@@ -8,6 +8,7 @@ import { resolveDbPath, resolveHome, resolvePipePath } from "../core/paths.js";
 import { PROTOCOL_VERSION } from "../core/constants.js";
 import { loadOrCreateToken } from "../core/token.js";
 import { formatMessage } from "../mcp/format.js";
+import { parseInstallerArgs, runInstaller } from "./installer.js";
 import { installOpencode, opencodeSourceDir, uninstallOpencode, type InstallResult } from "./opencode-install.js";
 
 const CLI_PEER_NAME = "cli";
@@ -75,6 +76,10 @@ async function main(argv: string[]): Promise<number> {
       await node.stop();
       return 0;
     }
+    case "install":
+    case "update":
+    case "uninstall":
+      return runInstaller({ action: command, tools: parseInstallerArgs(command, rest), yes: rest.includes("--yes") || rest.includes("-y"), out });
     case "install-opencode": {
       const source = opencodeSourceDir();
       if (!source) {

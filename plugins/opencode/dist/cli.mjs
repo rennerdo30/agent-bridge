@@ -2,7 +2,7 @@
 import { createRequire as __abCreateRequire } from 'node:module'; const require = __abCreateRequire(import.meta.url);
 
 // src/cli/main.ts
-import { join as join6 } from "node:path";
+import { join as join7 } from "node:path";
 
 // src/core/client.ts
 import { EventEmitter } from "node:events";
@@ -210,12 +210,22 @@ var en = {
   "err.delegateDepth": "Delegation is not available inside a delegated session (prevents endless recursion).",
   "err.delegateFailed": "The delegated agent failed: {detail}",
   "err.delegatedSession": "This is a delegated headless session; peer messaging is disabled here.",
-  "cli.usage": 'Usage: agent-bridge <command>\n\nCommands:\n  status              Show the broker and the connected peers\n  send <to> <text>    Send a message as the "cli" peer\n  tail                Print messages addressed to "cli" as they arrive\n  install-opencode        Install the opencode plugin and its @claude/@codex subagents\n  uninstall-opencode      Remove them again\n  paths                   Show data, log and pipe locations\n  help                    Show this help',
+  "cli.usage": 'Usage: agent-bridge <command>\n\nCommands:\n  install [claude] [codex] [opencode] [--yes]   Install agent-bridge (all found tools by default)\n  update  [claude] [codex] [opencode] [--yes]   Update it\n  uninstall [claude] [codex] [opencode] [--yes] Remove it\n  status             Show the broker and the connected peers\n  send <to> <text>    Send a message as the "cli" peer\n  tail                Print messages addressed to "cli" as they arrive\n  install-opencode        Install the opencode plugin and its @claude/@codex subagents\n  uninstall-opencode      Remove them again\n  paths                   Show data, log and pipe locations\n  help                    Show this help',
   "cli.opencode.noSource": "Could not find the opencode plugin files next to this CLI. Run it from an agent-bridge checkout or package.",
   "cli.opencode.installed": "Installed the agent-bridge opencode plugin into {dir}:",
   "cli.opencode.restart": "Restart opencode to load it. Requires Node.js 22.13+ on PATH.",
   "cli.opencode.removed": "Removed the agent-bridge opencode plugin from {dir}:",
   "cli.opencode.nothing": "The agent-bridge opencode plugin is not installed in {dir}.",
+  "installer.plan": "{tool}: these commands will run:",
+  "installer.confirm": "Run them for {tool}? [y/N] ",
+  "installer.skipped": "Skipped {tool}.",
+  "installer.notFound": "{tool} is not installed (not found on PATH); skipping it.",
+  "installer.codexNote": "  Note: close all Codex sessions first; afterwards trust the agent-bridge hooks once via /hooks in Codex.",
+  "installer.opencodeCopy": "copy the agent-bridge plugin, skill and subagents into opencode's config folder",
+  "installer.opencodeRemove": "remove the agent-bridge files from opencode's config folder",
+  "installer.stepFailed": "  Command failed (exit code {code}); stopping for this tool.",
+  "installer.done": "Done. Restart your agent sessions to load agent-bridge.",
+  "installer.doneWithErrors": "Finished with {count} error(s); see above.",
   "cli.install.skipped": "  skipped (exists and was not created by agent-bridge): {path}",
   "cli.status.broker": "Broker: running (pid {pid}, protocol {protocol}) at {pipe}",
   "cli.status.noBroker": "Broker: not running (no agent with agent-bridge is active). Endpoint: {pipe}",
@@ -1092,35 +1102,73 @@ ${neutralizeBody(m.body)}
 </${TAG}>`;
 }
 
+// src/cli/installer.ts
+import { spawn as spawn2 } from "node:child_process";
+import { createInterface } from "node:readline/promises";
+
+// src/core/delegate.ts
+import { spawn } from "node:child_process";
+import { existsSync, readFileSync as readFileSync2 } from "node:fs";
+import { delimiter, extname, isAbsolute, join as join5, win32 } from "node:path";
+var MAX_CAPTURE_CHARS = 8 * 1024 * 1024;
+var DEFAULT_PATHEXT = ".COM;.EXE;.BAT;.CMD";
+function resolveBinary(bin, env = process.env, platform = process.platform) {
+  const isWin = platform === "win32";
+  const exts = isWin ? (env.PATHEXT ?? DEFAULT_PATHEXT).split(";").filter(Boolean) : [""];
+  const candidates = (base) => isWin && !extname(base) ? exts.map((e) => base + e.toLowerCase()) : [base];
+  if (isAbsolute(bin) || bin.includes("/") || bin.includes("\\")) {
+    return candidates(bin).find((c) => existsSync(c)) ?? null;
+  }
+  for (const dir of (env.PATH ?? env.Path ?? "").split(delimiter)) {
+    if (!dir) continue;
+    for (const c of candidates(join5(dir, bin))) if (existsSync(c)) return c;
+  }
+  return null;
+}
+function unwrapNpmShim(shimPath, readFile = (p) => readFileSync2(p, "utf8")) {
+  let text;
+  try {
+    text = readFile(shimPath);
+  } catch {
+    return null;
+  }
+  const dir = win32.dirname(shimPath);
+  const exe = /"%~?dp0%?\\([^"]+?\.exe)"\s+%\*/i.exec(text);
+  if (exe) return { command: win32.join(dir, exe[1]), prefix: [] };
+  const js = /"%~?dp0%?\\([^"]+?\.(?:c|m)?js)"\s+%\*/i.exec(text);
+  if (js) return { command: process.execPath, prefix: [win32.join(dir, js[1])] };
+  return null;
+}
+
 // src/cli/opencode-install.ts
-import { copyFileSync, existsSync, mkdirSync as mkdirSync4, readdirSync, readFileSync as readFileSync2, rmSync } from "node:fs";
+import { copyFileSync, existsSync as existsSync2, mkdirSync as mkdirSync4, readdirSync, readFileSync as readFileSync3, rmSync } from "node:fs";
 import { homedir as homedir2 } from "node:os";
-import { dirname as dirname3, join as join5, resolve as resolve2 } from "node:path";
+import { dirname as dirname3, join as join6, resolve as resolve2 } from "node:path";
 import { fileURLToPath } from "node:url";
 var INSTALL_MARKER = "agent-bridge";
 var PLUGIN_FILE = "agent-bridge.js";
 var SERVER_DIR = "agent-bridge";
 var SERVER_FILE = "server.mjs";
-var SKILL_REL = join5("skills", "agent-bridge", "SKILL.md");
+var SKILL_REL = join6("skills", "agent-bridge", "SKILL.md");
 var AGENTS_DIR = "agents";
 function opencodeConfigDir(env = process.env) {
   const xdg = env.XDG_CONFIG_HOME?.trim();
-  return join5(xdg || join5(homedir2(), ".config"), "opencode");
+  return join6(xdg || join6(homedir2(), ".config"), "opencode");
 }
 function pluginSourceDir(name, marker, fromFile = fileURLToPath(import.meta.url)) {
   let dir = dirname3(fromFile);
   for (let i = 0; i < 5; i++) {
-    for (const candidate of [join5(dir, "plugins", name), join5(dir, "..", name)]) {
-      if (existsSync(join5(candidate, marker))) return resolve2(candidate);
+    for (const candidate of [join6(dir, "plugins", name), join6(dir, "..", name)]) {
+      if (existsSync2(join6(candidate, marker))) return resolve2(candidate);
     }
     dir = dirname3(dir);
   }
   return null;
 }
-var opencodeSourceDir = (from) => pluginSourceDir("opencode", join5("dist", PLUGIN_FILE), from);
+var opencodeSourceDir = (from) => pluginSourceDir("opencode", join6("dist", PLUGIN_FILE), from);
 function ownedByUs(path) {
   try {
-    return readFileSync2(path, "utf8").includes(INSTALL_MARKER);
+    return readFileSync3(path, "utf8").includes(INSTALL_MARKER);
   } catch {
     return false;
   }
@@ -1128,8 +1176,8 @@ function ownedByUs(path) {
 function copyAll(copies, configDir) {
   const res = { configDir, files: [], skipped: [] };
   for (const [from, to] of copies) {
-    if (!existsSync(from)) throw new Error(`missing build output: ${from} (run npm run build)`);
-    if (existsSync(to) && !ownedByUs(to)) {
+    if (!existsSync2(from)) throw new Error(`missing build output: ${from} (run npm run build)`);
+    if (existsSync2(to) && !ownedByUs(to)) {
       res.skipped.push(to);
       continue;
     }
@@ -1140,30 +1188,30 @@ function copyAll(copies, configDir) {
   return res;
 }
 function agentCopies(sourceDir, targetDir) {
-  const dir = join5(sourceDir, AGENTS_DIR);
-  if (!existsSync(dir)) return [];
-  return readdirSync(dir).map((f) => [join5(dir, f), join5(targetDir, AGENTS_DIR, f)]);
+  const dir = join6(sourceDir, AGENTS_DIR);
+  if (!existsSync2(dir)) return [];
+  return readdirSync(dir).map((f) => [join6(dir, f), join6(targetDir, AGENTS_DIR, f)]);
 }
 function installOpencode(sourceDir, configDir = opencodeConfigDir()) {
   return copyAll(
     [
-      [join5(sourceDir, "dist", PLUGIN_FILE), join5(configDir, "plugins", PLUGIN_FILE)],
-      [join5(sourceDir, "dist", SERVER_FILE), join5(configDir, "plugins", SERVER_DIR, SERVER_FILE)],
-      [join5(sourceDir, SKILL_REL), join5(configDir, SKILL_REL)],
+      [join6(sourceDir, "dist", PLUGIN_FILE), join6(configDir, "plugins", PLUGIN_FILE)],
+      [join6(sourceDir, "dist", SERVER_FILE), join6(configDir, "plugins", SERVER_DIR, SERVER_FILE)],
+      [join6(sourceDir, SKILL_REL), join6(configDir, SKILL_REL)],
       ...agentCopies(sourceDir, configDir)
     ],
     configDir
   );
 }
 function uninstallOpencode(configDir = opencodeConfigDir(), sourceDir = opencodeSourceDir()) {
-  const targets = [join5(configDir, "plugins", PLUGIN_FILE), join5(configDir, "plugins", SERVER_DIR), join5(configDir, "skills", "agent-bridge")];
+  const targets = [join6(configDir, "plugins", PLUGIN_FILE), join6(configDir, "plugins", SERVER_DIR), join6(configDir, "skills", "agent-bridge")];
   if (sourceDir) targets.push(...agentCopies(sourceDir, configDir).map(([, to]) => to));
   return removeOwned(targets, configDir);
 }
 function removeOwned(targets, configDir) {
   const res = { configDir, files: [], skipped: [] };
   for (const p of targets) {
-    if (!existsSync(p)) continue;
+    if (!existsSync2(p)) continue;
     const isOurFile = p.endsWith(".md") || p.endsWith(".toml") ? ownedByUs(p) : true;
     if (!isOurFile) {
       res.skipped.push(p);
@@ -1173,6 +1221,135 @@ function removeOwned(targets, configDir) {
     res.files.push(p);
   }
   return res;
+}
+
+// src/cli/installer.ts
+var MARKETPLACE_REPO = "rennerdo30/agent-bridge";
+var MARKETPLACE_NAME = "agent-bridge";
+var PLUGIN_ID = `agent-bridge@${MARKETPLACE_NAME}`;
+var TOOLS = ["claude", "codex", "opencode"];
+function planFor(tool, action) {
+  if (tool === "claude") {
+    switch (action) {
+      case "install":
+        return [
+          // Adding an existing marketplace fails harmlessly; the update afterwards refreshes it.
+          { kind: "command", bin: "claude", args: ["plugin", "marketplace", "add", MARKETPLACE_REPO], allowFailure: true },
+          { kind: "command", bin: "claude", args: ["plugin", "marketplace", "update", MARKETPLACE_NAME] },
+          { kind: "command", bin: "claude", args: ["plugin", "install", PLUGIN_ID] }
+        ];
+      case "update":
+        return [
+          { kind: "command", bin: "claude", args: ["plugin", "marketplace", "update", MARKETPLACE_NAME] },
+          { kind: "command", bin: "claude", args: ["plugin", "update", PLUGIN_ID] }
+        ];
+      case "uninstall":
+        return [{ kind: "command", bin: "claude", args: ["plugin", "uninstall", PLUGIN_ID] }];
+    }
+  }
+  if (tool === "codex") {
+    switch (action) {
+      case "install":
+        return [
+          { kind: "command", bin: "codex", args: ["plugin", "marketplace", "add", MARKETPLACE_REPO], allowFailure: true },
+          { kind: "command", bin: "codex", args: ["plugin", "marketplace", "upgrade", MARKETPLACE_NAME] },
+          { kind: "command", bin: "codex", args: ["plugin", "add", PLUGIN_ID] }
+        ];
+      case "update":
+        return [
+          { kind: "command", bin: "codex", args: ["plugin", "marketplace", "upgrade", MARKETPLACE_NAME] },
+          { kind: "command", bin: "codex", args: ["plugin", "add", PLUGIN_ID] }
+        ];
+      case "uninstall":
+        return [{ kind: "command", bin: "codex", args: ["plugin", "remove", PLUGIN_ID] }];
+    }
+  }
+  return [{ kind: "opencode", action }];
+}
+function describeStep(step) {
+  if (step.kind === "command") return `${step.bin} ${step.args.join(" ")}`;
+  return step.action === "uninstall" ? t("installer.opencodeRemove") : t("installer.opencodeCopy");
+}
+function runInherited(bin, args) {
+  const resolved = resolveBinary(bin);
+  if (!resolved) return Promise.resolve(127);
+  const shim = /\.(cmd|bat)$/i.test(resolved) ? unwrapNpmShim(resolved) : null;
+  const command = shim?.command ?? resolved;
+  const fullArgs = [...shim?.prefix ?? [], ...args];
+  return new Promise((resolve3) => {
+    const child = spawn2(command, fullArgs, { stdio: "inherit", shell: false });
+    child.on("error", () => resolve3(1));
+    child.on("close", (code) => resolve3(code ?? 1));
+  });
+}
+function ask(rl, question) {
+  return new Promise((resolve3) => {
+    const onClose = () => resolve3("");
+    rl.once("close", onClose);
+    rl.question(question).then(
+      (a) => {
+        rl.off("close", onClose);
+        resolve3(a);
+      },
+      () => resolve3("")
+    );
+  });
+}
+async function runInstaller(opts) {
+  const rl = opts.yes ? null : createInterface({ input: process.stdin, output: process.stdout });
+  let failures = 0;
+  try {
+    for (const tool of opts.tools) {
+      const bin = tool === "opencode" ? "opencode" : tool;
+      if (!resolveBinary(bin)) {
+        opts.out(t("installer.notFound", { tool }));
+        continue;
+      }
+      const steps = planFor(tool, opts.action);
+      opts.out(t("installer.plan", { tool }));
+      for (const s of steps) opts.out(`  ${describeStep(s)}`);
+      if (tool === "codex") opts.out(t("installer.codexNote"));
+      if (rl) {
+        const answer = (await ask(rl, t("installer.confirm", { tool }))).trim().toLowerCase();
+        if (answer !== "y" && answer !== "yes") {
+          opts.out(t("installer.skipped", { tool }));
+          continue;
+        }
+      }
+      for (const step of steps) {
+        if (step.kind === "opencode") {
+          const source = opencodeSourceDir();
+          if (step.action === "uninstall") {
+            const res = uninstallOpencode();
+            for (const f of res.files) opts.out(`  - ${f}`);
+          } else if (!source) {
+            opts.out(t("cli.opencode.noSource"));
+            failures++;
+          } else {
+            const res = installOpencode(source);
+            for (const f of res.files) opts.out(`  + ${f}`);
+            for (const f of res.skipped) opts.out(t("cli.install.skipped", { path: f }));
+          }
+          continue;
+        }
+        opts.out(`> ${describeStep(step)}`);
+        const code = await runInherited(step.bin, step.args);
+        if (code !== 0 && !step.allowFailure) {
+          opts.out(t("installer.stepFailed", { code }));
+          failures++;
+          break;
+        }
+      }
+    }
+  } finally {
+    rl?.close();
+  }
+  opts.out(failures ? t("installer.doneWithErrors", { count: failures }) : t("installer.done"));
+  return failures ? 1 : 0;
+}
+function parseInstallerArgs(action, rest) {
+  const picked = rest.filter((a) => TOOLS.includes(a));
+  return picked.length ? picked : [...TOOLS];
 }
 
 // src/cli/main.ts
@@ -1237,6 +1414,10 @@ async function main(argv) {
       await node.stop();
       return 0;
     }
+    case "install":
+    case "update":
+    case "uninstall":
+      return runInstaller({ action: command, tools: parseInstallerArgs(command, rest), yes: rest.includes("--yes") || rest.includes("-y"), out });
     case "install-opencode": {
       const source = opencodeSourceDir();
       if (!source) {
@@ -1256,7 +1437,7 @@ async function main(argv) {
       return 0;
     }
     case "paths":
-      out(t("cli.paths", { home, logs: join6(home, LOG_DIR_NAME), db: resolveDbPath(home), pipe }));
+      out(t("cli.paths", { home, logs: join7(home, LOG_DIR_NAME), db: resolveDbPath(home), pipe }));
       return 0;
     case "help":
     case "--help":
