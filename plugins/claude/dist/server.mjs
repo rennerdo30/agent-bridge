@@ -36881,7 +36881,7 @@ function runProcess(opts) {
   });
 }
 var OPENCODE_CONFIG_CONTENT_ENV = "OPENCODE_CONFIG_CONTENT";
-var OPENCODE_READ_ONLY_PERMISSIONS = { edit: "deny", bash: "deny" };
+var OPENCODE_READ_ONLY_PERMISSIONS = { edit: "ask", bash: "ask" };
 function childEnv() {
   return { ...process.env, [DELEGATE_DEPTH_ENV]: String(currentDelegateDepth() + 1) };
 }
@@ -37097,12 +37097,18 @@ var en = {
   "err.delegateDepth": "Delegation is not available inside a delegated session (prevents endless recursion).",
   "err.delegateFailed": "The delegated agent failed: {detail}",
   "err.delegatedSession": "This is a delegated headless session; peer messaging is disabled here.",
-  "cli.usage": 'Usage: agent-bridge <command>\n\nCommands:\n  install [claude] [codex] [opencode] [--yes]   Install agent-bridge (all found tools by default)\n  update  [claude] [codex] [opencode] [--yes]   Update it\n  uninstall [claude] [codex] [opencode] [--yes] Remove it\n  status             Show the broker and the connected peers\n  send <to> <text>    Send a message as the "cli" peer\n  tail                Print messages addressed to "cli" as they arrive\n  install-opencode        Install the opencode plugin and its @claude/@codex subagents\n  uninstall-opencode      Remove them again\n  paths                   Show data, log and pipe locations\n  help                    Show this help',
+  "cli.usage": 'Usage: agent-bridge <command>\n\nCommands:\n  install [claude] [codex] [opencode] [--yes]   Install agent-bridge (all found tools by default)\n  update  [claude] [codex] [opencode] [--yes]   Update it\n  uninstall [claude] [codex] [opencode] [--yes] Remove it\n  smoke [claude] [codex] [opencode]              Check the real CLIs still work with agent-bridge\n  status                  Show the broker and the connected peers\n  send <to> <text>    Send a message as the "cli" peer\n  tail                Print messages addressed to "cli" as they arrive\n  install-opencode        Install the opencode plugin and its @claude/@codex subagents\n  uninstall-opencode      Remove them again\n  paths                   Show data, log and pipe locations\n  help                    Show this help',
   "cli.opencode.noSource": "Could not find the opencode plugin files next to this CLI. Run it from an agent-bridge checkout or package.",
   "cli.opencode.installed": "Installed the agent-bridge opencode plugin into {dir}:",
   "cli.opencode.restart": "Restart opencode to load it. Requires Node.js 22.13+ on PATH.",
   "cli.opencode.removed": "Removed the agent-bridge opencode plugin from {dir}:",
   "cli.opencode.nothing": "The agent-bridge opencode plugin is not installed in {dir}.",
+  "smoke.missing": "{agent}: not installed, skipped.",
+  "smoke.start": "{agent} {version}{note}: running\u2026",
+  "smoke.untested": " (agent-bridge was tested with {tested})",
+  "smoke.pass": "  PASS  {agent}: answer {answer}, session id {session}, resume {resume}",
+  "smoke.fail": "  FAIL  {agent}: answer {answer}, session id {session}, resume {resume}",
+  "smoke.error": "  FAIL  {agent}: {detail}",
   "installer.plan": "{tool}: these commands will run:",
   "installer.confirm": "Run them for {tool}? [y/N] ",
   "installer.skipped": "Skipped {tool}.",

@@ -193,7 +193,9 @@ export interface DelegateResult {
 /** opencode reads an extra JSON config layer from this variable (merged over the user's config). */
 export const OPENCODE_CONFIG_CONTENT_ENV = "OPENCODE_CONFIG_CONTENT";
 /** Read-only for opencode: no file changes, no shell commands. Reading and searching stay allowed. */
-export const OPENCODE_READ_ONLY_PERMISSIONS = { edit: "deny", bash: "deny" } as const;
+// "ask" rather than "deny": the tools stay listed (some providers reject a reduced tool set), and headless
+// `opencode run` rejects every ask without --auto, so nothing is changed.
+export const OPENCODE_READ_ONLY_PERMISSIONS = { edit: "ask", bash: "ask" } as const;
 
 function childEnv(): NodeJS.ProcessEnv {
   return { ...process.env, [DELEGATE_DEPTH_ENV]: String(currentDelegateDepth() + 1) };

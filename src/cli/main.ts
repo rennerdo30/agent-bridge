@@ -8,7 +8,9 @@ import { resolveDbPath, resolveHome, resolvePipePath } from "../core/paths.js";
 import { PROTOCOL_VERSION } from "../core/constants.js";
 import { loadOrCreateToken } from "../core/token.js";
 import { formatMessage } from "../mcp/format.js";
+import { CODING_AGENTS, type CodingAgent } from "../core/protocol.js";
 import { parseInstallerArgs, runInstaller } from "./installer.js";
+import { runSmoke } from "./smoke.js";
 import { installOpencode, opencodeSourceDir, uninstallOpencode, type InstallResult } from "./opencode-install.js";
 
 const CLI_PEER_NAME = "cli";
@@ -80,6 +82,10 @@ async function main(argv: string[]): Promise<number> {
     case "update":
     case "uninstall":
       return runInstaller({ action: command, tools: parseInstallerArgs(command, rest), yes: rest.includes("--yes") || rest.includes("-y"), out });
+    case "smoke": {
+      const picked = rest.filter((a) => (CODING_AGENTS as readonly string[]).includes(a)) as CodingAgent[];
+      return runSmoke({ agents: picked.length ? picked : [...CODING_AGENTS], out, log });
+    }
     case "install-opencode": {
       const source = opencodeSourceDir();
       if (!source) {

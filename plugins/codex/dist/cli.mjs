@@ -2,7 +2,7 @@
 import { createRequire as __abCreateRequire } from 'node:module'; const require = __abCreateRequire(import.meta.url);
 
 // src/cli/main.ts
-import { join as join7 } from "node:path";
+import { join as join8 } from "node:path";
 
 // src/core/client.ts
 import { EventEmitter } from "node:events";
@@ -45,9 +45,13 @@ var MAX_BODY_CHARS = 2e5;
 var MESSAGE_TTL_MS = 7 * 24 * 60 * 60 * 1e3;
 var PURGE_INTERVAL_MS = 60 * 60 * 1e3;
 var MAX_JOB_TIMEOUT_SEC = 24 * 60 * 60;
+var DEFAULT_CLAUDE_BIN = "claude";
+var DEFAULT_CODEX_BIN = "codex";
+var DEFAULT_OPENCODE_BIN = "opencode";
 
 // src/core/protocol.ts
 var AGENT_KINDS = ["claude", "codex", "opencode", "other"];
+var CODING_AGENTS = ["claude", "codex", "opencode"];
 var BROADCAST = "*";
 var BridgeError = class extends Error {
   constructor(code, message, details) {
@@ -210,12 +214,18 @@ var en = {
   "err.delegateDepth": "Delegation is not available inside a delegated session (prevents endless recursion).",
   "err.delegateFailed": "The delegated agent failed: {detail}",
   "err.delegatedSession": "This is a delegated headless session; peer messaging is disabled here.",
-  "cli.usage": 'Usage: agent-bridge <command>\n\nCommands:\n  install [claude] [codex] [opencode] [--yes]   Install agent-bridge (all found tools by default)\n  update  [claude] [codex] [opencode] [--yes]   Update it\n  uninstall [claude] [codex] [opencode] [--yes] Remove it\n  status             Show the broker and the connected peers\n  send <to> <text>    Send a message as the "cli" peer\n  tail                Print messages addressed to "cli" as they arrive\n  install-opencode        Install the opencode plugin and its @claude/@codex subagents\n  uninstall-opencode      Remove them again\n  paths                   Show data, log and pipe locations\n  help                    Show this help',
+  "cli.usage": 'Usage: agent-bridge <command>\n\nCommands:\n  install [claude] [codex] [opencode] [--yes]   Install agent-bridge (all found tools by default)\n  update  [claude] [codex] [opencode] [--yes]   Update it\n  uninstall [claude] [codex] [opencode] [--yes] Remove it\n  smoke [claude] [codex] [opencode]              Check the real CLIs still work with agent-bridge\n  status                  Show the broker and the connected peers\n  send <to> <text>    Send a message as the "cli" peer\n  tail                Print messages addressed to "cli" as they arrive\n  install-opencode        Install the opencode plugin and its @claude/@codex subagents\n  uninstall-opencode      Remove them again\n  paths                   Show data, log and pipe locations\n  help                    Show this help',
   "cli.opencode.noSource": "Could not find the opencode plugin files next to this CLI. Run it from an agent-bridge checkout or package.",
   "cli.opencode.installed": "Installed the agent-bridge opencode plugin into {dir}:",
   "cli.opencode.restart": "Restart opencode to load it. Requires Node.js 22.13+ on PATH.",
   "cli.opencode.removed": "Removed the agent-bridge opencode plugin from {dir}:",
   "cli.opencode.nothing": "The agent-bridge opencode plugin is not installed in {dir}.",
+  "smoke.missing": "{agent}: not installed, skipped.",
+  "smoke.start": "{agent} {version}{note}: running\u2026",
+  "smoke.untested": " (agent-bridge was tested with {tested})",
+  "smoke.pass": "  PASS  {agent}: answer {answer}, session id {session}, resume {resume}",
+  "smoke.fail": "  FAIL  {agent}: answer {answer}, session id {session}, resume {resume}",
+  "smoke.error": "  FAIL  {agent}: {detail}",
   "installer.plan": "{tool}: these commands will run:",
   "installer.confirm": "Run them for {tool}? [y/N] ",
   "installer.skipped": "Skipped {tool}.",
@@ -1110,8 +1120,106 @@ import { createInterface } from "node:readline/promises";
 import { spawn } from "node:child_process";
 import { existsSync, readFileSync as readFileSync2 } from "node:fs";
 import { delimiter, extname, isAbsolute, join as join5, win32 } from "node:path";
+
+// src/core/progress.ts
+var MAX_STATUS_CHARS = 140;
+function clip(s) {
+  const one = s.replace(/\s+/g, " ").trim();
+  return one.length > MAX_STATUS_CHARS ? `${one.slice(0, MAX_STATUS_CHARS - 1)}\u2026` : one;
+}
+function firstString(o, keys) {
+  for (const k of keys) if (typeof o?.[k] === "string" && o[k]) return o[k];
+  return null;
+}
+var INPUT_KEYS = ["command", "file_path", "filePath", "path", "pattern", "query", "url", "description"];
+function describeCodexEvent(ev) {
+  const item = ev?.item;
+  if (ev?.type === "item.started" && item) {
+    switch (item.type) {
+      case "command_execution":
+        return clip(`running: ${item.command ?? ""}`);
+      case "file_change": {
+        const paths = (item.changes ?? []).map((c) => c?.path).filter(Boolean);
+        return clip(`editing ${paths.join(", ") || "files"}`);
+      }
+      case "mcp_tool_call":
+        return clip(`tool ${item.server ?? ""}.${item.tool ?? ""}`);
+      case "web_search":
+        return clip(`searching the web${item.query ? `: ${item.query}` : ""}`);
+    }
+  }
+  if (ev?.type === "item.completed" && item?.type === "reasoning") return "thinking";
+  if (ev?.type === "item.completed" && item?.type === "agent_message") return "writing the answer";
+  return null;
+}
+function describeClaudeEvent(ev) {
+  if (ev?.type !== "assistant") return null;
+  const blocks = ev.message?.content ?? [];
+  const tool = blocks.find((b) => b?.type === "tool_use");
+  if (tool) {
+    const detail = firstString(tool.input, INPUT_KEYS);
+    return clip(`${tool.name}${detail ? `: ${detail}` : ""}`);
+  }
+  if (blocks.some((b) => b?.type === "text")) return "writing the answer";
+  if (blocks.some((b) => b?.type === "thinking")) return "thinking";
+  return null;
+}
+function describeOpencodeEvent(ev) {
+  if (ev?.type === "tool_use") {
+    const part = ev.part ?? {};
+    const detail = firstString(part.state?.input, INPUT_KEYS);
+    return clip(`${part.tool ?? "tool"}${detail ? `: ${detail}` : ""}`);
+  }
+  if (ev?.type === "text") return "writing the answer";
+  if (ev?.type === "reasoning") return "thinking";
+  return null;
+}
+var DESCRIBERS = {
+  codex: describeCodexEvent,
+  claude: describeClaudeEvent,
+  opencode: describeOpencodeEvent
+};
+function progressLineHandler(agent, onProgress) {
+  if (!onProgress) return void 0;
+  let last = "";
+  return (line) => {
+    if (!line.startsWith("{")) return;
+    let ev;
+    try {
+      ev = JSON.parse(line);
+    } catch {
+      return;
+    }
+    const msg = DESCRIBERS[agent](ev);
+    if (msg && msg !== last) {
+      last = msg;
+      onProgress(msg);
+    }
+  };
+}
+
+// src/core/delegate.ts
+var DELEGATE_DEPTH_ENV = "AGENT_BRIDGE_DELEGATE_DEPTH";
+var MAX_DELEGATE_DEPTH = 1;
+var KILL_GRACE_MS = 3e3;
 var MAX_CAPTURE_CHARS = 8 * 1024 * 1024;
+var STDERR_TAIL_CHARS = 4e3;
+var WINDOWS_SHIM_EXTS = /* @__PURE__ */ new Set([".cmd", ".bat"]);
 var DEFAULT_PATHEXT = ".COM;.EXE;.BAT;.CMD";
+function currentDelegateDepth(env = process.env) {
+  const n = Number.parseInt(env[DELEGATE_DEPTH_ENV] ?? "0", 10);
+  return Number.isInteger(n) && n > 0 ? n : 0;
+}
+var DelegateError = class extends Error {
+  constructor(message, kind, stderrTail = "") {
+    super(message);
+    this.kind = kind;
+    this.stderrTail = stderrTail;
+    this.name = "DelegateError";
+  }
+  kind;
+  stderrTail;
+};
 function resolveBinary(bin, env = process.env, platform = process.platform) {
   const isWin = platform === "win32";
   const exts = isWin ? (env.PATHEXT ?? DEFAULT_PATHEXT).split(";").filter(Boolean) : [""];
@@ -1138,6 +1246,265 @@ function unwrapNpmShim(shimPath, readFile = (p) => readFileSync2(p, "utf8")) {
   const js = /"%~?dp0%?\\([^"]+?\.(?:c|m)?js)"\s+%\*/i.exec(text);
   if (js) return { command: process.execPath, prefix: [win32.join(dir, js[1])] };
   return null;
+}
+function runProcess(opts) {
+  let resolved = resolveBinary(opts.bin, opts.env);
+  if (!resolved) return Promise.reject(new DelegateError(`executable not found: ${opts.bin}`, "not_found"));
+  let args = opts.args;
+  let needsShell = process.platform === "win32" && WINDOWS_SHIM_EXTS.has(extname(resolved).toLowerCase());
+  if (needsShell) {
+    const target = unwrapNpmShim(resolved);
+    if (target && existsSync(target.command) && target.prefix.every((p) => existsSync(p))) {
+      opts.log.debug("unwrapped npm shim", { shim: resolved, command: target.command, prefix: target.prefix });
+      resolved = target.command;
+      args = [...target.prefix, ...args];
+      needsShell = false;
+    }
+  }
+  if (needsShell) {
+    for (const a of args) {
+      if (/[&|<>^%"\s]/.test(a)) return Promise.reject(new DelegateError(`unsafe argument for shell invocation: ${a}`, "failed"));
+    }
+  }
+  opts.log.debug("spawning delegate", { bin: resolved, args, cwd: opts.cwd, shell: needsShell });
+  return new Promise((resolve3, reject) => {
+    const child = spawn(needsShell ? `"${resolved}"` : resolved, args, {
+      cwd: opts.cwd,
+      env: opts.env,
+      shell: needsShell,
+      windowsHide: true,
+      stdio: ["pipe", "pipe", "pipe"]
+    });
+    let stdout = "";
+    let stderr = "";
+    let settled = false;
+    const finish = (fn) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      opts.signal?.removeEventListener("abort", onAbort);
+      fn();
+    };
+    const kill = () => {
+      child.kill();
+      setTimeout(() => child.kill("SIGKILL"), KILL_GRACE_MS).unref();
+    };
+    const timer = setTimeout(() => {
+      kill();
+      finish(() => reject(new DelegateError(`delegate timed out after ${Math.round(opts.timeoutMs / 1e3)}s`, "timeout", stderr.slice(-STDERR_TAIL_CHARS))));
+    }, opts.timeoutMs);
+    const onAbort = () => {
+      kill();
+      finish(() => reject(new DelegateError("delegate aborted", "aborted")));
+    };
+    opts.signal?.addEventListener("abort", onAbort, { once: true });
+    let pending = "";
+    child.stdout.setEncoding("utf8").on("data", (d) => {
+      if (stdout.length < MAX_CAPTURE_CHARS) stdout += d;
+      if (!opts.onLine) return;
+      pending += d;
+      let nl;
+      while ((nl = pending.indexOf("\n")) >= 0) {
+        const line = pending.slice(0, nl).trim();
+        pending = pending.slice(nl + 1);
+        if (line) {
+          try {
+            opts.onLine(line);
+          } catch {
+          }
+        }
+      }
+    });
+    child.stderr.setEncoding("utf8").on("data", (d) => {
+      stderr = (stderr + d).slice(-MAX_CAPTURE_CHARS);
+    });
+    child.on("error", (err) => finish(() => reject(new DelegateError(`failed to start ${opts.bin}: ${err.message}`, "failed"))));
+    child.on("close", (code) => finish(() => resolve3({ code, stdout, stderr })));
+    child.stdin.on("error", () => {
+    });
+    child.stdin.end(opts.stdin);
+  });
+}
+var OPENCODE_CONFIG_CONTENT_ENV = "OPENCODE_CONFIG_CONTENT";
+var OPENCODE_READ_ONLY_PERMISSIONS = { edit: "ask", bash: "ask" };
+function childEnv() {
+  return { ...process.env, [DELEGATE_DEPTH_ENV]: String(currentDelegateDepth() + 1) };
+}
+function checkDepth() {
+  if (currentDelegateDepth() >= MAX_DELEGATE_DEPTH) {
+    throw new DelegateError("delegation is disabled inside a delegated session (prevents recursive delegation)", "depth");
+  }
+}
+function parseCodexJsonl(stdout) {
+  let threadId = null;
+  const messages = [];
+  let error = null;
+  let usage = null;
+  for (const line of stdout.split(/\r?\n/)) {
+    const s = line.trim();
+    if (!s.startsWith("{")) continue;
+    let ev;
+    try {
+      ev = JSON.parse(s);
+    } catch {
+      continue;
+    }
+    switch (ev.type) {
+      case "thread.started":
+        threadId = ev.thread_id ?? threadId;
+        break;
+      case "item.completed":
+        if (ev.item?.type === "agent_message" && typeof ev.item.text === "string") messages.push(ev.item.text);
+        break;
+      case "turn.completed":
+        usage = ev.usage ?? usage;
+        break;
+      case "turn.failed":
+        error = ev.error?.message ?? "turn failed";
+        break;
+      case "error":
+        error = ev.message ?? "error";
+        break;
+    }
+  }
+  return { threadId, text: messages.at(-1) ?? "", error, usage };
+}
+async function delegateToCodex(req) {
+  checkDepth();
+  const common = ["--json", "--skip-git-repo-check", ...req.model ? ["-m", req.model] : []];
+  const args = req.sessionId ? ["exec", "resume", ...common, "-c", `sandbox_mode="${req.sandbox}"`, req.sessionId, "-"] : ["exec", ...common, "-s", req.sandbox, "-C", req.cwd, "-"];
+  const res = await runProcess({
+    bin: req.bin,
+    args,
+    stdin: req.prompt,
+    cwd: req.cwd,
+    timeoutMs: req.timeoutSec * 1e3,
+    env: childEnv(),
+    log: req.log,
+    signal: req.signal,
+    onLine: progressLineHandler("codex", req.onProgress)
+  });
+  const parsed = parseCodexJsonl(res.stdout);
+  const isError = res.code !== 0 || parsed.error !== null;
+  if (isError && !parsed.text) {
+    throw new DelegateError(parsed.error ?? `codex exited with code ${res.code}`, "failed", res.stderr.slice(-STDERR_TAIL_CHARS));
+  }
+  req.log.info("codex delegate finished", { threadId: parsed.threadId, code: res.code, isError });
+  return {
+    sessionId: parsed.threadId ?? req.sessionId ?? null,
+    text: parsed.text,
+    isError,
+    details: { exitCode: res.code, usage: parsed.usage, error: parsed.error }
+  };
+}
+function parseClaudeJson(stdout) {
+  const lines = stdout.split(/\r?\n/).filter((l) => l.trim().startsWith("{"));
+  const resultLine = [...lines].reverse().find((l) => l.includes('"type":"result"'));
+  const candidate = resultLine ?? (stdout.indexOf("{") >= 0 ? stdout.slice(stdout.indexOf("{")) : null);
+  if (!candidate) return null;
+  try {
+    const o = JSON.parse(candidate);
+    return {
+      sessionId: typeof o.session_id === "string" ? o.session_id : null,
+      text: typeof o.result === "string" ? o.result : "",
+      isError: Boolean(o.is_error) || o.subtype === "error",
+      cost: o.total_cost_usd ?? null
+    };
+  } catch {
+    return null;
+  }
+}
+async function delegateToClaude(req) {
+  checkDepth();
+  const args = ["-p", "--output-format", "stream-json", "--verbose", "--permission-mode", req.permissionMode];
+  if (req.model) args.push("--model", req.model);
+  if (req.sessionId) args.push("--resume", req.sessionId);
+  const res = await runProcess({
+    bin: req.bin,
+    args,
+    stdin: req.prompt,
+    cwd: req.cwd,
+    timeoutMs: req.timeoutSec * 1e3,
+    env: childEnv(),
+    log: req.log,
+    signal: req.signal,
+    onLine: progressLineHandler("claude", req.onProgress)
+  });
+  const parsed = parseClaudeJson(res.stdout);
+  if (!parsed) {
+    throw new DelegateError(`claude exited with code ${res.code} without a JSON result`, "failed", (res.stderr || res.stdout).slice(-STDERR_TAIL_CHARS));
+  }
+  req.log.info("claude delegate finished", { sessionId: parsed.sessionId, code: res.code, isError: parsed.isError });
+  return {
+    sessionId: parsed.sessionId ?? req.sessionId ?? null,
+    text: parsed.text,
+    isError: parsed.isError || res.code !== 0,
+    details: { exitCode: res.code, costUsd: parsed.cost }
+  };
+}
+function parseOpencodeJsonl(stdout) {
+  let sessionId = null;
+  const textByMessage = /* @__PURE__ */ new Map();
+  let lastMessage = "";
+  let error = null;
+  let input = 0;
+  let output = 0;
+  let cost = 0;
+  let sawUsage = false;
+  for (const line of stdout.split(/\r?\n/)) {
+    const s = line.trim();
+    if (!s.startsWith("{")) continue;
+    let ev;
+    try {
+      ev = JSON.parse(s);
+    } catch {
+      continue;
+    }
+    if (typeof ev.sessionID === "string") sessionId ??= ev.sessionID;
+    if (ev.type === "step_finish" && ev.part?.tokens) {
+      sawUsage = true;
+      input += Number(ev.part.tokens.input) || 0;
+      output += Number(ev.part.tokens.output) || 0;
+      cost += Number(ev.part.cost) || 0;
+    }
+    if (ev.type === "text" && typeof ev.part?.text === "string") {
+      const mid = String(ev.part.messageID ?? "");
+      if (!textByMessage.has(mid)) textByMessage.set(mid, []);
+      textByMessage.get(mid).push(ev.part.text);
+      lastMessage = mid;
+    } else if (ev.type === "error") {
+      error = ev.error?.data?.message ?? ev.error?.message ?? ev.message ?? "opencode reported an error";
+    }
+  }
+  const text = (textByMessage.get(lastMessage) ?? []).join("");
+  return sawUsage ? { sessionId, text, error, usage: { input, output }, cost } : { sessionId, text, error };
+}
+async function delegateToOpencode(req) {
+  checkDepth();
+  const args = ["run", "--format", "json"];
+  if (req.model) args.push("-m", req.model);
+  if (req.sessionId) args.push("-s", req.sessionId);
+  if (req.autoApprove) args.push("--auto");
+  const env = childEnv();
+  if (!req.autoApprove) env[OPENCODE_CONFIG_CONTENT_ENV] = JSON.stringify({ permission: OPENCODE_READ_ONLY_PERMISSIONS });
+  const res = await runProcess({
+    bin: req.bin,
+    args,
+    stdin: req.prompt,
+    cwd: req.cwd,
+    timeoutMs: req.timeoutSec * 1e3,
+    env,
+    log: req.log,
+    signal: req.signal,
+    onLine: progressLineHandler("opencode", req.onProgress)
+  });
+  const parsed = parseOpencodeJsonl(res.stdout);
+  const isError = res.code !== 0 || parsed.error !== null;
+  if (isError && !parsed.text) {
+    throw new DelegateError(parsed.error ?? `opencode exited with code ${res.code}`, "failed", res.stderr.slice(-STDERR_TAIL_CHARS));
+  }
+  req.log.info("opencode delegate finished", { sessionId: parsed.sessionId, code: res.code, isError });
+  return { sessionId: parsed.sessionId ?? req.sessionId ?? null, text: parsed.text, isError, details: { exitCode: res.code, error: parsed.error, usage: parsed.usage ?? null, costUsd: parsed.cost || null } };
 }
 
 // src/cli/opencode-install.ts
@@ -1352,6 +1719,75 @@ function parseInstallerArgs(action, rest) {
   return picked.length ? picked : [...TOOLS];
 }
 
+// src/cli/smoke.ts
+import { mkdtempSync, rmSync as rmSync2 } from "node:fs";
+import { tmpdir } from "node:os";
+import { join as join7 } from "node:path";
+var TESTED_VERSIONS = {
+  claude: "2.1.283",
+  codex: "0.157.1",
+  opencode: "1.18.32"
+};
+var SMOKE_TIMEOUT_SEC = 180;
+var VERSION_TIMEOUT_MS = 3e4;
+var EXPECTED = "AGENT_BRIDGE_OK";
+var PROMPT = `Reply with exactly ${EXPECTED} and nothing else.`;
+var RESUME_PROMPT = "What did you reply last time? Reply with exactly that word and nothing else.";
+async function version(bin, log) {
+  try {
+    const res = await runProcess({ bin, args: ["--version"], stdin: "", cwd: process.cwd(), timeoutMs: VERSION_TIMEOUT_MS, env: process.env, log });
+    return /\d+\.\d+\.\d+/.exec(res.stdout)?.[0] ?? "unknown";
+  } catch {
+    return "unknown";
+  }
+}
+async function runSmoke(opts) {
+  const dir = mkdtempSync(join7(tmpdir(), "agent-bridge-smoke-"));
+  const bins = { claude: DEFAULT_CLAUDE_BIN, codex: DEFAULT_CODEX_BIN, opencode: DEFAULT_OPENCODE_BIN };
+  let failures = 0;
+  try {
+    for (const agent of opts.agents) {
+      const bin = bins[agent];
+      if (!resolveBinary(bin)) {
+        opts.out(t("smoke.missing", { agent }));
+        continue;
+      }
+      const v = await version(bin, opts.log);
+      const note = v === TESTED_VERSIONS[agent] ? "" : t("smoke.untested", { tested: TESTED_VERSIONS[agent] });
+      opts.out(t("smoke.start", { agent, version: v, note }));
+      const run = (prompt, sessionId) => {
+        const base = { prompt, cwd: dir, sessionId, timeoutSec: SMOKE_TIMEOUT_SEC, log: opts.log };
+        if (agent === "codex") return delegateToCodex({ ...base, bin, sandbox: "read-only" });
+        if (agent === "claude") return delegateToClaude({ ...base, bin, permissionMode: "plan" });
+        return delegateToOpencode({ ...base, bin, autoApprove: false });
+      };
+      try {
+        const first = await run(PROMPT, null);
+        const okAnswer = first.text.includes(EXPECTED);
+        const okSession = Boolean(first.sessionId);
+        const second = okSession ? await run(RESUME_PROMPT, first.sessionId) : null;
+        const okResume = Boolean(second?.text.includes(EXPECTED));
+        const passed = okAnswer && okSession && okResume;
+        if (!passed) failures++;
+        opts.out(
+          t(passed ? "smoke.pass" : "smoke.fail", {
+            agent,
+            answer: okAnswer ? "ok" : `unexpected "${first.text.slice(0, 60)}"`,
+            session: okSession ? "ok" : "missing",
+            resume: okResume ? "ok" : second ? `unexpected "${second.text.slice(0, 60)}"` : "skipped"
+          })
+        );
+      } catch (err) {
+        failures++;
+        opts.out(t("smoke.error", { agent, detail: String(err?.message ?? err) }));
+      }
+    }
+  } finally {
+    rmSync2(dir, { recursive: true, force: true });
+  }
+  return failures ? 1 : 0;
+}
+
 // src/cli/main.ts
 var CLI_PEER_NAME = "cli";
 var out = (s) => process.stdout.write(s + "\n");
@@ -1418,6 +1854,10 @@ async function main(argv) {
     case "update":
     case "uninstall":
       return runInstaller({ action: command, tools: parseInstallerArgs(command, rest), yes: rest.includes("--yes") || rest.includes("-y"), out });
+    case "smoke": {
+      const picked = rest.filter((a) => CODING_AGENTS.includes(a));
+      return runSmoke({ agents: picked.length ? picked : [...CODING_AGENTS], out, log });
+    }
     case "install-opencode": {
       const source = opencodeSourceDir();
       if (!source) {
@@ -1437,7 +1877,7 @@ async function main(argv) {
       return 0;
     }
     case "paths":
-      out(t("cli.paths", { home, logs: join7(home, LOG_DIR_NAME), db: resolveDbPath(home), pipe }));
+      out(t("cli.paths", { home, logs: join8(home, LOG_DIR_NAME), db: resolveDbPath(home), pipe }));
       return 0;
     case "help":
     case "--help":
