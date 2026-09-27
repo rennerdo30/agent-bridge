@@ -1,0 +1,16 @@
+{
+  "name": "agent-bridge",
+  "owner": {
+    "name": "rennerdo30",
+    "url": "https://github.com/rennerdo30"
+  },
+  "description": "agent-bridge: let Claude Code and OpenAI Codex talk to each other.",
+  "plugins": [
+    {
+      "name": "agent-bridge",
+      "source": "./plugins/claude",
+      "description": "Live messaging with Codex sessions plus headless delegation (ask_codex).",
+      "version": "0.1.0"
+    }
+  ]
+}

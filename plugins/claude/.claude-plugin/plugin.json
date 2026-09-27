@@ -1,0 +1,35 @@
+{
+  "name": "agent-bridge",
+  "displayName": "agent-bridge",
+  "version": "0.1.0",
+  "description": "Talk to OpenAI Codex from Claude Code: live peer messaging over a local pipe, plus headless delegation (ask_codex).",
+  "author": {
+    "name": "rennerdo30",
+    "url": "https://github.com/rennerdo30"
+  },
+  "homepage": "https://github.com/rennerdo30/agent-bridge",
+  "repository": "https://github.com/rennerdo30/agent-bridge",
+  "license": "MIT",
+  "keywords": [
+    "codex",
+    "multi-agent",
+    "mcp",
+    "channels",
+    "collaboration"
+  ],
+  "mcpServers": {
+    "bridge": {
+      "command": "node",
+      "args": [
+        "${CLAUDE_PLUGIN_ROOT}/dist/server.mjs",
+        "--agent=claude"
+      ]
+    }
+  },
+  "channels": [
+    {
+      "server": "bridge",
+      "displayName": "agent-bridge"
+    }
+  ]
+}

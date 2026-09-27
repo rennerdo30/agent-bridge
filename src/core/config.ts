@@ -1,0 +1,118 @@
+import { readFileSync } from "node:fs";
+import { basename, join } from "node:path";
+import { CONFIG_FILE_NAME, DEFAULT_CLAUDE_BIN, DEFAULT_CODEX_BIN, DEFAULT_MAX_HOPS, ENV } from "./constants.js";
+import type { Logger } from "./logger.js";
+import { AGENT_KINDS, type AgentKind } from "./protocol.js";
+
+/**
+ * How incoming messages reach a Claude Code session.
+ *  - channel: pushed live through Claude Code channels (session started with --channels / development flag)
+ *  - hooks:   injected by UserPromptSubmit / PostToolUse / Stop hooks
+ *  - auto:    channel when the parent Claude process was started with the channel flag, else hooks
+ */
+export type DeliveryMode = "auto" | "channel" | "hooks";
+const DELIVERY_MODES: readonly DeliveryMode[] = ["auto", "channel", "hooks"];
+
+export type CodexSandbox = "read-only" | "workspace-write" | "danger-full-access";
+const CODEX_SANDBOXES: readonly CodexSandbox[] = ["read-only", "workspace-write", "danger-full-access"];
+
+export type ClaudePermissionMode = "default" | "acceptEdits" | "plan" | "auto" | "dontAsk" | "bypassPermissions";
+const CLAUDE_PERMISSION_MODES: readonly ClaudePermissionMode[] = ["default", "acceptEdits", "plan", "auto", "dontAsk", "bypassPermissions"];
+
+export interface BridgeConfig {
+  /** Peer name; defaults to "<agent>-<cwd basename>". */
+  name: string | null;
+  autoWake: boolean;
+  maxHops: number;
+  delivery: DeliveryMode;
+  claudeBin: string;
+  codexBin: string;
+  /** Default sandbox for delegated Codex runs. */
+  codexSandbox: CodexSandbox;
+  /** Default permission mode for delegated Claude runs. */
+  claudePermissionMode: ClaudePermissionMode;
+}
+
+export const DEFAULT_CONFIG: BridgeConfig = {
+  name: null,
+  autoWake: false,
+  maxHops: DEFAULT_MAX_HOPS,
+  delivery: "auto",
+  claudeBin: DEFAULT_CLAUDE_BIN,
+  codexBin: DEFAULT_CODEX_BIN,
+  codexSandbox: "read-only",
+  claudePermissionMode: "default",
+};
+
+const TRUE_VALUES = new Set(["1", "true", "yes", "on"]);
+const FALSE_VALUES = new Set(["0", "false", "no", "off"]);
+
+function parseBool(v: unknown): boolean | undefined {
+  if (typeof v === "boolean") return v;
+  if (typeof v !== "string") return undefined;
+  const s = v.trim().toLowerCase();
+  if (TRUE_VALUES.has(s)) return true;
+  if (FALSE_VALUES.has(s)) return false;
+  return undefined;
+}
+
+function parseIntInRange(v: unknown, min: number, max: number): number | undefined {
+  const n = typeof v === "number" ? v : typeof v === "string" ? Number.parseInt(v, 10) : Number.NaN;
+  return Number.isInteger(n) && n >= min && n <= max ? n : undefined;
+}
+
+function oneOf<T extends string>(v: unknown, allowed: readonly T[]): T | undefined {
+  return typeof v === "string" && (allowed as readonly string[]).includes(v) ? (v as T) : undefined;
+}
+
+const MAX_HOPS_LIMIT = 100;
+
+/** Config file (~/.agent-bridge/config.json) with optional per-agent sections, overridden by env vars. */
+export function loadConfig(home: string, agent: AgentKind, log: Logger, env: NodeJS.ProcessEnv = process.env): BridgeConfig {
+  let file: Record<string, unknown> = {};
+  const path = join(home, CONFIG_FILE_NAME);
+  try {
+    file = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
+    log.debug("config file loaded", { path });
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") log.warn("ignoring unreadable config file", { path, err: (err as Error).message });
+  }
+  const section = (file[agent] ?? {}) as Record<string, unknown>;
+  /** First valid value wins: env var, then the agent section, then the top level of the file. */
+  const pick = <T>(key: keyof BridgeConfig, envKey: string | null, parse: (v: unknown) => T | undefined): T | undefined => {
+    for (const v of [envKey ? env[envKey] : undefined, section[key], file[key]]) {
+      if (v === undefined) continue;
+      const parsed = parse(v);
+      if (parsed !== undefined) return parsed;
+      log.warn("ignoring invalid config value", { key, value: String(v) });
+    }
+    return undefined;
+  };
+  const str = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : undefined);
+
+  const d = DEFAULT_CONFIG;
+  const cfg: BridgeConfig = {
+    name: pick("name", ENV.name, str) ?? d.name,
+    autoWake: pick("autoWake", ENV.autoWake, parseBool) ?? d.autoWake,
+    maxHops: pick("maxHops", ENV.maxHops, (v) => parseIntInRange(v, 0, MAX_HOPS_LIMIT)) ?? d.maxHops,
+    delivery: pick("delivery", ENV.delivery, (v) => oneOf(v, DELIVERY_MODES)) ?? d.delivery,
+    claudeBin: pick("claudeBin", ENV.claudeBin, str) ?? d.claudeBin,
+    codexBin: pick("codexBin", ENV.codexBin, str) ?? d.codexBin,
+    codexSandbox: pick("codexSandbox", null, (v) => oneOf(v, CODEX_SANDBOXES)) ?? d.codexSandbox,
+    claudePermissionMode: pick("claudePermissionMode", null, (v) => oneOf(v, CLAUDE_PERMISSION_MODES)) ?? d.claudePermissionMode,
+  };
+  log.debug("effective config", { ...cfg });
+  return cfg;
+}
+
+export function parseAgentKind(v: string | undefined): AgentKind {
+  return oneOf(v?.trim().toLowerCase(), AGENT_KINDS) ?? "other";
+}
+
+/** Default peer name: agent kind plus the project folder name, sanitized to the peer-name alphabet. */
+export function defaultPeerName(agent: AgentKind, cwd: string): string {
+  const folder = basename(cwd).replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^[-._]+/, "").slice(0, 40);
+  return folder ? `${agent}-${folder}` : agent;
+}
+
+export { CODEX_SANDBOXES, CLAUDE_PERMISSION_MODES };

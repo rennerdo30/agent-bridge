@@ -1,0 +1,52 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "mcp_tool",
+            "server": "plugin:agent-bridge:bridge",
+            "tool": "hook_event",
+            "input": { "event": "SessionStart", "session_id": "${session_id}", "cwd": "${cwd}" }
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "mcp_tool",
+            "server": "plugin:agent-bridge:bridge",
+            "tool": "hook_event",
+            "input": { "event": "UserPromptSubmit", "session_id": "${session_id}", "cwd": "${cwd}" }
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "mcp_tool",
+            "server": "plugin:agent-bridge:bridge",
+            "tool": "hook_event",
+            "input": { "event": "PostToolUse", "session_id": "${session_id}" }
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "mcp_tool",
+            "server": "plugin:agent-bridge:bridge",
+            "tool": "hook_event",
+            "input": { "event": "Stop", "session_id": "${session_id}", "stop_hook_active": "${stop_hook_active}" }
+          }
+        ]
+      }
+    ]
+  }
+}

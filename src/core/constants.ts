@@ -1,0 +1,72 @@
+import { homedir } from "node:os";
+import { join } from "node:path";
+
+/** Product identity. */
+export const APP_NAME = "agent-bridge";
+export const APP_VERSION = "0.1.0";
+
+/** Wire protocol version; bump on incompatible changes to the broker protocol. */
+export const PROTOCOL_VERSION = 1;
+
+/** Environment variables understood by agent-bridge. */
+export const ENV = {
+  home: "AGENT_BRIDGE_HOME",
+  pipe: "AGENT_BRIDGE_PIPE",
+  name: "AGENT_BRIDGE_NAME",
+  agent: "AGENT_BRIDGE_AGENT",
+  logLevel: "AGENT_BRIDGE_LOG_LEVEL",
+  logConsole: "AGENT_BRIDGE_LOG_CONSOLE",
+  autoWake: "AGENT_BRIDGE_AUTO_WAKE",
+  maxHops: "AGENT_BRIDGE_MAX_HOPS",
+  delivery: "AGENT_BRIDGE_DELIVERY",
+  claudeBin: "AGENT_BRIDGE_CLAUDE_BIN",
+  codexBin: "AGENT_BRIDGE_CODEX_BIN",
+} as const;
+
+/** Default data directory; holds the message store, logs and config. */
+export const DEFAULT_HOME = join(homedir(), `.${APP_NAME}`);
+
+export const CONFIG_FILE_NAME = "config.json";
+export const DB_FILE_NAME = "bridge.db";
+export const LOG_DIR_NAME = "logs";
+export const LOG_FILE_NAME = `${APP_NAME}.log`;
+
+/** Named pipe (Windows) / Unix socket file name used by the broker. */
+export const WINDOWS_PIPE_PREFIX = "\\\\.\\pipe\\";
+export const SOCKET_FILE_NAME = "bridge.sock";
+
+/** Broker election and reconnect timing. */
+export const ELECTION_RETRY_MIN_MS = 100;
+export const ELECTION_RETRY_MAX_MS = 600;
+export const ELECTION_MAX_ATTEMPTS = 20;
+export const CONNECT_TIMEOUT_MS = 2_000;
+export const REQUEST_TIMEOUT_MS = 10_000;
+
+/** Largest single protocol frame accepted, to bound memory use. */
+export const MAX_FRAME_BYTES = 4 * 1024 * 1024;
+
+/** Largest message body accepted from an agent. */
+export const MAX_BODY_CHARS = 200_000;
+
+/** Undelivered messages older than this are purged by the broker. */
+export const MESSAGE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+export const PURGE_INTERVAL_MS = 60 * 60 * 1000;
+
+/** Loop protection: messages at or beyond this hop count never auto-wake an agent. */
+export const DEFAULT_MAX_HOPS = 6;
+
+/** Delegation (headless calls to the other CLI). */
+export const DEFAULT_DELEGATE_TIMEOUT_SEC = 900;
+export const MAX_DELEGATE_TIMEOUT_SEC = 3_600;
+export const DEFAULT_CLAUDE_BIN = "claude";
+export const DEFAULT_CODEX_BIN = "codex";
+
+/** wait_for_message tool limits. */
+export const DEFAULT_WAIT_SEC = 120;
+export const MAX_WAIT_SEC = 1_800;
+
+/** Hook helpers: how long a hook may wait for the broker before giving up silently. */
+export const HOOK_BROKER_TIMEOUT_MS = 1_500;
+
+/** Maximum number of messages injected into a single hook response. */
+export const HOOK_MAX_MESSAGES = 10;

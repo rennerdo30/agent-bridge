@@ -1,0 +1,108 @@
+{
+  "name": "agent-bridge",
+  "version": "0.1.0",
+  "description": "Talk to Claude Code from Codex: live peer messaging over a local pipe, plus headless delegation (ask_claude).",
+  "author": {
+    "name": "rennerdo30",
+    "url": "https://github.com/rennerdo30"
+  },
+  "homepage": "https://github.com/rennerdo30/agent-bridge",
+  "repository": "https://github.com/rennerdo30/agent-bridge",
+  "license": "MIT",
+  "keywords": [
+    "claude",
+    "claude-code",
+    "multi-agent",
+    "mcp",
+    "collaboration"
+  ],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "hooks": {
+    "hooks": {
+      "SessionStart": [
+        {
+          "hooks": [
+            {
+              "type": "mcp_tool",
+              "server": "agent-bridge",
+              "tool": "hook_event",
+              "input": {
+                "event": "SessionStart",
+                "session_id": "${session_id}",
+                "cwd": "${cwd}"
+              }
+            }
+          ]
+        }
+      ],
+      "UserPromptSubmit": [
+        {
+          "hooks": [
+            {
+              "type": "mcp_tool",
+              "server": "agent-bridge",
+              "tool": "hook_event",
+              "input": {
+                "event": "UserPromptSubmit",
+                "session_id": "${session_id}",
+                "cwd": "${cwd}"
+              }
+            }
+          ]
+        }
+      ],
+      "PostToolUse": [
+        {
+          "hooks": [
+            {
+              "type": "mcp_tool",
+              "server": "agent-bridge",
+              "tool": "hook_event",
+              "input": {
+                "event": "PostToolUse",
+                "session_id": "${session_id}",
+                "cwd": "${cwd}"
+              }
+            }
+          ]
+        }
+      ],
+      "Stop": [
+        {
+          "hooks": [
+            {
+              "type": "mcp_tool",
+              "server": "agent-bridge",
+              "tool": "hook_event",
+              "input": {
+                "event": "Stop",
+                "session_id": "${session_id}",
+                "cwd": "${cwd}",
+                "stop_hook_active": "${stop_hook_active}"
+              }
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "interface": {
+    "displayName": "agent-bridge",
+    "shortDescription": "Collaborate with Claude Code sessions on this machine",
+    "longDescription": "Live messaging between Codex and Claude Code sessions over a local named pipe or Unix socket, with threaded replies, offline queueing and optional auto-wake, plus ask_claude for headless delegation.",
+    "developerName": "rennerdo30",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Interactive",
+      "Read",
+      "Write"
+    ],
+    "websiteURL": "https://github.com/rennerdo30/agent-bridge",
+    "defaultPrompt": [
+      "Ask Claude for a second opinion on this change",
+      "Send the Claude session a summary of what I just did",
+      "Check whether Claude has sent me any messages"
+    ]
+  }
+}
