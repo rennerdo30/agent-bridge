@@ -6,6 +6,7 @@ import { createLogger } from "../core/logger.js";
 import { BridgeNode } from "../core/node.js";
 import { resolveDbPath, resolveHome, resolvePipePath } from "../core/paths.js";
 import { formatMessage } from "../mcp/format.js";
+import { installOpencode, opencodeSourceDir, uninstallOpencode } from "./opencode-install.js";
 
 const CLI_PEER_NAME = "cli";
 const out = (s: string) => process.stdout.write(s + "\n");
@@ -32,7 +33,7 @@ async function main(argv: string[]): Promise<number> {
         const peers = await client.request("peers", {});
         out(t("cli.status.broker", { pid: String(ping.brokerPid), protocol: String(ping.protocol), pipe }));
         out(t("cli.status.peers", { count: peers.length }));
-        for (const p of peers) out(t("cli.status.peer", { name: p.name, agent: p.agent, since: formatDateTime(p.startedAt), cwd: p.cwd }));
+        for (const p of peers) out(t("cli.status.peer", { name: p.name, agent: p.agent, activity: p.activity ?? "unknown", since: formatDateTime(p.startedAt), cwd: p.cwd }));
       } finally {
         client.close();
       }
@@ -64,6 +65,24 @@ async function main(argv: string[]): Promise<number> {
       out(t("cli.tail.listening", { name: node.name }));
       await new Promise<void>((resolve) => process.once("SIGINT", resolve));
       await node.stop();
+      return 0;
+    }
+    case "install-opencode": {
+      const source = opencodeSourceDir();
+      if (!source) {
+        out(t("cli.opencode.noSource"));
+        return 1;
+      }
+      const res = installOpencode(source);
+      out(t("cli.opencode.installed", { dir: res.configDir }));
+      for (const f of res.files) out(`  ${f}`);
+      out(t("cli.opencode.restart"));
+      return 0;
+    }
+    case "uninstall-opencode": {
+      const res = uninstallOpencode();
+      out(res.files.length ? t("cli.opencode.removed", { dir: res.configDir }) : t("cli.opencode.nothing", { dir: res.configDir }));
+      for (const f of res.files) out(`  ${f}`);
       return 0;
     }
     case "paths":

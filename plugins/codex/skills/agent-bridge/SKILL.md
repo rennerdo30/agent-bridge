@@ -1,6 +1,6 @@
 ---
 name: agent-bridge
-description: Collaborate with Claude Code (or other agents) running on this machine through agent-bridge. Use when the user asks to talk to, message, coordinate with, ask, or get a review/second opinion from Claude, or when an <agent-bridge-message> arrives.
+description: Collaborate with Claude Code, opencode (or other agents) running on this machine through agent-bridge. Use when the user asks to talk to, message, coordinate with, ask, or get a review/second opinion from Claude, or when an <agent-bridge-message> arrives.
 ---
 
 # Working with other agents via agent-bridge
@@ -16,15 +16,18 @@ agent-bridge links this Codex session with other AI coding agents on the same ma
 
 Incoming messages appear as `<agent-bridge-message id=... from=...>` blocks in your context. To reply, call `send` with `to` set to the `from` value and `reply_to` set to the `id` value.
 
-## 2. One-off delegation
+## 2. Delegation and subagents
 
-`ask_claude` runs Claude Code headlessly in this project and returns its final answer. Good uses:
+- `ask_claude` / `ask_opencode` run that agent headlessly in this project and wait for its final answer.
+- `spawn_claude` / `spawn_opencode` start it as a **background subagent** and return a job name at once. The result arrives later as a message from `<agent>-job-<id>`. Several can run in parallel; `cancel_subagent` stops one.
+
+Good uses:
 
 - an independent review,
 - a second opinion on a design,
 - a self-contained subtask.
 
-Write a complete, self-contained prompt: Claude cannot see your conversation. Pass the returned `session_id` to continue the same Claude conversation.
+All of them accept `model`, meaning any model id the target accepts (for example `opus` for Claude, or `provider/model` for opencode), and `session_id` to continue a previous run. Write a complete, self-contained prompt: the other agent cannot see your conversation. Headless opencode rejects permission requests unless you pass `auto_approve: true`.
 
 ## Rules
 

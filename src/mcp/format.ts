@@ -48,7 +48,23 @@ export function formatMessages(msgs: BridgeMessage[], opts: { header?: string; r
   return parts.join("\n\n");
 }
 
-export function formatPeer(p: PeerInfo, selfId?: string): string {
-  const flags = [p.agent, p.autoWake ? "auto-wake" : null, p.id === selfId ? "you" : null].filter(Boolean).join(", ");
-  return `- ${p.name} (${flags}) cwd=${p.cwd}`;
+function formatUptime(ms: number): string {
+  const min = Math.max(0, Math.round(ms / 60_000));
+  if (min < 60) return `${min}m`;
+  const h = Math.floor(min / 60);
+  return h < 48 ? `${h}h${min % 60 ? ` ${min % 60}m` : ""}` : `${Math.floor(h / 24)}d`;
+}
+
+export function formatPeer(p: PeerInfo, selfId?: string, now: number = Date.now()): string {
+  const flags = [
+    p.agent,
+    p.activity ?? null,
+    p.autoWake ? "auto-wake" : null,
+    `up ${formatUptime(now - p.startedAt)}`,
+    p.id === selfId ? "you" : null,
+  ]
+    .filter(Boolean)
+    .join(", ");
+  const session = p.sessionId ? ` session=${p.sessionId}` : "";
+  return `- ${p.name} (${flags}) cwd=${p.cwd}${session}`;
 }

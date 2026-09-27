@@ -215,6 +215,8 @@ export class Broker {
       sessionId: p.sessionId ?? null,
       startedAt: Number(p.startedAt) || this.now(),
       autoWake: Boolean(p.autoWake),
+      activity: p.activity === "busy" || p.activity === "idle" ? p.activity : null,
+      version: typeof p.version === "string" ? p.version.slice(0, 32) : undefined,
     };
     conn.peer = peer;
     const claimed = this.store.claim(agentQueueKey(peer.agent), peer.name);
@@ -232,6 +234,7 @@ export class Broker {
     if (args.sessionId !== undefined) peer.sessionId = args.sessionId;
     if (args.autoWake !== undefined) peer.autoWake = Boolean(args.autoWake);
     if (typeof args.cwd === "string" && args.cwd) peer.cwd = args.cwd;
+    if (args.activity === "busy" || args.activity === "idle") peer.activity = args.activity;
     if (typeof args.name === "string" && args.name !== peer.name) {
       if (!PEER_NAME_PATTERN.test(args.name)) throw new BridgeError("bad_request", "invalid peer name");
       const old = peer.name;

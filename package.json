@@ -1,10 +1,13 @@
 {
   "name": "agent-bridge",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "description": "Let Claude Code and OpenAI Codex talk to each other: live peer messaging over a local pipe plus headless delegation.",
   "license": "MIT",
   "type": "module",
   "private": true,
+  "bin": {
+    "agent-bridge": "plugins/opencode/dist/cli.mjs"
+  },
   "engines": {
     "node": ">=22.13"
   },

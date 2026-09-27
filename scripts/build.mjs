@@ -6,14 +6,17 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
-const PLUGIN_DIRS = ["plugins/claude", "plugins/codex"];
+const PLUGIN_DIRS = ["plugins/claude", "plugins/codex", "plugins/opencode"];
 const MANIFESTS = [
   "plugins/claude/.claude-plugin/plugin.json",
   "plugins/codex/.codex-plugin/plugin.json",
+  "plugins/opencode/package.json",
   ".claude-plugin/marketplace.json",
 ];
 const ENTRIES = { server: "src/mcp/main.ts", cli: "src/cli/main.ts" };
 const NODE_TARGET = "node22";
+const SHEBANG = "#!/usr/bin/env node\n";
+const REQUIRE_SHIM = "import { createRequire as __abCreateRequire } from 'node:module'; const require = __abCreateRequire(import.meta.url);";
 
 const { version } = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8"));
 
@@ -43,8 +46,23 @@ for (const dir of PLUGIN_DIRS) {
       legalComments: "eof",
       logLevel: "warning",
       // Some bundled CommonJS dependencies call require(); give them one in ESM output.
-      banner: { js: "import { createRequire as __abCreateRequire } from 'node:module'; const require = __abCreateRequire(import.meta.url);" },
+      // The CLI also gets a shebang so it works as the package's bin (npx github:...).
+      banner: { js: (name === "cli" ? SHEBANG : "") + REQUIRE_SHIM },
     });
   }
   console.log(`built ${dir}/dist (v${version})`);
 }
+
+// The opencode plugin runs inside opencode (Bun) and spawns dist/server.mjs with Node.
+await build({
+  entryPoints: [join(ROOT, "src/opencode/plugin.ts")],
+  outfile: join(ROOT, "plugins/opencode/dist/agent-bridge.js"),
+  bundle: true,
+  platform: "node",
+  format: "esm",
+  target: NODE_TARGET,
+  external: ["node:*", "@opencode-ai/plugin"],
+  legalComments: "eof",
+  logLevel: "warning",
+});
+console.log(`built plugins/opencode/dist/agent-bridge.js (v${version})`);

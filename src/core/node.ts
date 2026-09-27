@@ -6,11 +6,12 @@ import { BridgeClient } from "./client.js";
 import {
   ELECTION_MAX_ATTEMPTS,
   ELECTION_RETRY_MAX_MS,
+  APP_VERSION,
   ELECTION_RETRY_MIN_MS,
   PROTOCOL_VERSION,
 } from "./constants.js";
 import type { Logger } from "./logger.js";
-import type { AgentKind, BridgeMessage, PeerInfo, SendArgs, SendResult } from "./protocol.js";
+import type { AgentKind, BridgeMessage, PeerActivity, PeerInfo, SendArgs, SendResult } from "./protocol.js";
 import { MessageStore } from "./store.js";
 
 export interface BridgeNodeOptions {
@@ -60,6 +61,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
   private autoWake: boolean;
   private currentCwd: string;
   private lastSent = 0;
+  private activity: PeerActivity | null = null;
   private readonly log: Logger;
 
   constructor(private readonly opts: BridgeNodeOptions) {
@@ -180,6 +182,8 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
         sessionId: this.sessionId,
         startedAt: Date.now(),
         autoWake: this.autoWake,
+        activity: this.activity,
+        version: APP_VERSION,
       },
     });
     this.client = client;
@@ -307,6 +311,15 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
     if (sessionId === this.sessionId) return;
     this.sessionId = sessionId;
     if (this.isConnected) await this.client!.request("updatePeer", { sessionId });
+  }
+
+  /** Report busy/idle to the broker so peers can see who is free. Only changes are sent. */
+  setActivity(state: PeerActivity): void {
+    if (state === this.activity) return;
+    this.activity = state;
+    if (this.isConnected) {
+      this.client!.request("updatePeer", { activity: state }).catch((err) => this.log.debug("activity update failed", { err: (err as Error).message }));
+    }
   }
 
   async setAutoWake(enabled: boolean): Promise<void> {

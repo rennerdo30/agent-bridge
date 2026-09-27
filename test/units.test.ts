@@ -8,7 +8,7 @@ import { nullLogger } from "../src/core/logger.js";
 import { resolvePipePath } from "../src/core/paths.js";
 import { cmdlineEnablesChannel } from "../src/core/procinfo.js";
 import type { BridgeMessage } from "../src/core/protocol.js";
-import { formatMessage } from "../src/mcp/format.js";
+import { formatMessage, formatPeer } from "../src/mcp/format.js";
 
 const msg = (over: Partial<BridgeMessage> = {}): BridgeMessage => ({
   id: "m1",
@@ -95,6 +95,17 @@ describe("paths", () => {
     expect(resolvePipePath("C:\\Users\\x\\.agent-bridge", {}, "win32")).toMatch(/^\\\\\.\\pipe\\agent-bridge-[0-9a-f]{12}$/);
     expect(resolvePipePath("/home/x/.agent-bridge", {}, "linux")).toBe("/home/x/.agent-bridge/bridge.sock");
     expect(resolvePipePath("/h", { AGENT_BRIDGE_PIPE: "/tmp/p.sock" }, "linux")).toBe("/tmp/p.sock");
+  });
+});
+
+describe("formatPeer", () => {
+  it("shows activity, uptime and session", () => {
+    const line = formatPeer(
+      { id: "x", name: "codex-app", agent: "codex", cwd: "/w/app", pid: 1, agentPid: null, sessionId: "t-9", startedAt: 0, autoWake: true, activity: "idle" },
+      undefined,
+      90 * 60_000,
+    );
+    expect(line).toBe("- codex-app (codex, idle, auto-wake, up 1h 30m) cwd=/w/app session=t-9");
   });
 });
 

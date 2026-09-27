@@ -1,0 +1,14 @@
+{
+  "name": "agent-bridge-opencode",
+  "version": "0.2.0",
+  "description": "agent-bridge for opencode: message and delegate between opencode, Claude Code and Codex sessions on one machine.",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/agent-bridge.js",
+  "files": [
+    "dist",
+    "skills"
+  ],
+  "homepage": "https://github.com/rennerdo30/agent-bridge",
+  "repository": "https://github.com/rennerdo30/agent-bridge"
+}

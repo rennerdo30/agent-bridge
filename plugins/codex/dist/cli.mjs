@@ -1,7 +1,8 @@
+#!/usr/bin/env node
 import { createRequire as __abCreateRequire } from 'node:module'; const require = __abCreateRequire(import.meta.url);
 
 // src/cli/main.ts
-import { join as join4 } from "node:path";
+import { join as join5 } from "node:path";
 
 // src/core/client.ts
 import { EventEmitter } from "node:events";
@@ -11,6 +12,7 @@ import { connect } from "node:net";
 import { homedir } from "node:os";
 import { join } from "node:path";
 var APP_NAME = "agent-bridge";
+var APP_VERSION = "0.2.0";
 var PROTOCOL_VERSION = 1;
 var ENV = {
   home: "AGENT_BRIDGE_HOME",
@@ -24,7 +26,8 @@ var ENV = {
   lingerSec: "AGENT_BRIDGE_LINGER_SEC",
   delivery: "AGENT_BRIDGE_DELIVERY",
   claudeBin: "AGENT_BRIDGE_CLAUDE_BIN",
-  codexBin: "AGENT_BRIDGE_CODEX_BIN"
+  codexBin: "AGENT_BRIDGE_CODEX_BIN",
+  opencodeBin: "AGENT_BRIDGE_OPENCODE_BIN"
 };
 var DEFAULT_HOME = join(homedir(), `.${APP_NAME}`);
 var DB_FILE_NAME = "bridge.db";
@@ -43,7 +46,7 @@ var MESSAGE_TTL_MS = 7 * 24 * 60 * 60 * 1e3;
 var PURGE_INTERVAL_MS = 60 * 60 * 1e3;
 
 // src/core/protocol.ts
-var AGENT_KINDS = ["claude", "codex", "other"];
+var AGENT_KINDS = ["claude", "codex", "opencode", "other"];
 var BROADCAST = "*";
 var BridgeError = class extends Error {
   constructor(code, message, details) {
@@ -125,7 +128,7 @@ var BridgeClient = class _BridgeClient extends EventEmitter {
   closed = false;
   /** Connect to an existing broker. Rejects with the socket error (ENOENT/ECONNREFUSED if nobody listens). */
   static connect(pipePath, log, timeoutMs = CONNECT_TIMEOUT_MS) {
-    return new Promise((resolve2, reject) => {
+    return new Promise((resolve3, reject) => {
       const socket = connect(pipePath);
       const timer = setTimeout(() => {
         socket.destroy();
@@ -134,7 +137,7 @@ var BridgeClient = class _BridgeClient extends EventEmitter {
       socket.once("connect", () => {
         clearTimeout(timer);
         socket.removeAllListeners("error");
-        resolve2(new _BridgeClient(socket, log));
+        resolve3(new _BridgeClient(socket, log));
       });
       socket.once("error", (err) => {
         clearTimeout(timer);
@@ -148,12 +151,12 @@ var BridgeClient = class _BridgeClient extends EventEmitter {
   request(op, args, timeoutMs = REQUEST_TIMEOUT_MS) {
     if (this.closed) return Promise.reject(new Error("connection to broker closed"));
     const id = this.nextId++;
-    return new Promise((resolve2, reject) => {
+    return new Promise((resolve3, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
         reject(new Error(`broker request timed out: ${op}`));
       }, timeoutMs);
-      this.pending.set(id, { resolve: resolve2, reject, timer });
+      this.pending.set(id, { resolve: resolve3, reject, timer });
       this.socket.write(encodeFrame({ t: "req", id, op, args }));
     });
   }
@@ -206,11 +209,25 @@ var en = {
   "err.delegateDepth": "Delegation is not available inside a delegated session (prevents endless recursion).",
   "err.delegateFailed": "The delegated agent failed: {detail}",
   "err.delegatedSession": "This is a delegated headless session; peer messaging is disabled here.",
-  "cli.usage": 'Usage: agent-bridge <command>\n\nCommands:\n  status              Show the broker and the connected peers\n  send <to> <text>    Send a message as the "cli" peer\n  tail                Print messages addressed to "cli" as they arrive\n  paths               Show data, log and pipe locations\n  help                Show this help',
+  "cli.usage": `Usage: agent-bridge <command>
+
+Commands:
+  status              Show the broker and the connected peers
+  send <to> <text>    Send a message as the "cli" peer
+  tail                Print messages addressed to "cli" as they arrive
+  install-opencode    Install the opencode plugin into opencode's global config
+  uninstall-opencode  Remove the opencode plugin
+  paths               Show data, log and pipe locations
+  help                Show this help`,
+  "cli.opencode.noSource": "Could not find the opencode plugin files next to this CLI. Run it from an agent-bridge checkout or package.",
+  "cli.opencode.installed": "Installed the agent-bridge opencode plugin into {dir}:",
+  "cli.opencode.restart": "Restart opencode to load it. Requires Node.js 22.13+ on PATH.",
+  "cli.opencode.removed": "Removed the agent-bridge opencode plugin from {dir}:",
+  "cli.opencode.nothing": "The agent-bridge opencode plugin is not installed in {dir}.",
   "cli.status.broker": "Broker: running (pid {pid}, protocol {protocol}) at {pipe}",
   "cli.status.noBroker": "Broker: not running (no agent with agent-bridge is active). Endpoint: {pipe}",
   "cli.status.peers": "Peers online: {count}",
-  "cli.status.peer": "  {name}  [{agent}]  since {since}  {cwd}",
+  "cli.status.peer": "  {name}  [{agent}, {activity}]  since {since}  {cwd}",
   "cli.sent": "Sent message {id}.",
   "cli.tail.listening": 'Listening as "{name}". Press Ctrl+C to stop.',
   "cli.paths": "Data:  {home}\nLogs:  {logs}\nStore: {db}\nPipe:  {pipe}",
@@ -450,7 +467,7 @@ var Broker = class {
   handlers;
   /** Bind the endpoint. Rejects with the socket error (EADDRINUSE when another broker owns it). */
   listen() {
-    return new Promise((resolve2, reject) => {
+    return new Promise((resolve3, reject) => {
       const server = createServer((socket) => this.accept(socket));
       const onError = (err) => {
         server.removeListener("listening", onListening);
@@ -464,7 +481,7 @@ var Broker = class {
         this.purgeTimer.unref();
         this.purge();
         this.log.info("broker listening", { pipe: this.pipePath });
-        resolve2();
+        resolve3();
       };
       server.once("error", onError);
       server.once("listening", onListening);
@@ -581,7 +598,9 @@ var Broker = class {
       agentPid: p.agentPid ?? null,
       sessionId: p.sessionId ?? null,
       startedAt: Number(p.startedAt) || this.now(),
-      autoWake: Boolean(p.autoWake)
+      autoWake: Boolean(p.autoWake),
+      activity: p.activity === "busy" || p.activity === "idle" ? p.activity : null,
+      version: typeof p.version === "string" ? p.version.slice(0, 32) : void 0
     };
     conn.peer = peer;
     const claimed = this.store.claim(agentQueueKey(peer.agent), peer.name);
@@ -597,6 +616,7 @@ var Broker = class {
     if (args.sessionId !== void 0) peer.sessionId = args.sessionId;
     if (args.autoWake !== void 0) peer.autoWake = Boolean(args.autoWake);
     if (typeof args.cwd === "string" && args.cwd) peer.cwd = args.cwd;
+    if (args.activity === "busy" || args.activity === "idle") peer.activity = args.activity;
     if (typeof args.name === "string" && args.name !== peer.name) {
       if (!PEER_NAME_PATTERN.test(args.name)) throw new BridgeError("bad_request", "invalid peer name");
       const old = peer.name;
@@ -713,6 +733,7 @@ var BridgeNode = class extends EventEmitter2 {
   autoWake;
   currentCwd;
   lastSent = 0;
+  activity = null;
   log;
   get name() {
     return this.currentName;
@@ -814,7 +835,9 @@ var BridgeNode = class extends EventEmitter2 {
         agentPid: process.ppid ?? null,
         sessionId: this.sessionId,
         startedAt: Date.now(),
-        autoWake: this.autoWake
+        autoWake: this.autoWake,
+        activity: this.activity,
+        version: APP_VERSION
       }
     });
     this.client = client;
@@ -909,12 +932,12 @@ var BridgeNode = class extends EventEmitter2 {
   waitForMessage(timeoutMs, predicate = () => true, signal) {
     const existing = this.unread().find(predicate);
     if (existing) return Promise.resolve(existing);
-    return new Promise((resolve2) => {
+    return new Promise((resolve3) => {
       const done = (m) => {
         clearTimeout(timer);
         this.off("message", onMessage);
         signal?.removeEventListener("abort", onAbort);
-        resolve2(m);
+        resolve3(m);
       };
       const onMessage = (m) => {
         if (predicate(m)) done(m);
@@ -929,6 +952,14 @@ var BridgeNode = class extends EventEmitter2 {
     if (sessionId === this.sessionId) return;
     this.sessionId = sessionId;
     if (this.isConnected) await this.client.request("updatePeer", { sessionId });
+  }
+  /** Report busy/idle to the broker so peers can see who is free. Only changes are sent. */
+  setActivity(state) {
+    if (state === this.activity) return;
+    this.activity = state;
+    if (this.isConnected) {
+      this.client.request("updatePeer", { activity: state }).catch((err) => this.log.debug("activity update failed", { err: err.message }));
+    }
   }
   async setAutoWake(enabled) {
     this.autoWake = enabled;
@@ -1000,6 +1031,49 @@ ${neutralizeBody(m.body)}
 </${TAG}>`;
 }
 
+// src/cli/opencode-install.ts
+import { copyFileSync, existsSync, mkdirSync as mkdirSync3, rmSync } from "node:fs";
+import { homedir as homedir2 } from "node:os";
+import { dirname as dirname2, join as join4, resolve as resolve2 } from "node:path";
+import { fileURLToPath } from "node:url";
+var PLUGIN_FILE = "agent-bridge.js";
+var SERVER_DIR = "agent-bridge";
+var SERVER_FILE = "server.mjs";
+var SKILL_REL = join4("skills", "agent-bridge", "SKILL.md");
+function opencodeConfigDir(env = process.env) {
+  const xdg = env.XDG_CONFIG_HOME?.trim();
+  return join4(xdg || join4(homedir2(), ".config"), "opencode");
+}
+function opencodeSourceDir(fromFile = fileURLToPath(import.meta.url)) {
+  let dir = dirname2(fromFile);
+  for (let i = 0; i < 5; i++) {
+    for (const candidate of [join4(dir, "plugins", "opencode"), join4(dir, "..", "opencode")]) {
+      if (existsSync(join4(candidate, "dist", PLUGIN_FILE))) return resolve2(candidate);
+    }
+    dir = dirname2(dir);
+  }
+  return null;
+}
+function installOpencode(sourceDir, configDir = opencodeConfigDir()) {
+  const copies = [
+    [join4(sourceDir, "dist", PLUGIN_FILE), join4(configDir, "plugins", PLUGIN_FILE)],
+    [join4(sourceDir, "dist", SERVER_FILE), join4(configDir, "plugins", SERVER_DIR, SERVER_FILE)],
+    [join4(sourceDir, SKILL_REL), join4(configDir, SKILL_REL)]
+  ];
+  for (const [from, to] of copies) {
+    if (!existsSync(from)) throw new Error(`missing build output: ${from} (run npm run build)`);
+    mkdirSync3(dirname2(to), { recursive: true });
+    copyFileSync(from, to);
+  }
+  return { configDir, files: copies.map(([, to]) => to) };
+}
+function uninstallOpencode(configDir = opencodeConfigDir()) {
+  const targets = [join4(configDir, "plugins", PLUGIN_FILE), join4(configDir, "plugins", SERVER_DIR), join4(configDir, "skills", "agent-bridge")];
+  const removed = targets.filter((p) => existsSync(p));
+  for (const p of removed) rmSync(p, { recursive: true, force: true });
+  return { configDir, files: removed };
+}
+
 // src/cli/main.ts
 var CLI_PEER_NAME = "cli";
 var out = (s) => process.stdout.write(s + "\n");
@@ -1023,7 +1097,7 @@ async function main(argv) {
         const peers = await client.request("peers", {});
         out(t("cli.status.broker", { pid: String(ping.brokerPid), protocol: String(ping.protocol), pipe }));
         out(t("cli.status.peers", { count: peers.length }));
-        for (const p of peers) out(t("cli.status.peer", { name: p.name, agent: p.agent, since: formatDateTime(p.startedAt), cwd: p.cwd }));
+        for (const p of peers) out(t("cli.status.peer", { name: p.name, agent: p.agent, activity: p.activity ?? "unknown", since: formatDateTime(p.startedAt), cwd: p.cwd }));
       } finally {
         client.close();
       }
@@ -1053,12 +1127,30 @@ async function main(argv) {
       });
       await node.start();
       out(t("cli.tail.listening", { name: node.name }));
-      await new Promise((resolve2) => process.once("SIGINT", resolve2));
+      await new Promise((resolve3) => process.once("SIGINT", resolve3));
       await node.stop();
       return 0;
     }
+    case "install-opencode": {
+      const source = opencodeSourceDir();
+      if (!source) {
+        out(t("cli.opencode.noSource"));
+        return 1;
+      }
+      const res = installOpencode(source);
+      out(t("cli.opencode.installed", { dir: res.configDir }));
+      for (const f of res.files) out(`  ${f}`);
+      out(t("cli.opencode.restart"));
+      return 0;
+    }
+    case "uninstall-opencode": {
+      const res = uninstallOpencode();
+      out(res.files.length ? t("cli.opencode.removed", { dir: res.configDir }) : t("cli.opencode.nothing", { dir: res.configDir }));
+      for (const f of res.files) out(`  ${f}`);
+      return 0;
+    }
     case "paths":
-      out(t("cli.paths", { home, logs: join4(home, LOG_DIR_NAME), db: resolveDbPath(home), pipe }));
+      out(t("cli.paths", { home, logs: join5(home, LOG_DIR_NAME), db: resolveDbPath(home), pipe }));
       return 0;
     case "help":
     case "--help":

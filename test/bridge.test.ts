@@ -139,6 +139,21 @@ describe("messaging", () => {
     expect(peers.find((p) => p.id === b.id)?.cwd).toBe("/work/realproject");
   });
 
+  it("peers report busy/idle, session id and version", async () => {
+    const a = env.node("claude-s", "claude");
+    const b = env.node("codex-s", "codex");
+    await a.start();
+    await b.start();
+    b.setActivity("busy");
+    await b.setSessionId("thread-1");
+    await until(() => false, 200).catch(() => {});
+    const seen = (await a.peers()).find((p) => p.name === "codex-s")!;
+    expect(seen).toMatchObject({ activity: "busy", sessionId: "thread-1", version: expect.any(String) });
+    b.setActivity("idle");
+    await new Promise((r) => setTimeout(r, 100));
+    expect((await a.peers()).find((p) => p.name === "codex-s")!.activity).toBe("idle");
+  });
+
   it("wait_for_message honours its predicate and timeout", async () => {
     const a = env.node("a");
     const b = env.node("b", "codex");

@@ -6,8 +6,11 @@
  *   broker -> client   {"t":"evt","ev":"message","data":{...}}
  */
 
-export type AgentKind = "claude" | "codex" | "other";
-export const AGENT_KINDS: readonly AgentKind[] = ["claude", "codex", "other"];
+export type AgentKind = "claude" | "codex" | "opencode" | "other";
+export const AGENT_KINDS: readonly AgentKind[] = ["claude", "codex", "opencode", "other"];
+/** Agents that agent-bridge can run headlessly (delegation / subagents). */
+export type CodingAgent = Exclude<AgentKind, "other">;
+export const CODING_AGENTS: readonly CodingAgent[] = ["claude", "codex", "opencode"];
 
 /** Broadcast target. */
 export const BROADCAST = "*";
@@ -26,7 +29,13 @@ export interface PeerInfo {
   sessionId: string | null;
   startedAt: number;
   autoWake: boolean;
+  /** Whether the agent is working on a turn right now, when known (reported by hooks). */
+  activity?: PeerActivity | null;
+  /** agent-bridge version of this peer. */
+  version?: string;
 }
+
+export type PeerActivity = "busy" | "idle";
 
 export interface MessageAddress {
   id: string;
@@ -87,6 +96,7 @@ export interface UpdatePeerArgs {
   sessionId?: string | null;
   autoWake?: boolean;
   cwd?: string;
+  activity?: PeerActivity;
   /** Requested new name; the broker may add a suffix if it is taken. */
   name?: string;
 }

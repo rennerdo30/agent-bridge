@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { basename, join } from "node:path";
-import { CONFIG_FILE_NAME, DEFAULT_CLAUDE_BIN, DEFAULT_CODEX_BIN, DEFAULT_LINGER_SEC, DEFAULT_MAX_HOPS, ENV } from "./constants.js";
+import { CONFIG_FILE_NAME, DEFAULT_CLAUDE_BIN, DEFAULT_CODEX_BIN, DEFAULT_LINGER_SEC, DEFAULT_MAX_HOPS, DEFAULT_OPENCODE_BIN, ENV } from "./constants.js";
 import type { Logger } from "./logger.js";
 import { AGENT_KINDS, type AgentKind } from "./protocol.js";
 
@@ -36,6 +36,11 @@ export interface BridgeConfig {
   /** Default model for delegated Codex / Claude runs (null = the CLI's own default). */
   codexModel: string | null;
   claudeModel: string | null;
+  opencodeBin: string;
+  /** opencode model as provider/model, e.g. "anthropic/claude-sonnet-5". */
+  opencodeModel: string | null;
+  /** Pass --auto to headless opencode runs (auto-approve permission requests). */
+  opencodeAutoApprove: boolean;
 }
 
 export const DEFAULT_CONFIG: BridgeConfig = {
@@ -50,6 +55,9 @@ export const DEFAULT_CONFIG: BridgeConfig = {
   lingerSec: DEFAULT_LINGER_SEC,
   codexModel: null,
   claudeModel: null,
+  opencodeBin: DEFAULT_OPENCODE_BIN,
+  opencodeModel: null,
+  opencodeAutoApprove: false,
 };
 
 const TRUE_VALUES = new Set(["1", "true", "yes", "on"]);
@@ -121,6 +129,9 @@ export function loadConfig(home: string, agent: AgentKind, log: Logger, env: Nod
     lingerSec: pick("lingerSec", ENV.lingerSec, (v) => parseIntInRange(v, 0, MAX_LINGER_SEC)) ?? d.lingerSec,
     codexModel: pick("codexModel", null, modelName) ?? d.codexModel,
     claudeModel: pick("claudeModel", null, modelName) ?? d.claudeModel,
+    opencodeBin: pick("opencodeBin", ENV.opencodeBin, str) ?? d.opencodeBin,
+    opencodeModel: pick("opencodeModel", null, modelName) ?? d.opencodeModel,
+    opencodeAutoApprove: pick("opencodeAutoApprove", null, parseBool) ?? d.opencodeAutoApprove,
   };
   log.debug("effective config", { ...cfg });
   return cfg;

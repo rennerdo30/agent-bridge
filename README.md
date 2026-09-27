@@ -1,11 +1,11 @@
 # agent-bridge
 
-**Let Claude Code and OpenAI Codex talk to each other.**
+**Let Claude Code, OpenAI Codex and opencode talk to each other.**
 
-agent-bridge is a pair of plugins, one for Claude Code and one for Codex, built on a shared core. Agents on the same machine can:
+agent-bridge is a set of plugins for Claude Code, Codex and opencode, built on a shared core. Agents on the same machine can:
 
 - **Message each other live.** A Claude Code session and a Codex session send each other questions, reviews and results. Replies are threaded, and messages to an agent that is offline wait for it.
-- **Delegate.** `ask_codex` (from Claude) and `ask_claude` (from Codex) run the other agent headlessly for a one-off task and return its answer. You can continue that session later.
+- **Delegate.** `ask_<agent>` runs another agent headlessly for a one-off task and returns its answer; for example `ask_codex` and `ask_opencode` from Claude, or `ask_claude` from Codex. You can continue that session later.
 - **Spawn each other as subagents.** `spawn_codex` / `spawn_claude` start the other agent in the background and return immediately. The result arrives later as a message, and several subagents can run in parallel.
 - **Pick any model.** `ask_*` and `spawn_*` accept any model id or alias the target CLI accepts, for example `gpt-6-sol`, `opus`, or a full Claude model id. Ids are passed through verbatim, so new models work without a plugin update.
 
@@ -43,6 +43,16 @@ codex plugin add agent-bridge@agent-bridge
 
 Codex does not run plugin hooks until you trust them. Open `/hooks` in a Codex session once and trust the agent-bridge hooks. Without them, messages are only visible when Codex calls the `inbox` tool.
 
+### opencode
+
+```bash
+npx -y github:rennerdo30/agent-bridge install-opencode
+```
+
+This copies the plugin into opencode's global config (`~/.config/opencode/plugins/`, plus a skill). Restart opencode afterwards. It needs Node.js 22.13+ on `PATH`. Remove it with `npx -y github:rennerdo30/agent-bridge uninstall-opencode`.
+
+In opencode the tools are called `bridge_peers`, `bridge_send`, `bridge_ask_claude`, `bridge_spawn_codex`, and so on. Because opencode plugins can start turns themselves, opencode receives peer messages live, even while idle, whenever its listen window or auto-wake applies.
+
 ## Usage
 
 Just ask in plain language, for example:
@@ -61,12 +71,16 @@ Just ask in plain language, for example:
 | `send` | Message a peer: `to` = peer name, `claude`/`codex` (if exactly one is online) or `*`; `reply_to` threads answers |
 | `wait_for_message` | Block until a (matching) message arrives, e.g. the answer to your question |
 | `inbox` | Read unread messages |
-| `ask_codex` / `ask_claude` | Headless delegation to the other CLI; waits and returns the answer and a `session_id` to continue |
-| `spawn_codex` / `spawn_claude` | Same, but as a background subagent: returns a job name at once; the result arrives as a message from `<agent>-job-<id>` |
+| `ask_claude` / `ask_codex` / `ask_opencode` | Headless delegation to another agent (every agent gets the other two); waits and returns the answer and a `session_id` to continue |
+| `spawn_claude` / `spawn_codex` / `spawn_opencode` | Same, but as a background subagent: returns a job name at once; the result arrives as a message from `<agent>-job-<id>` |
 | `cancel_subagent` | Stop a running background subagent |
 | `auto_wake` | Let incoming messages make this session keep working (see below) |
 
-`ask_*` and `spawn_*` take an optional `model` (any id or alias, passed through verbatim), `session_id`, `cwd`, `timeout_sec` and `sandbox` (Codex) or `permission_mode` (Claude).
+`ask_*` and `spawn_*` take these optional parameters:
+
+- `model`: any id or alias the target accepts, passed through verbatim. opencode uses `provider/model`.
+- `session_id`, `cwd`, `timeout_sec`.
+- One target-specific option: `sandbox` for Codex, `permission_mode` for Claude, or `auto_approve` for opencode. Headless opencode rejects every permission request unless `auto_approve` is set.
 
 Peer names default to `<agent>-<project folder>`, for example `codex-myrepo`. Set `AGENT_BRIDGE_NAME` or the `name` option in the config file to choose your own.
 
@@ -78,6 +92,8 @@ Peer names default to `<agent>-<project folder>`, for example `codex-myrepo`. Se
 | On your next prompt | injected (`UserPromptSubmit` hook) | same |
 | When the agent finishes a turn (auto-wake on) | `Stop` hook keeps it going | same |
 | While the session is idle | **live push via channel** (see below) | auto-wake runs `codex queue`, which starts a turn |
+
+opencode receives messages through its plugin: after each model step while it works, and by starting a turn itself when it is idle.
 
 ### Live push into Claude Code (channels)
 
@@ -109,7 +125,9 @@ Every reply increments a conversation's hop count. Messages at or above `maxHops
   "maxHops": 6,
   "lingerSec": 300,
   "codex": { "name": "codex-main", "claudeBin": "claude", "claudePermissionMode": "default", "claudeModel": "opus" },
-  "claude": { "delivery": "auto", "codexBin": "codex", "codexSandbox": "read-only", "codexModel": "gpt-6-sol" }
+  "claude": { "delivery": "auto", "codexBin": "codex", "codexSandbox": "read-only", "codexModel": "gpt-6-sol" },
+  "opencodeModel": "anthropic/claude-sonnet-5",
+  "opencodeAutoApprove": false
 }
 ```
 
@@ -121,7 +139,7 @@ Every reply increments a conversation's hop count. Messages at or above `maxHops
 | `AGENT_BRIDGE_MAX_HOPS` | Loop limit |
 | `AGENT_BRIDGE_LINGER_SEC` | Listen window after sending (0 disables) |
 | `AGENT_BRIDGE_DELIVERY` | Claude only: `auto`, `channel`, `hooks` |
-| `AGENT_BRIDGE_CLAUDE_BIN` / `AGENT_BRIDGE_CODEX_BIN` | Paths of the CLIs used for delegation |
+| `AGENT_BRIDGE_CLAUDE_BIN` / `AGENT_BRIDGE_CODEX_BIN` / `AGENT_BRIDGE_OPENCODE_BIN` | Paths of the CLIs used for delegation |
 | `AGENT_BRIDGE_LOG_LEVEL` | File log level: `debug`, `info` (default), `warn`, `error`, `silent` |
 | `AGENT_BRIDGE_LOG_CONSOLE` | stderr log level (default `warn`) |
 | `AGENT_BRIDGE_PIPE` | Override the pipe / socket path |

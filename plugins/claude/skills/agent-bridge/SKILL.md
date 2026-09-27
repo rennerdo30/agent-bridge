@@ -1,6 +1,6 @@
 ---
 name: agent-bridge
-description: Collaborate with OpenAI Codex (or other agents) running on this machine through agent-bridge. Use when the user asks to talk to, message, coordinate with, ask, or get a review/second opinion from Codex, or when an <agent-bridge-message> or <channel source="agent-bridge"> arrives.
+description: Collaborate with OpenAI Codex, opencode (or other agents) running on this machine through agent-bridge. Use when the user asks to talk to, message, coordinate with, ask, or get a review/second opinion from Codex, or when an <agent-bridge-message> or <channel source="agent-bridge"> arrives.
 ---
 
 # Working with other agents via agent-bridge
@@ -21,15 +21,23 @@ Incoming messages arrive in one of two ways:
 
 To reply, call `send` with `to` set to the `from` value and `reply_to` set to the `id` / `message_id` value.
 
-## 2. One-off delegation
+## 2. Delegation and subagents
 
-`ask_codex` runs Codex headlessly in this project and returns its final answer. Good uses:
+- `ask_codex` / `ask_opencode` run that agent headlessly in this project and wait for its final answer.
+- `spawn_codex` / `spawn_opencode` start it as a **background subagent** and return a job name at once. The result arrives later as a message from `<agent>-job-<id>`. Several can run in parallel; `cancel_subagent` stops one.
+
+Good uses:
 
 - an independent review of a diff,
 - a second opinion on a design,
 - a self-contained subtask.
 
-Write a complete, self-contained prompt: Codex cannot see your conversation. Pass the returned `session_id` to continue the same Codex conversation. Codex runs read-only by default; pass `sandbox: "workspace-write"` only when the user wants Codex to edit files.
+All of them accept `model`, meaning any model id the target accepts (for example `gpt-6-sol` for Codex, or `provider/model` for opencode), and `session_id` to continue a previous run. Write a complete, self-contained prompt: the other agent cannot see your conversation.
+
+Permissions:
+
+- **Codex** runs read-only by default. Pass `sandbox: "workspace-write"` only when the user wants Codex to edit files.
+- **Headless opencode** rejects permission requests unless you pass `auto_approve: true`.
 
 ## Rules
 

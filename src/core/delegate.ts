@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
-import { delimiter, extname, isAbsolute, join } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { delimiter, dirname, extname, isAbsolute, join } from "node:path";
 import type { ClaudePermissionMode, CodexSandbox } from "./config.js";
 import type { Logger } from "./logger.js";
 
@@ -44,6 +44,25 @@ export function resolveBinary(bin: string, env: NodeJS.ProcessEnv = process.env,
   return null;
 }
 
+/**
+ * npm installs CLIs on Windows as .cmd shims. Spawning those needs a shell, so find what the shim
+ * runs instead: either a native executable (`"%dp0%\...\x.exe" %*`) or a JS entry run by node.
+ */
+export function unwrapNpmShim(shimPath: string, readFile: (p: string) => string = (p) => readFileSync(p, "utf8")): { command: string; prefix: string[] } | null {
+  let text: string;
+  try {
+    text = readFile(shimPath);
+  } catch {
+    return null;
+  }
+  const dir = dirname(shimPath);
+  const exe = /"%~?dp0%?\\([^"]+?\.exe)"\s+%\*/i.exec(text);
+  if (exe) return { command: join(dir, exe[1]!), prefix: [] };
+  const js = /"%~?dp0%?\\([^"]+?\.(?:c|m)?js)"\s+%\*/i.exec(text);
+  if (js) return { command: process.execPath, prefix: [join(dir, js[1]!)] };
+  return null;
+}
+
 export interface RunResult {
   code: number | null;
   stdout: string;
@@ -64,18 +83,29 @@ export function runProcess(opts: {
   log: Logger;
   signal?: AbortSignal;
 }): Promise<RunResult> {
-  const resolved = resolveBinary(opts.bin, opts.env);
+  let resolved = resolveBinary(opts.bin, opts.env);
   if (!resolved) return Promise.reject(new DelegateError(`executable not found: ${opts.bin}`, "not_found"));
-  const needsShell = process.platform === "win32" && WINDOWS_SHIM_EXTS.has(extname(resolved).toLowerCase());
-  for (const a of opts.args) {
-    if (needsShell && /[&|<>^%"\r\n]/.test(a)) {
-      return Promise.reject(new DelegateError(`unsafe argument for shell invocation: ${a}`, "failed"));
+  let args = opts.args;
+  let needsShell = process.platform === "win32" && WINDOWS_SHIM_EXTS.has(extname(resolved).toLowerCase());
+  if (needsShell) {
+    const target = unwrapNpmShim(resolved);
+    if (target && existsSync(target.command) && target.prefix.every((p) => existsSync(p))) {
+      opts.log.debug("unwrapped npm shim", { shim: resolved, command: target.command, prefix: target.prefix });
+      resolved = target.command;
+      args = [...target.prefix, ...args];
+      needsShell = false;
     }
   }
-  opts.log.debug("spawning delegate", { bin: resolved, args: opts.args, cwd: opts.cwd, shell: needsShell });
+  if (needsShell) {
+    // Last resort: cmd.exe re-parses the command line, so refuse anything it could interpret.
+    for (const a of args) {
+      if (/[&|<>^%"\s]/.test(a)) return Promise.reject(new DelegateError(`unsafe argument for shell invocation: ${a}`, "failed"));
+    }
+  }
+  opts.log.debug("spawning delegate", { bin: resolved, args, cwd: opts.cwd, shell: needsShell });
 
   return new Promise((resolve, reject) => {
-    const child = spawn(needsShell ? `"${resolved}"` : resolved, opts.args, {
+    const child = spawn(needsShell ? `"${resolved}"` : resolved, args, {
       cwd: opts.cwd,
       env: opts.env,
       shell: needsShell,
@@ -262,4 +292,58 @@ export async function delegateToClaude(
     isError: parsed.isError || res.code !== 0,
     details: { exitCode: res.code, costUsd: parsed.cost },
   };
+}
+
+/** Parse `opencode run --format json` output: one event per line, each carrying the sessionID. */
+export function parseOpencodeJsonl(stdout: string): { sessionId: string | null; text: string; error: string | null } {
+  let sessionId: string | null = null;
+  const textByMessage = new Map<string, string[]>();
+  let lastMessage = "";
+  let error: string | null = null;
+  for (const line of stdout.split(/\r?\n/)) {
+    const s = line.trim();
+    if (!s.startsWith("{")) continue;
+    let ev: Record<string, any>;
+    try {
+      ev = JSON.parse(s);
+    } catch {
+      continue;
+    }
+    if (typeof ev.sessionID === "string") sessionId ??= ev.sessionID;
+    if (ev.type === "text" && typeof ev.part?.text === "string") {
+      const mid = String(ev.part.messageID ?? "");
+      if (!textByMessage.has(mid)) textByMessage.set(mid, []);
+      textByMessage.get(mid)!.push(ev.part.text);
+      lastMessage = mid;
+    } else if (ev.type === "error") {
+      error = ev.error?.data?.message ?? ev.error?.message ?? ev.message ?? "opencode reported an error";
+    }
+  }
+  return { sessionId, text: (textByMessage.get(lastMessage) ?? []).join(""), error };
+}
+
+export async function delegateToOpencode(req: DelegateRequest & { bin: string; autoApprove: boolean }): Promise<DelegateResult> {
+  checkDepth();
+  const args = ["run", "--format", "json"];
+  if (req.model) args.push("-m", req.model);
+  if (req.sessionId) args.push("-s", req.sessionId);
+  // Headless opencode rejects every permission request unless --auto is given.
+  if (req.autoApprove) args.push("--auto");
+  const res = await runProcess({
+    bin: req.bin,
+    args,
+    stdin: req.prompt,
+    cwd: req.cwd,
+    timeoutMs: req.timeoutSec * 1000,
+    env: childEnv(),
+    log: req.log,
+    signal: req.signal,
+  });
+  const parsed = parseOpencodeJsonl(res.stdout);
+  const isError = res.code !== 0 || parsed.error !== null;
+  if (isError && !parsed.text) {
+    throw new DelegateError(parsed.error ?? `opencode exited with code ${res.code}`, "failed", res.stderr.slice(-STDERR_TAIL_CHARS));
+  }
+  req.log.info("opencode delegate finished", { sessionId: parsed.sessionId, code: res.code, isError });
+  return { sessionId: parsed.sessionId ?? req.sessionId ?? null, text: parsed.text, isError, details: { exitCode: res.code, error: parsed.error } };
 }

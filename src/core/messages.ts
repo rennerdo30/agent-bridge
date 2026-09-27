@@ -42,11 +42,16 @@ export const en = {
   "err.delegatedSession": "This is a delegated headless session; peer messaging is disabled here.",
 
   "cli.usage":
-    "Usage: agent-bridge <command>\n\nCommands:\n  status              Show the broker and the connected peers\n  send <to> <text>    Send a message as the \"cli\" peer\n  tail                Print messages addressed to \"cli\" as they arrive\n  paths               Show data, log and pipe locations\n  help                Show this help",
+    "Usage: agent-bridge <command>\n\nCommands:\n  status              Show the broker and the connected peers\n  send <to> <text>    Send a message as the \"cli\" peer\n  tail                Print messages addressed to \"cli\" as they arrive\n  install-opencode    Install the opencode plugin into opencode's global config\n  uninstall-opencode  Remove the opencode plugin\n  paths               Show data, log and pipe locations\n  help                Show this help",
+  "cli.opencode.noSource": "Could not find the opencode plugin files next to this CLI. Run it from an agent-bridge checkout or package.",
+  "cli.opencode.installed": "Installed the agent-bridge opencode plugin into {dir}:",
+  "cli.opencode.restart": "Restart opencode to load it. Requires Node.js 22.13+ on PATH.",
+  "cli.opencode.removed": "Removed the agent-bridge opencode plugin from {dir}:",
+  "cli.opencode.nothing": "The agent-bridge opencode plugin is not installed in {dir}.",
   "cli.status.broker": "Broker: running (pid {pid}, protocol {protocol}) at {pipe}",
   "cli.status.noBroker": "Broker: not running (no agent with agent-bridge is active). Endpoint: {pipe}",
   "cli.status.peers": "Peers online: {count}",
-  "cli.status.peer": "  {name}  [{agent}]  since {since}  {cwd}",
+  "cli.status.peer": "  {name}  [{agent}, {activity}]  since {since}  {cwd}",
   "cli.sent": "Sent message {id}.",
   "cli.tail.listening": "Listening as \"{name}\". Press Ctrl+C to stop.",
   "cli.paths": "Data:  {home}\nLogs:  {logs}\nStore: {db}\nPipe:  {pipe}",

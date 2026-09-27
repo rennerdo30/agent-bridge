@@ -3,7 +3,7 @@ import { join } from "node:path";
 
 /** Product identity. */
 export const APP_NAME = "agent-bridge";
-export const APP_VERSION = "0.1.2";
+export const APP_VERSION = "0.2.0";
 
 /** Wire protocol version; bump on incompatible changes to the broker protocol. */
 export const PROTOCOL_VERSION = 1;
@@ -22,6 +22,7 @@ export const ENV = {
   delivery: "AGENT_BRIDGE_DELIVERY",
   claudeBin: "AGENT_BRIDGE_CLAUDE_BIN",
   codexBin: "AGENT_BRIDGE_CODEX_BIN",
+  opencodeBin: "AGENT_BRIDGE_OPENCODE_BIN",
 } as const;
 
 /** Default data directory; holds the message store, logs and config. */
@@ -61,6 +62,7 @@ export const DEFAULT_DELEGATE_TIMEOUT_SEC = 900;
 export const MAX_DELEGATE_TIMEOUT_SEC = 3_600;
 export const DEFAULT_CLAUDE_BIN = "claude";
 export const DEFAULT_CODEX_BIN = "codex";
+export const DEFAULT_OPENCODE_BIN = "opencode";
 
 /**
  * Listen window: after a session sent a bridge message (or spawned a subagent), its Stop hook keeps the
