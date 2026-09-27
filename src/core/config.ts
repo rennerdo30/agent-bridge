@@ -16,8 +16,9 @@ const DELIVERY_MODES: readonly DeliveryMode[] = ["auto", "channel", "hooks"];
 export type CodexSandbox = "read-only" | "workspace-write" | "danger-full-access";
 const CODEX_SANDBOXES: readonly CodexSandbox[] = ["read-only", "workspace-write", "danger-full-access"];
 
-export type ClaudePermissionMode = "default" | "acceptEdits" | "plan" | "auto" | "dontAsk" | "bypassPermissions";
-const CLAUDE_PERMISSION_MODES: readonly ClaudePermissionMode[] = ["default", "acceptEdits", "plan", "auto", "dontAsk", "bypassPermissions"];
+/** "manual" is the newer name of "default" (Claude Code 2.1.28x); both are accepted. */
+export type ClaudePermissionMode = "default" | "manual" | "acceptEdits" | "plan" | "auto" | "dontAsk" | "bypassPermissions";
+const CLAUDE_PERMISSION_MODES: readonly ClaudePermissionMode[] = ["default", "manual", "acceptEdits", "plan", "auto", "dontAsk", "bypassPermissions"];
 
 export interface BridgeConfig {
   /** Peer name; defaults to "<agent>-<cwd basename>". */

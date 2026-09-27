@@ -111,7 +111,8 @@ export function runProcess(opts: {
   return new Promise((resolve, reject) => {
     const child = spawn(needsShell ? `"${resolved}"` : resolved, args, {
       cwd: opts.cwd,
-      env: opts.env,
+      // Some CLIs (opencode) take their project folder from PWD rather than the real cwd; keep them in sync.
+      env: { ...opts.env, PWD: opts.cwd },
       shell: needsShell,
       windowsHide: true,
       stdio: ["pipe", "pipe", "pipe"],
@@ -192,6 +193,8 @@ export interface DelegateResult {
 
 /** opencode reads an extra JSON config layer from this variable (merged over the user's config). */
 export const OPENCODE_CONFIG_CONTENT_ENV = "OPENCODE_CONFIG_CONTENT";
+/** Keep delegated Codex runs inside their sandbox regardless of the user's approvals reviewer. */
+export const CODEX_STRICT_APPROVALS = 'approvals_reviewer="user"';
 /** Read-only for opencode: no file changes, no shell commands. Reading and searching stay allowed. */
 // "ask" rather than "deny": the tools stay listed (some providers reject a reduced tool set), and headless
 // `opencode run` rejects every ask without --auto, so nothing is changed.
@@ -248,9 +251,13 @@ export async function delegateToCodex(
 ): Promise<DelegateResult> {
   checkDepth();
   const common = ["--json", "--skip-git-repo-check", ...(req.model ? ["-m", req.model] : [])];
+  // With approvals_reviewer="auto_review" in the user's config, codex exec lets a reviewer model approve
+  // escalations, so a read-only sandbox would not hold. Route approvals to "user": exec then never
+  // escalates and the sandbox is enforced (verified: read-only then refuses to create files).
+  const strict = ["-c", CODEX_STRICT_APPROVALS];
   const args = req.sessionId
-    ? ["exec", "resume", ...common, "-c", `sandbox_mode="${req.sandbox}"`, req.sessionId, "-"]
-    : ["exec", ...common, "-s", req.sandbox, "-C", req.cwd, "-"];
+    ? ["exec", "resume", ...common, ...strict, "-c", `sandbox_mode="${req.sandbox}"`, req.sessionId, "-"]
+    : ["exec", ...common, ...strict, "-s", req.sandbox, "-C", req.cwd, "-"];
   const res = await runProcess({
     bin: req.bin,
     args,
@@ -374,7 +381,8 @@ export function parseOpencodeJsonl(stdout: string): {
 
 export async function delegateToOpencode(req: DelegateRequest & { bin: string; autoApprove: boolean }): Promise<DelegateResult> {
   checkDepth();
-  const args = ["run", "--format", "json"];
+  // --dir as well: opencode must not fall back to an inherited PWD (it then works in the wrong folder).
+  const args = ["run", "--format", "json", "--dir", req.cwd];
   if (req.model) args.push("-m", req.model);
   if (req.sessionId) args.push("-s", req.sessionId);
   // opencode's default rules allow edits and commands without asking, so read access must be enforced

@@ -27,6 +27,14 @@ There is no daemon to install. Each agent starts its own MCP server. The first o
 
 ## Install
 
+### All at once
+
+```bash
+npx -y github:rennerdo30/agent-bridge install        # or: install claude codex opencode
+```
+
+The installer finds which of the three tools you have. For each one it shows the exact commands it will run and asks before running them (`--yes` skips the questions). It only runs the tools' official plugin commands, listed below; for opencode it copies the plugin files into opencode's plugin folder. Nothing is patched. `update` and `uninstall` work the same way.
+
 ### Claude Code
 
 ```bash
@@ -83,6 +91,28 @@ Just ask in plain language, for example:
 - One target-specific option: `sandbox` for Codex, `permission_mode` for Claude, or `auto_approve` for opencode. Headless opencode rejects every permission request unless `auto_approve` is set.
 
 Peer names default to `<agent>-<project folder>`, for example `codex-myrepo`. Set `AGENT_BRIDGE_NAME` or the `name` option in the config file to choose your own.
+
+### Slash commands (Claude Code)
+
+`/agent-bridge:peers`, `/agent-bridge:inbox`, `/agent-bridge:send <to> <message>` and `/agent-bridge:delegate <codex|opencode> [model=<id>] [edit] [worktree] <task>`.
+
+### Editing subagents: access and worktrees
+
+- `access: "read"` (the default) lets a delegated agent look but not change anything. `access: "edit"` lets it change files.
+- `worktree: true` runs the subagent in its own git worktree on a branch `agent-bridge/<id>`. Your working copy stays untouched. The result shows a diff summary and the exact commands to review, merge (`git merge agent-bridge/<id>`) or discard the changes. Use it for parallel or risky edits.
+- Results also list the files changed in place (for `access: "edit"` without a worktree) and the token usage or cost the CLI reported.
+
+How `read` is enforced per agent:
+
+| Agent | read | edit |
+|---|---|---|
+| Codex | `read-only` sandbox (enforced by Codex's OS sandbox) | `workspace-write` sandbox |
+| opencode | an extra config layer turns edits and shell commands into "ask", which headless runs reject | `--auto` |
+| Claude | `manual` permission mode, see the note under *Permission requests* | `acceptEdits` |
+
+### Permission requests from subagents
+
+A headless subagent cannot show you a permission dialog. Its permissions are fixed by `access` when it starts, and anything beyond them is refused. Forwarding a subagent's permission request to your session as a native dialog is being worked on.
 
 ## Native subagents
 
@@ -169,7 +199,11 @@ node <plugin>/dist/cli.mjs status          # broker and connected peers
 node <plugin>/dist/cli.mjs send codex "hi" # send as peer "cli"
 node <plugin>/dist/cli.mjs tail            # print messages addressed to "cli"
 node <plugin>/dist/cli.mjs paths
+node <plugin>/dist/cli.mjs smoke           # check the installed CLIs still work with agent-bridge (a few tokens)
+node <plugin>/dist/cli.mjs reliability     # measured run: answers, read-only, worktree edits, parallel, cancel
 ```
+
+Run `smoke` after updating Claude Code, Codex or opencode. It exercises the real CLIs (answer, session id, resume) and warns when a CLI version differs from the one this release was tested with.
 
 ## Troubleshooting
 
@@ -179,9 +213,10 @@ node <plugin>/dist/cli.mjs paths
 
 ## Security notes
 
+- Only your own agent-bridge processes can join: every connection must present the secret in `~/.agent-bridge/token`, which is created on first use and is readable only by you on Unix. Delete the file to rotate it; all sessions then need a restart.
 - The pipe and socket are local to your user account. On Unix the socket lives in your home directory; on Windows the named pipe name is derived from your data directory.
 - Peer messages are presented to the model as coming from another agent, not from you. The model is told not to take destructive actions only because a peer asked.
-- Delegated Codex runs are `read-only` by default. Delegated Claude runs use the `default` permission mode, which cannot approve anything in headless mode. Raise these only if you trust the task.
+- Delegated runs are read-only by default (see *Editing subagents*). Raise `access` only if you trust the task, and prefer `worktree: true` for edits.
 
 ## Development
 

@@ -1,0 +1,155 @@
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { DEFAULT_CLAUDE_BIN, DEFAULT_CODEX_BIN, DEFAULT_OPENCODE_BIN } from "../core/constants.js";
+import { delegateToClaude, delegateToCodex, delegateToOpencode, resolveBinary, type DelegateResult } from "../core/delegate.js";
+import type { Logger } from "../core/logger.js";
+import type { CodingAgent } from "../core/protocol.js";
+import { createWorktree, finishWorktree } from "../core/worktree.js";
+
+/**
+ * A measured run of real delegations (costs tokens): repeated short answers, read-only enforcement,
+ * worktree edits, parallel runs and cancellation, per installed CLI.
+ */
+const RUN_TIMEOUT_SEC = 300;
+const REPEATS = 3;
+const CANCEL_AFTER_MS = 8_000;
+const CANCEL_GRACE_MS = 10_000;
+const BINS: Record<CodingAgent, string> = { claude: DEFAULT_CLAUDE_BIN, codex: DEFAULT_CODEX_BIN, opencode: DEFAULT_OPENCODE_BIN };
+
+type Access = "read" | "edit";
+
+function run(agent: CodingAgent, prompt: string, cwd: string, access: Access, log: Logger, signal?: AbortSignal): Promise<DelegateResult> {
+  const base = { prompt, cwd, sessionId: null, timeoutSec: RUN_TIMEOUT_SEC, log, signal };
+  if (agent === "codex") return delegateToCodex({ ...base, bin: BINS.codex, sandbox: access === "edit" ? "workspace-write" : "read-only" });
+  if (agent === "claude") return delegateToClaude({ ...base, bin: BINS.claude, permissionMode: access === "edit" ? "acceptEdits" : "default" });
+  return delegateToOpencode({ ...base, bin: BINS.opencode, autoApprove: access === "edit" });
+}
+
+interface Outcome {
+  name: string;
+  pass: boolean;
+  detail: string;
+  ms: number;
+}
+
+async function timed(name: string, fn: () => Promise<{ pass: boolean; detail: string }>): Promise<Outcome> {
+  const start = Date.now();
+  try {
+    const r = await fn();
+    return { name, ...r, ms: Date.now() - start };
+  } catch (err) {
+    return { name, pass: false, detail: String((err as Error)?.message ?? err).slice(0, 160), ms: Date.now() - start };
+  }
+}
+
+function makeRepo(): string {
+  const dir = mkdtempSync(join(tmpdir(), "agent-bridge-rel-"));
+  const git = (...a: string[]) => execFileSync("git", a, { cwd: dir, stdio: "ignore" });
+  git("init", "-q");
+  writeFileSync(join(dir, "README.md"), "reliability sandbox\n");
+  git("add", "README.md");
+  git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "base");
+  return dir;
+}
+
+export async function runReliability(opts: { agents: CodingAgent[]; out: (s: string) => void; log: Logger }): Promise<number> {
+  const agents = opts.agents.filter((a) => resolveBinary(BINS[a]));
+  const home = mkdtempSync(join(tmpdir(), "agent-bridge-rel-home-"));
+  const results: Outcome[] = [];
+  const record = (o: Outcome) => {
+    results.push(o);
+    opts.out(`  ${o.pass ? "PASS" : "FAIL"}  ${o.name}  (${(o.ms / 1000).toFixed(1)}s)  ${o.detail}`);
+  };
+  const repos: string[] = [];
+  const repo = () => {
+    const r = makeRepo();
+    repos.push(r);
+    return r;
+  };
+
+  try {
+    for (const agent of agents) {
+      opts.out(`${agent}:`);
+      for (let i = 1; i <= REPEATS; i++) {
+        const n = 10 + i;
+        record(
+          await timed(`${agent} answer #${i}`, async () => {
+            const r = await run(agent, `Reply with only the number ${n * n}. That is ${n} squared.`, repo(), "read", opts.log);
+            return { pass: r.text.includes(String(n * n)) && Boolean(r.sessionId), detail: `"${r.text.trim().slice(0, 40)}"` };
+          }),
+        );
+      }
+      record(
+        await timed(`${agent} read-only is enforced`, async () => {
+          const dir = repo();
+          await run(agent, "Create a file named should-not-exist.txt containing the word hi. Then reply done.", dir, "read", opts.log);
+          const exists = existsSync(join(dir, "should-not-exist.txt"));
+          return { pass: !exists, detail: exists ? "the file WAS created despite read-only access" : "no file created" };
+        }),
+      );
+      record(
+        await timed(`${agent} edit in worktree`, async () => {
+          const dir = repo();
+          const wt = await createWorktree({ cwd: dir, home, jobId: `${agent}-${Date.now().toString(36)}`, log: opts.log });
+          const steps: string[] = [];
+          const base = { prompt: "Create a file named created.txt containing the word hello. Then reply done.", cwd: wt.cwd, sessionId: null, timeoutSec: RUN_TIMEOUT_SEC, log: opts.log, onProgress: (m: string) => steps.push(m) };
+          const r =
+            agent === "codex"
+              ? await delegateToCodex({ ...base, bin: BINS.codex, sandbox: "workspace-write" })
+              : agent === "claude"
+                ? await delegateToClaude({ ...base, bin: BINS.claude, permissionMode: "acceptEdits" })
+                : await delegateToOpencode({ ...base, bin: BINS.opencode, autoApprove: true });
+          const outcome = await finishWorktree(wt, "reliability edit", opts.log);
+          const leaked = existsSync(join(dir, "created.txt"));
+          const pass = outcome.diffStat.includes("created.txt") && !leaked;
+          return {
+            pass,
+            detail: leaked
+              ? "file leaked into the working copy"
+              : pass
+                ? "created.txt committed on the worktree branch"
+                : `no created.txt; steps: [${steps.join(" | ")}]; answer: "${r.text.trim().slice(0, 80)}"; diff: ${outcome.diffStat.split("\n").pop() ?? ""}`,
+          };
+        }),
+      );
+    }
+
+    if (agents.length > 1) {
+      opts.out("parallel:");
+      record(
+        await timed(`parallel (${agents.join(", ")})`, async () => {
+          const rs = await Promise.all(agents.map((a, i) => run(a, `Reply with only the word parallel${i}.`, repo(), "read", opts.log)));
+          const ok = rs.map((r, i) => r.text.includes(`parallel${i}`));
+          return { pass: ok.every(Boolean), detail: agents.map((a, i) => `${a}:${ok[i] ? "ok" : "bad"}`).join(" ") };
+        }),
+      );
+    }
+
+    if (agents.includes("codex")) {
+      opts.out("cancel:");
+      record(
+        await timed("codex cancel", async () => {
+          const ac = new AbortController();
+          const started = Date.now();
+          setTimeout(() => ac.abort(), CANCEL_AFTER_MS);
+          const p = run("codex", "Count slowly from 1 to 400, one number per line, thinking about each number.", repo(), "read", opts.log, ac.signal);
+          const r = await p.then(
+            () => "finished",
+            (e) => String((e as Error).message),
+          );
+          const took = Date.now() - started;
+          return { pass: r.includes("aborted") && took < CANCEL_AFTER_MS + CANCEL_GRACE_MS, detail: `${r}, stopped after ${(took / 1000).toFixed(1)}s` };
+        }),
+      );
+    }
+  } finally {
+    for (const r of repos) rmSync(r, { recursive: true, force: true, maxRetries: 3 });
+    rmSync(home, { recursive: true, force: true, maxRetries: 3 });
+  }
+
+  const passed = results.filter((r) => r.pass).length;
+  opts.out(`\n${passed}/${results.length} passed`);
+  return passed === results.length ? 0 : 1;
+}

@@ -36583,7 +36583,7 @@ function encodeFrame(frame) {
 // src/core/config.ts
 var DELIVERY_MODES = ["auto", "channel", "hooks"];
 var CODEX_SANDBOXES = ["read-only", "workspace-write", "danger-full-access"];
-var CLAUDE_PERMISSION_MODES = ["default", "acceptEdits", "plan", "auto", "dontAsk", "bypassPermissions"];
+var CLAUDE_PERMISSION_MODES = ["default", "manual", "acceptEdits", "plan", "auto", "dontAsk", "bypassPermissions"];
 var DEFAULT_CONFIG = {
   name: null,
   autoWake: false,
@@ -36825,7 +36825,8 @@ function runProcess(opts) {
   return new Promise((resolve3, reject) => {
     const child = spawn(needsShell ? `"${resolved}"` : resolved, args, {
       cwd: opts.cwd,
-      env: opts.env,
+      // Some CLIs (opencode) take their project folder from PWD rather than the real cwd; keep them in sync.
+      env: { ...opts.env, PWD: opts.cwd },
       shell: needsShell,
       windowsHide: true,
       stdio: ["pipe", "pipe", "pipe"]
@@ -36881,6 +36882,7 @@ function runProcess(opts) {
   });
 }
 var OPENCODE_CONFIG_CONTENT_ENV = "OPENCODE_CONFIG_CONTENT";
+var CODEX_STRICT_APPROVALS = 'approvals_reviewer="user"';
 var OPENCODE_READ_ONLY_PERMISSIONS = { edit: "ask", bash: "ask" };
 function childEnv() {
   return { ...process.env, [DELEGATE_DEPTH_ENV]: String(currentDelegateDepth() + 1) };
@@ -36927,7 +36929,8 @@ function parseCodexJsonl(stdout) {
 async function delegateToCodex(req) {
   checkDepth();
   const common = ["--json", "--skip-git-repo-check", ...req.model ? ["-m", req.model] : []];
-  const args = req.sessionId ? ["exec", "resume", ...common, "-c", `sandbox_mode="${req.sandbox}"`, req.sessionId, "-"] : ["exec", ...common, "-s", req.sandbox, "-C", req.cwd, "-"];
+  const strict = ["-c", CODEX_STRICT_APPROVALS];
+  const args = req.sessionId ? ["exec", "resume", ...common, ...strict, "-c", `sandbox_mode="${req.sandbox}"`, req.sessionId, "-"] : ["exec", ...common, ...strict, "-s", req.sandbox, "-C", req.cwd, "-"];
   const res = await runProcess({
     bin: req.bin,
     args,
@@ -37036,7 +37039,7 @@ function parseOpencodeJsonl(stdout) {
 }
 async function delegateToOpencode(req) {
   checkDepth();
-  const args = ["run", "--format", "json"];
+  const args = ["run", "--format", "json", "--dir", req.cwd];
   if (req.model) args.push("-m", req.model);
   if (req.sessionId) args.push("-s", req.sessionId);
   if (req.autoApprove) args.push("--auto");
