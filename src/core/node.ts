@@ -59,6 +59,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
   private sessionId: string | null = null;
   private autoWake: boolean;
   private currentCwd: string;
+  private lastSent = 0;
   private readonly log: Logger;
 
   constructor(private readonly opts: BridgeNodeOptions) {
@@ -225,7 +226,16 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
   }
 
   send(args: SendArgs): Promise<SendResult> {
-    return this.withClient((c) => c.request("send", args));
+    return this.withClient(async (c) => {
+      const res = await c.request("send", args);
+      this.lastSent = Date.now();
+      return res;
+    });
+  }
+
+  /** When this peer last sent a message (0 = never); marks it as taking part in a conversation. */
+  get lastSentAt(): number {
+    return this.lastSent;
   }
 
   peers(): Promise<PeerInfo[]> {
@@ -244,6 +254,14 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
 
   get(id: string): BridgeMessage | undefined {
     return this.inbox.get(id);
+  }
+
+  /**
+   * Put a message into this peer's own inbox without going through the broker, e.g. the result of a
+   * background subagent. It is handled exactly like a peer message (hooks, wait_for_message, channel).
+   */
+  deliverLocal(m: BridgeMessage): void {
+    this.onEvent("message", m);
   }
 
   /** Mark messages consumed locally and on the broker. */

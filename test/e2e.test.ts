@@ -50,8 +50,8 @@ describe.skipIf(!existsSync(SERVER))("bundled MCP server end-to-end", () => {
   it("exposes the expected tools per agent", async () => {
     const c = (await claude.listTools()).tools.map((t) => t.name).sort();
     const x = (await codex.listTools()).tools.map((t) => t.name).sort();
-    expect(c).toEqual(["ask_codex", "auto_wake", "hook_event", "inbox", "peers", "send", "wait_for_message"]);
-    expect(x).toEqual(["ask_claude", "auto_wake", "hook_event", "inbox", "peers", "send", "wait_for_message"]);
+    expect(c).toEqual(["ask_codex", "auto_wake", "cancel_subagent", "hook_event", "inbox", "peers", "send", "spawn_codex", "wait_for_message"]);
+    expect(x).toEqual(["ask_claude", "auto_wake", "cancel_subagent", "hook_event", "inbox", "peers", "send", "spawn_claude", "wait_for_message"]);
   });
 
   it("declares the Claude channel capability only for Claude", () => {

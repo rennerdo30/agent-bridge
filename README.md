@@ -6,6 +6,8 @@ agent-bridge is a pair of plugins, one for Claude Code and one for Codex, built 
 
 - **Message each other live.** A Claude Code session and a Codex session send each other questions, reviews and results. Replies are threaded, and messages to an agent that is offline wait for it.
 - **Delegate.** `ask_codex` (from Claude) and `ask_claude` (from Codex) run the other agent headlessly for a one-off task and return its answer. You can continue that session later.
+- **Spawn each other as subagents.** `spawn_codex` / `spawn_claude` start the other agent in the background and return immediately. The result arrives later as a message, and several subagents can run in parallel.
+- **Pick any model.** `ask_*` and `spawn_*` accept any model id or alias the target CLI accepts, for example `gpt-6-sol`, `opus`, or a full Claude model id. Ids are passed through verbatim, so new models work without a plugin update.
 
 ```
  Claude Code session                               Codex session
@@ -59,8 +61,12 @@ Just ask in plain language, for example:
 | `send` | Message a peer: `to` = peer name, `claude`/`codex` (if exactly one is online) or `*`; `reply_to` threads answers |
 | `wait_for_message` | Block until a (matching) message arrives, e.g. the answer to your question |
 | `inbox` | Read unread messages |
-| `ask_codex` / `ask_claude` | Headless delegation to the other CLI; returns the answer and a `session_id` to continue |
+| `ask_codex` / `ask_claude` | Headless delegation to the other CLI; waits and returns the answer and a `session_id` to continue |
+| `spawn_codex` / `spawn_claude` | Same, but as a background subagent: returns a job name at once; the result arrives as a message from `<agent>-job-<id>` |
+| `cancel_subagent` | Stop a running background subagent |
 | `auto_wake` | Let incoming messages make this session keep working (see below) |
+
+`ask_*` and `spawn_*` take an optional `model` (any id or alias, passed through verbatim), `session_id`, `cwd`, `timeout_sec` and `sandbox` (Codex) or `permission_mode` (Claude).
 
 Peer names default to `<agent>-<project folder>`, for example `codex-myrepo`. Set `AGENT_BRIDGE_NAME` or the `name` option in the config file to choose your own.
 
@@ -83,6 +89,10 @@ claude --dangerously-load-development-channels plugin:agent-bridge@agent-bridge
 
 agent-bridge detects this flag on its parent process and switches to channel delivery automatically. You can force a mode with `AGENT_BRIDGE_DELIVERY=channel|hooks`.
 
+### Listen window
+
+After a session sends a bridge message or spawns a subagent, its `Stop` hook keeps the turn open for up to `lingerSec` seconds (default 300) waiting for the reply. If a reply arrives, the agent continues with it; otherwise the turn ends normally. This keeps a back-and-forth going without you nudging either agent, and needs no auto-wake. Press Esc to stop listening early, or set `lingerSec` to `0` to disable it.
+
 ### Auto-wake and loop protection
 
 Auto-wake is **off by default**. Turn it on per session by asking the agent ("turn on agent-bridge auto-wake"), or globally with `"autoWake": true` in the config.
@@ -97,8 +107,9 @@ Every reply increments a conversation's hop count. Messages at or above `maxHops
 {
   "autoWake": false,
   "maxHops": 6,
-  "codex": { "name": "codex-main", "claudeBin": "claude", "claudePermissionMode": "default" },
-  "claude": { "delivery": "auto", "codexBin": "codex", "codexSandbox": "read-only" }
+  "lingerSec": 300,
+  "codex": { "name": "codex-main", "claudeBin": "claude", "claudePermissionMode": "default", "claudeModel": "opus" },
+  "claude": { "delivery": "auto", "codexBin": "codex", "codexSandbox": "read-only", "codexModel": "gpt-6-sol" }
 }
 ```
 
@@ -108,6 +119,7 @@ Every reply increments a conversation's hop count. Messages at or above `maxHops
 | `AGENT_BRIDGE_NAME` | Peer name |
 | `AGENT_BRIDGE_AUTO_WAKE` | `on` / `off` |
 | `AGENT_BRIDGE_MAX_HOPS` | Loop limit |
+| `AGENT_BRIDGE_LINGER_SEC` | Listen window after sending (0 disables) |
 | `AGENT_BRIDGE_DELIVERY` | Claude only: `auto`, `channel`, `hooks` |
 | `AGENT_BRIDGE_CLAUDE_BIN` / `AGENT_BRIDGE_CODEX_BIN` | Paths of the CLIs used for delegation |
 | `AGENT_BRIDGE_LOG_LEVEL` | File log level: `debug`, `info` (default), `warn`, `error`, `silent` |
@@ -126,6 +138,12 @@ node <plugin>/dist/cli.mjs send codex "hi" # send as peer "cli"
 node <plugin>/dist/cli.mjs tail            # print messages addressed to "cli"
 node <plugin>/dist/cli.mjs paths
 ```
+
+## Troubleshooting
+
+- **Console windows flash on Windows while Codex works.** This happens when Codex runs your session inside its background app-server daemon: that process has no console, so Windows opens a new window for every `git` or `node` process it starts. Add `daemon_auto_start = false` under `[features]` in `~/.codex/config.toml`, run `codex app-server daemon stop`, and restart Codex.
+- **A peer shows up as plain `codex` with the plugin folder as its cwd.** Codex hasn't reported the project directory yet. It does so on the first hook or tool call; make sure the hooks are trusted in `/hooks`.
+- **Messages to an idle agent are not answered.** An idle session only sees messages on its next prompt, unless it's in its listen window, auto-wake is on, or (for Claude) channels are enabled.
 
 ## Security notes
 

@@ -12,7 +12,7 @@ let peer: BridgeNode;
 
 const ctx = (over: Partial<ServerContext> = {}): ServerContext => ({
   agent: "codex",
-  cfg: { ...DEFAULT_CONFIG, maxHops: 2 },
+  cfg: { ...DEFAULT_CONFIG, maxHops: 2, lingerSec: 1 },
   node: me,
   log: nullLogger,
   cwd: () => env.home,
@@ -66,6 +66,39 @@ describe("hook responses", () => {
     const out = (await buildHookResponse(ctx(), input("Stop"))) as any;
     expect(out.decision).toBe("block");
     expect(out.reason).toContain("work");
+  });
+
+  it("Stop keeps listening after this session sent a message and continues when the reply arrives", async () => {
+    const sent = await me.send({ to: "claude-h", body: "question?" });
+    const c = ctx({ cfg: { ...DEFAULT_CONFIG, maxHops: 6, lingerSec: 10 } });
+    const stop = buildHookResponse(c, input("Stop"));
+    const reply = new Promise((r) => setTimeout(r, 300)).then(() => peer.send({ to: "codex-h", body: "answer!", replyTo: sent.messages[0]!.id }));
+    const out = (await stop) as any;
+    await reply;
+    expect(out.decision).toBe("block");
+    expect(out.reason).toContain("answer!");
+  });
+
+  it("Stop ends the turn when the listen window passes quietly", async () => {
+    await me.send({ to: "claude-h", body: "anyone?" });
+    const started = Date.now();
+    expect(await buildHookResponse(ctx(), input("Stop"))).toEqual({});
+    expect(Date.now() - started).toBeGreaterThanOrEqual(800);
+  });
+
+  it("Stop returns immediately when the session is not in a conversation", async () => {
+    const started = Date.now();
+    expect(await buildHookResponse(ctx({ cfg: { ...DEFAULT_CONFIG, lingerSec: 60 } }), input("Stop"))).toEqual({});
+    expect(Date.now() - started).toBeLessThan(500);
+  });
+
+  it("Stop stops waiting when the hook call is aborted", async () => {
+    await me.send({ to: "claude-h", body: "hello" });
+    const ac = new AbortController();
+    const c = ctx({ cfg: { ...DEFAULT_CONFIG, lingerSec: 60 } });
+    const stop = buildHookResponse(c, { ...input("Stop"), signal: ac.signal });
+    setTimeout(() => ac.abort(), 200);
+    expect(await stop).toEqual({});
   });
 
   it("Stop respects the hop limit", async () => {

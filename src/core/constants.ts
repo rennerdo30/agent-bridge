@@ -3,7 +3,7 @@ import { join } from "node:path";
 
 /** Product identity. */
 export const APP_NAME = "agent-bridge";
-export const APP_VERSION = "0.1.1";
+export const APP_VERSION = "0.1.2";
 
 /** Wire protocol version; bump on incompatible changes to the broker protocol. */
 export const PROTOCOL_VERSION = 1;
@@ -18,6 +18,7 @@ export const ENV = {
   logConsole: "AGENT_BRIDGE_LOG_CONSOLE",
   autoWake: "AGENT_BRIDGE_AUTO_WAKE",
   maxHops: "AGENT_BRIDGE_MAX_HOPS",
+  lingerSec: "AGENT_BRIDGE_LINGER_SEC",
   delivery: "AGENT_BRIDGE_DELIVERY",
   claudeBin: "AGENT_BRIDGE_CLAUDE_BIN",
   codexBin: "AGENT_BRIDGE_CODEX_BIN",
@@ -60,6 +61,16 @@ export const DEFAULT_DELEGATE_TIMEOUT_SEC = 900;
 export const MAX_DELEGATE_TIMEOUT_SEC = 3_600;
 export const DEFAULT_CLAUDE_BIN = "claude";
 export const DEFAULT_CODEX_BIN = "codex";
+
+/**
+ * Listen window: after a session sent a bridge message (or spawned a subagent), its Stop hook keeps the
+ * turn open this long waiting for replies, so conversations continue without the user nudging.
+ */
+export const DEFAULT_LINGER_SEC = 300;
+/** Longest a single Stop hook invocation waits; must stay below the hosts' hook timeouts (600s). */
+export const STOP_WAIT_CAP_MS = 290_000;
+/** Background subagents per session. */
+export const MAX_RUNNING_JOBS = 4;
 
 /** wait_for_message tool limits. */
 export const DEFAULT_WAIT_SEC = 120;

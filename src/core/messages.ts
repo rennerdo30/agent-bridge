@@ -8,7 +8,15 @@ export const en = {
   "peers.header": "{count} other peer(s) online:",
   "peers.none": "No other peers are online. Messages you send to an offline peer name wait until it connects.",
 
-  "send.ok": "Message {id} sent (conversation {conversation}).",
+  "peers.jobs": "Your running subagents ({count}):",
+  "peers.job": "- {name} (model: {model}, running {seconds}s)",
+
+  "jobs.started": "Subagent {name} started. Keep working; its result will arrive as a message from \"{name}\" (or call wait_for_message with from=\"{name}\").",
+  "jobs.limit": "Too many subagents running (maximum {max}). Wait for one to finish or cancel one.",
+  "jobs.cancelled": "Cancelled subagent {name}.",
+  "jobs.unknown": "No running subagent named {name}.",
+
+  "send.ok":"Message {id} sent (conversation {conversation}).",
   "send.delivered": "Delivered to: {names}.",
   "send.queued": "Recipient offline, queued for: {names}.",
   "send.waitHint": "Use wait_for_message to wait for the answer.",

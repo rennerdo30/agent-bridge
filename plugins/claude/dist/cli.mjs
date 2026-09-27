@@ -21,6 +21,7 @@ var ENV = {
   logConsole: "AGENT_BRIDGE_LOG_CONSOLE",
   autoWake: "AGENT_BRIDGE_AUTO_WAKE",
   maxHops: "AGENT_BRIDGE_MAX_HOPS",
+  lingerSec: "AGENT_BRIDGE_LINGER_SEC",
   delivery: "AGENT_BRIDGE_DELIVERY",
   claudeBin: "AGENT_BRIDGE_CLAUDE_BIN",
   codexBin: "AGENT_BRIDGE_CODEX_BIN"
@@ -179,6 +180,12 @@ var en = {
   "peers.self": 'You are "{name}" (broker: {broker}, auto-wake: {autoWake}, delivery: {delivery}, unread: {unread}).',
   "peers.header": "{count} other peer(s) online:",
   "peers.none": "No other peers are online. Messages you send to an offline peer name wait until it connects.",
+  "peers.jobs": "Your running subagents ({count}):",
+  "peers.job": "- {name} (model: {model}, running {seconds}s)",
+  "jobs.started": 'Subagent {name} started. Keep working; its result will arrive as a message from "{name}" (or call wait_for_message with from="{name}").',
+  "jobs.limit": "Too many subagents running (maximum {max}). Wait for one to finish or cancel one.",
+  "jobs.cancelled": "Cancelled subagent {name}.",
+  "jobs.unknown": "No running subagent named {name}.",
   "send.ok": "Message {id} sent (conversation {conversation}).",
   "send.delivered": "Delivered to: {names}.",
   "send.queued": "Recipient offline, queued for: {names}.",
@@ -705,6 +712,7 @@ var BridgeNode = class extends EventEmitter2 {
   sessionId = null;
   autoWake;
   currentCwd;
+  lastSent = 0;
   log;
   get name() {
     return this.currentName;
@@ -849,7 +857,15 @@ var BridgeNode = class extends EventEmitter2 {
     return fn(this.client);
   }
   send(args) {
-    return this.withClient((c) => c.request("send", args));
+    return this.withClient(async (c) => {
+      const res = await c.request("send", args);
+      this.lastSent = Date.now();
+      return res;
+    });
+  }
+  /** When this peer last sent a message (0 = never); marks it as taking part in a conversation. */
+  get lastSentAt() {
+    return this.lastSent;
   }
   peers() {
     return this.withClient((c) => c.request("peers", {}));
@@ -864,6 +880,13 @@ var BridgeNode = class extends EventEmitter2 {
   }
   get(id) {
     return this.inbox.get(id);
+  }
+  /**
+   * Put a message into this peer's own inbox without going through the broker, e.g. the result of a
+   * background subagent. It is handled exactly like a peer message (hooks, wait_for_message, channel).
+   */
+  deliverLocal(m) {
+    this.onEvent("message", m);
   }
   /** Mark messages consumed locally and on the broker. */
   markRead(ids) {

@@ -126,6 +126,8 @@ export interface DelegateRequest {
   cwd: string;
   sessionId?: string | null;
   timeoutSec: number;
+  /** Model override; null uses the CLI default. */
+  model?: string | null;
   log: Logger;
   signal?: AbortSignal;
 }
@@ -187,7 +189,7 @@ export async function delegateToCodex(
   req: DelegateRequest & { bin: string; sandbox: CodexSandbox },
 ): Promise<DelegateResult> {
   checkDepth();
-  const common = ["--json", "--skip-git-repo-check"];
+  const common = ["--json", "--skip-git-repo-check", ...(req.model ? ["-m", req.model] : [])];
   const args = req.sessionId
     ? ["exec", "resume", ...common, "-c", `sandbox_mode="${req.sandbox}"`, req.sessionId, "-"]
     : ["exec", ...common, "-s", req.sandbox, "-C", req.cwd, "-"];
@@ -237,6 +239,7 @@ export async function delegateToClaude(
 ): Promise<DelegateResult> {
   checkDepth();
   const args = ["-p", "--output-format", "json", "--permission-mode", req.permissionMode];
+  if (req.model) args.push("--model", req.model);
   if (req.sessionId) args.push("--resume", req.sessionId);
   const res = await runProcess({
     bin: req.bin,

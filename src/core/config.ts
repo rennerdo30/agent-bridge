@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { basename, join } from "node:path";
-import { CONFIG_FILE_NAME, DEFAULT_CLAUDE_BIN, DEFAULT_CODEX_BIN, DEFAULT_MAX_HOPS, ENV } from "./constants.js";
+import { CONFIG_FILE_NAME, DEFAULT_CLAUDE_BIN, DEFAULT_CODEX_BIN, DEFAULT_LINGER_SEC, DEFAULT_MAX_HOPS, ENV } from "./constants.js";
 import type { Logger } from "./logger.js";
 import { AGENT_KINDS, type AgentKind } from "./protocol.js";
 
@@ -31,6 +31,11 @@ export interface BridgeConfig {
   codexSandbox: CodexSandbox;
   /** Default permission mode for delegated Claude runs. */
   claudePermissionMode: ClaudePermissionMode;
+  /** Listen window after sending, in seconds (0 disables). */
+  lingerSec: number;
+  /** Default model for delegated Codex / Claude runs (null = the CLI's own default). */
+  codexModel: string | null;
+  claudeModel: string | null;
 }
 
 export const DEFAULT_CONFIG: BridgeConfig = {
@@ -42,6 +47,9 @@ export const DEFAULT_CONFIG: BridgeConfig = {
   codexBin: DEFAULT_CODEX_BIN,
   codexSandbox: "read-only",
   claudePermissionMode: "default",
+  lingerSec: DEFAULT_LINGER_SEC,
+  codexModel: null,
+  claudeModel: null,
 };
 
 const TRUE_VALUES = new Set(["1", "true", "yes", "on"]);
@@ -66,6 +74,16 @@ function oneOf<T extends string>(v: unknown, allowed: readonly T[]): T | undefin
 }
 
 const MAX_HOPS_LIMIT = 100;
+const MAX_LINGER_SEC = 3_600;
+
+/**
+ * Model ids are passed through verbatim to the CLI, so new models work without a plugin update.
+ * Only reject what could break a command line: whitespace, quotes and shell metacharacters.
+ */
+export const MODEL_NAME_PATTERN = /^[^\s"'`&|<>^%$;()]{1,200}$/;
+function modelName(v: unknown): string | undefined {
+  return typeof v === "string" && MODEL_NAME_PATTERN.test(v.trim()) ? v.trim() : undefined;
+}
 
 /** Config file (~/.agent-bridge/config.json) with optional per-agent sections, overridden by env vars. */
 export function loadConfig(home: string, agent: AgentKind, log: Logger, env: NodeJS.ProcessEnv = process.env): BridgeConfig {
@@ -100,6 +118,9 @@ export function loadConfig(home: string, agent: AgentKind, log: Logger, env: Nod
     codexBin: pick("codexBin", ENV.codexBin, str) ?? d.codexBin,
     codexSandbox: pick("codexSandbox", null, (v) => oneOf(v, CODEX_SANDBOXES)) ?? d.codexSandbox,
     claudePermissionMode: pick("claudePermissionMode", null, (v) => oneOf(v, CLAUDE_PERMISSION_MODES)) ?? d.claudePermissionMode,
+    lingerSec: pick("lingerSec", ENV.lingerSec, (v) => parseIntInRange(v, 0, MAX_LINGER_SEC)) ?? d.lingerSec,
+    codexModel: pick("codexModel", null, modelName) ?? d.codexModel,
+    claudeModel: pick("claudeModel", null, modelName) ?? d.claudeModel,
   };
   log.debug("effective config", { ...cfg });
   return cfg;

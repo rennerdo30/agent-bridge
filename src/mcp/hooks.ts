@@ -1,4 +1,4 @@
-import { HOOK_MAX_MESSAGES } from "../core/constants.js";
+import { HOOK_MAX_MESSAGES, STOP_WAIT_CAP_MS } from "../core/constants.js";
 import type { BridgeMessage } from "../core/protocol.js";
 import { formatMessages, formatPeer } from "./format.js";
 import type { ServerContext } from "./server.js";
@@ -12,6 +12,8 @@ export interface HookInput {
   stopHookActive: boolean;
   /** Session working directory from the hook input, when the host provides it. */
   cwd?: string | null;
+  /** Aborted when the host cancels the hook call (e.g. the user interrupts). */
+  signal?: AbortSignal;
 }
 
 /** Same JSON shape as command-hook stdout; both hosts parse MCP-tool hook text identically. */
@@ -70,12 +72,32 @@ export async function buildHookResponse(ctx: ServerContext, input: HookInput): P
       return msgs.length ? context(input.event, formatMessages(msgs)) : {};
     }
     case "Stop": {
-      ctx.activity?.("idle");
-      if (channel || !node.autoWakeEnabled) return {};
-      const msgs = take(ctx, true);
-      if (msgs.length === 0) return {};
+      if (channel) {
+        ctx.activity?.("idle");
+        return {};
+      }
+      // Listen window: this session is in a conversation if it sent something recently or has subagents running.
+      const now = Date.now();
+      const lingerRemaining = node.lastSentAt > 0 ? node.lastSentAt + ctx.cfg.lingerSec * 1000 - now : 0;
+      const jobsRunning = ctx.jobs?.runningCount() ?? 0;
+      const inConversation = lingerRemaining > 0 || jobsRunning > 0;
+      if (!node.autoWakeEnabled && !inConversation) {
+        ctx.activity?.("idle");
+        return {};
+      }
+      let msgs = take(ctx, true);
+      if (msgs.length === 0 && inConversation) {
+        const waitMs = Math.min(STOP_WAIT_CAP_MS, jobsRunning > 0 ? STOP_WAIT_CAP_MS : lingerRemaining);
+        ctx.log.info("listening for replies before ending the turn", { waitMs, jobsRunning });
+        const arrived = await node.waitForMessage(waitMs, (m) => m.hop < ctx.cfg.maxHops, input.signal);
+        if (arrived) msgs = take(ctx, true);
+      }
+      if (msgs.length === 0) {
+        ctx.activity?.("idle");
+        return {};
+      }
       ctx.activity?.("busy");
-      ctx.log.info("auto-wake: continuing turn for peer messages", { count: msgs.length });
+      ctx.log.info("continuing turn for peer messages", { count: msgs.length, autoWake: node.autoWakeEnabled });
       return { decision: "block", reason: `${formatMessages(msgs, { replyHint: false })}\n\n${STOP_REASON_FOOTER}` };
     }
     default:

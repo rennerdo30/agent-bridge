@@ -43,7 +43,9 @@
             "type": "mcp_tool",
             "server": "plugin:agent-bridge:bridge",
             "tool": "hook_event",
-            "input": { "event": "Stop", "session_id": "${session_id}", "stop_hook_active": "${stop_hook_active}" }
+            "input": { "event": "Stop", "session_id": "${session_id}", "stop_hook_active": "${stop_hook_active}" },
+            "timeout": 600,
+            "statusMessage": "agent-bridge: listening for replies from peers"
           }
         ]
       }
