@@ -63,10 +63,18 @@ function copyAll(copies: [string, string][], configDir: string): InstallResult {
   return res;
 }
 
+/**
+ * Agent sources are stored as `<name>.agent.md`: on case-insensitive file systems a plain `claude.md`
+ * would be picked up by Claude Code as a CLAUDE.md memory file. They are installed as `<name>.md`.
+ */
+const AGENT_SOURCE_SUFFIX = ".agent.md";
+
 function agentCopies(sourceDir: string, targetDir: string): [string, string][] {
   const dir = join(sourceDir, AGENTS_DIR);
   if (!existsSync(dir)) return [];
-  return readdirSync(dir).map((f) => [join(dir, f), join(targetDir, AGENTS_DIR, f)] as [string, string]);
+  return readdirSync(dir)
+    .filter((f) => f.endsWith(AGENT_SOURCE_SUFFIX))
+    .map((f) => [join(dir, f), join(targetDir, AGENTS_DIR, f.slice(0, -AGENT_SOURCE_SUFFIX.length) + ".md")] as [string, string]);
 }
 
 export function installOpencode(sourceDir: string, configDir: string = opencodeConfigDir()): InstallResult {
