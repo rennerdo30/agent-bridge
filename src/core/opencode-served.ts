@@ -1,0 +1,186 @@
+import { spawn, type ChildProcess } from "node:child_process";
+import { randomBytes } from "node:crypto";
+import { extname } from "node:path";
+import { checkDepthPublic, childEnvPublic, DelegateError, resolveBinary, unwrapNpmShim, type DelegateRequest, type DelegateResult } from "./delegate.js";
+import { describeOpencodeEvent } from "./progress.js";
+import type { PermissionDecision, PermissionRequest } from "./relay.js";
+
+/**
+ * opencode with permission forwarding. `opencode run` answers every permission request itself, so for
+ * access "ask" agent-bridge starts a private `opencode serve` (127.0.0.1, random port, random password),
+ * sends the prompt over its HTTP API and answers `permission.asked` events with the user's decision.
+ */
+const SERVE_START_TIMEOUT_MS = 30_000;
+const LISTEN_RE = /listening on (https?:\/\/[^\s]+)/i;
+const SERVER_USER = "opencode";
+const PASSWORD_BYTES = 24;
+const MAX_DETAIL_CHARS = 4_000;
+/** Edits and commands ask (the defaults allow everything); asks come to us as events. */
+const ASK_PERMISSIONS = { edit: "ask", bash: "ask" };
+
+type Json = Record<string, any>;
+
+function startServe(bin: string, cwd: string, env: NodeJS.ProcessEnv): Promise<{ child: ChildProcess; url: string }> {
+  let resolved = resolveBinary(bin, env);
+  if (!resolved) return Promise.reject(new DelegateError(`executable not found: ${bin}`, "not_found"));
+  let prefix: string[] = [];
+  if (process.platform === "win32" && [".cmd", ".bat"].includes(extname(resolved).toLowerCase())) {
+    const target = unwrapNpmShim(resolved);
+    if (!target) return Promise.reject(new DelegateError(`cannot start ${bin} without a shell`, "failed"));
+    resolved = target.command;
+    prefix = target.prefix;
+  }
+  return new Promise((resolve, reject) => {
+    const child = spawn(resolved!, [...prefix, "serve", "--port", "0", "--hostname", "127.0.0.1"], {
+      cwd,
+      env: { ...env, PWD: cwd },
+      windowsHide: true,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let out = "";
+    const timer = setTimeout(() => {
+      child.kill();
+      reject(new DelegateError("opencode serve did not start in time", "timeout", out.slice(-2_000)));
+    }, SERVE_START_TIMEOUT_MS);
+    const onData = (d: Buffer) => {
+      out += d.toString();
+      const m = LISTEN_RE.exec(out);
+      if (m) {
+        clearTimeout(timer);
+        resolve({ child, url: m[1]!.replace(/\/+$/, "") });
+      }
+    };
+    child.stdout!.on("data", onData);
+    child.stderr!.on("data", onData);
+    child.on("error", (err) => {
+      clearTimeout(timer);
+      reject(new DelegateError(`failed to start opencode serve: ${err.message}`, "failed"));
+    });
+    child.on("exit", (code) => {
+      clearTimeout(timer);
+      reject(new DelegateError(`opencode serve exited early (code ${code})`, "failed", out.slice(-2_000)));
+    });
+  });
+}
+
+/** Parse Server-Sent Events from a fetch body into JSON payloads. */
+async function* sse(body: ReadableStream<Uint8Array>): AsyncGenerator<Json> {
+  const decoder = new TextDecoder();
+  let buf = "";
+  for await (const chunk of body as unknown as AsyncIterable<Uint8Array>) {
+    buf += decoder.decode(chunk, { stream: true });
+    let idx: number;
+    while ((idx = buf.indexOf("\n\n")) >= 0) {
+      const block = buf.slice(0, idx);
+      buf = buf.slice(idx + 2);
+      const data = block
+        .split(/\r?\n/)
+        .filter((l) => l.startsWith("data:"))
+        .map((l) => l.slice(5).trim())
+        .join("\n");
+      if (!data) continue;
+      try {
+        yield JSON.parse(data);
+      } catch {
+        // ignore keep-alives and partial frames
+      }
+    }
+  }
+}
+
+function permissionDetail(p: Json): string {
+  const patterns = Array.isArray(p.patterns) ? p.patterns.join(", ") : "";
+  const meta = p.metadata && typeof p.metadata === "object" ? p.metadata : {};
+  const cmd = typeof meta.command === "string" ? meta.command : typeof meta.filepath === "string" ? meta.filepath : "";
+  return (cmd || patterns || JSON.stringify(meta)).slice(0, MAX_DETAIL_CHARS);
+}
+
+export async function delegateToOpencodeServed(
+  req: DelegateRequest & { bin: string; onPermission: (r: PermissionRequest) => Promise<PermissionDecision> },
+): Promise<DelegateResult> {
+  checkDepthPublic();
+  const password = randomBytes(PASSWORD_BYTES).toString("hex");
+  const env = childEnvPublic({
+    ...req.extraEnv,
+    OPENCODE_SERVER_PASSWORD: password,
+    OPENCODE_SERVER_USERNAME: SERVER_USER,
+    OPENCODE_CONFIG_CONTENT: JSON.stringify({ permission: ASK_PERMISSIONS }),
+  });
+  const { child, url } = await startServe(req.bin, req.cwd, env);
+  const auth = `Basic ${Buffer.from(`${SERVER_USER}:${password}`).toString("base64")}`;
+  const q = `directory=${encodeURIComponent(req.cwd)}`;
+  const ac = new AbortController();
+  const onAbort = () => ac.abort();
+  req.signal?.addEventListener("abort", onAbort, { once: true });
+  const timer = setTimeout(() => ac.abort(), req.timeoutSec * 1000);
+  const api = async (method: string, path: string, body?: unknown): Promise<any> => {
+    const res = await fetch(`${url}${path}${path.includes("?") ? "&" : "?"}${q}`, {
+      method,
+      headers: { authorization: auth, "content-type": "application/json" },
+      body: body === undefined ? undefined : JSON.stringify(body),
+      signal: ac.signal,
+    });
+    if (!res.ok) throw new DelegateError(`opencode API ${method} ${path} failed: HTTP ${res.status}`, "failed", await res.text().catch(() => ""));
+    const text = await res.text();
+    return text ? JSON.parse(text) : null;
+  };
+
+  try {
+    const sessionId: string = req.sessionId ?? (await api("POST", "/session", {})).id;
+    const events = await fetch(`${url}/event?${q}`, { headers: { authorization: auth, accept: "text/event-stream" }, signal: ac.signal });
+    if (!events.ok || !events.body) throw new DelegateError(`opencode event stream failed: HTTP ${events.status}`, "failed");
+
+    const [providerID, ...rest] = (req.model ?? "").split("/");
+    const body: Json = { parts: [{ type: "text", text: req.prompt }] };
+    if (req.model && rest.length) body.model = { providerID, modelID: rest.join("/") };
+    await api("POST", `/session/${sessionId}/prompt_async`, body);
+
+    let failure: string | null = null;
+    let lastProgress = "";
+    for await (const ev of sse(events.body)) {
+      const type = String(ev.type ?? "");
+      const p: Json = ev.properties ?? {};
+      if (type === "permission.asked" && p.sessionID === sessionId) {
+        const decision = await req.onPermission({ agent: "opencode", tool: String(p.permission ?? "unknown"), detail: permissionDetail(p), cwd: req.cwd });
+        await api("POST", `/permission/${p.id}/reply`, decision.allow ? { reply: "once" } : { reply: "reject", message: decision.message });
+      } else if (type === "message.part.updated" && p.part?.sessionID === sessionId && p.part?.type === "tool") {
+        const msg = describeOpencodeEvent({ type: "tool_use", part: p.part });
+        if (msg && msg !== lastProgress) req.onProgress?.((lastProgress = msg));
+      } else if (type === "session.error" && p.sessionID === sessionId) {
+        failure = String(p.error?.data?.message ?? p.error?.message ?? "opencode session error");
+        break;
+      } else if ((type === "session.idle" && p.sessionID === sessionId) || (type === "session.status" && p.sessionID === sessionId && p.status?.type === "idle")) {
+        break;
+      }
+    }
+
+    const messages: Json[] = (await api("GET", `/session/${sessionId}/message`)) ?? [];
+    const last = [...messages].reverse().find((m) => m.info?.role === "assistant");
+    const text = (last?.parts ?? [])
+      .filter((part: Json) => part.type === "text" && typeof part.text === "string")
+      .map((part: Json) => part.text)
+      .join("");
+    if (failure && !text) throw new DelegateError(failure, "failed");
+    const tokens = last?.info?.tokens;
+    return {
+      sessionId,
+      text,
+      isError: failure !== null,
+      details: {
+        error: failure,
+        usage: tokens ? { input: Number(tokens.input) || 0, output: Number(tokens.output) || 0 } : null,
+        costUsd: typeof last?.info?.cost === "number" ? last.info.cost : null,
+      },
+    };
+  } catch (err) {
+    if (ac.signal.aborted && !(err instanceof DelegateError)) {
+      throw new DelegateError(req.signal?.aborted ? "delegate aborted" : `delegate timed out after ${req.timeoutSec}s`, req.signal?.aborted ? "aborted" : "timeout");
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+    req.signal?.removeEventListener("abort", onAbort);
+    ac.abort();
+    child.kill();
+  }
+}

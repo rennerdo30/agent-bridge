@@ -180,6 +180,8 @@ export interface DelegateRequest {
   model?: string | null;
   /** Receives short human-readable status lines while the delegate works. */
   onProgress?: (message: string) => void;
+  /** Extra environment for the child (e.g. the permission relay address). */
+  extraEnv?: Record<string, string>;
   log: Logger;
   signal?: AbortSignal;
 }
@@ -195,13 +197,15 @@ export interface DelegateResult {
 export const OPENCODE_CONFIG_CONTENT_ENV = "OPENCODE_CONFIG_CONTENT";
 /** Keep delegated Codex runs inside their sandbox regardless of the user's approvals reviewer. */
 export const CODEX_STRICT_APPROVALS = 'approvals_reviewer="user"';
+/** Makes codex exec request approvals (answered by the agent-bridge PermissionRequest hook first). */
+export const CODEX_RELAY_APPROVALS = 'approvals_reviewer="auto_review"';
 /** Read-only for opencode: no file changes, no shell commands. Reading and searching stay allowed. */
 // "ask" rather than "deny": the tools stay listed (some providers reject a reduced tool set), and headless
 // `opencode run` rejects every ask without --auto, so nothing is changed.
 export const OPENCODE_READ_ONLY_PERMISSIONS = { edit: "ask", bash: "ask" } as const;
 
-function childEnv(): NodeJS.ProcessEnv {
-  return { ...process.env, [DELEGATE_DEPTH_ENV]: String(currentDelegateDepth() + 1) };
+function childEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
+  return { ...process.env, ...extra, [DELEGATE_DEPTH_ENV]: String(currentDelegateDepth() + 1) };
 }
 
 function checkDepth(): void {
@@ -247,14 +251,16 @@ export function parseCodexJsonl(stdout: string): { threadId: string | null; text
 }
 
 export async function delegateToCodex(
-  req: DelegateRequest & { bin: string; sandbox: CodexSandbox },
+  req: DelegateRequest & { bin: string; sandbox: CodexSandbox; relayApprovals?: boolean },
 ): Promise<DelegateResult> {
   checkDepth();
   const common = ["--json", "--skip-git-repo-check", ...(req.model ? ["-m", req.model] : [])];
   // With approvals_reviewer="auto_review" in the user's config, codex exec lets a reviewer model approve
   // escalations, so a read-only sandbox would not hold. Route approvals to "user": exec then never
   // escalates and the sandbox is enforced (verified: read-only then refuses to create files).
-  const strict = ["-c", CODEX_STRICT_APPROVALS];
+  // relayApprovals: exec then asks for approvals, and the (trusted) agent-bridge PermissionRequest hook
+  // answers them with the user's decision. Only used when that hook's trust entry exists.
+  const strict = ["-c", req.relayApprovals ? CODEX_RELAY_APPROVALS : CODEX_STRICT_APPROVALS];
   const args = req.sessionId
     ? ["exec", "resume", ...common, ...strict, "-c", `sandbox_mode="${req.sandbox}"`, req.sessionId, "-"]
     : ["exec", ...common, ...strict, "-s", req.sandbox, "-C", req.cwd, "-"];
@@ -264,7 +270,7 @@ export async function delegateToCodex(
     stdin: req.prompt,
     cwd: req.cwd,
     timeoutMs: req.timeoutSec * 1000,
-    env: childEnv(),
+    env: childEnv(req.extraEnv),
     log: req.log,
     signal: req.signal,
     onLine: progressLineHandler("codex", req.onProgress),
@@ -325,7 +331,7 @@ export async function delegateToClaude(
     stdin: req.prompt,
     cwd: req.cwd,
     timeoutMs: req.timeoutSec * 1000,
-    env: childEnv(),
+    env: childEnv(req.extraEnv),
     log: req.log,
     signal: req.signal,
     onLine: progressLineHandler("claude", req.onProgress),
@@ -397,7 +403,7 @@ export async function delegateToOpencode(req: DelegateRequest & { bin: string; a
   // opencode's default rules allow edits and commands without asking, so read access must be enforced
   // explicitly: an extra config layer (merged over the user's) denies them. --auto approves the rest.
   if (req.autoApprove) args.push("--auto");
-  const env = childEnv();
+  const env = childEnv(req.extraEnv);
   if (!req.autoApprove) env[OPENCODE_CONFIG_CONTENT_ENV] = JSON.stringify({ permission: OPENCODE_READ_ONLY_PERMISSIONS });
   const res = await runProcess({
     bin: req.bin,
@@ -418,3 +424,7 @@ export async function delegateToOpencode(req: DelegateRequest & { bin: string; a
   req.log.info("opencode delegate finished", { sessionId: parsed.sessionId, code: res.code, isError });
   return { sessionId: parsed.sessionId ?? req.sessionId ?? null, text: parsed.text, isError, details: { exitCode: res.code, error: parsed.error, usage: parsed.usage ?? null, costUsd: parsed.cost || null } };
 }
+
+/** Shared with the opencode server-mode delegate. */
+export const checkDepthPublic = checkDepth;
+export const childEnvPublic = (extra: Record<string, string> = {}) => childEnv(extra);

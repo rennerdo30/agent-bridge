@@ -1,15 +1,30 @@
 import { z } from "zod";
 import { CLAUDE_PERMISSION_MODES, CODEX_SANDBOXES, type BridgeConfig, type ClaudePermissionMode, type CodexSandbox } from "../core/config.js";
 import { delegateToClaude, delegateToCodex, delegateToOpencode, type DelegateRequest, type DelegateResult } from "../core/delegate.js";
+import { delegateToOpencodeServed } from "../core/opencode-served.js";
 import type { CodingAgent } from "../core/protocol.js";
+import type { PermissionDecision, PermissionRequest } from "../core/relay.js";
 
-/** Generic access level; each target maps it to its own permission vocabulary. */
-export type Access = "read" | "edit";
-export const ACCESS_LEVELS: readonly Access[] = ["read", "edit"];
+/**
+ * Generic access level; each target maps it to its own permission vocabulary.
+ *  - read: look only
+ *  - ask:  look; anything more is forwarded to the user in the parent session (where supported)
+ *  - edit: may change files
+ */
+export type Access = "read" | "ask" | "edit";
+export const ACCESS_LEVELS: readonly Access[] = ["read", "ask", "edit"];
+
+/** Wiring for access "ask", prepared by the caller for one run. */
+export interface RelayWiring {
+  onPermission: (r: PermissionRequest) => Promise<PermissionDecision>;
+  env: Record<string, string>;
+  codexHookTrusted: boolean;
+}
 
 /** Target-specific options accepted by ask_<agent> / spawn_<agent> on top of the common ones. */
 export interface TargetArgs {
   access?: Access;
+  relay?: RelayWiring;
   sandbox?: string;
   permission_mode?: string;
   auto_approve?: boolean;
@@ -25,10 +40,18 @@ export interface DelegationTarget {
   run: (cfg: BridgeConfig, base: DelegateRequest, args: TargetArgs) => Promise<DelegateResult>;
 }
 
-const CODEX_SANDBOX_FOR: Record<Access, CodexSandbox> = { read: "read-only", edit: "workspace-write" };
-/** "read" = manual mode plus a deny list for editing and shell tools (see delegate.ts). */
-const CLAUDE_MODE_FOR: Record<Access, ClaudePermissionMode> = { read: "manual", edit: "acceptEdits" };
-const OPENCODE_AUTO_FOR: Record<Access, boolean> = { read: false, edit: true };
+const CODEX_SANDBOX_FOR: Record<Access, CodexSandbox> = { read: "read-only", ask: "read-only", edit: "workspace-write" };
+/** "read" = manual mode plus a deny list for editing and shell tools (see delegate.ts). "ask" is not forwarded for Claude yet. */
+const CLAUDE_MODE_FOR: Record<Access, ClaudePermissionMode> = { read: "manual", ask: "manual", edit: "acceptEdits" };
+const OPENCODE_AUTO_FOR: Record<Access, boolean> = { read: false, ask: false, edit: true };
+
+/** Whether a target can forward permission requests in this setup (else "ask" behaves like "read"). */
+export function supportsAsk(target: CodingAgent, relay: RelayWiring | undefined): boolean {
+  if (!relay) return false;
+  if (target === "opencode") return true;
+  if (target === "codex") return relay.codexHookTrusted;
+  return false;
+}
 
 /** How to run each coding agent headlessly. Adding an agent means adding one entry here. */
 export const DELEGATION_TARGETS: Record<CodingAgent, DelegationTarget> = {
@@ -43,6 +66,7 @@ export const DELEGATION_TARGETS: Record<CodingAgent, DelegationTarget> = {
         ...base,
         bin: cfg.codexBin,
         sandbox: (a.sandbox as CodexSandbox | undefined) ?? (a.access ? CODEX_SANDBOX_FOR[a.access] : cfg.codexSandbox),
+        ...(a.access === "ask" && supportsAsk("codex", a.relay) ? { relayApprovals: true, extraEnv: { ...base.extraEnv, ...a.relay!.env } } : {}),
       }),
   },
   claude: {
@@ -68,10 +92,12 @@ export const DELEGATION_TARGETS: Record<CodingAgent, DelegationTarget> = {
         ? "opencode auto-approves permission requests unless you pass access=read or auto_approve=false."
         : "Headless opencode rejects every permission request (edits, commands) unless you pass access=edit or auto_approve=true.",
     run: (cfg, base, a) =>
-      delegateToOpencode({
-        ...base,
-        bin: cfg.opencodeBin,
-        autoApprove: a.auto_approve ?? (a.access ? OPENCODE_AUTO_FOR[a.access] : cfg.opencodeAutoApprove),
-      }),
+      a.access === "ask" && a.auto_approve === undefined && supportsAsk("opencode", a.relay)
+        ? delegateToOpencodeServed({ ...base, bin: cfg.opencodeBin, onPermission: a.relay!.onPermission })
+        : delegateToOpencode({
+            ...base,
+            bin: cfg.opencodeBin,
+            autoApprove: a.auto_approve ?? (a.access ? OPENCODE_AUTO_FOR[a.access] : cfg.opencodeAutoApprove),
+          }),
   },
 };

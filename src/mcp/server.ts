@@ -30,7 +30,10 @@ import { BridgeError, BROADCAST, CODING_AGENTS, type AgentKind, type BridgeMessa
 import { formatMessage, formatMessages, formatPeer, formatUsage } from "./format.js";
 import { CodexWaker, type Activity } from "./codex-wake.js";
 import { buildHookResponse, type HookEvent } from "./hooks.js";
-import { ACCESS_LEVELS, DELEGATION_TARGETS, type Access, type TargetArgs } from "./targets.js";
+import { ACCESS_LEVELS, DELEGATION_TARGETS, supportsAsk, type Access, type RelayWiring, type TargetArgs } from "./targets.js";
+import { askUserViaElicitation } from "./permissions.js";
+import { PermissionRelay, type PermissionDecision, type PermissionRequest } from "../core/relay.js";
+import { codexPermissionHookTrusted } from "../core/codex-trust.js";
 import { createWorktree, finishWorktree, gitStatusSnapshot, worktreeReport } from "../core/worktree.js";
 import { JobManager } from "./jobs.js";
 
@@ -117,6 +120,8 @@ export interface ServerContext {
   learnCwd?: (projectDir: string) => Promise<void>;
   /** Background subagents started by this session. */
   jobs?: JobManager;
+  /** Ask the user in this session (MCP elicitation); used for forwarded subagent permission requests. */
+  askUser?: (req: PermissionRequest) => Promise<PermissionDecision>;
 }
 
 type ToolExtra = {
@@ -233,6 +238,7 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
       instructions: instructionsFor(agent, targets),
     },
   );
+  ctx.askUser = (req) => askUserViaElicitation(mcp.server, req, log.child("permissions"));
   registerTools(mcp, ctx, targets);
 
   const pushChannel = async (m: BridgeMessage) => {
@@ -477,7 +483,9 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
       access: z
         .enum(ACCESS_LEVELS as [Access, ...Access[]])
         .optional()
-        .describe('"read" (default): look only. "edit": may change files. Combine edit with worktree=true for parallel or risky work.'),
+        .describe(
+          '"read" (default): look only. "ask": look, and every change or command the subagent wants is asked of the user in this session (opencode; Codex with its trusted hook). "edit": may change files. Combine edit with worktree=true for parallel or risky work.',
+        ),
       worktree: z
         .boolean()
         .optional()
@@ -493,6 +501,22 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
       const access: Access | undefined = a.worktree ? (a.access ?? "edit") : a.access;
       const wt = a.worktree ? await createWorktree({ cwd, home: ctx.home, jobId: randomUUID().slice(0, 8), log: dlog }) : null;
       const before = !wt && access === "edit" ? await gitStatusSnapshot(cwd, dlog) : null;
+      // access "ask": forward the subagent's permission requests to the user in this session.
+      let relay: PermissionRelay | null = null;
+      let wiring: RelayWiring | undefined;
+      const asked: string[] = [];
+      if (access === "ask" && ctx.askUser) {
+        const askUser = ctx.askUser;
+        const decide = async (r: PermissionRequest) => {
+          const d = await askUser(r);
+          asked.push(`${d.allow ? "allowed" : "denied"}: ${r.tool} ${r.detail.slice(0, 80)}`);
+          return d;
+        };
+        relay = new PermissionRelay(decide, dlog);
+        await relay.start();
+        wiring = { onPermission: decide, env: relay.childEnv(), codexHookTrusted: codexPermissionHookTrusted() };
+      }
+      const forwarding = access === "ask" && supportsAsk(target, wiring);
       const res = await profile.run(
         cfg,
         {
@@ -505,9 +529,18 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
           signal,
           onProgress,
         },
-        { ...a, access },
-      );
+        { ...a, access, relay: wiring },
+      ).finally(() => relay?.stop());
       const notes: string[] = [];
+      if (access === "ask") {
+        notes.push(
+          forwarding
+            ? asked.length
+              ? `Permission requests forwarded to the user:\n${asked.join("\n")}`
+              : "No permission requests were needed."
+            : t("ask.unsupported", { agent: target }),
+        );
+      }
       const usage = formatUsage(res.details);
       if (usage) notes.push(usage);
       if (wt) {

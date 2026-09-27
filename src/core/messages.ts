@@ -48,7 +48,9 @@ export const en = {
   "cli.opencode.restart": "Restart opencode to load it. Requires Node.js 22.13+ on PATH.",
   "cli.opencode.removed": "Removed the agent-bridge opencode plugin from {dir}:",
   "cli.opencode.nothing": "The agent-bridge opencode plugin is not installed in {dir}.",
-  "smoke.missing": "{agent}: not installed, skipped.",
+  "ask.unsupported":
+    "access \"ask\" is not available for {agent} here, so it ran read-only. (opencode always supports it; Codex needs the agent-bridge PermissionRequest hook trusted via /hooks; Claude is not supported yet.)",
+  "smoke.missing":"{agent}: not installed, skipped.",
   "smoke.start": "{agent} {version}{note}: running…",
   "smoke.untested": " (agent-bridge was tested with {tested})",
   "smoke.pass": "  PASS  {agent}: answer {answer}, session id {session}, resume {resume}",

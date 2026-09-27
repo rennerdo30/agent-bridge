@@ -7,6 +7,9 @@ import { delegateToClaude, delegateToCodex, delegateToOpencode, resolveBinary, t
 import type { Logger } from "../core/logger.js";
 import type { CodingAgent } from "../core/protocol.js";
 import { createWorktree, finishWorktree } from "../core/worktree.js";
+import { codexPermissionHookTrusted } from "../core/codex-trust.js";
+import { delegateToOpencodeServed } from "../core/opencode-served.js";
+import { PermissionRelay, type PermissionDecision, type PermissionRequest } from "../core/relay.js";
 
 /**
  * A measured run of real delegations (costs tokens): repeated short answers, read-only enforcement,
@@ -25,6 +28,29 @@ function run(agent: CodingAgent, prompt: string, cwd: string, access: Access, lo
   if (agent === "codex") return delegateToCodex({ ...base, bin: BINS.codex, sandbox: access === "edit" ? "workspace-write" : "read-only" });
   if (agent === "claude") return delegateToClaude({ ...base, bin: BINS.claude, permissionMode: access === "edit" ? "acceptEdits" : "default" });
   return delegateToOpencode({ ...base, bin: BINS.opencode, autoApprove: access === "edit" });
+}
+
+/** Run with access "ask": permission requests go to `decide` instead of a user. Null = not supported here. */
+async function runAsk(
+  agent: CodingAgent,
+  prompt: string,
+  cwd: string,
+  decide: (r: PermissionRequest) => Promise<PermissionDecision>,
+  log: Logger,
+): Promise<DelegateResult | null> {
+  const base = { prompt, cwd, sessionId: null, timeoutSec: RUN_TIMEOUT_SEC, log };
+  if (agent === "opencode") return delegateToOpencodeServed({ ...base, bin: BINS.opencode, onPermission: decide });
+  if (agent === "codex") {
+    if (!codexPermissionHookTrusted()) return null;
+    const relay = new PermissionRelay(decide, log);
+    await relay.start();
+    try {
+      return await delegateToCodex({ ...base, bin: BINS.codex, sandbox: "read-only", relayApprovals: true, extraEnv: relay.childEnv() });
+    } finally {
+      await relay.stop();
+    }
+  }
+  return null;
 }
 
 interface Outcome {
@@ -114,6 +140,33 @@ export async function runReliability(opts: { agents: CodingAgent[]; out: (s: str
           };
         }),
       );
+    }
+
+    for (const agent of agents) {
+      for (const allow of [false, true]) {
+        const label = `${agent} ask -> ${allow ? "allow" : "deny"}`;
+        const dir = repo();
+        const asked: string[] = [];
+        const outcome = await timed(label, async () => {
+          const r = await runAsk(
+            agent,
+            "Create a file named asked.txt containing the word hi. Then reply done.",
+            dir,
+            async (req) => {
+              asked.push(`${req.tool}: ${req.detail.slice(0, 60)}`);
+              return allow ? { allow: true } : { allow: false, message: "Denied by the reliability test." };
+            },
+            opts.log,
+          );
+          if (r === null) return { pass: true, detail: "SKIP (not available: see README, permission requests)" };
+          const exists = existsSync(join(dir, "asked.txt"));
+          return {
+            pass: asked.length > 0 && exists === allow,
+            detail: `asked ${asked.length}x [${asked.join(" | ")}], file ${exists ? "created" : "not created"}`,
+          };
+        });
+        record(outcome);
+      }
     }
 
     if (agents.length > 1) {

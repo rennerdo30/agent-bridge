@@ -36490,7 +36490,7 @@ import { basename, join as join2 } from "node:path";
 import { homedir } from "node:os";
 import { join } from "node:path";
 var APP_NAME = "agent-bridge";
-var APP_VERSION = "0.4.0";
+var APP_VERSION = "0.5.0";
 var PROTOCOL_VERSION = 2;
 var ENV = {
   home: "AGENT_BRIDGE_HOME",
@@ -36883,9 +36883,10 @@ function runProcess(opts) {
 }
 var OPENCODE_CONFIG_CONTENT_ENV = "OPENCODE_CONFIG_CONTENT";
 var CODEX_STRICT_APPROVALS = 'approvals_reviewer="user"';
+var CODEX_RELAY_APPROVALS = 'approvals_reviewer="auto_review"';
 var OPENCODE_READ_ONLY_PERMISSIONS = { edit: "ask", bash: "ask" };
-function childEnv() {
-  return { ...process.env, [DELEGATE_DEPTH_ENV]: String(currentDelegateDepth() + 1) };
+function childEnv(extra = {}) {
+  return { ...process.env, ...extra, [DELEGATE_DEPTH_ENV]: String(currentDelegateDepth() + 1) };
 }
 function checkDepth() {
   if (currentDelegateDepth() >= MAX_DELEGATE_DEPTH) {
@@ -36929,7 +36930,7 @@ function parseCodexJsonl(stdout) {
 async function delegateToCodex(req) {
   checkDepth();
   const common = ["--json", "--skip-git-repo-check", ...req.model ? ["-m", req.model] : []];
-  const strict = ["-c", CODEX_STRICT_APPROVALS];
+  const strict = ["-c", req.relayApprovals ? CODEX_RELAY_APPROVALS : CODEX_STRICT_APPROVALS];
   const args = req.sessionId ? ["exec", "resume", ...common, ...strict, "-c", `sandbox_mode="${req.sandbox}"`, req.sessionId, "-"] : ["exec", ...common, ...strict, "-s", req.sandbox, "-C", req.cwd, "-"];
   const res = await runProcess({
     bin: req.bin,
@@ -36937,7 +36938,7 @@ async function delegateToCodex(req) {
     stdin: req.prompt,
     cwd: req.cwd,
     timeoutMs: req.timeoutSec * 1e3,
-    env: childEnv(),
+    env: childEnv(req.extraEnv),
     log: req.log,
     signal: req.signal,
     onLine: progressLineHandler("codex", req.onProgress)
@@ -36986,7 +36987,7 @@ async function delegateToClaude(req) {
     stdin: req.prompt,
     cwd: req.cwd,
     timeoutMs: req.timeoutSec * 1e3,
-    env: childEnv(),
+    env: childEnv(req.extraEnv),
     log: req.log,
     signal: req.signal,
     onLine: progressLineHandler("claude", req.onProgress)
@@ -37046,7 +37047,7 @@ async function delegateToOpencode(req) {
   if (req.model) args.push("-m", req.model);
   if (req.sessionId) args.push("-s", req.sessionId);
   if (req.autoApprove) args.push("--auto");
-  const env = childEnv();
+  const env = childEnv(req.extraEnv);
   if (!req.autoApprove) env[OPENCODE_CONFIG_CONTENT_ENV] = JSON.stringify({ permission: OPENCODE_READ_ONLY_PERMISSIONS });
   const res = await runProcess({
     bin: req.bin,
@@ -37067,6 +37068,8 @@ async function delegateToOpencode(req) {
   req.log.info("opencode delegate finished", { sessionId: parsed.sessionId, code: res.code, isError });
   return { sessionId: parsed.sessionId ?? req.sessionId ?? null, text: parsed.text, isError, details: { exitCode: res.code, error: parsed.error, usage: parsed.usage ?? null, costUsd: parsed.cost || null } };
 }
+var checkDepthPublic = checkDepth;
+var childEnvPublic = (extra = {}) => childEnv(extra);
 
 // src/core/messages.ts
 var en = {
@@ -37109,6 +37112,7 @@ var en = {
   "cli.opencode.restart": "Restart opencode to load it. Requires Node.js 22.13+ on PATH.",
   "cli.opencode.removed": "Removed the agent-bridge opencode plugin from {dir}:",
   "cli.opencode.nothing": "The agent-bridge opencode plugin is not installed in {dir}.",
+  "ask.unsupported": 'access "ask" is not available for {agent} here, so it ran read-only. (opencode always supports it; Codex needs the agent-bridge PermissionRequest hook trusted via /hooks; Claude is not supported yet.)',
   "smoke.missing": "{agent}: not installed, skipped.",
   "smoke.start": "{agent} {version}{note}: running\u2026",
   "smoke.untested": " (agent-bridge was tested with {tested})",
@@ -38343,11 +38347,174 @@ ${STOP_REASON_FOOTER}` };
   }
 }
 
+// src/core/opencode-served.ts
+import { spawn as spawn2 } from "node:child_process";
+import { randomBytes as randomBytes2 } from "node:crypto";
+import { extname as extname2 } from "node:path";
+var SERVE_START_TIMEOUT_MS = 3e4;
+var LISTEN_RE = /listening on (https?:\/\/[^\s]+)/i;
+var SERVER_USER = "opencode";
+var PASSWORD_BYTES = 24;
+var MAX_DETAIL_CHARS = 4e3;
+var ASK_PERMISSIONS = { edit: "ask", bash: "ask" };
+function startServe(bin, cwd, env) {
+  let resolved = resolveBinary(bin, env);
+  if (!resolved) return Promise.reject(new DelegateError(`executable not found: ${bin}`, "not_found"));
+  let prefix = [];
+  if (process.platform === "win32" && [".cmd", ".bat"].includes(extname2(resolved).toLowerCase())) {
+    const target = unwrapNpmShim(resolved);
+    if (!target) return Promise.reject(new DelegateError(`cannot start ${bin} without a shell`, "failed"));
+    resolved = target.command;
+    prefix = target.prefix;
+  }
+  return new Promise((resolve3, reject) => {
+    const child = spawn2(resolved, [...prefix, "serve", "--port", "0", "--hostname", "127.0.0.1"], {
+      cwd,
+      env: { ...env, PWD: cwd },
+      windowsHide: true,
+      stdio: ["ignore", "pipe", "pipe"]
+    });
+    let out = "";
+    const timer = setTimeout(() => {
+      child.kill();
+      reject(new DelegateError("opencode serve did not start in time", "timeout", out.slice(-2e3)));
+    }, SERVE_START_TIMEOUT_MS);
+    const onData = (d) => {
+      out += d.toString();
+      const m = LISTEN_RE.exec(out);
+      if (m) {
+        clearTimeout(timer);
+        resolve3({ child, url: m[1].replace(/\/+$/, "") });
+      }
+    };
+    child.stdout.on("data", onData);
+    child.stderr.on("data", onData);
+    child.on("error", (err) => {
+      clearTimeout(timer);
+      reject(new DelegateError(`failed to start opencode serve: ${err.message}`, "failed"));
+    });
+    child.on("exit", (code) => {
+      clearTimeout(timer);
+      reject(new DelegateError(`opencode serve exited early (code ${code})`, "failed", out.slice(-2e3)));
+    });
+  });
+}
+async function* sse(body) {
+  const decoder = new TextDecoder();
+  let buf = "";
+  for await (const chunk of body) {
+    buf += decoder.decode(chunk, { stream: true });
+    let idx;
+    while ((idx = buf.indexOf("\n\n")) >= 0) {
+      const block = buf.slice(0, idx);
+      buf = buf.slice(idx + 2);
+      const data = block.split(/\r?\n/).filter((l) => l.startsWith("data:")).map((l) => l.slice(5).trim()).join("\n");
+      if (!data) continue;
+      try {
+        yield JSON.parse(data);
+      } catch {
+      }
+    }
+  }
+}
+function permissionDetail(p) {
+  const patterns = Array.isArray(p.patterns) ? p.patterns.join(", ") : "";
+  const meta3 = p.metadata && typeof p.metadata === "object" ? p.metadata : {};
+  const cmd = typeof meta3.command === "string" ? meta3.command : typeof meta3.filepath === "string" ? meta3.filepath : "";
+  return (cmd || patterns || JSON.stringify(meta3)).slice(0, MAX_DETAIL_CHARS);
+}
+async function delegateToOpencodeServed(req) {
+  checkDepthPublic();
+  const password = randomBytes2(PASSWORD_BYTES).toString("hex");
+  const env = childEnvPublic({
+    ...req.extraEnv,
+    OPENCODE_SERVER_PASSWORD: password,
+    OPENCODE_SERVER_USERNAME: SERVER_USER,
+    OPENCODE_CONFIG_CONTENT: JSON.stringify({ permission: ASK_PERMISSIONS })
+  });
+  const { child, url: url2 } = await startServe(req.bin, req.cwd, env);
+  const auth = `Basic ${Buffer.from(`${SERVER_USER}:${password}`).toString("base64")}`;
+  const q = `directory=${encodeURIComponent(req.cwd)}`;
+  const ac = new AbortController();
+  const onAbort = () => ac.abort();
+  req.signal?.addEventListener("abort", onAbort, { once: true });
+  const timer = setTimeout(() => ac.abort(), req.timeoutSec * 1e3);
+  const api = async (method, path, body) => {
+    const res = await fetch(`${url2}${path}${path.includes("?") ? "&" : "?"}${q}`, {
+      method,
+      headers: { authorization: auth, "content-type": "application/json" },
+      body: body === void 0 ? void 0 : JSON.stringify(body),
+      signal: ac.signal
+    });
+    if (!res.ok) throw new DelegateError(`opencode API ${method} ${path} failed: HTTP ${res.status}`, "failed", await res.text().catch(() => ""));
+    const text2 = await res.text();
+    return text2 ? JSON.parse(text2) : null;
+  };
+  try {
+    const sessionId = req.sessionId ?? (await api("POST", "/session", {})).id;
+    const events = await fetch(`${url2}/event?${q}`, { headers: { authorization: auth, accept: "text/event-stream" }, signal: ac.signal });
+    if (!events.ok || !events.body) throw new DelegateError(`opencode event stream failed: HTTP ${events.status}`, "failed");
+    const [providerID, ...rest] = (req.model ?? "").split("/");
+    const body = { parts: [{ type: "text", text: req.prompt }] };
+    if (req.model && rest.length) body.model = { providerID, modelID: rest.join("/") };
+    await api("POST", `/session/${sessionId}/prompt_async`, body);
+    let failure2 = null;
+    let lastProgress = "";
+    for await (const ev of sse(events.body)) {
+      const type = String(ev.type ?? "");
+      const p = ev.properties ?? {};
+      if (type === "permission.asked" && p.sessionID === sessionId) {
+        const decision = await req.onPermission({ agent: "opencode", tool: String(p.permission ?? "unknown"), detail: permissionDetail(p), cwd: req.cwd });
+        await api("POST", `/permission/${p.id}/reply`, decision.allow ? { reply: "once" } : { reply: "reject", message: decision.message });
+      } else if (type === "message.part.updated" && p.part?.sessionID === sessionId && p.part?.type === "tool") {
+        const msg = describeOpencodeEvent({ type: "tool_use", part: p.part });
+        if (msg && msg !== lastProgress) req.onProgress?.(lastProgress = msg);
+      } else if (type === "session.error" && p.sessionID === sessionId) {
+        failure2 = String(p.error?.data?.message ?? p.error?.message ?? "opencode session error");
+        break;
+      } else if (type === "session.idle" && p.sessionID === sessionId || type === "session.status" && p.sessionID === sessionId && p.status?.type === "idle") {
+        break;
+      }
+    }
+    const messages = await api("GET", `/session/${sessionId}/message`) ?? [];
+    const last = [...messages].reverse().find((m) => m.info?.role === "assistant");
+    const text2 = (last?.parts ?? []).filter((part) => part.type === "text" && typeof part.text === "string").map((part) => part.text).join("");
+    if (failure2 && !text2) throw new DelegateError(failure2, "failed");
+    const tokens = last?.info?.tokens;
+    return {
+      sessionId,
+      text: text2,
+      isError: failure2 !== null,
+      details: {
+        error: failure2,
+        usage: tokens ? { input: Number(tokens.input) || 0, output: Number(tokens.output) || 0 } : null,
+        costUsd: typeof last?.info?.cost === "number" ? last.info.cost : null
+      }
+    };
+  } catch (err) {
+    if (ac.signal.aborted && !(err instanceof DelegateError)) {
+      throw new DelegateError(req.signal?.aborted ? "delegate aborted" : `delegate timed out after ${req.timeoutSec}s`, req.signal?.aborted ? "aborted" : "timeout");
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+    req.signal?.removeEventListener("abort", onAbort);
+    ac.abort();
+    child.kill();
+  }
+}
+
 // src/mcp/targets.ts
-var ACCESS_LEVELS = ["read", "edit"];
-var CODEX_SANDBOX_FOR = { read: "read-only", edit: "workspace-write" };
-var CLAUDE_MODE_FOR = { read: "manual", edit: "acceptEdits" };
-var OPENCODE_AUTO_FOR = { read: false, edit: true };
+var ACCESS_LEVELS = ["read", "ask", "edit"];
+var CODEX_SANDBOX_FOR = { read: "read-only", ask: "read-only", edit: "workspace-write" };
+var CLAUDE_MODE_FOR = { read: "manual", ask: "manual", edit: "acceptEdits" };
+var OPENCODE_AUTO_FOR = { read: false, ask: false, edit: true };
+function supportsAsk(target, relay) {
+  if (!relay) return false;
+  if (target === "opencode") return true;
+  if (target === "codex") return relay.codexHookTrusted;
+  return false;
+}
 var DELEGATION_TARGETS = {
   codex: {
     title: "OpenAI Codex",
@@ -38358,7 +38525,8 @@ var DELEGATION_TARGETS = {
     run: (cfg, base, a) => delegateToCodex({
       ...base,
       bin: cfg.codexBin,
-      sandbox: a.sandbox ?? (a.access ? CODEX_SANDBOX_FOR[a.access] : cfg.codexSandbox)
+      sandbox: a.sandbox ?? (a.access ? CODEX_SANDBOX_FOR[a.access] : cfg.codexSandbox),
+      ...a.access === "ask" && supportsAsk("codex", a.relay) ? { relayApprovals: true, extraEnv: { ...base.extraEnv, ...a.relay.env } } : {}
     })
   },
   claude: {
@@ -38379,7 +38547,7 @@ var DELEGATION_TARGETS = {
     defaultModel: (cfg) => cfg.opencodeModel,
     schema: { auto_approve: external_exports.boolean().optional().describe("Overrides access: auto-approve every opencode permission request (opencode run --auto)") },
     permissionNote: (cfg) => cfg.opencodeAutoApprove ? "opencode auto-approves permission requests unless you pass access=read or auto_approve=false." : "Headless opencode rejects every permission request (edits, commands) unless you pass access=edit or auto_approve=true.",
-    run: (cfg, base, a) => delegateToOpencode({
+    run: (cfg, base, a) => a.access === "ask" && a.auto_approve === void 0 && supportsAsk("opencode", a.relay) ? delegateToOpencodeServed({ ...base, bin: cfg.opencodeBin, onPermission: a.relay.onPermission }) : delegateToOpencode({
       ...base,
       bin: cfg.opencodeBin,
       autoApprove: a.auto_approve ?? (a.access ? OPENCODE_AUTO_FOR[a.access] : cfg.opencodeAutoApprove)
@@ -38387,9 +38555,149 @@ var DELEGATION_TARGETS = {
   }
 };
 
+// src/mcp/permissions.ts
+var DECISION_SCHEMA = {
+  type: "object",
+  properties: {
+    decision: {
+      type: "string",
+      title: "Decision",
+      enum: ["allow", "deny"],
+      enumNames: ["Allow", "Deny"]
+    }
+  },
+  required: ["decision"]
+};
+var ANSWER_TIMEOUT_MS = 10 * 60 * 1e3;
+var MAX_DETAIL_CHARS2 = 1500;
+function describeRequest(req) {
+  const detail = req.detail.length > MAX_DETAIL_CHARS2 ? `${req.detail.slice(0, MAX_DETAIL_CHARS2)}\u2026` : req.detail;
+  return `A ${req.agent} subagent started by agent-bridge asks for permission to use ${req.tool}${req.cwd ? ` in ${req.cwd}` : ""}:
+
+${detail}`;
+}
+async function askUserViaElicitation(server, req, log) {
+  const caps = server.getClientCapabilities();
+  if (!caps?.elicitation) {
+    return { allow: false, message: "Denied: the parent session cannot show permission dialogs (its client does not support MCP elicitation)." };
+  }
+  try {
+    const res = await server.elicitInput(
+      { mode: "form", message: describeRequest(req), requestedSchema: DECISION_SCHEMA },
+      { timeout: ANSWER_TIMEOUT_MS }
+    );
+    const allowed = res.action === "accept" && res.content?.decision === "allow";
+    log.info("user answered subagent permission request", { tool: req.tool, action: res.action, allowed });
+    return allowed ? { allow: true } : { allow: false, message: "The user denied this request." };
+  } catch (err) {
+    log.warn("permission dialog failed; denying", { err: err.message });
+    return { allow: false, message: "Denied: the permission dialog could not be shown or was not answered in time." };
+  }
+}
+
+// src/core/relay.ts
+import { randomBytes as randomBytes3 } from "node:crypto";
+import { createServer as createServer2 } from "node:http";
+var RELAY_URL_ENV = "AGENT_BRIDGE_RELAY_URL";
+var RELAY_TOKEN_ENV = "AGENT_BRIDGE_RELAY_TOKEN";
+var RELAY_HOST = "127.0.0.1";
+var RELAY_PATH = "/permission";
+var MAX_REQUEST_BYTES = 256 * 1024;
+var SECRET_BYTES = 24;
+var PermissionRelay = class {
+  constructor(handler, log) {
+    this.handler = handler;
+    this.log = log;
+  }
+  handler;
+  log;
+  server = null;
+  secret = randomBytes3(SECRET_BYTES).toString("hex");
+  url = "";
+  async start() {
+    this.server = createServer2((req, res) => {
+      void this.handle(req).then(
+        (body) => {
+          res.writeHead(200, { "content-type": "application/json" });
+          res.end(JSON.stringify(body));
+        },
+        (err) => {
+          this.log.warn("permission relay request failed", { err: err.message });
+          res.writeHead(400, { "content-type": "application/json" });
+          res.end(JSON.stringify({ allow: false, message: "agent-bridge relay error" }));
+        }
+      );
+    });
+    this.server.requestTimeout = 0;
+    this.server.headersTimeout = 0;
+    await new Promise((resolve3, reject) => {
+      this.server.once("error", reject);
+      this.server.listen(0, RELAY_HOST, () => resolve3());
+    });
+    const { port } = this.server.address();
+    this.url = `http://${RELAY_HOST}:${port}${RELAY_PATH}`;
+    this.log.debug("permission relay listening", { url: this.url });
+  }
+  /** Environment variables that let a child process reach this relay. */
+  childEnv() {
+    return { [RELAY_URL_ENV]: this.url, [RELAY_TOKEN_ENV]: this.secret };
+  }
+  async stop() {
+    const s = this.server;
+    this.server = null;
+    if (s) await new Promise((r) => s.close(() => r()));
+  }
+  async handle(req) {
+    if (req.method !== "POST" || req.url !== RELAY_PATH) throw new Error("not found");
+    const auth = String(req.headers.authorization ?? "").replace(/^Bearer /, "");
+    if (!tokensEqual(auth, this.secret)) throw new Error("unauthorized");
+    let raw = "";
+    for await (const chunk of req) {
+      raw += chunk;
+      if (raw.length > MAX_REQUEST_BYTES) throw new Error("request too large");
+    }
+    const body = JSON.parse(raw);
+    const request = {
+      agent: String(body.agent ?? "subagent"),
+      tool: String(body.tool ?? "unknown"),
+      detail: String(body.detail ?? "").slice(0, 4e3),
+      cwd: body.cwd ? String(body.cwd) : void 0
+    };
+    this.log.info("permission requested by subagent", { agent: request.agent, tool: request.tool });
+    const decision = await this.handler(request);
+    this.log.info("permission decided", { tool: request.tool, allow: decision.allow });
+    return decision;
+  }
+};
+
+// src/core/codex-trust.ts
+import { readFileSync as readFileSync4 } from "node:fs";
+import { homedir as homedir2 } from "node:os";
+import { join as join7 } from "node:path";
+var PERMISSION_HOOK_STATE_KEY = 'hooks.state."agent-bridge@agent-bridge:plugin.json#hooks[0]:permission_request:0:0"';
+function codexHome(env = process.env) {
+  return env.CODEX_HOME?.trim() || join7(homedir2(), ".codex");
+}
+function codexPermissionHookTrusted(home = codexHome(), read = (p) => readFileSync4(p, "utf8")) {
+  let text2;
+  try {
+    text2 = read(join7(home, "config.toml"));
+  } catch {
+    return false;
+  }
+  const at = text2.indexOf(`[${PERMISSION_HOOK_STATE_KEY}]`);
+  if (at < 0) return false;
+  const rest = text2.slice(at).split(/\r?\n/).slice(1);
+  for (const line of rest) {
+    if (line.trim().startsWith("[")) break;
+    if (/^\s*trusted_hash\s*=\s*"sha256:[0-9a-f]+"/.test(line)) return true;
+  }
+  return false;
+}
+
 // src/core/worktree.ts
 import { mkdirSync as mkdirSync4 } from "node:fs";
-import { basename as basename2, isAbsolute as isAbsolute2, join as join7, relative } from "node:path";
+import { basename as basename2, isAbsolute as isAbsolute2, join as join8, relative } from "node:path";
 var GIT = "git";
 var GIT_TIMEOUT_MS = 6e4;
 var BRANCH_PREFIX = "agent-bridge/";
@@ -38409,12 +38717,12 @@ async function createWorktree(opts) {
   }
   const base = await git(["rev-parse", "HEAD"], repoRoot, opts.log);
   const branch = `${BRANCH_PREFIX}${opts.jobId}`;
-  const dir = join7(opts.home, "worktrees");
+  const dir = join8(opts.home, "worktrees");
   mkdirSync4(dir, { recursive: true });
-  const path = join7(dir, `${basename2(repoRoot)}-${opts.jobId}`);
+  const path = join8(dir, `${basename2(repoRoot)}-${opts.jobId}`);
   await git(["worktree", "add", "-b", branch, path, base], repoRoot, opts.log);
   const rel = relative(repoRoot, opts.cwd);
-  const cwd = rel && !rel.startsWith("..") && !isAbsolute2(rel) ? join7(path, rel) : path;
+  const cwd = rel && !rel.startsWith("..") && !isAbsolute2(rel) ? join8(path, rel) : path;
   opts.log.info("worktree created", { repoRoot, path, branch });
   return { repoRoot, path, cwd, branch, base };
 }
@@ -38647,6 +38955,7 @@ async function startServer(argv = process.argv.slice(2)) {
       instructions: instructionsFor(agent, targets)
     }
   );
+  ctx.askUser = (req) => askUserViaElicitation(mcp.server, req, log.child("permissions"));
   registerTools(mcp, ctx, targets);
   const pushChannel = async (m) => {
     if (!channel || !node2 || m.hop >= cfg.maxHops) return;
@@ -38699,12 +39008,12 @@ async function startServer(argv = process.argv.slice(2)) {
     node2.on("connected", () => {
       if (channel) for (const m of node2.unread()) void pushChannel(m);
     });
-    const join8 = () => node2.start().catch((err) => log.error("could not join the bridge", { err: err.message }));
+    const join9 = () => node2.start().catch((err) => log.error("could not join the bridge", { err: err.message }));
     if (cwdKnown) {
-      void join8();
+      void join9();
     } else {
       log.info("project directory unknown yet; deferring bridge join", { graceMs: CWD_DISCOVERY_GRACE_MS });
-      setTimeout(() => void join8(), CWD_DISCOVERY_GRACE_MS).unref();
+      setTimeout(() => void join9(), CWD_DISCOVERY_GRACE_MS).unref();
     }
   }
 }
@@ -38848,7 +39157,9 @@ function registerTools(mcp, ctx, targets) {
       session_id: external_exports.string().optional().describe("Continue a previous delegated session"),
       cwd: external_exports.string().optional().describe("Working directory (default: this project)"),
       timeout_sec: external_exports.number().int().min(10).max(MAX_JOB_TIMEOUT_SEC).optional().describe(`Default ${DEFAULT_DELEGATE_TIMEOUT_SEC} for ask_*, none (${MAX_JOB_TIMEOUT_SEC}) for spawn_*`),
-      access: external_exports.enum(ACCESS_LEVELS).optional().describe('"read" (default): look only. "edit": may change files. Combine edit with worktree=true for parallel or risky work.'),
+      access: external_exports.enum(ACCESS_LEVELS).optional().describe(
+        '"read" (default): look only. "ask": look, and every change or command the subagent wants is asked of the user in this session (opencode; Codex with its trusted hook). "edit": may change files. Combine edit with worktree=true for parallel or risky work.'
+      ),
       worktree: external_exports.boolean().optional().describe(
         "Run in a separate git worktree on its own branch (implies access=edit). Your working copy stays untouched; the result explains how to review, merge or discard the changes."
       ),
@@ -38860,6 +39171,21 @@ function registerTools(mcp, ctx, targets) {
       const access = a.worktree ? a.access ?? "edit" : a.access;
       const wt = a.worktree ? await createWorktree({ cwd, home: ctx.home, jobId: randomUUID4().slice(0, 8), log: dlog }) : null;
       const before = !wt && access === "edit" ? await gitStatusSnapshot(cwd, dlog) : null;
+      let relay = null;
+      let wiring;
+      const asked = [];
+      if (access === "ask" && ctx.askUser) {
+        const askUser = ctx.askUser;
+        const decide = async (r) => {
+          const d = await askUser(r);
+          asked.push(`${d.allow ? "allowed" : "denied"}: ${r.tool} ${r.detail.slice(0, 80)}`);
+          return d;
+        };
+        relay = new PermissionRelay(decide, dlog);
+        await relay.start();
+        wiring = { onPermission: decide, env: relay.childEnv(), codexHookTrusted: codexPermissionHookTrusted() };
+      }
+      const forwarding = access === "ask" && supportsAsk(target, wiring);
       const res = await profile.run(
         cfg,
         {
@@ -38872,9 +39198,15 @@ function registerTools(mcp, ctx, targets) {
           signal,
           onProgress
         },
-        { ...a, access }
-      );
+        { ...a, access, relay: wiring }
+      ).finally(() => relay?.stop());
       const notes = [];
+      if (access === "ask") {
+        notes.push(
+          forwarding ? asked.length ? `Permission requests forwarded to the user:
+${asked.join("\n")}` : "No permission requests were needed." : t("ask.unsupported", { agent: target })
+        );
+      }
       const usage = formatUsage(res.details);
       if (usage) notes.push(usage);
       if (wt) {

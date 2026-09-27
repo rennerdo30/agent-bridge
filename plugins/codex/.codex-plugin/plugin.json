@@ -1,6 +1,6 @@
 {
   "name": "agent-bridge",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Talk to Claude Code from Codex: live peer messaging over a local pipe, plus headless delegation (ask_claude).",
   "author": {
     "name": "rennerdo30",
@@ -64,6 +64,18 @@
                 "session_id": "${session_id}",
                 "cwd": "${cwd}"
               }
+            }
+          ]
+        }
+      ],
+      "PermissionRequest": [
+        {
+          "hooks": [
+            {
+              "type": "command",
+              "command": "node \"${PLUGIN_ROOT}/dist/cli.mjs\" permission-hook",
+              "timeout": 900,
+              "statusMessage": "agent-bridge: asking the parent session"
             }
           ]
         }

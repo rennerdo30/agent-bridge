@@ -98,7 +98,7 @@ Peer names default to `<agent>-<project folder>`, for example `codex-myrepo`. Se
 
 ### Editing subagents: access and worktrees
 
-- `access: "read"` (the default) lets a delegated agent look but not change anything. `access: "edit"` lets it change files.
+- `access: "read"` (the default) lets a delegated agent look but not change anything. `access: "ask"` asks you for each change (see below). `access: "edit"` lets it change files.
 - `worktree: true` runs the subagent in its own git worktree on a branch `agent-bridge/<id>`. Your working copy stays untouched. The result shows a diff summary and the exact commands to review, merge (`git merge agent-bridge/<id>`) or discard the changes. Use it for parallel or risky edits.
 - Results also list the files changed in place (for `access: "edit"` without a worktree) and the token usage or cost the CLI reported.
 
@@ -114,9 +114,17 @@ Why so strict: in testing, permission modes alone did not hold. An `approvals_re
 
 A read-only Claude subagent therefore cannot run shell commands such as `git diff`. Give it `access: "edit"`, ideally with `worktree: true`, if it needs them.
 
-### Permission requests from subagents
+### Permission requests from subagents: `access: "ask"`
 
-A headless subagent cannot show you a permission dialog. Its permissions are fixed by `access` when it starts, and anything beyond them is refused. Forwarding a subagent's permission request to your session as a native dialog is not implemented yet.
+With `access: "ask"` a subagent starts read-only. Whenever it wants to change a file or run a command, you get an Allow / Deny dialog in the session that started it. That dialog is your host's native MCP dialog, in Claude Code or Codex. Your answer goes back to the subagent. Dismissing the dialog, not answering within 10 minutes, or any error counts as Deny. The result lists every request and your decision.
+
+| Subagent | Forwarding | How |
+|---|---|---|
+| opencode | yes | agent-bridge runs a private `opencode serve` (127.0.0.1, random port and password) and answers its permission events |
+| Codex | yes, once you trust the hook | the agent-bridge `PermissionRequest` hook asks your session. Trust it once via `/hooks` in Codex. Without that trust entry, Codex subagents run strictly read-only, so Codex's automatic reviewer never decides on its own. |
+| Claude | not yet | `ask` runs read-only |
+
+The parent session must support MCP elicitation dialogs; Claude Code and Codex do. If it doesn't, every request is denied.
 
 ## Native subagents
 

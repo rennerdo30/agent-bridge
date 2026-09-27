@@ -2,7 +2,7 @@
 import { createRequire as __abCreateRequire } from 'node:module'; const require = __abCreateRequire(import.meta.url);
 
 // src/cli/main.ts
-import { join as join10 } from "node:path";
+import { join as join11 } from "node:path";
 
 // src/core/client.ts
 import { EventEmitter } from "node:events";
@@ -12,7 +12,7 @@ import { connect } from "node:net";
 import { homedir } from "node:os";
 import { join } from "node:path";
 var APP_NAME = "agent-bridge";
-var APP_VERSION = "0.4.0";
+var APP_VERSION = "0.5.0";
 var PROTOCOL_VERSION = 2;
 var ENV = {
   home: "AGENT_BRIDGE_HOME",
@@ -220,6 +220,7 @@ var en = {
   "cli.opencode.restart": "Restart opencode to load it. Requires Node.js 22.13+ on PATH.",
   "cli.opencode.removed": "Removed the agent-bridge opencode plugin from {dir}:",
   "cli.opencode.nothing": "The agent-bridge opencode plugin is not installed in {dir}.",
+  "ask.unsupported": 'access "ask" is not available for {agent} here, so it ran read-only. (opencode always supports it; Codex needs the agent-bridge PermissionRequest hook trusted via /hooks; Claude is not supported yet.)',
   "smoke.missing": "{agent}: not installed, skipped.",
   "smoke.start": "{agent} {version}{note}: running\u2026",
   "smoke.untested": " (agent-bridge was tested with {tested})",
@@ -1328,9 +1329,10 @@ function runProcess(opts) {
 }
 var OPENCODE_CONFIG_CONTENT_ENV = "OPENCODE_CONFIG_CONTENT";
 var CODEX_STRICT_APPROVALS = 'approvals_reviewer="user"';
+var CODEX_RELAY_APPROVALS = 'approvals_reviewer="auto_review"';
 var OPENCODE_READ_ONLY_PERMISSIONS = { edit: "ask", bash: "ask" };
-function childEnv() {
-  return { ...process.env, [DELEGATE_DEPTH_ENV]: String(currentDelegateDepth() + 1) };
+function childEnv(extra = {}) {
+  return { ...process.env, ...extra, [DELEGATE_DEPTH_ENV]: String(currentDelegateDepth() + 1) };
 }
 function checkDepth() {
   if (currentDelegateDepth() >= MAX_DELEGATE_DEPTH) {
@@ -1374,7 +1376,7 @@ function parseCodexJsonl(stdout) {
 async function delegateToCodex(req) {
   checkDepth();
   const common = ["--json", "--skip-git-repo-check", ...req.model ? ["-m", req.model] : []];
-  const strict = ["-c", CODEX_STRICT_APPROVALS];
+  const strict = ["-c", req.relayApprovals ? CODEX_RELAY_APPROVALS : CODEX_STRICT_APPROVALS];
   const args = req.sessionId ? ["exec", "resume", ...common, ...strict, "-c", `sandbox_mode="${req.sandbox}"`, req.sessionId, "-"] : ["exec", ...common, ...strict, "-s", req.sandbox, "-C", req.cwd, "-"];
   const res = await runProcess({
     bin: req.bin,
@@ -1382,7 +1384,7 @@ async function delegateToCodex(req) {
     stdin: req.prompt,
     cwd: req.cwd,
     timeoutMs: req.timeoutSec * 1e3,
-    env: childEnv(),
+    env: childEnv(req.extraEnv),
     log: req.log,
     signal: req.signal,
     onLine: progressLineHandler("codex", req.onProgress)
@@ -1431,7 +1433,7 @@ async function delegateToClaude(req) {
     stdin: req.prompt,
     cwd: req.cwd,
     timeoutMs: req.timeoutSec * 1e3,
-    env: childEnv(),
+    env: childEnv(req.extraEnv),
     log: req.log,
     signal: req.signal,
     onLine: progressLineHandler("claude", req.onProgress)
@@ -1491,7 +1493,7 @@ async function delegateToOpencode(req) {
   if (req.model) args.push("-m", req.model);
   if (req.sessionId) args.push("-s", req.sessionId);
   if (req.autoApprove) args.push("--auto");
-  const env = childEnv();
+  const env = childEnv(req.extraEnv);
   if (!req.autoApprove) env[OPENCODE_CONFIG_CONTENT_ENV] = JSON.stringify({ permission: OPENCODE_READ_ONLY_PERMISSIONS });
   const res = await runProcess({
     bin: req.bin,
@@ -1512,6 +1514,8 @@ async function delegateToOpencode(req) {
   req.log.info("opencode delegate finished", { sessionId: parsed.sessionId, code: res.code, isError });
   return { sessionId: parsed.sessionId ?? req.sessionId ?? null, text: parsed.text, isError, details: { exitCode: res.code, error: parsed.error, usage: parsed.usage ?? null, costUsd: parsed.cost || null } };
 }
+var checkDepthPublic = checkDepth;
+var childEnvPublic = (extra = {}) => childEnv(extra);
 
 // src/cli/opencode-install.ts
 import { copyFileSync, existsSync as existsSync2, mkdirSync as mkdirSync4, readdirSync, readFileSync as readFileSync3, rmSync } from "node:fs";
@@ -1726,11 +1730,140 @@ function parseInstallerArgs(action, rest) {
   return picked.length ? picked : [...TOOLS];
 }
 
+// src/core/relay.ts
+import { randomBytes as randomBytes2 } from "node:crypto";
+import { createServer as createServer2 } from "node:http";
+var RELAY_URL_ENV = "AGENT_BRIDGE_RELAY_URL";
+var RELAY_TOKEN_ENV = "AGENT_BRIDGE_RELAY_TOKEN";
+var RELAY_HOST = "127.0.0.1";
+var RELAY_PATH = "/permission";
+var MAX_REQUEST_BYTES = 256 * 1024;
+var SECRET_BYTES = 24;
+var PermissionRelay = class {
+  constructor(handler, log) {
+    this.handler = handler;
+    this.log = log;
+  }
+  handler;
+  log;
+  server = null;
+  secret = randomBytes2(SECRET_BYTES).toString("hex");
+  url = "";
+  async start() {
+    this.server = createServer2((req, res) => {
+      void this.handle(req).then(
+        (body) => {
+          res.writeHead(200, { "content-type": "application/json" });
+          res.end(JSON.stringify(body));
+        },
+        (err) => {
+          this.log.warn("permission relay request failed", { err: err.message });
+          res.writeHead(400, { "content-type": "application/json" });
+          res.end(JSON.stringify({ allow: false, message: "agent-bridge relay error" }));
+        }
+      );
+    });
+    this.server.requestTimeout = 0;
+    this.server.headersTimeout = 0;
+    await new Promise((resolve3, reject) => {
+      this.server.once("error", reject);
+      this.server.listen(0, RELAY_HOST, () => resolve3());
+    });
+    const { port } = this.server.address();
+    this.url = `http://${RELAY_HOST}:${port}${RELAY_PATH}`;
+    this.log.debug("permission relay listening", { url: this.url });
+  }
+  /** Environment variables that let a child process reach this relay. */
+  childEnv() {
+    return { [RELAY_URL_ENV]: this.url, [RELAY_TOKEN_ENV]: this.secret };
+  }
+  async stop() {
+    const s = this.server;
+    this.server = null;
+    if (s) await new Promise((r) => s.close(() => r()));
+  }
+  async handle(req) {
+    if (req.method !== "POST" || req.url !== RELAY_PATH) throw new Error("not found");
+    const auth = String(req.headers.authorization ?? "").replace(/^Bearer /, "");
+    if (!tokensEqual(auth, this.secret)) throw new Error("unauthorized");
+    let raw = "";
+    for await (const chunk of req) {
+      raw += chunk;
+      if (raw.length > MAX_REQUEST_BYTES) throw new Error("request too large");
+    }
+    const body = JSON.parse(raw);
+    const request = {
+      agent: String(body.agent ?? "subagent"),
+      tool: String(body.tool ?? "unknown"),
+      detail: String(body.detail ?? "").slice(0, 4e3),
+      cwd: body.cwd ? String(body.cwd) : void 0
+    };
+    this.log.info("permission requested by subagent", { agent: request.agent, tool: request.tool });
+    const decision = await this.handler(request);
+    this.log.info("permission decided", { tool: request.tool, allow: decision.allow });
+    return decision;
+  }
+};
+async function askRelay(req, env = process.env) {
+  const url = env[RELAY_URL_ENV];
+  const token = env[RELAY_TOKEN_ENV];
+  if (!url || !token) return { allow: false, message: "agent-bridge: no permission relay for this run" };
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+      body: JSON.stringify(req)
+    });
+    const body = await res.json();
+    return body.allow === true ? { allow: true } : { allow: false, message: body.message ?? "denied" };
+  } catch (err) {
+    return { allow: false, message: `agent-bridge: permission relay unreachable (${err.message})` };
+  }
+}
+
+// src/cli/permission-hook.ts
+var MAX_DETAIL_CHARS = 4e3;
+function describe(toolInput) {
+  if (toolInput && typeof toolInput === "object") {
+    const o = toolInput;
+    if (typeof o.command === "string") return o.command;
+    if (typeof o.file_path === "string") return o.file_path;
+  }
+  return JSON.stringify(toolInput ?? {}).slice(0, MAX_DETAIL_CHARS);
+}
+async function readStdin() {
+  let raw = "";
+  for await (const chunk of process.stdin) raw += chunk;
+  return raw;
+}
+async function runPermissionHook() {
+  if (!process.env[RELAY_URL_ENV]) return 0;
+  let input = {};
+  try {
+    input = JSON.parse(await readStdin() || "{}");
+  } catch {
+  }
+  const decision = await askRelay({
+    agent: "codex",
+    tool: String(input.tool_name ?? "unknown"),
+    detail: describe(input.tool_input).slice(0, MAX_DETAIL_CHARS),
+    cwd: typeof input.cwd === "string" ? input.cwd : void 0
+  });
+  const out2 = {
+    hookSpecificOutput: {
+      hookEventName: "PermissionRequest",
+      decision: decision.allow ? { behavior: "allow" } : { behavior: "deny", message: decision.message }
+    }
+  };
+  process.stdout.write(JSON.stringify(out2));
+  return 0;
+}
+
 // src/cli/reliability.ts
 import { execFileSync } from "node:child_process";
 import { existsSync as existsSync3, mkdtempSync, rmSync as rmSync2, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join as join8 } from "node:path";
+import { join as join9 } from "node:path";
 
 // src/core/worktree.ts
 import { mkdirSync as mkdirSync5 } from "node:fs";
@@ -1774,6 +1907,188 @@ async function finishWorktree(wt, summary, log) {
   return { changed: diffStat.length > 0, diffStat: diffStat.slice(0, MAX_DIFFSTAT_CHARS) };
 }
 
+// src/core/codex-trust.ts
+import { readFileSync as readFileSync4 } from "node:fs";
+import { homedir as homedir3 } from "node:os";
+import { join as join8 } from "node:path";
+var PERMISSION_HOOK_STATE_KEY = 'hooks.state."agent-bridge@agent-bridge:plugin.json#hooks[0]:permission_request:0:0"';
+function codexHome(env = process.env) {
+  return env.CODEX_HOME?.trim() || join8(homedir3(), ".codex");
+}
+function codexPermissionHookTrusted(home = codexHome(), read = (p) => readFileSync4(p, "utf8")) {
+  let text;
+  try {
+    text = read(join8(home, "config.toml"));
+  } catch {
+    return false;
+  }
+  const at = text.indexOf(`[${PERMISSION_HOOK_STATE_KEY}]`);
+  if (at < 0) return false;
+  const rest = text.slice(at).split(/\r?\n/).slice(1);
+  for (const line of rest) {
+    if (line.trim().startsWith("[")) break;
+    if (/^\s*trusted_hash\s*=\s*"sha256:[0-9a-f]+"/.test(line)) return true;
+  }
+  return false;
+}
+
+// src/core/opencode-served.ts
+import { spawn as spawn3 } from "node:child_process";
+import { randomBytes as randomBytes3 } from "node:crypto";
+import { extname as extname2 } from "node:path";
+var SERVE_START_TIMEOUT_MS = 3e4;
+var LISTEN_RE = /listening on (https?:\/\/[^\s]+)/i;
+var SERVER_USER = "opencode";
+var PASSWORD_BYTES = 24;
+var MAX_DETAIL_CHARS2 = 4e3;
+var ASK_PERMISSIONS = { edit: "ask", bash: "ask" };
+function startServe(bin, cwd, env) {
+  let resolved = resolveBinary(bin, env);
+  if (!resolved) return Promise.reject(new DelegateError(`executable not found: ${bin}`, "not_found"));
+  let prefix = [];
+  if (process.platform === "win32" && [".cmd", ".bat"].includes(extname2(resolved).toLowerCase())) {
+    const target = unwrapNpmShim(resolved);
+    if (!target) return Promise.reject(new DelegateError(`cannot start ${bin} without a shell`, "failed"));
+    resolved = target.command;
+    prefix = target.prefix;
+  }
+  return new Promise((resolve3, reject) => {
+    const child = spawn3(resolved, [...prefix, "serve", "--port", "0", "--hostname", "127.0.0.1"], {
+      cwd,
+      env: { ...env, PWD: cwd },
+      windowsHide: true,
+      stdio: ["ignore", "pipe", "pipe"]
+    });
+    let out2 = "";
+    const timer = setTimeout(() => {
+      child.kill();
+      reject(new DelegateError("opencode serve did not start in time", "timeout", out2.slice(-2e3)));
+    }, SERVE_START_TIMEOUT_MS);
+    const onData = (d) => {
+      out2 += d.toString();
+      const m = LISTEN_RE.exec(out2);
+      if (m) {
+        clearTimeout(timer);
+        resolve3({ child, url: m[1].replace(/\/+$/, "") });
+      }
+    };
+    child.stdout.on("data", onData);
+    child.stderr.on("data", onData);
+    child.on("error", (err) => {
+      clearTimeout(timer);
+      reject(new DelegateError(`failed to start opencode serve: ${err.message}`, "failed"));
+    });
+    child.on("exit", (code) => {
+      clearTimeout(timer);
+      reject(new DelegateError(`opencode serve exited early (code ${code})`, "failed", out2.slice(-2e3)));
+    });
+  });
+}
+async function* sse(body) {
+  const decoder = new TextDecoder();
+  let buf = "";
+  for await (const chunk of body) {
+    buf += decoder.decode(chunk, { stream: true });
+    let idx;
+    while ((idx = buf.indexOf("\n\n")) >= 0) {
+      const block = buf.slice(0, idx);
+      buf = buf.slice(idx + 2);
+      const data = block.split(/\r?\n/).filter((l) => l.startsWith("data:")).map((l) => l.slice(5).trim()).join("\n");
+      if (!data) continue;
+      try {
+        yield JSON.parse(data);
+      } catch {
+      }
+    }
+  }
+}
+function permissionDetail(p) {
+  const patterns = Array.isArray(p.patterns) ? p.patterns.join(", ") : "";
+  const meta = p.metadata && typeof p.metadata === "object" ? p.metadata : {};
+  const cmd = typeof meta.command === "string" ? meta.command : typeof meta.filepath === "string" ? meta.filepath : "";
+  return (cmd || patterns || JSON.stringify(meta)).slice(0, MAX_DETAIL_CHARS2);
+}
+async function delegateToOpencodeServed(req) {
+  checkDepthPublic();
+  const password = randomBytes3(PASSWORD_BYTES).toString("hex");
+  const env = childEnvPublic({
+    ...req.extraEnv,
+    OPENCODE_SERVER_PASSWORD: password,
+    OPENCODE_SERVER_USERNAME: SERVER_USER,
+    OPENCODE_CONFIG_CONTENT: JSON.stringify({ permission: ASK_PERMISSIONS })
+  });
+  const { child, url } = await startServe(req.bin, req.cwd, env);
+  const auth = `Basic ${Buffer.from(`${SERVER_USER}:${password}`).toString("base64")}`;
+  const q = `directory=${encodeURIComponent(req.cwd)}`;
+  const ac = new AbortController();
+  const onAbort = () => ac.abort();
+  req.signal?.addEventListener("abort", onAbort, { once: true });
+  const timer = setTimeout(() => ac.abort(), req.timeoutSec * 1e3);
+  const api = async (method, path, body) => {
+    const res = await fetch(`${url}${path}${path.includes("?") ? "&" : "?"}${q}`, {
+      method,
+      headers: { authorization: auth, "content-type": "application/json" },
+      body: body === void 0 ? void 0 : JSON.stringify(body),
+      signal: ac.signal
+    });
+    if (!res.ok) throw new DelegateError(`opencode API ${method} ${path} failed: HTTP ${res.status}`, "failed", await res.text().catch(() => ""));
+    const text = await res.text();
+    return text ? JSON.parse(text) : null;
+  };
+  try {
+    const sessionId = req.sessionId ?? (await api("POST", "/session", {})).id;
+    const events = await fetch(`${url}/event?${q}`, { headers: { authorization: auth, accept: "text/event-stream" }, signal: ac.signal });
+    if (!events.ok || !events.body) throw new DelegateError(`opencode event stream failed: HTTP ${events.status}`, "failed");
+    const [providerID, ...rest] = (req.model ?? "").split("/");
+    const body = { parts: [{ type: "text", text: req.prompt }] };
+    if (req.model && rest.length) body.model = { providerID, modelID: rest.join("/") };
+    await api("POST", `/session/${sessionId}/prompt_async`, body);
+    let failure = null;
+    let lastProgress = "";
+    for await (const ev of sse(events.body)) {
+      const type = String(ev.type ?? "");
+      const p = ev.properties ?? {};
+      if (type === "permission.asked" && p.sessionID === sessionId) {
+        const decision = await req.onPermission({ agent: "opencode", tool: String(p.permission ?? "unknown"), detail: permissionDetail(p), cwd: req.cwd });
+        await api("POST", `/permission/${p.id}/reply`, decision.allow ? { reply: "once" } : { reply: "reject", message: decision.message });
+      } else if (type === "message.part.updated" && p.part?.sessionID === sessionId && p.part?.type === "tool") {
+        const msg = describeOpencodeEvent({ type: "tool_use", part: p.part });
+        if (msg && msg !== lastProgress) req.onProgress?.(lastProgress = msg);
+      } else if (type === "session.error" && p.sessionID === sessionId) {
+        failure = String(p.error?.data?.message ?? p.error?.message ?? "opencode session error");
+        break;
+      } else if (type === "session.idle" && p.sessionID === sessionId || type === "session.status" && p.sessionID === sessionId && p.status?.type === "idle") {
+        break;
+      }
+    }
+    const messages = await api("GET", `/session/${sessionId}/message`) ?? [];
+    const last = [...messages].reverse().find((m) => m.info?.role === "assistant");
+    const text = (last?.parts ?? []).filter((part) => part.type === "text" && typeof part.text === "string").map((part) => part.text).join("");
+    if (failure && !text) throw new DelegateError(failure, "failed");
+    const tokens = last?.info?.tokens;
+    return {
+      sessionId,
+      text,
+      isError: failure !== null,
+      details: {
+        error: failure,
+        usage: tokens ? { input: Number(tokens.input) || 0, output: Number(tokens.output) || 0 } : null,
+        costUsd: typeof last?.info?.cost === "number" ? last.info.cost : null
+      }
+    };
+  } catch (err) {
+    if (ac.signal.aborted && !(err instanceof DelegateError)) {
+      throw new DelegateError(req.signal?.aborted ? "delegate aborted" : `delegate timed out after ${req.timeoutSec}s`, req.signal?.aborted ? "aborted" : "timeout");
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+    req.signal?.removeEventListener("abort", onAbort);
+    ac.abort();
+    child.kill();
+  }
+}
+
 // src/cli/reliability.ts
 var RUN_TIMEOUT_SEC = 300;
 var REPEATS = 3;
@@ -1786,6 +2101,21 @@ function run(agent, prompt, cwd, access, log, signal) {
   if (agent === "claude") return delegateToClaude({ ...base, bin: BINS.claude, permissionMode: access === "edit" ? "acceptEdits" : "default" });
   return delegateToOpencode({ ...base, bin: BINS.opencode, autoApprove: access === "edit" });
 }
+async function runAsk(agent, prompt, cwd, decide, log) {
+  const base = { prompt, cwd, sessionId: null, timeoutSec: RUN_TIMEOUT_SEC, log };
+  if (agent === "opencode") return delegateToOpencodeServed({ ...base, bin: BINS.opencode, onPermission: decide });
+  if (agent === "codex") {
+    if (!codexPermissionHookTrusted()) return null;
+    const relay = new PermissionRelay(decide, log);
+    await relay.start();
+    try {
+      return await delegateToCodex({ ...base, bin: BINS.codex, sandbox: "read-only", relayApprovals: true, extraEnv: relay.childEnv() });
+    } finally {
+      await relay.stop();
+    }
+  }
+  return null;
+}
 async function timed(name, fn) {
   const start = Date.now();
   try {
@@ -1796,17 +2126,17 @@ async function timed(name, fn) {
   }
 }
 function makeRepo() {
-  const dir = mkdtempSync(join8(tmpdir(), "agent-bridge-rel-"));
+  const dir = mkdtempSync(join9(tmpdir(), "agent-bridge-rel-"));
   const git2 = (...a) => execFileSync("git", a, { cwd: dir, stdio: "ignore" });
   git2("init", "-q");
-  writeFileSync(join8(dir, "README.md"), "reliability sandbox\n");
+  writeFileSync(join9(dir, "README.md"), "reliability sandbox\n");
   git2("add", "README.md");
   git2("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "base");
   return dir;
 }
 async function runReliability(opts) {
   const agents = opts.agents.filter((a) => resolveBinary(BINS[a]));
-  const home = mkdtempSync(join8(tmpdir(), "agent-bridge-rel-home-"));
+  const home = mkdtempSync(join9(tmpdir(), "agent-bridge-rel-home-"));
   const results = [];
   const record = (o) => {
     results.push(o);
@@ -1834,7 +2164,7 @@ async function runReliability(opts) {
         await timed(`${agent} read-only is enforced`, async () => {
           const dir = repo();
           await run(agent, "Create a file named should-not-exist.txt containing the word hi. Then reply done.", dir, "read", opts.log);
-          const exists = existsSync3(join8(dir, "should-not-exist.txt"));
+          const exists = existsSync3(join9(dir, "should-not-exist.txt"));
           return { pass: !exists, detail: exists ? "the file WAS created despite read-only access" : "no file created" };
         })
       );
@@ -1846,7 +2176,7 @@ async function runReliability(opts) {
           const base = { prompt: "Create a file named created.txt containing the word hello. Then reply done.", cwd: wt.cwd, sessionId: null, timeoutSec: RUN_TIMEOUT_SEC, log: opts.log, onProgress: (m) => steps.push(m) };
           const r = agent === "codex" ? await delegateToCodex({ ...base, bin: BINS.codex, sandbox: "workspace-write" }) : agent === "claude" ? await delegateToClaude({ ...base, bin: BINS.claude, permissionMode: "acceptEdits" }) : await delegateToOpencode({ ...base, bin: BINS.opencode, autoApprove: true });
           const outcome = await finishWorktree(wt, "reliability edit", opts.log);
-          const leaked = existsSync3(join8(dir, "created.txt"));
+          const leaked = existsSync3(join9(dir, "created.txt"));
           const pass = outcome.diffStat.includes("created.txt") && !leaked;
           return {
             pass,
@@ -1854,6 +2184,32 @@ async function runReliability(opts) {
           };
         })
       );
+    }
+    for (const agent of agents) {
+      for (const allow of [false, true]) {
+        const label = `${agent} ask -> ${allow ? "allow" : "deny"}`;
+        const dir = repo();
+        const asked = [];
+        const outcome = await timed(label, async () => {
+          const r = await runAsk(
+            agent,
+            "Create a file named asked.txt containing the word hi. Then reply done.",
+            dir,
+            async (req) => {
+              asked.push(`${req.tool}: ${req.detail.slice(0, 60)}`);
+              return allow ? { allow: true } : { allow: false, message: "Denied by the reliability test." };
+            },
+            opts.log
+          );
+          if (r === null) return { pass: true, detail: "SKIP (not available: see README, permission requests)" };
+          const exists = existsSync3(join9(dir, "asked.txt"));
+          return {
+            pass: asked.length > 0 && exists === allow,
+            detail: `asked ${asked.length}x [${asked.join(" | ")}], file ${exists ? "created" : "not created"}`
+          };
+        });
+        record(outcome);
+      }
     }
     if (agents.length > 1) {
       opts.out("parallel:");
@@ -1895,7 +2251,7 @@ ${passed}/${results.length} passed`);
 // src/cli/smoke.ts
 import { mkdtempSync as mkdtempSync2, rmSync as rmSync3 } from "node:fs";
 import { tmpdir as tmpdir2 } from "node:os";
-import { join as join9 } from "node:path";
+import { join as join10 } from "node:path";
 var TESTED_VERSIONS = {
   claude: "2.1.283",
   codex: "0.157.1",
@@ -1915,7 +2271,7 @@ async function version(bin, log) {
   }
 }
 async function runSmoke(opts) {
-  const dir = mkdtempSync2(join9(tmpdir2(), "agent-bridge-smoke-"));
+  const dir = mkdtempSync2(join10(tmpdir2(), "agent-bridge-smoke-"));
   const bins = { claude: DEFAULT_CLAUDE_BIN, codex: DEFAULT_CODEX_BIN, opencode: DEFAULT_OPENCODE_BIN };
   let failures = 0;
   try {
@@ -2027,6 +2383,8 @@ async function main(argv) {
     case "update":
     case "uninstall":
       return runInstaller({ action: command, tools: parseInstallerArgs(command, rest), yes: rest.includes("--yes") || rest.includes("-y"), out });
+    case "permission-hook":
+      return runPermissionHook();
     case "reliability": {
       const picked = rest.filter((a) => CODING_AGENTS.includes(a));
       return runReliability({ agents: picked.length ? picked : [...CODING_AGENTS], out, log });
@@ -2054,7 +2412,7 @@ async function main(argv) {
       return 0;
     }
     case "paths":
-      out(t("cli.paths", { home, logs: join10(home, LOG_DIR_NAME), db: resolveDbPath(home), pipe }));
+      out(t("cli.paths", { home, logs: join11(home, LOG_DIR_NAME), db: resolveDbPath(home), pipe }));
       return 0;
     case "help":
     case "--help":
