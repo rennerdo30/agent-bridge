@@ -1,2 +1,44 @@
+# Normalize line endings: text files are stored with LF in the repository and checked out with LF on
+# every platform, regardless of the user's core.autocrlf setting. The bundles in plugins/*/dist are
+# executed directly by Node, and the CI "bundles are up to date" check compares them byte for byte.
 * text=auto eol=lf
-*.png binary
+
+# Source and config
+*.ts        text eol=lf diff=javascript
+*.mts       text eol=lf diff=javascript
+*.js        text eol=lf diff=javascript
+*.mjs       text eol=lf diff=javascript
+*.cjs       text eol=lf diff=javascript
+*.json      text eol=lf
+*.jsonc     text eol=lf
+*.toml      text eol=lf
+*.yml       text eol=lf
+*.yaml      text eol=lf
+*.md        text eol=lf diff=markdown
+*.txt       text eol=lf
+.gitattributes text eol=lf
+.gitignore     text eol=lf
+
+# Shell scripts must keep LF; Windows scripts need CRLF to run correctly in cmd.exe / PowerShell.
+*.sh        text eol=lf
+*.cmd       text eol=crlf
+*.bat       text eol=crlf
+*.ps1       text eol=crlf
+
+# Generated files: keep them out of diffs and language statistics.
+plugins/*/dist/**   linguist-generated=true -diff
+package-lock.json   linguist-generated=true -diff
+
+# Binary assets
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.ico   binary
+*.webp  binary
+*.pdf   binary
+*.zip   binary
+*.tgz   binary
+*.gz    binary
+*.woff  binary
+*.woff2 binary
