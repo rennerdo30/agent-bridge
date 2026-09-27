@@ -36489,7 +36489,7 @@ import { basename, join as join2 } from "node:path";
 import { homedir } from "node:os";
 import { join } from "node:path";
 var APP_NAME = "agent-bridge";
-var APP_VERSION = "0.2.0";
+var APP_VERSION = "0.3.0";
 var PROTOCOL_VERSION = 1;
 var ENV = {
   home: "AGENT_BRIDGE_HOME",
@@ -36674,6 +36674,85 @@ function defaultPeerName(agent, cwd) {
 import { spawn } from "node:child_process";
 import { existsSync, readFileSync as readFileSync2 } from "node:fs";
 import { delimiter, extname, isAbsolute, join as join3, win32 } from "node:path";
+
+// src/core/progress.ts
+var MAX_STATUS_CHARS = 140;
+function clip(s) {
+  const one = s.replace(/\s+/g, " ").trim();
+  return one.length > MAX_STATUS_CHARS ? `${one.slice(0, MAX_STATUS_CHARS - 1)}\u2026` : one;
+}
+function firstString(o, keys) {
+  for (const k of keys) if (typeof o?.[k] === "string" && o[k]) return o[k];
+  return null;
+}
+var INPUT_KEYS = ["command", "file_path", "filePath", "path", "pattern", "query", "url", "description"];
+function describeCodexEvent(ev) {
+  const item = ev?.item;
+  if (ev?.type === "item.started" && item) {
+    switch (item.type) {
+      case "command_execution":
+        return clip(`running: ${item.command ?? ""}`);
+      case "file_change": {
+        const paths = (item.changes ?? []).map((c) => c?.path).filter(Boolean);
+        return clip(`editing ${paths.join(", ") || "files"}`);
+      }
+      case "mcp_tool_call":
+        return clip(`tool ${item.server ?? ""}.${item.tool ?? ""}`);
+      case "web_search":
+        return clip(`searching the web${item.query ? `: ${item.query}` : ""}`);
+    }
+  }
+  if (ev?.type === "item.completed" && item?.type === "reasoning") return "thinking";
+  if (ev?.type === "item.completed" && item?.type === "agent_message") return "writing the answer";
+  return null;
+}
+function describeClaudeEvent(ev) {
+  if (ev?.type !== "assistant") return null;
+  const blocks = ev.message?.content ?? [];
+  const tool = blocks.find((b) => b?.type === "tool_use");
+  if (tool) {
+    const detail = firstString(tool.input, INPUT_KEYS);
+    return clip(`${tool.name}${detail ? `: ${detail}` : ""}`);
+  }
+  if (blocks.some((b) => b?.type === "text")) return "writing the answer";
+  if (blocks.some((b) => b?.type === "thinking")) return "thinking";
+  return null;
+}
+function describeOpencodeEvent(ev) {
+  if (ev?.type === "tool_use") {
+    const part = ev.part ?? {};
+    const detail = firstString(part.state?.input, INPUT_KEYS);
+    return clip(`${part.tool ?? "tool"}${detail ? `: ${detail}` : ""}`);
+  }
+  if (ev?.type === "text") return "writing the answer";
+  if (ev?.type === "reasoning") return "thinking";
+  return null;
+}
+var DESCRIBERS = {
+  codex: describeCodexEvent,
+  claude: describeClaudeEvent,
+  opencode: describeOpencodeEvent
+};
+function progressLineHandler(agent, onProgress) {
+  if (!onProgress) return void 0;
+  let last = "";
+  return (line) => {
+    if (!line.startsWith("{")) return;
+    let ev;
+    try {
+      ev = JSON.parse(line);
+    } catch {
+      return;
+    }
+    const msg = DESCRIBERS[agent](ev);
+    if (msg && msg !== last) {
+      last = msg;
+      onProgress(msg);
+    }
+  };
+}
+
+// src/core/delegate.ts
 var DELEGATE_DEPTH_ENV = "AGENT_BRIDGE_DELEGATE_DEPTH";
 var MAX_DELEGATE_DEPTH = 1;
 var KILL_GRACE_MS = 3e3;
@@ -36773,8 +36852,22 @@ function runProcess(opts) {
       finish(() => reject(new DelegateError("delegate aborted", "aborted")));
     };
     opts.signal?.addEventListener("abort", onAbort, { once: true });
+    let pending = "";
     child.stdout.setEncoding("utf8").on("data", (d) => {
       if (stdout.length < MAX_CAPTURE_CHARS) stdout += d;
+      if (!opts.onLine) return;
+      pending += d;
+      let nl;
+      while ((nl = pending.indexOf("\n")) >= 0) {
+        const line = pending.slice(0, nl).trim();
+        pending = pending.slice(nl + 1);
+        if (line) {
+          try {
+            opts.onLine(line);
+          } catch {
+          }
+        }
+      }
     });
     child.stderr.setEncoding("utf8").on("data", (d) => {
       stderr = (stderr + d).slice(-MAX_CAPTURE_CHARS);
@@ -36840,7 +36933,8 @@ async function delegateToCodex(req) {
     timeoutMs: req.timeoutSec * 1e3,
     env: childEnv(),
     log: req.log,
-    signal: req.signal
+    signal: req.signal,
+    onLine: progressLineHandler("codex", req.onProgress)
   });
   const parsed = parseCodexJsonl(res.stdout);
   const isError = res.code !== 0 || parsed.error !== null;
@@ -36856,10 +36950,12 @@ async function delegateToCodex(req) {
   };
 }
 function parseClaudeJson(stdout) {
-  const start = stdout.indexOf("{");
-  if (start < 0) return null;
+  const lines = stdout.split(/\r?\n/).filter((l) => l.trim().startsWith("{"));
+  const resultLine = [...lines].reverse().find((l) => l.includes('"type":"result"'));
+  const candidate = resultLine ?? (stdout.indexOf("{") >= 0 ? stdout.slice(stdout.indexOf("{")) : null);
+  if (!candidate) return null;
   try {
-    const o = JSON.parse(stdout.slice(start));
+    const o = JSON.parse(candidate);
     return {
       sessionId: typeof o.session_id === "string" ? o.session_id : null,
       text: typeof o.result === "string" ? o.result : "",
@@ -36872,7 +36968,7 @@ function parseClaudeJson(stdout) {
 }
 async function delegateToClaude(req) {
   checkDepth();
-  const args = ["-p", "--output-format", "json", "--permission-mode", req.permissionMode];
+  const args = ["-p", "--output-format", "stream-json", "--verbose", "--permission-mode", req.permissionMode];
   if (req.model) args.push("--model", req.model);
   if (req.sessionId) args.push("--resume", req.sessionId);
   const res = await runProcess({
@@ -36883,7 +36979,8 @@ async function delegateToClaude(req) {
     timeoutMs: req.timeoutSec * 1e3,
     env: childEnv(),
     log: req.log,
-    signal: req.signal
+    signal: req.signal,
+    onLine: progressLineHandler("claude", req.onProgress)
   });
   const parsed = parseClaudeJson(res.stdout);
   if (!parsed) {
@@ -36937,7 +37034,8 @@ async function delegateToOpencode(req) {
     timeoutMs: req.timeoutSec * 1e3,
     env: childEnv(),
     log: req.log,
-    signal: req.signal
+    signal: req.signal,
+    onLine: progressLineHandler("opencode", req.onProgress)
   });
   const parsed = parseOpencodeJsonl(res.stdout);
   const isError = res.code !== 0 || parsed.error !== null;
@@ -36958,7 +37056,7 @@ var en = {
   "peers.header": "{count} other peer(s) online:",
   "peers.none": "No other peers are online. Messages you send to an offline peer name wait until it connects.",
   "peers.jobs": "Your running subagents ({count}):",
-  "peers.job": "- {name} (model: {model}, running {seconds}s)",
+  "peers.job": "- {name} (model: {model}, running {seconds}s): {progress}",
   "jobs.started": 'Subagent {name} started. Keep working; its result will arrive as a message from "{name}" (or call wait_for_message with from="{name}").',
   "jobs.limit": "Too many subagents running (maximum {max}). Wait for one to finish or cancel one.",
   "jobs.cancelled": "Cancelled subagent {name}.",
@@ -36983,21 +37081,13 @@ var en = {
   "err.delegateDepth": "Delegation is not available inside a delegated session (prevents endless recursion).",
   "err.delegateFailed": "The delegated agent failed: {detail}",
   "err.delegatedSession": "This is a delegated headless session; peer messaging is disabled here.",
-  "cli.usage": `Usage: agent-bridge <command>
-
-Commands:
-  status              Show the broker and the connected peers
-  send <to> <text>    Send a message as the "cli" peer
-  tail                Print messages addressed to "cli" as they arrive
-  install-opencode    Install the opencode plugin into opencode's global config
-  uninstall-opencode  Remove the opencode plugin
-  paths               Show data, log and pipe locations
-  help                Show this help`,
+  "cli.usage": 'Usage: agent-bridge <command>\n\nCommands:\n  status              Show the broker and the connected peers\n  send <to> <text>    Send a message as the "cli" peer\n  tail                Print messages addressed to "cli" as they arrive\n  install-opencode        Install the opencode plugin and its @claude/@codex subagents\n  uninstall-opencode      Remove them again\n  paths                   Show data, log and pipe locations\n  help                    Show this help',
   "cli.opencode.noSource": "Could not find the opencode plugin files next to this CLI. Run it from an agent-bridge checkout or package.",
   "cli.opencode.installed": "Installed the agent-bridge opencode plugin into {dir}:",
   "cli.opencode.restart": "Restart opencode to load it. Requires Node.js 22.13+ on PATH.",
   "cli.opencode.removed": "Removed the agent-bridge opencode plugin from {dir}:",
   "cli.opencode.nothing": "The agent-bridge opencode plugin is not installed in {dir}.",
+  "cli.install.skipped": "  skipped (exists and was not created by agent-bridge): {path}",
   "cli.status.broker": "Broker: running (pid {pid}, protocol {protocol}) at {pipe}",
   "cli.status.noBroker": "Broker: not running (no agent with agent-bridge is active). Endpoint: {pipe}",
   "cli.status.peers": "Peers online: {count}",
@@ -38187,10 +38277,14 @@ var JobManager = class {
   }
   start(agent, model, prompt, run) {
     const id = randomUUID3().replace(/-/g, "").slice(0, JOB_ID_LENGTH);
-    const job = { id, name: `${agent}-job-${id}`, agent, model, prompt, startedAt: Date.now(), controller: new AbortController() };
+    const job = { id, name: `${agent}-job-${id}`, agent, model, prompt, startedAt: Date.now(), controller: new AbortController(), progress: null };
     this.running.set(id, job);
     this.log.info("subagent started", { job: job.name, model, prompt: prompt.slice(0, PROMPT_PREVIEW_CHARS) });
-    run(job.controller.signal).then(
+    const onProgress = (message) => {
+      job.progress = message;
+      this.log.debug("subagent progress", { job: job.name, message });
+    };
+    run(job.controller.signal, onProgress).then(
       (res) => this.finish(job, res.isError ? "failed" : "done", res.text || "(no answer text returned)", res.sessionId),
       (err) => this.finish(job, "failed", String(err?.message ?? err), null)
     );
@@ -38283,6 +38377,15 @@ ${err.stderrTail}` : "";
     }
   }
   return t("err.generic", { detail: String(err?.message ?? err) });
+}
+function progressReporter(extra, log) {
+  const token = extra._meta?.progressToken;
+  if (typeof token !== "string" && typeof token !== "number" || !extra.sendNotification) return void 0;
+  let progress = 0;
+  return (message) => {
+    progress++;
+    extra.sendNotification({ method: "notifications/progress", params: { progressToken: token, progress, message } }).catch((err) => log.debug("progress notification failed", { err: err.message }));
+  };
 }
 function delegationTargets(agent) {
   return CODING_AGENTS.filter((a) => a !== agent);
@@ -38454,7 +38557,7 @@ function registerTools(mcp, ctx, targets) {
       if (jobs.length) {
         lines.push(t("peers.jobs", { count: jobs.length }));
         for (const j of jobs) {
-          lines.push(t("peers.job", { name: j.name, model: j.model ?? "default", seconds: Math.round((Date.now() - j.startedAt) / 1e3) }));
+          lines.push(t("peers.job", { name: j.name, model: j.model ?? "default", seconds: Math.round((Date.now() - j.startedAt) / 1e3), progress: j.progress ?? "starting" }));
         }
       }
       return text(lines.join("\n"));
@@ -38553,7 +38656,7 @@ function registerTools(mcp, ctx, targets) {
       timeout_sec: external_exports.number().int().min(10).max(MAX_DELEGATE_TIMEOUT_SEC).optional().describe(`Default ${DEFAULT_DELEGATE_TIMEOUT_SEC}`),
       ...profile.schema
     };
-    const run = (a, signal) => profile.run(
+    const run = (a, signal, onProgress) => profile.run(
       cfg,
       {
         prompt: a.prompt,
@@ -38562,7 +38665,8 @@ function registerTools(mcp, ctx, targets) {
         timeoutSec: a.timeout_sec ?? DEFAULT_DELEGATE_TIMEOUT_SEC,
         model: a.model ?? defaultModel,
         log: log.child("delegate"),
-        signal
+        signal,
+        onProgress
       },
       a
     );
@@ -38575,7 +38679,7 @@ function registerTools(mcp, ctx, targets) {
         inputSchema: schema
       },
       guarded(askName, async (a, extra) => {
-        const res = await run(a, extra.signal);
+        const res = await run(a, extra.signal, progressReporter(extra, log));
         const header = t("delegate.done", { agent: target, session: res.sessionId ?? "-" });
         return text(`${header}
 
@@ -38594,7 +38698,7 @@ ${res.text || t("delegate.empty")}`, res.isError);
         const jobs = ctx.jobs;
         if (!jobs) throw new BridgeError("bad_request", t("err.delegatedSession"));
         if (!jobs.canStart()) return text(t("jobs.limit", { max: MAX_RUNNING_JOBS }), true);
-        const job = jobs.start(target, a.model ?? defaultModel, a.prompt, (signal) => run(a, signal));
+        const job = jobs.start(target, a.model ?? defaultModel, a.prompt, (signal, onProgress) => run(a, signal, onProgress));
         return text(t("jobs.started", { name: job.name }));
       })
     );

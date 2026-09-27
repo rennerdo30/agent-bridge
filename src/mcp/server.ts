@@ -2,7 +2,7 @@ import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
+import type { CallToolResult, ServerNotification } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import { defaultPeerName, loadConfig, parseAgentKind, type BridgeConfig, MODEL_NAME_PATTERN } from "../core/config.js";
 import {
@@ -113,7 +113,24 @@ export interface ServerContext {
   jobs?: JobManager;
 }
 
-type ToolExtra = { signal: AbortSignal; _meta?: Record<string, unknown> };
+type ToolExtra = {
+  signal: AbortSignal;
+  _meta?: Record<string, unknown>;
+  sendNotification?: (n: ServerNotification) => Promise<void>;
+};
+
+/** MCP progress notifications for a tool call, if the client asked for them (sent a progressToken). */
+function progressReporter(extra: ToolExtra, log: Logger): ((message: string) => void) | undefined {
+  const token = extra._meta?.progressToken;
+  if ((typeof token !== "string" && typeof token !== "number") || !extra.sendNotification) return undefined;
+  let progress = 0;
+  return (message) => {
+    progress++;
+    extra
+      .sendNotification!({ method: "notifications/progress", params: { progressToken: token, progress, message } } as ServerNotification)
+      .catch((err) => log.debug("progress notification failed", { err: (err as Error).message }));
+  };
+}
 
 /** Headless targets for ask_* / spawn_*: every coding agent except ourselves. */
 export function delegationTargets(agent: AgentKind): CodingAgent[] {
@@ -327,7 +344,7 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
       if (jobs.length) {
         lines.push(t("peers.jobs", { count: jobs.length }));
         for (const j of jobs) {
-          lines.push(t("peers.job", { name: j.name, model: j.model ?? "default", seconds: Math.round((Date.now() - j.startedAt) / 1000) }));
+          lines.push(t("peers.job", { name: j.name, model: j.model ?? "default", seconds: Math.round((Date.now() - j.startedAt) / 1000), progress: j.progress ?? "starting" }));
         }
       }
       return text(lines.join("\n"));
@@ -446,7 +463,7 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
       timeout_sec: z.number().int().min(10).max(MAX_DELEGATE_TIMEOUT_SEC).optional().describe(`Default ${DEFAULT_DELEGATE_TIMEOUT_SEC}`),
       ...profile.schema,
     };
-    const run = (a: DelegateArgs, signal: AbortSignal) =>
+    const run = (a: DelegateArgs, signal: AbortSignal, onProgress?: (message: string) => void) =>
       profile.run(
         cfg,
         {
@@ -457,6 +474,7 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
           model: a.model ?? defaultModel,
           log: log.child("delegate"),
           signal,
+          onProgress,
         },
         a,
       );
@@ -474,7 +492,7 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
         inputSchema: schema,
       },
       guarded(askName, async (a: DelegateArgs, extra) => {
-        const res = await run(a, extra.signal);
+        const res = await run(a, extra.signal, progressReporter(extra, log));
         const header = t("delegate.done", { agent: target, session: res.sessionId ?? "-" });
         return text(`${header}
 
@@ -498,7 +516,7 @@ ${res.text || t("delegate.empty")}`, res.isError);
         const jobs = ctx.jobs;
         if (!jobs) throw new BridgeError("bad_request", t("err.delegatedSession"));
         if (!jobs.canStart()) return text(t("jobs.limit", { max: MAX_RUNNING_JOBS }), true);
-        const job = jobs.start(target, a.model ?? defaultModel, a.prompt, (signal) => run(a, signal));
+        const job = jobs.start(target, a.model ?? defaultModel, a.prompt, (signal, onProgress) => run(a, signal, onProgress));
         return text(t("jobs.started", { name: job.name }));
       }),
     );

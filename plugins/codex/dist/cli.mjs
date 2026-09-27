@@ -12,7 +12,7 @@ import { connect } from "node:net";
 import { homedir } from "node:os";
 import { join } from "node:path";
 var APP_NAME = "agent-bridge";
-var APP_VERSION = "0.2.0";
+var APP_VERSION = "0.3.0";
 var PROTOCOL_VERSION = 1;
 var ENV = {
   home: "AGENT_BRIDGE_HOME",
@@ -184,7 +184,7 @@ var en = {
   "peers.header": "{count} other peer(s) online:",
   "peers.none": "No other peers are online. Messages you send to an offline peer name wait until it connects.",
   "peers.jobs": "Your running subagents ({count}):",
-  "peers.job": "- {name} (model: {model}, running {seconds}s)",
+  "peers.job": "- {name} (model: {model}, running {seconds}s): {progress}",
   "jobs.started": 'Subagent {name} started. Keep working; its result will arrive as a message from "{name}" (or call wait_for_message with from="{name}").',
   "jobs.limit": "Too many subagents running (maximum {max}). Wait for one to finish or cancel one.",
   "jobs.cancelled": "Cancelled subagent {name}.",
@@ -209,21 +209,13 @@ var en = {
   "err.delegateDepth": "Delegation is not available inside a delegated session (prevents endless recursion).",
   "err.delegateFailed": "The delegated agent failed: {detail}",
   "err.delegatedSession": "This is a delegated headless session; peer messaging is disabled here.",
-  "cli.usage": `Usage: agent-bridge <command>
-
-Commands:
-  status              Show the broker and the connected peers
-  send <to> <text>    Send a message as the "cli" peer
-  tail                Print messages addressed to "cli" as they arrive
-  install-opencode    Install the opencode plugin into opencode's global config
-  uninstall-opencode  Remove the opencode plugin
-  paths               Show data, log and pipe locations
-  help                Show this help`,
+  "cli.usage": 'Usage: agent-bridge <command>\n\nCommands:\n  status              Show the broker and the connected peers\n  send <to> <text>    Send a message as the "cli" peer\n  tail                Print messages addressed to "cli" as they arrive\n  install-opencode        Install the opencode plugin and its @claude/@codex subagents\n  uninstall-opencode      Remove them again\n  paths                   Show data, log and pipe locations\n  help                    Show this help',
   "cli.opencode.noSource": "Could not find the opencode plugin files next to this CLI. Run it from an agent-bridge checkout or package.",
   "cli.opencode.installed": "Installed the agent-bridge opencode plugin into {dir}:",
   "cli.opencode.restart": "Restart opencode to load it. Requires Node.js 22.13+ on PATH.",
   "cli.opencode.removed": "Removed the agent-bridge opencode plugin from {dir}:",
   "cli.opencode.nothing": "The agent-bridge opencode plugin is not installed in {dir}.",
+  "cli.install.skipped": "  skipped (exists and was not created by agent-bridge): {path}",
   "cli.status.broker": "Broker: running (pid {pid}, protocol {protocol}) at {pipe}",
   "cli.status.noBroker": "Broker: not running (no agent with agent-bridge is active). Endpoint: {pipe}",
   "cli.status.peers": "Peers online: {count}",
@@ -1032,51 +1024,95 @@ ${neutralizeBody(m.body)}
 }
 
 // src/cli/opencode-install.ts
-import { copyFileSync, existsSync, mkdirSync as mkdirSync3, rmSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync as mkdirSync3, readdirSync, readFileSync, rmSync } from "node:fs";
 import { homedir as homedir2 } from "node:os";
 import { dirname as dirname2, join as join4, resolve as resolve2 } from "node:path";
 import { fileURLToPath } from "node:url";
+var INSTALL_MARKER = "agent-bridge";
 var PLUGIN_FILE = "agent-bridge.js";
 var SERVER_DIR = "agent-bridge";
 var SERVER_FILE = "server.mjs";
 var SKILL_REL = join4("skills", "agent-bridge", "SKILL.md");
+var AGENTS_DIR = "agents";
 function opencodeConfigDir(env = process.env) {
   const xdg = env.XDG_CONFIG_HOME?.trim();
   return join4(xdg || join4(homedir2(), ".config"), "opencode");
 }
-function opencodeSourceDir(fromFile = fileURLToPath(import.meta.url)) {
+function pluginSourceDir(name, marker, fromFile = fileURLToPath(import.meta.url)) {
   let dir = dirname2(fromFile);
   for (let i = 0; i < 5; i++) {
-    for (const candidate of [join4(dir, "plugins", "opencode"), join4(dir, "..", "opencode")]) {
-      if (existsSync(join4(candidate, "dist", PLUGIN_FILE))) return resolve2(candidate);
+    for (const candidate of [join4(dir, "plugins", name), join4(dir, "..", name)]) {
+      if (existsSync(join4(candidate, marker))) return resolve2(candidate);
     }
     dir = dirname2(dir);
   }
   return null;
 }
-function installOpencode(sourceDir, configDir = opencodeConfigDir()) {
-  const copies = [
-    [join4(sourceDir, "dist", PLUGIN_FILE), join4(configDir, "plugins", PLUGIN_FILE)],
-    [join4(sourceDir, "dist", SERVER_FILE), join4(configDir, "plugins", SERVER_DIR, SERVER_FILE)],
-    [join4(sourceDir, SKILL_REL), join4(configDir, SKILL_REL)]
-  ];
+var opencodeSourceDir = (from) => pluginSourceDir("opencode", join4("dist", PLUGIN_FILE), from);
+function ownedByUs(path) {
+  try {
+    return readFileSync(path, "utf8").includes(INSTALL_MARKER);
+  } catch {
+    return false;
+  }
+}
+function copyAll(copies, configDir) {
+  const res = { configDir, files: [], skipped: [] };
   for (const [from, to] of copies) {
     if (!existsSync(from)) throw new Error(`missing build output: ${from} (run npm run build)`);
+    if (existsSync(to) && !ownedByUs(to)) {
+      res.skipped.push(to);
+      continue;
+    }
     mkdirSync3(dirname2(to), { recursive: true });
     copyFileSync(from, to);
+    res.files.push(to);
   }
-  return { configDir, files: copies.map(([, to]) => to) };
+  return res;
 }
-function uninstallOpencode(configDir = opencodeConfigDir()) {
+function agentCopies(sourceDir, targetDir) {
+  const dir = join4(sourceDir, AGENTS_DIR);
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir).map((f) => [join4(dir, f), join4(targetDir, AGENTS_DIR, f)]);
+}
+function installOpencode(sourceDir, configDir = opencodeConfigDir()) {
+  return copyAll(
+    [
+      [join4(sourceDir, "dist", PLUGIN_FILE), join4(configDir, "plugins", PLUGIN_FILE)],
+      [join4(sourceDir, "dist", SERVER_FILE), join4(configDir, "plugins", SERVER_DIR, SERVER_FILE)],
+      [join4(sourceDir, SKILL_REL), join4(configDir, SKILL_REL)],
+      ...agentCopies(sourceDir, configDir)
+    ],
+    configDir
+  );
+}
+function uninstallOpencode(configDir = opencodeConfigDir(), sourceDir = opencodeSourceDir()) {
   const targets = [join4(configDir, "plugins", PLUGIN_FILE), join4(configDir, "plugins", SERVER_DIR), join4(configDir, "skills", "agent-bridge")];
-  const removed = targets.filter((p) => existsSync(p));
-  for (const p of removed) rmSync(p, { recursive: true, force: true });
-  return { configDir, files: removed };
+  if (sourceDir) targets.push(...agentCopies(sourceDir, configDir).map(([, to]) => to));
+  return removeOwned(targets, configDir);
+}
+function removeOwned(targets, configDir) {
+  const res = { configDir, files: [], skipped: [] };
+  for (const p of targets) {
+    if (!existsSync(p)) continue;
+    const isOurFile = p.endsWith(".md") || p.endsWith(".toml") ? ownedByUs(p) : true;
+    if (!isOurFile) {
+      res.skipped.push(p);
+      continue;
+    }
+    rmSync(p, { recursive: true, force: true });
+    res.files.push(p);
+  }
+  return res;
 }
 
 // src/cli/main.ts
 var CLI_PEER_NAME = "cli";
 var out = (s) => process.stdout.write(s + "\n");
+function printResult(res) {
+  for (const f of res.files) out(`  ${f}`);
+  for (const f of res.skipped) out(t("cli.install.skipped", { path: f }));
+}
 async function main(argv) {
   const [command = "help", ...rest] = argv;
   const home = resolveHome();
@@ -1139,14 +1175,14 @@ async function main(argv) {
       }
       const res = installOpencode(source);
       out(t("cli.opencode.installed", { dir: res.configDir }));
-      for (const f of res.files) out(`  ${f}`);
+      printResult(res);
       out(t("cli.opencode.restart"));
       return 0;
     }
     case "uninstall-opencode": {
       const res = uninstallOpencode();
       out(res.files.length ? t("cli.opencode.removed", { dir: res.configDir }) : t("cli.opencode.nothing", { dir: res.configDir }));
-      for (const f of res.files) out(`  ${f}`);
+      printResult(res);
       return 0;
     }
     case "paths":

@@ -9,7 +9,7 @@ export const en = {
   "peers.none": "No other peers are online. Messages you send to an offline peer name wait until it connects.",
 
   "peers.jobs": "Your running subagents ({count}):",
-  "peers.job": "- {name} (model: {model}, running {seconds}s)",
+  "peers.job": "- {name} (model: {model}, running {seconds}s): {progress}",
 
   "jobs.started": "Subagent {name} started. Keep working; its result will arrive as a message from \"{name}\" (or call wait_for_message with from=\"{name}\").",
   "jobs.limit": "Too many subagents running (maximum {max}). Wait for one to finish or cancel one.",
@@ -42,12 +42,13 @@ export const en = {
   "err.delegatedSession": "This is a delegated headless session; peer messaging is disabled here.",
 
   "cli.usage":
-    "Usage: agent-bridge <command>\n\nCommands:\n  status              Show the broker and the connected peers\n  send <to> <text>    Send a message as the \"cli\" peer\n  tail                Print messages addressed to \"cli\" as they arrive\n  install-opencode    Install the opencode plugin into opencode's global config\n  uninstall-opencode  Remove the opencode plugin\n  paths               Show data, log and pipe locations\n  help                Show this help",
+    "Usage: agent-bridge <command>\n\nCommands:\n  status              Show the broker and the connected peers\n  send <to> <text>    Send a message as the \"cli\" peer\n  tail                Print messages addressed to \"cli\" as they arrive\n  install-opencode        Install the opencode plugin and its @claude/@codex subagents\n  uninstall-opencode      Remove them again\n  paths                   Show data, log and pipe locations\n  help                    Show this help",
   "cli.opencode.noSource": "Could not find the opencode plugin files next to this CLI. Run it from an agent-bridge checkout or package.",
   "cli.opencode.installed": "Installed the agent-bridge opencode plugin into {dir}:",
   "cli.opencode.restart": "Restart opencode to load it. Requires Node.js 22.13+ on PATH.",
   "cli.opencode.removed": "Removed the agent-bridge opencode plugin from {dir}:",
   "cli.opencode.nothing": "The agent-bridge opencode plugin is not installed in {dir}.",
+  "cli.install.skipped": "  skipped (exists and was not created by agent-bridge): {path}",
   "cli.status.broker": "Broker: running (pid {pid}, protocol {protocol}) at {pipe}",
   "cli.status.noBroker": "Broker: not running (no agent with agent-bridge is active). Endpoint: {pipe}",
   "cli.status.peers": "Peers online: {count}",

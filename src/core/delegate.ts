@@ -3,6 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { delimiter, extname, isAbsolute, join, win32 } from "node:path";
 import type { ClaudePermissionMode, CodexSandbox } from "./config.js";
 import type { Logger } from "./logger.js";
+import { progressLineHandler } from "./progress.js";
 
 /** Env var tracking nested delegation, so a delegated agent cannot delegate back forever. */
 export const DELEGATE_DEPTH_ENV = "AGENT_BRIDGE_DELEGATE_DEPTH";
@@ -83,6 +84,8 @@ export function runProcess(opts: {
   env: NodeJS.ProcessEnv;
   log: Logger;
   signal?: AbortSignal;
+  /** Called with every complete stdout line as it arrives (for progress reporting). */
+  onLine?: (line: string) => void;
 }): Promise<RunResult> {
   let resolved = resolveBinary(opts.bin, opts.env);
   if (!resolved) return Promise.reject(new DelegateError(`executable not found: ${opts.bin}`, "not_found"));
@@ -137,8 +140,23 @@ export function runProcess(opts: {
     };
     opts.signal?.addEventListener("abort", onAbort, { once: true });
 
+    let pending = "";
     child.stdout.setEncoding("utf8").on("data", (d: string) => {
       if (stdout.length < MAX_CAPTURE_CHARS) stdout += d;
+      if (!opts.onLine) return;
+      pending += d;
+      let nl: number;
+      while ((nl = pending.indexOf("\n")) >= 0) {
+        const line = pending.slice(0, nl).trim();
+        pending = pending.slice(nl + 1);
+        if (line) {
+          try {
+            opts.onLine(line);
+          } catch {
+            // progress reporting must never break the run
+          }
+        }
+      }
     });
     child.stderr.setEncoding("utf8").on("data", (d: string) => {
       stderr = (stderr + d).slice(-MAX_CAPTURE_CHARS);
@@ -159,6 +177,8 @@ export interface DelegateRequest {
   timeoutSec: number;
   /** Model override; null uses the CLI default. */
   model?: string | null;
+  /** Receives short human-readable status lines while the delegate works. */
+  onProgress?: (message: string) => void;
   log: Logger;
   signal?: AbortSignal;
 }
@@ -233,6 +253,7 @@ export async function delegateToCodex(
     env: childEnv(),
     log: req.log,
     signal: req.signal,
+    onLine: progressLineHandler("codex", req.onProgress),
   });
   const parsed = parseCodexJsonl(res.stdout);
   const isError = res.code !== 0 || parsed.error !== null;
@@ -248,12 +269,14 @@ export async function delegateToCodex(
   };
 }
 
-/** Parse `claude -p --output-format json` output (a single JSON object). */
+/** Parse `claude -p` output: the final "result" line of stream-json, or a single json object. */
 export function parseClaudeJson(stdout: string): { sessionId: string | null; text: string; isError: boolean; cost: unknown } | null {
-  const start = stdout.indexOf("{");
-  if (start < 0) return null;
+  const lines = stdout.split(/\r?\n/).filter((l) => l.trim().startsWith("{"));
+  const resultLine = [...lines].reverse().find((l) => l.includes('"type":"result"'));
+  const candidate = resultLine ?? (stdout.indexOf("{") >= 0 ? stdout.slice(stdout.indexOf("{")) : null);
+  if (!candidate) return null;
   try {
-    const o = JSON.parse(stdout.slice(start)) as Record<string, any>;
+    const o = JSON.parse(candidate) as Record<string, any>;
     return {
       sessionId: typeof o.session_id === "string" ? o.session_id : null,
       text: typeof o.result === "string" ? o.result : "",
@@ -269,7 +292,8 @@ export async function delegateToClaude(
   req: DelegateRequest & { bin: string; permissionMode: ClaudePermissionMode },
 ): Promise<DelegateResult> {
   checkDepth();
-  const args = ["-p", "--output-format", "json", "--permission-mode", req.permissionMode];
+  // stream-json lets us report progress; the final "result" line matches --output-format json.
+  const args = ["-p", "--output-format", "stream-json", "--verbose", "--permission-mode", req.permissionMode];
   if (req.model) args.push("--model", req.model);
   if (req.sessionId) args.push("--resume", req.sessionId);
   const res = await runProcess({
@@ -281,6 +305,7 @@ export async function delegateToClaude(
     env: childEnv(),
     log: req.log,
     signal: req.signal,
+    onLine: progressLineHandler("claude", req.onProgress),
   });
   const parsed = parseClaudeJson(res.stdout);
   if (!parsed) {
@@ -339,6 +364,7 @@ export async function delegateToOpencode(req: DelegateRequest & { bin: string; a
     env: childEnv(),
     log: req.log,
     signal: req.signal,
+    onLine: progressLineHandler("opencode", req.onProgress),
   });
   const parsed = parseOpencodeJsonl(res.stdout);
   const isError = res.code !== 0 || parsed.error !== null;

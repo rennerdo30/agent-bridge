@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -70,18 +70,40 @@ describe("jsonSchemaToZodShape", () => {
   });
 });
 
-describe("opencode installer", () => {
-  it("copies plugin, server and skill and removes them again", () => {
+describe("installers", () => {
+  const rel = (base: string, files: string[]) => files.map((f) => f.slice(base.length).replace(/\\/g, "/")).sort();
+
+  it("installs the opencode plugin, server, skill and subagents and removes them again", () => {
     const cfg = mkdtempSync(join(tmpdir(), "ab-oc-"));
+    const src = join(REPO, "plugins", "opencode");
     try {
-      const res = installOpencode(join(REPO, "plugins", "opencode"), cfg);
-      expect(res.files.map((f) => f.slice(cfg.length).replace(/\\/g, "/")).sort()).toEqual([
+      const res = installOpencode(src, cfg);
+      expect(rel(cfg, res.files)).toEqual([
+        "/agents/claude.md",
+        "/agents/codex.md",
         "/plugins/agent-bridge.js",
         "/plugins/agent-bridge/server.mjs",
         "/skills/agent-bridge/SKILL.md",
       ]);
-      expect(uninstallOpencode(cfg).files).toHaveLength(3);
-      expect(uninstallOpencode(cfg).files).toHaveLength(0);
+      expect(uninstallOpencode(cfg, src).files).toHaveLength(5);
+      expect(uninstallOpencode(cfg, src).files).toHaveLength(0);
+    } finally {
+      rmSync(cfg, { recursive: true, force: true });
+    }
+  });
+
+  it("never overwrites or removes an agent file the user wrote", () => {
+    const cfg = mkdtempSync(join(tmpdir(), "ab-oc-"));
+    const src = join(REPO, "plugins", "opencode");
+    try {
+      mkdirSync(join(cfg, "agents"), { recursive: true });
+      writeFileSync(join(cfg, "agents", "claude.md"), "my own claude agent");
+      const res = installOpencode(src, cfg);
+      expect(rel(cfg, res.skipped)).toEqual(["/agents/claude.md"]);
+      expect(readFileSync(join(cfg, "agents", "claude.md"), "utf8")).toBe("my own claude agent");
+      const un = uninstallOpencode(cfg, src);
+      expect(rel(cfg, un.skipped)).toEqual(["/agents/claude.md"]);
+      expect(existsSync(join(cfg, "agents", "claude.md"))).toBe(true);
     } finally {
       rmSync(cfg, { recursive: true, force: true });
     }

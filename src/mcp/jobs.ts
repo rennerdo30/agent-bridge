@@ -17,6 +17,8 @@ export interface Job {
   prompt: string;
   startedAt: number;
   controller: AbortController;
+  /** Latest status line reported by the subagent, e.g. "running: npm test". */
+  progress: string | null;
 }
 
 /**
@@ -43,13 +45,22 @@ export class JobManager {
     return this.running.size < MAX_RUNNING_JOBS;
   }
 
-  start(agent: AgentKind, model: string | null, prompt: string, run: (signal: AbortSignal) => Promise<DelegateResult>): Job {
+  start(
+    agent: AgentKind,
+    model: string | null,
+    prompt: string,
+    run: (signal: AbortSignal, onProgress: (message: string) => void) => Promise<DelegateResult>,
+  ): Job {
     const id = randomUUID().replace(/-/g, "").slice(0, JOB_ID_LENGTH);
-    const job: Job = { id, name: `${agent}-job-${id}`, agent, model, prompt, startedAt: Date.now(), controller: new AbortController() };
+    const job: Job = { id, name: `${agent}-job-${id}`, agent, model, prompt, startedAt: Date.now(), controller: new AbortController(), progress: null };
     this.running.set(id, job);
     this.log.info("subagent started", { job: job.name, model, prompt: prompt.slice(0, PROMPT_PREVIEW_CHARS) });
 
-    run(job.controller.signal).then(
+    const onProgress = (message: string) => {
+      job.progress = message;
+      this.log.debug("subagent progress", { job: job.name, message });
+    };
+    run(job.controller.signal, onProgress).then(
       (res) => this.finish(job, res.isError ? "failed" : "done", res.text || "(no answer text returned)", res.sessionId),
       (err) => this.finish(job, "failed", String((err as Error)?.message ?? err), null),
     );

@@ -49,7 +49,7 @@ Codex does not run plugin hooks until you trust them. Open `/hooks` in a Codex s
 npx -y github:rennerdo30/agent-bridge install-opencode
 ```
 
-This copies the plugin into opencode's global config (`~/.config/opencode/plugins/`, plus a skill). Restart opencode afterwards. It needs Node.js 22.13+ on `PATH`. Remove it with `npx -y github:rennerdo30/agent-bridge uninstall-opencode`.
+This copies the plugin into opencode's global config (`~/.config/opencode/plugins/`), plus a skill and the `codex` / `claude` subagents. Existing files you created yourself are never overwritten. Restart opencode afterwards. It needs Node.js 22.13+ on `PATH`. Remove it with `npx -y github:rennerdo30/agent-bridge uninstall-opencode`.
 
 In opencode the tools are called `bridge_peers`, `bridge_send`, `bridge_ask_claude`, `bridge_spawn_codex`, and so on. Because opencode plugins can start turns themselves, opencode receives peer messages live, even while idle, whenever its listen window or auto-wake applies.
 
@@ -72,7 +72,7 @@ Just ask in plain language, for example:
 | `wait_for_message` | Block until a (matching) message arrives, e.g. the answer to your question |
 | `inbox` | Read unread messages |
 | `ask_claude` / `ask_codex` / `ask_opencode` | Headless delegation to another agent (every agent gets the other two); waits and returns the answer and a `session_id` to continue |
-| `spawn_claude` / `spawn_codex` / `spawn_opencode` | Same, but as a background subagent: returns a job name at once; the result arrives as a message from `<agent>-job-<id>` |
+| `spawn_claude` / `spawn_codex` / `spawn_opencode` | Same, but as a background subagent: returns a job name at once; the result arrives as a message from `<agent>-job-<id>`; `peers` shows each job's current step |
 | `cancel_subagent` | Stop a running background subagent |
 | `auto_wake` | Let incoming messages make this session keep working (see below) |
 
@@ -83,6 +83,20 @@ Just ask in plain language, for example:
 - One target-specific option: `sandbox` for Codex, `permission_mode` for Claude, or `auto_approve` for opencode. Headless opencode rejects every permission request unless `auto_approve` is set.
 
 Peer names default to `<agent>-<project folder>`, for example `codex-myrepo`. Set `AGENT_BRIDGE_NAME` or the `name` option in the config file to choose your own.
+
+## Native subagents
+
+Where the host lets plugins define subagents, agent-bridge ships them. Each one is a thin relay that hands the task to the other agent and returns its answer. Because they are the host's own subagents, you get its subagent UI, background runs, parallelism and cancellation.
+
+| Host | Subagents | How to use |
+|---|---|---|
+| Claude Code | `agent-bridge:codex`, `agent-bridge:opencode` (bundled in the plugin, run on Haiku) | "use the codex subagent to review this diff", or `@agent-agent-bridge:codex` |
+| opencode | `codex`, `claude` (installed by `install-opencode`) | "use the codex subagent …", or `@codex` |
+| Codex | none: Codex plugins can't ship agent roles, and Codex's current `spawn_agent` has no role parameter | use `spawn_claude` / `spawn_opencode` (background jobs, see below) |
+
+While a delegated run works, agent-bridge streams its steps ("running: npm test", "editing src/x.ts") as MCP progress notifications. Claude Code shows them; Codex currently ignores MCP progress.
+
+opencode subagents keep opencode's full tool set on purpose, because opencode's free tier rejects subagents with a restricted tool list. Their prompt tells them to only relay.
 
 ## How messages reach a session
 

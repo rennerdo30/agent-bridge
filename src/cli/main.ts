@@ -6,10 +6,15 @@ import { createLogger } from "../core/logger.js";
 import { BridgeNode } from "../core/node.js";
 import { resolveDbPath, resolveHome, resolvePipePath } from "../core/paths.js";
 import { formatMessage } from "../mcp/format.js";
-import { installOpencode, opencodeSourceDir, uninstallOpencode } from "./opencode-install.js";
+import { installOpencode, opencodeSourceDir, uninstallOpencode, type InstallResult } from "./opencode-install.js";
 
 const CLI_PEER_NAME = "cli";
 const out = (s: string) => process.stdout.write(s + "\n");
+
+function printResult(res: InstallResult): void {
+  for (const f of res.files) out(`  ${f}`);
+  for (const f of res.skipped) out(t("cli.install.skipped", { path: f }));
+}
 
 async function main(argv: string[]): Promise<number> {
   const [command = "help", ...rest] = argv;
@@ -75,14 +80,14 @@ async function main(argv: string[]): Promise<number> {
       }
       const res = installOpencode(source);
       out(t("cli.opencode.installed", { dir: res.configDir }));
-      for (const f of res.files) out(`  ${f}`);
+      printResult(res);
       out(t("cli.opencode.restart"));
       return 0;
     }
     case "uninstall-opencode": {
       const res = uninstallOpencode();
       out(res.files.length ? t("cli.opencode.removed", { dir: res.configDir }) : t("cli.opencode.nothing", { dir: res.configDir }));
-      for (const f of res.files) out(`  ${f}`);
+      printResult(res);
       return 0;
     }
     case "paths":
