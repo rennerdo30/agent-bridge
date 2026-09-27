@@ -106,13 +106,17 @@ How `read` is enforced per agent:
 
 | Agent | read | edit |
 |---|---|---|
-| Codex | `read-only` sandbox (enforced by Codex's OS sandbox) | `workspace-write` sandbox |
+| Codex | `read-only` sandbox, with approvals routed to `user` so an `auto_review` setting cannot approve escalations | `workspace-write` sandbox |
 | opencode | an extra config layer turns edits and shell commands into "ask", which headless runs reject | `--auto` |
-| Claude | `manual` permission mode, see the note under *Permission requests* | `acceptEdits` |
+| Claude | editing and shell tools removed (`--disallowedTools`); Read, Grep and Glob stay | `acceptEdits` |
+
+Why so strict: in testing, permission modes alone did not hold. An `approvals_reviewer = "auto_review"` Codex setting approved writes past the read-only sandbox. Headless Claude wrote files and ran commands even in `manual` mode. opencode's default rules allow everything. `agent-bridge reliability` checks all three.
+
+A read-only Claude subagent therefore cannot run shell commands such as `git diff`. Give it `access: "edit"`, ideally with `worktree: true`, if it needs them.
 
 ### Permission requests from subagents
 
-A headless subagent cannot show you a permission dialog. Its permissions are fixed by `access` when it starts, and anything beyond them is refused. Forwarding a subagent's permission request to your session as a native dialog is being worked on.
+A headless subagent cannot show you a permission dialog. Its permissions are fixed by `access` when it starts, and anything beyond them is refused. Forwarding a subagent's permission request to your session as a native dialog is not implemented yet.
 
 ## Native subagents
 

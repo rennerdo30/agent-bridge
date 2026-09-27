@@ -36490,7 +36490,7 @@ import { basename, join as join2 } from "node:path";
 import { homedir } from "node:os";
 import { join } from "node:path";
 var APP_NAME = "agent-bridge";
-var APP_VERSION = "0.3.0";
+var APP_VERSION = "0.4.0";
 var PROTOCOL_VERSION = 2;
 var ENV = {
   home: "AGENT_BRIDGE_HOME",
@@ -36972,9 +36972,12 @@ function parseClaudeJson(stdout) {
     return null;
   }
 }
+var CLAUDE_READ_ONLY_DENIED_TOOLS = ["Write", "Edit", "MultiEdit", "NotebookEdit", "Bash", "PowerShell"];
+var CLAUDE_READ_ONLY_MODES = /* @__PURE__ */ new Set(["default", "manual", "plan"]);
 async function delegateToClaude(req) {
   checkDepth();
   const args = ["-p", "--output-format", "stream-json", "--verbose", "--permission-mode", req.permissionMode];
+  if (CLAUDE_READ_ONLY_MODES.has(req.permissionMode)) args.push("--disallowedTools", CLAUDE_READ_ONLY_DENIED_TOOLS.join(","));
   if (req.model) args.push("--model", req.model);
   if (req.sessionId) args.push("--resume", req.sessionId);
   const res = await runProcess({
@@ -38343,7 +38346,7 @@ ${STOP_REASON_FOOTER}` };
 // src/mcp/targets.ts
 var ACCESS_LEVELS = ["read", "edit"];
 var CODEX_SANDBOX_FOR = { read: "read-only", edit: "workspace-write" };
-var CLAUDE_MODE_FOR = { read: "default", edit: "acceptEdits" };
+var CLAUDE_MODE_FOR = { read: "manual", edit: "acceptEdits" };
 var OPENCODE_AUTO_FOR = { read: false, edit: true };
 var DELEGATION_TARGETS = {
   codex: {

@@ -26,8 +26,8 @@ export interface DelegationTarget {
 }
 
 const CODEX_SANDBOX_FOR: Record<Access, CodexSandbox> = { read: "read-only", edit: "workspace-write" };
-/** Headless Claude cannot ask anyone, so "read" keeps the default mode (edits are refused). */
-const CLAUDE_MODE_FOR: Record<Access, ClaudePermissionMode> = { read: "default", edit: "acceptEdits" };
+/** "read" = manual mode plus a deny list for editing and shell tools (see delegate.ts). */
+const CLAUDE_MODE_FOR: Record<Access, ClaudePermissionMode> = { read: "manual", edit: "acceptEdits" };
 const OPENCODE_AUTO_FOR: Record<Access, boolean> = { read: false, edit: true };
 
 /** How to run each coding agent headlessly. Adding an agent means adding one entry here. */

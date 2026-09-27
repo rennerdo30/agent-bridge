@@ -302,12 +302,21 @@ export function parseClaudeJson(stdout: string): { sessionId: string | null; tex
   }
 }
 
+/**
+ * Tools removed from a read-only Claude subagent. A deny list is used because permission modes alone
+ * did not hold in headless runs: allow rules / auto mode approved writes and commands even in "manual".
+ */
+export const CLAUDE_READ_ONLY_DENIED_TOOLS = ["Write", "Edit", "MultiEdit", "NotebookEdit", "Bash", "PowerShell"];
+/** Permission modes that mean "look only". */
+const CLAUDE_READ_ONLY_MODES = new Set<ClaudePermissionMode>(["default", "manual", "plan"]);
+
 export async function delegateToClaude(
   req: DelegateRequest & { bin: string; permissionMode: ClaudePermissionMode },
 ): Promise<DelegateResult> {
   checkDepth();
   // stream-json lets us report progress; the final "result" line matches --output-format json.
   const args = ["-p", "--output-format", "stream-json", "--verbose", "--permission-mode", req.permissionMode];
+  if (CLAUDE_READ_ONLY_MODES.has(req.permissionMode)) args.push("--disallowedTools", CLAUDE_READ_ONLY_DENIED_TOOLS.join(","));
   if (req.model) args.push("--model", req.model);
   if (req.sessionId) args.push("--resume", req.sessionId);
   const res = await runProcess({
