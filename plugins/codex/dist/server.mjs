@@ -7200,7 +7200,7 @@ var require_dist = __commonJS({
 });
 
 // src/mcp/server.ts
-import { dirname as dirname3, isAbsolute as isAbsolute2, relative, resolve as resolve2 } from "node:path";
+import { dirname as dirname2, isAbsolute as isAbsolute2, relative, resolve as resolve2 } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // node_modules/zod/v3/helpers/util.js
@@ -36673,7 +36673,7 @@ function defaultPeerName(agent, cwd) {
 // src/core/delegate.ts
 import { spawn } from "node:child_process";
 import { existsSync, readFileSync as readFileSync2 } from "node:fs";
-import { delimiter, dirname, extname, isAbsolute, join as join3 } from "node:path";
+import { delimiter, extname, isAbsolute, join as join3, win32 } from "node:path";
 var DELEGATE_DEPTH_ENV = "AGENT_BRIDGE_DELEGATE_DEPTH";
 var MAX_DELEGATE_DEPTH = 1;
 var KILL_GRACE_MS = 3e3;
@@ -36715,11 +36715,11 @@ function unwrapNpmShim(shimPath, readFile2 = (p) => readFileSync2(p, "utf8")) {
   } catch {
     return null;
   }
-  const dir = dirname(shimPath);
+  const dir = win32.dirname(shimPath);
   const exe = /"%~?dp0%?\\([^"]+?\.exe)"\s+%\*/i.exec(text2);
-  if (exe) return { command: join3(dir, exe[1]), prefix: [] };
+  if (exe) return { command: win32.join(dir, exe[1]), prefix: [] };
   const js = /"%~?dp0%?\\([^"]+?\.(?:c|m)?js)"\s+%\*/i.exec(text2);
-  if (js) return { command: process.execPath, prefix: [join3(dir, js[1])] };
+  if (js) return { command: process.execPath, prefix: [win32.join(dir, js[1])] };
   return null;
 }
 function runProcess(opts) {
@@ -37099,7 +37099,7 @@ import { createServer } from "node:net";
 
 // src/core/store.ts
 import { mkdirSync as mkdirSync2 } from "node:fs";
-import { dirname as dirname2 } from "node:path";
+import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 function agentQueueKey(agent) {
   return `agent:${agent}`;
@@ -37140,7 +37140,7 @@ function toMessage(r) {
 var MessageStore = class {
   constructor(file2, log) {
     this.log = log;
-    if (file2 !== ":memory:") mkdirSync2(dirname2(file2), { recursive: true });
+    if (file2 !== ":memory:") mkdirSync2(dirname(file2), { recursive: true });
     this.db = new DatabaseSync(file2);
     this.db.exec("PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 3000;");
     this.db.exec(SCHEMA);
@@ -38233,7 +38233,7 @@ var CHANNEL_NOTIFICATION = "notifications/claude/channel";
 var OPENCODE_NOTIFICATION = "notifications/agent-bridge/message";
 var CODEX_SANDBOX_META = "codex/sandbox-state-meta";
 var CWD_DISCOVERY_GRACE_MS = 15e3;
-var PLUGIN_ROOT = resolve2(dirname3(fileURLToPath(import.meta.url)), "..");
+var PLUGIN_ROOT = resolve2(dirname2(fileURLToPath(import.meta.url)), "..");
 function isInside(child, parent) {
   const rel = relative(resolve2(parent), resolve2(child));
   return rel === "" || !rel.startsWith("..") && !isAbsolute2(rel);

@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
-import { delimiter, dirname, extname, isAbsolute, join } from "node:path";
+import { delimiter, extname, isAbsolute, join, win32 } from "node:path";
 import type { ClaudePermissionMode, CodexSandbox } from "./config.js";
 import type { Logger } from "./logger.js";
 
@@ -55,11 +55,12 @@ export function unwrapNpmShim(shimPath: string, readFile: (p: string) => string 
   } catch {
     return null;
   }
-  const dir = dirname(shimPath);
+  // .cmd shims only exist on Windows; parse their paths with Windows semantics everywhere.
+  const dir = win32.dirname(shimPath);
   const exe = /"%~?dp0%?\\([^"]+?\.exe)"\s+%\*/i.exec(text);
-  if (exe) return { command: join(dir, exe[1]!), prefix: [] };
+  if (exe) return { command: win32.join(dir, exe[1]!), prefix: [] };
   const js = /"%~?dp0%?\\([^"]+?\.(?:c|m)?js)"\s+%\*/i.exec(text);
-  if (js) return { command: process.execPath, prefix: [join(dir, js[1]!)] };
+  if (js) return { command: process.execPath, prefix: [win32.join(dir, js[1]!)] };
   return null;
 }
 
