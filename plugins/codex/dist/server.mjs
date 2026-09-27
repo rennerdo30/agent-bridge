@@ -36489,7 +36489,7 @@ import { basename, join as join2 } from "node:path";
 import { homedir } from "node:os";
 import { join } from "node:path";
 var APP_NAME = "agent-bridge";
-var APP_VERSION = "0.1.0";
+var APP_VERSION = "0.1.1";
 var PROTOCOL_VERSION = 1;
 var ENV = {
   home: "AGENT_BRIDGE_HOME",
