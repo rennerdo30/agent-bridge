@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { nullLogger } from "../src/core/logger.js";
 import { BridgeNode } from "../src/core/node.js";
 import { resolveDbPath, resolvePipePath } from "../src/core/paths.js";
+import { loadOrCreateToken } from "../src/core/token.js";
 import type { AgentKind } from "../src/core/protocol.js";
 
 export interface TestEnv {
@@ -25,7 +26,7 @@ export function makeEnv(): TestEnv {
     pipe,
     db,
     node(name, agent = "claude", autoWake = false) {
-      const n = new BridgeNode({ pipePath: pipe, dbPath: db, agent, name, cwd: home, autoWake, log: nullLogger });
+      const n = new BridgeNode({ pipePath: pipe, token: loadOrCreateToken(home), dbPath: db, agent, name, cwd: home, autoWake, log: nullLogger });
       nodes.push(n);
       return n;
     },

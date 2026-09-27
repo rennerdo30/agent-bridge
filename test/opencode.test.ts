@@ -8,6 +8,7 @@ import { nullLogger } from "../src/core/logger.js";
 import { BridgeNode } from "../src/core/node.js";
 import { parseOpencodeJsonl, unwrapNpmShim } from "../src/core/delegate.js";
 import { resolveDbPath, resolvePipePath } from "../src/core/paths.js";
+import { loadOrCreateToken } from "../src/core/token.js";
 import { jsonSchemaToZodShape } from "../src/opencode/schema.js";
 
 const REPO = join(import.meta.dirname, "..");
@@ -133,7 +134,7 @@ describe("opencode plugin", () => {
     };
     const { AgentBridgePlugin } = await import("../src/opencode/plugin.js");
     hooks = await AgentBridgePlugin({ client, directory: home });
-    peer = new BridgeNode({ pipePath: resolvePipePath(home, {}), dbPath: resolveDbPath(home), agent: "claude", name: "claude-peer", cwd: home, autoWake: false, log: nullLogger });
+    peer = new BridgeNode({ pipePath: resolvePipePath(home, {}), token: loadOrCreateToken(home), dbPath: resolveDbPath(home), agent: "claude", name: "claude-peer", cwd: home, autoWake: false, log: nullLogger });
     await peer.start();
   }, 30_000);
 

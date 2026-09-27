@@ -7200,7 +7200,7 @@ var require_dist = __commonJS({
 });
 
 // src/mcp/server.ts
-import { dirname as dirname2, isAbsolute as isAbsolute2, relative, resolve as resolve2 } from "node:path";
+import { dirname as dirname3, isAbsolute as isAbsolute2, relative, resolve as resolve2 } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // node_modules/zod/v3/helpers/util.js
@@ -36490,7 +36490,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 var APP_NAME = "agent-bridge";
 var APP_VERSION = "0.3.0";
-var PROTOCOL_VERSION = 1;
+var PROTOCOL_VERSION = 2;
 var ENV = {
   home: "AGENT_BRIDGE_HOME",
   pipe: "AGENT_BRIDGE_PIPE",
@@ -37297,18 +37297,62 @@ var MessageStore = class {
   }
 };
 
+// src/core/token.ts
+import { randomBytes, timingSafeEqual } from "node:crypto";
+import { chmodSync, mkdirSync as mkdirSync3, openSync, readFileSync as readFileSync3, writeSync, closeSync } from "node:fs";
+import { dirname as dirname2, join as join5 } from "node:path";
+var TOKEN_FILE_NAME = "token";
+var TOKEN_BYTES = 32;
+var OWNER_ONLY = 384;
+function tokenPath(home) {
+  return join5(home, TOKEN_FILE_NAME);
+}
+function loadOrCreateToken(home) {
+  const file2 = tokenPath(home);
+  mkdirSync3(dirname2(file2), { recursive: true });
+  try {
+    const fd = openSync(file2, "wx", OWNER_ONLY);
+    try {
+      writeSync(fd, randomBytes(TOKEN_BYTES).toString("hex"));
+    } finally {
+      closeSync(fd);
+    }
+    try {
+      chmodSync(file2, OWNER_ONLY);
+    } catch {
+    }
+  } catch (err) {
+    if (err.code !== "EEXIST") throw err;
+  }
+  const token = readFileSync3(file2, "utf8").trim();
+  if (!token) throw new Error(`agent-bridge token file is empty: ${file2}`);
+  return token;
+}
+function tokensEqual(a, b) {
+  const x = Buffer.from(a);
+  const y = Buffer.from(b);
+  return x.length === y.length && timingSafeEqual(x, y);
+}
+
 // src/core/broker.ts
 var PEER_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 var PENDING_DEFAULT_LIMIT = 50;
 var PENDING_MAX_LIMIT = 500;
 var NAME_SUFFIX_LIMIT = 100;
+var UNAUTHENTICATED_OPS = /* @__PURE__ */ new Set(["hello", "auth", "ping"]);
 var Broker = class {
-  constructor(pipePath, store, log, now = Date.now) {
+  constructor(pipePath, store, log, token, now = Date.now) {
     this.pipePath = pipePath;
     this.store = store;
     this.log = log;
+    this.token = token;
     this.now = now;
     this.handlers = {
+      auth: (c, a) => {
+        this.checkAuth(a.protocol, a.token);
+        c.authed = true;
+        return { brokerPid: process.pid };
+      },
       hello: (c, a) => this.onHello(c, a),
       send: (c, a) => this.onSend(c, a),
       peers: () => this.livePeers(),
@@ -37321,6 +37365,7 @@ var Broker = class {
   pipePath;
   store;
   log;
+  token;
   now;
   server = null;
   conns = /* @__PURE__ */ new Set();
@@ -37367,7 +37412,7 @@ var Broker = class {
     }
   }
   accept(socket) {
-    const conn = { socket, peer: null };
+    const conn = { socket, peer: null, authed: false };
     this.conns.add(conn);
     socket.setEncoding("utf8");
     const decoder = new FrameDecoder(MAX_FRAME_BYTES);
@@ -37399,6 +37444,7 @@ var Broker = class {
     const handler = this.handlers[frame.op];
     try {
       if (!handler) throw new BridgeError("bad_request", `unknown op: ${String(frame.op)}`);
+      if (!conn.authed && !UNAUTHENTICATED_OPS.has(frame.op)) throw new BridgeError("unauthorized", "authenticate first");
       this.log.debug("request", { op: frame.op, peer: conn.peer?.name });
       const result = await handler(conn, frame.args ?? {});
       this.write(conn, { t: "res", id: frame.id, ok: true, result });
@@ -37438,12 +37484,20 @@ var Broker = class {
     }
     return `${requested}-${randomUUID().slice(0, 8)}`;
   }
-  onHello(conn, args) {
-    if (args.protocol !== PROTOCOL_VERSION) {
-      throw new BridgeError("protocol_mismatch", `broker speaks protocol ${PROTOCOL_VERSION}, client ${args.protocol}`, {
+  checkAuth(protocol, token) {
+    if (protocol !== PROTOCOL_VERSION) {
+      throw new BridgeError("protocol_mismatch", `broker speaks protocol ${PROTOCOL_VERSION}, client ${protocol}`, {
         brokerProtocol: PROTOCOL_VERSION
       });
     }
+    if (typeof token !== "string" || !tokensEqual(token, this.token)) {
+      this.log.warn("rejected connection with a wrong or missing token");
+      throw new BridgeError("unauthorized", "wrong agent-bridge token");
+    }
+  }
+  onHello(conn, args) {
+    this.checkAuth(args.protocol, args.token);
+    conn.authed = true;
     const p = args.peer;
     if (!p || !PEER_NAME_PATTERN.test(p.name ?? "") || !AGENT_KINDS.includes(p.agent)) {
       throw new BridgeError("bad_request", "invalid peer info");
@@ -37722,6 +37776,10 @@ var BridgeNode = class extends EventEmitter2 {
         await this.adopt(client);
         return;
       } catch (err) {
+        if (err instanceof BridgeError && (err.code === "unauthorized" || err.code === "protocol_mismatch")) {
+          this.log.error("broker refused this peer", { code: err.code, message: err.message });
+          throw err;
+        }
         const code = errCode(err);
         this.log.debug("connect attempt failed", { attempt, code, message: err.message });
         if (code !== "ENOENT" && code !== "ECONNREFUSED") {
@@ -37743,7 +37801,7 @@ var BridgeNode = class extends EventEmitter2 {
       this.log.error("cannot open message store", { err, db: this.opts.dbPath });
       throw err;
     }
-    const broker = new Broker(this.opts.pipePath, store, this.log.child("broker"));
+    const broker = new Broker(this.opts.pipePath, store, this.log.child("broker"), this.opts.token);
     try {
       await broker.listen();
       this.broker = broker;
@@ -37773,8 +37831,16 @@ var BridgeNode = class extends EventEmitter2 {
   }
   async adopt(client) {
     client.on("event", (ev, data) => this.onEvent(ev, data));
-    const hello = await client.request("hello", {
+    const hello = await client.request("hello", this.helloArgs()).catch((err) => {
+      client.close();
+      throw err;
+    });
+    this.afterHello(client, hello);
+  }
+  helloArgs() {
+    return {
       protocol: PROTOCOL_VERSION,
+      token: this.opts.token,
       peer: {
         id: this.id,
         name: this.currentName,
@@ -37788,7 +37854,9 @@ var BridgeNode = class extends EventEmitter2 {
         activity: this.activity,
         version: APP_VERSION
       }
-    });
+    };
+  }
+  afterHello(client, hello) {
     this.client = client;
     this.currentName = hello.name;
     client.once("close", () => this.onClose(client));
@@ -37938,7 +38006,7 @@ var BridgeNode = class extends EventEmitter2 {
 
 // src/core/paths.ts
 import { createHash } from "node:crypto";
-import { join as join5, posix, resolve } from "node:path";
+import { join as join6, posix, resolve } from "node:path";
 var PIPE_HASH_LENGTH = 12;
 function resolveHome(env = process.env) {
   return resolve(env[ENV.home]?.trim() || DEFAULT_HOME);
@@ -37953,7 +38021,7 @@ function resolvePipePath(home, env = process.env, platform = process.platform) {
   return posix.join(home, SOCKET_FILE_NAME);
 }
 function resolveDbPath(home) {
-  return join5(home, DB_FILE_NAME);
+  return join6(home, DB_FILE_NAME);
 }
 
 // src/core/procinfo.ts
@@ -38327,7 +38395,7 @@ var CHANNEL_NOTIFICATION = "notifications/claude/channel";
 var OPENCODE_NOTIFICATION = "notifications/agent-bridge/message";
 var CODEX_SANDBOX_META = "codex/sandbox-state-meta";
 var CWD_DISCOVERY_GRACE_MS = 15e3;
-var PLUGIN_ROOT = resolve2(dirname2(fileURLToPath(import.meta.url)), "..");
+var PLUGIN_ROOT = resolve2(dirname3(fileURLToPath(import.meta.url)), "..");
 function isInside(child, parent) {
   const rel = relative(resolve2(parent), resolve2(child));
   return rel === "" || !rel.startsWith("..") && !isAbsolute2(rel);
@@ -38408,6 +38476,7 @@ async function startServer(argv = process.argv.slice(2)) {
   log.info("starting MCP server", { agent, cwd, cwdKnown, delegated, version: APP_VERSION, node: process.version });
   const node2 = delegated ? null : new BridgeNode({
     pipePath: resolvePipePath(home),
+    token: loadOrCreateToken(home),
     dbPath: resolveDbPath(home),
     agent,
     // Until the project dir is known, the folder name would be the plugin version; use the bare agent kind.
@@ -38505,12 +38574,12 @@ async function startServer(argv = process.argv.slice(2)) {
     node2.on("connected", () => {
       if (channel) for (const m of node2.unread()) void pushChannel(m);
     });
-    const join6 = () => node2.start().catch((err) => log.error("could not join the bridge", { err: err.message }));
+    const join7 = () => node2.start().catch((err) => log.error("could not join the bridge", { err: err.message }));
     if (cwdKnown) {
-      void join6();
+      void join7();
     } else {
       log.info("project directory unknown yet; deferring bridge join", { graceMs: CWD_DISCOVERY_GRACE_MS });
-      setTimeout(() => void join6(), CWD_DISCOVERY_GRACE_MS).unref();
+      setTimeout(() => void join7(), CWD_DISCOVERY_GRACE_MS).unref();
     }
   }
 }

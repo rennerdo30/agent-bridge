@@ -23,6 +23,7 @@ import { createLogger, type Logger } from "../core/logger.js";
 import { BridgeNode } from "../core/node.js";
 import { resolveDbPath, resolveHome, resolvePipePath } from "../core/paths.js";
 import { detectClaudeChannel } from "../core/procinfo.js";
+import { loadOrCreateToken } from "../core/token.js";
 import { BridgeError, BROADCAST, CODING_AGENTS, type AgentKind, type BridgeMessage, type CodingAgent } from "../core/protocol.js";
 import { formatMessage, formatMessages, formatPeer } from "./format.js";
 import { CodexWaker, type Activity } from "./codex-wake.js";
@@ -175,6 +176,7 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
     ? null
     : new BridgeNode({
         pipePath: resolvePipePath(home),
+        token: loadOrCreateToken(home),
         dbPath: resolveDbPath(home),
         agent,
         // Until the project dir is known, the folder name would be the plugin version; use the bare agent kind.

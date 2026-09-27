@@ -1,5 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { BridgeClient } from "../src/core/client.js";
+import { PROTOCOL_VERSION } from "../src/core/constants.js";
+import { nullLogger } from "../src/core/logger.js";
+import { BridgeNode } from "../src/core/node.js";
 import { BridgeError } from "../src/core/protocol.js";
+import { loadOrCreateToken } from "../src/core/token.js";
 import { makeEnv, until, type TestEnv } from "./helpers.js";
 
 let env: TestEnv;
@@ -53,6 +58,38 @@ describe("broker election", () => {
     await later.start();
     await until(() => later.unread().length === 1);
     expect(later.unread()[0]!.body).toBe("hello later");
+  });
+});
+
+describe("authentication", () => {
+  it("rejects peers with a wrong token and does not retry forever", async () => {
+    const good = env.node("good");
+    await good.start();
+    const bad = new BridgeNode({ pipePath: env.pipe, token: "wrong", dbPath: env.db, agent: "other", name: "bad", cwd: env.home, autoWake: false, log: nullLogger });
+    const started = Date.now();
+    await expect(bad.start()).rejects.toMatchObject({ code: "unauthorized" });
+    expect(Date.now() - started).toBeLessThan(3_000);
+    expect((await good.peers()).map((p) => p.name)).toEqual(["good"]);
+  });
+
+  it("refuses requests on connections that never authenticated", async () => {
+    const good = env.node("good2");
+    await good.start();
+    const raw = await BridgeClient.connect(env.pipe, nullLogger);
+    try {
+      expect(await raw.request("ping", {})).toMatchObject({ protocol: PROTOCOL_VERSION });
+      await expect(raw.request("peers", {})).rejects.toMatchObject({ code: "unauthorized" });
+      await expect(raw.request("auth", { protocol: PROTOCOL_VERSION, token: "nope" })).rejects.toMatchObject({ code: "unauthorized" });
+      await raw.request("auth", { protocol: PROTOCOL_VERSION, token: loadOrCreateToken(env.home) });
+      expect(await raw.request("peers", {})).toHaveLength(1);
+    } finally {
+      raw.close();
+    }
+  });
+
+  it("creates one token per home and reuses it", () => {
+    expect(loadOrCreateToken(env.home)).toBe(loadOrCreateToken(env.home));
+    expect(loadOrCreateToken(env.home)).toMatch(/^[0-9a-f]{64}$/);
   });
 });
 

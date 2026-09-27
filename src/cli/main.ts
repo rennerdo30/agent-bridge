@@ -5,6 +5,8 @@ import { formatDateTime, t } from "../core/i18n.js";
 import { createLogger } from "../core/logger.js";
 import { BridgeNode } from "../core/node.js";
 import { resolveDbPath, resolveHome, resolvePipePath } from "../core/paths.js";
+import { PROTOCOL_VERSION } from "../core/constants.js";
+import { loadOrCreateToken } from "../core/token.js";
 import { formatMessage } from "../mcp/format.js";
 import { installOpencode, opencodeSourceDir, uninstallOpencode, type InstallResult } from "./opencode-install.js";
 
@@ -22,7 +24,7 @@ async function main(argv: string[]): Promise<number> {
   const pipe = resolvePipePath(home);
   const log = createLogger({ home, component: "cli" });
   const makeNode = () =>
-    new BridgeNode({ pipePath: pipe, dbPath: resolveDbPath(home), agent: "other", name: CLI_PEER_NAME, cwd: process.cwd(), autoWake: false, log });
+    new BridgeNode({ pipePath: pipe, token: loadOrCreateToken(home), dbPath: resolveDbPath(home), agent: "other", name: CLI_PEER_NAME, cwd: process.cwd(), autoWake: false, log });
 
   switch (command) {
     case "status": {
@@ -35,6 +37,7 @@ async function main(argv: string[]): Promise<number> {
       }
       try {
         const ping = await client.request("ping", {});
+        await client.request("auth", { protocol: PROTOCOL_VERSION, token: loadOrCreateToken(home) });
         const peers = await client.request("peers", {});
         out(t("cli.status.broker", { pid: String(ping.brokerPid), protocol: String(ping.protocol), pipe }));
         out(t("cli.status.peers", { count: peers.length }));

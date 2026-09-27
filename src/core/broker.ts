@@ -25,6 +25,7 @@ import {
   type RequestMap,
 } from "./protocol.js";
 import { agentQueueKey, MessageStore } from "./store.js";
+import { tokensEqual } from "./token.js";
 
 /** Peer names double as offline queue keys, so keep them simple and unambiguous. */
 export const PEER_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
@@ -35,7 +36,12 @@ const NAME_SUFFIX_LIMIT = 100;
 interface Conn {
   socket: Socket;
   peer: PeerInfo | null;
+  /** Presented the right token (via hello or auth). */
+  authed: boolean;
 }
+
+/** Operations allowed before a connection has authenticated. */
+const UNAUTHENTICATED_OPS = new Set<string>(["hello", "auth", "ping"]);
 
 type Handler<O extends Op> = (conn: Conn, args: RequestMap[O][0]) => RequestMap[O][1] | Promise<RequestMap[O][1]>;
 
@@ -54,9 +60,15 @@ export class Broker {
     private readonly pipePath: string,
     private readonly store: MessageStore,
     private readonly log: Logger,
+    private readonly token: string,
     private readonly now: () => number = Date.now,
   ) {
     this.handlers = {
+      auth: (c, a) => {
+        this.checkAuth(a.protocol, a.token);
+        c.authed = true;
+        return { brokerPid: process.pid };
+      },
       hello: (c, a) => this.onHello(c, a),
       send: (c, a) => this.onSend(c, a),
       peers: () => this.livePeers(),
@@ -112,7 +124,7 @@ export class Broker {
   }
 
   private accept(socket: Socket): void {
-    const conn: Conn = { socket, peer: null };
+    const conn: Conn = { socket, peer: null, authed: false };
     this.conns.add(conn);
     socket.setEncoding("utf8");
     const decoder = new FrameDecoder(MAX_FRAME_BYTES);
@@ -146,6 +158,7 @@ export class Broker {
     const handler = this.handlers[frame.op] as Handler<Op> | undefined;
     try {
       if (!handler) throw new BridgeError("bad_request", `unknown op: ${String(frame.op)}`);
+      if (!conn.authed && !UNAUTHENTICATED_OPS.has(frame.op)) throw new BridgeError("unauthorized", "authenticate first");
       this.log.debug("request", { op: frame.op, peer: conn.peer?.name });
       const result = await handler(conn, (frame.args ?? {}) as never);
       this.write(conn, { t: "res", id: frame.id, ok: true, result });
@@ -193,12 +206,21 @@ export class Broker {
     return `${requested}-${randomUUID().slice(0, 8)}`;
   }
 
-  private onHello(conn: Conn, args: RequestMap["hello"][0]): RequestMap["hello"][1] {
-    if (args.protocol !== PROTOCOL_VERSION) {
-      throw new BridgeError("protocol_mismatch", `broker speaks protocol ${PROTOCOL_VERSION}, client ${args.protocol}`, {
+  private checkAuth(protocol: number, token: unknown): void {
+    if (protocol !== PROTOCOL_VERSION) {
+      throw new BridgeError("protocol_mismatch", `broker speaks protocol ${PROTOCOL_VERSION}, client ${protocol}`, {
         brokerProtocol: PROTOCOL_VERSION,
       });
     }
+    if (typeof token !== "string" || !tokensEqual(token, this.token)) {
+      this.log.warn("rejected connection with a wrong or missing token");
+      throw new BridgeError("unauthorized", "wrong agent-bridge token");
+    }
+  }
+
+  private onHello(conn: Conn, args: RequestMap["hello"][0]): RequestMap["hello"][1] {
+    this.checkAuth(args.protocol, args.token);
+    conn.authed = true;
     const p = args.peer;
     if (!p || !PEER_NAME_PATTERN.test(p.name ?? "") || !AGENT_KINDS.includes(p.agent)) {
       throw new BridgeError("bad_request", "invalid peer info");

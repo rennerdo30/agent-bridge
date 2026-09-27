@@ -6,7 +6,7 @@ export const APP_NAME = "agent-bridge";
 export const APP_VERSION = "0.3.0";
 
 /** Wire protocol version; bump on incompatible changes to the broker protocol. */
-export const PROTOCOL_VERSION = 1;
+export const PROTOCOL_VERSION = 2;
 
 /** Environment variables understood by agent-bridge. */
 export const ENV = {

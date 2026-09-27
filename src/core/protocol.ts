@@ -61,6 +61,8 @@ export interface BridgeMessage {
 
 export interface HelloArgs {
   protocol: number;
+  /** Shared secret from ~/.agent-bridge/token. */
+  token: string;
   peer: Omit<PeerInfo, "name"> & { name: string };
 }
 export interface HelloResult {
@@ -101,7 +103,13 @@ export interface UpdatePeerArgs {
   name?: string;
 }
 
+export interface AuthArgs {
+  protocol: number;
+  token: string;
+}
+
 export interface RequestMap {
+  auth: [AuthArgs, { brokerPid: number }];
   hello: [HelloArgs, HelloResult];
   send: [SendArgs, SendResult];
   peers: [Record<string, never>, PeerInfo[]];
@@ -131,6 +139,7 @@ export type ErrorCode =
   | "ambiguous_target"
   | "unknown_target"
   | "protocol_mismatch"
+  | "unauthorized"
   | "too_large"
   | "internal";
 

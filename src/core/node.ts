@@ -11,11 +11,13 @@ import {
   PROTOCOL_VERSION,
 } from "./constants.js";
 import type { Logger } from "./logger.js";
-import type { AgentKind, BridgeMessage, PeerActivity, PeerInfo, SendArgs, SendResult } from "./protocol.js";
+import { BridgeError, type AgentKind, type BridgeMessage, type PeerActivity, type PeerInfo, type SendArgs, type SendResult } from "./protocol.js";
 import { MessageStore } from "./store.js";
 
 export interface BridgeNodeOptions {
   pipePath: string;
+  /** Shared secret (see token.ts). */
+  token: string;
   dbPath: string;
   agent: AgentKind;
   name: string;
@@ -114,6 +116,11 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
         await this.adopt(client);
         return;
       } catch (err) {
+        if (err instanceof BridgeError && (err.code === "unauthorized" || err.code === "protocol_mismatch")) {
+          // Retrying cannot help: the running broker is another agent-bridge version or uses another token.
+          this.log.error("broker refused this peer", { code: err.code, message: err.message });
+          throw err;
+        }
         const code = errCode(err);
         this.log.debug("connect attempt failed", { attempt, code, message: (err as Error).message });
         if (code !== "ENOENT" && code !== "ECONNREFUSED") {
@@ -137,7 +144,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
       this.log.error("cannot open message store", { err, db: this.opts.dbPath });
       throw err;
     }
-    const broker = new Broker(this.opts.pipePath, store, this.log.child("broker"));
+    const broker = new Broker(this.opts.pipePath, store, this.log.child("broker"), this.opts.token);
     try {
       await broker.listen();
       this.broker = broker;
@@ -170,8 +177,17 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
 
   private async adopt(client: BridgeClient): Promise<void> {
     client.on("event", (ev, data) => this.onEvent(ev, data));
-    const hello = await client.request("hello", {
+    const hello = await client.request("hello", this.helloArgs()).catch((err) => {
+      client.close();
+      throw err;
+    });
+    this.afterHello(client, hello);
+  }
+
+  private helloArgs() {
+    return {
       protocol: PROTOCOL_VERSION,
+      token: this.opts.token,
       peer: {
         id: this.id,
         name: this.currentName,
@@ -185,7 +201,10 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
         activity: this.activity,
         version: APP_VERSION,
       },
-    });
+    };
+  }
+
+  private afterHello(client: BridgeClient, hello: { name: string; brokerPid: number }): void {
     this.client = client;
     this.currentName = hello.name;
     client.once("close", () => this.onClose(client));
