@@ -60,6 +60,8 @@ export const DEFAULT_MAX_HOPS = 6;
 /** Delegation (headless calls to the other CLI). */
 export const DEFAULT_DELEGATE_TIMEOUT_SEC = 900;
 export const MAX_DELEGATE_TIMEOUT_SEC = 3_600;
+/** Background subagents have no practical limit; this cap only stops runaway processes. */
+export const MAX_JOB_TIMEOUT_SEC = 24 * 60 * 60;
 export const DEFAULT_CLAUDE_BIN = "claude";
 export const DEFAULT_CODEX_BIN = "codex";
 export const DEFAULT_OPENCODE_BIN = "opencode";

@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -14,6 +15,7 @@ import {
   HOOK_MAX_MESSAGES,
   MAX_BODY_CHARS,
   MAX_DELEGATE_TIMEOUT_SEC,
+  MAX_JOB_TIMEOUT_SEC,
   MAX_RUNNING_JOBS,
   MAX_WAIT_SEC,
 } from "../core/constants.js";
@@ -25,10 +27,11 @@ import { resolveDbPath, resolveHome, resolvePipePath } from "../core/paths.js";
 import { detectClaudeChannel } from "../core/procinfo.js";
 import { loadOrCreateToken } from "../core/token.js";
 import { BridgeError, BROADCAST, CODING_AGENTS, type AgentKind, type BridgeMessage, type CodingAgent } from "../core/protocol.js";
-import { formatMessage, formatMessages, formatPeer } from "./format.js";
+import { formatMessage, formatMessages, formatPeer, formatUsage } from "./format.js";
 import { CodexWaker, type Activity } from "./codex-wake.js";
 import { buildHookResponse, type HookEvent } from "./hooks.js";
-import { DELEGATION_TARGETS, type TargetArgs } from "./targets.js";
+import { ACCESS_LEVELS, DELEGATION_TARGETS, type Access, type TargetArgs } from "./targets.js";
+import { createWorktree, finishWorktree, gitStatusSnapshot, worktreeReport } from "../core/worktree.js";
 import { JobManager } from "./jobs.js";
 
 const CHANNEL_NOTIFICATION = "notifications/claude/channel";
@@ -100,6 +103,8 @@ export interface ServerContext {
   cfg: BridgeConfig;
   node: BridgeNode | null;
   log: Logger;
+  /** agent-bridge data directory (~/.agent-bridge). */
+  home: string;
   /** Current project directory (updated when hooks report the real one). */
   cwd: () => string;
   /** True once we know Claude Code registered this server as a channel. */
@@ -187,7 +192,7 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
       });
 
   let channel = agent === "claude" && cfg.delivery === "channel";
-  const ctx: ServerContext = { agent, cfg, node, log, cwd: () => node?.cwd ?? cwd, channelActive: () => channel };
+  const ctx: ServerContext = { agent, cfg, node, log, home, cwd: () => node?.cwd ?? cwd, channelActive: () => channel };
   if (node) {
     ctx.jobs = new JobManager(node, log.child("jobs"));
     ctx.activity = (s) => node.setActivity(s);
@@ -446,7 +451,7 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
     }),
   );
 
-  type DelegateArgs = { prompt: string; model?: string; session_id?: string; cwd?: string; timeout_sec?: number } & TargetArgs;
+  type DelegateArgs = { prompt: string; model?: string; session_id?: string; cwd?: string; timeout_sec?: number; worktree?: boolean } & TargetArgs;
   for (const target of targets) {
     const profile = DELEGATION_TARGETS[target];
     const defaultModel = profile.defaultModel(cfg);
@@ -462,24 +467,58 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
         ),
       session_id: z.string().optional().describe("Continue a previous delegated session"),
       cwd: z.string().optional().describe("Working directory (default: this project)"),
-      timeout_sec: z.number().int().min(10).max(MAX_DELEGATE_TIMEOUT_SEC).optional().describe(`Default ${DEFAULT_DELEGATE_TIMEOUT_SEC}`),
+      timeout_sec: z
+        .number()
+        .int()
+        .min(10)
+        .max(MAX_JOB_TIMEOUT_SEC)
+        .optional()
+        .describe(`Default ${DEFAULT_DELEGATE_TIMEOUT_SEC} for ask_*, none (${MAX_JOB_TIMEOUT_SEC}) for spawn_*`),
+      access: z
+        .enum(ACCESS_LEVELS as [Access, ...Access[]])
+        .optional()
+        .describe('"read" (default): look only. "edit": may change files. Combine edit with worktree=true for parallel or risky work.'),
+      worktree: z
+        .boolean()
+        .optional()
+        .describe(
+          "Run in a separate git worktree on its own branch (implies access=edit). Your working copy stays untouched; the result explains how to review, merge or discard the changes.",
+        ),
       ...profile.schema,
     };
-    const run = (a: DelegateArgs, signal: AbortSignal, onProgress?: (message: string) => void) =>
-      profile.run(
+    /** Run the delegate; returns its result plus a report of what it changed. */
+    const run = async (a: DelegateArgs, signal: AbortSignal, onProgress: ((message: string) => void) | undefined, background: boolean) => {
+      const dlog = log.child("delegate");
+      const cwd = a.cwd || ctx.cwd();
+      const access: Access | undefined = a.worktree ? (a.access ?? "edit") : a.access;
+      const wt = a.worktree ? await createWorktree({ cwd, home: ctx.home, jobId: randomUUID().slice(0, 8), log: dlog }) : null;
+      const before = !wt && access === "edit" ? await gitStatusSnapshot(cwd, dlog) : null;
+      const res = await profile.run(
         cfg,
         {
           prompt: a.prompt,
-          cwd: a.cwd || ctx.cwd(),
+          cwd: wt?.cwd ?? cwd,
           sessionId: a.session_id ?? null,
-          timeoutSec: a.timeout_sec ?? DEFAULT_DELEGATE_TIMEOUT_SEC,
+          timeoutSec: a.timeout_sec ?? (background ? MAX_JOB_TIMEOUT_SEC : DEFAULT_DELEGATE_TIMEOUT_SEC),
           model: a.model ?? defaultModel,
-          log: log.child("delegate"),
+          log: dlog,
           signal,
           onProgress,
         },
-        a,
+        { ...a, access },
       );
+      const notes: string[] = [];
+      const usage = formatUsage(res.details);
+      if (usage) notes.push(usage);
+      if (wt) {
+        notes.push(worktreeReport(wt, await finishWorktree(wt, a.prompt, dlog)));
+      } else if (before) {
+        const after = await gitStatusSnapshot(cwd, dlog);
+        const changed = after ? [...after].filter((l) => !before.has(l)) : [];
+        notes.push(changed.length ? `Files changed in your working copy:\n${changed.join("\n")}` : "No files changed.");
+      }
+      return { ...res, text: notes.length ? `${res.text}\n\n---\n${notes.join("\n\n")}` : res.text };
+    };
 
     const askName = `ask_${target}`;
     mcp.registerTool(
@@ -494,7 +533,7 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
         inputSchema: schema,
       },
       guarded(askName, async (a: DelegateArgs, extra) => {
-        const res = await run(a, extra.signal, progressReporter(extra, log));
+        const res = await run(a, extra.signal, progressReporter(extra, log), false);
         const header = t("delegate.done", { agent: target, session: res.sessionId ?? "-" });
         return text(`${header}
 
@@ -518,7 +557,7 @@ ${res.text || t("delegate.empty")}`, res.isError);
         const jobs = ctx.jobs;
         if (!jobs) throw new BridgeError("bad_request", t("err.delegatedSession"));
         if (!jobs.canStart()) return text(t("jobs.limit", { max: MAX_RUNNING_JOBS }), true);
-        const job = jobs.start(target, a.model ?? defaultModel, a.prompt, (signal, onProgress) => run(a, signal, onProgress));
+        const job = jobs.start(target, a.model ?? defaultModel, a.prompt, (signal, onProgress) => run(a, signal, onProgress, true));
         return text(t("jobs.started", { name: job.name }));
       }),
     );

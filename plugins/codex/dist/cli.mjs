@@ -44,6 +44,7 @@ var MAX_FRAME_BYTES = 4 * 1024 * 1024;
 var MAX_BODY_CHARS = 2e5;
 var MESSAGE_TTL_MS = 7 * 24 * 60 * 60 * 1e3;
 var PURGE_INTERVAL_MS = 60 * 60 * 1e3;
+var MAX_JOB_TIMEOUT_SEC = 24 * 60 * 60;
 
 // src/core/protocol.ts
 var AGENT_KINDS = ["claude", "codex", "opencode", "other"];

@@ -62,6 +62,7 @@ describe("background subagents", () => {
       cfg: { ...DEFAULT_CONFIG, lingerSec: 0 },
       node: me,
       log: nullLogger,
+      home: env.home,
       cwd: () => env.home,
       channelActive: () => false,
       jobs,

@@ -190,6 +190,11 @@ export interface DelegateResult {
   details: Record<string, unknown>;
 }
 
+/** opencode reads an extra JSON config layer from this variable (merged over the user's config). */
+export const OPENCODE_CONFIG_CONTENT_ENV = "OPENCODE_CONFIG_CONTENT";
+/** Read-only for opencode: no file changes, no shell commands. Reading and searching stay allowed. */
+export const OPENCODE_READ_ONLY_PERMISSIONS = { edit: "deny", bash: "deny" } as const;
+
 function childEnv(): NodeJS.ProcessEnv {
   return { ...process.env, [DELEGATE_DEPTH_ENV]: String(currentDelegateDepth() + 1) };
 }
@@ -321,11 +326,21 @@ export async function delegateToClaude(
 }
 
 /** Parse `opencode run --format json` output: one event per line, each carrying the sessionID. */
-export function parseOpencodeJsonl(stdout: string): { sessionId: string | null; text: string; error: string | null } {
+export function parseOpencodeJsonl(stdout: string): {
+  sessionId: string | null;
+  text: string;
+  error: string | null;
+  usage?: { input: number; output: number };
+  cost?: number;
+} {
   let sessionId: string | null = null;
   const textByMessage = new Map<string, string[]>();
   let lastMessage = "";
   let error: string | null = null;
+  let input = 0;
+  let output = 0;
+  let cost = 0;
+  let sawUsage = false;
   for (const line of stdout.split(/\r?\n/)) {
     const s = line.trim();
     if (!s.startsWith("{")) continue;
@@ -336,6 +351,12 @@ export function parseOpencodeJsonl(stdout: string): { sessionId: string | null; 
       continue;
     }
     if (typeof ev.sessionID === "string") sessionId ??= ev.sessionID;
+    if (ev.type === "step_finish" && ev.part?.tokens) {
+      sawUsage = true;
+      input += Number(ev.part.tokens.input) || 0;
+      output += Number(ev.part.tokens.output) || 0;
+      cost += Number(ev.part.cost) || 0;
+    }
     if (ev.type === "text" && typeof ev.part?.text === "string") {
       const mid = String(ev.part.messageID ?? "");
       if (!textByMessage.has(mid)) textByMessage.set(mid, []);
@@ -345,7 +366,8 @@ export function parseOpencodeJsonl(stdout: string): { sessionId: string | null; 
       error = ev.error?.data?.message ?? ev.error?.message ?? ev.message ?? "opencode reported an error";
     }
   }
-  return { sessionId, text: (textByMessage.get(lastMessage) ?? []).join(""), error };
+  const text = (textByMessage.get(lastMessage) ?? []).join("");
+  return sawUsage ? { sessionId, text, error, usage: { input, output }, cost } : { sessionId, text, error };
 }
 
 export async function delegateToOpencode(req: DelegateRequest & { bin: string; autoApprove: boolean }): Promise<DelegateResult> {
@@ -353,15 +375,18 @@ export async function delegateToOpencode(req: DelegateRequest & { bin: string; a
   const args = ["run", "--format", "json"];
   if (req.model) args.push("-m", req.model);
   if (req.sessionId) args.push("-s", req.sessionId);
-  // Headless opencode rejects every permission request unless --auto is given.
+  // opencode's default rules allow edits and commands without asking, so read access must be enforced
+  // explicitly: an extra config layer (merged over the user's) denies them. --auto approves the rest.
   if (req.autoApprove) args.push("--auto");
+  const env = childEnv();
+  if (!req.autoApprove) env[OPENCODE_CONFIG_CONTENT_ENV] = JSON.stringify({ permission: OPENCODE_READ_ONLY_PERMISSIONS });
   const res = await runProcess({
     bin: req.bin,
     args,
     stdin: req.prompt,
     cwd: req.cwd,
     timeoutMs: req.timeoutSec * 1000,
-    env: childEnv(),
+    env,
     log: req.log,
     signal: req.signal,
     onLine: progressLineHandler("opencode", req.onProgress),
@@ -372,5 +397,5 @@ export async function delegateToOpencode(req: DelegateRequest & { bin: string; a
     throw new DelegateError(parsed.error ?? `opencode exited with code ${res.code}`, "failed", res.stderr.slice(-STDERR_TAIL_CHARS));
   }
   req.log.info("opencode delegate finished", { sessionId: parsed.sessionId, code: res.code, isError });
-  return { sessionId: parsed.sessionId ?? req.sessionId ?? null, text: parsed.text, isError, details: { exitCode: res.code, error: parsed.error } };
+  return { sessionId: parsed.sessionId ?? req.sessionId ?? null, text: parsed.text, isError, details: { exitCode: res.code, error: parsed.error, usage: parsed.usage ?? null, costUsd: parsed.cost || null } };
 }

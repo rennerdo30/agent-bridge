@@ -3874,49 +3874,49 @@ var require_fast_uri = __commonJS({
       schemelessOptions.skipEscape = true;
       return serialize2(resolved, schemelessOptions);
     }
-    function resolveComponent(base, relative2, options, skipNormalization) {
+    function resolveComponent(base, relative3, options, skipNormalization) {
       const target = {};
       if (!skipNormalization) {
         base = parse3(serialize2(base, options), options);
-        relative2 = parse3(serialize2(relative2, options), options);
+        relative3 = parse3(serialize2(relative3, options), options);
       }
       options = options || {};
-      if (!options.tolerant && relative2.scheme) {
-        target.scheme = relative2.scheme;
-        target.userinfo = relative2.userinfo;
-        target.host = relative2.host;
-        target.port = relative2.port;
-        target.path = removeDotSegments(relative2.path || "");
-        target.query = relative2.query;
+      if (!options.tolerant && relative3.scheme) {
+        target.scheme = relative3.scheme;
+        target.userinfo = relative3.userinfo;
+        target.host = relative3.host;
+        target.port = relative3.port;
+        target.path = removeDotSegments(relative3.path || "");
+        target.query = relative3.query;
       } else {
-        if (relative2.userinfo !== void 0 || relative2.host !== void 0 || relative2.port !== void 0) {
-          target.userinfo = relative2.userinfo;
-          target.host = relative2.host;
-          target.port = relative2.port;
-          target.path = removeDotSegments(relative2.path || "");
-          target.query = relative2.query;
+        if (relative3.userinfo !== void 0 || relative3.host !== void 0 || relative3.port !== void 0) {
+          target.userinfo = relative3.userinfo;
+          target.host = relative3.host;
+          target.port = relative3.port;
+          target.path = removeDotSegments(relative3.path || "");
+          target.query = relative3.query;
         } else {
-          if (!relative2.path) {
+          if (!relative3.path) {
             target.path = base.path;
-            if (relative2.query !== void 0) {
-              target.query = relative2.query;
+            if (relative3.query !== void 0) {
+              target.query = relative3.query;
             } else {
               target.query = base.query;
             }
           } else {
-            if (relative2.path[0] === "/") {
-              target.path = removeDotSegments(relative2.path);
+            if (relative3.path[0] === "/") {
+              target.path = removeDotSegments(relative3.path);
             } else {
               if ((base.userinfo !== void 0 || base.host !== void 0 || base.port !== void 0) && !base.path) {
-                target.path = "/" + relative2.path;
+                target.path = "/" + relative3.path;
               } else if (!base.path) {
-                target.path = relative2.path;
+                target.path = relative3.path;
               } else {
-                target.path = base.path.slice(0, base.path.lastIndexOf("/") + 1) + relative2.path;
+                target.path = base.path.slice(0, base.path.lastIndexOf("/") + 1) + relative3.path;
               }
               target.path = removeDotSegments(target.path);
             }
-            target.query = relative2.query;
+            target.query = relative3.query;
           }
           target.userinfo = base.userinfo;
           target.host = base.host;
@@ -3924,7 +3924,7 @@ var require_fast_uri = __commonJS({
         }
         target.scheme = base.scheme;
       }
-      target.fragment = relative2.fragment;
+      target.fragment = relative3.fragment;
       return target;
     }
     function equal(uriA, uriB, options) {
@@ -7200,7 +7200,8 @@ var require_dist = __commonJS({
 });
 
 // src/mcp/server.ts
-import { dirname as dirname3, isAbsolute as isAbsolute2, relative, resolve as resolve2 } from "node:path";
+import { randomUUID as randomUUID4 } from "node:crypto";
+import { dirname as dirname3, isAbsolute as isAbsolute3, relative as relative2, resolve as resolve2 } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // node_modules/zod/v3/helpers/util.js
@@ -36524,7 +36525,7 @@ var MESSAGE_TTL_MS = 7 * 24 * 60 * 60 * 1e3;
 var PURGE_INTERVAL_MS = 60 * 60 * 1e3;
 var DEFAULT_MAX_HOPS = 6;
 var DEFAULT_DELEGATE_TIMEOUT_SEC = 900;
-var MAX_DELEGATE_TIMEOUT_SEC = 3600;
+var MAX_JOB_TIMEOUT_SEC = 24 * 60 * 60;
 var DEFAULT_CLAUDE_BIN = "claude";
 var DEFAULT_CODEX_BIN = "codex";
 var DEFAULT_OPENCODE_BIN = "opencode";
@@ -36879,6 +36880,8 @@ function runProcess(opts) {
     child.stdin.end(opts.stdin);
   });
 }
+var OPENCODE_CONFIG_CONTENT_ENV = "OPENCODE_CONFIG_CONTENT";
+var OPENCODE_READ_ONLY_PERMISSIONS = { edit: "deny", bash: "deny" };
 function childEnv() {
   return { ...process.env, [DELEGATE_DEPTH_ENV]: String(currentDelegateDepth() + 1) };
 }
@@ -36999,6 +37002,10 @@ function parseOpencodeJsonl(stdout) {
   const textByMessage = /* @__PURE__ */ new Map();
   let lastMessage = "";
   let error62 = null;
+  let input2 = 0;
+  let output2 = 0;
+  let cost = 0;
+  let sawUsage = false;
   for (const line of stdout.split(/\r?\n/)) {
     const s = line.trim();
     if (!s.startsWith("{")) continue;
@@ -37009,6 +37016,12 @@ function parseOpencodeJsonl(stdout) {
       continue;
     }
     if (typeof ev.sessionID === "string") sessionId ??= ev.sessionID;
+    if (ev.type === "step_finish" && ev.part?.tokens) {
+      sawUsage = true;
+      input2 += Number(ev.part.tokens.input) || 0;
+      output2 += Number(ev.part.tokens.output) || 0;
+      cost += Number(ev.part.cost) || 0;
+    }
     if (ev.type === "text" && typeof ev.part?.text === "string") {
       const mid = String(ev.part.messageID ?? "");
       if (!textByMessage.has(mid)) textByMessage.set(mid, []);
@@ -37018,7 +37031,8 @@ function parseOpencodeJsonl(stdout) {
       error62 = ev.error?.data?.message ?? ev.error?.message ?? ev.message ?? "opencode reported an error";
     }
   }
-  return { sessionId, text: (textByMessage.get(lastMessage) ?? []).join(""), error: error62 };
+  const text2 = (textByMessage.get(lastMessage) ?? []).join("");
+  return sawUsage ? { sessionId, text: text2, error: error62, usage: { input: input2, output: output2 }, cost } : { sessionId, text: text2, error: error62 };
 }
 async function delegateToOpencode(req) {
   checkDepth();
@@ -37026,13 +37040,15 @@ async function delegateToOpencode(req) {
   if (req.model) args.push("-m", req.model);
   if (req.sessionId) args.push("-s", req.sessionId);
   if (req.autoApprove) args.push("--auto");
+  const env = childEnv();
+  if (!req.autoApprove) env[OPENCODE_CONFIG_CONTENT_ENV] = JSON.stringify({ permission: OPENCODE_READ_ONLY_PERMISSIONS });
   const res = await runProcess({
     bin: req.bin,
     args,
     stdin: req.prompt,
     cwd: req.cwd,
     timeoutMs: req.timeoutSec * 1e3,
-    env: childEnv(),
+    env,
     log: req.log,
     signal: req.signal,
     onLine: progressLineHandler("opencode", req.onProgress)
@@ -37043,7 +37059,7 @@ async function delegateToOpencode(req) {
     throw new DelegateError(parsed.error ?? `opencode exited with code ${res.code}`, "failed", res.stderr.slice(-STDERR_TAIL_CHARS));
   }
   req.log.info("opencode delegate finished", { sessionId: parsed.sessionId, code: res.code, isError });
-  return { sessionId: parsed.sessionId ?? req.sessionId ?? null, text: parsed.text, isError, details: { exitCode: res.code, error: parsed.error } };
+  return { sessionId: parsed.sessionId ?? req.sessionId ?? null, text: parsed.text, isError, details: { exitCode: res.code, error: parsed.error, usage: parsed.usage ?? null, costUsd: parsed.cost || null } };
 }
 
 // src/core/messages.ts
@@ -38139,6 +38155,21 @@ function formatPeer(p, selfId, now = Date.now()) {
   const session = p.sessionId ? ` session=${p.sessionId}` : "";
   return `- ${p.name} (${flags}) cwd=${p.cwd}${session}`;
 }
+function formatUsage(details) {
+  const parts = [];
+  const usage = details.usage;
+  if (usage && typeof usage === "object") {
+    const n = (k) => typeof usage[k] === "number" ? usage[k] : null;
+    const input2 = n("input_tokens") ?? n("input");
+    const output2 = n("output_tokens") ?? n("output");
+    const cached2 = n("cached_input_tokens");
+    if (input2 !== null) parts.push(`${input2.toLocaleString()} input tokens${cached2 ? ` (${cached2.toLocaleString()} cached)` : ""}`);
+    if (output2 !== null) parts.push(`${output2.toLocaleString()} output tokens`);
+  }
+  const cost = details.costUsd;
+  if (typeof cost === "number") parts.push(`$${cost.toFixed(4)}`);
+  return parts.length ? `Usage: ${parts.join(", ")}` : null;
+}
 
 // src/mcp/codex-wake.ts
 var WAKE_DEBOUNCE_MS = 1500;
@@ -38291,36 +38322,108 @@ ${STOP_REASON_FOOTER}` };
 }
 
 // src/mcp/targets.ts
+var ACCESS_LEVELS = ["read", "edit"];
+var CODEX_SANDBOX_FOR = { read: "read-only", edit: "workspace-write" };
+var CLAUDE_MODE_FOR = { read: "default", edit: "acceptEdits" };
+var OPENCODE_AUTO_FOR = { read: false, edit: true };
 var DELEGATION_TARGETS = {
   codex: {
     title: "OpenAI Codex",
     modelExample: '"gpt-6-sol"',
     defaultModel: (cfg) => cfg.codexModel,
-    schema: { sandbox: external_exports.enum(CODEX_SANDBOXES).optional() },
-    permissionNote: (cfg) => `Codex runs in the "${cfg.codexSandbox}" sandbox unless you pass sandbox.`,
-    run: (cfg, base, a) => delegateToCodex({ ...base, bin: cfg.codexBin, sandbox: a.sandbox ?? cfg.codexSandbox })
+    schema: { sandbox: external_exports.enum(CODEX_SANDBOXES).optional().describe("Overrides access with an exact Codex sandbox mode") },
+    permissionNote: (cfg) => `Codex runs in the "${cfg.codexSandbox}" sandbox unless you pass access or sandbox.`,
+    run: (cfg, base, a) => delegateToCodex({
+      ...base,
+      bin: cfg.codexBin,
+      sandbox: a.sandbox ?? (a.access ? CODEX_SANDBOX_FOR[a.access] : cfg.codexSandbox)
+    })
   },
   claude: {
     title: "Claude Code",
     modelExample: '"opus", "sonnet" or a full model id',
     defaultModel: (cfg) => cfg.claudeModel,
-    schema: { permission_mode: external_exports.enum(CLAUDE_PERMISSION_MODES).optional() },
-    permissionNote: (cfg) => `Claude runs with permission mode "${cfg.claudePermissionMode}" unless you pass permission_mode.`,
+    schema: { permission_mode: external_exports.enum(CLAUDE_PERMISSION_MODES).optional().describe("Overrides access with an exact Claude permission mode") },
+    permissionNote: (cfg) => `Claude runs with permission mode "${cfg.claudePermissionMode}" unless you pass access or permission_mode.`,
     run: (cfg, base, a) => delegateToClaude({
       ...base,
       bin: cfg.claudeBin,
-      permissionMode: a.permission_mode ?? cfg.claudePermissionMode
+      permissionMode: a.permission_mode ?? (a.access ? CLAUDE_MODE_FOR[a.access] : cfg.claudePermissionMode)
     })
   },
   opencode: {
     title: "opencode",
-    modelExample: '"provider/model", e.g. "anthropic/claude-sonnet-5" or "openai/gpt-6-sol"',
+    modelExample: '"provider/model", e.g. "anthropic/claude-sonnet-5" or "opencode/muse-spark-1.3-contributor-free"',
     defaultModel: (cfg) => cfg.opencodeModel,
-    schema: { auto_approve: external_exports.boolean().optional().describe("Auto-approve opencode permission requests (opencode run --auto)") },
-    permissionNote: (cfg) => cfg.opencodeAutoApprove ? "opencode auto-approves permission requests unless you pass auto_approve=false." : "Headless opencode rejects every permission request (edits, commands) unless you pass auto_approve=true.",
-    run: (cfg, base, a) => delegateToOpencode({ ...base, bin: cfg.opencodeBin, autoApprove: a.auto_approve ?? cfg.opencodeAutoApprove })
+    schema: { auto_approve: external_exports.boolean().optional().describe("Overrides access: auto-approve every opencode permission request (opencode run --auto)") },
+    permissionNote: (cfg) => cfg.opencodeAutoApprove ? "opencode auto-approves permission requests unless you pass access=read or auto_approve=false." : "Headless opencode rejects every permission request (edits, commands) unless you pass access=edit or auto_approve=true.",
+    run: (cfg, base, a) => delegateToOpencode({
+      ...base,
+      bin: cfg.opencodeBin,
+      autoApprove: a.auto_approve ?? (a.access ? OPENCODE_AUTO_FOR[a.access] : cfg.opencodeAutoApprove)
+    })
   }
 };
+
+// src/core/worktree.ts
+import { mkdirSync as mkdirSync4 } from "node:fs";
+import { basename as basename2, isAbsolute as isAbsolute2, join as join7, relative } from "node:path";
+var GIT = "git";
+var GIT_TIMEOUT_MS = 6e4;
+var BRANCH_PREFIX = "agent-bridge/";
+var COMMIT_IDENTITY = ["-c", "user.name=agent-bridge", "-c", "user.email=agent-bridge@localhost"];
+var MAX_DIFFSTAT_CHARS = 4e3;
+async function git(args, cwd, log) {
+  const res = await runProcess({ bin: GIT, args, stdin: "", cwd, timeoutMs: GIT_TIMEOUT_MS, env: process.env, log });
+  if (res.code !== 0) throw new Error(`git ${args[0]} failed: ${(res.stderr || res.stdout).trim().slice(0, 500)}`);
+  return res.stdout.trimEnd();
+}
+async function createWorktree(opts) {
+  let repoRoot;
+  try {
+    repoRoot = await git(["rev-parse", "--show-toplevel"], opts.cwd, opts.log);
+  } catch {
+    throw new Error(`worktree isolation needs a git repository, but ${opts.cwd} is not inside one`);
+  }
+  const base = await git(["rev-parse", "HEAD"], repoRoot, opts.log);
+  const branch = `${BRANCH_PREFIX}${opts.jobId}`;
+  const dir = join7(opts.home, "worktrees");
+  mkdirSync4(dir, { recursive: true });
+  const path = join7(dir, `${basename2(repoRoot)}-${opts.jobId}`);
+  await git(["worktree", "add", "-b", branch, path, base], repoRoot, opts.log);
+  const rel = relative(repoRoot, opts.cwd);
+  const cwd = rel && !rel.startsWith("..") && !isAbsolute2(rel) ? join7(path, rel) : path;
+  opts.log.info("worktree created", { repoRoot, path, branch });
+  return { repoRoot, path, cwd, branch, base };
+}
+async function finishWorktree(wt, summary, log) {
+  await git(["add", "-A"], wt.path, log);
+  const status = await git(["status", "--porcelain"], wt.path, log);
+  if (status) {
+    const message = `agent-bridge: ${summary.replace(/\s+/g, " ").slice(0, 72)}`;
+    await git([...COMMIT_IDENTITY, "commit", "-q", "--no-verify", "-m", message], wt.path, log);
+  }
+  const diffStat = await git(["diff", "--stat", `${wt.base}..${wt.branch}`], wt.repoRoot, log);
+  return { changed: diffStat.length > 0, diffStat: diffStat.slice(0, MAX_DIFFSTAT_CHARS) };
+}
+function worktreeReport(wt, outcome) {
+  if (!outcome.changed) return `Worktree ${wt.path} (branch ${wt.branch}) has no changes; remove it with: git worktree remove "${wt.path}" && git branch -D ${wt.branch}`;
+  return [
+    `Changes are committed on branch ${wt.branch} (worktree ${wt.path}), not in your working copy:`,
+    outcome.diffStat,
+    `Review: git diff ${wt.base.slice(0, 12)}..${wt.branch}`,
+    `Take them: git merge ${wt.branch}   (or git cherry-pick ${wt.branch})`,
+    `Discard: git worktree remove --force "${wt.path}" && git branch -D ${wt.branch}`
+  ].join("\n");
+}
+async function gitStatusSnapshot(cwd, log) {
+  try {
+    const out = await git(["status", "--porcelain"], cwd, log);
+    return new Set(out.split(/\r?\n/).filter(Boolean));
+  } catch {
+    return null;
+  }
+}
 
 // src/mcp/jobs.ts
 import { randomUUID as randomUUID3 } from "node:crypto";
@@ -38397,8 +38500,8 @@ var CODEX_SANDBOX_META = "codex/sandbox-state-meta";
 var CWD_DISCOVERY_GRACE_MS = 15e3;
 var PLUGIN_ROOT = resolve2(dirname3(fileURLToPath(import.meta.url)), "..");
 function isInside(child, parent) {
-  const rel = relative(resolve2(parent), resolve2(child));
-  return rel === "" || !rel.startsWith("..") && !isAbsolute2(rel);
+  const rel = relative2(resolve2(parent), resolve2(child));
+  return rel === "" || !rel.startsWith("..") && !isAbsolute3(rel);
 }
 function pathFromUriOrPath(v) {
   if (typeof v !== "string" || !v) return null;
@@ -38409,7 +38512,7 @@ function pathFromUriOrPath(v) {
       return null;
     }
   }
-  return isAbsolute2(v) ? v : null;
+  return isAbsolute3(v) ? v : null;
 }
 function text(s, isError = false) {
   return { content: [{ type: "text", text: s }], ...isError ? { isError: true } : {} };
@@ -38486,7 +38589,7 @@ async function startServer(argv = process.argv.slice(2)) {
     log
   });
   let channel = agent === "claude" && cfg.delivery === "channel";
-  const ctx = { agent, cfg, node: node2, log, cwd: () => node2?.cwd ?? cwd, channelActive: () => channel };
+  const ctx = { agent, cfg, node: node2, log, home, cwd: () => node2?.cwd ?? cwd, channelActive: () => channel };
   if (node2) {
     ctx.jobs = new JobManager(node2, log.child("jobs"));
     ctx.activity = (s) => node2.setActivity(s);
@@ -38574,12 +38677,12 @@ async function startServer(argv = process.argv.slice(2)) {
     node2.on("connected", () => {
       if (channel) for (const m of node2.unread()) void pushChannel(m);
     });
-    const join7 = () => node2.start().catch((err) => log.error("could not join the bridge", { err: err.message }));
+    const join8 = () => node2.start().catch((err) => log.error("could not join the bridge", { err: err.message }));
     if (cwdKnown) {
-      void join7();
+      void join8();
     } else {
       log.info("project directory unknown yet; deferring bridge join", { graceMs: CWD_DISCOVERY_GRACE_MS });
-      setTimeout(() => void join7(), CWD_DISCOVERY_GRACE_MS).unref();
+      setTimeout(() => void join8(), CWD_DISCOVERY_GRACE_MS).unref();
     }
   }
 }
@@ -38722,23 +38825,49 @@ function registerTools(mcp, ctx, targets) {
       ),
       session_id: external_exports.string().optional().describe("Continue a previous delegated session"),
       cwd: external_exports.string().optional().describe("Working directory (default: this project)"),
-      timeout_sec: external_exports.number().int().min(10).max(MAX_DELEGATE_TIMEOUT_SEC).optional().describe(`Default ${DEFAULT_DELEGATE_TIMEOUT_SEC}`),
+      timeout_sec: external_exports.number().int().min(10).max(MAX_JOB_TIMEOUT_SEC).optional().describe(`Default ${DEFAULT_DELEGATE_TIMEOUT_SEC} for ask_*, none (${MAX_JOB_TIMEOUT_SEC}) for spawn_*`),
+      access: external_exports.enum(ACCESS_LEVELS).optional().describe('"read" (default): look only. "edit": may change files. Combine edit with worktree=true for parallel or risky work.'),
+      worktree: external_exports.boolean().optional().describe(
+        "Run in a separate git worktree on its own branch (implies access=edit). Your working copy stays untouched; the result explains how to review, merge or discard the changes."
+      ),
       ...profile.schema
     };
-    const run = (a, signal, onProgress) => profile.run(
-      cfg,
-      {
-        prompt: a.prompt,
-        cwd: a.cwd || ctx.cwd(),
-        sessionId: a.session_id ?? null,
-        timeoutSec: a.timeout_sec ?? DEFAULT_DELEGATE_TIMEOUT_SEC,
-        model: a.model ?? defaultModel,
-        log: log.child("delegate"),
-        signal,
-        onProgress
-      },
-      a
-    );
+    const run = async (a, signal, onProgress, background) => {
+      const dlog = log.child("delegate");
+      const cwd = a.cwd || ctx.cwd();
+      const access = a.worktree ? a.access ?? "edit" : a.access;
+      const wt = a.worktree ? await createWorktree({ cwd, home: ctx.home, jobId: randomUUID4().slice(0, 8), log: dlog }) : null;
+      const before = !wt && access === "edit" ? await gitStatusSnapshot(cwd, dlog) : null;
+      const res = await profile.run(
+        cfg,
+        {
+          prompt: a.prompt,
+          cwd: wt?.cwd ?? cwd,
+          sessionId: a.session_id ?? null,
+          timeoutSec: a.timeout_sec ?? (background ? MAX_JOB_TIMEOUT_SEC : DEFAULT_DELEGATE_TIMEOUT_SEC),
+          model: a.model ?? defaultModel,
+          log: dlog,
+          signal,
+          onProgress
+        },
+        { ...a, access }
+      );
+      const notes = [];
+      const usage = formatUsage(res.details);
+      if (usage) notes.push(usage);
+      if (wt) {
+        notes.push(worktreeReport(wt, await finishWorktree(wt, a.prompt, dlog)));
+      } else if (before) {
+        const after = await gitStatusSnapshot(cwd, dlog);
+        const changed = after ? [...after].filter((l) => !before.has(l)) : [];
+        notes.push(changed.length ? `Files changed in your working copy:
+${changed.join("\n")}` : "No files changed.");
+      }
+      return { ...res, text: notes.length ? `${res.text}
+
+---
+${notes.join("\n\n")}` : res.text };
+    };
     const askName = `ask_${target}`;
     mcp.registerTool(
       askName,
@@ -38748,7 +38877,7 @@ function registerTools(mcp, ctx, targets) {
         inputSchema: schema
       },
       guarded(askName, async (a, extra) => {
-        const res = await run(a, extra.signal, progressReporter(extra, log));
+        const res = await run(a, extra.signal, progressReporter(extra, log), false);
         const header = t("delegate.done", { agent: target, session: res.sessionId ?? "-" });
         return text(`${header}
 
@@ -38767,7 +38896,7 @@ ${res.text || t("delegate.empty")}`, res.isError);
         const jobs = ctx.jobs;
         if (!jobs) throw new BridgeError("bad_request", t("err.delegatedSession"));
         if (!jobs.canStart()) return text(t("jobs.limit", { max: MAX_RUNNING_JOBS }), true);
-        const job = jobs.start(target, a.model ?? defaultModel, a.prompt, (signal, onProgress) => run(a, signal, onProgress));
+        const job = jobs.start(target, a.model ?? defaultModel, a.prompt, (signal, onProgress) => run(a, signal, onProgress, true));
         return text(t("jobs.started", { name: job.name }));
       })
     );

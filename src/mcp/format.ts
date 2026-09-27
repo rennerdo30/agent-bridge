@@ -68,3 +68,20 @@ export function formatPeer(p: PeerInfo, selfId?: string, now: number = Date.now(
   const session = p.sessionId ? ` session=${p.sessionId}` : "";
   return `- ${p.name} (${flags}) cwd=${p.cwd}${session}`;
 }
+
+/** One-line token/cost summary from a delegate's details, when the CLI reported any. */
+export function formatUsage(details: Record<string, unknown>): string | null {
+  const parts: string[] = [];
+  const usage = details.usage as Record<string, unknown> | null | undefined;
+  if (usage && typeof usage === "object") {
+    const n = (k: string) => (typeof usage[k] === "number" ? (usage[k] as number) : null);
+    const input = n("input_tokens") ?? n("input");
+    const output = n("output_tokens") ?? n("output");
+    const cached = n("cached_input_tokens");
+    if (input !== null) parts.push(`${input.toLocaleString()} input tokens${cached ? ` (${cached.toLocaleString()} cached)` : ""}`);
+    if (output !== null) parts.push(`${output.toLocaleString()} output tokens`);
+  }
+  const cost = details.costUsd;
+  if (typeof cost === "number") parts.push(`$${cost.toFixed(4)}`);
+  return parts.length ? `Usage: ${parts.join(", ")}` : null;
+}

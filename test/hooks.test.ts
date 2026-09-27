@@ -15,6 +15,7 @@ const ctx = (over: Partial<ServerContext> = {}): ServerContext => ({
   cfg: { ...DEFAULT_CONFIG, maxHops: 2, lingerSec: 1 },
   node: me,
   log: nullLogger,
+  home: env.home,
   cwd: () => env.home,
   channelActive: () => false,
   ...over,

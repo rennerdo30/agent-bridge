@@ -30946,6 +30946,7 @@ var LOG_FILE_NAME = `${APP_NAME}.log`;
 var MAX_FRAME_BYTES = 4 * 1024 * 1024;
 var MESSAGE_TTL_MS = 7 * 24 * 60 * 60 * 1e3;
 var PURGE_INTERVAL_MS = 60 * 60 * 1e3;
+var MAX_JOB_TIMEOUT_SEC = 24 * 60 * 60;
 
 // src/opencode/schema.ts
 function convert(z2, s) {
