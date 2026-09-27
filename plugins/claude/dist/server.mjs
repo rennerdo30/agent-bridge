@@ -38025,7 +38025,8 @@ async function startServer(argv = process.argv.slice(2)) {
     pipePath: resolvePipePath(home),
     dbPath: resolveDbPath(home),
     agent,
-    name: cfg.name ?? defaultPeerName(agent, cwd),
+    // Until the project dir is known, the folder name would be the plugin version; use the bare agent kind.
+    name: cfg.name ?? (cwdKnown ? defaultPeerName(agent, cwd) : agent),
     cwd,
     autoWake: cfg.autoWake,
     log
