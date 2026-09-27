@@ -15,6 +15,8 @@ beforeEach(() => {
   repo = mkdtempSync(join(tmpdir(), "ab-repo-"));
   home = mkdtempSync(join(tmpdir(), "ab-home-"));
   git("init", "-q");
+  // CI Windows runners set core.autocrlf=true, which would rewrite line endings on merge.
+  git("config", "core.autocrlf", "false");
   git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "base");
   writeFileSync(join(repo, "a.txt"), "original\n");
   git("add", "a.txt");
