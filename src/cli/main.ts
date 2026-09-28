@@ -5,7 +5,7 @@ import { formatDateTime, t } from "../core/i18n.js";
 import { createLogger } from "../core/logger.js";
 import { BridgeNode } from "../core/node.js";
 import { resolveDbPath, resolveHome, resolvePipePath } from "../core/paths.js";
-import { PROTOCOL_VERSION } from "../core/constants.js";
+import { APP_VERSION, PROTOCOL_VERSION } from "../core/constants.js";
 import { loadOrCreateToken } from "../core/token.js";
 import { formatMessage } from "../mcp/format.js";
 import { CODING_AGENTS, type CodingAgent } from "../core/protocol.js";
@@ -46,7 +46,12 @@ async function main(argv: string[]): Promise<number> {
         const peers = await client.request("peers", {});
         out(t("cli.status.broker", { pid: String(ping.brokerPid), protocol: String(ping.protocol), pipe }));
         out(t("cli.status.peers", { count: peers.length }));
-        for (const p of peers) out(t("cli.status.peer", { name: p.name, agent: p.agent, activity: p.activity ?? "unknown", since: formatDateTime(p.startedAt), cwd: p.cwd }));
+        const isOld = (v: string | undefined) => !v || v !== APP_VERSION;
+        for (const p of peers) {
+          out(t("cli.status.peer", { name: p.name, agent: p.agent, activity: p.activity ?? "unknown", version: p.version ?? "?", outdated: isOld(p.version) ? t("cli.status.outdatedMark") : "", since: formatDateTime(p.startedAt), cwd: p.cwd }));
+        }
+        const old = peers.filter((p) => isOld(p.version)).length;
+        if (peers.length) out(old ? t("cli.status.outdated", { count: old, version: APP_VERSION }) : t("cli.status.upToDate", { version: APP_VERSION }));
       } finally {
         client.close();
       }

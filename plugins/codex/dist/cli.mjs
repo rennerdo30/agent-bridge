@@ -12,7 +12,7 @@ import { connect } from "node:net";
 import { homedir } from "node:os";
 import { join } from "node:path";
 var APP_NAME = "agent-bridge";
-var APP_VERSION = "0.5.3";
+var APP_VERSION = "0.5.4";
 var PROTOCOL_VERSION = 2;
 var ENV = {
   home: "AGENT_BRIDGE_HOME",
@@ -241,7 +241,10 @@ var en = {
   "cli.status.broker": "Broker: running (pid {pid}, protocol {protocol}) at {pipe}",
   "cli.status.noBroker": "Broker: not running (no agent with agent-bridge is active). Endpoint: {pipe}",
   "cli.status.peers": "Peers online: {count}",
-  "cli.status.peer": "  {name}  [{agent}, {activity}]  since {since}  {cwd}",
+  "cli.status.peer": "  {name}  [{agent}, {activity}, v{version}{outdated}]  since {since}  {cwd}",
+  "cli.status.outdatedMark": " OUTDATED",
+  "cli.status.outdated": "{count} session(s) run an older agent-bridge than {version}. Restart them (after finishing their current work) to load the update.",
+  "cli.status.upToDate": "All sessions run agent-bridge {version}.",
   "cli.sent": "Sent message {id}.",
   "cli.tail.listening": 'Listening as "{name}". Press Ctrl+C to stop.',
   "cli.paths": "Data:  {home}\nLogs:  {logs}\nStore: {db}\nPipe:  {pipe}",
@@ -2393,7 +2396,12 @@ async function main(argv) {
         const peers = await client.request("peers", {});
         out(t("cli.status.broker", { pid: String(ping.brokerPid), protocol: String(ping.protocol), pipe }));
         out(t("cli.status.peers", { count: peers.length }));
-        for (const p of peers) out(t("cli.status.peer", { name: p.name, agent: p.agent, activity: p.activity ?? "unknown", since: formatDateTime(p.startedAt), cwd: p.cwd }));
+        const isOld = (v) => !v || v !== APP_VERSION;
+        for (const p of peers) {
+          out(t("cli.status.peer", { name: p.name, agent: p.agent, activity: p.activity ?? "unknown", version: p.version ?? "?", outdated: isOld(p.version) ? t("cli.status.outdatedMark") : "", since: formatDateTime(p.startedAt), cwd: p.cwd }));
+        }
+        const old = peers.filter((p) => isOld(p.version)).length;
+        if (peers.length) out(old ? t("cli.status.outdated", { count: old, version: APP_VERSION }) : t("cli.status.upToDate", { version: APP_VERSION }));
       } finally {
         client.close();
       }
