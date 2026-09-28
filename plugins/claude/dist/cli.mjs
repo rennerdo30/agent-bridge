@@ -12,7 +12,7 @@ import { connect } from "node:net";
 import { homedir } from "node:os";
 import { join } from "node:path";
 var APP_NAME = "agent-bridge";
-var APP_VERSION = "0.5.0";
+var APP_VERSION = "0.5.1";
 var PROTOCOL_VERSION = 2;
 var ENV = {
   home: "AGENT_BRIDGE_HOME",
@@ -1942,6 +1942,7 @@ var SERVER_USER = "opencode";
 var PASSWORD_BYTES = 24;
 var MAX_DETAIL_CHARS2 = 4e3;
 var ASK_PERMISSIONS = { edit: "ask", bash: "ask" };
+var START_WATCHDOG_MS = 6e4;
 function startServe(bin, cwd, env) {
   let resolved = resolveBinary(bin, env);
   if (!resolved) return Promise.reject(new DelegateError(`executable not found: ${bin}`, "not_found"));
@@ -2045,22 +2046,41 @@ async function delegateToOpencodeServed(req) {
     await api("POST", `/session/${sessionId}/prompt_async`, body);
     let failure = null;
     let lastProgress = "";
-    for await (const ev of sse(events.body)) {
-      const type = String(ev.type ?? "");
-      const p = ev.properties ?? {};
-      if (type === "permission.asked" && p.sessionID === sessionId) {
-        const decision = await req.onPermission({ agent: "opencode", tool: String(p.permission ?? "unknown"), detail: permissionDetail(p), cwd: req.cwd });
-        await api("POST", `/permission/${p.id}/reply`, decision.allow ? { reply: "once" } : { reply: "reject", message: decision.message });
-      } else if (type === "message.part.updated" && p.part?.sessionID === sessionId && p.part?.type === "tool") {
-        const msg = describeOpencodeEvent({ type: "tool_use", part: p.part });
-        if (msg && msg !== lastProgress) req.onProgress?.(lastProgress = msg);
-      } else if (type === "session.error" && p.sessionID === sessionId) {
-        failure = String(p.error?.data?.message ?? p.error?.message ?? "opencode session error");
-        break;
-      } else if (type === "session.idle" && p.sessionID === sessionId || type === "session.status" && p.sessionID === sessionId && p.status?.type === "idle") {
-        break;
+    let alive = false;
+    const watchdog = setTimeout(() => {
+      if (alive) return;
+      failure = "opencode did not start working on the prompt within 60 seconds (check the model id and the provider's login).";
+      ac.abort();
+    }, START_WATCHDOG_MS);
+    try {
+      for await (const ev of sse(events.body)) {
+        const type = String(ev.type ?? "");
+        const p = ev.properties ?? {};
+        const mine = p.sessionID === sessionId || p.part?.sessionID === sessionId || p.info?.sessionID === sessionId;
+        if (mine) alive = true;
+        if (type === "session.error" && !p.sessionID) {
+          failure = String(p.error?.data?.message ?? p.error?.message ?? "opencode reported an error");
+          break;
+        }
+        if (type === "permission.asked" && p.sessionID === sessionId) {
+          const decision = await req.onPermission({ agent: "opencode", tool: String(p.permission ?? "unknown"), detail: permissionDetail(p), cwd: req.cwd });
+          await api("POST", `/permission/${p.id}/reply`, decision.allow ? { reply: "once" } : { reply: "reject", message: decision.message });
+        } else if (type === "message.part.updated" && p.part?.sessionID === sessionId && p.part?.type === "tool") {
+          const msg = describeOpencodeEvent({ type: "tool_use", part: p.part });
+          if (msg && msg !== lastProgress) req.onProgress?.(lastProgress = msg);
+        } else if (type === "session.error" && p.sessionID === sessionId) {
+          failure = String(p.error?.data?.message ?? p.error?.message ?? "opencode session error");
+          break;
+        } else if (type === "session.idle" && p.sessionID === sessionId || type === "session.status" && p.sessionID === sessionId && p.status?.type === "idle") {
+          break;
+        }
       }
+    } catch (err) {
+      if (!failure) throw err;
+    } finally {
+      clearTimeout(watchdog);
     }
+    if (failure && !alive) throw new DelegateError(failure, "failed");
     const messages = await api("GET", `/session/${sessionId}/message`) ?? [];
     const last = [...messages].reverse().find((m) => m.info?.role === "assistant");
     const text = (last?.parts ?? []).filter((part) => part.type === "text" && typeof part.text === "string").map((part) => part.text).join("");

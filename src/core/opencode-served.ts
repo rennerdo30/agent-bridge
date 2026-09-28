@@ -17,6 +17,8 @@ const PASSWORD_BYTES = 24;
 const MAX_DETAIL_CHARS = 4_000;
 /** Edits and commands ask (the defaults allow everything); asks come to us as events. */
 const ASK_PERMISSIONS = { edit: "ask", bash: "ask" };
+/** If the session shows no sign of life this long after the prompt, something is wrong (bad model, auth). */
+const START_WATCHDOG_MS = 60_000;
 
 type Json = Record<string, any>;
 
@@ -137,9 +139,22 @@ export async function delegateToOpencodeServed(
 
     let failure: string | null = null;
     let lastProgress = "";
+    let alive = false;
+    const watchdog = setTimeout(() => {
+      if (alive) return;
+      failure = "opencode did not start working on the prompt within 60 seconds (check the model id and the provider's login).";
+      ac.abort();
+    }, START_WATCHDOG_MS);
+    try {
     for await (const ev of sse(events.body)) {
       const type = String(ev.type ?? "");
       const p: Json = ev.properties ?? {};
+      const mine = p.sessionID === sessionId || p.part?.sessionID === sessionId || p.info?.sessionID === sessionId;
+      if (mine) alive = true;
+      if (type === "session.error" && !p.sessionID) {
+        failure = String(p.error?.data?.message ?? p.error?.message ?? "opencode reported an error");
+        break;
+      }
       if (type === "permission.asked" && p.sessionID === sessionId) {
         const decision = await req.onPermission({ agent: "opencode", tool: String(p.permission ?? "unknown"), detail: permissionDetail(p), cwd: req.cwd });
         await api("POST", `/permission/${p.id}/reply`, decision.allow ? { reply: "once" } : { reply: "reject", message: decision.message });
@@ -153,6 +168,13 @@ export async function delegateToOpencodeServed(
         break;
       }
     }
+    } catch (err) {
+      // The watchdog aborts the event stream; report its reason instead of a generic abort.
+      if (!failure) throw err;
+    } finally {
+      clearTimeout(watchdog);
+    }
+    if (failure && !alive) throw new DelegateError(failure, "failed");
 
     const messages: Json[] = (await api("GET", `/session/${sessionId}/message`)) ?? [];
     const last = [...messages].reverse().find((m) => m.info?.role === "assistant");

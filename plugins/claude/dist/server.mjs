@@ -27830,21 +27830,21 @@ function visit(schema, fnOrHandlers) {
     const h = fnOrHandlers[node2._zod.def.type];
     return h ? h(node2, rewritten) : node2;
   };
-  const cache = /* @__PURE__ */ new Map();
+  const cache2 = /* @__PURE__ */ new Map();
   function run(s) {
-    const cached2 = cache.get(s);
+    const cached2 = cache2.get(s);
     if (cached2 === RESOLVING) {
       return new $ZodLazy({
         type: "lazy",
-        getter: () => cache.get(s)
+        getter: () => cache2.get(s)
       });
     }
     if (cached2 !== void 0)
       return cached2;
-    cache.set(s, RESOLVING);
+    cache2.set(s, RESOLVING);
     const inner = mapInner(s);
     const mapped = fn(inner, inner !== s);
-    cache.set(s, mapped);
+    cache2.set(s, mapped);
     return mapped;
   }
   function mapInner(s) {
@@ -36490,7 +36490,7 @@ import { basename, join as join2 } from "node:path";
 import { homedir } from "node:os";
 import { join } from "node:path";
 var APP_NAME = "agent-bridge";
-var APP_VERSION = "0.5.0";
+var APP_VERSION = "0.5.1";
 var PROTOCOL_VERSION = 2;
 var ENV = {
   home: "AGENT_BRIDGE_HOME",
@@ -38347,6 +38347,45 @@ ${STOP_REASON_FOOTER}` };
   }
 }
 
+// src/core/opencode-models.ts
+var LIST_TIMEOUT_MS = 6e4;
+var CACHE_TTL_MS = 10 * 60 * 1e3;
+var MODEL_LINE = /^[A-Za-z0-9._-]+\/\S+$/;
+var MAX_SUGGESTIONS = 8;
+var cache = null;
+async function listOpencodeModels(bin, cwd, log) {
+  if (cache && Date.now() - cache.at < CACHE_TTL_MS) return cache.models;
+  const res = await runProcess({ bin, args: ["models"], stdin: "", cwd, timeoutMs: LIST_TIMEOUT_MS, env: process.env, log });
+  const models = res.stdout.split(/\r?\n/).map((l) => l.trim()).filter((l) => MODEL_LINE.test(l));
+  if (models.length) cache = { at: Date.now(), models };
+  return models;
+}
+function resolveOpencodeModel(input2, models) {
+  const want = input2.trim();
+  if (models.length === 0) return { model: want, note: null };
+  if (models.includes(want)) return { model: want, note: null };
+  const lower = want.toLowerCase();
+  const exactCi = models.filter((m) => m.toLowerCase() === lower);
+  if (exactCi.length === 1) return { model: exactCi[0], note: null };
+  const [provider, ...rest] = lower.includes("/") ? lower.split("/") : ["", lower];
+  const name = rest.join("/");
+  const matches = models.filter((m) => {
+    const [mp, ...mr] = m.toLowerCase().split("/");
+    const mn = mr.join("/");
+    if (provider && mp !== provider) return false;
+    return mn === name || mn.startsWith(name) || mn.includes(name);
+  });
+  const prefixed = matches.filter((m) => m.toLowerCase().split("/").slice(1).join("/").startsWith(name));
+  const best = prefixed.length ? prefixed : matches;
+  if (best.length === 1) return { model: best[0], note: `model "${want}" resolved to "${best[0]}"` };
+  const suggest = (list) => list.slice(0, MAX_SUGGESTIONS).join(", ");
+  if (best.length > 1) return { error: `The opencode model "${want}" is ambiguous. Pass one of: ${suggest(best)}${best.length > MAX_SUGGESTIONS ? ", \u2026" : ""}` };
+  const near = models.filter((m) => name.split(/[-._]/).some((part) => part.length > 2 && m.toLowerCase().includes(part)));
+  return {
+    error: `Unknown opencode model "${want}". Use "provider/model" from \`opencode models\`${near.length ? `, e.g. ${suggest(near)}` : ""}.`
+  };
+}
+
 // src/core/opencode-served.ts
 import { spawn as spawn2 } from "node:child_process";
 import { randomBytes as randomBytes2 } from "node:crypto";
@@ -38357,6 +38396,7 @@ var SERVER_USER = "opencode";
 var PASSWORD_BYTES = 24;
 var MAX_DETAIL_CHARS = 4e3;
 var ASK_PERMISSIONS = { edit: "ask", bash: "ask" };
+var START_WATCHDOG_MS = 6e4;
 function startServe(bin, cwd, env) {
   let resolved = resolveBinary(bin, env);
   if (!resolved) return Promise.reject(new DelegateError(`executable not found: ${bin}`, "not_found"));
@@ -38460,22 +38500,41 @@ async function delegateToOpencodeServed(req) {
     await api("POST", `/session/${sessionId}/prompt_async`, body);
     let failure2 = null;
     let lastProgress = "";
-    for await (const ev of sse(events.body)) {
-      const type = String(ev.type ?? "");
-      const p = ev.properties ?? {};
-      if (type === "permission.asked" && p.sessionID === sessionId) {
-        const decision = await req.onPermission({ agent: "opencode", tool: String(p.permission ?? "unknown"), detail: permissionDetail(p), cwd: req.cwd });
-        await api("POST", `/permission/${p.id}/reply`, decision.allow ? { reply: "once" } : { reply: "reject", message: decision.message });
-      } else if (type === "message.part.updated" && p.part?.sessionID === sessionId && p.part?.type === "tool") {
-        const msg = describeOpencodeEvent({ type: "tool_use", part: p.part });
-        if (msg && msg !== lastProgress) req.onProgress?.(lastProgress = msg);
-      } else if (type === "session.error" && p.sessionID === sessionId) {
-        failure2 = String(p.error?.data?.message ?? p.error?.message ?? "opencode session error");
-        break;
-      } else if (type === "session.idle" && p.sessionID === sessionId || type === "session.status" && p.sessionID === sessionId && p.status?.type === "idle") {
-        break;
+    let alive = false;
+    const watchdog = setTimeout(() => {
+      if (alive) return;
+      failure2 = "opencode did not start working on the prompt within 60 seconds (check the model id and the provider's login).";
+      ac.abort();
+    }, START_WATCHDOG_MS);
+    try {
+      for await (const ev of sse(events.body)) {
+        const type = String(ev.type ?? "");
+        const p = ev.properties ?? {};
+        const mine = p.sessionID === sessionId || p.part?.sessionID === sessionId || p.info?.sessionID === sessionId;
+        if (mine) alive = true;
+        if (type === "session.error" && !p.sessionID) {
+          failure2 = String(p.error?.data?.message ?? p.error?.message ?? "opencode reported an error");
+          break;
+        }
+        if (type === "permission.asked" && p.sessionID === sessionId) {
+          const decision = await req.onPermission({ agent: "opencode", tool: String(p.permission ?? "unknown"), detail: permissionDetail(p), cwd: req.cwd });
+          await api("POST", `/permission/${p.id}/reply`, decision.allow ? { reply: "once" } : { reply: "reject", message: decision.message });
+        } else if (type === "message.part.updated" && p.part?.sessionID === sessionId && p.part?.type === "tool") {
+          const msg = describeOpencodeEvent({ type: "tool_use", part: p.part });
+          if (msg && msg !== lastProgress) req.onProgress?.(lastProgress = msg);
+        } else if (type === "session.error" && p.sessionID === sessionId) {
+          failure2 = String(p.error?.data?.message ?? p.error?.message ?? "opencode session error");
+          break;
+        } else if (type === "session.idle" && p.sessionID === sessionId || type === "session.status" && p.sessionID === sessionId && p.status?.type === "idle") {
+          break;
+        }
       }
+    } catch (err) {
+      if (!failure2) throw err;
+    } finally {
+      clearTimeout(watchdog);
     }
+    if (failure2 && !alive) throw new DelegateError(failure2, "failed");
     const messages = await api("GET", `/session/${sessionId}/message`) ?? [];
     const last = [...messages].reverse().find((m) => m.info?.role === "assistant");
     const text2 = (last?.parts ?? []).filter((part) => part.type === "text" && typeof part.text === "string").map((part) => part.text).join("");
@@ -38547,11 +38606,24 @@ var DELEGATION_TARGETS = {
     defaultModel: (cfg) => cfg.opencodeModel,
     schema: { auto_approve: external_exports.boolean().optional().describe("Overrides access: auto-approve every opencode permission request (opencode run --auto)") },
     permissionNote: (cfg) => cfg.opencodeAutoApprove ? "opencode auto-approves permission requests unless you pass access=read or auto_approve=false." : "Headless opencode rejects every permission request (edits, commands) unless you pass access=edit or auto_approve=true.",
-    run: (cfg, base, a) => a.access === "ask" && a.auto_approve === void 0 && supportsAsk("opencode", a.relay) ? delegateToOpencodeServed({ ...base, bin: cfg.opencodeBin, onPermission: a.relay.onPermission }) : delegateToOpencode({
-      ...base,
-      bin: cfg.opencodeBin,
-      autoApprove: a.auto_approve ?? (a.access ? OPENCODE_AUTO_FOR[a.access] : cfg.opencodeAutoApprove)
-    })
+    run: async (cfg, base, a) => {
+      let note = null;
+      if (base.model) {
+        const models = await listOpencodeModels(cfg.opencodeBin, base.cwd, base.log).catch(() => []);
+        const r = resolveOpencodeModel(base.model, models);
+        if ("error" in r) throw new DelegateError(r.error, "failed");
+        base = { ...base, model: r.model };
+        note = r.note;
+      }
+      const res = a.access === "ask" && a.auto_approve === void 0 && supportsAsk("opencode", a.relay) ? await delegateToOpencodeServed({ ...base, bin: cfg.opencodeBin, onPermission: a.relay.onPermission }) : await delegateToOpencode({
+        ...base,
+        bin: cfg.opencodeBin,
+        autoApprove: a.auto_approve ?? (a.access ? OPENCODE_AUTO_FOR[a.access] : cfg.opencodeAutoApprove)
+      });
+      return note ? { ...res, text: `(${note})
+
+${res.text}` } : res;
+    }
   }
 };
 

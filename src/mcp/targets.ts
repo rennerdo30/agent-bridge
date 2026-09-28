@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { CLAUDE_PERMISSION_MODES, CODEX_SANDBOXES, type BridgeConfig, type ClaudePermissionMode, type CodexSandbox } from "../core/config.js";
-import { delegateToClaude, delegateToCodex, delegateToOpencode, type DelegateRequest, type DelegateResult } from "../core/delegate.js";
+import { DelegateError, delegateToClaude, delegateToCodex, delegateToOpencode, type DelegateRequest, type DelegateResult } from "../core/delegate.js";
+import { listOpencodeModels, resolveOpencodeModel } from "../core/opencode-models.js";
 import { delegateToOpencodeServed } from "../core/opencode-served.js";
 import type { CodingAgent } from "../core/protocol.js";
 import type { PermissionDecision, PermissionRequest } from "../core/relay.js";
@@ -91,13 +92,25 @@ export const DELEGATION_TARGETS: Record<CodingAgent, DelegationTarget> = {
       cfg.opencodeAutoApprove
         ? "opencode auto-approves permission requests unless you pass access=read or auto_approve=false."
         : "Headless opencode rejects every permission request (edits, commands) unless you pass access=edit or auto_approve=true.",
-    run: (cfg, base, a) =>
-      a.access === "ask" && a.auto_approve === undefined && supportsAsk("opencode", a.relay)
-        ? delegateToOpencodeServed({ ...base, bin: cfg.opencodeBin, onPermission: a.relay!.onPermission })
-        : delegateToOpencode({
-            ...base,
-            bin: cfg.opencodeBin,
-            autoApprove: a.auto_approve ?? (a.access ? OPENCODE_AUTO_FOR[a.access] : cfg.opencodeAutoApprove),
-          }),
+    run: async (cfg, base, a) => {
+      // Resolve short or partial model names first: an unknown model must fail fast, not hang.
+      let note: string | null = null;
+      if (base.model) {
+        const models = await listOpencodeModels(cfg.opencodeBin, base.cwd, base.log).catch(() => []);
+        const r = resolveOpencodeModel(base.model, models);
+        if ("error" in r) throw new DelegateError(r.error, "failed");
+        base = { ...base, model: r.model };
+        note = r.note;
+      }
+      const res =
+        a.access === "ask" && a.auto_approve === undefined && supportsAsk("opencode", a.relay)
+          ? await delegateToOpencodeServed({ ...base, bin: cfg.opencodeBin, onPermission: a.relay!.onPermission })
+          : await delegateToOpencode({
+              ...base,
+              bin: cfg.opencodeBin,
+              autoApprove: a.auto_approve ?? (a.access ? OPENCODE_AUTO_FOR[a.access] : cfg.opencodeAutoApprove),
+            });
+      return note ? { ...res, text: `(${note})\n\n${res.text}` } : res;
+    },
   },
 };
