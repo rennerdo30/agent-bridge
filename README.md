@@ -33,7 +33,7 @@ There is no daemon to install. Each agent starts its own MCP server. The first o
 npx -y github:rennerdo30/agent-bridge install        # or: install claude codex opencode
 ```
 
-The installer finds which of the three tools you have. For each one it shows the exact commands it will run and asks before running them (`--yes` skips the questions). It only runs the tools' official plugin commands, listed below; for opencode it copies the plugin files into opencode's plugin folder. Nothing is patched. `update` and `uninstall` work the same way.
+The installer finds which of the three tools you have. For each one it shows the exact commands it will run and asks before running them (`--yes` skips the questions). It only runs the tools' official plugin commands, listed below; for opencode it copies the plugin files into opencode's plugin folder. Nothing is patched. `uninstall` works the same way; for updates see [Updating](#updating).
 
 ### Claude Code
 
@@ -61,6 +61,26 @@ This copies the plugin into opencode's global config (`~/.config/opencode/plugin
 
 In opencode the tools are called `bridge_peers`, `bridge_send`, `bridge_ask_claude`, `bridge_spawn_codex`, and so on. Because opencode plugins can start turns themselves, opencode receives peer messages live, even while idle, whenever its listen window or auto-wake applies.
 
+## Updating
+
+```bash
+npx -y github:rennerdo30/agent-bridge update     # or: update claude codex opencode
+npx -y github:rennerdo30/agent-bridge status     # which sessions still run an old version
+```
+
+1. **Close all Codex sessions first.** Codex keeps the plugin folder in use while it runs, and its update fails with "Access is denied".
+2. `update` runs the same official commands as `install` (`claude plugin update …`, `codex plugin marketplace upgrade …` plus `codex plugin add …`) and copies the new opencode plugin. It asks per tool; `--yes` skips the questions.
+3. **Restart your agent sessions** to load the new version. There is deliberately no command for this: the sessions are your own windows, often with work in progress. `status` lists every connected session with its agent-bridge version and marks old ones `OUTDATED`:
+
+   ```
+   claude-myrepo  [claude, busy, v0.5.0 OUTDATED]  since …  E:\work\myrepo
+   codex-myrepo   [codex, idle, v0.5.4]            since …  E:\work\myrepo
+   1 session(s) run an older agent-bridge than 0.5.4. Restart them (after finishing their current work) to load the update.
+   ```
+4. In Codex, check `/hooks` after an update. Newly added agent-bridge hooks, such as the `PermissionRequest` hook in 0.5.0, must be trusted once.
+
+All sessions should run the same version. Sessions with an older wire protocol are refused by the bridge ("version mismatch") until they are restarted.
+
 ## Usage
 
 Just ask in plain language, for example:
@@ -75,7 +95,7 @@ Just ask in plain language, for example:
 
 | Tool | What it does |
 |---|---|
-| `peers` | Who is online, your own name, delivery mode and auto-wake status |
+| `peers` | Who is online (busy or idle, uptime, session id), your own name and settings, and every running delegation (background jobs and blocking `ask_*` calls) with its runtime and current step |
 | `send` | Message a peer: `to` = peer name, `claude`/`codex` (if exactly one is online) or `*`; `reply_to` threads answers |
 | `wait_for_message` | Block until a (matching) message arrives, e.g. the answer to your question |
 | `inbox` | Read unread messages |
@@ -86,8 +106,10 @@ Just ask in plain language, for example:
 
 `ask_*` and `spawn_*` take these optional parameters:
 
-- `model`: any id or alias the target accepts, passed through verbatim. opencode uses `provider/model`.
-- `session_id`, `cwd`, `timeout_sec`.
+- `model`: any id or alias the target accepts, passed through verbatim. For opencode, short or partial names like `muse-spark` are resolved against `opencode models`. An ambiguous or unknown name fails immediately and lists the candidates.
+- `session_id`: continue an earlier run. `cwd`: working folder.
+- `timeout_sec`: 60 minutes by default for `ask_*`; background `spawn_*` jobs have no practical limit (24 hours). A run that times out is not lost: the error names its session (`call again with session_id="…"`), so the caller continues it instead of starting over. The relay subagents do that automatically, once.
+- `access` and `worktree`, see below.
 - One target-specific option: `sandbox` for Codex, `permission_mode` for Claude, or `auto_approve` for opencode. Headless opencode rejects every permission request unless `auto_approve` is set.
 
 Peer names default to `<agent>-<project folder>`, for example `codex-myrepo`. Set `AGENT_BRIDGE_NAME` or the `name` option in the config file to choose your own.
@@ -207,7 +229,7 @@ Logs are written to `~/.agent-bridge/logs/agent-bridge.log`.
 The plugins bundle a small CLI for debugging:
 
 ```bash
-node <plugin>/dist/cli.mjs status          # broker and connected peers
+node <plugin>/dist/cli.mjs status          # broker, connected sessions, their versions (OUTDATED marks)
 node <plugin>/dist/cli.mjs send codex "hi" # send as peer "cli"
 node <plugin>/dist/cli.mjs tail            # print messages addressed to "cli"
 node <plugin>/dist/cli.mjs paths
@@ -222,6 +244,10 @@ Run `smoke` after updating Claude Code, Codex or opencode. It exercises the real
 - **Console windows flash on Windows while Codex works.** This happens when Codex runs your session inside its background app-server daemon: that process has no console, so Windows opens a new window for every `git` or `node` process it starts. Add `daemon_auto_start = false` under `[features]` in `~/.codex/config.toml`, run `codex app-server daemon stop`, and restart Codex.
 - **A peer shows up as plain `codex` with the plugin folder as its cwd.** Codex hasn't reported the project directory yet. It does so on the first hook or tool call; make sure the hooks are trusted in `/hooks`.
 - **Messages to an idle agent are not answered.** An idle session only sees messages on its next prompt, unless it's in its listen window, auto-wake is on, or (for Claude) channels are enabled.
+- **A relay subagent (`agent-bridge:codex`, `agent-bridge:opencode`) does not answer status questions.** It is waiting for its one call and cannot reply until it returns. Call `peers` instead: it shows the delegation's runtime and current step.
+- **A delegated task restarts from scratch.** That was the 15-minute limit before 0.5.2. Update, and restart the calling session.
+- **"version mismatch" / a session cannot join.** Another session runs a different agent-bridge version. Update all tools and restart the sessions that `status` marks `OUTDATED`.
+- **Codex update fails with "Access is denied".** Close all Codex sessions, then run `update codex` again.
 
 ## Security notes
 
