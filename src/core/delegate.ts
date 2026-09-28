@@ -24,6 +24,8 @@ export class DelegateError extends Error {
     message: string,
     readonly kind: "not_found" | "timeout" | "failed" | "depth" | "aborted",
     readonly stderrTail = "",
+    /** stdout captured before the failure (lets callers recover the session id after a timeout). */
+    readonly partialStdout = "",
   ) {
     super(message);
     this.name = "DelegateError";
@@ -133,7 +135,7 @@ export function runProcess(opts: {
     };
     const timer = setTimeout(() => {
       kill();
-      finish(() => reject(new DelegateError(`delegate timed out after ${Math.round(opts.timeoutMs / 1000)}s`, "timeout", stderr.slice(-STDERR_TAIL_CHARS))));
+      finish(() => reject(new DelegateError(`delegate timed out after ${Math.round(opts.timeoutMs / 1000)}s`, "timeout", stderr.slice(-STDERR_TAIL_CHARS), stdout)));
     }, opts.timeoutMs);
     const onAbort = () => {
       kill();
@@ -264,7 +266,7 @@ export async function delegateToCodex(
   const args = req.sessionId
     ? ["exec", "resume", ...common, ...strict, "-c", `sandbox_mode="${req.sandbox}"`, req.sessionId, "-"]
     : ["exec", ...common, ...strict, "-s", req.sandbox, "-C", req.cwd, "-"];
-  const res = await runProcess({
+  const res = await withResumeHint("codex", (o) => parseCodexJsonl(o).threadId, () => runProcess({
     bin: req.bin,
     args,
     stdin: req.prompt,
@@ -274,7 +276,7 @@ export async function delegateToCodex(
     log: req.log,
     signal: req.signal,
     onLine: progressLineHandler("codex", req.onProgress),
-  });
+  }));
   const parsed = parseCodexJsonl(res.stdout);
   const isError = res.code !== 0 || parsed.error !== null;
   if (isError && !parsed.text) {
@@ -325,7 +327,7 @@ export async function delegateToClaude(
   if (CLAUDE_READ_ONLY_MODES.has(req.permissionMode)) args.push("--disallowedTools", CLAUDE_READ_ONLY_DENIED_TOOLS.join(","));
   if (req.model) args.push("--model", req.model);
   if (req.sessionId) args.push("--resume", req.sessionId);
-  const res = await runProcess({
+  const res = await withResumeHint("claude", (o) => claudeSessionFromStream(o), () => runProcess({
     bin: req.bin,
     args,
     stdin: req.prompt,
@@ -335,7 +337,7 @@ export async function delegateToClaude(
     log: req.log,
     signal: req.signal,
     onLine: progressLineHandler("claude", req.onProgress),
-  });
+  }));
   const parsed = parseClaudeJson(res.stdout);
   if (!parsed) {
     throw new DelegateError(`claude exited with code ${res.code} without a JSON result`, "failed", (res.stderr || res.stdout).slice(-STDERR_TAIL_CHARS));
@@ -405,7 +407,7 @@ export async function delegateToOpencode(req: DelegateRequest & { bin: string; a
   if (req.autoApprove) args.push("--auto");
   const env = childEnv(req.extraEnv);
   if (!req.autoApprove) env[OPENCODE_CONFIG_CONTENT_ENV] = JSON.stringify({ permission: OPENCODE_READ_ONLY_PERMISSIONS });
-  const res = await runProcess({
+  const res = await withResumeHint("opencode", (o) => parseOpencodeJsonl(o).sessionId, () => runProcess({
     bin: req.bin,
     args,
     stdin: req.prompt,
@@ -415,7 +417,7 @@ export async function delegateToOpencode(req: DelegateRequest & { bin: string; a
     log: req.log,
     signal: req.signal,
     onLine: progressLineHandler("opencode", req.onProgress),
-  });
+  }));
   const parsed = parseOpencodeJsonl(res.stdout);
   const isError = res.code !== 0 || parsed.error !== null;
   if (isError && !parsed.text) {
@@ -428,3 +430,32 @@ export async function delegateToOpencode(req: DelegateRequest & { bin: string; a
 /** Shared with the opencode server-mode delegate. */
 export const checkDepthPublic = checkDepth;
 export const childEnvPublic = (extra: Record<string, string> = {}) => childEnv(extra);
+
+/** Session id from a partial `claude -p --output-format stream-json` stream (every event carries it). */
+export function claudeSessionFromStream(stdout: string): string | null {
+  const m = /"session_id":"([^"]+)"/.exec(stdout);
+  return m ? m[1]! : null;
+}
+
+/**
+ * A timed-out run is not wasted: the agent's session keeps its progress. Tell the caller which session
+ * to continue, so it resumes instead of starting the same task from scratch.
+ */
+export async function withResumeHint<T>(agent: string, sessionOf: (stdout: string) => string | null, run: () => Promise<T>): Promise<T> {
+  try {
+    return await run();
+  } catch (err) {
+    if (err instanceof DelegateError && err.kind === "timeout") {
+      const id = sessionOf(err.partialStdout);
+      if (id) {
+        throw new DelegateError(
+          `${err.message}. The ${agent} session ${id} keeps its progress: call again with session_id="${id}" (and a longer timeout_sec, or use spawn_${agent}) to continue instead of starting over.`,
+          "timeout",
+          err.stderrTail,
+          err.partialStdout,
+        );
+      }
+    }
+    throw err;
+  }
+}

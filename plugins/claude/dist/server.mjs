@@ -36490,7 +36490,7 @@ import { basename, join as join2 } from "node:path";
 import { homedir } from "node:os";
 import { join } from "node:path";
 var APP_NAME = "agent-bridge";
-var APP_VERSION = "0.5.1";
+var APP_VERSION = "0.5.2";
 var PROTOCOL_VERSION = 2;
 var ENV = {
   home: "AGENT_BRIDGE_HOME",
@@ -36524,7 +36524,7 @@ var MAX_BODY_CHARS = 2e5;
 var MESSAGE_TTL_MS = 7 * 24 * 60 * 60 * 1e3;
 var PURGE_INTERVAL_MS = 60 * 60 * 1e3;
 var DEFAULT_MAX_HOPS = 6;
-var DEFAULT_DELEGATE_TIMEOUT_SEC = 900;
+var DEFAULT_DELEGATE_TIMEOUT_SEC = 3600;
 var MAX_JOB_TIMEOUT_SEC = 24 * 60 * 60;
 var DEFAULT_CLAUDE_BIN = "claude";
 var DEFAULT_CODEX_BIN = "codex";
@@ -36766,14 +36766,16 @@ function currentDelegateDepth(env = process.env) {
   return Number.isInteger(n) && n > 0 ? n : 0;
 }
 var DelegateError = class extends Error {
-  constructor(message, kind, stderrTail = "") {
+  constructor(message, kind, stderrTail = "", partialStdout = "") {
     super(message);
     this.kind = kind;
     this.stderrTail = stderrTail;
+    this.partialStdout = partialStdout;
     this.name = "DelegateError";
   }
   kind;
   stderrTail;
+  partialStdout;
 };
 function resolveBinary(bin, env = process.env, platform = process.platform) {
   const isWin = platform === "win32";
@@ -36847,7 +36849,7 @@ function runProcess(opts) {
     };
     const timer = setTimeout(() => {
       kill();
-      finish(() => reject(new DelegateError(`delegate timed out after ${Math.round(opts.timeoutMs / 1e3)}s`, "timeout", stderr.slice(-STDERR_TAIL_CHARS))));
+      finish(() => reject(new DelegateError(`delegate timed out after ${Math.round(opts.timeoutMs / 1e3)}s`, "timeout", stderr.slice(-STDERR_TAIL_CHARS), stdout)));
     }, opts.timeoutMs);
     const onAbort = () => {
       kill();
@@ -36932,7 +36934,7 @@ async function delegateToCodex(req) {
   const common = ["--json", "--skip-git-repo-check", ...req.model ? ["-m", req.model] : []];
   const strict = ["-c", req.relayApprovals ? CODEX_RELAY_APPROVALS : CODEX_STRICT_APPROVALS];
   const args = req.sessionId ? ["exec", "resume", ...common, ...strict, "-c", `sandbox_mode="${req.sandbox}"`, req.sessionId, "-"] : ["exec", ...common, ...strict, "-s", req.sandbox, "-C", req.cwd, "-"];
-  const res = await runProcess({
+  const res = await withResumeHint("codex", (o) => parseCodexJsonl(o).threadId, () => runProcess({
     bin: req.bin,
     args,
     stdin: req.prompt,
@@ -36942,7 +36944,7 @@ async function delegateToCodex(req) {
     log: req.log,
     signal: req.signal,
     onLine: progressLineHandler("codex", req.onProgress)
-  });
+  }));
   const parsed = parseCodexJsonl(res.stdout);
   const isError = res.code !== 0 || parsed.error !== null;
   if (isError && !parsed.text) {
@@ -36981,7 +36983,7 @@ async function delegateToClaude(req) {
   if (CLAUDE_READ_ONLY_MODES.has(req.permissionMode)) args.push("--disallowedTools", CLAUDE_READ_ONLY_DENIED_TOOLS.join(","));
   if (req.model) args.push("--model", req.model);
   if (req.sessionId) args.push("--resume", req.sessionId);
-  const res = await runProcess({
+  const res = await withResumeHint("claude", (o) => claudeSessionFromStream(o), () => runProcess({
     bin: req.bin,
     args,
     stdin: req.prompt,
@@ -36991,7 +36993,7 @@ async function delegateToClaude(req) {
     log: req.log,
     signal: req.signal,
     onLine: progressLineHandler("claude", req.onProgress)
-  });
+  }));
   const parsed = parseClaudeJson(res.stdout);
   if (!parsed) {
     throw new DelegateError(`claude exited with code ${res.code} without a JSON result`, "failed", (res.stderr || res.stdout).slice(-STDERR_TAIL_CHARS));
@@ -37049,7 +37051,7 @@ async function delegateToOpencode(req) {
   if (req.autoApprove) args.push("--auto");
   const env = childEnv(req.extraEnv);
   if (!req.autoApprove) env[OPENCODE_CONFIG_CONTENT_ENV] = JSON.stringify({ permission: OPENCODE_READ_ONLY_PERMISSIONS });
-  const res = await runProcess({
+  const res = await withResumeHint("opencode", (o) => parseOpencodeJsonl(o).sessionId, () => runProcess({
     bin: req.bin,
     args,
     stdin: req.prompt,
@@ -37059,7 +37061,7 @@ async function delegateToOpencode(req) {
     log: req.log,
     signal: req.signal,
     onLine: progressLineHandler("opencode", req.onProgress)
-  });
+  }));
   const parsed = parseOpencodeJsonl(res.stdout);
   const isError = res.code !== 0 || parsed.error !== null;
   if (isError && !parsed.text) {
@@ -37070,6 +37072,28 @@ async function delegateToOpencode(req) {
 }
 var checkDepthPublic = checkDepth;
 var childEnvPublic = (extra = {}) => childEnv(extra);
+function claudeSessionFromStream(stdout) {
+  const m = /"session_id":"([^"]+)"/.exec(stdout);
+  return m ? m[1] : null;
+}
+async function withResumeHint(agent, sessionOf, run) {
+  try {
+    return await run();
+  } catch (err) {
+    if (err instanceof DelegateError && err.kind === "timeout") {
+      const id = sessionOf(err.partialStdout);
+      if (id) {
+        throw new DelegateError(
+          `${err.message}. The ${agent} session ${id} keeps its progress: call again with session_id="${id}" (and a longer timeout_sec, or use spawn_${agent}) to continue instead of starting over.`,
+          "timeout",
+          err.stderrTail,
+          err.partialStdout
+        );
+      }
+    }
+    throw err;
+  }
+}
 
 // src/core/messages.ts
 var en = {
@@ -38490,8 +38514,10 @@ async function delegateToOpencodeServed(req) {
     const text2 = await res.text();
     return text2 ? JSON.parse(text2) : null;
   };
+  let knownSession = req.sessionId ?? null;
   try {
     const sessionId = req.sessionId ?? (await api("POST", "/session", {})).id;
+    knownSession = sessionId;
     const events = await fetch(`${url2}/event?${q}`, { headers: { authorization: auth, accept: "text/event-stream" }, signal: ac.signal });
     if (!events.ok || !events.body) throw new DelegateError(`opencode event stream failed: HTTP ${events.status}`, "failed");
     const [providerID, ...rest] = (req.model ?? "").split("/");
@@ -38552,7 +38578,9 @@ async function delegateToOpencodeServed(req) {
     };
   } catch (err) {
     if (ac.signal.aborted && !(err instanceof DelegateError)) {
-      throw new DelegateError(req.signal?.aborted ? "delegate aborted" : `delegate timed out after ${req.timeoutSec}s`, req.signal?.aborted ? "aborted" : "timeout");
+      if (req.signal?.aborted) throw new DelegateError("delegate aborted", "aborted");
+      const hint = knownSession ? `. The opencode session ${knownSession} keeps its progress: call again with session_id="${knownSession}" (and a longer timeout_sec, or use spawn_opencode) to continue instead of starting over.` : "";
+      throw new DelegateError(`delegate timed out after ${req.timeoutSec}s${hint}`, "timeout");
     }
     throw err;
   } finally {

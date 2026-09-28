@@ -3,7 +3,7 @@ import { join } from "node:path";
 
 /** Product identity. */
 export const APP_NAME = "agent-bridge";
-export const APP_VERSION = "0.5.1";
+export const APP_VERSION = "0.5.2";
 
 /** Wire protocol version; bump on incompatible changes to the broker protocol. */
 export const PROTOCOL_VERSION = 2;
@@ -58,7 +58,8 @@ export const PURGE_INTERVAL_MS = 60 * 60 * 1000;
 export const DEFAULT_MAX_HOPS = 6;
 
 /** Delegation (headless calls to the other CLI). */
-export const DEFAULT_DELEGATE_TIMEOUT_SEC = 900;
+/** ask_* default. Real implementation tasks take longer than 15 minutes; hosts background long calls anyway. */
+export const DEFAULT_DELEGATE_TIMEOUT_SEC = 3_600;
 export const MAX_DELEGATE_TIMEOUT_SEC = 3_600;
 /** Background subagents have no practical limit; this cap only stops runaway processes. */
 export const MAX_JOB_TIMEOUT_SEC = 24 * 60 * 60;

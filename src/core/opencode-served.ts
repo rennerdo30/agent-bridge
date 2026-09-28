@@ -127,8 +127,10 @@ export async function delegateToOpencodeServed(
     return text ? JSON.parse(text) : null;
   };
 
+  let knownSession: string | null = req.sessionId ?? null;
   try {
     const sessionId: string = req.sessionId ?? (await api("POST", "/session", {})).id;
+    knownSession = sessionId;
     const events = await fetch(`${url}/event?${q}`, { headers: { authorization: auth, accept: "text/event-stream" }, signal: ac.signal });
     if (!events.ok || !events.body) throw new DelegateError(`opencode event stream failed: HTTP ${events.status}`, "failed");
 
@@ -196,7 +198,11 @@ export async function delegateToOpencodeServed(
     };
   } catch (err) {
     if (ac.signal.aborted && !(err instanceof DelegateError)) {
-      throw new DelegateError(req.signal?.aborted ? "delegate aborted" : `delegate timed out after ${req.timeoutSec}s`, req.signal?.aborted ? "aborted" : "timeout");
+      if (req.signal?.aborted) throw new DelegateError("delegate aborted", "aborted");
+      const hint = knownSession
+        ? `. The opencode session ${knownSession} keeps its progress: call again with session_id="${knownSession}" (and a longer timeout_sec, or use spawn_opencode) to continue instead of starting over.`
+        : "";
+      throw new DelegateError(`delegate timed out after ${req.timeoutSec}s${hint}`, "timeout");
     }
     throw err;
   } finally {
