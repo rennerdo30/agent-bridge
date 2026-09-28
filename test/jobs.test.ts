@@ -56,6 +56,18 @@ describe("background subagents", () => {
     await until(() => aborted && jobs.runningCount() === 0);
   });
 
+  it("lists blocking ask runs with their current step, without counting them as background jobs", () => {
+    const tracked = jobs.track("opencode", "opencode/muse", "implement interiors");
+    tracked.onProgress("bash: grep -rn Layout");
+    const listed = jobs.list();
+    expect(listed).toHaveLength(1);
+    expect(listed[0]).toMatchObject({ name: expect.stringMatching(/^opencode-ask-/), progress: "bash: grep -rn Layout", foreground: true });
+    expect(jobs.runningCount()).toBe(0);
+    tracked.end();
+    expect(jobs.list()).toHaveLength(0);
+    expect(me.unread()).toHaveLength(0); // no result message for foreground runs
+  });
+
   it("Stop waits for a running subagent and continues with its result", async () => {
     const ctx: ServerContext = {
       agent: "claude",

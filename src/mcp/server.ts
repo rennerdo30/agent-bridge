@@ -27,7 +27,7 @@ import { resolveDbPath, resolveHome, resolvePipePath } from "../core/paths.js";
 import { detectClaudeChannel } from "../core/procinfo.js";
 import { loadOrCreateToken } from "../core/token.js";
 import { BridgeError, BROADCAST, CODING_AGENTS, type AgentKind, type BridgeMessage, type CodingAgent } from "../core/protocol.js";
-import { formatMessage, formatMessages, formatPeer, formatUsage } from "./format.js";
+import { formatDuration, formatMessage, formatMessages, formatPeer, formatUsage } from "./format.js";
 import { CodexWaker, type Activity } from "./codex-wake.js";
 import { buildHookResponse, type HookEvent } from "./hooks.js";
 import { ACCESS_LEVELS, DELEGATION_TARGETS, supportsAsk, type Access, type RelayWiring, type TargetArgs } from "./targets.js";
@@ -357,7 +357,7 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
       if (jobs.length) {
         lines.push(t("peers.jobs", { count: jobs.length }));
         for (const j of jobs) {
-          lines.push(t("peers.job", { name: j.name, model: j.model ?? "default", seconds: Math.round((Date.now() - j.startedAt) / 1000), progress: j.progress ?? "starting" }));
+          lines.push(t("peers.job", { name: j.name, model: j.model ?? "default", duration: formatDuration(Date.now() - j.startedAt), progress: j.progress ?? "starting" }));
         }
       }
       return text(lines.join("\n"));
@@ -566,7 +566,14 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
         inputSchema: schema,
       },
       guarded(askName, async (a: DelegateArgs, extra) => {
-        const res = await run(a, extra.signal, progressReporter(extra, log), false);
+        // Visible in peers while it runs (the caller is blocked, but its coordinator may ask).
+        const tracked = ctx.jobs?.track(target, a.model ?? defaultModel, a.prompt);
+        const report = progressReporter(extra, log);
+        const onProgress = (m: string) => {
+          tracked?.onProgress(m);
+          report?.(m);
+        };
+        const res = await run(a, extra.signal, onProgress, false).finally(() => tracked?.end());
         const header = t("delegate.done", { agent: target, session: res.sessionId ?? "-" });
         return text(`${header}
 

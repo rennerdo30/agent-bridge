@@ -85,3 +85,12 @@ export function formatUsage(details: Record<string, unknown>): string | null {
   if (typeof cost === "number") parts.push(`$${cost.toFixed(4)}`);
   return parts.length ? `Usage: ${parts.join(", ")}` : null;
 }
+
+/** "45s", "34m 52s", "2h 5m": runtimes of subagents in peers. */
+export function formatDuration(ms: number): string {
+  const s = Math.max(0, Math.round(ms / 1000));
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ${s % 60}s`;
+  return `${Math.floor(m / 60)}h ${m % 60}m`;
+}

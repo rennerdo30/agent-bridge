@@ -12,7 +12,7 @@ import { connect } from "node:net";
 import { homedir } from "node:os";
 import { join } from "node:path";
 var APP_NAME = "agent-bridge";
-var APP_VERSION = "0.5.2";
+var APP_VERSION = "0.5.3";
 var PROTOCOL_VERSION = 2;
 var ENV = {
   home: "AGENT_BRIDGE_HOME",
@@ -189,7 +189,7 @@ var en = {
   "peers.header": "{count} other peer(s) online:",
   "peers.none": "No other peers are online. Messages you send to an offline peer name wait until it connects.",
   "peers.jobs": "Your running subagents ({count}):",
-  "peers.job": "- {name} (model: {model}, running {seconds}s): {progress}",
+  "peers.job": "- {name} (model: {model}, running {duration}): {progress}",
   "jobs.started": 'Subagent {name} started. Keep working; its result will arrive as a message from "{name}" (or call wait_for_message with from="{name}").',
   "jobs.limit": "Too many subagents running (maximum {max}). Wait for one to finish or cancel one.",
   "jobs.cancelled": "Cancelled subagent {name}.",

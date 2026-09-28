@@ -36490,7 +36490,7 @@ import { basename, join as join2 } from "node:path";
 import { homedir } from "node:os";
 import { join } from "node:path";
 var APP_NAME = "agent-bridge";
-var APP_VERSION = "0.5.2";
+var APP_VERSION = "0.5.3";
 var PROTOCOL_VERSION = 2;
 var ENV = {
   home: "AGENT_BRIDGE_HOME",
@@ -37105,7 +37105,7 @@ var en = {
   "peers.header": "{count} other peer(s) online:",
   "peers.none": "No other peers are online. Messages you send to an offline peer name wait until it connects.",
   "peers.jobs": "Your running subagents ({count}):",
-  "peers.job": "- {name} (model: {model}, running {seconds}s): {progress}",
+  "peers.job": "- {name} (model: {model}, running {duration}): {progress}",
   "jobs.started": 'Subagent {name} started. Keep working; its result will arrive as a message from "{name}" (or call wait_for_message with from="{name}").',
   "jobs.limit": "Too many subagents running (maximum {max}). Wait for one to finish or cancel one.",
   "jobs.cancelled": "Cancelled subagent {name}.",
@@ -38220,6 +38220,13 @@ function formatUsage(details) {
   if (typeof cost === "number") parts.push(`$${cost.toFixed(4)}`);
   return parts.length ? `Usage: ${parts.join(", ")}` : null;
 }
+function formatDuration(ms) {
+  const s = Math.max(0, Math.round(ms / 1e3));
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ${s % 60}s`;
+  return `${Math.floor(m / 60)}h ${m % 60}m`;
+}
 
 // src/mcp/codex-wake.ts
 var WAKE_DEBOUNCE_MS = 1500;
@@ -38867,11 +38874,31 @@ var JobManager = class {
   node;
   log;
   running = /* @__PURE__ */ new Map();
+  foreground = /* @__PURE__ */ new Map();
   runningCount() {
     return this.running.size;
   }
+  /** Background jobs plus blocking ask_* runs, so the session (and its coordinator) can see all of them. */
   list() {
-    return [...this.running.values()];
+    return [...this.running.values(), ...this.foreground.values()];
+  }
+  /**
+   * Register a blocking ask_* run for visibility in peers. Returns a progress sink and a function to
+   * call when the run ends. Foreground runs do not count against the job limit or delay the Stop hook.
+   */
+  track(agent, model, prompt) {
+    const id = randomUUID3().replace(/-/g, "").slice(0, JOB_ID_LENGTH);
+    const job = { id, name: `${agent}-ask-${id}`, agent, model, prompt, startedAt: Date.now(), controller: new AbortController(), progress: null, foreground: true };
+    this.foreground.set(id, job);
+    return {
+      job,
+      onProgress: (message) => {
+        job.progress = message;
+      },
+      end: () => {
+        this.foreground.delete(id);
+      }
+    };
   }
   canStart() {
     return this.running.size < MAX_RUNNING_JOBS;
@@ -39160,7 +39187,7 @@ function registerTools(mcp, ctx, targets) {
       if (jobs.length) {
         lines.push(t("peers.jobs", { count: jobs.length }));
         for (const j of jobs) {
-          lines.push(t("peers.job", { name: j.name, model: j.model ?? "default", seconds: Math.round((Date.now() - j.startedAt) / 1e3), progress: j.progress ?? "starting" }));
+          lines.push(t("peers.job", { name: j.name, model: j.model ?? "default", duration: formatDuration(Date.now() - j.startedAt), progress: j.progress ?? "starting" }));
         }
       }
       return text(lines.join("\n"));
@@ -39331,7 +39358,13 @@ ${notes.join("\n\n")}` : res.text };
         inputSchema: schema
       },
       guarded(askName, async (a, extra) => {
-        const res = await run(a, extra.signal, progressReporter(extra, log), false);
+        const tracked = ctx.jobs?.track(target, a.model ?? defaultModel, a.prompt);
+        const report = progressReporter(extra, log);
+        const onProgress = (m) => {
+          tracked?.onProgress(m);
+          report?.(m);
+        };
+        const res = await run(a, extra.signal, onProgress, false).finally(() => tracked?.end());
         const header = t("delegate.done", { agent: target, session: res.sessionId ?? "-" });
         return text(`${header}
 

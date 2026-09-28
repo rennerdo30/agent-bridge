@@ -19,6 +19,8 @@ export interface Job {
   controller: AbortController;
   /** Latest status line reported by the subagent, e.g. "running: npm test". */
   progress: string | null;
+  /** ask_* runs: the caller waits for the result itself; shown in peers, no result message. */
+  foreground?: boolean;
 }
 
 /**
@@ -27,6 +29,7 @@ export interface Job {
  */
 export class JobManager {
   private readonly running = new Map<string, Job>();
+  private readonly foreground = new Map<string, Job>();
 
   constructor(
     private readonly node: BridgeNode,
@@ -37,8 +40,28 @@ export class JobManager {
     return this.running.size;
   }
 
+  /** Background jobs plus blocking ask_* runs, so the session (and its coordinator) can see all of them. */
   list(): Job[] {
-    return [...this.running.values()];
+    return [...this.running.values(), ...this.foreground.values()];
+  }
+
+  /**
+   * Register a blocking ask_* run for visibility in peers. Returns a progress sink and a function to
+   * call when the run ends. Foreground runs do not count against the job limit or delay the Stop hook.
+   */
+  track(agent: AgentKind, model: string | null, prompt: string): { job: Job; onProgress: (message: string) => void; end: () => void } {
+    const id = randomUUID().replace(/-/g, "").slice(0, JOB_ID_LENGTH);
+    const job: Job = { id, name: `${agent}-ask-${id}`, agent, model, prompt, startedAt: Date.now(), controller: new AbortController(), progress: null, foreground: true };
+    this.foreground.set(id, job);
+    return {
+      job,
+      onProgress: (message) => {
+        job.progress = message;
+      },
+      end: () => {
+        this.foreground.delete(id);
+      },
+    };
   }
 
   canStart(): boolean {
