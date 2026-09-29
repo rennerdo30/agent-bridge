@@ -147,6 +147,8 @@ export interface ServerContext {
   openDashboard?: () => Promise<string | null>;
   /** Ask the user in this session (MCP elicitation); used for forwarded subagent permission requests. */
   askUser?: (req: PermissionRequest) => Promise<PermissionDecision>;
+  /** Whether askUser can reach the user (the host shows MCP elicitation dialogs). */
+  userCanAnswer?: () => boolean;
 }
 
 type ToolExtra = {
@@ -270,6 +272,7 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
     },
   );
   ctx.askUser = (req) => askUserViaElicitation(mcp.server, req, log.child("permissions"));
+  ctx.userCanAnswer = () => Boolean(mcp.server.getClientCapabilities()?.elicitation);
   registerTools(mcp, ctx, targets);
 
   const pushChannel = async (m: BridgeMessage) => {
@@ -625,7 +628,9 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
       }
       const forwarding = access === "ask" && supportsAsk(target, wiring);
       // Approval questions a subagent asks while it works (Codex app-server: MCP tool calls, and in "ask" mode
-      // commands and edits) go to this session's user. One "allow" per MCP server covers the rest of the run.
+      // commands and edits; opencode "edit" runs: what its rules leave to "ask"; Claude "edit" runs: permission
+      // prompts, through a PermissionRequest hook) go to the parent agent of a background subagent, else to this
+      // session's user. One "allow" per MCP server covers the rest of the run.
       const allowedServers = new Set<string>();
       const approve = async (r: PermissionRequest): Promise<PermissionDecision> => {
         if (r.tool.startsWith("mcp:") && allowedServers.has(r.tool)) return { allow: true };
@@ -720,6 +725,9 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
               if (job) ctx.jobs?.note(job, { sessionId: id, workdir, worktree: wt });
             },
             approve,
+            // Someone answers approve's questions: the user ("ask" relay or a dialog) or, for a background
+            // subagent, the parent agent. Else targets keep their own behavior (Claude and opencode).
+            canApprove: Boolean(wiring) || Boolean(job && !job.foreground && ctx.jobs) || Boolean(ctx.askUser && ctx.userCanAnswer?.()),
             live: job
               ? {
                   from: me,
@@ -751,7 +759,7 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
       }
 
       const notes: string[] = [`Step-by-step log: ${feed.logPath}`];
-      if (access !== "ask" && asked.length) notes.push(`Approval requests forwarded to the user:\n${asked.join("\n")}`);
+      if (access !== "ask" && asked.length) notes.push(`Approval requests forwarded:\n${asked.join("\n")}`);
       if (access === "ask") {
         notes.push(
           forwarding

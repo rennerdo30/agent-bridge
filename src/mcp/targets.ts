@@ -47,7 +47,12 @@ export interface DelegationTarget {
 }
 
 const CODEX_SANDBOX_FOR: Record<Access, CodexSandbox> = { read: "read-only", ask: "read-only", edit: "workspace-write" };
-/** "read" = manual mode plus a deny list for editing and shell tools (see delegate.ts). "ask" is not forwarded for Claude yet. */
+/**
+ * "read" = manual mode plus a deny list for editing and shell tools (see delegate.ts). "edit" runs send their
+ * permission prompts (commands or MCP tools that need approval) to the parent through a PermissionRequest hook.
+ * "ask" stays read-only for Claude: the hook only sees what would show a dialog, and the user's allow rules or
+ * auto mode approve edits and commands before that, so "every change is asked" could not be guaranteed.
+ */
 const CLAUDE_MODE_FOR: Record<Access, ClaudePermissionMode> = { read: "manual", ask: "manual", edit: "acceptEdits" };
 const OPENCODE_AUTO_FOR: Record<Access, boolean> = { read: false, ask: false, edit: true };
 
@@ -63,6 +68,15 @@ export function supportsAsk(target: CodingAgent, relay: RelayWiring | undefined)
   // Codex: through app-server always; the exec fallback needs the trusted PermissionRequest hook.
   if (target === "codex") return process.env[CODEX_EXEC_ENV] !== "1" || relay.codexHookTrusted;
   return false;
+}
+
+/**
+ * Whether an opencode "edit" run forwards its permission questions (served mode) instead of `run --auto`.
+ * Only with someone to answer them; an explicit auto_approve keeps its meaning. "read" never gets here:
+ * it stays `opencode run` with edits, commands and MCP tools denied.
+ */
+export function opencodeEditAsks(base: Pick<DelegateRequest, "approve" | "canApprove">, a: TargetArgs): boolean {
+  return a.access === "edit" && a.auto_approve === undefined && Boolean(base.approve && base.canApprove);
 }
 
 /** How to run each coding agent headlessly. Adding an agent means adding one entry here. */
@@ -130,11 +144,15 @@ export const DELEGATION_TARGETS: Record<CodingAgent, DelegationTarget> = {
       const res =
         a.access === "ask" && a.auto_approve === undefined && supportsAsk("opencode", a.relay)
           ? await delegateToOpencodeServed({ ...base, bin: cfg.opencodeBin, onPermission: a.relay!.onPermission })
-          : await delegateToOpencode({
-              ...base,
-              bin: cfg.opencodeBin,
-              autoApprove: a.auto_approve ?? (a.access ? OPENCODE_AUTO_FOR[a.access] : cfg.opencodeAutoApprove),
-            });
+          : opencodeEditAsks(base, a)
+            ? // "edit": what the user's opencode rules leave to "ask" (MCP tools, folders outside the project,
+              // commands they marked) goes to the parent instead of `opencode run --auto` approving it blindly.
+              await delegateToOpencodeServed({ ...base, bin: cfg.opencodeBin, onPermission: base.approve!, permissions: null })
+            : await delegateToOpencode({
+                ...base,
+                bin: cfg.opencodeBin,
+                autoApprove: a.auto_approve ?? (a.access ? OPENCODE_AUTO_FOR[a.access] : cfg.opencodeAutoApprove),
+              });
       return note ? { ...res, text: `(${note})\n\n${res.text}` } : res;
     },
   },
