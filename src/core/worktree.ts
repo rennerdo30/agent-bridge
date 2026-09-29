@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync } from "node:fs";
+import { mkdirSync, readFileSync, realpathSync } from "node:fs";
 import { basename, isAbsolute, join, relative, resolve } from "node:path";
 import { runProcess } from "./delegate.js";
 import type { Logger } from "./logger.js";
@@ -86,8 +86,16 @@ export function subagentCommitMessage(opts: { answer: string; task: string; job?
 export async function gitDirsOutside(cwd: string, log: Logger): Promise<string[]> {
   try {
     const [gitDir, common] = (await git(["rev-parse", "--path-format=absolute", "--git-dir", "--git-common-dir"], cwd, log)).split(/\r?\n/);
+    // Git reports resolved paths: compare real paths (symlinked temp dirs, Windows 8.3 short names).
+    const real = (p: string) => {
+      try {
+        return realpathSync.native(p);
+      } catch {
+        return resolve(p);
+      }
+    };
     const inside = (p: string) => {
-      const rel = relative(resolve(cwd), resolve(p));
+      const rel = relative(real(cwd), real(p));
       return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
     };
     return [...new Set([gitDir, common].filter((p): p is string => Boolean(p) && !inside(p!)))];

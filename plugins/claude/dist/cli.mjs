@@ -7714,7 +7714,7 @@ import { connect } from "node:net";
 import { homedir } from "node:os";
 import { join } from "node:path";
 var APP_NAME = "agent-bridge";
-var APP_VERSION = "0.14.0";
+var APP_VERSION = "0.14.1";
 var PROTOCOL_VERSION = 2;
 var ENV = {
   home: "AGENT_BRIDGE_HOME",
@@ -10951,7 +10951,7 @@ import { join as join17 } from "node:path";
 
 // src/core/worktree.ts
 import { createHash as createHash2 } from "node:crypto";
-import { mkdirSync as mkdirSync7, readFileSync as readFileSync9 } from "node:fs";
+import { mkdirSync as mkdirSync7, readFileSync as readFileSync9, realpathSync as realpathSync2 } from "node:fs";
 import { basename as basename2, isAbsolute as isAbsolute2, join as join14, relative, resolve as resolve4 } from "node:path";
 var GIT = "git";
 var GIT_TIMEOUT_MS = 6e4;
