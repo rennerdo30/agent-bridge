@@ -26,6 +26,8 @@ export class DelegateError extends Error {
     readonly stderrTail = "",
     /** stdout captured before the failure (lets callers recover the session id after a timeout). */
     readonly partialStdout = "",
+    /** The agent's session, when it was known before the failure (for resuming it). */
+    public sessionId: string | null = null,
   ) {
     super(message);
     this.name = "DelegateError";
@@ -139,7 +141,7 @@ export function runProcess(opts: {
     }, opts.timeoutMs);
     const onAbort = () => {
       kill();
-      finish(() => reject(new DelegateError("delegate aborted", "aborted")));
+      finish(() => reject(new DelegateError("delegate aborted", "aborted", "", stdout)));
     };
     opts.signal?.addEventListener("abort", onAbort, { once: true });
 
@@ -301,7 +303,7 @@ export async function delegateToCodex(
   const parsed = parseCodexJsonl(res.stdout);
   const isError = res.code !== 0 || parsed.error !== null;
   if (isError && !parsed.text) {
-    throw new DelegateError(parsed.error ?? `codex exited with code ${res.code}`, "failed", res.stderr.slice(-STDERR_TAIL_CHARS));
+    throw new DelegateError(parsed.error ?? `codex exited with code ${res.code}`, "failed", res.stderr.slice(-STDERR_TAIL_CHARS), "", parsed.threadId ?? req.sessionId ?? null);
   }
   req.log.info("codex delegate finished", { threadId: parsed.threadId, code: res.code, isError });
   return {
@@ -361,7 +363,7 @@ export async function delegateToClaude(
   }));
   const parsed = parseClaudeJson(res.stdout);
   if (!parsed) {
-    throw new DelegateError(`claude exited with code ${res.code} without a JSON result`, "failed", (res.stderr || res.stdout).slice(-STDERR_TAIL_CHARS));
+    throw new DelegateError(`claude exited with code ${res.code} without a JSON result`, "failed", (res.stderr || res.stdout).slice(-STDERR_TAIL_CHARS), "", claudeSessionFromStream(res.stdout) ?? req.sessionId ?? null);
   }
   req.log.info("claude delegate finished", { sessionId: parsed.sessionId, code: res.code, isError: parsed.isError });
   return {
@@ -442,7 +444,7 @@ export async function delegateToOpencode(req: DelegateRequest & { bin: string; a
   const parsed = parseOpencodeJsonl(res.stdout);
   const isError = res.code !== 0 || parsed.error !== null;
   if (isError && !parsed.text) {
-    throw new DelegateError(parsed.error ?? `opencode exited with code ${res.code}`, "failed", res.stderr.slice(-STDERR_TAIL_CHARS));
+    throw new DelegateError(parsed.error ?? `opencode exited with code ${res.code}`, "failed", res.stderr.slice(-STDERR_TAIL_CHARS), "", parsed.sessionId ?? req.sessionId ?? null);
   }
   req.log.info("opencode delegate finished", { sessionId: parsed.sessionId, code: res.code, isError });
   return { sessionId: parsed.sessionId ?? req.sessionId ?? null, text: parsed.text, isError, details: { exitCode: res.code, error: parsed.error, usage: parsed.usage ?? null, costUsd: parsed.cost || null } };
@@ -466,14 +468,16 @@ export async function withResumeHint<T>(agent: string, sessionOf: (stdout: strin
   try {
     return await run();
   } catch (err) {
+    if (err instanceof DelegateError && !err.sessionId) err.sessionId = sessionOf(err.partialStdout);
     if (err instanceof DelegateError && err.kind === "timeout") {
-      const id = sessionOf(err.partialStdout);
+      const id = err.sessionId;
       if (id) {
         throw new DelegateError(
           `${err.message}. The ${agent} session ${id} keeps its progress: call again with session_id="${id}" (and a longer timeout_sec, or use spawn_${agent}) to continue instead of starting over.`,
           "timeout",
           err.stderrTail,
           err.partialStdout,
+          id,
         );
       }
     }

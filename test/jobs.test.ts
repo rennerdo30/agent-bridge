@@ -34,7 +34,7 @@ describe("background subagents", () => {
     expect(m.from.name).toBe(job.name);
     expect(m.body).toContain("all done");
     expect(m.body).toContain("model gpt-6-sol");
-    expect(m.body).toContain("session_id=s-9");
+    expect(m.body).toContain(`message_subagent(job="${job.name}"`);
     expect(jobs.runningCount()).toBe(0);
   });
 

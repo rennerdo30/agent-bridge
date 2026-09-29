@@ -28,7 +28,15 @@ export const en = {
   "autoWake.off": "Auto-wake is off. Peer messages are shown on your next prompt or tool use.",
 
   "delegate.done": "{agent} finished (session_id: {session}).",
-  "delegate.empty": "(no answer text returned)",
+  "peers.recent": "Recent subagents (message_subagent continues them):",
+  "peers.recentJob": "- {name}: {status} {ago} ago, {session}",
+  "delegate.followUp": "Follow up with its full context: message_subagent(job=\"{job}\", message=...).",
+  "followUp.started": "Sent to {name}; it continues in its own session. Its answer will arrive as a message from {name}.",
+  "followUp.queued": "{name} is still working; your message is queued and will be sent as soon as it finishes.",
+  "followUp.unknown": "No subagent named {name}. Call peers to see running and recent subagents.",
+  "followUp.no-session": "{name} has no session to continue (it failed before starting one). Start a new one with ask_* or spawn_*.",
+  "followUp.busy": "Too many subagents running (maximum {max}). Wait for one to finish, then send the message again.",
+  "delegate.empty":"(no answer text returned)",
 
   "err.ambiguous": "Several peers match; pick one of: {candidates}.",
   "err.unknownTarget": "Unknown recipient: {detail}",

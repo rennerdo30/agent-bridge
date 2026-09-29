@@ -182,7 +182,7 @@ export async function delegateToOpencodeServed(
     } finally {
       clearTimeout(watchdog);
     }
-    if (failure && !alive) throw new DelegateError(failure, "failed");
+    if (failure && !alive) throw new DelegateError(failure, "failed", "", "", sessionId);
 
     const messages: Json[] = (await api("GET", `/session/${sessionId}/message`)) ?? [];
     const last = [...messages].reverse().find((m) => m.info?.role === "assistant");
@@ -190,7 +190,7 @@ export async function delegateToOpencodeServed(
       .filter((part: Json) => part.type === "text" && typeof part.text === "string")
       .map((part: Json) => part.text)
       .join("");
-    if (failure && !text) throw new DelegateError(failure, "failed");
+    if (failure && !text) throw new DelegateError(failure, "failed", "", "", sessionId);
     const tokens = last?.info?.tokens;
     return {
       sessionId,
@@ -204,11 +204,11 @@ export async function delegateToOpencodeServed(
     };
   } catch (err) {
     if (ac.signal.aborted && !(err instanceof DelegateError)) {
-      if (req.signal?.aborted) throw new DelegateError("delegate aborted", "aborted");
+      if (req.signal?.aborted) throw new DelegateError("delegate aborted", "aborted", "", "", knownSession);
       const hint = knownSession
         ? `. The opencode session ${knownSession} keeps its progress: call again with session_id="${knownSession}" (and a longer timeout_sec, or use spawn_opencode) to continue instead of starting over.`
         : "";
-      throw new DelegateError(`delegate timed out after ${req.timeoutSec}s${hint}`, "timeout");
+      throw new DelegateError(`delegate timed out after ${req.timeoutSec}s${hint}`, "timeout", "", "", knownSession);
     }
     throw err;
   } finally {

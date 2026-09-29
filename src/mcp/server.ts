@@ -39,7 +39,7 @@ import { findRunningDashboard, hostDashboard, type DashboardInfo, type HostedDas
 import { openBrowser } from "../cli/open.js";
 import { RewakeEndpoint } from "./rewake.js";
 import { createWorktree, finishWorktree, gitStatusSnapshot, worktreeReport } from "../core/worktree.js";
-import { JobManager } from "./jobs.js";
+import { DEFAULT_FOLLOW_UP, JobManager, type Resume } from "./jobs.js";
 
 const CHANNEL_NOTIFICATION = "notifications/claude/channel";
 /** Sent to the opencode plugin (our MCP client in --agent=opencode mode) when a message arrives. */
@@ -410,6 +410,11 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
           lines.push(t("peers.job", { name: j.name, model: j.model ?? "default", duration: formatDuration(Date.now() - j.startedAt), progress: j.progress ?? "starting" }));
         }
       }
+      const recent = ctx.jobs?.recent() ?? [];
+      if (recent.length) {
+        lines.push(t("peers.recent"));
+        for (const j of recent) lines.push(t("peers.recentJob", { name: j.name, status: j.status, ago: formatDuration(Date.now() - (j.finishedAt ?? Date.now())), session: j.sessionId ? "can be continued" : "no session" }));
+      }
       return text(lines.join("\n"));
     }),
   );
@@ -614,8 +619,20 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
         const changed = after ? [...after].filter((l) => !before.has(l)) : [];
         notes.push(changed.length ? `Files changed in your working copy:\n${changed.join("\n")}` : "No files changed.");
       }
-      return { ...res, text: notes.length ? `${res.text}\n\n---\n${notes.join("\n\n")}` : res.text };
+      return { ...res, workdir: wt?.cwd ?? cwd, text: notes.length ? `${res.text}\n\n---\n${notes.join("\n\n")}` : res.text };
     };
+
+    /** Continue a subagent's session: same agent, model and access, in the folder (or worktree) it used. */
+    const resumeFor =
+      (a: DelegateArgs): Resume =>
+      (message, sessionId, workdir) =>
+      (signal, onProgress) =>
+        run(
+          { ...a, prompt: message, session_id: sessionId, cwd: workdir ?? a.cwd, worktree: false, access: a.worktree ? (a.access ?? "edit") : a.access },
+          signal,
+          onProgress,
+          true,
+        );
 
     const askName = `ask_${target}`;
     mcp.registerTool(
@@ -631,14 +648,21 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
       },
       guarded(askName, async (a: DelegateArgs, extra) => {
         // Visible in peers while it runs (the caller is blocked, but its coordinator may ask).
-        const tracked = ctx.jobs?.track(target, a.model ?? defaultModel, a.prompt);
+        const tracked = ctx.jobs?.track(target, a.model ?? defaultModel, a.prompt, resumeFor(a));
         const report = progressReporter(extra, log);
         const onProgress = (m: string) => {
           tracked?.onProgress(m);
           report?.(m);
         };
-        const res = await run(a, extra.signal, onProgress, false).finally(() => tracked?.end());
-        const header = t("delegate.done", { agent: target, session: res.sessionId ?? "-" });
+        let res;
+        try {
+          res = await run(a, extra.signal, onProgress, false);
+        } catch (err) {
+          tracked?.end({ error: err });
+          throw err;
+        }
+        tracked?.end({ result: res });
+        const header = t("delegate.done", { agent: target, session: res.sessionId ?? "-" }) + (tracked && res.sessionId ? "\n" + t("delegate.followUp", { job: tracked.job.name }) : "");
         return text(`${header}
 
 ${res.text || t("delegate.empty")}`, res.isError);
@@ -661,7 +685,7 @@ ${res.text || t("delegate.empty")}`, res.isError);
         const jobs = ctx.jobs;
         if (!jobs) throw new BridgeError("bad_request", t("err.delegatedSession"));
         if (!jobs.canStart()) return text(t("jobs.limit", { max: MAX_RUNNING_JOBS }), true);
-        const job = jobs.start(target, a.model ?? defaultModel, a.prompt, (signal, onProgress) => run(a, signal, onProgress, true));
+        const job = jobs.start(target, a.model ?? defaultModel, a.prompt, (signal, onProgress) => run(a, signal, onProgress, true), resumeFor(a));
         return text(t("jobs.started", { name: job.name }));
       }),
     );
@@ -679,6 +703,28 @@ ${res.text || t("delegate.empty")}`, res.isError);
     guarded("dashboard", async () => {
       const url = await ctx.openDashboard?.();
       return url ? text(t("dashboard.opened", { url })) : text(t("dashboard.failed"), true);
+    }),
+  );
+
+  mcp.registerTool(
+    "message_subagent",
+    {
+      title: "Message a subagent",
+      description:
+        "Send a follow-up to a subagent started with ask_* or spawn_* (running or finished), like messaging a native subagent. " +
+        "It continues in its own session with its full context, in the same folder or worktree. " +
+        "While it is still running the message is queued and sent as soon as it finishes. The answer arrives as a message from the job. " +
+        "Without a message it is told to continue where it stopped: use that to recover a failed or interrupted subagent.",
+      inputSchema: {
+        job: z.string().min(1).describe('Job name, e.g. "codex-job-1a2b3c4d" or "opencode-ask-9f8e7d6c" (see peers)'),
+        message: z.string().optional().describe("The follow-up. Default: continue where you stopped and finish the task."),
+      },
+    },
+    guarded("message_subagent", async (a: { job: string; message?: string }) => {
+      const jobs = ctx.jobs;
+      if (!jobs) throw new BridgeError("bad_request", t("err.delegatedSession"));
+      const { outcome, job } = jobs.followUp(a.job, a.message?.trim() || DEFAULT_FOLLOW_UP);
+      return text(t(`followUp.${outcome}`, { name: job?.name ?? a.job, max: MAX_RUNNING_JOBS }), outcome === "unknown" || outcome === "no-session" || outcome === "busy");
     }),
   );
 

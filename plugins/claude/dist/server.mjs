@@ -36812,16 +36812,18 @@ function currentDelegateDepth(env = process.env) {
   return Number.isInteger(n) && n > 0 ? n : 0;
 }
 var DelegateError = class extends Error {
-  constructor(message, kind, stderrTail = "", partialStdout = "") {
+  constructor(message, kind, stderrTail = "", partialStdout = "", sessionId = null) {
     super(message);
     this.kind = kind;
     this.stderrTail = stderrTail;
     this.partialStdout = partialStdout;
+    this.sessionId = sessionId;
     this.name = "DelegateError";
   }
   kind;
   stderrTail;
   partialStdout;
+  sessionId;
 };
 function resolveBinary(bin, env = process.env, platform = process.platform) {
   const isWin = platform === "win32";
@@ -36899,7 +36901,7 @@ function runProcess(opts) {
     }, opts.timeoutMs);
     const onAbort = () => {
       kill();
-      finish(() => reject(new DelegateError("delegate aborted", "aborted")));
+      finish(() => reject(new DelegateError("delegate aborted", "aborted", "", stdout)));
     };
     opts.signal?.addEventListener("abort", onAbort, { once: true });
     let pending = "";
@@ -37008,7 +37010,7 @@ ${CODEX_ASK_HINT}` };
   const parsed = parseCodexJsonl(res.stdout);
   const isError = res.code !== 0 || parsed.error !== null;
   if (isError && !parsed.text) {
-    throw new DelegateError(parsed.error ?? `codex exited with code ${res.code}`, "failed", res.stderr.slice(-STDERR_TAIL_CHARS));
+    throw new DelegateError(parsed.error ?? `codex exited with code ${res.code}`, "failed", res.stderr.slice(-STDERR_TAIL_CHARS), "", parsed.threadId ?? req.sessionId ?? null);
   }
   req.log.info("codex delegate finished", { threadId: parsed.threadId, code: res.code, isError });
   return {
@@ -37056,7 +37058,7 @@ async function delegateToClaude(req) {
   }));
   const parsed = parseClaudeJson(res.stdout);
   if (!parsed) {
-    throw new DelegateError(`claude exited with code ${res.code} without a JSON result`, "failed", (res.stderr || res.stdout).slice(-STDERR_TAIL_CHARS));
+    throw new DelegateError(`claude exited with code ${res.code} without a JSON result`, "failed", (res.stderr || res.stdout).slice(-STDERR_TAIL_CHARS), "", claudeSessionFromStream(res.stdout) ?? req.sessionId ?? null);
   }
   req.log.info("claude delegate finished", { sessionId: parsed.sessionId, code: res.code, isError: parsed.isError });
   return {
@@ -37125,7 +37127,7 @@ async function delegateToOpencode(req) {
   const parsed = parseOpencodeJsonl(res.stdout);
   const isError = res.code !== 0 || parsed.error !== null;
   if (isError && !parsed.text) {
-    throw new DelegateError(parsed.error ?? `opencode exited with code ${res.code}`, "failed", res.stderr.slice(-STDERR_TAIL_CHARS));
+    throw new DelegateError(parsed.error ?? `opencode exited with code ${res.code}`, "failed", res.stderr.slice(-STDERR_TAIL_CHARS), "", parsed.sessionId ?? req.sessionId ?? null);
   }
   req.log.info("opencode delegate finished", { sessionId: parsed.sessionId, code: res.code, isError });
   return { sessionId: parsed.sessionId ?? req.sessionId ?? null, text: parsed.text, isError, details: { exitCode: res.code, error: parsed.error, usage: parsed.usage ?? null, costUsd: parsed.cost || null } };
@@ -37140,14 +37142,16 @@ async function withResumeHint(agent, sessionOf, run) {
   try {
     return await run();
   } catch (err) {
+    if (err instanceof DelegateError && !err.sessionId) err.sessionId = sessionOf(err.partialStdout);
     if (err instanceof DelegateError && err.kind === "timeout") {
-      const id = sessionOf(err.partialStdout);
+      const id = err.sessionId;
       if (id) {
         throw new DelegateError(
           `${err.message}. The ${agent} session ${id} keeps its progress: call again with session_id="${id}" (and a longer timeout_sec, or use spawn_${agent}) to continue instead of starting over.`,
           "timeout",
           err.stderrTail,
-          err.partialStdout
+          err.partialStdout,
+          id
         );
       }
     }
@@ -37179,6 +37183,14 @@ var en = {
   "autoWake.on": "Auto-wake is on. Incoming peer messages will make this session continue (up to {maxHops} hops per conversation).",
   "autoWake.off": "Auto-wake is off. Peer messages are shown on your next prompt or tool use.",
   "delegate.done": "{agent} finished (session_id: {session}).",
+  "peers.recent": "Recent subagents (message_subagent continues them):",
+  "peers.recentJob": "- {name}: {status} {ago} ago, {session}",
+  "delegate.followUp": 'Follow up with its full context: message_subagent(job="{job}", message=...).',
+  "followUp.started": "Sent to {name}; it continues in its own session. Its answer will arrive as a message from {name}.",
+  "followUp.queued": "{name} is still working; your message is queued and will be sent as soon as it finishes.",
+  "followUp.unknown": "No subagent named {name}. Call peers to see running and recent subagents.",
+  "followUp.no-session": "{name} has no session to continue (it failed before starting one). Start a new one with ask_* or spawn_*.",
+  "followUp.busy": "Too many subagents running (maximum {max}). Wait for one to finish, then send the message again.",
   "delegate.empty": "(no answer text returned)",
   "err.ambiguous": "Several peers match; pick one of: {candidates}.",
   "err.unknownTarget": "Unknown recipient: {detail}",
@@ -38648,11 +38660,11 @@ async function delegateToOpencodeServed(req) {
     } finally {
       clearTimeout(watchdog);
     }
-    if (failure2 && !alive) throw new DelegateError(failure2, "failed");
+    if (failure2 && !alive) throw new DelegateError(failure2, "failed", "", "", sessionId);
     const messages = await api("GET", `/session/${sessionId}/message`) ?? [];
     const last = [...messages].reverse().find((m) => m.info?.role === "assistant");
     const text2 = (last?.parts ?? []).filter((part) => part.type === "text" && typeof part.text === "string").map((part) => part.text).join("");
-    if (failure2 && !text2) throw new DelegateError(failure2, "failed");
+    if (failure2 && !text2) throw new DelegateError(failure2, "failed", "", "", sessionId);
     const tokens = last?.info?.tokens;
     return {
       sessionId,
@@ -38666,9 +38678,9 @@ async function delegateToOpencodeServed(req) {
     };
   } catch (err) {
     if (ac.signal.aborted && !(err instanceof DelegateError)) {
-      if (req.signal?.aborted) throw new DelegateError("delegate aborted", "aborted");
+      if (req.signal?.aborted) throw new DelegateError("delegate aborted", "aborted", "", "", knownSession);
       const hint = knownSession ? `. The opencode session ${knownSession} keeps its progress: call again with session_id="${knownSession}" (and a longer timeout_sec, or use spawn_opencode) to continue instead of starting over.` : "";
-      throw new DelegateError(`delegate timed out after ${req.timeoutSec}s${hint}`, "timeout");
+      throw new DelegateError(`delegate timed out after ${req.timeoutSec}s${hint}`, "timeout", "", "", knownSession);
     }
     throw err;
   } finally {
@@ -39572,6 +39584,8 @@ async function gitStatusSnapshot(cwd, log) {
 import { randomUUID as randomUUID3 } from "node:crypto";
 var JOB_ID_LENGTH = 8;
 var PROMPT_PREVIEW_CHARS = 120;
+var HISTORY_LIMIT = 50;
+var DEFAULT_FOLLOW_UP = "Continue where you stopped and finish the task. Then give your final answer.";
 var JobManager = class {
   constructor(node2, log) {
     this.node = node2;
@@ -39581,6 +39595,7 @@ var JobManager = class {
   log;
   running = /* @__PURE__ */ new Map();
   foreground = /* @__PURE__ */ new Map();
+  history = /* @__PURE__ */ new Map();
   runningCount() {
     return this.running.size;
   }
@@ -39588,45 +39603,106 @@ var JobManager = class {
   list() {
     return [...this.running.values(), ...this.foreground.values()];
   }
-  /**
-   * Register a blocking ask_* run for visibility in peers. Returns a progress sink and a function to
-   * call when the run ends. Foreground runs do not count against the job limit or delay the Stop hook.
-   */
-  track(agent, model, prompt) {
+  /** Recently finished subagents, newest first (they can still be messaged). */
+  recent(limit = 5) {
+    return [...this.history.values()].filter((j) => j.status !== "running").sort((a, b) => (b.finishedAt ?? 0) - (a.finishedAt ?? 0)).slice(0, limit);
+  }
+  find(ref) {
+    const id = ref.replace(/^.*-(?:job|ask)-/, "");
+    return this.history.get(id) ?? [...this.history.values()].find((j) => j.name === ref);
+  }
+  remember(job) {
+    this.history.set(job.id, job);
+    while (this.history.size > HISTORY_LIMIT) this.history.delete(this.history.keys().next().value);
+  }
+  newJob(agent, model, prompt, kind, resume) {
     const id = randomUUID3().replace(/-/g, "").slice(0, JOB_ID_LENGTH);
-    const job = { id, name: `${agent}-ask-${id}`, agent, model, prompt, startedAt: Date.now(), controller: new AbortController(), progress: null, foreground: true };
-    this.foreground.set(id, job);
+    return {
+      id,
+      name: `${agent}-${kind}-${id}`,
+      agent,
+      model,
+      prompt,
+      startedAt: Date.now(),
+      controller: new AbortController(),
+      progress: null,
+      status: "running",
+      sessionId: null,
+      workdir: null,
+      resume,
+      queue: []
+    };
+  }
+  /**
+   * Register a blocking ask_* run for visibility in peers. Returns a progress sink and `end`, which records
+   * the outcome so the run can be continued later with message_subagent.
+   */
+  track(agent, model, prompt, resume) {
+    const job = { ...this.newJob(agent, model, prompt, "ask", resume), foreground: true };
+    this.foreground.set(job.id, job);
+    this.remember(job);
     return {
       job,
       onProgress: (message) => {
         job.progress = message;
       },
-      end: () => {
-        this.foreground.delete(id);
+      end: (outcome) => {
+        this.foreground.delete(job.id);
+        job.foreground = false;
+        job.finishedAt = Date.now();
+        job.status = outcome?.result && !outcome.result.isError ? "done" : "failed";
+        job.sessionId = outcome?.result?.sessionId ?? sessionOfError(outcome?.error) ?? job.sessionId;
+        job.workdir = outcome?.result?.workdir ?? job.workdir;
       }
     };
   }
   canStart() {
     return this.running.size < MAX_RUNNING_JOBS;
   }
-  start(agent, model, prompt, run) {
-    const id = randomUUID3().replace(/-/g, "").slice(0, JOB_ID_LENGTH);
-    const job = { id, name: `${agent}-job-${id}`, agent, model, prompt, startedAt: Date.now(), controller: new AbortController(), progress: null };
-    this.running.set(id, job);
+  start(agent, model, prompt, run, resume) {
+    const job = this.newJob(agent, model, prompt, "job", resume);
+    this.remember(job);
     this.log.info("subagent started", { job: job.name, model, prompt: prompt.slice(0, PROMPT_PREVIEW_CHARS) });
+    this.launch(job, run);
+    return job;
+  }
+  /** Send a follow-up to a subagent: queued while it runs, otherwise its session is resumed in the background. */
+  followUp(ref, message) {
+    const job = this.find(ref);
+    if (!job) return { outcome: "unknown" };
+    if (job.status === "running") {
+      job.queue.push(message);
+      return { outcome: "queued", job };
+    }
+    if (!job.resume || !job.sessionId) return { outcome: "no-session", job };
+    if (!this.canStart()) return { outcome: "busy", job };
+    this.log.info("subagent resumed", { job: job.name, sessionId: job.sessionId });
+    this.launch(job, job.resume(message, job.sessionId, job.workdir));
+    return { outcome: "started", job };
+  }
+  launch(job, run) {
+    job.status = "running";
+    job.startedAt = Date.now();
+    job.controller = new AbortController();
+    job.progress = null;
+    job.foreground = false;
+    this.running.set(job.id, job);
     const onProgress = (message) => {
       job.progress = message;
       this.log.debug("subagent progress", { job: job.name, message });
     };
     run(job.controller.signal, onProgress).then(
-      (res) => this.finish(job, res.isError ? "failed" : "done", res.text || "(no answer text returned)", res.sessionId),
-      (err) => this.finish(job, "failed", String(err?.message ?? err), null)
+      (res) => {
+        job.workdir = res.workdir ?? job.workdir;
+        this.finish(job, res.isError ? "failed" : "done", res.text || "(no answer text returned)", res.sessionId);
+      },
+      (err) => this.finish(job, "failed", String(err?.message ?? err), sessionOfError(err))
     );
-    return job;
   }
   cancel(id) {
     const job = this.running.get(id) ?? [...this.running.values()].find((j) => j.name === id);
     if (!job) return false;
+    job.queue = [];
     job.controller.abort();
     return true;
   }
@@ -39635,9 +39711,30 @@ var JobManager = class {
   }
   finish(job, status, text2, sessionId) {
     this.running.delete(job.id);
+    job.status = status;
+    job.finishedAt = Date.now();
+    job.sessionId = sessionId ?? job.sessionId;
     const seconds = Math.round((Date.now() - job.startedAt) / 1e3);
-    this.log.info("subagent finished", { job: job.name, status, seconds, sessionId });
-    const header = `Subagent ${job.name} (${job.agent}${job.model ? `, model ${job.model}` : ""}) ${status} after ${seconds}s.` + (sessionId ? ` session_id=${sessionId} (pass it to ask_${job.agent} or spawn_${job.agent} to continue).` : "");
+    this.log.info("subagent finished", { job: job.name, status, seconds, sessionId: job.sessionId });
+    if (job.queue.length && job.resume && job.sessionId && !job.controller.signal.aborted) {
+      const queued = job.queue.splice(0).join("\n\n");
+      this.post(job, `${this.header(job, status, seconds)}
+
+${text2}
+
+(Your queued follow-up was sent to it; its answer will arrive as another message.)`);
+      this.launch(job, job.resume(queued, job.sessionId, job.workdir));
+      return;
+    }
+    this.post(job, `${this.header(job, status, seconds)}
+
+${text2}`);
+  }
+  header(job, status, seconds) {
+    const how = job.sessionId ? status === "failed" ? ` To recover it with its context, call message_subagent(job="${job.name}") (optionally with a message).` : ` Continue it with its context: message_subagent(job="${job.name}", message=...).` : "";
+    return `Subagent ${job.name} (${job.agent}${job.model ? `, model ${job.model}` : ""}) ${status} after ${seconds}s.${how}`;
+  }
+  post(job, body) {
     const m = {
       id: randomUUID3(),
       from: { id: `job:${job.id}`, name: job.name, agent: job.agent },
@@ -39646,15 +39743,16 @@ var JobManager = class {
       conversationId: `job-${job.id}`,
       replyTo: null,
       hop: 0,
-      body: `${header}
-
-${text2}`,
+      body,
       createdAt: Date.now(),
       readAt: null
     };
     this.node.deliverLocal(m);
   }
 };
+function sessionOfError(err) {
+  return err instanceof DelegateError ? err.sessionId ?? null : null;
+}
 
 // src/mcp/server.ts
 var CHANNEL_NOTIFICATION = "notifications/claude/channel";
@@ -39932,6 +40030,11 @@ function registerTools(mcp, ctx, targets) {
           lines.push(t("peers.job", { name: j.name, model: j.model ?? "default", duration: formatDuration(Date.now() - j.startedAt), progress: j.progress ?? "starting" }));
         }
       }
+      const recent = ctx.jobs?.recent() ?? [];
+      if (recent.length) {
+        lines.push(t("peers.recent"));
+        for (const j of recent) lines.push(t("peers.recentJob", { name: j.name, status: j.status, ago: formatDuration(Date.now() - (j.finishedAt ?? Date.now())), session: j.sessionId ? "can be continued" : "no session" }));
+      }
       return text(lines.join("\n"));
     })
   );
@@ -40100,11 +40203,17 @@ ${asked.join("\n")}` : "No permission requests were needed." : t("ask.unsupporte
         notes.push(changed.length ? `Files changed in your working copy:
 ${changed.join("\n")}` : "No files changed.");
       }
-      return { ...res, text: notes.length ? `${res.text}
+      return { ...res, workdir: wt?.cwd ?? cwd, text: notes.length ? `${res.text}
 
 ---
 ${notes.join("\n\n")}` : res.text };
     };
+    const resumeFor = (a) => (message, sessionId, workdir) => (signal, onProgress) => run(
+      { ...a, prompt: message, session_id: sessionId, cwd: workdir ?? a.cwd, worktree: false, access: a.worktree ? a.access ?? "edit" : a.access },
+      signal,
+      onProgress,
+      true
+    );
     const askName = `ask_${target}`;
     mcp.registerTool(
       askName,
@@ -40114,14 +40223,21 @@ ${notes.join("\n\n")}` : res.text };
         inputSchema: schema
       },
       guarded(askName, async (a, extra) => {
-        const tracked = ctx.jobs?.track(target, a.model ?? defaultModel, a.prompt);
+        const tracked = ctx.jobs?.track(target, a.model ?? defaultModel, a.prompt, resumeFor(a));
         const report = progressReporter(extra, log);
         const onProgress = (m) => {
           tracked?.onProgress(m);
           report?.(m);
         };
-        const res = await run(a, extra.signal, onProgress, false).finally(() => tracked?.end());
-        const header = t("delegate.done", { agent: target, session: res.sessionId ?? "-" });
+        let res;
+        try {
+          res = await run(a, extra.signal, onProgress, false);
+        } catch (err) {
+          tracked?.end({ error: err });
+          throw err;
+        }
+        tracked?.end({ result: res });
+        const header = t("delegate.done", { agent: target, session: res.sessionId ?? "-" }) + (tracked && res.sessionId ? "\n" + t("delegate.followUp", { job: tracked.job.name }) : "");
         return text(`${header}
 
 ${res.text || t("delegate.empty")}`, res.isError);
@@ -40139,7 +40255,7 @@ ${res.text || t("delegate.empty")}`, res.isError);
         const jobs = ctx.jobs;
         if (!jobs) throw new BridgeError("bad_request", t("err.delegatedSession"));
         if (!jobs.canStart()) return text(t("jobs.limit", { max: MAX_RUNNING_JOBS }), true);
-        const job = jobs.start(target, a.model ?? defaultModel, a.prompt, (signal, onProgress) => run(a, signal, onProgress, true));
+        const job = jobs.start(target, a.model ?? defaultModel, a.prompt, (signal, onProgress) => run(a, signal, onProgress, true), resumeFor(a));
         return text(t("jobs.started", { name: job.name }));
       })
     );
@@ -40154,6 +40270,23 @@ ${res.text || t("delegate.empty")}`, res.isError);
     guarded("dashboard", async () => {
       const url2 = await ctx.openDashboard?.();
       return url2 ? text(t("dashboard.opened", { url: url2 })) : text(t("dashboard.failed"), true);
+    })
+  );
+  mcp.registerTool(
+    "message_subagent",
+    {
+      title: "Message a subagent",
+      description: "Send a follow-up to a subagent started with ask_* or spawn_* (running or finished), like messaging a native subagent. It continues in its own session with its full context, in the same folder or worktree. While it is still running the message is queued and sent as soon as it finishes. The answer arrives as a message from the job. Without a message it is told to continue where it stopped: use that to recover a failed or interrupted subagent.",
+      inputSchema: {
+        job: external_exports.string().min(1).describe('Job name, e.g. "codex-job-1a2b3c4d" or "opencode-ask-9f8e7d6c" (see peers)'),
+        message: external_exports.string().optional().describe("The follow-up. Default: continue where you stopped and finish the task.")
+      }
+    },
+    guarded("message_subagent", async (a) => {
+      const jobs = ctx.jobs;
+      if (!jobs) throw new BridgeError("bad_request", t("err.delegatedSession"));
+      const { outcome, job } = jobs.followUp(a.job, a.message?.trim() || DEFAULT_FOLLOW_UP);
+      return text(t(`followUp.${outcome}`, { name: job?.name ?? a.job, max: MAX_RUNNING_JOBS }), outcome === "unknown" || outcome === "no-session" || outcome === "busy");
     })
   );
   mcp.registerTool(
