@@ -125,7 +125,7 @@ async function main(argv: string[]): Promise<number> {
     case "rewake-hook":
       return runRewakeHook();
     case "permission-hook":
-      return runPermissionHook();
+      return runPermissionHook(rest[0]);
     case "reliability": {
       const picked = rest.filter((a) => (CODING_AGENTS as readonly string[]).includes(a)) as CodingAgent[];
       return runReliability({ agents: picked.length ? picked : [...CODING_AGENTS], out, log });

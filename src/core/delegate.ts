@@ -1,11 +1,13 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync, readFileSync, realpathSync } from "node:fs";
-import { delimiter, extname, isAbsolute, join, win32 } from "node:path";
+import { delimiter, dirname, extname, isAbsolute, join, win32 } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { ClaudePermissionMode, CodexSandbox } from "./config.js";
 import type { Logger } from "./logger.js";
 import { claudeMcpDenyRules } from "./claude-mcp.js";
 import { PARENT_URL_ENV } from "./parent-link.js";
 import { progressLineHandler } from "./progress.js";
+import { PermissionRelay, type PermissionDecision } from "./relay.js";
 
 /** Env var tracking nested delegation, so a delegated agent cannot delegate back forever. */
 export const DELEGATE_DEPTH_ENV = "AGENT_BRIDGE_DELEGATE_DEPTH";
@@ -251,8 +253,17 @@ export interface DelegateRequest {
   writableRoots?: string[];
   /** Called once with the subagent's own session id, as soon as it is known (not only at the end). */
   onSession?: (sessionId: string) => void;
-  /** Answers the subagent's approval questions (Codex app-server): the parent session decides. */
-  approve?: (r: { agent: string; tool: string; detail: string; cwd?: string }) => Promise<{ allow: boolean }>;
+  /**
+   * Answers the subagent's approval questions: the parent agent (background subagents) or the user decides.
+   * Used by Codex app-server, opencode served mode and the Claude PermissionRequest hook.
+   */
+  approve?: (r: { agent: string; tool: string; detail: string; cwd?: string }) => Promise<PermissionDecision>;
+  /**
+   * Whether someone can really answer approve's questions in this run (the parent agent of a background
+   * subagent, or a user who can see permission dialogs). Where a target would otherwise approve blindly or
+   * deny, it only routes questions to approve when this is true, so nothing becomes more permissive.
+   */
+  canApprove?: boolean;
   /** Talking to the running subagent, where the target supports it natively (Codex app-server). */
   live?: {
     from: string;
@@ -459,8 +470,41 @@ export function isClaudeReadOnly(mode: ClaudePermissionMode): boolean {
 /** Permission modes that mean "look only". */
 const CLAUDE_READ_ONLY_MODES = new Set<ClaudePermissionMode>(["default", "manual", "plan"]);
 
+/** The CLI bundled next to this module (plugins/<x>/dist/cli.mjs next to server.mjs); null when run from source. */
+function bundledCli(): string | null {
+  const cli = join(dirname(fileURLToPath(import.meta.url)), "cli.mjs");
+  return existsSync(cli) ? cli : null;
+}
+
+/** Whether a CLI starts without a shell (a shell would refuse the JSON settings argument). */
+function spawnsWithoutShell(bin: string, log: Logger): boolean {
+  try {
+    return !resolveCommand(bin, [], process.env, log).needsShell;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * `--settings` for a Claude subagent: a PermissionRequest command hook (it fires in headless `claude -p` too,
+ * whenever a tool would show a permission dialog) that asks agent-bridge's relay (see cli/permission-hook.ts).
+ * Deny rules and allow rules are applied before it, so it never widens a read-only run's deny list.
+ */
+export function claudePermissionHookSettings(cli: string, node = process.execPath): string {
+  const hook = { type: "command", command: node, args: [cli, "permission-hook", "claude"], timeout: CLAUDE_HOOK_TIMEOUT_SEC };
+  return JSON.stringify({ hooks: { PermissionRequest: [{ hooks: [hook] }] } });
+}
+
+/** Whether a Claude subagent's permission prompts go to approve: never read-only, only with someone to answer. */
+export function claudeForwardsPrompts(mode: ClaudePermissionMode, req: Pick<DelegateRequest, "approve" | "canApprove">): boolean {
+  return !isClaudeReadOnly(mode) && Boolean(req.canApprove && req.approve);
+}
+
+/** Longer than the parent's (and the user's) 10 minutes to answer: on a hook timeout Claude would just deny. */
+const CLAUDE_HOOK_TIMEOUT_SEC = 900;
+
 export async function delegateToClaude(
-  req: DelegateRequest & { bin: string; permissionMode: ClaudePermissionMode },
+  req: DelegateRequest & { bin: string; permissionMode: ClaudePermissionMode; hookCli?: string },
 ): Promise<DelegateResult> {
   checkDepth();
   // stream-json lets us report progress; the final "result" line matches --output-format json.
@@ -473,17 +517,40 @@ export async function delegateToClaude(
   if (req.sessionId) args.push("--resume", req.sessionId);
   // Headless Claude denies MCP tools it would ask about: let it answer its parent (see parent-link.ts).
   if (req.extraEnv?.[PARENT_URL_ENV]) args.push("--allowedTools", CLAUDE_PARENT_SEND_TOOL);
-  const res = await withResumeHint("claude", (o) => claudeSessionFromStream(o), () => runProcess({
-    bin: req.bin,
-    args,
-    stdin: req.prompt,
-    cwd: req.cwd,
-    timeoutMs: req.timeoutSec * 1000,
-    env: childEnv(req.extraEnv),
-    log: req.log,
-    signal: req.signal,
-    onLine: withSessionSniffer("claude", progressLineHandler("claude", req.onProgress), req.onSession),
-  }));
+  // Permission prompts (a command or MCP tool that needs approval) go to approve through a PermissionRequest
+  // hook; without it headless Claude settles them on its own, unseen. Never for read-only runs: there the deny
+  // list decides alone. The hook fires in `claude -p` since Claude Code 2.1.268; older versions skip it.
+  const hookCli = claudeForwardsPrompts(req.permissionMode, req) ? (req.hookCli ?? bundledCli()) : null;
+  let relay: PermissionRelay | null = null;
+  const extraEnv = { ...req.extraEnv };
+  if (hookCli && spawnsWithoutShell(req.bin, req.log)) {
+    const approve = req.approve!;
+    relay = new PermissionRelay(async (r) => {
+      const d = await approve(r);
+      return d.allow ? { allow: true } : { allow: false, message: d.message || "Denied by the parent session." };
+    }, req.log);
+    await relay.start();
+    Object.assign(extraEnv, relay.childEnv());
+    args.push("--settings", claudePermissionHookSettings(hookCli));
+  } else if (hookCli) {
+    req.log.warn("claude runs through a shell; its permission prompts are not forwarded", { bin: req.bin });
+  }
+  let res: RunResult;
+  try {
+    res = await withResumeHint("claude", (o) => claudeSessionFromStream(o), () => runProcess({
+      bin: req.bin,
+      args,
+      stdin: req.prompt,
+      cwd: req.cwd,
+      timeoutMs: req.timeoutSec * 1000,
+      env: childEnv(extraEnv),
+      log: req.log,
+      signal: req.signal,
+      onLine: withSessionSniffer("claude", progressLineHandler("claude", req.onProgress), req.onSession),
+    }));
+  } finally {
+    await relay?.stop();
+  }
   const parsed = parseClaudeJson(res.stdout);
   if (!parsed) {
     throw new DelegateError(`claude exited with code ${res.code} without a JSON result`, "failed", (res.stderr || res.stdout).slice(-STDERR_TAIL_CHARS), "", claudeSessionFromStream(res.stdout) ?? req.sessionId ?? null);

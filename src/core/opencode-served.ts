@@ -6,9 +6,11 @@ import { progressEventHandler } from "./progress.js";
 import type { PermissionDecision, PermissionRequest } from "./relay.js";
 
 /**
- * opencode with permission forwarding. `opencode run` answers every permission request itself, so for
- * access "ask" agent-bridge starts a private `opencode serve` (127.0.0.1, random port, random password),
- * sends the prompt over its HTTP API and answers `permission.asked` events with the user's decision.
+ * opencode with permission forwarding. `opencode run` answers every permission request itself (rejects
+ * them, or approves them all with --auto), so for access "ask", and for "edit" runs whose questions someone
+ * can answer, agent-bridge starts a private `opencode serve` (127.0.0.1, random port, random password),
+ * sends the prompt over its HTTP API and answers `permission.asked` events with the decision of the user
+ * or the parent agent.
  */
 const SERVE_START_TIMEOUT_MS = 30_000;
 const LISTEN_RE = /listening on (https?:\/\/[^\s]+)/i;
@@ -16,7 +18,7 @@ const SERVER_USER = "opencode";
 const PASSWORD_BYTES = 24;
 const MAX_DETAIL_CHARS = 4_000;
 /** Edits and commands ask (the defaults allow everything); asks come to us as events. */
-const ASK_PERMISSIONS = { edit: "ask", bash: "ask" };
+export const OPENCODE_ASK_PERMISSIONS = { edit: "ask", bash: "ask" } as const;
 /** If the session shows no sign of life this long after the prompt, something is wrong (bad model, auth). */
 const START_WATCHDOG_MS = 60_000;
 
@@ -92,6 +94,23 @@ async function* sse(body: ReadableStream<Uint8Array>): AsyncGenerator<Json> {
   }
 }
 
+/** opencode names MCP tools <server>_<tool>, with anything but letters, digits, "_" and "-" replaced by "_". */
+function mcpToolPrefix(server: string): string {
+  return `${server.replace(/[^a-zA-Z0-9_-]/g, "_")}_`;
+}
+
+/**
+ * The permission request for a `permission.asked` event. A permission named after an MCP tool becomes
+ * "mcp:<server>" (like Codex's MCP approvals), so one "allow" covers that server for the rest of the run.
+ */
+export function opencodePermissionRequest(p: Json, mcpServers: string[], cwd: string): PermissionRequest {
+  const permission = String(p.permission ?? "unknown");
+  const detail = permissionDetail(p);
+  const server = [...mcpServers].sort((a, b) => b.length - a.length).find((s) => permission.startsWith(mcpToolPrefix(s)));
+  if (server) return { agent: "opencode", tool: `mcp:${server}`, detail: `${permission}: ${detail}`.slice(0, MAX_DETAIL_CHARS), cwd };
+  return { agent: "opencode", tool: permission, detail, cwd };
+}
+
 function permissionDetail(p: Json): string {
   const patterns = Array.isArray(p.patterns) ? p.patterns.join(", ") : "";
   const meta = p.metadata && typeof p.metadata === "object" ? p.metadata : {};
@@ -100,15 +119,21 @@ function permissionDetail(p: Json): string {
 }
 
 export async function delegateToOpencodeServed(
-  req: DelegateRequest & { bin: string; onPermission: (r: PermissionRequest) => Promise<PermissionDecision> },
+  req: DelegateRequest & {
+    bin: string;
+    onPermission: (r: PermissionRequest) => Promise<PermissionDecision>;
+    /** Permission rules layered over the user's config; null keeps the user's own rules (access "edit"). */
+    permissions?: Record<string, string> | null;
+  },
 ): Promise<DelegateResult> {
   checkDepthPublic();
   const password = randomBytes(PASSWORD_BYTES).toString("hex");
+  const permissions = req.permissions === undefined ? OPENCODE_ASK_PERMISSIONS : req.permissions;
   const env = childEnvPublic({
     ...req.extraEnv,
     OPENCODE_SERVER_PASSWORD: password,
     OPENCODE_SERVER_USERNAME: SERVER_USER,
-    OPENCODE_CONFIG_CONTENT: JSON.stringify({ permission: ASK_PERMISSIONS }),
+    ...(permissions ? { OPENCODE_CONFIG_CONTENT: JSON.stringify({ permission: permissions }) } : {}),
   });
   const { child, url } = await startServe(req.bin, req.cwd, env);
   const auth = `Basic ${Buffer.from(`${SERVER_USER}:${password}`).toString("base64")}`;
@@ -134,6 +159,8 @@ export async function delegateToOpencodeServed(
     const sessionId: string = req.sessionId ?? (await api("POST", "/session", {})).id;
     req.onSession?.(sessionId);
     knownSession = sessionId;
+    // MCP server names, to recognize MCP tool permissions; without them those are still asked, just one by one.
+    const mcpServers = Object.keys((await api("GET", "/mcp").catch(() => null)) ?? {});
     const events = await fetch(`${url}/event?${q}`, { headers: { authorization: auth, accept: "text/event-stream" }, signal: ac.signal });
     if (!events.ok || !events.body) throw new DelegateError(`opencode event stream failed: HTTP ${events.status}`, "failed");
 
@@ -161,7 +188,7 @@ export async function delegateToOpencodeServed(
         break;
       }
       if (type === "permission.asked" && p.sessionID === sessionId) {
-        const decision = await req.onPermission({ agent: "opencode", tool: String(p.permission ?? "unknown"), detail: permissionDetail(p), cwd: req.cwd });
+        const decision = await req.onPermission(opencodePermissionRequest(p, mcpServers, req.cwd));
         await api("POST", `/permission/${p.id}/reply`, decision.allow ? { reply: "once" } : { reply: "reject", message: decision.message });
       } else if (type === "message.part.updated" && p.part?.sessionID === sessionId) {
         // Parts are updated many times while streaming: report tools once their input is known,
