@@ -32367,17 +32367,17 @@ var CompleteRequestSchema = RequestSchema.extend({
   method: literal("completion/complete"),
   params: CompleteRequestParamsSchema
 });
-function assertCompleteRequestPrompt(request) {
-  if (request.params.ref.type !== "ref/prompt") {
-    throw new TypeError(`Expected CompleteRequestPrompt, but got ${request.params.ref.type}`);
+function assertCompleteRequestPrompt(request2) {
+  if (request2.params.ref.type !== "ref/prompt") {
+    throw new TypeError(`Expected CompleteRequestPrompt, but got ${request2.params.ref.type}`);
   }
-  void request;
+  void request2;
 }
-function assertCompleteRequestResourceTemplate(request) {
-  if (request.params.ref.type !== "ref/resource") {
-    throw new TypeError(`Expected CompleteRequestResourceTemplate, but got ${request.params.ref.type}`);
+function assertCompleteRequestResourceTemplate(request2) {
+  if (request2.params.ref.type !== "ref/resource") {
+    throw new TypeError(`Expected CompleteRequestResourceTemplate, but got ${request2.params.ref.type}`);
   }
-  void request;
+  void request2;
 }
 var CompleteResultSchema = ResultSchema.extend({
   completion: looseObject({
@@ -33884,8 +33884,8 @@ var Protocol = class {
     this._taskStore = _options?.taskStore;
     this._taskMessageQueue = _options?.taskMessageQueue;
     if (this._taskStore) {
-      this.setRequestHandler(GetTaskRequestSchema, async (request, extra) => {
-        const task = await this._taskStore.getTask(request.params.taskId, extra.sessionId);
+      this.setRequestHandler(GetTaskRequestSchema, async (request2, extra) => {
+        const task = await this._taskStore.getTask(request2.params.taskId, extra.sessionId);
         if (!task) {
           throw new McpError(ErrorCode.InvalidParams, "Failed to retrieve task: Task not found");
         }
@@ -33893,9 +33893,9 @@ var Protocol = class {
           ...task
         };
       });
-      this.setRequestHandler(GetTaskPayloadRequestSchema, async (request, extra) => {
+      this.setRequestHandler(GetTaskPayloadRequestSchema, async (request2, extra) => {
         const handleTaskResult = async () => {
-          const taskId = request.params.taskId;
+          const taskId = request2.params.taskId;
           if (this._taskMessageQueue) {
             let queuedMessage;
             while (queuedMessage = await this._taskMessageQueue.dequeue(taskId, extra.sessionId)) {
@@ -33946,9 +33946,9 @@ var Protocol = class {
         };
         return await handleTaskResult();
       });
-      this.setRequestHandler(ListTasksRequestSchema, async (request, extra) => {
+      this.setRequestHandler(ListTasksRequestSchema, async (request2, extra) => {
         try {
-          const { tasks, nextCursor } = await this._taskStore.listTasks(request.params?.cursor, extra.sessionId);
+          const { tasks, nextCursor } = await this._taskStore.listTasks(request2.params?.cursor, extra.sessionId);
           return {
             tasks,
             nextCursor,
@@ -33958,20 +33958,20 @@ var Protocol = class {
           throw new McpError(ErrorCode.InvalidParams, `Failed to list tasks: ${error62 instanceof Error ? error62.message : String(error62)}`);
         }
       });
-      this.setRequestHandler(CancelTaskRequestSchema, async (request, extra) => {
+      this.setRequestHandler(CancelTaskRequestSchema, async (request2, extra) => {
         try {
-          const task = await this._taskStore.getTask(request.params.taskId, extra.sessionId);
+          const task = await this._taskStore.getTask(request2.params.taskId, extra.sessionId);
           if (!task) {
-            throw new McpError(ErrorCode.InvalidParams, `Task not found: ${request.params.taskId}`);
+            throw new McpError(ErrorCode.InvalidParams, `Task not found: ${request2.params.taskId}`);
           }
           if (isTerminal(task.status)) {
             throw new McpError(ErrorCode.InvalidParams, `Cannot cancel task in terminal status: ${task.status}`);
           }
-          await this._taskStore.updateTaskStatus(request.params.taskId, "cancelled", "Client cancelled task execution.", extra.sessionId);
-          this._clearTaskQueue(request.params.taskId);
-          const cancelledTask = await this._taskStore.getTask(request.params.taskId, extra.sessionId);
+          await this._taskStore.updateTaskStatus(request2.params.taskId, "cancelled", "Client cancelled task execution.", extra.sessionId);
+          this._clearTaskQueue(request2.params.taskId);
+          const cancelledTask = await this._taskStore.getTask(request2.params.taskId, extra.sessionId);
           if (!cancelledTask) {
-            throw new McpError(ErrorCode.InvalidParams, `Task not found after cancellation: ${request.params.taskId}`);
+            throw new McpError(ErrorCode.InvalidParams, `Task not found after cancellation: ${request2.params.taskId}`);
           }
           return {
             _meta: {},
@@ -34092,14 +34092,14 @@ var Protocol = class {
     }
     Promise.resolve().then(() => handler(notification)).catch((error62) => this._onerror(new Error(`Uncaught error in notification handler: ${error62}`)));
   }
-  _onrequest(request, extra) {
-    const handler = this._requestHandlers.get(request.method) ?? this.fallbackRequestHandler;
+  _onrequest(request2, extra) {
+    const handler = this._requestHandlers.get(request2.method) ?? this.fallbackRequestHandler;
     const capturedTransport = this._transport;
-    const relatedTaskId = request.params?._meta?.[RELATED_TASK_META_KEY]?.taskId;
+    const relatedTaskId = request2.params?._meta?.[RELATED_TASK_META_KEY]?.taskId;
     if (handler === void 0) {
       const errorResponse = {
         jsonrpc: "2.0",
-        id: request.id,
+        id: request2.id,
         error: {
           code: ErrorCode.MethodNotFound,
           message: "Method not found"
@@ -34117,17 +34117,17 @@ var Protocol = class {
       return;
     }
     const abortController = new AbortController();
-    this._requestHandlerAbortControllers.set(request.id, abortController);
-    const taskCreationParams = isTaskAugmentedRequestParams(request.params) ? request.params.task : void 0;
-    const taskStore = this._taskStore ? this.requestTaskStore(request, capturedTransport?.sessionId) : void 0;
+    this._requestHandlerAbortControllers.set(request2.id, abortController);
+    const taskCreationParams = isTaskAugmentedRequestParams(request2.params) ? request2.params.task : void 0;
+    const taskStore = this._taskStore ? this.requestTaskStore(request2, capturedTransport?.sessionId) : void 0;
     const fullExtra = {
       signal: abortController.signal,
       sessionId: capturedTransport?.sessionId,
-      _meta: request.params?._meta,
+      _meta: request2.params?._meta,
       sendNotification: async (notification) => {
         if (abortController.signal.aborted)
           return;
-        const notificationOptions = { relatedRequestId: request.id };
+        const notificationOptions = { relatedRequestId: request2.id };
         if (relatedTaskId) {
           notificationOptions.relatedTask = { taskId: relatedTaskId };
         }
@@ -34137,7 +34137,7 @@ var Protocol = class {
         if (abortController.signal.aborted) {
           throw new McpError(ErrorCode.ConnectionClosed, "Request was cancelled");
         }
-        const requestOptions = { ...options, relatedRequestId: request.id };
+        const requestOptions = { ...options, relatedRequestId: request2.id };
         if (relatedTaskId && !requestOptions.relatedTask) {
           requestOptions.relatedTask = { taskId: relatedTaskId };
         }
@@ -34148,7 +34148,7 @@ var Protocol = class {
         return await this.request(r, resultSchema, requestOptions);
       },
       authInfo: extra?.authInfo,
-      requestId: request.id,
+      requestId: request2.id,
       requestInfo: extra?.requestInfo,
       taskId: relatedTaskId,
       taskStore,
@@ -34158,16 +34158,16 @@ var Protocol = class {
     };
     Promise.resolve().then(() => {
       if (taskCreationParams) {
-        this.assertTaskHandlerCapability(request.method);
+        this.assertTaskHandlerCapability(request2.method);
       }
-    }).then(() => handler(request, fullExtra)).then(async (result) => {
+    }).then(() => handler(request2, fullExtra)).then(async (result) => {
       if (abortController.signal.aborted) {
         return;
       }
       const response = {
         result,
         jsonrpc: "2.0",
-        id: request.id
+        id: request2.id
       };
       if (relatedTaskId && this._taskMessageQueue) {
         await this._enqueueTaskMessage(relatedTaskId, {
@@ -34184,7 +34184,7 @@ var Protocol = class {
       }
       const errorResponse = {
         jsonrpc: "2.0",
-        id: request.id,
+        id: request2.id,
         error: {
           code: Number.isSafeInteger(error62["code"]) ? error62["code"] : ErrorCode.InternalError,
           message: error62.message ?? "Internal error",
@@ -34201,8 +34201,8 @@ var Protocol = class {
         await capturedTransport?.send(errorResponse);
       }
     }).catch((error62) => this._onerror(new Error(`Failed to send response: ${error62}`))).finally(() => {
-      if (this._requestHandlerAbortControllers.get(request.id) === abortController) {
-        this._requestHandlerAbortControllers.delete(request.id);
+      if (this._requestHandlerAbortControllers.get(request2.id) === abortController) {
+        this._requestHandlerAbortControllers.delete(request2.id);
       }
     });
   }
@@ -34306,11 +34306,11 @@ var Protocol = class {
    *
    * @experimental Use `client.experimental.tasks.requestStream()` to access this method.
    */
-  async *requestStream(request, resultSchema, options) {
+  async *requestStream(request2, resultSchema, options) {
     const { task } = options ?? {};
     if (!task) {
       try {
-        const result = await this.request(request, resultSchema, options);
+        const result = await this.request(request2, resultSchema, options);
         yield { type: "result", result };
       } catch (error62) {
         yield {
@@ -34322,7 +34322,7 @@ var Protocol = class {
     }
     let taskId;
     try {
-      const createResult = await this.request(request, CreateTaskResultSchema, options);
+      const createResult = await this.request(request2, CreateTaskResultSchema, options);
       if (createResult.task) {
         taskId = createResult.task.taskId;
         yield { type: "taskCreated", task: createResult.task };
@@ -34370,7 +34370,7 @@ var Protocol = class {
    *
    * Do not use this method to emit notifications! Use notification() instead.
    */
-  request(request, resultSchema, options) {
+  request(request2, resultSchema, options) {
     const { relatedRequestId, resumptionToken, onresumptiontoken, task, relatedTask } = options ?? {};
     return new Promise((resolve3, reject) => {
       const earlyReject = (error62) => {
@@ -34382,9 +34382,9 @@ var Protocol = class {
       }
       if (this._options?.enforceStrictCapabilities === true) {
         try {
-          this.assertCapabilityForMethod(request.method);
+          this.assertCapabilityForMethod(request2.method);
           if (task) {
-            this.assertTaskCapability(request.method);
+            this.assertTaskCapability(request2.method);
           }
         } catch (e) {
           earlyReject(e);
@@ -34394,16 +34394,16 @@ var Protocol = class {
       options?.signal?.throwIfAborted();
       const messageId = this._requestMessageId++;
       const jsonrpcRequest = {
-        ...request,
+        ...request2,
         jsonrpc: "2.0",
         id: messageId
       };
       if (options?.onprogress) {
         this._progressHandlers.set(messageId, options.onprogress);
         jsonrpcRequest.params = {
-          ...request.params,
+          ...request2.params,
           _meta: {
-            ...request.params?._meta || {},
+            ...request2.params?._meta || {},
             progressToken: messageId
           }
         };
@@ -34607,8 +34607,8 @@ var Protocol = class {
   setRequestHandler(requestSchema, handler) {
     const method = getMethodLiteral(requestSchema);
     this.assertRequestHandlerCapability(method);
-    this._requestHandlers.set(method, (request, extra) => {
-      const parsed = parseWithCompat(requestSchema, request);
+    this._requestHandlers.set(method, (request2, extra) => {
+      const parsed = parseWithCompat(requestSchema, request2);
       return Promise.resolve(handler(parsed, extra));
     });
   }
@@ -34723,19 +34723,19 @@ var Protocol = class {
       }, { once: true });
     });
   }
-  requestTaskStore(request, sessionId) {
+  requestTaskStore(request2, sessionId) {
     const taskStore = this._taskStore;
     if (!taskStore) {
       throw new Error("No task store configured");
     }
     return {
       createTask: async (taskParams) => {
-        if (!request) {
+        if (!request2) {
           throw new Error("No request provided");
         }
-        return await taskStore.createTask(taskParams, request.id, {
-          method: request.method,
-          params: request.params
+        return await taskStore.createTask(taskParams, request2.id, {
+          method: request2.method,
+          params: request2.params
         }, sessionId);
       },
       getTask: async (taskId) => {
@@ -34896,8 +34896,8 @@ var ExperimentalServerTasks = class {
    *
    * @experimental
    */
-  requestStream(request, resultSchema, options) {
-    return this._server.requestStream(request, resultSchema, options);
+  requestStream(request2, resultSchema, options) {
+    return this._server.requestStream(request2, resultSchema, options);
   }
   /**
    * Sends a sampling request and returns an AsyncGenerator that yields response messages.
@@ -35142,12 +35142,12 @@ var Server = class extends Protocol {
     this._capabilities = options?.capabilities ?? {};
     this._instructions = options?.instructions;
     this._jsonSchemaValidator = options?.jsonSchemaValidator ?? new AjvJsonSchemaValidator();
-    this.setRequestHandler(InitializeRequestSchema, (request) => this._oninitialize(request));
+    this.setRequestHandler(InitializeRequestSchema, (request2) => this._oninitialize(request2));
     this.setNotificationHandler(InitializedNotificationSchema, () => this.oninitialized?.());
     if (this._capabilities.logging) {
-      this.setRequestHandler(SetLevelRequestSchema, async (request, extra) => {
+      this.setRequestHandler(SetLevelRequestSchema, async (request2, extra) => {
         const transportSessionId = extra.sessionId || extra.requestInfo?.headers["mcp-session-id"] || void 0;
-        const { level } = request.params;
+        const { level } = request2.params;
         const parseResult = LoggingLevelSchema.safeParse(level);
         if (parseResult.success) {
           this._loggingLevels.set(transportSessionId, parseResult.data);
@@ -35197,14 +35197,14 @@ var Server = class extends Protocol {
     }
     const method = methodValue;
     if (method === "tools/call") {
-      const wrappedHandler = async (request, extra) => {
-        const validatedRequest = safeParse2(CallToolRequestSchema, request);
+      const wrappedHandler = async (request2, extra) => {
+        const validatedRequest = safeParse2(CallToolRequestSchema, request2);
         if (!validatedRequest.success) {
           const errorMessage = validatedRequest.error instanceof Error ? validatedRequest.error.message : String(validatedRequest.error);
           throw new McpError(ErrorCode.InvalidParams, `Invalid tools/call request: ${errorMessage}`);
         }
         const { params } = validatedRequest.data;
-        const result = await Promise.resolve(handler(request, extra));
+        const result = await Promise.resolve(handler(request2, extra));
         if (params.task) {
           const taskValidationResult = safeParse2(CreateTaskResultSchema, result);
           if (!taskValidationResult.success) {
@@ -35335,10 +35335,10 @@ var Server = class extends Protocol {
     }
     assertToolsCallTaskCapability(this._capabilities.tasks?.requests, method, "Server");
   }
-  async _oninitialize(request) {
-    const requestedVersion = request.params.protocolVersion;
-    this._clientCapabilities = request.params.capabilities;
-    this._clientVersion = request.params.clientInfo;
+  async _oninitialize(request2) {
+    const requestedVersion = request2.params.protocolVersion;
+    this._clientCapabilities = request2.params.capabilities;
+    this._clientVersion = request2.params.clientInfo;
     const protocolVersion = SUPPORTED_PROTOCOL_VERSIONS.includes(requestedVersion) ? requestedVersion : LATEST_PROTOCOL_VERSION;
     return {
       protocolVersion,
@@ -35665,33 +35665,33 @@ var McpServer = class {
         return toolDefinition;
       })
     }));
-    this.server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
+    this.server.setRequestHandler(CallToolRequestSchema, async (request2, extra) => {
       try {
-        const tool = this._registeredTools[request.params.name];
+        const tool = this._registeredTools[request2.params.name];
         if (!tool) {
-          throw new McpError(ErrorCode.InvalidParams, `Tool ${request.params.name} not found`);
+          throw new McpError(ErrorCode.InvalidParams, `Tool ${request2.params.name} not found`);
         }
         if (!tool.enabled) {
-          throw new McpError(ErrorCode.InvalidParams, `Tool ${request.params.name} disabled`);
+          throw new McpError(ErrorCode.InvalidParams, `Tool ${request2.params.name} disabled`);
         }
-        const isTaskRequest = !!request.params.task;
+        const isTaskRequest = !!request2.params.task;
         const taskSupport = tool.execution?.taskSupport;
         const isTaskHandler = "createTask" in tool.handler;
         if ((taskSupport === "required" || taskSupport === "optional") && !isTaskHandler) {
-          throw new McpError(ErrorCode.InternalError, `Tool ${request.params.name} has taskSupport '${taskSupport}' but was not registered with registerToolTask`);
+          throw new McpError(ErrorCode.InternalError, `Tool ${request2.params.name} has taskSupport '${taskSupport}' but was not registered with registerToolTask`);
         }
         if (taskSupport === "required" && !isTaskRequest) {
-          throw new McpError(ErrorCode.MethodNotFound, `Tool ${request.params.name} requires task augmentation (taskSupport: 'required')`);
+          throw new McpError(ErrorCode.MethodNotFound, `Tool ${request2.params.name} requires task augmentation (taskSupport: 'required')`);
         }
         if (taskSupport === "optional" && !isTaskRequest && isTaskHandler) {
-          return await this.handleAutomaticTaskPolling(tool, request, extra);
+          return await this.handleAutomaticTaskPolling(tool, request2, extra);
         }
-        const args = await this.validateToolInput(tool, request.params.arguments, request.params.name);
+        const args = await this.validateToolInput(tool, request2.params.arguments, request2.params.name);
         const result = await this.executeToolHandler(tool, args, extra);
         if (isTaskRequest) {
           return result;
         }
-        await this.validateToolOutput(tool, result, request.params.name);
+        await this.validateToolOutput(tool, result, request2.params.name);
         return result;
       } catch (error62) {
         if (error62 instanceof McpError) {
@@ -35792,11 +35792,11 @@ var McpServer = class {
   /**
    * Handles automatic task polling for tools with taskSupport 'optional'.
    */
-  async handleAutomaticTaskPolling(tool, request, extra) {
+  async handleAutomaticTaskPolling(tool, request2, extra) {
     if (!extra.taskStore) {
       throw new Error("No task store provided for task-capable tool.");
     }
-    const args = await this.validateToolInput(tool, request.params.arguments, request.params.name);
+    const args = await this.validateToolInput(tool, request2.params.arguments, request2.params.name);
     const handler = tool.handler;
     const taskExtra = { ...extra, taskStore: extra.taskStore };
     const createTaskResult = args ? await Promise.resolve(handler.createTask(args, taskExtra)) : (
@@ -35824,21 +35824,21 @@ var McpServer = class {
     this.server.registerCapabilities({
       completions: {}
     });
-    this.server.setRequestHandler(CompleteRequestSchema, async (request) => {
-      switch (request.params.ref.type) {
+    this.server.setRequestHandler(CompleteRequestSchema, async (request2) => {
+      switch (request2.params.ref.type) {
         case "ref/prompt":
-          assertCompleteRequestPrompt(request);
-          return this.handlePromptCompletion(request, request.params.ref);
+          assertCompleteRequestPrompt(request2);
+          return this.handlePromptCompletion(request2, request2.params.ref);
         case "ref/resource":
-          assertCompleteRequestResourceTemplate(request);
-          return this.handleResourceCompletion(request, request.params.ref);
+          assertCompleteRequestResourceTemplate(request2);
+          return this.handleResourceCompletion(request2, request2.params.ref);
         default:
-          throw new McpError(ErrorCode.InvalidParams, `Invalid completion reference: ${request.params.ref}`);
+          throw new McpError(ErrorCode.InvalidParams, `Invalid completion reference: ${request2.params.ref}`);
       }
     });
     this._completionHandlerInitialized = true;
   }
-  async handlePromptCompletion(request, ref) {
+  async handlePromptCompletion(request2, ref) {
     const prompt = this._registeredPrompts[ref.name];
     if (!prompt) {
       throw new McpError(ErrorCode.InvalidParams, `Prompt ${ref.name} not found`);
@@ -35850,7 +35850,7 @@ var McpServer = class {
       return EMPTY_COMPLETION_RESULT;
     }
     const promptShape = getObjectShape(prompt.argsSchema);
-    const field = promptShape?.[request.params.argument.name];
+    const field = promptShape?.[request2.params.argument.name];
     if (!isCompletable(field)) {
       return EMPTY_COMPLETION_RESULT;
     }
@@ -35858,22 +35858,22 @@ var McpServer = class {
     if (!completer) {
       return EMPTY_COMPLETION_RESULT;
     }
-    const suggestions = await completer(request.params.argument.value, request.params.context);
+    const suggestions = await completer(request2.params.argument.value, request2.params.context);
     return createCompletionResult(suggestions);
   }
-  async handleResourceCompletion(request, ref) {
+  async handleResourceCompletion(request2, ref) {
     const template = Object.values(this._registeredResourceTemplates).find((t2) => t2.resourceTemplate.uriTemplate.toString() === ref.uri);
     if (!template) {
       if (this._registeredResources[ref.uri]) {
         return EMPTY_COMPLETION_RESULT;
       }
-      throw new McpError(ErrorCode.InvalidParams, `Resource template ${request.params.ref.uri} not found`);
+      throw new McpError(ErrorCode.InvalidParams, `Resource template ${request2.params.ref.uri} not found`);
     }
-    const completer = template.resourceTemplate.completeCallback(request.params.argument.name);
+    const completer = template.resourceTemplate.completeCallback(request2.params.argument.name);
     if (!completer) {
       return EMPTY_COMPLETION_RESULT;
     }
-    const suggestions = await completer(request.params.argument.value, request.params.context);
+    const suggestions = await completer(request2.params.argument.value, request2.params.context);
     return createCompletionResult(suggestions);
   }
   setResourceRequestHandlers() {
@@ -35888,7 +35888,7 @@ var McpServer = class {
         listChanged: true
       }
     });
-    this.server.setRequestHandler(ListResourcesRequestSchema, async (request, extra) => {
+    this.server.setRequestHandler(ListResourcesRequestSchema, async (request2, extra) => {
       const resources = Object.entries(this._registeredResources).filter(([_, resource]) => resource.enabled).map(([uri, resource]) => ({
         uri,
         name: resource.name,
@@ -35918,8 +35918,8 @@ var McpServer = class {
       }));
       return { resourceTemplates };
     });
-    this.server.setRequestHandler(ReadResourceRequestSchema, async (request, extra) => {
-      const uri = new URL(request.params.uri);
+    this.server.setRequestHandler(ReadResourceRequestSchema, async (request2, extra) => {
+      const uri = new URL(request2.params.uri);
       const resource = this._registeredResources[uri.toString()];
       if (resource) {
         if (!resource.enabled) {
@@ -35958,21 +35958,21 @@ var McpServer = class {
         };
       })
     }));
-    this.server.setRequestHandler(GetPromptRequestSchema, async (request, extra) => {
-      const prompt = this._registeredPrompts[request.params.name];
+    this.server.setRequestHandler(GetPromptRequestSchema, async (request2, extra) => {
+      const prompt = this._registeredPrompts[request2.params.name];
       if (!prompt) {
-        throw new McpError(ErrorCode.InvalidParams, `Prompt ${request.params.name} not found`);
+        throw new McpError(ErrorCode.InvalidParams, `Prompt ${request2.params.name} not found`);
       }
       if (!prompt.enabled) {
-        throw new McpError(ErrorCode.InvalidParams, `Prompt ${request.params.name} disabled`);
+        throw new McpError(ErrorCode.InvalidParams, `Prompt ${request2.params.name} disabled`);
       }
       if (prompt.argsSchema) {
         const argsObj = normalizeObjectSchema(prompt.argsSchema);
-        const parseResult = await safeParseAsync2(argsObj, request.params.arguments);
+        const parseResult = await safeParseAsync2(argsObj, request2.params.arguments);
         if (!parseResult.success) {
           const error62 = "error" in parseResult ? parseResult.error : "Unknown error";
           const errorMessage = getParseErrorMessage(error62);
-          throw new McpError(ErrorCode.InvalidParams, `Invalid arguments for prompt ${request.params.name}: ${errorMessage}`);
+          throw new McpError(ErrorCode.InvalidParams, `Invalid arguments for prompt ${request2.params.name}: ${errorMessage}`);
         }
         const args = parseResult.data;
         const cb = prompt.callback;
@@ -36490,7 +36490,7 @@ import { basename, join as join2 } from "node:path";
 import { homedir } from "node:os";
 import { join } from "node:path";
 var APP_NAME = "agent-bridge";
-var APP_VERSION = "0.7.0";
+var APP_VERSION = "0.8.0";
 var PROTOCOL_VERSION = 2;
 var ENV = {
   home: "AGENT_BRIDGE_HOME",
@@ -36505,7 +36505,8 @@ var ENV = {
   delivery: "AGENT_BRIDGE_DELIVERY",
   claudeBin: "AGENT_BRIDGE_CLAUDE_BIN",
   codexBin: "AGENT_BRIDGE_CODEX_BIN",
-  opencodeBin: "AGENT_BRIDGE_OPENCODE_BIN"
+  opencodeBin: "AGENT_BRIDGE_OPENCODE_BIN",
+  dashboard: "AGENT_BRIDGE_DASHBOARD"
 };
 var DEFAULT_HOME = join(homedir(), `.${APP_NAME}`);
 var CONFIG_FILE_NAME = "config.json";
@@ -36529,6 +36530,7 @@ var MAX_JOB_TIMEOUT_SEC = 24 * 60 * 60;
 var DEFAULT_CLAUDE_BIN = "claude";
 var DEFAULT_CODEX_BIN = "codex";
 var DEFAULT_OPENCODE_BIN = "opencode";
+var DEFAULT_DASHBOARD_PORT = 4777;
 var DEFAULT_LINGER_SEC = 300;
 var STOP_WAIT_CAP_MS = 29e4;
 var MAX_RUNNING_JOBS = 4;
@@ -36598,7 +36600,9 @@ var DEFAULT_CONFIG = {
   claudeModel: null,
   opencodeBin: DEFAULT_OPENCODE_BIN,
   opencodeModel: null,
-  opencodeAutoApprove: false
+  opencodeAutoApprove: false,
+  dashboard: true,
+  dashboardPort: DEFAULT_DASHBOARD_PORT
 };
 var TRUE_VALUES = /* @__PURE__ */ new Set(["1", "true", "yes", "on"]);
 var FALSE_VALUES = /* @__PURE__ */ new Set(["0", "false", "no", "off"]);
@@ -36658,7 +36662,9 @@ function loadConfig(home, agent, log, env = process.env) {
     claudeModel: pick2("claudeModel", null, modelName) ?? d.claudeModel,
     opencodeBin: pick2("opencodeBin", ENV.opencodeBin, str) ?? d.opencodeBin,
     opencodeModel: pick2("opencodeModel", null, modelName) ?? d.opencodeModel,
-    opencodeAutoApprove: pick2("opencodeAutoApprove", null, parseBool) ?? d.opencodeAutoApprove
+    opencodeAutoApprove: pick2("opencodeAutoApprove", null, parseBool) ?? d.opencodeAutoApprove,
+    dashboard: pick2("dashboard", ENV.dashboard, parseBool) ?? d.dashboard,
+    dashboardPort: pick2("dashboardPort", null, (v) => parseIntInRange(v, 1, 65535)) ?? d.dashboardPort
   };
   log.debug("effective config", { ...cfg });
   return cfg;
@@ -37199,6 +37205,9 @@ var en = {
   "cli.status.upToDate": "All sessions run agent-bridge {version}.",
   "cli.sent": "Sent message {id}.",
   "cli.tail.listening": 'Listening as "{name}". Press Ctrl+C to stop.',
+  "dashboard.opened": "Opened the agent-bridge dashboard in the browser: {url}",
+  "dashboard.failed": "The dashboard could not be started (see ~/.agent-bridge/logs/agent-bridge.log; the port may be in use). Set dashboardPort in ~/.agent-bridge/config.json to use another port.",
+  "cli.ui.existing": "agent-bridge dashboard (hosted by a running agent session): {url}",
   "cli.ui.running": "agent-bridge dashboard: {url}\nOnly this link opens it (it contains a one-time secret). Press Ctrl+C to stop.",
   "cli.watch.none": "No delegated runs yet (run logs live in ~/.agent-bridge/runs).",
   "cli.watch.following": "Following {path} (Ctrl+C to stop)",
@@ -38807,15 +38816,15 @@ var PermissionRelay = class {
       if (raw.length > MAX_REQUEST_BYTES) throw new Error("request too large");
     }
     const body = JSON.parse(raw);
-    const request = {
+    const request2 = {
       agent: String(body.agent ?? "subagent"),
       tool: String(body.tool ?? "unknown"),
       detail: String(body.detail ?? "").slice(0, 4e3),
       cwd: body.cwd ? String(body.cwd) : void 0
     };
-    this.log.info("permission requested by subagent", { agent: request.agent, tool: request.tool });
-    const decision = await this.handler(request);
-    this.log.info("permission decided", { tool: request.tool, allow: decision.allow });
+    this.log.info("permission requested by subagent", { agent: request2.agent, tool: request2.tool });
+    const decision = await this.handler(request2);
+    this.log.info("permission decided", { tool: request2.tool, allow: decision.allow });
     return decision;
   }
 };
@@ -38902,9 +38911,452 @@ function startRunFeed(opts) {
   };
 }
 
+// src/cli/dashboard.ts
+import { randomBytes as randomBytes5 } from "node:crypto";
+import { chmodSync as chmodSync2, readFileSync as readFileSync6, rmSync, writeFileSync } from "node:fs";
+import { request } from "node:http";
+import { join as join10 } from "node:path";
+
+// src/cli/ui.ts
+import { randomBytes as randomBytes4 } from "node:crypto";
+import { existsSync as existsSync2, readdirSync as readdirSync2, readFileSync as readFileSync5, statSync as statSync3 } from "node:fs";
+import { createServer as createServer3 } from "node:http";
+import { join as join9 } from "node:path";
+import { DatabaseSync as DatabaseSync2 } from "node:sqlite";
+
+// src/cli/ui-page.ts
+var UI_PAGE = `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>agent-bridge</title>
+<style>
+:root {
+  --bg: #f6f7f9; --panel: #ffffff; --text: #1d2330; --muted: #667085; --line: #e3e6eb;
+  --accent: #3b5bdb; --ok: #2b8a3e; --warn: #b7791f; --bad: #c92a2a; --busy: #1971c2;
+  --code-bg: #f1f3f5; --sel: #e7edff;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #111418; --panel: #191d23; --text: #e6e8eb; --muted: #98a2b3; --line: #2a303a;
+    --accent: #7b93ff; --ok: #51cf66; --warn: #fcc419; --bad: #ff6b6b; --busy: #4dabf7;
+    --code-bg: #0d1014; --sel: #232b45;
+    color-scheme: dark;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+header { display: flex; align-items: center; gap: 12px; padding: 12px 20px; border-bottom: 1px solid var(--line); background: var(--panel); }
+header h1 { font-size: 16px; margin: 0; }
+header .status { color: var(--muted); font-size: 13px; }
+.dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
+main { display: grid; grid-template-columns: minmax(280px, 360px) 1fr; gap: 16px; padding: 16px 20px; min-height: calc(100vh - 53px); }
+@media (max-width: 860px) { main { grid-template-columns: 1fr; } }
+section { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+section h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0; padding: 10px 14px; border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; }
+.col { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+ul { list-style: none; margin: 0; padding: 0; }
+li { padding: 9px 14px; border-bottom: 1px solid var(--line); }
+li:last-child { border-bottom: 0; }
+.name { font-weight: 600; }
+.sub { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+.tag { font-size: 11px; padding: 1px 6px; border-radius: 10px; border: 1px solid var(--line); color: var(--muted); margin-left: 6px; }
+.tag.old { color: var(--bad); border-color: var(--bad); }
+.run { cursor: pointer; }
+.run:hover { background: var(--sel); }
+.run.sel { background: var(--sel); box-shadow: inset 3px 0 0 var(--accent); }
+.s-running { color: var(--busy); } .s-done { color: var(--ok); } .s-failed { color: var(--bad); } .s-interrupted { color: var(--warn); }
+.empty { padding: 14px; color: var(--muted); }
+#log { margin: 0; padding: 12px 14px; background: var(--code-bg); font: 12.5px/1.5 ui-monospace, "Cascadia Code", Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; height: 46vh; overflow: auto; }
+#task { border-bottom: 1px solid var(--line); padding: 6px 14px; }
+#task summary { cursor: pointer; }
+#taskText { margin: 6px 0 0; max-height: 24vh; overflow: auto; white-space: pre-wrap; font: 12px/1.45 ui-monospace, Consolas, monospace; color: var(--muted); }
+#logHead { padding: 10px 14px; border-bottom: 1px solid var(--line); }
+.msg { display: grid; gap: 2px; }
+.msg .body { white-space: pre-wrap; overflow-wrap: anywhere; }
+#msgs { max-height: 38vh; overflow: auto; }
+form { display: flex; gap: 8px; padding: 10px 14px; border-top: 1px solid var(--line); flex-wrap: wrap; }
+select, textarea, button { font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; }
+textarea { flex: 1 1 260px; min-height: 38px; resize: vertical; }
+button { background: var(--accent); color: #fff; border-color: var(--accent); cursor: pointer; }
+button:disabled { opacity: .6; cursor: default; }
+#sendInfo { width: 100%; color: var(--muted); font-size: 12px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>agent-bridge</h1>
+  <span class="status" id="status">connecting\u2026</span>
+</header>
+<main>
+  <div class="col">
+    <section><h2>Sessions <span id="peerCount"></span></h2><ul id="peers"></ul></section>
+    <section><h2>Delegated runs <span id="runCount"></span></h2><ul id="runs"></ul></section>
+  </div>
+  <div class="col">
+    <section>
+      <h2>Run <label class="sub"><input type="checkbox" id="follow" checked> follow</label></h2>
+      <div id="logHead" class="sub">Select a run on the left.</div>
+      <details id="task"><summary class="sub">Task</summary><pre id="taskText"></pre></details>
+      <pre id="log"></pre>
+    </section>
+    <section>
+      <h2>Messages</h2>
+      <ul id="msgs"></ul>
+      <form id="send">
+        <select id="to" aria-label="Recipient"></select>
+        <textarea id="body" placeholder="Message to the session (sent as &quot;you&quot;)" aria-label="Message"></textarea>
+        <button type="submit" id="sendBtn">Send</button>
+        <div id="sendInfo"></div>
+      </form>
+    </section>
+  </div>
+</main>
+<script>
+const POLL_MS = 1500;
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+const time = (t) => new Date(t).toLocaleTimeString();
+const ago = (t) => { const s = Math.round((Date.now() - t) / 1000); return s < 60 ? s + "s" : s < 3600 ? Math.floor(s / 60) + "m" : Math.floor(s / 3600) + "h " + Math.floor((s % 3600) / 60) + "m"; };
+let selected = null, logOffset = 0, version = "", raw = "";
+
+function renderPeers(peers) {
+  $("peerCount").textContent = peers.length;
+  $("peers").innerHTML = peers.length ? peers.map((p) => {
+    const color = p.activity === "busy" ? "var(--busy)" : p.activity === "idle" ? "var(--ok)" : "var(--muted)";
+    const old = p.version && p.version !== version ? '<span class="tag old">v' + esc(p.version) + " outdated</span>" : '<span class="tag">v' + esc(p.version ?? "?") + "</span>";
+    return '<li><span class="dot" style="background:' + color + '"></span><span class="name">' + esc(p.name) + '</span><span class="tag">' + esc(p.agent) + "</span>" + old +
+      '<div class="sub">' + esc(p.activity ?? "unknown") + " \xB7 up " + ago(p.startedAt) + " \xB7 " + esc(p.cwd) + "</div></li>";
+  }).join("") : '<li class="empty">No sessions connected.</li>';
+  const to = $("to"), current = to.value;
+  const names = peers.filter((p) => p.name !== "you").map((p) => p.name);
+  to.innerHTML = names.map((n) => "<option>" + esc(n) + "</option>").join("") + '<option value="*">* everyone</option>';
+  if ([...names, "*"].includes(current)) to.value = current;
+}
+
+function renderRuns(runs) {
+  $("runCount").textContent = runs.length;
+  if (!selected && runs[0]) select(runs[0].name);
+  $("runs").innerHTML = runs.length ? runs.map((r) =>
+    '<li class="run' + (r.name === selected ? " sel" : "") + '" data-name="' + esc(r.name) + '">' +
+    '<span class="name">' + esc(r.agent) + '</span> <span class="s-' + r.status + '">' + r.status + "</span>" +
+    '<span class="sub"> \xB7 ' + time(r.startedAt) + " \xB7 updated " + ago(r.updatedAt) + " ago</span>" +
+    '<div class="sub">' + esc(r.last) + "</div></li>").join("") : '<li class="empty">No delegated runs yet.</li>';
+  const cur = runs.find((r) => r.name === selected);
+  if (cur) $("logHead").innerHTML = '<span class="s-' + cur.status + '">' + cur.status + "</span> \xB7 " + esc(cur.header);
+}
+
+function renderMessages(msgs) {
+  $("msgs").innerHTML = msgs.length ? msgs.map((m) =>
+    '<li class="msg"><div class="sub"><b>' + esc(m.from_name) + "</b> \u2192 " + esc(m.recipients || m.to_target) + " \xB7 " + time(m.created_at) + (m.hop ? " \xB7 hop " + m.hop : "") + "</div>" +
+    '<div class="body">' + esc(m.body) + "</div></li>").join("") : '<li class="empty">No messages yet.</li>';
+}
+
+async function poll() {
+  try {
+    const r = await fetch("/api/state");
+    if (!r.ok) throw new Error(r.status === 403 ? "not authorized: open the link printed by agent-bridge ui" : "HTTP " + r.status);
+    const s = await r.json();
+    version = s.version;
+    $("status").innerHTML = s.brokerPid
+      ? '<span class="dot" style="background:var(--ok)"></span>bridge running \xB7 v' + esc(s.version)
+      : '<span class="dot" style="background:var(--warn)"></span>no bridge running (start a session with agent-bridge)';
+    renderPeers(s.peers); renderRuns(s.runs); renderMessages(s.messages);
+    await pullLog();
+  } catch (e) {
+    $("status").innerHTML = '<span class="dot" style="background:var(--bad)"></span>' + esc(e.message);
+  }
+}
+
+let pulling = false;
+async function pullLog() {
+  // One fetch at a time: overlapping pulls would append the same chunk twice.
+  if (!selected || pulling) return;
+  pulling = true;
+  const run = selected;
+  try {
+    const r = await fetch("/api/runs/" + encodeURIComponent(run) + "?from=" + logOffset);
+    if (!r.ok || run !== selected) return;
+    const d = await r.json();
+    if (run !== selected) return;
+    applyLog(d);
+  } finally {
+    pulling = false;
+  }
+}
+
+function applyLog(d) {
+  if (d.text) {
+    raw += d.text;
+    // The log starts with the task (header, prompt, "---"); keep it folded away from the live steps.
+    const m = /\\n---\\n(?=\\d\\d:\\d\\d:\\d\\d started )/.exec(raw);
+    const cut = m ? m.index : -1;
+    $("taskText").textContent = cut >= 0 ? raw.slice(0, cut) : raw;
+    $("log").textContent = cut >= 0 ? raw.slice(cut + 5) : "";
+    if ($("follow").checked) $("log").scrollTop = $("log").scrollHeight;
+  }
+  logOffset = d.next;
+}
+
+function select(name) {
+  selected = name; logOffset = 0; raw = ""; $("log").textContent = ""; $("taskText").textContent = "";
+  document.querySelectorAll(".run").forEach((el) => el.classList.toggle("sel", el.dataset.name === name));
+  pullLog();
+}
+
+$("runs").addEventListener("click", (e) => { const li = e.target.closest(".run"); if (li) select(li.dataset.name); });
+
+$("send").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const body = $("body").value.trim(), to = $("to").value;
+  if (!body || !to) return;
+  $("sendBtn").disabled = true;
+  try {
+    const r = await fetch("/api/send", { method: "POST", headers: { "content-type": "application/json", "x-agent-bridge": "1" }, body: JSON.stringify({ to, body }) });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || "HTTP " + r.status);
+    $("sendInfo").textContent = d.deliveredTo?.length ? "Delivered to " + d.deliveredTo.join(", ") : "Queued for " + (d.queuedFor || []).join(", ");
+    $("body").value = "";
+    poll();
+  } catch (err) {
+    $("sendInfo").textContent = "Not sent: " + err.message;
+  } finally {
+    $("sendBtn").disabled = false;
+  }
+});
+
+poll();
+setInterval(poll, POLL_MS);
+</script>
+</body>
+</html>
+`;
+
+// src/cli/ui.ts
+var UI_HOST = "127.0.0.1";
+var COOKIE = "ab_ui";
+var SECRET_BYTES2 = 24;
+var MAX_RUNS = 40;
+var MAX_MESSAGES = 200;
+var MAX_LOG_CHUNK = 512 * 1024;
+var MAX_POST_BYTES = 256 * 1024;
+var STALE_RUN_MS = 15e4;
+var UI_PEER_NAME = "you";
+var ALLOWED_HOSTS = /* @__PURE__ */ new Set([UI_HOST, "localhost"]);
+var RUN_NAME = /^[\w.-]+\.log$/;
+function summarizeRun(file2, text2, mtimeMs, now) {
+  const lines = text2.split("\n").filter(Boolean);
+  const finished = [...lines].reverse().find((l) => / finished after \d+s · /.test(l));
+  const last = (finished ?? lines.at(-1) ?? "").replace(/^\d\d:\d\d:\d\d /, "");
+  const status = finished ? / · done$/.test(finished) ? "done" : "failed" : now - mtimeMs > STALE_RUN_MS ? "interrupted" : "running";
+  const m = /^(\d{4})-(\d\d)-(\d\d)-(\d\d)-(\d\d)-(\d\d)-([a-z]+)-/.exec(file2);
+  const startedAt = m ? Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]) : mtimeMs;
+  return {
+    name: file2.replace(/\.log$/, ""),
+    agent: m?.[7] ?? "agent",
+    header: (lines[0] ?? "").replace(/^\d\d:\d\d:\d\d /, ""),
+    startedAt,
+    updatedAt: mtimeMs,
+    status,
+    last
+  };
+}
+function listRuns(home, now = Date.now()) {
+  const dir = join9(home, RUNS_DIR_NAME);
+  if (!existsSync2(dir)) return [];
+  return readdirSync2(dir).filter((f) => RUN_NAME.test(f)).map((f) => ({ f, st: statSync3(join9(dir, f)) })).sort((a, b) => b.st.mtimeMs - a.st.mtimeMs).slice(0, MAX_RUNS).map(({ f, st }) => summarizeRun(f, readFileSync5(join9(dir, f), "utf8"), st.mtimeMs, now));
+}
+function recentMessages(dbPath) {
+  if (!existsSync2(dbPath)) return [];
+  const db = new DatabaseSync2(dbPath, { readOnly: true });
+  try {
+    const stmt = db.prepare(
+      `SELECT id, from_name, from_agent, to_target, group_concat(recipient, ', ') AS recipients, body, created_at, hop, reply_to
+       FROM messages GROUP BY id ORDER BY created_at DESC LIMIT ?`
+    );
+    return stmt.all(MAX_MESSAGES);
+  } finally {
+    db.close();
+  }
+}
+async function brokerPeers(pipe2, token, log) {
+  let client = null;
+  try {
+    client = await BridgeClient.connect(pipe2, log);
+    const { brokerPid } = await client.request("auth", { protocol: PROTOCOL_VERSION, token });
+    return { brokerPid, peers: await client.request("peers", {}) };
+  } catch {
+    return { brokerPid: null, peers: [] };
+  } finally {
+    client?.close();
+  }
+}
+function send(res, status, body, type = "application/json; charset=utf-8") {
+  res.writeHead(status, { "content-type": type, "cache-control": "no-store", "x-content-type-options": "nosniff" });
+  res.end(typeof body === "string" ? body : JSON.stringify(body));
+}
+async function readJson(req) {
+  let raw = "";
+  for await (const chunk of req) {
+    raw += chunk;
+    if (raw.length > MAX_POST_BYTES) throw new Error("request too large");
+  }
+  return JSON.parse(raw || "{}");
+}
+function cookieSecret(req) {
+  const m = new RegExp(`(?:^|;\\s*)${COOKIE}=([0-9a-f]+)`).exec(String(req.headers.cookie ?? ""));
+  return m?.[1] ?? "";
+}
+async function startUi(opts) {
+  const secret = opts.secret ?? randomBytes4(SECRET_BYTES2).toString("hex");
+  const token = loadOrCreateToken(opts.home);
+  const dbPath = resolveDbPath(opts.home);
+  let sender = null;
+  const handle = async (req, res) => {
+    const host = String(req.headers.host ?? "").replace(/:\d+$/, "");
+    if (!ALLOWED_HOSTS.has(host)) return send(res, 403, { error: "forbidden host" });
+    const url2 = new URL(req.url ?? "/", `http://${UI_HOST}`);
+    const fromUrl = url2.searchParams.get("t");
+    if (url2.pathname === "/" && fromUrl) {
+      if (!tokensEqual(fromUrl, secret)) return send(res, 403, "Invalid or expired link. Restart `agent-bridge ui`.", "text/plain; charset=utf-8");
+      res.writeHead(302, { location: "/", "set-cookie": `${COOKIE}=${secret}; HttpOnly; SameSite=Strict; Path=/` });
+      return res.end();
+    }
+    if (!tokensEqual(cookieSecret(req), secret)) return send(res, 403, "Open the link printed by `agent-bridge ui`.", "text/plain; charset=utf-8");
+    if (req.method === "GET" && url2.pathname === "/") return send(res, 200, UI_PAGE, "text/html; charset=utf-8");
+    if (req.method === "GET" && url2.pathname === "/api/state") {
+      const { brokerPid, peers } = await brokerPeers(opts.pipe, token, opts.log);
+      return send(res, 200, {
+        version: APP_VERSION,
+        brokerPid,
+        peers,
+        runs: listRuns(opts.home),
+        messages: recentMessages(dbPath)
+      });
+    }
+    const runMatch = /^\/api\/runs\/([\w.-]+)$/.exec(url2.pathname);
+    if (req.method === "GET" && runMatch) {
+      const file2 = join9(opts.home, RUNS_DIR_NAME, `${runMatch[1]}.log`);
+      if (!existsSync2(file2)) return send(res, 404, { error: "no such run" });
+      const from = Math.max(0, Number(url2.searchParams.get("from")) || 0);
+      const buf = readFileSync5(file2);
+      const end = Math.min(buf.length, from + MAX_LOG_CHUNK);
+      return send(res, 200, { text: buf.subarray(from, end).toString("utf8"), next: end, size: buf.length });
+    }
+    if (req.method === "POST" && url2.pathname === "/api/send") {
+      if (req.headers["x-agent-bridge"] !== "1") return send(res, 403, { error: "missing header" });
+      const body = await readJson(req);
+      const to = String(body.to ?? "").trim();
+      const text2 = String(body.body ?? "").trim();
+      if (!to || !text2) return send(res, 400, { error: "to and body are required" });
+      if (!sender) {
+        sender = new BridgeNode({ pipePath: opts.pipe, token, dbPath, agent: "other", name: UI_PEER_NAME, cwd: opts.home, autoWake: false, log: opts.log });
+        await sender.start();
+      }
+      const r = await sender.send({ to, body: text2 });
+      return send(res, 200, { id: r.messages[0]?.id, deliveredTo: r.deliveredTo, queuedFor: r.queuedFor });
+    }
+    return send(res, 404, { error: "not found" });
+  };
+  const server = createServer3((req, res) => {
+    handle(req, res).catch((err) => {
+      opts.log.warn("ui request failed", { err: err.message });
+      if (!res.headersSent) send(res, 500, { error: String(err.message) });
+    });
+  });
+  await new Promise((resolve3, reject) => {
+    server.once("error", reject);
+    server.listen(opts.port, UI_HOST, () => resolve3());
+  });
+  const { port } = server.address();
+  return {
+    url: `http://${UI_HOST}:${port}/?t=${secret}`,
+    port,
+    close: async () => {
+      await sender?.stop();
+      await new Promise((r) => server.close(() => r()));
+    }
+  };
+}
+
+// src/cli/dashboard.ts
+var DASHBOARD_FILE = "dashboard.json";
+var SECRET_BYTES3 = 24;
+var PROBE_TIMEOUT_MS = 1500;
+var OWNER_ONLY2 = 384;
+function dashboardFile(home) {
+  return join10(home, DASHBOARD_FILE);
+}
+function readDashboardInfo(home) {
+  try {
+    const d = JSON.parse(readFileSync6(dashboardFile(home), "utf8"));
+    return typeof d.url === "string" && typeof d.port === "number" && typeof d.pid === "number" ? d : null;
+  } catch {
+    return null;
+  }
+}
+function processAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return err.code === "EPERM";
+  }
+}
+function probeDashboard(port) {
+  return new Promise((resolve3) => {
+    const req = request({ host: "127.0.0.1", port, path: "/api/state", timeout: PROBE_TIMEOUT_MS }, (res) => {
+      res.resume();
+      resolve3(res.statusCode === 403 || res.statusCode === 200);
+    });
+    req.on("timeout", () => req.destroy());
+    req.on("error", () => resolve3(false));
+    req.end();
+  });
+}
+async function findRunningDashboard(home) {
+  const info = readDashboardInfo(home);
+  if (!info || !processAlive(info.pid)) return null;
+  return await probeDashboard(info.port) ? info : null;
+}
+async function hostDashboard(opts) {
+  const secret = randomBytes5(SECRET_BYTES3).toString("hex");
+  const ui = await startUi({ ...opts, secret });
+  const info = { url: ui.url, port: ui.port, pid: process.pid };
+  const file2 = dashboardFile(opts.home);
+  writeFileSync(file2, JSON.stringify(info, null, 2), { mode: OWNER_ONLY2 });
+  try {
+    chmodSync2(file2, OWNER_ONLY2);
+  } catch {
+  }
+  opts.log.info("dashboard started", { port: ui.port });
+  return {
+    info,
+    close: async () => {
+      await ui.close();
+      if (readDashboardInfo(opts.home)?.pid === process.pid) rmSync(file2, { force: true });
+    }
+  };
+}
+
+// src/cli/open.ts
+import { spawn as spawn3 } from "node:child_process";
+function openBrowser(url2) {
+  const [cmd, args] = process.platform === "win32" ? ["cmd.exe", ["/d", "/c", "start", '""', url2]] : process.platform === "darwin" ? ["open", [url2]] : ["xdg-open", [url2]];
+  try {
+    const child = spawn3(cmd, args, { stdio: "ignore", detached: true, windowsHide: true, windowsVerbatimArguments: process.platform === "win32" });
+    child.on("error", () => {
+    });
+    child.unref();
+  } catch {
+  }
+}
+
 // src/core/worktree.ts
 import { mkdirSync as mkdirSync5 } from "node:fs";
-import { basename as basename2, isAbsolute as isAbsolute2, join as join9, relative } from "node:path";
+import { basename as basename2, isAbsolute as isAbsolute2, join as join11, relative } from "node:path";
 var GIT = "git";
 var GIT_TIMEOUT_MS = 6e4;
 var BRANCH_PREFIX = "agent-bridge/";
@@ -38924,12 +39376,12 @@ async function createWorktree(opts) {
   }
   const base = await git(["rev-parse", "HEAD"], repoRoot, opts.log);
   const branch = `${BRANCH_PREFIX}${opts.jobId}`;
-  const dir = join9(opts.home, "worktrees");
+  const dir = join11(opts.home, "worktrees");
   mkdirSync5(dir, { recursive: true });
-  const path = join9(dir, `${basename2(repoRoot)}-${opts.jobId}`);
+  const path = join11(dir, `${basename2(repoRoot)}-${opts.jobId}`);
   await git(["worktree", "add", "-b", branch, path, base], repoRoot, opts.log);
   const rel = relative(repoRoot, opts.cwd);
-  const cwd = rel && !rel.startsWith("..") && !isAbsolute2(rel) ? join9(path, rel) : path;
+  const cwd = rel && !rel.startsWith("..") && !isAbsolute2(rel) ? join11(path, rel) : path;
   opts.log.info("worktree created", { repoRoot, path, branch });
   return { repoRoot, path, cwd, branch, base };
 }
@@ -39213,10 +39665,30 @@ async function startServer(argv = process.argv.slice(2)) {
       mcp.server.notification({ method: OPENCODE_NOTIFICATION, params: { message_id: m.id, from: m.from.name, hop: m.hop } }).catch((err) => log.debug("opencode notification failed", { err: err.message }));
     });
   }
+  let dashboard = null;
+  const ensureDashboard = async (force) => {
+    try {
+      const running = await findRunningDashboard(home);
+      if (running) return running;
+      if (!force && !cfg.dashboard) return null;
+      dashboard ??= await hostDashboard({ home, pipe: resolvePipePath(home), port: cfg.dashboardPort, log: log.child("dashboard") });
+      return dashboard.info;
+    } catch (err) {
+      log.warn("could not start the dashboard", { err: err.message, port: cfg.dashboardPort });
+      return null;
+    }
+  };
+  ctx.openDashboard = async () => {
+    const info = await ensureDashboard(true);
+    if (info) openBrowser(info.url);
+    return info?.url ?? null;
+  };
   const transport = new StdioServerTransport();
   const shutdown = async (reason) => {
     log.info("shutting down", { reason });
     ctx.jobs?.cancelAll();
+    await dashboard?.close().catch(() => {
+    });
     await node2?.stop().catch(() => {
     });
     process.exit(0);
@@ -39232,15 +39704,16 @@ async function startServer(argv = process.argv.slice(2)) {
     log.info("delivery mode resolved", { delivery: channel ? "channel" : "hooks" });
   }
   if (node2) {
-    node2.on("connected", () => {
+    node2.on("connected", ({ isBroker }) => {
       if (channel) for (const m of node2.unread()) void pushChannel(m);
+      if (isBroker && cfg.dashboard) void ensureDashboard(false);
     });
-    const join10 = () => node2.start().catch((err) => log.error("could not join the bridge", { err: err.message }));
+    const join12 = () => node2.start().catch((err) => log.error("could not join the bridge", { err: err.message }));
     if (cwdKnown) {
-      void join10();
+      void join12();
     } else {
       log.info("project directory unknown yet; deferring bridge join", { graceMs: CWD_DISCOVERY_GRACE_MS });
-      setTimeout(() => void join10(), CWD_DISCOVERY_GRACE_MS).unref();
+      setTimeout(() => void join12(), CWD_DISCOVERY_GRACE_MS).unref();
     }
   }
 }
@@ -39502,6 +39975,18 @@ ${res.text || t("delegate.empty")}`, res.isError);
       })
     );
   }
+  mcp.registerTool(
+    "dashboard",
+    {
+      title: "Open the agent-bridge dashboard",
+      description: "Open the agent-bridge web dashboard in the user's browser (sessions, delegated runs with live steps, messages) and return its link. Only call this when the user asks to see the dashboard.",
+      inputSchema: {}
+    },
+    guarded("dashboard", async () => {
+      const url2 = await ctx.openDashboard?.();
+      return url2 ? text(t("dashboard.opened", { url: url2 })) : text(t("dashboard.failed"), true);
+    })
+  );
   mcp.registerTool(
     "cancel_subagent",
     {

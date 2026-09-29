@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { basename, join } from "node:path";
-import { CONFIG_FILE_NAME, DEFAULT_CLAUDE_BIN, DEFAULT_CODEX_BIN, DEFAULT_LINGER_SEC, DEFAULT_MAX_HOPS, DEFAULT_OPENCODE_BIN, ENV } from "./constants.js";
+import { CONFIG_FILE_NAME, DEFAULT_CLAUDE_BIN, DEFAULT_CODEX_BIN, DEFAULT_LINGER_SEC, DEFAULT_MAX_HOPS, DEFAULT_OPENCODE_BIN, DEFAULT_DASHBOARD_PORT, ENV } from "./constants.js";
 import type { Logger } from "./logger.js";
 import { AGENT_KINDS, type AgentKind } from "./protocol.js";
 
@@ -42,6 +42,9 @@ export interface BridgeConfig {
   opencodeModel: string | null;
   /** Pass --auto to headless opencode runs (auto-approve permission requests). */
   opencodeAutoApprove: boolean;
+  /** Run the web dashboard inside whichever session hosts the bridge. */
+  dashboard: boolean;
+  dashboardPort: number;
 }
 
 export const DEFAULT_CONFIG: BridgeConfig = {
@@ -59,6 +62,8 @@ export const DEFAULT_CONFIG: BridgeConfig = {
   opencodeBin: DEFAULT_OPENCODE_BIN,
   opencodeModel: null,
   opencodeAutoApprove: false,
+  dashboard: true,
+  dashboardPort: DEFAULT_DASHBOARD_PORT,
 };
 
 const TRUE_VALUES = new Set(["1", "true", "yes", "on"]);
@@ -133,6 +138,8 @@ export function loadConfig(home: string, agent: AgentKind, log: Logger, env: Nod
     opencodeBin: pick("opencodeBin", ENV.opencodeBin, str) ?? d.opencodeBin,
     opencodeModel: pick("opencodeModel", null, modelName) ?? d.opencodeModel,
     opencodeAutoApprove: pick("opencodeAutoApprove", null, parseBool) ?? d.opencodeAutoApprove,
+    dashboard: pick("dashboard", ENV.dashboard, parseBool) ?? d.dashboard,
+    dashboardPort: pick("dashboardPort", null, (v) => parseIntInRange(v, 1, 65_535)) ?? d.dashboardPort,
   };
   log.debug("effective config", { ...cfg });
   return cfg;

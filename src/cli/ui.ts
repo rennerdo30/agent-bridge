@@ -18,7 +18,6 @@ import { UI_PAGE } from "./ui-page.js";
  * `agent-bridge ui`: a local dashboard for sessions, delegated runs and messages.
  * Bound to 127.0.0.1; every request needs a per-launch secret (given once in the URL, then a cookie).
  */
-export const DEFAULT_UI_PORT = 4777;
 const UI_HOST = "127.0.0.1";
 const COOKIE = "ab_ui";
 const SECRET_BYTES = 24;
@@ -139,13 +138,15 @@ function cookieSecret(req: IncomingMessage): string {
 
 export interface UiOptions {
   home: string;
+  /** Per-launch secret; generated when omitted. */
+  secret?: string;
   pipe: string;
   port: number;
   log: Logger;
 }
 
-export async function startUi(opts: UiOptions): Promise<{ url: string; close: () => Promise<void> }> {
-  const secret = randomBytes(SECRET_BYTES).toString("hex");
+export async function startUi(opts: UiOptions): Promise<{ url: string; port: number; close: () => Promise<void> }> {
+  const secret = opts.secret ?? randomBytes(SECRET_BYTES).toString("hex");
   const token = loadOrCreateToken(opts.home);
   const dbPath = resolveDbPath(opts.home);
   let sender: BridgeNode | null = null;
@@ -214,6 +215,7 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; close: ()
   const { port } = server.address() as AddressInfo;
   return {
     url: `http://${UI_HOST}:${port}/?t=${secret}`,
+    port,
     close: async () => {
       await sender?.stop();
       await new Promise<void>((r) => server.close(() => r()));

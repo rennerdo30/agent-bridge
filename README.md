@@ -116,7 +116,7 @@ Peer names default to `<agent>-<project folder>`, for example `codex-myrepo`. Se
 
 ### Slash commands (Claude Code)
 
-`/agent-bridge:peers`, `/agent-bridge:inbox`, `/agent-bridge:send <to> <message>` and `/agent-bridge:delegate <codex|opencode> [model=<id>] [edit] [worktree] <task>`.
+`/agent-bridge:dashboard`, `/agent-bridge:peers`, `/agent-bridge:inbox`, `/agent-bridge:send <to> <message>` and `/agent-bridge:delegate <codex|opencode> [model=<id>] [edit] [worktree] <task>`.
 
 ### Editing subagents: access and worktrees
 
@@ -172,9 +172,16 @@ The "still working" heartbeat comes after every minute without a new step, so lo
 
 ### Web dashboard
 
-```bash
-npx -y github:rennerdo30/agent-bridge ui     # opens http://127.0.0.1:4777 in your browser
-```
+The dashboard starts automatically: whichever agent session hosts the bridge also hosts the dashboard at `http://127.0.0.1:4777`, and if that session ends, another one takes it over. To open it:
+
+- `/agent-bridge:dashboard` in Claude Code (or ask any agent to "open the agent-bridge dashboard"), or
+- from any terminal:
+
+  ```bash
+  npx -y github:rennerdo30/agent-bridge ui     # opens the running dashboard, or starts one if no agent runs
+  ```
+
+Turn the automatic start off with `"dashboard": false` in `~/.agent-bridge/config.json` (or `AGENT_BRIDGE_DASHBOARD=off`); change the port with `"dashboardPort"`.
 
 The dashboard shows:
 
@@ -182,7 +189,7 @@ The dashboard shows:
 - **Delegated runs:** every `ask_*` / `spawn_*` run (running, done, failed or interrupted), and a live step-by-step view of the selected one. The task itself is folded away above the steps.
 - **Messages:** the message history between sessions, and a box to send a message to a session yourself (as "you").
 
-It only listens on 127.0.0.1. The printed link contains a one-time secret; without it the dashboard refuses every request, also from other local programs and web pages. Options: `--port=N`, `--no-open`. Press Ctrl+C to stop it.
+It only listens on 127.0.0.1. Its link contains a secret (stored in `~/.agent-bridge/dashboard.json`, readable only by you on Unix); without it the dashboard refuses every request, also from other local programs and web pages. `ui` options: `--port=N`, `--no-open`.
 
 ### Run logs
 

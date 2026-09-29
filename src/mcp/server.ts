@@ -35,6 +35,8 @@ import { askUserViaElicitation } from "./permissions.js";
 import { PermissionRelay, type PermissionDecision, type PermissionRequest } from "../core/relay.js";
 import { codexPermissionHookTrusted } from "../core/codex-trust.js";
 import { startRunFeed } from "../core/runfeed.js";
+import { findRunningDashboard, hostDashboard, type DashboardInfo, type HostedDashboard } from "../cli/dashboard.js";
+import { openBrowser } from "../cli/open.js";
 import { createWorktree, finishWorktree, gitStatusSnapshot, worktreeReport } from "../core/worktree.js";
 import { JobManager } from "./jobs.js";
 
@@ -121,6 +123,8 @@ export interface ServerContext {
   learnCwd?: (projectDir: string) => Promise<void>;
   /** Background subagents started by this session. */
   jobs?: JobManager;
+  /** Open (starting if needed) the web dashboard; returns its link. */
+  openDashboard?: () => Promise<string | null>;
   /** Ask the user in this session (MCP elicitation); used for forwarded subagent permission requests. */
   askUser?: (req: PermissionRequest) => Promise<PermissionDecision>;
 }
@@ -275,10 +279,31 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
     });
   }
 
+  /** Web dashboard hosted by this process, if any. */
+  let dashboard: HostedDashboard | null = null;
+  const ensureDashboard = async (force: boolean): Promise<DashboardInfo | null> => {
+    try {
+      const running = await findRunningDashboard(home);
+      if (running) return running;
+      if (!force && !cfg.dashboard) return null;
+      dashboard ??= await hostDashboard({ home, pipe: resolvePipePath(home), port: cfg.dashboardPort, log: log.child("dashboard") });
+      return dashboard.info;
+    } catch (err) {
+      log.warn("could not start the dashboard", { err: (err as Error).message, port: cfg.dashboardPort });
+      return null;
+    }
+  };
+  ctx.openDashboard = async () => {
+    const info = await ensureDashboard(true);
+    if (info) openBrowser(info.url);
+    return info?.url ?? null;
+  };
+
   const transport = new StdioServerTransport();
   const shutdown = async (reason: string) => {
     log.info("shutting down", { reason });
     ctx.jobs?.cancelAll();
+    await dashboard?.close().catch(() => {});
     await node?.stop().catch(() => {});
     process.exit(0);
   };
@@ -295,8 +320,10 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
     log.info("delivery mode resolved", { delivery: channel ? "channel" : "hooks" });
   }
   if (node) {
-    node.on("connected", () => {
+    node.on("connected", ({ isBroker }) => {
       if (channel) for (const m of node.unread()) void pushChannel(m);
+      // The session that hosts the bridge also hosts the web dashboard.
+      if (isBroker && cfg.dashboard) void ensureDashboard(false);
     });
     const join = () => node.start().catch((err) => log.error("could not join the bridge", { err: (err as Error).message }));
     if (cwdKnown) {
@@ -617,6 +644,21 @@ ${res.text || t("delegate.empty")}`, res.isError);
       }),
     );
   }
+
+  mcp.registerTool(
+    "dashboard",
+    {
+      title: "Open the agent-bridge dashboard",
+      description:
+        "Open the agent-bridge web dashboard in the user's browser (sessions, delegated runs with live steps, messages) and return its link. " +
+        "Only call this when the user asks to see the dashboard.",
+      inputSchema: {},
+    },
+    guarded("dashboard", async () => {
+      const url = await ctx.openDashboard?.();
+      return url ? text(t("dashboard.opened", { url })) : text(t("dashboard.failed"), true);
+    }),
+  );
 
   mcp.registerTool(
     "cancel_subagent",

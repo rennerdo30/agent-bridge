@@ -30925,7 +30925,7 @@ var StdioClientTransport = class {
 import { homedir } from "node:os";
 import { join } from "node:path";
 var APP_NAME = "agent-bridge";
-var APP_VERSION = "0.7.0";
+var APP_VERSION = "0.8.0";
 var ENV = {
   home: "AGENT_BRIDGE_HOME",
   pipe: "AGENT_BRIDGE_PIPE",
@@ -30939,7 +30939,8 @@ var ENV = {
   delivery: "AGENT_BRIDGE_DELIVERY",
   claudeBin: "AGENT_BRIDGE_CLAUDE_BIN",
   codexBin: "AGENT_BRIDGE_CODEX_BIN",
-  opencodeBin: "AGENT_BRIDGE_OPENCODE_BIN"
+  opencodeBin: "AGENT_BRIDGE_OPENCODE_BIN",
+  dashboard: "AGENT_BRIDGE_DASHBOARD"
 };
 var DEFAULT_HOME = join(homedir(), `.${APP_NAME}`);
 var LOG_FILE_NAME = `${APP_NAME}.log`;
