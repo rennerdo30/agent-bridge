@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DelegateError } from "../src/core/delegate.js";
 import { nullLogger } from "../src/core/logger.js";
@@ -100,5 +101,31 @@ describe("messaging subagents", () => {
     expect(jobs.cancel(tracked.job.name)).toBe(true);
     expect(tracked.job.controller.signal.aborted).toBe(true);
     expect(jobs.cancel("codex-ask-nope")).toBe(false);
+  });
+
+  it("keeps jobs across a restart of the session: finished ones continue, running ones can be recovered", async () => {
+    const store = join(env.home, "jobs.json");
+    const first = new JobManager(me, nullLogger, store);
+    const agent = fakeAgent();
+    const done = first.start("codex", "gpt-x", "task one", async () => ok("one", "ses-A", "/wt/a"), agent.resume, { access: "edit" });
+    await until(() => first.recent().some((j) => j.id === done.id));
+    const running = first.start("claude", null, "task two", (_s, _p, job) => {
+      first.note(job, { sessionId: "ses-B", workdir: "/wt/b" });
+      return new Promise(() => {});
+    }, agent.resume);
+    await until(() => running.sessionId === "ses-B");
+
+    // The session restarts: a new manager reads what the old one saved.
+    const args: Record<string, unknown>[] = [];
+    const second = new JobManager(me, nullLogger, store);
+    second.restore((_agent, a) => (args.push(a), agent.resume));
+    expect(second.find(running.name)).toMatchObject({ status: "interrupted", sessionId: "ses-B", workdir: "/wt/b" });
+    expect(args).toContainEqual({ access: "edit" });
+    expect(second.followUp(done.name, "and now the tests").outcome).toBe("started");
+    expect(second.followUp(running.name, DEFAULT_FOLLOW_UP).outcome).toBe("started");
+    await until(() => agent.calls.length === 2);
+    expect(agent.calls.map((c) => c.sessionId).sort()).toEqual(["ses-A", "ses-B"]);
+    second.cancelAll();
+    first.cancelAll();
   });
 });

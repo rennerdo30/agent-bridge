@@ -132,6 +132,7 @@ export async function delegateToOpencodeServed(
   let knownSession: string | null = req.sessionId ?? null;
   try {
     const sessionId: string = req.sessionId ?? (await api("POST", "/session", {})).id;
+    req.onSession?.(sessionId);
     knownSession = sessionId;
     const events = await fetch(`${url}/event?${q}`, { headers: { authorization: auth, accept: "text/event-stream" }, signal: ac.signal });
     if (!events.ok || !events.body) throw new DelegateError(`opencode event stream failed: HTTP ${events.status}`, "failed");

@@ -3,6 +3,7 @@ import { APP_VERSION } from "./constants.js";
 import type { CodexSandbox } from "./config.js";
 import { checkDepth, childEnv, DelegateError, killTree, realFolder, resolveCommand, trackChild, type DelegateRequest, type DelegateResult } from "./delegate.js";
 import { progressEventHandler } from "./progress.js";
+import { CODEX_ASK_HINT } from "./delegate.js";
 
 /**
  * Codex subagents through `codex app-server` (JSON-RPC over stdio) instead of `codex exec`. The same
@@ -23,6 +24,14 @@ const OPT_OUT = [
 ];
 const STDERR_TAIL_CHARS = 4_000;
 
+/** `"…\pwsh.exe" -Command '…'` and friends: just the command, for approval questions. */
+export function innerCommand(s: string): string {
+  const m = /^"?[^"\s]*?(?:pwsh|powershell|bash|zsh|sh|cmd)(?:\.exe)?"?\s+(?:-NoProfile\s+|-NoLogo\s+)*(?:-Command|-lc|-c|\/c)\s+([\s\S]*)$/i.exec(s.trim());
+  if (!m) return s;
+  const c = m[1]!.trim();
+  return /^'[\s\S]*'$|^"[\s\S]*"$/.test(c) ? c.slice(1, -1) : c;
+}
+
 /** Lets the caller talk to the running subagent. */
 export interface Steering {
   /** Deliver a message into the running turn; false when no turn is running (it has finished). */
@@ -40,7 +49,7 @@ function asExecEvent(kind: "item.started" | "item.completed", item: any): unknow
 }
 
 export async function delegateToCodexAppServer(
-  req: DelegateRequest & { bin: string; sandbox: CodexSandbox },
+  req: DelegateRequest & { bin: string; sandbox: CodexSandbox; askMode?: boolean },
 ): Promise<DelegateResult> {
   checkDepth();
   // See delegateToCodex: the Windows sandbox user does not see drive mappings.
@@ -61,6 +70,7 @@ export async function delegateToCodexAppServer(
   let retryableError: string | null = null;
   let finished: (v: { status: string; error: string | null }) => void = () => {};
   const turnDone = new Promise<{ status: string; error: string | null }>((r) => (finished = r));
+  const completions = new Map<string, { status: string; error: string | null }>();
   // After a steered message, the subagent's next message is its answer to it.
   const answers: string[] = [];
   let awaitingAnswer = false;
@@ -77,6 +87,41 @@ export async function delegateToCodexAppServer(
       write({ id, method, params });
     });
 
+  // Approval questions from Codex go to the session that started the subagent (see DelegateRequest.approve).
+  const editPaths = new Map<string, string[]>();
+  const decide = async (tool: string, detail: string): Promise<boolean> => {
+    if (!req.approve) return false;
+    try {
+      const d = await req.approve({ agent: "codex", tool, detail, cwd });
+      return d.allow;
+    } catch {
+      return false;
+    }
+  };
+  const answerRequest = async (id: number | string, method: string, params: any) => {
+    const reply = (result: unknown) => write({ id, result });
+    switch (method) {
+      case "mcpServer/elicitation/request": {
+        const ok = await decide(`mcp:${params.serverName ?? "tool"}`, String(params.message ?? "an MCP tool call"));
+        // Form elicitations get their defaults; tool-call approvals have no fields to fill.
+        const props = params.requestedSchema?.properties ?? {};
+        const content = Object.fromEntries(Object.entries(props).filter(([, v]: [string, any]) => v && "default" in v).map(([k, v]: [string, any]) => [k, v.default]));
+        return reply(ok ? { action: "accept", content } : { action: "decline", content: null });
+      }
+      case "item/commandExecution/requestApproval":
+        if (!req.askMode) return reply({ decision: "decline" });
+        return reply({ decision: (await decide("command", innerCommand(String(params.command ?? params.reason ?? "a command")))) ? "accept" : "decline" });
+      case "item/fileChange/requestApproval": {
+        if (!req.askMode) return reply({ decision: "decline" });
+        const paths = editPaths.get(params.itemId) ?? [];
+        return reply({ decision: (await decide("edit", paths.length ? paths.join(", ") : String(params.reason ?? "file changes"))) ? "accept" : "decline" });
+      }
+      default:
+        // Questions and permission-profile requests: not forwarded; refuse rather than let the turn hang.
+        req.log.warn("codex app-server request refused", { method });
+        return write({ id, error: { code: -32601, message: "not supported by agent-bridge" } });
+    }
+  };
   const handle = (msg: any) => {
     if (msg.id !== undefined && msg.method === undefined) {
       const p = pending.get(msg.id);
@@ -87,18 +132,17 @@ export async function delegateToCodexAppServer(
       return;
     }
     if (msg.id !== undefined && msg.method) {
-      // A request from Codex (an approval, a question). Runs use approvalPolicy "never", so none are expected;
-      // refuse anything that comes anyway rather than letting the turn hang.
-      req.log.warn("codex app-server request refused", { method: msg.method });
-      write({ id: msg.id, error: { code: -32601, message: "not supported by agent-bridge" } });
+      void answerRequest(msg.id, msg.method, msg.params ?? {});
       return;
     }
     const params = msg.params ?? {};
     switch (msg.method) {
       case "item/started":
         onEvent?.(asExecEvent("item.started", params.item));
+        if (params.item?.type === "fileChange") editPaths.set(params.item.id, (params.item.changes ?? []).map((c: any) => c?.path).filter(Boolean));
         break;
       case "item/completed": {
+        if (turnId && params.turnId && params.turnId !== turnId) break;
         const item = params.item ?? {};
         onEvent?.(asExecEvent("item.completed", item));
         if (item.type === "agentMessage" && typeof item.text === "string" && item.text.trim()) {
@@ -118,9 +162,9 @@ export async function delegateToCodexAppServer(
         if (!params.willRetry) retryableError = params.error?.message ?? "error";
         break;
       case "turn/completed":
-        if (!turnId || params.turn?.id === turnId) {
-          finished({ status: String(params.turn?.status ?? "completed"), error: params.turn?.error?.message ?? null });
-        }
+        // Only our turn counts: a resumed thread can report an earlier (interrupted) turn first.
+        completions.set(String(params.turn?.id), { status: String(params.turn?.status ?? "completed"), error: params.turn?.error?.message ?? null });
+        if (turnId && completions.has(turnId)) finished(completions.get(turnId)!);
         break;
     }
   };
@@ -175,18 +219,25 @@ export async function delegateToCodexAppServer(
     await race(request("initialize", { clientInfo: { name: "agent-bridge", title: "agent-bridge", version: APP_VERSION }, capabilities: { experimentalApi: false, optOutNotificationMethods: OPT_OUT } }));
     write({ method: "initialized", params: {} });
     // approvalsReviewer "user" + approvalPolicy "never": the sandbox holds (see CODEX_STRICT_APPROVALS).
-    const threadParams = { cwd, sandbox: req.sandbox, approvalPolicy: "never", approvalsReviewer: "user", ...(req.model ? { model: req.model } : {}) };
+    // Codex asks us (never a reviewer model): MCP tool approvals go to the parent session; sandbox escalations
+    // only in "ask" mode, and are refused here without asking otherwise, so the sandbox holds.
+    const approvalPolicy = "on-request";
+    const threadParams = { cwd, sandbox: req.sandbox, approvalPolicy, approvalsReviewer: "user", ...(req.model ? { model: req.model } : {}) };
     const thread = req.sessionId
       ? await race(request("thread/resume", { ...threadParams, threadId: req.sessionId, excludeTurns: true }))
       : await race(request("thread/start", threadParams));
     threadId = thread?.thread?.id ?? threadId;
-    const turn = await race(request("turn/start", { threadId, input: [{ type: "text", text: req.prompt, text_elements: [] }] }));
+    if (threadId) req.onSession?.(threadId);
+    const prompt = req.askMode ? `${req.prompt}\n\n${CODEX_ASK_HINT}` : req.prompt;
+    const turn = await race(request("turn/start", { threadId, input: [{ type: "text", text: prompt, text_elements: [] }] }));
     turnId = turn?.turn?.id ?? null;
+    if (turnId && completions.has(turnId)) finished(completions.get(turnId)!);
     req.live?.onSteering(steering);
     const outcome = await race(turnDone);
     req.live?.onSteering(null);
     const error = outcome.error ?? (outcome.status === "failed" ? (retryableError ?? "turn failed") : null);
-    if (outcome.status === "interrupted") throw new DelegateError("delegate aborted", "aborted", "", "", threadId);
+    req.log.info("codex turn ended", { threadId, turnId, status: outcome.status, error: outcome.error, retryableError });
+    if (outcome.status === "interrupted") throw new DelegateError(`codex interrupted the turn${outcome.error ? `: ${outcome.error}` : ""}`, "failed", stderr, "", threadId);
     if (error && !lastMessage) throw new DelegateError(error, "failed", stderr, "", threadId);
     req.log.info("codex delegate finished", { threadId, status: outcome.status });
     return { sessionId: threadId, text: lastMessage, isError: Boolean(error), details: { usage, error, answers: answers.length } };

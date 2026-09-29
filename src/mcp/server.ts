@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { dirname, isAbsolute, relative, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -50,6 +50,12 @@ export const OPENCODE_NOTIFICATION = "notifications/agent-bridge/message";
 const CODEX_SANDBOX_META = "codex/sandbox-state-meta";
 /** How long to wait for a hook or tool call to reveal the project dir before joining the bridge anyway. */
 const CWD_DISCOVERY_GRACE_MS = 15_000;
+/** Subagent jobs, kept across restarts so message_subagent can continue them (see jobs.ts). */
+const JOBS_FILE = "jobs.json";
+/** The options of a job worth keeping to continue it the same way later (no prompt, no internals). */
+const KEPT_ARGS = ["model", "cwd", "timeout_sec", "worktree", "access", "sandbox", "permission_mode", "auto_approve"] as const;
+/** How long a background subagent waits for its parent agent to approve something before it counts as "deny". */
+const PARENT_APPROVAL_TIMEOUT_MS = 10 * 60_000;
 /** Plugin root: dist/server.mjs lives one level below it. */
 const PLUGIN_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -215,7 +221,7 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
   let channel = agent === "claude" && cfg.delivery === "channel";
   const ctx: ServerContext = { agent, cfg, node, log, home, cwd: () => node?.cwd ?? cwd, channelActive: () => channel, parent: delegated ? parentFromEnv() : null };
   if (node) {
-    ctx.jobs = new JobManager(node, log.child("jobs"));
+    ctx.jobs = new JobManager(node, log.child("jobs"), join(home, JOBS_FILE));
     ctx.activity = (s) => node.setActivity(s);
     // Learn the project folder once, when it was unknown at start (Codex starts us in the plugin folder).
     // Later hook cwds follow the agent's `cd`s; renaming then would strand replies sent to the old name.
@@ -538,6 +544,8 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
 
   /** _worktree: internal, a follow-up continuing in an existing worktree. */
   type DelegateArgs = { prompt: string; model?: string; session_id?: string; cwd?: string; timeout_sec?: number; worktree?: boolean; _worktree?: Worktree; _job?: string } & TargetArgs;
+  const keep = (a: DelegateArgs): Record<string, unknown> => Object.fromEntries(KEPT_ARGS.filter((k) => a[k] !== undefined).map((k) => [k, a[k]]));
+  const resumers: Partial<Record<CodingAgent, (a: DelegateArgs) => Resume>> = {};
   for (const target of targets) {
     const profile = DELEGATION_TARGETS[target];
     const defaultModel = profile.defaultModel(cfg);
@@ -610,6 +618,27 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
         throw err;
       }
       const forwarding = access === "ask" && supportsAsk(target, wiring);
+      // Approval questions a subagent asks while it works (Codex app-server: MCP tool calls, and in "ask" mode
+      // commands and edits) go to this session's user. One "allow" per MCP server covers the rest of the run.
+      const allowedServers = new Set<string>();
+      const approve = async (r: PermissionRequest): Promise<PermissionDecision> => {
+        if (r.tool.startsWith("mcp:") && allowedServers.has(r.tool)) return { allow: true };
+        let d: PermissionDecision;
+        if (wiring) d = await wiring.onPermission(r);
+        else if (job && !job.foreground && ctx.jobs) {
+          // A background subagent asks the agent that started it (it can decide, also in auto mode or with
+          // the user away). A blocking ask_* caller cannot answer while it waits, so that one asks the user.
+          const a = await ctx.jobs.askParent(job, `${r.tool.replace(/^mcp:/, "MCP server ")}: ${r.detail}`, PARENT_APPROVAL_TIMEOUT_MS);
+          d = a.allow ? { allow: true } : { allow: false, message: `Denied by ${me}: ${a.reason}` };
+          asked.push(`${d.allow ? "allowed" : "denied"} by ${me}: ${r.tool} ${r.detail.slice(0, 80)}`);
+        } else if (ctx.askUser) {
+          relayCalls++;
+          d = await ctx.askUser(r);
+          asked.push(`${d.allow ? "allowed" : "denied"}: ${r.tool} ${r.detail.slice(0, 80)}`);
+        } else d = r.tool.startsWith("mcp:") && access === "edit" ? { allow: true } : { allow: false, message: "No one to ask in this session." };
+        if (d.allow && r.tool.startsWith("mcp:")) allowedServers.add(r.tool);
+        return d;
+      };
       let feed: ReturnType<typeof startRunFeed>;
       try {
         feed = startRunFeed({
@@ -678,6 +707,11 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
             signal,
             onProgress: feed.report,
             extraEnv: link?.childEnv(),
+            onSession: (id) => {
+              feed.meta({ session: id });
+              if (job) ctx.jobs?.note(job, { sessionId: id, workdir, worktree: wt });
+            },
+            approve,
             live: job
               ? {
                   from: me,
@@ -709,6 +743,7 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
       }
 
       const notes: string[] = [`Step-by-step log: ${feed.logPath}`];
+      if (access !== "ask" && asked.length) notes.push(`Approval requests forwarded to the user:\n${asked.join("\n")}`);
       if (access === "ask") {
         notes.push(
           forwarding
@@ -756,6 +791,7 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
           true,
           job,
         );
+    resumers[target] = resumeFor;
 
     const askName = `ask_${target}`;
     mcp.registerTool(
@@ -771,7 +807,7 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
       },
       guarded(askName, async (a: DelegateArgs, extra) => {
         // Visible in peers while it runs (the caller is blocked, but its coordinator may ask).
-        const tracked = ctx.jobs?.track(target, a.model ?? defaultModel, a.prompt, resumeFor(a));
+        const tracked = ctx.jobs?.track(target, a.model ?? defaultModel, a.prompt, resumeFor(a), keep(a));
         const report = progressReporter(extra, log);
         const onProgress = (m: string) => {
           tracked?.onProgress(m);
@@ -809,11 +845,17 @@ ${res.text || t("delegate.empty")}`, res.isError);
         const jobs = ctx.jobs;
         if (!jobs) throw new BridgeError("bad_request", t("err.delegatedSession"));
         if (!jobs.canStart()) return text(t("jobs.limit", { max: MAX_RUNNING_JOBS }), true);
-        const job = jobs.start(target, a.model ?? defaultModel, a.prompt, (signal, onProgress, job) => run({ ...a, _job: job.name }, signal, onProgress, true, job), resumeFor(a));
+        const job = jobs.start(target, a.model ?? defaultModel, a.prompt, (signal, onProgress, job) => run({ ...a, _job: job.name }, signal, onProgress, true, job), resumeFor(a), keep(a));
         return text(t("jobs.started", { name: job.name }));
       }),
     );
   }
+
+  // Jobs from before this session (re)started stay addressable: message_subagent continues them.
+  ctx.jobs?.restore((agent, args) => {
+    const make = resumers[agent as CodingAgent];
+    return make ? make({ prompt: "", ...(args as Partial<DelegateArgs>) } as DelegateArgs) : undefined;
+  });
 
   mcp.registerTool(
     "usage_limits",

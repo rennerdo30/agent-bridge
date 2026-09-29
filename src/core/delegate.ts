@@ -246,6 +246,10 @@ export interface DelegateRequest {
   model?: string | null;
   /** Receives short human-readable status lines while the delegate works. */
   onProgress?: (message: string, full?: string) => void;
+  /** Called once with the subagent's own session id, as soon as it is known (not only at the end). */
+  onSession?: (sessionId: string) => void;
+  /** Answers the subagent's approval questions (Codex app-server): the parent session decides. */
+  approve?: (r: { agent: string; tool: string; detail: string; cwd?: string }) => Promise<{ allow: boolean }>;
   /** Talking to the running subagent, where the target supports it natively (Codex app-server). */
   live?: {
     from: string;
@@ -291,6 +295,34 @@ export function checkDepth(): void {
   if (currentDelegateDepth() >= MAX_DELEGATE_DEPTH) {
     throw new DelegateError("delegation is disabled inside a delegated session (prevents recursive delegation)", "depth");
   }
+}
+
+/** The session id in one JSON event line of a CLI, if it carries one. */
+export function sessionInLine(agent: "codex" | "claude" | "opencode", line: string): string | null {
+  if (!line.startsWith("{")) return null;
+  try {
+    const ev = JSON.parse(line) as Record<string, any>;
+    const id = agent === "codex" ? (ev.type === "thread.started" ? ev.thread_id : null) : agent === "claude" ? ev.session_id : (ev.sessionID ?? ev.part?.sessionID);
+    return typeof id === "string" && id ? id : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Wraps a line handler: reports the session id the first time it shows up in the stream. */
+function withSessionSniffer(agent: "codex" | "claude" | "opencode", next: ((line: string) => void) | undefined, onSession: ((id: string) => void) | undefined): ((line: string) => void) | undefined {
+  if (!onSession) return next;
+  let seen = false;
+  return (line) => {
+    if (!seen) {
+      const id = sessionInLine(agent, line);
+      if (id) {
+        seen = true;
+        onSession(id);
+      }
+    }
+    next?.(line);
+  };
 }
 
 /** Parse `codex exec --json` JSONL output. */
@@ -369,7 +401,7 @@ export async function delegateToCodex(
     env: childEnv(req.extraEnv),
     log: req.log,
     signal: req.signal,
-    onLine: progressLineHandler("codex", req.onProgress),
+    onLine: withSessionSniffer("codex", progressLineHandler("codex", req.onProgress), req.onSession),
   }));
   const parsed = parseCodexJsonl(res.stdout);
   const isError = res.code !== 0 || parsed.error !== null;
@@ -434,7 +466,7 @@ export async function delegateToClaude(
     env: childEnv(req.extraEnv),
     log: req.log,
     signal: req.signal,
-    onLine: progressLineHandler("claude", req.onProgress),
+    onLine: withSessionSniffer("claude", progressLineHandler("claude", req.onProgress), req.onSession),
   }));
   const parsed = parseClaudeJson(res.stdout);
   if (!parsed) {
@@ -514,7 +546,7 @@ export async function delegateToOpencode(req: DelegateRequest & { bin: string; a
     env,
     log: req.log,
     signal: req.signal,
-    onLine: progressLineHandler("opencode", req.onProgress),
+    onLine: withSessionSniffer("opencode", progressLineHandler("opencode", req.onProgress), req.onSession),
   }));
   const parsed = parseOpencodeJsonl(res.stdout);
   const isError = res.code !== 0 || parsed.error !== null;

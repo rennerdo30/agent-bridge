@@ -54,7 +54,8 @@ const OPENCODE_AUTO_FOR: Record<Access, boolean> = { read: false, ask: false, ed
 export function supportsAsk(target: CodingAgent, relay: RelayWiring | undefined): boolean {
   if (!relay) return false;
   if (target === "opencode") return true;
-  if (target === "codex") return relay.codexHookTrusted;
+  // Codex: through app-server always; the exec fallback needs the trusted PermissionRequest hook.
+  if (target === "codex") return process.env[CODEX_EXEC_ENV] !== "1" || relay.codexHookTrusted;
   return false;
 }
 
@@ -68,12 +69,12 @@ export const DELEGATION_TARGETS: Record<CodingAgent, DelegationTarget> = {
     permissionNote: (cfg) => `Codex runs in the "${cfg.codexSandbox}" sandbox unless you pass access or sandbox.`,
     run: async (cfg, base, a) => {
       const sandbox = (a.sandbox as CodexSandbox | undefined) ?? (a.access ? CODEX_SANDBOX_FOR[a.access] : cfg.codexSandbox);
-      const relay = a.access === "ask" && supportsAsk("codex", a.relay);
-      // app-server lets messages reach the running subagent (turn/steer). "ask" runs keep exec: their
-      // approvals go through the PermissionRequest hook, which is wired for exec.
-      if (!relay && process.env[CODEX_EXEC_ENV] !== "1") {
+      const relay = a.access === "ask" && Boolean(a.relay?.codexHookTrusted);
+      // app-server lets messages reach the running subagent (turn/steer) and hands us its approval questions
+      // (answered by the parent session). exec is the fallback; there "ask" needs the trusted PermissionRequest hook.
+      if (process.env[CODEX_EXEC_ENV] !== "1") {
         try {
-          return await delegateToCodexAppServer({ ...base, bin: cfg.codexBin, sandbox });
+          return await delegateToCodexAppServer({ ...base, bin: cfg.codexBin, sandbox, askMode: a.access === "ask", approve: a.access === "ask" && a.relay ? a.relay.onPermission : base.approve });
         } catch (err) {
           // Older Codex without app-server (or one that cannot start it): the run never began, use exec.
           if (!(err instanceof DelegateError) || err.kind !== "failed" || err.sessionId) throw err;

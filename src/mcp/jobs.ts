@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 import { MAX_RUNNING_JOBS } from "../core/constants.js";
 import { DelegateError, type DelegateResult } from "../core/delegate.js";
 import type { Logger } from "../core/logger.js";
@@ -10,6 +12,9 @@ const JOB_ID_LENGTH = 8;
 const PROMPT_PREVIEW_CHARS = 120;
 /** Finished subagents stay addressable (message_subagent) for this many jobs. */
 const HISTORY_LIMIT = 50;
+/** Jobs kept on disk (all sessions together), and how much of each task: the file stays small. */
+const STORE_LIMIT = 200;
+const STORED_PROMPT_CHARS = 1_000;
 /** Follow-up sent when a subagent is resumed without a message (e.g. after a failure). */
 export const DEFAULT_FOLLOW_UP = "Continue where you stopped and finish the task. Then give your final answer.";
 
@@ -33,7 +38,12 @@ export interface Job {
   progress: string | null;
   /** ask_* runs: the caller waits for the result itself; shown in peers, no result message. */
   foreground?: boolean;
-  status: "running" | "done" | "failed";
+  /** "interrupted": it was running when its session ended (agent-bridge restarted); it can be recovered. */
+  status: "running" | "done" | "failed" | "interrupted";
+  /** The options it was started with (access, model, folder, ...), to continue it the same way after a restart. */
+  args?: Record<string, unknown>;
+  /** Peer name of the session that started it. */
+  owner?: string;
   /** The subagent's own session (Codex thread, Claude session, opencode session) once known. */
   sessionId: string | null;
   workdir: string | null;
@@ -41,12 +51,14 @@ export interface Job {
   resume?: Resume;
   /** Follow-ups that arrived while the job was running; sent as soon as it finishes. */
   queue: string[];
+  /** An approval question the subagent is waiting on; the next message to the job answers it. */
+  pendingApproval?: ((answer: string) => void) | null;
   /** While it runs: delivers a message into the running subagent (see parent-link.ts). */
   live?: { post: (message: string) => void } | null;
   finishedAt?: number;
 }
 
-export type FollowUpOutcome = "started" | "delivered" | "queued" | "unknown" | "no-session" | "busy";
+export type FollowUpOutcome = "started" | "delivered" | "queued" | "answered" | "unknown" | "no-session" | "busy";
 
 /**
  * Subagents: the other CLI running headlessly. Background jobs report their result as a message from the
@@ -61,7 +73,55 @@ export class JobManager {
   constructor(
     private readonly node: BridgeNode,
     private readonly log: Logger,
+    /** Where jobs are kept across restarts of the session (~/.agent-bridge/jobs.json); none in tests. */
+    private readonly storePath: string | null = null,
   ) {}
+
+  /** Save this session's jobs, merged with those other sessions saved. Best effort: never breaks a run. */
+  persist(): void {
+    if (!this.storePath) return;
+    try {
+      const mine = [...this.history.values()].map(toStored);
+      const ids = new Set(mine.map((j) => j.id));
+      const others = readStore(this.storePath).filter((j) => !ids.has(j.id));
+      const all = [...others, ...mine].sort((a, b) => a.startedAt - b.startedAt).slice(-STORE_LIMIT);
+      mkdirSync(dirname(this.storePath), { recursive: true });
+      const tmp = `${this.storePath}.${process.pid}.tmp`;
+      writeFileSync(tmp, JSON.stringify(all), { mode: 0o600 });
+      renameSync(tmp, this.storePath);
+    } catch (err) {
+      this.log.warn("could not save subagent jobs", { err: (err as Error).message });
+    }
+  }
+
+  /**
+   * Load the jobs saved before this session (re)started, so message_subagent can continue them with their
+   * context. Jobs that were still running are marked interrupted: a follow-up without a message recovers them.
+   */
+  restore(makeResume: (agent: AgentKind, args: Record<string, unknown>) => Resume | undefined): void {
+    if (!this.storePath) return;
+    const stored = readStore(this.storePath);
+    for (const s of stored.slice(-HISTORY_LIMIT)) {
+      if (this.history.has(s.id)) continue;
+      this.history.set(s.id, {
+        ...s,
+        status: s.status === "running" ? "interrupted" : s.status,
+        controller: new AbortController(),
+        progress: null,
+        queue: [],
+        resume: makeResume(s.agent, s.args ?? {}),
+      });
+    }
+    if (stored.length) this.log.info("restored subagent jobs", { count: Math.min(stored.length, HISTORY_LIMIT) });
+  }
+
+  /** Record facts learned while it runs (its session, its folder), so a restart can continue it. */
+  note(job: Job, facts: { sessionId?: string | null; workdir?: string | null; worktree?: Worktree | null }): void {
+    if (facts.sessionId) job.sessionId = facts.sessionId;
+    if (facts.workdir) job.workdir = facts.workdir;
+    if (facts.worktree) job.worktree = facts.worktree;
+    this.persist();
+  }
 
   runningCount(): number {
     return this.running.size;
@@ -75,7 +135,7 @@ export class JobManager {
   /** Recently finished subagents, newest first (they can still be messaged). */
   recent(limit = 5): Job[] {
     return [...this.history.values()]
-      .filter((j) => j.status !== "running")
+      .filter((j) => j.status !== "running" && (!j.owner || j.owner === this.node.name))
       .sort((a, b) => (b.finishedAt ?? 0) - (a.finishedAt ?? 0))
       .slice(0, limit);
   }
@@ -88,9 +148,10 @@ export class JobManager {
   private remember(job: Job): void {
     this.history.set(job.id, job);
     while (this.history.size > HISTORY_LIMIT) this.history.delete(this.history.keys().next().value!);
+    this.persist();
   }
 
-  private newJob(agent: AgentKind, model: string | null, prompt: string, kind: "job" | "ask", resume?: Resume): Job {
+  private newJob(agent: AgentKind, model: string | null, prompt: string, kind: "job" | "ask", resume?: Resume, args?: Record<string, unknown>): Job {
     const id = randomUUID().replace(/-/g, "").slice(0, JOB_ID_LENGTH);
     return {
       id,
@@ -107,6 +168,8 @@ export class JobManager {
       worktree: null,
       resume,
       queue: [],
+      args,
+      owner: this.node.name,
     };
   }
 
@@ -119,8 +182,9 @@ export class JobManager {
     model: string | null,
     prompt: string,
     resume?: Resume,
+    args?: Record<string, unknown>,
   ): { job: Job; onProgress: (message: string) => void; end: (outcome?: { result?: RunResult; error?: unknown }) => void } {
-    const job = { ...this.newJob(agent, model, prompt, "ask", resume), foreground: true };
+    const job = { ...this.newJob(agent, model, prompt, "ask", resume, args), foreground: true };
     this.foreground.set(job.id, job);
     this.remember(job);
     return {
@@ -136,6 +200,7 @@ export class JobManager {
         job.sessionId = outcome?.result?.sessionId ?? sessionOfError(outcome?.error) ?? job.sessionId;
         job.workdir = outcome?.result?.workdir ?? job.workdir;
         job.worktree = outcome?.result?.worktree ?? job.worktree;
+        this.persist();
         // Follow-ups sent while the caller waited continue the session in the background.
         if (job.queue.length && job.resume && job.sessionId && !job.controller.signal.aborted) {
           this.launch(job, job.resume(job.queue.splice(0).join("\n\n"), job.sessionId, job.workdir, job.worktree));
@@ -148,8 +213,8 @@ export class JobManager {
     return this.running.size < MAX_RUNNING_JOBS;
   }
 
-  start(agent: AgentKind, model: string | null, prompt: string, run: Run, resume?: Resume): Job {
-    const job = this.newJob(agent, model, prompt, "job", resume);
+  start(agent: AgentKind, model: string | null, prompt: string, run: Run, resume?: Resume, args?: Record<string, unknown>): Job {
+    const job = this.newJob(agent, model, prompt, "job", resume, args);
     this.remember(job);
     this.log.info("subagent started", { job: job.name, model, prompt: prompt.slice(0, PROMPT_PREVIEW_CHARS) });
     this.launch(job, run);
@@ -160,6 +225,12 @@ export class JobManager {
   followUp(ref: string, message: string): { outcome: FollowUpOutcome; job?: Job } {
     const job = this.find(ref);
     if (!job) return { outcome: "unknown" };
+    if (job.status === "running" && job.pendingApproval) {
+      const answer = job.pendingApproval;
+      job.pendingApproval = null;
+      answer(message);
+      return { outcome: "answered", job };
+    }
     if (job.status === "running") {
       // Like a native subagent: it sees the message while it works and can answer at once.
       if (job.live) {
@@ -183,6 +254,7 @@ export class JobManager {
     job.progress = null;
     job.foreground = false;
     this.running.set(job.id, job);
+    this.persist();
     const onProgress = (message: string) => {
       job.progress = message;
       this.log.debug("subagent progress", { job: job.name, message });
@@ -216,6 +288,7 @@ export class JobManager {
     job.status = status;
     job.finishedAt = Date.now();
     job.sessionId = sessionId ?? job.sessionId;
+    this.persist();
     const seconds = Math.round((Date.now() - job.startedAt) / 1000);
     this.log.info("subagent finished", { job: job.name, status, seconds, sessionId: job.sessionId });
 
@@ -236,6 +309,34 @@ export class JobManager {
         : ` Continue it with its context: message_subagent(job="${job.name}", message=...).`
       : "";
     return `Subagent ${job.name} (${job.agent}${job.model ? `, model ${job.model}` : ""}) ${status} after ${seconds}s.${how}`;
+  }
+
+  /**
+   * Ask this session's agent to approve something the running subagent wants to do (an MCP tool call, for
+   * example). The question arrives as a message from the job; the agent answers with message_subagent.
+   * No answer within the time limit counts as "deny".
+   */
+  askParent(job: Job, question: string, timeoutMs: number): Promise<{ allow: boolean; reason: string }> {
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        if (job.pendingApproval !== settle) return;
+        job.pendingApproval = null;
+        resolve({ allow: false, reason: "no answer in time" });
+      }, timeoutMs);
+      timer.unref?.();
+      const settle = (answer: string) => {
+        clearTimeout(timer);
+        resolve({ allow: /^\s*(allow|yes|y|approve|approved|ok|okay|go ahead|accept)\b/i.test(answer), reason: answer.trim() });
+      };
+      job.pendingApproval = settle;
+      this.log.info("subagent asks for approval", { job: job.name });
+      this.post(
+        job,
+        `Subagent ${job.name} asks for approval: ${question}\n\n` +
+          `Decide as its supervisor: answer with message_subagent(job="${job.name}", message="allow") or message="deny" (a reason may follow). ` +
+          `It waits for your answer; no answer within ${Math.round(timeoutMs / 60_000)} minutes counts as deny.`,
+      );
+    });
   }
 
   /** A message the running subagent sent to this session (its answer to a live message, for example). */
@@ -264,4 +365,33 @@ export class JobManager {
 /** Failed runs often still have a session (timeouts, aborts, errors after progress): keep it for recovery. */
 function sessionOfError(err: unknown): string | null {
   return err instanceof DelegateError ? (err.sessionId ?? null) : null;
+}
+
+type StoredJob = Pick<Job, "id" | "name" | "agent" | "model" | "prompt" | "startedAt" | "status" | "sessionId" | "workdir" | "worktree" | "args" | "owner" | "finishedAt">;
+
+function toStored(j: Job): StoredJob {
+  return {
+    id: j.id,
+    name: j.name,
+    agent: j.agent,
+    model: j.model,
+    prompt: j.prompt.slice(0, STORED_PROMPT_CHARS),
+    startedAt: j.startedAt,
+    status: j.status,
+    sessionId: j.sessionId,
+    workdir: j.workdir,
+    worktree: j.worktree,
+    args: j.args,
+    owner: j.owner,
+    finishedAt: j.finishedAt,
+  };
+}
+
+function readStore(path: string): StoredJob[] {
+  try {
+    const data = JSON.parse(readFileSync(path, "utf8")) as unknown;
+    return Array.isArray(data) ? (data as StoredJob[]).filter((j) => j && typeof j.id === "string" && typeof j.name === "string") : [];
+  } catch {
+    return [];
+  }
 }

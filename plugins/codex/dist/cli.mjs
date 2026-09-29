@@ -12,7 +12,7 @@ import { connect } from "node:net";
 import { homedir } from "node:os";
 import { join } from "node:path";
 var APP_NAME = "agent-bridge";
-var APP_VERSION = "0.11.0";
+var APP_VERSION = "0.12.0";
 var PROTOCOL_VERSION = 2;
 var ENV = {
   home: "AGENT_BRIDGE_HOME",
@@ -215,6 +215,7 @@ var en = {
   "delegate.followUp": 'Follow up with its full context: message_subagent(job="{job}", message=...).',
   "followUp.started": "Sent to {name}; it continues in its own session. Its answer will arrive as a message from {name}.",
   "followUp.delivered": "{name} is still working and gets your message at its next step (after its current tool call or model step). Its answer arrives as a message from {name}, usually within a minute. If it finishes first, the message is sent to it as a follow-up.",
+  "followUp.answered": "Your answer went to {name}; it continues accordingly.",
   "followUp.queued": "{name} is still working; your message is queued and will be sent as soon as it finishes.",
   "followUp.unknown": "No subagent named {name}. Call peers to see running and recent subagents.",
   "followUp.no-session": "{name} has no session to continue (it failed before starting one). Start a new one with ask_* or spawn_*.",
@@ -1470,6 +1471,30 @@ function checkDepth() {
     throw new DelegateError("delegation is disabled inside a delegated session (prevents recursive delegation)", "depth");
   }
 }
+function sessionInLine(agent, line) {
+  if (!line.startsWith("{")) return null;
+  try {
+    const ev = JSON.parse(line);
+    const id = agent === "codex" ? ev.type === "thread.started" ? ev.thread_id : null : agent === "claude" ? ev.session_id : ev.sessionID ?? ev.part?.sessionID;
+    return typeof id === "string" && id ? id : null;
+  } catch {
+    return null;
+  }
+}
+function withSessionSniffer(agent, next, onSession) {
+  if (!onSession) return next;
+  let seen = false;
+  return (line) => {
+    if (!seen) {
+      const id = sessionInLine(agent, line);
+      if (id) {
+        seen = true;
+        onSession(id);
+      }
+    }
+    next?.(line);
+  };
+}
 function parseCodexJsonl(stdout) {
   let threadId = null;
   const messages = [];
@@ -1530,7 +1555,7 @@ ${CODEX_ASK_HINT}` };
     env: childEnv(req.extraEnv),
     log: req.log,
     signal: req.signal,
-    onLine: progressLineHandler("codex", req.onProgress)
+    onLine: withSessionSniffer("codex", progressLineHandler("codex", req.onProgress), req.onSession)
   }));
   const parsed = parseCodexJsonl(res.stdout);
   const isError = res.code !== 0 || parsed.error !== null;
@@ -1581,7 +1606,7 @@ async function delegateToClaude(req) {
     env: childEnv(req.extraEnv),
     log: req.log,
     signal: req.signal,
-    onLine: progressLineHandler("claude", req.onProgress)
+    onLine: withSessionSniffer("claude", progressLineHandler("claude", req.onProgress), req.onSession)
   }));
   const parsed = parseClaudeJson(res.stdout);
   if (!parsed) {
@@ -1649,7 +1674,7 @@ async function delegateToOpencode(req) {
     env,
     log: req.log,
     signal: req.signal,
-    onLine: progressLineHandler("opencode", req.onProgress)
+    onLine: withSessionSniffer("opencode", progressLineHandler("opencode", req.onProgress), req.onSession)
   }));
   const parsed = parseOpencodeJsonl(res.stdout);
   const isError = res.code !== 0 || parsed.error !== null;
@@ -2278,9 +2303,10 @@ button:disabled { opacity: .6; cursor: default; }
 .bubble .who { display: block; font-size: 11.5px; font-weight: 600; color: var(--muted); margin-bottom: 4px; }
 .bubble.answer { background: var(--ok-soft); border-color: transparent; }
 .bubble.answer .who { color: var(--ok); }
-.bubble.clamp { max-height: 220px; overflow: hidden; position: relative; cursor: pointer; }
-.bubble.clamp::after { content: "Show all"; position: absolute; left: 0; right: 0; bottom: 0; padding: 30px 14px 8px; background: linear-gradient(transparent, var(--accent-soft) 70%); color: var(--accent); font-size: 12px; font-weight: 600; }
-.steps { margin-left: 36px; border-left: 2px solid var(--line); padding-left: 12px; display: flex; flex-direction: column; gap: 3px; min-width: 0; max-width: calc(100% - 36px); overflow: hidden; }
+.bubble.clamp { max-height: 220px; overflow: hidden; position: relative; cursor: pointer; padding-bottom: 34px; }
+.bubble.clamp::before { content: ""; position: absolute; left: 0; right: 0; bottom: 30px; height: 48px; background: linear-gradient(transparent, var(--accent-soft)); pointer-events: none; }
+.bubble.clamp::after { content: "Show all \u25BE"; position: absolute; left: 0; right: 0; bottom: 0; height: 30px; line-height: 30px; padding: 0 14px; background: var(--accent-soft); color: var(--accent); font-size: 12px; font-weight: 600; }
+.steps { margin-left: 36px; border-left: 2px solid var(--line); padding-left: 12px; display: flex; flex-direction: column; gap: 3px; min-width: 0; width: calc(88% - 36px); overflow: hidden; }
 .steps details, .steps summary { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chat > * { min-width: 0; }
 .steps summary { cursor: pointer; font-size: 12.5px; color: var(--muted); padding: 2px 0; list-style: none; }
@@ -2289,8 +2315,8 @@ button:disabled { opacity: .6; cursor: default; }
 details[open] > summary::before { content: "\u25BE "; }
 .step { display: flex; gap: 8px; align-items: baseline; font-size: 12.5px; min-width: 0; max-width: 100%; }
 .step .t { color: var(--faint); font-size: 11px; flex: none; width: 52px; font-variant-numeric: tabular-nums; }
-.step .k { flex: none; font-size: 11px; font-weight: 600; color: var(--accent); }
-.step code { font-family: var(--mono); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1; }
+.step .k { flex: none; font-size: 11px; font-weight: 500; color: var(--accent); }
+.step code { font-family: var(--mono); font-size: 11.5px; font-weight: 400; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1; }
 </style>
 </head>
 <body>
@@ -3216,6 +3242,7 @@ async function delegateToOpencodeServed(req) {
   let knownSession = req.sessionId ?? null;
   try {
     const sessionId = req.sessionId ?? (await api("POST", "/session", {})).id;
+    req.onSession?.(sessionId);
     knownSession = sessionId;
     const events = await fetch(`${url}/event?${q}`, { headers: { authorization: auth, accept: "text/event-stream" }, signal: ac.signal });
     if (!events.ok || !events.body) throw new DelegateError(`opencode event stream failed: HTTP ${events.status}`, "failed");

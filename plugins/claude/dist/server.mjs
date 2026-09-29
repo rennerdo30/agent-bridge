@@ -7201,7 +7201,7 @@ var require_dist = __commonJS({
 
 // src/mcp/server.ts
 import { randomUUID as randomUUID5 } from "node:crypto";
-import { dirname as dirname3, isAbsolute as isAbsolute3, relative as relative2, resolve as resolve2 } from "node:path";
+import { dirname as dirname4, isAbsolute as isAbsolute3, join as join13, relative as relative2, resolve as resolve2 } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // node_modules/zod/v3/helpers/util.js
@@ -36490,7 +36490,7 @@ import { basename, join as join2 } from "node:path";
 import { homedir } from "node:os";
 import { join } from "node:path";
 var APP_NAME = "agent-bridge";
-var APP_VERSION = "0.11.0";
+var APP_VERSION = "0.12.0";
 var PROTOCOL_VERSION = 2;
 var ENV = {
   home: "AGENT_BRIDGE_HOME",
@@ -37137,6 +37137,30 @@ function checkDepth() {
     throw new DelegateError("delegation is disabled inside a delegated session (prevents recursive delegation)", "depth");
   }
 }
+function sessionInLine(agent, line) {
+  if (!line.startsWith("{")) return null;
+  try {
+    const ev = JSON.parse(line);
+    const id = agent === "codex" ? ev.type === "thread.started" ? ev.thread_id : null : agent === "claude" ? ev.session_id : ev.sessionID ?? ev.part?.sessionID;
+    return typeof id === "string" && id ? id : null;
+  } catch {
+    return null;
+  }
+}
+function withSessionSniffer(agent, next, onSession) {
+  if (!onSession) return next;
+  let seen = false;
+  return (line) => {
+    if (!seen) {
+      const id = sessionInLine(agent, line);
+      if (id) {
+        seen = true;
+        onSession(id);
+      }
+    }
+    next?.(line);
+  };
+}
 function parseCodexJsonl(stdout) {
   let threadId = null;
   const messages = [];
@@ -37197,7 +37221,7 @@ ${CODEX_ASK_HINT}` };
     env: childEnv(req.extraEnv),
     log: req.log,
     signal: req.signal,
-    onLine: progressLineHandler("codex", req.onProgress)
+    onLine: withSessionSniffer("codex", progressLineHandler("codex", req.onProgress), req.onSession)
   }));
   const parsed = parseCodexJsonl(res.stdout);
   const isError = res.code !== 0 || parsed.error !== null;
@@ -37248,7 +37272,7 @@ async function delegateToClaude(req) {
     env: childEnv(req.extraEnv),
     log: req.log,
     signal: req.signal,
-    onLine: progressLineHandler("claude", req.onProgress)
+    onLine: withSessionSniffer("claude", progressLineHandler("claude", req.onProgress), req.onSession)
   }));
   const parsed = parseClaudeJson(res.stdout);
   if (!parsed) {
@@ -37316,7 +37340,7 @@ async function delegateToOpencode(req) {
     env,
     log: req.log,
     signal: req.signal,
-    onLine: progressLineHandler("opencode", req.onProgress)
+    onLine: withSessionSniffer("opencode", progressLineHandler("opencode", req.onProgress), req.onSession)
   }));
   const parsed = parseOpencodeJsonl(res.stdout);
   const isError = res.code !== 0 || parsed.error !== null;
@@ -37520,6 +37544,7 @@ var en = {
   "delegate.followUp": 'Follow up with its full context: message_subagent(job="{job}", message=...).',
   "followUp.started": "Sent to {name}; it continues in its own session. Its answer will arrive as a message from {name}.",
   "followUp.delivered": "{name} is still working and gets your message at its next step (after its current tool call or model step). Its answer arrives as a message from {name}, usually within a minute. If it finishes first, the message is sent to it as a follow-up.",
+  "followUp.answered": "Your answer went to {name}; it continues accordingly.",
   "followUp.queued": "{name} is still working; your message is queued and will be sent as soon as it finishes.",
   "followUp.unknown": "No subagent named {name}. Call peers to see running and recent subagents.",
   "followUp.no-session": "{name} has no session to continue (it failed before starting one). Start a new one with ask_* or spawn_*.",
@@ -38939,6 +38964,7 @@ async function delegateToOpencodeServed(req) {
   let knownSession = req.sessionId ?? null;
   try {
     const sessionId = req.sessionId ?? (await api("POST", "/session", {})).id;
+    req.onSession?.(sessionId);
     knownSession = sessionId;
     const events = await fetch(`${url2}/event?${q}`, { headers: { authorization: auth, accept: "text/event-stream" }, signal: ac.signal });
     if (!events.ok || !events.body) throw new DelegateError(`opencode event stream failed: HTTP ${events.status}`, "failed");
@@ -39027,6 +39053,12 @@ var OPT_OUT = [
   "item/plan/delta"
 ];
 var STDERR_TAIL_CHARS2 = 4e3;
+function innerCommand(s) {
+  const m = /^"?[^"\s]*?(?:pwsh|powershell|bash|zsh|sh|cmd)(?:\.exe)?"?\s+(?:-NoProfile\s+|-NoLogo\s+)*(?:-Command|-lc|-c|\/c)\s+([\s\S]*)$/i.exec(s.trim());
+  if (!m) return s;
+  const c = m[1].trim();
+  return /^'[\s\S]*'$|^"[\s\S]*"$/.test(c) ? c.slice(1, -1) : c;
+}
 function asExecEvent(kind, item) {
   const type = { agentMessage: "agent_message", commandExecution: "command_execution", fileChange: "file_change", mcpToolCall: "mcp_tool_call", webSearch: "web_search", reasoning: "reasoning" }[item?.type] ?? item?.type;
   return { type: kind, item: { ...item, type } };
@@ -39050,6 +39082,7 @@ async function delegateToCodexAppServer(req) {
   let finished = () => {
   };
   const turnDone = new Promise((r) => finished = r);
+  const completions = /* @__PURE__ */ new Map();
   const answers = [];
   let awaitingAnswer = false;
   const onEvent = progressEventHandler("codex", req.onProgress);
@@ -39063,6 +39096,38 @@ async function delegateToCodexAppServer(req) {
     pending.set(id, { resolve: resolve3, reject });
     write({ id, method, params });
   });
+  const editPaths = /* @__PURE__ */ new Map();
+  const decide = async (tool, detail) => {
+    if (!req.approve) return false;
+    try {
+      const d = await req.approve({ agent: "codex", tool, detail, cwd });
+      return d.allow;
+    } catch {
+      return false;
+    }
+  };
+  const answerRequest = async (id, method, params) => {
+    const reply = (result) => write({ id, result });
+    switch (method) {
+      case "mcpServer/elicitation/request": {
+        const ok = await decide(`mcp:${params.serverName ?? "tool"}`, String(params.message ?? "an MCP tool call"));
+        const props = params.requestedSchema?.properties ?? {};
+        const content = Object.fromEntries(Object.entries(props).filter(([, v]) => v && "default" in v).map(([k, v]) => [k, v.default]));
+        return reply(ok ? { action: "accept", content } : { action: "decline", content: null });
+      }
+      case "item/commandExecution/requestApproval":
+        if (!req.askMode) return reply({ decision: "decline" });
+        return reply({ decision: await decide("command", innerCommand(String(params.command ?? params.reason ?? "a command"))) ? "accept" : "decline" });
+      case "item/fileChange/requestApproval": {
+        if (!req.askMode) return reply({ decision: "decline" });
+        const paths = editPaths.get(params.itemId) ?? [];
+        return reply({ decision: await decide("edit", paths.length ? paths.join(", ") : String(params.reason ?? "file changes")) ? "accept" : "decline" });
+      }
+      default:
+        req.log.warn("codex app-server request refused", { method });
+        return write({ id, error: { code: -32601, message: "not supported by agent-bridge" } });
+    }
+  };
   const handle = (msg) => {
     if (msg.id !== void 0 && msg.method === void 0) {
       const p = pending.get(msg.id);
@@ -39073,16 +39138,17 @@ async function delegateToCodexAppServer(req) {
       return;
     }
     if (msg.id !== void 0 && msg.method) {
-      req.log.warn("codex app-server request refused", { method: msg.method });
-      write({ id: msg.id, error: { code: -32601, message: "not supported by agent-bridge" } });
+      void answerRequest(msg.id, msg.method, msg.params ?? {});
       return;
     }
     const params = msg.params ?? {};
     switch (msg.method) {
       case "item/started":
         onEvent?.(asExecEvent("item.started", params.item));
+        if (params.item?.type === "fileChange") editPaths.set(params.item.id, (params.item.changes ?? []).map((c) => c?.path).filter(Boolean));
         break;
       case "item/completed": {
+        if (turnId && params.turnId && params.turnId !== turnId) break;
         const item = params.item ?? {};
         onEvent?.(asExecEvent("item.completed", item));
         if (item.type === "agentMessage" && typeof item.text === "string" && item.text.trim()) {
@@ -39102,9 +39168,8 @@ async function delegateToCodexAppServer(req) {
         if (!params.willRetry) retryableError = params.error?.message ?? "error";
         break;
       case "turn/completed":
-        if (!turnId || params.turn?.id === turnId) {
-          finished({ status: String(params.turn?.status ?? "completed"), error: params.turn?.error?.message ?? null });
-        }
+        completions.set(String(params.turn?.id), { status: String(params.turn?.status ?? "completed"), error: params.turn?.error?.message ?? null });
+        if (turnId && completions.has(turnId)) finished(completions.get(turnId));
         break;
     }
   };
@@ -39158,16 +39223,23 @@ ${message}`, text_elements: [] }] });
   try {
     await race(request2("initialize", { clientInfo: { name: "agent-bridge", title: "agent-bridge", version: APP_VERSION }, capabilities: { experimentalApi: false, optOutNotificationMethods: OPT_OUT } }));
     write({ method: "initialized", params: {} });
-    const threadParams = { cwd, sandbox: req.sandbox, approvalPolicy: "never", approvalsReviewer: "user", ...req.model ? { model: req.model } : {} };
+    const approvalPolicy = "on-request";
+    const threadParams = { cwd, sandbox: req.sandbox, approvalPolicy, approvalsReviewer: "user", ...req.model ? { model: req.model } : {} };
     const thread = req.sessionId ? await race(request2("thread/resume", { ...threadParams, threadId: req.sessionId, excludeTurns: true })) : await race(request2("thread/start", threadParams));
     threadId = thread?.thread?.id ?? threadId;
-    const turn = await race(request2("turn/start", { threadId, input: [{ type: "text", text: req.prompt, text_elements: [] }] }));
+    if (threadId) req.onSession?.(threadId);
+    const prompt = req.askMode ? `${req.prompt}
+
+${CODEX_ASK_HINT}` : req.prompt;
+    const turn = await race(request2("turn/start", { threadId, input: [{ type: "text", text: prompt, text_elements: [] }] }));
     turnId = turn?.turn?.id ?? null;
+    if (turnId && completions.has(turnId)) finished(completions.get(turnId));
     req.live?.onSteering(steering);
     const outcome = await race(turnDone);
     req.live?.onSteering(null);
     const error62 = outcome.error ?? (outcome.status === "failed" ? retryableError ?? "turn failed" : null);
-    if (outcome.status === "interrupted") throw new DelegateError("delegate aborted", "aborted", "", "", threadId);
+    req.log.info("codex turn ended", { threadId, turnId, status: outcome.status, error: outcome.error, retryableError });
+    if (outcome.status === "interrupted") throw new DelegateError(`codex interrupted the turn${outcome.error ? `: ${outcome.error}` : ""}`, "failed", stderr, "", threadId);
     if (error62 && !lastMessage) throw new DelegateError(error62, "failed", stderr, "", threadId);
     req.log.info("codex delegate finished", { threadId, status: outcome.status });
     return { sessionId: threadId, text: lastMessage, isError: Boolean(error62), details: { usage, error: error62, answers: answers.length } };
@@ -39197,7 +39269,7 @@ var OPENCODE_AUTO_FOR = { read: false, ask: false, edit: true };
 function supportsAsk(target, relay) {
   if (!relay) return false;
   if (target === "opencode") return true;
-  if (target === "codex") return relay.codexHookTrusted;
+  if (target === "codex") return process.env[CODEX_EXEC_ENV] !== "1" || relay.codexHookTrusted;
   return false;
 }
 var DELEGATION_TARGETS = {
@@ -39209,10 +39281,10 @@ var DELEGATION_TARGETS = {
     permissionNote: (cfg) => `Codex runs in the "${cfg.codexSandbox}" sandbox unless you pass access or sandbox.`,
     run: async (cfg, base, a) => {
       const sandbox = a.sandbox ?? (a.access ? CODEX_SANDBOX_FOR[a.access] : cfg.codexSandbox);
-      const relay = a.access === "ask" && supportsAsk("codex", a.relay);
-      if (!relay && process.env[CODEX_EXEC_ENV] !== "1") {
+      const relay = a.access === "ask" && Boolean(a.relay?.codexHookTrusted);
+      if (process.env[CODEX_EXEC_ENV] !== "1") {
         try {
-          return await delegateToCodexAppServer({ ...base, bin: cfg.codexBin, sandbox });
+          return await delegateToCodexAppServer({ ...base, bin: cfg.codexBin, sandbox, askMode: a.access === "ask", approve: a.access === "ask" && a.relay ? a.relay.onPermission : base.approve });
         } catch (err) {
           if (!(err instanceof DelegateError) || err.kind !== "failed" || err.sessionId) throw err;
           base.log.warn("codex app-server unavailable, using codex exec", { err: err.message });
@@ -39655,9 +39727,10 @@ button:disabled { opacity: .6; cursor: default; }
 .bubble .who { display: block; font-size: 11.5px; font-weight: 600; color: var(--muted); margin-bottom: 4px; }
 .bubble.answer { background: var(--ok-soft); border-color: transparent; }
 .bubble.answer .who { color: var(--ok); }
-.bubble.clamp { max-height: 220px; overflow: hidden; position: relative; cursor: pointer; }
-.bubble.clamp::after { content: "Show all"; position: absolute; left: 0; right: 0; bottom: 0; padding: 30px 14px 8px; background: linear-gradient(transparent, var(--accent-soft) 70%); color: var(--accent); font-size: 12px; font-weight: 600; }
-.steps { margin-left: 36px; border-left: 2px solid var(--line); padding-left: 12px; display: flex; flex-direction: column; gap: 3px; min-width: 0; max-width: calc(100% - 36px); overflow: hidden; }
+.bubble.clamp { max-height: 220px; overflow: hidden; position: relative; cursor: pointer; padding-bottom: 34px; }
+.bubble.clamp::before { content: ""; position: absolute; left: 0; right: 0; bottom: 30px; height: 48px; background: linear-gradient(transparent, var(--accent-soft)); pointer-events: none; }
+.bubble.clamp::after { content: "Show all \u25BE"; position: absolute; left: 0; right: 0; bottom: 0; height: 30px; line-height: 30px; padding: 0 14px; background: var(--accent-soft); color: var(--accent); font-size: 12px; font-weight: 600; }
+.steps { margin-left: 36px; border-left: 2px solid var(--line); padding-left: 12px; display: flex; flex-direction: column; gap: 3px; min-width: 0; width: calc(88% - 36px); overflow: hidden; }
 .steps details, .steps summary { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chat > * { min-width: 0; }
 .steps summary { cursor: pointer; font-size: 12.5px; color: var(--muted); padding: 2px 0; list-style: none; }
@@ -39666,8 +39739,8 @@ button:disabled { opacity: .6; cursor: default; }
 details[open] > summary::before { content: "\u25BE "; }
 .step { display: flex; gap: 8px; align-items: baseline; font-size: 12.5px; min-width: 0; max-width: 100%; }
 .step .t { color: var(--faint); font-size: 11px; flex: none; width: 52px; font-variant-numeric: tabular-nums; }
-.step .k { flex: none; font-size: 11px; font-weight: 600; color: var(--accent); }
-.step code { font-family: var(--mono); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1; }
+.step .k { flex: none; font-size: 11px; font-weight: 500; color: var(--accent); }
+.step code { font-family: var(--mono); font-size: 11.5px; font-weight: 400; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1; }
 </style>
 </head>
 <body>
@@ -40481,20 +40554,69 @@ function changedFiles(before, after) {
 
 // src/mcp/jobs.ts
 import { randomUUID as randomUUID4 } from "node:crypto";
+import { mkdirSync as mkdirSync7, readFileSync as readFileSync8, renameSync as renameSync2, writeFileSync as writeFileSync5 } from "node:fs";
+import { dirname as dirname3 } from "node:path";
 var JOB_ID_LENGTH = 8;
 var PROMPT_PREVIEW_CHARS = 120;
 var HISTORY_LIMIT = 50;
+var STORE_LIMIT = 200;
+var STORED_PROMPT_CHARS = 1e3;
 var DEFAULT_FOLLOW_UP = "Continue where you stopped and finish the task. Then give your final answer.";
 var JobManager = class {
-  constructor(node2, log) {
+  constructor(node2, log, storePath = null) {
     this.node = node2;
     this.log = log;
+    this.storePath = storePath;
   }
   node;
   log;
+  storePath;
   running = /* @__PURE__ */ new Map();
   foreground = /* @__PURE__ */ new Map();
   history = /* @__PURE__ */ new Map();
+  /** Save this session's jobs, merged with those other sessions saved. Best effort: never breaks a run. */
+  persist() {
+    if (!this.storePath) return;
+    try {
+      const mine = [...this.history.values()].map(toStored);
+      const ids = new Set(mine.map((j) => j.id));
+      const others = readStore(this.storePath).filter((j) => !ids.has(j.id));
+      const all = [...others, ...mine].sort((a, b) => a.startedAt - b.startedAt).slice(-STORE_LIMIT);
+      mkdirSync7(dirname3(this.storePath), { recursive: true });
+      const tmp = `${this.storePath}.${process.pid}.tmp`;
+      writeFileSync5(tmp, JSON.stringify(all), { mode: 384 });
+      renameSync2(tmp, this.storePath);
+    } catch (err) {
+      this.log.warn("could not save subagent jobs", { err: err.message });
+    }
+  }
+  /**
+   * Load the jobs saved before this session (re)started, so message_subagent can continue them with their
+   * context. Jobs that were still running are marked interrupted: a follow-up without a message recovers them.
+   */
+  restore(makeResume) {
+    if (!this.storePath) return;
+    const stored = readStore(this.storePath);
+    for (const s of stored.slice(-HISTORY_LIMIT)) {
+      if (this.history.has(s.id)) continue;
+      this.history.set(s.id, {
+        ...s,
+        status: s.status === "running" ? "interrupted" : s.status,
+        controller: new AbortController(),
+        progress: null,
+        queue: [],
+        resume: makeResume(s.agent, s.args ?? {})
+      });
+    }
+    if (stored.length) this.log.info("restored subagent jobs", { count: Math.min(stored.length, HISTORY_LIMIT) });
+  }
+  /** Record facts learned while it runs (its session, its folder), so a restart can continue it. */
+  note(job, facts) {
+    if (facts.sessionId) job.sessionId = facts.sessionId;
+    if (facts.workdir) job.workdir = facts.workdir;
+    if (facts.worktree) job.worktree = facts.worktree;
+    this.persist();
+  }
   runningCount() {
     return this.running.size;
   }
@@ -40504,7 +40626,7 @@ var JobManager = class {
   }
   /** Recently finished subagents, newest first (they can still be messaged). */
   recent(limit = 5) {
-    return [...this.history.values()].filter((j) => j.status !== "running").sort((a, b) => (b.finishedAt ?? 0) - (a.finishedAt ?? 0)).slice(0, limit);
+    return [...this.history.values()].filter((j) => j.status !== "running" && (!j.owner || j.owner === this.node.name)).sort((a, b) => (b.finishedAt ?? 0) - (a.finishedAt ?? 0)).slice(0, limit);
   }
   find(ref) {
     const id = ref.replace(/^.*-(?:job|ask)-/, "");
@@ -40513,8 +40635,9 @@ var JobManager = class {
   remember(job) {
     this.history.set(job.id, job);
     while (this.history.size > HISTORY_LIMIT) this.history.delete(this.history.keys().next().value);
+    this.persist();
   }
-  newJob(agent, model, prompt, kind, resume) {
+  newJob(agent, model, prompt, kind, resume, args) {
     const id = randomUUID4().replace(/-/g, "").slice(0, JOB_ID_LENGTH);
     return {
       id,
@@ -40530,15 +40653,17 @@ var JobManager = class {
       workdir: null,
       worktree: null,
       resume,
-      queue: []
+      queue: [],
+      args,
+      owner: this.node.name
     };
   }
   /**
    * Register a blocking ask_* run for visibility in peers. Returns a progress sink and `end`, which records
    * the outcome so the run can be continued later with message_subagent.
    */
-  track(agent, model, prompt, resume) {
-    const job = { ...this.newJob(agent, model, prompt, "ask", resume), foreground: true };
+  track(agent, model, prompt, resume, args) {
+    const job = { ...this.newJob(agent, model, prompt, "ask", resume, args), foreground: true };
     this.foreground.set(job.id, job);
     this.remember(job);
     return {
@@ -40554,6 +40679,7 @@ var JobManager = class {
         job.sessionId = outcome?.result?.sessionId ?? sessionOfError(outcome?.error) ?? job.sessionId;
         job.workdir = outcome?.result?.workdir ?? job.workdir;
         job.worktree = outcome?.result?.worktree ?? job.worktree;
+        this.persist();
         if (job.queue.length && job.resume && job.sessionId && !job.controller.signal.aborted) {
           this.launch(job, job.resume(job.queue.splice(0).join("\n\n"), job.sessionId, job.workdir, job.worktree));
         }
@@ -40563,8 +40689,8 @@ var JobManager = class {
   canStart() {
     return this.running.size < MAX_RUNNING_JOBS;
   }
-  start(agent, model, prompt, run, resume) {
-    const job = this.newJob(agent, model, prompt, "job", resume);
+  start(agent, model, prompt, run, resume, args) {
+    const job = this.newJob(agent, model, prompt, "job", resume, args);
     this.remember(job);
     this.log.info("subagent started", { job: job.name, model, prompt: prompt.slice(0, PROMPT_PREVIEW_CHARS) });
     this.launch(job, run);
@@ -40574,6 +40700,12 @@ var JobManager = class {
   followUp(ref, message) {
     const job = this.find(ref);
     if (!job) return { outcome: "unknown" };
+    if (job.status === "running" && job.pendingApproval) {
+      const answer = job.pendingApproval;
+      job.pendingApproval = null;
+      answer(message);
+      return { outcome: "answered", job };
+    }
     if (job.status === "running") {
       if (job.live) {
         job.live.post(message);
@@ -40595,6 +40727,7 @@ var JobManager = class {
     job.progress = null;
     job.foreground = false;
     this.running.set(job.id, job);
+    this.persist();
     const onProgress = (message) => {
       job.progress = message;
       this.log.debug("subagent progress", { job: job.name, message });
@@ -40625,6 +40758,7 @@ var JobManager = class {
     job.status = status;
     job.finishedAt = Date.now();
     job.sessionId = sessionId ?? job.sessionId;
+    this.persist();
     const seconds = Math.round((Date.now() - job.startedAt) / 1e3);
     this.log.info("subagent finished", { job: job.name, status, seconds, sessionId: job.sessionId });
     if (job.queue.length && job.resume && job.sessionId && !job.controller.signal.aborted) {
@@ -40644,6 +40778,33 @@ ${text2}`);
   header(job, status, seconds) {
     const how = job.sessionId ? status === "failed" ? ` To recover it with its context, call message_subagent(job="${job.name}") (optionally with a message).` : ` Continue it with its context: message_subagent(job="${job.name}", message=...).` : "";
     return `Subagent ${job.name} (${job.agent}${job.model ? `, model ${job.model}` : ""}) ${status} after ${seconds}s.${how}`;
+  }
+  /**
+   * Ask this session's agent to approve something the running subagent wants to do (an MCP tool call, for
+   * example). The question arrives as a message from the job; the agent answers with message_subagent.
+   * No answer within the time limit counts as "deny".
+   */
+  askParent(job, question, timeoutMs) {
+    return new Promise((resolve3) => {
+      const timer = setTimeout(() => {
+        if (job.pendingApproval !== settle2) return;
+        job.pendingApproval = null;
+        resolve3({ allow: false, reason: "no answer in time" });
+      }, timeoutMs);
+      timer.unref?.();
+      const settle2 = (answer) => {
+        clearTimeout(timer);
+        resolve3({ allow: /^\s*(allow|yes|y|approve|approved|ok|okay|go ahead|accept)\b/i.test(answer), reason: answer.trim() });
+      };
+      job.pendingApproval = settle2;
+      this.log.info("subagent asks for approval", { job: job.name });
+      this.post(
+        job,
+        `Subagent ${job.name} asks for approval: ${question}
+
+Decide as its supervisor: answer with message_subagent(job="${job.name}", message="allow") or message="deny" (a reason may follow). It waits for your answer; no answer within ${Math.round(timeoutMs / 6e4)} minutes counts as deny.`
+      );
+    });
   }
   /** A message the running subagent sent to this session (its answer to a live message, for example). */
   fromSubagent(job, body, replyTo) {
@@ -40669,13 +40830,41 @@ ${text2}`);
 function sessionOfError(err) {
   return err instanceof DelegateError ? err.sessionId ?? null : null;
 }
+function toStored(j) {
+  return {
+    id: j.id,
+    name: j.name,
+    agent: j.agent,
+    model: j.model,
+    prompt: j.prompt.slice(0, STORED_PROMPT_CHARS),
+    startedAt: j.startedAt,
+    status: j.status,
+    sessionId: j.sessionId,
+    workdir: j.workdir,
+    worktree: j.worktree,
+    args: j.args,
+    owner: j.owner,
+    finishedAt: j.finishedAt
+  };
+}
+function readStore(path) {
+  try {
+    const data = JSON.parse(readFileSync8(path, "utf8"));
+    return Array.isArray(data) ? data.filter((j) => j && typeof j.id === "string" && typeof j.name === "string") : [];
+  } catch {
+    return [];
+  }
+}
 
 // src/mcp/server.ts
 var CHANNEL_NOTIFICATION = "notifications/claude/channel";
 var OPENCODE_NOTIFICATION = "notifications/agent-bridge/message";
 var CODEX_SANDBOX_META = "codex/sandbox-state-meta";
 var CWD_DISCOVERY_GRACE_MS = 15e3;
-var PLUGIN_ROOT = resolve2(dirname3(fileURLToPath(import.meta.url)), "..");
+var JOBS_FILE = "jobs.json";
+var KEPT_ARGS = ["model", "cwd", "timeout_sec", "worktree", "access", "sandbox", "permission_mode", "auto_approve"];
+var PARENT_APPROVAL_TIMEOUT_MS = 10 * 6e4;
+var PLUGIN_ROOT = resolve2(dirname4(fileURLToPath(import.meta.url)), "..");
 function isInside(child, parent) {
   const rel = relative2(resolve2(parent), resolve2(child));
   return rel === "" || !rel.startsWith("..") && !isAbsolute3(rel);
@@ -40768,7 +40957,7 @@ async function startServer(argv = process.argv.slice(2)) {
   let channel = agent === "claude" && cfg.delivery === "channel";
   const ctx = { agent, cfg, node: node2, log, home, cwd: () => node2?.cwd ?? cwd, channelActive: () => channel, parent: delegated ? parentFromEnv() : null };
   if (node2) {
-    ctx.jobs = new JobManager(node2, log.child("jobs"));
+    ctx.jobs = new JobManager(node2, log.child("jobs"), join13(home, JOBS_FILE));
     ctx.activity = (s) => node2.setActivity(s);
     let cwdSettled = cwdKnown;
     ctx.learnCwd = async (projectDir) => {
@@ -40899,12 +41088,12 @@ async function startServer(argv = process.argv.slice(2)) {
       if (channel) for (const m of node2.unread()) void pushChannel(m);
       if (isBroker && cfg.dashboard) void ensureDashboard(false);
     });
-    const join13 = () => node2.start().catch((err) => log.error("could not join the bridge", { err: err.message }));
+    const join14 = () => node2.start().catch((err) => log.error("could not join the bridge", { err: err.message }));
     if (cwdKnown) {
-      void join13();
+      void join14();
     } else {
       log.info("project directory unknown yet; deferring bridge join", { graceMs: CWD_DISCOVERY_GRACE_MS });
-      setTimeout(() => void join13(), CWD_DISCOVERY_GRACE_MS).unref();
+      setTimeout(() => void join14(), CWD_DISCOVERY_GRACE_MS).unref();
     }
   }
 }
@@ -41046,6 +41235,8 @@ function registerTools(mcp, ctx, targets) {
       return text(a.enabled ? t("autoWake.on", { maxHops: cfg.maxHops }) : t("autoWake.off"));
     })
   );
+  const keep = (a) => Object.fromEntries(KEPT_ARGS.filter((k) => a[k] !== void 0).map((k) => [k, a[k]]));
+  const resumers = {};
   for (const target of targets) {
     const profile = DELEGATION_TARGETS[target];
     const defaultModel = profile.defaultModel(cfg);
@@ -41096,6 +41287,23 @@ function registerTools(mcp, ctx, targets) {
         throw err;
       }
       const forwarding = access === "ask" && supportsAsk(target, wiring);
+      const allowedServers = /* @__PURE__ */ new Set();
+      const approve = async (r) => {
+        if (r.tool.startsWith("mcp:") && allowedServers.has(r.tool)) return { allow: true };
+        let d;
+        if (wiring) d = await wiring.onPermission(r);
+        else if (job && !job.foreground && ctx.jobs) {
+          const a2 = await ctx.jobs.askParent(job, `${r.tool.replace(/^mcp:/, "MCP server ")}: ${r.detail}`, PARENT_APPROVAL_TIMEOUT_MS);
+          d = a2.allow ? { allow: true } : { allow: false, message: `Denied by ${me}: ${a2.reason}` };
+          asked.push(`${d.allow ? "allowed" : "denied"} by ${me}: ${r.tool} ${r.detail.slice(0, 80)}`);
+        } else if (ctx.askUser) {
+          relayCalls++;
+          d = await ctx.askUser(r);
+          asked.push(`${d.allow ? "allowed" : "denied"}: ${r.tool} ${r.detail.slice(0, 80)}`);
+        } else d = r.tool.startsWith("mcp:") && access === "edit" ? { allow: true } : { allow: false, message: "No one to ask in this session." };
+        if (d.allow && r.tool.startsWith("mcp:")) allowedServers.add(r.tool);
+        return d;
+      };
       let feed;
       try {
         feed = startRunFeed({
@@ -41164,6 +41372,11 @@ ${a.prompt}
             signal,
             onProgress: feed.report,
             extraEnv: link?.childEnv(),
+            onSession: (id) => {
+              feed.meta({ session: id });
+              if (job) ctx.jobs?.note(job, { sessionId: id, workdir, worktree: wt });
+            },
+            approve,
             live: job ? {
               from: me,
               onSteering: (s) => void (steering = s),
@@ -41192,6 +41405,8 @@ Its worktree (with any partial work) is ${wt.path} on branch ${wt.branch}.`;
         }
       }
       const notes = [`Step-by-step log: ${feed.logPath}`];
+      if (access !== "ask" && asked.length) notes.push(`Approval requests forwarded to the user:
+${asked.join("\n")}`);
       if (access === "ask") {
         notes.push(
           forwarding ? asked.length ? `Permission requests forwarded to the user:
@@ -41232,6 +41447,7 @@ ${notes.join("\n\n")}` : res.text };
       true,
       job
     );
+    resumers[target] = resumeFor;
     const askName = `ask_${target}`;
     mcp.registerTool(
       askName,
@@ -41241,7 +41457,7 @@ ${notes.join("\n\n")}` : res.text };
         inputSchema: schema
       },
       guarded(askName, async (a, extra) => {
-        const tracked = ctx.jobs?.track(target, a.model ?? defaultModel, a.prompt, resumeFor(a));
+        const tracked = ctx.jobs?.track(target, a.model ?? defaultModel, a.prompt, resumeFor(a), keep(a));
         const report = progressReporter(extra, log);
         const onProgress = (m) => {
           tracked?.onProgress(m);
@@ -41273,11 +41489,15 @@ ${res.text || t("delegate.empty")}`, res.isError);
         const jobs = ctx.jobs;
         if (!jobs) throw new BridgeError("bad_request", t("err.delegatedSession"));
         if (!jobs.canStart()) return text(t("jobs.limit", { max: MAX_RUNNING_JOBS }), true);
-        const job = jobs.start(target, a.model ?? defaultModel, a.prompt, (signal, onProgress, job2) => run({ ...a, _job: job2.name }, signal, onProgress, true, job2), resumeFor(a));
+        const job = jobs.start(target, a.model ?? defaultModel, a.prompt, (signal, onProgress, job2) => run({ ...a, _job: job2.name }, signal, onProgress, true, job2), resumeFor(a), keep(a));
         return text(t("jobs.started", { name: job.name }));
       })
     );
   }
+  ctx.jobs?.restore((agent, args) => {
+    const make = resumers[agent];
+    return make ? make({ prompt: "", ...args }) : void 0;
+  });
   mcp.registerTool(
     "usage_limits",
     {

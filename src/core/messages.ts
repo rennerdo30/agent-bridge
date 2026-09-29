@@ -35,6 +35,7 @@ export const en = {
   "delegate.followUp": "Follow up with its full context: message_subagent(job=\"{job}\", message=...).",
   "followUp.started": "Sent to {name}; it continues in its own session. Its answer will arrive as a message from {name}.",
   "followUp.delivered": "{name} is still working and gets your message at its next step (after its current tool call or model step). Its answer arrives as a message from {name}, usually within a minute. If it finishes first, the message is sent to it as a follow-up.",
+  "followUp.answered": "Your answer went to {name}; it continues accordingly.",
   "followUp.queued": "{name} is still working; your message is queued and will be sent as soon as it finishes.",
   "followUp.unknown": "No subagent named {name}. Call peers to see running and recent subagents.",
   "followUp.no-session": "{name} has no session to continue (it failed before starting one). Start a new one with ask_* or spawn_*.",
