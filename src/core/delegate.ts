@@ -181,7 +181,7 @@ export interface DelegateRequest {
   /** Model override; null uses the CLI default. */
   model?: string | null;
   /** Receives short human-readable status lines while the delegate works. */
-  onProgress?: (message: string) => void;
+  onProgress?: (message: string, full?: string) => void;
   /** Extra environment for the child (e.g. the permission relay address). */
   extraEnv?: Record<string, string>;
   log: Logger;

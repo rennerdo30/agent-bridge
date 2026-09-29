@@ -43,10 +43,18 @@ li:last-child { border-bottom: 0; }
 .run.sel { background: var(--sel); box-shadow: inset 3px 0 0 var(--accent); }
 .s-running { color: var(--busy); } .s-done { color: var(--ok); } .s-failed { color: var(--bad); } .s-interrupted { color: var(--warn); }
 .empty { padding: 14px; color: var(--muted); }
-#log { margin: 0; padding: 12px 14px; background: var(--code-bg); font: 12.5px/1.5 ui-monospace, "Cascadia Code", Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; height: 46vh; overflow: auto; }
 #task { border-bottom: 1px solid var(--line); padding: 6px 14px; }
 #task summary { cursor: pointer; }
 #taskText { margin: 6px 0 0; max-height: 24vh; overflow: auto; white-space: pre-wrap; font: 12px/1.45 ui-monospace, Consolas, monospace; color: var(--muted); }
+.chat { padding: 12px 14px; height: 56vh; overflow: auto; background: var(--code-bg); display: flex; flex-direction: column; gap: 6px; }
+.chat .note { color: var(--muted); font-size: 12px; text-align: center; }
+.chat .row { display: grid; grid-template-columns: 70px 1fr; gap: 8px; align-items: baseline; }
+.chat .meta { color: var(--muted); font-size: 11px; white-space: nowrap; }
+.chat .cmd { font: 12px/1.45 ui-monospace, "Cascadia Code", Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text); opacity: .85; }
+.chat .cmd b { color: var(--accent); font-weight: 600; }
+.chat .bubble { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; white-space: pre-wrap; overflow-wrap: anywhere; max-width: 92%; }
+.chat .answer { border-color: var(--ok); box-shadow: inset 3px 0 0 var(--ok); }
+.chat .answer::before { content: "Final answer"; display: block; font-size: 11px; color: var(--ok); margin-bottom: 4px; }
 #logHead { padding: 10px 14px; border-bottom: 1px solid var(--line); }
 .msg { display: grid; gap: 2px; }
 .msg .body { white-space: pre-wrap; overflow-wrap: anywhere; }
@@ -74,7 +82,7 @@ button:disabled { opacity: .6; cursor: default; }
       <h2>Run <label class="sub"><input type="checkbox" id="follow" checked> follow</label></h2>
       <div id="logHead" class="sub">Select a run on the left.</div>
       <details id="task"><summary class="sub">Task</summary><pre id="taskText"></pre></details>
-      <pre id="log"></pre>
+      <div id="log" class="chat"></div>
     </section>
     <section>
       <h2>Messages</h2>
@@ -165,17 +173,43 @@ function applyLog(d) {
   if (d.text) {
     raw += d.text;
     // The log starts with the task (header, prompt, "---"); keep it folded away from the live steps.
-    const m = /\\n---\\n(?=\\d\\d:\\d\\d:\\d\\d started )/.exec(raw);
+    const m = /\\n *---\\n(?=\\d\\d:\\d\\d:\\d\\d started )/.exec(raw);
     const cut = m ? m.index : -1;
-    $("taskText").textContent = cut >= 0 ? raw.slice(0, cut) : raw;
-    $("log").textContent = cut >= 0 ? raw.slice(cut + 5) : "";
+    $("taskText").textContent = (cut >= 0 ? raw.slice(0, cut) : raw).replace(/^ {9}/gm, "");
+    renderChat(cut >= 0 ? raw.slice(cut + m[0].length) : "");
     if ($("follow").checked) $("log").scrollTop = $("log").scrollHeight;
   }
   logOffset = d.next;
 }
 
+/** Log entries: "HH:MM:SS text" plus indented continuation lines. */
+function parseEntries(text) {
+  const out = [];
+  for (const line of text.split("\\n")) {
+    const m = /^(\\d\\d:\\d\\d:\\d\\d) (.*)$/.exec(line);
+    if (m) out.push({ time: m[1], text: m[2] });
+    else if (out.length && line.trim()) out[out.length - 1].text += "\\n" + line.replace(/^ {9}/, "");
+  }
+  return out;
+}
+
+function renderChat(text) {
+  const html = parseEntries(text).map((e) => {
+    if (e.text.startsWith("answer: ")) return '<div class="bubble answer">' + esc(e.text.slice(8)) + "</div>";
+    if (/^(started|still working|finished after)/.test(e.text)) return '<div class="note">' + esc(e.time + " · " + e.text) + "</div>";
+    const parts = e.text.split(" · ");
+    const body = parts.slice(parts[1] && parts[1].startsWith("step ") ? 2 : 1).join(" · ");
+    const meta = esc(e.time) + "<br>" + esc(parts[0]);
+    if (body.startsWith("says: ")) return '<div class="row"><span class="meta">' + meta + '</span><div class="bubble">' + esc(body.slice(6)) + "</div></div>";
+    const i = body.indexOf(": ");
+    const cmd = i > 0 && i < 24 ? "<b>" + esc(body.slice(0, i)) + "</b> " + esc(body.slice(i + 2)) : esc(body);
+    return '<div class="row"><span class="meta">' + meta + '</span><div class="cmd">' + cmd + "</div></div>";
+  }).join("");
+  $("log").innerHTML = html || '<div class="note">Waiting for the first step…</div>';
+}
+
 function select(name) {
-  selected = name; logOffset = 0; raw = ""; $("log").textContent = ""; $("taskText").textContent = "";
+  selected = name; logOffset = 0; raw = ""; $("log").innerHTML = ""; $("taskText").textContent = "";
   document.querySelectorAll(".run").forEach((el) => el.classList.toggle("sel", el.dataset.name === name));
   pullLog();
 }

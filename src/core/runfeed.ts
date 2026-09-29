@@ -13,9 +13,12 @@ const KEEP_RUN_LOGS = 50;
 
 export interface RunFeed {
   logPath: string;
-  report: (message: string) => void;
-  end: (summary: string) => void;
+  report: (message: string, full?: string) => void;
+  end: (summary: string, answer?: string) => void;
 }
+
+/** Indent for the extra lines of a multi-line log entry (width of the "HH:MM:SS " stamp). */
+export const CONTINUATION = "         ";
 
 function stamp(t: number): string {
   return new Date(t).toISOString().slice(11, 19);
@@ -46,9 +49,12 @@ export function startRunFeed(opts: {
   mkdirSync(dir, { recursive: true });
   pruneOldLogs(dir);
   const logPath = join(dir, `${new Date(now()).toISOString().slice(0, 19).replace(/[:T]/g, "-")}-${opts.name}.log`);
+  /** One entry; extra lines of a multi-line text are indented under it. */
   const write = (line: string) => {
+    const [first, ...rest] = line.replace(/\r/g, "").split("\n");
+    const body = [first, ...rest.map((l) => `${CONTINUATION}${l}`)].join("\n");
     try {
-      appendFileSync(logPath, `${stamp(now())} ${line}\n`);
+      appendFileSync(logPath, `${stamp(now())} ${body}\n`);
     } catch {
       // never break a run because of the feed
     }
@@ -71,13 +77,16 @@ export function startRunFeed(opts: {
 
   return {
     logPath,
-    report: (m) => {
+    report: (m, full) => {
       lastStep = m.split(" · ").pop() ?? m;
       lastAt = now();
-      emit(m);
+      // The log keeps the full text (whole message or command); the host gets the short line.
+      write(full ?? m);
+      opts.forward?.(m);
     },
-    end: (summary) => {
+    end: (summary, answer) => {
       clearInterval(timer);
+      if (answer?.trim()) write(`answer: ${answer.trim()}`);
       write(`finished after ${Math.round((now() - started) / 1000)}s · ${summary}`);
     },
   };

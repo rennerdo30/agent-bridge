@@ -588,7 +588,7 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
         { ...a, access, relay: wiring },
       )
         .then(
-          (r) => (feed.end(r.isError ? "failed" : "done"), r),
+          (r) => (feed.end(r.isError ? "failed" : "done", r.text), r),
           (err) => {
             feed.end(`failed: ${(err as Error)?.message ?? err}`);
             throw err;
