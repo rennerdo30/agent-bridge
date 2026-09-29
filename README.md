@@ -158,7 +158,24 @@ Where the host lets plugins define subagents, agent-bridge ships them. Each one 
 | opencode | `codex`, `claude` (installed by `install-opencode`) | "use the codex subagent …", or `@codex` |
 | Codex | none: Codex plugins can't ship agent roles, and Codex's current `spawn_agent` has no role parameter | use `spawn_claude` / `spawn_opencode` (background jobs, see below) |
 
-While a delegated run works, agent-bridge streams its steps ("running: npm test", "editing src/x.ts") as MCP progress notifications. Claude Code shows them; Codex currently ignores MCP progress.
+### Following a delegated run
+
+While a delegated run works, agent-bridge streams every step as an MCP progress notification. Each line carries the elapsed time, a step counter with totals, and what the agent is doing or saying:
+
+```
+2m · step 14 (6 cmds, 3 edits) · bash: py scripts/run-domain-tests.py
+3m · step 14 (6 cmds, 3 edits) · says: Rooms per building type are in, now the furniture kit.
+still working, no new step for 4m (last: bash: py scripts/run-domain-tests.py)
+```
+
+The "still working" heartbeat comes after every minute without a new step, so long test runs or thinking phases don't look like a hang. Claude Code shows these lines under the running tool call (`Ctrl+O` expands them). Codex currently ignores MCP progress.
+
+Every run also writes a step-by-step log to `~/.agent-bridge/runs/`, whose path is in the result. Follow a run live from any terminal:
+
+```bash
+npx -y github:rennerdo30/agent-bridge watch            # the newest run
+npx -y github:rennerdo30/agent-bridge watch opencode   # the newest opencode run
+```
 
 opencode subagents keep opencode's full tool set on purpose, because opencode's free tier rejects subagents with a restricted tool list. Their prompt tells them to only relay.
 

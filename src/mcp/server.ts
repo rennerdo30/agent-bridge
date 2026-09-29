@@ -34,6 +34,7 @@ import { ACCESS_LEVELS, DELEGATION_TARGETS, supportsAsk, type Access, type Relay
 import { askUserViaElicitation } from "./permissions.js";
 import { PermissionRelay, type PermissionDecision, type PermissionRequest } from "../core/relay.js";
 import { codexPermissionHookTrusted } from "../core/codex-trust.js";
+import { startRunFeed } from "../core/runfeed.js";
 import { createWorktree, finishWorktree, gitStatusSnapshot, worktreeReport } from "../core/worktree.js";
 import { JobManager } from "./jobs.js";
 
@@ -517,6 +518,12 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
         wiring = { onPermission: decide, env: relay.childEnv(), codexHookTrusted: codexPermissionHookTrusted() };
       }
       const forwarding = access === "ask" && supportsAsk(target, wiring);
+      const feed = startRunFeed({
+        home: ctx.home,
+        name: `${target}-${randomUUID().slice(0, 8)}`,
+        header: `${target}${a.model ? ` (${a.model})` : ""} in ${wt?.cwd ?? cwd}, access ${access ?? "default"}\n${a.prompt}\n---`,
+        forward: onProgress,
+      });
       const res = await profile.run(
         cfg,
         {
@@ -527,11 +534,19 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
           model: a.model ?? defaultModel,
           log: dlog,
           signal,
-          onProgress,
+          onProgress: feed.report,
         },
         { ...a, access, relay: wiring },
-      ).finally(() => relay?.stop());
-      const notes: string[] = [];
+      )
+        .then(
+          (r) => (feed.end(r.isError ? "failed" : "done"), r),
+          (err) => {
+            feed.end(`failed: ${(err as Error)?.message ?? err}`);
+            throw err;
+          },
+        )
+        .finally(() => relay?.stop());
+      const notes: string[] = [`Step-by-step log: ${feed.logPath}`];
       if (access === "ask") {
         notes.push(
           forwarding

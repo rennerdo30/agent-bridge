@@ -36490,7 +36490,7 @@ import { basename, join as join2 } from "node:path";
 import { homedir } from "node:os";
 import { join } from "node:path";
 var APP_NAME = "agent-bridge";
-var APP_VERSION = "0.5.4";
+var APP_VERSION = "0.6.0";
 var PROTOCOL_VERSION = 2;
 var ENV = {
   home: "AGENT_BRIDGE_HOME",
@@ -36678,33 +36678,46 @@ import { delimiter, extname, isAbsolute, join as join3, win32 } from "node:path"
 
 // src/core/progress.ts
 var MAX_STATUS_CHARS = 140;
-function clip(s) {
+var MAX_SAY_CHARS = 160;
+function clip(s, max = MAX_STATUS_CHARS) {
   const one = s.replace(/\s+/g, " ").trim();
-  return one.length > MAX_STATUS_CHARS ? `${one.slice(0, MAX_STATUS_CHARS - 1)}\u2026` : one;
+  return one.length > max ? `${one.slice(0, max - 1)}\u2026` : one;
 }
 function firstString(o, keys) {
   for (const k of keys) if (typeof o?.[k] === "string" && o[k]) return o[k];
   return null;
 }
 var INPUT_KEYS = ["command", "file_path", "filePath", "path", "pattern", "query", "url", "description"];
+var EDIT_TOOLS = /^(edit|write|multiedit|patch|apply_patch|notebookedit)$/i;
+var CMD_TOOLS = /^(bash|shell|powershell)$/i;
+var READ_TOOLS = /^(read|grep|glob|list|ls|find)$/i;
+function kindOfTool(name) {
+  if (EDIT_TOOLS.test(name)) return "edit";
+  if (CMD_TOOLS.test(name)) return "cmd";
+  if (READ_TOOLS.test(name)) return "read";
+  return "tool";
+}
+function say(text2) {
+  return text2.trim() ? { kind: "say", text: `says: ${clip(text2, MAX_SAY_CHARS)}` } : null;
+}
 function describeCodexEvent(ev) {
   const item = ev?.item;
   if (ev?.type === "item.started" && item) {
     switch (item.type) {
       case "command_execution":
-        return clip(`running: ${item.command ?? ""}`);
+        return { kind: "cmd", text: clip(`running: ${item.command ?? ""}`), id: item.id };
       case "file_change": {
         const paths = (item.changes ?? []).map((c) => c?.path).filter(Boolean);
-        return clip(`editing ${paths.join(", ") || "files"}`);
+        return { kind: "edit", text: clip(`editing ${paths.join(", ") || "files"}`), id: item.id };
       }
       case "mcp_tool_call":
-        return clip(`tool ${item.server ?? ""}.${item.tool ?? ""}`);
+        return { kind: "tool", text: clip(`tool ${item.server ?? ""}.${item.tool ?? ""}`), id: item.id };
       case "web_search":
-        return clip(`searching the web${item.query ? `: ${item.query}` : ""}`);
+        return { kind: "tool", text: clip(`searching the web${item.query ? `: ${item.query}` : ""}`), id: item.id };
     }
   }
-  if (ev?.type === "item.completed" && item?.type === "reasoning") return "thinking";
-  if (ev?.type === "item.completed" && item?.type === "agent_message") return "writing the answer";
+  if (ev?.type === "item.completed" && item?.type === "reasoning") return { kind: "think", text: "thinking" };
+  if (ev?.type === "item.completed" && item?.type === "agent_message") return say(String(item.text ?? ""));
   return null;
 }
 function describeClaudeEvent(ev) {
@@ -36713,20 +36726,22 @@ function describeClaudeEvent(ev) {
   const tool = blocks.find((b) => b?.type === "tool_use");
   if (tool) {
     const detail = firstString(tool.input, INPUT_KEYS);
-    return clip(`${tool.name}${detail ? `: ${detail}` : ""}`);
+    return { kind: kindOfTool(String(tool.name)), text: clip(`${tool.name}${detail ? `: ${detail}` : ""}`), id: tool.id };
   }
-  if (blocks.some((b) => b?.type === "text")) return "writing the answer";
-  if (blocks.some((b) => b?.type === "thinking")) return "thinking";
+  const text2 = blocks.filter((b) => b?.type === "text").map((b) => b.text).join(" ");
+  if (text2) return say(text2);
+  if (blocks.some((b) => b?.type === "thinking")) return { kind: "think", text: "thinking" };
   return null;
 }
 function describeOpencodeEvent(ev) {
-  if (ev?.type === "tool_use") {
-    const part = ev.part ?? {};
+  const part = ev?.part ?? {};
+  if (ev?.type === "tool_use" || part.type === "tool") {
+    const tool = String(part.tool ?? "tool");
     const detail = firstString(part.state?.input, INPUT_KEYS);
-    return clip(`${part.tool ?? "tool"}${detail ? `: ${detail}` : ""}`);
+    return { kind: kindOfTool(tool), text: clip(`${tool}${detail ? `: ${detail}` : ""}`), id: part.id };
   }
-  if (ev?.type === "text") return "writing the answer";
-  if (ev?.type === "reasoning") return "thinking";
+  if (ev?.type === "text" || part.type === "text") return say(String(part.text ?? ""));
+  if (ev?.type === "reasoning" || part.type === "reasoning") return { kind: "think", text: "thinking" };
   return null;
 }
 var DESCRIBERS = {
@@ -36734,21 +36749,42 @@ var DESCRIBERS = {
   claude: describeClaudeEvent,
   opencode: describeOpencodeEvent
 };
-function progressLineHandler(agent, onProgress) {
+function formatElapsed(ms) {
+  const m = Math.floor(ms / 6e4);
+  return m < 1 ? `${Math.round(ms / 1e3)}s` : m < 60 ? `${m}m` : `${Math.floor(m / 60)}h ${m % 60}m`;
+}
+function progressEventHandler(agent, onProgress, now = Date.now) {
   if (!onProgress) return void 0;
+  const started = now();
+  const seen = /* @__PURE__ */ new Set();
+  const counts = { cmd: 0, edit: 0, read: 0, tool: 0, say: 0, think: 0 };
+  let steps = 0;
   let last = "";
+  return (ev) => {
+    const step = DESCRIBERS[agent](ev);
+    if (!step) return;
+    if (step.id) {
+      const key = `${step.kind}:${step.id}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+    }
+    if (step.text === last) return;
+    last = step.text;
+    if (step.kind !== "think" && step.kind !== "say") steps++;
+    counts[step.kind]++;
+    const totals = [counts.cmd && `${counts.cmd} cmds`, counts.edit && `${counts.edit} edits`].filter(Boolean).join(", ");
+    const where = steps ? ` \xB7 step ${steps}${totals ? ` (${totals})` : ""}` : "";
+    onProgress(`${formatElapsed(now() - started)}${where} \xB7 ${step.text}`);
+  };
+}
+function progressLineHandler(agent, onProgress) {
+  const handle = progressEventHandler(agent, onProgress);
+  if (!handle) return void 0;
   return (line) => {
     if (!line.startsWith("{")) return;
-    let ev;
     try {
-      ev = JSON.parse(line);
+      handle(JSON.parse(line));
     } catch {
-      return;
-    }
-    const msg = DESCRIBERS[agent](ev);
-    if (msg && msg !== last) {
-      last = msg;
-      onProgress(msg);
     }
   };
 }
@@ -37130,7 +37166,7 @@ var en = {
   "err.delegateDepth": "Delegation is not available inside a delegated session (prevents endless recursion).",
   "err.delegateFailed": "The delegated agent failed: {detail}",
   "err.delegatedSession": "This is a delegated headless session; peer messaging is disabled here.",
-  "cli.usage": 'Usage: agent-bridge <command>\n\nCommands:\n  install [claude] [codex] [opencode] [--yes]   Install agent-bridge (all found tools by default)\n  update  [claude] [codex] [opencode] [--yes]   Update it\n  uninstall [claude] [codex] [opencode] [--yes] Remove it\n  smoke [claude] [codex] [opencode]              Check the real CLIs still work with agent-bridge\n  status                  Show the broker and the connected peers\n  send <to> <text>    Send a message as the "cli" peer\n  tail                Print messages addressed to "cli" as they arrive\n  install-opencode        Install the opencode plugin and its @claude/@codex subagents\n  uninstall-opencode      Remove them again\n  paths                   Show data, log and pipe locations\n  help                    Show this help',
+  "cli.usage": 'Usage: agent-bridge <command>\n\nCommands:\n  install [claude] [codex] [opencode] [--yes]   Install agent-bridge (all found tools by default)\n  update  [claude] [codex] [opencode] [--yes]   Update it\n  uninstall [claude] [codex] [opencode] [--yes] Remove it\n  smoke [claude] [codex] [opencode]              Check the real CLIs still work with agent-bridge\n  status                  Show the broker and the connected peers\n  send <to> <text>    Send a message as the "cli" peer\n  tail                Print messages addressed to "cli" as they arrive\n  watch [name]            Follow a delegated run live (newest, or one whose name contains [name])\n  install-opencode        Install the opencode plugin and its @claude/@codex subagents\n  uninstall-opencode      Remove them again\n  paths                   Show data, log and pipe locations\n  help                    Show this help',
   "cli.opencode.noSource": "Could not find the opencode plugin files next to this CLI. Run it from an agent-bridge checkout or package.",
   "cli.opencode.installed": "Installed the agent-bridge opencode plugin into {dir}:",
   "cli.opencode.restart": "Restart opencode to load it. Requires Node.js 22.13+ on PATH.",
@@ -37163,6 +37199,8 @@ var en = {
   "cli.status.upToDate": "All sessions run agent-bridge {version}.",
   "cli.sent": "Sent message {id}.",
   "cli.tail.listening": 'Listening as "{name}". Press Ctrl+C to stop.',
+  "cli.watch.none": "No delegated runs yet (run logs live in ~/.agent-bridge/runs).",
+  "cli.watch.following": "Following {path} (Ctrl+C to stop)",
   "cli.paths": "Data:  {home}\nLogs:  {logs}\nStore: {db}\nPipe:  {pipe}",
   "cli.error": "Error: {detail}",
   "cli.unknownCommand": "Unknown command: {command}"
@@ -38535,7 +38573,7 @@ async function delegateToOpencodeServed(req) {
     if (req.model && rest.length) body.model = { providerID, modelID: rest.join("/") };
     await api("POST", `/session/${sessionId}/prompt_async`, body);
     let failure2 = null;
-    let lastProgress = "";
+    const onEvent = progressEventHandler("opencode", req.onProgress);
     let alive = false;
     const watchdog = setTimeout(() => {
       if (alive) return;
@@ -38555,9 +38593,10 @@ async function delegateToOpencodeServed(req) {
         if (type === "permission.asked" && p.sessionID === sessionId) {
           const decision = await req.onPermission({ agent: "opencode", tool: String(p.permission ?? "unknown"), detail: permissionDetail(p), cwd: req.cwd });
           await api("POST", `/permission/${p.id}/reply`, decision.allow ? { reply: "once" } : { reply: "reject", message: decision.message });
-        } else if (type === "message.part.updated" && p.part?.sessionID === sessionId && p.part?.type === "tool") {
-          const msg = describeOpencodeEvent({ type: "tool_use", part: p.part });
-          if (msg && msg !== lastProgress) req.onProgress?.(lastProgress = msg);
+        } else if (type === "message.part.updated" && p.part?.sessionID === sessionId) {
+          const part = p.part;
+          const ready = part.type === "tool" && (part.state?.status === "running" || part.state?.status === "completed") || part.type === "text" && part.time?.end || part.type === "reasoning" && part.time?.end;
+          if (ready) onEvent?.({ part });
         } else if (type === "session.error" && p.sessionID === sessionId) {
           failure2 = String(p.error?.data?.message ?? p.error?.message ?? "opencode session error");
           break;
@@ -38805,9 +38844,66 @@ function codexPermissionHookTrusted(home = codexHome(), read = (p) => readFileSy
   return false;
 }
 
+// src/core/runfeed.ts
+import { appendFileSync as appendFileSync2, mkdirSync as mkdirSync4, readdirSync, statSync as statSync2, unlinkSync as unlinkSync2 } from "node:fs";
+import { join as join8 } from "node:path";
+var RUNS_DIR_NAME = "runs";
+var HEARTBEAT_MS = 6e4;
+var KEEP_RUN_LOGS = 50;
+function stamp(t2) {
+  return new Date(t2).toISOString().slice(11, 19);
+}
+function pruneOldLogs(dir) {
+  try {
+    const files = readdirSync(dir).filter((f) => f.endsWith(".log")).map((f) => ({ f, t: statSync2(join8(dir, f)).mtimeMs })).sort((a, b) => b.t - a.t);
+    for (const { f } of files.slice(KEEP_RUN_LOGS)) unlinkSync2(join8(dir, f));
+  } catch {
+  }
+}
+function startRunFeed(opts) {
+  const now = opts.now ?? Date.now;
+  const dir = join8(opts.home, RUNS_DIR_NAME);
+  mkdirSync4(dir, { recursive: true });
+  pruneOldLogs(dir);
+  const logPath = join8(dir, `${new Date(now()).toISOString().slice(0, 19).replace(/[:T]/g, "-")}-${opts.name}.log`);
+  const write = (line) => {
+    try {
+      appendFileSync2(logPath, `${stamp(now())} ${line}
+`);
+    } catch {
+    }
+  };
+  write(opts.header);
+  const started = now();
+  let lastStep = "starting";
+  let lastAt = started;
+  const emit = (m) => {
+    write(m);
+    opts.forward?.(m);
+  };
+  emit(`started \xB7 follow live: agent-bridge watch ${opts.name}`);
+  const timer = setInterval(() => {
+    const quietMin = Math.floor((now() - lastAt) / 6e4);
+    if (quietMin >= 1) emit(`still working, no new step for ${quietMin}m (last: ${lastStep})`);
+  }, opts.heartbeatMs ?? HEARTBEAT_MS);
+  timer.unref();
+  return {
+    logPath,
+    report: (m) => {
+      lastStep = m.split(" \xB7 ").pop() ?? m;
+      lastAt = now();
+      emit(m);
+    },
+    end: (summary) => {
+      clearInterval(timer);
+      write(`finished after ${Math.round((now() - started) / 1e3)}s \xB7 ${summary}`);
+    }
+  };
+}
+
 // src/core/worktree.ts
-import { mkdirSync as mkdirSync4 } from "node:fs";
-import { basename as basename2, isAbsolute as isAbsolute2, join as join8, relative } from "node:path";
+import { mkdirSync as mkdirSync5 } from "node:fs";
+import { basename as basename2, isAbsolute as isAbsolute2, join as join9, relative } from "node:path";
 var GIT = "git";
 var GIT_TIMEOUT_MS = 6e4;
 var BRANCH_PREFIX = "agent-bridge/";
@@ -38827,12 +38923,12 @@ async function createWorktree(opts) {
   }
   const base = await git(["rev-parse", "HEAD"], repoRoot, opts.log);
   const branch = `${BRANCH_PREFIX}${opts.jobId}`;
-  const dir = join8(opts.home, "worktrees");
-  mkdirSync4(dir, { recursive: true });
-  const path = join8(dir, `${basename2(repoRoot)}-${opts.jobId}`);
+  const dir = join9(opts.home, "worktrees");
+  mkdirSync5(dir, { recursive: true });
+  const path = join9(dir, `${basename2(repoRoot)}-${opts.jobId}`);
   await git(["worktree", "add", "-b", branch, path, base], repoRoot, opts.log);
   const rel = relative(repoRoot, opts.cwd);
-  const cwd = rel && !rel.startsWith("..") && !isAbsolute2(rel) ? join8(path, rel) : path;
+  const cwd = rel && !rel.startsWith("..") && !isAbsolute2(rel) ? join9(path, rel) : path;
   opts.log.info("worktree created", { repoRoot, path, branch });
   return { repoRoot, path, cwd, branch, base };
 }
@@ -39138,12 +39234,12 @@ async function startServer(argv = process.argv.slice(2)) {
     node2.on("connected", () => {
       if (channel) for (const m of node2.unread()) void pushChannel(m);
     });
-    const join9 = () => node2.start().catch((err) => log.error("could not join the bridge", { err: err.message }));
+    const join10 = () => node2.start().catch((err) => log.error("could not join the bridge", { err: err.message }));
     if (cwdKnown) {
-      void join9();
+      void join10();
     } else {
       log.info("project directory unknown yet; deferring bridge join", { graceMs: CWD_DISCOVERY_GRACE_MS });
-      setTimeout(() => void join9(), CWD_DISCOVERY_GRACE_MS).unref();
+      setTimeout(() => void join10(), CWD_DISCOVERY_GRACE_MS).unref();
     }
   }
 }
@@ -39316,6 +39412,14 @@ function registerTools(mcp, ctx, targets) {
         wiring = { onPermission: decide, env: relay.childEnv(), codexHookTrusted: codexPermissionHookTrusted() };
       }
       const forwarding = access === "ask" && supportsAsk(target, wiring);
+      const feed = startRunFeed({
+        home: ctx.home,
+        name: `${target}-${randomUUID4().slice(0, 8)}`,
+        header: `${target}${a.model ? ` (${a.model})` : ""} in ${wt?.cwd ?? cwd}, access ${access ?? "default"}
+${a.prompt}
+---`,
+        forward: onProgress
+      });
       const res = await profile.run(
         cfg,
         {
@@ -39326,11 +39430,17 @@ function registerTools(mcp, ctx, targets) {
           model: a.model ?? defaultModel,
           log: dlog,
           signal,
-          onProgress
+          onProgress: feed.report
         },
         { ...a, access, relay: wiring }
+      ).then(
+        (r) => (feed.end(r.isError ? "failed" : "done"), r),
+        (err) => {
+          feed.end(`failed: ${err?.message ?? err}`);
+          throw err;
+        }
       ).finally(() => relay?.stop());
-      const notes = [];
+      const notes = [`Step-by-step log: ${feed.logPath}`];
       if (access === "ask") {
         notes.push(
           forwarding ? asked.length ? `Permission requests forwarded to the user:

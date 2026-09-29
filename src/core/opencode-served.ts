@@ -2,7 +2,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { extname } from "node:path";
 import { checkDepthPublic, childEnvPublic, DelegateError, resolveBinary, unwrapNpmShim, type DelegateRequest, type DelegateResult } from "./delegate.js";
-import { describeOpencodeEvent } from "./progress.js";
+import { progressEventHandler } from "./progress.js";
 import type { PermissionDecision, PermissionRequest } from "./relay.js";
 
 /**
@@ -140,7 +140,7 @@ export async function delegateToOpencodeServed(
     await api("POST", `/session/${sessionId}/prompt_async`, body);
 
     let failure: string | null = null;
-    let lastProgress = "";
+    const onEvent = progressEventHandler("opencode", req.onProgress);
     let alive = false;
     const watchdog = setTimeout(() => {
       if (alive) return;
@@ -160,9 +160,15 @@ export async function delegateToOpencodeServed(
       if (type === "permission.asked" && p.sessionID === sessionId) {
         const decision = await req.onPermission({ agent: "opencode", tool: String(p.permission ?? "unknown"), detail: permissionDetail(p), cwd: req.cwd });
         await api("POST", `/permission/${p.id}/reply`, decision.allow ? { reply: "once" } : { reply: "reject", message: decision.message });
-      } else if (type === "message.part.updated" && p.part?.sessionID === sessionId && p.part?.type === "tool") {
-        const msg = describeOpencodeEvent({ type: "tool_use", part: p.part });
-        if (msg && msg !== lastProgress) req.onProgress?.((lastProgress = msg));
+      } else if (type === "message.part.updated" && p.part?.sessionID === sessionId) {
+        // Parts are updated many times while streaming: report tools once their input is known,
+        // text once it is complete (the handler reports each part id only once).
+        const part = p.part;
+        const ready =
+          (part.type === "tool" && (part.state?.status === "running" || part.state?.status === "completed")) ||
+          (part.type === "text" && part.time?.end) ||
+          (part.type === "reasoning" && part.time?.end);
+        if (ready) onEvent?.({ part });
       } else if (type === "session.error" && p.sessionID === sessionId) {
         failure = String(p.error?.data?.message ?? p.error?.message ?? "opencode session error");
         break;

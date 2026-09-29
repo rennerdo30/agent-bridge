@@ -1,14 +1,26 @@
 /**
- * Turn the JSON event streams of headless agent runs into short status lines ("running: npm test"),
- * so a delegating agent (and its user) can see what a subagent is doing.
+ * Turn the JSON event streams of headless agent runs into short status lines, so a delegating agent
+ * (and its user) can follow what a subagent is doing:
+ *
+ *   "12m · step 58 (20 cmds, 17 edits) · bash: grep -rn Layout …"
+ *   "14m · step 61 (20 cmds, 18 edits) · says: Rooms per building type are in, now the furniture kit …"
  */
 import type { CodingAgent } from "./protocol.js";
 
 const MAX_STATUS_CHARS = 140;
+const MAX_SAY_CHARS = 160;
 
-function clip(s: string): string {
+export type StepKind = "cmd" | "edit" | "read" | "tool" | "say" | "think";
+export interface Step {
+  kind: StepKind;
+  text: string;
+  /** Stable id of the underlying event part, used to report each part once. */
+  id?: string;
+}
+
+function clip(s: string, max = MAX_STATUS_CHARS): string {
   const one = s.replace(/\s+/g, " ").trim();
-  return one.length > MAX_STATUS_CHARS ? `${one.slice(0, MAX_STATUS_CHARS - 1)}…` : one;
+  return one.length > max ? `${one.slice(0, max - 1)}…` : one;
 }
 
 function firstString(o: any, keys: string[]): string | null {
@@ -17,77 +29,125 @@ function firstString(o: any, keys: string[]): string | null {
 }
 
 const INPUT_KEYS = ["command", "file_path", "filePath", "path", "pattern", "query", "url", "description"];
+const EDIT_TOOLS = /^(edit|write|multiedit|patch|apply_patch|notebookedit)$/i;
+const CMD_TOOLS = /^(bash|shell|powershell)$/i;
+const READ_TOOLS = /^(read|grep|glob|list|ls|find)$/i;
+
+function kindOfTool(name: string): StepKind {
+  if (EDIT_TOOLS.test(name)) return "edit";
+  if (CMD_TOOLS.test(name)) return "cmd";
+  if (READ_TOOLS.test(name)) return "read";
+  return "tool";
+}
+
+function say(text: string): Step | null {
+  return text.trim() ? { kind: "say", text: `says: ${clip(text, MAX_SAY_CHARS)}` } : null;
+}
 
 /** `codex exec --json` events. */
-export function describeCodexEvent(ev: any): string | null {
+export function describeCodexEvent(ev: any): Step | null {
   const item = ev?.item;
   if (ev?.type === "item.started" && item) {
     switch (item.type) {
       case "command_execution":
-        return clip(`running: ${item.command ?? ""}`);
+        return { kind: "cmd", text: clip(`running: ${item.command ?? ""}`), id: item.id };
       case "file_change": {
         const paths = (item.changes ?? []).map((c: any) => c?.path).filter(Boolean);
-        return clip(`editing ${paths.join(", ") || "files"}`);
+        return { kind: "edit", text: clip(`editing ${paths.join(", ") || "files"}`), id: item.id };
       }
       case "mcp_tool_call":
-        return clip(`tool ${item.server ?? ""}.${item.tool ?? ""}`);
+        return { kind: "tool", text: clip(`tool ${item.server ?? ""}.${item.tool ?? ""}`), id: item.id };
       case "web_search":
-        return clip(`searching the web${item.query ? `: ${item.query}` : ""}`);
+        return { kind: "tool", text: clip(`searching the web${item.query ? `: ${item.query}` : ""}`), id: item.id };
     }
   }
-  if (ev?.type === "item.completed" && item?.type === "reasoning") return "thinking";
-  if (ev?.type === "item.completed" && item?.type === "agent_message") return "writing the answer";
+  if (ev?.type === "item.completed" && item?.type === "reasoning") return { kind: "think", text: "thinking" };
+  if (ev?.type === "item.completed" && item?.type === "agent_message") return say(String(item.text ?? ""));
   return null;
 }
 
 /** `claude -p --output-format stream-json --verbose` events. */
-export function describeClaudeEvent(ev: any): string | null {
+export function describeClaudeEvent(ev: any): Step | null {
   if (ev?.type !== "assistant") return null;
   const blocks: any[] = ev.message?.content ?? [];
   const tool = blocks.find((b) => b?.type === "tool_use");
   if (tool) {
     const detail = firstString(tool.input, INPUT_KEYS);
-    return clip(`${tool.name}${detail ? `: ${detail}` : ""}`);
+    return { kind: kindOfTool(String(tool.name)), text: clip(`${tool.name}${detail ? `: ${detail}` : ""}`), id: tool.id };
   }
-  if (blocks.some((b) => b?.type === "text")) return "writing the answer";
-  if (blocks.some((b) => b?.type === "thinking")) return "thinking";
+  const text = blocks.filter((b) => b?.type === "text").map((b) => b.text).join(" ");
+  if (text) return say(text);
+  if (blocks.some((b) => b?.type === "thinking")) return { kind: "think", text: "thinking" };
   return null;
 }
 
-/** `opencode run --format json` events. */
-export function describeOpencodeEvent(ev: any): string | null {
-  if (ev?.type === "tool_use") {
-    const part = ev.part ?? {};
+/** `opencode run --format json` events, and message parts from `opencode serve` (same part shape). */
+export function describeOpencodeEvent(ev: any): Step | null {
+  const part = ev?.part ?? {};
+  if (ev?.type === "tool_use" || part.type === "tool") {
+    const tool = String(part.tool ?? "tool");
     const detail = firstString(part.state?.input, INPUT_KEYS);
-    return clip(`${part.tool ?? "tool"}${detail ? `: ${detail}` : ""}`);
+    return { kind: kindOfTool(tool), text: clip(`${tool}${detail ? `: ${detail}` : ""}`), id: part.id };
   }
-  if (ev?.type === "text") return "writing the answer";
-  if (ev?.type === "reasoning") return "thinking";
+  if (ev?.type === "text" || part.type === "text") return say(String(part.text ?? ""));
+  if (ev?.type === "reasoning" || part.type === "reasoning") return { kind: "think", text: "thinking" };
   return null;
 }
 
-const DESCRIBERS: Record<CodingAgent, (ev: any) => string | null> = {
+const DESCRIBERS: Record<CodingAgent, (ev: any) => Step | null> = {
   codex: describeCodexEvent,
   claude: describeClaudeEvent,
   opencode: describeOpencodeEvent,
 };
 
-/** A stdout line handler that reports each new status (consecutive duplicates are dropped). */
-export function progressLineHandler(agent: CodingAgent, onProgress: ((m: string) => void) | undefined): ((line: string) => void) | undefined {
+function formatElapsed(ms: number): string {
+  const m = Math.floor(ms / 60_000);
+  return m < 1 ? `${Math.round(ms / 1000)}s` : m < 60 ? `${m}m` : `${Math.floor(m / 60)}h ${m % 60}m`;
+}
+
+/**
+ * Event handler that counts steps and reports each new one with elapsed time and totals.
+ * Consecutive duplicates and repeated updates of the same part are dropped.
+ */
+export function progressEventHandler(
+  agent: CodingAgent,
+  onProgress: ((m: string) => void) | undefined,
+  now: () => number = Date.now,
+): ((ev: unknown) => void) | undefined {
   if (!onProgress) return undefined;
+  const started = now();
+  const seen = new Set<string>();
+  const counts: Record<StepKind, number> = { cmd: 0, edit: 0, read: 0, tool: 0, say: 0, think: 0 };
+  let steps = 0;
   let last = "";
+  return (ev) => {
+    const step = DESCRIBERS[agent](ev);
+    if (!step) return;
+    if (step.id) {
+      const key = `${step.kind}:${step.id}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+    }
+    if (step.text === last) return;
+    last = step.text;
+    if (step.kind !== "think" && step.kind !== "say") steps++;
+    counts[step.kind]++;
+    const totals = [counts.cmd && `${counts.cmd} cmds`, counts.edit && `${counts.edit} edits`].filter(Boolean).join(", ");
+    const where = steps ? ` · step ${steps}${totals ? ` (${totals})` : ""}` : "";
+    onProgress(`${formatElapsed(now() - started)}${where} · ${step.text}`);
+  };
+}
+
+/** Same, for newline-delimited JSON on stdout. */
+export function progressLineHandler(agent: CodingAgent, onProgress: ((m: string) => void) | undefined): ((line: string) => void) | undefined {
+  const handle = progressEventHandler(agent, onProgress);
+  if (!handle) return undefined;
   return (line) => {
     if (!line.startsWith("{")) return;
-    let ev: unknown;
     try {
-      ev = JSON.parse(line);
+      handle(JSON.parse(line));
     } catch {
-      return;
-    }
-    const msg = DESCRIBERS[agent](ev);
-    if (msg && msg !== last) {
-      last = msg;
-      onProgress(msg);
+      // not JSON
     }
   };
 }
