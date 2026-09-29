@@ -16,7 +16,7 @@ import { findRunLog, watchRunLog } from "./watch.js";
 import { findRunningDashboard, hostDashboard } from "./dashboard.js";
 import { loadConfig } from "../core/config.js";
 import { openBrowser } from "./open.js";
-import { runReliability } from "./reliability.js";
+import { RELIABILITY_SECTIONS, runReliability } from "./reliability.js";
 import { runSmoke } from "./smoke.js";
 import { installOpencode, opencodeSourceDir, uninstallOpencode, type InstallResult } from "./opencode-install.js";
 
@@ -127,8 +127,20 @@ async function main(argv: string[]): Promise<number> {
     case "permission-hook":
       return runPermissionHook();
     case "reliability": {
+      // reliability [agents...] [--only=core|live] [--model=<agent>:<model> ...]
       const picked = rest.filter((a) => (CODING_AGENTS as readonly string[]).includes(a)) as CodingAgent[];
-      return runReliability({ agents: picked.length ? picked : [...CODING_AGENTS], out, log });
+      const only = rest.find((a) => a.startsWith("--only="))?.slice("--only=".length);
+      const sections = RELIABILITY_SECTIONS.filter((s) => !only || s === only);
+      const models: Partial<Record<CodingAgent, string>> = {};
+      for (const arg of rest.filter((a) => a.startsWith("--model="))) {
+        const [agent, ...model] = arg.slice("--model=".length).split(":");
+        if ((CODING_AGENTS as readonly string[]).includes(agent!) && model.length) models[agent as CodingAgent] = model.join(":");
+      }
+      if (!sections.length) {
+        out(t("cli.usage"));
+        return 2;
+      }
+      return runReliability({ agents: picked.length ? picked : [...CODING_AGENTS], out, log, sections, models });
     }
     case "smoke": {
       const picked = rest.filter((a) => (CODING_AGENTS as readonly string[]).includes(a)) as CodingAgent[];
