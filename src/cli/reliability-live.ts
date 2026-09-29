@@ -449,7 +449,7 @@ export async function runLiveChecks(o: LiveOptions): Promise<void> {
             askMode: true,
             approve: async (req) => {
               asked.push(`${req.tool}: ${req.detail.slice(0, 60)}`);
-              return { allow };
+              return allow ? { allow: true } : { allow: false, message: "Denied by the reliability check." };
             },
           });
           const exists = existsSync(join(dir, "asked.txt"));

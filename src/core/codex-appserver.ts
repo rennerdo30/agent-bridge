@@ -26,7 +26,8 @@ const STDERR_TAIL_CHARS = 4_000;
 
 /** `"…\pwsh.exe" -Command '…'` and friends: just the command, for approval questions. */
 export function innerCommand(s: string): string {
-  const m = /^"?[^"\s]*?(?:pwsh|powershell|bash|zsh|sh|cmd)(?:\.exe)?"?\s+(?:-NoProfile\s+|-NoLogo\s+)*(?:-Command|-lc|-c|\/c)\s+([\s\S]*)$/i.exec(s.trim());
+  // The shell may be a quoted path with spaces ("C:\Program Files\...\pwsh.exe").
+  const m = /^(?:"[^"]*[\\/]|[^\s"]*[\\/])?(?:pwsh|powershell|bash|zsh|sh|cmd)(?:\.exe)?"?\s+(?:-NoProfile\s+|-NoLogo\s+)*(?:-Command|-lc|-c|\/c)\s+([\s\S]*)$/i.exec(s.trim());
   if (!m) return s;
   const c = m[1]!.trim();
   return /^'[\s\S]*'$|^"[\s\S]*"$/.test(c) ? c.slice(1, -1) : c;

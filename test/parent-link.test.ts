@@ -27,6 +27,15 @@ describe("parent link", () => {
     }
   });
 
+  it("hands back messages picked up but never answered", async () => {
+    const link = new ParentLink("p", () => {}, nullLogger);
+    await link.start();
+    const child = parentFromEnv(link.childEnv())!;
+    link.post("seen at the very end");
+    await child.inbox();
+    expect(await link.close()).toEqual(["seen at the very end"]);
+  });
+
   it("hands back messages the subagent never picked up", async () => {
     const link = new ParentLink("p", () => {}, nullLogger);
     await link.start();

@@ -31,6 +31,8 @@ export class ParentLink {
   private readonly secret = randomBytes(SECRET_BYTES).toString("hex");
   private url = "";
   private pending: LinkMessage[] = [];
+  /** Picked up by the subagent but not answered yet (it may have seen them only as it finished). */
+  private unanswered: LinkMessage[] = [];
 
   constructor(
     private readonly parentName: string,
@@ -70,9 +72,12 @@ export class ParentLink {
     return m;
   }
 
-  /** Stop the link; returns the messages the subagent never picked up (they become a follow-up). */
+  /**
+   * Stop the link; returns the messages the subagent never picked up or never answered (they become a
+   * follow-up, so a message that arrived as it finished is not lost).
+   */
   async close(): Promise<string[]> {
-    const left = this.pending.splice(0).map((m) => m.body);
+    const left = [...this.unanswered.splice(0), ...this.pending.splice(0)].map((m) => m.body);
     const s = this.server;
     this.server = null;
     if (s) await new Promise<void>((r) => s.close(() => r()));
@@ -84,6 +89,7 @@ export class ParentLink {
     if (!tokensEqual(auth, this.secret)) throw new Error("unauthorized");
     if (req.method === "POST" && req.url === "/inbox") {
       const messages = this.pending.splice(0);
+      this.unanswered.push(...messages);
       if (messages.length) this.log.info("subagent picked up messages", { count: messages.length });
       return { messages };
     }
@@ -96,6 +102,8 @@ export class ParentLink {
       const body = JSON.parse(raw) as { body?: unknown; reply_to?: unknown };
       const text = String(body.body ?? "").trim();
       if (!text) throw new Error("empty message");
+      // Any answer counts: the subagent has taken up what it was sent.
+      this.unanswered = [];
       this.onMessage(text, typeof body.reply_to === "string" ? body.reply_to : null);
       return { ok: true };
     }

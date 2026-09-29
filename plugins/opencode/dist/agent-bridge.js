@@ -30925,7 +30925,7 @@ var StdioClientTransport = class {
 import { homedir } from "node:os";
 import { join } from "node:path";
 var APP_NAME = "agent-bridge";
-var APP_VERSION = "0.13.0";
+var APP_VERSION = "0.14.0";
 var ENV = {
   home: "AGENT_BRIDGE_HOME",
   pipe: "AGENT_BRIDGE_PIPE",
@@ -30947,6 +30947,7 @@ var LOG_FILE_NAME = `${APP_NAME}.log`;
 var MAX_FRAME_BYTES = 4 * 1024 * 1024;
 var MESSAGE_TTL_MS = 7 * 24 * 60 * 60 * 1e3;
 var PURGE_INTERVAL_MS = 60 * 60 * 1e3;
+var QUEUED_MAIL_MAX_AGE_MS = 24 * 60 * 60 * 1e3;
 var MAX_JOB_TIMEOUT_SEC = 24 * 60 * 60;
 
 // src/opencode/schema.ts
@@ -31169,14 +31170,25 @@ async function createBridge({ client, directory }) {
 ${context}`;
       }
     },
-    /** Runs before every model step: deliver mail that arrived while the session is working. */
+    /**
+     * Runs before every model step: deliver mail that arrived while the session is working. The hook marks
+     * it read, but a system prompt is not stored: if this step fails (provider error, abort) the mail would
+     * be gone. So it is also added to the session as a message (like after a tool call), which persists;
+     * the system prompt still shows it to this very step.
+     */
     "experimental.chat.system.transform": async (input2, output2) => {
       const sessionID = input2?.sessionID;
       if (!sessionID || childSessions.has(sessionID)) return;
       noteSession(sessionID);
       const out = await hook("PostToolUse", sessionID);
       const context = out?.hookSpecificOutput?.additionalContext;
-      if (typeof context === "string" && context) output2.system.push(context);
+      if (typeof context !== "string" || !context) return;
+      output2.system.push(context);
+      try {
+        await promptAsync(client, sessionID, context, true);
+      } catch (err) {
+        log("warn", "could not store peer messages in the session; they reach only this step's system prompt", { err: String(err?.message ?? err) });
+      }
     },
     event: async ({ event }) => {
       if (event?.type?.startsWith("session.")) log("debug", "event", { type: event.type, sessionID: event.properties?.sessionID ?? event.properties?.info?.id });
