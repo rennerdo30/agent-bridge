@@ -170,6 +170,22 @@ still working, no new step for 4m (last: bash: py scripts/run-domain-tests.py)
 
 The "still working" heartbeat comes after every minute without a new step, so long test runs or thinking phases don't look like a hang. Claude Code shows these lines under the running tool call (`Ctrl+O` expands them). Codex currently ignores MCP progress.
 
+### Web dashboard
+
+```bash
+npx -y github:rennerdo30/agent-bridge ui     # opens http://127.0.0.1:4777 in your browser
+```
+
+The dashboard shows:
+
+- **Sessions:** every connected Claude Code, Codex and opencode session, busy or idle, with its version (outdated ones are flagged) and folder.
+- **Delegated runs:** every `ask_*` / `spawn_*` run (running, done, failed or interrupted), and a live step-by-step view of the selected one. The task itself is folded away above the steps.
+- **Messages:** the message history between sessions, and a box to send a message to a session yourself (as "you").
+
+It only listens on 127.0.0.1. The printed link contains a one-time secret; without it the dashboard refuses every request, also from other local programs and web pages. Options: `--port=N`, `--no-open`. Press Ctrl+C to stop it.
+
+### Run logs
+
 Every run also writes a step-by-step log to `~/.agent-bridge/runs/`, whose path is in the result. Follow a run live from any terminal:
 
 ```bash
@@ -246,6 +262,7 @@ Logs are written to `~/.agent-bridge/logs/agent-bridge.log`.
 The plugins bundle a small CLI for debugging:
 
 ```bash
+node <plugin>/dist/cli.mjs ui              # web dashboard (sessions, runs, messages)
 node <plugin>/dist/cli.mjs status          # broker, connected sessions, their versions (OUTDATED marks)
 node <plugin>/dist/cli.mjs send codex "hi" # send as peer "cli"
 node <plugin>/dist/cli.mjs tail            # print messages addressed to "cli"

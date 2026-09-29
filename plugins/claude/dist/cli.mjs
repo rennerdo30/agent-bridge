@@ -2,7 +2,7 @@
 import { createRequire as __abCreateRequire } from 'node:module'; const require = __abCreateRequire(import.meta.url);
 
 // src/cli/main.ts
-import { join as join13 } from "node:path";
+import { join as join14 } from "node:path";
 
 // src/core/client.ts
 import { EventEmitter } from "node:events";
@@ -12,7 +12,7 @@ import { connect } from "node:net";
 import { homedir } from "node:os";
 import { join } from "node:path";
 var APP_NAME = "agent-bridge";
-var APP_VERSION = "0.6.0";
+var APP_VERSION = "0.7.0";
 var PROTOCOL_VERSION = 2;
 var ENV = {
   home: "AGENT_BRIDGE_HOME",
@@ -214,7 +214,7 @@ var en = {
   "err.delegateDepth": "Delegation is not available inside a delegated session (prevents endless recursion).",
   "err.delegateFailed": "The delegated agent failed: {detail}",
   "err.delegatedSession": "This is a delegated headless session; peer messaging is disabled here.",
-  "cli.usage": 'Usage: agent-bridge <command>\n\nCommands:\n  install [claude] [codex] [opencode] [--yes]   Install agent-bridge (all found tools by default)\n  update  [claude] [codex] [opencode] [--yes]   Update it\n  uninstall [claude] [codex] [opencode] [--yes] Remove it\n  smoke [claude] [codex] [opencode]              Check the real CLIs still work with agent-bridge\n  status                  Show the broker and the connected peers\n  send <to> <text>    Send a message as the "cli" peer\n  tail                Print messages addressed to "cli" as they arrive\n  watch [name]            Follow a delegated run live (newest, or one whose name contains [name])\n  install-opencode        Install the opencode plugin and its @claude/@codex subagents\n  uninstall-opencode      Remove them again\n  paths                   Show data, log and pipe locations\n  help                    Show this help',
+  "cli.usage": 'Usage: agent-bridge <command>\n\nCommands:\n  install [claude] [codex] [opencode] [--yes]   Install agent-bridge (all found tools by default)\n  update  [claude] [codex] [opencode] [--yes]   Update it\n  uninstall [claude] [codex] [opencode] [--yes] Remove it\n  smoke [claude] [codex] [opencode]              Check the real CLIs still work with agent-bridge\n  status                  Show the broker and the connected peers\n  send <to> <text>    Send a message as the "cli" peer\n  tail                Print messages addressed to "cli" as they arrive\n  ui [--port=N] [--no-open]  Open the web dashboard (sessions, runs, messages)\n  watch [name]            Follow a delegated run live (newest, or one whose name contains [name])\n  install-opencode        Install the opencode plugin and its @claude/@codex subagents\n  uninstall-opencode      Remove them again\n  paths                   Show data, log and pipe locations\n  help                    Show this help',
   "cli.opencode.noSource": "Could not find the opencode plugin files next to this CLI. Run it from an agent-bridge checkout or package.",
   "cli.opencode.installed": "Installed the agent-bridge opencode plugin into {dir}:",
   "cli.opencode.restart": "Restart opencode to load it. Requires Node.js 22.13+ on PATH.",
@@ -247,6 +247,7 @@ var en = {
   "cli.status.upToDate": "All sessions run agent-bridge {version}.",
   "cli.sent": "Sent message {id}.",
   "cli.tail.listening": 'Listening as "{name}". Press Ctrl+C to stop.',
+  "cli.ui.running": "agent-bridge dashboard: {url}\nOnly this link opens it (it contains a one-time secret). Press Ctrl+C to stop.",
   "cli.watch.none": "No delegated runs yet (run logs live in ~/.agent-bridge/runs).",
   "cli.watch.following": "Following {path} (Ctrl+C to stop)",
   "cli.paths": "Data:  {home}\nLogs:  {logs}\nStore: {db}\nPipe:  {pipe}",
@@ -1970,15 +1971,392 @@ async function watchRunLog(path, out2) {
   }
 }
 
+// src/cli/ui.ts
+import { randomBytes as randomBytes3 } from "node:crypto";
+import { existsSync as existsSync4, readdirSync as readdirSync4, readFileSync as readFileSync4, statSync as statSync4 } from "node:fs";
+import { createServer as createServer3 } from "node:http";
+import { join as join9 } from "node:path";
+import { DatabaseSync as DatabaseSync2 } from "node:sqlite";
+
+// src/cli/ui-page.ts
+var UI_PAGE = `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>agent-bridge</title>
+<style>
+:root {
+  --bg: #f6f7f9; --panel: #ffffff; --text: #1d2330; --muted: #667085; --line: #e3e6eb;
+  --accent: #3b5bdb; --ok: #2b8a3e; --warn: #b7791f; --bad: #c92a2a; --busy: #1971c2;
+  --code-bg: #f1f3f5; --sel: #e7edff;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #111418; --panel: #191d23; --text: #e6e8eb; --muted: #98a2b3; --line: #2a303a;
+    --accent: #7b93ff; --ok: #51cf66; --warn: #fcc419; --bad: #ff6b6b; --busy: #4dabf7;
+    --code-bg: #0d1014; --sel: #232b45;
+    color-scheme: dark;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+header { display: flex; align-items: center; gap: 12px; padding: 12px 20px; border-bottom: 1px solid var(--line); background: var(--panel); }
+header h1 { font-size: 16px; margin: 0; }
+header .status { color: var(--muted); font-size: 13px; }
+.dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
+main { display: grid; grid-template-columns: minmax(280px, 360px) 1fr; gap: 16px; padding: 16px 20px; min-height: calc(100vh - 53px); }
+@media (max-width: 860px) { main { grid-template-columns: 1fr; } }
+section { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+section h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0; padding: 10px 14px; border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; }
+.col { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+ul { list-style: none; margin: 0; padding: 0; }
+li { padding: 9px 14px; border-bottom: 1px solid var(--line); }
+li:last-child { border-bottom: 0; }
+.name { font-weight: 600; }
+.sub { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+.tag { font-size: 11px; padding: 1px 6px; border-radius: 10px; border: 1px solid var(--line); color: var(--muted); margin-left: 6px; }
+.tag.old { color: var(--bad); border-color: var(--bad); }
+.run { cursor: pointer; }
+.run:hover { background: var(--sel); }
+.run.sel { background: var(--sel); box-shadow: inset 3px 0 0 var(--accent); }
+.s-running { color: var(--busy); } .s-done { color: var(--ok); } .s-failed { color: var(--bad); } .s-interrupted { color: var(--warn); }
+.empty { padding: 14px; color: var(--muted); }
+#log { margin: 0; padding: 12px 14px; background: var(--code-bg); font: 12.5px/1.5 ui-monospace, "Cascadia Code", Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; height: 46vh; overflow: auto; }
+#task { border-bottom: 1px solid var(--line); padding: 6px 14px; }
+#task summary { cursor: pointer; }
+#taskText { margin: 6px 0 0; max-height: 24vh; overflow: auto; white-space: pre-wrap; font: 12px/1.45 ui-monospace, Consolas, monospace; color: var(--muted); }
+#logHead { padding: 10px 14px; border-bottom: 1px solid var(--line); }
+.msg { display: grid; gap: 2px; }
+.msg .body { white-space: pre-wrap; overflow-wrap: anywhere; }
+#msgs { max-height: 38vh; overflow: auto; }
+form { display: flex; gap: 8px; padding: 10px 14px; border-top: 1px solid var(--line); flex-wrap: wrap; }
+select, textarea, button { font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; }
+textarea { flex: 1 1 260px; min-height: 38px; resize: vertical; }
+button { background: var(--accent); color: #fff; border-color: var(--accent); cursor: pointer; }
+button:disabled { opacity: .6; cursor: default; }
+#sendInfo { width: 100%; color: var(--muted); font-size: 12px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>agent-bridge</h1>
+  <span class="status" id="status">connecting\u2026</span>
+</header>
+<main>
+  <div class="col">
+    <section><h2>Sessions <span id="peerCount"></span></h2><ul id="peers"></ul></section>
+    <section><h2>Delegated runs <span id="runCount"></span></h2><ul id="runs"></ul></section>
+  </div>
+  <div class="col">
+    <section>
+      <h2>Run <label class="sub"><input type="checkbox" id="follow" checked> follow</label></h2>
+      <div id="logHead" class="sub">Select a run on the left.</div>
+      <details id="task"><summary class="sub">Task</summary><pre id="taskText"></pre></details>
+      <pre id="log"></pre>
+    </section>
+    <section>
+      <h2>Messages</h2>
+      <ul id="msgs"></ul>
+      <form id="send">
+        <select id="to" aria-label="Recipient"></select>
+        <textarea id="body" placeholder="Message to the session (sent as &quot;you&quot;)" aria-label="Message"></textarea>
+        <button type="submit" id="sendBtn">Send</button>
+        <div id="sendInfo"></div>
+      </form>
+    </section>
+  </div>
+</main>
+<script>
+const POLL_MS = 1500;
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+const time = (t) => new Date(t).toLocaleTimeString();
+const ago = (t) => { const s = Math.round((Date.now() - t) / 1000); return s < 60 ? s + "s" : s < 3600 ? Math.floor(s / 60) + "m" : Math.floor(s / 3600) + "h " + Math.floor((s % 3600) / 60) + "m"; };
+let selected = null, logOffset = 0, version = "", raw = "";
+
+function renderPeers(peers) {
+  $("peerCount").textContent = peers.length;
+  $("peers").innerHTML = peers.length ? peers.map((p) => {
+    const color = p.activity === "busy" ? "var(--busy)" : p.activity === "idle" ? "var(--ok)" : "var(--muted)";
+    const old = p.version && p.version !== version ? '<span class="tag old">v' + esc(p.version) + " outdated</span>" : '<span class="tag">v' + esc(p.version ?? "?") + "</span>";
+    return '<li><span class="dot" style="background:' + color + '"></span><span class="name">' + esc(p.name) + '</span><span class="tag">' + esc(p.agent) + "</span>" + old +
+      '<div class="sub">' + esc(p.activity ?? "unknown") + " \xB7 up " + ago(p.startedAt) + " \xB7 " + esc(p.cwd) + "</div></li>";
+  }).join("") : '<li class="empty">No sessions connected.</li>';
+  const to = $("to"), current = to.value;
+  const names = peers.filter((p) => p.name !== "you").map((p) => p.name);
+  to.innerHTML = names.map((n) => "<option>" + esc(n) + "</option>").join("") + '<option value="*">* everyone</option>';
+  if ([...names, "*"].includes(current)) to.value = current;
+}
+
+function renderRuns(runs) {
+  $("runCount").textContent = runs.length;
+  if (!selected && runs[0]) select(runs[0].name);
+  $("runs").innerHTML = runs.length ? runs.map((r) =>
+    '<li class="run' + (r.name === selected ? " sel" : "") + '" data-name="' + esc(r.name) + '">' +
+    '<span class="name">' + esc(r.agent) + '</span> <span class="s-' + r.status + '">' + r.status + "</span>" +
+    '<span class="sub"> \xB7 ' + time(r.startedAt) + " \xB7 updated " + ago(r.updatedAt) + " ago</span>" +
+    '<div class="sub">' + esc(r.last) + "</div></li>").join("") : '<li class="empty">No delegated runs yet.</li>';
+  const cur = runs.find((r) => r.name === selected);
+  if (cur) $("logHead").innerHTML = '<span class="s-' + cur.status + '">' + cur.status + "</span> \xB7 " + esc(cur.header);
+}
+
+function renderMessages(msgs) {
+  $("msgs").innerHTML = msgs.length ? msgs.map((m) =>
+    '<li class="msg"><div class="sub"><b>' + esc(m.from_name) + "</b> \u2192 " + esc(m.recipients || m.to_target) + " \xB7 " + time(m.created_at) + (m.hop ? " \xB7 hop " + m.hop : "") + "</div>" +
+    '<div class="body">' + esc(m.body) + "</div></li>").join("") : '<li class="empty">No messages yet.</li>';
+}
+
+async function poll() {
+  try {
+    const r = await fetch("/api/state");
+    if (!r.ok) throw new Error(r.status === 403 ? "not authorized: open the link printed by agent-bridge ui" : "HTTP " + r.status);
+    const s = await r.json();
+    version = s.version;
+    $("status").innerHTML = s.brokerPid
+      ? '<span class="dot" style="background:var(--ok)"></span>bridge running \xB7 v' + esc(s.version)
+      : '<span class="dot" style="background:var(--warn)"></span>no bridge running (start a session with agent-bridge)';
+    renderPeers(s.peers); renderRuns(s.runs); renderMessages(s.messages);
+    await pullLog();
+  } catch (e) {
+    $("status").innerHTML = '<span class="dot" style="background:var(--bad)"></span>' + esc(e.message);
+  }
+}
+
+let pulling = false;
+async function pullLog() {
+  // One fetch at a time: overlapping pulls would append the same chunk twice.
+  if (!selected || pulling) return;
+  pulling = true;
+  const run = selected;
+  try {
+    const r = await fetch("/api/runs/" + encodeURIComponent(run) + "?from=" + logOffset);
+    if (!r.ok || run !== selected) return;
+    const d = await r.json();
+    if (run !== selected) return;
+    applyLog(d);
+  } finally {
+    pulling = false;
+  }
+}
+
+function applyLog(d) {
+  if (d.text) {
+    raw += d.text;
+    // The log starts with the task (header, prompt, "---"); keep it folded away from the live steps.
+    const m = /\\n---\\n(?=\\d\\d:\\d\\d:\\d\\d started )/.exec(raw);
+    const cut = m ? m.index : -1;
+    $("taskText").textContent = cut >= 0 ? raw.slice(0, cut) : raw;
+    $("log").textContent = cut >= 0 ? raw.slice(cut + 5) : "";
+    if ($("follow").checked) $("log").scrollTop = $("log").scrollHeight;
+  }
+  logOffset = d.next;
+}
+
+function select(name) {
+  selected = name; logOffset = 0; raw = ""; $("log").textContent = ""; $("taskText").textContent = "";
+  document.querySelectorAll(".run").forEach((el) => el.classList.toggle("sel", el.dataset.name === name));
+  pullLog();
+}
+
+$("runs").addEventListener("click", (e) => { const li = e.target.closest(".run"); if (li) select(li.dataset.name); });
+
+$("send").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const body = $("body").value.trim(), to = $("to").value;
+  if (!body || !to) return;
+  $("sendBtn").disabled = true;
+  try {
+    const r = await fetch("/api/send", { method: "POST", headers: { "content-type": "application/json", "x-agent-bridge": "1" }, body: JSON.stringify({ to, body }) });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || "HTTP " + r.status);
+    $("sendInfo").textContent = d.deliveredTo?.length ? "Delivered to " + d.deliveredTo.join(", ") : "Queued for " + (d.queuedFor || []).join(", ");
+    $("body").value = "";
+    poll();
+  } catch (err) {
+    $("sendInfo").textContent = "Not sent: " + err.message;
+  } finally {
+    $("sendBtn").disabled = false;
+  }
+});
+
+poll();
+setInterval(poll, POLL_MS);
+</script>
+</body>
+</html>
+`;
+
+// src/cli/ui.ts
+var DEFAULT_UI_PORT = 4777;
+var UI_HOST = "127.0.0.1";
+var COOKIE = "ab_ui";
+var SECRET_BYTES2 = 24;
+var MAX_RUNS = 40;
+var MAX_MESSAGES = 200;
+var MAX_LOG_CHUNK = 512 * 1024;
+var MAX_POST_BYTES = 256 * 1024;
+var STALE_RUN_MS = 15e4;
+var UI_PEER_NAME = "you";
+var ALLOWED_HOSTS = /* @__PURE__ */ new Set([UI_HOST, "localhost"]);
+var RUN_NAME = /^[\w.-]+\.log$/;
+function summarizeRun(file, text, mtimeMs, now) {
+  const lines = text.split("\n").filter(Boolean);
+  const finished = [...lines].reverse().find((l) => / finished after \d+s · /.test(l));
+  const last = (finished ?? lines.at(-1) ?? "").replace(/^\d\d:\d\d:\d\d /, "");
+  const status = finished ? / · done$/.test(finished) ? "done" : "failed" : now - mtimeMs > STALE_RUN_MS ? "interrupted" : "running";
+  const m = /^(\d{4})-(\d\d)-(\d\d)-(\d\d)-(\d\d)-(\d\d)-([a-z]+)-/.exec(file);
+  const startedAt = m ? Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]) : mtimeMs;
+  return {
+    name: file.replace(/\.log$/, ""),
+    agent: m?.[7] ?? "agent",
+    header: (lines[0] ?? "").replace(/^\d\d:\d\d:\d\d /, ""),
+    startedAt,
+    updatedAt: mtimeMs,
+    status,
+    last
+  };
+}
+function listRuns(home, now = Date.now()) {
+  const dir = join9(home, RUNS_DIR_NAME);
+  if (!existsSync4(dir)) return [];
+  return readdirSync4(dir).filter((f) => RUN_NAME.test(f)).map((f) => ({ f, st: statSync4(join9(dir, f)) })).sort((a, b) => b.st.mtimeMs - a.st.mtimeMs).slice(0, MAX_RUNS).map(({ f, st }) => summarizeRun(f, readFileSync4(join9(dir, f), "utf8"), st.mtimeMs, now));
+}
+function recentMessages(dbPath) {
+  if (!existsSync4(dbPath)) return [];
+  const db = new DatabaseSync2(dbPath, { readOnly: true });
+  try {
+    const stmt = db.prepare(
+      `SELECT id, from_name, from_agent, to_target, group_concat(recipient, ', ') AS recipients, body, created_at, hop, reply_to
+       FROM messages GROUP BY id ORDER BY created_at DESC LIMIT ?`
+    );
+    return stmt.all(MAX_MESSAGES);
+  } finally {
+    db.close();
+  }
+}
+async function brokerPeers(pipe, token, log) {
+  let client = null;
+  try {
+    client = await BridgeClient.connect(pipe, log);
+    const { brokerPid } = await client.request("auth", { protocol: PROTOCOL_VERSION, token });
+    return { brokerPid, peers: await client.request("peers", {}) };
+  } catch {
+    return { brokerPid: null, peers: [] };
+  } finally {
+    client?.close();
+  }
+}
+function send(res, status, body, type = "application/json; charset=utf-8") {
+  res.writeHead(status, { "content-type": type, "cache-control": "no-store", "x-content-type-options": "nosniff" });
+  res.end(typeof body === "string" ? body : JSON.stringify(body));
+}
+async function readJson(req) {
+  let raw = "";
+  for await (const chunk of req) {
+    raw += chunk;
+    if (raw.length > MAX_POST_BYTES) throw new Error("request too large");
+  }
+  return JSON.parse(raw || "{}");
+}
+function cookieSecret(req) {
+  const m = new RegExp(`(?:^|;\\s*)${COOKIE}=([0-9a-f]+)`).exec(String(req.headers.cookie ?? ""));
+  return m?.[1] ?? "";
+}
+async function startUi(opts) {
+  const secret = randomBytes3(SECRET_BYTES2).toString("hex");
+  const token = loadOrCreateToken(opts.home);
+  const dbPath = resolveDbPath(opts.home);
+  let sender = null;
+  const handle = async (req, res) => {
+    const host = String(req.headers.host ?? "").replace(/:\d+$/, "");
+    if (!ALLOWED_HOSTS.has(host)) return send(res, 403, { error: "forbidden host" });
+    const url = new URL(req.url ?? "/", `http://${UI_HOST}`);
+    const fromUrl = url.searchParams.get("t");
+    if (url.pathname === "/" && fromUrl) {
+      if (!tokensEqual(fromUrl, secret)) return send(res, 403, "Invalid or expired link. Restart `agent-bridge ui`.", "text/plain; charset=utf-8");
+      res.writeHead(302, { location: "/", "set-cookie": `${COOKIE}=${secret}; HttpOnly; SameSite=Strict; Path=/` });
+      return res.end();
+    }
+    if (!tokensEqual(cookieSecret(req), secret)) return send(res, 403, "Open the link printed by `agent-bridge ui`.", "text/plain; charset=utf-8");
+    if (req.method === "GET" && url.pathname === "/") return send(res, 200, UI_PAGE, "text/html; charset=utf-8");
+    if (req.method === "GET" && url.pathname === "/api/state") {
+      const { brokerPid, peers } = await brokerPeers(opts.pipe, token, opts.log);
+      return send(res, 200, {
+        version: APP_VERSION,
+        brokerPid,
+        peers,
+        runs: listRuns(opts.home),
+        messages: recentMessages(dbPath)
+      });
+    }
+    const runMatch = /^\/api\/runs\/([\w.-]+)$/.exec(url.pathname);
+    if (req.method === "GET" && runMatch) {
+      const file = join9(opts.home, RUNS_DIR_NAME, `${runMatch[1]}.log`);
+      if (!existsSync4(file)) return send(res, 404, { error: "no such run" });
+      const from = Math.max(0, Number(url.searchParams.get("from")) || 0);
+      const buf = readFileSync4(file);
+      const end = Math.min(buf.length, from + MAX_LOG_CHUNK);
+      return send(res, 200, { text: buf.subarray(from, end).toString("utf8"), next: end, size: buf.length });
+    }
+    if (req.method === "POST" && url.pathname === "/api/send") {
+      if (req.headers["x-agent-bridge"] !== "1") return send(res, 403, { error: "missing header" });
+      const body = await readJson(req);
+      const to = String(body.to ?? "").trim();
+      const text = String(body.body ?? "").trim();
+      if (!to || !text) return send(res, 400, { error: "to and body are required" });
+      if (!sender) {
+        sender = new BridgeNode({ pipePath: opts.pipe, token, dbPath, agent: "other", name: UI_PEER_NAME, cwd: opts.home, autoWake: false, log: opts.log });
+        await sender.start();
+      }
+      const r = await sender.send({ to, body: text });
+      return send(res, 200, { id: r.messages[0]?.id, deliveredTo: r.deliveredTo, queuedFor: r.queuedFor });
+    }
+    return send(res, 404, { error: "not found" });
+  };
+  const server = createServer3((req, res) => {
+    handle(req, res).catch((err) => {
+      opts.log.warn("ui request failed", { err: err.message });
+      if (!res.headersSent) send(res, 500, { error: String(err.message) });
+    });
+  });
+  await new Promise((resolve3, reject) => {
+    server.once("error", reject);
+    server.listen(opts.port, UI_HOST, () => resolve3());
+  });
+  const { port } = server.address();
+  return {
+    url: `http://${UI_HOST}:${port}/?t=${secret}`,
+    close: async () => {
+      await sender?.stop();
+      await new Promise((r) => server.close(() => r()));
+    }
+  };
+}
+
+// src/cli/open.ts
+import { spawn as spawn3 } from "node:child_process";
+function openBrowser(url) {
+  const [cmd, args] = process.platform === "win32" ? ["cmd.exe", ["/d", "/c", "start", '""', url]] : process.platform === "darwin" ? ["open", [url]] : ["xdg-open", [url]];
+  try {
+    const child = spawn3(cmd, args, { stdio: "ignore", detached: true, windowsHide: true, windowsVerbatimArguments: process.platform === "win32" });
+    child.on("error", () => {
+    });
+    child.unref();
+  } catch {
+  }
+}
+
 // src/cli/reliability.ts
 import { execFileSync } from "node:child_process";
-import { existsSync as existsSync4, mkdtempSync, rmSync as rmSync2, writeFileSync } from "node:fs";
+import { existsSync as existsSync5, mkdtempSync, rmSync as rmSync2, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join as join11 } from "node:path";
+import { join as join12 } from "node:path";
 
 // src/core/worktree.ts
 import { mkdirSync as mkdirSync6 } from "node:fs";
-import { basename, isAbsolute as isAbsolute2, join as join9, relative } from "node:path";
+import { basename, isAbsolute as isAbsolute2, join as join10, relative } from "node:path";
 var GIT = "git";
 var GIT_TIMEOUT_MS = 6e4;
 var BRANCH_PREFIX = "agent-bridge/";
@@ -1998,12 +2376,12 @@ async function createWorktree(opts) {
   }
   const base = await git(["rev-parse", "HEAD"], repoRoot, opts.log);
   const branch = `${BRANCH_PREFIX}${opts.jobId}`;
-  const dir = join9(opts.home, "worktrees");
+  const dir = join10(opts.home, "worktrees");
   mkdirSync6(dir, { recursive: true });
-  const path = join9(dir, `${basename(repoRoot)}-${opts.jobId}`);
+  const path = join10(dir, `${basename(repoRoot)}-${opts.jobId}`);
   await git(["worktree", "add", "-b", branch, path, base], repoRoot, opts.log);
   const rel = relative(repoRoot, opts.cwd);
-  const cwd = rel && !rel.startsWith("..") && !isAbsolute2(rel) ? join9(path, rel) : path;
+  const cwd = rel && !rel.startsWith("..") && !isAbsolute2(rel) ? join10(path, rel) : path;
   opts.log.info("worktree created", { repoRoot, path, branch });
   return { repoRoot, path, cwd, branch, base };
 }
@@ -2019,17 +2397,17 @@ async function finishWorktree(wt, summary, log) {
 }
 
 // src/core/codex-trust.ts
-import { readFileSync as readFileSync4 } from "node:fs";
+import { readFileSync as readFileSync5 } from "node:fs";
 import { homedir as homedir3 } from "node:os";
-import { join as join10 } from "node:path";
+import { join as join11 } from "node:path";
 var PERMISSION_HOOK_STATE_KEY = 'hooks.state."agent-bridge@agent-bridge:plugin.json#hooks[0]:permission_request:0:0"';
 function codexHome(env = process.env) {
-  return env.CODEX_HOME?.trim() || join10(homedir3(), ".codex");
+  return env.CODEX_HOME?.trim() || join11(homedir3(), ".codex");
 }
-function codexPermissionHookTrusted(home = codexHome(), read = (p) => readFileSync4(p, "utf8")) {
+function codexPermissionHookTrusted(home = codexHome(), read = (p) => readFileSync5(p, "utf8")) {
   let text;
   try {
-    text = read(join10(home, "config.toml"));
+    text = read(join11(home, "config.toml"));
   } catch {
     return false;
   }
@@ -2044,8 +2422,8 @@ function codexPermissionHookTrusted(home = codexHome(), read = (p) => readFileSy
 }
 
 // src/core/opencode-served.ts
-import { spawn as spawn3 } from "node:child_process";
-import { randomBytes as randomBytes3 } from "node:crypto";
+import { spawn as spawn4 } from "node:child_process";
+import { randomBytes as randomBytes4 } from "node:crypto";
 import { extname as extname2 } from "node:path";
 var SERVE_START_TIMEOUT_MS = 3e4;
 var LISTEN_RE = /listening on (https?:\/\/[^\s]+)/i;
@@ -2065,7 +2443,7 @@ function startServe(bin, cwd, env) {
     prefix = target.prefix;
   }
   return new Promise((resolve3, reject) => {
-    const child = spawn3(resolved, [...prefix, "serve", "--port", "0", "--hostname", "127.0.0.1"], {
+    const child = spawn4(resolved, [...prefix, "serve", "--port", "0", "--hostname", "127.0.0.1"], {
       cwd,
       env: { ...env, PWD: cwd },
       windowsHide: true,
@@ -2122,7 +2500,7 @@ function permissionDetail(p) {
 }
 async function delegateToOpencodeServed(req) {
   checkDepthPublic();
-  const password = randomBytes3(PASSWORD_BYTES).toString("hex");
+  const password = randomBytes4(PASSWORD_BYTES).toString("hex");
   const env = childEnvPublic({
     ...req.extraEnv,
     OPENCODE_SERVER_PASSWORD: password,
@@ -2262,17 +2640,17 @@ async function timed(name, fn) {
   }
 }
 function makeRepo() {
-  const dir = mkdtempSync(join11(tmpdir(), "agent-bridge-rel-"));
+  const dir = mkdtempSync(join12(tmpdir(), "agent-bridge-rel-"));
   const git2 = (...a) => execFileSync("git", a, { cwd: dir, stdio: "ignore" });
   git2("init", "-q");
-  writeFileSync(join11(dir, "README.md"), "reliability sandbox\n");
+  writeFileSync(join12(dir, "README.md"), "reliability sandbox\n");
   git2("add", "README.md");
   git2("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "base");
   return dir;
 }
 async function runReliability(opts) {
   const agents = opts.agents.filter((a) => resolveBinary(BINS[a]));
-  const home = mkdtempSync(join11(tmpdir(), "agent-bridge-rel-home-"));
+  const home = mkdtempSync(join12(tmpdir(), "agent-bridge-rel-home-"));
   const results = [];
   const record = (o) => {
     results.push(o);
@@ -2300,7 +2678,7 @@ async function runReliability(opts) {
         await timed(`${agent} read-only is enforced`, async () => {
           const dir = repo();
           await run(agent, "Create a file named should-not-exist.txt containing the word hi. Then reply done.", dir, "read", opts.log);
-          const exists = existsSync4(join11(dir, "should-not-exist.txt"));
+          const exists = existsSync5(join12(dir, "should-not-exist.txt"));
           return { pass: !exists, detail: exists ? "the file WAS created despite read-only access" : "no file created" };
         })
       );
@@ -2312,7 +2690,7 @@ async function runReliability(opts) {
           const base = { prompt: "Create a file named created.txt containing the word hello. Then reply done.", cwd: wt.cwd, sessionId: null, timeoutSec: RUN_TIMEOUT_SEC, log: opts.log, onProgress: (m) => steps.push(m) };
           const r = agent === "codex" ? await delegateToCodex({ ...base, bin: BINS.codex, sandbox: "workspace-write" }) : agent === "claude" ? await delegateToClaude({ ...base, bin: BINS.claude, permissionMode: "acceptEdits" }) : await delegateToOpencode({ ...base, bin: BINS.opencode, autoApprove: true });
           const outcome = await finishWorktree(wt, "reliability edit", opts.log);
-          const leaked = existsSync4(join11(dir, "created.txt"));
+          const leaked = existsSync5(join12(dir, "created.txt"));
           const pass = outcome.diffStat.includes("created.txt") && !leaked;
           return {
             pass,
@@ -2338,7 +2716,7 @@ async function runReliability(opts) {
             opts.log
           );
           if (r === null) return { pass: true, detail: "SKIP (not available: see README, permission requests)" };
-          const exists = existsSync4(join11(dir, "asked.txt"));
+          const exists = existsSync5(join12(dir, "asked.txt"));
           return {
             pass: asked.length > 0 && exists === allow,
             detail: `asked ${asked.length}x [${asked.join(" | ")}], file ${exists ? "created" : "not created"}`
@@ -2387,7 +2765,7 @@ ${passed}/${results.length} passed`);
 // src/cli/smoke.ts
 import { mkdtempSync as mkdtempSync2, rmSync as rmSync3 } from "node:fs";
 import { tmpdir as tmpdir2 } from "node:os";
-import { join as join12 } from "node:path";
+import { join as join13 } from "node:path";
 var TESTED_VERSIONS = {
   claude: "2.1.283",
   codex: "0.157.1",
@@ -2407,7 +2785,7 @@ async function version(bin, log) {
   }
 }
 async function runSmoke(opts) {
-  const dir = mkdtempSync2(join12(tmpdir2(), "agent-bridge-smoke-"));
+  const dir = mkdtempSync2(join13(tmpdir2(), "agent-bridge-smoke-"));
   const bins = { claude: DEFAULT_CLAUDE_BIN, codex: DEFAULT_CODEX_BIN, opencode: DEFAULT_OPENCODE_BIN };
   let failures = 0;
   try {
@@ -2524,6 +2902,16 @@ async function main(argv) {
     case "update":
     case "uninstall":
       return runInstaller({ action: command, tools: parseInstallerArgs(command, rest), yes: rest.includes("--yes") || rest.includes("-y"), out });
+    case "ui": {
+      const portArg = rest.find((a) => a.startsWith("--port="))?.slice("--port=".length);
+      const port = portArg ? Number(portArg) : DEFAULT_UI_PORT;
+      const ui = await startUi({ home, pipe, port, log });
+      out(t("cli.ui.running", { url: ui.url }));
+      if (!rest.includes("--no-open")) openBrowser(ui.url);
+      await new Promise((resolve3) => process.once("SIGINT", resolve3));
+      await ui.close();
+      return 0;
+    }
     case "watch": {
       const logPath = findRunLog(home, rest[0]);
       if (!logPath) {
@@ -2563,7 +2951,7 @@ async function main(argv) {
       return 0;
     }
     case "paths":
-      out(t("cli.paths", { home, logs: join13(home, LOG_DIR_NAME), db: resolveDbPath(home), pipe }));
+      out(t("cli.paths", { home, logs: join14(home, LOG_DIR_NAME), db: resolveDbPath(home), pipe }));
       return 0;
     case "help":
     case "--help":

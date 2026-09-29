@@ -12,6 +12,8 @@ import { CODING_AGENTS, type CodingAgent } from "../core/protocol.js";
 import { parseInstallerArgs, runInstaller } from "./installer.js";
 import { runPermissionHook } from "./permission-hook.js";
 import { findRunLog, watchRunLog } from "./watch.js";
+import { DEFAULT_UI_PORT, startUi } from "./ui.js";
+import { openBrowser } from "./open.js";
 import { runReliability } from "./reliability.js";
 import { runSmoke } from "./smoke.js";
 import { installOpencode, opencodeSourceDir, uninstallOpencode, type InstallResult } from "./opencode-install.js";
@@ -90,6 +92,16 @@ async function main(argv: string[]): Promise<number> {
     case "update":
     case "uninstall":
       return runInstaller({ action: command, tools: parseInstallerArgs(command, rest), yes: rest.includes("--yes") || rest.includes("-y"), out });
+    case "ui": {
+      const portArg = rest.find((a) => a.startsWith("--port="))?.slice("--port=".length);
+      const port = portArg ? Number(portArg) : DEFAULT_UI_PORT;
+      const ui = await startUi({ home, pipe, port, log });
+      out(t("cli.ui.running", { url: ui.url }));
+      if (!rest.includes("--no-open")) openBrowser(ui.url);
+      await new Promise<void>((resolve) => process.once("SIGINT", resolve));
+      await ui.close();
+      return 0;
+    }
     case "watch": {
       const logPath = findRunLog(home, rest[0]);
       if (!logPath) {
