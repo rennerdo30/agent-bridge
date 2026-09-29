@@ -11,10 +11,13 @@ import { codexPermissionHookTrusted } from "../core/codex-trust.js";
 import { resolveHome } from "../core/paths.js";
 import { delegateToOpencodeServed } from "../core/opencode-served.js";
 import { PermissionRelay, type PermissionDecision, type PermissionRequest } from "../core/relay.js";
+import { runLiveChecks } from "./reliability-live.js";
 
 /**
  * A measured run of real delegations (costs tokens): repeated short answers, read-only enforcement,
- * worktree edits, parallel runs and cancellation, per installed CLI.
+ * worktree edits, parallel runs and cancellation, per installed CLI ("core"), plus the subagent features
+ * of the MCP server: live messages, follow-ups, restart recovery, clean exit, Codex approvals ("live",
+ * see reliability-live.ts).
  */
 const RUN_TIMEOUT_SEC = 300;
 const REPEATS = 3;
@@ -23,9 +26,13 @@ const CANCEL_GRACE_MS = 10_000;
 const BINS: Record<CodingAgent, string> = { claude: DEFAULT_CLAUDE_BIN, codex: DEFAULT_CODEX_BIN, opencode: DEFAULT_OPENCODE_BIN };
 
 type Access = "read" | "edit";
+export type ReliabilitySection = "core" | "live";
+export const RELIABILITY_SECTIONS: readonly ReliabilitySection[] = ["core", "live"];
+/** Model per agent (e.g. a cheap one for the long live tasks); none = the CLI's default. */
+let models: Partial<Record<CodingAgent, string>> = {};
 
 function run(agent: CodingAgent, prompt: string, cwd: string, access: Access, log: Logger, signal?: AbortSignal): Promise<DelegateResult> {
-  const base = { prompt, cwd, sessionId: null, timeoutSec: RUN_TIMEOUT_SEC, log, signal };
+  const base = { prompt, cwd, sessionId: null, timeoutSec: RUN_TIMEOUT_SEC, log, signal, model: models[agent] ?? null };
   if (agent === "codex") return delegateToCodex({ ...base, bin: BINS.codex, sandbox: access === "edit" ? "workspace-write" : "read-only" });
   if (agent === "claude") return delegateToClaude({ ...base, bin: BINS.claude, permissionMode: access === "edit" ? "acceptEdits" : "default" });
   return delegateToOpencode({ ...base, bin: BINS.opencode, autoApprove: access === "edit" });
@@ -39,7 +46,7 @@ async function runAsk(
   decide: (r: PermissionRequest) => Promise<PermissionDecision>,
   log: Logger,
 ): Promise<DelegateResult | null> {
-  const base = { prompt, cwd, sessionId: null, timeoutSec: RUN_TIMEOUT_SEC, log };
+  const base = { prompt, cwd, sessionId: null, timeoutSec: RUN_TIMEOUT_SEC, log, model: models[agent] ?? null };
   if (agent === "opencode") return delegateToOpencodeServed({ ...base, bin: BINS.opencode, onPermission: decide });
   if (agent === "codex") {
     if (!codexPermissionHookTrusted(resolveHome())) return null;
@@ -81,8 +88,17 @@ function makeRepo(): string {
   return dir;
 }
 
-export async function runReliability(opts: { agents: CodingAgent[]; out: (s: string) => void; log: Logger }): Promise<number> {
+export async function runReliability(opts: {
+  agents: CodingAgent[];
+  out: (s: string) => void;
+  log: Logger;
+  sections?: readonly ReliabilitySection[];
+  models?: Partial<Record<CodingAgent, string>>;
+}): Promise<number> {
+  const sections = opts.sections ?? RELIABILITY_SECTIONS;
+  models = opts.models ?? {};
   const agents = opts.agents.filter((a) => resolveBinary(BINS[a]));
+  for (const a of opts.agents) if (!agents.includes(a)) opts.out(`${a}: SKIP (CLI "${BINS[a]}" not installed)`);
   const home = mkdtempSync(join(tmpdir(), "agent-bridge-rel-home-"));
   const results: Outcome[] = [];
   const record = (o: Outcome) => {
@@ -97,7 +113,7 @@ export async function runReliability(opts: { agents: CodingAgent[]; out: (s: str
   };
 
   try {
-    for (const agent of agents) {
+    for (const agent of sections.includes("core") ? agents : []) {
       opts.out(`${agent}:`);
       for (let i = 1; i <= REPEATS; i++) {
         const n = 10 + i;
@@ -121,7 +137,7 @@ export async function runReliability(opts: { agents: CodingAgent[]; out: (s: str
           const dir = repo();
           const wt = await createWorktree({ cwd: dir, home, jobId: `${agent}-${Date.now().toString(36)}`, log: opts.log });
           const steps: string[] = [];
-          const base = { prompt: "Create a file named created.txt containing the word hello. Then reply done.", cwd: wt.cwd, sessionId: null, timeoutSec: RUN_TIMEOUT_SEC, log: opts.log, onProgress: (m: string) => steps.push(m) };
+          const base = { prompt: "Create a file named created.txt containing the word hello. Then reply done.", cwd: wt.cwd, sessionId: null, timeoutSec: RUN_TIMEOUT_SEC, log: opts.log, model: models[agent] ?? null, onProgress: (m: string) => steps.push(m) };
           const r =
             agent === "codex"
               ? await delegateToCodex({ ...base, bin: BINS.codex, sandbox: "workspace-write" })
@@ -143,7 +159,7 @@ export async function runReliability(opts: { agents: CodingAgent[]; out: (s: str
       );
     }
 
-    for (const agent of agents) {
+    for (const agent of sections.includes("core") ? agents : []) {
       for (const allow of [false, true]) {
         const label = `${agent} ask -> ${allow ? "allow" : "deny"}`;
         const dir = repo();
@@ -170,7 +186,7 @@ export async function runReliability(opts: { agents: CodingAgent[]; out: (s: str
       }
     }
 
-    if (agents.length > 1) {
+    if (sections.includes("core") && agents.length > 1) {
       opts.out("parallel:");
       record(
         await timed(`parallel (${agents.join(", ")})`, async () => {
@@ -181,7 +197,7 @@ export async function runReliability(opts: { agents: CodingAgent[]; out: (s: str
       );
     }
 
-    if (agents.includes("codex")) {
+    if (sections.includes("core") && agents.includes("codex")) {
       opts.out("cancel:");
       record(
         await timed("codex cancel", async () => {
@@ -197,6 +213,18 @@ export async function runReliability(opts: { agents: CodingAgent[]; out: (s: str
           return { pass: r.includes("aborted") && took < CANCEL_AFTER_MS + CANCEL_GRACE_MS, detail: `${r}, stopped after ${(took / 1000).toFixed(1)}s` };
         }),
       );
+    }
+
+    if (sections.includes("live")) {
+      await runLiveChecks({
+        agents,
+        bins: BINS,
+        models,
+        check: async (name, fn) => record(await timed(name, fn)),
+        repo,
+        out: opts.out,
+        log: opts.log,
+      });
     }
   } finally {
     for (const r of repos) rmSync(r, { recursive: true, force: true, maxRetries: 3 });
