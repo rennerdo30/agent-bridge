@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { chmodSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, readFileSync, writeFileSync } from "node:fs";
 import { request } from "node:http";
 import { join } from "node:path";
 import type { Logger } from "../core/logger.js";
@@ -56,6 +56,12 @@ export function probeDashboard(port: number): Promise<boolean> {
   });
 }
 
+/** The secret of the last dashboard (the file stays after it stops; its dead pid marks it as not running). */
+function previousSecret(home: string): string | null {
+  const t = readDashboardInfo(home)?.url.match(/[?&]t=([0-9a-f]{16,})/)?.[1];
+  return t ?? null;
+}
+
 /** The running dashboard, if its owner is alive and it answers. */
 export async function findRunningDashboard(home: string): Promise<DashboardInfo | null> {
   const info = readDashboardInfo(home);
@@ -70,7 +76,8 @@ export interface HostedDashboard {
 
 /** Start the dashboard in this process and publish its link. Fails with EADDRINUSE if the port is taken. */
 export async function hostDashboard(opts: { home: string; pipe: string; port: number; log: Logger }): Promise<HostedDashboard> {
-  const secret = randomBytes(SECRET_BYTES).toString("hex");
+  // A session taking over keeps the previous secret: open dashboard tabs (and saved links) keep working.
+  const secret = previousSecret(opts.home) ?? randomBytes(SECRET_BYTES).toString("hex");
   const ui = await startUi({ ...opts, secret });
   const info: DashboardInfo = { url: ui.url, port: ui.port, pid: process.pid };
   const file = dashboardFile(opts.home);
@@ -85,7 +92,6 @@ export async function hostDashboard(opts: { home: string; pipe: string; port: nu
     info,
     close: async () => {
       await ui.close();
-      if (readDashboardInfo(opts.home)?.pid === process.pid) rmSync(file, { force: true });
     },
   };
 }

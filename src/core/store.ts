@@ -78,7 +78,7 @@ export class MessageStore {
     file: string,
     private readonly log: Logger,
   ) {
-    if (file !== ":memory:") mkdirSync(dirname(file), { recursive: true });
+    if (file !== ":memory:") mkdirSync(dirname(file), { recursive: true, mode: 0o700 }); // owner-only on Unix
     this.db = new DatabaseSync(file);
     this.db.exec("PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 3000;");
     this.db.exec(SCHEMA);

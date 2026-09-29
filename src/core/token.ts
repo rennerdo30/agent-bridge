@@ -16,7 +16,7 @@ export function tokenPath(home: string): string {
  */
 export function loadOrCreateToken(home: string): string {
   const file = tokenPath(home);
-  mkdirSync(dirname(file), { recursive: true });
+  mkdirSync(dirname(file), { recursive: true, mode: 0o700 }); // owner-only on Unix
   try {
     const fd = openSync(file, "wx", OWNER_ONLY);
     try {

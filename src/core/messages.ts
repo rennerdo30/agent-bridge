@@ -56,6 +56,7 @@ export const en = {
   "cli.opencode.restart": "Restart opencode to load it. Requires Node.js 22.13+ on PATH.",
   "cli.opencode.removed": "Removed the agent-bridge opencode plugin from {dir}:",
   "cli.opencode.nothing": "The agent-bridge opencode plugin is not installed in {dir}.",
+  "ask.hookBypassed": "WARNING: Codex changed files ({files}) without its agent-bridge permission hook asking you: Codex's automatic reviewer approved it. The hook is not active (not trusted, or changed by an update). agent-bridge will run Codex ask-mode subagents strictly read-only until you trust the hook again via /hooks in Codex.",
   "ask.unsupported":
     "access \"ask\" is not available for {agent} here, so it ran read-only. (opencode always supports it; Codex needs the agent-bridge PermissionRequest hook trusted via /hooks; Claude is not supported yet.)",
   "smoke.missing":"{agent}: not installed, skipped.",

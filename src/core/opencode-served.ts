@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { extname } from "node:path";
-import { checkDepthPublic, childEnvPublic, DelegateError, resolveBinary, unwrapNpmShim, type DelegateRequest, type DelegateResult } from "./delegate.js";
+import { checkDepthPublic, childEnvPublic, DelegateError, killTree, trackChild, resolveBinary, unwrapNpmShim, type DelegateRequest, type DelegateResult } from "./delegate.js";
 import { progressEventHandler } from "./progress.js";
 import type { PermissionDecision, PermissionRequest } from "./relay.js";
 
@@ -38,10 +38,12 @@ function startServe(bin: string, cwd: string, env: NodeJS.ProcessEnv): Promise<{
       env: { ...env, PWD: cwd },
       windowsHide: true,
       stdio: ["ignore", "pipe", "pipe"],
+      detached: process.platform !== "win32",
     });
+    trackChild(child);
     let out = "";
     const timer = setTimeout(() => {
-      child.kill();
+      void killTree(child);
       reject(new DelegateError("opencode serve did not start in time", "timeout", out.slice(-2_000)));
     }, SERVE_START_TIMEOUT_MS);
     const onData = (d: Buffer) => {
@@ -215,6 +217,6 @@ export async function delegateToOpencodeServed(
     clearTimeout(timer);
     req.signal?.removeEventListener("abort", onAbort);
     ac.abort();
-    child.kill();
+    await killTree(child);
   }
 }

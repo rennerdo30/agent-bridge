@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -7,29 +7,64 @@ import { join } from "node:path";
  * config.toml under [hooks.state."<plugin>:plugin.json#hooks[0]:<event>:<group>:<handler>"].
  *
  * Forwarding permissions from a Codex subagent relies on the agent-bridge PermissionRequest hook. If it
- * does not run, Codex's automatic reviewer would decide alone, so forwarding is only used when this
- * trust entry exists. Keep the hook definition in plugin.json unchanged: editing it invalidates the trust.
+ * does not run, Codex's automatic reviewer decides alone. A trust entry alone is not proof (a changed hook
+ * keeps a stale entry), so agent-bridge also records what it observed per trusted hash:
+ *  - verified: the hook answered a real request through the relay
+ *  - failed:   a Codex "ask" run changed files without the hook asking (the reviewer approved)
+ * A failed hash is never used again; the user has to re-trust the hook in /hooks (which changes the hash).
  */
 const PERMISSION_HOOK_STATE_KEY = 'hooks.state."agent-bridge@agent-bridge:plugin.json#hooks[0]:permission_request:0:0"';
+const OBSERVATIONS_FILE = "codex-hook.json";
 
 export function codexHome(env: NodeJS.ProcessEnv = process.env): string {
   return env.CODEX_HOME?.trim() || join(homedir(), ".codex");
 }
 
-export function codexPermissionHookTrusted(home: string = codexHome(), read: (p: string) => string = (p) => readFileSync(p, "utf8")): boolean {
+/** The trusted hash Codex stored for the agent-bridge PermissionRequest hook, if any. */
+export function codexPermissionHookHash(home: string = codexHome(), read: (p: string) => string = (p) => readFileSync(p, "utf8")): string | null {
   let text: string;
   try {
     text = read(join(home, "config.toml"));
   } catch {
-    return false;
+    return null;
   }
   const at = text.indexOf(`[${PERMISSION_HOOK_STATE_KEY}]`);
-  if (at < 0) return false;
-  // The table body runs until the next table header.
-  const rest = text.slice(at).split(/\r?\n/).slice(1);
-  for (const line of rest) {
+  if (at < 0) return null;
+  for (const line of text.slice(at).split(/\r?\n/).slice(1)) {
     if (line.trim().startsWith("[")) break;
-    if (/^\s*trusted_hash\s*=\s*"sha256:[0-9a-f]+"/.test(line)) return true;
+    const m = /^\s*trusted_hash\s*=\s*"(sha256:[0-9a-f]+)"/.exec(line);
+    if (m) return m[1]!;
   }
-  return false;
+  return null;
+}
+
+type Observation = "verified" | "failed";
+
+function readObservations(bridgeHome: string): Record<string, Observation> {
+  try {
+    return JSON.parse(readFileSync(join(bridgeHome, OBSERVATIONS_FILE), "utf8")) as Record<string, Observation>;
+  } catch {
+    return {};
+  }
+}
+
+export function recordCodexHookObservation(bridgeHome: string, hash: string, observation: Observation): void {
+  const all = readObservations(bridgeHome);
+  if (all[hash] === "failed") return; // never upgrade a hash that let the reviewer decide
+  all[hash] = observation;
+  try {
+    writeFileSync(join(bridgeHome, OBSERVATIONS_FILE), JSON.stringify(all, null, 2), { mode: 0o600 });
+  } catch {
+    // best effort; the in-run warning still reaches the user
+  }
+}
+
+/** Trusted in Codex and not caught letting the reviewer approve. */
+export function codexPermissionHookTrusted(
+  bridgeHome: string,
+  home: string = codexHome(),
+  read: (p: string) => string = (p) => readFileSync(p, "utf8"),
+): boolean {
+  const hash = codexPermissionHookHash(home, read);
+  return hash !== null && readObservations(bridgeHome)[hash] !== "failed";
 }

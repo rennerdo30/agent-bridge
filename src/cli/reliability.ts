@@ -8,6 +8,7 @@ import type { Logger } from "../core/logger.js";
 import type { CodingAgent } from "../core/protocol.js";
 import { createWorktree, finishWorktree } from "../core/worktree.js";
 import { codexPermissionHookTrusted } from "../core/codex-trust.js";
+import { resolveHome } from "../core/paths.js";
 import { delegateToOpencodeServed } from "../core/opencode-served.js";
 import { PermissionRelay, type PermissionDecision, type PermissionRequest } from "../core/relay.js";
 
@@ -41,7 +42,7 @@ async function runAsk(
   const base = { prompt, cwd, sessionId: null, timeoutSec: RUN_TIMEOUT_SEC, log };
   if (agent === "opencode") return delegateToOpencodeServed({ ...base, bin: BINS.opencode, onPermission: decide });
   if (agent === "codex") {
-    if (!codexPermissionHookTrusted()) return null;
+    if (!codexPermissionHookTrusted(resolveHome())) return null;
     const relay = new PermissionRelay(decide, log);
     await relay.start();
     try {

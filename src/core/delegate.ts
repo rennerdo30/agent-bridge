@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { delimiter, extname, isAbsolute, join, win32 } from "node:path";
 import type { ClaudePermissionMode, CodexSandbox } from "./config.js";
@@ -69,6 +69,51 @@ export function unwrapNpmShim(shimPath: string, readFile: (p: string) => string 
   return null;
 }
 
+/** Every process tree started by a delegate, so shutdown can stop them all. */
+const liveChildren = new Set<ChildProcess>();
+
+/**
+ * Stop a delegate and everything it started (the agent's own tool processes, the native binary behind
+ * a node launcher). child.kill() alone only stops the direct child on Windows.
+ */
+export function killTree(child: ChildProcess): Promise<void> {
+  const pid = child.pid;
+  if (!pid || child.exitCode !== null) return Promise.resolve();
+  return new Promise((resolve) => {
+    if (process.platform === "win32") {
+      const tk = spawn("taskkill", ["/PID", String(pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" });
+      tk.on("error", () => (child.kill(), resolve()));
+      tk.on("close", () => resolve());
+    } else {
+      try {
+        process.kill(-pid, "SIGTERM");
+      } catch {
+        child.kill("SIGTERM");
+      }
+      const force = setTimeout(() => {
+        try {
+          process.kill(-pid, "SIGKILL");
+        } catch {
+          // already gone
+        }
+        resolve();
+      }, KILL_GRACE_MS);
+      child.once("exit", () => (clearTimeout(force), resolve()));
+    }
+  });
+}
+
+/** Kill every running delegate's process tree (on shutdown); resolves when they are gone or after a cap. */
+export async function killAllDelegates(capMs = KILL_GRACE_MS): Promise<void> {
+  const all = [...liveChildren].map((c) => killTree(c));
+  await Promise.race([Promise.all(all), new Promise((r) => setTimeout(r, capMs))]);
+}
+
+export function trackChild(child: ChildProcess): void {
+  liveChildren.add(child);
+  child.once("exit", () => liveChildren.delete(child));
+}
+
 export interface RunResult {
   code: number | null;
   stdout: string;
@@ -120,8 +165,14 @@ export function runProcess(opts: {
       shell: needsShell,
       windowsHide: true,
       stdio: ["pipe", "pipe", "pipe"],
+      // Own process group on POSIX, so the whole tree can be killed (see killTree).
+      detached: process.platform !== "win32",
     });
-    let stdout = "";
+    trackChild(child);
+    // Long runs can print more than the cap: keep the start (session id) and the end (final answer).
+    let head = "";
+    let tail = "";
+    const captured = () => (tail ? `${head}\n${tail.slice(tail.indexOf("\n") + 1)}` : head);
     let stderr = "";
     let settled = false;
     const finish = (fn: () => void) => {
@@ -131,23 +182,21 @@ export function runProcess(opts: {
       opts.signal?.removeEventListener("abort", onAbort);
       fn();
     };
-    const kill = () => {
-      child.kill();
-      setTimeout(() => child.kill("SIGKILL"), KILL_GRACE_MS).unref();
-    };
+    const kill = () => void killTree(child);
     const timer = setTimeout(() => {
       kill();
-      finish(() => reject(new DelegateError(`delegate timed out after ${Math.round(opts.timeoutMs / 1000)}s`, "timeout", stderr.slice(-STDERR_TAIL_CHARS), stdout)));
+      finish(() => reject(new DelegateError(`delegate timed out after ${Math.round(opts.timeoutMs / 1000)}s`, "timeout", stderr.slice(-STDERR_TAIL_CHARS), captured())));
     }, opts.timeoutMs);
     const onAbort = () => {
       kill();
-      finish(() => reject(new DelegateError("delegate aborted", "aborted", "", stdout)));
+      finish(() => reject(new DelegateError("delegate aborted", "aborted", "", captured())));
     };
     opts.signal?.addEventListener("abort", onAbort, { once: true });
 
     let pending = "";
     child.stdout.setEncoding("utf8").on("data", (d: string) => {
-      if (stdout.length < MAX_CAPTURE_CHARS) stdout += d;
+      if (head.length < MAX_CAPTURE_CHARS / 2) head += d;
+      else tail = (tail + d).slice(-MAX_CAPTURE_CHARS / 2);
       if (!opts.onLine) return;
       pending += d;
       let nl: number;
@@ -167,7 +216,7 @@ export function runProcess(opts: {
       stderr = (stderr + d).slice(-MAX_CAPTURE_CHARS);
     });
     child.on("error", (err) => finish(() => reject(new DelegateError(`failed to start ${opts.bin}: ${err.message}`, "failed"))));
-    child.on("close", (code) => finish(() => resolve({ code, stdout, stderr })));
+    child.on("close", (code) => finish(() => resolve({ code, stdout: captured(), stderr })));
     child.stdin.on("error", () => {
       // The child may exit before reading stdin; the close handler reports the outcome.
     });
@@ -213,7 +262,9 @@ export const CODEX_ASK_HINT =
 export const OPENCODE_READ_ONLY_PERMISSIONS = { edit: "ask", bash: "ask" } as const;
 
 function childEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
-  return { ...process.env, ...extra, [DELEGATE_DEPTH_ENV]: String(currentDelegateDepth() + 1) };
+  // The parent's project dir would point a delegated Claude (it may work in a worktree) at the wrong folder.
+  const { CLAUDE_PROJECT_DIR: _parentProject, ...env } = process.env;
+  return { ...env, ...extra, [DELEGATE_DEPTH_ENV]: String(currentDelegateDepth() + 1) };
 }
 
 function checkDepth(): void {

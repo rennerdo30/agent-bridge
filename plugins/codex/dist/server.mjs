@@ -36674,7 +36674,7 @@ function parseAgentKind(v) {
 }
 function defaultPeerName(agent, cwd) {
   const folder = basename(cwd).replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^[-._]+/, "").slice(0, 40);
-  return folder ? `${agent}-${folder}` : agent;
+  return `${agent}-${folder || "session"}`;
 }
 
 // src/core/delegate.ts
@@ -36852,6 +36852,40 @@ function unwrapNpmShim(shimPath, readFile2 = (p) => readFileSync2(p, "utf8")) {
   if (js) return { command: process.execPath, prefix: [win32.join(dir, js[1])] };
   return null;
 }
+var liveChildren = /* @__PURE__ */ new Set();
+function killTree(child) {
+  const pid = child.pid;
+  if (!pid || child.exitCode !== null) return Promise.resolve();
+  return new Promise((resolve3) => {
+    if (process.platform === "win32") {
+      const tk = spawn("taskkill", ["/PID", String(pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" });
+      tk.on("error", () => (child.kill(), resolve3()));
+      tk.on("close", () => resolve3());
+    } else {
+      try {
+        process.kill(-pid, "SIGTERM");
+      } catch {
+        child.kill("SIGTERM");
+      }
+      const force = setTimeout(() => {
+        try {
+          process.kill(-pid, "SIGKILL");
+        } catch {
+        }
+        resolve3();
+      }, KILL_GRACE_MS);
+      child.once("exit", () => (clearTimeout(force), resolve3()));
+    }
+  });
+}
+async function killAllDelegates(capMs = KILL_GRACE_MS) {
+  const all = [...liveChildren].map((c) => killTree(c));
+  await Promise.race([Promise.all(all), new Promise((r) => setTimeout(r, capMs))]);
+}
+function trackChild(child) {
+  liveChildren.add(child);
+  child.once("exit", () => liveChildren.delete(child));
+}
 function runProcess(opts) {
   let resolved = resolveBinary(opts.bin, opts.env);
   if (!resolved) return Promise.reject(new DelegateError(`executable not found: ${opts.bin}`, "not_found"));
@@ -36879,9 +36913,15 @@ function runProcess(opts) {
       env: { ...opts.env, PWD: opts.cwd },
       shell: needsShell,
       windowsHide: true,
-      stdio: ["pipe", "pipe", "pipe"]
+      stdio: ["pipe", "pipe", "pipe"],
+      // Own process group on POSIX, so the whole tree can be killed (see killTree).
+      detached: process.platform !== "win32"
     });
-    let stdout = "";
+    trackChild(child);
+    let head = "";
+    let tail = "";
+    const captured = () => tail ? `${head}
+${tail.slice(tail.indexOf("\n") + 1)}` : head;
     let stderr = "";
     let settled = false;
     const finish = (fn) => {
@@ -36891,22 +36931,20 @@ function runProcess(opts) {
       opts.signal?.removeEventListener("abort", onAbort);
       fn();
     };
-    const kill = () => {
-      child.kill();
-      setTimeout(() => child.kill("SIGKILL"), KILL_GRACE_MS).unref();
-    };
+    const kill = () => void killTree(child);
     const timer = setTimeout(() => {
       kill();
-      finish(() => reject(new DelegateError(`delegate timed out after ${Math.round(opts.timeoutMs / 1e3)}s`, "timeout", stderr.slice(-STDERR_TAIL_CHARS), stdout)));
+      finish(() => reject(new DelegateError(`delegate timed out after ${Math.round(opts.timeoutMs / 1e3)}s`, "timeout", stderr.slice(-STDERR_TAIL_CHARS), captured())));
     }, opts.timeoutMs);
     const onAbort = () => {
       kill();
-      finish(() => reject(new DelegateError("delegate aborted", "aborted", "", stdout)));
+      finish(() => reject(new DelegateError("delegate aborted", "aborted", "", captured())));
     };
     opts.signal?.addEventListener("abort", onAbort, { once: true });
     let pending = "";
     child.stdout.setEncoding("utf8").on("data", (d) => {
-      if (stdout.length < MAX_CAPTURE_CHARS) stdout += d;
+      if (head.length < MAX_CAPTURE_CHARS / 2) head += d;
+      else tail = (tail + d).slice(-MAX_CAPTURE_CHARS / 2);
       if (!opts.onLine) return;
       pending += d;
       let nl;
@@ -36925,7 +36963,7 @@ function runProcess(opts) {
       stderr = (stderr + d).slice(-MAX_CAPTURE_CHARS);
     });
     child.on("error", (err) => finish(() => reject(new DelegateError(`failed to start ${opts.bin}: ${err.message}`, "failed"))));
-    child.on("close", (code) => finish(() => resolve3({ code, stdout, stderr })));
+    child.on("close", (code) => finish(() => resolve3({ code, stdout: captured(), stderr })));
     child.stdin.on("error", () => {
     });
     child.stdin.end(opts.stdin);
@@ -36938,7 +36976,8 @@ var CODEX_ASK_POLICY = 'approval_policy="on-request"';
 var CODEX_ASK_HINT = "(The workspace is read-only on purpose: when you need to change files or run a command the sandbox blocks, request escalated permissions for it. The user is asked and decides; if denied, stop and report.)";
 var OPENCODE_READ_ONLY_PERMISSIONS = { edit: "ask", bash: "ask" };
 function childEnv(extra = {}) {
-  return { ...process.env, ...extra, [DELEGATE_DEPTH_ENV]: String(currentDelegateDepth() + 1) };
+  const { CLAUDE_PROJECT_DIR: _parentProject, ...env } = process.env;
+  return { ...env, ...extra, [DELEGATE_DEPTH_ENV]: String(currentDelegateDepth() + 1) };
 }
 function checkDepth() {
   if (currentDelegateDepth() >= MAX_DELEGATE_DEPTH) {
@@ -37208,6 +37247,7 @@ var en = {
   "cli.opencode.restart": "Restart opencode to load it. Requires Node.js 22.13+ on PATH.",
   "cli.opencode.removed": "Removed the agent-bridge opencode plugin from {dir}:",
   "cli.opencode.nothing": "The agent-bridge opencode plugin is not installed in {dir}.",
+  "ask.hookBypassed": "WARNING: Codex changed files ({files}) without its agent-bridge permission hook asking you: Codex's automatic reviewer approved it. The hook is not active (not trusted, or changed by an update). agent-bridge will run Codex ask-mode subagents strictly read-only until you trust the hook again via /hooks in Codex.",
   "ask.unsupported": 'access "ask" is not available for {agent} here, so it ran read-only. (opencode always supports it; Codex needs the agent-bridge PermissionRequest hook trusted via /hooks; Claude is not supported yet.)',
   "smoke.missing": "{agent}: not installed, skipped.",
   "smoke.start": "{agent} {version}{note}: running\u2026",
@@ -37377,7 +37417,7 @@ function toMessage(r) {
 var MessageStore = class {
   constructor(file2, log) {
     this.log = log;
-    if (file2 !== ":memory:") mkdirSync2(dirname(file2), { recursive: true });
+    if (file2 !== ":memory:") mkdirSync2(dirname(file2), { recursive: true, mode: 448 });
     this.db = new DatabaseSync(file2);
     this.db.exec("PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 3000;");
     this.db.exec(SCHEMA);
@@ -37456,7 +37496,7 @@ function tokenPath(home) {
 }
 function loadOrCreateToken(home) {
   const file2 = tokenPath(home);
-  mkdirSync3(dirname2(file2), { recursive: true });
+  mkdirSync3(dirname2(file2), { recursive: true, mode: 448 });
   try {
     const fd = openSync(file2, "wx", OWNER_ONLY);
     try {
@@ -38171,9 +38211,9 @@ function resolvePipePath(home, env = process.env, platform = process.platform) {
   if (override) return override;
   if (platform === "win32") {
     const hash2 = createHash("sha256").update(home.toLowerCase()).digest("hex").slice(0, PIPE_HASH_LENGTH);
-    return `${WINDOWS_PIPE_PREFIX}${APP_NAME}-${hash2}`;
+    return `${WINDOWS_PIPE_PREFIX}${APP_NAME}-${hash2}-p${PROTOCOL_VERSION}`;
   }
-  return posix.join(home, SOCKET_FILE_NAME);
+  return posix.join(home, SOCKET_FILE_NAME.replace(/\.sock$/, `-p${PROTOCOL_VERSION}.sock`));
 }
 function resolveDbPath(home) {
   return join6(home, DB_FILE_NAME);
@@ -38535,11 +38575,13 @@ function startServe(bin, cwd, env) {
       cwd,
       env: { ...env, PWD: cwd },
       windowsHide: true,
-      stdio: ["ignore", "pipe", "pipe"]
+      stdio: ["ignore", "pipe", "pipe"],
+      detached: process.platform !== "win32"
     });
+    trackChild(child);
     let out = "";
     const timer = setTimeout(() => {
-      child.kill();
+      void killTree(child);
       reject(new DelegateError("opencode serve did not start in time", "timeout", out.slice(-2e3)));
     }, SERVE_START_TIMEOUT_MS);
     const onData = (d) => {
@@ -38687,7 +38729,7 @@ async function delegateToOpencodeServed(req) {
     clearTimeout(timer);
     req.signal?.removeEventListener("abort", onAbort);
     ac.abort();
-    child.kill();
+    await killTree(child);
   }
 }
 
@@ -38804,6 +38846,7 @@ var RELAY_HOST = "127.0.0.1";
 var RELAY_PATH = "/permission";
 var MAX_REQUEST_BYTES = 256 * 1024;
 var SECRET_BYTES = 24;
+var KEEP_ALIVE_MS = 6e4;
 var PermissionRelay = class {
   constructor(handler, log) {
     this.handler = handler;
@@ -38816,17 +38859,16 @@ var PermissionRelay = class {
   url = "";
   async start() {
     this.server = createServer2((req, res) => {
-      void this.handle(req).then(
-        (body) => {
-          res.writeHead(200, { "content-type": "application/json" });
-          res.end(JSON.stringify(body));
-        },
-        (err) => {
-          this.log.warn("permission relay request failed", { err: err.message });
-          res.writeHead(400, { "content-type": "application/json" });
-          res.end(JSON.stringify({ allow: false, message: "agent-bridge relay error" }));
-        }
-      );
+      res.writeHead(200, { "content-type": "application/json" });
+      res.flushHeaders();
+      const keepAlive = setInterval(() => res.write(" "), KEEP_ALIVE_MS);
+      void this.handle(req).catch((err) => {
+        this.log.warn("permission relay request failed", { err: err.message });
+        return { allow: false, message: "agent-bridge relay error" };
+      }).then((body) => {
+        clearInterval(keepAlive);
+        res.end(JSON.stringify(body));
+      });
     });
     this.server.requestTimeout = 0;
     this.server.headersTimeout = 0;
@@ -38871,28 +38913,49 @@ var PermissionRelay = class {
 };
 
 // src/core/codex-trust.ts
-import { readFileSync as readFileSync4 } from "node:fs";
+import { readFileSync as readFileSync4, writeFileSync } from "node:fs";
 import { homedir as homedir2 } from "node:os";
 import { join as join7 } from "node:path";
 var PERMISSION_HOOK_STATE_KEY = 'hooks.state."agent-bridge@agent-bridge:plugin.json#hooks[0]:permission_request:0:0"';
+var OBSERVATIONS_FILE = "codex-hook.json";
 function codexHome(env = process.env) {
   return env.CODEX_HOME?.trim() || join7(homedir2(), ".codex");
 }
-function codexPermissionHookTrusted(home = codexHome(), read = (p) => readFileSync4(p, "utf8")) {
+function codexPermissionHookHash(home = codexHome(), read = (p) => readFileSync4(p, "utf8")) {
   let text2;
   try {
     text2 = read(join7(home, "config.toml"));
   } catch {
-    return false;
+    return null;
   }
   const at = text2.indexOf(`[${PERMISSION_HOOK_STATE_KEY}]`);
-  if (at < 0) return false;
-  const rest = text2.slice(at).split(/\r?\n/).slice(1);
-  for (const line of rest) {
+  if (at < 0) return null;
+  for (const line of text2.slice(at).split(/\r?\n/).slice(1)) {
     if (line.trim().startsWith("[")) break;
-    if (/^\s*trusted_hash\s*=\s*"sha256:[0-9a-f]+"/.test(line)) return true;
+    const m = /^\s*trusted_hash\s*=\s*"(sha256:[0-9a-f]+)"/.exec(line);
+    if (m) return m[1];
   }
-  return false;
+  return null;
+}
+function readObservations(bridgeHome) {
+  try {
+    return JSON.parse(readFileSync4(join7(bridgeHome, OBSERVATIONS_FILE), "utf8"));
+  } catch {
+    return {};
+  }
+}
+function recordCodexHookObservation(bridgeHome, hash2, observation) {
+  const all = readObservations(bridgeHome);
+  if (all[hash2] === "failed") return;
+  all[hash2] = observation;
+  try {
+    writeFileSync(join7(bridgeHome, OBSERVATIONS_FILE), JSON.stringify(all, null, 2), { mode: 384 });
+  } catch {
+  }
+}
+function codexPermissionHookTrusted(bridgeHome, home = codexHome(), read = (p) => readFileSync4(p, "utf8")) {
+  const hash2 = codexPermissionHookHash(home, read);
+  return hash2 !== null && readObservations(bridgeHome)[hash2] !== "failed";
 }
 
 // src/core/runfeed.ts
@@ -38959,7 +39022,7 @@ function startRunFeed(opts) {
 
 // src/cli/dashboard.ts
 import { randomBytes as randomBytes5 } from "node:crypto";
-import { chmodSync as chmodSync2, readFileSync as readFileSync6, rmSync, writeFileSync } from "node:fs";
+import { chmodSync as chmodSync2, readFileSync as readFileSync6, writeFileSync as writeFileSync2 } from "node:fs";
 import { request } from "node:http";
 import { join as join10 } from "node:path";
 
@@ -39396,17 +39459,21 @@ function probeDashboard(port) {
     req.end();
   });
 }
+function previousSecret(home) {
+  const t2 = readDashboardInfo(home)?.url.match(/[?&]t=([0-9a-f]{16,})/)?.[1];
+  return t2 ?? null;
+}
 async function findRunningDashboard(home) {
   const info = readDashboardInfo(home);
   if (!info || !processAlive(info.pid)) return null;
   return await probeDashboard(info.port) ? info : null;
 }
 async function hostDashboard(opts) {
-  const secret = randomBytes5(SECRET_BYTES3).toString("hex");
+  const secret = previousSecret(opts.home) ?? randomBytes5(SECRET_BYTES3).toString("hex");
   const ui = await startUi({ ...opts, secret });
   const info = { url: ui.url, port: ui.port, pid: process.pid };
   const file2 = dashboardFile(opts.home);
-  writeFileSync(file2, JSON.stringify(info, null, 2), { mode: OWNER_ONLY2 });
+  writeFileSync2(file2, JSON.stringify(info, null, 2), { mode: OWNER_ONLY2 });
   try {
     chmodSync2(file2, OWNER_ONLY2);
   } catch {
@@ -39416,7 +39483,6 @@ async function hostDashboard(opts) {
     info,
     close: async () => {
       await ui.close();
-      if (readDashboardInfo(opts.home)?.pid === process.pid) rmSync(file2, { force: true });
     }
   };
 }
@@ -39436,7 +39502,7 @@ function openBrowser(url2) {
 
 // src/mcp/rewake.ts
 import { randomBytes as randomBytes6 } from "node:crypto";
-import { mkdirSync as mkdirSync5, rmSync as rmSync2, writeFileSync as writeFileSync2 } from "node:fs";
+import { mkdirSync as mkdirSync5, rmSync, writeFileSync as writeFileSync3 } from "node:fs";
 import { createServer as createServer4 } from "node:http";
 import { join as join11 } from "node:path";
 var SESSIONS_DIR = "sessions";
@@ -39506,14 +39572,14 @@ var RewakeEndpoint = class {
     const file2 = sessionFile(this.home, sessionId);
     mkdirSync5(join11(this.home, SESSIONS_DIR), { recursive: true });
     const reg = { port: this.port, secret: this.secret, pid: process.pid };
-    writeFileSync2(file2, JSON.stringify(reg), { mode: 384 });
-    if (this.registered) rmSync2(sessionFile(this.home, this.registered), { force: true });
+    writeFileSync3(file2, JSON.stringify(reg), { mode: 384 });
+    if (this.registered) rmSync(sessionFile(this.home, this.registered), { force: true });
     this.registered = sessionId;
     this.log.debug("rewake endpoint registered", { sessionId });
   }
   async stop() {
     this.waiter?.abort("superseded");
-    if (this.registered) rmSync2(sessionFile(this.home, this.registered), { force: true });
+    if (this.registered) rmSync(sessionFile(this.home, this.registered), { force: true });
     const s = this.server;
     this.server = null;
     if (s) await new Promise((r) => s.close(() => r()));
@@ -39521,7 +39587,8 @@ var RewakeEndpoint = class {
 };
 
 // src/core/worktree.ts
-import { mkdirSync as mkdirSync6 } from "node:fs";
+import { createHash as createHash2 } from "node:crypto";
+import { mkdirSync as mkdirSync6, readFileSync as readFileSync7 } from "node:fs";
 import { basename as basename2, isAbsolute as isAbsolute2, join as join12, relative } from "node:path";
 var GIT = "git";
 var GIT_TIMEOUT_MS = 6e4;
@@ -39571,13 +39638,37 @@ function worktreeReport(wt, outcome) {
     `Discard: git worktree remove --force "${wt.path}" && git branch -D ${wt.branch}`
   ].join("\n");
 }
-async function gitStatusSnapshot(cwd, log) {
+async function gitChangeSnapshot(cwd, log) {
+  let status;
   try {
-    const out = await git(["status", "--porcelain"], cwd, log);
-    return new Set(out.split(/\r?\n/).filter(Boolean));
+    status = await git(["status", "--porcelain", "--untracked-files=all"], cwd, log);
   } catch {
     return null;
   }
+  let root;
+  try {
+    root = await git(["rev-parse", "--show-toplevel"], cwd, log);
+  } catch {
+    return null;
+  }
+  const snap = /* @__PURE__ */ new Map();
+  for (const line of status.split(/\r?\n/).filter(Boolean)) {
+    const file2 = line.slice(3).replace(/^.* -> /, "").replace(/^"|"$/g, "");
+    let fp = line.slice(0, 2);
+    try {
+      fp += ":" + createHash2("sha1").update(readFileSync7(join12(root, file2))).digest("hex");
+    } catch {
+      fp += ":missing";
+    }
+    snap.set(file2, fp);
+  }
+  return snap;
+}
+function changedFiles(before, after) {
+  const out = /* @__PURE__ */ new Set();
+  for (const [f, fp] of after) if (before.get(f) !== fp) out.add(f);
+  for (const f of before.keys()) if (!after.has(f)) out.add(f);
+  return [...out].sort();
 }
 
 // src/mcp/jobs.ts
@@ -39629,6 +39720,7 @@ var JobManager = class {
       status: "running",
       sessionId: null,
       workdir: null,
+      worktree: null,
       resume,
       queue: []
     };
@@ -39653,6 +39745,10 @@ var JobManager = class {
         job.status = outcome?.result && !outcome.result.isError ? "done" : "failed";
         job.sessionId = outcome?.result?.sessionId ?? sessionOfError(outcome?.error) ?? job.sessionId;
         job.workdir = outcome?.result?.workdir ?? job.workdir;
+        job.worktree = outcome?.result?.worktree ?? job.worktree;
+        if (job.queue.length && job.resume && job.sessionId && !job.controller.signal.aborted) {
+          this.launch(job, job.resume(job.queue.splice(0).join("\n\n"), job.sessionId, job.workdir, job.worktree));
+        }
       }
     };
   }
@@ -39677,7 +39773,7 @@ var JobManager = class {
     if (!job.resume || !job.sessionId) return { outcome: "no-session", job };
     if (!this.canStart()) return { outcome: "busy", job };
     this.log.info("subagent resumed", { job: job.name, sessionId: job.sessionId });
-    this.launch(job, job.resume(message, job.sessionId, job.workdir));
+    this.launch(job, job.resume(message, job.sessionId, job.workdir, job.worktree));
     return { outcome: "started", job };
   }
   launch(job, run) {
@@ -39694,13 +39790,16 @@ var JobManager = class {
     run(job.controller.signal, onProgress).then(
       (res) => {
         job.workdir = res.workdir ?? job.workdir;
+        job.worktree = res.worktree ?? job.worktree;
         this.finish(job, res.isError ? "failed" : "done", res.text || "(no answer text returned)", res.sessionId);
       },
       (err) => this.finish(job, "failed", String(err?.message ?? err), sessionOfError(err))
     );
   }
-  cancel(id) {
-    const job = this.running.get(id) ?? [...this.running.values()].find((j) => j.name === id);
+  /** Cancel a background job or a blocking ask_* run, by name or id. */
+  cancel(ref) {
+    const id = ref.replace(/^.*-(?:job|ask)-/, "");
+    const job = [...this.running.values(), ...this.foreground.values()].find((j) => j.id === id || j.name === ref);
     if (!job) return false;
     job.queue = [];
     job.controller.abort();
@@ -39723,7 +39822,7 @@ var JobManager = class {
 ${text2}
 
 (Your queued follow-up was sent to it; its answer will arrive as another message.)`);
-      this.launch(job, job.resume(queued, job.sessionId, job.workdir));
+      this.launch(job, job.resume(queued, job.sessionId, job.workdir, job.worktree));
       return;
     }
     this.post(job, `${this.header(job, status, seconds)}
@@ -39843,8 +39942,8 @@ async function startServer(argv = process.argv.slice(2)) {
     token: loadOrCreateToken(home),
     dbPath: resolveDbPath(home),
     agent,
-    // Until the project dir is known, the folder name would be the plugin version; use the bare agent kind.
-    name: cfg.name ?? (cwdKnown ? defaultPeerName(agent, cwd) : agent),
+    // Until the project dir is known, the folder name would be the plugin version.
+    name: cfg.name ?? defaultPeerName(agent, cwdKnown ? cwd : ""),
     cwd,
     autoWake: cfg.autoWake,
     log
@@ -39854,8 +39953,10 @@ async function startServer(argv = process.argv.slice(2)) {
   if (node2) {
     ctx.jobs = new JobManager(node2, log.child("jobs"));
     ctx.activity = (s) => node2.setActivity(s);
+    let cwdSettled = cwdKnown;
     ctx.learnCwd = async (projectDir) => {
-      if (projectDir === node2.cwd) return;
+      if (cwdSettled || projectDir === node2.cwd) return;
+      cwdSettled = true;
       const name = cfg.name ? void 0 : defaultPeerName(agent, projectDir);
       await node2.relocate(projectDir, name).catch((err) => log.warn("relocate failed", { err: err.message }));
     };
@@ -39919,7 +40020,7 @@ async function startServer(argv = process.argv.slice(2)) {
   }
   let rewake = null;
   if (agent === "claude" && node2) {
-    const shouldWake = (m) => m.hop < cfg.maxHops && (m.from.id.startsWith("job:") || node2.isAwaitedReply(m) || node2.autoWakeEnabled);
+    const shouldWake = (m) => !ctx.channelActive() && m.hop < cfg.maxHops && (m.from.id.startsWith("job:") || node2.isAwaitedReply(m) || node2.autoWakeEnabled);
     rewake = new RewakeEndpoint(home, node2, shouldWake, log.child("rewake"));
     try {
       await rewake.start();
@@ -39949,9 +40050,15 @@ async function startServer(argv = process.argv.slice(2)) {
     return info?.url ?? null;
   };
   const transport = new StdioServerTransport();
+  let shuttingDown = false;
   const shutdown = async (reason) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
     log.info("shutting down", { reason });
     ctx.jobs?.cancelAll();
+    await killAllDelegates();
+    await mcp.close().catch(() => {
+    });
     await dashboard?.close().catch(() => {
     });
     await rewake?.stop().catch(() => {
@@ -40140,52 +40247,74 @@ function registerTools(mcp, ctx, targets) {
     const run = async (a, signal, onProgress, background) => {
       const dlog = log.child("delegate");
       const cwd = a.cwd || ctx.cwd();
-      const access = a.worktree ? a.access ?? "edit" : a.access;
-      const wt = a.worktree ? await createWorktree({ cwd, home: ctx.home, jobId: randomUUID4().slice(0, 8), log: dlog }) : null;
-      const before = !wt && access === "edit" ? await gitStatusSnapshot(cwd, dlog) : null;
+      const access = a.worktree || a._worktree ? a.access ?? "edit" : a.access;
+      const wt = a._worktree ?? (a.worktree ? await createWorktree({ cwd, home: ctx.home, jobId: randomUUID4().slice(0, 8), log: dlog }) : null);
+      const workdir = wt?.cwd ?? cwd;
+      const watchChanges = !wt && (access === "edit" || access === "ask" && target === "codex");
+      const before = watchChanges ? await gitChangeSnapshot(workdir, dlog) : null;
       let relay = null;
       let wiring;
       const asked = [];
-      if (access === "ask" && ctx.askUser) {
-        const askUser = ctx.askUser;
-        const decide = async (r) => {
-          const d = await askUser(r);
-          asked.push(`${d.allow ? "allowed" : "denied"}: ${r.tool} ${r.detail.slice(0, 80)}`);
-          return d;
-        };
-        relay = new PermissionRelay(decide, dlog);
-        await relay.start();
-        wiring = { onPermission: decide, env: relay.childEnv(), codexHookTrusted: codexPermissionHookTrusted() };
+      let relayCalls = 0;
+      const codexHash = target === "codex" ? codexPermissionHookHash() : null;
+      try {
+        if (access === "ask" && ctx.askUser) {
+          const askUser = ctx.askUser;
+          const decide = async (r) => {
+            relayCalls++;
+            const d = await askUser(r);
+            asked.push(`${d.allow ? "allowed" : "denied"}: ${r.tool} ${r.detail.slice(0, 80)}`);
+            return d;
+          };
+          relay = new PermissionRelay(decide, dlog);
+          await relay.start();
+          wiring = { onPermission: decide, env: relay.childEnv(), codexHookTrusted: codexPermissionHookTrusted(ctx.home) };
+        }
+      } catch (err) {
+        await relay?.stop();
+        throw err;
       }
       const forwarding = access === "ask" && supportsAsk(target, wiring);
-      const feed = startRunFeed({
-        home: ctx.home,
-        name: `${target}-${randomUUID4().slice(0, 8)}`,
-        header: `${target}${a.model ? ` (${a.model})` : ""} in ${wt?.cwd ?? cwd}, access ${access ?? "default"}
+      let feed;
+      try {
+        feed = startRunFeed({
+          home: ctx.home,
+          name: `${target}-${randomUUID4().slice(0, 8)}`,
+          header: `${target}${a.model ? ` (${a.model})` : ""} in ${workdir}, access ${access ?? "default"}, by ${node2?.name ?? ctx.agent}${a.session_id ? `, continues ${a.session_id}` : ""}
 ${a.prompt}
 ---`,
-        forward: onProgress
-      });
-      const res = await profile.run(
-        cfg,
-        {
-          prompt: a.prompt,
-          cwd: wt?.cwd ?? cwd,
-          sessionId: a.session_id ?? null,
-          timeoutSec: a.timeout_sec ?? (background ? MAX_JOB_TIMEOUT_SEC : DEFAULT_DELEGATE_TIMEOUT_SEC),
-          model: a.model ?? defaultModel,
-          log: dlog,
-          signal,
-          onProgress: feed.report
-        },
-        { ...a, access, relay: wiring }
-      ).then(
-        (r) => (feed.end(r.isError ? "failed" : "done", r.text), r),
-        (err) => {
-          feed.end(`failed: ${err?.message ?? err}`);
-          throw err;
-        }
-      ).finally(() => relay?.stop());
+          forward: onProgress
+        });
+      } catch (err) {
+        await relay?.stop();
+        throw err;
+      }
+      let res;
+      try {
+        res = await profile.run(
+          cfg,
+          {
+            prompt: a.prompt,
+            cwd: workdir,
+            sessionId: a.session_id ?? null,
+            timeoutSec: a.timeout_sec ?? (background ? MAX_JOB_TIMEOUT_SEC : DEFAULT_DELEGATE_TIMEOUT_SEC),
+            model: a.model ?? defaultModel,
+            log: dlog,
+            signal,
+            onProgress: feed.report
+          },
+          { ...a, access, relay: wiring }
+        );
+        feed.end(res.isError ? "failed" : "done", res.text);
+      } catch (err) {
+        feed.end(`failed: ${err?.message ?? err}`);
+        if (wt && err instanceof Error) err.message += `
+
+Its worktree (with any partial work) is ${wt.path} on branch ${wt.branch}.`;
+        throw err;
+      } finally {
+        await relay?.stop();
+      }
       const notes = [`Step-by-step log: ${feed.logPath}`];
       if (access === "ask") {
         notes.push(
@@ -40196,20 +40325,32 @@ ${asked.join("\n")}` : "No permission requests were needed." : t("ask.unsupporte
       const usage = formatUsage(res.details);
       if (usage) notes.push(usage);
       if (wt) {
-        notes.push(worktreeReport(wt, await finishWorktree(wt, a.prompt, dlog)));
+        try {
+          notes.push(worktreeReport(wt, await finishWorktree(wt, a.prompt, dlog)));
+        } catch (err) {
+          notes.push(`Could not commit the changes in worktree ${wt.path} (branch ${wt.branch}): ${err.message}`);
+        }
       } else if (before) {
-        const after = await gitStatusSnapshot(cwd, dlog);
-        const changed = after ? [...after].filter((l) => !before.has(l)) : [];
-        notes.push(changed.length ? `Files changed in your working copy:
+        const after = await gitChangeSnapshot(workdir, dlog);
+        const changed = after ? changedFiles(before, after) : [];
+        if (access === "ask" && target === "codex" && forwarding && codexHash) {
+          if (relayCalls > 0) recordCodexHookObservation(ctx.home, codexHash, "verified");
+          else if (changed.length) {
+            recordCodexHookObservation(ctx.home, codexHash, "failed");
+            log.warn("codex changed files without the permission hook asking; forwarding disabled for this hook version", { changed });
+            notes.push(t("ask.hookBypassed", { files: changed.join(", ") }));
+          }
+        }
+        if (access === "edit" || changed.length) notes.push(changed.length ? `Files changed in your working copy:
 ${changed.join("\n")}` : "No files changed.");
       }
-      return { ...res, workdir: wt?.cwd ?? cwd, text: notes.length ? `${res.text}
+      return { ...res, workdir, worktree: wt ?? void 0, text: notes.length ? `${res.text}
 
 ---
 ${notes.join("\n\n")}` : res.text };
     };
-    const resumeFor = (a) => (message, sessionId, workdir) => (signal, onProgress) => run(
-      { ...a, prompt: message, session_id: sessionId, cwd: workdir ?? a.cwd, worktree: false, access: a.worktree ? a.access ?? "edit" : a.access },
+    const resumeFor = (a) => (message, sessionId, workdir, worktree) => (signal, onProgress) => run(
+      { ...a, prompt: message, session_id: sessionId, cwd: workdir ?? a.cwd, worktree: false, _worktree: worktree ?? void 0, access: a.worktree ? a.access ?? "edit" : a.access },
       signal,
       onProgress,
       true
@@ -40231,7 +40372,7 @@ ${notes.join("\n\n")}` : res.text };
         };
         let res;
         try {
-          res = await run(a, extra.signal, onProgress, false);
+          res = await run(a, tracked ? AbortSignal.any([extra.signal, tracked.job.controller.signal]) : extra.signal, onProgress, false);
         } catch (err) {
           tracked?.end({ error: err });
           throw err;
@@ -40297,8 +40438,7 @@ ${res.text || t("delegate.empty")}`, res.isError);
       inputSchema: { job: external_exports.string().min(1) }
     },
     guarded("cancel_subagent", async (a) => {
-      const id = a.job.replace(/^.*-job-/, "");
-      return ctx.jobs?.cancel(id) ? text(t("jobs.cancelled", { name: a.job })) : text(t("jobs.unknown", { name: a.job }), true);
+      return ctx.jobs?.cancel(a.job) ? text(t("jobs.cancelled", { name: a.job })) : text(t("jobs.unknown", { name: a.job }), true);
     })
   );
   mcp.registerTool(

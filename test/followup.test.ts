@@ -85,4 +85,20 @@ describe("messaging subagents", () => {
     await until(() => agent.calls.length === 1);
     expect(agent.calls[0]).toEqual({ message: "what about security?", sessionId: "c-7", workdir: "/repo" });
   });
+
+  it("sends follow-ups queued during a blocking ask run once it ends", async () => {
+    const agent = fakeAgent();
+    const tracked = jobs.track("codex", null, "review this", agent.resume);
+    expect(jobs.followUp(tracked.job.name, "check the tests too").outcome).toBe("queued");
+    tracked.end({ result: ok("reviewed", "t-2", "/repo") });
+    await until(() => bodies().some((b) => b.includes("reply to: check the tests too")));
+    expect(agent.calls[0]).toMatchObject({ sessionId: "t-2" });
+  });
+
+  it("cancels blocking ask runs by name", () => {
+    const tracked = jobs.track("codex", null, "slow", fakeAgent().resume);
+    expect(jobs.cancel(tracked.job.name)).toBe(true);
+    expect(tracked.job.controller.signal.aborted).toBe(true);
+    expect(jobs.cancel("codex-ask-nope")).toBe(false);
+  });
 });

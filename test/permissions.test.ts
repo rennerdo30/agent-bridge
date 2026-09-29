@@ -5,8 +5,10 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { ElicitRequestSchema } from "@modelcontextprotocol/sdk/types.js";
-import { describe, expect, it } from "vitest";
-import { codexPermissionHookTrusted } from "../src/core/codex-trust.js";
+import { afterAll, describe, expect, it } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { codexPermissionHookTrusted, recordCodexHookObservation } from "../src/core/codex-trust.js";
 import { nullLogger } from "../src/core/logger.js";
 import { askRelay, PermissionRelay, RELAY_TOKEN_ENV, RELAY_URL_ENV, type PermissionRequest } from "../src/core/relay.js";
 import { askUserViaElicitation } from "../src/mcp/permissions.js";
@@ -75,15 +77,27 @@ describe("asking the user via elicitation", () => {
 
 describe("codex hook trust detection", () => {
   const key = '[hooks.state."agent-bridge@agent-bridge:plugin.json#hooks[0]:permission_request:0:0"]';
+  const trusted = () => `${key}\ntrusted_hash = "sha256:abc123"\n`;
+  const bridgeHome = mkdtempSync(join(tmpdir(), "ab-trust-"));
+  afterAll(() => rmSync(bridgeHome, { recursive: true, force: true }));
+
   it("requires the trust entry for the permission hook", () => {
-    expect(codexPermissionHookTrusted("/h", () => `${key}\ntrusted_hash = "sha256:abc123"\n`)).toBe(true);
-    expect(codexPermissionHookTrusted("/h", () => `${key}\n\n[other]\ntrusted_hash = "sha256:abc"\n`)).toBe(false);
-    expect(codexPermissionHookTrusted("/h", () => `[hooks.state."agent-bridge@agent-bridge:plugin.json#hooks[0]:stop:0:0"]\ntrusted_hash = "sha256:1"\n`)).toBe(false);
+    expect(codexPermissionHookTrusted(bridgeHome, "/h", trusted)).toBe(true);
+    expect(codexPermissionHookTrusted(bridgeHome, "/h", () => `${key}\n\n[other]\ntrusted_hash = "sha256:abc"\n`)).toBe(false);
+    expect(codexPermissionHookTrusted(bridgeHome, "/h", () => `[hooks.state."agent-bridge@agent-bridge:plugin.json#hooks[0]:stop:0:0"]\ntrusted_hash = "sha256:1"\n`)).toBe(false);
     expect(
-      codexPermissionHookTrusted("/h", () => {
+      codexPermissionHookTrusted(bridgeHome, "/h", () => {
         throw new Error("missing");
       }),
     ).toBe(false);
+  });
+
+  it("fails closed for a hash that let Codex's reviewer approve, until the hook is re-trusted", () => {
+    recordCodexHookObservation(bridgeHome, "sha256:abc123", "failed");
+    expect(codexPermissionHookTrusted(bridgeHome, "/h", trusted)).toBe(false);
+    recordCodexHookObservation(bridgeHome, "sha256:abc123", "verified"); // never upgraded
+    expect(codexPermissionHookTrusted(bridgeHome, "/h", trusted)).toBe(false);
+    expect(codexPermissionHookTrusted(bridgeHome, "/h", () => `${key}\ntrusted_hash = "sha256:def456"\n`)).toBe(true);
   });
 });
 

@@ -233,6 +233,7 @@ var en = {
   "cli.opencode.restart": "Restart opencode to load it. Requires Node.js 22.13+ on PATH.",
   "cli.opencode.removed": "Removed the agent-bridge opencode plugin from {dir}:",
   "cli.opencode.nothing": "The agent-bridge opencode plugin is not installed in {dir}.",
+  "ask.hookBypassed": "WARNING: Codex changed files ({files}) without its agent-bridge permission hook asking you: Codex's automatic reviewer approved it. The hook is not active (not trusted, or changed by an update). agent-bridge will run Codex ask-mode subagents strictly read-only until you trust the hook again via /hooks in Codex.",
   "ask.unsupported": 'access "ask" is not available for {agent} here, so it ran read-only. (opencode always supports it; Codex needs the agent-bridge PermissionRequest hook trusted via /hooks; Claude is not supported yet.)',
   "smoke.missing": "{agent}: not installed, skipped.",
   "smoke.start": "{agent} {version}{note}: running\u2026",
@@ -405,7 +406,7 @@ function toMessage(r) {
 var MessageStore = class {
   constructor(file, log) {
     this.log = log;
-    if (file !== ":memory:") mkdirSync2(dirname(file), { recursive: true });
+    if (file !== ":memory:") mkdirSync2(dirname(file), { recursive: true, mode: 448 });
     this.db = new DatabaseSync(file);
     this.db.exec("PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 3000;");
     this.db.exec(SCHEMA);
@@ -484,7 +485,7 @@ function tokenPath(home) {
 }
 function loadOrCreateToken(home) {
   const file = tokenPath(home);
-  mkdirSync3(dirname2(file), { recursive: true });
+  mkdirSync3(dirname2(file), { recursive: true, mode: 448 });
   try {
     const fd = openSync(file, "wx", OWNER_ONLY);
     try {
@@ -1111,9 +1112,9 @@ function resolvePipePath(home, env = process.env, platform = process.platform) {
   if (override) return override;
   if (platform === "win32") {
     const hash = createHash("sha256").update(home.toLowerCase()).digest("hex").slice(0, PIPE_HASH_LENGTH);
-    return `${WINDOWS_PIPE_PREFIX}${APP_NAME}-${hash}`;
+    return `${WINDOWS_PIPE_PREFIX}${APP_NAME}-${hash}-p${PROTOCOL_VERSION}`;
   }
-  return posix.join(home, SOCKET_FILE_NAME);
+  return posix.join(home, SOCKET_FILE_NAME.replace(/\.sock$/, `-p${PROTOCOL_VERSION}.sock`));
 }
 function resolveDbPath(home) {
   return join4(home, DB_FILE_NAME);
@@ -1322,6 +1323,36 @@ function unwrapNpmShim(shimPath, readFile = (p) => readFileSync2(p, "utf8")) {
   if (js) return { command: process.execPath, prefix: [win32.join(dir, js[1])] };
   return null;
 }
+var liveChildren = /* @__PURE__ */ new Set();
+function killTree(child) {
+  const pid = child.pid;
+  if (!pid || child.exitCode !== null) return Promise.resolve();
+  return new Promise((resolve3) => {
+    if (process.platform === "win32") {
+      const tk = spawn("taskkill", ["/PID", String(pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" });
+      tk.on("error", () => (child.kill(), resolve3()));
+      tk.on("close", () => resolve3());
+    } else {
+      try {
+        process.kill(-pid, "SIGTERM");
+      } catch {
+        child.kill("SIGTERM");
+      }
+      const force = setTimeout(() => {
+        try {
+          process.kill(-pid, "SIGKILL");
+        } catch {
+        }
+        resolve3();
+      }, KILL_GRACE_MS);
+      child.once("exit", () => (clearTimeout(force), resolve3()));
+    }
+  });
+}
+function trackChild(child) {
+  liveChildren.add(child);
+  child.once("exit", () => liveChildren.delete(child));
+}
 function runProcess(opts) {
   let resolved = resolveBinary(opts.bin, opts.env);
   if (!resolved) return Promise.reject(new DelegateError(`executable not found: ${opts.bin}`, "not_found"));
@@ -1349,9 +1380,15 @@ function runProcess(opts) {
       env: { ...opts.env, PWD: opts.cwd },
       shell: needsShell,
       windowsHide: true,
-      stdio: ["pipe", "pipe", "pipe"]
+      stdio: ["pipe", "pipe", "pipe"],
+      // Own process group on POSIX, so the whole tree can be killed (see killTree).
+      detached: process.platform !== "win32"
     });
-    let stdout = "";
+    trackChild(child);
+    let head = "";
+    let tail = "";
+    const captured = () => tail ? `${head}
+${tail.slice(tail.indexOf("\n") + 1)}` : head;
     let stderr = "";
     let settled = false;
     const finish = (fn) => {
@@ -1361,22 +1398,20 @@ function runProcess(opts) {
       opts.signal?.removeEventListener("abort", onAbort);
       fn();
     };
-    const kill = () => {
-      child.kill();
-      setTimeout(() => child.kill("SIGKILL"), KILL_GRACE_MS).unref();
-    };
+    const kill = () => void killTree(child);
     const timer = setTimeout(() => {
       kill();
-      finish(() => reject(new DelegateError(`delegate timed out after ${Math.round(opts.timeoutMs / 1e3)}s`, "timeout", stderr.slice(-STDERR_TAIL_CHARS), stdout)));
+      finish(() => reject(new DelegateError(`delegate timed out after ${Math.round(opts.timeoutMs / 1e3)}s`, "timeout", stderr.slice(-STDERR_TAIL_CHARS), captured())));
     }, opts.timeoutMs);
     const onAbort = () => {
       kill();
-      finish(() => reject(new DelegateError("delegate aborted", "aborted", "", stdout)));
+      finish(() => reject(new DelegateError("delegate aborted", "aborted", "", captured())));
     };
     opts.signal?.addEventListener("abort", onAbort, { once: true });
     let pending = "";
     child.stdout.setEncoding("utf8").on("data", (d) => {
-      if (stdout.length < MAX_CAPTURE_CHARS) stdout += d;
+      if (head.length < MAX_CAPTURE_CHARS / 2) head += d;
+      else tail = (tail + d).slice(-MAX_CAPTURE_CHARS / 2);
       if (!opts.onLine) return;
       pending += d;
       let nl;
@@ -1395,7 +1430,7 @@ function runProcess(opts) {
       stderr = (stderr + d).slice(-MAX_CAPTURE_CHARS);
     });
     child.on("error", (err) => finish(() => reject(new DelegateError(`failed to start ${opts.bin}: ${err.message}`, "failed"))));
-    child.on("close", (code) => finish(() => resolve3({ code, stdout, stderr })));
+    child.on("close", (code) => finish(() => resolve3({ code, stdout: captured(), stderr })));
     child.stdin.on("error", () => {
     });
     child.stdin.end(opts.stdin);
@@ -1408,7 +1443,8 @@ var CODEX_ASK_POLICY = 'approval_policy="on-request"';
 var CODEX_ASK_HINT = "(The workspace is read-only on purpose: when you need to change files or run a command the sandbox blocks, request escalated permissions for it. The user is asked and decides; if denied, stop and report.)";
 var OPENCODE_READ_ONLY_PERMISSIONS = { edit: "ask", bash: "ask" };
 function childEnv(extra = {}) {
-  return { ...process.env, ...extra, [DELEGATE_DEPTH_ENV]: String(currentDelegateDepth() + 1) };
+  const { CLAUDE_PROJECT_DIR: _parentProject, ...env } = process.env;
+  return { ...env, ...extra, [DELEGATE_DEPTH_ENV]: String(currentDelegateDepth() + 1) };
 }
 function checkDepth() {
   if (currentDelegateDepth() >= MAX_DELEGATE_DEPTH) {
@@ -1851,6 +1887,7 @@ var RELAY_HOST = "127.0.0.1";
 var RELAY_PATH = "/permission";
 var MAX_REQUEST_BYTES = 256 * 1024;
 var SECRET_BYTES = 24;
+var KEEP_ALIVE_MS = 6e4;
 var PermissionRelay = class {
   constructor(handler, log) {
     this.handler = handler;
@@ -1863,17 +1900,16 @@ var PermissionRelay = class {
   url = "";
   async start() {
     this.server = createServer2((req, res) => {
-      void this.handle(req).then(
-        (body) => {
-          res.writeHead(200, { "content-type": "application/json" });
-          res.end(JSON.stringify(body));
-        },
-        (err) => {
-          this.log.warn("permission relay request failed", { err: err.message });
-          res.writeHead(400, { "content-type": "application/json" });
-          res.end(JSON.stringify({ allow: false, message: "agent-bridge relay error" }));
-        }
-      );
+      res.writeHead(200, { "content-type": "application/json" });
+      res.flushHeaders();
+      const keepAlive = setInterval(() => res.write(" "), KEEP_ALIVE_MS);
+      void this.handle(req).catch((err) => {
+        this.log.warn("permission relay request failed", { err: err.message });
+        return { allow: false, message: "agent-bridge relay error" };
+      }).then((body) => {
+        clearInterval(keepAlive);
+        res.end(JSON.stringify(body));
+      });
     });
     this.server.requestTimeout = 0;
     this.server.headersTimeout = 0;
@@ -2074,7 +2110,7 @@ async function watchRunLog(path, out2) {
 
 // src/cli/dashboard.ts
 import { randomBytes as randomBytes5 } from "node:crypto";
-import { chmodSync as chmodSync2, readFileSync as readFileSync6, rmSync as rmSync3, writeFileSync as writeFileSync2 } from "node:fs";
+import { chmodSync as chmodSync2, readFileSync as readFileSync6, writeFileSync as writeFileSync2 } from "node:fs";
 import { request } from "node:http";
 import { join as join11 } from "node:path";
 
@@ -2511,13 +2547,17 @@ function probeDashboard(port) {
     req.end();
   });
 }
+function previousSecret(home) {
+  const t2 = readDashboardInfo(home)?.url.match(/[?&]t=([0-9a-f]{16,})/)?.[1];
+  return t2 ?? null;
+}
 async function findRunningDashboard(home) {
   const info = readDashboardInfo(home);
   if (!info || !processAlive(info.pid)) return null;
   return await probeDashboard(info.port) ? info : null;
 }
 async function hostDashboard(opts) {
-  const secret = randomBytes5(SECRET_BYTES3).toString("hex");
+  const secret = previousSecret(opts.home) ?? randomBytes5(SECRET_BYTES3).toString("hex");
   const ui = await startUi({ ...opts, secret });
   const info = { url: ui.url, port: ui.port, pid: process.pid };
   const file = dashboardFile(opts.home);
@@ -2531,7 +2571,6 @@ async function hostDashboard(opts) {
     info,
     close: async () => {
       await ui.close();
-      if (readDashboardInfo(opts.home)?.pid === process.pid) rmSync3(file, { force: true });
     }
   };
 }
@@ -2641,12 +2680,13 @@ function openBrowser(url) {
 
 // src/cli/reliability.ts
 import { execFileSync } from "node:child_process";
-import { existsSync as existsSync5, mkdtempSync, rmSync as rmSync4, writeFileSync as writeFileSync3 } from "node:fs";
+import { existsSync as existsSync5, mkdtempSync, rmSync as rmSync3, writeFileSync as writeFileSync4 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join as join15 } from "node:path";
 
 // src/core/worktree.ts
-import { mkdirSync as mkdirSync7 } from "node:fs";
+import { createHash as createHash2 } from "node:crypto";
+import { mkdirSync as mkdirSync7, readFileSync as readFileSync8 } from "node:fs";
 import { basename as basename2, isAbsolute as isAbsolute2, join as join13, relative } from "node:path";
 var GIT = "git";
 var GIT_TIMEOUT_MS = 6e4;
@@ -2688,28 +2728,40 @@ async function finishWorktree(wt, summary, log) {
 }
 
 // src/core/codex-trust.ts
-import { readFileSync as readFileSync8 } from "node:fs";
+import { readFileSync as readFileSync9, writeFileSync as writeFileSync3 } from "node:fs";
 import { homedir as homedir3 } from "node:os";
 import { join as join14 } from "node:path";
 var PERMISSION_HOOK_STATE_KEY = 'hooks.state."agent-bridge@agent-bridge:plugin.json#hooks[0]:permission_request:0:0"';
+var OBSERVATIONS_FILE = "codex-hook.json";
 function codexHome(env = process.env) {
   return env.CODEX_HOME?.trim() || join14(homedir3(), ".codex");
 }
-function codexPermissionHookTrusted(home = codexHome(), read = (p) => readFileSync8(p, "utf8")) {
+function codexPermissionHookHash(home = codexHome(), read = (p) => readFileSync9(p, "utf8")) {
   let text;
   try {
     text = read(join14(home, "config.toml"));
   } catch {
-    return false;
+    return null;
   }
   const at = text.indexOf(`[${PERMISSION_HOOK_STATE_KEY}]`);
-  if (at < 0) return false;
-  const rest = text.slice(at).split(/\r?\n/).slice(1);
-  for (const line of rest) {
+  if (at < 0) return null;
+  for (const line of text.slice(at).split(/\r?\n/).slice(1)) {
     if (line.trim().startsWith("[")) break;
-    if (/^\s*trusted_hash\s*=\s*"sha256:[0-9a-f]+"/.test(line)) return true;
+    const m = /^\s*trusted_hash\s*=\s*"(sha256:[0-9a-f]+)"/.exec(line);
+    if (m) return m[1];
   }
-  return false;
+  return null;
+}
+function readObservations(bridgeHome) {
+  try {
+    return JSON.parse(readFileSync9(join14(bridgeHome, OBSERVATIONS_FILE), "utf8"));
+  } catch {
+    return {};
+  }
+}
+function codexPermissionHookTrusted(bridgeHome, home = codexHome(), read = (p) => readFileSync9(p, "utf8")) {
+  const hash = codexPermissionHookHash(home, read);
+  return hash !== null && readObservations(bridgeHome)[hash] !== "failed";
 }
 
 // src/core/opencode-served.ts
@@ -2738,11 +2790,13 @@ function startServe(bin, cwd, env) {
       cwd,
       env: { ...env, PWD: cwd },
       windowsHide: true,
-      stdio: ["ignore", "pipe", "pipe"]
+      stdio: ["ignore", "pipe", "pipe"],
+      detached: process.platform !== "win32"
     });
+    trackChild(child);
     let out2 = "";
     const timer = setTimeout(() => {
-      child.kill();
+      void killTree(child);
       reject(new DelegateError("opencode serve did not start in time", "timeout", out2.slice(-2e3)));
     }, SERVE_START_TIMEOUT_MS);
     const onData = (d) => {
@@ -2890,7 +2944,7 @@ async function delegateToOpencodeServed(req) {
     clearTimeout(timer);
     req.signal?.removeEventListener("abort", onAbort);
     ac.abort();
-    child.kill();
+    await killTree(child);
   }
 }
 
@@ -2910,7 +2964,7 @@ async function runAsk(agent, prompt, cwd, decide, log) {
   const base = { prompt, cwd, sessionId: null, timeoutSec: RUN_TIMEOUT_SEC, log };
   if (agent === "opencode") return delegateToOpencodeServed({ ...base, bin: BINS.opencode, onPermission: decide });
   if (agent === "codex") {
-    if (!codexPermissionHookTrusted()) return null;
+    if (!codexPermissionHookTrusted(resolveHome())) return null;
     const relay = new PermissionRelay(decide, log);
     await relay.start();
     try {
@@ -2934,7 +2988,7 @@ function makeRepo() {
   const dir = mkdtempSync(join15(tmpdir(), "agent-bridge-rel-"));
   const git2 = (...a) => execFileSync("git", a, { cwd: dir, stdio: "ignore" });
   git2("init", "-q");
-  writeFileSync3(join15(dir, "README.md"), "reliability sandbox\n");
+  writeFileSync4(join15(dir, "README.md"), "reliability sandbox\n");
   git2("add", "README.md");
   git2("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "base");
   return dir;
@@ -3044,8 +3098,8 @@ async function runReliability(opts) {
       );
     }
   } finally {
-    for (const r of repos) rmSync4(r, { recursive: true, force: true, maxRetries: 3 });
-    rmSync4(home, { recursive: true, force: true, maxRetries: 3 });
+    for (const r of repos) rmSync3(r, { recursive: true, force: true, maxRetries: 3 });
+    rmSync3(home, { recursive: true, force: true, maxRetries: 3 });
   }
   const passed = results.filter((r) => r.pass).length;
   opts.out(`
@@ -3054,7 +3108,7 @@ ${passed}/${results.length} passed`);
 }
 
 // src/cli/smoke.ts
-import { mkdtempSync as mkdtempSync2, rmSync as rmSync5 } from "node:fs";
+import { mkdtempSync as mkdtempSync2, rmSync as rmSync4 } from "node:fs";
 import { tmpdir as tmpdir2 } from "node:os";
 import { join as join16 } from "node:path";
 var TESTED_VERSIONS = {
@@ -3117,7 +3171,7 @@ async function runSmoke(opts) {
       }
     }
   } finally {
-    rmSync5(dir, { recursive: true, force: true });
+    rmSync4(dir, { recursive: true, force: true });
   }
   return failures ? 1 : 0;
 }

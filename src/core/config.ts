@@ -149,10 +149,13 @@ export function parseAgentKind(v: string | undefined): AgentKind {
   return oneOf(v?.trim().toLowerCase(), AGENT_KINDS) ?? "other";
 }
 
-/** Default peer name: agent kind plus the project folder name, sanitized to the peer-name alphabet. */
+/**
+ * Default peer name: agent kind plus the project folder name, sanitized to the peer-name alphabet. Never the bare
+ * kind: "codex" as a target means "the codex peer", and a peer named so would shadow that.
+ */
 export function defaultPeerName(agent: AgentKind, cwd: string): string {
   const folder = basename(cwd).replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^[-._]+/, "").slice(0, 40);
-  return folder ? `${agent}-${folder}` : agent;
+  return `${agent}-${folder || "session"}`;
 }
 
 export { CODEX_SANDBOXES, CLAUDE_PERMISSION_MODES };

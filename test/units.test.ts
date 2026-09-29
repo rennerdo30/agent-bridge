@@ -91,14 +91,14 @@ describe("config", () => {
 
   it("builds safe default peer names", () => {
     expect(defaultPeerName("codex", "/home/me/My Project!")).toBe("codex-My-Project-");
-    expect(defaultPeerName("claude", "/")).toBe("claude");
+    expect(defaultPeerName("claude", "/")).toBe("claude-session");
   });
 });
 
 describe("paths", () => {
   it("uses a named pipe on Windows and a socket elsewhere", () => {
-    expect(resolvePipePath("C:\\Users\\x\\.agent-bridge", {}, "win32")).toMatch(/^\\\\\.\\pipe\\agent-bridge-[0-9a-f]{12}$/);
-    expect(resolvePipePath("/home/x/.agent-bridge", {}, "linux")).toBe("/home/x/.agent-bridge/bridge.sock");
+    expect(resolvePipePath("C:\\Users\\x\\.agent-bridge", {}, "win32")).toMatch(/^\\\\\.\\pipe\\agent-bridge-[0-9a-f]{12}-p\d+$/);
+    expect(resolvePipePath("/home/x/.agent-bridge", {}, "linux")).toMatch(/^\/home\/x\/\.agent-bridge\/bridge-p\d+\.sock$/);
     expect(resolvePipePath("/h", { AGENT_BRIDGE_PIPE: "/tmp/p.sock" }, "linux")).toBe("/tmp/p.sock");
   });
 });

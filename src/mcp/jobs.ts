@@ -4,6 +4,7 @@ import { DelegateError, type DelegateResult } from "../core/delegate.js";
 import type { Logger } from "../core/logger.js";
 import type { BridgeNode } from "../core/node.js";
 import type { AgentKind, BridgeMessage } from "../core/protocol.js";
+import type { Worktree } from "../core/worktree.js";
 
 const JOB_ID_LENGTH = 8;
 const PROMPT_PREVIEW_CHARS = 120;
@@ -13,10 +14,10 @@ const HISTORY_LIMIT = 50;
 export const DEFAULT_FOLLOW_UP = "Continue where you stopped and finish the task. Then give your final answer.";
 
 /** A delegated run's result, plus the folder it worked in (a worktree, for example). */
-export type RunResult = DelegateResult & { workdir?: string };
+export type RunResult = DelegateResult & { workdir?: string; worktree?: Worktree };
 export type Run = (signal: AbortSignal, onProgress: (message: string, full?: string) => void) => Promise<RunResult>;
 /** Continue a subagent's own session with a new message (same agent, model, access and folder). */
-export type Resume = (message: string, sessionId: string, workdir: string | null) => Run;
+export type Resume = (message: string, sessionId: string, workdir: string | null, worktree: Worktree | null) => Run;
 
 export interface Job {
   id: string;
@@ -35,6 +36,7 @@ export interface Job {
   /** The subagent's own session (Codex thread, Claude session, opencode session) once known. */
   sessionId: string | null;
   workdir: string | null;
+  worktree: Worktree | null;
   resume?: Resume;
   /** Follow-ups that arrived while the job was running; sent as soon as it finishes. */
   queue: string[];
@@ -99,6 +101,7 @@ export class JobManager {
       status: "running",
       sessionId: null,
       workdir: null,
+      worktree: null,
       resume,
       queue: [],
     };
@@ -129,6 +132,11 @@ export class JobManager {
         job.status = outcome?.result && !outcome.result.isError ? "done" : "failed";
         job.sessionId = outcome?.result?.sessionId ?? sessionOfError(outcome?.error) ?? job.sessionId;
         job.workdir = outcome?.result?.workdir ?? job.workdir;
+        job.worktree = outcome?.result?.worktree ?? job.worktree;
+        // Follow-ups sent while the caller waited continue the session in the background.
+        if (job.queue.length && job.resume && job.sessionId && !job.controller.signal.aborted) {
+          this.launch(job, job.resume(job.queue.splice(0).join("\n\n"), job.sessionId, job.workdir, job.worktree));
+        }
       },
     };
   }
@@ -156,7 +164,7 @@ export class JobManager {
     if (!job.resume || !job.sessionId) return { outcome: "no-session", job };
     if (!this.canStart()) return { outcome: "busy", job };
     this.log.info("subagent resumed", { job: job.name, sessionId: job.sessionId });
-    this.launch(job, job.resume(message, job.sessionId, job.workdir));
+    this.launch(job, job.resume(message, job.sessionId, job.workdir, job.worktree));
     return { outcome: "started", job };
   }
 
@@ -174,14 +182,17 @@ export class JobManager {
     run(job.controller.signal, onProgress).then(
       (res) => {
         job.workdir = res.workdir ?? job.workdir;
+        job.worktree = res.worktree ?? job.worktree;
         this.finish(job, res.isError ? "failed" : "done", res.text || "(no answer text returned)", res.sessionId);
       },
       (err) => this.finish(job, "failed", String((err as Error)?.message ?? err), sessionOfError(err)),
     );
   }
 
-  cancel(id: string): boolean {
-    const job = this.running.get(id) ?? [...this.running.values()].find((j) => j.name === id);
+  /** Cancel a background job or a blocking ask_* run, by name or id. */
+  cancel(ref: string): boolean {
+    const id = ref.replace(/^.*-(?:job|ask)-/, "");
+    const job = [...this.running.values(), ...this.foreground.values()].find((j) => j.id === id || j.name === ref);
     if (!job) return false;
     job.queue = [];
     job.controller.abort();
@@ -204,7 +215,7 @@ export class JobManager {
     if (job.queue.length && job.resume && job.sessionId && !job.controller.signal.aborted) {
       const queued = job.queue.splice(0).join("\n\n");
       this.post(job, `${this.header(job, status, seconds)}\n\n${text}\n\n(Your queued follow-up was sent to it; its answer will arrive as another message.)`);
-      this.launch(job, job.resume(queued, job.sessionId, job.workdir));
+      this.launch(job, job.resume(queued, job.sessionId, job.workdir, job.worktree));
       return;
     }
     this.post(job, `${this.header(job, status, seconds)}\n\n${text}`);

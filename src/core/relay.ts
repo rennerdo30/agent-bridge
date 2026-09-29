@@ -15,6 +15,7 @@ const RELAY_HOST = "127.0.0.1";
 const RELAY_PATH = "/permission";
 const MAX_REQUEST_BYTES = 256 * 1024;
 const SECRET_BYTES = 24;
+const KEEP_ALIVE_MS = 60_000;
 
 export interface PermissionRequest {
   /** Which agent asks, e.g. "codex". */
@@ -42,17 +43,20 @@ export class PermissionRelay {
 
   async start(): Promise<void> {
     this.server = createServer((req, res) => {
-      void this.handle(req).then(
-        (body) => {
-          res.writeHead(200, { "content-type": "application/json" });
-          res.end(JSON.stringify(body));
-        },
-        (err) => {
+      // The user may take longer than fetch's 5-minute header and body timeouts: answer the headers at once
+      // and keep the body alive with whitespace (valid before JSON) until the decision is in.
+      res.writeHead(200, { "content-type": "application/json" });
+      res.flushHeaders();
+      const keepAlive = setInterval(() => res.write(" "), KEEP_ALIVE_MS);
+      void this.handle(req)
+        .catch((err): PermissionDecision => {
           this.log.warn("permission relay request failed", { err: (err as Error).message });
-          res.writeHead(400, { "content-type": "application/json" });
-          res.end(JSON.stringify({ allow: false, message: "agent-bridge relay error" }));
-        },
-      );
+          return { allow: false, message: "agent-bridge relay error" };
+        })
+        .then((body) => {
+          clearInterval(keepAlive);
+          res.end(JSON.stringify(body));
+        });
     });
     // Answers can take as long as the user needs.
     this.server.requestTimeout = 0;

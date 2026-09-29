@@ -1,6 +1,5 @@
-import { existsSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { dashboardFile, findRunningDashboard, hostDashboard, readDashboardInfo } from "../src/cli/dashboard.js";
+import { findRunningDashboard, hostDashboard, readDashboardInfo } from "../src/cli/dashboard.js";
 import { nullLogger } from "../src/core/logger.js";
 import { makeEnv, type TestEnv } from "./helpers.js";
 
@@ -13,7 +12,7 @@ afterEach(async () => {
 });
 
 describe("shared dashboard", () => {
-  it("publishes its link, is found by others, and cleans up on close", async () => {
+  it("publishes its link, is found by others, and keeps its secret for the next host", async () => {
     expect(await findRunningDashboard(env.home)).toBeNull();
     const hosted = await hostDashboard({ home: env.home, pipe: env.pipe, port: 0, log: nullLogger });
     expect(readDashboardInfo(env.home)).toMatchObject({ port: hosted.info.port, pid: process.pid });
@@ -21,8 +20,10 @@ describe("shared dashboard", () => {
     expect(found?.url).toBe(hosted.info.url);
     expect((await fetch(found!.url, { redirect: "manual" })).status).toBe(302);
     await hosted.close();
-    expect(existsSync(dashboardFile(env.home))).toBe(false);
     expect(await findRunningDashboard(env.home)).toBeNull();
+    const next = await hostDashboard({ home: env.home, pipe: env.pipe, port: 0, log: nullLogger });
+    expect(new URL(next.info.url).searchParams.get("t")).toBe(new URL(hosted.info.url).searchParams.get("t"));
+    await next.close();
   });
 
   it("fails when the port is taken instead of starting a second one", async () => {

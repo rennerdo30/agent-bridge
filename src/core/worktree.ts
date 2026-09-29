@@ -1,4 +1,5 @@
-import { mkdirSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { mkdirSync, readFileSync } from "node:fs";
 import { basename, isAbsolute, join, relative } from "node:path";
 import { runProcess } from "./delegate.js";
 import type { Logger } from "./logger.js";
@@ -87,4 +88,43 @@ export async function gitStatusSnapshot(cwd: string, log: Logger): Promise<Set<s
   } catch {
     return null;
   }
+}
+
+/**
+ * Dirty and untracked files with a fingerprint of their content. Comparing two snapshots finds every file
+ * a subagent changed, also files that were already modified before it started.
+ */
+export async function gitChangeSnapshot(cwd: string, log: Logger): Promise<Map<string, string> | null> {
+  let status: string;
+  try {
+    status = await git(["status", "--porcelain", "--untracked-files=all"], cwd, log);
+  } catch {
+    return null;
+  }
+  let root: string;
+  try {
+    root = await git(["rev-parse", "--show-toplevel"], cwd, log);
+  } catch {
+    return null;
+  }
+  const snap = new Map<string, string>();
+  for (const line of status.split(/\r?\n/).filter(Boolean)) {
+    const file = line.slice(3).replace(/^.* -> /, "").replace(/^"|"$/g, "");
+    let fp = line.slice(0, 2);
+    try {
+      fp += ":" + createHash("sha1").update(readFileSync(join(root, file))).digest("hex");
+    } catch {
+      fp += ":missing";
+    }
+    snap.set(file, fp);
+  }
+  return snap;
+}
+
+/** Files whose state or content differs between two snapshots (new, changed, or no longer dirty). */
+export function changedFiles(before: Map<string, string>, after: Map<string, string>): string[] {
+  const out = new Set<string>();
+  for (const [f, fp] of after) if (before.get(f) !== fp) out.add(f);
+  for (const f of before.keys()) if (!after.has(f)) out.add(f);
+  return [...out].sort();
 }

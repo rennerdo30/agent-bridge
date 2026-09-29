@@ -19,7 +19,7 @@ import {
   MAX_RUNNING_JOBS,
   MAX_WAIT_SEC,
 } from "../core/constants.js";
-import { currentDelegateDepth, DelegateError } from "../core/delegate.js";
+import { currentDelegateDepth, DelegateError, killAllDelegates, type DelegateResult } from "../core/delegate.js";
 import { t } from "../core/i18n.js";
 import { createLogger, type Logger } from "../core/logger.js";
 import { BridgeNode } from "../core/node.js";
@@ -33,13 +33,13 @@ import { buildHookResponse, type HookEvent } from "./hooks.js";
 import { ACCESS_LEVELS, DELEGATION_TARGETS, supportsAsk, type Access, type RelayWiring, type TargetArgs } from "./targets.js";
 import { askUserViaElicitation } from "./permissions.js";
 import { PermissionRelay, type PermissionDecision, type PermissionRequest } from "../core/relay.js";
-import { codexPermissionHookTrusted } from "../core/codex-trust.js";
+import { codexPermissionHookHash, codexPermissionHookTrusted, recordCodexHookObservation } from "../core/codex-trust.js";
 import { startRunFeed } from "../core/runfeed.js";
 import { findRunningDashboard, hostDashboard, type DashboardInfo, type HostedDashboard } from "../cli/dashboard.js";
 import { openBrowser } from "../cli/open.js";
 import { RewakeEndpoint } from "./rewake.js";
-import { createWorktree, finishWorktree, gitStatusSnapshot, worktreeReport } from "../core/worktree.js";
-import { DEFAULT_FOLLOW_UP, JobManager, type Resume } from "./jobs.js";
+import { changedFiles, createWorktree, finishWorktree, gitChangeSnapshot, worktreeReport, type Worktree } from "../core/worktree.js";
+import { DEFAULT_FOLLOW_UP, JobManager, type Resume, type RunResult } from "./jobs.js";
 
 const CHANNEL_NOTIFICATION = "notifications/claude/channel";
 /** Sent to the opencode plugin (our MCP client in --agent=opencode mode) when a message arrives. */
@@ -199,8 +199,8 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
         token: loadOrCreateToken(home),
         dbPath: resolveDbPath(home),
         agent,
-        // Until the project dir is known, the folder name would be the plugin version; use the bare agent kind.
-        name: cfg.name ?? (cwdKnown ? defaultPeerName(agent, cwd) : agent),
+        // Until the project dir is known, the folder name would be the plugin version.
+        name: cfg.name ?? defaultPeerName(agent, cwdKnown ? cwd : ""),
         cwd,
         autoWake: cfg.autoWake,
         log,
@@ -211,8 +211,12 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
   if (node) {
     ctx.jobs = new JobManager(node, log.child("jobs"));
     ctx.activity = (s) => node.setActivity(s);
+    // Learn the project folder once, when it was unknown at start (Codex starts us in the plugin folder).
+    // Later hook cwds follow the agent's `cd`s; renaming then would strand replies sent to the old name.
+    let cwdSettled = cwdKnown;
     ctx.learnCwd = async (projectDir) => {
-      if (projectDir === node.cwd) return;
+      if (cwdSettled || projectDir === node.cwd) return;
+      cwdSettled = true;
       const name = cfg.name ? undefined : defaultPeerName(agent, projectDir);
       await node.relocate(projectDir, name).catch((err) => log.warn("relocate failed", { err: (err as Error).message }));
     };
@@ -287,7 +291,9 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
   // Claude Code: wake the idle session for subagent results and awaited replies (see rewake.ts).
   let rewake: RewakeEndpoint | null = null;
   if (agent === "claude" && node) {
+    // With the channel active, messages already arrive as channel events: waking too would deliver them twice.
     const shouldWake = (m: BridgeMessage) =>
+      !ctx.channelActive() &&
       m.hop < cfg.maxHops && (m.from.id.startsWith("job:") || node.isAwaitedReply(m) || node.autoWakeEnabled);
     rewake = new RewakeEndpoint(home, node, shouldWake, log.child("rewake"));
     try {
@@ -321,9 +327,16 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
   };
 
   const transport = new StdioServerTransport();
+  let shuttingDown = false;
   const shutdown = async (reason: string) => {
+    // stdin end, transport close and signals can all fire; shut down once.
+    if (shuttingDown) return;
+    shuttingDown = true;
     log.info("shutting down", { reason });
     ctx.jobs?.cancelAll();
+    // Stop every delegated CLI with its whole process tree; nothing may keep working unobserved.
+    await killAllDelegates();
+    await mcp.close().catch(() => {});
     await dashboard?.close().catch(() => {});
     await rewake?.stop().catch(() => {});
     await node?.stop().catch(() => {});
@@ -512,7 +525,8 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
     }),
   );
 
-  type DelegateArgs = { prompt: string; model?: string; session_id?: string; cwd?: string; timeout_sec?: number; worktree?: boolean } & TargetArgs;
+  /** _worktree: internal, a follow-up continuing in an existing worktree. */
+  type DelegateArgs = { prompt: string; model?: string; session_id?: string; cwd?: string; timeout_sec?: number; worktree?: boolean; _worktree?: Worktree } & TargetArgs;
   for (const target of targets) {
     const profile = DELEGATION_TARGETS[target];
     const defaultModel = profile.defaultModel(cfg);
@@ -550,56 +564,79 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
       ...profile.schema,
     };
     /** Run the delegate; returns its result plus a report of what it changed. */
-    const run = async (a: DelegateArgs, signal: AbortSignal, onProgress: ((message: string) => void) | undefined, background: boolean) => {
+    const run = async (a: DelegateArgs, signal: AbortSignal, onProgress: ((message: string) => void) | undefined, background: boolean): Promise<RunResult> => {
       const dlog = log.child("delegate");
       const cwd = a.cwd || ctx.cwd();
-      const access: Access | undefined = a.worktree ? (a.access ?? "edit") : a.access;
-      const wt = a.worktree ? await createWorktree({ cwd, home: ctx.home, jobId: randomUUID().slice(0, 8), log: dlog }) : null;
-      const before = !wt && access === "edit" ? await gitStatusSnapshot(cwd, dlog) : null;
+      const access: Access | undefined = a.worktree || a._worktree ? (a.access ?? "edit") : a.access;
+      // A follow-up to a worktree job keeps working (and committing) in that worktree.
+      const wt = a._worktree ?? (a.worktree ? await createWorktree({ cwd, home: ctx.home, jobId: randomUUID().slice(0, 8), log: dlog }) : null);
+      const workdir = wt?.cwd ?? cwd;
+      // Codex in "ask" mode can only change files through an approval: watching the folder tells us whether
+      // its permission hook really asked (see codex-trust.ts).
+      const watchChanges = !wt && (access === "edit" || (access === "ask" && target === "codex"));
+      const before = watchChanges ? await gitChangeSnapshot(workdir, dlog) : null;
       // access "ask": forward the subagent's permission requests to the user in this session.
       let relay: PermissionRelay | null = null;
       let wiring: RelayWiring | undefined;
       const asked: string[] = [];
-      if (access === "ask" && ctx.askUser) {
-        const askUser = ctx.askUser;
-        const decide = async (r: PermissionRequest) => {
-          const d = await askUser(r);
-          asked.push(`${d.allow ? "allowed" : "denied"}: ${r.tool} ${r.detail.slice(0, 80)}`);
-          return d;
-        };
-        relay = new PermissionRelay(decide, dlog);
-        await relay.start();
-        wiring = { onPermission: decide, env: relay.childEnv(), codexHookTrusted: codexPermissionHookTrusted() };
+      let relayCalls = 0;
+      const codexHash = target === "codex" ? codexPermissionHookHash() : null;
+      try {
+        if (access === "ask" && ctx.askUser) {
+          const askUser = ctx.askUser;
+          const decide = async (r: PermissionRequest) => {
+            relayCalls++;
+            const d = await askUser(r);
+            asked.push(`${d.allow ? "allowed" : "denied"}: ${r.tool} ${r.detail.slice(0, 80)}`);
+            return d;
+          };
+          relay = new PermissionRelay(decide, dlog);
+          await relay.start();
+          wiring = { onPermission: decide, env: relay.childEnv(), codexHookTrusted: codexPermissionHookTrusted(ctx.home) };
+        }
+      } catch (err) {
+        await relay?.stop();
+        throw err;
       }
       const forwarding = access === "ask" && supportsAsk(target, wiring);
-      const feed = startRunFeed({
-        home: ctx.home,
-        name: `${target}-${randomUUID().slice(0, 8)}`,
-        header: `${target}${a.model ? ` (${a.model})` : ""} in ${wt?.cwd ?? cwd}, access ${access ?? "default"}\n${a.prompt}\n---`,
-        forward: onProgress,
-      });
-      const res = await profile.run(
-        cfg,
-        {
-          prompt: a.prompt,
-          cwd: wt?.cwd ?? cwd,
-          sessionId: a.session_id ?? null,
-          timeoutSec: a.timeout_sec ?? (background ? MAX_JOB_TIMEOUT_SEC : DEFAULT_DELEGATE_TIMEOUT_SEC),
-          model: a.model ?? defaultModel,
-          log: dlog,
-          signal,
-          onProgress: feed.report,
-        },
-        { ...a, access, relay: wiring },
-      )
-        .then(
-          (r) => (feed.end(r.isError ? "failed" : "done", r.text), r),
-          (err) => {
-            feed.end(`failed: ${(err as Error)?.message ?? err}`);
-            throw err;
+      let feed: ReturnType<typeof startRunFeed>;
+      try {
+        feed = startRunFeed({
+          home: ctx.home,
+          name: `${target}-${randomUUID().slice(0, 8)}`,
+          header: `${target}${a.model ? ` (${a.model})` : ""} in ${workdir}, access ${access ?? "default"}, by ${node?.name ?? ctx.agent}${a.session_id ? `, continues ${a.session_id}` : ""}\n${a.prompt}\n---`,
+          forward: onProgress,
+        });
+      } catch (err) {
+        await relay?.stop();
+        throw err;
+      }
+      let res: DelegateResult;
+      try {
+        res = await profile.run(
+          cfg,
+          {
+            prompt: a.prompt,
+            cwd: workdir,
+            sessionId: a.session_id ?? null,
+            timeoutSec: a.timeout_sec ?? (background ? MAX_JOB_TIMEOUT_SEC : DEFAULT_DELEGATE_TIMEOUT_SEC),
+            model: a.model ?? defaultModel,
+            log: dlog,
+            signal,
+            onProgress: feed.report,
           },
-        )
-        .finally(() => relay?.stop());
+          { ...a, access, relay: wiring },
+        );
+        feed.end(res.isError ? "failed" : "done", res.text);
+      } catch (err) {
+        feed.end(`failed: ${(err as Error)?.message ?? err}`);
+        // The worktree keeps whatever the subagent did before failing: say where it is.
+        if (wt && err instanceof Error) err.message += `\n\nIts worktree (with any partial work) is ${wt.path} on branch ${wt.branch}.`;
+        throw err;
+      } finally {
+        await relay?.stop();
+      }
+
       const notes: string[] = [`Step-by-step log: ${feed.logPath}`];
       if (access === "ask") {
         notes.push(
@@ -613,22 +650,36 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
       const usage = formatUsage(res.details);
       if (usage) notes.push(usage);
       if (wt) {
-        notes.push(worktreeReport(wt, await finishWorktree(wt, a.prompt, dlog)));
+        try {
+          notes.push(worktreeReport(wt, await finishWorktree(wt, a.prompt, dlog)));
+        } catch (err) {
+          // Never lose the answer over a git problem.
+          notes.push(`Could not commit the changes in worktree ${wt.path} (branch ${wt.branch}): ${(err as Error).message}`);
+        }
       } else if (before) {
-        const after = await gitStatusSnapshot(cwd, dlog);
-        const changed = after ? [...after].filter((l) => !before.has(l)) : [];
-        notes.push(changed.length ? `Files changed in your working copy:\n${changed.join("\n")}` : "No files changed.");
+        const after = await gitChangeSnapshot(workdir, dlog);
+        const changed = after ? changedFiles(before, after) : [];
+        if (access === "ask" && target === "codex" && forwarding && codexHash) {
+          if (relayCalls > 0) recordCodexHookObservation(ctx.home, codexHash, "verified");
+          else if (changed.length) {
+            // Files changed in a read-only sandbox without the hook asking: Codex's reviewer approved.
+            recordCodexHookObservation(ctx.home, codexHash, "failed");
+            log.warn("codex changed files without the permission hook asking; forwarding disabled for this hook version", { changed });
+            notes.push(t("ask.hookBypassed", { files: changed.join(", ") }));
+          }
+        }
+        if (access === "edit" || changed.length) notes.push(changed.length ? `Files changed in your working copy:\n${changed.join("\n")}` : "No files changed.");
       }
-      return { ...res, workdir: wt?.cwd ?? cwd, text: notes.length ? `${res.text}\n\n---\n${notes.join("\n\n")}` : res.text };
+      return { ...res, workdir, worktree: wt ?? undefined, text: notes.length ? `${res.text}\n\n---\n${notes.join("\n\n")}` : res.text };
     };
 
     /** Continue a subagent's session: same agent, model and access, in the folder (or worktree) it used. */
     const resumeFor =
       (a: DelegateArgs): Resume =>
-      (message, sessionId, workdir) =>
+      (message, sessionId, workdir, worktree) =>
       (signal, onProgress) =>
         run(
-          { ...a, prompt: message, session_id: sessionId, cwd: workdir ?? a.cwd, worktree: false, access: a.worktree ? (a.access ?? "edit") : a.access },
+          { ...a, prompt: message, session_id: sessionId, cwd: workdir ?? a.cwd, worktree: false, _worktree: worktree ?? undefined, access: a.worktree ? (a.access ?? "edit") : a.access },
           signal,
           onProgress,
           true,
@@ -656,7 +707,8 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
         };
         let res;
         try {
-          res = await run(a, extra.signal, onProgress, false);
+          // cancel_subagent can stop it too (e.g. from its coordinator), not only the caller.
+          res = await run(a, tracked ? AbortSignal.any([extra.signal, tracked.job.controller.signal]) : extra.signal, onProgress, false);
         } catch (err) {
           tracked?.end({ error: err });
           throw err;
@@ -736,8 +788,7 @@ ${res.text || t("delegate.empty")}`, res.isError);
       inputSchema: { job: z.string().min(1) },
     },
     guarded("cancel_subagent", async (a: { job: string }) => {
-      const id = a.job.replace(/^.*-job-/, "");
-      return ctx.jobs?.cancel(id) ? text(t("jobs.cancelled", { name: a.job })) : text(t("jobs.unknown", { name: a.job }), true);
+      return ctx.jobs?.cancel(a.job) ? text(t("jobs.cancelled", { name: a.job })) : text(t("jobs.unknown", { name: a.job }), true);
     }),
   );
 
