@@ -41,10 +41,12 @@ export interface Job {
   resume?: Resume;
   /** Follow-ups that arrived while the job was running; sent as soon as it finishes. */
   queue: string[];
+  /** While it runs: delivers a message into the running subagent (see parent-link.ts). */
+  live?: { post: (message: string) => void } | null;
   finishedAt?: number;
 }
 
-export type FollowUpOutcome = "started" | "queued" | "unknown" | "no-session" | "busy";
+export type FollowUpOutcome = "started" | "delivered" | "queued" | "unknown" | "no-session" | "busy";
 
 /**
  * Subagents: the other CLI running headlessly. Background jobs report their result as a message from the
@@ -159,6 +161,11 @@ export class JobManager {
     const job = this.find(ref);
     if (!job) return { outcome: "unknown" };
     if (job.status === "running") {
+      // Like a native subagent: it sees the message while it works and can answer at once.
+      if (job.live) {
+        job.live.post(message);
+        return { outcome: "delivered", job };
+      }
       job.queue.push(message);
       return { outcome: "queued", job };
     }
@@ -231,14 +238,20 @@ export class JobManager {
     return `Subagent ${job.name} (${job.agent}${job.model ? `, model ${job.model}` : ""}) ${status} after ${seconds}s.${how}`;
   }
 
-  private post(job: Job, body: string): void {
+  /** A message the running subagent sent to this session (its answer to a live message, for example). */
+  fromSubagent(job: Job, body: string, replyTo: string | null): void {
+    this.log.info("message from subagent", { job: job.name });
+    this.post(job, body, replyTo);
+  }
+
+  private post(job: Job, body: string, replyTo: string | null = null): void {
     const m: BridgeMessage = {
       id: randomUUID(),
       from: { id: `job:${job.id}`, name: job.name, agent: job.agent },
       to: this.node.name,
       recipient: this.node.name,
       conversationId: `job-${job.id}`,
-      replyTo: null,
+      replyTo,
       hop: 0,
       body,
       createdAt: Date.now(),

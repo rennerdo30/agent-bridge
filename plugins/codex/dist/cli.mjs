@@ -12,7 +12,7 @@ import { connect } from "node:net";
 import { homedir } from "node:os";
 import { join } from "node:path";
 var APP_NAME = "agent-bridge";
-var APP_VERSION = "0.10.0";
+var APP_VERSION = "0.11.0";
 var PROTOCOL_VERSION = 2;
 var ENV = {
   home: "AGENT_BRIDGE_HOME",
@@ -203,6 +203,8 @@ var en = {
   "send.delivered": "Delivered to: {names}.",
   "send.queued": "Recipient offline, queued for: {names}.",
   "send.waitHint": "Use wait_for_message to wait for the answer.",
+  "usage.none": "None of Codex, Claude Code or opencode is installed here.",
+  "send.toParent": "Sent to {name}, the session that gave you this task. Go on with your task.",
   "inbox.empty": "No unread messages.",
   "wait.timeout": "No message arrived within {seconds} seconds.",
   "autoWake.on": "Auto-wake is on. Incoming peer messages will make this session continue (up to {maxHops} hops per conversation).",
@@ -212,6 +214,7 @@ var en = {
   "peers.recentJob": "- {name}: {status} {ago} ago, {session}",
   "delegate.followUp": 'Follow up with its full context: message_subagent(job="{job}", message=...).',
   "followUp.started": "Sent to {name}; it continues in its own session. Its answer will arrive as a message from {name}.",
+  "followUp.delivered": "{name} is still working and gets your message at its next step (after its current tool call or model step). Its answer arrives as a message from {name}, usually within a minute. If it finishes first, the message is sent to it as a follow-up.",
   "followUp.queued": "{name} is still working; your message is queued and will be sent as soon as it finishes.",
   "followUp.unknown": "No subagent named {name}. Call peers to see running and recent subagents.",
   "followUp.no-session": "{name} has no session to continue (it failed before starting one). Start a new one with ask_* or spawn_*.",
@@ -1153,6 +1156,12 @@ import { spawn } from "node:child_process";
 import { existsSync, readFileSync as readFileSync2, realpathSync } from "node:fs";
 import { delimiter, extname, isAbsolute, join as join5, win32 } from "node:path";
 
+// src/core/parent-link.ts
+import { randomBytes as randomBytes2, randomUUID as randomUUID3 } from "node:crypto";
+import { createServer as createServer2 } from "node:http";
+var PARENT_URL_ENV = "AGENT_BRIDGE_PARENT_URL";
+var MAX_REQUEST_BYTES = 256 * 1024;
+
 // src/core/progress.ts
 var MAX_STATUS_CHARS = 140;
 var MAX_SAY_CHARS = 160;
@@ -1353,15 +1362,15 @@ function trackChild(child) {
   liveChildren.add(child);
   child.once("exit", () => liveChildren.delete(child));
 }
-function runProcess(opts) {
-  let resolved = resolveBinary(opts.bin, opts.env);
-  if (!resolved) return Promise.reject(new DelegateError(`executable not found: ${opts.bin}`, "not_found"));
-  let args = opts.args;
+function resolveCommand(bin, argsIn, env, log) {
+  let resolved = resolveBinary(bin, env);
+  if (!resolved) throw new DelegateError(`executable not found: ${bin}`, "not_found");
+  let args = argsIn;
   let needsShell = process.platform === "win32" && WINDOWS_SHIM_EXTS.has(extname(resolved).toLowerCase());
   if (needsShell) {
     const target = unwrapNpmShim(resolved);
     if (target && existsSync(target.command) && target.prefix.every((p) => existsSync(p))) {
-      opts.log.debug("unwrapped npm shim", { shim: resolved, command: target.command, prefix: target.prefix });
+      log.debug("unwrapped npm shim", { shim: resolved, command: target.command, prefix: target.prefix });
       resolved = target.command;
       args = [...target.prefix, ...args];
       needsShell = false;
@@ -1369,12 +1378,22 @@ function runProcess(opts) {
   }
   if (needsShell) {
     for (const a of args) {
-      if (/[&|<>^%"\s]/.test(a)) return Promise.reject(new DelegateError(`unsafe argument for shell invocation: ${a}`, "failed"));
+      if (/[&|<>^%"\s]/.test(a)) throw new DelegateError(`unsafe argument for shell invocation: ${a}`, "failed");
     }
   }
+  return { resolved: needsShell ? `"${resolved}"` : resolved, args, needsShell };
+}
+function runProcess(opts) {
+  let command;
+  try {
+    command = resolveCommand(opts.bin, opts.args, opts.env, opts.log);
+  } catch (err) {
+    return Promise.reject(err);
+  }
+  const { resolved, args, needsShell } = command;
   opts.log.debug("spawning delegate", { bin: resolved, args, cwd: opts.cwd, shell: needsShell });
   return new Promise((resolve3, reject) => {
-    const child = spawn(needsShell ? `"${resolved}"` : resolved, args, {
+    const child = spawn(resolved, args, {
       cwd: opts.cwd,
       // Some CLIs (opencode) take their project folder from PWD rather than the real cwd; keep them in sync.
       env: { ...opts.env, PWD: opts.cwd },
@@ -1543,6 +1562,7 @@ function parseClaudeJson(stdout) {
     return null;
   }
 }
+var CLAUDE_PARENT_SEND_TOOL = "mcp__plugin_agent-bridge_bridge__send";
 var CLAUDE_READ_ONLY_DENIED_TOOLS = ["Write", "Edit", "MultiEdit", "NotebookEdit", "Bash", "PowerShell"];
 var CLAUDE_READ_ONLY_MODES = /* @__PURE__ */ new Set(["default", "manual", "plan"]);
 async function delegateToClaude(req) {
@@ -1551,6 +1571,7 @@ async function delegateToClaude(req) {
   if (CLAUDE_READ_ONLY_MODES.has(req.permissionMode)) args.push("--disallowedTools", CLAUDE_READ_ONLY_DENIED_TOOLS.join(","));
   if (req.model) args.push("--model", req.model);
   if (req.sessionId) args.push("--resume", req.sessionId);
+  if (req.extraEnv?.[PARENT_URL_ENV]) args.push("--allowedTools", CLAUDE_PARENT_SEND_TOOL);
   const res = await withResumeHint("claude", (o) => claudeSessionFromStream(o), () => runProcess({
     bin: req.bin,
     args,
@@ -1879,13 +1900,13 @@ function parseInstallerArgs(action, rest) {
 }
 
 // src/core/relay.ts
-import { randomBytes as randomBytes2 } from "node:crypto";
-import { createServer as createServer2 } from "node:http";
+import { randomBytes as randomBytes3 } from "node:crypto";
+import { createServer as createServer3 } from "node:http";
 var RELAY_URL_ENV = "AGENT_BRIDGE_RELAY_URL";
 var RELAY_TOKEN_ENV = "AGENT_BRIDGE_RELAY_TOKEN";
 var RELAY_HOST = "127.0.0.1";
 var RELAY_PATH = "/permission";
-var MAX_REQUEST_BYTES = 256 * 1024;
+var MAX_REQUEST_BYTES2 = 256 * 1024;
 var SECRET_BYTES = 24;
 var KEEP_ALIVE_MS = 6e4;
 var PermissionRelay = class {
@@ -1896,10 +1917,10 @@ var PermissionRelay = class {
   handler;
   log;
   server = null;
-  secret = randomBytes2(SECRET_BYTES).toString("hex");
+  secret = randomBytes3(SECRET_BYTES).toString("hex");
   url = "";
   async start() {
-    this.server = createServer2((req, res) => {
+    this.server = createServer3((req, res) => {
       res.writeHead(200, { "content-type": "application/json" });
       res.flushHeaders();
       const keepAlive = setInterval(() => res.write(" "), KEEP_ALIVE_MS);
@@ -1937,7 +1958,7 @@ var PermissionRelay = class {
     let raw = "";
     for await (const chunk of req) {
       raw += chunk;
-      if (raw.length > MAX_REQUEST_BYTES) throw new Error("request too large");
+      if (raw.length > MAX_REQUEST_BYTES2) throw new Error("request too large");
     }
     const body = JSON.parse(raw);
     const request2 = {
@@ -2011,9 +2032,9 @@ async function runPermissionHook() {
 import { readFileSync as readFileSync4 } from "node:fs";
 
 // src/mcp/rewake.ts
-import { randomBytes as randomBytes3 } from "node:crypto";
+import { randomBytes as randomBytes4 } from "node:crypto";
 import { mkdirSync as mkdirSync5, rmSync as rmSync2, writeFileSync } from "node:fs";
-import { createServer as createServer3 } from "node:http";
+import { createServer as createServer4 } from "node:http";
 import { join as join7 } from "node:path";
 var SESSIONS_DIR = "sessions";
 var REWAKE_POLL_MS = 4 * 60 * 1e3;
@@ -2112,15 +2133,15 @@ async function watchRunLog(path, out2) {
 }
 
 // src/cli/dashboard.ts
-import { randomBytes as randomBytes5 } from "node:crypto";
+import { randomBytes as randomBytes6 } from "node:crypto";
 import { chmodSync as chmodSync2, readFileSync as readFileSync6, writeFileSync as writeFileSync3 } from "node:fs";
 import { request } from "node:http";
 import { join as join11 } from "node:path";
 
 // src/cli/ui.ts
-import { randomBytes as randomBytes4 } from "node:crypto";
+import { randomBytes as randomBytes5 } from "node:crypto";
 import { existsSync as existsSync4, readdirSync as readdirSync4, readFileSync as readFileSync5, statSync as statSync4 } from "node:fs";
-import { createServer as createServer4 } from "node:http";
+import { createServer as createServer5 } from "node:http";
 import { join as join10 } from "node:path";
 import { DatabaseSync as DatabaseSync2 } from "node:sqlite";
 
@@ -2239,7 +2260,7 @@ button:disabled { opacity: .6; cursor: default; }
 .kv { display: grid; grid-template-columns: 72px 1fr; gap: 4px 10px; font-size: 12.5px; }
 .kv span:nth-child(odd) { color: var(--faint); }
 .kv span:nth-child(even) { overflow-wrap: anywhere; }
-.conv { display: flex; flex-direction: column; height: calc(100vh - 150px); min-height: 480px; position: sticky; top: 124px; }
+.conv { display: flex; flex-direction: column; min-width: 0; height: calc(100vh - 150px); min-height: 480px; position: sticky; top: 124px; }
 .conv-head { padding: 14px 18px; border-bottom: 1px solid var(--line); display: flex; gap: 12px; align-items: center; }
 .conv-head .grow { flex: 1; min-width: 0; }
 .conv-head .title { font-weight: 650; font-size: 15px; display: flex; gap: 8px; align-items: center; }
@@ -2259,15 +2280,17 @@ button:disabled { opacity: .6; cursor: default; }
 .bubble.answer .who { color: var(--ok); }
 .bubble.clamp { max-height: 220px; overflow: hidden; position: relative; cursor: pointer; }
 .bubble.clamp::after { content: "Show all"; position: absolute; left: 0; right: 0; bottom: 0; padding: 30px 14px 8px; background: linear-gradient(transparent, var(--accent-soft) 70%); color: var(--accent); font-size: 12px; font-weight: 600; }
-.steps { margin-left: 36px; border-left: 2px solid var(--line); padding-left: 12px; display: flex; flex-direction: column; gap: 3px; }
+.steps { margin-left: 36px; border-left: 2px solid var(--line); padding-left: 12px; display: flex; flex-direction: column; gap: 3px; min-width: 0; max-width: calc(100% - 36px); overflow: hidden; }
+.steps details, .steps summary { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat > * { min-width: 0; }
 .steps summary { cursor: pointer; font-size: 12.5px; color: var(--muted); padding: 2px 0; list-style: none; }
 .steps summary::-webkit-details-marker { display: none; }
 .steps summary::before { content: "\u25B8 "; }
 details[open] > summary::before { content: "\u25BE "; }
-.step { display: flex; gap: 8px; align-items: baseline; font-size: 12.5px; min-width: 0; }
+.step { display: flex; gap: 8px; align-items: baseline; font-size: 12.5px; min-width: 0; max-width: 100%; }
 .step .t { color: var(--faint); font-size: 11px; flex: none; width: 52px; font-variant-numeric: tabular-nums; }
 .step .k { flex: none; font-size: 11px; font-weight: 600; color: var(--accent); }
-.step code { font-family: var(--mono); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.step code { font-family: var(--mono); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1; }
 </style>
 </head>
 <body>
@@ -2284,7 +2307,7 @@ details[open] > summary::before { content: "\u25BE "; }
 <main class="wrap">
   <div id="overview">
     <div class="block"><h3>Sessions <span class="n" id="ovCount"></span></h3><div id="ovSessions" class="cards"></div></div>
-    <div class="block"><h3>Subagents <span class="n">latest first</span></h3><div class="panel rows" id="ovRuns"></div></div>
+    <div class="block"><h3>Subagents <span class="n">newest first</span></h3><div class="panel rows" id="ovRuns"></div></div>
     <div class="block" id="ovMsgBox"><h3>Messages</h3><div class="panel"><div id="ovMsgs" class="msgs"></div></div></div>
   </div>
 
@@ -2378,10 +2401,12 @@ function buildModel(s) {
   for (const g of groups.values()) {
     const last = g.turns[g.turns.length - 1];
     g.status = last.status; g.updatedAt = last.updatedAt; g.last = last.last; g.task = g.turns[0].task;
+    g.startedAt = g.turns[0].startedAt;
   }
   const sessions = live.map((p) => ({ name: p.name, peer: p, live: true, groups: [], children: [] }));
   const byName = new Map(sessions.map((x) => [x.name, x]));
-  const sorted = [...groups.values()].sort((a, b) => b.updatedAt - a.updatedAt);
+  // Newest started first, and stable: rows must not jump around while subagents report progress.
+  const sorted = [...groups.values()].sort((a, b) => b.startedAt - a.startedAt || (a.key < b.key ? -1 : 1));
   for (const g of sorted) {
     let x = byName.get(g.owner);
     if (!x) { x = { name: g.owner, peer: null, live: false, groups: [], children: [] }; byName.set(g.owner, x); sessions.push(x); }
@@ -2576,6 +2601,8 @@ function stepsHtml(text, agent, run) {
   for (const e of parseEntries(text)) {
     if (e.text.startsWith("answer: ")) { items.push({ kind: "answer", text: e.text.slice(8) }); continue; }
     if (/^(started|still working)/.test(e.text)) continue;
+    const live = /^(message from|answer to) ([^:]+): ([\\s\\S]*)$/.exec(e.text);
+    if (live) { items.push({ kind: live[1] === "answer to" ? "say" : "live", who: live[2], text: live[3] }); continue; }
     if (/^finished after/.test(e.text)) { items.push({ kind: "sys", text: e.time.slice(0, 5) + " \xB7 " + e.text.replace(/ \xB7 (done|failed)$/, "").replace(/^finished/, "finished") }); continue; }
     const parts = e.text.split(" \xB7 ");
     const body = parts.slice(parts[1] && parts[1].startsWith("step ") ? 2 : 1).join(" \xB7 ");
@@ -2598,6 +2625,7 @@ function stepsHtml(text, agent, run) {
     if (it.kind === "step") { buf.push(it); continue; }
     flush();
     if (it.kind === "sys") html += '<div class="sys">' + esc(it.text) + "</div>";
+    else if (it.kind === "live") html += '<div class="msgrow me">' + av(state.peers.find((p) => p.name === it.who)?.agent || "other", true) + '<div class="bubble"><span class="who">' + esc(it.who) + " \xB7 while it works</span>" + esc(it.text) + "</div></div>";
     else html += '<div class="msgrow">' + av(agent, true) + '<div class="bubble' + (it.kind === "answer" ? " answer" : "") + '">' + (it.kind === "answer" ? '<span class="who">Answer</span>' : "") + esc(it.text) + "</div></div>";
   }
   flush();
@@ -2755,7 +2783,7 @@ function cookieSecret(req) {
   return m?.[1] ?? "";
 }
 async function startUi(opts) {
-  const secret = opts.secret ?? randomBytes4(SECRET_BYTES2).toString("hex");
+  const secret = opts.secret ?? randomBytes5(SECRET_BYTES2).toString("hex");
   const token = loadOrCreateToken(opts.home);
   const dbPath = resolveDbPath(opts.home);
   let sender = null;
@@ -2806,7 +2834,7 @@ async function startUi(opts) {
     }
     return send(res, 404, { error: "not found" });
   };
-  const server = createServer4((req, res) => {
+  const server = createServer5((req, res) => {
     handle(req, res).catch((err) => {
       opts.log.warn("ui request failed", { err: err.message });
       if (!res.headersSent) send(res, 500, { error: String(err.message) });
@@ -2872,7 +2900,7 @@ async function findRunningDashboard(home) {
   return await probeDashboard(info.port) ? info : null;
 }
 async function hostDashboard(opts) {
-  const secret = previousSecret(opts.home) ?? randomBytes5(SECRET_BYTES3).toString("hex");
+  const secret = previousSecret(opts.home) ?? randomBytes6(SECRET_BYTES3).toString("hex");
   const ui = await startUi({ ...opts, secret });
   const info = { url: ui.url, port: ui.port, pid: process.pid };
   const file = dashboardFile(opts.home);
@@ -3081,7 +3109,7 @@ function codexPermissionHookTrusted(bridgeHome, home = codexHome(), read = (p) =
 
 // src/core/opencode-served.ts
 import { spawn as spawn4 } from "node:child_process";
-import { randomBytes as randomBytes6 } from "node:crypto";
+import { randomBytes as randomBytes7 } from "node:crypto";
 import { extname as extname2 } from "node:path";
 var SERVE_START_TIMEOUT_MS = 3e4;
 var LISTEN_RE = /listening on (https?:\/\/[^\s]+)/i;
@@ -3160,7 +3188,7 @@ function permissionDetail(p) {
 }
 async function delegateToOpencodeServed(req) {
   checkDepthPublic();
-  const password = randomBytes6(PASSWORD_BYTES).toString("hex");
+  const password = randomBytes7(PASSWORD_BYTES).toString("hex");
   const env = childEnvPublic({
     ...req.extraEnv,
     OPENCODE_SERVER_PASSWORD: password,

@@ -48,6 +48,21 @@ export function formatMessages(msgs: BridgeMessage[], opts: { header?: string; r
   return parts.join("\n\n");
 }
 
+/**
+ * Messages from the session that gave this subagent its task, delivered while it works (see parent-link.ts).
+ * The parent is the one it works for, so this is not a peer's request: it may change or stop the task.
+ */
+export function formatParentMessages(parent: string, msgs: { id: string; body: string }[]): string {
+  const blocks = msgs.map((m) => `<${TAG} id="${escapeAttr(m.id)}" from="${escapeAttr(parent)}" relation="parent">\n${neutralizeBody(m.body)}\n</${TAG}>`);
+  return [
+    `[agent-bridge] IMPORTANT: ${parent}, the session that gave you your current task, just sent you a message while you work. ` +
+      "It is waiting for your answer. Handle it now, before your next step.",
+    ...blocks,
+    `Required: reply by calling the "send" tool of the agent-bridge MCP server (named bridge_send in opencode) with your answer as "message" ` +
+      `(and reply_to=<id>). It goes straight to ${parent}; your final answer at the end does not reach it in time. ` +
+      "Keep the reply short. Then go on with your task, adjusted to what the message asks (it may change or stop the task).",
+  ].join("\n\n");
+}
 function formatUptime(ms: number): string {
   const min = Math.max(0, Math.round(ms / 60_000));
   if (min < 60) return `${min}m`;

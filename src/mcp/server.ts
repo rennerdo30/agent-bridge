@@ -19,7 +19,8 @@ import {
   MAX_RUNNING_JOBS,
   MAX_WAIT_SEC,
 } from "../core/constants.js";
-import { currentDelegateDepth, DelegateError, killAllDelegates, type DelegateResult } from "../core/delegate.js";
+import { currentDelegateDepth, DelegateError, killAllDelegates, resolveBinary, type DelegateResult } from "../core/delegate.js";
+import { readUsage } from "../core/usage.js";
 import { t } from "../core/i18n.js";
 import { createLogger, type Logger } from "../core/logger.js";
 import { BridgeNode } from "../core/node.js";
@@ -35,11 +36,12 @@ import { askUserViaElicitation } from "./permissions.js";
 import { PermissionRelay, type PermissionDecision, type PermissionRequest } from "../core/relay.js";
 import { codexPermissionHookHash, codexPermissionHookTrusted, recordCodexHookObservation } from "../core/codex-trust.js";
 import { startRunFeed } from "../core/runfeed.js";
+import { ParentLink, parentFromEnv, type ParentClient } from "../core/parent-link.js";
 import { findRunningDashboard, hostDashboard, type DashboardInfo, type HostedDashboard } from "../cli/dashboard.js";
 import { openBrowser } from "../cli/open.js";
 import { RewakeEndpoint } from "./rewake.js";
 import { changedFiles, createWorktree, finishWorktree, gitChangeSnapshot, worktreeReport, type Worktree } from "../core/worktree.js";
-import { DEFAULT_FOLLOW_UP, JobManager, type Resume, type RunResult } from "./jobs.js";
+import { DEFAULT_FOLLOW_UP, JobManager, type Job, type Resume, type RunResult } from "./jobs.js";
 
 const CHANNEL_NOTIFICATION = "notifications/claude/channel";
 /** Sent to the opencode plugin (our MCP client in --agent=opencode mode) when a message arrives. */
@@ -126,6 +128,8 @@ export interface ServerContext {
   jobs?: JobManager;
   /** Claude Code: idle sessions are woken by the asyncRewake Stop hook, so Stop never waits. */
   rewakeAvailable?: boolean;
+  /** Delegated subagents: the live link to the session that runs them. */
+  parent?: ParentClient | null;
   /** Called when a hook reports the host's session id. */
   onSessionId?: (sessionId: string) => void;
   /** Open (starting if needed) the web dashboard; returns its link. */
@@ -174,7 +178,8 @@ function instructionsFor(agent: AgentKind, targets: CodingAgent[]): string {
     `"wait_for_message" blocks until a message arrives (use it after asking a peer something); ` +
     `"ask_<agent>" (${targets.map((x) => `ask_${x}`).join(", ")}) runs that agent headlessly for a one-off task and returns its answer; ` +
     `"spawn_<agent>" starts it as a background subagent whose result arrives later as a message (both accept any model id via "model"). ` +
-    `"message_subagent" sends a follow-up to one of those subagents (running or finished, also to recover a failed one): it continues in its own session with its full context. ` +
+    `"message_subagent" talks to one of those subagents like a native one: a running subagent gets the message while it works and answers right away (ask how far it is, or redirect it); a finished or failed one continues in its own session with its full context. ` +
+    `"usage_limits" shows how much of each agent's account limits is left, so you can pick who gets large work. ` +
     "After you message a peer or spawn a subagent, your turn stays open for a while to receive the reply; handle it and answer if needed. " +
     'Never call "hook_event"; it is reserved for agent-bridge hooks.'
   );
@@ -208,7 +213,7 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
       });
 
   let channel = agent === "claude" && cfg.delivery === "channel";
-  const ctx: ServerContext = { agent, cfg, node, log, home, cwd: () => node?.cwd ?? cwd, channelActive: () => channel };
+  const ctx: ServerContext = { agent, cfg, node, log, home, cwd: () => node?.cwd ?? cwd, channelActive: () => channel, parent: delegated ? parentFromEnv() : null };
   if (node) {
     ctx.jobs = new JobManager(node, log.child("jobs"));
     ctx.activity = (s) => node.setActivity(s);
@@ -448,6 +453,11 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
       },
     },
     guarded("send", async (a: { to: string; message: string; reply_to?: string; conversation_id?: string }) => {
+      // A subagent talks to the session that runs it, whatever name it uses.
+      if (!node && ctx.parent) {
+        await ctx.parent.send(a.message, a.reply_to);
+        return text(t("send.toParent", { name: ctx.parent.name }));
+      }
       const n = requireNode();
       if (a.reply_to) n.markRead([a.reply_to]);
       const res = await n.send({ to: a.to, body: a.message, replyTo: a.reply_to, conversationId: a.conversation_id });
@@ -565,7 +575,7 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
       ...profile.schema,
     };
     /** Run the delegate; returns its result plus a report of what it changed. */
-    const run = async (a: DelegateArgs, signal: AbortSignal, onProgress: ((message: string) => void) | undefined, background: boolean): Promise<RunResult> => {
+    const run = async (a: DelegateArgs, signal: AbortSignal, onProgress: ((message: string) => void) | undefined, background: boolean, job?: Job): Promise<RunResult> => {
       const dlog = log.child("delegate");
       const cwd = a.cwd || ctx.cwd();
       const access: Access | undefined = a.worktree || a._worktree ? (a.access ?? "edit") : a.access;
@@ -622,6 +632,38 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
         await relay?.stop();
         throw err;
       }
+      // Live link: this session's messages reach the subagent while it works, and it can answer at once.
+      const me = node?.name ?? ctx.agent;
+      let link: ParentLink | null = null;
+      let steering: { send: (message: string) => Promise<boolean> } | null = null;
+      if (job && ctx.jobs) {
+        const jobs = ctx.jobs;
+        const l = new ParentLink(
+          me,
+          (body, replyTo) => {
+            feed.report(`answer to ${me}: ${body.split("\n")[0]!.slice(0, 120)}`, `answer to ${me}: ${body}`);
+            jobs.fromSubagent(job, body, replyTo);
+          },
+          dlog,
+        );
+        try {
+          await l.start();
+          link = l;
+          job.live = {
+            post: (m) => {
+              feed.report(`message from ${me}: ${m.split("\n")[0]!.slice(0, 120)}`, `message from ${me}: ${m}`);
+              // Natively where the target supports it (a real user message in the running turn), else at its next hook.
+              if (!steering) return void l.post(m);
+              const s = steering;
+              void s.send(m).then((ok) => {
+                if (!ok) l.post(m);
+              });
+            },
+          };
+        } catch (err) {
+          dlog.warn("live link unavailable; messages to this subagent wait until it finishes", { err: (err as Error).message });
+        }
+      }
       let res: DelegateResult;
       try {
         res = await profile.run(
@@ -635,6 +677,17 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
             log: dlog,
             signal,
             onProgress: feed.report,
+            extraEnv: link?.childEnv(),
+            live: job
+              ? {
+                  from: me,
+                  onSteering: (s) => void (steering = s),
+                  onAnswer: (answer) => {
+                    feed.report(`answer to ${me}: ${answer.split("\n")[0]!.slice(0, 120)}`, `answer to ${me}: ${answer}`);
+                    ctx.jobs?.fromSubagent(job, answer, null);
+                  },
+                }
+              : undefined,
           },
           { ...a, access, relay: wiring },
         );
@@ -648,6 +701,11 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
         throw err;
       } finally {
         await relay?.stop();
+        if (job && link) {
+          job.live = null;
+          // Messages it never got to see go out as a follow-up right after this turn.
+          job.queue.unshift(...(await link.close()));
+        }
       }
 
       const notes: string[] = [`Step-by-step log: ${feed.logPath}`];
@@ -696,6 +754,7 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
           signal,
           onProgress,
           true,
+          job,
         );
 
     const askName = `ask_${target}`;
@@ -721,7 +780,7 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
         let res;
         try {
           // cancel_subagent can stop it too (e.g. from its coordinator), not only the caller.
-          res = await run({ ...a, _job: tracked?.job.name }, tracked ? AbortSignal.any([extra.signal, tracked.job.controller.signal]) : extra.signal, onProgress, false);
+          res = await run({ ...a, _job: tracked?.job.name }, tracked ? AbortSignal.any([extra.signal, tracked.job.controller.signal]) : extra.signal, onProgress, false, tracked?.job);
         } catch (err) {
           tracked?.end({ error: err });
           throw err;
@@ -750,12 +809,33 @@ ${res.text || t("delegate.empty")}`, res.isError);
         const jobs = ctx.jobs;
         if (!jobs) throw new BridgeError("bad_request", t("err.delegatedSession"));
         if (!jobs.canStart()) return text(t("jobs.limit", { max: MAX_RUNNING_JOBS }), true);
-        const job = jobs.start(target, a.model ?? defaultModel, a.prompt, (signal, onProgress, job) => run({ ...a, _job: job.name }, signal, onProgress, true), resumeFor(a));
+        const job = jobs.start(target, a.model ?? defaultModel, a.prompt, (signal, onProgress, job) => run({ ...a, _job: job.name }, signal, onProgress, true, job), resumeFor(a));
         return text(t("jobs.started", { name: job.name }));
       }),
     );
   }
 
+  mcp.registerTool(
+    "usage_limits",
+    {
+      title: "Usage limits of the agents",
+      description:
+        "How much of each installed agent's account limits is used: Codex and Claude Code (5-hour and weekly windows, with reset times), " +
+        "and for opencode today's spend plus which models are free. Use it before handing out large or parallel work, to pick the agent " +
+        "with the most room left, or to decide to stop and save state. Costs no model calls; takes a few seconds.",
+      inputSchema: {
+        agent: z.enum(CODING_AGENTS as unknown as [string, ...string[]]).optional().describe("Only this agent (default: all installed)"),
+      },
+      annotations: { readOnlyHint: true },
+    },
+    guarded("usage_limits", async (a: { agent?: string }) => {
+      const bins: Record<CodingAgent, string> = { codex: cfg.codexBin, claude: cfg.claudeBin, opencode: cfg.opencodeBin };
+      const agents = (a.agent ? [a.agent as CodingAgent] : [...CODING_AGENTS]).filter((x) => resolveBinary(bins[x]));
+      if (!agents.length) return text(t("usage.none"), true);
+      const reports = await Promise.all(agents.map((x) => readUsage(x, bins[x], ctx.cwd(), log, x === "opencode" ? cfg.opencodeModel : null)));
+      return text(reports.map((r) => `${r.agent}${r.maxUsedPercent !== null ? ` (highest: ${r.maxUsedPercent}% used)` : ""}:\n${r.lines.map((l) => `  ${l}`).join("\n")}`).join("\n\n"));
+    }),
+  );
   mcp.registerTool(
     "dashboard",
     {
@@ -778,7 +858,8 @@ ${res.text || t("delegate.empty")}`, res.isError);
       description:
         "Send a follow-up to a subagent started with ask_* or spawn_* (running or finished), like messaging a native subagent. " +
         "It continues in its own session with its full context, in the same folder or worktree. " +
-        "While it is still running the message is queued and sent as soon as it finishes. The answer arrives as a message from the job. " +
+        "While it is still running it gets the message live, at its next step (after its current tool call), and answers right away, like a native subagent: use that to ask how far it is or to redirect it. " +
+        "The answer arrives as a message from the job. " +
         "Without a message it is told to continue where it stopped: use that to recover a failed or interrupted subagent.",
       inputSchema: {
         job: z.string().min(1).describe('Job name, e.g. "codex-job-1a2b3c4d" or "opencode-ask-9f8e7d6c" (see peers)'),

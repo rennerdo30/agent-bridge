@@ -117,7 +117,7 @@ button:disabled { opacity: .6; cursor: default; }
 .kv { display: grid; grid-template-columns: 72px 1fr; gap: 4px 10px; font-size: 12.5px; }
 .kv span:nth-child(odd) { color: var(--faint); }
 .kv span:nth-child(even) { overflow-wrap: anywhere; }
-.conv { display: flex; flex-direction: column; height: calc(100vh - 150px); min-height: 480px; position: sticky; top: 124px; }
+.conv { display: flex; flex-direction: column; min-width: 0; height: calc(100vh - 150px); min-height: 480px; position: sticky; top: 124px; }
 .conv-head { padding: 14px 18px; border-bottom: 1px solid var(--line); display: flex; gap: 12px; align-items: center; }
 .conv-head .grow { flex: 1; min-width: 0; }
 .conv-head .title { font-weight: 650; font-size: 15px; display: flex; gap: 8px; align-items: center; }
@@ -137,15 +137,17 @@ button:disabled { opacity: .6; cursor: default; }
 .bubble.answer .who { color: var(--ok); }
 .bubble.clamp { max-height: 220px; overflow: hidden; position: relative; cursor: pointer; }
 .bubble.clamp::after { content: "Show all"; position: absolute; left: 0; right: 0; bottom: 0; padding: 30px 14px 8px; background: linear-gradient(transparent, var(--accent-soft) 70%); color: var(--accent); font-size: 12px; font-weight: 600; }
-.steps { margin-left: 36px; border-left: 2px solid var(--line); padding-left: 12px; display: flex; flex-direction: column; gap: 3px; }
+.steps { margin-left: 36px; border-left: 2px solid var(--line); padding-left: 12px; display: flex; flex-direction: column; gap: 3px; min-width: 0; max-width: calc(100% - 36px); overflow: hidden; }
+.steps details, .steps summary { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat > * { min-width: 0; }
 .steps summary { cursor: pointer; font-size: 12.5px; color: var(--muted); padding: 2px 0; list-style: none; }
 .steps summary::-webkit-details-marker { display: none; }
 .steps summary::before { content: "▸ "; }
 details[open] > summary::before { content: "▾ "; }
-.step { display: flex; gap: 8px; align-items: baseline; font-size: 12.5px; min-width: 0; }
+.step { display: flex; gap: 8px; align-items: baseline; font-size: 12.5px; min-width: 0; max-width: 100%; }
 .step .t { color: var(--faint); font-size: 11px; flex: none; width: 52px; font-variant-numeric: tabular-nums; }
 .step .k { flex: none; font-size: 11px; font-weight: 600; color: var(--accent); }
-.step code { font-family: var(--mono); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.step code { font-family: var(--mono); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1; }
 </style>
 </head>
 <body>
@@ -162,7 +164,7 @@ details[open] > summary::before { content: "▾ "; }
 <main class="wrap">
   <div id="overview">
     <div class="block"><h3>Sessions <span class="n" id="ovCount"></span></h3><div id="ovSessions" class="cards"></div></div>
-    <div class="block"><h3>Subagents <span class="n">latest first</span></h3><div class="panel rows" id="ovRuns"></div></div>
+    <div class="block"><h3>Subagents <span class="n">newest first</span></h3><div class="panel rows" id="ovRuns"></div></div>
     <div class="block" id="ovMsgBox"><h3>Messages</h3><div class="panel"><div id="ovMsgs" class="msgs"></div></div></div>
   </div>
 
@@ -256,10 +258,12 @@ function buildModel(s) {
   for (const g of groups.values()) {
     const last = g.turns[g.turns.length - 1];
     g.status = last.status; g.updatedAt = last.updatedAt; g.last = last.last; g.task = g.turns[0].task;
+    g.startedAt = g.turns[0].startedAt;
   }
   const sessions = live.map((p) => ({ name: p.name, peer: p, live: true, groups: [], children: [] }));
   const byName = new Map(sessions.map((x) => [x.name, x]));
-  const sorted = [...groups.values()].sort((a, b) => b.updatedAt - a.updatedAt);
+  // Newest started first, and stable: rows must not jump around while subagents report progress.
+  const sorted = [...groups.values()].sort((a, b) => b.startedAt - a.startedAt || (a.key < b.key ? -1 : 1));
   for (const g of sorted) {
     let x = byName.get(g.owner);
     if (!x) { x = { name: g.owner, peer: null, live: false, groups: [], children: [] }; byName.set(g.owner, x); sessions.push(x); }
@@ -454,6 +458,8 @@ function stepsHtml(text, agent, run) {
   for (const e of parseEntries(text)) {
     if (e.text.startsWith("answer: ")) { items.push({ kind: "answer", text: e.text.slice(8) }); continue; }
     if (/^(started|still working)/.test(e.text)) continue;
+    const live = /^(message from|answer to) ([^:]+): ([\\s\\S]*)$/.exec(e.text);
+    if (live) { items.push({ kind: live[1] === "answer to" ? "say" : "live", who: live[2], text: live[3] }); continue; }
     if (/^finished after/.test(e.text)) { items.push({ kind: "sys", text: e.time.slice(0, 5) + " · " + e.text.replace(/ · (done|failed)$/, "").replace(/^finished/, "finished") }); continue; }
     const parts = e.text.split(" · ");
     const body = parts.slice(parts[1] && parts[1].startsWith("step ") ? 2 : 1).join(" · ");
@@ -476,6 +482,7 @@ function stepsHtml(text, agent, run) {
     if (it.kind === "step") { buf.push(it); continue; }
     flush();
     if (it.kind === "sys") html += '<div class="sys">' + esc(it.text) + "</div>";
+    else if (it.kind === "live") html += '<div class="msgrow me">' + av(state.peers.find((p) => p.name === it.who)?.agent || "other", true) + '<div class="bubble"><span class="who">' + esc(it.who) + " · while it works</span>" + esc(it.text) + "</div></div>";
     else html += '<div class="msgrow">' + av(agent, true) + '<div class="bubble' + (it.kind === "answer" ? " answer" : "") + '">' + (it.kind === "answer" ? '<span class="who">Answer</span>' : "") + esc(it.text) + "</div></div>";
   }
   flush();

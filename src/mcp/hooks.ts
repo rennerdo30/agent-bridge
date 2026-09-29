@@ -1,6 +1,6 @@
 import { HOOK_MAX_MESSAGES, STOP_WAIT_CAP_MS } from "../core/constants.js";
 import type { BridgeMessage } from "../core/protocol.js";
-import { formatMessages, formatPeer } from "./format.js";
+import { formatMessages, formatParentMessages, formatPeer } from "./format.js";
 import type { ServerContext } from "./server.js";
 
 /** Hook events agent-bridge subscribes to in both Claude Code and Codex. */
@@ -20,7 +20,7 @@ export interface HookInput {
 export type HookOutput =
   | Record<string, never>
   | { hookSpecificOutput: { hookEventName: HookEvent; additionalContext: string } }
-  | { decision: "block"; reason: string };
+  | { decision: "block"; reason: string; hookSpecificOutput?: { hookEventName: HookEvent; additionalContext: string } };
 
 const STOP_REASON_FOOTER =
   "Handle these peer messages now: do what is reasonable, answer with the agent-bridge \"send\" tool (reply_to=<id>), then end your turn.";
@@ -40,9 +40,28 @@ function take(ctx: ServerContext, wakeOnly: boolean): BridgeMessage[] {
   return msgs;
 }
 
+/** A delegated subagent: its parent's messages arrive over the parent link, not the bridge. */
+async function subagentHook(ctx: ServerContext, input: HookInput): Promise<HookOutput> {
+  const parent = ctx.parent;
+  if (!parent || input.event === "SessionStart") return {};
+  const msgs = await parent.inbox().catch((err) => {
+    ctx.log.debug("parent inbox unavailable", { err: (err as Error).message });
+    return [];
+  });
+  if (msgs.length === 0) return {};
+  ctx.log.info("delivering parent messages to the subagent", { count: msgs.length, event: input.event });
+  const text = formatParentMessages(parent.name, msgs);
+  // Before it ends its turn: keep it going so it answers (and adjusts) instead of finishing without seeing them.
+  if (input.event === "Stop") return { decision: "block", reason: text };
+  // After a tool call, "block" feeds the reason back to the model as feedback on that call (the call itself
+  // already ran), which the hosts surface far more reliably than additional context alone.
+  if (input.event === "PostToolUse") return { decision: "block", reason: text, hookSpecificOutput: { hookEventName: input.event, additionalContext: text } };
+  return context(input.event, text);
+}
+
 export async function buildHookResponse(ctx: ServerContext, input: HookInput): Promise<HookOutput> {
   const node = ctx.node;
-  if (!node) return {};
+  if (!node) return subagentHook(ctx, input);
   ctx.log.debug("hook event", { event: input.event, sessionId: input.sessionId, stopHookActive: input.stopHookActive });
   if (input.sessionId) {
     await node.setSessionId(input.sessionId).catch(() => {});

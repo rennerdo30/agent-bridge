@@ -6,6 +6,9 @@
       "cwd": ".",
       "env_vars": [
         "AGENT_BRIDGE_DELEGATE_DEPTH",
+        "AGENT_BRIDGE_PARENT_URL",
+        "AGENT_BRIDGE_PARENT_TOKEN",
+        "AGENT_BRIDGE_PARENT_NAME",
         "AGENT_BRIDGE_HOME",
         "AGENT_BRIDGE_PIPE",
         "AGENT_BRIDGE_NAME",

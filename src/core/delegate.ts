@@ -3,6 +3,7 @@ import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { delimiter, extname, isAbsolute, join, win32 } from "node:path";
 import type { ClaudePermissionMode, CodexSandbox } from "./config.js";
 import type { Logger } from "./logger.js";
+import { PARENT_URL_ENV } from "./parent-link.js";
 import { progressLineHandler } from "./progress.js";
 
 /** Env var tracking nested delegation, so a delegated agent cannot delegate back forever. */
@@ -114,6 +115,30 @@ export function trackChild(child: ChildProcess): void {
   child.once("exit", () => liveChildren.delete(child));
 }
 
+/** What to spawn for a CLI: its real executable (npm .cmd shims unwrapped), or the shim through a shell. */
+export function resolveCommand(bin: string, argsIn: string[], env: NodeJS.ProcessEnv, log: Logger): { resolved: string; args: string[]; needsShell: boolean } {
+  let resolved = resolveBinary(bin, env);
+  if (!resolved) throw new DelegateError(`executable not found: ${bin}`, "not_found");
+  let args = argsIn;
+  let needsShell = process.platform === "win32" && WINDOWS_SHIM_EXTS.has(extname(resolved).toLowerCase());
+  if (needsShell) {
+    const target = unwrapNpmShim(resolved);
+    if (target && existsSync(target.command) && target.prefix.every((p) => existsSync(p))) {
+      log.debug("unwrapped npm shim", { shim: resolved, command: target.command, prefix: target.prefix });
+      resolved = target.command;
+      args = [...target.prefix, ...args];
+      needsShell = false;
+    }
+  }
+  if (needsShell) {
+    // Last resort: cmd.exe re-parses the command line, so refuse anything it could interpret.
+    for (const a of args) {
+      if (/[&|<>^%"\s]/.test(a)) throw new DelegateError(`unsafe argument for shell invocation: ${a}`, "failed");
+    }
+  }
+  return { resolved: needsShell ? `"${resolved}"` : resolved, args, needsShell };
+}
+
 export interface RunResult {
   code: number | null;
   stdout: string;
@@ -136,29 +161,17 @@ export function runProcess(opts: {
   /** Called with every complete stdout line as it arrives (for progress reporting). */
   onLine?: (line: string) => void;
 }): Promise<RunResult> {
-  let resolved = resolveBinary(opts.bin, opts.env);
-  if (!resolved) return Promise.reject(new DelegateError(`executable not found: ${opts.bin}`, "not_found"));
-  let args = opts.args;
-  let needsShell = process.platform === "win32" && WINDOWS_SHIM_EXTS.has(extname(resolved).toLowerCase());
-  if (needsShell) {
-    const target = unwrapNpmShim(resolved);
-    if (target && existsSync(target.command) && target.prefix.every((p) => existsSync(p))) {
-      opts.log.debug("unwrapped npm shim", { shim: resolved, command: target.command, prefix: target.prefix });
-      resolved = target.command;
-      args = [...target.prefix, ...args];
-      needsShell = false;
-    }
+  let command: { resolved: string; args: string[]; needsShell: boolean };
+  try {
+    command = resolveCommand(opts.bin, opts.args, opts.env, opts.log);
+  } catch (err) {
+    return Promise.reject(err);
   }
-  if (needsShell) {
-    // Last resort: cmd.exe re-parses the command line, so refuse anything it could interpret.
-    for (const a of args) {
-      if (/[&|<>^%"\s]/.test(a)) return Promise.reject(new DelegateError(`unsafe argument for shell invocation: ${a}`, "failed"));
-    }
-  }
+  const { resolved, args, needsShell } = command;
   opts.log.debug("spawning delegate", { bin: resolved, args, cwd: opts.cwd, shell: needsShell });
 
   return new Promise((resolve, reject) => {
-    const child = spawn(needsShell ? `"${resolved}"` : resolved, args, {
+    const child = spawn(resolved, args, {
       cwd: opts.cwd,
       // Some CLIs (opencode) take their project folder from PWD rather than the real cwd; keep them in sync.
       env: { ...opts.env, PWD: opts.cwd },
@@ -233,6 +246,13 @@ export interface DelegateRequest {
   model?: string | null;
   /** Receives short human-readable status lines while the delegate works. */
   onProgress?: (message: string, full?: string) => void;
+  /** Talking to the running subagent, where the target supports it natively (Codex app-server). */
+  live?: {
+    from: string;
+    onSteering: (s: { send: (message: string) => Promise<boolean> } | null) => void;
+    /** Its reply to a message delivered this way. */
+    onAnswer: (text: string) => void;
+  };
   /** Extra environment for the child (e.g. the permission relay address). */
   extraEnv?: Record<string, string>;
   log: Logger;
@@ -261,13 +281,13 @@ export const CODEX_ASK_HINT =
 // `opencode run` rejects every ask without --auto, so nothing is changed.
 export const OPENCODE_READ_ONLY_PERMISSIONS = { edit: "ask", bash: "ask" } as const;
 
-function childEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
+export function childEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
   // The parent's project dir would point a delegated Claude (it may work in a worktree) at the wrong folder.
   const { CLAUDE_PROJECT_DIR: _parentProject, ...env } = process.env;
   return { ...env, ...extra, [DELEGATE_DEPTH_ENV]: String(currentDelegateDepth() + 1) };
 }
 
-function checkDepth(): void {
+export function checkDepth(): void {
   if (currentDelegateDepth() >= MAX_DELEGATE_DEPTH) {
     throw new DelegateError("delegation is disabled inside a delegated session (prevents recursive delegation)", "depth");
   }
@@ -388,6 +408,8 @@ export function parseClaudeJson(stdout: string): { sessionId: string | null; tex
  * Tools removed from a read-only Claude subagent. A deny list is used because permission modes alone
  * did not hold in headless runs: allow rules / auto mode approved writes and commands even in "manual".
  */
+/** The agent-bridge plugin's "send" tool as Claude Code names it. */
+const CLAUDE_PARENT_SEND_TOOL = "mcp__plugin_agent-bridge_bridge__send";
 export const CLAUDE_READ_ONLY_DENIED_TOOLS = ["Write", "Edit", "MultiEdit", "NotebookEdit", "Bash", "PowerShell"];
 /** Permission modes that mean "look only". */
 const CLAUDE_READ_ONLY_MODES = new Set<ClaudePermissionMode>(["default", "manual", "plan"]);
@@ -401,6 +423,8 @@ export async function delegateToClaude(
   if (CLAUDE_READ_ONLY_MODES.has(req.permissionMode)) args.push("--disallowedTools", CLAUDE_READ_ONLY_DENIED_TOOLS.join(","));
   if (req.model) args.push("--model", req.model);
   if (req.sessionId) args.push("--resume", req.sessionId);
+  // Headless Claude denies MCP tools it would ask about: let it answer its parent (see parent-link.ts).
+  if (req.extraEnv?.[PARENT_URL_ENV]) args.push("--allowedTools", CLAUDE_PARENT_SEND_TOOL);
   const res = await withResumeHint("claude", (o) => claudeSessionFromStream(o), () => runProcess({
     bin: req.bin,
     args,

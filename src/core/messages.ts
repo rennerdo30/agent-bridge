@@ -20,6 +20,8 @@ export const en = {
   "send.delivered": "Delivered to: {names}.",
   "send.queued": "Recipient offline, queued for: {names}.",
   "send.waitHint": "Use wait_for_message to wait for the answer.",
+  "usage.none": "None of Codex, Claude Code or opencode is installed here.",
+  "send.toParent": "Sent to {name}, the session that gave you this task. Go on with your task.",
 
   "inbox.empty": "No unread messages.",
   "wait.timeout": "No message arrived within {seconds} seconds.",
@@ -32,6 +34,7 @@ export const en = {
   "peers.recentJob": "- {name}: {status} {ago} ago, {session}",
   "delegate.followUp": "Follow up with its full context: message_subagent(job=\"{job}\", message=...).",
   "followUp.started": "Sent to {name}; it continues in its own session. Its answer will arrive as a message from {name}.",
+  "followUp.delivered": "{name} is still working and gets your message at its next step (after its current tool call or model step). Its answer arrives as a message from {name}, usually within a minute. If it finishes first, the message is sent to it as a follow-up.",
   "followUp.queued": "{name} is still working; your message is queued and will be sent as soon as it finishes.",
   "followUp.unknown": "No subagent named {name}. Call peers to see running and recent subagents.",
   "followUp.no-session": "{name} has no session to continue (it failed before starting one). Start a new one with ask_* or spawn_*.",

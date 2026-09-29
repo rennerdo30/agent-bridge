@@ -30925,7 +30925,7 @@ var StdioClientTransport = class {
 import { homedir } from "node:os";
 import { join } from "node:path";
 var APP_NAME = "agent-bridge";
-var APP_VERSION = "0.10.0";
+var APP_VERSION = "0.11.0";
 var ENV = {
   home: "AGENT_BRIDGE_HOME",
   pipe: "AGENT_BRIDGE_PIPE",
@@ -31151,6 +31151,23 @@ async function createBridge({ client, directory }) {
     "chat.message": async (input2) => {
       log("debug", "chat.message", { sessionID: input2?.sessionID });
       noteSession(input2?.sessionID);
+    },
+    /** After each tool call: mail that arrived meanwhile goes into that tool's result, where the model reads it. */
+    "tool.execute.after": async (input2, output2) => {
+      const sessionID = input2?.sessionID;
+      if (!sessionID || childSessions.has(sessionID) || typeof output2?.output !== "string") return;
+      noteSession(sessionID);
+      const out = await hook("PostToolUse", sessionID);
+      const context = out?.reason ?? out?.hookSpecificOutput?.additionalContext;
+      if (typeof context !== "string" || !context) return;
+      try {
+        await promptAsync(client, sessionID, context, true);
+      } catch (err) {
+        log("warn", "could not add the message to the session; appending it to the tool result", { err: String(err?.message ?? err) });
+        output2.output = `${output2.output}
+
+${context}`;
+      }
     },
     /** Runs before every model step: deliver mail that arrived while the session is working. */
     "experimental.chat.system.transform": async (input2, output2) => {

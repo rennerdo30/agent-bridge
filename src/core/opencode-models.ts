@@ -1,4 +1,4 @@
-import { runProcess } from "./delegate.js";
+import { childEnv, runProcess } from "./delegate.js";
 import type { Logger } from "./logger.js";
 
 /**
@@ -15,7 +15,7 @@ let cache: { at: number; models: string[] } | null = null;
 
 export async function listOpencodeModels(bin: string, cwd: string, log: Logger): Promise<string[]> {
   if (cache && Date.now() - cache.at < CACHE_TTL_MS) return cache.models;
-  const res = await runProcess({ bin, args: ["models"], stdin: "", cwd, timeoutMs: LIST_TIMEOUT_MS, env: process.env, log });
+  const res = await runProcess({ bin, args: ["models"], stdin: "", cwd, timeoutMs: LIST_TIMEOUT_MS, env: childEnv(), log }); // childEnv: its agent-bridge plugin must not join the bridge as a session
   const models = res.stdout
     .split(/\r?\n/)
     .map((l) => l.trim())

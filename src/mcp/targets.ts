@@ -3,6 +3,10 @@ import { CLAUDE_PERMISSION_MODES, CODEX_SANDBOXES, type BridgeConfig, type Claud
 import { DelegateError, delegateToClaude, delegateToCodex, delegateToOpencode, type DelegateRequest, type DelegateResult } from "../core/delegate.js";
 import { listOpencodeModels, resolveOpencodeModel } from "../core/opencode-models.js";
 import { delegateToOpencodeServed } from "../core/opencode-served.js";
+import { delegateToCodexAppServer } from "../core/codex-appserver.js";
+
+/** Set to 1 to run Codex subagents with `codex exec` (no live messages) instead of `codex app-server`. */
+export const CODEX_EXEC_ENV = "AGENT_BRIDGE_CODEX_EXEC";
 import type { CodingAgent } from "../core/protocol.js";
 import type { PermissionDecision, PermissionRequest } from "../core/relay.js";
 
@@ -62,13 +66,27 @@ export const DELEGATION_TARGETS: Record<CodingAgent, DelegationTarget> = {
     defaultModel: (cfg) => cfg.codexModel,
     schema: { sandbox: z.enum(CODEX_SANDBOXES as [string, ...string[]]).optional().describe("Overrides access with an exact Codex sandbox mode") },
     permissionNote: (cfg) => `Codex runs in the "${cfg.codexSandbox}" sandbox unless you pass access or sandbox.`,
-    run: (cfg, base, a) =>
-      delegateToCodex({
+    run: async (cfg, base, a) => {
+      const sandbox = (a.sandbox as CodexSandbox | undefined) ?? (a.access ? CODEX_SANDBOX_FOR[a.access] : cfg.codexSandbox);
+      const relay = a.access === "ask" && supportsAsk("codex", a.relay);
+      // app-server lets messages reach the running subagent (turn/steer). "ask" runs keep exec: their
+      // approvals go through the PermissionRequest hook, which is wired for exec.
+      if (!relay && process.env[CODEX_EXEC_ENV] !== "1") {
+        try {
+          return await delegateToCodexAppServer({ ...base, bin: cfg.codexBin, sandbox });
+        } catch (err) {
+          // Older Codex without app-server (or one that cannot start it): the run never began, use exec.
+          if (!(err instanceof DelegateError) || err.kind !== "failed" || err.sessionId) throw err;
+          base.log.warn("codex app-server unavailable, using codex exec", { err: err.message });
+        }
+      }
+      return delegateToCodex({
         ...base,
         bin: cfg.codexBin,
-        sandbox: (a.sandbox as CodexSandbox | undefined) ?? (a.access ? CODEX_SANDBOX_FOR[a.access] : cfg.codexSandbox),
-        ...(a.access === "ask" && supportsAsk("codex", a.relay) ? { relayApprovals: true, extraEnv: { ...base.extraEnv, ...a.relay!.env } } : {}),
-      }),
+        sandbox,
+        ...(relay ? { relayApprovals: true, extraEnv: { ...base.extraEnv, ...a.relay!.env } } : {}),
+      });
+    },
   },
   claude: {
     title: "Claude Code",

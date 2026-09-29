@@ -229,6 +229,24 @@ async function createBridge({ client, directory }: PluginInput) {
       noteSession(input?.sessionID);
     },
 
+    /** After each tool call: mail that arrived meanwhile goes into that tool's result, where the model reads it. */
+    "tool.execute.after": async (input: { sessionID?: string }, output: { output?: unknown }) => {
+      const sessionID = input?.sessionID;
+      if (!sessionID || childSessions.has(sessionID) || typeof output?.output !== "string") return;
+      noteSession(sessionID);
+      const out = await hook("PostToolUse", sessionID);
+      const context = out?.reason ?? out?.hookSpecificOutput?.additionalContext;
+      if (typeof context !== "string" || !context) return;
+      // A real user message in the running session (models discount instructions inside tool results);
+      // the tool result only as a fallback.
+      try {
+        await promptAsync(client, sessionID, context, true);
+      } catch (err) {
+        log("warn", "could not add the message to the session; appending it to the tool result", { err: String((err as Error)?.message ?? err) });
+        output.output = `${output.output}\n\n${context}`;
+      }
+    },
+
     /** Runs before every model step: deliver mail that arrived while the session is working. */
     "experimental.chat.system.transform": async (input: { sessionID?: string }, output: { system: string[] }) => {
       const sessionID = input?.sessionID;
