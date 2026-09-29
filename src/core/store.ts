@@ -72,6 +72,7 @@ export class MessageStore {
     claim: StatementSync;
     byId: StatementSync;
     purge: StatementSync;
+    expireQueued: StatementSync;
   };
 
   constructor(
@@ -94,6 +95,7 @@ export class MessageStore {
       claim: this.db.prepare(`UPDATE messages SET recipient = ? WHERE recipient = ? AND read_at IS NULL`),
       byId: this.db.prepare(`SELECT * FROM messages WHERE id = ? ORDER BY created_at ASC LIMIT 1`),
       purge: this.db.prepare(`DELETE FROM messages WHERE created_at < ?`),
+      expireQueued: this.db.prepare(`DELETE FROM messages WHERE recipient = ? AND read_at IS NULL AND created_at < ?`),
     };
     log.debug("message store opened", { file });
   }
@@ -127,6 +129,13 @@ export class MessageStore {
   /** Move messages waiting for "any <agent>" to a concrete peer name. */
   claim(fromKey: string, toName: string): number {
     return Number(this.stmt.claim.run(toName, fromKey).changes);
+  }
+
+  /** Drop unread mail waiting for a queue key or name that is older than the cutoff. */
+  expireQueued(recipient: string, cutoff: number): number {
+    const n = Number(this.stmt.expireQueued.run(recipient, cutoff).changes);
+    if (n > 0) this.log.info("dropped stale queued messages", { recipient, count: n });
+    return n;
   }
 
   byId(id: string): BridgeMessage | null {

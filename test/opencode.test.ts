@@ -7,6 +7,7 @@ import { installOpencode, uninstallOpencode } from "../src/cli/opencode-install.
 import { nullLogger } from "../src/core/logger.js";
 import { BridgeNode } from "../src/core/node.js";
 import { parseOpencodeJsonl, unwrapNpmShim } from "../src/core/delegate.js";
+import { watchServeOutput } from "../src/core/opencode-served.js";
 import { resolveDbPath, resolvePipePath } from "../src/core/paths.js";
 import { loadOrCreateToken } from "../src/core/token.js";
 import { jsonSchemaToZodShape } from "../src/opencode/schema.js";
@@ -46,6 +47,22 @@ describe("unwrapNpmShim", () => {
   });
   it("returns null for unknown shims", () => {
     expect(unwrapNpmShim("C:\\x.cmd", () => "echo hi")).toBeNull();
+  });
+});
+
+describe("watchServeOutput", () => {
+  it("finds the listen line after lots of output, keeping only a bounded tail", () => {
+    const urls: string[] = [];
+    const w = watchServeOutput((u) => urls.push(u));
+    const noise = "INFO booting something\n".repeat(1_000);
+    for (let i = 0; i < 100; i++) w.onData(noise);
+    expect(w.tail().length).toBeLessThanOrEqual(4_000);
+    w.onData("opencode server listening on http://127.0.0.1:4567/\n");
+    expect(urls).toEqual(["http://127.0.0.1:4567"]);
+    // A running server's log is drained but not kept.
+    for (let i = 0; i < 100; i++) w.onData(noise);
+    expect(w.tail()).toBe("");
+    expect(urls).toHaveLength(1);
   });
 });
 
@@ -176,7 +193,13 @@ describe("opencode plugin", () => {
     await peer.send({ to: "opencode-test", body: "while you work" });
     await new Promise((r) => setTimeout(r, 300));
     const output = { system: [] as string[] };
+    const before = prompts.length;
     await hooks["experimental.chat.system.transform"]({ sessionID: "ses_A" }, output);
     expect(output.system.join("\n")).toContain("while you work");
+    // Also stored in the session, so a failed step does not lose mail that is already marked read.
+    const stored = prompts.slice(before);
+    expect(stored).toHaveLength(1);
+    expect(stored[0]).toMatchObject({ id: "ses_A", noReply: true });
+    expect(stored[0]!.text).toContain("while you work");
   });
 });

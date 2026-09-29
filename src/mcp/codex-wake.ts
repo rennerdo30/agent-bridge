@@ -25,6 +25,8 @@ export class CodexWaker {
   private threadId: string | null = null;
   private timer: NodeJS.Timeout | null = null;
   private inFlight = false;
+  /** Bumped on every activity report, so a finishing wake-up can tell whether hooks reported since it began. */
+  private reports = 0;
 
   constructor(
     private readonly node: BridgeNode,
@@ -43,7 +45,16 @@ export class CodexWaker {
 
   setActivity(state: Activity): void {
     this.state = state;
-    if (state === "idle" && this.node.autoWakeEnabled && this.node.unread().some((m) => m.hop < this.cfg.maxHops)) this.schedule();
+    this.reports++;
+    if (state === "idle" && this.hasWakeableMail()) this.schedule();
+  }
+
+  private hasWakeableMail(): boolean {
+    return this.node.autoWakeEnabled && this.node.unread().some((m) => m.hop < this.cfg.maxHops);
+  }
+
+  private idleWithMail(): boolean {
+    return this.state === "idle" && this.hasWakeableMail();
   }
 
   private onMessage(m: BridgeMessage): void {
@@ -71,6 +82,12 @@ export class CodexWaker {
     }
     this.inFlight = true;
     this.state = "busy";
+    const reportsAtStart = this.reports;
+    // The queued turn can start (and even end) while `codex queue` still runs. Hooks then report the real
+    // state, which must win over our guess: a failed queue call only resets to idle if nobody reported since.
+    const failed = () => {
+      if (this.reports === reportsAtStart) this.state = "idle";
+    };
     try {
       const res = await runProcess({
         bin: this.cfg.codexBin,
@@ -83,14 +100,17 @@ export class CodexWaker {
       });
       if (res.code === 0) this.log.info("queued wake-up turn for codex", { threadId: this.threadId });
       else {
-        this.state = "idle";
+        failed();
         this.log.warn("codex queue failed", { code: res.code, stderr: res.stderr.slice(-1000) });
       }
     } catch (err) {
-      this.state = "idle";
+      failed();
       this.log.warn("codex queue failed", { err: (err as Error).message });
     } finally {
       this.inFlight = false;
+      // An idle report during the call could not schedule (inFlight); catch up on mail it left behind.
+      // Without such a report nothing is retried, so a failing `codex queue` does not loop.
+      if (this.reports !== reportsAtStart && this.idleWithMail()) this.schedule();
     }
   }
 }

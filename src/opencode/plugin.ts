@@ -247,14 +247,25 @@ async function createBridge({ client, directory }: PluginInput) {
       }
     },
 
-    /** Runs before every model step: deliver mail that arrived while the session is working. */
+    /**
+     * Runs before every model step: deliver mail that arrived while the session is working. The hook marks
+     * it read, but a system prompt is not stored: if this step fails (provider error, abort) the mail would
+     * be gone. So it is also added to the session as a message (like after a tool call), which persists;
+     * the system prompt still shows it to this very step.
+     */
     "experimental.chat.system.transform": async (input: { sessionID?: string }, output: { system: string[] }) => {
       const sessionID = input?.sessionID;
       if (!sessionID || childSessions.has(sessionID)) return;
       noteSession(sessionID);
       const out = await hook("PostToolUse", sessionID);
       const context = out?.hookSpecificOutput?.additionalContext;
-      if (typeof context === "string" && context) output.system.push(context);
+      if (typeof context !== "string" || !context) return;
+      output.system.push(context);
+      try {
+        await promptAsync(client, sessionID, context, true);
+      } catch (err) {
+        log("warn", "could not store peer messages in the session; they reach only this step's system prompt", { err: String((err as Error)?.message ?? err) });
+      }
     },
 
     event: async ({ event }: { event: OpencodeEvent }) => {

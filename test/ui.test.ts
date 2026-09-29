@@ -78,6 +78,21 @@ describe("web dashboard", () => {
     const state = await (await fetch(`${base()}/api/state`, { headers: { cookie } })).json();
     expect(state.messages[0]).toMatchObject({ from_name: "you", body: "hello from the dashboard" });
   });
+
+  it("concurrent first sends share one sender peer", async () => {
+    const peer = env.node("claude-app", "claude");
+    await peer.start();
+    const post = (body: string) =>
+      fetch(`${base()}/api/send`, {
+        method: "POST",
+        headers: { cookie, "x-agent-bridge": "1", "content-type": "application/json" },
+        body: JSON.stringify({ to: "claude-app", body }),
+      }).then((r) => r.json());
+    const results = await Promise.all([post("one"), post("two"), post("three")]);
+    expect(results.every((r) => r.deliveredTo?.[0] === "claude-app")).toBe(true);
+    const senders = (await peer.peers()).filter((p) => p.agent === "other").map((p) => p.name);
+    expect(senders).toEqual(["you"]);
+  });
 });
 
 describe("summarizeRun", () => {
