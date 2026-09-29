@@ -44,7 +44,10 @@ export async function buildHookResponse(ctx: ServerContext, input: HookInput): P
   const node = ctx.node;
   if (!node) return {};
   ctx.log.debug("hook event", { event: input.event, sessionId: input.sessionId, stopHookActive: input.stopHookActive });
-  if (input.sessionId) await node.setSessionId(input.sessionId).catch(() => {});
+  if (input.sessionId) {
+    await node.setSessionId(input.sessionId).catch(() => {});
+    ctx.onSessionId?.(input.sessionId);
+  }
   // The MCP server may have been started outside the project (e.g. in the plugin folder).
   if (input.cwd) await ctx.learnCwd?.(input.cwd);
   // Joining may have been deferred until the project dir was known.
@@ -86,7 +89,9 @@ export async function buildHookResponse(ctx: ServerContext, input: HookInput): P
         return {};
       }
       let msgs = take(ctx, true);
-      if (msgs.length === 0 && inConversation) {
+      // With background wake-ups (Claude Code's asyncRewake hook) the turn never waits: it ends now and
+      // the session is woken when a result or reply arrives. Hosts without that keep the listen window.
+      if (msgs.length === 0 && inConversation && !ctx.rewakeAvailable) {
         const waitMs = Math.min(STOP_WAIT_CAP_MS, jobsRunning > 0 ? STOP_WAIT_CAP_MS : lingerRemaining);
         ctx.log.info("listening for replies before ending the turn", { waitMs, jobsRunning });
         const arrived = await node.waitForMessage(waitMs, (m) => m.hop < ctx.cfg.maxHops, input.signal);

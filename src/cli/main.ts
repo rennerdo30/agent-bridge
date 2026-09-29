@@ -11,6 +11,7 @@ import { formatMessage } from "../mcp/format.js";
 import { CODING_AGENTS, type CodingAgent } from "../core/protocol.js";
 import { parseInstallerArgs, runInstaller } from "./installer.js";
 import { runPermissionHook } from "./permission-hook.js";
+import { runRewakeHook } from "./rewake-hook.js";
 import { findRunLog, watchRunLog } from "./watch.js";
 import { findRunningDashboard, hostDashboard } from "./dashboard.js";
 import { loadConfig } from "../core/config.js";
@@ -121,6 +122,8 @@ async function main(argv: string[]): Promise<number> {
       await watchRunLog(logPath, out);
       return 0;
     }
+    case "rewake-hook":
+      return runRewakeHook();
     case "permission-hook":
       return runPermissionHook();
     case "reliability": {

@@ -36490,7 +36490,7 @@ import { basename, join as join2 } from "node:path";
 import { homedir } from "node:os";
 import { join } from "node:path";
 var APP_NAME = "agent-bridge";
-var APP_VERSION = "0.8.0";
+var APP_VERSION = "0.9.0";
 var PROTOCOL_VERSION = 2;
 var ENV = {
   home: "AGENT_BRIDGE_HOME",
@@ -37853,6 +37853,8 @@ var BridgeNode = class extends EventEmitter2 {
   autoWake;
   currentCwd;
   lastSent = 0;
+  /** Ids of messages this peer sent as new questions (not replies); replies to them are awaited. */
+  asked = /* @__PURE__ */ new Set();
   activity = null;
   log;
   get name() {
@@ -38017,8 +38019,14 @@ var BridgeNode = class extends EventEmitter2 {
     return this.withClient(async (c) => {
       const res = await c.request("send", args);
       this.lastSent = Date.now();
+      if (!args.replyTo) for (const m of res.messages) this.asked.add(m.id);
+      if (this.asked.size > READ_ID_MEMORY) this.asked.delete(this.asked.values().next().value);
       return res;
     });
+  }
+  /** A reply to a question this peer asked (so the answer should reach the agent even when it is idle). */
+  isAwaitedReply(m) {
+    return m.replyTo !== null && this.asked.has(m.replyTo);
   }
   /** When this peer last sent a message (0 = never); marks it as taking part in a conversation. */
   get lastSentAt() {
@@ -38369,8 +38377,11 @@ async function buildHookResponse(ctx, input2) {
   const node2 = ctx.node;
   if (!node2) return {};
   ctx.log.debug("hook event", { event: input2.event, sessionId: input2.sessionId, stopHookActive: input2.stopHookActive });
-  if (input2.sessionId) await node2.setSessionId(input2.sessionId).catch(() => {
-  });
+  if (input2.sessionId) {
+    await node2.setSessionId(input2.sessionId).catch(() => {
+    });
+    ctx.onSessionId?.(input2.sessionId);
+  }
   if (input2.cwd) await ctx.learnCwd?.(input2.cwd);
   await node2.ensureConnected().catch((err) => ctx.log.warn("bridge not reachable from hook", { err: err.message }));
   const channel = ctx.channelActive();
@@ -38408,7 +38419,7 @@ ${peers.map((p) => formatPeer(p)).join("\n")}` : "No other agents are online rig
         return {};
       }
       let msgs = take(ctx, true);
-      if (msgs.length === 0 && inConversation) {
+      if (msgs.length === 0 && inConversation && !ctx.rewakeAvailable) {
         const waitMs = Math.min(STOP_WAIT_CAP_MS, jobsRunning > 0 ? STOP_WAIT_CAP_MS : lingerRemaining);
         ctx.log.info("listening for replies before ending the turn", { waitMs, jobsRunning });
         const arrived = await node2.waitForMessage(waitMs, (m) => m.hop < ctx.cfg.maxHops, input2.signal);
@@ -39354,9 +39365,91 @@ function openBrowser(url2) {
   }
 }
 
+// src/mcp/rewake.ts
+import { randomBytes as randomBytes6 } from "node:crypto";
+import { mkdirSync as mkdirSync5, rmSync as rmSync2, writeFileSync as writeFileSync2 } from "node:fs";
+import { createServer as createServer4 } from "node:http";
+import { join as join11 } from "node:path";
+var SESSIONS_DIR = "sessions";
+var HOST = "127.0.0.1";
+var SECRET_BYTES4 = 24;
+var REWAKE_POLL_MS = 4 * 60 * 1e3;
+function sessionFile(home, sessionId) {
+  return join11(home, SESSIONS_DIR, `${sessionId.replace(/[^\w-]/g, "_")}.json`);
+}
+var RewakeEndpoint = class {
+  constructor(home, node2, shouldWake, log) {
+    this.home = home;
+    this.node = node2;
+    this.shouldWake = shouldWake;
+    this.log = log;
+  }
+  home;
+  node;
+  shouldWake;
+  log;
+  server = null;
+  secret = randomBytes6(SECRET_BYTES4).toString("hex");
+  port = 0;
+  registered = null;
+  /** Only the newest waiter gets messages; an older one (from an earlier turn) is released empty. */
+  waiter = null;
+  async start() {
+    this.server = createServer4((req, res) => {
+      const url2 = new URL(req.url ?? "/", `http://${HOST}`);
+      if (url2.pathname !== "/wait" || !tokensEqual(String(req.headers.authorization ?? "").replace(/^Bearer /, ""), this.secret)) {
+        res.writeHead(403).end();
+        return;
+      }
+      this.waiter?.abort("superseded");
+      const ac = new AbortController();
+      this.waiter = ac;
+      res.on("close", () => ac.abort("closed"));
+      void this.node.waitForMessage(REWAKE_POLL_MS, this.shouldWake, ac.signal).then((first) => {
+        if (this.waiter === ac) this.waiter = null;
+        let text2 = "";
+        if (first && !res.destroyed) {
+          const msgs = this.node.unread().filter(this.shouldWake);
+          this.node.markRead(msgs.map((m) => m.id));
+          text2 = formatMessages(msgs, { header: "[agent-bridge] Something you were waiting for arrived:" });
+          this.log.info("waking the session", { count: msgs.length });
+        }
+        if (res.destroyed) return;
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ text: text2, superseded: ac.signal.reason === "superseded" }));
+      });
+    });
+    this.server.requestTimeout = 0;
+    this.server.headersTimeout = 0;
+    await new Promise((resolve3, reject) => {
+      this.server.once("error", reject);
+      this.server.listen(0, HOST, () => resolve3());
+    });
+    this.port = this.server.address().port;
+  }
+  /** Publish the endpoint for this Claude session id so the hook can find it. */
+  register(sessionId) {
+    if (!this.server || this.registered === sessionId) return;
+    const file2 = sessionFile(this.home, sessionId);
+    mkdirSync5(join11(this.home, SESSIONS_DIR), { recursive: true });
+    const reg = { port: this.port, secret: this.secret, pid: process.pid };
+    writeFileSync2(file2, JSON.stringify(reg), { mode: 384 });
+    if (this.registered) rmSync2(sessionFile(this.home, this.registered), { force: true });
+    this.registered = sessionId;
+    this.log.debug("rewake endpoint registered", { sessionId });
+  }
+  async stop() {
+    this.waiter?.abort("superseded");
+    if (this.registered) rmSync2(sessionFile(this.home, this.registered), { force: true });
+    const s = this.server;
+    this.server = null;
+    if (s) await new Promise((r) => s.close(() => r()));
+  }
+};
+
 // src/core/worktree.ts
-import { mkdirSync as mkdirSync5 } from "node:fs";
-import { basename as basename2, isAbsolute as isAbsolute2, join as join11, relative } from "node:path";
+import { mkdirSync as mkdirSync6 } from "node:fs";
+import { basename as basename2, isAbsolute as isAbsolute2, join as join12, relative } from "node:path";
 var GIT = "git";
 var GIT_TIMEOUT_MS = 6e4;
 var BRANCH_PREFIX = "agent-bridge/";
@@ -39376,12 +39469,12 @@ async function createWorktree(opts) {
   }
   const base = await git(["rev-parse", "HEAD"], repoRoot, opts.log);
   const branch = `${BRANCH_PREFIX}${opts.jobId}`;
-  const dir = join11(opts.home, "worktrees");
-  mkdirSync5(dir, { recursive: true });
-  const path = join11(dir, `${basename2(repoRoot)}-${opts.jobId}`);
+  const dir = join12(opts.home, "worktrees");
+  mkdirSync6(dir, { recursive: true });
+  const path = join12(dir, `${basename2(repoRoot)}-${opts.jobId}`);
   await git(["worktree", "add", "-b", branch, path, base], repoRoot, opts.log);
   const rel = relative(repoRoot, opts.cwd);
-  const cwd = rel && !rel.startsWith("..") && !isAbsolute2(rel) ? join11(path, rel) : path;
+  const cwd = rel && !rel.startsWith("..") && !isAbsolute2(rel) ? join12(path, rel) : path;
   opts.log.info("worktree created", { repoRoot, path, branch });
   return { repoRoot, path, cwd, branch, base };
 }
@@ -39665,6 +39758,19 @@ async function startServer(argv = process.argv.slice(2)) {
       mcp.server.notification({ method: OPENCODE_NOTIFICATION, params: { message_id: m.id, from: m.from.name, hop: m.hop } }).catch((err) => log.debug("opencode notification failed", { err: err.message }));
     });
   }
+  let rewake = null;
+  if (agent === "claude" && node2) {
+    const shouldWake = (m) => m.hop < cfg.maxHops && (m.from.id.startsWith("job:") || node2.isAwaitedReply(m) || node2.autoWakeEnabled);
+    rewake = new RewakeEndpoint(home, node2, shouldWake, log.child("rewake"));
+    try {
+      await rewake.start();
+      ctx.rewakeAvailable = true;
+      ctx.onSessionId = (sid) => rewake?.register(sid);
+    } catch (err) {
+      log.warn("background wake-ups unavailable", { err: err.message });
+      rewake = null;
+    }
+  }
   let dashboard = null;
   const ensureDashboard = async (force) => {
     try {
@@ -39689,6 +39795,8 @@ async function startServer(argv = process.argv.slice(2)) {
     ctx.jobs?.cancelAll();
     await dashboard?.close().catch(() => {
     });
+    await rewake?.stop().catch(() => {
+    });
     await node2?.stop().catch(() => {
     });
     process.exit(0);
@@ -39708,12 +39816,12 @@ async function startServer(argv = process.argv.slice(2)) {
       if (channel) for (const m of node2.unread()) void pushChannel(m);
       if (isBroker && cfg.dashboard) void ensureDashboard(false);
     });
-    const join12 = () => node2.start().catch((err) => log.error("could not join the bridge", { err: err.message }));
+    const join13 = () => node2.start().catch((err) => log.error("could not join the bridge", { err: err.message }));
     if (cwdKnown) {
-      void join12();
+      void join13();
     } else {
       log.info("project directory unknown yet; deferring bridge join", { graceMs: CWD_DISCOVERY_GRACE_MS });
-      setTimeout(() => void join12(), CWD_DISCOVERY_GRACE_MS).unref();
+      setTimeout(() => void join13(), CWD_DISCOVERY_GRACE_MS).unref();
     }
   }
 }

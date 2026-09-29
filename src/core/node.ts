@@ -63,6 +63,8 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
   private autoWake: boolean;
   private currentCwd: string;
   private lastSent = 0;
+  /** Ids of messages this peer sent as new questions (not replies); replies to them are awaited. */
+  private readonly asked = new Set<string>();
   private activity: PeerActivity | null = null;
   private readonly log: Logger;
 
@@ -252,8 +254,15 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
     return this.withClient(async (c) => {
       const res = await c.request("send", args);
       this.lastSent = Date.now();
+      if (!args.replyTo) for (const m of res.messages) this.asked.add(m.id);
+      if (this.asked.size > READ_ID_MEMORY) this.asked.delete(this.asked.values().next().value!);
       return res;
     });
+  }
+
+  /** A reply to a question this peer asked (so the answer should reach the agent even when it is idle). */
+  isAwaitedReply(m: BridgeMessage): boolean {
+    return m.replyTo !== null && this.asked.has(m.replyTo);
   }
 
   /** When this peer last sent a message (0 = never); marks it as taking part in a conversation. */

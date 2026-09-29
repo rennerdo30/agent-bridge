@@ -37,6 +37,7 @@ import { codexPermissionHookTrusted } from "../core/codex-trust.js";
 import { startRunFeed } from "../core/runfeed.js";
 import { findRunningDashboard, hostDashboard, type DashboardInfo, type HostedDashboard } from "../cli/dashboard.js";
 import { openBrowser } from "../cli/open.js";
+import { RewakeEndpoint } from "./rewake.js";
 import { createWorktree, finishWorktree, gitStatusSnapshot, worktreeReport } from "../core/worktree.js";
 import { JobManager } from "./jobs.js";
 
@@ -123,6 +124,10 @@ export interface ServerContext {
   learnCwd?: (projectDir: string) => Promise<void>;
   /** Background subagents started by this session. */
   jobs?: JobManager;
+  /** Claude Code: idle sessions are woken by the asyncRewake Stop hook, so Stop never waits. */
+  rewakeAvailable?: boolean;
+  /** Called when a hook reports the host's session id. */
+  onSessionId?: (sessionId: string) => void;
   /** Open (starting if needed) the web dashboard; returns its link. */
   openDashboard?: () => Promise<string | null>;
   /** Ask the user in this session (MCP elicitation); used for forwarded subagent permission requests. */
@@ -279,6 +284,22 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
     });
   }
 
+  // Claude Code: wake the idle session for subagent results and awaited replies (see rewake.ts).
+  let rewake: RewakeEndpoint | null = null;
+  if (agent === "claude" && node) {
+    const shouldWake = (m: BridgeMessage) =>
+      m.hop < cfg.maxHops && (m.from.id.startsWith("job:") || node.isAwaitedReply(m) || node.autoWakeEnabled);
+    rewake = new RewakeEndpoint(home, node, shouldWake, log.child("rewake"));
+    try {
+      await rewake.start();
+      ctx.rewakeAvailable = true;
+      ctx.onSessionId = (sid) => rewake?.register(sid);
+    } catch (err) {
+      log.warn("background wake-ups unavailable", { err: (err as Error).message });
+      rewake = null;
+    }
+  }
+
   /** Web dashboard hosted by this process, if any. */
   let dashboard: HostedDashboard | null = null;
   const ensureDashboard = async (force: boolean): Promise<DashboardInfo | null> => {
@@ -304,6 +325,7 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
     log.info("shutting down", { reason });
     ctx.jobs?.cancelAll();
     await dashboard?.close().catch(() => {});
+    await rewake?.stop().catch(() => {});
     await node?.stop().catch(() => {});
     process.exit(0);
   };

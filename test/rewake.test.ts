@@ -1,0 +1,109 @@
+import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { DEFAULT_CONFIG } from "../src/core/config.js";
+import type { DelegateResult } from "../src/core/delegate.js";
+import { nullLogger } from "../src/core/logger.js";
+import type { BridgeNode } from "../src/core/node.js";
+import type { BridgeMessage } from "../src/core/protocol.js";
+import { buildHookResponse } from "../src/mcp/hooks.js";
+import { JobManager } from "../src/mcp/jobs.js";
+import { RewakeEndpoint, sessionFile } from "../src/mcp/rewake.js";
+import type { ServerContext } from "../src/mcp/server.js";
+import { makeEnv, type TestEnv } from "./helpers.js";
+
+const CLI = join(import.meta.dirname, "..", "plugins", "claude", "dist", "cli.mjs");
+let env: TestEnv;
+let me: BridgeNode;
+let jobs: JobManager;
+let rewake: RewakeEndpoint;
+
+beforeEach(async () => {
+  env = makeEnv();
+  me = env.node("claude-r", "claude");
+  await me.start();
+  jobs = new JobManager(me, nullLogger);
+  rewake = new RewakeEndpoint(env.home, me, (m: BridgeMessage) => m.from.id.startsWith("job:") || me.isAwaitedReply(m), nullLogger);
+  await rewake.start();
+  rewake.register("sess-1");
+});
+afterEach(async () => {
+  await rewake.stop();
+  await env.cleanup();
+});
+
+/** Run the real hook command the way Claude Code does (JSON on stdin). */
+function runHook(sessionId: string): Promise<{ code: number | null; stderr: string }> {
+  return new Promise((resolve) => {
+    const child = spawn(process.execPath, [CLI, "rewake-hook"], { env: { ...process.env, AGENT_BRIDGE_HOME: env.home } });
+    let stderr = "";
+    child.stderr.on("data", (d) => (stderr += d));
+    child.on("close", (code) => resolve({ code, stderr }));
+    child.stdin.end(JSON.stringify({ session_id: sessionId, hook_event_name: "Stop" }));
+  });
+}
+
+const result = (text: string): DelegateResult => ({ sessionId: "s", text, isError: false, details: {} });
+
+describe.skipIf(!existsSync(CLI))("background wake-ups", () => {
+  it("wakes the session (exit 2) with a finished subagent's result", async () => {
+    const hook = runHook("sess-1");
+    await new Promise((r) => setTimeout(r, 400));
+    jobs.start("opencode", null, "task", async () => result("interiors are done"));
+    const { code, stderr } = await hook;
+    expect(code).toBe(2);
+    expect(stderr).toContain("interiors are done");
+    expect(me.unread()).toHaveLength(0); // delivered once
+  });
+
+  it("wakes for a reply to a question this session asked, not for unrelated chatter", async () => {
+    const peer = env.node("codex-r", "codex");
+    await peer.start();
+    const q = await me.send({ to: "codex-r", body: "question?" });
+    const hook = runHook("sess-1");
+    await new Promise((r) => setTimeout(r, 400));
+    await peer.send({ to: "claude-r", body: "unrelated chatter" });
+    await new Promise((r) => setTimeout(r, 300));
+    await peer.send({ to: "claude-r", body: "the answer", replyTo: q.messages[0]!.id });
+    const { code, stderr } = await hook;
+    expect(code).toBe(2);
+    expect(stderr).toContain("the answer");
+    expect(stderr).not.toContain("unrelated chatter");
+  });
+
+  it("an older waiter ends quietly when a newer turn starts waiting", async () => {
+    const older = runHook("sess-1");
+    await new Promise((r) => setTimeout(r, 400));
+    const newer = runHook("sess-1");
+    expect((await older).code).toBe(0);
+    await new Promise((r) => setTimeout(r, 300));
+    jobs.start("codex", null, "t", async () => result("ok"));
+    expect((await newer).code).toBe(2);
+  });
+
+  it("does nothing for unknown sessions", async () => {
+    expect((await runHook("other-session")).code).toBe(0);
+    await rewake.stop();
+    expect(existsSync(sessionFile(env.home, "sess-1"))).toBe(false);
+  });
+
+  it("Stop no longer holds the turn open while background jobs run", async () => {
+    const ctx: ServerContext = {
+      agent: "claude",
+      cfg: { ...DEFAULT_CONFIG },
+      node: me,
+      log: nullLogger,
+      home: env.home,
+      cwd: () => env.home,
+      channelActive: () => false,
+      jobs,
+      rewakeAvailable: true,
+    };
+    const job = jobs.start("opencode", null, "long", (signal) => new Promise((_, reject) => signal.addEventListener("abort", () => reject(new Error("stopped")))));
+    const started = Date.now();
+    expect(await buildHookResponse(ctx, { event: "Stop", sessionId: null, stopHookActive: false })).toEqual({});
+    expect(Date.now() - started).toBeLessThan(500);
+    jobs.cancel(job.id);
+  });
+});

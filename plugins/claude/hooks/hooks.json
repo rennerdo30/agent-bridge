@@ -43,9 +43,15 @@
             "type": "mcp_tool",
             "server": "plugin:agent-bridge:bridge",
             "tool": "hook_event",
-            "input": { "event": "Stop", "session_id": "${session_id}", "stop_hook_active": "${stop_hook_active}" },
-            "timeout": 600,
-            "statusMessage": "agent-bridge: listening for replies from peers"
+            "input": { "event": "Stop", "session_id": "${session_id}", "stop_hook_active": "${stop_hook_active}" }
+          },
+          {
+            "type": "command",
+            "command": "node",
+            "args": ["${CLAUDE_PLUGIN_ROOT}/dist/cli.mjs", "rewake-hook"],
+            "async": true,
+            "asyncRewake": true,
+            "timeout": 7200
           }
         ]
       }

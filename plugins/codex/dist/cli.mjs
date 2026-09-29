@@ -2,7 +2,7 @@
 import { createRequire as __abCreateRequire } from 'node:module'; const require = __abCreateRequire(import.meta.url);
 
 // src/cli/main.ts
-import { join as join16 } from "node:path";
+import { join as join17 } from "node:path";
 
 // src/core/client.ts
 import { EventEmitter } from "node:events";
@@ -12,7 +12,7 @@ import { connect } from "node:net";
 import { homedir } from "node:os";
 import { join } from "node:path";
 var APP_NAME = "agent-bridge";
-var APP_VERSION = "0.8.0";
+var APP_VERSION = "0.9.0";
 var PROTOCOL_VERSION = 2;
 var ENV = {
   home: "AGENT_BRIDGE_HOME",
@@ -815,6 +815,8 @@ var BridgeNode = class extends EventEmitter2 {
   autoWake;
   currentCwd;
   lastSent = 0;
+  /** Ids of messages this peer sent as new questions (not replies); replies to them are awaited. */
+  asked = /* @__PURE__ */ new Set();
   activity = null;
   log;
   get name() {
@@ -979,8 +981,14 @@ var BridgeNode = class extends EventEmitter2 {
     return this.withClient(async (c) => {
       const res = await c.request("send", args);
       this.lastSent = Date.now();
+      if (!args.replyTo) for (const m of res.messages) this.asked.add(m.id);
+      if (this.asked.size > READ_ID_MEMORY) this.asked.delete(this.asked.values().next().value);
       return res;
     });
+  }
+  /** A reply to a question this peer asked (so the answer should reach the agent even when it is idle). */
+  isAwaitedReply(m) {
+    return m.replyTo !== null && this.asked.has(m.replyTo);
   }
   /** When this peer last sent a message (0 = never); marks it as taking part in a conversation. */
   get lastSentAt() {
@@ -1933,13 +1941,68 @@ async function runPermissionHook() {
   return 0;
 }
 
+// src/cli/rewake-hook.ts
+import { readFileSync as readFileSync4 } from "node:fs";
+
+// src/mcp/rewake.ts
+import { randomBytes as randomBytes3 } from "node:crypto";
+import { mkdirSync as mkdirSync5, rmSync as rmSync2, writeFileSync } from "node:fs";
+import { createServer as createServer3 } from "node:http";
+import { join as join7 } from "node:path";
+var SESSIONS_DIR = "sessions";
+var REWAKE_POLL_MS = 4 * 60 * 1e3;
+function sessionFile(home, sessionId) {
+  return join7(home, SESSIONS_DIR, `${sessionId.replace(/[^\w-]/g, "_")}.json`);
+}
+
+// src/cli/rewake-hook.ts
+var EXIT_WAKE = 2;
+var MAX_WAIT_MS = 7e3 * 1e3;
+async function readStdin2() {
+  let raw = "";
+  for await (const chunk of process.stdin) raw += chunk;
+  return raw;
+}
+async function runRewakeHook() {
+  let sessionId = "";
+  try {
+    sessionId = String(JSON.parse(await readStdin2() || "{}").session_id ?? "");
+  } catch {
+    return 0;
+  }
+  if (!sessionId) return 0;
+  let reg;
+  try {
+    reg = JSON.parse(readFileSync4(sessionFile(resolveHome(), sessionId), "utf8"));
+  } catch {
+    return 0;
+  }
+  const deadline = Date.now() + MAX_WAIT_MS;
+  while (Date.now() < deadline) {
+    let res;
+    try {
+      res = await fetch(`http://127.0.0.1:${reg.port}/wait`, { headers: { authorization: `Bearer ${reg.secret}` } });
+    } catch {
+      return 0;
+    }
+    if (!res.ok) return 0;
+    const { text, superseded } = await res.json();
+    if (text) {
+      process.stderr.write(text);
+      return EXIT_WAKE;
+    }
+    if (superseded) return 0;
+  }
+  return 0;
+}
+
 // src/cli/watch.ts
 import { closeSync as closeSync2, existsSync as existsSync3, openSync as openSync2, readdirSync as readdirSync3, readSync, statSync as statSync3 } from "node:fs";
-import { join as join8 } from "node:path";
+import { join as join9 } from "node:path";
 
 // src/core/runfeed.ts
-import { appendFileSync as appendFileSync2, mkdirSync as mkdirSync5, readdirSync as readdirSync2, statSync as statSync2, unlinkSync as unlinkSync2 } from "node:fs";
-import { join as join7 } from "node:path";
+import { appendFileSync as appendFileSync2, mkdirSync as mkdirSync6, readdirSync as readdirSync2, statSync as statSync2, unlinkSync as unlinkSync2 } from "node:fs";
+import { join as join8 } from "node:path";
 var RUNS_DIR_NAME = "runs";
 
 // src/cli/watch.ts
@@ -1947,9 +2010,9 @@ var POLL_MS = 500;
 var CHUNK = 64 * 1024;
 var FINISHED = / finished after \d+s · /;
 function findRunLog(home, filter) {
-  const dir = join8(home, RUNS_DIR_NAME);
+  const dir = join9(home, RUNS_DIR_NAME);
   if (!existsSync3(dir)) return null;
-  const logs = readdirSync3(dir).filter((f) => f.endsWith(".log") && (!filter || f.includes(filter))).map((f) => ({ path: join8(dir, f), t: statSync3(join8(dir, f)).mtimeMs })).sort((a, b) => b.t - a.t);
+  const logs = readdirSync3(dir).filter((f) => f.endsWith(".log") && (!filter || f.includes(filter))).map((f) => ({ path: join9(dir, f), t: statSync3(join9(dir, f)).mtimeMs })).sort((a, b) => b.t - a.t);
   return logs[0]?.path ?? null;
 }
 async function watchRunLog(path, out2) {
@@ -1980,16 +2043,16 @@ async function watchRunLog(path, out2) {
 }
 
 // src/cli/dashboard.ts
-import { randomBytes as randomBytes4 } from "node:crypto";
-import { chmodSync as chmodSync2, readFileSync as readFileSync5, rmSync as rmSync2, writeFileSync } from "node:fs";
+import { randomBytes as randomBytes5 } from "node:crypto";
+import { chmodSync as chmodSync2, readFileSync as readFileSync6, rmSync as rmSync3, writeFileSync as writeFileSync2 } from "node:fs";
 import { request } from "node:http";
-import { join as join10 } from "node:path";
+import { join as join11 } from "node:path";
 
 // src/cli/ui.ts
-import { randomBytes as randomBytes3 } from "node:crypto";
-import { existsSync as existsSync4, readdirSync as readdirSync4, readFileSync as readFileSync4, statSync as statSync4 } from "node:fs";
-import { createServer as createServer3 } from "node:http";
-import { join as join9 } from "node:path";
+import { randomBytes as randomBytes4 } from "node:crypto";
+import { existsSync as existsSync4, readdirSync as readdirSync4, readFileSync as readFileSync5, statSync as statSync4 } from "node:fs";
+import { createServer as createServer4 } from "node:http";
+import { join as join10 } from "node:path";
 import { DatabaseSync as DatabaseSync2 } from "node:sqlite";
 
 // src/cli/ui-page.ts
@@ -2232,9 +2295,9 @@ function summarizeRun(file, text, mtimeMs, now) {
   };
 }
 function listRuns(home, now = Date.now()) {
-  const dir = join9(home, RUNS_DIR_NAME);
+  const dir = join10(home, RUNS_DIR_NAME);
   if (!existsSync4(dir)) return [];
-  return readdirSync4(dir).filter((f) => RUN_NAME.test(f)).map((f) => ({ f, st: statSync4(join9(dir, f)) })).sort((a, b) => b.st.mtimeMs - a.st.mtimeMs).slice(0, MAX_RUNS).map(({ f, st }) => summarizeRun(f, readFileSync4(join9(dir, f), "utf8"), st.mtimeMs, now));
+  return readdirSync4(dir).filter((f) => RUN_NAME.test(f)).map((f) => ({ f, st: statSync4(join10(dir, f)) })).sort((a, b) => b.st.mtimeMs - a.st.mtimeMs).slice(0, MAX_RUNS).map(({ f, st }) => summarizeRun(f, readFileSync5(join10(dir, f), "utf8"), st.mtimeMs, now));
 }
 function recentMessages(dbPath) {
   if (!existsSync4(dbPath)) return [];
@@ -2278,7 +2341,7 @@ function cookieSecret(req) {
   return m?.[1] ?? "";
 }
 async function startUi(opts) {
-  const secret = opts.secret ?? randomBytes3(SECRET_BYTES2).toString("hex");
+  const secret = opts.secret ?? randomBytes4(SECRET_BYTES2).toString("hex");
   const token = loadOrCreateToken(opts.home);
   const dbPath = resolveDbPath(opts.home);
   let sender = null;
@@ -2306,10 +2369,10 @@ async function startUi(opts) {
     }
     const runMatch = /^\/api\/runs\/([\w.-]+)$/.exec(url.pathname);
     if (req.method === "GET" && runMatch) {
-      const file = join9(opts.home, RUNS_DIR_NAME, `${runMatch[1]}.log`);
+      const file = join10(opts.home, RUNS_DIR_NAME, `${runMatch[1]}.log`);
       if (!existsSync4(file)) return send(res, 404, { error: "no such run" });
       const from = Math.max(0, Number(url.searchParams.get("from")) || 0);
-      const buf = readFileSync4(file);
+      const buf = readFileSync5(file);
       const end = Math.min(buf.length, from + MAX_LOG_CHUNK);
       return send(res, 200, { text: buf.subarray(from, end).toString("utf8"), next: end, size: buf.length });
     }
@@ -2328,7 +2391,7 @@ async function startUi(opts) {
     }
     return send(res, 404, { error: "not found" });
   };
-  const server = createServer3((req, res) => {
+  const server = createServer4((req, res) => {
     handle(req, res).catch((err) => {
       opts.log.warn("ui request failed", { err: err.message });
       if (!res.headersSent) send(res, 500, { error: String(err.message) });
@@ -2355,11 +2418,11 @@ var SECRET_BYTES3 = 24;
 var PROBE_TIMEOUT_MS = 1500;
 var OWNER_ONLY2 = 384;
 function dashboardFile(home) {
-  return join10(home, DASHBOARD_FILE);
+  return join11(home, DASHBOARD_FILE);
 }
 function readDashboardInfo(home) {
   try {
-    const d = JSON.parse(readFileSync5(dashboardFile(home), "utf8"));
+    const d = JSON.parse(readFileSync6(dashboardFile(home), "utf8"));
     return typeof d.url === "string" && typeof d.port === "number" && typeof d.pid === "number" ? d : null;
   } catch {
     return null;
@@ -2390,11 +2453,11 @@ async function findRunningDashboard(home) {
   return await probeDashboard(info.port) ? info : null;
 }
 async function hostDashboard(opts) {
-  const secret = randomBytes4(SECRET_BYTES3).toString("hex");
+  const secret = randomBytes5(SECRET_BYTES3).toString("hex");
   const ui = await startUi({ ...opts, secret });
   const info = { url: ui.url, port: ui.port, pid: process.pid };
   const file = dashboardFile(opts.home);
-  writeFileSync(file, JSON.stringify(info, null, 2), { mode: OWNER_ONLY2 });
+  writeFileSync2(file, JSON.stringify(info, null, 2), { mode: OWNER_ONLY2 });
   try {
     chmodSync2(file, OWNER_ONLY2);
   } catch {
@@ -2404,14 +2467,14 @@ async function hostDashboard(opts) {
     info,
     close: async () => {
       await ui.close();
-      if (readDashboardInfo(opts.home)?.pid === process.pid) rmSync2(file, { force: true });
+      if (readDashboardInfo(opts.home)?.pid === process.pid) rmSync3(file, { force: true });
     }
   };
 }
 
 // src/core/config.ts
-import { readFileSync as readFileSync6 } from "node:fs";
-import { basename, join as join11 } from "node:path";
+import { readFileSync as readFileSync7 } from "node:fs";
+import { basename, join as join12 } from "node:path";
 var DELIVERY_MODES = ["auto", "channel", "hooks"];
 var CODEX_SANDBOXES = ["read-only", "workspace-write", "danger-full-access"];
 var CLAUDE_PERMISSION_MODES = ["default", "manual", "acceptEdits", "plan", "auto", "dontAsk", "bypassPermissions"];
@@ -2458,9 +2521,9 @@ function modelName(v) {
 }
 function loadConfig(home, agent, log, env = process.env) {
   let file = {};
-  const path = join11(home, CONFIG_FILE_NAME);
+  const path = join12(home, CONFIG_FILE_NAME);
   try {
-    file = JSON.parse(readFileSync6(path, "utf8"));
+    file = JSON.parse(readFileSync7(path, "utf8"));
     log.debug("config file loaded", { path });
   } catch (err) {
     if (err.code !== "ENOENT") log.warn("ignoring unreadable config file", { path, err: err.message });
@@ -2514,13 +2577,13 @@ function openBrowser(url) {
 
 // src/cli/reliability.ts
 import { execFileSync } from "node:child_process";
-import { existsSync as existsSync5, mkdtempSync, rmSync as rmSync3, writeFileSync as writeFileSync2 } from "node:fs";
+import { existsSync as existsSync5, mkdtempSync, rmSync as rmSync4, writeFileSync as writeFileSync3 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join as join14 } from "node:path";
+import { join as join15 } from "node:path";
 
 // src/core/worktree.ts
-import { mkdirSync as mkdirSync6 } from "node:fs";
-import { basename as basename2, isAbsolute as isAbsolute2, join as join12, relative } from "node:path";
+import { mkdirSync as mkdirSync7 } from "node:fs";
+import { basename as basename2, isAbsolute as isAbsolute2, join as join13, relative } from "node:path";
 var GIT = "git";
 var GIT_TIMEOUT_MS = 6e4;
 var BRANCH_PREFIX = "agent-bridge/";
@@ -2540,12 +2603,12 @@ async function createWorktree(opts) {
   }
   const base = await git(["rev-parse", "HEAD"], repoRoot, opts.log);
   const branch = `${BRANCH_PREFIX}${opts.jobId}`;
-  const dir = join12(opts.home, "worktrees");
-  mkdirSync6(dir, { recursive: true });
-  const path = join12(dir, `${basename2(repoRoot)}-${opts.jobId}`);
+  const dir = join13(opts.home, "worktrees");
+  mkdirSync7(dir, { recursive: true });
+  const path = join13(dir, `${basename2(repoRoot)}-${opts.jobId}`);
   await git(["worktree", "add", "-b", branch, path, base], repoRoot, opts.log);
   const rel = relative(repoRoot, opts.cwd);
-  const cwd = rel && !rel.startsWith("..") && !isAbsolute2(rel) ? join12(path, rel) : path;
+  const cwd = rel && !rel.startsWith("..") && !isAbsolute2(rel) ? join13(path, rel) : path;
   opts.log.info("worktree created", { repoRoot, path, branch });
   return { repoRoot, path, cwd, branch, base };
 }
@@ -2561,17 +2624,17 @@ async function finishWorktree(wt, summary, log) {
 }
 
 // src/core/codex-trust.ts
-import { readFileSync as readFileSync7 } from "node:fs";
+import { readFileSync as readFileSync8 } from "node:fs";
 import { homedir as homedir3 } from "node:os";
-import { join as join13 } from "node:path";
+import { join as join14 } from "node:path";
 var PERMISSION_HOOK_STATE_KEY = 'hooks.state."agent-bridge@agent-bridge:plugin.json#hooks[0]:permission_request:0:0"';
 function codexHome(env = process.env) {
-  return env.CODEX_HOME?.trim() || join13(homedir3(), ".codex");
+  return env.CODEX_HOME?.trim() || join14(homedir3(), ".codex");
 }
-function codexPermissionHookTrusted(home = codexHome(), read = (p) => readFileSync7(p, "utf8")) {
+function codexPermissionHookTrusted(home = codexHome(), read = (p) => readFileSync8(p, "utf8")) {
   let text;
   try {
-    text = read(join13(home, "config.toml"));
+    text = read(join14(home, "config.toml"));
   } catch {
     return false;
   }
@@ -2587,7 +2650,7 @@ function codexPermissionHookTrusted(home = codexHome(), read = (p) => readFileSy
 
 // src/core/opencode-served.ts
 import { spawn as spawn4 } from "node:child_process";
-import { randomBytes as randomBytes5 } from "node:crypto";
+import { randomBytes as randomBytes6 } from "node:crypto";
 import { extname as extname2 } from "node:path";
 var SERVE_START_TIMEOUT_MS = 3e4;
 var LISTEN_RE = /listening on (https?:\/\/[^\s]+)/i;
@@ -2664,7 +2727,7 @@ function permissionDetail(p) {
 }
 async function delegateToOpencodeServed(req) {
   checkDepthPublic();
-  const password = randomBytes5(PASSWORD_BYTES).toString("hex");
+  const password = randomBytes6(PASSWORD_BYTES).toString("hex");
   const env = childEnvPublic({
     ...req.extraEnv,
     OPENCODE_SERVER_PASSWORD: password,
@@ -2804,17 +2867,17 @@ async function timed(name, fn) {
   }
 }
 function makeRepo() {
-  const dir = mkdtempSync(join14(tmpdir(), "agent-bridge-rel-"));
+  const dir = mkdtempSync(join15(tmpdir(), "agent-bridge-rel-"));
   const git2 = (...a) => execFileSync("git", a, { cwd: dir, stdio: "ignore" });
   git2("init", "-q");
-  writeFileSync2(join14(dir, "README.md"), "reliability sandbox\n");
+  writeFileSync3(join15(dir, "README.md"), "reliability sandbox\n");
   git2("add", "README.md");
   git2("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "base");
   return dir;
 }
 async function runReliability(opts) {
   const agents = opts.agents.filter((a) => resolveBinary(BINS[a]));
-  const home = mkdtempSync(join14(tmpdir(), "agent-bridge-rel-home-"));
+  const home = mkdtempSync(join15(tmpdir(), "agent-bridge-rel-home-"));
   const results = [];
   const record = (o) => {
     results.push(o);
@@ -2842,7 +2905,7 @@ async function runReliability(opts) {
         await timed(`${agent} read-only is enforced`, async () => {
           const dir = repo();
           await run(agent, "Create a file named should-not-exist.txt containing the word hi. Then reply done.", dir, "read", opts.log);
-          const exists = existsSync5(join14(dir, "should-not-exist.txt"));
+          const exists = existsSync5(join15(dir, "should-not-exist.txt"));
           return { pass: !exists, detail: exists ? "the file WAS created despite read-only access" : "no file created" };
         })
       );
@@ -2854,7 +2917,7 @@ async function runReliability(opts) {
           const base = { prompt: "Create a file named created.txt containing the word hello. Then reply done.", cwd: wt.cwd, sessionId: null, timeoutSec: RUN_TIMEOUT_SEC, log: opts.log, onProgress: (m) => steps.push(m) };
           const r = agent === "codex" ? await delegateToCodex({ ...base, bin: BINS.codex, sandbox: "workspace-write" }) : agent === "claude" ? await delegateToClaude({ ...base, bin: BINS.claude, permissionMode: "acceptEdits" }) : await delegateToOpencode({ ...base, bin: BINS.opencode, autoApprove: true });
           const outcome = await finishWorktree(wt, "reliability edit", opts.log);
-          const leaked = existsSync5(join14(dir, "created.txt"));
+          const leaked = existsSync5(join15(dir, "created.txt"));
           const pass = outcome.diffStat.includes("created.txt") && !leaked;
           return {
             pass,
@@ -2880,7 +2943,7 @@ async function runReliability(opts) {
             opts.log
           );
           if (r === null) return { pass: true, detail: "SKIP (not available: see README, permission requests)" };
-          const exists = existsSync5(join14(dir, "asked.txt"));
+          const exists = existsSync5(join15(dir, "asked.txt"));
           return {
             pass: asked.length > 0 && exists === allow,
             detail: `asked ${asked.length}x [${asked.join(" | ")}], file ${exists ? "created" : "not created"}`
@@ -2917,8 +2980,8 @@ async function runReliability(opts) {
       );
     }
   } finally {
-    for (const r of repos) rmSync3(r, { recursive: true, force: true, maxRetries: 3 });
-    rmSync3(home, { recursive: true, force: true, maxRetries: 3 });
+    for (const r of repos) rmSync4(r, { recursive: true, force: true, maxRetries: 3 });
+    rmSync4(home, { recursive: true, force: true, maxRetries: 3 });
   }
   const passed = results.filter((r) => r.pass).length;
   opts.out(`
@@ -2927,9 +2990,9 @@ ${passed}/${results.length} passed`);
 }
 
 // src/cli/smoke.ts
-import { mkdtempSync as mkdtempSync2, rmSync as rmSync4 } from "node:fs";
+import { mkdtempSync as mkdtempSync2, rmSync as rmSync5 } from "node:fs";
 import { tmpdir as tmpdir2 } from "node:os";
-import { join as join15 } from "node:path";
+import { join as join16 } from "node:path";
 var TESTED_VERSIONS = {
   claude: "2.1.283",
   codex: "0.157.1",
@@ -2949,7 +3012,7 @@ async function version(bin, log) {
   }
 }
 async function runSmoke(opts) {
-  const dir = mkdtempSync2(join15(tmpdir2(), "agent-bridge-smoke-"));
+  const dir = mkdtempSync2(join16(tmpdir2(), "agent-bridge-smoke-"));
   const bins = { claude: DEFAULT_CLAUDE_BIN, codex: DEFAULT_CODEX_BIN, opencode: DEFAULT_OPENCODE_BIN };
   let failures = 0;
   try {
@@ -2990,7 +3053,7 @@ async function runSmoke(opts) {
       }
     }
   } finally {
-    rmSync4(dir, { recursive: true, force: true });
+    rmSync5(dir, { recursive: true, force: true });
   }
   return failures ? 1 : 0;
 }
@@ -3093,6 +3156,8 @@ async function main(argv) {
       await watchRunLog(logPath, out);
       return 0;
     }
+    case "rewake-hook":
+      return runRewakeHook();
     case "permission-hook":
       return runPermissionHook();
     case "reliability": {
@@ -3122,7 +3187,7 @@ async function main(argv) {
       return 0;
     }
     case "paths":
-      out(t("cli.paths", { home, logs: join16(home, LOG_DIR_NAME), db: resolveDbPath(home), pipe }));
+      out(t("cli.paths", { home, logs: join17(home, LOG_DIR_NAME), db: resolveDbPath(home), pipe }));
       return 0;
     case "help":
     case "--help":
