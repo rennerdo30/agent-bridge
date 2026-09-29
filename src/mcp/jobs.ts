@@ -15,7 +15,8 @@ export const DEFAULT_FOLLOW_UP = "Continue where you stopped and finish the task
 
 /** A delegated run's result, plus the folder it worked in (a worktree, for example). */
 export type RunResult = DelegateResult & { workdir?: string; worktree?: Worktree };
-export type Run = (signal: AbortSignal, onProgress: (message: string, full?: string) => void) => Promise<RunResult>;
+/** Runs a subagent turn; `job` is the job it belongs to (its name labels the run in the dashboard). */
+export type Run = (signal: AbortSignal, onProgress: (message: string, full?: string) => void, job: Job) => Promise<RunResult>;
 /** Continue a subagent's own session with a new message (same agent, model, access and folder). */
 export type Resume = (message: string, sessionId: string, workdir: string | null, worktree: Worktree | null) => Run;
 
@@ -179,7 +180,7 @@ export class JobManager {
       job.progress = message;
       this.log.debug("subagent progress", { job: job.name, message });
     };
-    run(job.controller.signal, onProgress).then(
+    run(job.controller.signal, onProgress, job).then(
       (res) => {
         job.workdir = res.workdir ?? job.workdir;
         job.worktree = res.worktree ?? job.worktree;

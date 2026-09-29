@@ -10,7 +10,7 @@ import type { Logger } from "../core/logger.js";
 import { BridgeNode } from "../core/node.js";
 import { resolveDbPath } from "../core/paths.js";
 import type { PeerInfo } from "../core/protocol.js";
-import { RUNS_DIR_NAME } from "../core/runfeed.js";
+import { RUNS_DIR_NAME, runMetaPath, type RunMeta } from "../core/runfeed.js";
 import { loadOrCreateToken, tokensEqual } from "../core/token.js";
 import { UI_PAGE } from "./ui-page.js";
 
@@ -21,7 +21,8 @@ import { UI_PAGE } from "./ui-page.js";
 const UI_HOST = "127.0.0.1";
 const COOKIE = "ab_ui";
 const SECRET_BYTES = 24;
-const MAX_RUNS = 40;
+const MAX_RUNS = 50;
+const TASK_PREVIEW_CHARS = 300;
 const MAX_MESSAGES = 200;
 const MAX_LOG_CHUNK = 512 * 1024;
 const MAX_POST_BYTES = 256 * 1024;
@@ -31,7 +32,7 @@ const UI_PEER_NAME = "you";
 const ALLOWED_HOSTS = new Set([UI_HOST, "localhost"]);
 const RUN_NAME = /^[\w.-]+\.log$/;
 
-export interface RunSummary {
+export interface RunSummary extends RunMeta {
   name: string;
   agent: string;
   header: string;
@@ -39,10 +40,12 @@ export interface RunSummary {
   updatedAt: number;
   status: "running" | "done" | "failed" | "interrupted";
   last: string;
+  /** Start of the prompt, for lists. */
+  task: string;
 }
 
-/** Parse the head and tail of a run log written by runfeed.ts. */
-export function summarizeRun(file: string, text: string, mtimeMs: number, now: number): RunSummary {
+/** Parse the head and tail of a run log written by runfeed.ts, plus its metadata (older runs: from the header). */
+export function summarizeRun(file: string, text: string, mtimeMs: number, now: number, meta: RunMeta = {}): RunSummary {
   const lines = text.split("\n").filter(Boolean);
   const finished = [...lines].reverse().find((l) => / finished after \d+s · /.test(l));
   const last = (finished ?? lines.at(-1) ?? "").replace(/^\d\d:\d\d:\d\d /, "");
@@ -55,14 +58,26 @@ export function summarizeRun(file: string, text: string, mtimeMs: number, now: n
       : "running";
   const m = /^(\d{4})-(\d\d)-(\d\d)-(\d\d)-(\d\d)-(\d\d)-([a-z]+)-/.exec(file);
   const startedAt = m ? Date.UTC(+m[1]!, +m[2]! - 1, +m[3]!, +m[4]!, +m[5]!, +m[6]!) : mtimeMs;
+  const header = (lines[0] ?? "").replace(/^\d\d:\d\d:\d\d /, "");
+  const end = lines.findIndex((l) => l.trim() === "---");
+  const task = lines
+    .slice(1, end > 0 ? end : 1)
+    .map((l) => l.trim())
+    .join(" ")
+    .slice(0, TASK_PREVIEW_CHARS);
   return {
+    by: / by ([\w.-]+)/.exec(header)?.[1],
+    workdir: / in (.+?), access /.exec(header)?.[1],
+    continues: /, continues (\S+)/.exec(header)?.[1] ?? null,
+    ...meta,
     name: file.replace(/\.log$/, ""),
     agent: m?.[7] ?? "agent",
-    header: (lines[0] ?? "").replace(/^\d\d:\d\d:\d\d /, ""),
+    header,
     startedAt,
     updatedAt: mtimeMs,
     status,
     last,
+    task,
   };
 }
 
@@ -74,7 +89,32 @@ export function listRuns(home: string, now = Date.now()): RunSummary[] {
     .map((f) => ({ f, st: statSync(join(dir, f)) }))
     .sort((a, b) => b.st.mtimeMs - a.st.mtimeMs)
     .slice(0, MAX_RUNS)
-    .map(({ f, st }) => summarizeRun(f, readFileSync(join(dir, f), "utf8"), st.mtimeMs, now));
+    .map(({ f, st }) => summarizeRun(f, readFileSync(join(dir, f), "utf8"), st.mtimeMs, now, readMeta(join(dir, runMetaPath(f)))));
+}
+
+function readMeta(file: string): RunMeta {
+  try {
+    return JSON.parse(readFileSync(file, "utf8")) as RunMeta;
+  } catch {
+    return {};
+  }
+}
+
+export type DashboardPeer = PeerInfo & { subagent: boolean; parent: string | null };
+
+/**
+ * Sessions in a subagent worktree are subagents, not sessions of their own (older versions let them join):
+ * show them under the session whose run used that folder.
+ */
+export function classifyPeers(peers: PeerInfo[], runs: RunSummary[], home: string): DashboardPeer[] {
+  const norm = (p: string) => p.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+  const worktrees = `${norm(join(home, "worktrees"))}/`;
+  return peers.map((p) => {
+    const cwd = norm(p.cwd ?? "");
+    const subagent = cwd.startsWith(worktrees);
+    const run = subagent ? runs.find((r) => r.workdir && norm(r.workdir) === cwd) : undefined;
+    return { ...p, subagent, parent: run?.by ?? null };
+  });
 }
 
 interface MessageRow {
@@ -168,11 +208,12 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
     if (req.method === "GET" && url.pathname === "/") return send(res, 200, UI_PAGE, "text/html; charset=utf-8");
     if (req.method === "GET" && url.pathname === "/api/state") {
       const { brokerPid, peers } = await brokerPeers(opts.pipe, token, opts.log);
+      const runs = listRuns(opts.home);
       return send(res, 200, {
         version: APP_VERSION,
         brokerPid,
-        peers,
-        runs: listRuns(opts.home),
+        peers: classifyPeers(peers, runs, opts.home),
+        runs,
         messages: recentMessages(dbPath),
       });
     }

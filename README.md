@@ -79,7 +79,7 @@ npx -y github:rennerdo30/agent-bridge status     # which sessions still run an o
    ```
 4. In Codex, check `/hooks` after an update. Newly added agent-bridge hooks, such as the `PermissionRequest` hook in 0.5.0, must be trusted once.
 
-All sessions should run the same version. Sessions with an older wire protocol are refused by the bridge ("version mismatch") until they are restarted.
+All sessions should run the same version. Since 0.10.0 the bridge's pipe name includes the wire protocol, so sessions of incompatible versions run separate bridges instead of locking each other out. They don't see each other until they are restarted. The same applies to sessions from before 0.10.0.
 
 ## Usage
 
@@ -101,7 +101,8 @@ Just ask in plain language, for example:
 | `inbox` | Read unread messages |
 | `ask_claude` / `ask_codex` / `ask_opencode` | Headless delegation to another agent (every agent gets the other two); waits and returns the answer and a `session_id` to continue |
 | `spawn_claude` / `spawn_codex` / `spawn_opencode` | Same, but as a background subagent: returns a job name at once; the result arrives as a message from `<agent>-job-<id>`; `peers` shows each job's current step |
-| `cancel_subagent` | Stop a running background subagent |
+| `message_subagent` | Send a follow-up to a subagent started with `ask_*` or `spawn_*`, running or finished: it continues in its own session with its full context (see below) |
+| `cancel_subagent` | Stop a running subagent (background job or blocking `ask_*` run) by its job name |
 | `auto_wake` | Let incoming messages make this session keep working (see below) |
 
 `ask_*` and `spawn_*` take these optional parameters:
@@ -112,7 +113,7 @@ Just ask in plain language, for example:
 - `access` and `worktree`, see below.
 - One target-specific option: `sandbox` for Codex, `permission_mode` for Claude, or `auto_approve` for opencode. Headless opencode rejects every permission request unless `auto_approve` is set.
 
-Peer names default to `<agent>-<project folder>`, for example `codex-myrepo`. Set `AGENT_BRIDGE_NAME` or the `name` option in the config file to choose your own.
+Peer names default to `<agent>-<project folder>`, for example `codex-myrepo` (`<agent>-session` until the folder is known; a bare `codex` always means "the codex peer"). Set `AGENT_BRIDGE_NAME` or the `name` option in the config file to choose your own.
 
 ### Slash commands (Claude Code)
 
@@ -143,10 +144,20 @@ With `access: "ask"` a subagent starts read-only. Whenever it wants to change a 
 | Subagent | Forwarding | How |
 |---|---|---|
 | opencode | yes | agent-bridge runs a private `opencode serve` (127.0.0.1, random port and password) and answers its permission events |
-| Codex | yes, once you trust the hook | the agent-bridge `PermissionRequest` hook asks your session. Trust it once via `/hooks` in Codex. Without that trust entry, Codex subagents run strictly read-only, so Codex's automatic reviewer never decides on its own. |
+| Codex | yes, once you trust the hook | the agent-bridge `PermissionRequest` hook asks your session. Trust it once via `/hooks` in Codex. Without that trust entry, Codex subagents run strictly read-only, so Codex's automatic reviewer never decides on its own. If a Codex run ever changes files without the hook asking, agent-bridge warns and switches that hook version back to read-only (fail closed). |
 | Claude | not yet | `ask` runs read-only |
 
 The parent session must support MCP elicitation dialogs; Claude Code and Codex do. If it doesn't, every request is denied.
+
+### Talking to subagents: follow-ups and recovery
+
+Every `ask_*` and `spawn_*` run is a job with a name like `codex-job-1a2b3c4d` or `opencode-ask-9f8e7d6c`, and it keeps its own session. So you can talk to it like a native subagent:
+
+- **Follow up:** `message_subagent(job="codex-job-1a2b3c4d", message="now add tests")` continues the same Codex thread, Claude session or opencode session with its full context, in the same folder or worktree. The answer arrives as a message from the job.
+- **While it runs:** follow-ups are queued and sent as soon as the current turn ends.
+- **Recover:** if a run failed, timed out or was interrupted, `message_subagent(job=...)` without a message tells it to continue where it stopped. The failure message says so and names the job.
+
+`peers` lists running jobs and the recent finished ones. This works the same whichever agent is the host (Claude Code, Codex or opencode, where the tool is `bridge_message_subagent`) and whichever is the subagent. Cancelling or ending a session stops its subagents with their whole process tree.
 
 ## Native subagents
 
@@ -183,11 +194,10 @@ The dashboard starts automatically: whichever agent session hosts the bridge als
 
 Turn the automatic start off with `"dashboard": false` in `~/.agent-bridge/config.json` (or `AGENT_BRIDGE_DASHBOARD=off`); change the port with `"dashboardPort"`.
 
-The dashboard shows:
+The dashboard has an **Overview** and a **tab per session**:
 
-- **Sessions:** every connected Claude Code, Codex and opencode session, busy or idle, with its version (outdated ones are flagged) and folder.
-- **Delegated runs:** every `ask_*` / `spawn_*` run (running, done, failed or interrupted), and a live step-by-step view of the selected one. The task itself is folded away above the steps.
-- **Messages:** the message history between sessions, and a box to send a message to a session yourself (as "you").
+- **Overview:** every connected Claude Code, Codex and opencode session as a card (busy or idle, folder, version, how many subagents it started and how many are working), the latest subagents of all sessions, and the message history with a box to send a message yourself (as "you").
+- **Session tab:** the subagents this session started, and for the selected one its whole conversation: the task, what it said, its commands (bursts fold into one row), its answer, and every follow-up as a further turn. Runs are grouped under the session that started them, never shown as sessions of their own.
 
 It only listens on 127.0.0.1. Its link contains a secret (stored in `~/.agent-bridge/dashboard.json`, readable only by you on Unix); without it the dashboard refuses every request, also from other local programs and web pages. `ui` options: `--port=N`, `--no-open`.
 

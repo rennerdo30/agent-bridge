@@ -174,6 +174,7 @@ function instructionsFor(agent: AgentKind, targets: CodingAgent[]): string {
     `"wait_for_message" blocks until a message arrives (use it after asking a peer something); ` +
     `"ask_<agent>" (${targets.map((x) => `ask_${x}`).join(", ")}) runs that agent headlessly for a one-off task and returns its answer; ` +
     `"spawn_<agent>" starts it as a background subagent whose result arrives later as a message (both accept any model id via "model"). ` +
+    `"message_subagent" sends a follow-up to one of those subagents (running or finished, also to recover a failed one): it continues in its own session with its full context. ` +
     "After you message a peer or spawn a subagent, your turn stays open for a while to receive the reply; handle it and answer if needed. " +
     'Never call "hook_event"; it is reserved for agent-bridge hooks.'
   );
@@ -526,7 +527,7 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
   );
 
   /** _worktree: internal, a follow-up continuing in an existing worktree. */
-  type DelegateArgs = { prompt: string; model?: string; session_id?: string; cwd?: string; timeout_sec?: number; worktree?: boolean; _worktree?: Worktree } & TargetArgs;
+  type DelegateArgs = { prompt: string; model?: string; session_id?: string; cwd?: string; timeout_sec?: number; worktree?: boolean; _worktree?: Worktree; _job?: string } & TargetArgs;
   for (const target of targets) {
     const profile = DELEGATION_TARGETS[target];
     const defaultModel = profile.defaultModel(cfg);
@@ -606,6 +607,16 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
           name: `${target}-${randomUUID().slice(0, 8)}`,
           header: `${target}${a.model ? ` (${a.model})` : ""} in ${workdir}, access ${access ?? "default"}, by ${node?.name ?? ctx.agent}${a.session_id ? `, continues ${a.session_id}` : ""}\n${a.prompt}\n---`,
           forward: onProgress,
+          meta: {
+            by: node?.name ?? ctx.agent,
+            byAgent: ctx.agent,
+            byCwd: ctx.cwd(),
+            job: a._job,
+            model: a.model ?? defaultModel ?? null,
+            access: access ?? "default",
+            workdir,
+            continues: a.session_id ?? null,
+          },
         });
       } catch (err) {
         await relay?.stop();
@@ -627,8 +638,10 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
           },
           { ...a, access, relay: wiring },
         );
+        feed.meta({ session: res.sessionId });
         feed.end(res.isError ? "failed" : "done", res.text);
       } catch (err) {
+        if (err instanceof DelegateError && err.sessionId) feed.meta({ session: err.sessionId });
         feed.end(`failed: ${(err as Error)?.message ?? err}`);
         // The worktree keeps whatever the subagent did before failing: say where it is.
         if (wt && err instanceof Error) err.message += `\n\nIts worktree (with any partial work) is ${wt.path} on branch ${wt.branch}.`;
@@ -677,9 +690,9 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
     const resumeFor =
       (a: DelegateArgs): Resume =>
       (message, sessionId, workdir, worktree) =>
-      (signal, onProgress) =>
+      (signal, onProgress, job) =>
         run(
-          { ...a, prompt: message, session_id: sessionId, cwd: workdir ?? a.cwd, worktree: false, _worktree: worktree ?? undefined, access: a.worktree ? (a.access ?? "edit") : a.access },
+          { ...a, _job: job.name, prompt: message, session_id: sessionId, cwd: workdir ?? a.cwd, worktree: false, _worktree: worktree ?? undefined, access: a.worktree ? (a.access ?? "edit") : a.access },
           signal,
           onProgress,
           true,
@@ -708,7 +721,7 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
         let res;
         try {
           // cancel_subagent can stop it too (e.g. from its coordinator), not only the caller.
-          res = await run(a, tracked ? AbortSignal.any([extra.signal, tracked.job.controller.signal]) : extra.signal, onProgress, false);
+          res = await run({ ...a, _job: tracked?.job.name }, tracked ? AbortSignal.any([extra.signal, tracked.job.controller.signal]) : extra.signal, onProgress, false);
         } catch (err) {
           tracked?.end({ error: err });
           throw err;
@@ -737,7 +750,7 @@ ${res.text || t("delegate.empty")}`, res.isError);
         const jobs = ctx.jobs;
         if (!jobs) throw new BridgeError("bad_request", t("err.delegatedSession"));
         if (!jobs.canStart()) return text(t("jobs.limit", { max: MAX_RUNNING_JOBS }), true);
-        const job = jobs.start(target, a.model ?? defaultModel, a.prompt, (signal, onProgress) => run(a, signal, onProgress, true), resumeFor(a));
+        const job = jobs.start(target, a.model ?? defaultModel, a.prompt, (signal, onProgress, job) => run({ ...a, _job: job.name }, signal, onProgress, true), resumeFor(a));
         return text(t("jobs.started", { name: job.name }));
       }),
     );

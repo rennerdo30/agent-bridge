@@ -1,4 +1,4 @@
-import { appendFileSync, mkdirSync, readdirSync, statSync, unlinkSync } from "node:fs";
+import { appendFileSync, mkdirSync, readdirSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 /**
@@ -15,13 +15,36 @@ export interface RunFeed {
   logPath: string;
   report: (message: string, full?: string) => void;
   end: (summary: string, answer?: string) => void;
+  /** Add facts to the run's metadata file (e.g. the subagent's session once known). */
+  meta: (patch: RunMeta) => void;
+}
+
+/** Who started a run and how it relates to others; the dashboard groups runs with it. Kept next to the log. */
+export interface RunMeta {
+  /** Peer name of the session that started it, its agent kind and project folder. */
+  by?: string;
+  byAgent?: string;
+  byCwd?: string;
+  /** Job name (e.g. codex-job-1a2b3c4d); follow-ups share it. */
+  job?: string;
+  model?: string | null;
+  access?: string;
+  workdir?: string;
+  /** The subagent's own session, and the one this run continued (a follow-up). */
+  session?: string | null;
+  continues?: string | null;
+}
+
+export function runMetaPath(logPath: string): string {
+  return logPath.replace(/\.log$/, ".json");
 }
 
 /** Indent for the extra lines of a multi-line log entry (width of the "HH:MM:SS " stamp). */
 export const CONTINUATION = "         ";
 
+/** Local time, like the user's clock. */
 function stamp(t: number): string {
-  return new Date(t).toISOString().slice(11, 19);
+  return new Date(t).toTimeString().slice(0, 8);
 }
 
 function pruneOldLogs(dir: string): void {
@@ -30,7 +53,14 @@ function pruneOldLogs(dir: string): void {
       .filter((f) => f.endsWith(".log"))
       .map((f) => ({ f, t: statSync(join(dir, f)).mtimeMs }))
       .sort((a, b) => b.t - a.t);
-    for (const { f } of files.slice(KEEP_RUN_LOGS)) unlinkSync(join(dir, f));
+    for (const { f } of files.slice(KEEP_RUN_LOGS)) {
+      unlinkSync(join(dir, f));
+      try {
+        unlinkSync(join(dir, runMetaPath(f)));
+      } catch {
+        // older runs have no metadata
+      }
+    }
   } catch {
     // best effort
   }
@@ -41,6 +71,7 @@ export function startRunFeed(opts: {
   name: string;
   header: string;
   forward?: (message: string) => void;
+  meta?: RunMeta;
   now?: () => number;
   heartbeatMs?: number;
 }): RunFeed {
@@ -59,6 +90,15 @@ export function startRunFeed(opts: {
       // never break a run because of the feed
     }
   };
+  let meta: RunMeta = { ...opts.meta };
+  const writeMeta = () => {
+    try {
+      writeFileSync(runMetaPath(logPath), JSON.stringify(meta));
+    } catch {
+      // never break a run because of the feed
+    }
+  };
+  writeMeta();
   write(opts.header);
 
   const started = now();
@@ -88,6 +128,10 @@ export function startRunFeed(opts: {
       clearInterval(timer);
       if (answer?.trim()) write(`answer: ${answer.trim()}`);
       write(`finished after ${Math.round((now() - started) / 1000)}s · ${summary}`);
+    },
+    meta: (patch) => {
+      meta = { ...meta, ...patch };
+      writeMeta();
     },
   };
 }

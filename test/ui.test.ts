@@ -2,7 +2,8 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { request } from "node:http";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { startUi, summarizeRun } from "../src/cli/ui.js";
+import { classifyPeers, startUi, summarizeRun, type RunSummary } from "../src/cli/ui.js";
+import type { PeerInfo } from "../src/core/protocol.js";
 import { nullLogger } from "../src/core/logger.js";
 import { makeEnv, type TestEnv } from "./helpers.js";
 
@@ -52,6 +53,10 @@ describe("web dashboard", () => {
     expect(state.brokerPid).toBeTypeOf("number");
     expect(state.peers.map((p: { name: string }) => p.name)).toContain("codex-app");
     expect(state.runs[0]).toMatchObject({ name: "2026-09-29-06-32-18-opencode-ab12cd34", agent: "opencode", status: "done" });
+    // Written next to the log by the run feed: who started it and which job it belongs to.
+    writeFileSync(join(env.home, "runs", "2026-09-29-06-32-18-opencode-ab12cd34.json"), JSON.stringify({ by: "claude-app", job: "opencode-job-1", session: "ses_1" }));
+    const withMeta = await (await fetch(`${base()}/api/state`, { headers: { cookie } })).json();
+    expect(withMeta.runs[0]).toMatchObject({ by: "claude-app", job: "opencode-job-1", session: "ses_1", workdir: "/w" });
 
     const log = await (await fetch(`${base()}/api/runs/2026-09-29-06-32-18-opencode-ab12cd34?from=0`, { headers: { cookie } })).json();
     expect(log.text).toContain("bash: ls");
@@ -81,5 +86,23 @@ describe("summarizeRun", () => {
     expect(summarizeRun(f, "06:32:18 h\n06:33:00 1m · step 3 · bash: x\n", 1_000, 2_000).status).toBe("running");
     expect(summarizeRun(f, "06:32:18 h\n06:40:00 finished after 400s · failed: boom\n", 1_000, 2_000).status).toBe("failed");
     expect(summarizeRun(f, "06:32:18 h\n", 0, 10 * 60_000).status).toBe("interrupted");
+  });
+
+  it("reads who started a run and the task from older logs", () => {
+    const r = summarizeRun("2026-09-29-06-32-18-codex-x.log", "06:32:18 codex in /w, access read, by claude-app, continues th-1\n         fix the bug\n         in main.ts\n         ---\n06:32:19 started · x\n", 1_000, 2_000);
+    expect(r).toMatchObject({ by: "claude-app", workdir: "/w", continues: "th-1", task: "fix the bug in main.ts" });
+  });
+});
+
+describe("classifyPeers", () => {
+  it("nests sessions in a subagent worktree under the session that ran it", () => {
+    const peer = (name: string, cwd: string) => ({ id: name, name, agent: "codex", cwd, pid: 1, agentPid: null, sessionId: null, startedAt: 0, autoWake: false }) as PeerInfo;
+    const home = "/h/.agent-bridge";
+    const runs = [{ by: "claude-app", workdir: "/h/.agent-bridge/worktrees/app-1a2b" } as RunSummary];
+    const out = classifyPeers([peer("claude-app", "/w/app"), peer("codex-app-1a2b", "/h/.agent-bridge/worktrees/app-1a2b/")], runs, home);
+    expect(out.map((p) => [p.subagent, p.parent])).toEqual([
+      [false, null],
+      [true, "claude-app"],
+    ]);
   });
 });
