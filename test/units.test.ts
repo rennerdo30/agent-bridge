@@ -38,6 +38,11 @@ describe("parseCodexJsonl", () => {
     expect(parseCodexJsonl(out)).toEqual({ threadId: "th-1", text: "final answer", error: null, usage: { input_tokens: 5 } });
   });
 
+  it("ignores transient errors when the turn completes", () => {
+    const out = ['{"type":"error","message":"Reconnecting... 1/5"}', '{"type":"item.completed","item":{"type":"agent_message","text":"done"}}', '{"type":"turn.completed","usage":{}}'].join("\n");
+    expect(parseCodexJsonl(out)).toMatchObject({ text: "done", error: null });
+  });
+
   it("reports failures", () => {
     expect(parseCodexJsonl('{"type":"turn.failed","error":{"message":"boom"}}').error).toBe("boom");
   });

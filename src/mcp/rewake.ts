@@ -84,6 +84,11 @@ export class RewakeEndpoint {
     this.port = (this.server.address() as AddressInfo).port;
   }
 
+  /** Whether a hook is currently waiting (used by tests and diagnostics). */
+  get waiting(): boolean {
+    return this.waiter !== null;
+  }
+
   /** Publish the endpoint for this Claude session id so the hook can find it. */
   register(sessionId: string): void {
     if (!this.server || this.registered === sessionId) return;

@@ -1141,7 +1141,7 @@ import { createInterface } from "node:readline/promises";
 
 // src/core/delegate.ts
 import { spawn } from "node:child_process";
-import { existsSync, readFileSync as readFileSync2 } from "node:fs";
+import { existsSync, readFileSync as readFileSync2, realpathSync } from "node:fs";
 import { delimiter, extname, isAbsolute, join as join5, win32 } from "node:path";
 
 // src/core/progress.ts
@@ -1390,6 +1390,8 @@ function runProcess(opts) {
 var OPENCODE_CONFIG_CONTENT_ENV = "OPENCODE_CONFIG_CONTENT";
 var CODEX_STRICT_APPROVALS = 'approvals_reviewer="user"';
 var CODEX_RELAY_APPROVALS = 'approvals_reviewer="auto_review"';
+var CODEX_ASK_POLICY = 'approval_policy="on-request"';
+var CODEX_ASK_HINT = "(The workspace is read-only on purpose: when you need to change files or run a command the sandbox blocks, request escalated permissions for it. The user is asked and decides; if denied, stop and report.)";
 var OPENCODE_READ_ONLY_PERMISSIONS = { edit: "ask", bash: "ask" };
 function childEnv(extra = {}) {
   return { ...process.env, ...extra, [DELEGATE_DEPTH_ENV]: String(currentDelegateDepth() + 1) };
@@ -1422,6 +1424,7 @@ function parseCodexJsonl(stdout) {
         break;
       case "turn.completed":
         usage = ev.usage ?? usage;
+        error = null;
         break;
       case "turn.failed":
         error = ev.error?.message ?? "turn failed";
@@ -1433,10 +1436,21 @@ function parseCodexJsonl(stdout) {
   }
   return { threadId, text: messages.at(-1) ?? "", error, usage };
 }
+function realFolder(dir) {
+  try {
+    return realpathSync.native(dir);
+  } catch {
+    return dir;
+  }
+}
 async function delegateToCodex(req) {
   checkDepth();
+  req = { ...req, cwd: realFolder(req.cwd) };
+  if (req.relayApprovals) req = { ...req, prompt: `${req.prompt}
+
+${CODEX_ASK_HINT}` };
   const common = ["--json", "--skip-git-repo-check", ...req.model ? ["-m", req.model] : []];
-  const strict = ["-c", req.relayApprovals ? CODEX_RELAY_APPROVALS : CODEX_STRICT_APPROVALS];
+  const strict = req.relayApprovals ? ["-c", CODEX_RELAY_APPROVALS, "-c", CODEX_ASK_POLICY] : ["-c", CODEX_STRICT_APPROVALS];
   const args = req.sessionId ? ["exec", "resume", ...common, ...strict, "-c", `sandbox_mode="${req.sandbox}"`, req.sessionId, "-"] : ["exec", ...common, ...strict, "-s", req.sandbox, "-C", req.cwd, "-"];
   const res = await withResumeHint("codex", (o) => parseCodexJsonl(o).threadId, () => runProcess({
     bin: req.bin,

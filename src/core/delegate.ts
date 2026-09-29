@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { delimiter, extname, isAbsolute, join, win32 } from "node:path";
 import type { ClaudePermissionMode, CodexSandbox } from "./config.js";
 import type { Logger } from "./logger.js";
@@ -201,6 +201,10 @@ export const OPENCODE_CONFIG_CONTENT_ENV = "OPENCODE_CONFIG_CONTENT";
 export const CODEX_STRICT_APPROVALS = 'approvals_reviewer="user"';
 /** Makes codex exec request approvals (answered by the agent-bridge PermissionRequest hook first). */
 export const CODEX_RELAY_APPROVALS = 'approvals_reviewer="auto_review"';
+/** With it, Codex requests approval for anything beyond the sandbox instead of just failing. */
+export const CODEX_ASK_POLICY = 'approval_policy="on-request"';
+export const CODEX_ASK_HINT =
+  "(The workspace is read-only on purpose: when you need to change files or run a command the sandbox blocks, request escalated permissions for it. The user is asked and decides; if denied, stop and report.)";
 /** Read-only for opencode: no file changes, no shell commands. Reading and searching stay allowed. */
 // "ask" rather than "deny": the tools stay listed (some providers reject a reduced tool set), and headless
 // `opencode run` rejects every ask without --auto, so nothing is changed.
@@ -240,6 +244,8 @@ export function parseCodexJsonl(stdout: string): { threadId: string | null; text
         break;
       case "turn.completed":
         usage = ev.usage ?? usage;
+        // "error" events before a completed turn were transient (e.g. a reconnect); the run succeeded.
+        error = null;
         break;
       case "turn.failed":
         error = ev.error?.message ?? "turn failed";
@@ -252,17 +258,32 @@ export function parseCodexJsonl(stdout: string): { threadId: string | null; text
   return { threadId, text: messages.at(-1) ?? "", error, usage };
 }
 
+/** The canonical path of a folder (drive mappings and junctions resolved); the input on any error. */
+export function realFolder(dir: string): string {
+  try {
+    return realpathSync.native(dir);
+  } catch {
+    return dir;
+  }
+}
+
 export async function delegateToCodex(
   req: DelegateRequest & { bin: string; sandbox: CodexSandbox; relayApprovals?: boolean },
 ): Promise<DelegateResult> {
   checkDepth();
+  // Codex's Windows sandbox runs as a separate user that does not see per-user drive mappings (a mapped
+  // or subst'ed E: drive): commands fail with "no E: drive". Hand it the real path instead.
+  req = { ...req, cwd: realFolder(req.cwd) };
+  // In ask mode the sandbox is read-only and every change goes through an approval the user answers;
+  // without this hint Codex gives up at the sandbox instead of requesting the approval.
+  if (req.relayApprovals) req = { ...req, prompt: `${req.prompt}\n\n${CODEX_ASK_HINT}` };
   const common = ["--json", "--skip-git-repo-check", ...(req.model ? ["-m", req.model] : [])];
   // With approvals_reviewer="auto_review" in the user's config, codex exec lets a reviewer model approve
   // escalations, so a read-only sandbox would not hold. Route approvals to "user": exec then never
   // escalates and the sandbox is enforced (verified: read-only then refuses to create files).
   // relayApprovals: exec then asks for approvals, and the (trusted) agent-bridge PermissionRequest hook
   // answers them with the user's decision. Only used when that hook's trust entry exists.
-  const strict = ["-c", req.relayApprovals ? CODEX_RELAY_APPROVALS : CODEX_STRICT_APPROVALS];
+  const strict = req.relayApprovals ? ["-c", CODEX_RELAY_APPROVALS, "-c", CODEX_ASK_POLICY] : ["-c", CODEX_STRICT_APPROVALS];
   const args = req.sessionId
     ? ["exec", "resume", ...common, ...strict, "-c", `sandbox_mode="${req.sandbox}"`, req.sessionId, "-"]
     : ["exec", ...common, ...strict, "-s", req.sandbox, "-C", req.cwd, "-"];

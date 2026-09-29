@@ -11,7 +11,7 @@ import { buildHookResponse } from "../src/mcp/hooks.js";
 import { JobManager } from "../src/mcp/jobs.js";
 import { RewakeEndpoint, sessionFile } from "../src/mcp/rewake.js";
 import type { ServerContext } from "../src/mcp/server.js";
-import { makeEnv, type TestEnv } from "./helpers.js";
+import { makeEnv, until, type TestEnv } from "./helpers.js";
 
 const CLI = join(import.meta.dirname, "..", "plugins", "claude", "dist", "cli.mjs");
 let env: TestEnv;
@@ -49,7 +49,7 @@ const result = (text: string): DelegateResult => ({ sessionId: "s", text, isErro
 describe.skipIf(!existsSync(CLI))("background wake-ups", () => {
   it("wakes the session (exit 2) with a finished subagent's result", async () => {
     const hook = runHook("sess-1");
-    await new Promise((r) => setTimeout(r, 400));
+    await until(() => rewake.waiting, 10_000);
     jobs.start("opencode", null, "task", async () => result("interiors are done"));
     const { code, stderr } = await hook;
     expect(code).toBe(2);
@@ -62,7 +62,7 @@ describe.skipIf(!existsSync(CLI))("background wake-ups", () => {
     await peer.start();
     const q = await me.send({ to: "codex-r", body: "question?" });
     const hook = runHook("sess-1");
-    await new Promise((r) => setTimeout(r, 400));
+    await until(() => rewake.waiting, 10_000);
     await peer.send({ to: "claude-r", body: "unrelated chatter" });
     await new Promise((r) => setTimeout(r, 300));
     await peer.send({ to: "claude-r", body: "the answer", replyTo: q.messages[0]!.id });
@@ -74,10 +74,10 @@ describe.skipIf(!existsSync(CLI))("background wake-ups", () => {
 
   it("an older waiter ends quietly when a newer turn starts waiting", async () => {
     const older = runHook("sess-1");
-    await new Promise((r) => setTimeout(r, 400));
+    await until(() => rewake.waiting, 10_000);
     const newer = runHook("sess-1");
     expect((await older).code).toBe(0);
-    await new Promise((r) => setTimeout(r, 300));
+    await until(() => rewake.waiting, 10_000);
     jobs.start("codex", null, "t", async () => result("ok"));
     expect((await newer).code).toBe(2);
   });

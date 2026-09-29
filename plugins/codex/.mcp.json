@@ -4,6 +4,21 @@
       "command": "node",
       "args": ["./dist/server.mjs", "--agent=codex"],
       "cwd": ".",
+      "env_vars": [
+        "AGENT_BRIDGE_DELEGATE_DEPTH",
+        "AGENT_BRIDGE_HOME",
+        "AGENT_BRIDGE_PIPE",
+        "AGENT_BRIDGE_NAME",
+        "AGENT_BRIDGE_AUTO_WAKE",
+        "AGENT_BRIDGE_MAX_HOPS",
+        "AGENT_BRIDGE_LINGER_SEC",
+        "AGENT_BRIDGE_LOG_LEVEL",
+        "AGENT_BRIDGE_LOG_CONSOLE",
+        "AGENT_BRIDGE_DASHBOARD",
+        "AGENT_BRIDGE_CLAUDE_BIN",
+        "AGENT_BRIDGE_CODEX_BIN",
+        "AGENT_BRIDGE_OPENCODE_BIN"
+      ],
       "startup_timeout_sec": 30,
       "tool_timeout_sec": 3600
     }
