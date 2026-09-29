@@ -9,6 +9,7 @@ const LEVEL_RANK: Record<LogLevel, number> = { debug: 10, info: 20, warn: 30, er
 const DEFAULT_FILE_LEVEL: LogLevel = "info";
 const DEFAULT_CONSOLE_LEVEL: LogLevel = "warn";
 const MAX_LOG_BYTES = 5 * 1024 * 1024;
+const ROTATE_CHECK_EVERY = 500;
 
 export interface Logger {
   debug(msg: string, data?: Record<string, unknown>): void;
@@ -22,6 +23,8 @@ interface Sink {
   fileLevel: LogLevel;
   consoleLevel: LogLevel;
   file: string | null;
+  /** Lines written, for the periodic size check. */
+  writes: number;
 }
 
 function parseLevel(value: string | undefined, fallback: LogLevel): LogLevel {
@@ -55,6 +58,7 @@ export function createLogger(opts: { home: string; component: string; consoleLev
     fileLevel: opts.fileLevel ?? parseLevel(envLevel, DEFAULT_FILE_LEVEL),
     consoleLevel: opts.consoleLevel ?? parseLevel(process.env[ENV.logConsole] ?? envLevel, DEFAULT_CONSOLE_LEVEL),
     file: null,
+    writes: 0,
   };
   try {
     const dir = join(opts.home, LOG_DIR_NAME);
@@ -76,6 +80,8 @@ function makeLogger(sink: Sink, scope: string): Logger {
     const line = `${new Date().toISOString()} ${level.toUpperCase().padEnd(5)} [${scope}] pid=${process.pid} ${msg}${serialize(data)}\n`;
     if (toFile) {
       try {
+        // Long-running sessions: check the size now and then, not only at start.
+        if (++sink.writes % ROTATE_CHECK_EVERY === 0) rotateIfNeeded(sink.file as string);
         appendFileSync(sink.file as string, line);
       } catch {
         // Never let logging failures break the bridge.

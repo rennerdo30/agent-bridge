@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync } from "node:fs";
-import { basename, isAbsolute, join, relative } from "node:path";
+import { basename, isAbsolute, join, relative, resolve } from "node:path";
 import { runProcess } from "./delegate.js";
 import type { Logger } from "./logger.js";
 
@@ -56,14 +56,51 @@ export interface WorktreeOutcome {
   diffStat: string;
 }
 
+const SUBJECT_CHARS = 72;
+
+/**
+ * Commit message for work a subagent left uncommitted: the subject from its answer (what it did), not from
+ * the task; the task and the job in the body; the agent as co-author.
+ */
+export function subagentCommitMessage(opts: { answer: string; task: string; job?: string | null; agent: string; model?: string | null }): string {
+  const plain = (s: string) => s.replace(/[*_`#>]+/g, "").replace(/\s+/g, " ").trim();
+  const firstLine = (s: string) => s.split(/\r?\n/).map(plain).find((l) => l.length > 0) ?? "";
+  const clip = (s: string) => (s.length > SUBJECT_CHARS ? `${s.slice(0, SUBJECT_CHARS - 1).trimEnd()}…` : s);
+  const subject = clip(firstLine(opts.answer) || firstLine(opts.task) || "subagent changes");
+  const email = { codex: "noreply@openai.com", claude: "noreply@anthropic.com", opencode: "noreply@opencode.ai" }[opts.agent] ?? "noreply@localhost";
+  const who = opts.model ? `${opts.model} via ${opts.agent}` : opts.agent;
+  return [
+    subject,
+    "",
+    `Committed by agent-bridge for ${opts.job ?? "a subagent"} (${who}).`,
+    `Task: ${clip(firstLine(opts.task))}`,
+    "",
+    `Co-Authored-By: ${who} <${email}>`,
+  ].join("\n");
+}
+
+/**
+ * A linked worktree keeps its git data in the main repository (.git/worktrees/<name> and the shared .git).
+ * Sandboxed agents need these folders writable to commit; returns them when they lie outside `cwd`.
+ */
+export async function gitDirsOutside(cwd: string, log: Logger): Promise<string[]> {
+  try {
+    const [gitDir, common] = (await git(["rev-parse", "--path-format=absolute", "--git-dir", "--git-common-dir"], cwd, log)).split(/\r?\n/);
+    const inside = (p: string) => {
+      const rel = relative(resolve(cwd), resolve(p));
+      return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+    };
+    return [...new Set([gitDir, common].filter((p): p is string => Boolean(p) && !inside(p!)))];
+  } catch {
+    return [];
+  }
+}
+
 /** Commit whatever the subagent changed onto its branch and summarize the diff against the base. */
-export async function finishWorktree(wt: Worktree, summary: string, log: Logger): Promise<WorktreeOutcome> {
+export async function finishWorktree(wt: Worktree, message: string, log: Logger): Promise<WorktreeOutcome> {
   await git(["add", "-A"], wt.path, log);
   const status = await git(["status", "--porcelain"], wt.path, log);
-  if (status) {
-    const message = `agent-bridge: ${summary.replace(/\s+/g, " ").slice(0, 72)}`;
-    await git([...COMMIT_IDENTITY, "commit", "-q", "--no-verify", "-m", message], wt.path, log);
-  }
+  if (status) await git([...COMMIT_IDENTITY, "commit", "-q", "--no-verify", "-m", message], wt.path, log);
   const diffStat = await git(["diff", "--stat", `${wt.base}..${wt.branch}`], wt.repoRoot, log);
   return { changed: diffStat.length > 0, diffStat: diffStat.slice(0, MAX_DIFFSTAT_CHARS) };
 }

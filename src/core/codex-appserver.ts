@@ -49,7 +49,7 @@ function asExecEvent(kind: "item.started" | "item.completed", item: any): unknow
 }
 
 export async function delegateToCodexAppServer(
-  req: DelegateRequest & { bin: string; sandbox: CodexSandbox; askMode?: boolean },
+  req: DelegateRequest & { bin: string; sandbox: CodexSandbox; askMode?: boolean; writableRoots?: string[] },
 ): Promise<DelegateResult> {
   checkDepth();
   // See delegateToCodex: the Windows sandbox user does not see drive mappings.
@@ -222,7 +222,10 @@ export async function delegateToCodexAppServer(
     // Codex asks us (never a reviewer model): MCP tool approvals go to the parent session; sandbox escalations
     // only in "ask" mode, and are refused here without asking otherwise, so the sandbox holds.
     const approvalPolicy = "on-request";
-    const threadParams = { cwd, sandbox: req.sandbox, approvalPolicy, approvalsReviewer: "user", ...(req.model ? { model: req.model } : {}) };
+    // Extra writable folders for workspace-write (a worktree's git admin dir lives in the main repo).
+    const config: Record<string, unknown> = {};
+    if (req.writableRoots?.length && req.sandbox === "workspace-write") config.sandbox_workspace_write = { writable_roots: req.writableRoots.map(realFolder) };
+    const threadParams = { cwd, sandbox: req.sandbox, approvalPolicy, approvalsReviewer: "user", ...(Object.keys(config).length ? { config } : {}), ...(req.model ? { model: req.model } : {}) };
     const thread = req.sessionId
       ? await race(request("thread/resume", { ...threadParams, threadId: req.sessionId, excludeTurns: true }))
       : await race(request("thread/start", threadParams));

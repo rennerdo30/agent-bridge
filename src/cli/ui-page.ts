@@ -88,6 +88,12 @@ h3 .n { color: var(--faint); font-weight: 500; }
 /* Subagent rows */
 .rows > a { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; gap: 14px; align-items: center; padding: 13px 16px; border-bottom: 1px solid var(--line); }
 .rows > a:last-child { border-bottom: 0; }
+.archive > summary { cursor: pointer; padding: 11px 16px; color: var(--muted); font-size: 13px; list-style: none; border-top: 1px solid var(--line); }
+.archive > summary::-webkit-details-marker { display: none; }
+.archive > summary::before { content: "▸ "; }
+.archive[open] > summary::before { content: "▾ "; }
+.archive > a { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; gap: 14px; align-items: center; padding: 13px 16px; border-top: 1px solid var(--line); opacity: .8; }
+.archive > a:hover { background: var(--panel-2); opacity: 1; }
 .rows > a:hover { background: var(--panel-2); }
 .rows > a.sel { background: var(--accent-soft); box-shadow: inset 3px 0 0 var(--accent); }
 .rows .line1 { display: flex; align-items: center; gap: 8px; min-width: 0; }
@@ -199,6 +205,8 @@ const POLL_MS = 1500;
 const LOG_PAGES = 20;
 /** Runs of more commands than this fold into one expandable row. */
 const FOLD_STEPS = 3;
+/** Finished subagents older than this move into the session's archive. */
+const ARCHIVE_AFTER_MS = 30 * 60_000;
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
 const time = (t) => new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
@@ -299,7 +307,11 @@ function renderTabs() {
     (t.live ? dot(t.peer.activity) : "") + esc(t.name) + (t.running ? '<span class="count" title="subagents working">' + t.running + "</span>" : "") + "</a>").join("");
 }
 
-const versionChip = (p) => p.version && p.version !== state.version ? '<span class="chip old">v' + esc(p.version) + " · outdated</span>" : "";
+/** "0.12.0" vs "0.11.3": negative when a is older. */
+const cmpVersion = (a, b) => { const x = String(a).split(".").map(Number), y = String(b).split(".").map(Number); for (let i = 0; i < 3; i++) { const d = (x[i] || 0) - (y[i] || 0); if (d) return d; } return 0; };
+/** The newest agent-bridge version on the bridge (the dashboard's host may itself be an older session). */
+const newestVersion = () => [state.version, ...state.peers.map((p) => p.version)].filter(Boolean).reduce((m, v) => (cmpVersion(v, m) > 0 ? v : m), "0.0.0");
+const versionChip = (p) => p.version && cmpVersion(p.version, newestVersion()) < 0 ? '<span class="chip old">v' + esc(p.version) + " · outdated</span>" : "";
 const childLine = (c) => '<div class="ell">' + dot(c.activity) + " subagent session <b>" + esc(c.name) + "</b></div>";
 
 function groupRow(g, sel, showOwner) {
@@ -327,7 +339,7 @@ function renderOverview() {
     (live.length ? live.map(card).join("") : '<div class="panel empty">No sessions connected. Start Claude Code, Codex or opencode with agent-bridge installed.</div>') +
     ended.map(card).join("") +
     (model.orphans.length ? '<div class="card ended"><div class="small muted">Subagent sessions in worktrees</div><div class="kids">' + model.orphans.map(childLine).join("") + "</div></div>" : "");
-  $("ovRuns").innerHTML = model.sorted.length ? model.sorted.slice(0, 12).map((g) => groupRow(g, false, true)).join("") : '<div class="empty">No subagents yet. They appear here when a session uses ask_* or spawn_*.</div>';
+  $("ovRuns").innerHTML = model.sorted.length ? model.sorted.filter((g) => g.status === "running" || Date.now() - g.updatedAt < ARCHIVE_AFTER_MS).concat(model.sorted.filter((g) => !(g.status === "running" || Date.now() - g.updatedAt < ARCHIVE_AFTER_MS))).slice(0, 12).map((g) => groupRow(g, false, true)).join("") : '<div class="empty">No subagents yet. They appear here when a session uses ask_* or spawn_*.</div>';
   $("ovMsgs").innerHTML = messagesHtml(state.messages);
 }
 
@@ -343,7 +355,14 @@ function renderSession() {
       (x.name === "earlier runs" ? "Runs from before sessions were recorded, or from sessions in other folders." : "This session has ended. Its subagents are kept for reference.") + "</div></div></div>";
   $("sCount").textContent = x.groups.length || "";
   const sel = route.group && x.groups.find((g) => g.key === route.group) ? route.group : x.groups[0] && x.groups[0].key;
-  $("sGroups").innerHTML = x.groups.length ? x.groups.map((g) => groupRow(g, g.key === sel, false)).join("") : '<div class="empty">No subagents started from this session yet.</div>';
+  // Running and recently finished subagents on top; older ones in a folded archive (the selected one stays visible).
+  const fresh = (g) => g.status === "running" || Date.now() - g.updatedAt < ARCHIVE_AFTER_MS || g.key === sel;
+  const active = x.groups.filter(fresh), archived = x.groups.filter((g) => !fresh(g));
+  const archiveOpen = opened.has("archive:" + x.name);
+  $("sGroups").innerHTML = x.groups.length
+    ? (active.length ? active.map((g) => groupRow(g, g.key === sel, false)).join("") : '<div class="empty">Nothing running or recent.</div>') +
+      (archived.length ? '<details class="archive" data-open="archive:' + esc(x.name) + '"' + (archiveOpen ? " open" : "") + '><summary>Archive · ' + archived.length + " older subagent" + (archived.length === 1 ? "" : "s") + "</summary>" + archived.map((g) => groupRow(g, false, false)).join("") + "</details>" : "")
+    : '<div class="empty">No subagents started from this session yet.</div>';
   const mine = state.messages.filter((m) => m.from_name === x.name || m.to_target === x.name || String(m.recipients || "").split(", ").includes(x.name));
   $("sMsgs").innerHTML = messagesHtml(mine);
   const g = sel && model.groups.get(sel);

@@ -223,7 +223,9 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
       if (!existsSync(file)) return send(res, 404, { error: "no such run" });
       const from = Math.max(0, Number(url.searchParams.get("from")) || 0);
       const buf = readFileSync(file);
-      const end = Math.min(buf.length, from + MAX_LOG_CHUNK);
+      let end = Math.min(buf.length, from + MAX_LOG_CHUNK);
+      // Never cut a UTF-8 character in half: step back over continuation bytes (10xxxxxx).
+      while (end < buf.length && end > from && (buf[end]! & 0xc0) === 0x80) end--;
       return send(res, 200, { text: buf.subarray(from, end).toString("utf8"), next: end, size: buf.length });
     }
     if (req.method === "POST" && url.pathname === "/api/send") {

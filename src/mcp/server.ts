@@ -40,7 +40,7 @@ import { ParentLink, parentFromEnv, type ParentClient } from "../core/parent-lin
 import { findRunningDashboard, hostDashboard, type DashboardInfo, type HostedDashboard } from "../cli/dashboard.js";
 import { openBrowser } from "../cli/open.js";
 import { RewakeEndpoint } from "./rewake.js";
-import { changedFiles, createWorktree, finishWorktree, gitChangeSnapshot, worktreeReport, type Worktree } from "../core/worktree.js";
+import { changedFiles, createWorktree, finishWorktree, gitChangeSnapshot, gitDirsOutside, subagentCommitMessage, worktreeReport, type Worktree } from "../core/worktree.js";
 import { DEFAULT_FOLLOW_UP, JobManager, type Job, type Resume, type RunResult } from "./jobs.js";
 
 const CHANNEL_NOTIFICATION = "notifications/claude/channel";
@@ -58,6 +58,11 @@ const KEPT_ARGS = ["model", "cwd", "timeout_sec", "worktree", "access", "sandbox
 const PARENT_APPROVAL_TIMEOUT_MS = 10 * 60_000;
 /** Plugin root: dist/server.mjs lives one level below it. */
 const PLUGIN_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+
+/** A folder inside ~/.agent-bridge/worktrees (a subagent worktree, possibly from an earlier job). */
+function isBridgeWorktree(dir: string, home: string): boolean {
+  return isInside(dir, join(home, "worktrees")) && resolve(dir) !== resolve(join(home, "worktrees"));
+}
 
 function isInside(child: string, parent: string): boolean {
   const rel = relative(resolve(parent), resolve(child));
@@ -586,7 +591,8 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
     const run = async (a: DelegateArgs, signal: AbortSignal, onProgress: ((message: string) => void) | undefined, background: boolean, job?: Job): Promise<RunResult> => {
       const dlog = log.child("delegate");
       const cwd = a.cwd || ctx.cwd();
-      const access: Access | undefined = a.worktree || a._worktree ? (a.access ?? "edit") : a.access;
+      // Worktrees (new, continued, or an agent-bridge worktree given as cwd) exist to be edited in: edit by default.
+      const access: Access | undefined = a.worktree || a._worktree || isBridgeWorktree(cwd, ctx.home) ? (a.access ?? "edit") : a.access;
       // A follow-up to a worktree job keeps working (and committing) in that worktree.
       const wt = a._worktree ?? (a.worktree ? await createWorktree({ cwd, home: ctx.home, jobId: randomUUID().slice(0, 8), log: dlog }) : null);
       const workdir = wt?.cwd ?? cwd;
@@ -664,6 +670,7 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
       // Live link: this session's messages reach the subagent while it works, and it can answer at once.
       const me = node?.name ?? ctx.agent;
       let link: ParentLink | null = null;
+
       let steering: { send: (message: string) => Promise<boolean> } | null = null;
       if (job && ctx.jobs) {
         const jobs = ctx.jobs;
@@ -707,6 +714,7 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
             signal,
             onProgress: feed.report,
             extraEnv: link?.childEnv(),
+            writableRoots: access === "edit" || (a as { sandbox?: string }).sandbox === "workspace-write" ? await gitDirsOutside(workdir, dlog) : undefined,
             onSession: (id) => {
               feed.meta({ session: id });
               if (job) ctx.jobs?.note(job, { sessionId: id, workdir, worktree: wt });
@@ -757,7 +765,8 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
       if (usage) notes.push(usage);
       if (wt) {
         try {
-          notes.push(worktreeReport(wt, await finishWorktree(wt, a.prompt, dlog)));
+          const message = subagentCommitMessage({ answer: res.text, task: a.prompt, job: a._job, agent: target, model: a.model ?? defaultModel });
+          notes.push(worktreeReport(wt, await finishWorktree(wt, message, dlog)));
         } catch (err) {
           // Never lose the answer over a git problem.
           notes.push(`Could not commit the changes in worktree ${wt.path} (branch ${wt.branch}): ${(err as Error).message}`);
@@ -846,7 +855,12 @@ ${res.text || t("delegate.empty")}`, res.isError);
         if (!jobs) throw new BridgeError("bad_request", t("err.delegatedSession"));
         if (!jobs.canStart()) return text(t("jobs.limit", { max: MAX_RUNNING_JOBS }), true);
         const job = jobs.start(target, a.model ?? defaultModel, a.prompt, (signal, onProgress, job) => run({ ...a, _job: job.name }, signal, onProgress, true, job), resumeFor(a), keep(a));
-        return text(t("jobs.started", { name: job.name }));
+        const cwd = a.cwd || ctx.cwd();
+        const access = a.access ?? (a.worktree || isBridgeWorktree(cwd, ctx.home) ? "edit" : null);
+        // Exact target options (sandbox, permission_mode, auto_approve) say it themselves.
+        const exact = a.sandbox !== undefined || a.permission_mode !== undefined || a.auto_approve !== undefined;
+        const note = exact ? "" : `\n${access === "edit" ? t("jobs.accessEdit") : access === "ask" ? t("jobs.accessAsk") : t("jobs.accessRead")}`;
+        return text(`${t("jobs.started", { name: job.name })}${note}`);
       }),
     );
   }

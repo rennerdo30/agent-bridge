@@ -3,6 +3,7 @@ import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { delimiter, extname, isAbsolute, join, win32 } from "node:path";
 import type { ClaudePermissionMode, CodexSandbox } from "./config.js";
 import type { Logger } from "./logger.js";
+import { claudeMcpDenyRules } from "./claude-mcp.js";
 import { PARENT_URL_ENV } from "./parent-link.js";
 import { progressLineHandler } from "./progress.js";
 
@@ -246,6 +247,8 @@ export interface DelegateRequest {
   model?: string | null;
   /** Receives short human-readable status lines while the delegate works. */
   onProgress?: (message: string, full?: string) => void;
+  /** Extra folders the subagent may write (workspace-write), e.g. a worktree's git data in the main repo. */
+  writableRoots?: string[];
   /** Called once with the subagent's own session id, as soon as it is known (not only at the end). */
   onSession?: (sessionId: string) => void;
   /** Answers the subagent's approval questions (Codex app-server): the parent session decides. */
@@ -284,6 +287,8 @@ export const CODEX_ASK_HINT =
 // "ask" rather than "deny": the tools stay listed (some providers reject a reduced tool set), and headless
 // `opencode run` rejects every ask without --auto, so nothing is changed.
 export const OPENCODE_READ_ONLY_PERMISSIONS = { edit: "ask", bash: "ask" } as const;
+/** MCP tools (named <server>_<tool>) can change things too: read-only runs keep only agent-bridge's send (to answer the parent). */
+export const OPENCODE_READ_ONLY_TOOLS = { "*_*": false, bridge_send: true } as const;
 
 export function childEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
   // The parent's project dir would point a delegated Claude (it may work in a worktree) at the wrong folder.
@@ -383,6 +388,9 @@ export async function delegateToCodex(
   // without this hint Codex gives up at the sandbox instead of requesting the approval.
   if (req.relayApprovals) req = { ...req, prompt: `${req.prompt}\n\n${CODEX_ASK_HINT}` };
   const common = ["--json", "--skip-git-repo-check", ...(req.model ? ["-m", req.model] : [])];
+  if (req.writableRoots?.length && req.sandbox === "workspace-write") {
+    common.push("-c", `sandbox_workspace_write.writable_roots=${JSON.stringify(req.writableRoots.map(realFolder))}`);
+  }
   // With approvals_reviewer="auto_review" in the user's config, codex exec lets a reviewer model approve
   // escalations, so a read-only sandbox would not hold. Route approvals to "user": exec then never
   // escalates and the sandbox is enforced (verified: read-only then refuses to create files).
@@ -443,6 +451,11 @@ export function parseClaudeJson(stdout: string): { sessionId: string | null; tex
 /** The agent-bridge plugin's "send" tool as Claude Code names it. */
 const CLAUDE_PARENT_SEND_TOOL = "mcp__plugin_agent-bridge_bridge__send";
 export const CLAUDE_READ_ONLY_DENIED_TOOLS = ["Write", "Edit", "MultiEdit", "NotebookEdit", "Bash", "PowerShell"];
+/** Whether a Claude subagent in this mode may only look (no edits, commands or MCP tools). */
+export function isClaudeReadOnly(mode: ClaudePermissionMode): boolean {
+  return CLAUDE_READ_ONLY_MODES.has(mode);
+}
+
 /** Permission modes that mean "look only". */
 const CLAUDE_READ_ONLY_MODES = new Set<ClaudePermissionMode>(["default", "manual", "plan"]);
 
@@ -452,7 +465,10 @@ export async function delegateToClaude(
   checkDepth();
   // stream-json lets us report progress; the final "result" line matches --output-format json.
   const args = ["-p", "--output-format", "stream-json", "--verbose", "--permission-mode", req.permissionMode];
-  if (CLAUDE_READ_ONLY_MODES.has(req.permissionMode)) args.push("--disallowedTools", CLAUDE_READ_ONLY_DENIED_TOOLS.join(","));
+  // Read-only also means no MCP tools: those of the user's plugins can change things. Each server is denied by
+  // name except agent-bridge's (a blanket mcp__* deny would beat the allow for send, which answers the parent).
+  const readOnly = isClaudeReadOnly(req.permissionMode);
+  if (readOnly) args.push("--disallowedTools", [...CLAUDE_READ_ONLY_DENIED_TOOLS, ...claudeMcpDenyRules(req.cwd)].join(","));
   if (req.model) args.push("--model", req.model);
   if (req.sessionId) args.push("--resume", req.sessionId);
   // Headless Claude denies MCP tools it would ask about: let it answer its parent (see parent-link.ts).
@@ -536,7 +552,7 @@ export async function delegateToOpencode(req: DelegateRequest & { bin: string; a
   // explicitly: an extra config layer (merged over the user's) denies them. --auto approves the rest.
   if (req.autoApprove) args.push("--auto");
   const env = childEnv(req.extraEnv);
-  if (!req.autoApprove) env[OPENCODE_CONFIG_CONTENT_ENV] = JSON.stringify({ permission: OPENCODE_READ_ONLY_PERMISSIONS });
+  if (!req.autoApprove) env[OPENCODE_CONFIG_CONTENT_ENV] = JSON.stringify({ permission: OPENCODE_READ_ONLY_PERMISSIONS, tools: OPENCODE_READ_ONLY_TOOLS });
   const res = await withResumeHint("opencode", (o) => parseOpencodeJsonl(o).sessionId, () => runProcess({
     bin: req.bin,
     args,

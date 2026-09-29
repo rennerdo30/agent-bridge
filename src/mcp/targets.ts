@@ -50,6 +50,11 @@ const CODEX_SANDBOX_FOR: Record<Access, CodexSandbox> = { read: "read-only", ask
 const CLAUDE_MODE_FOR: Record<Access, ClaudePermissionMode> = { read: "manual", ask: "manual", edit: "acceptEdits" };
 const OPENCODE_AUTO_FOR: Record<Access, boolean> = { read: false, ask: false, edit: true };
 
+/** The permission mode a Claude subagent runs with for these arguments. */
+export function claudeModeFor(cfg: BridgeConfig, a: TargetArgs): ClaudePermissionMode {
+  return (a.permission_mode as ClaudePermissionMode | undefined) ?? (a.access ? CLAUDE_MODE_FOR[a.access] : cfg.claudePermissionMode);
+}
+
 /** Whether a target can forward permission requests in this setup (else "ask" behaves like "read"). */
 export function supportsAsk(target: CodingAgent, relay: RelayWiring | undefined): boolean {
   if (!relay) return false;
@@ -74,7 +79,7 @@ export const DELEGATION_TARGETS: Record<CodingAgent, DelegationTarget> = {
       // (answered by the parent session). exec is the fallback; there "ask" needs the trusted PermissionRequest hook.
       if (process.env[CODEX_EXEC_ENV] !== "1") {
         try {
-          return await delegateToCodexAppServer({ ...base, bin: cfg.codexBin, sandbox, askMode: a.access === "ask", approve: a.access === "ask" && a.relay ? a.relay.onPermission : base.approve });
+          return await delegateToCodexAppServer({ ...base, bin: cfg.codexBin, sandbox, writableRoots: base.writableRoots, askMode: a.access === "ask", approve: a.access === "ask" && a.relay ? a.relay.onPermission : base.approve });
         } catch (err) {
           // Older Codex without app-server (or one that cannot start it): the run never began, use exec.
           if (!(err instanceof DelegateError) || err.kind !== "failed" || err.sessionId) throw err;
@@ -99,7 +104,7 @@ export const DELEGATION_TARGETS: Record<CodingAgent, DelegationTarget> = {
       delegateToClaude({
         ...base,
         bin: cfg.claudeBin,
-        permissionMode: (a.permission_mode as ClaudePermissionMode | undefined) ?? (a.access ? CLAUDE_MODE_FOR[a.access] : cfg.claudePermissionMode),
+        permissionMode: claudeModeFor(cfg, a),
       }),
   },
   opencode: {

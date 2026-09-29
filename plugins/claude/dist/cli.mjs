@@ -2,7 +2,7 @@
 import { createRequire as __abCreateRequire } from 'node:module'; const require = __abCreateRequire(import.meta.url);
 
 // src/cli/main.ts
-import { join as join17 } from "node:path";
+import { join as join18 } from "node:path";
 
 // src/core/client.ts
 import { EventEmitter } from "node:events";
@@ -12,7 +12,7 @@ import { connect } from "node:net";
 import { homedir } from "node:os";
 import { join } from "node:path";
 var APP_NAME = "agent-bridge";
-var APP_VERSION = "0.12.0";
+var APP_VERSION = "0.13.0";
 var PROTOCOL_VERSION = 2;
 var ENV = {
   home: "AGENT_BRIDGE_HOME",
@@ -138,7 +138,7 @@ var BridgeClient = class _BridgeClient extends EventEmitter {
   closed = false;
   /** Connect to an existing broker. Rejects with the socket error (ENOENT/ECONNREFUSED if nobody listens). */
   static connect(pipePath, log, timeoutMs = CONNECT_TIMEOUT_MS) {
-    return new Promise((resolve3, reject) => {
+    return new Promise((resolve5, reject) => {
       const socket = connect(pipePath);
       const timer = setTimeout(() => {
         socket.destroy();
@@ -147,7 +147,7 @@ var BridgeClient = class _BridgeClient extends EventEmitter {
       socket.once("connect", () => {
         clearTimeout(timer);
         socket.removeAllListeners("error");
-        resolve3(new _BridgeClient(socket, log));
+        resolve5(new _BridgeClient(socket, log));
       });
       socket.once("error", (err) => {
         clearTimeout(timer);
@@ -161,12 +161,12 @@ var BridgeClient = class _BridgeClient extends EventEmitter {
   request(op, args, timeoutMs = REQUEST_TIMEOUT_MS) {
     if (this.closed) return Promise.reject(new Error("connection to broker closed"));
     const id = this.nextId++;
-    return new Promise((resolve3, reject) => {
+    return new Promise((resolve5, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
         reject(new Error(`broker request timed out: ${op}`));
       }, timeoutMs);
-      this.pending.set(id, { resolve: resolve3, reject, timer });
+      this.pending.set(id, { resolve: resolve5, reject, timer });
       this.socket.write(encodeFrame({ t: "req", id, op, args }));
     });
   }
@@ -195,6 +195,9 @@ var en = {
   "peers.none": "No other peers are online. Messages you send to an offline peer name wait until it connects.",
   "peers.jobs": "Your running subagents ({count}):",
   "peers.job": "- {name} (model: {model}, running {duration}): {progress}",
+  "jobs.accessRead": 'It runs read-only: it can look but not change files or commit. To let it edit, start it with access="edit" (or worktree=true).',
+  "jobs.accessEdit": "It may change files.",
+  "jobs.accessAsk": "It asks the user before changing files or running commands.",
   "jobs.started": 'Subagent {name} started. Keep working; its result will arrive as a message from "{name}" (or call wait_for_message with from="{name}").',
   "jobs.limit": "Too many subagents running (maximum {max}). Wait for one to finish or cancel one.",
   "jobs.cancelled": "Cancelled subagent {name}.",
@@ -297,6 +300,7 @@ var LEVEL_RANK = { debug: 10, info: 20, warn: 30, error: 40, silent: 100 };
 var DEFAULT_FILE_LEVEL = "info";
 var DEFAULT_CONSOLE_LEVEL = "warn";
 var MAX_LOG_BYTES = 5 * 1024 * 1024;
+var ROTATE_CHECK_EVERY = 500;
 function parseLevel(value, fallback) {
   const v = value?.trim().toLowerCase();
   return LOG_LEVELS.includes(v ?? "") ? v : fallback;
@@ -320,7 +324,8 @@ function createLogger(opts) {
   const sink = {
     fileLevel: opts.fileLevel ?? parseLevel(envLevel, DEFAULT_FILE_LEVEL),
     consoleLevel: opts.consoleLevel ?? parseLevel(process.env[ENV.logConsole] ?? envLevel, DEFAULT_CONSOLE_LEVEL),
-    file: null
+    file: null,
+    writes: 0
   };
   try {
     const dir = join2(opts.home, LOG_DIR_NAME);
@@ -343,6 +348,7 @@ function makeLogger(sink, scope) {
 `;
     if (toFile) {
       try {
+        if (++sink.writes % ROTATE_CHECK_EVERY === 0) rotateIfNeeded(sink.file);
         appendFileSync(sink.file, line);
       } catch {
       }
@@ -553,7 +559,7 @@ var Broker = class {
   handlers;
   /** Bind the endpoint. Rejects with the socket error (EADDRINUSE when another broker owns it). */
   listen() {
-    return new Promise((resolve3, reject) => {
+    return new Promise((resolve5, reject) => {
       const server = createServer((socket) => this.accept(socket));
       const onError = (err) => {
         server.removeListener("listening", onListening);
@@ -567,7 +573,7 @@ var Broker = class {
         this.purgeTimer.unref();
         this.purge();
         this.log.info("broker listening", { pipe: this.pipePath });
-        resolve3();
+        resolve5();
       };
       server.once("error", onError);
       server.once("listening", onListening);
@@ -1049,12 +1055,12 @@ var BridgeNode = class extends EventEmitter2 {
   waitForMessage(timeoutMs, predicate = () => true, signal) {
     const existing = this.unread().find(predicate);
     if (existing) return Promise.resolve(existing);
-    return new Promise((resolve3) => {
+    return new Promise((resolve5) => {
       const done = (m) => {
         clearTimeout(timer);
         this.off("message", onMessage);
         signal?.removeEventListener("abort", onAbort);
-        resolve3(m);
+        resolve5(m);
       };
       const onMessage = (m) => {
         if (predicate(m)) done(m);
@@ -1154,8 +1160,57 @@ import { createInterface } from "node:readline/promises";
 
 // src/core/delegate.ts
 import { spawn } from "node:child_process";
-import { existsSync, readFileSync as readFileSync2, realpathSync } from "node:fs";
-import { delimiter, extname, isAbsolute, join as join5, win32 } from "node:path";
+import { existsSync, readFileSync as readFileSync3, realpathSync } from "node:fs";
+import { delimiter, extname, isAbsolute, join as join6, win32 } from "node:path";
+
+// src/core/claude-mcp.ts
+import { readFileSync as readFileSync2 } from "node:fs";
+import { homedir as homedir2 } from "node:os";
+import { join as join5, resolve as resolve2 } from "node:path";
+var OWN_SERVER_RULE = "mcp__plugin_agent-bridge_bridge";
+var ACCOUNT_CONNECTORS_RULE = "mcp__claude_ai_*";
+var BUILT_IN_RULES = ["mcp__claude-in-chrome"];
+function readJson(path) {
+  try {
+    return JSON.parse(readFileSync2(path, "utf8"));
+  } catch {
+    return null;
+  }
+}
+function serverNames(mcp) {
+  return mcp && typeof mcp === "object" ? Object.keys(mcp) : [];
+}
+function pluginServers(home) {
+  const installed = readJson(join5(home, ".claude", "plugins", "installed_plugins.json"));
+  const out2 = [];
+  for (const [key, entries] of Object.entries(installed?.plugins ?? {})) {
+    const plugin = key.split("@")[0];
+    for (const e of Array.isArray(entries) ? entries : [entries]) {
+      const root = e?.installPath;
+      if (typeof root !== "string") continue;
+      const manifest = readJson(join5(root, ".claude-plugin", "plugin.json"));
+      const declared = manifest?.mcpServers;
+      const servers = typeof declared === "string" ? readJson(resolve2(root, declared))?.mcpServers ?? readJson(resolve2(root, declared)) : declared;
+      const names = /* @__PURE__ */ new Set([...serverNames(servers), ...serverNames(readJson(join5(root, ".mcp.json"))?.mcpServers)]);
+      for (const s of names) out2.push(`mcp__plugin_${plugin}_${s}`);
+    }
+  }
+  return out2;
+}
+function claudeMcpDenyRules(cwd, home = homedir2()) {
+  const config = readJson(join5(home, ".claude.json"));
+  const norm = (p) => resolve2(p).replace(/\\/g, "/").toLowerCase();
+  const project = Object.entries(config?.projects ?? {}).find(([p]) => norm(p) === norm(cwd))?.[1];
+  const names = [
+    ...pluginServers(home),
+    ...serverNames(config?.mcpServers).map((s) => `mcp__${s}`),
+    ...serverNames(project?.mcpServers).map((s) => `mcp__${s}`),
+    ...serverNames(readJson(join5(cwd, ".mcp.json"))?.mcpServers).map((s) => `mcp__${s}`),
+    ACCOUNT_CONNECTORS_RULE,
+    ...BUILT_IN_RULES
+  ];
+  return [...new Set(names)].filter((n) => n !== OWN_SERVER_RULE);
+}
 
 // src/core/parent-link.ts
 import { randomBytes as randomBytes2, randomUUID as randomUUID3 } from "node:crypto";
@@ -1315,11 +1370,11 @@ function resolveBinary(bin, env = process.env, platform = process.platform) {
   }
   for (const dir of (env.PATH ?? env.Path ?? "").split(delimiter)) {
     if (!dir) continue;
-    for (const c of candidates(join5(dir, bin))) if (existsSync(c)) return c;
+    for (const c of candidates(join6(dir, bin))) if (existsSync(c)) return c;
   }
   return null;
 }
-function unwrapNpmShim(shimPath, readFile = (p) => readFileSync2(p, "utf8")) {
+function unwrapNpmShim(shimPath, readFile = (p) => readFileSync3(p, "utf8")) {
   let text;
   try {
     text = readFile(shimPath);
@@ -1337,11 +1392,11 @@ var liveChildren = /* @__PURE__ */ new Set();
 function killTree(child) {
   const pid = child.pid;
   if (!pid || child.exitCode !== null) return Promise.resolve();
-  return new Promise((resolve3) => {
+  return new Promise((resolve5) => {
     if (process.platform === "win32") {
       const tk = spawn("taskkill", ["/PID", String(pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" });
-      tk.on("error", () => (child.kill(), resolve3()));
-      tk.on("close", () => resolve3());
+      tk.on("error", () => (child.kill(), resolve5()));
+      tk.on("close", () => resolve5());
     } else {
       try {
         process.kill(-pid, "SIGTERM");
@@ -1353,9 +1408,9 @@ function killTree(child) {
           process.kill(-pid, "SIGKILL");
         } catch {
         }
-        resolve3();
+        resolve5();
       }, KILL_GRACE_MS);
-      child.once("exit", () => (clearTimeout(force), resolve3()));
+      child.once("exit", () => (clearTimeout(force), resolve5()));
     }
   });
 }
@@ -1393,7 +1448,7 @@ function runProcess(opts) {
   }
   const { resolved, args, needsShell } = command;
   opts.log.debug("spawning delegate", { bin: resolved, args, cwd: opts.cwd, shell: needsShell });
-  return new Promise((resolve3, reject) => {
+  return new Promise((resolve5, reject) => {
     const child = spawn(resolved, args, {
       cwd: opts.cwd,
       // Some CLIs (opencode) take their project folder from PWD rather than the real cwd; keep them in sync.
@@ -1450,7 +1505,7 @@ ${tail.slice(tail.indexOf("\n") + 1)}` : head;
       stderr = (stderr + d).slice(-MAX_CAPTURE_CHARS);
     });
     child.on("error", (err) => finish(() => reject(new DelegateError(`failed to start ${opts.bin}: ${err.message}`, "failed"))));
-    child.on("close", (code) => finish(() => resolve3({ code, stdout: captured(), stderr })));
+    child.on("close", (code) => finish(() => resolve5({ code, stdout: captured(), stderr })));
     child.stdin.on("error", () => {
     });
     child.stdin.end(opts.stdin);
@@ -1462,6 +1517,7 @@ var CODEX_RELAY_APPROVALS = 'approvals_reviewer="auto_review"';
 var CODEX_ASK_POLICY = 'approval_policy="on-request"';
 var CODEX_ASK_HINT = "(The workspace is read-only on purpose: when you need to change files or run a command the sandbox blocks, request escalated permissions for it. The user is asked and decides; if denied, stop and report.)";
 var OPENCODE_READ_ONLY_PERMISSIONS = { edit: "ask", bash: "ask" };
+var OPENCODE_READ_ONLY_TOOLS = { "*_*": false, bridge_send: true };
 function childEnv(extra = {}) {
   const { CLAUDE_PROJECT_DIR: _parentProject, ...env } = process.env;
   return { ...env, ...extra, [DELEGATE_DEPTH_ENV]: String(currentDelegateDepth() + 1) };
@@ -1544,6 +1600,9 @@ async function delegateToCodex(req) {
 
 ${CODEX_ASK_HINT}` };
   const common = ["--json", "--skip-git-repo-check", ...req.model ? ["-m", req.model] : []];
+  if (req.writableRoots?.length && req.sandbox === "workspace-write") {
+    common.push("-c", `sandbox_workspace_write.writable_roots=${JSON.stringify(req.writableRoots.map(realFolder))}`);
+  }
   const strict = req.relayApprovals ? ["-c", CODEX_RELAY_APPROVALS, "-c", CODEX_ASK_POLICY] : ["-c", CODEX_STRICT_APPROVALS];
   const args = req.sessionId ? ["exec", "resume", ...common, ...strict, "-c", `sandbox_mode="${req.sandbox}"`, req.sessionId, "-"] : ["exec", ...common, ...strict, "-s", req.sandbox, "-C", req.cwd, "-"];
   const res = await withResumeHint("codex", (o) => parseCodexJsonl(o).threadId, () => runProcess({
@@ -1589,11 +1648,15 @@ function parseClaudeJson(stdout) {
 }
 var CLAUDE_PARENT_SEND_TOOL = "mcp__plugin_agent-bridge_bridge__send";
 var CLAUDE_READ_ONLY_DENIED_TOOLS = ["Write", "Edit", "MultiEdit", "NotebookEdit", "Bash", "PowerShell"];
+function isClaudeReadOnly(mode) {
+  return CLAUDE_READ_ONLY_MODES.has(mode);
+}
 var CLAUDE_READ_ONLY_MODES = /* @__PURE__ */ new Set(["default", "manual", "plan"]);
 async function delegateToClaude(req) {
   checkDepth();
   const args = ["-p", "--output-format", "stream-json", "--verbose", "--permission-mode", req.permissionMode];
-  if (CLAUDE_READ_ONLY_MODES.has(req.permissionMode)) args.push("--disallowedTools", CLAUDE_READ_ONLY_DENIED_TOOLS.join(","));
+  const readOnly = isClaudeReadOnly(req.permissionMode);
+  if (readOnly) args.push("--disallowedTools", [...CLAUDE_READ_ONLY_DENIED_TOOLS, ...claudeMcpDenyRules(req.cwd)].join(","));
   if (req.model) args.push("--model", req.model);
   if (req.sessionId) args.push("--resume", req.sessionId);
   if (req.extraEnv?.[PARENT_URL_ENV]) args.push("--allowedTools", CLAUDE_PARENT_SEND_TOOL);
@@ -1664,7 +1727,7 @@ async function delegateToOpencode(req) {
   if (req.sessionId) args.push("-s", req.sessionId);
   if (req.autoApprove) args.push("--auto");
   const env = childEnv(req.extraEnv);
-  if (!req.autoApprove) env[OPENCODE_CONFIG_CONTENT_ENV] = JSON.stringify({ permission: OPENCODE_READ_ONLY_PERMISSIONS });
+  if (!req.autoApprove) env[OPENCODE_CONFIG_CONTENT_ENV] = JSON.stringify({ permission: OPENCODE_READ_ONLY_PERMISSIONS, tools: OPENCODE_READ_ONLY_TOOLS });
   const res = await withResumeHint("opencode", (o) => parseOpencodeJsonl(o).sessionId, () => runProcess({
     bin: req.bin,
     args,
@@ -1712,34 +1775,34 @@ async function withResumeHint(agent, sessionOf, run2) {
 }
 
 // src/cli/opencode-install.ts
-import { copyFileSync, existsSync as existsSync2, mkdirSync as mkdirSync4, readdirSync, readFileSync as readFileSync3, rmSync } from "node:fs";
-import { homedir as homedir2 } from "node:os";
-import { dirname as dirname3, join as join6, resolve as resolve2 } from "node:path";
+import { copyFileSync, existsSync as existsSync2, mkdirSync as mkdirSync4, readdirSync, readFileSync as readFileSync4, rmSync } from "node:fs";
+import { homedir as homedir3 } from "node:os";
+import { dirname as dirname3, join as join7, resolve as resolve3 } from "node:path";
 import { fileURLToPath } from "node:url";
 var INSTALL_MARKER = "agent-bridge";
 var PLUGIN_FILE = "agent-bridge.js";
 var SERVER_DIR = "agent-bridge";
 var SERVER_FILE = "server.mjs";
-var SKILL_REL = join6("skills", "agent-bridge", "SKILL.md");
+var SKILL_REL = join7("skills", "agent-bridge", "SKILL.md");
 var AGENTS_DIR = "agents";
 function opencodeConfigDir(env = process.env) {
   const xdg = env.XDG_CONFIG_HOME?.trim();
-  return join6(xdg || join6(homedir2(), ".config"), "opencode");
+  return join7(xdg || join7(homedir3(), ".config"), "opencode");
 }
 function pluginSourceDir(name, marker, fromFile = fileURLToPath(import.meta.url)) {
   let dir = dirname3(fromFile);
   for (let i = 0; i < 5; i++) {
-    for (const candidate of [join6(dir, "plugins", name), join6(dir, "..", name)]) {
-      if (existsSync2(join6(candidate, marker))) return resolve2(candidate);
+    for (const candidate of [join7(dir, "plugins", name), join7(dir, "..", name)]) {
+      if (existsSync2(join7(candidate, marker))) return resolve3(candidate);
     }
     dir = dirname3(dir);
   }
   return null;
 }
-var opencodeSourceDir = (from) => pluginSourceDir("opencode", join6("dist", PLUGIN_FILE), from);
+var opencodeSourceDir = (from) => pluginSourceDir("opencode", join7("dist", PLUGIN_FILE), from);
 function ownedByUs(path) {
   try {
-    return readFileSync3(path, "utf8").includes(INSTALL_MARKER);
+    return readFileSync4(path, "utf8").includes(INSTALL_MARKER);
   } catch {
     return false;
   }
@@ -1760,23 +1823,23 @@ function copyAll(copies, configDir) {
 }
 var AGENT_SOURCE_SUFFIX = ".agent.md";
 function agentCopies(sourceDir, targetDir) {
-  const dir = join6(sourceDir, AGENTS_DIR);
+  const dir = join7(sourceDir, AGENTS_DIR);
   if (!existsSync2(dir)) return [];
-  return readdirSync(dir).filter((f) => f.endsWith(AGENT_SOURCE_SUFFIX)).map((f) => [join6(dir, f), join6(targetDir, AGENTS_DIR, f.slice(0, -AGENT_SOURCE_SUFFIX.length) + ".md")]);
+  return readdirSync(dir).filter((f) => f.endsWith(AGENT_SOURCE_SUFFIX)).map((f) => [join7(dir, f), join7(targetDir, AGENTS_DIR, f.slice(0, -AGENT_SOURCE_SUFFIX.length) + ".md")]);
 }
 function installOpencode(sourceDir, configDir = opencodeConfigDir()) {
   return copyAll(
     [
-      [join6(sourceDir, "dist", PLUGIN_FILE), join6(configDir, "plugins", PLUGIN_FILE)],
-      [join6(sourceDir, "dist", SERVER_FILE), join6(configDir, "plugins", SERVER_DIR, SERVER_FILE)],
-      [join6(sourceDir, SKILL_REL), join6(configDir, SKILL_REL)],
+      [join7(sourceDir, "dist", PLUGIN_FILE), join7(configDir, "plugins", PLUGIN_FILE)],
+      [join7(sourceDir, "dist", SERVER_FILE), join7(configDir, "plugins", SERVER_DIR, SERVER_FILE)],
+      [join7(sourceDir, SKILL_REL), join7(configDir, SKILL_REL)],
       ...agentCopies(sourceDir, configDir)
     ],
     configDir
   );
 }
 function uninstallOpencode(configDir = opencodeConfigDir(), sourceDir = opencodeSourceDir()) {
-  const targets = [join6(configDir, "plugins", PLUGIN_FILE), join6(configDir, "plugins", SERVER_DIR), join6(configDir, "skills", "agent-bridge")];
+  const targets = [join7(configDir, "plugins", PLUGIN_FILE), join7(configDir, "plugins", SERVER_DIR), join7(configDir, "skills", "agent-bridge")];
   if (sourceDir) targets.push(...agentCopies(sourceDir, configDir).map(([, to]) => to));
   return removeOwned(targets, configDir);
 }
@@ -1848,22 +1911,22 @@ function runInherited(bin, args) {
   const shim = /\.(cmd|bat)$/i.test(resolved) ? unwrapNpmShim(resolved) : null;
   const command = shim?.command ?? resolved;
   const fullArgs = [...shim?.prefix ?? [], ...args];
-  return new Promise((resolve3) => {
+  return new Promise((resolve5) => {
     const child = spawn2(command, fullArgs, { stdio: "inherit", shell: false });
-    child.on("error", () => resolve3(1));
-    child.on("close", (code) => resolve3(code ?? 1));
+    child.on("error", () => resolve5(1));
+    child.on("close", (code) => resolve5(code ?? 1));
   });
 }
 function ask(rl, question) {
-  return new Promise((resolve3) => {
-    const onClose = () => resolve3("");
+  return new Promise((resolve5) => {
+    const onClose = () => resolve5("");
     rl.once("close", onClose);
     rl.question(question).then(
       (a) => {
         rl.off("close", onClose);
-        resolve3(a);
+        resolve5(a);
       },
-      () => resolve3("")
+      () => resolve5("")
     );
   });
 }
@@ -1959,9 +2022,9 @@ var PermissionRelay = class {
     });
     this.server.requestTimeout = 0;
     this.server.headersTimeout = 0;
-    await new Promise((resolve3, reject) => {
+    await new Promise((resolve5, reject) => {
       this.server.once("error", reject);
-      this.server.listen(0, RELAY_HOST, () => resolve3());
+      this.server.listen(0, RELAY_HOST, () => resolve5());
     });
     const { port } = this.server.address();
     this.url = `http://${RELAY_HOST}:${port}${RELAY_PATH}`;
@@ -2054,17 +2117,17 @@ async function runPermissionHook() {
 }
 
 // src/cli/rewake-hook.ts
-import { readFileSync as readFileSync4 } from "node:fs";
+import { readFileSync as readFileSync5 } from "node:fs";
 
 // src/mcp/rewake.ts
 import { randomBytes as randomBytes4 } from "node:crypto";
 import { mkdirSync as mkdirSync5, rmSync as rmSync2, writeFileSync } from "node:fs";
 import { createServer as createServer4 } from "node:http";
-import { join as join7 } from "node:path";
+import { join as join8 } from "node:path";
 var SESSIONS_DIR = "sessions";
 var REWAKE_POLL_MS = 4 * 60 * 1e3;
 function sessionFile(home, sessionId) {
-  return join7(home, SESSIONS_DIR, `${sessionId.replace(/[^\w-]/g, "_")}.json`);
+  return join8(home, SESSIONS_DIR, `${sessionId.replace(/[^\w-]/g, "_")}.json`);
 }
 
 // src/cli/rewake-hook.ts
@@ -2085,7 +2148,7 @@ async function runRewakeHook() {
   if (!sessionId) return 0;
   let reg;
   try {
-    reg = JSON.parse(readFileSync4(sessionFile(resolveHome(), sessionId), "utf8"));
+    reg = JSON.parse(readFileSync5(sessionFile(resolveHome(), sessionId), "utf8"));
   } catch {
     return 0;
   }
@@ -2110,11 +2173,12 @@ async function runRewakeHook() {
 
 // src/cli/watch.ts
 import { closeSync as closeSync2, existsSync as existsSync3, openSync as openSync2, readdirSync as readdirSync3, readSync, statSync as statSync3 } from "node:fs";
-import { join as join9 } from "node:path";
+import { StringDecoder } from "node:string_decoder";
+import { join as join10 } from "node:path";
 
 // src/core/runfeed.ts
 import { appendFileSync as appendFileSync2, mkdirSync as mkdirSync6, readdirSync as readdirSync2, statSync as statSync2, unlinkSync as unlinkSync2, writeFileSync as writeFileSync2 } from "node:fs";
-import { join as join8 } from "node:path";
+import { join as join9 } from "node:path";
 var RUNS_DIR_NAME = "runs";
 function runMetaPath(logPath) {
   return logPath.replace(/\.log$/, ".json");
@@ -2125,14 +2189,15 @@ var POLL_MS = 500;
 var CHUNK = 64 * 1024;
 var FINISHED = / finished after \d+s · /;
 function findRunLog(home, filter) {
-  const dir = join9(home, RUNS_DIR_NAME);
+  const dir = join10(home, RUNS_DIR_NAME);
   if (!existsSync3(dir)) return null;
-  const logs = readdirSync3(dir).filter((f) => f.endsWith(".log") && (!filter || f.includes(filter))).map((f) => ({ path: join9(dir, f), t: statSync3(join9(dir, f)).mtimeMs })).sort((a, b) => b.t - a.t);
+  const logs = readdirSync3(dir).filter((f) => f.endsWith(".log") && (!filter || f.includes(filter))).map((f) => ({ path: join10(dir, f), t: statSync3(join10(dir, f)).mtimeMs })).sort((a, b) => b.t - a.t);
   return logs[0]?.path ?? null;
 }
 async function watchRunLog(path, out2) {
   let offset = 0;
   let pending = "";
+  const decoder = new StringDecoder("utf8");
   for (; ; ) {
     const size = statSync3(path).size;
     if (size > offset) {
@@ -2141,7 +2206,7 @@ async function watchRunLog(path, out2) {
         const buf = Buffer.alloc(Math.min(CHUNK, size - offset));
         const n = readSync(fd, buf, 0, buf.length, offset);
         offset += n;
-        pending += buf.subarray(0, n).toString("utf8");
+        pending += decoder.write(buf.subarray(0, n));
       } finally {
         closeSync2(fd);
       }
@@ -2159,15 +2224,15 @@ async function watchRunLog(path, out2) {
 
 // src/cli/dashboard.ts
 import { randomBytes as randomBytes6 } from "node:crypto";
-import { chmodSync as chmodSync2, readFileSync as readFileSync6, writeFileSync as writeFileSync3 } from "node:fs";
+import { chmodSync as chmodSync2, readFileSync as readFileSync7, writeFileSync as writeFileSync3 } from "node:fs";
 import { request } from "node:http";
-import { join as join11 } from "node:path";
+import { join as join12 } from "node:path";
 
 // src/cli/ui.ts
 import { randomBytes as randomBytes5 } from "node:crypto";
-import { existsSync as existsSync4, readdirSync as readdirSync4, readFileSync as readFileSync5, statSync as statSync4 } from "node:fs";
+import { existsSync as existsSync4, readdirSync as readdirSync4, readFileSync as readFileSync6, statSync as statSync4 } from "node:fs";
 import { createServer as createServer5 } from "node:http";
-import { join as join10 } from "node:path";
+import { join as join11 } from "node:path";
 import { DatabaseSync as DatabaseSync2 } from "node:sqlite";
 
 // src/cli/ui-page.ts
@@ -2256,6 +2321,12 @@ h3 .n { color: var(--faint); font-weight: 500; }
 /* Subagent rows */
 .rows > a { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; gap: 14px; align-items: center; padding: 13px 16px; border-bottom: 1px solid var(--line); }
 .rows > a:last-child { border-bottom: 0; }
+.archive > summary { cursor: pointer; padding: 11px 16px; color: var(--muted); font-size: 13px; list-style: none; border-top: 1px solid var(--line); }
+.archive > summary::-webkit-details-marker { display: none; }
+.archive > summary::before { content: "\u25B8 "; }
+.archive[open] > summary::before { content: "\u25BE "; }
+.archive > a { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; gap: 14px; align-items: center; padding: 13px 16px; border-top: 1px solid var(--line); opacity: .8; }
+.archive > a:hover { background: var(--panel-2); opacity: 1; }
 .rows > a:hover { background: var(--panel-2); }
 .rows > a.sel { background: var(--accent-soft); box-shadow: inset 3px 0 0 var(--accent); }
 .rows .line1 { display: flex; align-items: center; gap: 8px; min-width: 0; }
@@ -2367,6 +2438,8 @@ const POLL_MS = 1500;
 const LOG_PAGES = 20;
 /** Runs of more commands than this fold into one expandable row. */
 const FOLD_STEPS = 3;
+/** Finished subagents older than this move into the session's archive. */
+const ARCHIVE_AFTER_MS = 30 * 60_000;
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
 const time = (t) => new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
@@ -2467,7 +2540,11 @@ function renderTabs() {
     (t.live ? dot(t.peer.activity) : "") + esc(t.name) + (t.running ? '<span class="count" title="subagents working">' + t.running + "</span>" : "") + "</a>").join("");
 }
 
-const versionChip = (p) => p.version && p.version !== state.version ? '<span class="chip old">v' + esc(p.version) + " \xB7 outdated</span>" : "";
+/** "0.12.0" vs "0.11.3": negative when a is older. */
+const cmpVersion = (a, b) => { const x = String(a).split(".").map(Number), y = String(b).split(".").map(Number); for (let i = 0; i < 3; i++) { const d = (x[i] || 0) - (y[i] || 0); if (d) return d; } return 0; };
+/** The newest agent-bridge version on the bridge (the dashboard's host may itself be an older session). */
+const newestVersion = () => [state.version, ...state.peers.map((p) => p.version)].filter(Boolean).reduce((m, v) => (cmpVersion(v, m) > 0 ? v : m), "0.0.0");
+const versionChip = (p) => p.version && cmpVersion(p.version, newestVersion()) < 0 ? '<span class="chip old">v' + esc(p.version) + " \xB7 outdated</span>" : "";
 const childLine = (c) => '<div class="ell">' + dot(c.activity) + " subagent session <b>" + esc(c.name) + "</b></div>";
 
 function groupRow(g, sel, showOwner) {
@@ -2495,7 +2572,7 @@ function renderOverview() {
     (live.length ? live.map(card).join("") : '<div class="panel empty">No sessions connected. Start Claude Code, Codex or opencode with agent-bridge installed.</div>') +
     ended.map(card).join("") +
     (model.orphans.length ? '<div class="card ended"><div class="small muted">Subagent sessions in worktrees</div><div class="kids">' + model.orphans.map(childLine).join("") + "</div></div>" : "");
-  $("ovRuns").innerHTML = model.sorted.length ? model.sorted.slice(0, 12).map((g) => groupRow(g, false, true)).join("") : '<div class="empty">No subagents yet. They appear here when a session uses ask_* or spawn_*.</div>';
+  $("ovRuns").innerHTML = model.sorted.length ? model.sorted.filter((g) => g.status === "running" || Date.now() - g.updatedAt < ARCHIVE_AFTER_MS).concat(model.sorted.filter((g) => !(g.status === "running" || Date.now() - g.updatedAt < ARCHIVE_AFTER_MS))).slice(0, 12).map((g) => groupRow(g, false, true)).join("") : '<div class="empty">No subagents yet. They appear here when a session uses ask_* or spawn_*.</div>';
   $("ovMsgs").innerHTML = messagesHtml(state.messages);
 }
 
@@ -2511,7 +2588,14 @@ function renderSession() {
       (x.name === "earlier runs" ? "Runs from before sessions were recorded, or from sessions in other folders." : "This session has ended. Its subagents are kept for reference.") + "</div></div></div>";
   $("sCount").textContent = x.groups.length || "";
   const sel = route.group && x.groups.find((g) => g.key === route.group) ? route.group : x.groups[0] && x.groups[0].key;
-  $("sGroups").innerHTML = x.groups.length ? x.groups.map((g) => groupRow(g, g.key === sel, false)).join("") : '<div class="empty">No subagents started from this session yet.</div>';
+  // Running and recently finished subagents on top; older ones in a folded archive (the selected one stays visible).
+  const fresh = (g) => g.status === "running" || Date.now() - g.updatedAt < ARCHIVE_AFTER_MS || g.key === sel;
+  const active = x.groups.filter(fresh), archived = x.groups.filter((g) => !fresh(g));
+  const archiveOpen = opened.has("archive:" + x.name);
+  $("sGroups").innerHTML = x.groups.length
+    ? (active.length ? active.map((g) => groupRow(g, g.key === sel, false)).join("") : '<div class="empty">Nothing running or recent.</div>') +
+      (archived.length ? '<details class="archive" data-open="archive:' + esc(x.name) + '"' + (archiveOpen ? " open" : "") + '><summary>Archive \xB7 ' + archived.length + " older subagent" + (archived.length === 1 ? "" : "s") + "</summary>" + archived.map((g) => groupRow(g, false, false)).join("") + "</details>" : "")
+    : '<div class="empty">No subagents started from this session yet.</div>';
   const mine = state.messages.filter((m) => m.from_name === x.name || m.to_target === x.name || String(m.recipients || "").split(", ").includes(x.name));
   $("sMsgs").innerHTML = messagesHtml(mine);
   const g = sel && model.groups.get(sel);
@@ -2746,20 +2830,20 @@ function summarizeRun(file, text, mtimeMs, now, meta = {}) {
   };
 }
 function listRuns(home, now = Date.now()) {
-  const dir = join10(home, RUNS_DIR_NAME);
+  const dir = join11(home, RUNS_DIR_NAME);
   if (!existsSync4(dir)) return [];
-  return readdirSync4(dir).filter((f) => RUN_NAME.test(f)).map((f) => ({ f, st: statSync4(join10(dir, f)) })).sort((a, b) => b.st.mtimeMs - a.st.mtimeMs).slice(0, MAX_RUNS).map(({ f, st }) => summarizeRun(f, readFileSync5(join10(dir, f), "utf8"), st.mtimeMs, now, readMeta(join10(dir, runMetaPath(f)))));
+  return readdirSync4(dir).filter((f) => RUN_NAME.test(f)).map((f) => ({ f, st: statSync4(join11(dir, f)) })).sort((a, b) => b.st.mtimeMs - a.st.mtimeMs).slice(0, MAX_RUNS).map(({ f, st }) => summarizeRun(f, readFileSync6(join11(dir, f), "utf8"), st.mtimeMs, now, readMeta(join11(dir, runMetaPath(f)))));
 }
 function readMeta(file) {
   try {
-    return JSON.parse(readFileSync5(file, "utf8"));
+    return JSON.parse(readFileSync6(file, "utf8"));
   } catch {
     return {};
   }
 }
 function classifyPeers(peers, runs, home) {
   const norm = (p) => p.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
-  const worktrees = `${norm(join10(home, "worktrees"))}/`;
+  const worktrees = `${norm(join11(home, "worktrees"))}/`;
   return peers.map((p) => {
     const cwd = norm(p.cwd ?? "");
     const subagent = cwd.startsWith(worktrees);
@@ -2796,7 +2880,7 @@ function send(res, status, body, type = "application/json; charset=utf-8") {
   res.writeHead(status, { "content-type": type, "cache-control": "no-store", "x-content-type-options": "nosniff" });
   res.end(typeof body === "string" ? body : JSON.stringify(body));
 }
-async function readJson(req) {
+async function readJson2(req) {
   let raw = "";
   for await (const chunk of req) {
     raw += chunk;
@@ -2838,16 +2922,17 @@ async function startUi(opts) {
     }
     const runMatch = /^\/api\/runs\/([\w.-]+)$/.exec(url.pathname);
     if (req.method === "GET" && runMatch) {
-      const file = join10(opts.home, RUNS_DIR_NAME, `${runMatch[1]}.log`);
+      const file = join11(opts.home, RUNS_DIR_NAME, `${runMatch[1]}.log`);
       if (!existsSync4(file)) return send(res, 404, { error: "no such run" });
       const from = Math.max(0, Number(url.searchParams.get("from")) || 0);
-      const buf = readFileSync5(file);
-      const end = Math.min(buf.length, from + MAX_LOG_CHUNK);
+      const buf = readFileSync6(file);
+      let end = Math.min(buf.length, from + MAX_LOG_CHUNK);
+      while (end < buf.length && end > from && (buf[end] & 192) === 128) end--;
       return send(res, 200, { text: buf.subarray(from, end).toString("utf8"), next: end, size: buf.length });
     }
     if (req.method === "POST" && url.pathname === "/api/send") {
       if (req.headers["x-agent-bridge"] !== "1") return send(res, 403, { error: "missing header" });
-      const body = await readJson(req);
+      const body = await readJson2(req);
       const to = String(body.to ?? "").trim();
       const text = String(body.body ?? "").trim();
       if (!to || !text) return send(res, 400, { error: "to and body are required" });
@@ -2866,9 +2951,9 @@ async function startUi(opts) {
       if (!res.headersSent) send(res, 500, { error: String(err.message) });
     });
   });
-  await new Promise((resolve3, reject) => {
+  await new Promise((resolve5, reject) => {
     server.once("error", reject);
-    server.listen(opts.port, UI_HOST, () => resolve3());
+    server.listen(opts.port, UI_HOST, () => resolve5());
   });
   const { port } = server.address();
   return {
@@ -2887,11 +2972,11 @@ var SECRET_BYTES3 = 24;
 var PROBE_TIMEOUT_MS = 1500;
 var OWNER_ONLY2 = 384;
 function dashboardFile(home) {
-  return join11(home, DASHBOARD_FILE);
+  return join12(home, DASHBOARD_FILE);
 }
 function readDashboardInfo(home) {
   try {
-    const d = JSON.parse(readFileSync6(dashboardFile(home), "utf8"));
+    const d = JSON.parse(readFileSync7(dashboardFile(home), "utf8"));
     return typeof d.url === "string" && typeof d.port === "number" && typeof d.pid === "number" ? d : null;
   } catch {
     return null;
@@ -2906,13 +2991,13 @@ function processAlive(pid) {
   }
 }
 function probeDashboard(port) {
-  return new Promise((resolve3) => {
+  return new Promise((resolve5) => {
     const req = request({ host: "127.0.0.1", port, path: "/api/state", timeout: PROBE_TIMEOUT_MS }, (res) => {
       res.resume();
-      resolve3(res.statusCode === 403 || res.statusCode === 200);
+      resolve5(res.statusCode === 403 || res.statusCode === 200);
     });
     req.on("timeout", () => req.destroy());
-    req.on("error", () => resolve3(false));
+    req.on("error", () => resolve5(false));
     req.end();
   });
 }
@@ -2945,8 +3030,8 @@ async function hostDashboard(opts) {
 }
 
 // src/core/config.ts
-import { readFileSync as readFileSync7 } from "node:fs";
-import { basename, join as join12 } from "node:path";
+import { readFileSync as readFileSync8 } from "node:fs";
+import { basename, join as join13 } from "node:path";
 var DELIVERY_MODES = ["auto", "channel", "hooks"];
 var CODEX_SANDBOXES = ["read-only", "workspace-write", "danger-full-access"];
 var CLAUDE_PERMISSION_MODES = ["default", "manual", "acceptEdits", "plan", "auto", "dontAsk", "bypassPermissions"];
@@ -2993,9 +3078,9 @@ function modelName(v) {
 }
 function loadConfig(home, agent, log, env = process.env) {
   let file = {};
-  const path = join12(home, CONFIG_FILE_NAME);
+  const path = join13(home, CONFIG_FILE_NAME);
   try {
-    file = JSON.parse(readFileSync7(path, "utf8"));
+    file = JSON.parse(readFileSync8(path, "utf8"));
     log.debug("config file loaded", { path });
   } catch (err) {
     if (err.code !== "ENOENT") log.warn("ignoring unreadable config file", { path, err: err.message });
@@ -3051,12 +3136,12 @@ function openBrowser(url) {
 import { execFileSync } from "node:child_process";
 import { existsSync as existsSync5, mkdtempSync, rmSync as rmSync3, writeFileSync as writeFileSync5 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join as join15 } from "node:path";
+import { join as join16 } from "node:path";
 
 // src/core/worktree.ts
 import { createHash as createHash2 } from "node:crypto";
-import { mkdirSync as mkdirSync7, readFileSync as readFileSync8 } from "node:fs";
-import { basename as basename2, isAbsolute as isAbsolute2, join as join13, relative } from "node:path";
+import { mkdirSync as mkdirSync7, readFileSync as readFileSync9 } from "node:fs";
+import { basename as basename2, isAbsolute as isAbsolute2, join as join14, relative, resolve as resolve4 } from "node:path";
 var GIT = "git";
 var GIT_TIMEOUT_MS = 6e4;
 var BRANCH_PREFIX = "agent-bridge/";
@@ -3076,39 +3161,36 @@ async function createWorktree(opts) {
   }
   const base = await git(["rev-parse", "HEAD"], repoRoot, opts.log);
   const branch = `${BRANCH_PREFIX}${opts.jobId}`;
-  const dir = join13(opts.home, "worktrees");
+  const dir = join14(opts.home, "worktrees");
   mkdirSync7(dir, { recursive: true });
-  const path = join13(dir, `${basename2(repoRoot)}-${opts.jobId}`);
+  const path = join14(dir, `${basename2(repoRoot)}-${opts.jobId}`);
   await git(["worktree", "add", "-b", branch, path, base], repoRoot, opts.log);
   const rel = relative(repoRoot, opts.cwd);
-  const cwd = rel && !rel.startsWith("..") && !isAbsolute2(rel) ? join13(path, rel) : path;
+  const cwd = rel && !rel.startsWith("..") && !isAbsolute2(rel) ? join14(path, rel) : path;
   opts.log.info("worktree created", { repoRoot, path, branch });
   return { repoRoot, path, cwd, branch, base };
 }
-async function finishWorktree(wt, summary, log) {
+async function finishWorktree(wt, message, log) {
   await git(["add", "-A"], wt.path, log);
   const status = await git(["status", "--porcelain"], wt.path, log);
-  if (status) {
-    const message = `agent-bridge: ${summary.replace(/\s+/g, " ").slice(0, 72)}`;
-    await git([...COMMIT_IDENTITY, "commit", "-q", "--no-verify", "-m", message], wt.path, log);
-  }
+  if (status) await git([...COMMIT_IDENTITY, "commit", "-q", "--no-verify", "-m", message], wt.path, log);
   const diffStat = await git(["diff", "--stat", `${wt.base}..${wt.branch}`], wt.repoRoot, log);
   return { changed: diffStat.length > 0, diffStat: diffStat.slice(0, MAX_DIFFSTAT_CHARS) };
 }
 
 // src/core/codex-trust.ts
-import { readFileSync as readFileSync9, writeFileSync as writeFileSync4 } from "node:fs";
-import { homedir as homedir3 } from "node:os";
-import { join as join14 } from "node:path";
+import { readFileSync as readFileSync10, writeFileSync as writeFileSync4 } from "node:fs";
+import { homedir as homedir4 } from "node:os";
+import { join as join15 } from "node:path";
 var PERMISSION_HOOK_STATE_KEY = 'hooks.state."agent-bridge@agent-bridge:plugin.json#hooks[0]:permission_request:0:0"';
 var OBSERVATIONS_FILE = "codex-hook.json";
 function codexHome(env = process.env) {
-  return env.CODEX_HOME?.trim() || join14(homedir3(), ".codex");
+  return env.CODEX_HOME?.trim() || join15(homedir4(), ".codex");
 }
-function codexPermissionHookHash(home = codexHome(), read = (p) => readFileSync9(p, "utf8")) {
+function codexPermissionHookHash(home = codexHome(), read = (p) => readFileSync10(p, "utf8")) {
   let text;
   try {
-    text = read(join14(home, "config.toml"));
+    text = read(join15(home, "config.toml"));
   } catch {
     return null;
   }
@@ -3123,12 +3205,12 @@ function codexPermissionHookHash(home = codexHome(), read = (p) => readFileSync9
 }
 function readObservations(bridgeHome) {
   try {
-    return JSON.parse(readFileSync9(join14(bridgeHome, OBSERVATIONS_FILE), "utf8"));
+    return JSON.parse(readFileSync10(join15(bridgeHome, OBSERVATIONS_FILE), "utf8"));
   } catch {
     return {};
   }
 }
-function codexPermissionHookTrusted(bridgeHome, home = codexHome(), read = (p) => readFileSync9(p, "utf8")) {
+function codexPermissionHookTrusted(bridgeHome, home = codexHome(), read = (p) => readFileSync10(p, "utf8")) {
   const hash = codexPermissionHookHash(home, read);
   return hash !== null && readObservations(bridgeHome)[hash] !== "failed";
 }
@@ -3154,7 +3236,7 @@ function startServe(bin, cwd, env) {
     resolved = target.command;
     prefix = target.prefix;
   }
-  return new Promise((resolve3, reject) => {
+  return new Promise((resolve5, reject) => {
     const child = spawn4(resolved, [...prefix, "serve", "--port", "0", "--hostname", "127.0.0.1"], {
       cwd,
       env: { ...env, PWD: cwd },
@@ -3173,7 +3255,7 @@ function startServe(bin, cwd, env) {
       const m = LISTEN_RE.exec(out2);
       if (m) {
         clearTimeout(timer);
-        resolve3({ child, url: m[1].replace(/\/+$/, "") });
+        resolve5({ child, url: m[1].replace(/\/+$/, "") });
       }
     };
     child.stdout.on("data", onData);
@@ -3355,17 +3437,17 @@ async function timed(name, fn) {
   }
 }
 function makeRepo() {
-  const dir = mkdtempSync(join15(tmpdir(), "agent-bridge-rel-"));
+  const dir = mkdtempSync(join16(tmpdir(), "agent-bridge-rel-"));
   const git2 = (...a) => execFileSync("git", a, { cwd: dir, stdio: "ignore" });
   git2("init", "-q");
-  writeFileSync5(join15(dir, "README.md"), "reliability sandbox\n");
+  writeFileSync5(join16(dir, "README.md"), "reliability sandbox\n");
   git2("add", "README.md");
   git2("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "base");
   return dir;
 }
 async function runReliability(opts) {
   const agents = opts.agents.filter((a) => resolveBinary(BINS[a]));
-  const home = mkdtempSync(join15(tmpdir(), "agent-bridge-rel-home-"));
+  const home = mkdtempSync(join16(tmpdir(), "agent-bridge-rel-home-"));
   const results = [];
   const record = (o) => {
     results.push(o);
@@ -3393,7 +3475,7 @@ async function runReliability(opts) {
         await timed(`${agent} read-only is enforced`, async () => {
           const dir = repo();
           await run(agent, "Create a file named should-not-exist.txt containing the word hi. Then reply done.", dir, "read", opts.log);
-          const exists = existsSync5(join15(dir, "should-not-exist.txt"));
+          const exists = existsSync5(join16(dir, "should-not-exist.txt"));
           return { pass: !exists, detail: exists ? "the file WAS created despite read-only access" : "no file created" };
         })
       );
@@ -3405,7 +3487,7 @@ async function runReliability(opts) {
           const base = { prompt: "Create a file named created.txt containing the word hello. Then reply done.", cwd: wt.cwd, sessionId: null, timeoutSec: RUN_TIMEOUT_SEC, log: opts.log, onProgress: (m) => steps.push(m) };
           const r = agent === "codex" ? await delegateToCodex({ ...base, bin: BINS.codex, sandbox: "workspace-write" }) : agent === "claude" ? await delegateToClaude({ ...base, bin: BINS.claude, permissionMode: "acceptEdits" }) : await delegateToOpencode({ ...base, bin: BINS.opencode, autoApprove: true });
           const outcome = await finishWorktree(wt, "reliability edit", opts.log);
-          const leaked = existsSync5(join15(dir, "created.txt"));
+          const leaked = existsSync5(join16(dir, "created.txt"));
           const pass = outcome.diffStat.includes("created.txt") && !leaked;
           return {
             pass,
@@ -3431,7 +3513,7 @@ async function runReliability(opts) {
             opts.log
           );
           if (r === null) return { pass: true, detail: "SKIP (not available: see README, permission requests)" };
-          const exists = existsSync5(join15(dir, "asked.txt"));
+          const exists = existsSync5(join16(dir, "asked.txt"));
           return {
             pass: asked.length > 0 && exists === allow,
             detail: `asked ${asked.length}x [${asked.join(" | ")}], file ${exists ? "created" : "not created"}`
@@ -3480,7 +3562,7 @@ ${passed}/${results.length} passed`);
 // src/cli/smoke.ts
 import { mkdtempSync as mkdtempSync2, rmSync as rmSync4 } from "node:fs";
 import { tmpdir as tmpdir2 } from "node:os";
-import { join as join16 } from "node:path";
+import { join as join17 } from "node:path";
 var TESTED_VERSIONS = {
   claude: "2.1.283",
   codex: "0.157.1",
@@ -3500,7 +3582,7 @@ async function version(bin, log) {
   }
 }
 async function runSmoke(opts) {
-  const dir = mkdtempSync2(join16(tmpdir2(), "agent-bridge-smoke-"));
+  const dir = mkdtempSync2(join17(tmpdir2(), "agent-bridge-smoke-"));
   const bins = { claude: DEFAULT_CLAUDE_BIN, codex: DEFAULT_CODEX_BIN, opencode: DEFAULT_OPENCODE_BIN };
   let failures = 0;
   try {
@@ -3609,7 +3691,7 @@ async function main(argv) {
       });
       await node.start();
       out(t("cli.tail.listening", { name: node.name }));
-      await new Promise((resolve3) => process.once("SIGINT", resolve3));
+      await new Promise((resolve5) => process.once("SIGINT", resolve5));
       await node.stop();
       return 0;
     }
@@ -3630,7 +3712,7 @@ async function main(argv) {
       const hosted = await hostDashboard({ home, pipe, port, log });
       out(t("cli.ui.running", { url: hosted.info.url }));
       if (!noOpen) openBrowser(hosted.info.url);
-      await new Promise((resolve3) => process.once("SIGINT", resolve3));
+      await new Promise((resolve5) => process.once("SIGINT", resolve5));
       await hosted.close();
       return 0;
     }
@@ -3675,7 +3757,7 @@ async function main(argv) {
       return 0;
     }
     case "paths":
-      out(t("cli.paths", { home, logs: join17(home, LOG_DIR_NAME), db: resolveDbPath(home), pipe }));
+      out(t("cli.paths", { home, logs: join18(home, LOG_DIR_NAME), db: resolveDbPath(home), pipe }));
       return 0;
     case "help":
     case "--help":

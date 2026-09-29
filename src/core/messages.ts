@@ -11,6 +11,9 @@ export const en = {
   "peers.jobs": "Your running subagents ({count}):",
   "peers.job": "- {name} (model: {model}, running {duration}): {progress}",
 
+  "jobs.accessRead": "It runs read-only: it can look but not change files or commit. To let it edit, start it with access=\"edit\" (or worktree=true).",
+  "jobs.accessEdit": "It may change files.",
+  "jobs.accessAsk": "It asks the user before changing files or running commands.",
   "jobs.started": "Subagent {name} started. Keep working; its result will arrive as a message from \"{name}\" (or call wait_for_message with from=\"{name}\").",
   "jobs.limit": "Too many subagents running (maximum {max}). Wait for one to finish or cancel one.",
   "jobs.cancelled": "Cancelled subagent {name}.",

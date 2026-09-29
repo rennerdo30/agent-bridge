@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { nullLogger } from "../src/core/logger.js";
-import { createWorktree, finishWorktree, gitStatusSnapshot, worktreeReport } from "../src/core/worktree.js";
+import { createWorktree, finishWorktree, gitDirsOutside, gitStatusSnapshot, subagentCommitMessage, worktreeReport } from "../src/core/worktree.js";
 import { formatUsage } from "../src/mcp/format.js";
 
 let repo: string;
@@ -63,6 +63,23 @@ describe("worktree isolation", () => {
     const outcome = await finishWorktree(wt, "look only", nullLogger);
     expect(outcome.changed).toBe(false);
     expect(worktreeReport(wt, outcome)).toContain("has no changes");
+  });
+
+  it("names the git folders a worktree needs writable to commit", async () => {
+    const wt = await createWorktree({ cwd: repo, home, jobId: "job4", log: nullLogger });
+    const dirs = (await gitDirsOutside(wt.path, nullLogger)).map((d) => d.replace(/\\/g, "/").toLowerCase());
+    const common = git("rev-parse", "--path-format=absolute", "--git-common-dir").replace(/\\/g, "/").toLowerCase();
+    expect(dirs).toContain(common);
+    expect(dirs.some((d) => d.endsWith("/worktrees/" + wt.path.replace(/\\/g, "/").split("/").pop()!.toLowerCase()))).toBe(true);
+    expect(await gitDirsOutside(repo, nullLogger)).toEqual([]);
+  });
+
+  it("builds commit messages from the answer, not the task", () => {
+    const m = subagentCommitMessage({ answer: "**Fixed** the castle gate alignment.\n\nDetails …", task: "AnimaSky (Unity 6 URP, C#). Own git worktree. First: …", job: "codex-job-1", agent: "codex", model: "gpt-6.1-sol" });
+    const [subject, , body] = m.split("\n");
+    expect(subject).toBe("Fixed the castle gate alignment.");
+    expect(body).toContain("codex-job-1");
+    expect(m).toContain("Co-Authored-By: gpt-6.1-sol via codex <noreply@openai.com>");
   });
 
   it("refuses outside a git repository", async () => {

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { closeSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { MAX_RUNNING_JOBS } from "../core/constants.js";
 import { DelegateError, type DelegateResult } from "../core/delegate.js";
@@ -80,6 +80,7 @@ export class JobManager {
   /** Save this session's jobs, merged with those other sessions saved. Best effort: never breaks a run. */
   persist(): void {
     if (!this.storePath) return;
+    const lock = acquireLock(`${this.storePath}.lock`);
     try {
       const mine = [...this.history.values()].map(toStored);
       const ids = new Set(mine.map((j) => j.id));
@@ -91,6 +92,8 @@ export class JobManager {
       renameSync(tmp, this.storePath);
     } catch (err) {
       this.log.warn("could not save subagent jobs", { err: (err as Error).message });
+    } finally {
+      lock();
     }
   }
 
@@ -393,5 +396,34 @@ function readStore(path: string): StoredJob[] {
     return Array.isArray(data) ? (data as StoredJob[]).filter((j) => j && typeof j.id === "string" && typeof j.name === "string") : [];
   } catch {
     return [];
+  }
+}
+
+const LOCK_WAIT_MS = 2_000;
+const LOCK_STALE_MS = 10_000;
+const LOCK_RETRY_MS = 20;
+
+/**
+ * Serialize read-merge-write of the job store across sessions (processes). Returns the release function.
+ * Gives up waiting after a short time (saving is best effort) and breaks locks left by a crashed process.
+ */
+function acquireLock(path: string): () => void {
+  mkdirSync(dirname(path), { recursive: true });
+  const deadline = Date.now() + LOCK_WAIT_MS;
+  const pause = new Int32Array(new SharedArrayBuffer(4));
+  for (;;) {
+    try {
+      closeSync(openSync(path, "wx"));
+      return () => rmSync(path, { force: true });
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "EEXIST") return () => {};
+      try {
+        if (Date.now() - statSync(path).mtimeMs > LOCK_STALE_MS) rmSync(path, { force: true });
+      } catch {
+        // gone meanwhile
+      }
+      if (Date.now() > deadline) return () => {};
+      Atomics.wait(pause, 0, 0, LOCK_RETRY_MS);
+    }
   }
 }

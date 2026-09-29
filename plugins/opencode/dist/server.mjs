@@ -2984,7 +2984,7 @@ var require_compile = __commonJS({
       const schOrFunc = root.refs[ref];
       if (schOrFunc)
         return schOrFunc;
-      let _sch = resolve3.call(this, root, ref);
+      let _sch = resolve5.call(this, root, ref);
       if (_sch === void 0) {
         const schema = (_a3 = root.localRefs) === null || _a3 === void 0 ? void 0 : _a3[ref];
         const { schemaId } = this.opts;
@@ -3011,7 +3011,7 @@ var require_compile = __commonJS({
     function sameSchemaEnv(s1, s2) {
       return s1.schema === s2.schema && s1.root === s2.root && s1.baseId === s2.baseId;
     }
-    function resolve3(root, ref) {
+    function resolve5(root, ref) {
       let sch;
       while (typeof (sch = this.refs[ref]) == "string")
         ref = sch;
@@ -3841,7 +3841,7 @@ var require_fast_uri = __commonJS({
       }
       return uri;
     }
-    function resolve3(baseURI, relativeURI, options) {
+    function resolve5(baseURI, relativeURI, options) {
       const schemelessOptions = options ? Object.assign({ scheme: "null" }, options) : { scheme: "null" };
       const {
         parsed: baseParsed,
@@ -4210,7 +4210,7 @@ var require_fast_uri = __commonJS({
     var fastUri = {
       SCHEMES,
       normalize,
-      resolve: resolve3,
+      resolve: resolve5,
       resolveComponent,
       equal,
       serialize: serialize2,
@@ -7201,7 +7201,7 @@ var require_dist = __commonJS({
 
 // src/mcp/server.ts
 import { randomUUID as randomUUID5 } from "node:crypto";
-import { dirname as dirname4, isAbsolute as isAbsolute3, join as join13, relative as relative2, resolve as resolve2 } from "node:path";
+import { dirname as dirname4, isAbsolute as isAbsolute3, join as join14, relative as relative2, resolve as resolve4 } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // node_modules/zod/v3/helpers/util.js
@@ -15862,7 +15862,7 @@ var recursive = /* @__PURE__ */ new WeakMap();
 var NONE = 0;
 var ASSUMED = 1;
 var PROVEN = 2;
-function isRecursive(inst, stack, resolve3) {
+function isRecursive(inst, stack, resolve5) {
   const cached2 = recursive.get(inst);
   if (cached2 !== void 0)
     return cached2 ? PROVEN : NONE;
@@ -15872,7 +15872,7 @@ function isRecursive(inst, stack, resolve3) {
   let result = NONE;
   const check2 = (child) => {
     if (result !== PROVEN && child?._zod) {
-      const answer = isRecursive(child, stack, resolve3);
+      const answer = isRecursive(child, stack, resolve5);
       if (answer > result)
         result = answer;
     }
@@ -15883,7 +15883,7 @@ function isRecursive(inst, stack, resolve3) {
       const desc = Object.getOwnPropertyDescriptor(sh, key);
       if (spread && !desc.enumerable)
         continue;
-      const child = desc.get ? ASSUMED : desc.value?._zod ? isRecursive(desc.value, stack, resolve3) : NONE;
+      const child = desc.get ? ASSUMED : desc.value?._zod ? isRecursive(desc.value, stack, resolve5) : NONE;
       if (child > answer)
         answer = child;
     }
@@ -15947,7 +15947,7 @@ function isRecursive(inst, stack, resolve3) {
       break;
     // `$ZodLazy` caches its inner on the def, so a resolved edge is followed exactly
     case "lazy": {
-      const inner = def._cachedInner ?? (resolve3 ? inst._zod.innerType : void 0);
+      const inner = def._cachedInner ?? (resolve5 ? inst._zod.innerType : void 0);
       merge2(inner ? isRecursive(inner, stack, false) : ASSUMED);
       break;
     }
@@ -34355,7 +34355,7 @@ var Protocol = class {
           return;
         }
         const pollInterval = task2.pollInterval ?? this._options?.defaultTaskPollInterval ?? 1e3;
-        await new Promise((resolve3) => setTimeout(resolve3, pollInterval));
+        await new Promise((resolve5) => setTimeout(resolve5, pollInterval));
         options?.signal?.throwIfAborted();
       }
     } catch (error62) {
@@ -34372,7 +34372,7 @@ var Protocol = class {
    */
   request(request2, resultSchema, options) {
     const { relatedRequestId, resumptionToken, onresumptiontoken, task, relatedTask } = options ?? {};
-    return new Promise((resolve3, reject) => {
+    return new Promise((resolve5, reject) => {
       const earlyReject = (error62) => {
         reject(error62);
       };
@@ -34450,7 +34450,7 @@ var Protocol = class {
           if (!parseResult.success) {
             reject(parseResult.error);
           } else {
-            resolve3(parseResult.data);
+            resolve5(parseResult.data);
           }
         } catch (error62) {
           reject(error62);
@@ -34711,12 +34711,12 @@ var Protocol = class {
       }
     } catch {
     }
-    return new Promise((resolve3, reject) => {
+    return new Promise((resolve5, reject) => {
       if (signal.aborted) {
         reject(new McpError(ErrorCode.InvalidRequest, "Request cancelled"));
         return;
       }
-      const timeoutId = setTimeout(resolve3, interval);
+      const timeoutId = setTimeout(resolve5, interval);
       signal.addEventListener("abort", () => {
         clearTimeout(timeoutId);
         reject(new McpError(ErrorCode.InvalidRequest, "Request cancelled"));
@@ -35807,7 +35807,7 @@ var McpServer = class {
     let task = createTaskResult.task;
     const pollInterval = task.pollInterval ?? 5e3;
     while (task.status !== "completed" && task.status !== "failed" && task.status !== "cancelled") {
-      await new Promise((resolve3) => setTimeout(resolve3, pollInterval));
+      await new Promise((resolve5) => setTimeout(resolve5, pollInterval));
       const updatedTask = await extra.taskStore.getTask(taskId);
       if (!updatedTask) {
         throw new McpError(ErrorCode.InternalError, `Task ${taskId} not found during polling`);
@@ -36471,12 +36471,12 @@ var StdioServerTransport = class {
     this.onclose?.();
   }
   send(message) {
-    return new Promise((resolve3) => {
+    return new Promise((resolve5) => {
       const json2 = serializeMessage(message);
       if (this._stdout.write(json2)) {
-        resolve3();
+        resolve5();
       } else {
-        this._stdout.once("drain", resolve3);
+        this._stdout.once("drain", resolve5);
       }
     });
   }
@@ -36490,7 +36490,7 @@ import { basename, join as join2 } from "node:path";
 import { homedir } from "node:os";
 import { join } from "node:path";
 var APP_NAME = "agent-bridge";
-var APP_VERSION = "0.12.0";
+var APP_VERSION = "0.13.0";
 var PROTOCOL_VERSION = 2;
 var ENV = {
   home: "AGENT_BRIDGE_HOME",
@@ -36679,8 +36679,57 @@ function defaultPeerName(agent, cwd) {
 
 // src/core/delegate.ts
 import { spawn } from "node:child_process";
-import { existsSync, readFileSync as readFileSync3, realpathSync } from "node:fs";
-import { delimiter, extname, isAbsolute, join as join4, win32 } from "node:path";
+import { existsSync, readFileSync as readFileSync4, realpathSync } from "node:fs";
+import { delimiter, extname, isAbsolute, join as join5, win32 } from "node:path";
+
+// src/core/claude-mcp.ts
+import { readFileSync as readFileSync2 } from "node:fs";
+import { homedir as homedir2 } from "node:os";
+import { join as join3, resolve } from "node:path";
+var OWN_SERVER_RULE = "mcp__plugin_agent-bridge_bridge";
+var ACCOUNT_CONNECTORS_RULE = "mcp__claude_ai_*";
+var BUILT_IN_RULES = ["mcp__claude-in-chrome"];
+function readJson(path) {
+  try {
+    return JSON.parse(readFileSync2(path, "utf8"));
+  } catch {
+    return null;
+  }
+}
+function serverNames(mcp) {
+  return mcp && typeof mcp === "object" ? Object.keys(mcp) : [];
+}
+function pluginServers(home) {
+  const installed = readJson(join3(home, ".claude", "plugins", "installed_plugins.json"));
+  const out = [];
+  for (const [key, entries] of Object.entries(installed?.plugins ?? {})) {
+    const plugin = key.split("@")[0];
+    for (const e of Array.isArray(entries) ? entries : [entries]) {
+      const root = e?.installPath;
+      if (typeof root !== "string") continue;
+      const manifest = readJson(join3(root, ".claude-plugin", "plugin.json"));
+      const declared = manifest?.mcpServers;
+      const servers = typeof declared === "string" ? readJson(resolve(root, declared))?.mcpServers ?? readJson(resolve(root, declared)) : declared;
+      const names = /* @__PURE__ */ new Set([...serverNames(servers), ...serverNames(readJson(join3(root, ".mcp.json"))?.mcpServers)]);
+      for (const s of names) out.push(`mcp__plugin_${plugin}_${s}`);
+    }
+  }
+  return out;
+}
+function claudeMcpDenyRules(cwd, home = homedir2()) {
+  const config2 = readJson(join3(home, ".claude.json"));
+  const norm = (p) => resolve(p).replace(/\\/g, "/").toLowerCase();
+  const project = Object.entries(config2?.projects ?? {}).find(([p]) => norm(p) === norm(cwd))?.[1];
+  const names = [
+    ...pluginServers(home),
+    ...serverNames(config2?.mcpServers).map((s) => `mcp__${s}`),
+    ...serverNames(project?.mcpServers).map((s) => `mcp__${s}`),
+    ...serverNames(readJson(join3(cwd, ".mcp.json"))?.mcpServers).map((s) => `mcp__${s}`),
+    ACCOUNT_CONNECTORS_RULE,
+    ...BUILT_IN_RULES
+  ];
+  return [...new Set(names)].filter((n) => n !== OWN_SERVER_RULE);
+}
 
 // src/core/parent-link.ts
 import { randomBytes as randomBytes2, randomUUID } from "node:crypto";
@@ -36688,13 +36737,13 @@ import { createServer } from "node:http";
 
 // src/core/token.ts
 import { randomBytes, timingSafeEqual } from "node:crypto";
-import { chmodSync, mkdirSync, openSync, readFileSync as readFileSync2, writeSync, closeSync } from "node:fs";
-import { dirname, join as join3 } from "node:path";
+import { chmodSync, mkdirSync, openSync, readFileSync as readFileSync3, writeSync, closeSync } from "node:fs";
+import { dirname, join as join4 } from "node:path";
 var TOKEN_FILE_NAME = "token";
 var TOKEN_BYTES = 32;
 var OWNER_ONLY = 384;
 function tokenPath(home) {
-  return join3(home, TOKEN_FILE_NAME);
+  return join4(home, TOKEN_FILE_NAME);
 }
 function loadOrCreateToken(home) {
   const file2 = tokenPath(home);
@@ -36713,7 +36762,7 @@ function loadOrCreateToken(home) {
   } catch (err) {
     if (err.code !== "EEXIST") throw err;
   }
-  const token = readFileSync2(file2, "utf8").trim();
+  const token = readFileSync3(file2, "utf8").trim();
   if (!token) throw new Error(`agent-bridge token file is empty: ${file2}`);
   return token;
 }
@@ -36757,9 +36806,9 @@ var ParentLink = class {
         }
       );
     });
-    await new Promise((resolve3, reject) => {
+    await new Promise((resolve5, reject) => {
       this.server.once("error", reject);
-      this.server.listen(0, HOST, () => resolve3());
+      this.server.listen(0, HOST, () => resolve5());
     });
     this.url = `http://${HOST}:${this.server.address().port}`;
   }
@@ -36977,11 +37026,11 @@ function resolveBinary(bin, env = process.env, platform = process.platform) {
   }
   for (const dir of (env.PATH ?? env.Path ?? "").split(delimiter)) {
     if (!dir) continue;
-    for (const c of candidates(join4(dir, bin))) if (existsSync(c)) return c;
+    for (const c of candidates(join5(dir, bin))) if (existsSync(c)) return c;
   }
   return null;
 }
-function unwrapNpmShim(shimPath, readFile2 = (p) => readFileSync3(p, "utf8")) {
+function unwrapNpmShim(shimPath, readFile2 = (p) => readFileSync4(p, "utf8")) {
   let text2;
   try {
     text2 = readFile2(shimPath);
@@ -36999,11 +37048,11 @@ var liveChildren = /* @__PURE__ */ new Set();
 function killTree(child) {
   const pid = child.pid;
   if (!pid || child.exitCode !== null) return Promise.resolve();
-  return new Promise((resolve3) => {
+  return new Promise((resolve5) => {
     if (process.platform === "win32") {
       const tk = spawn("taskkill", ["/PID", String(pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" });
-      tk.on("error", () => (child.kill(), resolve3()));
-      tk.on("close", () => resolve3());
+      tk.on("error", () => (child.kill(), resolve5()));
+      tk.on("close", () => resolve5());
     } else {
       try {
         process.kill(-pid, "SIGTERM");
@@ -37015,9 +37064,9 @@ function killTree(child) {
           process.kill(-pid, "SIGKILL");
         } catch {
         }
-        resolve3();
+        resolve5();
       }, KILL_GRACE_MS);
-      child.once("exit", () => (clearTimeout(force), resolve3()));
+      child.once("exit", () => (clearTimeout(force), resolve5()));
     }
   });
 }
@@ -37059,7 +37108,7 @@ function runProcess(opts) {
   }
   const { resolved, args, needsShell } = command;
   opts.log.debug("spawning delegate", { bin: resolved, args, cwd: opts.cwd, shell: needsShell });
-  return new Promise((resolve3, reject) => {
+  return new Promise((resolve5, reject) => {
     const child = spawn(resolved, args, {
       cwd: opts.cwd,
       // Some CLIs (opencode) take their project folder from PWD rather than the real cwd; keep them in sync.
@@ -37116,7 +37165,7 @@ ${tail.slice(tail.indexOf("\n") + 1)}` : head;
       stderr = (stderr + d).slice(-MAX_CAPTURE_CHARS);
     });
     child.on("error", (err) => finish(() => reject(new DelegateError(`failed to start ${opts.bin}: ${err.message}`, "failed"))));
-    child.on("close", (code) => finish(() => resolve3({ code, stdout: captured(), stderr })));
+    child.on("close", (code) => finish(() => resolve5({ code, stdout: captured(), stderr })));
     child.stdin.on("error", () => {
     });
     child.stdin.end(opts.stdin);
@@ -37128,6 +37177,7 @@ var CODEX_RELAY_APPROVALS = 'approvals_reviewer="auto_review"';
 var CODEX_ASK_POLICY = 'approval_policy="on-request"';
 var CODEX_ASK_HINT = "(The workspace is read-only on purpose: when you need to change files or run a command the sandbox blocks, request escalated permissions for it. The user is asked and decides; if denied, stop and report.)";
 var OPENCODE_READ_ONLY_PERMISSIONS = { edit: "ask", bash: "ask" };
+var OPENCODE_READ_ONLY_TOOLS = { "*_*": false, bridge_send: true };
 function childEnv(extra = {}) {
   const { CLAUDE_PROJECT_DIR: _parentProject, ...env } = process.env;
   return { ...env, ...extra, [DELEGATE_DEPTH_ENV]: String(currentDelegateDepth() + 1) };
@@ -37210,6 +37260,9 @@ async function delegateToCodex(req) {
 
 ${CODEX_ASK_HINT}` };
   const common = ["--json", "--skip-git-repo-check", ...req.model ? ["-m", req.model] : []];
+  if (req.writableRoots?.length && req.sandbox === "workspace-write") {
+    common.push("-c", `sandbox_workspace_write.writable_roots=${JSON.stringify(req.writableRoots.map(realFolder))}`);
+  }
   const strict = req.relayApprovals ? ["-c", CODEX_RELAY_APPROVALS, "-c", CODEX_ASK_POLICY] : ["-c", CODEX_STRICT_APPROVALS];
   const args = req.sessionId ? ["exec", "resume", ...common, ...strict, "-c", `sandbox_mode="${req.sandbox}"`, req.sessionId, "-"] : ["exec", ...common, ...strict, "-s", req.sandbox, "-C", req.cwd, "-"];
   const res = await withResumeHint("codex", (o) => parseCodexJsonl(o).threadId, () => runProcess({
@@ -37255,11 +37308,15 @@ function parseClaudeJson(stdout) {
 }
 var CLAUDE_PARENT_SEND_TOOL = "mcp__plugin_agent-bridge_bridge__send";
 var CLAUDE_READ_ONLY_DENIED_TOOLS = ["Write", "Edit", "MultiEdit", "NotebookEdit", "Bash", "PowerShell"];
+function isClaudeReadOnly(mode) {
+  return CLAUDE_READ_ONLY_MODES.has(mode);
+}
 var CLAUDE_READ_ONLY_MODES = /* @__PURE__ */ new Set(["default", "manual", "plan"]);
 async function delegateToClaude(req) {
   checkDepth();
   const args = ["-p", "--output-format", "stream-json", "--verbose", "--permission-mode", req.permissionMode];
-  if (CLAUDE_READ_ONLY_MODES.has(req.permissionMode)) args.push("--disallowedTools", CLAUDE_READ_ONLY_DENIED_TOOLS.join(","));
+  const readOnly = isClaudeReadOnly(req.permissionMode);
+  if (readOnly) args.push("--disallowedTools", [...CLAUDE_READ_ONLY_DENIED_TOOLS, ...claudeMcpDenyRules(req.cwd)].join(","));
   if (req.model) args.push("--model", req.model);
   if (req.sessionId) args.push("--resume", req.sessionId);
   if (req.extraEnv?.[PARENT_URL_ENV]) args.push("--allowedTools", CLAUDE_PARENT_SEND_TOOL);
@@ -37330,7 +37387,7 @@ async function delegateToOpencode(req) {
   if (req.sessionId) args.push("-s", req.sessionId);
   if (req.autoApprove) args.push("--auto");
   const env = childEnv(req.extraEnv);
-  if (!req.autoApprove) env[OPENCODE_CONFIG_CONTENT_ENV] = JSON.stringify({ permission: OPENCODE_READ_ONLY_PERMISSIONS });
+  if (!req.autoApprove) env[OPENCODE_CONFIG_CONTENT_ENV] = JSON.stringify({ permission: OPENCODE_READ_ONLY_PERMISSIONS, tools: OPENCODE_READ_ONLY_TOOLS });
   const res = await withResumeHint("opencode", (o) => parseOpencodeJsonl(o).sessionId, () => runProcess({
     bin: req.bin,
     args,
@@ -37383,7 +37440,7 @@ var USAGE_TIMEOUT_MS = 45e3;
 var MINUTES_PER_HOUR = 60;
 var MINUTES_PER_DAY = 1440;
 function capture(bin, args, cwd, log, stdin) {
-  return new Promise((resolve3, reject) => {
+  return new Promise((resolve5, reject) => {
     const env = childEnv();
     let cmd;
     try {
@@ -37406,8 +37463,8 @@ function capture(bin, args, cwd, log, stdin) {
     child.stdout.setEncoding("utf8").on("data", (d) => out += d);
     child.stderr.setEncoding("utf8").on("data", (d) => err += d);
     child.on("error", (e) => finish(() => reject(e)));
-    child.on("close", (code) => finish(() => code === 0 || out ? resolve3(out) : reject(new Error(err.trim().slice(-300) || `exit code ${code}`))));
-    if (stdin) stdin((s) => child.stdin.write(s), () => out, () => finish(() => resolve3(out)));
+    child.on("close", (code) => finish(() => code === 0 || out ? resolve5(out) : reject(new Error(err.trim().slice(-300) || `exit code ${code}`))));
+    if (stdin) stdin((s) => child.stdin.write(s), () => out, () => finish(() => resolve5(out)));
     else child.stdin.end();
   });
 }
@@ -37524,6 +37581,9 @@ var en = {
   "peers.none": "No other peers are online. Messages you send to an offline peer name wait until it connects.",
   "peers.jobs": "Your running subagents ({count}):",
   "peers.job": "- {name} (model: {model}, running {duration}): {progress}",
+  "jobs.accessRead": 'It runs read-only: it can look but not change files or commit. To let it edit, start it with access="edit" (or worktree=true).',
+  "jobs.accessEdit": "It may change files.",
+  "jobs.accessAsk": "It asks the user before changing files or running commands.",
   "jobs.started": 'Subagent {name} started. Keep working; its result will arrive as a message from "{name}" (or call wait_for_message with from="{name}").',
   "jobs.limit": "Too many subagents running (maximum {max}). Wait for one to finish or cancel one.",
   "jobs.cancelled": "Cancelled subagent {name}.",
@@ -37617,12 +37677,13 @@ function t(key, params = {}) {
 
 // src/core/logger.ts
 import { appendFileSync, mkdirSync as mkdirSync2, renameSync, statSync } from "node:fs";
-import { join as join5 } from "node:path";
+import { join as join6 } from "node:path";
 var LOG_LEVELS = ["debug", "info", "warn", "error", "silent"];
 var LEVEL_RANK = { debug: 10, info: 20, warn: 30, error: 40, silent: 100 };
 var DEFAULT_FILE_LEVEL = "info";
 var DEFAULT_CONSOLE_LEVEL = "warn";
 var MAX_LOG_BYTES = 5 * 1024 * 1024;
+var ROTATE_CHECK_EVERY = 500;
 function parseLevel(value, fallback) {
   const v = value?.trim().toLowerCase();
   return LOG_LEVELS.includes(v ?? "") ? v : fallback;
@@ -37646,12 +37707,13 @@ function createLogger(opts) {
   const sink = {
     fileLevel: opts.fileLevel ?? parseLevel(envLevel, DEFAULT_FILE_LEVEL),
     consoleLevel: opts.consoleLevel ?? parseLevel(process.env[ENV.logConsole] ?? envLevel, DEFAULT_CONSOLE_LEVEL),
-    file: null
+    file: null,
+    writes: 0
   };
   try {
-    const dir = join5(opts.home, LOG_DIR_NAME);
+    const dir = join6(opts.home, LOG_DIR_NAME);
     mkdirSync2(dir, { recursive: true });
-    sink.file = join5(dir, LOG_FILE_NAME);
+    sink.file = join6(dir, LOG_FILE_NAME);
     rotateIfNeeded(sink.file);
   } catch (err) {
     process.stderr.write(`[${opts.component}] cannot open log directory, logging to stderr only: ${String(err)}
@@ -37669,6 +37731,7 @@ function makeLogger(sink, scope) {
 `;
     if (toFile) {
       try {
+        if (++sink.writes % ROTATE_CHECK_EVERY === 0) rotateIfNeeded(sink.file);
         appendFileSync(sink.file, line);
       } catch {
       }
@@ -37842,7 +37905,7 @@ var Broker = class {
   handlers;
   /** Bind the endpoint. Rejects with the socket error (EADDRINUSE when another broker owns it). */
   listen() {
-    return new Promise((resolve3, reject) => {
+    return new Promise((resolve5, reject) => {
       const server = createServer2((socket) => this.accept(socket));
       const onError = (err) => {
         server.removeListener("listening", onListening);
@@ -37856,7 +37919,7 @@ var Broker = class {
         this.purgeTimer.unref();
         this.purge();
         this.log.info("broker listening", { pipe: this.pipePath });
-        resolve3();
+        resolve5();
       };
       server.once("error", onError);
       server.once("listening", onListening);
@@ -38129,7 +38192,7 @@ var BridgeClient = class _BridgeClient extends EventEmitter {
   closed = false;
   /** Connect to an existing broker. Rejects with the socket error (ENOENT/ECONNREFUSED if nobody listens). */
   static connect(pipePath, log, timeoutMs = CONNECT_TIMEOUT_MS) {
-    return new Promise((resolve3, reject) => {
+    return new Promise((resolve5, reject) => {
       const socket = connect(pipePath);
       const timer = setTimeout(() => {
         socket.destroy();
@@ -38138,7 +38201,7 @@ var BridgeClient = class _BridgeClient extends EventEmitter {
       socket.once("connect", () => {
         clearTimeout(timer);
         socket.removeAllListeners("error");
-        resolve3(new _BridgeClient(socket, log));
+        resolve5(new _BridgeClient(socket, log));
       });
       socket.once("error", (err) => {
         clearTimeout(timer);
@@ -38152,12 +38215,12 @@ var BridgeClient = class _BridgeClient extends EventEmitter {
   request(op, args, timeoutMs = REQUEST_TIMEOUT_MS) {
     if (this.closed) return Promise.reject(new Error("connection to broker closed"));
     const id = this.nextId++;
-    return new Promise((resolve3, reject) => {
+    return new Promise((resolve5, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
         reject(new Error(`broker request timed out: ${op}`));
       }, timeoutMs);
-      this.pending.set(id, { resolve: resolve3, reject, timer });
+      this.pending.set(id, { resolve: resolve5, reject, timer });
       this.socket.write(encodeFrame({ t: "req", id, op, args }));
     });
   }
@@ -38426,12 +38489,12 @@ var BridgeNode = class extends EventEmitter2 {
   waitForMessage(timeoutMs, predicate = () => true, signal) {
     const existing = this.unread().find(predicate);
     if (existing) return Promise.resolve(existing);
-    return new Promise((resolve3) => {
+    return new Promise((resolve5) => {
       const done = (m) => {
         clearTimeout(timer);
         this.off("message", onMessage);
         signal?.removeEventListener("abort", onAbort);
-        resolve3(m);
+        resolve5(m);
       };
       const onMessage = (m) => {
         if (predicate(m)) done(m);
@@ -38483,10 +38546,10 @@ var BridgeNode = class extends EventEmitter2 {
 
 // src/core/paths.ts
 import { createHash } from "node:crypto";
-import { join as join6, posix, resolve } from "node:path";
+import { join as join7, posix, resolve as resolve2 } from "node:path";
 var PIPE_HASH_LENGTH = 12;
 function resolveHome(env = process.env) {
-  return resolve(env[ENV.home]?.trim() || DEFAULT_HOME);
+  return resolve2(env[ENV.home]?.trim() || DEFAULT_HOME);
 }
 function resolvePipePath(home, env = process.env, platform = process.platform) {
   const override = env[ENV.pipe]?.trim();
@@ -38498,7 +38561,7 @@ function resolvePipePath(home, env = process.env, platform = process.platform) {
   return posix.join(home, SOCKET_FILE_NAME.replace(/\.sock$/, `-p${PROTOCOL_VERSION}.sock`));
 }
 function resolveDbPath(home) {
-  return join6(home, DB_FILE_NAME);
+  return join7(home, DB_FILE_NAME);
 }
 
 // src/core/procinfo.ts
@@ -38507,12 +38570,12 @@ import { readFile } from "node:fs/promises";
 var LOOKUP_TIMEOUT_MS = 5e3;
 var MAX_ANCESTORS = 4;
 function exec(file2, args) {
-  return new Promise((resolve3, reject) => {
+  return new Promise((resolve5, reject) => {
     execFile(
       file2,
       args,
       { timeout: LOOKUP_TIMEOUT_MS, windowsHide: true, maxBuffer: 1024 * 1024 },
-      (err, stdout) => err ? reject(err) : resolve3(stdout)
+      (err, stdout) => err ? reject(err) : resolve5(stdout)
     );
   });
 }
@@ -38876,7 +38939,7 @@ function startServe(bin, cwd, env) {
     resolved = target.command;
     prefix = target.prefix;
   }
-  return new Promise((resolve3, reject) => {
+  return new Promise((resolve5, reject) => {
     const child = spawn3(resolved, [...prefix, "serve", "--port", "0", "--hostname", "127.0.0.1"], {
       cwd,
       env: { ...env, PWD: cwd },
@@ -38895,7 +38958,7 @@ function startServe(bin, cwd, env) {
       const m = LISTEN_RE.exec(out);
       if (m) {
         clearTimeout(timer);
-        resolve3({ child, url: m[1].replace(/\/+$/, "") });
+        resolve5({ child, url: m[1].replace(/\/+$/, "") });
       }
     };
     child.stdout.on("data", onData);
@@ -39091,9 +39154,9 @@ async function delegateToCodexAppServer(req) {
     child.stdin.write(`${JSON.stringify(msg)}
 `);
   };
-  const request2 = (method, params) => new Promise((resolve3, reject) => {
+  const request2 = (method, params) => new Promise((resolve5, reject) => {
     const id = nextId++;
-    pending.set(id, { resolve: resolve3, reject });
+    pending.set(id, { resolve: resolve5, reject });
     write({ id, method, params });
   });
   const editPaths = /* @__PURE__ */ new Map();
@@ -39224,7 +39287,9 @@ ${message}`, text_elements: [] }] });
     await race(request2("initialize", { clientInfo: { name: "agent-bridge", title: "agent-bridge", version: APP_VERSION }, capabilities: { experimentalApi: false, optOutNotificationMethods: OPT_OUT } }));
     write({ method: "initialized", params: {} });
     const approvalPolicy = "on-request";
-    const threadParams = { cwd, sandbox: req.sandbox, approvalPolicy, approvalsReviewer: "user", ...req.model ? { model: req.model } : {} };
+    const config2 = {};
+    if (req.writableRoots?.length && req.sandbox === "workspace-write") config2.sandbox_workspace_write = { writable_roots: req.writableRoots.map(realFolder) };
+    const threadParams = { cwd, sandbox: req.sandbox, approvalPolicy, approvalsReviewer: "user", ...Object.keys(config2).length ? { config: config2 } : {}, ...req.model ? { model: req.model } : {} };
     const thread = req.sessionId ? await race(request2("thread/resume", { ...threadParams, threadId: req.sessionId, excludeTurns: true })) : await race(request2("thread/start", threadParams));
     threadId = thread?.thread?.id ?? threadId;
     if (threadId) req.onSession?.(threadId);
@@ -39266,6 +39331,9 @@ var ACCESS_LEVELS = ["read", "ask", "edit"];
 var CODEX_SANDBOX_FOR = { read: "read-only", ask: "read-only", edit: "workspace-write" };
 var CLAUDE_MODE_FOR = { read: "manual", ask: "manual", edit: "acceptEdits" };
 var OPENCODE_AUTO_FOR = { read: false, ask: false, edit: true };
+function claudeModeFor(cfg, a) {
+  return a.permission_mode ?? (a.access ? CLAUDE_MODE_FOR[a.access] : cfg.claudePermissionMode);
+}
 function supportsAsk(target, relay) {
   if (!relay) return false;
   if (target === "opencode") return true;
@@ -39284,7 +39352,7 @@ var DELEGATION_TARGETS = {
       const relay = a.access === "ask" && Boolean(a.relay?.codexHookTrusted);
       if (process.env[CODEX_EXEC_ENV] !== "1") {
         try {
-          return await delegateToCodexAppServer({ ...base, bin: cfg.codexBin, sandbox, askMode: a.access === "ask", approve: a.access === "ask" && a.relay ? a.relay.onPermission : base.approve });
+          return await delegateToCodexAppServer({ ...base, bin: cfg.codexBin, sandbox, writableRoots: base.writableRoots, askMode: a.access === "ask", approve: a.access === "ask" && a.relay ? a.relay.onPermission : base.approve });
         } catch (err) {
           if (!(err instanceof DelegateError) || err.kind !== "failed" || err.sessionId) throw err;
           base.log.warn("codex app-server unavailable, using codex exec", { err: err.message });
@@ -39307,7 +39375,7 @@ var DELEGATION_TARGETS = {
     run: (cfg, base, a) => delegateToClaude({
       ...base,
       bin: cfg.claudeBin,
-      permissionMode: a.permission_mode ?? (a.access ? CLAUDE_MODE_FOR[a.access] : cfg.claudePermissionMode)
+      permissionMode: claudeModeFor(cfg, a)
     })
   },
   opencode: {
@@ -39412,9 +39480,9 @@ var PermissionRelay = class {
     });
     this.server.requestTimeout = 0;
     this.server.headersTimeout = 0;
-    await new Promise((resolve3, reject) => {
+    await new Promise((resolve5, reject) => {
       this.server.once("error", reject);
-      this.server.listen(0, RELAY_HOST, () => resolve3());
+      this.server.listen(0, RELAY_HOST, () => resolve5());
     });
     const { port } = this.server.address();
     this.url = `http://${RELAY_HOST}:${port}${RELAY_PATH}`;
@@ -39453,18 +39521,18 @@ var PermissionRelay = class {
 };
 
 // src/core/codex-trust.ts
-import { readFileSync as readFileSync4, writeFileSync } from "node:fs";
-import { homedir as homedir2 } from "node:os";
-import { join as join7 } from "node:path";
+import { readFileSync as readFileSync5, writeFileSync } from "node:fs";
+import { homedir as homedir3 } from "node:os";
+import { join as join8 } from "node:path";
 var PERMISSION_HOOK_STATE_KEY = 'hooks.state."agent-bridge@agent-bridge:plugin.json#hooks[0]:permission_request:0:0"';
 var OBSERVATIONS_FILE = "codex-hook.json";
 function codexHome(env = process.env) {
-  return env.CODEX_HOME?.trim() || join7(homedir2(), ".codex");
+  return env.CODEX_HOME?.trim() || join8(homedir3(), ".codex");
 }
-function codexPermissionHookHash(home = codexHome(), read = (p) => readFileSync4(p, "utf8")) {
+function codexPermissionHookHash(home = codexHome(), read = (p) => readFileSync5(p, "utf8")) {
   let text2;
   try {
-    text2 = read(join7(home, "config.toml"));
+    text2 = read(join8(home, "config.toml"));
   } catch {
     return null;
   }
@@ -39479,7 +39547,7 @@ function codexPermissionHookHash(home = codexHome(), read = (p) => readFileSync4
 }
 function readObservations(bridgeHome) {
   try {
-    return JSON.parse(readFileSync4(join7(bridgeHome, OBSERVATIONS_FILE), "utf8"));
+    return JSON.parse(readFileSync5(join8(bridgeHome, OBSERVATIONS_FILE), "utf8"));
   } catch {
     return {};
   }
@@ -39489,18 +39557,18 @@ function recordCodexHookObservation(bridgeHome, hash2, observation) {
   if (all[hash2] === "failed") return;
   all[hash2] = observation;
   try {
-    writeFileSync(join7(bridgeHome, OBSERVATIONS_FILE), JSON.stringify(all, null, 2), { mode: 384 });
+    writeFileSync(join8(bridgeHome, OBSERVATIONS_FILE), JSON.stringify(all, null, 2), { mode: 384 });
   } catch {
   }
 }
-function codexPermissionHookTrusted(bridgeHome, home = codexHome(), read = (p) => readFileSync4(p, "utf8")) {
+function codexPermissionHookTrusted(bridgeHome, home = codexHome(), read = (p) => readFileSync5(p, "utf8")) {
   const hash2 = codexPermissionHookHash(home, read);
   return hash2 !== null && readObservations(bridgeHome)[hash2] !== "failed";
 }
 
 // src/core/runfeed.ts
 import { appendFileSync as appendFileSync2, mkdirSync as mkdirSync4, readdirSync, statSync as statSync2, unlinkSync as unlinkSync2, writeFileSync as writeFileSync2 } from "node:fs";
-import { join as join8 } from "node:path";
+import { join as join9 } from "node:path";
 var RUNS_DIR_NAME = "runs";
 var HEARTBEAT_MS = 6e4;
 var KEEP_RUN_LOGS = 50;
@@ -39513,11 +39581,11 @@ function stamp(t2) {
 }
 function pruneOldLogs(dir) {
   try {
-    const files = readdirSync(dir).filter((f) => f.endsWith(".log")).map((f) => ({ f, t: statSync2(join8(dir, f)).mtimeMs })).sort((a, b) => b.t - a.t);
+    const files = readdirSync(dir).filter((f) => f.endsWith(".log")).map((f) => ({ f, t: statSync2(join9(dir, f)).mtimeMs })).sort((a, b) => b.t - a.t);
     for (const { f } of files.slice(KEEP_RUN_LOGS)) {
-      unlinkSync2(join8(dir, f));
+      unlinkSync2(join9(dir, f));
       try {
-        unlinkSync2(join8(dir, runMetaPath(f)));
+        unlinkSync2(join9(dir, runMetaPath(f)));
       } catch {
       }
     }
@@ -39526,10 +39594,10 @@ function pruneOldLogs(dir) {
 }
 function startRunFeed(opts) {
   const now = opts.now ?? Date.now;
-  const dir = join8(opts.home, RUNS_DIR_NAME);
+  const dir = join9(opts.home, RUNS_DIR_NAME);
   mkdirSync4(dir, { recursive: true });
   pruneOldLogs(dir);
-  const logPath = join8(dir, `${new Date(now()).toISOString().slice(0, 19).replace(/[:T]/g, "-")}-${opts.name}.log`);
+  const logPath = join9(dir, `${new Date(now()).toISOString().slice(0, 19).replace(/[:T]/g, "-")}-${opts.name}.log`);
   const write = (line) => {
     const [first, ...rest] = line.replace(/\r/g, "").split("\n");
     const body = [first, ...rest.map((l) => `${CONTINUATION}${l}`)].join("\n");
@@ -39583,15 +39651,15 @@ function startRunFeed(opts) {
 
 // src/cli/dashboard.ts
 import { randomBytes as randomBytes6 } from "node:crypto";
-import { chmodSync as chmodSync2, readFileSync as readFileSync6, writeFileSync as writeFileSync3 } from "node:fs";
+import { chmodSync as chmodSync2, readFileSync as readFileSync7, writeFileSync as writeFileSync3 } from "node:fs";
 import { request } from "node:http";
-import { join as join10 } from "node:path";
+import { join as join11 } from "node:path";
 
 // src/cli/ui.ts
 import { randomBytes as randomBytes5 } from "node:crypto";
-import { existsSync as existsSync2, readdirSync as readdirSync2, readFileSync as readFileSync5, statSync as statSync3 } from "node:fs";
+import { existsSync as existsSync2, readdirSync as readdirSync2, readFileSync as readFileSync6, statSync as statSync3 } from "node:fs";
 import { createServer as createServer4 } from "node:http";
-import { join as join9 } from "node:path";
+import { join as join10 } from "node:path";
 import { DatabaseSync as DatabaseSync2 } from "node:sqlite";
 
 // src/cli/ui-page.ts
@@ -39680,6 +39748,12 @@ h3 .n { color: var(--faint); font-weight: 500; }
 /* Subagent rows */
 .rows > a { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; gap: 14px; align-items: center; padding: 13px 16px; border-bottom: 1px solid var(--line); }
 .rows > a:last-child { border-bottom: 0; }
+.archive > summary { cursor: pointer; padding: 11px 16px; color: var(--muted); font-size: 13px; list-style: none; border-top: 1px solid var(--line); }
+.archive > summary::-webkit-details-marker { display: none; }
+.archive > summary::before { content: "\u25B8 "; }
+.archive[open] > summary::before { content: "\u25BE "; }
+.archive > a { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; gap: 14px; align-items: center; padding: 13px 16px; border-top: 1px solid var(--line); opacity: .8; }
+.archive > a:hover { background: var(--panel-2); opacity: 1; }
 .rows > a:hover { background: var(--panel-2); }
 .rows > a.sel { background: var(--accent-soft); box-shadow: inset 3px 0 0 var(--accent); }
 .rows .line1 { display: flex; align-items: center; gap: 8px; min-width: 0; }
@@ -39791,6 +39865,8 @@ const POLL_MS = 1500;
 const LOG_PAGES = 20;
 /** Runs of more commands than this fold into one expandable row. */
 const FOLD_STEPS = 3;
+/** Finished subagents older than this move into the session's archive. */
+const ARCHIVE_AFTER_MS = 30 * 60_000;
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
 const time = (t) => new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
@@ -39891,7 +39967,11 @@ function renderTabs() {
     (t.live ? dot(t.peer.activity) : "") + esc(t.name) + (t.running ? '<span class="count" title="subagents working">' + t.running + "</span>" : "") + "</a>").join("");
 }
 
-const versionChip = (p) => p.version && p.version !== state.version ? '<span class="chip old">v' + esc(p.version) + " \xB7 outdated</span>" : "";
+/** "0.12.0" vs "0.11.3": negative when a is older. */
+const cmpVersion = (a, b) => { const x = String(a).split(".").map(Number), y = String(b).split(".").map(Number); for (let i = 0; i < 3; i++) { const d = (x[i] || 0) - (y[i] || 0); if (d) return d; } return 0; };
+/** The newest agent-bridge version on the bridge (the dashboard's host may itself be an older session). */
+const newestVersion = () => [state.version, ...state.peers.map((p) => p.version)].filter(Boolean).reduce((m, v) => (cmpVersion(v, m) > 0 ? v : m), "0.0.0");
+const versionChip = (p) => p.version && cmpVersion(p.version, newestVersion()) < 0 ? '<span class="chip old">v' + esc(p.version) + " \xB7 outdated</span>" : "";
 const childLine = (c) => '<div class="ell">' + dot(c.activity) + " subagent session <b>" + esc(c.name) + "</b></div>";
 
 function groupRow(g, sel, showOwner) {
@@ -39919,7 +39999,7 @@ function renderOverview() {
     (live.length ? live.map(card).join("") : '<div class="panel empty">No sessions connected. Start Claude Code, Codex or opencode with agent-bridge installed.</div>') +
     ended.map(card).join("") +
     (model.orphans.length ? '<div class="card ended"><div class="small muted">Subagent sessions in worktrees</div><div class="kids">' + model.orphans.map(childLine).join("") + "</div></div>" : "");
-  $("ovRuns").innerHTML = model.sorted.length ? model.sorted.slice(0, 12).map((g) => groupRow(g, false, true)).join("") : '<div class="empty">No subagents yet. They appear here when a session uses ask_* or spawn_*.</div>';
+  $("ovRuns").innerHTML = model.sorted.length ? model.sorted.filter((g) => g.status === "running" || Date.now() - g.updatedAt < ARCHIVE_AFTER_MS).concat(model.sorted.filter((g) => !(g.status === "running" || Date.now() - g.updatedAt < ARCHIVE_AFTER_MS))).slice(0, 12).map((g) => groupRow(g, false, true)).join("") : '<div class="empty">No subagents yet. They appear here when a session uses ask_* or spawn_*.</div>';
   $("ovMsgs").innerHTML = messagesHtml(state.messages);
 }
 
@@ -39935,7 +40015,14 @@ function renderSession() {
       (x.name === "earlier runs" ? "Runs from before sessions were recorded, or from sessions in other folders." : "This session has ended. Its subagents are kept for reference.") + "</div></div></div>";
   $("sCount").textContent = x.groups.length || "";
   const sel = route.group && x.groups.find((g) => g.key === route.group) ? route.group : x.groups[0] && x.groups[0].key;
-  $("sGroups").innerHTML = x.groups.length ? x.groups.map((g) => groupRow(g, g.key === sel, false)).join("") : '<div class="empty">No subagents started from this session yet.</div>';
+  // Running and recently finished subagents on top; older ones in a folded archive (the selected one stays visible).
+  const fresh = (g) => g.status === "running" || Date.now() - g.updatedAt < ARCHIVE_AFTER_MS || g.key === sel;
+  const active = x.groups.filter(fresh), archived = x.groups.filter((g) => !fresh(g));
+  const archiveOpen = opened.has("archive:" + x.name);
+  $("sGroups").innerHTML = x.groups.length
+    ? (active.length ? active.map((g) => groupRow(g, g.key === sel, false)).join("") : '<div class="empty">Nothing running or recent.</div>') +
+      (archived.length ? '<details class="archive" data-open="archive:' + esc(x.name) + '"' + (archiveOpen ? " open" : "") + '><summary>Archive \xB7 ' + archived.length + " older subagent" + (archived.length === 1 ? "" : "s") + "</summary>" + archived.map((g) => groupRow(g, false, false)).join("") + "</details>" : "")
+    : '<div class="empty">No subagents started from this session yet.</div>';
   const mine = state.messages.filter((m) => m.from_name === x.name || m.to_target === x.name || String(m.recipients || "").split(", ").includes(x.name));
   $("sMsgs").innerHTML = messagesHtml(mine);
   const g = sel && model.groups.get(sel);
@@ -40170,20 +40257,20 @@ function summarizeRun(file2, text2, mtimeMs, now, meta3 = {}) {
   };
 }
 function listRuns(home, now = Date.now()) {
-  const dir = join9(home, RUNS_DIR_NAME);
+  const dir = join10(home, RUNS_DIR_NAME);
   if (!existsSync2(dir)) return [];
-  return readdirSync2(dir).filter((f) => RUN_NAME.test(f)).map((f) => ({ f, st: statSync3(join9(dir, f)) })).sort((a, b) => b.st.mtimeMs - a.st.mtimeMs).slice(0, MAX_RUNS).map(({ f, st }) => summarizeRun(f, readFileSync5(join9(dir, f), "utf8"), st.mtimeMs, now, readMeta(join9(dir, runMetaPath(f)))));
+  return readdirSync2(dir).filter((f) => RUN_NAME.test(f)).map((f) => ({ f, st: statSync3(join10(dir, f)) })).sort((a, b) => b.st.mtimeMs - a.st.mtimeMs).slice(0, MAX_RUNS).map(({ f, st }) => summarizeRun(f, readFileSync6(join10(dir, f), "utf8"), st.mtimeMs, now, readMeta(join10(dir, runMetaPath(f)))));
 }
 function readMeta(file2) {
   try {
-    return JSON.parse(readFileSync5(file2, "utf8"));
+    return JSON.parse(readFileSync6(file2, "utf8"));
   } catch {
     return {};
   }
 }
 function classifyPeers(peers, runs, home) {
   const norm = (p) => p.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
-  const worktrees = `${norm(join9(home, "worktrees"))}/`;
+  const worktrees = `${norm(join10(home, "worktrees"))}/`;
   return peers.map((p) => {
     const cwd = norm(p.cwd ?? "");
     const subagent = cwd.startsWith(worktrees);
@@ -40220,7 +40307,7 @@ function send(res, status, body, type = "application/json; charset=utf-8") {
   res.writeHead(status, { "content-type": type, "cache-control": "no-store", "x-content-type-options": "nosniff" });
   res.end(typeof body === "string" ? body : JSON.stringify(body));
 }
-async function readJson(req) {
+async function readJson2(req) {
   let raw = "";
   for await (const chunk of req) {
     raw += chunk;
@@ -40262,16 +40349,17 @@ async function startUi(opts) {
     }
     const runMatch = /^\/api\/runs\/([\w.-]+)$/.exec(url2.pathname);
     if (req.method === "GET" && runMatch) {
-      const file2 = join9(opts.home, RUNS_DIR_NAME, `${runMatch[1]}.log`);
+      const file2 = join10(opts.home, RUNS_DIR_NAME, `${runMatch[1]}.log`);
       if (!existsSync2(file2)) return send(res, 404, { error: "no such run" });
       const from = Math.max(0, Number(url2.searchParams.get("from")) || 0);
-      const buf = readFileSync5(file2);
-      const end = Math.min(buf.length, from + MAX_LOG_CHUNK);
+      const buf = readFileSync6(file2);
+      let end = Math.min(buf.length, from + MAX_LOG_CHUNK);
+      while (end < buf.length && end > from && (buf[end] & 192) === 128) end--;
       return send(res, 200, { text: buf.subarray(from, end).toString("utf8"), next: end, size: buf.length });
     }
     if (req.method === "POST" && url2.pathname === "/api/send") {
       if (req.headers["x-agent-bridge"] !== "1") return send(res, 403, { error: "missing header" });
-      const body = await readJson(req);
+      const body = await readJson2(req);
       const to = String(body.to ?? "").trim();
       const text2 = String(body.body ?? "").trim();
       if (!to || !text2) return send(res, 400, { error: "to and body are required" });
@@ -40290,9 +40378,9 @@ async function startUi(opts) {
       if (!res.headersSent) send(res, 500, { error: String(err.message) });
     });
   });
-  await new Promise((resolve3, reject) => {
+  await new Promise((resolve5, reject) => {
     server.once("error", reject);
-    server.listen(opts.port, UI_HOST, () => resolve3());
+    server.listen(opts.port, UI_HOST, () => resolve5());
   });
   const { port } = server.address();
   return {
@@ -40311,11 +40399,11 @@ var SECRET_BYTES4 = 24;
 var PROBE_TIMEOUT_MS = 1500;
 var OWNER_ONLY2 = 384;
 function dashboardFile(home) {
-  return join10(home, DASHBOARD_FILE);
+  return join11(home, DASHBOARD_FILE);
 }
 function readDashboardInfo(home) {
   try {
-    const d = JSON.parse(readFileSync6(dashboardFile(home), "utf8"));
+    const d = JSON.parse(readFileSync7(dashboardFile(home), "utf8"));
     return typeof d.url === "string" && typeof d.port === "number" && typeof d.pid === "number" ? d : null;
   } catch {
     return null;
@@ -40330,13 +40418,13 @@ function processAlive(pid) {
   }
 }
 function probeDashboard(port) {
-  return new Promise((resolve3) => {
+  return new Promise((resolve5) => {
     const req = request({ host: "127.0.0.1", port, path: "/api/state", timeout: PROBE_TIMEOUT_MS }, (res) => {
       res.resume();
-      resolve3(res.statusCode === 403 || res.statusCode === 200);
+      resolve5(res.statusCode === 403 || res.statusCode === 200);
     });
     req.on("timeout", () => req.destroy());
-    req.on("error", () => resolve3(false));
+    req.on("error", () => resolve5(false));
     req.end();
   });
 }
@@ -40385,13 +40473,13 @@ function openBrowser(url2) {
 import { randomBytes as randomBytes7 } from "node:crypto";
 import { mkdirSync as mkdirSync5, rmSync, writeFileSync as writeFileSync4 } from "node:fs";
 import { createServer as createServer5 } from "node:http";
-import { join as join11 } from "node:path";
+import { join as join12 } from "node:path";
 var SESSIONS_DIR = "sessions";
 var HOST2 = "127.0.0.1";
 var SECRET_BYTES5 = 24;
 var REWAKE_POLL_MS = 4 * 60 * 1e3;
 function sessionFile(home, sessionId) {
-  return join11(home, SESSIONS_DIR, `${sessionId.replace(/[^\w-]/g, "_")}.json`);
+  return join12(home, SESSIONS_DIR, `${sessionId.replace(/[^\w-]/g, "_")}.json`);
 }
 var RewakeEndpoint = class {
   constructor(home, node2, shouldWake, log) {
@@ -40437,9 +40525,9 @@ var RewakeEndpoint = class {
     });
     this.server.requestTimeout = 0;
     this.server.headersTimeout = 0;
-    await new Promise((resolve3, reject) => {
+    await new Promise((resolve5, reject) => {
       this.server.once("error", reject);
-      this.server.listen(0, HOST2, () => resolve3());
+      this.server.listen(0, HOST2, () => resolve5());
     });
     this.port = this.server.address().port;
   }
@@ -40451,7 +40539,7 @@ var RewakeEndpoint = class {
   register(sessionId) {
     if (!this.server || this.registered === sessionId) return;
     const file2 = sessionFile(this.home, sessionId);
-    mkdirSync5(join11(this.home, SESSIONS_DIR), { recursive: true });
+    mkdirSync5(join12(this.home, SESSIONS_DIR), { recursive: true });
     const reg = { port: this.port, secret: this.secret, pid: process.pid };
     writeFileSync4(file2, JSON.stringify(reg), { mode: 384 });
     if (this.registered) rmSync(sessionFile(this.home, this.registered), { force: true });
@@ -40469,8 +40557,8 @@ var RewakeEndpoint = class {
 
 // src/core/worktree.ts
 import { createHash as createHash2 } from "node:crypto";
-import { mkdirSync as mkdirSync6, readFileSync as readFileSync7 } from "node:fs";
-import { basename as basename2, isAbsolute as isAbsolute2, join as join12, relative } from "node:path";
+import { mkdirSync as mkdirSync6, readFileSync as readFileSync8 } from "node:fs";
+import { basename as basename2, isAbsolute as isAbsolute2, join as join13, relative, resolve as resolve3 } from "node:path";
 var GIT = "git";
 var GIT_TIMEOUT_MS = 6e4;
 var BRANCH_PREFIX = "agent-bridge/";
@@ -40490,22 +40578,48 @@ async function createWorktree(opts) {
   }
   const base = await git(["rev-parse", "HEAD"], repoRoot, opts.log);
   const branch = `${BRANCH_PREFIX}${opts.jobId}`;
-  const dir = join12(opts.home, "worktrees");
+  const dir = join13(opts.home, "worktrees");
   mkdirSync6(dir, { recursive: true });
-  const path = join12(dir, `${basename2(repoRoot)}-${opts.jobId}`);
+  const path = join13(dir, `${basename2(repoRoot)}-${opts.jobId}`);
   await git(["worktree", "add", "-b", branch, path, base], repoRoot, opts.log);
   const rel = relative(repoRoot, opts.cwd);
-  const cwd = rel && !rel.startsWith("..") && !isAbsolute2(rel) ? join12(path, rel) : path;
+  const cwd = rel && !rel.startsWith("..") && !isAbsolute2(rel) ? join13(path, rel) : path;
   opts.log.info("worktree created", { repoRoot, path, branch });
   return { repoRoot, path, cwd, branch, base };
 }
-async function finishWorktree(wt, summary, log) {
+var SUBJECT_CHARS = 72;
+function subagentCommitMessage(opts) {
+  const plain = (s) => s.replace(/[*_`#>]+/g, "").replace(/\s+/g, " ").trim();
+  const firstLine = (s) => s.split(/\r?\n/).map(plain).find((l) => l.length > 0) ?? "";
+  const clip2 = (s) => s.length > SUBJECT_CHARS ? `${s.slice(0, SUBJECT_CHARS - 1).trimEnd()}\u2026` : s;
+  const subject = clip2(firstLine(opts.answer) || firstLine(opts.task) || "subagent changes");
+  const email3 = { codex: "noreply@openai.com", claude: "noreply@anthropic.com", opencode: "noreply@opencode.ai" }[opts.agent] ?? "noreply@localhost";
+  const who = opts.model ? `${opts.model} via ${opts.agent}` : opts.agent;
+  return [
+    subject,
+    "",
+    `Committed by agent-bridge for ${opts.job ?? "a subagent"} (${who}).`,
+    `Task: ${clip2(firstLine(opts.task))}`,
+    "",
+    `Co-Authored-By: ${who} <${email3}>`
+  ].join("\n");
+}
+async function gitDirsOutside(cwd, log) {
+  try {
+    const [gitDir, common] = (await git(["rev-parse", "--path-format=absolute", "--git-dir", "--git-common-dir"], cwd, log)).split(/\r?\n/);
+    const inside = (p) => {
+      const rel = relative(resolve3(cwd), resolve3(p));
+      return rel === "" || !rel.startsWith("..") && !isAbsolute2(rel);
+    };
+    return [...new Set([gitDir, common].filter((p) => Boolean(p) && !inside(p)))];
+  } catch {
+    return [];
+  }
+}
+async function finishWorktree(wt, message, log) {
   await git(["add", "-A"], wt.path, log);
   const status = await git(["status", "--porcelain"], wt.path, log);
-  if (status) {
-    const message = `agent-bridge: ${summary.replace(/\s+/g, " ").slice(0, 72)}`;
-    await git([...COMMIT_IDENTITY, "commit", "-q", "--no-verify", "-m", message], wt.path, log);
-  }
+  if (status) await git([...COMMIT_IDENTITY, "commit", "-q", "--no-verify", "-m", message], wt.path, log);
   const diffStat = await git(["diff", "--stat", `${wt.base}..${wt.branch}`], wt.repoRoot, log);
   return { changed: diffStat.length > 0, diffStat: diffStat.slice(0, MAX_DIFFSTAT_CHARS) };
 }
@@ -40537,7 +40651,7 @@ async function gitChangeSnapshot(cwd, log) {
     const file2 = line.slice(3).replace(/^.* -> /, "").replace(/^"|"$/g, "");
     let fp = line.slice(0, 2);
     try {
-      fp += ":" + createHash2("sha1").update(readFileSync7(join12(root, file2))).digest("hex");
+      fp += ":" + createHash2("sha1").update(readFileSync8(join13(root, file2))).digest("hex");
     } catch {
       fp += ":missing";
     }
@@ -40554,7 +40668,7 @@ function changedFiles(before, after) {
 
 // src/mcp/jobs.ts
 import { randomUUID as randomUUID4 } from "node:crypto";
-import { mkdirSync as mkdirSync7, readFileSync as readFileSync8, renameSync as renameSync2, writeFileSync as writeFileSync5 } from "node:fs";
+import { closeSync as closeSync2, mkdirSync as mkdirSync7, openSync as openSync2, readFileSync as readFileSync9, renameSync as renameSync2, rmSync as rmSync2, statSync as statSync4, writeFileSync as writeFileSync5 } from "node:fs";
 import { dirname as dirname3 } from "node:path";
 var JOB_ID_LENGTH = 8;
 var PROMPT_PREVIEW_CHARS = 120;
@@ -40577,6 +40691,7 @@ var JobManager = class {
   /** Save this session's jobs, merged with those other sessions saved. Best effort: never breaks a run. */
   persist() {
     if (!this.storePath) return;
+    const lock = acquireLock(`${this.storePath}.lock`);
     try {
       const mine = [...this.history.values()].map(toStored);
       const ids = new Set(mine.map((j) => j.id));
@@ -40588,6 +40703,8 @@ var JobManager = class {
       renameSync2(tmp, this.storePath);
     } catch (err) {
       this.log.warn("could not save subagent jobs", { err: err.message });
+    } finally {
+      lock();
     }
   }
   /**
@@ -40785,16 +40902,16 @@ ${text2}`);
    * No answer within the time limit counts as "deny".
    */
   askParent(job, question, timeoutMs) {
-    return new Promise((resolve3) => {
+    return new Promise((resolve5) => {
       const timer = setTimeout(() => {
         if (job.pendingApproval !== settle2) return;
         job.pendingApproval = null;
-        resolve3({ allow: false, reason: "no answer in time" });
+        resolve5({ allow: false, reason: "no answer in time" });
       }, timeoutMs);
       timer.unref?.();
       const settle2 = (answer) => {
         clearTimeout(timer);
-        resolve3({ allow: /^\s*(allow|yes|y|approve|approved|ok|okay|go ahead|accept)\b/i.test(answer), reason: answer.trim() });
+        resolve5({ allow: /^\s*(allow|yes|y|approve|approved|ok|okay|go ahead|accept)\b/i.test(answer), reason: answer.trim() });
       };
       job.pendingApproval = settle2;
       this.log.info("subagent asks for approval", { job: job.name });
@@ -40849,10 +40966,34 @@ function toStored(j) {
 }
 function readStore(path) {
   try {
-    const data = JSON.parse(readFileSync8(path, "utf8"));
+    const data = JSON.parse(readFileSync9(path, "utf8"));
     return Array.isArray(data) ? data.filter((j) => j && typeof j.id === "string" && typeof j.name === "string") : [];
   } catch {
     return [];
+  }
+}
+var LOCK_WAIT_MS = 2e3;
+var LOCK_STALE_MS = 1e4;
+var LOCK_RETRY_MS = 20;
+function acquireLock(path) {
+  mkdirSync7(dirname3(path), { recursive: true });
+  const deadline = Date.now() + LOCK_WAIT_MS;
+  const pause = new Int32Array(new SharedArrayBuffer(4));
+  for (; ; ) {
+    try {
+      closeSync2(openSync2(path, "wx"));
+      return () => rmSync2(path, { force: true });
+    } catch (err) {
+      if (err.code !== "EEXIST") return () => {
+      };
+      try {
+        if (Date.now() - statSync4(path).mtimeMs > LOCK_STALE_MS) rmSync2(path, { force: true });
+      } catch {
+      }
+      if (Date.now() > deadline) return () => {
+      };
+      Atomics.wait(pause, 0, 0, LOCK_RETRY_MS);
+    }
   }
 }
 
@@ -40864,9 +41005,12 @@ var CWD_DISCOVERY_GRACE_MS = 15e3;
 var JOBS_FILE = "jobs.json";
 var KEPT_ARGS = ["model", "cwd", "timeout_sec", "worktree", "access", "sandbox", "permission_mode", "auto_approve"];
 var PARENT_APPROVAL_TIMEOUT_MS = 10 * 6e4;
-var PLUGIN_ROOT = resolve2(dirname4(fileURLToPath(import.meta.url)), "..");
+var PLUGIN_ROOT = resolve4(dirname4(fileURLToPath(import.meta.url)), "..");
+function isBridgeWorktree(dir, home) {
+  return isInside(dir, join14(home, "worktrees")) && resolve4(dir) !== resolve4(join14(home, "worktrees"));
+}
 function isInside(child, parent) {
-  const rel = relative2(resolve2(parent), resolve2(child));
+  const rel = relative2(resolve4(parent), resolve4(child));
   return rel === "" || !rel.startsWith("..") && !isAbsolute3(rel);
 }
 function pathFromUriOrPath(v) {
@@ -40957,7 +41101,7 @@ async function startServer(argv = process.argv.slice(2)) {
   let channel = agent === "claude" && cfg.delivery === "channel";
   const ctx = { agent, cfg, node: node2, log, home, cwd: () => node2?.cwd ?? cwd, channelActive: () => channel, parent: delegated ? parentFromEnv() : null };
   if (node2) {
-    ctx.jobs = new JobManager(node2, log.child("jobs"), join13(home, JOBS_FILE));
+    ctx.jobs = new JobManager(node2, log.child("jobs"), join14(home, JOBS_FILE));
     ctx.activity = (s) => node2.setActivity(s);
     let cwdSettled = cwdKnown;
     ctx.learnCwd = async (projectDir) => {
@@ -41088,12 +41232,12 @@ async function startServer(argv = process.argv.slice(2)) {
       if (channel) for (const m of node2.unread()) void pushChannel(m);
       if (isBroker && cfg.dashboard) void ensureDashboard(false);
     });
-    const join14 = () => node2.start().catch((err) => log.error("could not join the bridge", { err: err.message }));
+    const join15 = () => node2.start().catch((err) => log.error("could not join the bridge", { err: err.message }));
     if (cwdKnown) {
-      void join14();
+      void join15();
     } else {
       log.info("project directory unknown yet; deferring bridge join", { graceMs: CWD_DISCOVERY_GRACE_MS });
-      setTimeout(() => void join14(), CWD_DISCOVERY_GRACE_MS).unref();
+      setTimeout(() => void join15(), CWD_DISCOVERY_GRACE_MS).unref();
     }
   }
 }
@@ -41259,7 +41403,7 @@ function registerTools(mcp, ctx, targets) {
     const run = async (a, signal, onProgress, background, job) => {
       const dlog = log.child("delegate");
       const cwd = a.cwd || ctx.cwd();
-      const access = a.worktree || a._worktree ? a.access ?? "edit" : a.access;
+      const access = a.worktree || a._worktree || isBridgeWorktree(cwd, ctx.home) ? a.access ?? "edit" : a.access;
       const wt = a._worktree ?? (a.worktree ? await createWorktree({ cwd, home: ctx.home, jobId: randomUUID5().slice(0, 8), log: dlog }) : null);
       const workdir = wt?.cwd ?? cwd;
       const watchChanges = !wt && (access === "edit" || access === "ask" && target === "codex");
@@ -41372,6 +41516,7 @@ ${a.prompt}
             signal,
             onProgress: feed.report,
             extraEnv: link?.childEnv(),
+            writableRoots: access === "edit" || a.sandbox === "workspace-write" ? await gitDirsOutside(workdir, dlog) : void 0,
             onSession: (id) => {
               feed.meta({ session: id });
               if (job) ctx.jobs?.note(job, { sessionId: id, workdir, worktree: wt });
@@ -41417,7 +41562,8 @@ ${asked.join("\n")}` : "No permission requests were needed." : t("ask.unsupporte
       if (usage) notes.push(usage);
       if (wt) {
         try {
-          notes.push(worktreeReport(wt, await finishWorktree(wt, a.prompt, dlog)));
+          const message = subagentCommitMessage({ answer: res.text, task: a.prompt, job: a._job, agent: target, model: a.model ?? defaultModel });
+          notes.push(worktreeReport(wt, await finishWorktree(wt, message, dlog)));
         } catch (err) {
           notes.push(`Could not commit the changes in worktree ${wt.path} (branch ${wt.branch}): ${err.message}`);
         }
@@ -41490,7 +41636,12 @@ ${res.text || t("delegate.empty")}`, res.isError);
         if (!jobs) throw new BridgeError("bad_request", t("err.delegatedSession"));
         if (!jobs.canStart()) return text(t("jobs.limit", { max: MAX_RUNNING_JOBS }), true);
         const job = jobs.start(target, a.model ?? defaultModel, a.prompt, (signal, onProgress, job2) => run({ ...a, _job: job2.name }, signal, onProgress, true, job2), resumeFor(a), keep(a));
-        return text(t("jobs.started", { name: job.name }));
+        const cwd = a.cwd || ctx.cwd();
+        const access = a.access ?? (a.worktree || isBridgeWorktree(cwd, ctx.home) ? "edit" : null);
+        const exact = a.sandbox !== void 0 || a.permission_mode !== void 0 || a.auto_approve !== void 0;
+        const note = exact ? "" : `
+${access === "edit" ? t("jobs.accessEdit") : access === "ask" ? t("jobs.accessAsk") : t("jobs.accessRead")}`;
+        return text(`${t("jobs.started", { name: job.name })}${note}`);
       })
     );
   }

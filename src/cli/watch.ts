@@ -1,4 +1,5 @@
 import { closeSync, existsSync, openSync, readdirSync, readSync, statSync } from "node:fs";
+import { StringDecoder } from "node:string_decoder";
 import { join } from "node:path";
 import { RUNS_DIR_NAME } from "../core/runfeed.js";
 
@@ -21,6 +22,7 @@ export function findRunLog(home: string, filter?: string): string | null {
 export async function watchRunLog(path: string, out: (s: string) => void): Promise<void> {
   let offset = 0;
   let pending = "";
+  const decoder = new StringDecoder("utf8");
   for (;;) {
     const size = statSync(path).size;
     if (size > offset) {
@@ -29,7 +31,8 @@ export async function watchRunLog(path: string, out: (s: string) => void): Promi
         const buf = Buffer.alloc(Math.min(CHUNK, size - offset));
         const n = readSync(fd, buf, 0, buf.length, offset);
         offset += n;
-        pending += buf.subarray(0, n).toString("utf8");
+        // A chunk can end inside a multi-byte character: the decoder keeps the partial bytes for the next read.
+        pending += decoder.write(buf.subarray(0, n));
       } finally {
         closeSync(fd);
       }

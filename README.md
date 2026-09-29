@@ -123,6 +123,7 @@ Peer names default to `<agent>-<project folder>`, for example `codex-myrepo` (`<
 ### Editing subagents: access and worktrees
 
 - `access: "read"` (the default) lets a delegated agent look but not change anything. `access: "ask"` asks you for each change (see below). `access: "edit"` lets it change files.
+- A subagent started in an existing agent-bridge worktree (`cwd` inside `~/.agent-bridge/worktrees`) gets `access: "edit"` by default. The spawn result always says which access a job has.
 - `worktree: true` runs the subagent in its own git worktree on a branch `agent-bridge/<id>`. Your working copy stays untouched. The result shows a diff summary and the exact commands to review, merge (`git merge agent-bridge/<id>`) or discard the changes. Use it for parallel or risky edits.
 - Results also list the files changed in place (for `access: "edit"` without a worktree) and the token usage or cost the CLI reported.
 
@@ -135,6 +136,10 @@ How `read` is enforced per agent:
 | Claude | editing and shell tools removed (`--disallowedTools`); Read, Grep and Glob stay | `acceptEdits` |
 
 Why so strict: in testing, permission modes alone did not hold. An `approvals_reviewer = "auto_review"` Codex setting approved writes past the read-only sandbox. Headless Claude wrote files and ran commands even in `manual` mode. opencode's default rules allow everything. `agent-bridge reliability` checks all three.
+
+Read-only also covers MCP tools, which can change things too: a read-only Claude subagent gets every configured MCP server denied (plugins, `~/.claude.json`, the project's `.mcp.json`, claude.ai connectors) except agent-bridge's own, so it can still answer you; read-only opencode subagents keep only `bridge_send` of all MCP tools; Codex asks its parent before any MCP tool call.
+
+Codex edit jobs in a linked git worktree may write that worktree's git data in the main repository (`.git/worktrees/<name>` and the shared `.git`), so they can commit on their own branch. Work a subagent leaves uncommitted is committed for it with a subject taken from its answer and a `Co-Authored-By` line naming the agent and model.
 
 A read-only Claude subagent therefore cannot run shell commands such as `git diff`. Give it `access: "edit"`, ideally with `worktree: true`, if it needs them.
 
@@ -201,7 +206,7 @@ Turn the automatic start off with `"dashboard": false` in `~/.agent-bridge/confi
 The dashboard has an **Overview** and a **tab per session**:
 
 - **Overview:** every connected Claude Code, Codex and opencode session as a card (busy or idle, folder, version, how many subagents it started and how many are working), the latest subagents of all sessions, and the message history with a box to send a message yourself (as "you").
-- **Session tab:** the subagents this session started, and for the selected one its whole conversation: the task, what it said, its commands (bursts fold into one row), its answer, and every follow-up as a further turn. Runs are grouped under the session that started them, never shown as sessions of their own.
+- **Session tab:** the subagents this session started (finished ones older than 30 minutes fold into an archive), and for the selected one its whole conversation: the task, what it said, its commands (bursts fold into one row), its answer, and every follow-up as a further turn. Runs are grouped under the session that started them, never shown as sessions of their own.
 
 It only listens on 127.0.0.1. Its link contains a secret (stored in `~/.agent-bridge/dashboard.json`, readable only by you on Unix); without it the dashboard refuses every request, also from other local programs and web pages. `ui` options: `--port=N`, `--no-open`.
 
