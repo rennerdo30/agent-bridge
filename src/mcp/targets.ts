@@ -4,6 +4,7 @@ import { DelegateError, delegateToClaude, delegateToCodex, delegateToOpencode, t
 import { listOpencodeModels, resolveOpencodeModel } from "../core/opencode-models.js";
 import { delegateToOpencodeServed } from "../core/opencode-served.js";
 import { delegateToCodexAppServer } from "../core/codex-appserver.js";
+import { codexEnvironmentNote } from "../core/codex-env.js";
 
 /** Set to 1 to run Codex subagents with `codex exec` (no live messages) instead of `codex app-server`. */
 export const CODEX_EXEC_ENV = "AGENT_BRIDGE_CODEX_EXEC";
@@ -71,7 +72,7 @@ export const DELEGATION_TARGETS: Record<CodingAgent, DelegationTarget> = {
     modelExample: '"gpt-6-sol"',
     defaultModel: (cfg) => cfg.codexModel,
     schema: { sandbox: z.enum(CODEX_SANDBOXES as [string, ...string[]]).optional().describe("Overrides access with an exact Codex sandbox mode") },
-    permissionNote: (cfg) => `Codex runs in the "${cfg.codexSandbox}" sandbox unless you pass access or sandbox.`,
+    permissionNote: (cfg) => `Codex runs in the "${cfg.codexSandbox}" sandbox unless you pass access or sandbox.${codexEnvironmentNote()}`,
     run: async (cfg, base, a) => {
       const sandbox = (a.sandbox as CodexSandbox | undefined) ?? (a.access ? CODEX_SANDBOX_FOR[a.access] : cfg.codexSandbox);
       const relay = a.access === "ask" && Boolean(a.relay?.codexHookTrusted);
