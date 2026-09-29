@@ -42,6 +42,9 @@ export const SOCKET_FILE_NAME = "bridge.sock";
 export const ELECTION_RETRY_MIN_MS = 100;
 export const ELECTION_RETRY_MAX_MS = 600;
 export const ELECTION_MAX_ATTEMPTS = 20;
+/** After a failed election, retry in the background with this backoff (doubling up to the cap). */
+export const RECONNECT_BACKOFF_MIN_MS = 1_000;
+export const RECONNECT_BACKOFF_MAX_MS = 30_000;
 export const CONNECT_TIMEOUT_MS = 2_000;
 export const REQUEST_TIMEOUT_MS = 10_000;
 
@@ -54,6 +57,11 @@ export const MAX_BODY_CHARS = 200_000;
 /** Undelivered messages older than this are purged by the broker. */
 export const MESSAGE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 export const PURGE_INTERVAL_MS = 60 * 60 * 1000;
+/**
+ * Queued mail older than this is dropped when a peer claims its name: peer names are reused (they come
+ * from the project folder), so a new session must not inherit an old one's stale backlog.
+ */
+export const QUEUED_MAIL_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
 /** Loop protection: messages at or beyond this hop count never auto-wake an agent. */
 export const DEFAULT_MAX_HOPS = 6;

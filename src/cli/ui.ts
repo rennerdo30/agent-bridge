@@ -189,7 +189,23 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
   const secret = opts.secret ?? randomBytes(SECRET_BYTES).toString("hex");
   const token = loadOrCreateToken(opts.home);
   const dbPath = resolveDbPath(opts.home);
-  let sender: BridgeNode | null = null;
+  /** The lazily started "you" peer; one shared start, so concurrent sends never start two. */
+  let sender: Promise<BridgeNode> | null = null;
+  const getSender = (): Promise<BridgeNode> => {
+    sender ??= (async () => {
+      const node = new BridgeNode({ pipePath: opts.pipe, token, dbPath, agent: "other", name: UI_PEER_NAME, cwd: opts.home, autoWake: false, log: opts.log });
+      try {
+        await node.start();
+        return node;
+      } catch (err) {
+        // Let the next send start afresh instead of keeping a half-started node (and its retries).
+        sender = null;
+        await node.stop();
+        throw err;
+      }
+    })();
+    return sender;
+  };
 
   const handle = async (req: IncomingMessage, res: ServerResponse) => {
     const host = String(req.headers.host ?? "").replace(/:\d+$/, "");
@@ -235,11 +251,7 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
       const to = String(body.to ?? "").trim();
       const text = String(body.body ?? "").trim();
       if (!to || !text) return send(res, 400, { error: "to and body are required" });
-      if (!sender) {
-        sender = new BridgeNode({ pipePath: opts.pipe, token, dbPath, agent: "other", name: UI_PEER_NAME, cwd: opts.home, autoWake: false, log: opts.log });
-        await sender.start();
-      }
-      const r = await sender.send({ to, body: text });
+      const r = await (await getSender()).send({ to, body: text });
       return send(res, 200, { id: r.messages[0]?.id, deliveredTo: r.deliveredTo, queuedFor: r.queuedFor });
     }
     return send(res, 404, { error: "not found" });
@@ -260,7 +272,7 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
     url: `http://${UI_HOST}:${port}/?t=${secret}`,
     port,
     close: async () => {
-      await sender?.stop();
+      await (await sender?.catch(() => null))?.stop();
       await new Promise<void>((r) => server.close(() => r()));
     },
   };

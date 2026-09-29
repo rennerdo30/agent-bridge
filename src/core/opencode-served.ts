@@ -19,8 +19,33 @@ const MAX_DETAIL_CHARS = 4_000;
 const ASK_PERMISSIONS = { edit: "ask", bash: "ask" };
 /** If the session shows no sign of life this long after the prompt, something is wrong (bad model, auth). */
 const START_WATCHDOG_MS = 60_000;
+/** Server output kept for error reports; the listen line and a failure's last words fit easily. */
+const SERVE_OUTPUT_TAIL_CHARS = 4_000;
 
 type Json = Record<string, any>;
+
+/**
+ * Watches `opencode serve` output for its listen line. Only a bounded tail is kept, and nothing once the
+ * server is up: it runs (and logs) for the whole delegated run, which can take hours. The pipes are still
+ * drained so the server never blocks on a full pipe.
+ */
+export function watchServeOutput(onListening: (url: string) => void): { onData: (d: Buffer | string) => void; tail: () => string } {
+  let out = "";
+  let listening = false;
+  return {
+    onData: (d) => {
+      if (listening) return;
+      out = (out + d.toString()).slice(-SERVE_OUTPUT_TAIL_CHARS);
+      const m = LISTEN_RE.exec(out);
+      if (m) {
+        listening = true;
+        out = "";
+        onListening(m[1]!.replace(/\/+$/, ""));
+      }
+    },
+    tail: () => out,
+  };
+}
 
 function startServe(bin: string, cwd: string, env: NodeJS.ProcessEnv): Promise<{ child: ChildProcess; url: string }> {
   let resolved = resolveBinary(bin, env);
@@ -41,28 +66,23 @@ function startServe(bin: string, cwd: string, env: NodeJS.ProcessEnv): Promise<{
       detached: process.platform !== "win32",
     });
     trackChild(child);
-    let out = "";
+    const output = watchServeOutput((url) => {
+      clearTimeout(timer);
+      resolve({ child, url });
+    });
     const timer = setTimeout(() => {
       void killTree(child);
-      reject(new DelegateError("opencode serve did not start in time", "timeout", out.slice(-2_000)));
+      reject(new DelegateError("opencode serve did not start in time", "timeout", output.tail()));
     }, SERVE_START_TIMEOUT_MS);
-    const onData = (d: Buffer) => {
-      out += d.toString();
-      const m = LISTEN_RE.exec(out);
-      if (m) {
-        clearTimeout(timer);
-        resolve({ child, url: m[1]!.replace(/\/+$/, "") });
-      }
-    };
-    child.stdout!.on("data", onData);
-    child.stderr!.on("data", onData);
+    child.stdout!.on("data", output.onData);
+    child.stderr!.on("data", output.onData);
     child.on("error", (err) => {
       clearTimeout(timer);
       reject(new DelegateError(`failed to start opencode serve: ${err.message}`, "failed"));
     });
     child.on("exit", (code) => {
       clearTimeout(timer);
-      reject(new DelegateError(`opencode serve exited early (code ${code})`, "failed", out.slice(-2_000)));
+      reject(new DelegateError(`opencode serve exited early (code ${code})`, "failed", output.tail()));
     });
   });
 }

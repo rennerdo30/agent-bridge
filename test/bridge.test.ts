@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { BridgeClient } from "../src/core/client.js";
-import { PROTOCOL_VERSION } from "../src/core/constants.js";
+import { PROTOCOL_VERSION, QUEUED_MAIL_MAX_AGE_MS } from "../src/core/constants.js";
 import { nullLogger } from "../src/core/logger.js";
 import { BridgeNode } from "../src/core/node.js";
-import { BridgeError } from "../src/core/protocol.js";
+import { BridgeError, type BridgeMessage } from "../src/core/protocol.js";
+import { MessageStore } from "../src/core/store.js";
 import { loadOrCreateToken } from "../src/core/token.js";
 import { makeEnv, until, type TestEnv } from "./helpers.js";
 
@@ -58,6 +59,65 @@ describe("broker election", () => {
     await later.start();
     await until(() => later.unread().length === 1);
     expect(later.unread()[0]!.body).toBe("hello later");
+  });
+});
+
+describe("background re-election", () => {
+  it("keeps retrying with backoff after a failed start and joins once it can", async () => {
+    const good = env.node("good");
+    await good.start();
+    // The running broker refuses this node (other token): start fails, but the node keeps trying.
+    const other = new BridgeNode({ pipePath: env.pipe, token: "other-token", dbPath: env.db, agent: "other", name: "other", cwd: env.home, autoWake: false, log: nullLogger });
+    try {
+      await expect(other.start()).rejects.toMatchObject({ code: "unauthorized" });
+      await good.stop();
+      await until(() => other.isConnected && other.isBroker, 8_000);
+    } finally {
+      await other.stop();
+    }
+  });
+
+  it("stops retrying once the node is stopped", async () => {
+    const good = env.node("good");
+    await good.start();
+    const other = new BridgeNode({ pipePath: env.pipe, token: "other-token", dbPath: env.db, agent: "other", name: "other", cwd: env.home, autoWake: false, log: nullLogger });
+    await expect(other.start()).rejects.toMatchObject({ code: "unauthorized" });
+    await other.stop();
+    await good.stop();
+    await new Promise((r) => setTimeout(r, 1_500));
+    expect(other.isConnected).toBe(false);
+  });
+});
+
+describe("queued mail age limit", () => {
+  const queued = (id: string, recipient: string, createdAt: number): BridgeMessage => ({
+    id,
+    recipient,
+    from: { id: "x", name: "old-sender", agent: "claude" },
+    to: recipient,
+    conversationId: id,
+    replyTo: null,
+    hop: 0,
+    body: id,
+    createdAt,
+    readAt: null,
+  });
+
+  it("a session claiming a name gets recent queued mail, not a day-old backlog meant for an earlier session", async () => {
+    const now = Date.now();
+    const stale = now - QUEUED_MAIL_MAX_AGE_MS - 60_000;
+    const store = new MessageStore(env.db, nullLogger);
+    store.insert(queued("old-by-name", "codex-app", stale));
+    store.insert(queued("old-by-kind", "agent:codex", stale));
+    store.insert(queued("fresh-by-name", "codex-app", now - 60_000));
+    store.insert(queued("fresh-by-kind", "agent:codex", now - 60_000));
+    store.close();
+
+    const codex = env.node("codex-app", "codex");
+    await codex.start();
+    await until(() => codex.unread().length === 2);
+    await new Promise((r) => setTimeout(r, 100));
+    expect(codex.unread().map((m) => m.body).sort()).toEqual(["fresh-by-kind", "fresh-by-name"]);
   });
 });
 

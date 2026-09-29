@@ -9,6 +9,8 @@ import {
   APP_VERSION,
   ELECTION_RETRY_MIN_MS,
   PROTOCOL_VERSION,
+  RECONNECT_BACKOFF_MAX_MS,
+  RECONNECT_BACKOFF_MIN_MS,
 } from "./constants.js";
 import type { Logger } from "./logger.js";
 import { BridgeError, type AgentKind, type BridgeMessage, type PeerActivity, type PeerInfo, type SendArgs, type SendResult } from "./protocol.js";
@@ -55,6 +57,8 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
   private broker: Broker | null = null;
   private stopping = false;
   private electing: Promise<void> | null = null;
+  private reconnectTimer: NodeJS.Timeout | null = null;
+  private reconnectDelay = RECONNECT_BACKOFF_MIN_MS;
   private currentName: string;
   private readonly inbox = new Map<string, BridgeMessage>();
   private readonly readIds = new Set<string>();
@@ -95,6 +99,8 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
 
   async stop(): Promise<void> {
     this.stopping = true;
+    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = null;
     this.client?.close();
     this.client = null;
     if (this.broker) await this.broker.close();
@@ -102,13 +108,42 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
     this.log.info("bridge node stopped");
   }
 
-  /** Connects (electing a broker if needed). Concurrent callers share one attempt. */
+  /**
+   * Connects (electing a broker if needed). Concurrent callers share one attempt. When it fails, the
+   * node keeps retrying in the background (see scheduleReconnect) instead of staying disconnected.
+   */
   ensureConnected(): Promise<void> {
     if (this.isConnected) return Promise.resolve();
-    this.electing ??= this.elect().finally(() => {
-      this.electing = null;
-    });
+    this.electing ??= this.elect()
+      .catch((err) => {
+        this.scheduleReconnect(this.nextBackoff());
+        throw err;
+      })
+      .finally(() => {
+        this.electing = null;
+      });
     return this.electing;
+  }
+
+  /** Doubling delay for background retries, capped; reset once connected. */
+  private nextBackoff(): number {
+    const delay = this.reconnectDelay;
+    this.reconnectDelay = Math.min(delay * 2, RECONNECT_BACKOFF_MAX_MS);
+    return delay;
+  }
+
+  /**
+   * Retry the election later until connected or stopped. Also after "unauthorized" / "protocol_mismatch":
+   * the incompatible broker may exit (e.g. after an update) and this node then takes over.
+   */
+  private scheduleReconnect(delayMs: number): void {
+    if (this.stopping || this.reconnectTimer) return;
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      if (this.stopping || this.isConnected) return;
+      this.ensureConnected().catch((err) => this.log.warn("re-election failed; retrying with backoff", { err: (err as Error).message }));
+    }, delayMs);
+    this.reconnectTimer.unref();
   }
 
   private async elect(): Promise<void> {
@@ -209,6 +244,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
   private afterHello(client: BridgeClient, hello: { name: string; brokerPid: number }): void {
     this.client = client;
     this.currentName = hello.name;
+    this.reconnectDelay = RECONNECT_BACKOFF_MIN_MS;
     client.once("close", () => this.onClose(client));
     if (this.unflushedAcks.size > 0) {
       const ids = [...this.unflushedAcks];
@@ -228,9 +264,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
     if (this.stopping) return;
     this.log.warn("lost connection to broker; re-electing");
     this.emit("disconnected");
-    setTimeout(() => {
-      this.ensureConnected().catch((err) => this.log.error("re-election failed", { err: (err as Error).message }));
-    }, jitter()).unref();
+    this.scheduleReconnect(jitter());
   }
 
   private onEvent(ev: string, data: unknown): void {

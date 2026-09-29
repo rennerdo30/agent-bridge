@@ -6,6 +6,7 @@ import {
   MESSAGE_TTL_MS,
   PROTOCOL_VERSION,
   PURGE_INTERVAL_MS,
+  QUEUED_MAIL_MAX_AGE_MS,
 } from "./constants.js";
 import type { Logger } from "./logger.js";
 import {
@@ -241,6 +242,8 @@ export class Broker {
       version: typeof p.version === "string" ? p.version.slice(0, 32) : undefined,
     };
     conn.peer = peer;
+    this.expireStaleQueue(agentQueueKey(peer.agent));
+    this.expireStaleQueue(peer.name);
     const claimed = this.store.claim(agentQueueKey(peer.agent), peer.name);
     this.log.info("peer joined", { name, agent: peer.agent, cwd: peer.cwd, claimed });
     this.broadcastEvent("peer_joined", peer, conn);
@@ -262,6 +265,7 @@ export class Broker {
       const old = peer.name;
       peer.name = this.uniqueName(args.name);
       this.log.info("peer renamed", { from: old, to: peer.name });
+      this.expireStaleQueue(peer.name);
       // Mail that was waiting under the new name is now ours.
       setImmediate(() => {
         for (const m of this.store.unread(peer.name, PENDING_MAX_LIMIT)) this.emit(conn, "message", m);
@@ -269,6 +273,20 @@ export class Broker {
     }
     this.log.debug("peer updated", { name: peer.name, sessionId: peer.sessionId, autoWake: peer.autoWake, cwd: peer.cwd });
     return peer;
+  }
+
+  /**
+   * Before a peer takes over queued mail. Names are derived from the project folder and reused by every
+   * later session there, so a name alone does not identify the session that mail was meant for. Mail that
+   * waited longer than QUEUED_MAIL_MAX_AGE_MS most likely belongs to a session that is gone; recent mail
+   * still reaches a session that restarted or reconnected after a broker hand-over.
+   */
+  private expireStaleQueue(key: string): void {
+    try {
+      this.store.expireQueued(key, this.now() - QUEUED_MAIL_MAX_AGE_MS);
+    } catch (err) {
+      this.log.warn("expiring queued mail failed", { key, err });
+    }
   }
 
   /** Turns a sender-supplied target into live connections and/or offline queue keys. */
