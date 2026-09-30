@@ -36490,7 +36490,7 @@ import { basename, join as join2 } from "node:path";
 import { homedir } from "node:os";
 import { join } from "node:path";
 var APP_NAME = "agent-bridge";
-var APP_VERSION = "0.16.0";
+var APP_VERSION = "0.16.1";
 var PROTOCOL_VERSION = 2;
 var ENV = {
   home: "AGENT_BRIDGE_HOME",
@@ -39912,7 +39912,100 @@ import { createServer as createServer4 } from "node:http";
 import { join as join11 } from "node:path";
 import { DatabaseSync as DatabaseSync2 } from "node:sqlite";
 
+// src/cli/markdown.ts
+function renderMarkdown(src) {
+  const esc2 = (s) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+  const safeUrl = (u) => /^(https?:\/\/|mailto:)/i.test(u) ? u : null;
+  const inline = (text2) => {
+    const codes = [];
+    let s = text2.replace(/`([^`\n]+)`/g, (_, c) => `\0${codes.push(`<code>${esc2(c)}</code>`) - 1}\0`);
+    s = esc2(s);
+    s = s.replace(/\[([^\]\n]+)\]\(([^)\s]+)\)/g, (m, label, url2) => {
+      const href = safeUrl(url2.replace(/&amp;/g, "&"));
+      return href ? `<a href="${esc2(href)}" target="_blank" rel="noopener noreferrer">${label}</a>` : m;
+    });
+    s = s.replace(/(^|[\s(])(https?:\/\/[^\s<]+[^\s<.,;:!?)])/g, (_, pre, url2) => `${pre}<a href="${url2}" target="_blank" rel="noopener noreferrer">${url2}</a>`);
+    s = s.replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>").replace(/__([^_\n]+)__/g, "<strong>$1</strong>");
+    s = s.replace(/(^|[^\w*])\*([^*\s][^*\n]*?)\*(?!\w)/g, "$1<em>$2</em>").replace(/(^|[^\w])_([^_\s][^_\n]*?)_(?!\w)/g, "$1<em>$2</em>");
+    s = s.replace(/~~([^~\n]+)~~/g, "<del>$1</del>");
+    return s.replace(/\u0000(\d+)\u0000/g, (_, i) => codes[Number(i)]);
+  };
+  const cells = (row) => row.trim().replace(/^\||\|$/g, "").split("|").map((c) => c.trim());
+  const lines = src.replace(/\r\n?/g, "\n").split("\n");
+  const out = [];
+  let para = [];
+  const flush = () => {
+    if (para.length) out.push(`<p>${para.map(inline).join("<br>")}</p>`);
+    para = [];
+  };
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const fence = /^\s*(```|~~~)\s*([\w+-]*)\s*$/.exec(line);
+    if (fence) {
+      flush();
+      const body = [];
+      for (i++; i < lines.length && !lines[i].trim().startsWith(fence[1]); i++) body.push(lines[i]);
+      out.push(`<pre><code>${esc2(body.join("\n"))}</code></pre>`);
+      continue;
+    }
+    if (!line.trim()) {
+      flush();
+      continue;
+    }
+    const heading = /^(#{1,6})\s+(.*)$/.exec(line);
+    if (heading) {
+      flush();
+      const level = Math.min(heading[1].length + 2, 6);
+      out.push(`<h${level}>${inline(heading[2])}</h${level}>`);
+      continue;
+    }
+    if (/^\s*([-*_])(\s*\1){2,}\s*$/.test(line)) {
+      flush();
+      out.push("<hr>");
+      continue;
+    }
+    if (/^\s*\|.*\|\s*$/.test(line) && /^\s*\|?\s*:?-{2,}/.test(lines[i + 1] ?? "")) {
+      flush();
+      const head = cells(line);
+      const rows = [];
+      for (i += 2; i < lines.length && /^\s*\|.*\|\s*$/.test(lines[i]); i++) rows.push(cells(lines[i]));
+      i--;
+      out.push(
+        `<table><thead><tr>${head.map((c) => `<th>${inline(c)}</th>`).join("")}</tr></thead><tbody>` + rows.map((r) => `<tr>${r.map((c) => `<td>${inline(c)}</td>`).join("")}</tr>`).join("") + "</tbody></table>"
+      );
+      continue;
+    }
+    const list = /^(\s*)([-*+]|\d+[.)])\s+(.*)$/.exec(line);
+    if (list) {
+      flush();
+      const ordered = /\d/.test(list[2]);
+      const items = [];
+      for (; i < lines.length; i++) {
+        const m = /^(\s*)([-*+]|\d+[.)])\s+(.*)$/.exec(lines[i]);
+        if (m && /\d/.test(m[2]) === ordered) items.push(`<li${m[1].length >= 2 ? ' class="sub"' : ""}>${inline(m[3])}</li>`);
+        else if (items.length && /^\s{2,}\S/.test(lines[i])) items[items.length - 1] = items[items.length - 1].replace(/<\/li>$/, `<br>${inline(lines[i].trim())}</li>`);
+        else break;
+      }
+      i--;
+      out.push(`<${ordered ? "ol" : "ul"}>${items.join("")}</${ordered ? "ol" : "ul"}>`);
+      continue;
+    }
+    if (/^\s*>/.test(line)) {
+      flush();
+      const quoted = [];
+      for (; i < lines.length && /^\s*>/.test(lines[i]); i++) quoted.push(lines[i].replace(/^\s*>\s?/, ""));
+      i--;
+      out.push(`<blockquote>${quoted.map(inline).join("<br>")}</blockquote>`);
+      continue;
+    }
+    para.push(line);
+  }
+  flush();
+  return out.join("");
+}
+
 // src/cli/ui-page.ts
+var MARKDOWN_SOURCE = `(() => { const __name = (f) => f; return ${renderMarkdown.toString()}; })()`;
 var UI_PAGE = `<!doctype html>
 <html lang="en">
 <head>
@@ -40016,7 +40109,7 @@ h3 .n { color: var(--faint); font-weight: 500; }
 .msg:last-child { border-bottom: 0; }
 .msg .meta { font-size: 12px; color: var(--muted); margin-bottom: 3px; }
 .msg .meta b { color: var(--text); font-weight: 600; }
-.msg .body { white-space: pre-wrap; overflow-wrap: anywhere; }
+.msg .body { overflow-wrap: anywhere; }
 form { display: flex; gap: 8px; padding: 12px; border-top: 1px solid var(--line); background: var(--panel-2); flex-wrap: wrap; }
 select, textarea, button { font: inherit; color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
 textarea { flex: 1 1 220px; min-height: 40px; resize: vertical; }
@@ -40046,7 +40139,20 @@ button:disabled { opacity: .6; cursor: default; }
 .chat .turn::before, .chat .turn::after { content: ""; flex: 1; height: 1px; background: var(--line); }
 .msgrow { display: flex; gap: 10px; align-items: flex-start; max-width: 88%; }
 .msgrow.me { align-self: flex-end; flex-direction: row-reverse; }
-.bubble { padding: 10px 14px; border-radius: 12px; background: var(--panel-2); border: 1px solid var(--line); white-space: pre-wrap; overflow-wrap: anywhere; min-width: 0; }
+.bubble { padding: 10px 14px; border-radius: 12px; background: var(--panel-2); border: 1px solid var(--line); overflow-wrap: anywhere; min-width: 0; }
+.bubble p, .msg .body p { margin: 0 0 .55em; }
+.bubble > :last-child, .msg .body > :last-child { margin-bottom: 0; }
+.bubble h3, .bubble h4, .bubble h5, .bubble h6, .msg .body h3, .msg .body h4 { margin: .7em 0 .35em; font-size: 14px; }
+.bubble ul, .bubble ol, .msg .body ul, .msg .body ol { margin: .3em 0 .55em; padding-left: 1.4em; }
+.bubble li.sub { margin-left: 1.2em; }
+.bubble code, .msg .body code { font-family: var(--mono); font-size: 12px; background: var(--code-bg, rgba(127,127,127,.15)); padding: 1px 5px; border-radius: 4px; }
+.bubble pre, .msg .body pre { margin: .4em 0 .6em; padding: 10px 12px; border-radius: 8px; background: rgba(127,127,127,.12); overflow-x: auto; white-space: pre; }
+.bubble pre code, .msg .body pre code { background: none; padding: 0; }
+.bubble blockquote { margin: .4em 0; padding-left: 10px; border-left: 3px solid var(--line); color: var(--muted); }
+.bubble table { border-collapse: collapse; margin: .4em 0 .6em; font-size: 12.5px; display: block; overflow-x: auto; }
+.bubble th, .bubble td { border: 1px solid var(--line); padding: 4px 8px; text-align: left; }
+.bubble hr { border: 0; border-top: 1px solid var(--line); margin: .6em 0; }
+.bubble a, .msg .body a { color: var(--accent); }
 .msgrow.me .bubble { background: var(--accent-soft); border-color: transparent; }
 .bubble .who { display: block; font-size: 11.5px; font-weight: 600; color: var(--muted); margin-bottom: 4px; }
 .bubble.answer { background: var(--ok-soft); border-color: transparent; }
@@ -40056,7 +40162,7 @@ button:disabled { opacity: .6; cursor: default; }
 .bubble.clamp::after { content: "Show all \u25BE"; position: absolute; left: 0; right: 0; bottom: 0; height: 30px; line-height: 30px; padding: 0 14px; background: var(--accent-soft); color: var(--accent); font-size: 12px; font-weight: 600; }
 .steps { margin-left: 36px; border-left: 2px solid var(--line); padding-left: 12px; display: flex; flex-direction: column; gap: 3px; min-width: 0; width: calc(88% - 36px); overflow: hidden; }
 .steps details, .steps summary { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.chat > * { min-width: 0; }
+.chat > * { min-width: 0; flex-shrink: 0; } /* the panel scrolls; rows must never be squeezed (steps hide overflow) */
 .steps summary { cursor: pointer; font-size: 12.5px; color: var(--muted); padding: 2px 0; list-style: none; }
 .steps summary::-webkit-details-marker { display: none; }
 .steps summary::before { content: "\u25B8 "; }
@@ -40119,6 +40225,8 @@ const FOLD_STEPS = 3;
 const ARCHIVE_AFTER_MS = 30 * 60_000;
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+/** Markdown of agent messages (escaped first; see markdown.ts). */
+const md = ${MARKDOWN_SOURCE};
 const time = (t) => new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 const ago = (t) => { const s = Math.max(0, Math.round((Date.now() - t) / 1000)); return s < 60 ? "just now" : s < 3600 ? Math.floor(s / 60) + "m ago" : s < 86400 ? Math.floor(s / 3600) + "h ago" : Math.floor(s / 86400) + "d ago"; };
 const up = (t) => { const m = Math.max(0, Math.floor((Date.now() - t) / 60000)); return m < 60 ? m + "m" : Math.floor(m / 60) + "h " + (m % 60) + "m"; };
@@ -40286,7 +40394,7 @@ function renderSession() {
 function messagesHtml(msgs) {
   return msgs.length ? msgs.slice(0, 100).map((m) =>
     '<div class="msg"><div class="meta"><b>' + esc(m.from_name) + "</b> \u2192 " + esc(m.recipients || m.to_target) + " \xB7 " + time(m.created_at) + "</div>" +
-    '<div class="body">' + esc(m.body) + "</div></div>").join("") : '<div class="empty">No messages yet.</div>';
+    '<div class="body">' + md(m.body) + "</div></div>").join("") : '<div class="empty">No messages yet.</div>';
 }
 
 function renderSendForm(inSession) {
@@ -40351,7 +40459,7 @@ function renderConversation(g) {
     const long = t.prompt.length > 600 && !opened.has(id);
     return (g.turns.length > 1 ? '<div class="turn">' + (i === 0 ? "Task" : "Follow-up " + i) + " \xB7 " + time(r.startedAt) + " \xB7 " + pill(r.status) + "</div>" : "") +
       '<div class="msgrow me">' + av(state.peers.find((p) => p.name === g.owner)?.agent || "other", true) +
-      '<div class="bubble' + (long ? " clamp" : "") + '" data-open="' + esc(id) + '"><span class="who">' + (i === 0 ? esc(g.owner) : "follow-up from " + esc(g.owner)) + "</span>" + esc(t.prompt.trim()) + "</div></div>" +
+      '<div class="bubble' + (long ? " clamp" : "") + '" data-open="' + esc(id) + '"><span class="who">' + (i === 0 ? esc(g.owner) : "follow-up from " + esc(g.owner)) + "</span>" + md(t.prompt.trim()) + "</div></div>" +
       stepsHtml(t.steps, g.agent, r.name, () => n++);
   }).join("");
   if (html === lastChat) return;
@@ -40412,8 +40520,8 @@ function stepsHtml(text, agent, run) {
     if (it.kind === "step") { buf.push(it); continue; }
     flush();
     if (it.kind === "sys") html += '<div class="sys">' + esc(it.text) + "</div>";
-    else if (it.kind === "live") html += '<div class="msgrow me">' + av(state.peers.find((p) => p.name === it.who)?.agent || "other", true) + '<div class="bubble"><span class="who">' + esc(it.who) + " \xB7 while it works</span>" + esc(it.text) + "</div></div>";
-    else html += '<div class="msgrow">' + av(agent, true) + '<div class="bubble' + (it.kind === "answer" ? " answer" : "") + '">' + (it.kind === "answer" ? '<span class="who">Answer</span>' : "") + esc(it.text) + "</div></div>";
+    else if (it.kind === "live") html += '<div class="msgrow me">' + av(state.peers.find((p) => p.name === it.who)?.agent || "other", true) + '<div class="bubble"><span class="who">' + esc(it.who) + " \xB7 while it works</span>" + md(it.text) + "</div></div>";
+    else html += '<div class="msgrow">' + av(agent, true) + '<div class="bubble' + (it.kind === "answer" ? " answer" : "") + '">' + (it.kind === "answer" ? '<span class="who">Answer</span>' : "") + md(it.text) + "</div></div>";
   }
   flush();
   return html || '<div class="sys">Waiting for the first step\u2026</div>';

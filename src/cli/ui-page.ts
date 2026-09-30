@@ -3,6 +3,14 @@
  * Overview of all sessions, plus a tab per session with the subagents it started, each shown as a
  * conversation (task, steps, answer, follow-ups).
  */
+import { renderMarkdown } from "./markdown.js";
+
+/**
+ * The renderer as page script. Bundlers may wrap functions in a __name(...) helper (keepNames); the page
+ * has no such helper, so the source brings a no-op one along.
+ */
+export const MARKDOWN_SOURCE = `(() => { const __name = (f) => f; return ${renderMarkdown.toString()}; })()`;
+
 export const UI_PAGE = `<!doctype html>
 <html lang="en">
 <head>
@@ -106,7 +114,7 @@ h3 .n { color: var(--faint); font-weight: 500; }
 .msg:last-child { border-bottom: 0; }
 .msg .meta { font-size: 12px; color: var(--muted); margin-bottom: 3px; }
 .msg .meta b { color: var(--text); font-weight: 600; }
-.msg .body { white-space: pre-wrap; overflow-wrap: anywhere; }
+.msg .body { overflow-wrap: anywhere; }
 form { display: flex; gap: 8px; padding: 12px; border-top: 1px solid var(--line); background: var(--panel-2); flex-wrap: wrap; }
 select, textarea, button { font: inherit; color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
 textarea { flex: 1 1 220px; min-height: 40px; resize: vertical; }
@@ -136,7 +144,20 @@ button:disabled { opacity: .6; cursor: default; }
 .chat .turn::before, .chat .turn::after { content: ""; flex: 1; height: 1px; background: var(--line); }
 .msgrow { display: flex; gap: 10px; align-items: flex-start; max-width: 88%; }
 .msgrow.me { align-self: flex-end; flex-direction: row-reverse; }
-.bubble { padding: 10px 14px; border-radius: 12px; background: var(--panel-2); border: 1px solid var(--line); white-space: pre-wrap; overflow-wrap: anywhere; min-width: 0; }
+.bubble { padding: 10px 14px; border-radius: 12px; background: var(--panel-2); border: 1px solid var(--line); overflow-wrap: anywhere; min-width: 0; }
+.bubble p, .msg .body p { margin: 0 0 .55em; }
+.bubble > :last-child, .msg .body > :last-child { margin-bottom: 0; }
+.bubble h3, .bubble h4, .bubble h5, .bubble h6, .msg .body h3, .msg .body h4 { margin: .7em 0 .35em; font-size: 14px; }
+.bubble ul, .bubble ol, .msg .body ul, .msg .body ol { margin: .3em 0 .55em; padding-left: 1.4em; }
+.bubble li.sub { margin-left: 1.2em; }
+.bubble code, .msg .body code { font-family: var(--mono); font-size: 12px; background: var(--code-bg, rgba(127,127,127,.15)); padding: 1px 5px; border-radius: 4px; }
+.bubble pre, .msg .body pre { margin: .4em 0 .6em; padding: 10px 12px; border-radius: 8px; background: rgba(127,127,127,.12); overflow-x: auto; white-space: pre; }
+.bubble pre code, .msg .body pre code { background: none; padding: 0; }
+.bubble blockquote { margin: .4em 0; padding-left: 10px; border-left: 3px solid var(--line); color: var(--muted); }
+.bubble table { border-collapse: collapse; margin: .4em 0 .6em; font-size: 12.5px; display: block; overflow-x: auto; }
+.bubble th, .bubble td { border: 1px solid var(--line); padding: 4px 8px; text-align: left; }
+.bubble hr { border: 0; border-top: 1px solid var(--line); margin: .6em 0; }
+.bubble a, .msg .body a { color: var(--accent); }
 .msgrow.me .bubble { background: var(--accent-soft); border-color: transparent; }
 .bubble .who { display: block; font-size: 11.5px; font-weight: 600; color: var(--muted); margin-bottom: 4px; }
 .bubble.answer { background: var(--ok-soft); border-color: transparent; }
@@ -146,7 +167,7 @@ button:disabled { opacity: .6; cursor: default; }
 .bubble.clamp::after { content: "Show all ▾"; position: absolute; left: 0; right: 0; bottom: 0; height: 30px; line-height: 30px; padding: 0 14px; background: var(--accent-soft); color: var(--accent); font-size: 12px; font-weight: 600; }
 .steps { margin-left: 36px; border-left: 2px solid var(--line); padding-left: 12px; display: flex; flex-direction: column; gap: 3px; min-width: 0; width: calc(88% - 36px); overflow: hidden; }
 .steps details, .steps summary { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.chat > * { min-width: 0; }
+.chat > * { min-width: 0; flex-shrink: 0; } /* the panel scrolls; rows must never be squeezed (steps hide overflow) */
 .steps summary { cursor: pointer; font-size: 12.5px; color: var(--muted); padding: 2px 0; list-style: none; }
 .steps summary::-webkit-details-marker { display: none; }
 .steps summary::before { content: "▸ "; }
@@ -209,6 +230,8 @@ const FOLD_STEPS = 3;
 const ARCHIVE_AFTER_MS = 30 * 60_000;
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+/** Markdown of agent messages (escaped first; see markdown.ts). */
+const md = ${MARKDOWN_SOURCE};
 const time = (t) => new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 const ago = (t) => { const s = Math.max(0, Math.round((Date.now() - t) / 1000)); return s < 60 ? "just now" : s < 3600 ? Math.floor(s / 60) + "m ago" : s < 86400 ? Math.floor(s / 3600) + "h ago" : Math.floor(s / 86400) + "d ago"; };
 const up = (t) => { const m = Math.max(0, Math.floor((Date.now() - t) / 60000)); return m < 60 ? m + "m" : Math.floor(m / 60) + "h " + (m % 60) + "m"; };
@@ -376,7 +399,7 @@ function renderSession() {
 function messagesHtml(msgs) {
   return msgs.length ? msgs.slice(0, 100).map((m) =>
     '<div class="msg"><div class="meta"><b>' + esc(m.from_name) + "</b> → " + esc(m.recipients || m.to_target) + " · " + time(m.created_at) + "</div>" +
-    '<div class="body">' + esc(m.body) + "</div></div>").join("") : '<div class="empty">No messages yet.</div>';
+    '<div class="body">' + md(m.body) + "</div></div>").join("") : '<div class="empty">No messages yet.</div>';
 }
 
 function renderSendForm(inSession) {
@@ -441,7 +464,7 @@ function renderConversation(g) {
     const long = t.prompt.length > 600 && !opened.has(id);
     return (g.turns.length > 1 ? '<div class="turn">' + (i === 0 ? "Task" : "Follow-up " + i) + " · " + time(r.startedAt) + " · " + pill(r.status) + "</div>" : "") +
       '<div class="msgrow me">' + av(state.peers.find((p) => p.name === g.owner)?.agent || "other", true) +
-      '<div class="bubble' + (long ? " clamp" : "") + '" data-open="' + esc(id) + '"><span class="who">' + (i === 0 ? esc(g.owner) : "follow-up from " + esc(g.owner)) + "</span>" + esc(t.prompt.trim()) + "</div></div>" +
+      '<div class="bubble' + (long ? " clamp" : "") + '" data-open="' + esc(id) + '"><span class="who">' + (i === 0 ? esc(g.owner) : "follow-up from " + esc(g.owner)) + "</span>" + md(t.prompt.trim()) + "</div></div>" +
       stepsHtml(t.steps, g.agent, r.name, () => n++);
   }).join("");
   if (html === lastChat) return;
@@ -502,8 +525,8 @@ function stepsHtml(text, agent, run) {
     if (it.kind === "step") { buf.push(it); continue; }
     flush();
     if (it.kind === "sys") html += '<div class="sys">' + esc(it.text) + "</div>";
-    else if (it.kind === "live") html += '<div class="msgrow me">' + av(state.peers.find((p) => p.name === it.who)?.agent || "other", true) + '<div class="bubble"><span class="who">' + esc(it.who) + " · while it works</span>" + esc(it.text) + "</div></div>";
-    else html += '<div class="msgrow">' + av(agent, true) + '<div class="bubble' + (it.kind === "answer" ? " answer" : "") + '">' + (it.kind === "answer" ? '<span class="who">Answer</span>' : "") + esc(it.text) + "</div></div>";
+    else if (it.kind === "live") html += '<div class="msgrow me">' + av(state.peers.find((p) => p.name === it.who)?.agent || "other", true) + '<div class="bubble"><span class="who">' + esc(it.who) + " · while it works</span>" + md(it.text) + "</div></div>";
+    else html += '<div class="msgrow">' + av(agent, true) + '<div class="bubble' + (it.kind === "answer" ? " answer" : "") + '">' + (it.kind === "answer" ? '<span class="who">Answer</span>' : "") + md(it.text) + "</div></div>";
   }
   flush();
   return html || '<div class="sys">Waiting for the first step…</div>';

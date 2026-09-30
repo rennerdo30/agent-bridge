@@ -1,6 +1,6 @@
 {
   "name": "agent-bridge",
-  "version": "0.16.0",
+  "version": "0.16.1",
   "description": "Let Claude Code and OpenAI Codex talk to each other: live peer messaging over a local pipe plus headless delegation.",
   "license": "MIT",
   "type": "module",
