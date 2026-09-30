@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { APP_VERSION } from "./constants.js";
 import type { CodexSandbox } from "./config.js";
-import { checkDepth, childEnv, DelegateError, killTree, realFolder, resolveCommand, trackChild, type DelegateRequest, type DelegateResult } from "./delegate.js";
+import { checkDepth, childEnv, DelegateError, exitDescription, killTree, realFolder, resolveCommand, trackChild, type DelegateRequest, type DelegateResult } from "./delegate.js";
 import { progressEventHandler } from "./progress.js";
 import { CODEX_ASK_HINT } from "./delegate.js";
 
@@ -23,6 +23,11 @@ const OPT_OUT = [
   "item/plan/delta",
 ];
 const STDERR_TAIL_CHARS = 4_000;
+/**
+ * Longest wait for app-server to answer the handshake (initialize, thread start or resume, turn start).
+ * Usually seconds, but with many Codex processes running it can take a minute or more.
+ */
+export const STARTUP_TIMEOUT_MS = 180_000;
 
 /** `"…\pwsh.exe" -Command '…'` and friends: just the command, for approval questions. */
 export function innerCommand(s: string): string {
@@ -50,7 +55,7 @@ function asExecEvent(kind: "item.started" | "item.completed", item: any): unknow
 }
 
 export async function delegateToCodexAppServer(
-  req: DelegateRequest & { bin: string; sandbox: CodexSandbox; askMode?: boolean; writableRoots?: string[] },
+  req: DelegateRequest & { bin: string; sandbox: CodexSandbox; askMode?: boolean; writableRoots?: string[]; startupTimeoutMs?: number },
 ): Promise<DelegateResult> {
   checkDepth();
   // See delegateToCodex: the Windows sandbox user does not see drive mappings.
@@ -190,17 +195,28 @@ export async function delegateToCodexAppServer(
   });
   const exited = new Promise<never>((_, reject) => {
     child.on("error", (err) => reject(new DelegateError(`failed to start ${req.bin}: ${err.message}`, "failed", "", "", threadId)));
-    child.on("exit", (code) => reject(new DelegateError(`codex app-server exited with code ${code}`, "failed", stderr, "", threadId)));
+    child.on("exit", (code, signal) => reject(new DelegateError(`codex app-server ${exitDescription({ code, signal })}`, "failed", stderr, "", threadId)));
   });
   exited.catch(() => {});
 
   let timer: NodeJS.Timeout | undefined;
   const stopped = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new DelegateError(`delegate timed out after ${req.timeoutSec}s`, "timeout", stderr, "", threadId)), req.timeoutSec * 1000);
+    timer = setTimeout(() => reject(new DelegateError(`delegate timed out after ${req.timeoutSec}s (its time limit, timeout_sec)`, "timeout", stderr, "", threadId)), req.timeoutSec * 1000);
     req.signal?.addEventListener("abort", () => reject(new DelegateError("delegate aborted", "aborted", "", "", threadId)), { once: true });
   });
   stopped.catch(() => {});
   const race = <T>(p: Promise<T>) => Promise.race([p, exited, stopped]);
+  // The handshake has its own, shorter limit: a stuck start must not wait for the whole run's timeout.
+  let step = "initialize";
+  let startupTimer: NodeJS.Timeout | undefined;
+  const startup = new Promise<never>((_, reject) => {
+    startupTimer = setTimeout(
+      () => reject(DelegateError.startup(`codex app-server did not answer ${step} within ${Math.round((req.startupTimeoutMs ?? STARTUP_TIMEOUT_MS) / 1000)}s (startup timeout)`, stderr, threadId)),
+      req.startupTimeoutMs ?? STARTUP_TIMEOUT_MS,
+    );
+  });
+  startup.catch(() => {});
+  const boot = <T>(p: Promise<T>) => Promise.race([p, exited, stopped, startup]);
 
   const steering: Steering = {
     send: async (message) => {
@@ -217,7 +233,7 @@ export async function delegateToCodexAppServer(
   };
 
   try {
-    await race(request("initialize", { clientInfo: { name: "agent-bridge", title: "agent-bridge", version: APP_VERSION }, capabilities: { experimentalApi: false, optOutNotificationMethods: OPT_OUT } }));
+    await boot(request("initialize", { clientInfo: { name: "agent-bridge", title: "agent-bridge", version: APP_VERSION }, capabilities: { experimentalApi: false, optOutNotificationMethods: OPT_OUT } }));
     write({ method: "initialized", params: {} });
     // approvalsReviewer "user" + approvalPolicy "never": the sandbox holds (see CODEX_STRICT_APPROVALS).
     // Codex asks us (never a reviewer model): MCP tool approvals go to the parent session; sandbox escalations
@@ -227,14 +243,17 @@ export async function delegateToCodexAppServer(
     const config: Record<string, unknown> = {};
     if (req.writableRoots?.length && req.sandbox === "workspace-write") config.sandbox_workspace_write = { writable_roots: req.writableRoots.map(realFolder) };
     const threadParams = { cwd, sandbox: req.sandbox, approvalPolicy, approvalsReviewer: "user", ...(Object.keys(config).length ? { config } : {}), ...(req.model ? { model: req.model } : {}) };
+    step = req.sessionId ? "thread/resume" : "thread/start";
     const thread = req.sessionId
-      ? await race(request("thread/resume", { ...threadParams, threadId: req.sessionId, excludeTurns: true }))
-      : await race(request("thread/start", threadParams));
+      ? await boot(request("thread/resume", { ...threadParams, threadId: req.sessionId, excludeTurns: true }))
+      : await boot(request("thread/start", threadParams));
     threadId = thread?.thread?.id ?? threadId;
     if (threadId) req.onSession?.(threadId);
     const prompt = req.askMode ? `${req.prompt}\n\n${CODEX_ASK_HINT}` : req.prompt;
-    const turn = await race(request("turn/start", { threadId, input: [{ type: "text", text: prompt, text_elements: [] }] }));
+    step = "turn/start";
+    const turn = await boot(request("turn/start", { threadId, input: [{ type: "text", text: prompt, text_elements: [] }] }));
     turnId = turn?.turn?.id ?? null;
+    clearTimeout(startupTimer);
     if (turnId && completions.has(turnId)) finished(completions.get(turnId)!);
     req.live?.onSteering(steering);
     const outcome = await race(turnDone);
@@ -256,6 +275,7 @@ export async function delegateToCodexAppServer(
     throw new DelegateError((err as Error).message, "failed", stderr, "", threadId);
   } finally {
     clearTimeout(timer);
+    clearTimeout(startupTimer);
     for (const p of pending.values()) p.reject(new Error("closed"));
     child.stdin.end();
     await killTree(child);

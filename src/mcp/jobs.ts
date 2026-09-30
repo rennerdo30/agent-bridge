@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { closeSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { DEFAULT_MAX_JOBS } from "../core/constants.js";
-import { DelegateError, type DelegateResult } from "../core/delegate.js";
+import { DelegateError, failureCause, type DelegateResult } from "../core/delegate.js";
 import type { Logger } from "../core/logger.js";
 import type { BridgeNode } from "../core/node.js";
 import type { AgentKind, BridgeMessage } from "../core/protocol.js";
@@ -65,17 +65,21 @@ export interface Job {
   finishedAt?: number;
 }
 
-export type FollowUpOutcome = "started" | "delivered" | "queued" | "answered" | "unknown" | "no-session" | "busy";
+/** "waiting": a finished job, but all slots are taken; it continues as soon as one frees up. */
+export type FollowUpOutcome = "started" | "delivered" | "queued" | "waiting" | "answered" | "unknown" | "no-session";
 
 /**
  * Subagents: the other CLI running headlessly. Background jobs report their result as a message from the
  * job's pseudo peer. Every job keeps its session, so it can be continued later with its full context
- * (message_subagent), like a native subagent: follow-ups to a running job are queued.
+ * (message_subagent), like a native subagent: follow-ups to a running job are queued. Continuing a finished
+ * job while maxJobs are running waits for a free slot (first come, first served) instead of being refused.
  */
 export class JobManager {
   private readonly running = new Map<string, Job>();
   private readonly foreground = new Map<string, Job>();
   private readonly history = new Map<string, Job>();
+  /** Finished jobs whose continuation waits for a free slot, in arrival order; the messages are in job.queue. */
+  private readonly waitingJobs = new Map<string, Job>();
 
   constructor(
     private readonly node: BridgeNode,
@@ -144,10 +148,15 @@ export class JobManager {
     return [...this.running.values(), ...this.foreground.values()];
   }
 
+  /** Continuations waiting for a free slot, first in line first. */
+  waiting(): Job[] {
+    return [...this.waitingJobs.values()];
+  }
+
   /** Recently finished subagents, newest first (they can still be messaged). */
   recent(limit = 5): Job[] {
     return [...this.history.values()]
-      .filter((j) => j.status !== "running" && (!j.owner || j.owner === this.node.name))
+      .filter((j) => j.status !== "running" && !this.waitingJobs.has(j.id) && (!j.owner || j.owner === this.node.name))
       .sort((a, b) => (b.finishedAt ?? 0) - (a.finishedAt ?? 0))
       .slice(0, limit);
   }
@@ -213,9 +222,10 @@ export class JobManager {
         job.workdir = outcome?.result?.workdir ?? job.workdir;
         job.worktree = outcome?.result?.worktree ?? job.worktree;
         this.persist();
-        // Follow-ups sent while the caller waited continue the session in the background.
+        // Follow-ups sent while the caller waited continue the session in the background (or wait for a slot).
         if (job.queue.length && job.resume && job.sessionId && !job.controller.signal.aborted) {
-          this.launch(job, job.resume(job.queue.splice(0).join("\n\n"), job.sessionId, job.workdir, job.worktree));
+          if (this.canStart()) this.launch(job, job.resume(job.queue.splice(0).join("\n\n"), job.sessionId, job.workdir, job.worktree));
+          else this.waitForSlot(job);
         }
       },
     };
@@ -242,10 +252,17 @@ export class JobManager {
     this.persist();
     return true;
   }
-  /** Send a follow-up to a subagent: queued while it runs, otherwise its session is resumed in the background. */
+  /**
+   * Send a follow-up to a subagent: queued while it runs, otherwise its session is resumed in the background,
+   * as soon as a slot is free.
+   */
   followUp(ref: string, message: string): { outcome: FollowUpOutcome; job?: Job } {
     const job = this.find(ref);
     if (!job) return { outcome: "unknown" };
+    if (this.waitingJobs.has(job.id)) {
+      job.queue.push(message);
+      return { outcome: "waiting", job };
+    }
     if (job.status === "running" && job.pendingApproval) {
       const answer = job.pendingApproval;
       job.pendingApproval = null;
@@ -262,10 +279,31 @@ export class JobManager {
       return { outcome: "queued", job };
     }
     if (!job.resume || !job.sessionId) return { outcome: "no-session", job };
-    if (!this.canStart()) return { outcome: "busy", job };
+    if (!this.canStart()) {
+      job.queue.push(message);
+      this.waitForSlot(job);
+      return { outcome: "waiting", job };
+    }
     this.log.info("subagent resumed", { job: job.name, sessionId: job.sessionId });
     this.launch(job, job.resume(message, job.sessionId, job.workdir, job.worktree));
     return { outcome: "started", job };
+  }
+
+  /** Continue this finished job (its queued messages) once a slot frees up. */
+  private waitForSlot(job: Job): void {
+    this.waitingJobs.set(job.id, job);
+    this.log.info("subagent continuation waits for a free slot", { job: job.name, running: this.running.size, position: this.waitingJobs.size });
+  }
+
+  /** Start waiting continuations while there are free slots, oldest first. */
+  private startWaiting(): void {
+    for (const job of this.waitingJobs.values()) {
+      if (!this.canStart()) return;
+      this.waitingJobs.delete(job.id);
+      if (!job.queue.length || !job.resume || !job.sessionId) continue;
+      this.log.info("subagent resumed (was waiting for a slot)", { job: job.name, sessionId: job.sessionId });
+      this.launch(job, job.resume(job.queue.splice(0).join("\n\n"), job.sessionId, job.workdir, job.worktree));
+    }
   }
 
   private launch(job: Job, run: Run): void {
@@ -284,15 +322,23 @@ export class JobManager {
       (res) => {
         job.workdir = res.workdir ?? job.workdir;
         job.worktree = res.worktree ?? job.worktree;
-        this.finish(job, res.isError ? "failed" : "done", res.text || "(no answer text returned)", res.sessionId);
+        this.finish(job, res.isError ? "failed" : "done", res.text || "(no answer text returned)", res.sessionId, res.isError ? failureCause({ result: res }) : null);
       },
-      (err) => this.finish(job, "failed", String((err as Error)?.message ?? err), sessionOfError(err)),
+      // The cause is the whole report here: the error says what happened (and, for a worktree, where the work is).
+      (err) => this.finish(job, "failed", "", sessionOfError(err), failureCause({ error: err })),
     );
   }
 
-  /** Cancel a background job or a blocking ask_* run, by name or id. */
+  /** Cancel a background job, a blocking ask_* run or a continuation waiting for a slot, by name or id. */
   cancel(ref: string): boolean {
     const id = ref.replace(/^.*-(?:job|ask)-/, "");
+    const waiting = [...this.waitingJobs.values()].find((j) => j.id === id || j.name === ref);
+    if (waiting) {
+      this.waitingJobs.delete(waiting.id);
+      waiting.queue = [];
+      this.log.info("waiting subagent continuation cancelled", { job: waiting.name });
+      return true;
+    }
     const job = [...this.running.values(), ...this.foreground.values()].find((j) => j.id === id || j.name === ref);
     if (!job) return false;
     job.queue = [];
@@ -301,26 +347,32 @@ export class JobManager {
   }
 
   cancelAll(): void {
+    for (const j of this.waitingJobs.values()) j.queue = [];
+    this.waitingJobs.clear();
     for (const j of this.running.values()) j.controller.abort();
   }
 
-  private finish(job: Job, status: "done" | "failed", text: string, sessionId: string | null): void {
+  private finish(job: Job, status: "done" | "failed", text: string, sessionId: string | null, cause: string | null = null): void {
     this.running.delete(job.id);
     job.status = status;
     job.finishedAt = Date.now();
     job.sessionId = sessionId ?? job.sessionId;
     this.persist();
     const seconds = Math.round((Date.now() - job.startedAt) / 1000);
-    this.log.info("subagent finished", { job: job.name, status, seconds, sessionId: job.sessionId });
+    this.log.info("subagent finished", { job: job.name, status, seconds, sessionId: job.sessionId, cause });
+    // A failure always says why, before whatever the agent said last (which may be only a progress note).
+    const report = [this.header(job, status, seconds), cause ? `Cause: ${cause}` : "", text && cause ? `Its last message:\n${text}` : text].filter(Boolean).join("\n\n");
 
-    // Follow-ups that arrived meanwhile go out right away, into the same session.
+    // Follow-ups that arrived meanwhile go out right away, into the same session (it keeps its slot).
     if (job.queue.length && job.resume && job.sessionId && !job.controller.signal.aborted) {
       const queued = job.queue.splice(0).join("\n\n");
-      this.post(job, `${this.header(job, status, seconds)}\n\n${text}\n\n(Your queued follow-up was sent to it; its answer will arrive as another message.)`);
+      this.post(job, `${report}\n\n(Your queued follow-up was sent to it; its answer will arrive as another message.)`);
       this.launch(job, job.resume(queued, job.sessionId, job.workdir, job.worktree));
       return;
     }
-    this.post(job, `${this.header(job, status, seconds)}\n\n${text}`);
+    this.post(job, report);
+    // Its slot is free: the continuation waiting longest starts now.
+    this.startWaiting();
   }
 
   private header(job: Job, status: string, seconds: number): string {

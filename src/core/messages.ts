@@ -10,6 +10,8 @@ export const en = {
 
   "peers.jobs": "Your running subagents ({count}):",
   "peers.job": "- {name} (model: {model}, running {duration}): {progress}",
+  "peers.waiting": "Queued continuations ({count}; each starts when one of the {max} subagent slots frees up, in this order):",
+  "peers.waitingJob": "- {name}: {messages} message(s) waiting; cancel_subagent drops it",
 
   "jobs.accessRead": "It runs read-only: it can look but not change files or commit. To let it edit, start it with access=\"edit\" (or worktree=true).",
   "jobs.accessEdit": "It may change files.",
@@ -17,7 +19,7 @@ export const en = {
   "jobs.started": "Subagent {name} started. Keep working; its result will arrive as a message from \"{name}\" (or call wait_for_message with from=\"{name}\").",
   "jobs.limit": "Too many subagents running (maximum {max}). Wait for one to finish or cancel one.",
   "jobs.cancelled": "Cancelled subagent {name}.",
-  "jobs.unknown": "No running subagent named {name}.",
+  "jobs.unknown": "No running or queued subagent named {name}.",
 
   "send.ok":"Message {id} sent (conversation {conversation}).",
   "send.delivered": "Delivered to: {names}.",
@@ -37,6 +39,7 @@ export const en = {
   "delegate.done": "{agent} finished (session_id: {session}).",
   "peers.recent": "Recent subagents (message_subagent continues them):",
   "peers.recentJob": "- {name}: {status} {ago} ago, {session}",
+  "delegate.cause": "It failed. Cause: {cause}",
   "delegate.followUp": "Follow up with its full context: message_subagent(job=\"{job}\", message=...).",
   "followUp.started": "Sent to {name}; it continues in its own session. Its answer will arrive as a message from {name}.",
   "followUp.delivered": "{name} is still working and gets your message at its next step (after its current tool call or model step). Its answer arrives as a message from {name}, usually within a minute. If it finishes first, the message is sent to it as a follow-up.",
@@ -44,7 +47,7 @@ export const en = {
   "followUp.queued": "{name} is still working; your message is queued and will be sent as soon as it finishes.",
   "followUp.unknown": "No subagent named {name}. Call peers to see running and recent subagents.",
   "followUp.no-session": "{name} has no session to continue (it failed before starting one). Start a new one with ask_* or spawn_*.",
-  "followUp.busy": "Too many subagents running (maximum {max}). Wait for one to finish, then send the message again.",
+  "followUp.waiting": "Queued: {name} continues in its own session when one of the {running} running subagents finishes (maximum {max}){ahead}. Nothing more to do; its answer arrives as a message from {name}. To drop it: cancel_subagent(job=\"{name}\").",
   "delegate.empty":"(no answer text returned)",
 
   "err.ambiguous": "Several peers match; pick one of: {candidates}.",

@@ -74,7 +74,7 @@ function startServe(bin: string, cwd: string, env: NodeJS.ProcessEnv): Promise<{
     });
     const timer = setTimeout(() => {
       void killTree(child);
-      reject(new DelegateError("opencode serve did not start in time", "timeout", output.tail()));
+      reject(new DelegateError(`opencode serve did not start within ${SERVE_START_TIMEOUT_MS / 1000}s (startup timeout)`, "timeout", output.tail()));
     }, SERVE_START_TIMEOUT_MS);
     child.stdout!.on("data", output.onData);
     child.stderr!.on("data", output.onData);
@@ -82,9 +82,9 @@ function startServe(bin: string, cwd: string, env: NodeJS.ProcessEnv): Promise<{
       clearTimeout(timer);
       reject(new DelegateError(`failed to start opencode serve: ${err.message}`, "failed"));
     });
-    child.on("exit", (code) => {
+    child.on("exit", (code, signal) => {
       clearTimeout(timer);
-      reject(new DelegateError(`opencode serve exited early (code ${code})`, "failed", output.tail()));
+      reject(new DelegateError(`opencode serve exited early (${signal ? `signal ${signal}` : `code ${code}`})`, "failed", output.tail()));
     });
   });
 }
@@ -258,7 +258,7 @@ export async function delegateToOpencodeServed(
       const hint = knownSession
         ? `. The opencode session ${knownSession} keeps its progress: call again with session_id="${knownSession}" (and a longer timeout_sec, or use spawn_opencode) to continue instead of starting over.`
         : "";
-      throw new DelegateError(`delegate timed out after ${req.timeoutSec}s${hint}`, "timeout", "", "", knownSession);
+      throw new DelegateError(`delegate timed out after ${req.timeoutSec}s (its time limit, timeout_sec)${hint}`, "timeout", "", "", knownSession);
     }
     throw err;
   } finally {

@@ -129,6 +129,61 @@ describe("messaging subagents", () => {
     first.cancelAll();
   });
 
+  it("queues a continuation while all slots are taken and starts it when one frees up, first come first served", async () => {
+    const full = new JobManager(me, nullLogger, null, 1);
+    const agent = fakeAgent();
+    const done1 = full.start("codex", null, "one", async () => ok("one done", "ses-1"), agent.resume);
+    await until(() => full.recent().some((j) => j.id === done1.id));
+    const done2 = full.start("codex", null, "two", async () => ok("two done", "ses-2"), agent.resume);
+    await until(() => full.recent().some((j) => j.id === done2.id));
+    let release!: (r: RunResult) => void;
+    full.start("opencode", null, "blocker", () => new Promise((r) => (release = r)), agent.resume);
+
+    expect(full.followUp(done1.name, "more for one").outcome).toBe("waiting");
+    expect(full.followUp(done2.name, "more for two").outcome).toBe("waiting");
+    expect(full.followUp(done1.name, "and this").outcome).toBe("waiting");
+    expect(full.waiting().map((j) => j.name)).toEqual([done1.name, done2.name]);
+    expect(full.recent().map((j) => j.name)).not.toContain(done1.name);
+    expect(full.runningCount()).toBe(1);
+    expect(agent.calls).toEqual([]);
+
+    release(ok("blocker done"));
+    await until(() => agent.calls.length === 2);
+    // One slot: the first in line runs, with everything sent to it meanwhile; the second only after it.
+    expect(agent.calls[0]).toMatchObject({ sessionId: "ses-1", message: "more for one\n\nand this" });
+    expect(agent.calls[1]).toMatchObject({ sessionId: "ses-2", message: "more for two" });
+    await until(() => full.waiting().length === 0 && full.runningCount() === 0);
+    full.cancelAll();
+  });
+
+  it("drops a queued continuation with cancel", async () => {
+    const full = new JobManager(me, nullLogger, null, 1);
+    const agent = fakeAgent();
+    const done = full.start("codex", null, "one", async () => ok("one done"), agent.resume);
+    await until(() => full.recent().some((j) => j.id === done.id));
+    let release!: (r: RunResult) => void;
+    full.start("codex", null, "blocker", () => new Promise((r) => (release = r)), agent.resume);
+    expect(full.followUp(done.name, "more").outcome).toBe("waiting");
+    expect(full.cancel(done.name)).toBe(true);
+    expect(full.waiting()).toEqual([]);
+    release(ok("blocker done"));
+    await until(() => full.runningCount() === 0);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(agent.calls).toEqual([]);
+  });
+
+  it("says why a job failed, not only what it said last", async () => {
+    const failed = jobs.start("opencode", null, "long task", async () => ({ ...ok("step 12: running tests"), isError: true, details: { error: "Upstream response was not valid JSON" } }), fakeAgent().resume);
+    await until(() => bodies().some((b) => b.includes(failed.name)));
+    const report = bodies().find((b) => b.includes(failed.name))!;
+    expect(report).toMatch(/failed after \d+s\.[\s\S]*Cause: error: Upstream response was not valid JSON\n\nIts last message:\nstep 12: running tests/);
+
+    const cancelled = jobs.start("codex", null, "slow", (signal) => new Promise((_, reject) => signal.addEventListener("abort", () => reject(new DelegateError("delegate aborted", "aborted", "", "", "s-9")))), fakeAgent().resume);
+    jobs.cancel(cancelled.name);
+    await until(() => bodies().some((b) => b.includes(cancelled.name)));
+    expect(bodies().find((b) => b.includes(cancelled.name))).toContain("Cause: cancelled");
+  });
+
   it("names or renames a job, also while it runs", async () => {
     const titles: string[] = [];
     let release!: (r: RunResult) => void;

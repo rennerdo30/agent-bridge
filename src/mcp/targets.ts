@@ -93,12 +93,23 @@ export const DELEGATION_TARGETS: Record<CodingAgent, DelegationTarget> = {
       // app-server lets messages reach the running subagent (turn/steer) and hands us its approval questions
       // (answered by the parent session). exec is the fallback; there "ask" needs the trusted PermissionRequest hook.
       if (process.env[CODEX_EXEC_ENV] !== "1") {
-        try {
-          return await delegateToCodexAppServer({ ...base, bin: cfg.codexBin, sandbox, writableRoots: base.writableRoots, askMode: a.access === "ask", approve: a.access === "ask" && a.relay ? a.relay.onPermission : base.approve });
-        } catch (err) {
-          // Older Codex without app-server (or one that cannot start it): the run never began, use exec.
-          if (!(err instanceof DelegateError) || err.kind !== "failed" || err.sessionId) throw err;
-          base.log.warn("codex app-server unavailable, using codex exec", { err: err.message });
+        let sessionId = base.sessionId ?? null;
+        for (let attempt = 1; ; attempt++) {
+          try {
+            return await delegateToCodexAppServer({ ...base, sessionId, bin: cfg.codexBin, sandbox, writableRoots: base.writableRoots, askMode: a.access === "ask", approve: a.access === "ask" && a.relay ? a.relay.onPermission : base.approve });
+          } catch (err) {
+            // A slow start (many Codex processes running): try once more, in the thread it may already have.
+            if (err instanceof DelegateError && err.startupFailed && attempt === 1 && !base.signal?.aborted) {
+              base.log.warn("codex app-server startup timed out; retrying once", { err: err.message });
+              base.onProgress?.(`${err.message}; retrying once`);
+              sessionId = err.sessionId ?? sessionId;
+              continue;
+            }
+            // Older Codex without app-server (or one that cannot start it): the run never began, use exec.
+            if (!(err instanceof DelegateError) || err.kind !== "failed" || err.sessionId) throw err;
+            base.log.warn("codex app-server unavailable, using codex exec", { err: err.message });
+            break;
+          }
         }
       }
       return delegateToCodex({
