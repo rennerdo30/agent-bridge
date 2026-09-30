@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DEFAULT_CONFIG } from "../src/core/config.js";
 import { nullLogger } from "../src/core/logger.js";
-import { isAutoApproved, mcpToolOf } from "../src/core/tool-allow.js";
+import { isAutoApproved, isOwnServerCall, mcpToolOf } from "../src/core/tool-allow.js";
 import { buildHookResponse } from "../src/mcp/hooks.js";
 import type { ServerContext } from "../src/mcp/server.js";
 import { makeEnv, until, type TestEnv } from "./helpers.js";
@@ -16,6 +16,13 @@ describe("MCP tool allow-list", () => {
     expect(mcpToolOf(claude)).toEqual({ server: "plugin_agent-pair-programming_pair-desk", tool: "get_handoff" });
     expect(mcpToolOf(opencode)).toEqual({ server: "pair-desk", tool: "update_step" });
     expect(mcpToolOf({ tool: "command", detail: "git push" })).toBeNull();
+  });
+
+  it("always allows the subagent's own agent-bridge tools", () => {
+    expect(isOwnServerCall({ tool: "mcp:agent-bridge", detail: 'Allow the agent-bridge MCP server to run tool "send"?' })).toBe(true);
+    expect(isOwnServerCall({ tool: "mcp:plugin_agent-bridge_bridge", detail: "report_progress: {}" })).toBe(true);
+    expect(isOwnServerCall({ tool: "mcp:bridge", detail: "bridge_send: *" })).toBe(true);
+    expect(isOwnServerCall({ tool: "mcp:pair-desk", detail: "list_projects" })).toBe(false);
   });
 
   it("allows read-only patterns and whole servers, never commands", () => {

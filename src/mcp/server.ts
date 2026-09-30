@@ -36,7 +36,7 @@ import { PermissionRelay, type PermissionDecision, type PermissionRequest } from
 import { codexPermissionHookHash, codexPermissionHookTrusted, recordCodexHookObservation } from "../core/codex-trust.js";
 import { startRunFeed } from "../core/runfeed.js";
 import { saveAutoWake, savedAutoWake } from "../core/auto-wake-pref.js";
-import { isAutoApproved } from "../core/tool-allow.js";
+import { isAutoApproved, isOwnServerCall } from "../core/tool-allow.js";
 import { ParentLink, parentFromEnv, type ParentClient } from "../core/parent-link.js";
 import { findRunningDashboard, hostDashboard, type DashboardInfo, type HostedDashboard } from "../cli/dashboard.js";
 import { openBrowser } from "../cli/open.js";
@@ -682,7 +682,8 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
       const autoApprove = [...cfg.autoApproveTools, ...(a.allow_tools ?? [])];
       const approve = async (r: PermissionRequest): Promise<PermissionDecision> => {
         if (r.tool.startsWith("mcp:") && allowedServers.has(r.tool)) return { allow: true };
-        if (isAutoApproved(r, autoApprove)) return { allow: true };
+        // Its own agent-bridge tools (answering the parent, report_progress) never need a question.
+        if (isOwnServerCall(r) || isAutoApproved(r, autoApprove)) return { allow: true };
         let d: PermissionDecision;
         if (wiring) d = await wiring.onPermission(r);
         else if (job && !job.foreground && ctx.jobs) {

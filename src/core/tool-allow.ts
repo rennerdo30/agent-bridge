@@ -30,6 +30,18 @@ function glob(pattern: string): RegExp {
   return new RegExp(`^${pattern.split("*").map((s) => s.replace(/[.+?^${}()|[\]\\]/g, "\\$&")).join(".*")}$`, "i");
 }
 
+/**
+ * The subagent's own agent-bridge server (send to its parent, report_progress, peers): always allowed, it only
+ * talks to the session that runs the subagent. Its name per CLI: Codex "agent-bridge", Claude
+ * "plugin_agent-bridge_bridge", opencode "bridge".
+ */
+const OWN_SERVERS = new Set(["agent-bridge", "plugin_agent-bridge_bridge", "bridge"]);
+
+export function isOwnServerCall(r: { tool: string; detail: string }): boolean {
+  const call = mcpToolOf(r);
+  return Boolean(call && OWN_SERVERS.has(call.server));
+}
+
 /** Whether a pattern list allows this request (always false for non-MCP requests: commands, edits). */
 export function isAutoApproved(r: { tool: string; detail: string }, patterns: readonly string[]): boolean {
   const call = mcpToolOf(r);

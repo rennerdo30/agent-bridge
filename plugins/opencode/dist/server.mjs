@@ -36490,7 +36490,7 @@ import { basename, join as join2 } from "node:path";
 import { homedir } from "node:os";
 import { join } from "node:path";
 var APP_NAME = "agent-bridge";
-var APP_VERSION = "0.19.0";
+var APP_VERSION = "0.19.1";
 var PROTOCOL_VERSION = 2;
 var ENV = {
   home: "AGENT_BRIDGE_HOME",
@@ -40105,6 +40105,11 @@ function mcpToolOf(r) {
 function glob(pattern) {
   return new RegExp(`^${pattern.split("*").map((s) => s.replace(/[.+?^${}()|[\]\\]/g, "\\$&")).join(".*")}$`, "i");
 }
+var OWN_SERVERS = /* @__PURE__ */ new Set(["agent-bridge", "plugin_agent-bridge_bridge", "bridge"]);
+function isOwnServerCall(r) {
+  const call = mcpToolOf(r);
+  return Boolean(call && OWN_SERVERS.has(call.server));
+}
 function isAutoApproved(r, patterns) {
   const call = mcpToolOf(r);
   if (!call || patterns.length === 0) return false;
@@ -42024,7 +42029,7 @@ function registerTools(mcp, ctx, targets) {
       const autoApprove = [...cfg.autoApproveTools, ...a.allow_tools ?? []];
       const approve = async (r) => {
         if (r.tool.startsWith("mcp:") && allowedServers.has(r.tool)) return { allow: true };
-        if (isAutoApproved(r, autoApprove)) return { allow: true };
+        if (isOwnServerCall(r) || isAutoApproved(r, autoApprove)) return { allow: true };
         let d;
         if (wiring) d = await wiring.onPermission(r);
         else if (job && !job.foreground && ctx.jobs) {
