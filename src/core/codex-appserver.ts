@@ -242,6 +242,7 @@ export async function delegateToCodexAppServer(
     // Extra writable folders for workspace-write (a worktree's git admin dir lives in the main repo).
     const config: Record<string, unknown> = {};
     if (req.writableRoots?.length && req.sandbox === "workspace-write") config.sandbox_workspace_write = { writable_roots: req.writableRoots.map(realFolder) };
+    if (req.effort) config.model_reasoning_effort = req.effort;
     const threadParams = { cwd, sandbox: req.sandbox, approvalPolicy, approvalsReviewer: "user", ...(Object.keys(config).length ? { config } : {}), ...(req.model ? { model: req.model } : {}) };
     step = req.sessionId ? "thread/resume" : "thread/start";
     const thread = req.sessionId
@@ -249,9 +250,11 @@ export async function delegateToCodexAppServer(
       : await boot(request("thread/start", threadParams));
     threadId = thread?.thread?.id ?? threadId;
     if (threadId) req.onSession?.(threadId);
+    // The model and effort this thread really uses (the user's config defaults included).
+    if (typeof thread?.model === "string") req.onInfo?.({ model: thread.model, effort: req.effort ?? (typeof thread.reasoningEffort === "string" ? thread.reasoningEffort : null) });
     const prompt = req.askMode ? `${req.prompt}\n\n${CODEX_ASK_HINT}` : req.prompt;
     step = "turn/start";
-    const turn = await boot(request("turn/start", { threadId, input: [{ type: "text", text: prompt, text_elements: [] }] }));
+    const turn = await boot(request("turn/start", { threadId, input: [{ type: "text", text: prompt, text_elements: [] }], ...(req.effort ? { effort: req.effort } : {}) }));
     turnId = turn?.turn?.id ?? null;
     clearTimeout(startupTimer);
     if (turnId && completions.has(turnId)) finished(completions.get(turnId)!);

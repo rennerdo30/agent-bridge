@@ -34,6 +34,8 @@ export interface RunMeta {
   progressNote?: string;
   progressAt?: number;
   model?: string | null;
+  /** Reasoning effort: the one asked for, else what the CLI reported or its configured default. */
+  effort?: string | null;
   access?: string;
   workdir?: string;
   /** The subagent's own session, and the one this run continued (a follow-up). */

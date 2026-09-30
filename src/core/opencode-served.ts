@@ -187,6 +187,8 @@ export async function delegateToOpencodeServed(
     const [providerID, ...rest] = (req.model ?? "").split("/");
     const body: Json = { parts: [{ type: "text", text: req.prompt }] };
     if (req.model && rest.length) body.model = { providerID, modelID: rest.join("/") };
+    // opencode calls a model's reasoning effort its "variant".
+    if (req.effort) body.variant = req.effort;
     await api("POST", `/session/${sessionId}/prompt_async`, body);
 
     let failure: string | null = null;

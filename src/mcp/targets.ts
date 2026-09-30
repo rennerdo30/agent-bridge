@@ -39,6 +39,8 @@ export interface TargetArgs {
 export interface DelegationTarget {
   title: string;
   modelExample: string;
+  /** Effort levels the target accepts, for the effort parameter's description. */
+  effortExample: string;
   defaultModel: (cfg: BridgeConfig) => string | null;
   /** Extra zod fields for the tool schema. */
   schema: Record<string, z.ZodTypeAny>;
@@ -84,6 +86,7 @@ export const DELEGATION_TARGETS: Record<CodingAgent, DelegationTarget> = {
   codex: {
     title: "OpenAI Codex",
     modelExample: '"gpt-6-sol"',
+    effortExample: '"low", "medium", "high" or "xhigh"',
     defaultModel: (cfg) => cfg.codexModel,
     schema: { sandbox: z.enum(CODEX_SANDBOXES as [string, ...string[]]).optional().describe("Overrides access with an exact Codex sandbox mode") },
     permissionNote: (cfg) => `Codex runs in the "${cfg.codexSandbox}" sandbox unless you pass access or sandbox.${codexEnvironmentNote()}`,
@@ -123,6 +126,7 @@ export const DELEGATION_TARGETS: Record<CodingAgent, DelegationTarget> = {
   claude: {
     title: "Claude Code",
     modelExample: '"opus", "sonnet" or a full model id',
+    effortExample: '"low", "medium", "high", "xhigh" or "max"',
     defaultModel: (cfg) => cfg.claudeModel,
     schema: { permission_mode: z.enum(CLAUDE_PERMISSION_MODES as [string, ...string[]]).optional().describe("Overrides access with an exact Claude permission mode") },
     permissionNote: (cfg) => `Claude runs with permission mode "${cfg.claudePermissionMode}" unless you pass access or permission_mode.`,
@@ -135,6 +139,7 @@ export const DELEGATION_TARGETS: Record<CodingAgent, DelegationTarget> = {
   },
   opencode: {
     title: "opencode",
+    effortExample: 'the model\'s variant, such as "low", "high" or "max" (provider-specific)',
     modelExample: '"provider/model", e.g. "anthropic/claude-sonnet-5" or "opencode/muse-spark-1.3-contributor-free"',
     defaultModel: (cfg) => cfg.opencodeModel,
     schema: { auto_approve: z.boolean().optional().describe("Overrides access: auto-approve every opencode permission request (opencode run --auto)") },

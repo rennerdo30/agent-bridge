@@ -1,6 +1,6 @@
 {
   "name": "agent-bridge-opencode",
-  "version": "0.20.0",
+  "version": "0.21.0",
   "description": "agent-bridge for opencode: message and delegate between opencode, Claude Code and Codex sessions on one machine.",
   "license": "MIT",
   "type": "module",

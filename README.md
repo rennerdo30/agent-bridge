@@ -113,6 +113,7 @@ Just ask in plain language, for example:
 - `title` (required): a short name for the job, 3-7 words, like a chat title. The dashboard and `peers` show it.
 
 - `model`: any id or alias the target accepts, passed through verbatim. For opencode, short or partial names like `muse-spark` are resolved against `opencode models`. An ambiguous or unknown name fails immediately and lists the candidates.
+- `effort`: reasoning effort, e.g. `low`, `medium`, `high`, `xhigh` (Claude also `max`; for opencode the model's variant). Passed as Claude `--effort`, Codex `model_reasoning_effort` and opencode `--variant`. Without it the CLI's own default applies. The dashboard shows the effort each subagent runs at: the one asked for, what Codex reports for its thread, or the default from the Claude or Codex config.
 - `session_id`: continue an earlier run. `cwd`: working folder.
 - `timeout_sec`: 60 minutes by default for `ask_*`; background `spawn_*` jobs have no practical limit (24 hours). A run that times out is not lost: the error names its session (`call again with session_id="…"`), so the caller continues it instead of starting over. The relay subagents do that automatically, once.
 - `access` and `worktree`, see below.

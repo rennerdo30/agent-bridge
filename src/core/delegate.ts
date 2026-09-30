@@ -267,6 +267,10 @@ export interface DelegateRequest {
   timeoutSec: number;
   /** Model override; null uses the CLI default. */
   model?: string | null;
+  /** Reasoning effort override (Claude --effort, Codex model_reasoning_effort, opencode --variant); null uses the CLI default. */
+  effort?: string | null;
+  /** The model and effort the subagent really uses, where its CLI reports them (Codex threads, Claude's init). */
+  onInfo?: (info: { model?: string | null; effort?: string | null }) => void;
   /** Receives short human-readable status lines while the delegate works. */
   onProgress?: (message: string, full?: string) => void;
   /** Extra folders the subagent may write (workspace-write), e.g. a worktree's git data in the main repo. */
@@ -418,7 +422,7 @@ export async function delegateToCodex(
   // In ask mode the sandbox is read-only and every change goes through an approval the user answers;
   // without this hint Codex gives up at the sandbox instead of requesting the approval.
   if (req.relayApprovals) req = { ...req, prompt: `${req.prompt}\n\n${CODEX_ASK_HINT}` };
-  const common = ["--json", "--skip-git-repo-check", ...(req.model ? ["-m", req.model] : [])];
+  const common = ["--json", "--skip-git-repo-check", ...(req.model ? ["-m", req.model] : []), ...(req.effort ? ["-c", `model_reasoning_effort="${req.effort}"`] : [])];
   if (req.writableRoots?.length && req.sandbox === "workspace-write") {
     common.push("-c", `sandbox_workspace_write.writable_roots=${JSON.stringify(req.writableRoots.map(realFolder))}`);
   }
@@ -524,6 +528,24 @@ export function claudeForwardsPrompts(mode: ClaudePermissionMode, req: Pick<Dele
 /** Longer than the parent's (and the user's) 10 minutes to answer: on a hook timeout Claude would just deny. */
 const CLAUDE_HOOK_TIMEOUT_SEC = 900;
 
+/** Claude's first stream line (system init) names the model it really runs, e.g. for an alias like "opus". */
+function claudeInitSniffer(next: ((line: string) => void) | undefined, onInfo: DelegateRequest["onInfo"]): ((line: string) => void) | undefined {
+  if (!onInfo) return next;
+  let seen = false;
+  return (line) => {
+    if (!seen && line.includes('"subtype":"init"')) {
+      seen = true;
+      try {
+        const model = (JSON.parse(line) as { model?: unknown }).model;
+        if (typeof model === "string" && model) onInfo({ model });
+      } catch {
+        // not the line we are after
+      }
+    }
+    next?.(line);
+  };
+}
+
 export async function delegateToClaude(
   req: DelegateRequest & { bin: string; permissionMode: ClaudePermissionMode; hookCli?: string },
 ): Promise<DelegateResult> {
@@ -535,6 +557,7 @@ export async function delegateToClaude(
   const readOnly = isClaudeReadOnly(req.permissionMode);
   if (readOnly) args.push("--disallowedTools", [...CLAUDE_READ_ONLY_DENIED_TOOLS, ...claudeMcpDenyRules(req.cwd)].join(","));
   if (req.model) args.push("--model", req.model);
+  if (req.effort) args.push("--effort", req.effort);
   if (req.sessionId) args.push("--resume", req.sessionId);
   // Headless Claude denies MCP tools it would ask about: let it answer its parent (see parent-link.ts).
   if (req.extraEnv?.[PARENT_URL_ENV]) args.push("--allowedTools", `${CLAUDE_PARENT_SEND_TOOL},${CLAUDE_PARENT_PROGRESS_TOOL}`);
@@ -567,7 +590,7 @@ export async function delegateToClaude(
       env: childEnv(extraEnv),
       log: req.log,
       signal: req.signal,
-      onLine: withSessionSniffer("claude", progressLineHandler("claude", req.onProgress), req.onSession),
+      onLine: claudeInitSniffer(withSessionSniffer("claude", progressLineHandler("claude", req.onProgress), req.onSession), req.onInfo),
     }));
   } finally {
     await relay?.stop();
@@ -635,6 +658,7 @@ export async function delegateToOpencode(req: DelegateRequest & { bin: string; a
   // --dir as well: opencode must not fall back to an inherited PWD (it then works in the wrong folder).
   const args = ["run", "--format", "json", "--dir", req.cwd];
   if (req.model) args.push("-m", req.model);
+  if (req.effort) args.push("--variant", req.effort);
   if (req.sessionId) args.push("-s", req.sessionId);
   // opencode's default rules allow edits and commands without asking, so read access must be enforced
   // explicitly: an extra config layer (merged over the user's) denies them. --auto approves the rest.

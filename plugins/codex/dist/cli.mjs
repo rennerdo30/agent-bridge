@@ -7714,7 +7714,7 @@ import { connect } from "node:net";
 import { homedir } from "node:os";
 import { join } from "node:path";
 var APP_NAME = "agent-bridge";
-var APP_VERSION = "0.20.0";
+var APP_VERSION = "0.21.0";
 var PROTOCOL_VERSION = 2;
 var ENV = {
   home: "AGENT_BRIDGE_HOME",
@@ -9507,7 +9507,7 @@ async function delegateToCodex(req) {
   if (req.relayApprovals) req = { ...req, prompt: `${req.prompt}
 
 ${CODEX_ASK_HINT}` };
-  const common = ["--json", "--skip-git-repo-check", ...req.model ? ["-m", req.model] : []];
+  const common = ["--json", "--skip-git-repo-check", ...req.model ? ["-m", req.model] : [], ...req.effort ? ["-c", `model_reasoning_effort="${req.effort}"`] : []];
   if (req.writableRoots?.length && req.sandbox === "workspace-write") {
     common.push("-c", `sandbox_workspace_write.writable_roots=${JSON.stringify(req.writableRoots.map(realFolder))}`);
   }
@@ -9580,12 +9580,28 @@ function claudeForwardsPrompts(mode, req) {
   return !isClaudeReadOnly(mode) && Boolean(req.canApprove && req.approve);
 }
 var CLAUDE_HOOK_TIMEOUT_SEC = 900;
+function claudeInitSniffer(next, onInfo) {
+  if (!onInfo) return next;
+  let seen = false;
+  return (line) => {
+    if (!seen && line.includes('"subtype":"init"')) {
+      seen = true;
+      try {
+        const model = JSON.parse(line).model;
+        if (typeof model === "string" && model) onInfo({ model });
+      } catch {
+      }
+    }
+    next?.(line);
+  };
+}
 async function delegateToClaude(req) {
   checkDepth();
   const args = ["-p", "--output-format", "stream-json", "--verbose", "--permission-mode", req.permissionMode];
   const readOnly = isClaudeReadOnly(req.permissionMode);
   if (readOnly) args.push("--disallowedTools", [...CLAUDE_READ_ONLY_DENIED_TOOLS, ...claudeMcpDenyRules(req.cwd)].join(","));
   if (req.model) args.push("--model", req.model);
+  if (req.effort) args.push("--effort", req.effort);
   if (req.sessionId) args.push("--resume", req.sessionId);
   if (req.extraEnv?.[PARENT_URL_ENV]) args.push("--allowedTools", `${CLAUDE_PARENT_SEND_TOOL},${CLAUDE_PARENT_PROGRESS_TOOL}`);
   const hookCli = claudeForwardsPrompts(req.permissionMode, req) ? req.hookCli ?? bundledCli() : null;
@@ -9614,7 +9630,7 @@ async function delegateToClaude(req) {
       env: childEnv(extraEnv),
       log: req.log,
       signal: req.signal,
-      onLine: withSessionSniffer("claude", progressLineHandler("claude", req.onProgress), req.onSession)
+      onLine: claudeInitSniffer(withSessionSniffer("claude", progressLineHandler("claude", req.onProgress), req.onSession), req.onInfo)
     }));
   } finally {
     await relay?.stop();
@@ -9672,6 +9688,7 @@ async function delegateToOpencode(req) {
   checkDepth();
   const args = ["run", "--format", "json", "--dir", req.cwd];
   if (req.model) args.push("-m", req.model);
+  if (req.effort) args.push("--variant", req.effort);
   if (req.sessionId) args.push("-s", req.sessionId);
   if (req.autoApprove) args.push("--auto");
   const env = childEnv(req.extraEnv);
@@ -10325,6 +10342,11 @@ h3 .n { color: var(--faint); font-weight: 500; }
 .pill.interrupted { background: var(--warn-soft); color: var(--warn); }
 .pill.running::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; animation: pulse 1.4s infinite; }
 @keyframes pulse { 50% { opacity: .3; } }
+.chip.effort { display: inline-flex; align-items: center; gap: 5px; }
+.meter { display: inline-flex; align-items: flex-end; gap: 1.5px; height: 10px; }
+.meter i { width: 2.5px; border-radius: 1px; background: var(--line); }
+.meter i:nth-child(1) { height: 4px; } .meter i:nth-child(2) { height: 6px; } .meter i:nth-child(3) { height: 8px; } .meter i:nth-child(4) { height: 10px; }
+.meter i.on { background: var(--accent); }
 .chip { display: inline-block; padding: 1px 7px; border-radius: 6px; background: var(--panel-2); border: 1px solid var(--line); color: var(--muted); font-size: 11.5px; white-space: nowrap; }
 .chip.old { color: var(--bad); border-color: var(--bad); }
 .muted { color: var(--muted); } .faint { color: var(--faint); }
@@ -10504,7 +10526,14 @@ const norm = (p) => String(p || "").replace(/\\\\/g, "/").replace(/\\/+$/, "").t
 const folder = (p) => String(p || "").replace(/[\\\\/]+$/, "").split(/[\\\\/]/).pop() || p;
 const av = (agent, sm) => '<span class="av ' + (sm ? "sm " : "") + esc(agent) + '">' + esc((agent || "?")[0].toUpperCase()) + "</span>";
 const dot = (activity) => '<span class="dot ' + (activity === "busy" ? "busy" : activity === "idle" ? "idle" : "off") + '"></span>';
-const pill = (status, percent) => '<span class="pill ' + status + '">' + (status === "running" ? (typeof percent === "number" ? "working \xB7 " + percent + "%" : "working") : status) + "</span>";
+// Effort as a chip with a small level meter (unknown names, e.g. opencode variants, get no meter).
+    const EFFORT_LEVELS = { minimal: 1, low: 1, medium: 2, high: 3, xhigh: 4, max: 4 };
+    const effortChip = (e) => {
+      const n = EFFORT_LEVELS[String(e).toLowerCase()];
+      const bars = n ? '<span class="meter">' + [1, 2, 3, 4].map((i) => "<i" + (i <= n ? ' class="on"' : "") + "></i>").join("") + "</span>" : "";
+      return '<span class="chip effort" title="reasoning effort">' + bars + esc(e) + "</span>";
+    };
+    const pill = (status, percent) => '<span class="pill ' + status + '">' + (status === "running" ? (typeof percent === "number" ? "working \xB7 " + percent + "%" : "working") : status) + "</span>";
 
 let state = null, model = null, route = parseRoute(), lastTo = "", pulling = false, lastChat = "";
 /** Loaded run logs: name -> { raw, offset, done }. */
@@ -10556,6 +10585,7 @@ function buildModel(s) {
     if (!g) groups.set(key, (g = { key, job: r.job || null, agent: r.agent, model: null, owner: ownerOf(r, live), turns: [] }));
     g.turns.push(r);
     if (r.model) g.model = r.model;
+      if (r.effort) g.effort = r.effort;
     if (r.session) ofSession.set(r.session, key);
   }
   for (const g of groups.values()) {
@@ -10622,8 +10652,8 @@ function groupRow(g, sel, showOwner) {
     // Like a chat list: the title the starting agent gave it, with agent and model below; else the task.
     (g.title
       ? '<div style="min-width:0"><div class="line1"><b class="ell">' + esc(g.title) + "</b></div>" +
-        '<div class="task">' + esc(g.agent) + (g.model ? " \xB7 " + esc(g.model) : "") + (g.turns.length > 1 ? " \xB7 " + g.turns.length + " turns" : "") + "</div></div>"
-      : '<div style="min-width:0"><div class="line1"><b>' + esc(g.agent) + "</b>" + (g.model ? '<span class="chip ell">' + esc(g.model) + "</span>" : "") +
+        '<div class="task">' + esc(g.agent) + (g.model ? " \xB7 " + esc(g.model) : "") + (g.effort ? " \xB7 " + esc(g.effort) + " effort" : "") + (g.turns.length > 1 ? " \xB7 " + g.turns.length + " turns" : "") + "</div></div>"
+      : '<div style="min-width:0"><div class="line1"><b>' + esc(g.agent) + "</b>" + (g.model ? '<span class="chip ell">' + esc(g.model) + "</span>" : "") + (g.effort ? effortChip(g.effort) : "") +
         (g.turns.length > 1 ? '<span class="chip">' + g.turns.length + " turns</span>" : "") + "</div>" +
         '<div class="task">' + esc(g.task || g.last) + "</div></div>") +
     '<div class="side">' + pill(g.status, g.percent) + "<span>" + (showOwner ? esc(g.owner) + " \xB7 " : "") + ago(g.updatedAt) + "</span></div>" +
@@ -10761,7 +10791,7 @@ function splitTurn(raw) {
 function renderConversation(g) {
   const first = g.turns[0], last = g.turns[g.turns.length - 1];
   $("cAvatar").innerHTML = av(g.agent);
-  $("cTitle").innerHTML = (g.title ? esc(g.title) + ' <span class="chip">' + esc(g.agent) + "</span>" : esc(g.agent)) + (g.model ? ' <span class="chip">' + esc(g.model) + "</span>" : "") + " " + pill(g.status, g.percent) + (g.progressNote && g.percent !== null ? ' <span class="small muted">' + esc(g.progressNote) + "</span>" : "");
+  $("cTitle").innerHTML = (g.title ? esc(g.title) + ' <span class="chip">' + esc(g.agent) + "</span>" : esc(g.agent)) + (g.model ? ' <span class="chip">' + esc(g.model) + "</span>" : "") + (g.effort ? " " + effortChip(g.effort) : "") + " " + pill(g.status, g.percent) + (g.progressNote && g.percent !== null ? ' <span class="small muted">' + esc(g.progressNote) + "</span>" : "");
   $("cSub").textContent = (g.owner === "earlier runs" ? "" : "started by " + g.owner + " \xB7 ") + time(first.startedAt) + " \xB7 " + (first.access || "default") + " access" + (first.workdir ? " \xB7 " + first.workdir : "");
   const hint = g.job && g.status !== "running"
     ? (g.status === "done" ? "Continue it with its context from " : "Recover it with its context from ") + esc(g.owner) + ': <code>message_subagent(job="' + esc(g.job) + '")</code>'
@@ -11553,6 +11583,7 @@ async function delegateToOpencodeServed(req) {
     const [providerID, ...rest] = (req.model ?? "").split("/");
     const body = { parts: [{ type: "text", text: req.prompt }] };
     if (req.model && rest.length) body.model = { providerID, modelID: rest.join("/") };
+    if (req.effort) body.variant = req.effort;
     await api("POST", `/session/${sessionId}/prompt_async`, body);
     let failure2 = null;
     const onEvent = progressEventHandler("opencode", req.onProgress);
@@ -21737,16 +21768,18 @@ ${message}`, text_elements: [] }] });
     const approvalPolicy = "on-request";
     const config2 = {};
     if (req.writableRoots?.length && req.sandbox === "workspace-write") config2.sandbox_workspace_write = { writable_roots: req.writableRoots.map(realFolder) };
+    if (req.effort) config2.model_reasoning_effort = req.effort;
     const threadParams = { cwd, sandbox: req.sandbox, approvalPolicy, approvalsReviewer: "user", ...Object.keys(config2).length ? { config: config2 } : {}, ...req.model ? { model: req.model } : {} };
     step = req.sessionId ? "thread/resume" : "thread/start";
     const thread = req.sessionId ? await boot(request2("thread/resume", { ...threadParams, threadId: req.sessionId, excludeTurns: true })) : await boot(request2("thread/start", threadParams));
     threadId = thread?.thread?.id ?? threadId;
     if (threadId) req.onSession?.(threadId);
+    if (typeof thread?.model === "string") req.onInfo?.({ model: thread.model, effort: req.effort ?? (typeof thread.reasoningEffort === "string" ? thread.reasoningEffort : null) });
     const prompt = req.askMode ? `${req.prompt}
 
 ${CODEX_ASK_HINT}` : req.prompt;
     step = "turn/start";
-    const turn = await boot(request2("turn/start", { threadId, input: [{ type: "text", text: prompt, text_elements: [] }] }));
+    const turn = await boot(request2("turn/start", { threadId, input: [{ type: "text", text: prompt, text_elements: [] }], ...req.effort ? { effort: req.effort } : {} }));
     turnId = turn?.turn?.id ?? null;
     clearTimeout(startupTimer);
     if (turnId && completions.has(turnId)) finished(completions.get(turnId));

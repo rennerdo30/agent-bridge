@@ -92,6 +92,11 @@ h3 .n { color: var(--faint); font-weight: 500; }
 .pill.interrupted { background: var(--warn-soft); color: var(--warn); }
 .pill.running::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; animation: pulse 1.4s infinite; }
 @keyframes pulse { 50% { opacity: .3; } }
+.chip.effort { display: inline-flex; align-items: center; gap: 5px; }
+.meter { display: inline-flex; align-items: flex-end; gap: 1.5px; height: 10px; }
+.meter i { width: 2.5px; border-radius: 1px; background: var(--line); }
+.meter i:nth-child(1) { height: 4px; } .meter i:nth-child(2) { height: 6px; } .meter i:nth-child(3) { height: 8px; } .meter i:nth-child(4) { height: 10px; }
+.meter i.on { background: var(--accent); }
 .chip { display: inline-block; padding: 1px 7px; border-radius: 6px; background: var(--panel-2); border: 1px solid var(--line); color: var(--muted); font-size: 11.5px; white-space: nowrap; }
 .chip.old { color: var(--bad); border-color: var(--bad); }
 .muted { color: var(--muted); } .faint { color: var(--faint); }
@@ -271,7 +276,14 @@ const norm = (p) => String(p || "").replace(/\\\\/g, "/").replace(/\\/+$/, "").t
 const folder = (p) => String(p || "").replace(/[\\\\/]+$/, "").split(/[\\\\/]/).pop() || p;
 const av = (agent, sm) => '<span class="av ' + (sm ? "sm " : "") + esc(agent) + '">' + esc((agent || "?")[0].toUpperCase()) + "</span>";
 const dot = (activity) => '<span class="dot ' + (activity === "busy" ? "busy" : activity === "idle" ? "idle" : "off") + '"></span>';
-const pill = (status, percent) => '<span class="pill ' + status + '">' + (status === "running" ? (typeof percent === "number" ? "working · " + percent + "%" : "working") : status) + "</span>";
+// Effort as a chip with a small level meter (unknown names, e.g. opencode variants, get no meter).
+    const EFFORT_LEVELS = { minimal: 1, low: 1, medium: 2, high: 3, xhigh: 4, max: 4 };
+    const effortChip = (e) => {
+      const n = EFFORT_LEVELS[String(e).toLowerCase()];
+      const bars = n ? '<span class="meter">' + [1, 2, 3, 4].map((i) => "<i" + (i <= n ? ' class="on"' : "") + "></i>").join("") + "</span>" : "";
+      return '<span class="chip effort" title="reasoning effort">' + bars + esc(e) + "</span>";
+    };
+    const pill = (status, percent) => '<span class="pill ' + status + '">' + (status === "running" ? (typeof percent === "number" ? "working · " + percent + "%" : "working") : status) + "</span>";
 
 let state = null, model = null, route = parseRoute(), lastTo = "", pulling = false, lastChat = "";
 /** Loaded run logs: name -> { raw, offset, done }. */
@@ -323,6 +335,7 @@ function buildModel(s) {
     if (!g) groups.set(key, (g = { key, job: r.job || null, agent: r.agent, model: null, owner: ownerOf(r, live), turns: [] }));
     g.turns.push(r);
     if (r.model) g.model = r.model;
+      if (r.effort) g.effort = r.effort;
     if (r.session) ofSession.set(r.session, key);
   }
   for (const g of groups.values()) {
@@ -389,8 +402,8 @@ function groupRow(g, sel, showOwner) {
     // Like a chat list: the title the starting agent gave it, with agent and model below; else the task.
     (g.title
       ? '<div style="min-width:0"><div class="line1"><b class="ell">' + esc(g.title) + "</b></div>" +
-        '<div class="task">' + esc(g.agent) + (g.model ? " · " + esc(g.model) : "") + (g.turns.length > 1 ? " · " + g.turns.length + " turns" : "") + "</div></div>"
-      : '<div style="min-width:0"><div class="line1"><b>' + esc(g.agent) + "</b>" + (g.model ? '<span class="chip ell">' + esc(g.model) + "</span>" : "") +
+        '<div class="task">' + esc(g.agent) + (g.model ? " · " + esc(g.model) : "") + (g.effort ? " · " + esc(g.effort) + " effort" : "") + (g.turns.length > 1 ? " · " + g.turns.length + " turns" : "") + "</div></div>"
+      : '<div style="min-width:0"><div class="line1"><b>' + esc(g.agent) + "</b>" + (g.model ? '<span class="chip ell">' + esc(g.model) + "</span>" : "") + (g.effort ? effortChip(g.effort) : "") +
         (g.turns.length > 1 ? '<span class="chip">' + g.turns.length + " turns</span>" : "") + "</div>" +
         '<div class="task">' + esc(g.task || g.last) + "</div></div>") +
     '<div class="side">' + pill(g.status, g.percent) + "<span>" + (showOwner ? esc(g.owner) + " · " : "") + ago(g.updatedAt) + "</span></div>" +
@@ -528,7 +541,7 @@ function splitTurn(raw) {
 function renderConversation(g) {
   const first = g.turns[0], last = g.turns[g.turns.length - 1];
   $("cAvatar").innerHTML = av(g.agent);
-  $("cTitle").innerHTML = (g.title ? esc(g.title) + ' <span class="chip">' + esc(g.agent) + "</span>" : esc(g.agent)) + (g.model ? ' <span class="chip">' + esc(g.model) + "</span>" : "") + " " + pill(g.status, g.percent) + (g.progressNote && g.percent !== null ? ' <span class="small muted">' + esc(g.progressNote) + "</span>" : "");
+  $("cTitle").innerHTML = (g.title ? esc(g.title) + ' <span class="chip">' + esc(g.agent) + "</span>" : esc(g.agent)) + (g.model ? ' <span class="chip">' + esc(g.model) + "</span>" : "") + (g.effort ? " " + effortChip(g.effort) : "") + " " + pill(g.status, g.percent) + (g.progressNote && g.percent !== null ? ' <span class="small muted">' + esc(g.progressNote) + "</span>" : "");
   $("cSub").textContent = (g.owner === "earlier runs" ? "" : "started by " + g.owner + " · ") + time(first.startedAt) + " · " + (first.access || "default") + " access" + (first.workdir ? " · " + first.workdir : "");
   const hint = g.job && g.status !== "running"
     ? (g.status === "done" ? "Continue it with its context from " : "Recover it with its context from ") + esc(g.owner) + ': <code>message_subagent(job="' + esc(g.job) + '")</code>'

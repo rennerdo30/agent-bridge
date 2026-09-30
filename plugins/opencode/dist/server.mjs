@@ -7201,7 +7201,7 @@ var require_dist = __commonJS({
 
 // src/mcp/server.ts
 import { randomUUID as randomUUID5 } from "node:crypto";
-import { dirname as dirname6, isAbsolute as isAbsolute3, join as join16, relative as relative2, resolve as resolve4 } from "node:path";
+import { dirname as dirname6, isAbsolute as isAbsolute3, join as join17, relative as relative2, resolve as resolve4 } from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 
 // node_modules/zod/v3/helpers/util.js
@@ -36490,7 +36490,7 @@ import { basename, join as join2 } from "node:path";
 import { homedir } from "node:os";
 import { join } from "node:path";
 var APP_NAME = "agent-bridge";
-var APP_VERSION = "0.20.0";
+var APP_VERSION = "0.21.0";
 var PROTOCOL_VERSION = 2;
 var ENV = {
   home: "AGENT_BRIDGE_HOME",
@@ -37385,7 +37385,7 @@ async function delegateToCodex(req) {
   if (req.relayApprovals) req = { ...req, prompt: `${req.prompt}
 
 ${CODEX_ASK_HINT}` };
-  const common = ["--json", "--skip-git-repo-check", ...req.model ? ["-m", req.model] : []];
+  const common = ["--json", "--skip-git-repo-check", ...req.model ? ["-m", req.model] : [], ...req.effort ? ["-c", `model_reasoning_effort="${req.effort}"`] : []];
   if (req.writableRoots?.length && req.sandbox === "workspace-write") {
     common.push("-c", `sandbox_workspace_write.writable_roots=${JSON.stringify(req.writableRoots.map(realFolder))}`);
   }
@@ -37458,12 +37458,28 @@ function claudeForwardsPrompts(mode, req) {
   return !isClaudeReadOnly(mode) && Boolean(req.canApprove && req.approve);
 }
 var CLAUDE_HOOK_TIMEOUT_SEC = 900;
+function claudeInitSniffer(next, onInfo) {
+  if (!onInfo) return next;
+  let seen = false;
+  return (line) => {
+    if (!seen && line.includes('"subtype":"init"')) {
+      seen = true;
+      try {
+        const model = JSON.parse(line).model;
+        if (typeof model === "string" && model) onInfo({ model });
+      } catch {
+      }
+    }
+    next?.(line);
+  };
+}
 async function delegateToClaude(req) {
   checkDepth();
   const args = ["-p", "--output-format", "stream-json", "--verbose", "--permission-mode", req.permissionMode];
   const readOnly = isClaudeReadOnly(req.permissionMode);
   if (readOnly) args.push("--disallowedTools", [...CLAUDE_READ_ONLY_DENIED_TOOLS, ...claudeMcpDenyRules(req.cwd)].join(","));
   if (req.model) args.push("--model", req.model);
+  if (req.effort) args.push("--effort", req.effort);
   if (req.sessionId) args.push("--resume", req.sessionId);
   if (req.extraEnv?.[PARENT_URL_ENV]) args.push("--allowedTools", `${CLAUDE_PARENT_SEND_TOOL},${CLAUDE_PARENT_PROGRESS_TOOL}`);
   const hookCli = claudeForwardsPrompts(req.permissionMode, req) ? req.hookCli ?? bundledCli() : null;
@@ -37492,7 +37508,7 @@ async function delegateToClaude(req) {
       env: childEnv(extraEnv),
       log: req.log,
       signal: req.signal,
-      onLine: withSessionSniffer("claude", progressLineHandler("claude", req.onProgress), req.onSession)
+      onLine: claudeInitSniffer(withSessionSniffer("claude", progressLineHandler("claude", req.onProgress), req.onSession), req.onInfo)
     }));
   } finally {
     await relay?.stop();
@@ -37550,6 +37566,7 @@ async function delegateToOpencode(req) {
   checkDepth();
   const args = ["run", "--format", "json", "--dir", req.cwd];
   if (req.model) args.push("-m", req.model);
+  if (req.effort) args.push("--variant", req.effort);
   if (req.sessionId) args.push("-s", req.sessionId);
   if (req.autoApprove) args.push("--auto");
   const env = childEnv(req.extraEnv);
@@ -39594,6 +39611,7 @@ async function delegateToOpencodeServed(req) {
     const [providerID, ...rest] = (req.model ?? "").split("/");
     const body = { parts: [{ type: "text", text: req.prompt }] };
     if (req.model && rest.length) body.model = { providerID, modelID: rest.join("/") };
+    if (req.effort) body.variant = req.effort;
     await api("POST", `/session/${sessionId}/prompt_async`, body);
     let failure2 = null;
     const onEvent = progressEventHandler("opencode", req.onProgress);
@@ -39861,16 +39879,18 @@ ${message}`, text_elements: [] }] });
     const approvalPolicy = "on-request";
     const config2 = {};
     if (req.writableRoots?.length && req.sandbox === "workspace-write") config2.sandbox_workspace_write = { writable_roots: req.writableRoots.map(realFolder) };
+    if (req.effort) config2.model_reasoning_effort = req.effort;
     const threadParams = { cwd, sandbox: req.sandbox, approvalPolicy, approvalsReviewer: "user", ...Object.keys(config2).length ? { config: config2 } : {}, ...req.model ? { model: req.model } : {} };
     step = req.sessionId ? "thread/resume" : "thread/start";
     const thread = req.sessionId ? await boot(request2("thread/resume", { ...threadParams, threadId: req.sessionId, excludeTurns: true })) : await boot(request2("thread/start", threadParams));
     threadId = thread?.thread?.id ?? threadId;
     if (threadId) req.onSession?.(threadId);
+    if (typeof thread?.model === "string") req.onInfo?.({ model: thread.model, effort: req.effort ?? (typeof thread.reasoningEffort === "string" ? thread.reasoningEffort : null) });
     const prompt = req.askMode ? `${req.prompt}
 
 ${CODEX_ASK_HINT}` : req.prompt;
     step = "turn/start";
-    const turn = await boot(request2("turn/start", { threadId, input: [{ type: "text", text: prompt, text_elements: [] }] }));
+    const turn = await boot(request2("turn/start", { threadId, input: [{ type: "text", text: prompt, text_elements: [] }], ...req.effort ? { effort: req.effort } : {} }));
     turnId = turn?.turn?.id ?? null;
     clearTimeout(startupTimer);
     if (turnId && completions.has(turnId)) finished(completions.get(turnId));
@@ -39943,6 +39963,7 @@ var DELEGATION_TARGETS = {
   codex: {
     title: "OpenAI Codex",
     modelExample: '"gpt-6-sol"',
+    effortExample: '"low", "medium", "high" or "xhigh"',
     defaultModel: (cfg) => cfg.codexModel,
     schema: { sandbox: external_exports.enum(CODEX_SANDBOXES).optional().describe("Overrides access with an exact Codex sandbox mode") },
     permissionNote: (cfg) => `Codex runs in the "${cfg.codexSandbox}" sandbox unless you pass access or sandbox.${codexEnvironmentNote()}`,
@@ -39978,6 +39999,7 @@ var DELEGATION_TARGETS = {
   claude: {
     title: "Claude Code",
     modelExample: '"opus", "sonnet" or a full model id',
+    effortExample: '"low", "medium", "high", "xhigh" or "max"',
     defaultModel: (cfg) => cfg.claudeModel,
     schema: { permission_mode: external_exports.enum(CLAUDE_PERMISSION_MODES).optional().describe("Overrides access with an exact Claude permission mode") },
     permissionNote: (cfg) => `Claude runs with permission mode "${cfg.claudePermissionMode}" unless you pass access or permission_mode.`,
@@ -39989,6 +40011,7 @@ var DELEGATION_TARGETS = {
   },
   opencode: {
     title: "opencode",
+    effortExample: `the model's variant, such as "low", "high" or "max" (provider-specific)`,
     modelExample: '"provider/model", e.g. "anthropic/claude-sonnet-5" or "opencode/muse-spark-1.3-contributor-free"',
     defaultModel: (cfg) => cfg.opencodeModel,
     schema: { auto_approve: external_exports.boolean().optional().describe("Overrides access: auto-approve every opencode permission request (opencode run --auto)") },
@@ -40213,6 +40236,38 @@ function saveAutoWake(home, name, enabled) {
   }
 }
 
+// src/core/effort.ts
+import { readFileSync as readFileSync8 } from "node:fs";
+import { homedir as homedir5 } from "node:os";
+import { join as join13 } from "node:path";
+function defaultEffort(agent, model, read2 = (p) => readFileSync8(p, "utf8")) {
+  try {
+    if (agent === "codex") return codexConfigEffort(read2(join13(codexHome(), "config.toml")));
+    if (agent === "claude") return claudeSettingsEffort(read2(join13(process.env.CLAUDE_CONFIG_DIR?.trim() || join13(homedir5(), ".claude"), "settings.json")), model);
+  } catch {
+  }
+  return null;
+}
+function codexConfigEffort(toml) {
+  for (const line of toml.split(/\r?\n/)) {
+    if (/^\s*\[/.test(line)) break;
+    const m = /^\s*model_reasoning_effort\s*=\s*"([^"]+)"/.exec(line);
+    if (m) return m[1];
+  }
+  return null;
+}
+function claudeSettingsEffort(json2, model) {
+  const s = JSON.parse(json2);
+  const id = model?.replace(/\[.*\]$/, "").toLowerCase() ?? "";
+  if (id) {
+    for (const [key, v] of Object.entries(s.modelSettings ?? {})) {
+      const k = key.replace(/\[.*\]$/, "").toLowerCase();
+      if ((id === k || id.startsWith(`${k}-`) || k.startsWith(`${id}-`)) && typeof v?.effortLevel === "string") return v.effortLevel;
+    }
+  }
+  return typeof s.effortLevel === "string" ? s.effortLevel : null;
+}
+
 // src/core/tool-allow.ts
 function serverNames2(server) {
   const short = /^plugin_[^_]+_(.+)$/.exec(server)?.[1];
@@ -40251,15 +40306,15 @@ function isHandoffToolCall(r) {
 
 // src/cli/dashboard.ts
 import { randomBytes as randomBytes7 } from "node:crypto";
-import { chmodSync as chmodSync2, readFileSync as readFileSync9, writeFileSync as writeFileSync5 } from "node:fs";
+import { chmodSync as chmodSync2, readFileSync as readFileSync10, writeFileSync as writeFileSync5 } from "node:fs";
 import { request } from "node:http";
-import { join as join14 } from "node:path";
+import { join as join15 } from "node:path";
 
 // src/cli/ui.ts
 import { randomBytes as randomBytes6 } from "node:crypto";
-import { existsSync as existsSync2, readdirSync as readdirSync2, readFileSync as readFileSync8, statSync as statSync3 } from "node:fs";
+import { existsSync as existsSync2, readdirSync as readdirSync2, readFileSync as readFileSync9, statSync as statSync3 } from "node:fs";
 import { createServer as createServer5 } from "node:http";
-import { join as join13 } from "node:path";
+import { join as join14 } from "node:path";
 import { DatabaseSync as DatabaseSync2 } from "node:sqlite";
 
 // src/cli/logo.ts
@@ -40440,6 +40495,11 @@ h3 .n { color: var(--faint); font-weight: 500; }
 .pill.interrupted { background: var(--warn-soft); color: var(--warn); }
 .pill.running::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; animation: pulse 1.4s infinite; }
 @keyframes pulse { 50% { opacity: .3; } }
+.chip.effort { display: inline-flex; align-items: center; gap: 5px; }
+.meter { display: inline-flex; align-items: flex-end; gap: 1.5px; height: 10px; }
+.meter i { width: 2.5px; border-radius: 1px; background: var(--line); }
+.meter i:nth-child(1) { height: 4px; } .meter i:nth-child(2) { height: 6px; } .meter i:nth-child(3) { height: 8px; } .meter i:nth-child(4) { height: 10px; }
+.meter i.on { background: var(--accent); }
 .chip { display: inline-block; padding: 1px 7px; border-radius: 6px; background: var(--panel-2); border: 1px solid var(--line); color: var(--muted); font-size: 11.5px; white-space: nowrap; }
 .chip.old { color: var(--bad); border-color: var(--bad); }
 .muted { color: var(--muted); } .faint { color: var(--faint); }
@@ -40619,7 +40679,14 @@ const norm = (p) => String(p || "").replace(/\\\\/g, "/").replace(/\\/+$/, "").t
 const folder = (p) => String(p || "").replace(/[\\\\/]+$/, "").split(/[\\\\/]/).pop() || p;
 const av = (agent, sm) => '<span class="av ' + (sm ? "sm " : "") + esc(agent) + '">' + esc((agent || "?")[0].toUpperCase()) + "</span>";
 const dot = (activity) => '<span class="dot ' + (activity === "busy" ? "busy" : activity === "idle" ? "idle" : "off") + '"></span>';
-const pill = (status, percent) => '<span class="pill ' + status + '">' + (status === "running" ? (typeof percent === "number" ? "working \xB7 " + percent + "%" : "working") : status) + "</span>";
+// Effort as a chip with a small level meter (unknown names, e.g. opencode variants, get no meter).
+    const EFFORT_LEVELS = { minimal: 1, low: 1, medium: 2, high: 3, xhigh: 4, max: 4 };
+    const effortChip = (e) => {
+      const n = EFFORT_LEVELS[String(e).toLowerCase()];
+      const bars = n ? '<span class="meter">' + [1, 2, 3, 4].map((i) => "<i" + (i <= n ? ' class="on"' : "") + "></i>").join("") + "</span>" : "";
+      return '<span class="chip effort" title="reasoning effort">' + bars + esc(e) + "</span>";
+    };
+    const pill = (status, percent) => '<span class="pill ' + status + '">' + (status === "running" ? (typeof percent === "number" ? "working \xB7 " + percent + "%" : "working") : status) + "</span>";
 
 let state = null, model = null, route = parseRoute(), lastTo = "", pulling = false, lastChat = "";
 /** Loaded run logs: name -> { raw, offset, done }. */
@@ -40671,6 +40738,7 @@ function buildModel(s) {
     if (!g) groups.set(key, (g = { key, job: r.job || null, agent: r.agent, model: null, owner: ownerOf(r, live), turns: [] }));
     g.turns.push(r);
     if (r.model) g.model = r.model;
+      if (r.effort) g.effort = r.effort;
     if (r.session) ofSession.set(r.session, key);
   }
   for (const g of groups.values()) {
@@ -40737,8 +40805,8 @@ function groupRow(g, sel, showOwner) {
     // Like a chat list: the title the starting agent gave it, with agent and model below; else the task.
     (g.title
       ? '<div style="min-width:0"><div class="line1"><b class="ell">' + esc(g.title) + "</b></div>" +
-        '<div class="task">' + esc(g.agent) + (g.model ? " \xB7 " + esc(g.model) : "") + (g.turns.length > 1 ? " \xB7 " + g.turns.length + " turns" : "") + "</div></div>"
-      : '<div style="min-width:0"><div class="line1"><b>' + esc(g.agent) + "</b>" + (g.model ? '<span class="chip ell">' + esc(g.model) + "</span>" : "") +
+        '<div class="task">' + esc(g.agent) + (g.model ? " \xB7 " + esc(g.model) : "") + (g.effort ? " \xB7 " + esc(g.effort) + " effort" : "") + (g.turns.length > 1 ? " \xB7 " + g.turns.length + " turns" : "") + "</div></div>"
+      : '<div style="min-width:0"><div class="line1"><b>' + esc(g.agent) + "</b>" + (g.model ? '<span class="chip ell">' + esc(g.model) + "</span>" : "") + (g.effort ? effortChip(g.effort) : "") +
         (g.turns.length > 1 ? '<span class="chip">' + g.turns.length + " turns</span>" : "") + "</div>" +
         '<div class="task">' + esc(g.task || g.last) + "</div></div>") +
     '<div class="side">' + pill(g.status, g.percent) + "<span>" + (showOwner ? esc(g.owner) + " \xB7 " : "") + ago(g.updatedAt) + "</span></div>" +
@@ -40876,7 +40944,7 @@ function splitTurn(raw) {
 function renderConversation(g) {
   const first = g.turns[0], last = g.turns[g.turns.length - 1];
   $("cAvatar").innerHTML = av(g.agent);
-  $("cTitle").innerHTML = (g.title ? esc(g.title) + ' <span class="chip">' + esc(g.agent) + "</span>" : esc(g.agent)) + (g.model ? ' <span class="chip">' + esc(g.model) + "</span>" : "") + " " + pill(g.status, g.percent) + (g.progressNote && g.percent !== null ? ' <span class="small muted">' + esc(g.progressNote) + "</span>" : "");
+  $("cTitle").innerHTML = (g.title ? esc(g.title) + ' <span class="chip">' + esc(g.agent) + "</span>" : esc(g.agent)) + (g.model ? ' <span class="chip">' + esc(g.model) + "</span>" : "") + (g.effort ? " " + effortChip(g.effort) : "") + " " + pill(g.status, g.percent) + (g.progressNote && g.percent !== null ? ' <span class="small muted">' + esc(g.progressNote) + "</span>" : "");
   $("cSub").textContent = (g.owner === "earlier runs" ? "" : "started by " + g.owner + " \xB7 ") + time(first.startedAt) + " \xB7 " + (first.access || "default") + " access" + (first.workdir ? " \xB7 " + first.workdir : "");
   const hint = g.job && g.status !== "running"
     ? (g.status === "done" ? "Continue it with its context from " : "Recover it with its context from ") + esc(g.owner) + ': <code>message_subagent(job="' + esc(g.job) + '")</code>'
@@ -41063,20 +41131,20 @@ function summarizeRun(file2, text2, mtimeMs, now, meta3 = {}) {
   };
 }
 function listRuns(home, now = Date.now()) {
-  const dir = join13(home, RUNS_DIR_NAME);
+  const dir = join14(home, RUNS_DIR_NAME);
   if (!existsSync2(dir)) return [];
-  return readdirSync2(dir).filter((f) => RUN_NAME.test(f)).map((f) => ({ f, st: statSync3(join13(dir, f)) })).sort((a, b) => b.st.mtimeMs - a.st.mtimeMs).slice(0, MAX_RUNS).map(({ f, st }) => summarizeRun(f, readFileSync8(join13(dir, f), "utf8"), st.mtimeMs, now, readMeta(join13(dir, runMetaPath(f)))));
+  return readdirSync2(dir).filter((f) => RUN_NAME.test(f)).map((f) => ({ f, st: statSync3(join14(dir, f)) })).sort((a, b) => b.st.mtimeMs - a.st.mtimeMs).slice(0, MAX_RUNS).map(({ f, st }) => summarizeRun(f, readFileSync9(join14(dir, f), "utf8"), st.mtimeMs, now, readMeta(join14(dir, runMetaPath(f)))));
 }
 function readMeta(file2) {
   try {
-    return JSON.parse(readFileSync8(file2, "utf8"));
+    return JSON.parse(readFileSync9(file2, "utf8"));
   } catch {
     return {};
   }
 }
 function classifyPeers(peers, runs, home) {
   const norm = (p) => p.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
-  const worktrees = `${norm(join13(home, "worktrees"))}/`;
+  const worktrees = `${norm(join14(home, "worktrees"))}/`;
   return peers.map((p) => {
     const cwd = norm(p.cwd ?? "");
     const subagent = cwd.startsWith(worktrees);
@@ -41169,10 +41237,10 @@ async function startUi(opts) {
     }
     const runMatch = /^\/api\/runs\/([\w.-]+)$/.exec(url2.pathname);
     if (req.method === "GET" && runMatch) {
-      const file2 = join13(opts.home, RUNS_DIR_NAME, `${runMatch[1]}.log`);
+      const file2 = join14(opts.home, RUNS_DIR_NAME, `${runMatch[1]}.log`);
       if (!existsSync2(file2)) return send(res, 404, { error: "no such run" });
       const from = Math.max(0, Number(url2.searchParams.get("from")) || 0);
-      const buf = readFileSync8(file2);
+      const buf = readFileSync9(file2);
       let end = Math.min(buf.length, from + MAX_LOG_CHUNK);
       while (end < buf.length && end > from && (buf[end] & 192) === 128) end--;
       return send(res, 200, { text: buf.subarray(from, end).toString("utf8"), next: end, size: buf.length });
@@ -41215,11 +41283,11 @@ var SECRET_BYTES5 = 24;
 var PROBE_TIMEOUT_MS = 1500;
 var OWNER_ONLY2 = 384;
 function dashboardFile(home) {
-  return join14(home, DASHBOARD_FILE);
+  return join15(home, DASHBOARD_FILE);
 }
 function readDashboardInfo(home) {
   try {
-    const d = JSON.parse(readFileSync9(dashboardFile(home), "utf8"));
+    const d = JSON.parse(readFileSync10(dashboardFile(home), "utf8"));
     return typeof d.url === "string" && typeof d.port === "number" && typeof d.pid === "number" ? d : null;
   } catch {
     return null;
@@ -41287,8 +41355,8 @@ function openBrowser(url2) {
 
 // src/core/worktree.ts
 import { createHash as createHash2 } from "node:crypto";
-import { mkdirSync as mkdirSync7, readFileSync as readFileSync10, realpathSync as realpathSync2, rmSync as rmSync2 } from "node:fs";
-import { basename as basename2, isAbsolute as isAbsolute2, join as join15, relative, resolve as resolve3 } from "node:path";
+import { mkdirSync as mkdirSync7, readFileSync as readFileSync11, realpathSync as realpathSync2, rmSync as rmSync2 } from "node:fs";
+import { basename as basename2, isAbsolute as isAbsolute2, join as join16, relative, resolve as resolve3 } from "node:path";
 var GIT = "git";
 var GIT_TIMEOUT_MS = 18e4;
 var WORKTREE_ADD_TIMEOUT_MS = 6e5;
@@ -41314,9 +41382,9 @@ async function createWorktree(opts) {
   const base = await git(["rev-parse", "HEAD"], repoRoot, opts.log);
   const baseBranch = await git(["symbolic-ref", "-q", "--short", "HEAD"], repoRoot, opts.log).catch(() => "") || null;
   const branch = `${BRANCH_PREFIX}${opts.jobId}`;
-  const dir = join15(opts.home, "worktrees");
+  const dir = join16(opts.home, "worktrees");
   mkdirSync7(dir, { recursive: true });
-  const path = join15(dir, `${basename2(repoRoot)}-${opts.jobId}`);
+  const path = join16(dir, `${basename2(repoRoot)}-${opts.jobId}`);
   try {
     await git(["worktree", "add", "-b", branch, path, base], repoRoot, opts.log, WORKTREE_ADD_TIMEOUT_MS);
   } catch (err) {
@@ -41335,7 +41403,7 @@ async function createWorktree(opts) {
   }
   await unlockWorktree(repoRoot, path, opts.log);
   const rel = relative(repoRoot, opts.cwd);
-  const cwd = rel && !rel.startsWith("..") && !isAbsolute2(rel) ? join15(path, rel) : path;
+  const cwd = rel && !rel.startsWith("..") && !isAbsolute2(rel) ? join16(path, rel) : path;
   opts.log.info("worktree created", { repoRoot, path, branch });
   return { repoRoot, path, cwd, branch, base, baseBranch };
 }
@@ -41454,7 +41522,7 @@ async function gitChangeSnapshot(cwd, log) {
     const file2 = line.slice(3).replace(/^.* -> /, "").replace(/^"|"$/g, "");
     let fp = line.slice(0, 2);
     try {
-      fp += ":" + createHash2("sha1").update(readFileSync10(join15(root, file2))).digest("hex");
+      fp += ":" + createHash2("sha1").update(readFileSync11(join16(root, file2))).digest("hex");
     } catch {
       fp += ":missing";
     }
@@ -41471,7 +41539,7 @@ function changedFiles(before, after) {
 
 // src/mcp/jobs.ts
 import { randomUUID as randomUUID4 } from "node:crypto";
-import { closeSync as closeSync2, mkdirSync as mkdirSync8, openSync as openSync2, readFileSync as readFileSync11, renameSync as renameSync2, rmSync as rmSync3, statSync as statSync4, writeFileSync as writeFileSync6 } from "node:fs";
+import { closeSync as closeSync2, mkdirSync as mkdirSync8, openSync as openSync2, readFileSync as readFileSync12, renameSync as renameSync2, rmSync as rmSync3, statSync as statSync4, writeFileSync as writeFileSync6 } from "node:fs";
 import { dirname as dirname5 } from "node:path";
 var JOB_ID_LENGTH = 8;
 var PROMPT_PREVIEW_CHARS = 120;
@@ -41822,7 +41890,7 @@ function toStored(j) {
 }
 function readStore(path) {
   try {
-    const data = JSON.parse(readFileSync11(path, "utf8"));
+    const data = JSON.parse(readFileSync12(path, "utf8"));
     return Array.isArray(data) ? data.filter((j) => j && typeof j.id === "string" && typeof j.name === "string") : [];
   } catch {
     return [];
@@ -41863,11 +41931,11 @@ var PROGRESS_HINT = "(agent-bridge: while you work, call the report_progress too
 var DELEGATED_JOB_NOTE = "(agent-bridge: you are a delegated job. Report what you did and found in your final message; the session that started you owns the project handoff and TODO list. Do not write or commit handoff or TODO files (such as HANDOFF.md or TODO.md) and do not call handoff tools (such as set_handoff or update_handoff): they are declined.)";
 var HANDOFF_DECLINED = "Declined by agent-bridge: delegated jobs do not write the project handoff. Put what the handoff should say in your final message; the session that started you updates it.";
 var SUBAGENT_TOOLS = /* @__PURE__ */ new Set(["peers", "send", "report_progress", "hook_event"]);
-var KEPT_ARGS = ["model", "cwd", "timeout_sec", "worktree", "access", "sandbox", "permission_mode", "auto_approve", "allow_tools", "title"];
+var KEPT_ARGS = ["model", "effort", "cwd", "timeout_sec", "worktree", "access", "sandbox", "permission_mode", "auto_approve", "allow_tools", "title"];
 var PARENT_APPROVAL_TIMEOUT_MS = 10 * 6e4;
 var PLUGIN_ROOT = resolve4(dirname6(fileURLToPath2(import.meta.url)), "..");
 function isBridgeWorktree(dir, home) {
-  return isInside(dir, join16(home, "worktrees")) && resolve4(dir) !== resolve4(join16(home, "worktrees"));
+  return isInside(dir, join17(home, "worktrees")) && resolve4(dir) !== resolve4(join17(home, "worktrees"));
 }
 function isInside(child, parent) {
   const rel = relative2(resolve4(parent), resolve4(child));
@@ -41965,7 +42033,7 @@ async function startServer(argv = process.argv.slice(2)) {
   const launchKnown = new Promise((r) => launchInspected = r);
   const ctx = { agent, cfg, node: node2, log, home, cwd: () => node2?.cwd ?? cwd, channelActive: () => channel, parent: delegated ? parentFromEnv() : null, launchKnown };
   if (node2) {
-    ctx.jobs = new JobManager(node2, log.child("jobs"), join16(home, JOBS_FILE), cfg.maxJobs);
+    ctx.jobs = new JobManager(node2, log.child("jobs"), join17(home, JOBS_FILE), cfg.maxJobs);
     ctx.activity = (s) => node2.setActivity(s);
     let cwdSettled = cwdKnown;
     ctx.learnCwd = async (projectDir) => {
@@ -42103,14 +42171,14 @@ async function startServer(argv = process.argv.slice(2)) {
       if (channel) for (const m of node2.unread()) void pushChannel(m);
       if (isBroker && cfg.dashboard && !ctx.headless) void ensureDashboard(false);
     });
-    const join17 = () => node2.start().catch((err) => log.error("could not join the bridge", { err: err.message }));
+    const join18 = () => node2.start().catch((err) => log.error("could not join the bridge", { err: err.message }));
     if (ctx.headless) {
       log.info("headless claude -p run: not joining the bridge unless a bridge tool is used");
     } else if (cwdKnown) {
-      void join17();
+      void join18();
     } else {
       log.info("project directory unknown yet; deferring bridge join", { graceMs: CWD_DISCOVERY_GRACE_MS });
-      setTimeout(() => void join17(), CWD_DISCOVERY_GRACE_MS).unref();
+      setTimeout(() => void join18(), CWD_DISCOVERY_GRACE_MS).unref();
     }
   }
 }
@@ -42159,7 +42227,7 @@ function registerTools(mcp, ctx, targets) {
       if (jobs.length) {
         lines.push(t("peers.jobs", { count: jobs.length }));
         for (const j of jobs) {
-          lines.push(t("peers.job", { name: j.name + (j.args?.title ? ` "${j.args.title}"` : " (untitled: name it with message_subagent(job, title=...))"), model: j.model ?? "default", duration: formatDuration(Date.now() - j.startedAt), progress: (j.percent !== void 0 ? `${j.percent}% (${j.progressNote || "reported"}) \xB7 ` : "") + (j.progress ?? "starting") }));
+          lines.push(t("peers.job", { name: j.name + (j.args?.title ? ` "${j.args.title}"` : " (untitled: name it with message_subagent(job, title=...))"), model: (j.model ?? "default") + (typeof j.args?.effort === "string" ? `, effort ${j.args.effort}` : ""), duration: formatDuration(Date.now() - j.startedAt), progress: (j.percent !== void 0 ? `${j.percent}% (${j.progressNote || "reported"}) \xB7 ` : "") + (j.progress ?? "starting") }));
         }
       }
       const waiting = ctx.jobs?.waiting() ?? [];
@@ -42270,6 +42338,7 @@ function registerTools(mcp, ctx, targets) {
       model: external_exports.string().regex(MODEL_NAME_PATTERN).optional().describe(
         `Any model id or alias ${target} accepts, passed through verbatim (e.g. ${profile.modelExample}). Default: ${defaultModel ?? `${target}'s own default`}.`
       ),
+      effort: external_exports.string().regex(/^[A-Za-z0-9_-]{1,20}$/).optional().describe(`Reasoning effort, e.g. ${profile.effortExample}. Default: ${target}'s own default (shown in the dashboard).`),
       session_id: external_exports.string().optional().describe("Continue a previous delegated session"),
       cwd: external_exports.string().optional().describe("Working directory (default: this project)"),
       timeout_sec: external_exports.number().int().min(10).max(MAX_JOB_TIMEOUT_SEC).optional().describe(`Default ${DEFAULT_DELEGATE_TIMEOUT_SEC} for ask_*, none (${MAX_JOB_TIMEOUT_SEC}) for spawn_*`),
@@ -42345,7 +42414,7 @@ function registerTools(mcp, ctx, targets) {
         feed = startRunFeed({
           home: ctx.home,
           name: `${target}-${randomUUID5().slice(0, 8)}`,
-          header: `${target}${a.model ? ` (${a.model})` : ""} in ${workdir}, access ${access ?? "default"}, by ${node2?.name ?? ctx.agent}${a.session_id ? `, continues ${a.session_id}` : ""}
+          header: `${target}${a.model ? ` (${a.model}${a.effort ? `, effort ${a.effort}` : ""})` : a.effort ? ` (effort ${a.effort})` : ""} in ${workdir}, access ${access ?? "default"}, by ${node2?.name ?? ctx.agent}${a.session_id ? `, continues ${a.session_id}` : ""}
 ${a.prompt}
 ---`,
           forward: onProgress,
@@ -42357,6 +42426,7 @@ ${a.prompt}
             // The job's current title (message_subagent can name or rename a job after it started).
             title: typeof job?.args?.title === "string" && job.args.title || a.title?.trim() || void 0,
             model: a.model ?? defaultModel ?? null,
+            effort: a.effort ?? defaultEffort(target, a.model ?? defaultModel ?? null),
             access: access ?? "default",
             workdir,
             continues: a.session_id ?? null
@@ -42416,6 +42486,9 @@ ${a.prompt}
             sessionId: a.session_id ?? null,
             timeoutSec: a.timeout_sec ?? (background ? MAX_JOB_TIMEOUT_SEC : DEFAULT_DELEGATE_TIMEOUT_SEC),
             model: a.model ?? defaultModel,
+            effort: a.effort ?? null,
+            // What it really runs (a CLI default or an alias resolved), for the dashboard.
+            onInfo: (info) => feed.meta({ ...info.model ? { model: info.model } : {}, effort: info.effort ?? a.effort ?? defaultEffort(target, info.model ?? null) }),
             log: dlog,
             signal,
             onProgress: feed.report,

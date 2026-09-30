@@ -37,6 +37,7 @@ import { PermissionRelay, type PermissionDecision, type PermissionRequest } from
 import { codexPermissionHookHash, codexPermissionHookTrusted, recordCodexHookObservation } from "../core/codex-trust.js";
 import { startRunFeed } from "../core/runfeed.js";
 import { saveAutoWake, savedAutoWake } from "../core/auto-wake-pref.js";
+import { defaultEffort } from "../core/effort.js";
 import { isAutoApproved, isHandoffToolCall, isOwnServerCall } from "../core/tool-allow.js";
 import { ParentLink, parentFromEnv, type ParentClient } from "../core/parent-link.js";
 import { findRunningDashboard, hostDashboard, type DashboardInfo, type HostedDashboard } from "../cli/dashboard.js";
@@ -66,7 +67,7 @@ const HANDOFF_DECLINED =
 /** The tools a delegated subagent's server offers (see registerTools). */
 const SUBAGENT_TOOLS = new Set(["peers", "send", "report_progress", "hook_event"]);
 /** The options of a job worth keeping to continue it the same way later (no prompt, no internals). */
-const KEPT_ARGS = ["model", "cwd", "timeout_sec", "worktree", "access", "sandbox", "permission_mode", "auto_approve", "allow_tools", "title"] as const;
+const KEPT_ARGS = ["model", "effort", "cwd", "timeout_sec", "worktree", "access", "sandbox", "permission_mode", "auto_approve", "allow_tools", "title"] as const;
 /** How long a background subagent waits for its parent agent to approve something before it counts as "deny". */
 const PARENT_APPROVAL_TIMEOUT_MS = 10 * 60_000;
 /** Plugin root: dist/server.mjs lives one level below it. */
@@ -478,7 +479,7 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
       if (jobs.length) {
         lines.push(t("peers.jobs", { count: jobs.length }));
         for (const j of jobs) {
-          lines.push(t("peers.job", { name: j.name + (j.args?.title ? ` "${j.args.title}"` : " (untitled: name it with message_subagent(job, title=...))"), model: j.model ?? "default", duration: formatDuration(Date.now() - j.startedAt), progress: (j.percent !== undefined ? `${j.percent}% (${j.progressNote || "reported"}) · ` : "") + (j.progress ?? "starting") }));
+          lines.push(t("peers.job", { name: j.name + (j.args?.title ? ` "${j.args.title}"` : " (untitled: name it with message_subagent(job, title=...))"), model: (j.model ?? "default") + (typeof j.args?.effort === "string" ? `, effort ${j.args.effort}` : ""), duration: formatDuration(Date.now() - j.startedAt), progress: (j.percent !== undefined ? `${j.percent}% (${j.progressNote || "reported"}) · ` : "") + (j.progress ?? "starting") }));
         }
       }
       const waiting = ctx.jobs?.waiting() ?? [];
@@ -595,7 +596,7 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
   );
 
   /** _worktree: internal, a follow-up continuing in an existing worktree. */
-  type DelegateArgs = { prompt: string; model?: string; session_id?: string; cwd?: string; timeout_sec?: number; worktree?: boolean; allow_tools?: string[]; title: string; _worktree?: Worktree; _job?: string } & TargetArgs;
+  type DelegateArgs = { prompt: string; model?: string; effort?: string; session_id?: string; cwd?: string; timeout_sec?: number; worktree?: boolean; allow_tools?: string[]; title: string; _worktree?: Worktree; _job?: string } & TargetArgs;
   const keep = (a: DelegateArgs): Record<string, unknown> => Object.fromEntries(KEPT_ARGS.filter((k) => a[k] !== undefined).map((k) => [k, a[k]]));
   const resumers: Partial<Record<CodingAgent, (a: DelegateArgs) => Resume>> = {};
   for (const target of targets) {
@@ -611,6 +612,11 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
           `Any model id or alias ${target} accepts, passed through verbatim (e.g. ${profile.modelExample}). ` +
             `Default: ${defaultModel ?? `${target}'s own default`}.`,
         ),
+      effort: z
+        .string()
+        .regex(/^[A-Za-z0-9_-]{1,20}$/)
+        .optional()
+        .describe(`Reasoning effort, e.g. ${profile.effortExample}. Default: ${target}'s own default (shown in the dashboard).`),
       session_id: z.string().optional().describe("Continue a previous delegated session"),
       cwd: z.string().optional().describe("Working directory (default: this project)"),
       timeout_sec: z
@@ -722,7 +728,7 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
         feed = startRunFeed({
           home: ctx.home,
           name: `${target}-${randomUUID().slice(0, 8)}`,
-          header: `${target}${a.model ? ` (${a.model})` : ""} in ${workdir}, access ${access ?? "default"}, by ${node?.name ?? ctx.agent}${a.session_id ? `, continues ${a.session_id}` : ""}\n${a.prompt}\n---`,
+          header: `${target}${a.model ? ` (${a.model}${a.effort ? `, effort ${a.effort}` : ""})` : a.effort ? ` (effort ${a.effort})` : ""} in ${workdir}, access ${access ?? "default"}, by ${node?.name ?? ctx.agent}${a.session_id ? `, continues ${a.session_id}` : ""}\n${a.prompt}\n---`,
           forward: onProgress,
           meta: {
             by: node?.name ?? ctx.agent,
@@ -732,6 +738,7 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
             // The job's current title (message_subagent can name or rename a job after it started).
             title: (typeof job?.args?.title === "string" && job.args.title) || a.title?.trim() || undefined,
             model: a.model ?? defaultModel ?? null,
+            effort: a.effort ?? defaultEffort(target, a.model ?? defaultModel ?? null),
             access: access ?? "default",
             workdir,
             continues: a.session_id ?? null,
@@ -796,6 +803,9 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
             sessionId: a.session_id ?? null,
             timeoutSec: a.timeout_sec ?? (background ? MAX_JOB_TIMEOUT_SEC : DEFAULT_DELEGATE_TIMEOUT_SEC),
             model: a.model ?? defaultModel,
+            effort: a.effort ?? null,
+            // What it really runs (a CLI default or an alias resolved), for the dashboard.
+            onInfo: (info) => feed.meta({ ...(info.model ? { model: info.model } : {}), effort: info.effort ?? a.effort ?? defaultEffort(target, info.model ?? null) }),
             log: dlog,
             signal,
             onProgress: feed.report,
