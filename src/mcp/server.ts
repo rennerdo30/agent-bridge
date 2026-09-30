@@ -16,7 +16,6 @@ import {
   MAX_BODY_CHARS,
   MAX_DELEGATE_TIMEOUT_SEC,
   MAX_JOB_TIMEOUT_SEC,
-  MAX_RUNNING_JOBS,
   MAX_WAIT_SEC,
 } from "../core/constants.js";
 import { currentDelegateDepth, DelegateError, killAllDelegates, resolveBinary, type DelegateResult } from "../core/delegate.js";
@@ -230,7 +229,7 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
   let channel = agent === "claude" && cfg.delivery === "channel";
   const ctx: ServerContext = { agent, cfg, node, log, home, cwd: () => node?.cwd ?? cwd, channelActive: () => channel, parent: delegated ? parentFromEnv() : null };
   if (node) {
-    ctx.jobs = new JobManager(node, log.child("jobs"), join(home, JOBS_FILE));
+    ctx.jobs = new JobManager(node, log.child("jobs"), join(home, JOBS_FILE), cfg.maxJobs);
     ctx.activity = (s) => node.setActivity(s);
     // Learn the project folder once, when it was unknown at start (Codex starts us in the plugin folder).
     // Later hook cwds follow the agent's `cd`s; renaming then would strand replies sent to the old name.
@@ -857,14 +856,14 @@ ${res.text || t("delegate.empty")}`, res.isError);
         description:
           `Start ${profile.title} as a background subagent and return immediately with a job id. Keep working meanwhile; ` +
           `the result arrives as a message from "${target}-job-<id>" (injected automatically, or use wait_for_message with from=<job name>). ` +
-          `Several subagents can run in parallel (max ${MAX_RUNNING_JOBS}). ` +
+          `Several subagents can run in parallel (max ${cfg.maxJobs}). ` +
           profile.permissionNote(cfg),
         inputSchema: schema,
       },
       guarded(spawnName, async (a: DelegateArgs) => {
         const jobs = ctx.jobs;
         if (!jobs) throw new BridgeError("bad_request", t("err.delegatedSession"));
-        if (!jobs.canStart()) return text(t("jobs.limit", { max: MAX_RUNNING_JOBS }), true);
+        if (!jobs.canStart()) return text(t("jobs.limit", { max: jobs.maxJobs }), true);
         const job = jobs.start(target, a.model ?? defaultModel, a.prompt, (signal, onProgress, job) => run({ ...a, _job: job.name }, signal, onProgress, true, job), resumeFor(a), keep(a));
         const cwd = a.cwd || ctx.cwd();
         const access = a.access ?? (a.worktree || isBridgeWorktree(cwd, ctx.home) ? "edit" : null);
@@ -937,7 +936,7 @@ ${res.text || t("delegate.empty")}`, res.isError);
       const jobs = ctx.jobs;
       if (!jobs) throw new BridgeError("bad_request", t("err.delegatedSession"));
       const { outcome, job } = jobs.followUp(a.job, a.message?.trim() || DEFAULT_FOLLOW_UP);
-      return text(t(`followUp.${outcome}`, { name: job?.name ?? a.job, max: MAX_RUNNING_JOBS }), outcome === "unknown" || outcome === "no-session" || outcome === "busy");
+      return text(t(`followUp.${outcome}`, { name: job?.name ?? a.job, max: cfg.maxJobs }), outcome === "unknown" || outcome === "no-session" || outcome === "busy");
     }),
   );
 

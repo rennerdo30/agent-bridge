@@ -84,6 +84,9 @@ describe("config", () => {
       const envOverride = loadConfig(home, "codex", nullLogger, { AGENT_BRIDGE_AUTO_WAKE: "on", AGENT_BRIDGE_MAX_HOPS: "999" });
       expect(envOverride.autoWake).toBe(true);
       expect(envOverride.maxHops).toBe(3); // out of range env value is ignored
+      expect(claude.maxJobs).toBe(8);
+      expect(loadConfig(home, "claude", nullLogger, { AGENT_BRIDGE_MAX_JOBS: "12" }).maxJobs).toBe(12);
+      expect(loadConfig(home, "claude", nullLogger, { AGENT_BRIDGE_MAX_JOBS: "500" }).maxJobs).toBe(8);
     } finally {
       rmSync(home, { recursive: true, force: true });
     }

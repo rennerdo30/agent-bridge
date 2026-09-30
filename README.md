@@ -262,6 +262,7 @@ Every reply increments a conversation's hop count. Messages at or above `maxHops
 {
   "autoWake": false,
   "maxHops": 6,
+  "maxJobs": 8,
   "lingerSec": 300,
   "codex": { "name": "codex-main", "claudeBin": "claude", "claudePermissionMode": "default", "claudeModel": "opus" },
   "claude": { "delivery": "auto", "codexBin": "codex", "codexSandbox": "read-only", "codexModel": "gpt-6-sol" },
@@ -276,6 +277,7 @@ Every reply increments a conversation's hop count. Messages at or above `maxHops
 | `AGENT_BRIDGE_NAME` | Peer name |
 | `AGENT_BRIDGE_AUTO_WAKE` | `on` / `off` |
 | `AGENT_BRIDGE_MAX_HOPS` | Loop limit |
+| `AGENT_BRIDGE_MAX_JOBS` | Background subagents running at once per session (default 8, max 50); `maxJobs` in the config file |
 | `AGENT_BRIDGE_LINGER_SEC` | Listen window after sending (0 disables) |
 | `AGENT_BRIDGE_DELIVERY` | Claude only: `auto`, `channel`, `hooks` |
 | `AGENT_BRIDGE_CLAUDE_BIN` / `AGENT_BRIDGE_CODEX_BIN` / `AGENT_BRIDGE_OPENCODE_BIN` | Paths of the CLIs used for delegation |

@@ -36490,7 +36490,7 @@ import { basename, join as join2 } from "node:path";
 import { homedir } from "node:os";
 import { join } from "node:path";
 var APP_NAME = "agent-bridge";
-var APP_VERSION = "0.14.2";
+var APP_VERSION = "0.15.0";
 var PROTOCOL_VERSION = 2;
 var ENV = {
   home: "AGENT_BRIDGE_HOME",
@@ -36501,6 +36501,7 @@ var ENV = {
   logConsole: "AGENT_BRIDGE_LOG_CONSOLE",
   autoWake: "AGENT_BRIDGE_AUTO_WAKE",
   maxHops: "AGENT_BRIDGE_MAX_HOPS",
+  maxJobs: "AGENT_BRIDGE_MAX_JOBS",
   lingerSec: "AGENT_BRIDGE_LINGER_SEC",
   delivery: "AGENT_BRIDGE_DELIVERY",
   claudeBin: "AGENT_BRIDGE_CLAUDE_BIN",
@@ -36536,7 +36537,8 @@ var DEFAULT_OPENCODE_BIN = "opencode";
 var DEFAULT_DASHBOARD_PORT = 4777;
 var DEFAULT_LINGER_SEC = 300;
 var STOP_WAIT_CAP_MS = 29e4;
-var MAX_RUNNING_JOBS = 4;
+var DEFAULT_MAX_JOBS = 8;
+var MAX_JOBS_LIMIT = 50;
 var DEFAULT_WAIT_SEC = 120;
 var MAX_WAIT_SEC = 1800;
 var HOOK_MAX_MESSAGES = 10;
@@ -36593,6 +36595,7 @@ var DEFAULT_CONFIG = {
   name: null,
   autoWake: false,
   maxHops: DEFAULT_MAX_HOPS,
+  maxJobs: DEFAULT_MAX_JOBS,
   delivery: "auto",
   claudeBin: DEFAULT_CLAUDE_BIN,
   codexBin: DEFAULT_CODEX_BIN,
@@ -36655,6 +36658,7 @@ function loadConfig(home, agent, log, env = process.env) {
     name: pick2("name", ENV.name, str) ?? d.name,
     autoWake: pick2("autoWake", ENV.autoWake, parseBool) ?? d.autoWake,
     maxHops: pick2("maxHops", ENV.maxHops, (v) => parseIntInRange(v, 0, MAX_HOPS_LIMIT)) ?? d.maxHops,
+    maxJobs: pick2("maxJobs", ENV.maxJobs, (v) => parseIntInRange(v, 1, MAX_JOBS_LIMIT)) ?? d.maxJobs,
     delivery: pick2("delivery", ENV.delivery, (v) => oneOf(v, DELIVERY_MODES)) ?? d.delivery,
     claudeBin: pick2("claudeBin", ENV.claudeBin, str) ?? d.claudeBin,
     codexBin: pick2("codexBin", ENV.codexBin, str) ?? d.codexBin,
@@ -40880,14 +40884,16 @@ var STORE_LIMIT = 200;
 var STORED_PROMPT_CHARS = 1e3;
 var DEFAULT_FOLLOW_UP = "Continue where you stopped and finish the task. Then give your final answer.";
 var JobManager = class {
-  constructor(node2, log, storePath = null) {
+  constructor(node2, log, storePath = null, maxJobs = DEFAULT_MAX_JOBS) {
     this.node = node2;
     this.log = log;
     this.storePath = storePath;
+    this.maxJobs = maxJobs;
   }
   node;
   log;
   storePath;
+  maxJobs;
   running = /* @__PURE__ */ new Map();
   foreground = /* @__PURE__ */ new Map();
   history = /* @__PURE__ */ new Map();
@@ -41007,7 +41013,7 @@ var JobManager = class {
     };
   }
   canStart() {
-    return this.running.size < MAX_RUNNING_JOBS;
+    return this.running.size < this.maxJobs;
   }
   start(agent, model, prompt, run, resume, args) {
     const job = this.newJob(agent, model, prompt, "job", resume, args);
@@ -41304,7 +41310,7 @@ async function startServer(argv = process.argv.slice(2)) {
   let channel = agent === "claude" && cfg.delivery === "channel";
   const ctx = { agent, cfg, node: node2, log, home, cwd: () => node2?.cwd ?? cwd, channelActive: () => channel, parent: delegated ? parentFromEnv() : null };
   if (node2) {
-    ctx.jobs = new JobManager(node2, log.child("jobs"), join15(home, JOBS_FILE));
+    ctx.jobs = new JobManager(node2, log.child("jobs"), join15(home, JOBS_FILE), cfg.maxJobs);
     ctx.activity = (s) => node2.setActivity(s);
     let cwdSettled = cwdKnown;
     ctx.learnCwd = async (projectDir) => {
@@ -41836,13 +41842,13 @@ ${res.text || t("delegate.empty")}`, res.isError);
       spawnName,
       {
         title: `Spawn ${target} subagent`,
-        description: `Start ${profile.title} as a background subagent and return immediately with a job id. Keep working meanwhile; the result arrives as a message from "${target}-job-<id>" (injected automatically, or use wait_for_message with from=<job name>). Several subagents can run in parallel (max ${MAX_RUNNING_JOBS}). ` + profile.permissionNote(cfg),
+        description: `Start ${profile.title} as a background subagent and return immediately with a job id. Keep working meanwhile; the result arrives as a message from "${target}-job-<id>" (injected automatically, or use wait_for_message with from=<job name>). Several subagents can run in parallel (max ${cfg.maxJobs}). ` + profile.permissionNote(cfg),
         inputSchema: schema
       },
       guarded(spawnName, async (a) => {
         const jobs = ctx.jobs;
         if (!jobs) throw new BridgeError("bad_request", t("err.delegatedSession"));
-        if (!jobs.canStart()) return text(t("jobs.limit", { max: MAX_RUNNING_JOBS }), true);
+        if (!jobs.canStart()) return text(t("jobs.limit", { max: jobs.maxJobs }), true);
         const job = jobs.start(target, a.model ?? defaultModel, a.prompt, (signal, onProgress, job2) => run({ ...a, _job: job2.name }, signal, onProgress, true, job2), resumeFor(a), keep(a));
         const cwd = a.cwd || ctx.cwd();
         const access = a.access ?? (a.worktree || isBridgeWorktree(cwd, ctx.home) ? "edit" : null);
@@ -41902,7 +41908,7 @@ ${r.lines.map((l) => `  ${l}`).join("\n")}`).join("\n\n"));
       const jobs = ctx.jobs;
       if (!jobs) throw new BridgeError("bad_request", t("err.delegatedSession"));
       const { outcome, job } = jobs.followUp(a.job, a.message?.trim() || DEFAULT_FOLLOW_UP);
-      return text(t(`followUp.${outcome}`, { name: job?.name ?? a.job, max: MAX_RUNNING_JOBS }), outcome === "unknown" || outcome === "no-session" || outcome === "busy");
+      return text(t(`followUp.${outcome}`, { name: job?.name ?? a.job, max: cfg.maxJobs }), outcome === "unknown" || outcome === "no-session" || outcome === "busy");
     })
   );
   mcp.registerTool(

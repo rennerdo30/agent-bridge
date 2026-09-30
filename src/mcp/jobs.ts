@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { closeSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import { MAX_RUNNING_JOBS } from "../core/constants.js";
+import { DEFAULT_MAX_JOBS } from "../core/constants.js";
 import { DelegateError, type DelegateResult } from "../core/delegate.js";
 import type { Logger } from "../core/logger.js";
 import type { BridgeNode } from "../core/node.js";
@@ -75,6 +75,8 @@ export class JobManager {
     private readonly log: Logger,
     /** Where jobs are kept across restarts of the session (~/.agent-bridge/jobs.json); none in tests. */
     private readonly storePath: string | null = null,
+    /** Background subagents running at once (config maxJobs). */
+    readonly maxJobs: number = DEFAULT_MAX_JOBS,
   ) {}
 
   /** Save this session's jobs, merged with those other sessions saved. Best effort: never breaks a run. */
@@ -213,7 +215,7 @@ export class JobManager {
   }
 
   canStart(): boolean {
-    return this.running.size < MAX_RUNNING_JOBS;
+    return this.running.size < this.maxJobs;
   }
 
   start(agent: AgentKind, model: string | null, prompt: string, run: Run, resume?: Resume, args?: Record<string, unknown>): Job {

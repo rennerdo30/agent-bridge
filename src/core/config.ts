@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { basename, join } from "node:path";
-import { CONFIG_FILE_NAME, DEFAULT_CLAUDE_BIN, DEFAULT_CODEX_BIN, DEFAULT_LINGER_SEC, DEFAULT_MAX_HOPS, DEFAULT_OPENCODE_BIN, DEFAULT_DASHBOARD_PORT, ENV } from "./constants.js";
+import { CONFIG_FILE_NAME, DEFAULT_CLAUDE_BIN, DEFAULT_CODEX_BIN, DEFAULT_LINGER_SEC, DEFAULT_MAX_HOPS, DEFAULT_MAX_JOBS, DEFAULT_OPENCODE_BIN, DEFAULT_DASHBOARD_PORT, ENV, MAX_JOBS_LIMIT } from "./constants.js";
 import type { Logger } from "./logger.js";
 import { AGENT_KINDS, type AgentKind } from "./protocol.js";
 
@@ -25,6 +25,8 @@ export interface BridgeConfig {
   name: string | null;
   autoWake: boolean;
   maxHops: number;
+  /** Background subagents running at once per session. */
+  maxJobs: number;
   delivery: DeliveryMode;
   claudeBin: string;
   codexBin: string;
@@ -51,6 +53,7 @@ export const DEFAULT_CONFIG: BridgeConfig = {
   name: null,
   autoWake: false,
   maxHops: DEFAULT_MAX_HOPS,
+  maxJobs: DEFAULT_MAX_JOBS,
   delivery: "auto",
   claudeBin: DEFAULT_CLAUDE_BIN,
   codexBin: DEFAULT_CODEX_BIN,
@@ -127,6 +130,7 @@ export function loadConfig(home: string, agent: AgentKind, log: Logger, env: Nod
     name: pick("name", ENV.name, str) ?? d.name,
     autoWake: pick("autoWake", ENV.autoWake, parseBool) ?? d.autoWake,
     maxHops: pick("maxHops", ENV.maxHops, (v) => parseIntInRange(v, 0, MAX_HOPS_LIMIT)) ?? d.maxHops,
+    maxJobs: pick("maxJobs", ENV.maxJobs, (v) => parseIntInRange(v, 1, MAX_JOBS_LIMIT)) ?? d.maxJobs,
     delivery: pick("delivery", ENV.delivery, (v) => oneOf(v, DELIVERY_MODES)) ?? d.delivery,
     claudeBin: pick("claudeBin", ENV.claudeBin, str) ?? d.claudeBin,
     codexBin: pick("codexBin", ENV.codexBin, str) ?? d.codexBin,

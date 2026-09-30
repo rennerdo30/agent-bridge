@@ -3,7 +3,7 @@ import { join } from "node:path";
 
 /** Product identity. */
 export const APP_NAME = "agent-bridge";
-export const APP_VERSION = "0.14.2";
+export const APP_VERSION = "0.15.0";
 
 /** Wire protocol version; bump on incompatible changes to the broker protocol. */
 export const PROTOCOL_VERSION = 2;
@@ -18,6 +18,7 @@ export const ENV = {
   logConsole: "AGENT_BRIDGE_LOG_CONSOLE",
   autoWake: "AGENT_BRIDGE_AUTO_WAKE",
   maxHops: "AGENT_BRIDGE_MAX_HOPS",
+  maxJobs: "AGENT_BRIDGE_MAX_JOBS",
   lingerSec: "AGENT_BRIDGE_LINGER_SEC",
   delivery: "AGENT_BRIDGE_DELIVERY",
   claudeBin: "AGENT_BRIDGE_CLAUDE_BIN",
@@ -85,8 +86,10 @@ export const DEFAULT_DASHBOARD_PORT = 4777;
 export const DEFAULT_LINGER_SEC = 300;
 /** Longest a single Stop hook invocation waits; must stay below the hosts' hook timeouts (600s). */
 export const STOP_WAIT_CAP_MS = 290_000;
-/** Background subagents per session. */
-export const MAX_RUNNING_JOBS = 4;
+/** Background subagents running at once per session, unless maxJobs / AGENT_BRIDGE_MAX_JOBS says otherwise. */
+export const DEFAULT_MAX_JOBS = 8;
+/** Upper bound for that setting (a typo must not start hundreds of CLIs). */
+export const MAX_JOBS_LIMIT = 50;
 
 /** wait_for_message tool limits. */
 export const DEFAULT_WAIT_SEC = 120;
