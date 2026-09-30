@@ -36490,7 +36490,7 @@ import { basename, join as join2 } from "node:path";
 import { homedir } from "node:os";
 import { join } from "node:path";
 var APP_NAME = "agent-bridge";
-var APP_VERSION = "0.16.1";
+var APP_VERSION = "0.16.2";
 var PROTOCOL_VERSION = 2;
 var ENV = {
   home: "AGENT_BRIDGE_HOME",
@@ -40289,8 +40289,13 @@ function buildModel(s) {
   }
   const sessions = live.map((p) => ({ name: p.name, peer: p, live: true, groups: [], children: [] }));
   const byName = new Map(sessions.map((x) => [x.name, x]));
-  // Newest started first, and stable: rows must not jump around while subagents report progress.
-  const sorted = [...groups.values()].sort((a, b) => b.startedAt - a.startedAt || (a.key < b.key ? -1 : 1));
+  // Working subagents first (newest started first), then finished ones (newest finished first). Stable: a
+  // row only moves when its subagent finishes or is continued, never while it reports progress.
+  const running = (g) => g.status === "running";
+  const sorted = [...groups.values()].sort((a, b) =>
+    running(a) !== running(b) ? (running(a) ? -1 : 1)
+    : running(a) ? b.startedAt - a.startedAt || (a.key < b.key ? -1 : 1)
+    : b.updatedAt - a.updatedAt || (a.key < b.key ? -1 : 1));
   for (const g of sorted) {
     let x = byName.get(g.owner);
     if (!x) { x = { name: g.owner, peer: null, live: false, groups: [], children: [] }; byName.set(g.owner, x); sessions.push(x); }
