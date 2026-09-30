@@ -92,6 +92,16 @@ h3 .n { color: var(--faint); font-weight: 500; }
 .pill.interrupted { background: var(--warn-soft); color: var(--warn); }
 .pill.running::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; animation: pulse 1.4s infinite; }
 @keyframes pulse { 50% { opacity: .3; } }
+.linkbtn { margin-left: 8px; background: none; border: 0; padding: 0; color: var(--accent); font: inherit; font-size: 11.5px; text-transform: none; letter-spacing: 0; cursor: pointer; }
+.linkbtn:disabled { color: var(--faint); cursor: default; }
+.usage .card { display: flex; flex-direction: column; gap: 10px; }
+.usage .head { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+.limit .top { display: flex; justify-content: space-between; gap: 8px; font-size: 12.5px; }
+.limit .top b { font-variant-numeric: tabular-nums; }
+.limit .track { height: 6px; border-radius: 3px; background: var(--panel-2); border: 1px solid var(--line); overflow: hidden; margin: 4px 0 2px; }
+.limit .track i { display: block; height: 100%; border-radius: 3px; background: var(--ok); }
+.limit.warn .track i { background: var(--warn); } .limit.bad .track i { background: var(--bad); }
+.limit.bad .top b { color: var(--bad); }
 .chip.effort { display: inline-flex; align-items: center; gap: 5px; }
 .meter { display: inline-flex; align-items: flex-end; gap: 1.5px; height: 10px; }
 .meter i { width: 2.5px; border-radius: 1px; background: var(--line); }
@@ -228,6 +238,7 @@ details[open] > summary::before { content: "▾ "; }
 <main class="wrap">
   <div id="overview">
     <div class="block stats" id="ovStats"></div>
+    <div class="block"><h3>Usage left <span class="n" id="usageAt"></span><button class="linkbtn" id="usageRefresh" title="Read the limits again">refresh</button></h3><div id="ovUsage" class="cards usage"><div class="panel empty small muted">Reading the agents' limits…</div></div></div>
     <div class="block"><h3>Sessions <span class="n" id="ovCount"></span></h3><div id="ovSessions" class="cards"></div></div>
     <div class="block"><h3>Subagents <span class="n">working first, then newest finished</span></h3><div class="panel rows" id="ovRuns"></div></div>
     <div class="block" id="ovMsgBox"><h3>Messages</h3><div class="panel"><div id="ovMsgs" class="msgs"></div></div></div>
@@ -633,8 +644,36 @@ document.addEventListener("click", (e) => {
   if (b) { opened.add(b.dataset.open); b.classList.remove("clamp"); }
 });
 
-async function poll() {
+/** Each agent's account limits as bars of what is left (read by the server from the CLIs, cached a few minutes). */
+async function loadUsage(refresh) {
+  const btn = $("usageRefresh");
+  btn.disabled = true;
+  btn.textContent = "reading…";
   try {
+    const r = await fetch("/api/usage" + (refresh ? "?refresh=1" : ""));
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const u = await r.json();
+    $("ovUsage").innerHTML = u.reports.map(usageCard).join("");
+    $("usageAt").textContent = "as of " + new Date(u.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  } catch (err) {
+    $("ovUsage").innerHTML = '<div class="panel empty small muted">Could not read usage: ' + esc(err.message) + "</div>";
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "refresh";
+  }
+}
+function usageCard(rep) {
+  const body = rep.limits.length
+    ? rep.limits.map((l) => {
+        const left = Math.max(0, Math.min(100, 100 - l.usedPercent));
+        return '<div class="limit ' + (left < 10 ? "bad" : left < 30 ? "warn" : "") + '"><div class="top"><span>' + esc(l.name) + "</span><b>" + left + "% left</b></div>" +
+          '<div class="track"><i style="width:' + left + '%"></i></div>' + (l.resets ? '<div class="small muted">resets ' + esc(l.resets) + "</div>" : "") + "</div>";
+      }).join("")
+    : rep.lines.slice(0, 2).map((x) => '<div class="small muted">' + esc(x) + "</div>").join("");
+  return '<div class="card"><div class="head">' + av(rep.agent, true) + esc(rep.agent) + "</div>" + body + "</div>";
+}
+
+async function poll() {  try {
     const r = await fetch("/api/state");
     if (!r.ok) throw new Error(r.status === 403 ? "not authorized: open the link printed by agent-bridge ui" : "HTTP " + r.status);
     state = await r.json();
@@ -683,6 +722,9 @@ $("theme").addEventListener("click", (e) => {
 });
 applyTheme(document.documentElement.dataset.theme || "auto");
 poll();
+loadUsage(false);
+setInterval(() => loadUsage(false), 5 * 60 * 1000);
+$("usageRefresh").addEventListener("click", () => loadUsage(true));
 setInterval(poll, POLL_MS);
 </script>
 </body>

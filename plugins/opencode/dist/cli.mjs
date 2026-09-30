@@ -7683,7 +7683,7 @@ var require_cross_spawn = __commonJS({
     var cp = __require("child_process");
     var parse3 = require_parse();
     var enoent = require_enoent();
-    function spawn7(command, args, options) {
+    function spawn8(command, args, options) {
       const parsed = parse3(command, args, options);
       const spawned = cp.spawn(parsed.command, parsed.args, parsed.options);
       enoent.hookChildProcess(spawned, parsed);
@@ -7695,8 +7695,8 @@ var require_cross_spawn = __commonJS({
       result.error = result.error || enoent.verifyENOENTSync(result.status, parsed);
       return result;
     }
-    module.exports = spawn7;
-    module.exports.spawn = spawn7;
+    module.exports = spawn8;
+    module.exports.spawn = spawn8;
     module.exports.sync = spawnSync;
     module.exports._parse = parse3;
     module.exports._enoent = enoent;
@@ -7714,7 +7714,7 @@ import { connect } from "node:net";
 import { homedir } from "node:os";
 import { join } from "node:path";
 var APP_NAME = "agent-bridge";
-var APP_VERSION = "0.21.0";
+var APP_VERSION = "0.22.0";
 var PROTOCOL_VERSION = 2;
 var ENV = {
   home: "AGENT_BRIDGE_HOME",
@@ -10153,16 +10153,263 @@ async function watchRunLog(path, out2) {
 
 // src/cli/dashboard.ts
 import { randomBytes as randomBytes6 } from "node:crypto";
-import { chmodSync as chmodSync2, readFileSync as readFileSync7, writeFileSync as writeFileSync3 } from "node:fs";
+import { chmodSync as chmodSync2, readFileSync as readFileSync8, writeFileSync as writeFileSync3 } from "node:fs";
 import { request } from "node:http";
-import { join as join12 } from "node:path";
+import { join as join13 } from "node:path";
 
 // src/cli/ui.ts
 import { randomBytes as randomBytes5 } from "node:crypto";
-import { existsSync as existsSync4, readdirSync as readdirSync4, readFileSync as readFileSync6, statSync as statSync4 } from "node:fs";
+import { existsSync as existsSync4, readdirSync as readdirSync4, readFileSync as readFileSync7, statSync as statSync4 } from "node:fs";
 import { createServer as createServer5 } from "node:http";
-import { join as join11 } from "node:path";
+import { join as join12 } from "node:path";
 import { DatabaseSync as DatabaseSync2 } from "node:sqlite";
+
+// src/core/config.ts
+import { readFileSync as readFileSync6 } from "node:fs";
+import { basename, join as join11 } from "node:path";
+var DELIVERY_MODES = ["auto", "channel", "hooks"];
+var CODEX_SANDBOXES = ["read-only", "workspace-write", "danger-full-access"];
+var CLAUDE_PERMISSION_MODES = ["default", "manual", "acceptEdits", "plan", "auto", "dontAsk", "bypassPermissions"];
+var DEFAULT_CONFIG = {
+  name: null,
+  autoWake: false,
+  maxHops: DEFAULT_MAX_HOPS,
+  maxJobs: DEFAULT_MAX_JOBS,
+  autoApproveTools: [],
+  delivery: "auto",
+  claudeBin: DEFAULT_CLAUDE_BIN,
+  codexBin: DEFAULT_CODEX_BIN,
+  codexSandbox: "read-only",
+  claudePermissionMode: "default",
+  lingerSec: DEFAULT_LINGER_SEC,
+  codexModel: null,
+  claudeModel: null,
+  opencodeBin: DEFAULT_OPENCODE_BIN,
+  opencodeModel: null,
+  opencodeAutoApprove: false,
+  dashboard: true,
+  dashboardPort: DEFAULT_DASHBOARD_PORT
+};
+var TRUE_VALUES = /* @__PURE__ */ new Set(["1", "true", "yes", "on"]);
+var FALSE_VALUES = /* @__PURE__ */ new Set(["0", "false", "no", "off"]);
+function parseBool(v) {
+  if (typeof v === "boolean") return v;
+  if (typeof v !== "string") return void 0;
+  const s = v.trim().toLowerCase();
+  if (TRUE_VALUES.has(s)) return true;
+  if (FALSE_VALUES.has(s)) return false;
+  return void 0;
+}
+function parseIntInRange(v, min, max) {
+  const n = typeof v === "number" ? v : typeof v === "string" ? Number.parseInt(v, 10) : Number.NaN;
+  return Number.isInteger(n) && n >= min && n <= max ? n : void 0;
+}
+function oneOf(v, allowed) {
+  return typeof v === "string" && allowed.includes(v) ? v : void 0;
+}
+var MAX_HOPS_LIMIT = 100;
+var MAX_LINGER_SEC = 3600;
+var MODEL_NAME_PATTERN = /^[^\s"'`&|<>^%$;()]{1,200}$/;
+function modelName(v) {
+  return typeof v === "string" && MODEL_NAME_PATTERN.test(v.trim()) ? v.trim() : void 0;
+}
+function toolPatterns(v) {
+  const list = Array.isArray(v) ? v : typeof v === "string" ? v.split(",") : null;
+  if (!list || !list.every((x) => typeof x === "string")) return void 0;
+  return list.map((x) => x.trim()).filter(Boolean);
+}
+function loadConfig(home, agent, log, env = process.env) {
+  let file = {};
+  const path = join11(home, CONFIG_FILE_NAME);
+  try {
+    file = JSON.parse(readFileSync6(path, "utf8"));
+    log.debug("config file loaded", { path });
+  } catch (err) {
+    if (err.code !== "ENOENT") log.warn("ignoring unreadable config file", { path, err: err.message });
+  }
+  const section = file[agent] ?? {};
+  const pick2 = (key, envKey, parse3) => {
+    for (const v of [envKey ? env[envKey] : void 0, section[key], file[key]]) {
+      if (v === void 0) continue;
+      const parsed = parse3(v);
+      if (parsed !== void 0) return parsed;
+      log.warn("ignoring invalid config value", { key, value: String(v) });
+    }
+    return void 0;
+  };
+  const str = (v) => typeof v === "string" && v.trim() ? v.trim() : void 0;
+  const d = DEFAULT_CONFIG;
+  const cfg = {
+    name: pick2("name", ENV.name, str) ?? d.name,
+    autoWake: pick2("autoWake", ENV.autoWake, parseBool) ?? d.autoWake,
+    maxHops: pick2("maxHops", ENV.maxHops, (v) => parseIntInRange(v, 0, MAX_HOPS_LIMIT)) ?? d.maxHops,
+    maxJobs: pick2("maxJobs", ENV.maxJobs, (v) => parseIntInRange(v, 1, MAX_JOBS_LIMIT)) ?? d.maxJobs,
+    autoApproveTools: pick2("autoApproveTools", ENV.autoApproveTools, toolPatterns) ?? d.autoApproveTools,
+    delivery: pick2("delivery", ENV.delivery, (v) => oneOf(v, DELIVERY_MODES)) ?? d.delivery,
+    claudeBin: pick2("claudeBin", ENV.claudeBin, str) ?? d.claudeBin,
+    codexBin: pick2("codexBin", ENV.codexBin, str) ?? d.codexBin,
+    codexSandbox: pick2("codexSandbox", null, (v) => oneOf(v, CODEX_SANDBOXES)) ?? d.codexSandbox,
+    claudePermissionMode: pick2("claudePermissionMode", null, (v) => oneOf(v, CLAUDE_PERMISSION_MODES)) ?? d.claudePermissionMode,
+    lingerSec: pick2("lingerSec", ENV.lingerSec, (v) => parseIntInRange(v, 0, MAX_LINGER_SEC)) ?? d.lingerSec,
+    codexModel: pick2("codexModel", null, modelName) ?? d.codexModel,
+    claudeModel: pick2("claudeModel", null, modelName) ?? d.claudeModel,
+    opencodeBin: pick2("opencodeBin", ENV.opencodeBin, str) ?? d.opencodeBin,
+    opencodeModel: pick2("opencodeModel", null, modelName) ?? d.opencodeModel,
+    opencodeAutoApprove: pick2("opencodeAutoApprove", null, parseBool) ?? d.opencodeAutoApprove,
+    dashboard: pick2("dashboard", ENV.dashboard, parseBool) ?? d.dashboard,
+    dashboardPort: pick2("dashboardPort", null, (v) => parseIntInRange(v, 1, 65535)) ?? d.dashboardPort
+  };
+  log.debug("effective config", { ...cfg });
+  return cfg;
+}
+
+// src/core/usage.ts
+import { spawn as spawn3 } from "node:child_process";
+var USAGE_TIMEOUT_MS = 45e3;
+var MINUTES_PER_HOUR = 60;
+var MINUTES_PER_DAY = 1440;
+function capture(bin, args, cwd, log, stdin) {
+  return new Promise((resolve6, reject) => {
+    const env = childEnv();
+    let cmd;
+    try {
+      cmd = resolveCommand(bin, args, env, log);
+    } catch (err2) {
+      return reject(err2);
+    }
+    const child = spawn3(cmd.resolved, cmd.args, { cwd, env, shell: cmd.needsShell, windowsHide: true, stdio: ["pipe", "pipe", "pipe"], detached: process.platform !== "win32" });
+    let out2 = "";
+    let err = "";
+    let settled = false;
+    const finish = (fn) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      void killTree(child);
+      fn();
+    };
+    const timer = setTimeout(() => finish(() => reject(new Error(`${bin} did not answer within ${USAGE_TIMEOUT_MS / 1e3}s`))), USAGE_TIMEOUT_MS);
+    child.stdout.setEncoding("utf8").on("data", (d) => out2 += d);
+    child.stderr.setEncoding("utf8").on("data", (d) => err += d);
+    child.on("error", (e) => finish(() => reject(e)));
+    child.on("close", (code) => finish(() => code === 0 || out2 ? resolve6(out2) : reject(new Error(err.trim().slice(-300) || `exit code ${code}`))));
+    if (stdin) stdin((s) => child.stdin.write(s), () => out2, () => finish(() => resolve6(out2)));
+    else child.stdin.end();
+  });
+}
+function windowName(mins) {
+  if (!mins) return "window";
+  if (mins === 5 * MINUTES_PER_HOUR) return "5-hour window";
+  if (mins === 7 * MINUTES_PER_DAY) return "weekly";
+  return mins % MINUTES_PER_DAY === 0 ? `${mins / MINUTES_PER_DAY}-day window` : `${Math.round(mins / MINUTES_PER_HOUR)}-hour window`;
+}
+function resetTime(epoch) {
+  if (!epoch) return null;
+  const d = new Date(epoch < 1e12 ? epoch * 1e3 : epoch);
+  return d.toLocaleString([], { weekday: "short", hour: "2-digit", minute: "2-digit" });
+}
+function resetText(epoch) {
+  const r = resetTime(epoch);
+  return r ? ` (resets ${r})` : "";
+}
+function formatCodexLimits(res) {
+  const lines = [];
+  const limits = [];
+  let max = null;
+  const snapshots = res?.rateLimitsByLimitId ? Object.values(res.rateLimitsByLimitId) : res?.rateLimits ? [res.rateLimits] : [];
+  for (const s of snapshots) {
+    const parts = [];
+    for (const w of [s?.primary, s?.secondary]) {
+      if (!w || typeof w.usedPercent !== "number") continue;
+      max = Math.max(max ?? 0, w.usedPercent);
+      parts.push(`${windowName(w.windowDurationMins)} ${w.usedPercent}% used${resetText(w.resetsAt)}`);
+      const window = windowName(w.windowDurationMins);
+      limits.push({ name: snapshots.length > 1 ? `${s?.limitName ?? s?.limitId ?? "codex"}: ${window}` : window, usedPercent: w.usedPercent, resets: resetTime(w.resetsAt) });
+    }
+    if (s?.credits?.hasCredits && !s.credits.unlimited && s.credits.balance) parts.push(`credits ${s.credits.balance}`);
+    if (s?.rateLimitReachedType) parts.push(`LIMIT REACHED (${s.rateLimitReachedType})`);
+    if (parts.length) lines.push(`${s?.limitName ?? s?.limitId ?? "codex"}${s?.planType ? ` [${s.planType}]` : ""}: ${parts.join(", ")}`);
+  }
+  if (res?.ordinaryUsageAllowed === false) lines.push("The account currently does not allow ordinary usage.");
+  return { agent: "codex", lines: lines.length ? lines : ["No limits reported (API key or no plan limits)."], limits, maxUsedPercent: max };
+}
+function parseClaudeUsage(text) {
+  const lines = text.split(/\r?\n/).map((l) => l.trim()).filter((l) => /\d+%\s*used/i.test(l) || /api key/i.test(l));
+  const percents = lines.map((l) => Number(/(\d+)%\s*used/i.exec(l)?.[1])).filter((n) => Number.isFinite(n));
+  const limits = [];
+  for (const l of lines) {
+    const m = /^(.+?):\s*(\d+)%\s*used(?:\s*[·•-]\s*resets\s+(.+))?$/i.exec(l);
+    if (m) limits.push({ name: m[1].replace(/^current\s+/i, ""), usedPercent: Number(m[2]), resets: m[3]?.trim() ?? null });
+  }
+  return { agent: "claude", lines: lines.length ? lines : ["No limits reported."], limits, maxUsedPercent: percents.length ? Math.max(...percents) : null };
+}
+function parseOpencodeStats(text) {
+  const pick2 = (label) => new RegExp(`${label}\\s+([^\\s\u2502|]+)`, "i").exec(text)?.[1];
+  const cost = pick2("Total Cost");
+  const input = pick2("Input");
+  const output = pick2("Output");
+  const lines = ["No account limits: opencode uses the providers' keys and plans."];
+  if (cost || input) lines.push(`Last 24 hours: ${[cost && `cost ${cost}`, input && `${input} input tokens`, output && `${output} output tokens`].filter(Boolean).join(", ")}`);
+  return { agent: "opencode", lines, limits: [], maxUsedPercent: null };
+}
+function parseOpencodeModelCosts(text) {
+  const out2 = [];
+  const parts = text.split(/^([\w.-]+\/[\w.:@-]+)\r?\n(?=\{)/m);
+  for (let i = 1; i + 1 < parts.length; i += 2) {
+    try {
+      const cost = JSON.parse(parts[i + 1].trim()).cost;
+      if (cost && typeof cost.input === "number" && typeof cost.output === "number") out2.push({ id: parts[i], input: cost.input, output: cost.output });
+    } catch {
+    }
+  }
+  return out2;
+}
+var MAX_FREE_LISTED = 12;
+function describeOpencodeCosts(costs, model) {
+  const lines = [];
+  const free = costs.filter((c) => c.input === 0 && c.output === 0).map((c) => c.id);
+  if (model) {
+    const m = costs.find((c) => c.id === model) ?? costs.find((c) => c.id.endsWith(`/${model}`) || c.id.includes(model));
+    if (m) lines.push(m.input === 0 && m.output === 0 ? `Model ${m.id} has no per-token price (free, or covered by a plan).` : `Model ${m.id} costs $${m.input} input / $${m.output} output per million tokens.`);
+  }
+  if (free.length) lines.push(`Models without a per-token price (free, or covered by a plan) (${free.length}): ${free.slice(0, MAX_FREE_LISTED).join(", ")}${free.length > MAX_FREE_LISTED ? ", \u2026" : ""}`);
+  return lines;
+}
+async function codexUsage(bin, cwd, log) {
+  const out2 = await capture(bin, ["app-server"], cwd, log, (write, read, done) => {
+    write(`${JSON.stringify({ id: 1, method: "initialize", params: { clientInfo: { name: "agent-bridge", version: APP_VERSION }, capabilities: { experimentalApi: false } } })}
+`);
+    write(`${JSON.stringify({ method: "initialized", params: {} })}
+`);
+    write(`${JSON.stringify({ id: 2, method: "account/rateLimits/read", params: null })}
+`);
+    const poll = setInterval(() => {
+      if (/"id":2[,}]/.test(read())) {
+        clearInterval(poll);
+        done();
+      }
+    }, 100);
+  });
+  const line = out2.split("\n").find((l) => /"id":2[,}]/.test(l));
+  const msg = line ? JSON.parse(line) : null;
+  if (!msg || msg.error) throw new Error(msg?.error?.message ?? "no answer from codex app-server");
+  return formatCodexLimits(msg.result);
+}
+async function readUsage(agent, bin, cwd, log, model = null) {
+  try {
+    if (agent === "codex") return await codexUsage(bin, cwd, log);
+    if (agent === "claude") return parseClaudeUsage(await capture(bin, ["-p", "/usage"], cwd, log));
+    const [stats, models2] = await Promise.all([
+      capture(bin, ["stats", "--days", "1"], cwd, log).catch(() => ""),
+      capture(bin, ["models", "--verbose"], cwd, log).catch(() => "")
+    ]);
+    const report = parseOpencodeStats(stats);
+    report.lines.push(...describeOpencodeCosts(parseOpencodeModelCosts(models2), model));
+    return report;
+  } catch (err) {
+    return { agent, lines: [`Could not read usage: ${err.message}`], limits: [], maxUsedPercent: null };
+  }
+}
 
 // src/cli/logo.ts
 var LOGO_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="agent-bridge"><defs><linearGradient id="ab-bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#1e1b4b"/><stop offset="1" stop-color="#4338ca"/></linearGradient><linearGradient id="ab-l" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffb088"/><stop offset="1" stop-color="#e2603b"/></linearGradient><linearGradient id="ab-r" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#7cf0c0"/><stop offset="1" stop-color="#0e9f6e"/></linearGradient><radialGradient id="ab-glow"><stop offset="0" stop-color="#fff" stop-opacity=".55"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></radialGradient></defs><rect width="64" height="64" rx="16" fill="url(#ab-bg)"/><path d="M9 52V32A20 20 0 0 1 27 12.1v10.2A10 10 0 0 0 19 32v20z" fill="url(#ab-l)"/><path d="M55 52V32A20 20 0 0 0 37 12.1v10.2A10 10 0 0 1 45 32v20z" fill="url(#ab-r)"/><circle cx="32" cy="17" r="11" fill="url(#ab-glow)"/><path d="M32 9.5c.9 4.6 2.9 6.6 7.5 7.5-4.6.9-6.6 2.9-7.5 7.5-.9-4.6-2.9-6.6-7.5-7.5 4.6-.9 6.6-2.9 7.5-7.5z" fill="#fff"/></svg>';
@@ -10342,6 +10589,16 @@ h3 .n { color: var(--faint); font-weight: 500; }
 .pill.interrupted { background: var(--warn-soft); color: var(--warn); }
 .pill.running::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; animation: pulse 1.4s infinite; }
 @keyframes pulse { 50% { opacity: .3; } }
+.linkbtn { margin-left: 8px; background: none; border: 0; padding: 0; color: var(--accent); font: inherit; font-size: 11.5px; text-transform: none; letter-spacing: 0; cursor: pointer; }
+.linkbtn:disabled { color: var(--faint); cursor: default; }
+.usage .card { display: flex; flex-direction: column; gap: 10px; }
+.usage .head { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+.limit .top { display: flex; justify-content: space-between; gap: 8px; font-size: 12.5px; }
+.limit .top b { font-variant-numeric: tabular-nums; }
+.limit .track { height: 6px; border-radius: 3px; background: var(--panel-2); border: 1px solid var(--line); overflow: hidden; margin: 4px 0 2px; }
+.limit .track i { display: block; height: 100%; border-radius: 3px; background: var(--ok); }
+.limit.warn .track i { background: var(--warn); } .limit.bad .track i { background: var(--bad); }
+.limit.bad .top b { color: var(--bad); }
 .chip.effort { display: inline-flex; align-items: center; gap: 5px; }
 .meter { display: inline-flex; align-items: flex-end; gap: 1.5px; height: 10px; }
 .meter i { width: 2.5px; border-radius: 1px; background: var(--line); }
@@ -10478,6 +10735,7 @@ details[open] > summary::before { content: "\u25BE "; }
 <main class="wrap">
   <div id="overview">
     <div class="block stats" id="ovStats"></div>
+    <div class="block"><h3>Usage left <span class="n" id="usageAt"></span><button class="linkbtn" id="usageRefresh" title="Read the limits again">refresh</button></h3><div id="ovUsage" class="cards usage"><div class="panel empty small muted">Reading the agents' limits\u2026</div></div></div>
     <div class="block"><h3>Sessions <span class="n" id="ovCount"></span></h3><div id="ovSessions" class="cards"></div></div>
     <div class="block"><h3>Subagents <span class="n">working first, then newest finished</span></h3><div class="panel rows" id="ovRuns"></div></div>
     <div class="block" id="ovMsgBox"><h3>Messages</h3><div class="panel"><div id="ovMsgs" class="msgs"></div></div></div>
@@ -10883,8 +11141,36 @@ document.addEventListener("click", (e) => {
   if (b) { opened.add(b.dataset.open); b.classList.remove("clamp"); }
 });
 
-async function poll() {
+/** Each agent's account limits as bars of what is left (read by the server from the CLIs, cached a few minutes). */
+async function loadUsage(refresh) {
+  const btn = $("usageRefresh");
+  btn.disabled = true;
+  btn.textContent = "reading\u2026";
   try {
+    const r = await fetch("/api/usage" + (refresh ? "?refresh=1" : ""));
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const u = await r.json();
+    $("ovUsage").innerHTML = u.reports.map(usageCard).join("");
+    $("usageAt").textContent = "as of " + new Date(u.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  } catch (err) {
+    $("ovUsage").innerHTML = '<div class="panel empty small muted">Could not read usage: ' + esc(err.message) + "</div>";
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "refresh";
+  }
+}
+function usageCard(rep) {
+  const body = rep.limits.length
+    ? rep.limits.map((l) => {
+        const left = Math.max(0, Math.min(100, 100 - l.usedPercent));
+        return '<div class="limit ' + (left < 10 ? "bad" : left < 30 ? "warn" : "") + '"><div class="top"><span>' + esc(l.name) + "</span><b>" + left + "% left</b></div>" +
+          '<div class="track"><i style="width:' + left + '%"></i></div>' + (l.resets ? '<div class="small muted">resets ' + esc(l.resets) + "</div>" : "") + "</div>";
+      }).join("")
+    : rep.lines.slice(0, 2).map((x) => '<div class="small muted">' + esc(x) + "</div>").join("");
+  return '<div class="card"><div class="head">' + av(rep.agent, true) + esc(rep.agent) + "</div>" + body + "</div>";
+}
+
+async function poll() {  try {
     const r = await fetch("/api/state");
     if (!r.ok) throw new Error(r.status === 403 ? "not authorized: open the link printed by agent-bridge ui" : "HTTP " + r.status);
     state = await r.json();
@@ -10933,6 +11219,9 @@ $("theme").addEventListener("click", (e) => {
 });
 applyTheme(document.documentElement.dataset.theme || "auto");
 poll();
+loadUsage(false);
+setInterval(() => loadUsage(false), 5 * 60 * 1000);
+$("usageRefresh").addEventListener("click", () => loadUsage(true));
 setInterval(poll, POLL_MS);
 </script>
 </body>
@@ -10978,20 +11267,20 @@ function summarizeRun(file, text, mtimeMs, now, meta2 = {}) {
   };
 }
 function listRuns(home, now = Date.now()) {
-  const dir = join11(home, RUNS_DIR_NAME);
+  const dir = join12(home, RUNS_DIR_NAME);
   if (!existsSync4(dir)) return [];
-  return readdirSync4(dir).filter((f) => RUN_NAME.test(f)).map((f) => ({ f, st: statSync4(join11(dir, f)) })).sort((a, b) => b.st.mtimeMs - a.st.mtimeMs).slice(0, MAX_RUNS).map(({ f, st }) => summarizeRun(f, readFileSync6(join11(dir, f), "utf8"), st.mtimeMs, now, readMeta(join11(dir, runMetaPath(f)))));
+  return readdirSync4(dir).filter((f) => RUN_NAME.test(f)).map((f) => ({ f, st: statSync4(join12(dir, f)) })).sort((a, b) => b.st.mtimeMs - a.st.mtimeMs).slice(0, MAX_RUNS).map(({ f, st }) => summarizeRun(f, readFileSync7(join12(dir, f), "utf8"), st.mtimeMs, now, readMeta(join12(dir, runMetaPath(f)))));
 }
 function readMeta(file) {
   try {
-    return JSON.parse(readFileSync6(file, "utf8"));
+    return JSON.parse(readFileSync7(file, "utf8"));
   } catch {
     return {};
   }
 }
 function classifyPeers(peers, runs, home) {
   const norm = (p) => p.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
-  const worktrees = `${norm(join11(home, "worktrees"))}/`;
+  const worktrees = `${norm(join12(home, "worktrees"))}/`;
   return peers.map((p) => {
     const cwd = norm(p.cwd ?? "");
     const subagent = cwd.startsWith(worktrees);
@@ -11040,6 +11329,16 @@ function cookieSecret(req) {
   const m = new RegExp(`(?:^|;\\s*)${COOKIE}=([0-9a-f]+)`).exec(String(req.headers.cookie ?? ""));
   return m?.[1] ?? "";
 }
+var USAGE_CACHE_MS = 5 * 60 * 1e3;
+var USAGE_REFRESH_MIN_MS = 15 * 1e3;
+function readAllUsage(home, log) {
+  const cfg = loadConfig(home, "other", log);
+  return Promise.all([
+    readUsage("claude", cfg.claudeBin, home, log),
+    readUsage("codex", cfg.codexBin, home, log),
+    readUsage("opencode", cfg.opencodeBin, home, log, cfg.opencodeModel ?? null)
+  ]);
+}
 async function startUi(opts) {
   const secret = opts.secret ?? randomBytes5(SECRET_BYTES2).toString("hex");
   const token = loadOrCreateToken(opts.home);
@@ -11058,6 +11357,15 @@ async function startUi(opts) {
       }
     })();
     return sender;
+  };
+  let usage = null;
+  const getUsage = (refresh) => {
+    if (!usage || refresh && Date.now() - usage.at > USAGE_REFRESH_MIN_MS || Date.now() - usage.at > USAGE_CACHE_MS) {
+      const reports = (opts.usage ?? (() => readAllUsage(opts.home, opts.log)))();
+      usage = { at: Date.now(), reports };
+      reports.catch(() => usage = null);
+    }
+    return usage.reports;
   };
   const handle = async (req, res) => {
     const host = String(req.headers.host ?? "").replace(/:\d+$/, "");
@@ -11082,12 +11390,16 @@ async function startUi(opts) {
         messages: recentMessages(dbPath)
       });
     }
+    if (req.method === "GET" && url.pathname === "/api/usage") {
+      const reports = await getUsage(url.searchParams.get("refresh") === "1");
+      return send(res, 200, { at: usage?.at ?? Date.now(), reports });
+    }
     const runMatch = /^\/api\/runs\/([\w.-]+)$/.exec(url.pathname);
     if (req.method === "GET" && runMatch) {
-      const file = join11(opts.home, RUNS_DIR_NAME, `${runMatch[1]}.log`);
+      const file = join12(opts.home, RUNS_DIR_NAME, `${runMatch[1]}.log`);
       if (!existsSync4(file)) return send(res, 404, { error: "no such run" });
       const from = Math.max(0, Number(url.searchParams.get("from")) || 0);
-      const buf = readFileSync6(file);
+      const buf = readFileSync7(file);
       let end = Math.min(buf.length, from + MAX_LOG_CHUNK);
       while (end < buf.length && end > from && (buf[end] & 192) === 128) end--;
       return send(res, 200, { text: buf.subarray(from, end).toString("utf8"), next: end, size: buf.length });
@@ -11130,11 +11442,11 @@ var SECRET_BYTES3 = 24;
 var PROBE_TIMEOUT_MS = 1500;
 var OWNER_ONLY2 = 384;
 function dashboardFile(home) {
-  return join12(home, DASHBOARD_FILE);
+  return join13(home, DASHBOARD_FILE);
 }
 function readDashboardInfo(home) {
   try {
-    const d = JSON.parse(readFileSync7(dashboardFile(home), "utf8"));
+    const d = JSON.parse(readFileSync8(dashboardFile(home), "utf8"));
     return typeof d.url === "string" && typeof d.port === "number" && typeof d.pid === "number" ? d : null;
   } catch {
     return null;
@@ -11187,111 +11499,12 @@ async function hostDashboard(opts) {
   };
 }
 
-// src/core/config.ts
-import { readFileSync as readFileSync8 } from "node:fs";
-import { basename, join as join13 } from "node:path";
-var DELIVERY_MODES = ["auto", "channel", "hooks"];
-var CODEX_SANDBOXES = ["read-only", "workspace-write", "danger-full-access"];
-var CLAUDE_PERMISSION_MODES = ["default", "manual", "acceptEdits", "plan", "auto", "dontAsk", "bypassPermissions"];
-var DEFAULT_CONFIG = {
-  name: null,
-  autoWake: false,
-  maxHops: DEFAULT_MAX_HOPS,
-  maxJobs: DEFAULT_MAX_JOBS,
-  autoApproveTools: [],
-  delivery: "auto",
-  claudeBin: DEFAULT_CLAUDE_BIN,
-  codexBin: DEFAULT_CODEX_BIN,
-  codexSandbox: "read-only",
-  claudePermissionMode: "default",
-  lingerSec: DEFAULT_LINGER_SEC,
-  codexModel: null,
-  claudeModel: null,
-  opencodeBin: DEFAULT_OPENCODE_BIN,
-  opencodeModel: null,
-  opencodeAutoApprove: false,
-  dashboard: true,
-  dashboardPort: DEFAULT_DASHBOARD_PORT
-};
-var TRUE_VALUES = /* @__PURE__ */ new Set(["1", "true", "yes", "on"]);
-var FALSE_VALUES = /* @__PURE__ */ new Set(["0", "false", "no", "off"]);
-function parseBool(v) {
-  if (typeof v === "boolean") return v;
-  if (typeof v !== "string") return void 0;
-  const s = v.trim().toLowerCase();
-  if (TRUE_VALUES.has(s)) return true;
-  if (FALSE_VALUES.has(s)) return false;
-  return void 0;
-}
-function parseIntInRange(v, min, max) {
-  const n = typeof v === "number" ? v : typeof v === "string" ? Number.parseInt(v, 10) : Number.NaN;
-  return Number.isInteger(n) && n >= min && n <= max ? n : void 0;
-}
-function oneOf(v, allowed) {
-  return typeof v === "string" && allowed.includes(v) ? v : void 0;
-}
-var MAX_HOPS_LIMIT = 100;
-var MAX_LINGER_SEC = 3600;
-var MODEL_NAME_PATTERN = /^[^\s"'`&|<>^%$;()]{1,200}$/;
-function modelName(v) {
-  return typeof v === "string" && MODEL_NAME_PATTERN.test(v.trim()) ? v.trim() : void 0;
-}
-function toolPatterns(v) {
-  const list = Array.isArray(v) ? v : typeof v === "string" ? v.split(",") : null;
-  if (!list || !list.every((x) => typeof x === "string")) return void 0;
-  return list.map((x) => x.trim()).filter(Boolean);
-}
-function loadConfig(home, agent, log, env = process.env) {
-  let file = {};
-  const path = join13(home, CONFIG_FILE_NAME);
-  try {
-    file = JSON.parse(readFileSync8(path, "utf8"));
-    log.debug("config file loaded", { path });
-  } catch (err) {
-    if (err.code !== "ENOENT") log.warn("ignoring unreadable config file", { path, err: err.message });
-  }
-  const section = file[agent] ?? {};
-  const pick2 = (key, envKey, parse3) => {
-    for (const v of [envKey ? env[envKey] : void 0, section[key], file[key]]) {
-      if (v === void 0) continue;
-      const parsed = parse3(v);
-      if (parsed !== void 0) return parsed;
-      log.warn("ignoring invalid config value", { key, value: String(v) });
-    }
-    return void 0;
-  };
-  const str = (v) => typeof v === "string" && v.trim() ? v.trim() : void 0;
-  const d = DEFAULT_CONFIG;
-  const cfg = {
-    name: pick2("name", ENV.name, str) ?? d.name,
-    autoWake: pick2("autoWake", ENV.autoWake, parseBool) ?? d.autoWake,
-    maxHops: pick2("maxHops", ENV.maxHops, (v) => parseIntInRange(v, 0, MAX_HOPS_LIMIT)) ?? d.maxHops,
-    maxJobs: pick2("maxJobs", ENV.maxJobs, (v) => parseIntInRange(v, 1, MAX_JOBS_LIMIT)) ?? d.maxJobs,
-    autoApproveTools: pick2("autoApproveTools", ENV.autoApproveTools, toolPatterns) ?? d.autoApproveTools,
-    delivery: pick2("delivery", ENV.delivery, (v) => oneOf(v, DELIVERY_MODES)) ?? d.delivery,
-    claudeBin: pick2("claudeBin", ENV.claudeBin, str) ?? d.claudeBin,
-    codexBin: pick2("codexBin", ENV.codexBin, str) ?? d.codexBin,
-    codexSandbox: pick2("codexSandbox", null, (v) => oneOf(v, CODEX_SANDBOXES)) ?? d.codexSandbox,
-    claudePermissionMode: pick2("claudePermissionMode", null, (v) => oneOf(v, CLAUDE_PERMISSION_MODES)) ?? d.claudePermissionMode,
-    lingerSec: pick2("lingerSec", ENV.lingerSec, (v) => parseIntInRange(v, 0, MAX_LINGER_SEC)) ?? d.lingerSec,
-    codexModel: pick2("codexModel", null, modelName) ?? d.codexModel,
-    claudeModel: pick2("claudeModel", null, modelName) ?? d.claudeModel,
-    opencodeBin: pick2("opencodeBin", ENV.opencodeBin, str) ?? d.opencodeBin,
-    opencodeModel: pick2("opencodeModel", null, modelName) ?? d.opencodeModel,
-    opencodeAutoApprove: pick2("opencodeAutoApprove", null, parseBool) ?? d.opencodeAutoApprove,
-    dashboard: pick2("dashboard", ENV.dashboard, parseBool) ?? d.dashboard,
-    dashboardPort: pick2("dashboardPort", null, (v) => parseIntInRange(v, 1, 65535)) ?? d.dashboardPort
-  };
-  log.debug("effective config", { ...cfg });
-  return cfg;
-}
-
 // src/cli/open.ts
-import { spawn as spawn3 } from "node:child_process";
+import { spawn as spawn4 } from "node:child_process";
 function openBrowser(url) {
   const [cmd, args] = process.platform === "win32" ? ["cmd.exe", ["/d", "/c", "start", '""', url]] : process.platform === "darwin" ? ["open", [url]] : ["xdg-open", [url]];
   try {
-    const child = spawn3(cmd, args, { stdio: "ignore", detached: true, windowsHide: true, windowsVerbatimArguments: process.platform === "win32" });
+    const child = spawn4(cmd, args, { stdio: "ignore", detached: true, windowsHide: true, windowsVerbatimArguments: process.platform === "win32" });
     child.on("error", () => {
     });
     child.unref();
@@ -11443,7 +11656,7 @@ function codexPermissionHookTrusted(bridgeHome, home = codexHome(), read = (p) =
 }
 
 // src/core/opencode-served.ts
-import { spawn as spawn4 } from "node:child_process";
+import { spawn as spawn5 } from "node:child_process";
 import { randomBytes as randomBytes7 } from "node:crypto";
 import { extname as extname2 } from "node:path";
 var SERVE_START_TIMEOUT_MS = 3e4;
@@ -11482,7 +11695,7 @@ function startServe(bin, cwd, env) {
     prefix = target.prefix;
   }
   return new Promise((resolve6, reject) => {
-    const child = spawn4(resolved, [...prefix, "serve", "--port", "0", "--hostname", "127.0.0.1"], {
+    const child = spawn5(resolved, [...prefix, "serve", "--port", "0", "--hostname", "127.0.0.1"], {
       cwd,
       env: { ...env, PWD: cwd },
       windowsHide: true,
@@ -21571,7 +21784,7 @@ var StdioClientTransport = class {
 };
 
 // src/core/codex-appserver.ts
-import { spawn as spawn6 } from "node:child_process";
+import { spawn as spawn7 } from "node:child_process";
 var STEER_HEADER = (from) => `[Message from ${from}, who gave you this task, sent while you work. Answer it briefly in your next message, then continue the task, adjusted to what it asks.]`;
 var OPT_OUT = [
   "item/agentMessage/delta",
@@ -21600,7 +21813,7 @@ async function delegateToCodexAppServer(req) {
   const env = childEnv(req.extraEnv);
   const { resolved, args, needsShell } = resolveCommand(req.bin, ["app-server"], env, req.log);
   req.log.debug("starting codex app-server", { bin: resolved, cwd });
-  const child = spawn6(resolved, args, { cwd, env: { ...env, PWD: cwd }, shell: needsShell, windowsHide: true, stdio: ["pipe", "pipe", "pipe"], detached: process.platform !== "win32" });
+  const child = spawn7(resolved, args, { cwd, env: { ...env, PWD: cwd }, shell: needsShell, windowsHide: true, stdio: ["pipe", "pipe", "pipe"], detached: process.platform !== "win32" });
   trackChild(child);
   let nextId = 1;
   const pending = /* @__PURE__ */ new Map();

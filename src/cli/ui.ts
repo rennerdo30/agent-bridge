@@ -12,6 +12,8 @@ import { resolveDbPath } from "../core/paths.js";
 import type { PeerInfo } from "../core/protocol.js";
 import { RUNS_DIR_NAME, runMetaPath, type RunMeta } from "../core/runfeed.js";
 import { loadOrCreateToken, tokensEqual } from "../core/token.js";
+import { loadConfig } from "../core/config.js";
+import { readUsage, type UsageReport } from "../core/usage.js";
 import { UI_PAGE } from "./ui-page.js";
 
 /**
@@ -183,6 +185,22 @@ export interface UiOptions {
   pipe: string;
   port: number;
   log: Logger;
+  /** Reads the agents' usage limits (default: each CLI, see usage.ts); replaceable for tests. */
+  usage?: () => Promise<UsageReport[]>;
+}
+
+/** Usage is read by running each CLI briefly: keep it this long unless the page asks for a refresh. */
+const USAGE_CACHE_MS = 5 * 60 * 1000;
+/** A refresh click re-reads at most this often (each read starts the CLIs). */
+const USAGE_REFRESH_MIN_MS = 15 * 1000;
+
+function readAllUsage(home: string, log: Logger): Promise<UsageReport[]> {
+  const cfg = loadConfig(home, "other", log);
+  return Promise.all([
+    readUsage("claude", cfg.claudeBin, home, log),
+    readUsage("codex", cfg.codexBin, home, log),
+    readUsage("opencode", cfg.opencodeBin, home, log, cfg.opencodeModel ?? null),
+  ]);
 }
 
 export async function startUi(opts: UiOptions): Promise<{ url: string; port: number; close: () => Promise<void> }> {
@@ -205,6 +223,17 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
       }
     })();
     return sender;
+  };
+
+  let usage: { at: number; reports: Promise<UsageReport[]> } | null = null;
+  const getUsage = (refresh: boolean): Promise<UsageReport[]> => {
+    if (!usage || (refresh && Date.now() - usage.at > USAGE_REFRESH_MIN_MS) || Date.now() - usage.at > USAGE_CACHE_MS) {
+      const reports = (opts.usage ?? (() => readAllUsage(opts.home, opts.log)))();
+      usage = { at: Date.now(), reports };
+      // A failed read is not kept: the next request tries again.
+      reports.catch(() => (usage = null));
+    }
+    return usage.reports;
   };
 
   const handle = async (req: IncomingMessage, res: ServerResponse) => {
@@ -232,6 +261,10 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
         runs,
         messages: recentMessages(dbPath),
       });
+    }
+    if (req.method === "GET" && url.pathname === "/api/usage") {
+      const reports = await getUsage(url.searchParams.get("refresh") === "1");
+      return send(res, 200, { at: usage?.at ?? Date.now(), reports });
     }
     const runMatch = /^\/api\/runs\/([\w.-]+)$/.exec(url.pathname);
     if (req.method === "GET" && runMatch) {

@@ -36490,7 +36490,7 @@ import { basename, join as join2 } from "node:path";
 import { homedir } from "node:os";
 import { join } from "node:path";
 var APP_NAME = "agent-bridge";
-var APP_VERSION = "0.21.0";
+var APP_VERSION = "0.22.0";
 var PROTOCOL_VERSION = 2;
 var ENV = {
   home: "AGENT_BRIDGE_HOME",
@@ -37729,13 +37729,18 @@ function windowName(mins) {
   if (mins === 7 * MINUTES_PER_DAY) return "weekly";
   return mins % MINUTES_PER_DAY === 0 ? `${mins / MINUTES_PER_DAY}-day window` : `${Math.round(mins / MINUTES_PER_HOUR)}-hour window`;
 }
-function resetText(epoch) {
-  if (!epoch) return "";
+function resetTime(epoch) {
+  if (!epoch) return null;
   const d = new Date(epoch < 1e12 ? epoch * 1e3 : epoch);
-  return ` (resets ${d.toLocaleString([], { weekday: "short", hour: "2-digit", minute: "2-digit" })})`;
+  return d.toLocaleString([], { weekday: "short", hour: "2-digit", minute: "2-digit" });
+}
+function resetText(epoch) {
+  const r = resetTime(epoch);
+  return r ? ` (resets ${r})` : "";
 }
 function formatCodexLimits(res) {
   const lines = [];
+  const limits = [];
   let max = null;
   const snapshots = res?.rateLimitsByLimitId ? Object.values(res.rateLimitsByLimitId) : res?.rateLimits ? [res.rateLimits] : [];
   for (const s of snapshots) {
@@ -37744,18 +37749,25 @@ function formatCodexLimits(res) {
       if (!w || typeof w.usedPercent !== "number") continue;
       max = Math.max(max ?? 0, w.usedPercent);
       parts.push(`${windowName(w.windowDurationMins)} ${w.usedPercent}% used${resetText(w.resetsAt)}`);
+      const window = windowName(w.windowDurationMins);
+      limits.push({ name: snapshots.length > 1 ? `${s?.limitName ?? s?.limitId ?? "codex"}: ${window}` : window, usedPercent: w.usedPercent, resets: resetTime(w.resetsAt) });
     }
     if (s?.credits?.hasCredits && !s.credits.unlimited && s.credits.balance) parts.push(`credits ${s.credits.balance}`);
     if (s?.rateLimitReachedType) parts.push(`LIMIT REACHED (${s.rateLimitReachedType})`);
     if (parts.length) lines.push(`${s?.limitName ?? s?.limitId ?? "codex"}${s?.planType ? ` [${s.planType}]` : ""}: ${parts.join(", ")}`);
   }
   if (res?.ordinaryUsageAllowed === false) lines.push("The account currently does not allow ordinary usage.");
-  return { agent: "codex", lines: lines.length ? lines : ["No limits reported (API key or no plan limits)."], maxUsedPercent: max };
+  return { agent: "codex", lines: lines.length ? lines : ["No limits reported (API key or no plan limits)."], limits, maxUsedPercent: max };
 }
 function parseClaudeUsage(text2) {
   const lines = text2.split(/\r?\n/).map((l) => l.trim()).filter((l) => /\d+%\s*used/i.test(l) || /api key/i.test(l));
   const percents = lines.map((l) => Number(/(\d+)%\s*used/i.exec(l)?.[1])).filter((n) => Number.isFinite(n));
-  return { agent: "claude", lines: lines.length ? lines : ["No limits reported."], maxUsedPercent: percents.length ? Math.max(...percents) : null };
+  const limits = [];
+  for (const l of lines) {
+    const m = /^(.+?):\s*(\d+)%\s*used(?:\s*[·•-]\s*resets\s+(.+))?$/i.exec(l);
+    if (m) limits.push({ name: m[1].replace(/^current\s+/i, ""), usedPercent: Number(m[2]), resets: m[3]?.trim() ?? null });
+  }
+  return { agent: "claude", lines: lines.length ? lines : ["No limits reported."], limits, maxUsedPercent: percents.length ? Math.max(...percents) : null };
 }
 function parseOpencodeStats(text2) {
   const pick2 = (label) => new RegExp(`${label}\\s+([^\\s\u2502|]+)`, "i").exec(text2)?.[1];
@@ -37764,7 +37776,7 @@ function parseOpencodeStats(text2) {
   const output2 = pick2("Output");
   const lines = ["No account limits: opencode uses the providers' keys and plans."];
   if (cost || input2) lines.push(`Last 24 hours: ${[cost && `cost ${cost}`, input2 && `${input2} input tokens`, output2 && `${output2} output tokens`].filter(Boolean).join(", ")}`);
-  return { agent: "opencode", lines, maxUsedPercent: null };
+  return { agent: "opencode", lines, limits: [], maxUsedPercent: null };
 }
 function parseOpencodeModelCosts(text2) {
   const out = [];
@@ -37821,7 +37833,7 @@ async function readUsage(agent, bin, cwd, log, model = null) {
     report.lines.push(...describeOpencodeCosts(parseOpencodeModelCosts(models), model));
     return report;
   } catch (err) {
-    return { agent, lines: [`Could not read usage: ${err.message}`], maxUsedPercent: null };
+    return { agent, lines: [`Could not read usage: ${err.message}`], limits: [], maxUsedPercent: null };
   }
 }
 
@@ -40495,6 +40507,16 @@ h3 .n { color: var(--faint); font-weight: 500; }
 .pill.interrupted { background: var(--warn-soft); color: var(--warn); }
 .pill.running::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; animation: pulse 1.4s infinite; }
 @keyframes pulse { 50% { opacity: .3; } }
+.linkbtn { margin-left: 8px; background: none; border: 0; padding: 0; color: var(--accent); font: inherit; font-size: 11.5px; text-transform: none; letter-spacing: 0; cursor: pointer; }
+.linkbtn:disabled { color: var(--faint); cursor: default; }
+.usage .card { display: flex; flex-direction: column; gap: 10px; }
+.usage .head { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+.limit .top { display: flex; justify-content: space-between; gap: 8px; font-size: 12.5px; }
+.limit .top b { font-variant-numeric: tabular-nums; }
+.limit .track { height: 6px; border-radius: 3px; background: var(--panel-2); border: 1px solid var(--line); overflow: hidden; margin: 4px 0 2px; }
+.limit .track i { display: block; height: 100%; border-radius: 3px; background: var(--ok); }
+.limit.warn .track i { background: var(--warn); } .limit.bad .track i { background: var(--bad); }
+.limit.bad .top b { color: var(--bad); }
 .chip.effort { display: inline-flex; align-items: center; gap: 5px; }
 .meter { display: inline-flex; align-items: flex-end; gap: 1.5px; height: 10px; }
 .meter i { width: 2.5px; border-radius: 1px; background: var(--line); }
@@ -40631,6 +40653,7 @@ details[open] > summary::before { content: "\u25BE "; }
 <main class="wrap">
   <div id="overview">
     <div class="block stats" id="ovStats"></div>
+    <div class="block"><h3>Usage left <span class="n" id="usageAt"></span><button class="linkbtn" id="usageRefresh" title="Read the limits again">refresh</button></h3><div id="ovUsage" class="cards usage"><div class="panel empty small muted">Reading the agents' limits\u2026</div></div></div>
     <div class="block"><h3>Sessions <span class="n" id="ovCount"></span></h3><div id="ovSessions" class="cards"></div></div>
     <div class="block"><h3>Subagents <span class="n">working first, then newest finished</span></h3><div class="panel rows" id="ovRuns"></div></div>
     <div class="block" id="ovMsgBox"><h3>Messages</h3><div class="panel"><div id="ovMsgs" class="msgs"></div></div></div>
@@ -41036,8 +41059,36 @@ document.addEventListener("click", (e) => {
   if (b) { opened.add(b.dataset.open); b.classList.remove("clamp"); }
 });
 
-async function poll() {
+/** Each agent's account limits as bars of what is left (read by the server from the CLIs, cached a few minutes). */
+async function loadUsage(refresh) {
+  const btn = $("usageRefresh");
+  btn.disabled = true;
+  btn.textContent = "reading\u2026";
   try {
+    const r = await fetch("/api/usage" + (refresh ? "?refresh=1" : ""));
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const u = await r.json();
+    $("ovUsage").innerHTML = u.reports.map(usageCard).join("");
+    $("usageAt").textContent = "as of " + new Date(u.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  } catch (err) {
+    $("ovUsage").innerHTML = '<div class="panel empty small muted">Could not read usage: ' + esc(err.message) + "</div>";
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "refresh";
+  }
+}
+function usageCard(rep) {
+  const body = rep.limits.length
+    ? rep.limits.map((l) => {
+        const left = Math.max(0, Math.min(100, 100 - l.usedPercent));
+        return '<div class="limit ' + (left < 10 ? "bad" : left < 30 ? "warn" : "") + '"><div class="top"><span>' + esc(l.name) + "</span><b>" + left + "% left</b></div>" +
+          '<div class="track"><i style="width:' + left + '%"></i></div>' + (l.resets ? '<div class="small muted">resets ' + esc(l.resets) + "</div>" : "") + "</div>";
+      }).join("")
+    : rep.lines.slice(0, 2).map((x) => '<div class="small muted">' + esc(x) + "</div>").join("");
+  return '<div class="card"><div class="head">' + av(rep.agent, true) + esc(rep.agent) + "</div>" + body + "</div>";
+}
+
+async function poll() {  try {
     const r = await fetch("/api/state");
     if (!r.ok) throw new Error(r.status === 403 ? "not authorized: open the link printed by agent-bridge ui" : "HTTP " + r.status);
     state = await r.json();
@@ -41086,6 +41137,9 @@ $("theme").addEventListener("click", (e) => {
 });
 applyTheme(document.documentElement.dataset.theme || "auto");
 poll();
+loadUsage(false);
+setInterval(() => loadUsage(false), 5 * 60 * 1000);
+$("usageRefresh").addEventListener("click", () => loadUsage(true));
 setInterval(poll, POLL_MS);
 </script>
 </body>
@@ -41193,6 +41247,16 @@ function cookieSecret(req) {
   const m = new RegExp(`(?:^|;\\s*)${COOKIE}=([0-9a-f]+)`).exec(String(req.headers.cookie ?? ""));
   return m?.[1] ?? "";
 }
+var USAGE_CACHE_MS = 5 * 60 * 1e3;
+var USAGE_REFRESH_MIN_MS = 15 * 1e3;
+function readAllUsage(home, log) {
+  const cfg = loadConfig(home, "other", log);
+  return Promise.all([
+    readUsage("claude", cfg.claudeBin, home, log),
+    readUsage("codex", cfg.codexBin, home, log),
+    readUsage("opencode", cfg.opencodeBin, home, log, cfg.opencodeModel ?? null)
+  ]);
+}
 async function startUi(opts) {
   const secret = opts.secret ?? randomBytes6(SECRET_BYTES4).toString("hex");
   const token = loadOrCreateToken(opts.home);
@@ -41211,6 +41275,15 @@ async function startUi(opts) {
       }
     })();
     return sender;
+  };
+  let usage = null;
+  const getUsage = (refresh) => {
+    if (!usage || refresh && Date.now() - usage.at > USAGE_REFRESH_MIN_MS || Date.now() - usage.at > USAGE_CACHE_MS) {
+      const reports = (opts.usage ?? (() => readAllUsage(opts.home, opts.log)))();
+      usage = { at: Date.now(), reports };
+      reports.catch(() => usage = null);
+    }
+    return usage.reports;
   };
   const handle = async (req, res) => {
     const host = String(req.headers.host ?? "").replace(/:\d+$/, "");
@@ -41234,6 +41307,10 @@ async function startUi(opts) {
         runs,
         messages: recentMessages(dbPath)
       });
+    }
+    if (req.method === "GET" && url2.pathname === "/api/usage") {
+      const reports = await getUsage(url2.searchParams.get("refresh") === "1");
+      return send(res, 200, { at: usage?.at ?? Date.now(), reports });
     }
     const runMatch = /^\/api\/runs\/([\w.-]+)$/.exec(url2.pathname);
     if (req.method === "GET" && runMatch) {

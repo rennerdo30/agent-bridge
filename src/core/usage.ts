@@ -15,9 +15,19 @@ const USAGE_TIMEOUT_MS = 45_000;
 const MINUTES_PER_HOUR = 60;
 const MINUTES_PER_DAY = 1440;
 
+/** One account limit, for display as a bar (the dashboard). */
+export interface UsageLimit {
+  name: string;
+  usedPercent: number;
+  /** When it resets, as the CLI words it (or a local time); null when unknown. */
+  resets: string | null;
+}
+
 export interface UsageReport {
   agent: CodingAgent;
   lines: string[];
+  /** The same limits, structured. Empty when the agent has none (opencode, API keys). */
+  limits: UsageLimit[];
   /** Highest "% used" among the limits, when known: the one that blocks first. */
   maxUsedPercent: number | null;
 }
@@ -60,15 +70,21 @@ function windowName(mins: number | null | undefined): string {
   return mins % MINUTES_PER_DAY === 0 ? `${mins / MINUTES_PER_DAY}-day window` : `${Math.round(mins / MINUTES_PER_HOUR)}-hour window`;
 }
 
-function resetText(epoch: number | null | undefined): string {
-  if (!epoch) return "";
+function resetTime(epoch: number | null | undefined): string | null {
+  if (!epoch) return null;
   const d = new Date(epoch < 1e12 ? epoch * 1000 : epoch);
-  return ` (resets ${d.toLocaleString([], { weekday: "short", hour: "2-digit", minute: "2-digit" })})`;
+  return d.toLocaleString([], { weekday: "short", hour: "2-digit", minute: "2-digit" });
+}
+
+function resetText(epoch: number | null | undefined): string {
+  const r = resetTime(epoch);
+  return r ? ` (resets ${r})` : "";
 }
 
 /** Format Codex's GetAccountRateLimitsResponse. */
 export function formatCodexLimits(res: any): UsageReport {
   const lines: string[] = [];
+  const limits: UsageLimit[] = [];
   let max: number | null = null;
   const snapshots: any[] = res?.rateLimitsByLimitId ? Object.values(res.rateLimitsByLimitId) : res?.rateLimits ? [res.rateLimits] : [];
   for (const s of snapshots) {
@@ -77,13 +93,15 @@ export function formatCodexLimits(res: any): UsageReport {
       if (!w || typeof w.usedPercent !== "number") continue;
       max = Math.max(max ?? 0, w.usedPercent);
       parts.push(`${windowName(w.windowDurationMins)} ${w.usedPercent}% used${resetText(w.resetsAt)}`);
+      const window = windowName(w.windowDurationMins);
+      limits.push({ name: snapshots.length > 1 ? `${s?.limitName ?? s?.limitId ?? "codex"}: ${window}` : window, usedPercent: w.usedPercent, resets: resetTime(w.resetsAt) });
     }
     if (s?.credits?.hasCredits && !s.credits.unlimited && s.credits.balance) parts.push(`credits ${s.credits.balance}`);
     if (s?.rateLimitReachedType) parts.push(`LIMIT REACHED (${s.rateLimitReachedType})`);
     if (parts.length) lines.push(`${s?.limitName ?? s?.limitId ?? "codex"}${s?.planType ? ` [${s.planType}]` : ""}: ${parts.join(", ")}`);
   }
   if (res?.ordinaryUsageAllowed === false) lines.push("The account currently does not allow ordinary usage.");
-  return { agent: "codex", lines: lines.length ? lines : ["No limits reported (API key or no plan limits)."], maxUsedPercent: max };
+  return { agent: "codex", lines: lines.length ? lines : ["No limits reported (API key or no plan limits)."], limits, maxUsedPercent: max };
 }
 
 /** Pick the limit lines out of `claude -p /usage`. */
@@ -93,7 +111,13 @@ export function parseClaudeUsage(text: string): UsageReport {
     .map((l) => l.trim())
     .filter((l) => /\d+%\s*used/i.test(l) || /api key/i.test(l));
   const percents = lines.map((l) => Number(/(\d+)%\s*used/i.exec(l)?.[1])).filter((n) => Number.isFinite(n));
-  return { agent: "claude", lines: lines.length ? lines : ["No limits reported."], maxUsedPercent: percents.length ? Math.max(...percents) : null };
+  // "Current week (all models): 88% used · resets Oct 6, 1:59pm (Asia/Tokyo)"
+  const limits: UsageLimit[] = [];
+  for (const l of lines) {
+    const m = /^(.+?):\s*(\d+)%\s*used(?:\s*[·•-]\s*resets\s+(.+))?$/i.exec(l);
+    if (m) limits.push({ name: m[1]!.replace(/^current\s+/i, ""), usedPercent: Number(m[2]), resets: m[3]?.trim() ?? null });
+  }
+  return { agent: "claude", lines: lines.length ? lines : ["No limits reported."], limits, maxUsedPercent: percents.length ? Math.max(...percents) : null };
 }
 
 /** Today's spend and tokens from `opencode stats`. */
@@ -104,7 +128,7 @@ export function parseOpencodeStats(text: string): UsageReport {
   const output = pick("Output");
   const lines = ["No account limits: opencode uses the providers' keys and plans."];
   if (cost || input) lines.push(`Last 24 hours: ${[cost && `cost ${cost}`, input && `${input} input tokens`, output && `${output} output tokens`].filter(Boolean).join(", ")}`);
-  return { agent: "opencode", lines, maxUsedPercent: null };
+  return { agent: "opencode", lines, limits: [], maxUsedPercent: null };
 }
 
 export interface ModelCost {
@@ -173,6 +197,6 @@ export async function readUsage(agent: CodingAgent, bin: string, cwd: string, lo
     report.lines.push(...describeOpencodeCosts(parseOpencodeModelCosts(models), model));
     return report;
   } catch (err) {
-    return { agent, lines: [`Could not read usage: ${(err as Error).message}`], maxUsedPercent: null };
+    return { agent, lines: [`Could not read usage: ${(err as Error).message}`], limits: [], maxUsedPercent: null };
   }
 }

@@ -10,12 +10,14 @@ describe("usage limits", () => {
     });
     expect(r.lines).toEqual(["codex [pro]: 5-hour window 12% used, weekly 95% used"]);
     expect(r.maxUsedPercent).toBe(95);
+    expect(r.limits).toEqual([{ name: "5-hour window", usedPercent: 12, resets: null }, { name: "weekly", usedPercent: 95, resets: null }]);
   });
 
   it("picks the limit lines out of claude /usage", () => {
     const r = parseClaudeUsage("Usage\n\nCurrent session: 6% used · resets 10am\nCurrent week (all models): 66% used · resets Oct 6\n\nWhat's contributing …\n");
     expect(r.lines).toEqual(["Current session: 6% used · resets 10am", "Current week (all models): 66% used · resets Oct 6"]);
     expect(r.maxUsedPercent).toBe(66);
+    expect(r.limits).toEqual([{ name: "session", usedPercent: 6, resets: "10am" }, { name: "week (all models)", usedPercent: 66, resets: "Oct 6" }]);
   });
 
   it("reads opencode spend and which models are free", () => {
