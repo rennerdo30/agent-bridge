@@ -36,6 +36,15 @@ export class DelegateError extends Error {
     super(message);
     this.name = "DelegateError";
   }
+
+  /** The agent never got going (its startup timed out): trying again is safe. */
+  startupFailed = false;
+
+  static startup(message: string, stderrTail: string, sessionId: string | null): DelegateError {
+    const err = new DelegateError(message, "failed", stderrTail, "", sessionId);
+    err.startupFailed = true;
+    return err;
+  }
 }
 
 /** Resolve a bare command name against PATH (and PATHEXT on Windows). */
@@ -144,8 +153,15 @@ export function resolveCommand(bin: string, argsIn: string[], env: NodeJS.Proces
 
 export interface RunResult {
   code: number | null;
+  /** The signal that ended the process, if one did (then code is null). */
+  signal?: NodeJS.Signals | null;
   stdout: string;
   stderr: string;
+}
+
+/** How a process ended, for error messages: "exited with code 1" or "was killed by signal SIGKILL". */
+export function exitDescription(res: Pick<RunResult, "code" | "signal">): string {
+  return res.code === null && res.signal ? `was killed by signal ${res.signal}` : `exited with code ${res.code}`;
 }
 
 /**
@@ -163,6 +179,8 @@ export function runProcess(opts: {
   signal?: AbortSignal;
   /** Called with every complete stdout line as it arrives (for progress reporting). */
   onLine?: (line: string) => void;
+  /** What runs, for the timeout message (e.g. "git worktree add"); default: a delegated agent run. */
+  what?: string;
 }): Promise<RunResult> {
   let command: { resolved: string; args: string[]; needsShell: boolean };
   try {
@@ -201,7 +219,9 @@ export function runProcess(opts: {
     const kill = () => void killTree(child);
     const timer = setTimeout(() => {
       kill();
-      finish(() => reject(new DelegateError(`delegate timed out after ${Math.round(opts.timeoutMs / 1000)}s`, "timeout", stderr.slice(-STDERR_TAIL_CHARS), captured())));
+      const seconds = Math.round(opts.timeoutMs / 1000);
+      const message = opts.what ? `${opts.what} timed out after ${seconds}s` : `delegate timed out after ${seconds}s (its time limit, timeout_sec)`;
+      finish(() => reject(new DelegateError(message, "timeout", stderr.slice(-STDERR_TAIL_CHARS), captured())));
     }, opts.timeoutMs);
     const onAbort = () => {
       kill();
@@ -232,7 +252,7 @@ export function runProcess(opts: {
       stderr = (stderr + d).slice(-MAX_CAPTURE_CHARS);
     });
     child.on("error", (err) => finish(() => reject(new DelegateError(`failed to start ${opts.bin}: ${err.message}`, "failed"))));
-    child.on("close", (code) => finish(() => resolve({ code, stdout: captured(), stderr })));
+    child.on("close", (code, signal) => finish(() => resolve({ code, signal, stdout: captured(), stderr })));
     child.stdin.on("error", () => {
       // The child may exit before reading stdin; the close handler reports the outcome.
     });
@@ -425,14 +445,14 @@ export async function delegateToCodex(
   const parsed = parseCodexJsonl(res.stdout);
   const isError = res.code !== 0 || parsed.error !== null;
   if (isError && !parsed.text) {
-    throw new DelegateError(parsed.error ?? `codex exited with code ${res.code}`, "failed", res.stderr.slice(-STDERR_TAIL_CHARS), "", parsed.threadId ?? req.sessionId ?? null);
+    throw new DelegateError(parsed.error ?? `codex ${exitDescription(res)}`, "failed", res.stderr.slice(-STDERR_TAIL_CHARS), "", parsed.threadId ?? req.sessionId ?? null);
   }
   req.log.info("codex delegate finished", { threadId: parsed.threadId, code: res.code, isError });
   return {
     sessionId: parsed.threadId ?? req.sessionId ?? null,
     text: parsed.text,
     isError,
-    details: { exitCode: res.code, usage: parsed.usage, error: parsed.error },
+    details: { exitCode: res.code, signal: res.signal ?? null, usage: parsed.usage, error: parsed.error },
   };
 }
 
@@ -554,14 +574,14 @@ export async function delegateToClaude(
   }
   const parsed = parseClaudeJson(res.stdout);
   if (!parsed) {
-    throw new DelegateError(`claude exited with code ${res.code} without a JSON result`, "failed", (res.stderr || res.stdout).slice(-STDERR_TAIL_CHARS), "", claudeSessionFromStream(res.stdout) ?? req.sessionId ?? null);
+    throw new DelegateError(`claude ${exitDescription(res)} without a JSON result`, "failed", (res.stderr || res.stdout).slice(-STDERR_TAIL_CHARS), "", claudeSessionFromStream(res.stdout) ?? req.sessionId ?? null);
   }
   req.log.info("claude delegate finished", { sessionId: parsed.sessionId, code: res.code, isError: parsed.isError });
   return {
     sessionId: parsed.sessionId ?? req.sessionId ?? null,
     text: parsed.text,
     isError: parsed.isError || res.code !== 0,
-    details: { exitCode: res.code, costUsd: parsed.cost },
+    details: { exitCode: res.code, signal: res.signal ?? null, costUsd: parsed.cost },
   };
 }
 
@@ -635,10 +655,10 @@ export async function delegateToOpencode(req: DelegateRequest & { bin: string; a
   const parsed = parseOpencodeJsonl(res.stdout);
   const isError = res.code !== 0 || parsed.error !== null;
   if (isError && !parsed.text) {
-    throw new DelegateError(parsed.error ?? `opencode exited with code ${res.code}`, "failed", res.stderr.slice(-STDERR_TAIL_CHARS), "", parsed.sessionId ?? req.sessionId ?? null);
+    throw new DelegateError(parsed.error ?? `opencode ${exitDescription(res)}`, "failed", res.stderr.slice(-STDERR_TAIL_CHARS), "", parsed.sessionId ?? req.sessionId ?? null);
   }
   req.log.info("opencode delegate finished", { sessionId: parsed.sessionId, code: res.code, isError });
-  return { sessionId: parsed.sessionId ?? req.sessionId ?? null, text: parsed.text, isError, details: { exitCode: res.code, error: parsed.error, usage: parsed.usage ?? null, costUsd: parsed.cost || null } };
+  return { sessionId: parsed.sessionId ?? req.sessionId ?? null, text: parsed.text, isError, details: { exitCode: res.code, signal: res.signal ?? null, error: parsed.error, usage: parsed.usage ?? null, costUsd: parsed.cost || null } };
 }
 
 /** Shared with the opencode server-mode delegate. */
@@ -673,5 +693,95 @@ export async function withResumeHint<T>(agent: string, sessionOf: (stdout: strin
       }
     }
     throw err;
+  }
+}
+
+/** Provider hiccups worth one automatic retry: the session is fine, the provider's answer was not. */
+const TRANSIENT_ERROR_RE =
+  /not valid JSON|upstream|overloaded|bad gateway|service unavailable|gateway time-?out|internal server error|\b50[0-4]\b|ECONNRESET|ETIMEDOUT|EPIPE|socket hang up|connection (?:reset|closed|error|refused)|stream (?:error|closed|disconnected|ended)|network error|fetch failed|temporarily unavailable/i;
+/** Usage and rate limits: retrying at once only fails again, so these are reported, not retried. */
+const LIMIT_ERROR_RE = /usage limit|rate.?limit|quota|too many requests|\b429\b|insufficient (?:credits|balance)|billing/i;
+
+export function isTransientProviderError(message: string): boolean {
+  return TRANSIENT_ERROR_RE.test(message) && !LIMIT_ERROR_RE.test(message);
+}
+
+/** Sent to the same session after a transient provider error, to carry on with the task. */
+export const TRANSIENT_RETRY_MESSAGE =
+  "Your previous turn was cut off by a temporary provider error. Continue where you stopped and finish the task. Then give your final answer.";
+
+/**
+ * Run a delegate; if a transient provider error ("Upstream response was not valid JSON") ends it, resume the
+ * same session once with a short "continue" message before reporting a failure. Long runs are not lost to a
+ * single bad response. The result (or the final error) says that it was retried.
+ */
+export async function retryTransient(req: DelegateRequest, run: (req: DelegateRequest) => Promise<DelegateResult>): Promise<DelegateResult> {
+  const started = Date.now();
+  let cause: string;
+  let sessionId: string;
+  try {
+    const res = await run(req);
+    const error = typeof res.details?.error === "string" ? res.details.error : null;
+    if (!res.isError || !error || !res.sessionId || !isTransientProviderError(error)) return res;
+    cause = error;
+    sessionId = res.sessionId;
+  } catch (err) {
+    if (!(err instanceof DelegateError) || err.kind !== "failed" || !err.sessionId || !isTransientProviderError(err.message)) throw err;
+    cause = err.message;
+    sessionId = err.sessionId;
+  }
+  if (req.signal?.aborted) throw new DelegateError("delegate aborted", "aborted", "", "", sessionId);
+  req.log.warn("transient provider error; resuming the session once", { sessionId, cause });
+  req.onProgress?.(`temporary provider error, resuming the session: ${cause.slice(0, 120)}`);
+  const note = `(A temporary provider error interrupted the run ("${cause}"); agent-bridge resumed the same session once with a short "continue" message.)`;
+  const remainingSec = Math.max(60, req.timeoutSec - Math.round((Date.now() - started) / 1000));
+  try {
+    const res = await run({ ...req, sessionId, prompt: TRANSIENT_RETRY_MESSAGE, timeoutSec: remainingSec });
+    return { ...res, text: `${note}\n\n${res.text}`, details: { ...res.details, retriedAfter: cause } };
+  } catch (err) {
+    if (err instanceof DelegateError) {
+      err.message += ` (after one automatic retry: the first attempt had failed with "${cause}")`;
+      err.sessionId ??= sessionId;
+    }
+    throw err;
+  }
+}
+
+/** The last lines of a process's error output, short enough for a report. */
+function stderrSummary(stderr: string): string {
+  const lines = stderr.trim().split(/\r?\n/).filter((l) => l.trim());
+  return lines.slice(-5).join("\n").slice(-800);
+}
+
+function labelError(message: string): string {
+  return LIMIT_ERROR_RE.test(message) ? `usage or rate limit reached: ${message}` : `error: ${message}`;
+}
+
+/**
+ * Why a delegated run failed, for the report to whoever started it: the exit code or signal, which timeout,
+ * the provider's error text, a usage limit, or a cancellation. Never just "failed".
+ */
+export function failureCause(outcome: { result?: DelegateResult; error?: unknown }): string {
+  if (outcome.result) {
+    const d = outcome.result.details ?? {};
+    const parts: string[] = [];
+    if (typeof d.error === "string" && d.error) parts.push(labelError(d.error));
+    if (typeof d.exitCode === "number" && d.exitCode !== 0) parts.push(`the agent exited with code ${d.exitCode}`);
+    else if (typeof d.signal === "string" && d.signal) parts.push(`the agent was killed by signal ${d.signal}`);
+    return parts.join("; ") || "the agent ended its turn with an error but gave no details";
+  }
+  const err = outcome.error;
+  if (!(err instanceof DelegateError)) return `error: ${String((err as Error)?.message ?? err)}`;
+  switch (err.kind) {
+    case "aborted":
+      return "cancelled: it was stopped (cancel_subagent, or the session that started it ended)";
+    case "timeout":
+      return `timeout: ${err.message}`;
+    case "not_found":
+      return `could not start: ${err.message}`;
+    default: {
+      const tail = err.stderrTail ? stderrSummary(err.stderrTail) : "";
+      return `${labelError(err.message)}${tail && !err.message.includes(tail) ? `\nLast error output:\n${tail}` : ""}`;
+    }
   }
 }

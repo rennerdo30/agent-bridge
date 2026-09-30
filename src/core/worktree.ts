@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync, realpathSync } from "node:fs";
+import { mkdirSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { basename, isAbsolute, join, relative, resolve } from "node:path";
-import { runProcess } from "./delegate.js";
+import { DelegateError, runProcess } from "./delegate.js";
 import type { Logger } from "./logger.js";
 
 /**
@@ -9,7 +9,10 @@ import type { Logger } from "./logger.js";
  * parallel subagents never touch each other's files or the user's working copy.
  */
 const GIT = "git";
-const GIT_TIMEOUT_MS = 60_000;
+/** Most git commands; generous, since many parallel subagents (and virus scanners) slow the disk down. */
+const GIT_TIMEOUT_MS = 180_000;
+/** `git worktree add` checks out the whole tree: on a large repository under load that takes minutes. */
+const WORKTREE_ADD_TIMEOUT_MS = 600_000;
 const BRANCH_PREFIX = "agent-bridge/";
 /** Commit identity for subagent work; local branches only, so a neutral identity is fine. */
 const COMMIT_IDENTITY = ["-c", "user.name=agent-bridge", "-c", "user.email=agent-bridge@localhost"];
@@ -24,9 +27,11 @@ export interface Worktree {
   base: string;
 }
 
-async function git(args: string[], cwd: string, log: Logger): Promise<string> {
-  const res = await runProcess({ bin: GIT, args, stdin: "", cwd, timeoutMs: GIT_TIMEOUT_MS, env: process.env, log });
-  if (res.code !== 0) throw new Error(`git ${args[0]} failed: ${(res.stderr || res.stdout).trim().slice(0, 500)}`);
+async function git(args: string[], cwd: string, log: Logger, timeoutMs = GIT_TIMEOUT_MS): Promise<string> {
+  // Name the command in errors ("git worktree add timed out after 600s"), not the -c options before it.
+  const what = `git ${args.filter((a, i) => !a.startsWith("-") && args[i - 1] !== "-c").slice(0, 2).join(" ")}`;
+  const res = await runProcess({ bin: GIT, args, stdin: "", cwd, timeoutMs, env: process.env, log, what });
+  if (res.code !== 0) throw new Error(`${what} failed: ${(res.stderr || res.stdout).trim().slice(0, 500)}`);
   // Only trailing whitespace: leading spaces are meaningful in `git status --porcelain`.
   return res.stdout.trimEnd();
 }
@@ -43,12 +48,37 @@ export async function createWorktree(opts: { cwd: string; home: string; jobId: s
   const dir = join(opts.home, "worktrees");
   mkdirSync(dir, { recursive: true });
   const path = join(dir, `${basename(repoRoot)}-${opts.jobId}`);
-  await git(["worktree", "add", "-b", branch, path, base], repoRoot, opts.log);
+  try {
+    await git(["worktree", "add", "-b", branch, path, base], repoRoot, opts.log, WORKTREE_ADD_TIMEOUT_MS);
+  } catch (err) {
+    if (!(err instanceof DelegateError && err.kind === "timeout")) throw new Error(`could not create a worktree for the subagent: ${(err as Error).message}`);
+    // A slow disk under load: clean up the half-made checkout and try once more.
+    opts.log.warn("git worktree add timed out; retrying once", { path });
+    await removeWorktree(repoRoot, path, branch, opts.log);
+    try {
+      await git(["worktree", "add", "-b", branch, path, base], repoRoot, opts.log, WORKTREE_ADD_TIMEOUT_MS);
+    } catch (again) {
+      await removeWorktree(repoRoot, path, branch, opts.log);
+      throw new Error(`could not create a worktree for the subagent (tried twice): ${(again as Error).message}`);
+    }
+  }
   const rel = relative(repoRoot, opts.cwd);
   // Different spellings of the same folder (drive mappings, junctions) make rel absolute or "..": use the root.
   const cwd = rel && !rel.startsWith("..") && !isAbsolute(rel) ? join(path, rel) : path;
   opts.log.info("worktree created", { repoRoot, path, branch });
   return { repoRoot, path, cwd, branch, base };
+}
+
+/** Best effort: remove a worktree and its branch (a failed or half-made checkout). */
+async function removeWorktree(repoRoot: string, path: string, branch: string, log: Logger): Promise<void> {
+  await git(["worktree", "remove", "--force", path], repoRoot, log).catch(() => {});
+  try {
+    rmSync(path, { recursive: true, force: true });
+  } catch {
+    // files still locked: prune below forgets it anyway
+  }
+  await git(["worktree", "prune"], repoRoot, log).catch(() => {});
+  await git(["branch", "-D", branch], repoRoot, log).catch(() => {});
 }
 
 export interface WorktreeOutcome {

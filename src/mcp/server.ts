@@ -18,7 +18,7 @@ import {
   MAX_JOB_TIMEOUT_SEC,
   MAX_WAIT_SEC,
 } from "../core/constants.js";
-import { currentDelegateDepth, DelegateError, killAllDelegates, resolveBinary, type DelegateResult } from "../core/delegate.js";
+import { currentDelegateDepth, DelegateError, failureCause, killAllDelegates, resolveBinary, retryTransient, type DelegateResult } from "../core/delegate.js";
 import { readUsage } from "../core/usage.js";
 import { t } from "../core/i18n.js";
 import { createLogger, type Logger } from "../core/logger.js";
@@ -476,6 +476,11 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
           lines.push(t("peers.job", { name: j.name + (j.args?.title ? ` "${j.args.title}"` : " (untitled: name it with message_subagent(job, title=...))"), model: j.model ?? "default", duration: formatDuration(Date.now() - j.startedAt), progress: (j.percent !== undefined ? `${j.percent}% (${j.progressNote || "reported"}) · ` : "") + (j.progress ?? "starting") }));
         }
       }
+      const waiting = ctx.jobs?.waiting() ?? [];
+      if (waiting.length) {
+        lines.push(t("peers.waiting", { count: waiting.length, max: ctx.jobs!.maxJobs }));
+        for (const j of waiting) lines.push(t("peers.waitingJob", { name: j.name + (j.args?.title ? ` "${j.args.title}"` : ""), messages: j.queue.length }));
+      }
       const recent = ctx.jobs?.recent() ?? [];
       if (recent.length) {
         lines.push(t("peers.recent"));
@@ -769,8 +774,8 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
       if (job) job.retitle = (title) => feed.meta({ title });
       let res: DelegateResult;
       try {
-        res = await profile.run(
-          cfg,
+        // A temporary provider error (an invalid upstream response, say) gets one automatic resume first.
+        res = await retryTransient(
           {
             // With a live link the subagent can report how far it is (report_progress; shown in the dashboard).
             prompt: link ? `${a.prompt}\n\n${PROGRESS_HINT}` : a.prompt,
@@ -802,7 +807,7 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
                 }
               : undefined,
           },
-          { ...a, access, relay: wiring },
+          (req) => profile.run(cfg, req, { ...a, access, relay: wiring }),
         );
         feed.meta({ session: res.sessionId });
         feed.end(res.isError ? "failed" : "done", res.text);
@@ -903,7 +908,10 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
           throw err;
         }
         tracked?.end({ result: res });
-        const header = t("delegate.done", { agent: target, session: res.sessionId ?? "-" }) + (tracked && res.sessionId ? "\n" + t("delegate.followUp", { job: tracked.job.name }) : "");
+        const header =
+          t("delegate.done", { agent: target, session: res.sessionId ?? "-" }) +
+          (res.isError ? "\n" + t("delegate.cause", { cause: failureCause({ result: res }) }) : "") +
+          (tracked && res.sessionId ? "\n" + t("delegate.followUp", { job: tracked.job.name }) : "");
         return text(`${header}
 
 ${res.text || t("delegate.empty")}`, res.isError);
@@ -988,7 +996,8 @@ ${res.text || t("delegate.empty")}`, res.isError);
         "It continues in its own session with its full context, in the same folder or worktree. " +
         "While it is still running it gets the message live, at its next step (after its current tool call), and answers right away, like a native subagent: use that to ask how far it is or to redirect it. " +
         "The answer arrives as a message from the job. " +
-        "Without a message it is told to continue where it stopped: use that to recover a failed or interrupted subagent.",
+        "Without a message it is told to continue where it stopped: use that to recover a failed or interrupted subagent. " +
+        "If all subagent slots are taken, a finished subagent's continuation is queued and starts by itself when one frees up (cancel_subagent drops it).",
       inputSchema: {
         job: z.string().min(1).describe('Job name, e.g. "codex-job-1a2b3c4d" or "opencode-ask-9f8e7d6c" (see peers)'),
         message: z.string().optional().describe("The follow-up. Default: continue where you stopped and finish the task."),
@@ -1000,7 +1009,11 @@ ${res.text || t("delegate.empty")}`, res.isError);
       if (!jobs) throw new BridgeError("bad_request", t("err.delegatedSession"));
       if (a.title?.trim()) jobs.setTitle(a.job, a.title.trim());
       const { outcome, job } = jobs.followUp(a.job, a.message?.trim() || DEFAULT_FOLLOW_UP);
-      return text(t(`followUp.${outcome}`, { name: job?.name ?? a.job, max: cfg.maxJobs }), outcome === "unknown" || outcome === "no-session" || outcome === "busy");
+      const position = job ? jobs.waiting().indexOf(job) + 1 : 0;
+      return text(
+        t(`followUp.${outcome}`, { name: job?.name ?? a.job, max: jobs.maxJobs, running: jobs.runningCount(), ahead: position > 1 ? ` (${position - 1} queued before it)` : "" }),
+        outcome === "unknown" || outcome === "no-session",
+      );
     }),
   );
 
@@ -1008,7 +1021,8 @@ ${res.text || t("delegate.empty")}`, res.isError);
     "cancel_subagent",
     {
       title: "Cancel subagent",
-      description: "Stop a background subagent started with spawn_*. Pass its job name (e.g. codex-job-1a2b3c4d).",
+      description:
+        "Stop a background subagent started with spawn_*, or drop a queued continuation (message_subagent while all slots were taken). Pass its job name (e.g. codex-job-1a2b3c4d).",
       inputSchema: { job: z.string().min(1) },
     },
     guarded("cancel_subagent", async (a: { job: string }) => {
