@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { createInterface } from "node:readline/promises";
 import { resolveBinary, unwrapNpmShim } from "../core/delegate.js";
 import { t } from "../core/i18n.js";
+import { describeCodexUser, listCodexUsers } from "./codex-users.js";
 import { installOpencode, opencodeSourceDir, uninstallOpencode } from "./opencode-install.js";
 
 /** Where the agent-bridge marketplaces live (Claude Code and Codex read the same repo). */
@@ -110,7 +111,14 @@ export async function runInstaller(opts: InstallerOptions): Promise<number> {
       const steps = planFor(tool, opts.action);
       opts.out(t("installer.plan", { tool }));
       for (const s of steps) opts.out(`  ${describeStep(s)}`);
-      if (tool === "codex") opts.out(t("installer.codexNote"));
+      if (tool === "codex") {
+        opts.out(t("installer.codexNote"));
+        const users = await listCodexUsers();
+        if (users.length) {
+          opts.out(t("installer.codexInUse"));
+          for (const u of users) opts.out(`    - ${describeCodexUser(u)}`);
+        }
+      }
       if (rl) {
         const answer = (await ask(rl, t("installer.confirm", { tool }))).trim().toLowerCase();
         if (answer !== "y" && answer !== "yes") {
@@ -137,7 +145,13 @@ export async function runInstaller(opts: InstallerOptions): Promise<number> {
         opts.out(`> ${describeStep(step)}`);
         const code = await runInherited(step.bin, step.args);
         if (code !== 0 && !step.allowFailure) {
-          opts.out(t("installer.stepFailed", { code }));
+          opts.out(t("installer.stepFailed", { code }));          if (tool === "codex") {
+            const users = await listCodexUsers();
+            if (users.length) {
+              opts.out(t("installer.codexBlocked"));
+              for (const u of users) opts.out(`    - ${describeCodexUser(u)}`);
+            }
+          }
           failures++;
           break;
         }

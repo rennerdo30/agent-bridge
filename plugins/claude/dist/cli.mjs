@@ -7714,7 +7714,7 @@ import { connect } from "node:net";
 import { homedir } from "node:os";
 import { join } from "node:path";
 var APP_NAME = "agent-bridge";
-var APP_VERSION = "0.15.1";
+var APP_VERSION = "0.15.2";
 var PROTOCOL_VERSION = 2;
 var ENV = {
   home: "AGENT_BRIDGE_HOME",
@@ -7963,6 +7963,8 @@ var en = {
   "installer.skipped": "Skipped {tool}.",
   "installer.notFound": "{tool} is not installed (not found on PATH); skipping it.",
   "installer.codexNote": "  Note: close all Codex sessions first; afterwards trust the agent-bridge hooks once via /hooks in Codex.",
+  "installer.codexInUse": "  These Codex processes are running; on Windows they keep the plugin folder in use and the update fails until they are gone:",
+  "installer.codexBlocked": "  Codex could not replace the plugin because these processes still use it (Codex subagents started by agent-bridge sessions count too):",
   "installer.opencodeCopy": "copy the agent-bridge plugin, skill and subagents into opencode's config folder",
   "installer.opencodeRemove": "remove the agent-bridge files from opencode's config folder",
   "installer.stepFailed": "  Command failed (exit code {code}); stopping for this tool.",
@@ -9666,6 +9668,43 @@ async function withResumeHint(agent, sessionOf, run2) {
   }
 }
 
+// src/cli/codex-users.ts
+import { execFile } from "node:child_process";
+var LOOKUP_TIMEOUT_MS = 1e4;
+function classifyCodexProcesses(procs) {
+  const byPid = new Map(procs.map((p) => [p.ProcessId, p]));
+  const codex = procs.filter((p) => /^codex(\.exe)?$/i.test(p.Name) && !/exec-server|code-mode-host/i.test(p.CommandLine ?? ""));
+  const codexPids = new Set(codex.map((p) => p.ProcessId));
+  return codex.filter((p) => !codexPids.has(p.ParentProcessId)).map((p) => {
+    const parent = byPid.get(p.ParentProcessId);
+    const started = p.CreationDate ? new Date(p.CreationDate).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "?";
+    const bridge = /agent-bridge[\\/].*server\.mjs\s+--agent=(\w+)/i.exec(parent?.CommandLine ?? "");
+    if (bridge) return { pid: p.ProcessId, kind: "subagent", startedBy: bridge[1], started };
+    if (/^(ChatGPT|Codex)(\.exe)?$/i.test(parent?.Name ?? "")) return { pid: p.ProcessId, kind: "app", started };
+    return { pid: p.ProcessId, kind: "session", started };
+  });
+}
+function listCodexUsers() {
+  if (process.platform !== "win32") return Promise.resolve([]);
+  const script = "Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,Name,CommandLine,@{n='CreationDate';e={$_.CreationDate.ToString('o')}} | ConvertTo-Json -Compress";
+  return new Promise((resolve5) => {
+    execFile("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], { timeout: LOOKUP_TIMEOUT_MS, windowsHide: true, maxBuffer: 64 * 1024 * 1024 }, (err, stdout) => {
+      if (err) return resolve5([]);
+      try {
+        const data = JSON.parse(stdout);
+        resolve5(classifyCodexProcesses(Array.isArray(data) ? data : [data]));
+      } catch {
+        resolve5([]);
+      }
+    });
+  });
+}
+function describeCodexUser(u) {
+  if (u.kind === "app") return `the Codex app (pid ${u.pid}, since ${u.started}): close it`;
+  if (u.kind === "subagent") return `a Codex subagent of a ${u.startedBy} session (pid ${u.pid}, since ${u.started}): wait until it finishes, or cancel it with cancel_subagent`;
+  return `a Codex session (pid ${u.pid}, since ${u.started}): close it`;
+}
+
 // src/cli/opencode-install.ts
 import { copyFileSync, existsSync as existsSync2, mkdirSync as mkdirSync4, readdirSync, readFileSync as readFileSync4, rmSync } from "node:fs";
 import { homedir as homedir3 } from "node:os";
@@ -9835,7 +9874,14 @@ async function runInstaller(opts) {
       const steps = planFor(tool, opts.action);
       opts.out(t("installer.plan", { tool }));
       for (const s of steps) opts.out(`  ${describeStep(s)}`);
-      if (tool === "codex") opts.out(t("installer.codexNote"));
+      if (tool === "codex") {
+        opts.out(t("installer.codexNote"));
+        const users = await listCodexUsers();
+        if (users.length) {
+          opts.out(t("installer.codexInUse"));
+          for (const u of users) opts.out(`    - ${describeCodexUser(u)}`);
+        }
+      }
       if (rl) {
         const answer = (await ask(rl, t("installer.confirm", { tool }))).trim().toLowerCase();
         if (answer !== "y" && answer !== "yes") {
@@ -9863,6 +9909,13 @@ async function runInstaller(opts) {
         const code = await runInherited(step.bin, step.args);
         if (code !== 0 && !step.allowFailure) {
           opts.out(t("installer.stepFailed", { code }));
+          if (tool === "codex") {
+            const users = await listCodexUsers();
+            if (users.length) {
+              opts.out(t("installer.codexBlocked"));
+              for (const u of users) opts.out(`    - ${describeCodexUser(u)}`);
+            }
+          }
           failures++;
           break;
         }
@@ -11243,7 +11296,7 @@ async function delegateToOpencodeServed(req) {
 }
 
 // src/cli/reliability-live.ts
-import { execFile } from "node:child_process";
+import { execFile as execFile2 } from "node:child_process";
 import { existsSync as existsSync5, mkdirSync as mkdirSync8, mkdtempSync, readdirSync as readdirSync5, readFileSync as readFileSync11, rmSync as rmSync3, writeFileSync as writeFileSync5 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join as join16 } from "node:path";
@@ -21436,7 +21489,7 @@ function listProcesses() {
     ]
   ] : ["ps", ["-A", "-o", "pid=,ppid=,pgid="]];
   return new Promise((resolve5, reject) => {
-    execFile(file, args, { timeout: PROCESS_LIST_TIMEOUT_MS, windowsHide: true, maxBuffer: 16 * 1024 * 1024 }, (err, stdout) => {
+    execFile2(file, args, { timeout: PROCESS_LIST_TIMEOUT_MS, windowsHide: true, maxBuffer: 16 * 1024 * 1024 }, (err, stdout) => {
       if (err) return reject(err);
       const procs = [];
       for (const line of stdout.split(/\r?\n/)) {

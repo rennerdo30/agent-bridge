@@ -68,7 +68,7 @@ npx -y github:rennerdo30/agent-bridge update     # or: update claude codex openc
 npx -y github:rennerdo30/agent-bridge status     # which sessions still run an old version
 ```
 
-1. **Close all Codex sessions first.** Codex keeps the plugin folder in use while it runs, and its update fails with "Access is denied".
+1. **Close all Codex sessions first, including the Codex app, and let Codex subagents finish.** On Windows every running Codex keeps the plugin folder in use, also Codex subagents that your Claude or opencode sessions started, and the update fails with "Access is denied". `update` lists the Codex processes that are in the way.
 2. `update` runs the same official commands as `install` (`claude plugin update …`, `codex plugin marketplace upgrade …` plus `codex plugin add …`) and copies the new opencode plugin. It asks per tool; `--yes` skips the questions.
 3. **Restart your agent sessions** to load the new version. There is deliberately no command for this: the sessions are your own windows, often with work in progress. `status` lists every connected session with its agent-bridge version and marks old ones `OUTDATED`:
 
