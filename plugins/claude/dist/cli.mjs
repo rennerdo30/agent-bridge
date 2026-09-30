@@ -7714,7 +7714,7 @@ import { connect } from "node:net";
 import { homedir } from "node:os";
 import { join } from "node:path";
 var APP_NAME = "agent-bridge";
-var APP_VERSION = "0.16.2";
+var APP_VERSION = "0.16.3";
 var PROTOCOL_VERSION = 2;
 var ENV = {
   home: "AGENT_BRIDGE_HOME",
@@ -10290,6 +10290,14 @@ h3 .n { color: var(--faint); font-weight: 500; }
 .ell { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .hidden { display: none !important; }
 
+/* Overview: figures */
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; }
+.stat { padding: 14px 16px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); }
+.stat b { display: block; font-size: 24px; font-weight: 700; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.stat span { font-size: 12.5px; color: var(--muted); }
+.stat.busy b { color: var(--busy); } .stat.ok b { color: var(--ok); } .stat.bad b { color: var(--bad); }
+.counts { font-size: 12px; font-weight: 500; text-transform: none; letter-spacing: 0; color: var(--muted); }
+.counts .w { color: var(--busy); } .counts .d { color: var(--ok); } .counts .f { color: var(--bad); }
 /* Overview: session cards */
 .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); gap: 14px; }
 .card { display: flex; flex-direction: column; gap: 12px; padding: 16px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); transition: border-color .15s, transform .15s; }
@@ -10399,15 +10407,16 @@ details[open] > summary::before { content: "\u25BE "; }
 
 <main class="wrap">
   <div id="overview">
+    <div class="block stats" id="ovStats"></div>
     <div class="block"><h3>Sessions <span class="n" id="ovCount"></span></h3><div id="ovSessions" class="cards"></div></div>
-    <div class="block"><h3>Subagents <span class="n">newest first</span></h3><div class="panel rows" id="ovRuns"></div></div>
+    <div class="block"><h3>Subagents <span class="n">working first, then newest finished</span></h3><div class="panel rows" id="ovRuns"></div></div>
     <div class="block" id="ovMsgBox"><h3>Messages</h3><div class="panel"><div id="ovMsgs" class="msgs"></div></div></div>
   </div>
 
   <div id="session" class="split hidden">
     <div class="side-col">
       <div class="panel sess" id="sHead"></div>
-      <div><h3>Subagents <span class="n" id="sCount"></span></h3><div class="panel rows" id="sGroups"></div></div>
+      <div><h3>Subagents <span class="counts" id="sCount"></span></h3><div class="panel rows" id="sGroups"></div></div>
       <div id="sMsgBox"><h3>Messages</h3><div class="panel"><div id="sMsgs" class="msgs"></div></div></div>
     </div>
     <div class="panel conv">
@@ -10558,9 +10567,35 @@ function groupRow(g, sel, showOwner) {
     '<div class="side">' + pill(g.status) + "<span>" + (showOwner ? esc(g.owner) + " \xB7 " : "") + ago(g.updatedAt) + "</span></div></a>";
 }
 
+/** How many subagents are working, finished, failed (overall and since midnight). */
+function countGroups(groups) {
+  const midnight = new Date().setHours(0, 0, 0, 0);
+  const c = { working: 0, done: 0, failed: 0, total: groups.length, today: 0, doneToday: 0, failedToday: 0 };
+  for (const g of groups) {
+    const today = g.updatedAt >= midnight;
+    if (g.status === "running") c.working++;
+    else if (g.status === "done") c.done++, (c.doneToday += today ? 1 : 0);
+    else c.failed++, (c.failedToday += today ? 1 : 0);
+    if (g.startedAt >= midnight) c.today++;
+  }
+  return c;
+}
+
+function countsLine(c) {
+  return [c.working && '<span class="w">' + c.working + " working</span>", c.done && '<span class="d">' + c.done + " done</span>", c.failed && '<span class="f">' + c.failed + " failed</span>", c.total + " total"].filter(Boolean).join(" \xB7 ");
+}
 function renderOverview() {
   const live = model.sessions.filter((x) => x.live), ended = model.sessions.filter((x) => !x.live && x.groups.length);
   $("ovCount").textContent = live.length || "";
+  const c = countGroups(model.sorted);
+  const stat = (n, label, cls) => '<div class="stat ' + (cls || "") + '"><b>' + n + "</b><span>" + label + "</span></div>";
+  $("ovStats").innerHTML =
+    stat(live.length, "sessions connected") +
+    stat(c.working, "subagents working", c.working ? "busy" : "") +
+    stat(c.today, "started today") +
+    stat(c.doneToday, "finished today", c.doneToday ? "ok" : "") +
+    stat(c.failedToday, "failed or interrupted today", c.failedToday ? "bad" : "") +
+    stat(c.total, "subagents in the log");
   const card = (x) => {
     const p = x.peer;
     const head = p
@@ -10589,7 +10624,7 @@ function renderSession() {
       (x.children.length ? '<div class="kids">' + x.children.map(childLine).join("") + "</div>" : "")
     : '<div class="head" style="display:flex;gap:12px;align-items:center">' + av("other") + '<div><div style="font-weight:650">' + esc(x.name) + '</div><div class="small muted">' +
       (x.name === "earlier runs" ? "Runs from before sessions were recorded, or from sessions in other folders." : "This session has ended. Its subagents are kept for reference.") + "</div></div></div>";
-  $("sCount").textContent = x.groups.length || "";
+  $("sCount").innerHTML = x.groups.length ? countsLine(countGroups(x.groups)) : "";
   const sel = route.group && x.groups.find((g) => g.key === route.group) ? route.group : x.groups[0] && x.groups[0].key;
   // Running and recently finished subagents on top; older ones in a folded archive (the selected one stays visible).
   const fresh = (g) => g.status === "running" || Date.now() - g.updatedAt < ARCHIVE_AFTER_MS || g.key === sel;
