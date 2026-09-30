@@ -61,19 +61,34 @@ export function cmdlineEnablesChannel(cmdline: string, pluginName: string): bool
   return values.some((v) => v.split(",").some((entry) => entry.includes(pluginName)));
 }
 
+/** True for a headless `claude -p` / `--print` run (a script or another tool), not an interactive session. */
+export function cmdlineIsPrintMode(cmdline: string): boolean {
+  return cmdline.split(/\s+/).some((t) => /^["']?(-p|--print)(=.*)?["']?$/.test(t));
+}
+
+export interface ClaudeLaunch {
+  /** Its command line enables our channel. */
+  channel: boolean;
+  /** A headless print-mode run. */
+  print: boolean;
+}
+
 /**
- * Walk up from our parent looking for a Claude Code process whose command line enables our channel.
- * Best effort: any failure means "not detected" and delivery falls back to hooks.
+ * Walk up from our parent to the Claude Code process and read how it was started (channel flags, print
+ * mode). Best effort: any failure means "not detected" (hooks delivery, a normal session).
  */
-export async function detectClaudeChannel(pluginName: string, log: Logger): Promise<boolean> {
+export async function inspectClaudeLaunch(pluginName: string, log: Logger): Promise<ClaudeLaunch> {
   let pid = process.ppid;
+  let channel = false;
   for (let i = 0; i < MAX_ANCESTORS && pid > 1; i++) {
     const info = await lookup(pid);
     if (!info) break;
     log.debug("inspected ancestor process", { pid, cmdline: info.cmdline.slice(0, 300) });
-    if (cmdlineEnablesChannel(info.cmdline, pluginName)) return true;
-    if (/\bclaude(\.exe)?\b/i.test(info.cmdline) && !/node_modules|agent-bridge/i.test(info.cmdline)) break;
+    if (cmdlineEnablesChannel(info.cmdline, pluginName)) channel = true;
+    if (/\bclaude(\.exe)?\b/i.test(info.cmdline) && !/node_modules|agent-bridge/i.test(info.cmdline)) {
+      return { channel, print: cmdlineIsPrintMode(info.cmdline) };
+    }
     pid = info.ppid;
   }
-  return false;
+  return { channel, print: false };
 }

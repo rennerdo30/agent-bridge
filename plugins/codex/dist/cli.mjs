@@ -7714,7 +7714,7 @@ import { connect } from "node:net";
 import { homedir } from "node:os";
 import { join } from "node:path";
 var APP_NAME = "agent-bridge";
-var APP_VERSION = "0.15.0";
+var APP_VERSION = "0.15.1";
 var PROTOCOL_VERSION = 2;
 var ENV = {
   home: "AGENT_BRIDGE_HOME",
@@ -7916,6 +7916,7 @@ var en = {
   "send.queued": "Recipient offline, queued for: {names}.",
   "send.waitHint": "Use wait_for_message to wait for the answer.",
   "usage.none": "None of Codex, Claude Code or opencode is installed here.",
+  "peers.subagent": "You are a subagent of {name}, which gave you your current task. Other sessions are not visible from here; to tell {name} something, use the send tool (it goes straight to {name}).",
   "send.toParent": "Sent to {name}, the session that gave you this task. Go on with your task.",
   "inbox.empty": "No unread messages.",
   "wait.timeout": "No message arrived within {seconds} seconds.",

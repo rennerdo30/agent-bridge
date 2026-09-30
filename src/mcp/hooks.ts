@@ -62,6 +62,9 @@ async function subagentHook(ctx: ServerContext, input: HookInput): Promise<HookO
 export async function buildHookResponse(ctx: ServerContext, input: HookInput): Promise<HookOutput> {
   const node = ctx.node;
   if (!node) return subagentHook(ctx, input);
+  // A headless `claude -p` run is not a session: its hooks must not join the bridge or take mail.
+  await ctx.launchKnown;
+  if (ctx.headless) return {};
   ctx.log.debug("hook event", { event: input.event, sessionId: input.sessionId, stopHookActive: input.stopHookActive });
   if (input.sessionId) {
     await node.setSessionId(input.sessionId).catch(() => {});

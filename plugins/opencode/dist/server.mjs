@@ -36490,7 +36490,7 @@ import { basename, join as join2 } from "node:path";
 import { homedir } from "node:os";
 import { join } from "node:path";
 var APP_NAME = "agent-bridge";
-var APP_VERSION = "0.15.0";
+var APP_VERSION = "0.15.1";
 var PROTOCOL_VERSION = 2;
 var ENV = {
   home: "AGENT_BRIDGE_HOME",
@@ -37722,6 +37722,7 @@ var en = {
   "send.queued": "Recipient offline, queued for: {names}.",
   "send.waitHint": "Use wait_for_message to wait for the answer.",
   "usage.none": "None of Codex, Claude Code or opencode is installed here.",
+  "peers.subagent": "You are a subagent of {name}, which gave you your current task. Other sessions are not visible from here; to tell {name} something, use the send tool (it goes straight to {name}).",
   "send.toParent": "Sent to {name}, the session that gave you this task. Go on with your task.",
   "inbox.empty": "No unread messages.",
   "wait.timeout": "No message arrived within {seconds} seconds.",
@@ -38795,17 +38796,23 @@ function cmdlineEnablesChannel(cmdline, pluginName) {
   }
   return values.some((v) => v.split(",").some((entry) => entry.includes(pluginName)));
 }
-async function detectClaudeChannel(pluginName, log) {
+function cmdlineIsPrintMode(cmdline) {
+  return cmdline.split(/\s+/).some((t2) => /^["']?(-p|--print)(=.*)?["']?$/.test(t2));
+}
+async function inspectClaudeLaunch(pluginName, log) {
   let pid = process.ppid;
+  let channel = false;
   for (let i = 0; i < MAX_ANCESTORS && pid > 1; i++) {
     const info = await lookup(pid);
     if (!info) break;
     log.debug("inspected ancestor process", { pid, cmdline: info.cmdline.slice(0, 300) });
-    if (cmdlineEnablesChannel(info.cmdline, pluginName)) return true;
-    if (/\bclaude(\.exe)?\b/i.test(info.cmdline) && !/node_modules|agent-bridge/i.test(info.cmdline)) break;
+    if (cmdlineEnablesChannel(info.cmdline, pluginName)) channel = true;
+    if (/\bclaude(\.exe)?\b/i.test(info.cmdline) && !/node_modules|agent-bridge/i.test(info.cmdline)) {
+      return { channel, print: cmdlineIsPrintMode(info.cmdline) };
+    }
     pid = info.ppid;
   }
-  return false;
+  return { channel, print: false };
 }
 
 // src/mcp/format.ts
@@ -39009,6 +39016,8 @@ async function subagentHook(ctx, input2) {
 async function buildHookResponse(ctx, input2) {
   const node2 = ctx.node;
   if (!node2) return subagentHook(ctx, input2);
+  await ctx.launchKnown;
+  if (ctx.headless) return {};
   ctx.log.debug("hook event", { event: input2.event, sessionId: input2.sessionId, stopHookActive: input2.stopHookActive });
   if (input2.sessionId) {
     await node2.setSessionId(input2.sessionId).catch(() => {
@@ -41308,7 +41317,10 @@ async function startServer(argv = process.argv.slice(2)) {
     log
   });
   let channel = agent === "claude" && cfg.delivery === "channel";
-  const ctx = { agent, cfg, node: node2, log, home, cwd: () => node2?.cwd ?? cwd, channelActive: () => channel, parent: delegated ? parentFromEnv() : null };
+  let launchInspected = () => {
+  };
+  const launchKnown = new Promise((r) => launchInspected = r);
+  const ctx = { agent, cfg, node: node2, log, home, cwd: () => node2?.cwd ?? cwd, channelActive: () => channel, parent: delegated ? parentFromEnv() : null, launchKnown };
   if (node2) {
     ctx.jobs = new JobManager(node2, log.child("jobs"), join15(home, JOBS_FILE), cfg.maxJobs);
     ctx.activity = (s) => node2.setActivity(s);
@@ -41434,17 +41446,24 @@ async function startServer(argv = process.argv.slice(2)) {
   process.on("SIGINT", () => void shutdown("SIGINT"));
   await mcp.connect(transport);
   log.info("MCP transport connected");
-  if (agent === "claude" && cfg.delivery === "auto") {
-    channel = await detectClaudeChannel(APP_NAME, log);
-    log.info("delivery mode resolved", { delivery: channel ? "channel" : "hooks" });
+  if (agent === "claude" && node2) {
+    const launch = await inspectClaudeLaunch(APP_NAME, log);
+    ctx.headless = launch.print;
+    if (cfg.delivery === "auto") {
+      channel = launch.channel;
+      log.info("delivery mode resolved", { delivery: channel ? "channel" : "hooks" });
+    }
   }
+  launchInspected();
   if (node2) {
     node2.on("connected", ({ isBroker }) => {
       if (channel) for (const m of node2.unread()) void pushChannel(m);
-      if (isBroker && cfg.dashboard) void ensureDashboard(false);
+      if (isBroker && cfg.dashboard && !ctx.headless) void ensureDashboard(false);
     });
     const join16 = () => node2.start().catch((err) => log.error("could not join the bridge", { err: err.message }));
-    if (cwdKnown) {
+    if (ctx.headless) {
+      log.info("headless claude -p run: not joining the bridge unless a bridge tool is used");
+    } else if (cwdKnown) {
       void join16();
     } else {
       log.info("project directory unknown yet; deferring bridge join", { graceMs: CWD_DISCOVERY_GRACE_MS });
@@ -41477,6 +41496,7 @@ function registerTools(mcp, ctx, targets) {
       annotations: { readOnlyHint: true }
     },
     guarded("peers", async () => {
+      if (!node2 && ctx.parent) return text(t("peers.subagent", { name: ctx.parent.name }));
       const n = requireNode();
       const peers = await n.peers();
       const others = peers.filter((p) => p.id !== n.id);

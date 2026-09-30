@@ -6,7 +6,7 @@ import { defaultPeerName, loadConfig } from "../src/core/config.js";
 import { parseClaudeJson, parseCodexJsonl } from "../src/core/delegate.js";
 import { nullLogger } from "../src/core/logger.js";
 import { resolvePipePath } from "../src/core/paths.js";
-import { cmdlineEnablesChannel } from "../src/core/procinfo.js";
+import { cmdlineEnablesChannel, cmdlineIsPrintMode } from "../src/core/procinfo.js";
 import type { BridgeMessage } from "../src/core/protocol.js";
 import { formatMessage, formatPeer } from "../src/mcp/format.js";
 
@@ -63,6 +63,12 @@ describe("cmdlineEnablesChannel", () => {
     expect(cmdlineEnablesChannel("claude --dangerously-load-development-channels plugin:agent-bridge@agent-bridge", "agent-bridge")).toBe(true);
     expect(cmdlineEnablesChannel("claude.exe --channels plugin:telegram@x,plugin:agent-bridge@y --verbose", "agent-bridge")).toBe(true);
     expect(cmdlineEnablesChannel('"C:\\bin\\claude.exe" --channels=plugin:agent-bridge@m', "agent-bridge")).toBe(true);
+  });
+  it("recognizes headless print-mode runs", () => {
+    expect(cmdlineIsPrintMode('"C:\\bin\\claude.exe" -p "/usage"')).toBe(true);
+    expect(cmdlineIsPrintMode("claude --print --output-format json")).toBe(true);
+    expect(cmdlineIsPrintMode("claude --permission-mode plan")).toBe(false);
+    expect(cmdlineIsPrintMode("claude --plugin-dir x")).toBe(false);
   });
   it("ignores unrelated flags", () => {
     expect(cmdlineEnablesChannel("claude --channels plugin:telegram@x --plugin-dir agent-bridge", "agent-bridge")).toBe(false);

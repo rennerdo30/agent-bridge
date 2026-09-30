@@ -24,7 +24,7 @@ import { t } from "../core/i18n.js";
 import { createLogger, type Logger } from "../core/logger.js";
 import { BridgeNode } from "../core/node.js";
 import { resolveDbPath, resolveHome, resolvePipePath } from "../core/paths.js";
-import { detectClaudeChannel } from "../core/procinfo.js";
+import { inspectClaudeLaunch } from "../core/procinfo.js";
 import { loadOrCreateToken } from "../core/token.js";
 import { BridgeError, BROADCAST, CODING_AGENTS, type AgentKind, type BridgeMessage, type CodingAgent } from "../core/protocol.js";
 import { formatDuration, formatMessage, formatMessages, formatPeer, formatUsage } from "./format.js";
@@ -142,6 +142,10 @@ export interface ServerContext {
   parent?: ParentClient | null;
   /** Claude Code: messages handed to a wake-up count as delivered only once the session shows activity. */
   wakeDelivery?: { confirm: () => void; release: () => void };
+  /** A headless `claude -p` run: stays off the bridge unless one of its tools is used. */
+  headless?: boolean;
+  /** Resolves once `headless` is known (hooks can fire before the launch was inspected). */
+  launchKnown?: Promise<void>;
   /** Called when a hook reports the host's session id. */
   onSessionId?: (sessionId: string) => void;
   /** Open (starting if needed) the web dashboard; returns its link. */
@@ -227,7 +231,9 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
       });
 
   let channel = agent === "claude" && cfg.delivery === "channel";
-  const ctx: ServerContext = { agent, cfg, node, log, home, cwd: () => node?.cwd ?? cwd, channelActive: () => channel, parent: delegated ? parentFromEnv() : null };
+  let launchInspected: () => void = () => {};
+  const launchKnown = new Promise<void>((r) => (launchInspected = r));
+  const ctx: ServerContext = { agent, cfg, node, log, home, cwd: () => node?.cwd ?? cwd, channelActive: () => channel, parent: delegated ? parentFromEnv() : null, launchKnown };
   if (node) {
     ctx.jobs = new JobManager(node, log.child("jobs"), join(home, JOBS_FILE), cfg.maxJobs);
     ctx.activity = (s) => node.setActivity(s);
@@ -372,18 +378,27 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
   log.info("MCP transport connected");
 
   // Slow work happens after the handshake so the host never times out waiting for us.
-  if (agent === "claude" && cfg.delivery === "auto") {
-    channel = await detectClaudeChannel(APP_NAME, log);
-    log.info("delivery mode resolved", { delivery: channel ? "channel" : "hooks" });
+  if (agent === "claude" && node) {
+    const launch = await inspectClaudeLaunch(APP_NAME, log);
+    ctx.headless = launch.print;
+    if (cfg.delivery === "auto") {
+      channel = launch.channel;
+      log.info("delivery mode resolved", { delivery: channel ? "channel" : "hooks" });
+    }
   }
+  launchInspected();
   if (node) {
     node.on("connected", ({ isBroker }) => {
       if (channel) for (const m of node.unread()) void pushChannel(m);
-      // The session that hosts the bridge also hosts the web dashboard.
-      if (isBroker && cfg.dashboard) void ensureDashboard(false);
+      // The session that hosts the bridge also hosts the web dashboard (not a short headless run).
+      if (isBroker && cfg.dashboard && !ctx.headless) void ensureDashboard(false);
     });
     const join = () => node.start().catch((err) => log.error("could not join the bridge", { err: (err as Error).message }));
-    if (cwdKnown) {
+    if (ctx.headless) {
+      // `claude -p` (scripts, other plugins' background calls) loads every plugin: joining would show a
+      // phantom session and could take mail meant for real sessions. A bridge tool call still connects.
+      log.info("headless claude -p run: not joining the bridge unless a bridge tool is used");
+    } else if (cwdKnown) {
       void join();
     } else {
       // Join as soon as a hook or tool call tells us the project dir (they connect on demand);
@@ -424,6 +439,8 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
       annotations: { readOnlyHint: true },
     },
     guarded("peers", async () => {
+      // A subagent has no view of the bridge; tell it whom it can talk to instead of failing.
+      if (!node && ctx.parent) return text(t("peers.subagent", { name: ctx.parent.name }));
       const n = requireNode();
       const peers = await n.peers();
       const others = peers.filter((p) => p.id !== n.id);
