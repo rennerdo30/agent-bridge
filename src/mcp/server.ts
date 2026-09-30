@@ -473,7 +473,7 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
       if (jobs.length) {
         lines.push(t("peers.jobs", { count: jobs.length }));
         for (const j of jobs) {
-          lines.push(t("peers.job", { name: j.name + (j.args?.title ? ` "${j.args.title}"` : ""), model: j.model ?? "default", duration: formatDuration(Date.now() - j.startedAt), progress: (j.percent !== undefined ? `${j.percent}% (${j.progressNote || "reported"}) · ` : "") + (j.progress ?? "starting") }));
+          lines.push(t("peers.job", { name: j.name + (j.args?.title ? ` "${j.args.title}"` : " (untitled: name it with message_subagent(job, title=...))"), model: j.model ?? "default", duration: formatDuration(Date.now() - j.startedAt), progress: (j.percent !== undefined ? `${j.percent}% (${j.progressNote || "reported"}) · ` : "") + (j.progress ?? "starting") }));
         }
       }
       const recent = ctx.jobs?.recent() ?? [];
@@ -712,7 +712,8 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
             byAgent: ctx.agent,
             byCwd: ctx.cwd(),
             job: a._job,
-            title: a.title?.trim() || undefined,
+            // The job's current title (message_subagent can name or rename a job after it started).
+            title: (typeof job?.args?.title === "string" && job.args.title) || a.title?.trim() || undefined,
             model: a.model ?? defaultModel ?? null,
             access: access ?? "default",
             workdir,
@@ -765,6 +766,7 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
       // A linked worktree's git data lives in the main repository: writable, so the subagent can commit.
       const writableRoots = access === "edit" || (a as { sandbox?: string }).sandbox === "workspace-write" ? await gitDirsOutside(workdir, dlog) : undefined;
       if (writableRoots?.length) dlog.info("extra writable folders for the subagent", { workdir, writableRoots });
+      if (job) job.retitle = (title) => feed.meta({ title });
       let res: DelegateResult;
       try {
         res = await profile.run(
@@ -812,6 +814,7 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
         throw err;
       } finally {
         await relay?.stop();
+        if (job) job.retitle = null;
         if (job && link) {
           job.live = null;
           // Messages it never got to see go out as a follow-up right after this turn.
@@ -989,11 +992,13 @@ ${res.text || t("delegate.empty")}`, res.isError);
       inputSchema: {
         job: z.string().min(1).describe('Job name, e.g. "codex-job-1a2b3c4d" or "opencode-ask-9f8e7d6c" (see peers)'),
         message: z.string().optional().describe("The follow-up. Default: continue where you stopped and finish the task."),
+        title: z.string().min(1).max(MAX_TITLE_CHARS).optional().describe("Give the job a (new) short title, 3-7 words; use it for jobs listed without a title."),
       },
     },
-    guarded("message_subagent", async (a: { job: string; message?: string }) => {
+    guarded("message_subagent", async (a: { job: string; message?: string; title?: string }) => {
       const jobs = ctx.jobs;
       if (!jobs) throw new BridgeError("bad_request", t("err.delegatedSession"));
+      if (a.title?.trim()) jobs.setTitle(a.job, a.title.trim());
       const { outcome, job } = jobs.followUp(a.job, a.message?.trim() || DEFAULT_FOLLOW_UP);
       return text(t(`followUp.${outcome}`, { name: job?.name ?? a.job, max: cfg.maxJobs }), outcome === "unknown" || outcome === "no-session" || outcome === "busy");
     }),

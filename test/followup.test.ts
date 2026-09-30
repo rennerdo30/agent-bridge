@@ -128,4 +128,19 @@ describe("messaging subagents", () => {
     second.cancelAll();
     first.cancelAll();
   });
+
+  it("names or renames a job, also while it runs", async () => {
+    const titles: string[] = [];
+    let release!: (r: RunResult) => void;
+    const job = jobs.start("codex", null, "task", (_s, _p, j) => {
+      j.retitle = (t) => titles.push(t);
+      return new Promise((r) => (release = r));
+    }, fakeAgent().resume);
+    await until(() => Boolean(job.retitle));
+    expect(jobs.setTitle(job.name, "Build castle gates")).toBe(true);
+    expect(job.args?.title).toBe("Build castle gates");
+    expect(titles).toEqual(["Build castle gates"]);
+    expect(jobs.setTitle("codex-job-nope", "x")).toBe(false);
+    release(ok("done"));
+  });
 });

@@ -36490,7 +36490,7 @@ import { basename, join as join2 } from "node:path";
 import { homedir } from "node:os";
 import { join } from "node:path";
 var APP_NAME = "agent-bridge";
-var APP_VERSION = "0.19.1";
+var APP_VERSION = "0.19.2";
 var PROTOCOL_VERSION = 2;
 var ENV = {
   home: "AGENT_BRIDGE_HOME",
@@ -41384,6 +41384,15 @@ var JobManager = class {
     this.launch(job, run);
     return job;
   }
+  /** Name or rename a job; its next turn (and the dashboard) uses the title. */
+  setTitle(ref, title) {
+    const job = this.find(ref);
+    if (!job) return false;
+    job.args = { ...job.args, title };
+    job.retitle?.(title);
+    this.persist();
+    return true;
+  }
   /** Send a follow-up to a subagent: queued while it runs, otherwise its session is resumed in the background. */
   followUp(ref, message) {
     const job = this.find(ref);
@@ -41873,7 +41882,7 @@ function registerTools(mcp, ctx, targets) {
       if (jobs.length) {
         lines.push(t("peers.jobs", { count: jobs.length }));
         for (const j of jobs) {
-          lines.push(t("peers.job", { name: j.name + (j.args?.title ? ` "${j.args.title}"` : ""), model: j.model ?? "default", duration: formatDuration(Date.now() - j.startedAt), progress: (j.percent !== void 0 ? `${j.percent}% (${j.progressNote || "reported"}) \xB7 ` : "") + (j.progress ?? "starting") }));
+          lines.push(t("peers.job", { name: j.name + (j.args?.title ? ` "${j.args.title}"` : " (untitled: name it with message_subagent(job, title=...))"), model: j.model ?? "default", duration: formatDuration(Date.now() - j.startedAt), progress: (j.percent !== void 0 ? `${j.percent}% (${j.progressNote || "reported"}) \xB7 ` : "") + (j.progress ?? "starting") }));
         }
       }
       const recent = ctx.jobs?.recent() ?? [];
@@ -42058,7 +42067,8 @@ ${a.prompt}
             byAgent: ctx.agent,
             byCwd: ctx.cwd(),
             job: a._job,
-            title: a.title?.trim() || void 0,
+            // The job's current title (message_subagent can name or rename a job after it started).
+            title: typeof job?.args?.title === "string" && job.args.title || a.title?.trim() || void 0,
             model: a.model ?? defaultModel ?? null,
             access: access ?? "default",
             workdir,
@@ -42107,6 +42117,7 @@ ${a.prompt}
       }
       const writableRoots = access === "edit" || a.sandbox === "workspace-write" ? await gitDirsOutside(workdir, dlog) : void 0;
       if (writableRoots?.length) dlog.info("extra writable folders for the subagent", { workdir, writableRoots });
+      if (job) job.retitle = (title) => feed.meta({ title });
       let res;
       try {
         res = await profile.run(
@@ -42155,6 +42166,7 @@ Its worktree (with any partial work) is ${wt.path} on branch ${wt.branch}.`;
         throw err;
       } finally {
         await relay?.stop();
+        if (job) job.retitle = null;
         if (job && link) {
           job.live = null;
           job.queue.unshift(...await link.close());
@@ -42298,12 +42310,14 @@ ${r.lines.map((l) => `  ${l}`).join("\n")}`).join("\n\n"));
       description: "Send a follow-up to a subagent started with ask_* or spawn_* (running or finished), like messaging a native subagent. It continues in its own session with its full context, in the same folder or worktree. While it is still running it gets the message live, at its next step (after its current tool call), and answers right away, like a native subagent: use that to ask how far it is or to redirect it. The answer arrives as a message from the job. Without a message it is told to continue where it stopped: use that to recover a failed or interrupted subagent.",
       inputSchema: {
         job: external_exports.string().min(1).describe('Job name, e.g. "codex-job-1a2b3c4d" or "opencode-ask-9f8e7d6c" (see peers)'),
-        message: external_exports.string().optional().describe("The follow-up. Default: continue where you stopped and finish the task.")
+        message: external_exports.string().optional().describe("The follow-up. Default: continue where you stopped and finish the task."),
+        title: external_exports.string().min(1).max(MAX_TITLE_CHARS).optional().describe("Give the job a (new) short title, 3-7 words; use it for jobs listed without a title.")
       }
     },
     guarded("message_subagent", async (a) => {
       const jobs = ctx.jobs;
       if (!jobs) throw new BridgeError("bad_request", t("err.delegatedSession"));
+      if (a.title?.trim()) jobs.setTitle(a.job, a.title.trim());
       const { outcome, job } = jobs.followUp(a.job, a.message?.trim() || DEFAULT_FOLLOW_UP);
       return text(t(`followUp.${outcome}`, { name: job?.name ?? a.job, max: cfg.maxJobs }), outcome === "unknown" || outcome === "no-session" || outcome === "busy");
     })

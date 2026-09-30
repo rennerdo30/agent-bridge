@@ -51,6 +51,8 @@ export interface Job {
   resume?: Resume;
   /** Follow-ups that arrived while the job was running; sent as soon as it finishes. */
   queue: string[];
+  /** While it runs: show a new title in the current turn too (dashboard). */
+  retitle?: ((title: string) => void) | null;
   /** The subagent's own estimate of how far it is (report_progress), and its note. */
   percent?: number;
   progressNote?: string;
@@ -231,6 +233,15 @@ export class JobManager {
     return job;
   }
 
+  /** Name or rename a job; its next turn (and the dashboard) uses the title. */
+  setTitle(ref: string, title: string): boolean {
+    const job = this.find(ref);
+    if (!job) return false;
+    job.args = { ...job.args, title };
+    job.retitle?.(title);
+    this.persist();
+    return true;
+  }
   /** Send a follow-up to a subagent: queued while it runs, otherwise its session is resumed in the background. */
   followUp(ref: string, message: string): { outcome: FollowUpOutcome; job?: Job } {
     const job = this.find(ref);
