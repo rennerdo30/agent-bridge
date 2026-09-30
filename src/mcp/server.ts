@@ -53,10 +53,12 @@ const CODEX_SANDBOX_META = "codex/sandbox-state-meta";
 const CWD_DISCOVERY_GRACE_MS = 15_000;
 /** Subagent jobs, kept across restarts so message_subagent can continue them (see jobs.ts). */
 const JOBS_FILE = "jobs.json";
+/** Subagent titles (ask_* / spawn_* `title`), like a chat title. */
+const MAX_TITLE_CHARS = 80;
 /** The tools a delegated subagent's server offers (see registerTools). */
 const SUBAGENT_TOOLS = new Set(["peers", "send", "hook_event"]);
 /** The options of a job worth keeping to continue it the same way later (no prompt, no internals). */
-const KEPT_ARGS = ["model", "cwd", "timeout_sec", "worktree", "access", "sandbox", "permission_mode", "auto_approve", "allow_tools"] as const;
+const KEPT_ARGS = ["model", "cwd", "timeout_sec", "worktree", "access", "sandbox", "permission_mode", "auto_approve", "allow_tools", "title"] as const;
 /** How long a background subagent waits for its parent agent to approve something before it counts as "deny". */
 const PARENT_APPROVAL_TIMEOUT_MS = 10 * 60_000;
 /** Plugin root: dist/server.mjs lives one level below it. */
@@ -468,13 +470,13 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
       if (jobs.length) {
         lines.push(t("peers.jobs", { count: jobs.length }));
         for (const j of jobs) {
-          lines.push(t("peers.job", { name: j.name, model: j.model ?? "default", duration: formatDuration(Date.now() - j.startedAt), progress: j.progress ?? "starting" }));
+          lines.push(t("peers.job", { name: j.name + (j.args?.title ? ` "${j.args.title}"` : ""), model: j.model ?? "default", duration: formatDuration(Date.now() - j.startedAt), progress: j.progress ?? "starting" }));
         }
       }
       const recent = ctx.jobs?.recent() ?? [];
       if (recent.length) {
         lines.push(t("peers.recent"));
-        for (const j of recent) lines.push(t("peers.recentJob", { name: j.name, status: j.status, ago: formatDuration(Date.now() - (j.finishedAt ?? Date.now())), session: j.sessionId ? "can be continued" : "no session" }));
+        for (const j of recent) lines.push(t("peers.recentJob", { name: j.name + (j.args?.title ? ` "${j.args.title}"` : ""), status: j.status, ago: formatDuration(Date.now() - (j.finishedAt ?? Date.now())), session: j.sessionId ? "can be continued" : "no session" }));
       }
       return text(lines.join("\n"));
     }),
@@ -580,7 +582,7 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
   );
 
   /** _worktree: internal, a follow-up continuing in an existing worktree. */
-  type DelegateArgs = { prompt: string; model?: string; session_id?: string; cwd?: string; timeout_sec?: number; worktree?: boolean; allow_tools?: string[]; _worktree?: Worktree; _job?: string } & TargetArgs;
+  type DelegateArgs = { prompt: string; model?: string; session_id?: string; cwd?: string; timeout_sec?: number; worktree?: boolean; allow_tools?: string[]; title?: string; _worktree?: Worktree; _job?: string } & TargetArgs;
   const keep = (a: DelegateArgs): Record<string, unknown> => Object.fromEntries(KEPT_ARGS.filter((k) => a[k] !== undefined).map((k) => [k, a[k]]));
   const resumers: Partial<Record<CodingAgent, (a: DelegateArgs) => Resume>> = {};
   for (const target of targets) {
@@ -617,6 +619,11 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
         .describe(
           "Run in a separate git worktree on its own branch (implies access=edit). Your working copy stays untouched; the result explains how to review, merge or discard the changes.",
         ),
+      title: z
+        .string()
+        .max(MAX_TITLE_CHARS)
+        .optional()
+        .describe('A short title for this subagent, 3-7 words, like a chat title (e.g. "Fix castle gate alignment"). Shown in peers and the dashboard; please always set it.'),
       allow_tools: z
         .array(z.string().min(1).max(200))
         .max(50)
@@ -701,6 +708,7 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
             byAgent: ctx.agent,
             byCwd: ctx.cwd(),
             job: a._job,
+            title: a.title?.trim() || undefined,
             model: a.model ?? defaultModel ?? null,
             access: access ?? "default",
             workdir,

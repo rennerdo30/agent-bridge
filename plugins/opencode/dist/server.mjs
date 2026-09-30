@@ -36490,7 +36490,7 @@ import { basename, join as join2 } from "node:path";
 import { homedir } from "node:os";
 import { join } from "node:path";
 var APP_NAME = "agent-bridge";
-var APP_VERSION = "0.17.1";
+var APP_VERSION = "0.18.0";
 var PROTOCOL_VERSION = 2;
 var ENV = {
   home: "AGENT_BRIDGE_HOME",
@@ -40553,9 +40553,13 @@ const childLine = (c) => '<div class="ell">' + dot(c.activity) + " subagent sess
 
 function groupRow(g, sel, showOwner) {
   return '<a href="' + href(g.owner, g.key) + '" class="' + (sel ? "sel" : "") + '">' + av(g.agent) +
-    '<div style="min-width:0"><div class="line1"><b>' + esc(g.agent) + "</b>" + (g.model ? '<span class="chip ell">' + esc(g.model) + "</span>" : "") +
-    (g.turns.length > 1 ? '<span class="chip">' + g.turns.length + " turns</span>" : "") + "</div>" +
-    '<div class="task">' + esc(g.task || g.last) + "</div></div>" +
+    // Like a chat list: the title the starting agent gave it, with agent and model below; else the task.
+    (g.title
+      ? '<div style="min-width:0"><div class="line1"><b class="ell">' + esc(g.title) + "</b></div>" +
+        '<div class="task">' + esc(g.agent) + (g.model ? " \xB7 " + esc(g.model) : "") + (g.turns.length > 1 ? " \xB7 " + g.turns.length + " turns" : "") + "</div></div>"
+      : '<div style="min-width:0"><div class="line1"><b>' + esc(g.agent) + "</b>" + (g.model ? '<span class="chip ell">' + esc(g.model) + "</span>" : "") +
+        (g.turns.length > 1 ? '<span class="chip">' + g.turns.length + " turns</span>" : "") + "</div>" +
+        '<div class="task">' + esc(g.task || g.last) + "</div></div>") +
     '<div class="side">' + pill(g.status) + "<span>" + (showOwner ? esc(g.owner) + " \xB7 " : "") + ago(g.updatedAt) + "</span></div></a>";
 }
 
@@ -40690,7 +40694,7 @@ function splitTurn(raw) {
 function renderConversation(g) {
   const first = g.turns[0], last = g.turns[g.turns.length - 1];
   $("cAvatar").innerHTML = av(g.agent);
-  $("cTitle").innerHTML = esc(g.agent) + (g.model ? ' <span class="chip">' + esc(g.model) + "</span>" : "") + " " + pill(g.status);
+  $("cTitle").innerHTML = (g.title ? esc(g.title) + ' <span class="chip">' + esc(g.agent) + "</span>" : esc(g.agent)) + (g.model ? ' <span class="chip">' + esc(g.model) + "</span>" : "") + " " + pill(g.status);
   $("cSub").textContent = (g.owner === "earlier runs" ? "" : "started by " + g.owner + " \xB7 ") + time(first.startedAt) + " \xB7 " + (first.access || "default") + " access" + (first.workdir ? " \xB7 " + first.workdir : "");
   const hint = g.job && g.status !== "running"
     ? (g.status === "done" ? "Continue it with its context from " : "Recover it with its context from ") + esc(g.owner) + ': <code>message_subagent(job="' + esc(g.job) + '")</code>'
@@ -41539,8 +41543,9 @@ var OPENCODE_NOTIFICATION = "notifications/agent-bridge/message";
 var CODEX_SANDBOX_META = "codex/sandbox-state-meta";
 var CWD_DISCOVERY_GRACE_MS = 15e3;
 var JOBS_FILE = "jobs.json";
+var MAX_TITLE_CHARS = 80;
 var SUBAGENT_TOOLS = /* @__PURE__ */ new Set(["peers", "send", "hook_event"]);
-var KEPT_ARGS = ["model", "cwd", "timeout_sec", "worktree", "access", "sandbox", "permission_mode", "auto_approve", "allow_tools"];
+var KEPT_ARGS = ["model", "cwd", "timeout_sec", "worktree", "access", "sandbox", "permission_mode", "auto_approve", "allow_tools", "title"];
 var PARENT_APPROVAL_TIMEOUT_MS = 10 * 6e4;
 var PLUGIN_ROOT = resolve4(dirname6(fileURLToPath2(import.meta.url)), "..");
 function isBridgeWorktree(dir, home) {
@@ -41836,13 +41841,13 @@ function registerTools(mcp, ctx, targets) {
       if (jobs.length) {
         lines.push(t("peers.jobs", { count: jobs.length }));
         for (const j of jobs) {
-          lines.push(t("peers.job", { name: j.name, model: j.model ?? "default", duration: formatDuration(Date.now() - j.startedAt), progress: j.progress ?? "starting" }));
+          lines.push(t("peers.job", { name: j.name + (j.args?.title ? ` "${j.args.title}"` : ""), model: j.model ?? "default", duration: formatDuration(Date.now() - j.startedAt), progress: j.progress ?? "starting" }));
         }
       }
       const recent = ctx.jobs?.recent() ?? [];
       if (recent.length) {
         lines.push(t("peers.recent"));
-        for (const j of recent) lines.push(t("peers.recentJob", { name: j.name, status: j.status, ago: formatDuration(Date.now() - (j.finishedAt ?? Date.now())), session: j.sessionId ? "can be continued" : "no session" }));
+        for (const j of recent) lines.push(t("peers.recentJob", { name: j.name + (j.args?.title ? ` "${j.args.title}"` : ""), status: j.status, ago: formatDuration(Date.now() - (j.finishedAt ?? Date.now())), session: j.sessionId ? "can be continued" : "no session" }));
       }
       return text(lines.join("\n"));
     })
@@ -41951,6 +41956,7 @@ function registerTools(mcp, ctx, targets) {
       worktree: external_exports.boolean().optional().describe(
         "Run in a separate git worktree on its own branch (implies access=edit). Your working copy stays untouched; the result explains how to review, merge or discard the changes."
       ),
+      title: external_exports.string().max(MAX_TITLE_CHARS).optional().describe('A short title for this subagent, 3-7 words, like a chat title (e.g. "Fix castle gate alignment"). Shown in peers and the dashboard; please always set it.'),
       allow_tools: external_exports.array(external_exports.string().min(1).max(200)).max(50).optional().describe(
         'MCP tools the subagent may call without asking you, as "server.tool" patterns with *, e.g. ["pair-desk.get_*", "pair-desk.list_*"] (read-only tools), or "server" for all of its tools.'
       ),
@@ -42020,6 +42026,7 @@ ${a.prompt}
             byAgent: ctx.agent,
             byCwd: ctx.cwd(),
             job: a._job,
+            title: a.title?.trim() || void 0,
             model: a.model ?? defaultModel ?? null,
             access: access ?? "default",
             workdir,

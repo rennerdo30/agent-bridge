@@ -106,7 +106,9 @@ Just ask in plain language, for example:
 | `cancel_subagent` | Stop a running subagent (background job or blocking `ask_*` run) by its job name |
 | `auto_wake` | Let incoming messages make this session keep working (see below) |
 
-`ask_*` and `spawn_*` take these optional parameters:
+sk_* and spawn_* take these optional parameters:
+
+- `title`: a short name for the job, 3-7 words, like a chat title. The dashboard and `peers` show it (without one, the start of the task).
 
 - `model`: any id or alias the target accepts, passed through verbatim. For opencode, short or partial names like `muse-spark` are resolved against `opencode models`. An ambiguous or unknown name fails immediately and lists the candidates.
 - `session_id`: continue an earlier run. `cwd`: working folder.

@@ -11,5 +11,5 @@ Start a background subagent with agent-bridge. Arguments: `$ARGUMENTS`
    - `model=<id>` → pass it as `model` unchanged.
    - `edit` → `access: "edit"`.
    - `worktree` → `worktree: true`, which runs in a separate git worktree and implies edit.
-3. Everything else is the task. Pass it as `prompt`, verbatim, adding any file paths or context from this conversation that the subagent needs, because it cannot see this conversation.
+3. Everything else is the task. Pass it as `prompt`, verbatim, adding any file paths or context from this conversation that the subagent needs, because it cannot see this conversation. Also pass a `title`: 3-7 words naming the job, like a chat title.
 4. Tell the user the job name in one line. The result will arrive later as a message.

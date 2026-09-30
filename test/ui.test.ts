@@ -54,9 +54,9 @@ describe("web dashboard", () => {
     expect(state.peers.map((p: { name: string }) => p.name)).toContain("codex-app");
     expect(state.runs[0]).toMatchObject({ name: "2026-09-29-06-32-18-opencode-ab12cd34", agent: "opencode", status: "done" });
     // Written next to the log by the run feed: who started it and which job it belongs to.
-    writeFileSync(join(env.home, "runs", "2026-09-29-06-32-18-opencode-ab12cd34.json"), JSON.stringify({ by: "claude-app", job: "opencode-job-1", session: "ses_1" }));
+    writeFileSync(join(env.home, "runs", "2026-09-29-06-32-18-opencode-ab12cd34.json"), JSON.stringify({ by: "claude-app", job: "opencode-job-1", session: "ses_1", title: "Fix castle gates" }));
     const withMeta = await (await fetch(`${base()}/api/state`, { headers: { cookie } })).json();
-    expect(withMeta.runs[0]).toMatchObject({ by: "claude-app", job: "opencode-job-1", session: "ses_1", workdir: "/w" });
+    expect(withMeta.runs[0]).toMatchObject({ by: "claude-app", job: "opencode-job-1", session: "ses_1", workdir: "/w", title: "Fix castle gates" });
 
     const log = await (await fetch(`${base()}/api/runs/2026-09-29-06-32-18-opencode-ab12cd34?from=0`, { headers: { cookie } })).json();
     expect(log.text).toContain("bash: ls");

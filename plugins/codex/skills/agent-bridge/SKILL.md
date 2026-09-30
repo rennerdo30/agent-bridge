@@ -19,7 +19,7 @@ Incoming messages appear as `<agent-bridge-message id=... from=...>` blocks in y
 ## 2. Delegation and subagents
 
 - `ask_claude` / `ask_opencode` run that agent headlessly in this project and wait for its final answer.
-- `spawn_claude` / `spawn_opencode` start it as a **background subagent** and return a job name at once. The result arrives later as a message from `<agent>-job-<id>`. Several can run in parallel; `cancel_subagent` stops one.
+- `spawn_claude` / `spawn_opencode` start it as a **background subagent** and return a job name at once. The result arrives later as a message from `<agent>-job-<id>`. Several can run in parallel; `cancel_subagent` stops one. Give every ask/spawn call a short `title` (3-7 words, like a chat title); it names the job in peers and the dashboard.
 
 Good uses:
 

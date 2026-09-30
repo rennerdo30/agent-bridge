@@ -19,7 +19,7 @@ Incoming messages appear as `<agent-bridge-message id=... from=...>` blocks. Aft
 ## 2. Delegation and subagents
 
 - `bridge_ask_claude` / `bridge_ask_codex`: run that agent headlessly and wait for its answer.
-- `bridge_spawn_claude` / `bridge_spawn_codex`: start it as a background subagent. The result arrives later as a message from `<agent>-job-<id>`.
+- `bridge_spawn_claude` / `bridge_spawn_codex`: start it as a background subagent. The result arrives later as a message from `<agent>-job-<id>`. Give every ask/spawn call a short `title` (3-7 words, like a chat title); it names the job in peers and the dashboard.
 
 All of them accept `model` (any model id the target accepts) and `session_id` to continue a previous run. Write complete, self-contained prompts: the other agent cannot see your conversation.
 

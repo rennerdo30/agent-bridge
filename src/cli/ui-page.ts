@@ -359,9 +359,13 @@ const childLine = (c) => '<div class="ell">' + dot(c.activity) + " subagent sess
 
 function groupRow(g, sel, showOwner) {
   return '<a href="' + href(g.owner, g.key) + '" class="' + (sel ? "sel" : "") + '">' + av(g.agent) +
-    '<div style="min-width:0"><div class="line1"><b>' + esc(g.agent) + "</b>" + (g.model ? '<span class="chip ell">' + esc(g.model) + "</span>" : "") +
-    (g.turns.length > 1 ? '<span class="chip">' + g.turns.length + " turns</span>" : "") + "</div>" +
-    '<div class="task">' + esc(g.task || g.last) + "</div></div>" +
+    // Like a chat list: the title the starting agent gave it, with agent and model below; else the task.
+    (g.title
+      ? '<div style="min-width:0"><div class="line1"><b class="ell">' + esc(g.title) + "</b></div>" +
+        '<div class="task">' + esc(g.agent) + (g.model ? " · " + esc(g.model) : "") + (g.turns.length > 1 ? " · " + g.turns.length + " turns" : "") + "</div></div>"
+      : '<div style="min-width:0"><div class="line1"><b>' + esc(g.agent) + "</b>" + (g.model ? '<span class="chip ell">' + esc(g.model) + "</span>" : "") +
+        (g.turns.length > 1 ? '<span class="chip">' + g.turns.length + " turns</span>" : "") + "</div>" +
+        '<div class="task">' + esc(g.task || g.last) + "</div></div>") +
     '<div class="side">' + pill(g.status) + "<span>" + (showOwner ? esc(g.owner) + " · " : "") + ago(g.updatedAt) + "</span></div></a>";
 }
 
@@ -496,7 +500,7 @@ function splitTurn(raw) {
 function renderConversation(g) {
   const first = g.turns[0], last = g.turns[g.turns.length - 1];
   $("cAvatar").innerHTML = av(g.agent);
-  $("cTitle").innerHTML = esc(g.agent) + (g.model ? ' <span class="chip">' + esc(g.model) + "</span>" : "") + " " + pill(g.status);
+  $("cTitle").innerHTML = (g.title ? esc(g.title) + ' <span class="chip">' + esc(g.agent) + "</span>" : esc(g.agent)) + (g.model ? ' <span class="chip">' + esc(g.model) + "</span>" : "") + " " + pill(g.status);
   $("cSub").textContent = (g.owner === "earlier runs" ? "" : "started by " + g.owner + " · ") + time(first.startedAt) + " · " + (first.access || "default") + " access" + (first.workdir ? " · " + first.workdir : "");
   const hint = g.job && g.status !== "running"
     ? (g.status === "done" ? "Continue it with its context from " : "Recover it with its context from ") + esc(g.owner) + ': <code>message_subagent(job="' + esc(g.job) + '")</code>'

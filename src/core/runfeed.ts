@@ -27,6 +27,8 @@ export interface RunMeta {
   byCwd?: string;
   /** Job name (e.g. codex-job-1a2b3c4d); follow-ups share it. */
   job?: string;
+  /** Short title the starting agent gave the subagent. */
+  title?: string;
   model?: string | null;
   access?: string;
   workdir?: string;
