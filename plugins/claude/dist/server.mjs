@@ -36490,7 +36490,7 @@ import { basename, join as join2 } from "node:path";
 import { homedir } from "node:os";
 import { join } from "node:path";
 var APP_NAME = "agent-bridge";
-var APP_VERSION = "0.19.2";
+var APP_VERSION = "0.20.0";
 var PROTOCOL_VERSION = 2;
 var ENV = {
   home: "AGENT_BRIDGE_HOME",
@@ -36532,6 +36532,7 @@ var QUEUED_MAIL_MAX_AGE_MS = 24 * 60 * 60 * 1e3;
 var DEFAULT_MAX_HOPS = 6;
 var DEFAULT_DELEGATE_TIMEOUT_SEC = 3600;
 var MAX_JOB_TIMEOUT_SEC = 24 * 60 * 60;
+var JOBS_FILE = "jobs.json";
 var DEFAULT_CLAUDE_BIN = "claude";
 var DEFAULT_CODEX_BIN = "codex";
 var DEFAULT_OPENCODE_BIN = "opencode";
@@ -37116,7 +37117,7 @@ function currentDelegateDepth(env = process.env) {
   const n = Number.parseInt(env[DELEGATE_DEPTH_ENV] ?? "0", 10);
   return Number.isInteger(n) && n > 0 ? n : 0;
 }
-var DelegateError = class extends Error {
+var DelegateError = class _DelegateError extends Error {
   constructor(message, kind, stderrTail = "", partialStdout = "", sessionId = null) {
     super(message);
     this.kind = kind;
@@ -37129,6 +37130,13 @@ var DelegateError = class extends Error {
   stderrTail;
   partialStdout;
   sessionId;
+  /** The agent never got going (its startup timed out): trying again is safe. */
+  startupFailed = false;
+  static startup(message, stderrTail, sessionId) {
+    const err = new _DelegateError(message, "failed", stderrTail, "", sessionId);
+    err.startupFailed = true;
+    return err;
+  }
 };
 function resolveBinary(bin, env = process.env, platform = process.platform) {
   const isWin = platform === "win32";
@@ -37212,6 +37220,9 @@ function resolveCommand(bin, argsIn, env, log) {
   }
   return { resolved: needsShell ? `"${resolved}"` : resolved, args, needsShell };
 }
+function exitDescription(res) {
+  return res.code === null && res.signal ? `was killed by signal ${res.signal}` : `exited with code ${res.code}`;
+}
 function runProcess(opts) {
   let command;
   try {
@@ -37249,7 +37260,9 @@ ${tail.slice(tail.indexOf("\n") + 1)}` : head;
     const kill = () => void killTree(child);
     const timer = setTimeout(() => {
       kill();
-      finish(() => reject(new DelegateError(`delegate timed out after ${Math.round(opts.timeoutMs / 1e3)}s`, "timeout", stderr.slice(-STDERR_TAIL_CHARS), captured())));
+      const seconds = Math.round(opts.timeoutMs / 1e3);
+      const message = opts.what ? `${opts.what} timed out after ${seconds}s` : `delegate timed out after ${seconds}s (its time limit, timeout_sec)`;
+      finish(() => reject(new DelegateError(message, "timeout", stderr.slice(-STDERR_TAIL_CHARS), captured())));
     }, opts.timeoutMs);
     const onAbort = () => {
       kill();
@@ -37278,7 +37291,7 @@ ${tail.slice(tail.indexOf("\n") + 1)}` : head;
       stderr = (stderr + d).slice(-MAX_CAPTURE_CHARS);
     });
     child.on("error", (err) => finish(() => reject(new DelegateError(`failed to start ${opts.bin}: ${err.message}`, "failed"))));
-    child.on("close", (code) => finish(() => resolve5({ code, stdout: captured(), stderr })));
+    child.on("close", (code, signal) => finish(() => resolve5({ code, signal, stdout: captured(), stderr })));
     child.stdin.on("error", () => {
     });
     child.stdin.end(opts.stdin);
@@ -37392,14 +37405,14 @@ ${CODEX_ASK_HINT}` };
   const parsed = parseCodexJsonl(res.stdout);
   const isError = res.code !== 0 || parsed.error !== null;
   if (isError && !parsed.text) {
-    throw new DelegateError(parsed.error ?? `codex exited with code ${res.code}`, "failed", res.stderr.slice(-STDERR_TAIL_CHARS), "", parsed.threadId ?? req.sessionId ?? null);
+    throw new DelegateError(parsed.error ?? `codex ${exitDescription(res)}`, "failed", res.stderr.slice(-STDERR_TAIL_CHARS), "", parsed.threadId ?? req.sessionId ?? null);
   }
   req.log.info("codex delegate finished", { threadId: parsed.threadId, code: res.code, isError });
   return {
     sessionId: parsed.threadId ?? req.sessionId ?? null,
     text: parsed.text,
     isError,
-    details: { exitCode: res.code, usage: parsed.usage, error: parsed.error }
+    details: { exitCode: res.code, signal: res.signal ?? null, usage: parsed.usage, error: parsed.error }
   };
 }
 function parseClaudeJson(stdout) {
@@ -37486,14 +37499,14 @@ async function delegateToClaude(req) {
   }
   const parsed = parseClaudeJson(res.stdout);
   if (!parsed) {
-    throw new DelegateError(`claude exited with code ${res.code} without a JSON result`, "failed", (res.stderr || res.stdout).slice(-STDERR_TAIL_CHARS), "", claudeSessionFromStream(res.stdout) ?? req.sessionId ?? null);
+    throw new DelegateError(`claude ${exitDescription(res)} without a JSON result`, "failed", (res.stderr || res.stdout).slice(-STDERR_TAIL_CHARS), "", claudeSessionFromStream(res.stdout) ?? req.sessionId ?? null);
   }
   req.log.info("claude delegate finished", { sessionId: parsed.sessionId, code: res.code, isError: parsed.isError });
   return {
     sessionId: parsed.sessionId ?? req.sessionId ?? null,
     text: parsed.text,
     isError: parsed.isError || res.code !== 0,
-    details: { exitCode: res.code, costUsd: parsed.cost }
+    details: { exitCode: res.code, signal: res.signal ?? null, costUsd: parsed.cost }
   };
 }
 function parseOpencodeJsonl(stdout) {
@@ -37555,10 +37568,10 @@ async function delegateToOpencode(req) {
   const parsed = parseOpencodeJsonl(res.stdout);
   const isError = res.code !== 0 || parsed.error !== null;
   if (isError && !parsed.text) {
-    throw new DelegateError(parsed.error ?? `opencode exited with code ${res.code}`, "failed", res.stderr.slice(-STDERR_TAIL_CHARS), "", parsed.sessionId ?? req.sessionId ?? null);
+    throw new DelegateError(parsed.error ?? `opencode ${exitDescription(res)}`, "failed", res.stderr.slice(-STDERR_TAIL_CHARS), "", parsed.sessionId ?? req.sessionId ?? null);
   }
   req.log.info("opencode delegate finished", { sessionId: parsed.sessionId, code: res.code, isError });
-  return { sessionId: parsed.sessionId ?? req.sessionId ?? null, text: parsed.text, isError, details: { exitCode: res.code, error: parsed.error, usage: parsed.usage ?? null, costUsd: parsed.cost || null } };
+  return { sessionId: parsed.sessionId ?? req.sessionId ?? null, text: parsed.text, isError, details: { exitCode: res.code, signal: res.signal ?? null, error: parsed.error, usage: parsed.usage ?? null, costUsd: parsed.cost || null } };
 }
 var checkDepthPublic = checkDepth;
 var childEnvPublic = (extra = {}) => childEnv(extra);
@@ -37584,6 +37597,78 @@ async function withResumeHint(agent, sessionOf, run) {
       }
     }
     throw err;
+  }
+}
+var TRANSIENT_ERROR_RE = /not valid JSON|upstream|overloaded|bad gateway|service unavailable|gateway time-?out|internal server error|\b50[0-4]\b|ECONNRESET|ETIMEDOUT|EPIPE|socket hang up|connection (?:reset|closed|error|refused)|stream (?:error|closed|disconnected|ended)|network error|fetch failed|temporarily unavailable/i;
+var LIMIT_ERROR_RE = /usage limit|rate.?limit|quota|too many requests|\b429\b|insufficient (?:credits|balance)|billing/i;
+function isTransientProviderError(message) {
+  return TRANSIENT_ERROR_RE.test(message) && !LIMIT_ERROR_RE.test(message);
+}
+var TRANSIENT_RETRY_MESSAGE = "Your previous turn was cut off by a temporary provider error. Continue where you stopped and finish the task. Then give your final answer.";
+async function retryTransient(req, run) {
+  const started = Date.now();
+  let cause;
+  let sessionId;
+  try {
+    const res = await run(req);
+    const error62 = typeof res.details?.error === "string" ? res.details.error : null;
+    if (!res.isError || !error62 || !res.sessionId || !isTransientProviderError(error62)) return res;
+    cause = error62;
+    sessionId = res.sessionId;
+  } catch (err) {
+    if (!(err instanceof DelegateError) || err.kind !== "failed" || !err.sessionId || !isTransientProviderError(err.message)) throw err;
+    cause = err.message;
+    sessionId = err.sessionId;
+  }
+  if (req.signal?.aborted) throw new DelegateError("delegate aborted", "aborted", "", "", sessionId);
+  req.log.warn("transient provider error; resuming the session once", { sessionId, cause });
+  req.onProgress?.(`temporary provider error, resuming the session: ${cause.slice(0, 120)}`);
+  const note = `(A temporary provider error interrupted the run ("${cause}"); agent-bridge resumed the same session once with a short "continue" message.)`;
+  const remainingSec = Math.max(60, req.timeoutSec - Math.round((Date.now() - started) / 1e3));
+  try {
+    const res = await run({ ...req, sessionId, prompt: TRANSIENT_RETRY_MESSAGE, timeoutSec: remainingSec });
+    return { ...res, text: `${note}
+
+${res.text}`, details: { ...res.details, retriedAfter: cause } };
+  } catch (err) {
+    if (err instanceof DelegateError) {
+      err.message += ` (after one automatic retry: the first attempt had failed with "${cause}")`;
+      err.sessionId ??= sessionId;
+    }
+    throw err;
+  }
+}
+function stderrSummary(stderr) {
+  const lines = stderr.trim().split(/\r?\n/).filter((l) => l.trim());
+  return lines.slice(-5).join("\n").slice(-800);
+}
+function labelError(message) {
+  return LIMIT_ERROR_RE.test(message) ? `usage or rate limit reached: ${message}` : `error: ${message}`;
+}
+function failureCause(outcome) {
+  if (outcome.result) {
+    const d = outcome.result.details ?? {};
+    const parts = [];
+    if (typeof d.error === "string" && d.error) parts.push(labelError(d.error));
+    if (typeof d.exitCode === "number" && d.exitCode !== 0) parts.push(`the agent exited with code ${d.exitCode}`);
+    else if (typeof d.signal === "string" && d.signal) parts.push(`the agent was killed by signal ${d.signal}`);
+    return parts.join("; ") || "the agent ended its turn with an error but gave no details";
+  }
+  const err = outcome.error;
+  if (!(err instanceof DelegateError)) return `error: ${String(err?.message ?? err)}`;
+  switch (err.kind) {
+    case "aborted":
+      return "cancelled: it was stopped (cancel_subagent, or the session that started it ended)";
+    case "timeout":
+      return `timeout: ${err.message}`;
+    case "not_found":
+      return `could not start: ${err.message}`;
+    default: {
+      const tail = err.stderrTail ? stderrSummary(err.stderrTail) : "";
+      return `${labelError(err.message)}${tail && !err.message.includes(tail) ? `
+Last error output:
+${tail}` : ""}`;
+    }
   }
 }
 
@@ -37734,13 +37819,15 @@ var en = {
   "peers.none": "No other peers are online. Messages you send to an offline peer name wait until it connects.",
   "peers.jobs": "Your running subagents ({count}):",
   "peers.job": "- {name} (model: {model}, running {duration}): {progress}",
+  "peers.waiting": "Queued continuations ({count}; each starts when one of the {max} subagent slots frees up, in this order):",
+  "peers.waitingJob": "- {name}: {messages} message(s) waiting; cancel_subagent drops it",
   "jobs.accessRead": 'It runs read-only: it can look but not change files or commit. To let it edit, start it with access="edit" (or worktree=true).',
   "jobs.accessEdit": "It may change files.",
   "jobs.accessAsk": "It asks the user before changing files or running commands.",
   "jobs.started": 'Subagent {name} started. Keep working; its result will arrive as a message from "{name}" (or call wait_for_message with from="{name}").',
   "jobs.limit": "Too many subagents running (maximum {max}). Wait for one to finish or cancel one.",
   "jobs.cancelled": "Cancelled subagent {name}.",
-  "jobs.unknown": "No running subagent named {name}.",
+  "jobs.unknown": "No running or queued subagent named {name}.",
   "send.ok": "Message {id} sent (conversation {conversation}).",
   "send.delivered": "Delivered to: {names}.",
   "send.queued": "Recipient offline, queued for: {names}.",
@@ -37756,6 +37843,7 @@ var en = {
   "delegate.done": "{agent} finished (session_id: {session}).",
   "peers.recent": "Recent subagents (message_subagent continues them):",
   "peers.recentJob": "- {name}: {status} {ago} ago, {session}",
+  "delegate.cause": "It failed. Cause: {cause}",
   "delegate.followUp": 'Follow up with its full context: message_subagent(job="{job}", message=...).',
   "followUp.started": "Sent to {name}; it continues in its own session. Its answer will arrive as a message from {name}.",
   "followUp.delivered": "{name} is still working and gets your message at its next step (after its current tool call or model step). Its answer arrives as a message from {name}, usually within a minute. If it finishes first, the message is sent to it as a follow-up.",
@@ -37763,7 +37851,7 @@ var en = {
   "followUp.queued": "{name} is still working; your message is queued and will be sent as soon as it finishes.",
   "followUp.unknown": "No subagent named {name}. Call peers to see running and recent subagents.",
   "followUp.no-session": "{name} has no session to continue (it failed before starting one). Start a new one with ask_* or spawn_*.",
-  "followUp.busy": "Too many subagents running (maximum {max}). Wait for one to finish, then send the message again.",
+  "followUp.waiting": 'Queued: {name} continues in its own session when one of the {running} running subagents finishes (maximum {max}){ahead}. Nothing more to do; its answer arrives as a message from {name}. To drop it: cancel_subagent(job="{name}").',
   "delegate.empty": "(no answer text returned)",
   "err.ambiguous": "Several peers match; pick one of: {candidates}.",
   "err.unknownTarget": "Unknown recipient: {detail}",
@@ -37775,7 +37863,7 @@ var en = {
   "err.delegateDepth": "Delegation is not available inside a delegated session (prevents endless recursion).",
   "err.delegateFailed": "The delegated agent failed: {detail}",
   "err.delegatedSession": "This is a delegated headless session; peer messaging is disabled here.",
-  "cli.usage": 'Usage: agent-bridge <command>\n\nCommands:\n  install [claude] [codex] [opencode] [--yes]   Install agent-bridge (all found tools by default)\n  update  [claude] [codex] [opencode] [--yes]   Update it\n  uninstall [claude] [codex] [opencode] [--yes] Remove it\n  smoke [claude] [codex] [opencode]              Check the real CLIs still work with agent-bridge\n  status                  Show the broker and the connected peers\n  send <to> <text>    Send a message as the "cli" peer\n  tail                Print messages addressed to "cli" as they arrive\n  ui [--port=N] [--no-open]  Open the web dashboard (sessions, runs, messages)\n  watch [name]            Follow a delegated run live (newest, or one whose name contains [name])\n  install-opencode        Install the opencode plugin and its @claude/@codex subagents\n  uninstall-opencode      Remove them again\n  paths                   Show data, log and pipe locations\n  help                    Show this help',
+  "cli.usage": 'Usage: agent-bridge <command>\n\nCommands:\n  install [claude] [codex] [opencode] [--yes]   Install agent-bridge (all found tools by default)\n  update  [claude] [codex] [opencode] [--yes]   Update it\n  uninstall [claude] [codex] [opencode] [--yes] Remove it\n  smoke [claude] [codex] [opencode]              Check the real CLIs still work with agent-bridge\n  status                  Show the broker and the connected peers\n  send <to> <text>    Send a message as the "cli" peer\n  tail                Print messages addressed to "cli" as they arrive\n  ui [--port=N] [--no-open]  Open the web dashboard (sessions, runs, messages)\n  watch [name]            Follow a delegated run live (newest, or one whose name contains [name])\n  install-opencode        Install the opencode plugin and its @claude/@codex subagents\n  uninstall-opencode      Remove them again\n  cleanup [--dry-run] [--yes]  List (with --yes: remove) worktrees of finished jobs that are merged and clean\n  paths                   Show data, log and pipe locations\n  help                    Show this help',
   "cli.opencode.noSource": "Could not find the opencode plugin files next to this CLI. Run it from an agent-bridge checkout or package.",
   "cli.opencode.installed": "Installed the agent-bridge opencode plugin into {dir}:",
   "cli.opencode.restart": "Restart opencode to load it. Requires Node.js 22.13+ on PATH.",
@@ -37817,6 +37905,10 @@ var en = {
   "cli.ui.running": "agent-bridge dashboard: {url}\nOnly this link opens it (it contains a one-time secret). Press Ctrl+C to stop.",
   "cli.watch.none": "No delegated runs yet (run logs live in ~/.agent-bridge/runs).",
   "cli.watch.following": "Following {path} (Ctrl+C to stop)",
+  "cli.cleanup.none": "No job worktrees in {dir}.",
+  "cli.cleanup.line": "{action} {path} ({branch}): {reason}",
+  "cli.cleanup.summary": "Removed {removed}, removable {would}, kept {kept}, failed {failed}.",
+  "cli.cleanup.dryRun": 'Dry run: nothing was removed. Run cleanup again with --yes to remove the worktrees marked "would remove".',
   "cli.paths": "Data:  {home}\nLogs:  {logs}\nStore: {db}\nPipe:  {pipe}",
   "cli.error": "Error: {detail}",
   "cli.unknownCommand": "Unknown command: {command}"
@@ -39182,8 +39274,14 @@ var RewakeEndpoint = class {
     this.node.markRead([...this.handedOut]);
     this.handedOut.clear();
   }
-  /** A turn is running (tool calls, a prompt): the standby of the previous turn end is not needed anymore. */
+  /**
+   * A turn is running (tool calls, a prompt): the hooks of the previous turn end are not needed anymore.
+   * The primary one must go too: a message it took mid-turn would become a wake-up Claude Code does not start
+   * while busy, and the next tool call would count it as delivered. Mid-turn messages go out with the tool
+   * hooks instead, and the next turn end starts a fresh waiter.
+   */
   sessionActive() {
+    this.waiter?.abort("superseded");
     this.standby?.release("active");
   }
   /** The wake-up was lost (a new prompt came first): its messages go out with that prompt instead. */
@@ -39409,7 +39507,7 @@ function startServe(bin, cwd, env) {
     });
     const timer = setTimeout(() => {
       void killTree(child);
-      reject(new DelegateError("opencode serve did not start in time", "timeout", output2.tail()));
+      reject(new DelegateError(`opencode serve did not start within ${SERVE_START_TIMEOUT_MS / 1e3}s (startup timeout)`, "timeout", output2.tail()));
     }, SERVE_START_TIMEOUT_MS);
     child.stdout.on("data", output2.onData);
     child.stderr.on("data", output2.onData);
@@ -39417,9 +39515,9 @@ function startServe(bin, cwd, env) {
       clearTimeout(timer);
       reject(new DelegateError(`failed to start opencode serve: ${err.message}`, "failed"));
     });
-    child.on("exit", (code) => {
+    child.on("exit", (code, signal) => {
       clearTimeout(timer);
-      reject(new DelegateError(`opencode serve exited early (code ${code})`, "failed", output2.tail()));
+      reject(new DelegateError(`opencode serve exited early (${signal ? `signal ${signal}` : `code ${code}`})`, "failed", output2.tail()));
     });
   });
 }
@@ -39554,7 +39652,7 @@ async function delegateToOpencodeServed(req) {
     if (ac.signal.aborted && !(err instanceof DelegateError)) {
       if (req.signal?.aborted) throw new DelegateError("delegate aborted", "aborted", "", "", knownSession);
       const hint = knownSession ? `. The opencode session ${knownSession} keeps its progress: call again with session_id="${knownSession}" (and a longer timeout_sec, or use spawn_opencode) to continue instead of starting over.` : "";
-      throw new DelegateError(`delegate timed out after ${req.timeoutSec}s${hint}`, "timeout", "", "", knownSession);
+      throw new DelegateError(`delegate timed out after ${req.timeoutSec}s (its time limit, timeout_sec)${hint}`, "timeout", "", "", knownSession);
     }
     throw err;
   } finally {
@@ -39578,6 +39676,7 @@ var OPT_OUT = [
   "item/plan/delta"
 ];
 var STDERR_TAIL_CHARS2 = 4e3;
+var STARTUP_TIMEOUT_MS = 18e4;
 function innerCommand(s) {
   const m = /^(?:"[^"]*[\\/]|[^\s"]*[\\/])?(?:pwsh|powershell|bash|zsh|sh|cmd)(?:\.exe)?"?\s+(?:-NoProfile\s+|-NoLogo\s+)*(?:-Command|-lc|-c|\/c)\s+([\s\S]*)$/i.exec(s.trim());
   if (!m) return s;
@@ -39718,18 +39817,29 @@ async function delegateToCodexAppServer(req) {
   });
   const exited = new Promise((_, reject) => {
     child.on("error", (err) => reject(new DelegateError(`failed to start ${req.bin}: ${err.message}`, "failed", "", "", threadId)));
-    child.on("exit", (code) => reject(new DelegateError(`codex app-server exited with code ${code}`, "failed", stderr, "", threadId)));
+    child.on("exit", (code, signal) => reject(new DelegateError(`codex app-server ${exitDescription({ code, signal })}`, "failed", stderr, "", threadId)));
   });
   exited.catch(() => {
   });
   let timer;
   const stopped = new Promise((_, reject) => {
-    timer = setTimeout(() => reject(new DelegateError(`delegate timed out after ${req.timeoutSec}s`, "timeout", stderr, "", threadId)), req.timeoutSec * 1e3);
+    timer = setTimeout(() => reject(new DelegateError(`delegate timed out after ${req.timeoutSec}s (its time limit, timeout_sec)`, "timeout", stderr, "", threadId)), req.timeoutSec * 1e3);
     req.signal?.addEventListener("abort", () => reject(new DelegateError("delegate aborted", "aborted", "", "", threadId)), { once: true });
   });
   stopped.catch(() => {
   });
   const race = (p) => Promise.race([p, exited, stopped]);
+  let step = "initialize";
+  let startupTimer;
+  const startup = new Promise((_, reject) => {
+    startupTimer = setTimeout(
+      () => reject(DelegateError.startup(`codex app-server did not answer ${step} within ${Math.round((req.startupTimeoutMs ?? STARTUP_TIMEOUT_MS) / 1e3)}s (startup timeout)`, stderr, threadId)),
+      req.startupTimeoutMs ?? STARTUP_TIMEOUT_MS
+    );
+  });
+  startup.catch(() => {
+  });
+  const boot = (p) => Promise.race([p, exited, stopped, startup]);
   const steering = {
     send: async (message) => {
       if (!threadId || !turnId) return false;
@@ -39746,20 +39856,23 @@ ${message}`, text_elements: [] }] });
     }
   };
   try {
-    await race(request2("initialize", { clientInfo: { name: "agent-bridge", title: "agent-bridge", version: APP_VERSION }, capabilities: { experimentalApi: false, optOutNotificationMethods: OPT_OUT } }));
+    await boot(request2("initialize", { clientInfo: { name: "agent-bridge", title: "agent-bridge", version: APP_VERSION }, capabilities: { experimentalApi: false, optOutNotificationMethods: OPT_OUT } }));
     write({ method: "initialized", params: {} });
     const approvalPolicy = "on-request";
     const config2 = {};
     if (req.writableRoots?.length && req.sandbox === "workspace-write") config2.sandbox_workspace_write = { writable_roots: req.writableRoots.map(realFolder) };
     const threadParams = { cwd, sandbox: req.sandbox, approvalPolicy, approvalsReviewer: "user", ...Object.keys(config2).length ? { config: config2 } : {}, ...req.model ? { model: req.model } : {} };
-    const thread = req.sessionId ? await race(request2("thread/resume", { ...threadParams, threadId: req.sessionId, excludeTurns: true })) : await race(request2("thread/start", threadParams));
+    step = req.sessionId ? "thread/resume" : "thread/start";
+    const thread = req.sessionId ? await boot(request2("thread/resume", { ...threadParams, threadId: req.sessionId, excludeTurns: true })) : await boot(request2("thread/start", threadParams));
     threadId = thread?.thread?.id ?? threadId;
     if (threadId) req.onSession?.(threadId);
     const prompt = req.askMode ? `${req.prompt}
 
 ${CODEX_ASK_HINT}` : req.prompt;
-    const turn = await race(request2("turn/start", { threadId, input: [{ type: "text", text: prompt, text_elements: [] }] }));
+    step = "turn/start";
+    const turn = await boot(request2("turn/start", { threadId, input: [{ type: "text", text: prompt, text_elements: [] }] }));
     turnId = turn?.turn?.id ?? null;
+    clearTimeout(startupTimer);
     if (turnId && completions.has(turnId)) finished(completions.get(turnId));
     req.live?.onSteering(steering);
     const outcome = await race(turnDone);
@@ -39781,6 +39894,7 @@ ${CODEX_ASK_HINT}` : req.prompt;
     throw new DelegateError(err.message, "failed", stderr, "", threadId);
   } finally {
     clearTimeout(timer);
+    clearTimeout(startupTimer);
     for (const p of pending.values()) p.reject(new Error("closed"));
     child.stdin.end();
     await killTree(child);
@@ -39836,11 +39950,21 @@ var DELEGATION_TARGETS = {
       const sandbox = a.sandbox ?? (a.access ? CODEX_SANDBOX_FOR[a.access] : cfg.codexSandbox);
       const relay = a.access === "ask" && Boolean(a.relay?.codexHookTrusted);
       if (process.env[CODEX_EXEC_ENV] !== "1") {
-        try {
-          return await delegateToCodexAppServer({ ...base, bin: cfg.codexBin, sandbox, writableRoots: base.writableRoots, askMode: a.access === "ask", approve: a.access === "ask" && a.relay ? a.relay.onPermission : base.approve });
-        } catch (err) {
-          if (!(err instanceof DelegateError) || err.kind !== "failed" || err.sessionId) throw err;
-          base.log.warn("codex app-server unavailable, using codex exec", { err: err.message });
+        let sessionId = base.sessionId ?? null;
+        for (let attempt = 1; ; attempt++) {
+          try {
+            return await delegateToCodexAppServer({ ...base, sessionId, bin: cfg.codexBin, sandbox, writableRoots: base.writableRoots, askMode: a.access === "ask", approve: a.access === "ask" && a.relay ? a.relay.onPermission : base.approve });
+          } catch (err) {
+            if (err instanceof DelegateError && err.startupFailed && attempt === 1 && !base.signal?.aborted) {
+              base.log.warn("codex app-server startup timed out; retrying once", { err: err.message });
+              base.onProgress?.(`${err.message}; retrying once`);
+              sessionId = err.sessionId ?? sessionId;
+              continue;
+            }
+            if (!(err instanceof DelegateError) || err.kind !== "failed" || err.sessionId) throw err;
+            base.log.warn("codex app-server unavailable, using codex exec", { err: err.message });
+            break;
+          }
         }
       }
       return delegateToCodex({
@@ -40119,6 +40243,11 @@ function isAutoApproved(r, patterns) {
     return names.some((n) => re.test(n));
   });
 }
+var HANDOFF_TOOL = /(set|update)_handoff$/i;
+function isHandoffToolCall(r) {
+  const tool = mcpToolOf(r)?.tool;
+  return Boolean(tool && HANDOFF_TOOL.test(tool));
+}
 
 // src/cli/dashboard.ts
 import { randomBytes as randomBytes7 } from "node:crypto";
@@ -40132,6 +40261,10 @@ import { existsSync as existsSync2, readdirSync as readdirSync2, readFileSync as
 import { createServer as createServer5 } from "node:http";
 import { join as join13 } from "node:path";
 import { DatabaseSync as DatabaseSync2 } from "node:sqlite";
+
+// src/cli/logo.ts
+var LOGO_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="agent-bridge"><defs><linearGradient id="ab-bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#1e1b4b"/><stop offset="1" stop-color="#4338ca"/></linearGradient><linearGradient id="ab-l" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffb088"/><stop offset="1" stop-color="#e2603b"/></linearGradient><linearGradient id="ab-r" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#7cf0c0"/><stop offset="1" stop-color="#0e9f6e"/></linearGradient><radialGradient id="ab-glow"><stop offset="0" stop-color="#fff" stop-opacity=".55"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></radialGradient></defs><rect width="64" height="64" rx="16" fill="url(#ab-bg)"/><path d="M9 52V32A20 20 0 0 1 27 12.1v10.2A10 10 0 0 0 19 32v20z" fill="url(#ab-l)"/><path d="M55 52V32A20 20 0 0 0 37 12.1v10.2A10 10 0 0 1 45 32v20z" fill="url(#ab-r)"/><circle cx="32" cy="17" r="11" fill="url(#ab-glow)"/><path d="M32 9.5c.9 4.6 2.9 6.6 7.5 7.5-4.6.9-6.6 2.9-7.5 7.5-.9-4.6-2.9-6.6-7.5-7.5 4.6-.9 6.6-2.9 7.5-7.5z" fill="#fff"/></svg>';
+var FAVICON_HREF = `data:image/svg+xml,${encodeURIComponent(LOGO_SVG)}`;
 
 // src/cli/markdown.ts
 function renderMarkdown(src) {
@@ -40233,6 +40366,8 @@ var UI_PAGE = `<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>agent-bridge</title>
+<link rel="icon" type="image/svg+xml" href="${FAVICON_HREF}">
+<script>try { const t = localStorage.getItem("ab-theme"); if (t === "light" || t === "dark") document.documentElement.dataset.theme = t; } catch {}</script>
 <style>
 :root {
   --bg: #f4f5f7; --panel: #ffffff; --panel-2: #f8f9fb; --text: #161b26; --muted: #6b7385; --faint: #9aa1b1; --line: #e4e7ec;
@@ -40244,13 +40379,21 @@ var UI_PAGE = `<!doctype html>
   color-scheme: light;
 }
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --bg: #0e1116; --panel: #161a21; --panel-2: #1b2029; --text: #e7e9ee; --muted: #9aa3b5; --faint: #6b7385; --line: #262c37;
     --accent: #8b87ff; --accent-soft: #23234a; --ok: #4ade80; --ok-soft: #14301f; --warn: #fbbf24; --warn-soft: #33280f;
     --bad: #fb923c; --bad-soft: #3a2012; --busy: #60a5fa; --busy-soft: #16263f;
     --shadow: none;
     color-scheme: dark;
   }
+}
+/* Chosen in the header: dark regardless of the system. */
+:root[data-theme="dark"] {
+  --bg: #0e1116; --panel: #161a21; --panel-2: #1b2029; --text: #e7e9ee; --muted: #9aa3b5; --faint: #6b7385; --line: #262c37;
+  --accent: #8b87ff; --accent-soft: #23234a; --ok: #4ade80; --ok-soft: #14301f; --warn: #fbbf24; --warn-soft: #33280f;
+  --bad: #fb923c; --bad-soft: #3a2012; --busy: #60a5fa; --busy-soft: #16263f;
+  --shadow: none;
+  color-scheme: dark;
 }
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; -webkit-font-smoothing: antialiased; }
@@ -40261,7 +40404,13 @@ a { color: inherit; text-decoration: none; }
 header { position: sticky; top: 0; z-index: 5; background: var(--panel); border-bottom: 1px solid var(--line); }
 .top { display: flex; align-items: center; justify-content: space-between; gap: 12px; height: 56px; }
 .brand { display: flex; align-items: center; gap: 10px; font-weight: 650; font-size: 15px; }
-.logo { width: 26px; height: 26px; border-radius: 7px; background: linear-gradient(135deg, var(--claude), var(--codex) 55%, var(--opencode)); }
+.logo { width: 28px; height: 28px; display: block; }
+.logo svg { width: 100%; height: 100%; display: block; }
+.right { display: flex; align-items: center; gap: 14px; }
+.theme { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.theme button { background: transparent; color: var(--muted); border: 0; border-radius: 0; padding: 4px 10px; font-size: 12px; font-weight: 500; cursor: pointer; }
+.theme button + button { border-left: 1px solid var(--line); }
+.theme button.on { background: var(--accent-soft); color: var(--text); }
 .conn { display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px; color: var(--muted); }
 nav { display: flex; gap: 4px; overflow-x: auto; scrollbar-width: none; }
 nav a { display: inline-flex; align-items: center; gap: 7px; padding: 10px 12px; color: var(--muted); border-bottom: 2px solid transparent; white-space: nowrap; font-size: 13.5px; }
@@ -40409,8 +40558,11 @@ details[open] > summary::before { content: "\u25BE "; }
 <header>
   <div class="wrap">
     <div class="top">
-      <div class="brand"><span class="logo"></span>agent-bridge</div>
-      <span class="conn" id="status">connecting\u2026</span>
+      <div class="brand"><span class="logo">${LOGO_SVG}</span>agent-bridge</div>
+      <div class="right">
+        <span class="conn" id="status">connecting\u2026</span>
+        <div class="theme" id="theme" role="group" aria-label="Theme"><button data-theme="auto">Auto</button><button data-theme="light">Light</button><button data-theme="dark">Dark</button></div>
+      </div>
     </div>
     <nav id="tabs"></nav>
   </div>
@@ -40849,6 +41001,22 @@ $("send").addEventListener("submit", async (e) => {
   }
 });
 
+/** Auto follows the system; Light and Dark override it. Remembered in this browser. */
+function applyTheme(theme) {
+  const root = document.documentElement;
+  if (theme === "light" || theme === "dark") root.dataset.theme = theme;
+  else delete root.dataset.theme;
+  try {
+    if (theme === "light" || theme === "dark") localStorage.setItem("ab-theme", theme);
+    else localStorage.removeItem("ab-theme");
+  } catch {}
+  document.querySelectorAll("#theme button").forEach((b) => b.classList.toggle("on", b.dataset.theme === (theme || "auto")));
+}
+$("theme").addEventListener("click", (e) => {
+  const b = e.target.closest("button");
+  if (b) applyTheme(b.dataset.theme);
+});
+applyTheme(document.documentElement.dataset.theme || "auto");
 poll();
 setInterval(poll, POLL_MS);
 </script>
@@ -41119,16 +41287,21 @@ function openBrowser(url2) {
 
 // src/core/worktree.ts
 import { createHash as createHash2 } from "node:crypto";
-import { mkdirSync as mkdirSync7, readFileSync as readFileSync10, realpathSync as realpathSync2 } from "node:fs";
+import { mkdirSync as mkdirSync7, readFileSync as readFileSync10, realpathSync as realpathSync2, rmSync as rmSync2 } from "node:fs";
 import { basename as basename2, isAbsolute as isAbsolute2, join as join15, relative, resolve as resolve3 } from "node:path";
 var GIT = "git";
-var GIT_TIMEOUT_MS = 6e4;
+var GIT_TIMEOUT_MS = 18e4;
+var WORKTREE_ADD_TIMEOUT_MS = 6e5;
 var BRANCH_PREFIX = "agent-bridge/";
 var COMMIT_IDENTITY = ["-c", "user.name=agent-bridge", "-c", "user.email=agent-bridge@localhost"];
 var MAX_DIFFSTAT_CHARS = 4e3;
-async function git(args, cwd, log) {
-  const res = await runProcess({ bin: GIT, args, stdin: "", cwd, timeoutMs: GIT_TIMEOUT_MS, env: process.env, log });
-  if (res.code !== 0) throw new Error(`git ${args[0]} failed: ${(res.stderr || res.stdout).trim().slice(0, 500)}`);
+function trustArgs(...dirs) {
+  return dirs.flatMap((d) => ["-c", `safe.directory=${resolve3(d).replace(/\\/g, "/")}`]);
+}
+async function git(args, cwd, log, timeoutMs = GIT_TIMEOUT_MS) {
+  const what = `git ${args.filter((a, i) => !a.startsWith("-") && args[i - 1] !== "-c").slice(0, 2).join(" ")}`;
+  const res = await runProcess({ bin: GIT, args, stdin: "", cwd, timeoutMs, env: process.env, log, what });
+  if (res.code !== 0) throw new Error(`${what} failed: ${(res.stderr || res.stdout).trim().slice(0, 500)}`);
   return res.stdout.trimEnd();
 }
 async function createWorktree(opts) {
@@ -41139,15 +41312,47 @@ async function createWorktree(opts) {
     throw new Error(`worktree isolation needs a git repository, but ${opts.cwd} is not inside one`);
   }
   const base = await git(["rev-parse", "HEAD"], repoRoot, opts.log);
+  const baseBranch = await git(["symbolic-ref", "-q", "--short", "HEAD"], repoRoot, opts.log).catch(() => "") || null;
   const branch = `${BRANCH_PREFIX}${opts.jobId}`;
   const dir = join15(opts.home, "worktrees");
   mkdirSync7(dir, { recursive: true });
   const path = join15(dir, `${basename2(repoRoot)}-${opts.jobId}`);
-  await git(["worktree", "add", "-b", branch, path, base], repoRoot, opts.log);
+  try {
+    await git(["worktree", "add", "-b", branch, path, base], repoRoot, opts.log, WORKTREE_ADD_TIMEOUT_MS);
+  } catch (err) {
+    if (!(err instanceof DelegateError && err.kind === "timeout")) {
+      await removeWorktree(repoRoot, path, branch, opts.log);
+      throw new Error(`could not create a worktree for the subagent: ${err.message}`);
+    }
+    opts.log.warn("git worktree add timed out; retrying once", { path });
+    await removeWorktree(repoRoot, path, branch, opts.log);
+    try {
+      await git(["worktree", "add", "-b", branch, path, base], repoRoot, opts.log, WORKTREE_ADD_TIMEOUT_MS);
+    } catch (again) {
+      await removeWorktree(repoRoot, path, branch, opts.log);
+      throw new Error(`could not create a worktree for the subagent (tried twice): ${again.message}`);
+    }
+  }
+  await unlockWorktree(repoRoot, path, opts.log);
   const rel = relative(repoRoot, opts.cwd);
   const cwd = rel && !rel.startsWith("..") && !isAbsolute2(rel) ? join15(path, rel) : path;
   opts.log.info("worktree created", { repoRoot, path, branch });
-  return { repoRoot, path, cwd, branch, base };
+  return { repoRoot, path, cwd, branch, base, baseBranch };
+}
+async function unlockWorktree(repoRoot, path, log) {
+  await git([...trustArgs(path), "worktree", "unlock", path], repoRoot, log).catch(() => "");
+}
+async function removeWorktree(repoRoot, path, branch, log) {
+  await git([...trustArgs(path), "worktree", "remove", "--force", "--force", path], repoRoot, log).catch(() => {
+  });
+  try {
+    rmSync2(path, { recursive: true, force: true });
+  } catch {
+  }
+  await git(["worktree", "prune"], repoRoot, log).catch(() => {
+  });
+  await git(["branch", "-D", branch], repoRoot, log).catch(() => {
+  });
 }
 var SUBJECT_CHARS = 72;
 function subagentCommitMessage(opts) {
@@ -41185,19 +41390,48 @@ async function gitDirsOutside(cwd, log) {
     return [];
   }
 }
+async function reviewBase(wt, log) {
+  const run = (args) => git(args, wt.repoRoot, log);
+  const tip = await run(["rev-parse", wt.branch]);
+  const list = await run(["worktree", "list", "--porcelain"]).catch(() => "");
+  const main = /^branch refs\/heads\/(.+)$/m.exec(list.split(/\r?\n\r?\n/)[0] ?? "")?.[1];
+  const candidates = /* @__PURE__ */ new Set([wt.base]);
+  for (const b of /* @__PURE__ */ new Set([wt.baseBranch, main])) {
+    if (!b || b === wt.branch) continue;
+    const mb = await run(["merge-base", b, wt.branch]).catch(() => "");
+    if (mb && mb !== tip) candidates.add(mb);
+  }
+  let best = wt.base;
+  let fewest = Infinity;
+  for (const c of candidates) {
+    const n = Number(await run(["rev-list", "--count", `${c}..${wt.branch}`]).catch(() => "NaN"));
+    if (n < fewest) [best, fewest] = [c, n];
+  }
+  return best;
+}
 async function finishWorktree(wt, message, log) {
-  await git(["add", "-A"], wt.path, log);
-  const status = await git(["status", "--porcelain"], wt.path, log);
-  if (status) await git([...COMMIT_IDENTITY, "commit", "-q", "--no-verify", "-m", message], wt.path, log);
-  const diffStat = await git(["diff", "--stat", `${wt.base}..${wt.branch}`], wt.repoRoot, log);
-  return { changed: diffStat.length > 0, diffStat: diffStat.slice(0, MAX_DIFFSTAT_CHARS) };
+  const trust = trustArgs(wt.path);
+  await git([...trust, "add", "-A"], wt.path, log);
+  const status = await git([...trust, "status", "--porcelain"], wt.path, log);
+  if (status) await git([...trust, ...COMMIT_IDENTITY, "commit", "-q", "--no-verify", "-m", message], wt.path, log);
+  await unlockWorktree(wt.repoRoot, wt.path, log);
+  const from = await reviewBase(wt, log);
+  const diffStat = await git(["diff", "--stat", `${from}..${wt.branch}`], wt.repoRoot, log);
+  const files = (await git(["diff", "--name-only", `${from}..${wt.branch}`], wt.repoRoot, log)).split(/\r?\n/).filter(Boolean);
+  return { changed: diffStat.length > 0, diffStat: diffStat.slice(0, MAX_DIFFSTAT_CHARS), reviewBase: from, files };
+}
+var HANDOFF_FILE = /(^|\/)(HANDOFF|TODO)\.md$/i;
+function handoffWarning(files) {
+  const hit = files.filter((f) => HANDOFF_FILE.test(f.replace(/\\/g, "/")));
+  return hit.length ? `WARNING: this job changed ${hit.join(", ")}. Delegated jobs should report in their answer and leave handoff and TODO files to you: check these changes before you take them.` : null;
 }
 function worktreeReport(wt, outcome) {
   if (!outcome.changed) return `Worktree ${wt.path} (branch ${wt.branch}) has no changes; remove it with: git worktree remove "${wt.path}" && git branch -D ${wt.branch}`;
   return [
     `Changes are committed on branch ${wt.branch} (worktree ${wt.path}), not in your working copy:`,
     outcome.diffStat,
-    `Review: git diff ${wt.base.slice(0, 12)}..${wt.branch}`,
+    ...[handoffWarning(outcome.files)].filter((w) => Boolean(w)),
+    `Review: git diff ${outcome.reviewBase.slice(0, 12)}..${wt.branch}`,
     `Take them: git merge ${wt.branch}   (or git cherry-pick ${wt.branch})`,
     `Discard: git worktree remove --force "${wt.path}" && git branch -D ${wt.branch}`
   ].join("\n");
@@ -41237,7 +41471,7 @@ function changedFiles(before, after) {
 
 // src/mcp/jobs.ts
 import { randomUUID as randomUUID4 } from "node:crypto";
-import { closeSync as closeSync2, mkdirSync as mkdirSync8, openSync as openSync2, readFileSync as readFileSync11, renameSync as renameSync2, rmSync as rmSync2, statSync as statSync4, writeFileSync as writeFileSync6 } from "node:fs";
+import { closeSync as closeSync2, mkdirSync as mkdirSync8, openSync as openSync2, readFileSync as readFileSync11, renameSync as renameSync2, rmSync as rmSync3, statSync as statSync4, writeFileSync as writeFileSync6 } from "node:fs";
 import { dirname as dirname5 } from "node:path";
 var JOB_ID_LENGTH = 8;
 var PROMPT_PREVIEW_CHARS = 120;
@@ -41259,6 +41493,8 @@ var JobManager = class {
   running = /* @__PURE__ */ new Map();
   foreground = /* @__PURE__ */ new Map();
   history = /* @__PURE__ */ new Map();
+  /** Finished jobs whose continuation waits for a free slot, in arrival order; the messages are in job.queue. */
+  waitingJobs = /* @__PURE__ */ new Map();
   /** Save this session's jobs, merged with those other sessions saved. Best effort: never breaks a run. */
   persist() {
     if (!this.storePath) return;
@@ -41312,9 +41548,13 @@ var JobManager = class {
   list() {
     return [...this.running.values(), ...this.foreground.values()];
   }
+  /** Continuations waiting for a free slot, first in line first. */
+  waiting() {
+    return [...this.waitingJobs.values()];
+  }
   /** Recently finished subagents, newest first (they can still be messaged). */
   recent(limit = 5) {
-    return [...this.history.values()].filter((j) => j.status !== "running" && (!j.owner || j.owner === this.node.name)).sort((a, b) => (b.finishedAt ?? 0) - (a.finishedAt ?? 0)).slice(0, limit);
+    return [...this.history.values()].filter((j) => j.status !== "running" && !this.waitingJobs.has(j.id) && (!j.owner || j.owner === this.node.name)).sort((a, b) => (b.finishedAt ?? 0) - (a.finishedAt ?? 0)).slice(0, limit);
   }
   find(ref) {
     const id = ref.replace(/^.*-(?:job|ask)-/, "");
@@ -41369,7 +41609,8 @@ var JobManager = class {
         job.worktree = outcome?.result?.worktree ?? job.worktree;
         this.persist();
         if (job.queue.length && job.resume && job.sessionId && !job.controller.signal.aborted) {
-          this.launch(job, job.resume(job.queue.splice(0).join("\n\n"), job.sessionId, job.workdir, job.worktree));
+          if (this.canStart()) this.launch(job, job.resume(job.queue.splice(0).join("\n\n"), job.sessionId, job.workdir, job.worktree));
+          else this.waitForSlot(job);
         }
       }
     };
@@ -41393,10 +41634,17 @@ var JobManager = class {
     this.persist();
     return true;
   }
-  /** Send a follow-up to a subagent: queued while it runs, otherwise its session is resumed in the background. */
+  /**
+   * Send a follow-up to a subagent: queued while it runs, otherwise its session is resumed in the background,
+   * as soon as a slot is free.
+   */
   followUp(ref, message) {
     const job = this.find(ref);
     if (!job) return { outcome: "unknown" };
+    if (this.waitingJobs.has(job.id)) {
+      job.queue.push(message);
+      return { outcome: "waiting", job };
+    }
     if (job.status === "running" && job.pendingApproval) {
       const answer = job.pendingApproval;
       job.pendingApproval = null;
@@ -41412,10 +41660,29 @@ var JobManager = class {
       return { outcome: "queued", job };
     }
     if (!job.resume || !job.sessionId) return { outcome: "no-session", job };
-    if (!this.canStart()) return { outcome: "busy", job };
+    if (!this.canStart()) {
+      job.queue.push(message);
+      this.waitForSlot(job);
+      return { outcome: "waiting", job };
+    }
     this.log.info("subagent resumed", { job: job.name, sessionId: job.sessionId });
     this.launch(job, job.resume(message, job.sessionId, job.workdir, job.worktree));
     return { outcome: "started", job };
+  }
+  /** Continue this finished job (its queued messages) once a slot frees up. */
+  waitForSlot(job) {
+    this.waitingJobs.set(job.id, job);
+    this.log.info("subagent continuation waits for a free slot", { job: job.name, running: this.running.size, position: this.waitingJobs.size });
+  }
+  /** Start waiting continuations while there are free slots, oldest first. */
+  startWaiting() {
+    for (const job of this.waitingJobs.values()) {
+      if (!this.canStart()) return;
+      this.waitingJobs.delete(job.id);
+      if (!job.queue.length || !job.resume || !job.sessionId) continue;
+      this.log.info("subagent resumed (was waiting for a slot)", { job: job.name, sessionId: job.sessionId });
+      this.launch(job, job.resume(job.queue.splice(0).join("\n\n"), job.sessionId, job.workdir, job.worktree));
+    }
   }
   launch(job, run) {
     job.status = "running";
@@ -41433,14 +41700,22 @@ var JobManager = class {
       (res) => {
         job.workdir = res.workdir ?? job.workdir;
         job.worktree = res.worktree ?? job.worktree;
-        this.finish(job, res.isError ? "failed" : "done", res.text || "(no answer text returned)", res.sessionId);
+        this.finish(job, res.isError ? "failed" : "done", res.text || "(no answer text returned)", res.sessionId, res.isError ? failureCause({ result: res }) : null);
       },
-      (err) => this.finish(job, "failed", String(err?.message ?? err), sessionOfError(err))
+      // The cause is the whole report here: the error says what happened (and, for a worktree, where the work is).
+      (err) => this.finish(job, "failed", "", sessionOfError(err), failureCause({ error: err }))
     );
   }
-  /** Cancel a background job or a blocking ask_* run, by name or id. */
+  /** Cancel a background job, a blocking ask_* run or a continuation waiting for a slot, by name or id. */
   cancel(ref) {
     const id = ref.replace(/^.*-(?:job|ask)-/, "");
+    const waiting = [...this.waitingJobs.values()].find((j) => j.id === id || j.name === ref);
+    if (waiting) {
+      this.waitingJobs.delete(waiting.id);
+      waiting.queue = [];
+      this.log.info("waiting subagent continuation cancelled", { job: waiting.name });
+      return true;
+    }
     const job = [...this.running.values(), ...this.foreground.values()].find((j) => j.id === id || j.name === ref);
     if (!job) return false;
     job.queue = [];
@@ -41448,29 +41723,30 @@ var JobManager = class {
     return true;
   }
   cancelAll() {
+    for (const j of this.waitingJobs.values()) j.queue = [];
+    this.waitingJobs.clear();
     for (const j of this.running.values()) j.controller.abort();
   }
-  finish(job, status, text2, sessionId) {
+  finish(job, status, text2, sessionId, cause = null) {
     this.running.delete(job.id);
     job.status = status;
     job.finishedAt = Date.now();
     job.sessionId = sessionId ?? job.sessionId;
     this.persist();
     const seconds = Math.round((Date.now() - job.startedAt) / 1e3);
-    this.log.info("subagent finished", { job: job.name, status, seconds, sessionId: job.sessionId });
+    this.log.info("subagent finished", { job: job.name, status, seconds, sessionId: job.sessionId, cause });
+    const report = [this.header(job, status, seconds), cause ? `Cause: ${cause}` : "", text2 && cause ? `Its last message:
+${text2}` : text2].filter(Boolean).join("\n\n");
     if (job.queue.length && job.resume && job.sessionId && !job.controller.signal.aborted) {
       const queued = job.queue.splice(0).join("\n\n");
-      this.post(job, `${this.header(job, status, seconds)}
-
-${text2}
+      this.post(job, `${report}
 
 (Your queued follow-up was sent to it; its answer will arrive as another message.)`);
       this.launch(job, job.resume(queued, job.sessionId, job.workdir, job.worktree));
       return;
     }
-    this.post(job, `${this.header(job, status, seconds)}
-
-${text2}`);
+    this.post(job, report);
+    this.startWaiting();
   }
   header(job, status, seconds) {
     const how = job.sessionId ? status === "failed" ? ` To recover it with its context, call message_subagent(job="${job.name}") (optionally with a message).` : ` Continue it with its context: message_subagent(job="${job.name}", message=...).` : "";
@@ -41562,12 +41838,12 @@ function acquireLock(path) {
   for (; ; ) {
     try {
       closeSync2(openSync2(path, "wx"));
-      return () => rmSync2(path, { force: true });
+      return () => rmSync3(path, { force: true });
     } catch (err) {
       if (err.code !== "EEXIST") return () => {
       };
       try {
-        if (Date.now() - statSync4(path).mtimeMs > LOCK_STALE_MS) rmSync2(path, { force: true });
+        if (Date.now() - statSync4(path).mtimeMs > LOCK_STALE_MS) rmSync3(path, { force: true });
       } catch {
       }
       if (Date.now() > deadline) return () => {
@@ -41582,9 +41858,10 @@ var CHANNEL_NOTIFICATION = "notifications/claude/channel";
 var OPENCODE_NOTIFICATION = "notifications/agent-bridge/message";
 var CODEX_SANDBOX_META = "codex/sandbox-state-meta";
 var CWD_DISCOVERY_GRACE_MS = 15e3;
-var JOBS_FILE = "jobs.json";
 var MAX_TITLE_CHARS = 80;
 var PROGRESS_HINT = "(agent-bridge: while you work, call the report_progress tool of the agent-bridge MCP server with the percent of the whole task done and a few words on the current step: when you start, after each milestone, and at least every few minutes.)";
+var DELEGATED_JOB_NOTE = "(agent-bridge: you are a delegated job. Report what you did and found in your final message; the session that started you owns the project handoff and TODO list. Do not write or commit handoff or TODO files (such as HANDOFF.md or TODO.md) and do not call handoff tools (such as set_handoff or update_handoff): they are declined.)";
+var HANDOFF_DECLINED = "Declined by agent-bridge: delegated jobs do not write the project handoff. Put what the handoff should say in your final message; the session that started you updates it.";
 var SUBAGENT_TOOLS = /* @__PURE__ */ new Set(["peers", "send", "report_progress", "hook_event"]);
 var KEPT_ARGS = ["model", "cwd", "timeout_sec", "worktree", "access", "sandbox", "permission_mode", "auto_approve", "allow_tools", "title"];
 var PARENT_APPROVAL_TIMEOUT_MS = 10 * 6e4;
@@ -41885,6 +42162,11 @@ function registerTools(mcp, ctx, targets) {
           lines.push(t("peers.job", { name: j.name + (j.args?.title ? ` "${j.args.title}"` : " (untitled: name it with message_subagent(job, title=...))"), model: j.model ?? "default", duration: formatDuration(Date.now() - j.startedAt), progress: (j.percent !== void 0 ? `${j.percent}% (${j.progressNote || "reported"}) \xB7 ` : "") + (j.progress ?? "starting") }));
         }
       }
+      const waiting = ctx.jobs?.waiting() ?? [];
+      if (waiting.length) {
+        lines.push(t("peers.waiting", { count: waiting.length, max: ctx.jobs.maxJobs }));
+        for (const j of waiting) lines.push(t("peers.waitingJob", { name: j.name + (j.args?.title ? ` "${j.args.title}"` : ""), messages: j.queue.length }));
+      }
       const recent = ctx.jobs?.recent() ?? [];
       if (recent.length) {
         lines.push(t("peers.recent"));
@@ -42037,6 +42319,11 @@ function registerTools(mcp, ctx, targets) {
       const allowedServers = job ? job.allowedServers ??= /* @__PURE__ */ new Set() : /* @__PURE__ */ new Set();
       const autoApprove = [...cfg.autoApproveTools, ...a.allow_tools ?? []];
       const approve = async (r) => {
+        if (isHandoffToolCall(r)) {
+          asked.push(`declined (handoff tool): ${r.tool} ${r.detail.slice(0, 80)}`);
+          if (target === "codex") job?.live?.post(HANDOFF_DECLINED);
+          return { allow: false, message: HANDOFF_DECLINED };
+        }
         if (r.tool.startsWith("mcp:") && allowedServers.has(r.tool)) return { allow: true };
         if (isOwnServerCall(r) || isAutoApproved(r, autoApprove)) return { allow: true };
         let d;
@@ -42120,13 +42407,11 @@ ${a.prompt}
       if (job) job.retitle = (title) => feed.meta({ title });
       let res;
       try {
-        res = await profile.run(
-          cfg,
+        res = await retryTransient(
           {
             // With a live link the subagent can report how far it is (report_progress; shown in the dashboard).
-            prompt: link ? `${a.prompt}
-
-${PROGRESS_HINT}` : a.prompt,
+            // A new session learns once that it reports back and leaves the handoff alone.
+            prompt: [a.prompt, a.session_id ? null : DELEGATED_JOB_NOTE, link ? PROGRESS_HINT : null].filter(Boolean).join("\n\n"),
             cwd: workdir,
             sessionId: a.session_id ?? null,
             timeoutSec: a.timeout_sec ?? (background ? MAX_JOB_TIMEOUT_SEC : DEFAULT_DELEGATE_TIMEOUT_SEC),
@@ -42153,7 +42438,7 @@ ${PROGRESS_HINT}` : a.prompt,
               }
             } : void 0
           },
-          { ...a, access, relay: wiring }
+          (req) => profile.run(cfg, req, { ...a, access, relay: wiring })
         );
         feed.meta({ session: res.sessionId });
         feed.end(res.isError ? "failed" : "done", res.text);
@@ -42203,6 +42488,8 @@ ${asked.join("\n")}` : "No permission requests were needed." : t("ask.unsupporte
         }
         if (access === "edit" || changed.length) notes.push(changed.length ? `Files changed in your working copy:
 ${changed.join("\n")}` : "No files changed.");
+        const warning = handoffWarning(changed);
+        if (warning) notes.push(warning);
       }
       return { ...res, workdir, worktree: wt ?? void 0, text: notes.length ? `${res.text}
 
@@ -42240,7 +42527,7 @@ ${notes.join("\n\n")}` : res.text };
           throw err;
         }
         tracked?.end({ result: res });
-        const header = t("delegate.done", { agent: target, session: res.sessionId ?? "-" }) + (tracked && res.sessionId ? "\n" + t("delegate.followUp", { job: tracked.job.name }) : "");
+        const header = t("delegate.done", { agent: target, session: res.sessionId ?? "-" }) + (res.isError ? "\n" + t("delegate.cause", { cause: failureCause({ result: res }) }) : "") + (tracked && res.sessionId ? "\n" + t("delegate.followUp", { job: tracked.job.name }) : "");
         return text(`${header}
 
 ${res.text || t("delegate.empty")}`, res.isError);
@@ -42307,7 +42594,7 @@ ${r.lines.map((l) => `  ${l}`).join("\n")}`).join("\n\n"));
     "message_subagent",
     {
       title: "Message a subagent",
-      description: "Send a follow-up to a subagent started with ask_* or spawn_* (running or finished), like messaging a native subagent. It continues in its own session with its full context, in the same folder or worktree. While it is still running it gets the message live, at its next step (after its current tool call), and answers right away, like a native subagent: use that to ask how far it is or to redirect it. The answer arrives as a message from the job. Without a message it is told to continue where it stopped: use that to recover a failed or interrupted subagent.",
+      description: "Send a follow-up to a subagent started with ask_* or spawn_* (running or finished), like messaging a native subagent. It continues in its own session with its full context, in the same folder or worktree. While it is still running it gets the message live, at its next step (after its current tool call), and answers right away, like a native subagent: use that to ask how far it is or to redirect it. The answer arrives as a message from the job. Without a message it is told to continue where it stopped: use that to recover a failed or interrupted subagent. If all subagent slots are taken, a finished subagent's continuation is queued and starts by itself when one frees up (cancel_subagent drops it).",
       inputSchema: {
         job: external_exports.string().min(1).describe('Job name, e.g. "codex-job-1a2b3c4d" or "opencode-ask-9f8e7d6c" (see peers)'),
         message: external_exports.string().optional().describe("The follow-up. Default: continue where you stopped and finish the task."),
@@ -42319,14 +42606,18 @@ ${r.lines.map((l) => `  ${l}`).join("\n")}`).join("\n\n"));
       if (!jobs) throw new BridgeError("bad_request", t("err.delegatedSession"));
       if (a.title?.trim()) jobs.setTitle(a.job, a.title.trim());
       const { outcome, job } = jobs.followUp(a.job, a.message?.trim() || DEFAULT_FOLLOW_UP);
-      return text(t(`followUp.${outcome}`, { name: job?.name ?? a.job, max: cfg.maxJobs }), outcome === "unknown" || outcome === "no-session" || outcome === "busy");
+      const position = job ? jobs.waiting().indexOf(job) + 1 : 0;
+      return text(
+        t(`followUp.${outcome}`, { name: job?.name ?? a.job, max: jobs.maxJobs, running: jobs.runningCount(), ahead: position > 1 ? ` (${position - 1} queued before it)` : "" }),
+        outcome === "unknown" || outcome === "no-session"
+      );
     })
   );
   register(
     "cancel_subagent",
     {
       title: "Cancel subagent",
-      description: "Stop a background subagent started with spawn_*. Pass its job name (e.g. codex-job-1a2b3c4d).",
+      description: "Stop a background subagent started with spawn_*, or drop a queued continuation (message_subagent while all slots were taken). Pass its job name (e.g. codex-job-1a2b3c4d).",
       inputSchema: { job: external_exports.string().min(1) }
     },
     guarded("cancel_subagent", async (a) => {
