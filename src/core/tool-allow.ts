@@ -52,3 +52,12 @@ export function isAutoApproved(r: { tool: string; detail: string }, patterns: re
     return names.some((n) => re.test(n));
   });
 }
+
+/** Handoff tools (names ending in set_handoff or update_handoff, e.g. pair-desk's): the session that started a subagent owns the handoff. */
+const HANDOFF_TOOL = /(set|update)_handoff$/i;
+
+/** Whether a subagent's request is a call to a handoff-writing MCP tool; such calls are declined without asking. */
+export function isHandoffToolCall(r: { tool: string; detail: string }): boolean {
+  const tool = mcpToolOf(r)?.tool;
+  return Boolean(tool && HANDOFF_TOOL.test(tool));
+}

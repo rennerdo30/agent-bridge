@@ -13,6 +13,7 @@ import {
   DEFAULT_WAIT_SEC,
   ENV,
   HOOK_MAX_MESSAGES,
+  JOBS_FILE,
   MAX_BODY_CHARS,
   MAX_DELEGATE_TIMEOUT_SEC,
   MAX_JOB_TIMEOUT_SEC,
@@ -36,12 +37,12 @@ import { PermissionRelay, type PermissionDecision, type PermissionRequest } from
 import { codexPermissionHookHash, codexPermissionHookTrusted, recordCodexHookObservation } from "../core/codex-trust.js";
 import { startRunFeed } from "../core/runfeed.js";
 import { saveAutoWake, savedAutoWake } from "../core/auto-wake-pref.js";
-import { isAutoApproved, isOwnServerCall } from "../core/tool-allow.js";
+import { isAutoApproved, isHandoffToolCall, isOwnServerCall } from "../core/tool-allow.js";
 import { ParentLink, parentFromEnv, type ParentClient } from "../core/parent-link.js";
 import { findRunningDashboard, hostDashboard, type DashboardInfo, type HostedDashboard } from "../cli/dashboard.js";
 import { openBrowser } from "../cli/open.js";
 import { RewakeEndpoint } from "./rewake.js";
-import { changedFiles, createWorktree, finishWorktree, gitChangeSnapshot, gitDirsOutside, subagentCommitMessage, worktreeReport, type Worktree } from "../core/worktree.js";
+import { changedFiles, createWorktree, finishWorktree, gitChangeSnapshot, gitDirsOutside, handoffWarning, subagentCommitMessage, worktreeReport, type Worktree } from "../core/worktree.js";
 import { DEFAULT_FOLLOW_UP, JobManager, type Job, type Resume, type RunResult } from "./jobs.js";
 
 const CHANNEL_NOTIFICATION = "notifications/claude/channel";
@@ -51,13 +52,17 @@ export const OPENCODE_NOTIFICATION = "notifications/agent-bridge/message";
 const CODEX_SANDBOX_META = "codex/sandbox-state-meta";
 /** How long to wait for a hook or tool call to reveal the project dir before joining the bridge anyway. */
 const CWD_DISCOVERY_GRACE_MS = 15_000;
-/** Subagent jobs, kept across restarts so message_subagent can continue them (see jobs.ts). */
-const JOBS_FILE = "jobs.json";
 /** Subagent titles (ask_* / spawn_* `title`), like a chat title. */
 const MAX_TITLE_CHARS = 80;
 /** Added to a subagent's task when it can report progress. */
 const PROGRESS_HINT =
   "(agent-bridge: while you work, call the report_progress tool of the agent-bridge MCP server with the percent of the whole task done and a few words on the current step: when you start, after each milestone, and at least every few minutes.)";
+/** Added to a new subagent's task: the session that started it owns the project handoff. */
+export const DELEGATED_JOB_NOTE =
+  "(agent-bridge: you are a delegated job. Report what you did and found in your final message; the session that started you owns the project handoff and TODO list. Do not write or commit handoff or TODO files (such as HANDOFF.md or TODO.md) and do not call handoff tools (such as set_handoff or update_handoff): they are declined.)";
+/** Why a subagent's handoff tool call was declined; shown to the subagent where its CLI passes it on. */
+const HANDOFF_DECLINED =
+  "Declined by agent-bridge: delegated jobs do not write the project handoff. Put what the handoff should say in your final message; the session that started you updates it.";
 /** The tools a delegated subagent's server offers (see registerTools). */
 const SUBAGENT_TOOLS = new Set(["peers", "send", "report_progress", "hook_event"]);
 /** The options of a job worth keeping to continue it the same way later (no prompt, no internals). */
@@ -681,6 +686,13 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
       const allowedServers = job ? (job.allowedServers ??= new Set<string>()) : new Set<string>();
       const autoApprove = [...cfg.autoApproveTools, ...(a.allow_tools ?? [])];
       const approve = async (r: PermissionRequest): Promise<PermissionDecision> => {
+        // Handoff tools first: no allow pattern or earlier "allow" for their server covers them.
+        if (isHandoffToolCall(r)) {
+          asked.push(`declined (handoff tool): ${r.tool} ${r.detail.slice(0, 80)}`);
+          // Codex's decline carries no reason: tell the running subagent directly.
+          if (target === "codex") job?.live?.post(HANDOFF_DECLINED);
+          return { allow: false, message: HANDOFF_DECLINED };
+        }
         if (r.tool.startsWith("mcp:") && allowedServers.has(r.tool)) return { allow: true };
         // Its own agent-bridge tools (answering the parent, report_progress) never need a question.
         if (isOwnServerCall(r) || isAutoApproved(r, autoApprove)) return { allow: true };
@@ -773,7 +785,8 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
           cfg,
           {
             // With a live link the subagent can report how far it is (report_progress; shown in the dashboard).
-            prompt: link ? `${a.prompt}\n\n${PROGRESS_HINT}` : a.prompt,
+            // A new session learns once that it reports back and leaves the handoff alone.
+            prompt: [a.prompt, a.session_id ? null : DELEGATED_JOB_NOTE, link ? PROGRESS_HINT : null].filter(Boolean).join("\n\n"),
             cwd: workdir,
             sessionId: a.session_id ?? null,
             timeoutSec: a.timeout_sec ?? (background ? MAX_JOB_TIMEOUT_SEC : DEFAULT_DELEGATE_TIMEOUT_SEC),
@@ -856,6 +869,8 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
           }
         }
         if (access === "edit" || changed.length) notes.push(changed.length ? `Files changed in your working copy:\n${changed.join("\n")}` : "No files changed.");
+        const warning = handoffWarning(changed);
+        if (warning) notes.push(warning);
       }
       return { ...res, workdir, worktree: wt ?? undefined, text: notes.length ? `${res.text}\n\n---\n${notes.join("\n\n")}` : res.text };
     };
