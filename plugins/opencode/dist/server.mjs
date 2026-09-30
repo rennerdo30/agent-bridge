@@ -36490,7 +36490,7 @@ import { basename, join as join2 } from "node:path";
 import { homedir } from "node:os";
 import { join } from "node:path";
 var APP_NAME = "agent-bridge";
-var APP_VERSION = "0.15.2";
+var APP_VERSION = "0.16.0";
 var PROTOCOL_VERSION = 2;
 var ENV = {
   home: "AGENT_BRIDGE_HOME",
@@ -36502,6 +36502,7 @@ var ENV = {
   autoWake: "AGENT_BRIDGE_AUTO_WAKE",
   maxHops: "AGENT_BRIDGE_MAX_HOPS",
   maxJobs: "AGENT_BRIDGE_MAX_JOBS",
+  autoApproveTools: "AGENT_BRIDGE_AUTO_APPROVE_TOOLS",
   lingerSec: "AGENT_BRIDGE_LINGER_SEC",
   delivery: "AGENT_BRIDGE_DELIVERY",
   claudeBin: "AGENT_BRIDGE_CLAUDE_BIN",
@@ -36596,6 +36597,7 @@ var DEFAULT_CONFIG = {
   autoWake: false,
   maxHops: DEFAULT_MAX_HOPS,
   maxJobs: DEFAULT_MAX_JOBS,
+  autoApproveTools: [],
   delivery: "auto",
   claudeBin: DEFAULT_CLAUDE_BIN,
   codexBin: DEFAULT_CODEX_BIN,
@@ -36633,6 +36635,11 @@ var MODEL_NAME_PATTERN = /^[^\s"'`&|<>^%$;()]{1,200}$/;
 function modelName(v) {
   return typeof v === "string" && MODEL_NAME_PATTERN.test(v.trim()) ? v.trim() : void 0;
 }
+function toolPatterns(v) {
+  const list = Array.isArray(v) ? v : typeof v === "string" ? v.split(",") : null;
+  if (!list || !list.every((x) => typeof x === "string")) return void 0;
+  return list.map((x) => x.trim()).filter(Boolean);
+}
 function loadConfig(home, agent, log, env = process.env) {
   let file2 = {};
   const path = join2(home, CONFIG_FILE_NAME);
@@ -36659,6 +36666,7 @@ function loadConfig(home, agent, log, env = process.env) {
     autoWake: pick2("autoWake", ENV.autoWake, parseBool) ?? d.autoWake,
     maxHops: pick2("maxHops", ENV.maxHops, (v) => parseIntInRange(v, 0, MAX_HOPS_LIMIT)) ?? d.maxHops,
     maxJobs: pick2("maxJobs", ENV.maxJobs, (v) => parseIntInRange(v, 1, MAX_JOBS_LIMIT)) ?? d.maxJobs,
+    autoApproveTools: pick2("autoApproveTools", ENV.autoApproveTools, toolPatterns) ?? d.autoApproveTools,
     delivery: pick2("delivery", ENV.delivery, (v) => oneOf(v, DELIVERY_MODES)) ?? d.delivery,
     claudeBin: pick2("claudeBin", ENV.claudeBin, str) ?? d.claudeBin,
     codexBin: pick2("codexBin", ENV.codexBin, str) ?? d.codexBin,
@@ -38189,6 +38197,7 @@ var Broker = class {
       version: typeof p.version === "string" ? p.version.slice(0, 32) : void 0
     };
     conn.peer = peer;
+    if (peer.sessionId) this.replaceStale(conn, peer);
     this.expireStaleQueue(agentQueueKey(peer.agent));
     this.expireStaleQueue(peer.name);
     const claimed = this.store.claim(agentQueueKey(peer.agent), peer.name);
@@ -38197,11 +38206,14 @@ var Broker = class {
     setImmediate(() => {
       for (const m of this.store.unread(peer.name, PENDING_MAX_LIMIT)) this.emit(conn, "message", m);
     });
-    return { brokerPid: process.pid, name, peers: this.livePeers().filter((x) => x.id !== peer.id) };
+    return { brokerPid: process.pid, name: peer.name, peers: this.livePeers().filter((x) => x.id !== peer.id) };
   }
   onUpdatePeer(conn, args) {
     const peer = this.requirePeer(conn);
-    if (args.sessionId !== void 0) peer.sessionId = args.sessionId;
+    if (args.sessionId !== void 0) {
+      peer.sessionId = args.sessionId;
+      if (peer.sessionId) this.replaceStale(conn, peer);
+    }
     if (args.autoWake !== void 0) peer.autoWake = Boolean(args.autoWake);
     if (typeof args.cwd === "string" && args.cwd) peer.cwd = args.cwd;
     if (args.activity === "busy" || args.activity === "idle") peer.activity = args.activity;
@@ -38217,6 +38229,30 @@ var Broker = class {
     }
     this.log.debug("peer updated", { name: peer.name, sessionId: peer.sessionId, autoWake: peer.autoWake, cwd: peer.cwd });
     return peer;
+  }
+  /**
+   * One agent session, two servers: Claude Code's /reload-plugins (or a restart of the MCP server) starts a new
+   * agent-bridge server while the old one may still be connected. The old one would keep the name and receive
+   * mail the session no longer sees. So the newest server of a session wins: the old connection is told it was
+   * replaced (it stops instead of reconnecting) and the new one takes over its name and waiting mail.
+   */
+  replaceStale(conn, peer) {
+    for (const c of [...this.conns]) {
+      const old = c.peer;
+      if (c === conn || !old || old.agent !== peer.agent || old.sessionId !== peer.sessionId) continue;
+      this.log.info("session connected again from a new server; replacing the old connection", { name: old.name, by: peer.name, sessionId: peer.sessionId });
+      this.emit(c, "replaced", { by: peer.name });
+      this.conns.delete(c);
+      c.peer = null;
+      this.broadcastEvent("peer_left", old, c);
+      c.socket.end();
+      if (peer.name !== old.name && !this.connByName(old.name)) {
+        peer.name = old.name;
+        setImmediate(() => {
+          for (const m of this.store.unread(peer.name, PENDING_MAX_LIMIT)) this.emit(conn, "message", m);
+        });
+      }
+    }
   }
   /**
    * Before a peer takes over queued mail. Names are derived from the project folder and reused by every
@@ -38607,6 +38643,9 @@ var BridgeNode = class extends EventEmitter2 {
       this.emit("message", m);
     } else if (ev === "peer_joined" || ev === "peer_left") {
       this.emit(ev, data);
+    } else if (ev === "replaced") {
+      this.log.info("replaced by a newer server of this session; leaving the bridge", { by: data?.by });
+      void this.stop();
     }
   }
   async withClient(fn) {
@@ -38691,7 +38730,7 @@ var BridgeNode = class extends EventEmitter2 {
   async setSessionId(sessionId) {
     if (sessionId === this.sessionId) return;
     this.sessionId = sessionId;
-    if (this.isConnected) await this.client.request("updatePeer", { sessionId });
+    if (this.isConnected) this.currentName = (await this.client.request("updatePeer", { sessionId })).name;
   }
   /** Report busy/idle to the broker so peers can see who is free. Only changes are sent. */
   setActivity(state) {
@@ -39028,6 +39067,7 @@ async function buildHookResponse(ctx, input2) {
   }
   if (input2.cwd) await ctx.learnCwd?.(input2.cwd);
   await node2.ensureConnected().catch((err) => ctx.log.warn("bridge not reachable from hook", { err: err.message }));
+  if (input2.subagent) return {};
   if (input2.event === "PostToolUse" || input2.event === "Stop") ctx.wakeDelivery?.confirm();
   else ctx.wakeDelivery?.release();
   const channel = ctx.channelActive();
@@ -39831,6 +39871,32 @@ function startRunFeed(opts) {
       writeMeta();
     }
   };
+}
+
+// src/core/tool-allow.ts
+function serverNames2(server) {
+  const short = /^plugin_[^_]+_(.+)$/.exec(server)?.[1];
+  return short ? [server, short] : [server];
+}
+function mcpToolOf(r) {
+  if (!r.tool.startsWith("mcp:")) return null;
+  const server = r.tool.slice("mcp:".length);
+  const quoted = /tool "([^"]+)"/.exec(r.detail)?.[1];
+  let tool = quoted ?? /^\s*([\w.-]+)/.exec(r.detail)?.[1] ?? null;
+  for (const name of serverNames2(server)) if (tool?.startsWith(`${name}_`)) tool = tool.slice(name.length + 1);
+  return { server, tool };
+}
+function glob(pattern) {
+  return new RegExp(`^${pattern.split("*").map((s) => s.replace(/[.+?^${}()|[\]\\]/g, "\\$&")).join(".*")}$`, "i");
+}
+function isAutoApproved(r, patterns) {
+  const call = mcpToolOf(r);
+  if (!call || patterns.length === 0) return false;
+  const names = serverNames2(call.server).flatMap((s) => [s, call.tool ? `${s}.${call.tool}` : null]).filter((n) => Boolean(n));
+  return patterns.some((p) => {
+    const re = glob(p.trim());
+    return names.some((n) => re.test(n));
+  });
 }
 
 // src/cli/dashboard.ts
@@ -41223,7 +41289,8 @@ var OPENCODE_NOTIFICATION = "notifications/agent-bridge/message";
 var CODEX_SANDBOX_META = "codex/sandbox-state-meta";
 var CWD_DISCOVERY_GRACE_MS = 15e3;
 var JOBS_FILE = "jobs.json";
-var KEPT_ARGS = ["model", "cwd", "timeout_sec", "worktree", "access", "sandbox", "permission_mode", "auto_approve"];
+var SUBAGENT_TOOLS = /* @__PURE__ */ new Set(["peers", "send", "hook_event"]);
+var KEPT_ARGS = ["model", "cwd", "timeout_sec", "worktree", "access", "sandbox", "permission_mode", "auto_approve", "allow_tools"];
 var PARENT_APPROVAL_TIMEOUT_MS = 10 * 6e4;
 var PLUGIN_ROOT = resolve4(dirname5(fileURLToPath2(import.meta.url)), "..");
 function isBridgeWorktree(dir, home) {
@@ -41475,6 +41542,7 @@ async function startServer(argv = process.argv.slice(2)) {
 }
 function registerTools(mcp, ctx, targets) {
   const { node: node2, log, cfg } = ctx;
+  const register = ((name, ...rest) => node2 || SUBAGENT_TOOLS.has(name) ? mcp.registerTool(name, ...rest) : void 0);
   const requireNode = () => {
     if (!node2) throw new BridgeError("bad_request", t("err.delegatedSession"));
     return node2;
@@ -41489,7 +41557,7 @@ function registerTools(mcp, ctx, targets) {
       return text(describeError(err), true);
     }
   };
-  mcp.registerTool(
+  register(
     "peers",
     {
       title: "List peers",
@@ -41528,7 +41596,7 @@ function registerTools(mcp, ctx, targets) {
       return text(lines.join("\n"));
     })
   );
-  mcp.registerTool(
+  register(
     "send",
     {
       title: "Send message",
@@ -41556,7 +41624,7 @@ function registerTools(mcp, ctx, targets) {
       return text(lines.join("\n"));
     })
   );
-  mcp.registerTool(
+  register(
     "inbox",
     {
       title: "Read inbox",
@@ -41574,7 +41642,7 @@ function registerTools(mcp, ctx, targets) {
       return text(formatMessages(msgs));
     })
   );
-  mcp.registerTool(
+  register(
     "wait_for_message",
     {
       title: "Wait for a message",
@@ -41599,7 +41667,7 @@ function registerTools(mcp, ctx, targets) {
       return text(formatMessages([m], { header: "[agent-bridge] Message received." }));
     })
   );
-  mcp.registerTool(
+  register(
     "auto_wake",
     {
       title: "Toggle auto-wake",
@@ -41630,6 +41698,9 @@ function registerTools(mcp, ctx, targets) {
       ),
       worktree: external_exports.boolean().optional().describe(
         "Run in a separate git worktree on its own branch (implies access=edit). Your working copy stays untouched; the result explains how to review, merge or discard the changes."
+      ),
+      allow_tools: external_exports.array(external_exports.string().min(1).max(200)).max(50).optional().describe(
+        'MCP tools the subagent may call without asking you, as "server.tool" patterns with *, e.g. ["pair-desk.get_*", "pair-desk.list_*"] (read-only tools), or "server" for all of its tools.'
       ),
       ...profile.schema
     };
@@ -41664,9 +41735,11 @@ function registerTools(mcp, ctx, targets) {
         throw err;
       }
       const forwarding = access === "ask" && supportsAsk(target, wiring);
-      const allowedServers = /* @__PURE__ */ new Set();
+      const allowedServers = job ? job.allowedServers ??= /* @__PURE__ */ new Set() : /* @__PURE__ */ new Set();
+      const autoApprove = [...cfg.autoApproveTools, ...a.allow_tools ?? []];
       const approve = async (r) => {
         if (r.tool.startsWith("mcp:") && allowedServers.has(r.tool)) return { allow: true };
+        if (isAutoApproved(r, autoApprove)) return { allow: true };
         let d;
         if (wiring) d = await wiring.onPermission(r);
         else if (job && !job.foreground && ctx.jobs) {
@@ -41735,6 +41808,8 @@ ${a.prompt}
           dlog.warn("live link unavailable; messages to this subagent wait until it finishes", { err: err.message });
         }
       }
+      const writableRoots = access === "edit" || a.sandbox === "workspace-write" ? await gitDirsOutside(workdir, dlog) : void 0;
+      if (writableRoots?.length) dlog.info("extra writable folders for the subagent", { workdir, writableRoots });
       let res;
       try {
         res = await profile.run(
@@ -41749,7 +41824,7 @@ ${a.prompt}
             signal,
             onProgress: feed.report,
             extraEnv: link?.childEnv(),
-            writableRoots: access === "edit" || a.sandbox === "workspace-write" ? await gitDirsOutside(workdir, dlog) : void 0,
+            writableRoots,
             onSession: (id) => {
               feed.meta({ session: id });
               if (job) ctx.jobs?.note(job, { sessionId: id, workdir, worktree: wt });
@@ -41831,7 +41906,7 @@ ${notes.join("\n\n")}` : res.text };
     );
     resumers[target] = resumeFor;
     const askName = `ask_${target}`;
-    mcp.registerTool(
+    register(
       askName,
       {
         title: `Ask ${target}`,
@@ -41860,7 +41935,7 @@ ${res.text || t("delegate.empty")}`, res.isError);
       })
     );
     const spawnName = `spawn_${target}`;
-    mcp.registerTool(
+    register(
       spawnName,
       {
         title: `Spawn ${target} subagent`,
@@ -41885,7 +41960,7 @@ ${access === "edit" ? t("jobs.accessEdit") : access === "ask" ? t("jobs.accessAs
     const make = resumers[agent];
     return make ? make({ prompt: "", ...args }) : void 0;
   });
-  mcp.registerTool(
+  register(
     "usage_limits",
     {
       title: "Usage limits of the agents",
@@ -41904,7 +41979,7 @@ ${access === "edit" ? t("jobs.accessEdit") : access === "ask" ? t("jobs.accessAs
 ${r.lines.map((l) => `  ${l}`).join("\n")}`).join("\n\n"));
     })
   );
-  mcp.registerTool(
+  register(
     "dashboard",
     {
       title: "Open the agent-bridge dashboard",
@@ -41916,7 +41991,7 @@ ${r.lines.map((l) => `  ${l}`).join("\n")}`).join("\n\n"));
       return url2 ? text(t("dashboard.opened", { url: url2 })) : text(t("dashboard.failed"), true);
     })
   );
-  mcp.registerTool(
+  register(
     "message_subagent",
     {
       title: "Message a subagent",
@@ -41933,7 +42008,7 @@ ${r.lines.map((l) => `  ${l}`).join("\n")}`).join("\n\n"));
       return text(t(`followUp.${outcome}`, { name: job?.name ?? a.job, max: cfg.maxJobs }), outcome === "unknown" || outcome === "no-session" || outcome === "busy");
     })
   );
-  mcp.registerTool(
+  register(
     "cancel_subagent",
     {
       title: "Cancel subagent",
@@ -41944,7 +42019,7 @@ ${r.lines.map((l) => `  ${l}`).join("\n")}`).join("\n\n"));
       return ctx.jobs?.cancel(a.job) ? text(t("jobs.cancelled", { name: a.job })) : text(t("jobs.unknown", { name: a.job }), true);
     })
   );
-  mcp.registerTool(
+  register(
     "hook_event",
     {
       title: "agent-bridge hook (internal)",
@@ -41953,7 +42028,8 @@ ${r.lines.map((l) => `  ${l}`).join("\n")}`).join("\n\n"));
         event: external_exports.string(),
         session_id: external_exports.string().optional(),
         stop_hook_active: external_exports.union([external_exports.boolean(), external_exports.string()]).optional(),
-        cwd: external_exports.string().optional()
+        cwd: external_exports.string().optional(),
+        agent_id: external_exports.string().optional()
       }
     },
     async (a, extra) => {
@@ -41965,6 +42041,7 @@ ${r.lines.map((l) => `  ${l}`).join("\n")}`).join("\n\n"));
           sessionId: given(a.session_id),
           stopHookActive: a.stop_hook_active === true || a.stop_hook_active === "true",
           cwd: given(a.cwd),
+          subagent: Boolean(given(a.agent_id)),
           signal: extra.signal
         });
         return text(JSON.stringify(out));

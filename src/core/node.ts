@@ -276,6 +276,10 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
       this.emit("message", m);
     } else if (ev === "peer_joined" || ev === "peer_left") {
       this.emit(ev, data as PeerInfo);
+    } else if (ev === "replaced") {
+      // A newer server of this same session took over (e.g. /reload-plugins): stay away instead of rejoining.
+      this.log.info("replaced by a newer server of this session; leaving the bridge", { by: (data as { by?: string })?.by });
+      void this.stop();
     }
   }
 
@@ -372,7 +376,8 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
   async setSessionId(sessionId: string | null): Promise<void> {
     if (sessionId === this.sessionId) return;
     this.sessionId = sessionId;
-    if (this.isConnected) await this.client!.request("updatePeer", { sessionId });
+    // The broker may hand us the name of an older server of this session that we replace.
+    if (this.isConnected) this.currentName = (await this.client!.request("updatePeer", { sessionId })).name;
   }
 
   /** Report busy/idle to the broker so peers can see who is free. Only changes are sent. */

@@ -10,6 +10,8 @@ export interface HookInput {
   event: HookEvent;
   sessionId: string | null;
   stopHookActive: boolean;
+  /** The hook fired inside a native subagent (Claude Code's agent_id), not for the main agent. */
+  subagent?: boolean;
   /** Session working directory from the hook input, when the host provides it. */
   cwd?: string | null;
   /** Aborted when the host cancels the hook call (e.g. the user interrupts). */
@@ -74,6 +76,8 @@ export async function buildHookResponse(ctx: ServerContext, input: HookInput): P
   if (input.cwd) await ctx.learnCwd?.(input.cwd);
   // Joining may have been deferred until the project dir was known.
   await node.ensureConnected().catch((err) => ctx.log.warn("bridge not reachable from hook", { err: (err as Error).message }));
+  // A native subagent's tool calls fire the same hooks: messages are for the main agent, so leave them.
+  if (input.subagent) return {};
   // A wake-up's messages reached the session if a turn is running (tool calls, turn end); if a prompt or a new
   // session comes first, the wake-up was lost and they are shown again below.
   if (input.event === "PostToolUse" || input.event === "Stop") ctx.wakeDelivery?.confirm();

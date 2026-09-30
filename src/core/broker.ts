@@ -242,6 +242,7 @@ export class Broker {
       version: typeof p.version === "string" ? p.version.slice(0, 32) : undefined,
     };
     conn.peer = peer;
+    if (peer.sessionId) this.replaceStale(conn, peer);
     this.expireStaleQueue(agentQueueKey(peer.agent));
     this.expireStaleQueue(peer.name);
     const claimed = this.store.claim(agentQueueKey(peer.agent), peer.name);
@@ -251,12 +252,15 @@ export class Broker {
     setImmediate(() => {
       for (const m of this.store.unread(peer.name, PENDING_MAX_LIMIT)) this.emit(conn, "message", m);
     });
-    return { brokerPid: process.pid, name, peers: this.livePeers().filter((x) => x.id !== peer.id) };
+    return { brokerPid: process.pid, name: peer.name, peers: this.livePeers().filter((x) => x.id !== peer.id) };
   }
 
   private onUpdatePeer(conn: Conn, args: RequestMap["updatePeer"][0]): PeerInfo {
     const peer = this.requirePeer(conn);
-    if (args.sessionId !== undefined) peer.sessionId = args.sessionId;
+    if (args.sessionId !== undefined) {
+      peer.sessionId = args.sessionId;
+      if (peer.sessionId) this.replaceStale(conn, peer);
+    }
     if (args.autoWake !== undefined) peer.autoWake = Boolean(args.autoWake);
     if (typeof args.cwd === "string" && args.cwd) peer.cwd = args.cwd;
     if (args.activity === "busy" || args.activity === "idle") peer.activity = args.activity;
@@ -273,6 +277,31 @@ export class Broker {
     }
     this.log.debug("peer updated", { name: peer.name, sessionId: peer.sessionId, autoWake: peer.autoWake, cwd: peer.cwd });
     return peer;
+  }
+
+  /**
+   * One agent session, two servers: Claude Code's /reload-plugins (or a restart of the MCP server) starts a new
+   * agent-bridge server while the old one may still be connected. The old one would keep the name and receive
+   * mail the session no longer sees. So the newest server of a session wins: the old connection is told it was
+   * replaced (it stops instead of reconnecting) and the new one takes over its name and waiting mail.
+   */
+  private replaceStale(conn: Conn, peer: PeerInfo): void {
+    for (const c of [...this.conns]) {
+      const old = c.peer;
+      if (c === conn || !old || old.agent !== peer.agent || old.sessionId !== peer.sessionId) continue;
+      this.log.info("session connected again from a new server; replacing the old connection", { name: old.name, by: peer.name, sessionId: peer.sessionId });
+      this.emit(c, "replaced", { by: peer.name });
+      this.conns.delete(c);
+      c.peer = null;
+      this.broadcastEvent("peer_left", old, c);
+      c.socket.end();
+      if (peer.name !== old.name && !this.connByName(old.name)) {
+        peer.name = old.name;
+        setImmediate(() => {
+          for (const m of this.store.unread(peer.name, PENDING_MAX_LIMIT)) this.emit(conn, "message", m);
+        });
+      }
+    }
   }
 
   /**

@@ -31,7 +31,7 @@
             "type": "mcp_tool",
             "server": "plugin:agent-bridge:bridge",
             "tool": "hook_event",
-            "input": { "event": "PostToolUse", "session_id": "${session_id}" }
+            "input": { "event": "PostToolUse", "session_id": "${session_id}", "agent_id": "${agent_id}" }
           }
         ]
       }

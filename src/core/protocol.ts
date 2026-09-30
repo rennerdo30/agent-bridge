@@ -151,6 +151,8 @@ export interface EventMap {
   message: BridgeMessage;
   peer_joined: PeerInfo;
   peer_left: PeerInfo;
+  /** This connection was replaced by a newer server of the same session (e.g. after /reload-plugins). */
+  replaced: { by: string };
 }
 export type EventName = keyof EventMap;
 

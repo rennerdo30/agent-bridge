@@ -3,7 +3,7 @@ import { join } from "node:path";
 
 /** Product identity. */
 export const APP_NAME = "agent-bridge";
-export const APP_VERSION = "0.15.2";
+export const APP_VERSION = "0.16.0";
 
 /** Wire protocol version; bump on incompatible changes to the broker protocol. */
 export const PROTOCOL_VERSION = 2;
@@ -19,6 +19,7 @@ export const ENV = {
   autoWake: "AGENT_BRIDGE_AUTO_WAKE",
   maxHops: "AGENT_BRIDGE_MAX_HOPS",
   maxJobs: "AGENT_BRIDGE_MAX_JOBS",
+  autoApproveTools: "AGENT_BRIDGE_AUTO_APPROVE_TOOLS",
   lingerSec: "AGENT_BRIDGE_LINGER_SEC",
   delivery: "AGENT_BRIDGE_DELIVERY",
   claudeBin: "AGENT_BRIDGE_CLAUDE_BIN",

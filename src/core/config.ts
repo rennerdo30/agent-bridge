@@ -27,6 +27,8 @@ export interface BridgeConfig {
   maxHops: number;
   /** Background subagents running at once per session. */
   maxJobs: number;
+  /** MCP tools subagents may call without asking the parent (\server.tool\ patterns with *; see tool-allow.ts). */
+  autoApproveTools: string[];
   delivery: DeliveryMode;
   claudeBin: string;
   codexBin: string;
@@ -54,6 +56,7 @@ export const DEFAULT_CONFIG: BridgeConfig = {
   autoWake: false,
   maxHops: DEFAULT_MAX_HOPS,
   maxJobs: DEFAULT_MAX_JOBS,
+  autoApproveTools: [],
   delivery: "auto",
   claudeBin: DEFAULT_CLAUDE_BIN,
   codexBin: DEFAULT_CODEX_BIN,
@@ -102,6 +105,13 @@ function modelName(v: unknown): string | undefined {
   return typeof v === "string" && MODEL_NAME_PATTERN.test(v.trim()) ? v.trim() : undefined;
 }
 
+/** A list of tool patterns: a JSON array, or a comma-separated string (env var). */
+function toolPatterns(v: unknown): string[] | undefined {
+  const list = Array.isArray(v) ? v : typeof v === "string" ? v.split(",") : null;
+  if (!list || !list.every((x) => typeof x === "string")) return undefined;
+  return (list as string[]).map((x) => x.trim()).filter(Boolean);
+}
+
 /** Config file (~/.agent-bridge/config.json) with optional per-agent sections, overridden by env vars. */
 export function loadConfig(home: string, agent: AgentKind, log: Logger, env: NodeJS.ProcessEnv = process.env): BridgeConfig {
   let file: Record<string, unknown> = {};
@@ -131,6 +141,7 @@ export function loadConfig(home: string, agent: AgentKind, log: Logger, env: Nod
     autoWake: pick("autoWake", ENV.autoWake, parseBool) ?? d.autoWake,
     maxHops: pick("maxHops", ENV.maxHops, (v) => parseIntInRange(v, 0, MAX_HOPS_LIMIT)) ?? d.maxHops,
     maxJobs: pick("maxJobs", ENV.maxJobs, (v) => parseIntInRange(v, 1, MAX_JOBS_LIMIT)) ?? d.maxJobs,
+    autoApproveTools: pick("autoApproveTools", ENV.autoApproveTools, toolPatterns) ?? d.autoApproveTools,
     delivery: pick("delivery", ENV.delivery, (v) => oneOf(v, DELIVERY_MODES)) ?? d.delivery,
     claudeBin: pick("claudeBin", ENV.claudeBin, str) ?? d.claudeBin,
     codexBin: pick("codexBin", ENV.codexBin, str) ?? d.codexBin,

@@ -35,6 +35,7 @@ import { askUserViaElicitation } from "./permissions.js";
 import { PermissionRelay, type PermissionDecision, type PermissionRequest } from "../core/relay.js";
 import { codexPermissionHookHash, codexPermissionHookTrusted, recordCodexHookObservation } from "../core/codex-trust.js";
 import { startRunFeed } from "../core/runfeed.js";
+import { isAutoApproved } from "../core/tool-allow.js";
 import { ParentLink, parentFromEnv, type ParentClient } from "../core/parent-link.js";
 import { findRunningDashboard, hostDashboard, type DashboardInfo, type HostedDashboard } from "../cli/dashboard.js";
 import { openBrowser } from "../cli/open.js";
@@ -51,8 +52,10 @@ const CODEX_SANDBOX_META = "codex/sandbox-state-meta";
 const CWD_DISCOVERY_GRACE_MS = 15_000;
 /** Subagent jobs, kept across restarts so message_subagent can continue them (see jobs.ts). */
 const JOBS_FILE = "jobs.json";
+/** The tools a delegated subagent's server offers (see registerTools). */
+const SUBAGENT_TOOLS = new Set(["peers", "send", "hook_event"]);
 /** The options of a job worth keeping to continue it the same way later (no prompt, no internals). */
-const KEPT_ARGS = ["model", "cwd", "timeout_sec", "worktree", "access", "sandbox", "permission_mode", "auto_approve"] as const;
+const KEPT_ARGS = ["model", "cwd", "timeout_sec", "worktree", "access", "sandbox", "permission_mode", "auto_approve", "allow_tools"] as const;
 /** How long a background subagent waits for its parent agent to approve something before it counts as "deny". */
 const PARENT_APPROVAL_TIMEOUT_MS = 10 * 60_000;
 /** Plugin root: dist/server.mjs lives one level below it. */
@@ -411,6 +414,10 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
 
 function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[]): void {
   const { node, log, cfg } = ctx;
+  // A subagent (delegated run) only talks to its parent: no spawning of further agents, no bridge tools it
+  // cannot use. Hidden rather than refused, so its CLI never even asks for approval to call them.
+  const register = ((name: string, ...rest: unknown[]) =>
+    node || SUBAGENT_TOOLS.has(name) ? (mcp.registerTool as (...a: unknown[]) => unknown)(name, ...rest) : undefined) as typeof mcp.registerTool;
   const requireNode = (): BridgeNode => {
     if (!node) throw new BridgeError("bad_request", t("err.delegatedSession"));
     return node;
@@ -428,7 +435,7 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
       }
     };
 
-  mcp.registerTool(
+  register(
     "peers",
     {
       title: "List peers",
@@ -471,7 +478,7 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
     }),
   );
 
-  mcp.registerTool(
+  register(
     "send",
     {
       title: "Send message",
@@ -503,7 +510,7 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
     }),
   );
 
-  mcp.registerTool(
+  register(
     "inbox",
     {
       title: "Read inbox",
@@ -522,7 +529,7 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
     }),
   );
 
-  mcp.registerTool(
+  register(
     "wait_for_message",
     {
       title: "Wait for a message",
@@ -553,7 +560,7 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
     }),
   );
 
-  mcp.registerTool(
+  register(
     "auto_wake",
     {
       title: "Toggle auto-wake",
@@ -570,7 +577,7 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
   );
 
   /** _worktree: internal, a follow-up continuing in an existing worktree. */
-  type DelegateArgs = { prompt: string; model?: string; session_id?: string; cwd?: string; timeout_sec?: number; worktree?: boolean; _worktree?: Worktree; _job?: string } & TargetArgs;
+  type DelegateArgs = { prompt: string; model?: string; session_id?: string; cwd?: string; timeout_sec?: number; worktree?: boolean; allow_tools?: string[]; _worktree?: Worktree; _job?: string } & TargetArgs;
   const keep = (a: DelegateArgs): Record<string, unknown> => Object.fromEntries(KEPT_ARGS.filter((k) => a[k] !== undefined).map((k) => [k, a[k]]));
   const resumers: Partial<Record<CodingAgent, (a: DelegateArgs) => Resume>> = {};
   for (const target of targets) {
@@ -606,6 +613,13 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
         .optional()
         .describe(
           "Run in a separate git worktree on its own branch (implies access=edit). Your working copy stays untouched; the result explains how to review, merge or discard the changes.",
+        ),
+      allow_tools: z
+        .array(z.string().min(1).max(200))
+        .max(50)
+        .optional()
+        .describe(
+          'MCP tools the subagent may call without asking you, as "server.tool" patterns with *, e.g. ["pair-desk.get_*", "pair-desk.list_*"] (read-only tools), or "server" for all of its tools.',
         ),
       ...profile.schema,
     };
@@ -650,9 +664,12 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
       // commands and edits; opencode "edit" runs: what its rules leave to "ask"; Claude "edit" runs: permission
       // prompts, through a PermissionRequest hook) go to the parent agent of a background subagent, else to this
       // session's user. One "allow" per MCP server covers the rest of the run.
-      const allowedServers = new Set<string>();
+      // Remembered per job, so follow-ups and recoveries don't ask again.
+      const allowedServers = job ? (job.allowedServers ??= new Set<string>()) : new Set<string>();
+      const autoApprove = [...cfg.autoApproveTools, ...(a.allow_tools ?? [])];
       const approve = async (r: PermissionRequest): Promise<PermissionDecision> => {
         if (r.tool.startsWith("mcp:") && allowedServers.has(r.tool)) return { allow: true };
+        if (isAutoApproved(r, autoApprove)) return { allow: true };
         let d: PermissionDecision;
         if (wiring) d = await wiring.onPermission(r);
         else if (job && !job.foreground && ctx.jobs) {
@@ -724,6 +741,9 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
           dlog.warn("live link unavailable; messages to this subagent wait until it finishes", { err: (err as Error).message });
         }
       }
+      // A linked worktree's git data lives in the main repository: writable, so the subagent can commit.
+      const writableRoots = access === "edit" || (a as { sandbox?: string }).sandbox === "workspace-write" ? await gitDirsOutside(workdir, dlog) : undefined;
+      if (writableRoots?.length) dlog.info("extra writable folders for the subagent", { workdir, writableRoots });
       let res: DelegateResult;
       try {
         res = await profile.run(
@@ -738,7 +758,7 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
             signal,
             onProgress: feed.report,
             extraEnv: link?.childEnv(),
-            writableRoots: access === "edit" || (a as { sandbox?: string }).sandbox === "workspace-write" ? await gitDirsOutside(workdir, dlog) : undefined,
+            writableRoots,
             onSession: (id) => {
               feed.meta({ session: id });
               if (job) ctx.jobs?.note(job, { sessionId: id, workdir, worktree: wt });
@@ -830,7 +850,7 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
     resumers[target] = resumeFor;
 
     const askName = `ask_${target}`;
-    mcp.registerTool(
+    register(
       askName,
       {
         title: `Ask ${target}`,
@@ -866,7 +886,7 @@ ${res.text || t("delegate.empty")}`, res.isError);
     );
 
     const spawnName = `spawn_${target}`;
-    mcp.registerTool(
+    register(
       spawnName,
       {
         title: `Spawn ${target} subagent`,
@@ -898,7 +918,7 @@ ${res.text || t("delegate.empty")}`, res.isError);
     return make ? make({ prompt: "", ...(args as Partial<DelegateArgs>) } as DelegateArgs) : undefined;
   });
 
-  mcp.registerTool(
+  register(
     "usage_limits",
     {
       title: "Usage limits of the agents",
@@ -919,7 +939,7 @@ ${res.text || t("delegate.empty")}`, res.isError);
       return text(reports.map((r) => `${r.agent}${r.maxUsedPercent !== null ? ` (highest: ${r.maxUsedPercent}% used)` : ""}:\n${r.lines.map((l) => `  ${l}`).join("\n")}`).join("\n\n"));
     }),
   );
-  mcp.registerTool(
+  register(
     "dashboard",
     {
       title: "Open the agent-bridge dashboard",
@@ -934,7 +954,7 @@ ${res.text || t("delegate.empty")}`, res.isError);
     }),
   );
 
-  mcp.registerTool(
+  register(
     "message_subagent",
     {
       title: "Message a subagent",
@@ -957,7 +977,7 @@ ${res.text || t("delegate.empty")}`, res.isError);
     }),
   );
 
-  mcp.registerTool(
+  register(
     "cancel_subagent",
     {
       title: "Cancel subagent",
@@ -969,7 +989,7 @@ ${res.text || t("delegate.empty")}`, res.isError);
     }),
   );
 
-  mcp.registerTool(
+  register(
     "hook_event",
     {
       title: "agent-bridge hook (internal)",
@@ -979,9 +999,10 @@ ${res.text || t("delegate.empty")}`, res.isError);
         session_id: z.string().optional(),
         stop_hook_active: z.union([z.boolean(), z.string()]).optional(),
         cwd: z.string().optional(),
+        agent_id: z.string().optional(),
       },
     },
-    async (a: { event: string; session_id?: string; stop_hook_active?: boolean | string; cwd?: string }, extra: ToolExtra) => {
+    async (a: { event: string; session_id?: string; stop_hook_active?: boolean | string; cwd?: string; agent_id?: string }, extra: ToolExtra) => {
       await ctx.observeMeta?.(extra._meta);
       // An unsubstituted "${...}" template means the host had no value for that field.
       const given = (v: string | undefined) => (v && !v.startsWith("${") ? v : null);
@@ -991,6 +1012,7 @@ ${res.text || t("delegate.empty")}`, res.isError);
           sessionId: given(a.session_id),
           stopHookActive: a.stop_hook_active === true || a.stop_hook_active === "true",
           cwd: given(a.cwd),
+          subagent: Boolean(given(a.agent_id)),
           signal: extra.signal,
         });
         return text(JSON.stringify(out));
