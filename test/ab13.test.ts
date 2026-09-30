@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DEFAULT_CONFIG } from "../src/core/config.js";
 import { nullLogger } from "../src/core/logger.js";
-import { isAutoApproved, isOwnServerCall, mcpToolOf } from "../src/core/tool-allow.js";
+import { isAutoApproved, isHandoffToolCall, isOwnServerCall, mcpToolOf } from "../src/core/tool-allow.js";
 import { buildHookResponse } from "../src/mcp/hooks.js";
 import type { ServerContext } from "../src/mcp/server.js";
 import { makeEnv, until, type TestEnv } from "./helpers.js";
@@ -33,6 +33,14 @@ describe("MCP tool allow-list", () => {
     expect(isAutoApproved(opencode, ["pair-desk"])).toBe(true);
     expect(isAutoApproved({ tool: "command", detail: "git push" }, ["*"])).toBe(false);
     expect(isAutoApproved(codex, [])).toBe(false);
+  });
+
+  it("recognizes handoff-writing tools of every CLI, not reading ones", () => {
+    expect(isHandoffToolCall({ tool: "mcp:pair-desk", detail: 'Allow the pair-desk MCP server to run tool "set_handoff"?' })).toBe(true);
+    expect(isHandoffToolCall({ tool: "mcp:plugin_agent-pair-programming_pair-desk", detail: "update_handoff: {}" })).toBe(true);
+    expect(isHandoffToolCall({ tool: "mcp:pair-desk", detail: "pair-desk_set_handoff: *" })).toBe(true);
+    expect(isHandoffToolCall(claude)).toBe(false);
+    expect(isHandoffToolCall({ tool: "command", detail: "set_handoff" })).toBe(false);
   });
 });
 

@@ -18,6 +18,7 @@ import { loadConfig } from "../core/config.js";
 import { openBrowser } from "./open.js";
 import { RELIABILITY_SECTIONS, runReliability } from "./reliability.js";
 import { runSmoke } from "./smoke.js";
+import { cleanupWorktrees } from "../core/worktree-cleanup.js";
 import { installOpencode, opencodeSourceDir, uninstallOpencode, type InstallResult } from "./opencode-install.js";
 
 const CLI_PEER_NAME = "cli";
@@ -163,6 +164,20 @@ async function main(argv: string[]): Promise<number> {
       out(res.files.length ? t("cli.opencode.removed", { dir: res.configDir }) : t("cli.opencode.nothing", { dir: res.configDir }));
       printResult(res);
       return 0;
+    }
+    case "cleanup": {
+      // Dry run unless --yes: removing worktrees cannot be undone.
+      const apply = (rest.includes("--yes") || rest.includes("-y")) && !rest.includes("--dry-run");
+      const entries = await cleanupWorktrees({ home, apply, log });
+      if (!entries.length) {
+        out(t("cli.cleanup.none", { dir: join(home, "worktrees") }));
+        return 0;
+      }
+      for (const e of entries) out(t("cli.cleanup.line", { action: e.action.padEnd(12), path: e.path, branch: e.branch ?? "-", reason: e.reason }));
+      const count = (a: string) => entries.filter((e) => e.action === a).length;
+      out(t("cli.cleanup.summary", { removed: count("removed"), would: count("would remove"), kept: count("kept"), failed: count("failed") }));
+      if (count("would remove")) out(t("cli.cleanup.dryRun"));
+      return count("failed") ? 1 : 0;
     }
     case "paths":
       out(t("cli.paths", { home, logs: join(home, LOG_DIR_NAME), db: resolveDbPath(home), pipe }));

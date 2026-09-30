@@ -74,6 +74,8 @@ export const DEFAULT_DELEGATE_TIMEOUT_SEC = 3_600;
 export const MAX_DELEGATE_TIMEOUT_SEC = 3_600;
 /** Background subagents have no practical limit; this cap only stops runaway processes. */
 export const MAX_JOB_TIMEOUT_SEC = 24 * 60 * 60;
+/** Subagent jobs of all sessions, kept across restarts so message_subagent can continue them (in the home folder; see jobs.ts). */
+export const JOBS_FILE = "jobs.json";
 export const DEFAULT_CLAUDE_BIN = "claude";
 export const DEFAULT_CODEX_BIN = "codex";
 export const DEFAULT_OPENCODE_BIN = "opencode";
