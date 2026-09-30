@@ -102,7 +102,7 @@ h3 .n { color: var(--faint); font-weight: 500; }
 .kids { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; color: var(--muted); }
 
 /* Subagent rows */
-.rows > a { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; gap: 14px; align-items: center; padding: 13px 16px; border-bottom: 1px solid var(--line); }
+.rows > a { position: relative; display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; gap: 14px; align-items: center; padding: 13px 16px; border-bottom: 1px solid var(--line); }
 .rows > a:last-child { border-bottom: 0; }
 .archive > summary { cursor: pointer; padding: 11px 16px; color: var(--muted); font-size: 13px; list-style: none; border-top: 1px solid var(--line); }
 .archive > summary::-webkit-details-marker { display: none; }
@@ -115,6 +115,9 @@ h3 .n { color: var(--faint); font-weight: 500; }
 .rows .line1 { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .rows .task { color: var(--muted); font-size: 13px; margin-top: 2px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
 .rows .side { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; font-size: 12px; color: var(--faint); }
+
+.bar { position: absolute; left: 16px; right: 16px; bottom: 5px; height: 3px; border-radius: 2px; background: var(--line); overflow: hidden; }
+.bar i { display: block; height: 100%; background: var(--busy); border-radius: 2px; transition: width .4s; }
 
 /* Messages */
 .msgs { max-height: 420px; overflow: auto; }
@@ -248,7 +251,7 @@ const norm = (p) => String(p || "").replace(/\\\\/g, "/").replace(/\\/+$/, "").t
 const folder = (p) => String(p || "").replace(/[\\\\/]+$/, "").split(/[\\\\/]/).pop() || p;
 const av = (agent, sm) => '<span class="av ' + (sm ? "sm " : "") + esc(agent) + '">' + esc((agent || "?")[0].toUpperCase()) + "</span>";
 const dot = (activity) => '<span class="dot ' + (activity === "busy" ? "busy" : activity === "idle" ? "idle" : "off") + '"></span>';
-const pill = (status) => '<span class="pill ' + status + '">' + (status === "running" ? "working" : status) + "</span>";
+const pill = (status, percent) => '<span class="pill ' + status + '">' + (status === "running" ? (typeof percent === "number" ? "working · " + percent + "%" : "working") : status) + "</span>";
 
 let state = null, model = null, route = parseRoute(), lastTo = "", pulling = false, lastChat = "";
 /** Loaded run logs: name -> { raw, offset, done }. */
@@ -306,6 +309,10 @@ function buildModel(s) {
     const last = g.turns[g.turns.length - 1];
     g.status = last.status; g.updatedAt = last.updatedAt; g.last = last.last; g.task = g.turns[0].task;
     g.startedAt = g.turns[0].startedAt;
+    g.title = (g.turns.find((t) => t.title) || {}).title || "";
+    // Progress the subagent reported in its current turn (only meaningful while it runs).
+    g.percent = g.status === "running" && typeof last.percent === "number" ? last.percent : null;
+    g.progressNote = last.progressNote || "";
   }
   const sessions = live.map((p) => ({ name: p.name, peer: p, live: true, groups: [], children: [] }));
   const byName = new Map(sessions.map((x) => [x.name, x]));
@@ -366,7 +373,8 @@ function groupRow(g, sel, showOwner) {
       : '<div style="min-width:0"><div class="line1"><b>' + esc(g.agent) + "</b>" + (g.model ? '<span class="chip ell">' + esc(g.model) + "</span>" : "") +
         (g.turns.length > 1 ? '<span class="chip">' + g.turns.length + " turns</span>" : "") + "</div>" +
         '<div class="task">' + esc(g.task || g.last) + "</div></div>") +
-    '<div class="side">' + pill(g.status) + "<span>" + (showOwner ? esc(g.owner) + " · " : "") + ago(g.updatedAt) + "</span></div></a>";
+    '<div class="side">' + pill(g.status, g.percent) + "<span>" + (showOwner ? esc(g.owner) + " · " : "") + ago(g.updatedAt) + "</span></div>" +
+    (g.percent !== null ? '<div class="bar" title="' + esc(g.percent + "% · " + g.progressNote) + '"><i style="width:' + g.percent + '%"></i></div>' : "") + "</a>";
 }
 
 /** How many subagents are working, finished, failed (overall and since midnight). */
@@ -500,7 +508,7 @@ function splitTurn(raw) {
 function renderConversation(g) {
   const first = g.turns[0], last = g.turns[g.turns.length - 1];
   $("cAvatar").innerHTML = av(g.agent);
-  $("cTitle").innerHTML = (g.title ? esc(g.title) + ' <span class="chip">' + esc(g.agent) + "</span>" : esc(g.agent)) + (g.model ? ' <span class="chip">' + esc(g.model) + "</span>" : "") + " " + pill(g.status);
+  $("cTitle").innerHTML = (g.title ? esc(g.title) + ' <span class="chip">' + esc(g.agent) + "</span>" : esc(g.agent)) + (g.model ? ' <span class="chip">' + esc(g.model) + "</span>" : "") + " " + pill(g.status, g.percent) + (g.progressNote && g.percent !== null ? ' <span class="small muted">' + esc(g.progressNote) + "</span>" : "");
   $("cSub").textContent = (g.owner === "earlier runs" ? "" : "started by " + g.owner + " · ") + time(first.startedAt) + " · " + (first.access || "default") + " access" + (first.workdir ? " · " + first.workdir : "");
   const hint = g.job && g.status !== "running"
     ? (g.status === "done" ? "Continue it with its context from " : "Recover it with its context from ") + esc(g.owner) + ': <code>message_subagent(job="' + esc(g.job) + '")</code>'
@@ -551,6 +559,7 @@ function stepsHtml(text, agent, run) {
   for (const e of parseEntries(text)) {
     if (e.text.startsWith("answer: ")) { items.push({ kind: "answer", text: e.text.slice(8) }); continue; }
     if (/^(started|still working)/.test(e.text)) continue;
+    if (/^progress \\d+%/.test(e.text)) { items.push({ kind: "sys", text: e.time.slice(0, 5) + " · " + e.text }); continue; }
     const live = /^(message from|answer to) ([^:]+): ([\\s\\S]*)$/.exec(e.text);
     if (live) { items.push({ kind: live[1] === "answer to" ? "say" : "live", who: live[2], text: live[3] }); continue; }
     if (/^finished after/.test(e.text)) { items.push({ kind: "sys", text: e.time.slice(0, 5) + " · " + e.text.replace(/ · (done|failed)$/, "").replace(/^finished/, "finished") }); continue; }

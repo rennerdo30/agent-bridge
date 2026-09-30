@@ -299,7 +299,7 @@ export const CODEX_ASK_HINT =
 // `opencode run` rejects every ask without --auto, so nothing is changed.
 export const OPENCODE_READ_ONLY_PERMISSIONS = { edit: "ask", bash: "ask" } as const;
 /** MCP tools (named <server>_<tool>) can change things too: read-only runs keep only agent-bridge's send (to answer the parent). */
-export const OPENCODE_READ_ONLY_TOOLS = { "*_*": false, bridge_send: true } as const;
+export const OPENCODE_READ_ONLY_TOOLS = { "*_*": false, bridge_send: true, bridge_report_progress: true } as const;
 
 export function childEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
   // The parent's project dir would point a delegated Claude (it may work in a worktree) at the wrong folder.
@@ -461,6 +461,7 @@ export function parseClaudeJson(stdout: string): { sessionId: string | null; tex
  */
 /** The agent-bridge plugin's "send" tool as Claude Code names it. */
 const CLAUDE_PARENT_SEND_TOOL = "mcp__plugin_agent-bridge_bridge__send";
+const CLAUDE_PARENT_PROGRESS_TOOL = "mcp__plugin_agent-bridge_bridge__report_progress";
 export const CLAUDE_READ_ONLY_DENIED_TOOLS = ["Write", "Edit", "MultiEdit", "NotebookEdit", "Bash", "PowerShell"];
 /** Whether a Claude subagent in this mode may only look (no edits, commands or MCP tools). */
 export function isClaudeReadOnly(mode: ClaudePermissionMode): boolean {
@@ -516,7 +517,7 @@ export async function delegateToClaude(
   if (req.model) args.push("--model", req.model);
   if (req.sessionId) args.push("--resume", req.sessionId);
   // Headless Claude denies MCP tools it would ask about: let it answer its parent (see parent-link.ts).
-  if (req.extraEnv?.[PARENT_URL_ENV]) args.push("--allowedTools", CLAUDE_PARENT_SEND_TOOL);
+  if (req.extraEnv?.[PARENT_URL_ENV]) args.push("--allowedTools", `${CLAUDE_PARENT_SEND_TOOL},${CLAUDE_PARENT_PROGRESS_TOOL}`);
   // Permission prompts (a command or MCP tool that needs approval) go to approve through a PermissionRequest
   // hook; without it headless Claude settles them on its own, unseen. Never for read-only runs: there the deny
   // list decides alone. The hook fires in `claude -p` since Claude Code 2.1.268; older versions skip it.

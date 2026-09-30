@@ -305,7 +305,7 @@ export async function runLiveChecks(o: LiveOptions): Promise<void> {
   };
   const model = (agent: CodingAgent) => (o.models[agent] ? { model: o.models[agent] } : {});
   const spawnLong = async (host: LiveHost, agent: CodingAgent): Promise<string> => {
-    const r = await host.call(`spawn_${agent}`, { prompt: LONG_TASK, timeout_sec: JOB_TIMEOUT_SEC, ...model(agent) });
+    const r = await host.call(`spawn_${agent}`, { title: "Reliability: read notes", prompt: LONG_TASK, timeout_sec: JOB_TIMEOUT_SEC, ...model(agent) });
     const job = jobNameIn(r.text);
     if (r.isError || !job) throw new Error(`spawn_${agent} failed: ${short(r.text)}`);
     return job;
@@ -353,7 +353,7 @@ export async function runLiveChecks(o: LiveOptions): Promise<void> {
           });
 
           await o.check(`${agent} follow-up keeps context`, async () => {
-            const asked = await server.call(`ask_${agent}`, { prompt: FACT_PROMPT, ...model(agent) }, RESULT_TIMEOUT_MS);
+            const asked = await server.call(`ask_${agent}`, { title: "Reliability: remember a fact", prompt: FACT_PROMPT, ...model(agent) }, RESULT_TIMEOUT_MS);
             const job = jobNameIn(asked.text);
             if (asked.isError || !job) return { pass: false, detail: `ask_${agent}: ${short(asked.text)}` };
             const sent = await server.call("message_subagent", { job, message: FACT_QUESTION });

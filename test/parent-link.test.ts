@@ -27,6 +27,17 @@ describe("parent link", () => {
     }
   });
 
+  it("carries the subagent's progress reports to the parent", async () => {
+    const reports: [number, string][] = [];
+    const link = new ParentLink("p", () => {}, nullLogger, (percent, note) => reports.push([percent, note]));
+    await link.start();
+    const child = parentFromEnv(link.childEnv())!;
+    await child.progress(40, "gate frame done");
+    expect(reports).toEqual([[40, "gate frame done"]]);
+    await expect(child.progress(140, "")).rejects.toThrow(/0-100/);
+    await link.close();
+  });
+
   it("hands back messages picked up but never answered", async () => {
     const link = new ParentLink("p", () => {}, nullLogger);
     await link.start();

@@ -51,6 +51,9 @@ export interface Job {
   resume?: Resume;
   /** Follow-ups that arrived while the job was running; sent as soon as it finishes. */
   queue: string[];
+  /** The subagent's own estimate of how far it is (report_progress), and its note. */
+  percent?: number;
+  progressNote?: string;
   /** MCP servers the parent allowed for this job (kept across its follow-ups). */
   allowedServers?: Set<string>;
   /** An approval question the subagent is waiting on; the next message to the job answers it. */

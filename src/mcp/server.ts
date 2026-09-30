@@ -55,8 +55,11 @@ const CWD_DISCOVERY_GRACE_MS = 15_000;
 const JOBS_FILE = "jobs.json";
 /** Subagent titles (ask_* / spawn_* `title`), like a chat title. */
 const MAX_TITLE_CHARS = 80;
+/** Added to a subagent's task when it can report progress. */
+const PROGRESS_HINT =
+  "(agent-bridge: while you work, call the report_progress tool of the agent-bridge MCP server with the percent of the whole task done and a few words on the current step: when you start, after each milestone, and at least every few minutes.)";
 /** The tools a delegated subagent's server offers (see registerTools). */
-const SUBAGENT_TOOLS = new Set(["peers", "send", "hook_event"]);
+const SUBAGENT_TOOLS = new Set(["peers", "send", "report_progress", "hook_event"]);
 /** The options of a job worth keeping to continue it the same way later (no prompt, no internals). */
 const KEPT_ARGS = ["model", "cwd", "timeout_sec", "worktree", "access", "sandbox", "permission_mode", "auto_approve", "allow_tools", "title"] as const;
 /** How long a background subagent waits for its parent agent to approve something before it counts as "deny". */
@@ -470,7 +473,7 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
       if (jobs.length) {
         lines.push(t("peers.jobs", { count: jobs.length }));
         for (const j of jobs) {
-          lines.push(t("peers.job", { name: j.name + (j.args?.title ? ` "${j.args.title}"` : ""), model: j.model ?? "default", duration: formatDuration(Date.now() - j.startedAt), progress: j.progress ?? "starting" }));
+          lines.push(t("peers.job", { name: j.name + (j.args?.title ? ` "${j.args.title}"` : ""), model: j.model ?? "default", duration: formatDuration(Date.now() - j.startedAt), progress: (j.percent !== undefined ? `${j.percent}% (${j.progressNote || "reported"}) · ` : "") + (j.progress ?? "starting") }));
         }
       }
       const recent = ctx.jobs?.recent() ?? [];
@@ -582,7 +585,7 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
   );
 
   /** _worktree: internal, a follow-up continuing in an existing worktree. */
-  type DelegateArgs = { prompt: string; model?: string; session_id?: string; cwd?: string; timeout_sec?: number; worktree?: boolean; allow_tools?: string[]; title?: string; _worktree?: Worktree; _job?: string } & TargetArgs;
+  type DelegateArgs = { prompt: string; model?: string; session_id?: string; cwd?: string; timeout_sec?: number; worktree?: boolean; allow_tools?: string[]; title: string; _worktree?: Worktree; _job?: string } & TargetArgs;
   const keep = (a: DelegateArgs): Record<string, unknown> => Object.fromEntries(KEPT_ARGS.filter((k) => a[k] !== undefined).map((k) => [k, a[k]]));
   const resumers: Partial<Record<CodingAgent, (a: DelegateArgs) => Resume>> = {};
   for (const target of targets) {
@@ -621,9 +624,9 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
         ),
       title: z
         .string()
+        .min(1)
         .max(MAX_TITLE_CHARS)
-        .optional()
-        .describe('A short title for this subagent, 3-7 words, like a chat title (e.g. "Fix castle gate alignment"). Shown in peers and the dashboard; please always set it.'),
+        .describe('A short title for this subagent, 3-7 words, like a chat title (e.g. "Fix castle gate alignment"). Required. Shown in peers and the dashboard.'),
       allow_tools: z
         .array(z.string().min(1).max(200))
         .max(50)
@@ -733,6 +736,12 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
             jobs.fromSubagent(job, body, replyTo);
           },
           dlog,
+          (percent, note) => {
+            job.percent = percent;
+            job.progressNote = note;
+            feed.meta({ percent, progressNote: note, progressAt: Date.now() });
+            feed.report(`progress ${percent}%${note ? `: ${note}` : ""}`);
+          },
         );
         try {
           await l.start();
@@ -760,7 +769,8 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
         res = await profile.run(
           cfg,
           {
-            prompt: a.prompt,
+            // With a live link the subagent can report how far it is (report_progress; shown in the dashboard).
+            prompt: link ? `${a.prompt}\n\n${PROGRESS_HINT}` : a.prompt,
             cwd: workdir,
             sessionId: a.session_id ?? null,
             timeoutSec: a.timeout_sec ?? (background ? MAX_JOB_TIMEOUT_SEC : DEFAULT_DELEGATE_TIMEOUT_SEC),
@@ -1000,6 +1010,27 @@ ${res.text || t("delegate.empty")}`, res.isError);
     }),
   );
 
+  // Only in subagents: their own estimate of how far they are, shown to the session that started them.
+  if (!node && ctx.parent) {
+    const parent = ctx.parent;
+    register(
+      "report_progress",
+      {
+        title: "Report progress",
+        description:
+          `Tell ${parent.name}, which gave you your current task, how far you are: the percent of the whole task done and a few words on the current step. ` +
+          "Call it when you start, after each milestone, and at least every few minutes. It does not interrupt your work.",
+        inputSchema: {
+          percent: z.number().min(0).max(100).describe("Percent of the whole task done, 0-100"),
+          note: z.string().max(200).optional().describe('The current step in a few words, e.g. "tests pass, updating docs"'),
+        },
+      },
+      guarded("report_progress", async (a: { percent: number; note?: string }) => {
+        await parent.progress(a.percent, a.note ?? "");
+        return text(t("progress.reported", { percent: Math.round(a.percent) }));
+      }),
+    );
+  }
   register(
     "hook_event",
     {

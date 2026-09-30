@@ -36490,7 +36490,7 @@ import { basename, join as join2 } from "node:path";
 import { homedir } from "node:os";
 import { join } from "node:path";
 var APP_NAME = "agent-bridge";
-var APP_VERSION = "0.18.0";
+var APP_VERSION = "0.19.0";
 var PROTOCOL_VERSION = 2;
 var ENV = {
   home: "AGENT_BRIDGE_HOME",
@@ -36795,16 +36795,20 @@ var PARENT_NAME_ENV = "AGENT_BRIDGE_PARENT_NAME";
 var HOST = "127.0.0.1";
 var SECRET_BYTES = 24;
 var MAX_REQUEST_BYTES = 256 * 1024;
+var MAX_NOTE_CHARS = 200;
 var CHILD_REQUEST_TIMEOUT_MS = 5e3;
 var ParentLink = class {
-  constructor(parentName, onMessage, log) {
+  constructor(parentName, onMessage, log, onProgress = () => {
+  }) {
     this.parentName = parentName;
     this.onMessage = onMessage;
     this.log = log;
+    this.onProgress = onProgress;
   }
   parentName;
   onMessage;
   log;
+  onProgress;
   server = null;
   secret = randomBytes2(SECRET_BYTES).toString("hex");
   url = "";
@@ -36859,13 +36863,15 @@ var ParentLink = class {
       if (messages.length) this.log.info("subagent picked up messages", { count: messages.length });
       return { messages };
     }
+    if (req.method === "POST" && req.url === "/progress") {
+      const body = JSON.parse(await readBody(req));
+      const percent = Math.round(Number(body.percent));
+      if (!Number.isFinite(percent) || percent < 0 || percent > 100) throw new Error("percent must be 0-100");
+      this.onProgress(percent, String(body.note ?? "").trim().slice(0, MAX_NOTE_CHARS));
+      return { ok: true };
+    }
     if (req.method === "POST" && req.url === "/message") {
-      let raw = "";
-      for await (const chunk of req) {
-        raw += chunk;
-        if (raw.length > MAX_REQUEST_BYTES) throw new Error("request too large");
-      }
-      const body = JSON.parse(raw);
+      const body = JSON.parse(await readBody(req));
       const text2 = String(body.body ?? "").trim();
       if (!text2) throw new Error("empty message");
       this.unanswered = [];
@@ -36875,6 +36881,14 @@ var ParentLink = class {
     throw new Error("not found");
   }
 };
+async function readBody(req) {
+  let raw = "";
+  for await (const chunk of req) {
+    raw += chunk;
+    if (raw.length > MAX_REQUEST_BYTES) throw new Error("request too large");
+  }
+  return raw;
+}
 function parentFromEnv(env = process.env) {
   const url2 = env[PARENT_URL_ENV];
   const token = env[PARENT_TOKEN_ENV];
@@ -36893,7 +36907,8 @@ function parentFromEnv(env = process.env) {
   return {
     name: env[PARENT_NAME_ENV] || "parent",
     inbox: async () => (await call("/inbox", {})).messages ?? [],
-    send: async (body, replyTo) => void await call("/message", { body, reply_to: replyTo ?? null })
+    send: async (body, replyTo) => void await call("/message", { body, reply_to: replyTo ?? null }),
+    progress: async (percent, note) => void await call("/progress", { percent, note })
   };
 }
 
@@ -37275,7 +37290,7 @@ var CODEX_RELAY_APPROVALS = 'approvals_reviewer="auto_review"';
 var CODEX_ASK_POLICY = 'approval_policy="on-request"';
 var CODEX_ASK_HINT = "(The workspace is read-only on purpose: when you need to change files or run a command the sandbox blocks, request escalated permissions for it. The user is asked and decides; if denied, stop and report.)";
 var OPENCODE_READ_ONLY_PERMISSIONS = { edit: "ask", bash: "ask" };
-var OPENCODE_READ_ONLY_TOOLS = { "*_*": false, bridge_send: true };
+var OPENCODE_READ_ONLY_TOOLS = { "*_*": false, bridge_send: true, bridge_report_progress: true };
 function childEnv(extra = {}) {
   const { CLAUDE_PROJECT_DIR: _parentProject, ...env } = process.env;
   return { ...env, ...extra, [DELEGATE_DEPTH_ENV]: String(currentDelegateDepth() + 1) };
@@ -37405,6 +37420,7 @@ function parseClaudeJson(stdout) {
   }
 }
 var CLAUDE_PARENT_SEND_TOOL = "mcp__plugin_agent-bridge_bridge__send";
+var CLAUDE_PARENT_PROGRESS_TOOL = "mcp__plugin_agent-bridge_bridge__report_progress";
 var CLAUDE_READ_ONLY_DENIED_TOOLS = ["Write", "Edit", "MultiEdit", "NotebookEdit", "Bash", "PowerShell"];
 function isClaudeReadOnly(mode) {
   return CLAUDE_READ_ONLY_MODES.has(mode);
@@ -37436,7 +37452,7 @@ async function delegateToClaude(req) {
   if (readOnly) args.push("--disallowedTools", [...CLAUDE_READ_ONLY_DENIED_TOOLS, ...claudeMcpDenyRules(req.cwd)].join(","));
   if (req.model) args.push("--model", req.model);
   if (req.sessionId) args.push("--resume", req.sessionId);
-  if (req.extraEnv?.[PARENT_URL_ENV]) args.push("--allowedTools", CLAUDE_PARENT_SEND_TOOL);
+  if (req.extraEnv?.[PARENT_URL_ENV]) args.push("--allowedTools", `${CLAUDE_PARENT_SEND_TOOL},${CLAUDE_PARENT_PROGRESS_TOOL}`);
   const hookCli = claudeForwardsPrompts(req.permissionMode, req) ? req.hookCli ?? bundledCli() : null;
   let relay = null;
   const extraEnv = { ...req.extraEnv };
@@ -37731,6 +37747,7 @@ var en = {
   "send.waitHint": "Use wait_for_message to wait for the answer.",
   "usage.none": "None of Codex, Claude Code or opencode is installed here.",
   "peers.subagent": "You are a subagent of {name}, which gave you your current task. Other sessions are not visible from here; to tell {name} something, use the send tool (it goes straight to {name}).",
+  "progress.reported": "Progress {percent}% reported. Go on with your task.",
   "send.toParent": "Sent to {name}, the session that gave you this task. Go on with your task.",
   "inbox.empty": "No unread messages.",
   "wait.timeout": "No message arrived within {seconds} seconds.",
@@ -40296,7 +40313,7 @@ h3 .n { color: var(--faint); font-weight: 500; }
 .kids { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; color: var(--muted); }
 
 /* Subagent rows */
-.rows > a { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; gap: 14px; align-items: center; padding: 13px 16px; border-bottom: 1px solid var(--line); }
+.rows > a { position: relative; display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; gap: 14px; align-items: center; padding: 13px 16px; border-bottom: 1px solid var(--line); }
 .rows > a:last-child { border-bottom: 0; }
 .archive > summary { cursor: pointer; padding: 11px 16px; color: var(--muted); font-size: 13px; list-style: none; border-top: 1px solid var(--line); }
 .archive > summary::-webkit-details-marker { display: none; }
@@ -40309,6 +40326,9 @@ h3 .n { color: var(--faint); font-weight: 500; }
 .rows .line1 { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .rows .task { color: var(--muted); font-size: 13px; margin-top: 2px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
 .rows .side { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; font-size: 12px; color: var(--faint); }
+
+.bar { position: absolute; left: 16px; right: 16px; bottom: 5px; height: 3px; border-radius: 2px; background: var(--line); overflow: hidden; }
+.bar i { display: block; height: 100%; background: var(--busy); border-radius: 2px; transition: width .4s; }
 
 /* Messages */
 .msgs { max-height: 420px; overflow: auto; }
@@ -40442,7 +40462,7 @@ const norm = (p) => String(p || "").replace(/\\\\/g, "/").replace(/\\/+$/, "").t
 const folder = (p) => String(p || "").replace(/[\\\\/]+$/, "").split(/[\\\\/]/).pop() || p;
 const av = (agent, sm) => '<span class="av ' + (sm ? "sm " : "") + esc(agent) + '">' + esc((agent || "?")[0].toUpperCase()) + "</span>";
 const dot = (activity) => '<span class="dot ' + (activity === "busy" ? "busy" : activity === "idle" ? "idle" : "off") + '"></span>';
-const pill = (status) => '<span class="pill ' + status + '">' + (status === "running" ? "working" : status) + "</span>";
+const pill = (status, percent) => '<span class="pill ' + status + '">' + (status === "running" ? (typeof percent === "number" ? "working \xB7 " + percent + "%" : "working") : status) + "</span>";
 
 let state = null, model = null, route = parseRoute(), lastTo = "", pulling = false, lastChat = "";
 /** Loaded run logs: name -> { raw, offset, done }. */
@@ -40500,6 +40520,10 @@ function buildModel(s) {
     const last = g.turns[g.turns.length - 1];
     g.status = last.status; g.updatedAt = last.updatedAt; g.last = last.last; g.task = g.turns[0].task;
     g.startedAt = g.turns[0].startedAt;
+    g.title = (g.turns.find((t) => t.title) || {}).title || "";
+    // Progress the subagent reported in its current turn (only meaningful while it runs).
+    g.percent = g.status === "running" && typeof last.percent === "number" ? last.percent : null;
+    g.progressNote = last.progressNote || "";
   }
   const sessions = live.map((p) => ({ name: p.name, peer: p, live: true, groups: [], children: [] }));
   const byName = new Map(sessions.map((x) => [x.name, x]));
@@ -40560,7 +40584,8 @@ function groupRow(g, sel, showOwner) {
       : '<div style="min-width:0"><div class="line1"><b>' + esc(g.agent) + "</b>" + (g.model ? '<span class="chip ell">' + esc(g.model) + "</span>" : "") +
         (g.turns.length > 1 ? '<span class="chip">' + g.turns.length + " turns</span>" : "") + "</div>" +
         '<div class="task">' + esc(g.task || g.last) + "</div></div>") +
-    '<div class="side">' + pill(g.status) + "<span>" + (showOwner ? esc(g.owner) + " \xB7 " : "") + ago(g.updatedAt) + "</span></div></a>";
+    '<div class="side">' + pill(g.status, g.percent) + "<span>" + (showOwner ? esc(g.owner) + " \xB7 " : "") + ago(g.updatedAt) + "</span></div>" +
+    (g.percent !== null ? '<div class="bar" title="' + esc(g.percent + "% \xB7 " + g.progressNote) + '"><i style="width:' + g.percent + '%"></i></div>' : "") + "</a>";
 }
 
 /** How many subagents are working, finished, failed (overall and since midnight). */
@@ -40694,7 +40719,7 @@ function splitTurn(raw) {
 function renderConversation(g) {
   const first = g.turns[0], last = g.turns[g.turns.length - 1];
   $("cAvatar").innerHTML = av(g.agent);
-  $("cTitle").innerHTML = (g.title ? esc(g.title) + ' <span class="chip">' + esc(g.agent) + "</span>" : esc(g.agent)) + (g.model ? ' <span class="chip">' + esc(g.model) + "</span>" : "") + " " + pill(g.status);
+  $("cTitle").innerHTML = (g.title ? esc(g.title) + ' <span class="chip">' + esc(g.agent) + "</span>" : esc(g.agent)) + (g.model ? ' <span class="chip">' + esc(g.model) + "</span>" : "") + " " + pill(g.status, g.percent) + (g.progressNote && g.percent !== null ? ' <span class="small muted">' + esc(g.progressNote) + "</span>" : "");
   $("cSub").textContent = (g.owner === "earlier runs" ? "" : "started by " + g.owner + " \xB7 ") + time(first.startedAt) + " \xB7 " + (first.access || "default") + " access" + (first.workdir ? " \xB7 " + first.workdir : "");
   const hint = g.job && g.status !== "running"
     ? (g.status === "done" ? "Continue it with its context from " : "Recover it with its context from ") + esc(g.owner) + ': <code>message_subagent(job="' + esc(g.job) + '")</code>'
@@ -40745,6 +40770,7 @@ function stepsHtml(text, agent, run) {
   for (const e of parseEntries(text)) {
     if (e.text.startsWith("answer: ")) { items.push({ kind: "answer", text: e.text.slice(8) }); continue; }
     if (/^(started|still working)/.test(e.text)) continue;
+    if (/^progress \\d+%/.test(e.text)) { items.push({ kind: "sys", text: e.time.slice(0, 5) + " \xB7 " + e.text }); continue; }
     const live = /^(message from|answer to) ([^:]+): ([\\s\\S]*)$/.exec(e.text);
     if (live) { items.push({ kind: live[1] === "answer to" ? "say" : "live", who: live[2], text: live[3] }); continue; }
     if (/^finished after/.test(e.text)) { items.push({ kind: "sys", text: e.time.slice(0, 5) + " \xB7 " + e.text.replace(/ \xB7 (done|failed)$/, "").replace(/^finished/, "finished") }); continue; }
@@ -41544,7 +41570,8 @@ var CODEX_SANDBOX_META = "codex/sandbox-state-meta";
 var CWD_DISCOVERY_GRACE_MS = 15e3;
 var JOBS_FILE = "jobs.json";
 var MAX_TITLE_CHARS = 80;
-var SUBAGENT_TOOLS = /* @__PURE__ */ new Set(["peers", "send", "hook_event"]);
+var PROGRESS_HINT = "(agent-bridge: while you work, call the report_progress tool of the agent-bridge MCP server with the percent of the whole task done and a few words on the current step: when you start, after each milestone, and at least every few minutes.)";
+var SUBAGENT_TOOLS = /* @__PURE__ */ new Set(["peers", "send", "report_progress", "hook_event"]);
 var KEPT_ARGS = ["model", "cwd", "timeout_sec", "worktree", "access", "sandbox", "permission_mode", "auto_approve", "allow_tools", "title"];
 var PARENT_APPROVAL_TIMEOUT_MS = 10 * 6e4;
 var PLUGIN_ROOT = resolve4(dirname6(fileURLToPath2(import.meta.url)), "..");
@@ -41841,7 +41868,7 @@ function registerTools(mcp, ctx, targets) {
       if (jobs.length) {
         lines.push(t("peers.jobs", { count: jobs.length }));
         for (const j of jobs) {
-          lines.push(t("peers.job", { name: j.name + (j.args?.title ? ` "${j.args.title}"` : ""), model: j.model ?? "default", duration: formatDuration(Date.now() - j.startedAt), progress: j.progress ?? "starting" }));
+          lines.push(t("peers.job", { name: j.name + (j.args?.title ? ` "${j.args.title}"` : ""), model: j.model ?? "default", duration: formatDuration(Date.now() - j.startedAt), progress: (j.percent !== void 0 ? `${j.percent}% (${j.progressNote || "reported"}) \xB7 ` : "") + (j.progress ?? "starting") }));
         }
       }
       const recent = ctx.jobs?.recent() ?? [];
@@ -41956,7 +41983,7 @@ function registerTools(mcp, ctx, targets) {
       worktree: external_exports.boolean().optional().describe(
         "Run in a separate git worktree on its own branch (implies access=edit). Your working copy stays untouched; the result explains how to review, merge or discard the changes."
       ),
-      title: external_exports.string().max(MAX_TITLE_CHARS).optional().describe('A short title for this subagent, 3-7 words, like a chat title (e.g. "Fix castle gate alignment"). Shown in peers and the dashboard; please always set it.'),
+      title: external_exports.string().min(1).max(MAX_TITLE_CHARS).describe('A short title for this subagent, 3-7 words, like a chat title (e.g. "Fix castle gate alignment"). Required. Shown in peers and the dashboard.'),
       allow_tools: external_exports.array(external_exports.string().min(1).max(200)).max(50).optional().describe(
         'MCP tools the subagent may call without asking you, as "server.tool" patterns with *, e.g. ["pair-desk.get_*", "pair-desk.list_*"] (read-only tools), or "server" for all of its tools.'
       ),
@@ -42048,7 +42075,13 @@ ${a.prompt}
             feed.report(`answer to ${me}: ${body.split("\n")[0].slice(0, 120)}`, `answer to ${me}: ${body}`);
             jobs.fromSubagent(job, body, replyTo);
           },
-          dlog
+          dlog,
+          (percent, note) => {
+            job.percent = percent;
+            job.progressNote = note;
+            feed.meta({ percent, progressNote: note, progressAt: Date.now() });
+            feed.report(`progress ${percent}%${note ? `: ${note}` : ""}`);
+          }
         );
         try {
           await l.start();
@@ -42074,7 +42107,10 @@ ${a.prompt}
         res = await profile.run(
           cfg,
           {
-            prompt: a.prompt,
+            // With a live link the subagent can report how far it is (report_progress; shown in the dashboard).
+            prompt: link ? `${a.prompt}
+
+${PROGRESS_HINT}` : a.prompt,
             cwd: workdir,
             sessionId: a.session_id ?? null,
             timeoutSec: a.timeout_sec ?? (background ? MAX_JOB_TIMEOUT_SEC : DEFAULT_DELEGATE_TIMEOUT_SEC),
@@ -42278,6 +42314,24 @@ ${r.lines.map((l) => `  ${l}`).join("\n")}`).join("\n\n"));
       return ctx.jobs?.cancel(a.job) ? text(t("jobs.cancelled", { name: a.job })) : text(t("jobs.unknown", { name: a.job }), true);
     })
   );
+  if (!node2 && ctx.parent) {
+    const parent = ctx.parent;
+    register(
+      "report_progress",
+      {
+        title: "Report progress",
+        description: `Tell ${parent.name}, which gave you your current task, how far you are: the percent of the whole task done and a few words on the current step. Call it when you start, after each milestone, and at least every few minutes. It does not interrupt your work.`,
+        inputSchema: {
+          percent: external_exports.number().min(0).max(100).describe("Percent of the whole task done, 0-100"),
+          note: external_exports.string().max(200).optional().describe('The current step in a few words, e.g. "tests pass, updating docs"')
+        }
+      },
+      guarded("report_progress", async (a) => {
+        await parent.progress(a.percent, a.note ?? "");
+        return text(t("progress.reported", { percent: Math.round(a.percent) }));
+      })
+    );
+  }
   register(
     "hook_event",
     {

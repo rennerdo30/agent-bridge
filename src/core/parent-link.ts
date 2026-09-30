@@ -18,6 +18,7 @@ export const PARENT_NAME_ENV = "AGENT_BRIDGE_PARENT_NAME";
 const HOST = "127.0.0.1";
 const SECRET_BYTES = 24;
 const MAX_REQUEST_BYTES = 256 * 1024;
+const MAX_NOTE_CHARS = 200;
 /** Child side: a hook must never hang on the parent. */
 const CHILD_REQUEST_TIMEOUT_MS = 5_000;
 
@@ -39,6 +40,8 @@ export class ParentLink {
     /** A message from the subagent to its parent. */
     private readonly onMessage: (body: string, replyTo: string | null) => void,
     private readonly log: Logger,
+    /** The subagent's own estimate of how far it is (report_progress). */
+    private readonly onProgress: (percent: number, note: string) => void = () => {},
   ) {}
 
   async start(): Promise<void> {
@@ -93,13 +96,14 @@ export class ParentLink {
       if (messages.length) this.log.info("subagent picked up messages", { count: messages.length });
       return { messages };
     }
-    if (req.method === "POST" && req.url === "/message") {
-      let raw = "";
-      for await (const chunk of req) {
-        raw += chunk;
-        if (raw.length > MAX_REQUEST_BYTES) throw new Error("request too large");
-      }
-      const body = JSON.parse(raw) as { body?: unknown; reply_to?: unknown };
+    if (req.method === "POST" && req.url === "/progress") {
+      const body = JSON.parse(await readBody(req)) as { percent?: unknown; note?: unknown };
+      const percent = Math.round(Number(body.percent));
+      if (!Number.isFinite(percent) || percent < 0 || percent > 100) throw new Error("percent must be 0-100");
+      this.onProgress(percent, String(body.note ?? "").trim().slice(0, MAX_NOTE_CHARS));
+      return { ok: true };
+    }    if (req.method === "POST" && req.url === "/message") {
+      const body = JSON.parse(await readBody(req)) as { body?: unknown; reply_to?: unknown };
       const text = String(body.body ?? "").trim();
       if (!text) throw new Error("empty message");
       // Any answer counts: the subagent has taken up what it was sent.
@@ -111,11 +115,21 @@ export class ParentLink {
   }
 }
 
+async function readBody(req: IncomingMessage): Promise<string> {
+  let raw = "";
+  for await (const chunk of req) {
+    raw += chunk;
+    if (raw.length > MAX_REQUEST_BYTES) throw new Error("request too large");
+  }
+  return raw;
+}
+
 /** Child side: the link to the session that runs this subagent, if there is one. */
 export interface ParentClient {
   name: string;
   inbox(): Promise<LinkMessage[]>;
   send(body: string, replyTo?: string): Promise<void>;
+  progress(percent: number, note: string): Promise<void>;
 }
 
 export function parentFromEnv(env: NodeJS.ProcessEnv = process.env): ParentClient | null {
@@ -137,5 +151,6 @@ export function parentFromEnv(env: NodeJS.ProcessEnv = process.env): ParentClien
     name: env[PARENT_NAME_ENV] || "parent",
     inbox: async () => ((await call("/inbox", {})).messages as LinkMessage[]) ?? [],
     send: async (body, replyTo) => void (await call("/message", { body, reply_to: replyTo ?? null })),
+    progress: async (percent, note) => void (await call("/progress", { percent, note })),
   };
 }

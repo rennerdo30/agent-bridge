@@ -29,6 +29,10 @@ export interface RunMeta {
   job?: string;
   /** Short title the starting agent gave the subagent. */
   title?: string;
+  /** The subagent's own progress estimate (report_progress) and when it came. */
+  percent?: number;
+  progressNote?: string;
+  progressAt?: number;
   model?: string | null;
   access?: string;
   workdir?: string;

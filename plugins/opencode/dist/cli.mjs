@@ -7714,7 +7714,7 @@ import { connect } from "node:net";
 import { homedir } from "node:os";
 import { join } from "node:path";
 var APP_NAME = "agent-bridge";
-var APP_VERSION = "0.18.0";
+var APP_VERSION = "0.19.0";
 var PROTOCOL_VERSION = 2;
 var ENV = {
   home: "AGENT_BRIDGE_HOME",
@@ -7918,6 +7918,7 @@ var en = {
   "send.waitHint": "Use wait_for_message to wait for the answer.",
   "usage.none": "None of Codex, Claude Code or opencode is installed here.",
   "peers.subagent": "You are a subagent of {name}, which gave you your current task. Other sessions are not visible from here; to tell {name} something, use the send tool (it goes straight to {name}).",
+  "progress.reported": "Progress {percent}% reported. Go on with your task.",
   "send.toParent": "Sent to {name}, the session that gave you this task. Go on with your task.",
   "inbox.empty": "No unread messages.",
   "wait.timeout": "No message arrived within {seconds} seconds.",
@@ -9404,7 +9405,7 @@ var CODEX_RELAY_APPROVALS = 'approvals_reviewer="auto_review"';
 var CODEX_ASK_POLICY = 'approval_policy="on-request"';
 var CODEX_ASK_HINT = "(The workspace is read-only on purpose: when you need to change files or run a command the sandbox blocks, request escalated permissions for it. The user is asked and decides; if denied, stop and report.)";
 var OPENCODE_READ_ONLY_PERMISSIONS = { edit: "ask", bash: "ask" };
-var OPENCODE_READ_ONLY_TOOLS = { "*_*": false, bridge_send: true };
+var OPENCODE_READ_ONLY_TOOLS = { "*_*": false, bridge_send: true, bridge_report_progress: true };
 function childEnv(extra = {}) {
   const { CLAUDE_PROJECT_DIR: _parentProject, ...env } = process.env;
   return { ...env, ...extra, [DELEGATE_DEPTH_ENV]: String(currentDelegateDepth() + 1) };
@@ -9534,6 +9535,7 @@ function parseClaudeJson(stdout) {
   }
 }
 var CLAUDE_PARENT_SEND_TOOL = "mcp__plugin_agent-bridge_bridge__send";
+var CLAUDE_PARENT_PROGRESS_TOOL = "mcp__plugin_agent-bridge_bridge__report_progress";
 var CLAUDE_READ_ONLY_DENIED_TOOLS = ["Write", "Edit", "MultiEdit", "NotebookEdit", "Bash", "PowerShell"];
 function isClaudeReadOnly(mode) {
   return CLAUDE_READ_ONLY_MODES.has(mode);
@@ -9565,7 +9567,7 @@ async function delegateToClaude(req) {
   if (readOnly) args.push("--disallowedTools", [...CLAUDE_READ_ONLY_DENIED_TOOLS, ...claudeMcpDenyRules(req.cwd)].join(","));
   if (req.model) args.push("--model", req.model);
   if (req.sessionId) args.push("--resume", req.sessionId);
-  if (req.extraEnv?.[PARENT_URL_ENV]) args.push("--allowedTools", CLAUDE_PARENT_SEND_TOOL);
+  if (req.extraEnv?.[PARENT_URL_ENV]) args.push("--allowedTools", `${CLAUDE_PARENT_SEND_TOOL},${CLAUDE_PARENT_PROGRESS_TOOL}`);
   const hookCli = claudeForwardsPrompts(req.permissionMode, req) ? req.hookCli ?? bundledCli() : null;
   let relay = null;
   const extraEnv = { ...req.extraEnv };
@@ -10310,7 +10312,7 @@ h3 .n { color: var(--faint); font-weight: 500; }
 .kids { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; color: var(--muted); }
 
 /* Subagent rows */
-.rows > a { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; gap: 14px; align-items: center; padding: 13px 16px; border-bottom: 1px solid var(--line); }
+.rows > a { position: relative; display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; gap: 14px; align-items: center; padding: 13px 16px; border-bottom: 1px solid var(--line); }
 .rows > a:last-child { border-bottom: 0; }
 .archive > summary { cursor: pointer; padding: 11px 16px; color: var(--muted); font-size: 13px; list-style: none; border-top: 1px solid var(--line); }
 .archive > summary::-webkit-details-marker { display: none; }
@@ -10323,6 +10325,9 @@ h3 .n { color: var(--faint); font-weight: 500; }
 .rows .line1 { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .rows .task { color: var(--muted); font-size: 13px; margin-top: 2px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
 .rows .side { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; font-size: 12px; color: var(--faint); }
+
+.bar { position: absolute; left: 16px; right: 16px; bottom: 5px; height: 3px; border-radius: 2px; background: var(--line); overflow: hidden; }
+.bar i { display: block; height: 100%; background: var(--busy); border-radius: 2px; transition: width .4s; }
 
 /* Messages */
 .msgs { max-height: 420px; overflow: auto; }
@@ -10456,7 +10461,7 @@ const norm = (p) => String(p || "").replace(/\\\\/g, "/").replace(/\\/+$/, "").t
 const folder = (p) => String(p || "").replace(/[\\\\/]+$/, "").split(/[\\\\/]/).pop() || p;
 const av = (agent, sm) => '<span class="av ' + (sm ? "sm " : "") + esc(agent) + '">' + esc((agent || "?")[0].toUpperCase()) + "</span>";
 const dot = (activity) => '<span class="dot ' + (activity === "busy" ? "busy" : activity === "idle" ? "idle" : "off") + '"></span>';
-const pill = (status) => '<span class="pill ' + status + '">' + (status === "running" ? "working" : status) + "</span>";
+const pill = (status, percent) => '<span class="pill ' + status + '">' + (status === "running" ? (typeof percent === "number" ? "working \xB7 " + percent + "%" : "working") : status) + "</span>";
 
 let state = null, model = null, route = parseRoute(), lastTo = "", pulling = false, lastChat = "";
 /** Loaded run logs: name -> { raw, offset, done }. */
@@ -10514,6 +10519,10 @@ function buildModel(s) {
     const last = g.turns[g.turns.length - 1];
     g.status = last.status; g.updatedAt = last.updatedAt; g.last = last.last; g.task = g.turns[0].task;
     g.startedAt = g.turns[0].startedAt;
+    g.title = (g.turns.find((t) => t.title) || {}).title || "";
+    // Progress the subagent reported in its current turn (only meaningful while it runs).
+    g.percent = g.status === "running" && typeof last.percent === "number" ? last.percent : null;
+    g.progressNote = last.progressNote || "";
   }
   const sessions = live.map((p) => ({ name: p.name, peer: p, live: true, groups: [], children: [] }));
   const byName = new Map(sessions.map((x) => [x.name, x]));
@@ -10574,7 +10583,8 @@ function groupRow(g, sel, showOwner) {
       : '<div style="min-width:0"><div class="line1"><b>' + esc(g.agent) + "</b>" + (g.model ? '<span class="chip ell">' + esc(g.model) + "</span>" : "") +
         (g.turns.length > 1 ? '<span class="chip">' + g.turns.length + " turns</span>" : "") + "</div>" +
         '<div class="task">' + esc(g.task || g.last) + "</div></div>") +
-    '<div class="side">' + pill(g.status) + "<span>" + (showOwner ? esc(g.owner) + " \xB7 " : "") + ago(g.updatedAt) + "</span></div></a>";
+    '<div class="side">' + pill(g.status, g.percent) + "<span>" + (showOwner ? esc(g.owner) + " \xB7 " : "") + ago(g.updatedAt) + "</span></div>" +
+    (g.percent !== null ? '<div class="bar" title="' + esc(g.percent + "% \xB7 " + g.progressNote) + '"><i style="width:' + g.percent + '%"></i></div>' : "") + "</a>";
 }
 
 /** How many subagents are working, finished, failed (overall and since midnight). */
@@ -10708,7 +10718,7 @@ function splitTurn(raw) {
 function renderConversation(g) {
   const first = g.turns[0], last = g.turns[g.turns.length - 1];
   $("cAvatar").innerHTML = av(g.agent);
-  $("cTitle").innerHTML = (g.title ? esc(g.title) + ' <span class="chip">' + esc(g.agent) + "</span>" : esc(g.agent)) + (g.model ? ' <span class="chip">' + esc(g.model) + "</span>" : "") + " " + pill(g.status);
+  $("cTitle").innerHTML = (g.title ? esc(g.title) + ' <span class="chip">' + esc(g.agent) + "</span>" : esc(g.agent)) + (g.model ? ' <span class="chip">' + esc(g.model) + "</span>" : "") + " " + pill(g.status, g.percent) + (g.progressNote && g.percent !== null ? ' <span class="small muted">' + esc(g.progressNote) + "</span>" : "");
   $("cSub").textContent = (g.owner === "earlier runs" ? "" : "started by " + g.owner + " \xB7 ") + time(first.startedAt) + " \xB7 " + (first.access || "default") + " access" + (first.workdir ? " \xB7 " + first.workdir : "");
   const hint = g.job && g.status !== "running"
     ? (g.status === "done" ? "Continue it with its context from " : "Recover it with its context from ") + esc(g.owner) + ': <code>message_subagent(job="' + esc(g.job) + '")</code>'
@@ -10759,6 +10769,7 @@ function stepsHtml(text, agent, run) {
   for (const e of parseEntries(text)) {
     if (e.text.startsWith("answer: ")) { items.push({ kind: "answer", text: e.text.slice(8) }); continue; }
     if (/^(started|still working)/.test(e.text)) continue;
+    if (/^progress \\d+%/.test(e.text)) { items.push({ kind: "sys", text: e.time.slice(0, 5) + " \xB7 " + e.text }); continue; }
     const live = /^(message from|answer to) ([^:]+): ([\\s\\S]*)$/.exec(e.text);
     if (live) { items.push({ kind: live[1] === "answer to" ? "say" : "live", who: live[2], text: live[3] }); continue; }
     if (/^finished after/.test(e.text)) { items.push({ kind: "sys", text: e.time.slice(0, 5) + " \xB7 " + e.text.replace(/ \xB7 (done|failed)$/, "").replace(/^finished/, "finished") }); continue; }
@@ -21846,7 +21857,7 @@ async function runLiveChecks(o) {
   };
   const model = (agent) => o.models[agent] ? { model: o.models[agent] } : {};
   const spawnLong = async (host, agent) => {
-    const r = await host.call(`spawn_${agent}`, { prompt: LONG_TASK, timeout_sec: JOB_TIMEOUT_SEC, ...model(agent) });
+    const r = await host.call(`spawn_${agent}`, { title: "Reliability: read notes", prompt: LONG_TASK, timeout_sec: JOB_TIMEOUT_SEC, ...model(agent) });
     const job = jobNameIn(r.text);
     if (r.isError || !job) throw new Error(`spawn_${agent} failed: ${short(r.text)}`);
     return job;
@@ -21891,7 +21902,7 @@ async function runLiveChecks(o) {
             }
           });
           await o.check(`${agent} follow-up keeps context`, async () => {
-            const asked = await server.call(`ask_${agent}`, { prompt: FACT_PROMPT, ...model(agent) }, RESULT_TIMEOUT_MS);
+            const asked = await server.call(`ask_${agent}`, { title: "Reliability: remember a fact", prompt: FACT_PROMPT, ...model(agent) }, RESULT_TIMEOUT_MS);
             const job = jobNameIn(asked.text);
             if (asked.isError || !job) return { pass: false, detail: `ask_${agent}: ${short(asked.text)}` };
             const sent = await server.call("message_subagent", { job, message: FACT_QUESTION });
