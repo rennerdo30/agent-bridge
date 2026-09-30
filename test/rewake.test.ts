@@ -34,9 +34,9 @@ afterEach(async () => {
 });
 
 /** Run the real hook command the way Claude Code does (JSON on stdin). */
-function runHook(sessionId: string): Promise<{ code: number | null; stderr: string }> {
+function runHook(sessionId: string, standby = false): Promise<{ code: number | null; stderr: string }> {
   return new Promise((resolve) => {
-    const child = spawn(process.execPath, [CLI, "rewake-hook"], { env: { ...process.env, AGENT_BRIDGE_HOME: env.home } });
+    const child = spawn(process.execPath, [CLI, "rewake-hook", ...(standby ? ["--standby"] : [])], { env: { ...process.env, AGENT_BRIDGE_HOME: env.home } });
     let stderr = "";
     child.stderr.on("data", (d) => (stderr += d));
     child.on("close", (code) => resolve({ code, stderr }));
@@ -71,7 +71,7 @@ describe.skipIf(!existsSync(CLI))("background wake-ups", () => {
       channelActive: () => false,
       jobs,
       rewakeAvailable: true,
-      wakeDelivery: { confirm: () => rewake.confirmDelivery(), release: () => rewake.releaseUndelivered() },
+      wakeDelivery: { confirm: () => rewake.confirmDelivery(), release: () => rewake.releaseUndelivered(), active: () => rewake.sessionActive() },
     } as ServerContext;
     const hook = runHook("sess-1");
     await until(() => rewake.waiting, 10_000);
@@ -94,7 +94,7 @@ describe.skipIf(!existsSync(CLI))("background wake-ups", () => {
       channelActive: () => false,
       jobs,
       rewakeAvailable: true,
-      wakeDelivery: { confirm: () => rewake.confirmDelivery(), release: () => rewake.releaseUndelivered() },
+      wakeDelivery: { confirm: () => rewake.confirmDelivery(), release: () => rewake.releaseUndelivered(), active: () => rewake.sessionActive() },
     } as ServerContext;
     const hook = runHook("sess-1");
     await until(() => rewake.waiting, 10_000);
@@ -104,6 +104,49 @@ describe.skipIf(!existsSync(CLI))("background wake-ups", () => {
     expect(await buildHookResponse(ctx, { event: "PostToolUse", sessionId: null, stopHookActive: false })).toEqual({});
     expect(me.unread()).toHaveLength(0);
   });
+
+  it("treats the wake-up's own prompt as delivery, not as a new user prompt", async () => {
+    const ctx = {
+      agent: "claude",
+      cfg: { ...DEFAULT_CONFIG },
+      node: me,
+      log: nullLogger,
+      home: env.home,
+      cwd: () => env.home,
+      channelActive: () => false,
+      jobs,
+      rewakeAvailable: true,
+      wakeDelivery: { confirm: () => rewake.confirmDelivery(), release: () => rewake.releaseUndelivered(), active: () => rewake.sessionActive() },
+    } as ServerContext;
+    const hook = runHook("sess-1");
+    await until(() => rewake.waiting, 10_000);
+    jobs.start("codex", null, "task", async () => result("towers are done"));
+    const { stderr } = await hook;
+    // Claude Code runs the prompt hook for the wake-up's text: no second copy of the message.
+    expect(await buildHookResponse(ctx, { event: "UserPromptSubmit", sessionId: null, stopHookActive: false, prompt: `Stop hook feedback: ${stderr}` })).toEqual({});
+    expect(me.unread()).toHaveLength(0);
+  });
+
+  it("retries a wake-up that Claude Code did not take through the standby hook", async () => {
+    const primary = runHook("sess-1");
+    const standby = runHook("sess-1", true);
+    await until(() => rewake.waiting, 10_000);
+    jobs.start("codex", null, "task", async () => result("bridges are done"));
+    expect((await primary).code).toBe(2);
+    // No session activity follows: after the confirmation window the standby wakes with the same message.
+    const second = await standby;
+    expect(second.code).toBe(2);
+    expect(second.stderr).toContain("bridges are done");
+  }, 40_000);
+
+  it("wakes through the standby for a result that arrives when nothing else waits", async () => {
+    const standby = runHook("sess-1", true);
+    await new Promise((r) => setTimeout(r, 500));
+    jobs.start("codex", null, "task", async () => result("walls are done"));
+    const { code, stderr } = await standby;
+    expect(code).toBe(2);
+    expect(stderr).toContain("walls are done");
+  }, 20_000);
 
   it("wakes for a reply to a question this session asked, not for unrelated chatter", async () => {
     const peer = env.node("codex-r", "codex");

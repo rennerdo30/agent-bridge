@@ -19,7 +19,7 @@
             "type": "mcp_tool",
             "server": "plugin:agent-bridge:bridge",
             "tool": "hook_event",
-            "input": { "event": "UserPromptSubmit", "session_id": "${session_id}", "cwd": "${cwd}" }
+            "input": { "event": "UserPromptSubmit", "session_id": "${session_id}", "cwd": "${cwd}", "prompt": "${prompt}" }
           }
         ]
       }
@@ -49,6 +49,14 @@
             "type": "command",
             "command": "node",
             "args": ["${CLAUDE_PLUGIN_ROOT}/dist/cli.mjs", "rewake-hook"],
+            "async": true,
+            "asyncRewake": true,
+            "timeout": 7200
+          },
+          {
+            "type": "command",
+            "command": "node",
+            "args": ["${CLAUDE_PLUGIN_ROOT}/dist/cli.mjs", "rewake-hook", "--standby"],
             "async": true,
             "asyncRewake": true,
             "timeout": 7200

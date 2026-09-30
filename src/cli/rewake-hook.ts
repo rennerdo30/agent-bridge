@@ -17,7 +17,8 @@ async function readStdin(): Promise<string> {
   return raw;
 }
 
-export async function runRewakeHook(): Promise<number> {
+/** `standby`: the second hook of a turn end, which retries a wake-up that Claude Code did not take. */
+export async function runRewakeHook(standby = false): Promise<number> {
   let sessionId = "";
   try {
     sessionId = String(JSON.parse((await readStdin()) || "{}").session_id ?? "");
@@ -35,7 +36,7 @@ export async function runRewakeHook(): Promise<number> {
   while (Date.now() < deadline) {
     let res: Response;
     try {
-      res = await fetch(`http://127.0.0.1:${reg.port}/wait`, { headers: { authorization: `Bearer ${reg.secret}` } });
+      res = await fetch(`http://127.0.0.1:${reg.port}/wait${standby ? "?role=standby" : ""}`, { headers: { authorization: `Bearer ${reg.secret}` } });
     } catch {
       return 0; // the session's server is gone
     }

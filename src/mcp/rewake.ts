@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { createServer, type Server } from "node:http";
+import { createServer, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { join } from "node:path";
 import type { Logger } from "../core/logger.js";
@@ -18,10 +18,16 @@ import { formatMessages } from "./format.js";
  * wakes the session with them. So the turn never has to stay open waiting.
  */
 export const SESSIONS_DIR = "sessions";
+/** How a wake-up's text starts; the prompt hook recognizes its own wake-up turn by it. */
+export const WAKE_HEADER = "[agent-bridge] Something you were waiting for arrived:";
 const HOST = "127.0.0.1";
 const SECRET_BYTES = 24;
 /** One long poll; the hook polls again until its own timeout. */
 export const REWAKE_POLL_MS = 4 * 60 * 1000; // below fetch's 5-minute response-headers timeout
+/** No session activity this long after a wake-up: Claude Code did not take it, retry through the standby hook. */
+export const WAKE_CONFIRM_MS = 20_000;
+/** The standby waits this long before taking a message, so a starting turn's own hook gets it first. */
+const STANDBY_GRACE_MS = 3_000;
 
 export interface RewakeRegistration {
   port: number;
@@ -42,6 +48,9 @@ export class RewakeEndpoint {
   private waiter: AbortController | null = null;
   /** Messages handed to a wake-up that the session has not shown activity for yet. */
   private readonly handedOut = new Set<string>();
+  /** The second hook of a turn end, waiting to retry a wake-up that did not start a turn. */
+  private standby: { ac: AbortController; release: (reason: string) => void; wake: () => void } | null = null;
+  private confirmTimer: NodeJS.Timeout | undefined;
 
   constructor(
     private readonly home: string,
@@ -58,29 +67,8 @@ export class RewakeEndpoint {
         res.writeHead(403).end();
         return;
       }
-      // A new waiter means a turn ended since the last wake-up, so that wake-up was delivered.
-      this.confirmDelivery();
-      this.waiter?.abort("superseded");
-      const ac = new AbortController();
-      this.waiter = ac;
-      res.on("close", () => ac.abort("closed"));
-      void this.node.waitForMessage(REWAKE_POLL_MS, this.shouldWake, ac.signal).then((first) => {
-        if (this.waiter === ac) this.waiter = null;
-        let text = "";
-        if (first && !res.destroyed) {
-          const msgs = this.node.unread().filter(this.shouldWake);
-          // Not marked read yet: Claude Code does not always turn a hook's wake-up into a turn. They count as
-          // delivered once the session shows activity (confirmDelivery); until then the next prompt or turn
-          // still gets them.
-          for (const m of msgs) this.handedOut.add(m.id);
-          text = formatMessages(msgs, { header: "[agent-bridge] Something you were waiting for arrived:" });
-          this.log.info("waking the session", { count: msgs.length });
-        }
-        if (res.destroyed) return;
-        res.writeHead(200, { "content-type": "application/json" });
-        // superseded: a newer turn's hook waits now, so this one should end quietly.
-        res.end(JSON.stringify({ text, superseded: ac.signal.reason === "superseded" }));
-      });
+      if (url.searchParams.get("role") === "standby") this.waitStandby(res);
+      else this.waitPrimary(res);
     });
     this.server.requestTimeout = 0;
     this.server.headersTimeout = 0;
@@ -91,14 +79,106 @@ export class RewakeEndpoint {
     this.port = (this.server.address() as AddressInfo).port;
   }
 
+  private reply(res: ServerResponse, text: string, superseded: boolean): void {
+    if (res.destroyed) return;
+    res.writeHead(200, { "content-type": "application/json" });
+    // superseded: a newer turn's hook waits now, so this one should end quietly.
+    res.end(JSON.stringify({ text, superseded }));
+  }
+
+  /** Hand the waiting messages to a wake-up; they stay unread until the session shows activity. */
+  private handOut(): string {
+    const msgs = this.node.unread().filter(this.shouldWake);
+    // Not marked read yet: Claude Code does not always turn a hook's wake-up into a turn. They count as
+    // delivered once the session shows activity (confirmDelivery); until then a retry, the next prompt or
+    // the next turn still gets them.
+    for (const m of msgs) this.handedOut.add(m.id);
+    return formatMessages(msgs, { header: WAKE_HEADER });
+  }
+
+  /** The turn-end hook: wakes the session for the next message that should wake it. */
+  private waitPrimary(res: ServerResponse): void {
+    // A new waiter means a turn ended since the last wake-up, so that wake-up was delivered.
+    this.confirmDelivery();
+    this.waiter?.abort("superseded");
+    const ac = new AbortController();
+    this.waiter = ac;
+    res.on("close", () => ac.abort("closed"));
+    void this.node.waitForMessage(REWAKE_POLL_MS, this.shouldWake, ac.signal).then((first) => {
+      if (this.waiter === ac) this.waiter = null;
+      let text = "";
+      if (first && !res.destroyed) {
+        text = this.handOut();
+        this.log.info("waking the session", { count: this.handedOut.size });
+        // If no activity follows, Claude Code dropped the wake-up: the standby hook tries again.
+        clearTimeout(this.confirmTimer);
+        this.confirmTimer = setTimeout(() => this.retryWake(), WAKE_CONFIRM_MS);
+        this.confirmTimer.unref();
+      }
+      this.reply(res, text, ac.signal.reason === "superseded");
+    });
+  }
+
+  /**
+   * A second hook from the same turn end. It wakes the session when the first one's wake-up was not taken
+   * (retryWake), or when a message arrives while nothing else waits (the first one already woke the session
+   * once and Claude Code did not start a turn). Released as soon as the session is active again.
+   */
+  private waitStandby(res: ServerResponse): void {
+    this.standby?.release("superseded");
+    const ac = new AbortController();
+    let done = false;
+    const finish = (text: string, superseded: boolean) => {
+      if (done) return;
+      done = true;
+      ac.abort("done");
+      if (this.standby?.ac === ac) this.standby = null;
+      this.reply(res, text, superseded);
+    };
+    // Released (a newer turn end, or the session is active again): the hook ends instead of polling on.
+    this.standby = { ac, release: () => finish("", true), wake: () => finish(this.handOut(), false) };
+    res.on("close", () => finish("", false));
+    // A message nobody else waits for: take it (after a short grace, in case a new turn's hook is starting).
+    const loop = () =>
+      void this.node
+        .waitForMessage(REWAKE_POLL_MS, (m) => this.shouldWake(m) && !this.handedOut.has(m.id) && !this.waiter, ac.signal)
+        .then((m) => {
+          if (done) return;
+          if (!m) return finish("", false);
+          setTimeout(() => {
+            if (done) return;
+            if (this.waiter || this.handedOut.has(m.id)) return loop();
+            this.log.info("waking the session (standby)", { reason: "no other hook waiting" });
+            this.standby?.wake();
+          }, STANDBY_GRACE_MS).unref();
+        });
+    loop();
+  }
+
+  /** The first wake-up was not confirmed: give the same messages to the standby hook. */
+  private retryWake(): void {
+    if (this.handedOut.size === 0) return;
+    if (!this.standby) {
+      this.log.warn("a wake-up was not taken and no standby hook waits; the messages go out with the next prompt", { count: this.handedOut.size });
+      return;
+    }
+    this.log.warn("a wake-up was not taken; trying again through the standby hook", { count: this.handedOut.size });
+    this.standby.wake();
+  }
   /**
    * The session is active (a hook of it ran, or a new waiter started after a turn): the messages of the
    * last wake-up reached it. Called before hooks inject unread mail, so they are not shown twice.
    */
   confirmDelivery(): void {
+    clearTimeout(this.confirmTimer);
     if (this.handedOut.size === 0) return;
     this.node.markRead([...this.handedOut]);
     this.handedOut.clear();
+  }
+
+  /** A turn is running (tool calls, a prompt): the standby of the previous turn end is not needed anymore. */
+  sessionActive(): void {
+    this.standby?.release("active");
   }
 
   /** The wake-up was lost (a new prompt came first): its messages go out with that prompt instead. */
@@ -126,6 +206,8 @@ export class RewakeEndpoint {
 
   async stop(): Promise<void> {
     this.waiter?.abort("superseded");
+    this.standby?.release("superseded");
+    clearTimeout(this.confirmTimer);
     if (this.registered) rmSync(sessionFile(this.home, this.registered), { force: true });
     const s = this.server;
     this.server = null;

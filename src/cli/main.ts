@@ -123,7 +123,7 @@ async function main(argv: string[]): Promise<number> {
       return 0;
     }
     case "rewake-hook":
-      return runRewakeHook();
+      return runRewakeHook(rest.includes("--standby"));
     case "permission-hook":
       return runPermissionHook(rest[0]);
     case "reliability": {

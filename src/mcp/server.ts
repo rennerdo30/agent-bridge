@@ -35,6 +35,7 @@ import { askUserViaElicitation } from "./permissions.js";
 import { PermissionRelay, type PermissionDecision, type PermissionRequest } from "../core/relay.js";
 import { codexPermissionHookHash, codexPermissionHookTrusted, recordCodexHookObservation } from "../core/codex-trust.js";
 import { startRunFeed } from "../core/runfeed.js";
+import { saveAutoWake, savedAutoWake } from "../core/auto-wake-pref.js";
 import { isAutoApproved } from "../core/tool-allow.js";
 import { ParentLink, parentFromEnv, type ParentClient } from "../core/parent-link.js";
 import { findRunningDashboard, hostDashboard, type DashboardInfo, type HostedDashboard } from "../cli/dashboard.js";
@@ -144,7 +145,7 @@ export interface ServerContext {
   /** Delegated subagents: the live link to the session that runs them. */
   parent?: ParentClient | null;
   /** Claude Code: messages handed to a wake-up count as delivered only once the session shows activity. */
-  wakeDelivery?: { confirm: () => void; release: () => void };
+  wakeDelivery?: { confirm: () => void; release: () => void; active: () => void };
   /** A headless `claude -p` run: stays off the bridge unless one of its tools is used. */
   headless?: boolean;
   /** Resolves once `headless` is known (hooks can fire before the launch was inspected). */
@@ -229,7 +230,8 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
         // Until the project dir is known, the folder name would be the plugin version.
         name: cfg.name ?? defaultPeerName(agent, cwdKnown ? cwd : ""),
         cwd,
-        autoWake: cfg.autoWake,
+        // What the user last chose for this session survives /reload-plugins and restarts.
+        autoWake: savedAutoWake(home, cfg.name ?? defaultPeerName(agent, cwdKnown ? cwd : "")) ?? cfg.autoWake,
         log,
       });
 
@@ -330,7 +332,7 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
       await rewake.start();
       ctx.rewakeAvailable = true;
       ctx.onSessionId = (sid) => rewake?.register(sid);
-      ctx.wakeDelivery = { confirm: () => rewake?.confirmDelivery(), release: () => rewake?.releaseUndelivered() };
+      ctx.wakeDelivery = { confirm: () => rewake?.confirmDelivery(), release: () => rewake?.releaseUndelivered(), active: () => rewake?.sessionActive() };
     } catch (err) {
       log.warn("background wake-ups unavailable", { err: (err as Error).message });
       rewake = null;
@@ -572,6 +574,7 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
     guarded("auto_wake", async (a: { enabled: boolean }) => {
       const n = requireNode();
       await n.setAutoWake(a.enabled);
+      saveAutoWake(ctx.home, n.name, a.enabled);
       return text(a.enabled ? t("autoWake.on", { maxHops: cfg.maxHops }) : t("autoWake.off"));
     }),
   );
@@ -1000,9 +1003,10 @@ ${res.text || t("delegate.empty")}`, res.isError);
         stop_hook_active: z.union([z.boolean(), z.string()]).optional(),
         cwd: z.string().optional(),
         agent_id: z.string().optional(),
+        prompt: z.string().optional(),
       },
     },
-    async (a: { event: string; session_id?: string; stop_hook_active?: boolean | string; cwd?: string; agent_id?: string }, extra: ToolExtra) => {
+    async (a: { event: string; session_id?: string; stop_hook_active?: boolean | string; cwd?: string; agent_id?: string; prompt?: string }, extra: ToolExtra) => {
       await ctx.observeMeta?.(extra._meta);
       // An unsubstituted "${...}" template means the host had no value for that field.
       const given = (v: string | undefined) => (v && !v.startsWith("${") ? v : null);
@@ -1013,6 +1017,7 @@ ${res.text || t("delegate.empty")}`, res.isError);
           stopHookActive: a.stop_hook_active === true || a.stop_hook_active === "true",
           cwd: given(a.cwd),
           subagent: Boolean(given(a.agent_id)),
+          prompt: given(a.prompt),
           signal: extra.signal,
         });
         return text(JSON.stringify(out));

@@ -1,6 +1,7 @@
 import { HOOK_MAX_MESSAGES, STOP_WAIT_CAP_MS } from "../core/constants.js";
 import type { BridgeMessage } from "../core/protocol.js";
 import { formatMessages, formatParentMessages, formatPeer } from "./format.js";
+import { WAKE_HEADER } from "./rewake.js";
 import type { ServerContext } from "./server.js";
 
 /** Hook events agent-bridge subscribes to in both Claude Code and Codex. */
@@ -10,6 +11,8 @@ export interface HookInput {
   event: HookEvent;
   sessionId: string | null;
   stopHookActive: boolean;
+  /** UserPromptSubmit: the prompt text (to recognize agent-bridge's own wake-up turns). */
+  prompt?: string | null;
   /** The hook fired inside a native subagent (Claude Code's agent_id), not for the main agent. */
   subagent?: boolean;
   /** Session working directory from the hook input, when the host provides it. */
@@ -80,8 +83,11 @@ export async function buildHookResponse(ctx: ServerContext, input: HookInput): P
   if (input.subagent) return {};
   // A wake-up's messages reached the session if a turn is running (tool calls, turn end); if a prompt or a new
   // session comes first, the wake-up was lost and they are shown again below.
-  if (input.event === "PostToolUse" || input.event === "Stop") ctx.wakeDelivery?.confirm();
-  else ctx.wakeDelivery?.release();  // With a live channel, Claude Code receives messages by push; hooks would only duplicate them.
+  // The wake-up's own turn starts with a prompt carrying its text: that is delivery, not a new user prompt.
+  const wakeTurn = input.event === "UserPromptSubmit" && Boolean(input.prompt?.includes(WAKE_HEADER));
+  if (input.event === "PostToolUse" || input.event === "Stop" || wakeTurn) ctx.wakeDelivery?.confirm();
+  else ctx.wakeDelivery?.release();
+  if (input.event === "PostToolUse" || input.event === "UserPromptSubmit") ctx.wakeDelivery?.active();  // With a live channel, Claude Code receives messages by push; hooks would only duplicate them.
   const channel = ctx.channelActive();
 
   switch (input.event) {

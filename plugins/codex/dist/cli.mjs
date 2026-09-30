@@ -7714,7 +7714,7 @@ import { connect } from "node:net";
 import { homedir } from "node:os";
 import { join } from "node:path";
 var APP_NAME = "agent-bridge";
-var APP_VERSION = "0.16.3";
+var APP_VERSION = "0.17.0";
 var PROTOCOL_VERSION = 2;
 var ENV = {
   home: "AGENT_BRIDGE_HOME",
@@ -10028,7 +10028,7 @@ async function readStdin2() {
   for await (const chunk of process.stdin) raw += chunk;
   return raw;
 }
-async function runRewakeHook() {
+async function runRewakeHook(standby = false) {
   let sessionId = "";
   try {
     sessionId = String(JSON.parse(await readStdin2() || "{}").session_id ?? "");
@@ -10046,7 +10046,7 @@ async function runRewakeHook() {
   while (Date.now() < deadline) {
     let res;
     try {
-      res = await fetch(`http://127.0.0.1:${reg.port}/wait`, { headers: { authorization: `Bearer ${reg.secret}` } });
+      res = await fetch(`http://127.0.0.1:${reg.port}/wait${standby ? "?role=standby" : ""}`, { headers: { authorization: `Bearer ${reg.secret}` } });
     } catch {
       return 0;
     }
@@ -22349,7 +22349,7 @@ async function main(argv) {
       return 0;
     }
     case "rewake-hook":
-      return runRewakeHook();
+      return runRewakeHook(rest.includes("--standby"));
     case "permission-hook":
       return runPermissionHook(rest[0]);
     case "reliability": {
