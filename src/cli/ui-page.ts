@@ -263,7 +263,13 @@ function parseRoute() {
 function href(session, group) {
   return session ? "#/s/" + encodeURIComponent(session) + (group ? "/" + encodeURIComponent(group) : "") : "#/";
 }
-window.addEventListener("hashchange", () => { route = parseRoute(); lastChat = ""; window.scrollTo(0, 0); render(); });
+window.addEventListener("hashchange", () => {
+  const previous = route.session;
+  route = parseRoute(); lastChat = "";
+  // A new tab starts at the top; picking a subagent in the same session keeps the list where it is.
+  if (route.session !== previous) window.scrollTo(0, 0);
+  render();
+});
 
 /** Which session started a run: its peer name, or (renamed since) the live session of that agent in that folder. */
 function ownerOf(r, live) {
