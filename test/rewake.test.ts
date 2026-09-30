@@ -54,7 +54,55 @@ describe.skipIf(!existsSync(CLI))("background wake-ups", () => {
     const { code, stderr } = await hook;
     expect(code).toBe(2);
     expect(stderr).toContain("interiors are done");
-    expect(me.unread()).toHaveLength(0); // delivered once
+    // Handed to the wake-up, but only read once the session shows activity.
+    expect(me.unread()).toHaveLength(1);
+    rewake.confirmDelivery();
+    expect(me.unread()).toHaveLength(0);
+  });
+
+  it("keeps a lost wake-up's messages for the next prompt instead of dropping them", async () => {
+    const ctx = {
+      agent: "claude",
+      cfg: { ...DEFAULT_CONFIG },
+      node: me,
+      log: nullLogger,
+      home: env.home,
+      cwd: () => env.home,
+      channelActive: () => false,
+      jobs,
+      rewakeAvailable: true,
+      wakeDelivery: { confirm: () => rewake.confirmDelivery(), release: () => rewake.releaseUndelivered() },
+    } as ServerContext;
+    const hook = runHook("sess-1");
+    await until(() => rewake.waiting, 10_000);
+    jobs.start("codex", null, "task", async () => result("caves are done"));
+    expect((await hook).code).toBe(2);
+    // Claude Code never started the wake-up's turn; the user writes next.
+    const out = (await buildHookResponse(ctx, { event: "UserPromptSubmit", sessionId: null, stopHookActive: false })) as { hookSpecificOutput?: { additionalContext: string } };
+    expect(out.hookSpecificOutput?.additionalContext).toContain("caves are done");
+    expect(me.unread()).toHaveLength(0);
+  });
+
+  it("does not show a delivered wake-up's messages again in its own turn", async () => {
+    const ctx = {
+      agent: "claude",
+      cfg: { ...DEFAULT_CONFIG },
+      node: me,
+      log: nullLogger,
+      home: env.home,
+      cwd: () => env.home,
+      channelActive: () => false,
+      jobs,
+      rewakeAvailable: true,
+      wakeDelivery: { confirm: () => rewake.confirmDelivery(), release: () => rewake.releaseUndelivered() },
+    } as ServerContext;
+    const hook = runHook("sess-1");
+    await until(() => rewake.waiting, 10_000);
+    jobs.start("codex", null, "task", async () => result("bridges are done"));
+    expect((await hook).code).toBe(2);
+    // The wake-up's turn runs a tool: its messages are not injected a second time.
+    expect(await buildHookResponse(ctx, { event: "PostToolUse", sessionId: null, stopHookActive: false })).toEqual({});
+    expect(me.unread()).toHaveLength(0);
   });
 
   it("wakes for a reply to a question this session asked, not for unrelated chatter", async () => {

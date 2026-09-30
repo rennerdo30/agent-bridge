@@ -71,7 +71,10 @@ export async function buildHookResponse(ctx: ServerContext, input: HookInput): P
   if (input.cwd) await ctx.learnCwd?.(input.cwd);
   // Joining may have been deferred until the project dir was known.
   await node.ensureConnected().catch((err) => ctx.log.warn("bridge not reachable from hook", { err: (err as Error).message }));
-  // With a live channel, Claude Code receives messages by push; hooks would only duplicate them.
+  // A wake-up's messages reached the session if a turn is running (tool calls, turn end); if a prompt or a new
+  // session comes first, the wake-up was lost and they are shown again below.
+  if (input.event === "PostToolUse" || input.event === "Stop") ctx.wakeDelivery?.confirm();
+  else ctx.wakeDelivery?.release();  // With a live channel, Claude Code receives messages by push; hooks would only duplicate them.
   const channel = ctx.channelActive();
 
   switch (input.event) {

@@ -36490,7 +36490,7 @@ import { basename, join as join2 } from "node:path";
 import { homedir } from "node:os";
 import { join } from "node:path";
 var APP_NAME = "agent-bridge";
-var APP_VERSION = "0.14.1";
+var APP_VERSION = "0.14.2";
 var PROTOCOL_VERSION = 2;
 var ENV = {
   home: "AGENT_BRIDGE_HOME",
@@ -39013,6 +39013,8 @@ async function buildHookResponse(ctx, input2) {
   }
   if (input2.cwd) await ctx.learnCwd?.(input2.cwd);
   await node2.ensureConnected().catch((err) => ctx.log.warn("bridge not reachable from hook", { err: err.message }));
+  if (input2.event === "PostToolUse" || input2.event === "Stop") ctx.wakeDelivery?.confirm();
+  else ctx.wakeDelivery?.release();
   const channel = ctx.channelActive();
   switch (input2.event) {
     case "SessionStart": {
@@ -40675,6 +40677,8 @@ var RewakeEndpoint = class {
   registered = null;
   /** Only the newest waiter gets messages; an older one (from an earlier turn) is released empty. */
   waiter = null;
+  /** Messages handed to a wake-up that the session has not shown activity for yet. */
+  handedOut = /* @__PURE__ */ new Set();
   async start() {
     this.server = createServer5((req, res) => {
       const url2 = new URL(req.url ?? "/", `http://${HOST2}`);
@@ -40682,6 +40686,7 @@ var RewakeEndpoint = class {
         res.writeHead(403).end();
         return;
       }
+      this.confirmDelivery();
       this.waiter?.abort("superseded");
       const ac = new AbortController();
       this.waiter = ac;
@@ -40691,7 +40696,7 @@ var RewakeEndpoint = class {
         let text2 = "";
         if (first && !res.destroyed) {
           const msgs = this.node.unread().filter(this.shouldWake);
-          this.node.markRead(msgs.map((m) => m.id));
+          for (const m of msgs) this.handedOut.add(m.id);
           text2 = formatMessages(msgs, { header: "[agent-bridge] Something you were waiting for arrived:" });
           this.log.info("waking the session", { count: msgs.length });
         }
@@ -40707,6 +40712,20 @@ var RewakeEndpoint = class {
       this.server.listen(0, HOST2, () => resolve5());
     });
     this.port = this.server.address().port;
+  }
+  /**
+   * The session is active (a hook of it ran, or a new waiter started after a turn): the messages of the
+   * last wake-up reached it. Called before hooks inject unread mail, so they are not shown twice.
+   */
+  confirmDelivery() {
+    if (this.handedOut.size === 0) return;
+    this.node.markRead([...this.handedOut]);
+    this.handedOut.clear();
+  }
+  /** The wake-up was lost (a new prompt came first): its messages go out with that prompt instead. */
+  releaseUndelivered() {
+    if (this.handedOut.size) this.log.warn("a wake-up did not reach the session; delivering its messages with the next prompt", { count: this.handedOut.size });
+    this.handedOut.clear();
   }
   /** Whether a hook is currently waiting (used by tests and diagnostics). */
   get waiting() {
@@ -41361,6 +41380,7 @@ async function startServer(argv = process.argv.slice(2)) {
       await rewake.start();
       ctx.rewakeAvailable = true;
       ctx.onSessionId = (sid) => rewake?.register(sid);
+      ctx.wakeDelivery = { confirm: () => rewake?.confirmDelivery(), release: () => rewake?.releaseUndelivered() };
     } catch (err) {
       log.warn("background wake-ups unavailable", { err: err.message });
       rewake = null;

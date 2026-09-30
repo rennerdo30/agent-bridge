@@ -141,6 +141,8 @@ export interface ServerContext {
   rewakeAvailable?: boolean;
   /** Delegated subagents: the live link to the session that runs them. */
   parent?: ParentClient | null;
+  /** Claude Code: messages handed to a wake-up count as delivered only once the session shows activity. */
+  wakeDelivery?: { confirm: () => void; release: () => void };
   /** Called when a hook reports the host's session id. */
   onSessionId?: (sessionId: string) => void;
   /** Open (starting if needed) the web dashboard; returns its link. */
@@ -320,6 +322,7 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
       await rewake.start();
       ctx.rewakeAvailable = true;
       ctx.onSessionId = (sid) => rewake?.register(sid);
+      ctx.wakeDelivery = { confirm: () => rewake?.confirmDelivery(), release: () => rewake?.releaseUndelivered() };
     } catch (err) {
       log.warn("background wake-ups unavailable", { err: (err as Error).message });
       rewake = null;

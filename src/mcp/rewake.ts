@@ -40,6 +40,8 @@ export class RewakeEndpoint {
   private registered: string | null = null;
   /** Only the newest waiter gets messages; an older one (from an earlier turn) is released empty. */
   private waiter: AbortController | null = null;
+  /** Messages handed to a wake-up that the session has not shown activity for yet. */
+  private readonly handedOut = new Set<string>();
 
   constructor(
     private readonly home: string,
@@ -56,6 +58,8 @@ export class RewakeEndpoint {
         res.writeHead(403).end();
         return;
       }
+      // A new waiter means a turn ended since the last wake-up, so that wake-up was delivered.
+      this.confirmDelivery();
       this.waiter?.abort("superseded");
       const ac = new AbortController();
       this.waiter = ac;
@@ -65,7 +69,10 @@ export class RewakeEndpoint {
         let text = "";
         if (first && !res.destroyed) {
           const msgs = this.node.unread().filter(this.shouldWake);
-          this.node.markRead(msgs.map((m) => m.id));
+          // Not marked read yet: Claude Code does not always turn a hook's wake-up into a turn. They count as
+          // delivered once the session shows activity (confirmDelivery); until then the next prompt or turn
+          // still gets them.
+          for (const m of msgs) this.handedOut.add(m.id);
           text = formatMessages(msgs, { header: "[agent-bridge] Something you were waiting for arrived:" });
           this.log.info("waking the session", { count: msgs.length });
         }
@@ -82,6 +89,22 @@ export class RewakeEndpoint {
       this.server!.listen(0, HOST, () => resolve());
     });
     this.port = (this.server.address() as AddressInfo).port;
+  }
+
+  /**
+   * The session is active (a hook of it ran, or a new waiter started after a turn): the messages of the
+   * last wake-up reached it. Called before hooks inject unread mail, so they are not shown twice.
+   */
+  confirmDelivery(): void {
+    if (this.handedOut.size === 0) return;
+    this.node.markRead([...this.handedOut]);
+    this.handedOut.clear();
+  }
+
+  /** The wake-up was lost (a new prompt came first): its messages go out with that prompt instead. */
+  releaseUndelivered(): void {
+    if (this.handedOut.size) this.log.warn("a wake-up did not reach the session; delivering its messages with the next prompt", { count: this.handedOut.size });
+    this.handedOut.clear();
   }
 
   /** Whether a hook is currently waiting (used by tests and diagnostics). */
