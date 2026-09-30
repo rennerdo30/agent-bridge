@@ -1,0 +1,22 @@
+/**
+ * The agent-bridge logo: an arch built from two halves, Claude coral and Codex mint, that meet in a spark,
+ * the message passing between them. A deep indigo tile keeps it readable on light and dark tabs alike.
+ * Used in the dashboard header and as its favicon.
+ */
+export const LOGO_SVG =
+  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="agent-bridge">' +
+  "<defs>" +
+  '<linearGradient id="ab-bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#1e1b4b"/><stop offset="1" stop-color="#4338ca"/></linearGradient>' +
+  '<linearGradient id="ab-l" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffb088"/><stop offset="1" stop-color="#e2603b"/></linearGradient>' +
+  '<linearGradient id="ab-r" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#7cf0c0"/><stop offset="1" stop-color="#0e9f6e"/></linearGradient>' +
+  '<radialGradient id="ab-glow"><stop offset="0" stop-color="#fff" stop-opacity=".55"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></radialGradient>' +
+  "</defs>" +
+  '<rect width="64" height="64" rx="16" fill="url(#ab-bg)"/>' +
+  '<path d="M9 52V32A20 20 0 0 1 27 12.1v10.2A10 10 0 0 0 19 32v20z" fill="url(#ab-l)"/>' +
+  '<path d="M55 52V32A20 20 0 0 0 37 12.1v10.2A10 10 0 0 1 45 32v20z" fill="url(#ab-r)"/>' +
+  '<circle cx="32" cy="17" r="11" fill="url(#ab-glow)"/>' +
+  '<path d="M32 9.5c.9 4.6 2.9 6.6 7.5 7.5-4.6.9-6.6 2.9-7.5 7.5-.9-4.6-2.9-6.6-7.5-7.5 4.6-.9 6.6-2.9 7.5-7.5z" fill="#fff"/>' +
+  "</svg>";
+
+/** The logo as a favicon link target. */
+export const FAVICON_HREF = `data:image/svg+xml,${encodeURIComponent(LOGO_SVG)}`;

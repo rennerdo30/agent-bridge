@@ -127,6 +127,30 @@ describe.skipIf(!existsSync(CLI))("background wake-ups", () => {
     expect(me.unread()).toHaveLength(0);
   });
 
+  it("leaves mid-turn results to the tool hooks instead of the previous turn end's waiter", async () => {
+    const ctx = {
+      agent: "claude",
+      cfg: { ...DEFAULT_CONFIG },
+      node: me,
+      log: nullLogger,
+      home: env.home,
+      cwd: () => env.home,
+      channelActive: () => false,
+      jobs,
+      rewakeAvailable: true,
+      wakeDelivery: { confirm: () => rewake.confirmDelivery(), release: () => rewake.releaseUndelivered(), active: () => rewake.sessionActive() },
+    } as ServerContext;
+    const hook = runHook("sess-1");
+    await until(() => rewake.waiting, 10_000);
+    // The user starts a new turn: the old waiter ends without taking anything.
+    await buildHookResponse(ctx, { event: "UserPromptSubmit", sessionId: null, stopHookActive: false, prompt: "go on" });
+    expect((await hook).code).toBe(0);
+    jobs.start("codex", null, "task", async () => result("gates are done"));
+    await until(() => me.unread().length === 1);
+    const out = (await buildHookResponse(ctx, { event: "PostToolUse", sessionId: null, stopHookActive: false })) as { hookSpecificOutput?: { additionalContext: string } };
+    expect(out.hookSpecificOutput?.additionalContext).toContain("gates are done");
+  });
+
   it("retries a wake-up that Claude Code did not take through the standby hook", async () => {
     const primary = runHook("sess-1");
     const standby = runHook("sess-1", true);

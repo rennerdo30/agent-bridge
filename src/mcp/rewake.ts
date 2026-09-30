@@ -176,8 +176,14 @@ export class RewakeEndpoint {
     this.handedOut.clear();
   }
 
-  /** A turn is running (tool calls, a prompt): the standby of the previous turn end is not needed anymore. */
+  /**
+   * A turn is running (tool calls, a prompt): the hooks of the previous turn end are not needed anymore.
+   * The primary one must go too: a message it took mid-turn would become a wake-up Claude Code does not start
+   * while busy, and the next tool call would count it as delivered. Mid-turn messages go out with the tool
+   * hooks instead, and the next turn end starts a fresh waiter.
+   */
   sessionActive(): void {
+    this.waiter?.abort("superseded");
     this.standby?.release("active");
   }
 

@@ -87,7 +87,8 @@ export async function buildHookResponse(ctx: ServerContext, input: HookInput): P
   const wakeTurn = input.event === "UserPromptSubmit" && Boolean(input.prompt?.includes(WAKE_HEADER));
   if (input.event === "PostToolUse" || input.event === "Stop" || wakeTurn) ctx.wakeDelivery?.confirm();
   else ctx.wakeDelivery?.release();
-  if (input.event === "PostToolUse" || input.event === "UserPromptSubmit") ctx.wakeDelivery?.active();  // With a live channel, Claude Code receives messages by push; hooks would only duplicate them.
+  if (input.event === "PostToolUse" || input.event === "UserPromptSubmit") ctx.wakeDelivery?.active();
+  // With a live channel, Claude Code receives messages by push; hooks would only duplicate them.
   const channel = ctx.channelActive();
 
   switch (input.event) {

@@ -1,3 +1,5 @@
+<img src="assets/logo.svg" alt="" width="72" height="72">
+
 # agent-bridge
 
 **Let Claude Code, OpenAI Codex and opencode talk to each other.**

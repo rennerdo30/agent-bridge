@@ -3,6 +3,7 @@
  * Overview of all sessions, plus a tab per session with the subagents it started, each shown as a
  * conversation (task, steps, answer, follow-ups).
  */
+import { FAVICON_HREF, LOGO_SVG } from "./logo.js";
 import { renderMarkdown } from "./markdown.js";
 
 /**
@@ -17,6 +18,8 @@ export const UI_PAGE = `<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>agent-bridge</title>
+<link rel="icon" type="image/svg+xml" href="${FAVICON_HREF}">
+<script>try { const t = localStorage.getItem("ab-theme"); if (t === "light" || t === "dark") document.documentElement.dataset.theme = t; } catch {}</script>
 <style>
 :root {
   --bg: #f4f5f7; --panel: #ffffff; --panel-2: #f8f9fb; --text: #161b26; --muted: #6b7385; --faint: #9aa1b1; --line: #e4e7ec;
@@ -28,13 +31,21 @@ export const UI_PAGE = `<!doctype html>
   color-scheme: light;
 }
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --bg: #0e1116; --panel: #161a21; --panel-2: #1b2029; --text: #e7e9ee; --muted: #9aa3b5; --faint: #6b7385; --line: #262c37;
     --accent: #8b87ff; --accent-soft: #23234a; --ok: #4ade80; --ok-soft: #14301f; --warn: #fbbf24; --warn-soft: #33280f;
     --bad: #fb923c; --bad-soft: #3a2012; --busy: #60a5fa; --busy-soft: #16263f;
     --shadow: none;
     color-scheme: dark;
   }
+}
+/* Chosen in the header: dark regardless of the system. */
+:root[data-theme="dark"] {
+  --bg: #0e1116; --panel: #161a21; --panel-2: #1b2029; --text: #e7e9ee; --muted: #9aa3b5; --faint: #6b7385; --line: #262c37;
+  --accent: #8b87ff; --accent-soft: #23234a; --ok: #4ade80; --ok-soft: #14301f; --warn: #fbbf24; --warn-soft: #33280f;
+  --bad: #fb923c; --bad-soft: #3a2012; --busy: #60a5fa; --busy-soft: #16263f;
+  --shadow: none;
+  color-scheme: dark;
 }
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; -webkit-font-smoothing: antialiased; }
@@ -45,7 +56,13 @@ a { color: inherit; text-decoration: none; }
 header { position: sticky; top: 0; z-index: 5; background: var(--panel); border-bottom: 1px solid var(--line); }
 .top { display: flex; align-items: center; justify-content: space-between; gap: 12px; height: 56px; }
 .brand { display: flex; align-items: center; gap: 10px; font-weight: 650; font-size: 15px; }
-.logo { width: 26px; height: 26px; border-radius: 7px; background: linear-gradient(135deg, var(--claude), var(--codex) 55%, var(--opencode)); }
+.logo { width: 28px; height: 28px; display: block; }
+.logo svg { width: 100%; height: 100%; display: block; }
+.right { display: flex; align-items: center; gap: 14px; }
+.theme { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.theme button { background: transparent; color: var(--muted); border: 0; border-radius: 0; padding: 4px 10px; font-size: 12px; font-weight: 500; cursor: pointer; }
+.theme button + button { border-left: 1px solid var(--line); }
+.theme button.on { background: var(--accent-soft); color: var(--text); }
 .conn { display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px; color: var(--muted); }
 nav { display: flex; gap: 4px; overflow-x: auto; scrollbar-width: none; }
 nav a { display: inline-flex; align-items: center; gap: 7px; padding: 10px 12px; color: var(--muted); border-bottom: 2px solid transparent; white-space: nowrap; font-size: 13.5px; }
@@ -193,8 +210,11 @@ details[open] > summary::before { content: "▾ "; }
 <header>
   <div class="wrap">
     <div class="top">
-      <div class="brand"><span class="logo"></span>agent-bridge</div>
-      <span class="conn" id="status">connecting…</span>
+      <div class="brand"><span class="logo">${LOGO_SVG}</span>agent-bridge</div>
+      <div class="right">
+        <span class="conn" id="status">connecting…</span>
+        <div class="theme" id="theme" role="group" aria-label="Theme"><button data-theme="auto">Auto</button><button data-theme="light">Light</button><button data-theme="dark">Dark</button></div>
+      </div>
     </div>
     <nav id="tabs"></nav>
   </div>
@@ -633,6 +653,22 @@ $("send").addEventListener("submit", async (e) => {
   }
 });
 
+/** Auto follows the system; Light and Dark override it. Remembered in this browser. */
+function applyTheme(theme) {
+  const root = document.documentElement;
+  if (theme === "light" || theme === "dark") root.dataset.theme = theme;
+  else delete root.dataset.theme;
+  try {
+    if (theme === "light" || theme === "dark") localStorage.setItem("ab-theme", theme);
+    else localStorage.removeItem("ab-theme");
+  } catch {}
+  document.querySelectorAll("#theme button").forEach((b) => b.classList.toggle("on", b.dataset.theme === (theme || "auto")));
+}
+$("theme").addEventListener("click", (e) => {
+  const b = e.target.closest("button");
+  if (b) applyTheme(b.dataset.theme);
+});
+applyTheme(document.documentElement.dataset.theme || "auto");
 poll();
 setInterval(poll, POLL_MS);
 </script>

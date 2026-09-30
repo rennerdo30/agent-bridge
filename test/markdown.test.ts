@@ -20,7 +20,8 @@ describe("dashboard markdown", () => {
   });
 
   it("is embedded in the page and runs there", () => {
-    const script = UI_PAGE.split("<script>")[1]!.split("</script>")[0]!;
+    // The main script is the last one (a tiny theme script runs first in <head>).
+    const script = UI_PAGE.split("<script>").pop()!.split("</script>")[0]!;
     expect(() => new Function(script)).not.toThrow();
     expect(script).toContain(MARKDOWN_SOURCE);
     // Run the embedded copy the way the page does (no bundler helpers around).
