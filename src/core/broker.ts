@@ -150,7 +150,7 @@ export class Broker {
       this.conns.delete(conn);
       if (conn.peer) {
         this.log.info("peer left", { name: conn.peer.name, agent: conn.peer.agent });
-        this.broadcastEvent("peer_left", conn.peer, conn);
+        if (!conn.peer.jobAgent) this.broadcastEvent("peer_left", conn.peer, conn);
       }
     });
   }
@@ -189,8 +189,9 @@ export class Broker {
     return conn.peer;
   }
 
+  /** Sessions, without job runners (they are reached by name only; see job-host.ts). */
   private livePeers(): PeerInfo[] {
-    return [...this.conns].flatMap((c) => (c.peer ? [c.peer] : []));
+    return [...this.conns].flatMap((c) => (c.peer && !c.peer.jobAgent ? [c.peer] : []));
   }
 
   private connByName(name: string): Conn | undefined {
@@ -240,14 +241,19 @@ export class Broker {
       autoWake: Boolean(p.autoWake),
       activity: p.activity === "busy" || p.activity === "idle" ? p.activity : null,
       version: typeof p.version === "string" ? p.version.slice(0, 32) : undefined,
+      ...(p.jobAgent && AGENT_KINDS.includes(p.jobAgent) ? { jobAgent: p.jobAgent } : {}),
     };
     conn.peer = peer;
     if (peer.sessionId) this.replaceStale(conn, peer);
-    this.expireStaleQueue(agentQueueKey(peer.agent));
     this.expireStaleQueue(peer.name);
-    const claimed = this.store.claim(agentQueueKey(peer.agent), peer.name);
-    this.log.info("peer joined", { name, agent: peer.agent, cwd: peer.cwd, claimed });
-    this.broadcastEvent("peer_joined", peer, conn);
+    // A job runner is no session of its agent kind: it never takes mail waiting for "any <agent>".
+    let claimed = 0;
+    if (!peer.jobAgent) {
+      this.expireStaleQueue(agentQueueKey(peer.agent));
+      claimed = this.store.claim(agentQueueKey(peer.agent), peer.name);
+    }
+    this.log.info("peer joined", { name, agent: peer.agent, jobAgent: peer.jobAgent, cwd: peer.cwd, claimed });
+    if (!peer.jobAgent) this.broadcastEvent("peer_joined", peer, conn);
     // Deliver the backlog right after the hello response has been written.
     setImmediate(() => {
       for (const m of this.store.unread(peer.name, PENDING_MAX_LIMIT)) this.emit(conn, "message", m);
@@ -320,12 +326,14 @@ export class Broker {
 
   /** Turns a sender-supplied target into live connections and/or offline queue keys. */
   private resolveTargets(to: string, sender: PeerInfo): { live: Conn[]; queued: string[] } {
-    const others = [...this.conns].filter((c) => c.peer && c.peer.id !== sender.id);
+    const all = [...this.conns].filter((c) => c.peer && c.peer.id !== sender.id);
+    // Broadcasts and agent kinds address sessions; job runners only get mail sent to them by name.
+    const others = all.filter((c) => !c.peer!.jobAgent);
     if (to === BROADCAST) {
       if (others.length === 0) throw new BridgeError("unknown_target", "no other peers are online");
       return { live: others, queued: [] };
     }
-    const exact = others.find((c) => c.peer!.id === to || c.peer!.name === to);
+    const exact = all.find((c) => c.peer!.id === to || c.peer!.name === to);
     if (exact) return { live: [exact], queued: [] };
     if (to === sender.name || to === sender.id) throw new BridgeError("bad_request", "cannot send a message to yourself");
     if ((AGENT_KINDS as readonly string[]).includes(to)) {
@@ -369,7 +377,8 @@ export class Broker {
     const createdAt = this.now();
     const base = {
       id,
-      from: { id: sender.id, name: sender.name, agent: sender.agent },
+      // A job runner speaks for its job: from the subagent's agent, like a job run inside the session's server.
+      from: { id: sender.id, name: sender.name, agent: sender.jobAgent ?? sender.agent },
       to,
       conversationId,
       replyTo,

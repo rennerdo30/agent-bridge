@@ -1,5 +1,4 @@
-import { randomUUID } from "node:crypto";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -20,7 +19,7 @@ import {
   MAX_JOBS_LIMIT,
   MAX_WAIT_SEC,
 } from "../core/constants.js";
-import { currentDelegateDepth, DelegateError, failureCause, killAllDelegates, resolveBinary, retryTransient, type DelegateResult } from "../core/delegate.js";
+import { bundledCli, currentDelegateDepth, DelegateError, failureCause, killAllDelegates, resolveBinary } from "../core/delegate.js";
 import { readUsage } from "../core/usage.js";
 import { t } from "../core/i18n.js";
 import { createLogger, type Logger } from "../core/logger.js";
@@ -29,24 +28,23 @@ import { resolveDbPath, resolveHome, resolvePipePath } from "../core/paths.js";
 import { inspectClaudeLaunch } from "../core/procinfo.js";
 import { loadOrCreateToken } from "../core/token.js";
 import { BridgeError, BROADCAST, CODING_AGENTS, type AgentKind, type BridgeMessage, type CodingAgent } from "../core/protocol.js";
-import { formatDuration, formatMessage, formatMessages, formatPeer, formatUsage } from "./format.js";
+import { formatDuration, formatMessage, formatMessages, formatPeer } from "./format.js";
 import { CodexWaker, type Activity } from "./codex-wake.js";
 import { buildHookResponse, type HookEvent } from "./hooks.js";
-import { ACCESS_LEVELS, DELEGATION_TARGETS, supportsAsk, type Access, type RelayWiring, type TargetArgs } from "./targets.js";
+import { ACCESS_LEVELS, DELEGATION_TARGETS, type Access } from "./targets.js";
 import { askUserViaElicitation } from "./permissions.js";
-import { PermissionRelay, type PermissionDecision, type PermissionRequest } from "../core/relay.js";
-import { codexPermissionHookHash, codexPermissionHookTrusted, recordCodexHookObservation } from "../core/codex-trust.js";
-import { startRunFeed } from "../core/runfeed.js";
+import type { PermissionDecision, PermissionRequest } from "../core/relay.js";
 import { saveAutoWake, savedAutoWake } from "../core/auto-wake-pref.js";
-import { defaultEffort } from "../core/effort.js";
 import { describeModels } from "../core/models.js";
-import { isAutoApproved, isHandoffToolCall, isOwnServerCall, mcpToolOf, shortServer } from "../core/tool-allow.js";
-import { ParentLink, parentFromEnv, type ParentClient } from "../core/parent-link.js";
+import { parentFromEnv, type ParentClient } from "../core/parent-link.js";
 import { findRunningDashboard, hostDashboard, type DashboardInfo, type HostedDashboard } from "../cli/dashboard.js";
 import { openBrowser } from "../cli/open.js";
 import { RewakeEndpoint } from "./rewake.js";
-import { changedFiles, createWorktree, finishWorktree, gitChangeSnapshot, gitDirsOutside, handoffWarning, subagentCommitMessage, worktreeReport, type Worktree } from "../core/worktree.js";
-import { DEFAULT_FOLLOW_UP, JobManager, type Job, type Resume, type RunResult } from "./jobs.js";
+import { DEFAULT_FOLLOW_UP, JobManager, type Job, type Resume, type Run, type RunResult } from "./jobs.js";
+import { isBridgeWorktree, isInside, resumeArgs, runDelegate, type DelegateArgs, type RunContext } from "./delegate-run.js";
+import { JobRunners } from "./job-host.js";
+
+export { DELEGATED_JOB_NOTE } from "./delegate-run.js";
 
 const CHANNEL_NOTIFICATION = "notifications/claude/channel";
 /** Sent to the opencode plugin (our MCP client in --agent=opencode mode) when a message arrives. */
@@ -57,33 +55,12 @@ const CODEX_SANDBOX_META = "codex/sandbox-state-meta";
 const CWD_DISCOVERY_GRACE_MS = 15_000;
 /** Subagent titles (ask_* / spawn_* `title`), like a chat title. */
 const MAX_TITLE_CHARS = 80;
-/** Added to a subagent's task when it can report progress. */
-const PROGRESS_HINT =
-  "(agent-bridge: while you work, call the report_progress tool of the agent-bridge MCP server with the percent of the whole task done and a few words on the current step: when you start, after each milestone, and at least every few minutes.)";
-/** Added to a new subagent's task: the session that started it owns the project handoff. */
-export const DELEGATED_JOB_NOTE =
-  "(agent-bridge: you are a delegated job. Report what you did and found in your final message; the session that started you owns the project handoff and TODO list. Do not write or commit handoff or TODO files (such as HANDOFF.md or TODO.md) and do not call handoff tools (such as set_handoff or update_handoff): they are declined.)";
-/** Why a subagent's handoff tool call was declined; shown to the subagent where its CLI passes it on. */
-const HANDOFF_DECLINED =
-  "Declined by agent-bridge: delegated jobs do not write the project handoff. Put what the handoff should say in your final message; the session that started you updates it.";
 /** The tools a delegated subagent's server offers (see registerTools). */
 const SUBAGENT_TOOLS = new Set(["peers", "send", "report_progress", "hook_event"]);
 /** The options of a job worth keeping to continue it the same way later (no prompt, no internals). */
 const KEPT_ARGS = ["model", "effort", "cwd", "timeout_sec", "worktree", "access", "sandbox", "permission_mode", "auto_approve", "allow_tools", "title"] as const;
-/** How long a background subagent waits for its parent agent to approve something before it counts as "deny". */
-const PARENT_APPROVAL_TIMEOUT_MS = 10 * 60_000;
 /** Plugin root: dist/server.mjs lives one level below it. */
 const PLUGIN_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-
-/** A folder inside ~/.agent-bridge/worktrees (a subagent worktree, possibly from an earlier job). */
-function isBridgeWorktree(dir: string, home: string): boolean {
-  return isInside(dir, join(home, "worktrees")) && resolve(dir) !== resolve(join(home, "worktrees"));
-}
-
-function isInside(child: string, parent: string): boolean {
-  const rel = relative(resolve(parent), resolve(child));
-  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
-}
 
 /** Accepts a plain path or a file:// URI (Codex serializes PathUri either way depending on version). */
 export function pathFromUriOrPath(v: unknown): string | null {
@@ -153,6 +130,8 @@ export interface ServerContext {
   learnCwd?: (projectDir: string) => Promise<void>;
   /** Background subagents started by this session. */
   jobs?: JobManager;
+  /** Detached job runners for them (none: they run inside this server; see job-host.ts). */
+  runners?: JobRunners;
   /** Claude Code: idle sessions are woken by the asyncRewake Stop hook, so Stop never waits. */
   rewakeAvailable?: boolean;
   /** Delegated subagents: the live link to the session that runs them. */
@@ -256,6 +235,10 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
   const ctx: ServerContext = { agent, cfg, node, log, home, cwd: () => node?.cwd ?? cwd, channelActive: () => channel, parent: delegated ? parentFromEnv() : null, launchKnown };
   if (node) {
     ctx.jobs = new JobManager(node, log.child("jobs"), join(home, JOBS_FILE), cfg.maxJobs);
+    // Background subagents run in detached job runners, so a reload of this server (or the session) leaves
+    // them running; the next server takes them over. AGENT_BRIDGE_JOB_RUNNER=0 runs them in here instead.
+    const cli = process.env[ENV.jobRunner] === "0" ? null : bundledCli();
+    if (cli) ctx.jobs.runners = ctx.runners = new JobRunners(node, home, cli, log.child("runners"));
     // Edits to config.json apply right away. Settings read only at start (name, delivery, ports) wait for a restart.
     const jobs = ctx.jobs;
     watchConfig(home, agent, log, (next) => {
@@ -350,7 +333,7 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
       !ctx.channelActive() &&
       m.hop < cfg.maxHops &&
       // A running subagent's status note waits for the next prompt or tool call (see JobManager.fromSubagent).
-      !ctx.jobs?.isNote(m.id) &&
+      !ctx.jobs?.isNote(m) &&
       (m.from.id.startsWith("job:") || node.isAwaitedReply(m) || node.autoWakeEnabled);
     rewake = new RewakeEndpoint(home, node, shouldWake, log.child("rewake"));
     try {
@@ -391,8 +374,9 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
     if (shuttingDown) return;
     shuttingDown = true;
     log.info("shutting down", { reason });
+    // Runner-hosted subagents keep going for the next server of this session (see job-host.ts).
     ctx.jobs?.cancelAll();
-    // Stop every delegated CLI with its whole process tree; nothing may keep working unobserved.
+    // Stop every delegated CLI this process runs itself, with its whole process tree; nothing may keep working unobserved.
     await killAllDelegates();
     await mcp.close().catch(() => {});
     await dashboard?.close().catch(() => {});
@@ -477,7 +461,8 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
       if (!node && ctx.parent) return text(t("peers.subagent", { name: ctx.parent.name }));
       const n = requireNode();
       const peers = await n.peers();
-      const others = peers.filter((p) => p.id !== n.id);
+      // Job runners are this or another session's subagents, not sessions (an older broker still lists them).
+      const others = peers.filter((p) => p.id !== n.id && !p.id.startsWith("job:"));
       const lines = [
         t("peers.self", {
           name: n.name,
@@ -628,8 +613,17 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
     }),
   );
 
-  /** _worktree: internal, a follow-up continuing in an existing worktree. */
-  type DelegateArgs = { prompt: string; model?: string; effort?: string; session_id?: string; cwd?: string; timeout_sec?: number; worktree?: boolean; allow_tools?: string[]; title: string; _worktree?: Worktree; _job?: string } & TargetArgs;
+  const rc: RunContext = {
+    agent: ctx.agent,
+    cfg,
+    home: ctx.home,
+    log,
+    me: () => node?.name ?? ctx.agent,
+    cwd: ctx.cwd,
+    askUser: ctx.askUser,
+    userCanAnswer: ctx.userCanAnswer,
+    jobs: ctx.jobs,
+  };
   const keep = (a: DelegateArgs): Record<string, unknown> => Object.fromEntries(KEPT_ARGS.filter((k) => a[k] !== undefined).map((k) => [k, a[k]]));
   const resumers: Partial<Record<CodingAgent, (a: DelegateArgs) => Resume>> = {};
   for (const target of targets) {
@@ -685,259 +679,27 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
         ),
       ...profile.schema,
     };
-    /** Run the delegate; returns its result plus a report of what it changed. */
-    const run = async (a: DelegateArgs, signal: AbortSignal, onProgress: ((message: string) => void) | undefined, background: boolean, job?: Job): Promise<RunResult> => {
-      const dlog = log.child("delegate");
-      const cwd = a.cwd || ctx.cwd();
-      // Worktrees (new, continued, or an agent-bridge worktree given as cwd) exist to be edited in: edit by default.
-      const access: Access | undefined = a.worktree || a._worktree || isBridgeWorktree(cwd, ctx.home) ? (a.access ?? "edit") : a.access;
-      // A follow-up to a worktree job keeps working (and committing) in that worktree.
-      const wt = a._worktree ?? (a.worktree ? await createWorktree({ cwd, home: ctx.home, jobId: randomUUID().slice(0, 8), log: dlog }) : null);
-      const workdir = wt?.cwd ?? cwd;
-      // Codex in "ask" mode can only change files through an approval: watching the folder tells us whether
-      // its permission hook really asked (see codex-trust.ts).
-      const watchChanges = !wt && (access === "edit" || (access === "ask" && target === "codex"));
-      const before = watchChanges ? await gitChangeSnapshot(workdir, dlog) : null;
-      // access "ask": forward the subagent's permission requests to the user in this session.
-      let relay: PermissionRelay | null = null;
-      let wiring: RelayWiring | undefined;
-      const asked: string[] = [];
-      let relayCalls = 0;
-      const codexHash = target === "codex" ? codexPermissionHookHash() : null;
-      try {
-        if (access === "ask" && ctx.askUser) {
-          const askUser = ctx.askUser;
-          const decide = async (r: PermissionRequest) => {
-            relayCalls++;
-            const d = await askUser(r);
-            asked.push(`${d.allow ? "allowed" : "denied"}: ${r.tool} ${r.detail.slice(0, 80)}`);
-            return d;
-          };
-          relay = new PermissionRelay(decide, dlog);
-          await relay.start();
-          wiring = { onPermission: decide, env: relay.childEnv(), codexHookTrusted: codexPermissionHookTrusted(ctx.home) };
-        }
-      } catch (err) {
-        await relay?.stop();
-        throw err;
-      }
-      const forwarding = access === "ask" && supportsAsk(target, wiring);
-      // Approval questions a subagent asks while it works (Codex app-server: MCP tool calls, and in "ask" mode
-      // commands and edits; opencode "edit" runs: what its rules leave to "ask"; Claude "edit" runs: permission
-      // prompts, through a PermissionRequest hook) go to the parent agent of a background subagent, else to this
-      // session's user. One "allow" per MCP server covers the rest of the run.
-      // Remembered per job, so follow-ups and recoveries don't ask again.
-      const allowedServers = job ? (job.allowedServers ??= new Set<string>()) : new Set<string>();
-      const autoApprove = [...cfg.autoApproveTools, ...(a.allow_tools ?? [])];
-      const approve = async (r: PermissionRequest): Promise<PermissionDecision> => {
-        // Handoff tools first: no allow pattern or earlier "allow" for their server covers them.
-        if (isHandoffToolCall(r)) {
-          asked.push(`declined (handoff tool): ${r.tool} ${r.detail.slice(0, 80)}`);
-          // Codex's decline carries no reason: tell the running subagent directly.
-          if (target === "codex") job?.live?.post(HANDOFF_DECLINED);
-          return { allow: false, message: HANDOFF_DECLINED };
-        }
-        if (r.tool.startsWith("mcp:") && allowedServers.has(r.tool)) return { allow: true };
-        // Its own agent-bridge tools (answering the parent, report_progress) never need a question.
-        if (isOwnServerCall(r) || isAutoApproved(r, autoApprove)) return { allow: true };
-        let d: PermissionDecision;
-        if (wiring) d = await wiring.onPermission(r);
-        else if (job && !job.foreground && ctx.jobs) {
-          // A background subagent asks the agent that started it (it can decide, also in auto mode or with
-          // the user away). A blocking ask_* caller cannot answer while it waits, so that one asks the user.
-          // Name the allow_tools pattern that would cover this call, so the next spawn need not ask.
-          const call = mcpToolOf(r);
-          const hint = call?.tool ? ` (not covered by this job's allow_tools; "${shortServer(call.server)}.${call.tool}" or "${shortServer(call.server)}" would allow it without asking)` : "";
-          const a = await ctx.jobs.askParent(job, `${r.tool.replace(/^mcp:/, "MCP server ")}: ${r.detail}${hint}`, PARENT_APPROVAL_TIMEOUT_MS);
-          d = a.allow ? { allow: true } : { allow: false, message: `Denied by ${me}: ${a.reason}` };
-          asked.push(`${d.allow ? "allowed" : "denied"} by ${me}: ${r.tool} ${r.detail.slice(0, 80)}`);
-        } else if (ctx.askUser) {
-          relayCalls++;
-          d = await ctx.askUser(r);
-          asked.push(`${d.allow ? "allowed" : "denied"}: ${r.tool} ${r.detail.slice(0, 80)}`);
-        } else d = r.tool.startsWith("mcp:") && access === "edit" ? { allow: true } : { allow: false, message: "No one to ask in this session." };
-        if (d.allow && r.tool.startsWith("mcp:")) allowedServers.add(r.tool);
-        return d;
-      };
-      let feed: ReturnType<typeof startRunFeed>;
-      try {
-        feed = startRunFeed({
-          home: ctx.home,
-          name: `${target}-${randomUUID().slice(0, 8)}`,
-          header: `${target}${a.model ? ` (${a.model}${a.effort ? `, effort ${a.effort}` : ""})` : a.effort ? ` (effort ${a.effort})` : ""} in ${workdir}, access ${access ?? "default"}, by ${node?.name ?? ctx.agent}${a.session_id ? `, continues ${a.session_id}` : ""}\n${a.prompt}\n---`,
-          forward: onProgress,
-          meta: {
-            by: node?.name ?? ctx.agent,
-            byAgent: ctx.agent,
-            byCwd: ctx.cwd(),
-            job: a._job,
-            // The job's current title (message_subagent can name or rename a job after it started).
-            title: (typeof job?.args?.title === "string" && job.args.title) || a.title?.trim() || undefined,
-            model: a.model ?? defaultModel ?? null,
-            effort: a.effort ?? cfg.effort[target] ?? defaultEffort(target, a.model ?? defaultModel ?? null),
-            access: access ?? "default",
-            workdir,
-            continues: a.session_id ?? null,
-          },
-        });
-      } catch (err) {
-        await relay?.stop();
-        throw err;
-      }
-      // Live link: this session's messages reach the subagent while it works, and it can answer at once.
-      const me = node?.name ?? ctx.agent;
-      let link: ParentLink | null = null;
-
-      let steering: { send: (message: string) => Promise<boolean> } | null = null;
-      if (job && ctx.jobs) {
-        const jobs = ctx.jobs;
-        const l = new ParentLink(
-          me,
-          (body, replyTo) => {
-            feed.report(`answer to ${me}: ${body.split("\n")[0]!.slice(0, 120)}`, `answer to ${me}: ${body}`);
-            jobs.fromSubagent(job, body, replyTo);
-          },
-          dlog,
-          (percent, note) => {
-            job.percent = percent;
-            job.progressNote = note;
-            feed.meta({ percent, progressNote: note, progressAt: Date.now() });
-            feed.report(`progress ${percent}%${note ? `: ${note}` : ""}`);
-          },
-        );
-        try {
-          await l.start();
-          link = l;
-          job.live = {
-            post: (m) => {
-              feed.report(`message from ${me}: ${m.split("\n")[0]!.slice(0, 120)}`, `message from ${me}: ${m}`);
-              // Natively where the target supports it (a real user message in the running turn), else at its next hook.
-              if (!steering) return void l.post(m);
-              const s = steering;
-              void s.send(m).then((ok) => {
-                if (!ok) l.post(m);
-              });
-            },
-          };
-        } catch (err) {
-          dlog.warn("live link unavailable; messages to this subagent wait until it finishes", { err: (err as Error).message });
-        }
-      }
-      // A linked worktree's git data lives in the main repository: writable, so the subagent can commit.
-      const writableRoots = access === "edit" || (a as { sandbox?: string }).sandbox === "workspace-write" ? await gitDirsOutside(workdir, dlog) : undefined;
-      if (writableRoots?.length) dlog.info("extra writable folders for the subagent", { workdir, writableRoots });
-      if (job) job.retitle = (title) => feed.meta({ title });
-      let res: DelegateResult;
-      try {
-        // A temporary provider error (an invalid upstream response, say) gets one automatic resume first.
-        res = await retryTransient(
-          {
-            // With a live link the subagent can report how far it is (report_progress; shown in the dashboard).
-            // A new session learns once that it reports back and leaves the handoff alone.
-            prompt: [a.prompt, a.session_id ? null : DELEGATED_JOB_NOTE, link ? PROGRESS_HINT : null].filter(Boolean).join("\n\n"),
-            cwd: workdir,
-            sessionId: a.session_id ?? null,
-            timeoutSec: a.timeout_sec ?? (background ? MAX_JOB_TIMEOUT_SEC : DEFAULT_DELEGATE_TIMEOUT_SEC),
-            model: a.model ?? defaultModel,
-            effort: a.effort ?? cfg.effort[target] ?? null,
-            // What it really runs (a CLI default or an alias resolved), for the dashboard.
-            onInfo: (info) => feed.meta({ ...(info.model ? { model: info.model } : {}), effort: info.effort ?? a.effort ?? cfg.effort[target] ?? defaultEffort(target, info.model ?? null) }),
-            log: dlog,
-            signal,
-            onProgress: feed.report,
-            extraEnv: link?.childEnv(),
-            writableRoots,
-            onSession: (id) => {
-              feed.meta({ session: id });
-              if (job) ctx.jobs?.note(job, { sessionId: id, workdir, worktree: wt });
-            },
-            approve,
-            // Someone answers approve's questions: the user ("ask" relay or a dialog) or, for a background
-            // subagent, the parent agent. Else targets keep their own behavior (Claude and opencode).
-            canApprove: Boolean(wiring) || Boolean(job && !job.foreground && ctx.jobs) || Boolean(ctx.askUser && ctx.userCanAnswer?.()),
-            live: job
-              ? {
-                  from: me,
-                  onSteering: (s) => void (steering = s),
-                  onAnswer: (answer) => {
-                    feed.report(`answer to ${me}: ${answer.split("\n")[0]!.slice(0, 120)}`, `answer to ${me}: ${answer}`);
-                    ctx.jobs?.fromSubagent(job, answer, null, true);
-                  },
-                }
-              : undefined,
-          },
-          (req) => profile.run(cfg, req, { ...a, access, relay: wiring }),
-        );
-        feed.meta({ session: res.sessionId });
-        feed.end(res.isError ? "failed" : "done", res.text);
-      } catch (err) {
-        if (err instanceof DelegateError && err.sessionId) feed.meta({ session: err.sessionId });
-        feed.end(`failed: ${(err as Error)?.message ?? err}`);
-        // The worktree keeps whatever the subagent did before failing: say where it is.
-        if (wt && err instanceof Error) err.message += `\n\nIts worktree (with any partial work) is ${wt.path} on branch ${wt.branch}.`;
-        throw err;
-      } finally {
-        await relay?.stop();
-        if (job) job.retitle = null;
-        if (job && link) {
-          job.live = null;
-          // Messages it never got to see go out as a follow-up right after this turn.
-          job.queue.unshift(...(await link.close()));
-        }
-      }
-
-      const notes: string[] = [`Step-by-step log: ${feed.logPath}`];
-      if (access !== "ask" && asked.length) notes.push(`Approval requests forwarded:\n${asked.join("\n")}`);
-      if (access === "ask") {
-        notes.push(
-          forwarding
-            ? asked.length
-              ? `Permission requests forwarded to the user:\n${asked.join("\n")}`
-              : "No permission requests were needed."
-            : t("ask.unsupported", { agent: target }),
-        );
-      }
-      const usage = formatUsage(res.details);
-      if (usage) notes.push(usage);
-      if (wt) {
-        try {
-          const message = subagentCommitMessage({ answer: res.text, task: a.prompt, job: a._job, agent: target, model: a.model ?? defaultModel });
-          notes.push(worktreeReport(wt, await finishWorktree(wt, message, dlog)));
-        } catch (err) {
-          // Never lose the answer over a git problem.
-          notes.push(`Could not commit the changes in worktree ${wt.path} (branch ${wt.branch}): ${(err as Error).message}`);
-        }
-      } else if (before) {
-        const after = await gitChangeSnapshot(workdir, dlog);
-        const changed = after ? changedFiles(before, after) : [];
-        if (access === "ask" && target === "codex" && forwarding && codexHash) {
-          if (relayCalls > 0) recordCodexHookObservation(ctx.home, codexHash, "verified");
-          else if (changed.length) {
-            // Files changed in a read-only sandbox without the hook asking: Codex's reviewer approved.
-            recordCodexHookObservation(ctx.home, codexHash, "failed");
-            log.warn("codex changed files without the permission hook asking; forwarding disabled for this hook version", { changed });
-            notes.push(t("ask.hookBypassed", { files: changed.join(", ") }));
-          }
-        }
-        if (access === "edit" || changed.length) notes.push(changed.length ? `Files changed in your working copy:\n${changed.join("\n")}` : "No files changed.");
-        const warning = handoffWarning(changed);
-        if (warning) notes.push(warning);
-      }
-      return { ...res, workdir, worktree: wt ?? undefined, text: notes.length ? `${res.text}\n\n---\n${notes.join("\n\n")}` : res.text };
-    };
+    /** Run the delegate in this process. */
+    const run = (a: DelegateArgs, signal: AbortSignal, onProgress: ((message: string) => void) | undefined, background: boolean, job?: Job): Promise<RunResult> =>
+      runDelegate(rc, target, a, signal, onProgress, background, job);
+    /**
+     * A background turn: in a detached job runner where possible (it survives a restart of this server), else in
+     * here. "ask" runs stay here: their questions go to the user through this server's MCP connection.
+     */
+    const background = (args: (job: Job) => DelegateArgs, base: DelegateArgs): Run =>
+      Object.assign((signal: AbortSignal, onProgress: (message: string) => void, job: Job) => run(args(job), signal, onProgress, true, job), {
+        hosted: (job: Job) => {
+          const a = args(job);
+          if (!ctx.runners || a.access === "ask") return null;
+          return ctx.runners.start(job, { target, args: a, base, owner: node?.name ?? ctx.agent, byAgent: ctx.agent, cwd: ctx.cwd(), cfg });
+        },
+      });
 
     /** Continue a subagent's session: same agent, model and access, in the folder (or worktree) it used. */
     const resumeFor =
       (a: DelegateArgs): Resume =>
       (message, sessionId, workdir, worktree) =>
-      (signal, onProgress, job) =>
-        run(
-          { ...a, _job: job.name, prompt: message, session_id: sessionId, cwd: workdir ?? a.cwd, worktree: false, _worktree: worktree ?? undefined, access: a.worktree ? (a.access ?? "edit") : a.access },
-          signal,
-          onProgress,
-          true,
-          job,
-        );
+        background((job) => resumeArgs(a, job.name, message, sessionId, workdir, worktree), a);
     resumers[target] = resumeFor;
 
     const askName = `ask_${target}`;
@@ -995,7 +757,7 @@ ${res.text || t("delegate.empty")}`, res.isError);
         const jobs = ctx.jobs;
         if (!jobs) throw new BridgeError("bad_request", t("err.delegatedSession"));
         if (!jobs.canStart()) return text(t("jobs.limit", { max: jobs.limit }), true);
-        const job = jobs.start(target, a.model ?? defaultModel, a.prompt, (signal, onProgress, job) => run({ ...a, _job: job.name }, signal, onProgress, true, job), resumeFor(a), keep(a));
+        const job = jobs.start(target, a.model ?? defaultModel, a.prompt, background((job) => ({ ...a, _job: job.name }), a), resumeFor(a), keep(a));
         const cwd = a.cwd || ctx.cwd();
         const access = a.access ?? (a.worktree || isBridgeWorktree(cwd, ctx.home) ? "edit" : null);
         // Exact target options (sandbox, permission_mode, auto_approve) say it themselves.

@@ -3,7 +3,7 @@ import { DEFAULT_CONFIG } from "../src/core/config.js";
 import { nullLogger } from "../src/core/logger.js";
 import { isAutoApproved, isHandoffToolCall, isOwnServerCall, mcpToolOf } from "../src/core/tool-allow.js";
 import { buildHookResponse } from "../src/mcp/hooks.js";
-import { JobManager } from "../src/mcp/jobs.js";
+import { JobManager, NOTE_CONVERSATION_SUFFIX } from "../src/mcp/jobs.js";
 import type { ServerContext } from "../src/mcp/server.js";
 import { makeEnv, until, type TestEnv } from "./helpers.js";
 
@@ -108,7 +108,7 @@ describe("status notes from running subagents", () => {
 
     jobs.fromSubagent(job, "tests pass, merging next", null);
     await until(() => me.unread().length === 1);
-    expect(jobs.isNote(me.unread()[0]!.id)).toBe(true);
+    expect(jobs.isNote(me.unread()[0]!)).toBe(true);
     // Ending the turn: the note does not keep it going.
     expect(await buildHookResponse(ctx, { event: "Stop", sessionId: null, stopHookActive: false })).toEqual({});
     // The next prompt brings it.
@@ -118,7 +118,10 @@ describe("status notes from running subagents", () => {
     expect(jobs.followUp(job.name, "how far are you?").outcome).not.toBe("unknown");
     jobs.fromSubagent(job, "about half way", null);
     await until(() => me.unread().length === 1);
-    expect(jobs.isNote(me.unread()[0]!.id)).toBe(false);
+    expect(jobs.isNote(me.unread()[0]!)).toBe(false);
+    // A job runner's note reaches the session over the bridge, marked in its conversation id.
+    expect(jobs.isNote({ id: "x", conversationId: `job-abc${NOTE_CONVERSATION_SUFFIX}` })).toBe(true);
+    expect(jobs.isNote({ id: "y", conversationId: "job-abc" })).toBe(false);
     jobs.cancelAll();
   });
 });

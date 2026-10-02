@@ -131,14 +131,14 @@ interface MessageRow {
   reply_to: string | null;
 }
 
-/** Recent messages (one row per message, recipients joined), newest first. Read-only access. */
+/** Recent messages (one row per message, recipients joined), newest first; not the control messages to job runners. Read-only access. */
 export function recentMessages(dbPath: string): MessageRow[] {
   if (!existsSync(dbPath)) return [];
   const db = new DatabaseSync(dbPath, { readOnly: true });
   try {
     const stmt = db.prepare(
       `SELECT id, from_name, from_agent, to_target, group_concat(recipient, ', ') AS recipients, body, created_at, hop, reply_to
-       FROM messages GROUP BY id ORDER BY created_at DESC LIMIT ?`,
+       FROM messages WHERE conversation_id NOT LIKE 'jobctl-%' GROUP BY id ORDER BY created_at DESC LIMIT ?`,
     );
     return stmt.all(MAX_MESSAGES) as unknown as MessageRow[];
   } finally {

@@ -116,6 +116,47 @@ export function killTree(child: ChildProcess): Promise<void> {
   });
 }
 
+/**
+ * Stop a process this one did not start (a detached job runner) and everything it started. On POSIX it gets
+ * SIGTERM first (the runner then stops its subagent's own process group), SIGKILL after the grace period.
+ */
+export function killPid(pid: number): void {
+  if (process.platform === "win32") {
+    const tk = spawn("taskkill", ["/PID", String(pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" });
+    tk.on("error", () => {
+      try {
+        process.kill(pid);
+      } catch {
+        // already gone
+      }
+    });
+    return;
+  }
+  try {
+    process.kill(pid, "SIGTERM");
+  } catch {
+    return;
+  }
+  setTimeout(() => {
+    try {
+      process.kill(pid, "SIGKILL");
+    } catch {
+      // already gone
+    }
+  }, KILL_GRACE_MS).unref();
+}
+
+/** Whether a process with this pid exists (it may be another one after pid reuse; callers check more). */
+export function pidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    // EPERM: it exists, it just is not ours to signal.
+    return (err as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
 /** Kill every running delegate's process tree (on shutdown); resolves when they are gone or after a cap. */
 export async function killAllDelegates(capMs = KILL_GRACE_MS): Promise<void> {
   const all = [...liveChildren].map((c) => killTree(c));
@@ -496,7 +537,7 @@ export function isClaudeReadOnly(mode: ClaudePermissionMode): boolean {
 const CLAUDE_READ_ONLY_MODES = new Set<ClaudePermissionMode>(["default", "manual", "plan"]);
 
 /** The CLI bundled next to this module (plugins/<x>/dist/cli.mjs next to server.mjs); null when run from source. */
-function bundledCli(): string | null {
+export function bundledCli(): string | null {
   const cli = join(dirname(fileURLToPath(import.meta.url)), "cli.mjs");
   return existsSync(cli) ? cli : null;
 }

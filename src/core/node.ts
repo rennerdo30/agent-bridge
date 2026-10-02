@@ -27,6 +27,12 @@ export interface BridgeNodeOptions {
   autoWake: boolean;
   log: Logger;
   platform?: NodeJS.Platform;
+  /** Fixed peer id (a job runner's "job:<id>"); default: a new random one. */
+  id?: string;
+  /** A job runner: the agent of the subagent it runs. The broker keeps such peers out of listings and agent-kind routing. */
+  jobAgent?: AgentKind;
+  /** false: only connect to a broker, never become one (a short-lived job runner would take the bridge down with it). */
+  canHostBroker?: boolean;
 }
 
 export interface BridgeNodeEvents {
@@ -52,7 +58,7 @@ function errCode(err: unknown): string {
  * is running, and re-elects transparently when the broker process goes away.
  */
 export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
-  readonly id = randomUUID();
+  readonly id: string;
   private client: BridgeClient | null = null;
   private broker: Broker | null = null;
   private stopping = false;
@@ -74,6 +80,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
 
   constructor(private readonly opts: BridgeNodeOptions) {
     super();
+    this.id = opts.id ?? randomUUID();
     this.currentName = opts.name;
     this.currentCwd = opts.cwd;
     this.autoWake = opts.autoWake;
@@ -166,7 +173,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
         }
       }
       // Nobody is listening: try to become the broker.
-      if (await this.tryBecomeBroker()) continue; // next loop iteration connects to ourselves
+      if (this.opts.canHostBroker !== false && (await this.tryBecomeBroker())) continue; // next loop iteration connects to ourselves
       await sleep(jitter());
     }
     throw new Error(`could not connect to or start the agent-bridge broker at ${this.opts.pipePath}`);
@@ -237,6 +244,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
         autoWake: this.autoWake,
         activity: this.activity,
         version: APP_VERSION,
+        ...(this.opts.jobAgent ? { jobAgent: this.opts.jobAgent } : {}),
       },
     };
   }
@@ -288,9 +296,11 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
     return fn(this.client!);
   }
 
-  send(args: SendArgs): Promise<SendResult> {
+  /** quiet: not part of a conversation of this agent (no listen window, replies are not awaited), e.g. control messages to a job runner. */
+  send(args: SendArgs, opts: { quiet?: boolean } = {}): Promise<SendResult> {
     return this.withClient(async (c) => {
       const res = await c.request("send", args);
+      if (opts.quiet) return res;
       this.lastSent = Date.now();
       if (!args.replyTo) for (const m of res.messages) this.asked.add(m.id);
       if (this.asked.size > READ_ID_MEMORY) this.asked.delete(this.asked.values().next().value!);

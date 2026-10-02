@@ -33,6 +33,8 @@ export interface PeerInfo {
   activity?: PeerActivity | null;
   /** agent-bridge version of this peer. */
   version?: string;
+  /** Set for a job runner (it hosts a background subagent of a session): that subagent's agent. Hidden from peer lists. */
+  jobAgent?: AgentKind;
 }
 
 export type PeerActivity = "busy" | "idle";

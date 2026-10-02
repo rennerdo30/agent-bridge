@@ -40,7 +40,7 @@ function take(ctx: ServerContext, wakeOnly: boolean): BridgeMessage[] {
   const msgs = node
     .unread()
     // Ending a turn: a running subagent's status note does not keep it going; it comes with the next prompt.
-    .filter((m) => !wakeOnly || (m.hop < ctx.cfg.maxHops && !ctx.jobs?.isNote(m.id)))
+    .filter((m) => !wakeOnly || (m.hop < ctx.cfg.maxHops && !ctx.jobs?.isNote(m)))
     .slice(0, HOOK_MAX_MESSAGES);
   node.markRead(msgs.map((m) => m.id));
   return msgs;
