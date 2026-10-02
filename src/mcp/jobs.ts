@@ -14,6 +14,8 @@ const PROMPT_PREVIEW_CHARS = 120;
 const HISTORY_LIMIT = 50;
 /** Jobs kept on disk (all sessions together), and how much of each task: the file stays small. */
 const STORE_LIMIT = 200;
+/** Status note ids remembered (they are read long before this many pile up). */
+const MAX_NOTES = 500;
 const STORED_PROMPT_CHARS = 1_000;
 /** Follow-up sent when a subagent is resumed without a message (e.g. after a failure). */
 export const DEFAULT_FOLLOW_UP = "Continue where you stopped and finish the task. Then give your final answer.";
@@ -56,6 +58,8 @@ export interface Job {
   /** The subagent's own estimate of how far it is (report_progress), and its note. */
   percent?: number;
   progressNote?: string;
+  /** This session sent it a live message and its answer is still to come (that answer wakes the session). */
+  awaitingAnswer?: boolean;
   /** MCP servers the parent allowed for this job (kept across its follow-ups). */
   allowedServers?: Set<string>;
   /** An approval question the subagent is waiting on; the next message to the job answers it. */
@@ -80,6 +84,8 @@ export class JobManager {
   private readonly history = new Map<string, Job>();
   /** Finished jobs whose continuation waits for a free slot, in arrival order; the messages are in job.queue. */
   private readonly waitingJobs = new Map<string, Job>();
+  /** Ids of status notes from running subagents (see fromSubagent). */
+  private readonly notes = new Set<string>();
 
   constructor(
     private readonly node: BridgeNode,
@@ -283,7 +289,8 @@ export class JobManager {
     if (job.status === "running") {
       // Like a native subagent: it sees the message while it works and can answer at once.
       if (job.live) {
-        job.live.post(message);
+        job.awaitingAnswer = true;
+      job.live.post(message);
         return { outcome: "delivered", job };
       }
       job.queue.push(message);
@@ -423,13 +430,28 @@ export class JobManager {
     });
   }
 
-  /** A message the running subagent sent to this session (its answer to a live message, for example). */
-  fromSubagent(job: Job, body: string, replyTo: string | null): void {
-    this.log.info("message from subagent", { job: job.name });
-    this.post(job, body, replyTo);
+  /**
+   * A message the running subagent sent to this session. An answer (to a live message, or marked as a reply)
+   * wakes the session; a note it sends on its own ("tests pass, merging next") does not: it waits for the
+   * session's next prompt or tool call, so status chatter costs no extra turn.
+   */
+  fromSubagent(job: Job, body: string, replyTo: string | null, isAnswer = false): void {
+    const answer = isAnswer || replyTo !== null || job.awaitingAnswer === true;
+    job.awaitingAnswer = false;
+    this.log.info("message from subagent", { job: job.name, note: !answer });
+    const id = this.post(job, body, replyTo);
+    if (!answer) {
+      this.notes.add(id);
+      if (this.notes.size > MAX_NOTES) this.notes.delete(this.notes.values().next().value!);
+    }
   }
 
-  private post(job: Job, body: string, replyTo: string | null = null): void {
+  /** Whether a message is a running subagent's own status note (it should not wake the session). */
+  isNote(id: string): boolean {
+    return this.notes.has(id);
+  }
+
+  private post(job: Job, body: string, replyTo: string | null = null): string {
     const m: BridgeMessage = {
       id: randomUUID(),
       from: { id: `job:${job.id}`, name: job.name, agent: job.agent },
@@ -443,6 +465,7 @@ export class JobManager {
       readAt: null,
     };
     this.node.deliverLocal(m);
+    return m.id;
   }
 }
 

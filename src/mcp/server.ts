@@ -348,7 +348,10 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
     // With the channel active, messages already arrive as channel events: waking too would deliver them twice.
     const shouldWake = (m: BridgeMessage) =>
       !ctx.channelActive() &&
-      m.hop < cfg.maxHops && (m.from.id.startsWith("job:") || node.isAwaitedReply(m) || node.autoWakeEnabled);
+      m.hop < cfg.maxHops &&
+      // A running subagent's status note waits for the next prompt or tool call (see JobManager.fromSubagent).
+      !ctx.jobs?.isNote(m.id) &&
+      (m.from.id.startsWith("job:") || node.isAwaitedReply(m) || node.autoWakeEnabled);
     rewake = new RewakeEndpoint(home, node, shouldWake, log.child("rewake"));
     try {
       await rewake.start();
@@ -858,7 +861,7 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
                   onSteering: (s) => void (steering = s),
                   onAnswer: (answer) => {
                     feed.report(`answer to ${me}: ${answer.split("\n")[0]!.slice(0, 120)}`, `answer to ${me}: ${answer}`);
-                    ctx.jobs?.fromSubagent(job, answer, null);
+                    ctx.jobs?.fromSubagent(job, answer, null, true);
                   },
                 }
               : undefined,

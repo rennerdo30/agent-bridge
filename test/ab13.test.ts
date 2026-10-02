@@ -3,6 +3,7 @@ import { DEFAULT_CONFIG } from "../src/core/config.js";
 import { nullLogger } from "../src/core/logger.js";
 import { isAutoApproved, isHandoffToolCall, isOwnServerCall, mcpToolOf } from "../src/core/tool-allow.js";
 import { buildHookResponse } from "../src/mcp/hooks.js";
+import { JobManager } from "../src/mcp/jobs.js";
 import type { ServerContext } from "../src/mcp/server.js";
 import { makeEnv, until, type TestEnv } from "./helpers.js";
 
@@ -84,5 +85,40 @@ describe("sessions and native subagents", () => {
     expect(me.unread()).toHaveLength(1);
     const main = (await buildHookResponse(ctx, { event: "PostToolUse", sessionId: null, stopHookActive: false })) as { hookSpecificOutput?: { additionalContext: string } };
     expect(main.hookSpecificOutput?.additionalContext).toContain("for the main agent");
+  });
+});
+
+describe("status notes from running subagents", () => {
+  let env: TestEnv;
+  beforeEach(() => {
+    env = makeEnv();
+  });
+  afterEach(async () => {
+    await env.cleanup();
+  });
+
+  it("a note waits for the next prompt; an answer to a live message counts as an answer", async () => {
+    const me = env.node("claude-n", "claude");
+    await me.start();
+    const jobs = new JobManager(me, nullLogger);
+    const job = jobs.start("codex", null, "long task", () => new Promise(() => {}));
+    job.live = { post: () => {} };
+    const ctx = { agent: "claude", cfg: { ...DEFAULT_CONFIG, autoWake: true }, node: me, log: nullLogger, home: env.home, cwd: () => env.home, channelActive: () => false, jobs, rewakeAvailable: true } as ServerContext;
+    await me.setAutoWake(true);
+
+    jobs.fromSubagent(job, "tests pass, merging next", null);
+    await until(() => me.unread().length === 1);
+    expect(jobs.isNote(me.unread()[0]!.id)).toBe(true);
+    // Ending the turn: the note does not keep it going.
+    expect(await buildHookResponse(ctx, { event: "Stop", sessionId: null, stopHookActive: false })).toEqual({});
+    // The next prompt brings it.
+    const next = (await buildHookResponse(ctx, { event: "UserPromptSubmit", sessionId: null, stopHookActive: false, prompt: "go on" })) as { hookSpecificOutput?: { additionalContext: string } };
+    expect(next.hookSpecificOutput?.additionalContext).toContain("merging next");
+
+    expect(jobs.followUp(job.name, "how far are you?").outcome).not.toBe("unknown");
+    jobs.fromSubagent(job, "about half way", null);
+    await until(() => me.unread().length === 1);
+    expect(jobs.isNote(me.unread()[0]!.id)).toBe(false);
+    jobs.cancelAll();
   });
 });
