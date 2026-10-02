@@ -607,7 +607,13 @@ function sameSay(items, text) {
 function stepsHtml(text, agent, run) {
   const items = [];
   for (const e of parseEntries(text)) {
-    if (e.text.startsWith("answer: ")) { items.push({ kind: "answer", text: e.text.slice(8) }); continue; }
+    if (e.text.startsWith("answer: ")) {
+      // The final answer is usually also the agent's last message ("says:"): keep only the answer.
+      const ans = e.text.slice(8).trim();
+      for (let j = items.length - 1; j >= Math.max(0, items.length - 4); j--) if (items[j].kind === "say" && items[j].text.trim() === ans) items.splice(j, 1);
+      items.push({ kind: "answer", text: e.text.slice(8) });
+      continue;
+    }
     if (/^(started|still working)/.test(e.text)) continue;
     if (/^progress \\d+%/.test(e.text)) { items.push({ kind: "sys", text: e.time.slice(0, 5) + " · " + e.text }); continue; }
     const live = /^(message from|answer to) ([^:]+): ([\\s\\S]*)$/.exec(e.text);

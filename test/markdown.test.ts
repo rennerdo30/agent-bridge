@@ -29,3 +29,21 @@ describe("dashboard markdown", () => {
     expect(pageMd("**ok**")).toBe("<p><strong>ok</strong></p>");
   });
 });
+
+describe("dashboard steps", () => {
+  // The page's own functions, run without a DOM.
+  const script = UI_PAGE.split("<script>").pop()!.split("</script>")[0]!;
+  const stub = "const document = { getElementById: () => null, documentElement: { dataset: {} }, addEventListener() {} }; const window = { addEventListener() {} }; const location = { hash: '' }; const localStorage = { getItem: () => null, setItem() {} }; const setInterval = () => 0; const fetch = () => new Promise(() => {});";
+  const stepsHtml = new Function(`${stub}\ntry { ${script} } catch {}\nreturn stepsHtml;`)() as (text: string, agent: string, run: unknown) => string;
+  const count = (html: string, s: string) => html.split(s).length - 1;
+
+  it("shows a reply once when it is logged as a message and as the answer", () => {
+    const log = "header\n---\n07:30:00 7m · step 9 · says: Committed abc; worktree clean.\n07:34:00 answer: Committed abc; worktree clean.\n";
+    expect(count(stepsHtml(log, "codex", {}), "Committed abc")).toBe(1);
+  });
+
+  it("shows an answer to a live message once", () => {
+    const log = "header\n---\n07:30:00 1m · step 2 · says: I'll merge the base first.\n07:30:00 answer to claude-x: I'll merge the base first.\n";
+    expect(count(stepsHtml(log, "codex", {}), "merge the base")).toBe(1);
+  });
+});
