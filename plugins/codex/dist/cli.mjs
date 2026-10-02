@@ -7714,7 +7714,7 @@ import { connect } from "node:net";
 import { homedir } from "node:os";
 import { join } from "node:path";
 var APP_NAME = "agent-bridge";
-var APP_VERSION = "0.22.0";
+var APP_VERSION = "0.22.1";
 var PROTOCOL_VERSION = 2;
 var ENV = {
   home: "AGENT_BRIDGE_HOME",
@@ -11095,6 +11095,12 @@ function cleanCmd(s) {
   return c;
 }
 
+/** Whether one of the last few items already shows this message (the same reply logged twice). */
+function sameSay(items, text) {
+  const t = text.trim();
+  return items.slice(-3).some((it) => it.kind === "say" && it.text.trim() === t);
+}
+
 function stepsHtml(text, agent, run) {
   const items = [];
   for (const e of parseEntries(text)) {
@@ -11102,11 +11108,19 @@ function stepsHtml(text, agent, run) {
     if (/^(started|still working)/.test(e.text)) continue;
     if (/^progress \\d+%/.test(e.text)) { items.push({ kind: "sys", text: e.time.slice(0, 5) + " \xB7 " + e.text }); continue; }
     const live = /^(message from|answer to) ([^:]+): ([\\s\\S]*)$/.exec(e.text);
-    if (live) { items.push({ kind: live[1] === "answer to" ? "say" : "live", who: live[2], text: live[3] }); continue; }
+    if (live) {
+      // A running Codex job's answer is also logged as its own message ("says:"): show it once.
+      if (live[1] === "answer to" && sameSay(items, live[3])) continue;
+      items.push({ kind: live[1] === "answer to" ? "say" : "live", who: live[2], text: live[3] });
+      continue;
+    }
     if (/^finished after/.test(e.text)) { items.push({ kind: "sys", text: e.time.slice(0, 5) + " \xB7 " + e.text.replace(/ \xB7 (done|failed)$/, "").replace(/^finished/, "finished") }); continue; }
     const parts = e.text.split(" \xB7 ");
     const body = parts.slice(parts[1] && parts[1].startsWith("step ") ? 2 : 1).join(" \xB7 ");
-    if (body.startsWith("says: ")) { items.push({ kind: "say", text: body.slice(6) }); continue; }
+    if (body.startsWith("says: ")) {
+      if (!sameSay(items, body.slice(6))) items.push({ kind: "say", text: body.slice(6) });
+      continue;
+    }
     const i = body.indexOf(": ");
     const k = i > 0 && i < 24 ? body.slice(0, i) : "";
     items.push({ kind: "step", time: e.time, label: k, text: cleanCmd(k ? body.slice(i + 2) : body) });

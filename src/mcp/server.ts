@@ -38,7 +38,7 @@ import { codexPermissionHookHash, codexPermissionHookTrusted, recordCodexHookObs
 import { startRunFeed } from "../core/runfeed.js";
 import { saveAutoWake, savedAutoWake } from "../core/auto-wake-pref.js";
 import { defaultEffort } from "../core/effort.js";
-import { isAutoApproved, isHandoffToolCall, isOwnServerCall } from "../core/tool-allow.js";
+import { isAutoApproved, isHandoffToolCall, isOwnServerCall, mcpToolOf, shortServer } from "../core/tool-allow.js";
 import { ParentLink, parentFromEnv, type ParentClient } from "../core/parent-link.js";
 import { findRunningDashboard, hostDashboard, type DashboardInfo, type HostedDashboard } from "../cli/dashboard.js";
 import { openBrowser } from "../cli/open.js";
@@ -712,7 +712,10 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
         else if (job && !job.foreground && ctx.jobs) {
           // A background subagent asks the agent that started it (it can decide, also in auto mode or with
           // the user away). A blocking ask_* caller cannot answer while it waits, so that one asks the user.
-          const a = await ctx.jobs.askParent(job, `${r.tool.replace(/^mcp:/, "MCP server ")}: ${r.detail}`, PARENT_APPROVAL_TIMEOUT_MS);
+          // Name the allow_tools pattern that would cover this call, so the next spawn need not ask.
+          const call = mcpToolOf(r);
+          const hint = call?.tool ? ` (not covered by this job's allow_tools; "${shortServer(call.server)}.${call.tool}" or "${shortServer(call.server)}" would allow it without asking)` : "";
+          const a = await ctx.jobs.askParent(job, `${r.tool.replace(/^mcp:/, "MCP server ")}: ${r.detail}${hint}`, PARENT_APPROVAL_TIMEOUT_MS);
           d = a.allow ? { allow: true } : { allow: false, message: `Denied by ${me}: ${a.reason}` };
           asked.push(`${d.allow ? "allowed" : "denied"} by ${me}: ${r.tool} ${r.detail.slice(0, 80)}`);
         } else if (ctx.askUser) {

@@ -15,6 +15,11 @@ function serverNames(server: string): string[] {
   return short ? [server, short] : [server];
 }
 
+/** A server's name as allow patterns use it ("plugin_x_pair-desk" -> "pair-desk"). */
+export function shortServer(server: string): string {
+  return serverNames(server).at(-1)!;
+}
+
 /** The MCP server and tool of a permission request, when it is an MCP tool call. */
 export function mcpToolOf(r: { tool: string; detail: string }): { server: string; tool: string | null } | null {
   if (!r.tool.startsWith("mcp:")) return null;
