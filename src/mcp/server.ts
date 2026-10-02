@@ -58,6 +58,8 @@ const MAX_TITLE_CHARS = 80;
 /** The tools a delegated subagent's server offers (see registerTools). */
 const SUBAGENT_TOOLS = new Set(["peers", "send", "report_progress", "hook_event"]);
 /** The options of a job worth keeping to continue it the same way later (no prompt, no internals). */
+/** When to look again for jobs under a stand-in name (a replaced server of the session may still be leaving). */
+const STAND_IN_RECHECK_MS = 30_000;
 const KEPT_ARGS = ["model", "effort", "cwd", "timeout_sec", "worktree", "access", "sandbox", "permission_mode", "auto_approve", "allow_tools", "title"] as const;
 /** Plugin root: dist/server.mjs lives one level below it. */
 const PLUGIN_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -412,6 +414,15 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
       if (channel) for (const m of node.unread()) void pushChannel(m);
       // The session that hosts the bridge also hosts the web dashboard (not a short headless run).
       if (isBroker && cfg.dashboard && !ctx.headless) void ensureDashboard(false);
+      // Jobs this session started under a "-N" stand-in name: adopt them once that name is gone (now, and
+      // again shortly, when a replaced server of this session has left the bridge).
+      const adopt = () =>
+        void node
+          .peers()
+          .then((peers) => ctx.jobs?.adoptStandIns(new Set(peers.map((p) => p.name))))
+          .catch(() => {});
+      adopt();
+      setTimeout(adopt, STAND_IN_RECHECK_MS).unref();
     });
     const join = () => node.start().catch((err) => log.error("could not join the bridge", { err: (err as Error).message }));
     if (ctx.headless) {

@@ -36489,7 +36489,7 @@ import { basename, join as join2 } from "node:path";
 import { homedir } from "node:os";
 import { join } from "node:path";
 var APP_NAME = "agent-bridge";
-var APP_VERSION = "0.24.7";
+var APP_VERSION = "0.24.8";
 var PROTOCOL_VERSION = 2;
 var ENV = {
   home: "AGENT_BRIDGE_HOME",
@@ -41797,14 +41797,22 @@ var JobManager = class {
         resume: makeResume(s.agent, s.args ?? {})
       };
       this.history.set(s.id, job);
-      if (hosted && mine && this.runners) {
-        const state = this.runners.state(job);
-        if (state) Object.assign(job, { sessionId: state.sessionId ?? job.sessionId, workdir: state.workdir ?? job.workdir, worktree: state.worktree ?? job.worktree });
-        if (this.runners.alive(job, state) || state && state.status !== "running") adopted.push(job);
-        else if (state?.sessionId && state.sessionId !== s.sessionId) this.own.add(job.id);
-      }
+      if (hosted && mine && this.takeOver(job)) adopted.push(job);
     }
     if (stored.length) this.log.info("restored subagent jobs", { count: Math.min(stored.length, HISTORY_LIMIT), runnerHosted: adopted.length });
+    this.settleAdopted(adopted);
+  }
+  /** Whether a runner-hosted job can be taken over here (its runner lives, or finished and left its report). */
+  takeOver(job) {
+    if (!this.runners) return false;
+    const state = this.runners.state(job);
+    if (state) Object.assign(job, { sessionId: state.sessionId ?? job.sessionId, workdir: state.workdir ?? job.workdir, worktree: state.worktree ?? job.worktree });
+    if (this.runners.alive(job, state) || state && state.status !== "running") return true;
+    job.status = "interrupted";
+    if (state?.sessionId) this.own.add(job.id);
+    return false;
+  }
+  settleAdopted(adopted) {
     for (const job of adopted) {
       job.status = "running";
       job.owner = this.node.name;
@@ -41842,9 +41850,32 @@ var JobManager = class {
    * reload starts its new server while the old one is still connected; jobs started then are its too.
    */
   isMine(owner) {
-    if (!owner || owner === this.node.name) return true;
+    return !owner || owner === this.node.name || this.adoptedOwners.has(owner);
+  }
+  /** "-N" stand-in names of this session whose jobs it adopted (see adoptStandIns). */
+  adoptedOwners = /* @__PURE__ */ new Set();
+  /** Whether `owner` is a "-N" stand-in of this session's name ("claude-x-2" for "claude-x"). */
+  isStandIn(owner) {
     const base = this.node.name.replace(/-\d+$/, "");
-    return owner === base || owner.startsWith(`${base}-`) && /^\d+$/.test(owner.slice(base.length + 1));
+    return owner !== this.node.name && (owner === base || owner.startsWith(`${base}-`) && /^\d+$/.test(owner.slice(base.length + 1)));
+  }
+  /**
+   * A reload can run a session briefly under a "-N" stand-in name; jobs started then carry it. Once on the
+   * bridge, adopt those whose stand-in name no live peer holds (a live "-2" is another session of the folder).
+   */
+  adoptStandIns(online) {
+    if (this.dormant) return;
+    const owners = new Set([...this.history.values()].map((j) => j.owner).filter((o) => Boolean(o) && this.isStandIn(o) && !online.has(o)));
+    if (!owners.size) return;
+    for (const o of owners) this.adoptedOwners.add(o);
+    const taken = [];
+    for (const job of this.history.values()) {
+      if (!job.owner || !owners.has(job.owner)) continue;
+      if (job.status === "running" && job.host && !this.running.has(job.id) && this.takeOver(job)) taken.push(job);
+      else if (job.status === "running" && !this.running.has(job.id)) job.status = "interrupted";
+    }
+    this.log.info("adopted jobs started under a stand-in name of this session", { owners: [...owners], runnerHosted: taken.length });
+    this.settleAdopted(taken);
   }
   /** Finished jobs of this session: every interrupted one (they need recovering), then the newest others. */
   recent(limit = 5) {
@@ -42847,6 +42878,7 @@ var CODEX_SANDBOX_META = "codex/sandbox-state-meta";
 var CWD_DISCOVERY_GRACE_MS = 15e3;
 var MAX_TITLE_CHARS = 80;
 var SUBAGENT_TOOLS = /* @__PURE__ */ new Set(["peers", "send", "report_progress", "hook_event"]);
+var STAND_IN_RECHECK_MS = 3e4;
 var KEPT_ARGS = ["model", "effort", "cwd", "timeout_sec", "worktree", "access", "sandbox", "permission_mode", "auto_approve", "allow_tools", "title"];
 var PLUGIN_ROOT = resolve5(dirname6(fileURLToPath2(import.meta.url)), "..");
 function pathFromUriOrPath(v) {
@@ -43091,6 +43123,10 @@ async function startServer(argv = process.argv.slice(2)) {
     node2.on("connected", ({ isBroker }) => {
       if (channel) for (const m of node2.unread()) void pushChannel(m);
       if (isBroker && cfg.dashboard && !ctx.headless) void ensureDashboard(false);
+      const adopt = () => void node2.peers().then((peers) => ctx.jobs?.adoptStandIns(new Set(peers.map((p) => p.name)))).catch(() => {
+      });
+      adopt();
+      setTimeout(adopt, STAND_IN_RECHECK_MS).unref();
     });
     const join20 = () => node2.start().catch((err) => log.error("could not join the bridge", { err: err.message }));
     if (ctx.headless) {

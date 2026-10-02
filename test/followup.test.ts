@@ -241,7 +241,7 @@ describe("subagent limit", () => {
 });
 
 describe("jobs of a session under a stand-in name", () => {
-  it("counts jobs started under a -N stand-in of the session's name as its own", async () => {
+  it("adopts jobs of a -N stand-in name once no live session holds that name", async () => {
     const store = join(env.home, "jobs.json");
     const standIn = env.node("claude-f", "claude"); // second node of the same name: "claude-f-2"
     await standIn.start();
@@ -252,6 +252,11 @@ describe("jobs of a session under a stand-in name", () => {
     await until(() => first.recent().some((j) => j.id === done.id));
     const second = new JobManager(me, nullLogger, store);
     second.restore(() => agent.resume);
+    // While "claude-f-2" is online it is another session of this folder: its jobs stay its own.
+    second.adoptStandIns(new Set(["claude-f", "claude-f-2"]));
+    expect(second.recent().map((j) => j.name)).not.toContain(done.name);
+    // Gone (a reload's stand-in): its jobs are this session's.
+    second.adoptStandIns(new Set(["claude-f"]));
     expect(second.recent().map((j) => j.name)).toContain(done.name);
     second.cancelAll();
     first.cancelAll();

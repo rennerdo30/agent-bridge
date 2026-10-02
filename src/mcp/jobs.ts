@@ -288,15 +288,25 @@ export class JobManager {
         resume: makeResume(s.agent, s.args ?? {}),
       };
       this.history.set(s.id, job);
-      if (hosted && mine && this.runners) {
-        const state = this.runners.state(job);
-        // What the runner learned after the old server last saved (its session, above all) makes it recoverable.
-        if (state) Object.assign(job, { sessionId: state.sessionId ?? job.sessionId, workdir: state.workdir ?? job.workdir, worktree: state.worktree ?? job.worktree });
-        if (this.runners.alive(job, state) || (state && state.status !== "running")) adopted.push(job);
-        else if (state?.sessionId && state.sessionId !== s.sessionId) this.own.add(job.id);
-      }
+      if (hosted && mine && this.takeOver(job)) adopted.push(job);
     }
     if (stored.length) this.log.info("restored subagent jobs", { count: Math.min(stored.length, HISTORY_LIMIT), runnerHosted: adopted.length });
+    this.settleAdopted(adopted);
+  }
+
+  /** Whether a runner-hosted job can be taken over here (its runner lives, or finished and left its report). */
+  private takeOver(job: Job): boolean {
+    if (!this.runners) return false;
+    const state = this.runners.state(job);
+    // What the runner learned after the old server last saved (its session, above all) makes it recoverable.
+    if (state) Object.assign(job, { sessionId: state.sessionId ?? job.sessionId, workdir: state.workdir ?? job.workdir, worktree: state.worktree ?? job.worktree });
+    if (this.runners.alive(job, state) || (state && state.status !== "running")) return true;
+    job.status = "interrupted";
+    if (state?.sessionId) this.own.add(job.id);
+    return false;
+  }
+
+  private settleAdopted(adopted: Job[]): void {
     for (const job of adopted) {
       job.status = "running";
       // Under this session's name from now on (it may have been started under a "-N" stand-in).
@@ -342,9 +352,35 @@ export class JobManager {
    * reload starts its new server while the old one is still connected; jobs started then are its too.
    */
   private isMine(owner: string | undefined): boolean {
-    if (!owner || owner === this.node.name) return true;
+    return !owner || owner === this.node.name || this.adoptedOwners.has(owner);
+  }
+
+  /** "-N" stand-in names of this session whose jobs it adopted (see adoptStandIns). */
+  private readonly adoptedOwners = new Set<string>();
+
+  /** Whether `owner` is a "-N" stand-in of this session's name ("claude-x-2" for "claude-x"). */
+  private isStandIn(owner: string): boolean {
     const base = this.node.name.replace(/-\d+$/, "");
-    return owner === base || (owner.startsWith(`${base}-`) && /^\d+$/.test(owner.slice(base.length + 1)));
+    return owner !== this.node.name && (owner === base || (owner.startsWith(`${base}-`) && /^\d+$/.test(owner.slice(base.length + 1))));
+  }
+
+  /**
+   * A reload can run a session briefly under a "-N" stand-in name; jobs started then carry it. Once on the
+   * bridge, adopt those whose stand-in name no live peer holds (a live "-2" is another session of the folder).
+   */
+  adoptStandIns(online: ReadonlySet<string>): void {
+    if (this.dormant) return;
+    const owners = new Set([...this.history.values()].map((j) => j.owner).filter((o): o is string => Boolean(o) && this.isStandIn(o!) && !online.has(o!)));
+    if (!owners.size) return;
+    for (const o of owners) this.adoptedOwners.add(o);
+    const taken: Job[] = [];
+    for (const job of this.history.values()) {
+      if (!job.owner || !owners.has(job.owner)) continue;
+      if (job.status === "running" && job.host && !this.running.has(job.id) && this.takeOver(job)) taken.push(job);
+      else if (job.status === "running" && !this.running.has(job.id)) job.status = "interrupted";
+    }
+    this.log.info("adopted jobs started under a stand-in name of this session", { owners: [...owners], runnerHosted: taken.length });
+    this.settleAdopted(taken);
   }
 
   /** Finished jobs of this session: every interrupted one (they need recovering), then the newest others. */
