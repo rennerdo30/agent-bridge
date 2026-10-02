@@ -405,6 +405,16 @@ export class JobManager {
   }
 
   /** Name or rename a job; its next turn (and the dashboard) uses the title. */
+  /** Change a job's thinking level for its next turns (a turn already running keeps its own). */
+  setEffort(ref: string, effort: string): boolean {
+    const job = this.find(ref);
+    if (!job) return false;
+    job.args = { ...job.args, effort };
+    this.own.add(job.id);
+    this.persist();
+    return true;
+  }
+
   setTitle(ref: string, title: string): boolean {
     const job = this.find(ref);
     if (!job) return false;

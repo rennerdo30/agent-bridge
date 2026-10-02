@@ -196,6 +196,9 @@ describe("messaging subagents", () => {
     expect(job.args?.title).toBe("Build castle gates");
     expect(titles).toEqual(["Build castle gates"]);
     expect(jobs.setTitle("codex-job-nope", "x")).toBe(false);
+    // A new thinking level is kept for the job's next turns.
+    expect(jobs.setEffort(job.name, "high")).toBe(true);
+    expect(job.args?.effort).toBe("high");
     release(ok("done"));
   });
 });

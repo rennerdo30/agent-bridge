@@ -699,7 +699,8 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
     const resumeFor =
       (a: DelegateArgs): Resume =>
       (message, sessionId, workdir, worktree) =>
-        background((job) => resumeArgs(a, job.name, message, sessionId, workdir, worktree), a);
+        // The job's saved effort wins: message_subagent(effort=...) changes it for the following turns.
+        background((job) => resumeArgs({ ...a, ...(typeof job.args?.effort === "string" ? { effort: job.args.effort } : {}) }, job.name, message, sessionId, workdir, worktree), a);
     resumers[target] = resumeFor;
 
     const askName = `ask_${target}`;
@@ -840,12 +841,18 @@ ${res.text || t("delegate.empty")}`, res.isError);
         job: z.string().min(1).describe('Job name, e.g. "codex-job-1a2b3c4d" or "opencode-ask-9f8e7d6c" (see peers)'),
         message: z.string().optional().describe("The follow-up. Default: continue where you stopped and finish the task."),
         title: z.string().min(1).max(MAX_TITLE_CHARS).optional().describe("Give the job a (new) short title, 3-7 words; use it for jobs listed without a title."),
+        effort: z
+          .string()
+          .regex(/^[A-Za-z0-9_-]{1,20}$/)
+          .optional()
+          .describe("Thinking level for this continuation and the job's later turns (e.g. low, medium, high, xhigh). A turn already running keeps its level."),
       },
     },
-    guarded("message_subagent", async (a: { job: string; message?: string; title?: string }) => {
+    guarded("message_subagent", async (a: { job: string; message?: string; title?: string; effort?: string }) => {
       const jobs = ctx.jobs;
       if (!jobs) throw new BridgeError("bad_request", t("err.delegatedSession"));
       if (a.title?.trim()) jobs.setTitle(a.job, a.title.trim());
+      if (a.effort) jobs.setEffort(a.job, a.effort);
       const { outcome, job } = jobs.followUp(a.job, a.message?.trim() || DEFAULT_FOLLOW_UP);
       const position = job ? jobs.waiting().indexOf(job) + 1 : 0;
       return text(

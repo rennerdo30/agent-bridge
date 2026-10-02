@@ -36489,7 +36489,7 @@ import { basename, join as join2 } from "node:path";
 import { homedir } from "node:os";
 import { join } from "node:path";
 var APP_NAME = "agent-bridge";
-var APP_VERSION = "0.24.0";
+var APP_VERSION = "0.24.1";
 var PROTOCOL_VERSION = 2;
 var ENV = {
   home: "AGENT_BRIDGE_HOME",
@@ -41851,6 +41851,15 @@ var JobManager = class {
     return job;
   }
   /** Name or rename a job; its next turn (and the dashboard) uses the title. */
+  /** Change a job's thinking level for its next turns (a turn already running keeps its own). */
+  setEffort(ref, effort) {
+    const job = this.find(ref);
+    if (!job) return false;
+    job.args = { ...job.args, effort };
+    this.own.add(job.id);
+    this.persist();
+    return true;
+  }
   setTitle(ref, title) {
     const job = this.find(ref);
     if (!job) return false;
@@ -43201,7 +43210,10 @@ function registerTools(mcp, ctx, targets) {
         return ctx.runners.start(job, { target, args: a, base, owner: node2?.name ?? ctx.agent, byAgent: ctx.agent, cwd: ctx.cwd(), cfg });
       }
     });
-    const resumeFor = (a) => (message, sessionId, workdir, worktree) => background((job) => resumeArgs(a, job.name, message, sessionId, workdir, worktree), a);
+    const resumeFor = (a) => (message, sessionId, workdir, worktree) => (
+      // The job's saved effort wins: message_subagent(effort=...) changes it for the following turns.
+      background((job) => resumeArgs({ ...a, ...typeof job.args?.effort === "string" ? { effort: job.args.effort } : {} }, job.name, message, sessionId, workdir, worktree), a)
+    );
     resumers[target] = resumeFor;
     const askName = `ask_${target}`;
     register(
@@ -43310,13 +43322,15 @@ ${r.lines.map((l) => `  ${l}`).join("\n")}`).join("\n\n"));
       inputSchema: {
         job: external_exports.string().min(1).describe('Job name, e.g. "codex-job-1a2b3c4d" or "opencode-ask-9f8e7d6c" (see peers)'),
         message: external_exports.string().optional().describe("The follow-up. Default: continue where you stopped and finish the task."),
-        title: external_exports.string().min(1).max(MAX_TITLE_CHARS).optional().describe("Give the job a (new) short title, 3-7 words; use it for jobs listed without a title.")
+        title: external_exports.string().min(1).max(MAX_TITLE_CHARS).optional().describe("Give the job a (new) short title, 3-7 words; use it for jobs listed without a title."),
+        effort: external_exports.string().regex(/^[A-Za-z0-9_-]{1,20}$/).optional().describe("Thinking level for this continuation and the job's later turns (e.g. low, medium, high, xhigh). A turn already running keeps its level.")
       }
     },
     guarded("message_subagent", async (a) => {
       const jobs = ctx.jobs;
       if (!jobs) throw new BridgeError("bad_request", t("err.delegatedSession"));
       if (a.title?.trim()) jobs.setTitle(a.job, a.title.trim());
+      if (a.effort) jobs.setEffort(a.job, a.effort);
       const { outcome, job } = jobs.followUp(a.job, a.message?.trim() || DEFAULT_FOLLOW_UP);
       const position = job ? jobs.waiting().indexOf(job) + 1 : 0;
       return text(
