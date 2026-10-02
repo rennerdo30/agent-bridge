@@ -16,6 +16,8 @@ const HISTORY_LIMIT = 50;
 const STORE_LIMIT = 200;
 /** Status note ids remembered (they are read long before this many pile up). */
 const MAX_NOTES = 500;
+/** Interrupted jobs stay listed (to be recovered) this long. */
+const INTERRUPTED_LISTED_MS = 24 * 60 * 60 * 1000;
 /** A job runner's status note travels as conversation "job-<id>" plus this. */
 export const NOTE_CONVERSATION_SUFFIX = ":note";
 const STORED_PROMPT_CHARS = 1_000;
@@ -314,11 +316,13 @@ export class JobManager {
   }
 
   /** Recently finished subagents, newest first (they can still be messaged). */
+  /** Finished jobs of this session: every interrupted one (they need recovering), then the newest others. */
   recent(limit = 5): Job[] {
-    return [...this.history.values()]
+    const mine = [...this.history.values()]
       .filter((j) => j.status !== "running" && !this.waitingJobs.has(j.id) && (!j.owner || j.owner === this.node.name))
-      .sort((a, b) => (b.finishedAt ?? 0) - (a.finishedAt ?? 0))
-      .slice(0, limit);
+      .sort((a, b) => (b.finishedAt ?? b.startedAt) - (a.finishedAt ?? a.startedAt));
+    const interrupted = mine.filter((j) => j.status === "interrupted" && Date.now() - (j.finishedAt ?? j.startedAt) < INTERRUPTED_LISTED_MS);
+    return [...interrupted, ...mine.filter((j) => !interrupted.includes(j)).slice(0, limit)];
   }
 
   find(ref: string): Job | undefined {

@@ -36489,7 +36489,7 @@ import { basename, join as join2 } from "node:path";
 import { homedir } from "node:os";
 import { join } from "node:path";
 var APP_NAME = "agent-bridge";
-var APP_VERSION = "0.24.1";
+var APP_VERSION = "0.24.2";
 var PROTOCOL_VERSION = 2;
 var ENV = {
   home: "AGENT_BRIDGE_HOME",
@@ -40928,7 +40928,8 @@ function buildModel(s) {
     const last = g.turns[g.turns.length - 1];
     g.status = last.status; g.updatedAt = last.updatedAt; g.last = last.last; g.task = g.turns[0].task;
     g.startedAt = g.turns[0].startedAt;
-    g.title = (g.turns.find((t) => t.title) || {}).title || "";
+    // The newest title: message_subagent(title=...) can rename a job between turns.
+    g.title = ([...g.turns].reverse().find((t) => t.title) || {}).title || "";
     // Progress the subagent reported in its current turn (only meaningful while it runs).
     g.percent = g.status === "running" && typeof last.percent === "number" ? last.percent : null;
     g.progressNote = last.progressNote || "";
@@ -41623,6 +41624,7 @@ var PROMPT_PREVIEW_CHARS = 120;
 var HISTORY_LIMIT = 50;
 var STORE_LIMIT = 200;
 var MAX_NOTES = 500;
+var INTERRUPTED_LISTED_MS = 24 * 60 * 60 * 1e3;
 var NOTE_CONVERSATION_SUFFIX = ":note";
 var STORED_PROMPT_CHARS = 1e3;
 var DEFAULT_FOLLOW_UP = "Continue where you stopped and finish the task. Then give your final answer.";
@@ -41777,8 +41779,11 @@ var JobManager = class {
     return [...this.waitingJobs.values()];
   }
   /** Recently finished subagents, newest first (they can still be messaged). */
+  /** Finished jobs of this session: every interrupted one (they need recovering), then the newest others. */
   recent(limit = 5) {
-    return [...this.history.values()].filter((j) => j.status !== "running" && !this.waitingJobs.has(j.id) && (!j.owner || j.owner === this.node.name)).sort((a, b) => (b.finishedAt ?? 0) - (a.finishedAt ?? 0)).slice(0, limit);
+    const mine = [...this.history.values()].filter((j) => j.status !== "running" && !this.waitingJobs.has(j.id) && (!j.owner || j.owner === this.node.name)).sort((a, b) => (b.finishedAt ?? b.startedAt) - (a.finishedAt ?? a.startedAt));
+    const interrupted = mine.filter((j) => j.status === "interrupted" && Date.now() - (j.finishedAt ?? j.startedAt) < INTERRUPTED_LISTED_MS);
+    return [...interrupted, ...mine.filter((j) => !interrupted.includes(j)).slice(0, limit)];
   }
   find(ref) {
     const id = ref.replace(/^.*-(?:job|ask)-/, "");

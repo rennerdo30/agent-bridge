@@ -7714,7 +7714,7 @@ import { connect } from "node:net";
 import { homedir } from "node:os";
 import { join } from "node:path";
 var APP_NAME = "agent-bridge";
-var APP_VERSION = "0.24.1";
+var APP_VERSION = "0.24.2";
 var PROTOCOL_VERSION = 2;
 var ENV = {
   home: "AGENT_BRIDGE_HOME",
@@ -11145,7 +11145,8 @@ function buildModel(s) {
     const last = g.turns[g.turns.length - 1];
     g.status = last.status; g.updatedAt = last.updatedAt; g.last = last.last; g.task = g.turns[0].task;
     g.startedAt = g.turns[0].startedAt;
-    g.title = (g.turns.find((t) => t.title) || {}).title || "";
+    // The newest title: message_subagent(title=...) can rename a job between turns.
+    g.title = ([...g.turns].reverse().find((t) => t.title) || {}).title || "";
     // Progress the subagent reported in its current turn (only meaningful while it runs).
     g.percent = g.status === "running" && typeof last.percent === "number" ? last.percent : null;
     g.progressNote = last.progressNote || "";
@@ -36989,6 +36990,7 @@ function writeRunnerState(home, id, state) {
 import { randomUUID as randomUUID5 } from "node:crypto";
 import { closeSync as closeSync3, mkdirSync as mkdirSync11, openSync as openSync3, readFileSync as readFileSync16, renameSync as renameSync3, rmSync as rmSync9, statSync as statSync6, writeFileSync as writeFileSync9 } from "node:fs";
 import { dirname as dirname5 } from "node:path";
+var INTERRUPTED_LISTED_MS = 24 * 60 * 60 * 1e3;
 var NOTE_CONVERSATION_SUFFIX = ":note";
 var QUEUED_FOLLOW_UP_NOTE = "(Your queued follow-up was sent to it; its answer will arrive as another message.)";
 function jobReport(job, status, seconds, text, cause) {

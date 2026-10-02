@@ -353,7 +353,8 @@ function buildModel(s) {
     const last = g.turns[g.turns.length - 1];
     g.status = last.status; g.updatedAt = last.updatedAt; g.last = last.last; g.task = g.turns[0].task;
     g.startedAt = g.turns[0].startedAt;
-    g.title = (g.turns.find((t) => t.title) || {}).title || "";
+    // The newest title: message_subagent(title=...) can rename a job between turns.
+    g.title = ([...g.turns].reverse().find((t) => t.title) || {}).title || "";
     // Progress the subagent reported in its current turn (only meaningful while it runs).
     g.percent = g.status === "running" && typeof last.percent === "number" ? last.percent : null;
     g.progressNote = last.progressNote || "";

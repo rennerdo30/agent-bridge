@@ -202,6 +202,28 @@ describe("messaging subagents", () => {
     release(ok("done"));
   });
 });
+describe("listing after a restart", () => {
+  it("lists every interrupted job, not only the newest five finished", async () => {
+    const store = join(env.home, "jobs.json");
+    const first = new JobManager(me, nullLogger, store);
+    const agent = fakeAgent();
+    const lost = first.start("codex", null, "long", (_s, _p, job) => {
+      first.note(job, { sessionId: "ses-lost" });
+      return new Promise(() => {});
+    }, agent.resume);
+    await until(() => lost.sessionId === "ses-lost");
+    const second = new JobManager(me, nullLogger, store);
+    second.restore(() => agent.resume);
+    for (let i = 0; i < 6; i++) second.start("codex", null, `quick ${i}`, async () => ok(`done ${i}`, `ses-${i}`), agent.resume);
+    await until(() => second.recent(10).filter((j) => j.status === "done").length === 6);
+    const listed = second.recent();
+    expect(listed.map((j) => j.name)).toContain(lost.name);
+    expect(listed.find((j) => j.name === lost.name)?.status).toBe("interrupted");
+    second.cancelAll();
+    first.cancelAll();
+  });
+});
+
 describe("subagent limit", () => {
   it("raising the limit mid-session starts waiting continuations", async () => {
     const limited = new JobManager(me, nullLogger, null, 1);
