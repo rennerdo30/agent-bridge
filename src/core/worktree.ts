@@ -107,6 +107,10 @@ async function removeWorktree(repoRoot: string, path: string, branch: string, lo
 
 export interface WorktreeOutcome {
   changed: boolean;
+  /** The branch holding the job's work: the one checked out at the end (the job may have made its own). */
+  branch: string;
+  /** Other branches committed from this worktree that carry work of their own, with their commit counts. */
+  otherBranches: { name: string; commits: number }[];
   diffStat: string;
   /** The commit the review diff starts from (see reviewBase). */
   reviewBase: string;
@@ -167,23 +171,23 @@ export async function gitDirsOutside(cwd: string, log: Logger): Promise<string[]
  * newer state of its base branch (or of the main checkout's branch) into its branch, a diff from there would
  * list all of that too. So: the fork point with each of those branches, whichever leaves the fewest commits.
  */
-export async function reviewBase(wt: Worktree, log: Logger): Promise<string> {
+export async function reviewBase(wt: Worktree, log: Logger, branch = wt.branch): Promise<string> {
   const run = (args: string[]) => git(args, wt.repoRoot, log);
-  const tip = await run(["rev-parse", wt.branch]);
+  const tip = await run(["rev-parse", branch]);
   // The branch of the main checkout (the first entry of `git worktree list`).
   const list = await run(["worktree", "list", "--porcelain"]).catch(() => "");
   const main = /^branch refs\/heads\/(.+)$/m.exec(list.split(/\r?\n\r?\n/)[0] ?? "")?.[1];
   const candidates = new Set([wt.base]);
   for (const b of new Set([wt.baseBranch, main])) {
-    if (!b || b === wt.branch) continue;
-    const mb = await run(["merge-base", b, wt.branch]).catch(() => "");
+    if (!b || b === branch) continue;
+    const mb = await run(["merge-base", b, branch]).catch(() => "");
     // A fork point at the tip itself means the branch is already merged there: nothing to learn from it.
     if (mb && mb !== tip) candidates.add(mb);
   }
   let best = wt.base;
   let fewest = Infinity;
   for (const c of candidates) {
-    const n = Number(await run(["rev-list", "--count", `${c}..${wt.branch}`]).catch(() => "NaN"));
+    const n = Number(await run(["rev-list", "--count", `${c}..${branch}`]).catch(() => "NaN"));
     if (n < fewest) [best, fewest] = [c, n];
   }
   return best;
@@ -196,10 +200,38 @@ export async function finishWorktree(wt: Worktree, message: string, log: Logger)
   const status = await git([...trust, "status", "--porcelain"], wt.path, log);
   if (status) await git([...trust, ...COMMIT_IDENTITY, "commit", "-q", "--no-verify", "-m", message], wt.path, log);
   await unlockWorktree(wt.repoRoot, wt.path, log);
-  const from = await reviewBase(wt, log);
-  const diffStat = await git(["diff", "--stat", `${from}..${wt.branch}`], wt.repoRoot, log);
-  const files = (await git(["diff", "--name-only", `${from}..${wt.branch}`], wt.repoRoot, log)).split(/\r?\n/).filter(Boolean);
-  return { changed: diffStat.length > 0, diffStat: diffStat.slice(0, MAX_DIFFSTAT_CHARS), reviewBase: from, files };
+  // The job may have switched to (or created) a branch of its own: its work is wherever it committed.
+  const current = (await git([...trust, "branch", "--show-current"], wt.path, log).catch(() => "")) || wt.branch;
+  const work = await workBranches(wt, current, log);
+  // The job's branch: the checked-out one, unless only another branch of this worktree carries work.
+  const branch = work.has(current) || !work.size ? current : [...work.keys()][0]!;
+  const from = await reviewBase(wt, log, branch);
+  const diffStat = await git(["diff", "--stat", `${from}..${branch}`], wt.repoRoot, log);
+  const files = (await git(["diff", "--name-only", `${from}..${branch}`], wt.repoRoot, log)).split(/\r?\n/).filter(Boolean);
+  const otherBranches = [...work].filter(([name]) => name !== branch).map(([name, commits]) => ({ name, commits }));
+  return { changed: diffStat.length > 0 || otherBranches.length > 0, branch, otherBranches, diffStat: diffStat.slice(0, MAX_DIFFSTAT_CHARS), reviewBase: from, files };
+}
+
+/**
+ * Branches committed from this worktree that carry work beyond their base, with their commit counts: the
+ * worktree's branch, the one checked out now, and every branch whose tip this worktree's HEAD has been on
+ * (its own reflog), so a branch the job made and then left is found too.
+ */
+async function workBranches(wt: Worktree, current: string, log: Logger): Promise<Map<string, number>> {
+  const trust = trustArgs(wt.path);
+  const visited = new Set((await git([...trust, "log", "-g", "--format=%H", "HEAD"], wt.path, log).catch(() => "")).split(/\r?\n/).filter(Boolean));
+  const refs = (await git(["for-each-ref", "refs/heads", "--format=%(refname:short) %(objectname)"], wt.repoRoot, log).catch(() => ""))
+    .split(/\r?\n/)
+    .map((l) => l.split(" "))
+    .filter((p): p is [string, string] => p.length === 2);
+  const candidates = new Set([wt.branch, current, ...refs.filter(([, sha]) => visited.has(sha) && sha !== wt.base).map(([name]) => name)]);
+  const out = new Map<string, number>();
+  for (const name of candidates) {
+    const from = await reviewBase(wt, log, name).catch(() => null);
+    const commits = from ? Number(await git(["rev-list", "--count", `${from}..${name}`], wt.repoRoot, log).catch(() => "0")) : 0;
+    if (commits > 0) out.set(name, commits);
+  }
+  return out;
 }
 
 /** Project handoff and TODO files: the session that started a job owns them, a job must not write them. */
@@ -215,15 +247,24 @@ export function handoffWarning(files: readonly string[]): string | null {
 
 /** Human/agent-readable instructions for taking or discarding the subagent's work. */
 export function worktreeReport(wt: Worktree, outcome: WorktreeOutcome): string {
-  if (!outcome.changed) return `Worktree ${wt.path} (branch ${wt.branch}) has no changes; remove it with: git worktree remove "${wt.path}" && git branch -D ${wt.branch}`;
-  return [
-    `Changes are committed on branch ${wt.branch} (worktree ${wt.path}), not in your working copy:`,
-    outcome.diffStat,
-    ...[handoffWarning(outcome.files)].filter((w): w is string => Boolean(w)),
-    `Review: git diff ${outcome.reviewBase.slice(0, 12)}..${wt.branch}`,
-    `Take them: git merge ${wt.branch}   (or git cherry-pick ${wt.branch})`,
-    `Discard: git worktree remove --force "${wt.path}" && git branch -D ${wt.branch}`,
-  ].join("\n");
+  const branch = outcome.branch ?? wt.branch;
+  // Only a worktree without any work of its own may be removed.
+  if (!outcome.changed) return `Worktree ${wt.path} (branch ${branch}) has no changes; remove it with: git worktree remove "${wt.path}" && git branch -D ${branch}`;
+  const others = outcome.otherBranches ?? [];
+  const lines = [
+    `Changes are committed on branch ${branch} (worktree ${wt.path}), not in your working copy` +
+      (branch !== wt.branch ? ` (the job worked on its own branch; ${wt.branch} was its starting branch)` : "") +
+      ":",
+  ];
+  if (outcome.diffStat) lines.push(outcome.diffStat);
+  if (others.length) lines.push(`Also committed from this worktree: ${others.map((o) => `${o.name} (${o.commits} commit${o.commits === 1 ? "" : "s"})`).join(", ")}. Review those before removing anything.`);
+  lines.push(...[handoffWarning(outcome.files)].filter((w): w is string => Boolean(w)));
+  if (outcome.diffStat) {
+    lines.push(`Review: git diff ${outcome.reviewBase.slice(0, 12)}..${branch}`);
+    lines.push(`Take them: git merge ${branch}   (or git cherry-pick ${branch})`);
+  }
+  lines.push(`Discard: git worktree remove --force "${wt.path}" && git branch -D ${[branch, ...others.map((o) => o.name)].join(" ")}`);
+  return lines.join("\n");
 }
 
 /** Files that changed in a plain (non-worktree) run: `git status` lines that are new after the run. */

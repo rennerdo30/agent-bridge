@@ -66,6 +66,36 @@ describe("worktree isolation", () => {
     expect(worktreeReport(wt, outcome)).toContain("has no changes");
   });
 
+  it("finds the work on a branch the job made itself, and never calls it unchanged", async () => {
+    const wt = await createWorktree({ cwd: repo, home, jobId: "job8", log: nullLogger });
+    const inWt = (...args: string[]) => execFileSync("git", args, { cwd: wt.path, encoding: "utf8" }).trim();
+    inWt("checkout", "-q", "-b", "codex/as991-markers");
+    writeFileSync(join(wt.path, "marker.txt"), "kit\n");
+    inWt("add", "-A");
+    inWt("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "markers");
+    const outcome = await finishWorktree(wt, "unused", nullLogger);
+    expect(outcome.changed).toBe(true);
+    expect(outcome.branch).toBe("codex/as991-markers");
+    const report = worktreeReport(wt, outcome);
+    expect(report).not.toContain("has no changes");
+    expect(report).toContain("git merge codex/as991-markers");
+  });
+
+  it("lists a branch the job committed to and then left", async () => {
+    const wt = await createWorktree({ cwd: repo, home, jobId: "job9", log: nullLogger });
+    const inWt = (...args: string[]) => execFileSync("git", args, { cwd: wt.path, encoding: "utf8" }).trim();
+    inWt("checkout", "-q", "-b", "fix/as-999-pins");
+    writeFileSync(join(wt.path, "pins.txt"), "pins\n");
+    inWt("add", "-A");
+    inWt("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "pins");
+    inWt("checkout", "-q", wt.branch);
+    const outcome = await finishWorktree(wt, "unused", nullLogger);
+    expect(outcome.changed).toBe(true);
+    expect(outcome.branch).toBe("fix/as-999-pins");
+    expect(worktreeReport(wt, outcome)).toContain("fix/as-999-pins");
+    expect(worktreeReport(wt, outcome)).not.toContain("has no changes");
+  });
+
   it("names the git folders a worktree needs writable to commit", async () => {
     const wt = await createWorktree({ cwd: repo, home, jobId: "job4", log: nullLogger });
     const dirs = (await gitDirsOutside(wt.path, nullLogger)).map((d) => d.replace(/\\/g, "/").toLowerCase());

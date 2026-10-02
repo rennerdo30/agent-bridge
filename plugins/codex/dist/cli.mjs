@@ -7714,7 +7714,7 @@ import { connect } from "node:net";
 import { homedir } from "node:os";
 import { join } from "node:path";
 var APP_NAME = "agent-bridge";
-var APP_VERSION = "0.24.2";
+var APP_VERSION = "0.24.3";
 var PROTOCOL_VERSION = 2;
 var ENV = {
   home: "AGENT_BRIDGE_HOME",
@@ -11943,21 +11943,21 @@ async function gitDirsOutside(cwd, log) {
     return [];
   }
 }
-async function reviewBase(wt, log) {
+async function reviewBase(wt, log, branch = wt.branch) {
   const run2 = (args) => git(args, wt.repoRoot, log);
-  const tip = await run2(["rev-parse", wt.branch]);
+  const tip = await run2(["rev-parse", branch]);
   const list = await run2(["worktree", "list", "--porcelain"]).catch(() => "");
   const main2 = /^branch refs\/heads\/(.+)$/m.exec(list.split(/\r?\n\r?\n/)[0] ?? "")?.[1];
   const candidates = /* @__PURE__ */ new Set([wt.base]);
   for (const b of /* @__PURE__ */ new Set([wt.baseBranch, main2])) {
-    if (!b || b === wt.branch) continue;
-    const mb = await run2(["merge-base", b, wt.branch]).catch(() => "");
+    if (!b || b === branch) continue;
+    const mb = await run2(["merge-base", b, branch]).catch(() => "");
     if (mb && mb !== tip) candidates.add(mb);
   }
   let best = wt.base;
   let fewest = Infinity;
   for (const c of candidates) {
-    const n = Number(await run2(["rev-list", "--count", `${c}..${wt.branch}`]).catch(() => "NaN"));
+    const n = Number(await run2(["rev-list", "--count", `${c}..${branch}`]).catch(() => "NaN"));
     if (n < fewest) [best, fewest] = [c, n];
   }
   return best;
@@ -11968,10 +11968,27 @@ async function finishWorktree(wt, message, log) {
   const status = await git([...trust, "status", "--porcelain"], wt.path, log);
   if (status) await git([...trust, ...COMMIT_IDENTITY, "commit", "-q", "--no-verify", "-m", message], wt.path, log);
   await unlockWorktree(wt.repoRoot, wt.path, log);
-  const from = await reviewBase(wt, log);
-  const diffStat = await git(["diff", "--stat", `${from}..${wt.branch}`], wt.repoRoot, log);
-  const files = (await git(["diff", "--name-only", `${from}..${wt.branch}`], wt.repoRoot, log)).split(/\r?\n/).filter(Boolean);
-  return { changed: diffStat.length > 0, diffStat: diffStat.slice(0, MAX_DIFFSTAT_CHARS), reviewBase: from, files };
+  const current = await git([...trust, "branch", "--show-current"], wt.path, log).catch(() => "") || wt.branch;
+  const work = await workBranches(wt, current, log);
+  const branch = work.has(current) || !work.size ? current : [...work.keys()][0];
+  const from = await reviewBase(wt, log, branch);
+  const diffStat = await git(["diff", "--stat", `${from}..${branch}`], wt.repoRoot, log);
+  const files = (await git(["diff", "--name-only", `${from}..${branch}`], wt.repoRoot, log)).split(/\r?\n/).filter(Boolean);
+  const otherBranches = [...work].filter(([name]) => name !== branch).map(([name, commits]) => ({ name, commits }));
+  return { changed: diffStat.length > 0 || otherBranches.length > 0, branch, otherBranches, diffStat: diffStat.slice(0, MAX_DIFFSTAT_CHARS), reviewBase: from, files };
+}
+async function workBranches(wt, current, log) {
+  const trust = trustArgs(wt.path);
+  const visited = new Set((await git([...trust, "log", "-g", "--format=%H", "HEAD"], wt.path, log).catch(() => "")).split(/\r?\n/).filter(Boolean));
+  const refs = (await git(["for-each-ref", "refs/heads", "--format=%(refname:short) %(objectname)"], wt.repoRoot, log).catch(() => "")).split(/\r?\n/).map((l) => l.split(" ")).filter((p) => p.length === 2);
+  const candidates = /* @__PURE__ */ new Set([wt.branch, current, ...refs.filter(([, sha]) => visited.has(sha) && sha !== wt.base).map(([name]) => name)]);
+  const out2 = /* @__PURE__ */ new Map();
+  for (const name of candidates) {
+    const from = await reviewBase(wt, log, name).catch(() => null);
+    const commits = from ? Number(await git(["rev-list", "--count", `${from}..${name}`], wt.repoRoot, log).catch(() => "0")) : 0;
+    if (commits > 0) out2.set(name, commits);
+  }
+  return out2;
 }
 var HANDOFF_FILE = /(^|\/)(HANDOFF|TODO)\.md$/i;
 function handoffWarning(files) {
@@ -11979,15 +11996,21 @@ function handoffWarning(files) {
   return hit.length ? `WARNING: this job changed ${hit.join(", ")}. Delegated jobs should report in their answer and leave handoff and TODO files to you: check these changes before you take them.` : null;
 }
 function worktreeReport(wt, outcome) {
-  if (!outcome.changed) return `Worktree ${wt.path} (branch ${wt.branch}) has no changes; remove it with: git worktree remove "${wt.path}" && git branch -D ${wt.branch}`;
-  return [
-    `Changes are committed on branch ${wt.branch} (worktree ${wt.path}), not in your working copy:`,
-    outcome.diffStat,
-    ...[handoffWarning(outcome.files)].filter((w) => Boolean(w)),
-    `Review: git diff ${outcome.reviewBase.slice(0, 12)}..${wt.branch}`,
-    `Take them: git merge ${wt.branch}   (or git cherry-pick ${wt.branch})`,
-    `Discard: git worktree remove --force "${wt.path}" && git branch -D ${wt.branch}`
-  ].join("\n");
+  const branch = outcome.branch ?? wt.branch;
+  if (!outcome.changed) return `Worktree ${wt.path} (branch ${branch}) has no changes; remove it with: git worktree remove "${wt.path}" && git branch -D ${branch}`;
+  const others = outcome.otherBranches ?? [];
+  const lines = [
+    `Changes are committed on branch ${branch} (worktree ${wt.path}), not in your working copy` + (branch !== wt.branch ? ` (the job worked on its own branch; ${wt.branch} was its starting branch)` : "") + ":"
+  ];
+  if (outcome.diffStat) lines.push(outcome.diffStat);
+  if (others.length) lines.push(`Also committed from this worktree: ${others.map((o) => `${o.name} (${o.commits} commit${o.commits === 1 ? "" : "s"})`).join(", ")}. Review those before removing anything.`);
+  lines.push(...[handoffWarning(outcome.files)].filter((w) => Boolean(w)));
+  if (outcome.diffStat) {
+    lines.push(`Review: git diff ${outcome.reviewBase.slice(0, 12)}..${branch}`);
+    lines.push(`Take them: git merge ${branch}   (or git cherry-pick ${branch})`);
+  }
+  lines.push(`Discard: git worktree remove --force "${wt.path}" && git branch -D ${[branch, ...others.map((o) => o.name)].join(" ")}`);
+  return lines.join("\n");
 }
 async function gitChangeSnapshot(cwd, log) {
   let status;
