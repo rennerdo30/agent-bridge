@@ -7,7 +7,11 @@
             "type": "mcp_tool",
             "server": "plugin:agent-bridge:bridge",
             "tool": "hook_event",
-            "input": { "event": "SessionStart", "session_id": "${session_id}", "cwd": "${cwd}" }
+            "input": {
+              "event": "SessionStart",
+              "session_id": "${session_id}",
+              "cwd": "${cwd}"
+            }
           }
         ]
       }
@@ -19,7 +23,12 @@
             "type": "mcp_tool",
             "server": "plugin:agent-bridge:bridge",
             "tool": "hook_event",
-            "input": { "event": "UserPromptSubmit", "session_id": "${session_id}", "cwd": "${cwd}", "prompt": "${prompt}" }
+            "input": {
+              "event": "UserPromptSubmit",
+              "session_id": "${session_id}",
+              "cwd": "${cwd}",
+              "prompt": "${prompt}"
+            }
           }
         ]
       }
@@ -31,7 +40,11 @@
             "type": "mcp_tool",
             "server": "plugin:agent-bridge:bridge",
             "tool": "hook_event",
-            "input": { "event": "PostToolUse", "session_id": "${session_id}", "agent_id": "${agent_id}" }
+            "input": {
+              "event": "PostToolUse",
+              "session_id": "${session_id}",
+              "agent_id": "${agent_id}"
+            }
           }
         ]
       }
@@ -43,12 +56,19 @@
             "type": "mcp_tool",
             "server": "plugin:agent-bridge:bridge",
             "tool": "hook_event",
-            "input": { "event": "Stop", "session_id": "${session_id}", "stop_hook_active": "${stop_hook_active}" }
+            "input": {
+              "event": "Stop",
+              "session_id": "${session_id}",
+              "stop_hook_active": "${stop_hook_active}"
+            }
           },
           {
             "type": "command",
             "command": "node",
-            "args": ["${CLAUDE_PLUGIN_ROOT}/dist/cli.mjs", "rewake-hook"],
+            "args": [
+              "${CLAUDE_PLUGIN_ROOT}/dist/cli.mjs",
+              "rewake-hook"
+            ],
             "async": true,
             "asyncRewake": true,
             "timeout": 7200
@@ -56,7 +76,11 @@
           {
             "type": "command",
             "command": "node",
-            "args": ["${CLAUDE_PLUGIN_ROOT}/dist/cli.mjs", "rewake-hook", "--standby"],
+            "args": [
+              "${CLAUDE_PLUGIN_ROOT}/dist/cli.mjs",
+              "rewake-hook",
+              "--standby"
+            ],
             "async": true,
             "asyncRewake": true,
             "timeout": 7200
@@ -64,5 +88,8 @@
         ]
       }
     ]
-  }
+  },
+  "modules": [
+    "./wake.ts"
+  ]
 }

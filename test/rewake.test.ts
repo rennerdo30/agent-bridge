@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DEFAULT_CONFIG } from "../src/core/config.js";
@@ -150,6 +150,26 @@ describe.skipIf(!existsSync(CLI))("background wake-ups", () => {
     const out = (await buildHookResponse(ctx, { event: "PostToolUse", sessionId: null, stopHookActive: false })) as { hookSpecificOutput?: { additionalContext: string } };
     expect(out.hookSpecificOutput?.additionalContext).toContain("gates are done");
   });
+
+  it("the mod waits while a turn runs, wakes once idle, and the Stop hooks then step aside", async () => {
+    const reg = JSON.parse(readFileSync(sessionFile(env.home, "sess-1"), "utf8")) as { port: number; secret: string };
+    const call = (path: string, method = "GET") => fetch(`http://127.0.0.1:${reg.port}${path}`, { method, headers: { authorization: `Bearer ${reg.secret}` } });
+    expect((await call("/mod?busy=1", "POST")).status).toBe(204);
+    const waiting = call("/wait?role=mod").then((r) => r.json() as Promise<{ text: string; superseded: boolean }>);
+    jobs.start("codex", null, "task", async () => result("roofs are done"));
+    await until(() => me.unread().length === 1);
+    let answered = false;
+    void waiting.then(() => (answered = true));
+    await new Promise((r) => setTimeout(r, 2_500));
+    expect(answered).toBe(false); // busy: the message goes out with the tool hooks, not as a wake-up
+    await call("/mod?busy=0", "POST");
+    const got = await waiting;
+    expect(got.text).toContain("roofs are done");
+    // With the mod around, a turn-end hook ends at once instead of waiting.
+    const started = Date.now();
+    expect((await runHook("sess-1")).code).toBe(0);
+    expect(Date.now() - started).toBeLessThan(5_000);
+  }, 20_000);
 
   it("retries a wake-up that Claude Code did not take through the standby hook", async () => {
     const primary = runHook("sess-1");

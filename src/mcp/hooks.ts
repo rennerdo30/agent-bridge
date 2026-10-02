@@ -116,6 +116,12 @@ export async function buildHookResponse(ctx: ServerContext, input: HookInput): P
         ctx.activity?.("idle");
         return {};
       }
+      ctx.wakeDelivery?.idle?.();
+      // The agent-bridge mod wakes the session with a real turn: the turn ends, waiting messages go to the mod.
+      if (ctx.wakeDelivery?.modActive?.()) {
+        ctx.activity?.("idle");
+        return {};
+      }
       // Listen window: this session is in a conversation if it sent something recently or has subagents running.
       const now = Date.now();
       const lingerRemaining = node.lastSentAt > 0 ? node.lastSentAt + ctx.cfg.lingerSec * 1000 - now : 0;

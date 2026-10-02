@@ -158,7 +158,7 @@ export interface ServerContext {
   /** Delegated subagents: the live link to the session that runs them. */
   parent?: ParentClient | null;
   /** Claude Code: messages handed to a wake-up count as delivered only once the session shows activity. */
-  wakeDelivery?: { confirm: () => void; release: () => void; active: () => void };
+  wakeDelivery?: { confirm: () => void; release: () => void; active: () => void; idle?: () => void; modActive?: () => boolean };
   /** A headless `claude -p` run: stays off the bridge unless one of its tools is used. */
   headless?: boolean;
   /** Resolves once `headless` is known (hooks can fire before the launch was inspected). */
@@ -357,7 +357,7 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
       await rewake.start();
       ctx.rewakeAvailable = true;
       ctx.onSessionId = (sid) => rewake?.register(sid);
-      ctx.wakeDelivery = { confirm: () => rewake?.confirmDelivery(), release: () => rewake?.releaseUndelivered(), active: () => rewake?.sessionActive() };
+      ctx.wakeDelivery = { confirm: () => rewake?.confirmDelivery(), release: () => rewake?.releaseUndelivered(), active: () => rewake?.sessionActive(), idle: () => rewake?.sessionIdle(), modActive: () => rewake?.modActive ?? false };
     } catch (err) {
       log.warn("background wake-ups unavailable", { err: (err as Error).message });
       rewake = null;

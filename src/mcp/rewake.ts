@@ -28,6 +28,8 @@ export const REWAKE_POLL_MS = 4 * 60 * 1000; // below fetch's 5-minute response-
 export const WAKE_CONFIRM_MS = 20_000;
 /** The standby waits this long before taking a message, so a starting turn's own hook gets it first. */
 const STANDBY_GRACE_MS = 3_000;
+/** How often the mod's wait re-checks whether the session went idle (messages themselves end it at once). */
+const MOD_TICK_MS = 2_000;
 
 export interface RewakeRegistration {
   port: number;
@@ -51,6 +53,14 @@ export class RewakeEndpoint {
   /** The second hook of a turn end, waiting to retry a wake-up that did not start a turn. */
   private standby: { ac: AbortController; release: (reason: string) => void; wake: () => void } | null = null;
   private confirmTimer: NodeJS.Timeout | undefined;
+  /**
+   * The agent-bridge mod (Claude Code 2.1.287+, plugins/claude/hooks/wake.ts) wakes the session itself with
+   * $.prompt.submit, a real turn: once it has shown up, the Stop hooks step aside and leave waking to it.
+   */
+  private modWaiter: AbortController | null = null;
+  private modSeen = false;
+  /** A turn is running (from the hooks and the mod): the mod waits until the session is idle. */
+  private busy = false;
 
   constructor(
     private readonly home: string,
@@ -63,11 +73,21 @@ export class RewakeEndpoint {
   async start(): Promise<void> {
     this.server = createServer((req, res) => {
       const url = new URL(req.url ?? "/", `http://${HOST}`);
+      if (url.pathname === "/mod" && tokensEqual(String(req.headers.authorization ?? "").replace(/^Bearer /, ""), this.secret)) {
+        // The mod reports turns starting and ending.
+        this.modSeen = true;
+        this.setBusy(url.searchParams.get("busy") === "1");
+        res.writeHead(204).end();
+        return;
+      }
       if (url.pathname !== "/wait" || !tokensEqual(String(req.headers.authorization ?? "").replace(/^Bearer /, ""), this.secret)) {
         res.writeHead(403).end();
         return;
       }
-      if (url.searchParams.get("role") === "standby") this.waitStandby(res);
+      if (url.searchParams.get("role") === "mod") this.waitMod(res);
+      // With the mod, the turn-end hooks end at once: the mod does the waking.
+      else if (this.modSeen) this.reply(res, "", true);
+      else if (url.searchParams.get("role") === "standby") this.waitStandby(res);
       else this.waitPrimary(res);
     });
     this.server.requestTimeout = 0;
@@ -155,9 +175,55 @@ export class RewakeEndpoint {
     loop();
   }
 
+  /**
+   * The mod's long poll, while the session is idle: answers with the messages that should wake it. Messages
+   * handed out before but not yet confirmed are handed out again (the mod polls again when its wake-up did
+   * not start a turn).
+   */
+  private waitMod(res: ServerResponse): void {
+    this.modSeen = true;
+    this.modWaiter?.abort("superseded");
+    const ac = new AbortController();
+    this.modWaiter = ac;
+    res.on("close", () => ac.abort("closed"));
+    const deadline = Date.now() + REWAKE_POLL_MS;
+    void (async () => {
+      while (!ac.signal.aborted && Date.now() < deadline) {
+        const waiting = this.node.unread().some(this.shouldWake);
+        if (waiting && !this.busy) break;
+        // Busy with a message already waiting: check again shortly (waitForMessage would return it at once).
+        if (waiting) await new Promise<void>((r) => setTimeout(r, MOD_TICK_MS).unref());
+        else await this.node.waitForMessage(MOD_TICK_MS, this.shouldWake, ac.signal);
+      }
+      if (this.modWaiter === ac) this.modWaiter = null;
+      if (ac.signal.aborted || Date.now() >= deadline) return this.reply(res, "", ac.signal.reason === "superseded");
+      const text = this.handOut();
+      this.log.info("waking the session (mod)", { count: this.handedOut.size });
+      this.reply(res, text, false);
+    })();
+  }
+
+  private setBusy(busy: boolean): void {
+    this.busy = busy;
+    // A turn started: a message now goes out with the tool hooks, not as a wake-up queued behind the turn.
+    if (busy) this.modWaiter?.abort("superseded");
+  }
+
+  /** Whether the mod wakes this session (the Stop hook then leaves messages to it instead of blocking). */
+  get modActive(): boolean {
+    return this.modSeen;
+  }
+
+  /** A turn ended (the Stop hook ran). */
+  sessionIdle(): void {
+    this.setBusy(false);
+  }
+
   /** The first wake-up was not confirmed: give the same messages to the standby hook. */
   private retryWake(): void {
     if (this.handedOut.size === 0) return;
+    // The mod polls again by itself when its wake-up started no turn, and gets the same messages.
+    if (this.modSeen) return;
     if (!this.standby) {
       this.log.warn("a wake-up was not taken and no standby hook waits; the messages go out with the next prompt", { count: this.handedOut.size });
       return;
@@ -183,6 +249,7 @@ export class RewakeEndpoint {
    * hooks instead, and the next turn end starts a fresh waiter.
    */
   sessionActive(): void {
+    this.setBusy(true);
     this.waiter?.abort("superseded");
     this.standby?.release("active");
   }
@@ -212,6 +279,7 @@ export class RewakeEndpoint {
 
   async stop(): Promise<void> {
     this.waiter?.abort("superseded");
+    this.modWaiter?.abort("superseded");
     this.standby?.release("superseded");
     clearTimeout(this.confirmTimer);
     if (this.registered) rmSync(sessionFile(this.home, this.registered), { force: true });
