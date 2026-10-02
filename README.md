@@ -113,7 +113,7 @@ Just ask in plain language, for example:
 - `title` (required): a short name for the job, 3-7 words, like a chat title. The dashboard and `peers` show it.
 
 - `model`: any id or alias the target accepts, passed through verbatim. For opencode, short or partial names like `muse-spark` are resolved against `opencode models`. An ambiguous or unknown name fails immediately and lists the candidates.
-- `effort`: reasoning effort, e.g. `low`, `medium`, `high`, `xhigh` (Claude also `max`; for opencode the model's variant). Passed as Claude `--effort`, Codex `model_reasoning_effort` and opencode `--variant`. Without it the CLI's own default applies. The dashboard shows the effort each subagent runs at: the one asked for, what Codex reports for its thread, or the default from the Claude or Codex config.
+- `effort`: reasoning effort, e.g. `low`, `medium`, `high`, `xhigh` (Claude also `max`; for opencode the model's variant). Passed as Claude `--effort`, Codex `model_reasoning_effort` and opencode `--variant`. Without it the config's `effort` applies (`"high"` for every subagent, or per target: `{ "codex": "xhigh", "claude": "high" }`), else the CLI's own default. The dashboard shows the effort each subagent runs at: the one asked for, what Codex reports for its thread, or the default from the Claude or Codex config.
 - `session_id`: continue an earlier run. `cwd`: working folder.
 - `timeout_sec`: 60 minutes by default for `ask_*`; background `spawn_*` jobs have no practical limit (24 hours). A run that times out is not lost: the error names its session (`call again with session_id="…"`), so the caller continues it instead of starting over. The relay subagents do that automatically, once.
 - `access` and `worktree`, see below.
@@ -267,7 +267,7 @@ Every reply increments a conversation's hop count. Messages at or above `maxHops
 
 ## Configuration
 
-`~/.agent-bridge/config.json` (all keys optional; per-agent sections override the top level; env vars override both):
+`~/.agent-bridge/config.json` (all keys optional; per-agent sections override the top level; env vars override both). Running sessions pick up changes within a few seconds; only `name`, `delivery` and the dashboard port need a restart:
 
 ```json
 {
@@ -289,7 +289,7 @@ Every reply increments a conversation's hop count. Messages at or above `maxHops
 | `AGENT_BRIDGE_NAME` | Peer name |
 | `AGENT_BRIDGE_AUTO_WAKE` | `on` / `off` |
 | `AGENT_BRIDGE_MAX_HOPS` | Loop limit |
-| `AGENT_BRIDGE_MAX_JOBS` | Background subagents running at once per session (default 8, max 50); `maxJobs` in the config file. Continuing a finished subagent while all slots are taken queues it; it starts when one frees up |
+| `AGENT_BRIDGE_MAX_JOBS` | Background subagents running at once per session (default 8, max 50); `maxJobs` in the config file. Continuing a finished subagent while all slots are taken queues it; it starts when one frees up. Mid-session, ask the agent to change it ("allow 10 subagents"): the `max_subagents` tool applies it at once, with `save=true` also for new sessions |
 | `AGENT_BRIDGE_LINGER_SEC` | Listen window after sending (0 disables) |
 | `AGENT_BRIDGE_DELIVERY` | Claude only: `auto`, `channel`, `hooks` |
 | `AGENT_BRIDGE_CLAUDE_BIN` / `AGENT_BRIDGE_CODEX_BIN` / `AGENT_BRIDGE_OPENCODE_BIN` | Paths of the CLIs used for delegation |

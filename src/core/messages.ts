@@ -17,7 +17,7 @@ export const en = {
   "jobs.accessEdit": "It may change files.",
   "jobs.accessAsk": "It asks the user before changing files or running commands.",
   "jobs.started": "Subagent {name} started. Keep working; its result will arrive as a message from \"{name}\" (or call wait_for_message with from=\"{name}\").",
-  "jobs.limit": "Too many subagents running (maximum {max}). Wait for one to finish or cancel one.",
+  "jobs.limit": "Too many subagents running (maximum {max}). Wait for one to finish or cancel one; if your user wants more at once, max_subagents raises the limit.",
   "jobs.cancelled": "Cancelled subagent {name}.",
   "jobs.unknown": "No running or queued subagent named {name}.",
 

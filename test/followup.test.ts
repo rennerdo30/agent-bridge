@@ -199,3 +199,18 @@ describe("messaging subagents", () => {
     release(ok("done"));
   });
 });
+describe("subagent limit", () => {
+  it("raising the limit mid-session starts waiting continuations", async () => {
+    const limited = new JobManager(me, nullLogger, null, 1);
+    const agent = fakeAgent();
+    const done = limited.start("codex", null, "first", async () => ok("first done", "ses-1"), agent.resume);
+    await until(() => limited.recent().some((j) => j.id === done.id));
+    limited.start("codex", null, "busy", () => new Promise(() => {}), agent.resume);
+    expect(limited.followUp(done.name, "continue").outcome).toBe("waiting");
+    limited.setLimit(2);
+    expect(limited.limit).toBe(2);
+    await until(() => agent.calls.length === 1);
+    expect(agent.calls[0]).toMatchObject({ message: "continue", sessionId: "ses-1" });
+    limited.cancelAll();
+  });
+});

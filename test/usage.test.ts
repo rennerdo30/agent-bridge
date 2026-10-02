@@ -13,6 +13,14 @@ describe("usage limits", () => {
     expect(r.limits).toEqual([{ name: "5-hour window", usedPercent: 12, resets: null }, { name: "weekly", usedPercent: 95, resets: null }]);
   });
 
+  it("reads Codex credits, and whether they are in use", () => {
+    const r = formatCodexLimits({
+      rateLimits: { limitId: "codex", primary: { usedPercent: 100, windowDurationMins: 10080, resetsAt: null }, credits: { hasCredits: true, unlimited: false, balance: "62082.3000850000" }, rateLimitReachedType: "rate_limit_reached" },
+    });
+    expect(r.credits).toEqual({ balance: "62,082", unlimited: false, inUse: true });
+    expect(r.lines[0]).toContain("credits 62,082 (in use: a limit is reached)");
+  });
+
   it("picks the limit lines out of claude /usage", () => {
     const r = parseClaudeUsage("Usage\n\nCurrent session: 6% used · resets 10am\nCurrent week (all models): 66% used · resets Oct 6\n\nWhat's contributing …\n");
     expect(r.lines).toEqual(["Current session: 6% used · resets 10am", "Current week (all models): 66% used · resets Oct 6"]);

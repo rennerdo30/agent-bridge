@@ -28,6 +28,8 @@ export interface UsageReport {
   lines: string[];
   /** The same limits, structured. Empty when the agent has none (opencode, API keys). */
   limits: UsageLimit[];
+  /** Prepaid credits (Codex): what runs once a limit is reached. */
+  credits?: { balance: string; unlimited: boolean; inUse: boolean } | null;
   /** Highest "% used" among the limits, when known: the one that blocks first. */
   maxUsedPercent: number | null;
 }
@@ -81,10 +83,17 @@ function resetText(epoch: number | null | undefined): string {
   return r ? ` (resets ${r})` : "";
 }
 
+/** "62082.3000850000" -> "62,082". */
+function formatCredits(balance: string): string {
+  const n = Number(balance);
+  return Number.isFinite(n) ? Math.floor(n).toLocaleString("en-US") : balance;
+}
+
 /** Format Codex's GetAccountRateLimitsResponse. */
 export function formatCodexLimits(res: any): UsageReport {
   const lines: string[] = [];
   const limits: UsageLimit[] = [];
+  let credits: UsageReport["credits"] = null;
   let max: number | null = null;
   const snapshots: any[] = res?.rateLimitsByLimitId ? Object.values(res.rateLimitsByLimitId) : res?.rateLimits ? [res.rateLimits] : [];
   for (const s of snapshots) {
@@ -96,12 +105,17 @@ export function formatCodexLimits(res: any): UsageReport {
       const window = windowName(w.windowDurationMins);
       limits.push({ name: snapshots.length > 1 ? `${s?.limitName ?? s?.limitId ?? "codex"}: ${window}` : window, usedPercent: w.usedPercent, resets: resetTime(w.resetsAt) });
     }
-    if (s?.credits?.hasCredits && !s.credits.unlimited && s.credits.balance) parts.push(`credits ${s.credits.balance}`);
+    if (s?.credits?.hasCredits && (s.credits.unlimited || s.credits.balance)) {
+      const balance = s.credits.unlimited ? "unlimited" : formatCredits(s.credits.balance);
+      // With a limit reached, work continues on credits.
+      credits = { balance, unlimited: Boolean(s.credits.unlimited), inUse: Boolean(s.rateLimitReachedType) };
+      parts.push(`credits ${balance}${credits.inUse ? " (in use: a limit is reached)" : ""}`);
+    }
     if (s?.rateLimitReachedType) parts.push(`LIMIT REACHED (${s.rateLimitReachedType})`);
     if (parts.length) lines.push(`${s?.limitName ?? s?.limitId ?? "codex"}${s?.planType ? ` [${s.planType}]` : ""}: ${parts.join(", ")}`);
   }
   if (res?.ordinaryUsageAllowed === false) lines.push("The account currently does not allow ordinary usage.");
-  return { agent: "codex", lines: lines.length ? lines : ["No limits reported (API key or no plan limits)."], limits, maxUsedPercent: max };
+  return { agent: "codex", lines: lines.length ? lines : ["No limits reported (API key or no plan limits)."], limits, credits, maxUsedPercent: max };
 }
 
 /** Pick the limit lines out of `claude -p /usage`. */
@@ -166,11 +180,12 @@ export function describeOpencodeCosts(costs: ModelCost[], model: string | null):
   return lines;
 }
 
-async function codexUsage(bin: string, cwd: string, log: Logger): Promise<UsageReport> {
+/** One request to a short-lived `codex app-server` (initialize, then the call); returns its result. */
+export async function codexAppServerCall(bin: string, cwd: string, log: Logger, method: string, params: unknown): Promise<any> {
   const out = await capture(bin, ["app-server"], cwd, log, (write, read, done) => {
     write(`${JSON.stringify({ id: 1, method: "initialize", params: { clientInfo: { name: "agent-bridge", version: APP_VERSION }, capabilities: { experimentalApi: false } } })}\n`);
     write(`${JSON.stringify({ method: "initialized", params: {} })}\n`);
-    write(`${JSON.stringify({ id: 2, method: "account/rateLimits/read", params: null })}\n`);
+    write(`${JSON.stringify({ id: 2, method, params })}\n`);
     const poll = setInterval(() => {
       if (/"id":2[,}]/.test(read())) {
         clearInterval(poll);
@@ -181,7 +196,16 @@ async function codexUsage(bin: string, cwd: string, log: Logger): Promise<UsageR
   const line = out.split("\n").find((l) => /"id":2[,}]/.test(l));
   const msg = line ? JSON.parse(line) : null;
   if (!msg || msg.error) throw new Error(msg?.error?.message ?? "no answer from codex app-server");
-  return formatCodexLimits(msg.result);
+  return msg.result;
+}
+
+/** Run a CLI briefly and return its output (for model lists and help texts). */
+export function captureOutput(bin: string, args: string[], cwd: string, log: Logger): Promise<string> {
+  return capture(bin, args, cwd, log);
+}
+
+async function codexUsage(bin: string, cwd: string, log: Logger): Promise<UsageReport> {
+  return formatCodexLimits(await codexAppServerCall(bin, cwd, log, "account/rateLimits/read", null));
 }
 
 /** `model`: the model the caller would use (opencode: shows whether it is free). */

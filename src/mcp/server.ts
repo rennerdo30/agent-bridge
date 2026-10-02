@@ -5,7 +5,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import type { CallToolResult, ServerNotification } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
-import { defaultPeerName, loadConfig, parseAgentKind, type BridgeConfig, MODEL_NAME_PATTERN } from "../core/config.js";
+import { defaultPeerName, loadConfig, parseAgentKind, saveConfigValue, watchConfig, type BridgeConfig, MODEL_NAME_PATTERN } from "../core/config.js";
 import {
   APP_NAME,
   APP_VERSION,
@@ -17,6 +17,7 @@ import {
   MAX_BODY_CHARS,
   MAX_DELEGATE_TIMEOUT_SEC,
   MAX_JOB_TIMEOUT_SEC,
+  MAX_JOBS_LIMIT,
   MAX_WAIT_SEC,
 } from "../core/constants.js";
 import { currentDelegateDepth, DelegateError, failureCause, killAllDelegates, resolveBinary, retryTransient, type DelegateResult } from "../core/delegate.js";
@@ -38,6 +39,7 @@ import { codexPermissionHookHash, codexPermissionHookTrusted, recordCodexHookObs
 import { startRunFeed } from "../core/runfeed.js";
 import { saveAutoWake, savedAutoWake } from "../core/auto-wake-pref.js";
 import { defaultEffort } from "../core/effort.js";
+import { describeModels } from "../core/models.js";
 import { isAutoApproved, isHandoffToolCall, isOwnServerCall, mcpToolOf, shortServer } from "../core/tool-allow.js";
 import { ParentLink, parentFromEnv, type ParentClient } from "../core/parent-link.js";
 import { findRunningDashboard, hostDashboard, type DashboardInfo, type HostedDashboard } from "../cli/dashboard.js";
@@ -213,6 +215,8 @@ function instructionsFor(agent: AgentKind, targets: CodingAgent[]): string {
     `"spawn_<agent>" starts it as a background subagent whose result arrives later as a message (both accept any model id via "model"). ` +
     `"message_subagent" talks to one of those subagents like a native one: a running subagent gets the message while it works and answers right away (ask how far it is, or redirect it); a finished or failed one continues in its own session with its full context. ` +
     `"usage_limits" shows how much of each agent's account limits is left, so you can pick who gets large work. ` +
+    `Each subagent call takes a model ("model") and a thinking level ("effort", e.g. low/medium/high/xhigh); "list_models" shows what an agent accepts. ` +
+    `"max_subagents" changes how many may run at once when your user asks. ` +
     "After you message a peer or spawn a subagent, your turn stays open for a while to receive the reply; handle it and answer if needed. " +
     'Never call "hook_event"; it is reserved for agent-bridge hooks.'
   );
@@ -252,6 +256,13 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
   const ctx: ServerContext = { agent, cfg, node, log, home, cwd: () => node?.cwd ?? cwd, channelActive: () => channel, parent: delegated ? parentFromEnv() : null, launchKnown };
   if (node) {
     ctx.jobs = new JobManager(node, log.child("jobs"), join(home, JOBS_FILE), cfg.maxJobs);
+    // Edits to config.json apply right away. Settings read only at start (name, delivery, ports) wait for a restart.
+    const jobs = ctx.jobs;
+    watchConfig(home, agent, log, (next) => {
+      const limitChanged = next.maxJobs !== cfg.maxJobs;
+      Object.assign(cfg, next);
+      if (limitChanged) jobs.setLimit(next.maxJobs);
+    });
     ctx.activity = (s) => node.setActivity(s);
     // Learn the project folder once, when it was unknown at start (Codex starts us in the plugin folder).
     // Later hook cwds follow the agent's `cd`s; renaming then would strand replies sent to the old name.
@@ -484,7 +495,7 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
       }
       const waiting = ctx.jobs?.waiting() ?? [];
       if (waiting.length) {
-        lines.push(t("peers.waiting", { count: waiting.length, max: ctx.jobs!.maxJobs }));
+        lines.push(t("peers.waiting", { count: waiting.length, max: ctx.jobs!.limit }));
         for (const j of waiting) lines.push(t("peers.waitingJob", { name: j.name + (j.args?.title ? ` "${j.args.title}"` : ""), messages: j.queue.length }));
       }
       const recent = ctx.jobs?.recent() ?? [];
@@ -579,6 +590,25 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
   );
 
   register(
+    "max_subagents",
+    {
+      title: "Set the subagent limit",
+      description:
+        "Change how many background subagents may run at once in this session, effective immediately (a higher limit starts queued continuations; a lower one stops none). " +
+        `save=true also writes it to ~/.agent-bridge/config.json as the default for new sessions. Only change this when your user asks.`,
+      inputSchema: { count: z.number().int().min(1).max(MAX_JOBS_LIMIT), save: z.boolean().optional() },
+    },
+    guarded("max_subagents", async (a: { count: number; save?: boolean }) => {
+      if (!ctx.jobs) return text("No subagents in this session.");
+      const before = ctx.jobs.limit;
+      ctx.jobs.setLimit(a.count);
+      cfg.maxJobs = a.count;
+      if (a.save) saveConfigValue(ctx.home, "maxJobs", a.count);
+      return text(`Subagent limit ${before} -> ${a.count} (running: ${ctx.jobs.runningCount()}).${a.save ? " Saved to config.json for new sessions too." : " For this session only; save=true makes it the default."}`);
+    }),
+  );
+
+  register(
     "auto_wake",
     {
       title: "Toggle auto-wake",
@@ -616,7 +646,7 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
         .string()
         .regex(/^[A-Za-z0-9_-]{1,20}$/)
         .optional()
-        .describe(`Reasoning effort, e.g. ${profile.effortExample}. Default: ${target}'s own default (shown in the dashboard).`),
+        .describe(`Thinking level (reasoning effort), e.g. ${profile.effortExample}; list_models shows what each model supports. Default: ${cfg.effort[target] ?? `${target}'s own default`} (config "effort"; shown in the dashboard).`),
       session_id: z.string().optional().describe("Continue a previous delegated session"),
       cwd: z.string().optional().describe("Working directory (default: this project)"),
       timeout_sec: z
@@ -741,7 +771,7 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
             // The job's current title (message_subagent can name or rename a job after it started).
             title: (typeof job?.args?.title === "string" && job.args.title) || a.title?.trim() || undefined,
             model: a.model ?? defaultModel ?? null,
-            effort: a.effort ?? defaultEffort(target, a.model ?? defaultModel ?? null),
+            effort: a.effort ?? cfg.effort[target] ?? defaultEffort(target, a.model ?? defaultModel ?? null),
             access: access ?? "default",
             workdir,
             continues: a.session_id ?? null,
@@ -806,9 +836,9 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
             sessionId: a.session_id ?? null,
             timeoutSec: a.timeout_sec ?? (background ? MAX_JOB_TIMEOUT_SEC : DEFAULT_DELEGATE_TIMEOUT_SEC),
             model: a.model ?? defaultModel,
-            effort: a.effort ?? null,
+            effort: a.effort ?? cfg.effort[target] ?? null,
             // What it really runs (a CLI default or an alias resolved), for the dashboard.
-            onInfo: (info) => feed.meta({ ...(info.model ? { model: info.model } : {}), effort: info.effort ?? a.effort ?? defaultEffort(target, info.model ?? null) }),
+            onInfo: (info) => feed.meta({ ...(info.model ? { model: info.model } : {}), effort: info.effort ?? a.effort ?? cfg.effort[target] ?? defaultEffort(target, info.model ?? null) }),
             log: dlog,
             signal,
             onProgress: feed.report,
@@ -961,7 +991,7 @@ ${res.text || t("delegate.empty")}`, res.isError);
       guarded(spawnName, async (a: DelegateArgs) => {
         const jobs = ctx.jobs;
         if (!jobs) throw new BridgeError("bad_request", t("err.delegatedSession"));
-        if (!jobs.canStart()) return text(t("jobs.limit", { max: jobs.maxJobs }), true);
+        if (!jobs.canStart()) return text(t("jobs.limit", { max: jobs.limit }), true);
         const job = jobs.start(target, a.model ?? defaultModel, a.prompt, (signal, onProgress, job) => run({ ...a, _job: job.name }, signal, onProgress, true, job), resumeFor(a), keep(a));
         const cwd = a.cwd || ctx.cwd();
         const access = a.access ?? (a.worktree || isBridgeWorktree(cwd, ctx.home) ? "edit" : null);
@@ -999,6 +1029,21 @@ ${res.text || t("delegate.empty")}`, res.isError);
       const reports = await Promise.all(agents.map((x) => readUsage(x, bins[x], ctx.cwd(), log, x === "opencode" ? cfg.opencodeModel : null)));
       return text(reports.map((r) => `${r.agent}${r.maxUsedPercent !== null ? ` (highest: ${r.maxUsedPercent}% used)` : ""}:\n${r.lines.map((l) => `  ${l}`).join("\n")}`).join("\n\n"));
     }),
+  );
+  register(
+    "list_models",
+    {
+      title: "List subagent models",
+      description:
+        "Which models and reasoning efforts a subagent agent accepts, to pick model= and effort= for ask_*/spawn_*. Codex and opencode list their models; " +
+        "for Claude it gives the aliases and effort levels. query filters by name (opencode can list hundreds). Costs no model calls.",
+      inputSchema: {
+        agent: z.enum(targets as [CodingAgent, ...CodingAgent[]]).describe("The subagent agent"),
+        query: z.string().max(80).optional().describe('Filter, e.g. "sonnet" or "openai/"'),
+      },
+      annotations: { readOnlyHint: true },
+    },
+    guarded("list_models", async (a: { agent: CodingAgent; query?: string }) => text((await describeModels(a.agent, cfg, ctx.cwd(), log, a.query)).join("\n"))),
   );
   register(
     "dashboard",
@@ -1039,7 +1084,7 @@ ${res.text || t("delegate.empty")}`, res.isError);
       const { outcome, job } = jobs.followUp(a.job, a.message?.trim() || DEFAULT_FOLLOW_UP);
       const position = job ? jobs.waiting().indexOf(job) + 1 : 0;
       return text(
-        t(`followUp.${outcome}`, { name: job?.name ?? a.job, max: jobs.maxJobs, running: jobs.runningCount(), ahead: position > 1 ? ` (${position - 1} queued before it)` : "" }),
+        t(`followUp.${outcome}`, { name: job?.name ?? a.job, max: jobs.limit, running: jobs.runningCount(), ahead: position > 1 ? ` (${position - 1} queued before it)` : "" }),
         outcome === "unknown" || outcome === "no-session",
       );
     }),

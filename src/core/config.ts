@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { mkdirSync, readFileSync, unwatchFile, watchFile, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { CONFIG_FILE_NAME, DEFAULT_CLAUDE_BIN, DEFAULT_CODEX_BIN, DEFAULT_LINGER_SEC, DEFAULT_MAX_HOPS, DEFAULT_MAX_JOBS, DEFAULT_OPENCODE_BIN, DEFAULT_DASHBOARD_PORT, ENV, MAX_JOBS_LIMIT } from "./constants.js";
 import type { Logger } from "./logger.js";
@@ -44,6 +44,8 @@ export interface BridgeConfig {
   opencodeBin: string;
   /** opencode model as provider/model, e.g. "anthropic/claude-sonnet-5". */
   opencodeModel: string | null;
+  /** Default reasoning effort for subagents: one level for all, or per target agent ({ "codex": "high" }). */
+  effort: Partial<Record<AgentKind, string>>;
   /** Pass --auto to headless opencode runs (auto-approve permission requests). */
   opencodeAutoApprove: boolean;
   /** Run the web dashboard inside whichever session hosts the bridge. */
@@ -67,6 +69,7 @@ export const DEFAULT_CONFIG: BridgeConfig = {
   claudeModel: null,
   opencodeBin: DEFAULT_OPENCODE_BIN,
   opencodeModel: null,
+  effort: {},
   opencodeAutoApprove: false,
   dashboard: true,
   dashboardPort: DEFAULT_DASHBOARD_PORT,
@@ -106,10 +109,53 @@ function modelName(v: unknown): string | undefined {
 }
 
 /** A list of tool patterns: a JSON array, or a comma-separated string (env var). */
+const EFFORT_NAME = /^[A-Za-z0-9_-]{1,20}$/;
+
+/** "high" (every target) or { "codex": "xhigh", "claude": "high" }. */
+function effortLevels(v: unknown): Partial<Record<AgentKind, string>> | undefined {
+  if (typeof v === "string" && EFFORT_NAME.test(v)) return Object.fromEntries(AGENT_KINDS.map((k) => [k, v]));
+  if (!v || typeof v !== "object" || Array.isArray(v)) return undefined;
+  const out: Partial<Record<AgentKind, string>> = {};
+  for (const [k, x] of Object.entries(v)) if ((AGENT_KINDS as readonly string[]).includes(k) && typeof x === "string" && EFFORT_NAME.test(x)) out[k as AgentKind] = x;
+  return out;
+}
+
 function toolPatterns(v: unknown): string[] | undefined {
   const list = Array.isArray(v) ? v : typeof v === "string" ? v.split(",") : null;
   if (!list || !list.every((x) => typeof x === "string")) return undefined;
   return (list as string[]).map((x) => x.trim()).filter(Boolean);
+}
+
+/** How often a running session checks config.json for changes. */
+const CONFIG_POLL_MS = 2_000;
+
+/**
+ * Re-read config.json whenever it changes (polling: editors often replace the file, which breaks fs.watch).
+ * Returns a function that stops watching.
+ */
+export function watchConfig(home: string, agent: AgentKind, log: Logger, onChange: (cfg: BridgeConfig) => void): () => void {
+  const path = join(home, CONFIG_FILE_NAME);
+  const listener = (cur: { mtimeMs: number }, prev: { mtimeMs: number }) => {
+    if (cur.mtimeMs === prev.mtimeMs) return;
+    log.info("config file changed; applying it", { path });
+    onChange(loadConfig(home, agent, log));
+  };
+  watchFile(path, { interval: CONFIG_POLL_MS, persistent: false }, listener);
+  return () => unwatchFile(path, listener);
+}
+
+/** Set one top-level value in config.json, keeping the rest of the file. */
+export function saveConfigValue(home: string, key: string, value: unknown): void {
+  const path = join(home, CONFIG_FILE_NAME);
+  let file: Record<string, unknown> = {};
+  try {
+    file = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
+  } catch {
+    // missing or unreadable: start a new file
+  }
+  file[key] = value;
+  mkdirSync(home, { recursive: true });
+  writeFileSync(path, `${JSON.stringify(file, null, 2)}\n`);
 }
 
 /** Config file (~/.agent-bridge/config.json) with optional per-agent sections, overridden by env vars. */
@@ -152,6 +198,7 @@ export function loadConfig(home: string, agent: AgentKind, log: Logger, env: Nod
     claudeModel: pick("claudeModel", null, modelName) ?? d.claudeModel,
     opencodeBin: pick("opencodeBin", ENV.opencodeBin, str) ?? d.opencodeBin,
     opencodeModel: pick("opencodeModel", null, modelName) ?? d.opencodeModel,
+    effort: pick("effort", null, effortLevels) ?? d.effort,
     opencodeAutoApprove: pick("opencodeAutoApprove", null, parseBool) ?? d.opencodeAutoApprove,
     dashboard: pick("dashboard", ENV.dashboard, parseBool) ?? d.dashboard,
     dashboardPort: pick("dashboardPort", null, (v) => parseIntInRange(v, 1, 65_535)) ?? d.dashboardPort,

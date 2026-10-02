@@ -7714,7 +7714,7 @@ import { connect } from "node:net";
 import { homedir } from "node:os";
 import { join } from "node:path";
 var APP_NAME = "agent-bridge";
-var APP_VERSION = "0.22.2";
+var APP_VERSION = "0.23.0";
 var PROTOCOL_VERSION = 2;
 var ENV = {
   home: "AGENT_BRIDGE_HOME",
@@ -7912,7 +7912,7 @@ var en = {
   "jobs.accessEdit": "It may change files.",
   "jobs.accessAsk": "It asks the user before changing files or running commands.",
   "jobs.started": 'Subagent {name} started. Keep working; its result will arrive as a message from "{name}" (or call wait_for_message with from="{name}").',
-  "jobs.limit": "Too many subagents running (maximum {max}). Wait for one to finish or cancel one.",
+  "jobs.limit": "Too many subagents running (maximum {max}). Wait for one to finish or cancel one; if your user wants more at once, max_subagents raises the limit.",
   "jobs.cancelled": "Cancelled subagent {name}.",
   "jobs.unknown": "No running or queued subagent named {name}.",
   "send.ok": "Message {id} sent (conversation {conversation}).",
@@ -10153,7 +10153,7 @@ async function watchRunLog(path, out2) {
 
 // src/cli/dashboard.ts
 import { randomBytes as randomBytes6 } from "node:crypto";
-import { chmodSync as chmodSync2, readFileSync as readFileSync8, writeFileSync as writeFileSync3 } from "node:fs";
+import { chmodSync as chmodSync2, readFileSync as readFileSync8, writeFileSync as writeFileSync4 } from "node:fs";
 import { request } from "node:http";
 import { join as join13 } from "node:path";
 
@@ -10165,7 +10165,7 @@ import { join as join12 } from "node:path";
 import { DatabaseSync as DatabaseSync2 } from "node:sqlite";
 
 // src/core/config.ts
-import { readFileSync as readFileSync6 } from "node:fs";
+import { mkdirSync as mkdirSync7, readFileSync as readFileSync6, unwatchFile, watchFile, writeFileSync as writeFileSync3 } from "node:fs";
 import { basename, join as join11 } from "node:path";
 var DELIVERY_MODES = ["auto", "channel", "hooks"];
 var CODEX_SANDBOXES = ["read-only", "workspace-write", "danger-full-access"];
@@ -10186,6 +10186,7 @@ var DEFAULT_CONFIG = {
   claudeModel: null,
   opencodeBin: DEFAULT_OPENCODE_BIN,
   opencodeModel: null,
+  effort: {},
   opencodeAutoApprove: false,
   dashboard: true,
   dashboardPort: DEFAULT_DASHBOARD_PORT
@@ -10212,6 +10213,14 @@ var MAX_LINGER_SEC = 3600;
 var MODEL_NAME_PATTERN = /^[^\s"'`&|<>^%$;()]{1,200}$/;
 function modelName(v) {
   return typeof v === "string" && MODEL_NAME_PATTERN.test(v.trim()) ? v.trim() : void 0;
+}
+var EFFORT_NAME = /^[A-Za-z0-9_-]{1,20}$/;
+function effortLevels(v) {
+  if (typeof v === "string" && EFFORT_NAME.test(v)) return Object.fromEntries(AGENT_KINDS.map((k) => [k, v]));
+  if (!v || typeof v !== "object" || Array.isArray(v)) return void 0;
+  const out2 = {};
+  for (const [k, x] of Object.entries(v)) if (AGENT_KINDS.includes(k) && typeof x === "string" && EFFORT_NAME.test(x)) out2[k] = x;
+  return out2;
 }
 function toolPatterns(v) {
   const list = Array.isArray(v) ? v : typeof v === "string" ? v.split(",") : null;
@@ -10255,6 +10264,7 @@ function loadConfig(home, agent, log, env = process.env) {
     claudeModel: pick2("claudeModel", null, modelName) ?? d.claudeModel,
     opencodeBin: pick2("opencodeBin", ENV.opencodeBin, str) ?? d.opencodeBin,
     opencodeModel: pick2("opencodeModel", null, modelName) ?? d.opencodeModel,
+    effort: pick2("effort", null, effortLevels) ?? d.effort,
     opencodeAutoApprove: pick2("opencodeAutoApprove", null, parseBool) ?? d.opencodeAutoApprove,
     dashboard: pick2("dashboard", ENV.dashboard, parseBool) ?? d.dashboard,
     dashboardPort: pick2("dashboardPort", null, (v) => parseIntInRange(v, 1, 65535)) ?? d.dashboardPort
@@ -10312,9 +10322,14 @@ function resetText(epoch) {
   const r = resetTime(epoch);
   return r ? ` (resets ${r})` : "";
 }
+function formatCredits(balance) {
+  const n = Number(balance);
+  return Number.isFinite(n) ? Math.floor(n).toLocaleString("en-US") : balance;
+}
 function formatCodexLimits(res) {
   const lines = [];
   const limits = [];
+  let credits = null;
   let max = null;
   const snapshots = res?.rateLimitsByLimitId ? Object.values(res.rateLimitsByLimitId) : res?.rateLimits ? [res.rateLimits] : [];
   for (const s of snapshots) {
@@ -10326,12 +10341,16 @@ function formatCodexLimits(res) {
       const window = windowName(w.windowDurationMins);
       limits.push({ name: snapshots.length > 1 ? `${s?.limitName ?? s?.limitId ?? "codex"}: ${window}` : window, usedPercent: w.usedPercent, resets: resetTime(w.resetsAt) });
     }
-    if (s?.credits?.hasCredits && !s.credits.unlimited && s.credits.balance) parts.push(`credits ${s.credits.balance}`);
+    if (s?.credits?.hasCredits && (s.credits.unlimited || s.credits.balance)) {
+      const balance = s.credits.unlimited ? "unlimited" : formatCredits(s.credits.balance);
+      credits = { balance, unlimited: Boolean(s.credits.unlimited), inUse: Boolean(s.rateLimitReachedType) };
+      parts.push(`credits ${balance}${credits.inUse ? " (in use: a limit is reached)" : ""}`);
+    }
     if (s?.rateLimitReachedType) parts.push(`LIMIT REACHED (${s.rateLimitReachedType})`);
     if (parts.length) lines.push(`${s?.limitName ?? s?.limitId ?? "codex"}${s?.planType ? ` [${s.planType}]` : ""}: ${parts.join(", ")}`);
   }
   if (res?.ordinaryUsageAllowed === false) lines.push("The account currently does not allow ordinary usage.");
-  return { agent: "codex", lines: lines.length ? lines : ["No limits reported (API key or no plan limits)."], limits, maxUsedPercent: max };
+  return { agent: "codex", lines: lines.length ? lines : ["No limits reported (API key or no plan limits)."], limits, credits, maxUsedPercent: max };
 }
 function parseClaudeUsage(text) {
   const lines = text.split(/\r?\n/).map((l) => l.trim()).filter((l) => /\d+%\s*used/i.test(l) || /api key/i.test(l));
@@ -10375,13 +10394,13 @@ function describeOpencodeCosts(costs, model) {
   if (free.length) lines.push(`Models without a per-token price (free, or covered by a plan) (${free.length}): ${free.slice(0, MAX_FREE_LISTED).join(", ")}${free.length > MAX_FREE_LISTED ? ", \u2026" : ""}`);
   return lines;
 }
-async function codexUsage(bin, cwd, log) {
+async function codexAppServerCall(bin, cwd, log, method, params) {
   const out2 = await capture(bin, ["app-server"], cwd, log, (write, read, done) => {
     write(`${JSON.stringify({ id: 1, method: "initialize", params: { clientInfo: { name: "agent-bridge", version: APP_VERSION }, capabilities: { experimentalApi: false } } })}
 `);
     write(`${JSON.stringify({ method: "initialized", params: {} })}
 `);
-    write(`${JSON.stringify({ id: 2, method: "account/rateLimits/read", params: null })}
+    write(`${JSON.stringify({ id: 2, method, params })}
 `);
     const poll = setInterval(() => {
       if (/"id":2[,}]/.test(read())) {
@@ -10393,7 +10412,10 @@ async function codexUsage(bin, cwd, log) {
   const line = out2.split("\n").find((l) => /"id":2[,}]/.test(l));
   const msg = line ? JSON.parse(line) : null;
   if (!msg || msg.error) throw new Error(msg?.error?.message ?? "no answer from codex app-server");
-  return formatCodexLimits(msg.result);
+  return msg.result;
+}
+async function codexUsage(bin, cwd, log) {
+  return formatCodexLimits(await codexAppServerCall(bin, cwd, log, "account/rateLimits/read", null));
 }
 async function readUsage(agent, bin, cwd, log, model = null) {
   try {
@@ -11187,7 +11209,11 @@ function usageCard(rep) {
           '<div class="track"><i style="width:' + left + '%"></i></div>' + (l.resets ? '<div class="small muted">resets ' + esc(l.resets) + "</div>" : "") + "</div>";
       }).join("")
     : rep.lines.slice(0, 2).map((x) => '<div class="small muted">' + esc(x) + "</div>").join("");
-  return '<div class="card"><div class="head">' + av(rep.agent, true) + esc(rep.agent) + "</div>" + body + "</div>";
+  const credits = rep.credits
+    ? '<div class="limit"><div class="top"><span>credits' + (rep.credits.inUse ? ' <span class="chip">in use</span>' : "") + "</span><b>" + esc(rep.credits.balance) + "</b></div>" +
+      (rep.credits.inUse ? '<div class="small muted">a limit is reached; work continues on credits</div>' : "") + "</div>"
+    : "";
+  return '<div class="card"><div class="head">' + av(rep.agent, true) + esc(rep.agent) + "</div>" + body + credits + "</div>";
 }
 
 async function poll() {  try {
@@ -11505,7 +11531,7 @@ async function hostDashboard(opts) {
   const ui = await startUi({ ...opts, secret });
   const info = { url: ui.url, port: ui.port, pid: process.pid };
   const file = dashboardFile(opts.home);
-  writeFileSync3(file, JSON.stringify(info, null, 2), { mode: OWNER_ONLY2 });
+  writeFileSync4(file, JSON.stringify(info, null, 2), { mode: OWNER_ONLY2 });
   try {
     chmodSync2(file, OWNER_ONLY2);
   } catch {
@@ -11534,13 +11560,13 @@ function openBrowser(url) {
 
 // src/cli/reliability.ts
 import { execFileSync } from "node:child_process";
-import { existsSync as existsSync6, mkdtempSync as mkdtempSync2, rmSync as rmSync5, writeFileSync as writeFileSync6 } from "node:fs";
+import { existsSync as existsSync6, mkdtempSync as mkdtempSync2, rmSync as rmSync5, writeFileSync as writeFileSync7 } from "node:fs";
 import { tmpdir as tmpdir2 } from "node:os";
 import { join as join17 } from "node:path";
 
 // src/core/worktree.ts
 import { createHash as createHash2 } from "node:crypto";
-import { mkdirSync as mkdirSync7, readFileSync as readFileSync9, realpathSync as realpathSync2, rmSync as rmSync3 } from "node:fs";
+import { mkdirSync as mkdirSync8, readFileSync as readFileSync9, realpathSync as realpathSync2, rmSync as rmSync3 } from "node:fs";
 import { basename as basename2, isAbsolute as isAbsolute2, join as join14, relative, resolve as resolve4 } from "node:path";
 var GIT = "git";
 var GIT_TIMEOUT_MS = 18e4;
@@ -11568,7 +11594,7 @@ async function createWorktree(opts) {
   const baseBranch = await git(["symbolic-ref", "-q", "--short", "HEAD"], repoRoot, opts.log).catch(() => "") || null;
   const branch = `${BRANCH_PREFIX}${opts.jobId}`;
   const dir = join14(opts.home, "worktrees");
-  mkdirSync7(dir, { recursive: true });
+  mkdirSync8(dir, { recursive: true });
   const path = join14(dir, `${basename2(repoRoot)}-${opts.jobId}`);
   try {
     await git(["worktree", "add", "-b", branch, path, base], repoRoot, opts.log, WORKTREE_ADD_TIMEOUT_MS);
@@ -11639,7 +11665,7 @@ async function finishWorktree(wt, message, log) {
 }
 
 // src/core/codex-trust.ts
-import { readFileSync as readFileSync10, writeFileSync as writeFileSync4 } from "node:fs";
+import { readFileSync as readFileSync10, writeFileSync as writeFileSync5 } from "node:fs";
 import { homedir as homedir4 } from "node:os";
 import { join as join15 } from "node:path";
 var PERMISSION_HOOK_STATE_KEY = 'hooks.state."agent-bridge@agent-bridge:plugin.json#hooks[0]:permission_request:0:0"';
@@ -11888,7 +11914,7 @@ async function delegateToOpencodeServed(req) {
 
 // src/cli/reliability-live.ts
 import { execFile as execFile2 } from "node:child_process";
-import { existsSync as existsSync5, mkdirSync as mkdirSync8, mkdtempSync, readdirSync as readdirSync5, readFileSync as readFileSync11, rmSync as rmSync4, writeFileSync as writeFileSync5 } from "node:fs";
+import { existsSync as existsSync5, mkdirSync as mkdirSync9, mkdtempSync, readdirSync as readdirSync5, readFileSync as readFileSync11, rmSync as rmSync4, writeFileSync as writeFileSync6 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join as join16 } from "node:path";
 
@@ -22235,9 +22261,9 @@ var LiveHost = class _LiveHost {
   }
 };
 function writeNotes(dir) {
-  mkdirSync8(join16(dir, NOTES_DIR), { recursive: true });
+  mkdirSync9(join16(dir, NOTES_DIR), { recursive: true });
   for (let i = 1; i <= NOTE_COUNT; i++) {
-    writeFileSync5(join16(dir, NOTES_DIR, `note-${String(i).padStart(2, "0")}.txt`), `Note ${i}: the garden bed number ${i} gets ${i * 2} liters of water on day ${i}.
+    writeFileSync6(join16(dir, NOTES_DIR, `note-${String(i).padStart(2, "0")}.txt`), `Note ${i}: the garden bed number ${i} gets ${i * 2} liters of water on day ${i}.
 `);
   }
 }
@@ -22470,7 +22496,7 @@ function makeRepo() {
   const dir = mkdtempSync2(join17(tmpdir2(), "agent-bridge-rel-"));
   const git2 = (...a) => execFileSync("git", a, { cwd: dir, stdio: "ignore" });
   git2("init", "-q");
-  writeFileSync6(join17(dir, "README.md"), "reliability sandbox\n");
+  writeFileSync7(join17(dir, "README.md"), "reliability sandbox\n");
   git2("add", "README.md");
   git2("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "base");
   return dir;

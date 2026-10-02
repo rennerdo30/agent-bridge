@@ -86,9 +86,20 @@ export class JobManager {
     private readonly log: Logger,
     /** Where jobs are kept across restarts of the session (~/.agent-bridge/jobs.json); none in tests. */
     private readonly storePath: string | null = null,
-    /** Background subagents running at once (config maxJobs). */
-    readonly maxJobs: number = DEFAULT_MAX_JOBS,
+    /** Background subagents running at once (config maxJobs; max_subagents changes it while the session runs). */
+    private maxJobs: number = DEFAULT_MAX_JOBS,
   ) {}
+
+  get limit(): number {
+    return this.maxJobs;
+  }
+
+  /** Change the limit now. A higher one starts waiting continuations; a lower one stops no running subagent. */
+  setLimit(max: number): void {
+    this.maxJobs = max;
+    this.log.info("subagent limit changed", { max });
+    this.startWaiting();
+  }
 
   /** Save this session's jobs, merged with those other sessions saved. Best effort: never breaks a run. */
   persist(): void {

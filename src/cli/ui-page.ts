@@ -690,7 +690,11 @@ function usageCard(rep) {
           '<div class="track"><i style="width:' + left + '%"></i></div>' + (l.resets ? '<div class="small muted">resets ' + esc(l.resets) + "</div>" : "") + "</div>";
       }).join("")
     : rep.lines.slice(0, 2).map((x) => '<div class="small muted">' + esc(x) + "</div>").join("");
-  return '<div class="card"><div class="head">' + av(rep.agent, true) + esc(rep.agent) + "</div>" + body + "</div>";
+  const credits = rep.credits
+    ? '<div class="limit"><div class="top"><span>credits' + (rep.credits.inUse ? ' <span class="chip">in use</span>' : "") + "</span><b>" + esc(rep.credits.balance) + "</b></div>" +
+      (rep.credits.inUse ? '<div class="small muted">a limit is reached; work continues on credits</div>' : "") + "</div>"
+    : "";
+  return '<div class="card"><div class="head">' + av(rep.agent, true) + esc(rep.agent) + "</div>" + body + credits + "</div>";
 }
 
 async function poll() {  try {

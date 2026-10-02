@@ -86,7 +86,7 @@ export const DELEGATION_TARGETS: Record<CodingAgent, DelegationTarget> = {
   codex: {
     title: "OpenAI Codex",
     modelExample: '"gpt-6-sol"',
-    effortExample: '"low", "medium", "high" or "xhigh"',
+    effortExample: '"low", "medium", "high", "xhigh", "max" or "ultra" (depends on the model)',
     defaultModel: (cfg) => cfg.codexModel,
     schema: { sandbox: z.enum(CODEX_SANDBOXES as [string, ...string[]]).optional().describe("Overrides access with an exact Codex sandbox mode") },
     permissionNote: (cfg) => `Codex runs in the "${cfg.codexSandbox}" sandbox unless you pass access or sandbox.${codexEnvironmentNote()}`,
