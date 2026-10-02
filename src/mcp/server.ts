@@ -235,6 +235,9 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
   const ctx: ServerContext = { agent, cfg, node, log, home, cwd: () => node?.cwd ?? cwd, channelActive: () => channel, parent: delegated ? parentFromEnv() : null, launchKnown };
   if (node) {
     ctx.jobs = new JobManager(node, log.child("jobs"), join(home, JOBS_FILE), cfg.maxJobs);
+    // Only the server the session uses tends the jobs: a replaced one pauses until it takes its place back.
+    node.on("replaced", () => ctx.jobs?.setDormant(true));
+    node.on("reclaimed", () => ctx.jobs?.setDormant(false));
     // Background subagents run in detached job runners, so a reload of this server (or the session) leaves
     // them running; the next server takes them over. AGENT_BRIDGE_JOB_RUNNER=0 runs them in here instead.
     const cli = process.env[ENV.jobRunner] === "0" ? null : bundledCli();
@@ -437,6 +440,8 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
     <A>(name: string, fn: (args: A, extra: ToolExtra) => Promise<CallToolResult>) =>
     async (args: A, extra: ToolExtra): Promise<CallToolResult> => {
       log.debug("tool call", { tool: name, args: args as Record<string, unknown> });
+      // Replaced by another server of this session, yet called: this is the one the session uses (see reclaim).
+      if (ctx.node?.wasReplaced) await ctx.node.reclaim().catch((err) => log.warn("could not take the bridge back", { err: (err as Error).message }));
       await ctx.observeMeta?.(extra._meta);
       try {
         return await fn(args, extra);
@@ -913,6 +918,8 @@ ${res.text || t("delegate.empty")}`, res.isError);
       },
     },
     async (a: { event: string; session_id?: string; stop_hook_active?: boolean | string; cwd?: string; agent_id?: string; prompt?: string }, extra: ToolExtra) => {
+      // The session's hooks reach this server: if the bridge gave the session to a stale one, take it back.
+      if (ctx.node?.wasReplaced) await ctx.node.reclaim().catch((err) => log.warn("could not take the bridge back", { err: (err as Error).message }));
       await ctx.observeMeta?.(extra._meta);
       // An unsubstituted "${...}" template means the host had no value for that field.
       const given = (v: string | undefined) => (v && !v.startsWith("${") ? v : null);

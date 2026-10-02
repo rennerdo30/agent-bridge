@@ -62,6 +62,8 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
   private client: BridgeClient | null = null;
   private broker: Broker | null = null;
   private stopping = false;
+  /** The bridge gave this session to another server of it (see reclaim). */
+  private replaced = false;
   private electing: Promise<void> | null = null;
   private reconnectTimer: NodeJS.Timeout | null = null;
   private reconnectDelay = RECONNECT_BACKOFF_MIN_MS;
@@ -102,6 +104,24 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
 
   async start(): Promise<void> {
     await this.ensureConnected();
+  }
+
+  get wasReplaced(): boolean {
+    return this.replaced;
+  }
+
+  /**
+   * The session still calls this server (hooks, tools) after the bridge replaced it: Claude Code can start a
+   * stale server of an older plugin version next to the current one on /reload-plugins, and whichever connects
+   * last wins. The server the session really uses takes its place back; the stale one, never called, stays out.
+   */
+  async reclaim(): Promise<void> {
+    if (!this.replaced) return;
+    this.replaced = false;
+    this.stopping = false;
+    this.log.info("the session still uses this server: taking its place back on the bridge");
+    await this.ensureConnected();
+    this.emit("reclaimed");
   }
 
   async stop(): Promise<void> {
@@ -287,7 +307,9 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
     } else if (ev === "replaced") {
       // A newer server of this same session took over (e.g. /reload-plugins): stay away instead of rejoining.
       this.log.info("replaced by a newer server of this session; leaving the bridge", { by: (data as { by?: string })?.by });
+      this.replaced = true;
       void this.stop();
+      this.emit("replaced");
     }
   }
 

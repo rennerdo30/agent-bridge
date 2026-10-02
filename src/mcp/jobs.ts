@@ -226,9 +226,26 @@ export class JobManager {
     this.startWaiting();
   }
 
+  /**
+   * A newer server of this session took over (the bridge replaced this one): stay out of the job store and the
+   * runners, so two servers never settle or save the same jobs. Ends when this server takes its place back.
+   */
+  private dormant = false;
+
+  setDormant(dormant: boolean): void {
+    if (this.dormant === dormant) return;
+    this.dormant = dormant;
+    this.log.info(dormant ? "another server of this session took over: jobs paused here" : "this server took its place back: jobs resumed");
+    if (dormant && this.hostTimer) {
+      clearInterval(this.hostTimer);
+      this.hostTimer = null;
+    }
+    if (!dormant && [...this.running.values()].some((j) => j.host)) this.watchHosted();
+  }
+
   /** Save this session's jobs, merged with those other sessions saved. Best effort: never breaks a run. */
   persist(): void {
-    if (!this.storePath) return;
+    if (!this.storePath || this.dormant) return;
     const lock = acquireLock(`${this.storePath}.lock`);
     try {
       const mine = [...this.history.values()].filter((j) => this.own.has(j.id)).map(toStored);
@@ -535,7 +552,7 @@ export class JobManager {
 
   /** Check runner-hosted jobs while any runs. */
   private watchHosted(): void {
-    if (this.hostTimer) return;
+    if (this.hostTimer || this.dormant) return;
     this.hostTimer = setInterval(() => {
       const hosted = [...this.running.values()].filter((j) => j.host);
       if (!hosted.length && this.hostTimer) {

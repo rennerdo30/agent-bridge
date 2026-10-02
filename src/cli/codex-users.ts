@@ -60,7 +60,7 @@ export function listCodexUsers(): Promise<CodexUser[]> {
 }
 
 export function describeCodexUser(u: CodexUser): string {
-  if (u.kind === "app") return `the Codex app (pid ${u.pid}, since ${u.started}): close it`;
+  if (u.kind === "app") return `the Codex app (pid ${u.pid}, since ${u.started}): update once it is idle`;
   if (u.kind === "subagent") return `a Codex subagent of a ${u.startedBy} session (pid ${u.pid}, since ${u.started}): wait until it finishes, or cancel it with cancel_subagent`;
-  return `a Codex session (pid ${u.pid}, since ${u.started}): close it`;
+  return `a Codex session (pid ${u.pid}, since ${u.started}): update once it is idle`;
 }

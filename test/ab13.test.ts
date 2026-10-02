@@ -91,6 +91,26 @@ describe("sessions and native subagents", () => {
     expect((await fresh.waitForMessage(2_000))?.body).toBe("waited under -2");
   });
 
+  it("the server the session really uses takes the bridge back from a stale one", async () => {
+    const broker = env.node("broker-z", "codex");
+    await broker.start();
+    const real = env.node("claude-app", "claude");
+    await real.start();
+    await real.setSessionId("sess-3");
+    // A stale server of the same session connects last and wins the bridge.
+    const stale = env.node("claude-app", "claude");
+    await stale.start();
+    await stale.setSessionId("sess-3");
+    await until(() => real.wasReplaced);
+    // The session keeps calling the real one: it takes its place (and the usual name) back.
+    await real.reclaim();
+    await until(() => !stale.isConnected);
+    expect(real.name).toBe("claude-app");
+    expect(stale.wasReplaced).toBe(true);
+    await broker.send({ to: "claude-app", body: "for the real server" });
+    expect((await real.waitForMessage(2_000))?.body).toBe("for the real server");
+  });
+
   it("leaves mail for the main agent when a native subagent's tool call fires the hook", async () => {
     const me = env.node("claude-m", "claude");
     await me.start();

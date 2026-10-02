@@ -7714,7 +7714,7 @@ import { connect } from "node:net";
 import { homedir } from "node:os";
 import { join } from "node:path";
 var APP_NAME = "agent-bridge";
-var APP_VERSION = "0.24.4";
+var APP_VERSION = "0.24.5";
 var PROTOCOL_VERSION = 2;
 var ENV = {
   home: "AGENT_BRIDGE_HOME",
@@ -7971,8 +7971,8 @@ var en = {
   "installer.confirm": "Run them for {tool}? [y/N] ",
   "installer.skipped": "Skipped {tool}.",
   "installer.notFound": "{tool} is not installed (not found on PATH); skipping it.",
-  "installer.codexNote": "  Note: close all Codex sessions first; afterwards trust the agent-bridge hooks once via /hooks in Codex.",
-  "installer.codexInUse": "  These Codex processes are running; on Windows they keep the plugin folder in use and the update fails until they are gone:",
+  "installer.codexNote": "  Note: on Windows this needs no Codex running (the plugin folder is in use otherwise). No hurry: the Codex plugin matters only for Codex sessions on the bridge and its subagents' report-back; an older one keeps working, so update when Codex is idle. Afterwards trust the agent-bridge hooks once via /hooks in Codex.",
+  "installer.codexInUse": "  These Codex processes are running; on Windows they keep the plugin folder in use, so the Codex update has to wait until they are done (nothing breaks meanwhile):",
   "installer.codexBlocked": "  Codex could not replace the plugin because these processes still use it (Codex subagents started by agent-bridge sessions count too):",
   "installer.opencodeCopy": "copy the agent-bridge plugin, skill and subagents into opencode's config folder",
   "installer.opencodeRemove": "remove the agent-bridge files from opencode's config folder",
@@ -8610,6 +8610,8 @@ var BridgeNode = class extends EventEmitter2 {
   client = null;
   broker = null;
   stopping = false;
+  /** The bridge gave this session to another server of it (see reclaim). */
+  replaced = false;
   electing = null;
   reconnectTimer = null;
   reconnectDelay = RECONNECT_BACKOFF_MIN_MS;
@@ -8639,6 +8641,22 @@ var BridgeNode = class extends EventEmitter2 {
   }
   async start() {
     await this.ensureConnected();
+  }
+  get wasReplaced() {
+    return this.replaced;
+  }
+  /**
+   * The session still calls this server (hooks, tools) after the bridge replaced it: Claude Code can start a
+   * stale server of an older plugin version next to the current one on /reload-plugins, and whichever connects
+   * last wins. The server the session really uses takes its place back; the stale one, never called, stays out.
+   */
+  async reclaim() {
+    if (!this.replaced) return;
+    this.replaced = false;
+    this.stopping = false;
+    this.log.info("the session still uses this server: taking its place back on the bridge");
+    await this.ensureConnected();
+    this.emit("reclaimed");
   }
   async stop() {
     this.stopping = true;
@@ -8806,7 +8824,9 @@ var BridgeNode = class extends EventEmitter2 {
       this.emit(ev, data);
     } else if (ev === "replaced") {
       this.log.info("replaced by a newer server of this session; leaving the bridge", { by: data?.by });
+      this.replaced = true;
       void this.stop();
+      this.emit("replaced");
     }
   }
   async withClient(fn) {
@@ -9970,9 +9990,9 @@ function listCodexUsers() {
   });
 }
 function describeCodexUser(u) {
-  if (u.kind === "app") return `the Codex app (pid ${u.pid}, since ${u.started}): close it`;
+  if (u.kind === "app") return `the Codex app (pid ${u.pid}, since ${u.started}): update once it is idle`;
   if (u.kind === "subagent") return `a Codex subagent of a ${u.startedBy} session (pid ${u.pid}, since ${u.started}): wait until it finishes, or cancel it with cancel_subagent`;
-  return `a Codex session (pid ${u.pid}, since ${u.started}): close it`;
+  return `a Codex session (pid ${u.pid}, since ${u.started}): update once it is idle`;
 }
 
 // src/cli/opencode-install.ts

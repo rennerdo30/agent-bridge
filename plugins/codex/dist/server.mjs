@@ -36489,7 +36489,7 @@ import { basename, join as join2 } from "node:path";
 import { homedir } from "node:os";
 import { join } from "node:path";
 var APP_NAME = "agent-bridge";
-var APP_VERSION = "0.24.4";
+var APP_VERSION = "0.24.5";
 var PROTOCOL_VERSION = 2;
 var ENV = {
   home: "AGENT_BRIDGE_HOME",
@@ -37990,8 +37990,8 @@ var en = {
   "installer.confirm": "Run them for {tool}? [y/N] ",
   "installer.skipped": "Skipped {tool}.",
   "installer.notFound": "{tool} is not installed (not found on PATH); skipping it.",
-  "installer.codexNote": "  Note: close all Codex sessions first; afterwards trust the agent-bridge hooks once via /hooks in Codex.",
-  "installer.codexInUse": "  These Codex processes are running; on Windows they keep the plugin folder in use and the update fails until they are gone:",
+  "installer.codexNote": "  Note: on Windows this needs no Codex running (the plugin folder is in use otherwise). No hurry: the Codex plugin matters only for Codex sessions on the bridge and its subagents' report-back; an older one keeps working, so update when Codex is idle. Afterwards trust the agent-bridge hooks once via /hooks in Codex.",
+  "installer.codexInUse": "  These Codex processes are running; on Windows they keep the plugin folder in use, so the Codex update has to wait until they are done (nothing breaks meanwhile):",
   "installer.codexBlocked": "  Codex could not replace the plugin because these processes still use it (Codex subagents started by agent-bridge sessions count too):",
   "installer.opencodeCopy": "copy the agent-bridge plugin, skill and subagents into opencode's config folder",
   "installer.opencodeRemove": "remove the agent-bridge files from opencode's config folder",
@@ -38677,6 +38677,8 @@ var BridgeNode = class extends EventEmitter2 {
   client = null;
   broker = null;
   stopping = false;
+  /** The bridge gave this session to another server of it (see reclaim). */
+  replaced = false;
   electing = null;
   reconnectTimer = null;
   reconnectDelay = RECONNECT_BACKOFF_MIN_MS;
@@ -38706,6 +38708,22 @@ var BridgeNode = class extends EventEmitter2 {
   }
   async start() {
     await this.ensureConnected();
+  }
+  get wasReplaced() {
+    return this.replaced;
+  }
+  /**
+   * The session still calls this server (hooks, tools) after the bridge replaced it: Claude Code can start a
+   * stale server of an older plugin version next to the current one on /reload-plugins, and whichever connects
+   * last wins. The server the session really uses takes its place back; the stale one, never called, stays out.
+   */
+  async reclaim() {
+    if (!this.replaced) return;
+    this.replaced = false;
+    this.stopping = false;
+    this.log.info("the session still uses this server: taking its place back on the bridge");
+    await this.ensureConnected();
+    this.emit("reclaimed");
   }
   async stop() {
     this.stopping = true;
@@ -38873,7 +38891,9 @@ var BridgeNode = class extends EventEmitter2 {
       this.emit(ev, data);
     } else if (ev === "replaced") {
       this.log.info("replaced by a newer server of this session; leaving the bridge", { by: data?.by });
+      this.replaced = true;
       void this.stop();
+      this.emit("replaced");
     }
   }
   async withClient(fn) {
@@ -41699,9 +41719,24 @@ var JobManager = class {
     this.log.info("subagent limit changed", { max });
     this.startWaiting();
   }
+  /**
+   * A newer server of this session took over (the bridge replaced this one): stay out of the job store and the
+   * runners, so two servers never settle or save the same jobs. Ends when this server takes its place back.
+   */
+  dormant = false;
+  setDormant(dormant) {
+    if (this.dormant === dormant) return;
+    this.dormant = dormant;
+    this.log.info(dormant ? "another server of this session took over: jobs paused here" : "this server took its place back: jobs resumed");
+    if (dormant && this.hostTimer) {
+      clearInterval(this.hostTimer);
+      this.hostTimer = null;
+    }
+    if (!dormant && [...this.running.values()].some((j) => j.host)) this.watchHosted();
+  }
   /** Save this session's jobs, merged with those other sessions saved. Best effort: never breaks a run. */
   persist() {
-    if (!this.storePath) return;
+    if (!this.storePath || this.dormant) return;
     const lock = acquireLock(`${this.storePath}.lock`);
     try {
       const mine = [...this.history.values()].filter((j) => this.own.has(j.id)).map(toStored);
@@ -41972,7 +42007,7 @@ var JobManager = class {
   }
   /** Check runner-hosted jobs while any runs. */
   watchHosted() {
-    if (this.hostTimer) return;
+    if (this.hostTimer || this.dormant) return;
     this.hostTimer = setInterval(() => {
       const hosted = [...this.running.values()].filter((j) => j.host);
       if (!hosted.length && this.hostTimer) {
@@ -42876,6 +42911,8 @@ async function startServer(argv = process.argv.slice(2)) {
   const ctx = { agent, cfg, node: node2, log, home, cwd: () => node2?.cwd ?? cwd, channelActive: () => channel, parent: delegated ? parentFromEnv() : null, launchKnown };
   if (node2) {
     ctx.jobs = new JobManager(node2, log.child("jobs"), join19(home, JOBS_FILE), cfg.maxJobs);
+    node2.on("replaced", () => ctx.jobs?.setDormant(true));
+    node2.on("reclaimed", () => ctx.jobs?.setDormant(false));
     const cli = process.env[ENV.jobRunner] === "0" ? null : bundledCli();
     if (cli) ctx.jobs.runners = ctx.runners = new JobRunners(node2, home, cli, log.child("runners"));
     const jobs = ctx.jobs;
@@ -43042,6 +43079,7 @@ function registerTools(mcp, ctx, targets) {
   };
   const guarded = (name, fn) => async (args, extra) => {
     log.debug("tool call", { tool: name, args });
+    if (ctx.node?.wasReplaced) await ctx.node.reclaim().catch((err) => log.warn("could not take the bridge back", { err: err.message }));
     await ctx.observeMeta?.(extra._meta);
     try {
       return await fn(args, extra);
@@ -43416,6 +43454,7 @@ Thinking level: ${a.effort}.` : "";
       }
     },
     async (a, extra) => {
+      if (ctx.node?.wasReplaced) await ctx.node.reclaim().catch((err) => log.warn("could not take the bridge back", { err: err.message }));
       await ctx.observeMeta?.(extra._meta);
       const given = (v) => v && !v.startsWith("${") ? v : null;
       try {
