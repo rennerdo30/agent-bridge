@@ -111,6 +111,22 @@ describe("sessions and native subagents", () => {
     expect((await real.waitForMessage(2_000))?.body).toBe("for the real server");
   });
 
+  it("claims mail of a gone stand-in name, never of a live session", async () => {
+    const broker = env.node("broker-m", "codex");
+    await broker.start();
+    const me = env.node("claude-mm", "claude");
+    await me.start();
+    const other = env.node("claude-mm", "claude"); // another session of the folder: "claude-mm-2"
+    await other.start();
+    await broker.send({ to: "claude-mm-2", body: "for the other session" });
+    await until(() => other.unread().length === 1);
+    expect(await me.claimMail(["claude-mm-2"])).toBe(0);
+    await other.stop();
+    await broker.send({ to: "claude-mm-3", body: "result sent to a stand-in" });
+    expect(await me.claimMail(["claude-mm-3", "codex-x"])).toBe(1);
+    await until(() => me.unread().some((m) => m.body === "result sent to a stand-in"));
+  });
+
   it("leaves mail for the main agent when a native subagent's tool call fires the hook", async () => {
     const me = env.node("claude-m", "claude");
     await me.start();

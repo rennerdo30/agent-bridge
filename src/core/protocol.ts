@@ -118,6 +118,8 @@ export interface RequestMap {
   ack: [AckArgs, { acked: number }];
   pending: [PendingArgs, BridgeMessage[]];
   updatePeer: [UpdatePeerArgs, PeerInfo];
+  /** Take over the unread mail of "-N" stand-in names of this peer that no one holds (after a reload). */
+  claimMail: [{ names: string[] }, { moved: number }];
   ping: [Record<string, never>, { brokerPid: number; protocol: number }];
 }
 export type Op = keyof RequestMap;

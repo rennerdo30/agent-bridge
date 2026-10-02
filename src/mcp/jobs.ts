@@ -368,10 +368,10 @@ export class JobManager {
    * A reload can run a session briefly under a "-N" stand-in name; jobs started then carry it. Once on the
    * bridge, adopt those whose stand-in name no live peer holds (a live "-2" is another session of the folder).
    */
-  adoptStandIns(online: ReadonlySet<string>): void {
-    if (this.dormant) return;
+  adoptStandIns(online: ReadonlySet<string>): string[] {
+    if (this.dormant) return [];
     const owners = new Set([...this.history.values()].map((j) => j.owner).filter((o): o is string => Boolean(o) && this.isStandIn(o!) && !online.has(o!)));
-    if (!owners.size) return;
+    if (!owners.size) return [];
     for (const o of owners) this.adoptedOwners.add(o);
     const taken: Job[] = [];
     for (const job of this.history.values()) {
@@ -381,6 +381,7 @@ export class JobManager {
     }
     this.log.info("adopted jobs started under a stand-in name of this session", { owners: [...owners], runnerHosted: taken.length });
     this.settleAdopted(taken);
+    return [...owners];
   }
 
   /** Finished jobs of this session: every interrupted one (they need recovering), then the newest others. */

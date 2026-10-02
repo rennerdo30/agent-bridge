@@ -419,7 +419,11 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
       const adopt = () =>
         void node
           .peers()
-          .then((peers) => ctx.jobs?.adoptStandIns(new Set(peers.map((p) => p.name))))
+          .then(async (peers) => {
+            const owners = ctx.jobs?.adoptStandIns(new Set(peers.map((p) => p.name))) ?? [];
+            // Their results that went to the stand-in name come here too.
+            if (owners.length) await node.claimMail(owners);
+          })
           .catch(() => {});
       adopt();
       setTimeout(adopt, STAND_IN_RECHECK_MS).unref();

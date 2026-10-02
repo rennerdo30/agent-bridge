@@ -77,6 +77,7 @@ export class Broker {
       pending: (c, a) =>
         this.store.unread(this.requirePeer(c).name, Math.min(Math.max(1, a.limit ?? PENDING_DEFAULT_LIMIT), PENDING_MAX_LIMIT)),
       updatePeer: (c, a) => this.onUpdatePeer(c, a),
+      claimMail: (c, a) => this.onClaimMail(c, a),
       ping: () => ({ brokerPid: process.pid, protocol: PROTOCOL_VERSION }),
     };
   }
@@ -259,6 +260,28 @@ export class Broker {
       for (const m of this.store.unread(peer.name, PENDING_MAX_LIMIT)) this.emit(conn, "message", m);
     });
     return { brokerPid: process.pid, name: peer.name, peers: this.livePeers().filter((x) => x.id !== peer.id) };
+  }
+
+  /**
+   * Mail sent to a "-N" stand-in of this peer's name (a reload ran the session under it briefly) moves to the
+   * peer. Only names of that form, and only while no one holds them: another session's mail stays its own.
+   */
+  private onClaimMail(conn: Conn, args: RequestMap["claimMail"][0]): { moved: number } {
+    const peer = this.requirePeer(conn);
+    const base = peer.name.replace(/-\d+$/, "");
+    let moved = 0;
+    for (const name of new Set(args.names ?? [])) {
+      const standIn = name !== peer.name && (name === base || (name.startsWith(`${base}-`) && /^\d+$/.test(name.slice(base.length + 1))));
+      if (!standIn || this.connByName(name)) continue;
+      moved += this.store.claim(name, peer.name);
+    }
+    if (moved) {
+      this.log.info("mail of a stand-in name moved to its session", { to: peer.name, moved });
+      setImmediate(() => {
+        for (const m of this.store.unread(peer.name, PENDING_MAX_LIMIT)) this.emit(conn, "message", m);
+      });
+    }
+    return { moved };
   }
 
   private onUpdatePeer(conn: Conn, args: RequestMap["updatePeer"][0]): PeerInfo {

@@ -106,6 +106,12 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
     await this.ensureConnected();
   }
 
+  /** Take over unread mail sent to "-N" stand-in names of this session (see the broker's claimMail). */
+  async claimMail(names: string[]): Promise<number> {
+    if (!names.length || !this.isConnected) return 0;
+    return (await this.client!.request("claimMail", { names })).moved;
+  }
+
   get wasReplaced(): boolean {
     return this.replaced;
   }

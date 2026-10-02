@@ -7714,7 +7714,7 @@ import { connect } from "node:net";
 import { homedir } from "node:os";
 import { join } from "node:path";
 var APP_NAME = "agent-bridge";
-var APP_VERSION = "0.24.8";
+var APP_VERSION = "0.24.9";
 var PROTOCOL_VERSION = 2;
 var ENV = {
   home: "AGENT_BRIDGE_HOME",
@@ -8278,6 +8278,7 @@ var Broker = class {
       ack: (c, a) => ({ acked: this.store.markRead(this.requirePeer(c).name, a.ids ?? [], this.now()) }),
       pending: (c, a) => this.store.unread(this.requirePeer(c).name, Math.min(Math.max(1, a.limit ?? PENDING_DEFAULT_LIMIT), PENDING_MAX_LIMIT)),
       updatePeer: (c, a) => this.onUpdatePeer(c, a),
+      claimMail: (c, a) => this.onClaimMail(c, a),
       ping: () => ({ brokerPid: process.pid, protocol: PROTOCOL_VERSION })
     };
   }
@@ -8452,6 +8453,27 @@ var Broker = class {
       for (const m of this.store.unread(peer.name, PENDING_MAX_LIMIT)) this.emit(conn, "message", m);
     });
     return { brokerPid: process.pid, name: peer.name, peers: this.livePeers().filter((x) => x.id !== peer.id) };
+  }
+  /**
+   * Mail sent to a "-N" stand-in of this peer's name (a reload ran the session under it briefly) moves to the
+   * peer. Only names of that form, and only while no one holds them: another session's mail stays its own.
+   */
+  onClaimMail(conn, args) {
+    const peer = this.requirePeer(conn);
+    const base = peer.name.replace(/-\d+$/, "");
+    let moved = 0;
+    for (const name of new Set(args.names ?? [])) {
+      const standIn = name !== peer.name && (name === base || name.startsWith(`${base}-`) && /^\d+$/.test(name.slice(base.length + 1)));
+      if (!standIn || this.connByName(name)) continue;
+      moved += this.store.claim(name, peer.name);
+    }
+    if (moved) {
+      this.log.info("mail of a stand-in name moved to its session", { to: peer.name, moved });
+      setImmediate(() => {
+        for (const m of this.store.unread(peer.name, PENDING_MAX_LIMIT)) this.emit(conn, "message", m);
+      });
+    }
+    return { moved };
   }
   onUpdatePeer(conn, args) {
     const peer = this.requirePeer(conn);
@@ -8642,6 +8664,11 @@ var BridgeNode = class extends EventEmitter2 {
   }
   async start() {
     await this.ensureConnected();
+  }
+  /** Take over unread mail sent to "-N" stand-in names of this session (see the broker's claimMail). */
+  async claimMail(names) {
+    if (!names.length || !this.isConnected) return 0;
+    return (await this.client.request("claimMail", { names })).moved;
   }
   get wasReplaced() {
     return this.replaced;
