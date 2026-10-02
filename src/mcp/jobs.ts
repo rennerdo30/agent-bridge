@@ -273,10 +273,12 @@ export class JobManager {
     if (!this.storePath) return;
     const stored = readStore(this.storePath);
     const adopted: Job[] = [];
-    for (const s of stored.slice(-HISTORY_LIMIT)) {
+    // The newest ones, plus every job still marked running however old (its runner may still be at work).
+    const recentIds = new Set(stored.slice(-HISTORY_LIMIT).map((s) => s.id));
+    for (const s of stored.filter((x) => recentIds.has(x.id) || x.status === "running")) {
       if (this.history.has(s.id)) continue;
       const hosted = s.status === "running" && Boolean(s.host);
-      const mine = !s.owner || s.owner === this.node.name;
+      const mine = this.isMine(s.owner);
       const job: Job = {
         ...s,
         status: s.status === "running" && !(hosted && !mine) ? "interrupted" : s.status,
@@ -297,6 +299,8 @@ export class JobManager {
     if (stored.length) this.log.info("restored subagent jobs", { count: Math.min(stored.length, HISTORY_LIMIT), runnerHosted: adopted.length });
     for (const job of adopted) {
       job.status = "running";
+      // Under this session's name from now on (it may have been started under a "-N" stand-in).
+      job.owner = this.node.name;
       this.running.set(job.id, job);
       this.own.add(job.id);
       // A runner that finished while no server of this session was there is settled now.
@@ -333,10 +337,20 @@ export class JobManager {
   }
 
   /** Recently finished subagents, newest first (they can still be messaged). */
+  /**
+   * Whether a job belongs to this session. A session briefly runs under a "-N" stand-in of its name when a
+   * reload starts its new server while the old one is still connected; jobs started then are its too.
+   */
+  private isMine(owner: string | undefined): boolean {
+    if (!owner || owner === this.node.name) return true;
+    const base = this.node.name.replace(/-\d+$/, "");
+    return owner === base || (owner.startsWith(`${base}-`) && /^\d+$/.test(owner.slice(base.length + 1)));
+  }
+
   /** Finished jobs of this session: every interrupted one (they need recovering), then the newest others. */
   recent(limit = 5): Job[] {
     const mine = [...this.history.values()]
-      .filter((j) => j.status !== "running" && !this.waitingJobs.has(j.id) && (!j.owner || j.owner === this.node.name))
+      .filter((j) => j.status !== "running" && !this.waitingJobs.has(j.id) && this.isMine(j.owner))
       .sort((a, b) => (b.finishedAt ?? b.startedAt) - (a.finishedAt ?? a.startedAt));
     const interrupted = mine.filter((j) => j.status === "interrupted" && Date.now() - (j.finishedAt ?? j.startedAt) < INTERRUPTED_LISTED_MS);
     return [...interrupted, ...mine.filter((j) => !interrupted.includes(j)).slice(0, limit)];

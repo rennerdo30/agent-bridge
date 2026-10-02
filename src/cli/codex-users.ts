@@ -36,6 +36,8 @@ export function classifyCodexProcesses(procs: Proc[]): CodexUser[] {
       const started = p.CreationDate ? new Date(p.CreationDate).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "?";
       const bridge = /agent-bridge[\\/].*server\.mjs\s+--agent=(\w+)/i.exec(parent?.CommandLine ?? "");
       if (bridge) return { pid: p.ProcessId, kind: "subagent", startedBy: bridge[1], started };
+      // A background subagent in its job runner (agent-bridge 0.24+): node ... cli.mjs job-runner <spec>.
+      if (/agent-bridge[\\/].*cli\.mjs"?\s+job-runner\b/i.test(parent?.CommandLine ?? "")) return { pid: p.ProcessId, kind: "subagent", startedBy: "agent-bridge", started };
       if (/^(ChatGPT|Codex)(\.exe)?$/i.test(parent?.Name ?? "")) return { pid: p.ProcessId, kind: "app", started };
       return { pid: p.ProcessId, kind: "session", started };
     });
@@ -61,6 +63,6 @@ export function listCodexUsers(): Promise<CodexUser[]> {
 
 export function describeCodexUser(u: CodexUser): string {
   if (u.kind === "app") return `the Codex app (pid ${u.pid}, since ${u.started}): update once it is idle`;
-  if (u.kind === "subagent") return `a Codex subagent of a ${u.startedBy} session (pid ${u.pid}, since ${u.started}): wait until it finishes, or cancel it with cancel_subagent`;
+  if (u.kind === "subagent") return `a Codex subagent of ${u.startedBy === "agent-bridge" ? "an agent-bridge" : `a ${u.startedBy}`} session (pid ${u.pid}, since ${u.started}): wait until it finishes, or cancel it with cancel_subagent`;
   return `a Codex session (pid ${u.pid}, since ${u.started}): update once it is idle`;
 }

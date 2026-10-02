@@ -239,3 +239,22 @@ describe("subagent limit", () => {
     limited.cancelAll();
   });
 });
+
+describe("jobs of a session under a stand-in name", () => {
+  it("counts jobs started under a -N stand-in of the session's name as its own", async () => {
+    const store = join(env.home, "jobs.json");
+    const standIn = env.node("claude-f", "claude"); // second node of the same name: "claude-f-2"
+    await standIn.start();
+    expect(standIn.name).toBe("claude-f-2");
+    const first = new JobManager(standIn, nullLogger, store);
+    const agent = fakeAgent();
+    const done = first.start("codex", null, "task", async () => ok("finished", "ses-x"), agent.resume);
+    await until(() => first.recent().some((j) => j.id === done.id));
+    const second = new JobManager(me, nullLogger, store);
+    second.restore(() => agent.resume);
+    expect(second.recent().map((j) => j.name)).toContain(done.name);
+    second.cancelAll();
+    first.cancelAll();
+    await standIn.stop();
+  });
+});

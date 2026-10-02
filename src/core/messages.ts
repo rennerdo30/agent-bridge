@@ -83,6 +83,7 @@ export const en = {
   "installer.notFound": "{tool} is not installed (not found on PATH); skipping it.",
   "installer.codexNote": "  Note: on Windows this needs no Codex running (the plugin folder is in use otherwise). No hurry: the Codex plugin matters only for Codex sessions on the bridge and its subagents' report-back; an older one keeps working, so update when Codex is idle. Afterwards trust the agent-bridge hooks once via /hooks in Codex.",
   "installer.codexInUse": "  These Codex processes are running; on Windows they keep the plugin folder in use, so the Codex update has to wait until they are done (nothing breaks meanwhile):",
+  "installer.codexSkippedInUse": "  Skipped codex for now; run the update again once these are done (nothing breaks meanwhile).",
   "installer.codexBlocked": "  Codex could not replace the plugin because these processes still use it (Codex subagents started by agent-bridge sessions count too):",
   "installer.opencodeCopy": "copy the agent-bridge plugin, skill and subagents into opencode's config folder",
   "installer.opencodeRemove": "remove the agent-bridge files from opencode's config folder",

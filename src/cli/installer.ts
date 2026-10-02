@@ -117,6 +117,11 @@ export async function runInstaller(opts: InstallerOptions): Promise<number> {
         if (users.length) {
           opts.out(t("installer.codexInUse"));
           for (const u of users) opts.out(`    - ${describeCodexUser(u)}`);
+          // On Windows the update cannot replace a plugin folder in use: skip it instead of failing.
+          if (process.platform === "win32") {
+            opts.out(t("installer.codexSkippedInUse"));
+            continue;
+          }
         }
       }
       if (rl) {

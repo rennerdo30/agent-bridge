@@ -7714,7 +7714,7 @@ import { connect } from "node:net";
 import { homedir } from "node:os";
 import { join } from "node:path";
 var APP_NAME = "agent-bridge";
-var APP_VERSION = "0.24.6";
+var APP_VERSION = "0.24.7";
 var PROTOCOL_VERSION = 2;
 var ENV = {
   home: "AGENT_BRIDGE_HOME",
@@ -7973,6 +7973,7 @@ var en = {
   "installer.notFound": "{tool} is not installed (not found on PATH); skipping it.",
   "installer.codexNote": "  Note: on Windows this needs no Codex running (the plugin folder is in use otherwise). No hurry: the Codex plugin matters only for Codex sessions on the bridge and its subagents' report-back; an older one keeps working, so update when Codex is idle. Afterwards trust the agent-bridge hooks once via /hooks in Codex.",
   "installer.codexInUse": "  These Codex processes are running; on Windows they keep the plugin folder in use, so the Codex update has to wait until they are done (nothing breaks meanwhile):",
+  "installer.codexSkippedInUse": "  Skipped codex for now; run the update again once these are done (nothing breaks meanwhile).",
   "installer.codexBlocked": "  Codex could not replace the plugin because these processes still use it (Codex subagents started by agent-bridge sessions count too):",
   "installer.opencodeCopy": "copy the agent-bridge plugin, skill and subagents into opencode's config folder",
   "installer.opencodeRemove": "remove the agent-bridge files from opencode's config folder",
@@ -9970,6 +9971,7 @@ function classifyCodexProcesses(procs) {
     const started = p.CreationDate ? new Date(p.CreationDate).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "?";
     const bridge = /agent-bridge[\\/].*server\.mjs\s+--agent=(\w+)/i.exec(parent?.CommandLine ?? "");
     if (bridge) return { pid: p.ProcessId, kind: "subagent", startedBy: bridge[1], started };
+    if (/agent-bridge[\\/].*cli\.mjs"?\s+job-runner\b/i.test(parent?.CommandLine ?? "")) return { pid: p.ProcessId, kind: "subagent", startedBy: "agent-bridge", started };
     if (/^(ChatGPT|Codex)(\.exe)?$/i.test(parent?.Name ?? "")) return { pid: p.ProcessId, kind: "app", started };
     return { pid: p.ProcessId, kind: "session", started };
   });
@@ -9991,7 +9993,7 @@ function listCodexUsers() {
 }
 function describeCodexUser(u) {
   if (u.kind === "app") return `the Codex app (pid ${u.pid}, since ${u.started}): update once it is idle`;
-  if (u.kind === "subagent") return `a Codex subagent of a ${u.startedBy} session (pid ${u.pid}, since ${u.started}): wait until it finishes, or cancel it with cancel_subagent`;
+  if (u.kind === "subagent") return `a Codex subagent of ${u.startedBy === "agent-bridge" ? "an agent-bridge" : `a ${u.startedBy}`} session (pid ${u.pid}, since ${u.started}): wait until it finishes, or cancel it with cancel_subagent`;
   return `a Codex session (pid ${u.pid}, since ${u.started}): update once it is idle`;
 }
 
@@ -10170,6 +10172,10 @@ async function runInstaller(opts) {
         if (users.length) {
           opts.out(t("installer.codexInUse"));
           for (const u of users) opts.out(`    - ${describeCodexUser(u)}`);
+          if (process.platform === "win32") {
+            opts.out(t("installer.codexSkippedInUse"));
+            continue;
+          }
         }
       }
       if (rl) {
