@@ -23,7 +23,11 @@ const state = {
   /** Main-loop turns that started and have not completed. */
   openTurns: new Set<string>(),
   turnsStarted: 0,
+  /** Ids of the messages already submitted: never submitted twice (a server that missed the delivery). */
+  submitted: [] as string[],
 }
+
+const MAX_REMEMBERED = 500
 
 async function endpoint($: Engine): Promise<Endpoint | null> {
   const home =
@@ -55,11 +59,22 @@ async function poll($: Engine, mine: number): Promise<void> {
       const { text, superseded } = JSON.parse(r.text) as { text?: string; superseded?: boolean }
       if (superseded) return
       if (!text) continue
+      const ids = [...text.matchAll(/<agent-bridge-message id="([^"]+)"/g)].map((m) => m[1]!)
+      if (ids.length && ids.every((id) => state.submitted.includes(id))) {
+        // Shown before: tell that server they were delivered (a turn start confirms), instead of a second turn.
+        await call($, '/mod?busy=1', 'POST')
+        await call($, '/mod?busy=0', 'POST')
+        continue
+      }
+      state.submitted = [...state.submitted, ...ids].slice(-MAX_REMEMBERED)
       const started = state.turnsStarted
       await $.prompt.submit({ text })
       // No turn came of it: ask again (the messages stay unread until a turn shows them).
       $.clock.after(RETAKE_MS, () => {
-        if (state.turnsStarted === started && mine === state.generation) void poll($, ++state.generation)
+        if (state.turnsStarted !== started || mine !== state.generation) return
+        // They were never shown: submitting them again is right this time.
+        state.submitted = state.submitted.filter((id) => !ids.includes(id))
+        void poll($, ++state.generation)
       })
       return
     } catch {

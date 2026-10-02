@@ -171,6 +171,24 @@ describe.skipIf(!existsSync(CLI))("background wake-ups", () => {
     expect(Date.now() - started).toBeLessThan(5_000);
   }, 20_000);
 
+  it("never hands the mod the same messages twice, and a retired endpoint hands out nothing", async () => {
+    const reg = JSON.parse(readFileSync(sessionFile(env.home, "sess-1"), "utf8")) as { port: number; secret: string };
+    const call = (path: string, method = "GET") => fetch(`http://127.0.0.1:${reg.port}${path}`, { method, headers: { authorization: `Bearer ${reg.secret}` } });
+    jobs.start("codex", null, "task", async () => result("stairs are done"));
+    await until(() => me.unread().length === 1);
+    const first = (await (await call("/wait?role=mod")).json()) as { text: string };
+    expect(first.text).toContain("stairs are done");
+    // The mod's turn starts: delivered here, even if the session's hooks reach another server.
+    await call("/mod?busy=1", "POST");
+    expect(me.unread()).toHaveLength(0);
+    await call("/mod?busy=0", "POST");
+    // A new message after the endpoint was retired (another server took the session): nothing goes out here.
+    rewake.retire();
+    jobs.start("codex", null, "task", async () => result("roof is done"));
+    await until(() => me.unread().length === 1);
+    expect(((await (await call("/wait?role=mod")).json()) as { superseded: boolean }).superseded).toBe(true);
+  }, 20_000);
+
   it("retries a wake-up that Claude Code did not take through the standby hook", async () => {
     const primary = runHook("sess-1");
     const standby = runHook("sess-1", true);

@@ -58,6 +58,8 @@ export class RewakeEndpoint {
    * $.prompt.submit, a real turn: once it has shown up, the Stop hooks step aside and leave waking to it.
    */
   private modWaiter: AbortController | null = null;
+  /** The bridge gave this session to another server of it: this endpoint stays quiet (see retire). */
+  private retired = false;
   private modSeen = false;
   /** A turn is running (from the hooks and the mod): the mod waits until the session is idle. */
   private busy = false;
@@ -76,7 +78,12 @@ export class RewakeEndpoint {
       if (url.pathname === "/mod" && tokensEqual(String(req.headers.authorization ?? "").replace(/^Bearer /, ""), this.secret)) {
         // The mod reports turns starting and ending.
         this.modSeen = true;
-        this.setBusy(url.searchParams.get("busy") === "1");
+        const busy = url.searchParams.get("busy") === "1";
+        // A turn started after the mod submitted what this endpoint handed out: it reached the session (it is in
+        // Claude Code's prompt queue). Confirmed here, where it was handed out, so it is never handed out again,
+        // even when the session's hooks reach another server of it.
+        if (busy) this.confirmDelivery();
+        this.setBusy(busy);
         res.writeHead(204).end();
         return;
       }
@@ -84,7 +91,9 @@ export class RewakeEndpoint {
         res.writeHead(403).end();
         return;
       }
-      if (url.searchParams.get("role") === "mod") this.waitMod(res);
+      // Another server of this session took over: nothing is handed out here (it would be handed out twice).
+      if (this.retired) this.reply(res, "", true);
+      else if (url.searchParams.get("role") === "mod") this.waitMod(res);
       // With the mod, the turn-end hooks end at once: the mod does the waking.
       else if (this.modSeen) this.reply(res, "", true);
       else if (url.searchParams.get("role") === "standby") this.waitStandby(res);
@@ -265,9 +274,25 @@ export class RewakeEndpoint {
     return this.waiter !== null;
   }
 
+  /** Another server of this session took over the bridge: stop handing out wake-ups from here. */
+  retire(): void {
+    this.retired = true;
+    this.waiter?.abort("superseded");
+    this.modWaiter?.abort("superseded");
+    this.standby?.release("superseded");
+  }
+
+  /** This server took its place back: serve again, and point the session's hooks and mod here again. */
+  unretire(): void {
+    this.retired = false;
+    const sessionId = this.registered;
+    this.registered = null;
+    if (sessionId) this.register(sessionId);
+  }
+
   /** Publish the endpoint for this Claude session id so the hook can find it. */
   register(sessionId: string): void {
-    if (!this.server || this.registered === sessionId) return;
+    if (!this.server || this.retired || this.registered === sessionId) return;
     const file = sessionFile(this.home, sessionId);
     mkdirSync(join(this.home, SESSIONS_DIR), { recursive: true });
     const reg: RewakeRegistration = { port: this.port, secret: this.secret, pid: process.pid };

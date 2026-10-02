@@ -36489,7 +36489,7 @@ import { basename, join as join2 } from "node:path";
 import { homedir } from "node:os";
 import { join } from "node:path";
 var APP_NAME = "agent-bridge";
-var APP_VERSION = "0.24.5";
+var APP_VERSION = "0.24.6";
 var PROTOCOL_VERSION = 2;
 var ENV = {
   home: "AGENT_BRIDGE_HOME",
@@ -39322,6 +39322,8 @@ var RewakeEndpoint = class {
    * $.prompt.submit, a real turn: once it has shown up, the Stop hooks step aside and leave waking to it.
    */
   modWaiter = null;
+  /** The bridge gave this session to another server of it: this endpoint stays quiet (see retire). */
+  retired = false;
   modSeen = false;
   /** A turn is running (from the hooks and the mod): the mod waits until the session is idle. */
   busy = false;
@@ -39330,7 +39332,9 @@ var RewakeEndpoint = class {
       const url2 = new URL(req.url ?? "/", `http://${HOST2}`);
       if (url2.pathname === "/mod" && tokensEqual(String(req.headers.authorization ?? "").replace(/^Bearer /, ""), this.secret)) {
         this.modSeen = true;
-        this.setBusy(url2.searchParams.get("busy") === "1");
+        const busy = url2.searchParams.get("busy") === "1";
+        if (busy) this.confirmDelivery();
+        this.setBusy(busy);
         res.writeHead(204).end();
         return;
       }
@@ -39338,7 +39342,8 @@ var RewakeEndpoint = class {
         res.writeHead(403).end();
         return;
       }
-      if (url2.searchParams.get("role") === "mod") this.waitMod(res);
+      if (this.retired) this.reply(res, "", true);
+      else if (url2.searchParams.get("role") === "mod") this.waitMod(res);
       else if (this.modSeen) this.reply(res, "", true);
       else if (url2.searchParams.get("role") === "standby") this.waitStandby(res);
       else this.waitPrimary(res);
@@ -39491,9 +39496,23 @@ var RewakeEndpoint = class {
   get waiting() {
     return this.waiter !== null;
   }
+  /** Another server of this session took over the bridge: stop handing out wake-ups from here. */
+  retire() {
+    this.retired = true;
+    this.waiter?.abort("superseded");
+    this.modWaiter?.abort("superseded");
+    this.standby?.release("superseded");
+  }
+  /** This server took its place back: serve again, and point the session's hooks and mod here again. */
+  unretire() {
+    this.retired = false;
+    const sessionId = this.registered;
+    this.registered = null;
+    if (sessionId) this.register(sessionId);
+  }
   /** Publish the endpoint for this Claude session id so the hook can find it. */
   register(sessionId) {
-    if (!this.server || this.registered === sessionId) return;
+    if (!this.server || this.retired || this.registered === sessionId) return;
     const file2 = sessionFile(this.home, sessionId);
     mkdirSync5(join8(this.home, SESSIONS_DIR), { recursive: true });
     const reg = { port: this.port, secret: this.secret, pid: process.pid };
@@ -42997,6 +43016,8 @@ async function startServer(argv = process.argv.slice(2)) {
       await rewake.start();
       ctx.rewakeAvailable = true;
       ctx.onSessionId = (sid) => rewake?.register(sid);
+      node2.on("replaced", () => rewake?.retire());
+      node2.on("reclaimed", () => rewake?.unretire());
       ctx.wakeDelivery = { confirm: () => rewake?.confirmDelivery(), release: () => rewake?.releaseUndelivered(), active: () => rewake?.sessionActive(), idle: () => rewake?.sessionIdle(), modActive: () => rewake?.modActive ?? false };
     } catch (err) {
       log.warn("background wake-ups unavailable", { err: err.message });

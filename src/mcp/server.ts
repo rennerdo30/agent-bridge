@@ -343,6 +343,9 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
       await rewake.start();
       ctx.rewakeAvailable = true;
       ctx.onSessionId = (sid) => rewake?.register(sid);
+      // Only the server the session uses serves wake-ups (see RewakeEndpoint.retire).
+      node.on("replaced", () => rewake?.retire());
+      node.on("reclaimed", () => rewake?.unretire());
       ctx.wakeDelivery = { confirm: () => rewake?.confirmDelivery(), release: () => rewake?.releaseUndelivered(), active: () => rewake?.sessionActive(), idle: () => rewake?.sessionIdle(), modActive: () => rewake?.modActive ?? false };
     } catch (err) {
       log.warn("background wake-ups unavailable", { err: (err as Error).message });
