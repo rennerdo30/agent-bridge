@@ -26,6 +26,8 @@ export const ENV = {
   codexBin: "AGENT_BRIDGE_CODEX_BIN",
   opencodeBin: "AGENT_BRIDGE_OPENCODE_BIN",
   dashboard: "AGENT_BRIDGE_DASHBOARD",
+  /** "0": background subagents run inside the session's MCP server instead of detached job runners (they then end with it). */
+  jobRunner: "AGENT_BRIDGE_JOB_RUNNER",
 } as const;
 
 /** Default data directory; holds the message store, logs and config. */

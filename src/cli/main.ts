@@ -20,6 +20,7 @@ import { RELIABILITY_SECTIONS, runReliability } from "./reliability.js";
 import { runSmoke } from "./smoke.js";
 import { cleanupWorktrees } from "../core/worktree-cleanup.js";
 import { installOpencode, opencodeSourceDir, uninstallOpencode, type InstallResult } from "./opencode-install.js";
+import { runJobRunner } from "../mcp/job-runner.js";
 
 const CLI_PEER_NAME = "cli";
 const out = (s: string) => process.stdout.write(s + "\n");
@@ -127,6 +128,9 @@ async function main(argv: string[]): Promise<number> {
       return runRewakeHook(rest.includes("--standby"));
     case "permission-hook":
       return runPermissionHook(rest[0]);
+    case "job-runner":
+      // Internal: started by a session's MCP server for one background subagent (see mcp/job-host.ts).
+      return runJobRunner(rest[0]);
     case "reliability": {
       // reliability [agents...] [--only=core|live] [--model=<agent>:<model> ...]
       const picked = rest.filter((a) => (CODING_AGENTS as readonly string[]).includes(a)) as CodingAgent[];

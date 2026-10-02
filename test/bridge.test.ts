@@ -263,3 +263,32 @@ describe("messaging", () => {
     expect(await b.waitForMessage(100, (m) => m.body === "never")).toBeNull();
   });
 });
+
+describe("job runner peers", () => {
+  it("are reached by name only, never take a session's mail and speak as the job's agent", async () => {
+    const claude = env.node("claude-j", "claude");
+    await claude.start();
+    // Mail for "any codex" waits for a real Codex session.
+    await claude.send({ to: "codex", body: "for a codex session" });
+    const runner = new BridgeNode({ pipePath: env.pipe, token: loadOrCreateToken(env.home), dbPath: env.db, agent: "other", jobAgent: "codex", id: "job:1a2b3c4d", name: "codex-job-1a2b3c4d", cwd: env.home, autoWake: false, log: nullLogger });
+    const got: BridgeMessage[] = [];
+    runner.on("message", (m) => got.push(m));
+    await runner.start();
+    try {
+      expect((await claude.peers()).map((p) => p.name)).toEqual(["claude-j"]);
+      await expect(claude.send({ to: "codex", body: "anyone?" })).resolves.toMatchObject({ deliveredTo: [], queuedFor: ["agent:codex"] });
+      await claude.send({ to: "codex-job-1a2b3c4d", body: "{}", conversationId: "jobctl-1a2b3c4d" });
+      await until(() => got.length === 1);
+      expect(got[0]!.body).toBe("{}");
+      await runner.send({ to: "claude-j", body: "result", conversationId: "job-1a2b3c4d" });
+      await until(() => claude.unread().some((m) => m.body === "result"));
+      expect(claude.unread().find((m) => m.body === "result")!.from).toEqual({ id: "job:1a2b3c4d", name: "codex-job-1a2b3c4d", agent: "codex" });
+      const codex = env.node("codex-j", "codex");
+      await codex.start();
+      await until(() => codex.unread().length === 2);
+      expect(codex.unread().map((m) => m.body)).toEqual(["for a codex session", "anyone?"]);
+    } finally {
+      await runner.stop();
+    }
+  });
+});
