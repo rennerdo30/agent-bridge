@@ -73,6 +73,24 @@ describe("sessions and native subagents", () => {
     expect((await fresh.waitForMessage(2_000))?.body).toBe("hello");
   });
 
+  it("keeps the usual name when the server it replaces is the one with the -2 name", async () => {
+    const broker = env.node("broker-y", "codex");
+    await broker.start();
+    const fresh = env.node("claude-app", "claude");
+    await fresh.start();
+    const leftover = env.node("claude-app", "claude");
+    await leftover.start();
+    expect(leftover.name).toBe("claude-app-2");
+    await leftover.setSessionId("sess-2");
+    await broker.send({ to: "claude-app-2", body: "waited under -2" });
+    await fresh.setSessionId("sess-2");
+    await until(() => !leftover.isConnected);
+    expect(fresh.name).toBe("claude-app");
+    expect((await broker.peers()).map((p) => p.name)).not.toContain("claude-app-2");
+    // Mail that waited under the leftover's name still reaches the session.
+    expect((await fresh.waitForMessage(2_000))?.body).toBe("waited under -2");
+  });
+
   it("leaves mail for the main agent when a native subagent's tool call fires the hook", async () => {
     const me = env.node("claude-m", "claude");
     await me.start();

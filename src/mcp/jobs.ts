@@ -115,7 +115,7 @@ export interface RunnerState {
 }
 
 /** A message from the session to the runner of one of its jobs. */
-export type RunnerControl = { type: "message"; body: string; cid: string } | { type: "title"; title: string } | { type: "cancel" } | { type: "attach" };
+export type RunnerControl = { type: "message"; body: string; cid: string } | { type: "title"; title: string } | { type: "effort"; effort: string } | { type: "cancel" } | { type: "attach" };
 
 /** The session's side of job runners (implemented in job-host.ts). */
 export interface JobHost {
@@ -414,6 +414,8 @@ export class JobManager {
     const job = this.find(ref);
     if (!job) return false;
     job.args = { ...job.args, effort };
+    // A runner continues queued follow-ups itself: it needs the new level too.
+    if (this.hostedRunning(job)) this.runners!.send(job, { type: "effort", effort });
     this.own.add(job.id);
     this.persist();
     return true;

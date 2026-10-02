@@ -36489,7 +36489,7 @@ import { basename, join as join2 } from "node:path";
 import { homedir } from "node:os";
 import { join } from "node:path";
 var APP_NAME = "agent-bridge";
-var APP_VERSION = "0.24.3";
+var APP_VERSION = "0.24.4";
 var PROTOCOL_VERSION = 2;
 var ENV = {
   home: "AGENT_BRIDGE_HOME",
@@ -38470,9 +38470,10 @@ var Broker = class {
       this.broadcastEvent("peer_left", old, c);
       c.socket.end();
       if (peer.name !== old.name && !this.connByName(old.name)) {
-        peer.name = old.name;
+        const oldName = old.name;
+        if (peer.name.startsWith(`${oldName}-`) && /^\d+$/.test(peer.name.slice(oldName.length + 1))) peer.name = oldName;
         setImmediate(() => {
-          for (const m of this.store.unread(peer.name, PENDING_MAX_LIMIT)) this.emit(conn, "message", m);
+          for (const name of /* @__PURE__ */ new Set([oldName, peer.name])) for (const m of this.store.unread(name, PENDING_MAX_LIMIT)) this.emit(conn, "message", m);
         });
       }
     }
@@ -41861,6 +41862,7 @@ var JobManager = class {
     const job = this.find(ref);
     if (!job) return false;
     job.args = { ...job.args, effort };
+    if (this.hostedRunning(job)) this.runners.send(job, { type: "effort", effort });
     this.own.add(job.id);
     this.persist();
     return true;
@@ -43351,7 +43353,7 @@ ${r.lines.map((l) => `  ${l}`).join("\n")}`).join("\n\n"));
         job: external_exports.string().min(1).describe('Job name, e.g. "codex-job-1a2b3c4d" or "opencode-ask-9f8e7d6c" (see peers)'),
         message: external_exports.string().optional().describe("The follow-up. Default: continue where you stopped and finish the task."),
         title: external_exports.string().min(1).max(MAX_TITLE_CHARS).optional().describe("Give the job a (new) short title, 3-7 words; use it for jobs listed without a title."),
-        effort: external_exports.string().regex(/^[A-Za-z0-9_-]{1,20}$/).optional().describe("Thinking level for this continuation and the job's later turns (e.g. low, medium, high, xhigh). A turn already running keeps its level.")
+        effort: external_exports.string().regex(/^[A-Za-z0-9_-]{1,20}$/).optional().describe("Thinking level for this continuation and the job's later turns (e.g. low, medium, high, xhigh). A turn already running keeps its level: to apply it now, cancel_subagent and continue it with message_subagent.")
       }
     },
     guarded("message_subagent", async (a) => {
@@ -43361,8 +43363,11 @@ ${r.lines.map((l) => `  ${l}`).join("\n")}`).join("\n\n"));
       if (a.effort) jobs.setEffort(a.job, a.effort);
       const { outcome, job } = jobs.followUp(a.job, a.message?.trim() || DEFAULT_FOLLOW_UP);
       const position = job ? jobs.waiting().indexOf(job) + 1 : 0;
+      const effortNote = a.effort && job?.status === "running" ? `
+Thinking level ${a.effort} applies from its next turn; the turn running now keeps its level.` : a.effort ? `
+Thinking level: ${a.effort}.` : "";
       return text(
-        t(`followUp.${outcome}`, { name: job?.name ?? a.job, max: jobs.limit, running: jobs.runningCount(), ahead: position > 1 ? ` (${position - 1} queued before it)` : "" }),
+        t(`followUp.${outcome}`, { name: job?.name ?? a.job, max: jobs.limit, running: jobs.runningCount(), ahead: position > 1 ? ` (${position - 1} queued before it)` : "" }) + effortNote,
         outcome === "unknown" || outcome === "no-session"
       );
     })

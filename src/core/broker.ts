@@ -302,9 +302,13 @@ export class Broker {
       this.broadcastEvent("peer_left", old, c);
       c.socket.end();
       if (peer.name !== old.name && !this.connByName(old.name)) {
-        peer.name = old.name;
+        // Keep the session's usual name: take the old one's only when ours is a "-N" stand-in for it (the usual
+        // reload). A leftover server can also be the one holding "-N"; then the new server keeps its own name.
+        const oldName = old.name;
+        if (peer.name.startsWith(`${oldName}-`) && /^\d+$/.test(peer.name.slice(oldName.length + 1))) peer.name = oldName;
+        // Either way, mail that waited under the old name is the session's.
         setImmediate(() => {
-          for (const m of this.store.unread(peer.name, PENDING_MAX_LIMIT)) this.emit(conn, "message", m);
+          for (const name of new Set([oldName, peer.name])) for (const m of this.store.unread(name, PENDING_MAX_LIMIT)) this.emit(conn, "message", m);
         });
       }
     }

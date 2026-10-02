@@ -154,6 +154,10 @@ export async function runJobRunner(specFile: string | undefined): Promise<number
     } else if (c.type === "title") {
       job.args = { ...job.args, title: c.title };
       job.retitle?.(c.title);
+    } else if (c.type === "effort") {
+      // From the next turn on (a running turn keeps its level).
+      job.args = { ...job.args, effort: c.effort };
+      save();
     } else if (c.type === "cancel") {
       log.info("cancelled by the session");
       job.queue = [];
@@ -203,7 +207,8 @@ export async function runJobRunner(specFile: string | undefined): Promise<number
     if (job.queue.length && job.sessionId && !job.controller.signal.aborted) {
       const queued = job.queue.splice(0).join("\n\n");
       void post(`${report}\n\n${QUEUED_FOLLOW_UP_NOTE}`);
-      args = resumeArgs(spec.base, job.name, queued, job.sessionId, job.workdir, job.worktree);
+      const effort = typeof job.args?.effort === "string" ? { effort: job.args.effort } : {};
+      args = resumeArgs({ ...spec.base, ...effort }, job.name, queued, job.sessionId, job.workdir, job.worktree);
       job.startedAt = Date.now();
       job.progress = null;
       save();

@@ -845,7 +845,7 @@ ${res.text || t("delegate.empty")}`, res.isError);
           .string()
           .regex(/^[A-Za-z0-9_-]{1,20}$/)
           .optional()
-          .describe("Thinking level for this continuation and the job's later turns (e.g. low, medium, high, xhigh). A turn already running keeps its level."),
+          .describe("Thinking level for this continuation and the job's later turns (e.g. low, medium, high, xhigh). A turn already running keeps its level: to apply it now, cancel_subagent and continue it with message_subagent."),
       },
     },
     guarded("message_subagent", async (a: { job: string; message?: string; title?: string; effort?: string }) => {
@@ -855,8 +855,10 @@ ${res.text || t("delegate.empty")}`, res.isError);
       if (a.effort) jobs.setEffort(a.job, a.effort);
       const { outcome, job } = jobs.followUp(a.job, a.message?.trim() || DEFAULT_FOLLOW_UP);
       const position = job ? jobs.waiting().indexOf(job) + 1 : 0;
+      // A level cannot change inside a running turn: say so, so nobody assumes it already applies.
+      const effortNote = a.effort && job?.status === "running" ? `\nThinking level ${a.effort} applies from its next turn; the turn running now keeps its level.` : a.effort ? `\nThinking level: ${a.effort}.` : "";
       return text(
-        t(`followUp.${outcome}`, { name: job?.name ?? a.job, max: jobs.limit, running: jobs.runningCount(), ahead: position > 1 ? ` (${position - 1} queued before it)` : "" }),
+        t(`followUp.${outcome}`, { name: job?.name ?? a.job, max: jobs.limit, running: jobs.runningCount(), ahead: position > 1 ? ` (${position - 1} queued before it)` : "" }) + effortNote,
         outcome === "unknown" || outcome === "no-session",
       );
     }),

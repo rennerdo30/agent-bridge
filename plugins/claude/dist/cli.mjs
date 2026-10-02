@@ -7714,7 +7714,7 @@ import { connect } from "node:net";
 import { homedir } from "node:os";
 import { join } from "node:path";
 var APP_NAME = "agent-bridge";
-var APP_VERSION = "0.24.3";
+var APP_VERSION = "0.24.4";
 var PROTOCOL_VERSION = 2;
 var ENV = {
   home: "AGENT_BRIDGE_HOME",
@@ -8491,9 +8491,10 @@ var Broker = class {
       this.broadcastEvent("peer_left", old, c);
       c.socket.end();
       if (peer.name !== old.name && !this.connByName(old.name)) {
-        peer.name = old.name;
+        const oldName = old.name;
+        if (peer.name.startsWith(`${oldName}-`) && /^\d+$/.test(peer.name.slice(oldName.length + 1))) peer.name = oldName;
         setImmediate(() => {
-          for (const m of this.store.unread(peer.name, PENDING_MAX_LIMIT)) this.emit(conn, "message", m);
+          for (const name of /* @__PURE__ */ new Set([oldName, peer.name])) for (const m of this.store.unread(name, PENDING_MAX_LIMIT)) this.emit(conn, "message", m);
         });
       }
     }
@@ -37174,6 +37175,9 @@ async function runJobRunner(specFile) {
     } else if (c.type === "title") {
       job.args = { ...job.args, title: c.title };
       job.retitle?.(c.title);
+    } else if (c.type === "effort") {
+      job.args = { ...job.args, effort: c.effort };
+      save();
     } else if (c.type === "cancel") {
       log.info("cancelled by the session");
       job.queue = [];
@@ -37222,7 +37226,8 @@ async function runJobRunner(specFile) {
       void post(`${report}
 
 ${QUEUED_FOLLOW_UP_NOTE}`);
-      args = resumeArgs(spec.base, job.name, queued, job.sessionId, job.workdir, job.worktree);
+      const effort = typeof job.args?.effort === "string" ? { effort: job.args.effort } : {};
+      args = resumeArgs({ ...spec.base, ...effort }, job.name, queued, job.sessionId, job.workdir, job.worktree);
       job.startedAt = Date.now();
       job.progress = null;
       save();
