@@ -56,10 +56,10 @@ export async function createWorktree(opts: { cwd: string; home: string; jobId: s
   }
   const base = await git(["rev-parse", "HEAD"], repoRoot, opts.log);
   const baseBranch = (await git(["symbolic-ref", "-q", "--short", "HEAD"], repoRoot, opts.log).catch(() => "")) || null;
-  const branch = `${BRANCH_PREFIX}${opts.jobId}`;
+  let branch = `${BRANCH_PREFIX}${opts.jobId}`;
   const dir = join(opts.home, "worktrees");
   mkdirSync(dir, { recursive: true });
-  const path = join(dir, `${basename(repoRoot)}-${opts.jobId}`);
+  let path = join(dir, `${basename(repoRoot)}-${opts.jobId}`);
   // This runs in the MCP server (as the user), never inside the sandboxed agent, so the worktree is the user's.
   try {
     await git(["worktree", "add", "-b", branch, path, base], repoRoot, opts.log, WORKTREE_ADD_TIMEOUT_MS);
@@ -72,6 +72,9 @@ export async function createWorktree(opts: { cwd: string; home: string; jobId: s
     // A slow disk under load: clean up the half-made checkout and try once more.
     opts.log.warn("git worktree add timed out; retrying once", { path });
     await removeWorktree(repoRoot, path, branch, opts.log);
+    // Under a fresh name: the slow first attempt may still hold its branch and folder.
+    branch = `${branch}-r2`;
+    path = `${path}-r2`;
     try {
       await git(["worktree", "add", "-b", branch, path, base], repoRoot, opts.log, WORKTREE_ADD_TIMEOUT_MS);
     } catch (again) {
@@ -224,7 +227,21 @@ async function workBranches(wt: Worktree, current: string, log: Logger): Promise
     .split(/\r?\n/)
     .map((l) => l.split(" "))
     .filter((p): p is [string, string] => p.length === 2);
-  const candidates = new Set([wt.branch, current, ...refs.filter(([, sha]) => visited.has(sha) && sha !== wt.base).map(([name]) => name)]);
+  // Branches checked out in another worktree (the main checkout, other jobs) are never this job's, whatever
+  // its HEAD touched: a report must not offer to delete them.
+  const list = await git(["worktree", "list", "--porcelain"], wt.repoRoot, log).catch(() => "");
+  const here = resolve(wt.path).toLowerCase();
+  const elsewhere = new Set(
+    list
+      .split(/\r?\n\r?\n/)
+      .filter((block) => resolve(/^worktree (.+)$/m.exec(block)?.[1] ?? "").toLowerCase() !== here)
+      .map((block) => /^branch refs\/heads\/(.+)$/m.exec(block)?.[1])
+      .filter((b): b is string => Boolean(b)),
+  );
+  for (const b of [wt.baseBranch]) if (b) elsewhere.add(b);
+  const candidates = new Set(
+    [wt.branch, current, ...refs.filter(([, sha]) => visited.has(sha) && sha !== wt.base).map(([name]) => name)].filter((b) => b === wt.branch || !elsewhere.has(b)),
+  );
   const out = new Map<string, number>();
   for (const name of candidates) {
     const from = await reviewBase(wt, log, name).catch(() => null);

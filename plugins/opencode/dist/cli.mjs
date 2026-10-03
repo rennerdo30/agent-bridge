@@ -7714,7 +7714,7 @@ import { connect } from "node:net";
 import { homedir } from "node:os";
 import { join } from "node:path";
 var APP_NAME = "agent-bridge";
-var APP_VERSION = "0.25.0";
+var APP_VERSION = "0.25.1";
 var PROTOCOL_VERSION = 2;
 var ENV = {
   home: "AGENT_BRIDGE_HOME",
@@ -8256,6 +8256,8 @@ function tokensEqual(a, b) {
 // src/core/broker.ts
 var PEER_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 var PENDING_DEFAULT_LIMIT = 50;
+var DEDUPE_KEEP_MS = 30 * 60 * 1e3;
+var DEDUPE_MAX = 5e3;
 var PENDING_MAX_LIMIT = 500;
 var NAME_SUFFIX_LIMIT = 100;
 var UNAUTHENTICATED_OPS = /* @__PURE__ */ new Set(["hello", "auth", "ping"]);
@@ -8559,8 +8561,25 @@ var Broker = class {
     if (!PEER_NAME_PATTERN.test(to)) throw new BridgeError("unknown_target", `invalid target: ${to}`);
     return { live: [], queued: [to] };
   }
+  /** Results of recent sends by dedupe key (see SendArgs.dedupeKey), so a retry is not sent twice. */
+  sentByKey = /* @__PURE__ */ new Map();
   onSend(conn, args) {
     const sender = this.requirePeer(conn);
+    const key = typeof args.dedupeKey === "string" && args.dedupeKey ? `${sender.id}:${args.dedupeKey}` : null;
+    const seen = key ? this.sentByKey.get(key) : void 0;
+    if (seen) return seen.result;
+    const result = this.routeSend(conn, sender, args);
+    if (key) {
+      const now = this.now();
+      this.sentByKey.set(key, { at: now, result });
+      for (const [k, v] of this.sentByKey) {
+        if (now - v.at < DEDUPE_KEEP_MS && this.sentByKey.size <= DEDUPE_MAX) break;
+        this.sentByKey.delete(k);
+      }
+    }
+    return result;
+  }
+  routeSend(conn, sender, args) {
     const body = typeof args.body === "string" ? args.body : "";
     if (!body.trim()) throw new BridgeError("bad_request", "message body is empty");
     if (body.length > MAX_BODY_CHARS) throw new BridgeError("too_large", `message body exceeds ${MAX_BODY_CHARS} characters`);
@@ -9913,7 +9932,7 @@ async function withResumeHint(agent, sessionOf, run2) {
     throw err;
   }
 }
-var TRANSIENT_ERROR_RE = /not valid JSON|upstream|overloaded|bad gateway|service unavailable|gateway time-?out|internal server error|\b50[0-4]\b|ECONNRESET|ETIMEDOUT|EPIPE|socket hang up|connection (?:reset|closed|error|refused)|stream (?:error|closed|disconnected|ended)|network error|fetch failed|temporarily unavailable/i;
+var TRANSIENT_ERROR_RE = /not valid JSON|upstream|overloaded|bad gateway|service unavailable|gateway time-?out|internal server error|\b50[0-4]\b|ECONNRESET|ETIMEDOUT|EPIPE|socket hang up|connection (?:reset|closed|error|refused)|stream (?:error|closed|disconnected|ended)|network error|fetch failed|temporarily unavailable|routing discovery timed out/i;
 var LIMIT_ERROR_RE = /usage limit|rate.?limit|quota|too many requests|\b429\b|insufficient (?:credits|balance)|billing/i;
 function isTransientProviderError(message) {
   return TRANSIENT_ERROR_RE.test(message) && !LIMIT_ERROR_RE.test(message);
@@ -11932,10 +11951,10 @@ async function createWorktree(opts) {
   }
   const base = await git(["rev-parse", "HEAD"], repoRoot, opts.log);
   const baseBranch = await git(["symbolic-ref", "-q", "--short", "HEAD"], repoRoot, opts.log).catch(() => "") || null;
-  const branch = `${BRANCH_PREFIX}${opts.jobId}`;
+  let branch = `${BRANCH_PREFIX}${opts.jobId}`;
   const dir = join14(opts.home, "worktrees");
   mkdirSync8(dir, { recursive: true });
-  const path = join14(dir, `${basename2(repoRoot)}-${opts.jobId}`);
+  let path = join14(dir, `${basename2(repoRoot)}-${opts.jobId}`);
   try {
     await git(["worktree", "add", "-b", branch, path, base], repoRoot, opts.log, WORKTREE_ADD_TIMEOUT_MS);
   } catch (err) {
@@ -11945,6 +11964,8 @@ async function createWorktree(opts) {
     }
     opts.log.warn("git worktree add timed out; retrying once", { path });
     await removeWorktree(repoRoot, path, branch, opts.log);
+    branch = `${branch}-r2`;
+    path = `${path}-r2`;
     try {
       await git(["worktree", "add", "-b", branch, path, base], repoRoot, opts.log, WORKTREE_ADD_TIMEOUT_MS);
     } catch (again) {
@@ -12047,7 +12068,15 @@ async function workBranches(wt, current, log) {
   const trust = trustArgs(wt.path);
   const visited = new Set((await git([...trust, "log", "-g", "--format=%H", "HEAD"], wt.path, log).catch(() => "")).split(/\r?\n/).filter(Boolean));
   const refs = (await git(["for-each-ref", "refs/heads", "--format=%(refname:short) %(objectname)"], wt.repoRoot, log).catch(() => "")).split(/\r?\n/).map((l) => l.split(" ")).filter((p) => p.length === 2);
-  const candidates = /* @__PURE__ */ new Set([wt.branch, current, ...refs.filter(([, sha]) => visited.has(sha) && sha !== wt.base).map(([name]) => name)]);
+  const list = await git(["worktree", "list", "--porcelain"], wt.repoRoot, log).catch(() => "");
+  const here = resolve4(wt.path).toLowerCase();
+  const elsewhere = new Set(
+    list.split(/\r?\n\r?\n/).filter((block) => resolve4(/^worktree (.+)$/m.exec(block)?.[1] ?? "").toLowerCase() !== here).map((block) => /^branch refs\/heads\/(.+)$/m.exec(block)?.[1]).filter((b) => Boolean(b))
+  );
+  for (const b of [wt.baseBranch]) if (b) elsewhere.add(b);
+  const candidates = new Set(
+    [wt.branch, current, ...refs.filter(([, sha]) => visited.has(sha) && sha !== wt.base).map(([name]) => name)].filter((b) => b === wt.branch || !elsewhere.has(b))
+  );
   const out2 = /* @__PURE__ */ new Map();
   for (const name of candidates) {
     const from = await reviewBase(wt, log, name).catch(() => null);
@@ -36574,6 +36603,7 @@ async function cleanupWorktrees(opts) {
 }
 
 // src/mcp/job-runner.ts
+import { randomUUID as randomUUID6 } from "node:crypto";
 import { readFileSync as readFileSync17, rmSync as rmSync10 } from "node:fs";
 
 // src/mcp/delegate-run.ts
@@ -37190,9 +37220,10 @@ async function runJobRunner(specFile) {
   log.info("job runner started", { pid: process.pid, target, owner });
   let chain = Promise.resolve(true);
   const deliver = async (body, replyTo, note = false) => {
+    const dedupeKey = randomUUID6();
     for (let attempt = 1; attempt <= SEND_ATTEMPTS; attempt++) {
       try {
-        await node2.send({ to: owner, body, conversationId: `job-${job.id}${note ? NOTE_CONVERSATION_SUFFIX : ""}`, ...replyTo ? { replyTo } : {} }, { quiet: true });
+        await node2.send({ to: owner, body, conversationId: `job-${job.id}${note ? NOTE_CONVERSATION_SUFFIX : ""}`, ...replyTo ? { replyTo } : {}, dedupeKey }, { quiet: true });
         return true;
       } catch (err) {
         log.warn("could not deliver to the session; retrying", { owner, attempt, err: err.message });

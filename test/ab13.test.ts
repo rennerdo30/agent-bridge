@@ -111,6 +111,22 @@ describe("sessions and native subagents", () => {
     expect((await real.waitForMessage(2_000))?.body).toBe("for the real server");
   });
 
+  it("sends a retried message once when it carries the same dedupe key", async () => {
+    const broker = env.node("broker-d", "codex");
+    await broker.start();
+    const to = env.node("claude-dd", "claude");
+    await to.start();
+    const job = env.node("codex-job-dd", "other");
+    await job.start();
+    const first = await job.send({ to: "claude-dd", body: "only once", dedupeKey: "k1" });
+    const again = await job.send({ to: "claude-dd", body: "only once", dedupeKey: "k1" });
+    expect(again.messages[0]!.id).toBe(first.messages[0]!.id);
+    await job.send({ to: "claude-dd", body: "another one", dedupeKey: "k2" });
+    await until(() => to.unread().length === 2);
+    await new Promise((r) => setTimeout(r, 200));
+    expect(to.unread().map((m) => m.body)).toEqual(["only once", "another one"]);
+  });
+
   it("claims mail of a gone stand-in name, never of a live session", async () => {
     const broker = env.node("broker-m", "codex");
     await broker.start();

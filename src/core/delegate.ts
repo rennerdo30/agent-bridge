@@ -763,7 +763,7 @@ export async function withResumeHint<T>(agent: string, sessionOf: (stdout: strin
 
 /** Provider hiccups worth one automatic retry: the session is fine, the provider's answer was not. */
 const TRANSIENT_ERROR_RE =
-  /not valid JSON|upstream|overloaded|bad gateway|service unavailable|gateway time-?out|internal server error|\b50[0-4]\b|ECONNRESET|ETIMEDOUT|EPIPE|socket hang up|connection (?:reset|closed|error|refused)|stream (?:error|closed|disconnected|ended)|network error|fetch failed|temporarily unavailable/i;
+  /not valid JSON|upstream|overloaded|bad gateway|service unavailable|gateway time-?out|internal server error|\b50[0-4]\b|ECONNRESET|ETIMEDOUT|EPIPE|socket hang up|connection (?:reset|closed|error|refused)|stream (?:error|closed|disconnected|ended)|network error|fetch failed|temporarily unavailable|routing discovery timed out/i;
 /** Usage and rate limits: retrying at once only fails again, so these are reported, not retried. */
 const LIMIT_ERROR_RE = /usage limit|rate.?limit|quota|too many requests|\b429\b|insufficient (?:credits|balance)|billing/i;
 

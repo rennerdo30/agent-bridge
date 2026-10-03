@@ -79,6 +79,11 @@ export interface SendArgs {
   body: string;
   conversationId?: string;
   replyTo?: string;
+  /**
+   * Same key on a retry of the same message: the broker sends it once. A request can time out on the
+   * sender's side while the broker, merely slow, still has it queued.
+   */
+  dedupeKey?: string;
 }
 export interface SendResult {
   messages: BridgeMessage[];

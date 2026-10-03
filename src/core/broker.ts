@@ -31,6 +31,9 @@ import { tokensEqual } from "./token.js";
 /** Peer names double as offline queue keys, so keep them simple and unambiguous. */
 export const PEER_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 const PENDING_DEFAULT_LIMIT = 50;
+/** How long, and how many, send dedupe keys are remembered (retries come within minutes). */
+const DEDUPE_KEEP_MS = 30 * 60 * 1000;
+const DEDUPE_MAX = 5_000;
 const PENDING_MAX_LIMIT = 500;
 const NAME_SUFFIX_LIMIT = 100;
 
@@ -377,8 +380,27 @@ export class Broker {
     return { live: [], queued: [to] };
   }
 
+  /** Results of recent sends by dedupe key (see SendArgs.dedupeKey), so a retry is not sent twice. */
+  private readonly sentByKey = new Map<string, { at: number; result: RequestMap["send"][1] }>();
+
   private onSend(conn: Conn, args: RequestMap["send"][0]): RequestMap["send"][1] {
     const sender = this.requirePeer(conn);
+    const key = typeof args.dedupeKey === "string" && args.dedupeKey ? `${sender.id}:${args.dedupeKey}` : null;
+    const seen = key ? this.sentByKey.get(key) : undefined;
+    if (seen) return seen.result;
+    const result = this.routeSend(conn, sender, args);
+    if (key) {
+      const now = this.now();
+      this.sentByKey.set(key, { at: now, result });
+      for (const [k, v] of this.sentByKey) {
+        if (now - v.at < DEDUPE_KEEP_MS && this.sentByKey.size <= DEDUPE_MAX) break;
+        this.sentByKey.delete(k);
+      }
+    }
+    return result;
+  }
+
+  private routeSend(conn: Conn, sender: PeerInfo, args: RequestMap["send"][0]): RequestMap["send"][1] {
     const body = typeof args.body === "string" ? args.body : "";
     if (!body.trim()) throw new BridgeError("bad_request", "message body is empty");
     if (body.length > MAX_BODY_CHARS) throw new BridgeError("too_large", `message body exceeds ${MAX_BODY_CHARS} characters`);

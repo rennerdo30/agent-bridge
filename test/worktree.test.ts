@@ -81,6 +81,19 @@ describe("worktree isolation", () => {
     expect(report).toContain("git merge codex/as991-markers");
   });
 
+  it("never reports or offers to delete a branch checked out in another worktree", async () => {
+    const mainBranch = git("symbolic-ref", "--short", "HEAD");
+    const wt = await createWorktree({ cwd: repo, home, jobId: "job10", log: nullLogger });
+    // The main checkout moves on, and the job fast-forwards onto it: its HEAD visits the main branch's tip.
+    writeFileSync(join(repo, "main.txt"), "main work\n");
+    git("add", "main.txt");
+    git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "main work");
+    execFileSync("git", ["merge", "-q", "--ff-only", mainBranch], { cwd: wt.path });
+    const report = worktreeReport(wt, await finishWorktree(wt, "unused", nullLogger));
+    expect(report).not.toContain(`branch -D ${wt.branch} ${mainBranch}`);
+    expect(report).not.toMatch(new RegExp(`Also committed from this worktree: .*\\b${mainBranch}\\b`));
+  });
+
   it("lists a branch the job committed to and then left", async () => {
     const wt = await createWorktree({ cwd: repo, home, jobId: "job9", log: nullLogger });
     const inWt = (...args: string[]) => execFileSync("git", args, { cwd: wt.path, encoding: "utf8" }).trim();

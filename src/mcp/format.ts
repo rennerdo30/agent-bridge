@@ -43,7 +43,11 @@ export function formatMessages(msgs: BridgeMessage[], opts: { header?: string; r
   parts.push(PEER_TRUST_NOTE);
   for (const m of msgs) parts.push(formatMessage(m));
   if (opts.replyHint !== false) {
-    parts.push('To answer, call the agent-bridge "send" tool with to=<from> and reply_to=<id>.');
+    // Subagents (from "job:...") are talked to with message_subagent: "send" to a finished one just queues.
+    const jobs = msgs.some((m) => m.from.id.startsWith("job:"));
+    const peers = msgs.some((m) => !m.from.id.startsWith("job:"));
+    if (peers) parts.push('To answer a peer, call the agent-bridge "send" tool with to=<from> and reply_to=<id>.');
+    if (jobs) parts.push('Subagent messages need no reply. To give a subagent more work, answer an approval question, or continue a finished one, use message_subagent(job=<from>, message=...).');
   }
   return parts.join("\n\n");
 }

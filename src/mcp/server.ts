@@ -539,6 +539,17 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
         return text(t("send.toParent", { name: ctx.parent.name }));
       }
       const n = requireNode();
+      // One of this session's subagents: it is talked to with message_subagent (a finished one would never
+      // read a queued message; a running one gets message_subagent live).
+      const job = ctx.jobs?.find(a.to);
+      if (job && a.to === job.name) {
+        if (a.reply_to) n.markRead([a.reply_to]);
+        if (job.status !== "running") {
+          return text(`${a.to} has finished, so nothing was sent (it needs no reply). To continue it with more work, call message_subagent(job="${a.to}", message=...).`);
+        }
+        const { outcome } = ctx.jobs!.followUp(job.name, a.message);
+        return text(`${a.to} is a running subagent: delivered as message_subagent (${outcome}). Use message_subagent for subagents.`);
+      }
       if (a.reply_to) n.markRead([a.reply_to]);
       const res = await n.send({ to: a.to, body: a.message, replyTo: a.reply_to, conversationId: a.conversation_id });
       const first = res.messages[0]!;
@@ -668,7 +679,10 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
         .optional()
         .describe(`Thinking level (reasoning effort), e.g. ${profile.effortExample}; list_models shows what each model supports. Default: ${cfg.effort[target] ?? `${target}'s own default`} (config "effort"; shown in the dashboard).`),
       session_id: z.string().optional().describe("Continue a previous delegated session"),
-      cwd: z.string().optional().describe("Working directory (default: this project)"),
+      cwd: z
+        .string()
+        .optional()
+        .describe(`Working directory, and for worktree=true the repository the worktree comes from. Default: ${ctx.cwd()} (where this session started); pass it whenever the work lives elsewhere.`),
       timeout_sec: z
         .number()
         .int()

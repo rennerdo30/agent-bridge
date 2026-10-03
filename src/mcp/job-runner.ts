@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { readFileSync, rmSync } from "node:fs";
 import { failureCause } from "../core/delegate.js";
 import { createLogger } from "../core/logger.js";
@@ -90,9 +91,11 @@ export async function runJobRunner(specFile: string | undefined): Promise<number
   // then it waits in the store for the session's next server).
   let chain: Promise<boolean> = Promise.resolve(true);
   const deliver = async (body: string, replyTo: string | null, note = false): Promise<boolean> => {
+    // One key for all attempts: a send that timed out here may still be queued at a slow broker.
+    const dedupeKey = randomUUID();
     for (let attempt = 1; attempt <= SEND_ATTEMPTS; attempt++) {
       try {
-        await node.send({ to: owner, body, conversationId: `job-${job.id}${note ? NOTE_CONVERSATION_SUFFIX : ""}`, ...(replyTo ? { replyTo } : {}) }, { quiet: true });
+        await node.send({ to: owner, body, conversationId: `job-${job.id}${note ? NOTE_CONVERSATION_SUFFIX : ""}`, ...(replyTo ? { replyTo } : {}), dedupeKey }, { quiet: true });
         return true;
       } catch (err) {
         log.warn("could not deliver to the session; retrying", { owner, attempt, err: (err as Error).message });

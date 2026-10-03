@@ -36489,7 +36489,7 @@ import { basename, join as join2 } from "node:path";
 import { homedir } from "node:os";
 import { join } from "node:path";
 var APP_NAME = "agent-bridge";
-var APP_VERSION = "0.25.0";
+var APP_VERSION = "0.25.1";
 var PROTOCOL_VERSION = 2;
 var ENV = {
   home: "AGENT_BRIDGE_HOME",
@@ -37681,7 +37681,7 @@ async function withResumeHint(agent, sessionOf, run) {
     throw err;
   }
 }
-var TRANSIENT_ERROR_RE = /not valid JSON|upstream|overloaded|bad gateway|service unavailable|gateway time-?out|internal server error|\b50[0-4]\b|ECONNRESET|ETIMEDOUT|EPIPE|socket hang up|connection (?:reset|closed|error|refused)|stream (?:error|closed|disconnected|ended)|network error|fetch failed|temporarily unavailable/i;
+var TRANSIENT_ERROR_RE = /not valid JSON|upstream|overloaded|bad gateway|service unavailable|gateway time-?out|internal server error|\b50[0-4]\b|ECONNRESET|ETIMEDOUT|EPIPE|socket hang up|connection (?:reset|closed|error|refused)|stream (?:error|closed|disconnected|ended)|network error|fetch failed|temporarily unavailable|routing discovery timed out/i;
 var LIMIT_ERROR_RE = /usage limit|rate.?limit|quota|too many requests|\b429\b|insufficient (?:credits|balance)|billing/i;
 function isTransientProviderError(message) {
   return TRANSIENT_ERROR_RE.test(message) && !LIMIT_ERROR_RE.test(message);
@@ -38235,6 +38235,8 @@ var MessageStore = class {
 // src/core/broker.ts
 var PEER_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 var PENDING_DEFAULT_LIMIT = 50;
+var DEDUPE_KEEP_MS = 30 * 60 * 1e3;
+var DEDUPE_MAX = 5e3;
 var PENDING_MAX_LIMIT = 500;
 var NAME_SUFFIX_LIMIT = 100;
 var UNAUTHENTICATED_OPS = /* @__PURE__ */ new Set(["hello", "auth", "ping"]);
@@ -38538,8 +38540,25 @@ var Broker = class {
     if (!PEER_NAME_PATTERN.test(to)) throw new BridgeError("unknown_target", `invalid target: ${to}`);
     return { live: [], queued: [to] };
   }
+  /** Results of recent sends by dedupe key (see SendArgs.dedupeKey), so a retry is not sent twice. */
+  sentByKey = /* @__PURE__ */ new Map();
   onSend(conn, args) {
     const sender = this.requirePeer(conn);
+    const key = typeof args.dedupeKey === "string" && args.dedupeKey ? `${sender.id}:${args.dedupeKey}` : null;
+    const seen = key ? this.sentByKey.get(key) : void 0;
+    if (seen) return seen.result;
+    const result = this.routeSend(conn, sender, args);
+    if (key) {
+      const now = this.now();
+      this.sentByKey.set(key, { at: now, result });
+      for (const [k, v] of this.sentByKey) {
+        if (now - v.at < DEDUPE_KEEP_MS && this.sentByKey.size <= DEDUPE_MAX) break;
+        this.sentByKey.delete(k);
+      }
+    }
+    return result;
+  }
+  routeSend(conn, sender, args) {
     const body = typeof args.body === "string" ? args.body : "";
     if (!body.trim()) throw new BridgeError("bad_request", "message body is empty");
     if (body.length > MAX_BODY_CHARS) throw new BridgeError("too_large", `message body exceeds ${MAX_BODY_CHARS} characters`);
@@ -39164,7 +39183,10 @@ function formatMessages(msgs, opts = {}) {
   parts.push(PEER_TRUST_NOTE);
   for (const m of msgs) parts.push(formatMessage(m));
   if (opts.replyHint !== false) {
-    parts.push('To answer, call the agent-bridge "send" tool with to=<from> and reply_to=<id>.');
+    const jobs = msgs.some((m) => m.from.id.startsWith("job:"));
+    const peers = msgs.some((m) => !m.from.id.startsWith("job:"));
+    if (peers) parts.push('To answer a peer, call the agent-bridge "send" tool with to=<from> and reply_to=<id>.');
+    if (jobs) parts.push("Subagent messages need no reply. To give a subagent more work, answer an approval question, or continue a finished one, use message_subagent(job=<from>, message=...).");
   }
   return parts.join("\n\n");
 }
@@ -42398,10 +42420,10 @@ async function createWorktree(opts) {
   }
   const base = await git(["rev-parse", "HEAD"], repoRoot, opts.log);
   const baseBranch = await git(["symbolic-ref", "-q", "--short", "HEAD"], repoRoot, opts.log).catch(() => "") || null;
-  const branch = `${BRANCH_PREFIX}${opts.jobId}`;
+  let branch = `${BRANCH_PREFIX}${opts.jobId}`;
   const dir = join16(opts.home, "worktrees");
   mkdirSync9(dir, { recursive: true });
-  const path = join16(dir, `${basename2(repoRoot)}-${opts.jobId}`);
+  let path = join16(dir, `${basename2(repoRoot)}-${opts.jobId}`);
   try {
     await git(["worktree", "add", "-b", branch, path, base], repoRoot, opts.log, WORKTREE_ADD_TIMEOUT_MS);
   } catch (err) {
@@ -42411,6 +42433,8 @@ async function createWorktree(opts) {
     }
     opts.log.warn("git worktree add timed out; retrying once", { path });
     await removeWorktree(repoRoot, path, branch, opts.log);
+    branch = `${branch}-r2`;
+    path = `${path}-r2`;
     try {
       await git(["worktree", "add", "-b", branch, path, base], repoRoot, opts.log, WORKTREE_ADD_TIMEOUT_MS);
     } catch (again) {
@@ -42513,7 +42537,15 @@ async function workBranches(wt, current, log) {
   const trust = trustArgs(wt.path);
   const visited = new Set((await git([...trust, "log", "-g", "--format=%H", "HEAD"], wt.path, log).catch(() => "")).split(/\r?\n/).filter(Boolean));
   const refs = (await git(["for-each-ref", "refs/heads", "--format=%(refname:short) %(objectname)"], wt.repoRoot, log).catch(() => "")).split(/\r?\n/).map((l) => l.split(" ")).filter((p) => p.length === 2);
-  const candidates = /* @__PURE__ */ new Set([wt.branch, current, ...refs.filter(([, sha]) => visited.has(sha) && sha !== wt.base).map(([name]) => name)]);
+  const list = await git(["worktree", "list", "--porcelain"], wt.repoRoot, log).catch(() => "");
+  const here = resolve3(wt.path).toLowerCase();
+  const elsewhere = new Set(
+    list.split(/\r?\n\r?\n/).filter((block) => resolve3(/^worktree (.+)$/m.exec(block)?.[1] ?? "").toLowerCase() !== here).map((block) => /^branch refs\/heads\/(.+)$/m.exec(block)?.[1]).filter((b) => Boolean(b))
+  );
+  for (const b of [wt.baseBranch]) if (b) elsewhere.add(b);
+  const candidates = new Set(
+    [wt.branch, current, ...refs.filter(([, sha]) => visited.has(sha) && sha !== wt.base).map(([name]) => name)].filter((b) => b === wt.branch || !elsewhere.has(b))
+  );
   const out = /* @__PURE__ */ new Map();
   for (const name of candidates) {
     const from = await reviewBase(wt, log, name).catch(() => null);
@@ -43272,6 +43304,15 @@ function registerTools(mcp, ctx, targets) {
         return text(t("send.toParent", { name: ctx.parent.name }));
       }
       const n = requireNode();
+      const job = ctx.jobs?.find(a.to);
+      if (job && a.to === job.name) {
+        if (a.reply_to) n.markRead([a.reply_to]);
+        if (job.status !== "running") {
+          return text(`${a.to} has finished, so nothing was sent (it needs no reply). To continue it with more work, call message_subagent(job="${a.to}", message=...).`);
+        }
+        const { outcome } = ctx.jobs.followUp(job.name, a.message);
+        return text(`${a.to} is a running subagent: delivered as message_subagent (${outcome}). Use message_subagent for subagents.`);
+      }
       if (a.reply_to) n.markRead([a.reply_to]);
       const res = await n.send({ to: a.to, body: a.message, replyTo: a.reply_to, conversationId: a.conversation_id });
       const first = res.messages[0];
@@ -43378,7 +43419,7 @@ function registerTools(mcp, ctx, targets) {
       ),
       effort: external_exports.string().regex(/^[A-Za-z0-9_-]{1,20}$/).optional().describe(`Thinking level (reasoning effort), e.g. ${profile.effortExample}; list_models shows what each model supports. Default: ${cfg.effort[target] ?? `${target}'s own default`} (config "effort"; shown in the dashboard).`),
       session_id: external_exports.string().optional().describe("Continue a previous delegated session"),
-      cwd: external_exports.string().optional().describe("Working directory (default: this project)"),
+      cwd: external_exports.string().optional().describe(`Working directory, and for worktree=true the repository the worktree comes from. Default: ${ctx.cwd()} (where this session started); pass it whenever the work lives elsewhere.`),
       timeout_sec: external_exports.number().int().min(10).max(MAX_JOB_TIMEOUT_SEC).optional().describe(`Default ${DEFAULT_DELEGATE_TIMEOUT_SEC} for ask_*, none (${MAX_JOB_TIMEOUT_SEC}) for spawn_*`),
       access: external_exports.enum(ACCESS_LEVELS).optional().describe(
         '"read" (default): look only. "ask": look, and every change or command the subagent wants is asked of the user in this session (opencode; Codex with its trusted hook). "edit": may change files. Combine edit with worktree=true for parallel or risky work.'
