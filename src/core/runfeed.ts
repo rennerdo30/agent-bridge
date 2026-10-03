@@ -37,6 +37,8 @@ export interface RunMeta {
   /** Reasoning effort: the one asked for, else what the CLI reported or its configured default. */
   effort?: string | null;
   access?: string;
+  /** The permission level it really runs at: Codex sandbox, Claude permission mode, opencode approval. */
+  permission?: string;
   workdir?: string;
   /** The subagent's own session, and the one this run continued (a follow-up). */
   session?: string | null;

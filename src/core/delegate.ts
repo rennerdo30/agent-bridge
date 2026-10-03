@@ -311,7 +311,7 @@ export interface DelegateRequest {
   /** Reasoning effort override (Claude --effort, Codex model_reasoning_effort, opencode --variant); null uses the CLI default. */
   effort?: string | null;
   /** The model and effort the subagent really uses, where its CLI reports them (Codex threads, Claude's init). */
-  onInfo?: (info: { model?: string | null; effort?: string | null }) => void;
+  onInfo?: (info: { model?: string | null; effort?: string | null; permission?: string | null }) => void;
   /** Receives short human-readable status lines while the delegate works. */
   onProgress?: (message: string, full?: string) => void;
   /** Extra folders the subagent may write (workspace-write), e.g. a worktree's git data in the main repo. */

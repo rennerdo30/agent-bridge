@@ -102,6 +102,9 @@ h3 .n { color: var(--faint); font-weight: 500; }
 .limit .track i { display: block; height: 100%; border-radius: 3px; background: var(--ok); }
 .limit.warn .track i { background: var(--warn); } .limit.bad .track i { background: var(--bad); }
 .limit.bad .top b { color: var(--bad); }
+.chip.perm.low { color: var(--ok); background: var(--ok-soft); border-color: transparent; }
+.chip.perm.mid { color: var(--warn); background: var(--warn-soft); border-color: transparent; }
+.chip.perm.high { color: var(--bad); background: var(--bad-soft); border-color: transparent; font-weight: 600; }
 .chip.effort { display: inline-flex; align-items: center; gap: 5px; }
 .meter { display: inline-flex; align-items: flex-end; gap: 1.5px; height: 10px; }
 .meter i { width: 2.5px; border-radius: 1px; background: var(--line); }
@@ -294,6 +297,12 @@ const dot = (activity) => '<span class="dot ' + (activity === "busy" ? "busy" : 
       const bars = n ? '<span class="meter">' + [1, 2, 3, 4].map((i) => "<i" + (i <= n ? ' class="on"' : "") + "></i>").join("") + "</span>" : "";
       return '<span class="chip effort" title="reasoning effort">' + bars + esc(e) + "</span>";
     };
+    // Permission level as a chip, colored by what it allows: look only, edit its workspace, anything.
+    function permChip(p) {
+      const risk = { "read-only": "low", read: "low", ask: "low", default: "low", manual: "low", plan: "low", "workspace-write": "mid", edit: "mid", acceptEdits: "mid", "danger-full-access": "high", bypassPermissions: "high", "auto-approve": "high", auto: "high" }[p] || "mid";
+      const tip = { low: "can look; changes need approval", mid: "can change files in its workspace", high: "no sandbox: can change anything your account can" }[risk];
+      return '<span class="chip perm ' + risk + '" title="permission level: ' + tip + '">' + esc(p) + "</span>";
+    }
     const pill = (status, percent) => '<span class="pill ' + status + '">' + (status === "running" ? (typeof percent === "number" ? "working · " + percent + "%" : "working") : status) + "</span>";
 
 let state = null, model = null, route = parseRoute(), lastTo = "", pulling = false, lastChat = "";
@@ -347,6 +356,9 @@ function buildModel(s) {
     g.turns.push(r);
     if (r.model) g.model = r.model;
       if (r.effort) g.effort = r.effort;
+      // The level it really runs at; runs from before agent-bridge recorded it show their access.
+      if (r.permission) g.permission = r.permission;
+      else if (r.access && r.access !== "default" && !g.permission) g.permission = r.access;
     if (r.session) ofSession.set(r.session, key);
   }
   for (const g of groups.values()) {
@@ -414,8 +426,8 @@ function groupRow(g, sel, showOwner) {
     // Like a chat list: the title the starting agent gave it, with agent and model below; else the task.
     (g.title
       ? '<div style="min-width:0"><div class="line1"><b class="ell">' + esc(g.title) + "</b></div>" +
-        '<div class="task">' + esc(g.agent) + (g.model ? " · " + esc(g.model) : "") + (g.effort ? " · " + esc(g.effort) + " effort" : "") + (g.turns.length > 1 ? " · " + g.turns.length + " turns" : "") + "</div></div>"
-      : '<div style="min-width:0"><div class="line1"><b>' + esc(g.agent) + "</b>" + (g.model ? '<span class="chip ell">' + esc(g.model) + "</span>" : "") + (g.effort ? effortChip(g.effort) : "") +
+        '<div class="task">' + esc(g.agent) + (g.model ? " · " + esc(g.model) : "") + (g.effort ? " · " + esc(g.effort) + " effort" : "") + (g.permission ? " · " + esc(g.permission) : "") + (g.turns.length > 1 ? " · " + g.turns.length + " turns" : "") + "</div></div>"
+      : '<div style="min-width:0"><div class="line1"><b>' + esc(g.agent) + "</b>" + (g.model ? '<span class="chip ell">' + esc(g.model) + "</span>" : "") + (g.effort ? effortChip(g.effort) : "") + (g.permission ? permChip(g.permission) : "") +
         (g.turns.length > 1 ? '<span class="chip">' + g.turns.length + " turns</span>" : "") + "</div>" +
         '<div class="task">' + esc(g.task || g.last) + "</div></div>") +
     '<div class="side">' + pill(g.status, g.percent) + "<span>" + (showOwner ? esc(g.owner) + " · " : "") + ago(g.updatedAt) + "</span></div>" +
@@ -553,7 +565,7 @@ function splitTurn(raw) {
 function renderConversation(g) {
   const first = g.turns[0], last = g.turns[g.turns.length - 1];
   $("cAvatar").innerHTML = av(g.agent);
-  $("cTitle").innerHTML = (g.title ? esc(g.title) + ' <span class="chip">' + esc(g.agent) + "</span>" : esc(g.agent)) + (g.model ? ' <span class="chip">' + esc(g.model) + "</span>" : "") + (g.effort ? " " + effortChip(g.effort) : "") + " " + pill(g.status, g.percent) + (g.progressNote && g.percent !== null ? ' <span class="small muted">' + esc(g.progressNote) + "</span>" : "");
+  $("cTitle").innerHTML = (g.title ? esc(g.title) + ' <span class="chip">' + esc(g.agent) + "</span>" : esc(g.agent)) + (g.model ? ' <span class="chip">' + esc(g.model) + "</span>" : "") + (g.effort ? " " + effortChip(g.effort) : "") + (g.permission ? " " + permChip(g.permission) : "") + " " + pill(g.status, g.percent) + (g.progressNote && g.percent !== null ? ' <span class="small muted">' + esc(g.progressNote) + "</span>" : "");
   $("cSub").textContent = (g.owner === "earlier runs" ? "" : "started by " + g.owner + " · ") + time(first.startedAt) + " · " + (first.access || "default") + " access" + (first.workdir ? " · " + first.workdir : "");
   const hint = g.job && g.status !== "running"
     ? (g.status === "done" ? "Continue it with its context from " : "Recover it with its context from ") + esc(g.owner) + ': <code>message_subagent(job="' + esc(g.job) + '")</code>'

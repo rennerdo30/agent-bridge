@@ -251,7 +251,13 @@ export async function delegateToCodexAppServer(
     threadId = thread?.thread?.id ?? threadId;
     if (threadId) req.onSession?.(threadId);
     // The model and effort this thread really uses (the user's config defaults included).
-    if (typeof thread?.model === "string") req.onInfo?.({ model: thread.model, effort: req.effort ?? (typeof thread.reasoningEffort === "string" ? thread.reasoningEffort : null) });
+    if (typeof thread?.model === "string")
+      req.onInfo?.({
+        model: thread.model,
+        effort: req.effort ?? (typeof thread.reasoningEffort === "string" ? thread.reasoningEffort : null),
+        // The sandbox Codex really applies to this thread (its config can differ from what was asked).
+        permission: typeof thread.sandbox?.type === "string" ? thread.sandbox.type : null,
+      });
     const prompt = req.askMode ? `${req.prompt}\n\n${CODEX_ASK_HINT}` : req.prompt;
     step = "turn/start";
     const turn = await boot(request("turn/start", { threadId, input: [{ type: "text", text: prompt, text_elements: [] }], ...(req.effort ? { effort: req.effort } : {}) }));

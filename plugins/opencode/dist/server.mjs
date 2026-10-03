@@ -36489,7 +36489,7 @@ import { basename, join as join2 } from "node:path";
 import { homedir } from "node:os";
 import { join } from "node:path";
 var APP_NAME = "agent-bridge";
-var APP_VERSION = "0.24.9";
+var APP_VERSION = "0.25.0";
 var PROTOCOL_VERSION = 2;
 var ENV = {
   home: "AGENT_BRIDGE_HOME",
@@ -40119,7 +40119,13 @@ ${message}`, text_elements: [] }] });
     const thread = req.sessionId ? await boot(request2("thread/resume", { ...threadParams, threadId: req.sessionId, excludeTurns: true })) : await boot(request2("thread/start", threadParams));
     threadId = thread?.thread?.id ?? threadId;
     if (threadId) req.onSession?.(threadId);
-    if (typeof thread?.model === "string") req.onInfo?.({ model: thread.model, effort: req.effort ?? (typeof thread.reasoningEffort === "string" ? thread.reasoningEffort : null) });
+    if (typeof thread?.model === "string")
+      req.onInfo?.({
+        model: thread.model,
+        effort: req.effort ?? (typeof thread.reasoningEffort === "string" ? thread.reasoningEffort : null),
+        // The sandbox Codex really applies to this thread (its config can differ from what was asked).
+        permission: typeof thread.sandbox?.type === "string" ? thread.sandbox.type : null
+      });
     const prompt = req.askMode ? `${req.prompt}
 
 ${CODEX_ASK_HINT}` : req.prompt;
@@ -40201,6 +40207,7 @@ var DELEGATION_TARGETS = {
     defaultModel: (cfg) => cfg.codexModel,
     schema: { sandbox: external_exports.enum(CODEX_SANDBOXES).optional().describe("Overrides access with an exact Codex sandbox mode") },
     permissionNote: (cfg) => `Codex runs in the "${cfg.codexSandbox}" sandbox unless you pass access or sandbox.${codexEnvironmentNote()}`,
+    permission: (cfg, a) => a.sandbox ?? (a.access ? CODEX_SANDBOX_FOR[a.access] : cfg.codexSandbox),
     run: async (cfg, base, a) => {
       const sandbox = a.sandbox ?? (a.access ? CODEX_SANDBOX_FOR[a.access] : cfg.codexSandbox);
       const relay = a.access === "ask" && Boolean(a.relay?.codexHookTrusted);
@@ -40237,6 +40244,7 @@ var DELEGATION_TARGETS = {
     defaultModel: (cfg) => cfg.claudeModel,
     schema: { permission_mode: external_exports.enum(CLAUDE_PERMISSION_MODES).optional().describe("Overrides access with an exact Claude permission mode") },
     permissionNote: (cfg) => `Claude runs with permission mode "${cfg.claudePermissionMode}" unless you pass access or permission_mode.`,
+    permission: (cfg, a) => claudeModeFor(cfg, a),
     run: (cfg, base, a) => delegateToClaude({
       ...base,
       bin: cfg.claudeBin,
@@ -40250,6 +40258,7 @@ var DELEGATION_TARGETS = {
     defaultModel: (cfg) => cfg.opencodeModel,
     schema: { auto_approve: external_exports.boolean().optional().describe("Overrides access: auto-approve every opencode permission request (opencode run --auto)") },
     permissionNote: (cfg) => cfg.opencodeAutoApprove ? "opencode auto-approves permission requests unless you pass access=read or auto_approve=false." : "Headless opencode rejects every permission request (edits, commands) unless you pass access=edit or auto_approve=true.",
+    permission: (cfg, a) => a.auto_approve ?? (a.access ? OPENCODE_AUTO_FOR[a.access] : cfg.opencodeAutoApprove) ? "auto-approve" : "read-only",
     run: async (cfg, base, a) => {
       let note = null;
       if (base.model) {
@@ -40745,6 +40754,9 @@ h3 .n { color: var(--faint); font-weight: 500; }
 .limit .track i { display: block; height: 100%; border-radius: 3px; background: var(--ok); }
 .limit.warn .track i { background: var(--warn); } .limit.bad .track i { background: var(--bad); }
 .limit.bad .top b { color: var(--bad); }
+.chip.perm.low { color: var(--ok); background: var(--ok-soft); border-color: transparent; }
+.chip.perm.mid { color: var(--warn); background: var(--warn-soft); border-color: transparent; }
+.chip.perm.high { color: var(--bad); background: var(--bad-soft); border-color: transparent; font-weight: 600; }
 .chip.effort { display: inline-flex; align-items: center; gap: 5px; }
 .meter { display: inline-flex; align-items: flex-end; gap: 1.5px; height: 10px; }
 .meter i { width: 2.5px; border-radius: 1px; background: var(--line); }
@@ -40937,6 +40949,12 @@ const dot = (activity) => '<span class="dot ' + (activity === "busy" ? "busy" : 
       const bars = n ? '<span class="meter">' + [1, 2, 3, 4].map((i) => "<i" + (i <= n ? ' class="on"' : "") + "></i>").join("") + "</span>" : "";
       return '<span class="chip effort" title="reasoning effort">' + bars + esc(e) + "</span>";
     };
+    // Permission level as a chip, colored by what it allows: look only, edit its workspace, anything.
+    function permChip(p) {
+      const risk = { "read-only": "low", read: "low", ask: "low", default: "low", manual: "low", plan: "low", "workspace-write": "mid", edit: "mid", acceptEdits: "mid", "danger-full-access": "high", bypassPermissions: "high", "auto-approve": "high", auto: "high" }[p] || "mid";
+      const tip = { low: "can look; changes need approval", mid: "can change files in its workspace", high: "no sandbox: can change anything your account can" }[risk];
+      return '<span class="chip perm ' + risk + '" title="permission level: ' + tip + '">' + esc(p) + "</span>";
+    }
     const pill = (status, percent) => '<span class="pill ' + status + '">' + (status === "running" ? (typeof percent === "number" ? "working \xB7 " + percent + "%" : "working") : status) + "</span>";
 
 let state = null, model = null, route = parseRoute(), lastTo = "", pulling = false, lastChat = "";
@@ -40990,6 +41008,9 @@ function buildModel(s) {
     g.turns.push(r);
     if (r.model) g.model = r.model;
       if (r.effort) g.effort = r.effort;
+      // The level it really runs at; runs from before agent-bridge recorded it show their access.
+      if (r.permission) g.permission = r.permission;
+      else if (r.access && r.access !== "default" && !g.permission) g.permission = r.access;
     if (r.session) ofSession.set(r.session, key);
   }
   for (const g of groups.values()) {
@@ -41057,8 +41078,8 @@ function groupRow(g, sel, showOwner) {
     // Like a chat list: the title the starting agent gave it, with agent and model below; else the task.
     (g.title
       ? '<div style="min-width:0"><div class="line1"><b class="ell">' + esc(g.title) + "</b></div>" +
-        '<div class="task">' + esc(g.agent) + (g.model ? " \xB7 " + esc(g.model) : "") + (g.effort ? " \xB7 " + esc(g.effort) + " effort" : "") + (g.turns.length > 1 ? " \xB7 " + g.turns.length + " turns" : "") + "</div></div>"
-      : '<div style="min-width:0"><div class="line1"><b>' + esc(g.agent) + "</b>" + (g.model ? '<span class="chip ell">' + esc(g.model) + "</span>" : "") + (g.effort ? effortChip(g.effort) : "") +
+        '<div class="task">' + esc(g.agent) + (g.model ? " \xB7 " + esc(g.model) : "") + (g.effort ? " \xB7 " + esc(g.effort) + " effort" : "") + (g.permission ? " \xB7 " + esc(g.permission) : "") + (g.turns.length > 1 ? " \xB7 " + g.turns.length + " turns" : "") + "</div></div>"
+      : '<div style="min-width:0"><div class="line1"><b>' + esc(g.agent) + "</b>" + (g.model ? '<span class="chip ell">' + esc(g.model) + "</span>" : "") + (g.effort ? effortChip(g.effort) : "") + (g.permission ? permChip(g.permission) : "") +
         (g.turns.length > 1 ? '<span class="chip">' + g.turns.length + " turns</span>" : "") + "</div>" +
         '<div class="task">' + esc(g.task || g.last) + "</div></div>") +
     '<div class="side">' + pill(g.status, g.percent) + "<span>" + (showOwner ? esc(g.owner) + " \xB7 " : "") + ago(g.updatedAt) + "</span></div>" +
@@ -41196,7 +41217,7 @@ function splitTurn(raw) {
 function renderConversation(g) {
   const first = g.turns[0], last = g.turns[g.turns.length - 1];
   $("cAvatar").innerHTML = av(g.agent);
-  $("cTitle").innerHTML = (g.title ? esc(g.title) + ' <span class="chip">' + esc(g.agent) + "</span>" : esc(g.agent)) + (g.model ? ' <span class="chip">' + esc(g.model) + "</span>" : "") + (g.effort ? " " + effortChip(g.effort) : "") + " " + pill(g.status, g.percent) + (g.progressNote && g.percent !== null ? ' <span class="small muted">' + esc(g.progressNote) + "</span>" : "");
+  $("cTitle").innerHTML = (g.title ? esc(g.title) + ' <span class="chip">' + esc(g.agent) + "</span>" : esc(g.agent)) + (g.model ? ' <span class="chip">' + esc(g.model) + "</span>" : "") + (g.effort ? " " + effortChip(g.effort) : "") + (g.permission ? " " + permChip(g.permission) : "") + " " + pill(g.status, g.percent) + (g.progressNote && g.percent !== null ? ' <span class="small muted">' + esc(g.progressNote) + "</span>" : "");
   $("cSub").textContent = (g.owner === "earlier runs" ? "" : "started by " + g.owner + " \xB7 ") + time(first.startedAt) + " \xB7 " + (first.access || "default") + " access" + (first.workdir ? " \xB7 " + first.workdir : "");
   const hint = g.job && g.status !== "running"
     ? (g.status === "done" ? "Continue it with its context from " : "Recover it with its context from ") + esc(g.owner) + ': <code>message_subagent(job="' + esc(g.job) + '")</code>'
@@ -42651,6 +42672,7 @@ ${a.prompt}
         model: a.model ?? defaultModel ?? null,
         effort: a.effort ?? cfg.effort[target] ?? defaultEffort(target, a.model ?? defaultModel ?? null),
         access: access ?? "default",
+        permission: profile.permission(cfg, { ...a, access }),
         workdir,
         continues: a.session_id ?? null
       }
@@ -42710,7 +42732,7 @@ ${a.prompt}
         model: a.model ?? defaultModel,
         effort: a.effort ?? cfg.effort[target] ?? null,
         // What it really runs (a CLI default or an alias resolved), for the dashboard.
-        onInfo: (info) => feed.meta({ ...info.model ? { model: info.model } : {}, effort: info.effort ?? a.effort ?? cfg.effort[target] ?? defaultEffort(target, info.model ?? null) }),
+        onInfo: (info) => feed.meta({ ...info.model ? { model: info.model } : {}, ...info.permission ? { permission: info.permission } : {}, effort: info.effort ?? a.effort ?? cfg.effort[target] ?? defaultEffort(target, info.model ?? null) }),
         log: dlog,
         signal,
         onProgress: feed.report,

@@ -37,6 +37,14 @@ describe("dashboard steps", () => {
   const stepsHtml = new Function(`${stub}\ntry { ${script} } catch {}\nreturn stepsHtml;`)() as (text: string, agent: string, run: unknown) => string;
   const count = (html: string, s: string) => html.split(s).length - 1;
 
+  it("colors a permission level by what it allows", () => {
+    const permChip = new Function(`${stub}\ntry { ${script} } catch {}\nreturn permChip;`)() as (p: string) => string;
+    expect(permChip("danger-full-access")).toContain("perm high");
+    expect(permChip("bypassPermissions")).toContain("perm high");
+    expect(permChip("workspace-write")).toContain("perm mid");
+    expect(permChip("read-only")).toContain("perm low");
+  });
+
   it("shows a reply once when it is logged as a message and as the answer", () => {
     const log = "header\n---\n07:30:00 7m · step 9 · says: Committed abc; worktree clean.\n07:34:00 answer: Committed abc; worktree clean.\n";
     expect(count(stepsHtml(log, "codex", {}), "Committed abc")).toBe(1);

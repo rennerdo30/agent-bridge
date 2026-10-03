@@ -46,6 +46,8 @@ export interface DelegationTarget {
   schema: Record<string, z.ZodTypeAny>;
   permissionNote: (cfg: BridgeConfig) => string;
   run: (cfg: BridgeConfig, base: DelegateRequest, args: TargetArgs) => Promise<DelegateResult>;
+  /** The permission level a run with these arguments gets (Codex sandbox, Claude permission mode, opencode approval). */
+  permission: (cfg: BridgeConfig, args: TargetArgs) => string;
 }
 
 const CODEX_SANDBOX_FOR: Record<Access, CodexSandbox> = { read: "read-only", ask: "read-only", edit: "workspace-write" };
@@ -90,6 +92,7 @@ export const DELEGATION_TARGETS: Record<CodingAgent, DelegationTarget> = {
     defaultModel: (cfg) => cfg.codexModel,
     schema: { sandbox: z.enum(CODEX_SANDBOXES as [string, ...string[]]).optional().describe("Overrides access with an exact Codex sandbox mode") },
     permissionNote: (cfg) => `Codex runs in the "${cfg.codexSandbox}" sandbox unless you pass access or sandbox.${codexEnvironmentNote()}`,
+    permission: (cfg, a) => (a.sandbox as CodexSandbox | undefined) ?? (a.access ? CODEX_SANDBOX_FOR[a.access] : cfg.codexSandbox),
     run: async (cfg, base, a) => {
       const sandbox = (a.sandbox as CodexSandbox | undefined) ?? (a.access ? CODEX_SANDBOX_FOR[a.access] : cfg.codexSandbox);
       const relay = a.access === "ask" && Boolean(a.relay?.codexHookTrusted);
@@ -130,6 +133,7 @@ export const DELEGATION_TARGETS: Record<CodingAgent, DelegationTarget> = {
     defaultModel: (cfg) => cfg.claudeModel,
     schema: { permission_mode: z.enum(CLAUDE_PERMISSION_MODES as [string, ...string[]]).optional().describe("Overrides access with an exact Claude permission mode") },
     permissionNote: (cfg) => `Claude runs with permission mode "${cfg.claudePermissionMode}" unless you pass access or permission_mode.`,
+    permission: (cfg, a) => claudeModeFor(cfg, a),
     run: (cfg, base, a) =>
       delegateToClaude({
         ...base,
@@ -147,6 +151,7 @@ export const DELEGATION_TARGETS: Record<CodingAgent, DelegationTarget> = {
       cfg.opencodeAutoApprove
         ? "opencode auto-approves permission requests unless you pass access=read or auto_approve=false."
         : "Headless opencode rejects every permission request (edits, commands) unless you pass access=edit or auto_approve=true.",
+    permission: (cfg, a) => ((a.auto_approve ?? (a.access ? OPENCODE_AUTO_FOR[a.access] : cfg.opencodeAutoApprove)) ? "auto-approve" : "read-only"),
     run: async (cfg, base, a) => {
       // Resolve short or partial model names first: an unknown model must fail fast, not hang.
       let note: string | null = null;

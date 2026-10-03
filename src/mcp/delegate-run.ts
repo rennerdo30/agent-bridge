@@ -175,6 +175,7 @@ export async function runDelegate(
         model: a.model ?? defaultModel ?? null,
         effort: a.effort ?? cfg.effort[target] ?? defaultEffort(target, a.model ?? defaultModel ?? null),
         access: access ?? "default",
+      permission: profile.permission(cfg, { ...a, access }),
         workdir,
         continues: a.session_id ?? null,
       },
@@ -239,7 +240,7 @@ export async function runDelegate(
         model: a.model ?? defaultModel,
         effort: a.effort ?? cfg.effort[target] ?? null,
         // What it really runs (a CLI default or an alias resolved), for the dashboard.
-        onInfo: (info) => feed.meta({ ...(info.model ? { model: info.model } : {}), effort: info.effort ?? a.effort ?? cfg.effort[target] ?? defaultEffort(target, info.model ?? null) }),
+        onInfo: (info) => feed.meta({ ...(info.model ? { model: info.model } : {}), ...(info.permission ? { permission: info.permission } : {}), effort: info.effort ?? a.effort ?? cfg.effort[target] ?? defaultEffort(target, info.model ?? null) }),
         log: dlog,
         signal,
         onProgress: feed.report,
