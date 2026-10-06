@@ -869,6 +869,8 @@ function buildModel(s) {
     // Progress the subagent reported in its current turn (only meaningful while it runs).
     g.percent = g.status === "running" && typeof last.percent === "number" ? last.percent : null;
     g.progressNote = last.progressNote || "";
+    // When the subagent expects to be done (report_progress eta_minutes), while it runs.
+    g.etaAt = g.status === "running" && typeof last.etaAt === "number" ? last.etaAt : null;
     // A subagent started by another subagent (nested delegation) is listed under its parent.
     g.parentJob = (g.turns.find((t) => t.parentJob) || {}).parentJob || null;
   }
@@ -957,6 +959,15 @@ function selectedKey(x) {
   return route.group && x.groups.some((g) => g.key === route.group) ? route.group : x.groups[0] ? x.groups[0].key : hasNativeChat(x) ? CHAT_KEY : null;
 }
 const sessionApi = (name) => "/api/sessions/" + encodeURIComponent(name);
+
+/** A subagent's own estimate of when it is done (etaAt, epoch ms), as "~12 min left" / "~1.5 h left". */
+const ETA_HOUR_FROM_MIN = 90;
+function etaText(etaAt) {
+  const min = Math.ceil((etaAt - Date.now()) / 60000);
+  if (min <= 0) return "should be done by now";
+  if (min < ETA_HOUR_FROM_MIN) return "~" + min + " min left";
+  return "~" + (min / 60).toLocaleString(undefined, { maximumFractionDigits: 1 }) + " h left";
+}
 
 /** Readable text for a failed read from the paired PC (see docs/remote-dashboard.md), or "" for local errors. */
 const REMOTE_ERRORS = {
@@ -1187,7 +1198,7 @@ function groupRow(g, sel, showOwner) {
       : '<div style="min-width:0"><div class="line1"><b>' + esc(g.agent) + "</b>" + (g.model ? '<span class="chip ell">' + esc(g.model) + "</span>" : "") + (g.effort ? effortChip(g.effort) : "") + (g.permission ? permChip(g.permission) : "") +
         (g.turns.length > 1 ? '<span class="chip">' + g.turns.length + " turns</span>" : "") + runChips(g) + "</div>" +
         '<div class="task">' + esc(g.task || g.last) + "</div></div>") +
-    '<div class="side">' + pill(g.status, g.percent) + outcomeChip(g) + "<span>" + (showOwner ? esc(g.owner) + " · " : "") + ago(g.updatedAt) + "</span></div>" +
+    '<div class="side">' + pill(g.status, g.percent) + outcomeChip(g) + "<span>" + (showOwner ? esc(g.owner) + " · " : "") + (g.etaAt ? esc(etaText(g.etaAt)) : ago(g.updatedAt)) + "</span></div>" +
     (g.percent !== null ? '<div class="bar" title="' + esc(g.percent + "% · " + g.progressNote) + '"><i style="width:' + g.percent + '%"></i></div>' : "") + "</a>";
 }
 
@@ -1441,7 +1452,7 @@ function renderConversation(g) {
   // Line 1: what it is and how it stands; line 2: quiet facts; line 3: its own progress note.
   $("cTitle").innerHTML = '<span class="ttl">' + esc(g.title || g.agent) + "</span>" + pill(g.status, g.percent) + outcomeChip(g);
   $("cMeta").innerHTML = '<span class="chip">' + esc(g.agent) + "</span>" + (g.model ? '<span class="chip">' + esc(g.model) + "</span>" : "") + (g.effort ? effortChip(g.effort) : "") + (g.permission ? permChip(g.permission) : "") + runChips(g) + pendingChips(g);
-  $("cNote").textContent = g.progressNote && g.percent !== null ? g.progressNote : "";
+  $("cNote").textContent = [g.progressNote && g.percent !== null ? g.progressNote : "", g.etaAt ? etaText(g.etaAt) : ""].filter(Boolean).join(" · ");
   $("cSub").textContent = (g.owner === "earlier runs" ? "" : "started by " + g.owner + " · ") + time(first.startedAt) + " · " + (first.access || "default") + " access" + (first.workdir ? " · " + first.workdir : "");
   const hint = g.job && g.status !== "running"
     ? (g.status === "done" ? "Continue it with its context from " : "Recover it with its context from ") + esc(g.owner) + ': <code>message_subagent(job="' + esc(g.job) + '")</code>'
