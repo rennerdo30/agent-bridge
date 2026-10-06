@@ -4,6 +4,7 @@ import { open, statfs } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { setTimeout as realDelay } from "node:timers/promises";
 import { join } from "node:path";
+import type { TLSSocket } from "node:tls";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { nullLogger } from "../src/core/logger.js";
 import type { BridgeMessage, PeerInfo } from "../src/core/protocol.js";
@@ -119,6 +120,28 @@ describe("chunked paired-PC file transfers", () => {
     await wait(() => a.transfers.list().find((state) => state.id === started.id)?.status === "completed");
     expect(await hash(join(home, "mac", "inbox", started.id, "link-drop.bin"))).toBe(expected);
   }, 120_000);
+
+  it.each(["EPIPE", "ECONNRESET"])("resumes when socket write reports %s before socket close", async (code) => {
+    const { a, sender } = await paired();
+    const source = join(home, "write-drop.bin"); const expected = await generate(source, TRANSFER_CHUNK_BYTES + 3);
+    // Model the OS callback ordering independently of which platform runs this regression.
+    const socket = (a as unknown as { links: Map<string, { socket: TLSSocket }> }).links.values().next().value!.socket;
+    const write = socket.write.bind(socket); let injected = false;
+    vi.spyOn(socket, "write").mockImplementation((...args) => {
+      if (!injected && typeof args[0] === "string" && JSON.parse(args[0]).type === "file-stream") {
+        injected = true;
+        const callback = args.find((arg) => typeof arg === "function") as (error?: Error) => void;
+        queueMicrotask(() => callback(Object.assign(new Error(`write ${code}`), { code })));
+        return false;
+      }
+      return write(...args);
+    });
+    const started = a.startFiles("mac/receiver", [source], home, sender);
+    await wait(() => a.transfers.list().find((state) => state.id === started.id)?.status === "paused", 5_000);
+    await wait(() => a.transfers.list().find((state) => state.id === started.id)?.status === "completed", 10_000);
+    expect(injected).toBe(true);
+    expect(await hash(join(home, "mac", "inbox", started.id, "write-drop.bin"))).toBe(expected);
+  });
 
   it("propagates source failures so both sides finish and partial files stay unpublished", async () => {
     const { a, b, sender } = await paired(); const source = join(home, "changed.bin"); await generate(source, TRANSFER_CHUNK_BYTES);
