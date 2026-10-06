@@ -43680,6 +43680,35 @@ form#send { background: transparent; border-top: 0; padding: 12px 0 0; }
 .sysrow.fold[open] { color: var(--text); white-space: normal; overflow-wrap: anywhere; }
 .msgrow.peer .bubble { background: var(--panel-2); border: 1px solid var(--line); border-radius: 14px 14px 14px 4px; padding: 10px 14px; }
 
+/* Outcomes, nesting, older pages, recovered runs */
+.chip.outcome { margin-top: 2px; }
+.chip.outcome.ok { color: var(--ok); background: var(--ok-soft); }
+.chip.outcome.warn { color: var(--warn); background: var(--warn-soft); }
+.chip.outcome.faint { color: var(--faint); }
+.rows > a.nest1 { padding-left: 40px; background: color-mix(in srgb, var(--panel-2) 50%, transparent); }
+.rows > a.nest2 { padding-left: 64px; background: var(--panel-2); }
+.rows > a.nest1::after, .rows > a.nest2::after { content: "\u21B3"; position: absolute; left: 22px; top: 50%; transform: translateY(-50%); color: var(--faint); }
+.rows > a.nest2::after { left: 46px; }
+.load-older { display: block; width: 100%; padding: 11px 16px; text-align: left; margin: 0; border-top: 1px solid var(--panel-2); font-size: 12.5px; }
+.kids-box { margin-left: 36px; padding: 10px 14px; border-radius: 10px; background: var(--panel-2); display: flex; flex-direction: column; gap: 6px; max-width: min(780px, calc(100% - 36px)); }
+.kids-box a { font-size: 13px; color: var(--text); }
+.kids-box a:hover { color: var(--accent); }
+/* Search */
+.search-form { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; border: 0; background: none; padding: 0 0 16px; }
+.search-form input[type="search"] { flex: 1 1 320px; padding: 9px 12px; font-size: 14px; }
+.search-form label.check { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
+.answer-box { padding: 16px 20px; margin-bottom: 16px; border-left: 3px solid var(--accent); line-height: 1.6; }
+.hit { padding: 14px 18px; border-bottom: 1px solid var(--panel-2); }
+.hit:last-child { border-bottom: 0; }
+.hit-head { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; margin-bottom: 4px; }
+.hit-snip { font-size: 13.5px; overflow-wrap: anywhere; }
+.hit .linkbtn { margin: 6px 0 0; }
+.hit-body { margin-top: 8px; padding: 10px 14px; border-radius: 8px; background: var(--panel-2); font-size: 13px; max-height: 360px; overflow: auto; overflow-wrap: anywhere; }
+/* Transfers */
+.xfer-dir { flex: none; width: 26px; height: 26px; border-radius: 7px; display: grid; place-items: center; background: var(--panel-2); color: var(--accent); font-weight: 700; }
+.xfer-bar { height: 4px; border-radius: 2px; background: var(--panel-2); margin-top: 6px; overflow: hidden; }
+.xfer-bar i { display: block; height: 100%; background: var(--busy); }
+
 /* Pages: approvals and decisions */
 .page-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 12px 24px; flex-wrap: wrap; margin-bottom: 20px; }
 .page-head h2 { margin: 0 0 4px; font-size: 22px; font-weight: 650; letter-spacing: -.015em; }
@@ -43867,7 +43896,7 @@ const LOG_PAGES = 20;
 const FOLD_STEPS = 3;
 /** Finished subagents older than this move into the session's archive. */
 const ARCHIVE_AFTER_MS = 30 * 60_000;
-const NETWORK_HASH = "#/network", APPROVALS_HASH = "#/approvals", DECISIONS_HASH = "#/decisions";
+const NETWORK_HASH = "#/network", APPROVALS_HASH = "#/approvals", DECISIONS_HASH = "#/decisions", SEARCH_HASH = "#/search";
 /** Open approval requests are re-read this often (they expire into a "deny" after a few minutes). */
 const APPROVALS_POLL_MS = 3000;
 /** Network status refresh while the tab is open, and faster while a pairing code waits for the other PC. */
@@ -43937,6 +43966,7 @@ function parseRoute() {
   if (location.hash === NETWORK_HASH) return { session: null, group: null, network: true, page: "network" };
   if (location.hash === APPROVALS_HASH) return { session: null, group: null, page: "approvals" };
   if (location.hash === DECISIONS_HASH) return { session: null, group: null, page: "decisions" };
+  if (location.hash === SEARCH_HASH) return { session: null, group: null, page: "search" };
   const m = /^#\\/s\\/([^/]+)(?:\\/(.+))?$/.exec(location.hash);
   return m ? { session: decodeURIComponent(m[1]), group: m[2] ? decodeURIComponent(m[2]) : null } : { session: null, group: null };
 }
@@ -43975,7 +44005,10 @@ function buildModel(s) {
   const live = s.peers.filter((p) => p.name !== "you" && !p.subagent);
   const subPeers = s.peers.filter((p) => p.subagent);
   const groups = new Map(), ofSession = new Map();
-  for (const r of [...s.runs].sort((a, b) => a.startedAt - b.startedAt || a.name.localeCompare(b.name))) {
+  // The newest page from /api/state plus any older pages the owner loaded ("Load older subagents").
+  const seen = new Set(s.runs.map((r) => r.name));
+  const allRuns = [...s.runs, ...olderRuns.filter((r) => !seen.has(r.name))];
+  for (const r of allRuns.sort((a, b) => a.startedAt - b.startedAt || a.name.localeCompare(b.name))) {
     const key = r.job || (r.continues && ofSession.get(r.continues)) || r.name;
     let g = groups.get(key);
     if (!g) groups.set(key, (g = { key, job: r.job || null, agent: r.agent, model: null, owner: ownerOf(r, live), turns: [] }));
@@ -43996,6 +44029,8 @@ function buildModel(s) {
     // Progress the subagent reported in its current turn (only meaningful while it runs).
     g.percent = g.status === "running" && typeof last.percent === "number" ? last.percent : null;
     g.progressNote = last.progressNote || "";
+    // A subagent started by another subagent (nested delegation) is listed under its parent.
+    g.parentJob = (g.turns.find((t) => t.parentJob) || {}).parentJob || null;
   }
   const sessions = live.map((p) => ({ name: p.name, peer: p, live: true, groups: [], children: [] }));
   const byName = new Map(sessions.map((x) => [x.name, x]));
@@ -44031,9 +44066,11 @@ function render() {
   $("network").classList.toggle("hidden", !inNetwork);
   $("approvals").classList.toggle("hidden", page !== "approvals");
   $("decisions").classList.toggle("hidden", page !== "decisions");
+  $("search").classList.toggle("hidden", page !== "search");
   if (inNetwork) renderNetwork();
   else if (page === "approvals") renderApprovals();
   else if (page === "decisions") renderDecisions();
+  else if (page === "search") renderSearch();
   else if (inSession) renderSession();
   else renderOverview();
   renderSendForm(inSession);
@@ -44097,13 +44134,25 @@ async function loadNativeList(x) {
 }
 
 /** Fetch the new part of a transcript (several chunks when it is long) and merge it. */
-async function pullChat(x, key) {
-  const id = x.name + "|" + key;
+/** The transcript endpoint for a key: the session's chat, one of its own subagents, or a subagent's own subagent. */
+function chatUrl(x, key) {
+  if (key === CHAT_KEY) return sessionApi(x.name) + "/chat";
+  if (key.startsWith(JOB_CHILD_PREFIX)) {
+    const [job, child] = key.slice(JOB_CHILD_PREFIX.length).split("|");
+    return "/api/jobs/" + encodeURIComponent(job) + "/subagents/" + encodeURIComponent(child);
+  }
+  return sessionApi(x.name) + "/subagents/" + encodeURIComponent(key.slice(NATIVE_PREFIX.length));
+}
+
+function pullChat(x, key) {
+  return pullChatFrom(x.name + "|" + key, chatUrl(x, key));
+}
+
+async function pullChatFrom(id, url) {
   let c = chats.get(id);
   if (!c) chats.set(id, (c = { items: [], byId: new Map(), next: null, loading: false, error: "" }));
   if (c.loading) return c;
   c.loading = true;
-  const url = key === CHAT_KEY ? sessionApi(x.name) + "/chat" : sessionApi(x.name) + "/subagents/" + encodeURIComponent(key.slice(NATIVE_PREFIX.length));
   try {
     for (let i = 0; i < LOG_PAGES; i++) {
       const r = await fetch(url + (c.next ? "?from=" + encodeURIComponent(c.next) : ""));
@@ -44208,10 +44257,12 @@ function chatHtml(items, agent, session) {
 
 async function showNative(x, key) {
   const p = x.peer || {};
-  const native = key.startsWith(NATIVE_PREFIX) ? ((nativeLists.get(x.name) || {}).list || []).find((s) => NATIVE_PREFIX + s.id === key) : null;
+  const jc = key.startsWith(JOB_CHILD_PREFIX) ? key.slice(JOB_CHILD_PREFIX.length).split("|") : null;
+  const native = key.startsWith(NATIVE_PREFIX) ? ((nativeLists.get(x.name) || {}).list || []).find((s) => NATIVE_PREFIX + s.id === key)
+    : jc ? ((jobChildren.get(jc[0]) || {}).list || []).find((s) => s.id === jc[1]) : null;
   $("cAvatar").innerHTML = av(p.agent || "other");
   $("cTitle").innerHTML = key === CHAT_KEY ? "Chat <span class=\\"chip\\">" + esc(p.agent || "") + "</span>" : esc((native && native.title) || "Subagent") + ' <span class="chip own">own subagent</span>';
-  $("cSub").textContent = (key === CHAT_KEY ? "the session's own conversation" : "a subagent of " + p.agent + " itself") + " \xB7 read-only" + (p.cwd ? " \xB7 " + p.cwd : "");
+  $("cSub").textContent = (key === CHAT_KEY ? "the session's own conversation" : jc ? "its own subagent of " + jc[0] : "a subagent of " + p.agent + " itself") + " \xB7 read-only" + (p.cwd ? " \xB7 " + p.cwd : "");
   $("cHint").classList.add("hidden");
   const c = await pullChat(x, key);
   if (route.session !== x.name || route.group !== key) return;
@@ -44239,10 +44290,11 @@ function renderSide() {
   $("tabNet").className = route.network ? "on" : "";
   $("tabApprovals").className = (route.page === "approvals" ? "on" : "") + (approvals.length ? " attn" : "");
   $("tabDecisions").className = route.page === "decisions" ? "on" : "";
+  $("tabSearch").className = route.page === "search" ? "on" : "";
   setHtml("tabNet", '<span class="ico" aria-hidden="true">\u21C4</span>Network' + networkTabDot());
   setHtml("tabApprovals", '<span class="ico" aria-hidden="true">!</span>Waiting for you' + (approvals.length ? '<span class="count attn">' + approvals.length + "</span>" : ""));
   const cur = route.session && model.byName.get(route.session);
-  $("mTitle").textContent = route.network ? "Network" : route.page === "approvals" ? "Waiting for you" : route.page === "decisions" ? "Decisions" : route.session ? (cur ? sessionTitle(cur) : route.session) : "Overview";
+  $("mTitle").textContent = route.network ? "Network" : route.page === "approvals" ? "Waiting for you" : route.page === "decisions" ? "Decisions" : route.page === "search" ? "Search history" : route.session ? (cur ? sessionTitle(cur) : route.session) : "Overview";
   const q = $("sessFilter").value.trim().toLowerCase();
   const groups = sideGroups(q);
   const html = groups.length
@@ -44270,12 +44322,12 @@ function groupRow(g, sel, showOwner) {
   return '<a href="' + href(g.owner, g.key) + '" class="' + (sel ? "sel" : "") + '">' + av(g.agent) +
     // Like a chat list: the title the starting agent gave it, with agent and model below; else the task.
     (g.title
-      ? '<div style="min-width:0"><div class="line1"><b class="ell">' + esc(g.title) + "</b></div>" +
+      ? '<div style="min-width:0"><div class="line1"><b class="ell">' + esc(g.title) + "</b>" + runChips(g) + "</div>" +
         '<div class="task">' + esc(g.agent) + (g.model ? " \xB7 " + esc(g.model) : "") + (g.effort ? " \xB7 " + esc(g.effort) + " effort" : "") + (g.permission ? " \xB7 " + esc(g.permission) : "") + (g.turns.length > 1 ? " \xB7 " + g.turns.length + " turns" : "") + "</div></div>"
       : '<div style="min-width:0"><div class="line1"><b>' + esc(g.agent) + "</b>" + (g.model ? '<span class="chip ell">' + esc(g.model) + "</span>" : "") + (g.effort ? effortChip(g.effort) : "") + (g.permission ? permChip(g.permission) : "") +
-        (g.turns.length > 1 ? '<span class="chip">' + g.turns.length + " turns</span>" : "") + "</div>" +
+        (g.turns.length > 1 ? '<span class="chip">' + g.turns.length + " turns</span>" : "") + runChips(g) + "</div>" +
         '<div class="task">' + esc(g.task || g.last) + "</div></div>") +
-    '<div class="side">' + pill(g.status, g.percent) + "<span>" + (showOwner ? esc(g.owner) + " \xB7 " : "") + ago(g.updatedAt) + "</span></div>" +
+    '<div class="side">' + pill(g.status, g.percent) + outcomeChip(g) + "<span>" + (showOwner ? esc(g.owner) + " \xB7 " : "") + ago(g.updatedAt) + "</span></div>" +
     (g.percent !== null ? '<div class="bar" title="' + esc(g.percent + "% \xB7 " + g.progressNote) + '"><i style="width:' + g.percent + '%"></i></div>' : "") + "</a>";
 }
 
@@ -44328,7 +44380,7 @@ function renderOverview() {
     (live.length ? byPc : '<div class="panel empty">No sessions connected. Start Claude Code, Codex or opencode with agent-bridge installed.</div>') +
     ended.map(card).join("") +
     (model.orphans.length ? '<div class="card ended"><div class="small muted">Subagent sessions in worktrees</div><div class="kids">' + model.orphans.map(childLine).join("") + "</div></div>" : "");
-  $("ovRuns").innerHTML = model.sorted.length ? model.sorted.filter((g) => g.status === "running" || Date.now() - g.updatedAt < ARCHIVE_AFTER_MS).concat(model.sorted.filter((g) => !(g.status === "running" || Date.now() - g.updatedAt < ARCHIVE_AFTER_MS))).slice(0, 12).map((g) => groupRow(g, false, true)).join("") : '<div class="empty">No subagents yet. They appear here when a session uses ask_* or spawn_*.</div>';
+  $("ovRuns").innerHTML = model.sorted.length ? model.sorted.filter((g) => g.status === "running" || Date.now() - g.updatedAt < ARCHIVE_AFTER_MS).concat(model.sorted.filter((g) => !(g.status === "running" || Date.now() - g.updatedAt < ARCHIVE_AFTER_MS))).slice(0, 12).map((g) => groupRow(g, false, true)).join("") + loadOlderButton() : '<div class="empty">No subagents yet. They appear here when a session uses ask_* or spawn_*.</div>';
   $("ovMsgs").innerHTML = messagesHtml(state.messages);
 }
 
@@ -44388,11 +44440,18 @@ function renderSessionList(x, selKey) {
     ? '<div class="rows-head">Its own subagents <span class="faint">' + natives.length + "</span></div>" + nativeActive.map(nativeRow).join("") +
       (nativeOld.length ? '<details class="archive" data-open="native-archive:' + esc(x.name) + '"' + (nativeOpen ? " open" : "") + "><summary>Older \xB7 " + nativeOld.length + " own subagent" + (nativeOld.length === 1 ? "" : "s") + "</summary>" + nativeOld.map(nativeRow).join("") + "</details>" : "")
     : "";
+  // Subagents started by a subagent follow their parent, indented; orphans (parent not listed) stay top level.
+  const nested = (list) => {
+    const byJob = new Set(list.map((g) => g.job).filter(Boolean));
+    const kids = (g) => list.filter((c) => c.parentJob && c.parentJob === g.job);
+    const row = (g, depth) => (depth ? groupRow(g, g.key === selKey, false).replace('class="', 'class="nest' + Math.min(depth, 2) + " ") : groupRow(g, g.key === selKey, false)) + kids(g).map((c) => row(c, depth + 1)).join("");
+    return list.filter((g) => !g.parentJob || !byJob.has(g.parentJob)).map((g) => row(g, 0)).join("");
+  };
   const bridgeRows = x.groups.length
-    ? (active.length ? active.map((g) => groupRow(g, g.key === selKey, false)).join("") : '<div class="empty">Nothing running or recent.</div>') +
-      (archived.length ? '<details class="archive" data-open="archive:' + esc(x.name) + '"' + (archiveOpen ? " open" : "") + "><summary>Archive \xB7 " + archived.length + " older subagent" + (archived.length === 1 ? "" : "s") + "</summary>" + archived.map((g) => groupRow(g, false, false)).join("") + "</details>" : "")
+    ? (active.length ? nested(active) : '<div class="empty">Nothing running or recent.</div>') +
+      (archived.length ? '<details class="archive" data-open="archive:' + esc(x.name) + '"' + (archiveOpen ? " open" : "") + "><summary>Archive \xB7 " + archived.length + " older subagent" + (archived.length === 1 ? "" : "s") + "</summary>" + nested(archived) + "</details>" : "")
     : chat ? "" : '<div class="empty">No subagents started from this session yet.</div>';
-  const html = chatRow + bridgeRows + nativeRows;
+  const html = chatRow + bridgeRows + nativeRows + loadOlderButton();
   if ($("sGroups").innerHTML !== html) $("sGroups").innerHTML = html;
 }
 
@@ -44466,7 +44525,10 @@ async function showGroup(g) {
   if (pulling) return;
   pulling = true;
   try {
+    if (g.job) void loadJobChildren(g.job);
     for (const r of g.turns) {
+      // Its step log was lost (recovered from the job record): read the turn from the CLI's own transcript.
+      if (r.hasLog === false) { await pullChatFrom("run|" + r.name, "/api/runs/" + encodeURIComponent(r.name) + "/chat"); continue; }
       let l = logs.get(r.name);
       if (!l) logs.set(r.name, (l = { raw: "", offset: 0, done: false }));
       if (l.done) continue;
@@ -44506,6 +44568,15 @@ function renderConversation(g) {
   $("cHint").classList.toggle("hidden", !hint);
   let n = 0;
   const html = g.turns.map((r, i) => {
+    const turnHead = g.turns.length > 1 ? '<div class="turn">' + (i === 0 ? "Task" : "Follow-up " + i) + " \xB7 " + time(r.startedAt) + " \xB7 " + pill(r.status) + "</div>" : "";
+    if (r.hasLog === false) {
+      // Recovered: the step log is gone, the CLI's own transcript tells the turn.
+      const c = chats.get("run|" + r.name);
+      const body = !c ? '<div class="sys">Loading its conversation\u2026</div>'
+        : c.error ? '<div class="sys">Its step log was lost and its transcript is not readable: ' + esc(c.error) + "</div>"
+        : c.items.length ? chatHtml(c.items, g.agent, g.owner) : '<div class="sys">Its step log was lost and its transcript has no entries.</div>';
+      return turnHead + '<div class="sys">Recovered from the job record and ' + esc(g.agent) + "'s own transcript</div>" + body;
+    }
     const t = splitTurn((logs.get(r.name) || { raw: "" }).raw);
     const id = r.name + ":task";
     const long = t.prompt.length > 600 && !opened.has(id);
@@ -44513,7 +44584,7 @@ function renderConversation(g) {
       '<div class="msgrow me">' + av(state.peers.find((p) => p.name === g.owner)?.agent || "other", true) +
       '<div class="bubble' + (long ? " clamp" : "") + '" data-open="' + esc(id) + '"><span class="who">' + (i === 0 ? esc(g.owner) : "follow-up from " + esc(g.owner)) + "</span>" + md(t.prompt.trim()) + "</div></div>" +
       stepsHtml(t.steps, g.agent, r.name, () => n++);
-  }).join("") + (jobResults.get(g.key) || []).map((text) => '<div class="sys">' + esc(text) + "</div>").join("");
+  }).join("") + jobChildrenHtml(g) + (jobResults.get(g.key) || []).map((text) => '<div class="sys">' + esc(text) + "</div>").join("");
   if (html === lastChat) return;
   lastChat = html;
   const chat = $("chat"), atEnd = chat.scrollHeight - chat.scrollTop - chat.clientHeight < 40;
@@ -45234,6 +45305,176 @@ setInterval(() => {
   for (const el of $("apList").querySelectorAll("[data-deadline]")) { const left = Number(el.dataset.deadline) - Date.now(); el.textContent = left > 0 ? "auto-deny in " + mmss(left) : "expiring"; }
   if (Date.now() - apLoadedAt >= APPROVALS_POLL_MS) void loadApprovals();
 }, 1000);
+
+/* ---- Job outcomes (GET /api/job-outcomes, docs/job-outcomes.md): merged, held, unmerged or discarded ---- */
+let outcomes = null, outcomesOff = false, outcomesAt = 0;
+const OUTCOMES_MS = 15_000;
+async function loadOutcomes() {
+  if (outcomesOff || Date.now() - outcomesAt < OUTCOMES_MS) return;
+  outcomesAt = Date.now();
+  try {
+    const r = await fetch("/api/job-outcomes");
+    if (r.status === 404) { outcomesOff = true; return; }
+    if (r.ok) { outcomes = (await r.json()).jobs || {}; if (model) render(); }
+  } catch {}
+}
+const OUTCOME_LABEL = { merged: ["merged", "ok"], held: ["held", "warn"], unmerged: ["not merged", ""], discarded: ["discarded", "faint"] };
+function outcomeChip(g) {
+  const o = g.status !== "running" && g.job && outcomes && outcomes[g.job] && outcomes[g.job].outcome;
+  const merge = o && o.merge;
+  if (!merge || !OUTCOME_LABEL[merge.state]) return "";
+  const [label, cls] = OUTCOME_LABEL[merge.state];
+  const tip = [merge.branch && "branch " + merge.branch, merge.baseBranch && "into " + merge.baseBranch, merge.reason].filter(Boolean).join(" \xB7 ");
+  return '<span class="chip outcome ' + cls + '" title="' + esc(tip) + '">' + label + "</span>";
+}
+/** Where a run lives: on a paired PC, or rebuilt from its job record after its log was lost. */
+function runChips(g) {
+  const last = g.turns[g.turns.length - 1] || {};
+  return (last.remote ? '<span class="chip" title="runs on the paired PC">on ' + esc(last.remote.host) + "</span>" : "") +
+    (g.turns.some((t) => t.recovered) ? '<span class="chip" title="Its step log was lost; the conversation comes from the CLI\\'s own transcript">recovered</span>' : "");
+}
+
+/* ---- Older subagents: /api/state carries the newest page, GET /api/runs?before= the rest (archived and recovered too) ---- */
+let olderRuns = [], olderNext = undefined, olderLoading = false;
+const OLDER_PAGE = 100;
+const olderCursor = () => (olderNext === undefined ? state && state.runsNext : olderNext);
+function loadOlderButton() {
+  const next = olderCursor();
+  if (!next) return "";
+  const total = state && state.runsTotal ? " \xB7 " + state.runsTotal + " in total" : "";
+  return '<button type="button" class="linkbtn load-older" data-load-older="1"' + (olderLoading ? " disabled" : "") + ">" + (olderLoading ? "Loading\u2026" : "Load older subagents" + total) + "</button>";
+}
+async function loadOlder() {
+  const next = olderCursor();
+  if (!next || olderLoading) return;
+  olderLoading = true;
+  render();
+  try {
+    const r = await fetch("/api/runs?before=" + encodeURIComponent(next) + "&limit=" + OLDER_PAGE);
+    if (r.ok) {
+      const d = await r.json();
+      const known = new Set(olderRuns.map((x) => x.name));
+      olderRuns.push(...(d.runs || []).filter((x) => !known.has(x.name)));
+      olderNext = d.next || null;
+    }
+  } catch {}
+  olderLoading = false;
+  render();
+}
+
+/* ---- The CLI's own subagents of an agent-bridge subagent (GET /api/jobs/<job>/subagents) ---- */
+const JOB_CHILD_PREFIX = "~jc:";
+const jobChildren = new Map();
+async function loadJobChildren(job) {
+  const c = jobChildren.get(job);
+  if (c && Date.now() - c.at < NATIVE_LIST_MS) return;
+  jobChildren.set(job, { at: Date.now(), list: c ? c.list : [] });
+  try {
+    const r = await fetch("/api/jobs/" + encodeURIComponent(job) + "/subagents");
+    if (r.ok) { jobChildren.set(job, { at: Date.now(), list: (await r.json()).subagents || [] }); lastChat = ""; }
+  } catch {}
+}
+function jobChildrenHtml(g) {
+  const list = g.job && jobChildren.get(g.job) ? jobChildren.get(g.job).list : [];
+  if (!list.length) return "";
+  return '<div class="kids-box"><div class="small muted">Its own subagents</div>' + list.map((s) =>
+    '<a href="' + href(g.owner, JOB_CHILD_PREFIX + g.job + "|" + s.id) + '">' + '<span class="chip own">own</span> ' + esc(s.title || "subagent") + ' <span class="faint">' + ago(s.updatedAt) + "</span></a>").join("") + "</div>";
+}
+
+/* ---- File transfers between paired PCs (GET /api/transfers, POST /api/transfers/<id>/cancel) ---- */
+let transfers = [], transfersOff = false;
+const fmtBytes = (n) => { const u = ["B", "KB", "MB", "GB", "TB"]; let i = 0, v = Number(n) || 0; while (v >= 1024 && i < u.length - 1) { v /= 1024; i++; } return (i ? v.toFixed(v < 10 ? 1 : 0) : v) + " " + u[i]; };
+const TRANSFER_ACTIVE = ["queued", "preparing", "running", "paused"];
+async function loadTransfers() {
+  if (transfersOff) return;
+  try {
+    const r = await fetch("/api/transfers");
+    if (r.status === 404) { transfersOff = true; return; }
+    if (r.ok) transfers = (await r.json()).transfers || [];
+  } catch {}
+  renderTransfers();
+}
+function renderTransfers() {
+  $("netTransfersBox").classList.toggle("hidden", transfersOff);
+  $("netTransfersN").textContent = transfers.length || "";
+  setHtml("netTransfers", transfers.length
+    ? transfers.map((t) => {
+        const active = TRANSFER_ACTIVE.includes(t.status);
+        const pillStatus = t.status === "completed" ? "done" : t.status === "failed" || t.status === "cancelled" ? "failed" : "running";
+        return '<div class="peer-row"><span class="xfer-dir" title="' + (t.direction === "send" ? "sending" : "receiving") + '">' + (t.direction === "send" ? "\u2191" : "\u2193") + '</span><div class="grow"><b>' + esc(t.peer) + "</b> " + pill(pillStatus) +
+          '<div class="small muted">' + esc(t.files + " of " + t.totalFiles + " files \xB7 " + fmtBytes(t.bytes) + " of " + fmtBytes(t.totalBytes) + " \xB7 " + ago(t.updatedAt)) + (t.inbox ? " \xB7 " + esc(t.inbox) : "") + (t.error ? ' \xB7 <span style="color:var(--bad)">' + esc(t.error) + "</span>" : "") + "</div>" +
+          (active ? '<div class="xfer-bar"><i style="width:' + Math.max(0, Math.min(100, t.percent || 0)) + '%"></i></div>' : "") + "</div>" +
+          (active ? '<div class="acts"><button type="button" class="ghost" data-xfer-cancel="' + esc(t.id) + '">Cancel</button></div>' : "") + "</div>";
+      }).join("")
+    : '<div class="empty">No transfers yet. Agents send files with send_files; they appear here with their progress.</div>');
+}
+
+/* ---- Search history (GET /api/search, /api/history/<id>, docs/history-search.md) ---- */
+let searchResult = null, searchBusy = false;
+const searchSources = new Map();
+const KIND_LABEL = { message: "message", run: "subagent run", decision: "decision", transcript: "chat" };
+function renderSearch() {
+  if (searchBusy) return setHtml("sResults", '<div class="panel empty">Searching\u2026</div>');
+  if (!searchResult) return setHtml("sResults", '<div class="panel empty">Search across everything agents said and did, archived history included.</div>');
+  if (searchResult.error) return setHtml("sResults", '<div class="panel empty">' + esc(searchResult.error) + "</div>");
+  const a = searchResult.answer;
+  setHtml("sAnswerBox", a ? '<div class="panel answer-box">' + (a.error ? '<div class="note err">' + esc(a.error) + "</div>" : '<div class="small muted">Answer by ' + esc(a.agent + (a.model ? " \xB7 " + a.model : "")) + "</div>" + md(a.text || "") + (a.sources && a.sources.length ? '<div class="small muted">Sources: ' + a.sources.map((s) => esc(s.id)).join(", ") + "</div>" : "")) + "</div>" : "");
+  const hits = searchResult.hits || [];
+  setHtml("sResults", hits.length
+    ? '<div class="panel">' + hits.map((h) => {
+        const src = searchSources.get(h.id);
+        return '<article class="hit"><div class="hit-head"><span class="chip">' + esc(KIND_LABEL[h.kind] || h.kind) + "</span>" + (h.agent ? '<span class="small muted">' + esc(h.agent) + "</span>" : "") + '<span class="small faint">' + esc(h.at ? new Date(h.at).toLocaleString() : "") + "</span>" +
+          (h.job ? '<span class="small faint">' + esc(h.job) + "</span>" : "") + '</div><div class="hit-snip">' + esc(h.snippet || "") + "</div>" +
+          '<button type="button" class="linkbtn" data-hit="' + esc(h.id) + '">' + (src ? "Hide source" : "Show source") + "</button>" + (src ? '<div class="hit-body">' + (src.error ? esc(src.error) : md(src.body || "")) + "</div>" : "") + "</article>";
+      }).join("") + "</div>"
+    : '<div class="panel empty">Nothing found. Try fewer or other words.</div>');
+}
+async function runSearch() {
+  const q = $("sq").value.trim();
+  if (!q) return;
+  const params = new URLSearchParams({ q });
+  if ($("sKind").value) params.set("kind", $("sKind").value);
+  if ($("sAgent").value) params.set("agent", $("sAgent").value);
+  if ($("sAnswer").checked) params.set("answer", "true");
+  searchBusy = true; searchSources.clear(); setHtml("sAnswerBox", ""); renderSearch();
+  try {
+    const r = await fetch("/api/search?" + params.toString());
+    const d = await r.json().catch(() => ({}));
+    searchResult = r.ok ? d : { error: r.status === 404 ? "Search is not available in this version yet." : d.error || "Search failed (HTTP " + r.status + ")." };
+  } catch (err) {
+    searchResult = { error: "Search failed: " + err.message };
+  }
+  searchBusy = false;
+  renderSearch();
+}
+
+$("searchForm").addEventListener("submit", (e) => { e.preventDefault(); void runSearch(); });
+$("sResults").addEventListener("click", async (e) => {
+  const b = e.target.closest("[data-hit]");
+  if (!b) return;
+  const id = b.dataset.hit;
+  if (searchSources.has(id)) { searchSources.delete(id); return renderSearch(); }
+  const hit = ((searchResult && searchResult.hits) || []).find((h) => h.id === id);
+  try {
+    const r = await fetch((hit && hit.sourceLink) || "/api/history/" + encodeURIComponent(id));
+    searchSources.set(id, r.ok ? await r.json() : { error: "Source not available (HTTP " + r.status + ")." });
+  } catch (err) {
+    searchSources.set(id, { error: err.message });
+  }
+  renderSearch();
+});
+$("netTransfers").addEventListener("click", async (e) => {
+  const b = e.target.closest("[data-xfer-cancel]");
+  if (!b) return;
+  b.disabled = true;
+  try { await fetch("/api/transfers/" + encodeURIComponent(b.dataset.xferCancel) + "/cancel", { method: "POST", headers: { "x-agent-bridge": "1" } }); } catch {}
+  void loadTransfers();
+});
+document.addEventListener("click", (e) => { if (e.target.closest("[data-load-older]")) void loadOlder(); });
+setInterval(() => {
+  void loadOutcomes();
+  if (route.network) void loadTransfers();
+}, 3000);
 
 /** Auto follows the system; Light and Dark override it. Remembered in this browser. */
 function applyTheme(theme) {
