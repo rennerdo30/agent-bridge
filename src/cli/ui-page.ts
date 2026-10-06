@@ -422,6 +422,42 @@ form#jobSend textarea { background: var(--panel-2); border-color: transparent; b
 .msg { border-bottom-color: var(--panel-2); }
 form#send { background: transparent; border-top: 0; padding: 12px 0 0; }
 
+/* Pages: approvals and decisions */
+.page-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 12px 24px; flex-wrap: wrap; margin-bottom: 20px; }
+.page-head h2 { margin: 0 0 4px; font-size: 22px; font-weight: 650; letter-spacing: -.015em; }
+.page-head p { margin: 0; max-width: 640px; font-size: 13.5px; }
+/* Attention is amber, and only here. */
+.count.attn { background: var(--warn-soft); color: var(--warn); }
+.side-nav a.attn { color: var(--text); }
+.side-nav a.attn .ico { color: var(--warn); font-weight: 800; }
+.side-nav a .count { margin-left: auto; }
+.attn-banner { display: flex; align-items: center; gap: 12px; margin-bottom: 24px; padding: 12px 16px; border-radius: 10px; background: var(--warn-soft); color: var(--text); font-size: 13.5px; }
+.attn-banner:hover .attn-go { text-decoration: underline; }
+.attn-mark { flex: none; width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; background: var(--warn); color: var(--panel); font-weight: 800; font-size: 13px; }
+.attn-go { margin-left: auto; font-weight: 600; color: var(--warn); white-space: nowrap; }
+.ap-card { background: var(--panel); border-radius: 10px; box-shadow: var(--shadow); padding: 16px 18px; margin-bottom: 12px; display: flex; flex-direction: column; gap: 10px; border-left: 3px solid var(--warn); }
+.ap-head { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.ap-head .grow { flex: 1; min-width: 0; }
+.ap-time { flex: none; font-size: 12px; font-weight: 600; color: var(--warn); font-variant-numeric: tabular-nums; }
+.ap-tool { font-size: 12px; color: var(--muted); font-family: var(--mono); }
+.ap-card .cmds { max-height: 180px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
+.ap-reason { margin: 0; font-size: 13.5px; color: var(--text); }
+.ap-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.ap-actions .ap-why { flex: 1 1 260px; min-width: 0; padding: 7px 10px; }
+.ap-note, .ap-done .note { font-size: 12.5px; margin: -4px 0 12px; }
+.ap-done { margin-top: 18px; display: flex; flex-direction: column; gap: 4px; }
+.note.ok { color: var(--ok); } .note.err { color: var(--bad); }
+.dec-search { padding: 0 0 12px; max-width: 420px; }
+.dec { padding: 16px 20px; border-bottom: 1px solid var(--panel-2); }
+.dec:last-child { border-bottom: 0; }
+.dec-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 6px; }
+.dec-head h4 { margin: 0; font-size: 15px; font-weight: 650; }
+.dec-text { max-width: 760px; line-height: 1.6; }
+.dec-text p { margin: 0 0 .5em; } .dec-text > :last-child { margin-bottom: 0; }
+.dec .linkbtn { margin: 8px 0 0; font-size: 12.5px; }
+.dec-hist { margin-top: 10px; padding-left: 14px; border-left: 2px solid var(--line); display: flex; flex-direction: column; gap: 10px; color: var(--muted); }
+.dec-hist p { margin: 2px 0 0; }
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
@@ -437,7 +473,9 @@ form#send { background: transparent; border-top: 0; padding: 12px 0 0; }
   <div class="side-search"><input id="sessFilter" type="search" placeholder="Search sessions and subagents" autocomplete="off" spellcheck="false" aria-label="Search sessions and subagents"></div>
   <nav class="side-nav">
     <a href="#/" id="tabOverview"><span class="ico" aria-hidden="true">▦</span>Overview</a>
+    <a href="#/approvals" id="tabApprovals"><span class="ico" aria-hidden="true">!</span>Waiting for you</a>
     <a href="#/network" id="tabNet"><span class="ico" aria-hidden="true">⇄</span>Network</a>
+    <a href="#/decisions" id="tabDecisions"><span class="ico" aria-hidden="true">✓</span>Decisions</a>
   </nav>
   <div class="side-tree" id="sideTree"></div>
   <div class="side-foot">
@@ -451,12 +489,29 @@ form#send { background: transparent; border-top: 0; padding: 12px 0 0; }
 
 <main class="wrap">
   <div id="overview">
+    <div id="ovAttn"></div>
     <div class="block stats" id="ovStats"></div>
     <div class="block"><h3>Usage left <span class="n" id="usageAt"></span><button class="linkbtn" id="usageRefresh" title="Read the limits again">refresh</button></h3><div id="ovUsage" class="cards usage"><div class="panel empty small muted">Reading the agents' limits…</div></div></div>
     <div class="block"><details><summary class="small muted">Available models</summary><div id="ovModels" class="cards usage"><div class="panel empty small muted">Open to read the available models.</div></div></details></div>
     <div class="block"><h3>Sessions <span class="n" id="ovCount"></span></h3><div id="ovSessions" class="cards"></div></div>
     <div class="block"><h3>Subagents <span class="n">working first, then newest finished</span></h3><div class="panel rows" id="ovRuns"></div></div>
     <div class="block" id="ovMsgBox"><h3>Messages</h3><div class="panel"><div id="ovMsgs" class="msgs"></div></div></div>
+  </div>
+
+  <div id="approvals" class="hidden">
+    <div class="page-head">
+      <div><h2>Waiting for you</h2><p class="muted">Subagents asking before they run something. Unanswered requests count as "deny" when their time runs out.</p></div>
+      <button type="button" class="ghost" id="notifyBtn">Notify me in this browser</button>
+    </div>
+    <div id="apList"></div>
+  </div>
+
+  <div id="decisions" class="hidden">
+    <div class="page-head">
+      <div><h2>Decisions</h2><p class="muted">What you decided, as every session sees it. A newer decision on a topic replaces the older one, which stays in its history.</p></div>
+    </div>
+    <div class="side-search dec-search"><input id="decFilter" type="search" placeholder="Search topics and text" autocomplete="off" aria-label="Search decisions"></div>
+    <div id="decList" class="panel"></div>
   </div>
 
   <div id="network" class="hidden">
@@ -539,7 +594,9 @@ const LOG_PAGES = 20;
 const FOLD_STEPS = 3;
 /** Finished subagents older than this move into the session's archive. */
 const ARCHIVE_AFTER_MS = 30 * 60_000;
-const NETWORK_HASH = "#/network";
+const NETWORK_HASH = "#/network", APPROVALS_HASH = "#/approvals", DECISIONS_HASH = "#/decisions";
+/** Open approval requests are re-read this often (they expire into a "deny" after a few minutes). */
+const APPROVALS_POLL_MS = 3000;
 /** Network status refresh while the tab is open, and faster while a pairing code waits for the other PC. */
 const NET_POLL_MS = 3000, NET_PAIR_POLL_MS = 1500;
 const DEFAULT_NETWORK_PORT = ${DEFAULT_NETWORK_PORT};
@@ -604,7 +661,9 @@ const jobDrafts = new Map(), jobResults = new Map(), jobSending = new Set();
 let composerGroup = null;
 
 function parseRoute() {
-  if (location.hash === NETWORK_HASH) return { session: null, group: null, network: true };
+  if (location.hash === NETWORK_HASH) return { session: null, group: null, network: true, page: "network" };
+  if (location.hash === APPROVALS_HASH) return { session: null, group: null, page: "approvals" };
+  if (location.hash === DECISIONS_HASH) return { session: null, group: null, page: "decisions" };
   const m = /^#\\/s\\/([^/]+)(?:\\/(.+))?$/.exec(location.hash);
   return m ? { session: decodeURIComponent(m[1]), group: m[2] ? decodeURIComponent(m[2]) : null } : { session: null, group: null };
 }
@@ -693,11 +752,15 @@ function render() {
   model = buildModel(state);
   for (const x of model.sessions) if (hasNativeChat(x)) void loadNativeList(x);
   renderSide();
-  const inSession = Boolean(route.session), inNetwork = Boolean(route.network);
-  $("overview").classList.toggle("hidden", inSession || inNetwork);
+  const inSession = Boolean(route.session), inNetwork = Boolean(route.network), page = route.page || "";
+  $("overview").classList.toggle("hidden", inSession || Boolean(page));
   $("session").classList.toggle("hidden", !inSession);
   $("network").classList.toggle("hidden", !inNetwork);
+  $("approvals").classList.toggle("hidden", page !== "approvals");
+  $("decisions").classList.toggle("hidden", page !== "decisions");
   if (inNetwork) renderNetwork();
+  else if (page === "approvals") renderApprovals();
+  else if (page === "decisions") renderDecisions();
   else if (inSession) renderSession();
   else renderOverview();
   renderSendForm(inSession);
@@ -882,11 +945,14 @@ function sideSession(x, q) {
 }
 
 function renderSide() {
-  $("tabOverview").className = route.session || route.network ? "" : "on";
+  $("tabOverview").className = route.session || route.page ? "" : "on";
   $("tabNet").className = route.network ? "on" : "";
+  $("tabApprovals").className = (route.page === "approvals" ? "on" : "") + (approvals.length ? " attn" : "");
+  $("tabDecisions").className = route.page === "decisions" ? "on" : "";
   setHtml("tabNet", '<span class="ico" aria-hidden="true">⇄</span>Network' + networkTabDot());
+  setHtml("tabApprovals", '<span class="ico" aria-hidden="true">!</span>Waiting for you' + (approvals.length ? '<span class="count attn">' + approvals.length + "</span>" : ""));
   const cur = route.session && model.byName.get(route.session);
-  $("mTitle").textContent = route.network ? "Network" : route.session ? (cur ? sessionTitle(cur) : route.session) : "Overview";
+  $("mTitle").textContent = route.network ? "Network" : route.page === "approvals" ? "Waiting for you" : route.page === "decisions" ? "Decisions" : route.session ? (cur ? sessionTitle(cur) : route.session) : "Overview";
   const q = $("sessFilter").value.trim().toLowerCase();
   const groups = sideGroups(q);
   const html = groups.length
@@ -941,6 +1007,7 @@ function countsLine(c) {
   return [c.working && '<span class="w">' + c.working + " working</span>", c.done && '<span class="d">' + c.done + " done</span>", c.failed && '<span class="f">' + c.failed + " failed</span>", c.total + " total"].filter(Boolean).join(" · ");
 }
 function renderOverview() {
+  renderApprovalBanner();
   const live = model.sessions.filter((x) => x.live), ended = model.sessions.filter((x) => !x.live && x.groups.length);
   $("ovCount").textContent = live.length || "";
   const c = countGroups(model.sorted);
@@ -1687,6 +1754,171 @@ $("sideHide").addEventListener("click", () => setSidebar(false));
 $("sideShow").addEventListener("click", () => setSidebar(true));
 $("scrim").addEventListener("click", () => setSidebar(false));
 try { if (localStorage.getItem(SIDE_COLLAPSED_KEY) === "1" && !narrow()) $("app").classList.add("collapsed"); } catch {}
+
+/* ---- Waiting for you: subagent approval requests (GET/POST /api/approvals, docs/approval-api.md) ---- */
+let approvals = [], apLoadedAt = 0, apLoading = false, apFirstLoad = true, lastApKey = "";
+/** Typed reasons survive refreshes; answers stay visible for a while after their request is gone. */
+const apDrafts = new Map(), apResults = new Map(), apBusy = new Set(), apSeen = new Set();
+const AP_RESULT_KEEP_MS = 5 * 60_000;
+
+const approvalJob = (a) => { const g = model && [...model.groups.values()].find((x) => x.job === a.job); return (g && g.title) || a.job; };
+
+async function loadApprovals() {
+  if (apLoading) return;
+  apLoading = true;
+  try {
+    const r = await fetch("/api/approvals");
+    if (r.ok) {
+      approvals = (await r.json()).approvals || [];
+      notifyNewApprovals();
+    }
+  } catch {
+    // Kept as it was; the next round tries again.
+  } finally {
+    apLoading = false;
+    apLoadedAt = Date.now();
+  }
+  if (!model) return;
+  renderSide();
+  if (route.page === "approvals") renderApprovals();
+  else if (!route.session && !route.page) renderApprovalBanner();
+}
+
+/** A browser notification for requests that arrive while this tab is in the background (once allowed). */
+function notifyNewApprovals() {
+  const fresh = approvals.filter((a) => !apSeen.has(a.id));
+  for (const a of approvals) apSeen.add(a.id);
+  if (apFirstLoad) { apFirstLoad = false; return; }
+  if (!fresh.length || typeof Notification === "undefined" || Notification.permission !== "granted" || !document.hidden) return;
+  for (const a of fresh.slice(0, 3)) {
+    const n = new Notification("A subagent is waiting for you", { body: (approvalJob(a) + ": " + (a.command || a.tool || "")).slice(0, 180), tag: "ab-approval-" + a.id });
+    n.onclick = () => { window.focus(); location.hash = APPROVALS_HASH; };
+  }
+}
+
+function approvalCard(a) {
+  const left = a.deadline - Date.now(), busy = apBusy.has(a.id);
+  return '<div class="ap-card">' +
+    '<div class="ap-head">' + av(a.agent) + '<div class="grow"><b class="ell">' + esc(approvalJob(a)) + '</b><div class="small muted ell">' + esc(a.agent + " subagent of " + a.owner) + "</div></div>" +
+    '<span class="ap-time" data-deadline="' + Number(a.deadline) + '">' + (left > 0 ? "auto-deny in " + mmss(left) : "expiring") + "</span></div>" +
+    (a.tool ? '<div class="ap-tool">' + esc(a.tool) + "</div>" : "") +
+    (a.command ? '<pre class="cmds">' + esc(a.command) + "</pre>" : "") +
+    (a.reason ? '<p class="ap-reason">' + esc(a.reason) + "</p>" : "") +
+    '<div class="ap-actions"><input class="ap-why" data-ap-why="' + esc(a.id) + '" placeholder="Reason for the subagent (optional)" maxlength="4000" aria-label="Reason for the subagent">' +
+    '<button type="button" data-ap-act="allow" data-id="' + esc(a.id) + '"' + (busy ? " disabled" : "") + ">Allow</button>" +
+    '<button type="button" class="ghost danger" data-ap-act="deny" data-id="' + esc(a.id) + '"' + (busy ? " disabled" : "") + ">Deny</button></div></div>";
+}
+
+function renderApprovals() {
+  for (const [id, r] of apResults) if (Date.now() - r.at > AP_RESULT_KEEP_MS) apResults.delete(id);
+  const open = new Set(approvals.map((a) => a.id));
+  const done = [...apResults].filter(([id]) => !open.has(id));
+  const key = JSON.stringify([approvals.map((a) => a.id + ":" + approvalJob(a)), [...apResults].map(([id, r]) => id + r.text), [...apBusy]]);
+  updateNotifyButton();
+  if (key === lastApKey) return;
+  lastApKey = key;
+  $("apList").innerHTML = (approvals.length
+    ? approvals.map((a) => approvalCard(a) + (apResults.has(a.id) ? '<div class="note err ap-note">' + esc(apResults.get(a.id).text) + "</div>" : "")).join("")
+    : '<div class="panel empty">Nothing is waiting for you. Requests appear here the moment a subagent asks.</div>') +
+    (done.length ? '<div class="ap-done">' + done.map(([, r]) => '<div class="note ' + r.kind + '">' + esc(r.text) + "</div>").join("") + "</div>" : "");
+  // Re-rendering replaced the inputs: put back what was typed.
+  for (const input of $("apList").querySelectorAll("[data-ap-why]")) input.value = apDrafts.get(input.dataset.apWhy) || "";
+}
+
+function renderApprovalBanner() {
+  const n = approvals.length;
+  setHtml("ovAttn", n ? '<a class="attn-banner" href="' + APPROVALS_HASH + '"><span class="attn-mark" aria-hidden="true">!</span><span><b>' + n + " subagent" + (n === 1 ? " is" : "s are") + " waiting for your approval.</b> Unanswered requests count as deny when their time runs out.</span><span class=\\"attn-go\\">Review</span></a>" : "");
+}
+
+function updateNotifyButton() {
+  const b = $("notifyBtn");
+  if (typeof Notification === "undefined") { b.disabled = true; b.textContent = "Browser notifications unavailable"; return; }
+  b.disabled = Notification.permission !== "default";
+  b.textContent = Notification.permission === "granted" ? "Browser notifications on" : Notification.permission === "denied" ? "Notifications blocked in this browser" : "Notify me in this browser";
+}
+
+async function answerApproval(id, decision) {
+  const reason = (apDrafts.get(id) || "").trim();
+  apBusy.add(id);
+  renderApprovals();
+  let result;
+  try {
+    const r = await fetch("/api/approvals/" + encodeURIComponent(id), { method: "POST", headers: { "content-type": "application/json", "x-agent-bridge": "1" }, body: JSON.stringify(reason ? { decision, reason } : { decision }) });
+    const d = await r.json().catch(() => ({}));
+    const a = approvals.find((x) => x.id === id), name = a ? approvalJob(a) : "the subagent";
+    result = r.ok
+      ? { kind: "ok", text: (decision === "allow" ? "Allowed: " : "Denied: ") + name + (a && a.command ? " · " + a.command.slice(0, 80) : "") }
+      : { kind: "err", text: d.error || "Not answered (HTTP " + r.status + ")." };
+    if (r.ok) apDrafts.delete(id);
+  } catch (err) {
+    result = { kind: "err", text: "Not answered: " + err.message };
+  } finally {
+    apBusy.delete(id);
+  }
+  apResults.set(id, { ...result, at: Date.now() });
+  await loadApprovals();
+  renderApprovals();
+}
+
+/* ---- Decisions (GET /api/decisions, docs/decisions.md) ---- */
+let decisions = null, decLoading = false, decLoadedAt = 0, decTimer = 0;
+const decHistory = new Map();
+const DECISIONS_REFRESH_MS = 15_000, DECISION_SEARCH_DELAY_MS = 250;
+
+const scopeLabel = (s) => !s || s === "all" ? "all sessions" : s.project ? folder(s.project) : s.sessions ? s.sessions.length + " session" + (s.sessions.length === 1 ? "" : "s") : "scoped";
+
+async function loadDecisions() {
+  if (decLoading) return;
+  decLoading = true;
+  const q = $("decFilter").value.trim();
+  try {
+    const r = await fetch("/api/decisions" + (q ? "?q=" + encodeURIComponent(q) : ""));
+    const d = await r.json().catch(() => ({}));
+    decisions = r.ok ? d.decisions || [] : [];
+  } catch {
+    decisions = decisions || [];
+  } finally {
+    decLoading = false;
+    decLoadedAt = Date.now();
+  }
+  if (route.page === "decisions") renderDecisions();
+}
+
+function renderDecisions() {
+  if (decisions === null || Date.now() - decLoadedAt > DECISIONS_REFRESH_MS) void loadDecisions();
+  if (decisions === null) return setHtml("decList", '<div class="empty">Reading decisions…</div>');
+  const q = $("decFilter").value.trim();
+  setHtml("decList", decisions.length
+    ? decisions.map((d) => {
+        const hist = decHistory.get(d.topic);
+        return '<article class="dec"><div class="dec-head"><h4>' + esc(d.topic) + '</h4><span class="chip">' + esc(scopeLabel(d.scope)) + '</span><span class="small faint">' + esc(((d.author && d.author.name) || "") + " · " + ago(d.createdAt)) + "</span></div>" +
+          '<div class="dec-text">' + md(d.text) + "</div>" +
+          (d.supersedes ? '<button type="button" class="linkbtn" data-dec-hist="' + esc(d.topic) + '">' + (hist ? "Hide earlier versions" : "Show earlier versions") + "</button>" : "") +
+          (hist ? '<div class="dec-hist">' + hist.filter((x) => !x.current).map((x) => '<div><span class="small faint">' + esc(new Date(x.createdAt).toLocaleString() + " · " + ((x.author && x.author.name) || "")) + "</span>" + md(x.text) + "</div>").join("") + "</div>" : "") +
+          "</article>";
+      }).join("")
+    : '<div class="empty">' + (q ? "No decision matches." : "No decisions yet. When you settle something, ask a session to record it with the decide tool, and every session will see it.") + "</div>");
+}
+
+$("apList").addEventListener("input", (e) => { const id = e.target.dataset && e.target.dataset.apWhy; if (id) apDrafts.set(id, e.target.value); });
+$("apList").addEventListener("click", (e) => { const b = e.target.closest("[data-ap-act]"); if (b) void answerApproval(b.dataset.id, b.dataset.apAct); });
+$("notifyBtn").addEventListener("click", async () => { try { await Notification.requestPermission(); } catch {} updateNotifyButton(); });
+$("decFilter").addEventListener("input", () => { clearTimeout(decTimer); decTimer = setTimeout(() => { decHistory.clear(); void loadDecisions(); }, DECISION_SEARCH_DELAY_MS); });
+$("decList").addEventListener("click", async (e) => {
+  const b = e.target.closest("[data-dec-hist]");
+  if (!b) return;
+  const topic = b.dataset.decHist;
+  if (decHistory.has(topic)) { decHistory.delete(topic); return renderDecisions(); }
+  try {
+    const r = await fetch("/api/decisions/" + encodeURIComponent(topic) + "/history");
+    if (r.ok) decHistory.set(topic, (await r.json()).decisions || []);
+  } catch {}
+  renderDecisions();
+});
+setInterval(() => {
+  for (const el of $("apList").querySelectorAll("[data-deadline]")) { const left = Number(el.dataset.deadline) - Date.now(); el.textContent = left > 0 ? "auto-deny in " + mmss(left) : "expiring"; }
+  if (Date.now() - apLoadedAt >= APPROVALS_POLL_MS) void loadApprovals();
+}, 1000);
 
 /** Auto follows the system; Light and Dark override it. Remembered in this browser. */
 function applyTheme(theme) {
