@@ -33,9 +33,9 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
   mod
 ));
 
-// node_modules/ajv/dist/compile/codegen/code.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/compile/codegen/code.js
 var require_code = __commonJS({
-  "node_modules/ajv/dist/compile/codegen/code.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/compile/codegen/code.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.regexpCode = exports.getEsmExportName = exports.getProperty = exports.safeStringify = exports.stringify = exports.strConcat = exports.addCodeArg = exports.str = exports._ = exports.nil = exports._Code = exports.Name = exports.IDENTIFIER = exports._CodeOrName = void 0;
@@ -187,9 +187,9 @@ var require_code = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/compile/codegen/scope.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/compile/codegen/scope.js
 var require_scope = __commonJS({
-  "node_modules/ajv/dist/compile/codegen/scope.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/compile/codegen/scope.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.ValueScope = exports.ValueScopeName = exports.Scope = exports.varKinds = exports.UsedValueState = void 0;
@@ -332,9 +332,9 @@ var require_scope = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/compile/codegen/index.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/compile/codegen/index.js
 var require_codegen = __commonJS({
-  "node_modules/ajv/dist/compile/codegen/index.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/compile/codegen/index.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.or = exports.and = exports.not = exports.CodeGen = exports.operators = exports.varKinds = exports.ValueScopeName = exports.ValueScope = exports.Scope = exports.Name = exports.regexpCode = exports.stringify = exports.getProperty = exports.nil = exports.strConcat = exports.str = exports._ = void 0;
@@ -1052,9 +1052,9 @@ var require_codegen = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/compile/util.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/compile/util.js
 var require_util = __commonJS({
-  "node_modules/ajv/dist/compile/util.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/compile/util.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.checkStrictMode = exports.getErrorPath = exports.Type = exports.useFunc = exports.setEvaluated = exports.evaluatedPropsToName = exports.mergeEvaluated = exports.eachItem = exports.unescapeJsonPointer = exports.escapeJsonPointer = exports.escapeFragment = exports.unescapeFragment = exports.schemaRefOrVal = exports.schemaHasRulesButRef = exports.schemaHasRules = exports.checkUnknownRules = exports.alwaysValidSchema = exports.toHash = void 0;
@@ -1219,9 +1219,9 @@ var require_util = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/compile/names.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/compile/names.js
 var require_names = __commonJS({
-  "node_modules/ajv/dist/compile/names.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/compile/names.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var codegen_1 = require_codegen();
@@ -1258,9 +1258,9 @@ var require_names = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/compile/errors.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/compile/errors.js
 var require_errors = __commonJS({
-  "node_modules/ajv/dist/compile/errors.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/compile/errors.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.extendErrors = exports.resetErrorsCount = exports.reportExtraError = exports.reportError = exports.keyword$DataError = exports.keywordError = void 0;
@@ -1380,9 +1380,9 @@ var require_errors = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/compile/validate/boolSchema.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/compile/validate/boolSchema.js
 var require_boolSchema = __commonJS({
-  "node_modules/ajv/dist/compile/validate/boolSchema.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/compile/validate/boolSchema.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.boolOrEmptySchema = exports.topBoolOrEmptySchema = void 0;
@@ -1431,9 +1431,9 @@ var require_boolSchema = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/compile/rules.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/compile/rules.js
 var require_rules = __commonJS({
-  "node_modules/ajv/dist/compile/rules.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/compile/rules.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.getRules = exports.isJSONType = void 0;
@@ -1462,9 +1462,9 @@ var require_rules = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/compile/validate/applicability.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/compile/validate/applicability.js
 var require_applicability = __commonJS({
-  "node_modules/ajv/dist/compile/validate/applicability.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/compile/validate/applicability.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.shouldUseRule = exports.shouldUseGroup = exports.schemaHasRulesForType = void 0;
@@ -1485,9 +1485,9 @@ var require_applicability = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/compile/validate/dataType.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/compile/validate/dataType.js
 var require_dataType = __commonJS({
-  "node_modules/ajv/dist/compile/validate/dataType.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/compile/validate/dataType.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.reportTypeError = exports.checkDataTypes = exports.checkDataType = exports.coerceAndCheckDataType = exports.getJSONTypes = exports.getSchemaTypes = exports.DataType = void 0;
@@ -1669,9 +1669,9 @@ var require_dataType = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/compile/validate/defaults.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/compile/validate/defaults.js
 var require_defaults = __commonJS({
-  "node_modules/ajv/dist/compile/validate/defaults.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/compile/validate/defaults.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.assignDefaults = void 0;
@@ -1706,9 +1706,9 @@ var require_defaults = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/code.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/code.js
 var require_code2 = __commonJS({
-  "node_modules/ajv/dist/vocabularies/code.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/code.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.validateUnion = exports.validateArray = exports.usePattern = exports.callValidateCode = exports.schemaProperties = exports.allSchemaProperties = exports.noPropertyInData = exports.propertyInData = exports.isOwnProperty = exports.hasPropFunc = exports.reportMissingProp = exports.checkMissingProp = exports.checkReportMissingProp = void 0;
@@ -1839,9 +1839,9 @@ var require_code2 = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/compile/validate/keyword.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/compile/validate/keyword.js
 var require_keyword = __commonJS({
-  "node_modules/ajv/dist/compile/validate/keyword.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/compile/validate/keyword.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.validateKeywordUsage = exports.validSchemaType = exports.funcKeywordCode = exports.macroKeywordCode = void 0;
@@ -1957,9 +1957,9 @@ var require_keyword = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/compile/validate/subschema.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/compile/validate/subschema.js
 var require_subschema = __commonJS({
-  "node_modules/ajv/dist/compile/validate/subschema.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/compile/validate/subschema.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.extendSubschemaMode = exports.extendSubschemaData = exports.getSubschema = void 0;
@@ -2040,9 +2040,9 @@ var require_subschema = __commonJS({
   }
 });
 
-// node_modules/fast-deep-equal/index.js
+// D:/Development/claude-codex-comm/node_modules/fast-deep-equal/index.js
 var require_fast_deep_equal = __commonJS({
-  "node_modules/fast-deep-equal/index.js"(exports, module) {
+  "D:/Development/claude-codex-comm/node_modules/fast-deep-equal/index.js"(exports, module) {
     "use strict";
     module.exports = function equal(a, b) {
       if (a === b) return true;
@@ -2075,9 +2075,9 @@ var require_fast_deep_equal = __commonJS({
   }
 });
 
-// node_modules/json-schema-traverse/index.js
+// D:/Development/claude-codex-comm/node_modules/json-schema-traverse/index.js
 var require_json_schema_traverse = __commonJS({
-  "node_modules/json-schema-traverse/index.js"(exports, module) {
+  "D:/Development/claude-codex-comm/node_modules/json-schema-traverse/index.js"(exports, module) {
     "use strict";
     var traverse = module.exports = function(schema, opts, cb) {
       if (typeof opts == "function") {
@@ -2163,9 +2163,9 @@ var require_json_schema_traverse = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/compile/resolve.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/compile/resolve.js
 var require_resolve = __commonJS({
-  "node_modules/ajv/dist/compile/resolve.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/compile/resolve.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.getSchemaRefs = exports.resolveUrl = exports.normalizeId = exports._getFullPath = exports.getFullPath = exports.inlineRef = void 0;
@@ -2319,9 +2319,9 @@ var require_resolve = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/compile/validate/index.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/compile/validate/index.js
 var require_validate = __commonJS({
-  "node_modules/ajv/dist/compile/validate/index.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/compile/validate/index.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.getData = exports.KeywordCxt = exports.validateFunctionCode = void 0;
@@ -2827,9 +2827,9 @@ var require_validate = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/runtime/validation_error.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/runtime/validation_error.js
 var require_validation_error = __commonJS({
-  "node_modules/ajv/dist/runtime/validation_error.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/runtime/validation_error.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var ValidationError = class extends Error {
@@ -2843,9 +2843,9 @@ var require_validation_error = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/compile/ref_error.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/compile/ref_error.js
 var require_ref_error = __commonJS({
-  "node_modules/ajv/dist/compile/ref_error.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/compile/ref_error.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var resolve_1 = require_resolve();
@@ -2860,9 +2860,9 @@ var require_ref_error = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/compile/index.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/compile/index.js
 var require_compile = __commonJS({
-  "node_modules/ajv/dist/compile/index.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/compile/index.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.resolveSchema = exports.getCompilingSchema = exports.resolveRef = exports.compileSchema = exports.SchemaEnv = void 0;
@@ -3084,9 +3084,9 @@ var require_compile = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/refs/data.json
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/refs/data.json
 var require_data = __commonJS({
-  "node_modules/ajv/dist/refs/data.json"(exports, module) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/refs/data.json"(exports, module) {
     module.exports = {
       $id: "https://raw.githubusercontent.com/ajv-validator/ajv/master/lib/refs/data.json#",
       description: "Meta-schema for $data reference (JSON AnySchema extension proposal)",
@@ -3103,9 +3103,9 @@ var require_data = __commonJS({
   }
 });
 
-// node_modules/fast-uri/lib/utils.js
+// D:/Development/claude-codex-comm/node_modules/fast-uri/lib/utils.js
 var require_utils = __commonJS({
-  "node_modules/fast-uri/lib/utils.js"(exports, module) {
+  "D:/Development/claude-codex-comm/node_modules/fast-uri/lib/utils.js"(exports, module) {
     "use strict";
     var isUUID = RegExp.prototype.test.bind(/^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/iu);
     var isIPv42 = RegExp.prototype.test.bind(/^(?:(?:25[0-5]|2[0-4]\d|1\d{2}|[1-9]\d|\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d{2}|[1-9]\d|\d)$/u);
@@ -3605,9 +3605,9 @@ var require_utils = __commonJS({
   }
 });
 
-// node_modules/fast-uri/lib/schemes.js
+// D:/Development/claude-codex-comm/node_modules/fast-uri/lib/schemes.js
 var require_schemes = __commonJS({
-  "node_modules/fast-uri/lib/schemes.js"(exports, module) {
+  "D:/Development/claude-codex-comm/node_modules/fast-uri/lib/schemes.js"(exports, module) {
     "use strict";
     var { isUUID } = require_utils();
     var URN_REG = /^([\da-z][\d\-a-z]{0,31}):((?:[\w!$'()*+,\-./:;=@]|%[\da-f]{2})+)$/iu;
@@ -3816,9 +3816,9 @@ var require_schemes = __commonJS({
   }
 });
 
-// node_modules/fast-uri/index.js
+// D:/Development/claude-codex-comm/node_modules/fast-uri/index.js
 var require_fast_uri = __commonJS({
-  "node_modules/fast-uri/index.js"(exports, module) {
+  "D:/Development/claude-codex-comm/node_modules/fast-uri/index.js"(exports, module) {
     "use strict";
     var { normalizeIPv6, removeDotSegments, recomposeAuthority, normalizePercentEncoding, normalizePathEncoding, serializePathEncoding, normalizeQueryFragmentEncoding, encodeQuery, encodeFragment, reescapeHostDelimiters, isIPv4: isIPv42, nonSimpleDomain } = require_utils();
     var { SCHEMES, getSchemeHandler } = require_schemes();
@@ -4222,9 +4222,9 @@ var require_fast_uri = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/runtime/uri.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/runtime/uri.js
 var require_uri = __commonJS({
-  "node_modules/ajv/dist/runtime/uri.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/runtime/uri.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var uri = require_fast_uri();
@@ -4233,9 +4233,9 @@ var require_uri = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/core.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/core.js
 var require_core = __commonJS({
-  "node_modules/ajv/dist/core.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/core.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.CodeGen = exports.Name = exports.nil = exports.stringify = exports.str = exports._ = exports.KeywordCxt = void 0;
@@ -4844,9 +4844,9 @@ var require_core = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/core/id.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/core/id.js
 var require_id = __commonJS({
-  "node_modules/ajv/dist/vocabularies/core/id.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/core/id.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var def = {
@@ -4859,9 +4859,9 @@ var require_id = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/core/ref.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/core/ref.js
 var require_ref = __commonJS({
-  "node_modules/ajv/dist/vocabularies/core/ref.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/core/ref.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.callRef = exports.getValidate = void 0;
@@ -4981,9 +4981,9 @@ var require_ref = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/core/index.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/core/index.js
 var require_core2 = __commonJS({
-  "node_modules/ajv/dist/vocabularies/core/index.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/core/index.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var id_1 = require_id();
@@ -5002,9 +5002,9 @@ var require_core2 = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/validation/limitNumber.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/validation/limitNumber.js
 var require_limitNumber = __commonJS({
-  "node_modules/ajv/dist/vocabularies/validation/limitNumber.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/validation/limitNumber.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var codegen_1 = require_codegen();
@@ -5034,9 +5034,9 @@ var require_limitNumber = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/validation/multipleOf.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/validation/multipleOf.js
 var require_multipleOf = __commonJS({
-  "node_modules/ajv/dist/vocabularies/validation/multipleOf.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/validation/multipleOf.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var codegen_1 = require_codegen();
@@ -5062,9 +5062,9 @@ var require_multipleOf = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/runtime/ucs2length.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/runtime/ucs2length.js
 var require_ucs2length = __commonJS({
-  "node_modules/ajv/dist/runtime/ucs2length.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/runtime/ucs2length.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     function ucs2length(str) {
@@ -5088,9 +5088,9 @@ var require_ucs2length = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/validation/limitLength.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/validation/limitLength.js
 var require_limitLength = __commonJS({
-  "node_modules/ajv/dist/vocabularies/validation/limitLength.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/validation/limitLength.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var codegen_1 = require_codegen();
@@ -5120,9 +5120,9 @@ var require_limitLength = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/validation/pattern.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/validation/pattern.js
 var require_pattern = __commonJS({
-  "node_modules/ajv/dist/vocabularies/validation/pattern.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/validation/pattern.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var code_1 = require_code2();
@@ -5157,9 +5157,9 @@ var require_pattern = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/validation/limitProperties.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/validation/limitProperties.js
 var require_limitProperties = __commonJS({
-  "node_modules/ajv/dist/vocabularies/validation/limitProperties.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/validation/limitProperties.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var codegen_1 = require_codegen();
@@ -5186,9 +5186,9 @@ var require_limitProperties = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/validation/required.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/validation/required.js
 var require_required = __commonJS({
-  "node_modules/ajv/dist/vocabularies/validation/required.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/validation/required.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var code_1 = require_code2();
@@ -5268,9 +5268,9 @@ var require_required = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/validation/limitItems.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/validation/limitItems.js
 var require_limitItems = __commonJS({
-  "node_modules/ajv/dist/vocabularies/validation/limitItems.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/validation/limitItems.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var codegen_1 = require_codegen();
@@ -5297,9 +5297,9 @@ var require_limitItems = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/runtime/equal.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/runtime/equal.js
 var require_equal = __commonJS({
-  "node_modules/ajv/dist/runtime/equal.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/runtime/equal.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var equal = require_fast_deep_equal();
@@ -5308,9 +5308,9 @@ var require_equal = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/validation/uniqueItems.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/validation/uniqueItems.js
 var require_uniqueItems = __commonJS({
-  "node_modules/ajv/dist/vocabularies/validation/uniqueItems.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/validation/uniqueItems.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var dataType_1 = require_dataType();
@@ -5375,9 +5375,9 @@ var require_uniqueItems = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/validation/const.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/validation/const.js
 var require_const = __commonJS({
-  "node_modules/ajv/dist/vocabularies/validation/const.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/validation/const.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var codegen_1 = require_codegen();
@@ -5404,9 +5404,9 @@ var require_const = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/validation/enum.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/validation/enum.js
 var require_enum = __commonJS({
-  "node_modules/ajv/dist/vocabularies/validation/enum.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/validation/enum.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var codegen_1 = require_codegen();
@@ -5453,9 +5453,9 @@ var require_enum = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/validation/index.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/validation/index.js
 var require_validation = __commonJS({
-  "node_modules/ajv/dist/vocabularies/validation/index.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/validation/index.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var limitNumber_1 = require_limitNumber();
@@ -5491,9 +5491,9 @@ var require_validation = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/applicator/additionalItems.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/applicator/additionalItems.js
 var require_additionalItems = __commonJS({
-  "node_modules/ajv/dist/vocabularies/applicator/additionalItems.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/applicator/additionalItems.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.validateAdditionalItems = void 0;
@@ -5544,9 +5544,9 @@ var require_additionalItems = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/applicator/items.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/applicator/items.js
 var require_items = __commonJS({
-  "node_modules/ajv/dist/vocabularies/applicator/items.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/applicator/items.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.validateTuple = void 0;
@@ -5601,9 +5601,9 @@ var require_items = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/applicator/prefixItems.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/applicator/prefixItems.js
 var require_prefixItems = __commonJS({
-  "node_modules/ajv/dist/vocabularies/applicator/prefixItems.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/applicator/prefixItems.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var items_1 = require_items();
@@ -5618,9 +5618,9 @@ var require_prefixItems = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/applicator/items2020.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/applicator/items2020.js
 var require_items2020 = __commonJS({
-  "node_modules/ajv/dist/vocabularies/applicator/items2020.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/applicator/items2020.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var codegen_1 = require_codegen();
@@ -5653,9 +5653,9 @@ var require_items2020 = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/applicator/contains.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/applicator/contains.js
 var require_contains = __commonJS({
-  "node_modules/ajv/dist/vocabularies/applicator/contains.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/applicator/contains.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var codegen_1 = require_codegen();
@@ -5747,9 +5747,9 @@ var require_contains = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/applicator/dependencies.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/applicator/dependencies.js
 var require_dependencies = __commonJS({
-  "node_modules/ajv/dist/vocabularies/applicator/dependencies.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/applicator/dependencies.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.validateSchemaDeps = exports.validatePropertyDeps = exports.error = void 0;
@@ -5841,9 +5841,9 @@ var require_dependencies = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/applicator/propertyNames.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/applicator/propertyNames.js
 var require_propertyNames = __commonJS({
-  "node_modules/ajv/dist/vocabularies/applicator/propertyNames.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/applicator/propertyNames.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var codegen_1 = require_codegen();
@@ -5884,9 +5884,9 @@ var require_propertyNames = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/applicator/additionalProperties.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/applicator/additionalProperties.js
 var require_additionalProperties = __commonJS({
-  "node_modules/ajv/dist/vocabularies/applicator/additionalProperties.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/applicator/additionalProperties.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var code_1 = require_code2();
@@ -5990,9 +5990,9 @@ var require_additionalProperties = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/applicator/properties.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/applicator/properties.js
 var require_properties = __commonJS({
-  "node_modules/ajv/dist/vocabularies/applicator/properties.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/applicator/properties.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var validate_1 = require_validate();
@@ -6048,9 +6048,9 @@ var require_properties = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/applicator/patternProperties.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/applicator/patternProperties.js
 var require_patternProperties = __commonJS({
-  "node_modules/ajv/dist/vocabularies/applicator/patternProperties.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/applicator/patternProperties.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var code_1 = require_code2();
@@ -6122,9 +6122,9 @@ var require_patternProperties = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/applicator/not.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/applicator/not.js
 var require_not = __commonJS({
-  "node_modules/ajv/dist/vocabularies/applicator/not.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/applicator/not.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var util_1 = require_util();
@@ -6153,9 +6153,9 @@ var require_not = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/applicator/anyOf.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/applicator/anyOf.js
 var require_anyOf = __commonJS({
-  "node_modules/ajv/dist/vocabularies/applicator/anyOf.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/applicator/anyOf.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var code_1 = require_code2();
@@ -6170,9 +6170,9 @@ var require_anyOf = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/applicator/oneOf.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/applicator/oneOf.js
 var require_oneOf = __commonJS({
-  "node_modules/ajv/dist/vocabularies/applicator/oneOf.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/applicator/oneOf.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var codegen_1 = require_codegen();
@@ -6228,9 +6228,9 @@ var require_oneOf = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/applicator/allOf.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/applicator/allOf.js
 var require_allOf = __commonJS({
-  "node_modules/ajv/dist/vocabularies/applicator/allOf.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/applicator/allOf.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var util_1 = require_util();
@@ -6255,9 +6255,9 @@ var require_allOf = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/applicator/if.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/applicator/if.js
 var require_if = __commonJS({
-  "node_modules/ajv/dist/vocabularies/applicator/if.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/applicator/if.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var codegen_1 = require_codegen();
@@ -6324,9 +6324,9 @@ var require_if = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/applicator/thenElse.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/applicator/thenElse.js
 var require_thenElse = __commonJS({
-  "node_modules/ajv/dist/vocabularies/applicator/thenElse.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/applicator/thenElse.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var util_1 = require_util();
@@ -6342,9 +6342,9 @@ var require_thenElse = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/applicator/index.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/applicator/index.js
 var require_applicator = __commonJS({
-  "node_modules/ajv/dist/vocabularies/applicator/index.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/applicator/index.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var additionalItems_1 = require_additionalItems();
@@ -6390,9 +6390,9 @@ var require_applicator = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/format/format.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/format/format.js
 var require_format = __commonJS({
-  "node_modules/ajv/dist/vocabularies/format/format.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/format/format.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var codegen_1 = require_codegen();
@@ -6480,9 +6480,9 @@ var require_format = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/format/index.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/format/index.js
 var require_format2 = __commonJS({
-  "node_modules/ajv/dist/vocabularies/format/index.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/format/index.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var format_1 = require_format();
@@ -6491,9 +6491,9 @@ var require_format2 = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/metadata.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/metadata.js
 var require_metadata = __commonJS({
-  "node_modules/ajv/dist/vocabularies/metadata.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/metadata.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.contentVocabulary = exports.metadataVocabulary = void 0;
@@ -6514,9 +6514,9 @@ var require_metadata = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/draft7.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/draft7.js
 var require_draft7 = __commonJS({
-  "node_modules/ajv/dist/vocabularies/draft7.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/draft7.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var core_1 = require_core2();
@@ -6536,9 +6536,9 @@ var require_draft7 = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/discriminator/types.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/discriminator/types.js
 var require_types = __commonJS({
-  "node_modules/ajv/dist/vocabularies/discriminator/types.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/discriminator/types.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.DiscrError = void 0;
@@ -6550,9 +6550,9 @@ var require_types = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/discriminator/index.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/discriminator/index.js
 var require_discriminator = __commonJS({
-  "node_modules/ajv/dist/vocabularies/discriminator/index.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/discriminator/index.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var codegen_1 = require_codegen();
@@ -6655,9 +6655,9 @@ var require_discriminator = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/refs/json-schema-draft-07.json
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/refs/json-schema-draft-07.json
 var require_json_schema_draft_07 = __commonJS({
-  "node_modules/ajv/dist/refs/json-schema-draft-07.json"(exports, module) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/refs/json-schema-draft-07.json"(exports, module) {
     module.exports = {
       $schema: "http://json-schema.org/draft-07/schema#",
       $id: "http://json-schema.org/draft-07/schema#",
@@ -6812,9 +6812,9 @@ var require_json_schema_draft_07 = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/ajv.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/ajv.js
 var require_ajv = __commonJS({
-  "node_modules/ajv/dist/ajv.js"(exports, module) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/ajv.js"(exports, module) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.MissingRefError = exports.ValidationError = exports.CodeGen = exports.Name = exports.nil = exports.stringify = exports.str = exports._ = exports.KeywordCxt = exports.Ajv = void 0;
@@ -6882,9 +6882,9 @@ var require_ajv = __commonJS({
   }
 });
 
-// node_modules/ajv-formats/dist/formats.js
+// D:/Development/claude-codex-comm/node_modules/ajv-formats/dist/formats.js
 var require_formats = __commonJS({
-  "node_modules/ajv-formats/dist/formats.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv-formats/dist/formats.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.formatNames = exports.fastFormats = exports.fullFormats = void 0;
@@ -7085,9 +7085,9 @@ var require_formats = __commonJS({
   }
 });
 
-// node_modules/ajv-formats/dist/limit.js
+// D:/Development/claude-codex-comm/node_modules/ajv-formats/dist/limit.js
 var require_limit = __commonJS({
-  "node_modules/ajv-formats/dist/limit.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv-formats/dist/limit.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.formatLimitDefinition = void 0;
@@ -7157,9 +7157,9 @@ var require_limit = __commonJS({
   }
 });
 
-// node_modules/ajv-formats/dist/index.js
+// D:/Development/claude-codex-comm/node_modules/ajv-formats/dist/index.js
 var require_dist = __commonJS({
-  "node_modules/ajv-formats/dist/index.js"(exports, module) {
+  "D:/Development/claude-codex-comm/node_modules/ajv-formats/dist/index.js"(exports, module) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var formats_1 = require_formats();
@@ -7200,10 +7200,10 @@ var require_dist = __commonJS({
 });
 
 // src/mcp/server.ts
-import { dirname as dirname9, isAbsolute as isAbsolute6, join as join35, resolve as resolve9 } from "node:path";
+import { dirname as dirname9, isAbsolute as isAbsolute7, join as join37, resolve as resolve9 } from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 
-// node_modules/zod/v3/helpers/util.js
+// D:/Development/claude-codex-comm/node_modules/zod/v3/helpers/util.js
 var util;
 (function(util2) {
   util2.assertEqual = (_) => {
@@ -7337,7 +7337,7 @@ var getParsedType = (data) => {
   }
 };
 
-// node_modules/zod/v3/ZodError.js
+// D:/Development/claude-codex-comm/node_modules/zod/v3/ZodError.js
 var ZodIssueCode = util.arrayToEnum([
   "invalid_type",
   "invalid_literal",
@@ -7466,7 +7466,7 @@ ZodError.create = (issues) => {
   return error62;
 };
 
-// node_modules/zod/v3/locales/en.js
+// D:/Development/claude-codex-comm/node_modules/zod/v3/locales/en.js
 var errorMap = (issue2, _ctx) => {
   let message;
   switch (issue2.code) {
@@ -7569,13 +7569,13 @@ var errorMap = (issue2, _ctx) => {
 };
 var en_default = errorMap;
 
-// node_modules/zod/v3/errors.js
+// D:/Development/claude-codex-comm/node_modules/zod/v3/errors.js
 var overrideErrorMap = en_default;
 function getErrorMap() {
   return overrideErrorMap;
 }
 
-// node_modules/zod/v3/helpers/parseUtil.js
+// D:/Development/claude-codex-comm/node_modules/zod/v3/helpers/parseUtil.js
 var makeIssue = (params) => {
   const { data, path, errorMaps, issueData } = params;
   const fullPath = [...path, ...issueData.path || []];
@@ -7684,14 +7684,14 @@ var isDirty = (x) => x.status === "dirty";
 var isValid = (x) => x.status === "valid";
 var isAsync = (x) => typeof Promise !== "undefined" && x instanceof Promise;
 
-// node_modules/zod/v3/helpers/errorUtil.js
+// D:/Development/claude-codex-comm/node_modules/zod/v3/helpers/errorUtil.js
 var errorUtil;
 (function(errorUtil2) {
   errorUtil2.errToObj = (message) => typeof message === "string" ? { message } : message || {};
   errorUtil2.toString = (message) => typeof message === "string" ? message : message?.message;
 })(errorUtil || (errorUtil = {}));
 
-// node_modules/zod/v3/types.js
+// D:/Development/claude-codex-comm/node_modules/zod/v3/types.js
 var ParseInputLazyPath = class {
   constructor(parent2, value, path, key) {
     this._cachedPath = [];
@@ -11098,7 +11098,7 @@ var nullableType = ZodNullable.create;
 var preprocessType = ZodEffects.createWithPreprocess;
 var pipelineType = ZodPipeline.create;
 
-// node_modules/zod/v4/core/index.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/core/index.js
 var core_exports2 = {};
 __export(core_exports2, {
   $ZodAny: () => $ZodAny,
@@ -11415,7 +11415,7 @@ __export(core_exports2, {
   withParser: () => withParser
 });
 
-// node_modules/zod/v4/core/util.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/core/util.js
 var util_exports = {};
 __export(util_exports, {
   BIGINT_FORMAT_RANGES: () => BIGINT_FORMAT_RANGES,
@@ -12258,7 +12258,7 @@ function constantCatch(value) {
   return fn;
 }
 
-// node_modules/zod/v4/core/core.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/core/core.js
 var _a;
 var NEVER = /* @__PURE__ */ Object.freeze({
   status: "aborted"
@@ -12380,7 +12380,7 @@ function config(newConfig) {
   return globalConfig;
 }
 
-// node_modules/zod/v4/core/errors.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/core/errors.js
 function _getMessage() {
   const internals = this._zod;
   internals.message ?? (internals.message = JSON.stringify(internals.def, jsonStringifyReplacer, 2));
@@ -12572,7 +12572,7 @@ function prettifyError(error62) {
   return lines.join("\n");
 }
 
-// node_modules/zod/v4/core/parse.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/core/parse.js
 function finalizeParams(callee, params) {
   return { callee: params?.callee ?? callee, Err: params?.Err };
 }
@@ -12732,7 +12732,7 @@ var _safeDecodeAsync = (_Err) => async (schema, value, _ctx) => {
 };
 var safeDecodeAsync = /* @__PURE__ */ _safeDecodeAsync($ZodRealError);
 
-// node_modules/zod/v4/core/regexes.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/core/regexes.js
 var regexes_exports = {};
 __export(regexes_exports, {
   anyString: () => anyString,
@@ -12904,7 +12904,7 @@ var sha512_hex = /^[0-9a-fA-F]{128}$/;
 var sha512_base64 = /* @__PURE__ */ fixedBase64(86, "==");
 var sha512_base64url = /* @__PURE__ */ fixedBase64url(86);
 
-// node_modules/zod/v4/core/checks.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/core/checks.js
 var $ZodCheck = /* @__PURE__ */ $constructor("$ZodCheck", (inst, def) => {
   var _a3;
   inst._zod ?? (inst._zod = {});
@@ -13380,7 +13380,7 @@ var $ZodCheckOverwrite = /* @__PURE__ */ $constructor("$ZodCheckOverwrite", (ins
   };
 });
 
-// node_modules/zod/v4/core/doc.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/core/doc.js
 var Doc = class {
   constructor(args = [], closed = {}) {
     this.content = [];
@@ -13421,14 +13421,14 @@ ${content.join("\n")}
   }
 };
 
-// node_modules/zod/v4/core/versions.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/core/versions.js
 var version = {
   major: 4,
   minor: 6,
   patch: 5
 };
 
-// node_modules/zod/v4/core/schemas.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/core/schemas.js
 var $ZodType = /* @__PURE__ */ $constructor("$ZodType", (inst, def) => {
   var _a3;
   inst ?? (inst = {});
@@ -15842,7 +15842,7 @@ function handleRefineResult(result, payload, input2, inst) {
   }
 }
 
-// node_modules/zod/v4/core/memoizer.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/core/memoizer.js
 var $ZodCyclicError = class extends Error {
   constructor() {
     super(`Cannot parse a reference cycle that closes through a transform`);
@@ -16119,7 +16119,7 @@ function isBackEdge(ctx, value) {
   return backEdges !== void 0 && isRef(value) && backEdges.has(value);
 }
 
-// node_modules/zod/v4/locales/index.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/index.js
 var locales_exports = {};
 __export(locales_exports, {
   ar: () => ar_default,
@@ -16187,7 +16187,7 @@ __export(locales_exports, {
   zhTW: () => zh_TW_default
 });
 
-// node_modules/zod/v4/locales/ar.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/ar.js
 var error = () => {
   const Sizable = {
     string: { unit: "\u062D\u0631\u0641", verb: "\u0623\u0646 \u064A\u062D\u0648\u064A" },
@@ -16299,7 +16299,7 @@ function ar_default() {
   };
 }
 
-// node_modules/zod/v4/locales/az.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/az.js
 var error2 = () => {
   const Sizable = {
     string: { unit: "simvol", verb: "olmal\u0131d\u0131r" },
@@ -16410,7 +16410,7 @@ function az_default() {
   };
 }
 
-// node_modules/zod/v4/locales/be.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/be.js
 function getBelarusianPlural(count, one, few, many) {
   const absCount = Math.abs(count);
   const lastDigit = absCount % 10;
@@ -16579,7 +16579,7 @@ function be_default() {
   };
 }
 
-// node_modules/zod/v4/locales/bg.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/bg.js
 var error4 = () => {
   const Sizable = {
     string: { unit: "\u0441\u0438\u043C\u0432\u043E\u043B\u0430", verb: "\u0434\u0430 \u0441\u044A\u0434\u044A\u0440\u0436\u0430" },
@@ -16705,7 +16705,7 @@ function bg_default() {
   };
 }
 
-// node_modules/zod/v4/locales/bn.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/bn.js
 var error5 = () => {
   const Sizable = {
     string: { unit: "\u0985\u0995\u09CD\u09B7\u09B0", verb: "\u09A5\u09BE\u0995\u09A4\u09C7 \u09B9\u09AC\u09C7" },
@@ -16819,7 +16819,7 @@ function bn_default() {
   };
 }
 
-// node_modules/zod/v4/locales/ca.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/ca.js
 var error6 = () => {
   const Sizable = {
     string: { unit: "car\xE0cters", verb: "contenir" },
@@ -16933,7 +16933,7 @@ function ca_default() {
   };
 }
 
-// node_modules/zod/v4/locales/ckb.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/ckb.js
 var error7 = () => {
   const Sizable = {
     string: { unit: "\u067E\u06CC\u062A", verb: "\u0628\u06CE\u062A" },
@@ -17066,7 +17066,7 @@ function ckb_default() {
   };
 }
 
-// node_modules/zod/v4/locales/cs.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/cs.js
 var error8 = () => {
   const Sizable = {
     string: { unit: "znak\u016F", verb: "m\xEDt" },
@@ -17183,7 +17183,7 @@ function cs_default() {
   };
 }
 
-// node_modules/zod/v4/locales/da.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/da.js
 var error9 = () => {
   const Sizable = {
     string: { unit: "tegn", verb: "havde" },
@@ -17304,7 +17304,7 @@ function da_default() {
   };
 }
 
-// node_modules/zod/v4/locales/de.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/de.js
 var error10 = () => {
   const Sizable = {
     string: { unit: "Zeichen", verb: "zu haben" },
@@ -17418,7 +17418,7 @@ function de_default() {
   };
 }
 
-// node_modules/zod/v4/locales/el.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/el.js
 var error11 = () => {
   const Sizable = {
     string: { unit: "\u03C7\u03B1\u03C1\u03B1\u03BA\u03C4\u03AE\u03C1\u03B5\u03C2", verb: "\u03BD\u03B1 \u03AD\u03C7\u03B5\u03B9" },
@@ -17531,7 +17531,7 @@ function el_default() {
   };
 }
 
-// node_modules/zod/v4/locales/en.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/en.js
 var error12 = () => {
   const Sizable = {
     string: { unit: "characters", verb: "to have" },
@@ -17656,7 +17656,7 @@ function en_default2() {
   };
 }
 
-// node_modules/zod/v4/locales/eo.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/eo.js
 var error13 = () => {
   const Sizable = {
     string: { unit: "karaktrojn", verb: "havi" },
@@ -17771,7 +17771,7 @@ function eo_default() {
   };
 }
 
-// node_modules/zod/v4/locales/es.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/es.js
 var error14 = () => {
   const Sizable = {
     string: { unit: "caracteres", verb: "tener" },
@@ -17908,7 +17908,7 @@ function es_default() {
   };
 }
 
-// node_modules/zod/v4/locales/fa.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/fa.js
 var error15 = () => {
   const Sizable = {
     string: { unit: "\u06A9\u0627\u0631\u0627\u06A9\u062A\u0631", verb: "\u062F\u0627\u0634\u062A\u0647 \u0628\u0627\u0634\u062F" },
@@ -18028,7 +18028,7 @@ function fa_default() {
   };
 }
 
-// node_modules/zod/v4/locales/fi.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/fi.js
 var error16 = () => {
   const Sizable = {
     string: { unit: "merkki\xE4", subject: "merkkijonon" },
@@ -18146,7 +18146,7 @@ function fi_default() {
   };
 }
 
-// node_modules/zod/v4/locales/fr.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/fr.js
 var error17 = () => {
   const Sizable = {
     string: { unit: "caract\xE8res", verb: "avoir" },
@@ -18276,7 +18276,7 @@ function fr_default() {
   };
 }
 
-// node_modules/zod/v4/locales/fr-CA.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/fr-CA.js
 var error18 = () => {
   const Sizable = {
     string: { unit: "caract\xE8res", verb: "avoir" },
@@ -18389,7 +18389,7 @@ function fr_CA_default() {
   };
 }
 
-// node_modules/zod/v4/locales/gu.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/gu.js
 var error19 = () => {
   const Sizable = {
     string: { unit: "\u0A85\u0A95\u0ACD\u0AB7\u0AB0", verb: "\u0AB9\u0ACB\u0AB5\u0ABE \u0A9C\u0ACB\u0A88\u0A8F" },
@@ -18503,7 +18503,7 @@ function gu_default() {
   };
 }
 
-// node_modules/zod/v4/locales/he.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/he.js
 var error20 = () => {
   const TypeNames = {
     string: { label: "\u05DE\u05D7\u05E8\u05D5\u05D6\u05EA", gender: "f" },
@@ -18705,7 +18705,7 @@ function he_default() {
   };
 }
 
-// node_modules/zod/v4/locales/hi.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/hi.js
 var error21 = () => {
   const Sizable = {
     string: { unit: "\u0905\u0915\u094D\u0937\u0930", verb: "\u0930\u0916\u0928\u0947 \u0915\u0947 \u0932\u093F\u090F" },
@@ -18817,7 +18817,7 @@ function hi_default() {
   };
 }
 
-// node_modules/zod/v4/locales/hr.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/hr.js
 var error22 = () => {
   const Sizable = {
     string: { unit: "znakova", verb: "imati" },
@@ -18944,7 +18944,7 @@ function hr_default() {
   };
 }
 
-// node_modules/zod/v4/locales/hu.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/hu.js
 var error23 = () => {
   const Sizable = {
     string: { unit: "karakter", verb: "legyen" },
@@ -19058,7 +19058,7 @@ function hu_default() {
   };
 }
 
-// node_modules/zod/v4/locales/hy.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/hy.js
 function getArmenianPlural(count, one, many) {
   return Math.abs(count) === 1 ? one : many;
 }
@@ -19217,7 +19217,7 @@ function hy_default() {
   };
 }
 
-// node_modules/zod/v4/locales/id.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/id.js
 var error25 = () => {
   const Sizable = {
     string: { unit: "karakter", verb: "memiliki" },
@@ -19329,7 +19329,7 @@ function id_default() {
   };
 }
 
-// node_modules/zod/v4/locales/is.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/is.js
 var error26 = () => {
   const Sizable = {
     string: { unit: "stafi", verb: "a\xF0 hafa" },
@@ -19444,7 +19444,7 @@ function is_default() {
   };
 }
 
-// node_modules/zod/v4/locales/it.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/it.js
 var error27 = () => {
   const Sizable = {
     string: { unit: "caratteri", verb: "avere" },
@@ -19558,7 +19558,7 @@ function it_default() {
   };
 }
 
-// node_modules/zod/v4/locales/ja.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/ja.js
 var error28 = () => {
   const Sizable = {
     string: { unit: "\u6587\u5B57", verb: "\u3067\u3042\u308B" },
@@ -19671,7 +19671,7 @@ function ja_default() {
   };
 }
 
-// node_modules/zod/v4/locales/ka.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/ka.js
 var error29 = () => {
   const Sizable = {
     string: { unit: "\u10E1\u10D8\u10DB\u10D1\u10DD\u10DA\u10DD", verb: "\u10E3\u10DC\u10D3\u10D0 \u10E8\u10D4\u10D8\u10EA\u10D0\u10D5\u10D3\u10D4\u10E1" },
@@ -19789,7 +19789,7 @@ function ka_default() {
   };
 }
 
-// node_modules/zod/v4/locales/km.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/km.js
 var error30 = () => {
   const Sizable = {
     string: { unit: "\u178F\u17BD\u17A2\u1780\u17D2\u179F\u179A", verb: "\u1782\u17BD\u179A\u1798\u17B6\u1793" },
@@ -19905,12 +19905,12 @@ function km_default() {
   };
 }
 
-// node_modules/zod/v4/locales/kh.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/kh.js
 function kh_default() {
   return km_default();
 }
 
-// node_modules/zod/v4/locales/kn.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/kn.js
 var error31 = () => {
   const Sizable = {
     string: { unit: "\u0C85\u0C95\u0CCD\u0CB7\u0CB0\u0C97\u0CB3\u0CC1", verb: "\u0CB9\u0CCA\u0C82\u0CA6\u0CB2\u0CC1" },
@@ -20026,7 +20026,7 @@ function kn_default() {
   };
 }
 
-// node_modules/zod/v4/locales/ko.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/ko.js
 var error32 = () => {
   const Sizable = {
     string: { unit: "\uBB38\uC790", verb: "to have" },
@@ -20143,7 +20143,7 @@ function ko_default() {
   };
 }
 
-// node_modules/zod/v4/locales/lt.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/lt.js
 var capitalizeFirstCharacter = (text2) => {
   return text2.charAt(0).toUpperCase() + text2.slice(1);
 };
@@ -20351,7 +20351,7 @@ function lt_default() {
   };
 }
 
-// node_modules/zod/v4/locales/mk.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/mk.js
 var error34 = () => {
   const Sizable = {
     string: { unit: "\u0437\u043D\u0430\u0446\u0438", verb: "\u0434\u0430 \u0438\u043C\u0430\u0430\u0442" },
@@ -20466,7 +20466,7 @@ function mk_default() {
   };
 }
 
-// node_modules/zod/v4/locales/ms.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/ms.js
 var error35 = () => {
   const Sizable = {
     string: { unit: "aksara", verb: "mempunyai" },
@@ -20579,7 +20579,7 @@ function ms_default() {
   };
 }
 
-// node_modules/zod/v4/locales/ne.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/ne.js
 var error36 = () => {
   const Sizable = {
     string: { unit: "\u0905\u0915\u094D\u0937\u0930", verb: "\u0939\u0941\u0928\u0941\u092A\u0930\u094D\u091B" },
@@ -20691,7 +20691,7 @@ function ne_default() {
   };
 }
 
-// node_modules/zod/v4/locales/nl.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/nl.js
 var error37 = () => {
   const Sizable = {
     string: { unit: "tekens", verb: "heeft" },
@@ -20807,7 +20807,7 @@ function nl_default() {
   };
 }
 
-// node_modules/zod/v4/locales/nn.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/nn.js
 var error38 = () => {
   const Sizable = {
     string: { unit: "teikn", verb: "\xE5 ha" },
@@ -20921,7 +20921,7 @@ function nn_default() {
   };
 }
 
-// node_modules/zod/v4/locales/no.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/no.js
 var error39 = () => {
   const Sizable = {
     string: { unit: "tegn", verb: "\xE5 ha" },
@@ -21035,7 +21035,7 @@ function no_default() {
   };
 }
 
-// node_modules/zod/v4/locales/ota.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/ota.js
 var error40 = () => {
   const Sizable = {
     string: { unit: "harf", verb: "olmal\u0131d\u0131r" },
@@ -21150,7 +21150,7 @@ function ota_default() {
   };
 }
 
-// node_modules/zod/v4/locales/ps.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/ps.js
 var error41 = () => {
   const Sizable = {
     string: { unit: "\u062A\u0648\u06A9\u064A", verb: "\u0648\u0644\u0631\u064A" },
@@ -21270,7 +21270,7 @@ function ps_default() {
   };
 }
 
-// node_modules/zod/v4/locales/pl.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/pl.js
 var error42 = () => {
   const Sizable = {
     string: { unit: "znak\xF3w", verb: "mie\u0107" },
@@ -21385,7 +21385,7 @@ function pl_default() {
   };
 }
 
-// node_modules/zod/v4/locales/pt.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/pt.js
 var error43 = () => {
   const Sizable = {
     string: { unit: "caracteres" },
@@ -21529,7 +21529,7 @@ function pt_default() {
   };
 }
 
-// node_modules/zod/v4/locales/pt-BR.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/pt-BR.js
 var error44 = () => {
   const Sizable = {
     string: { unit: "caracteres" },
@@ -21674,7 +21674,7 @@ function pt_BR_default() {
   };
 }
 
-// node_modules/zod/v4/locales/ro.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/ro.js
 var error45 = () => {
   const Sizable = {
     string: { unit: "caractere", verb: "s\u0103 aib\u0103" },
@@ -21797,7 +21797,7 @@ function ro_default() {
   };
 }
 
-// node_modules/zod/v4/locales/ru.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/ru.js
 function getRussianPlural(count, one, few, many) {
   const absCount = Math.abs(count);
   const lastDigit = absCount % 10;
@@ -21966,7 +21966,7 @@ function ru_default() {
   };
 }
 
-// node_modules/zod/v4/locales/sk.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/sk.js
 var error47 = () => {
   const Sizable = {
     string: { unit: "znakov", verb: "ma\u0165" },
@@ -22083,7 +22083,7 @@ function sk_default() {
   };
 }
 
-// node_modules/zod/v4/locales/sl.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/sl.js
 var error48 = () => {
   const Sizable = {
     string: { unit: "znakov", verb: "imeti" },
@@ -22198,7 +22198,7 @@ function sl_default() {
   };
 }
 
-// node_modules/zod/v4/locales/sv.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/sv.js
 var error49 = () => {
   const Sizable = {
     string: { unit: "tecken", verb: "att ha" },
@@ -22314,7 +22314,7 @@ function sv_default() {
   };
 }
 
-// node_modules/zod/v4/locales/ta.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/ta.js
 var error50 = () => {
   const Sizable = {
     string: { unit: "\u0B8E\u0BB4\u0BC1\u0BA4\u0BCD\u0BA4\u0BC1\u0B95\u0BCD\u0B95\u0BB3\u0BCD", verb: "\u0B95\u0BCA\u0BA3\u0BCD\u0B9F\u0BBF\u0BB0\u0BC1\u0B95\u0BCD\u0B95 \u0BB5\u0BC7\u0BA3\u0BCD\u0B9F\u0BC1\u0BAE\u0BCD" },
@@ -22430,7 +22430,7 @@ function ta_default() {
   };
 }
 
-// node_modules/zod/v4/locales/tg.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/tg.js
 var error51 = () => {
   const Sizable = {
     string: { unit: "\u0430\u043B\u043E\u043C\u0430\u0442", verb: "\u0434\u043E\u0448\u0442\u0430 \u0431\u043E\u0448\u0430\u0434" },
@@ -22547,7 +22547,7 @@ function tg_default() {
   };
 }
 
-// node_modules/zod/v4/locales/th.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/th.js
 var error52 = () => {
   const Sizable = {
     string: { unit: "\u0E15\u0E31\u0E27\u0E2D\u0E31\u0E01\u0E29\u0E23", verb: "\u0E04\u0E27\u0E23\u0E21\u0E35" },
@@ -22663,7 +22663,7 @@ function th_default() {
   };
 }
 
-// node_modules/zod/v4/locales/tk.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/tk.js
 var error53 = () => {
   const Sizable = {
     string: { unit: "simwol", verb: "bolmaly" },
@@ -22771,7 +22771,7 @@ function tk_default() {
   };
 }
 
-// node_modules/zod/v4/locales/tr.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/tr.js
 var error54 = () => {
   const Sizable = {
     string: { unit: "karakter", verb: "olmal\u0131" },
@@ -22882,7 +22882,7 @@ function tr_default() {
   };
 }
 
-// node_modules/zod/v4/locales/uk.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/uk.js
 var error55 = () => {
   const Sizable = {
     string: { unit: "\u0441\u0438\u043C\u0432\u043E\u043B\u0456\u0432", verb: "\u043C\u0430\u0442\u0438\u043C\u0435" },
@@ -22996,12 +22996,12 @@ function uk_default() {
   };
 }
 
-// node_modules/zod/v4/locales/ua.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/ua.js
 function ua_default() {
   return uk_default();
 }
 
-// node_modules/zod/v4/locales/ur.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/ur.js
 var error56 = () => {
   const Sizable = {
     string: { unit: "\u062D\u0631\u0648\u0641", verb: "\u06C1\u0648\u0646\u0627" },
@@ -23117,7 +23117,7 @@ function ur_default() {
   };
 }
 
-// node_modules/zod/v4/locales/uz.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/uz.js
 var error57 = () => {
   const Sizable = {
     string: { unit: "belgi", verb: "bo\u2018lishi kerak" },
@@ -23231,7 +23231,7 @@ function uz_default() {
   };
 }
 
-// node_modules/zod/v4/locales/vi.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/vi.js
 var error58 = () => {
   const Sizable = {
     string: { unit: "k\xFD t\u1EF1", verb: "c\xF3" },
@@ -23345,7 +23345,7 @@ function vi_default() {
   };
 }
 
-// node_modules/zod/v4/locales/zh-CN.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/zh-CN.js
 var error59 = () => {
   const Sizable = {
     string: { unit: "\u5B57\u7B26", verb: "\u5305\u542B" },
@@ -23460,7 +23460,7 @@ function zh_CN_default() {
   };
 }
 
-// node_modules/zod/v4/locales/zh-TW.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/zh-TW.js
 var error60 = () => {
   const Sizable = {
     string: { unit: "\u5B57\u5143", verb: "\u64C1\u6709" },
@@ -23573,7 +23573,7 @@ function zh_TW_default() {
   };
 }
 
-// node_modules/zod/v4/locales/yo.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/yo.js
 var error61 = () => {
   const Sizable = {
     string: { unit: "\xE0mi", verb: "n\xED" },
@@ -23686,7 +23686,7 @@ function yo_default() {
   };
 }
 
-// node_modules/zod/v4/core/registries.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/core/registries.js
 var _a2;
 var $output = /* @__PURE__ */ Symbol("ZodOutput");
 var $input = /* @__PURE__ */ Symbol("ZodInput");
@@ -23736,7 +23736,7 @@ function registry() {
 (_a2 = globalThis).__zod_globalRegistry ?? (_a2.__zod_globalRegistry = registry());
 var globalRegistry = globalThis.__zod_globalRegistry;
 
-// node_modules/zod/v4/core/compile.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/core/compile.js
 var INVALID2 = /* @__PURE__ */ Symbol.for("zod.compile.invalid");
 var FALLBACK_FLAG = /* @__PURE__ */ Symbol.for("zod.compile.fallback");
 var ZodCompileAsyncError = class extends Error {
@@ -25338,7 +25338,7 @@ function generateTransformCheck(doc, ctx, schema, accessor) {
   return accessor;
 }
 
-// node_modules/zod/v4/core/api.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/core/api.js
 function snapshotChecks(def) {
   if (def.checks)
     def.checks = [...def.checks];
@@ -26397,7 +26397,7 @@ function _stringFormat(Class2, format, fnOrRegex, _params = {}) {
   return inst;
 }
 
-// node_modules/zod/v4/core/to-json-schema.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/core/to-json-schema.js
 function assignProps(target, ...sources) {
   for (const source of sources) {
     for (const key of Reflect.ownKeys(source)) {
@@ -26927,7 +26927,7 @@ var createStandardJSONSchemaMethod = (schema, io, processors = {}) => (params) =
   return finalize(ctx, schema);
 };
 
-// node_modules/zod/v4/core/json-schema-processors.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/core/json-schema-processors.js
 var narrowMin = (agg, key, value) => {
   if (agg[key] === void 0 || value > agg[key])
     agg[key] = value;
@@ -27675,7 +27675,7 @@ function toJSONSchema(input2, params) {
   return finalize(ctx, input2);
 }
 
-// node_modules/zod/v4/core/json-schema-generator.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/core/json-schema-generator.js
 var JSONSchemaGenerator = class {
   /** @deprecated Access via ctx instead */
   get metadataRegistry() {
@@ -27753,10 +27753,10 @@ var JSONSchemaGenerator = class {
   }
 };
 
-// node_modules/zod/v4/core/json-schema.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/core/json-schema.js
 var json_schema_exports = {};
 
-// node_modules/zod/v4/mini/schemas.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/mini/schemas.js
 var ZodMiniType = /* @__PURE__ */ $constructor("ZodMiniType", (inst, def) => {
   if (!inst._zod)
     throw new Error("Uninitialized schema in ZodMiniType.");
@@ -27822,7 +27822,7 @@ function object(shape, params) {
   return new ZodMiniObject(def);
 }
 
-// node_modules/zod/v4/core/visit.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/core/visit.js
 var RESOLVING = /* @__PURE__ */ Symbol("z.visit/resolving");
 function visit(schema, fnOrHandlers) {
   const fn = typeof fnOrHandlers === "function" ? fnOrHandlers : (node2, rewritten) => {
@@ -27977,7 +27977,7 @@ function visit(schema, fnOrHandlers) {
   return run(schema);
 }
 
-// node_modules/@modelcontextprotocol/sdk/dist/esm/server/zod-compat.js
+// D:/Development/claude-codex-comm/node_modules/@modelcontextprotocol/sdk/dist/esm/server/zod-compat.js
 function isZ4Schema(s) {
   const schema = s;
   return !!schema._zod;
@@ -28137,7 +28137,7 @@ function getLiteralValue(schema) {
   return void 0;
 }
 
-// node_modules/zod/v4/classic/external.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/classic/external.js
 var external_exports = {};
 __export(external_exports, {
   $brand: () => $brand,
@@ -28400,7 +28400,7 @@ __export(external_exports, {
   xor: () => xor
 });
 
-// node_modules/zod/v4/classic/schemas.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/classic/schemas.js
 var schemas_exports2 = {};
 __export(schemas_exports2, {
   ZodAny: () => ZodAny2,
@@ -28581,7 +28581,7 @@ __export(schemas_exports2, {
   xor: () => xor
 });
 
-// node_modules/zod/v4/classic/checks.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/classic/checks.js
 var checks_exports2 = {};
 __export(checks_exports2, {
   endsWith: () => _endsWith,
@@ -28616,7 +28616,7 @@ __export(checks_exports2, {
   uppercase: () => _uppercase
 });
 
-// node_modules/zod/v4/classic/errors.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/classic/errors.js
 var _installedErrorProtos = /* @__PURE__ */ new WeakSet([Object.prototype, Error.prototype]);
 function _lazyMethod(proto, key, make) {
   Object.defineProperty(proto, key, {
@@ -28662,7 +28662,7 @@ var ZodRealError = /* @__PURE__ */ $constructor("ZodError", initializer2, void 0
   Parent: Error
 });
 
-// node_modules/zod/v4/classic/parse.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/classic/parse.js
 var parse2 = /* @__PURE__ */ _parse(ZodRealError);
 var parseAsync2 = /* @__PURE__ */ _parseAsync(ZodRealError);
 var safeParse3 = /* @__PURE__ */ _safeParse(ZodRealError);
@@ -28676,7 +28676,7 @@ var safeDecode2 = /* @__PURE__ */ _safeDecode(ZodRealError);
 var safeEncodeAsync2 = /* @__PURE__ */ _safeEncodeAsync(ZodRealError);
 var safeDecodeAsync2 = /* @__PURE__ */ _safeDecodeAsync(ZodRealError);
 
-// node_modules/zod/v4/classic/schemas.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/classic/schemas.js
 function _ensureDefaultLocale() {
   if (!globalConfig.localeError)
     config(en_default2());
@@ -30141,7 +30141,7 @@ function preprocess(fn, schema) {
   });
 }
 
-// node_modules/zod/v4/classic/compat.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/classic/compat.js
 var ZodIssueCode2 = {
   invalid_type: "invalid_type",
   too_big: "too_big",
@@ -30167,7 +30167,7 @@ var ZodFirstPartyTypeKind2;
 /* @__PURE__ */ (function(ZodFirstPartyTypeKind3) {
 })(ZodFirstPartyTypeKind2 || (ZodFirstPartyTypeKind2 = {}));
 
-// node_modules/zod/v4/classic/iso.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/classic/iso.js
 var iso_exports2 = {};
 __export(iso_exports2, {
   ZodISODate: () => ZodISODate,
@@ -30192,7 +30192,7 @@ function duration2(params) {
   return _isoDuration(ZodISODuration, params);
 }
 
-// node_modules/zod/v4/classic/from-json-schema.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/classic/from-json-schema.js
 var z = {
   ...schemas_exports2,
   ...checks_exports2,
@@ -30925,7 +30925,7 @@ function fromJSONSchema(schema, params) {
   return convertSchema(normalized, ctx);
 }
 
-// node_modules/zod/v4/classic/deep-partial.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/classic/deep-partial.js
 function deepPartial(schema) {
   return visit(schema, {
     object: (s) => s.partial(),
@@ -30937,7 +30937,7 @@ function deepPartial(schema) {
   });
 }
 
-// node_modules/zod/v4/classic/in-out.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/classic/in-out.js
 function withChecks(side, checks) {
   if (!checks?.length)
     return side;
@@ -30967,7 +30967,7 @@ function output(schema) {
   });
 }
 
-// node_modules/zod/v4/classic/coerce.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/classic/coerce.js
 var coerce_exports2 = {};
 __export(coerce_exports2, {
   bigint: () => bigint3,
@@ -30992,7 +30992,7 @@ function date4(params) {
   return _coercedDate(ZodDate2, params);
 }
 
-// node_modules/@modelcontextprotocol/sdk/dist/esm/types.js
+// D:/Development/claude-codex-comm/node_modules/@modelcontextprotocol/sdk/dist/esm/types.js
 var LATEST_PROTOCOL_VERSION = "2025-11-25";
 var SUPPORTED_PROTOCOL_VERSIONS = [LATEST_PROTOCOL_VERSION, "2025-06-18", "2025-03-26", "2024-11-05", "2024-10-07"];
 var RELATED_TASK_META_KEY = "io.modelcontextprotocol/related-task";
@@ -32523,12 +32523,12 @@ var UrlElicitationRequiredError = class extends McpError {
   }
 };
 
-// node_modules/@modelcontextprotocol/sdk/dist/esm/experimental/tasks/interfaces.js
+// D:/Development/claude-codex-comm/node_modules/@modelcontextprotocol/sdk/dist/esm/experimental/tasks/interfaces.js
 function isTerminal(status) {
   return status === "completed" || status === "failed" || status === "cancelled";
 }
 
-// node_modules/zod-to-json-schema/dist/esm/Options.js
+// D:/Development/claude-codex-comm/node_modules/zod-to-json-schema/dist/esm/Options.js
 var ignoreOverride = /* @__PURE__ */ Symbol("Let zodToJsonSchema decide on which parser to use");
 var defaultOptions = {
   name: void 0,
@@ -32562,7 +32562,7 @@ var getDefaultOptions = (options) => typeof options === "string" ? {
   ...options
 };
 
-// node_modules/zod-to-json-schema/dist/esm/Refs.js
+// D:/Development/claude-codex-comm/node_modules/zod-to-json-schema/dist/esm/Refs.js
 var getRefs = (options) => {
   const _options = getDefaultOptions(options);
   const currentPath = _options.name !== void 0 ? [..._options.basePath, _options.definitionPath, _options.name] : _options.basePath;
@@ -32583,7 +32583,7 @@ var getRefs = (options) => {
   };
 };
 
-// node_modules/zod-to-json-schema/dist/esm/errorMessages.js
+// D:/Development/claude-codex-comm/node_modules/zod-to-json-schema/dist/esm/errorMessages.js
 function addErrorMessage(res, key, errorMessage, refs) {
   if (!refs?.errorMessages)
     return;
@@ -32599,7 +32599,7 @@ function setResponseValueAndErrors(res, key, value, errorMessage, refs) {
   addErrorMessage(res, key, errorMessage, refs);
 }
 
-// node_modules/zod-to-json-schema/dist/esm/getRelativePath.js
+// D:/Development/claude-codex-comm/node_modules/zod-to-json-schema/dist/esm/getRelativePath.js
 var getRelativePath = (pathA, pathB) => {
   let i = 0;
   for (; i < pathA.length && i < pathB.length; i++) {
@@ -32609,7 +32609,7 @@ var getRelativePath = (pathA, pathB) => {
   return [(pathA.length - i).toString(), ...pathB.slice(i)].join("/");
 };
 
-// node_modules/zod-to-json-schema/dist/esm/parsers/any.js
+// D:/Development/claude-codex-comm/node_modules/zod-to-json-schema/dist/esm/parsers/any.js
 function parseAnyDef(refs) {
   if (refs.target !== "openAi") {
     return {};
@@ -32625,7 +32625,7 @@ function parseAnyDef(refs) {
   };
 }
 
-// node_modules/zod-to-json-schema/dist/esm/parsers/array.js
+// D:/Development/claude-codex-comm/node_modules/zod-to-json-schema/dist/esm/parsers/array.js
 function parseArrayDef(def, refs) {
   const res = {
     type: "array"
@@ -32649,7 +32649,7 @@ function parseArrayDef(def, refs) {
   return res;
 }
 
-// node_modules/zod-to-json-schema/dist/esm/parsers/bigint.js
+// D:/Development/claude-codex-comm/node_modules/zod-to-json-schema/dist/esm/parsers/bigint.js
 function parseBigintDef(def, refs) {
   const res = {
     type: "integer",
@@ -32695,24 +32695,24 @@ function parseBigintDef(def, refs) {
   return res;
 }
 
-// node_modules/zod-to-json-schema/dist/esm/parsers/boolean.js
+// D:/Development/claude-codex-comm/node_modules/zod-to-json-schema/dist/esm/parsers/boolean.js
 function parseBooleanDef() {
   return {
     type: "boolean"
   };
 }
 
-// node_modules/zod-to-json-schema/dist/esm/parsers/branded.js
+// D:/Development/claude-codex-comm/node_modules/zod-to-json-schema/dist/esm/parsers/branded.js
 function parseBrandedDef(_def, refs) {
   return parseDef(_def.type._def, refs);
 }
 
-// node_modules/zod-to-json-schema/dist/esm/parsers/catch.js
+// D:/Development/claude-codex-comm/node_modules/zod-to-json-schema/dist/esm/parsers/catch.js
 var parseCatchDef = (def, refs) => {
   return parseDef(def.innerType._def, refs);
 };
 
-// node_modules/zod-to-json-schema/dist/esm/parsers/date.js
+// D:/Development/claude-codex-comm/node_modules/zod-to-json-schema/dist/esm/parsers/date.js
 function parseDateDef(def, refs, overrideDateStrategy) {
   const strategy = overrideDateStrategy ?? refs.dateStrategy;
   if (Array.isArray(strategy)) {
@@ -32771,7 +32771,7 @@ var integerDateParser = (def, refs) => {
   return res;
 };
 
-// node_modules/zod-to-json-schema/dist/esm/parsers/default.js
+// D:/Development/claude-codex-comm/node_modules/zod-to-json-schema/dist/esm/parsers/default.js
 function parseDefaultDef(_def, refs) {
   return {
     ...parseDef(_def.innerType._def, refs),
@@ -32779,12 +32779,12 @@ function parseDefaultDef(_def, refs) {
   };
 }
 
-// node_modules/zod-to-json-schema/dist/esm/parsers/effects.js
+// D:/Development/claude-codex-comm/node_modules/zod-to-json-schema/dist/esm/parsers/effects.js
 function parseEffectsDef(_def, refs) {
   return refs.effectStrategy === "input" ? parseDef(_def.schema._def, refs) : parseAnyDef(refs);
 }
 
-// node_modules/zod-to-json-schema/dist/esm/parsers/enum.js
+// D:/Development/claude-codex-comm/node_modules/zod-to-json-schema/dist/esm/parsers/enum.js
 function parseEnumDef(def) {
   return {
     type: "string",
@@ -32792,7 +32792,7 @@ function parseEnumDef(def) {
   };
 }
 
-// node_modules/zod-to-json-schema/dist/esm/parsers/intersection.js
+// D:/Development/claude-codex-comm/node_modules/zod-to-json-schema/dist/esm/parsers/intersection.js
 var isJsonSchema7AllOfType = (type) => {
   if ("type" in type && type.type === "string")
     return false;
@@ -32834,7 +32834,7 @@ function parseIntersectionDef(def, refs) {
   } : void 0;
 }
 
-// node_modules/zod-to-json-schema/dist/esm/parsers/literal.js
+// D:/Development/claude-codex-comm/node_modules/zod-to-json-schema/dist/esm/parsers/literal.js
 function parseLiteralDef(def, refs) {
   const parsedType2 = typeof def.value;
   if (parsedType2 !== "bigint" && parsedType2 !== "number" && parsedType2 !== "boolean" && parsedType2 !== "string") {
@@ -32854,7 +32854,7 @@ function parseLiteralDef(def, refs) {
   };
 }
 
-// node_modules/zod-to-json-schema/dist/esm/parsers/string.js
+// D:/Development/claude-codex-comm/node_modules/zod-to-json-schema/dist/esm/parsers/string.js
 var emojiRegex2 = void 0;
 var zodPatterns = {
   /**
@@ -33179,7 +33179,7 @@ function stringifyRegExpWithFlags(regex, refs) {
   return pattern;
 }
 
-// node_modules/zod-to-json-schema/dist/esm/parsers/record.js
+// D:/Development/claude-codex-comm/node_modules/zod-to-json-schema/dist/esm/parsers/record.js
 function parseRecordDef(def, refs) {
   if (refs.target === "openAi") {
     console.warn("Warning: OpenAI may not support records in schemas! Try an array of key-value pairs instead.");
@@ -33231,7 +33231,7 @@ function parseRecordDef(def, refs) {
   return schema;
 }
 
-// node_modules/zod-to-json-schema/dist/esm/parsers/map.js
+// D:/Development/claude-codex-comm/node_modules/zod-to-json-schema/dist/esm/parsers/map.js
 function parseMapDef(def, refs) {
   if (refs.mapStrategy === "record") {
     return parseRecordDef(def, refs);
@@ -33256,7 +33256,7 @@ function parseMapDef(def, refs) {
   };
 }
 
-// node_modules/zod-to-json-schema/dist/esm/parsers/nativeEnum.js
+// D:/Development/claude-codex-comm/node_modules/zod-to-json-schema/dist/esm/parsers/nativeEnum.js
 function parseNativeEnumDef(def) {
   const object4 = def.values;
   const actualKeys = Object.keys(def.values).filter((key) => {
@@ -33270,7 +33270,7 @@ function parseNativeEnumDef(def) {
   };
 }
 
-// node_modules/zod-to-json-schema/dist/esm/parsers/never.js
+// D:/Development/claude-codex-comm/node_modules/zod-to-json-schema/dist/esm/parsers/never.js
 function parseNeverDef(refs) {
   return refs.target === "openAi" ? void 0 : {
     not: parseAnyDef({
@@ -33280,7 +33280,7 @@ function parseNeverDef(refs) {
   };
 }
 
-// node_modules/zod-to-json-schema/dist/esm/parsers/null.js
+// D:/Development/claude-codex-comm/node_modules/zod-to-json-schema/dist/esm/parsers/null.js
 function parseNullDef(refs) {
   return refs.target === "openApi3" ? {
     enum: ["null"],
@@ -33290,7 +33290,7 @@ function parseNullDef(refs) {
   };
 }
 
-// node_modules/zod-to-json-schema/dist/esm/parsers/union.js
+// D:/Development/claude-codex-comm/node_modules/zod-to-json-schema/dist/esm/parsers/union.js
 var primitiveMappings = {
   ZodString: "string",
   ZodNumber: "number",
@@ -33358,7 +33358,7 @@ var asAnyOf = (def, refs) => {
   return anyOf.length ? { anyOf } : void 0;
 };
 
-// node_modules/zod-to-json-schema/dist/esm/parsers/nullable.js
+// D:/Development/claude-codex-comm/node_modules/zod-to-json-schema/dist/esm/parsers/nullable.js
 function parseNullableDef(def, refs) {
   if (["ZodString", "ZodNumber", "ZodBigInt", "ZodBoolean", "ZodNull"].includes(def.innerType._def.typeName) && (!def.innerType._def.checks || !def.innerType._def.checks.length)) {
     if (refs.target === "openApi3") {
@@ -33390,7 +33390,7 @@ function parseNullableDef(def, refs) {
   return base && { anyOf: [base, { type: "null" }] };
 }
 
-// node_modules/zod-to-json-schema/dist/esm/parsers/number.js
+// D:/Development/claude-codex-comm/node_modules/zod-to-json-schema/dist/esm/parsers/number.js
 function parseNumberDef(def, refs) {
   const res = {
     type: "number"
@@ -33439,7 +33439,7 @@ function parseNumberDef(def, refs) {
   return res;
 }
 
-// node_modules/zod-to-json-schema/dist/esm/parsers/object.js
+// D:/Development/claude-codex-comm/node_modules/zod-to-json-schema/dist/esm/parsers/object.js
 function parseObjectDef(def, refs) {
   const forceOptionalIntoNullable = refs.target === "openAi";
   const result = {
@@ -33509,7 +33509,7 @@ function safeIsOptional(schema) {
   }
 }
 
-// node_modules/zod-to-json-schema/dist/esm/parsers/optional.js
+// D:/Development/claude-codex-comm/node_modules/zod-to-json-schema/dist/esm/parsers/optional.js
 var parseOptionalDef = (def, refs) => {
   if (refs.currentPath.toString() === refs.propertyPath?.toString()) {
     return parseDef(def.innerType._def, refs);
@@ -33528,7 +33528,7 @@ var parseOptionalDef = (def, refs) => {
   } : parseAnyDef(refs);
 };
 
-// node_modules/zod-to-json-schema/dist/esm/parsers/pipeline.js
+// D:/Development/claude-codex-comm/node_modules/zod-to-json-schema/dist/esm/parsers/pipeline.js
 var parsePipelineDef = (def, refs) => {
   if (refs.pipeStrategy === "input") {
     return parseDef(def.in._def, refs);
@@ -33548,12 +33548,12 @@ var parsePipelineDef = (def, refs) => {
   };
 };
 
-// node_modules/zod-to-json-schema/dist/esm/parsers/promise.js
+// D:/Development/claude-codex-comm/node_modules/zod-to-json-schema/dist/esm/parsers/promise.js
 function parsePromiseDef(def, refs) {
   return parseDef(def.type._def, refs);
 }
 
-// node_modules/zod-to-json-schema/dist/esm/parsers/set.js
+// D:/Development/claude-codex-comm/node_modules/zod-to-json-schema/dist/esm/parsers/set.js
 function parseSetDef(def, refs) {
   const items = parseDef(def.valueType._def, {
     ...refs,
@@ -33573,7 +33573,7 @@ function parseSetDef(def, refs) {
   return schema;
 }
 
-// node_modules/zod-to-json-schema/dist/esm/parsers/tuple.js
+// D:/Development/claude-codex-comm/node_modules/zod-to-json-schema/dist/esm/parsers/tuple.js
 function parseTupleDef(def, refs) {
   if (def.rest) {
     return {
@@ -33601,24 +33601,24 @@ function parseTupleDef(def, refs) {
   }
 }
 
-// node_modules/zod-to-json-schema/dist/esm/parsers/undefined.js
+// D:/Development/claude-codex-comm/node_modules/zod-to-json-schema/dist/esm/parsers/undefined.js
 function parseUndefinedDef(refs) {
   return {
     not: parseAnyDef(refs)
   };
 }
 
-// node_modules/zod-to-json-schema/dist/esm/parsers/unknown.js
+// D:/Development/claude-codex-comm/node_modules/zod-to-json-schema/dist/esm/parsers/unknown.js
 function parseUnknownDef(refs) {
   return parseAnyDef(refs);
 }
 
-// node_modules/zod-to-json-schema/dist/esm/parsers/readonly.js
+// D:/Development/claude-codex-comm/node_modules/zod-to-json-schema/dist/esm/parsers/readonly.js
 var parseReadonlyDef = (def, refs) => {
   return parseDef(def.innerType._def, refs);
 };
 
-// node_modules/zod-to-json-schema/dist/esm/selectParser.js
+// D:/Development/claude-codex-comm/node_modules/zod-to-json-schema/dist/esm/selectParser.js
 var selectParser = (def, typeName, refs) => {
   switch (typeName) {
     case ZodFirstPartyTypeKind.ZodString:
@@ -33694,7 +33694,7 @@ var selectParser = (def, typeName, refs) => {
   }
 };
 
-// node_modules/zod-to-json-schema/dist/esm/parseDef.js
+// D:/Development/claude-codex-comm/node_modules/zod-to-json-schema/dist/esm/parseDef.js
 function parseDef(def, refs, forceResolution = false) {
   const seenItem = refs.seen.get(def);
   if (refs.override) {
@@ -33750,7 +33750,7 @@ var addMeta = (def, refs, jsonSchema) => {
   return jsonSchema;
 };
 
-// node_modules/zod-to-json-schema/dist/esm/zodToJsonSchema.js
+// D:/Development/claude-codex-comm/node_modules/zod-to-json-schema/dist/esm/zodToJsonSchema.js
 var zodToJsonSchema = (schema, options) => {
   const refs = getRefs(options);
   let definitions = typeof options === "object" && options.definitions ? Object.entries(options.definitions).reduce((acc, [name2, schema2]) => ({
@@ -33812,7 +33812,7 @@ var zodToJsonSchema = (schema, options) => {
   return combined;
 };
 
-// node_modules/@modelcontextprotocol/sdk/dist/esm/server/zod-json-schema-compat.js
+// D:/Development/claude-codex-comm/node_modules/@modelcontextprotocol/sdk/dist/esm/server/zod-json-schema-compat.js
 function mapMiniTarget(t2) {
   if (!t2)
     return "draft-7";
@@ -33854,7 +33854,7 @@ function parseWithCompat(schema, data) {
   return result.data;
 }
 
-// node_modules/@modelcontextprotocol/sdk/dist/esm/shared/protocol.js
+// D:/Development/claude-codex-comm/node_modules/@modelcontextprotocol/sdk/dist/esm/shared/protocol.js
 var DEFAULT_REQUEST_TIMEOUT_MSEC = 6e4;
 var Protocol = class {
   constructor(_options) {
@@ -34808,7 +34808,7 @@ function mergeCapabilities(base, additional) {
   return result;
 }
 
-// node_modules/@modelcontextprotocol/sdk/dist/esm/validation/ajv-provider.js
+// D:/Development/claude-codex-comm/node_modules/@modelcontextprotocol/sdk/dist/esm/validation/ajv-provider.js
 var import_ajv = __toESM(require_ajv(), 1);
 var import_ajv_formats = __toESM(require_dist(), 1);
 function createDefaultAjvInstance() {
@@ -34876,7 +34876,7 @@ var AjvJsonSchemaValidator = class {
   }
 };
 
-// node_modules/@modelcontextprotocol/sdk/dist/esm/experimental/tasks/server.js
+// D:/Development/claude-codex-comm/node_modules/@modelcontextprotocol/sdk/dist/esm/experimental/tasks/server.js
 var ExperimentalServerTasks = class {
   constructor(_server) {
     this._server = _server;
@@ -35089,7 +35089,7 @@ var ExperimentalServerTasks = class {
   }
 };
 
-// node_modules/@modelcontextprotocol/sdk/dist/esm/experimental/tasks/helpers.js
+// D:/Development/claude-codex-comm/node_modules/@modelcontextprotocol/sdk/dist/esm/experimental/tasks/helpers.js
 function assertToolsCallTaskCapability(requests, method, entityName) {
   if (!requests) {
     throw new Error(`${entityName} does not support task creation (required for ${method})`);
@@ -35124,7 +35124,7 @@ function assertClientRequestTaskCapability(requests, method, entityName) {
   }
 }
 
-// node_modules/@modelcontextprotocol/sdk/dist/esm/server/index.js
+// D:/Development/claude-codex-comm/node_modules/@modelcontextprotocol/sdk/dist/esm/server/index.js
 var Server = class extends Protocol {
   /**
    * Initializes this server with the given name and version information.
@@ -35495,7 +35495,7 @@ var Server = class extends Protocol {
   }
 };
 
-// node_modules/@modelcontextprotocol/sdk/dist/esm/server/completable.js
+// D:/Development/claude-codex-comm/node_modules/@modelcontextprotocol/sdk/dist/esm/server/completable.js
 var COMPLETABLE_SYMBOL = /* @__PURE__ */ Symbol.for("mcp.completable");
 function isCompletable(schema) {
   return !!schema && typeof schema === "object" && COMPLETABLE_SYMBOL in schema;
@@ -35509,7 +35509,7 @@ var McpZodTypeKind;
   McpZodTypeKind2["Completable"] = "McpCompletable";
 })(McpZodTypeKind || (McpZodTypeKind = {}));
 
-// node_modules/@modelcontextprotocol/sdk/dist/esm/shared/toolNameValidation.js
+// D:/Development/claude-codex-comm/node_modules/@modelcontextprotocol/sdk/dist/esm/shared/toolNameValidation.js
 var TOOL_NAME_REGEX = /^[A-Za-z0-9._-]{1,128}$/;
 function validateToolName(name) {
   const warnings = [];
@@ -35567,7 +35567,7 @@ function validateAndWarnToolName(name) {
   return result.isValid;
 }
 
-// node_modules/@modelcontextprotocol/sdk/dist/esm/experimental/tasks/mcp-server.js
+// D:/Development/claude-codex-comm/node_modules/@modelcontextprotocol/sdk/dist/esm/experimental/tasks/mcp-server.js
 var ExperimentalMcpServerTasks = class {
   constructor(_mcpServer) {
     this._mcpServer = _mcpServer;
@@ -35582,7 +35582,7 @@ var ExperimentalMcpServerTasks = class {
   }
 };
 
-// node_modules/@modelcontextprotocol/sdk/dist/esm/server/mcp.js
+// D:/Development/claude-codex-comm/node_modules/@modelcontextprotocol/sdk/dist/esm/server/mcp.js
 var McpServer = class {
   constructor(serverInfo, options) {
     this._registeredResources = {};
@@ -36374,10 +36374,10 @@ var EMPTY_COMPLETION_RESULT = {
   }
 };
 
-// node_modules/@modelcontextprotocol/sdk/dist/esm/server/stdio.js
+// D:/Development/claude-codex-comm/node_modules/@modelcontextprotocol/sdk/dist/esm/server/stdio.js
 import process2 from "node:process";
 
-// node_modules/@modelcontextprotocol/sdk/dist/esm/shared/stdio.js
+// D:/Development/claude-codex-comm/node_modules/@modelcontextprotocol/sdk/dist/esm/shared/stdio.js
 var STDIO_DEFAULT_MAX_BUFFER_SIZE = 10 * 1024 * 1024;
 var ReadBuffer = class {
   constructor(options) {
@@ -36414,7 +36414,7 @@ function serializeMessage(message) {
   return JSON.stringify(message) + "\n";
 }
 
-// node_modules/@modelcontextprotocol/sdk/dist/esm/server/stdio.js
+// D:/Development/claude-codex-comm/node_modules/@modelcontextprotocol/sdk/dist/esm/server/stdio.js
 var StdioServerTransport = class {
   constructor(_stdin = process2.stdin, _stdout = process2.stdout, options) {
     this._stdin = _stdin;
@@ -36730,7 +36730,14 @@ var networkConfigSchema = external_exports.object({
   name: external_exports.string().regex(NETWORK_NAME_PATTERN).default(hostname3().replace(/[^A-Za-z0-9._-]/g, "-").replace(/^[^A-Za-z0-9]+/, "").slice(0, MAX_NETWORK_NAME_CHARS) || "host"),
   bind: external_exports.string().min(1).max(MAX_NETWORK_HOST_CHARS).default("127.0.0.1"),
   port: external_exports.number().int().min(0).max(MAX_PORT).default(DEFAULT_NETWORK_PORT),
-  discovery: external_exports.boolean().default(false)
+  discovery: external_exports.boolean().default(false),
+  remoteJobs: external_exports.object({
+    enabled: external_exports.boolean().default(false),
+    allowRoots: external_exports.array(external_exports.string().min(1).max(4096)).max(50).default([]),
+    agents: external_exports.array(external_exports.enum(CODING_AGENTS)).max(3).default([]),
+    /** Pair names explicitly permitted to request jobs; no pair is trusted implicitly. */
+    allowPeers: external_exports.array(external_exports.string().regex(NETWORK_NAME_PATTERN)).max(50).default([])
+  }).default({ enabled: false, allowRoots: [], agents: [], allowPeers: [] })
 });
 var DEFAULT_NETWORK_CONFIG = networkConfigSchema.parse({});
 function parseNetworkConfig(value) {
@@ -37389,7 +37396,7 @@ async function publishApproval(home, approval, answer) {
       }
       const body = JSON.parse(raw);
       if (!body || body.decision !== "allow" && body.decision !== "deny" || body.reason !== void 0 && (typeof body.reason !== "string" || body.reason.length > MAX_APPROVAL_REASON_CHARS)) return reply(400, { error: "invalid answer" });
-      const accepted = Date.now() < approval.deadline && answer(`${body.decision}${body.reason ? `: ${body.reason}` : ""}`, "dashboard");
+      const accepted = Date.now() < approval.deadline && await answer(`${body.decision}${body.reason ? `: ${body.reason}` : ""}`, "dashboard");
       reply(accepted ? 200 : 409, { outcome: accepted ? "answered" : "expired" });
     })().catch(() => reply(400, { error: "invalid answer" }));
   });
@@ -38147,6 +38154,129 @@ ${tail}` : ""}`;
   }
 }
 
+// src/mcp/remote-ask.ts
+import { setTimeout as delay2 } from "node:timers/promises";
+import { randomUUID as randomUUID4 } from "node:crypto";
+
+// src/network/remote-job-protocol.ts
+var REMOTE_JOB_CAPABILITY = "remote-jobs-v1";
+var REMOTE_JOB_FRAME = "remote-job";
+var REMOTE_JOB_POLL_MS = 2e3;
+var REMOTE_JOB_REQUEST_TIMEOUT_MS = 3e4;
+var REMOTE_JOB_LOCAL_TIMEOUT_MS = REMOTE_JOB_REQUEST_TIMEOUT_MS + 5e3;
+var REMOTE_JOB_RATE_WINDOW_MS = 6e4;
+var REMOTE_JOB_RATE_LIMIT = 600;
+var REMOTE_JOB_SPAWN_LIMIT = 10;
+var MAX_REMOTE_JOBS = 200;
+var MAX_PATH_CHARS = 4096;
+var MAX_TITLE_CHARS = 120;
+var remoteSpawnArgsSchema = external_exports.object({
+  prompt: external_exports.string().min(1).max(MAX_BODY_CHARS),
+  title: external_exports.string().min(1).max(MAX_TITLE_CHARS),
+  cwd: external_exports.string().min(1).max(MAX_PATH_CHARS),
+  model: external_exports.string().regex(MODEL_NAME_PATTERN).optional(),
+  effort: external_exports.string().regex(/^[A-Za-z0-9_-]{1,20}$/).optional(),
+  session_id: external_exports.string().min(1).max(MAX_PATH_CHARS).optional(),
+  timeout_sec: external_exports.number().int().min(10).max(MAX_JOB_TIMEOUT_SEC).optional(),
+  access: external_exports.enum(["read", "ask", "edit"]).optional(),
+  worktree: external_exports.boolean().optional(),
+  allow_tools: external_exports.array(external_exports.string().min(1).max(200)).max(50).optional(),
+  sandbox: external_exports.enum(CODEX_SANDBOXES).optional(),
+  permission_mode: external_exports.enum(CLAUDE_PERMISSION_MODES).optional(),
+  auto_approve: external_exports.boolean().optional()
+}).strict();
+var settingsSchema = external_exports.record(external_exports.string(), external_exports.unknown());
+var remoteControlSchema = external_exports.discriminatedUnion("type", [
+  external_exports.object({ type: external_exports.literal("message"), body: external_exports.string().min(1).max(MAX_BODY_CHARS), cid: external_exports.uuid() }).strict(),
+  external_exports.object({ type: external_exports.literal("cancel") }).strict(),
+  external_exports.object({ type: external_exports.literal("attach") }).strict(),
+  external_exports.object({ type: external_exports.literal("title"), title: external_exports.string().min(1).max(MAX_TITLE_CHARS) }).strict(),
+  external_exports.object({ type: external_exports.literal("effort"), effort: external_exports.string().regex(/^[A-Za-z0-9_-]{1,20}$/) }).strict(),
+  external_exports.object({ type: external_exports.literal("settings"), settings: settingsSchema }).strict()
+]);
+var remoteJobRequestSchema = external_exports.discriminatedUnion("op", [
+  external_exports.object({ op: external_exports.literal("spawn"), job: external_exports.string().regex(/^[0-9a-f]{8}$/), target: external_exports.enum(CODING_AGENTS), args: remoteSpawnArgsSchema }).strict(),
+  external_exports.object({ op: external_exports.literal("state"), job: external_exports.string().regex(/^[0-9a-f]{8}$/) }).strict(),
+  external_exports.object({ op: external_exports.literal("control"), job: external_exports.string().regex(/^[0-9a-f]{8}$/), control: remoteControlSchema }).strict(),
+  external_exports.object({ op: external_exports.literal("approval"), job: external_exports.string().regex(/^[0-9a-f]{8}$/), id: external_exports.uuid(), decision: external_exports.enum(["allow", "deny"]), reason: external_exports.string().max(4e3).optional() }).strict()
+]);
+var worktreeSchema = external_exports.object({ repoRoot: external_exports.string(), path: external_exports.string(), cwd: external_exports.string(), branch: external_exports.string(), base: external_exports.string(), baseBranch: external_exports.string().nullable().optional() });
+var remoteJobSnapshotSchema = external_exports.object({
+  alive: external_exports.boolean(),
+  state: external_exports.object({
+    pid: external_exports.number().int().nonnegative(),
+    peer: external_exports.string().regex(NETWORK_NAME_PATTERN),
+    status: external_exports.enum(["running", "done", "failed"]),
+    updatedAt: external_exports.number().nonnegative(),
+    model: external_exports.string().nullable().optional(),
+    sessionId: external_exports.string().nullable().optional(),
+    workdir: external_exports.string().nullable().optional(),
+    worktree: worktreeSchema.nullable().optional(),
+    progress: external_exports.string().nullable().optional(),
+    percent: external_exports.number().min(0).max(100).optional(),
+    progressNote: external_exports.string().optional(),
+    asking: external_exports.boolean().optional(),
+    live: external_exports.boolean().optional(),
+    seen: external_exports.array(external_exports.string()).optional(),
+    report: external_exports.string().optional(),
+    delivered: external_exports.boolean().optional(),
+    finishedAt: external_exports.number().optional()
+  }).nullable(),
+  approvals: external_exports.array(external_exports.object({ id: external_exports.uuid(), owner: external_exports.string(), job: external_exports.string(), agent: external_exports.string(), tool: external_exports.string(), command: external_exports.string(), reason: external_exports.string(), askedAt: external_exports.number(), deadline: external_exports.number() })).max(50)
+});
+var remoteJobWireSchema = external_exports.discriminatedUnion("kind", [
+  external_exports.object({ kind: external_exports.literal("request"), rid: external_exports.uuid(), peer: external_exports.object({ id: external_exports.string().min(1).max(MAX_PATH_CHARS), name: external_exports.string().regex(NETWORK_NAME_PATTERN), supervisor: external_exports.string().min(1).max(MAX_PATH_CHARS) }).strict(), request: remoteJobRequestSchema }).strict(),
+  external_exports.object({ kind: external_exports.literal("response"), rid: external_exports.uuid(), value: external_exports.unknown().optional(), error: external_exports.string().max(MAX_PATH_CHARS).optional() }).strict()
+]);
+
+// src/mcp/remote-ask.ts
+async function runRemoteAsk(node2, target, args, job, signal, onProgress) {
+  const host = args.host;
+  const raw = { ...args, timeout_sec: args.timeout_sec ?? DEFAULT_DELEGATE_TIMEOUT_SEC };
+  delete raw.host;
+  delete raw.send_to;
+  job.remote = { host, name: `${target}-job-${job.id}` };
+  const cancel = () => {
+    void node2.remoteJob(host, { op: "control", job: job.id, control: { type: "cancel" } }).catch(() => {
+    });
+  };
+  const combined = AbortSignal.any([signal, job.controller.signal]);
+  combined.addEventListener("abort", cancel, { once: true });
+  try {
+    let snapshot = await node2.remoteJob(host, { op: "spawn", job: job.id, target, args: remoteSpawnArgsSchema.parse(raw) });
+    if (combined.aborted) {
+      cancel();
+      combined.throwIfAborted();
+    }
+    job.remoteControl = (control) => {
+      void node2.remoteJob(host, { op: "control", job: job.id, control }).catch(() => {
+      });
+    };
+    job.live = { post: (body) => {
+      void node2.remoteJob(host, { op: "control", job: job.id, control: { type: "message", body, cid: randomUUID4() } }).catch(() => {
+      });
+    } };
+    for (; ; ) {
+      combined.throwIfAborted();
+      const state = snapshot.state;
+      if (state?.progress) onProgress(state.progress);
+      if (state) {
+        job.sessionId = state.sessionId ?? job.sessionId;
+        job.workdir = state.workdir ?? job.workdir;
+        job.worktree = state.worktree ?? job.worktree;
+      }
+      if (state && state.status !== "running" && !snapshot.alive) return { text: state.report ?? "Remote job ended without a report.", sessionId: state.sessionId ?? null, isError: state.status === "failed", details: {}, workdir: state.workdir ?? void 0, worktree: state.worktree ?? void 0 };
+      if (!snapshot.alive) throw new Error("Remote job runner ended without a result.");
+      await delay2(REMOTE_JOB_POLL_MS, void 0, { signal: combined });
+      snapshot = await node2.remoteJob(host, { op: "state", job: job.id });
+    }
+  } finally {
+    combined.removeEventListener("abort", cancel);
+    job.live = null;
+    job.remoteControl = void 0;
+  }
+}
+
 // src/core/usage.ts
 import { spawn as spawn2 } from "node:child_process";
 var USAGE_TIMEOUT_MS = 45e3;
@@ -38526,14 +38656,14 @@ function makeLogger(sink, scope) {
 }
 
 // src/core/node.ts
-import { randomUUID as randomUUID10 } from "node:crypto";
+import { randomUUID as randomUUID14 } from "node:crypto";
 import { EventEmitter as EventEmitter2 } from "node:events";
 import { unlinkSync } from "node:fs";
-import { dirname as dirname5, join as join13 } from "node:path";
+import { dirname as dirname7, join as join26 } from "node:path";
 
 // src/core/broker.ts
-import { randomUUID as randomUUID8 } from "node:crypto";
-import { readFileSync as readFileSync8 } from "node:fs";
+import { randomUUID as randomUUID12 } from "node:crypto";
+import { readFileSync as readFileSync14 } from "node:fs";
 import { createServer as createServer4 } from "node:net";
 
 // src/core/store.ts
@@ -38542,7 +38672,7 @@ import { dirname as dirname4 } from "node:path";
 import { DatabaseSync as DatabaseSync2 } from "node:sqlite";
 
 // src/core/decisions.ts
-import { randomUUID as randomUUID4 } from "node:crypto";
+import { randomUUID as randomUUID5 } from "node:crypto";
 import { existsSync as existsSync3 } from "node:fs";
 import { resolve as resolve2 } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -38612,7 +38742,7 @@ var DecisionStore = class {
   db;
   record(args, author, at) {
     const topic = args.topic.trim().toLowerCase();
-    const id = randomUUID4();
+    const id = randomUUID5();
     this.db.exec("BEGIN IMMEDIATE");
     try {
       const previous = this.db.prepare("SELECT id FROM decisions WHERE topic = ? ORDER BY revision DESC LIMIT 1").get(topic);
@@ -38872,7 +39002,7 @@ function siblingMaxHops(maxHops) {
 }
 
 // src/network/link.ts
-import { randomBytes as randomBytes5, randomUUID as randomUUID7 } from "node:crypto";
+import { randomBytes as randomBytes5, randomUUID as randomUUID8 } from "node:crypto";
 import { connect, createServer as createServer3 } from "node:tls";
 
 // src/network/discovery.ts
@@ -38881,7 +39011,7 @@ import { isIPv4 } from "node:net";
 
 // src/network/pairing.ts
 import { execFileSync } from "node:child_process";
-import { createHash, randomBytes as randomBytes4, randomUUID as randomUUID5 } from "node:crypto";
+import { createHash, randomBytes as randomBytes4, randomUUID as randomUUID6 } from "node:crypto";
 import { chmodSync as chmodSync2, existsSync as existsSync5, mkdirSync as mkdirSync6, readFileSync as readFileSync6, renameSync as renameSync3, writeFileSync as writeFileSync3 } from "node:fs";
 import { join as join10 } from "node:path";
 var DEFAULT_SYSTEM_ROOT = "C:\\Windows";
@@ -38927,7 +39057,7 @@ var PairingStore = class {
       protect(this.file, OWNER_FILE_MODE);
       this.state = stateSchema.parse(JSON.parse(readFileSync6(this.file, "utf8")));
     } else {
-      this.state = { identity: { id: randomUUID5(), key: randomBytes4(PAIRING_KEY_BYTES).toString("hex") }, invitations: [], pairs: [] };
+      this.state = { identity: { id: randomUUID6(), key: randomBytes4(PAIRING_KEY_BYTES).toString("hex") }, invitations: [], pairs: [] };
       this.save();
     }
   }
@@ -38997,7 +39127,7 @@ var PairingStore = class {
     this.save();
   }
   save() {
-    const temp = join10(this.dir, `${randomUUID5()}.tmp`);
+    const temp = join10(this.dir, `${randomUUID6()}.tmp`);
     writeFileSync3(temp, JSON.stringify(this.state, null, 2) + "\n", { mode: OWNER_FILE_MODE, flag: "wx" });
     protect(temp, OWNER_FILE_MODE);
     renameSync3(temp, this.file);
@@ -39079,17 +39209,17 @@ var NetworkDiscovery = class {
 };
 
 // src/network/files.ts
-import { createHash as createHash2, randomUUID as randomUUID6 } from "node:crypto";
+import { createHash as createHash2, randomUUID as randomUUID7 } from "node:crypto";
 import { existsSync as existsSync6, lstatSync, mkdirSync as mkdirSync7, mkdtempSync, readFileSync as readFileSync7, readdirSync as readdirSync3, renameSync as renameSync4, rmSync as rmSync3, writeFileSync as writeFileSync4 } from "node:fs";
 import { basename as basename3, join as join11, resolve as resolve3 } from "node:path";
 var MAX_TRANSFER_BYTES = 1024 * 1024;
 var MAX_TRANSFER_ENTRIES = 128;
 var MAX_TRANSFER_DEPTH = 16;
-var MAX_PATH_CHARS = 1024;
+var MAX_PATH_CHARS2 = 1024;
 var MAX_COMPONENT_CHARS = 255;
 var MAX_ID_CHARS = 128;
 var MAX_BASE64_CHARS = Math.ceil(MAX_TRANSFER_BYTES / 3) * 4;
-var pathSchema = external_exports.string().min(1).max(MAX_PATH_CHARS);
+var pathSchema = external_exports.string().min(1).max(MAX_PATH_CHARS2);
 var entrySchema = external_exports.discriminatedUnion("kind", [
   external_exports.object({ kind: external_exports.literal("directory"), path: pathSchema }),
   external_exports.object({ kind: external_exports.literal("file"), path: pathSchema, data: external_exports.string().max(MAX_BASE64_CHARS), sha256: external_exports.string().regex(/^[0-9a-f]{64}$/) })
@@ -39100,13 +39230,13 @@ var transferSchema = external_exports.object({
   from: external_exports.object({ id: external_exports.string().min(1).max(MAX_ID_CHARS), name: external_exports.string().regex(NETWORK_NAME_PATTERN), agent: external_exports.enum(AGENT_KINDS) }),
   entries: external_exports.array(entrySchema).min(1).max(MAX_TRANSFER_ENTRIES)
 });
-var transferResultSchema = external_exports.object({ id: external_exports.uuid(), inbox: external_exports.string().max(MAX_PATH_CHARS), files: external_exports.number().int().nonnegative().max(MAX_TRANSFER_ENTRIES), bytes: external_exports.number().int().nonnegative().max(MAX_TRANSFER_BYTES) });
+var transferResultSchema = external_exports.object({ id: external_exports.uuid(), inbox: external_exports.string().max(MAX_PATH_CHARS2), files: external_exports.number().int().nonnegative().max(MAX_TRANSFER_ENTRIES), bytes: external_exports.number().int().nonnegative().max(MAX_TRANSFER_BYTES) });
 function checksum(data) {
   return createHash2("sha256").update(data).digest("hex");
 }
 function safeTransferPath(path) {
   const components = path.split("/");
-  return path.length <= MAX_PATH_CHARS && components.length <= MAX_TRANSFER_DEPTH && components.every((part) => part.length > 0 && part.length <= MAX_COMPONENT_CHARS && part !== "." && part !== ".." && !/[<>:"\\|?*\x00-\x1f]/.test(part) && !/[. ]$/.test(part) && !/^(CON|PRN|AUX|NUL|CONIN\$|CONOUT\$|COM[1-9¹²³]|LPT[1-9¹²³])(?:\.|$)/i.test(part));
+  return path.length <= MAX_PATH_CHARS2 && components.length <= MAX_TRANSFER_DEPTH && components.every((part) => part.length > 0 && part.length <= MAX_COMPONENT_CHARS && part !== "." && part !== ".." && !/[<>:"\\|?*\x00-\x1f]/.test(part) && !/[. ]$/.test(part) && !/^(CON|PRN|AUX|NUL|CONIN\$|CONOUT\$|COM[1-9¹²³]|LPT[1-9¹²³])(?:\.|$)/i.test(part));
 }
 function collectTransfer(paths, cwd, to, from) {
   if (!paths.length || paths.length > MAX_TRANSFER_ENTRIES) throw new Error("invalid number of transfer paths");
@@ -39132,7 +39262,7 @@ function collectTransfer(paths, cwd, to, from) {
     const source = resolve3(cwd, path);
     walk(source, basename3(source));
   }
-  const transfer = transferSchema.parse({ id: randomUUID6(), to, from, entries });
+  const transfer = transferSchema.parse({ id: randomUUID7(), to, from, entries });
   validateEntries(transfer);
   return transfer;
 }
@@ -39183,6 +39313,7 @@ function receiveTransfer(home, input2) {
 var MAX_METADATA_CHARS = 4096;
 var MAX_ID_CHARS2 = 128;
 var MAX_HOP_COUNT = 100;
+var MAX_EXTENSION_HANDLERS = 8;
 var textId = external_exports.string().min(1).max(MAX_ID_CHARS2);
 var peerSchema = external_exports.object({
   id: textId,
@@ -39215,7 +39346,9 @@ var messageSchema = external_exports.object({
   readAt: external_exports.null()
 });
 var frameSchema = external_exports.discriminatedUnion("type", [
-  publicIdentitySchema.extend({ type: external_exports.literal("hello"), v: external_exports.literal(NETWORK_VERSION), peers: peersSchema, echo: external_exports.boolean().optional(), receipts: external_exports.boolean().optional() }),
+  publicIdentitySchema.extend({ type: external_exports.literal("hello"), v: external_exports.literal(NETWORK_VERSION), peers: peersSchema, echo: external_exports.boolean().optional(), receipts: external_exports.boolean().optional(), capabilities: external_exports.array(external_exports.string().min(1).max(MAX_ID_CHARS2)).max(MAX_EXTENSION_HANDLERS).optional() }),
+  external_exports.object({ type: external_exports.literal("file-stream"), payload: external_exports.record(external_exports.string(), external_exports.unknown()) }),
+  external_exports.object({ type: external_exports.literal("remote-job"), payload: external_exports.record(external_exports.string(), external_exports.unknown()) }),
   external_exports.object({ type: external_exports.literal("peers"), peers: peersSchema }),
   external_exports.object({ type: external_exports.literal("send"), rid: external_exports.uuid(), message: messageSchema }),
   external_exports.object({ type: external_exports.literal("echo"), rid: external_exports.uuid() }),
@@ -39247,6 +39380,7 @@ var Link = class {
             this.peers = frame.peers;
             this.echoSupported = frame.echo === true;
             this.receiptsSupported = frame.receipts === true;
+            this.capabilities = frame.capabilities ?? [];
             service.attach(this);
             clearTimeout(this.deadline);
             this.readyResolve();
@@ -39269,7 +39403,7 @@ var Link = class {
       this.pending.clear();
       service.detach(this);
     });
-    this.write({ type: "hello", v: NETWORK_VERSION, ...service.keys.identity, peers: service.localPeers(), echo: true, receipts: Boolean(service.supportsReceipts) });
+    this.write({ type: "hello", v: NETWORK_VERSION, ...service.keys.identity, peers: service.localPeers(), echo: true, receipts: Boolean(service.supportsReceipts), capabilities: service.extensionCapabilities() });
   }
   socket;
   service;
@@ -39278,6 +39412,8 @@ var Link = class {
   peers = [];
   echoSupported = false;
   receiptsSupported = false;
+  capabilities = [];
+  extensionHandlers = 0;
   buffer = Buffer.alloc(0);
   pending = /* @__PURE__ */ new Map();
   readyResolve;
@@ -39293,22 +39429,44 @@ var Link = class {
     if (this.socket.destroyed) throw new Error("network link closed");
     this.socket.write(data);
   }
+  supports(capability) {
+    return this.capabilities.includes(capability);
+  }
+  /** Complete only after the stream has consumed this bounded record; callers await each write. */
+  writeExtension(type, payload) {
+    const data = JSON.stringify({ type, payload }) + "\n";
+    if (Buffer.byteLength(data) > MAX_NETWORK_FRAME_BYTES || this.socket.writableLength > MAX_NETWORK_FRAME_BYTES) return Promise.reject(new Error("network write limit reached"));
+    if (this.socket.destroyed) return Promise.reject(new Error("network link closed"));
+    return new Promise((resolve10, reject) => {
+      const closed = () => {
+        cleanup();
+        reject(new Error("network link closed"));
+      };
+      const cleanup = () => this.socket.off("close", closed);
+      this.socket.once("close", closed);
+      this.socket.write(data, (error62) => {
+        cleanup();
+        if (error62) reject(error62);
+        else resolve10();
+      });
+    });
+  }
   refresh() {
     if (this.remote) this.write({ type: "peers", peers: this.service.localPeers() });
   }
   send(message) {
-    return this.request({ type: "send", rid: randomUUID7(), message: messageSchema.parse(message) });
+    return this.request({ type: "send", rid: randomUUID8(), message: messageSchema.parse(message) });
   }
   receipt(id, sender) {
     if (!this.receiptsSupported) return Promise.reject(new Error("Remote broker does not support read receipts. Update and reload its hosting sessions."));
-    return this.request({ type: "receipt", rid: randomUUID7(), id, sender });
+    return this.request({ type: "receipt", rid: randomUUID8(), id, sender });
   }
   files(transfer) {
-    return this.request({ type: "files", rid: randomUUID7(), transfer: transferSchema.parse(transfer) });
+    return this.request({ type: "files", rid: randomUUID8(), transfer: transferSchema.parse(transfer) });
   }
   async echo() {
     if (!this.echoSupported) throw new Error("Remote broker does not support verification. Update and restart its hosting sessions.");
-    const result = await this.request({ type: "echo", rid: randomUUID7() });
+    const result = await this.request({ type: "echo", rid: randomUUID8() });
     if (result !== true) throw new Error("network echo was not acknowledged");
   }
   request(frame) {
@@ -39331,6 +39489,13 @@ var Link = class {
     });
   }
   onFrame(frame) {
+    if (frame.type === "file-stream" || frame.type === "remote-job") {
+      if (++this.extensionHandlers > MAX_EXTENSION_HANDLERS) throw new Error("too many extension handlers");
+      void Promise.resolve().then(() => this.service.receiveExtension(frame.type, frame.payload, this.remote)).catch((error62) => this.fail(error62)).finally(() => {
+        this.extensionHandlers--;
+      });
+      return;
+    }
     if (frame.type === "peers") {
       this.peers = frame.peers;
       return;
@@ -39400,9 +39565,40 @@ var NetworkService = class {
   discovery = null;
   timer = null;
   closed = false;
+  extensions = /* @__PURE__ */ new Map();
   get port() {
     const address = this.server?.address();
     return address && typeof address !== "string" ? address.port : 0;
+  }
+  registerExtension(type, capability, handler) {
+    if (this.server || this.extensions.has(type)) throw new Error("register extensions once before starting networking");
+    this.extensions.set(type, { capability, handler });
+  }
+  extensionCapabilities() {
+    return [...this.extensions.values()].map((extension) => extension.capability);
+  }
+  receiveExtension(type, payload, remote) {
+    const extension = this.extensions.get(type);
+    if (!extension) throw new Error("unsupported network extension");
+    return extension.handler(payload, remote);
+  }
+  instanceLink(instance) {
+    const link = [...this.links.values()].find((candidate) => candidate.remote.id === instance || candidate.remote.name === instance);
+    if (!link) throw new Error("paired instance is not connected");
+    return link;
+  }
+  peerSupports(instance, capability) {
+    try {
+      return this.instanceLink(instance).supports(capability);
+    } catch {
+      return false;
+    }
+  }
+  sendExtension(instance, type, payload) {
+    const extension = this.extensions.get(type);
+    const link = this.instanceLink(instance);
+    if (!extension || !link.supports(extension.capability)) return Promise.reject(new Error("remote broker does not support this extension"));
+    return link.writeExtension(type, payload);
   }
   get supportsReceipts() {
     return Boolean(this.broker.receipt);
@@ -39614,1319 +39810,469 @@ var NetworkService = class {
   }
 };
 
-// src/core/broker.ts
-var PEER_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
-var PENDING_DEFAULT_LIMIT = 50;
-var DEDUPE_KEEP_MS = 30 * 60 * 1e3;
-var DEDUPE_MAX = 5e3;
-var PENDING_MAX_LIMIT = 500;
-var NAME_SUFFIX_LIMIT = 100;
-var SIBLING_STATUSES = /* @__PURE__ */ new Set(["running", "done", "failed", "interrupted"]);
-var UNAUTHENTICATED_OPS = /* @__PURE__ */ new Set(["hello", "auth", "ping"]);
-var Broker = class {
-  constructor(pipePath, store, log, token, now = Date.now, jobsPath, networking) {
-    this.pipePath = pipePath;
-    this.store = store;
-    this.log = log;
-    this.token = token;
-    this.now = now;
-    this.jobsPath = jobsPath;
-    this.networking = networking;
-    this.handlers = {
-      auth: (c, a) => {
-        this.checkAuth(a.protocol, a.token);
-        c.authed = true;
-        return { brokerPid: process.pid };
-      },
-      hello: (c, a) => this.onHello(c, a),
-      send: (c, a) => this.onSend(c, a),
-      decide: (c, a) => this.onDecide(c, a),
-      decisions: (c, a) => this.onDecisions(c, a),
-      peers: () => this.livePeers(),
-      siblings: (c) => this.siblingPeers(c),
-      sendSibling: (c, a) => this.onSendSibling(c, a),
-      messageReceipt: (c, a) => this.messageReceipt(c, a.id),
-      ack: (c, a) => ({ acked: this.store.markRead(this.requirePeer(c).name, a.ids ?? [], this.now()) }),
-      pending: (c, a) => this.unreadMail(this.requirePeer(c).name, Math.min(Math.max(1, a.limit ?? PENDING_DEFAULT_LIMIT), PENDING_MAX_LIMIT)),
-      updatePeer: (c, a) => this.onUpdatePeer(c, a),
-      claimMail: (c, a) => this.onClaimMail(c, a),
-      ping: () => ({ brokerPid: process.pid, protocol: PROTOCOL_VERSION }),
-      networkStatus: () => this.network?.status() ?? { enabled: false, config: this.networking?.config, discovered: [], paired: [] },
-      networkConfigure: (_, a) => {
-        const change = this.networkChange.then(() => this.configureNetwork(a));
-        this.networkChange = change.catch(() => {
-        });
-        return change;
-      },
-      networkVerify: (_, a) => this.requireNetwork().verify(external_exports.uuid().parse(a.id)),
-      networkPair: () => this.requireNetwork().keys.inviteWithExpiry(),
-      networkLink: async (_, a) => {
-        try {
-          const args = external_exports.object({ code: external_exports.string().min(1).max(MAX_PAIRING_CODE_CHARS), host: external_exports.string().min(1).max(MAX_NETWORK_HOST_CHARS), port: external_exports.number().int().min(1).max(MAX_PORT) }).parse(a);
-          return await this.requireNetwork().link(args.code, args.host, args.port);
-        } catch {
-          throw new BridgeError("bad_request", "Pairing failed. Check the address, code expiry, unique names and existing pairings.");
-        }
-      },
-      networkUnlink: (_, a) => {
-        const id = external_exports.uuid().parse(a.id);
-        const network = this.requireNetwork();
-        const removed = network.status().paired.some((p) => p.id === id);
-        network.unlink(id);
-        return { removed };
-      },
-      sendFiles: (c, a) => this.onSendFiles(c, a)
-    };
-  }
-  pipePath;
-  store;
-  log;
-  token;
-  now;
-  jobsPath;
-  networking;
-  server = null;
-  conns = /* @__PURE__ */ new Set();
-  purgeTimer = null;
-  network = null;
-  networkChange = Promise.resolve();
-  handlers;
-  /** Bind the endpoint. Rejects with the socket error (EADDRINUSE when another broker owns it). */
-  listen() {
-    return new Promise((resolve10, reject) => {
-      const server = createServer4((socket) => this.accept(socket));
-      const onError = (err) => {
-        server.removeListener("listening", onListening);
-        reject(err);
-      };
-      const onListening = async () => {
-        server.removeListener("error", onError);
-        server.on("error", (err) => this.log.error("broker server error", { err }));
-        this.server = server;
-        this.purgeTimer = setInterval(() => this.purge(), PURGE_INTERVAL_MS);
-        this.purgeTimer.unref();
-        this.purge();
-        this.log.info("broker listening", { pipe: this.pipePath });
-        if (this.networking?.config.enabled) {
-          try {
-            this.network = new NetworkService(this.networking.home, this.networking.config, {
-              peers: () => [...this.conns].flatMap((c) => c.peer ? [c.peer] : []),
-              receive: (message) => this.receiveRemote(message),
-              receipt: (id, sender) => this.remoteReceipt(id, sender)
-            }, this.log);
-            await this.network.start();
-          } catch (err) {
-            this.network = null;
-            this.log.warn("networking could not start; local broker remains available", { message: err.message });
-          }
-        }
-        resolve10();
-      };
-      server.once("error", onError);
-      server.once("listening", onListening);
-      server.listen(this.pipePath);
-    });
-  }
-  async close() {
-    if (this.purgeTimer) clearInterval(this.purgeTimer);
-    await this.networkChange;
-    await this.network?.close();
-    this.network = null;
-    for (const c of this.conns) c.socket.destroy();
-    this.conns.clear();
-    const server = this.server;
-    this.server = null;
-    if (server) await new Promise((r) => server.close(() => r()));
-    this.store.close();
-    this.log.info("broker closed");
-  }
-  /** Serialize listener changes and let the elected broker remain the sole network writer. */
-  async configureNetwork(value) {
-    if (!this.networking) throw new BridgeError("bad_request", "Restart all agent-bridge hosting sessions to load this wizard-capable broker.");
-    const config2 = writeNetworkConfig(this.networking.home, value);
-    await this.network?.close();
-    this.network = null;
-    this.networking.config = config2;
-    if (config2.enabled) {
-      const service = new NetworkService(this.networking.home, config2, {
-        peers: () => [...this.conns].flatMap((c) => c.peer ? [c.peer] : []),
-        receive: (message) => this.receiveRemote(message),
-        receipt: (id, sender) => this.remoteReceipt(id, sender)
-      }, this.log);
-      try {
-        await service.start();
-        this.network = service;
-      } catch (err) {
-        await service.close();
-        throw err;
-      }
-    }
-    return this.network?.status() ?? { enabled: false, config: config2, discovered: [], paired: [] };
-  }
-  purge() {
-    try {
-      const ttl = retentionLimit("AGENT_BRIDGE_MESSAGE_TTL_MS", MESSAGE_TTL_MS);
-      if (ttl) this.store.purgeOlderThan(this.now() - ttl);
-    } catch (err) {
-      this.log.warn("purge failed", { err });
-    }
-  }
-  accept(socket) {
-    const conn = { socket, peer: null, authed: false };
-    this.conns.add(conn);
-    socket.setEncoding("utf8");
-    const decoder = new FrameDecoder(MAX_FRAME_BYTES);
-    this.log.debug("connection accepted");
-    socket.on("data", (chunk) => {
-      let frames;
-      try {
-        frames = decoder.push(chunk);
-      } catch (err) {
-        this.log.warn("dropping connection after undecodable frame", { err });
-        socket.destroy();
-        return;
-      }
-      for (const f of frames) {
-        if (f.t === "req") void this.dispatch(conn, f);
-        else this.log.debug("ignoring non-request frame from client", { t: f.t });
-      }
-    });
-    socket.on("error", (err) => this.log.debug("connection error", { err: err.message }));
-    socket.on("close", () => {
-      this.conns.delete(conn);
-      if (conn.peer) {
-        this.log.info("peer left", { name: conn.peer.name, agent: conn.peer.agent });
-        if (!conn.peer.jobAgent) this.broadcastEvent("peer_left", conn.peer, conn);
-      }
-    });
-  }
-  async dispatch(conn, frame) {
-    const handler = this.handlers[frame.op];
-    try {
-      if (!handler) throw new BridgeError("bad_request", `unknown op: ${String(frame.op)}`);
-      if (!conn.authed && !UNAUTHENTICATED_OPS.has(frame.op)) throw new BridgeError("unauthorized", "authenticate first");
-      this.log.debug("request", { op: frame.op, peer: conn.peer?.name });
-      const result = await handler(conn, frame.args ?? {});
-      this.write(conn, { t: "res", id: frame.id, ok: true, result });
-    } catch (err) {
-      const be = err instanceof BridgeError ? err : new BridgeError("internal", String(err?.message ?? err));
-      if (be.code === "internal") this.log.error("request failed", { op: frame.op, err });
-      else this.log.debug("request rejected", { op: frame.op, code: be.code, message: be.message });
-      this.write(conn, { t: "res", id: frame.id, ok: false, error: be.toPayload() });
-    }
-  }
-  write(conn, frame) {
-    if (!conn.socket.destroyed) conn.socket.write(encodeFrame(frame));
-  }
-  emit(conn, ev, data) {
-    const frame = { t: "evt", ev, data };
-    this.write(conn, frame);
-  }
-  broadcastEvent(ev, data, except) {
-    for (const c of this.conns) if (c !== except && c.peer) this.emit(c, ev, data);
-  }
-  requirePeer(conn) {
-    if (!conn.peer) throw new BridgeError("not_registered", "send hello first");
-    return conn.peer;
-  }
-  /** Local sessions and paired remote peers; local job runners stay hidden (see job-host.ts). */
-  livePeers() {
-    return [...this.conns].flatMap((c) => c.peer && !c.peer.jobAgent ? [c.peer] : []).concat(this.network?.peers() ?? []);
-  }
-  connByName(name) {
-    for (const c of this.conns) if (c.peer?.name === name) return c;
-    return void 0;
-  }
-  siblingConns(conn) {
-    const peer = this.requirePeer(conn);
-    if (!peer.jobAgent || !peer.jobOwner) throw new BridgeError("bad_request", "not a linked job");
-    const jobs = this.storedJobs();
-    const supervisor = this.jobSupervisor(peer, jobs);
-    return [...this.conns].filter((c) => c !== conn && c.peer?.jobAgent && this.jobSupervisor(c.peer, jobs) === supervisor);
-  }
-  storedJobs() {
-    if (!this.jobsPath) return [];
-    try {
-      const data = JSON.parse(readFileSync8(this.jobsPath, "utf8"));
-      const jobs = Array.isArray(data) ? data : isRecord(data) && Array.isArray(data.jobs) ? data.jobs : [];
-      return jobs.filter(isRecord);
-    } catch {
-      return [];
-    }
-  }
-  /** A restored legacy runner may still advertise its old owner name until its next turn. */
-  jobSupervisor(peer, jobs = this.storedJobs()) {
-    const job = jobs.find((j) => `job:${j.id}` === peer.id);
-    return typeof job?.supervisor === "string" ? job.supervisor : peer.jobOwner;
-  }
-  storedSiblings(peer) {
-    if (!this.jobsPath || !peer.jobOwner) return [];
-    try {
-      const records = this.storedJobs();
-      const supervisor = this.jobSupervisor(peer, records);
-      return records.flatMap((j) => j && j.supervisor === supervisor && typeof j.id === "string" && typeof j.name === "string" && j.name !== peer.name && `job:${j.id}` !== peer.id && AGENT_KINDS.includes(j.agent) && SIBLING_STATUSES.has(j.status) ? [{ id: `job:${j.id}`, name: j.name, title: isRecord(j.args) && typeof j.args.title === "string" ? j.args.title : "", agent: j.agent, status: j.status }] : []);
-    } catch {
-      return [];
-    }
-  }
-  siblingPeers(conn) {
-    const live = this.siblingConns(conn);
-    const stored = this.storedSiblings(this.requirePeer(conn));
-    const peers = new Map(stored.map(({ id, ...s }) => [s.name, s]));
-    for (const c of live) {
-      const p = c.peer;
-      const previous = stored.find((s) => s.id === p.id);
-      if (previous) peers.delete(previous.name);
-      peers.set(p.name, { name: p.name, title: p.jobTitle ?? "", agent: p.jobAgent, status: "running" });
-    }
-    return [...peers.values()];
-  }
-  async onSendSibling(conn, args) {
-    const sender = this.requirePeer(conn);
-    const dedupeKey = args.dedupeKey ? `${SIBLING_CONVERSATION_PREFIX}${args.dedupeKey}` : void 0;
-    const key = dedupeKey ? `${sender.id}:${dedupeKey}` : null;
-    const seen = key ? this.sentByKey.get(key) : void 0;
-    if (seen) return seen.result;
-    const target = this.siblingConns(conn).find((c) => c.peer.name === args.to);
-    const stored = this.storedSiblings(sender).find((s) => s.name === args.to);
-    if (!target && !stored) {
-      if (!isJobSendTarget(args.to) || !sender.jobSendTo?.includes(args.to) || this.connByName(args.to)?.peer?.jobAgent) {
-        throw new BridgeError("unknown_target", "no sibling with that job name or explicit send_to grant");
-      }
-      if (args.replyTo) {
-        const parent3 = this.store.byId(args.replyTo);
-        const own2 = this.storedJobs().find((j) => `job:${j.id}` === sender.id);
-        const ownerNames = /* @__PURE__ */ new Set([sender.name, sender.jobParent, own2?.owner]);
-        if (!parent3 || !(parent3.from.name === args.to && ownerNames.has(parent3.recipient) || parent3.from.id === sender.id && parent3.recipient === args.to)) {
-          throw new BridgeError("bad_request", "reply_to must refer to a message exchanged with the granted session or supervisor");
-        }
-      }
-      return this.onSend(conn, { ...args, dedupeKey });
-    }
-    const targetId = target?.peer.id ?? stored.id;
-    const parent2 = args.replyTo ? this.store.byId(args.replyTo) : null;
-    if (args.replyTo && (!parent2 || !parent2.conversationId.startsWith(SIBLING_CONVERSATION_PREFIX) || !(parent2.from.id === targetId && parent2.recipient === sender.name || parent2.from.id === sender.id && parent2.recipient === args.to))) {
-      throw new BridgeError("bad_request", "reply_to must refer to a message exchanged with this sibling");
-    }
-    if (!Number.isInteger(args.maxHops) || args.maxHops < 1 || (parent2 ? parent2.hop + 1 : 0) >= args.maxHops) {
-      throw new BridgeError("bad_request", `sibling conversation reached its ${args.maxHops}-message hop limit; stop this thread and report the remaining work to the supervisor`);
-    }
-    const conversationId = parent2?.conversationId ?? `${SIBLING_CONVERSATION_PREFIX}${randomUUID8()}`;
-    const result = await this.onSend(conn, { ...args, dedupeKey, conversationId });
-    const message = result.messages[0];
-    if (sender.jobParent) {
-      const note = {
-        ...message,
-        id: randomUUID8(),
-        recipient: sender.jobParent,
-        conversationId: `${conversationId}${SIBLING_NOTE_SUFFIX}`,
-        body: `Sibling message to ${message.recipient}:
+// src/network/remote-jobs.ts
+import { randomUUID as randomUUID11 } from "node:crypto";
+import { existsSync as existsSync8, realpathSync as realpathSync5, statSync as statSync6 } from "node:fs";
+import { isAbsolute as isAbsolute5, join as join24 } from "node:path";
 
-${message.body}`
-      };
-      this.store.insert(note);
-      const supervisor = this.connByName(sender.jobParent);
-      if (supervisor) this.emit(supervisor, "message", note);
-    }
-    return result;
-  }
-  uniqueName(requested) {
-    if (!this.connByName(requested)) return requested;
-    for (let i = 2; i < NAME_SUFFIX_LIMIT; i++) {
-      const candidate = `${requested}-${i}`;
-      if (!this.connByName(candidate)) return candidate;
-    }
-    return `${requested}-${randomUUID8().slice(0, 8)}`;
-  }
-  onDecide(conn, value) {
-    const peer = this.requirePeer(conn);
-    const parsed = external_exports.object({
-      topic: external_exports.string().trim().min(1).max(MAX_DECISION_TOPIC_CHARS),
-      text: external_exports.string().trim().min(1).max(MAX_DECISION_TEXT_CHARS),
-      scope: decisionScopeSchema.optional(),
-      sourceMessageId: external_exports.string().min(1).optional()
-    }).strict().safeParse(value);
-    if (!parsed.success) throw new BridgeError("bad_request", "Invalid decision topic, text or scope.");
-    if (parsed.data.sourceMessageId && !this.store.byId(parsed.data.sourceMessageId)) throw new BridgeError("bad_request", "Source message does not exist.");
-    const decision = this.store.decisions.record({ ...parsed.data, scope: parsed.data.scope ?? { project: peer.cwd } }, { id: peer.id, name: peer.name, agent: peer.agent }, this.now());
-    const deliveredTo = [];
-    for (const c of this.conns) {
-      if (!c.peer || c.peer.jobAgent || !decisionApplies(decision, c.peer)) continue;
-      const message = this.queueDecision(decision, c.peer);
-      if (message) {
-        this.emit(c, "message", message);
-        deliveredTo.push(c.peer.name);
-      }
-    }
-    return { decision, deliveredTo };
-  }
-  onDecisions(conn, value) {
-    const parsed = external_exports.object({
-      query: external_exports.string().max(MAX_DECISION_TEXT_CHARS).optional(),
-      scope: decisionScopeSchema.optional(),
-      history: external_exports.boolean().optional(),
-      topic: external_exports.string().max(MAX_DECISION_TOPIC_CHARS).optional(),
-      session: external_exports.string().optional()
-    }).strict().safeParse(value);
-    if (!parsed.success) throw new BridgeError("bad_request", "Invalid decisions query or scope.");
-    const scope = parsed.data.scope ?? (conn.peer ? { project: conn.peer.cwd } : void 0);
-    return this.store.decisions.list({ ...parsed.data, scope }, conn.peer ?? void 0);
-  }
-  decisionSessionKey(peer) {
-    return `${peer.agent}:${peer.sessionId ?? peer.id}`;
-  }
-  queueDecision(decision, peer) {
-    const message = {
-      id: randomUUID8(),
-      from: decision.author,
-      to: peer.name,
-      recipient: peer.name,
-      conversationId: `decision-${decision.id}`,
-      replyTo: decision.sourceMessageId,
-      hop: DECISION_MESSAGE_HOP,
-      body: `Pinned owner decision: ${decision.topic}
-
-${decision.text}
-
-Call decisions to look up current decisions or their history.`,
-      createdAt: this.now(),
-      readAt: null
-    };
-    return this.store.decisions.enqueue(decision, this.decisionSessionKey(peer), message, () => this.store.insert(message)) ? message : null;
-  }
-  queueCurrentDecisions(peer) {
-    if (peer.jobAgent || !peer.sessionId) return [];
-    return this.store.decisions.list().filter((d) => decisionApplies(d, peer)).flatMap((d) => {
-      const message = this.queueDecision(d, peer);
-      return message ? [message] : [];
-    });
-  }
-  checkAuth(protocol, token) {
-    if (protocol !== PROTOCOL_VERSION) {
-      throw new BridgeError("protocol_mismatch", `broker speaks protocol ${PROTOCOL_VERSION}, client ${protocol}`, {
-        brokerProtocol: PROTOCOL_VERSION
-      });
-    }
-    if (typeof token !== "string" || !tokensEqual(token, this.token)) {
-      this.log.warn("rejected connection with a wrong or missing token");
-      throw new BridgeError("unauthorized", "wrong agent-bridge token");
-    }
-  }
-  onHello(conn, args) {
-    this.checkAuth(args.protocol, args.token);
-    conn.authed = true;
-    const p = args.peer;
-    if (!p || !PEER_NAME_PATTERN.test(p.name ?? "") || !AGENT_KINDS.includes(p.agent)) {
-      throw new BridgeError("bad_request", "invalid peer info");
-    }
-    if (conn.peer) throw new BridgeError("bad_request", "already registered");
-    const name = this.uniqueName(p.name);
-    const peer = {
-      id: String(p.id),
-      name,
-      agent: p.agent,
-      cwd: String(p.cwd ?? ""),
-      pid: Number(p.pid),
-      agentPid: p.agentPid ?? null,
-      sessionId: p.sessionId ?? null,
-      startedAt: Number(p.startedAt) || this.now(),
-      autoWake: Boolean(p.autoWake),
-      wakeOnDirect: Boolean(p.wakeOnDirect),
-      wakeAvailable: Boolean(p.wakeAvailable),
-      wakeMaxHops: typeof p.wakeMaxHops === "number" ? p.wakeMaxHops : void 0,
-      activity: p.activity === "busy" || p.activity === "idle" ? p.activity : null,
-      version: typeof p.version === "string" ? p.version.slice(0, 32) : void 0,
-      ...p.jobAgent && AGENT_KINDS.includes(p.jobAgent) ? { jobAgent: p.jobAgent } : {},
-      ...p.jobAgent && typeof p.jobOwner === "string" && p.jobOwner ? {
-        jobOwner: p.jobOwner,
-        jobParent: typeof p.jobParent === "string" ? p.jobParent : void 0,
-        jobTitle: typeof p.jobTitle === "string" ? p.jobTitle : void 0,
-        jobSendTo: Array.isArray(p.jobSendTo) ? p.jobSendTo.filter(isJobSendTarget).slice(0, MAX_JOB_SEND_TARGETS) : []
-      } : {}
-    };
-    conn.peer = peer;
-    if (peer.sessionId) this.replaceStale(conn, peer);
-    this.expireStaleQueue(peer.name);
-    let claimed = 0;
-    if (!peer.jobAgent) {
-      this.expireStaleQueue(agentQueueKey(peer.agent));
-      claimed = this.store.claim(agentQueueKey(peer.agent), peer.name);
-    }
-    this.log.info("peer joined", { name, agent: peer.agent, jobAgent: peer.jobAgent, cwd: peer.cwd, claimed });
-    if (!peer.jobAgent) this.broadcastEvent("peer_joined", peer, conn);
-    setImmediate(() => {
-      this.queueCurrentDecisions(peer);
-      for (const m of this.unreadMail(peer.name, PENDING_MAX_LIMIT)) this.emit(conn, "message", m);
-    });
-    return { brokerPid: process.pid, name: peer.name, peers: this.livePeers().filter((x) => x.id !== peer.id) };
-  }
-  /**
-   * Mail sent to a "-N" stand-in of this peer's name (a reload ran the session under it briefly) moves to the
-   * peer. Only names of that form, and only while no one holds them: another session's mail stays its own.
-   */
-  onClaimMail(conn, args) {
-    const peer = this.requirePeer(conn);
-    const base = peer.name.replace(/-\d+$/, "");
-    let moved = 0;
-    for (const name of new Set(args.names ?? [])) {
-      const standIn = name !== peer.name && (name === base || name.startsWith(`${base}-`) && /^\d+$/.test(name.slice(base.length + 1)));
-      if (!standIn || this.connByName(name)) continue;
-      moved += this.store.claim(name, peer.name);
-    }
-    if (moved) {
-      this.log.info("mail of a stand-in name moved to its session", { to: peer.name, moved });
-      setImmediate(() => {
-        for (const m of this.unreadMail(peer.name, PENDING_MAX_LIMIT)) this.emit(conn, "message", m);
-      });
-    }
-    return { moved };
-  }
-  onUpdatePeer(conn, args) {
-    const peer = this.requirePeer(conn);
-    if (peer.jobOwner) {
-      if (typeof args.jobParent === "string") peer.jobParent = args.jobParent;
-      if (typeof args.jobTitle === "string") peer.jobTitle = args.jobTitle;
-    }
-    if (args.sessionId !== void 0) {
-      const previousKey = this.decisionSessionKey(peer);
-      peer.sessionId = args.sessionId;
-      this.store.decisions.linkSession(previousKey, this.decisionSessionKey(peer));
-      if (peer.sessionId) this.replaceStale(conn, peer);
-    }
-    if (args.autoWake !== void 0) peer.autoWake = Boolean(args.autoWake);
-    if (args.wakeOnDirect !== void 0) peer.wakeOnDirect = Boolean(args.wakeOnDirect);
-    if (args.wakeAvailable !== void 0) peer.wakeAvailable = Boolean(args.wakeAvailable);
-    if (typeof args.wakeMaxHops === "number") peer.wakeMaxHops = args.wakeMaxHops;
-    if (typeof args.cwd === "string" && args.cwd) peer.cwd = args.cwd;
-    if (args.activity === "busy" || args.activity === "idle") peer.activity = args.activity;
-    if (typeof args.name === "string" && args.name !== peer.name) {
-      if (!PEER_NAME_PATTERN.test(args.name)) throw new BridgeError("bad_request", "invalid peer name");
-      const old = peer.name;
-      peer.name = this.uniqueName(args.name);
-      this.log.info("peer renamed", { from: old, to: peer.name });
-      this.expireStaleQueue(peer.name);
-      setImmediate(() => {
-        for (const m of this.unreadMail(peer.name, PENDING_MAX_LIMIT)) this.emit(conn, "message", m);
-      });
-    }
-    this.log.debug("peer updated", { name: peer.name, sessionId: peer.sessionId, autoWake: peer.autoWake, cwd: peer.cwd });
-    for (const message of this.queueCurrentDecisions(peer)) this.emit(conn, "message", message);
-    return peer;
-  }
-  /**
-   * One agent session, two servers: Claude Code's /reload-plugins (or a restart of the MCP server) starts a new
-   * agent-bridge server while the old one may still be connected. The old one would keep the name and receive
-   * mail the session no longer sees. So the newest server of a session wins: the old connection is told it was
-   * replaced (it stops instead of reconnecting) and the new one takes over its name and waiting mail.
-   */
-  replaceStale(conn, peer) {
-    for (const c of [...this.conns]) {
-      const old = c.peer;
-      if (c === conn || !old || old.agent !== peer.agent || old.sessionId !== peer.sessionId) continue;
-      this.log.info("session connected again from a new server; replacing the old connection", { name: old.name, by: peer.name, sessionId: peer.sessionId });
-      this.emit(c, "replaced", { by: peer.name });
-      this.conns.delete(c);
-      c.peer = null;
-      this.broadcastEvent("peer_left", old, c);
-      c.socket.end();
-      if (peer.name !== old.name && !this.connByName(old.name)) {
-        const oldName = old.name;
-        if (peer.name.startsWith(`${oldName}-`) && /^\d+$/.test(peer.name.slice(oldName.length + 1))) peer.name = oldName;
-        setImmediate(() => {
-          this.store.claim(oldName, peer.name);
-          for (const m of this.unreadMail(peer.name, PENDING_MAX_LIMIT)) this.emit(conn, "message", m);
-        });
-      }
-    }
-  }
-  /**
-   * Before a peer takes over queued mail. Names are derived from the project folder and reused by every
-   * later session there, so a name alone does not identify the session that mail was meant for. Mail that
-   * waited longer than QUEUED_MAIL_MAX_AGE_MS most likely belongs to a session that is gone; recent mail
-   * still reaches a session that restarted or reconnected after a broker hand-over.
-   */
-  expireStaleQueue(key) {
-    try {
-      const maxAge = retentionLimit("AGENT_BRIDGE_QUEUED_MAIL_MAX_AGE_MS", QUEUED_MAIL_MAX_AGE_MS);
-      if (maxAge) this.store.expireQueued(key, this.now() - maxAge);
-    } catch (err) {
-      this.log.warn("expiring queued mail failed", { key, err });
-    }
-  }
-  /** Turns a sender-supplied target into live connections and/or offline queue keys. */
-  resolveTargets(to, sender) {
-    const all = [...this.conns].filter((c) => c.peer && c.peer.id !== sender.id);
-    const others = all.filter((c) => !c.peer.jobAgent);
-    if (to === BROADCAST) {
-      if (others.length === 0) throw new BridgeError("unknown_target", "no other peers are online");
-      return { live: others, queued: [] };
-    }
-    const exact = all.find((c) => c.peer.id === to || c.peer.name === to);
-    if (exact) return { live: [exact], queued: [] };
-    if (to === sender.name || to === sender.id) throw new BridgeError("bad_request", "cannot send a message to yourself");
-    if (AGENT_KINDS.includes(to)) {
-      const ofKind = others.filter((c) => c.peer.agent === to);
-      if (ofKind.length === 1) return { live: ofKind, queued: [] };
-      if (ofKind.length > 1) {
-        throw new BridgeError("ambiguous_target", `several ${to} peers are online`, {
-          candidates: ofKind.map((c) => c.peer.name)
-        });
-      }
-      return { live: [], queued: [agentQueueKey(to)] };
-    }
-    if (!PEER_NAME_PATTERN.test(to)) throw new BridgeError("unknown_target", `invalid target: ${to}`);
-    return { live: [], queued: [to] };
-  }
-  /** Results of recent sends by dedupe key (see SendArgs.dedupeKey), so a retry is not sent twice. */
-  sentByKey = /* @__PURE__ */ new Map();
-  sendingByKey = /* @__PURE__ */ new Map();
-  async onSend(conn, args) {
-    const sender = this.requirePeer(conn);
-    const key = typeof args.dedupeKey === "string" && args.dedupeKey ? `${sender.id}:${args.dedupeKey}` : null;
-    const seen = key ? this.sentByKey.get(key) : void 0;
-    if (seen) return seen.result;
-    const inFlight = key ? this.sendingByKey.get(key) : void 0;
-    if (inFlight) return inFlight;
-    const sending = this.routeSend(conn, sender, args);
-    if (key) this.sendingByKey.set(key, sending);
-    let result;
-    try {
-      result = await sending;
-    } finally {
-      if (key) this.sendingByKey.delete(key);
-    }
-    if (key) {
-      const now = this.now();
-      this.sentByKey.set(key, { at: now, result });
-      for (const [k, v] of this.sentByKey) {
-        if (now - v.at < DEDUPE_KEEP_MS && this.sentByKey.size <= DEDUPE_MAX) break;
-        this.sentByKey.delete(k);
-      }
-    }
-    return result;
-  }
-  async routeSend(conn, sender, args) {
-    const body = typeof args.body === "string" ? args.body : "";
-    if (!body.trim()) throw new BridgeError("bad_request", "message body is empty");
-    if (body.length > MAX_BODY_CHARS) throw new BridgeError("too_large", `message body exceeds ${MAX_BODY_CHARS} characters`);
-    const to = String(args.to ?? "").trim();
-    if (!to) throw new BridgeError("bad_request", "missing target");
-    let conversationId = args.conversationId?.trim() || "";
-    let hop = 0;
-    const replyTo = args.replyTo?.trim() || null;
-    if (replyTo) {
-      const parent2 = this.store.byId(replyTo);
-      if (parent2) {
-        hop = parent2.hop + 1;
-        conversationId ||= parent2.conversationId;
-      } else {
-        this.log.debug("replyTo refers to an unknown message", { replyTo });
-      }
-    }
-    conversationId ||= randomUUID8();
-    const id = randomUUID8();
-    const createdAt = this.now();
-    const base = {
-      id,
-      // A job runner speaks for its job: from the subagent's agent, like a job run inside the session's server.
-      from: { id: sender.id, name: sender.name, agent: sender.jobAgent ?? sender.agent },
-      to,
-      conversationId,
-      replyTo,
-      hop,
-      body,
-      createdAt,
-      readAt: null
-    };
-    if (to.includes("/")) {
-      const result = await this.requireNetwork().send({ ...base, recipient: to });
-      for (const message of result.messages) this.store.insert(message);
-      return result;
-    }
-    const { live, queued } = this.resolveTargets(to, sender);
-    if (conversationId.startsWith(SIBLING_CONVERSATION_PREFIX) && (queued.some((name) => !sender.jobAgent || !this.storedSiblings(sender).some((s) => s.name === name)) || live.some((c) => c.peer.jobAgent && (!sender.jobAgent || !sender.jobOwner || this.jobSupervisor(c.peer) !== this.jobSupervisor(sender))))) {
-      throw new BridgeError("unauthorized", "sibling chat is restricted to jobs of the same supervisor");
-    }
-    const messages = [];
-    for (const c of live) messages.push({ ...base, recipient: c.peer.name });
-    for (const key of queued) messages.push({ ...base, recipient: key });
-    for (const m of messages) this.store.insert(m);
-    live.forEach((c, i) => this.emit(c, "message", messages[i]));
-    this.log.info("message routed", {
-      id,
-      from: sender.name,
-      to,
-      hop,
-      deliveredTo: live.map((c) => c.peer.name),
-      queuedFor: queued
-    });
-    return { messages, deliveredTo: live.map((c) => c.peer.name), queuedFor: queued, recipientStates: live.map((c) => ({ name: c.peer.name, activity: c.peer.activity, autoWake: c.peer.autoWake, wakeOnDirect: c.peer.wakeOnDirect, wakeAvailable: c.peer.wakeAvailable, wakeMaxHops: c.peer.wakeMaxHops })) };
-  }
-  unreadMail(recipient, limit) {
-    const messages = this.store.unread(recipient, limit);
-    if (!this.jobsPath || !messages.some((m) => m.conversationId.endsWith(SIBLING_NOTE_SUFFIX))) return messages;
-    let jobs;
-    try {
-      const value = JSON.parse(readFileSync8(this.jobsPath, "utf8"));
-      jobs = Array.isArray(value) ? value : Array.isArray(value?.jobs) ? value.jobs : [];
-    } catch {
-      return messages;
-    }
-    const finished = new Set(jobs.filter((j) => j.status && j.status !== "running").map((j) => `job:${j.id}`));
-    const stale = messages.filter((m) => m.conversationId.endsWith(SIBLING_NOTE_SUFFIX) && finished.has(m.from.id));
-    this.store.markRead(recipient, stale.map((m) => m.id), this.now());
-    return messages.filter((m) => !stale.includes(m));
-  }
-  remoteReceipt(id, sender) {
-    const message = this.store.byId(id);
-    if (!message || message.from.id !== sender) throw new BridgeError("unauthorized", "receipt is only available to the sender");
-    return this.store.receipts(id)[0]?.readAt ?? null;
-  }
-  async messageReceipt(conn, id) {
-    const sender = this.requirePeer(conn);
-    const message = this.store.byId(external_exports.uuid().parse(id));
-    if (!message || message.from.name !== sender.name) throw new BridgeError("unauthorized", "receipt is only available to the sender");
-    const receipts = this.store.receipts(id);
-    return Promise.all(receipts.map(async (r) => r.recipient.includes("/") ? { ...r, readAt: await this.requireNetwork().receipt(r.recipient, id, message.from.id) } : r));
-  }
-  requireNetwork() {
-    if (!this.network) throw new BridgeError("bad_request", "networking is disabled or unavailable; enable it and restart the broker");
-    return this.network;
-  }
-  async onSendFiles(conn, args) {
-    const sender = this.requirePeer(conn);
-    const parsed = external_exports.object({ to: external_exports.string().min(1), paths: external_exports.array(external_exports.string().min(1)).min(1).max(MAX_TRANSFER_ENTRIES) }).parse(args);
-    const remote = parsed.to.includes("/");
-    const target = remote ? this.requireNetwork().fileTarget(parsed.to) : parsed.to;
-    const transfer = collectTransfer(parsed.paths, sender.cwd, target, { id: sender.id, name: sender.name, agent: sender.jobAgent ?? sender.agent });
-    if (remote) return this.requireNetwork().sendFiles(parsed.to, transfer);
-    if (!this.connByName(target)) throw new BridgeError("unknown_target", "file recipient must be online");
-    const home = this.networking?.home;
-    if (!home) throw new BridgeError("bad_request", "file inbox home is unavailable");
-    const result = receiveTransfer(home, transfer);
-    this.receiveRemote({ id: transfer.id, from: transfer.from, to: target, recipient: target, conversationId: transfer.id, replyTo: null, hop: 0, body: `Received ${result.files} files (${result.bytes} bytes) in ${result.inbox}`, createdAt: this.now(), readAt: null });
-    return result;
-  }
-  receiveRemote(message) {
-    const target = this.connByName(message.recipient);
-    const existing = this.store.byId(message.id);
-    if (existing) {
-      if (existing.from.id !== message.from.id || existing.recipient !== message.recipient || existing.body !== message.body || existing.conversationId !== message.conversationId || existing.replyTo !== message.replyTo || existing.hop !== message.hop) throw new BridgeError("bad_request", "message id already used");
-      return { delivered: Boolean(target) };
-    }
-    this.store.insert(message);
-    if (target) this.emit(target, "message", message);
-    return { delivered: Boolean(target) };
-  }
-};
-
-// src/core/client.ts
-import { EventEmitter } from "node:events";
-import { connect as connect2 } from "node:net";
-var BridgeClient = class _BridgeClient extends EventEmitter {
-  constructor(socket, log) {
-    super();
-    this.socket = socket;
-    this.log = log;
-    socket.setEncoding("utf8");
-    const decoder = new FrameDecoder(MAX_FRAME_BYTES);
-    socket.on("data", (chunk) => {
-      let frames;
-      try {
-        frames = decoder.push(chunk);
-      } catch (err) {
-        this.log.warn("undecodable frame from broker; disconnecting", { err });
-        socket.destroy();
-        return;
-      }
-      for (const f of frames) {
-        if (f.t === "res") this.settle(f);
-        else if (f.t === "evt") this.emit("event", f.ev, f.data);
-      }
-    });
-    socket.on("error", (err) => this.log.debug("client socket error", { err: err.message }));
-    socket.on("close", () => {
-      this.closed = true;
-      for (const [, p] of this.pending) {
-        clearTimeout(p.timer);
-        p.reject(new Error("connection to broker closed"));
-      }
-      this.pending.clear();
-      this.emit("close");
-    });
-  }
-  socket;
-  log;
-  nextId = 1;
-  pending = /* @__PURE__ */ new Map();
-  closed = false;
-  /** Connect to an existing broker. Rejects with the socket error (ENOENT/ECONNREFUSED if nobody listens). */
-  static connect(pipePath, log, timeoutMs = CONNECT_TIMEOUT_MS) {
-    return new Promise((resolve10, reject) => {
-      const socket = connect2(pipePath);
-      const timer = setTimeout(() => {
-        socket.destroy();
-        reject(Object.assign(new Error("timed out connecting to broker"), { code: "ETIMEDOUT" }));
-      }, timeoutMs);
-      socket.once("connect", () => {
-        clearTimeout(timer);
-        socket.removeAllListeners("error");
-        resolve10(new _BridgeClient(socket, log));
-      });
-      socket.once("error", (err) => {
-        clearTimeout(timer);
-        reject(err);
-      });
-    });
-  }
-  get isClosed() {
-    return this.closed;
-  }
-  request(op, args, timeoutMs = REQUEST_TIMEOUT_MS) {
-    if (this.closed) return Promise.reject(new Error("connection to broker closed"));
-    const id = this.nextId++;
-    return new Promise((resolve10, reject) => {
-      const timer = setTimeout(() => {
-        this.pending.delete(id);
-        reject(new Error(`broker request timed out: ${op}`));
-      }, timeoutMs);
-      this.pending.set(id, { resolve: resolve10, reject, timer });
-      this.socket.write(encodeFrame({ t: "req", id, op, args }));
-    });
-  }
-  close() {
-    this.socket.end();
-    this.socket.destroy();
-  }
-  settle(f) {
-    const p = this.pending.get(f.id);
-    if (!p) return;
-    this.pending.delete(f.id);
-    clearTimeout(p.timer);
-    if (f.ok) p.resolve(f.result);
-    else p.reject(new BridgeError(f.error.code, f.error.message, f.error.details));
-  }
-};
-
-// src/core/read-journal.ts
-import { createHash as createHash3 } from "node:crypto";
-import { appendFileSync as appendFileSync2, mkdirSync as mkdirSync8, readFileSync as readFileSync9 } from "node:fs";
+// src/core/runfeed.ts
+import { appendFileSync as appendFileSync2, mkdirSync as mkdirSync8, readFileSync as readFileSync8, readdirSync as readdirSync4, statSync as statSync2 } from "node:fs";
 import { join as join12 } from "node:path";
-var ReadJournal = class {
-  dir;
-  constructor(home) {
-    this.dir = join12(home, "read-state");
-  }
-  path(identity) {
-    return join12(this.dir, `${createHash3("sha256").update(identity).digest("hex")}.jsonl`);
-  }
-  read(identity) {
-    let raw;
-    try {
-      raw = readFileSync9(this.path(identity), "utf8");
-    } catch (err) {
-      if (err.code === "ENOENT") return [];
-      throw err;
+var RUNS_DIR_NAME = "runs";
+var HEARTBEAT_MS = 6e4;
+var KEEP_RUN_LOGS = 50;
+var STALE_RUN_MS = 15e4;
+function runMetaPath(logPath) {
+  return logPath.replace(/\.log$/, ".json");
+}
+var CONTINUATION = "         ";
+function stamp(t2) {
+  return new Date(t2).toTimeString().slice(0, 8);
+}
+function pruneOldLogs(dir) {
+  try {
+    const limit = retentionLimit("AGENT_BRIDGE_RUN_LOG_LIMIT", KEEP_RUN_LOGS);
+    if (!limit) return;
+    const files = readdirSync4(dir).filter((f) => f.endsWith(".log")).map((f) => ({ f, t: statSync2(join12(dir, f)).mtimeMs })).sort((a, b) => b.t - a.t);
+    for (const { f } of files.slice(limit)) {
+      const path = join12(dir, f);
+      if (Date.now() - statSync2(path).mtimeMs <= STALE_RUN_MS && !/^\d\d:\d\d:\d\d finished after \d+s · /m.test(readFileSync8(path, "utf8"))) continue;
+      archiveFile(path);
+      archiveFile(join12(dir, runMetaPath(f)));
     }
-    return raw.split("\n").flatMap((line) => {
-      if (!line) return [];
-      try {
-        const ids = JSON.parse(line);
-        return Array.isArray(ids) ? ids.filter((id) => typeof id === "string") : [];
-      } catch {
-        return [];
-      }
-    });
+  } catch (err) {
+    process.stderr.write(`could not archive run logs: ${String(err)}
+`);
   }
-  append(identity, ids) {
-    mkdirSync8(this.dir, { recursive: true, mode: 448 });
-    appendFileSync2(this.path(identity), `
-${JSON.stringify(ids)}
-`, { mode: 384, flush: true });
-  }
-};
+}
+function startRunFeed(opts) {
+  const now = opts.now ?? Date.now;
+  const dir = join12(opts.home, RUNS_DIR_NAME);
+  mkdirSync8(dir, { recursive: true });
+  const logPath = join12(dir, `${new Date(now()).toISOString().slice(0, 19).replace(/[:T]/g, "-")}-${opts.name}.log`);
+  const write = (line) => {
+    const [first, ...rest] = line.replace(/\r/g, "").split("\n");
+    const body = [first, ...rest.map((l) => `${CONTINUATION}${l}`)].join("\n");
+    try {
+      appendFileSync2(logPath, `${stamp(now())} ${body}
+`);
+    } catch {
+    }
+  };
+  let meta3 = { ...opts.meta };
+  const writeMeta = () => {
+    try {
+      const path = runMetaPath(logPath);
+      const previous = readJsonStore(path);
+      writeJsonStore(path, mergeStoreFields(isRecord(previous) ? previous : {}, { ...meta3 }), previous);
+    } catch (err) {
+      process.stderr.write(`could not save run metadata: ${String(err)}
+`);
+    }
+  };
+  writeMeta();
+  write(opts.header);
+  pruneOldLogs(dir);
+  const started = now();
+  let lastStep = "starting";
+  let lastAt = started;
+  const emit = (m) => {
+    write(m);
+    opts.forward?.(m);
+  };
+  emit(`started \xB7 follow live: agent-bridge watch ${opts.name}`);
+  const timer = setInterval(() => {
+    const quietMin = Math.floor((now() - lastAt) / 6e4);
+    if (quietMin >= 1) emit(`still working, no new step for ${quietMin}m (last: ${lastStep})`);
+  }, opts.heartbeatMs ?? HEARTBEAT_MS);
+  timer.unref();
+  return {
+    logPath,
+    report: (m, full) => {
+      lastStep = m.split(" \xB7 ").pop() ?? m;
+      lastAt = now();
+      write(full ?? m);
+      opts.forward?.(m);
+    },
+    end: (summary, answer) => {
+      clearInterval(timer);
+      if (answer?.trim()) write(`answer: ${answer.trim()}`);
+      write(`finished after ${Math.round((now() - started) / 1e3)}s \xB7 ${summary}`);
+    },
+    meta: (patch) => {
+      meta3 = { ...meta3, ...patch };
+      writeMeta();
+    }
+  };
+}
 
-// src/core/job-control.ts
-import { randomUUID as randomUUID9 } from "node:crypto";
-var DASHBOARD_JOB_CONVERSATION = "jobctl-dashboard";
-var CONTROL_TIMEOUT_MS = 1e4;
-var JobControlError = class extends Error {
-  constructor(message, reason) {
-    super(message);
-    this.reason = reason;
+// src/core/worktree.ts
+import { createHash as createHash3 } from "node:crypto";
+import { existsSync as existsSync7, mkdirSync as mkdirSync9, readFileSync as readFileSync9, realpathSync as realpathSync3, rmSync as rmSync4 } from "node:fs";
+import { basename as basename4, isAbsolute as isAbsolute2, join as join13, relative, resolve as resolve4, toNamespacedPath } from "node:path";
+var GIT = "git";
+var LONG_PATH_ARGS = ["-c", "core.longpaths=true"];
+var REMOVE_RETRIES = 3;
+var GIT_TIMEOUT_MS = 18e4;
+var WORKTREE_ADD_TIMEOUT_MS = 6e5;
+var BRANCH_PREFIX = "agent-bridge/";
+var FALLBACK_COMMIT_IDENTITY = { "user.name": "agent-bridge", "user.email": "agent-bridge@localhost" };
+var MAX_DIFFSTAT_CHARS = 4e3;
+function trustArgs(...dirs) {
+  return dirs.flatMap((d) => ["-c", `safe.directory=${resolve4(d).replace(/\\/g, "/")}`]);
+}
+async function git(args, cwd, log, timeoutMs = GIT_TIMEOUT_MS) {
+  const what = `git ${args.filter((a, i) => !a.startsWith("-") && args[i - 1] !== "-c").slice(0, 2).join(" ")}`;
+  const res = await runProcess({ bin: GIT, args: [...LONG_PATH_ARGS, ...args], stdin: "", cwd, timeoutMs, env: process.env, log, what });
+  if (res.code !== 0) throw new Error(`${what} failed: ${(res.stderr || res.stdout).trim().slice(0, 500)}`);
+  return res.stdout.trimEnd();
+}
+async function createWorktree(opts) {
+  let repoRoot;
+  try {
+    repoRoot = await git(["rev-parse", "--show-toplevel"], opts.cwd, opts.log);
+  } catch {
+    throw new Error(`worktree isolation needs a git repository, but ${opts.cwd} is not inside one`);
   }
-  reason;
-};
-async function controlDashboardJob(node2, owner, job, command) {
-  if (!(await node2.peers()).some((p) => p.name === owner)) throw new JobControlError("The owning session is not connected. Reopen it to continue this subagent.", "offline");
-  const requestId = randomUUID9();
-  let receive;
-  let timer;
-  const reply = new Promise((resolve10, reject) => {
-    receive = (m) => {
-      if (m.from.name !== owner) return;
-      try {
-        const result = JSON.parse(m.body);
-        if (result.type === "result" && result.requestId === requestId && typeof result.text === "string" && typeof result.outcome === "string" && typeof result.isError === "boolean") resolve10(result);
-      } catch {
-      }
-    };
-    node2.on("job_control", receive);
-    timer = setTimeout(() => reject(new JobControlError("The owning session did not confirm delivery. Check its chat before sending again.", "timeout")), CONTROL_TIMEOUT_MS);
-  });
-  reply.catch(() => {
+  const base = await git(["rev-parse", "HEAD"], repoRoot, opts.log);
+  const baseBranch = await git(["symbolic-ref", "-q", "--short", "HEAD"], repoRoot, opts.log).catch(() => "") || null;
+  let branch = `${BRANCH_PREFIX}${opts.jobId}`;
+  const dir = join13(opts.home, "worktrees");
+  mkdirSync9(dir, { recursive: true });
+  let path = join13(dir, `${basename4(repoRoot)}-${opts.jobId}`);
+  try {
+    await git(["worktree", "add", "-b", branch, path, base], repoRoot, opts.log, WORKTREE_ADD_TIMEOUT_MS);
+  } catch (err) {
+    if (!(err instanceof DelegateError && err.kind === "timeout")) {
+      await removeWorktree(repoRoot, path, branch, opts.log);
+      throw new Error(`could not create a worktree for the subagent: ${err.message}`);
+    }
+    opts.log.warn("git worktree add timed out; retrying once", { path });
+    await removeWorktree(repoRoot, path, branch, opts.log);
+    branch = `${branch}-r2`;
+    path = `${path}-r2`;
+    try {
+      await git(["worktree", "add", "-b", branch, path, base], repoRoot, opts.log, WORKTREE_ADD_TIMEOUT_MS);
+    } catch (again) {
+      await removeWorktree(repoRoot, path, branch, opts.log);
+      throw new Error(`could not create a worktree for the subagent (tried twice): ${again.message}`);
+    }
+  }
+  await unlockWorktree(repoRoot, path, opts.log);
+  const rel = relative(repoRoot, opts.cwd);
+  const cwd = rel && !rel.startsWith("..") && !isAbsolute2(rel) ? join13(path, rel) : path;
+  opts.log.info("worktree created", { repoRoot, path, branch });
+  return { repoRoot, path, cwd, branch, base, baseBranch };
+}
+async function unlockWorktree(repoRoot, path, log) {
+  await git([...trustArgs(path), "worktree", "unlock", path], repoRoot, log).catch(() => "");
+}
+async function removeWorktree(repoRoot, path, branch, log) {
+  await git([...trustArgs(path), "worktree", "remove", "--force", "--force", path], repoRoot, log).catch(() => {
   });
   try {
-    await node2.send({ to: owner, body: JSON.stringify({ ...command, requestId, job }), conversationId: DASHBOARD_JOB_CONVERSATION }, { quiet: true });
-    return await reply;
-  } finally {
-    clearTimeout(timer);
-    node2.off("job_control", receive);
+    removeWorktreeDirectory(path);
+  } catch {
   }
+  await git(["worktree", "prune"], repoRoot, log).catch(() => {
+  });
+  await git(["branch", "-D", branch], repoRoot, log).catch(() => {
+  });
 }
-
-// src/core/node.ts
-var QUESTION_ID_MEMORY = 2e3;
-var jitter = () => ELECTION_RETRY_MIN_MS + Math.floor(Math.random() * (ELECTION_RETRY_MAX_MS - ELECTION_RETRY_MIN_MS));
-var sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-function errCode(err) {
-  return String(err?.code ?? "");
+function removeWorktreeDirectory(path) {
+  rmSync4(toNamespacedPath(resolve4(path)), { recursive: true, force: true, maxRetries: REMOVE_RETRIES });
 }
-var BridgeNode = class extends EventEmitter2 {
-  constructor(opts) {
-    super();
-    this.opts = opts;
-    this.id = opts.id ?? randomUUID10();
-    this.currentName = opts.name;
-    this.currentCwd = opts.cwd;
-    this.autoWake = opts.autoWake;
-    this.log = opts.log.child("node");
-    this.readJournal = new ReadJournal(dirname5(opts.dbPath));
-    this.restoreReadState(`name:${this.currentName}`);
-  }
-  opts;
-  id;
-  client = null;
-  broker = null;
-  stopping = false;
-  /** The bridge gave this session to another server of it (see reclaim). */
-  replaced = false;
-  electing = null;
-  reconnectTimer = null;
-  reconnectDelay = RECONNECT_BACKOFF_MIN_MS;
-  currentName;
-  inbox = /* @__PURE__ */ new Map();
-  readIds = /* @__PURE__ */ new Set();
-  readJournal;
-  unflushedAcks = /* @__PURE__ */ new Set();
-  sessionId = null;
-  autoWake;
-  wakeOnDirect = false;
-  wakeAvailable = false;
-  wakeMaxHops = DEFAULT_MAX_HOPS;
-  currentCwd;
-  lastSent = 0;
-  /** Ids of messages this peer sent as new questions (not replies); replies to them are awaited. */
-  asked = /* @__PURE__ */ new Set();
-  activity = null;
-  log;
-  get name() {
-    return this.currentName;
-  }
-  get isBroker() {
-    return this.broker !== null;
-  }
-  get isConnected() {
-    return this.client !== null && !this.client.isClosed;
-  }
-  get autoWakeEnabled() {
-    return this.autoWake;
-  }
-  async start() {
-    await this.ensureConnected();
-  }
-  /** Take over unread mail sent to "-N" stand-in names of this session (see the broker's claimMail). */
-  async claimMail(names) {
-    if (!names.length || !this.isConnected) return 0;
-    return (await this.client.request("claimMail", { names })).moved;
-  }
-  get wasReplaced() {
-    return this.replaced;
-  }
-  /**
-   * The session still calls this server (hooks, tools) after the bridge replaced it: Claude Code can start a
-   * stale server of an older plugin version next to the current one on /reload-plugins, and whichever connects
-   * last wins. The server the session really uses takes its place back; the stale one, never called, stays out.
-   */
-  async reclaim() {
-    if (!this.replaced) return;
-    this.replaced = false;
-    this.stopping = false;
-    this.log.info("the session still uses this server: taking its place back on the bridge");
-    await this.ensureConnected();
-    this.emit("reclaimed");
-  }
-  async stop() {
-    this.stopping = true;
-    this.emit("stopped");
-    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
-    this.reconnectTimer = null;
-    this.client?.close();
-    this.client = null;
-    if (this.broker) await this.broker.close();
-    this.broker = null;
-    this.log.info("bridge node stopped");
-  }
-  /**
-   * Connects (electing a broker if needed). Concurrent callers share one attempt. When it fails, the
-   * node keeps retrying in the background (see scheduleReconnect) instead of staying disconnected.
-   */
-  ensureConnected() {
-    if (this.isConnected) return Promise.resolve();
-    this.electing ??= this.elect().catch((err) => {
-      this.scheduleReconnect(this.nextBackoff());
-      throw err;
-    }).finally(() => {
-      this.electing = null;
-    });
-    return this.electing;
-  }
-  /** Doubling delay for background retries, capped; reset once connected. */
-  nextBackoff() {
-    const delay3 = this.reconnectDelay;
-    this.reconnectDelay = Math.min(delay3 * 2, RECONNECT_BACKOFF_MAX_MS);
-    return delay3;
-  }
-  /**
-   * Retry the election later until connected or stopped. Also after "unauthorized" / "protocol_mismatch":
-   * the incompatible broker may exit (e.g. after an update) and this node then takes over.
-   */
-  scheduleReconnect(delayMs) {
-    if (this.stopping || this.reconnectTimer) return;
-    this.reconnectTimer = setTimeout(() => {
-      this.reconnectTimer = null;
-      if (this.stopping || this.isConnected) return;
-      this.ensureConnected().catch((err) => this.log.warn("re-election failed; retrying with backoff", { err: err.message }));
-    }, delayMs);
-    this.reconnectTimer.unref();
-  }
-  async elect() {
-    for (let attempt = 1; attempt <= ELECTION_MAX_ATTEMPTS && !this.stopping; attempt++) {
+var SUBJECT_CHARS = 72;
+function subagentCommitMessage(opts) {
+  const plain = (s) => s.replace(/[*_`#>]+/g, "").replace(/\s+/g, " ").trim();
+  const firstLine = (s) => s.split(/\r?\n/).map(plain).find((l) => l.length > 0) ?? "";
+  const clip2 = (s) => s.length > SUBJECT_CHARS ? `${s.slice(0, SUBJECT_CHARS - 1).trimEnd()}\u2026` : s;
+  const subject = clip2(firstLine(opts.answer) || firstLine(opts.task) || "subagent changes");
+  const email3 = { codex: "noreply@openai.com", claude: "noreply@anthropic.com", opencode: "noreply@opencode.ai" }[opts.agent] ?? "noreply@localhost";
+  const who = opts.model ? `${opts.model} via ${opts.agent}` : opts.agent;
+  return [
+    subject,
+    "",
+    `Committed by agent-bridge for ${opts.job ?? "a subagent"} (${who}).`,
+    `Task: ${clip2(firstLine(opts.task))}`,
+    "",
+    `Co-Authored-By: ${who} <${email3}>`
+  ].join("\n");
+}
+async function gitDirsOutside(cwd, log) {
+  try {
+    const [gitDir, common] = (await git(["rev-parse", "--path-format=absolute", "--git-dir", "--git-common-dir"], cwd, log)).split(/\r?\n/);
+    const real = (p) => {
       try {
-        const client = await BridgeClient.connect(this.opts.pipePath, this.log.child("client"));
-        await this.adopt(client);
-        return;
-      } catch (err) {
-        if (err instanceof BridgeError && (err.code === "unauthorized" || err.code === "protocol_mismatch")) {
-          this.log.error("broker refused this peer", { code: err.code, message: err.message });
-          throw err;
-        }
-        const code = errCode(err);
-        this.log.debug("connect attempt failed", { attempt, code, message: err.message });
-        if (code !== "ENOENT" && code !== "ECONNREFUSED") {
-          await sleep(jitter());
-          continue;
-        }
-      }
-      if (this.opts.canHostBroker !== false && await this.tryBecomeBroker()) continue;
-      await sleep(jitter());
-    }
-    throw new Error(`could not connect to or start the agent-bridge broker at ${this.opts.pipePath}`);
-  }
-  async tryBecomeBroker() {
-    if (this.broker) return true;
-    let store;
-    try {
-      store = new MessageStore(this.opts.dbPath, this.log.child("store"));
-    } catch (err) {
-      this.log.error("cannot open message store", { err, db: this.opts.dbPath });
-      throw err;
-    }
-    const broker = new Broker(this.opts.pipePath, store, this.log.child("broker"), this.opts.token, Date.now, join13(dirname5(this.opts.dbPath), JOBS_FILE), this.opts.network);
-    try {
-      await broker.listen();
-      this.broker = broker;
-      this.log.info("became broker", { pipe: this.opts.pipePath });
-      return true;
-    } catch (err) {
-      store.close();
-      const code = errCode(err);
-      if (code === "EADDRINUSE" && (this.opts.platform ?? process.platform) !== "win32") {
-        try {
-          await BridgeClient.connect(this.opts.pipePath, this.log).then((c) => c.close());
-          return false;
-        } catch (probeErr) {
-          if (errCode(probeErr) === "ECONNREFUSED") {
-            this.log.warn("removing stale broker socket", { pipe: this.opts.pipePath });
-            try {
-              unlinkSync(this.opts.pipePath);
-            } catch {
-            }
-          }
-        }
-      } else {
-        this.log.debug("could not become broker", { code });
-      }
-      return false;
-    }
-  }
-  async adopt(client) {
-    client.on("event", (ev, data) => this.onEvent(ev, data));
-    const hello = await client.request("hello", this.helloArgs()).catch((err) => {
-      client.close();
-      throw err;
-    });
-    this.afterHello(client, hello);
-  }
-  helloArgs() {
-    return {
-      protocol: PROTOCOL_VERSION,
-      token: this.opts.token,
-      peer: {
-        id: this.id,
-        name: this.currentName,
-        agent: this.opts.agent,
-        cwd: this.currentCwd,
-        pid: process.pid,
-        agentPid: process.ppid ?? null,
-        sessionId: this.sessionId,
-        startedAt: Date.now(),
-        autoWake: this.autoWake,
-        wakeOnDirect: this.wakeOnDirect,
-        wakeAvailable: this.wakeAvailable,
-        wakeMaxHops: this.wakeMaxHops,
-        activity: this.activity,
-        version: APP_VERSION,
-        ...this.opts.jobAgent ? { jobAgent: this.opts.jobAgent } : {},
-        ...this.opts.jobOwner ? { jobOwner: this.opts.jobOwner, jobParent: this.opts.jobParent, jobTitle: this.opts.jobTitle, jobSendTo: this.opts.jobSendTo } : {}
+        return realpathSync3.native(p);
+      } catch {
+        return resolve4(p);
       }
     };
+    const inside = (p) => {
+      const rel = relative(real(cwd), real(p));
+      return rel === "" || !rel.startsWith("..") && !isAbsolute2(rel);
+    };
+    return [...new Set([gitDir, common].filter((p) => Boolean(p) && !inside(p)))];
+  } catch {
+    return [];
   }
-  afterHello(client, hello) {
-    this.client = client;
-    this.currentName = hello.name;
-    this.restoreReadState(`name:${this.currentName}`);
-    this.reconnectDelay = RECONNECT_BACKOFF_MIN_MS;
-    client.once("close", () => this.onClose(client));
-    if (this.unflushedAcks.size > 0) {
-      const ids = [...this.unflushedAcks];
-      this.unflushedAcks.clear();
-      client.request("ack", { ids }).catch((err) => {
-        this.log.warn("flushing acks failed", { err: err.message });
-        ids.forEach((id) => this.unflushedAcks.add(id));
-      });
-    }
-    this.log.info("connected to broker", { name: hello.name, brokerPid: hello.brokerPid, isBroker: this.isBroker });
-    this.emit("connected", { name: hello.name, isBroker: this.isBroker });
+}
+async function reviewBase(wt, log, branch = wt.branch) {
+  const run = (args) => git(args, wt.repoRoot, log);
+  const tip = await run(["rev-parse", branch]);
+  const reflog = await git([...trustArgs(wt.path), "log", "-g", "--format=%H%x09%gs", "HEAD"], wt.path, log).catch(() => "");
+  const start = reflog.split(/\r?\n/).reverse().find((line) => line.endsWith(` to ${branch}`) && line.includes("	checkout: moving from "))?.split("	")[0];
+  const base = branch === wt.branch ? wt.base : start ?? wt.base;
+  const created = (await run(["log", "-g", "--format=%H%x09%gs", branch]).catch(() => "")).split(/\r?\n/).reverse().find((line) => line.startsWith(`${base}	branch: Created from `));
+  const source = branch !== wt.branch ? created?.split("	branch: Created from ")[1] : null;
+  const list = await run(["worktree", "list", "--porcelain"]).catch(() => "");
+  const main = /^branch refs\/heads\/(.+)$/m.exec(list.split(/\r?\n\r?\n/)[0] ?? "")?.[1];
+  const candidates = /* @__PURE__ */ new Set([base]);
+  for (const b of /* @__PURE__ */ new Set([source, wt.baseBranch, main])) {
+    if (!b || b === "HEAD" || b === branch) continue;
+    const mb = await run(["merge-base", b, branch]).catch(() => "");
+    if (mb && mb !== tip) candidates.add(mb);
   }
-  onClose(client) {
-    if (this.client !== client) return;
-    this.client = null;
-    if (this.stopping) return;
-    this.log.warn("lost connection to broker; re-electing");
-    this.emit("disconnected");
-    this.scheduleReconnect(jitter());
+  let best = base;
+  let fewest = Infinity;
+  for (const c of candidates) {
+    const n = Number(await run(["rev-list", "--count", `${c}..${branch}`]).catch(() => "NaN"));
+    if (n < fewest) [best, fewest] = [c, n];
   }
-  onEvent(ev, data) {
-    if (ev === "message") {
-      const m = data;
-      if (this.readIds.has(m.id)) {
-        this.acknowledge([m.id]);
-        return;
-      }
-      if (this.inbox.has(m.id)) return;
-      this.inbox.set(m.id, m);
-      if (m.conversationId === DASHBOARD_JOB_CONVERSATION) {
-        this.markRead([m.id]);
-        this.emit("job_control", m);
-        return;
-      }
-      this.log.debug("message received", { id: m.id, from: m.from.name, hop: m.hop });
-      this.emit("message", m);
-    } else if (ev === "peer_joined" || ev === "peer_left") {
-      this.emit(ev, data);
-    } else if (ev === "replaced") {
-      this.log.info("replaced by a newer server of this session; leaving the bridge", { by: data?.by });
-      this.replaced = true;
-      void this.stop();
-      this.emit("replaced");
-    }
-  }
-  async withClient(fn) {
-    await this.ensureConnected();
-    return fn(this.client);
-  }
-  /** quiet: not part of a conversation of this agent (no listen window, replies are not awaited), e.g. control messages to a job runner. */
-  send(args, opts = {}) {
-    return this.withClient(async (c) => {
-      const res = await c.request("send", args);
-      if (opts.quiet) return res;
-      this.lastSent = Date.now();
-      if (!args.replyTo) for (const m of res.messages) this.asked.add(m.id);
-      if (this.asked.size > QUESTION_ID_MEMORY) this.asked.delete(this.asked.values().next().value);
-      return res;
-    });
-  }
-  /** A reply to a question this peer asked (so the answer should reach the agent even when it is idle). */
-  isAwaitedReply(m) {
-    return m.replyTo !== null && this.asked.has(m.replyTo);
-  }
-  /** When this peer last sent a message (0 = never); marks it as taking part in a conversation. */
-  get lastSentAt() {
-    return this.lastSent;
-  }
-  messageReceipt(id) {
-    return this.withClient((c) => c.request("messageReceipt", { id }));
-  }
-  peers() {
-    return this.withClient((c) => c.request("peers", {}));
-  }
-  decide(args) {
-    return this.withClient((c) => c.request("decide", args));
-  }
-  decisions(args = {}) {
-    return this.withClient((c) => c.request("decisions", args));
-  }
-  siblings() {
-    return this.withClient((c) => c.request("siblings", {}));
-  }
-  sendSibling(args, maxHops) {
-    return this.withClient((c) => c.request("sendSibling", { ...args, maxHops }));
-  }
-  async updateJob(patch) {
-    Object.assign(this.opts, patch);
-    if (this.isConnected) await this.client.request("updatePeer", patch);
-  }
-  networkStatus() {
-    return this.withClient((c) => c.request("networkStatus", {}));
-  }
-  sendFiles(to, paths) {
-    return this.withClient((c) => c.request("sendFiles", { to, paths }));
-  }
-  /** Locally buffered unread messages, oldest first. */
-  unread() {
-    return [...this.inbox.values()].sort((a, b) => a.createdAt - b.createdAt);
-  }
-  /** Look up a message by id: one we still hold, or remembered as read. */
-  hasSeen(id) {
-    return this.inbox.has(id) || this.readIds.has(id);
-  }
-  get(id) {
-    return this.inbox.get(id);
-  }
-  /**
-   * Put a message into this peer's own inbox without going through the broker, e.g. the result of a
-   * background subagent. It is handled exactly like a peer message (hooks, wait_for_message, channel).
-   */
-  deliverLocal(m) {
-    this.onEvent("message", m);
-  }
-  /** Mark messages consumed locally and on the broker. */
-  markRead(ids) {
-    const real = ids.filter((id) => this.inbox.has(id));
-    if (!real.length) return;
-    this.readJournal.append(`name:${this.currentName}`, real);
-    if (this.sessionId) this.readJournal.append(`session:${this.sessionId}`, real);
-    for (const id of real) {
-      this.inbox.delete(id);
-      this.readIds.add(id);
-    }
-    this.acknowledge(real);
-  }
-  restoreReadState(identity) {
-    for (const id of this.readJournal.read(identity)) this.readIds.add(id);
-    const consumed = [...this.inbox.keys()].filter((id) => this.readIds.has(id));
-    consumed.forEach((id) => this.inbox.delete(id));
-    this.acknowledge(consumed);
-  }
-  acknowledge(ids) {
-    if (!ids.length) return;
-    if (!this.isConnected) {
-      ids.forEach((id) => this.unflushedAcks.add(id));
-      return;
-    }
-    this.client.request("ack", { ids }).catch((err) => {
-      this.log.warn("ack failed; will retry after reconnect", { err: err.message });
-      ids.forEach((id) => this.unflushedAcks.add(id));
-    });
-  }
-  /** Resolves with the next unread message (possibly one already waiting), or null on timeout. */
-  waitForMessage(timeoutMs, predicate = () => true, signal) {
-    if (signal?.aborted) return Promise.resolve(null);
-    const existing = this.unread().find(predicate);
-    if (existing) return Promise.resolve(existing);
-    return new Promise((resolve10) => {
-      const done = (m) => {
-        clearTimeout(timer);
-        this.off("message", onMessage);
-        this.off("replaced", onAbort);
-        this.off("stopped", onAbort);
-        signal?.removeEventListener("abort", onAbort);
-        resolve10(m);
-      };
-      const onMessage = (m) => {
-        if (predicate(m)) done(m);
-      };
-      const onAbort = () => done(null);
-      const timer = setTimeout(() => done(null), timeoutMs);
-      this.on("message", onMessage);
-      this.once("replaced", onAbort);
-      this.once("stopped", onAbort);
-      signal?.addEventListener("abort", onAbort, { once: true });
-    });
-  }
-  async setSessionId(sessionId) {
-    if (sessionId === this.sessionId) return;
-    this.sessionId = sessionId;
-    if (this.isConnected) this.currentName = (await this.client.request("updatePeer", { sessionId })).name;
-    if (sessionId) this.restoreReadState(`session:${sessionId}`);
-  }
-  /** Report busy/idle to the broker so peers can see who is free. Only changes are sent. */
-  setActivity(state) {
-    if (state === this.activity) return;
-    this.activity = state;
-    if (this.isConnected) {
-      this.client.request("updatePeer", { activity: state }).catch((err) => this.log.debug("activity update failed", { err: err.message }));
+  return best;
+}
+var GENERATED_DIRECTORIES = /* @__PURE__ */ new Set(["node_modules", ".vs", "__pycache__"]);
+var UNITY_GENERATED_DIRECTORIES = /* @__PURE__ */ new Set(["Library", "Temp", "Obj", "Logs", "UserSettings"]);
+var GENERATED_FILES = /* @__PURE__ */ new Set([".DS_Store", "Thumbs.db"]);
+function generatedNoise(root, file2) {
+  const parts = file2.split("/");
+  if (GENERATED_FILES.has(parts.at(-1))) return true;
+  return parts.slice(0, -1).some((part, index) => {
+    if (GENERATED_DIRECTORIES.has(part)) return true;
+    if (!UNITY_GENERATED_DIRECTORIES.has(part)) return false;
+    return existsSync7(toNamespacedPath(join13(root, ...parts.slice(0, index), "ProjectSettings", "ProjectVersion.txt")));
+  });
+}
+async function autoCommitFiles(wt, log) {
+  const trust = trustArgs(wt.path);
+  const status = await git([...trust, "status", "--porcelain=v1", "-z", "--no-renames", "--untracked-files=all"], wt.path, log);
+  const included = [];
+  const unstage = [];
+  const skipped = [];
+  for (const entry of status.split("\0").filter(Boolean)) {
+    const file2 = entry.slice(3);
+    const literal2 = `:(literal)${file2}`;
+    let reason;
+    if (generatedNoise(wt.path, file2)) reason = "generated noise";
+    else if (entry.startsWith("??") || await git([...trust, "diff", "--ignore-all-space", "--ignore-cr-at-eol", "--no-ext-diff", "--no-textconv", "--no-renames", "HEAD", "--", literal2], wt.path, log)) {
+      if (!entry.startsWith("D ")) included.push(literal2);
+    } else reason = "whitespace only";
+    if (reason) {
+      skipped.push({ path: file2, reason });
+      if (entry[0] !== "?" && entry[0] !== " ") unstage.push(literal2);
     }
   }
-  async setWakePolicy(wakeOnDirect, wakeAvailable, wakeMaxHops = DEFAULT_MAX_HOPS) {
-    this.wakeOnDirect = wakeOnDirect;
-    this.wakeAvailable = wakeAvailable;
-    this.wakeMaxHops = wakeMaxHops;
-    if (this.isConnected) await this.client.request("updatePeer", { wakeOnDirect, wakeAvailable, wakeMaxHops });
+  for (const file2 of unstage) await git([...trust, "reset", "-q", "HEAD", "--", file2], wt.path, log);
+  for (const file2 of included) await git([...trust, "add", "-A", "--", file2], wt.path, log);
+  return skipped;
+}
+async function finishWorktree(wt, message, log) {
+  const trust = trustArgs(wt.path);
+  const skippedFiles = await autoCommitFiles(wt, log);
+  const status = await git([...trust, "diff", "--cached", "--name-only", "-z"], wt.path, log);
+  if (status) {
+    const identity = [];
+    for (const [key, fallback] of Object.entries(FALLBACK_COMMIT_IDENTITY)) {
+      const configured = (await git([...trustArgs(wt.repoRoot), "config", "--get", key], wt.repoRoot, log).catch(() => "")).trim();
+      identity.push("-c", `${key}=${configured || fallback}`);
+    }
+    await git([...trust, ...identity, "commit", "-q", "--no-verify", "-m", message], wt.path, log);
   }
-  async setAutoWake(enabled) {
-    this.autoWake = enabled;
-    if (this.isConnected) await this.client.request("updatePeer", { autoWake: enabled });
+  await unlockWorktree(wt.repoRoot, wt.path, log);
+  const current = await git([...trust, "branch", "--show-current"], wt.path, log).catch(() => "") || wt.branch;
+  const work = await workBranches(wt, current, log);
+  const branch = work.has(current) || !work.size ? current : [...work.keys()][0];
+  const from = await reviewBase(wt, log, branch);
+  const diffStat = await git(["diff", "--stat", `${from}..${branch}`], wt.repoRoot, log);
+  const files = (await git(["diff", "--name-only", "-z", `${from}..${branch}`], wt.repoRoot, log)).split("\0").filter(Boolean);
+  const otherBranches = [...work].filter(([name]) => name !== branch).map(([name, commits]) => ({ name, commits }));
+  return { changed: diffStat.length > 0 || otherBranches.length > 0, branch, otherBranches, diffStat: diffStat.slice(0, MAX_DIFFSTAT_CHARS), reviewBase: from, files, skippedFiles };
+}
+async function workBranches(wt, current, log) {
+  const trust = trustArgs(wt.path);
+  const visited = new Set((await git([...trust, "log", "-g", "--format=%H%x09%gs", "HEAD"], wt.path, log).catch(() => "")).split(/\r?\n/).filter((line) => line && !line.includes("	checkout: ")).map((line) => line.split("	")[0]));
+  const refs = (await git(["for-each-ref", "refs/heads", "--format=%(refname:short) %(objectname)"], wt.repoRoot, log).catch(() => "")).split(/\r?\n/).map((l) => l.split(" ")).filter((p) => p.length === 2);
+  const list = await git(["worktree", "list", "--porcelain"], wt.repoRoot, log).catch(() => "");
+  const here = resolve4(wt.path).toLowerCase();
+  const elsewhere = new Set(
+    list.split(/\r?\n\r?\n/).filter((block) => resolve4(/^worktree (.+)$/m.exec(block)?.[1] ?? "").toLowerCase() !== here).map((block) => /^branch refs\/heads\/(.+)$/m.exec(block)?.[1]).filter((b) => Boolean(b))
+  );
+  for (const b of [wt.baseBranch]) if (b) elsewhere.add(b);
+  const candidates = new Set(
+    [wt.branch, current, ...refs.filter(([, sha]) => visited.has(sha) && sha !== wt.base).map(([name]) => name)].filter((b) => b === wt.branch || !elsewhere.has(b))
+  );
+  const out = /* @__PURE__ */ new Map();
+  for (const name of candidates) {
+    const from = await reviewBase(wt, log, name).catch(() => null);
+    const commits = from ? Number(await git(["rev-list", "--count", `${from}..${name}`], wt.repoRoot, log).catch(() => "0")) : 0;
+    if (commits > 0) out.set(name, commits);
   }
-  get currentSessionId() {
-    return this.sessionId;
+  return out;
+}
+var HANDOFF_FILE = /(^|\/)(HANDOFF|TODO)\.md$/i;
+function handoffWarning(files) {
+  const hit = files.filter((f) => HANDOFF_FILE.test(f.replace(/\\/g, "/")));
+  return hit.length ? `WARNING: this job changed ${hit.join(", ")}. Delegated jobs should report in their answer and leave handoff and TODO files to you: check these changes before you take them.` : null;
+}
+function worktreeReport(wt, outcome) {
+  const branch = outcome.branch ?? wt.branch;
+  const skipped = outcome.skippedFiles ?? [];
+  const rule = skipped.length ? `Auto-commit skipped whitespace/line-ending-only changes and known generated noise; left on disk: ${skipped.map((f) => `${f.path} (${f.reason})`).join(", ")}.` : "";
+  const remove = "git -c core.longpaths=true worktree remove";
+  if (!outcome.changed) return [
+    `Worktree ${wt.path} (branch ${branch}) has ${skipped.length ? "no real changes" : "no changes"}; remove it with: ${remove}${skipped.length ? " --force" : ""} "${wt.path}" && git branch -D ${branch}`,
+    rule
+  ].filter(Boolean).join("\n");
+  const others = outcome.otherBranches ?? [];
+  const lines = [
+    `Changes are committed on branch ${branch} (worktree ${wt.path}), not in your working copy` + (branch !== wt.branch ? ` (the job worked on its own branch; ${wt.branch} was its starting branch)` : "") + ":"
+  ];
+  if (outcome.diffStat) lines.push(outcome.diffStat);
+  if (rule) lines.push(rule);
+  if (others.length) lines.push(`Also committed from this worktree: ${others.map((o) => `${o.name} (${o.commits} commit${o.commits === 1 ? "" : "s"})`).join(", ")}. Review those before removing anything.`);
+  lines.push(...[handoffWarning(outcome.files)].filter((w) => Boolean(w)));
+  if (outcome.diffStat) {
+    lines.push(`Review base: ${outcome.reviewBase} (job fork point).`);
+    lines.push(`Review: git diff ${outcome.reviewBase.slice(0, 12)}..${branch}`);
+    lines.push(`Take them: git merge ${branch}   (or git cherry-pick ${branch})`);
   }
-  get cwd() {
-    return this.currentCwd;
+  lines.push(`Discard: ${remove} --force "${wt.path}" && git branch -D ${[branch, ...others.map((o) => o.name)].join(" ")}`);
+  return lines.join("\n");
+}
+async function gitChangeSnapshot(cwd, log) {
+  let status;
+  try {
+    status = await git(["status", "--porcelain", "--untracked-files=all"], cwd, log);
+  } catch {
+    return null;
   }
-  /**
-   * Record the real project directory once the host tells us (hook input carries it). When a new
-   * name is given, the peer is renamed as well.
-   */
-  async relocate(cwd, name) {
-    if (cwd === this.currentCwd && (!name || name === this.currentName)) return;
-    this.currentCwd = cwd;
-    if (name) this.currentName = name;
-    this.log.info("peer relocated", { cwd, name: this.currentName });
-    if (this.isConnected) {
-      const peer = await this.client.request("updatePeer", { cwd, ...name ? { name } : {} });
-      this.currentName = peer.name;
+  let root;
+  try {
+    root = await git(["rev-parse", "--show-toplevel"], cwd, log);
+  } catch {
+    return null;
+  }
+  const snap = /* @__PURE__ */ new Map();
+  for (const line of status.split(/\r?\n/).filter(Boolean)) {
+    const file2 = line.slice(3).replace(/^.* -> /, "").replace(/^"|"$/g, "");
+    let fp = line.slice(0, 2);
+    try {
+      fp += ":" + createHash3("sha1").update(readFileSync9(join13(root, file2))).digest("hex");
+    } catch {
+      fp += ":missing";
+    }
+    snap.set(file2, fp);
+  }
+  return snap;
+}
+function changedFiles(before, after) {
+  const out = /* @__PURE__ */ new Set();
+  for (const [f, fp] of after) if (before.get(f) !== fp) out.add(f);
+  for (const f of before.keys()) if (!after.has(f)) out.add(f);
+  return [...out].sort();
+}
+
+// src/mcp/delegate-run.ts
+import { randomUUID as randomUUID10 } from "node:crypto";
+import { isAbsolute as isAbsolute4, join as join21, relative as relative3, resolve as resolve7 } from "node:path";
+
+// src/core/effort.ts
+import { readFileSync as readFileSync11 } from "node:fs";
+import { homedir as homedir4 } from "node:os";
+import { join as join15 } from "node:path";
+
+// src/core/codex-trust.ts
+import { readFileSync as readFileSync10, writeFileSync as writeFileSync5 } from "node:fs";
+import { homedir as homedir3 } from "node:os";
+import { join as join14 } from "node:path";
+var PERMISSION_HOOK_STATE_KEY = 'hooks.state."agent-bridge@agent-bridge:plugin.json#hooks[0]:permission_request:0:0"';
+var OBSERVATIONS_FILE = "codex-hook.json";
+function codexHome(env = process.env) {
+  return env.CODEX_HOME?.trim() || join14(homedir3(), ".codex");
+}
+function codexPermissionHookHash(home = codexHome(), read2 = (p) => readFileSync10(p, "utf8")) {
+  let text2;
+  try {
+    text2 = read2(join14(home, "config.toml"));
+  } catch {
+    return null;
+  }
+  const at = text2.indexOf(`[${PERMISSION_HOOK_STATE_KEY}]`);
+  if (at < 0) return null;
+  for (const line of text2.slice(at).split(/\r?\n/).slice(1)) {
+    if (line.trim().startsWith("[")) break;
+    const m = /^\s*trusted_hash\s*=\s*"(sha256:[0-9a-f]+)"/.exec(line);
+    if (m) return m[1];
+  }
+  return null;
+}
+function readObservations(bridgeHome) {
+  try {
+    return JSON.parse(readFileSync10(join14(bridgeHome, OBSERVATIONS_FILE), "utf8"));
+  } catch {
+    return {};
+  }
+}
+function recordCodexHookObservation(bridgeHome, hash2, observation) {
+  const all = readObservations(bridgeHome);
+  if (all[hash2] === "failed") return;
+  all[hash2] = observation;
+  try {
+    writeFileSync5(join14(bridgeHome, OBSERVATIONS_FILE), JSON.stringify(all, null, 2), { mode: 384 });
+  } catch {
+  }
+}
+function codexPermissionHookTrusted(bridgeHome, home = codexHome(), read2 = (p) => readFileSync10(p, "utf8")) {
+  const hash2 = codexPermissionHookHash(home, read2);
+  return hash2 !== null && readObservations(bridgeHome)[hash2] !== "failed";
+}
+
+// src/core/effort.ts
+function defaultEffort(agent, model, read2 = (p) => readFileSync11(p, "utf8")) {
+  try {
+    if (agent === "codex") return codexConfigEffort(read2(join15(codexHome(), "config.toml")));
+    if (agent === "claude") return claudeSettingsEffort(read2(join15(process.env.CLAUDE_CONFIG_DIR?.trim() || join15(homedir4(), ".claude"), "settings.json")), model);
+  } catch {
+  }
+  return null;
+}
+function codexConfigEffort(toml) {
+  for (const line of toml.split(/\r?\n/)) {
+    if (/^\s*\[/.test(line)) break;
+    const m = /^\s*model_reasoning_effort\s*=\s*"([^"]+)"/.exec(line);
+    if (m) return m[1];
+  }
+  return null;
+}
+function claudeSettingsEffort(json2, model) {
+  const s = JSON.parse(json2);
+  const id = model?.replace(/\[.*\]$/, "").toLowerCase() ?? "";
+  if (id) {
+    for (const [key, v] of Object.entries(s.modelSettings ?? {})) {
+      const k = key.replace(/\[.*\]$/, "").toLowerCase();
+      if ((id === k || id.startsWith(`${k}-`) || k.startsWith(`${id}-`)) && typeof v?.effortLevel === "string") return v.effortLevel;
     }
   }
-};
+  return typeof s.effortLevel === "string" ? s.effortLevel : null;
+}
 
 // src/core/paths.ts
 import { createHash as createHash4 } from "node:crypto";
-import { join as join14, posix, resolve as resolve4 } from "node:path";
+import { join as join16, posix, resolve as resolve5 } from "node:path";
 var PIPE_HASH_LENGTH = 12;
 function resolveHome(env = process.env) {
-  return resolve4(env[ENV.home]?.trim() || DEFAULT_HOME);
+  return resolve5(env[ENV.home]?.trim() || DEFAULT_HOME);
 }
 function resolvePipePath(home, env = process.env, platform = process.platform) {
   const override = env[ENV.pipe]?.trim();
@@ -40938,77 +40284,207 @@ function resolvePipePath(home, env = process.env, platform = process.platform) {
   return posix.join(home, SOCKET_FILE_NAME.replace(/\.sock$/, `-p${PROTOCOL_VERSION}.sock`));
 }
 function resolveDbPath(home) {
-  return join14(home, DB_FILE_NAME);
+  return join16(home, DB_FILE_NAME);
 }
 
-// src/core/procinfo.ts
-import { execFile } from "node:child_process";
-import { readFile } from "node:fs/promises";
-var LOOKUP_TIMEOUT_MS = 5e3;
-var MAX_ANCESTORS = 4;
-function exec(file2, args) {
-  return new Promise((resolve10, reject) => {
-    execFile(
-      file2,
-      args,
-      { timeout: LOOKUP_TIMEOUT_MS, windowsHide: true, maxBuffer: 1024 * 1024 },
-      (err, stdout) => err ? reject(err) : resolve10(stdout)
-    );
+// src/core/resource-slots.ts
+import { mkdirSync as mkdirSync10 } from "node:fs";
+import { join as join17 } from "node:path";
+import { DatabaseSync as DatabaseSync3 } from "node:sqlite";
+import { setTimeout as delay3 } from "node:timers/promises";
+var SLOT_OWNER_ENV = "AGENT_BRIDGE_SLOT_OWNER";
+var SLOT_PID_ENV = "AGENT_BRIDGE_SLOT_PID";
+var SLOT_LEASE_MS = 6 * 60 * 6e4;
+var SLOT_RENEW_MS = 6e4;
+var SLOT_POLL_MS = 250;
+var SLOT_DB_NAME = "resource-slots.sqlite";
+var LOCK_WAIT_MS = 3e3;
+function alive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return err.code !== "ESRCH";
+  }
+}
+var ResourceSlots = class {
+  constructor(home, isAlive = alive, now = Date.now) {
+    this.isAlive = isAlive;
+    this.now = now;
+    mkdirSync10(home, { recursive: true });
+    this.db = new DatabaseSync3(join17(home, SLOT_DB_NAME));
+    this.db.exec(`PRAGMA busy_timeout = ${LOCK_WAIT_MS};
+      CREATE TABLE IF NOT EXISTS slots (
+        ticket INTEGER PRIMARY KEY AUTOINCREMENT, resource TEXT NOT NULL, id TEXT NOT NULL,
+        pid INTEGER NOT NULL, held INTEGER NOT NULL, expiresAt INTEGER NOT NULL, UNIQUE(resource, id)
+      );`);
+  }
+  isAlive;
+  now;
+  db;
+  transaction(fn) {
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      const result = fn();
+      this.db.exec("COMMIT");
+      return result;
+    } catch (err) {
+      this.db.exec("ROLLBACK");
+      throw err;
+    }
+  }
+  prune() {
+    this.db.prepare("DELETE FROM slots WHERE expiresAt <= ?").run(this.now());
+    const pids = this.db.prepare("SELECT DISTINCT pid FROM slots").all();
+    for (const row of pids) if (!this.isAlive(Number(row.pid))) this.db.prepare("DELETE FROM slots WHERE pid = ?").run(row.pid);
+  }
+  tryAcquire(resource, count, owner) {
+    if (!RESOURCE_NAME_PATTERN.test(resource) || !Number.isInteger(count) || count < 1) throw new Error("Invalid resource name or capacity.");
+    if (!owner.id || !Number.isSafeInteger(owner.pid) || owner.pid <= 0 || !this.isAlive(owner.pid)) throw new Error("A resource slot needs a live owner process.");
+    return this.transaction(() => {
+      this.prune();
+      this.db.prepare("INSERT INTO slots(resource, id, pid, held, expiresAt) VALUES (?, ?, ?, 0, ?) ON CONFLICT(resource, id) DO NOTHING").run(resource, owner.id, owner.pid, this.now() + SLOT_LEASE_MS);
+      const own2 = this.db.prepare("SELECT ticket, pid, held FROM slots WHERE resource = ? AND id = ?").get(resource, owner.id);
+      if (Number(own2.pid) !== owner.pid) throw new Error("Resource slot owner does not match.");
+      this.db.prepare("UPDATE slots SET expiresAt = ? WHERE resource = ? AND id = ?").run(this.now() + SLOT_LEASE_MS, resource, owner.id);
+      if (own2.held) return true;
+      const held = Number(this.db.prepare("SELECT COUNT(*) AS n FROM slots WHERE resource = ? AND held = 1").get(resource).n);
+      const ahead = Number(this.db.prepare("SELECT COUNT(*) AS n FROM slots WHERE resource = ? AND held = 0 AND ticket < ?").get(resource, own2.ticket).n);
+      if (held + ahead >= count) return false;
+      this.db.prepare("UPDATE slots SET held = 1 WHERE ticket = ?").run(own2.ticket);
+      return true;
+    });
+  }
+  async acquire(resource, count, owner, signal) {
+    try {
+      for (; ; ) {
+        signal?.throwIfAborted();
+        if (this.tryAcquire(resource, count, owner)) return;
+        await delay3(SLOT_POLL_MS, void 0, { signal });
+      }
+    } catch (err) {
+      this.release(owner, resource);
+      throw err;
+    }
+  }
+  release(owner, resource) {
+    this.db.prepare(`DELETE FROM slots WHERE id = ? AND pid = ?${resource ? " AND resource = ?" : ""}`).run(...resource ? [owner.id, owner.pid, resource] : [owner.id, owner.pid]);
+  }
+  renew(owner, resource) {
+    const args = [this.now() + SLOT_LEASE_MS, owner.id, owner.pid, this.now()];
+    this.db.prepare(`UPDATE slots SET expiresAt = ? WHERE id = ? AND pid = ? AND expiresAt > ?${resource ? " AND resource = ?" : ""}`).run(...resource ? [...args, resource] : args);
+  }
+  list() {
+    return this.transaction(() => {
+      this.prune();
+      return this.db.prepare("SELECT * FROM slots ORDER BY ticket").all().map((row) => ({ resource: String(row.resource), id: String(row.id), pid: Number(row.pid), ticket: Number(row.ticket), held: Boolean(row.held), expiresAt: Number(row.expiresAt) }));
+    });
+  }
+  close() {
+    this.db.close();
+  }
+};
+function resourceSlotHint(counts, cli) {
+  if (!Object.keys(counts).length) return null;
+  const command = cli ? `node "${cli}"` : "agent-bridge";
+  return `(agent-bridge: shared resource slots are enabled: ${JSON.stringify(counts)}. Before a heavy command, run ${command} slot acquire <resource>; it waits in FIFO order. Always run ${command} slot release <resource> afterward, including on failure (use try/finally or a shell trap). ${command} slot status shows holders and waiters. Slots are shared across jobs and released when your run ends or its owner process dies. Acquiring twice is idempotent; hold one slot per resource per job.)`;
+}
+
+// src/core/tool-allow.ts
+function serverNames2(server) {
+  const short = /^plugin_[^_]+_(.+)$/.exec(server)?.[1];
+  const names = short ? [server, short] : [server];
+  if (names.includes("pair_desk")) names.push("pair-desk");
+  return names;
+}
+function shortServer(server) {
+  return serverNames2(server).at(-1);
+}
+function mcpToolOf(r) {
+  const raw = /^(?:[\w]+\.)?mcp__(.+?)__(.+)$/.exec(r.tool);
+  if (raw) return { server: raw[1], tool: raw[2] };
+  if (!r.tool.startsWith("mcp:")) return null;
+  const server = r.tool.slice("mcp:".length);
+  const quoted = /\btool\s+["'`]([\w.-]+)["'`]/i.exec(r.detail)?.[1];
+  let tool = quoted ?? /^\s*([\w.-]+)(?:\s*:|\s*$)/.exec(r.detail)?.[1] ?? null;
+  const prefixes = serverNames2(server).flatMap((name) => [name, name.replace(/[^a-zA-Z0-9_-]/g, "_")]).sort((a, b) => b.length - a.length);
+  for (const name of prefixes) if (tool?.startsWith(`${name}_`)) {
+    tool = tool.slice(name.length + 1);
+    break;
+  }
+  return { server, tool };
+}
+var DESK_WORKER_PRESET = "pair-desk:worker";
+var DESK_READ_PATTERNS = ["pair-desk.get_*", "pair-desk.list_*"];
+var DESK_WORKER_PATTERNS = ["pair-desk.get_*", "pair-desk.list_*", "pair-desk.comment", "pair-desk.progress", "pair-desk.set_plan", "pair-desk.update_step", "pair-desk.create_issue", "pair-desk.update_issue"];
+function approvalHint(r) {
+  const call = mcpToolOf(r);
+  if (!call?.tool) return "";
+  const server = shortServer(call.server);
+  const preset = isAutoApproved(r, [DESK_WORKER_PRESET]) ? ` or "${DESK_WORKER_PRESET}" (desk reads, comments, plans and issue edits; excludes status, builds and handoff writes)` : "";
+  return ` (not covered by this job's allow_tools; add "${server}.${call.tool}"${preset} to allow it without asking; get_* and list_* only cover reads)`;
+}
+function glob(pattern) {
+  return new RegExp(`^${pattern.split("*").map((s) => s.replace(/[.+?^${}()|[\]\\]/g, "\\$&")).join(".*")}$`, "i");
+}
+var OWN_SERVERS = /* @__PURE__ */ new Set(["agent-bridge", "plugin_agent-bridge_bridge", "bridge"]);
+function isOwnServerCall(r) {
+  const call = mcpToolOf(r);
+  return Boolean(call && OWN_SERVERS.has(call.server));
+}
+function isAutoApproved(r, patterns) {
+  const call = mcpToolOf(r);
+  if (!call || patterns.length === 0) return false;
+  const names = serverNames2(call.server).flatMap((s) => [s, call.tool ? `${s}.${call.tool}` : null]).filter((n) => Boolean(n));
+  return patterns.flatMap((p) => p.trim() === DESK_WORKER_PRESET ? DESK_WORKER_PATTERNS : [p]).some((p) => {
+    const re = glob(p.trim());
+    return names.some((n) => re.test(n));
   });
 }
-async function lookup(pid) {
-  try {
-    if (process.platform === "linux") {
-      const [cmd, stat] = await Promise.all([readFile(`/proc/${pid}/cmdline`, "utf8"), readFile(`/proc/${pid}/stat`, "utf8")]);
-      const ppid = Number(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[1]);
-      return { pid, ppid, cmdline: cmd.split("\0").join(" ") };
-    }
-    if (process.platform === "win32") {
-      const script = `$p = Get-CimInstance Win32_Process -Filter "ProcessId=${pid}"; if ($p) { "$($p.ParentProcessId)"; $p.CommandLine }`;
-      const out2 = await exec("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script]);
-      const [ppidLine, ...rest] = out2.split(/\r?\n/);
-      if (!ppidLine?.trim()) return null;
-      return { pid, ppid: Number(ppidLine.trim()), cmdline: rest.join(" ").trim() };
-    }
-    const out = await exec("ps", ["-o", "ppid=,args=", "-p", String(pid)]);
-    const m = /^\s*(\d+)\s+(.*)$/s.exec(out.trim());
-    return m ? { pid, ppid: Number(m[1]), cmdline: m[2].trim() } : null;
-  } catch {
-    return null;
-  }
+var HANDOFF_TOOL = /(set|update)_handoff$/i;
+function isHandoffToolCall(r) {
+  const tool = mcpToolOf(r)?.tool;
+  return Boolean(tool && HANDOFF_TOOL.test(tool));
 }
-var CHANNEL_FLAGS = ["--channels", "--dangerously-load-development-channels"];
-function cmdlineEnablesChannel(cmdline, pluginName) {
-  const tokens = cmdline.split(/\s+/).map((t2) => t2.replace(/^["']|["']$/g, ""));
-  const values = [];
-  for (let i = 0; i < tokens.length; i++) {
-    const tok = tokens[i];
-    const eq = CHANNEL_FLAGS.find((f) => tok.startsWith(`${f}=`));
-    if (eq) {
-      values.push(tok.slice(eq.length + 1));
-    } else if (CHANNEL_FLAGS.includes(tok)) {
-      for (let j = i + 1; j < tokens.length && !tokens[j].startsWith("-"); j++) values.push(tokens[j]);
+
+// src/core/worktree-links.ts
+import { lstatSync as lstatSync2, readdirSync as readdirSync5, readlinkSync, realpathSync as realpathSync4 } from "node:fs";
+import { dirname as dirname5, isAbsolute as isAbsolute3, join as join18, relative as relative2, resolve as resolve6, toNamespacedPath as toNamespacedPath2 } from "node:path";
+var WORKTREE_LINK_HINT = "(agent-bridge: worktree isolation is mandatory. Never create symlinks, directory junctions or other reparse points whose targets leave this worktree, including Unity Library folders in the owner's main checkout. Copy caches if needed; do not share them through links. Never follow an existing external link to modify its target. Request cleanup approval through the supervisor and report the link and target if cleanup is denied.)";
+function scanWorktreeLinks(root) {
+  const scan = { externalLinks: [], errors: [] };
+  const canonicalRoot = lstatSync2(toNamespacedPath2(root)).isSymbolicLink() ? resolve6(root) : realpathSync4.native(root);
+  const inside = (target) => {
+    const rel = relative2(canonicalRoot, target);
+    return rel === "" || rel !== ".." && !rel.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`) && !isAbsolute3(rel);
+  };
+  const visit2 = (path) => {
+    try {
+      const stat = lstatSync2(toNamespacedPath2(path));
+      if (stat.isSymbolicLink()) {
+        const raw = readlinkSync(toNamespacedPath2(path));
+        let target = resolve6(dirname5(path), raw);
+        try {
+          target = realpathSync4.native(path);
+        } catch {
+        }
+        if (!inside(target)) scan.externalLinks.push({ path, target });
+      } else if (stat.isDirectory()) {
+        for (const entry of readdirSync5(toNamespacedPath2(path))) visit2(join18(path, entry));
+      }
+    } catch (err) {
+      scan.errors.push(`${path}: ${err.message}`);
     }
-  }
-  return values.some((v) => v.split(",").some((entry) => entry.includes(pluginName)));
+  };
+  visit2(resolve6(root));
+  return scan;
 }
-function cmdlineIsPrintMode(cmdline) {
-  return cmdline.split(/\s+/).some((t2) => /^["']?(-p|--print)(=.*)?["']?$/.test(t2));
-}
-async function inspectClaudeLaunch(pluginName, log) {
-  let pid = process.ppid;
-  let channel = false;
-  for (let i = 0; i < MAX_ANCESTORS && pid > 1; i++) {
-    const info = await lookup(pid);
-    if (!info) break;
-    log.debug("inspected ancestor process", { pid, cmdline: info.cmdline.slice(0, 300) });
-    if (cmdlineEnablesChannel(info.cmdline, pluginName)) channel = true;
-    if (/\bclaude(\.exe)?\b/i.test(info.cmdline) && !/node_modules|agent-bridge/i.test(info.cmdline)) {
-      return { channel, print: cmdlineIsPrintMode(info.cmdline) };
-    }
-    pid = info.ppid;
-  }
-  return { channel, print: false };
+function worktreeLinkWarning(scan) {
+  const lines = scan.externalLinks.map((link) => `${link.path} -> ${link.target}`);
+  if (lines.length) lines.unshift("WARNING: external worktree links/reparse points found. Do not run tools through these links; unlink the link itself without recursively deleting its target:");
+  if (scan.errors.length) lines.push(`WARNING: worktree link inspection incomplete:
+${scan.errors.join("\n")}`);
+  return lines.length ? lines.join("\n") : null;
 }
 
 // src/mcp/format.ts
@@ -41041,8 +40517,8 @@ function formatMessages(msgs, opts = {}) {
   parts.push(PEER_TRUST_NOTE);
   for (const m of msgs) parts.push(formatMessage(m));
   if (opts.replyHint !== false) {
-    const jobs = msgs.some((m) => m.from.id.startsWith("job:"));
-    const peers = msgs.some((m) => !m.from.id.startsWith("job:"));
+    const jobs = msgs.some((m) => /(?:^|\/)job:/.test(m.from.id));
+    const peers = msgs.some((m) => !/(?:^|\/)job:/.test(m.from.id));
     if (peers) parts.push('To answer a peer, call the agent-bridge "send" tool with to=<from> and reply_to=<id>.');
     if (jobs) parts.push("Subagent messages need no reply. To give a subagent more work, answer an approval question, or continue a finished one, use message_subagent(job=<from>, message=...).");
   }
@@ -41123,572 +40599,46 @@ function formatDelivery(result, maxHops = DEFAULT_MAX_HOPS) {
   });
 }
 
-// src/mcp/codex-wake.ts
-var WAKE_DEBOUNCE_MS = 1500;
-var QUEUE_TIMEOUT_MS = 3e4;
-var WAKE_PROMPT = "agent-bridge: new message(s) from peer agents arrived. They are attached to this turn; read them and handle them, answering with the agent-bridge send tool.";
-var CodexWaker = class {
-  constructor(node2, cfg, log) {
+// src/mcp/siblings.ts
+var SiblingLink = class {
+  constructor(node2, job, maxHops, log) {
     this.node = node2;
-    this.cfg = cfg;
+    this.job = job;
     this.log = log;
-    node2.on("message", (m) => this.onMessage(m));
+    this.maxHops = siblingMaxHops(maxHops);
+    node2.on("message", this.receive);
+    for (const message of node2.unread()) this.receive(message);
   }
   node;
-  cfg;
+  job;
   log;
-  state = "idle";
-  threadId = null;
-  timer = null;
-  inFlight = false;
-  /** Bumped on every activity report, so a finishing wake-up can tell whether hooks reported since it began. */
-  reports = 0;
-  setThreadId(id) {
-    if (id && id !== this.threadId) {
-      this.threadId = id;
-      this.log.debug("codex thread id learned", { threadId: id });
-    }
+  maxHops;
+  peers() {
+    return this.node.siblings();
   }
-  setActivity(state) {
-    this.state = state;
-    this.reports++;
-    if (state === "idle" && this.hasWakeableMail()) this.schedule();
+  async policy() {
+    return { maxHops: this.maxHops, sendTo: Array.isArray(this.job.args?.send_to) ? this.job.args.send_to.filter(isJobSendTarget) : [] };
   }
-  hasWakeableMail() {
-    return this.node.autoWakeEnabled && this.node.unread().some((m) => m.hop < this.cfg.maxHops && !isSiblingNote(m));
+  send(to, body, replyTo) {
+    return this.node.sendSibling({ to, body, replyTo }, this.maxHops);
   }
-  idleWithMail() {
-    return this.state === "idle" && this.hasWakeableMail();
-  }
-  onMessage(m) {
-    if (isSiblingNote(m)) return;
-    if (m.hop >= this.cfg.maxHops) {
-      this.log.info("not waking codex: hop limit reached", { id: m.id, hop: m.hop });
-      return;
-    }
-    if (this.node.autoWakeEnabled && this.state === "idle") this.schedule();
-  }
-  schedule() {
-    if (this.timer || this.inFlight) return;
-    this.timer = setTimeout(() => {
-      this.timer = null;
-      void this.wake();
-    }, WAKE_DEBOUNCE_MS);
-    this.timer.unref();
-  }
-  async wake() {
-    if (this.state !== "idle" || !this.node.autoWakeEnabled) return;
-    if (!this.threadId) {
-      this.log.warn("cannot auto-wake codex: thread id unknown until the session makes its first agent-bridge call");
-      return;
-    }
-    this.inFlight = true;
-    this.state = "busy";
-    const reportsAtStart = this.reports;
-    const failed = () => {
-      if (this.reports === reportsAtStart) this.state = "idle";
-    };
-    try {
-      const res = await runProcess({
-        bin: this.cfg.codexBin,
-        args: ["queue", "--thread", this.threadId, "--message", WAKE_PROMPT],
-        stdin: "",
-        cwd: this.node.cwd,
-        timeoutMs: QUEUE_TIMEOUT_MS,
-        env: process.env,
-        log: this.log
-      });
-      if (res.code === 0) this.log.info("queued wake-up turn for codex", { threadId: this.threadId });
-      else {
-        failed();
-        this.log.warn("codex queue failed", { code: res.code, stderr: res.stderr.slice(-1e3) });
-      }
-    } catch (err) {
-      failed();
-      this.log.warn("codex queue failed", { err: err.message });
-    } finally {
-      this.inFlight = false;
-      if (this.reports !== reportsAtStart && this.idleWithMail()) this.schedule();
-    }
+  receive = (message) => {
+    if (!message.conversationId.startsWith(SIBLING_CONVERSATION_PREFIX)) return;
+    this.node.markRead([message.id]);
+    if (message.hop >= this.maxHops) return;
+    this.log.info("message from sibling", { from: message.from.name, to: this.job.name, hop: message.hop });
+    if (this.job.live) this.job.live.post(message.body, { ...message, replyLimit: this.maxHops });
+    else this.job.queue.push(formatSiblingMessages([message], this.maxHops));
+  };
+  close() {
+    this.node.off("message", this.receive);
   }
 };
 
-// src/mcp/message-wait.ts
-import { randomUUID as randomUUID11 } from "node:crypto";
-import { mkdirSync as mkdirSync9, readdirSync as readdirSync4, readFileSync as readFileSync10, rmSync as rmSync4 } from "node:fs";
-import { join as join15 } from "node:path";
-var SINGLE_WAIT_SEC = DEFAULT_WAIT_SEC;
-var RECEIPT_POLL_MS = 1e3;
-function singleWaitTimeoutMs(requestedSec) {
-  return Math.min(requestedSec, SINGLE_WAIT_SEC) * 1e3;
-}
-var waitSchema = external_exports.object({
-  id: external_exports.uuid(),
-  owner: external_exports.string(),
-  sessionId: external_exports.string().nullable(),
-  filters: external_exports.object({
-    from: external_exports.string().optional(),
-    reply_to: external_exports.string().optional(),
-    conversation_id: external_exports.string().optional(),
-    read_receipt_of: external_exports.string().optional()
-  })
-});
-var MessageWaitStore = class {
-  dir;
-  constructor(home) {
-    this.dir = join15(home, "message-waits");
-  }
-  path(id) {
-    return join15(this.dir, `${external_exports.uuid().parse(id)}.json`);
-  }
-  owns(node2, record2) {
-    return record2.sessionId && node2.currentSessionId ? record2.sessionId === node2.currentSessionId : record2.owner === node2.name;
-  }
-  save(node2, filters) {
-    const record2 = { id: randomUUID11(), owner: node2.name, sessionId: node2.currentSessionId, filters };
-    writeJsonStore(this.path(record2.id), record2, null);
-    return record2;
-  }
-  get(node2, id) {
-    const record2 = waitSchema.parse(JSON.parse(readFileSync10(this.path(id), "utf8")));
-    if (!this.owns(node2, record2)) throw new Error("This wait belongs to another session.");
-    return record2;
-  }
-  pending(node2) {
-    mkdirSync9(this.dir, { recursive: true, mode: 448 });
-    return readdirSync4(this.dir).filter((f) => f.endsWith(".json")).flatMap((f) => {
-      try {
-        const record2 = waitSchema.parse(JSON.parse(readFileSync10(join15(this.dir, f), "utf8")));
-        return this.owns(node2, record2) ? [record2] : [];
-      } catch {
-        return [];
-      }
-    });
-  }
-  remove(id) {
-    rmSync4(this.path(id), { force: true });
-  }
-};
-function resumeWaitHint(record2) {
-  return `If the wait was interrupted by /reload-plugins or Connection closed, resume with wait_for_message(${JSON.stringify({ resume_id: record2.id, ...record2.filters })}). Unconsumed messages remain queued.`;
-}
-async function waitForReadReceipt(node2, id, timeoutMs, signal) {
-  const deadline = Date.now() + timeoutMs;
-  while (!signal.aborted && !node2.wasReplaced) {
-    const receipts = await new Promise((resolve10, reject) => {
-      const cleanup = () => {
-        clearTimeout(timer);
-        signal.removeEventListener("abort", onAbort);
-      };
-      const onAbort = () => {
-        cleanup();
-        resolve10(null);
-      };
-      const timer = setTimeout(onAbort, Math.max(0, deadline - Date.now()));
-      signal.addEventListener("abort", onAbort, { once: true });
-      node2.messageReceipt(id).then((value) => {
-        cleanup();
-        resolve10(value);
-      }, (err) => {
-        cleanup();
-        reject(err);
-      });
-      if (signal.aborted) onAbort();
-    });
-    if (!receipts) return null;
-    if (receipts.length && receipts.every((r) => r.readAt !== null)) return receipts;
-    const remaining = deadline - Date.now();
-    if (remaining <= 0) break;
-    await new Promise((resolve10) => {
-      const done = () => {
-        clearTimeout(timer);
-        signal.removeEventListener("abort", done);
-        resolve10();
-      };
-      const timer = setTimeout(done, Math.min(RECEIPT_POLL_MS, remaining));
-      signal.addEventListener("abort", done, { once: true });
-      if (signal.aborted) done();
-    });
-  }
-  return null;
-}
-
-// src/mcp/rewake.ts
-import { randomBytes as randomBytes6 } from "node:crypto";
-import { mkdirSync as mkdirSync10, rmSync as rmSync5, writeFileSync as writeFileSync5 } from "node:fs";
-import { createServer as createServer5 } from "node:http";
-import { join as join16 } from "node:path";
-var SESSIONS_DIR = "sessions";
-var WAKE_HEADER = "[agent-bridge] Something you were waiting for arrived:";
-var HOST2 = "127.0.0.1";
-var SECRET_BYTES3 = 24;
-var REWAKE_POLL_MS = 4 * 60 * 1e3;
-var WAKE_CONFIRM_MS = 2e4;
-var STANDBY_GRACE_MS = 3e3;
-var MOD_TICK_MS = 2e3;
-function sessionFile(home, sessionId) {
-  return join16(home, SESSIONS_DIR, `${sessionId.replace(/[^\w-]/g, "_")}.json`);
-}
-function shouldWakeClaudeMessage(node2, cfg, m) {
-  if (m.hop >= cfg.maxHops || m.conversationId.endsWith(SIBLING_NOTE_SUFFIX)) return false;
-  const direct = m.to === node2.name || m.from.id.includes("/") && m.to.slice(m.to.indexOf("/") + 1) === node2.name;
-  return node2.autoWakeEnabled || direct && (m.from.id.startsWith("job:") || node2.isAwaitedReply(m) || cfg.wakeOnDirect);
-}
-var RewakeEndpoint = class {
-  constructor(home, node2, shouldWake, log) {
-    this.home = home;
-    this.node = node2;
-    this.shouldWake = shouldWake;
-    this.log = log;
-  }
-  home;
-  node;
-  shouldWake;
-  log;
-  server = null;
-  secret = randomBytes6(SECRET_BYTES3).toString("hex");
-  port = 0;
-  registered = null;
-  /** Only the newest waiter gets messages; an older one (from an earlier turn) is released empty. */
-  waiter = null;
-  /** Messages handed to a wake-up that the session has not shown activity for yet. */
-  handedOut = /* @__PURE__ */ new Set();
-  /** The second hook of a turn end, waiting to retry a wake-up that did not start a turn. */
-  standby = null;
-  confirmTimer;
-  /**
-   * The agent-bridge mod (Claude Code 2.1.287+, plugins/claude/hooks/wake.ts) wakes the session itself with
-   * $.prompt.submit, a real turn: once it has shown up, the Stop hooks step aside and leave waking to it.
-   */
-  modWaiter = null;
-  /** The bridge gave this session to another server of it: this endpoint stays quiet (see retire). */
-  retired = false;
-  modSeen = false;
-  /** A turn is running (from the hooks and the mod): the mod waits until the session is idle. */
-  busy = false;
-  async start() {
-    this.server = createServer5((req, res) => {
-      const url2 = new URL(req.url ?? "/", `http://${HOST2}`);
-      if (url2.pathname === "/mod" && tokensEqual(String(req.headers.authorization ?? "").replace(/^Bearer /, ""), this.secret)) {
-        this.modSeen = true;
-        const busy = url2.searchParams.get("busy") === "1";
-        if (busy) this.confirmDelivery();
-        this.setBusy(busy);
-        res.writeHead(204).end();
-        return;
-      }
-      if (url2.pathname !== "/wait" || !tokensEqual(String(req.headers.authorization ?? "").replace(/^Bearer /, ""), this.secret)) {
-        res.writeHead(403).end();
-        return;
-      }
-      if (this.retired) this.reply(res, "", true);
-      else if (url2.searchParams.get("role") === "mod") this.waitMod(res);
-      else if (this.modSeen) this.reply(res, "", true);
-      else if (url2.searchParams.get("role") === "standby") this.waitStandby(res);
-      else this.waitPrimary(res);
-    });
-    this.server.requestTimeout = 0;
-    this.server.headersTimeout = 0;
-    await new Promise((resolve10, reject) => {
-      this.server.once("error", reject);
-      this.server.listen(0, HOST2, () => resolve10());
-    });
-    this.port = this.server.address().port;
-  }
-  reply(res, text2, superseded) {
-    if (res.destroyed) return;
-    res.writeHead(200, { "content-type": "application/json" });
-    res.end(JSON.stringify({ text: text2, superseded }));
-  }
-  /** Hand the waiting messages to a wake-up; they stay unread until the session shows activity. */
-  handOut() {
-    const msgs = this.node.unread().filter(this.shouldWake);
-    for (const m of msgs) this.handedOut.add(m.id);
-    return formatMessages(msgs, { header: WAKE_HEADER });
-  }
-  /** The turn-end hook: wakes the session for the next message that should wake it. */
-  waitPrimary(res) {
-    this.confirmDelivery();
-    this.waiter?.abort("superseded");
-    const ac = new AbortController();
-    this.waiter = ac;
-    res.on("close", () => ac.abort("closed"));
-    void this.node.waitForMessage(REWAKE_POLL_MS, this.shouldWake, ac.signal).then((first) => {
-      if (this.waiter === ac) this.waiter = null;
-      let text2 = "";
-      if (first && !res.destroyed) {
-        text2 = this.handOut();
-        this.log.info("waking the session", { count: this.handedOut.size });
-        clearTimeout(this.confirmTimer);
-        this.confirmTimer = setTimeout(() => this.retryWake(), WAKE_CONFIRM_MS);
-        this.confirmTimer.unref();
-      }
-      this.reply(res, text2, ac.signal.reason === "superseded");
-    });
-  }
-  /**
-   * A second hook from the same turn end. It wakes the session when the first one's wake-up was not taken
-   * (retryWake), or when a message arrives while nothing else waits (the first one already woke the session
-   * once and Claude Code did not start a turn). Released as soon as the session is active again.
-   */
-  waitStandby(res) {
-    this.standby?.release("superseded");
-    const ac = new AbortController();
-    let done = false;
-    const finish = (text2, superseded) => {
-      if (done) return;
-      done = true;
-      ac.abort("done");
-      if (this.standby?.ac === ac) this.standby = null;
-      this.reply(res, text2, superseded);
-    };
-    this.standby = { ac, release: () => finish("", true), wake: () => finish(this.handOut(), false) };
-    res.on("close", () => finish("", false));
-    const loop = () => void this.node.waitForMessage(REWAKE_POLL_MS, (m) => this.shouldWake(m) && !this.handedOut.has(m.id) && !this.waiter, ac.signal).then((m) => {
-      if (done) return;
-      if (!m) return finish("", false);
-      setTimeout(() => {
-        if (done) return;
-        if (this.waiter || this.handedOut.has(m.id)) return loop();
-        this.log.info("waking the session (standby)", { reason: "no other hook waiting" });
-        this.standby?.wake();
-      }, STANDBY_GRACE_MS).unref();
-    });
-    loop();
-  }
-  /**
-   * The mod's long poll, while the session is idle: answers with the messages that should wake it. Messages
-   * handed out before but not yet confirmed are handed out again (the mod polls again when its wake-up did
-   * not start a turn).
-   */
-  waitMod(res) {
-    this.modSeen = true;
-    this.modWaiter?.abort("superseded");
-    const ac = new AbortController();
-    this.modWaiter = ac;
-    res.on("close", () => ac.abort("closed"));
-    const deadline = Date.now() + REWAKE_POLL_MS;
-    void (async () => {
-      while (!ac.signal.aborted && Date.now() < deadline) {
-        const waiting = this.node.unread().some(this.shouldWake);
-        if (waiting && !this.busy) break;
-        if (waiting) await new Promise((r) => setTimeout(r, MOD_TICK_MS).unref());
-        else await this.node.waitForMessage(MOD_TICK_MS, this.shouldWake, ac.signal);
-      }
-      if (this.modWaiter === ac) this.modWaiter = null;
-      if (ac.signal.aborted || Date.now() >= deadline) return this.reply(res, "", ac.signal.reason === "superseded");
-      const text2 = this.handOut();
-      this.log.info("waking the session (mod)", { count: this.handedOut.size });
-      this.reply(res, text2, false);
-    })();
-  }
-  setBusy(busy) {
-    this.busy = busy;
-    if (busy) this.modWaiter?.abort("superseded");
-  }
-  /** Whether the mod wakes this session (the Stop hook then leaves messages to it instead of blocking). */
-  get modActive() {
-    return this.modSeen;
-  }
-  /** A turn ended (the Stop hook ran). */
-  sessionIdle() {
-    this.setBusy(false);
-  }
-  /** The first wake-up was not confirmed: give the same messages to the standby hook. */
-  retryWake() {
-    if (this.handedOut.size === 0) return;
-    if (this.modSeen) return;
-    if (!this.standby) {
-      this.log.warn("a wake-up was not taken and no standby hook waits; the messages go out with the next prompt", { count: this.handedOut.size });
-      return;
-    }
-    this.log.warn("a wake-up was not taken; trying again through the standby hook", { count: this.handedOut.size });
-    this.standby.wake();
-  }
-  /**
-   * The session is active (a hook of it ran, or a new waiter started after a turn): the messages of the
-   * last wake-up reached it. Called before hooks inject unread mail, so they are not shown twice.
-   */
-  confirmDelivery() {
-    clearTimeout(this.confirmTimer);
-    if (this.handedOut.size === 0) return;
-    this.node.markRead([...this.handedOut]);
-    this.handedOut.clear();
-  }
-  /**
-   * A turn is running (tool calls, a prompt): the hooks of the previous turn end are not needed anymore.
-   * The primary one must go too: a message it took mid-turn would become a wake-up Claude Code does not start
-   * while busy, and the next tool call would count it as delivered. Mid-turn messages go out with the tool
-   * hooks instead, and the next turn end starts a fresh waiter.
-   */
-  sessionActive() {
-    this.setBusy(true);
-    this.waiter?.abort("superseded");
-    this.standby?.release("active");
-  }
-  /** The wake-up was lost (a new prompt came first): its messages go out with that prompt instead. */
-  releaseUndelivered() {
-    if (this.handedOut.size) this.log.warn("a wake-up did not reach the session; delivering its messages with the next prompt", { count: this.handedOut.size });
-    this.handedOut.clear();
-  }
-  /** Whether a hook is currently waiting (used by tests and diagnostics). */
-  get waiting() {
-    return this.waiter !== null;
-  }
-  /** Another server of this session took over the bridge: stop handing out wake-ups from here. */
-  retire() {
-    this.retired = true;
-    this.waiter?.abort("superseded");
-    this.modWaiter?.abort("superseded");
-    this.standby?.release("superseded");
-  }
-  /** This server took its place back: serve again, and point the session's hooks and mod here again. */
-  unretire() {
-    this.retired = false;
-    const sessionId = this.registered;
-    this.registered = null;
-    if (sessionId) this.register(sessionId);
-  }
-  /** Publish the endpoint for this Claude session id so the hook can find it. */
-  register(sessionId) {
-    if (!this.server || this.retired || this.registered === sessionId) return;
-    const file2 = sessionFile(this.home, sessionId);
-    mkdirSync10(join16(this.home, SESSIONS_DIR), { recursive: true });
-    const reg = { port: this.port, secret: this.secret, pid: process.pid };
-    writeFileSync5(file2, JSON.stringify(reg), { mode: 384 });
-    if (this.registered) rmSync5(sessionFile(this.home, this.registered), { force: true });
-    this.registered = sessionId;
-    this.log.debug("rewake endpoint registered", { sessionId });
-  }
-  async stop() {
-    this.waiter?.abort("superseded");
-    this.modWaiter?.abort("superseded");
-    this.standby?.release("superseded");
-    clearTimeout(this.confirmTimer);
-    if (this.registered) rmSync5(sessionFile(this.home, this.registered), { force: true });
-    const s = this.server;
-    this.server = null;
-    if (s) await new Promise((r) => s.close(() => r()));
-  }
-};
-
-// src/mcp/hooks.ts
-var STOP_REASON_FOOTER = 'Handle these peer messages now: do what is reasonable, answer with the agent-bridge "send" tool (reply_to=<id>), then end your turn.';
-function context(event, additionalContext) {
-  return { hookSpecificOutput: { hookEventName: event, additionalContext } };
-}
-function discardFinishedNotes(ctx) {
-  const node2 = ctx.node;
-  if (!node2) return;
-  const obsolete = node2.unread().filter((m) => {
-    if (!ctx.jobs?.isNote(m)) return false;
-    const job = ctx.jobs.find(m.from.name);
-    return job !== void 0 && job.status !== "running";
-  });
-  node2.markRead(obsolete.map((m) => m.id));
-}
-function take(ctx, wakeOnly, notesOnly = false) {
-  const node2 = ctx.node;
-  discardFinishedNotes(ctx);
-  const msgs = node2.unread().filter((m) => !notesOnly || isSiblingNote(m) || ctx.jobs?.isNote(m) || !shouldWakeClaudeMessage(node2, ctx.cfg, m)).filter((m) => !wakeOnly || m.hop < ctx.cfg.maxHops && !ctx.jobs?.isNote(m)).slice(0, HOOK_MAX_MESSAGES);
-  node2.markRead(msgs.map((m) => m.id));
-  return msgs;
-}
-async function subagentHook(ctx, input2) {
-  const parent2 = ctx.parent;
-  if (!parent2 || input2.event === "SessionStart") return {};
-  const msgs = await parent2.inbox().catch((err) => {
-    ctx.log.debug("parent inbox unavailable", { err: err.message });
-    return [];
-  });
-  if (msgs.length === 0) return {};
-  ctx.log.info("delivering parent messages to the subagent", { count: msgs.length, event: input2.event });
-  const text2 = formatParentMessages(parent2.name, msgs);
-  if (input2.event === "Stop") return { decision: "block", reason: text2 };
-  if (input2.event === "PostToolUse") return { decision: "block", reason: text2, hookSpecificOutput: { hookEventName: input2.event, additionalContext: text2 } };
-  return context(input2.event, text2);
-}
-async function buildHookResponse(ctx, input2) {
-  const node2 = ctx.node;
-  if (!node2) return subagentHook(ctx, input2);
-  await ctx.launchKnown;
-  if (ctx.headless) return {};
-  ctx.log.debug("hook event", { event: input2.event, sessionId: input2.sessionId, stopHookActive: input2.stopHookActive });
-  if (input2.sessionId) {
-    await node2.setSessionId(input2.sessionId).catch(() => {
-    });
-    ctx.onSessionId?.(input2.sessionId);
-  }
-  if (input2.cwd) await ctx.learnCwd?.(input2.cwd);
-  await node2.ensureConnected().catch((err) => ctx.log.warn("bridge not reachable from hook", { err: err.message }));
-  if (input2.subagent) return {};
-  const wakeTurn = input2.event === "UserPromptSubmit" && Boolean(input2.prompt?.includes(WAKE_HEADER));
-  if (input2.event === "PostToolUse" || input2.event === "Stop" || wakeTurn) ctx.wakeDelivery?.confirm();
-  else ctx.wakeDelivery?.release();
-  if (input2.event === "PostToolUse" || input2.event === "UserPromptSubmit") ctx.wakeDelivery?.active();
-  const channel = ctx.channelActive();
-  switch (input2.event) {
-    case "SessionStart": {
-      ctx.activity?.("idle");
-      const peers = node2.isConnected ? (await node2.peers().catch(() => [])).filter((p) => p.id !== node2.id) : [];
-      const lines = [
-        `[agent-bridge] You are connected to agent-bridge as "${node2.name}".`,
-        peers.length ? `Peers online:
-${peers.map((p) => formatPeer(p)).join("\n")}` : "No other agents are online right now."
-      ];
-      lines.push(...new MessageWaitStore(ctx.home).pending(node2).map(resumeWaitHint));
-      const unread = node2.unread().length;
-      const decisions = await node2.decisions({ scope: { project: ctx.cwd() } }).catch(() => []);
-      const summary = formatDecisionSummary(decisions);
-      if (summary) lines.push(summary);
-      if (unread > 0 && !channel) lines.push(`You have ${unread} unread peer message(s); call the "inbox" tool to read them.`);
-      return context("SessionStart", lines.join("\n"));
-    }
-    case "UserPromptSubmit":
-    case "PostToolUse": {
-      ctx.activity?.("busy");
-      const msgs = take(ctx, false, channel);
-      return msgs.length ? context(input2.event, formatMessages(msgs)) : {};
-    }
-    case "Stop": {
-      if (channel) {
-        ctx.activity?.("idle");
-        return {};
-      }
-      ctx.wakeDelivery?.idle?.();
-      if (ctx.wakeDelivery?.modActive?.()) {
-        ctx.activity?.("idle");
-        return {};
-      }
-      const now = Date.now();
-      const lingerRemaining = node2.lastSentAt > 0 ? node2.lastSentAt + ctx.cfg.lingerSec * 1e3 - now : 0;
-      const jobsRunning = ctx.jobs?.runningCount() ?? 0;
-      const inConversation = lingerRemaining > 0 || jobsRunning > 0;
-      if (!node2.autoWakeEnabled && !inConversation) {
-        ctx.activity?.("idle");
-        return {};
-      }
-      let msgs = take(ctx, true);
-      if (msgs.length === 0 && inConversation && !ctx.rewakeAvailable) {
-        const waitMs = Math.min(STOP_WAIT_CAP_MS, jobsRunning > 0 ? STOP_WAIT_CAP_MS : lingerRemaining);
-        ctx.log.info("listening for replies before ending the turn", { waitMs, jobsRunning });
-        const arrived = await node2.waitForMessage(waitMs, (m) => m.hop < ctx.cfg.maxHops, input2.signal);
-        if (arrived) msgs = take(ctx, true);
-      }
-      if (msgs.length === 0) {
-        ctx.activity?.("idle");
-        return {};
-      }
-      ctx.activity?.("busy");
-      ctx.log.info("continuing turn for peer messages", { count: msgs.length, autoWake: node2.autoWakeEnabled });
-      return { decision: "block", reason: `${formatMessages(msgs, { replyHint: false })}
-
-${STOP_REASON_FOOTER}` };
-    }
-    default:
-      return {};
-  }
-}
+// src/mcp/jobs.ts
+import { randomUUID as randomUUID9 } from "node:crypto";
+import { closeSync as closeSync2, mkdirSync as mkdirSync12, openSync as openSync2, rmSync as rmSync5, statSync as statSync4 } from "node:fs";
+import { dirname as dirname6 } from "node:path";
 
 // src/core/opencode-models.ts
 var LIST_TIMEOUT_MS = 6e4;
@@ -41731,7 +40681,7 @@ function resolveOpencodeModel(input2, models) {
 
 // src/core/opencode-served.ts
 import { spawn as spawn3 } from "node:child_process";
-import { randomBytes as randomBytes7 } from "node:crypto";
+import { randomBytes as randomBytes6 } from "node:crypto";
 import { extname as extname2 } from "node:path";
 var SERVE_START_TIMEOUT_MS = 3e4;
 var LISTEN_RE = /listening on (https?:\/\/[^\s]+)/i;
@@ -41833,7 +40783,7 @@ function permissionDetail(p) {
 }
 async function delegateToOpencodeServed(req) {
   checkDepthPublic();
-  const password = randomBytes7(PASSWORD_BYTES).toString("hex");
+  const password = randomBytes6(PASSWORD_BYTES).toString("hex");
   const permissions = req.permissions === void 0 ? OPENCODE_ASK_PERMISSIONS : req.permissions;
   const env = childEnvPublic({
     ...req.extraEnv,
@@ -42252,21 +41202,21 @@ ${CODEX_ASK_HINT}` : req.prompt;
 }
 
 // src/core/codex-env.ts
-import { readFileSync as readFileSync11 } from "node:fs";
-import { homedir as homedir3 } from "node:os";
-import { join as join17 } from "node:path";
-function codexWindowsSandbox(home = homedir3(), platform = process.platform) {
+import { readFileSync as readFileSync12 } from "node:fs";
+import { homedir as homedir5 } from "node:os";
+import { join as join19 } from "node:path";
+function codexWindowsSandbox(home = homedir5(), platform = process.platform) {
   if (platform !== "win32") return null;
   let toml;
   try {
-    toml = readFileSync11(join17(home, ".codex", "config.toml"), "utf8");
+    toml = readFileSync12(join19(home, ".codex", "config.toml"), "utf8");
   } catch {
     return null;
   }
   const table = /^\[windows\]\s*$([\s\S]*?)(?=^\[|(?![\s\S]))/m.exec(toml)?.[1] ?? "";
   return /^\s*sandbox\s*=\s*"([^"]+)"/m.exec(table)?.[1] ?? null;
 }
-function codexEnvironmentNote(home = homedir3(), platform = process.platform) {
+function codexEnvironmentNote(home = homedir5(), platform = process.platform) {
   if (codexWindowsSandbox(home, platform) !== "elevated") return "";
   return ` Note for this machine: Codex runs commands as a separate Windows sandbox user (elevated sandbox), which cannot read the user's profile. Tools installed there, such as Python under AppData\\Local\\Programs or user-level pip/npm installs, are missing in Codex subagents ("python is not recognized"). For work that needs them, point Codex to an interpreter inside the repository (e.g. a .venv in the worktree), or use a claude/opencode subagent.`;
 }
@@ -42375,6 +41325,3774 @@ ${res.text}` } : res;
   }
 };
 
+// src/mcp/job-settings.ts
+var JOB_SETTING_KEYS = ["model", "effort", "access", "sandbox", "permission_mode", "auto_approve"];
+var EXACT_PERMISSION_KEYS = ["sandbox", "permission_mode", "auto_approve"];
+var PERMISSION_KEY_AGENT = { sandbox: "codex", permission_mode: "claude", auto_approve: "opencode" };
+var EFFORT_PATTERN = /^[A-Za-z0-9_-]{1,20}$/;
+function changedJobArgs(args, settings) {
+  const next = { ...args };
+  if (settings.access !== void 0) for (const key of EXACT_PERMISSION_KEYS) delete next[key];
+  else if (EXACT_PERMISSION_KEYS.some((key) => settings[key] !== void 0)) delete next.access;
+  for (const key of JOB_SETTING_KEYS) if (settings[key] !== void 0) next[key] = settings[key];
+  return next;
+}
+function parseJobSettings(input2, agent) {
+  if (!input2 || typeof input2 !== "object" || Array.isArray(input2)) return "settings must be an object";
+  const raw = input2;
+  const unknownKey = Object.keys(raw).find((key) => !JOB_SETTING_KEYS.includes(key));
+  if (unknownKey) return `unknown setting: ${unknownKey}`;
+  const settings = {};
+  if (raw.model !== void 0) {
+    if (typeof raw.model !== "string" || !MODEL_NAME_PATTERN.test(raw.model)) return "invalid model";
+    settings.model = raw.model;
+  }
+  if (raw.effort !== void 0) {
+    if (typeof raw.effort !== "string" || !EFFORT_PATTERN.test(raw.effort)) return "invalid effort";
+    settings.effort = raw.effort;
+  }
+  if (raw.access !== void 0) {
+    if (!ACCESS_LEVELS.includes(raw.access)) return "invalid access";
+    settings.access = raw.access;
+  }
+  if (raw.sandbox !== void 0) {
+    if (!CODEX_SANDBOXES.includes(raw.sandbox)) return "invalid sandbox";
+    settings.sandbox = raw.sandbox;
+  }
+  if (raw.permission_mode !== void 0) {
+    if (!CLAUDE_PERMISSION_MODES.includes(raw.permission_mode)) return "invalid permission_mode";
+    settings.permission_mode = raw.permission_mode;
+  }
+  if (raw.auto_approve !== void 0) {
+    if (typeof raw.auto_approve !== "boolean") return "invalid auto_approve";
+    settings.auto_approve = raw.auto_approve;
+  }
+  for (const [key, owner] of Object.entries(PERMISSION_KEY_AGENT)) {
+    if (settings[key] !== void 0 && agent !== owner) return `${key} applies only to ${owner} jobs.`;
+  }
+  if (!Object.keys(settings).length) return "no settings given";
+  return settings;
+}
+
+// src/core/notifications.ts
+import { spawn as spawn5 } from "node:child_process";
+import { mkdirSync as mkdirSync11, readFileSync as readFileSync13, rmdirSync, statSync as statSync3, writeFileSync as writeFileSync6 } from "node:fs";
+import { join as join20 } from "node:path";
+var TITLE = "agent-bridge";
+var TEXT = {
+  approvals: "A subagent needs approval. Open the agent-bridge dashboard.",
+  finish: "A subagent finished. Open the agent-bridge dashboard for its report.",
+  fail: "A subagent failed. Open the agent-bridge dashboard for its report."
+};
+var NOTIFICATION_TIMEOUT_MS = 5e3;
+var EVENT_INTERVAL_MS = 5e3;
+var RATE_WINDOW_MS = 6e4;
+var MAX_NOTIFICATIONS_PER_WINDOW = 10;
+var MAX_RATE_HOMES = 100;
+var RATE_STATE_FILE = "notification-rate.json";
+var RATE_LOCK_DIR = "notification-rate.lock";
+var WINDOWS_POWERSHELL_APP_ID = "{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\\WindowsPowerShell\\v1.0\\powershell.exe";
+function notificationCommands(platform, event) {
+  const body = TEXT[event];
+  if (platform === "win32") {
+    const script = [
+      "$ErrorActionPreference = 'Stop'",
+      "[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] > $null",
+      "[Windows.UI.Notifications.ToastNotification, Windows.UI.Notifications, ContentType = WindowsRuntime] > $null",
+      "[Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime] > $null",
+      "$xml = New-Object Windows.Data.Xml.Dom.XmlDocument",
+      `$xml.LoadXml('<toast><visual><binding template="ToastGeneric"><text>${TITLE}</text><text>${body}</text></binding></visual></toast>')`,
+      "$toast = [Windows.UI.Notifications.ToastNotification]::new($xml)",
+      `[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('${WINDOWS_POWERSHELL_APP_ID}').Show($toast)`
+    ].join("; ");
+    return [{ bin: "powershell.exe", args: ["-NoLogo", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")] }];
+  }
+  if (platform === "darwin") return [
+    { bin: "terminal-notifier", args: ["-title", TITLE, "-message", body] },
+    { bin: "osascript", args: ["-e", `display notification "${body}" with title "${TITLE}"`] }
+  ];
+  if (platform === "linux") return [{ bin: "notify-send", args: ["--app-name", TITLE, "--", TITLE, body] }];
+  return [];
+}
+var NotificationLimiter = class {
+  homes = /* @__PURE__ */ new Map();
+  take(home, event, now = Date.now()) {
+    let state = this.homes.get(home);
+    if (!state) {
+      if (this.homes.size >= MAX_RATE_HOMES) this.homes.delete(this.homes.keys().next().value);
+      state = { times: [], events: {} };
+      this.homes.set(home, state);
+    }
+    state.times = state.times.filter((at) => now - at < RATE_WINDOW_MS);
+    const last = state.events[event];
+    if (last !== void 0 && now - last < EVENT_INTERVAL_MS || state.times.length >= MAX_NOTIFICATIONS_PER_WINDOW) return false;
+    state.times.push(now);
+    state.events[event] = now;
+    return true;
+  }
+};
+var limiter = new NotificationLimiter();
+function takeNotificationSlot(home, event, now = Date.now()) {
+  const lock = join20(home, RATE_LOCK_DIR);
+  try {
+    try {
+      mkdirSync11(lock);
+    } catch {
+      if (now - statSync3(lock).mtimeMs < NOTIFICATION_TIMEOUT_MS) return false;
+      rmdirSync(lock);
+      mkdirSync11(lock);
+    }
+  } catch {
+    return false;
+  }
+  try {
+    const file2 = join20(home, RATE_STATE_FILE);
+    let state = { times: [], events: {} };
+    try {
+      const stored = JSON.parse(readFileSync13(file2, "utf8"));
+      if (Array.isArray(stored.times) && stored.times.every((at) => typeof at === "number") && stored.events && typeof stored.events === "object") state = stored;
+    } catch {
+    }
+    state.times = state.times.filter((at) => now - at < RATE_WINDOW_MS);
+    const last = state.events[event];
+    if (typeof last === "number" && now - last < EVENT_INTERVAL_MS || state.times.length >= MAX_NOTIFICATIONS_PER_WINDOW) return false;
+    state.times.push(now);
+    state.events[event] = now;
+    writeFileSync6(file2, JSON.stringify(state), { mode: 384 });
+    return true;
+  } catch {
+    return false;
+  } finally {
+    try {
+      rmdirSync(lock);
+    } catch {
+    }
+  }
+}
+function launch(commands, log) {
+  const command = commands[0];
+  if (!command) return;
+  try {
+    const child = spawn5(command.bin, command.args, { stdio: "ignore", windowsHide: true, detached: true });
+    const timer = setTimeout(() => child.kill(), NOTIFICATION_TIMEOUT_MS);
+    timer.unref();
+    child.once("exit", () => clearTimeout(timer));
+    child.once("error", (err) => {
+      clearTimeout(timer);
+      if (err.code === "ENOENT" && commands.length > 1) launch(commands.slice(1), log);
+      else log.debug("desktop notification unavailable");
+    });
+    child.unref();
+  } catch {
+    log.debug("desktop notification unavailable");
+  }
+}
+function notifyJobEvent(home, event, log) {
+  const task = setImmediate(() => {
+    try {
+      if (!loadConfig(home, "other", log).notifications[event] || !limiter.take(home, event) || !takeNotificationSlot(home, event)) return;
+      launch(notificationCommands(process.platform, event), log);
+    } catch {
+      log.debug("desktop notification unavailable");
+    }
+  });
+  task.unref();
+}
+
+// src/mcp/jobs.ts
+var JOB_ID_LENGTH = 8;
+var PROMPT_PREVIEW_CHARS = 120;
+var HISTORY_LIMIT = 50;
+var STORE_LIMIT = 200;
+var MAX_NOTES = 500;
+var INTERRUPTED_LISTED_MS = 24 * 60 * 60 * 1e3;
+var NOTE_CONVERSATION_SUFFIX = ":note";
+var DEFAULT_FOLLOW_UP = "Continue where you stopped and finish the task. Then give your final answer.";
+var HOST_POLL_MS = 2e3;
+var CANCEL_GRACE_MS = 5e3;
+var QUEUED_FOLLOW_UP_NOTE = "(Your queued follow-up was sent to it; its answer will arrive as another message.)";
+function jobReport(job, status, seconds, text2, cause) {
+  const how = job.sessionId ? status === "failed" ? ` To recover it with its context, call message_subagent(job="${job.name}") (optionally with a message).` : ` Continue it with its context: message_subagent(job="${job.name}", message=...).` : "";
+  const header = `Subagent ${job.name} (${job.agent}${job.model ? `, model ${job.model}` : ""}) ${status} after ${seconds}s.${how}`;
+  return [header, cause ? `Cause: ${cause}` : "", text2 && cause ? `Its last message:
+${text2}` : text2].filter(Boolean).join("\n\n");
+}
+var approvalAnswers = /* @__PURE__ */ new WeakMap();
+function denyPendingApprovals(job, reason = "job finished") {
+  for (const answer of [...approvalAnswers.get(job) ?? []]) answer(reason, "job completion");
+}
+function waitForApproval(job, question, timeoutMs, post, log, home, request2, askUser) {
+  return new Promise((resolve10) => {
+    let settled = false;
+    let cleanup;
+    const askedAt = Date.now();
+    const settle2 = (answer, by = "session") => {
+      if (settled) return false;
+      if (Date.now() >= askedAt + timeoutMs) {
+        answer = "no answer in time";
+        by = "timeout";
+      }
+      settled = true;
+      clearTimeout(timer);
+      job.controller.signal.removeEventListener("abort", aborted2);
+      const answers2 = approvalAnswers.get(job);
+      answers2?.delete(settle2);
+      job.pendingApproval = answers2?.values().next().value ?? null;
+      if (!answers2?.size) approvalAnswers.delete(job);
+      try {
+        cleanup?.();
+      } catch {
+        log.warn("could not remove pending approval", { job: job.name });
+      }
+      const allow = /^\s*(allow|yes|y|approve|approved|ok|okay|go ahead|accept)\b/i.test(answer);
+      try {
+        post(`Approval for ${job.name} ${allow ? "allowed" : "denied"} by ${by}.`);
+      } catch {
+        log.warn("could not report approval answer", { job: job.name });
+      }
+      resolve10({ allow, reason: answer.trim() });
+      return true;
+    };
+    const timer = setTimeout(() => settle2("no answer in time", "timeout"), timeoutMs);
+    timer.unref?.();
+    const aborted2 = () => settle2("job cancelled", "cancellation");
+    job.controller.signal.addEventListener("abort", aborted2, { once: true });
+    let answers = approvalAnswers.get(job);
+    if (!answers) {
+      answers = /* @__PURE__ */ new Set();
+      approvalAnswers.set(job, answers);
+    }
+    answers.add(settle2);
+    job.pendingApproval = answers.values().next().value;
+    if (job.controller.signal.aborted) {
+      aborted2();
+      return;
+    }
+    if (home) {
+      void publishApproval(home, {
+        id: newApprovalId(),
+        owner: job.owner ?? "",
+        job: job.name,
+        agent: job.agent,
+        tool: request2?.tool ?? "approval",
+        command: request2?.detail ?? question,
+        reason: request2?.reason ?? question,
+        askedAt,
+        deadline: askedAt + timeoutMs
+      }, settle2).then((close) => {
+        if (settled) close();
+        else {
+          cleanup = close;
+          notifyJobEvent(home, "approvals", log);
+        }
+      }).catch(() => log.warn("could not publish pending approval", { job: job.name }));
+    }
+    log.info("subagent asks for approval", { job: job.name });
+    post(
+      `Subagent ${job.name} asks for approval: ${question}
+
+Decide as its supervisor: answer with message_subagent(job="${job.name}", message="allow") or message="deny" (a reason may follow). It waits for your answer; no answer within ${Math.round(timeoutMs / 6e4)} minutes counts as deny.`
+    );
+    if (askUser) {
+      void Promise.resolve().then(askUser).then(
+        (decision) => settle2(decision.allow ? "allow" : `deny: ${decision.message}`, "user in session"),
+        () => settle2("deny: The permission dialog failed.", "user in session")
+      );
+    }
+  });
+}
+var JobManager = class {
+  constructor(node2, log, storePath = null, maxJobs = DEFAULT_MAX_JOBS) {
+    this.node = node2;
+    this.log = log;
+    this.storePath = storePath;
+    this.maxJobs = maxJobs;
+    node2.on("message", (m) => {
+      const jobId = /(?:^|\/)job:([0-9a-f]+)$/.exec(m.from.id)?.[1];
+      if (!jobId) return;
+      const job = this.running.get(jobId);
+      if (job?.host) this.checkHosted(job);
+    });
+    node2.on("connected", () => {
+      for (const job of this.running.values()) if (job.host) this.runners?.send(job, { type: "attach" });
+    });
+  }
+  node;
+  log;
+  storePath;
+  maxJobs;
+  running = /* @__PURE__ */ new Map();
+  foreground = /* @__PURE__ */ new Map();
+  history = /* @__PURE__ */ new Map();
+  /** Finished jobs whose continuation waits for a free slot, in arrival order; the messages are in job.queue. */
+  waitingJobs = /* @__PURE__ */ new Map();
+  /** Ids of status notes from running subagents (see fromSubagent). */
+  notes = /* @__PURE__ */ new Set();
+  /** Jobs this manager started, continued or took over: only these are saved (others' entries stay as they are on disk). */
+  own = /* @__PURE__ */ new Set();
+  /** Background jobs run in detached job runners where it can (they survive a restart of this server); null: all here. */
+  runners = null;
+  hostTimer = null;
+  get limit() {
+    return this.maxJobs;
+  }
+  /** Change the limit now. A higher one starts waiting continuations; a lower one stops no running subagent. */
+  setLimit(max) {
+    this.maxJobs = max;
+    this.log.info("subagent limit changed", { max });
+    this.startWaiting();
+  }
+  /**
+   * A newer server of this session took over (the bridge replaced this one): stay out of the job store and the
+   * runners, so two servers never settle or save the same jobs. Ends when this server takes its place back.
+   */
+  dormant = false;
+  setDormant(dormant) {
+    if (this.dormant === dormant) return;
+    this.dormant = dormant;
+    this.log.info(dormant ? "another server of this session took over: jobs paused here" : "this server took its place back: jobs resumed");
+    if (dormant && this.hostTimer) {
+      clearInterval(this.hostTimer);
+      this.hostTimer = null;
+    }
+    if (!dormant && [...this.running.values()].some((j) => j.host)) this.watchHosted();
+  }
+  /** Save this session's jobs, merged with those other sessions saved. Best effort: never breaks a run. */
+  persist() {
+    if (!this.storePath || this.dormant) return;
+    let lock = () => {
+    };
+    try {
+      lock = acquireLock(`${this.storePath}.lock`);
+      const previous = readJobsDocument(this.storePath, this.log);
+      assertWritableStore(previous);
+      const entries = Array.isArray(previous) ? previous : isRecord(previous) ? previous.jobs : [];
+      const mine = [...this.history.values()].filter((j) => this.own.has(j.id)).map((j) => {
+        const old = entries.find((entry) => isRecord(entry) && entry.id === j.id);
+        return mergeStoreFields(isRecord(old) ? old : {}, toStored(j));
+      });
+      const ids = new Set(mine.map((j) => j.id));
+      const others = entries.filter((j) => !isRecord(j) || !ids.has(j.id));
+      const all = [...others, ...mine].sort((a, b) => {
+        const started = (entry) => isRecord(entry) && typeof entry.startedAt === "number" ? entry.startedAt : 0;
+        return started(a) - started(b);
+      });
+      const finished = all.filter((j) => isStoredJob(j) && (j.status === "done" || j.status === "failed")).sort((a, b) => a.startedAt - b.startedAt);
+      const limit = retentionLimit("AGENT_BRIDGE_JOB_STORE_LIMIT", STORE_LIMIT);
+      const overflow = new Set(limit ? finished.slice(0, Math.max(0, finished.length - limit)) : []);
+      if (overflow.size) {
+        const archive = `${this.storePath}.overflow.json`;
+        writeJsonStore(archive, { jobs: [...overflow] }, null);
+        archiveFile(archive);
+        this.log.info("archived finished jobs", { count: overflow.size });
+      }
+      writeJsonStore(this.storePath, { ...isRecord(previous) ? previous : {}, jobs: all.filter((j) => !overflow.has(j)) }, previous);
+    } catch (err) {
+      this.log.warn("could not save subagent jobs", { err: err.message });
+    } finally {
+      lock();
+    }
+  }
+  /**
+   * Load the jobs saved before this session (re)started, so message_subagent can continue them with their
+   * context. Jobs that were still running are marked interrupted: a follow-up without a message recovers them.
+   * A job of this session whose job runner is still at work (it outlived the old server) is running: this
+   * manager takes it over. Another session's runner-hosted job keeps its status for that session to take over.
+   */
+  restore(makeResume) {
+    if (!this.storePath) return;
+    const stored = readStore(this.storePath, this.log);
+    const adopted = [];
+    const recentIds = new Set(stored.slice(-HISTORY_LIMIT).map((s) => s.id));
+    for (const s of stored.filter((x) => recentIds.has(x.id) || x.status === "running")) {
+      if (this.history.has(s.id)) continue;
+      const hosted = s.status === "running" && Boolean(s.host);
+      const mine = this.isMine(s.owner);
+      const job = {
+        ...s,
+        status: s.status === "running" && !(hosted && !mine) ? "interrupted" : s.status,
+        controller: new AbortController(),
+        progress: null,
+        queue: [],
+        resume: makeResume(s.agent, s.args ?? {})
+      };
+      this.history.set(s.id, job);
+      if (hosted && mine && this.takeOver(job)) adopted.push(job);
+    }
+    if (stored.length) this.log.info("restored subagent jobs", { count: Math.min(stored.length, HISTORY_LIMIT), runnerHosted: adopted.length });
+    this.assignLegacySupervisors();
+    this.settleAdopted(adopted);
+    this.persist();
+  }
+  /** Whether a runner-hosted job can be taken over here (its runner lives, or finished and left its report). */
+  takeOver(job) {
+    if (!this.runners) return false;
+    const state = this.runners.state(job);
+    if (state) Object.assign(job, { sessionId: state.sessionId ?? job.sessionId, workdir: state.workdir ?? job.workdir, worktree: state.worktree ?? job.worktree });
+    if (this.runners.alive(job, state) || state && state.status !== "running") return true;
+    job.status = "interrupted";
+    if (state?.sessionId) this.own.add(job.id);
+    return false;
+  }
+  settleAdopted(adopted) {
+    for (const job of adopted) {
+      job.status = "running";
+      job.owner = this.node.name;
+      this.running.set(job.id, job);
+      this.own.add(job.id);
+      this.checkHosted(job);
+    }
+    if (adopted.length) {
+      this.watchHosted();
+      this.persist();
+    }
+  }
+  /** Record facts learned while it runs (its session, its folder), so a restart can continue it. */
+  note(job, facts) {
+    if (facts.sessionId) job.sessionId = facts.sessionId;
+    if (facts.workdir) job.workdir = facts.workdir;
+    if (facts.worktree) job.worktree = facts.worktree;
+    this.persist();
+  }
+  runningCount() {
+    return this.running.size;
+  }
+  /** Background jobs plus blocking ask_* runs, so the session (and its coordinator) can see all of them. */
+  list() {
+    for (const job of [...this.running.values()]) if (job.host) this.checkHosted(job);
+    return [...this.running.values(), ...this.foreground.values()];
+  }
+  /** Continuations waiting for a free slot, first in line first. */
+  waiting() {
+    return [...this.waitingJobs.values()];
+  }
+  /** Recently finished subagents, newest first (they can still be messaged). */
+  /**
+   * Whether a job belongs to this session. A session briefly runs under a "-N" stand-in of its name when a
+   * reload starts its new server while the old one is still connected; jobs started then are its too.
+   */
+  isMine(owner) {
+    return !owner || owner === this.node.name || this.adoptedOwners.has(owner);
+  }
+  /** "-N" stand-in names of this session whose jobs it adopted (see adoptStandIns). */
+  adoptedOwners = /* @__PURE__ */ new Set();
+  /** Whether `owner` is a "-N" stand-in of this session's name ("claude-x-2" for "claude-x"). */
+  isStandIn(owner) {
+    const base = this.node.name.replace(/-\d+$/, "");
+    return owner !== this.node.name && (owner === base || owner.startsWith(`${base}-`) && /^\d+$/.test(owner.slice(base.length + 1)));
+  }
+  /**
+   * A reload can run a session briefly under a "-N" stand-in name; jobs started then carry it. Once on the
+   * bridge, adopt those whose stand-in name no live peer holds (a live "-2" is another session of the folder).
+   */
+  adoptStandIns(online) {
+    if (this.dormant) return [];
+    const owners = new Set([...this.history.values()].map((j) => j.owner).filter((o) => Boolean(o) && this.isStandIn(o) && !online.has(o)));
+    if (!owners.size) return [];
+    for (const o of owners) this.adoptedOwners.add(o);
+    this.assignLegacySupervisors();
+    const taken = [];
+    for (const job of this.history.values()) {
+      if (!job.owner || !owners.has(job.owner)) continue;
+      if (job.status === "running" && job.host && !this.running.has(job.id) && this.takeOver(job)) taken.push(job);
+      else if (job.status === "running" && !this.running.has(job.id)) job.status = "interrupted";
+    }
+    this.log.info("adopted jobs started under a stand-in name of this session", { owners: [...owners], runnerHosted: taken.length });
+    this.settleAdopted(taken);
+    this.persist();
+    return [...owners];
+  }
+  /** Finished jobs of this session: every interrupted one (they need recovering), then the newest others. */
+  recent(limit = 5) {
+    const mine = [...this.history.values()].filter((j) => j.status !== "running" && !this.waitingJobs.has(j.id) && this.isMine(j.owner)).sort((a, b) => (b.finishedAt ?? b.startedAt) - (a.finishedAt ?? a.startedAt));
+    const interrupted = mine.filter((j) => j.status === "interrupted" && Date.now() - (j.finishedAt ?? j.startedAt) < INTERRUPTED_LISTED_MS);
+    return [...interrupted, ...mine.filter((j) => !interrupted.includes(j)).slice(0, limit)];
+  }
+  find(ref) {
+    const id = ref.replace(/^.*-(?:job|ask)-/, "");
+    return this.history.get(id) ?? [...this.history.values()].find((j) => j.name === ref);
+  }
+  remember(job) {
+    this.history.set(job.id, job);
+    this.own.add(job.id);
+    while (this.history.size > HISTORY_LIMIT) this.history.delete(this.history.keys().next().value);
+    this.persist();
+  }
+  newJob(agent, model, prompt, kind, resume, args) {
+    const id = randomUUID9().replace(/-/g, "").slice(0, JOB_ID_LENGTH);
+    return {
+      id,
+      name: `${agent}-${kind}-${id}`,
+      agent,
+      model,
+      prompt,
+      startedAt: Date.now(),
+      controller: new AbortController(),
+      progress: null,
+      status: "running",
+      sessionId: null,
+      workdir: null,
+      worktree: null,
+      resume,
+      queue: [],
+      args,
+      owner: this.node.name,
+      // Keep the first job's identity when hooks learn the session id later, or a server reload adopts it.
+      supervisor: this.supervisorIdentity()
+    };
+  }
+  supervisorIdentity() {
+    return [...this.running.values(), ...this.foreground.values(), ...this.history.values()].find((j) => this.isMine(j.owner) && j.supervisor)?.supervisor ?? this.node.currentSessionId ?? this.node.id;
+  }
+  assignLegacySupervisors() {
+    const supervisor = this.supervisorIdentity();
+    for (const job of this.history.values()) {
+      if (!job.supervisor && this.isMine(job.owner)) {
+        job.supervisor = supervisor;
+        this.own.add(job.id);
+      }
+    }
+  }
+  /**
+   * Register a blocking ask_* run for visibility in peers. Returns a progress sink and `end`, which records
+   * the outcome so the run can be continued later with message_subagent.
+   */
+  track(agent, model, prompt, resume, args) {
+    const job = { ...this.newJob(agent, model, prompt, "ask", resume, args), foreground: true };
+    this.foreground.set(job.id, job);
+    this.remember(job);
+    return {
+      job,
+      onProgress: (message) => {
+        job.progress = message;
+      },
+      end: (outcome) => {
+        denyPendingApprovals(job);
+        this.foreground.delete(job.id);
+        job.foreground = false;
+        job.finishedAt = Date.now();
+        job.status = outcome?.result && !outcome.result.isError ? "done" : "failed";
+        if (this.storePath) notifyJobEvent(dirname6(this.storePath), job.status === "done" ? "finish" : "fail", this.log);
+        job.sessionId = outcome?.result?.sessionId ?? sessionOfError(outcome?.error) ?? job.sessionId;
+        job.workdir = outcome?.result?.workdir ?? job.workdir;
+        job.worktree = outcome?.result?.worktree ?? job.worktree;
+        this.persist();
+        if (job.queue.length && job.resume && job.sessionId && !job.controller.signal.aborted) {
+          if (this.canStart()) this.launch(job, job.resume(job.queue.splice(0).join("\n\n"), job.sessionId, job.workdir, job.worktree));
+          else this.waitForSlot(job);
+        }
+      }
+    };
+  }
+  canStart() {
+    return this.running.size < this.maxJobs;
+  }
+  start(agent, model, prompt, run, resume, args) {
+    const job = this.newJob(agent, model, prompt, "job", resume, args);
+    this.remember(job);
+    this.log.info("subagent started", { job: job.name, model, prompt: prompt.slice(0, PROMPT_PREVIEW_CHARS) });
+    this.launch(job, run);
+    return job;
+  }
+  /** Save next-turn settings and send them to a runner that continues the job itself. */
+  setSettings(ref, settings) {
+    const job = this.find(ref);
+    if (!job) return false;
+    job.args = changedJobArgs(job.args, settings);
+    if (settings.model !== void 0 && job.status !== "running") job.model = settings.model;
+    if (this.hostedRunning(job)) this.runners.send(job, { type: "settings", settings });
+    else job.remoteControl?.({ type: "settings", settings });
+    this.own.add(job.id);
+    this.persist();
+    return true;
+  }
+  /** Change a job's thinking level for its next turns (a turn already running keeps its own). */
+  setEffort(ref, effort) {
+    const job = this.find(ref);
+    if (!job) return false;
+    job.args = { ...job.args, effort };
+    if (this.hostedRunning(job)) this.runners.send(job, { type: "effort", effort });
+    else job.remoteControl?.({ type: "effort", effort });
+    this.own.add(job.id);
+    this.persist();
+    return true;
+  }
+  /** Name or rename a job; its next turn (and the dashboard) uses the title. */
+  setTitle(ref, title) {
+    const job = this.find(ref);
+    if (!job) return false;
+    job.args = { ...job.args, title };
+    job.retitle?.(title);
+    if (this.hostedRunning(job)) this.runners.send(job, { type: "title", title });
+    else job.remoteControl?.({ type: "title", title });
+    this.own.add(job.id);
+    this.persist();
+    return true;
+  }
+  /**
+   * Send a follow-up to a subagent: queued while it runs, otherwise its session is resumed in the background,
+   * as soon as a slot is free.
+   */
+  followUp(ref, message) {
+    const job = this.find(ref);
+    if (!job) return { outcome: "unknown" };
+    if (this.hostedRunning(job)) this.checkHosted(job);
+    if (this.waitingJobs.has(job.id)) {
+      job.queue.push(message);
+      return { outcome: "waiting", job };
+    }
+    if (this.hostedRunning(job)) {
+      const state = this.runners.state(job);
+      const cid = randomUUID9();
+      (job.forwarded ??= []).push({ cid, body: message });
+      this.runners.send(job, { type: "message", body: message, cid });
+      return { outcome: state?.asking ? "answered" : state?.live ? "delivered" : "queued", job };
+    }
+    if (job.status === "running" && job.pendingApproval) {
+      const answer = job.pendingApproval;
+      job.pendingApproval = null;
+      answer(message, `session ${this.node.name}`);
+      return { outcome: "answered", job };
+    }
+    if (job.status === "running") {
+      if (job.live) {
+        job.awaitingAnswer = true;
+        job.live.post(message);
+        return { outcome: "delivered", job };
+      }
+      job.queue.push(message);
+      return { outcome: "queued", job };
+    }
+    if (!job.resume || !job.sessionId) return { outcome: "no-session", job };
+    if (!this.canStart()) {
+      job.queue.push(message);
+      this.waitForSlot(job);
+      return { outcome: "waiting", job };
+    }
+    this.log.info("subagent resumed", { job: job.name, sessionId: job.sessionId });
+    this.launch(job, job.resume(message, job.sessionId, job.workdir, job.worktree));
+    return { outcome: "started", job };
+  }
+  /** Continue this finished job (its queued messages) once a slot frees up. */
+  waitForSlot(job) {
+    this.waitingJobs.set(job.id, job);
+    this.log.info("subagent continuation waits for a free slot", { job: job.name, running: this.running.size, position: this.waitingJobs.size });
+  }
+  /** Start waiting continuations while there are free slots, oldest first. */
+  startWaiting() {
+    for (const job of this.waitingJobs.values()) {
+      if (!this.canStart()) return;
+      this.waitingJobs.delete(job.id);
+      if (!job.queue.length || !job.resume || !job.sessionId) continue;
+      this.log.info("subagent resumed (was waiting for a slot)", { job: job.name, sessionId: job.sessionId });
+      this.launch(job, job.resume(job.queue.splice(0).join("\n\n"), job.sessionId, job.workdir, job.worktree));
+    }
+  }
+  launch(job, run) {
+    if (typeof job.args?.model === "string") job.model = job.args.model;
+    job.status = "running";
+    job.startedAt = Date.now();
+    job.controller = new AbortController();
+    job.progress = null;
+    job.foreground = false;
+    this.running.set(job.id, job);
+    this.own.add(job.id);
+    job.host = this.runners ? run.hosted?.(job) ?? null : null;
+    job.forwarded = [];
+    this.persist();
+    if (job.host) {
+      this.log.info("subagent runs in a job runner", { job: job.name, peer: job.host.peer });
+      this.watchHosted();
+      return;
+    }
+    const onProgress = (message) => {
+      job.progress = message;
+      this.log.debug("subagent progress", { job: job.name, message });
+    };
+    run(job.controller.signal, onProgress, job).then(
+      (res) => {
+        job.workdir = res.workdir ?? job.workdir;
+        job.worktree = res.worktree ?? job.worktree;
+        this.finish(job, res.isError ? "failed" : "done", res.text || "(no answer text returned)", res.sessionId, res.isError ? failureCause({ result: res }) : null);
+      },
+      // The cause is the whole report here: the error says what happened (and, for a worktree, where the work is).
+      (err) => this.finish(job, "failed", "", sessionOfError(err), failureCause({ error: err }))
+    );
+  }
+  /** A running job of this manager that a job runner hosts. */
+  hostedRunning(job) {
+    return job.status === "running" && Boolean(job.host) && Boolean(this.runners) && this.running.get(job.id) === job;
+  }
+  /** Check runner-hosted jobs while any runs. */
+  watchHosted() {
+    if (this.hostTimer || this.dormant) return;
+    this.hostTimer = setInterval(() => {
+      const hosted = [...this.running.values()].filter((j) => j.host);
+      if (!hosted.length && this.hostTimer) {
+        clearInterval(this.hostTimer);
+        this.hostTimer = null;
+      }
+      for (const job of hosted) this.checkHosted(job);
+    }, HOST_POLL_MS);
+    this.hostTimer.unref();
+  }
+  /**
+   * Take what a job's runner reports: its progress and facts, and its end. The runner delivers the report
+   * itself (a message on the bridge, so it waits for the session even while no server of it runs); this
+   * session only posts it when the runner could not, or says why a runner ended without one.
+   */
+  checkHosted(job) {
+    if (!this.hostedRunning(job)) return;
+    const runners = this.runners;
+    const state = runners.state(job);
+    if (state) {
+      job.host.pid = state.pid;
+      if (state.model !== void 0) job.model = state.model;
+      job.progress = state.progress ?? job.progress;
+      if (state.percent !== void 0) {
+        job.percent = state.percent;
+        job.progressNote = state.progressNote;
+      }
+      if (state.sessionId && state.sessionId !== job.sessionId || state.workdir && state.workdir !== job.workdir || state.worktree && !job.worktree) {
+        this.note(job, { sessionId: state.sessionId, workdir: state.workdir, worktree: state.worktree });
+      }
+    }
+    const alive2 = runners.alive(job, state);
+    if (state && state.status !== "running") {
+      if (!job.remote && state.delivered || !alive2) this.settleHosted(job, state);
+    } else if (!alive2) this.settleHosted(job, null);
+  }
+  /** A runner-hosted job ended: with its runner's final state, or without (the runner is gone). */
+  settleHosted(job, final) {
+    const seen = new Set(final?.seen ?? this.runners?.state(job)?.seen ?? []);
+    job.queue.push(...(job.forwarded ?? []).filter((f) => !seen.has(f.cid)).map((f) => f.body));
+    job.forwarded = [];
+    const pid = job.host?.pid;
+    job.host = null;
+    if (final) {
+      this.finish(job, final.status === "done" ? "done" : "failed", "", final.sessionId ?? null, null, final.delivered ? null : final.report);
+      return;
+    }
+    const cause = job.controller.signal.aborted ? "cancelled" : `its job runner${pid ? ` (process ${pid})` : ""} ended without reporting a result`;
+    this.finish(job, "failed", "", job.sessionId, cause);
+  }
+  /** Cancel a background job, a blocking ask_* run or a continuation waiting for a slot, by name or id. */
+  cancel(ref) {
+    const id = ref.replace(/^.*-(?:job|ask)-/, "");
+    const waiting = [...this.waitingJobs.values()].find((j) => j.id === id || j.name === ref);
+    if (waiting) {
+      this.waitingJobs.delete(waiting.id);
+      waiting.queue = [];
+      this.log.info("waiting subagent continuation cancelled", { job: waiting.name });
+      return true;
+    }
+    const job = [...this.running.values(), ...this.foreground.values()].find((j) => j.id === id || j.name === ref);
+    if (!job) return false;
+    job.queue = [];
+    job.controller.abort();
+    if (this.hostedRunning(job)) {
+      job.forwarded = [];
+      const runners = this.runners;
+      runners.send(job, { type: "cancel" });
+      setTimeout(() => {
+        if (!this.hostedRunning(job)) return;
+        if (runners.alive(job, runners.state(job))) {
+          this.log.warn("job runner did not stop in time; killing it", { job: job.name, pid: job.host?.pid });
+          runners.kill(job);
+        }
+        this.checkHosted(job);
+      }, CANCEL_GRACE_MS).unref();
+    }
+    return true;
+  }
+  /**
+   * Stop every subagent of this process (the server shuts down). Runner-hosted ones keep running: the next
+   * server of this session takes them over, and their results wait for it on the bridge.
+   */
+  cancelAll() {
+    for (const j of this.waitingJobs.values()) j.queue = [];
+    this.waitingJobs.clear();
+    for (const j of this.running.values()) if (!j.host) j.controller.abort();
+    for (const j of this.foreground.values()) denyPendingApprovals(j, "session closed");
+    if (this.hostTimer) clearInterval(this.hostTimer);
+    this.hostTimer = null;
+  }
+  /** `report`: null when the runner already delivered it, a text to post as it is, or undefined to compose it here. */
+  finish(job, status, text2, sessionId, cause = null, report) {
+    denyPendingApprovals(job);
+    this.running.delete(job.id);
+    job.status = status;
+    job.finishedAt = Date.now();
+    job.sessionId = sessionId ?? job.sessionId;
+    this.persist();
+    const seconds = Math.round((Date.now() - job.startedAt) / 1e3);
+    this.log.info("subagent finished", { job: job.name, status, seconds, sessionId: job.sessionId, cause });
+    if (this.storePath && !job.host) notifyJobEvent(dirname6(this.storePath), status === "done" ? "finish" : "fail", this.log);
+    const message = report === void 0 ? jobReport(job, status, seconds, text2, cause) : report;
+    if (job.queue.length && job.resume && job.sessionId && !job.controller.signal.aborted) {
+      const queued = job.queue.splice(0).join("\n\n");
+      if (message !== null) this.post(job, `${message}
+
+${QUEUED_FOLLOW_UP_NOTE}`);
+      this.launch(job, job.resume(queued, job.sessionId, job.workdir, job.worktree));
+      return;
+    }
+    if (message !== null) this.post(job, message);
+    this.startWaiting();
+  }
+  /**
+   * Ask this session's agent to approve something the running subagent wants to do (an MCP tool call, for
+   * example). The question arrives as a message from the job; the agent answers with message_subagent.
+   * No answer within the time limit counts as "deny".
+   */
+  askParent(job, question, timeoutMs, request2) {
+    return waitForApproval(job, question, timeoutMs, (body) => this.post(job, body), this.log, this.storePath ? dirname6(this.storePath) : void 0, request2);
+  }
+  /**
+   * A message the running subagent sent to this session. An answer (to a live message, or marked as a reply)
+   * wakes the session; a note it sends on its own ("tests pass, merging next") does not: it waits for the
+   * session's next prompt or tool call, so status chatter costs no extra turn.
+   */
+  fromSubagent(job, body, replyTo, isAnswer = false) {
+    const answer = isAnswer || replyTo !== null || job.awaitingAnswer === true;
+    job.awaitingAnswer = false;
+    this.log.info("message from subagent", { job: job.name, note: !answer });
+    const id = this.post(job, body, replyTo);
+    if (!answer) {
+      this.notes.add(id);
+      if (this.notes.size > MAX_NOTES) this.notes.delete(this.notes.values().next().value);
+    }
+  }
+  /** Whether a message is a running subagent's own status note (it should not wake the session). */
+  isNote(m) {
+    return this.notes.has(m.id) || m.conversationId.endsWith(NOTE_CONVERSATION_SUFFIX);
+  }
+  post(job, body, replyTo = null) {
+    const m = {
+      id: randomUUID9(),
+      from: { id: `job:${job.id}`, name: job.name, agent: job.agent },
+      to: this.node.name,
+      recipient: this.node.name,
+      conversationId: `job-${job.id}`,
+      replyTo,
+      hop: 0,
+      body,
+      createdAt: Date.now(),
+      readAt: null
+    };
+    this.node.deliverLocal(m);
+    return m.id;
+  }
+};
+function sessionOfError(err) {
+  return err instanceof DelegateError ? err.sessionId ?? null : null;
+}
+function toStored(j) {
+  return {
+    id: j.id,
+    name: j.name,
+    agent: j.agent,
+    model: j.model,
+    prompt: j.prompt,
+    startedAt: j.startedAt,
+    status: j.status,
+    sessionId: j.sessionId,
+    workdir: j.workdir,
+    worktree: j.worktree,
+    args: j.args,
+    owner: j.owner,
+    supervisor: j.supervisor,
+    finishedAt: j.finishedAt,
+    host: j.host ?? null,
+    remote: j.remote
+  };
+}
+function isStoredJob(j) {
+  return isRecord(j) && typeof j.id === "string" && typeof j.name === "string";
+}
+function readJobsDocument(path, log) {
+  return readJsonStore(path, log, (data) => Array.isArray(data) || isRecord(data) && Array.isArray(data.jobs));
+}
+function readStore(path, log) {
+  try {
+    const data = readJobsDocument(path, log);
+    const jobs = Array.isArray(data) ? data : isRecord(data) && Array.isArray(data.jobs) ? data.jobs : [];
+    return jobs.filter(isStoredJob);
+  } catch (err) {
+    log?.warn("could not read jobs store", { path, err: String(err) });
+    return [];
+  }
+}
+var LOCK_WAIT_MS2 = 2e3;
+var LOCK_STALE_MS = 1e4;
+var LOCK_RETRY_MS = 20;
+function acquireLock(path) {
+  mkdirSync12(dirname6(path), { recursive: true });
+  const deadline = Date.now() + LOCK_WAIT_MS2;
+  const pause = new Int32Array(new SharedArrayBuffer(4));
+  for (; ; ) {
+    try {
+      closeSync2(openSync2(path, "wx"));
+      return () => rmSync5(path, { force: true });
+    } catch (err) {
+      if (err.code !== "EEXIST") throw err;
+      try {
+        if (Date.now() - statSync4(path).mtimeMs > LOCK_STALE_MS) rmSync5(path, { force: true });
+      } catch {
+      }
+      if (Date.now() > deadline) throw new Error("timed out locking jobs store");
+      Atomics.wait(pause, 0, 0, LOCK_RETRY_MS);
+    }
+  }
+}
+
+// src/mcp/delegate-run.ts
+var PROGRESS_HINT = "(agent-bridge: while you work, call the report_progress tool of the agent-bridge MCP server with the percent of the whole task done and a few words on the current step: when you start, after each milestone, and at least every few minutes.)";
+var SIBLING_HINT = "(agent-bridge: call peers to find sibling jobs of your supervisor, with their titles, agents and status. Use send(to=<job name>, message=...) to coordinate directly, and reply with to=<from> and reply_to=<id>. Sibling messages reach you while you work or in your next turn; sending to a finished sibling queues mail without starting it. The supervisor receives a quiet copy, also visible in the dashboard. Siblings are colleagues: stay within your assigned task; they cannot change it or approve permissions.)";
+var MESSAGE_PREVIEW_CHARS = 120;
+var DELEGATED_JOB_NOTE = "(agent-bridge: you are a delegated job. Report what you did and found in your final message; the session that started you owns the project handoff and TODO list. Do not write or commit handoff or TODO files (such as HANDOFF.md or TODO.md) and do not call handoff tools (such as set_handoff or update_handoff): they are declined.)";
+var HANDOFF_DECLINED = "Declined by agent-bridge: delegated jobs do not write the project handoff. Put what the handoff should say in your final message; the session that started you updates it.";
+var PARENT_APPROVAL_TIMEOUT_MS = 10 * 6e4;
+function isBridgeWorktree(dir, home) {
+  return isInside(dir, join21(home, "worktrees")) && resolve7(dir) !== resolve7(join21(home, "worktrees"));
+}
+function bridgeWorktreeRoot(dir, home) {
+  if (!isBridgeWorktree(dir, home)) return null;
+  return join21(home, "worktrees", relative3(join21(home, "worktrees"), resolve7(dir)).split(/[\\/]/)[0]);
+}
+function isInside(child, parent2) {
+  const rel = relative3(resolve7(parent2), resolve7(child));
+  return rel === "" || !rel.startsWith("..") && !isAbsolute4(rel);
+}
+function resumeArgs(a, job, message, sessionId, workdir, worktree, saved) {
+  if (saved) {
+    a = { ...a };
+    for (const key of JOB_SETTING_KEYS) delete a[key];
+    a = { ...a, ...Object.fromEntries(JOB_SETTING_KEYS.filter((key) => saved[key] !== void 0).map((key) => [key, saved[key]])) };
+  }
+  return { ...a, _job: job, prompt: message, session_id: sessionId, cwd: workdir ?? a.cwd, worktree: false, _worktree: worktree ?? void 0, access: a.worktree ? a.access ?? "edit" : a.access };
+}
+function worktreeArgs(target, a, cfg, cwd, home) {
+  const worktree = Boolean(a.worktree || a._worktree || isBridgeWorktree(cwd, home));
+  const access = worktree ? a.access ?? "edit" : a.access;
+  const sandbox = target === "codex" && worktree && access === "edit" && a.sandbox === void 0 ? cfg.codexWorktreeSandbox ?? (cfg.codexSandbox === "read-only" ? "workspace-write" : cfg.codexSandbox) : a.sandbox;
+  return { ...a, access, ...sandbox !== void 0 ? { sandbox } : {} };
+}
+async function runDelegate(rc, target, a, signal, onProgress, background, job) {
+  const { cfg, log } = rc;
+  const profile = DELEGATION_TARGETS[target];
+  const defaultModel = profile.defaultModel(cfg);
+  const dlog = log.child("delegate");
+  const cwd = a.cwd || rc.cwd();
+  a = worktreeArgs(target, a, cfg, cwd, rc.home);
+  const access = a.access;
+  const wt = a._worktree ?? (a.worktree ? await createWorktree({ cwd, home: rc.home, jobId: randomUUID10().slice(0, 8), log: dlog }) : null);
+  const workdir = wt?.cwd ?? cwd;
+  const linkRoot = wt?.path ?? bridgeWorktreeRoot(workdir, rc.home);
+  const watchChanges = !wt && (access === "edit" || access === "ask" && target === "codex");
+  const before = watchChanges ? await gitChangeSnapshot(workdir, dlog) : null;
+  let relay = null;
+  let wiring;
+  const asked = [];
+  let relayCalls = 0;
+  const codexHash = target === "codex" ? codexPermissionHookHash() : null;
+  const askUser = rc.askUser ? async (r) => {
+    if (!job) return rc.askUser(r);
+    const decision = await waitForApproval(
+      job,
+      `${r.tool}: ${r.detail}`,
+      PARENT_APPROVAL_TIMEOUT_MS,
+      (body) => rc.jobs?.fromSubagent(job, body, null),
+      dlog,
+      rc.home,
+      r,
+      () => rc.askUser(r)
+    );
+    return decision.allow ? { allow: true } : { allow: false, message: decision.reason.replace(/^deny:\s*/, "") };
+  } : void 0;
+  try {
+    if (access === "ask" && askUser) {
+      const decide = async (r) => {
+        relayCalls++;
+        const d = await askUser(r);
+        asked.push(`${d.allow ? "allowed" : "denied"}: ${r.tool} ${r.detail.slice(0, 80)}`);
+        return d;
+      };
+      relay = new PermissionRelay(decide, dlog);
+      await relay.start();
+      wiring = { onPermission: decide, env: relay.childEnv(), codexHookTrusted: codexPermissionHookTrusted(rc.home) };
+    }
+  } catch (err) {
+    await relay?.stop();
+    throw err;
+  }
+  const forwarding = access === "ask" && supportsAsk(target, wiring);
+  const me = rc.me();
+  const allowedServers = job ? job.allowedServers ??= /* @__PURE__ */ new Set() : /* @__PURE__ */ new Set();
+  const autoApprove = [...cfg.autoApproveTools, ...access === "read" ? DESK_READ_PATTERNS : [], ...a.allow_tools ?? []];
+  const approve = async (r) => {
+    if (isHandoffToolCall(r)) {
+      asked.push(`declined (handoff tool): ${r.tool} ${r.detail.slice(0, 80)}`);
+      return { allow: false, message: HANDOFF_DECLINED };
+    }
+    if (r.tool.startsWith("mcp:") && allowedServers.has(r.tool)) return { allow: true };
+    if (isOwnServerCall(r) || isAutoApproved(r, autoApprove)) return { allow: true };
+    let d;
+    if (wiring) d = await wiring.onPermission(r);
+    else if (job && !job.foreground && rc.jobs) {
+      const hint = approvalHint(r);
+      const a2 = await rc.jobs.askParent(job, `${r.tool.replace(/^mcp:/, "MCP server ")}: ${r.detail}${hint}`, PARENT_APPROVAL_TIMEOUT_MS, r);
+      d = a2.allow ? { allow: true } : { allow: false, message: `Denied by supervisor ${me}: ${a2.reason || "no reason supplied"}` };
+      asked.push(`${d.allow ? "allowed" : "denied"} by ${me}: ${r.tool} ${r.detail.slice(0, 80)}`);
+    } else if (askUser) {
+      relayCalls++;
+      d = await askUser(r);
+      asked.push(`${d.allow ? "allowed" : "denied"}: ${r.tool} ${r.detail.slice(0, 80)}`);
+    } else d = r.tool.startsWith("mcp:") && access === "edit" ? { allow: true } : { allow: false, message: "No one to ask in this session." };
+    if (d.allow && r.tool.startsWith("mcp:")) allowedServers.add(r.tool);
+    return d;
+  };
+  let feed;
+  try {
+    feed = startRunFeed({
+      home: rc.home,
+      name: `${target}-${randomUUID10().slice(0, 8)}`,
+      header: `${target}${a.model ? ` (${a.model}${a.effort ? `, effort ${a.effort}` : ""})` : a.effort ? ` (effort ${a.effort})` : ""} in ${workdir}, access ${access ?? "default"}, by ${me}${a.session_id ? `, continues ${a.session_id}` : ""}
+${a.prompt}
+---`,
+      forward: onProgress,
+      meta: {
+        by: me,
+        byAgent: rc.agent,
+        byCwd: rc.cwd(),
+        job: a._job,
+        // The job's current title (message_subagent can name or rename a job after it started).
+        title: typeof job?.args?.title === "string" && job.args.title || a.title?.trim() || void 0,
+        model: a.model ?? defaultModel ?? null,
+        effort: a.effort ?? cfg.effort[target] ?? defaultEffort(target, a.model ?? defaultModel ?? null),
+        access: access ?? "default",
+        permission: profile.permission(cfg, { ...a, access }),
+        workdir,
+        continues: a.session_id ?? null
+      }
+    });
+  } catch (err) {
+    await relay?.stop();
+    throw err;
+  }
+  let link = null;
+  let siblingLink = null;
+  let jobNode = null;
+  const liveDeliveries = /* @__PURE__ */ new Set();
+  let steering = null;
+  if (job && rc.jobs) {
+    const jobs = rc.jobs;
+    jobNode = rc.jobNode ?? new BridgeNode({
+      pipePath: resolvePipePath(rc.home),
+      token: loadOrCreateToken(rc.home),
+      dbPath: resolveDbPath(rc.home),
+      agent: "other",
+      jobAgent: job.agent,
+      id: `job:${job.id}`,
+      name: job.name,
+      cwd: workdir,
+      jobOwner: job.supervisor ?? job.owner ?? me,
+      jobParent: me,
+      jobTitle: a.title,
+      jobSendTo: a.send_to,
+      autoWake: false,
+      canHostBroker: false,
+      log: dlog
+    });
+    siblingLink = new SiblingLink(jobNode, job, cfg.maxHops, dlog);
+    void jobNode.start().catch((err) => dlog.warn("sibling bridge unavailable; retrying", { err: err.message }));
+    const l = new ParentLink(
+      me,
+      (body, replyTo) => {
+        feed.report(`answer to ${me}: ${body.split("\n")[0].slice(0, 120)}`, `answer to ${me}: ${body}`);
+        jobs.fromSubagent(job, body, replyTo);
+      },
+      dlog,
+      (percent, note) => {
+        job.percent = percent;
+        job.progressNote = note;
+        feed.meta({ percent, progressNote: note, progressAt: Date.now() });
+        feed.report(`progress ${percent}%${note ? `: ${note}` : ""}`);
+      },
+      siblingLink
+    );
+    try {
+      await l.start();
+      link = l;
+      job.live = {
+        post: (m, sibling) => {
+          const from = sibling?.from.name ?? me;
+          const message = sibling ? formatSiblingMessages([sibling], siblingLink?.maxHops) : m;
+          feed.report(`message from ${from}: ${m.split("\n")[0].slice(0, MESSAGE_PREVIEW_CHARS)}`, `message from ${from}: ${m}`);
+          if (!steering) return void l.post(message, sibling);
+          const s = steering;
+          const delivery = s.send(message, Boolean(sibling)).then(
+            (ok) => {
+              if (!ok) l.post(message, sibling);
+            },
+            () => {
+              l.post(message, sibling);
+            }
+          );
+          liveDeliveries.add(delivery);
+          void delivery.finally(() => liveDeliveries.delete(delivery));
+        }
+      };
+    } catch (err) {
+      dlog.warn("live link unavailable; messages to this subagent wait until it finishes", { err: err.message });
+    }
+  }
+  const writableRoots = access === "edit" || a.sandbox === "workspace-write" ? await gitDirsOutside(workdir, dlog) : void 0;
+  if (writableRoots?.length) dlog.info("extra writable folders for the subagent", { workdir, writableRoots });
+  if (job) job.retitle = (title) => {
+    feed.meta({ title });
+    void jobNode?.updateJob({ jobTitle: title }).catch(() => {
+    });
+    void steering?.rename?.(title).catch((err) => dlog.warn("could not rename the Codex thread", { err: err.message }));
+  };
+  const slotOwner = { id: `${a._job ?? target}-${randomUUID10()}`, pid: process.pid };
+  let slots = null;
+  let slotTimer;
+  let res;
+  try {
+    if (Object.keys(cfg.resourceSlots).length) {
+      slots = new ResourceSlots(rc.home);
+      slotTimer = setInterval(() => {
+        try {
+          slots?.renew(slotOwner);
+        } catch (err) {
+          dlog.warn("could not renew resource slots", { err: err.message });
+        }
+      }, SLOT_RENEW_MS);
+      slotTimer.unref();
+    }
+    res = await retryTransient(
+      {
+        // With a live link the subagent can report how far it is (report_progress; shown in the dashboard).
+        // A new session learns once that it reports back and leaves the handoff alone.
+        prompt: [a.prompt, a.session_id ? null : DELEGATED_JOB_NOTE, linkRoot ? WORKTREE_LINK_HINT : null, link ? PROGRESS_HINT : null, link ? SIBLING_HINT : null, resourceSlotHint(cfg.resourceSlots, bundledCli())].filter(Boolean).join("\n\n"),
+        title: typeof job?.args?.title === "string" && job.args.title || a.title,
+        cwd: workdir,
+        sessionId: a.session_id ?? null,
+        timeoutSec: a.timeout_sec ?? (background ? MAX_JOB_TIMEOUT_SEC : DEFAULT_DELEGATE_TIMEOUT_SEC),
+        model: a.model ?? defaultModel,
+        effort: a.effort ?? cfg.effort[target] ?? null,
+        // What it really runs (a CLI default or an alias resolved), for the dashboard.
+        onInfo: (info) => feed.meta({ ...info.model ? { model: info.model } : {}, ...info.permission ? { permission: info.permission } : {}, effort: info.effort ?? a.effort ?? cfg.effort[target] ?? defaultEffort(target, info.model ?? null) }),
+        log: dlog,
+        signal,
+        onProgress: feed.report,
+        extraEnv: { ...link?.childEnv(), ...slots ? { [ENV.home]: rc.home, [SLOT_OWNER_ENV]: slotOwner.id, [SLOT_PID_ENV]: String(slotOwner.pid) } : {} },
+        writableRoots,
+        onSession: (id) => {
+          feed.meta({ session: id });
+          if (job) rc.jobs?.note(job, { sessionId: id, workdir, worktree: wt });
+        },
+        approve,
+        onDenied: (message) => {
+          link?.post(message);
+        },
+        // Someone answers approve's questions: the user ("ask" relay or a dialog) or, for a background
+        // subagent, the parent agent. Else targets keep their own behavior (Claude and opencode).
+        canApprove: Boolean(wiring) || Boolean(job && !job.foreground && rc.jobs) || Boolean(rc.askUser && rc.userCanAnswer?.()),
+        live: job ? {
+          from: me,
+          onSteering: (s) => {
+            steering = s;
+            const title = job.args?.title;
+            if (s && typeof title === "string" && title !== a.title) job.retitle?.(title);
+          },
+          onAnswer: (answer) => {
+            feed.report(`answer to ${me}: ${answer.split("\n")[0].slice(0, 120)}`, `answer to ${me}: ${answer}`);
+            rc.jobs?.fromSubagent(job, answer, null, true);
+          }
+        } : void 0
+      },
+      (req) => profile.run(cfg, req, { ...a, access, relay: wiring })
+    );
+    feed.meta({ session: res.sessionId });
+    feed.end(res.isError ? "failed" : "done", res.text);
+  } catch (err) {
+    if (err instanceof DelegateError && err.sessionId) feed.meta({ session: err.sessionId });
+    feed.end(`failed: ${err?.message ?? err}`);
+    if (wt && err instanceof Error) err.message += `
+
+Its worktree (with any partial work) is ${wt.path} on branch ${wt.branch}.`;
+    if (linkRoot && err instanceof Error) {
+      try {
+        const warning = worktreeLinkWarning(scanWorktreeLinks(linkRoot));
+        if (warning) err.message += `
+
+${warning}`;
+      } catch (scanError) {
+        err.message += `
+WARNING: worktree link inspection failed: ${scanError.message}`;
+      }
+    }
+    throw err;
+  } finally {
+    if (job) denyPendingApprovals(job);
+    clearInterval(slotTimer);
+    if (slots) {
+      try {
+        slots.release(slotOwner);
+      } catch (err) {
+        dlog.warn("could not release resource slots; leases will expire", { err: err.message });
+      } finally {
+        slots.close();
+      }
+    }
+    siblingLink?.close();
+    if (jobNode && !rc.jobNode) await jobNode.stop();
+    await Promise.allSettled(liveDeliveries);
+    await relay?.stop();
+    if (job) job.retitle = null;
+    if (job && link) {
+      job.live = null;
+      job.queue.unshift(...await link.close());
+    }
+  }
+  const notes = [`Step-by-step log: ${feed.logPath}`];
+  if (target === "codex") {
+    const mappingNote = codexPathReport(codexDriveMappings(`${cwd}
+${a.prompt}`));
+    if (mappingNote) notes.push(mappingNote);
+  }
+  let linkedWorktreeRoot = false;
+  if (linkRoot) {
+    try {
+      const scan = scanWorktreeLinks(linkRoot);
+      linkedWorktreeRoot = scan.externalLinks.some((link2) => link2.path === resolve7(linkRoot));
+      const warning = worktreeLinkWarning(scan);
+      if (warning) notes.push(warning);
+    } catch (err) {
+      notes.push(`WARNING: worktree link inspection failed: ${err.message}`);
+    }
+  }
+  if (access !== "ask" && asked.length) notes.push(`Approval requests forwarded:
+${asked.join("\n")}`);
+  if (access === "ask") {
+    notes.push(
+      forwarding ? asked.length ? `Permission requests forwarded to the user:
+${asked.join("\n")}` : "No permission requests were needed." : t("ask.unsupported", { agent: target })
+    );
+  }
+  const usage = formatUsage(res.details);
+  if (usage) notes.push(usage);
+  if (wt && linkedWorktreeRoot) {
+    notes.push("Auto-commit skipped: the worktree root is an external link. Restore worktree isolation before running git or cleanup through it.");
+  } else if (wt) {
+    try {
+      const message = subagentCommitMessage({ answer: res.text, task: a.prompt, job: a._job, agent: target, model: a.model ?? defaultModel });
+      notes.push(worktreeReport(wt, await finishWorktree(wt, message, dlog)));
+    } catch (err) {
+      notes.push(`Could not commit the changes in worktree ${wt.path} (branch ${wt.branch}): ${err.message}`);
+    }
+  } else if (before) {
+    const after = await gitChangeSnapshot(workdir, dlog);
+    const changed = after ? changedFiles(before, after) : [];
+    if (access === "ask" && target === "codex" && forwarding && codexHash) {
+      if (relayCalls > 0) recordCodexHookObservation(rc.home, codexHash, "verified");
+      else if (changed.length) {
+        recordCodexHookObservation(rc.home, codexHash, "failed");
+        log.warn("codex changed files without the permission hook asking; forwarding disabled for this hook version", { changed });
+        notes.push(t("ask.hookBypassed", { files: changed.join(", ") }));
+      }
+    }
+    if (access === "edit" || changed.length) notes.push(changed.length ? `Files changed in your working copy:
+${changed.join("\n")}` : "No files changed.");
+    const warning = handoffWarning(changed);
+    if (warning) notes.push(warning);
+  }
+  return { ...res, workdir, worktree: wt ?? void 0, text: notes.length ? `${res.text}
+
+---
+${notes.join("\n\n")}` : res.text };
+}
+
+// src/mcp/job-host.ts
+import { spawn as spawn6 } from "node:child_process";
+import { mkdirSync as mkdirSync13, readdirSync as readdirSync6, statSync as statSync5 } from "node:fs";
+import { join as join23 } from "node:path";
+
+// src/mcp/remote-job-host.ts
+import { join as join22 } from "node:path";
+var REMOTE_STATE_GRACE_MS = 9e4;
+var RemoteJobHost = class {
+  constructor(node2, home, log) {
+    this.node = node2;
+    this.home = home;
+    this.log = log;
+  }
+  node;
+  home;
+  log;
+  busy = /* @__PURE__ */ new Set();
+  cache = /* @__PURE__ */ new Map();
+  path(job) {
+    return join22(this.home, "remote-job-states", `${job.id}.json`);
+  }
+  read(job) {
+    return this.cache.get(job.id) ?? readJsonStore(this.path(job));
+  }
+  save(job, snapshot) {
+    const data = { fetchedAt: Date.now(), snapshot };
+    this.cache.set(job.id, data);
+    writeJsonStore(this.path(job), data, readJsonStore(this.path(job)));
+  }
+  start(job, host, target, args) {
+    job.remote = { host, name: `${target}-job-${job.id}` };
+    this.cache.delete(job.id);
+    this.save(job, { state: null, alive: true, approvals: [] });
+    const raw = { ...args, cwd: args.cwd ?? job.workdir };
+    for (const key of ["host", "_job", "_worktree", "send_to"]) delete raw[key];
+    const request2 = { op: "spawn", job: job.id, target, args: remoteSpawnArgsSchema.parse(raw) };
+    this.busy.add(job.id);
+    void this.node.remoteJob(host, request2).then((snapshot) => {
+      this.save(job, snapshot);
+      if (job.controller.signal.aborted) this.send(job, { type: "cancel" });
+    }, (err) => {
+      this.save(job, { state: { pid: 0, peer: `${host}/${job.name}`, status: "failed", updatedAt: Date.now(), report: `Remote job failed: ${err.message}`, delivered: false }, alive: false, approvals: [] });
+    }).finally(() => this.busy.delete(job.id));
+    return { pid: null, peer: `${host}/${job.name}`, startedAt: Date.now() };
+  }
+  state(job) {
+    const cached2 = this.read(job);
+    if (!this.busy.has(job.id) && (!cached2 || Date.now() - cached2.fetchedAt >= REMOTE_JOB_POLL_MS)) this.sendRequest(job, { op: "state", job: job.id });
+    return cached2?.snapshot.state ?? null;
+  }
+  alive(job) {
+    const cached2 = this.read(job);
+    return cached2 ? cached2.snapshot.alive && Date.now() - cached2.fetchedAt < REMOTE_STATE_GRACE_MS : Date.now() - (job.host?.startedAt ?? 0) < REMOTE_STATE_GRACE_MS;
+  }
+  send(job, control) {
+    this.sendRequest(job, { op: "control", job: job.id, control });
+  }
+  sendRequest(job, request2) {
+    if (!job.remote) return;
+    if (request2.op === "state") this.busy.add(job.id);
+    void this.node.remoteJob(job.remote.host, request2).then((snapshot) => this.save(job, snapshot), (err) => {
+      this.log.warn("remote job request failed", { job: job.name, host: job.remote?.host, operation: request2.op, err: err.message });
+    }).finally(() => {
+      if (request2.op === "state") this.busy.delete(job.id);
+    });
+  }
+};
+
+// src/mcp/job-host.ts
+var RUNNERS_DIR_NAME = "jobs";
+var CONTROL_CONVERSATION_PREFIX = "jobctl-";
+var RUNNER_HEARTBEAT_MS = 15e3;
+var STALE_MS = 6 * RUNNER_HEARTBEAT_MS;
+var START_GRACE_MS = 3e4;
+var KEEP_FILES_MS = 7 * 24 * 60 * 60 * 1e3;
+var DETACH_LAUNCHER = "require('node:child_process').spawn(process.execPath,process.argv.slice(1),{detached:true,stdio:'ignore',windowsHide:true}).unref()";
+function runnerStatePath(home, id) {
+  return join23(home, RUNNERS_DIR_NAME, `${id}.json`);
+}
+function specPath(home, id) {
+  return join23(home, RUNNERS_DIR_NAME, `${id}.spec.json`);
+}
+function readRunnerState(home, id) {
+  try {
+    const s = readJsonStore(runnerStatePath(home, id), void 0, (value) => isRecord(value) && typeof value.pid === "number" && typeof value.status === "string");
+    return s && typeof s.pid === "number" && typeof s.status === "string" ? s : null;
+  } catch {
+    return null;
+  }
+}
+var JobRunners = class {
+  constructor(node2, home, cli, log) {
+    this.node = node2;
+    this.home = home;
+    this.cli = cli;
+    this.log = log;
+    this.remote = new RemoteJobHost(node2, home, log);
+    try {
+      const dir = join23(home, RUNNERS_DIR_NAME);
+      const keepMs = retentionLimit("AGENT_BRIDGE_RUNNER_KEEP_MS", KEEP_FILES_MS);
+      if (!keepMs) return;
+      for (const f of readdirSync6(dir)) {
+        const path = join23(dir, f);
+        if (!f.endsWith(".json") || f.endsWith(".spec.json") || Date.now() - statSync5(path).mtimeMs <= keepMs) continue;
+        const id = f.replace(/\.json$/, "");
+        const state = readRunnerState(home, id);
+        if (state?.status === "done" || state?.status === "failed") {
+          archiveFile(path);
+          archiveFile(specPath(home, id));
+        }
+      }
+    } catch (err) {
+      if (err.code !== "ENOENT") this.log.warn("could not archive runner files", { err: String(err) });
+    }
+  }
+  node;
+  home;
+  cli;
+  log;
+  remote;
+  /** Start a turn of this job in a new runner; null when that is not possible (the turn then runs in the server). */
+  start(job, spec) {
+    if (spec.args.host) return this.remote.start(job, spec.args.host, spec.target, spec.args);
+    try {
+      mkdirSync13(join23(this.home, RUNNERS_DIR_NAME), { recursive: true });
+      const statePath = runnerStatePath(this.home, job.id);
+      const file2 = specPath(this.home, job.id);
+      assertWritableStore(readJsonStore(statePath, this.log));
+      assertWritableStore(readJsonStore(file2, this.log));
+      archiveFile(statePath);
+      const full = {
+        ...spec,
+        home: this.home,
+        job: {
+          id: job.id,
+          name: job.name,
+          agent: job.agent,
+          model: job.model,
+          prompt: job.prompt,
+          startedAt: job.startedAt,
+          args: job.args,
+          sessionId: job.sessionId,
+          workdir: job.workdir,
+          worktree: job.worktree,
+          owner: job.owner,
+          supervisor: job.supervisor,
+          allowedServers: [...job.allowedServers ?? []]
+        }
+      };
+      archiveFile(file2);
+      writeJsonStore(file2, { ...full }, null);
+      const args = [this.cli, "job-runner", file2];
+      let pid = null;
+      if (process.platform === "win32") {
+        const launcher = spawn6(process.execPath, ["-e", DETACH_LAUNCHER, ...args], { stdio: "ignore", windowsHide: true });
+        launcher.on("error", (err) => this.log.warn("could not start a job runner", { job: job.name, err: err.message }));
+      } else {
+        const child = spawn6(process.execPath, args, { detached: true, stdio: "ignore" });
+        child.on("error", (err) => this.log.warn("could not start a job runner", { job: job.name, err: err.message }));
+        child.unref();
+        pid = child.pid ?? null;
+      }
+      this.log.info("job runner started", { job: job.name, pid });
+      return { pid, peer: job.name, startedAt: Date.now() };
+    } catch (err) {
+      this.log.warn("job runner unavailable; the subagent runs inside this server", { job: job.name, err: err.message });
+      return null;
+    }
+  }
+  state(job) {
+    if (job.remote) return this.remote.state(job);
+    return readRunnerState(this.home, job.id);
+  }
+  alive(job, state) {
+    if (job.remote) return this.remote.alive(job);
+    if (!state) {
+      const host = job.host;
+      return Boolean(host) && Date.now() - host.startedAt < START_GRACE_MS && (host.pid === null || pidAlive(host.pid));
+    }
+    return pidAlive(state.pid) && Date.now() - state.updatedAt < STALE_MS;
+  }
+  send(job, control) {
+    if (job.remote) return this.remote.send(job, control);
+    const to = this.state(job)?.peer ?? job.host?.peer ?? job.name;
+    this.node.send({ to, body: JSON.stringify(control), conversationId: `${CONTROL_CONVERSATION_PREFIX}${job.id}` }, { quiet: true }).catch((err) => this.log.warn("could not reach the job runner", { job: job.name, control: control.type, err: err.message }));
+  }
+  kill(job) {
+    if (job.remote) return this.remote.send(job, { type: "cancel" });
+    const pid = this.state(job)?.pid ?? job.host?.pid;
+    if (pid) killPid(pid);
+  }
+};
+
+// src/network/remote-jobs.ts
+var REMOTE_JOBS_FILE = "remote-jobs.json";
+function allowedRemoteDirectory(directory2, roots) {
+  if (!isAbsolute5(directory2)) throw new Error("Remote cwd must be an absolute path on the paired PC.");
+  const canonical = realpathSync5(directory2);
+  if (!statSync6(canonical).isDirectory() || !roots.some((root) => isAbsolute5(root) && isInside(canonical, realpathSync5(root)))) {
+    throw new Error("Remote folder is outside network.remoteJobs.allowRoots.");
+  }
+  return canonical;
+}
+var RemoteJobs = class {
+  constructor(network, home, log, control) {
+    this.network = network;
+    this.home = home;
+    this.log = log;
+    this.control = control;
+    const cli = bundledCli();
+    this.runners = cli ? new JobRunners({}, home, cli, log) : null;
+    const stored = readJsonStore(join24(home, REMOTE_JOBS_FILE));
+    if (isRecord(stored) && Array.isArray(stored.jobs)) for (const r of stored.jobs) {
+      if (typeof r.pair !== "string" || typeof r.peer !== "string" || !r.job?.id || !r.args) continue;
+      this.records.set(r.job.id, { ...r, job: { ...r.job, controller: new AbortController(), queue: [] } });
+    }
+    network.registerExtension(REMOTE_JOB_FRAME, REMOTE_JOB_CAPABILITY, (payload, pair) => this.receive(payload, pair));
+  }
+  network;
+  home;
+  log;
+  control;
+  records = /* @__PURE__ */ new Map();
+  pending = /* @__PURE__ */ new Map();
+  rates = /* @__PURE__ */ new Map();
+  feeds = /* @__PURE__ */ new Map();
+  approvals = /* @__PURE__ */ new Map();
+  publishingApprovals = /* @__PURE__ */ new Set();
+  starting = /* @__PURE__ */ new Set();
+  runners;
+  closed = false;
+  async request(host, peer, raw, supervisor = peer.id, localJobName) {
+    const request2 = remoteJobRequestSchema.parse(raw);
+    if (!this.network.peerSupports(host, REMOTE_JOB_CAPABILITY)) throw new Error("Remote broker update needed or paired PC disconnected: install remote-jobs-v1 support and restart its hosting sessions.");
+    if (this.pending.size >= REMOTE_JOB_RATE_LIMIT) throw new Error("Too many pending remote job requests.");
+    const rid = randomUUID11();
+    const response = new Promise((resolve10, reject) => {
+      const timer = setTimeout(() => {
+        this.pending.delete(rid);
+        reject(new Error("Remote job request timed out; check the paired PC before retrying a spawn."));
+      }, REMOTE_JOB_REQUEST_TIMEOUT_MS);
+      this.pending.set(rid, { host, resolve: resolve10, reject, timer });
+    });
+    void response.catch(() => {
+    });
+    try {
+      await this.network.sendExtension(host, REMOTE_JOB_FRAME, { kind: "request", rid, peer: { id: peer.id, name: peer.name, supervisor }, request: request2 });
+      const snapshot = await response;
+      await this.mirror(host, peer, request2, snapshot, supervisor, localJobName);
+      return snapshot;
+    } catch (err) {
+      const p = this.pending.get(rid);
+      if (p) {
+        clearTimeout(p.timer);
+        this.pending.delete(rid);
+        p.reject(err);
+      }
+      throw err;
+    }
+  }
+  async receive(payload, pair) {
+    const parsed = remoteJobWireSchema.safeParse(payload);
+    if (!parsed.success) {
+      this.log.warn("invalid remote job frame", { host: pair.name });
+      return;
+    }
+    const frame = parsed.data;
+    if (frame.kind === "response") {
+      const p = this.pending.get(frame.rid);
+      if (!p || p.host !== pair.id && p.host !== pair.name) return;
+      clearTimeout(p.timer);
+      this.pending.delete(frame.rid);
+      if (frame.error) p.reject(new Error(frame.error));
+      else {
+        const snapshot = remoteJobSnapshotSchema.safeParse(frame.value);
+        if (snapshot.success) p.resolve(snapshot.data);
+        else p.reject(new Error("Invalid remote job response."));
+      }
+      return;
+    }
+    try {
+      const advertised = this.network.peers().find((p) => p.id === `${pair.id}/${frame.peer.id}` && p.name === `${pair.name}/${frame.peer.name}`);
+      if (!advertised || advertised.jobAgent) throw new Error("Remote job requester is not an advertised supervisor session.");
+      const cfg = loadConfig(this.home, "other", this.log, {});
+      const policy = cfg.network.remoteJobs;
+      if (!policy.enabled || !policy.allowPeers.includes(pair.name)) throw new Error("Remote jobs are disabled for this pair; enable network.remoteJobs and explicitly allow its instance name.");
+      const now = Date.now();
+      let rate = this.rates.get(pair.id);
+      if (!rate || now - rate.at >= REMOTE_JOB_RATE_WINDOW_MS) {
+        rate = { at: now, requests: 0, spawns: 0 };
+        this.rates.set(pair.id, rate);
+      }
+      if (++rate.requests > REMOTE_JOB_RATE_LIMIT || frame.request.op === "spawn" && ++rate.spawns > REMOTE_JOB_SPAWN_LIMIT) throw new Error("Remote job rate limit reached; try again later.");
+      if (frame.request.op === "spawn" && this.starting.has(frame.request.job)) throw new Error("Remote job is already starting.");
+      if (frame.request.op === "spawn") this.starting.add(frame.request.job);
+      let value;
+      try {
+        value = await this.handle(pair, frame.peer, frame.request);
+      } finally {
+        if (frame.request.op === "spawn") this.starting.delete(frame.request.job);
+      }
+      await this.network.sendExtension(pair.id, REMOTE_JOB_FRAME, { kind: "response", rid: frame.rid, value });
+    } catch (err) {
+      await this.network.sendExtension(pair.id, REMOTE_JOB_FRAME, { kind: "response", rid: frame.rid, error: String(err.message).slice(0, 4096) });
+    }
+  }
+  async handle(pair, peer, request2) {
+    let record2 = this.records.get(request2.job);
+    if (record2 && (record2.pair !== pair.id || record2.peer !== peer.supervisor)) throw new Error("Remote job belongs to another supervisor.");
+    if (request2.op === "spawn") {
+      const cfg = loadConfig(this.home, request2.target, this.log, {});
+      const policy = loadConfig(this.home, "other", this.log, {}).network.remoteJobs;
+      if (!policy.agents.includes(request2.target)) throw new Error("Remote agent is not allowed by network.remoteJobs.agents.");
+      if (record2 && record2.job.agent !== request2.target) throw new Error("Cannot change a remote job's agent.");
+      if (record2 && this.snapshot(record2).alive) throw new Error("Remote job is already running.");
+      if ([...this.records.values()].filter((r) => this.snapshot(r).alive).length + this.starting.size > cfg.maxJobs) throw new Error("Remote subagent limit reached.");
+      if (!record2 && this.records.size >= MAX_REMOTE_JOBS) throw new Error("Remote job registry is full.");
+      if (!record2 && request2.args.session_id) throw new Error("Remote session continuation requires a job owned by this supervisor.");
+      const settings = Object.fromEntries(["model", "effort", "access", "sandbox", "permission_mode", "auto_approve"].filter((key) => key in request2.args).map((key) => [key, request2.args[key]]));
+      if (Object.keys(settings).length) {
+        const parsed = parseJobSettings(settings, request2.target);
+        if (typeof parsed === "string") throw new Error(parsed);
+      }
+      let args = { ...request2.args };
+      let cwd = allowedRemoteDirectory(args.cwd, policy.allowRoots);
+      for (const directory2 of await gitDirsOutside(cwd, this.log) ?? []) allowedRemoteDirectory(directory2, policy.allowRoots);
+      let worktree = null;
+      if (record2) {
+        const state = this.snapshot(record2).state;
+        if (!state?.sessionId) throw new Error("Remote job has no session to continue.");
+        cwd = allowedRemoteDirectory(state.workdir ?? cwd, policy.allowRoots);
+        worktree = state.worktree ?? null;
+        args = resumeArgs(args, record2.job.name, args.prompt, state.sessionId, cwd, worktree, { ...args });
+      } else if (args.worktree) {
+        const repo = allowedRemoteDirectory(await git(["rev-parse", "--show-toplevel"], cwd, this.log), policy.allowRoots);
+        if (existsSync8(join24(repo, "worktrees"))) allowedRemoteDirectory(join24(repo, "worktrees"), policy.allowRoots);
+        worktree = await createWorktree({ cwd, home: repo, jobId: request2.job, log: this.log });
+        cwd = allowedRemoteDirectory(worktree.cwd, policy.allowRoots);
+        args = { ...args, cwd, worktree: false, _worktree: worktree };
+      }
+      const owner = `${pair.name}/${peer.name}`;
+      const job = {
+        id: request2.job,
+        name: `${request2.target}-job-${request2.job}`,
+        agent: request2.target,
+        model: args.model ?? null,
+        prompt: args.prompt,
+        args: { ...args },
+        owner,
+        supervisor: `${pair.id}/${peer.supervisor}`,
+        startedAt: Date.now(),
+        controller: new AbortController(),
+        queue: [],
+        status: "running",
+        progress: null,
+        sessionId: args.session_id ?? null,
+        workdir: cwd,
+        worktree
+      };
+      const previous = this.records.get(request2.job);
+      record2 = { pair: pair.id, peer: peer.supervisor, owner, job, args: { ...args, cwd, _job: job.name } };
+      this.records.set(job.id, record2);
+      try {
+        if (this.closed) throw new Error("Remote broker closed while the job was starting.");
+        const host = this.runners?.start(job, { target: request2.target, args: record2.args, base: record2.args, owner, byAgent: "other", cwd, cfg });
+        if (!host) throw new Error("Remote job runner is unavailable; update the remote broker's bundled CLI.");
+        job.host = host;
+      } catch (err) {
+        if (previous) this.records.set(job.id, previous);
+        else this.records.delete(job.id);
+        throw err;
+      }
+      this.persist();
+      this.log.info("remote job started", { host: pair.name, owner, job: job.name, cwd });
+    } else {
+      if (!record2) throw new Error("Unknown remote job.");
+      if (request2.op === "control") {
+        if (request2.control.type === "settings") {
+          const settings = parseJobSettings(request2.control.settings, record2.job.agent);
+          if (typeof settings === "string") throw new Error(settings);
+        }
+        await this.control({ owner: record2.owner, name: record2.job.name, id: record2.job.id }, request2.control);
+        this.log.info("remote job control", { job: record2.job.name, control: request2.control.type, host: pair.name });
+      } else if (request2.op === "approval") {
+        if (!listPendingApprovals(this.home).some((a) => a.id === request2.id && a.job === record2.job.name && a.owner === record2.owner)) throw new Error("Remote approval expired or belongs to another job.");
+        const outcome = await answerPendingApproval(this.home, request2.id, { decision: request2.decision, reason: request2.reason });
+        if (outcome !== "answered") throw new Error(`Remote approval ${outcome}.`);
+      }
+    }
+    return this.snapshot(record2);
+  }
+  snapshot(record2) {
+    const state = readRunnerState(this.home, record2.job.id);
+    const alive2 = this.runners?.alive(record2.job, state) ?? Boolean(state && state.status === "running");
+    return { state, alive: alive2, approvals: listPendingApprovals(this.home).filter((a) => a.job === record2.job.name && a.owner === record2.owner) };
+  }
+  persist() {
+    writeJsonStore(join24(this.home, REMOTE_JOBS_FILE), { jobs: [...this.records.values()].map((r) => {
+      const { controller, queue, ...job } = r.job;
+      return { ...r, job };
+    }) }, readJsonStore(join24(this.home, REMOTE_JOBS_FILE)));
+  }
+  async mirror(host, peer, request2, snapshot, supervisor, localJobName) {
+    const owner = peer.name;
+    const key = `${host}/${request2.job}`;
+    if (request2.op === "spawn") {
+      this.feeds.get(key)?.end("interrupted");
+      this.feeds.set(key, startRunFeed({
+        home: this.home,
+        name: `${request2.target}-${request2.job}`,
+        header: `${request2.target} on ${host}, by ${owner}
+${request2.args.prompt}
+---`,
+        meta: { by: owner, job: localJobName ?? `${request2.target}-job-${request2.job}`, title: request2.args.title, remote: { host, name: `${request2.target}-job-${request2.job}` }, model: request2.args.model, effort: request2.args.effort, access: request2.args.access ?? (request2.args.worktree ? "edit" : "default"), workdir: request2.args.cwd }
+      }));
+      this.log.info("requested remote job", { host, job: request2.job, owner });
+    }
+    const state = snapshot.state;
+    if (!this.feeds.has(key) && state?.status === "running") {
+      this.feeds.set(key, startRunFeed({
+        home: this.home,
+        name: state.peer,
+        header: `Reattached remote job on ${host}, by ${owner}`,
+        meta: { by: owner, job: localJobName ?? state.peer, remote: { host, name: state.peer } }
+      }));
+    }
+    const feed = this.feeds.get(key);
+    if (state) {
+      feed?.meta({ session: state.sessionId, workdir: state.workdir ?? void 0, model: state.model, percent: state.percent, progressNote: state.progressNote });
+      if (state.progress) feed?.report(state.progress);
+      if (state.status !== "running") {
+        feed?.end(state.status, state.report);
+        this.feeds.delete(key);
+      }
+    }
+    const active = new Set(snapshot.approvals.map((a) => `${key}/${a.id}`));
+    for (const [id, close] of this.approvals) if (id.startsWith(`${key}/`) && !active.has(id)) {
+      close();
+      this.approvals.delete(id);
+    }
+    for (const approval of snapshot.approvals) {
+      const id = `${key}/${approval.id}`;
+      if (this.approvals.has(id) || this.publishingApprovals.has(id)) continue;
+      this.publishingApprovals.add(id);
+      try {
+        const close = await publishApproval(this.home, { ...approval, owner, job: `${host}/${approval.job}` }, async (body) => {
+          if (Date.now() >= approval.deadline) return false;
+          try {
+            await this.request(host, peer, { op: "approval", job: request2.job, id: approval.id, decision: body.startsWith("allow") ? "allow" : "deny", reason: body.includes(":") ? body.slice(body.indexOf(":") + 1).trim() : void 0 }, supervisor);
+            return true;
+          } catch {
+            return false;
+          }
+        });
+        if (this.closed) close();
+        else this.approvals.set(id, close);
+      } finally {
+        this.publishingApprovals.delete(id);
+      }
+    }
+  }
+  close() {
+    this.closed = true;
+    for (const p of this.pending.values()) {
+      clearTimeout(p.timer);
+      p.reject(new Error("Remote jobs link closed."));
+    }
+    this.pending.clear();
+    for (const close of this.approvals.values()) close();
+    this.approvals.clear();
+    for (const feed of this.feeds.values()) feed.end("interrupted");
+    this.feeds.clear();
+  }
+};
+
+// src/core/broker.ts
+var PEER_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+var PENDING_DEFAULT_LIMIT = 50;
+var DEDUPE_KEEP_MS = 30 * 60 * 1e3;
+var DEDUPE_MAX = 5e3;
+var PENDING_MAX_LIMIT = 500;
+var NAME_SUFFIX_LIMIT = 100;
+var SIBLING_STATUSES = /* @__PURE__ */ new Set(["running", "done", "failed", "interrupted"]);
+var UNAUTHENTICATED_OPS = /* @__PURE__ */ new Set(["hello", "auth", "ping"]);
+var Broker = class {
+  constructor(pipePath, store, log, token, now = Date.now, jobsPath, networking) {
+    this.pipePath = pipePath;
+    this.store = store;
+    this.log = log;
+    this.token = token;
+    this.now = now;
+    this.jobsPath = jobsPath;
+    this.networking = networking;
+    this.handlers = {
+      auth: (c, a) => {
+        this.checkAuth(a.protocol, a.token);
+        c.authed = true;
+        return { brokerPid: process.pid };
+      },
+      hello: (c, a) => this.onHello(c, a),
+      send: (c, a) => this.onSend(c, a),
+      decide: (c, a) => this.onDecide(c, a),
+      decisions: (c, a) => this.onDecisions(c, a),
+      peers: () => this.livePeers(),
+      siblings: (c) => this.siblingPeers(c),
+      sendSibling: (c, a) => this.onSendSibling(c, a),
+      messageReceipt: (c, a) => this.messageReceipt(c, a.id),
+      ack: (c, a) => ({ acked: this.store.markRead(this.requirePeer(c).name, a.ids ?? [], this.now()) }),
+      pending: (c, a) => this.unreadMail(this.requirePeer(c).name, Math.min(Math.max(1, a.limit ?? PENDING_DEFAULT_LIMIT), PENDING_MAX_LIMIT)),
+      updatePeer: (c, a) => this.onUpdatePeer(c, a),
+      claimMail: (c, a) => this.onClaimMail(c, a),
+      ping: () => ({ brokerPid: process.pid, protocol: PROTOCOL_VERSION }),
+      networkStatus: () => this.network?.status() ?? { enabled: false, config: this.networking?.config, discovered: [], paired: [] },
+      remoteJob: async (c, a) => {
+        const peer = this.requirePeer(c);
+        if (peer.jobAgent) throw new BridgeError("bad_request", "Only supervisor sessions can request remote jobs.");
+        if (!this.remoteJobs) throw new BridgeError("bad_request", "Remote broker update needed or networking unavailable.");
+        const saved = this.storedJobs().find((job) => job.id === a.request.job && job.owner === peer.name);
+        const supervisor = typeof saved?.supervisor === "string" ? saved.supervisor : peer.sessionId ?? peer.id;
+        const snapshot = await this.remoteJobs.request(a.host, peer, a.request, supervisor, typeof saved?.name === "string" ? saved.name : void 0);
+        const progress = snapshot.state?.progress;
+        const key = `${a.host}/${a.request.job}`;
+        if (progress && this.remoteProgress.get(key) !== progress) {
+          this.remoteProgress.set(key, progress);
+          const pair = this.requireNetwork().status().paired.find((p) => p.id === a.host || p.name === a.host);
+          const name = snapshot.state.peer;
+          this.receiveRemote({
+            id: randomUUID12(),
+            from: { id: `${pair?.id ?? a.host}/job:${a.request.job}`, name: `${pair?.name ?? a.host}/${name}`, agent: "other" },
+            to: peer.name,
+            recipient: peer.name,
+            body: progress,
+            conversationId: `job-${a.request.job}:note`,
+            replyTo: null,
+            hop: 0,
+            createdAt: this.now(),
+            readAt: null
+          });
+        }
+        return snapshot;
+      },
+      networkConfigure: (_, a) => {
+        const change = this.networkChange.then(() => this.configureNetwork(a));
+        this.networkChange = change.catch(() => {
+        });
+        return change;
+      },
+      networkVerify: (_, a) => this.requireNetwork().verify(external_exports.uuid().parse(a.id)),
+      networkPair: () => this.requireNetwork().keys.inviteWithExpiry(),
+      networkLink: async (_, a) => {
+        try {
+          const args = external_exports.object({ code: external_exports.string().min(1).max(MAX_PAIRING_CODE_CHARS), host: external_exports.string().min(1).max(MAX_NETWORK_HOST_CHARS), port: external_exports.number().int().min(1).max(MAX_PORT) }).parse(a);
+          return await this.requireNetwork().link(args.code, args.host, args.port);
+        } catch {
+          throw new BridgeError("bad_request", "Pairing failed. Check the address, code expiry, unique names and existing pairings.");
+        }
+      },
+      networkUnlink: (_, a) => {
+        const id = external_exports.uuid().parse(a.id);
+        const network = this.requireNetwork();
+        const removed = network.status().paired.some((p) => p.id === id);
+        network.unlink(id);
+        return { removed };
+      },
+      sendFiles: (c, a) => this.onSendFiles(c, a)
+    };
+  }
+  pipePath;
+  store;
+  log;
+  token;
+  now;
+  jobsPath;
+  networking;
+  server = null;
+  conns = /* @__PURE__ */ new Set();
+  purgeTimer = null;
+  network = null;
+  remoteJobs = null;
+  remoteProgress = /* @__PURE__ */ new Map();
+  networkChange = Promise.resolve();
+  handlers;
+  /** Bind the endpoint. Rejects with the socket error (EADDRINUSE when another broker owns it). */
+  listen() {
+    return new Promise((resolve10, reject) => {
+      const server = createServer4((socket) => this.accept(socket));
+      const onError = (err) => {
+        server.removeListener("listening", onListening);
+        reject(err);
+      };
+      const onListening = async () => {
+        server.removeListener("error", onError);
+        server.on("error", (err) => this.log.error("broker server error", { err }));
+        this.server = server;
+        this.purgeTimer = setInterval(() => this.purge(), PURGE_INTERVAL_MS);
+        this.purgeTimer.unref();
+        this.purge();
+        this.log.info("broker listening", { pipe: this.pipePath });
+        if (this.networking?.config.enabled) {
+          try {
+            this.network = new NetworkService(this.networking.home, this.networking.config, {
+              peers: () => [...this.conns].flatMap((c) => c.peer ? [c.peer] : []),
+              receive: (message) => this.receiveRemote(message),
+              receipt: (id, sender) => this.remoteReceipt(id, sender)
+            }, this.log);
+            this.installRemoteJobs(this.network);
+            await this.network.start();
+          } catch (err) {
+            this.network = null;
+            this.log.warn("networking could not start; local broker remains available", { message: err.message });
+          }
+        }
+        resolve10();
+      };
+      server.once("error", onError);
+      server.once("listening", onListening);
+      server.listen(this.pipePath);
+    });
+  }
+  async close() {
+    if (this.purgeTimer) clearInterval(this.purgeTimer);
+    await this.networkChange;
+    this.remoteJobs?.close();
+    this.remoteJobs = null;
+    await this.network?.close();
+    this.network = null;
+    for (const c of this.conns) c.socket.destroy();
+    this.conns.clear();
+    const server = this.server;
+    this.server = null;
+    if (server) await new Promise((r) => server.close(() => r()));
+    this.store.close();
+    this.log.info("broker closed");
+  }
+  /** Serialize listener changes and let the elected broker remain the sole network writer. */
+  async configureNetwork(value) {
+    if (!this.networking) throw new BridgeError("bad_request", "Restart all agent-bridge hosting sessions to load this wizard-capable broker.");
+    const config2 = writeNetworkConfig(this.networking.home, value);
+    this.remoteJobs?.close();
+    this.remoteJobs = null;
+    await this.network?.close();
+    this.network = null;
+    this.networking.config = config2;
+    if (config2.enabled) {
+      const service = new NetworkService(this.networking.home, config2, {
+        peers: () => [...this.conns].flatMap((c) => c.peer ? [c.peer] : []),
+        receive: (message) => this.receiveRemote(message),
+        receipt: (id, sender) => this.remoteReceipt(id, sender)
+      }, this.log);
+      this.installRemoteJobs(service);
+      try {
+        await service.start();
+        this.network = service;
+      } catch (err) {
+        await service.close();
+        throw err;
+      }
+    }
+    return this.network?.status() ?? { enabled: false, config: config2, discovered: [], paired: [] };
+  }
+  installRemoteJobs(service) {
+    this.remoteJobs = new RemoteJobs(service, this.networking.home, this.log, async (record2, control) => {
+      this.receiveRemote({
+        id: randomUUID12(),
+        from: { id: record2.owner, name: record2.owner, agent: "other" },
+        to: record2.name,
+        recipient: record2.name,
+        conversationId: `${CONTROL_CONVERSATION_PREFIX}${record2.id}`,
+        replyTo: null,
+        hop: 0,
+        body: JSON.stringify(control),
+        createdAt: this.now(),
+        readAt: null
+      });
+    });
+  }
+  purge() {
+    try {
+      const ttl = retentionLimit("AGENT_BRIDGE_MESSAGE_TTL_MS", MESSAGE_TTL_MS);
+      if (ttl) this.store.purgeOlderThan(this.now() - ttl);
+    } catch (err) {
+      this.log.warn("purge failed", { err });
+    }
+  }
+  accept(socket) {
+    const conn = { socket, peer: null, authed: false };
+    this.conns.add(conn);
+    socket.setEncoding("utf8");
+    const decoder = new FrameDecoder(MAX_FRAME_BYTES);
+    this.log.debug("connection accepted");
+    socket.on("data", (chunk) => {
+      let frames;
+      try {
+        frames = decoder.push(chunk);
+      } catch (err) {
+        this.log.warn("dropping connection after undecodable frame", { err });
+        socket.destroy();
+        return;
+      }
+      for (const f of frames) {
+        if (f.t === "req") void this.dispatch(conn, f);
+        else this.log.debug("ignoring non-request frame from client", { t: f.t });
+      }
+    });
+    socket.on("error", (err) => this.log.debug("connection error", { err: err.message }));
+    socket.on("close", () => {
+      this.conns.delete(conn);
+      if (conn.peer) {
+        this.log.info("peer left", { name: conn.peer.name, agent: conn.peer.agent });
+        if (!conn.peer.jobAgent) this.broadcastEvent("peer_left", conn.peer, conn);
+      }
+    });
+  }
+  async dispatch(conn, frame) {
+    const handler = this.handlers[frame.op];
+    try {
+      if (!handler) throw new BridgeError("bad_request", `unknown op: ${String(frame.op)}`);
+      if (!conn.authed && !UNAUTHENTICATED_OPS.has(frame.op)) throw new BridgeError("unauthorized", "authenticate first");
+      this.log.debug("request", { op: frame.op, peer: conn.peer?.name });
+      const result = await handler(conn, frame.args ?? {});
+      this.write(conn, { t: "res", id: frame.id, ok: true, result });
+    } catch (err) {
+      const be = err instanceof BridgeError ? err : new BridgeError("internal", String(err?.message ?? err));
+      if (be.code === "internal") this.log.error("request failed", { op: frame.op, err });
+      else this.log.debug("request rejected", { op: frame.op, code: be.code, message: be.message });
+      this.write(conn, { t: "res", id: frame.id, ok: false, error: be.toPayload() });
+    }
+  }
+  write(conn, frame) {
+    if (!conn.socket.destroyed) conn.socket.write(encodeFrame(frame));
+  }
+  emit(conn, ev, data) {
+    const frame = { t: "evt", ev, data };
+    this.write(conn, frame);
+  }
+  broadcastEvent(ev, data, except) {
+    for (const c of this.conns) if (c !== except && c.peer) this.emit(c, ev, data);
+  }
+  requirePeer(conn) {
+    if (!conn.peer) throw new BridgeError("not_registered", "send hello first");
+    return conn.peer;
+  }
+  /** Local sessions and paired remote peers; local job runners stay hidden (see job-host.ts). */
+  livePeers() {
+    return [...this.conns].flatMap((c) => c.peer && !c.peer.jobAgent ? [c.peer] : []).concat(this.network?.peers() ?? []);
+  }
+  connByName(name) {
+    for (const c of this.conns) if (c.peer?.name === name) return c;
+    return void 0;
+  }
+  siblingConns(conn) {
+    const peer = this.requirePeer(conn);
+    if (!peer.jobAgent || !peer.jobOwner) throw new BridgeError("bad_request", "not a linked job");
+    const jobs = this.storedJobs();
+    const supervisor = this.jobSupervisor(peer, jobs);
+    return [...this.conns].filter((c) => c !== conn && c.peer?.jobAgent && this.jobSupervisor(c.peer, jobs) === supervisor);
+  }
+  storedJobs() {
+    if (!this.jobsPath) return [];
+    try {
+      const data = JSON.parse(readFileSync14(this.jobsPath, "utf8"));
+      const jobs = Array.isArray(data) ? data : isRecord(data) && Array.isArray(data.jobs) ? data.jobs : [];
+      return jobs.filter(isRecord);
+    } catch {
+      return [];
+    }
+  }
+  /** A restored legacy runner may still advertise its old owner name until its next turn. */
+  jobSupervisor(peer, jobs = this.storedJobs()) {
+    const job = jobs.find((j) => `job:${j.id}` === peer.id);
+    return typeof job?.supervisor === "string" ? job.supervisor : peer.jobOwner;
+  }
+  storedSiblings(peer) {
+    if (!this.jobsPath || !peer.jobOwner) return [];
+    try {
+      const records = this.storedJobs();
+      const supervisor = this.jobSupervisor(peer, records);
+      return records.flatMap((j) => j && j.supervisor === supervisor && typeof j.id === "string" && typeof j.name === "string" && j.name !== peer.name && `job:${j.id}` !== peer.id && AGENT_KINDS.includes(j.agent) && SIBLING_STATUSES.has(j.status) ? [{ id: `job:${j.id}`, name: j.name, title: isRecord(j.args) && typeof j.args.title === "string" ? j.args.title : "", agent: j.agent, status: j.status }] : []);
+    } catch {
+      return [];
+    }
+  }
+  siblingPeers(conn) {
+    const live = this.siblingConns(conn);
+    const stored = this.storedSiblings(this.requirePeer(conn));
+    const peers = new Map(stored.map(({ id, ...s }) => [s.name, s]));
+    for (const c of live) {
+      const p = c.peer;
+      const previous = stored.find((s) => s.id === p.id);
+      if (previous) peers.delete(previous.name);
+      peers.set(p.name, { name: p.name, title: p.jobTitle ?? "", agent: p.jobAgent, status: "running" });
+    }
+    return [...peers.values()];
+  }
+  async onSendSibling(conn, args) {
+    const sender = this.requirePeer(conn);
+    const dedupeKey = args.dedupeKey ? `${SIBLING_CONVERSATION_PREFIX}${args.dedupeKey}` : void 0;
+    const key = dedupeKey ? `${sender.id}:${dedupeKey}` : null;
+    const seen = key ? this.sentByKey.get(key) : void 0;
+    if (seen) return seen.result;
+    const target = this.siblingConns(conn).find((c) => c.peer.name === args.to);
+    const stored = this.storedSiblings(sender).find((s) => s.name === args.to);
+    if (!target && !stored) {
+      if (!isJobSendTarget(args.to) || !sender.jobSendTo?.includes(args.to) || this.connByName(args.to)?.peer?.jobAgent) {
+        throw new BridgeError("unknown_target", "no sibling with that job name or explicit send_to grant");
+      }
+      if (args.replyTo) {
+        const parent3 = this.store.byId(args.replyTo);
+        const own2 = this.storedJobs().find((j) => `job:${j.id}` === sender.id);
+        const ownerNames = /* @__PURE__ */ new Set([sender.name, sender.jobParent, own2?.owner]);
+        if (!parent3 || !(parent3.from.name === args.to && ownerNames.has(parent3.recipient) || parent3.from.id === sender.id && parent3.recipient === args.to)) {
+          throw new BridgeError("bad_request", "reply_to must refer to a message exchanged with the granted session or supervisor");
+        }
+      }
+      return this.onSend(conn, { ...args, dedupeKey });
+    }
+    const targetId = target?.peer.id ?? stored.id;
+    const parent2 = args.replyTo ? this.store.byId(args.replyTo) : null;
+    if (args.replyTo && (!parent2 || !parent2.conversationId.startsWith(SIBLING_CONVERSATION_PREFIX) || !(parent2.from.id === targetId && parent2.recipient === sender.name || parent2.from.id === sender.id && parent2.recipient === args.to))) {
+      throw new BridgeError("bad_request", "reply_to must refer to a message exchanged with this sibling");
+    }
+    if (!Number.isInteger(args.maxHops) || args.maxHops < 1 || (parent2 ? parent2.hop + 1 : 0) >= args.maxHops) {
+      throw new BridgeError("bad_request", `sibling conversation reached its ${args.maxHops}-message hop limit; stop this thread and report the remaining work to the supervisor`);
+    }
+    const conversationId = parent2?.conversationId ?? `${SIBLING_CONVERSATION_PREFIX}${randomUUID12()}`;
+    const result = await this.onSend(conn, { ...args, dedupeKey, conversationId });
+    const message = result.messages[0];
+    if (sender.jobParent) {
+      const note = {
+        ...message,
+        id: randomUUID12(),
+        recipient: sender.jobParent,
+        conversationId: `${conversationId}${SIBLING_NOTE_SUFFIX}`,
+        body: `Sibling message to ${message.recipient}:
+
+${message.body}`
+      };
+      this.store.insert(note);
+      const supervisor = this.connByName(sender.jobParent);
+      if (supervisor) this.emit(supervisor, "message", note);
+    }
+    return result;
+  }
+  uniqueName(requested) {
+    if (!this.connByName(requested)) return requested;
+    for (let i = 2; i < NAME_SUFFIX_LIMIT; i++) {
+      const candidate = `${requested}-${i}`;
+      if (!this.connByName(candidate)) return candidate;
+    }
+    return `${requested}-${randomUUID12().slice(0, 8)}`;
+  }
+  onDecide(conn, value) {
+    const peer = this.requirePeer(conn);
+    const parsed = external_exports.object({
+      topic: external_exports.string().trim().min(1).max(MAX_DECISION_TOPIC_CHARS),
+      text: external_exports.string().trim().min(1).max(MAX_DECISION_TEXT_CHARS),
+      scope: decisionScopeSchema.optional(),
+      sourceMessageId: external_exports.string().min(1).optional()
+    }).strict().safeParse(value);
+    if (!parsed.success) throw new BridgeError("bad_request", "Invalid decision topic, text or scope.");
+    if (parsed.data.sourceMessageId && !this.store.byId(parsed.data.sourceMessageId)) throw new BridgeError("bad_request", "Source message does not exist.");
+    const decision = this.store.decisions.record({ ...parsed.data, scope: parsed.data.scope ?? { project: peer.cwd } }, { id: peer.id, name: peer.name, agent: peer.agent }, this.now());
+    const deliveredTo = [];
+    for (const c of this.conns) {
+      if (!c.peer || c.peer.jobAgent || !decisionApplies(decision, c.peer)) continue;
+      const message = this.queueDecision(decision, c.peer);
+      if (message) {
+        this.emit(c, "message", message);
+        deliveredTo.push(c.peer.name);
+      }
+    }
+    return { decision, deliveredTo };
+  }
+  onDecisions(conn, value) {
+    const parsed = external_exports.object({
+      query: external_exports.string().max(MAX_DECISION_TEXT_CHARS).optional(),
+      scope: decisionScopeSchema.optional(),
+      history: external_exports.boolean().optional(),
+      topic: external_exports.string().max(MAX_DECISION_TOPIC_CHARS).optional(),
+      session: external_exports.string().optional()
+    }).strict().safeParse(value);
+    if (!parsed.success) throw new BridgeError("bad_request", "Invalid decisions query or scope.");
+    const scope = parsed.data.scope ?? (conn.peer ? { project: conn.peer.cwd } : void 0);
+    return this.store.decisions.list({ ...parsed.data, scope }, conn.peer ?? void 0);
+  }
+  decisionSessionKey(peer) {
+    return `${peer.agent}:${peer.sessionId ?? peer.id}`;
+  }
+  queueDecision(decision, peer) {
+    const message = {
+      id: randomUUID12(),
+      from: decision.author,
+      to: peer.name,
+      recipient: peer.name,
+      conversationId: `decision-${decision.id}`,
+      replyTo: decision.sourceMessageId,
+      hop: DECISION_MESSAGE_HOP,
+      body: `Pinned owner decision: ${decision.topic}
+
+${decision.text}
+
+Call decisions to look up current decisions or their history.`,
+      createdAt: this.now(),
+      readAt: null
+    };
+    return this.store.decisions.enqueue(decision, this.decisionSessionKey(peer), message, () => this.store.insert(message)) ? message : null;
+  }
+  queueCurrentDecisions(peer) {
+    if (peer.jobAgent || !peer.sessionId) return [];
+    return this.store.decisions.list().filter((d) => decisionApplies(d, peer)).flatMap((d) => {
+      const message = this.queueDecision(d, peer);
+      return message ? [message] : [];
+    });
+  }
+  checkAuth(protocol, token) {
+    if (protocol !== PROTOCOL_VERSION) {
+      throw new BridgeError("protocol_mismatch", `broker speaks protocol ${PROTOCOL_VERSION}, client ${protocol}`, {
+        brokerProtocol: PROTOCOL_VERSION
+      });
+    }
+    if (typeof token !== "string" || !tokensEqual(token, this.token)) {
+      this.log.warn("rejected connection with a wrong or missing token");
+      throw new BridgeError("unauthorized", "wrong agent-bridge token");
+    }
+  }
+  onHello(conn, args) {
+    this.checkAuth(args.protocol, args.token);
+    conn.authed = true;
+    const p = args.peer;
+    if (!p || !PEER_NAME_PATTERN.test(p.name ?? "") || !AGENT_KINDS.includes(p.agent)) {
+      throw new BridgeError("bad_request", "invalid peer info");
+    }
+    if (conn.peer) throw new BridgeError("bad_request", "already registered");
+    const name = this.uniqueName(p.name);
+    const peer = {
+      id: String(p.id),
+      name,
+      agent: p.agent,
+      cwd: String(p.cwd ?? ""),
+      pid: Number(p.pid),
+      agentPid: p.agentPid ?? null,
+      sessionId: p.sessionId ?? null,
+      startedAt: Number(p.startedAt) || this.now(),
+      autoWake: Boolean(p.autoWake),
+      wakeOnDirect: Boolean(p.wakeOnDirect),
+      wakeAvailable: Boolean(p.wakeAvailable),
+      wakeMaxHops: typeof p.wakeMaxHops === "number" ? p.wakeMaxHops : void 0,
+      activity: p.activity === "busy" || p.activity === "idle" ? p.activity : null,
+      version: typeof p.version === "string" ? p.version.slice(0, 32) : void 0,
+      ...p.jobAgent && AGENT_KINDS.includes(p.jobAgent) ? { jobAgent: p.jobAgent } : {},
+      ...p.jobAgent && typeof p.jobOwner === "string" && p.jobOwner ? {
+        jobOwner: p.jobOwner,
+        jobParent: typeof p.jobParent === "string" ? p.jobParent : void 0,
+        jobTitle: typeof p.jobTitle === "string" ? p.jobTitle : void 0,
+        jobSendTo: Array.isArray(p.jobSendTo) ? p.jobSendTo.filter(isJobSendTarget).slice(0, MAX_JOB_SEND_TARGETS) : []
+      } : {}
+    };
+    conn.peer = peer;
+    if (peer.sessionId) this.replaceStale(conn, peer);
+    this.expireStaleQueue(peer.name);
+    let claimed = 0;
+    if (!peer.jobAgent) {
+      this.expireStaleQueue(agentQueueKey(peer.agent));
+      claimed = this.store.claim(agentQueueKey(peer.agent), peer.name);
+    }
+    this.log.info("peer joined", { name, agent: peer.agent, jobAgent: peer.jobAgent, cwd: peer.cwd, claimed });
+    if (!peer.jobAgent) this.broadcastEvent("peer_joined", peer, conn);
+    setImmediate(() => {
+      this.queueCurrentDecisions(peer);
+      for (const m of this.unreadMail(peer.name, PENDING_MAX_LIMIT)) this.emit(conn, "message", m);
+    });
+    return { brokerPid: process.pid, name: peer.name, peers: this.livePeers().filter((x) => x.id !== peer.id) };
+  }
+  /**
+   * Mail sent to a "-N" stand-in of this peer's name (a reload ran the session under it briefly) moves to the
+   * peer. Only names of that form, and only while no one holds them: another session's mail stays its own.
+   */
+  onClaimMail(conn, args) {
+    const peer = this.requirePeer(conn);
+    const base = peer.name.replace(/-\d+$/, "");
+    let moved = 0;
+    for (const name of new Set(args.names ?? [])) {
+      const standIn = name !== peer.name && (name === base || name.startsWith(`${base}-`) && /^\d+$/.test(name.slice(base.length + 1)));
+      if (!standIn || this.connByName(name)) continue;
+      moved += this.store.claim(name, peer.name);
+    }
+    if (moved) {
+      this.log.info("mail of a stand-in name moved to its session", { to: peer.name, moved });
+      setImmediate(() => {
+        for (const m of this.unreadMail(peer.name, PENDING_MAX_LIMIT)) this.emit(conn, "message", m);
+      });
+    }
+    return { moved };
+  }
+  onUpdatePeer(conn, args) {
+    const peer = this.requirePeer(conn);
+    if (peer.jobOwner) {
+      if (typeof args.jobParent === "string") peer.jobParent = args.jobParent;
+      if (typeof args.jobTitle === "string") peer.jobTitle = args.jobTitle;
+    }
+    if (args.sessionId !== void 0) {
+      const previousKey = this.decisionSessionKey(peer);
+      peer.sessionId = args.sessionId;
+      this.store.decisions.linkSession(previousKey, this.decisionSessionKey(peer));
+      if (peer.sessionId) this.replaceStale(conn, peer);
+    }
+    if (args.autoWake !== void 0) peer.autoWake = Boolean(args.autoWake);
+    if (args.wakeOnDirect !== void 0) peer.wakeOnDirect = Boolean(args.wakeOnDirect);
+    if (args.wakeAvailable !== void 0) peer.wakeAvailable = Boolean(args.wakeAvailable);
+    if (typeof args.wakeMaxHops === "number") peer.wakeMaxHops = args.wakeMaxHops;
+    if (typeof args.cwd === "string" && args.cwd) peer.cwd = args.cwd;
+    if (args.activity === "busy" || args.activity === "idle") peer.activity = args.activity;
+    if (typeof args.name === "string" && args.name !== peer.name) {
+      if (!PEER_NAME_PATTERN.test(args.name)) throw new BridgeError("bad_request", "invalid peer name");
+      const old = peer.name;
+      peer.name = this.uniqueName(args.name);
+      this.log.info("peer renamed", { from: old, to: peer.name });
+      this.expireStaleQueue(peer.name);
+      setImmediate(() => {
+        for (const m of this.unreadMail(peer.name, PENDING_MAX_LIMIT)) this.emit(conn, "message", m);
+      });
+    }
+    this.log.debug("peer updated", { name: peer.name, sessionId: peer.sessionId, autoWake: peer.autoWake, cwd: peer.cwd });
+    for (const message of this.queueCurrentDecisions(peer)) this.emit(conn, "message", message);
+    return peer;
+  }
+  /**
+   * One agent session, two servers: Claude Code's /reload-plugins (or a restart of the MCP server) starts a new
+   * agent-bridge server while the old one may still be connected. The old one would keep the name and receive
+   * mail the session no longer sees. So the newest server of a session wins: the old connection is told it was
+   * replaced (it stops instead of reconnecting) and the new one takes over its name and waiting mail.
+   */
+  replaceStale(conn, peer) {
+    for (const c of [...this.conns]) {
+      const old = c.peer;
+      if (c === conn || !old || old.agent !== peer.agent || old.sessionId !== peer.sessionId) continue;
+      this.log.info("session connected again from a new server; replacing the old connection", { name: old.name, by: peer.name, sessionId: peer.sessionId });
+      this.emit(c, "replaced", { by: peer.name });
+      this.conns.delete(c);
+      c.peer = null;
+      this.broadcastEvent("peer_left", old, c);
+      c.socket.end();
+      if (peer.name !== old.name && !this.connByName(old.name)) {
+        const oldName = old.name;
+        if (peer.name.startsWith(`${oldName}-`) && /^\d+$/.test(peer.name.slice(oldName.length + 1))) peer.name = oldName;
+        setImmediate(() => {
+          this.store.claim(oldName, peer.name);
+          for (const m of this.unreadMail(peer.name, PENDING_MAX_LIMIT)) this.emit(conn, "message", m);
+        });
+      }
+    }
+  }
+  /**
+   * Before a peer takes over queued mail. Names are derived from the project folder and reused by every
+   * later session there, so a name alone does not identify the session that mail was meant for. Mail that
+   * waited longer than QUEUED_MAIL_MAX_AGE_MS most likely belongs to a session that is gone; recent mail
+   * still reaches a session that restarted or reconnected after a broker hand-over.
+   */
+  expireStaleQueue(key) {
+    try {
+      const maxAge = retentionLimit("AGENT_BRIDGE_QUEUED_MAIL_MAX_AGE_MS", QUEUED_MAIL_MAX_AGE_MS);
+      if (maxAge) this.store.expireQueued(key, this.now() - maxAge);
+    } catch (err) {
+      this.log.warn("expiring queued mail failed", { key, err });
+    }
+  }
+  /** Turns a sender-supplied target into live connections and/or offline queue keys. */
+  resolveTargets(to, sender) {
+    const all = [...this.conns].filter((c) => c.peer && c.peer.id !== sender.id);
+    const others = all.filter((c) => !c.peer.jobAgent);
+    if (to === BROADCAST) {
+      if (others.length === 0) throw new BridgeError("unknown_target", "no other peers are online");
+      return { live: others, queued: [] };
+    }
+    const exact = all.find((c) => c.peer.id === to || c.peer.name === to);
+    if (exact) return { live: [exact], queued: [] };
+    if (to === sender.name || to === sender.id) throw new BridgeError("bad_request", "cannot send a message to yourself");
+    if (AGENT_KINDS.includes(to)) {
+      const ofKind = others.filter((c) => c.peer.agent === to);
+      if (ofKind.length === 1) return { live: ofKind, queued: [] };
+      if (ofKind.length > 1) {
+        throw new BridgeError("ambiguous_target", `several ${to} peers are online`, {
+          candidates: ofKind.map((c) => c.peer.name)
+        });
+      }
+      return { live: [], queued: [agentQueueKey(to)] };
+    }
+    if (!PEER_NAME_PATTERN.test(to)) throw new BridgeError("unknown_target", `invalid target: ${to}`);
+    return { live: [], queued: [to] };
+  }
+  /** Results of recent sends by dedupe key (see SendArgs.dedupeKey), so a retry is not sent twice. */
+  sentByKey = /* @__PURE__ */ new Map();
+  sendingByKey = /* @__PURE__ */ new Map();
+  async onSend(conn, args) {
+    const sender = this.requirePeer(conn);
+    const key = typeof args.dedupeKey === "string" && args.dedupeKey ? `${sender.id}:${args.dedupeKey}` : null;
+    const seen = key ? this.sentByKey.get(key) : void 0;
+    if (seen) return seen.result;
+    const inFlight = key ? this.sendingByKey.get(key) : void 0;
+    if (inFlight) return inFlight;
+    const sending = this.routeSend(conn, sender, args);
+    if (key) this.sendingByKey.set(key, sending);
+    let result;
+    try {
+      result = await sending;
+    } finally {
+      if (key) this.sendingByKey.delete(key);
+    }
+    if (key) {
+      const now = this.now();
+      this.sentByKey.set(key, { at: now, result });
+      for (const [k, v] of this.sentByKey) {
+        if (now - v.at < DEDUPE_KEEP_MS && this.sentByKey.size <= DEDUPE_MAX) break;
+        this.sentByKey.delete(k);
+      }
+    }
+    return result;
+  }
+  async routeSend(conn, sender, args) {
+    const body = typeof args.body === "string" ? args.body : "";
+    if (!body.trim()) throw new BridgeError("bad_request", "message body is empty");
+    if (body.length > MAX_BODY_CHARS) throw new BridgeError("too_large", `message body exceeds ${MAX_BODY_CHARS} characters`);
+    const to = String(args.to ?? "").trim();
+    if (!to) throw new BridgeError("bad_request", "missing target");
+    let conversationId = args.conversationId?.trim() || "";
+    let hop = 0;
+    const replyTo = args.replyTo?.trim() || null;
+    if (replyTo) {
+      const parent2 = this.store.byId(replyTo);
+      if (parent2) {
+        hop = parent2.hop + 1;
+        conversationId ||= parent2.conversationId;
+      } else {
+        this.log.debug("replyTo refers to an unknown message", { replyTo });
+      }
+    }
+    conversationId ||= randomUUID12();
+    const id = randomUUID12();
+    const createdAt = this.now();
+    const base = {
+      id,
+      // A job runner speaks for its job: from the subagent's agent, like a job run inside the session's server.
+      from: { id: sender.id, name: sender.name, agent: sender.jobAgent ?? sender.agent },
+      to,
+      conversationId,
+      replyTo,
+      hop,
+      body,
+      createdAt,
+      readAt: null
+    };
+    if (to.includes("/")) {
+      const result = await this.requireNetwork().send({ ...base, recipient: to });
+      for (const message of result.messages) this.store.insert(message);
+      return result;
+    }
+    const { live, queued } = this.resolveTargets(to, sender);
+    if (conversationId.startsWith(SIBLING_CONVERSATION_PREFIX) && (queued.some((name) => !sender.jobAgent || !this.storedSiblings(sender).some((s) => s.name === name)) || live.some((c) => c.peer.jobAgent && (!sender.jobAgent || !sender.jobOwner || this.jobSupervisor(c.peer) !== this.jobSupervisor(sender))))) {
+      throw new BridgeError("unauthorized", "sibling chat is restricted to jobs of the same supervisor");
+    }
+    const messages = [];
+    for (const c of live) messages.push({ ...base, recipient: c.peer.name });
+    for (const key of queued) messages.push({ ...base, recipient: key });
+    for (const m of messages) this.store.insert(m);
+    live.forEach((c, i) => this.emit(c, "message", messages[i]));
+    this.log.info("message routed", {
+      id,
+      from: sender.name,
+      to,
+      hop,
+      deliveredTo: live.map((c) => c.peer.name),
+      queuedFor: queued
+    });
+    return { messages, deliveredTo: live.map((c) => c.peer.name), queuedFor: queued, recipientStates: live.map((c) => ({ name: c.peer.name, activity: c.peer.activity, autoWake: c.peer.autoWake, wakeOnDirect: c.peer.wakeOnDirect, wakeAvailable: c.peer.wakeAvailable, wakeMaxHops: c.peer.wakeMaxHops })) };
+  }
+  unreadMail(recipient, limit) {
+    const messages = this.store.unread(recipient, limit);
+    if (!this.jobsPath || !messages.some((m) => m.conversationId.endsWith(SIBLING_NOTE_SUFFIX))) return messages;
+    let jobs;
+    try {
+      const value = JSON.parse(readFileSync14(this.jobsPath, "utf8"));
+      jobs = Array.isArray(value) ? value : Array.isArray(value?.jobs) ? value.jobs : [];
+    } catch {
+      return messages;
+    }
+    const finished = new Set(jobs.filter((j) => j.status && j.status !== "running").map((j) => `job:${j.id}`));
+    const stale = messages.filter((m) => m.conversationId.endsWith(SIBLING_NOTE_SUFFIX) && finished.has(m.from.id));
+    this.store.markRead(recipient, stale.map((m) => m.id), this.now());
+    return messages.filter((m) => !stale.includes(m));
+  }
+  remoteReceipt(id, sender) {
+    const message = this.store.byId(id);
+    if (!message || message.from.id !== sender) throw new BridgeError("unauthorized", "receipt is only available to the sender");
+    return this.store.receipts(id)[0]?.readAt ?? null;
+  }
+  async messageReceipt(conn, id) {
+    const sender = this.requirePeer(conn);
+    const message = this.store.byId(external_exports.uuid().parse(id));
+    if (!message || message.from.name !== sender.name) throw new BridgeError("unauthorized", "receipt is only available to the sender");
+    const receipts = this.store.receipts(id);
+    return Promise.all(receipts.map(async (r) => r.recipient.includes("/") ? { ...r, readAt: await this.requireNetwork().receipt(r.recipient, id, message.from.id) } : r));
+  }
+  requireNetwork() {
+    if (!this.network) throw new BridgeError("bad_request", "networking is disabled or unavailable; enable it and restart the broker");
+    return this.network;
+  }
+  async onSendFiles(conn, args) {
+    const sender = this.requirePeer(conn);
+    const parsed = external_exports.object({ to: external_exports.string().min(1), paths: external_exports.array(external_exports.string().min(1)).min(1).max(MAX_TRANSFER_ENTRIES) }).parse(args);
+    const remote = parsed.to.includes("/");
+    const target = remote ? this.requireNetwork().fileTarget(parsed.to) : parsed.to;
+    const transfer = collectTransfer(parsed.paths, sender.cwd, target, { id: sender.id, name: sender.name, agent: sender.jobAgent ?? sender.agent });
+    if (remote) return this.requireNetwork().sendFiles(parsed.to, transfer);
+    if (!this.connByName(target)) throw new BridgeError("unknown_target", "file recipient must be online");
+    const home = this.networking?.home;
+    if (!home) throw new BridgeError("bad_request", "file inbox home is unavailable");
+    const result = receiveTransfer(home, transfer);
+    this.receiveRemote({ id: transfer.id, from: transfer.from, to: target, recipient: target, conversationId: transfer.id, replyTo: null, hop: 0, body: `Received ${result.files} files (${result.bytes} bytes) in ${result.inbox}`, createdAt: this.now(), readAt: null });
+    return result;
+  }
+  receiveRemote(message) {
+    const target = this.connByName(message.recipient);
+    const existing = this.store.byId(message.id);
+    if (existing) {
+      if (existing.from.id !== message.from.id || existing.recipient !== message.recipient || existing.body !== message.body || existing.conversationId !== message.conversationId || existing.replyTo !== message.replyTo || existing.hop !== message.hop) throw new BridgeError("bad_request", "message id already used");
+      return { delivered: Boolean(target) };
+    }
+    this.store.insert(message);
+    if (target) this.emit(target, "message", message);
+    return { delivered: Boolean(target) };
+  }
+};
+
+// src/core/client.ts
+import { EventEmitter } from "node:events";
+import { connect as connect2 } from "node:net";
+var BridgeClient = class _BridgeClient extends EventEmitter {
+  constructor(socket, log) {
+    super();
+    this.socket = socket;
+    this.log = log;
+    socket.setEncoding("utf8");
+    const decoder = new FrameDecoder(MAX_FRAME_BYTES);
+    socket.on("data", (chunk) => {
+      let frames;
+      try {
+        frames = decoder.push(chunk);
+      } catch (err) {
+        this.log.warn("undecodable frame from broker; disconnecting", { err });
+        socket.destroy();
+        return;
+      }
+      for (const f of frames) {
+        if (f.t === "res") this.settle(f);
+        else if (f.t === "evt") this.emit("event", f.ev, f.data);
+      }
+    });
+    socket.on("error", (err) => this.log.debug("client socket error", { err: err.message }));
+    socket.on("close", () => {
+      this.closed = true;
+      for (const [, p] of this.pending) {
+        clearTimeout(p.timer);
+        p.reject(new Error("connection to broker closed"));
+      }
+      this.pending.clear();
+      this.emit("close");
+    });
+  }
+  socket;
+  log;
+  nextId = 1;
+  pending = /* @__PURE__ */ new Map();
+  closed = false;
+  /** Connect to an existing broker. Rejects with the socket error (ENOENT/ECONNREFUSED if nobody listens). */
+  static connect(pipePath, log, timeoutMs = CONNECT_TIMEOUT_MS) {
+    return new Promise((resolve10, reject) => {
+      const socket = connect2(pipePath);
+      const timer = setTimeout(() => {
+        socket.destroy();
+        reject(Object.assign(new Error("timed out connecting to broker"), { code: "ETIMEDOUT" }));
+      }, timeoutMs);
+      socket.once("connect", () => {
+        clearTimeout(timer);
+        socket.removeAllListeners("error");
+        resolve10(new _BridgeClient(socket, log));
+      });
+      socket.once("error", (err) => {
+        clearTimeout(timer);
+        reject(err);
+      });
+    });
+  }
+  get isClosed() {
+    return this.closed;
+  }
+  request(op, args, timeoutMs = REQUEST_TIMEOUT_MS) {
+    if (this.closed) return Promise.reject(new Error("connection to broker closed"));
+    const id = this.nextId++;
+    return new Promise((resolve10, reject) => {
+      const timer = setTimeout(() => {
+        this.pending.delete(id);
+        reject(new Error(`broker request timed out: ${op}`));
+      }, timeoutMs);
+      this.pending.set(id, { resolve: resolve10, reject, timer });
+      this.socket.write(encodeFrame({ t: "req", id, op, args }));
+    });
+  }
+  close() {
+    this.socket.end();
+    this.socket.destroy();
+  }
+  settle(f) {
+    const p = this.pending.get(f.id);
+    if (!p) return;
+    this.pending.delete(f.id);
+    clearTimeout(p.timer);
+    if (f.ok) p.resolve(f.result);
+    else p.reject(new BridgeError(f.error.code, f.error.message, f.error.details));
+  }
+};
+
+// src/core/read-journal.ts
+import { createHash as createHash5 } from "node:crypto";
+import { appendFileSync as appendFileSync3, mkdirSync as mkdirSync14, readFileSync as readFileSync15 } from "node:fs";
+import { join as join25 } from "node:path";
+var ReadJournal = class {
+  dir;
+  constructor(home) {
+    this.dir = join25(home, "read-state");
+  }
+  path(identity) {
+    return join25(this.dir, `${createHash5("sha256").update(identity).digest("hex")}.jsonl`);
+  }
+  read(identity) {
+    let raw;
+    try {
+      raw = readFileSync15(this.path(identity), "utf8");
+    } catch (err) {
+      if (err.code === "ENOENT") return [];
+      throw err;
+    }
+    return raw.split("\n").flatMap((line) => {
+      if (!line) return [];
+      try {
+        const ids = JSON.parse(line);
+        return Array.isArray(ids) ? ids.filter((id) => typeof id === "string") : [];
+      } catch {
+        return [];
+      }
+    });
+  }
+  append(identity, ids) {
+    mkdirSync14(this.dir, { recursive: true, mode: 448 });
+    appendFileSync3(this.path(identity), `
+${JSON.stringify(ids)}
+`, { mode: 384, flush: true });
+  }
+};
+
+// src/core/job-control.ts
+import { randomUUID as randomUUID13 } from "node:crypto";
+var DASHBOARD_JOB_CONVERSATION = "jobctl-dashboard";
+var CONTROL_TIMEOUT_MS = 1e4;
+var JobControlError = class extends Error {
+  constructor(message, reason) {
+    super(message);
+    this.reason = reason;
+  }
+  reason;
+};
+async function controlDashboardJob(node2, owner, job, command) {
+  if (!(await node2.peers()).some((p) => p.name === owner)) throw new JobControlError("The owning session is not connected. Reopen it to continue this subagent.", "offline");
+  const requestId = randomUUID13();
+  let receive;
+  let timer;
+  const reply = new Promise((resolve10, reject) => {
+    receive = (m) => {
+      if (m.from.name !== owner) return;
+      try {
+        const result = JSON.parse(m.body);
+        if (result.type === "result" && result.requestId === requestId && typeof result.text === "string" && typeof result.outcome === "string" && typeof result.isError === "boolean") resolve10(result);
+      } catch {
+      }
+    };
+    node2.on("job_control", receive);
+    timer = setTimeout(() => reject(new JobControlError("The owning session did not confirm delivery. Check its chat before sending again.", "timeout")), CONTROL_TIMEOUT_MS);
+  });
+  reply.catch(() => {
+  });
+  try {
+    await node2.send({ to: owner, body: JSON.stringify({ ...command, requestId, job }), conversationId: DASHBOARD_JOB_CONVERSATION }, { quiet: true });
+    return await reply;
+  } finally {
+    clearTimeout(timer);
+    node2.off("job_control", receive);
+  }
+}
+
+// src/core/node.ts
+var QUESTION_ID_MEMORY = 2e3;
+var jitter = () => ELECTION_RETRY_MIN_MS + Math.floor(Math.random() * (ELECTION_RETRY_MAX_MS - ELECTION_RETRY_MIN_MS));
+var sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+function errCode(err) {
+  return String(err?.code ?? "");
+}
+var BridgeNode = class extends EventEmitter2 {
+  constructor(opts) {
+    super();
+    this.opts = opts;
+    this.id = opts.id ?? randomUUID14();
+    this.currentName = opts.name;
+    this.currentCwd = opts.cwd;
+    this.autoWake = opts.autoWake;
+    this.log = opts.log.child("node");
+    this.readJournal = new ReadJournal(dirname7(opts.dbPath));
+    this.restoreReadState(`name:${this.currentName}`);
+  }
+  opts;
+  id;
+  client = null;
+  broker = null;
+  stopping = false;
+  /** The bridge gave this session to another server of it (see reclaim). */
+  replaced = false;
+  electing = null;
+  reconnectTimer = null;
+  reconnectDelay = RECONNECT_BACKOFF_MIN_MS;
+  currentName;
+  inbox = /* @__PURE__ */ new Map();
+  readIds = /* @__PURE__ */ new Set();
+  readJournal;
+  unflushedAcks = /* @__PURE__ */ new Set();
+  sessionId = null;
+  autoWake;
+  wakeOnDirect = false;
+  wakeAvailable = false;
+  wakeMaxHops = DEFAULT_MAX_HOPS;
+  currentCwd;
+  lastSent = 0;
+  /** Ids of messages this peer sent as new questions (not replies); replies to them are awaited. */
+  asked = /* @__PURE__ */ new Set();
+  activity = null;
+  log;
+  get name() {
+    return this.currentName;
+  }
+  get isBroker() {
+    return this.broker !== null;
+  }
+  get isConnected() {
+    return this.client !== null && !this.client.isClosed;
+  }
+  get autoWakeEnabled() {
+    return this.autoWake;
+  }
+  async start() {
+    await this.ensureConnected();
+  }
+  /** Take over unread mail sent to "-N" stand-in names of this session (see the broker's claimMail). */
+  async claimMail(names) {
+    if (!names.length || !this.isConnected) return 0;
+    return (await this.client.request("claimMail", { names })).moved;
+  }
+  get wasReplaced() {
+    return this.replaced;
+  }
+  /**
+   * The session still calls this server (hooks, tools) after the bridge replaced it: Claude Code can start a
+   * stale server of an older plugin version next to the current one on /reload-plugins, and whichever connects
+   * last wins. The server the session really uses takes its place back; the stale one, never called, stays out.
+   */
+  async reclaim() {
+    if (!this.replaced) return;
+    this.replaced = false;
+    this.stopping = false;
+    this.log.info("the session still uses this server: taking its place back on the bridge");
+    await this.ensureConnected();
+    this.emit("reclaimed");
+  }
+  async stop() {
+    this.stopping = true;
+    this.emit("stopped");
+    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = null;
+    this.client?.close();
+    this.client = null;
+    if (this.broker) await this.broker.close();
+    this.broker = null;
+    this.log.info("bridge node stopped");
+  }
+  /**
+   * Connects (electing a broker if needed). Concurrent callers share one attempt. When it fails, the
+   * node keeps retrying in the background (see scheduleReconnect) instead of staying disconnected.
+   */
+  ensureConnected() {
+    if (this.isConnected) return Promise.resolve();
+    this.electing ??= this.elect().catch((err) => {
+      this.scheduleReconnect(this.nextBackoff());
+      throw err;
+    }).finally(() => {
+      this.electing = null;
+    });
+    return this.electing;
+  }
+  /** Doubling delay for background retries, capped; reset once connected. */
+  nextBackoff() {
+    const delay4 = this.reconnectDelay;
+    this.reconnectDelay = Math.min(delay4 * 2, RECONNECT_BACKOFF_MAX_MS);
+    return delay4;
+  }
+  /**
+   * Retry the election later until connected or stopped. Also after "unauthorized" / "protocol_mismatch":
+   * the incompatible broker may exit (e.g. after an update) and this node then takes over.
+   */
+  scheduleReconnect(delayMs) {
+    if (this.stopping || this.reconnectTimer) return;
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      if (this.stopping || this.isConnected) return;
+      this.ensureConnected().catch((err) => this.log.warn("re-election failed; retrying with backoff", { err: err.message }));
+    }, delayMs);
+    this.reconnectTimer.unref();
+  }
+  async elect() {
+    for (let attempt = 1; attempt <= ELECTION_MAX_ATTEMPTS && !this.stopping; attempt++) {
+      try {
+        const client = await BridgeClient.connect(this.opts.pipePath, this.log.child("client"));
+        await this.adopt(client);
+        return;
+      } catch (err) {
+        if (err instanceof BridgeError && (err.code === "unauthorized" || err.code === "protocol_mismatch")) {
+          this.log.error("broker refused this peer", { code: err.code, message: err.message });
+          throw err;
+        }
+        const code = errCode(err);
+        this.log.debug("connect attempt failed", { attempt, code, message: err.message });
+        if (code !== "ENOENT" && code !== "ECONNREFUSED") {
+          await sleep(jitter());
+          continue;
+        }
+      }
+      if (this.opts.canHostBroker !== false && await this.tryBecomeBroker()) continue;
+      await sleep(jitter());
+    }
+    throw new Error(`could not connect to or start the agent-bridge broker at ${this.opts.pipePath}`);
+  }
+  async tryBecomeBroker() {
+    if (this.broker) return true;
+    let store;
+    try {
+      store = new MessageStore(this.opts.dbPath, this.log.child("store"));
+    } catch (err) {
+      this.log.error("cannot open message store", { err, db: this.opts.dbPath });
+      throw err;
+    }
+    const broker = new Broker(this.opts.pipePath, store, this.log.child("broker"), this.opts.token, Date.now, join26(dirname7(this.opts.dbPath), JOBS_FILE), this.opts.network);
+    try {
+      await broker.listen();
+      this.broker = broker;
+      this.log.info("became broker", { pipe: this.opts.pipePath });
+      return true;
+    } catch (err) {
+      store.close();
+      const code = errCode(err);
+      if (code === "EADDRINUSE" && (this.opts.platform ?? process.platform) !== "win32") {
+        try {
+          await BridgeClient.connect(this.opts.pipePath, this.log).then((c) => c.close());
+          return false;
+        } catch (probeErr) {
+          if (errCode(probeErr) === "ECONNREFUSED") {
+            this.log.warn("removing stale broker socket", { pipe: this.opts.pipePath });
+            try {
+              unlinkSync(this.opts.pipePath);
+            } catch {
+            }
+          }
+        }
+      } else {
+        this.log.debug("could not become broker", { code });
+      }
+      return false;
+    }
+  }
+  async adopt(client) {
+    client.on("event", (ev, data) => this.onEvent(ev, data));
+    const hello = await client.request("hello", this.helloArgs()).catch((err) => {
+      client.close();
+      throw err;
+    });
+    this.afterHello(client, hello);
+  }
+  helloArgs() {
+    return {
+      protocol: PROTOCOL_VERSION,
+      token: this.opts.token,
+      peer: {
+        id: this.id,
+        name: this.currentName,
+        agent: this.opts.agent,
+        cwd: this.currentCwd,
+        pid: process.pid,
+        agentPid: process.ppid ?? null,
+        sessionId: this.sessionId,
+        startedAt: Date.now(),
+        autoWake: this.autoWake,
+        wakeOnDirect: this.wakeOnDirect,
+        wakeAvailable: this.wakeAvailable,
+        wakeMaxHops: this.wakeMaxHops,
+        activity: this.activity,
+        version: APP_VERSION,
+        ...this.opts.jobAgent ? { jobAgent: this.opts.jobAgent } : {},
+        ...this.opts.jobOwner ? { jobOwner: this.opts.jobOwner, jobParent: this.opts.jobParent, jobTitle: this.opts.jobTitle, jobSendTo: this.opts.jobSendTo } : {}
+      }
+    };
+  }
+  afterHello(client, hello) {
+    this.client = client;
+    this.currentName = hello.name;
+    this.restoreReadState(`name:${this.currentName}`);
+    this.reconnectDelay = RECONNECT_BACKOFF_MIN_MS;
+    client.once("close", () => this.onClose(client));
+    if (this.unflushedAcks.size > 0) {
+      const ids = [...this.unflushedAcks];
+      this.unflushedAcks.clear();
+      client.request("ack", { ids }).catch((err) => {
+        this.log.warn("flushing acks failed", { err: err.message });
+        ids.forEach((id) => this.unflushedAcks.add(id));
+      });
+    }
+    this.log.info("connected to broker", { name: hello.name, brokerPid: hello.brokerPid, isBroker: this.isBroker });
+    this.emit("connected", { name: hello.name, isBroker: this.isBroker });
+  }
+  onClose(client) {
+    if (this.client !== client) return;
+    this.client = null;
+    if (this.stopping) return;
+    this.log.warn("lost connection to broker; re-electing");
+    this.emit("disconnected");
+    this.scheduleReconnect(jitter());
+  }
+  onEvent(ev, data) {
+    if (ev === "message") {
+      const m = data;
+      if (this.readIds.has(m.id)) {
+        this.acknowledge([m.id]);
+        return;
+      }
+      if (this.inbox.has(m.id)) return;
+      this.inbox.set(m.id, m);
+      if (m.conversationId === DASHBOARD_JOB_CONVERSATION) {
+        this.markRead([m.id]);
+        this.emit("job_control", m);
+        return;
+      }
+      this.log.debug("message received", { id: m.id, from: m.from.name, hop: m.hop });
+      this.emit("message", m);
+    } else if (ev === "peer_joined" || ev === "peer_left") {
+      this.emit(ev, data);
+    } else if (ev === "replaced") {
+      this.log.info("replaced by a newer server of this session; leaving the bridge", { by: data?.by });
+      this.replaced = true;
+      void this.stop();
+      this.emit("replaced");
+    }
+  }
+  async withClient(fn) {
+    await this.ensureConnected();
+    return fn(this.client);
+  }
+  /** quiet: not part of a conversation of this agent (no listen window, replies are not awaited), e.g. control messages to a job runner. */
+  send(args, opts = {}) {
+    return this.withClient(async (c) => {
+      const res = await c.request("send", args);
+      if (opts.quiet) return res;
+      this.lastSent = Date.now();
+      if (!args.replyTo) for (const m of res.messages) this.asked.add(m.id);
+      if (this.asked.size > QUESTION_ID_MEMORY) this.asked.delete(this.asked.values().next().value);
+      return res;
+    });
+  }
+  /** A reply to a question this peer asked (so the answer should reach the agent even when it is idle). */
+  isAwaitedReply(m) {
+    return m.replyTo !== null && this.asked.has(m.replyTo);
+  }
+  /** When this peer last sent a message (0 = never); marks it as taking part in a conversation. */
+  get lastSentAt() {
+    return this.lastSent;
+  }
+  messageReceipt(id) {
+    return this.withClient((c) => c.request("messageReceipt", { id }));
+  }
+  peers() {
+    return this.withClient((c) => c.request("peers", {}));
+  }
+  decide(args) {
+    return this.withClient((c) => c.request("decide", args));
+  }
+  decisions(args = {}) {
+    return this.withClient((c) => c.request("decisions", args));
+  }
+  siblings() {
+    return this.withClient((c) => c.request("siblings", {}));
+  }
+  sendSibling(args, maxHops) {
+    return this.withClient((c) => c.request("sendSibling", { ...args, maxHops }));
+  }
+  async updateJob(patch) {
+    Object.assign(this.opts, patch);
+    if (this.isConnected) await this.client.request("updatePeer", patch);
+  }
+  networkStatus() {
+    return this.withClient((c) => c.request("networkStatus", {}));
+  }
+  remoteJob(host, request2) {
+    return this.withClient((c) => c.request("remoteJob", { host, request: request2 }, REMOTE_JOB_LOCAL_TIMEOUT_MS)).catch((err) => {
+      if (/unknown op.*remoteJob/.test(err.message)) throw new BridgeError("bad_request", "Local broker update needed: restart its hosting sessions to enable remote jobs.");
+      throw err;
+    });
+  }
+  sendFiles(to, paths) {
+    return this.withClient((c) => c.request("sendFiles", { to, paths }));
+  }
+  /** Locally buffered unread messages, oldest first. */
+  unread() {
+    return [...this.inbox.values()].sort((a, b) => a.createdAt - b.createdAt);
+  }
+  /** Look up a message by id: one we still hold, or remembered as read. */
+  hasSeen(id) {
+    return this.inbox.has(id) || this.readIds.has(id);
+  }
+  get(id) {
+    return this.inbox.get(id);
+  }
+  /**
+   * Put a message into this peer's own inbox without going through the broker, e.g. the result of a
+   * background subagent. It is handled exactly like a peer message (hooks, wait_for_message, channel).
+   */
+  deliverLocal(m) {
+    this.onEvent("message", m);
+  }
+  /** Mark messages consumed locally and on the broker. */
+  markRead(ids) {
+    const real = ids.filter((id) => this.inbox.has(id));
+    if (!real.length) return;
+    this.readJournal.append(`name:${this.currentName}`, real);
+    if (this.sessionId) this.readJournal.append(`session:${this.sessionId}`, real);
+    for (const id of real) {
+      this.inbox.delete(id);
+      this.readIds.add(id);
+    }
+    this.acknowledge(real);
+  }
+  restoreReadState(identity) {
+    for (const id of this.readJournal.read(identity)) this.readIds.add(id);
+    const consumed = [...this.inbox.keys()].filter((id) => this.readIds.has(id));
+    consumed.forEach((id) => this.inbox.delete(id));
+    this.acknowledge(consumed);
+  }
+  acknowledge(ids) {
+    if (!ids.length) return;
+    if (!this.isConnected) {
+      ids.forEach((id) => this.unflushedAcks.add(id));
+      return;
+    }
+    this.client.request("ack", { ids }).catch((err) => {
+      this.log.warn("ack failed; will retry after reconnect", { err: err.message });
+      ids.forEach((id) => this.unflushedAcks.add(id));
+    });
+  }
+  /** Resolves with the next unread message (possibly one already waiting), or null on timeout. */
+  waitForMessage(timeoutMs, predicate = () => true, signal) {
+    if (signal?.aborted) return Promise.resolve(null);
+    const existing = this.unread().find(predicate);
+    if (existing) return Promise.resolve(existing);
+    return new Promise((resolve10) => {
+      const done = (m) => {
+        clearTimeout(timer);
+        this.off("message", onMessage);
+        this.off("replaced", onAbort);
+        this.off("stopped", onAbort);
+        signal?.removeEventListener("abort", onAbort);
+        resolve10(m);
+      };
+      const onMessage = (m) => {
+        if (predicate(m)) done(m);
+      };
+      const onAbort = () => done(null);
+      const timer = setTimeout(() => done(null), timeoutMs);
+      this.on("message", onMessage);
+      this.once("replaced", onAbort);
+      this.once("stopped", onAbort);
+      signal?.addEventListener("abort", onAbort, { once: true });
+    });
+  }
+  async setSessionId(sessionId) {
+    if (sessionId === this.sessionId) return;
+    this.sessionId = sessionId;
+    if (this.isConnected) this.currentName = (await this.client.request("updatePeer", { sessionId })).name;
+    if (sessionId) this.restoreReadState(`session:${sessionId}`);
+  }
+  /** Report busy/idle to the broker so peers can see who is free. Only changes are sent. */
+  setActivity(state) {
+    if (state === this.activity) return;
+    this.activity = state;
+    if (this.isConnected) {
+      this.client.request("updatePeer", { activity: state }).catch((err) => this.log.debug("activity update failed", { err: err.message }));
+    }
+  }
+  async setWakePolicy(wakeOnDirect, wakeAvailable, wakeMaxHops = DEFAULT_MAX_HOPS) {
+    this.wakeOnDirect = wakeOnDirect;
+    this.wakeAvailable = wakeAvailable;
+    this.wakeMaxHops = wakeMaxHops;
+    if (this.isConnected) await this.client.request("updatePeer", { wakeOnDirect, wakeAvailable, wakeMaxHops });
+  }
+  async setAutoWake(enabled) {
+    this.autoWake = enabled;
+    if (this.isConnected) await this.client.request("updatePeer", { autoWake: enabled });
+  }
+  get currentSessionId() {
+    return this.sessionId;
+  }
+  get cwd() {
+    return this.currentCwd;
+  }
+  /**
+   * Record the real project directory once the host tells us (hook input carries it). When a new
+   * name is given, the peer is renamed as well.
+   */
+  async relocate(cwd, name) {
+    if (cwd === this.currentCwd && (!name || name === this.currentName)) return;
+    this.currentCwd = cwd;
+    if (name) this.currentName = name;
+    this.log.info("peer relocated", { cwd, name: this.currentName });
+    if (this.isConnected) {
+      const peer = await this.client.request("updatePeer", { cwd, ...name ? { name } : {} });
+      this.currentName = peer.name;
+    }
+  }
+};
+
+// src/core/procinfo.ts
+import { execFile } from "node:child_process";
+import { readFile } from "node:fs/promises";
+var LOOKUP_TIMEOUT_MS = 5e3;
+var MAX_ANCESTORS = 4;
+function exec(file2, args) {
+  return new Promise((resolve10, reject) => {
+    execFile(
+      file2,
+      args,
+      { timeout: LOOKUP_TIMEOUT_MS, windowsHide: true, maxBuffer: 1024 * 1024 },
+      (err, stdout) => err ? reject(err) : resolve10(stdout)
+    );
+  });
+}
+async function lookup(pid) {
+  try {
+    if (process.platform === "linux") {
+      const [cmd, stat] = await Promise.all([readFile(`/proc/${pid}/cmdline`, "utf8"), readFile(`/proc/${pid}/stat`, "utf8")]);
+      const ppid = Number(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[1]);
+      return { pid, ppid, cmdline: cmd.split("\0").join(" ") };
+    }
+    if (process.platform === "win32") {
+      const script = `$p = Get-CimInstance Win32_Process -Filter "ProcessId=${pid}"; if ($p) { "$($p.ParentProcessId)"; $p.CommandLine }`;
+      const out2 = await exec("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script]);
+      const [ppidLine, ...rest] = out2.split(/\r?\n/);
+      if (!ppidLine?.trim()) return null;
+      return { pid, ppid: Number(ppidLine.trim()), cmdline: rest.join(" ").trim() };
+    }
+    const out = await exec("ps", ["-o", "ppid=,args=", "-p", String(pid)]);
+    const m = /^\s*(\d+)\s+(.*)$/s.exec(out.trim());
+    return m ? { pid, ppid: Number(m[1]), cmdline: m[2].trim() } : null;
+  } catch {
+    return null;
+  }
+}
+var CHANNEL_FLAGS = ["--channels", "--dangerously-load-development-channels"];
+function cmdlineEnablesChannel(cmdline, pluginName) {
+  const tokens = cmdline.split(/\s+/).map((t2) => t2.replace(/^["']|["']$/g, ""));
+  const values = [];
+  for (let i = 0; i < tokens.length; i++) {
+    const tok = tokens[i];
+    const eq = CHANNEL_FLAGS.find((f) => tok.startsWith(`${f}=`));
+    if (eq) {
+      values.push(tok.slice(eq.length + 1));
+    } else if (CHANNEL_FLAGS.includes(tok)) {
+      for (let j = i + 1; j < tokens.length && !tokens[j].startsWith("-"); j++) values.push(tokens[j]);
+    }
+  }
+  return values.some((v) => v.split(",").some((entry) => entry.includes(pluginName)));
+}
+function cmdlineIsPrintMode(cmdline) {
+  return cmdline.split(/\s+/).some((t2) => /^["']?(-p|--print)(=.*)?["']?$/.test(t2));
+}
+async function inspectClaudeLaunch(pluginName, log) {
+  let pid = process.ppid;
+  let channel = false;
+  for (let i = 0; i < MAX_ANCESTORS && pid > 1; i++) {
+    const info = await lookup(pid);
+    if (!info) break;
+    log.debug("inspected ancestor process", { pid, cmdline: info.cmdline.slice(0, 300) });
+    if (cmdlineEnablesChannel(info.cmdline, pluginName)) channel = true;
+    if (/\bclaude(\.exe)?\b/i.test(info.cmdline) && !/node_modules|agent-bridge/i.test(info.cmdline)) {
+      return { channel, print: cmdlineIsPrintMode(info.cmdline) };
+    }
+    pid = info.ppid;
+  }
+  return { channel, print: false };
+}
+
+// src/mcp/codex-wake.ts
+var WAKE_DEBOUNCE_MS = 1500;
+var QUEUE_TIMEOUT_MS = 3e4;
+var WAKE_PROMPT = "agent-bridge: new message(s) from peer agents arrived. They are attached to this turn; read them and handle them, answering with the agent-bridge send tool.";
+var CodexWaker = class {
+  constructor(node2, cfg, log) {
+    this.node = node2;
+    this.cfg = cfg;
+    this.log = log;
+    node2.on("message", (m) => this.onMessage(m));
+  }
+  node;
+  cfg;
+  log;
+  state = "idle";
+  threadId = null;
+  timer = null;
+  inFlight = false;
+  /** Bumped on every activity report, so a finishing wake-up can tell whether hooks reported since it began. */
+  reports = 0;
+  setThreadId(id) {
+    if (id && id !== this.threadId) {
+      this.threadId = id;
+      this.log.debug("codex thread id learned", { threadId: id });
+    }
+  }
+  setActivity(state) {
+    this.state = state;
+    this.reports++;
+    if (state === "idle" && this.hasWakeableMail()) this.schedule();
+  }
+  hasWakeableMail() {
+    return this.node.autoWakeEnabled && this.node.unread().some((m) => m.hop < this.cfg.maxHops && !isSiblingNote(m));
+  }
+  idleWithMail() {
+    return this.state === "idle" && this.hasWakeableMail();
+  }
+  onMessage(m) {
+    if (isSiblingNote(m)) return;
+    if (m.hop >= this.cfg.maxHops) {
+      this.log.info("not waking codex: hop limit reached", { id: m.id, hop: m.hop });
+      return;
+    }
+    if (this.node.autoWakeEnabled && this.state === "idle") this.schedule();
+  }
+  schedule() {
+    if (this.timer || this.inFlight) return;
+    this.timer = setTimeout(() => {
+      this.timer = null;
+      void this.wake();
+    }, WAKE_DEBOUNCE_MS);
+    this.timer.unref();
+  }
+  async wake() {
+    if (this.state !== "idle" || !this.node.autoWakeEnabled) return;
+    if (!this.threadId) {
+      this.log.warn("cannot auto-wake codex: thread id unknown until the session makes its first agent-bridge call");
+      return;
+    }
+    this.inFlight = true;
+    this.state = "busy";
+    const reportsAtStart = this.reports;
+    const failed = () => {
+      if (this.reports === reportsAtStart) this.state = "idle";
+    };
+    try {
+      const res = await runProcess({
+        bin: this.cfg.codexBin,
+        args: ["queue", "--thread", this.threadId, "--message", WAKE_PROMPT],
+        stdin: "",
+        cwd: this.node.cwd,
+        timeoutMs: QUEUE_TIMEOUT_MS,
+        env: process.env,
+        log: this.log
+      });
+      if (res.code === 0) this.log.info("queued wake-up turn for codex", { threadId: this.threadId });
+      else {
+        failed();
+        this.log.warn("codex queue failed", { code: res.code, stderr: res.stderr.slice(-1e3) });
+      }
+    } catch (err) {
+      failed();
+      this.log.warn("codex queue failed", { err: err.message });
+    } finally {
+      this.inFlight = false;
+      if (this.reports !== reportsAtStart && this.idleWithMail()) this.schedule();
+    }
+  }
+};
+
+// src/mcp/message-wait.ts
+import { randomUUID as randomUUID15 } from "node:crypto";
+import { mkdirSync as mkdirSync15, readdirSync as readdirSync7, readFileSync as readFileSync16, rmSync as rmSync6 } from "node:fs";
+import { join as join27 } from "node:path";
+var SINGLE_WAIT_SEC = DEFAULT_WAIT_SEC;
+var RECEIPT_POLL_MS = 1e3;
+function singleWaitTimeoutMs(requestedSec) {
+  return Math.min(requestedSec, SINGLE_WAIT_SEC) * 1e3;
+}
+var waitSchema = external_exports.object({
+  id: external_exports.uuid(),
+  owner: external_exports.string(),
+  sessionId: external_exports.string().nullable(),
+  filters: external_exports.object({
+    from: external_exports.string().optional(),
+    reply_to: external_exports.string().optional(),
+    conversation_id: external_exports.string().optional(),
+    read_receipt_of: external_exports.string().optional()
+  })
+});
+var MessageWaitStore = class {
+  dir;
+  constructor(home) {
+    this.dir = join27(home, "message-waits");
+  }
+  path(id) {
+    return join27(this.dir, `${external_exports.uuid().parse(id)}.json`);
+  }
+  owns(node2, record2) {
+    return record2.sessionId && node2.currentSessionId ? record2.sessionId === node2.currentSessionId : record2.owner === node2.name;
+  }
+  save(node2, filters) {
+    const record2 = { id: randomUUID15(), owner: node2.name, sessionId: node2.currentSessionId, filters };
+    writeJsonStore(this.path(record2.id), record2, null);
+    return record2;
+  }
+  get(node2, id) {
+    const record2 = waitSchema.parse(JSON.parse(readFileSync16(this.path(id), "utf8")));
+    if (!this.owns(node2, record2)) throw new Error("This wait belongs to another session.");
+    return record2;
+  }
+  pending(node2) {
+    mkdirSync15(this.dir, { recursive: true, mode: 448 });
+    return readdirSync7(this.dir).filter((f) => f.endsWith(".json")).flatMap((f) => {
+      try {
+        const record2 = waitSchema.parse(JSON.parse(readFileSync16(join27(this.dir, f), "utf8")));
+        return this.owns(node2, record2) ? [record2] : [];
+      } catch {
+        return [];
+      }
+    });
+  }
+  remove(id) {
+    rmSync6(this.path(id), { force: true });
+  }
+};
+function resumeWaitHint(record2) {
+  return `If the wait was interrupted by /reload-plugins or Connection closed, resume with wait_for_message(${JSON.stringify({ resume_id: record2.id, ...record2.filters })}). Unconsumed messages remain queued.`;
+}
+async function waitForReadReceipt(node2, id, timeoutMs, signal) {
+  const deadline = Date.now() + timeoutMs;
+  while (!signal.aborted && !node2.wasReplaced) {
+    const receipts = await new Promise((resolve10, reject) => {
+      const cleanup = () => {
+        clearTimeout(timer);
+        signal.removeEventListener("abort", onAbort);
+      };
+      const onAbort = () => {
+        cleanup();
+        resolve10(null);
+      };
+      const timer = setTimeout(onAbort, Math.max(0, deadline - Date.now()));
+      signal.addEventListener("abort", onAbort, { once: true });
+      node2.messageReceipt(id).then((value) => {
+        cleanup();
+        resolve10(value);
+      }, (err) => {
+        cleanup();
+        reject(err);
+      });
+      if (signal.aborted) onAbort();
+    });
+    if (!receipts) return null;
+    if (receipts.length && receipts.every((r) => r.readAt !== null)) return receipts;
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) break;
+    await new Promise((resolve10) => {
+      const done = () => {
+        clearTimeout(timer);
+        signal.removeEventListener("abort", done);
+        resolve10();
+      };
+      const timer = setTimeout(done, Math.min(RECEIPT_POLL_MS, remaining));
+      signal.addEventListener("abort", done, { once: true });
+      if (signal.aborted) done();
+    });
+  }
+  return null;
+}
+
+// src/mcp/rewake.ts
+import { randomBytes as randomBytes7 } from "node:crypto";
+import { mkdirSync as mkdirSync16, rmSync as rmSync7, writeFileSync as writeFileSync7 } from "node:fs";
+import { createServer as createServer5 } from "node:http";
+import { join as join28 } from "node:path";
+var SESSIONS_DIR = "sessions";
+var WAKE_HEADER = "[agent-bridge] Something you were waiting for arrived:";
+var HOST2 = "127.0.0.1";
+var SECRET_BYTES3 = 24;
+var REWAKE_POLL_MS = 4 * 60 * 1e3;
+var WAKE_CONFIRM_MS = 2e4;
+var STANDBY_GRACE_MS = 3e3;
+var MOD_TICK_MS = 2e3;
+function sessionFile(home, sessionId) {
+  return join28(home, SESSIONS_DIR, `${sessionId.replace(/[^\w-]/g, "_")}.json`);
+}
+function shouldWakeClaudeMessage(node2, cfg, m) {
+  if (m.hop >= cfg.maxHops || m.conversationId.endsWith(SIBLING_NOTE_SUFFIX)) return false;
+  const direct = m.to === node2.name || m.from.id.includes("/") && m.to.slice(m.to.indexOf("/") + 1) === node2.name;
+  return node2.autoWakeEnabled || direct && (m.from.id.startsWith("job:") || node2.isAwaitedReply(m) || cfg.wakeOnDirect);
+}
+var RewakeEndpoint = class {
+  constructor(home, node2, shouldWake, log) {
+    this.home = home;
+    this.node = node2;
+    this.shouldWake = shouldWake;
+    this.log = log;
+  }
+  home;
+  node;
+  shouldWake;
+  log;
+  server = null;
+  secret = randomBytes7(SECRET_BYTES3).toString("hex");
+  port = 0;
+  registered = null;
+  /** Only the newest waiter gets messages; an older one (from an earlier turn) is released empty. */
+  waiter = null;
+  /** Messages handed to a wake-up that the session has not shown activity for yet. */
+  handedOut = /* @__PURE__ */ new Set();
+  /** The second hook of a turn end, waiting to retry a wake-up that did not start a turn. */
+  standby = null;
+  confirmTimer;
+  /**
+   * The agent-bridge mod (Claude Code 2.1.287+, plugins/claude/hooks/wake.ts) wakes the session itself with
+   * $.prompt.submit, a real turn: once it has shown up, the Stop hooks step aside and leave waking to it.
+   */
+  modWaiter = null;
+  /** The bridge gave this session to another server of it: this endpoint stays quiet (see retire). */
+  retired = false;
+  modSeen = false;
+  /** A turn is running (from the hooks and the mod): the mod waits until the session is idle. */
+  busy = false;
+  async start() {
+    this.server = createServer5((req, res) => {
+      const url2 = new URL(req.url ?? "/", `http://${HOST2}`);
+      if (url2.pathname === "/mod" && tokensEqual(String(req.headers.authorization ?? "").replace(/^Bearer /, ""), this.secret)) {
+        this.modSeen = true;
+        const busy = url2.searchParams.get("busy") === "1";
+        if (busy) this.confirmDelivery();
+        this.setBusy(busy);
+        res.writeHead(204).end();
+        return;
+      }
+      if (url2.pathname !== "/wait" || !tokensEqual(String(req.headers.authorization ?? "").replace(/^Bearer /, ""), this.secret)) {
+        res.writeHead(403).end();
+        return;
+      }
+      if (this.retired) this.reply(res, "", true);
+      else if (url2.searchParams.get("role") === "mod") this.waitMod(res);
+      else if (this.modSeen) this.reply(res, "", true);
+      else if (url2.searchParams.get("role") === "standby") this.waitStandby(res);
+      else this.waitPrimary(res);
+    });
+    this.server.requestTimeout = 0;
+    this.server.headersTimeout = 0;
+    await new Promise((resolve10, reject) => {
+      this.server.once("error", reject);
+      this.server.listen(0, HOST2, () => resolve10());
+    });
+    this.port = this.server.address().port;
+  }
+  reply(res, text2, superseded) {
+    if (res.destroyed) return;
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify({ text: text2, superseded }));
+  }
+  /** Hand the waiting messages to a wake-up; they stay unread until the session shows activity. */
+  handOut() {
+    const msgs = this.node.unread().filter(this.shouldWake);
+    for (const m of msgs) this.handedOut.add(m.id);
+    return formatMessages(msgs, { header: WAKE_HEADER });
+  }
+  /** The turn-end hook: wakes the session for the next message that should wake it. */
+  waitPrimary(res) {
+    this.confirmDelivery();
+    this.waiter?.abort("superseded");
+    const ac = new AbortController();
+    this.waiter = ac;
+    res.on("close", () => ac.abort("closed"));
+    void this.node.waitForMessage(REWAKE_POLL_MS, this.shouldWake, ac.signal).then((first) => {
+      if (this.waiter === ac) this.waiter = null;
+      let text2 = "";
+      if (first && !res.destroyed) {
+        text2 = this.handOut();
+        this.log.info("waking the session", { count: this.handedOut.size });
+        clearTimeout(this.confirmTimer);
+        this.confirmTimer = setTimeout(() => this.retryWake(), WAKE_CONFIRM_MS);
+        this.confirmTimer.unref();
+      }
+      this.reply(res, text2, ac.signal.reason === "superseded");
+    });
+  }
+  /**
+   * A second hook from the same turn end. It wakes the session when the first one's wake-up was not taken
+   * (retryWake), or when a message arrives while nothing else waits (the first one already woke the session
+   * once and Claude Code did not start a turn). Released as soon as the session is active again.
+   */
+  waitStandby(res) {
+    this.standby?.release("superseded");
+    const ac = new AbortController();
+    let done = false;
+    const finish = (text2, superseded) => {
+      if (done) return;
+      done = true;
+      ac.abort("done");
+      if (this.standby?.ac === ac) this.standby = null;
+      this.reply(res, text2, superseded);
+    };
+    this.standby = { ac, release: () => finish("", true), wake: () => finish(this.handOut(), false) };
+    res.on("close", () => finish("", false));
+    const loop = () => void this.node.waitForMessage(REWAKE_POLL_MS, (m) => this.shouldWake(m) && !this.handedOut.has(m.id) && !this.waiter, ac.signal).then((m) => {
+      if (done) return;
+      if (!m) return finish("", false);
+      setTimeout(() => {
+        if (done) return;
+        if (this.waiter || this.handedOut.has(m.id)) return loop();
+        this.log.info("waking the session (standby)", { reason: "no other hook waiting" });
+        this.standby?.wake();
+      }, STANDBY_GRACE_MS).unref();
+    });
+    loop();
+  }
+  /**
+   * The mod's long poll, while the session is idle: answers with the messages that should wake it. Messages
+   * handed out before but not yet confirmed are handed out again (the mod polls again when its wake-up did
+   * not start a turn).
+   */
+  waitMod(res) {
+    this.modSeen = true;
+    this.modWaiter?.abort("superseded");
+    const ac = new AbortController();
+    this.modWaiter = ac;
+    res.on("close", () => ac.abort("closed"));
+    const deadline = Date.now() + REWAKE_POLL_MS;
+    void (async () => {
+      while (!ac.signal.aborted && Date.now() < deadline) {
+        const waiting = this.node.unread().some(this.shouldWake);
+        if (waiting && !this.busy) break;
+        if (waiting) await new Promise((r) => setTimeout(r, MOD_TICK_MS).unref());
+        else await this.node.waitForMessage(MOD_TICK_MS, this.shouldWake, ac.signal);
+      }
+      if (this.modWaiter === ac) this.modWaiter = null;
+      if (ac.signal.aborted || Date.now() >= deadline) return this.reply(res, "", ac.signal.reason === "superseded");
+      const text2 = this.handOut();
+      this.log.info("waking the session (mod)", { count: this.handedOut.size });
+      this.reply(res, text2, false);
+    })();
+  }
+  setBusy(busy) {
+    this.busy = busy;
+    if (busy) this.modWaiter?.abort("superseded");
+  }
+  /** Whether the mod wakes this session (the Stop hook then leaves messages to it instead of blocking). */
+  get modActive() {
+    return this.modSeen;
+  }
+  /** A turn ended (the Stop hook ran). */
+  sessionIdle() {
+    this.setBusy(false);
+  }
+  /** The first wake-up was not confirmed: give the same messages to the standby hook. */
+  retryWake() {
+    if (this.handedOut.size === 0) return;
+    if (this.modSeen) return;
+    if (!this.standby) {
+      this.log.warn("a wake-up was not taken and no standby hook waits; the messages go out with the next prompt", { count: this.handedOut.size });
+      return;
+    }
+    this.log.warn("a wake-up was not taken; trying again through the standby hook", { count: this.handedOut.size });
+    this.standby.wake();
+  }
+  /**
+   * The session is active (a hook of it ran, or a new waiter started after a turn): the messages of the
+   * last wake-up reached it. Called before hooks inject unread mail, so they are not shown twice.
+   */
+  confirmDelivery() {
+    clearTimeout(this.confirmTimer);
+    if (this.handedOut.size === 0) return;
+    this.node.markRead([...this.handedOut]);
+    this.handedOut.clear();
+  }
+  /**
+   * A turn is running (tool calls, a prompt): the hooks of the previous turn end are not needed anymore.
+   * The primary one must go too: a message it took mid-turn would become a wake-up Claude Code does not start
+   * while busy, and the next tool call would count it as delivered. Mid-turn messages go out with the tool
+   * hooks instead, and the next turn end starts a fresh waiter.
+   */
+  sessionActive() {
+    this.setBusy(true);
+    this.waiter?.abort("superseded");
+    this.standby?.release("active");
+  }
+  /** The wake-up was lost (a new prompt came first): its messages go out with that prompt instead. */
+  releaseUndelivered() {
+    if (this.handedOut.size) this.log.warn("a wake-up did not reach the session; delivering its messages with the next prompt", { count: this.handedOut.size });
+    this.handedOut.clear();
+  }
+  /** Whether a hook is currently waiting (used by tests and diagnostics). */
+  get waiting() {
+    return this.waiter !== null;
+  }
+  /** Another server of this session took over the bridge: stop handing out wake-ups from here. */
+  retire() {
+    this.retired = true;
+    this.waiter?.abort("superseded");
+    this.modWaiter?.abort("superseded");
+    this.standby?.release("superseded");
+  }
+  /** This server took its place back: serve again, and point the session's hooks and mod here again. */
+  unretire() {
+    this.retired = false;
+    const sessionId = this.registered;
+    this.registered = null;
+    if (sessionId) this.register(sessionId);
+  }
+  /** Publish the endpoint for this Claude session id so the hook can find it. */
+  register(sessionId) {
+    if (!this.server || this.retired || this.registered === sessionId) return;
+    const file2 = sessionFile(this.home, sessionId);
+    mkdirSync16(join28(this.home, SESSIONS_DIR), { recursive: true });
+    const reg = { port: this.port, secret: this.secret, pid: process.pid };
+    writeFileSync7(file2, JSON.stringify(reg), { mode: 384 });
+    if (this.registered) rmSync7(sessionFile(this.home, this.registered), { force: true });
+    this.registered = sessionId;
+    this.log.debug("rewake endpoint registered", { sessionId });
+  }
+  async stop() {
+    this.waiter?.abort("superseded");
+    this.modWaiter?.abort("superseded");
+    this.standby?.release("superseded");
+    clearTimeout(this.confirmTimer);
+    if (this.registered) rmSync7(sessionFile(this.home, this.registered), { force: true });
+    const s = this.server;
+    this.server = null;
+    if (s) await new Promise((r) => s.close(() => r()));
+  }
+};
+
+// src/mcp/hooks.ts
+var STOP_REASON_FOOTER = 'Handle these peer messages now: do what is reasonable, answer with the agent-bridge "send" tool (reply_to=<id>), then end your turn.';
+function context(event, additionalContext) {
+  return { hookSpecificOutput: { hookEventName: event, additionalContext } };
+}
+function discardFinishedNotes(ctx) {
+  const node2 = ctx.node;
+  if (!node2) return;
+  const obsolete = node2.unread().filter((m) => {
+    if (!ctx.jobs?.isNote(m)) return false;
+    const job = ctx.jobs.find(m.from.name);
+    return job !== void 0 && job.status !== "running";
+  });
+  node2.markRead(obsolete.map((m) => m.id));
+}
+function take(ctx, wakeOnly, notesOnly = false) {
+  const node2 = ctx.node;
+  discardFinishedNotes(ctx);
+  const msgs = node2.unread().filter((m) => !notesOnly || isSiblingNote(m) || ctx.jobs?.isNote(m) || !shouldWakeClaudeMessage(node2, ctx.cfg, m)).filter((m) => !wakeOnly || m.hop < ctx.cfg.maxHops && !ctx.jobs?.isNote(m)).slice(0, HOOK_MAX_MESSAGES);
+  node2.markRead(msgs.map((m) => m.id));
+  return msgs;
+}
+async function subagentHook(ctx, input2) {
+  const parent2 = ctx.parent;
+  if (!parent2 || input2.event === "SessionStart") return {};
+  const msgs = await parent2.inbox().catch((err) => {
+    ctx.log.debug("parent inbox unavailable", { err: err.message });
+    return [];
+  });
+  if (msgs.length === 0) return {};
+  ctx.log.info("delivering parent messages to the subagent", { count: msgs.length, event: input2.event });
+  const text2 = formatParentMessages(parent2.name, msgs);
+  if (input2.event === "Stop") return { decision: "block", reason: text2 };
+  if (input2.event === "PostToolUse") return { decision: "block", reason: text2, hookSpecificOutput: { hookEventName: input2.event, additionalContext: text2 } };
+  return context(input2.event, text2);
+}
+async function buildHookResponse(ctx, input2) {
+  const node2 = ctx.node;
+  if (!node2) return subagentHook(ctx, input2);
+  await ctx.launchKnown;
+  if (ctx.headless) return {};
+  ctx.log.debug("hook event", { event: input2.event, sessionId: input2.sessionId, stopHookActive: input2.stopHookActive });
+  if (input2.sessionId) {
+    await node2.setSessionId(input2.sessionId).catch(() => {
+    });
+    ctx.onSessionId?.(input2.sessionId);
+  }
+  if (input2.cwd) await ctx.learnCwd?.(input2.cwd);
+  await node2.ensureConnected().catch((err) => ctx.log.warn("bridge not reachable from hook", { err: err.message }));
+  if (input2.subagent) return {};
+  const wakeTurn = input2.event === "UserPromptSubmit" && Boolean(input2.prompt?.includes(WAKE_HEADER));
+  if (input2.event === "PostToolUse" || input2.event === "Stop" || wakeTurn) ctx.wakeDelivery?.confirm();
+  else ctx.wakeDelivery?.release();
+  if (input2.event === "PostToolUse" || input2.event === "UserPromptSubmit") ctx.wakeDelivery?.active();
+  const channel = ctx.channelActive();
+  switch (input2.event) {
+    case "SessionStart": {
+      ctx.activity?.("idle");
+      const peers = node2.isConnected ? (await node2.peers().catch(() => [])).filter((p) => p.id !== node2.id) : [];
+      const lines = [
+        `[agent-bridge] You are connected to agent-bridge as "${node2.name}".`,
+        peers.length ? `Peers online:
+${peers.map((p) => formatPeer(p)).join("\n")}` : "No other agents are online right now."
+      ];
+      lines.push(...new MessageWaitStore(ctx.home).pending(node2).map(resumeWaitHint));
+      const unread = node2.unread().length;
+      const decisions = await node2.decisions({ scope: { project: ctx.cwd() } }).catch(() => []);
+      const summary = formatDecisionSummary(decisions);
+      if (summary) lines.push(summary);
+      if (unread > 0 && !channel) lines.push(`You have ${unread} unread peer message(s); call the "inbox" tool to read them.`);
+      return context("SessionStart", lines.join("\n"));
+    }
+    case "UserPromptSubmit":
+    case "PostToolUse": {
+      ctx.activity?.("busy");
+      const msgs = take(ctx, false, channel);
+      return msgs.length ? context(input2.event, formatMessages(msgs)) : {};
+    }
+    case "Stop": {
+      if (channel) {
+        ctx.activity?.("idle");
+        return {};
+      }
+      ctx.wakeDelivery?.idle?.();
+      if (ctx.wakeDelivery?.modActive?.()) {
+        ctx.activity?.("idle");
+        return {};
+      }
+      const now = Date.now();
+      const lingerRemaining = node2.lastSentAt > 0 ? node2.lastSentAt + ctx.cfg.lingerSec * 1e3 - now : 0;
+      const jobsRunning = ctx.jobs?.runningCount() ?? 0;
+      const inConversation = lingerRemaining > 0 || jobsRunning > 0;
+      if (!node2.autoWakeEnabled && !inConversation) {
+        ctx.activity?.("idle");
+        return {};
+      }
+      let msgs = take(ctx, true);
+      if (msgs.length === 0 && inConversation && !ctx.rewakeAvailable) {
+        const waitMs = Math.min(STOP_WAIT_CAP_MS, jobsRunning > 0 ? STOP_WAIT_CAP_MS : lingerRemaining);
+        ctx.log.info("listening for replies before ending the turn", { waitMs, jobsRunning });
+        const arrived = await node2.waitForMessage(waitMs, (m) => m.hop < ctx.cfg.maxHops, input2.signal);
+        if (arrived) msgs = take(ctx, true);
+      }
+      if (msgs.length === 0) {
+        ctx.activity?.("idle");
+        return {};
+      }
+      ctx.activity?.("busy");
+      ctx.log.info("continuing turn for peer messages", { count: msgs.length, autoWake: node2.autoWakeEnabled });
+      return { decision: "block", reason: `${formatMessages(msgs, { replyHint: false })}
+
+${STOP_REASON_FOOTER}` };
+    }
+    default:
+      return {};
+  }
+}
+
 // src/mcp/permissions.ts
 var DECISION_SCHEMA = {
   type: "object",
@@ -42418,11 +45136,11 @@ async function askUserViaElicitation(server, req, log) {
 }
 
 // src/core/auto-wake-pref.ts
-import { join as join18 } from "node:path";
+import { join as join29 } from "node:path";
 var FILE = "auto-wake.json";
 function read(home) {
   try {
-    return readJsonStore(join18(home, FILE)) ?? {};
+    return readJsonStore(join29(home, FILE)) ?? {};
   } catch {
     return {};
   }
@@ -42434,7 +45152,7 @@ function savedAutoWake(home, name) {
 }
 function saveAutoWake(home, name, enabled) {
   try {
-    const file2 = join18(home, FILE);
+    const file2 = join29(home, FILE);
     const previous = readJsonStore(file2);
     const data = isRecord(previous) ? previous : {};
     const peers = isRecord(data.peers) ? data.peers : data;
@@ -42446,100 +45164,18 @@ function saveAutoWake(home, name, enabled) {
 }
 
 // src/core/models.ts
-import { mkdirSync as mkdirSync11, readFileSync as readFileSync14, writeFileSync as writeFileSync7 } from "node:fs";
-import { join as join21 } from "node:path";
-
-// src/core/effort.ts
-import { readFileSync as readFileSync13 } from "node:fs";
-import { homedir as homedir5 } from "node:os";
-import { join as join20 } from "node:path";
-
-// src/core/codex-trust.ts
-import { readFileSync as readFileSync12, writeFileSync as writeFileSync6 } from "node:fs";
-import { homedir as homedir4 } from "node:os";
-import { join as join19 } from "node:path";
-var PERMISSION_HOOK_STATE_KEY = 'hooks.state."agent-bridge@agent-bridge:plugin.json#hooks[0]:permission_request:0:0"';
-var OBSERVATIONS_FILE = "codex-hook.json";
-function codexHome(env = process.env) {
-  return env.CODEX_HOME?.trim() || join19(homedir4(), ".codex");
-}
-function codexPermissionHookHash(home = codexHome(), read2 = (p) => readFileSync12(p, "utf8")) {
-  let text2;
-  try {
-    text2 = read2(join19(home, "config.toml"));
-  } catch {
-    return null;
-  }
-  const at = text2.indexOf(`[${PERMISSION_HOOK_STATE_KEY}]`);
-  if (at < 0) return null;
-  for (const line of text2.slice(at).split(/\r?\n/).slice(1)) {
-    if (line.trim().startsWith("[")) break;
-    const m = /^\s*trusted_hash\s*=\s*"(sha256:[0-9a-f]+)"/.exec(line);
-    if (m) return m[1];
-  }
-  return null;
-}
-function readObservations(bridgeHome) {
-  try {
-    return JSON.parse(readFileSync12(join19(bridgeHome, OBSERVATIONS_FILE), "utf8"));
-  } catch {
-    return {};
-  }
-}
-function recordCodexHookObservation(bridgeHome, hash2, observation) {
-  const all = readObservations(bridgeHome);
-  if (all[hash2] === "failed") return;
-  all[hash2] = observation;
-  try {
-    writeFileSync6(join19(bridgeHome, OBSERVATIONS_FILE), JSON.stringify(all, null, 2), { mode: 384 });
-  } catch {
-  }
-}
-function codexPermissionHookTrusted(bridgeHome, home = codexHome(), read2 = (p) => readFileSync12(p, "utf8")) {
-  const hash2 = codexPermissionHookHash(home, read2);
-  return hash2 !== null && readObservations(bridgeHome)[hash2] !== "failed";
-}
-
-// src/core/effort.ts
-function defaultEffort(agent, model, read2 = (p) => readFileSync13(p, "utf8")) {
-  try {
-    if (agent === "codex") return codexConfigEffort(read2(join20(codexHome(), "config.toml")));
-    if (agent === "claude") return claudeSettingsEffort(read2(join20(process.env.CLAUDE_CONFIG_DIR?.trim() || join20(homedir5(), ".claude"), "settings.json")), model);
-  } catch {
-  }
-  return null;
-}
-function codexConfigEffort(toml) {
-  for (const line of toml.split(/\r?\n/)) {
-    if (/^\s*\[/.test(line)) break;
-    const m = /^\s*model_reasoning_effort\s*=\s*"([^"]+)"/.exec(line);
-    if (m) return m[1];
-  }
-  return null;
-}
-function claudeSettingsEffort(json2, model) {
-  const s = JSON.parse(json2);
-  const id = model?.replace(/\[.*\]$/, "").toLowerCase() ?? "";
-  if (id) {
-    for (const [key, v] of Object.entries(s.modelSettings ?? {})) {
-      const k = key.replace(/\[.*\]$/, "").toLowerCase();
-      if ((id === k || id.startsWith(`${k}-`) || k.startsWith(`${id}-`)) && typeof v?.effortLevel === "string") return v.effortLevel;
-    }
-  }
-  return typeof s.effortLevel === "string" ? s.effortLevel : null;
-}
-
-// src/core/models.ts
+import { mkdirSync as mkdirSync17, readFileSync as readFileSync17, writeFileSync as writeFileSync8 } from "node:fs";
+import { join as join30 } from "node:path";
 var MAX_LISTED = 80;
 var MODEL_CACHE_MS = 10 * 60 * 1e3;
 var SHORT_MODEL_LIST = 6;
 var modelReads = /* @__PURE__ */ new Map();
 var modelBin = (agent, cfg) => cfg[`${agent}Bin`];
 var modelDefault = (agent, cfg) => cfg[`${agent}Model`];
-var modelCachePath = (home, agent) => join21(home, `models-${agent}.json`);
+var modelCachePath = (home, agent) => join30(home, `models-${agent}.json`);
 function cachedModels(home, agent, cfg) {
   try {
-    const cache3 = JSON.parse(readFileSync14(modelCachePath(home, agent), "utf8"));
+    const cache3 = JSON.parse(readFileSync17(modelCachePath(home, agent), "utf8"));
     const validStrings = (v) => Array.isArray(v) && v.every((s) => typeof s === "string");
     if (cache3.bin !== modelBin(agent, cfg) || cache3.effort !== (cfg.effort[agent] ?? null) || typeof cache3.at !== "number" || Date.now() - cache3.at >= MODEL_CACHE_MS) return null;
     if (cache3.report?.agent !== agent || !validStrings(cache3.report.models) || !validStrings(cache3.report.lines)) return null;
@@ -42569,8 +45205,8 @@ async function readModels(agent, cfg, cwd, log, home) {
       const report = { agent, defaultModel, models, lines };
       if (!lines[0]?.startsWith("Could not list")) {
         try {
-          mkdirSync11(home, { recursive: true });
-          writeFileSync7(modelCachePath(home, agent), JSON.stringify({ at: Date.now(), bin: modelBin(agent, cfg), effort: cfg.effort[agent] ?? null, report }), { mode: 384 });
+          mkdirSync17(home, { recursive: true });
+          writeFileSync8(modelCachePath(home, agent), JSON.stringify({ at: Date.now(), bin: modelBin(agent, cfg), effort: cfg.effort[agent] ?? null, report }), { mode: 384 });
         } catch (err) {
           log.debug("could not cache models", { err: err.message });
         }
@@ -42621,157 +45257,17 @@ async function describeModels(agent, cfg, cwd, log, query = "") {
 
 // src/cli/dashboard.ts
 import { randomBytes as randomBytes9 } from "node:crypto";
-import { chmodSync as chmodSync3, readFileSync as readFileSync17, writeFileSync as writeFileSync8 } from "node:fs";
+import { chmodSync as chmodSync3, readFileSync as readFileSync19, writeFileSync as writeFileSync9 } from "node:fs";
 import { request } from "node:http";
-import { join as join28 } from "node:path";
+import { join as join36 } from "node:path";
 
 // src/cli/ui.ts
 import { randomBytes as randomBytes8 } from "node:crypto";
-import { existsSync as existsSync7, readdirSync as readdirSync7, readFileSync as readFileSync16, statSync as statSync4 } from "node:fs";
+import { existsSync as existsSync9, readdirSync as readdirSync9, readFileSync as readFileSync18, statSync as statSync8 } from "node:fs";
 import { createServer as createServer6 } from "node:http";
 import { networkInterfaces } from "node:os";
-import { join as join27 } from "node:path";
-import { DatabaseSync as DatabaseSync5 } from "node:sqlite";
-
-// src/core/runfeed.ts
-import { appendFileSync as appendFileSync3, mkdirSync as mkdirSync12, readFileSync as readFileSync15, readdirSync as readdirSync5, statSync as statSync2 } from "node:fs";
-import { join as join22 } from "node:path";
-var RUNS_DIR_NAME = "runs";
-var HEARTBEAT_MS = 6e4;
-var KEEP_RUN_LOGS = 50;
-var STALE_RUN_MS = 15e4;
-function runMetaPath(logPath) {
-  return logPath.replace(/\.log$/, ".json");
-}
-var CONTINUATION = "         ";
-function stamp(t2) {
-  return new Date(t2).toTimeString().slice(0, 8);
-}
-function pruneOldLogs(dir) {
-  try {
-    const limit = retentionLimit("AGENT_BRIDGE_RUN_LOG_LIMIT", KEEP_RUN_LOGS);
-    if (!limit) return;
-    const files = readdirSync5(dir).filter((f) => f.endsWith(".log")).map((f) => ({ f, t: statSync2(join22(dir, f)).mtimeMs })).sort((a, b) => b.t - a.t);
-    for (const { f } of files.slice(limit)) {
-      const path = join22(dir, f);
-      if (Date.now() - statSync2(path).mtimeMs <= STALE_RUN_MS && !/^\d\d:\d\d:\d\d finished after \d+s · /m.test(readFileSync15(path, "utf8"))) continue;
-      archiveFile(path);
-      archiveFile(join22(dir, runMetaPath(f)));
-    }
-  } catch (err) {
-    process.stderr.write(`could not archive run logs: ${String(err)}
-`);
-  }
-}
-function startRunFeed(opts) {
-  const now = opts.now ?? Date.now;
-  const dir = join22(opts.home, RUNS_DIR_NAME);
-  mkdirSync12(dir, { recursive: true });
-  const logPath = join22(dir, `${new Date(now()).toISOString().slice(0, 19).replace(/[:T]/g, "-")}-${opts.name}.log`);
-  const write = (line) => {
-    const [first, ...rest] = line.replace(/\r/g, "").split("\n");
-    const body = [first, ...rest.map((l) => `${CONTINUATION}${l}`)].join("\n");
-    try {
-      appendFileSync3(logPath, `${stamp(now())} ${body}
-`);
-    } catch {
-    }
-  };
-  let meta3 = { ...opts.meta };
-  const writeMeta = () => {
-    try {
-      const path = runMetaPath(logPath);
-      const previous = readJsonStore(path);
-      writeJsonStore(path, mergeStoreFields(isRecord(previous) ? previous : {}, { ...meta3 }), previous);
-    } catch (err) {
-      process.stderr.write(`could not save run metadata: ${String(err)}
-`);
-    }
-  };
-  writeMeta();
-  write(opts.header);
-  pruneOldLogs(dir);
-  const started = now();
-  let lastStep = "starting";
-  let lastAt = started;
-  const emit = (m) => {
-    write(m);
-    opts.forward?.(m);
-  };
-  emit(`started \xB7 follow live: agent-bridge watch ${opts.name}`);
-  const timer = setInterval(() => {
-    const quietMin = Math.floor((now() - lastAt) / 6e4);
-    if (quietMin >= 1) emit(`still working, no new step for ${quietMin}m (last: ${lastStep})`);
-  }, opts.heartbeatMs ?? HEARTBEAT_MS);
-  timer.unref();
-  return {
-    logPath,
-    report: (m, full) => {
-      lastStep = m.split(" \xB7 ").pop() ?? m;
-      lastAt = now();
-      write(full ?? m);
-      opts.forward?.(m);
-    },
-    end: (summary, answer) => {
-      clearInterval(timer);
-      if (answer?.trim()) write(`answer: ${answer.trim()}`);
-      write(`finished after ${Math.round((now() - started) / 1e3)}s \xB7 ${summary}`);
-    },
-    meta: (patch) => {
-      meta3 = { ...meta3, ...patch };
-      writeMeta();
-    }
-  };
-}
-
-// src/mcp/job-settings.ts
-var JOB_SETTING_KEYS = ["model", "effort", "access", "sandbox", "permission_mode", "auto_approve"];
-var EXACT_PERMISSION_KEYS = ["sandbox", "permission_mode", "auto_approve"];
-var PERMISSION_KEY_AGENT = { sandbox: "codex", permission_mode: "claude", auto_approve: "opencode" };
-var EFFORT_PATTERN = /^[A-Za-z0-9_-]{1,20}$/;
-function changedJobArgs(args, settings) {
-  const next = { ...args };
-  if (settings.access !== void 0) for (const key of EXACT_PERMISSION_KEYS) delete next[key];
-  else if (EXACT_PERMISSION_KEYS.some((key) => settings[key] !== void 0)) delete next.access;
-  for (const key of JOB_SETTING_KEYS) if (settings[key] !== void 0) next[key] = settings[key];
-  return next;
-}
-function parseJobSettings(input2, agent) {
-  if (!input2 || typeof input2 !== "object" || Array.isArray(input2)) return "settings must be an object";
-  const raw = input2;
-  const unknownKey = Object.keys(raw).find((key) => !JOB_SETTING_KEYS.includes(key));
-  if (unknownKey) return `unknown setting: ${unknownKey}`;
-  const settings = {};
-  if (raw.model !== void 0) {
-    if (typeof raw.model !== "string" || !MODEL_NAME_PATTERN.test(raw.model)) return "invalid model";
-    settings.model = raw.model;
-  }
-  if (raw.effort !== void 0) {
-    if (typeof raw.effort !== "string" || !EFFORT_PATTERN.test(raw.effort)) return "invalid effort";
-    settings.effort = raw.effort;
-  }
-  if (raw.access !== void 0) {
-    if (!ACCESS_LEVELS.includes(raw.access)) return "invalid access";
-    settings.access = raw.access;
-  }
-  if (raw.sandbox !== void 0) {
-    if (!CODEX_SANDBOXES.includes(raw.sandbox)) return "invalid sandbox";
-    settings.sandbox = raw.sandbox;
-  }
-  if (raw.permission_mode !== void 0) {
-    if (!CLAUDE_PERMISSION_MODES.includes(raw.permission_mode)) return "invalid permission_mode";
-    settings.permission_mode = raw.permission_mode;
-  }
-  if (raw.auto_approve !== void 0) {
-    if (typeof raw.auto_approve !== "boolean") return "invalid auto_approve";
-    settings.auto_approve = raw.auto_approve;
-  }
-  for (const [key, owner] of Object.entries(PERMISSION_KEY_AGENT)) {
-    if (settings[key] !== void 0 && agent !== owner) return `${key} applies only to ${owner} jobs.`;
-  }
-  if (!Object.keys(settings).length) return "no settings given";
-  return settings;
-}
+import { join as join35 } from "node:path";
+import { DatabaseSync as DatabaseSync6 } from "node:sqlite";
 
 // src/cli/logo.ts
 var LOGO_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="agent-bridge"><defs><linearGradient id="ab-bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#1e1b4b"/><stop offset="1" stop-color="#4338ca"/></linearGradient><linearGradient id="ab-l" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffb088"/><stop offset="1" stop-color="#e2603b"/></linearGradient><linearGradient id="ab-r" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#7cf0c0"/><stop offset="1" stop-color="#0e9f6e"/></linearGradient><radialGradient id="ab-glow"><stop offset="0" stop-color="#fff" stop-opacity=".55"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></radialGradient></defs><rect width="64" height="64" rx="16" fill="url(#ab-bg)"/><path d="M9 52V32A20 20 0 0 1 27 12.1v10.2A10 10 0 0 0 19 32v20z" fill="url(#ab-l)"/><path d="M55 52V32A20 20 0 0 0 37 12.1v10.2A10 10 0 0 1 45 32v20z" fill="url(#ab-r)"/><circle cx="32" cy="17" r="11" fill="url(#ab-glow)"/><path d="M32 9.5c.9 4.6 2.9 6.6 7.5 7.5-4.6.9-6.6 2.9-7.5 7.5-.9-4.6-2.9-6.6-7.5-7.5 4.6-.9 6.6-2.9 7.5-7.5z" fill="#fff"/></svg>';
@@ -44807,7 +47303,7 @@ setInterval(poll, POLL_MS);
 `;
 
 // src/network/firewall.ts
-import { execFile as execFile2, spawn as spawn5 } from "node:child_process";
+import { execFile as execFile2, spawn as spawn7 } from "node:child_process";
 import { promisify } from "node:util";
 var exec2 = promisify(execFile2);
 var COMMAND_TIMEOUT_MS = 1e4;
@@ -44860,16 +47356,16 @@ function parseNetworkAddress(address) {
 }
 
 // src/core/transcripts/claude.ts
-import { dirname as dirname6, join as join24 } from "node:path";
+import { dirname as dirname8, join as join32 } from "node:path";
 
 // src/core/transcripts/common.ts
-import { closeSync as closeSync2, fstatSync, openSync as openSync2, readSync, readdirSync as readdirSync6, realpathSync as realpathSync3, statSync as statSync3 } from "node:fs";
+import { closeSync as closeSync3, fstatSync, openSync as openSync3, readSync, readdirSync as readdirSync8, realpathSync as realpathSync6, statSync as statSync7 } from "node:fs";
 import { homedir as homedir6 } from "node:os";
-import { isAbsolute as isAbsolute2, join as join23, relative, resolve as resolve5, sep } from "node:path";
+import { isAbsolute as isAbsolute6, join as join31, relative as relative4, resolve as resolve8, sep } from "node:path";
 var MAX_TRANSCRIPT_CHUNK_BYTES = 512 * 1024;
 var MAX_TOOL_PREVIEW_CHARS = 1200;
 var MAX_TEXT_CHARS = 16e3;
-var MAX_TITLE_CHARS = 160;
+var MAX_TITLE_CHARS2 = 160;
 var MAX_NATIVE_SUBAGENTS = 200;
 var MAX_DISCOVERY_FILES = 2e4;
 var MAX_DISCOVERY_BYTES2 = 8 * 1024 * 1024;
@@ -44879,9 +47375,9 @@ var INITIAL_HEADER_BYTES = 8 * 1024;
 var TRANSCRIPT_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 function transcriptPaths(env = process.env, home = homedir6()) {
   return {
-    claude: resolve5(env.CLAUDE_CONFIG_DIR?.trim() || join23(home, ".claude")),
-    codex: resolve5(env.CODEX_HOME?.trim() || join23(home, ".codex")),
-    opencode: resolve5(join23(env.XDG_DATA_HOME?.trim() || join23(home, ".local", "share"), "opencode"))
+    claude: resolve8(env.CLAUDE_CONFIG_DIR?.trim() || join31(home, ".claude")),
+    codex: resolve8(env.CODEX_HOME?.trim() || join31(home, ".codex")),
+    opencode: resolve8(join31(env.XDG_DATA_HOME?.trim() || join31(home, ".local", "share"), "opencode"))
   };
 }
 function object3(value) {
@@ -44917,22 +47413,22 @@ function contentText(value) {
 }
 function directory(dir) {
   try {
-    return readdirSync6(dir);
+    return readdirSync8(dir);
   } catch {
     return [];
   }
 }
 function fileStat(file2) {
   try {
-    return statSync3(file2);
+    return statSync7(file2);
   } catch {
     return null;
   }
 }
 function safeFile(root, file2) {
   try {
-    const actual = realpathSync3(file2), rel = relative(realpathSync3(root), actual);
-    return rel && rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute2(rel) ? actual : null;
+    const actual = realpathSync6(file2), rel = relative4(realpathSync6(root), actual);
+    return rel && rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute6(rel) ? actual : null;
   } catch {
     return null;
   }
@@ -44943,7 +47439,7 @@ function readJsonl(file2, from = "0", maxBytes = MAX_TRANSCRIPT_CHUNK_BYTES) {
   if (!Number.isSafeInteger(offset)) offset = 0;
   let fd;
   try {
-    fd = openSync2(file2, "r");
+    fd = openSync3(file2, "r");
     const size = fstatSync(fd).size;
     if (offset > size) {
       offset = 0;
@@ -44973,13 +47469,13 @@ function readJsonl(file2, from = "0", maxBytes = MAX_TRANSCRIPT_CHUNK_BYTES) {
   } catch {
     return { entries: [], next: `j:${offset}:${discard ? 1 : 0}` };
   } finally {
-    if (fd !== void 0) closeSync2(fd);
+    if (fd !== void 0) closeSync3(fd);
   }
 }
 function readHead(file2) {
   let fd;
   try {
-    fd = openSync2(file2, "r");
+    fd = openSync3(file2, "r");
     const size = fstatSync(fd).size;
     for (let limit = INITIAL_HEADER_BYTES; limit <= MAX_TRANSCRIPT_CHUNK_BYTES; limit *= 2) {
       const buf = Buffer.alloc(Math.min(size, limit));
@@ -44991,7 +47487,7 @@ function readHead(file2) {
   } catch {
     return {};
   } finally {
-    if (fd !== void 0) closeSync2(fd);
+    if (fd !== void 0) closeSync3(fd);
   }
 }
 function readTail(file2) {
@@ -45013,12 +47509,12 @@ function scanJsonl(file2) {
 // src/core/transcripts/claude.ts
 function claudeSessionFile(session, paths) {
   if (!session.sessionId || !TRANSCRIPT_ID.test(session.sessionId)) return null;
-  const projects = join24(paths.claude, "projects");
+  const projects = join32(paths.claude, "projects");
   const encoded = session.cwd.replace(/[^A-Za-z0-9]/g, "-");
-  const direct = safeFile(projects, join24(projects, encoded, `${session.sessionId}.jsonl`));
+  const direct = safeFile(projects, join32(projects, encoded, `${session.sessionId}.jsonl`));
   if (direct) return direct;
   for (const dir of directory(projects)) {
-    const file2 = safeFile(projects, join24(projects, dir, `${session.sessionId}.jsonl`));
+    const file2 = safeFile(projects, join32(projects, dir, `${session.sessionId}.jsonl`));
     if (file2) return file2;
   }
   return null;
@@ -45036,7 +47532,7 @@ function claudeItems(row) {
     if (block.type === "tool_result") {
       items.push({ kind: "tool", at, tool: typeof block.tool_use_id === "string" ? block.tool_use_id : "result", summary: preview(contentText(block.content)) });
       const result = object3(row.toolUseResult);
-      if (typeof result.agentId === "string" && TRANSCRIPT_ID.test(result.agentId)) items.push({ kind: "subagent", at, subagent: { id: result.agentId, title: preview(result.description || "Native subagent", MAX_TITLE_CHARS), agent: "claude" } });
+      if (typeof result.agentId === "string" && TRANSCRIPT_ID.test(result.agentId)) items.push({ kind: "subagent", at, subagent: { id: result.agentId, title: preview(result.description || "Native subagent", MAX_TITLE_CHARS2), agent: "claude" } });
     }
   }
   return items;
@@ -45044,7 +47540,7 @@ function claudeItems(row) {
 function readClaudeChat(session, paths, from = "0", child) {
   const main = claudeSessionFile(session, paths);
   if (!main || child !== void 0 && !TRANSCRIPT_ID.test(child)) return null;
-  const nested = child ? safeFile(paths.claude, join24(dirname6(main), session.sessionId, "subagents", `agent-${child}.jsonl`)) : null;
+  const nested = child ? safeFile(paths.claude, join32(dirname8(main), session.sessionId, "subagents", `agent-${child}.jsonl`)) : null;
   const legacy = child && !nested ? listClaudeSubagents(session, paths).some((s) => s.id === child) : false;
   if (child && !nested && !legacy) return null;
   const page = readJsonl(nested ?? main, from);
@@ -45054,15 +47550,15 @@ function listClaudeSubagents(session, paths) {
   const main = claudeSessionFile(session, paths);
   if (!main) return [];
   const out = /* @__PURE__ */ new Map();
-  const dir = join24(dirname6(main), session.sessionId, "subagents");
+  const dir = join32(dirname8(main), session.sessionId, "subagents");
   for (const name of directory(dir).slice(0, MAX_NATIVE_SUBAGENTS)) {
     const id = /^agent-([A-Za-z0-9_-]+)\.jsonl$/.exec(name)?.[1];
     if (!id || !TRANSCRIPT_ID.test(id)) continue;
-    const file2 = safeFile(paths.claude, join24(dir, name));
+    const file2 = safeFile(paths.claude, join32(dir, name));
     if (!file2) continue;
     const st = fileStat(file2), head = readHead(file2), tail = readTail(file2);
     const last = [...tail].reverse().find((r) => r.type === "assistant");
-    out.set(id, { id, title: preview(contentText(object3(head.message).content) || `Subagent ${id}`, MAX_TITLE_CHARS), status: object3(last?.message).stop_reason === "end_turn" ? "done" : "unknown", startedAt: time3(head.timestamp) || st?.birthtimeMs || 0, updatedAt: st?.mtimeMs || 0 });
+    out.set(id, { id, title: preview(contentText(object3(head.message).content) || `Subagent ${id}`, MAX_TITLE_CHARS2), status: object3(last?.message).stop_reason === "end_turn" ? "done" : "unknown", startedAt: time3(head.timestamp) || st?.birthtimeMs || 0, updatedAt: st?.mtimeMs || 0 });
   }
   const nestedIds = new Set(out.keys());
   for (const { value: r } of scanJsonl(main)) {
@@ -45070,14 +47566,14 @@ function listClaudeSubagents(session, paths) {
     if (nestedIds.has(r.agentId)) continue;
     const existing = out.get(r.agentId), at = time3(r.timestamp);
     if (!existing && out.size >= MAX_NATIVE_SUBAGENTS) continue;
-    out.set(r.agentId, { id: r.agentId, title: existing?.title ?? preview(contentText(object3(r.message).content) || `Subagent ${r.agentId}`, MAX_TITLE_CHARS), status: object3(r.message).stop_reason === "end_turn" ? "done" : existing?.status ?? "unknown", startedAt: existing?.startedAt ?? at, updatedAt: at });
+    out.set(r.agentId, { id: r.agentId, title: existing?.title ?? preview(contentText(object3(r.message).content) || `Subagent ${r.agentId}`, MAX_TITLE_CHARS2), status: object3(r.message).stop_reason === "end_turn" ? "done" : existing?.status ?? "unknown", startedAt: existing?.startedAt ?? at, updatedAt: at });
   }
   return [...out.values()];
 }
 
 // src/core/transcripts/codex.ts
-import { join as join25 } from "node:path";
-import { DatabaseSync as DatabaseSync3 } from "node:sqlite";
+import { join as join33 } from "node:path";
+import { DatabaseSync as DatabaseSync4 } from "node:sqlite";
 var ROLLOUT_NAME = /^rollout-.*-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/i;
 var DISCOVERY_CACHE_MS = 1e4;
 var MAX_INDEX_PATH_CHARS = 4096;
@@ -45090,17 +47586,17 @@ function rollout(file2, id, known) {
 function indexedRollouts(paths, id, parentId) {
   const name = directory(paths.codex).filter((s) => /^state_\d+\.sqlite$/.test(s)).sort((a, b) => Number(b.match(/\d+/)?.[0]) - Number(a.match(/\d+/)?.[0]))[0];
   if (!name) return null;
-  const file2 = safeFile(paths.codex, join25(paths.codex, name));
+  const file2 = safeFile(paths.codex, join33(paths.codex, name));
   if (!file2) return null;
   let db;
   try {
-    db = new DatabaseSync3(file2, { readOnly: true, timeout: SQLITE_READ_TIMEOUT_MS });
+    db = new DatabaseSync4(file2, { readOnly: true, timeout: SQLITE_READ_TIMEOUT_MS });
     const rows = id ? db.prepare("SELECT id, substr(rollout_path, 1, ?) AS path FROM threads WHERE id = ? LIMIT 1").all(MAX_INDEX_PATH_CHARS, id) : db.prepare(`SELECT id, substr(rollout_path, 1, ?) AS path FROM threads
           WHERE CASE WHEN json_valid(source) THEN json_extract(source, '$.subagent.thread_spawn.parent_thread_id') END = ? LIMIT ?`).all(MAX_INDEX_PATH_CHARS, parentId, MAX_NATIVE_SUBAGENTS);
     const out = [];
     for (const row of rows) {
       if (typeof row.id !== "string" || !TRANSCRIPT_ID.test(row.id) || typeof row.path !== "string") continue;
-      const target = safeFile(join25(paths.codex, "sessions"), row.path);
+      const target = safeFile(join33(paths.codex, "sessions"), row.path);
       if (!target) continue;
       const entry = rollout(target, row.id);
       if (entry.meta.id === row.id && (!parentId || parent(entry.meta) === parentId)) out.push(entry);
@@ -45113,17 +47609,17 @@ function indexedRollouts(paths, id, parentId) {
   }
 }
 function rollouts(paths) {
-  const root = join25(paths.codex, "sessions"), existing = cache2.get(root);
+  const root = join33(paths.codex, "sessions"), existing = cache2.get(root);
   if (existing && Date.now() - existing.at < DISCOVERY_CACHE_MS) return existing.files;
   const files = [];
   const knownFiles = new Map(existing?.files.map((r) => [r.file, r]));
   for (const year of directory(root).filter((s) => /^\d{4}$/.test(s)).sort().reverse()) {
-    for (const month of directory(join25(root, year)).filter((s) => /^\d{2}$/.test(s)).sort().reverse()) {
-      for (const day of directory(join25(root, year, month)).filter((s) => /^\d{2}$/.test(s)).sort().reverse()) {
-        for (const name of directory(join25(root, year, month, day)).sort().reverse()) {
+    for (const month of directory(join33(root, year)).filter((s) => /^\d{2}$/.test(s)).sort().reverse()) {
+      for (const day of directory(join33(root, year, month)).filter((s) => /^\d{2}$/.test(s)).sort().reverse()) {
+        for (const name of directory(join33(root, year, month, day)).sort().reverse()) {
           const id = ROLLOUT_NAME.exec(name)?.[1];
           if (!id) continue;
-          const file2 = safeFile(root, join25(root, year, month, day, name));
+          const file2 = safeFile(root, join33(root, year, month, day, name));
           if (!file2) continue;
           const known = knownFiles.get(file2);
           files.push(rollout(file2, id, known?.meta));
@@ -45154,7 +47650,7 @@ function codexItems(row) {
   if (["function_call_output", "custom_tool_call_output"].includes(p.type)) {
     const items = [{ kind: "tool", at, tool: typeof p.call_id === "string" ? p.call_id : "result", summary: preview(p.output) }];
     const result = typeof p.output === "string" ? parse3(p.output) : object3(p.output);
-    if (typeof result.agent_id === "string" && TRANSCRIPT_ID.test(result.agent_id)) items.push({ kind: "subagent", at, subagent: { id: result.agent_id, title: preview(result.nickname || "Native subagent", MAX_TITLE_CHARS), agent: "codex" } });
+    if (typeof result.agent_id === "string" && TRANSCRIPT_ID.test(result.agent_id)) items.push({ kind: "subagent", at, subagent: { id: result.agent_id, title: preview(result.nickname || "Native subagent", MAX_TITLE_CHARS2), agent: "codex" } });
     return items;
   }
   return [];
@@ -45175,20 +47671,20 @@ function listCodexSubagents(session, paths) {
     const last = [...readTail(file2)].reverse().find((r) => r.type === "event_msg" && ["task_started", "task_complete", "turn_aborted"].includes(object3(r.payload).type));
     const state = object3(last?.payload).type;
     const spawn9 = object3(object3(object3(meta3.source).subagent).thread_spawn);
-    return { id, title: preview(meta3.agent_nickname || spawn9.agent_nickname || meta3.agent_path || spawn9.agent_path || `Subagent ${id}`, MAX_TITLE_CHARS), status: state === "task_complete" ? "done" : state === "turn_aborted" ? "interrupted" : "unknown", startedAt: time3(meta3.timestamp) || st?.birthtimeMs || 0, updatedAt: st?.mtimeMs || 0 };
+    return { id, title: preview(meta3.agent_nickname || spawn9.agent_nickname || meta3.agent_path || spawn9.agent_path || `Subagent ${id}`, MAX_TITLE_CHARS2), status: state === "task_complete" ? "done" : state === "turn_aborted" ? "interrupted" : "unknown", startedAt: time3(meta3.timestamp) || st?.birthtimeMs || 0, updatedAt: st?.mtimeMs || 0 };
   });
 }
 
 // src/core/transcripts/opencode.ts
-import { join as join26 } from "node:path";
-import { DatabaseSync as DatabaseSync4 } from "node:sqlite";
+import { join as join34 } from "node:path";
+import { DatabaseSync as DatabaseSync5 } from "node:sqlite";
 var MAX_SQLITE_PARTS = 200;
 var SQLITE_CURSOR = /^o:(\d+):([A-Za-z0-9_-]*)$/;
 function openDatabase(paths) {
-  const file2 = safeFile(paths.opencode, join26(paths.opencode, "opencode.db"));
+  const file2 = safeFile(paths.opencode, join34(paths.opencode, "opencode.db"));
   if (!file2) return null;
   try {
-    return new DatabaseSync4(file2, { readOnly: true, timeout: SQLITE_READ_TIMEOUT_MS });
+    return new DatabaseSync5(file2, { readOnly: true, timeout: SQLITE_READ_TIMEOUT_MS });
   } catch {
     return null;
   }
@@ -45199,7 +47695,7 @@ function opencodeItems(data, role, at, id) {
   if (part.type !== "tool" || typeof part.tool !== "string") return [];
   const items = [{ kind: "tool", at, tool: part.tool, summary: preview(state.output ?? state.error ?? state.input), id }];
   const child = object3(state.metadata).sessionId;
-  if (part.tool === "task" && typeof child === "string" && TRANSCRIPT_ID.test(child)) items.push({ kind: "subagent", at, id: `${id}-child`, subagent: { id: child, title: preview(state.title || "Native subagent", MAX_TITLE_CHARS), agent: "opencode" } });
+  if (part.tool === "task" && typeof child === "string" && TRANSCRIPT_ID.test(child)) items.push({ kind: "subagent", at, id: `${id}-child`, subagent: { id: child, title: preview(state.title || "Native subagent", MAX_TITLE_CHARS2), agent: "opencode" } });
   return items;
 }
 function readOpencodeChat(session, paths, from = "0", child) {
@@ -45239,7 +47735,7 @@ function listOpencodeSubagents(session, paths) {
   if (!db) return [];
   try {
     return db.prepare(`SELECT id, substr(title, 1, ?) AS title, time_created, time_updated FROM session
-      WHERE parent_id = ? ORDER BY time_created LIMIT ?`).all(MAX_TITLE_CHARS, session.sessionId, MAX_NATIVE_SUBAGENTS).map((row) => ({
+      WHERE parent_id = ? ORDER BY time_created LIMIT ?`).all(MAX_TITLE_CHARS2, session.sessionId, MAX_NATIVE_SUBAGENTS).map((row) => ({
       id: String(row.id),
       title: String(row.title),
       status: "unknown",
@@ -45322,9 +47818,9 @@ function summarizeRun(file2, text2, mtimeMs, now, meta3 = {}) {
   };
 }
 function listRuns(home, now = Date.now()) {
-  const dir = join27(home, RUNS_DIR_NAME);
-  if (!existsSync7(dir)) return [];
-  return readdirSync7(dir).filter((f) => RUN_NAME.test(f)).map((f) => ({ f, st: statSync4(join27(dir, f)) })).sort((a, b) => b.st.mtimeMs - a.st.mtimeMs).slice(0, MAX_RUNS).map(({ f, st }) => summarizeRun(f, readFileSync16(join27(dir, f), "utf8"), st.mtimeMs, now, readMeta(join27(dir, runMetaPath(f)))));
+  const dir = join35(home, RUNS_DIR_NAME);
+  if (!existsSync9(dir)) return [];
+  return readdirSync9(dir).filter((f) => RUN_NAME.test(f)).map((f) => ({ f, st: statSync8(join35(dir, f)) })).sort((a, b) => b.st.mtimeMs - a.st.mtimeMs).slice(0, MAX_RUNS).map(({ f, st }) => summarizeRun(f, readFileSync18(join35(dir, f), "utf8"), st.mtimeMs, now, readMeta(join35(dir, runMetaPath(f)))));
 }
 function readMeta(file2) {
   try {
@@ -45337,19 +47833,20 @@ function readStoredJobs(home) {
   const out = /* @__PURE__ */ new Map();
   let stored;
   try {
-    stored = JSON.parse(readFileSync16(join27(home, JOBS_FILE), "utf8"));
+    stored = JSON.parse(readFileSync18(join35(home, JOBS_FILE), "utf8"));
   } catch {
     return out;
   }
   const list = Array.isArray(stored) ? stored : Array.isArray(stored?.jobs) ? stored.jobs : [];
   for (const j of list) {
     if (!j || typeof j !== "object") continue;
-    const { name, owner, args } = j;
+    const { name, owner, args, remote } = j;
     if (typeof name !== "string") continue;
     const saved = args && typeof args === "object" ? args : {};
     out.set(name, {
       owner: typeof owner === "string" && owner ? owner : null,
-      next: Object.fromEntries(JOB_SETTING_KEYS.filter((key) => saved[key] !== void 0).map((key) => [key, saved[key]]))
+      next: Object.fromEntries(JOB_SETTING_KEYS.filter((key) => saved[key] !== void 0).map((key) => [key, saved[key]])),
+      ...remote && typeof remote.host === "string" && typeof remote.name === "string" ? { remote } : {}
     });
   }
   return out;
@@ -45359,7 +47856,7 @@ function jobOwner(home, job, original) {
 }
 function classifyPeers(peers, runs, home) {
   const norm = (p) => p.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
-  const worktrees = `${norm(join27(home, "worktrees"))}/`;
+  const worktrees = `${norm(join35(home, "worktrees"))}/`;
   return peers.map((p) => {
     const cwd = norm(p.cwd ?? "");
     const subagent = cwd.startsWith(worktrees);
@@ -45368,8 +47865,8 @@ function classifyPeers(peers, runs, home) {
   });
 }
 function recentMessages(dbPath) {
-  if (!existsSync7(dbPath)) return [];
-  const db = new DatabaseSync5(dbPath, { readOnly: true });
+  if (!existsSync9(dbPath)) return [];
+  const db = new DatabaseSync6(dbPath, { readOnly: true });
   try {
     const stmt = db.prepare(
       `SELECT id, from_name, from_agent, to_target, group_concat(recipient, ', ') AS recipients, body, created_at, hop, reply_to
@@ -45531,7 +48028,7 @@ async function startUi(opts) {
         runs,
         messages: recentMessages(dbPath),
         // Saved next-turn settings per job (message_subagent or the dashboard may have changed them).
-        jobs: Object.fromEntries([...readStoredJobs(opts.home)].map(([name, j]) => [name, { next: j.next }]))
+        jobs: Object.fromEntries([...readStoredJobs(opts.home)].map(([name, j]) => [name, { next: j.next, ...j.remote ? { remote: j.remote } : {} }]))
       });
     }
     if (req.method === "GET" && url2.pathname === "/api/network") {
@@ -45616,10 +48113,10 @@ async function startUi(opts) {
     }
     const runMatch = /^\/api\/runs\/([\w.-]+)$/.exec(url2.pathname);
     if (req.method === "GET" && runMatch) {
-      const file2 = join27(opts.home, RUNS_DIR_NAME, `${runMatch[1]}.log`);
-      if (!existsSync7(file2)) return send(res, 404, { error: "no such run" });
+      const file2 = join35(opts.home, RUNS_DIR_NAME, `${runMatch[1]}.log`);
+      if (!existsSync9(file2)) return send(res, 404, { error: "no such run" });
       const from = Math.max(0, Number(url2.searchParams.get("from")) || 0);
-      const buf = readFileSync16(file2);
+      const buf = readFileSync18(file2);
       let end = Math.min(buf.length, from + MAX_LOG_CHUNK);
       while (end < buf.length && end > from && (buf[end] & 192) === 128) end--;
       return send(res, 200, { text: buf.subarray(from, end).toString("utf8"), next: end, size: buf.length });
@@ -45640,9 +48137,9 @@ async function startUi(opts) {
       const run = typeof body.run === "string" ? body.run : "";
       const command = jobCommand(body);
       if (!RUN_NAME.test(`${run}.log`) || !command) return send(res, 400, { error: "a valid run and request are required" });
-      const file2 = join27(opts.home, RUNS_DIR_NAME, `${run}.log`);
-      if (!existsSync7(file2)) return send(res, 404, { error: "no such run" });
-      const meta3 = readMeta(join27(opts.home, RUNS_DIR_NAME, `${run}.json`));
+      const file2 = join35(opts.home, RUNS_DIR_NAME, `${run}.log`);
+      if (!existsSync9(file2)) return send(res, 404, { error: "no such run" });
+      const meta3 = readMeta(join35(opts.home, RUNS_DIR_NAME, `${run}.json`));
       if (!meta3.by || !meta3.job) return send(res, 409, { error: "This run has no owning session or job recorded." });
       try {
         const result = await controlDashboardJob(await getSender(), jobOwner(opts.home, meta3.job, meta3.by), meta3.job, command);
@@ -45681,11 +48178,11 @@ var SECRET_BYTES5 = 24;
 var PROBE_TIMEOUT_MS = 1500;
 var OWNER_ONLY2 = 384;
 function dashboardFile(home) {
-  return join28(home, DASHBOARD_FILE);
+  return join36(home, DASHBOARD_FILE);
 }
 function readDashboardInfo(home) {
   try {
-    const d = JSON.parse(readFileSync17(dashboardFile(home), "utf8"));
+    const d = JSON.parse(readFileSync19(dashboardFile(home), "utf8"));
     return typeof d.url === "string" && typeof d.port === "number" && typeof d.pid === "number" ? d : null;
   } catch {
     return null;
@@ -45724,7 +48221,7 @@ async function hostDashboard(opts) {
   const ui = await startUi({ ...opts, secret });
   const info = { url: ui.url, port: ui.port, pid: process.pid };
   const file2 = dashboardFile(opts.home);
-  writeFileSync8(file2, JSON.stringify(info, null, 2), { mode: OWNER_ONLY2 });
+  writeFileSync9(file2, JSON.stringify(info, null, 2), { mode: OWNER_ONLY2 });
   try {
     chmodSync3(file2, OWNER_ONLY2);
   } catch {
@@ -45739,1896 +48236,17 @@ async function hostDashboard(opts) {
 }
 
 // src/cli/open.ts
-import { spawn as spawn6 } from "node:child_process";
+import { spawn as spawn8 } from "node:child_process";
 function openBrowser(url2) {
   const [cmd, args] = process.platform === "win32" ? ["cmd.exe", ["/d", "/c", "start", '""', url2]] : process.platform === "darwin" ? ["open", [url2]] : ["xdg-open", [url2]];
   try {
-    const child = spawn6(cmd, args, { stdio: "ignore", detached: true, windowsHide: true, windowsVerbatimArguments: process.platform === "win32" });
+    const child = spawn8(cmd, args, { stdio: "ignore", detached: true, windowsHide: true, windowsVerbatimArguments: process.platform === "win32" });
     child.on("error", () => {
     });
     child.unref();
   } catch {
   }
 }
-
-// src/mcp/jobs.ts
-import { randomUUID as randomUUID12 } from "node:crypto";
-import { closeSync as closeSync3, mkdirSync as mkdirSync14, openSync as openSync3, rmSync as rmSync6, statSync as statSync6 } from "node:fs";
-import { dirname as dirname7 } from "node:path";
-
-// src/core/notifications.ts
-import { spawn as spawn7 } from "node:child_process";
-import { mkdirSync as mkdirSync13, readFileSync as readFileSync18, rmdirSync, statSync as statSync5, writeFileSync as writeFileSync9 } from "node:fs";
-import { join as join29 } from "node:path";
-var TITLE = "agent-bridge";
-var TEXT = {
-  approvals: "A subagent needs approval. Open the agent-bridge dashboard.",
-  finish: "A subagent finished. Open the agent-bridge dashboard for its report.",
-  fail: "A subagent failed. Open the agent-bridge dashboard for its report."
-};
-var NOTIFICATION_TIMEOUT_MS = 5e3;
-var EVENT_INTERVAL_MS = 5e3;
-var RATE_WINDOW_MS = 6e4;
-var MAX_NOTIFICATIONS_PER_WINDOW = 10;
-var MAX_RATE_HOMES = 100;
-var RATE_STATE_FILE = "notification-rate.json";
-var RATE_LOCK_DIR = "notification-rate.lock";
-var WINDOWS_POWERSHELL_APP_ID = "{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\\WindowsPowerShell\\v1.0\\powershell.exe";
-function notificationCommands(platform, event) {
-  const body = TEXT[event];
-  if (platform === "win32") {
-    const script = [
-      "$ErrorActionPreference = 'Stop'",
-      "[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] > $null",
-      "[Windows.UI.Notifications.ToastNotification, Windows.UI.Notifications, ContentType = WindowsRuntime] > $null",
-      "[Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime] > $null",
-      "$xml = New-Object Windows.Data.Xml.Dom.XmlDocument",
-      `$xml.LoadXml('<toast><visual><binding template="ToastGeneric"><text>${TITLE}</text><text>${body}</text></binding></visual></toast>')`,
-      "$toast = [Windows.UI.Notifications.ToastNotification]::new($xml)",
-      `[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('${WINDOWS_POWERSHELL_APP_ID}').Show($toast)`
-    ].join("; ");
-    return [{ bin: "powershell.exe", args: ["-NoLogo", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")] }];
-  }
-  if (platform === "darwin") return [
-    { bin: "terminal-notifier", args: ["-title", TITLE, "-message", body] },
-    { bin: "osascript", args: ["-e", `display notification "${body}" with title "${TITLE}"`] }
-  ];
-  if (platform === "linux") return [{ bin: "notify-send", args: ["--app-name", TITLE, "--", TITLE, body] }];
-  return [];
-}
-var NotificationLimiter = class {
-  homes = /* @__PURE__ */ new Map();
-  take(home, event, now = Date.now()) {
-    let state = this.homes.get(home);
-    if (!state) {
-      if (this.homes.size >= MAX_RATE_HOMES) this.homes.delete(this.homes.keys().next().value);
-      state = { times: [], events: {} };
-      this.homes.set(home, state);
-    }
-    state.times = state.times.filter((at) => now - at < RATE_WINDOW_MS);
-    const last = state.events[event];
-    if (last !== void 0 && now - last < EVENT_INTERVAL_MS || state.times.length >= MAX_NOTIFICATIONS_PER_WINDOW) return false;
-    state.times.push(now);
-    state.events[event] = now;
-    return true;
-  }
-};
-var limiter = new NotificationLimiter();
-function takeNotificationSlot(home, event, now = Date.now()) {
-  const lock = join29(home, RATE_LOCK_DIR);
-  try {
-    try {
-      mkdirSync13(lock);
-    } catch {
-      if (now - statSync5(lock).mtimeMs < NOTIFICATION_TIMEOUT_MS) return false;
-      rmdirSync(lock);
-      mkdirSync13(lock);
-    }
-  } catch {
-    return false;
-  }
-  try {
-    const file2 = join29(home, RATE_STATE_FILE);
-    let state = { times: [], events: {} };
-    try {
-      const stored = JSON.parse(readFileSync18(file2, "utf8"));
-      if (Array.isArray(stored.times) && stored.times.every((at) => typeof at === "number") && stored.events && typeof stored.events === "object") state = stored;
-    } catch {
-    }
-    state.times = state.times.filter((at) => now - at < RATE_WINDOW_MS);
-    const last = state.events[event];
-    if (typeof last === "number" && now - last < EVENT_INTERVAL_MS || state.times.length >= MAX_NOTIFICATIONS_PER_WINDOW) return false;
-    state.times.push(now);
-    state.events[event] = now;
-    writeFileSync9(file2, JSON.stringify(state), { mode: 384 });
-    return true;
-  } catch {
-    return false;
-  } finally {
-    try {
-      rmdirSync(lock);
-    } catch {
-    }
-  }
-}
-function launch(commands, log) {
-  const command = commands[0];
-  if (!command) return;
-  try {
-    const child = spawn7(command.bin, command.args, { stdio: "ignore", windowsHide: true, detached: true });
-    const timer = setTimeout(() => child.kill(), NOTIFICATION_TIMEOUT_MS);
-    timer.unref();
-    child.once("exit", () => clearTimeout(timer));
-    child.once("error", (err) => {
-      clearTimeout(timer);
-      if (err.code === "ENOENT" && commands.length > 1) launch(commands.slice(1), log);
-      else log.debug("desktop notification unavailable");
-    });
-    child.unref();
-  } catch {
-    log.debug("desktop notification unavailable");
-  }
-}
-function notifyJobEvent(home, event, log) {
-  const task = setImmediate(() => {
-    try {
-      if (!loadConfig(home, "other", log).notifications[event] || !limiter.take(home, event) || !takeNotificationSlot(home, event)) return;
-      launch(notificationCommands(process.platform, event), log);
-    } catch {
-      log.debug("desktop notification unavailable");
-    }
-  });
-  task.unref();
-}
-
-// src/mcp/jobs.ts
-var JOB_ID_LENGTH = 8;
-var PROMPT_PREVIEW_CHARS = 120;
-var HISTORY_LIMIT = 50;
-var STORE_LIMIT = 200;
-var MAX_NOTES = 500;
-var INTERRUPTED_LISTED_MS = 24 * 60 * 60 * 1e3;
-var NOTE_CONVERSATION_SUFFIX = ":note";
-var DEFAULT_FOLLOW_UP = "Continue where you stopped and finish the task. Then give your final answer.";
-var HOST_POLL_MS = 2e3;
-var CANCEL_GRACE_MS = 5e3;
-var QUEUED_FOLLOW_UP_NOTE = "(Your queued follow-up was sent to it; its answer will arrive as another message.)";
-function jobReport(job, status, seconds, text2, cause) {
-  const how = job.sessionId ? status === "failed" ? ` To recover it with its context, call message_subagent(job="${job.name}") (optionally with a message).` : ` Continue it with its context: message_subagent(job="${job.name}", message=...).` : "";
-  const header = `Subagent ${job.name} (${job.agent}${job.model ? `, model ${job.model}` : ""}) ${status} after ${seconds}s.${how}`;
-  return [header, cause ? `Cause: ${cause}` : "", text2 && cause ? `Its last message:
-${text2}` : text2].filter(Boolean).join("\n\n");
-}
-var approvalAnswers = /* @__PURE__ */ new WeakMap();
-function denyPendingApprovals(job, reason = "job finished") {
-  for (const answer of [...approvalAnswers.get(job) ?? []]) answer(reason, "job completion");
-}
-function waitForApproval(job, question, timeoutMs, post, log, home, request2, askUser) {
-  return new Promise((resolve10) => {
-    let settled = false;
-    let cleanup;
-    const askedAt = Date.now();
-    const settle2 = (answer, by = "session") => {
-      if (settled) return false;
-      if (Date.now() >= askedAt + timeoutMs) {
-        answer = "no answer in time";
-        by = "timeout";
-      }
-      settled = true;
-      clearTimeout(timer);
-      job.controller.signal.removeEventListener("abort", aborted2);
-      const answers2 = approvalAnswers.get(job);
-      answers2?.delete(settle2);
-      job.pendingApproval = answers2?.values().next().value ?? null;
-      if (!answers2?.size) approvalAnswers.delete(job);
-      try {
-        cleanup?.();
-      } catch {
-        log.warn("could not remove pending approval", { job: job.name });
-      }
-      const allow = /^\s*(allow|yes|y|approve|approved|ok|okay|go ahead|accept)\b/i.test(answer);
-      try {
-        post(`Approval for ${job.name} ${allow ? "allowed" : "denied"} by ${by}.`);
-      } catch {
-        log.warn("could not report approval answer", { job: job.name });
-      }
-      resolve10({ allow, reason: answer.trim() });
-      return true;
-    };
-    const timer = setTimeout(() => settle2("no answer in time", "timeout"), timeoutMs);
-    timer.unref?.();
-    const aborted2 = () => settle2("job cancelled", "cancellation");
-    job.controller.signal.addEventListener("abort", aborted2, { once: true });
-    let answers = approvalAnswers.get(job);
-    if (!answers) {
-      answers = /* @__PURE__ */ new Set();
-      approvalAnswers.set(job, answers);
-    }
-    answers.add(settle2);
-    job.pendingApproval = answers.values().next().value;
-    if (job.controller.signal.aborted) {
-      aborted2();
-      return;
-    }
-    if (home) {
-      void publishApproval(home, {
-        id: newApprovalId(),
-        owner: job.owner ?? "",
-        job: job.name,
-        agent: job.agent,
-        tool: request2?.tool ?? "approval",
-        command: request2?.detail ?? question,
-        reason: request2?.reason ?? question,
-        askedAt,
-        deadline: askedAt + timeoutMs
-      }, settle2).then((close) => {
-        if (settled) close();
-        else {
-          cleanup = close;
-          notifyJobEvent(home, "approvals", log);
-        }
-      }).catch(() => log.warn("could not publish pending approval", { job: job.name }));
-    }
-    log.info("subagent asks for approval", { job: job.name });
-    post(
-      `Subagent ${job.name} asks for approval: ${question}
-
-Decide as its supervisor: answer with message_subagent(job="${job.name}", message="allow") or message="deny" (a reason may follow). It waits for your answer; no answer within ${Math.round(timeoutMs / 6e4)} minutes counts as deny.`
-    );
-    if (askUser) {
-      void Promise.resolve().then(askUser).then(
-        (decision) => settle2(decision.allow ? "allow" : `deny: ${decision.message}`, "user in session"),
-        () => settle2("deny: The permission dialog failed.", "user in session")
-      );
-    }
-  });
-}
-var JobManager = class {
-  constructor(node2, log, storePath = null, maxJobs = DEFAULT_MAX_JOBS) {
-    this.node = node2;
-    this.log = log;
-    this.storePath = storePath;
-    this.maxJobs = maxJobs;
-    node2.on("message", (m) => {
-      if (!m.from.id.startsWith("job:")) return;
-      const job = this.running.get(m.from.id.slice("job:".length));
-      if (job?.host) this.checkHosted(job);
-    });
-    node2.on("connected", () => {
-      for (const job of this.running.values()) if (job.host) this.runners?.send(job, { type: "attach" });
-    });
-  }
-  node;
-  log;
-  storePath;
-  maxJobs;
-  running = /* @__PURE__ */ new Map();
-  foreground = /* @__PURE__ */ new Map();
-  history = /* @__PURE__ */ new Map();
-  /** Finished jobs whose continuation waits for a free slot, in arrival order; the messages are in job.queue. */
-  waitingJobs = /* @__PURE__ */ new Map();
-  /** Ids of status notes from running subagents (see fromSubagent). */
-  notes = /* @__PURE__ */ new Set();
-  /** Jobs this manager started, continued or took over: only these are saved (others' entries stay as they are on disk). */
-  own = /* @__PURE__ */ new Set();
-  /** Background jobs run in detached job runners where it can (they survive a restart of this server); null: all here. */
-  runners = null;
-  hostTimer = null;
-  get limit() {
-    return this.maxJobs;
-  }
-  /** Change the limit now. A higher one starts waiting continuations; a lower one stops no running subagent. */
-  setLimit(max) {
-    this.maxJobs = max;
-    this.log.info("subagent limit changed", { max });
-    this.startWaiting();
-  }
-  /**
-   * A newer server of this session took over (the bridge replaced this one): stay out of the job store and the
-   * runners, so two servers never settle or save the same jobs. Ends when this server takes its place back.
-   */
-  dormant = false;
-  setDormant(dormant) {
-    if (this.dormant === dormant) return;
-    this.dormant = dormant;
-    this.log.info(dormant ? "another server of this session took over: jobs paused here" : "this server took its place back: jobs resumed");
-    if (dormant && this.hostTimer) {
-      clearInterval(this.hostTimer);
-      this.hostTimer = null;
-    }
-    if (!dormant && [...this.running.values()].some((j) => j.host)) this.watchHosted();
-  }
-  /** Save this session's jobs, merged with those other sessions saved. Best effort: never breaks a run. */
-  persist() {
-    if (!this.storePath || this.dormant) return;
-    let lock = () => {
-    };
-    try {
-      lock = acquireLock(`${this.storePath}.lock`);
-      const previous = readJobsDocument(this.storePath, this.log);
-      assertWritableStore(previous);
-      const entries = Array.isArray(previous) ? previous : isRecord(previous) ? previous.jobs : [];
-      const mine = [...this.history.values()].filter((j) => this.own.has(j.id)).map((j) => {
-        const old = entries.find((entry) => isRecord(entry) && entry.id === j.id);
-        return mergeStoreFields(isRecord(old) ? old : {}, toStored(j));
-      });
-      const ids = new Set(mine.map((j) => j.id));
-      const others = entries.filter((j) => !isRecord(j) || !ids.has(j.id));
-      const all = [...others, ...mine].sort((a, b) => {
-        const started = (entry) => isRecord(entry) && typeof entry.startedAt === "number" ? entry.startedAt : 0;
-        return started(a) - started(b);
-      });
-      const finished = all.filter((j) => isStoredJob(j) && (j.status === "done" || j.status === "failed")).sort((a, b) => a.startedAt - b.startedAt);
-      const limit = retentionLimit("AGENT_BRIDGE_JOB_STORE_LIMIT", STORE_LIMIT);
-      const overflow = new Set(limit ? finished.slice(0, Math.max(0, finished.length - limit)) : []);
-      if (overflow.size) {
-        const archive = `${this.storePath}.overflow.json`;
-        writeJsonStore(archive, { jobs: [...overflow] }, null);
-        archiveFile(archive);
-        this.log.info("archived finished jobs", { count: overflow.size });
-      }
-      writeJsonStore(this.storePath, { ...isRecord(previous) ? previous : {}, jobs: all.filter((j) => !overflow.has(j)) }, previous);
-    } catch (err) {
-      this.log.warn("could not save subagent jobs", { err: err.message });
-    } finally {
-      lock();
-    }
-  }
-  /**
-   * Load the jobs saved before this session (re)started, so message_subagent can continue them with their
-   * context. Jobs that were still running are marked interrupted: a follow-up without a message recovers them.
-   * A job of this session whose job runner is still at work (it outlived the old server) is running: this
-   * manager takes it over. Another session's runner-hosted job keeps its status for that session to take over.
-   */
-  restore(makeResume) {
-    if (!this.storePath) return;
-    const stored = readStore(this.storePath, this.log);
-    const adopted = [];
-    const recentIds = new Set(stored.slice(-HISTORY_LIMIT).map((s) => s.id));
-    for (const s of stored.filter((x) => recentIds.has(x.id) || x.status === "running")) {
-      if (this.history.has(s.id)) continue;
-      const hosted = s.status === "running" && Boolean(s.host);
-      const mine = this.isMine(s.owner);
-      const job = {
-        ...s,
-        status: s.status === "running" && !(hosted && !mine) ? "interrupted" : s.status,
-        controller: new AbortController(),
-        progress: null,
-        queue: [],
-        resume: makeResume(s.agent, s.args ?? {})
-      };
-      this.history.set(s.id, job);
-      if (hosted && mine && this.takeOver(job)) adopted.push(job);
-    }
-    if (stored.length) this.log.info("restored subagent jobs", { count: Math.min(stored.length, HISTORY_LIMIT), runnerHosted: adopted.length });
-    this.assignLegacySupervisors();
-    this.settleAdopted(adopted);
-    this.persist();
-  }
-  /** Whether a runner-hosted job can be taken over here (its runner lives, or finished and left its report). */
-  takeOver(job) {
-    if (!this.runners) return false;
-    const state = this.runners.state(job);
-    if (state) Object.assign(job, { sessionId: state.sessionId ?? job.sessionId, workdir: state.workdir ?? job.workdir, worktree: state.worktree ?? job.worktree });
-    if (this.runners.alive(job, state) || state && state.status !== "running") return true;
-    job.status = "interrupted";
-    if (state?.sessionId) this.own.add(job.id);
-    return false;
-  }
-  settleAdopted(adopted) {
-    for (const job of adopted) {
-      job.status = "running";
-      job.owner = this.node.name;
-      this.running.set(job.id, job);
-      this.own.add(job.id);
-      this.checkHosted(job);
-    }
-    if (adopted.length) {
-      this.watchHosted();
-      this.persist();
-    }
-  }
-  /** Record facts learned while it runs (its session, its folder), so a restart can continue it. */
-  note(job, facts) {
-    if (facts.sessionId) job.sessionId = facts.sessionId;
-    if (facts.workdir) job.workdir = facts.workdir;
-    if (facts.worktree) job.worktree = facts.worktree;
-    this.persist();
-  }
-  runningCount() {
-    return this.running.size;
-  }
-  /** Background jobs plus blocking ask_* runs, so the session (and its coordinator) can see all of them. */
-  list() {
-    for (const job of [...this.running.values()]) if (job.host) this.checkHosted(job);
-    return [...this.running.values(), ...this.foreground.values()];
-  }
-  /** Continuations waiting for a free slot, first in line first. */
-  waiting() {
-    return [...this.waitingJobs.values()];
-  }
-  /** Recently finished subagents, newest first (they can still be messaged). */
-  /**
-   * Whether a job belongs to this session. A session briefly runs under a "-N" stand-in of its name when a
-   * reload starts its new server while the old one is still connected; jobs started then are its too.
-   */
-  isMine(owner) {
-    return !owner || owner === this.node.name || this.adoptedOwners.has(owner);
-  }
-  /** "-N" stand-in names of this session whose jobs it adopted (see adoptStandIns). */
-  adoptedOwners = /* @__PURE__ */ new Set();
-  /** Whether `owner` is a "-N" stand-in of this session's name ("claude-x-2" for "claude-x"). */
-  isStandIn(owner) {
-    const base = this.node.name.replace(/-\d+$/, "");
-    return owner !== this.node.name && (owner === base || owner.startsWith(`${base}-`) && /^\d+$/.test(owner.slice(base.length + 1)));
-  }
-  /**
-   * A reload can run a session briefly under a "-N" stand-in name; jobs started then carry it. Once on the
-   * bridge, adopt those whose stand-in name no live peer holds (a live "-2" is another session of the folder).
-   */
-  adoptStandIns(online) {
-    if (this.dormant) return [];
-    const owners = new Set([...this.history.values()].map((j) => j.owner).filter((o) => Boolean(o) && this.isStandIn(o) && !online.has(o)));
-    if (!owners.size) return [];
-    for (const o of owners) this.adoptedOwners.add(o);
-    this.assignLegacySupervisors();
-    const taken = [];
-    for (const job of this.history.values()) {
-      if (!job.owner || !owners.has(job.owner)) continue;
-      if (job.status === "running" && job.host && !this.running.has(job.id) && this.takeOver(job)) taken.push(job);
-      else if (job.status === "running" && !this.running.has(job.id)) job.status = "interrupted";
-    }
-    this.log.info("adopted jobs started under a stand-in name of this session", { owners: [...owners], runnerHosted: taken.length });
-    this.settleAdopted(taken);
-    this.persist();
-    return [...owners];
-  }
-  /** Finished jobs of this session: every interrupted one (they need recovering), then the newest others. */
-  recent(limit = 5) {
-    const mine = [...this.history.values()].filter((j) => j.status !== "running" && !this.waitingJobs.has(j.id) && this.isMine(j.owner)).sort((a, b) => (b.finishedAt ?? b.startedAt) - (a.finishedAt ?? a.startedAt));
-    const interrupted = mine.filter((j) => j.status === "interrupted" && Date.now() - (j.finishedAt ?? j.startedAt) < INTERRUPTED_LISTED_MS);
-    return [...interrupted, ...mine.filter((j) => !interrupted.includes(j)).slice(0, limit)];
-  }
-  find(ref) {
-    const id = ref.replace(/^.*-(?:job|ask)-/, "");
-    return this.history.get(id) ?? [...this.history.values()].find((j) => j.name === ref);
-  }
-  remember(job) {
-    this.history.set(job.id, job);
-    this.own.add(job.id);
-    while (this.history.size > HISTORY_LIMIT) this.history.delete(this.history.keys().next().value);
-    this.persist();
-  }
-  newJob(agent, model, prompt, kind, resume, args) {
-    const id = randomUUID12().replace(/-/g, "").slice(0, JOB_ID_LENGTH);
-    return {
-      id,
-      name: `${agent}-${kind}-${id}`,
-      agent,
-      model,
-      prompt,
-      startedAt: Date.now(),
-      controller: new AbortController(),
-      progress: null,
-      status: "running",
-      sessionId: null,
-      workdir: null,
-      worktree: null,
-      resume,
-      queue: [],
-      args,
-      owner: this.node.name,
-      // Keep the first job's identity when hooks learn the session id later, or a server reload adopts it.
-      supervisor: this.supervisorIdentity()
-    };
-  }
-  supervisorIdentity() {
-    return [...this.running.values(), ...this.foreground.values(), ...this.history.values()].find((j) => this.isMine(j.owner) && j.supervisor)?.supervisor ?? this.node.currentSessionId ?? this.node.id;
-  }
-  assignLegacySupervisors() {
-    const supervisor = this.supervisorIdentity();
-    for (const job of this.history.values()) {
-      if (!job.supervisor && this.isMine(job.owner)) {
-        job.supervisor = supervisor;
-        this.own.add(job.id);
-      }
-    }
-  }
-  /**
-   * Register a blocking ask_* run for visibility in peers. Returns a progress sink and `end`, which records
-   * the outcome so the run can be continued later with message_subagent.
-   */
-  track(agent, model, prompt, resume, args) {
-    const job = { ...this.newJob(agent, model, prompt, "ask", resume, args), foreground: true };
-    this.foreground.set(job.id, job);
-    this.remember(job);
-    return {
-      job,
-      onProgress: (message) => {
-        job.progress = message;
-      },
-      end: (outcome) => {
-        denyPendingApprovals(job);
-        this.foreground.delete(job.id);
-        job.foreground = false;
-        job.finishedAt = Date.now();
-        job.status = outcome?.result && !outcome.result.isError ? "done" : "failed";
-        if (this.storePath) notifyJobEvent(dirname7(this.storePath), job.status === "done" ? "finish" : "fail", this.log);
-        job.sessionId = outcome?.result?.sessionId ?? sessionOfError(outcome?.error) ?? job.sessionId;
-        job.workdir = outcome?.result?.workdir ?? job.workdir;
-        job.worktree = outcome?.result?.worktree ?? job.worktree;
-        this.persist();
-        if (job.queue.length && job.resume && job.sessionId && !job.controller.signal.aborted) {
-          if (this.canStart()) this.launch(job, job.resume(job.queue.splice(0).join("\n\n"), job.sessionId, job.workdir, job.worktree));
-          else this.waitForSlot(job);
-        }
-      }
-    };
-  }
-  canStart() {
-    return this.running.size < this.maxJobs;
-  }
-  start(agent, model, prompt, run, resume, args) {
-    const job = this.newJob(agent, model, prompt, "job", resume, args);
-    this.remember(job);
-    this.log.info("subagent started", { job: job.name, model, prompt: prompt.slice(0, PROMPT_PREVIEW_CHARS) });
-    this.launch(job, run);
-    return job;
-  }
-  /** Save next-turn settings and send them to a runner that continues the job itself. */
-  setSettings(ref, settings) {
-    const job = this.find(ref);
-    if (!job) return false;
-    job.args = changedJobArgs(job.args, settings);
-    if (settings.model !== void 0 && job.status !== "running") job.model = settings.model;
-    if (this.hostedRunning(job)) this.runners.send(job, { type: "settings", settings });
-    this.own.add(job.id);
-    this.persist();
-    return true;
-  }
-  /** Change a job's thinking level for its next turns (a turn already running keeps its own). */
-  setEffort(ref, effort) {
-    const job = this.find(ref);
-    if (!job) return false;
-    job.args = { ...job.args, effort };
-    if (this.hostedRunning(job)) this.runners.send(job, { type: "effort", effort });
-    this.own.add(job.id);
-    this.persist();
-    return true;
-  }
-  /** Name or rename a job; its next turn (and the dashboard) uses the title. */
-  setTitle(ref, title) {
-    const job = this.find(ref);
-    if (!job) return false;
-    job.args = { ...job.args, title };
-    job.retitle?.(title);
-    if (this.hostedRunning(job)) this.runners.send(job, { type: "title", title });
-    this.own.add(job.id);
-    this.persist();
-    return true;
-  }
-  /**
-   * Send a follow-up to a subagent: queued while it runs, otherwise its session is resumed in the background,
-   * as soon as a slot is free.
-   */
-  followUp(ref, message) {
-    const job = this.find(ref);
-    if (!job) return { outcome: "unknown" };
-    if (this.hostedRunning(job)) this.checkHosted(job);
-    if (this.waitingJobs.has(job.id)) {
-      job.queue.push(message);
-      return { outcome: "waiting", job };
-    }
-    if (this.hostedRunning(job)) {
-      const state = this.runners.state(job);
-      const cid = randomUUID12();
-      (job.forwarded ??= []).push({ cid, body: message });
-      this.runners.send(job, { type: "message", body: message, cid });
-      return { outcome: state?.asking ? "answered" : state?.live ? "delivered" : "queued", job };
-    }
-    if (job.status === "running" && job.pendingApproval) {
-      const answer = job.pendingApproval;
-      job.pendingApproval = null;
-      answer(message, `session ${this.node.name}`);
-      return { outcome: "answered", job };
-    }
-    if (job.status === "running") {
-      if (job.live) {
-        job.awaitingAnswer = true;
-        job.live.post(message);
-        return { outcome: "delivered", job };
-      }
-      job.queue.push(message);
-      return { outcome: "queued", job };
-    }
-    if (!job.resume || !job.sessionId) return { outcome: "no-session", job };
-    if (!this.canStart()) {
-      job.queue.push(message);
-      this.waitForSlot(job);
-      return { outcome: "waiting", job };
-    }
-    this.log.info("subagent resumed", { job: job.name, sessionId: job.sessionId });
-    this.launch(job, job.resume(message, job.sessionId, job.workdir, job.worktree));
-    return { outcome: "started", job };
-  }
-  /** Continue this finished job (its queued messages) once a slot frees up. */
-  waitForSlot(job) {
-    this.waitingJobs.set(job.id, job);
-    this.log.info("subagent continuation waits for a free slot", { job: job.name, running: this.running.size, position: this.waitingJobs.size });
-  }
-  /** Start waiting continuations while there are free slots, oldest first. */
-  startWaiting() {
-    for (const job of this.waitingJobs.values()) {
-      if (!this.canStart()) return;
-      this.waitingJobs.delete(job.id);
-      if (!job.queue.length || !job.resume || !job.sessionId) continue;
-      this.log.info("subagent resumed (was waiting for a slot)", { job: job.name, sessionId: job.sessionId });
-      this.launch(job, job.resume(job.queue.splice(0).join("\n\n"), job.sessionId, job.workdir, job.worktree));
-    }
-  }
-  launch(job, run) {
-    if (typeof job.args?.model === "string") job.model = job.args.model;
-    job.status = "running";
-    job.startedAt = Date.now();
-    job.controller = new AbortController();
-    job.progress = null;
-    job.foreground = false;
-    this.running.set(job.id, job);
-    this.own.add(job.id);
-    job.host = this.runners ? run.hosted?.(job) ?? null : null;
-    job.forwarded = [];
-    this.persist();
-    if (job.host) {
-      this.log.info("subagent runs in a job runner", { job: job.name, peer: job.host.peer });
-      this.watchHosted();
-      return;
-    }
-    const onProgress = (message) => {
-      job.progress = message;
-      this.log.debug("subagent progress", { job: job.name, message });
-    };
-    run(job.controller.signal, onProgress, job).then(
-      (res) => {
-        job.workdir = res.workdir ?? job.workdir;
-        job.worktree = res.worktree ?? job.worktree;
-        this.finish(job, res.isError ? "failed" : "done", res.text || "(no answer text returned)", res.sessionId, res.isError ? failureCause({ result: res }) : null);
-      },
-      // The cause is the whole report here: the error says what happened (and, for a worktree, where the work is).
-      (err) => this.finish(job, "failed", "", sessionOfError(err), failureCause({ error: err }))
-    );
-  }
-  /** A running job of this manager that a job runner hosts. */
-  hostedRunning(job) {
-    return job.status === "running" && Boolean(job.host) && Boolean(this.runners) && this.running.get(job.id) === job;
-  }
-  /** Check runner-hosted jobs while any runs. */
-  watchHosted() {
-    if (this.hostTimer || this.dormant) return;
-    this.hostTimer = setInterval(() => {
-      const hosted = [...this.running.values()].filter((j) => j.host);
-      if (!hosted.length && this.hostTimer) {
-        clearInterval(this.hostTimer);
-        this.hostTimer = null;
-      }
-      for (const job of hosted) this.checkHosted(job);
-    }, HOST_POLL_MS);
-    this.hostTimer.unref();
-  }
-  /**
-   * Take what a job's runner reports: its progress and facts, and its end. The runner delivers the report
-   * itself (a message on the bridge, so it waits for the session even while no server of it runs); this
-   * session only posts it when the runner could not, or says why a runner ended without one.
-   */
-  checkHosted(job) {
-    if (!this.hostedRunning(job)) return;
-    const runners = this.runners;
-    const state = runners.state(job);
-    if (state) {
-      job.host.pid = state.pid;
-      if (state.model !== void 0) job.model = state.model;
-      job.progress = state.progress ?? job.progress;
-      if (state.percent !== void 0) {
-        job.percent = state.percent;
-        job.progressNote = state.progressNote;
-      }
-      if (state.sessionId && state.sessionId !== job.sessionId || state.workdir && state.workdir !== job.workdir || state.worktree && !job.worktree) {
-        this.note(job, { sessionId: state.sessionId, workdir: state.workdir, worktree: state.worktree });
-      }
-    }
-    const alive2 = runners.alive(job, state);
-    if (state && state.status !== "running") {
-      if (state.delivered || !alive2) this.settleHosted(job, state);
-    } else if (!alive2) this.settleHosted(job, null);
-  }
-  /** A runner-hosted job ended: with its runner's final state, or without (the runner is gone). */
-  settleHosted(job, final) {
-    const seen = new Set(final?.seen ?? this.runners?.state(job)?.seen ?? []);
-    job.queue.push(...(job.forwarded ?? []).filter((f) => !seen.has(f.cid)).map((f) => f.body));
-    job.forwarded = [];
-    const pid = job.host?.pid;
-    job.host = null;
-    if (final) {
-      this.finish(job, final.status === "done" ? "done" : "failed", "", final.sessionId ?? null, null, final.delivered ? null : final.report);
-      return;
-    }
-    const cause = job.controller.signal.aborted ? "cancelled" : `its job runner${pid ? ` (process ${pid})` : ""} ended without reporting a result`;
-    this.finish(job, "failed", "", job.sessionId, cause);
-  }
-  /** Cancel a background job, a blocking ask_* run or a continuation waiting for a slot, by name or id. */
-  cancel(ref) {
-    const id = ref.replace(/^.*-(?:job|ask)-/, "");
-    const waiting = [...this.waitingJobs.values()].find((j) => j.id === id || j.name === ref);
-    if (waiting) {
-      this.waitingJobs.delete(waiting.id);
-      waiting.queue = [];
-      this.log.info("waiting subagent continuation cancelled", { job: waiting.name });
-      return true;
-    }
-    const job = [...this.running.values(), ...this.foreground.values()].find((j) => j.id === id || j.name === ref);
-    if (!job) return false;
-    job.queue = [];
-    job.controller.abort();
-    if (this.hostedRunning(job)) {
-      job.forwarded = [];
-      const runners = this.runners;
-      runners.send(job, { type: "cancel" });
-      setTimeout(() => {
-        if (!this.hostedRunning(job)) return;
-        if (runners.alive(job, runners.state(job))) {
-          this.log.warn("job runner did not stop in time; killing it", { job: job.name, pid: job.host?.pid });
-          runners.kill(job);
-        }
-        this.checkHosted(job);
-      }, CANCEL_GRACE_MS).unref();
-    }
-    return true;
-  }
-  /**
-   * Stop every subagent of this process (the server shuts down). Runner-hosted ones keep running: the next
-   * server of this session takes them over, and their results wait for it on the bridge.
-   */
-  cancelAll() {
-    for (const j of this.waitingJobs.values()) j.queue = [];
-    this.waitingJobs.clear();
-    for (const j of this.running.values()) if (!j.host) j.controller.abort();
-    for (const j of this.foreground.values()) denyPendingApprovals(j, "session closed");
-    if (this.hostTimer) clearInterval(this.hostTimer);
-    this.hostTimer = null;
-  }
-  /** `report`: null when the runner already delivered it, a text to post as it is, or undefined to compose it here. */
-  finish(job, status, text2, sessionId, cause = null, report) {
-    denyPendingApprovals(job);
-    this.running.delete(job.id);
-    job.status = status;
-    job.finishedAt = Date.now();
-    job.sessionId = sessionId ?? job.sessionId;
-    this.persist();
-    const seconds = Math.round((Date.now() - job.startedAt) / 1e3);
-    this.log.info("subagent finished", { job: job.name, status, seconds, sessionId: job.sessionId, cause });
-    if (this.storePath && !job.host) notifyJobEvent(dirname7(this.storePath), status === "done" ? "finish" : "fail", this.log);
-    const message = report === void 0 ? jobReport(job, status, seconds, text2, cause) : report;
-    if (job.queue.length && job.resume && job.sessionId && !job.controller.signal.aborted) {
-      const queued = job.queue.splice(0).join("\n\n");
-      if (message !== null) this.post(job, `${message}
-
-${QUEUED_FOLLOW_UP_NOTE}`);
-      this.launch(job, job.resume(queued, job.sessionId, job.workdir, job.worktree));
-      return;
-    }
-    if (message !== null) this.post(job, message);
-    this.startWaiting();
-  }
-  /**
-   * Ask this session's agent to approve something the running subagent wants to do (an MCP tool call, for
-   * example). The question arrives as a message from the job; the agent answers with message_subagent.
-   * No answer within the time limit counts as "deny".
-   */
-  askParent(job, question, timeoutMs, request2) {
-    return waitForApproval(job, question, timeoutMs, (body) => this.post(job, body), this.log, this.storePath ? dirname7(this.storePath) : void 0, request2);
-  }
-  /**
-   * A message the running subagent sent to this session. An answer (to a live message, or marked as a reply)
-   * wakes the session; a note it sends on its own ("tests pass, merging next") does not: it waits for the
-   * session's next prompt or tool call, so status chatter costs no extra turn.
-   */
-  fromSubagent(job, body, replyTo, isAnswer = false) {
-    const answer = isAnswer || replyTo !== null || job.awaitingAnswer === true;
-    job.awaitingAnswer = false;
-    this.log.info("message from subagent", { job: job.name, note: !answer });
-    const id = this.post(job, body, replyTo);
-    if (!answer) {
-      this.notes.add(id);
-      if (this.notes.size > MAX_NOTES) this.notes.delete(this.notes.values().next().value);
-    }
-  }
-  /** Whether a message is a running subagent's own status note (it should not wake the session). */
-  isNote(m) {
-    return this.notes.has(m.id) || m.conversationId.endsWith(NOTE_CONVERSATION_SUFFIX);
-  }
-  post(job, body, replyTo = null) {
-    const m = {
-      id: randomUUID12(),
-      from: { id: `job:${job.id}`, name: job.name, agent: job.agent },
-      to: this.node.name,
-      recipient: this.node.name,
-      conversationId: `job-${job.id}`,
-      replyTo,
-      hop: 0,
-      body,
-      createdAt: Date.now(),
-      readAt: null
-    };
-    this.node.deliverLocal(m);
-    return m.id;
-  }
-};
-function sessionOfError(err) {
-  return err instanceof DelegateError ? err.sessionId ?? null : null;
-}
-function toStored(j) {
-  return {
-    id: j.id,
-    name: j.name,
-    agent: j.agent,
-    model: j.model,
-    prompt: j.prompt,
-    startedAt: j.startedAt,
-    status: j.status,
-    sessionId: j.sessionId,
-    workdir: j.workdir,
-    worktree: j.worktree,
-    args: j.args,
-    owner: j.owner,
-    supervisor: j.supervisor,
-    finishedAt: j.finishedAt,
-    host: j.host ?? null
-  };
-}
-function isStoredJob(j) {
-  return isRecord(j) && typeof j.id === "string" && typeof j.name === "string";
-}
-function readJobsDocument(path, log) {
-  return readJsonStore(path, log, (data) => Array.isArray(data) || isRecord(data) && Array.isArray(data.jobs));
-}
-function readStore(path, log) {
-  try {
-    const data = readJobsDocument(path, log);
-    const jobs = Array.isArray(data) ? data : isRecord(data) && Array.isArray(data.jobs) ? data.jobs : [];
-    return jobs.filter(isStoredJob);
-  } catch (err) {
-    log?.warn("could not read jobs store", { path, err: String(err) });
-    return [];
-  }
-}
-var LOCK_WAIT_MS = 2e3;
-var LOCK_STALE_MS = 1e4;
-var LOCK_RETRY_MS = 20;
-function acquireLock(path) {
-  mkdirSync14(dirname7(path), { recursive: true });
-  const deadline = Date.now() + LOCK_WAIT_MS;
-  const pause = new Int32Array(new SharedArrayBuffer(4));
-  for (; ; ) {
-    try {
-      closeSync3(openSync3(path, "wx"));
-      return () => rmSync6(path, { force: true });
-    } catch (err) {
-      if (err.code !== "EEXIST") throw err;
-      try {
-        if (Date.now() - statSync6(path).mtimeMs > LOCK_STALE_MS) rmSync6(path, { force: true });
-      } catch {
-      }
-      if (Date.now() > deadline) throw new Error("timed out locking jobs store");
-      Atomics.wait(pause, 0, 0, LOCK_RETRY_MS);
-    }
-  }
-}
-
-// src/mcp/delegate-run.ts
-import { randomUUID as randomUUID13 } from "node:crypto";
-import { isAbsolute as isAbsolute5, join as join33, relative as relative4, resolve as resolve8 } from "node:path";
-
-// src/core/resource-slots.ts
-import { mkdirSync as mkdirSync15 } from "node:fs";
-import { join as join30 } from "node:path";
-import { DatabaseSync as DatabaseSync6 } from "node:sqlite";
-import { setTimeout as delay2 } from "node:timers/promises";
-var SLOT_OWNER_ENV = "AGENT_BRIDGE_SLOT_OWNER";
-var SLOT_PID_ENV = "AGENT_BRIDGE_SLOT_PID";
-var SLOT_LEASE_MS = 6 * 60 * 6e4;
-var SLOT_RENEW_MS = 6e4;
-var SLOT_POLL_MS = 250;
-var SLOT_DB_NAME = "resource-slots.sqlite";
-var LOCK_WAIT_MS2 = 3e3;
-function alive(pid) {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (err) {
-    return err.code !== "ESRCH";
-  }
-}
-var ResourceSlots = class {
-  constructor(home, isAlive = alive, now = Date.now) {
-    this.isAlive = isAlive;
-    this.now = now;
-    mkdirSync15(home, { recursive: true });
-    this.db = new DatabaseSync6(join30(home, SLOT_DB_NAME));
-    this.db.exec(`PRAGMA busy_timeout = ${LOCK_WAIT_MS2};
-      CREATE TABLE IF NOT EXISTS slots (
-        ticket INTEGER PRIMARY KEY AUTOINCREMENT, resource TEXT NOT NULL, id TEXT NOT NULL,
-        pid INTEGER NOT NULL, held INTEGER NOT NULL, expiresAt INTEGER NOT NULL, UNIQUE(resource, id)
-      );`);
-  }
-  isAlive;
-  now;
-  db;
-  transaction(fn) {
-    this.db.exec("BEGIN IMMEDIATE");
-    try {
-      const result = fn();
-      this.db.exec("COMMIT");
-      return result;
-    } catch (err) {
-      this.db.exec("ROLLBACK");
-      throw err;
-    }
-  }
-  prune() {
-    this.db.prepare("DELETE FROM slots WHERE expiresAt <= ?").run(this.now());
-    const pids = this.db.prepare("SELECT DISTINCT pid FROM slots").all();
-    for (const row of pids) if (!this.isAlive(Number(row.pid))) this.db.prepare("DELETE FROM slots WHERE pid = ?").run(row.pid);
-  }
-  tryAcquire(resource, count, owner) {
-    if (!RESOURCE_NAME_PATTERN.test(resource) || !Number.isInteger(count) || count < 1) throw new Error("Invalid resource name or capacity.");
-    if (!owner.id || !Number.isSafeInteger(owner.pid) || owner.pid <= 0 || !this.isAlive(owner.pid)) throw new Error("A resource slot needs a live owner process.");
-    return this.transaction(() => {
-      this.prune();
-      this.db.prepare("INSERT INTO slots(resource, id, pid, held, expiresAt) VALUES (?, ?, ?, 0, ?) ON CONFLICT(resource, id) DO NOTHING").run(resource, owner.id, owner.pid, this.now() + SLOT_LEASE_MS);
-      const own2 = this.db.prepare("SELECT ticket, pid, held FROM slots WHERE resource = ? AND id = ?").get(resource, owner.id);
-      if (Number(own2.pid) !== owner.pid) throw new Error("Resource slot owner does not match.");
-      this.db.prepare("UPDATE slots SET expiresAt = ? WHERE resource = ? AND id = ?").run(this.now() + SLOT_LEASE_MS, resource, owner.id);
-      if (own2.held) return true;
-      const held = Number(this.db.prepare("SELECT COUNT(*) AS n FROM slots WHERE resource = ? AND held = 1").get(resource).n);
-      const ahead = Number(this.db.prepare("SELECT COUNT(*) AS n FROM slots WHERE resource = ? AND held = 0 AND ticket < ?").get(resource, own2.ticket).n);
-      if (held + ahead >= count) return false;
-      this.db.prepare("UPDATE slots SET held = 1 WHERE ticket = ?").run(own2.ticket);
-      return true;
-    });
-  }
-  async acquire(resource, count, owner, signal) {
-    try {
-      for (; ; ) {
-        signal?.throwIfAborted();
-        if (this.tryAcquire(resource, count, owner)) return;
-        await delay2(SLOT_POLL_MS, void 0, { signal });
-      }
-    } catch (err) {
-      this.release(owner, resource);
-      throw err;
-    }
-  }
-  release(owner, resource) {
-    this.db.prepare(`DELETE FROM slots WHERE id = ? AND pid = ?${resource ? " AND resource = ?" : ""}`).run(...resource ? [owner.id, owner.pid, resource] : [owner.id, owner.pid]);
-  }
-  renew(owner, resource) {
-    const args = [this.now() + SLOT_LEASE_MS, owner.id, owner.pid, this.now()];
-    this.db.prepare(`UPDATE slots SET expiresAt = ? WHERE id = ? AND pid = ? AND expiresAt > ?${resource ? " AND resource = ?" : ""}`).run(...resource ? [...args, resource] : args);
-  }
-  list() {
-    return this.transaction(() => {
-      this.prune();
-      return this.db.prepare("SELECT * FROM slots ORDER BY ticket").all().map((row) => ({ resource: String(row.resource), id: String(row.id), pid: Number(row.pid), ticket: Number(row.ticket), held: Boolean(row.held), expiresAt: Number(row.expiresAt) }));
-    });
-  }
-  close() {
-    this.db.close();
-  }
-};
-function resourceSlotHint(counts, cli) {
-  if (!Object.keys(counts).length) return null;
-  const command = cli ? `node "${cli}"` : "agent-bridge";
-  return `(agent-bridge: shared resource slots are enabled: ${JSON.stringify(counts)}. Before a heavy command, run ${command} slot acquire <resource>; it waits in FIFO order. Always run ${command} slot release <resource> afterward, including on failure (use try/finally or a shell trap). ${command} slot status shows holders and waiters. Slots are shared across jobs and released when your run ends or its owner process dies. Acquiring twice is idempotent; hold one slot per resource per job.)`;
-}
-
-// src/core/tool-allow.ts
-function serverNames2(server) {
-  const short = /^plugin_[^_]+_(.+)$/.exec(server)?.[1];
-  const names = short ? [server, short] : [server];
-  if (names.includes("pair_desk")) names.push("pair-desk");
-  return names;
-}
-function shortServer(server) {
-  return serverNames2(server).at(-1);
-}
-function mcpToolOf(r) {
-  const raw = /^(?:[\w]+\.)?mcp__(.+?)__(.+)$/.exec(r.tool);
-  if (raw) return { server: raw[1], tool: raw[2] };
-  if (!r.tool.startsWith("mcp:")) return null;
-  const server = r.tool.slice("mcp:".length);
-  const quoted = /\btool\s+["'`]([\w.-]+)["'`]/i.exec(r.detail)?.[1];
-  let tool = quoted ?? /^\s*([\w.-]+)(?:\s*:|\s*$)/.exec(r.detail)?.[1] ?? null;
-  const prefixes = serverNames2(server).flatMap((name) => [name, name.replace(/[^a-zA-Z0-9_-]/g, "_")]).sort((a, b) => b.length - a.length);
-  for (const name of prefixes) if (tool?.startsWith(`${name}_`)) {
-    tool = tool.slice(name.length + 1);
-    break;
-  }
-  return { server, tool };
-}
-var DESK_WORKER_PRESET = "pair-desk:worker";
-var DESK_READ_PATTERNS = ["pair-desk.get_*", "pair-desk.list_*"];
-var DESK_WORKER_PATTERNS = ["pair-desk.get_*", "pair-desk.list_*", "pair-desk.comment", "pair-desk.progress", "pair-desk.set_plan", "pair-desk.update_step", "pair-desk.create_issue", "pair-desk.update_issue"];
-function approvalHint(r) {
-  const call = mcpToolOf(r);
-  if (!call?.tool) return "";
-  const server = shortServer(call.server);
-  const preset = isAutoApproved(r, [DESK_WORKER_PRESET]) ? ` or "${DESK_WORKER_PRESET}" (desk reads, comments, plans and issue edits; excludes status, builds and handoff writes)` : "";
-  return ` (not covered by this job's allow_tools; add "${server}.${call.tool}"${preset} to allow it without asking; get_* and list_* only cover reads)`;
-}
-function glob(pattern) {
-  return new RegExp(`^${pattern.split("*").map((s) => s.replace(/[.+?^${}()|[\]\\]/g, "\\$&")).join(".*")}$`, "i");
-}
-var OWN_SERVERS = /* @__PURE__ */ new Set(["agent-bridge", "plugin_agent-bridge_bridge", "bridge"]);
-function isOwnServerCall(r) {
-  const call = mcpToolOf(r);
-  return Boolean(call && OWN_SERVERS.has(call.server));
-}
-function isAutoApproved(r, patterns) {
-  const call = mcpToolOf(r);
-  if (!call || patterns.length === 0) return false;
-  const names = serverNames2(call.server).flatMap((s) => [s, call.tool ? `${s}.${call.tool}` : null]).filter((n) => Boolean(n));
-  return patterns.flatMap((p) => p.trim() === DESK_WORKER_PRESET ? DESK_WORKER_PATTERNS : [p]).some((p) => {
-    const re = glob(p.trim());
-    return names.some((n) => re.test(n));
-  });
-}
-var HANDOFF_TOOL = /(set|update)_handoff$/i;
-function isHandoffToolCall(r) {
-  const tool = mcpToolOf(r)?.tool;
-  return Boolean(tool && HANDOFF_TOOL.test(tool));
-}
-
-// src/core/worktree-links.ts
-import { lstatSync as lstatSync2, readdirSync as readdirSync8, readlinkSync, realpathSync as realpathSync4 } from "node:fs";
-import { dirname as dirname8, isAbsolute as isAbsolute3, join as join31, relative as relative2, resolve as resolve6, toNamespacedPath } from "node:path";
-var WORKTREE_LINK_HINT = "(agent-bridge: worktree isolation is mandatory. Never create symlinks, directory junctions or other reparse points whose targets leave this worktree, including Unity Library folders in the owner's main checkout. Copy caches if needed; do not share them through links. Never follow an existing external link to modify its target. Request cleanup approval through the supervisor and report the link and target if cleanup is denied.)";
-function scanWorktreeLinks(root) {
-  const scan = { externalLinks: [], errors: [] };
-  const canonicalRoot = lstatSync2(toNamespacedPath(root)).isSymbolicLink() ? resolve6(root) : realpathSync4.native(root);
-  const inside = (target) => {
-    const rel = relative2(canonicalRoot, target);
-    return rel === "" || rel !== ".." && !rel.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`) && !isAbsolute3(rel);
-  };
-  const visit2 = (path) => {
-    try {
-      const stat = lstatSync2(toNamespacedPath(path));
-      if (stat.isSymbolicLink()) {
-        const raw = readlinkSync(toNamespacedPath(path));
-        let target = resolve6(dirname8(path), raw);
-        try {
-          target = realpathSync4.native(path);
-        } catch {
-        }
-        if (!inside(target)) scan.externalLinks.push({ path, target });
-      } else if (stat.isDirectory()) {
-        for (const entry of readdirSync8(toNamespacedPath(path))) visit2(join31(path, entry));
-      }
-    } catch (err) {
-      scan.errors.push(`${path}: ${err.message}`);
-    }
-  };
-  visit2(resolve6(root));
-  return scan;
-}
-function worktreeLinkWarning(scan) {
-  const lines = scan.externalLinks.map((link) => `${link.path} -> ${link.target}`);
-  if (lines.length) lines.unshift("WARNING: external worktree links/reparse points found. Do not run tools through these links; unlink the link itself without recursively deleting its target:");
-  if (scan.errors.length) lines.push(`WARNING: worktree link inspection incomplete:
-${scan.errors.join("\n")}`);
-  return lines.length ? lines.join("\n") : null;
-}
-
-// src/core/worktree.ts
-import { createHash as createHash5 } from "node:crypto";
-import { existsSync as existsSync8, mkdirSync as mkdirSync16, readFileSync as readFileSync19, realpathSync as realpathSync5, rmSync as rmSync7 } from "node:fs";
-import { basename as basename4, isAbsolute as isAbsolute4, join as join32, relative as relative3, resolve as resolve7, toNamespacedPath as toNamespacedPath2 } from "node:path";
-var GIT = "git";
-var LONG_PATH_ARGS = ["-c", "core.longpaths=true"];
-var REMOVE_RETRIES = 3;
-var GIT_TIMEOUT_MS = 18e4;
-var WORKTREE_ADD_TIMEOUT_MS = 6e5;
-var BRANCH_PREFIX = "agent-bridge/";
-var FALLBACK_COMMIT_IDENTITY = { "user.name": "agent-bridge", "user.email": "agent-bridge@localhost" };
-var MAX_DIFFSTAT_CHARS = 4e3;
-function trustArgs(...dirs) {
-  return dirs.flatMap((d) => ["-c", `safe.directory=${resolve7(d).replace(/\\/g, "/")}`]);
-}
-async function git(args, cwd, log, timeoutMs = GIT_TIMEOUT_MS) {
-  const what = `git ${args.filter((a, i) => !a.startsWith("-") && args[i - 1] !== "-c").slice(0, 2).join(" ")}`;
-  const res = await runProcess({ bin: GIT, args: [...LONG_PATH_ARGS, ...args], stdin: "", cwd, timeoutMs, env: process.env, log, what });
-  if (res.code !== 0) throw new Error(`${what} failed: ${(res.stderr || res.stdout).trim().slice(0, 500)}`);
-  return res.stdout.trimEnd();
-}
-async function createWorktree(opts) {
-  let repoRoot;
-  try {
-    repoRoot = await git(["rev-parse", "--show-toplevel"], opts.cwd, opts.log);
-  } catch {
-    throw new Error(`worktree isolation needs a git repository, but ${opts.cwd} is not inside one`);
-  }
-  const base = await git(["rev-parse", "HEAD"], repoRoot, opts.log);
-  const baseBranch = await git(["symbolic-ref", "-q", "--short", "HEAD"], repoRoot, opts.log).catch(() => "") || null;
-  let branch = `${BRANCH_PREFIX}${opts.jobId}`;
-  const dir = join32(opts.home, "worktrees");
-  mkdirSync16(dir, { recursive: true });
-  let path = join32(dir, `${basename4(repoRoot)}-${opts.jobId}`);
-  try {
-    await git(["worktree", "add", "-b", branch, path, base], repoRoot, opts.log, WORKTREE_ADD_TIMEOUT_MS);
-  } catch (err) {
-    if (!(err instanceof DelegateError && err.kind === "timeout")) {
-      await removeWorktree(repoRoot, path, branch, opts.log);
-      throw new Error(`could not create a worktree for the subagent: ${err.message}`);
-    }
-    opts.log.warn("git worktree add timed out; retrying once", { path });
-    await removeWorktree(repoRoot, path, branch, opts.log);
-    branch = `${branch}-r2`;
-    path = `${path}-r2`;
-    try {
-      await git(["worktree", "add", "-b", branch, path, base], repoRoot, opts.log, WORKTREE_ADD_TIMEOUT_MS);
-    } catch (again) {
-      await removeWorktree(repoRoot, path, branch, opts.log);
-      throw new Error(`could not create a worktree for the subagent (tried twice): ${again.message}`);
-    }
-  }
-  await unlockWorktree(repoRoot, path, opts.log);
-  const rel = relative3(repoRoot, opts.cwd);
-  const cwd = rel && !rel.startsWith("..") && !isAbsolute4(rel) ? join32(path, rel) : path;
-  opts.log.info("worktree created", { repoRoot, path, branch });
-  return { repoRoot, path, cwd, branch, base, baseBranch };
-}
-async function unlockWorktree(repoRoot, path, log) {
-  await git([...trustArgs(path), "worktree", "unlock", path], repoRoot, log).catch(() => "");
-}
-async function removeWorktree(repoRoot, path, branch, log) {
-  await git([...trustArgs(path), "worktree", "remove", "--force", "--force", path], repoRoot, log).catch(() => {
-  });
-  try {
-    removeWorktreeDirectory(path);
-  } catch {
-  }
-  await git(["worktree", "prune"], repoRoot, log).catch(() => {
-  });
-  await git(["branch", "-D", branch], repoRoot, log).catch(() => {
-  });
-}
-function removeWorktreeDirectory(path) {
-  rmSync7(toNamespacedPath2(resolve7(path)), { recursive: true, force: true, maxRetries: REMOVE_RETRIES });
-}
-var SUBJECT_CHARS = 72;
-function subagentCommitMessage(opts) {
-  const plain = (s) => s.replace(/[*_`#>]+/g, "").replace(/\s+/g, " ").trim();
-  const firstLine = (s) => s.split(/\r?\n/).map(plain).find((l) => l.length > 0) ?? "";
-  const clip2 = (s) => s.length > SUBJECT_CHARS ? `${s.slice(0, SUBJECT_CHARS - 1).trimEnd()}\u2026` : s;
-  const subject = clip2(firstLine(opts.answer) || firstLine(opts.task) || "subagent changes");
-  const email3 = { codex: "noreply@openai.com", claude: "noreply@anthropic.com", opencode: "noreply@opencode.ai" }[opts.agent] ?? "noreply@localhost";
-  const who = opts.model ? `${opts.model} via ${opts.agent}` : opts.agent;
-  return [
-    subject,
-    "",
-    `Committed by agent-bridge for ${opts.job ?? "a subagent"} (${who}).`,
-    `Task: ${clip2(firstLine(opts.task))}`,
-    "",
-    `Co-Authored-By: ${who} <${email3}>`
-  ].join("\n");
-}
-async function gitDirsOutside(cwd, log) {
-  try {
-    const [gitDir, common] = (await git(["rev-parse", "--path-format=absolute", "--git-dir", "--git-common-dir"], cwd, log)).split(/\r?\n/);
-    const real = (p) => {
-      try {
-        return realpathSync5.native(p);
-      } catch {
-        return resolve7(p);
-      }
-    };
-    const inside = (p) => {
-      const rel = relative3(real(cwd), real(p));
-      return rel === "" || !rel.startsWith("..") && !isAbsolute4(rel);
-    };
-    return [...new Set([gitDir, common].filter((p) => Boolean(p) && !inside(p)))];
-  } catch {
-    return [];
-  }
-}
-async function reviewBase(wt, log, branch = wt.branch) {
-  const run = (args) => git(args, wt.repoRoot, log);
-  const tip = await run(["rev-parse", branch]);
-  const reflog = await git([...trustArgs(wt.path), "log", "-g", "--format=%H%x09%gs", "HEAD"], wt.path, log).catch(() => "");
-  const start = reflog.split(/\r?\n/).reverse().find((line) => line.endsWith(` to ${branch}`) && line.includes("	checkout: moving from "))?.split("	")[0];
-  const base = branch === wt.branch ? wt.base : start ?? wt.base;
-  const created = (await run(["log", "-g", "--format=%H%x09%gs", branch]).catch(() => "")).split(/\r?\n/).reverse().find((line) => line.startsWith(`${base}	branch: Created from `));
-  const source = branch !== wt.branch ? created?.split("	branch: Created from ")[1] : null;
-  const list = await run(["worktree", "list", "--porcelain"]).catch(() => "");
-  const main = /^branch refs\/heads\/(.+)$/m.exec(list.split(/\r?\n\r?\n/)[0] ?? "")?.[1];
-  const candidates = /* @__PURE__ */ new Set([base]);
-  for (const b of /* @__PURE__ */ new Set([source, wt.baseBranch, main])) {
-    if (!b || b === "HEAD" || b === branch) continue;
-    const mb = await run(["merge-base", b, branch]).catch(() => "");
-    if (mb && mb !== tip) candidates.add(mb);
-  }
-  let best = base;
-  let fewest = Infinity;
-  for (const c of candidates) {
-    const n = Number(await run(["rev-list", "--count", `${c}..${branch}`]).catch(() => "NaN"));
-    if (n < fewest) [best, fewest] = [c, n];
-  }
-  return best;
-}
-var GENERATED_DIRECTORIES = /* @__PURE__ */ new Set(["node_modules", ".vs", "__pycache__"]);
-var UNITY_GENERATED_DIRECTORIES = /* @__PURE__ */ new Set(["Library", "Temp", "Obj", "Logs", "UserSettings"]);
-var GENERATED_FILES = /* @__PURE__ */ new Set([".DS_Store", "Thumbs.db"]);
-function generatedNoise(root, file2) {
-  const parts = file2.split("/");
-  if (GENERATED_FILES.has(parts.at(-1))) return true;
-  return parts.slice(0, -1).some((part, index) => {
-    if (GENERATED_DIRECTORIES.has(part)) return true;
-    if (!UNITY_GENERATED_DIRECTORIES.has(part)) return false;
-    return existsSync8(toNamespacedPath2(join32(root, ...parts.slice(0, index), "ProjectSettings", "ProjectVersion.txt")));
-  });
-}
-async function autoCommitFiles(wt, log) {
-  const trust = trustArgs(wt.path);
-  const status = await git([...trust, "status", "--porcelain=v1", "-z", "--no-renames", "--untracked-files=all"], wt.path, log);
-  const included = [];
-  const unstage = [];
-  const skipped = [];
-  for (const entry of status.split("\0").filter(Boolean)) {
-    const file2 = entry.slice(3);
-    const literal2 = `:(literal)${file2}`;
-    let reason;
-    if (generatedNoise(wt.path, file2)) reason = "generated noise";
-    else if (entry.startsWith("??") || await git([...trust, "diff", "--ignore-all-space", "--ignore-cr-at-eol", "--no-ext-diff", "--no-textconv", "--no-renames", "HEAD", "--", literal2], wt.path, log)) {
-      if (!entry.startsWith("D ")) included.push(literal2);
-    } else reason = "whitespace only";
-    if (reason) {
-      skipped.push({ path: file2, reason });
-      if (entry[0] !== "?" && entry[0] !== " ") unstage.push(literal2);
-    }
-  }
-  for (const file2 of unstage) await git([...trust, "reset", "-q", "HEAD", "--", file2], wt.path, log);
-  for (const file2 of included) await git([...trust, "add", "-A", "--", file2], wt.path, log);
-  return skipped;
-}
-async function finishWorktree(wt, message, log) {
-  const trust = trustArgs(wt.path);
-  const skippedFiles = await autoCommitFiles(wt, log);
-  const status = await git([...trust, "diff", "--cached", "--name-only", "-z"], wt.path, log);
-  if (status) {
-    const identity = [];
-    for (const [key, fallback] of Object.entries(FALLBACK_COMMIT_IDENTITY)) {
-      const configured = (await git([...trustArgs(wt.repoRoot), "config", "--get", key], wt.repoRoot, log).catch(() => "")).trim();
-      identity.push("-c", `${key}=${configured || fallback}`);
-    }
-    await git([...trust, ...identity, "commit", "-q", "--no-verify", "-m", message], wt.path, log);
-  }
-  await unlockWorktree(wt.repoRoot, wt.path, log);
-  const current = await git([...trust, "branch", "--show-current"], wt.path, log).catch(() => "") || wt.branch;
-  const work = await workBranches(wt, current, log);
-  const branch = work.has(current) || !work.size ? current : [...work.keys()][0];
-  const from = await reviewBase(wt, log, branch);
-  const diffStat = await git(["diff", "--stat", `${from}..${branch}`], wt.repoRoot, log);
-  const files = (await git(["diff", "--name-only", "-z", `${from}..${branch}`], wt.repoRoot, log)).split("\0").filter(Boolean);
-  const otherBranches = [...work].filter(([name]) => name !== branch).map(([name, commits]) => ({ name, commits }));
-  return { changed: diffStat.length > 0 || otherBranches.length > 0, branch, otherBranches, diffStat: diffStat.slice(0, MAX_DIFFSTAT_CHARS), reviewBase: from, files, skippedFiles };
-}
-async function workBranches(wt, current, log) {
-  const trust = trustArgs(wt.path);
-  const visited = new Set((await git([...trust, "log", "-g", "--format=%H%x09%gs", "HEAD"], wt.path, log).catch(() => "")).split(/\r?\n/).filter((line) => line && !line.includes("	checkout: ")).map((line) => line.split("	")[0]));
-  const refs = (await git(["for-each-ref", "refs/heads", "--format=%(refname:short) %(objectname)"], wt.repoRoot, log).catch(() => "")).split(/\r?\n/).map((l) => l.split(" ")).filter((p) => p.length === 2);
-  const list = await git(["worktree", "list", "--porcelain"], wt.repoRoot, log).catch(() => "");
-  const here = resolve7(wt.path).toLowerCase();
-  const elsewhere = new Set(
-    list.split(/\r?\n\r?\n/).filter((block) => resolve7(/^worktree (.+)$/m.exec(block)?.[1] ?? "").toLowerCase() !== here).map((block) => /^branch refs\/heads\/(.+)$/m.exec(block)?.[1]).filter((b) => Boolean(b))
-  );
-  for (const b of [wt.baseBranch]) if (b) elsewhere.add(b);
-  const candidates = new Set(
-    [wt.branch, current, ...refs.filter(([, sha]) => visited.has(sha) && sha !== wt.base).map(([name]) => name)].filter((b) => b === wt.branch || !elsewhere.has(b))
-  );
-  const out = /* @__PURE__ */ new Map();
-  for (const name of candidates) {
-    const from = await reviewBase(wt, log, name).catch(() => null);
-    const commits = from ? Number(await git(["rev-list", "--count", `${from}..${name}`], wt.repoRoot, log).catch(() => "0")) : 0;
-    if (commits > 0) out.set(name, commits);
-  }
-  return out;
-}
-var HANDOFF_FILE = /(^|\/)(HANDOFF|TODO)\.md$/i;
-function handoffWarning(files) {
-  const hit = files.filter((f) => HANDOFF_FILE.test(f.replace(/\\/g, "/")));
-  return hit.length ? `WARNING: this job changed ${hit.join(", ")}. Delegated jobs should report in their answer and leave handoff and TODO files to you: check these changes before you take them.` : null;
-}
-function worktreeReport(wt, outcome) {
-  const branch = outcome.branch ?? wt.branch;
-  const skipped = outcome.skippedFiles ?? [];
-  const rule = skipped.length ? `Auto-commit skipped whitespace/line-ending-only changes and known generated noise; left on disk: ${skipped.map((f) => `${f.path} (${f.reason})`).join(", ")}.` : "";
-  const remove = "git -c core.longpaths=true worktree remove";
-  if (!outcome.changed) return [
-    `Worktree ${wt.path} (branch ${branch}) has ${skipped.length ? "no real changes" : "no changes"}; remove it with: ${remove}${skipped.length ? " --force" : ""} "${wt.path}" && git branch -D ${branch}`,
-    rule
-  ].filter(Boolean).join("\n");
-  const others = outcome.otherBranches ?? [];
-  const lines = [
-    `Changes are committed on branch ${branch} (worktree ${wt.path}), not in your working copy` + (branch !== wt.branch ? ` (the job worked on its own branch; ${wt.branch} was its starting branch)` : "") + ":"
-  ];
-  if (outcome.diffStat) lines.push(outcome.diffStat);
-  if (rule) lines.push(rule);
-  if (others.length) lines.push(`Also committed from this worktree: ${others.map((o) => `${o.name} (${o.commits} commit${o.commits === 1 ? "" : "s"})`).join(", ")}. Review those before removing anything.`);
-  lines.push(...[handoffWarning(outcome.files)].filter((w) => Boolean(w)));
-  if (outcome.diffStat) {
-    lines.push(`Review base: ${outcome.reviewBase} (job fork point).`);
-    lines.push(`Review: git diff ${outcome.reviewBase.slice(0, 12)}..${branch}`);
-    lines.push(`Take them: git merge ${branch}   (or git cherry-pick ${branch})`);
-  }
-  lines.push(`Discard: ${remove} --force "${wt.path}" && git branch -D ${[branch, ...others.map((o) => o.name)].join(" ")}`);
-  return lines.join("\n");
-}
-async function gitChangeSnapshot(cwd, log) {
-  let status;
-  try {
-    status = await git(["status", "--porcelain", "--untracked-files=all"], cwd, log);
-  } catch {
-    return null;
-  }
-  let root;
-  try {
-    root = await git(["rev-parse", "--show-toplevel"], cwd, log);
-  } catch {
-    return null;
-  }
-  const snap = /* @__PURE__ */ new Map();
-  for (const line of status.split(/\r?\n/).filter(Boolean)) {
-    const file2 = line.slice(3).replace(/^.* -> /, "").replace(/^"|"$/g, "");
-    let fp = line.slice(0, 2);
-    try {
-      fp += ":" + createHash5("sha1").update(readFileSync19(join32(root, file2))).digest("hex");
-    } catch {
-      fp += ":missing";
-    }
-    snap.set(file2, fp);
-  }
-  return snap;
-}
-function changedFiles(before, after) {
-  const out = /* @__PURE__ */ new Set();
-  for (const [f, fp] of after) if (before.get(f) !== fp) out.add(f);
-  for (const f of before.keys()) if (!after.has(f)) out.add(f);
-  return [...out].sort();
-}
-
-// src/mcp/siblings.ts
-var SiblingLink = class {
-  constructor(node2, job, maxHops, log) {
-    this.node = node2;
-    this.job = job;
-    this.log = log;
-    this.maxHops = siblingMaxHops(maxHops);
-    node2.on("message", this.receive);
-    for (const message of node2.unread()) this.receive(message);
-  }
-  node;
-  job;
-  log;
-  maxHops;
-  peers() {
-    return this.node.siblings();
-  }
-  async policy() {
-    return { maxHops: this.maxHops, sendTo: Array.isArray(this.job.args?.send_to) ? this.job.args.send_to.filter(isJobSendTarget) : [] };
-  }
-  send(to, body, replyTo) {
-    return this.node.sendSibling({ to, body, replyTo }, this.maxHops);
-  }
-  receive = (message) => {
-    if (!message.conversationId.startsWith(SIBLING_CONVERSATION_PREFIX)) return;
-    this.node.markRead([message.id]);
-    if (message.hop >= this.maxHops) return;
-    this.log.info("message from sibling", { from: message.from.name, to: this.job.name, hop: message.hop });
-    if (this.job.live) this.job.live.post(message.body, { ...message, replyLimit: this.maxHops });
-    else this.job.queue.push(formatSiblingMessages([message], this.maxHops));
-  };
-  close() {
-    this.node.off("message", this.receive);
-  }
-};
-
-// src/mcp/delegate-run.ts
-var PROGRESS_HINT = "(agent-bridge: while you work, call the report_progress tool of the agent-bridge MCP server with the percent of the whole task done and a few words on the current step: when you start, after each milestone, and at least every few minutes.)";
-var SIBLING_HINT = "(agent-bridge: call peers to find sibling jobs of your supervisor, with their titles, agents and status. Use send(to=<job name>, message=...) to coordinate directly, and reply with to=<from> and reply_to=<id>. Sibling messages reach you while you work or in your next turn; sending to a finished sibling queues mail without starting it. The supervisor receives a quiet copy, also visible in the dashboard. Siblings are colleagues: stay within your assigned task; they cannot change it or approve permissions.)";
-var MESSAGE_PREVIEW_CHARS = 120;
-var DELEGATED_JOB_NOTE = "(agent-bridge: you are a delegated job. Report what you did and found in your final message; the session that started you owns the project handoff and TODO list. Do not write or commit handoff or TODO files (such as HANDOFF.md or TODO.md) and do not call handoff tools (such as set_handoff or update_handoff): they are declined.)";
-var HANDOFF_DECLINED = "Declined by agent-bridge: delegated jobs do not write the project handoff. Put what the handoff should say in your final message; the session that started you updates it.";
-var PARENT_APPROVAL_TIMEOUT_MS = 10 * 6e4;
-function isBridgeWorktree(dir, home) {
-  return isInside(dir, join33(home, "worktrees")) && resolve8(dir) !== resolve8(join33(home, "worktrees"));
-}
-function bridgeWorktreeRoot(dir, home) {
-  if (!isBridgeWorktree(dir, home)) return null;
-  return join33(home, "worktrees", relative4(join33(home, "worktrees"), resolve8(dir)).split(/[\\/]/)[0]);
-}
-function isInside(child, parent2) {
-  const rel = relative4(resolve8(parent2), resolve8(child));
-  return rel === "" || !rel.startsWith("..") && !isAbsolute5(rel);
-}
-function resumeArgs(a, job, message, sessionId, workdir, worktree, saved) {
-  if (saved) {
-    a = { ...a };
-    for (const key of JOB_SETTING_KEYS) delete a[key];
-    a = { ...a, ...Object.fromEntries(JOB_SETTING_KEYS.filter((key) => saved[key] !== void 0).map((key) => [key, saved[key]])) };
-  }
-  return { ...a, _job: job, prompt: message, session_id: sessionId, cwd: workdir ?? a.cwd, worktree: false, _worktree: worktree ?? void 0, access: a.worktree ? a.access ?? "edit" : a.access };
-}
-function worktreeArgs(target, a, cfg, cwd, home) {
-  const worktree = Boolean(a.worktree || a._worktree || isBridgeWorktree(cwd, home));
-  const access = worktree ? a.access ?? "edit" : a.access;
-  const sandbox = target === "codex" && worktree && access === "edit" && a.sandbox === void 0 ? cfg.codexWorktreeSandbox ?? (cfg.codexSandbox === "read-only" ? "workspace-write" : cfg.codexSandbox) : a.sandbox;
-  return { ...a, access, ...sandbox !== void 0 ? { sandbox } : {} };
-}
-async function runDelegate(rc, target, a, signal, onProgress, background, job) {
-  const { cfg, log } = rc;
-  const profile = DELEGATION_TARGETS[target];
-  const defaultModel = profile.defaultModel(cfg);
-  const dlog = log.child("delegate");
-  const cwd = a.cwd || rc.cwd();
-  a = worktreeArgs(target, a, cfg, cwd, rc.home);
-  const access = a.access;
-  const wt = a._worktree ?? (a.worktree ? await createWorktree({ cwd, home: rc.home, jobId: randomUUID13().slice(0, 8), log: dlog }) : null);
-  const workdir = wt?.cwd ?? cwd;
-  const linkRoot = wt?.path ?? bridgeWorktreeRoot(workdir, rc.home);
-  const watchChanges = !wt && (access === "edit" || access === "ask" && target === "codex");
-  const before = watchChanges ? await gitChangeSnapshot(workdir, dlog) : null;
-  let relay = null;
-  let wiring;
-  const asked = [];
-  let relayCalls = 0;
-  const codexHash = target === "codex" ? codexPermissionHookHash() : null;
-  const askUser = rc.askUser ? async (r) => {
-    if (!job) return rc.askUser(r);
-    const decision = await waitForApproval(
-      job,
-      `${r.tool}: ${r.detail}`,
-      PARENT_APPROVAL_TIMEOUT_MS,
-      (body) => rc.jobs?.fromSubagent(job, body, null),
-      dlog,
-      rc.home,
-      r,
-      () => rc.askUser(r)
-    );
-    return decision.allow ? { allow: true } : { allow: false, message: decision.reason.replace(/^deny:\s*/, "") };
-  } : void 0;
-  try {
-    if (access === "ask" && askUser) {
-      const decide = async (r) => {
-        relayCalls++;
-        const d = await askUser(r);
-        asked.push(`${d.allow ? "allowed" : "denied"}: ${r.tool} ${r.detail.slice(0, 80)}`);
-        return d;
-      };
-      relay = new PermissionRelay(decide, dlog);
-      await relay.start();
-      wiring = { onPermission: decide, env: relay.childEnv(), codexHookTrusted: codexPermissionHookTrusted(rc.home) };
-    }
-  } catch (err) {
-    await relay?.stop();
-    throw err;
-  }
-  const forwarding = access === "ask" && supportsAsk(target, wiring);
-  const me = rc.me();
-  const allowedServers = job ? job.allowedServers ??= /* @__PURE__ */ new Set() : /* @__PURE__ */ new Set();
-  const autoApprove = [...cfg.autoApproveTools, ...access === "read" ? DESK_READ_PATTERNS : [], ...a.allow_tools ?? []];
-  const approve = async (r) => {
-    if (isHandoffToolCall(r)) {
-      asked.push(`declined (handoff tool): ${r.tool} ${r.detail.slice(0, 80)}`);
-      return { allow: false, message: HANDOFF_DECLINED };
-    }
-    if (r.tool.startsWith("mcp:") && allowedServers.has(r.tool)) return { allow: true };
-    if (isOwnServerCall(r) || isAutoApproved(r, autoApprove)) return { allow: true };
-    let d;
-    if (wiring) d = await wiring.onPermission(r);
-    else if (job && !job.foreground && rc.jobs) {
-      const hint = approvalHint(r);
-      const a2 = await rc.jobs.askParent(job, `${r.tool.replace(/^mcp:/, "MCP server ")}: ${r.detail}${hint}`, PARENT_APPROVAL_TIMEOUT_MS, r);
-      d = a2.allow ? { allow: true } : { allow: false, message: `Denied by supervisor ${me}: ${a2.reason || "no reason supplied"}` };
-      asked.push(`${d.allow ? "allowed" : "denied"} by ${me}: ${r.tool} ${r.detail.slice(0, 80)}`);
-    } else if (askUser) {
-      relayCalls++;
-      d = await askUser(r);
-      asked.push(`${d.allow ? "allowed" : "denied"}: ${r.tool} ${r.detail.slice(0, 80)}`);
-    } else d = r.tool.startsWith("mcp:") && access === "edit" ? { allow: true } : { allow: false, message: "No one to ask in this session." };
-    if (d.allow && r.tool.startsWith("mcp:")) allowedServers.add(r.tool);
-    return d;
-  };
-  let feed;
-  try {
-    feed = startRunFeed({
-      home: rc.home,
-      name: `${target}-${randomUUID13().slice(0, 8)}`,
-      header: `${target}${a.model ? ` (${a.model}${a.effort ? `, effort ${a.effort}` : ""})` : a.effort ? ` (effort ${a.effort})` : ""} in ${workdir}, access ${access ?? "default"}, by ${me}${a.session_id ? `, continues ${a.session_id}` : ""}
-${a.prompt}
----`,
-      forward: onProgress,
-      meta: {
-        by: me,
-        byAgent: rc.agent,
-        byCwd: rc.cwd(),
-        job: a._job,
-        // The job's current title (message_subagent can name or rename a job after it started).
-        title: typeof job?.args?.title === "string" && job.args.title || a.title?.trim() || void 0,
-        model: a.model ?? defaultModel ?? null,
-        effort: a.effort ?? cfg.effort[target] ?? defaultEffort(target, a.model ?? defaultModel ?? null),
-        access: access ?? "default",
-        permission: profile.permission(cfg, { ...a, access }),
-        workdir,
-        continues: a.session_id ?? null
-      }
-    });
-  } catch (err) {
-    await relay?.stop();
-    throw err;
-  }
-  let link = null;
-  let siblingLink = null;
-  let jobNode = null;
-  const liveDeliveries = /* @__PURE__ */ new Set();
-  let steering = null;
-  if (job && rc.jobs) {
-    const jobs = rc.jobs;
-    jobNode = rc.jobNode ?? new BridgeNode({
-      pipePath: resolvePipePath(rc.home),
-      token: loadOrCreateToken(rc.home),
-      dbPath: resolveDbPath(rc.home),
-      agent: "other",
-      jobAgent: job.agent,
-      id: `job:${job.id}`,
-      name: job.name,
-      cwd: workdir,
-      jobOwner: job.supervisor ?? job.owner ?? me,
-      jobParent: me,
-      jobTitle: a.title,
-      jobSendTo: a.send_to,
-      autoWake: false,
-      canHostBroker: false,
-      log: dlog
-    });
-    siblingLink = new SiblingLink(jobNode, job, cfg.maxHops, dlog);
-    void jobNode.start().catch((err) => dlog.warn("sibling bridge unavailable; retrying", { err: err.message }));
-    const l = new ParentLink(
-      me,
-      (body, replyTo) => {
-        feed.report(`answer to ${me}: ${body.split("\n")[0].slice(0, 120)}`, `answer to ${me}: ${body}`);
-        jobs.fromSubagent(job, body, replyTo);
-      },
-      dlog,
-      (percent, note) => {
-        job.percent = percent;
-        job.progressNote = note;
-        feed.meta({ percent, progressNote: note, progressAt: Date.now() });
-        feed.report(`progress ${percent}%${note ? `: ${note}` : ""}`);
-      },
-      siblingLink
-    );
-    try {
-      await l.start();
-      link = l;
-      job.live = {
-        post: (m, sibling) => {
-          const from = sibling?.from.name ?? me;
-          const message = sibling ? formatSiblingMessages([sibling], siblingLink?.maxHops) : m;
-          feed.report(`message from ${from}: ${m.split("\n")[0].slice(0, MESSAGE_PREVIEW_CHARS)}`, `message from ${from}: ${m}`);
-          if (!steering) return void l.post(message, sibling);
-          const s = steering;
-          const delivery = s.send(message, Boolean(sibling)).then(
-            (ok) => {
-              if (!ok) l.post(message, sibling);
-            },
-            () => {
-              l.post(message, sibling);
-            }
-          );
-          liveDeliveries.add(delivery);
-          void delivery.finally(() => liveDeliveries.delete(delivery));
-        }
-      };
-    } catch (err) {
-      dlog.warn("live link unavailable; messages to this subagent wait until it finishes", { err: err.message });
-    }
-  }
-  const writableRoots = access === "edit" || a.sandbox === "workspace-write" ? await gitDirsOutside(workdir, dlog) : void 0;
-  if (writableRoots?.length) dlog.info("extra writable folders for the subagent", { workdir, writableRoots });
-  if (job) job.retitle = (title) => {
-    feed.meta({ title });
-    void jobNode?.updateJob({ jobTitle: title }).catch(() => {
-    });
-    void steering?.rename?.(title).catch((err) => dlog.warn("could not rename the Codex thread", { err: err.message }));
-  };
-  const slotOwner = { id: `${a._job ?? target}-${randomUUID13()}`, pid: process.pid };
-  let slots = null;
-  let slotTimer;
-  let res;
-  try {
-    if (Object.keys(cfg.resourceSlots).length) {
-      slots = new ResourceSlots(rc.home);
-      slotTimer = setInterval(() => {
-        try {
-          slots?.renew(slotOwner);
-        } catch (err) {
-          dlog.warn("could not renew resource slots", { err: err.message });
-        }
-      }, SLOT_RENEW_MS);
-      slotTimer.unref();
-    }
-    res = await retryTransient(
-      {
-        // With a live link the subagent can report how far it is (report_progress; shown in the dashboard).
-        // A new session learns once that it reports back and leaves the handoff alone.
-        prompt: [a.prompt, a.session_id ? null : DELEGATED_JOB_NOTE, linkRoot ? WORKTREE_LINK_HINT : null, link ? PROGRESS_HINT : null, link ? SIBLING_HINT : null, resourceSlotHint(cfg.resourceSlots, bundledCli())].filter(Boolean).join("\n\n"),
-        title: typeof job?.args?.title === "string" && job.args.title || a.title,
-        cwd: workdir,
-        sessionId: a.session_id ?? null,
-        timeoutSec: a.timeout_sec ?? (background ? MAX_JOB_TIMEOUT_SEC : DEFAULT_DELEGATE_TIMEOUT_SEC),
-        model: a.model ?? defaultModel,
-        effort: a.effort ?? cfg.effort[target] ?? null,
-        // What it really runs (a CLI default or an alias resolved), for the dashboard.
-        onInfo: (info) => feed.meta({ ...info.model ? { model: info.model } : {}, ...info.permission ? { permission: info.permission } : {}, effort: info.effort ?? a.effort ?? cfg.effort[target] ?? defaultEffort(target, info.model ?? null) }),
-        log: dlog,
-        signal,
-        onProgress: feed.report,
-        extraEnv: { ...link?.childEnv(), ...slots ? { [ENV.home]: rc.home, [SLOT_OWNER_ENV]: slotOwner.id, [SLOT_PID_ENV]: String(slotOwner.pid) } : {} },
-        writableRoots,
-        onSession: (id) => {
-          feed.meta({ session: id });
-          if (job) rc.jobs?.note(job, { sessionId: id, workdir, worktree: wt });
-        },
-        approve,
-        onDenied: (message) => {
-          link?.post(message);
-        },
-        // Someone answers approve's questions: the user ("ask" relay or a dialog) or, for a background
-        // subagent, the parent agent. Else targets keep their own behavior (Claude and opencode).
-        canApprove: Boolean(wiring) || Boolean(job && !job.foreground && rc.jobs) || Boolean(rc.askUser && rc.userCanAnswer?.()),
-        live: job ? {
-          from: me,
-          onSteering: (s) => {
-            steering = s;
-            const title = job.args?.title;
-            if (s && typeof title === "string" && title !== a.title) job.retitle?.(title);
-          },
-          onAnswer: (answer) => {
-            feed.report(`answer to ${me}: ${answer.split("\n")[0].slice(0, 120)}`, `answer to ${me}: ${answer}`);
-            rc.jobs?.fromSubagent(job, answer, null, true);
-          }
-        } : void 0
-      },
-      (req) => profile.run(cfg, req, { ...a, access, relay: wiring })
-    );
-    feed.meta({ session: res.sessionId });
-    feed.end(res.isError ? "failed" : "done", res.text);
-  } catch (err) {
-    if (err instanceof DelegateError && err.sessionId) feed.meta({ session: err.sessionId });
-    feed.end(`failed: ${err?.message ?? err}`);
-    if (wt && err instanceof Error) err.message += `
-
-Its worktree (with any partial work) is ${wt.path} on branch ${wt.branch}.`;
-    if (linkRoot && err instanceof Error) {
-      try {
-        const warning = worktreeLinkWarning(scanWorktreeLinks(linkRoot));
-        if (warning) err.message += `
-
-${warning}`;
-      } catch (scanError) {
-        err.message += `
-WARNING: worktree link inspection failed: ${scanError.message}`;
-      }
-    }
-    throw err;
-  } finally {
-    if (job) denyPendingApprovals(job);
-    clearInterval(slotTimer);
-    if (slots) {
-      try {
-        slots.release(slotOwner);
-      } catch (err) {
-        dlog.warn("could not release resource slots; leases will expire", { err: err.message });
-      } finally {
-        slots.close();
-      }
-    }
-    siblingLink?.close();
-    if (jobNode && !rc.jobNode) await jobNode.stop();
-    await Promise.allSettled(liveDeliveries);
-    await relay?.stop();
-    if (job) job.retitle = null;
-    if (job && link) {
-      job.live = null;
-      job.queue.unshift(...await link.close());
-    }
-  }
-  const notes = [`Step-by-step log: ${feed.logPath}`];
-  if (target === "codex") {
-    const mappingNote = codexPathReport(codexDriveMappings(`${cwd}
-${a.prompt}`));
-    if (mappingNote) notes.push(mappingNote);
-  }
-  let linkedWorktreeRoot = false;
-  if (linkRoot) {
-    try {
-      const scan = scanWorktreeLinks(linkRoot);
-      linkedWorktreeRoot = scan.externalLinks.some((link2) => link2.path === resolve8(linkRoot));
-      const warning = worktreeLinkWarning(scan);
-      if (warning) notes.push(warning);
-    } catch (err) {
-      notes.push(`WARNING: worktree link inspection failed: ${err.message}`);
-    }
-  }
-  if (access !== "ask" && asked.length) notes.push(`Approval requests forwarded:
-${asked.join("\n")}`);
-  if (access === "ask") {
-    notes.push(
-      forwarding ? asked.length ? `Permission requests forwarded to the user:
-${asked.join("\n")}` : "No permission requests were needed." : t("ask.unsupported", { agent: target })
-    );
-  }
-  const usage = formatUsage(res.details);
-  if (usage) notes.push(usage);
-  if (wt && linkedWorktreeRoot) {
-    notes.push("Auto-commit skipped: the worktree root is an external link. Restore worktree isolation before running git or cleanup through it.");
-  } else if (wt) {
-    try {
-      const message = subagentCommitMessage({ answer: res.text, task: a.prompt, job: a._job, agent: target, model: a.model ?? defaultModel });
-      notes.push(worktreeReport(wt, await finishWorktree(wt, message, dlog)));
-    } catch (err) {
-      notes.push(`Could not commit the changes in worktree ${wt.path} (branch ${wt.branch}): ${err.message}`);
-    }
-  } else if (before) {
-    const after = await gitChangeSnapshot(workdir, dlog);
-    const changed = after ? changedFiles(before, after) : [];
-    if (access === "ask" && target === "codex" && forwarding && codexHash) {
-      if (relayCalls > 0) recordCodexHookObservation(rc.home, codexHash, "verified");
-      else if (changed.length) {
-        recordCodexHookObservation(rc.home, codexHash, "failed");
-        log.warn("codex changed files without the permission hook asking; forwarding disabled for this hook version", { changed });
-        notes.push(t("ask.hookBypassed", { files: changed.join(", ") }));
-      }
-    }
-    if (access === "edit" || changed.length) notes.push(changed.length ? `Files changed in your working copy:
-${changed.join("\n")}` : "No files changed.");
-    const warning = handoffWarning(changed);
-    if (warning) notes.push(warning);
-  }
-  return { ...res, workdir, worktree: wt ?? void 0, text: notes.length ? `${res.text}
-
----
-${notes.join("\n\n")}` : res.text };
-}
-
-// src/mcp/job-host.ts
-import { spawn as spawn8 } from "node:child_process";
-import { mkdirSync as mkdirSync17, readdirSync as readdirSync9, statSync as statSync7 } from "node:fs";
-import { join as join34 } from "node:path";
-var RUNNERS_DIR_NAME = "jobs";
-var CONTROL_CONVERSATION_PREFIX = "jobctl-";
-var RUNNER_HEARTBEAT_MS = 15e3;
-var STALE_MS = 6 * RUNNER_HEARTBEAT_MS;
-var START_GRACE_MS = 3e4;
-var KEEP_FILES_MS = 7 * 24 * 60 * 60 * 1e3;
-var DETACH_LAUNCHER = "require('node:child_process').spawn(process.execPath,process.argv.slice(1),{detached:true,stdio:'ignore',windowsHide:true}).unref()";
-function runnerStatePath(home, id) {
-  return join34(home, RUNNERS_DIR_NAME, `${id}.json`);
-}
-function specPath(home, id) {
-  return join34(home, RUNNERS_DIR_NAME, `${id}.spec.json`);
-}
-function readRunnerState(home, id) {
-  try {
-    const s = readJsonStore(runnerStatePath(home, id), void 0, (value) => isRecord(value) && typeof value.pid === "number" && typeof value.status === "string");
-    return s && typeof s.pid === "number" && typeof s.status === "string" ? s : null;
-  } catch {
-    return null;
-  }
-}
-var JobRunners = class {
-  constructor(node2, home, cli, log) {
-    this.node = node2;
-    this.home = home;
-    this.cli = cli;
-    this.log = log;
-    try {
-      const dir = join34(home, RUNNERS_DIR_NAME);
-      const keepMs = retentionLimit("AGENT_BRIDGE_RUNNER_KEEP_MS", KEEP_FILES_MS);
-      if (!keepMs) return;
-      for (const f of readdirSync9(dir)) {
-        const path = join34(dir, f);
-        if (!f.endsWith(".json") || f.endsWith(".spec.json") || Date.now() - statSync7(path).mtimeMs <= keepMs) continue;
-        const id = f.replace(/\.json$/, "");
-        const state = readRunnerState(home, id);
-        if (state?.status === "done" || state?.status === "failed") {
-          archiveFile(path);
-          archiveFile(specPath(home, id));
-        }
-      }
-    } catch (err) {
-      if (err.code !== "ENOENT") this.log.warn("could not archive runner files", { err: String(err) });
-    }
-  }
-  node;
-  home;
-  cli;
-  log;
-  /** Start a turn of this job in a new runner; null when that is not possible (the turn then runs in the server). */
-  start(job, spec) {
-    try {
-      mkdirSync17(join34(this.home, RUNNERS_DIR_NAME), { recursive: true });
-      const statePath = runnerStatePath(this.home, job.id);
-      const file2 = specPath(this.home, job.id);
-      assertWritableStore(readJsonStore(statePath, this.log));
-      assertWritableStore(readJsonStore(file2, this.log));
-      archiveFile(statePath);
-      const full = {
-        ...spec,
-        home: this.home,
-        job: {
-          id: job.id,
-          name: job.name,
-          agent: job.agent,
-          model: job.model,
-          prompt: job.prompt,
-          startedAt: job.startedAt,
-          args: job.args,
-          sessionId: job.sessionId,
-          workdir: job.workdir,
-          worktree: job.worktree,
-          owner: job.owner,
-          supervisor: job.supervisor,
-          allowedServers: [...job.allowedServers ?? []]
-        }
-      };
-      archiveFile(file2);
-      writeJsonStore(file2, { ...full }, null);
-      const args = [this.cli, "job-runner", file2];
-      let pid = null;
-      if (process.platform === "win32") {
-        const launcher = spawn8(process.execPath, ["-e", DETACH_LAUNCHER, ...args], { stdio: "ignore", windowsHide: true });
-        launcher.on("error", (err) => this.log.warn("could not start a job runner", { job: job.name, err: err.message }));
-      } else {
-        const child = spawn8(process.execPath, args, { detached: true, stdio: "ignore" });
-        child.on("error", (err) => this.log.warn("could not start a job runner", { job: job.name, err: err.message }));
-        child.unref();
-        pid = child.pid ?? null;
-      }
-      this.log.info("job runner started", { job: job.name, pid });
-      return { pid, peer: job.name, startedAt: Date.now() };
-    } catch (err) {
-      this.log.warn("job runner unavailable; the subagent runs inside this server", { job: job.name, err: err.message });
-      return null;
-    }
-  }
-  state(job) {
-    return readRunnerState(this.home, job.id);
-  }
-  alive(job, state) {
-    if (!state) {
-      const host = job.host;
-      return Boolean(host) && Date.now() - host.startedAt < START_GRACE_MS && (host.pid === null || pidAlive(host.pid));
-    }
-    return pidAlive(state.pid) && Date.now() - state.updatedAt < STALE_MS;
-  }
-  send(job, control) {
-    const to = this.state(job)?.peer ?? job.host?.peer ?? job.name;
-    this.node.send({ to, body: JSON.stringify(control), conversationId: `${CONTROL_CONVERSATION_PREFIX}${job.id}` }, { quiet: true }).catch((err) => this.log.warn("could not reach the job runner", { job: job.name, control: control.type, err: err.message }));
-  }
-  kill(job) {
-    const pid = this.state(job)?.pid ?? job.host?.pid;
-    if (pid) killPid(pid);
-  }
-};
 
 // src/mcp/dashboard-control.ts
 function attachDashboardJobControl(node2, jobs, log) {
@@ -47679,10 +48297,10 @@ var CHANNEL_NOTIFICATION = "notifications/claude/channel";
 var OPENCODE_NOTIFICATION = "notifications/agent-bridge/message";
 var CODEX_SANDBOX_META = "codex/sandbox-state-meta";
 var CWD_DISCOVERY_GRACE_MS = 15e3;
-var MAX_TITLE_CHARS2 = 80;
+var MAX_TITLE_CHARS3 = 80;
 var SUBAGENT_TOOLS = /* @__PURE__ */ new Set(["peers", "send", "report_progress", "hook_event"]);
 var STAND_IN_RECHECK_MS = 3e4;
-var KEPT_ARGS = ["model", "effort", "cwd", "timeout_sec", "worktree", "access", "sandbox", "permission_mode", "auto_approve", "allow_tools", "send_to", "title"];
+var KEPT_ARGS = ["host", "model", "effort", "cwd", "timeout_sec", "worktree", "access", "sandbox", "permission_mode", "auto_approve", "allow_tools", "send_to", "title"];
 var PLUGIN_ROOT = resolve9(dirname9(fileURLToPath2(import.meta.url)), "..");
 function pathFromUriOrPath(v) {
   if (typeof v !== "string" || !v) return null;
@@ -47693,7 +48311,7 @@ function pathFromUriOrPath(v) {
       return null;
     }
   }
-  return isAbsolute6(v) ? v : null;
+  return isAbsolute7(v) ? v : null;
 }
 function text(s, isError = false) {
   return { content: [{ type: "text", text: s }], ...isError ? { isError: true } : {} };
@@ -47777,7 +48395,7 @@ async function startServer(argv = process.argv.slice(2)) {
   const launchKnown = new Promise((r) => launchInspected = r);
   const ctx = { agent, cfg, node: node2, log, home, cwd: () => node2?.cwd ?? cwd, channelActive: () => channel, parent: delegated ? parentFromEnv() : null, launchKnown };
   if (node2) {
-    ctx.jobs = new JobManager(node2, log.child("jobs"), join35(home, JOBS_FILE), cfg.maxJobs);
+    ctx.jobs = new JobManager(node2, log.child("jobs"), join37(home, JOBS_FILE), cfg.maxJobs);
     node2.on("replaced", () => ctx.jobs?.setDormant(true));
     node2.on("reclaimed", () => ctx.jobs?.setDormant(false));
     const cli = process.env[ENV.jobRunner] === "0" ? null : bundledCli();
@@ -47945,14 +48563,14 @@ async function startServer(argv = process.argv.slice(2)) {
       adopt();
       setTimeout(adopt, STAND_IN_RECHECK_MS).unref();
     });
-    const join36 = () => node2.start().catch((err) => log.error("could not join the bridge", { err: err.message }));
+    const join38 = () => node2.start().catch((err) => log.error("could not join the bridge", { err: err.message }));
     if (ctx.headless) {
       log.info("headless claude -p run: not joining the bridge unless a bridge tool is used");
     } else if (cwdKnown) {
-      void join36();
+      void join38();
     } else {
       log.info("project directory unknown yet; deferring bridge join", { graceMs: CWD_DISCOVERY_GRACE_MS });
-      setTimeout(() => void join36(), CWD_DISCOVERY_GRACE_MS).unref();
+      setTimeout(() => void join38(), CWD_DISCOVERY_GRACE_MS).unref();
     }
   }
 }
@@ -48065,6 +48683,7 @@ function registerTools(mcp, ctx, targets) {
         for (const j of recent) lines.push(t("peers.recentJob", { name: j.name + (j.args?.title ? ` "${j.args.title}"` : ""), status: j.status, ago: formatDuration(Date.now() - (j.finishedAt ?? Date.now())), session: j.sessionId ? "can be continued" : "no session" }));
       }
       lines.push(...waits.pending(n).map(resumeWaitHint));
+      for (const j of [...jobs, ...waiting, ...recent]) if (j.remote) lines.push(`Remote job ${j.name}: ${j.remote.host}/${j.remote.name}`);
       return text(lines.join("\n"));
     })
   );
@@ -48249,6 +48868,7 @@ function registerTools(mcp, ctx, targets) {
     const profile = DELEGATION_TARGETS[target];
     const defaultModel = profile.defaultModel(cfg);
     const schema = {
+      host: external_exports.string().regex(NETWORK_NAME_PATTERN).optional().describe("Paired instance name to run on. Requires an absolute cwd on that PC and its explicit remoteJobs allowlist."),
       prompt: external_exports.string().min(1).describe("Complete, self-contained instructions"),
       model: external_exports.string().regex(MODEL_NAME_PATTERN).optional().describe(modelParameterDescription(target, cfg, ctx.home, profile.modelExample)),
       effort: external_exports.string().regex(/^[A-Za-z0-9_-]{1,20}$/).optional().describe(`Thinking level (reasoning effort), e.g. ${profile.effortExample}; list_models shows what each model supports. Default: ${cfg.effort[target] ?? `${target}'s own default`} (config "effort"; shown in the dashboard).`),
@@ -48261,18 +48881,21 @@ function registerTools(mcp, ctx, targets) {
       worktree: external_exports.boolean().optional().describe(
         "Run in a separate git worktree on its own branch (implies access=edit). Your working copy stays untouched; the result explains how to review, merge or discard the changes."
       ),
-      title: external_exports.string().min(1).max(MAX_TITLE_CHARS2).describe('A short title for this subagent, 3-7 words, like a chat title (e.g. "Fix castle gate alignment"). Required. Shown in peers and the dashboard.'),
+      title: external_exports.string().min(1).max(MAX_TITLE_CHARS3).describe('A short title for this subagent, 3-7 words, like a chat title (e.g. "Fix castle gate alignment"). Required. Shown in peers and the dashboard.'),
       allow_tools: external_exports.array(external_exports.string().min(1).max(200)).max(50).optional().describe(
         'MCP tools the subagent may call without asking you, as "server.tool" patterns with *, e.g. ["pair-desk.get_*", "pair-desk.list_*"] (reads only), "pair-desk:worker" (reads, comments, progress, plans and issue edits; excludes status, builds and handoff writes), or "server" for all of its tools.'
       ),
       send_to: external_exports.array(external_exports.string().refine(isJobSendTarget, "Use an exact local session name, not an agent kind, broadcast or job name")).max(MAX_JOB_SEND_TARGETS).optional().describe("Explicitly allow this job to send to these exact local session names, including replies to messages received by its supervisor. No other external recipients are allowed. Kept across continuations."),
       ...profile.schema
     };
-    const run = (a, signal, onProgress, background2, job) => runDelegate(rc, target, a, signal, onProgress, background2, job);
+    const run = (a, signal, onProgress, background2, job) => {
+      if (a.host) return Promise.reject(new Error("Remote jobs require the remote runner; local execution is unavailable for a host request."));
+      return runDelegate(rc, target, a, signal, onProgress, background2, job);
+    };
     const background = (args, base) => Object.assign((signal, onProgress, job) => run(args(job), signal, onProgress, true, job), {
       hosted: (job) => {
         const a = args(job);
-        if (!ctx.runners || a.access === "ask") return null;
+        if (!ctx.runners || a.access === "ask" && !a.host) return null;
         return ctx.runners.start(job, { target, args: a, base, owner: node2?.name ?? ctx.agent, byAgent: ctx.agent, cwd: ctx.cwd(), cfg });
       }
     });
@@ -48290,7 +48913,17 @@ function registerTools(mcp, ctx, targets) {
         inputSchema: schema
       },
       guarded(askName, async (a, extra) => {
+        if (a.host && (!a.cwd || a.send_to?.length)) throw new BridgeError("bad_request", "Remote jobs require an absolute remote cwd; send_to is local-only.");
+        if (a.host) {
+          const { host, send_to, ...args } = a;
+          remoteSpawnArgsSchema.parse(args);
+          if (!ctx.jobs) throw new BridgeError("bad_request", "Remote asks require a supervisor session.");
+        }
         const tracked = ctx.jobs?.track(target, a.model ?? defaultModel, a.prompt, resumeFor(a), keep(a));
+        if (a.host && tracked) {
+          tracked.job.remote = { host: a.host, name: `${target}-job-${tracked.job.id}` };
+          ctx.jobs.persist();
+        }
         const report = progressReporter(extra, log);
         const onProgress = (m) => {
           tracked?.onProgress(m);
@@ -48298,7 +48931,7 @@ function registerTools(mcp, ctx, targets) {
         };
         let res;
         try {
-          res = await run({ ...a, _job: tracked?.job.name }, tracked ? AbortSignal.any([extra.signal, tracked.job.controller.signal]) : extra.signal, onProgress, false, tracked?.job);
+          res = a.host && tracked ? await runRemoteAsk(requireNode(), target, a, tracked.job, extra.signal, onProgress) : await run({ ...a, _job: tracked?.job.name }, tracked ? AbortSignal.any([extra.signal, tracked.job.controller.signal]) : extra.signal, onProgress, false, tracked?.job);
         } catch (err) {
           tracked?.end({ error: err });
           log.warn("ask failed", { job: tracked?.job.name, err: err.message });
@@ -48325,6 +48958,12 @@ ${res.text || t("delegate.empty")}`, res.isError);
         inputSchema: schema
       },
       guarded(spawnName, async (a) => {
+        if (a.host && (!a.cwd || a.send_to?.length)) throw new BridgeError("bad_request", "Remote jobs require an absolute remote cwd; send_to is local-only.");
+        if (a.host) {
+          const { host, send_to, ...args } = a;
+          remoteSpawnArgsSchema.parse(args);
+        }
+        if (a.host && !ctx.runners) throw new BridgeError("bad_request", "Remote jobs require the bundled runner. Update and reload this session.");
         const jobs = ctx.jobs;
         if (!jobs) throw new BridgeError("bad_request", t("err.delegatedSession"));
         if (!jobs.canStart()) return text(t("jobs.limit", { max: jobs.limit }), true);
@@ -48394,7 +49033,7 @@ ${r.lines.map((l) => `  ${l}`).join("\n")}`).join("\n\n"));
       inputSchema: {
         job: external_exports.string().min(1).describe('Job name, e.g. "codex-job-1a2b3c4d" or "opencode-ask-9f8e7d6c" (see peers)'),
         message: external_exports.string().optional().describe("The follow-up. Default: continue where you stopped and finish the task."),
-        title: external_exports.string().min(1).max(MAX_TITLE_CHARS2).optional().describe("Give the job a (new) short title, 3-7 words; use it for jobs listed without a title."),
+        title: external_exports.string().min(1).max(MAX_TITLE_CHARS3).optional().describe("Give the job a (new) short title, 3-7 words; use it for jobs listed without a title."),
         effort: external_exports.string().regex(/^[A-Za-z0-9_-]{1,20}$/).optional().describe("Thinking level for this continuation and the job's later turns (e.g. low, medium, high, xhigh). A turn already running keeps its level: to apply it now, cancel_subagent and continue it with message_subagent."),
         model: external_exports.string().regex(MODEL_NAME_PATTERN).optional().describe("Model for this continuation and later turns. A running turn keeps its model."),
         access: external_exports.enum(ACCESS_LEVELS).optional().describe("Access for the next turn: read, ask or edit. Replaces earlier exact permission overrides."),
@@ -48416,7 +49055,7 @@ ${r.lines.map((l) => `  ${l}`).join("\n")}`).join("\n\n"));
       const wasRunning = existing?.status === "running";
       if (a.title?.trim()) {
         jobs.setTitle(a.job, a.title.trim());
-        if (existing?.agent === "codex" && existing.sessionId && existing.status !== "running") {
+        if (existing?.agent === "codex" && !existing.remote && existing.sessionId && existing.status !== "running") {
           await codexAppServerCall(cfg.codexBin, existing.workdir ?? ctx.cwd(), log, "thread/name/set", { threadId: existing.sessionId, name: a.title.trim() }).catch((err) => log.warn("could not rename the Codex thread", { err: err.message }));
         }
       }

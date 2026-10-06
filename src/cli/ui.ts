@@ -118,6 +118,7 @@ function readMeta(file: string): RunMeta {
 export interface StoredJobView {
   owner: string | null;
   next: Record<string, unknown>;
+  remote?: { host: string; name: string };
 }
 
 /** Jobs from the sessions' store (`{ jobs: [...] }`; before 0.26 a bare array). Read-only and best effort. */
@@ -132,12 +133,13 @@ export function readStoredJobs(home: string): Map<string, StoredJobView> {
   const list: unknown[] = Array.isArray(stored) ? stored : Array.isArray((stored as { jobs?: unknown })?.jobs) ? (stored as { jobs: unknown[] }).jobs : [];
   for (const j of list) {
     if (!j || typeof j !== "object") continue;
-    const { name, owner, args } = j as { name?: unknown; owner?: unknown; args?: unknown };
+    const { name, owner, args, remote } = j as { name?: unknown; owner?: unknown; args?: unknown; remote?: { host: string; name: string } };
     if (typeof name !== "string") continue;
     const saved = args && typeof args === "object" ? (args as Record<string, unknown>) : {};
     out.set(name, {
       owner: typeof owner === "string" && owner ? owner : null,
       next: Object.fromEntries(JOB_SETTING_KEYS.filter((key) => saved[key] !== undefined).map((key) => [key, saved[key]])),
+      ...(remote && typeof remote.host === "string" && typeof remote.name === "string" ? { remote } : {}),
     });
   }
   return out;
@@ -381,7 +383,7 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
         runs,
         messages: recentMessages(dbPath),
         // Saved next-turn settings per job (message_subagent or the dashboard may have changed them).
-        jobs: Object.fromEntries([...readStoredJobs(opts.home)].map(([name, j]) => [name, { next: j.next }])),
+        jobs: Object.fromEntries([...readStoredJobs(opts.home)].map(([name, j]) => [name, { next: j.next, ...(j.remote ? { remote: j.remote } : {}) }])),
       });
     }
     if (req.method === "GET" && url.pathname === "/api/network") {

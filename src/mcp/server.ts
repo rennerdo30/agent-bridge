@@ -20,11 +20,14 @@ import {
   MAX_WAIT_SEC,
 } from "../core/constants.js";
 import { bundledCli, currentDelegateDepth, DelegateError, failureCause, killAllDelegates, resolveBinary } from "../core/delegate.js";
+import { runRemoteAsk } from "./remote-ask.js";
 import { readUsage, codexAppServerCall } from "../core/usage.js";
 import { t } from "../core/i18n.js";
 import { createLogger, type Logger } from "../core/logger.js";
 import { BridgeNode } from "../core/node.js";
 import { MAX_TRANSFER_ENTRIES } from "../network/files.js";
+import { NETWORK_NAME_PATTERN } from "../network/constants.js";
+import { remoteSpawnArgsSchema } from "../network/remote-job-protocol.js";
 import { resolveDbPath, resolveHome, resolvePipePath } from "../core/paths.js";
 import { inspectClaudeLaunch } from "../core/procinfo.js";
 import { loadOrCreateToken } from "../core/token.js";
@@ -66,7 +69,7 @@ const SUBAGENT_TOOLS = new Set(["peers", "send", "report_progress", "hook_event"
 /** The options of a job worth keeping to continue it the same way later (no prompt, no internals). */
 /** When to look again for jobs under a stand-in name (a replaced server of the session may still be leaving). */
 const STAND_IN_RECHECK_MS = 30_000;
-const KEPT_ARGS = ["model", "effort", "cwd", "timeout_sec", "worktree", "access", "sandbox", "permission_mode", "auto_approve", "allow_tools", "send_to", "title"] as const;
+const KEPT_ARGS = ["host", "model", "effort", "cwd", "timeout_sec", "worktree", "access", "sandbox", "permission_mode", "auto_approve", "allow_tools", "send_to", "title"] as const;
 /** Plugin root: dist/server.mjs lives one level below it. */
 const PLUGIN_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -580,6 +583,7 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
         for (const j of recent) lines.push(t("peers.recentJob", { name: j.name + (j.args?.title ? ` "${j.args.title}"` : ""), status: j.status, ago: formatDuration(Date.now() - (j.finishedAt ?? Date.now())), session: j.sessionId ? "can be continued" : "no session" }));
       }
       lines.push(...waits.pending(n).map(resumeWaitHint));
+      for (const j of [...jobs, ...waiting, ...recent]) if (j.remote) lines.push(`Remote job ${j.name}: ${j.remote.host}/${j.remote.name}`);
       return text(lines.join("\n"));
     }),
   );
@@ -788,6 +792,7 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
     const profile = DELEGATION_TARGETS[target];
     const defaultModel = profile.defaultModel(cfg);
     const schema = {
+      host: z.string().regex(NETWORK_NAME_PATTERN).optional().describe("Paired instance name to run on. Requires an absolute cwd on that PC and its explicit remoteJobs allowlist."),
       prompt: z.string().min(1).describe("Complete, self-contained instructions"),
       model: z
         .string()
@@ -841,8 +846,10 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
       ...profile.schema,
     };
     /** Run the delegate in this process. */
-    const run = (a: DelegateArgs, signal: AbortSignal, onProgress: ((message: string) => void) | undefined, background: boolean, job?: Job): Promise<RunResult> =>
-      runDelegate(rc, target, a, signal, onProgress, background, job);
+    const run = (a: DelegateArgs, signal: AbortSignal, onProgress: ((message: string) => void) | undefined, background: boolean, job?: Job): Promise<RunResult> => {
+      if (a.host) return Promise.reject(new Error("Remote jobs require the remote runner; local execution is unavailable for a host request."));
+      return runDelegate(rc, target, a, signal, onProgress, background, job);
+    };
     /**
      * A background turn: in a detached job runner where possible (it survives a restart of this server), else in
      * here. "ask" runs stay here: their questions go to the user through this server's MCP connection.
@@ -851,7 +858,7 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
       Object.assign((signal: AbortSignal, onProgress: (message: string) => void, job: Job) => run(args(job), signal, onProgress, true, job), {
         hosted: (job: Job) => {
           const a = args(job);
-          if (!ctx.runners || a.access === "ask") return null;
+          if (!ctx.runners || (a.access === "ask" && !a.host)) return null;
           return ctx.runners.start(job, { target, args: a, base, owner: node?.name ?? ctx.agent, byAgent: ctx.agent, cwd: ctx.cwd(), cfg });
         },
       });
@@ -878,8 +885,18 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
         inputSchema: schema,
       },
       guarded(askName, async (a: DelegateArgs, extra) => {
+        if (a.host && (!a.cwd || a.send_to?.length)) throw new BridgeError("bad_request", "Remote jobs require an absolute remote cwd; send_to is local-only.");
+        if (a.host) {
+          const { host, send_to, ...args } = a;
+          remoteSpawnArgsSchema.parse(args);
+          if (!ctx.jobs) throw new BridgeError("bad_request", "Remote asks require a supervisor session.");
+        }
         // Visible in peers while it runs (the caller is blocked, but its coordinator may ask).
         const tracked = ctx.jobs?.track(target, a.model ?? defaultModel, a.prompt, resumeFor(a), keep(a));
+        if (a.host && tracked) {
+          tracked.job.remote = { host: a.host, name: `${target}-job-${tracked.job.id}` };
+          ctx.jobs!.persist();
+        }
         const report = progressReporter(extra, log);
         const onProgress = (m: string) => {
           tracked?.onProgress(m);
@@ -888,7 +905,9 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
         let res;
         try {
           // cancel_subagent can stop it too (e.g. from its coordinator), not only the caller.
-          res = await run({ ...a, _job: tracked?.job.name }, tracked ? AbortSignal.any([extra.signal, tracked.job.controller.signal]) : extra.signal, onProgress, false, tracked?.job);
+          res = a.host && tracked
+            ? await runRemoteAsk(requireNode(), target, a, tracked.job, extra.signal, onProgress)
+            : await run({ ...a, _job: tracked?.job.name }, tracked ? AbortSignal.any([extra.signal, tracked.job.controller.signal]) : extra.signal, onProgress, false, tracked?.job);
         } catch (err) {
           tracked?.end({ error: err });
           log.warn("ask failed", { job: tracked?.job.name, err: (err as Error).message });
@@ -920,6 +939,9 @@ ${res.text || t("delegate.empty")}`, res.isError);
         inputSchema: schema,
       },
       guarded(spawnName, async (a: DelegateArgs) => {
+        if (a.host && (!a.cwd || a.send_to?.length)) throw new BridgeError("bad_request", "Remote jobs require an absolute remote cwd; send_to is local-only.");
+        if (a.host) { const { host, send_to, ...args } = a; remoteSpawnArgsSchema.parse(args); }
+        if (a.host && !ctx.runners) throw new BridgeError("bad_request", "Remote jobs require the bundled runner. Update and reload this session.");
         const jobs = ctx.jobs;
         if (!jobs) throw new BridgeError("bad_request", t("err.delegatedSession"));
         if (!jobs.canStart()) return text(t("jobs.limit", { max: jobs.limit }), true);
@@ -1032,7 +1054,7 @@ ${res.text || t("delegate.empty")}`, res.isError);
       if (a.title?.trim()) {
         jobs.setTitle(a.job, a.title.trim());
         // A finished Codex job's thread is renamed here; a running one renames it itself (job.retitle).
-        if (existing?.agent === "codex" && existing.sessionId && existing.status !== "running") {
+        if (existing?.agent === "codex" && !existing.remote && existing.sessionId && existing.status !== "running") {
           await codexAppServerCall(cfg.codexBin, existing.workdir ?? ctx.cwd(), log, "thread/name/set", { threadId: existing.sessionId, name: a.title.trim() }).catch((err) => log.warn("could not rename the Codex thread", { err: (err as Error).message }));
         }
       }

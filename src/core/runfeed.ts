@@ -23,6 +23,8 @@ export interface RunFeed {
 
 /** Who started a run and how it relates to others; the dashboard groups runs with it. Kept next to the log. */
 export interface RunMeta {
+  /** Remote job location, on the requesting PC's mirrored feed. */
+  remote?: { host: string; name: string };
   /** Peer name of the session that started it, its agent kind and project folder. */
   by?: string;
   byAgent?: string;
