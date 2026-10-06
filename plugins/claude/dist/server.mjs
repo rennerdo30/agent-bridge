@@ -49809,6 +49809,19 @@ code.addr { font-family: var(--mono); font-size: 12px; padding: 2px 8px; border-
 .rows > a.nest2 { padding-left: 64px; background: var(--panel-2); }
 .rows > a.nest1::after, .rows > a.nest2::after { content: "\u21B3"; position: absolute; left: 22px; top: 50%; transform: translateY(-50%); color: var(--faint); }
 .rows > a.nest2::after { left: 46px; }
+/* A subagent's own CLI subagents: compact leaves on a tree guide beneath their parent row. */
+.rows > a:has(+ a.leaf) { border-bottom-color: transparent; }
+.rows > a.leaf { --x: calc(32px + var(--ind, 0px)); grid-template-columns: 22px minmax(0, 1fr) auto; gap: 10px; padding: 6px 16px 6px calc(var(--x) + 24px); border-bottom: 0; background: transparent; }
+.rows > a.leaf:not(:has(+ a.leaf)) { padding-bottom: 12px; border-bottom: 1px solid var(--panel-2); }
+.rows > a.leaf::after { content: ""; position: absolute; left: var(--x); top: 0; height: calc(50% - 3px); width: 14px; border-left: 1.5px solid var(--line); border-bottom: 1.5px solid var(--line); border-bottom-left-radius: 7px; }
+.rows > a.leaf:not(:has(+ a.leaf))::after { height: calc(50% - 6px); }
+.rows > a.leaf:has(+ a.leaf)::before { content: ""; position: absolute; left: var(--x); top: 0; bottom: 0; border-left: 1.5px solid var(--line); width: 0; background: none; }
+.rows > a.leaf .av { width: 22px; height: 22px; border-radius: 6px; font-size: 11px; }
+.rows > a.leaf b { font-size: 13px; font-weight: 600; }
+.rows > a.leaf .own-tag { font-size: 11px; color: var(--faint); font-weight: 500; }
+.rows > a.leaf .side { font-size: 11.5px; }
+.rows > a.leaf:hover { background: var(--panel-2); }
+.rows > a.leaf.sel { background: var(--accent-soft); }
 .load-older { display: block; width: 100%; padding: 11px 16px; text-align: left; margin: 0; border-top: 1px solid var(--panel-2); font-size: 12.5px; }
 .kids-box { margin-left: 36px; padding: 10px 14px; border-radius: 10px; background: var(--panel-2); display: flex; flex-direction: column; gap: 6px; max-width: min(780px, calc(100% - 36px)); }
 .kids-box a { font-size: 13px; color: var(--text); }
@@ -50663,7 +50676,8 @@ function renderSessionList(x, selKey) {
     const ownKids = (g, depth) => {
       if (!g.job) return "";
       if (g.status === "running" || g.key === selKey) void loadJobChildren(g.job);
-      return ((jobChildren.get(g.job) || {}).list || []).map((s) => indent(jobChildRow(g, s, selKey), depth)).join("");
+      // Leaves line up with their parent's avatar; a parent that is itself nested is indented by its own depth.
+      return ((jobChildren.get(g.job) || {}).list || []).map((s) => jobChildRow(g, s, selKey, Math.min(depth - 1, 2) * 24)).join("");
     };
     const row = (g, depth) => indent(groupRow(g, g.key === selKey, false), depth) + ownKids(g, depth + 1) + kids(g).map((c) => row(c, depth + 1)).join("");
     return list.filter((g) => !g.parentJob || !byJob.has(g.parentJob)).map((g) => row(g, 0)).join("");
@@ -51700,10 +51714,10 @@ async function loadJobChildren(job) {
   } catch {}
 }
 /** A row for one of a subagent's own CLI subagents in the session column, beneath that subagent. */
-function jobChildRow(g, s, selKey) {
+function jobChildRow(g, s, selKey, indentPx) {
   const key = JOB_CHILD_PREFIX + g.job + "|" + s.id;
-  return '<a href="' + href(g.owner, key) + '" class="' + (key === selKey ? "sel" : "") + '">' + av(g.agent) +
-    '<div style="min-width:0"><div class="line1"><b class="ell">' + esc(s.title || "subagent") + '</b><span class="chip own">own</span></div><div class="task">' + esc(g.agent + " subagent of " + (g.title || g.job) + " \xB7 read-only") + "</div></div>" +
+  return '<a href="' + href(g.owner, key) + '" class="leaf' + (key === selKey ? " sel" : "") + '" style="--ind:' + (indentPx || 0) + 'px" title="' + esc(g.agent + "'s own subagent of " + (g.title || g.job) + " (read-only)") + '">' + av(g.agent) +
+    '<div style="min-width:0"><div class="line1"><b class="ell">' + esc(s.title || "subagent") + '</b><span class="own-tag">own subagent</span></div></div>' +
     '<div class="side"><span>' + ago(s.updatedAt) + "</span></div></a>";
 }
 function jobChildrenHtml(g) {
