@@ -94,6 +94,8 @@ a { color: inherit; text-decoration: none; }
 .sdot { width: 7px; height: 7px; border-radius: 50%; flex: none; background: var(--faint); }
 .sdot.running { background: var(--busy); animation: pulse 1.4s infinite; } .sdot.done { background: var(--ok); }
 .sdot.failed { background: var(--bad); } .sdot.interrupted { background: var(--warn); }
+.chip.own { color: var(--accent); background: var(--accent-soft); border-color: transparent; font-size: 10.5px; padding: 0 6px; }
+.tree-row .ico { width: 7px; display: inline-flex; justify-content: center; font-size: 11px; }
 .tree-empty { padding: 16px 8px; color: var(--faint); font-size: 12.5px; }
 .side-foot { border-top: 1px solid var(--line); padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; }
 .side-foot .theme { align-self: flex-start; }
@@ -588,6 +590,7 @@ function buildModel(s) {
 function render() {
   if (!state) return;
   model = buildModel(state);
+  for (const x of model.sessions) if (hasNativeChat(x)) void loadNativeList(x);
   renderSide();
   const inSession = Boolean(route.session), inNetwork = Boolean(route.network);
   $("overview").classList.toggle("hidden", inSession || inNetwork);
@@ -627,32 +630,154 @@ function sideGroups(q) {
   return out;
 }
 
+/* ---- The CLIs' own conversations and subagents, read from their transcripts (GET /api/sessions/...) ---- */
+const CHAT_KEY = "~chat", NATIVE_PREFIX = "~native:";
+/** Native subagent lists are re-read this often per session; the open chat follows like a run log. */
+const NATIVE_LIST_MS = 10_000;
+/** Chat items kept per conversation in the page (the oldest go first). */
+const MAX_CHAT_ITEMS = 3000;
+/** Session name -> { at, list } of its native subagents. */
+const nativeLists = new Map();
+/** "<session>|<key>" -> { items, byId, next, loading, error }. */
+const chats = new Map();
+
+/** Only sessions of this PC with a known CLI session have a transcript to read. */
+const hasNativeChat = (x) => Boolean(x.live && x.peer && x.peer.sessionId && !pcOf(x.name));
+function selectedKey(x) {
+  if (route.group && route.group.startsWith("~")) return route.group;
+  return route.group && x.groups.some((g) => g.key === route.group) ? route.group : x.groups[0] ? x.groups[0].key : hasNativeChat(x) ? CHAT_KEY : null;
+}
+const sessionApi = (name) => "/api/sessions/" + encodeURIComponent(name);
+
+async function loadNativeList(x) {
+  const cached = nativeLists.get(x.name);
+  if (cached && Date.now() - cached.at < NATIVE_LIST_MS) return;
+  nativeLists.set(x.name, { at: Date.now(), list: cached ? cached.list : [] });
+  try {
+    const r = await fetch(sessionApi(x.name) + "/subagents");
+    if (!r.ok) return;
+    const d = await r.json();
+    nativeLists.set(x.name, { at: Date.now(), list: [...(d.subagents || [])].sort((a, b) => b.updatedAt - a.updatedAt) });
+    if (model) renderSide();
+  } catch {
+    // Shown as no native subagents; the next round tries again.
+  }
+}
+
+/** Fetch the new part of a transcript (several chunks when it is long) and merge it. */
+async function pullChat(x, key) {
+  const id = x.name + "|" + key;
+  let c = chats.get(id);
+  if (!c) chats.set(id, (c = { items: [], byId: new Map(), next: null, loading: false, error: "" }));
+  if (c.loading) return c;
+  c.loading = true;
+  const url = key === CHAT_KEY ? sessionApi(x.name) + "/chat" : sessionApi(x.name) + "/subagents/" + encodeURIComponent(key.slice(NATIVE_PREFIX.length));
+  try {
+    for (let i = 0; i < LOG_PAGES; i++) {
+      const r = await fetch(url + (c.next ? "?from=" + encodeURIComponent(c.next) : ""));
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(r.status === 409 ? "This session has not reported its CLI session yet: it appears after its next prompt." : d.error || "HTTP " + r.status);
+      for (const item of d.items || []) {
+        // opencode streams parts: a later version of the same item replaces the earlier one.
+        if (item.id && c.byId.has(item.id)) c.items[c.byId.get(item.id)] = item;
+        else { if (item.id) c.byId.set(item.id, c.items.length); c.items.push(item); }
+      }
+      if (c.items.length > MAX_CHAT_ITEMS) {
+        c.items = c.items.slice(-MAX_CHAT_ITEMS);
+        c.byId = new Map(c.items.flatMap((it, n) => (it.id ? [[it.id, n]] : [])));
+      }
+      const moved = d.next && d.next !== c.next;
+      c.next = d.next || c.next;
+      if (!moved || !(d.items || []).length) break;
+    }
+    c.error = "";
+  } catch (err) {
+    c.error = err.message;
+  } finally {
+    c.loading = false;
+  }
+  return c;
+}
+
+/** A transcript as chat: your prompts, the agent's answers, tool steps folded like a run log. */
+function chatHtml(items, agent, session) {
+  let html = "", buf = [], block = 0;
+  const flush = () => {
+    if (!buf.length) return;
+    const rows = buf.map((s) => '<div class="step"><span class="t">' + esc(time(s.at)) + '</span><span class="k">' + esc(s.tool || "tool") + "</span><code title=\\"" + esc(s.summary || "") + "\\">" + esc(s.summary || "") + "</code></div>").join("");
+    const id = session + ":native-steps:" + block++;
+    html += buf.length > FOLD_STEPS
+      ? '<div class="steps"><details data-open="' + esc(id) + '"' + (opened.has(id) ? " open" : "") + "><summary>" + buf.length + " steps · last: " + esc((buf[buf.length - 1].tool || "") + " " + (buf[buf.length - 1].summary || "").slice(0, 70)) + "</summary>" + rows + "</details></div>"
+      : '<div class="steps">' + rows + "</div>";
+    buf = [];
+  };
+  for (const it of items) {
+    if (it.kind === "tool") { buf.push(it); continue; }
+    flush();
+    if (it.kind === "user") html += '<div class="msgrow me">' + av("other", true) + '<div class="bubble"><span class="who">You · ' + esc(time(it.at)) + "</span>" + md(it.text || "") + "</div></div>";
+    else if (it.kind === "assistant") html += '<div class="msgrow">' + av(agent, true) + '<div class="bubble">' + md(it.text || "") + "</div></div>";
+    else if (it.kind === "subagent" && it.subagent) html += '<div class="sys">↳ started its own subagent <a href="' + href(session, NATIVE_PREFIX + it.subagent.id) + '">' + esc(it.subagent.title || it.subagent.id) + "</a></div>";
+  }
+  flush();
+  return html;
+}
+
+async function showNative(x, key) {
+  const p = x.peer || {};
+  const native = key.startsWith(NATIVE_PREFIX) ? ((nativeLists.get(x.name) || {}).list || []).find((s) => NATIVE_PREFIX + s.id === key) : null;
+  $("cAvatar").innerHTML = av(p.agent || "other");
+  $("cTitle").innerHTML = key === CHAT_KEY ? "Chat <span class=\\"chip\\">" + esc(p.agent || "") + "</span>" : esc((native && native.title) || "Subagent") + ' <span class="chip own">own subagent</span>';
+  $("cSub").textContent = (key === CHAT_KEY ? "the session's own conversation" : "a subagent of " + p.agent + " itself") + " · read-only" + (p.cwd ? " · " + p.cwd : "");
+  $("cHint").classList.add("hidden");
+  const c = await pullChat(x, key);
+  if (route.session !== x.name || route.group !== key) return;
+  const body = c.error ? '<div class="empty">' + esc(c.error) + "</div>" : c.items.length ? chatHtml(c.items, p.agent || "other", x.name) : '<div class="empty">' + (c.loading ? "Loading…" : "Nothing in this conversation yet.") + "</div>";
+  if (body === lastChat) return;
+  lastChat = body;
+  const chat = $("chat"), atEnd = chat.scrollHeight - chat.scrollTop - chat.clientHeight < 40;
+  chat.innerHTML = body;
+  if ($("follow").checked && (atEnd || chat.dataset.key !== x.name + key)) chat.scrollTop = chat.scrollHeight;
+  chat.dataset.key = x.name + key;
+}
+
 function sideSession(x, q) {
   const p = x.peer, searching = Boolean(q);
   const open = searching || (x.live !== sideToggled.has(x.name));
   const cur = x.name === route.session;
-  const selKey = cur ? (route.group && x.groups.some((g) => g.key === route.group) ? route.group : x.groups[0] && x.groups[0].key) : null;
+  const selKey = cur ? selectedKey(x) : null;
+  const chat = hasNativeChat(x);
   let kids = searching && !sessionMatches(x, q) ? x.groups.filter((g) => groupMatches(g, q)) : x.groups;
   const all = searching || opened.has("side-all:" + x.name);
   const recent = kids.filter((g) => g.status === "running" || Date.now() - g.updatedAt < ARCHIVE_AFTER_MS || g.key === selKey);
   const shown = all ? kids : (recent.length ? recent : kids).slice(0, SIDE_RECENT);
-  const hidden = kids.length - shown.length;
+  // The CLI's own subagents (read from its transcript), after agent-bridge's.
+  const natives = chat ? ((nativeLists.get(x.name) || {}).list || []).filter((s) => !searching || sessionMatches(x, q) || String(s.title || "").toLowerCase().includes(q)) : [];
+  const nativeRecent = natives.filter((s) => Date.now() - s.updatedAt < ARCHIVE_AFTER_MS || NATIVE_PREFIX + s.id === selKey);
+  const nativeShown = all ? natives : nativeRecent.slice(0, SIDE_RECENT);
+  const hidden = kids.length - shown.length + natives.length - nativeShown.length;
+  const anyKids = chat || x.groups.length > 0;
   const sub = shortName(x.name) + (p ? " · " + (p.activity || "connected") : " · ended");
   const row = '<div class="tree-sess' + (cur ? " cur" : "") + (x.live ? "" : " ended") + '">' +
-    '<button type="button" class="twist" data-fold="' + esc(x.name) + '" aria-expanded="' + open + '" aria-label="Show or hide its subagents"' + (x.groups.length ? "" : " disabled") + ">▶</button>" +
+    '<button type="button" class="twist" data-fold="' + esc(x.name) + '" aria-expanded="' + open + '" aria-label="Show or hide its subagents"' + (anyKids ? "" : " disabled") + ">▶</button>" +
     '<a href="' + href(x.name) + '" title="' + esc(x.name + (p ? " · " + p.cwd : "")) + '"' + (cur ? ' aria-current="page"' : "") + ">" + (p ? dot(p.activity) : '<span class="dot off"></span>') +
     '<span class="lbl ell">' + esc(sessionTitle(x)) + '<small class="ell">' + esc(sub) + "</small></span>" +
     (x.running ? '<span class="count" title="subagents working">' + x.running + "</span>" : "") + "</a></div>";
-  if (!open || !x.groups.length) return row;
-  const kidRows = shown.map((g) => {
+  if (!open || !anyKids) return row;
+  const chatRow = chat && (!searching || sessionMatches(x, q))
+    ? '<a class="tree-row chat' + (selKey === CHAT_KEY ? " sel" : "") + '" href="' + href(x.name, CHAT_KEY) + '" title="The session\\'s own conversation (read-only)"><span class="ico" aria-hidden="true">💬</span><span class="lbl">Chat</span></a>'
+    : "";
+  const nativeRows = nativeShown.map((s) =>
+    '<a class="tree-row' + (NATIVE_PREFIX + s.id === selKey ? " sel" : "") + '" href="' + href(x.name, NATIVE_PREFIX + s.id) + '" title="' + esc((s.title || "subagent") + " · its own subagent, read-only") + '">' +
+    '<span class="sdot ' + esc(s.status) + '"></span><span class="lbl">' + esc(s.title || "subagent") + '</span><span class="chip own">own</span></a>').join("");
+  const kidRows = chatRow + shown.map((g) => {
     const meta = g.status === "running" ? (g.percent !== null ? g.percent + "%" : "working") : ago(g.updatedAt).replace(" ago", "");
     return '<a class="tree-row' + (g.key === selKey ? " sel" : "") + '" href="' + href(x.name, g.key) + '" title="' + esc(groupLabel(g) + " · " + g.status) + '">' +
       '<span class="sdot ' + esc(g.status) + '"></span><span class="lbl">' + esc(groupLabel(g)) + '</span><span class="meta">' + esc(meta) + "</span></a>";
   }).join("");
-  const more = hidden > 0 || (all && !searching && kids.length > SIDE_RECENT)
+  const more = hidden > 0 || (all && !searching && (kids.length > SIDE_RECENT || natives.length > nativeRecent.length))
     ? '<button type="button" class="tree-row more" data-more="' + esc(x.name) + '">' + (hidden > 0 ? hidden + " more" : "show fewer") + "</button>"
     : "";
-  return row + '<div class="tree-kids">' + kidRows + more + "</div>";
+  return row + '<div class="tree-kids">' + kidRows + nativeRows + more + "</div>";
 }
 
 function renderSide() {
@@ -764,6 +889,11 @@ function renderSession() {
   const sel = route.group && x.groups.find((g) => g.key === route.group) ? route.group : x.groups[0] && x.groups[0].key;
   const mine = state.messages.filter((m) => m.from_name === x.name || m.to_target === x.name || String(m.recipients || "").split(", ").includes(x.name));
   $("sMsgs").innerHTML = messagesHtml(mine);
+  const key = selectedKey(x);
+  if (key && key.startsWith("~")) {
+    renderJobForm(null);
+    return void showNative(x, key);
+  }
   const g = sel && model.groups.get(sel);
   renderJobForm(g);
   if (g) void showGroup(g);

@@ -23,7 +23,7 @@ function page() {
   const fetch = vi.fn(() => new Promise(() => {}));
   const document = { getElementById: element, documentElement: { dataset: {} }, addEventListener() {}, querySelectorAll: () => [] };
   const location = { hash: "" };
-  const api = new Function("document", "window", "location", "localStorage", "setInterval", "fetch", `${script}\nreturn { renderJobForm, renderSendForm, modelsCard, renderNetwork, renderSide, setModel: (m) => { model = m; state = { peers: [] }; }, setRoute: (r) => route = r, setNet: (n, i) => { net = n; invite = i || null; } };`)(document, { addEventListener() {} }, location, { setItem() {}, removeItem() {} }, () => 0, fetch);
+  const api = new Function("document", "window", "location", "localStorage", "setInterval", "fetch", `${script}\nreturn { renderJobForm, renderSendForm, modelsCard, renderNetwork, renderSide, chatHtml, setModel: (m) => { model = m; state = { peers: [] }; }, setRoute: (r) => route = r, setNet: (n, i) => { net = n; invite = i || null; } };`)(document, { addEventListener() {} }, location, { setItem() {}, removeItem() {} }, () => 0, fetch);
   return { ...api, element, fetch, location };
 }
 const group = (key: string) => ({ key, job: `codex-job-${key}`, owner: "claude-app", agent: "codex", status: "done", percent: null, turns: [{ name: `run-${key}`, startedAt: 0 }] });
@@ -229,5 +229,38 @@ describe("sessions sidebar", () => {
     const p = setup();
     p.element("sideTree").listeners.get("click")({ target: { closest: (sel: string) => (sel === "[data-fold]" ? { dataset: { fold: "claude-strategy-game" } } : null) } });
     expect(p.element("sideTree").innerHTML).not.toContain("Fix the path finder");
+  });
+});
+
+describe("native chats", () => {
+  it("renders a transcript as chat with folded tool steps and escaped text", () => {
+    const p = page();
+    const tools = [1, 2, 3, 4].map((n) => ({ kind: "tool", at: 0, tool: "Read", summary: "file" + n + ".ts" }));
+    const html = p.chatHtml([
+      { kind: "user", at: 0, text: "Fix <the> build" },
+      ...tools,
+      { kind: "assistant", at: 0, text: "Done." },
+      { kind: "subagent", at: 0, subagent: { id: "a1", title: "Explore", agent: "claude" } },
+    ], "claude", "claude-app");
+    expect(html).toContain("Fix &lt;the&gt; build");
+    expect(html).toContain("4 steps");
+    expect(html).toContain("Done.");
+    expect(html).toContain('href="#/s/claude-app/~native%3Aa1"');
+  });
+
+  it("offers the session's own chat only for local sessions that reported their CLI session", () => {
+    const p = page();
+    const peer = (sessionId?: string) => ({ agent: "claude", activity: "idle", cwd: "E:/Development/app", startedAt: Date.now(), sessionId });
+    const sessions = [
+      { name: "claude-app", live: true, running: 0, groups: [], children: [], peer: peer("s-1") },
+      { name: "claude-new", live: true, running: 0, groups: [], children: [], peer: peer() },
+      { name: "mac.local/claude-app", live: true, running: 0, groups: [], children: [], peer: peer("s-2") },
+    ];
+    p.setModel({ sessions, byName: new Map(sessions.map((x) => [x.name, x])) });
+    p.setRoute({ session: null });
+    p.renderSide();
+    const html = p.element("sideTree").innerHTML;
+    expect(html.match(/tree-row chat/g)?.length).toBe(1);
+    expect(html).toContain('href="#/s/claude-app/~chat"');
   });
 });
