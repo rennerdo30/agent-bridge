@@ -52,6 +52,16 @@ describe("network pairing", () => {
     expect(loadConfig(home, "other", nullLogger, {}).network.enabled).toBe(false);
   });
 
+  it.skipIf(process.platform !== "win32")("removes explicit grants the key folder already had (as on CI runners)", () => {
+    const dir = join(home, "network");
+    mkdirSync(dir, { recursive: true });
+    // Everyone (S-1-1-0) with read access, as an explicit grant like those on a runner's temp folder.
+    execFileSync(join(process.env.SystemRoot || "C:\\Windows", "System32", "icacls.exe"), [dir, "/grant", "*S-1-1-0:(OI)(CI)R", "/Q"], { stdio: "pipe" });
+    expect(() => new PairingStore(home, "office-pc")).not.toThrow();
+    const acl = execFileSync(join(process.env.SystemRoot || "C:\\Windows", "System32", "icacls.exe"), [dir], { encoding: "utf8" });
+    expect((acl.match(/:\(/g) ?? []).length).toBe(1);
+  });
+
   it("stores owner-only secrets, persists identity, expires and consumes invitations", () => {
     let now = Date.now();
     const store = new PairingStore(home, "windows", () => now);

@@ -36489,7 +36489,7 @@ import { basename as basename2, join as join3 } from "node:path";
 import { homedir } from "node:os";
 import { join } from "node:path";
 var APP_NAME = "agent-bridge";
-var APP_VERSION = "0.26.0";
+var APP_VERSION = "0.26.1";
 var PROTOCOL_VERSION = 2;
 var ENV = {
   home: "AGENT_BRIDGE_HOME",
@@ -38530,12 +38530,15 @@ var codeSchema = publicIdentitySchema.extend({ v: external_exports.literal(NETWO
 function keyFingerprint(key) {
   return createHash("sha256").update(Buffer.from(key, "hex")).digest("hex");
 }
+var ACL_PRINCIPAL = /([^\s:][^:]*?):\(/;
 function protect(path, mode) {
   if (process.platform !== "win32") return chmodSync2(path, mode);
-  const sid = execFileSync(WHOAMI, ["/user", "/fo", "csv", "/nh"], { encoding: "utf8", windowsHide: true }).match(/S-\d+(?:-\d+)+/)?.[0];
-  if (!sid) throw new Error("cannot identify the account for network key permissions");
+  const [account, sid] = (execFileSync(WHOAMI, ["/user", "/fo", "csv", "/nh"], { encoding: "utf8", windowsHide: true }).match(/"([^"]+)","(S-\d+(?:-\d+)+)"/) ?? []).slice(1);
+  if (!sid || !account) throw new Error("cannot identify the account for network key permissions");
   const grant = mode === OWNER_DIR_MODE ? `*${sid}:(OI)(CI)F` : `*${sid}:F`;
   execFileSync(ICACLS, [path, "/inheritance:r", "/grant:r", grant, "/Q"], { windowsHide: true, stdio: "pipe" });
+  const others = execFileSync(ICACLS, [path], { encoding: "utf8", windowsHide: true }).split(/\r?\n/).map((line) => (line.startsWith(path) ? line.slice(path.length) : line).trim()).map((line) => ACL_PRINCIPAL.exec(line)?.[1]).filter((p) => Boolean(p) && p.toLowerCase() !== account.toLowerCase());
+  for (const principal of new Set(others)) execFileSync(ICACLS, [path, "/remove:g", principal, "/Q"], { windowsHide: true, stdio: "pipe" });
   const acl = execFileSync(ICACLS, [path], { encoding: "utf8", windowsHide: true });
   if ((acl.match(/:\(/g) ?? []).length !== 1 || acl.includes("(I)")) throw new Error("network key location has additional ACL grants; restrict it to the current account");
 }

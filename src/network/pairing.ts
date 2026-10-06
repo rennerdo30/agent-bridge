@@ -26,13 +26,25 @@ export function keyFingerprint(key: string): string {
   return createHash("sha256").update(Buffer.from(key, "hex")).digest("hex");
 }
 
-/** Windows modes do not restrict ACLs, so remove inherited grants and grant the current SID. */
+/** An `icacls <path>` line: "<path> DOMAIN\\name:(flags)" or "    DOMAIN\\name:(flags)". */
+const ACL_PRINCIPAL = /([^\s:][^:]*?):\(/;
+
+/**
+ * Windows modes do not restrict ACLs: remove inherited grants, grant the current SID, and remove every other
+ * explicit grant the folder already had (CI runners' temp folders carry some).
+ */
 function protect(path: string, mode: number): void {
   if (process.platform !== "win32") return chmodSync(path, mode);
-  const sid = execFileSync(WHOAMI, ["/user", "/fo", "csv", "/nh"], { encoding: "utf8", windowsHide: true }).match(/S-\d+(?:-\d+)+/)?.[0];
-  if (!sid) throw new Error("cannot identify the account for network key permissions");
+  const [account, sid] = (execFileSync(WHOAMI, ["/user", "/fo", "csv", "/nh"], { encoding: "utf8", windowsHide: true }).match(/"([^"]+)","(S-\d+(?:-\d+)+)"/) ?? []).slice(1);
+  if (!sid || !account) throw new Error("cannot identify the account for network key permissions");
   const grant = mode === OWNER_DIR_MODE ? `*${sid}:(OI)(CI)F` : `*${sid}:F`;
   execFileSync(ICACLS, [path, "/inheritance:r", "/grant:r", grant, "/Q"], { windowsHide: true, stdio: "pipe" });
+  const others = execFileSync(ICACLS, [path], { encoding: "utf8", windowsHide: true })
+    .split(/\r?\n/)
+    .map((line) => (line.startsWith(path) ? line.slice(path.length) : line).trim())
+    .map((line) => ACL_PRINCIPAL.exec(line)?.[1])
+    .filter((p): p is string => Boolean(p) && p!.toLowerCase() !== account.toLowerCase());
+  for (const principal of new Set(others)) execFileSync(ICACLS, [path, "/remove:g", principal, "/Q"], { windowsHide: true, stdio: "pipe" });
   const acl = execFileSync(ICACLS, [path], { encoding: "utf8", windowsHide: true });
   if ((acl.match(/:\(/g) ?? []).length !== 1 || acl.includes("(I)")) throw new Error("network key location has additional ACL grants; restrict it to the current account");
 }
