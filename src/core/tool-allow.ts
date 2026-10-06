@@ -37,6 +37,7 @@ export function mcpToolOf(r: { tool: string; detail: string }): { server: string
 }
 
 const DESK_WORKER_PRESET = "pair-desk:worker";
+export const DESK_READ_PATTERNS = ["pair-desk.get_*", "pair-desk.list_*"];
 const DESK_WORKER_PATTERNS = ["pair-desk.get_*", "pair-desk.list_*", "pair-desk.comment", "pair-desk.progress", "pair-desk.set_plan", "pair-desk.update_step", "pair-desk.create_issue", "pair-desk.update_issue"];
 
 /** Suggest explicit worker access without implying that read patterns cover desk writes. */

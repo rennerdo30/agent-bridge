@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_CONFIG } from "../src/core/config.js";
@@ -23,6 +23,79 @@ const context = (): RunContext => ({ agent: "claude", cfg: { ...DEFAULT_CONFIG }
 const job = (): Job => ({ id: "test", name: "codex-job-test", agent: "codex", model: null, prompt: "task", startedAt: Date.now(), controller: new AbortController(), progress: null, status: "running", sessionId: null, workdir: null, worktree: null, queue: [] });
 
 describe("delegation approval routing", () => {
+  it.each(["codex", "claude", "opencode"] as const)("allows desk reads by default without granting writes for %s", async (target) => {
+    const rc = context();
+    const j = job();
+    vi.spyOn(DELEGATION_TARGETS[target], "run").mockImplementation(async (_cfg, req) => {
+      for (const server of ["pair-desk", "pair_desk", "plugin_agent-pair-programming_pair-desk"]) {
+        for (const tool of ["get_handoff", "get_issue", "list_issues"]) {
+          expect(await req.approve!({ agent: target, tool: `mcp:${server}`, detail: `Allow server to run tool "${tool}"?` })).toEqual({ allow: true });
+        }
+      }
+      expect(await req.approve!({ agent: target, tool: "mcp:pair-desk", detail: "set_plan: {}" })).toMatchObject({ allow: false });
+      expect(await req.approve!({ agent: target, tool: "mcp:other", detail: "get_handoff: {}" })).toMatchObject({ allow: false });
+      expect(await req.approve!({ agent: target, tool: "mcp:pair-desk", detail: "update_handoff: {}" })).toMatchObject({ allow: false });
+      return { sessionId: "saved", text: "done", isError: false, details: {} };
+    });
+    await runDelegate(rc, target, { title: "read", prompt: "task", access: "read" }, j.controller.signal, undefined, true, j);
+    expect(rc.jobs!.askParent).toHaveBeenCalledTimes(2);
+  });
+
+  it("forwards job cleanup to its supervisor with the full command", async () => {
+    const rc = context();
+    const j = job();
+    const command = "[System.IO.Directory]::Delete('C:/worktree/Library')";
+    vi.spyOn(DELEGATION_TARGETS.codex, "run").mockImplementation(async (_cfg, req) => {
+      expect(await req.approve!({ agent: "codex", tool: "command", detail: command })).toMatchObject({ allow: false, message: expect.stringContaining("Denied by supervisor parent") });
+      return { sessionId: "saved", text: "cleanup denied", isError: false, details: {} };
+    });
+    const result = await runDelegate(rc, "codex", { title: "cleanup", prompt: "task", access: "edit" }, j.controller.signal, undefined, true, j);
+    expect(rc.jobs!.askParent).toHaveBeenCalledWith(j, expect.stringContaining(command), expect.any(Number));
+    expect(result.text).toContain("denied by parent: command");
+  });
+
+  it.each([false, true])("instructs continued worktrees and reports ignored external links (failure=%s)", async (fail) => {
+    const rc = context();
+    const root = join(home, "worktrees", "existing");
+    const outside = join(home, "owner-cache");
+    mkdirSync(root, { recursive: true }); mkdirSync(outside);
+    writeFileSync(join(outside, "keep.txt"), "owner data");
+    symlinkSync(outside, join(root, "Library"), "junction");
+    const wt = { repoRoot: home, path: root, cwd: root, branch: "agent-bridge/test", base: "base" };
+    vi.spyOn(DELEGATION_TARGETS.codex, "run").mockImplementation(async (_cfg, req) => {
+      expect(req.prompt).toContain("Never create symlinks, directory junctions");
+      expect(req.prompt).toContain("Copy caches");
+      if (fail) throw new DelegateError("failed task", "failed");
+      return { sessionId: "saved", text: "done", isError: false, details: {} };
+    });
+    const run = runDelegate(rc, "codex", { title: "worktree", prompt: "task", session_id: "continued", _worktree: wt, access: "read" }, new AbortController().signal, undefined, true);
+    if (fail) await expect(run).rejects.toThrow(/external worktree links[\s\S]*Library[\s\S]*owner-cache/);
+    else expect((await run).text).toMatch(/external worktree links[\s\S]*Library[\s\S]*owner-cache/);
+    expect(readFileSync(join(outside, "keep.txt"), "utf8")).toBe("owner data");
+  });
+
+  it("inspects the entire managed worktree when a job starts in a nested project folder", async () => {
+    const rc = context();
+    const root = join(home, "worktrees", "existing"); const cwd = join(root, "client"); const outside = join(home, "owner-cache");
+    mkdirSync(cwd, { recursive: true }); mkdirSync(outside);
+    symlinkSync(outside, join(root, "Library"), "junction");
+    vi.spyOn(DELEGATION_TARGETS.codex, "run").mockImplementation(async (_cfg, req) => {
+      expect(req.prompt).toContain("worktree isolation is mandatory");
+      return { sessionId: "saved", text: "done", isError: false, details: {} };
+    });
+    const result = await runDelegate(rc, "codex", { title: "nested", prompt: "task", cwd, access: "read" }, new AbortController().signal, undefined, true);
+    expect(result.text).toContain(`${join(root, "Library")} -> ${outside}`);
+  });
+
+  it("does not auto-commit through a worktree root replaced by an external junction", async () => {
+    const rc = context(); const root = join(home, "worktrees", "linked-root"); const outside = join(home, "owner");
+    mkdirSync(join(home, "worktrees")); mkdirSync(outside);
+    symlinkSync(outside, root, "junction");
+    vi.spyOn(DELEGATION_TARGETS.codex, "run").mockResolvedValue({ sessionId: "saved", text: "done", isError: false, details: {} });
+    const result = await runDelegate(rc, "codex", { title: "root", prompt: "task", access: "read", _worktree: { repoRoot: home, path: root, cwd: root, branch: "agent-bridge/test", base: "base" } }, new AbortController().signal, undefined, true);
+    expect(result.text).toContain("Auto-commit skipped: the worktree root is an external link");
+    expect(result.text).not.toContain("Could not commit");
+  });
   for (const target of ["codex", "claude", "opencode"] as const) it(`keeps supervisor denial reasons and worker access for ${target}`, async () => {
     const rc = context();
     const j = job();
