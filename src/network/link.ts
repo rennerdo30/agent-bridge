@@ -18,6 +18,12 @@ const MAX_HOP_COUNT = 100;
 const MAX_EXTENSION_HANDLERS = 8;
 export type NetworkExtensionType = "file-stream" | "remote-job" | "dashboard-read";
 export type NetworkExtensionHandler = (payload: Record<string, unknown>, remote: NetworkPair) => void | Promise<void>;
+/** Runtime-only timing overrides for tests; production keeps the shared network constants. */
+export interface NetworkTimings {
+  /** Peer advertisement, heartbeat and reconnect polling interval. */
+  refreshMs?: number;
+  heartbeatTimeoutMs?: number;
+}
 const textId = z.string().min(1).max(MAX_ID_CHARS);
 const peerSchema = z.object({
   id: textId, name: z.string().regex(NETWORK_NAME_PATTERN), agent: z.enum(AGENT_KINDS),
@@ -156,9 +162,14 @@ class Link {
     if (Buffer.byteLength(data) > MAX_NETWORK_FRAME_BYTES || this.socket.writableLength > MAX_NETWORK_FRAME_BYTES || this.extensionWrites.size >= MAX_NETWORK_REQUESTS) return Promise.reject(new Error("network write limit reached"));
     if (this.socket.destroyed) return Promise.reject(new Error("network link closed"));
     return new Promise((resolve, reject) => {
-      const failed = (error: Error) => { this.extensionWrites.delete(failed); reject(error); };
+      const failed = (error: Error) => {
+        if (!this.extensionWrites.delete(failed)) return;
+        // OS write callbacks can precede close. Keep transport failures retryable on every platform.
+        this.fail(error);
+        reject(new Error("network link closed", { cause: error }));
+      };
       this.extensionWrites.add(failed);
-      try { this.socket.write(data, (error) => { this.extensionWrites.delete(failed); if (error) reject(error); else resolve(); }); }
+      try { this.socket.write(data, (error) => { if (error) failed(error); else { this.extensionWrites.delete(failed); resolve(); } }); }
       catch (error) { failed(error as Error); }
     });
   }
@@ -175,7 +186,7 @@ class Link {
   heartbeat(): void {
     if (!this.remote || !this.echoSupported || this.heartbeatPending) return;
     this.heartbeatPending = true;
-    void this.echo(NETWORK_HEARTBEAT_TIMEOUT_MS).catch((error: Error) => this.fail(error)).finally(() => { this.heartbeatPending = false; });
+    void this.echo(this.service.timings.heartbeatTimeoutMs).catch((error: Error) => this.fail(error)).finally(() => { this.heartbeatPending = false; });
   }
 
   receipt(id: string, sender: string, recipient?: string, requireRecipient = false): Promise<number | null> {
@@ -265,6 +276,7 @@ class Link {
 
 /** One per elected local broker. Discovery cannot call link(); only an authenticated local request can. */
 export class NetworkService {
+  readonly timings: Readonly<Required<NetworkTimings>>;
   readonly keys: PairingStore;
   readonly transfers: TransferManager;
   private server: Server | null = null;
@@ -277,7 +289,9 @@ export class NetworkService {
   private closed = false;
   private readonly extensions = new Map<NetworkExtensionType, { capability: string; handler: NetworkExtensionHandler }>();
 
-  constructor(private readonly home: string, private readonly cfg: NetworkConfig, private readonly broker: NetworkBroker, private readonly log: Logger) {
+  constructor(private readonly home: string, private readonly cfg: NetworkConfig, private readonly broker: NetworkBroker, private readonly log: Logger, timings: NetworkTimings = {}) {
+    this.timings = { refreshMs: timings.refreshMs ?? NETWORK_REFRESH_MS, heartbeatTimeoutMs: timings.heartbeatTimeoutMs ?? NETWORK_HEARTBEAT_TIMEOUT_MS };
+    for (const value of Object.values(this.timings)) if (!Number.isSafeInteger(value) || value <= 0) throw new Error("network timings must be positive milliseconds");
     this.keys = new PairingStore(home, cfg.name);
     this.transfers = new TransferManager(home, {
       supports: (remote) => this.peerSupports(remote, FILE_STREAM_CAPABILITY),
@@ -382,7 +396,7 @@ export class NetworkService {
       this.timer = setInterval(() => {
         for (const link of this.links.values()) { try { link.refresh(); link.heartbeat(); } catch (err) { link.fail(err as Error); } }
         for (const pair of this.keys.pairs()) if (pair.host && pair.port && !this.links.has(pair.id) && !this.connecting.has(pair.id)) void this.connectPair(pair).catch(() => {});
-      }, NETWORK_REFRESH_MS);
+      }, this.timings.refreshMs);
       this.timer.unref();
       for (const pair of this.keys.pairs()) if (pair.host && pair.port) void this.connectPair(pair).catch(() => {});
     } catch (err) { await this.close(); throw err; }

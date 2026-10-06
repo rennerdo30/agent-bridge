@@ -44812,15 +44812,18 @@ var Link = class {
     if (this.socket.destroyed) return Promise.reject(new Error("network link closed"));
     return new Promise((resolve13, reject) => {
       const failed = (error62) => {
-        this.extensionWrites.delete(failed);
-        reject(error62);
+        if (!this.extensionWrites.delete(failed)) return;
+        this.fail(error62);
+        reject(new Error("network link closed", { cause: error62 }));
       };
       this.extensionWrites.add(failed);
       try {
         this.socket.write(data, (error62) => {
-          this.extensionWrites.delete(failed);
-          if (error62) reject(error62);
-          else resolve13();
+          if (error62) failed(error62);
+          else {
+            this.extensionWrites.delete(failed);
+            resolve13();
+          }
         });
       } catch (error62) {
         failed(error62);
@@ -44837,7 +44840,7 @@ var Link = class {
   heartbeat() {
     if (!this.remote || !this.echoSupported || this.heartbeatPending) return;
     this.heartbeatPending = true;
-    void this.echo(NETWORK_HEARTBEAT_TIMEOUT_MS).catch((error62) => this.fail(error62)).finally(() => {
+    void this.echo(this.service.timings.heartbeatTimeoutMs).catch((error62) => this.fail(error62)).finally(() => {
       this.heartbeatPending = false;
     });
   }
@@ -44932,11 +44935,13 @@ var Link = class {
   }
 };
 var NetworkService = class {
-  constructor(home, cfg, broker, log) {
+  constructor(home, cfg, broker, log, timings = {}) {
     this.home = home;
     this.cfg = cfg;
     this.broker = broker;
     this.log = log;
+    this.timings = { refreshMs: timings.refreshMs ?? NETWORK_REFRESH_MS, heartbeatTimeoutMs: timings.heartbeatTimeoutMs ?? NETWORK_HEARTBEAT_TIMEOUT_MS };
+    for (const value of Object.values(this.timings)) if (!Number.isSafeInteger(value) || value <= 0) throw new Error("network timings must be positive milliseconds");
     this.keys = new PairingStore(home, cfg.name);
     this.transfers = new TransferManager(home, {
       supports: (remote) => this.peerSupports(remote, FILE_STREAM_CAPABILITY),
@@ -44960,6 +44965,7 @@ var NetworkService = class {
   cfg;
   broker;
   log;
+  timings;
   keys;
   transfers;
   server = null;
@@ -45078,7 +45084,7 @@ var NetworkService = class {
         }
         for (const pair of this.keys.pairs()) if (pair.host && pair.port && !this.links.has(pair.id) && !this.connecting.has(pair.id)) void this.connectPair(pair).catch(() => {
         });
-      }, NETWORK_REFRESH_MS);
+      }, this.timings.refreshMs);
       this.timer.unref();
       for (const pair of this.keys.pairs()) if (pair.host && pair.port) void this.connectPair(pair).catch(() => {
       });

@@ -14,7 +14,7 @@ import type { BridgeMessage, PeerInfo } from "../src/core/protocol.js";
 import { MessageStore } from "../src/core/store.js";
 import { en } from "../src/core/messages.js";
 import { DEFAULT_NETWORK_CONFIG } from "../src/network/config.js";
-import { DISCOVERY_TTL_MS, NETWORK_HEARTBEAT_TIMEOUT_MS, NETWORK_REFRESH_MS, NETWORK_TIMEOUT_MS, NETWORK_VERSION, TLS_CIPHER } from "../src/network/constants.js";
+import { DISCOVERY_TTL_MS, NETWORK_REFRESH_MS, NETWORK_TIMEOUT_MS, NETWORK_VERSION, TLS_CIPHER } from "../src/network/constants.js";
 import { NetworkService } from "../src/network/link.js";
 import { decodePairingCode, keyFingerprint } from "../src/network/pairing.js";
 import { formatDelivery } from "../src/mcp/format.js";
@@ -198,8 +198,9 @@ describe("remote reconnect identity and reachability (AB-104)", () => {
   });
 
   it("detects an unresponsive authenticated link without waiting for a user message", async () => {
+    const timings = { refreshMs: 50, heartbeatTimeoutMs: 250 };
     const network = new NetworkService(env.home, { ...DEFAULT_NETWORK_CONFIG, enabled: true,
-      name: "windows", bind: "127.0.0.1", port: 0, discovery: false }, { peers: () => [], receive: () => ({ delivered: true }) }, nullLogger);
+      name: "windows", bind: "127.0.0.1", port: 0, discovery: false }, { peers: () => [], receive: () => ({ delivered: true }) }, nullLogger, timings);
     await network.start(); cleanup.push(() => network.close());
     const code = decodePairingCode(network.keys.invite());
     const socket = tlsConnect({ host: "127.0.0.1", port: network.port, minVersion: "TLSv1.3", maxVersion: "TLSv1.3",
@@ -222,7 +223,7 @@ describe("remote reconnect identity and reachability (AB-104)", () => {
     await until(() => network.status().paired[0]?.connected === true);
     expect(network.peers()).toHaveLength(1);
     await until(() => echoes > 0);
-    await until(() => network.status().paired[0]?.connected === false, NETWORK_HEARTBEAT_TIMEOUT_MS + NETWORK_REFRESH_MS + 5_000);
+    await until(() => network.status().paired[0]?.connected === false);
     expect(network.peers()).toEqual([]);
     expect(echoes).toBe(1); // bounded to one in-flight heartbeat
   });
