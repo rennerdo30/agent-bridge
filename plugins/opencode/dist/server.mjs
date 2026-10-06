@@ -43680,6 +43680,12 @@ form#send { background: transparent; border-top: 0; padding: 12px 0 0; }
 .sysrow.fold[open] { color: var(--text); white-space: normal; overflow-wrap: anywhere; }
 .msgrow.peer .bubble { background: var(--panel-2); border: 1px solid var(--line); border-radius: 14px 14px 14px 4px; padding: 10px 14px; }
 
+/* Messages: a feed with the sender's agent */
+.msg { display: grid; grid-template-columns: 24px minmax(0, 1fr); gap: 10px; align-items: start; padding: 12px 16px; }
+.msg .meta { display: flex; gap: 6px; align-items: baseline; flex-wrap: wrap; }
+.msg-time { margin-left: auto; color: var(--faint); font-size: 11.5px; font-variant-numeric: tabular-nums; }
+.msg .body { line-height: 1.55; }
+
 /* Outcomes, nesting, older pages, recovered runs */
 .chip.outcome { margin-top: 2px; }
 .chip.outcome.ok { color: var(--ok); background: var(--ok-soft); }
@@ -43777,6 +43783,7 @@ form#send { background: transparent; border-top: 0; padding: 12px 0 0; }
 
 <main class="wrap">
   <div id="overview">
+    <div class="page-head"><div><h2>Overview</h2><p class="muted" id="ovLead">Every session, subagent and message on the bridge.</p></div></div>
     <div id="ovAttn"></div>
     <div class="block stats" id="ovStats"></div>
     <div class="block"><h3>Usage left <span class="n" id="usageAt"></span><button class="linkbtn" id="usageRefresh" title="Read the limits again">refresh</button></h3><div id="ovUsage" class="cards usage"><div class="panel empty small muted">Reading the agents' limits\u2026</div></div></div>
@@ -43816,12 +43823,12 @@ form#send { background: transparent; border-top: 0; padding: 12px 0 0; }
   </div>
 
   <div id="network" class="hidden">
+    <div class="page-head"><div><h2>Network</h2><p class="muted">Connect agent-bridge on your other PCs: their agents can message each other and exchange files.</p></div></div>
     <div class="block"><div class="panel net-card">
       <div class="net-head">
         <div class="net-title"><span class="dot off" id="netDot"></span><b id="netState">Reading the network status\u2026</b></div>
         <div class="small muted" id="netWhere"></div>
       </div>
-      <p>Paired PCs can message each other's agents and send files. Traffic is encrypted, and only PCs you pair with a code can connect.</p>
       <form id="netConfig" class="net-form">
         <label>Name of this PC<input id="netName" maxlength="40" autocomplete="off" spellcheck="false" placeholder="e.g. office-pc"></label>
         <label>Reachable from<select id="netBind"><option value="0.0.0.0">Other PCs on this network</option><option value="127.0.0.1">This PC only (for testing)</option></select></label>
@@ -44352,6 +44359,10 @@ function renderOverview() {
   renderApprovalBanner();
   const live = model.sessions.filter((x) => x.live), ended = model.sessions.filter((x) => !x.live && x.groups.length);
   $("ovCount").textContent = live.length || "";
+  const pcCount = new Set(live.map((x) => pcOf(x.name))).size, working = live.reduce((n, x) => n + (x.running || 0), 0);
+  $("ovLead").textContent = live.length
+    ? live.length + " session" + (live.length === 1 ? "" : "s") + (pcCount > 1 ? " on " + pcCount + " PCs" : "") + (working ? " \xB7 " + working + " subagent" + (working === 1 ? "" : "s") + " working" : " \xB7 nothing working right now")
+    : "No sessions connected. Start Claude Code, Codex or opencode with agent-bridge installed.";
   const c = countGroups(model.sorted);
   const stat = (n, label, cls) => '<div class="stat ' + (cls || "") + '"><b>' + n + "</b><span>" + label + "</span></div>";
   $("ovStats").innerHTML =
@@ -44457,8 +44468,8 @@ function renderSessionList(x, selKey) {
 
 function messagesHtml(msgs) {
   return msgs.length ? msgs.slice(0, 100).map((m) =>
-    '<div class="msg"><div class="meta"><b>' + esc(m.from_name) + "</b> \u2192 " + esc(m.recipients || m.to_target) + " \xB7 " + time(m.created_at) + "</div>" +
-    '<div class="body">' + md(m.body) + "</div></div>").join("") : '<div class="empty">No messages yet.</div>';
+    '<div class="msg">' + av(m.from_agent || "other", true) + '<div class="msg-main"><div class="meta"><b>' + esc(m.from_name) + '</b> <span class="faint">to</span> ' + esc(m.recipients || m.to_target) + '<span class="msg-time">' + time(m.created_at) + "</span></div>" +
+    '<div class="body">' + md(m.body) + "</div></div></div>").join("") : '<div class="empty">No messages yet. Sessions write here when they talk to each other.</div>';
 }
 
 function renderSendForm(inSession) {
