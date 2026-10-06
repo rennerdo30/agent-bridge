@@ -7,5 +7,7 @@ export default defineConfig({
   test: {
     testTimeout: TEST_TIMEOUT_MS,
     hookTimeout: TEST_TIMEOUT_MS,
+    // Never inherit the parent link of a subagent that runs the suite.
+    setupFiles: ["./test/setup-env.ts"],
   },
 });

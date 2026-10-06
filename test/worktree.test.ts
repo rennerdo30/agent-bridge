@@ -1,10 +1,10 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, toNamespacedPath } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { nullLogger } from "../src/core/logger.js";
-import { createWorktree, finishWorktree, gitDirsOutside, gitStatusSnapshot, handoffWarning, subagentCommitMessage, worktreeReport } from "../src/core/worktree.js";
+import { createWorktree, finishWorktree, gitDirsOutside, gitStatusSnapshot, handoffWarning, removeWorktreeDirectory, subagentCommitMessage, worktreeReport } from "../src/core/worktree.js";
 import { cleanupWorktrees, type CleanupEntry } from "../src/core/worktree-cleanup.js";
 import { formatUsage } from "../src/mcp/format.js";
 
@@ -154,6 +154,79 @@ describe("review diff and handoff files", () => {
   };
   const mergeIn = (dir: string, branch: string) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "merge", "-q", "--no-edit", branch], { cwd: dir });
 
+  it("uses the actual fork point when a job creates a branch from another base", async () => {
+    const mainBranch = git("symbolic-ref", "--short", "HEAD");
+    git("checkout", "-q", "-b", "look4/candidate");
+    commitIn(repo, "candidate.txt", "candidate work");
+    const fork = git("rev-parse", "HEAD");
+    git("checkout", "-q", mainBranch);
+    commitIn(repo, "supervisor.txt", "supervisor work");
+    const wt = await createWorktree({ cwd: repo, home, jobId: "switched", log: nullLogger });
+    execFileSync("git", ["checkout", "-q", "-b", "look4/fix", "look4/candidate"], { cwd: wt.path });
+    commitIn(wt.path, "job.txt", "job work");
+    const outcome = await finishWorktree(wt, "unused", nullLogger);
+    expect(outcome.reviewBase).toBe(fork);
+    expect(outcome.files).toEqual(["job.txt"]);
+    expect(outcome.branch).toBe("look4/fix");
+    expect(outcome.otherBranches).toEqual([]);
+    const report = worktreeReport(wt, outcome);
+    expect(report).toContain(`Review base: ${fork} (job fork point)`);
+    expect(report).not.toContain("candidate.txt");
+    expect(report).not.toContain("supervisor.txt");
+  });
+
+  it("keeps each switched branch's base and commit count when the job leaves its work", async () => {
+    const mainBranch = git("symbolic-ref", "--short", "HEAD");
+    git("checkout", "-q", "-b", "candidate");
+    commitIn(repo, "candidate.txt", "candidate work");
+    const fork = git("rev-parse", "HEAD");
+    git("checkout", "-q", mainBranch);
+    const wt = await createWorktree({ cwd: repo, home, jobId: "left-switched", log: nullLogger });
+    const inWt = (...args: string[]) => execFileSync("git", args, { cwd: wt.path });
+    inWt("checkout", "-q", "-b", "fix/first", "candidate");
+    commitIn(wt.path, "first.txt", "first work");
+    inWt("checkout", "-q", "-b", "fix/second", "candidate");
+    commitIn(wt.path, "second.txt", "second work");
+    inWt("checkout", "-q", "fix/first");
+    inWt("checkout", "-q", wt.branch);
+    const outcome = await finishWorktree(wt, "unused", nullLogger);
+    expect(outcome.reviewBase).toBe(fork);
+    expect(outcome.files).toEqual(["first.txt"]);
+    expect(outcome.otherBranches).toEqual([{ name: "fix/second", commits: 1 }]);
+    expect(worktreeReport(wt, outcome)).not.toContain("candidate (1 commit)");
+  });
+
+  it("excludes newer alternate-base work that a switched job merged", async () => {
+    const mainBranch = git("symbolic-ref", "--short", "HEAD");
+    git("checkout", "-q", "-b", "candidate");
+    commitIn(repo, "candidate.txt", "candidate work");
+    git("checkout", "-q", mainBranch);
+    const wt = await createWorktree({ cwd: repo, home, jobId: "merged-switched", log: nullLogger });
+    execFileSync("git", ["checkout", "-q", "-b", "fix/merged", "candidate"], { cwd: wt.path });
+    commitIn(wt.path, "job.txt", "job work");
+    git("checkout", "-q", "candidate");
+    commitIn(repo, "newer.txt", "newer candidate work");
+    const fork = git("rev-parse", "HEAD");
+    git("checkout", "-q", mainBranch);
+    mergeIn(wt.path, "candidate");
+    const outcome = await finishWorktree(wt, "unused", nullLogger);
+    expect(outcome.reviewBase).toBe(fork);
+    expect(outcome.files).toEqual(["job.txt"]);
+    expect(outcome.otherBranches).toEqual([]);
+  });
+
+  it("does not report upstream work when a job only switches branches", async () => {
+    const mainBranch = git("symbolic-ref", "--short", "HEAD");
+    git("checkout", "-q", "-b", "candidate");
+    commitIn(repo, "candidate.txt", "candidate work");
+    git("checkout", "-q", mainBranch);
+    const wt = await createWorktree({ cwd: repo, home, jobId: "switch-only", log: nullLogger });
+    execFileSync("git", ["checkout", "-q", "-b", "fix/empty", "candidate"], { cwd: wt.path });
+    const outcome = await finishWorktree(wt, "unused", nullLogger);
+    expect(outcome.changed).toBe(false);
+    expect(outcome.otherBranches).toEqual([]);
+  });
+
   it("shows only the job's work when the job merged a newer base into its branch", async () => {
     const mainBranch = git("symbolic-ref", "--short", "HEAD");
     const wt = await createWorktree({ cwd: repo, home, jobId: "job5", log: nullLogger });
@@ -201,7 +274,155 @@ describe("review diff and handoff files", () => {
   });
 });
 
+describe("auto-commit filtering", () => {
+  const unityProject = () => {
+    mkdirSync(join(repo, "ProjectSettings"));
+    writeFileSync(join(repo, "ProjectSettings", "ProjectVersion.txt"), "m_EditorVersion: 6000.0\n");
+    writeFileSync(join(repo, "ProjectSettings", "ProjectSettings.asset"), "setting: value\n");
+    git("add", "ProjectSettings");
+    git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "settings");
+  };
+
+  it("leaves whitespace-only settings changes uncommitted and explains the rule", async () => {
+    unityProject();
+    const wt = await createWorktree({ cwd: repo, home, jobId: "whitespace", log: nullLogger });
+    const settings = "ProjectSettings/ProjectSettings.asset";
+    writeFileSync(join(wt.path, settings), "setting: value \n");
+    const outcome = await finishWorktree(wt, "verification only", nullLogger);
+    expect(outcome.changed).toBe(false);
+    expect(git("rev-parse", wt.branch)).toBe(wt.base);
+    expect(outcome.skippedFiles).toEqual([{ path: settings, reason: "whitespace only" }]);
+    expect(readFileSync(join(wt.path, settings), "utf8")).toBe("setting: value \n");
+    expect(worktreeReport(wt, outcome)).toContain("has no real changes");
+    expect(worktreeReport(wt, outcome)).toContain("Auto-commit skipped whitespace/line-ending-only changes");
+  });
+
+  it("excludes staged whitespace and generated noise while committing real settings and code", async () => {
+    unityProject();
+    const wt = await createWorktree({ cwd: repo, home, jobId: "mixed", log: nullLogger });
+    writeFileSync(join(wt.path, "a.txt"), "original \n");
+    writeFileSync(join(wt.path, "ProjectSettings", "ProjectSettings.asset"), "setting: new value\n");
+    mkdirSync(join(wt.path, "Library"));
+    writeFileSync(join(wt.path, "Library", "cache.asset"), "generated cache\n");
+    const code = "code [one] 日本語.txt";
+    writeFileSync(join(wt.path, code), "new code\n");
+    execFileSync("git", ["add", "-A"], { cwd: wt.path });
+    const outcome = await finishWorktree(wt, "real changes", nullLogger);
+    expect(outcome.files.sort()).toEqual(["ProjectSettings/ProjectSettings.asset", code].sort());
+    expect(outcome.skippedFiles).toEqual([
+      { path: "Library/cache.asset", reason: "generated noise" },
+      { path: "a.txt", reason: "whitespace only" },
+    ]);
+    expect(existsSync(join(wt.path, "Library", "cache.asset"))).toBe(true);
+    expect(execFileSync("git", ["diff", "--cached", "--name-only"], { cwd: wt.path, encoding: "utf8" }).trim()).toBe("");
+    expect(worktreeReport(wt, outcome)).toContain("Library/cache.asset (generated noise)");
+  });
+
+  it("skips raw EOL-only changes even when already staged", async () => {
+    writeFileSync(join(repo, ".gitattributes"), "* -text\n");
+    git("add", ".gitattributes");
+    git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "raw endings");
+    const wt = await createWorktree({ cwd: repo, home, jobId: "eol", log: nullLogger });
+    writeFileSync(join(wt.path, "a.txt"), "original\r\n");
+    execFileSync("git", ["add", "a.txt"], { cwd: wt.path });
+    const outcome = await finishWorktree(wt, "verification only", nullLogger);
+    expect(outcome.changed).toBe(false);
+    expect(outcome.skippedFiles).toEqual([{ path: "a.txt", reason: "whitespace only" }]);
+    expect(git("rev-parse", wt.branch)).toBe(wt.base);
+  });
+
+  it("preserves additions, deletions, renames and binary changes", async () => {
+    writeFileSync(join(repo, "image.bin"), Buffer.from([0, 1, 2]));
+    writeFileSync(join(repo, "remove.txt"), "remove me\n");
+    git("add", "image.bin", "remove.txt");
+    git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "binary");
+    const wt = await createWorktree({ cwd: repo, home, jobId: "structural", log: nullLogger });
+    execFileSync("git", ["mv", "a.txt", "renamed.txt"], { cwd: wt.path });
+    writeFileSync(join(wt.path, "empty.txt"), "");
+    writeFileSync(join(wt.path, "image.bin"), Buffer.from([0, 1, 3]));
+    rmSync(join(wt.path, "remove.txt"));
+    const outcome = await finishWorktree(wt, "structural changes", nullLogger);
+    expect(outcome.changed).toBe(true);
+    expect(outcome.skippedFiles).toEqual([]);
+    expect(git("show", `${wt.branch}:empty.txt`)).toBe("");
+    expect(git("show", `${wt.branch}:renamed.txt`)).toBe("original");
+    expect(git("ls-tree", "--name-only", wt.branch)).not.toContain("a.txt");
+    expect(git("ls-tree", "--name-only", wt.branch)).not.toContain("remove.txt");
+    expect(execFileSync("git", ["show", `${wt.branch}:image.bin`], { cwd: repo })).toEqual(Buffer.from([0, 1, 3]));
+  });
+
+  it("filters tracked and untracked caches in nested Unity projects but keeps source libraries", async () => {
+    const project = join(repo, "unity", "Game");
+    mkdirSync(join(project, "ProjectSettings"), { recursive: true });
+    mkdirSync(join(project, "Library"));
+    writeFileSync(join(project, "ProjectSettings", "ProjectVersion.txt"), "m_EditorVersion: 6000.0\n");
+    writeFileSync(join(project, "Library", "tracked.asset"), "old cache\n");
+    git("add", "unity");
+    git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "legacy tracked cache");
+    const wt = await createWorktree({ cwd: repo, home, jobId: "nested-noise", log: nullLogger });
+    writeFileSync(join(wt.path, "unity", "Game", "Library", "tracked.asset"), "regenerated cache\n");
+    mkdirSync(join(wt.path, "node_modules"));
+    writeFileSync(join(wt.path, "node_modules", "cache.js"), "dependency\n");
+    mkdirSync(join(wt.path, "Library"));
+    writeFileSync(join(wt.path, "Library", "source.txt"), "source library\n");
+    const outcome = await finishWorktree(wt, "source library", nullLogger);
+    expect(outcome.files).toEqual(["Library/source.txt"]);
+    expect(outcome.skippedFiles).toEqual([
+      { path: "unity/Game/Library/tracked.asset", reason: "generated noise" },
+      { path: "node_modules/cache.js", reason: "generated noise" },
+    ]);
+    expect(git("show", `${wt.branch}:unity/Game/Library/tracked.asset`)).toBe("old cache");
+  });
+});
+
 describe("cleanup", () => {
+  const DEEP_SEGMENTS = 8;
+  const DEEP_SEGMENT = "unity-cache-with-a-long-generated-folder-name";
+  const deepPath = (root: string) => join(root, "Library", ...Array<string>(DEEP_SEGMENTS).fill(DEEP_SEGMENT));
+
+  it("removes deep ignored Unity folders with repository long paths disabled", async () => {
+    git("config", "core.longpaths", "false");
+    writeFileSync(join(repo, ".git", "info", "exclude"), "Library/\n");
+    const wt = await createWorktree({ cwd: repo, home, jobId: "deep", log: nullLogger });
+    const deep = toNamespacedPath(deepPath(wt.path));
+    mkdirSync(deep, { recursive: true });
+    writeFileSync(join(deep, "cache.asset"), "generated\n");
+    const entries = await cleanupWorktrees({ home, apply: true, log: nullLogger });
+    expect(entries.find((e) => e.path === wt.path)?.action).toBe("removed");
+    expect(existsSync(wt.path)).toBe(false);
+    expect(git("worktree", "list", "--porcelain")).not.toContain(wt.path.replace(/\\/g, "/"));
+    expect(git("config", "core.longpaths")).toBe("false");
+    expect(worktreeReport(wt, { changed: false, branch: wt.branch, otherBranches: [], diffStat: "", reviewBase: wt.base, files: [] }))
+      .toContain("git -c core.longpaths=true worktree remove");
+  });
+
+  it("deletes deep leftovers through the filesystem fallback", async () => {
+    const wt = await createWorktree({ cwd: repo, home, jobId: "deep-fallback", log: nullLogger });
+    const deep = toNamespacedPath(deepPath(wt.path));
+    mkdirSync(deep, { recursive: true });
+    writeFileSync(join(deep, "cache.asset"), "generated\n");
+    removeWorktreeDirectory(wt.path);
+    expect(existsSync(wt.path)).toBe(false);
+    git("worktree", "prune");
+    expect(git("worktree", "list", "--porcelain")).not.toContain(wt.path.replace(/\\/g, "/"));
+  });
+
+  it("cleans deep orphan folders without following their junctions", async () => {
+    const shared = join(home, "shared-deep");
+    mkdirSync(shared);
+    writeFileSync(join(shared, "keep.txt"), "keep\n");
+    const orphan = join(home, "worktrees", "deep-orphan");
+    const deep = toNamespacedPath(deepPath(orphan));
+    mkdirSync(deep, { recursive: true });
+    symlinkSync(shared, join(deep, "shared"), "junction");
+    const dry = await cleanupWorktrees({ home, apply: false, log: nullLogger });
+    expect(dry.find((e) => e.path === orphan)?.action).toBe("would remove");
+    const entries = await cleanupWorktrees({ home, apply: true, log: nullLogger });
+    expect(entries.find((e) => e.path === orphan)?.action).toBe("removed");
+    expect(existsSync(orphan)).toBe(false);
+    expect(readFileSync(join(shared, "keep.txt"), "utf8")).toBe("keep\n");
+  });
+
   it("removes only finished, merged, clean job worktrees and never follows links inside them", async () => {
     // Like a Unity Library folder: ignored, and a junction to a folder outside the worktree.
     writeFileSync(join(repo, ".git", "info", "exclude"), "Library\n");
