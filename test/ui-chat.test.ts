@@ -23,7 +23,7 @@ function page() {
   const fetch = vi.fn(() => new Promise(() => {}));
   const document = { getElementById: element, documentElement: { dataset: {} }, addEventListener() {}, querySelectorAll: () => [] };
   const location = { hash: "" };
-  const api = new Function("document", "window", "location", "localStorage", "setInterval", "fetch", `${script}\nreturn { renderJobForm, renderSendForm, modelsCard, renderNetwork, renderSide, chatHtml, renderApprovals, answerApproval, renderDecisions, setApprovals: (a) => { approvals = a; }, setDecisions: (d) => { decisions = d; decLoadedAt = Date.now(); }, setModel: (m) => { model = m; state = { peers: [] }; }, setRoute: (r) => route = r, setNet: (n, i) => { net = n; invite = i || null; } };`)(document, { addEventListener() {} }, location, { setItem() {}, removeItem() {} }, () => 0, fetch);
+  const api = new Function("document", "window", "location", "localStorage", "setInterval", "fetch", `${script}\nreturn { renderJobForm, renderSendForm, modelsCard, renderNetwork, renderSide, renderSessionList, chatHtml, renderApprovals, answerApproval, renderDecisions, setApprovals: (a) => { approvals = a; }, setDecisions: (d) => { decisions = d; decLoadedAt = Date.now(); }, setModel: (m) => { model = m; state = { peers: [] }; }, setRoute: (r) => route = r, setNet: (n, i) => { net = n; invite = i || null; } };`)(document, { addEventListener() {} }, location, { setItem() {}, removeItem() {} }, () => 0, fetch);
   return { ...api, element, fetch, location };
 }
 const group = (key: string) => ({ key, job: `codex-job-${key}`, owner: "claude-app", agent: "codex", status: "done", percent: null, turns: [{ name: `run-${key}`, startedAt: 0 }] });
@@ -204,31 +204,26 @@ describe("sessions sidebar", () => {
     return p;
   };
 
-  it("lists sessions by PC (this PC first, busiest first) with their recent subagents nested", () => {
+  it("lists only sessions, grouped by PC with this PC first and busiest first", () => {
     const html = setup().element("sideTree").innerHTML;
-    const order = ["This PC", "strategy-game", "Fix the path finder", "project-mmorpg", "Server login", "Dominics-MacBook-Pro.local", "Ended", "claude-old"].map((s) => html.indexOf(s));
+    const order = ["This PC", "strategy-game", "project-mmorpg", "Dominics-MacBook-Pro.local", "Ended", "claude-old"].map((s) => html.indexOf(s));
     expect(order.every((at) => at >= 0)).toBe(true);
     expect([...order].sort((a, b) => a - b)).toEqual(order);
-    // A day-old finished subagent hides behind "more" once there are recent ones; ended sessions start folded.
-    expect(html).not.toContain("Old balance pass");
-    expect(html).not.toContain("Archived");
-    expect(html).toContain('href="#/s/claude-strategy-game/s1"');
+    expect(html).not.toContain("Fix the path finder");
+    expect(html).toContain(">1</span>");
   });
 
-  it("marks the open subagent and searches subagent titles too", () => {
+  it("finds a session by one of its subagents and lists the subagents on its page", () => {
     const p = setup({ session: "claude-strategy-game", group: "s1" });
-    expect(p.element("sideTree").innerHTML).toContain('class="tree-row sel"');
     p.element("sessFilter").value = "balance";
     p.element("sessFilter").listeners.get("input")();
     const html = p.element("sideTree").innerHTML;
-    expect(html).toContain("Old balance pass");
+    expect(html).toContain("strategy-game");
     expect(html).not.toContain("project-mmorpg");
-  });
-
-  it("folds a session's subagents and remembers it", () => {
-    const p = setup();
-    p.element("sideTree").listeners.get("click")({ target: { closest: (sel: string) => (sel === "[data-fold]" ? { dataset: { fold: "claude-strategy-game" } } : null) } });
-    expect(p.element("sideTree").innerHTML).not.toContain("Fix the path finder");
+    p.renderSessionList(sessions[1], "s1");
+    const list = p.element("sGroups").innerHTML;
+    expect(list).toContain("Fix the path finder");
+    expect(list).toContain("Archive · 1 older subagent");
   });
 });
 
@@ -257,11 +252,11 @@ describe("native chats", () => {
       { name: "mac.local/claude-app", live: true, running: 0, groups: [], children: [], peer: peer("s-2") },
     ];
     p.setModel({ sessions, byName: new Map(sessions.map((x) => [x.name, x])) });
-    p.setRoute({ session: null });
-    p.renderSide();
-    const html = p.element("sideTree").innerHTML;
-    expect(html.match(/tree-row tree-chat/g)?.length).toBe(1);
-    expect(html).toContain('href="#/s/claude-app/~chat"');
+    p.setRoute({ session: "claude-app" });
+    const chatRows = sessions.map((x) => { p.renderSessionList(x, null); return (p.element("sGroups").innerHTML.match(/class="chat-row/g) || []).length; });
+    expect(chatRows).toEqual([1, 0, 0]);
+    p.renderSessionList(sessions[0], null);
+    expect(p.element("sGroups").innerHTML).toContain('href="#/s/claude-app/~chat"');
   });
 });
 
