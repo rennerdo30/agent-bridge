@@ -44,6 +44,12 @@ export interface RunMeta {
   /** The permission level it really runs at: Codex sandbox, Claude permission mode, opencode approval. */
   permission?: string;
   workdir?: string;
+  /** Git identity and the final tip, retained after worktree cleanup. */
+  branch?: string;
+  baseBranch?: string | null;
+  repoRoot?: string;
+  branchHead?: string;
+  jobStartedAt?: number;
   /** The subagent's own session, and the one this run continued (a follow-up). */
   session?: string | null;
   continues?: string | null;

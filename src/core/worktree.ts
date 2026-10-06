@@ -30,6 +30,8 @@ export interface Worktree {
   base: string;
   /** Branch checked out where the worktree was created (null: detached HEAD, or a job saved by an older version). */
   baseBranch?: string | null;
+  /** Last finished tip, retained when its branch is removed. */
+  branchHead?: string;
 }
 
 /**

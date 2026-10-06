@@ -1,3 +1,4 @@
+import { JSON_STORE_VERSION } from "../src/core/json-store.js";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -63,7 +64,7 @@ describe("authenticated dashboard network flow", () => {
     const state = await (await fetch(`${base()}/api/network`, { headers: { cookie } })).json();
     expect(state).toMatchObject({ enabled: true, identity: { name: "local-pc" }, config: config("local-pc") });
     expect(state.port).toBeGreaterThan(0);
-    expect(JSON.parse(readFileSync(join(env.home, "config.json"), "utf8"))).toMatchObject({ version: 1, maxJobs: 8, network: { enabled: true, future: "keep" } });
+    expect(JSON.parse(readFileSync(join(env.home, "config.json"), "utf8"))).toMatchObject({ version: JSON_STORE_VERSION, maxJobs: 8, network: { enabled: true, future: "keep" } });
     expect((await post("configure", { enabled: false, confirm: true })).status).toBe(200);
     expect(await (await fetch(`${base()}/api/network`, { headers: { cookie } })).json()).toMatchObject({ enabled: false, config: config("local-pc", false) });
   });

@@ -45,7 +45,7 @@ export function jsonStoreFiles(home: string): string[] {
     }
   };
   visit(home, false);
-  for (const dir of ["jobs", "runs", "archive", "read-state"]) visit(join(home, dir), true);
+  for (const dir of ["jobs", "runs", "archive", "read-state", "job-outcomes", "local-result-receipts"]) visit(join(home, dir), true);
   return files;
 }
 
@@ -113,7 +113,7 @@ export function backupIfDue(home: string, now = Date.now()): string | null {
 function allowedPath(path: string): boolean {
   return path === DB_FILE_NAME || path === ARCHIVE_DB_NAME ||
     (/^[\w.-]+\.json$/.test(path) && !["dashboard.json"].includes(path)) ||
-    /^(jobs|runs|archive|read-state)\/[\w./-]+$/.test(path) && !path.split("/").some((s) => s === ".." || s === ".") &&
+    /^(jobs|runs|archive|read-state|job-outcomes|local-result-receipts)\/[\w./-]+$/.test(path) && !path.split("/").some((s) => s === ".." || s === ".") &&
       /\.jsonl?(?:-\d+-[\w-]+)?$/.test(path);
 }
 
