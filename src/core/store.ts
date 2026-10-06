@@ -8,11 +8,13 @@ import { archiveDbPath, archiveMessages, openArchive } from "./sqlite-maintenanc
 import { storageLease } from "./storage-lock.js";
 import { backupIfDue, BACKUP_INTERVAL_ENV, DEFAULT_BACKUP_INTERVAL_MS } from "./backups.js";
 import { retentionLimit } from "./json-store.js";
+import { historySchema } from "./history-schema.js";
+import { HistoryIndex } from "./history.js";
 import { DECISIONS_SCHEMA, DecisionStore } from "./decisions.js";
 
 const BACKUP_CHECK_INTERVAL_MS = 60 * 60 * 1_000;
 
-export const SQLITE_STORE_VERSION = 3;
+export const SQLITE_STORE_VERSION = 4;
 
 /** Recipient key used while a message waits for "any peer of this agent kind". */
 export function agentQueueKey(agent: AgentKind): string {
@@ -47,6 +49,7 @@ const MIGRATIONS = [
     PRAGMA user_version = 2;
   ` },
   { version: 3, sql: `${DECISIONS_SCHEMA} PRAGMA user_version = 3;` },
+  { version: 4, sql: historySchema() },
 ] as const;
 
 interface Row {
@@ -90,6 +93,7 @@ export class MessageStore {
   private readonly home: string | null;
   private backupTimer: ReturnType<typeof setInterval> | null = null;
   readonly decisions: DecisionStore;
+  readonly history: HistoryIndex;
   private readonly stmt: {
     insert: StatementSync;
     unread: StatementSync;
@@ -121,6 +125,7 @@ export class MessageStore {
     try { archiveMessages(this.db, this.archiveDb, "1", [], "legacy", "archived_messages"); }
     catch (err) { this.archiveDb.close(); this.db.close(); this.release(); throw err; }
     this.decisions = new DecisionStore(this.db);
+    this.history = new HistoryIndex(this.db, this.home);
     this.stmt = {
       insert: this.db.prepare(
         `INSERT INTO messages (id, recipient, from_id, from_name, from_agent, to_target, conversation_id, reply_to, hop, body, created_at, read_at)
@@ -226,6 +231,7 @@ export class MessageStore {
   }
 
   close(): void {
+    this.history.close();
     if (this.backupTimer) clearInterval(this.backupTimer);
     try {
       this.db.close();

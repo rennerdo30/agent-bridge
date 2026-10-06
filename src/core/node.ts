@@ -27,6 +27,7 @@ import type { TransferResult } from "../network/files.js";
 import type { RemoteJobRequest } from "../network/remote-job-protocol.js";
 import { REMOTE_JOB_LOCAL_TIMEOUT_MS } from "../network/remote-job-protocol.js";
 import type { RemoteJobSnapshot } from "../network/remote-jobs.js";
+import type { HistorySearch, HistoryResult } from "./history.js";
 import type { DecideArgs, DecisionsArgs, OwnerDecision } from "./decisions.js";
 
 export interface BridgeNodeOptions {
@@ -396,6 +397,14 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
 
   decide(args: DecideArgs): Promise<{ decision: OwnerDecision; deliveredTo: string[] }> {
     return this.withClient((c) => c.request("decide", args));
+  }
+
+  searchHistory(args: HistorySearch): Promise<HistoryResult> {
+    return this.withClient((c) => c.request("searchHistory", args));
+  }
+
+  reindexHistory(reset = false): Promise<{ work: number; discovering: boolean }> {
+    return this.withClient((c) => c.request("reindexHistory", { reset }));
   }
 
   decisions(args: DecisionsArgs = {}): Promise<OwnerDecision[]> {
