@@ -18,7 +18,14 @@ export class JobControlError extends Error {
   }
 }
 
-export async function messageDashboardJob(node: BridgeNode, owner: string, job: string, body: string): Promise<JobMessageResult> {
+/** A command for the session that owns the job: a follow-up message, or its next-turn settings. */
+export type DashboardJobCommand = { type: "message"; body: string } | { type: "settings"; settings: Record<string, unknown> };
+
+export function messageDashboardJob(node: BridgeNode, owner: string, job: string, body: string): Promise<JobMessageResult> {
+  return controlDashboardJob(node, owner, job, { type: "message", body });
+}
+
+export async function controlDashboardJob(node: BridgeNode, owner: string, job: string, command: DashboardJobCommand): Promise<JobMessageResult> {
   if (!(await node.peers()).some((p) => p.name === owner)) throw new JobControlError("The owning session is not connected. Reopen it to continue this subagent.", "offline");
   const requestId = randomUUID();
   let receive!: (m: BridgeMessage) => void;
@@ -39,7 +46,7 @@ export async function messageDashboardJob(node: BridgeNode, owner: string, job: 
   // A send may fail before the reply is awaited.
   reply.catch(() => {});
   try {
-    await node.send({ to: owner, body: JSON.stringify({ type: "message", requestId, job, body }), conversationId: DASHBOARD_JOB_CONVERSATION }, { quiet: true });
+    await node.send({ to: owner, body: JSON.stringify({ ...command, requestId, job }), conversationId: DASHBOARD_JOB_CONVERSATION }, { quiet: true });
     return await reply;
   } finally {
     clearTimeout(timer);

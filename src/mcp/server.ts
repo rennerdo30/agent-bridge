@@ -44,7 +44,7 @@ import { RewakeEndpoint } from "./rewake.js";
 import { DEFAULT_FOLLOW_UP, JobManager, type Job, type Resume, type Run, type RunResult } from "./jobs.js";
 import { isBridgeWorktree, isInside, resumeArgs, runDelegate, type DelegateArgs, type RunContext } from "./delegate-run.js";
 import { JobRunners } from "./job-host.js";
-import { JOB_SETTING_KEYS, type JobSettings } from "./job-settings.js";
+import { JOB_SETTING_KEYS, PERMISSION_KEY_AGENT, type JobSettings } from "./job-settings.js";
 import { attachDashboardJobControl } from "./dashboard-control.js";
 
 export { DELEGATED_JOB_NOTE } from "./delegate-run.js";
@@ -935,7 +935,7 @@ ${res.text || t("delegate.empty")}`, res.isError);
       if (!jobs) throw new BridgeError("bad_request", t("err.delegatedSession"));
       const existing = jobs.find(a.job);
       if (existing) {
-        for (const [key, agent] of [["sandbox", "codex"], ["permission_mode", "claude"], ["auto_approve", "opencode"]] as const) {
+        for (const [key, agent] of Object.entries(PERMISSION_KEY_AGENT) as [keyof typeof PERMISSION_KEY_AGENT, string][]) {
           if (a[key] !== undefined && existing.agent !== agent) throw new BridgeError("bad_request", `${key} applies only to ${agent} jobs.`);
         }
       }

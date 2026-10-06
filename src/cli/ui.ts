@@ -15,7 +15,8 @@ import { RUNS_DIR_NAME, runMetaPath, type RunMeta } from "../core/runfeed.js";
 import { loadOrCreateToken, tokensEqual } from "../core/token.js";
 import { loadConfig } from "../core/config.js";
 import { readUsage, type UsageReport } from "../core/usage.js";
-import { JobControlError, messageDashboardJob } from "../core/job-control.js";
+import { controlDashboardJob, JobControlError, type DashboardJobCommand } from "../core/job-control.js";
+import { JOB_SETTING_KEYS } from "../mcp/job-settings.js";
 import { UI_PAGE } from "./ui-page.js";
 import { readJsonStore } from "../core/json-store.js";
 
@@ -105,15 +106,38 @@ function readMeta(file: string): RunMeta {
   }
 }
 
+/** What the dashboard reads of a stored job: its owner and the settings its next turn uses. */
+export interface StoredJobView {
+  owner: string | null;
+  next: Record<string, unknown>;
+}
+
+/** Jobs from the sessions' store (`{ jobs: [...] }`; before 0.26 a bare array). Read-only and best effort. */
+export function readStoredJobs(home: string): Map<string, StoredJobView> {
+  const out = new Map<string, StoredJobView>();
+  let stored: unknown;
+  try {
+    stored = JSON.parse(readFileSync(join(home, JOBS_FILE), "utf8"));
+  } catch {
+    return out;
+  }
+  const list: unknown[] = Array.isArray(stored) ? stored : Array.isArray((stored as { jobs?: unknown })?.jobs) ? (stored as { jobs: unknown[] }).jobs : [];
+  for (const j of list) {
+    if (!j || typeof j !== "object") continue;
+    const { name, owner, args } = j as { name?: unknown; owner?: unknown; args?: unknown };
+    if (typeof name !== "string") continue;
+    const saved = args && typeof args === "object" ? (args as Record<string, unknown>) : {};
+    out.set(name, {
+      owner: typeof owner === "string" && owner ? owner : null,
+      next: Object.fromEntries(JOB_SETTING_KEYS.filter((key) => saved[key] !== undefined).map((key) => [key, saved[key]])),
+    });
+  }
+  return out;
+}
+
 /** A server may have adopted a job from an earlier stand-in name since its log was written. */
 function jobOwner(home: string, job: string, original: string): string {
-  try {
-    const stored = JSON.parse(readFileSync(join(home, JOBS_FILE), "utf8"));
-    const owner = Array.isArray(stored) ? stored.find((j) => j?.name === job)?.owner : null;
-    return typeof owner === "string" && owner ? owner : original;
-  } catch {
-    return original;
-  }
+  return readStoredJobs(home).get(job)?.owner ?? original;
 }
 
 export type DashboardPeer = PeerInfo & { subagent: boolean; parent: string | null };
@@ -191,6 +215,17 @@ function cookieSecret(req: IncomingMessage): string {
   const m = new RegExp(`(?:^|;\\s*)${COOKIE}=([0-9a-f]+)`).exec(String(req.headers.cookie ?? ""));
   return m?.[1] ?? "";
 }
+
+/** Subagent commands by path: the request body as a command for the owning session, or null when invalid. */
+const JOB_COMMANDS: Record<string, (body: Record<string, unknown>) => DashboardJobCommand | null> = {
+  "/api/subagents/message": (body) => {
+    const text = typeof body.body === "string" ? body.body.trim() : "";
+    return text && text.length <= MAX_BODY_CHARS ? { type: "message", body: text } : null;
+  },
+  // The owning session checks the values against the job's agent (job-settings.ts).
+  "/api/subagents/settings": (body) =>
+    body.settings && typeof body.settings === "object" && !Array.isArray(body.settings) && Object.keys(body.settings).length ? { type: "settings", settings: body.settings as Record<string, unknown> } : null,
+};
 
 export interface UiOptions {
   home: string;
@@ -275,6 +310,8 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
         peers: classifyPeers(peers, runs, opts.home),
         runs,
         messages: recentMessages(dbPath),
+        // Saved next-turn settings per job (message_subagent or the dashboard may have changed them).
+        jobs: Object.fromEntries([...readStoredJobs(opts.home)].map(([name, j]) => [name, { next: j.next }])),
       });
     }
     if (req.method === "GET" && url.pathname === "/api/usage") {
@@ -307,18 +344,19 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
       const r = await (await getSender()).send({ to, body: text });
       return send(res, 200, { id: r.messages[0]?.id, deliveredTo: r.deliveredTo, queuedFor: r.queuedFor });
     }
-    if (req.method === "POST" && url.pathname === "/api/subagents/message") {
+    const jobCommand = req.method === "POST" && Object.hasOwn(JOB_COMMANDS, url.pathname) ? JOB_COMMANDS[url.pathname] : undefined;
+    if (jobCommand) {
       if (req.headers["x-agent-bridge"] !== "1") return send(res, 403, { error: "missing header" });
       const body = await readJson(req);
       const run = typeof body.run === "string" ? body.run : "";
-      const text = typeof body.body === "string" ? body.body.trim() : "";
-      if (!RUN_NAME.test(`${run}.log`) || !text || text.length > MAX_BODY_CHARS) return send(res, 400, { error: "a valid run and message are required" });
+      const command = jobCommand(body);
+      if (!RUN_NAME.test(`${run}.log`) || !command) return send(res, 400, { error: "a valid run and request are required" });
       const file = join(opts.home, RUNS_DIR_NAME, `${run}.log`);
       if (!existsSync(file)) return send(res, 404, { error: "no such run" });
       const meta = readMeta(join(opts.home, RUNS_DIR_NAME, `${run}.json`));
       if (!meta.by || !meta.job) return send(res, 409, { error: "This run has no owning session or job recorded." });
       try {
-        const result = await messageDashboardJob(await getSender(), jobOwner(opts.home, meta.job, meta.by), meta.job, text);
+        const result = await controlDashboardJob(await getSender(), jobOwner(opts.home, meta.job, meta.by), meta.job, command);
         return send(res, result.isError ? 409 : 200, result);
       } catch (err) {
         if (err instanceof JobControlError) return send(res, err.reason === "offline" ? 409 : 504, { error: err.message });

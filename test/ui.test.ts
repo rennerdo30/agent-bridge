@@ -169,6 +169,56 @@ describe("web dashboard", () => {
     expect(received).toEqual(["after adoption"]);
   });
 
+  it("finds the current owner in the versioned job store too", async () => {
+    const peer = env.node("current-owner", "claude");
+    await peer.start();
+    const jobs = new JobManager(peer, nullLogger);
+    managers.push(jobs);
+    attachDashboardJobControl(peer, jobs, nullLogger);
+    const received: string[] = [];
+    const job = jobs.start("codex", null, "task", async (_s, _p, j) => {
+      j.live = { post: (body) => received.push(body) };
+      return new Promise(() => {});
+    });
+    recordJob("former-owner", job);
+    writeFileSync(join(env.home, JOBS_FILE), JSON.stringify({ version: 1, jobs: [{ name: job.name, owner: peer.name }] }));
+    const r = await fetch(`${base()}/api/subagents/message`, { method: "POST", headers: POST_HEADERS(), body: JSON.stringify({ run: RUN, body: "after adoption" }) });
+    expect(r.status).toBe(200);
+    expect(received).toEqual(["after adoption"]);
+  });
+
+  it("saves a job's next-turn settings without continuing it, and lists them in the state", async () => {
+    const peer = env.node("claude-owner", "claude");
+    await peer.start();
+    const jobs = new JobManager(peer, nullLogger, join(env.home, JOBS_FILE));
+    managers.push(jobs);
+    attachDashboardJobControl(peer, jobs, nullLogger);
+    const received: string[] = [];
+    const job = jobs.start("codex", null, "task", async (_s, _p, j) => {
+      j.live = { post: (body) => received.push(body) };
+      return new Promise(() => {});
+    });
+    recordJob(peer.name, job);
+    const post = (settings: unknown) => fetch(`${base()}/api/subagents/settings`, { method: "POST", headers: POST_HEADERS(), body: JSON.stringify({ run: RUN, settings }) });
+    const r = await post({ model: "gpt-6-luna", effort: "high", sandbox: "danger-full-access" });
+    expect(r.status).toBe(200);
+    expect(await r.json()).toMatchObject({ outcome: "saved", isError: false, text: expect.stringContaining("Applies from its next turn") });
+    expect(job.args).toMatchObject({ model: "gpt-6-luna", effort: "high", sandbox: "danger-full-access" });
+    expect(received).toEqual([]);
+    expect(job.queue).toEqual([]);
+    const state = await (await fetch(`${base()}/api/state`, { headers: { cookie } })).json();
+    expect(state.jobs[job.name].next).toMatchObject({ model: "gpt-6-luna", effort: "high", sandbox: "danger-full-access" });
+
+    const wrongAgent = await post({ permission_mode: "bypassPermissions" });
+    expect(wrongAgent.status).toBe(409);
+    expect(await wrongAgent.json()).toMatchObject({ outcome: "invalid", text: "permission_mode applies only to claude jobs." });
+    expect((await post({ effort: "high; rm" })).status).toBe(409);
+    expect((await post({ owner: "someone-else" })).status).toBe(409);
+    expect((await post({})).status).toBe(400);
+    expect((await post([])).status).toBe(400);
+    expect(job.args).not.toHaveProperty("permission_mode");
+  });
+
   it("ignores malformed control commands and does not route another session's restored job", async () => {
     const peer = env.node("owner", "claude"), sender = env.node("test-sender", "other");
     await peer.start();

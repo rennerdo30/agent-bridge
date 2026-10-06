@@ -162,7 +162,8 @@ h3 .n { color: var(--faint); font-weight: 500; }
 .msg .meta b { color: var(--text); font-weight: 600; }
 .msg .body { overflow-wrap: anywhere; }
 form { display: flex; gap: 8px; padding: 12px; border-top: 1px solid var(--line); background: var(--panel-2); flex-wrap: wrap; }
-select, textarea, button { font: inherit; color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
+select, textarea, button, input { font: inherit; color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
+input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: -1px; }
 textarea { flex: 1 1 220px; min-height: 40px; resize: vertical; }
 button { background: var(--accent); color: #fff; border-color: var(--accent); font-weight: 600; cursor: pointer; padding: 8px 16px; }
 button:disabled { opacity: .6; cursor: default; }
@@ -184,6 +185,18 @@ button:disabled { opacity: .6; cursor: default; }
 .conv-head .grow { flex: 1; min-width: 0; }
 .conv-head .title { font-weight: 650; font-size: 15px; display: flex; gap: 8px; align-items: center; }
 .follow { font-size: 12px; color: var(--muted); display: flex; gap: 5px; align-items: center; white-space: nowrap; }
+button.ghost { background: transparent; color: var(--muted); border-color: var(--line); font-weight: 500; font-size: 12.5px; padding: 4px 10px; }
+button.ghost:hover, button.ghost[aria-expanded="true"] { color: var(--text); border-color: var(--accent); background: var(--accent-soft); }
+.chip.next { color: var(--accent); background: var(--accent-soft); border-color: transparent; }
+/* Next-turn settings of a subagent */
+form.settings { border-top: 0; border-bottom: 1px solid var(--line); padding: 12px 18px; gap: 10px 12px; align-items: flex-end; }
+.settings label { display: flex; flex-direction: column; gap: 4px; font-size: 11.5px; font-weight: 600; color: var(--muted); flex: 1 1 150px; min-width: 0; }
+.settings label.wide { flex-basis: 220px; }
+.settings input, .settings select { width: 100%; padding: 6px 9px; font-size: 13px; font-weight: 400; }
+.settings button[type="submit"] { padding: 6px 14px; }
+.settings .note { width: 100%; font-size: 12px; color: var(--muted); }
+.settings .note.err { color: var(--bad); }
+.settings .note:empty { display: none; }
 .hint { padding: 9px 18px; font-size: 12.5px; color: var(--muted); background: var(--panel-2); border-bottom: 1px solid var(--line); }
 .hint code { font-family: var(--mono); font-size: 12px; color: var(--text); }
 .chat { flex: 1; overflow: auto; padding: 20px 22px; display: flex; flex-direction: column; gap: 10px; }
@@ -260,8 +273,16 @@ details[open] > summary::before { content: "▾ "; }
       <div class="conv-head">
         <div id="cAvatar"></div>
         <div class="grow"><div class="title" id="cTitle">Conversation</div><div class="small muted ell" id="cSub"></div></div>
+        <button type="button" class="ghost hidden" id="setToggle" aria-expanded="false" aria-controls="jobSettings" title="Model, effort and permission for its next turn">Settings</button>
         <label class="follow"><input type="checkbox" id="follow" checked> follow</label>
       </div>
+      <form id="jobSettings" class="settings hidden" aria-label="Settings for the next turn">
+        <label class="wide">Model<input id="setModel" list="setModels" autocomplete="off" spellcheck="false"><datalist id="setModels"></datalist></label>
+        <label>Effort<select id="setEffort"></select></label>
+        <label class="wide">Permission<select id="setPerm"></select></label>
+        <button type="submit" id="setApply">Apply</button>
+        <div class="note" id="setInfo" role="status" aria-live="polite"></div>
+      </form>
       <div class="hint hidden" id="cHint"></div>
       <div id="chat" class="chat"></div>
       <form id="jobSend" class="hidden">
@@ -313,7 +334,32 @@ const dot = (activity) => '<span class="dot ' + (activity === "busy" ? "busy" : 
     }
     const pill = (status, percent) => '<span class="pill ' + status + '">' + (status === "running" ? (typeof percent === "number" ? "working · " + percent + "%" : "working") : status) + "</span>";
 
+/** Next-turn settings the dashboard can change, per agent (the values message_subagent accepts). */
+const EFFORTS = ["low", "medium", "high", "xhigh", "max"];
+const PERMISSIONS = {
+  codex: { key: "sandbox", options: [["read-only", "read-only · looks only"], ["workspace-write", "workspace-write · edits its folder"], ["danger-full-access", "danger-full-access · no sandbox"]] },
+  claude: { key: "permission_mode", options: [["manual", "manual · asks first"], ["plan", "plan · plans only"], ["acceptEdits", "acceptEdits · edits files"], ["auto", "auto · decides itself"], ["bypassPermissions", "bypassPermissions · anything"]] },
+  opencode: { key: "auto_approve", options: [["false", "asks first"], ["true", "auto-approve · anything"]] },
+};
+/** The permission a job's saved settings give its next turn, named like the run's own permission. */
+function nextPermission(next) {
+  if (next.sandbox) return next.sandbox;
+  if (next.permission_mode) return next.permission_mode;
+  if (typeof next.auto_approve === "boolean") return next.auto_approve ? "auto-approve" : "ask";
+  return "";
+}
+const nextOf = (g) => (g && g.job && state && state.jobs && state.jobs[g.job] && state.jobs[g.job].next) || {};
+/** Saved settings that differ from what its current (or last) turn runs with. */
+function pendingChips(g) {
+  const next = nextOf(g), perm = nextPermission(next), out = [];
+  if (next.model && next.model !== g.model) out.push("model " + next.model);
+  if (next.effort && next.effort !== g.effort) out.push(next.effort + " effort");
+  if (perm && perm !== g.permission) out.push(perm);
+  return out.length ? ' <span class="chip next" title="saved; applies from its next turn">next turn: ' + esc(out.join(" · ")) + "</span>" : "";
+}
+
 let state = null, model = null, route = parseRoute(), pulling = false, lastChat = "";
+let settingsGroup = null, modelLists = null;
 /** Loaded run logs: name -> { raw, offset, done }. */
 const logs = new Map();
 /** Expanded step groups and bubbles survive re-renders. */
@@ -548,10 +594,44 @@ function renderJobForm(g) {
     $("jobBody").value = jobDrafts.get(key) || "";
     composerGroup = key;
   }
-  $("jobSend").classList.toggle("hidden", !g || !g.job || g.owner === "earlier runs");
+  const controllable = Boolean(g && g.job && g.owner !== "earlier runs");
+  $("jobSend").classList.toggle("hidden", !controllable);
   $("jobSendBtn").disabled = jobSending.has(key);
   $("jobSendInfo").textContent = (jobResults.get(key) || []).at(-1) || "";
+  renderSettings(controllable ? g : null);
 }
+
+/** The settings row: emptied when another subagent is selected; empty fields keep what it has. */
+function renderSettings(g) {
+  const toggle = $("setToggle"), form = $("jobSettings");
+  toggle.classList.toggle("hidden", !g);
+  if (!g) { form.classList.add("hidden"); toggle.setAttribute("aria-expanded", "false"); settingsGroup = null; return; }
+  if (settingsGroup === g.key) return;
+  settingsGroup = g.key;
+  const perm = PERMISSIONS[g.agent];
+  $("setModel").value = "";
+  $("setModel").placeholder = "keep: " + (g.model || "its default");
+  $("setEffort").innerHTML = '<option value="">keep: ' + esc(g.effort || "default") + "</option>" + EFFORTS.map((e) => "<option>" + e + "</option>").join("");
+  $("setPerm").innerHTML = perm ? '<option value="">keep: ' + esc(g.permission || "default") + "</option>" + perm.options.map((o) => '<option value="' + o[0] + '">' + esc(o[1]) + "</option>").join("") : "";
+  $("setPerm").disabled = !perm;
+  $("setInfo").textContent = "";
+  $("setInfo").classList.remove("err");
+  fillModels(g.agent);
+}
+
+/** Model suggestions from /api/models (read once, when the settings are first opened). */
+async function fillModels(agent) {
+  if (settingsHidden()) return;
+  if (!modelLists) {
+    modelLists = fetch("/api/models").then((r) => (r.ok ? r.json() : { reports: [] })).then((d) => d.reports || []).catch(() => []);
+  }
+  const reports = await modelLists;
+  const rep = reports.find((r) => r.agent === agent);
+  if (settingsGroup && model && model.groups.get(settingsGroup) && model.groups.get(settingsGroup).agent === agent) {
+    $("setModels").innerHTML = (rep ? rep.models : []).map((m) => '<option value="' + esc(m) + '"></option>').join("");
+  }
+}
+const settingsHidden = () => $("jobSettings").classList.contains("hidden");
 
 /** Load (the rest of) every turn's log, then render the conversation. */
 async function showGroup(g) {
@@ -589,7 +669,7 @@ function splitTurn(raw) {
 function renderConversation(g) {
   const first = g.turns[0], last = g.turns[g.turns.length - 1];
   $("cAvatar").innerHTML = av(g.agent);
-  $("cTitle").innerHTML = (g.title ? esc(g.title) + ' <span class="chip">' + esc(g.agent) + "</span>" : esc(g.agent)) + (g.model ? ' <span class="chip">' + esc(g.model) + "</span>" : "") + (g.effort ? " " + effortChip(g.effort) : "") + (g.permission ? " " + permChip(g.permission) : "") + " " + pill(g.status, g.percent) + (g.progressNote && g.percent !== null ? ' <span class="small muted">' + esc(g.progressNote) + "</span>" : "");
+  $("cTitle").innerHTML = (g.title ? esc(g.title) + ' <span class="chip">' + esc(g.agent) + "</span>" : esc(g.agent)) + (g.model ? ' <span class="chip">' + esc(g.model) + "</span>" : "") + (g.effort ? " " + effortChip(g.effort) : "") + (g.permission ? " " + permChip(g.permission) : "") + pendingChips(g) + " " + pill(g.status, g.percent) + (g.progressNote && g.percent !== null ? ' <span class="small muted">' + esc(g.progressNote) + "</span>" : "");
   $("cSub").textContent = (g.owner === "earlier runs" ? "" : "started by " + g.owner + " · ") + time(first.startedAt) + " · " + (first.access || "default") + " access" + (first.workdir ? " · " + first.workdir : "");
   const hint = g.job && g.status !== "running"
     ? (g.status === "done" ? "Continue it with its context from " : "Recover it with its context from ") + esc(g.owner) + ': <code>message_subagent(job="' + esc(g.job) + '")</code>'
@@ -804,6 +884,55 @@ $("jobSend").addEventListener("submit", async (e) => {
       renderJobForm(g);
       renderConversation(g);
     }
+  }
+});
+
+$("setToggle").addEventListener("click", () => {
+  const open = settingsHidden();
+  $("jobSettings").classList.toggle("hidden", !open);
+  $("setToggle").setAttribute("aria-expanded", String(open));
+  if (open && settingsGroup) {
+    const g = model && model.groups.get(settingsGroup);
+    if (g) void fillModels(g.agent);
+  }
+});
+
+/** Only the fields the user set; a turn already running keeps its own settings. */
+function chosenSettings(agent) {
+  const out = {}, modelName = $("setModel").value.trim(), effort = $("setEffort").value, perm = $("setPerm").value, spec = PERMISSIONS[agent];
+  if (modelName) out.model = modelName;
+  if (effort) out.effort = effort;
+  if (perm && spec) out[spec.key] = spec.key === "auto_approve" ? perm === "true" : perm;
+  return out;
+}
+
+$("jobSettings").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const key = settingsGroup, g = key && model.groups.get(key);
+  if (!g || !g.job) return;
+  const settings = chosenSettings(g.agent), info = $("setInfo");
+  info.classList.remove("err");
+  if (!Object.keys(settings).length) { info.textContent = "Nothing to change: pick a model, effort or permission."; return; }
+  $("setApply").disabled = true;
+  let result;
+  try {
+    const r = await fetch("/api/subagents/settings", { method: "POST", headers: { "content-type": "application/json", "x-agent-bridge": "1" }, body: JSON.stringify({ run: g.turns[g.turns.length - 1].name, settings }) });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || d.text || "HTTP " + r.status);
+    result = d.text;
+    if (settingsGroup === key) {
+      settingsGroup = null;
+      renderSettings(g);
+      info.textContent = result;
+    }
+    void poll();
+  } catch (err) {
+    result = "Settings not saved: " + err.message;
+    if (settingsGroup === key) { info.textContent = result; info.classList.add("err"); }
+  } finally {
+    $("setApply").disabled = false;
+    jobResults.set(key, [...(jobResults.get(key) || []), result]);
+    if (composerGroup === key) renderConversation(g);
   }
 });
 

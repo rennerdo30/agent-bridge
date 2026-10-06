@@ -6,7 +6,7 @@ import { DEFAULT_CONFIG } from "../src/core/config.js";
 import { nullLogger } from "../src/core/logger.js";
 import { delegateToOpencode } from "../src/core/delegate.js";
 import { resumeArgs, worktreeArgs, type DelegateArgs } from "../src/mcp/delegate-run.js";
-import { changedJobArgs } from "../src/mcp/job-settings.js";
+import { changedJobArgs, parseJobSettings } from "../src/mcp/job-settings.js";
 import { JobManager, type RunnerControl } from "../src/mcp/jobs.js";
 import { DELEGATION_TARGETS } from "../src/mcp/targets.js";
 import { makeEnv, until, type TestEnv } from "./helpers.js";
@@ -114,5 +114,24 @@ process.stdin.on("end", () => console.log(JSON.stringify({ type: "text", session
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe("settings from the dashboard", () => {
+  it("accepts the values message_subagent accepts", () => {
+    expect(parseJobSettings({ model: "gpt-6-luna", effort: "low", sandbox: "read-only" }, "codex")).toEqual({ model: "gpt-6-luna", effort: "low", sandbox: "read-only" });
+    expect(parseJobSettings({ permission_mode: "plan", access: "read" }, "claude")).toEqual({ permission_mode: "plan", access: "read" });
+    expect(parseJobSettings({ auto_approve: false }, "opencode")).toEqual({ auto_approve: false });
+  });
+
+  it("rejects other agents' permission keys, bad values, unknown keys and nothing", () => {
+    expect(parseJobSettings({ sandbox: "read-only" }, "claude")).toBe("sandbox applies only to codex jobs.");
+    expect(parseJobSettings({ auto_approve: "yes" }, "opencode")).toBe("invalid auto_approve");
+    expect(parseJobSettings({ model: "a b" }, "codex")).toBe("invalid model");
+    expect(parseJobSettings({ effort: "x".repeat(21) }, "codex")).toBe("invalid effort");
+    expect(parseJobSettings({ sandbox: "everything" }, "codex")).toBe("invalid sandbox");
+    expect(parseJobSettings({ prompt: "x" }, "codex")).toBe("unknown setting: prompt");
+    expect(parseJobSettings({}, "codex")).toBe("no settings given");
+    expect(parseJobSettings(null, "codex")).toBe("settings must be an object");
   });
 });

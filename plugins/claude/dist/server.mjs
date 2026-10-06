@@ -39825,7 +39825,7 @@ var JobControlError = class extends Error {
   }
   reason;
 };
-async function messageDashboardJob(node2, owner, job, body) {
+async function controlDashboardJob(node2, owner, job, command) {
   if (!(await node2.peers()).some((p) => p.name === owner)) throw new JobControlError("The owning session is not connected. Reopen it to continue this subagent.", "offline");
   const requestId = randomUUID7();
   let receive;
@@ -39845,7 +39845,7 @@ async function messageDashboardJob(node2, owner, job, body) {
   reply.catch(() => {
   });
   try {
-    await node2.send({ to: owner, body: JSON.stringify({ type: "message", requestId, job, body }), conversationId: DASHBOARD_JOB_CONVERSATION }, { quiet: true });
+    await node2.send({ to: owner, body: JSON.stringify({ ...command, requestId, job }), conversationId: DASHBOARD_JOB_CONVERSATION }, { quiet: true });
     return await reply;
   } finally {
     clearTimeout(timer);
@@ -41904,6 +41904,55 @@ function startRunFeed(opts) {
   };
 }
 
+// src/mcp/job-settings.ts
+var JOB_SETTING_KEYS = ["model", "effort", "access", "sandbox", "permission_mode", "auto_approve"];
+var EXACT_PERMISSION_KEYS = ["sandbox", "permission_mode", "auto_approve"];
+var PERMISSION_KEY_AGENT = { sandbox: "codex", permission_mode: "claude", auto_approve: "opencode" };
+var EFFORT_PATTERN = /^[A-Za-z0-9_-]{1,20}$/;
+function changedJobArgs(args, settings) {
+  const next = { ...args };
+  if (settings.access !== void 0) for (const key of EXACT_PERMISSION_KEYS) delete next[key];
+  else if (EXACT_PERMISSION_KEYS.some((key) => settings[key] !== void 0)) delete next.access;
+  for (const key of JOB_SETTING_KEYS) if (settings[key] !== void 0) next[key] = settings[key];
+  return next;
+}
+function parseJobSettings(input2, agent) {
+  if (!input2 || typeof input2 !== "object" || Array.isArray(input2)) return "settings must be an object";
+  const raw = input2;
+  const unknownKey = Object.keys(raw).find((key) => !JOB_SETTING_KEYS.includes(key));
+  if (unknownKey) return `unknown setting: ${unknownKey}`;
+  const settings = {};
+  if (raw.model !== void 0) {
+    if (typeof raw.model !== "string" || !MODEL_NAME_PATTERN.test(raw.model)) return "invalid model";
+    settings.model = raw.model;
+  }
+  if (raw.effort !== void 0) {
+    if (typeof raw.effort !== "string" || !EFFORT_PATTERN.test(raw.effort)) return "invalid effort";
+    settings.effort = raw.effort;
+  }
+  if (raw.access !== void 0) {
+    if (!ACCESS_LEVELS.includes(raw.access)) return "invalid access";
+    settings.access = raw.access;
+  }
+  if (raw.sandbox !== void 0) {
+    if (!CODEX_SANDBOXES.includes(raw.sandbox)) return "invalid sandbox";
+    settings.sandbox = raw.sandbox;
+  }
+  if (raw.permission_mode !== void 0) {
+    if (!CLAUDE_PERMISSION_MODES.includes(raw.permission_mode)) return "invalid permission_mode";
+    settings.permission_mode = raw.permission_mode;
+  }
+  if (raw.auto_approve !== void 0) {
+    if (typeof raw.auto_approve !== "boolean") return "invalid auto_approve";
+    settings.auto_approve = raw.auto_approve;
+  }
+  for (const [key, owner] of Object.entries(PERMISSION_KEY_AGENT)) {
+    if (settings[key] !== void 0 && agent !== owner) return `${key} applies only to ${owner} jobs.`;
+  }
+  if (!Object.keys(settings).length) return "no settings given";
+  return settings;
+}
+
 // src/cli/logo.ts
 var LOGO_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="agent-bridge"><defs><linearGradient id="ab-bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#1e1b4b"/><stop offset="1" stop-color="#4338ca"/></linearGradient><linearGradient id="ab-l" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffb088"/><stop offset="1" stop-color="#e2603b"/></linearGradient><linearGradient id="ab-r" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#7cf0c0"/><stop offset="1" stop-color="#0e9f6e"/></linearGradient><radialGradient id="ab-glow"><stop offset="0" stop-color="#fff" stop-opacity=".55"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></radialGradient></defs><rect width="64" height="64" rx="16" fill="url(#ab-bg)"/><path d="M9 52V32A20 20 0 0 1 27 12.1v10.2A10 10 0 0 0 19 32v20z" fill="url(#ab-l)"/><path d="M55 52V32A20 20 0 0 0 37 12.1v10.2A10 10 0 0 1 45 32v20z" fill="url(#ab-r)"/><circle cx="32" cy="17" r="11" fill="url(#ab-glow)"/><path d="M32 9.5c.9 4.6 2.9 6.6 7.5 7.5-4.6.9-6.6 2.9-7.5 7.5-.9-4.6-2.9-6.6-7.5-7.5 4.6-.9 6.6-2.9 7.5-7.5z" fill="#fff"/></svg>';
 var FAVICON_HREF = `data:image/svg+xml,${encodeURIComponent(LOGO_SVG)}`;
@@ -42152,7 +42201,8 @@ h3 .n { color: var(--faint); font-weight: 500; }
 .msg .meta b { color: var(--text); font-weight: 600; }
 .msg .body { overflow-wrap: anywhere; }
 form { display: flex; gap: 8px; padding: 12px; border-top: 1px solid var(--line); background: var(--panel-2); flex-wrap: wrap; }
-select, textarea, button { font: inherit; color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
+select, textarea, button, input { font: inherit; color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
+input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: -1px; }
 textarea { flex: 1 1 220px; min-height: 40px; resize: vertical; }
 button { background: var(--accent); color: #fff; border-color: var(--accent); font-weight: 600; cursor: pointer; padding: 8px 16px; }
 button:disabled { opacity: .6; cursor: default; }
@@ -42174,6 +42224,18 @@ button:disabled { opacity: .6; cursor: default; }
 .conv-head .grow { flex: 1; min-width: 0; }
 .conv-head .title { font-weight: 650; font-size: 15px; display: flex; gap: 8px; align-items: center; }
 .follow { font-size: 12px; color: var(--muted); display: flex; gap: 5px; align-items: center; white-space: nowrap; }
+button.ghost { background: transparent; color: var(--muted); border-color: var(--line); font-weight: 500; font-size: 12.5px; padding: 4px 10px; }
+button.ghost:hover, button.ghost[aria-expanded="true"] { color: var(--text); border-color: var(--accent); background: var(--accent-soft); }
+.chip.next { color: var(--accent); background: var(--accent-soft); border-color: transparent; }
+/* Next-turn settings of a subagent */
+form.settings { border-top: 0; border-bottom: 1px solid var(--line); padding: 12px 18px; gap: 10px 12px; align-items: flex-end; }
+.settings label { display: flex; flex-direction: column; gap: 4px; font-size: 11.5px; font-weight: 600; color: var(--muted); flex: 1 1 150px; min-width: 0; }
+.settings label.wide { flex-basis: 220px; }
+.settings input, .settings select { width: 100%; padding: 6px 9px; font-size: 13px; font-weight: 400; }
+.settings button[type="submit"] { padding: 6px 14px; }
+.settings .note { width: 100%; font-size: 12px; color: var(--muted); }
+.settings .note.err { color: var(--bad); }
+.settings .note:empty { display: none; }
 .hint { padding: 9px 18px; font-size: 12.5px; color: var(--muted); background: var(--panel-2); border-bottom: 1px solid var(--line); }
 .hint code { font-family: var(--mono); font-size: 12px; color: var(--text); }
 .chat { flex: 1; overflow: auto; padding: 20px 22px; display: flex; flex-direction: column; gap: 10px; }
@@ -42250,8 +42312,16 @@ details[open] > summary::before { content: "\u25BE "; }
       <div class="conv-head">
         <div id="cAvatar"></div>
         <div class="grow"><div class="title" id="cTitle">Conversation</div><div class="small muted ell" id="cSub"></div></div>
+        <button type="button" class="ghost hidden" id="setToggle" aria-expanded="false" aria-controls="jobSettings" title="Model, effort and permission for its next turn">Settings</button>
         <label class="follow"><input type="checkbox" id="follow" checked> follow</label>
       </div>
+      <form id="jobSettings" class="settings hidden" aria-label="Settings for the next turn">
+        <label class="wide">Model<input id="setModel" list="setModels" autocomplete="off" spellcheck="false"><datalist id="setModels"></datalist></label>
+        <label>Effort<select id="setEffort"></select></label>
+        <label class="wide">Permission<select id="setPerm"></select></label>
+        <button type="submit" id="setApply">Apply</button>
+        <div class="note" id="setInfo" role="status" aria-live="polite"></div>
+      </form>
       <div class="hint hidden" id="cHint"></div>
       <div id="chat" class="chat"></div>
       <form id="jobSend" class="hidden">
@@ -42303,7 +42373,32 @@ const dot = (activity) => '<span class="dot ' + (activity === "busy" ? "busy" : 
     }
     const pill = (status, percent) => '<span class="pill ' + status + '">' + (status === "running" ? (typeof percent === "number" ? "working \xB7 " + percent + "%" : "working") : status) + "</span>";
 
+/** Next-turn settings the dashboard can change, per agent (the values message_subagent accepts). */
+const EFFORTS = ["low", "medium", "high", "xhigh", "max"];
+const PERMISSIONS = {
+  codex: { key: "sandbox", options: [["read-only", "read-only \xB7 looks only"], ["workspace-write", "workspace-write \xB7 edits its folder"], ["danger-full-access", "danger-full-access \xB7 no sandbox"]] },
+  claude: { key: "permission_mode", options: [["manual", "manual \xB7 asks first"], ["plan", "plan \xB7 plans only"], ["acceptEdits", "acceptEdits \xB7 edits files"], ["auto", "auto \xB7 decides itself"], ["bypassPermissions", "bypassPermissions \xB7 anything"]] },
+  opencode: { key: "auto_approve", options: [["false", "asks first"], ["true", "auto-approve \xB7 anything"]] },
+};
+/** The permission a job's saved settings give its next turn, named like the run's own permission. */
+function nextPermission(next) {
+  if (next.sandbox) return next.sandbox;
+  if (next.permission_mode) return next.permission_mode;
+  if (typeof next.auto_approve === "boolean") return next.auto_approve ? "auto-approve" : "ask";
+  return "";
+}
+const nextOf = (g) => (g && g.job && state && state.jobs && state.jobs[g.job] && state.jobs[g.job].next) || {};
+/** Saved settings that differ from what its current (or last) turn runs with. */
+function pendingChips(g) {
+  const next = nextOf(g), perm = nextPermission(next), out = [];
+  if (next.model && next.model !== g.model) out.push("model " + next.model);
+  if (next.effort && next.effort !== g.effort) out.push(next.effort + " effort");
+  if (perm && perm !== g.permission) out.push(perm);
+  return out.length ? ' <span class="chip next" title="saved; applies from its next turn">next turn: ' + esc(out.join(" \xB7 ")) + "</span>" : "";
+}
+
 let state = null, model = null, route = parseRoute(), pulling = false, lastChat = "";
+let settingsGroup = null, modelLists = null;
 /** Loaded run logs: name -> { raw, offset, done }. */
 const logs = new Map();
 /** Expanded step groups and bubbles survive re-renders. */
@@ -42538,10 +42633,44 @@ function renderJobForm(g) {
     $("jobBody").value = jobDrafts.get(key) || "";
     composerGroup = key;
   }
-  $("jobSend").classList.toggle("hidden", !g || !g.job || g.owner === "earlier runs");
+  const controllable = Boolean(g && g.job && g.owner !== "earlier runs");
+  $("jobSend").classList.toggle("hidden", !controllable);
   $("jobSendBtn").disabled = jobSending.has(key);
   $("jobSendInfo").textContent = (jobResults.get(key) || []).at(-1) || "";
+  renderSettings(controllable ? g : null);
 }
+
+/** The settings row: emptied when another subagent is selected; empty fields keep what it has. */
+function renderSettings(g) {
+  const toggle = $("setToggle"), form = $("jobSettings");
+  toggle.classList.toggle("hidden", !g);
+  if (!g) { form.classList.add("hidden"); toggle.setAttribute("aria-expanded", "false"); settingsGroup = null; return; }
+  if (settingsGroup === g.key) return;
+  settingsGroup = g.key;
+  const perm = PERMISSIONS[g.agent];
+  $("setModel").value = "";
+  $("setModel").placeholder = "keep: " + (g.model || "its default");
+  $("setEffort").innerHTML = '<option value="">keep: ' + esc(g.effort || "default") + "</option>" + EFFORTS.map((e) => "<option>" + e + "</option>").join("");
+  $("setPerm").innerHTML = perm ? '<option value="">keep: ' + esc(g.permission || "default") + "</option>" + perm.options.map((o) => '<option value="' + o[0] + '">' + esc(o[1]) + "</option>").join("") : "";
+  $("setPerm").disabled = !perm;
+  $("setInfo").textContent = "";
+  $("setInfo").classList.remove("err");
+  fillModels(g.agent);
+}
+
+/** Model suggestions from /api/models (read once, when the settings are first opened). */
+async function fillModels(agent) {
+  if (settingsHidden()) return;
+  if (!modelLists) {
+    modelLists = fetch("/api/models").then((r) => (r.ok ? r.json() : { reports: [] })).then((d) => d.reports || []).catch(() => []);
+  }
+  const reports = await modelLists;
+  const rep = reports.find((r) => r.agent === agent);
+  if (settingsGroup && model && model.groups.get(settingsGroup) && model.groups.get(settingsGroup).agent === agent) {
+    $("setModels").innerHTML = (rep ? rep.models : []).map((m) => '<option value="' + esc(m) + '"></option>').join("");
+  }
+}
+const settingsHidden = () => $("jobSettings").classList.contains("hidden");
 
 /** Load (the rest of) every turn's log, then render the conversation. */
 async function showGroup(g) {
@@ -42579,7 +42708,7 @@ function splitTurn(raw) {
 function renderConversation(g) {
   const first = g.turns[0], last = g.turns[g.turns.length - 1];
   $("cAvatar").innerHTML = av(g.agent);
-  $("cTitle").innerHTML = (g.title ? esc(g.title) + ' <span class="chip">' + esc(g.agent) + "</span>" : esc(g.agent)) + (g.model ? ' <span class="chip">' + esc(g.model) + "</span>" : "") + (g.effort ? " " + effortChip(g.effort) : "") + (g.permission ? " " + permChip(g.permission) : "") + " " + pill(g.status, g.percent) + (g.progressNote && g.percent !== null ? ' <span class="small muted">' + esc(g.progressNote) + "</span>" : "");
+  $("cTitle").innerHTML = (g.title ? esc(g.title) + ' <span class="chip">' + esc(g.agent) + "</span>" : esc(g.agent)) + (g.model ? ' <span class="chip">' + esc(g.model) + "</span>" : "") + (g.effort ? " " + effortChip(g.effort) : "") + (g.permission ? " " + permChip(g.permission) : "") + pendingChips(g) + " " + pill(g.status, g.percent) + (g.progressNote && g.percent !== null ? ' <span class="small muted">' + esc(g.progressNote) + "</span>" : "");
   $("cSub").textContent = (g.owner === "earlier runs" ? "" : "started by " + g.owner + " \xB7 ") + time(first.startedAt) + " \xB7 " + (first.access || "default") + " access" + (first.workdir ? " \xB7 " + first.workdir : "");
   const hint = g.job && g.status !== "running"
     ? (g.status === "done" ? "Continue it with its context from " : "Recover it with its context from ") + esc(g.owner) + ': <code>message_subagent(job="' + esc(g.job) + '")</code>'
@@ -42797,6 +42926,55 @@ $("jobSend").addEventListener("submit", async (e) => {
   }
 });
 
+$("setToggle").addEventListener("click", () => {
+  const open = settingsHidden();
+  $("jobSettings").classList.toggle("hidden", !open);
+  $("setToggle").setAttribute("aria-expanded", String(open));
+  if (open && settingsGroup) {
+    const g = model && model.groups.get(settingsGroup);
+    if (g) void fillModels(g.agent);
+  }
+});
+
+/** Only the fields the user set; a turn already running keeps its own settings. */
+function chosenSettings(agent) {
+  const out = {}, modelName = $("setModel").value.trim(), effort = $("setEffort").value, perm = $("setPerm").value, spec = PERMISSIONS[agent];
+  if (modelName) out.model = modelName;
+  if (effort) out.effort = effort;
+  if (perm && spec) out[spec.key] = spec.key === "auto_approve" ? perm === "true" : perm;
+  return out;
+}
+
+$("jobSettings").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const key = settingsGroup, g = key && model.groups.get(key);
+  if (!g || !g.job) return;
+  const settings = chosenSettings(g.agent), info = $("setInfo");
+  info.classList.remove("err");
+  if (!Object.keys(settings).length) { info.textContent = "Nothing to change: pick a model, effort or permission."; return; }
+  $("setApply").disabled = true;
+  let result;
+  try {
+    const r = await fetch("/api/subagents/settings", { method: "POST", headers: { "content-type": "application/json", "x-agent-bridge": "1" }, body: JSON.stringify({ run: g.turns[g.turns.length - 1].name, settings }) });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || d.text || "HTTP " + r.status);
+    result = d.text;
+    if (settingsGroup === key) {
+      settingsGroup = null;
+      renderSettings(g);
+      info.textContent = result;
+    }
+    void poll();
+  } catch (err) {
+    result = "Settings not saved: " + err.message;
+    if (settingsGroup === key) { info.textContent = result; info.classList.add("err"); }
+  } finally {
+    $("setApply").disabled = false;
+    jobResults.set(key, [...(jobResults.get(key) || []), result]);
+    if (composerGroup === key) renderConversation(g);
+  }
+});
+
 /** Auto follows the system; Light and Dark override it. Remembered in this browser. */
 function applyTheme(theme) {
   const root = document.documentElement;
@@ -42874,14 +43052,29 @@ function readMeta(file2) {
     return {};
   }
 }
-function jobOwner(home, job, original) {
+function readStoredJobs(home) {
+  const out = /* @__PURE__ */ new Map();
+  let stored;
   try {
-    const stored = JSON.parse(readFileSync13(join19(home, JOBS_FILE), "utf8"));
-    const owner = Array.isArray(stored) ? stored.find((j) => j?.name === job)?.owner : null;
-    return typeof owner === "string" && owner ? owner : original;
+    stored = JSON.parse(readFileSync13(join19(home, JOBS_FILE), "utf8"));
   } catch {
-    return original;
+    return out;
   }
+  const list = Array.isArray(stored) ? stored : Array.isArray(stored?.jobs) ? stored.jobs : [];
+  for (const j of list) {
+    if (!j || typeof j !== "object") continue;
+    const { name, owner, args } = j;
+    if (typeof name !== "string") continue;
+    const saved = args && typeof args === "object" ? args : {};
+    out.set(name, {
+      owner: typeof owner === "string" && owner ? owner : null,
+      next: Object.fromEntries(JOB_SETTING_KEYS.filter((key) => saved[key] !== void 0).map((key) => [key, saved[key]]))
+    });
+  }
+  return out;
+}
+function jobOwner(home, job, original) {
+  return readStoredJobs(home).get(job)?.owner ?? original;
 }
 function classifyPeers(peers, runs, home) {
   const norm = (p) => p.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
@@ -42934,6 +43127,14 @@ function cookieSecret(req) {
   const m = new RegExp(`(?:^|;\\s*)${COOKIE}=([0-9a-f]+)`).exec(String(req.headers.cookie ?? ""));
   return m?.[1] ?? "";
 }
+var JOB_COMMANDS = {
+  "/api/subagents/message": (body) => {
+    const text2 = typeof body.body === "string" ? body.body.trim() : "";
+    return text2 && text2.length <= MAX_BODY_CHARS ? { type: "message", body: text2 } : null;
+  },
+  // The owning session checks the values against the job's agent (job-settings.ts).
+  "/api/subagents/settings": (body) => body.settings && typeof body.settings === "object" && !Array.isArray(body.settings) && Object.keys(body.settings).length ? { type: "settings", settings: body.settings } : null
+};
 var USAGE_CACHE_MS = 5 * 60 * 1e3;
 var USAGE_REFRESH_MIN_MS = 15 * 1e3;
 function readAllUsage(home, log) {
@@ -42992,7 +43193,9 @@ async function startUi(opts) {
         brokerPid,
         peers: classifyPeers(peers, runs, opts.home),
         runs,
-        messages: recentMessages(dbPath)
+        messages: recentMessages(dbPath),
+        // Saved next-turn settings per job (message_subagent or the dashboard may have changed them).
+        jobs: Object.fromEntries([...readStoredJobs(opts.home)].map(([name, j]) => [name, { next: j.next }]))
       });
     }
     if (req.method === "GET" && url2.pathname === "/api/usage") {
@@ -43023,18 +43226,19 @@ async function startUi(opts) {
       const r = await (await getSender()).send({ to, body: text2 });
       return send(res, 200, { id: r.messages[0]?.id, deliveredTo: r.deliveredTo, queuedFor: r.queuedFor });
     }
-    if (req.method === "POST" && url2.pathname === "/api/subagents/message") {
+    const jobCommand = req.method === "POST" && Object.hasOwn(JOB_COMMANDS, url2.pathname) ? JOB_COMMANDS[url2.pathname] : void 0;
+    if (jobCommand) {
       if (req.headers["x-agent-bridge"] !== "1") return send(res, 403, { error: "missing header" });
       const body = await readJson2(req);
       const run = typeof body.run === "string" ? body.run : "";
-      const text2 = typeof body.body === "string" ? body.body.trim() : "";
-      if (!RUN_NAME.test(`${run}.log`) || !text2 || text2.length > MAX_BODY_CHARS) return send(res, 400, { error: "a valid run and message are required" });
+      const command = jobCommand(body);
+      if (!RUN_NAME.test(`${run}.log`) || !command) return send(res, 400, { error: "a valid run and request are required" });
       const file2 = join19(opts.home, RUNS_DIR_NAME, `${run}.log`);
       if (!existsSync6(file2)) return send(res, 404, { error: "no such run" });
       const meta3 = readMeta(join19(opts.home, RUNS_DIR_NAME, `${run}.json`));
       if (!meta3.by || !meta3.job) return send(res, 409, { error: "This run has no owning session or job recorded." });
       try {
-        const result = await messageDashboardJob(await getSender(), jobOwner(opts.home, meta3.job, meta3.by), meta3.job, text2);
+        const result = await controlDashboardJob(await getSender(), jobOwner(opts.home, meta3.job, meta3.by), meta3.job, command);
         return send(res, result.isError ? 409 : 200, result);
       } catch (err) {
         if (err instanceof JobControlError) return send(res, err.reason === "offline" ? 409 : 504, { error: err.message });
@@ -43144,19 +43348,6 @@ function openBrowser(url2) {
 import { randomUUID as randomUUID9 } from "node:crypto";
 import { closeSync as closeSync2, mkdirSync as mkdirSync10, openSync as openSync2, rmSync as rmSync4, statSync as statSync4 } from "node:fs";
 import { dirname as dirname6 } from "node:path";
-
-// src/mcp/job-settings.ts
-var JOB_SETTING_KEYS = ["model", "effort", "access", "sandbox", "permission_mode", "auto_approve"];
-var EXACT_PERMISSION_KEYS = ["sandbox", "permission_mode", "auto_approve"];
-function changedJobArgs(args, settings) {
-  const next = { ...args };
-  if (settings.access !== void 0) for (const key of EXACT_PERMISSION_KEYS) delete next[key];
-  else if (EXACT_PERMISSION_KEYS.some((key) => settings[key] !== void 0)) delete next.access;
-  for (const key of JOB_SETTING_KEYS) if (settings[key] !== void 0) next[key] = settings[key];
-  return next;
-}
-
-// src/mcp/jobs.ts
 var JOB_ID_LENGTH = 8;
 var PROMPT_PREVIEW_CHARS = 120;
 var HISTORY_LIMIT = 50;
@@ -44737,19 +44928,39 @@ function attachDashboardJobControl(node2, jobs, log) {
     } catch {
       return;
     }
-    if (!command || command.type !== "message" || typeof command.requestId !== "string" || typeof command.job !== "string" || typeof command.body !== "string" || !command.body.trim() || command.body.length > MAX_BODY_CHARS) return;
-    const owned = jobs.find(command.job);
-    const { outcome, job } = owned?.owner === node2.name ? jobs.followUp(command.job, command.body) : { outcome: "unknown", job: void 0 };
-    const position = job ? jobs.waiting().indexOf(job) + 1 : 0;
-    const result = {
-      type: "result",
-      requestId: command.requestId,
-      outcome,
-      text: t(`followUp.${outcome}`, { name: job?.name ?? command.job, max: jobs.limit, running: jobs.runningCount(), ahead: position > 1 ? ` (${position - 1} queued before it)` : "" }),
-      isError: outcome === "unknown" || outcome === "no-session"
-    };
-    void node2.send({ to: m.from.name, replyTo: m.id, body: JSON.stringify(result), conversationId: DASHBOARD_JOB_CONVERSATION }, { quiet: true }).catch((err) => log.warn("dashboard job reply failed", { err: err.message }));
+    if (!command || typeof command.requestId !== "string" || typeof command.job !== "string") return;
+    let result;
+    if (command.type === "message") {
+      if (typeof command.body !== "string" || !command.body.trim() || command.body.length > MAX_BODY_CHARS) return;
+      result = followUp(node2, jobs, command.job, command.body);
+    } else if (command.type === "settings") {
+      result = changeSettings(node2, jobs, command.job, command.settings, log);
+    } else {
+      return;
+    }
+    void node2.send({ to: m.from.name, replyTo: m.id, body: JSON.stringify({ type: "result", requestId: command.requestId, ...result }), conversationId: DASHBOARD_JOB_CONVERSATION }, { quiet: true }).catch((err) => log.warn("dashboard job reply failed", { err: err.message }));
   });
+}
+function followUp(node2, jobs, ref, body) {
+  const owned = jobs.find(ref);
+  const { outcome, job } = owned?.owner === node2.name ? jobs.followUp(ref, body) : { outcome: "unknown", job: void 0 };
+  const position = job ? jobs.waiting().indexOf(job) + 1 : 0;
+  return {
+    outcome,
+    text: t(`followUp.${outcome}`, { name: job?.name ?? ref, max: jobs.limit, running: jobs.runningCount(), ahead: position > 1 ? ` (${position - 1} queued before it)` : "" }),
+    isError: outcome === "unknown" || outcome === "no-session"
+  };
+}
+function changeSettings(node2, jobs, ref, input2, log) {
+  const job = jobs.find(ref);
+  if (!job || job.owner !== node2.name) return { outcome: "unknown", text: t("followUp.unknown", { name: ref }), isError: true };
+  const settings = parseJobSettings(input2, job.agent);
+  if (typeof settings === "string") return { outcome: "invalid", text: settings, isError: true };
+  jobs.setSettings(job.name, settings);
+  log.info("dashboard changed subagent settings", { job: job.name, settings });
+  const list = Object.entries(settings).map(([key, value]) => `${key}=${value}`).join(", ");
+  const when = job.status === "running" ? "Applies from its next turn; the turn running now keeps its settings." : "Applies when it continues.";
+  return { outcome: "saved", text: `Saved settings for ${job.name}: ${list}. ${when}`, isError: false };
 }
 
 // src/mcp/server.ts
@@ -45403,7 +45614,7 @@ ${r.lines.map((l) => `  ${l}`).join("\n")}`).join("\n\n"));
       if (!jobs) throw new BridgeError("bad_request", t("err.delegatedSession"));
       const existing = jobs.find(a.job);
       if (existing) {
-        for (const [key, agent] of [["sandbox", "codex"], ["permission_mode", "claude"], ["auto_approve", "opencode"]]) {
+        for (const [key, agent] of Object.entries(PERMISSION_KEY_AGENT)) {
           if (a[key] !== void 0 && existing.agent !== agent) throw new BridgeError("bad_request", `${key} applies only to ${agent} jobs.`);
         }
       }

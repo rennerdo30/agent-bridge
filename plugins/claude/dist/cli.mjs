@@ -29335,7 +29335,7 @@ var JobControlError = class extends Error {
   }
   reason;
 };
-async function messageDashboardJob(node2, owner, job, body) {
+async function controlDashboardJob(node2, owner, job, command) {
   if (!(await node2.peers()).some((p) => p.name === owner)) throw new JobControlError("The owning session is not connected. Reopen it to continue this subagent.", "offline");
   const requestId = randomUUID6();
   let receive;
@@ -29355,7 +29355,7 @@ async function messageDashboardJob(node2, owner, job, body) {
   reply.catch(() => {
   });
   try {
-    await node2.send({ to: owner, body: JSON.stringify({ type: "message", requestId, job, body }), conversationId: DASHBOARD_JOB_CONVERSATION }, { quiet: true });
+    await node2.send({ to: owner, body: JSON.stringify({ ...command, requestId, job }), conversationId: DASHBOARD_JOB_CONVERSATION }, { quiet: true });
     return await reply;
   } finally {
     clearTimeout(timer);
@@ -31328,16 +31328,16 @@ async function watchRunLog(path, out2) {
 }
 
 // src/cli/dashboard.ts
-import { randomBytes as randomBytes8 } from "node:crypto";
-import { chmodSync as chmodSync3, readFileSync as readFileSync15, writeFileSync as writeFileSync7 } from "node:fs";
+import { randomBytes as randomBytes9 } from "node:crypto";
+import { chmodSync as chmodSync3, readFileSync as readFileSync16, writeFileSync as writeFileSync7 } from "node:fs";
 import { request } from "node:http";
-import { join as join20 } from "node:path";
+import { join as join21 } from "node:path";
 
 // src/cli/ui.ts
-import { randomBytes as randomBytes7 } from "node:crypto";
-import { existsSync as existsSync8, readdirSync as readdirSync6, readFileSync as readFileSync14, statSync as statSync4 } from "node:fs";
+import { randomBytes as randomBytes8 } from "node:crypto";
+import { existsSync as existsSync8, readdirSync as readdirSync6, readFileSync as readFileSync15, statSync as statSync4 } from "node:fs";
 import { createServer as createServer6 } from "node:http";
-import { join as join19 } from "node:path";
+import { join as join20 } from "node:path";
 import { DatabaseSync as DatabaseSync2 } from "node:sqlite";
 
 // src/core/models.ts
@@ -31853,6 +31853,655 @@ function loadConfig(home, agent, log, env = process.env) {
   return cfg;
 }
 
+// src/core/opencode-served.ts
+import { spawn as spawn4 } from "node:child_process";
+import { randomBytes as randomBytes7 } from "node:crypto";
+import { extname as extname2 } from "node:path";
+var SERVE_START_TIMEOUT_MS = 3e4;
+var LISTEN_RE = /listening on (https?:\/\/[^\s]+)/i;
+var SERVER_USER = "opencode";
+var PASSWORD_BYTES = 24;
+var MAX_DETAIL_CHARS2 = 4e3;
+var OPENCODE_ASK_PERMISSIONS = { edit: "ask", bash: "ask" };
+var START_WATCHDOG_MS = 6e4;
+var SERVE_OUTPUT_TAIL_CHARS = 4e3;
+function watchServeOutput(onListening) {
+  let out2 = "";
+  let listening = false;
+  return {
+    onData: (d) => {
+      if (listening) return;
+      out2 = (out2 + d.toString()).slice(-SERVE_OUTPUT_TAIL_CHARS);
+      const m = LISTEN_RE.exec(out2);
+      if (m) {
+        listening = true;
+        out2 = "";
+        onListening(m[1].replace(/\/+$/, ""));
+      }
+    },
+    tail: () => out2
+  };
+}
+function startServe(bin, cwd, env) {
+  let resolved = resolveBinary(bin, env);
+  if (!resolved) return Promise.reject(new DelegateError(`executable not found: ${bin}`, "not_found"));
+  let prefix = [];
+  if (process.platform === "win32" && [".cmd", ".bat"].includes(extname2(resolved).toLowerCase())) {
+    const target = unwrapNpmShim(resolved);
+    if (!target) return Promise.reject(new DelegateError(`cannot start ${bin} without a shell`, "failed"));
+    resolved = target.command;
+    prefix = target.prefix;
+  }
+  return new Promise((resolve8, reject) => {
+    const child = spawn4(resolved, [...prefix, "serve", "--port", "0", "--hostname", "127.0.0.1"], {
+      cwd,
+      env: { ...env, PWD: cwd },
+      windowsHide: true,
+      stdio: ["ignore", "pipe", "pipe"],
+      detached: process.platform !== "win32"
+    });
+    trackChild(child);
+    const output2 = watchServeOutput((url2) => {
+      clearTimeout(timer);
+      resolve8({ child, url: url2 });
+    });
+    const timer = setTimeout(() => {
+      void killTree(child);
+      reject(new DelegateError(`opencode serve did not start within ${SERVE_START_TIMEOUT_MS / 1e3}s (startup timeout)`, "timeout", output2.tail()));
+    }, SERVE_START_TIMEOUT_MS);
+    child.stdout.on("data", output2.onData);
+    child.stderr.on("data", output2.onData);
+    child.on("error", (err) => {
+      clearTimeout(timer);
+      reject(new DelegateError(`failed to start opencode serve: ${err.message}`, "failed"));
+    });
+    child.on("exit", (code, signal) => {
+      clearTimeout(timer);
+      reject(new DelegateError(`opencode serve exited early (${signal ? `signal ${signal}` : `code ${code}`})`, "failed", output2.tail()));
+    });
+  });
+}
+async function* sse(body) {
+  const decoder = new TextDecoder();
+  let buf = "";
+  for await (const chunk of body) {
+    buf += decoder.decode(chunk, { stream: true });
+    let idx;
+    while ((idx = buf.indexOf("\n\n")) >= 0) {
+      const block = buf.slice(0, idx);
+      buf = buf.slice(idx + 2);
+      const data = block.split(/\r?\n/).filter((l) => l.startsWith("data:")).map((l) => l.slice(5).trim()).join("\n");
+      if (!data) continue;
+      try {
+        yield JSON.parse(data);
+      } catch {
+      }
+    }
+  }
+}
+function mcpToolPrefix(server) {
+  return `${server.replace(/[^a-zA-Z0-9_-]/g, "_")}_`;
+}
+function opencodePermissionRequest(p, mcpServers, cwd) {
+  const permission = String(p.permission ?? "unknown");
+  const detail = permissionDetail(p);
+  const server = [...mcpServers].sort((a, b) => b.length - a.length).find((s) => permission.startsWith(mcpToolPrefix(s)));
+  if (server) return { agent: "opencode", tool: `mcp:${server}`, detail: `${permission}: ${detail}`.slice(0, MAX_DETAIL_CHARS2), cwd };
+  return { agent: "opencode", tool: permission, detail, cwd };
+}
+function permissionDetail(p) {
+  const patterns = Array.isArray(p.patterns) ? p.patterns.join(", ") : "";
+  const meta3 = p.metadata && typeof p.metadata === "object" ? p.metadata : {};
+  const cmd = typeof meta3.command === "string" ? meta3.command : typeof meta3.filepath === "string" ? meta3.filepath : "";
+  return (cmd || patterns || JSON.stringify(meta3)).slice(0, MAX_DETAIL_CHARS2);
+}
+async function delegateToOpencodeServed(req) {
+  checkDepthPublic();
+  const password = randomBytes7(PASSWORD_BYTES).toString("hex");
+  const permissions = req.permissions === void 0 ? OPENCODE_ASK_PERMISSIONS : req.permissions;
+  const env = childEnvPublic({
+    ...req.extraEnv,
+    OPENCODE_SERVER_PASSWORD: password,
+    OPENCODE_SERVER_USERNAME: SERVER_USER,
+    ...permissions ? { OPENCODE_CONFIG_CONTENT: JSON.stringify({ permission: permissions }) } : {}
+  });
+  const { child, url: url2 } = await startServe(req.bin, req.cwd, env);
+  const auth = `Basic ${Buffer.from(`${SERVER_USER}:${password}`).toString("base64")}`;
+  const q = `directory=${encodeURIComponent(req.cwd)}`;
+  const ac = new AbortController();
+  const onAbort = () => ac.abort();
+  req.signal?.addEventListener("abort", onAbort, { once: true });
+  const timer = setTimeout(() => ac.abort(), req.timeoutSec * 1e3);
+  const api = async (method, path, body) => {
+    const res = await fetch(`${url2}${path}${path.includes("?") ? "&" : "?"}${q}`, {
+      method,
+      headers: { authorization: auth, "content-type": "application/json" },
+      body: body === void 0 ? void 0 : JSON.stringify(body),
+      signal: ac.signal
+    });
+    if (!res.ok) throw new DelegateError(`opencode API ${method} ${path} failed: HTTP ${res.status}`, "failed", await res.text().catch(() => ""));
+    const text = await res.text();
+    return text ? JSON.parse(text) : null;
+  };
+  let knownSession = req.sessionId ?? null;
+  try {
+    const sessionId = req.sessionId ?? (await api("POST", "/session", {})).id;
+    req.onSession?.(sessionId);
+    knownSession = sessionId;
+    const mcpServers = Object.keys(await api("GET", "/mcp").catch(() => null) ?? {});
+    const events = await fetch(`${url2}/event?${q}`, { headers: { authorization: auth, accept: "text/event-stream" }, signal: ac.signal });
+    if (!events.ok || !events.body) throw new DelegateError(`opencode event stream failed: HTTP ${events.status}`, "failed");
+    const [providerID, ...rest] = (req.model ?? "").split("/");
+    const body = { parts: [{ type: "text", text: req.prompt }] };
+    if (req.model && rest.length) body.model = { providerID, modelID: rest.join("/") };
+    if (req.effort) body.variant = req.effort;
+    await api("POST", `/session/${sessionId}/prompt_async`, body);
+    let failure2 = null;
+    const onEvent = progressEventHandler("opencode", req.onProgress);
+    let alive3 = false;
+    const watchdog = setTimeout(() => {
+      if (alive3) return;
+      failure2 = "opencode did not start working on the prompt within 60 seconds (check the model id and the provider's login).";
+      ac.abort();
+    }, START_WATCHDOG_MS);
+    try {
+      for await (const ev of sse(events.body)) {
+        const type = String(ev.type ?? "");
+        const p = ev.properties ?? {};
+        const mine = p.sessionID === sessionId || p.part?.sessionID === sessionId || p.info?.sessionID === sessionId;
+        if (mine) alive3 = true;
+        if (type === "session.error" && !p.sessionID) {
+          failure2 = String(p.error?.data?.message ?? p.error?.message ?? "opencode reported an error");
+          break;
+        }
+        if (type === "permission.asked" && p.sessionID === sessionId) {
+          const decision = await req.onPermission(opencodePermissionRequest(p, mcpServers, req.cwd));
+          await api("POST", `/permission/${p.id}/reply`, decision.allow ? { reply: "once" } : { reply: "reject", message: decision.message });
+        } else if (type === "message.part.updated" && p.part?.sessionID === sessionId) {
+          const part = p.part;
+          const ready = part.type === "tool" && (part.state?.status === "running" || part.state?.status === "completed") || part.type === "text" && part.time?.end || part.type === "reasoning" && part.time?.end;
+          if (ready) onEvent?.({ part });
+        } else if (type === "session.error" && p.sessionID === sessionId) {
+          failure2 = String(p.error?.data?.message ?? p.error?.message ?? "opencode session error");
+          break;
+        } else if (type === "session.idle" && p.sessionID === sessionId || type === "session.status" && p.sessionID === sessionId && p.status?.type === "idle") {
+          break;
+        }
+      }
+    } catch (err) {
+      if (!failure2) throw err;
+    } finally {
+      clearTimeout(watchdog);
+    }
+    if (failure2 && !alive3) throw new DelegateError(failure2, "failed", "", "", sessionId);
+    const messages = await api("GET", `/session/${sessionId}/message`) ?? [];
+    const last = [...messages].reverse().find((m) => m.info?.role === "assistant");
+    const text = (last?.parts ?? []).filter((part) => part.type === "text" && typeof part.text === "string").map((part) => part.text).join("");
+    if (failure2 && !text) throw new DelegateError(failure2, "failed", "", "", sessionId);
+    const tokens = last?.info?.tokens;
+    return {
+      sessionId,
+      text,
+      isError: failure2 !== null,
+      details: {
+        error: failure2,
+        usage: tokens ? { input: Number(tokens.input) || 0, output: Number(tokens.output) || 0 } : null,
+        costUsd: typeof last?.info?.cost === "number" ? last.info.cost : null
+      }
+    };
+  } catch (err) {
+    if (ac.signal.aborted && !(err instanceof DelegateError)) {
+      if (req.signal?.aborted) throw new DelegateError("delegate aborted", "aborted", "", "", knownSession);
+      const hint = knownSession ? `. The opencode session ${knownSession} keeps its progress: call again with session_id="${knownSession}" (and a longer timeout_sec, or use spawn_opencode) to continue instead of starting over.` : "";
+      throw new DelegateError(`delegate timed out after ${req.timeoutSec}s (its time limit, timeout_sec)${hint}`, "timeout", "", "", knownSession);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+    req.signal?.removeEventListener("abort", onAbort);
+    ac.abort();
+    await killTree(child);
+  }
+}
+
+// src/core/codex-appserver.ts
+import { spawn as spawn5 } from "node:child_process";
+var STEER_HEADER = (from) => `[Message from ${from}, who gave you this task, sent while you work. Answer it briefly in your next message, then continue the task, adjusted to what it asks.]`;
+var SIBLING_STEER_HEADER = '[Message from a sibling job working for the same supervisor. Coordinate within your assigned task and answer with the agent-bridge "send" tool using to=<from> and reply_to=<id>.]';
+var OPT_OUT = [
+  "item/agentMessage/delta",
+  "item/reasoning/summaryTextDelta",
+  "item/reasoning/summaryPartAdded",
+  "item/reasoning/textDelta",
+  "item/commandExecution/outputDelta",
+  "item/fileChange/outputDelta",
+  "item/plan/delta"
+];
+var STDERR_TAIL_CHARS2 = 4e3;
+var STARTUP_TIMEOUT_MS = 18e4;
+function innerCommand(s) {
+  const m = /^(?:"[^"]*[\\/]|[^\s"]*[\\/])?(?:pwsh|powershell|bash|zsh|sh|cmd)(?:\.exe)?"?\s+(?:-NoProfile\s+|-NoLogo\s+)*(?:-Command|-lc|-c|\/c)\s+([\s\S]*)$/i.exec(s.trim());
+  if (!m) return s;
+  const c = m[1].trim();
+  return /^'[\s\S]*'$|^"[\s\S]*"$/.test(c) ? c.slice(1, -1) : c;
+}
+function codexTurnSandbox(sandbox, cwd, roots = [], reported, networkAccess) {
+  if (sandbox === "danger-full-access") return { type: "dangerFullAccess" };
+  if (sandbox === "read-only") return { type: "readOnly", networkAccess: false };
+  const inherited = reported?.type === "workspaceWrite" ? reported : {};
+  return {
+    ...inherited,
+    type: "workspaceWrite",
+    writableRoots: [.../* @__PURE__ */ new Set([cwd, ...roots, ...Array.isArray(inherited.writableRoots) ? inherited.writableRoots : []])],
+    ...networkAccess !== void 0 ? { networkAccess } : {}
+  };
+}
+function asExecEvent(kind, item) {
+  const type = { agentMessage: "agent_message", commandExecution: "command_execution", fileChange: "file_change", mcpToolCall: "mcp_tool_call", webSearch: "web_search", reasoning: "reasoning" }[item?.type] ?? item?.type;
+  return { type: kind, item: { ...item, type } };
+}
+async function delegateToCodexAppServer(req) {
+  checkDepth();
+  const cwd = realFolder(req.cwd);
+  const env = childEnv(req.extraEnv);
+  const { resolved, args, needsShell } = resolveCommand(req.bin, ["app-server"], env, req.log);
+  req.log.debug("starting codex app-server", { bin: resolved, cwd });
+  const child = spawn5(resolved, args, { cwd, env: { ...env, PWD: cwd }, shell: needsShell, windowsHide: true, stdio: ["pipe", "pipe", "pipe"], detached: process.platform !== "win32" });
+  trackChild(child);
+  let nextId = 1;
+  const pending = /* @__PURE__ */ new Map();
+  let stderr = "";
+  let threadId = req.sessionId ?? null;
+  let turnId = null;
+  let lastMessage = "";
+  let usage = null;
+  let retryableError = null;
+  let finished = () => {
+  };
+  const turnDone = new Promise((r) => finished = r);
+  const completions = /* @__PURE__ */ new Map();
+  const answers = [];
+  let awaitingAnswer = false;
+  const onEvent = progressEventHandler("codex", req.onProgress);
+  const write = (msg) => {
+    if (!child.stdin.writable) return;
+    child.stdin.write(`${JSON.stringify(msg)}
+`);
+  };
+  const request2 = (method, params) => new Promise((resolve8, reject) => {
+    const id = nextId++;
+    pending.set(id, { resolve: resolve8, reject });
+    write({ id, method, params });
+  });
+  const editPaths = /* @__PURE__ */ new Map();
+  const denialMessages = [];
+  const deliverDenials = async () => {
+    if (!threadId || !turnId) return;
+    for (const message of denialMessages.splice(0)) {
+      try {
+        await request2("turn/steer", { threadId, expectedTurnId: turnId, input: [{ type: "text", text: message, text_elements: [] }] });
+      } catch (err) {
+        req.log.warn("could not deliver approval denial reason", { message, err: err.message });
+        req.onDenied?.(message);
+      }
+    }
+  };
+  const decide = async (tool, detail) => {
+    if (!req.approve) return { allow: false, message: "Denied by agent-bridge: no approval handler is available." };
+    try {
+      return await req.approve({ agent: "codex", tool, detail, cwd });
+    } catch (err) {
+      return { allow: false, message: `Denied by agent-bridge: approval forwarding failed: ${String(err?.message ?? err)}` };
+    }
+  };
+  const answerRequest = async (id, method, params) => {
+    const reply = (result) => write({ id, result });
+    const answer = (decision, result, tool) => {
+      reply(result);
+      if (!decision.allow) {
+        const message = `Approval denied for ${tool}. ${decision.message || "Denied by the approval handler; no reason supplied."}`;
+        req.onProgress?.(message);
+        denialMessages.push(message);
+        void deliverDenials();
+      }
+    };
+    const sandboxDenial = { allow: false, message: "Denied by agent-bridge: this job's access does not allow sandbox escalations; the supervisor was not asked." };
+    switch (method) {
+      case "mcpServer/elicitation/request": {
+        const tool = `mcp:${params.serverName ?? "tool"}`;
+        const decision = await decide(tool, String(params.message ?? "an MCP tool call"));
+        const props = params.requestedSchema?.properties ?? {};
+        const content = Object.fromEntries(Object.entries(props).filter(([, v]) => v && "default" in v).map(([k, v]) => [k, v.default]));
+        return answer(decision, decision.allow ? { action: "accept", content } : { action: "decline", content: null }, tool);
+      }
+      case "item/commandExecution/requestApproval": {
+        const decision = req.askMode ? await decide("command", innerCommand(String(params.command ?? params.reason ?? "a command"))) : sandboxDenial;
+        return answer(decision, { decision: decision.allow ? "accept" : "decline" }, "command");
+      }
+      case "item/fileChange/requestApproval": {
+        const paths = editPaths.get(params.itemId) ?? [];
+        const decision = req.askMode ? await decide("edit", paths.length ? paths.join(", ") : String(params.reason ?? "file changes")) : sandboxDenial;
+        return answer(decision, { decision: decision.allow ? "accept" : "decline" }, "edit");
+      }
+      default:
+        req.log.warn("codex app-server request refused", { method });
+        return write({ id, error: { code: -32601, message: "not supported by agent-bridge" } });
+    }
+  };
+  const handle = (msg) => {
+    if (msg.id !== void 0 && msg.method === void 0) {
+      const p = pending.get(msg.id);
+      if (!p) return;
+      pending.delete(msg.id);
+      if (msg.error) p.reject(new Error(msg.error.message ?? "app-server error"));
+      else p.resolve(msg.result);
+      return;
+    }
+    if (msg.id !== void 0 && msg.method) {
+      void answerRequest(msg.id, msg.method, msg.params ?? {});
+      return;
+    }
+    const params = msg.params ?? {};
+    switch (msg.method) {
+      case "item/started":
+        onEvent?.(asExecEvent("item.started", params.item));
+        if (params.item?.type === "fileChange") editPaths.set(params.item.id, (params.item.changes ?? []).map((c) => c?.path).filter(Boolean));
+        break;
+      case "item/completed": {
+        if (turnId && params.turnId && params.turnId !== turnId) break;
+        const item = params.item ?? {};
+        onEvent?.(asExecEvent("item.completed", item));
+        if (item.type === "agentMessage" && typeof item.text === "string" && item.text.trim()) {
+          lastMessage = item.text;
+          if (awaitingAnswer) {
+            awaitingAnswer = false;
+            answers.push(item.text);
+            req.live?.onAnswer(item.text);
+          }
+        }
+        break;
+      }
+      case "thread/tokenUsage/updated":
+        usage = params.tokenUsage?.total ?? params.total ?? usage;
+        break;
+      case "error":
+        if (!params.willRetry) retryableError = params.error?.message ?? "error";
+        break;
+      case "turn/completed":
+        completions.set(String(params.turn?.id), { status: String(params.turn?.status ?? "completed"), error: params.turn?.error?.message ?? null });
+        if (turnId && completions.has(turnId)) finished(completions.get(turnId));
+        break;
+    }
+  };
+  let buf = "";
+  child.stdout.setEncoding("utf8").on("data", (d) => {
+    buf += d;
+    let nl;
+    while ((nl = buf.indexOf("\n")) >= 0) {
+      const line = buf.slice(0, nl).trim();
+      buf = buf.slice(nl + 1);
+      if (!line.startsWith("{")) continue;
+      try {
+        handle(JSON.parse(line));
+      } catch (err) {
+        req.log.debug("bad app-server line", { err: err.message });
+      }
+    }
+  });
+  child.stderr.setEncoding("utf8").on("data", (d) => {
+    stderr = (stderr + d).slice(-STDERR_TAIL_CHARS2);
+  });
+  const exited = new Promise((_, reject) => {
+    child.on("error", (err) => reject(new DelegateError(`failed to start ${req.bin}: ${err.message}`, "failed", "", "", threadId)));
+    child.on("exit", (code, signal) => reject(new DelegateError(`codex app-server ${exitDescription({ code, signal })}`, "failed", stderr, "", threadId)));
+  });
+  exited.catch(() => {
+  });
+  let timer;
+  const stopped = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new DelegateError(`delegate timed out after ${req.timeoutSec}s (its time limit, timeout_sec)`, "timeout", stderr, "", threadId)), req.timeoutSec * 1e3);
+    req.signal?.addEventListener("abort", () => reject(new DelegateError("delegate aborted", "aborted", "", "", threadId)), { once: true });
+  });
+  stopped.catch(() => {
+  });
+  const race = (p) => Promise.race([p, exited, stopped]);
+  let step = "initialize";
+  let startupTimer;
+  const startup = new Promise((_, reject) => {
+    startupTimer = setTimeout(
+      () => reject(DelegateError.startup(`codex app-server did not answer ${step} within ${Math.round((req.startupTimeoutMs ?? STARTUP_TIMEOUT_MS) / 1e3)}s (startup timeout)`, stderr, threadId)),
+      req.startupTimeoutMs ?? STARTUP_TIMEOUT_MS
+    );
+  });
+  startup.catch(() => {
+  });
+  const boot = (p) => Promise.race([p, exited, stopped, startup]);
+  const steering = {
+    rename: async (title) => {
+      if (threadId) await race(request2("thread/name/set", { threadId, name: title }));
+    },
+    send: async (message, sibling = false) => {
+      if (!threadId || !turnId) return false;
+      try {
+        const header = sibling ? SIBLING_STEER_HEADER : STEER_HEADER(req.live?.from ?? "the session that started you");
+        await request2("turn/steer", { threadId, expectedTurnId: turnId, input: [{ type: "text", text: `${header}
+
+${message}`, text_elements: [] }] });
+        if (!sibling) awaitingAnswer = true;
+        return true;
+      } catch (err) {
+        req.log.info("steering refused; the turn has ended", { err: err.message });
+        return false;
+      }
+    }
+  };
+  try {
+    await boot(request2("initialize", { clientInfo: { name: "agent-bridge", title: "agent-bridge", version: APP_VERSION }, capabilities: { experimentalApi: false, optOutNotificationMethods: OPT_OUT } }));
+    write({ method: "initialized", params: {} });
+    const approvalPolicy = "on-request";
+    const config2 = {};
+    if (req.sandbox === "workspace-write" && (req.writableRoots?.length || req.networkAccess !== void 0)) {
+      config2.sandbox_workspace_write = {
+        ...req.writableRoots?.length ? { writable_roots: req.writableRoots.map(realFolder) } : {},
+        ...req.networkAccess !== void 0 ? { network_access: req.networkAccess } : {}
+      };
+    }
+    if (req.effort) config2.model_reasoning_effort = req.effort;
+    const threadParams = { cwd, sandbox: req.sandbox, approvalPolicy, approvalsReviewer: "user", ...Object.keys(config2).length ? { config: config2 } : {}, ...req.model ? { model: req.model } : {} };
+    step = req.sessionId ? "thread/resume" : "thread/start";
+    const thread = req.sessionId ? await boot(request2("thread/resume", { ...threadParams, threadId: req.sessionId, excludeTurns: true })) : await boot(request2("thread/start", threadParams));
+    threadId = thread?.thread?.id ?? threadId;
+    if (threadId) req.onSession?.(threadId);
+    if (threadId && req.title) {
+      step = "thread/name/set";
+      await boot(request2("thread/name/set", { threadId, name: req.title })).catch((err) => req.log.warn("could not name the Codex thread", { err: err.message }));
+    }
+    if (typeof thread?.model === "string")
+      req.onInfo?.({
+        model: thread.model,
+        effort: req.effort ?? (typeof thread.reasoningEffort === "string" ? thread.reasoningEffort : null),
+        // The sandbox Codex really applies to this thread (its config can differ from what was asked).
+        permission: typeof thread.sandbox?.type === "string" ? thread.sandbox.type : null
+      });
+    const prompt = req.askMode ? `${req.prompt}
+
+${CODEX_ASK_HINT}` : req.prompt;
+    step = "turn/start";
+    const sandboxPolicy = codexTurnSandbox(req.sandbox, cwd, req.writableRoots?.map(realFolder), thread?.sandbox, req.networkAccess);
+    const turn = await boot(request2("turn/start", {
+      threadId,
+      input: [{ type: "text", text: prompt, text_elements: [] }],
+      ...req.model ? { model: req.model } : {},
+      sandboxPolicy,
+      ...req.effort ? { effort: req.effort } : {}
+    }));
+    req.onInfo?.({ model: req.model ?? thread?.model ?? null, permission: req.sandbox, effort: req.effort ?? (typeof thread?.reasoningEffort === "string" ? thread.reasoningEffort : null) });
+    turnId = turn?.turn?.id ?? null;
+    void deliverDenials();
+    clearTimeout(startupTimer);
+    if (turnId && completions.has(turnId)) finished(completions.get(turnId));
+    req.live?.onSteering(steering);
+    const outcome = await race(turnDone);
+    req.live?.onSteering(null);
+    const error62 = outcome.error ?? (outcome.status === "failed" ? retryableError ?? "turn failed" : null);
+    req.log.info("codex turn ended", { threadId, turnId, status: outcome.status, error: outcome.error, retryableError });
+    if (outcome.status === "interrupted") throw new DelegateError(`codex interrupted the turn${outcome.error ? `: ${outcome.error}` : ""}`, "failed", stderr, "", threadId);
+    if (error62 && !lastMessage) throw new DelegateError(error62, "failed", stderr, "", threadId);
+    req.log.info("codex delegate finished", { threadId, status: outcome.status });
+    return { sessionId: threadId, text: lastMessage, isError: Boolean(error62), details: { usage, error: error62, answers: answers.length } };
+  } catch (err) {
+    req.live?.onSteering(null);
+    if (threadId && turnId) await Promise.race([request2("turn/interrupt", { threadId, turnId }).catch(() => {
+    }), new Promise((r) => setTimeout(r, 2e3))]);
+    if (err instanceof DelegateError) {
+      err.sessionId = err.sessionId ?? threadId;
+      throw err;
+    }
+    throw new DelegateError(err.message, "failed", stderr, "", threadId);
+  } finally {
+    for (const message of denialMessages.splice(0)) req.onDenied?.(message);
+    clearTimeout(timer);
+    clearTimeout(startupTimer);
+    for (const p of pending.values()) p.reject(new Error("closed"));
+    child.stdin.end();
+    await killTree(child);
+  }
+}
+
+// src/core/codex-env.ts
+import { readFileSync as readFileSync14 } from "node:fs";
+import { homedir as homedir6 } from "node:os";
+import { join as join19 } from "node:path";
+function codexWindowsSandbox(home = homedir6(), platform = process.platform) {
+  if (platform !== "win32") return null;
+  let toml;
+  try {
+    toml = readFileSync14(join19(home, ".codex", "config.toml"), "utf8");
+  } catch {
+    return null;
+  }
+  const table = /^\[windows\]\s*$([\s\S]*?)(?=^\[|(?![\s\S]))/m.exec(toml)?.[1] ?? "";
+  return /^\s*sandbox\s*=\s*"([^"]+)"/m.exec(table)?.[1] ?? null;
+}
+function codexEnvironmentNote(home = homedir6(), platform = process.platform) {
+  if (codexWindowsSandbox(home, platform) !== "elevated") return "";
+  return ` Note for this machine: Codex runs commands as a separate Windows sandbox user (elevated sandbox), which cannot read the user's profile. Tools installed there, such as Python under AppData\\Local\\Programs or user-level pip/npm installs, are missing in Codex subagents ("python is not recognized"). For work that needs them, point Codex to an interpreter inside the repository (e.g. a .venv in the worktree), or use a claude/opencode subagent.`;
+}
+
+// src/mcp/targets.ts
+var CODEX_EXEC_ENV = "AGENT_BRIDGE_CODEX_EXEC";
+var CODEX_SANDBOX_FOR = { read: "read-only", ask: "read-only", edit: "workspace-write" };
+var CLAUDE_MODE_FOR = { read: "manual", ask: "manual", edit: "acceptEdits" };
+var OPENCODE_AUTO_FOR = { read: false, ask: false, edit: true };
+function claudeModeFor(cfg, a) {
+  return a.permission_mode ?? (a.access ? CLAUDE_MODE_FOR[a.access] : cfg.claudePermissionMode);
+}
+function supportsAsk(target, relay) {
+  if (!relay) return false;
+  if (target === "opencode") return true;
+  if (target === "codex") return process.env[CODEX_EXEC_ENV] !== "1" || relay.codexHookTrusted;
+  return false;
+}
+function opencodeEditAsks(base, a) {
+  return a.access === "edit" && a.auto_approve === void 0 && Boolean(base.approve && base.canApprove);
+}
+var DELEGATION_TARGETS = {
+  codex: {
+    title: "OpenAI Codex",
+    modelExample: '"gpt-6-sol"',
+    effortExample: '"low", "medium", "high", "xhigh", "max" or "ultra" (depends on the model)',
+    defaultModel: (cfg) => cfg.codexModel,
+    schema: { sandbox: external_exports.enum(CODEX_SANDBOXES).optional().describe("Overrides access with an exact Codex sandbox mode") },
+    permissionNote: (cfg) => `Codex runs in the "${cfg.codexSandbox}" sandbox unless you pass access or sandbox. Worktree edit runs use "${cfg.codexWorktreeSandbox ?? (cfg.codexSandbox === "read-only" ? "workspace-write" : cfg.codexSandbox)}" (config codexWorktreeSandbox); workspace-write can restrict builds and network access.${codexEnvironmentNote()}`,
+    permission: (cfg, a) => a.sandbox ?? (a.access ? CODEX_SANDBOX_FOR[a.access] : cfg.codexSandbox),
+    run: async (cfg, base, a) => {
+      const sandbox = a.sandbox ?? (a.access ? CODEX_SANDBOX_FOR[a.access] : cfg.codexSandbox);
+      const relay = a.access === "ask" && Boolean(a.relay?.codexHookTrusted);
+      if (process.env[CODEX_EXEC_ENV] !== "1") {
+        let sessionId = base.sessionId ?? null;
+        for (let attempt = 1; ; attempt++) {
+          try {
+            return await delegateToCodexAppServer({ ...base, sessionId, bin: cfg.codexBin, sandbox, networkAccess: cfg.codexWorkspaceWriteNetworkAccess ?? void 0, writableRoots: base.writableRoots, askMode: a.access === "ask", approve: a.access === "ask" && a.relay ? a.relay.onPermission : base.approve });
+          } catch (err) {
+            if (err instanceof DelegateError && err.startupFailed && attempt === 1 && !base.signal?.aborted) {
+              base.log.warn("codex app-server startup timed out; retrying once", { err: err.message });
+              base.onProgress?.(`${err.message}; retrying once`);
+              sessionId = err.sessionId ?? sessionId;
+              continue;
+            }
+            if (!(err instanceof DelegateError) || err.kind !== "failed" || err.sessionId) throw err;
+            base.log.warn("codex app-server unavailable, using codex exec", { err: err.message });
+            break;
+          }
+        }
+      }
+      return delegateToCodex({
+        ...base,
+        bin: cfg.codexBin,
+        sandbox,
+        networkAccess: cfg.codexWorkspaceWriteNetworkAccess ?? void 0,
+        ...relay ? { relayApprovals: true, extraEnv: { ...base.extraEnv, ...a.relay.env } } : {}
+      });
+    }
+  },
+  claude: {
+    title: "Claude Code",
+    modelExample: '"opus", "sonnet" or a full model id',
+    effortExample: '"low", "medium", "high", "xhigh" or "max"',
+    defaultModel: (cfg) => cfg.claudeModel,
+    schema: { permission_mode: external_exports.enum(CLAUDE_PERMISSION_MODES).optional().describe("Overrides access with an exact Claude permission mode") },
+    permissionNote: (cfg) => `Claude runs with permission mode "${cfg.claudePermissionMode}" unless you pass access or permission_mode.`,
+    permission: (cfg, a) => claudeModeFor(cfg, a),
+    run: (cfg, base, a) => delegateToClaude({
+      ...base,
+      bin: cfg.claudeBin,
+      permissionMode: claudeModeFor(cfg, a)
+    })
+  },
+  opencode: {
+    title: "opencode",
+    effortExample: `the model's variant, such as "low", "high" or "max" (provider-specific)`,
+    modelExample: '"provider/model", e.g. "anthropic/claude-sonnet-5" or "opencode/muse-spark-1.3-contributor-free"',
+    defaultModel: (cfg) => cfg.opencodeModel,
+    schema: { auto_approve: external_exports.boolean().optional().describe("Overrides access: auto-approve every opencode permission request (opencode run --auto)") },
+    permissionNote: (cfg) => cfg.opencodeAutoApprove ? "opencode auto-approves permission requests unless you pass access=read or auto_approve=false." : "Headless opencode rejects every permission request (edits, commands) unless you pass access=edit or auto_approve=true.",
+    permission: (cfg, a) => a.auto_approve ?? (a.access ? OPENCODE_AUTO_FOR[a.access] : cfg.opencodeAutoApprove) ? "auto-approve" : "read-only",
+    run: async (cfg, base, a) => {
+      let note = null;
+      if (base.model) {
+        const models2 = await listOpencodeModels(cfg.opencodeBin, base.cwd, base.log).catch(() => []);
+        const r = resolveOpencodeModel(base.model, models2);
+        if ("error" in r) throw new DelegateError(r.error, "failed");
+        base = { ...base, model: r.model };
+        note = r.note;
+      }
+      const res = a.access === "ask" && a.auto_approve === void 0 && supportsAsk("opencode", a.relay) ? await delegateToOpencodeServed({ ...base, bin: cfg.opencodeBin, onPermission: a.relay.onPermission }) : opencodeEditAsks(base, a) ? (
+        // "edit": what the user's opencode rules leave to "ask" (MCP tools, folders outside the project,
+        // commands they marked) goes to the parent instead of `opencode run --auto` approving it blindly.
+        await delegateToOpencodeServed({ ...base, bin: cfg.opencodeBin, onPermission: base.approve, permissions: null })
+      ) : await delegateToOpencode({
+        ...base,
+        bin: cfg.opencodeBin,
+        autoApprove: a.auto_approve ?? (a.access ? OPENCODE_AUTO_FOR[a.access] : cfg.opencodeAutoApprove)
+      });
+      return note ? { ...res, text: `(${note})
+
+${res.text}` } : res;
+    }
+  }
+};
+
+// src/mcp/job-settings.ts
+var JOB_SETTING_KEYS = ["model", "effort", "access", "sandbox", "permission_mode", "auto_approve"];
+var EXACT_PERMISSION_KEYS = ["sandbox", "permission_mode", "auto_approve"];
+function changedJobArgs(args, settings) {
+  const next = { ...args };
+  if (settings.access !== void 0) for (const key of EXACT_PERMISSION_KEYS) delete next[key];
+  else if (EXACT_PERMISSION_KEYS.some((key) => settings[key] !== void 0)) delete next.access;
+  for (const key of JOB_SETTING_KEYS) if (settings[key] !== void 0) next[key] = settings[key];
+  return next;
+}
+
 // src/cli/logo.ts
 var LOGO_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="agent-bridge"><defs><linearGradient id="ab-bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#1e1b4b"/><stop offset="1" stop-color="#4338ca"/></linearGradient><linearGradient id="ab-l" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffb088"/><stop offset="1" stop-color="#e2603b"/></linearGradient><linearGradient id="ab-r" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#7cf0c0"/><stop offset="1" stop-color="#0e9f6e"/></linearGradient><radialGradient id="ab-glow"><stop offset="0" stop-color="#fff" stop-opacity=".55"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></radialGradient></defs><rect width="64" height="64" rx="16" fill="url(#ab-bg)"/><path d="M9 52V32A20 20 0 0 1 27 12.1v10.2A10 10 0 0 0 19 32v20z" fill="url(#ab-l)"/><path d="M55 52V32A20 20 0 0 0 37 12.1v10.2A10 10 0 0 1 45 32v20z" fill="url(#ab-r)"/><circle cx="32" cy="17" r="11" fill="url(#ab-glow)"/><path d="M32 9.5c.9 4.6 2.9 6.6 7.5 7.5-4.6.9-6.6 2.9-7.5 7.5-.9-4.6-2.9-6.6-7.5-7.5 4.6-.9 6.6-2.9 7.5-7.5z" fill="#fff"/></svg>';
 var FAVICON_HREF = `data:image/svg+xml,${encodeURIComponent(LOGO_SVG)}`;
@@ -32101,7 +32750,8 @@ h3 .n { color: var(--faint); font-weight: 500; }
 .msg .meta b { color: var(--text); font-weight: 600; }
 .msg .body { overflow-wrap: anywhere; }
 form { display: flex; gap: 8px; padding: 12px; border-top: 1px solid var(--line); background: var(--panel-2); flex-wrap: wrap; }
-select, textarea, button { font: inherit; color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
+select, textarea, button, input { font: inherit; color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
+input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: -1px; }
 textarea { flex: 1 1 220px; min-height: 40px; resize: vertical; }
 button { background: var(--accent); color: #fff; border-color: var(--accent); font-weight: 600; cursor: pointer; padding: 8px 16px; }
 button:disabled { opacity: .6; cursor: default; }
@@ -32123,6 +32773,18 @@ button:disabled { opacity: .6; cursor: default; }
 .conv-head .grow { flex: 1; min-width: 0; }
 .conv-head .title { font-weight: 650; font-size: 15px; display: flex; gap: 8px; align-items: center; }
 .follow { font-size: 12px; color: var(--muted); display: flex; gap: 5px; align-items: center; white-space: nowrap; }
+button.ghost { background: transparent; color: var(--muted); border-color: var(--line); font-weight: 500; font-size: 12.5px; padding: 4px 10px; }
+button.ghost:hover, button.ghost[aria-expanded="true"] { color: var(--text); border-color: var(--accent); background: var(--accent-soft); }
+.chip.next { color: var(--accent); background: var(--accent-soft); border-color: transparent; }
+/* Next-turn settings of a subagent */
+form.settings { border-top: 0; border-bottom: 1px solid var(--line); padding: 12px 18px; gap: 10px 12px; align-items: flex-end; }
+.settings label { display: flex; flex-direction: column; gap: 4px; font-size: 11.5px; font-weight: 600; color: var(--muted); flex: 1 1 150px; min-width: 0; }
+.settings label.wide { flex-basis: 220px; }
+.settings input, .settings select { width: 100%; padding: 6px 9px; font-size: 13px; font-weight: 400; }
+.settings button[type="submit"] { padding: 6px 14px; }
+.settings .note { width: 100%; font-size: 12px; color: var(--muted); }
+.settings .note.err { color: var(--bad); }
+.settings .note:empty { display: none; }
 .hint { padding: 9px 18px; font-size: 12.5px; color: var(--muted); background: var(--panel-2); border-bottom: 1px solid var(--line); }
 .hint code { font-family: var(--mono); font-size: 12px; color: var(--text); }
 .chat { flex: 1; overflow: auto; padding: 20px 22px; display: flex; flex-direction: column; gap: 10px; }
@@ -32199,8 +32861,16 @@ details[open] > summary::before { content: "\u25BE "; }
       <div class="conv-head">
         <div id="cAvatar"></div>
         <div class="grow"><div class="title" id="cTitle">Conversation</div><div class="small muted ell" id="cSub"></div></div>
+        <button type="button" class="ghost hidden" id="setToggle" aria-expanded="false" aria-controls="jobSettings" title="Model, effort and permission for its next turn">Settings</button>
         <label class="follow"><input type="checkbox" id="follow" checked> follow</label>
       </div>
+      <form id="jobSettings" class="settings hidden" aria-label="Settings for the next turn">
+        <label class="wide">Model<input id="setModel" list="setModels" autocomplete="off" spellcheck="false"><datalist id="setModels"></datalist></label>
+        <label>Effort<select id="setEffort"></select></label>
+        <label class="wide">Permission<select id="setPerm"></select></label>
+        <button type="submit" id="setApply">Apply</button>
+        <div class="note" id="setInfo" role="status" aria-live="polite"></div>
+      </form>
       <div class="hint hidden" id="cHint"></div>
       <div id="chat" class="chat"></div>
       <form id="jobSend" class="hidden">
@@ -32252,7 +32922,32 @@ const dot = (activity) => '<span class="dot ' + (activity === "busy" ? "busy" : 
     }
     const pill = (status, percent) => '<span class="pill ' + status + '">' + (status === "running" ? (typeof percent === "number" ? "working \xB7 " + percent + "%" : "working") : status) + "</span>";
 
+/** Next-turn settings the dashboard can change, per agent (the values message_subagent accepts). */
+const EFFORTS = ["low", "medium", "high", "xhigh", "max"];
+const PERMISSIONS = {
+  codex: { key: "sandbox", options: [["read-only", "read-only \xB7 looks only"], ["workspace-write", "workspace-write \xB7 edits its folder"], ["danger-full-access", "danger-full-access \xB7 no sandbox"]] },
+  claude: { key: "permission_mode", options: [["manual", "manual \xB7 asks first"], ["plan", "plan \xB7 plans only"], ["acceptEdits", "acceptEdits \xB7 edits files"], ["auto", "auto \xB7 decides itself"], ["bypassPermissions", "bypassPermissions \xB7 anything"]] },
+  opencode: { key: "auto_approve", options: [["false", "asks first"], ["true", "auto-approve \xB7 anything"]] },
+};
+/** The permission a job's saved settings give its next turn, named like the run's own permission. */
+function nextPermission(next) {
+  if (next.sandbox) return next.sandbox;
+  if (next.permission_mode) return next.permission_mode;
+  if (typeof next.auto_approve === "boolean") return next.auto_approve ? "auto-approve" : "ask";
+  return "";
+}
+const nextOf = (g) => (g && g.job && state && state.jobs && state.jobs[g.job] && state.jobs[g.job].next) || {};
+/** Saved settings that differ from what its current (or last) turn runs with. */
+function pendingChips(g) {
+  const next = nextOf(g), perm = nextPermission(next), out = [];
+  if (next.model && next.model !== g.model) out.push("model " + next.model);
+  if (next.effort && next.effort !== g.effort) out.push(next.effort + " effort");
+  if (perm && perm !== g.permission) out.push(perm);
+  return out.length ? ' <span class="chip next" title="saved; applies from its next turn">next turn: ' + esc(out.join(" \xB7 ")) + "</span>" : "";
+}
+
 let state = null, model = null, route = parseRoute(), pulling = false, lastChat = "";
+let settingsGroup = null, modelLists = null;
 /** Loaded run logs: name -> { raw, offset, done }. */
 const logs = new Map();
 /** Expanded step groups and bubbles survive re-renders. */
@@ -32487,10 +33182,44 @@ function renderJobForm(g) {
     $("jobBody").value = jobDrafts.get(key) || "";
     composerGroup = key;
   }
-  $("jobSend").classList.toggle("hidden", !g || !g.job || g.owner === "earlier runs");
+  const controllable = Boolean(g && g.job && g.owner !== "earlier runs");
+  $("jobSend").classList.toggle("hidden", !controllable);
   $("jobSendBtn").disabled = jobSending.has(key);
   $("jobSendInfo").textContent = (jobResults.get(key) || []).at(-1) || "";
+  renderSettings(controllable ? g : null);
 }
+
+/** The settings row: emptied when another subagent is selected; empty fields keep what it has. */
+function renderSettings(g) {
+  const toggle = $("setToggle"), form = $("jobSettings");
+  toggle.classList.toggle("hidden", !g);
+  if (!g) { form.classList.add("hidden"); toggle.setAttribute("aria-expanded", "false"); settingsGroup = null; return; }
+  if (settingsGroup === g.key) return;
+  settingsGroup = g.key;
+  const perm = PERMISSIONS[g.agent];
+  $("setModel").value = "";
+  $("setModel").placeholder = "keep: " + (g.model || "its default");
+  $("setEffort").innerHTML = '<option value="">keep: ' + esc(g.effort || "default") + "</option>" + EFFORTS.map((e) => "<option>" + e + "</option>").join("");
+  $("setPerm").innerHTML = perm ? '<option value="">keep: ' + esc(g.permission || "default") + "</option>" + perm.options.map((o) => '<option value="' + o[0] + '">' + esc(o[1]) + "</option>").join("") : "";
+  $("setPerm").disabled = !perm;
+  $("setInfo").textContent = "";
+  $("setInfo").classList.remove("err");
+  fillModels(g.agent);
+}
+
+/** Model suggestions from /api/models (read once, when the settings are first opened). */
+async function fillModels(agent) {
+  if (settingsHidden()) return;
+  if (!modelLists) {
+    modelLists = fetch("/api/models").then((r) => (r.ok ? r.json() : { reports: [] })).then((d) => d.reports || []).catch(() => []);
+  }
+  const reports = await modelLists;
+  const rep = reports.find((r) => r.agent === agent);
+  if (settingsGroup && model && model.groups.get(settingsGroup) && model.groups.get(settingsGroup).agent === agent) {
+    $("setModels").innerHTML = (rep ? rep.models : []).map((m) => '<option value="' + esc(m) + '"></option>').join("");
+  }
+}
+const settingsHidden = () => $("jobSettings").classList.contains("hidden");
 
 /** Load (the rest of) every turn's log, then render the conversation. */
 async function showGroup(g) {
@@ -32528,7 +33257,7 @@ function splitTurn(raw) {
 function renderConversation(g) {
   const first = g.turns[0], last = g.turns[g.turns.length - 1];
   $("cAvatar").innerHTML = av(g.agent);
-  $("cTitle").innerHTML = (g.title ? esc(g.title) + ' <span class="chip">' + esc(g.agent) + "</span>" : esc(g.agent)) + (g.model ? ' <span class="chip">' + esc(g.model) + "</span>" : "") + (g.effort ? " " + effortChip(g.effort) : "") + (g.permission ? " " + permChip(g.permission) : "") + " " + pill(g.status, g.percent) + (g.progressNote && g.percent !== null ? ' <span class="small muted">' + esc(g.progressNote) + "</span>" : "");
+  $("cTitle").innerHTML = (g.title ? esc(g.title) + ' <span class="chip">' + esc(g.agent) + "</span>" : esc(g.agent)) + (g.model ? ' <span class="chip">' + esc(g.model) + "</span>" : "") + (g.effort ? " " + effortChip(g.effort) : "") + (g.permission ? " " + permChip(g.permission) : "") + pendingChips(g) + " " + pill(g.status, g.percent) + (g.progressNote && g.percent !== null ? ' <span class="small muted">' + esc(g.progressNote) + "</span>" : "");
   $("cSub").textContent = (g.owner === "earlier runs" ? "" : "started by " + g.owner + " \xB7 ") + time(first.startedAt) + " \xB7 " + (first.access || "default") + " access" + (first.workdir ? " \xB7 " + first.workdir : "");
   const hint = g.job && g.status !== "running"
     ? (g.status === "done" ? "Continue it with its context from " : "Recover it with its context from ") + esc(g.owner) + ': <code>message_subagent(job="' + esc(g.job) + '")</code>'
@@ -32746,6 +33475,55 @@ $("jobSend").addEventListener("submit", async (e) => {
   }
 });
 
+$("setToggle").addEventListener("click", () => {
+  const open = settingsHidden();
+  $("jobSettings").classList.toggle("hidden", !open);
+  $("setToggle").setAttribute("aria-expanded", String(open));
+  if (open && settingsGroup) {
+    const g = model && model.groups.get(settingsGroup);
+    if (g) void fillModels(g.agent);
+  }
+});
+
+/** Only the fields the user set; a turn already running keeps its own settings. */
+function chosenSettings(agent) {
+  const out = {}, modelName = $("setModel").value.trim(), effort = $("setEffort").value, perm = $("setPerm").value, spec = PERMISSIONS[agent];
+  if (modelName) out.model = modelName;
+  if (effort) out.effort = effort;
+  if (perm && spec) out[spec.key] = spec.key === "auto_approve" ? perm === "true" : perm;
+  return out;
+}
+
+$("jobSettings").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const key = settingsGroup, g = key && model.groups.get(key);
+  if (!g || !g.job) return;
+  const settings = chosenSettings(g.agent), info = $("setInfo");
+  info.classList.remove("err");
+  if (!Object.keys(settings).length) { info.textContent = "Nothing to change: pick a model, effort or permission."; return; }
+  $("setApply").disabled = true;
+  let result;
+  try {
+    const r = await fetch("/api/subagents/settings", { method: "POST", headers: { "content-type": "application/json", "x-agent-bridge": "1" }, body: JSON.stringify({ run: g.turns[g.turns.length - 1].name, settings }) });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || d.text || "HTTP " + r.status);
+    result = d.text;
+    if (settingsGroup === key) {
+      settingsGroup = null;
+      renderSettings(g);
+      info.textContent = result;
+    }
+    void poll();
+  } catch (err) {
+    result = "Settings not saved: " + err.message;
+    if (settingsGroup === key) { info.textContent = result; info.classList.add("err"); }
+  } finally {
+    $("setApply").disabled = false;
+    jobResults.set(key, [...(jobResults.get(key) || []), result]);
+    if (composerGroup === key) renderConversation(g);
+  }
+});
+
 /** Auto follows the system; Light and Dark override it. Remembered in this browser. */
 function applyTheme(theme) {
   const root = document.documentElement;
@@ -32812,9 +33590,9 @@ function summarizeRun(file2, text, mtimeMs, now, meta3 = {}) {
   };
 }
 function listRuns(home, now = Date.now()) {
-  const dir = join19(home, RUNS_DIR_NAME);
+  const dir = join20(home, RUNS_DIR_NAME);
   if (!existsSync8(dir)) return [];
-  return readdirSync6(dir).filter((f) => RUN_NAME.test(f)).map((f) => ({ f, st: statSync4(join19(dir, f)) })).sort((a, b) => b.st.mtimeMs - a.st.mtimeMs).slice(0, MAX_RUNS).map(({ f, st }) => summarizeRun(f, readFileSync14(join19(dir, f), "utf8"), st.mtimeMs, now, readMeta(join19(dir, runMetaPath(f)))));
+  return readdirSync6(dir).filter((f) => RUN_NAME.test(f)).map((f) => ({ f, st: statSync4(join20(dir, f)) })).sort((a, b) => b.st.mtimeMs - a.st.mtimeMs).slice(0, MAX_RUNS).map(({ f, st }) => summarizeRun(f, readFileSync15(join20(dir, f), "utf8"), st.mtimeMs, now, readMeta(join20(dir, runMetaPath(f)))));
 }
 function readMeta(file2) {
   try {
@@ -32823,18 +33601,33 @@ function readMeta(file2) {
     return {};
   }
 }
-function jobOwner(home, job, original) {
+function readStoredJobs(home) {
+  const out2 = /* @__PURE__ */ new Map();
+  let stored;
   try {
-    const stored = JSON.parse(readFileSync14(join19(home, JOBS_FILE), "utf8"));
-    const owner = Array.isArray(stored) ? stored.find((j) => j?.name === job)?.owner : null;
-    return typeof owner === "string" && owner ? owner : original;
+    stored = JSON.parse(readFileSync15(join20(home, JOBS_FILE), "utf8"));
   } catch {
-    return original;
+    return out2;
   }
+  const list = Array.isArray(stored) ? stored : Array.isArray(stored?.jobs) ? stored.jobs : [];
+  for (const j of list) {
+    if (!j || typeof j !== "object") continue;
+    const { name, owner, args } = j;
+    if (typeof name !== "string") continue;
+    const saved = args && typeof args === "object" ? args : {};
+    out2.set(name, {
+      owner: typeof owner === "string" && owner ? owner : null,
+      next: Object.fromEntries(JOB_SETTING_KEYS.filter((key) => saved[key] !== void 0).map((key) => [key, saved[key]]))
+    });
+  }
+  return out2;
+}
+function jobOwner(home, job, original) {
+  return readStoredJobs(home).get(job)?.owner ?? original;
 }
 function classifyPeers(peers, runs, home) {
   const norm = (p) => p.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
-  const worktrees = `${norm(join19(home, "worktrees"))}/`;
+  const worktrees = `${norm(join20(home, "worktrees"))}/`;
   return peers.map((p) => {
     const cwd = norm(p.cwd ?? "");
     const subagent = cwd.startsWith(worktrees);
@@ -32883,6 +33676,14 @@ function cookieSecret(req) {
   const m = new RegExp(`(?:^|;\\s*)${COOKIE}=([0-9a-f]+)`).exec(String(req.headers.cookie ?? ""));
   return m?.[1] ?? "";
 }
+var JOB_COMMANDS = {
+  "/api/subagents/message": (body) => {
+    const text = typeof body.body === "string" ? body.body.trim() : "";
+    return text && text.length <= MAX_BODY_CHARS ? { type: "message", body: text } : null;
+  },
+  // The owning session checks the values against the job's agent (job-settings.ts).
+  "/api/subagents/settings": (body) => body.settings && typeof body.settings === "object" && !Array.isArray(body.settings) && Object.keys(body.settings).length ? { type: "settings", settings: body.settings } : null
+};
 var USAGE_CACHE_MS = 5 * 60 * 1e3;
 var USAGE_REFRESH_MIN_MS = 15 * 1e3;
 function readAllUsage(home, log) {
@@ -32894,7 +33695,7 @@ function readAllUsage(home, log) {
   ]);
 }
 async function startUi(opts) {
-  const secret = opts.secret ?? randomBytes7(SECRET_BYTES3).toString("hex");
+  const secret = opts.secret ?? randomBytes8(SECRET_BYTES3).toString("hex");
   const token = loadOrCreateToken(opts.home);
   const dbPath = resolveDbPath(opts.home);
   let sender = null;
@@ -32941,7 +33742,9 @@ async function startUi(opts) {
         brokerPid,
         peers: classifyPeers(peers, runs, opts.home),
         runs,
-        messages: recentMessages(dbPath)
+        messages: recentMessages(dbPath),
+        // Saved next-turn settings per job (message_subagent or the dashboard may have changed them).
+        jobs: Object.fromEntries([...readStoredJobs(opts.home)].map(([name, j]) => [name, { next: j.next }]))
       });
     }
     if (req.method === "GET" && url2.pathname === "/api/usage") {
@@ -32955,10 +33758,10 @@ async function startUi(opts) {
     }
     const runMatch = /^\/api\/runs\/([\w.-]+)$/.exec(url2.pathname);
     if (req.method === "GET" && runMatch) {
-      const file2 = join19(opts.home, RUNS_DIR_NAME, `${runMatch[1]}.log`);
+      const file2 = join20(opts.home, RUNS_DIR_NAME, `${runMatch[1]}.log`);
       if (!existsSync8(file2)) return send(res, 404, { error: "no such run" });
       const from = Math.max(0, Number(url2.searchParams.get("from")) || 0);
-      const buf = readFileSync14(file2);
+      const buf = readFileSync15(file2);
       let end = Math.min(buf.length, from + MAX_LOG_CHUNK);
       while (end < buf.length && end > from && (buf[end] & 192) === 128) end--;
       return send(res, 200, { text: buf.subarray(from, end).toString("utf8"), next: end, size: buf.length });
@@ -32972,18 +33775,19 @@ async function startUi(opts) {
       const r = await (await getSender()).send({ to, body: text });
       return send(res, 200, { id: r.messages[0]?.id, deliveredTo: r.deliveredTo, queuedFor: r.queuedFor });
     }
-    if (req.method === "POST" && url2.pathname === "/api/subagents/message") {
+    const jobCommand = req.method === "POST" && Object.hasOwn(JOB_COMMANDS, url2.pathname) ? JOB_COMMANDS[url2.pathname] : void 0;
+    if (jobCommand) {
       if (req.headers["x-agent-bridge"] !== "1") return send(res, 403, { error: "missing header" });
       const body = await readJson2(req);
       const run2 = typeof body.run === "string" ? body.run : "";
-      const text = typeof body.body === "string" ? body.body.trim() : "";
-      if (!RUN_NAME.test(`${run2}.log`) || !text || text.length > MAX_BODY_CHARS) return send(res, 400, { error: "a valid run and message are required" });
-      const file2 = join19(opts.home, RUNS_DIR_NAME, `${run2}.log`);
+      const command = jobCommand(body);
+      if (!RUN_NAME.test(`${run2}.log`) || !command) return send(res, 400, { error: "a valid run and request are required" });
+      const file2 = join20(opts.home, RUNS_DIR_NAME, `${run2}.log`);
       if (!existsSync8(file2)) return send(res, 404, { error: "no such run" });
-      const meta3 = readMeta(join19(opts.home, RUNS_DIR_NAME, `${run2}.json`));
+      const meta3 = readMeta(join20(opts.home, RUNS_DIR_NAME, `${run2}.json`));
       if (!meta3.by || !meta3.job) return send(res, 409, { error: "This run has no owning session or job recorded." });
       try {
-        const result = await messageDashboardJob(await getSender(), jobOwner(opts.home, meta3.job, meta3.by), meta3.job, text);
+        const result = await controlDashboardJob(await getSender(), jobOwner(opts.home, meta3.job, meta3.by), meta3.job, command);
         return send(res, result.isError ? 409 : 200, result);
       } catch (err) {
         if (err instanceof JobControlError) return send(res, err.reason === "offline" ? 409 : 504, { error: err.message });
@@ -33019,11 +33823,11 @@ var SECRET_BYTES4 = 24;
 var PROBE_TIMEOUT_MS = 1500;
 var OWNER_ONLY2 = 384;
 function dashboardFile(home) {
-  return join20(home, DASHBOARD_FILE);
+  return join21(home, DASHBOARD_FILE);
 }
 function readDashboardInfo(home) {
   try {
-    const d = JSON.parse(readFileSync15(dashboardFile(home), "utf8"));
+    const d = JSON.parse(readFileSync16(dashboardFile(home), "utf8"));
     return typeof d.url === "string" && typeof d.port === "number" && typeof d.pid === "number" ? d : null;
   } catch {
     return null;
@@ -33058,7 +33862,7 @@ async function findRunningDashboard(home) {
   return await probeDashboard(info.port) ? info : null;
 }
 async function hostDashboard(opts) {
-  const secret = previousSecret(opts.home) ?? randomBytes8(SECRET_BYTES4).toString("hex");
+  const secret = previousSecret(opts.home) ?? randomBytes9(SECRET_BYTES4).toString("hex");
   const ui = await startUi({ ...opts, secret });
   const info = { url: ui.url, port: ui.port, pid: process.pid };
   const file2 = dashboardFile(opts.home);
@@ -33077,11 +33881,11 @@ async function hostDashboard(opts) {
 }
 
 // src/cli/open.ts
-import { spawn as spawn4 } from "node:child_process";
+import { spawn as spawn6 } from "node:child_process";
 function openBrowser(url2) {
   const [cmd, args] = process.platform === "win32" ? ["cmd.exe", ["/d", "/c", "start", '""', url2]] : process.platform === "darwin" ? ["open", [url2]] : ["xdg-open", [url2]];
   try {
-    const child = spawn4(cmd, args, { stdio: "ignore", detached: true, windowsHide: true, windowsVerbatimArguments: process.platform === "win32" });
+    const child = spawn6(cmd, args, { stdio: "ignore", detached: true, windowsHide: true, windowsVerbatimArguments: process.platform === "win32" });
     child.on("error", () => {
     });
     child.unref();
@@ -33093,12 +33897,12 @@ function openBrowser(url2) {
 import { execFileSync as execFileSync2 } from "node:child_process";
 import { existsSync as existsSync11, mkdtempSync as mkdtempSync3, rmSync as rmSync8, writeFileSync as writeFileSync9 } from "node:fs";
 import { tmpdir as tmpdir2 } from "node:os";
-import { join as join23 } from "node:path";
+import { join as join24 } from "node:path";
 
 // src/core/worktree.ts
 import { createHash as createHash4 } from "node:crypto";
-import { existsSync as existsSync9, mkdirSync as mkdirSync11, readFileSync as readFileSync16, realpathSync as realpathSync2, rmSync as rmSync5 } from "node:fs";
-import { basename as basename4, isAbsolute as isAbsolute2, join as join21, relative, resolve as resolve5, toNamespacedPath } from "node:path";
+import { existsSync as existsSync9, mkdirSync as mkdirSync11, readFileSync as readFileSync17, realpathSync as realpathSync2, rmSync as rmSync5 } from "node:fs";
+import { basename as basename4, isAbsolute as isAbsolute2, join as join22, relative, resolve as resolve5, toNamespacedPath } from "node:path";
 var GIT = "git";
 var LONG_PATH_ARGS = ["-c", "core.longpaths=true"];
 var REMOVE_RETRIES = 3;
@@ -33126,9 +33930,9 @@ async function createWorktree(opts) {
   const base = await git(["rev-parse", "HEAD"], repoRoot, opts.log);
   const baseBranch = await git(["symbolic-ref", "-q", "--short", "HEAD"], repoRoot, opts.log).catch(() => "") || null;
   let branch = `${BRANCH_PREFIX}${opts.jobId}`;
-  const dir = join21(opts.home, "worktrees");
+  const dir = join22(opts.home, "worktrees");
   mkdirSync11(dir, { recursive: true });
-  let path = join21(dir, `${basename4(repoRoot)}-${opts.jobId}`);
+  let path = join22(dir, `${basename4(repoRoot)}-${opts.jobId}`);
   try {
     await git(["worktree", "add", "-b", branch, path, base], repoRoot, opts.log, WORKTREE_ADD_TIMEOUT_MS);
   } catch (err) {
@@ -33149,7 +33953,7 @@ async function createWorktree(opts) {
   }
   await unlockWorktree(repoRoot, path, opts.log);
   const rel = relative(repoRoot, opts.cwd);
-  const cwd = rel && !rel.startsWith("..") && !isAbsolute2(rel) ? join21(path, rel) : path;
+  const cwd = rel && !rel.startsWith("..") && !isAbsolute2(rel) ? join22(path, rel) : path;
   opts.log.info("worktree created", { repoRoot, path, branch });
   return { repoRoot, path, cwd, branch, base, baseBranch };
 }
@@ -33240,7 +34044,7 @@ function generatedNoise(root, file2) {
   return parts.slice(0, -1).some((part, index) => {
     if (GENERATED_DIRECTORIES.has(part)) return true;
     if (!UNITY_GENERATED_DIRECTORIES.has(part)) return false;
-    return existsSync9(toNamespacedPath(join21(root, ...parts.slice(0, index), "ProjectSettings", "ProjectVersion.txt")));
+    return existsSync9(toNamespacedPath(join22(root, ...parts.slice(0, index), "ProjectSettings", "ProjectVersion.txt")));
   });
 }
 async function autoCommitFiles(wt, log) {
@@ -33357,7 +34161,7 @@ async function gitChangeSnapshot(cwd, log) {
     const file2 = line.slice(3).replace(/^.* -> /, "").replace(/^"|"$/g, "");
     let fp = line.slice(0, 2);
     try {
-      fp += ":" + createHash4("sha1").update(readFileSync16(join21(root, file2))).digest("hex");
+      fp += ":" + createHash4("sha1").update(readFileSync17(join22(root, file2))).digest("hex");
     } catch {
       fp += ":missing";
     }
@@ -33372,222 +34176,11 @@ function changedFiles(before, after) {
   return [...out2].sort();
 }
 
-// src/core/opencode-served.ts
-import { spawn as spawn5 } from "node:child_process";
-import { randomBytes as randomBytes9 } from "node:crypto";
-import { extname as extname2 } from "node:path";
-var SERVE_START_TIMEOUT_MS = 3e4;
-var LISTEN_RE = /listening on (https?:\/\/[^\s]+)/i;
-var SERVER_USER = "opencode";
-var PASSWORD_BYTES = 24;
-var MAX_DETAIL_CHARS2 = 4e3;
-var OPENCODE_ASK_PERMISSIONS = { edit: "ask", bash: "ask" };
-var START_WATCHDOG_MS = 6e4;
-var SERVE_OUTPUT_TAIL_CHARS = 4e3;
-function watchServeOutput(onListening) {
-  let out2 = "";
-  let listening = false;
-  return {
-    onData: (d) => {
-      if (listening) return;
-      out2 = (out2 + d.toString()).slice(-SERVE_OUTPUT_TAIL_CHARS);
-      const m = LISTEN_RE.exec(out2);
-      if (m) {
-        listening = true;
-        out2 = "";
-        onListening(m[1].replace(/\/+$/, ""));
-      }
-    },
-    tail: () => out2
-  };
-}
-function startServe(bin, cwd, env) {
-  let resolved = resolveBinary(bin, env);
-  if (!resolved) return Promise.reject(new DelegateError(`executable not found: ${bin}`, "not_found"));
-  let prefix = [];
-  if (process.platform === "win32" && [".cmd", ".bat"].includes(extname2(resolved).toLowerCase())) {
-    const target = unwrapNpmShim(resolved);
-    if (!target) return Promise.reject(new DelegateError(`cannot start ${bin} without a shell`, "failed"));
-    resolved = target.command;
-    prefix = target.prefix;
-  }
-  return new Promise((resolve8, reject) => {
-    const child = spawn5(resolved, [...prefix, "serve", "--port", "0", "--hostname", "127.0.0.1"], {
-      cwd,
-      env: { ...env, PWD: cwd },
-      windowsHide: true,
-      stdio: ["ignore", "pipe", "pipe"],
-      detached: process.platform !== "win32"
-    });
-    trackChild(child);
-    const output2 = watchServeOutput((url2) => {
-      clearTimeout(timer);
-      resolve8({ child, url: url2 });
-    });
-    const timer = setTimeout(() => {
-      void killTree(child);
-      reject(new DelegateError(`opencode serve did not start within ${SERVE_START_TIMEOUT_MS / 1e3}s (startup timeout)`, "timeout", output2.tail()));
-    }, SERVE_START_TIMEOUT_MS);
-    child.stdout.on("data", output2.onData);
-    child.stderr.on("data", output2.onData);
-    child.on("error", (err) => {
-      clearTimeout(timer);
-      reject(new DelegateError(`failed to start opencode serve: ${err.message}`, "failed"));
-    });
-    child.on("exit", (code, signal) => {
-      clearTimeout(timer);
-      reject(new DelegateError(`opencode serve exited early (${signal ? `signal ${signal}` : `code ${code}`})`, "failed", output2.tail()));
-    });
-  });
-}
-async function* sse(body) {
-  const decoder = new TextDecoder();
-  let buf = "";
-  for await (const chunk of body) {
-    buf += decoder.decode(chunk, { stream: true });
-    let idx;
-    while ((idx = buf.indexOf("\n\n")) >= 0) {
-      const block = buf.slice(0, idx);
-      buf = buf.slice(idx + 2);
-      const data = block.split(/\r?\n/).filter((l) => l.startsWith("data:")).map((l) => l.slice(5).trim()).join("\n");
-      if (!data) continue;
-      try {
-        yield JSON.parse(data);
-      } catch {
-      }
-    }
-  }
-}
-function mcpToolPrefix(server) {
-  return `${server.replace(/[^a-zA-Z0-9_-]/g, "_")}_`;
-}
-function opencodePermissionRequest(p, mcpServers, cwd) {
-  const permission = String(p.permission ?? "unknown");
-  const detail = permissionDetail(p);
-  const server = [...mcpServers].sort((a, b) => b.length - a.length).find((s) => permission.startsWith(mcpToolPrefix(s)));
-  if (server) return { agent: "opencode", tool: `mcp:${server}`, detail: `${permission}: ${detail}`.slice(0, MAX_DETAIL_CHARS2), cwd };
-  return { agent: "opencode", tool: permission, detail, cwd };
-}
-function permissionDetail(p) {
-  const patterns = Array.isArray(p.patterns) ? p.patterns.join(", ") : "";
-  const meta3 = p.metadata && typeof p.metadata === "object" ? p.metadata : {};
-  const cmd = typeof meta3.command === "string" ? meta3.command : typeof meta3.filepath === "string" ? meta3.filepath : "";
-  return (cmd || patterns || JSON.stringify(meta3)).slice(0, MAX_DETAIL_CHARS2);
-}
-async function delegateToOpencodeServed(req) {
-  checkDepthPublic();
-  const password = randomBytes9(PASSWORD_BYTES).toString("hex");
-  const permissions = req.permissions === void 0 ? OPENCODE_ASK_PERMISSIONS : req.permissions;
-  const env = childEnvPublic({
-    ...req.extraEnv,
-    OPENCODE_SERVER_PASSWORD: password,
-    OPENCODE_SERVER_USERNAME: SERVER_USER,
-    ...permissions ? { OPENCODE_CONFIG_CONTENT: JSON.stringify({ permission: permissions }) } : {}
-  });
-  const { child, url: url2 } = await startServe(req.bin, req.cwd, env);
-  const auth = `Basic ${Buffer.from(`${SERVER_USER}:${password}`).toString("base64")}`;
-  const q = `directory=${encodeURIComponent(req.cwd)}`;
-  const ac = new AbortController();
-  const onAbort = () => ac.abort();
-  req.signal?.addEventListener("abort", onAbort, { once: true });
-  const timer = setTimeout(() => ac.abort(), req.timeoutSec * 1e3);
-  const api = async (method, path, body) => {
-    const res = await fetch(`${url2}${path}${path.includes("?") ? "&" : "?"}${q}`, {
-      method,
-      headers: { authorization: auth, "content-type": "application/json" },
-      body: body === void 0 ? void 0 : JSON.stringify(body),
-      signal: ac.signal
-    });
-    if (!res.ok) throw new DelegateError(`opencode API ${method} ${path} failed: HTTP ${res.status}`, "failed", await res.text().catch(() => ""));
-    const text = await res.text();
-    return text ? JSON.parse(text) : null;
-  };
-  let knownSession = req.sessionId ?? null;
-  try {
-    const sessionId = req.sessionId ?? (await api("POST", "/session", {})).id;
-    req.onSession?.(sessionId);
-    knownSession = sessionId;
-    const mcpServers = Object.keys(await api("GET", "/mcp").catch(() => null) ?? {});
-    const events = await fetch(`${url2}/event?${q}`, { headers: { authorization: auth, accept: "text/event-stream" }, signal: ac.signal });
-    if (!events.ok || !events.body) throw new DelegateError(`opencode event stream failed: HTTP ${events.status}`, "failed");
-    const [providerID, ...rest] = (req.model ?? "").split("/");
-    const body = { parts: [{ type: "text", text: req.prompt }] };
-    if (req.model && rest.length) body.model = { providerID, modelID: rest.join("/") };
-    if (req.effort) body.variant = req.effort;
-    await api("POST", `/session/${sessionId}/prompt_async`, body);
-    let failure2 = null;
-    const onEvent = progressEventHandler("opencode", req.onProgress);
-    let alive3 = false;
-    const watchdog = setTimeout(() => {
-      if (alive3) return;
-      failure2 = "opencode did not start working on the prompt within 60 seconds (check the model id and the provider's login).";
-      ac.abort();
-    }, START_WATCHDOG_MS);
-    try {
-      for await (const ev of sse(events.body)) {
-        const type = String(ev.type ?? "");
-        const p = ev.properties ?? {};
-        const mine = p.sessionID === sessionId || p.part?.sessionID === sessionId || p.info?.sessionID === sessionId;
-        if (mine) alive3 = true;
-        if (type === "session.error" && !p.sessionID) {
-          failure2 = String(p.error?.data?.message ?? p.error?.message ?? "opencode reported an error");
-          break;
-        }
-        if (type === "permission.asked" && p.sessionID === sessionId) {
-          const decision = await req.onPermission(opencodePermissionRequest(p, mcpServers, req.cwd));
-          await api("POST", `/permission/${p.id}/reply`, decision.allow ? { reply: "once" } : { reply: "reject", message: decision.message });
-        } else if (type === "message.part.updated" && p.part?.sessionID === sessionId) {
-          const part = p.part;
-          const ready = part.type === "tool" && (part.state?.status === "running" || part.state?.status === "completed") || part.type === "text" && part.time?.end || part.type === "reasoning" && part.time?.end;
-          if (ready) onEvent?.({ part });
-        } else if (type === "session.error" && p.sessionID === sessionId) {
-          failure2 = String(p.error?.data?.message ?? p.error?.message ?? "opencode session error");
-          break;
-        } else if (type === "session.idle" && p.sessionID === sessionId || type === "session.status" && p.sessionID === sessionId && p.status?.type === "idle") {
-          break;
-        }
-      }
-    } catch (err) {
-      if (!failure2) throw err;
-    } finally {
-      clearTimeout(watchdog);
-    }
-    if (failure2 && !alive3) throw new DelegateError(failure2, "failed", "", "", sessionId);
-    const messages = await api("GET", `/session/${sessionId}/message`) ?? [];
-    const last = [...messages].reverse().find((m) => m.info?.role === "assistant");
-    const text = (last?.parts ?? []).filter((part) => part.type === "text" && typeof part.text === "string").map((part) => part.text).join("");
-    if (failure2 && !text) throw new DelegateError(failure2, "failed", "", "", sessionId);
-    const tokens = last?.info?.tokens;
-    return {
-      sessionId,
-      text,
-      isError: failure2 !== null,
-      details: {
-        error: failure2,
-        usage: tokens ? { input: Number(tokens.input) || 0, output: Number(tokens.output) || 0 } : null,
-        costUsd: typeof last?.info?.cost === "number" ? last.info.cost : null
-      }
-    };
-  } catch (err) {
-    if (ac.signal.aborted && !(err instanceof DelegateError)) {
-      if (req.signal?.aborted) throw new DelegateError("delegate aborted", "aborted", "", "", knownSession);
-      const hint = knownSession ? `. The opencode session ${knownSession} keeps its progress: call again with session_id="${knownSession}" (and a longer timeout_sec, or use spawn_opencode) to continue instead of starting over.` : "";
-      throw new DelegateError(`delegate timed out after ${req.timeoutSec}s (its time limit, timeout_sec)${hint}`, "timeout", "", "", knownSession);
-    }
-    throw err;
-  } finally {
-    clearTimeout(timer);
-    req.signal?.removeEventListener("abort", onAbort);
-    ac.abort();
-    await killTree(child);
-  }
-}
-
 // src/cli/reliability-live.ts
 import { execFile as execFile2 } from "node:child_process";
-import { existsSync as existsSync10, mkdirSync as mkdirSync13, mkdtempSync as mkdtempSync2, readdirSync as readdirSync7, readFileSync as readFileSync17, rmSync as rmSync7, writeFileSync as writeFileSync8 } from "node:fs";
+import { existsSync as existsSync10, mkdirSync as mkdirSync13, mkdtempSync as mkdtempSync2, readdirSync as readdirSync7, readFileSync as readFileSync18, rmSync as rmSync7, writeFileSync as writeFileSync8 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join as join22 } from "node:path";
+import { join as join23 } from "node:path";
 
 // node_modules/@modelcontextprotocol/sdk/dist/esm/server/zod-compat.js
 function isZ4Schema(s) {
@@ -37135,327 +37728,10 @@ var StdioClientTransport = class {
   }
 };
 
-// src/core/codex-appserver.ts
-import { spawn as spawn7 } from "node:child_process";
-var STEER_HEADER = (from) => `[Message from ${from}, who gave you this task, sent while you work. Answer it briefly in your next message, then continue the task, adjusted to what it asks.]`;
-var SIBLING_STEER_HEADER = '[Message from a sibling job working for the same supervisor. Coordinate within your assigned task and answer with the agent-bridge "send" tool using to=<from> and reply_to=<id>.]';
-var OPT_OUT = [
-  "item/agentMessage/delta",
-  "item/reasoning/summaryTextDelta",
-  "item/reasoning/summaryPartAdded",
-  "item/reasoning/textDelta",
-  "item/commandExecution/outputDelta",
-  "item/fileChange/outputDelta",
-  "item/plan/delta"
-];
-var STDERR_TAIL_CHARS2 = 4e3;
-var STARTUP_TIMEOUT_MS = 18e4;
-function innerCommand(s) {
-  const m = /^(?:"[^"]*[\\/]|[^\s"]*[\\/])?(?:pwsh|powershell|bash|zsh|sh|cmd)(?:\.exe)?"?\s+(?:-NoProfile\s+|-NoLogo\s+)*(?:-Command|-lc|-c|\/c)\s+([\s\S]*)$/i.exec(s.trim());
-  if (!m) return s;
-  const c = m[1].trim();
-  return /^'[\s\S]*'$|^"[\s\S]*"$/.test(c) ? c.slice(1, -1) : c;
-}
-function codexTurnSandbox(sandbox, cwd, roots = [], reported, networkAccess) {
-  if (sandbox === "danger-full-access") return { type: "dangerFullAccess" };
-  if (sandbox === "read-only") return { type: "readOnly", networkAccess: false };
-  const inherited = reported?.type === "workspaceWrite" ? reported : {};
-  return {
-    ...inherited,
-    type: "workspaceWrite",
-    writableRoots: [.../* @__PURE__ */ new Set([cwd, ...roots, ...Array.isArray(inherited.writableRoots) ? inherited.writableRoots : []])],
-    ...networkAccess !== void 0 ? { networkAccess } : {}
-  };
-}
-function asExecEvent(kind, item) {
-  const type = { agentMessage: "agent_message", commandExecution: "command_execution", fileChange: "file_change", mcpToolCall: "mcp_tool_call", webSearch: "web_search", reasoning: "reasoning" }[item?.type] ?? item?.type;
-  return { type: kind, item: { ...item, type } };
-}
-async function delegateToCodexAppServer(req) {
-  checkDepth();
-  const cwd = realFolder(req.cwd);
-  const env = childEnv(req.extraEnv);
-  const { resolved, args, needsShell } = resolveCommand(req.bin, ["app-server"], env, req.log);
-  req.log.debug("starting codex app-server", { bin: resolved, cwd });
-  const child = spawn7(resolved, args, { cwd, env: { ...env, PWD: cwd }, shell: needsShell, windowsHide: true, stdio: ["pipe", "pipe", "pipe"], detached: process.platform !== "win32" });
-  trackChild(child);
-  let nextId = 1;
-  const pending = /* @__PURE__ */ new Map();
-  let stderr = "";
-  let threadId = req.sessionId ?? null;
-  let turnId = null;
-  let lastMessage = "";
-  let usage = null;
-  let retryableError = null;
-  let finished = () => {
-  };
-  const turnDone = new Promise((r) => finished = r);
-  const completions = /* @__PURE__ */ new Map();
-  const answers = [];
-  let awaitingAnswer = false;
-  const onEvent = progressEventHandler("codex", req.onProgress);
-  const write = (msg) => {
-    if (!child.stdin.writable) return;
-    child.stdin.write(`${JSON.stringify(msg)}
-`);
-  };
-  const request2 = (method, params) => new Promise((resolve8, reject) => {
-    const id = nextId++;
-    pending.set(id, { resolve: resolve8, reject });
-    write({ id, method, params });
-  });
-  const editPaths = /* @__PURE__ */ new Map();
-  const denialMessages = [];
-  const deliverDenials = async () => {
-    if (!threadId || !turnId) return;
-    for (const message of denialMessages.splice(0)) {
-      try {
-        await request2("turn/steer", { threadId, expectedTurnId: turnId, input: [{ type: "text", text: message, text_elements: [] }] });
-      } catch (err) {
-        req.log.warn("could not deliver approval denial reason", { message, err: err.message });
-        req.onDenied?.(message);
-      }
-    }
-  };
-  const decide = async (tool, detail) => {
-    if (!req.approve) return { allow: false, message: "Denied by agent-bridge: no approval handler is available." };
-    try {
-      return await req.approve({ agent: "codex", tool, detail, cwd });
-    } catch (err) {
-      return { allow: false, message: `Denied by agent-bridge: approval forwarding failed: ${String(err?.message ?? err)}` };
-    }
-  };
-  const answerRequest = async (id, method, params) => {
-    const reply = (result) => write({ id, result });
-    const answer = (decision, result, tool) => {
-      reply(result);
-      if (!decision.allow) {
-        const message = `Approval denied for ${tool}. ${decision.message || "Denied by the approval handler; no reason supplied."}`;
-        req.onProgress?.(message);
-        denialMessages.push(message);
-        void deliverDenials();
-      }
-    };
-    const sandboxDenial = { allow: false, message: "Denied by agent-bridge: this job's access does not allow sandbox escalations; the supervisor was not asked." };
-    switch (method) {
-      case "mcpServer/elicitation/request": {
-        const tool = `mcp:${params.serverName ?? "tool"}`;
-        const decision = await decide(tool, String(params.message ?? "an MCP tool call"));
-        const props = params.requestedSchema?.properties ?? {};
-        const content = Object.fromEntries(Object.entries(props).filter(([, v]) => v && "default" in v).map(([k, v]) => [k, v.default]));
-        return answer(decision, decision.allow ? { action: "accept", content } : { action: "decline", content: null }, tool);
-      }
-      case "item/commandExecution/requestApproval": {
-        const decision = req.askMode ? await decide("command", innerCommand(String(params.command ?? params.reason ?? "a command"))) : sandboxDenial;
-        return answer(decision, { decision: decision.allow ? "accept" : "decline" }, "command");
-      }
-      case "item/fileChange/requestApproval": {
-        const paths = editPaths.get(params.itemId) ?? [];
-        const decision = req.askMode ? await decide("edit", paths.length ? paths.join(", ") : String(params.reason ?? "file changes")) : sandboxDenial;
-        return answer(decision, { decision: decision.allow ? "accept" : "decline" }, "edit");
-      }
-      default:
-        req.log.warn("codex app-server request refused", { method });
-        return write({ id, error: { code: -32601, message: "not supported by agent-bridge" } });
-    }
-  };
-  const handle = (msg) => {
-    if (msg.id !== void 0 && msg.method === void 0) {
-      const p = pending.get(msg.id);
-      if (!p) return;
-      pending.delete(msg.id);
-      if (msg.error) p.reject(new Error(msg.error.message ?? "app-server error"));
-      else p.resolve(msg.result);
-      return;
-    }
-    if (msg.id !== void 0 && msg.method) {
-      void answerRequest(msg.id, msg.method, msg.params ?? {});
-      return;
-    }
-    const params = msg.params ?? {};
-    switch (msg.method) {
-      case "item/started":
-        onEvent?.(asExecEvent("item.started", params.item));
-        if (params.item?.type === "fileChange") editPaths.set(params.item.id, (params.item.changes ?? []).map((c) => c?.path).filter(Boolean));
-        break;
-      case "item/completed": {
-        if (turnId && params.turnId && params.turnId !== turnId) break;
-        const item = params.item ?? {};
-        onEvent?.(asExecEvent("item.completed", item));
-        if (item.type === "agentMessage" && typeof item.text === "string" && item.text.trim()) {
-          lastMessage = item.text;
-          if (awaitingAnswer) {
-            awaitingAnswer = false;
-            answers.push(item.text);
-            req.live?.onAnswer(item.text);
-          }
-        }
-        break;
-      }
-      case "thread/tokenUsage/updated":
-        usage = params.tokenUsage?.total ?? params.total ?? usage;
-        break;
-      case "error":
-        if (!params.willRetry) retryableError = params.error?.message ?? "error";
-        break;
-      case "turn/completed":
-        completions.set(String(params.turn?.id), { status: String(params.turn?.status ?? "completed"), error: params.turn?.error?.message ?? null });
-        if (turnId && completions.has(turnId)) finished(completions.get(turnId));
-        break;
-    }
-  };
-  let buf = "";
-  child.stdout.setEncoding("utf8").on("data", (d) => {
-    buf += d;
-    let nl;
-    while ((nl = buf.indexOf("\n")) >= 0) {
-      const line = buf.slice(0, nl).trim();
-      buf = buf.slice(nl + 1);
-      if (!line.startsWith("{")) continue;
-      try {
-        handle(JSON.parse(line));
-      } catch (err) {
-        req.log.debug("bad app-server line", { err: err.message });
-      }
-    }
-  });
-  child.stderr.setEncoding("utf8").on("data", (d) => {
-    stderr = (stderr + d).slice(-STDERR_TAIL_CHARS2);
-  });
-  const exited = new Promise((_, reject) => {
-    child.on("error", (err) => reject(new DelegateError(`failed to start ${req.bin}: ${err.message}`, "failed", "", "", threadId)));
-    child.on("exit", (code, signal) => reject(new DelegateError(`codex app-server ${exitDescription({ code, signal })}`, "failed", stderr, "", threadId)));
-  });
-  exited.catch(() => {
-  });
-  let timer;
-  const stopped = new Promise((_, reject) => {
-    timer = setTimeout(() => reject(new DelegateError(`delegate timed out after ${req.timeoutSec}s (its time limit, timeout_sec)`, "timeout", stderr, "", threadId)), req.timeoutSec * 1e3);
-    req.signal?.addEventListener("abort", () => reject(new DelegateError("delegate aborted", "aborted", "", "", threadId)), { once: true });
-  });
-  stopped.catch(() => {
-  });
-  const race = (p) => Promise.race([p, exited, stopped]);
-  let step = "initialize";
-  let startupTimer;
-  const startup = new Promise((_, reject) => {
-    startupTimer = setTimeout(
-      () => reject(DelegateError.startup(`codex app-server did not answer ${step} within ${Math.round((req.startupTimeoutMs ?? STARTUP_TIMEOUT_MS) / 1e3)}s (startup timeout)`, stderr, threadId)),
-      req.startupTimeoutMs ?? STARTUP_TIMEOUT_MS
-    );
-  });
-  startup.catch(() => {
-  });
-  const boot = (p) => Promise.race([p, exited, stopped, startup]);
-  const steering = {
-    rename: async (title) => {
-      if (threadId) await race(request2("thread/name/set", { threadId, name: title }));
-    },
-    send: async (message, sibling = false) => {
-      if (!threadId || !turnId) return false;
-      try {
-        const header = sibling ? SIBLING_STEER_HEADER : STEER_HEADER(req.live?.from ?? "the session that started you");
-        await request2("turn/steer", { threadId, expectedTurnId: turnId, input: [{ type: "text", text: `${header}
-
-${message}`, text_elements: [] }] });
-        if (!sibling) awaitingAnswer = true;
-        return true;
-      } catch (err) {
-        req.log.info("steering refused; the turn has ended", { err: err.message });
-        return false;
-      }
-    }
-  };
-  try {
-    await boot(request2("initialize", { clientInfo: { name: "agent-bridge", title: "agent-bridge", version: APP_VERSION }, capabilities: { experimentalApi: false, optOutNotificationMethods: OPT_OUT } }));
-    write({ method: "initialized", params: {} });
-    const approvalPolicy = "on-request";
-    const config2 = {};
-    if (req.sandbox === "workspace-write" && (req.writableRoots?.length || req.networkAccess !== void 0)) {
-      config2.sandbox_workspace_write = {
-        ...req.writableRoots?.length ? { writable_roots: req.writableRoots.map(realFolder) } : {},
-        ...req.networkAccess !== void 0 ? { network_access: req.networkAccess } : {}
-      };
-    }
-    if (req.effort) config2.model_reasoning_effort = req.effort;
-    const threadParams = { cwd, sandbox: req.sandbox, approvalPolicy, approvalsReviewer: "user", ...Object.keys(config2).length ? { config: config2 } : {}, ...req.model ? { model: req.model } : {} };
-    step = req.sessionId ? "thread/resume" : "thread/start";
-    const thread = req.sessionId ? await boot(request2("thread/resume", { ...threadParams, threadId: req.sessionId, excludeTurns: true })) : await boot(request2("thread/start", threadParams));
-    threadId = thread?.thread?.id ?? threadId;
-    if (threadId) req.onSession?.(threadId);
-    if (threadId && req.title) {
-      step = "thread/name/set";
-      await boot(request2("thread/name/set", { threadId, name: req.title })).catch((err) => req.log.warn("could not name the Codex thread", { err: err.message }));
-    }
-    if (typeof thread?.model === "string")
-      req.onInfo?.({
-        model: thread.model,
-        effort: req.effort ?? (typeof thread.reasoningEffort === "string" ? thread.reasoningEffort : null),
-        // The sandbox Codex really applies to this thread (its config can differ from what was asked).
-        permission: typeof thread.sandbox?.type === "string" ? thread.sandbox.type : null
-      });
-    const prompt = req.askMode ? `${req.prompt}
-
-${CODEX_ASK_HINT}` : req.prompt;
-    step = "turn/start";
-    const sandboxPolicy = codexTurnSandbox(req.sandbox, cwd, req.writableRoots?.map(realFolder), thread?.sandbox, req.networkAccess);
-    const turn = await boot(request2("turn/start", {
-      threadId,
-      input: [{ type: "text", text: prompt, text_elements: [] }],
-      ...req.model ? { model: req.model } : {},
-      sandboxPolicy,
-      ...req.effort ? { effort: req.effort } : {}
-    }));
-    req.onInfo?.({ model: req.model ?? thread?.model ?? null, permission: req.sandbox, effort: req.effort ?? (typeof thread?.reasoningEffort === "string" ? thread.reasoningEffort : null) });
-    turnId = turn?.turn?.id ?? null;
-    void deliverDenials();
-    clearTimeout(startupTimer);
-    if (turnId && completions.has(turnId)) finished(completions.get(turnId));
-    req.live?.onSteering(steering);
-    const outcome = await race(turnDone);
-    req.live?.onSteering(null);
-    const error62 = outcome.error ?? (outcome.status === "failed" ? retryableError ?? "turn failed" : null);
-    req.log.info("codex turn ended", { threadId, turnId, status: outcome.status, error: outcome.error, retryableError });
-    if (outcome.status === "interrupted") throw new DelegateError(`codex interrupted the turn${outcome.error ? `: ${outcome.error}` : ""}`, "failed", stderr, "", threadId);
-    if (error62 && !lastMessage) throw new DelegateError(error62, "failed", stderr, "", threadId);
-    req.log.info("codex delegate finished", { threadId, status: outcome.status });
-    return { sessionId: threadId, text: lastMessage, isError: Boolean(error62), details: { usage, error: error62, answers: answers.length } };
-  } catch (err) {
-    req.live?.onSteering(null);
-    if (threadId && turnId) await Promise.race([request2("turn/interrupt", { threadId, turnId }).catch(() => {
-    }), new Promise((r) => setTimeout(r, 2e3))]);
-    if (err instanceof DelegateError) {
-      err.sessionId = err.sessionId ?? threadId;
-      throw err;
-    }
-    throw new DelegateError(err.message, "failed", stderr, "", threadId);
-  } finally {
-    for (const message of denialMessages.splice(0)) req.onDenied?.(message);
-    clearTimeout(timer);
-    clearTimeout(startupTimer);
-    for (const p of pending.values()) p.reject(new Error("closed"));
-    child.stdin.end();
-    await killTree(child);
-  }
-}
-
 // src/mcp/jobs.ts
 import { randomUUID as randomUUID9 } from "node:crypto";
 import { closeSync as closeSync3, mkdirSync as mkdirSync12, openSync as openSync3, rmSync as rmSync6, statSync as statSync5 } from "node:fs";
 import { dirname as dirname7 } from "node:path";
-
-// src/mcp/job-settings.ts
-var JOB_SETTING_KEYS = ["model", "effort", "access", "sandbox", "permission_mode", "auto_approve"];
-var EXACT_PERMISSION_KEYS = ["sandbox", "permission_mode", "auto_approve"];
-function changedJobArgs(args, settings) {
-  const next = { ...args };
-  if (settings.access !== void 0) for (const key of EXACT_PERMISSION_KEYS) delete next[key];
-  else if (EXACT_PERMISSION_KEYS.some((key) => settings[key] !== void 0)) delete next.access;
-  for (const key of JOB_SETTING_KEYS) if (settings[key] !== void 0) next[key] = settings[key];
-  return next;
-}
-
-// src/mcp/jobs.ts
 var INTERRUPTED_LISTED_MS = 24 * 60 * 60 * 1e3;
 var NOTE_CONVERSATION_SUFFIX = ":note";
 var QUEUED_FOLLOW_UP_NOTE = "(Your queued follow-up was sent to it; its answer will arrive as another message.)";
@@ -37507,7 +37783,7 @@ function readStore(path, log) {
 }
 
 // src/cli/reliability-live.ts
-var SERVER_BUNDLE = join22("dist", "server.mjs");
+var SERVER_BUNDLE = join23("dist", "server.mjs");
 var JOBS_FILE2 = "jobs.json";
 var NOTE_COUNT = 12;
 var NOTES_DIR = "notes";
@@ -37536,7 +37812,7 @@ function hostFor(target) {
 }
 function serverBundle(host, fromFile) {
   const dir = pluginSourceDir(host, SERVER_BUNDLE, fromFile);
-  return dir ? join22(dir, SERVER_BUNDLE) : null;
+  return dir ? join23(dir, SERVER_BUNDLE) : null;
 }
 function jobNameIn(text) {
   return /Subagent (\S+-job-[0-9a-f]+) started/.exec(text)?.[1] ?? /message_subagent\(job="([^"]+)"/.exec(text)?.[1] ?? null;
@@ -37596,7 +37872,7 @@ function alive(pid) {
 }
 function storedJob(home, job) {
   try {
-    const all = readStore(join22(home, JOBS_FILE2));
+    const all = readStore(join23(home, JOBS_FILE2));
     return all.find((j) => j.name === job) ?? null;
   } catch {
     return null;
@@ -37605,8 +37881,8 @@ function storedJob(home, job) {
 var PICKED_UP_LOG = "subagent picked up messages";
 function logsMention(home, text) {
   try {
-    const dir = join22(home, LOG_DIR_NAME);
-    return readdirSync7(dir).some((f) => readFileSync17(join22(dir, f), "utf8").includes(text));
+    const dir = join23(home, LOG_DIR_NAME);
+    return readdirSync7(dir).some((f) => readFileSync18(join23(dir, f), "utf8").includes(text));
   } catch {
     return false;
   }
@@ -37698,9 +37974,9 @@ var LiveHost = class _LiveHost {
   }
 };
 function writeNotes(dir) {
-  mkdirSync13(join22(dir, NOTES_DIR), { recursive: true });
+  mkdirSync13(join23(dir, NOTES_DIR), { recursive: true });
   for (let i = 1; i <= NOTE_COUNT; i++) {
-    writeFileSync8(join22(dir, NOTES_DIR, `note-${String(i).padStart(2, "0")}.txt`), `Note ${i}: the garden bed number ${i} gets ${i * 2} liters of water on day ${i}.
+    writeFileSync8(join23(dir, NOTES_DIR, `note-${String(i).padStart(2, "0")}.txt`), `Note ${i}: the garden bed number ${i} gets ${i * 2} liters of water on day ${i}.
 `);
   }
 }
@@ -37715,7 +37991,7 @@ async function killLeft(procs) {
 async function runLiveChecks(o) {
   const homes = [];
   const newHome = () => {
-    const h = mkdtempSync2(join22(tmpdir(), "agent-bridge-rel-live-"));
+    const h = mkdtempSync2(join23(tmpdir(), "agent-bridge-rel-live-"));
     homes.push(h);
     return h;
   };
@@ -37853,7 +38129,7 @@ async function runLiveChecks(o) {
               return allow ? { allow: true } : { allow: false, message: "Denied by the reliability check." };
             }
           });
-          const exists = existsSync10(join22(dir, "asked.txt"));
+          const exists = existsSync10(join23(dir, "asked.txt"));
           const relevant = asked.filter((a) => !a.startsWith("mcp:"));
           return {
             pass: relevant.length > 0 && exists === allow,
@@ -37878,7 +38154,7 @@ async function runLiveChecks(o) {
             return { allow: true };
           }
         });
-        const exists = existsSync10(join22(dir, "should-not-exist.txt"));
+        const exists = existsSync10(join23(dir, "should-not-exist.txt"));
         const relevant = asked.filter((a) => !a.startsWith("mcp:"));
         return {
           pass: !exists && relevant.length === 0,
@@ -37930,10 +38206,10 @@ async function timed(name, fn) {
   }
 }
 function makeRepo() {
-  const dir = mkdtempSync3(join23(tmpdir2(), "agent-bridge-rel-"));
+  const dir = mkdtempSync3(join24(tmpdir2(), "agent-bridge-rel-"));
   const git2 = (...a) => execFileSync2("git", a, { cwd: dir, stdio: "ignore" });
   git2("init", "-q");
-  writeFileSync9(join23(dir, "README.md"), "reliability sandbox\n");
+  writeFileSync9(join24(dir, "README.md"), "reliability sandbox\n");
   git2("add", "README.md");
   git2("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "base");
   return dir;
@@ -37943,7 +38219,7 @@ async function runReliability(opts) {
   models = opts.models ?? {};
   const agents = opts.agents.filter((a) => resolveBinary(BINS[a]));
   for (const a of opts.agents) if (!agents.includes(a)) opts.out(`${a}: SKIP (CLI "${BINS[a]}" not installed)`);
-  const home = mkdtempSync3(join23(tmpdir2(), "agent-bridge-rel-home-"));
+  const home = mkdtempSync3(join24(tmpdir2(), "agent-bridge-rel-home-"));
   const results = [];
   const record2 = (o) => {
     results.push(o);
@@ -37971,7 +38247,7 @@ async function runReliability(opts) {
         await timed(`${agent} read-only is enforced`, async () => {
           const dir = repo();
           await run(agent, "Create a file named should-not-exist.txt containing the word hi. Then reply done.", dir, "read", opts.log);
-          const exists = existsSync11(join23(dir, "should-not-exist.txt"));
+          const exists = existsSync11(join24(dir, "should-not-exist.txt"));
           return { pass: !exists, detail: exists ? "the file WAS created despite read-only access" : "no file created" };
         })
       );
@@ -37983,7 +38259,7 @@ async function runReliability(opts) {
           const base = { prompt: "Create a file named created.txt containing the word hello. Then reply done.", cwd: wt.cwd, sessionId: null, timeoutSec: RUN_TIMEOUT_SEC, log: opts.log, model: models[agent] ?? null, onProgress: (m) => steps.push(m) };
           const r = agent === "codex" ? await delegateToCodex({ ...base, bin: BINS.codex, sandbox: "workspace-write" }) : agent === "claude" ? await delegateToClaude({ ...base, bin: BINS.claude, permissionMode: "acceptEdits" }) : await delegateToOpencode({ ...base, bin: BINS.opencode, autoApprove: true });
           const outcome = await finishWorktree(wt, "reliability edit", opts.log);
-          const leaked = existsSync11(join23(dir, "created.txt"));
+          const leaked = existsSync11(join24(dir, "created.txt"));
           const pass = outcome.diffStat.includes("created.txt") && !leaked;
           return {
             pass,
@@ -38009,7 +38285,7 @@ async function runReliability(opts) {
             opts.log
           );
           if (r === null) return { pass: true, detail: "SKIP (not available: see README, permission requests)" };
-          const exists = existsSync11(join23(dir, "asked.txt"));
+          const exists = existsSync11(join24(dir, "asked.txt"));
           return {
             pass: asked.length > 0 && exists === allow,
             detail: `asked ${asked.length}x [${asked.join(" | ")}], file ${exists ? "created" : "not created"}`
@@ -38069,7 +38345,7 @@ ${passed}/${results.length} passed`);
 // src/cli/smoke.ts
 import { mkdtempSync as mkdtempSync4, rmSync as rmSync9 } from "node:fs";
 import { tmpdir as tmpdir3 } from "node:os";
-import { join as join24 } from "node:path";
+import { join as join25 } from "node:path";
 var TESTED_VERSIONS = {
   claude: "2.1.283",
   codex: "0.157.1",
@@ -38089,7 +38365,7 @@ async function version2(bin, log) {
   }
 }
 async function runSmoke(opts) {
-  const dir = mkdtempSync4(join24(tmpdir3(), "agent-bridge-smoke-"));
+  const dir = mkdtempSync4(join25(tmpdir3(), "agent-bridge-smoke-"));
   const bins = { claude: DEFAULT_CLAUDE_BIN, codex: DEFAULT_CODEX_BIN, opencode: DEFAULT_OPENCODE_BIN };
   let failures = 0;
   try {
@@ -38137,10 +38413,10 @@ async function runSmoke(opts) {
 
 // src/core/worktree-cleanup.ts
 import { existsSync as existsSync12, lstatSync as lstatSync2, readdirSync as readdirSync8, rmdirSync, unlinkSync as unlinkSync2 } from "node:fs";
-import { join as join25, resolve as resolve6, toNamespacedPath as toNamespacedPath2 } from "node:path";
+import { join as join26, resolve as resolve6, toNamespacedPath as toNamespacedPath2 } from "node:path";
 function readJobs(home) {
   try {
-    return readStore(join25(home, JOBS_FILE));
+    return readStore(join26(home, JOBS_FILE));
   } catch {
     return [];
   }
@@ -38150,7 +38426,7 @@ function unlinkLinks(dir) {
   dir = toNamespacedPath2(resolve6(dir));
   let count = 0;
   for (const entry of readdirSync8(dir, { withFileTypes: true })) {
-    const path = join25(dir, entry.name);
+    const path = join26(dir, entry.name);
     const link = entry.isSymbolicLink() || (entry.isDirectory() || !entry.isFile()) && lstatSync2(path).isSymbolicLink();
     if (link) {
       try {
@@ -38166,7 +38442,7 @@ function unlinkLinks(dir) {
 function onlyFoldersAndLinks(dir) {
   dir = toNamespacedPath2(resolve6(dir));
   return readdirSync8(dir, { withFileTypes: true }).every((e) => {
-    const path = join25(dir, e.name);
+    const path = join26(dir, e.name);
     if (e.isSymbolicLink() || lstatSync2(path).isSymbolicLink()) return true;
     return e.isDirectory() && onlyFoldersAndLinks(path);
   });
@@ -38183,7 +38459,7 @@ async function mergedInto(branch, targets, cwd, trust, log) {
 }
 async function inspect(path, jobs, apply, log) {
   const entry = (branch2, action, reason) => ({ path, branch: branch2, action, reason });
-  if (!existsSync12(toNamespacedPath2(join25(path, ".git")))) {
+  if (!existsSync12(toNamespacedPath2(join26(path, ".git")))) {
     if (!onlyFoldersAndLinks(path)) return entry(null, "kept", "not a git worktree (no .git), and it holds files");
     const why2 = "leftover of a removed worktree: no .git, only empty folders and links";
     if (!apply) return entry(null, "would remove", why2);
@@ -38235,13 +38511,13 @@ async function inspect(path, jobs, apply, log) {
   }
 }
 async function cleanupWorktrees(opts) {
-  const dir = join25(opts.home, "worktrees");
+  const dir = join26(opts.home, "worktrees");
   if (!existsSync12(dir)) return [];
   const jobs = readJobs(opts.home);
   const out2 = [];
   for (const d of readdirSync8(dir, { withFileTypes: true })) {
-    if (!d.isDirectory() || lstatSync2(join25(dir, d.name)).isSymbolicLink()) continue;
-    out2.push(await inspect(join25(dir, d.name), jobs, opts.apply, opts.log));
+    if (!d.isDirectory() || lstatSync2(join26(dir, d.name)).isSymbolicLink()) continue;
+    out2.push(await inspect(join26(dir, d.name), jobs, opts.apply, opts.log));
   }
   return out2;
 }
@@ -38255,7 +38531,7 @@ import { isAbsolute as isAbsolute3, join as join28, relative as relative2, resol
 
 // src/core/resource-slots.ts
 import { mkdirSync as mkdirSync14 } from "node:fs";
-import { join as join26 } from "node:path";
+import { join as join27 } from "node:path";
 import { DatabaseSync as DatabaseSync3 } from "node:sqlite";
 import { setTimeout as delay2 } from "node:timers/promises";
 var SLOT_OWNER_ENV = "AGENT_BRIDGE_SLOT_OWNER";
@@ -38278,7 +38554,7 @@ var ResourceSlots = class {
     this.isAlive = isAlive;
     this.now = now;
     mkdirSync14(home, { recursive: true });
-    this.db = new DatabaseSync3(join26(home, SLOT_DB_NAME));
+    this.db = new DatabaseSync3(join27(home, SLOT_DB_NAME));
     this.db.exec(`PRAGMA busy_timeout = ${LOCK_WAIT_MS};
       CREATE TABLE IF NOT EXISTS slots (
         ticket INTEGER PRIMARY KEY AUTOINCREMENT, resource TEXT NOT NULL, id TEXT NOT NULL,
@@ -38446,129 +38722,6 @@ var SiblingLink = class {
   };
   close() {
     this.node.off("message", this.receive);
-  }
-};
-
-// src/core/codex-env.ts
-import { readFileSync as readFileSync18 } from "node:fs";
-import { homedir as homedir6 } from "node:os";
-import { join as join27 } from "node:path";
-function codexWindowsSandbox(home = homedir6(), platform = process.platform) {
-  if (platform !== "win32") return null;
-  let toml;
-  try {
-    toml = readFileSync18(join27(home, ".codex", "config.toml"), "utf8");
-  } catch {
-    return null;
-  }
-  const table = /^\[windows\]\s*$([\s\S]*?)(?=^\[|(?![\s\S]))/m.exec(toml)?.[1] ?? "";
-  return /^\s*sandbox\s*=\s*"([^"]+)"/m.exec(table)?.[1] ?? null;
-}
-function codexEnvironmentNote(home = homedir6(), platform = process.platform) {
-  if (codexWindowsSandbox(home, platform) !== "elevated") return "";
-  return ` Note for this machine: Codex runs commands as a separate Windows sandbox user (elevated sandbox), which cannot read the user's profile. Tools installed there, such as Python under AppData\\Local\\Programs or user-level pip/npm installs, are missing in Codex subagents ("python is not recognized"). For work that needs them, point Codex to an interpreter inside the repository (e.g. a .venv in the worktree), or use a claude/opencode subagent.`;
-}
-
-// src/mcp/targets.ts
-var CODEX_EXEC_ENV = "AGENT_BRIDGE_CODEX_EXEC";
-var CODEX_SANDBOX_FOR = { read: "read-only", ask: "read-only", edit: "workspace-write" };
-var CLAUDE_MODE_FOR = { read: "manual", ask: "manual", edit: "acceptEdits" };
-var OPENCODE_AUTO_FOR = { read: false, ask: false, edit: true };
-function claudeModeFor(cfg, a) {
-  return a.permission_mode ?? (a.access ? CLAUDE_MODE_FOR[a.access] : cfg.claudePermissionMode);
-}
-function supportsAsk(target, relay) {
-  if (!relay) return false;
-  if (target === "opencode") return true;
-  if (target === "codex") return process.env[CODEX_EXEC_ENV] !== "1" || relay.codexHookTrusted;
-  return false;
-}
-function opencodeEditAsks(base, a) {
-  return a.access === "edit" && a.auto_approve === void 0 && Boolean(base.approve && base.canApprove);
-}
-var DELEGATION_TARGETS = {
-  codex: {
-    title: "OpenAI Codex",
-    modelExample: '"gpt-6-sol"',
-    effortExample: '"low", "medium", "high", "xhigh", "max" or "ultra" (depends on the model)',
-    defaultModel: (cfg) => cfg.codexModel,
-    schema: { sandbox: external_exports.enum(CODEX_SANDBOXES).optional().describe("Overrides access with an exact Codex sandbox mode") },
-    permissionNote: (cfg) => `Codex runs in the "${cfg.codexSandbox}" sandbox unless you pass access or sandbox. Worktree edit runs use "${cfg.codexWorktreeSandbox ?? (cfg.codexSandbox === "read-only" ? "workspace-write" : cfg.codexSandbox)}" (config codexWorktreeSandbox); workspace-write can restrict builds and network access.${codexEnvironmentNote()}`,
-    permission: (cfg, a) => a.sandbox ?? (a.access ? CODEX_SANDBOX_FOR[a.access] : cfg.codexSandbox),
-    run: async (cfg, base, a) => {
-      const sandbox = a.sandbox ?? (a.access ? CODEX_SANDBOX_FOR[a.access] : cfg.codexSandbox);
-      const relay = a.access === "ask" && Boolean(a.relay?.codexHookTrusted);
-      if (process.env[CODEX_EXEC_ENV] !== "1") {
-        let sessionId = base.sessionId ?? null;
-        for (let attempt = 1; ; attempt++) {
-          try {
-            return await delegateToCodexAppServer({ ...base, sessionId, bin: cfg.codexBin, sandbox, networkAccess: cfg.codexWorkspaceWriteNetworkAccess ?? void 0, writableRoots: base.writableRoots, askMode: a.access === "ask", approve: a.access === "ask" && a.relay ? a.relay.onPermission : base.approve });
-          } catch (err) {
-            if (err instanceof DelegateError && err.startupFailed && attempt === 1 && !base.signal?.aborted) {
-              base.log.warn("codex app-server startup timed out; retrying once", { err: err.message });
-              base.onProgress?.(`${err.message}; retrying once`);
-              sessionId = err.sessionId ?? sessionId;
-              continue;
-            }
-            if (!(err instanceof DelegateError) || err.kind !== "failed" || err.sessionId) throw err;
-            base.log.warn("codex app-server unavailable, using codex exec", { err: err.message });
-            break;
-          }
-        }
-      }
-      return delegateToCodex({
-        ...base,
-        bin: cfg.codexBin,
-        sandbox,
-        networkAccess: cfg.codexWorkspaceWriteNetworkAccess ?? void 0,
-        ...relay ? { relayApprovals: true, extraEnv: { ...base.extraEnv, ...a.relay.env } } : {}
-      });
-    }
-  },
-  claude: {
-    title: "Claude Code",
-    modelExample: '"opus", "sonnet" or a full model id',
-    effortExample: '"low", "medium", "high", "xhigh" or "max"',
-    defaultModel: (cfg) => cfg.claudeModel,
-    schema: { permission_mode: external_exports.enum(CLAUDE_PERMISSION_MODES).optional().describe("Overrides access with an exact Claude permission mode") },
-    permissionNote: (cfg) => `Claude runs with permission mode "${cfg.claudePermissionMode}" unless you pass access or permission_mode.`,
-    permission: (cfg, a) => claudeModeFor(cfg, a),
-    run: (cfg, base, a) => delegateToClaude({
-      ...base,
-      bin: cfg.claudeBin,
-      permissionMode: claudeModeFor(cfg, a)
-    })
-  },
-  opencode: {
-    title: "opencode",
-    effortExample: `the model's variant, such as "low", "high" or "max" (provider-specific)`,
-    modelExample: '"provider/model", e.g. "anthropic/claude-sonnet-5" or "opencode/muse-spark-1.3-contributor-free"',
-    defaultModel: (cfg) => cfg.opencodeModel,
-    schema: { auto_approve: external_exports.boolean().optional().describe("Overrides access: auto-approve every opencode permission request (opencode run --auto)") },
-    permissionNote: (cfg) => cfg.opencodeAutoApprove ? "opencode auto-approves permission requests unless you pass access=read or auto_approve=false." : "Headless opencode rejects every permission request (edits, commands) unless you pass access=edit or auto_approve=true.",
-    permission: (cfg, a) => a.auto_approve ?? (a.access ? OPENCODE_AUTO_FOR[a.access] : cfg.opencodeAutoApprove) ? "auto-approve" : "read-only",
-    run: async (cfg, base, a) => {
-      let note = null;
-      if (base.model) {
-        const models2 = await listOpencodeModels(cfg.opencodeBin, base.cwd, base.log).catch(() => []);
-        const r = resolveOpencodeModel(base.model, models2);
-        if ("error" in r) throw new DelegateError(r.error, "failed");
-        base = { ...base, model: r.model };
-        note = r.note;
-      }
-      const res = a.access === "ask" && a.auto_approve === void 0 && supportsAsk("opencode", a.relay) ? await delegateToOpencodeServed({ ...base, bin: cfg.opencodeBin, onPermission: a.relay.onPermission }) : opencodeEditAsks(base, a) ? (
-        // "edit": what the user's opencode rules leave to "ask" (MCP tools, folders outside the project,
-        // commands they marked) goes to the parent instead of `opencode run --auto` approving it blindly.
-        await delegateToOpencodeServed({ ...base, bin: cfg.opencodeBin, onPermission: base.approve, permissions: null })
-      ) : await delegateToOpencode({
-        ...base,
-        bin: cfg.opencodeBin,
-        autoApprove: a.auto_approve ?? (a.access ? OPENCODE_AUTO_FOR[a.access] : cfg.opencodeAutoApprove)
-      });
-      return note ? { ...res, text: `(${note})
-
-${res.text}` } : res;
-    }
   }
 };
 

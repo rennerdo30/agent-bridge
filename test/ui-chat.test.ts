@@ -6,8 +6,13 @@ function page() {
   const elements = new Map<string, any>();
   const element = (id: string): any => {
     if (!elements.has(id)) elements.set(id, {
-      value: "", innerHTML: "", textContent: "", dataset: {}, checked: true,
-      classList: { toggle: vi.fn(), add: vi.fn() },
+      value: "", innerHTML: "", textContent: "", dataset: {}, checked: true, attrs: {} as Record<string, string>,
+      classes: new Set<string>(id === "jobSettings" ? ["hidden"] : []),
+      get classList() {
+        const c = this.classes as Set<string>;
+        return { toggle: (n: string, on?: boolean) => ((on ?? !c.has(n)) ? c.add(n) : c.delete(n)), add: (n: string) => c.add(n), remove: (n: string) => c.delete(n), contains: (n: string) => c.has(n) };
+      },
+      setAttribute(name: string, value: string) { this.attrs[name] = value; },
       parentElement: { addEventListener() {} },
       listeners: new Map(), addEventListener(event: string, fn: unknown) { this.listeners.set(event, fn); },
       after() {}, scrollHeight: 0, scrollTop: 0, clientHeight: 0,
@@ -59,6 +64,32 @@ describe("dashboard chat inputs", () => {
     await p.element("jobSend").listeners.get("submit")({ preventDefault() {} });
     expect(p.element("jobBody").value).toBe("keep this");
     expect(p.element("chat").innerHTML).toContain("Message error: &lt;unavailable&gt;");
+  });
+
+  it("sends only the chosen next-turn settings, as the job's agent names them", async () => {
+    const p = page(), g = { ...group("first"), agent: "opencode", effort: "medium" };
+    p.setModel({ groups: new Map([[g.key, g]]) });
+    p.renderJobForm(g);
+    expect(p.element("setToggle").classes.has("hidden")).toBe(false);
+    expect(p.element("setEffort").innerHTML).toContain("keep: medium");
+    p.element("setToggle").listeners.get("click")();
+    expect(p.element("jobSettings").classes.has("hidden")).toBe(false);
+    expect(p.element("setToggle").attrs["aria-expanded"]).toBe("true");
+    p.element("setEffort").value = "high";
+    p.element("setPerm").value = "false";
+    p.fetch.mockResolvedValueOnce({ ok: true, json: async () => ({ text: "Saved settings." }) });
+    await p.element("jobSettings").listeners.get("submit")({ preventDefault() {} });
+    const request = p.fetch.mock.calls.find(([url]: any[]) => url === "/api/subagents/settings");
+    expect(JSON.parse(request[1].body)).toEqual({ run: "run-first", settings: { effort: "high", auto_approve: false } });
+    expect(request[1].headers["x-agent-bridge"]).toBe("1");
+    expect(p.element("setInfo").textContent).toBe("Saved settings.");
+    expect(p.element("chat").innerHTML).toContain("Saved settings.");
+  });
+
+  it("hides the settings for runs without a job", () => {
+    const p = page();
+    p.renderJobForm({ ...group("first"), job: null });
+    expect(p.element("setToggle").classes.has("hidden")).toBe(true);
   });
 
   it("addresses the session being viewed, including an ended session", () => {
