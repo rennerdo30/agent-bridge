@@ -1,3 +1,4 @@
+import { codexSubagentConfig } from "./codex-subagents.js";
 import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { delimiter, dirname, extname, isAbsolute, join, win32 } from "node:path";
@@ -310,6 +311,8 @@ export function runProcess(opts: {
 
 export interface DelegateRequest {
   maxDelegateDepth?: number;
+  /** Maximum open native Codex child threads, excluding this job. */
+  nativeSubagents?: number;
   prompt: string;
   /** The job's title, used as its Codex thread name. */
   title?: string;
@@ -482,6 +485,7 @@ export async function delegateToCodex(
   // without this hint Codex gives up at the sandbox instead of requesting the approval.
   if (req.relayApprovals && req.sandbox !== "danger-full-access") req = { ...req, prompt: `${req.prompt}\n\n${CODEX_ASK_HINT}` };
   const common = ["--json", "--skip-git-repo-check", ...(req.model ? ["-m", req.model] : []), ...(req.effort ? ["-c", `model_reasoning_effort="${req.effort}"`] : [])];
+  for (const [key, value] of Object.entries(codexSubagentConfig(req.nativeSubagents))) common.push("-c", `${key}=${value}`);
   if (req.writableRoots?.length && req.sandbox === "workspace-write") {
     common.push("-c", `sandbox_workspace_write.writable_roots=${JSON.stringify(req.writableRoots.map(realFolder))}`);
   }

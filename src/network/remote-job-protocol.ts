@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { MODEL_NAME_PATTERN, CLAUDE_PERMISSION_MODES, CODEX_APPROVALS_REVIEWERS, CODEX_SANDBOXES } from "../core/config.js";
-import { MAX_BODY_CHARS, MAX_JOB_TIMEOUT_SEC } from "../core/constants.js";
+import { MAX_CODEX_SUBAGENTS, MAX_BODY_CHARS, MAX_JOB_TIMEOUT_SEC } from "../core/constants.js";
 import { CODING_AGENTS } from "../core/protocol.js";
 import { NETWORK_NAME_PATTERN } from "./constants.js";
 
@@ -27,6 +27,7 @@ export const remoteSpawnArgsSchema = z.object({
   allow_tools: z.array(z.string().min(1).max(200)).max(50).optional(),
   sandbox: z.enum(CODEX_SANDBOXES).optional(), permission_mode: z.enum(CLAUDE_PERMISSION_MODES).optional(),
   auto_approve: z.boolean().optional(),
+  native_subagents: z.number().int().min(0).max(MAX_CODEX_SUBAGENTS).optional(),
   approvals_reviewer: z.enum(CODEX_APPROVALS_REVIEWERS).optional(),
 }).strict();
 const settingsSchema = z.record(z.string(), z.unknown());

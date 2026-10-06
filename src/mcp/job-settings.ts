@@ -1,13 +1,14 @@
+import { MAX_CODEX_SUBAGENTS } from "../core/constants.js";
 import { CLAUDE_PERMISSION_MODES, CODEX_APPROVALS_REVIEWERS, CODEX_SANDBOXES, MODEL_NAME_PATTERN } from "../core/config.js";
 import type { AgentKind } from "../core/protocol.js";
 import { ACCESS_LEVELS, type TargetArgs } from "./targets.js";
 
 /** Settings that can change between turns without replacing a job's session or worktree. */
-export type JobSettings = Pick<TargetArgs, "access" | "sandbox" | "approvals_reviewer" | "permission_mode" | "auto_approve"> & { model?: string; effort?: string };
-export const JOB_SETTING_KEYS = ["model", "effort", "access", "sandbox", "approvals_reviewer", "permission_mode", "auto_approve"] as const;
+export type JobSettings = Pick<TargetArgs, "access" | "sandbox" | "native_subagents" | "approvals_reviewer" | "permission_mode" | "auto_approve"> & { model?: string; effort?: string };
+export const JOB_SETTING_KEYS = ["native_subagents", "model", "effort", "access", "sandbox", "approvals_reviewer", "permission_mode", "auto_approve"] as const;
 const EXACT_PERMISSION_KEYS = ["sandbox", "permission_mode", "auto_approve"] as const;
 /** Each exact permission key belongs to one agent's CLI. */
-export const PERMISSION_KEY_AGENT = { sandbox: "codex", approvals_reviewer: "codex", permission_mode: "claude", auto_approve: "opencode" } as const;
+export const PERMISSION_KEY_AGENT = { native_subagents: "codex", sandbox: "codex", approvals_reviewer: "codex", permission_mode: "claude", auto_approve: "opencode" } as const;
 export const EFFORT_PATTERN = /^[A-Za-z0-9_-]{1,20}$/;
 
 /** An access change replaces an earlier exact override; an exact override replaces earlier access. */
@@ -29,6 +30,10 @@ export function parseJobSettings(input: unknown, agent: AgentKind): JobSettings 
   const unknownKey = Object.keys(raw).find((key) => !(JOB_SETTING_KEYS as readonly string[]).includes(key));
   if (unknownKey) return `unknown setting: ${unknownKey}`;
   const settings: JobSettings = {};
+  if (raw.native_subagents !== undefined) {
+    if (typeof raw.native_subagents !== "number" || !Number.isInteger(raw.native_subagents) || raw.native_subagents < 0 || raw.native_subagents > MAX_CODEX_SUBAGENTS) return "invalid native_subagents";
+    settings.native_subagents = raw.native_subagents;
+  }
   if (raw.model !== undefined) {
     if (typeof raw.model !== "string" || !MODEL_NAME_PATTERN.test(raw.model)) return "invalid model";
     settings.model = raw.model;

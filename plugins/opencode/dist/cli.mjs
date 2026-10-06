@@ -7739,6 +7739,8 @@ var ENV = {
   jobRunner: "AGENT_BRIDGE_JOB_RUNNER"
 };
 var DEFAULT_MAX_DELEGATE_DEPTH = 2;
+var DEFAULT_CODEX_SUBAGENTS = 6;
+var MAX_CODEX_SUBAGENTS = 32;
 var MAX_DELEGATE_DEPTH_LIMIT = 3;
 var DELEGATION_METADATA_VERSION = 2;
 var DEFAULT_HOME = join(homedir(), `.${APP_NAME}`);
@@ -31996,6 +31998,20 @@ import { randomUUID as randomUUID12 } from "node:crypto";
 import { closeSync as closeSync8, mkdirSync as mkdirSync16, openSync as openSync8, rmSync as rmSync4, statSync as statSync8 } from "node:fs";
 import { dirname as dirname12 } from "node:path";
 
+// src/core/codex-subagents.ts
+function codexSubagentConfig(count = DEFAULT_CODEX_SUBAGENTS) {
+  if (!Number.isInteger(count) || count < 0 || count > MAX_CODEX_SUBAGENTS) throw new Error(`native_subagents must be an integer from 0 to ${MAX_CODEX_SUBAGENTS}`);
+  return {
+    "features.multi_agent": count > 0,
+    // V2 takes precedence over agents.enabled. Clear an inherited V2 table (including its cap).
+    // If the model selects V2, it derives its cap from agents.max_threads plus the coordinator.
+    "features.multi_agent_v2": false,
+    "agents.enabled": count > 0,
+    // Codex rejects zero here even when the feature is disabled.
+    "agents.max_threads": Math.max(1, count)
+  };
+}
+
 // src/core/delegate.ts
 import { spawn } from "node:child_process";
 import { existsSync as existsSync13, readFileSync as readFileSync14, realpathSync as realpathSync4 } from "node:fs";
@@ -32882,6 +32898,7 @@ ${req.prompt}`)) };
 
 ${CODEX_ASK_HINT}` };
   const common = ["--json", "--skip-git-repo-check", ...req.model ? ["-m", req.model] : [], ...req.effort ? ["-c", `model_reasoning_effort="${req.effort}"`] : []];
+  for (const [key2, value] of Object.entries(codexSubagentConfig(req.nativeSubagents))) common.push("-c", `${key2}=${value}`);
   if (req.writableRoots?.length && req.sandbox === "workspace-write") {
     common.push("-c", `sandbox_workspace_write.writable_roots=${JSON.stringify(req.writableRoots.map(realFolder))}`);
   }
@@ -33250,6 +33267,7 @@ var DEFAULT_CONFIG = {
   delivery: "auto",
   claudeBin: DEFAULT_CLAUDE_BIN,
   codexBin: DEFAULT_CODEX_BIN,
+  codexSubagents: DEFAULT_CODEX_SUBAGENTS,
   codexSandbox: "read-only",
   codexApprovalsReviewer: DEFAULT_CODEX_APPROVALS_REVIEWER,
   codexWorktreeSandbox: null,
@@ -33340,6 +33358,12 @@ function toolPatterns(v) {
   if (!list || !list.every((x) => typeof x === "string")) return void 0;
   return list.map((x) => x.trim()).filter(Boolean);
 }
+function saveConfigValue(home, key2, value) {
+  const path = join25(home, CONFIG_FILE_NAME);
+  const previous = readJsonStore(path);
+  const file2 = isRecord(previous) ? previous : {};
+  writeJsonStore(path, { ...file2, [key2]: value }, previous);
+}
 function loadConfig(home, agent, log, env = process.env) {
   let file2 = {};
   const path = join25(home, CONFIG_FILE_NAME);
@@ -33374,6 +33398,10 @@ function loadConfig(home, agent, log, env = process.env) {
     delivery: pick2("delivery", ENV.delivery, (v) => oneOf(v, DELIVERY_MODES)) ?? d.delivery,
     claudeBin: pick2("claudeBin", ENV.claudeBin, str) ?? d.claudeBin,
     codexBin: pick2("codexBin", ENV.codexBin, str) ?? d.codexBin,
+    codexSubagents: pick2("codexSubagents", null, (v) => {
+      const n = typeof v === "string" && /^\d+$/.test(v) ? Number(v) : v;
+      return typeof n === "number" && Number.isInteger(n) && n >= 0 && n <= MAX_CODEX_SUBAGENTS ? n : void 0;
+    }) ?? d.codexSubagents,
     codexSandbox: pick2("codexSandbox", null, (v) => oneOf(v, CODEX_SANDBOXES)) ?? d.codexSandbox,
     codexApprovalsReviewer: pick2("codexApprovalsReviewer", null, (v) => oneOf(v, CODEX_APPROVALS_REVIEWERS)) ?? d.codexApprovalsReviewer,
     codexWorktreeSandbox: pick2("codexWorktreeSandbox", null, (v) => oneOf(v, CODEX_SANDBOXES)) ?? d.codexWorktreeSandbox,
@@ -33939,7 +33967,7 @@ ${message}`, text_elements: [] }] });
     await boot(request2("initialize", { clientInfo: { name: "agent-bridge", title: "agent-bridge", version: APP_VERSION }, capabilities: { experimentalApi: req.sandbox === "danger-full-access", optOutNotificationMethods: OPT_OUT } }));
     write({ method: "initialized", params: {} });
     const approvalPolicy = req.sandbox === "danger-full-access" ? CODEX_FULL_ACCESS_APPROVAL_POLICY : "on-request";
-    const config2 = {};
+    const config2 = codexSubagentConfig(req.nativeSubagents);
     if (req.sandbox === "workspace-write" && (req.writableRoots?.length || req.networkAccess !== void 0)) {
       config2.sandbox_workspace_write = {
         ...req.writableRoots?.length ? { writable_roots: req.writableRoots.map(realFolder) } : {},
@@ -34047,6 +34075,7 @@ function codexEnvironmentNote(home = homedir4(), platform = process.platform) {
 }
 
 // src/mcp/targets.ts
+var nativeSubagentsSchema = external_exports.number().int().min(0).max(MAX_CODEX_SUBAGENTS).optional().describe(`Maximum concurrent native Codex child threads per job (0 disables). Default: config codexSubagents (${DEFAULT_CODEX_SUBAGENTS}). Separate from bridge maxJobs/depth. Changes apply from the next turn.`);
 var CODEX_EXEC_ENV = "AGENT_BRIDGE_CODEX_EXEC";
 var ACCESS_LEVELS = ["read", "ask", "edit"];
 var CODEX_SANDBOX_FOR = { read: "read-only", ask: "read-only", edit: "workspace-write" };
@@ -34071,12 +34100,14 @@ var DELEGATION_TARGETS = {
     effortExample: '"low", "medium", "high", "xhigh", "max" or "ultra" (depends on the model)',
     defaultModel: (cfg) => cfg.codexModel,
     schema: {
+      native_subagents: nativeSubagentsSchema,
       sandbox: external_exports.enum(CODEX_SANDBOXES).optional().describe("Overrides access with an exact Codex sandbox mode"),
       approvals_reviewer: external_exports.enum(CODEX_APPROVALS_REVIEWERS).optional().describe("Codex reviewer: auto_review (approve for me, default) or user (forward approvals). Does not change the sandbox.")
     },
     permissionNote: (cfg) => `Codex runs in the "${cfg.codexSandbox}" sandbox unless you pass access or sandbox. Worktree edit runs use "${cfg.codexWorktreeSandbox ?? (cfg.codexSandbox === "read-only" ? "workspace-write" : cfg.codexSandbox)}" (config codexWorktreeSandbox); workspace-write can restrict builds and network access.${codexEnvironmentNote()}`,
     permission: (cfg, a) => a.sandbox ?? (a.access ? CODEX_SANDBOX_FOR[a.access] : cfg.codexSandbox),
     run: async (cfg, base2, a) => {
+      base2 = { ...base2, nativeSubagents: a.native_subagents ?? cfg.codexSubagents };
       const sandbox = a.sandbox ?? (a.access ? CODEX_SANDBOX_FOR[a.access] : cfg.codexSandbox);
       const relay = a.access === "ask" && Boolean(a.relay?.codexHookTrusted);
       if (process.env[CODEX_EXEC_ENV] !== "1") {
@@ -34154,9 +34185,9 @@ ${res.text}` } : res;
 };
 
 // src/mcp/job-settings.ts
-var JOB_SETTING_KEYS = ["model", "effort", "access", "sandbox", "approvals_reviewer", "permission_mode", "auto_approve"];
+var JOB_SETTING_KEYS = ["native_subagents", "model", "effort", "access", "sandbox", "approvals_reviewer", "permission_mode", "auto_approve"];
 var EXACT_PERMISSION_KEYS = ["sandbox", "permission_mode", "auto_approve"];
-var PERMISSION_KEY_AGENT = { sandbox: "codex", approvals_reviewer: "codex", permission_mode: "claude", auto_approve: "opencode" };
+var PERMISSION_KEY_AGENT = { native_subagents: "codex", sandbox: "codex", approvals_reviewer: "codex", permission_mode: "claude", auto_approve: "opencode" };
 var EFFORT_PATTERN = /^[A-Za-z0-9_-]{1,20}$/;
 function changedJobArgs(args, settings) {
   const next = { ...args };
@@ -34171,6 +34202,10 @@ function parseJobSettings(input2, agent) {
   const unknownKey = Object.keys(raw).find((key2) => !JOB_SETTING_KEYS.includes(key2));
   if (unknownKey) return `unknown setting: ${unknownKey}`;
   const settings = {};
+  if (raw.native_subagents !== void 0) {
+    if (typeof raw.native_subagents !== "number" || !Number.isInteger(raw.native_subagents) || raw.native_subagents < 0 || raw.native_subagents > MAX_CODEX_SUBAGENTS) return "invalid native_subagents";
+    settings.native_subagents = raw.native_subagents;
+  }
   if (raw.model !== void 0) {
     if (typeof raw.model !== "string" || !MODEL_NAME_PATTERN.test(raw.model)) return "invalid model";
     settings.model = raw.model;
@@ -36343,6 +36378,7 @@ var remoteSpawnArgsSchema = external_exports.object({
   sandbox: external_exports.enum(CODEX_SANDBOXES).optional(),
   permission_mode: external_exports.enum(CLAUDE_PERMISSION_MODES).optional(),
   auto_approve: external_exports.boolean().optional(),
+  native_subagents: external_exports.number().int().min(0).max(MAX_CODEX_SUBAGENTS).optional(),
   approvals_reviewer: external_exports.enum(CODEX_APPROVALS_REVIEWERS).optional()
 }).strict();
 var settingsSchema = external_exports.record(external_exports.string(), external_exports.unknown());
@@ -36714,12 +36750,12 @@ var RemoteJobs = class {
       if ([...this.records.values()].filter((r) => this.snapshot(r).alive).length + this.starting.size > cfg.maxJobs) throw new Error("Remote subagent limit reached.");
       if (!record2 && this.records.size >= MAX_REMOTE_JOBS) throw new Error("Remote job registry is full.");
       if (!record2 && request2.args.session_id) throw new Error("Remote session continuation requires a job owned by this supervisor.");
-      const settings = Object.fromEntries(["model", "effort", "access", "sandbox", "approvals_reviewer", "permission_mode", "auto_approve"].filter((key2) => key2 in request2.args).map((key2) => [key2, request2.args[key2]]));
+      const settings = Object.fromEntries(JOB_SETTING_KEYS.filter((key2) => key2 in request2.args).map((key2) => [key2, request2.args[key2]]));
       if (Object.keys(settings).length) {
         const parsed = parseJobSettings(settings, request2.target);
         if (typeof parsed === "string") throw new Error(parsed);
       }
-      let args = { ...request2.args };
+      let args = { ...request2.args, ...request2.target === "codex" ? { native_subagents: request2.args.native_subagents ?? cfg.codexSubagents } : {} };
       let cwd = allowedRemoteDirectory(args.cwd, policy.allowRoots);
       for (const directory2 of await gitDirsOutside(cwd, this.log) ?? []) allowedRemoteDirectory(directory2, policy.allowRoots);
       let worktree = null;
@@ -42180,6 +42216,20 @@ async function startUi(opts) {
     }
     if (!tokensEqual(cookieSecret(req), secret)) return send(res, 403, "Open the link printed by `agent-bridge ui`.", "text/plain; charset=utf-8");
     if (req.method === "GET" && url2.pathname === "/") return send(res, 200, UI_PAGE, "text/html; charset=utf-8");
+    const nativeDefaults = () => ({ codexSubagents: loadConfig(opts.home, "other", opts.log).codexSubagents, defaultCodexSubagents: DEFAULT_CODEX_SUBAGENTS, maxCodexSubagents: MAX_CODEX_SUBAGENTS });
+    if (req.method === "GET" && url2.pathname === "/api/config/codex-subagents") return send(res, 200, nativeDefaults());
+    if (req.method === "POST" && url2.pathname === "/api/config/codex-subagents") {
+      if (req.headers["x-agent-bridge"] !== "1") return send(res, 403, { error: "missing header" });
+      let body;
+      try {
+        body = await readJson2(req);
+      } catch {
+        return send(res, 400, { error: "Expected a JSON object." });
+      }
+      if (!isRecord(body) || Object.keys(body).length !== 1 || typeof body.codexSubagents !== "number" || !Number.isInteger(body.codexSubagents) || body.codexSubagents < 0 || body.codexSubagents > MAX_CODEX_SUBAGENTS) return send(res, 400, { error: `codexSubagents must be an integer from 0 to ${MAX_CODEX_SUBAGENTS}` });
+      saveConfigValue(opts.home, "codexSubagents", body.codexSubagents);
+      return send(res, 200, nativeDefaults());
+    }
     if (req.method === "GET" && url2.pathname === "/api/storage") return send(res, 200, doctor(opts.home));
     if (req.method === "GET" && url2.pathname === "/api/archive/messages") {
       const limit = url2.searchParams.get("limit");

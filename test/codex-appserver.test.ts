@@ -74,9 +74,13 @@ process.stdin.on("end", () => {
 `);
     try {
       for (const sandbox of ["workspace-write", "read-only"] as const) {
-        await delegateToCodex({ bin: process.execPath, cwd: dir, prompt: "continue", sessionId: "same-thread", model: "new-model", sandbox, networkAccess: true, timeoutSec: 30, log: nullLogger });
+        await delegateToCodex({ bin: process.execPath, cwd: dir, prompt: "continue", sessionId: "same-thread", model: "new-model", sandbox, nativeSubagents: sandbox === "read-only" ? 0 : 4, networkAccess: true, timeoutSec: 30, log: nullLogger });
         const args = JSON.parse(readFileSync(join(dir, "args.json"), "utf8"));
         expect(args).toEqual(expect.arrayContaining(["resume", "-m", "new-model", `sandbox_mode="${sandbox}"`, "same-thread"]));
+        expect(args).toContain(`agents.max_threads=${sandbox === "read-only" ? 1 : 4}`);
+        expect(args).toContain(`features.multi_agent=${sandbox !== "read-only"}`);
+        expect(args).toContain(`agents.enabled=${sandbox !== "read-only"}`);
+        expect(args).toContain("features.multi_agent_v2=false");
         expect(args.includes("sandbox_workspace_write.network_access=true")).toBe(sandbox === "workspace-write");
       }
     } finally {
@@ -117,9 +121,10 @@ rl.on("line", (line) => {
     writeFileSync(join(dir, "app-server"), fake);
     try {
       const info: object[] = [];
-      const result = await delegateToCodexAppServer({ bin: process.execPath, cwd: dir, prompt: "continue", sessionId: "same-thread", model: "new-model", effort: "high", sandbox, networkAccess: true, timeoutSec: 30, log: nullLogger, onInfo: (value) => info.push(value) });
+      const result = await delegateToCodexAppServer({ bin: process.execPath, cwd: dir, prompt: "continue", sessionId: "same-thread", model: "new-model", effort: "high", sandbox, nativeSubagents: sandbox === "read-only" ? 0 : 32, networkAccess: true, timeoutSec: 30, log: nullLogger, onInfo: (value) => info.push(value) });
       expect(result).toMatchObject({ sessionId: "same-thread", text: "done", isError: false });
       const calls = readFileSync(requests, "utf8").trim().split("\n").map((line) => JSON.parse(line));
+      expect(calls.find((call) => call.method === "thread/resume").params.config).toMatchObject({ "features.multi_agent": sandbox !== "read-only", "features.multi_agent_v2": false, "agents.enabled": sandbox !== "read-only", "agents.max_threads": sandbox === "read-only" ? 1 : 32 });
       const turn = calls.find((call) => call.method === "turn/start").params;
       expect(turn).toMatchObject({ threadId: "same-thread", model: "new-model", effort: "high", sandboxPolicy: { type: sandbox === "workspace-write" ? "workspaceWrite" : sandbox === "read-only" ? "readOnly" : "dangerFullAccess" } });
       if (sandbox === "workspace-write") {
