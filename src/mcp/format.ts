@@ -1,5 +1,5 @@
 import { DEFAULT_MAX_HOPS } from "../core/constants.js";
-import { BROADCAST, isQuietMessage, type BridgeMessage, type PeerInfo, type SendResult } from "../core/protocol.js";
+import { AGENT_KINDS, BROADCAST, isQuietMessage, type BridgeMessage, type PeerInfo, type SendResult } from "../core/protocol.js";
 import type { LinkMessage } from "../core/parent-link.js";
 import { DEFAULT_SIBLING_MAX_HOPS } from "../core/job-messaging.js";
 
@@ -140,7 +140,7 @@ export function formatDelivery(result: SendResult, maxHops = DEFAULT_MAX_HOPS): 
   return result.deliveredTo.map((name) => {
     const peer = result.recipientStates?.find((p) => p.name === name);
     const message = result.messages.find((m) => m.recipient === name);
-    const direct = message?.to === name || (name.includes("/") && message?.to.includes("/") && message.to.split("/").at(-1) === name.split("/").at(-1));
+    const direct = message && (message.to === name || (message.to !== BROADCAST && !(AGENT_KINDS as readonly string[]).includes(message.to) && message.recipient === name));
     const canWake = message && message.hop < (peer?.wakeMaxHops ?? maxHops) && !isQuietMessage(message) && !message.conversationId.endsWith(":note") &&
       peer?.wakeAvailable && (peer.autoWake || (peer.wakeOnDirect && (direct || message.to === BROADCAST)));
     const hint = peer?.activity === "idle"

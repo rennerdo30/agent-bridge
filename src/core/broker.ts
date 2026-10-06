@@ -31,7 +31,7 @@ import {
   type RequestMap,
   type SiblingPeer,
 } from "./protocol.js";
-import { agentQueueKey, MessageStore } from "./store.js";
+import { agentQueueKey, MessageStore, registrationIdentity } from "./store.js";
 import { tokensEqual } from "./token.js";
 import { isRecord, retentionLimit } from "./json-store.js";
 import { readArchivedJobs } from "./job-archive.js";
@@ -622,7 +622,8 @@ export class Broker {
     if (!peer.sessionId) peer.sessionId = this.store.recoverSession(peer);
     this.store.rememberSession(peer, this.now());
     conn.peer = peer;
-    if (peer.sessionId) this.replaceStale(conn, peer);
+    this.replaceStale(conn, peer);
+    this.restoreNames(conn, peer, { reclaim: true, replay: false });
     this.expireStaleQueue(peer.name);
     // A job runner is no session of its agent kind: it never takes mail waiting for "any <agent>".
     let claimed = 0;
@@ -683,6 +684,7 @@ export class Broker {
     if (typeof args.name === "string" && args.name !== peer.name) {
       if (!PEER_NAME_PATTERN.test(args.name)) throw new BridgeError("bad_request", "invalid peer name");
       const old = peer.name;
+      this.store.rememberName(peer, this.now());
       peer.name = this.uniqueName(args.name);
       this.log.info("peer renamed", { from: old, to: peer.name });
       this.expireStaleQueue(peer.name);
@@ -693,6 +695,8 @@ export class Broker {
     }
     this.log.debug("peer updated", { name: peer.name, sessionId: peer.sessionId, autoWake: peer.autoWake, cwd: peer.cwd });
     this.store.rememberSession(peer, this.now());
+    this.store.rememberName(peer, this.now());
+    this.restoreNames(conn, peer, { reclaim: args.sessionId !== undefined, replay: true });
     for (const message of this.queueCurrentDecisions(peer)) this.emit(conn, "message", message);
     return peer;
   }
@@ -706,7 +710,14 @@ export class Broker {
   private replaceStale(conn: Conn, peer: PeerInfo): void {
     for (const c of [...this.conns]) {
       const old = c.peer;
-      if (c === conn || !old || old.agent !== peer.agent || old.sessionId !== peer.sessionId) continue;
+      if (c === conn || !old || old.agent !== peer.agent) continue;
+      const sameSession = peer.sessionId && old.sessionId === peer.sessionId;
+      const identity = registrationIdentity(peer);
+      // Separate MCP processes of the same CLI can overlap before a hook learns its session id.
+      const sameProcess = (old.pid !== peer.pid || old.id === peer.id) && identity && identity === registrationIdentity(old) &&
+        (!old.sessionId || !peer.sessionId || old.sessionId === peer.sessionId);
+      if (!sameSession && !sameProcess) continue;
+      this.store.rememberName(old, this.now());
       this.log.info("session connected again from a new server; replacing the old connection", { name: old.name, by: peer.name, sessionId: peer.sessionId });
       this.emit(c, "replaced", { by: peer.name });
       this.conns.delete(c);
@@ -725,6 +736,34 @@ export class Broker {
         });
       }
     }
+  }
+
+  private restoreNames(conn: Conn, peer: PeerInfo, options: { reclaim: boolean; replay: boolean }): void {
+    const names = this.store.namesFor(peer);
+    const previous = peer.name;
+    if (options.reclaim) {
+      const base = peer.name.replace(/-\d+$/, "");
+      const original = names.find((name) => name.replace(/-\d+$/, "") === base && (name === peer.name || !this.connByName(name)));
+      if (original) peer.name = original;
+    }
+    let moved = 0;
+    for (const name of names) {
+      if (name === peer.name || this.connByName(name)) continue;
+      moved += this.store.claim(name, peer.name);
+    }
+    this.store.rememberName(peer, this.now());
+    if (options.replay && (moved || previous !== peer.name)) setImmediate(() => {
+      if (conn.peer !== peer) return;
+      for (const m of this.unreadMail(peer.name, PENDING_MAX_LIMIT)) this.emit(conn, "message", m);
+    });
+  }
+
+  /** Exact registrations win; an unoccupied retained alias must identify one live session. */
+  private recipientConn(name: string): Conn | undefined {
+    const exact = this.connByName(name);
+    if (exact) return exact;
+    const matches = [...this.conns].filter((c) => c.peer && this.store.namesFor(c.peer).includes(name));
+    return matches.length === 1 ? matches[0] : undefined;
   }
 
   /**
@@ -751,9 +790,10 @@ export class Broker {
       if (others.length === 0) throw new BridgeError("unknown_target", "no other peers are online");
       return { live: others, queued: [] };
     }
-    const exact = all.find((c) => c.peer!.id === to || c.peer!.name === to);
+    const recipient = this.recipientConn(to);
+    const exact = all.find((c) => c.peer!.id === to || c === recipient);
     if (exact) return { live: [exact], queued: [] };
-    if (to === sender.name || to === sender.id) throw new BridgeError("bad_request", "cannot send a message to yourself");
+    if (recipient?.peer?.id === sender.id || to === sender.name || to === sender.id) throw new BridgeError("bad_request", "cannot send a message to yourself");
     if ((AGENT_KINDS as readonly string[]).includes(to)) {
       const ofKind = others.filter((c) => c.peer!.agent === (to as AgentKind));
       if (ofKind.length === 1) return { live: ofKind, queued: [] };
@@ -894,7 +934,10 @@ export class Broker {
     const message = this.store.byId(id);
     if (!message || message.from.id !== sender) throw new BridgeError("unauthorized", "receipt is only available to the sender");
     const receipts = this.store.receipts(id);
-    return (recipient ? receipts.find((r) => r.recipient === recipient) : receipts[0])?.readAt ?? null;
+    const receipt = recipient ? receipts.find((r) => r.recipient === recipient) : receipts[0];
+    // A queued direct envelope may have moved from a retained alias to the reclaimed name.
+    const addressedAlias = recipient && message.to !== BROADCAST && message.to.split("/").at(-1) === recipient;
+    return (receipt ?? (addressedAlias ? receipts.find((r) => r.recipient === message.recipient) : undefined))?.readAt ?? null;
   }
 
   private async messageReceipt(conn: Conn, id: string) {
@@ -928,16 +971,17 @@ export class Broker {
     return result;
   }
 
-  private receiveRemote(message: BridgeMessage): { delivered: boolean } {
-    const target = this.connByName(message.recipient);
+  private receiveRemote(message: BridgeMessage): { delivered: boolean; recipient: string } {
+    const target = this.recipientConn(message.recipient);
+    if (target?.peer) message = { ...message, recipient: target.peer.name };
     const existing = this.store.byId(message.id);
     if (existing) {
       const broadcastCopy = existing.to === BROADCAST && message.to === BROADCAST;
       if (existing.from.id !== message.from.id || (!broadcastCopy && existing.recipient !== message.recipient) || existing.to !== message.to || existing.body !== message.body || existing.conversationId !== message.conversationId || existing.replyTo !== message.replyTo || existing.hop !== message.hop) throw new BridgeError("bad_request", "message id already used");
-      if (this.store.receipts(message.id).some((r) => r.recipient === message.recipient)) return { delivered: Boolean(target) };
+      if (this.store.receipts(message.id).some((r) => r.recipient === message.recipient)) return { delivered: Boolean(target), recipient: message.recipient };
     }
     this.store.insert(message);
     if (target) this.emit(target, "message", message);
-    return { delivered: Boolean(target) };
+    return { delivered: Boolean(target), recipient: message.recipient };
   }
 }

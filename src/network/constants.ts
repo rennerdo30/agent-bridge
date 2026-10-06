@@ -14,6 +14,8 @@ export const MAX_NETWORK_FRAME_BYTES = 2 * 1024 * 1024;
 export const MAX_NETWORK_REQUESTS = 64;
 export const NETWORK_TIMEOUT_MS = 5_000;
 export const NETWORK_REFRESH_MS = 2_000;
+/** Leave room for extension backpressure before declaring an otherwise idle link half-open. */
+export const NETWORK_HEARTBEAT_TIMEOUT_MS = 30_000;
 export const PAIRING_TTL_MS = 10 * 60 * 1000;
 export const PAIRING_KEY_BYTES = 32;
 export const MAX_PAIRING_CODE_CHARS = 1_024;
