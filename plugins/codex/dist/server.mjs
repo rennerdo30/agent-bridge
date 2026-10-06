@@ -18,9 +18,9 @@ var __export = (target, all) => {
 };
 var __copyProps = (to, from, except, desc) => {
   if (from && typeof from === "object" || typeof from === "function") {
-    for (let key of __getOwnPropNames(from))
-      if (!__hasOwnProp.call(to, key) && key !== except)
-        __defProp(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });
+    for (let key2 of __getOwnPropNames(from))
+      if (!__hasOwnProp.call(to, key2) && key2 !== except)
+        __defProp(to, key2, { get: () => from[key2], enumerable: !(desc = __getOwnPropDesc(from, key2)) || desc.enumerable });
   }
   return to;
 };
@@ -33,9 +33,9 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
   mod
 ));
 
-// node_modules/ajv/dist/compile/codegen/code.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/compile/codegen/code.js
 var require_code = __commonJS({
-  "node_modules/ajv/dist/compile/codegen/code.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/compile/codegen/code.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.regexpCode = exports.getEsmExportName = exports.getProperty = exports.safeStringify = exports.stringify = exports.strConcat = exports.addCodeArg = exports.str = exports._ = exports.nil = exports._Code = exports.Name = exports.IDENTIFIER = exports._CodeOrName = void 0;
@@ -169,15 +169,15 @@ var require_code = __commonJS({
       return JSON.stringify(x).replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029");
     }
     exports.safeStringify = safeStringify;
-    function getProperty(key) {
-      return typeof key == "string" && exports.IDENTIFIER.test(key) ? new _Code(`.${key}`) : _`[${key}]`;
+    function getProperty(key2) {
+      return typeof key2 == "string" && exports.IDENTIFIER.test(key2) ? new _Code(`.${key2}`) : _`[${key2}]`;
     }
     exports.getProperty = getProperty;
-    function getEsmExportName(key) {
-      if (typeof key == "string" && exports.IDENTIFIER.test(key)) {
-        return new _Code(`${key}`);
+    function getEsmExportName(key2) {
+      if (typeof key2 == "string" && exports.IDENTIFIER.test(key2)) {
+        return new _Code(`${key2}`);
       }
-      throw new Error(`CodeGen: invalid export name: ${key}, use explicit $id name mapping`);
+      throw new Error(`CodeGen: invalid export name: ${key2}, use explicit $id name mapping`);
     }
     exports.getEsmExportName = getEsmExportName;
     function regexpCode(rx) {
@@ -187,9 +187,9 @@ var require_code = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/compile/codegen/scope.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/compile/codegen/scope.js
 var require_scope = __commonJS({
-  "node_modules/ajv/dist/compile/codegen/scope.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/compile/codegen/scope.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.ValueScope = exports.ValueScopeName = exports.Scope = exports.varKinds = exports.UsedValueState = void 0;
@@ -332,9 +332,9 @@ var require_scope = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/compile/codegen/index.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/compile/codegen/index.js
 var require_codegen = __commonJS({
-  "node_modules/ajv/dist/compile/codegen/index.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/compile/codegen/index.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.or = exports.and = exports.not = exports.CodeGen = exports.operators = exports.varKinds = exports.ValueScopeName = exports.ValueScope = exports.Scope = exports.Name = exports.regexpCode = exports.stringify = exports.getProperty = exports.nil = exports.strConcat = exports.str = exports._ = void 0;
@@ -804,11 +804,11 @@ var require_codegen = __commonJS({
       // returns code for object literal for the passed argument list of key-value pairs
       object(...keyValues) {
         const code = ["{"];
-        for (const [key, value] of keyValues) {
+        for (const [key2, value] of keyValues) {
           if (code.length > 1)
             code.push(",");
-          code.push(key);
-          if (key !== value || this.opts.es5) {
+          code.push(key2);
+          if (key2 !== value || this.opts.es5) {
             code.push(":");
             (0, code_1.addCodeArg)(code, value);
           }
@@ -1052,9 +1052,9 @@ var require_codegen = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/compile/util.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/compile/util.js
 var require_util = __commonJS({
-  "node_modules/ajv/dist/compile/util.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/compile/util.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.checkStrictMode = exports.getErrorPath = exports.Type = exports.useFunc = exports.setEvaluated = exports.evaluatedPropsToName = exports.mergeEvaluated = exports.eachItem = exports.unescapeJsonPointer = exports.escapeJsonPointer = exports.escapeFragment = exports.unescapeFragment = exports.schemaRefOrVal = exports.schemaHasRulesButRef = exports.schemaHasRules = exports.checkUnknownRules = exports.alwaysValidSchema = exports.toHash = void 0;
@@ -1083,17 +1083,17 @@ var require_util = __commonJS({
       if (typeof schema === "boolean")
         return;
       const rules = self.RULES.keywords;
-      for (const key in schema) {
-        if (!rules[key])
-          checkStrictMode(it, `unknown keyword: "${key}"`);
+      for (const key2 in schema) {
+        if (!rules[key2])
+          checkStrictMode(it, `unknown keyword: "${key2}"`);
       }
     }
     exports.checkUnknownRules = checkUnknownRules;
     function schemaHasRules(schema, rules) {
       if (typeof schema == "boolean")
         return !schema;
-      for (const key in schema)
-        if (rules[key])
+      for (const key2 in schema)
+        if (rules[key2])
           return true;
       return false;
     }
@@ -1101,8 +1101,8 @@ var require_util = __commonJS({
     function schemaHasRulesButRef(schema, RULES) {
       if (typeof schema == "boolean")
         return !schema;
-      for (const key in schema)
-        if (key !== "$ref" && RULES.all[key])
+      for (const key2 in schema)
+        if (key2 !== "$ref" && RULES.all[key2])
           return true;
       return false;
     }
@@ -1219,9 +1219,9 @@ var require_util = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/compile/names.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/compile/names.js
 var require_names = __commonJS({
-  "node_modules/ajv/dist/compile/names.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/compile/names.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var codegen_1 = require_codegen();
@@ -1258,9 +1258,9 @@ var require_names = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/compile/errors.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/compile/errors.js
 var require_errors = __commonJS({
-  "node_modules/ajv/dist/compile/errors.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/compile/errors.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.extendErrors = exports.resetErrorsCount = exports.reportExtraError = exports.reportError = exports.keyword$DataError = exports.keywordError = void 0;
@@ -1380,9 +1380,9 @@ var require_errors = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/compile/validate/boolSchema.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/compile/validate/boolSchema.js
 var require_boolSchema = __commonJS({
-  "node_modules/ajv/dist/compile/validate/boolSchema.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/compile/validate/boolSchema.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.boolOrEmptySchema = exports.topBoolOrEmptySchema = void 0;
@@ -1431,9 +1431,9 @@ var require_boolSchema = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/compile/rules.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/compile/rules.js
 var require_rules = __commonJS({
-  "node_modules/ajv/dist/compile/rules.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/compile/rules.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.getRules = exports.isJSONType = void 0;
@@ -1462,9 +1462,9 @@ var require_rules = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/compile/validate/applicability.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/compile/validate/applicability.js
 var require_applicability = __commonJS({
-  "node_modules/ajv/dist/compile/validate/applicability.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/compile/validate/applicability.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.shouldUseRule = exports.shouldUseGroup = exports.schemaHasRulesForType = void 0;
@@ -1485,9 +1485,9 @@ var require_applicability = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/compile/validate/dataType.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/compile/validate/dataType.js
 var require_dataType = __commonJS({
-  "node_modules/ajv/dist/compile/validate/dataType.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/compile/validate/dataType.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.reportTypeError = exports.checkDataTypes = exports.checkDataType = exports.coerceAndCheckDataType = exports.getJSONTypes = exports.getSchemaTypes = exports.DataType = void 0;
@@ -1669,9 +1669,9 @@ var require_dataType = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/compile/validate/defaults.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/compile/validate/defaults.js
 var require_defaults = __commonJS({
-  "node_modules/ajv/dist/compile/validate/defaults.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/compile/validate/defaults.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.assignDefaults = void 0;
@@ -1680,8 +1680,8 @@ var require_defaults = __commonJS({
     function assignDefaults(it, ty) {
       const { properties, items } = it.schema;
       if (ty === "object" && properties) {
-        for (const key in properties) {
-          assignDefault(it, key, properties[key].default);
+        for (const key2 in properties) {
+          assignDefault(it, key2, properties[key2].default);
         }
       } else if (ty === "array" && Array.isArray(items)) {
         items.forEach((sch, i) => assignDefault(it, i, sch.default));
@@ -1706,9 +1706,9 @@ var require_defaults = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/code.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/code.js
 var require_code2 = __commonJS({
-  "node_modules/ajv/dist/vocabularies/code.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/code.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.validateUnion = exports.validateArray = exports.usePattern = exports.callValidateCode = exports.schemaProperties = exports.allSchemaProperties = exports.noPropertyInData = exports.propertyInData = exports.isOwnProperty = exports.hasPropFunc = exports.reportMissingProp = exports.checkMissingProp = exports.checkReportMissingProp = void 0;
@@ -1839,9 +1839,9 @@ var require_code2 = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/compile/validate/keyword.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/compile/validate/keyword.js
 var require_keyword = __commonJS({
-  "node_modules/ajv/dist/compile/validate/keyword.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/compile/validate/keyword.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.validateKeywordUsage = exports.validSchemaType = exports.funcKeywordCode = exports.macroKeywordCode = void 0;
@@ -1957,9 +1957,9 @@ var require_keyword = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/compile/validate/subschema.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/compile/validate/subschema.js
 var require_subschema = __commonJS({
-  "node_modules/ajv/dist/compile/validate/subschema.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/compile/validate/subschema.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.extendSubschemaMode = exports.extendSubschemaData = exports.getSubschema = void 0;
@@ -2040,9 +2040,9 @@ var require_subschema = __commonJS({
   }
 });
 
-// node_modules/fast-deep-equal/index.js
+// D:/Development/claude-codex-comm/node_modules/fast-deep-equal/index.js
 var require_fast_deep_equal = __commonJS({
-  "node_modules/fast-deep-equal/index.js"(exports, module) {
+  "D:/Development/claude-codex-comm/node_modules/fast-deep-equal/index.js"(exports, module) {
     "use strict";
     module.exports = function equal(a, b) {
       if (a === b) return true;
@@ -2065,8 +2065,8 @@ var require_fast_deep_equal = __commonJS({
         for (i = length; i-- !== 0; )
           if (!Object.prototype.hasOwnProperty.call(b, keys[i])) return false;
         for (i = length; i-- !== 0; ) {
-          var key = keys[i];
-          if (!equal(a[key], b[key])) return false;
+          var key2 = keys[i];
+          if (!equal(a[key2], b[key2])) return false;
         }
         return true;
       }
@@ -2075,9 +2075,9 @@ var require_fast_deep_equal = __commonJS({
   }
 });
 
-// node_modules/json-schema-traverse/index.js
+// D:/Development/claude-codex-comm/node_modules/json-schema-traverse/index.js
 var require_json_schema_traverse = __commonJS({
-  "node_modules/json-schema-traverse/index.js"(exports, module) {
+  "D:/Development/claude-codex-comm/node_modules/json-schema-traverse/index.js"(exports, module) {
     "use strict";
     var traverse = module.exports = function(schema, opts, cb) {
       if (typeof opts == "function") {
@@ -2138,20 +2138,20 @@ var require_json_schema_traverse = __commonJS({
     function _traverse(opts, pre, post, schema, jsonPtr, rootSchema, parentJsonPtr, parentKeyword, parentSchema, keyIndex) {
       if (schema && typeof schema == "object" && !Array.isArray(schema)) {
         pre(schema, jsonPtr, rootSchema, parentJsonPtr, parentKeyword, parentSchema, keyIndex);
-        for (var key in schema) {
-          var sch = schema[key];
+        for (var key2 in schema) {
+          var sch = schema[key2];
           if (Array.isArray(sch)) {
-            if (key in traverse.arrayKeywords) {
+            if (key2 in traverse.arrayKeywords) {
               for (var i = 0; i < sch.length; i++)
-                _traverse(opts, pre, post, sch[i], jsonPtr + "/" + key + "/" + i, rootSchema, jsonPtr, key, schema, i);
+                _traverse(opts, pre, post, sch[i], jsonPtr + "/" + key2 + "/" + i, rootSchema, jsonPtr, key2, schema, i);
             }
-          } else if (key in traverse.propsKeywords) {
+          } else if (key2 in traverse.propsKeywords) {
             if (sch && typeof sch == "object") {
               for (var prop in sch)
-                _traverse(opts, pre, post, sch[prop], jsonPtr + "/" + key + "/" + escapeJsonPtr(prop), rootSchema, jsonPtr, key, schema, prop);
+                _traverse(opts, pre, post, sch[prop], jsonPtr + "/" + key2 + "/" + escapeJsonPtr(prop), rootSchema, jsonPtr, key2, schema, prop);
             }
-          } else if (key in traverse.keywords || opts.allKeys && !(key in traverse.skipKeywords)) {
-            _traverse(opts, pre, post, sch, jsonPtr + "/" + key, rootSchema, jsonPtr, key, schema);
+          } else if (key2 in traverse.keywords || opts.allKeys && !(key2 in traverse.skipKeywords)) {
+            _traverse(opts, pre, post, sch, jsonPtr + "/" + key2, rootSchema, jsonPtr, key2, schema);
           }
         }
         post(schema, jsonPtr, rootSchema, parentJsonPtr, parentKeyword, parentSchema, keyIndex);
@@ -2163,9 +2163,9 @@ var require_json_schema_traverse = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/compile/resolve.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/compile/resolve.js
 var require_resolve = __commonJS({
-  "node_modules/ajv/dist/compile/resolve.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/compile/resolve.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.getSchemaRefs = exports.resolveUrl = exports.normalizeId = exports._getFullPath = exports.getFullPath = exports.inlineRef = void 0;
@@ -2208,10 +2208,10 @@ var require_resolve = __commonJS({
       "$dynamicAnchor"
     ]);
     function hasRef(schema) {
-      for (const key in schema) {
-        if (REF_KEYWORDS.has(key))
+      for (const key2 in schema) {
+        if (REF_KEYWORDS.has(key2))
           return true;
-        const sch = schema[key];
+        const sch = schema[key2];
         if (Array.isArray(sch) && sch.some(hasRef))
           return true;
         if (typeof sch == "object" && hasRef(sch))
@@ -2221,14 +2221,14 @@ var require_resolve = __commonJS({
     }
     function countKeys(schema) {
       let count = 0;
-      for (const key in schema) {
-        if (key === "$ref")
+      for (const key2 in schema) {
+        if (key2 === "$ref")
           return Infinity;
         count++;
-        if (SIMPLE_INLINED.has(key))
+        if (SIMPLE_INLINED.has(key2))
           continue;
-        if (typeof schema[key] == "object") {
-          (0, util_1.eachItem)(schema[key], (sch) => count += countKeys(sch));
+        if (typeof schema[key2] == "object") {
+          (0, util_1.eachItem)(schema[key2], (sch) => count += countKeys(sch));
         }
         if (count === Infinity)
           return Infinity;
@@ -2319,9 +2319,9 @@ var require_resolve = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/compile/validate/index.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/compile/validate/index.js
 var require_validate = __commonJS({
-  "node_modules/ajv/dist/compile/validate/index.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/compile/validate/index.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.getData = exports.KeywordCxt = exports.validateFunctionCode = void 0;
@@ -2417,8 +2417,8 @@ var require_validate = __commonJS({
     function schemaCxtHasRules({ schema, self }) {
       if (typeof schema == "boolean")
         return !schema;
-      for (const key in schema)
-        if (self.RULES.all[key])
+      for (const key2 in schema)
+        if (self.RULES.all[key2])
           return true;
       return false;
     }
@@ -2827,9 +2827,9 @@ var require_validate = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/runtime/validation_error.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/runtime/validation_error.js
 var require_validation_error = __commonJS({
-  "node_modules/ajv/dist/runtime/validation_error.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/runtime/validation_error.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var ValidationError = class extends Error {
@@ -2843,9 +2843,9 @@ var require_validation_error = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/compile/ref_error.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/compile/ref_error.js
 var require_ref_error = __commonJS({
-  "node_modules/ajv/dist/compile/ref_error.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/compile/ref_error.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var resolve_1 = require_resolve();
@@ -2860,9 +2860,9 @@ var require_ref_error = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/compile/index.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/compile/index.js
 var require_compile = __commonJS({
-  "node_modules/ajv/dist/compile/index.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/compile/index.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.resolveSchema = exports.getCompilingSchema = exports.resolveRef = exports.compileSchema = exports.SchemaEnv = void 0;
@@ -3084,9 +3084,9 @@ var require_compile = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/refs/data.json
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/refs/data.json
 var require_data = __commonJS({
-  "node_modules/ajv/dist/refs/data.json"(exports, module) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/refs/data.json"(exports, module) {
     module.exports = {
       $id: "https://raw.githubusercontent.com/ajv-validator/ajv/master/lib/refs/data.json#",
       description: "Meta-schema for $data reference (JSON AnySchema extension proposal)",
@@ -3103,9 +3103,9 @@ var require_data = __commonJS({
   }
 });
 
-// node_modules/fast-uri/lib/utils.js
+// D:/Development/claude-codex-comm/node_modules/fast-uri/lib/utils.js
 var require_utils = __commonJS({
-  "node_modules/fast-uri/lib/utils.js"(exports, module) {
+  "D:/Development/claude-codex-comm/node_modules/fast-uri/lib/utils.js"(exports, module) {
     "use strict";
     var isUUID = RegExp.prototype.test.bind(/^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/iu);
     var isIPv42 = RegExp.prototype.test.bind(/^(?:(?:25[0-5]|2[0-4]\d|1\d{2}|[1-9]\d|\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d{2}|[1-9]\d|\d)$/u);
@@ -3605,9 +3605,9 @@ var require_utils = __commonJS({
   }
 });
 
-// node_modules/fast-uri/lib/schemes.js
+// D:/Development/claude-codex-comm/node_modules/fast-uri/lib/schemes.js
 var require_schemes = __commonJS({
-  "node_modules/fast-uri/lib/schemes.js"(exports, module) {
+  "D:/Development/claude-codex-comm/node_modules/fast-uri/lib/schemes.js"(exports, module) {
     "use strict";
     var { isUUID } = require_utils();
     var URN_REG = /^([\da-z][\d\-a-z]{0,31}):((?:[\w!$'()*+,\-./:;=@]|%[\da-f]{2})+)$/iu;
@@ -3816,9 +3816,9 @@ var require_schemes = __commonJS({
   }
 });
 
-// node_modules/fast-uri/index.js
+// D:/Development/claude-codex-comm/node_modules/fast-uri/index.js
 var require_fast_uri = __commonJS({
-  "node_modules/fast-uri/index.js"(exports, module) {
+  "D:/Development/claude-codex-comm/node_modules/fast-uri/index.js"(exports, module) {
     "use strict";
     var { normalizeIPv6, removeDotSegments, recomposeAuthority, normalizePercentEncoding, normalizePathEncoding, serializePathEncoding, normalizeQueryFragmentEncoding, encodeQuery, encodeFragment, reescapeHostDelimiters, isIPv4: isIPv42, nonSimpleDomain } = require_utils();
     var { SCHEMES, getSchemeHandler } = require_schemes();
@@ -4222,9 +4222,9 @@ var require_fast_uri = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/runtime/uri.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/runtime/uri.js
 var require_uri = __commonJS({
-  "node_modules/ajv/dist/runtime/uri.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/runtime/uri.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var uri = require_fast_uri();
@@ -4233,9 +4233,9 @@ var require_uri = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/core.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/core.js
 var require_core = __commonJS({
-  "node_modules/ajv/dist/core.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/core.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.CodeGen = exports.Name = exports.nil = exports.stringify = exports.str = exports._ = exports.KeywordCxt = void 0;
@@ -4457,7 +4457,7 @@ var require_core = __commonJS({
         }
       }
       // Adds schema to the instance
-      addSchema(schema, key, _meta, _validateSchema = this.opts.validateSchema) {
+      addSchema(schema, key2, _meta, _validateSchema = this.opts.validateSchema) {
         if (Array.isArray(schema)) {
           for (const sch of schema)
             this.addSchema(sch, void 0, _meta, _validateSchema);
@@ -4471,15 +4471,15 @@ var require_core = __commonJS({
             throw new Error(`schema ${schemaId} must be string`);
           }
         }
-        key = (0, resolve_1.normalizeId)(key || id);
-        this._checkUnique(key);
-        this.schemas[key] = this._addSchema(schema, _meta, key, _validateSchema, true);
+        key2 = (0, resolve_1.normalizeId)(key2 || id);
+        this._checkUnique(key2);
+        this.schemas[key2] = this._addSchema(schema, _meta, key2, _validateSchema, true);
         return this;
       }
       // Add schema that will be used to validate other schemas
       // options in META_IGNORE_OPTIONS are alway set to false
-      addMetaSchema(schema, key, _validateSchema = this.opts.validateSchema) {
-        this.addSchema(schema, key, true, _validateSchema);
+      addMetaSchema(schema, key2, _validateSchema = this.opts.validateSchema) {
+        this.addSchema(schema, key2, true, _validateSchema);
         return this;
       }
       //  Validate schema against its meta-schema
@@ -4635,14 +4635,14 @@ var require_core = __commonJS({
           let keywords = metaSchema;
           for (const seg of segments)
             keywords = keywords[seg];
-          for (const key in rules) {
-            const rule = rules[key];
+          for (const key2 in rules) {
+            const rule = rules[key2];
             if (typeof rule != "object")
               continue;
             const { $data } = rule.definition;
-            const schema = keywords[key];
+            const schema = keywords[key2];
             if ($data && schema)
-              keywords[key] = schemaOrData(schema);
+              keywords[key2] = schemaOrData(schema);
           }
         }
         return metaSchema;
@@ -4715,10 +4715,10 @@ var require_core = __commonJS({
     Ajv2.MissingRefError = ref_error_1.default;
     exports.default = Ajv2;
     function checkOptions(checkOpts, options, msg, log = "error") {
-      for (const key in checkOpts) {
-        const opt = key;
+      for (const key2 in checkOpts) {
+        const opt = key2;
         if (opt in options)
-          this.logger[log](`${msg}: option ${key}. ${checkOpts[opt]}`);
+          this.logger[log](`${msg}: option ${key2}. ${checkOpts[opt]}`);
       }
     }
     function getSchEnv(keyRef) {
@@ -4732,8 +4732,8 @@ var require_core = __commonJS({
       if (Array.isArray(optsSchemas))
         this.addSchema(optsSchemas);
       else
-        for (const key in optsSchemas)
-          this.addSchema(optsSchemas[key], key);
+        for (const key2 in optsSchemas)
+          this.addSchema(optsSchemas[key2], key2);
     }
     function addInitialFormats() {
       for (const name in this.opts.formats) {
@@ -4844,9 +4844,9 @@ var require_core = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/core/id.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/core/id.js
 var require_id = __commonJS({
-  "node_modules/ajv/dist/vocabularies/core/id.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/core/id.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var def = {
@@ -4859,9 +4859,9 @@ var require_id = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/core/ref.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/core/ref.js
 var require_ref = __commonJS({
-  "node_modules/ajv/dist/vocabularies/core/ref.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/core/ref.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.callRef = exports.getValidate = void 0;
@@ -4981,9 +4981,9 @@ var require_ref = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/core/index.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/core/index.js
 var require_core2 = __commonJS({
-  "node_modules/ajv/dist/vocabularies/core/index.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/core/index.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var id_1 = require_id();
@@ -5002,9 +5002,9 @@ var require_core2 = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/validation/limitNumber.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/validation/limitNumber.js
 var require_limitNumber = __commonJS({
-  "node_modules/ajv/dist/vocabularies/validation/limitNumber.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/validation/limitNumber.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var codegen_1 = require_codegen();
@@ -5034,9 +5034,9 @@ var require_limitNumber = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/validation/multipleOf.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/validation/multipleOf.js
 var require_multipleOf = __commonJS({
-  "node_modules/ajv/dist/vocabularies/validation/multipleOf.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/validation/multipleOf.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var codegen_1 = require_codegen();
@@ -5062,9 +5062,9 @@ var require_multipleOf = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/runtime/ucs2length.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/runtime/ucs2length.js
 var require_ucs2length = __commonJS({
-  "node_modules/ajv/dist/runtime/ucs2length.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/runtime/ucs2length.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     function ucs2length(str) {
@@ -5088,9 +5088,9 @@ var require_ucs2length = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/validation/limitLength.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/validation/limitLength.js
 var require_limitLength = __commonJS({
-  "node_modules/ajv/dist/vocabularies/validation/limitLength.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/validation/limitLength.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var codegen_1 = require_codegen();
@@ -5120,9 +5120,9 @@ var require_limitLength = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/validation/pattern.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/validation/pattern.js
 var require_pattern = __commonJS({
-  "node_modules/ajv/dist/vocabularies/validation/pattern.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/validation/pattern.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var code_1 = require_code2();
@@ -5157,9 +5157,9 @@ var require_pattern = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/validation/limitProperties.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/validation/limitProperties.js
 var require_limitProperties = __commonJS({
-  "node_modules/ajv/dist/vocabularies/validation/limitProperties.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/validation/limitProperties.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var codegen_1 = require_codegen();
@@ -5186,9 +5186,9 @@ var require_limitProperties = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/validation/required.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/validation/required.js
 var require_required = __commonJS({
-  "node_modules/ajv/dist/vocabularies/validation/required.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/validation/required.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var code_1 = require_code2();
@@ -5268,9 +5268,9 @@ var require_required = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/validation/limitItems.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/validation/limitItems.js
 var require_limitItems = __commonJS({
-  "node_modules/ajv/dist/vocabularies/validation/limitItems.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/validation/limitItems.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var codegen_1 = require_codegen();
@@ -5297,9 +5297,9 @@ var require_limitItems = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/runtime/equal.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/runtime/equal.js
 var require_equal = __commonJS({
-  "node_modules/ajv/dist/runtime/equal.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/runtime/equal.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var equal = require_fast_deep_equal();
@@ -5308,9 +5308,9 @@ var require_equal = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/validation/uniqueItems.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/validation/uniqueItems.js
 var require_uniqueItems = __commonJS({
-  "node_modules/ajv/dist/vocabularies/validation/uniqueItems.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/validation/uniqueItems.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var dataType_1 = require_dataType();
@@ -5375,9 +5375,9 @@ var require_uniqueItems = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/validation/const.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/validation/const.js
 var require_const = __commonJS({
-  "node_modules/ajv/dist/vocabularies/validation/const.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/validation/const.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var codegen_1 = require_codegen();
@@ -5404,9 +5404,9 @@ var require_const = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/validation/enum.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/validation/enum.js
 var require_enum = __commonJS({
-  "node_modules/ajv/dist/vocabularies/validation/enum.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/validation/enum.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var codegen_1 = require_codegen();
@@ -5453,9 +5453,9 @@ var require_enum = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/validation/index.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/validation/index.js
 var require_validation = __commonJS({
-  "node_modules/ajv/dist/vocabularies/validation/index.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/validation/index.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var limitNumber_1 = require_limitNumber();
@@ -5491,9 +5491,9 @@ var require_validation = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/applicator/additionalItems.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/applicator/additionalItems.js
 var require_additionalItems = __commonJS({
-  "node_modules/ajv/dist/vocabularies/applicator/additionalItems.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/applicator/additionalItems.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.validateAdditionalItems = void 0;
@@ -5544,9 +5544,9 @@ var require_additionalItems = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/applicator/items.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/applicator/items.js
 var require_items = __commonJS({
-  "node_modules/ajv/dist/vocabularies/applicator/items.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/applicator/items.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.validateTuple = void 0;
@@ -5601,9 +5601,9 @@ var require_items = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/applicator/prefixItems.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/applicator/prefixItems.js
 var require_prefixItems = __commonJS({
-  "node_modules/ajv/dist/vocabularies/applicator/prefixItems.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/applicator/prefixItems.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var items_1 = require_items();
@@ -5618,9 +5618,9 @@ var require_prefixItems = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/applicator/items2020.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/applicator/items2020.js
 var require_items2020 = __commonJS({
-  "node_modules/ajv/dist/vocabularies/applicator/items2020.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/applicator/items2020.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var codegen_1 = require_codegen();
@@ -5653,9 +5653,9 @@ var require_items2020 = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/applicator/contains.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/applicator/contains.js
 var require_contains = __commonJS({
-  "node_modules/ajv/dist/vocabularies/applicator/contains.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/applicator/contains.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var codegen_1 = require_codegen();
@@ -5747,9 +5747,9 @@ var require_contains = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/applicator/dependencies.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/applicator/dependencies.js
 var require_dependencies = __commonJS({
-  "node_modules/ajv/dist/vocabularies/applicator/dependencies.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/applicator/dependencies.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.validateSchemaDeps = exports.validatePropertyDeps = exports.error = void 0;
@@ -5781,11 +5781,11 @@ var require_dependencies = __commonJS({
     function splitDependencies({ schema }) {
       const propertyDeps = {};
       const schemaDeps = {};
-      for (const key in schema) {
-        if (key === "__proto__")
+      for (const key2 in schema) {
+        if (key2 === "__proto__")
           continue;
-        const deps = Array.isArray(schema[key]) ? propertyDeps : schemaDeps;
-        deps[key] = schema[key];
+        const deps = Array.isArray(schema[key2]) ? propertyDeps : schemaDeps;
+        deps[key2] = schema[key2];
       }
       return [propertyDeps, schemaDeps];
     }
@@ -5841,9 +5841,9 @@ var require_dependencies = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/applicator/propertyNames.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/applicator/propertyNames.js
 var require_propertyNames = __commonJS({
-  "node_modules/ajv/dist/vocabularies/applicator/propertyNames.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/applicator/propertyNames.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var codegen_1 = require_codegen();
@@ -5862,13 +5862,13 @@ var require_propertyNames = __commonJS({
         if ((0, util_1.alwaysValidSchema)(it, schema))
           return;
         const valid = gen.name("valid");
-        gen.forIn("key", data, (key) => {
-          cxt.setParams({ propertyName: key });
+        gen.forIn("key", data, (key2) => {
+          cxt.setParams({ propertyName: key2 });
           cxt.subschema({
             keyword: "propertyNames",
-            data: key,
+            data: key2,
             dataTypes: ["string"],
-            propertyName: key,
+            propertyName: key2,
             compositeRule: true
           }, valid);
           gen.if((0, codegen_1.not)(valid), () => {
@@ -5884,9 +5884,9 @@ var require_propertyNames = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/applicator/additionalProperties.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/applicator/additionalProperties.js
 var require_additionalProperties = __commonJS({
-  "node_modules/ajv/dist/vocabularies/applicator/additionalProperties.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/applicator/additionalProperties.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var code_1 = require_code2();
@@ -5917,38 +5917,38 @@ var require_additionalProperties = __commonJS({
         checkAdditionalProperties();
         cxt.ok((0, codegen_1._)`${errsCount} === ${names_1.default.errors}`);
         function checkAdditionalProperties() {
-          gen.forIn("key", data, (key) => {
+          gen.forIn("key", data, (key2) => {
             if (!props.length && !patProps.length)
-              additionalPropertyCode(key);
+              additionalPropertyCode(key2);
             else
-              gen.if(isAdditional(key), () => additionalPropertyCode(key));
+              gen.if(isAdditional(key2), () => additionalPropertyCode(key2));
           });
         }
-        function isAdditional(key) {
+        function isAdditional(key2) {
           let definedProp;
           if (props.length > 8) {
             const propsSchema = (0, util_1.schemaRefOrVal)(it, parentSchema.properties, "properties");
-            definedProp = (0, code_1.isOwnProperty)(gen, propsSchema, key);
+            definedProp = (0, code_1.isOwnProperty)(gen, propsSchema, key2);
           } else if (props.length) {
-            definedProp = (0, codegen_1.or)(...props.map((p) => (0, codegen_1._)`${key} === ${p}`));
+            definedProp = (0, codegen_1.or)(...props.map((p) => (0, codegen_1._)`${key2} === ${p}`));
           } else {
             definedProp = codegen_1.nil;
           }
           if (patProps.length) {
-            definedProp = (0, codegen_1.or)(definedProp, ...patProps.map((p) => (0, codegen_1._)`${(0, code_1.usePattern)(cxt, p)}.test(${key})`));
+            definedProp = (0, codegen_1.or)(definedProp, ...patProps.map((p) => (0, codegen_1._)`${(0, code_1.usePattern)(cxt, p)}.test(${key2})`));
           }
           return (0, codegen_1.not)(definedProp);
         }
-        function deleteAdditional(key) {
-          gen.code((0, codegen_1._)`delete ${data}[${key}]`);
+        function deleteAdditional(key2) {
+          gen.code((0, codegen_1._)`delete ${data}[${key2}]`);
         }
-        function additionalPropertyCode(key) {
+        function additionalPropertyCode(key2) {
           if (opts.removeAdditional === "all" || opts.removeAdditional && schema === false) {
-            deleteAdditional(key);
+            deleteAdditional(key2);
             return;
           }
           if (schema === false) {
-            cxt.setParams({ additionalProperty: key });
+            cxt.setParams({ additionalProperty: key2 });
             cxt.error();
             if (!allErrors)
               gen.break();
@@ -5957,22 +5957,22 @@ var require_additionalProperties = __commonJS({
           if (typeof schema == "object" && !(0, util_1.alwaysValidSchema)(it, schema)) {
             const valid = gen.name("valid");
             if (opts.removeAdditional === "failing") {
-              applyAdditionalSchema(key, valid, false);
+              applyAdditionalSchema(key2, valid, false);
               gen.if((0, codegen_1.not)(valid), () => {
                 cxt.reset();
-                deleteAdditional(key);
+                deleteAdditional(key2);
               });
             } else {
-              applyAdditionalSchema(key, valid);
+              applyAdditionalSchema(key2, valid);
               if (!allErrors)
                 gen.if((0, codegen_1.not)(valid), () => gen.break());
             }
           }
         }
-        function applyAdditionalSchema(key, valid, errors) {
+        function applyAdditionalSchema(key2, valid, errors) {
           const subschema = {
             keyword: "additionalProperties",
-            dataProp: key,
+            dataProp: key2,
             dataPropType: util_1.Type.Str
           };
           if (errors === false) {
@@ -5990,9 +5990,9 @@ var require_additionalProperties = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/applicator/properties.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/applicator/properties.js
 var require_properties = __commonJS({
-  "node_modules/ajv/dist/vocabularies/applicator/properties.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/applicator/properties.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var validate_1 = require_validate();
@@ -6048,9 +6048,9 @@ var require_properties = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/applicator/patternProperties.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/applicator/patternProperties.js
 var require_patternProperties = __commonJS({
-  "node_modules/ajv/dist/vocabularies/applicator/patternProperties.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/applicator/patternProperties.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var code_1 = require_code2();
@@ -6097,19 +6097,19 @@ var require_patternProperties = __commonJS({
           }
         }
         function validateProperties(pat) {
-          gen.forIn("key", data, (key) => {
-            gen.if((0, codegen_1._)`${(0, code_1.usePattern)(cxt, pat)}.test(${key})`, () => {
+          gen.forIn("key", data, (key2) => {
+            gen.if((0, codegen_1._)`${(0, code_1.usePattern)(cxt, pat)}.test(${key2})`, () => {
               const alwaysValid = alwaysValidPatterns.includes(pat);
               if (!alwaysValid) {
                 cxt.subschema({
                   keyword: "patternProperties",
                   schemaProp: pat,
-                  dataProp: key,
+                  dataProp: key2,
                   dataPropType: util_2.Type.Str
                 }, valid);
               }
               if (it.opts.unevaluated && props !== true) {
-                gen.assign((0, codegen_1._)`${props}[${key}]`, true);
+                gen.assign((0, codegen_1._)`${props}[${key2}]`, true);
               } else if (!alwaysValid && !it.allErrors) {
                 gen.if((0, codegen_1.not)(valid), () => gen.break());
               }
@@ -6122,9 +6122,9 @@ var require_patternProperties = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/applicator/not.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/applicator/not.js
 var require_not = __commonJS({
-  "node_modules/ajv/dist/vocabularies/applicator/not.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/applicator/not.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var util_1 = require_util();
@@ -6153,9 +6153,9 @@ var require_not = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/applicator/anyOf.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/applicator/anyOf.js
 var require_anyOf = __commonJS({
-  "node_modules/ajv/dist/vocabularies/applicator/anyOf.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/applicator/anyOf.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var code_1 = require_code2();
@@ -6170,9 +6170,9 @@ var require_anyOf = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/applicator/oneOf.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/applicator/oneOf.js
 var require_oneOf = __commonJS({
-  "node_modules/ajv/dist/vocabularies/applicator/oneOf.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/applicator/oneOf.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var codegen_1 = require_codegen();
@@ -6228,9 +6228,9 @@ var require_oneOf = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/applicator/allOf.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/applicator/allOf.js
 var require_allOf = __commonJS({
-  "node_modules/ajv/dist/vocabularies/applicator/allOf.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/applicator/allOf.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var util_1 = require_util();
@@ -6255,9 +6255,9 @@ var require_allOf = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/applicator/if.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/applicator/if.js
 var require_if = __commonJS({
-  "node_modules/ajv/dist/vocabularies/applicator/if.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/applicator/if.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var codegen_1 = require_codegen();
@@ -6324,9 +6324,9 @@ var require_if = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/applicator/thenElse.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/applicator/thenElse.js
 var require_thenElse = __commonJS({
-  "node_modules/ajv/dist/vocabularies/applicator/thenElse.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/applicator/thenElse.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var util_1 = require_util();
@@ -6342,9 +6342,9 @@ var require_thenElse = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/applicator/index.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/applicator/index.js
 var require_applicator = __commonJS({
-  "node_modules/ajv/dist/vocabularies/applicator/index.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/applicator/index.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var additionalItems_1 = require_additionalItems();
@@ -6390,9 +6390,9 @@ var require_applicator = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/format/format.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/format/format.js
 var require_format = __commonJS({
-  "node_modules/ajv/dist/vocabularies/format/format.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/format/format.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var codegen_1 = require_codegen();
@@ -6480,9 +6480,9 @@ var require_format = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/format/index.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/format/index.js
 var require_format2 = __commonJS({
-  "node_modules/ajv/dist/vocabularies/format/index.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/format/index.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var format_1 = require_format();
@@ -6491,9 +6491,9 @@ var require_format2 = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/metadata.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/metadata.js
 var require_metadata = __commonJS({
-  "node_modules/ajv/dist/vocabularies/metadata.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/metadata.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.contentVocabulary = exports.metadataVocabulary = void 0;
@@ -6514,9 +6514,9 @@ var require_metadata = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/draft7.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/draft7.js
 var require_draft7 = __commonJS({
-  "node_modules/ajv/dist/vocabularies/draft7.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/draft7.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var core_1 = require_core2();
@@ -6536,9 +6536,9 @@ var require_draft7 = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/discriminator/types.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/discriminator/types.js
 var require_types = __commonJS({
-  "node_modules/ajv/dist/vocabularies/discriminator/types.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/discriminator/types.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.DiscrError = void 0;
@@ -6550,9 +6550,9 @@ var require_types = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/discriminator/index.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/discriminator/index.js
 var require_discriminator = __commonJS({
-  "node_modules/ajv/dist/vocabularies/discriminator/index.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/discriminator/index.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var codegen_1 = require_codegen();
@@ -6655,9 +6655,9 @@ var require_discriminator = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/refs/json-schema-draft-07.json
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/refs/json-schema-draft-07.json
 var require_json_schema_draft_07 = __commonJS({
-  "node_modules/ajv/dist/refs/json-schema-draft-07.json"(exports, module) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/refs/json-schema-draft-07.json"(exports, module) {
     module.exports = {
       $schema: "http://json-schema.org/draft-07/schema#",
       $id: "http://json-schema.org/draft-07/schema#",
@@ -6812,9 +6812,9 @@ var require_json_schema_draft_07 = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/ajv.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/ajv.js
 var require_ajv = __commonJS({
-  "node_modules/ajv/dist/ajv.js"(exports, module) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/ajv.js"(exports, module) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.MissingRefError = exports.ValidationError = exports.CodeGen = exports.Name = exports.nil = exports.stringify = exports.str = exports._ = exports.KeywordCxt = exports.Ajv = void 0;
@@ -6882,9 +6882,9 @@ var require_ajv = __commonJS({
   }
 });
 
-// node_modules/ajv-formats/dist/formats.js
+// D:/Development/claude-codex-comm/node_modules/ajv-formats/dist/formats.js
 var require_formats = __commonJS({
-  "node_modules/ajv-formats/dist/formats.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv-formats/dist/formats.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.formatNames = exports.fastFormats = exports.fullFormats = void 0;
@@ -7085,9 +7085,9 @@ var require_formats = __commonJS({
   }
 });
 
-// node_modules/ajv-formats/dist/limit.js
+// D:/Development/claude-codex-comm/node_modules/ajv-formats/dist/limit.js
 var require_limit = __commonJS({
-  "node_modules/ajv-formats/dist/limit.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv-formats/dist/limit.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.formatLimitDefinition = void 0;
@@ -7157,9 +7157,9 @@ var require_limit = __commonJS({
   }
 });
 
-// node_modules/ajv-formats/dist/index.js
+// D:/Development/claude-codex-comm/node_modules/ajv-formats/dist/index.js
 var require_dist = __commonJS({
-  "node_modules/ajv-formats/dist/index.js"(exports, module) {
+  "D:/Development/claude-codex-comm/node_modules/ajv-formats/dist/index.js"(exports, module) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var formats_1 = require_formats();
@@ -7199,3906 +7199,1756 @@ var require_dist = __commonJS({
   }
 });
 
-// src/mcp/server.ts
-import { dirname as dirname9, isAbsolute as isAbsolute6, join as join35, resolve as resolve9 } from "node:path";
-import { fileURLToPath as fileURLToPath2 } from "node:url";
+// src/core/job-outcomes.ts
+import { createHash as createHash5 } from "node:crypto";
+import { existsSync as existsSync5 } from "node:fs";
+import { join as join15 } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 
-// node_modules/zod/v3/helpers/util.js
-var util;
-(function(util2) {
-  util2.assertEqual = (_) => {
-  };
-  function assertIs2(_arg) {
-  }
-  util2.assertIs = assertIs2;
-  function assertNever2(_x) {
-    throw new Error();
-  }
-  util2.assertNever = assertNever2;
-  util2.arrayToEnum = (items) => {
-    const obj = {};
-    for (const item of items) {
-      obj[item] = item;
-    }
-    return obj;
-  };
-  util2.getValidEnumValues = (obj) => {
-    const validKeys = util2.objectKeys(obj).filter((k) => typeof obj[obj[k]] !== "number");
-    const filtered = {};
-    for (const k of validKeys) {
-      filtered[k] = obj[k];
-    }
-    return util2.objectValues(filtered);
-  };
-  util2.objectValues = (obj) => {
-    return util2.objectKeys(obj).map(function(e) {
-      return obj[e];
-    });
-  };
-  util2.objectKeys = typeof Object.keys === "function" ? (obj) => Object.keys(obj) : (object4) => {
-    const keys = [];
-    for (const key in object4) {
-      if (Object.prototype.hasOwnProperty.call(object4, key)) {
-        keys.push(key);
-      }
-    }
-    return keys;
-  };
-  util2.find = (arr, checker) => {
-    for (const item of arr) {
-      if (checker(item))
-        return item;
-    }
-    return void 0;
-  };
-  util2.isInteger = typeof Number.isInteger === "function" ? (val) => Number.isInteger(val) : (val) => typeof val === "number" && Number.isFinite(val) && Math.floor(val) === val;
-  function joinValues2(array2, separator = " | ") {
-    return array2.map((val) => typeof val === "string" ? `'${val}'` : val).join(separator);
-  }
-  util2.joinValues = joinValues2;
-  util2.jsonStringifyReplacer = (_, value) => {
-    if (typeof value === "bigint") {
-      return value.toString();
-    }
-    return value;
-  };
-})(util || (util = {}));
-var objectUtil;
-(function(objectUtil2) {
-  objectUtil2.mergeShapes = (first, second) => {
-    return {
-      ...first,
-      ...second
-      // second overwrites first
-    };
-  };
-})(objectUtil || (objectUtil = {}));
-var ZodParsedType = util.arrayToEnum([
-  "string",
-  "nan",
-  "number",
-  "integer",
-  "float",
-  "boolean",
-  "date",
-  "bigint",
-  "symbol",
-  "function",
-  "undefined",
-  "null",
-  "array",
-  "object",
-  "unknown",
-  "promise",
-  "void",
-  "never",
-  "map",
-  "set"
-]);
-var getParsedType = (data) => {
-  const t2 = typeof data;
-  switch (t2) {
-    case "undefined":
-      return ZodParsedType.undefined;
-    case "string":
-      return ZodParsedType.string;
-    case "number":
-      return Number.isNaN(data) ? ZodParsedType.nan : ZodParsedType.number;
-    case "boolean":
-      return ZodParsedType.boolean;
-    case "function":
-      return ZodParsedType.function;
-    case "bigint":
-      return ZodParsedType.bigint;
-    case "symbol":
-      return ZodParsedType.symbol;
-    case "object":
-      if (Array.isArray(data)) {
-        return ZodParsedType.array;
-      }
-      if (data === null) {
-        return ZodParsedType.null;
-      }
-      if (data.then && typeof data.then === "function" && data.catch && typeof data.catch === "function") {
-        return ZodParsedType.promise;
-      }
-      if (typeof Map !== "undefined" && data instanceof Map) {
-        return ZodParsedType.map;
-      }
-      if (typeof Set !== "undefined" && data instanceof Set) {
-        return ZodParsedType.set;
-      }
-      if (typeof Date !== "undefined" && data instanceof Date) {
-        return ZodParsedType.date;
-      }
-      return ZodParsedType.object;
-    default:
-      return ZodParsedType.unknown;
-  }
+// src/core/constants.ts
+import { homedir } from "node:os";
+import { join } from "node:path";
+var APP_NAME = "agent-bridge";
+var APP_VERSION = "0.28.1";
+var PROTOCOL_VERSION = 2;
+var ENV = {
+  home: "AGENT_BRIDGE_HOME",
+  pipe: "AGENT_BRIDGE_PIPE",
+  name: "AGENT_BRIDGE_NAME",
+  agent: "AGENT_BRIDGE_AGENT",
+  logLevel: "AGENT_BRIDGE_LOG_LEVEL",
+  logConsole: "AGENT_BRIDGE_LOG_CONSOLE",
+  autoWake: "AGENT_BRIDGE_AUTO_WAKE",
+  wakeOnDirect: "AGENT_BRIDGE_WAKE_ON_DIRECT",
+  maxHops: "AGENT_BRIDGE_MAX_HOPS",
+  maxJobs: "AGENT_BRIDGE_MAX_JOBS",
+  autoApproveTools: "AGENT_BRIDGE_AUTO_APPROVE_TOOLS",
+  lingerSec: "AGENT_BRIDGE_LINGER_SEC",
+  delivery: "AGENT_BRIDGE_DELIVERY",
+  claudeBin: "AGENT_BRIDGE_CLAUDE_BIN",
+  codexBin: "AGENT_BRIDGE_CODEX_BIN",
+  opencodeBin: "AGENT_BRIDGE_OPENCODE_BIN",
+  dashboard: "AGENT_BRIDGE_DASHBOARD",
+  /** "0": background subagents run inside the session's MCP server instead of detached job runners (they then end with it). */
+  jobRunner: "AGENT_BRIDGE_JOB_RUNNER"
 };
+var DEFAULT_HOME = join(homedir(), `.${APP_NAME}`);
+var CONFIG_FILE_NAME = "config.json";
+var DB_FILE_NAME = "bridge.db";
+var LOG_DIR_NAME = "logs";
+var LOG_FILE_NAME = `${APP_NAME}.log`;
+var WINDOWS_PIPE_PREFIX = "\\\\.\\pipe\\";
+var SOCKET_FILE_NAME = "bridge.sock";
+var ELECTION_RETRY_MIN_MS = 100;
+var ELECTION_RETRY_MAX_MS = 600;
+var ELECTION_MAX_ATTEMPTS = 20;
+var RECONNECT_BACKOFF_MIN_MS = 1e3;
+var RECONNECT_BACKOFF_MAX_MS = 3e4;
+var CONNECT_TIMEOUT_MS = 2e3;
+var REQUEST_TIMEOUT_MS = 1e4;
+var MAX_FRAME_BYTES = 4 * 1024 * 1024;
+var MAX_BODY_CHARS = 2e5;
+var MESSAGE_TTL_MS = 7 * 24 * 60 * 60 * 1e3;
+var PURGE_INTERVAL_MS = 60 * 60 * 1e3;
+var QUEUED_MAIL_MAX_AGE_MS = 24 * 60 * 60 * 1e3;
+var DEFAULT_MAX_HOPS = 6;
+var DEFAULT_DELEGATE_TIMEOUT_SEC = 3600;
+var MAX_JOB_TIMEOUT_SEC = 24 * 60 * 60;
+var JOBS_FILE = "jobs.json";
+var DEFAULT_CLAUDE_BIN = "claude";
+var DEFAULT_CODEX_BIN = "codex";
+var DEFAULT_OPENCODE_BIN = "opencode";
+var DEFAULT_DASHBOARD_PORT = 4777;
+var DEFAULT_LINGER_SEC = 300;
+var STOP_WAIT_CAP_MS = 29e4;
+var DEFAULT_MAX_JOBS = 8;
+var MAX_JOBS_LIMIT = 50;
+var DEFAULT_WAIT_SEC = 110;
+var MAX_WAIT_SEC = 1800;
+var HOOK_MAX_MESSAGES = 10;
 
-// node_modules/zod/v3/ZodError.js
-var ZodIssueCode = util.arrayToEnum([
-  "invalid_type",
-  "invalid_literal",
-  "custom",
-  "invalid_union",
-  "invalid_union_discriminator",
-  "invalid_enum_value",
-  "unrecognized_keys",
-  "invalid_arguments",
-  "invalid_return_type",
-  "invalid_date",
-  "invalid_string",
-  "too_small",
-  "too_big",
-  "invalid_intersection_types",
-  "not_multiple_of",
-  "not_finite"
-]);
-var ZodError = class _ZodError extends Error {
-  get errors() {
-    return this.issues;
-  }
-  constructor(issues) {
-    super();
-    this.issues = [];
-    this.addIssue = (sub) => {
-      this.issues = [...this.issues, sub];
-    };
-    this.addIssues = (subs = []) => {
-      this.issues = [...this.issues, ...subs];
-    };
-    const actualProto = new.target.prototype;
-    if (Object.setPrototypeOf) {
-      Object.setPrototypeOf(this, actualProto);
-    } else {
-      this.__proto__ = actualProto;
-    }
-    this.name = "ZodError";
-    this.issues = issues;
-  }
-  format(_mapper) {
-    const mapper = _mapper || function(issue2) {
-      return issue2.message;
-    };
-    const fieldErrors = { _errors: [] };
-    const processError = (error62) => {
-      for (const issue2 of error62.issues) {
-        if (issue2.code === "invalid_union") {
-          issue2.unionErrors.map(processError);
-        } else if (issue2.code === "invalid_return_type") {
-          processError(issue2.returnTypeError);
-        } else if (issue2.code === "invalid_arguments") {
-          processError(issue2.argumentsError);
-        } else if (issue2.path.length === 0) {
-          fieldErrors._errors.push(mapper(issue2));
-        } else {
-          let curr = fieldErrors;
-          let i = 0;
-          while (i < issue2.path.length) {
-            const el = issue2.path[i];
-            const terminal = i === issue2.path.length - 1;
-            if (el === "_errors") {
-              if (terminal)
-                curr._errors.push(mapper(issue2));
-              i++;
-              continue;
-            }
-            if (!Object.prototype.hasOwnProperty.call(curr, el)) {
-              if (el === "__proto__") {
-                Object.defineProperty(curr, el, {
-                  value: { _errors: [] },
-                  writable: true,
-                  enumerable: true,
-                  configurable: true
-                });
-              } else {
-                curr[el] = { _errors: [] };
-              }
-            }
-            curr = curr[el];
-            if (terminal) {
-              curr._errors.push(mapper(issue2));
-            }
-            i++;
-          }
-        }
-      }
-    };
-    processError(this);
-    return fieldErrors;
-  }
-  static assert(value) {
-    if (!(value instanceof _ZodError)) {
-      throw new Error(`Not a ZodError: ${value}`);
-    }
-  }
-  toString() {
-    return this.message;
-  }
-  get message() {
-    return JSON.stringify(this.issues, util.jsonStringifyReplacer, 2);
-  }
-  get isEmpty() {
-    return this.issues.length === 0;
-  }
-  flatten(mapper = (issue2) => issue2.message) {
-    const fieldErrors = /* @__PURE__ */ Object.create(null);
-    const formErrors = [];
-    for (const sub of this.issues) {
-      if (sub.path.length > 0) {
-        const firstEl = sub.path[0];
-        fieldErrors[firstEl] = fieldErrors[firstEl] || [];
-        fieldErrors[firstEl].push(mapper(sub));
-      } else {
-        formErrors.push(mapper(sub));
-      }
-    }
-    return { formErrors, fieldErrors };
-  }
-  get formErrors() {
-    return this.flatten();
-  }
-};
-ZodError.create = (issues) => {
-  const error62 = new ZodError(issues);
-  return error62;
-};
-
-// node_modules/zod/v3/locales/en.js
-var errorMap = (issue2, _ctx) => {
-  let message;
-  switch (issue2.code) {
-    case ZodIssueCode.invalid_type:
-      if (issue2.received === ZodParsedType.undefined) {
-        message = "Required";
-      } else {
-        message = `Expected ${issue2.expected}, received ${issue2.received}`;
-      }
-      break;
-    case ZodIssueCode.invalid_literal:
-      message = `Invalid literal value, expected ${JSON.stringify(issue2.expected, util.jsonStringifyReplacer)}`;
-      break;
-    case ZodIssueCode.unrecognized_keys:
-      message = `Unrecognized key(s) in object: ${util.joinValues(issue2.keys, ", ")}`;
-      break;
-    case ZodIssueCode.invalid_union:
-      message = `Invalid input`;
-      break;
-    case ZodIssueCode.invalid_union_discriminator:
-      message = `Invalid discriminator value. Expected ${util.joinValues(issue2.options)}`;
-      break;
-    case ZodIssueCode.invalid_enum_value:
-      message = `Invalid enum value. Expected ${util.joinValues(issue2.options)}, received '${issue2.received}'`;
-      break;
-    case ZodIssueCode.invalid_arguments:
-      message = `Invalid function arguments`;
-      break;
-    case ZodIssueCode.invalid_return_type:
-      message = `Invalid function return type`;
-      break;
-    case ZodIssueCode.invalid_date:
-      message = `Invalid date`;
-      break;
-    case ZodIssueCode.invalid_string:
-      if (typeof issue2.validation === "object") {
-        if ("includes" in issue2.validation) {
-          message = `Invalid input: must include "${issue2.validation.includes}"`;
-          if (typeof issue2.validation.position === "number") {
-            message = `${message} at one or more positions greater than or equal to ${issue2.validation.position}`;
-          }
-        } else if ("startsWith" in issue2.validation) {
-          message = `Invalid input: must start with "${issue2.validation.startsWith}"`;
-        } else if ("endsWith" in issue2.validation) {
-          message = `Invalid input: must end with "${issue2.validation.endsWith}"`;
-        } else {
-          util.assertNever(issue2.validation);
-        }
-      } else if (issue2.validation !== "regex") {
-        message = `Invalid ${issue2.validation}`;
-      } else {
-        message = "Invalid";
-      }
-      break;
-    case ZodIssueCode.too_small:
-      if (issue2.type === "array")
-        message = `Array must contain ${issue2.exact ? "exactly" : issue2.inclusive ? `at least` : `more than`} ${issue2.minimum} element(s)`;
-      else if (issue2.type === "string")
-        message = `String must contain ${issue2.exact ? "exactly" : issue2.inclusive ? `at least` : `over`} ${issue2.minimum} character(s)`;
-      else if (issue2.type === "number")
-        message = `Number must be ${issue2.exact ? `exactly equal to ` : issue2.inclusive ? `greater than or equal to ` : `greater than `}${issue2.minimum}`;
-      else if (issue2.type === "bigint")
-        message = `Number must be ${issue2.exact ? `exactly equal to ` : issue2.inclusive ? `greater than or equal to ` : `greater than `}${issue2.minimum}`;
-      else if (issue2.type === "date")
-        message = `Date must be ${issue2.exact ? `exactly equal to ` : issue2.inclusive ? `greater than or equal to ` : `greater than `}${new Date(Number(issue2.minimum))}`;
-      else
-        message = "Invalid input";
-      break;
-    case ZodIssueCode.too_big:
-      if (issue2.type === "array")
-        message = `Array must contain ${issue2.exact ? `exactly` : issue2.inclusive ? `at most` : `less than`} ${issue2.maximum} element(s)`;
-      else if (issue2.type === "string")
-        message = `String must contain ${issue2.exact ? `exactly` : issue2.inclusive ? `at most` : `under`} ${issue2.maximum} character(s)`;
-      else if (issue2.type === "number")
-        message = `Number must be ${issue2.exact ? `exactly` : issue2.inclusive ? `less than or equal to` : `less than`} ${issue2.maximum}`;
-      else if (issue2.type === "bigint")
-        message = `BigInt must be ${issue2.exact ? `exactly` : issue2.inclusive ? `less than or equal to` : `less than`} ${issue2.maximum}`;
-      else if (issue2.type === "date")
-        message = `Date must be ${issue2.exact ? `exactly` : issue2.inclusive ? `smaller than or equal to` : `smaller than`} ${new Date(Number(issue2.maximum))}`;
-      else
-        message = "Invalid input";
-      break;
-    case ZodIssueCode.custom:
-      message = `Invalid input`;
-      break;
-    case ZodIssueCode.invalid_intersection_types:
-      message = `Intersection results could not be merged`;
-      break;
-    case ZodIssueCode.not_multiple_of:
-      message = `Number must be a multiple of ${issue2.multipleOf}`;
-      break;
-    case ZodIssueCode.not_finite:
-      message = "Number must be finite";
-      break;
-    default:
-      message = _ctx.defaultError;
-      util.assertNever(issue2);
-  }
-  return { message };
-};
-var en_default = errorMap;
-
-// node_modules/zod/v3/errors.js
-var overrideErrorMap = en_default;
-function getErrorMap() {
-  return overrideErrorMap;
+// src/core/json-store.ts
+import { randomUUID } from "node:crypto";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { basename, dirname, join as join2 } from "node:path";
+var JSON_STORE_VERSION = 2;
+var KEEP_STORE_BACKUPS = 3;
+var RENAME_ATTEMPTS = 50;
+var RENAME_RETRY_MS = 20;
+function warn(log, message, data) {
+  if (log) log.warn(message, data);
+  else process.stderr.write(`${message}: ${JSON.stringify(data)}
+`);
 }
-
-// node_modules/zod/v3/helpers/parseUtil.js
-var makeIssue = (params) => {
-  const { data, path, errorMaps, issueData } = params;
-  const fullPath = [...path, ...issueData.path || []];
-  const fullIssue = {
-    ...issueData,
-    path: fullPath
-  };
-  if (issueData.message !== void 0) {
-    return {
-      ...issueData,
-      path: fullPath,
-      message: issueData.message
-    };
-  }
-  let errorMessage = "";
-  const maps = errorMaps.filter((m) => !!m).slice().reverse();
-  for (const map2 of maps) {
-    errorMessage = map2(fullIssue, { data, defaultError: errorMessage }).message;
-  }
-  return {
-    ...issueData,
-    path: fullPath,
-    message: errorMessage
-  };
-};
-function addIssueToContext(ctx, issueData) {
-  const overrideMap = getErrorMap();
-  const issue2 = makeIssue({
-    issueData,
-    data: ctx.data,
-    path: ctx.path,
-    errorMaps: [
-      ctx.common.contextualErrorMap,
-      // contextual error map is first priority
-      ctx.schemaErrorMap,
-      // then schema-bound map if available
-      overrideMap,
-      // then global override map
-      overrideMap === en_default ? void 0 : en_default
-      // then global default map
-    ].filter((x) => !!x)
-  });
-  ctx.common.issues.push(issue2);
+function isRecord(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
 }
-var ParseStatus = class _ParseStatus {
-  constructor() {
-    this.value = "valid";
-  }
-  dirty() {
-    if (this.value === "valid")
-      this.value = "dirty";
-  }
-  abort() {
-    if (this.value !== "aborted")
-      this.value = "aborted";
-  }
-  static mergeArray(status, results) {
-    const arrayValue = [];
-    for (const s of results) {
-      if (s.status === "aborted")
-        return INVALID;
-      if (s.status === "dirty")
-        status.dirty();
-      arrayValue.push(s.value);
-    }
-    return { status: status.value, value: arrayValue };
-  }
-  static async mergeObjectAsync(status, pairs) {
-    const syncPairs = [];
-    for (const pair of pairs) {
-      const key = await pair.key;
-      const value = await pair.value;
-      syncPairs.push({
-        key,
-        value
-      });
-    }
-    return _ParseStatus.mergeObjectSync(status, syncPairs);
-  }
-  static mergeObjectSync(status, pairs) {
-    const finalObject = {};
-    for (const pair of pairs) {
-      const { key, value } = pair;
-      if (key.status === "aborted")
-        return INVALID;
-      if (value.status === "aborted")
-        return INVALID;
-      if (key.status === "dirty")
-        status.dirty();
-      if (value.status === "dirty")
-        status.dirty();
-      if (key.value !== "__proto__" && (typeof value.value !== "undefined" || pair.alwaysSet)) {
-        finalObject[key.value] = value.value;
-      }
-    }
-    return { status: status.value, value: finalObject };
-  }
-};
-var INVALID = Object.freeze({
-  status: "aborted"
-});
-var DIRTY = (value) => ({ status: "dirty", value });
-var OK = (value) => ({ status: "valid", value });
-var isAborted = (x) => x.status === "aborted";
-var isDirty = (x) => x.status === "dirty";
-var isValid = (x) => x.status === "valid";
-var isAsync = (x) => typeof Promise !== "undefined" && x instanceof Promise;
-
-// node_modules/zod/v3/helpers/errorUtil.js
-var errorUtil;
-(function(errorUtil2) {
-  errorUtil2.errToObj = (message) => typeof message === "string" ? { message } : message || {};
-  errorUtil2.toString = (message) => typeof message === "string" ? message : message?.message;
-})(errorUtil || (errorUtil = {}));
-
-// node_modules/zod/v3/types.js
-var ParseInputLazyPath = class {
-  constructor(parent2, value, path, key) {
-    this._cachedPath = [];
-    this.parent = parent2;
-    this.data = value;
-    this._path = path;
-    this._key = key;
-  }
-  get path() {
-    if (!this._cachedPath.length) {
-      if (Array.isArray(this._key)) {
-        this._cachedPath.push(...this._path, ...this._key);
-      } else {
-        this._cachedPath.push(...this._path, this._key);
-      }
-    }
-    return this._cachedPath;
-  }
-};
-var handleResult = (ctx, result) => {
-  if (isValid(result)) {
-    return { success: true, data: result.value };
-  } else {
-    if (!ctx.common.issues.length) {
-      throw new Error("Validation failed but no issues detected.");
-    }
-    return {
-      success: false,
-      get error() {
-        if (this._error)
-          return this._error;
-        const error62 = new ZodError(ctx.common.issues);
-        this._error = error62;
-        return this._error;
-      }
-    };
-  }
-};
-function processCreateParams(params) {
-  if (!params)
-    return {};
-  const { errorMap: errorMap2, invalid_type_error, required_error, description } = params;
-  if (errorMap2 && (invalid_type_error || required_error)) {
-    throw new Error(`Can't use "invalid_type_error" or "required_error" in conjunction with custom error map.`);
-  }
-  if (errorMap2)
-    return { errorMap: errorMap2, description };
-  const customMap = (iss, ctx) => {
-    const { message } = params;
-    if (iss.code === "invalid_enum_value") {
-      return { message: message ?? ctx.defaultError };
-    }
-    if (typeof ctx.data === "undefined") {
-      return { message: message ?? required_error ?? ctx.defaultError };
-    }
-    if (iss.code !== "invalid_type")
-      return { message: ctx.defaultError };
-    return { message: message ?? invalid_type_error ?? ctx.defaultError };
-  };
-  return { errorMap: customMap, description };
+function archiveFile(path) {
+  if (!existsSync(path)) return null;
+  const dir = join2(dirname(path), "archive");
+  mkdirSync(dir, { recursive: true, mode: 448 });
+  const target = join2(dir, `${basename(path)}-${Date.now()}-${randomUUID()}`);
+  renameSync(path, target);
+  return target;
 }
-var ZodType = class {
-  get description() {
-    return this._def.description;
-  }
-  _getType(input2) {
-    return getParsedType(input2.data);
-  }
-  _getOrReturnCtx(input2, ctx) {
-    return ctx || {
-      common: input2.parent.common,
-      data: input2.data,
-      parsedType: getParsedType(input2.data),
-      schemaErrorMap: this._def.errorMap,
-      path: input2.path,
-      parent: input2.parent
-    };
-  }
-  _processInputParams(input2) {
-    return {
-      status: new ParseStatus(),
-      ctx: {
-        common: input2.parent.common,
-        data: input2.data,
-        parsedType: getParsedType(input2.data),
-        schemaErrorMap: this._def.errorMap,
-        path: input2.path,
-        parent: input2.parent
-      }
-    };
-  }
-  _parseSync(input2) {
-    const result = this._parse(input2);
-    if (isAsync(result)) {
-      throw new Error("Synchronous parse encountered promise.");
-    }
-    return result;
-  }
-  _parseAsync(input2) {
-    const result = this._parse(input2);
-    return Promise.resolve(result);
-  }
-  parse(data, params) {
-    const result = this.safeParse(data, params);
-    if (result.success)
-      return result.data;
-    throw result.error;
-  }
-  safeParse(data, params) {
-    const ctx = {
-      common: {
-        issues: [],
-        async: params?.async ?? false,
-        contextualErrorMap: params?.errorMap
-      },
-      path: params?.path || [],
-      schemaErrorMap: this._def.errorMap,
-      parent: null,
-      data,
-      parsedType: getParsedType(data)
-    };
-    const result = this._parseSync({ data, path: ctx.path, parent: ctx });
-    return handleResult(ctx, result);
-  }
-  "~validate"(data) {
-    const ctx = {
-      common: {
-        issues: [],
-        async: !!this["~standard"].async
-      },
-      path: [],
-      schemaErrorMap: this._def.errorMap,
-      parent: null,
-      data,
-      parsedType: getParsedType(data)
-    };
-    if (!this["~standard"].async) {
-      try {
-        const result = this._parseSync({ data, path: [], parent: ctx });
-        return isValid(result) ? {
-          value: result.value
-        } : {
-          issues: ctx.common.issues
-        };
-      } catch (err) {
-        if (err?.message?.toLowerCase()?.includes("encountered")) {
-          this["~standard"].async = true;
-        }
-        ctx.common = {
-          issues: [],
-          async: true
-        };
-      }
-    }
-    return this._parseAsync({ data, path: [], parent: ctx }).then((result) => isValid(result) ? {
-      value: result.value
-    } : {
-      issues: ctx.common.issues
-    });
-  }
-  async parseAsync(data, params) {
-    const result = await this.safeParseAsync(data, params);
-    if (result.success)
-      return result.data;
-    throw result.error;
-  }
-  async safeParseAsync(data, params) {
-    const ctx = {
-      common: {
-        issues: [],
-        contextualErrorMap: params?.errorMap,
-        async: true
-      },
-      path: params?.path || [],
-      schemaErrorMap: this._def.errorMap,
-      parent: null,
-      data,
-      parsedType: getParsedType(data)
-    };
-    const maybeAsyncResult = this._parse({ data, path: ctx.path, parent: ctx });
-    const result = await (isAsync(maybeAsyncResult) ? maybeAsyncResult : Promise.resolve(maybeAsyncResult));
-    return handleResult(ctx, result);
-  }
-  refine(check2, message) {
-    const getIssueProperties = (val) => {
-      if (typeof message === "string" || typeof message === "undefined") {
-        return { message };
-      } else if (typeof message === "function") {
-        return message(val);
-      } else {
-        return message;
-      }
-    };
-    return this._refinement((val, ctx) => {
-      const result = check2(val);
-      const setError = () => ctx.addIssue({
-        code: ZodIssueCode.custom,
-        ...getIssueProperties(val)
-      });
-      if (typeof Promise !== "undefined" && result instanceof Promise) {
-        return result.then((data) => {
-          if (!data) {
-            setError();
-            return false;
-          } else {
-            return true;
-          }
-        });
-      }
-      if (!result) {
-        setError();
-        return false;
-      } else {
-        return true;
-      }
-    });
-  }
-  refinement(check2, refinementData) {
-    return this._refinement((val, ctx) => {
-      if (!check2(val)) {
-        ctx.addIssue(typeof refinementData === "function" ? refinementData(val, ctx) : refinementData);
-        return false;
-      } else {
-        return true;
-      }
-    });
-  }
-  _refinement(refinement) {
-    return new ZodEffects({
-      schema: this,
-      typeName: ZodFirstPartyTypeKind.ZodEffects,
-      effect: { type: "refinement", refinement }
-    });
-  }
-  superRefine(refinement) {
-    return this._refinement(refinement);
-  }
-  constructor(def) {
-    this.spa = this.safeParseAsync;
-    this._def = def;
-    this.parse = this.parse.bind(this);
-    this.safeParse = this.safeParse.bind(this);
-    this.parseAsync = this.parseAsync.bind(this);
-    this.safeParseAsync = this.safeParseAsync.bind(this);
-    this.spa = this.spa.bind(this);
-    this.refine = this.refine.bind(this);
-    this.refinement = this.refinement.bind(this);
-    this.superRefine = this.superRefine.bind(this);
-    this.optional = this.optional.bind(this);
-    this.nullable = this.nullable.bind(this);
-    this.nullish = this.nullish.bind(this);
-    this.array = this.array.bind(this);
-    this.promise = this.promise.bind(this);
-    this.or = this.or.bind(this);
-    this.and = this.and.bind(this);
-    this.transform = this.transform.bind(this);
-    this.brand = this.brand.bind(this);
-    this.default = this.default.bind(this);
-    this.catch = this.catch.bind(this);
-    this.describe = this.describe.bind(this);
-    this.pipe = this.pipe.bind(this);
-    this.readonly = this.readonly.bind(this);
-    this.isNullable = this.isNullable.bind(this);
-    this.isOptional = this.isOptional.bind(this);
-    this["~standard"] = {
-      version: 1,
-      vendor: "zod",
-      validate: (data) => this["~validate"](data)
-    };
-  }
-  optional() {
-    return ZodOptional.create(this, this._def);
-  }
-  nullable() {
-    return ZodNullable.create(this, this._def);
-  }
-  nullish() {
-    return this.nullable().optional();
-  }
-  array() {
-    return ZodArray.create(this);
-  }
-  promise() {
-    return ZodPromise.create(this, this._def);
-  }
-  or(option) {
-    return ZodUnion.create([this, option], this._def);
-  }
-  and(incoming) {
-    return ZodIntersection.create(this, incoming, this._def);
-  }
-  transform(transform2) {
-    return new ZodEffects({
-      ...processCreateParams(this._def),
-      schema: this,
-      typeName: ZodFirstPartyTypeKind.ZodEffects,
-      effect: { type: "transform", transform: transform2 }
-    });
-  }
-  default(def) {
-    const defaultValueFunc = typeof def === "function" ? def : () => def;
-    return new ZodDefault({
-      ...processCreateParams(this._def),
-      innerType: this,
-      defaultValue: defaultValueFunc,
-      typeName: ZodFirstPartyTypeKind.ZodDefault
-    });
-  }
-  brand() {
-    return new ZodBranded({
-      typeName: ZodFirstPartyTypeKind.ZodBranded,
-      type: this,
-      ...processCreateParams(this._def)
-    });
-  }
-  catch(def) {
-    const catchValueFunc = typeof def === "function" ? def : () => def;
-    return new ZodCatch({
-      ...processCreateParams(this._def),
-      innerType: this,
-      catchValue: catchValueFunc,
-      typeName: ZodFirstPartyTypeKind.ZodCatch
-    });
-  }
-  describe(description) {
-    const This = this.constructor;
-    return new This({
-      ...this._def,
-      description
-    });
-  }
-  pipe(target) {
-    return ZodPipeline.create(this, target);
-  }
-  readonly() {
-    return ZodReadonly.create(this);
-  }
-  isOptional() {
-    return this.safeParse(void 0).success;
-  }
-  isNullable() {
-    return this.safeParse(null).success;
-  }
-};
-var cuidRegex = /^c[^\s-]{8,}$/i;
-var cuid2Regex = /^[0-9a-z]+$/;
-var ulidRegex = /^[0-9A-HJKMNP-TV-Z]{26}$/i;
-var uuidRegex = /^[0-9a-fA-F]{8}\b-[0-9a-fA-F]{4}\b-[0-9a-fA-F]{4}\b-[0-9a-fA-F]{4}\b-[0-9a-fA-F]{12}$/i;
-var nanoidRegex = /^[a-z0-9_-]{21}$/i;
-var jwtRegex = /^[A-Za-z0-9-_]+\.[A-Za-z0-9-_]+\.[A-Za-z0-9-_]*$/;
-var durationRegex = /^[-+]?P(?!$)(?:(?:[-+]?\d+Y)|(?:[-+]?\d+[.,]\d+Y$))?(?:(?:[-+]?\d+M)|(?:[-+]?\d+[.,]\d+M$))?(?:(?:[-+]?\d+W)|(?:[-+]?\d+[.,]\d+W$))?(?:(?:[-+]?\d+D)|(?:[-+]?\d+[.,]\d+D$))?(?:T(?=[\d+-])(?:(?:[-+]?\d+H)|(?:[-+]?\d+[.,]\d+H$))?(?:(?:[-+]?\d+M)|(?:[-+]?\d+[.,]\d+M$))?(?:[-+]?\d+(?:[.,]\d+)?S)?)??$/;
-var emailRegex = /^(?!\.)(?!.*\.\.)([A-Z0-9_'+\-\.]*)[A-Z0-9_+-]@([A-Z0-9][A-Z0-9\-]*\.)+[A-Z]{2,}$/i;
-var _emojiRegex = `^[\\p{Extended_Pictographic}\\p{Emoji_Component}]+$`;
-var emojiRegex;
-var ipv4Regex = /^(?:(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\.){3}(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])$/;
-var ipv4CidrRegex = /^(?:(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\.){3}(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\/(3[0-2]|[12]?[0-9])$/;
-var ipv6Regex = /^(([0-9a-fA-F]{1,4}:){7,7}[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,7}:|([0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,5}(:[0-9a-fA-F]{1,4}){1,2}|([0-9a-fA-F]{1,4}:){1,4}(:[0-9a-fA-F]{1,4}){1,3}|([0-9a-fA-F]{1,4}:){1,3}(:[0-9a-fA-F]{1,4}){1,4}|([0-9a-fA-F]{1,4}:){1,2}(:[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:((:[0-9a-fA-F]{1,4}){1,6})|:((:[0-9a-fA-F]{1,4}){1,7}|:)|fe80:(:[0-9a-fA-F]{0,4}){0,4}%[0-9a-zA-Z]{1,}|::(ffff(:0{1,4}){0,1}:){0,1}((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])|([0-9a-fA-F]{1,4}:){1,4}:((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9]))$/;
-var ipv6CidrRegex = /^(([0-9a-fA-F]{1,4}:){7,7}[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,7}:|([0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,5}(:[0-9a-fA-F]{1,4}){1,2}|([0-9a-fA-F]{1,4}:){1,4}(:[0-9a-fA-F]{1,4}){1,3}|([0-9a-fA-F]{1,4}:){1,3}(:[0-9a-fA-F]{1,4}){1,4}|([0-9a-fA-F]{1,4}:){1,2}(:[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:((:[0-9a-fA-F]{1,4}){1,6})|:((:[0-9a-fA-F]{1,4}){1,7}|:)|fe80:(:[0-9a-fA-F]{0,4}){0,4}%[0-9a-zA-Z]{1,}|::(ffff(:0{1,4}){0,1}:){0,1}((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])|([0-9a-fA-F]{1,4}:){1,4}:((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9]))\/(12[0-8]|1[01][0-9]|[1-9]?[0-9])$/;
-var base64Regex = /^([0-9a-zA-Z+/]{4})*(([0-9a-zA-Z+/]{2}==)|([0-9a-zA-Z+/]{3}=))?$/;
-var base64urlRegex = /^([0-9a-zA-Z-_]{4})*(([0-9a-zA-Z-_]{2}(==)?)|([0-9a-zA-Z-_]{3}(=)?))?$/;
-var dateRegexSource = `((\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-((0[13578]|1[02])-(0[1-9]|[12]\\d|3[01])|(0[469]|11)-(0[1-9]|[12]\\d|30)|(02)-(0[1-9]|1\\d|2[0-8])))`;
-var dateRegex = new RegExp(`^${dateRegexSource}$`);
-function timeRegexSource(args) {
-  let secondsRegexSource = `[0-5]\\d`;
-  if (args.precision) {
-    secondsRegexSource = `${secondsRegexSource}\\.\\d{${args.precision}}`;
-  } else if (args.precision == null) {
-    secondsRegexSource = `${secondsRegexSource}(\\.\\d+)?`;
-  }
-  const secondsQuantifier = args.precision ? "+" : "?";
-  return `([01]\\d|2[0-3]):[0-5]\\d(:${secondsRegexSource})${secondsQuantifier}`;
+function backupPath(path) {
+  return `${path}.backup-${Date.now()}-${randomUUID()}`;
 }
-function timeRegex(args) {
-  return new RegExp(`^${timeRegexSource(args)}$`);
+function retainBackups(path) {
+  const prefix = `${basename(path)}.backup-`;
+  const files = readdirSync(dirname(path)).filter((f) => f.startsWith(prefix)).sort().reverse();
+  for (const file2 of files.slice(KEEP_STORE_BACKUPS)) archiveFile(join2(dirname(path), file2));
 }
-function datetimeRegex(args) {
-  let regex = `${dateRegexSource}T${timeRegexSource(args)}`;
-  const opts = [];
-  opts.push(args.local ? `Z?` : `Z`);
-  if (args.offset)
-    opts.push(`([+-]\\d{2}:?\\d{2})`);
-  regex = `${regex}(${opts.join("|")})`;
-  return new RegExp(`^${regex}$`);
-}
-function isValidIP(ip, version2) {
-  if ((version2 === "v4" || !version2) && ipv4Regex.test(ip)) {
-    return true;
-  }
-  if ((version2 === "v6" || !version2) && ipv6Regex.test(ip)) {
-    return true;
-  }
-  return false;
-}
-function isValidJWT(jwt2, alg) {
-  if (!jwtRegex.test(jwt2))
-    return false;
+function readJsonStore(path, log, valid = isRecord) {
+  let raw;
   try {
-    const [header] = jwt2.split(".");
-    if (!header)
-      return false;
-    const base643 = header.replace(/-/g, "+").replace(/_/g, "/").padEnd(header.length + (4 - header.length % 4) % 4, "=");
-    const decoded = JSON.parse(atob(base643));
-    if (typeof decoded !== "object" || decoded === null)
-      return false;
-    if ("typ" in decoded && decoded?.typ !== "JWT")
-      return false;
-    if (!decoded.alg)
-      return false;
-    if (alg && decoded.alg !== alg)
-      return false;
+    raw = readFileSync(path, "utf8");
+  } catch (err) {
+    if (err.code === "ENOENT") return null;
+    throw err;
+  }
+  try {
+    const value = JSON.parse(raw);
+    if (isRecord(value) && typeof value.version === "number" && value.version > JSON_STORE_VERSION) return value;
+    if (!valid(value)) throw new Error("invalid store structure");
+    return value;
+  } catch (err) {
+    const preserved = `${path}.corrupt-${Date.now()}-${randomUUID()}`;
+    renameSync(path, preserved);
+    warn(log, "preserved corrupt JSON store", { path, preserved, err: err.message });
+    return null;
+  }
+}
+function assertWritableStore(value) {
+  if (!isRecord(value) || value.version === void 0) return;
+  if (!Number.isInteger(value.version) || value.version < 0 || value.version > JSON_STORE_VERSION) {
+    throw new Error(`unsupported JSON store version: ${String(value.version)}`);
+  }
+}
+function mergeStoreFields(previous, next) {
+  const merged = { ...previous, ...next };
+  for (const [key2, value] of Object.entries(next)) {
+    if (isRecord(previous[key2]) && isRecord(value)) merged[key2] = mergeStoreFields(previous[key2], value);
+  }
+  return merged;
+}
+function writeJsonStore(path, value, previous) {
+  assertWritableStore(previous);
+  mkdirSync(dirname(path), { recursive: true, mode: 448 });
+  if (previous !== null && (!isRecord(previous) || previous.version !== JSON_STORE_VERSION) && existsSync(path)) {
+    copyFileSync(path, backupPath(path));
+    retainBackups(path);
+  }
+  const tmp = `${path}.${process.pid}.${randomUUID()}.tmp`;
+  writeFileSync(tmp, `${JSON.stringify({ ...value, version: JSON_STORE_VERSION }, null, 2)}
+`, { mode: 384 });
+  const pause = new Int32Array(new SharedArrayBuffer(4));
+  try {
+    for (let attempt = 1; ; attempt++) {
+      try {
+        renameSync(tmp, path);
+        return;
+      } catch (err) {
+        const code = err.code;
+        if (!["EPERM", "EBUSY", "EACCES"].includes(code ?? "") || attempt >= RENAME_ATTEMPTS) throw err;
+        Atomics.wait(pause, 0, 0, RENAME_RETRY_MS);
+      }
+    }
+  } finally {
+    rmSync(tmp, { force: true });
+  }
+}
+function retentionLimit(key2, fallback) {
+  const raw = process.env[key2];
+  if (raw === void 0 || !/^\d+$/.test(raw)) return fallback;
+  const value = Number(raw);
+  return Number.isSafeInteger(value) ? value : fallback;
+}
+
+// src/core/paths.ts
+import { createHash } from "node:crypto";
+import { join as join3, posix, resolve } from "node:path";
+var PIPE_HASH_LENGTH = 12;
+function resolveHome(env = process.env) {
+  return resolve(env[ENV.home]?.trim() || DEFAULT_HOME);
+}
+function resolvePipePath(home, env = process.env, platform = process.platform) {
+  const override = env[ENV.pipe]?.trim();
+  if (override) return override;
+  if (platform === "win32") {
+    const hash2 = createHash("sha256").update(home.toLowerCase()).digest("hex").slice(0, PIPE_HASH_LENGTH);
+    return `${WINDOWS_PIPE_PREFIX}${APP_NAME}-${hash2}-p${PROTOCOL_VERSION}`;
+  }
+  return posix.join(home, SOCKET_FILE_NAME.replace(/\.sock$/, `-p${PROTOCOL_VERSION}.sock`));
+}
+function resolveDbPath(home) {
+  return join3(home, DB_FILE_NAME);
+}
+
+// src/mcp/jobs.ts
+import { randomUUID as randomUUID4 } from "node:crypto";
+import { closeSync as closeSync2, mkdirSync as mkdirSync5, openSync as openSync2, rmSync as rmSync3, statSync as statSync2 } from "node:fs";
+import { dirname as dirname4 } from "node:path";
+
+// src/core/delegate.ts
+import { spawn } from "node:child_process";
+import { existsSync as existsSync2, readFileSync as readFileSync5, realpathSync as realpathSync2 } from "node:fs";
+import { delimiter, dirname as dirname3, extname, isAbsolute, join as join7, win32 } from "node:path";
+import { fileURLToPath } from "node:url";
+import { setTimeout as delay } from "node:timers/promises";
+
+// src/core/claude-mcp.ts
+import { readFileSync as readFileSync2 } from "node:fs";
+import { homedir as homedir2 } from "node:os";
+import { join as join4, resolve as resolve2 } from "node:path";
+var OWN_SERVER_RULE = "mcp__plugin_agent-bridge_bridge";
+var ACCOUNT_CONNECTORS_RULE = "mcp__claude_ai_*";
+var BUILT_IN_RULES = ["mcp__claude-in-chrome"];
+function readJson(path) {
+  try {
+    return JSON.parse(readFileSync2(path, "utf8"));
+  } catch {
+    return null;
+  }
+}
+function serverNames(mcp) {
+  return mcp && typeof mcp === "object" ? Object.keys(mcp) : [];
+}
+function pluginServers(home) {
+  const installed = readJson(join4(home, ".claude", "plugins", "installed_plugins.json"));
+  const out = [];
+  for (const [key2, entries] of Object.entries(installed?.plugins ?? {})) {
+    const plugin = key2.split("@")[0];
+    for (const e of Array.isArray(entries) ? entries : [entries]) {
+      const root = e?.installPath;
+      if (typeof root !== "string") continue;
+      const manifest = readJson(join4(root, ".claude-plugin", "plugin.json"));
+      const declared = manifest?.mcpServers;
+      const servers = typeof declared === "string" ? readJson(resolve2(root, declared))?.mcpServers ?? readJson(resolve2(root, declared)) : declared;
+      const names = /* @__PURE__ */ new Set([...serverNames(servers), ...serverNames(readJson(join4(root, ".mcp.json"))?.mcpServers)]);
+      for (const s of names) out.push(`mcp__plugin_${plugin}_${s}`);
+    }
+  }
+  return out;
+}
+function claudeMcpDenyRules(cwd, home = homedir2()) {
+  const config2 = readJson(join4(home, ".claude.json"));
+  const norm = (p) => resolve2(p).replace(/\\/g, "/").toLowerCase();
+  const project = Object.entries(config2?.projects ?? {}).find(([p]) => norm(p) === norm(cwd))?.[1];
+  const names = [
+    ...pluginServers(home),
+    ...serverNames(config2?.mcpServers).map((s) => `mcp__${s}`),
+    ...serverNames(project?.mcpServers).map((s) => `mcp__${s}`),
+    ...serverNames(readJson(join4(cwd, ".mcp.json"))?.mcpServers).map((s) => `mcp__${s}`),
+    ACCOUNT_CONNECTORS_RULE,
+    ...BUILT_IN_RULES
+  ];
+  return [...new Set(names)].filter((n) => n !== OWN_SERVER_RULE);
+}
+
+// src/core/parent-link.ts
+import { randomBytes as randomBytes2, randomUUID as randomUUID2 } from "node:crypto";
+import { createServer } from "node:http";
+
+// src/core/token.ts
+import { randomBytes, timingSafeEqual } from "node:crypto";
+import { chmodSync, mkdirSync as mkdirSync2, openSync, readFileSync as readFileSync3, writeSync, closeSync } from "node:fs";
+import { dirname as dirname2, join as join5 } from "node:path";
+var TOKEN_FILE_NAME = "token";
+var TOKEN_BYTES = 32;
+var OWNER_ONLY = 384;
+function tokenPath(home) {
+  return join5(home, TOKEN_FILE_NAME);
+}
+function loadOrCreateToken(home) {
+  const file2 = tokenPath(home);
+  mkdirSync2(dirname2(file2), { recursive: true, mode: 448 });
+  try {
+    const fd = openSync(file2, "wx", OWNER_ONLY);
+    try {
+      writeSync(fd, randomBytes(TOKEN_BYTES).toString("hex"));
+    } finally {
+      closeSync(fd);
+    }
+    try {
+      chmodSync(file2, OWNER_ONLY);
+    } catch {
+    }
+  } catch (err) {
+    if (err.code !== "EEXIST") throw err;
+  }
+  const token = readFileSync3(file2, "utf8").trim();
+  if (!token) throw new Error(`agent-bridge token file is empty: ${file2}`);
+  return token;
+}
+function tokensEqual(a, b) {
+  const x = Buffer.from(a);
+  const y = Buffer.from(b);
+  return x.length === y.length && timingSafeEqual(x, y);
+}
+
+// src/core/parent-link.ts
+var PARENT_URL_ENV = "AGENT_BRIDGE_PARENT_URL";
+var PARENT_TOKEN_ENV = "AGENT_BRIDGE_PARENT_TOKEN";
+var PARENT_NAME_ENV = "AGENT_BRIDGE_PARENT_NAME";
+var HOST = "127.0.0.1";
+var SECRET_BYTES = 24;
+var MAX_REQUEST_BYTES = 256 * 1024;
+var MAX_NOTE_CHARS = 200;
+var CHILD_REQUEST_TIMEOUT_MS = 5e3;
+var ParentLink = class {
+  constructor(parentName, onMessage, log, onProgress = () => {
+  }, siblings) {
+    this.parentName = parentName;
+    this.onMessage = onMessage;
+    this.log = log;
+    this.onProgress = onProgress;
+    this.siblings = siblings;
+  }
+  parentName;
+  onMessage;
+  log;
+  onProgress;
+  siblings;
+  server = null;
+  secret = randomBytes2(SECRET_BYTES).toString("hex");
+  url = "";
+  pending = [];
+  /** Picked up by the subagent but not answered yet (it may have seen them only as it finished). */
+  unanswered = [];
+  async start() {
+    this.server = createServer((req, res) => {
+      void this.handle(req).then(
+        (body) => {
+          res.writeHead(200, { "content-type": "application/json" });
+          res.end(JSON.stringify(body));
+        },
+        (err) => {
+          res.writeHead(400, { "content-type": "application/json" });
+          res.end(JSON.stringify({ error: err.message }));
+        }
+      );
+    });
+    await new Promise((resolve10, reject) => {
+      this.server.once("error", reject);
+      this.server.listen(0, HOST, () => resolve10());
+    });
+    this.url = `http://${HOST}:${this.server.address().port}`;
+  }
+  childEnv() {
+    return { [PARENT_URL_ENV]: this.url, [PARENT_TOKEN_ENV]: this.secret, [PARENT_NAME_ENV]: this.parentName };
+  }
+  /** Queue a message for the subagent; it gets it at its next step. */
+  post(body, sibling) {
+    const m = { id: sibling?.id ?? randomUUID2(), body, ...sibling ? { sibling } : {} };
+    this.pending.push(m);
+    return m;
+  }
+  /**
+   * Stop the link; returns the messages the subagent never picked up or never answered (they become a
+   * follow-up, so a message that arrived as it finished is not lost).
+   */
+  async close() {
+    const left = [...this.unanswered.splice(0), ...this.pending.splice(0)].map((m) => m.body);
+    const s = this.server;
+    this.server = null;
+    if (s) await new Promise((r) => s.close(() => r()));
+    return left;
+  }
+  async handle(req) {
+    const auth = String(req.headers.authorization ?? "").replace(/^Bearer /, "");
+    if (!tokensEqual(auth, this.secret)) throw new Error("unauthorized");
+    if (req.method === "POST" && req.url === "/inbox") {
+      const messages = this.pending.splice(0);
+      this.unanswered.push(...messages);
+      if (messages.length) this.log.info("subagent picked up messages", { count: messages.length });
+      return { messages };
+    }
+    if (req.method === "POST" && req.url === "/progress") {
+      const body = JSON.parse(await readBody(req));
+      const percent = Math.round(Number(body.percent));
+      if (!Number.isFinite(percent) || percent < 0 || percent > 100) throw new Error("percent must be 0-100");
+      this.onProgress(percent, String(body.note ?? "").trim().slice(0, MAX_NOTE_CHARS));
+      return { ok: true };
+    }
+    if (req.method === "POST" && req.url === "/siblings") {
+      return { peers: this.siblings ? await this.siblings.peers() : [] };
+    }
+    if (req.method === "POST" && req.url === "/messaging-policy") {
+      return this.siblings?.policy ? this.siblings.policy() : { maxHops: 0, sendTo: [] };
+    }
+    if (req.method === "POST" && req.url === "/sibling-message") {
+      if (!this.siblings) throw new Error("sibling messaging unavailable");
+      const body = JSON.parse(await readBody(req));
+      if (typeof body.to !== "string" || typeof body.body !== "string" || !body.body.trim()) throw new Error("invalid sibling message");
+      if (body.body.length > MAX_BODY_CHARS) throw new Error("message too large");
+      const replyTo = typeof body.reply_to === "string" ? body.reply_to : void 0;
+      const result = await this.siblings.send(body.to, body.body, replyTo);
+      if (replyTo) this.unanswered = this.unanswered.filter((m) => m.sibling?.conversationId !== result.messages[0]?.conversationId);
+      return result;
+    }
+    if (req.method === "POST" && req.url === "/message") {
+      const body = JSON.parse(await readBody(req));
+      const text2 = String(body.body ?? "").trim();
+      if (!text2) throw new Error("empty message");
+      this.unanswered = this.unanswered.filter((m) => m.sibling);
+      this.onMessage(text2, typeof body.reply_to === "string" ? body.reply_to : null);
+      return { ok: true };
+    }
+    throw new Error("not found");
+  }
+};
+async function readBody(req) {
+  let raw = "";
+  for await (const chunk of req) {
+    raw += chunk;
+    if (raw.length > MAX_REQUEST_BYTES) throw new Error("request too large");
+  }
+  return raw;
+}
+function parentFromEnv(env = process.env) {
+  const url2 = env[PARENT_URL_ENV];
+  const token = env[PARENT_TOKEN_ENV];
+  if (!url2 || !token) return null;
+  const call = async (path, payload) => {
+    const res = await fetch(`${url2}${path}`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(CHILD_REQUEST_TIMEOUT_MS)
+    });
+    const out = await res.json();
+    if (!res.ok) throw new Error(String(out.error ?? `HTTP ${res.status}`));
+    return out;
+  };
+  return {
+    name: env[PARENT_NAME_ENV] || "parent",
+    inbox: async () => (await call("/inbox", {})).messages ?? [],
+    send: async (body, replyTo) => void await call("/message", { body, reply_to: replyTo ?? null }),
+    progress: async (percent, note) => void await call("/progress", { percent, note }),
+    siblings: {
+      peers: async () => (await call("/siblings", {})).peers ?? [],
+      send: async (to, body, replyTo) => await call("/sibling-message", { to, body, reply_to: replyTo }),
+      policy: async () => await call("/messaging-policy", {})
+    }
+  };
+}
+
+// src/core/final-answers.ts
+var FinalAnswers = class {
+  finals = /* @__PURE__ */ new Map();
+  unphased = /* @__PURE__ */ new Map();
+  lastMessage = "";
+  add(item) {
+    if (!item.text.trim()) return;
+    this.lastMessage = item.text;
+    const messages = item.phase === "final_answer" ? this.finals : item.phase ? null : this.unphased;
+    messages?.set(item.id ?? String(messages.size), item.text);
+  }
+  text() {
+    const messages = this.finals.size ? this.finals : this.unphased;
+    return messages.size ? [...messages.values()].join("\n\n") : this.lastMessage;
+  }
+};
+
+// src/core/progress.ts
+var MAX_STATUS_CHARS = 140;
+var MAX_SAY_CHARS = 160;
+function txt(s, max = MAX_STATUS_CHARS) {
+  return { text: clip(s, max), full: s.trim() };
+}
+function clip(s, max = MAX_STATUS_CHARS) {
+  const one = s.replace(/\s+/g, " ").trim();
+  return one.length > max ? `${one.slice(0, max - 1)}\u2026` : one;
+}
+function firstString(o, keys) {
+  for (const k of keys) if (typeof o?.[k] === "string" && o[k]) return o[k];
+  return null;
+}
+var INPUT_KEYS = ["command", "file_path", "filePath", "path", "pattern", "query", "url", "description"];
+var EDIT_TOOLS = /^(edit|write|multiedit|patch|apply_patch|notebookedit)$/i;
+var CMD_TOOLS = /^(bash|shell|powershell)$/i;
+var READ_TOOLS = /^(read|grep|glob|list|ls|find)$/i;
+function kindOfTool(name) {
+  if (EDIT_TOOLS.test(name)) return "edit";
+  if (CMD_TOOLS.test(name)) return "cmd";
+  if (READ_TOOLS.test(name)) return "read";
+  return "tool";
+}
+function say(text2) {
+  return text2.trim() ? { kind: "say", text: `says: ${clip(text2, MAX_SAY_CHARS)}`, full: `says: ${text2.trim()}` } : null;
+}
+function describeCodexEvent(ev) {
+  const item = ev?.item;
+  if (ev?.type === "item.started" && item) {
+    switch (item.type) {
+      case "command_execution":
+        return { kind: "cmd", ...txt(`running: ${item.command ?? ""}`), id: item.id };
+      case "file_change": {
+        const paths = (item.changes ?? []).map((c) => c?.path).filter(Boolean);
+        return { kind: "edit", ...txt(`editing ${paths.join(", ") || "files"}`), id: item.id };
+      }
+      case "mcp_tool_call":
+        return { kind: "tool", ...txt(`tool ${item.server ?? ""}.${item.tool ?? ""}`), id: item.id };
+      case "web_search":
+        return { kind: "tool", ...txt(`searching the web${item.query ? `: ${item.query}` : ""}`), id: item.id };
+    }
+  }
+  if (ev?.type === "item.completed" && item?.type === "reasoning") return { kind: "think", text: "thinking" };
+  if (ev?.type === "item.completed" && item?.type === "agent_message") return say(String(item.text ?? ""));
+  return null;
+}
+function describeClaudeEvent(ev) {
+  if (ev?.type !== "assistant") return null;
+  const blocks = ev.message?.content ?? [];
+  const tool = blocks.find((b) => b?.type === "tool_use");
+  if (tool) {
+    const detail = firstString(tool.input, INPUT_KEYS);
+    return { kind: kindOfTool(String(tool.name)), ...txt(`${tool.name}${detail ? `: ${detail}` : ""}`), id: tool.id };
+  }
+  const text2 = blocks.filter((b) => b?.type === "text").map((b) => b.text).join(" ");
+  if (text2) return say(text2);
+  if (blocks.some((b) => b?.type === "thinking")) return { kind: "think", text: "thinking" };
+  return null;
+}
+function describeOpencodeEvent(ev) {
+  const part = ev?.part ?? {};
+  if (ev?.type === "tool_use" || part.type === "tool") {
+    const tool = String(part.tool ?? "tool");
+    const detail = firstString(part.state?.input, INPUT_KEYS);
+    return { kind: kindOfTool(tool), ...txt(`${tool}${detail ? `: ${detail}` : ""}`), id: part.id };
+  }
+  if (ev?.type === "text" || part.type === "text") return say(String(part.text ?? ""));
+  if (ev?.type === "reasoning" || part.type === "reasoning") return { kind: "think", text: "thinking" };
+  return null;
+}
+var DESCRIBERS = {
+  codex: describeCodexEvent,
+  claude: describeClaudeEvent,
+  opencode: describeOpencodeEvent
+};
+function formatElapsed(ms) {
+  const m = Math.floor(ms / 6e4);
+  return m < 1 ? `${Math.round(ms / 1e3)}s` : m < 60 ? `${m}m` : `${Math.floor(m / 60)}h ${m % 60}m`;
+}
+function progressEventHandler(agent, onProgress, now = Date.now) {
+  if (!onProgress) return void 0;
+  const started = now();
+  const seen = /* @__PURE__ */ new Set();
+  const counts = { cmd: 0, edit: 0, read: 0, tool: 0, say: 0, think: 0 };
+  let steps = 0;
+  let last = "";
+  return (ev) => {
+    const step = DESCRIBERS[agent](ev);
+    if (!step) return;
+    if (step.id) {
+      const key2 = `${step.kind}:${step.id}`;
+      if (seen.has(key2)) return;
+      seen.add(key2);
+    }
+    if (step.text === last) return;
+    last = step.text;
+    if (step.kind !== "think" && step.kind !== "say") steps++;
+    counts[step.kind]++;
+    const totals = [counts.cmd && `${counts.cmd} cmds`, counts.edit && `${counts.edit} edits`].filter(Boolean).join(", ");
+    const where = steps ? ` \xB7 step ${steps}${totals ? ` (${totals})` : ""}` : "";
+    const head = `${formatElapsed(now() - started)}${where} \xB7 `;
+    onProgress(head + step.text, step.full ? head + step.full : void 0);
+  };
+}
+function progressLineHandler(agent, onProgress) {
+  const handle = progressEventHandler(agent, onProgress);
+  if (!handle) return void 0;
+  return (line) => {
+    if (!line.startsWith("{")) return;
+    try {
+      handle(JSON.parse(line));
+    } catch {
+    }
+  };
+}
+
+// src/core/relay.ts
+import { randomBytes as randomBytes3, randomUUID as randomUUID3 } from "node:crypto";
+import { mkdirSync as mkdirSync3, readFileSync as readFileSync4, readdirSync as readdirSync2, rmSync as rmSync2, writeFileSync as writeFileSync2 } from "node:fs";
+import { join as join6 } from "node:path";
+import { createServer as createServer2 } from "node:http";
+var RELAY_URL_ENV = "AGENT_BRIDGE_RELAY_URL";
+var RELAY_TOKEN_ENV = "AGENT_BRIDGE_RELAY_TOKEN";
+var RELAY_HOST = "127.0.0.1";
+var RELAY_PATH = "/permission";
+var MAX_REQUEST_BYTES2 = 256 * 1024;
+var SECRET_BYTES2 = 24;
+var KEEP_ALIVE_MS = 6e4;
+var PermissionRelay = class {
+  constructor(handler, log) {
+    this.handler = handler;
+    this.log = log;
+  }
+  handler;
+  log;
+  server = null;
+  secret = randomBytes3(SECRET_BYTES2).toString("hex");
+  url = "";
+  async start() {
+    this.server = createServer2((req, res) => {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.flushHeaders();
+      const keepAlive = setInterval(() => res.write(" "), KEEP_ALIVE_MS);
+      void this.handle(req).catch((err) => {
+        this.log.warn("permission relay request failed", { err: err.message });
+        return { allow: false, message: "agent-bridge relay error" };
+      }).then((body) => {
+        clearInterval(keepAlive);
+        res.end(JSON.stringify(body));
+      });
+    });
+    this.server.requestTimeout = 0;
+    this.server.headersTimeout = 0;
+    await new Promise((resolve10, reject) => {
+      this.server.once("error", reject);
+      this.server.listen(0, RELAY_HOST, () => resolve10());
+    });
+    const { port } = this.server.address();
+    this.url = `http://${RELAY_HOST}:${port}${RELAY_PATH}`;
+    this.log.debug("permission relay listening", { url: this.url });
+  }
+  /** Environment variables that let a child process reach this relay. */
+  childEnv() {
+    return { [RELAY_URL_ENV]: this.url, [RELAY_TOKEN_ENV]: this.secret };
+  }
+  async stop() {
+    const s = this.server;
+    this.server = null;
+    if (s) await new Promise((r) => s.close(() => r()));
+  }
+  async handle(req) {
+    if (req.method !== "POST" || req.url !== RELAY_PATH) throw new Error("not found");
+    const auth = String(req.headers.authorization ?? "").replace(/^Bearer /, "");
+    if (!tokensEqual(auth, this.secret)) throw new Error("unauthorized");
+    let raw = "";
+    for await (const chunk of req) {
+      raw += chunk;
+      if (raw.length > MAX_REQUEST_BYTES2) throw new Error("request too large");
+    }
+    const body = JSON.parse(raw);
+    const request2 = {
+      agent: String(body.agent ?? "subagent"),
+      tool: String(body.tool ?? "unknown"),
+      detail: String(body.detail ?? "").slice(0, 4e3),
+      cwd: body.cwd ? String(body.cwd) : void 0,
+      ...typeof body.reason === "string" ? { reason: body.reason.slice(0, MAX_APPROVAL_REASON_CHARS) } : {}
+    };
+    this.log.info("permission requested by subagent", { agent: request2.agent, tool: request2.tool });
+    const decision = await this.handler(request2);
+    this.log.info("permission decided", { tool: request2.tool, allow: decision.allow });
+    return decision;
+  }
+};
+var APPROVALS_DIR = "approvals";
+var APPROVAL_ID = /^[0-9a-f-]{36}$/;
+var ANSWER_PATH = "/answer";
+var ANSWER_TIMEOUT_MS = 5e3;
+var MAX_PORT = 65535;
+var MAX_APPROVAL_REASON_CHARS = 4e3;
+async function publishApproval(home, approval, answer) {
+  if (!APPROVAL_ID.test(approval.id)) throw new Error("invalid approval id");
+  const token = randomBytes3(SECRET_BYTES2).toString("hex");
+  const dir = join6(home, APPROVALS_DIR);
+  const file2 = join6(dir, `${approval.id}.json`);
+  const server = createServer2((req, res) => {
+    const reply = (status, body) => {
+      res.writeHead(status, { "content-type": "application/json", "cache-control": "no-store" });
+      res.end(JSON.stringify(body));
+    };
+    void (async () => {
+      if (req.method !== "POST" || req.url !== ANSWER_PATH || !tokensEqual(String(req.headers.authorization ?? ""), `Bearer ${token}`)) return reply(403, { error: "forbidden" });
+      let raw = "";
+      for await (const chunk of req) {
+        raw += chunk;
+        if (raw.length > MAX_REQUEST_BYTES2) return reply(400, { error: "request too large" });
+      }
+      const body = JSON.parse(raw);
+      if (!body || body.decision !== "allow" && body.decision !== "deny" || body.reason !== void 0 && (typeof body.reason !== "string" || body.reason.length > MAX_APPROVAL_REASON_CHARS)) return reply(400, { error: "invalid answer" });
+      const accepted = Date.now() < approval.deadline && answer(`${body.decision}${body.reason ? `: ${body.reason}` : ""}`, "dashboard");
+      reply(accepted ? 200 : 409, { outcome: accepted ? "answered" : "expired" });
+    })().catch(() => reply(400, { error: "invalid answer" }));
+  });
+  server.requestTimeout = ANSWER_TIMEOUT_MS;
+  server.headersTimeout = ANSWER_TIMEOUT_MS;
+  await new Promise((resolve10, reject) => {
+    server.once("error", reject);
+    server.listen(0, RELAY_HOST, resolve10);
+  });
+  server.unref();
+  try {
+    mkdirSync3(dir, { recursive: true, mode: 448 });
+    writeFileSync2(file2, JSON.stringify({ ...approval, pid: process.pid, port: server.address().port, token }), { mode: 384, flag: "wx" });
+  } catch (err) {
+    server.close();
+    throw err;
+  }
+  return () => {
+    try {
+      rmSync2(file2, { force: true });
+    } finally {
+      server.close();
+    }
+  };
+}
+function readApproval(home, id) {
+  if (!APPROVAL_ID.test(id)) return null;
+  try {
+    const r = JSON.parse(readFileSync4(join6(home, APPROVALS_DIR, `${id}.json`), "utf8"));
+    if (r.id !== id || !Number.isInteger(r.pid) || r.pid < 1 || !pidAlive(r.pid) || !Number.isSafeInteger(r.deadline) || r.deadline <= Date.now() || !Number.isSafeInteger(r.askedAt) || r.deadline <= r.askedAt || !Number.isInteger(r.port) || r.port < 1 || r.port > MAX_PORT || typeof r.token !== "string" || !r.token) return null;
+    if (![r.owner, r.job, r.agent, r.tool, r.command, r.reason].every((value) => typeof value === "string")) return null;
+    return r;
+  } catch {
+    return null;
+  }
+}
+function listPendingApprovals(home) {
+  let files;
+  try {
+    files = readdirSync2(join6(home, APPROVALS_DIR));
+  } catch {
+    return [];
+  }
+  return files.flatMap((file2) => {
+    if (!file2.endsWith(".json")) return [];
+    const r = readApproval(home, file2.slice(0, -5));
+    return r ? [{ id: r.id, owner: r.owner, job: r.job, agent: r.agent, tool: r.tool, command: r.command, reason: r.reason, askedAt: r.askedAt, deadline: r.deadline }] : [];
+  }).sort((a, b) => a.askedAt - b.askedAt);
+}
+function newApprovalId() {
+  return randomUUID3();
+}
+async function answerPendingApproval(home, id, body) {
+  const r = readApproval(home, id);
+  if (!r) return "expired";
+  try {
+    const res = await fetch(`http://${RELAY_HOST}:${r.port}${ANSWER_PATH}`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${r.token}` },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(ANSWER_TIMEOUT_MS)
+    });
+    return res.status === 200 ? "answered" : res.status === 409 ? "expired" : "unavailable";
+  } catch {
+    return readApproval(home, id) ? "unavailable" : "expired";
+  }
+}
+
+// src/core/codex-paths.ts
+import { realpathSync } from "node:fs";
+function codexDriveMappings(text2, platform = process.platform, canonical = realpathSync.native) {
+  if (platform !== "win32") return [];
+  const drives = new Set([...text2.matchAll(/\b([a-z]):[\\/]/gi)].map((m) => `${m[1].toUpperCase()}:\\`));
+  const mappings = [];
+  for (const alias of drives) {
+    try {
+      const real = canonical(alias).replace(/^\\\\\?\\UNC\\/i, "\\\\").replace(/^\\\\\?\\/, "").replace(/[\\/]*$/, "\\");
+      if (real.toLowerCase() !== alias.toLowerCase()) mappings.push({ alias, real });
+    } catch {
+    }
+  }
+  return mappings;
+}
+function codexPathPrompt(prompt, mappings) {
+  let text2 = prompt;
+  for (const { alias, real } of mappings) {
+    const drive = alias[0];
+    text2 = text2.replace(new RegExp(`\\b${drive}:[\\\\/]`, "gi"), () => real);
+  }
+  if (!mappings.length) return text2;
+  return `${text2}
+
+(agent-bridge: Windows drive aliases resolved by the supervisor: ${mappings.map((m) => `${m.alias} = ${m.real}`).join(", ")}. These are the same folders. Use the real paths supplied above, including for new output files, without requesting path confirmation. In your report name both the requested alias and the real path.)`;
+}
+function codexPathReport(mappings) {
+  return mappings.length ? `Windows path mappings (same folders): ${mappings.map((m) => `${m.alias} = ${m.real}`).join(", ")}. Outputs using the real paths are also available through these supervisor aliases.` : null;
+}
+
+// src/core/delegate.ts
+var DELEGATE_DEPTH_ENV = "AGENT_BRIDGE_DELEGATE_DEPTH";
+var MAX_DELEGATE_DEPTH = 1;
+var KILL_GRACE_MS = 3e3;
+var MAX_CAPTURE_CHARS = 8 * 1024 * 1024;
+var STDERR_TAIL_CHARS = 4e3;
+var WINDOWS_SHIM_EXTS = /* @__PURE__ */ new Set([".cmd", ".bat"]);
+var DEFAULT_PATHEXT = ".COM;.EXE;.BAT;.CMD";
+function currentDelegateDepth(env = process.env) {
+  const n = Number.parseInt(env[DELEGATE_DEPTH_ENV] ?? "0", 10);
+  return Number.isInteger(n) && n > 0 ? n : 0;
+}
+var DelegateError = class _DelegateError extends Error {
+  constructor(message, kind, stderrTail = "", partialStdout = "", sessionId = null) {
+    super(message);
+    this.kind = kind;
+    this.stderrTail = stderrTail;
+    this.partialStdout = partialStdout;
+    this.sessionId = sessionId;
+    this.name = "DelegateError";
+  }
+  kind;
+  stderrTail;
+  partialStdout;
+  sessionId;
+  /** The agent never got going (its startup timed out): trying again is safe. */
+  startupFailed = false;
+  static startup(message, stderrTail, sessionId) {
+    const err = new _DelegateError(message, "failed", stderrTail, "", sessionId);
+    err.startupFailed = true;
+    return err;
+  }
+};
+function resolveBinary(bin, env = process.env, platform = process.platform) {
+  const isWin = platform === "win32";
+  const exts = isWin ? (env.PATHEXT ?? DEFAULT_PATHEXT).split(";").filter(Boolean) : [""];
+  const candidates = (base) => isWin && !extname(base) ? exts.map((e) => base + e.toLowerCase()) : [base];
+  if (isAbsolute(bin) || bin.includes("/") || bin.includes("\\")) {
+    return candidates(bin).find((c) => existsSync2(c)) ?? null;
+  }
+  for (const dir of (env.PATH ?? env.Path ?? "").split(delimiter)) {
+    if (!dir) continue;
+    for (const c of candidates(join7(dir, bin))) if (existsSync2(c)) return c;
+  }
+  return null;
+}
+function unwrapNpmShim(shimPath, readFile2 = (p) => readFileSync5(p, "utf8")) {
+  let text2;
+  try {
+    text2 = readFile2(shimPath);
+  } catch {
+    return null;
+  }
+  const dir = win32.dirname(shimPath);
+  const exe = /"%~?dp0%?\\([^"]+?\.exe)"\s+%\*/i.exec(text2);
+  if (exe) return { command: win32.join(dir, exe[1]), prefix: [] };
+  const js = /"%~?dp0%?\\([^"]+?\.(?:c|m)?js)"\s+%\*/i.exec(text2);
+  if (js) return { command: process.execPath, prefix: [win32.join(dir, js[1])] };
+  return null;
+}
+var liveChildren = /* @__PURE__ */ new Set();
+function killTree(child) {
+  const pid = child.pid;
+  if (!pid || child.exitCode !== null) return Promise.resolve();
+  return new Promise((resolve10) => {
+    if (process.platform === "win32") {
+      const tk = spawn("taskkill", ["/PID", String(pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" });
+      tk.on("error", () => (child.kill(), resolve10()));
+      tk.on("close", () => resolve10());
+    } else {
+      try {
+        process.kill(-pid, "SIGTERM");
+      } catch {
+        child.kill("SIGTERM");
+      }
+      const force = setTimeout(() => {
+        try {
+          process.kill(-pid, "SIGKILL");
+        } catch {
+        }
+        resolve10();
+      }, KILL_GRACE_MS);
+      child.once("exit", () => (clearTimeout(force), resolve10()));
+    }
+  });
+}
+function killPid(pid) {
+  if (process.platform === "win32") {
+    const tk = spawn("taskkill", ["/PID", String(pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" });
+    tk.on("error", () => {
+      try {
+        process.kill(pid);
+      } catch {
+      }
+    });
+    return;
+  }
+  try {
+    process.kill(pid, "SIGTERM");
+  } catch {
+    return;
+  }
+  setTimeout(() => {
+    try {
+      process.kill(pid, "SIGKILL");
+    } catch {
+    }
+  }, KILL_GRACE_MS).unref();
+}
+function pidAlive(pid) {
+  try {
+    process.kill(pid, 0);
     return true;
+  } catch (err) {
+    return err.code === "EPERM";
+  }
+}
+async function killAllDelegates(capMs = KILL_GRACE_MS) {
+  const all = [...liveChildren].map((c) => killTree(c));
+  await Promise.race([Promise.all(all), new Promise((r) => setTimeout(r, capMs))]);
+}
+function trackChild(child) {
+  liveChildren.add(child);
+  child.once("exit", () => liveChildren.delete(child));
+}
+function resolveCommand(bin, argsIn, env, log) {
+  let resolved = resolveBinary(bin, env);
+  if (!resolved) throw new DelegateError(`executable not found: ${bin}`, "not_found");
+  let args = argsIn;
+  let needsShell = process.platform === "win32" && WINDOWS_SHIM_EXTS.has(extname(resolved).toLowerCase());
+  if (needsShell) {
+    const target = unwrapNpmShim(resolved);
+    if (target && existsSync2(target.command) && target.prefix.every((p) => existsSync2(p))) {
+      log.debug("unwrapped npm shim", { shim: resolved, command: target.command, prefix: target.prefix });
+      resolved = target.command;
+      args = [...target.prefix, ...args];
+      needsShell = false;
+    }
+  }
+  if (needsShell) {
+    for (const a of args) {
+      if (/[&|<>^%"\s]/.test(a)) throw new DelegateError(`unsafe argument for shell invocation: ${a}`, "failed");
+    }
+  }
+  return { resolved: needsShell ? `"${resolved}"` : resolved, args, needsShell };
+}
+function exitDescription(res) {
+  return res.code === null && res.signal ? `was killed by signal ${res.signal}` : `exited with code ${res.code}`;
+}
+function runProcess(opts) {
+  let command;
+  try {
+    command = resolveCommand(opts.bin, opts.args, opts.env, opts.log);
+  } catch (err) {
+    return Promise.reject(err);
+  }
+  const { resolved, args, needsShell } = command;
+  opts.log.debug("spawning delegate", { bin: resolved, args, cwd: opts.cwd, shell: needsShell });
+  return new Promise((resolve10, reject) => {
+    const child = spawn(resolved, args, {
+      cwd: opts.cwd,
+      // Some CLIs (opencode) take their project folder from PWD rather than the real cwd; keep them in sync.
+      env: { ...opts.env, PWD: opts.cwd },
+      shell: needsShell,
+      windowsHide: true,
+      stdio: ["pipe", "pipe", "pipe"],
+      // Own process group on POSIX, so the whole tree can be killed (see killTree).
+      detached: process.platform !== "win32"
+    });
+    trackChild(child);
+    let head = "";
+    let tail = "";
+    const captured = () => tail ? `${head}
+${tail.slice(tail.indexOf("\n") + 1)}` : head;
+    let stderr = "";
+    let settled = false;
+    const finish = (fn) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      opts.signal?.removeEventListener("abort", onAbort);
+      fn();
+    };
+    const kill = () => void killTree(child);
+    const timer = setTimeout(() => {
+      kill();
+      const seconds = Math.round(opts.timeoutMs / 1e3);
+      const message = opts.what ? `${opts.what} timed out after ${seconds}s` : `delegate timed out after ${seconds}s (its time limit, timeout_sec)`;
+      finish(() => reject(new DelegateError(message, "timeout", stderr.slice(-STDERR_TAIL_CHARS), captured())));
+    }, opts.timeoutMs);
+    const onAbort = () => {
+      kill();
+      finish(() => reject(new DelegateError("delegate aborted", "aborted", "", captured())));
+    };
+    opts.signal?.addEventListener("abort", onAbort, { once: true });
+    let pending = "";
+    child.stdout.setEncoding("utf8").on("data", (d) => {
+      if (head.length < MAX_CAPTURE_CHARS / 2) head += d;
+      else tail = (tail + d).slice(-MAX_CAPTURE_CHARS / 2);
+      if (!opts.onLine) return;
+      pending += d;
+      let nl;
+      while ((nl = pending.indexOf("\n")) >= 0) {
+        const line = pending.slice(0, nl).trim();
+        pending = pending.slice(nl + 1);
+        if (line) {
+          try {
+            opts.onLine(line);
+          } catch {
+          }
+        }
+      }
+    });
+    child.stderr.setEncoding("utf8").on("data", (d) => {
+      stderr = (stderr + d).slice(-MAX_CAPTURE_CHARS);
+    });
+    child.on("error", (err) => finish(() => reject(new DelegateError(`failed to start ${opts.bin}: ${err.message}`, "failed"))));
+    child.on("close", (code, signal) => finish(() => resolve10({ code, signal, stdout: captured(), stderr })));
+    child.stdin.on("error", () => {
+    });
+    child.stdin.end(opts.stdin);
+  });
+}
+var OPENCODE_CONFIG_CONTENT_ENV = "OPENCODE_CONFIG_CONTENT";
+var CODEX_STRICT_APPROVALS = 'approvals_reviewer="user"';
+var CODEX_RELAY_APPROVALS = 'approvals_reviewer="auto_review"';
+var CODEX_ASK_POLICY = 'approval_policy="on-request"';
+var CODEX_NO_APPROVALS = 'approval_policy="never"';
+var CODEX_ASK_HINT = "(The workspace is read-only on purpose: when you need to change files or run a command the sandbox blocks, request escalated permissions for it. The user is asked and decides; if denied, stop and report.)";
+var OPENCODE_READ_ONLY_PERMISSIONS = { edit: "ask", bash: "ask" };
+var OPENCODE_READ_ONLY_TOOLS = { "*_*": false, bridge_send: true, bridge_report_progress: true };
+function childEnv(extra = {}) {
+  const { CLAUDE_PROJECT_DIR: _parentProject, ...env } = process.env;
+  return { ...env, ...extra, [DELEGATE_DEPTH_ENV]: String(currentDelegateDepth() + 1) };
+}
+function checkDepth() {
+  if (currentDelegateDepth() >= MAX_DELEGATE_DEPTH) {
+    throw new DelegateError("delegation is disabled inside a delegated session (prevents recursive delegation)", "depth");
+  }
+}
+function sessionInLine(agent, line) {
+  if (!line.startsWith("{")) return null;
+  try {
+    const ev = JSON.parse(line);
+    const id = agent === "codex" ? ev.type === "thread.started" ? ev.thread_id : null : agent === "claude" ? ev.session_id : ev.sessionID ?? ev.part?.sessionID;
+    return typeof id === "string" && id ? id : null;
+  } catch {
+    return null;
+  }
+}
+function withSessionSniffer(agent, next, onSession) {
+  if (!onSession) return next;
+  let seen = false;
+  return (line) => {
+    if (!seen) {
+      const id = sessionInLine(agent, line);
+      if (id) {
+        seen = true;
+        onSession(id);
+      }
+    }
+    next?.(line);
+  };
+}
+function parseCodexJsonl(stdout) {
+  let threadId = null;
+  const messages = new FinalAnswers();
+  let error62 = null;
+  let usage = null;
+  for (const line of stdout.split(/\r?\n/)) {
+    const s = line.trim();
+    if (!s.startsWith("{")) continue;
+    let ev;
+    try {
+      ev = JSON.parse(s);
+    } catch {
+      continue;
+    }
+    switch (ev.type) {
+      case "thread.started":
+        threadId = ev.thread_id ?? threadId;
+        break;
+      case "item.completed":
+        if (ev.item?.type === "agent_message" && typeof ev.item.text === "string") messages.add(ev.item);
+        break;
+      case "turn.completed":
+        usage = ev.usage ?? usage;
+        error62 = null;
+        break;
+      case "turn.failed":
+        error62 = ev.error?.message ?? "turn failed";
+        break;
+      case "error":
+        error62 = ev.message ?? "error";
+        break;
+    }
+  }
+  return { threadId, text: messages.text(), error: error62, usage };
+}
+function realFolder(dir) {
+  try {
+    return realpathSync2.native(dir);
+  } catch {
+    return dir;
+  }
+}
+async function delegateToCodex(req) {
+  checkDepth();
+  req = { ...req, cwd: realFolder(req.cwd), prompt: codexPathPrompt(req.prompt, codexDriveMappings(`${req.cwd}
+${req.prompt}`)) };
+  if (req.relayApprovals && req.sandbox !== "danger-full-access") req = { ...req, prompt: `${req.prompt}
+
+${CODEX_ASK_HINT}` };
+  const common = ["--json", "--skip-git-repo-check", ...req.model ? ["-m", req.model] : [], ...req.effort ? ["-c", `model_reasoning_effort="${req.effort}"`] : []];
+  if (req.writableRoots?.length && req.sandbox === "workspace-write") {
+    common.push("-c", `sandbox_workspace_write.writable_roots=${JSON.stringify(req.writableRoots.map(realFolder))}`);
+  }
+  if (req.sandbox === "workspace-write" && req.networkAccess !== void 0) common.push("-c", `sandbox_workspace_write.network_access=${req.networkAccess}`);
+  const strict = req.sandbox === "danger-full-access" ? ["-c", CODEX_STRICT_APPROVALS, "-c", CODEX_NO_APPROVALS] : req.relayApprovals ? ["-c", CODEX_RELAY_APPROVALS, "-c", CODEX_ASK_POLICY] : ["-c", CODEX_STRICT_APPROVALS];
+  const args = req.sessionId ? ["exec", "resume", ...common, ...strict, "-c", `sandbox_mode="${req.sandbox}"`, req.sessionId, "-"] : ["exec", ...common, ...strict, "-s", req.sandbox, "-C", req.cwd, "-"];
+  const res = await withResumeHint("codex", (o) => parseCodexJsonl(o).threadId, () => runProcess({
+    bin: req.bin,
+    args,
+    stdin: req.prompt,
+    cwd: req.cwd,
+    timeoutMs: req.timeoutSec * 1e3,
+    env: childEnv(req.extraEnv),
+    log: req.log,
+    signal: req.signal,
+    onLine: withSessionSniffer("codex", progressLineHandler("codex", req.onProgress), req.onSession)
+  }));
+  const parsed = parseCodexJsonl(res.stdout);
+  const isError = res.code !== 0 || parsed.error !== null;
+  if (isError && !parsed.text) {
+    throw new DelegateError(parsed.error ?? `codex ${exitDescription(res)}`, "failed", res.stderr.slice(-STDERR_TAIL_CHARS), "", parsed.threadId ?? req.sessionId ?? null);
+  }
+  req.log.info("codex delegate finished", { threadId: parsed.threadId, code: res.code, isError });
+  return {
+    sessionId: parsed.threadId ?? req.sessionId ?? null,
+    text: parsed.text,
+    isError,
+    details: { exitCode: res.code, signal: res.signal ?? null, usage: parsed.usage, error: parsed.error }
+  };
+}
+function parseClaudeJson(stdout) {
+  const lines = stdout.split(/\r?\n/).filter((l) => l.trim().startsWith("{"));
+  const resultLine = [...lines].reverse().find((l) => l.includes('"type":"result"'));
+  const candidate = resultLine ?? (stdout.indexOf("{") >= 0 ? stdout.slice(stdout.indexOf("{")) : null);
+  if (!candidate) return null;
+  try {
+    const o = JSON.parse(candidate);
+    return {
+      sessionId: typeof o.session_id === "string" ? o.session_id : null,
+      text: typeof o.result === "string" ? o.result : "",
+      isError: Boolean(o.is_error) || o.subtype === "error",
+      cost: o.total_cost_usd ?? null
+    };
+  } catch {
+    return null;
+  }
+}
+var CLAUDE_PARENT_SEND_TOOL = "mcp__plugin_agent-bridge_bridge__send";
+var CLAUDE_PARENT_PROGRESS_TOOL = "mcp__plugin_agent-bridge_bridge__report_progress";
+var CLAUDE_READ_ONLY_DENIED_TOOLS = ["Write", "Edit", "MultiEdit", "NotebookEdit", "Bash", "PowerShell"];
+function isClaudeReadOnly(mode) {
+  return CLAUDE_READ_ONLY_MODES.has(mode);
+}
+var CLAUDE_READ_ONLY_MODES = /* @__PURE__ */ new Set(["default", "manual", "plan"]);
+function bundledCli() {
+  const cli = join7(dirname3(fileURLToPath(import.meta.url)), "cli.mjs");
+  return existsSync2(cli) ? cli : null;
+}
+function spawnsWithoutShell(bin, log) {
+  try {
+    return !resolveCommand(bin, [], process.env, log).needsShell;
   } catch {
     return false;
   }
 }
-function isValidCidr(ip, version2) {
-  if ((version2 === "v4" || !version2) && ipv4CidrRegex.test(ip)) {
-    return true;
-  }
-  if ((version2 === "v6" || !version2) && ipv6CidrRegex.test(ip)) {
-    return true;
-  }
-  return false;
+function claudePermissionHookSettings(cli, node2 = process.execPath) {
+  const hook = { type: "command", command: node2, args: [cli, "permission-hook", "claude"], timeout: CLAUDE_HOOK_TIMEOUT_SEC };
+  return JSON.stringify({ hooks: { PermissionRequest: [{ hooks: [hook] }] } });
 }
-var ZodString = class _ZodString2 extends ZodType {
-  _parse(input2) {
-    if (this._def.coerce) {
-      input2.data = String(input2.data);
-    }
-    const parsedType2 = this._getType(input2);
-    if (parsedType2 !== ZodParsedType.string) {
-      const ctx2 = this._getOrReturnCtx(input2);
-      addIssueToContext(ctx2, {
-        code: ZodIssueCode.invalid_type,
-        expected: ZodParsedType.string,
-        received: ctx2.parsedType
-      });
-      return INVALID;
-    }
-    const status = new ParseStatus();
-    let ctx = void 0;
-    for (const check2 of this._def.checks) {
-      if (check2.kind === "min") {
-        if (input2.data.length < check2.value) {
-          ctx = this._getOrReturnCtx(input2, ctx);
-          addIssueToContext(ctx, {
-            code: ZodIssueCode.too_small,
-            minimum: check2.value,
-            type: "string",
-            inclusive: true,
-            exact: false,
-            message: check2.message
-          });
-          status.dirty();
-        }
-      } else if (check2.kind === "max") {
-        if (input2.data.length > check2.value) {
-          ctx = this._getOrReturnCtx(input2, ctx);
-          addIssueToContext(ctx, {
-            code: ZodIssueCode.too_big,
-            maximum: check2.value,
-            type: "string",
-            inclusive: true,
-            exact: false,
-            message: check2.message
-          });
-          status.dirty();
-        }
-      } else if (check2.kind === "length") {
-        const tooBig = input2.data.length > check2.value;
-        const tooSmall = input2.data.length < check2.value;
-        if (tooBig || tooSmall) {
-          ctx = this._getOrReturnCtx(input2, ctx);
-          if (tooBig) {
-            addIssueToContext(ctx, {
-              code: ZodIssueCode.too_big,
-              maximum: check2.value,
-              type: "string",
-              inclusive: true,
-              exact: true,
-              message: check2.message
-            });
-          } else if (tooSmall) {
-            addIssueToContext(ctx, {
-              code: ZodIssueCode.too_small,
-              minimum: check2.value,
-              type: "string",
-              inclusive: true,
-              exact: true,
-              message: check2.message
-            });
-          }
-          status.dirty();
-        }
-      } else if (check2.kind === "email") {
-        if (!emailRegex.test(input2.data)) {
-          ctx = this._getOrReturnCtx(input2, ctx);
-          addIssueToContext(ctx, {
-            validation: "email",
-            code: ZodIssueCode.invalid_string,
-            message: check2.message
-          });
-          status.dirty();
-        }
-      } else if (check2.kind === "emoji") {
-        if (!emojiRegex) {
-          emojiRegex = new RegExp(_emojiRegex, "u");
-        }
-        if (!emojiRegex.test(input2.data)) {
-          ctx = this._getOrReturnCtx(input2, ctx);
-          addIssueToContext(ctx, {
-            validation: "emoji",
-            code: ZodIssueCode.invalid_string,
-            message: check2.message
-          });
-          status.dirty();
-        }
-      } else if (check2.kind === "uuid") {
-        if (!uuidRegex.test(input2.data)) {
-          ctx = this._getOrReturnCtx(input2, ctx);
-          addIssueToContext(ctx, {
-            validation: "uuid",
-            code: ZodIssueCode.invalid_string,
-            message: check2.message
-          });
-          status.dirty();
-        }
-      } else if (check2.kind === "nanoid") {
-        if (!nanoidRegex.test(input2.data)) {
-          ctx = this._getOrReturnCtx(input2, ctx);
-          addIssueToContext(ctx, {
-            validation: "nanoid",
-            code: ZodIssueCode.invalid_string,
-            message: check2.message
-          });
-          status.dirty();
-        }
-      } else if (check2.kind === "cuid") {
-        if (!cuidRegex.test(input2.data)) {
-          ctx = this._getOrReturnCtx(input2, ctx);
-          addIssueToContext(ctx, {
-            validation: "cuid",
-            code: ZodIssueCode.invalid_string,
-            message: check2.message
-          });
-          status.dirty();
-        }
-      } else if (check2.kind === "cuid2") {
-        if (!cuid2Regex.test(input2.data)) {
-          ctx = this._getOrReturnCtx(input2, ctx);
-          addIssueToContext(ctx, {
-            validation: "cuid2",
-            code: ZodIssueCode.invalid_string,
-            message: check2.message
-          });
-          status.dirty();
-        }
-      } else if (check2.kind === "ulid") {
-        if (!ulidRegex.test(input2.data)) {
-          ctx = this._getOrReturnCtx(input2, ctx);
-          addIssueToContext(ctx, {
-            validation: "ulid",
-            code: ZodIssueCode.invalid_string,
-            message: check2.message
-          });
-          status.dirty();
-        }
-      } else if (check2.kind === "url") {
-        try {
-          new URL(input2.data);
-        } catch {
-          ctx = this._getOrReturnCtx(input2, ctx);
-          addIssueToContext(ctx, {
-            validation: "url",
-            code: ZodIssueCode.invalid_string,
-            message: check2.message
-          });
-          status.dirty();
-        }
-      } else if (check2.kind === "regex") {
-        check2.regex.lastIndex = 0;
-        const testResult = check2.regex.test(input2.data);
-        if (!testResult) {
-          ctx = this._getOrReturnCtx(input2, ctx);
-          addIssueToContext(ctx, {
-            validation: "regex",
-            code: ZodIssueCode.invalid_string,
-            message: check2.message
-          });
-          status.dirty();
-        }
-      } else if (check2.kind === "trim") {
-        input2.data = input2.data.trim();
-      } else if (check2.kind === "includes") {
-        if (!input2.data.includes(check2.value, check2.position)) {
-          ctx = this._getOrReturnCtx(input2, ctx);
-          addIssueToContext(ctx, {
-            code: ZodIssueCode.invalid_string,
-            validation: { includes: check2.value, position: check2.position },
-            message: check2.message
-          });
-          status.dirty();
-        }
-      } else if (check2.kind === "toLowerCase") {
-        input2.data = input2.data.toLowerCase();
-      } else if (check2.kind === "toUpperCase") {
-        input2.data = input2.data.toUpperCase();
-      } else if (check2.kind === "startsWith") {
-        if (!input2.data.startsWith(check2.value)) {
-          ctx = this._getOrReturnCtx(input2, ctx);
-          addIssueToContext(ctx, {
-            code: ZodIssueCode.invalid_string,
-            validation: { startsWith: check2.value },
-            message: check2.message
-          });
-          status.dirty();
-        }
-      } else if (check2.kind === "endsWith") {
-        if (!input2.data.endsWith(check2.value)) {
-          ctx = this._getOrReturnCtx(input2, ctx);
-          addIssueToContext(ctx, {
-            code: ZodIssueCode.invalid_string,
-            validation: { endsWith: check2.value },
-            message: check2.message
-          });
-          status.dirty();
-        }
-      } else if (check2.kind === "datetime") {
-        const regex = datetimeRegex(check2);
-        if (!regex.test(input2.data)) {
-          ctx = this._getOrReturnCtx(input2, ctx);
-          addIssueToContext(ctx, {
-            code: ZodIssueCode.invalid_string,
-            validation: "datetime",
-            message: check2.message
-          });
-          status.dirty();
-        }
-      } else if (check2.kind === "date") {
-        const regex = dateRegex;
-        if (!regex.test(input2.data)) {
-          ctx = this._getOrReturnCtx(input2, ctx);
-          addIssueToContext(ctx, {
-            code: ZodIssueCode.invalid_string,
-            validation: "date",
-            message: check2.message
-          });
-          status.dirty();
-        }
-      } else if (check2.kind === "time") {
-        const regex = timeRegex(check2);
-        if (!regex.test(input2.data)) {
-          ctx = this._getOrReturnCtx(input2, ctx);
-          addIssueToContext(ctx, {
-            code: ZodIssueCode.invalid_string,
-            validation: "time",
-            message: check2.message
-          });
-          status.dirty();
-        }
-      } else if (check2.kind === "duration") {
-        if (!durationRegex.test(input2.data)) {
-          ctx = this._getOrReturnCtx(input2, ctx);
-          addIssueToContext(ctx, {
-            validation: "duration",
-            code: ZodIssueCode.invalid_string,
-            message: check2.message
-          });
-          status.dirty();
-        }
-      } else if (check2.kind === "ip") {
-        if (!isValidIP(input2.data, check2.version)) {
-          ctx = this._getOrReturnCtx(input2, ctx);
-          addIssueToContext(ctx, {
-            validation: "ip",
-            code: ZodIssueCode.invalid_string,
-            message: check2.message
-          });
-          status.dirty();
-        }
-      } else if (check2.kind === "jwt") {
-        if (!isValidJWT(input2.data, check2.alg)) {
-          ctx = this._getOrReturnCtx(input2, ctx);
-          addIssueToContext(ctx, {
-            validation: "jwt",
-            code: ZodIssueCode.invalid_string,
-            message: check2.message
-          });
-          status.dirty();
-        }
-      } else if (check2.kind === "cidr") {
-        if (!isValidCidr(input2.data, check2.version)) {
-          ctx = this._getOrReturnCtx(input2, ctx);
-          addIssueToContext(ctx, {
-            validation: "cidr",
-            code: ZodIssueCode.invalid_string,
-            message: check2.message
-          });
-          status.dirty();
-        }
-      } else if (check2.kind === "base64") {
-        if (!base64Regex.test(input2.data)) {
-          ctx = this._getOrReturnCtx(input2, ctx);
-          addIssueToContext(ctx, {
-            validation: "base64",
-            code: ZodIssueCode.invalid_string,
-            message: check2.message
-          });
-          status.dirty();
-        }
-      } else if (check2.kind === "base64url") {
-        if (!base64urlRegex.test(input2.data)) {
-          ctx = this._getOrReturnCtx(input2, ctx);
-          addIssueToContext(ctx, {
-            validation: "base64url",
-            code: ZodIssueCode.invalid_string,
-            message: check2.message
-          });
-          status.dirty();
-        }
-      } else {
-        util.assertNever(check2);
-      }
-    }
-    return { status: status.value, value: input2.data };
-  }
-  _regex(regex, validation, message) {
-    return this.refinement((data) => regex.test(data), {
-      validation,
-      code: ZodIssueCode.invalid_string,
-      ...errorUtil.errToObj(message)
-    });
-  }
-  _addCheck(check2) {
-    return new _ZodString2({
-      ...this._def,
-      checks: [...this._def.checks, check2]
-    });
-  }
-  email(message) {
-    return this._addCheck({ kind: "email", ...errorUtil.errToObj(message) });
-  }
-  url(message) {
-    return this._addCheck({ kind: "url", ...errorUtil.errToObj(message) });
-  }
-  emoji(message) {
-    return this._addCheck({ kind: "emoji", ...errorUtil.errToObj(message) });
-  }
-  uuid(message) {
-    return this._addCheck({ kind: "uuid", ...errorUtil.errToObj(message) });
-  }
-  nanoid(message) {
-    return this._addCheck({ kind: "nanoid", ...errorUtil.errToObj(message) });
-  }
-  cuid(message) {
-    return this._addCheck({ kind: "cuid", ...errorUtil.errToObj(message) });
-  }
-  cuid2(message) {
-    return this._addCheck({ kind: "cuid2", ...errorUtil.errToObj(message) });
-  }
-  ulid(message) {
-    return this._addCheck({ kind: "ulid", ...errorUtil.errToObj(message) });
-  }
-  base64(message) {
-    return this._addCheck({ kind: "base64", ...errorUtil.errToObj(message) });
-  }
-  base64url(message) {
-    return this._addCheck({
-      kind: "base64url",
-      ...errorUtil.errToObj(message)
-    });
-  }
-  jwt(options) {
-    return this._addCheck({ kind: "jwt", ...errorUtil.errToObj(options) });
-  }
-  ip(options) {
-    return this._addCheck({ kind: "ip", ...errorUtil.errToObj(options) });
-  }
-  cidr(options) {
-    return this._addCheck({ kind: "cidr", ...errorUtil.errToObj(options) });
-  }
-  datetime(options) {
-    if (typeof options === "string") {
-      return this._addCheck({
-        kind: "datetime",
-        precision: null,
-        offset: false,
-        local: false,
-        message: options
-      });
-    }
-    return this._addCheck({
-      kind: "datetime",
-      precision: typeof options?.precision === "undefined" ? null : options?.precision,
-      offset: options?.offset ?? false,
-      local: options?.local ?? false,
-      ...errorUtil.errToObj(options?.message)
-    });
-  }
-  date(message) {
-    return this._addCheck({ kind: "date", message });
-  }
-  time(options) {
-    if (typeof options === "string") {
-      return this._addCheck({
-        kind: "time",
-        precision: null,
-        message: options
-      });
-    }
-    return this._addCheck({
-      kind: "time",
-      precision: typeof options?.precision === "undefined" ? null : options?.precision,
-      ...errorUtil.errToObj(options?.message)
-    });
-  }
-  duration(message) {
-    return this._addCheck({ kind: "duration", ...errorUtil.errToObj(message) });
-  }
-  regex(regex, message) {
-    return this._addCheck({
-      kind: "regex",
-      regex,
-      ...errorUtil.errToObj(message)
-    });
-  }
-  includes(value, options) {
-    return this._addCheck({
-      kind: "includes",
-      value,
-      position: options?.position,
-      ...errorUtil.errToObj(options?.message)
-    });
-  }
-  startsWith(value, message) {
-    return this._addCheck({
-      kind: "startsWith",
-      value,
-      ...errorUtil.errToObj(message)
-    });
-  }
-  endsWith(value, message) {
-    return this._addCheck({
-      kind: "endsWith",
-      value,
-      ...errorUtil.errToObj(message)
-    });
-  }
-  min(minLength, message) {
-    return this._addCheck({
-      kind: "min",
-      value: minLength,
-      ...errorUtil.errToObj(message)
-    });
-  }
-  max(maxLength, message) {
-    return this._addCheck({
-      kind: "max",
-      value: maxLength,
-      ...errorUtil.errToObj(message)
-    });
-  }
-  length(len, message) {
-    return this._addCheck({
-      kind: "length",
-      value: len,
-      ...errorUtil.errToObj(message)
-    });
-  }
-  /**
-   * Equivalent to `.min(1)`
-   */
-  nonempty(message) {
-    return this.min(1, errorUtil.errToObj(message));
-  }
-  trim() {
-    return new _ZodString2({
-      ...this._def,
-      checks: [...this._def.checks, { kind: "trim" }]
-    });
-  }
-  toLowerCase() {
-    return new _ZodString2({
-      ...this._def,
-      checks: [...this._def.checks, { kind: "toLowerCase" }]
-    });
-  }
-  toUpperCase() {
-    return new _ZodString2({
-      ...this._def,
-      checks: [...this._def.checks, { kind: "toUpperCase" }]
-    });
-  }
-  get isDatetime() {
-    return !!this._def.checks.find((ch) => ch.kind === "datetime");
-  }
-  get isDate() {
-    return !!this._def.checks.find((ch) => ch.kind === "date");
-  }
-  get isTime() {
-    return !!this._def.checks.find((ch) => ch.kind === "time");
-  }
-  get isDuration() {
-    return !!this._def.checks.find((ch) => ch.kind === "duration");
-  }
-  get isEmail() {
-    return !!this._def.checks.find((ch) => ch.kind === "email");
-  }
-  get isURL() {
-    return !!this._def.checks.find((ch) => ch.kind === "url");
-  }
-  get isEmoji() {
-    return !!this._def.checks.find((ch) => ch.kind === "emoji");
-  }
-  get isUUID() {
-    return !!this._def.checks.find((ch) => ch.kind === "uuid");
-  }
-  get isNANOID() {
-    return !!this._def.checks.find((ch) => ch.kind === "nanoid");
-  }
-  get isCUID() {
-    return !!this._def.checks.find((ch) => ch.kind === "cuid");
-  }
-  get isCUID2() {
-    return !!this._def.checks.find((ch) => ch.kind === "cuid2");
-  }
-  get isULID() {
-    return !!this._def.checks.find((ch) => ch.kind === "ulid");
-  }
-  get isIP() {
-    return !!this._def.checks.find((ch) => ch.kind === "ip");
-  }
-  get isCIDR() {
-    return !!this._def.checks.find((ch) => ch.kind === "cidr");
-  }
-  get isBase64() {
-    return !!this._def.checks.find((ch) => ch.kind === "base64");
-  }
-  get isBase64url() {
-    return !!this._def.checks.find((ch) => ch.kind === "base64url");
-  }
-  get minLength() {
-    let min = null;
-    for (const ch of this._def.checks) {
-      if (ch.kind === "min") {
-        if (min === null || ch.value > min)
-          min = ch.value;
-      }
-    }
-    return min;
-  }
-  get maxLength() {
-    let max = null;
-    for (const ch of this._def.checks) {
-      if (ch.kind === "max") {
-        if (max === null || ch.value < max)
-          max = ch.value;
-      }
-    }
-    return max;
-  }
-};
-ZodString.create = (params) => {
-  return new ZodString({
-    checks: [],
-    typeName: ZodFirstPartyTypeKind.ZodString,
-    coerce: params?.coerce ?? false,
-    ...processCreateParams(params)
-  });
-};
-function floatSafeRemainder(val, step) {
-  const valDecCount = (val.toString().split(".")[1] || "").length;
-  const stepDecCount = (step.toString().split(".")[1] || "").length;
-  const decCount = valDecCount > stepDecCount ? valDecCount : stepDecCount;
-  const valInt = Number.parseInt(val.toFixed(decCount).replace(".", ""));
-  const stepInt = Number.parseInt(step.toFixed(decCount).replace(".", ""));
-  return valInt % stepInt / 10 ** decCount;
+function claudeForwardsPrompts(mode, req) {
+  return !isClaudeReadOnly(mode) && Boolean(req.canApprove && req.approve);
 }
-var ZodNumber = class _ZodNumber extends ZodType {
-  constructor() {
-    super(...arguments);
-    this.min = this.gte;
-    this.max = this.lte;
-    this.step = this.multipleOf;
-  }
-  _parse(input2) {
-    if (this._def.coerce) {
-      input2.data = Number(input2.data);
-    }
-    const parsedType2 = this._getType(input2);
-    if (parsedType2 !== ZodParsedType.number) {
-      const ctx2 = this._getOrReturnCtx(input2);
-      addIssueToContext(ctx2, {
-        code: ZodIssueCode.invalid_type,
-        expected: ZodParsedType.number,
-        received: ctx2.parsedType
-      });
-      return INVALID;
-    }
-    let ctx = void 0;
-    const status = new ParseStatus();
-    for (const check2 of this._def.checks) {
-      if (check2.kind === "int") {
-        if (!util.isInteger(input2.data)) {
-          ctx = this._getOrReturnCtx(input2, ctx);
-          addIssueToContext(ctx, {
-            code: ZodIssueCode.invalid_type,
-            expected: "integer",
-            received: "float",
-            message: check2.message
-          });
-          status.dirty();
-        }
-      } else if (check2.kind === "min") {
-        const tooSmall = check2.inclusive ? input2.data < check2.value : input2.data <= check2.value;
-        if (tooSmall) {
-          ctx = this._getOrReturnCtx(input2, ctx);
-          addIssueToContext(ctx, {
-            code: ZodIssueCode.too_small,
-            minimum: check2.value,
-            type: "number",
-            inclusive: check2.inclusive,
-            exact: false,
-            message: check2.message
-          });
-          status.dirty();
-        }
-      } else if (check2.kind === "max") {
-        const tooBig = check2.inclusive ? input2.data > check2.value : input2.data >= check2.value;
-        if (tooBig) {
-          ctx = this._getOrReturnCtx(input2, ctx);
-          addIssueToContext(ctx, {
-            code: ZodIssueCode.too_big,
-            maximum: check2.value,
-            type: "number",
-            inclusive: check2.inclusive,
-            exact: false,
-            message: check2.message
-          });
-          status.dirty();
-        }
-      } else if (check2.kind === "multipleOf") {
-        if (floatSafeRemainder(input2.data, check2.value) !== 0) {
-          ctx = this._getOrReturnCtx(input2, ctx);
-          addIssueToContext(ctx, {
-            code: ZodIssueCode.not_multiple_of,
-            multipleOf: check2.value,
-            message: check2.message
-          });
-          status.dirty();
-        }
-      } else if (check2.kind === "finite") {
-        if (!Number.isFinite(input2.data)) {
-          ctx = this._getOrReturnCtx(input2, ctx);
-          addIssueToContext(ctx, {
-            code: ZodIssueCode.not_finite,
-            message: check2.message
-          });
-          status.dirty();
-        }
-      } else {
-        util.assertNever(check2);
-      }
-    }
-    return { status: status.value, value: input2.data };
-  }
-  gte(value, message) {
-    return this.setLimit("min", value, true, errorUtil.toString(message));
-  }
-  gt(value, message) {
-    return this.setLimit("min", value, false, errorUtil.toString(message));
-  }
-  lte(value, message) {
-    return this.setLimit("max", value, true, errorUtil.toString(message));
-  }
-  lt(value, message) {
-    return this.setLimit("max", value, false, errorUtil.toString(message));
-  }
-  setLimit(kind, value, inclusive, message) {
-    return new _ZodNumber({
-      ...this._def,
-      checks: [
-        ...this._def.checks,
-        {
-          kind,
-          value,
-          inclusive,
-          message: errorUtil.toString(message)
-        }
-      ]
-    });
-  }
-  _addCheck(check2) {
-    return new _ZodNumber({
-      ...this._def,
-      checks: [...this._def.checks, check2]
-    });
-  }
-  int(message) {
-    return this._addCheck({
-      kind: "int",
-      message: errorUtil.toString(message)
-    });
-  }
-  positive(message) {
-    return this._addCheck({
-      kind: "min",
-      value: 0,
-      inclusive: false,
-      message: errorUtil.toString(message)
-    });
-  }
-  negative(message) {
-    return this._addCheck({
-      kind: "max",
-      value: 0,
-      inclusive: false,
-      message: errorUtil.toString(message)
-    });
-  }
-  nonpositive(message) {
-    return this._addCheck({
-      kind: "max",
-      value: 0,
-      inclusive: true,
-      message: errorUtil.toString(message)
-    });
-  }
-  nonnegative(message) {
-    return this._addCheck({
-      kind: "min",
-      value: 0,
-      inclusive: true,
-      message: errorUtil.toString(message)
-    });
-  }
-  multipleOf(value, message) {
-    return this._addCheck({
-      kind: "multipleOf",
-      value,
-      message: errorUtil.toString(message)
-    });
-  }
-  finite(message) {
-    return this._addCheck({
-      kind: "finite",
-      message: errorUtil.toString(message)
-    });
-  }
-  safe(message) {
-    return this._addCheck({
-      kind: "min",
-      inclusive: true,
-      value: Number.MIN_SAFE_INTEGER,
-      message: errorUtil.toString(message)
-    })._addCheck({
-      kind: "max",
-      inclusive: true,
-      value: Number.MAX_SAFE_INTEGER,
-      message: errorUtil.toString(message)
-    });
-  }
-  get minValue() {
-    let min = null;
-    for (const ch of this._def.checks) {
-      if (ch.kind === "min") {
-        if (min === null || ch.value > min)
-          min = ch.value;
-      }
-    }
-    return min;
-  }
-  get maxValue() {
-    let max = null;
-    for (const ch of this._def.checks) {
-      if (ch.kind === "max") {
-        if (max === null || ch.value < max)
-          max = ch.value;
-      }
-    }
-    return max;
-  }
-  get isInt() {
-    return !!this._def.checks.find((ch) => ch.kind === "int" || ch.kind === "multipleOf" && util.isInteger(ch.value));
-  }
-  get isFinite() {
-    let max = null;
-    let min = null;
-    for (const ch of this._def.checks) {
-      if (ch.kind === "finite" || ch.kind === "int" || ch.kind === "multipleOf") {
-        return true;
-      } else if (ch.kind === "min") {
-        if (min === null || ch.value > min)
-          min = ch.value;
-      } else if (ch.kind === "max") {
-        if (max === null || ch.value < max)
-          max = ch.value;
-      }
-    }
-    return Number.isFinite(min) && Number.isFinite(max);
-  }
-};
-ZodNumber.create = (params) => {
-  return new ZodNumber({
-    checks: [],
-    typeName: ZodFirstPartyTypeKind.ZodNumber,
-    coerce: params?.coerce || false,
-    ...processCreateParams(params)
-  });
-};
-var ZodBigInt = class _ZodBigInt extends ZodType {
-  constructor() {
-    super(...arguments);
-    this.min = this.gte;
-    this.max = this.lte;
-  }
-  _parse(input2) {
-    if (this._def.coerce) {
+var CLAUDE_HOOK_TIMEOUT_SEC = 900;
+function claudeInitSniffer(next, onInfo) {
+  if (!onInfo) return next;
+  let seen = false;
+  return (line) => {
+    if (!seen && line.includes('"subtype":"init"')) {
+      seen = true;
       try {
-        input2.data = BigInt(input2.data);
+        const model = JSON.parse(line).model;
+        if (typeof model === "string" && model) onInfo({ model });
       } catch {
-        return this._getInvalidInput(input2);
       }
     }
-    const parsedType2 = this._getType(input2);
-    if (parsedType2 !== ZodParsedType.bigint) {
-      return this._getInvalidInput(input2);
-    }
-    let ctx = void 0;
-    const status = new ParseStatus();
-    for (const check2 of this._def.checks) {
-      if (check2.kind === "min") {
-        const tooSmall = check2.inclusive ? input2.data < check2.value : input2.data <= check2.value;
-        if (tooSmall) {
-          ctx = this._getOrReturnCtx(input2, ctx);
-          addIssueToContext(ctx, {
-            code: ZodIssueCode.too_small,
-            type: "bigint",
-            minimum: check2.value,
-            inclusive: check2.inclusive,
-            message: check2.message
-          });
-          status.dirty();
-        }
-      } else if (check2.kind === "max") {
-        const tooBig = check2.inclusive ? input2.data > check2.value : input2.data >= check2.value;
-        if (tooBig) {
-          ctx = this._getOrReturnCtx(input2, ctx);
-          addIssueToContext(ctx, {
-            code: ZodIssueCode.too_big,
-            type: "bigint",
-            maximum: check2.value,
-            inclusive: check2.inclusive,
-            message: check2.message
-          });
-          status.dirty();
-        }
-      } else if (check2.kind === "multipleOf") {
-        if (input2.data % check2.value !== BigInt(0)) {
-          ctx = this._getOrReturnCtx(input2, ctx);
-          addIssueToContext(ctx, {
-            code: ZodIssueCode.not_multiple_of,
-            multipleOf: check2.value,
-            message: check2.message
-          });
-          status.dirty();
-        }
-      } else {
-        util.assertNever(check2);
-      }
-    }
-    return { status: status.value, value: input2.data };
-  }
-  _getInvalidInput(input2) {
-    const ctx = this._getOrReturnCtx(input2);
-    addIssueToContext(ctx, {
-      code: ZodIssueCode.invalid_type,
-      expected: ZodParsedType.bigint,
-      received: ctx.parsedType
-    });
-    return INVALID;
-  }
-  gte(value, message) {
-    return this.setLimit("min", value, true, errorUtil.toString(message));
-  }
-  gt(value, message) {
-    return this.setLimit("min", value, false, errorUtil.toString(message));
-  }
-  lte(value, message) {
-    return this.setLimit("max", value, true, errorUtil.toString(message));
-  }
-  lt(value, message) {
-    return this.setLimit("max", value, false, errorUtil.toString(message));
-  }
-  setLimit(kind, value, inclusive, message) {
-    return new _ZodBigInt({
-      ...this._def,
-      checks: [
-        ...this._def.checks,
-        {
-          kind,
-          value,
-          inclusive,
-          message: errorUtil.toString(message)
-        }
-      ]
-    });
-  }
-  _addCheck(check2) {
-    return new _ZodBigInt({
-      ...this._def,
-      checks: [...this._def.checks, check2]
-    });
-  }
-  positive(message) {
-    return this._addCheck({
-      kind: "min",
-      value: BigInt(0),
-      inclusive: false,
-      message: errorUtil.toString(message)
-    });
-  }
-  negative(message) {
-    return this._addCheck({
-      kind: "max",
-      value: BigInt(0),
-      inclusive: false,
-      message: errorUtil.toString(message)
-    });
-  }
-  nonpositive(message) {
-    return this._addCheck({
-      kind: "max",
-      value: BigInt(0),
-      inclusive: true,
-      message: errorUtil.toString(message)
-    });
-  }
-  nonnegative(message) {
-    return this._addCheck({
-      kind: "min",
-      value: BigInt(0),
-      inclusive: true,
-      message: errorUtil.toString(message)
-    });
-  }
-  multipleOf(value, message) {
-    return this._addCheck({
-      kind: "multipleOf",
-      value,
-      message: errorUtil.toString(message)
-    });
-  }
-  get minValue() {
-    let min = null;
-    for (const ch of this._def.checks) {
-      if (ch.kind === "min") {
-        if (min === null || ch.value > min)
-          min = ch.value;
-      }
-    }
-    return min;
-  }
-  get maxValue() {
-    let max = null;
-    for (const ch of this._def.checks) {
-      if (ch.kind === "max") {
-        if (max === null || ch.value < max)
-          max = ch.value;
-      }
-    }
-    return max;
-  }
-};
-ZodBigInt.create = (params) => {
-  return new ZodBigInt({
-    checks: [],
-    typeName: ZodFirstPartyTypeKind.ZodBigInt,
-    coerce: params?.coerce ?? false,
-    ...processCreateParams(params)
-  });
-};
-var ZodBoolean = class extends ZodType {
-  _parse(input2) {
-    if (this._def.coerce) {
-      input2.data = Boolean(input2.data);
-    }
-    const parsedType2 = this._getType(input2);
-    if (parsedType2 !== ZodParsedType.boolean) {
-      const ctx = this._getOrReturnCtx(input2);
-      addIssueToContext(ctx, {
-        code: ZodIssueCode.invalid_type,
-        expected: ZodParsedType.boolean,
-        received: ctx.parsedType
-      });
-      return INVALID;
-    }
-    return OK(input2.data);
-  }
-};
-ZodBoolean.create = (params) => {
-  return new ZodBoolean({
-    typeName: ZodFirstPartyTypeKind.ZodBoolean,
-    coerce: params?.coerce || false,
-    ...processCreateParams(params)
-  });
-};
-var ZodDate = class _ZodDate extends ZodType {
-  _parse(input2) {
-    if (this._def.coerce) {
-      input2.data = new Date(input2.data);
-    }
-    const parsedType2 = this._getType(input2);
-    if (parsedType2 !== ZodParsedType.date) {
-      const ctx2 = this._getOrReturnCtx(input2);
-      addIssueToContext(ctx2, {
-        code: ZodIssueCode.invalid_type,
-        expected: ZodParsedType.date,
-        received: ctx2.parsedType
-      });
-      return INVALID;
-    }
-    if (Number.isNaN(input2.data.getTime())) {
-      const ctx2 = this._getOrReturnCtx(input2);
-      addIssueToContext(ctx2, {
-        code: ZodIssueCode.invalid_date
-      });
-      return INVALID;
-    }
-    const status = new ParseStatus();
-    let ctx = void 0;
-    for (const check2 of this._def.checks) {
-      if (check2.kind === "min") {
-        if (input2.data.getTime() < check2.value) {
-          ctx = this._getOrReturnCtx(input2, ctx);
-          addIssueToContext(ctx, {
-            code: ZodIssueCode.too_small,
-            message: check2.message,
-            inclusive: true,
-            exact: false,
-            minimum: check2.value,
-            type: "date"
-          });
-          status.dirty();
-        }
-      } else if (check2.kind === "max") {
-        if (input2.data.getTime() > check2.value) {
-          ctx = this._getOrReturnCtx(input2, ctx);
-          addIssueToContext(ctx, {
-            code: ZodIssueCode.too_big,
-            message: check2.message,
-            inclusive: true,
-            exact: false,
-            maximum: check2.value,
-            type: "date"
-          });
-          status.dirty();
-        }
-      } else {
-        util.assertNever(check2);
-      }
-    }
-    return {
-      status: status.value,
-      value: new Date(input2.data.getTime())
-    };
-  }
-  _addCheck(check2) {
-    return new _ZodDate({
-      ...this._def,
-      checks: [...this._def.checks, check2]
-    });
-  }
-  min(minDate, message) {
-    return this._addCheck({
-      kind: "min",
-      value: minDate.getTime(),
-      message: errorUtil.toString(message)
-    });
-  }
-  max(maxDate, message) {
-    return this._addCheck({
-      kind: "max",
-      value: maxDate.getTime(),
-      message: errorUtil.toString(message)
-    });
-  }
-  get minDate() {
-    let min = null;
-    for (const ch of this._def.checks) {
-      if (ch.kind === "min") {
-        if (min === null || ch.value > min)
-          min = ch.value;
-      }
-    }
-    return min != null ? new Date(min) : null;
-  }
-  get maxDate() {
-    let max = null;
-    for (const ch of this._def.checks) {
-      if (ch.kind === "max") {
-        if (max === null || ch.value < max)
-          max = ch.value;
-      }
-    }
-    return max != null ? new Date(max) : null;
-  }
-};
-ZodDate.create = (params) => {
-  return new ZodDate({
-    checks: [],
-    coerce: params?.coerce || false,
-    typeName: ZodFirstPartyTypeKind.ZodDate,
-    ...processCreateParams(params)
-  });
-};
-var ZodSymbol = class extends ZodType {
-  _parse(input2) {
-    const parsedType2 = this._getType(input2);
-    if (parsedType2 !== ZodParsedType.symbol) {
-      const ctx = this._getOrReturnCtx(input2);
-      addIssueToContext(ctx, {
-        code: ZodIssueCode.invalid_type,
-        expected: ZodParsedType.symbol,
-        received: ctx.parsedType
-      });
-      return INVALID;
-    }
-    return OK(input2.data);
-  }
-};
-ZodSymbol.create = (params) => {
-  return new ZodSymbol({
-    typeName: ZodFirstPartyTypeKind.ZodSymbol,
-    ...processCreateParams(params)
-  });
-};
-var ZodUndefined = class extends ZodType {
-  _parse(input2) {
-    const parsedType2 = this._getType(input2);
-    if (parsedType2 !== ZodParsedType.undefined) {
-      const ctx = this._getOrReturnCtx(input2);
-      addIssueToContext(ctx, {
-        code: ZodIssueCode.invalid_type,
-        expected: ZodParsedType.undefined,
-        received: ctx.parsedType
-      });
-      return INVALID;
-    }
-    return OK(input2.data);
-  }
-};
-ZodUndefined.create = (params) => {
-  return new ZodUndefined({
-    typeName: ZodFirstPartyTypeKind.ZodUndefined,
-    ...processCreateParams(params)
-  });
-};
-var ZodNull = class extends ZodType {
-  _parse(input2) {
-    const parsedType2 = this._getType(input2);
-    if (parsedType2 !== ZodParsedType.null) {
-      const ctx = this._getOrReturnCtx(input2);
-      addIssueToContext(ctx, {
-        code: ZodIssueCode.invalid_type,
-        expected: ZodParsedType.null,
-        received: ctx.parsedType
-      });
-      return INVALID;
-    }
-    return OK(input2.data);
-  }
-};
-ZodNull.create = (params) => {
-  return new ZodNull({
-    typeName: ZodFirstPartyTypeKind.ZodNull,
-    ...processCreateParams(params)
-  });
-};
-var ZodAny = class extends ZodType {
-  constructor() {
-    super(...arguments);
-    this._any = true;
-  }
-  _parse(input2) {
-    return OK(input2.data);
-  }
-};
-ZodAny.create = (params) => {
-  return new ZodAny({
-    typeName: ZodFirstPartyTypeKind.ZodAny,
-    ...processCreateParams(params)
-  });
-};
-var ZodUnknown = class extends ZodType {
-  constructor() {
-    super(...arguments);
-    this._unknown = true;
-  }
-  _parse(input2) {
-    return OK(input2.data);
-  }
-};
-ZodUnknown.create = (params) => {
-  return new ZodUnknown({
-    typeName: ZodFirstPartyTypeKind.ZodUnknown,
-    ...processCreateParams(params)
-  });
-};
-var ZodNever = class extends ZodType {
-  _parse(input2) {
-    const ctx = this._getOrReturnCtx(input2);
-    addIssueToContext(ctx, {
-      code: ZodIssueCode.invalid_type,
-      expected: ZodParsedType.never,
-      received: ctx.parsedType
-    });
-    return INVALID;
-  }
-};
-ZodNever.create = (params) => {
-  return new ZodNever({
-    typeName: ZodFirstPartyTypeKind.ZodNever,
-    ...processCreateParams(params)
-  });
-};
-var ZodVoid = class extends ZodType {
-  _parse(input2) {
-    const parsedType2 = this._getType(input2);
-    if (parsedType2 !== ZodParsedType.undefined) {
-      const ctx = this._getOrReturnCtx(input2);
-      addIssueToContext(ctx, {
-        code: ZodIssueCode.invalid_type,
-        expected: ZodParsedType.void,
-        received: ctx.parsedType
-      });
-      return INVALID;
-    }
-    return OK(input2.data);
-  }
-};
-ZodVoid.create = (params) => {
-  return new ZodVoid({
-    typeName: ZodFirstPartyTypeKind.ZodVoid,
-    ...processCreateParams(params)
-  });
-};
-var ZodArray = class _ZodArray extends ZodType {
-  _parse(input2) {
-    const { ctx, status } = this._processInputParams(input2);
-    const def = this._def;
-    if (ctx.parsedType !== ZodParsedType.array) {
-      addIssueToContext(ctx, {
-        code: ZodIssueCode.invalid_type,
-        expected: ZodParsedType.array,
-        received: ctx.parsedType
-      });
-      return INVALID;
-    }
-    if (def.exactLength !== null) {
-      const tooBig = ctx.data.length > def.exactLength.value;
-      const tooSmall = ctx.data.length < def.exactLength.value;
-      if (tooBig || tooSmall) {
-        addIssueToContext(ctx, {
-          code: tooBig ? ZodIssueCode.too_big : ZodIssueCode.too_small,
-          minimum: tooSmall ? def.exactLength.value : void 0,
-          maximum: tooBig ? def.exactLength.value : void 0,
-          type: "array",
-          inclusive: true,
-          exact: true,
-          message: def.exactLength.message
-        });
-        status.dirty();
-      }
-    }
-    if (def.minLength !== null) {
-      if (ctx.data.length < def.minLength.value) {
-        addIssueToContext(ctx, {
-          code: ZodIssueCode.too_small,
-          minimum: def.minLength.value,
-          type: "array",
-          inclusive: true,
-          exact: false,
-          message: def.minLength.message
-        });
-        status.dirty();
-      }
-    }
-    if (def.maxLength !== null) {
-      if (ctx.data.length > def.maxLength.value) {
-        addIssueToContext(ctx, {
-          code: ZodIssueCode.too_big,
-          maximum: def.maxLength.value,
-          type: "array",
-          inclusive: true,
-          exact: false,
-          message: def.maxLength.message
-        });
-        status.dirty();
-      }
-    }
-    if (ctx.common.async) {
-      return Promise.all([...ctx.data].map((item, i) => {
-        return def.type._parseAsync(new ParseInputLazyPath(ctx, item, ctx.path, i));
-      })).then((result2) => {
-        return ParseStatus.mergeArray(status, result2);
-      });
-    }
-    const result = [...ctx.data].map((item, i) => {
-      return def.type._parseSync(new ParseInputLazyPath(ctx, item, ctx.path, i));
-    });
-    return ParseStatus.mergeArray(status, result);
-  }
-  get element() {
-    return this._def.type;
-  }
-  min(minLength, message) {
-    return new _ZodArray({
-      ...this._def,
-      minLength: { value: minLength, message: errorUtil.toString(message) }
-    });
-  }
-  max(maxLength, message) {
-    return new _ZodArray({
-      ...this._def,
-      maxLength: { value: maxLength, message: errorUtil.toString(message) }
-    });
-  }
-  length(len, message) {
-    return new _ZodArray({
-      ...this._def,
-      exactLength: { value: len, message: errorUtil.toString(message) }
-    });
-  }
-  nonempty(message) {
-    return this.min(1, message);
-  }
-};
-ZodArray.create = (schema, params) => {
-  return new ZodArray({
-    type: schema,
-    minLength: null,
-    maxLength: null,
-    exactLength: null,
-    typeName: ZodFirstPartyTypeKind.ZodArray,
-    ...processCreateParams(params)
-  });
-};
-function deepPartialify(schema) {
-  if (schema instanceof ZodObject) {
-    const newShape = {};
-    for (const key in schema.shape) {
-      const fieldSchema = schema.shape[key];
-      newShape[key] = ZodOptional.create(deepPartialify(fieldSchema));
-    }
-    return new ZodObject({
-      ...schema._def,
-      shape: () => newShape
-    });
-  } else if (schema instanceof ZodArray) {
-    return new ZodArray({
-      ...schema._def,
-      type: deepPartialify(schema.element)
-    });
-  } else if (schema instanceof ZodOptional) {
-    return ZodOptional.create(deepPartialify(schema.unwrap()));
-  } else if (schema instanceof ZodNullable) {
-    return ZodNullable.create(deepPartialify(schema.unwrap()));
-  } else if (schema instanceof ZodTuple) {
-    return ZodTuple.create(schema.items.map((item) => deepPartialify(item)));
-  } else {
-    return schema;
-  }
+    next?.(line);
+  };
 }
-var ZodObject = class _ZodObject extends ZodType {
-  constructor() {
-    super(...arguments);
-    this._cached = null;
-    this.nonstrict = this.passthrough;
-    this.augment = this.extend;
-  }
-  _getCached() {
-    if (this._cached !== null)
-      return this._cached;
-    const shape = this._def.shape();
-    const keys = util.objectKeys(shape);
-    this._cached = { shape, keys };
-    return this._cached;
-  }
-  _parse(input2) {
-    const parsedType2 = this._getType(input2);
-    if (parsedType2 !== ZodParsedType.object) {
-      const ctx2 = this._getOrReturnCtx(input2);
-      addIssueToContext(ctx2, {
-        code: ZodIssueCode.invalid_type,
-        expected: ZodParsedType.object,
-        received: ctx2.parsedType
-      });
-      return INVALID;
-    }
-    const { status, ctx } = this._processInputParams(input2);
-    const { shape, keys: shapeKeys } = this._getCached();
-    const extraKeys = [];
-    if (!(this._def.catchall instanceof ZodNever && this._def.unknownKeys === "strip")) {
-      for (const key in ctx.data) {
-        if (!shapeKeys.includes(key)) {
-          extraKeys.push(key);
-        }
-      }
-    }
-    const pairs = [];
-    for (const key of shapeKeys) {
-      const keyValidator = shape[key];
-      const value = ctx.data[key];
-      pairs.push({
-        key: { status: "valid", value: key },
-        value: keyValidator._parse(new ParseInputLazyPath(ctx, value, ctx.path, key)),
-        alwaysSet: key in ctx.data
-      });
-    }
-    if (this._def.catchall instanceof ZodNever) {
-      const unknownKeys = this._def.unknownKeys;
-      if (unknownKeys === "passthrough") {
-        for (const key of extraKeys) {
-          pairs.push({
-            key: { status: "valid", value: key },
-            value: { status: "valid", value: ctx.data[key] }
-          });
-        }
-      } else if (unknownKeys === "strict") {
-        if (extraKeys.length > 0) {
-          addIssueToContext(ctx, {
-            code: ZodIssueCode.unrecognized_keys,
-            keys: extraKeys
-          });
-          status.dirty();
-        }
-      } else if (unknownKeys === "strip") {
-      } else {
-        throw new Error(`Internal ZodObject error: invalid unknownKeys value.`);
-      }
-    } else {
-      const catchall = this._def.catchall;
-      for (const key of extraKeys) {
-        const value = ctx.data[key];
-        pairs.push({
-          key: { status: "valid", value: key },
-          value: catchall._parse(
-            new ParseInputLazyPath(ctx, value, ctx.path, key)
-            //, ctx.child(key), value, getParsedType(value)
-          ),
-          alwaysSet: key in ctx.data
-        });
-      }
-    }
-    if (ctx.common.async) {
-      return Promise.resolve().then(async () => {
-        const syncPairs = [];
-        for (const pair of pairs) {
-          const key = await pair.key;
-          const value = await pair.value;
-          syncPairs.push({
-            key,
-            value,
-            alwaysSet: pair.alwaysSet
-          });
-        }
-        return syncPairs;
-      }).then((syncPairs) => {
-        return ParseStatus.mergeObjectSync(status, syncPairs);
-      });
-    } else {
-      return ParseStatus.mergeObjectSync(status, pairs);
-    }
-  }
-  get shape() {
-    return this._def.shape();
-  }
-  strict(message) {
-    errorUtil.errToObj;
-    return new _ZodObject({
-      ...this._def,
-      unknownKeys: "strict",
-      ...message !== void 0 ? {
-        errorMap: (issue2, ctx) => {
-          const defaultError = this._def.errorMap?.(issue2, ctx).message ?? ctx.defaultError;
-          if (issue2.code === "unrecognized_keys")
-            return {
-              message: errorUtil.errToObj(message).message ?? defaultError
-            };
-          return {
-            message: defaultError
-          };
-        }
-      } : {}
-    });
-  }
-  strip() {
-    return new _ZodObject({
-      ...this._def,
-      unknownKeys: "strip"
-    });
-  }
-  passthrough() {
-    return new _ZodObject({
-      ...this._def,
-      unknownKeys: "passthrough"
-    });
-  }
-  // const AugmentFactory =
-  //   <Def extends ZodObjectDef>(def: Def) =>
-  //   <Augmentation extends ZodRawShape>(
-  //     augmentation: Augmentation
-  //   ): ZodObject<
-  //     extendShape<ReturnType<Def["shape"]>, Augmentation>,
-  //     Def["unknownKeys"],
-  //     Def["catchall"]
-  //   > => {
-  //     return new ZodObject({
-  //       ...def,
-  //       shape: () => ({
-  //         ...def.shape(),
-  //         ...augmentation,
-  //       }),
-  //     }) as any;
-  //   };
-  extend(augmentation) {
-    return new _ZodObject({
-      ...this._def,
-      shape: () => ({
-        ...this._def.shape(),
-        ...augmentation
-      })
-    });
-  }
-  /**
-   * Prior to zod@1.0.12 there was a bug in the
-   * inferred type of merged objects. Please
-   * upgrade if you are experiencing issues.
-   */
-  merge(merging) {
-    const merged = new _ZodObject({
-      unknownKeys: merging._def.unknownKeys,
-      catchall: merging._def.catchall,
-      shape: () => ({
-        ...this._def.shape(),
-        ...merging._def.shape()
-      }),
-      typeName: ZodFirstPartyTypeKind.ZodObject
-    });
-    return merged;
-  }
-  // merge<
-  //   Incoming extends AnyZodObject,
-  //   Augmentation extends Incoming["shape"],
-  //   NewOutput extends {
-  //     [k in keyof Augmentation | keyof Output]: k extends keyof Augmentation
-  //       ? Augmentation[k]["_output"]
-  //       : k extends keyof Output
-  //       ? Output[k]
-  //       : never;
-  //   },
-  //   NewInput extends {
-  //     [k in keyof Augmentation | keyof Input]: k extends keyof Augmentation
-  //       ? Augmentation[k]["_input"]
-  //       : k extends keyof Input
-  //       ? Input[k]
-  //       : never;
-  //   }
-  // >(
-  //   merging: Incoming
-  // ): ZodObject<
-  //   extendShape<T, ReturnType<Incoming["_def"]["shape"]>>,
-  //   Incoming["_def"]["unknownKeys"],
-  //   Incoming["_def"]["catchall"],
-  //   NewOutput,
-  //   NewInput
-  // > {
-  //   const merged: any = new ZodObject({
-  //     unknownKeys: merging._def.unknownKeys,
-  //     catchall: merging._def.catchall,
-  //     shape: () =>
-  //       objectUtil.mergeShapes(this._def.shape(), merging._def.shape()),
-  //     typeName: ZodFirstPartyTypeKind.ZodObject,
-  //   }) as any;
-  //   return merged;
-  // }
-  setKey(key, schema) {
-    return this.augment({ [key]: schema });
-  }
-  // merge<Incoming extends AnyZodObject>(
-  //   merging: Incoming
-  // ): //ZodObject<T & Incoming["_shape"], UnknownKeys, Catchall> = (merging) => {
-  // ZodObject<
-  //   extendShape<T, ReturnType<Incoming["_def"]["shape"]>>,
-  //   Incoming["_def"]["unknownKeys"],
-  //   Incoming["_def"]["catchall"]
-  // > {
-  //   // const mergedShape = objectUtil.mergeShapes(
-  //   //   this._def.shape(),
-  //   //   merging._def.shape()
-  //   // );
-  //   const merged: any = new ZodObject({
-  //     unknownKeys: merging._def.unknownKeys,
-  //     catchall: merging._def.catchall,
-  //     shape: () =>
-  //       objectUtil.mergeShapes(this._def.shape(), merging._def.shape()),
-  //     typeName: ZodFirstPartyTypeKind.ZodObject,
-  //   }) as any;
-  //   return merged;
-  // }
-  catchall(index) {
-    return new _ZodObject({
-      ...this._def,
-      catchall: index
-    });
-  }
-  pick(mask) {
-    const shape = {};
-    for (const key of util.objectKeys(mask)) {
-      if (mask[key] && this.shape[key]) {
-        shape[key] = this.shape[key];
-      }
-    }
-    return new _ZodObject({
-      ...this._def,
-      shape: () => shape
-    });
-  }
-  omit(mask) {
-    const shape = {};
-    for (const key of util.objectKeys(this.shape)) {
-      if (!mask[key]) {
-        shape[key] = this.shape[key];
-      }
-    }
-    return new _ZodObject({
-      ...this._def,
-      shape: () => shape
-    });
-  }
-  /**
-   * @deprecated
-   */
-  deepPartial() {
-    return deepPartialify(this);
-  }
-  partial(mask) {
-    const newShape = {};
-    for (const key of util.objectKeys(this.shape)) {
-      const fieldSchema = this.shape[key];
-      if (mask && !mask[key]) {
-        newShape[key] = fieldSchema;
-      } else {
-        newShape[key] = fieldSchema.optional();
-      }
-    }
-    return new _ZodObject({
-      ...this._def,
-      shape: () => newShape
-    });
-  }
-  required(mask) {
-    const newShape = {};
-    for (const key of util.objectKeys(this.shape)) {
-      if (mask && !mask[key]) {
-        newShape[key] = this.shape[key];
-      } else {
-        const fieldSchema = this.shape[key];
-        let newField = fieldSchema;
-        while (newField instanceof ZodOptional) {
-          newField = newField._def.innerType;
-        }
-        newShape[key] = newField;
-      }
-    }
-    return new _ZodObject({
-      ...this._def,
-      shape: () => newShape
-    });
-  }
-  keyof() {
-    return createZodEnum(util.objectKeys(this.shape));
-  }
-};
-ZodObject.create = (shape, params) => {
-  return new ZodObject({
-    shape: () => shape,
-    unknownKeys: "strip",
-    catchall: ZodNever.create(),
-    typeName: ZodFirstPartyTypeKind.ZodObject,
-    ...processCreateParams(params)
-  });
-};
-ZodObject.strictCreate = (shape, params) => {
-  return new ZodObject({
-    shape: () => shape,
-    unknownKeys: "strict",
-    catchall: ZodNever.create(),
-    typeName: ZodFirstPartyTypeKind.ZodObject,
-    ...processCreateParams(params)
-  });
-};
-ZodObject.lazycreate = (shape, params) => {
-  return new ZodObject({
-    shape,
-    unknownKeys: "strip",
-    catchall: ZodNever.create(),
-    typeName: ZodFirstPartyTypeKind.ZodObject,
-    ...processCreateParams(params)
-  });
-};
-var ZodUnion = class extends ZodType {
-  _parse(input2) {
-    const { ctx } = this._processInputParams(input2);
-    const options = this._def.options;
-    function handleResults(results) {
-      for (const result of results) {
-        if (result.result.status === "valid") {
-          return result.result;
-        }
-      }
-      for (const result of results) {
-        if (result.result.status === "dirty") {
-          ctx.common.issues.push(...result.ctx.common.issues);
-          return result.result;
-        }
-      }
-      const unionErrors = results.map((result) => new ZodError(result.ctx.common.issues));
-      addIssueToContext(ctx, {
-        code: ZodIssueCode.invalid_union,
-        unionErrors
-      });
-      return INVALID;
-    }
-    if (ctx.common.async) {
-      return Promise.all(options.map(async (option) => {
-        const childCtx = {
-          ...ctx,
-          common: {
-            ...ctx.common,
-            issues: []
-          },
-          parent: null
-        };
-        return {
-          result: await option._parseAsync({
-            data: ctx.data,
-            path: ctx.path,
-            parent: childCtx
-          }),
-          ctx: childCtx
-        };
-      })).then(handleResults);
-    } else {
-      let dirty = void 0;
-      const issues = [];
-      for (const option of options) {
-        const childCtx = {
-          ...ctx,
-          common: {
-            ...ctx.common,
-            issues: []
-          },
-          parent: null
-        };
-        const result = option._parseSync({
-          data: ctx.data,
-          path: ctx.path,
-          parent: childCtx
-        });
-        if (result.status === "valid") {
-          return result;
-        } else if (result.status === "dirty" && !dirty) {
-          dirty = { result, ctx: childCtx };
-        }
-        if (childCtx.common.issues.length) {
-          issues.push(childCtx.common.issues);
-        }
-      }
-      if (dirty) {
-        ctx.common.issues.push(...dirty.ctx.common.issues);
-        return dirty.result;
-      }
-      const unionErrors = issues.map((issues2) => new ZodError(issues2));
-      addIssueToContext(ctx, {
-        code: ZodIssueCode.invalid_union,
-        unionErrors
-      });
-      return INVALID;
-    }
-  }
-  get options() {
-    return this._def.options;
-  }
-};
-ZodUnion.create = (types, params) => {
-  return new ZodUnion({
-    options: types,
-    typeName: ZodFirstPartyTypeKind.ZodUnion,
-    ...processCreateParams(params)
-  });
-};
-var getDiscriminator = (type) => {
-  if (type instanceof ZodLazy) {
-    return getDiscriminator(type.schema);
-  } else if (type instanceof ZodEffects) {
-    return getDiscriminator(type.innerType());
-  } else if (type instanceof ZodLiteral) {
-    return [type.value];
-  } else if (type instanceof ZodEnum) {
-    return type.options;
-  } else if (type instanceof ZodNativeEnum) {
-    return util.objectValues(type.enum);
-  } else if (type instanceof ZodDefault) {
-    return getDiscriminator(type._def.innerType);
-  } else if (type instanceof ZodUndefined) {
-    return [void 0];
-  } else if (type instanceof ZodNull) {
-    return [null];
-  } else if (type instanceof ZodOptional) {
-    return [void 0, ...getDiscriminator(type.unwrap())];
-  } else if (type instanceof ZodNullable) {
-    return [null, ...getDiscriminator(type.unwrap())];
-  } else if (type instanceof ZodBranded) {
-    return getDiscriminator(type.unwrap());
-  } else if (type instanceof ZodReadonly) {
-    return getDiscriminator(type.unwrap());
-  } else if (type instanceof ZodCatch) {
-    return getDiscriminator(type._def.innerType);
-  } else {
-    return [];
-  }
-};
-var ZodDiscriminatedUnion = class _ZodDiscriminatedUnion extends ZodType {
-  _parse(input2) {
-    const { ctx } = this._processInputParams(input2);
-    if (ctx.parsedType !== ZodParsedType.object) {
-      addIssueToContext(ctx, {
-        code: ZodIssueCode.invalid_type,
-        expected: ZodParsedType.object,
-        received: ctx.parsedType
-      });
-      return INVALID;
-    }
-    const discriminator = this.discriminator;
-    const discriminatorValue = ctx.data[discriminator];
-    const option = this.optionsMap.get(discriminatorValue);
-    if (!option) {
-      addIssueToContext(ctx, {
-        code: ZodIssueCode.invalid_union_discriminator,
-        options: Array.from(this.optionsMap.keys()),
-        path: [discriminator]
-      });
-      return INVALID;
-    }
-    if (ctx.common.async) {
-      return option._parseAsync({
-        data: ctx.data,
-        path: ctx.path,
-        parent: ctx
-      });
-    } else {
-      return option._parseSync({
-        data: ctx.data,
-        path: ctx.path,
-        parent: ctx
-      });
-    }
-  }
-  get discriminator() {
-    return this._def.discriminator;
-  }
-  get options() {
-    return this._def.options;
-  }
-  get optionsMap() {
-    return this._def.optionsMap;
-  }
-  /**
-   * The constructor of the discriminated union schema. Its behaviour is very similar to that of the normal z.union() constructor.
-   * However, it only allows a union of objects, all of which need to share a discriminator property. This property must
-   * have a different value for each object in the union.
-   * @param discriminator the name of the discriminator property
-   * @param types an array of object schemas
-   * @param params
-   */
-  static create(discriminator, options, params) {
-    const optionsMap = /* @__PURE__ */ new Map();
-    for (const type of options) {
-      const discriminatorValues = getDiscriminator(type.shape[discriminator]);
-      if (!discriminatorValues.length) {
-        throw new Error(`A discriminator value for key \`${discriminator}\` could not be extracted from all schema options`);
-      }
-      for (const value of discriminatorValues) {
-        if (optionsMap.has(value)) {
-          throw new Error(`Discriminator property ${String(discriminator)} has duplicate value ${String(value)}`);
-        }
-        optionsMap.set(value, type);
-      }
-    }
-    return new _ZodDiscriminatedUnion({
-      typeName: ZodFirstPartyTypeKind.ZodDiscriminatedUnion,
-      discriminator,
-      options,
-      optionsMap,
-      ...processCreateParams(params)
-    });
-  }
-};
-function mergeValues(a, b) {
-  const aType = getParsedType(a);
-  const bType = getParsedType(b);
-  if (a === b) {
-    return { valid: true, data: a };
-  } else if (aType === ZodParsedType.object && bType === ZodParsedType.object) {
-    const bKeys = util.objectKeys(b);
-    const sharedKeys = util.objectKeys(a).filter((key) => bKeys.indexOf(key) !== -1);
-    const newObj = { ...a, ...b };
-    if (Object.prototype.hasOwnProperty.call(newObj, "__proto__"))
-      delete newObj.__proto__;
-    for (const key of sharedKeys) {
-      if (key === "__proto__")
-        continue;
-      const sharedValue = mergeValues(a[key], b[key]);
-      if (!sharedValue.valid) {
-        return { valid: false };
-      }
-      newObj[key] = sharedValue.data;
-    }
-    return { valid: true, data: newObj };
-  } else if (aType === ZodParsedType.array && bType === ZodParsedType.array) {
-    if (a.length !== b.length) {
-      return { valid: false };
-    }
-    const newArray = [];
-    for (let index = 0; index < a.length; index++) {
-      const itemA = a[index];
-      const itemB = b[index];
-      const sharedValue = mergeValues(itemA, itemB);
-      if (!sharedValue.valid) {
-        return { valid: false };
-      }
-      newArray.push(sharedValue.data);
-    }
-    return { valid: true, data: newArray };
-  } else if (aType === ZodParsedType.date && bType === ZodParsedType.date && +a === +b) {
-    return { valid: true, data: a };
-  } else {
-    return { valid: false };
-  }
-}
-var ZodIntersection = class extends ZodType {
-  _parse(input2) {
-    const { status, ctx } = this._processInputParams(input2);
-    const handleParsed = (parsedLeft, parsedRight) => {
-      if (isAborted(parsedLeft) || isAborted(parsedRight)) {
-        return INVALID;
-      }
-      const merged = mergeValues(parsedLeft.value, parsedRight.value);
-      if (!merged.valid) {
-        addIssueToContext(ctx, {
-          code: ZodIssueCode.invalid_intersection_types
-        });
-        return INVALID;
-      }
-      if (isDirty(parsedLeft) || isDirty(parsedRight)) {
-        status.dirty();
-      }
-      return { status: status.value, value: merged.data };
-    };
-    if (ctx.common.async) {
-      return Promise.all([
-        this._def.left._parseAsync({
-          data: ctx.data,
-          path: ctx.path,
-          parent: ctx
-        }),
-        this._def.right._parseAsync({
-          data: ctx.data,
-          path: ctx.path,
-          parent: ctx
-        })
-      ]).then(([left, right]) => handleParsed(left, right));
-    } else {
-      return handleParsed(this._def.left._parseSync({
-        data: ctx.data,
-        path: ctx.path,
-        parent: ctx
-      }), this._def.right._parseSync({
-        data: ctx.data,
-        path: ctx.path,
-        parent: ctx
-      }));
-    }
-  }
-};
-ZodIntersection.create = (left, right, params) => {
-  return new ZodIntersection({
-    left,
-    right,
-    typeName: ZodFirstPartyTypeKind.ZodIntersection,
-    ...processCreateParams(params)
-  });
-};
-var ZodTuple = class _ZodTuple extends ZodType {
-  _parse(input2) {
-    const { status, ctx } = this._processInputParams(input2);
-    if (ctx.parsedType !== ZodParsedType.array) {
-      addIssueToContext(ctx, {
-        code: ZodIssueCode.invalid_type,
-        expected: ZodParsedType.array,
-        received: ctx.parsedType
-      });
-      return INVALID;
-    }
-    if (ctx.data.length < this._def.items.length) {
-      addIssueToContext(ctx, {
-        code: ZodIssueCode.too_small,
-        minimum: this._def.items.length,
-        inclusive: true,
-        exact: false,
-        type: "array"
-      });
-      return INVALID;
-    }
-    const rest = this._def.rest;
-    if (!rest && ctx.data.length > this._def.items.length) {
-      addIssueToContext(ctx, {
-        code: ZodIssueCode.too_big,
-        maximum: this._def.items.length,
-        inclusive: true,
-        exact: false,
-        type: "array"
-      });
-      status.dirty();
-    }
-    const items = [...ctx.data].map((item, itemIndex) => {
-      const schema = this._def.items[itemIndex] || this._def.rest;
-      if (!schema)
-        return null;
-      return schema._parse(new ParseInputLazyPath(ctx, item, ctx.path, itemIndex));
-    }).filter((x) => !!x);
-    if (ctx.common.async) {
-      return Promise.all(items).then((results) => {
-        return ParseStatus.mergeArray(status, results);
-      });
-    } else {
-      return ParseStatus.mergeArray(status, items);
-    }
-  }
-  get items() {
-    return this._def.items;
-  }
-  rest(rest) {
-    return new _ZodTuple({
-      ...this._def,
-      rest
-    });
-  }
-};
-ZodTuple.create = (schemas, params) => {
-  if (!Array.isArray(schemas)) {
-    throw new Error("You must pass an array of schemas to z.tuple([ ... ])");
-  }
-  return new ZodTuple({
-    items: schemas,
-    typeName: ZodFirstPartyTypeKind.ZodTuple,
-    rest: null,
-    ...processCreateParams(params)
-  });
-};
-var ZodRecord = class _ZodRecord extends ZodType {
-  get keySchema() {
-    return this._def.keyType;
-  }
-  get valueSchema() {
-    return this._def.valueType;
-  }
-  _parse(input2) {
-    const { status, ctx } = this._processInputParams(input2);
-    if (ctx.parsedType !== ZodParsedType.object) {
-      addIssueToContext(ctx, {
-        code: ZodIssueCode.invalid_type,
-        expected: ZodParsedType.object,
-        received: ctx.parsedType
-      });
-      return INVALID;
-    }
-    const pairs = [];
-    const keyType = this._def.keyType;
-    const valueType = this._def.valueType;
-    for (const key in ctx.data) {
-      pairs.push({
-        key: keyType._parse(new ParseInputLazyPath(ctx, key, ctx.path, key)),
-        value: valueType._parse(new ParseInputLazyPath(ctx, ctx.data[key], ctx.path, key)),
-        alwaysSet: key in ctx.data
-      });
-    }
-    if (ctx.common.async) {
-      return ParseStatus.mergeObjectAsync(status, pairs);
-    } else {
-      return ParseStatus.mergeObjectSync(status, pairs);
-    }
-  }
-  get element() {
-    return this._def.valueType;
-  }
-  static create(first, second, third) {
-    if (second instanceof ZodType) {
-      return new _ZodRecord({
-        keyType: first,
-        valueType: second,
-        typeName: ZodFirstPartyTypeKind.ZodRecord,
-        ...processCreateParams(third)
-      });
-    }
-    return new _ZodRecord({
-      keyType: ZodString.create(),
-      valueType: first,
-      typeName: ZodFirstPartyTypeKind.ZodRecord,
-      ...processCreateParams(second)
-    });
-  }
-};
-var ZodMap = class extends ZodType {
-  get keySchema() {
-    return this._def.keyType;
-  }
-  get valueSchema() {
-    return this._def.valueType;
-  }
-  _parse(input2) {
-    const { status, ctx } = this._processInputParams(input2);
-    if (ctx.parsedType !== ZodParsedType.map) {
-      addIssueToContext(ctx, {
-        code: ZodIssueCode.invalid_type,
-        expected: ZodParsedType.map,
-        received: ctx.parsedType
-      });
-      return INVALID;
-    }
-    const keyType = this._def.keyType;
-    const valueType = this._def.valueType;
-    const pairs = [...ctx.data.entries()].map(([key, value], index) => {
-      return {
-        key: keyType._parse(new ParseInputLazyPath(ctx, key, ctx.path, [index, "key"])),
-        value: valueType._parse(new ParseInputLazyPath(ctx, value, ctx.path, [index, "value"]))
-      };
-    });
-    if (ctx.common.async) {
-      const finalMap = /* @__PURE__ */ new Map();
-      return Promise.resolve().then(async () => {
-        for (const pair of pairs) {
-          const key = await pair.key;
-          const value = await pair.value;
-          if (key.status === "aborted" || value.status === "aborted") {
-            return INVALID;
-          }
-          if (key.status === "dirty" || value.status === "dirty") {
-            status.dirty();
-          }
-          finalMap.set(key.value, value.value);
-        }
-        return { status: status.value, value: finalMap };
-      });
-    } else {
-      const finalMap = /* @__PURE__ */ new Map();
-      for (const pair of pairs) {
-        const key = pair.key;
-        const value = pair.value;
-        if (key.status === "aborted" || value.status === "aborted") {
-          return INVALID;
-        }
-        if (key.status === "dirty" || value.status === "dirty") {
-          status.dirty();
-        }
-        finalMap.set(key.value, value.value);
-      }
-      return { status: status.value, value: finalMap };
-    }
-  }
-};
-ZodMap.create = (keyType, valueType, params) => {
-  return new ZodMap({
-    valueType,
-    keyType,
-    typeName: ZodFirstPartyTypeKind.ZodMap,
-    ...processCreateParams(params)
-  });
-};
-var ZodSet = class _ZodSet extends ZodType {
-  _parse(input2) {
-    const { status, ctx } = this._processInputParams(input2);
-    if (ctx.parsedType !== ZodParsedType.set) {
-      addIssueToContext(ctx, {
-        code: ZodIssueCode.invalid_type,
-        expected: ZodParsedType.set,
-        received: ctx.parsedType
-      });
-      return INVALID;
-    }
-    const def = this._def;
-    if (def.minSize !== null) {
-      if (ctx.data.size < def.minSize.value) {
-        addIssueToContext(ctx, {
-          code: ZodIssueCode.too_small,
-          minimum: def.minSize.value,
-          type: "set",
-          inclusive: true,
-          exact: false,
-          message: def.minSize.message
-        });
-        status.dirty();
-      }
-    }
-    if (def.maxSize !== null) {
-      if (ctx.data.size > def.maxSize.value) {
-        addIssueToContext(ctx, {
-          code: ZodIssueCode.too_big,
-          maximum: def.maxSize.value,
-          type: "set",
-          inclusive: true,
-          exact: false,
-          message: def.maxSize.message
-        });
-        status.dirty();
-      }
-    }
-    const valueType = this._def.valueType;
-    function finalizeSet(elements2) {
-      const parsedSet = /* @__PURE__ */ new Set();
-      for (const element of elements2) {
-        if (element.status === "aborted")
-          return INVALID;
-        if (element.status === "dirty")
-          status.dirty();
-        parsedSet.add(element.value);
-      }
-      return { status: status.value, value: parsedSet };
-    }
-    const elements = [...ctx.data.values()].map((item, i) => valueType._parse(new ParseInputLazyPath(ctx, item, ctx.path, i)));
-    if (ctx.common.async) {
-      return Promise.all(elements).then((elements2) => finalizeSet(elements2));
-    } else {
-      return finalizeSet(elements);
-    }
-  }
-  min(minSize, message) {
-    return new _ZodSet({
-      ...this._def,
-      minSize: { value: minSize, message: errorUtil.toString(message) }
-    });
-  }
-  max(maxSize, message) {
-    return new _ZodSet({
-      ...this._def,
-      maxSize: { value: maxSize, message: errorUtil.toString(message) }
-    });
-  }
-  size(size, message) {
-    return this.min(size, message).max(size, message);
-  }
-  nonempty(message) {
-    return this.min(1, message);
-  }
-};
-ZodSet.create = (valueType, params) => {
-  return new ZodSet({
-    valueType,
-    minSize: null,
-    maxSize: null,
-    typeName: ZodFirstPartyTypeKind.ZodSet,
-    ...processCreateParams(params)
-  });
-};
-var ZodFunction = class _ZodFunction extends ZodType {
-  constructor() {
-    super(...arguments);
-    this.validate = this.implement;
-  }
-  _parse(input2) {
-    const { ctx } = this._processInputParams(input2);
-    if (ctx.parsedType !== ZodParsedType.function) {
-      addIssueToContext(ctx, {
-        code: ZodIssueCode.invalid_type,
-        expected: ZodParsedType.function,
-        received: ctx.parsedType
-      });
-      return INVALID;
-    }
-    function makeArgsIssue(args, error62) {
-      return makeIssue({
-        data: args,
-        path: ctx.path,
-        errorMaps: [ctx.common.contextualErrorMap, ctx.schemaErrorMap, getErrorMap(), en_default].filter((x) => !!x),
-        issueData: {
-          code: ZodIssueCode.invalid_arguments,
-          argumentsError: error62
-        }
-      });
-    }
-    function makeReturnsIssue(returns, error62) {
-      return makeIssue({
-        data: returns,
-        path: ctx.path,
-        errorMaps: [ctx.common.contextualErrorMap, ctx.schemaErrorMap, getErrorMap(), en_default].filter((x) => !!x),
-        issueData: {
-          code: ZodIssueCode.invalid_return_type,
-          returnTypeError: error62
-        }
-      });
-    }
-    const params = { errorMap: ctx.common.contextualErrorMap };
-    const fn = ctx.data;
-    if (this._def.returns instanceof ZodPromise) {
-      const me = this;
-      return OK(async function(...args) {
-        const error62 = new ZodError([]);
-        const parsedArgs = await me._def.args.parseAsync(args, params).catch((e) => {
-          error62.addIssue(makeArgsIssue(args, e));
-          throw error62;
-        });
-        const result = await Reflect.apply(fn, this, parsedArgs);
-        const parsedReturns = await me._def.returns._def.type.parseAsync(result, params).catch((e) => {
-          error62.addIssue(makeReturnsIssue(result, e));
-          throw error62;
-        });
-        return parsedReturns;
-      });
-    } else {
-      const me = this;
-      return OK(function(...args) {
-        const parsedArgs = me._def.args.safeParse(args, params);
-        if (!parsedArgs.success) {
-          throw new ZodError([makeArgsIssue(args, parsedArgs.error)]);
-        }
-        const result = Reflect.apply(fn, this, parsedArgs.data);
-        const parsedReturns = me._def.returns.safeParse(result, params);
-        if (!parsedReturns.success) {
-          throw new ZodError([makeReturnsIssue(result, parsedReturns.error)]);
-        }
-        return parsedReturns.data;
-      });
-    }
-  }
-  parameters() {
-    return this._def.args;
-  }
-  returnType() {
-    return this._def.returns;
-  }
-  args(...items) {
-    return new _ZodFunction({
-      ...this._def,
-      args: ZodTuple.create(items).rest(ZodUnknown.create())
-    });
-  }
-  returns(returnType) {
-    return new _ZodFunction({
-      ...this._def,
-      returns: returnType
-    });
-  }
-  implement(func) {
-    const validatedFunc = this.parse(func);
-    return validatedFunc;
-  }
-  strictImplement(func) {
-    const validatedFunc = this.parse(func);
-    return validatedFunc;
-  }
-  static create(args, returns, params) {
-    return new _ZodFunction({
-      args: args ? args : ZodTuple.create([]).rest(ZodUnknown.create()),
-      returns: returns || ZodUnknown.create(),
-      typeName: ZodFirstPartyTypeKind.ZodFunction,
-      ...processCreateParams(params)
-    });
-  }
-};
-var ZodLazy = class extends ZodType {
-  get schema() {
-    return this._def.getter();
-  }
-  _parse(input2) {
-    const { ctx } = this._processInputParams(input2);
-    const lazySchema = this._def.getter();
-    return lazySchema._parse({ data: ctx.data, path: ctx.path, parent: ctx });
-  }
-};
-ZodLazy.create = (getter, params) => {
-  return new ZodLazy({
-    getter,
-    typeName: ZodFirstPartyTypeKind.ZodLazy,
-    ...processCreateParams(params)
-  });
-};
-var ZodLiteral = class extends ZodType {
-  _parse(input2) {
-    if (input2.data !== this._def.value) {
-      const ctx = this._getOrReturnCtx(input2);
-      addIssueToContext(ctx, {
-        received: ctx.data,
-        code: ZodIssueCode.invalid_literal,
-        expected: this._def.value
-      });
-      return INVALID;
-    }
-    return { status: "valid", value: input2.data };
-  }
-  get value() {
-    return this._def.value;
-  }
-};
-ZodLiteral.create = (value, params) => {
-  return new ZodLiteral({
-    value,
-    typeName: ZodFirstPartyTypeKind.ZodLiteral,
-    ...processCreateParams(params)
-  });
-};
-function createZodEnum(values, params) {
-  return new ZodEnum({
-    values,
-    typeName: ZodFirstPartyTypeKind.ZodEnum,
-    ...processCreateParams(params)
-  });
-}
-var ZodEnum = class _ZodEnum extends ZodType {
-  _parse(input2) {
-    if (typeof input2.data !== "string") {
-      const ctx = this._getOrReturnCtx(input2);
-      const expectedValues = this._def.values;
-      addIssueToContext(ctx, {
-        expected: util.joinValues(expectedValues),
-        received: ctx.parsedType,
-        code: ZodIssueCode.invalid_type
-      });
-      return INVALID;
-    }
-    if (!this._cache) {
-      this._cache = new Set(this._def.values);
-    }
-    if (!this._cache.has(input2.data)) {
-      const ctx = this._getOrReturnCtx(input2);
-      const expectedValues = this._def.values;
-      addIssueToContext(ctx, {
-        received: ctx.data,
-        code: ZodIssueCode.invalid_enum_value,
-        options: expectedValues
-      });
-      return INVALID;
-    }
-    return OK(input2.data);
-  }
-  get options() {
-    return this._def.values;
-  }
-  get enum() {
-    const enumValues = {};
-    for (const val of this._def.values) {
-      enumValues[val] = val;
-    }
-    return enumValues;
-  }
-  get Values() {
-    const enumValues = {};
-    for (const val of this._def.values) {
-      enumValues[val] = val;
-    }
-    return enumValues;
-  }
-  get Enum() {
-    const enumValues = {};
-    for (const val of this._def.values) {
-      enumValues[val] = val;
-    }
-    return enumValues;
-  }
-  extract(values, newDef = this._def) {
-    return _ZodEnum.create(values, {
-      ...this._def,
-      ...newDef
-    });
-  }
-  exclude(values, newDef = this._def) {
-    return _ZodEnum.create(this.options.filter((opt) => !values.includes(opt)), {
-      ...this._def,
-      ...newDef
-    });
-  }
-};
-ZodEnum.create = createZodEnum;
-var ZodNativeEnum = class extends ZodType {
-  _parse(input2) {
-    const nativeEnumValues = util.getValidEnumValues(this._def.values);
-    const ctx = this._getOrReturnCtx(input2);
-    if (ctx.parsedType !== ZodParsedType.string && ctx.parsedType !== ZodParsedType.number) {
-      const expectedValues = util.objectValues(nativeEnumValues);
-      addIssueToContext(ctx, {
-        expected: util.joinValues(expectedValues),
-        received: ctx.parsedType,
-        code: ZodIssueCode.invalid_type
-      });
-      return INVALID;
-    }
-    if (!this._cache) {
-      this._cache = new Set(util.getValidEnumValues(this._def.values));
-    }
-    if (!this._cache.has(input2.data)) {
-      const expectedValues = util.objectValues(nativeEnumValues);
-      addIssueToContext(ctx, {
-        received: ctx.data,
-        code: ZodIssueCode.invalid_enum_value,
-        options: expectedValues
-      });
-      return INVALID;
-    }
-    return OK(input2.data);
-  }
-  get enum() {
-    return this._def.values;
-  }
-};
-ZodNativeEnum.create = (values, params) => {
-  return new ZodNativeEnum({
-    values,
-    typeName: ZodFirstPartyTypeKind.ZodNativeEnum,
-    ...processCreateParams(params)
-  });
-};
-var ZodPromise = class extends ZodType {
-  unwrap() {
-    return this._def.type;
-  }
-  _parse(input2) {
-    const { ctx } = this._processInputParams(input2);
-    if (ctx.parsedType !== ZodParsedType.promise && ctx.common.async === false) {
-      addIssueToContext(ctx, {
-        code: ZodIssueCode.invalid_type,
-        expected: ZodParsedType.promise,
-        received: ctx.parsedType
-      });
-      return INVALID;
-    }
-    const promisified = ctx.parsedType === ZodParsedType.promise ? ctx.data : Promise.resolve(ctx.data);
-    return OK(promisified.then((data) => {
-      return this._def.type.parseAsync(data, {
-        path: ctx.path,
-        errorMap: ctx.common.contextualErrorMap
-      });
+async function delegateToClaude(req) {
+  checkDepth();
+  const args = ["-p", "--output-format", "stream-json", "--verbose", "--permission-mode", req.permissionMode];
+  const readOnly = isClaudeReadOnly(req.permissionMode);
+  if (readOnly) args.push("--disallowedTools", [...CLAUDE_READ_ONLY_DENIED_TOOLS, ...claudeMcpDenyRules(req.cwd)].join(","));
+  if (req.model) args.push("--model", req.model);
+  if (req.effort) args.push("--effort", req.effort);
+  if (req.sessionId) args.push("--resume", req.sessionId);
+  if (req.extraEnv?.[PARENT_URL_ENV]) args.push("--allowedTools", `${CLAUDE_PARENT_SEND_TOOL},${CLAUDE_PARENT_PROGRESS_TOOL}`);
+  const hookCli = claudeForwardsPrompts(req.permissionMode, req) ? req.hookCli ?? bundledCli() : null;
+  let relay = null;
+  const extraEnv = { ...req.extraEnv };
+  if (hookCli && spawnsWithoutShell(req.bin, req.log)) {
+    const approve = req.approve;
+    relay = new PermissionRelay(async (r) => {
+      const d = await approve(r);
+      return d.allow ? { allow: true } : { allow: false, message: d.message || "Denied by the parent session." };
+    }, req.log);
+    await relay.start();
+    Object.assign(extraEnv, relay.childEnv());
+    args.push("--settings", claudePermissionHookSettings(hookCli));
+  } else if (hookCli) {
+    req.log.warn("claude runs through a shell; its permission prompts are not forwarded", { bin: req.bin });
+  }
+  let res;
+  try {
+    res = await withResumeHint("claude", (o) => claudeSessionFromStream(o), () => runProcess({
+      bin: req.bin,
+      args,
+      stdin: req.prompt,
+      cwd: req.cwd,
+      timeoutMs: req.timeoutSec * 1e3,
+      env: childEnv(extraEnv),
+      log: req.log,
+      signal: req.signal,
+      onLine: claudeInitSniffer(withSessionSniffer("claude", progressLineHandler("claude", req.onProgress), req.onSession), req.onInfo)
     }));
+  } finally {
+    await relay?.stop();
   }
-};
-ZodPromise.create = (schema, params) => {
-  return new ZodPromise({
-    type: schema,
-    typeName: ZodFirstPartyTypeKind.ZodPromise,
-    ...processCreateParams(params)
-  });
-};
-var ZodEffects = class extends ZodType {
-  innerType() {
-    return this._def.schema;
+  const parsed = parseClaudeJson(res.stdout);
+  if (!parsed) {
+    throw new DelegateError(`claude ${exitDescription(res)} without a JSON result`, "failed", (res.stderr || res.stdout).slice(-STDERR_TAIL_CHARS), "", claudeSessionFromStream(res.stdout) ?? req.sessionId ?? null);
   }
-  sourceType() {
-    return this._def.schema._def.typeName === ZodFirstPartyTypeKind.ZodEffects ? this._def.schema.sourceType() : this._def.schema;
+  req.log.info("claude delegate finished", { sessionId: parsed.sessionId, code: res.code, isError: parsed.isError });
+  return {
+    sessionId: parsed.sessionId ?? req.sessionId ?? null,
+    text: parsed.text,
+    isError: parsed.isError || res.code !== 0,
+    details: { exitCode: res.code, signal: res.signal ?? null, costUsd: parsed.cost }
+  };
+}
+function parseOpencodeJsonl(stdout) {
+  let sessionId = null;
+  const textByMessage = /* @__PURE__ */ new Map();
+  let lastMessage = "";
+  let error62 = null;
+  let input2 = 0;
+  let output2 = 0;
+  let cost = 0;
+  let sawUsage = false;
+  for (const line of stdout.split(/\r?\n/)) {
+    const s = line.trim();
+    if (!s.startsWith("{")) continue;
+    let ev;
+    try {
+      ev = JSON.parse(s);
+    } catch {
+      continue;
+    }
+    if (typeof ev.sessionID === "string") sessionId ??= ev.sessionID;
+    if (ev.type === "step_finish" && ev.part?.tokens) {
+      sawUsage = true;
+      input2 += Number(ev.part.tokens.input) || 0;
+      output2 += Number(ev.part.tokens.output) || 0;
+      cost += Number(ev.part.cost) || 0;
+    }
+    if (ev.type === "text" && typeof ev.part?.text === "string") {
+      const mid = String(ev.part.messageID ?? "");
+      if (!textByMessage.has(mid)) textByMessage.set(mid, []);
+      textByMessage.get(mid).push(ev.part.text);
+      lastMessage = mid;
+    } else if (ev.type === "error") {
+      error62 = ev.error?.data?.message ?? ev.error?.message ?? ev.message ?? "opencode reported an error";
+    }
   }
-  _parse(input2) {
-    const { status, ctx } = this._processInputParams(input2);
-    const effect = this._def.effect || null;
-    const checkCtx = {
-      addIssue: (arg) => {
-        addIssueToContext(ctx, arg);
-        if (arg.fatal) {
-          status.abort();
-        } else {
-          status.dirty();
+  const text2 = (textByMessage.get(lastMessage) ?? []).join("");
+  return sawUsage ? { sessionId, text: text2, error: error62, usage: { input: input2, output: output2 }, cost } : { sessionId, text: text2, error: error62 };
+}
+async function delegateToOpencode(req) {
+  checkDepth();
+  const args = ["run", "--format", "json", "--dir", req.cwd];
+  if (req.model) args.push("-m", req.model);
+  if (req.effort) args.push("--variant", req.effort);
+  if (req.sessionId) args.push("-s", req.sessionId);
+  if (req.autoApprove) args.push("--auto");
+  const env = childEnv(req.extraEnv);
+  if (!req.autoApprove) env[OPENCODE_CONFIG_CONTENT_ENV] = JSON.stringify({ permission: OPENCODE_READ_ONLY_PERMISSIONS, tools: OPENCODE_READ_ONLY_TOOLS });
+  const res = await withResumeHint("opencode", (o) => parseOpencodeJsonl(o).sessionId, () => runProcess({
+    bin: req.bin,
+    args,
+    stdin: req.prompt,
+    cwd: req.cwd,
+    timeoutMs: req.timeoutSec * 1e3,
+    env,
+    log: req.log,
+    signal: req.signal,
+    onLine: withSessionSniffer("opencode", progressLineHandler("opencode", req.onProgress), req.onSession)
+  }));
+  const parsed = parseOpencodeJsonl(res.stdout);
+  const isError = res.code !== 0 || parsed.error !== null;
+  if (isError && !parsed.text) {
+    throw new DelegateError(parsed.error ?? `opencode ${exitDescription(res)}`, "failed", res.stderr.slice(-STDERR_TAIL_CHARS), "", parsed.sessionId ?? req.sessionId ?? null);
+  }
+  req.log.info("opencode delegate finished", { sessionId: parsed.sessionId, code: res.code, isError });
+  return { sessionId: parsed.sessionId ?? req.sessionId ?? null, text: parsed.text, isError, details: { exitCode: res.code, signal: res.signal ?? null, error: parsed.error, usage: parsed.usage ?? null, costUsd: parsed.cost || null } };
+}
+var checkDepthPublic = checkDepth;
+var childEnvPublic = (extra = {}) => childEnv(extra);
+function claudeSessionFromStream(stdout) {
+  const m = /"session_id":"([^"]+)"/.exec(stdout);
+  return m ? m[1] : null;
+}
+async function withResumeHint(agent, sessionOf, run) {
+  try {
+    return await run();
+  } catch (err) {
+    if (err instanceof DelegateError && !err.sessionId) err.sessionId = sessionOf(err.partialStdout);
+    if (err instanceof DelegateError && err.kind === "timeout") {
+      const id = err.sessionId;
+      if (id) {
+        throw new DelegateError(
+          `${err.message}. The ${agent} session ${id} keeps its progress: call again with session_id="${id}" (and a longer timeout_sec, or use spawn_${agent}) to continue instead of starting over.`,
+          "timeout",
+          err.stderrTail,
+          err.partialStdout,
+          id
+        );
+      }
+    }
+    throw err;
+  }
+}
+var TRANSIENT_ERROR_RE = /(?:model|selected model) is at capacity|not valid JSON|upstream|overloaded|bad gateway|service unavailable|gateway time-?out|internal server error|\b50[0-4]\b|ECONNRESET|ETIMEDOUT|EPIPE|socket hang up|connection (?:reset|closed|error|refused)|stream (?:error|closed|disconnected|ended)|network error|fetch failed|temporarily unavailable|routing discovery timed out/i;
+var CAPACITY_ERROR_RE = /model is at capacity/i;
+var CAPACITY_RETRY_DELAYS_MS = [15e3, 3e4, 6e4];
+var TRANSIENT_RETRY_LIMIT = 1;
+var MS_PER_SECOND = 1e3;
+var LIMIT_ERROR_RE = /usage limit|rate.?limit|quota|too many requests|\b429\b|insufficient (?:credits|balance)|billing/i;
+function isTransientProviderError(message) {
+  return TRANSIENT_ERROR_RE.test(message) && !LIMIT_ERROR_RE.test(message);
+}
+var TRANSIENT_RETRY_MESSAGE = "Your previous turn was cut off by a temporary provider error. Continue where you stopped and finish the task. Then give your final answer.";
+async function retryTransient(req, run) {
+  const deadline = Date.now() + req.timeoutSec * MS_PER_SECOND;
+  let sessionId = req.sessionId ?? null;
+  let model = req.model;
+  let firstCause = null;
+  let retries = 0;
+  for (; ; ) {
+    if (req.signal?.aborted) throw new DelegateError("delegate aborted", "aborted", "", "", sessionId);
+    const remainingSec = (deadline - Date.now()) / MS_PER_SECOND;
+    if (remainingSec <= 0) throw new DelegateError("delegate timed out during provider retry backoff", "timeout", "", "", sessionId);
+    let res;
+    let failure2;
+    let failed = false;
+    let cause = "";
+    try {
+      res = await run({
+        ...req,
+        model,
+        sessionId,
+        timeoutSec: remainingSec,
+        prompt: retries && sessionId ? TRANSIENT_RETRY_MESSAGE : req.prompt,
+        onSession: (id) => {
+          sessionId = id;
+          req.onSession?.(id);
+        },
+        onInfo: (info) => {
+          model ??= info.model;
+          req.onInfo?.(info);
         }
-      },
-      get path() {
-        return ctx.path;
-      }
-    };
-    checkCtx.addIssue = checkCtx.addIssue.bind(checkCtx);
-    if (effect.type === "preprocess") {
-      const processed = effect.transform(ctx.data, checkCtx);
-      if (ctx.common.async) {
-        return Promise.resolve(processed).then(async (processed2) => {
-          if (status.value === "aborted")
-            return INVALID;
-          const result = await this._def.schema._parseAsync({
-            data: processed2,
-            path: ctx.path,
-            parent: ctx
-          });
-          if (result.status === "aborted")
-            return INVALID;
-          if (result.status === "dirty")
-            return DIRTY(result.value);
-          if (status.value === "dirty")
-            return DIRTY(result.value);
-          return result;
-        });
-      } else {
-        if (status.value === "aborted")
-          return INVALID;
-        const result = this._def.schema._parseSync({
-          data: processed,
-          path: ctx.path,
-          parent: ctx
-        });
-        if (result.status === "aborted")
-          return INVALID;
-        if (result.status === "dirty")
-          return DIRTY(result.value);
-        if (status.value === "dirty")
-          return DIRTY(result.value);
-        return result;
-      }
-    }
-    if (effect.type === "refinement") {
-      const executeRefinement = (acc) => {
-        const result = effect.refinement(acc, checkCtx);
-        if (ctx.common.async) {
-          return Promise.resolve(result);
-        }
-        if (result instanceof Promise) {
-          throw new Error("Async refinement encountered during synchronous parse operation. Use .parseAsync instead.");
-        }
-        return acc;
-      };
-      if (ctx.common.async === false) {
-        const inner = this._def.schema._parseSync({
-          data: ctx.data,
-          path: ctx.path,
-          parent: ctx
-        });
-        if (inner.status === "aborted")
-          return INVALID;
-        if (inner.status === "dirty")
-          status.dirty();
-        executeRefinement(inner.value);
-        return { status: status.value, value: inner.value };
-      } else {
-        return this._def.schema._parseAsync({ data: ctx.data, path: ctx.path, parent: ctx }).then((inner) => {
-          if (inner.status === "aborted")
-            return INVALID;
-          if (inner.status === "dirty")
-            status.dirty();
-          return executeRefinement(inner.value).then(() => {
-            return { status: status.value, value: inner.value };
-          });
-        });
-      }
-    }
-    if (effect.type === "transform") {
-      if (ctx.common.async === false) {
-        const base = this._def.schema._parseSync({
-          data: ctx.data,
-          path: ctx.path,
-          parent: ctx
-        });
-        if (!isValid(base))
-          return INVALID;
-        const result = effect.transform(base.value, checkCtx);
-        if (result instanceof Promise) {
-          throw new Error(`Asynchronous transform encountered during synchronous parse operation. Use .parseAsync instead.`);
-        }
-        return { status: status.value, value: result };
-      } else {
-        return this._def.schema._parseAsync({ data: ctx.data, path: ctx.path, parent: ctx }).then((base) => {
-          if (!isValid(base))
-            return INVALID;
-          return Promise.resolve(effect.transform(base.value, checkCtx)).then((result) => ({
-            status: status.value,
-            value: result
-          }));
-        });
-      }
-    }
-    util.assertNever(effect);
-  }
-};
-ZodEffects.create = (schema, effect, params) => {
-  return new ZodEffects({
-    schema,
-    typeName: ZodFirstPartyTypeKind.ZodEffects,
-    effect,
-    ...processCreateParams(params)
-  });
-};
-ZodEffects.createWithPreprocess = (preprocess2, schema, params) => {
-  return new ZodEffects({
-    schema,
-    effect: { type: "preprocess", transform: preprocess2 },
-    typeName: ZodFirstPartyTypeKind.ZodEffects,
-    ...processCreateParams(params)
-  });
-};
-var ZodOptional = class extends ZodType {
-  _parse(input2) {
-    const parsedType2 = this._getType(input2);
-    if (parsedType2 === ZodParsedType.undefined) {
-      return OK(void 0);
-    }
-    return this._def.innerType._parse(input2);
-  }
-  unwrap() {
-    return this._def.innerType;
-  }
-};
-ZodOptional.create = (type, params) => {
-  return new ZodOptional({
-    innerType: type,
-    typeName: ZodFirstPartyTypeKind.ZodOptional,
-    ...processCreateParams(params)
-  });
-};
-var ZodNullable = class extends ZodType {
-  _parse(input2) {
-    const parsedType2 = this._getType(input2);
-    if (parsedType2 === ZodParsedType.null) {
-      return OK(null);
-    }
-    return this._def.innerType._parse(input2);
-  }
-  unwrap() {
-    return this._def.innerType;
-  }
-};
-ZodNullable.create = (type, params) => {
-  return new ZodNullable({
-    innerType: type,
-    typeName: ZodFirstPartyTypeKind.ZodNullable,
-    ...processCreateParams(params)
-  });
-};
-var ZodDefault = class extends ZodType {
-  _parse(input2) {
-    const { ctx } = this._processInputParams(input2);
-    let data = ctx.data;
-    if (ctx.parsedType === ZodParsedType.undefined) {
-      data = this._def.defaultValue();
-    }
-    return this._def.innerType._parse({
-      data,
-      path: ctx.path,
-      parent: ctx
-    });
-  }
-  removeDefault() {
-    return this._def.innerType;
-  }
-};
-ZodDefault.create = (type, params) => {
-  return new ZodDefault({
-    innerType: type,
-    typeName: ZodFirstPartyTypeKind.ZodDefault,
-    defaultValue: typeof params.default === "function" ? params.default : () => params.default,
-    ...processCreateParams(params)
-  });
-};
-var ZodCatch = class extends ZodType {
-  _parse(input2) {
-    const { ctx } = this._processInputParams(input2);
-    const newCtx = {
-      ...ctx,
-      common: {
-        ...ctx.common,
-        issues: []
-      }
-    };
-    const result = this._def.innerType._parse({
-      data: newCtx.data,
-      path: newCtx.path,
-      parent: {
-        ...newCtx
-      }
-    });
-    if (isAsync(result)) {
-      return result.then((result2) => {
-        return {
-          status: "valid",
-          value: result2.status === "valid" ? result2.value : this._def.catchValue({
-            get error() {
-              return new ZodError(newCtx.common.issues);
-            },
-            input: newCtx.data
-          })
-        };
       });
-    } else {
-      return {
-        status: "valid",
-        value: result.status === "valid" ? result.value : this._def.catchValue({
-          get error() {
-            return new ZodError(newCtx.common.issues);
-          },
-          input: newCtx.data
-        })
-      };
+      sessionId = res.sessionId ?? sessionId;
+      cause = res.isError && typeof res.details?.error === "string" ? res.details.error : "";
+    } catch (err) {
+      failure2 = err;
+      failed = true;
+      if (err instanceof DelegateError) {
+        sessionId = err.sessionId ?? sessionId;
+        cause = err.kind === "failed" ? err.message : "";
+      }
     }
-  }
-  removeCatch() {
-    return this._def.innerType;
-  }
-};
-ZodCatch.create = (type, params) => {
-  return new ZodCatch({
-    innerType: type,
-    typeName: ZodFirstPartyTypeKind.ZodCatch,
-    catchValue: typeof params.catch === "function" ? params.catch : () => params.catch,
-    ...processCreateParams(params)
-  });
-};
-var ZodNaN = class extends ZodType {
-  _parse(input2) {
-    const parsedType2 = this._getType(input2);
-    if (parsedType2 !== ZodParsedType.nan) {
-      const ctx = this._getOrReturnCtx(input2);
-      addIssueToContext(ctx, {
-        code: ZodIssueCode.invalid_type,
-        expected: ZodParsedType.nan,
-        received: ctx.parsedType
-      });
-      return INVALID;
-    }
-    return { status: "valid", value: input2.data };
-  }
-};
-ZodNaN.create = (params) => {
-  return new ZodNaN({
-    typeName: ZodFirstPartyTypeKind.ZodNaN,
-    ...processCreateParams(params)
-  });
-};
-var ZodBranded = class extends ZodType {
-  _parse(input2) {
-    const { ctx } = this._processInputParams(input2);
-    const data = ctx.data;
-    return this._def.type._parse({
-      data,
-      path: ctx.path,
-      parent: ctx
-    });
-  }
-  unwrap() {
-    return this._def.type;
-  }
-};
-var ZodPipeline = class _ZodPipeline extends ZodType {
-  _parse(input2) {
-    const { status, ctx } = this._processInputParams(input2);
-    if (ctx.common.async) {
-      const handleAsync = async () => {
-        const inResult = await this._def.in._parseAsync({
-          data: ctx.data,
-          path: ctx.path,
-          parent: ctx
-        });
-        if (inResult.status === "aborted")
-          return INVALID;
-        if (inResult.status === "dirty") {
-          status.dirty();
-          return DIRTY(inResult.value);
-        } else {
-          return this._def.out._parseAsync({
-            data: inResult.value,
-            path: ctx.path,
-            parent: ctx
-          });
+    const capacity = CAPACITY_ERROR_RE.test(cause);
+    const limit = capacity ? CAPACITY_RETRY_DELAYS_MS.length : TRANSIENT_RETRY_LIMIT;
+    if (!isTransientProviderError(cause) || !sessionId && !capacity || retries >= limit) {
+      if (failed) {
+        if (failure2 instanceof DelegateError && firstCause) {
+          failure2.message += ` (after ${retries === 1 ? "one automatic retry" : `${retries} automatic retries`}: the first attempt had failed with "${firstCause}")`;
+          failure2.sessionId ??= sessionId;
         }
-      };
-      return handleAsync();
-    } else {
-      const inResult = this._def.in._parseSync({
-        data: ctx.data,
-        path: ctx.path,
-        parent: ctx
-      });
-      if (inResult.status === "aborted")
-        return INVALID;
-      if (inResult.status === "dirty") {
-        status.dirty();
-        return {
-          status: "dirty",
-          value: inResult.value
-        };
-      } else {
-        return this._def.out._parseSync({
-          data: inResult.value,
-          path: ctx.path,
-          parent: ctx
-        });
+        throw failure2;
       }
-    }
-  }
-  static create(a, b) {
-    return new _ZodPipeline({
-      in: a,
-      out: b,
-      typeName: ZodFirstPartyTypeKind.ZodPipeline
-    });
-  }
-};
-var ZodReadonly = class extends ZodType {
-  _parse(input2) {
-    const result = this._def.innerType._parse(input2);
-    const freeze = (data) => {
-      if (isValid(data)) {
-        data.value = Object.freeze(data.value);
-      }
-      return data;
-    };
-    return isAsync(result) ? result.then((data) => freeze(data)) : freeze(result);
-  }
-  unwrap() {
-    return this._def.innerType;
-  }
-};
-ZodReadonly.create = (type, params) => {
-  return new ZodReadonly({
-    innerType: type,
-    typeName: ZodFirstPartyTypeKind.ZodReadonly,
-    ...processCreateParams(params)
-  });
-};
-var late = {
-  object: ZodObject.lazycreate
-};
-var ZodFirstPartyTypeKind;
-(function(ZodFirstPartyTypeKind3) {
-  ZodFirstPartyTypeKind3["ZodString"] = "ZodString";
-  ZodFirstPartyTypeKind3["ZodNumber"] = "ZodNumber";
-  ZodFirstPartyTypeKind3["ZodNaN"] = "ZodNaN";
-  ZodFirstPartyTypeKind3["ZodBigInt"] = "ZodBigInt";
-  ZodFirstPartyTypeKind3["ZodBoolean"] = "ZodBoolean";
-  ZodFirstPartyTypeKind3["ZodDate"] = "ZodDate";
-  ZodFirstPartyTypeKind3["ZodSymbol"] = "ZodSymbol";
-  ZodFirstPartyTypeKind3["ZodUndefined"] = "ZodUndefined";
-  ZodFirstPartyTypeKind3["ZodNull"] = "ZodNull";
-  ZodFirstPartyTypeKind3["ZodAny"] = "ZodAny";
-  ZodFirstPartyTypeKind3["ZodUnknown"] = "ZodUnknown";
-  ZodFirstPartyTypeKind3["ZodNever"] = "ZodNever";
-  ZodFirstPartyTypeKind3["ZodVoid"] = "ZodVoid";
-  ZodFirstPartyTypeKind3["ZodArray"] = "ZodArray";
-  ZodFirstPartyTypeKind3["ZodObject"] = "ZodObject";
-  ZodFirstPartyTypeKind3["ZodUnion"] = "ZodUnion";
-  ZodFirstPartyTypeKind3["ZodDiscriminatedUnion"] = "ZodDiscriminatedUnion";
-  ZodFirstPartyTypeKind3["ZodIntersection"] = "ZodIntersection";
-  ZodFirstPartyTypeKind3["ZodTuple"] = "ZodTuple";
-  ZodFirstPartyTypeKind3["ZodRecord"] = "ZodRecord";
-  ZodFirstPartyTypeKind3["ZodMap"] = "ZodMap";
-  ZodFirstPartyTypeKind3["ZodSet"] = "ZodSet";
-  ZodFirstPartyTypeKind3["ZodFunction"] = "ZodFunction";
-  ZodFirstPartyTypeKind3["ZodLazy"] = "ZodLazy";
-  ZodFirstPartyTypeKind3["ZodLiteral"] = "ZodLiteral";
-  ZodFirstPartyTypeKind3["ZodEnum"] = "ZodEnum";
-  ZodFirstPartyTypeKind3["ZodEffects"] = "ZodEffects";
-  ZodFirstPartyTypeKind3["ZodNativeEnum"] = "ZodNativeEnum";
-  ZodFirstPartyTypeKind3["ZodOptional"] = "ZodOptional";
-  ZodFirstPartyTypeKind3["ZodNullable"] = "ZodNullable";
-  ZodFirstPartyTypeKind3["ZodDefault"] = "ZodDefault";
-  ZodFirstPartyTypeKind3["ZodCatch"] = "ZodCatch";
-  ZodFirstPartyTypeKind3["ZodPromise"] = "ZodPromise";
-  ZodFirstPartyTypeKind3["ZodBranded"] = "ZodBranded";
-  ZodFirstPartyTypeKind3["ZodPipeline"] = "ZodPipeline";
-  ZodFirstPartyTypeKind3["ZodReadonly"] = "ZodReadonly";
-})(ZodFirstPartyTypeKind || (ZodFirstPartyTypeKind = {}));
-var stringType = ZodString.create;
-var numberType = ZodNumber.create;
-var nanType = ZodNaN.create;
-var bigIntType = ZodBigInt.create;
-var booleanType = ZodBoolean.create;
-var dateType = ZodDate.create;
-var symbolType = ZodSymbol.create;
-var undefinedType = ZodUndefined.create;
-var nullType = ZodNull.create;
-var anyType = ZodAny.create;
-var unknownType = ZodUnknown.create;
-var neverType = ZodNever.create;
-var voidType = ZodVoid.create;
-var arrayType = ZodArray.create;
-var objectType = ZodObject.create;
-var strictObjectType = ZodObject.strictCreate;
-var unionType = ZodUnion.create;
-var discriminatedUnionType = ZodDiscriminatedUnion.create;
-var intersectionType = ZodIntersection.create;
-var tupleType = ZodTuple.create;
-var recordType = ZodRecord.create;
-var mapType = ZodMap.create;
-var setType = ZodSet.create;
-var functionType = ZodFunction.create;
-var lazyType = ZodLazy.create;
-var literalType = ZodLiteral.create;
-var enumType = ZodEnum.create;
-var nativeEnumType = ZodNativeEnum.create;
-var promiseType = ZodPromise.create;
-var effectsType = ZodEffects.create;
-var optionalType = ZodOptional.create;
-var nullableType = ZodNullable.create;
-var preprocessType = ZodEffects.createWithPreprocess;
-var pipelineType = ZodPipeline.create;
+      if (!firstCause) return res;
+      const count = retries === 1 ? "once" : `${retries} times`;
+      const note = `(A temporary provider error interrupted the run ("${firstCause}"); agent-bridge ${sessionId ? "resumed the same session" : "retried"} ${count} on the selected model.)`;
+      return { ...res, text: `${note}
 
-// node_modules/zod/v4/core/index.js
+${res.text}`, details: { ...res.details, retriedAfter: firstCause, retries } };
+    }
+    firstCause ??= cause;
+    const waitMs = capacity ? CAPACITY_RETRY_DELAYS_MS[retries] : 0;
+    if (Date.now() + waitMs >= deadline) throw new DelegateError("delegate timed out during provider retry backoff", "timeout", "", "", sessionId);
+    retries++;
+    req.log.warn("transient provider error; retrying on the selected model", { sessionId, model, cause, retries, waitMs });
+    req.onProgress?.(`temporary provider error: ${cause}; retry ${retries}/${limit} in ${waitMs / MS_PER_SECOND}s on the same model, ${sessionId ? "preserving session progress" : "before session start"}`);
+    try {
+      await delay(waitMs, void 0, { signal: req.signal });
+    } catch {
+      throw new DelegateError("delegate aborted", "aborted", "", "", sessionId);
+    }
+  }
+}
+function stderrSummary(stderr) {
+  const lines = stderr.trim().split(/\r?\n/).filter((l) => l.trim());
+  return lines.slice(-5).join("\n").slice(-800);
+}
+function labelError(message) {
+  return LIMIT_ERROR_RE.test(message) ? `usage or rate limit reached: ${message}` : `error: ${message}`;
+}
+function failureCause(outcome) {
+  if (outcome.result) {
+    const d = outcome.result.details ?? {};
+    const parts = [];
+    if (typeof d.error === "string" && d.error) parts.push(labelError(d.error));
+    if (typeof d.exitCode === "number" && d.exitCode !== 0) parts.push(`the agent exited with code ${d.exitCode}`);
+    else if (typeof d.signal === "string" && d.signal) parts.push(`the agent was killed by signal ${d.signal}`);
+    return parts.join("; ") || "the agent ended its turn with an error but gave no details";
+  }
+  const err = outcome.error;
+  if (!(err instanceof DelegateError)) return `error: ${String(err?.message ?? err)}`;
+  switch (err.kind) {
+    case "aborted":
+      return "cancelled: it was stopped (cancel_subagent, or the session that started it ended)";
+    case "timeout":
+      return `timeout: ${err.message}`;
+    case "not_found":
+      return `could not start: ${err.message}`;
+    default: {
+      const tail = err.stderrTail ? stderrSummary(err.stderrTail) : "";
+      return `${labelError(err.message)}${tail && !err.message.includes(tail) ? `
+Last error output:
+${tail}` : ""}`;
+    }
+  }
+}
+
+// src/core/config.ts
+import { unwatchFile, watchFile } from "node:fs";
+import { basename as basename2, join as join9 } from "node:path";
+
+// src/core/protocol.ts
+var AGENT_KINDS = ["claude", "codex", "opencode", "other"];
+var CODING_AGENTS = ["claude", "codex", "opencode"];
+var BROADCAST = "*";
+var SIBLING_CONVERSATION_PREFIX = "siblings-";
+var SIBLING_NOTE_SUFFIX = ":note";
+function isSiblingNote(m) {
+  return m.conversationId.startsWith(SIBLING_CONVERSATION_PREFIX) && m.conversationId.endsWith(SIBLING_NOTE_SUFFIX);
+}
+var BridgeError = class extends Error {
+  constructor(code, message, details) {
+    super(message);
+    this.code = code;
+    this.details = details;
+    this.name = "BridgeError";
+  }
+  code;
+  details;
+  toPayload() {
+    return { code: this.code, message: this.message, ...this.details ? { details: this.details } : {} };
+  }
+};
+var FrameDecoder = class {
+  constructor(maxBytes) {
+    this.maxBytes = maxBytes;
+  }
+  maxBytes;
+  buffer = "";
+  push(chunk) {
+    this.buffer += chunk;
+    if (this.buffer.length > this.maxBytes && !this.buffer.includes("\n")) {
+      this.buffer = "";
+      throw new BridgeError("too_large", "frame exceeds maximum size");
+    }
+    const frames = [];
+    let nl;
+    while ((nl = this.buffer.indexOf("\n")) >= 0) {
+      const line = this.buffer.slice(0, nl).trim();
+      this.buffer = this.buffer.slice(nl + 1);
+      if (!line) continue;
+      frames.push(JSON.parse(line));
+    }
+    return frames;
+  }
+};
+function encodeFrame(frame) {
+  return JSON.stringify(frame) + "\n";
+}
+
+// src/network/config.ts
+import { hostname as hostname3 } from "node:os";
+import { join as join8 } from "node:path";
+
+// D:/Development/claude-codex-comm/node_modules/zod/v4/classic/external.js
+var external_exports = {};
+__export(external_exports, {
+  $brand: () => $brand,
+  $input: () => $input,
+  $output: () => $output,
+  INVALID: () => INVALID,
+  NEVER: () => NEVER,
+  TimePrecision: () => TimePrecision,
+  ZodAny: () => ZodAny,
+  ZodArray: () => ZodArray,
+  ZodBase64: () => ZodBase64,
+  ZodBase64URL: () => ZodBase64URL,
+  ZodBigInt: () => ZodBigInt,
+  ZodBigIntFormat: () => ZodBigIntFormat,
+  ZodBoolean: () => ZodBoolean,
+  ZodCIDRv4: () => ZodCIDRv4,
+  ZodCIDRv6: () => ZodCIDRv6,
+  ZodCUID: () => ZodCUID,
+  ZodCUID2: () => ZodCUID2,
+  ZodCatch: () => ZodCatch,
+  ZodCodec: () => ZodCodec,
+  ZodCompileAsyncError: () => ZodCompileAsyncError,
+  ZodCompileUnsupportedError: () => ZodCompileUnsupportedError,
+  ZodCreditCard: () => ZodCreditCard,
+  ZodCustom: () => ZodCustom,
+  ZodCustomStringFormat: () => ZodCustomStringFormat,
+  ZodDate: () => ZodDate,
+  ZodDefault: () => ZodDefault,
+  ZodDiscriminatedUnion: () => ZodDiscriminatedUnion,
+  ZodE164: () => ZodE164,
+  ZodEmail: () => ZodEmail,
+  ZodEmoji: () => ZodEmoji,
+  ZodEnum: () => ZodEnum,
+  ZodError: () => ZodError,
+  ZodExactOptional: () => ZodExactOptional,
+  ZodFile: () => ZodFile,
+  ZodFirstPartyTypeKind: () => ZodFirstPartyTypeKind,
+  ZodFunction: () => ZodFunction,
+  ZodGUID: () => ZodGUID,
+  ZodIBAN: () => ZodIBAN,
+  ZodIPv4: () => ZodIPv4,
+  ZodIPv6: () => ZodIPv6,
+  ZodISODate: () => ZodISODate,
+  ZodISODateTime: () => ZodISODateTime,
+  ZodISODuration: () => ZodISODuration,
+  ZodISOTime: () => ZodISOTime,
+  ZodInstanceOf: () => ZodInstanceOf,
+  ZodIntersection: () => ZodIntersection,
+  ZodIssueCode: () => ZodIssueCode,
+  ZodJWT: () => ZodJWT,
+  ZodKSUID: () => ZodKSUID,
+  ZodLazy: () => ZodLazy,
+  ZodLiteral: () => ZodLiteral,
+  ZodMAC: () => ZodMAC,
+  ZodMap: () => ZodMap,
+  ZodNaN: () => ZodNaN,
+  ZodNanoID: () => ZodNanoID,
+  ZodNever: () => ZodNever,
+  ZodNonOptional: () => ZodNonOptional,
+  ZodNull: () => ZodNull,
+  ZodNullable: () => ZodNullable,
+  ZodNumber: () => ZodNumber,
+  ZodNumberFormat: () => ZodNumberFormat,
+  ZodObject: () => ZodObject,
+  ZodOptional: () => ZodOptional,
+  ZodPipe: () => ZodPipe,
+  ZodPrefault: () => ZodPrefault,
+  ZodPreprocess: () => ZodPreprocess,
+  ZodPromise: () => ZodPromise,
+  ZodReadonly: () => ZodReadonly,
+  ZodRealError: () => ZodRealError,
+  ZodRecord: () => ZodRecord,
+  ZodSet: () => ZodSet,
+  ZodString: () => ZodString,
+  ZodStringFormat: () => ZodStringFormat,
+  ZodSuccess: () => ZodSuccess,
+  ZodSymbol: () => ZodSymbol,
+  ZodTemplateLiteral: () => ZodTemplateLiteral,
+  ZodTransform: () => ZodTransform,
+  ZodTuple: () => ZodTuple,
+  ZodType: () => ZodType,
+  ZodULID: () => ZodULID,
+  ZodURL: () => ZodURL,
+  ZodUUID: () => ZodUUID,
+  ZodUndefined: () => ZodUndefined,
+  ZodUnion: () => ZodUnion,
+  ZodUnknown: () => ZodUnknown,
+  ZodVoid: () => ZodVoid,
+  ZodXID: () => ZodXID,
+  ZodXor: () => ZodXor,
+  _ZodString: () => _ZodString,
+  _default: () => _default2,
+  _function: () => _function,
+  any: () => any,
+  array: () => array,
+  base64: () => base642,
+  base64url: () => base64url2,
+  bigint: () => bigint2,
+  boolean: () => boolean2,
+  catch: () => _catch2,
+  check: () => check,
+  cidrv4: () => cidrv42,
+  cidrv6: () => cidrv62,
+  clone: () => clone,
+  codec: () => codec,
+  coerce: () => coerce_exports,
+  compile: () => compile,
+  config: () => config,
+  core: () => core_exports2,
+  creditCard: () => creditCard2,
+  cuid: () => cuid3,
+  cuid2: () => cuid22,
+  currencyCode: () => currencyCode2,
+  custom: () => custom,
+  date: () => date2,
+  decode: () => decode2,
+  decodeAsync: () => decodeAsync2,
+  deepPartial: () => deepPartial,
+  describe: () => describe2,
+  discriminatedUnion: () => discriminatedUnion,
+  e164: () => e1642,
+  email: () => email2,
+  emoji: () => emoji2,
+  encode: () => encode2,
+  encodeAsync: () => encodeAsync2,
+  endsWith: () => _endsWith,
+  enum: () => _enum2,
+  exactOptional: () => exactOptional,
+  file: () => file,
+  flattenError: () => flattenError,
+  float32: () => float32,
+  float64: () => float64,
+  formatError: () => formatError,
+  fromJSONSchema: () => fromJSONSchema,
+  function: () => _function,
+  getDiscriminatedOption: () => getDiscriminatedOption,
+  getErrorMap: () => getErrorMap,
+  globalRegistry: () => globalRegistry,
+  gt: () => _gt,
+  gte: () => _gte,
+  guid: () => guid2,
+  hash: () => hash,
+  hex: () => hex2,
+  hostname: () => hostname2,
+  httpUrl: () => httpUrl,
+  iban: () => iban2,
+  includes: () => _includes,
+  input: () => input,
+  instanceof: () => _instanceof,
+  int: () => int,
+  int32: () => int32,
+  int64: () => int64,
+  intersection: () => intersection,
+  invertCodec: () => invertCodec,
+  ipv4: () => ipv42,
+  ipv6: () => ipv62,
+  iso: () => iso_exports,
+  json: () => json,
+  jwt: () => jwt,
+  keyof: () => keyof,
+  ksuid: () => ksuid2,
+  lazy: () => lazy,
+  length: () => _length,
+  literal: () => literal,
+  locales: () => locales_exports,
+  looseObject: () => looseObject,
+  looseRecord: () => looseRecord,
+  lowercase: () => _lowercase,
+  lt: () => _lt,
+  lte: () => _lte,
+  mac: () => mac2,
+  map: () => map,
+  maxLength: () => _maxLength,
+  maxSize: () => _maxSize,
+  memoizer: () => memoizer,
+  meta: () => meta2,
+  mime: () => _mime,
+  minLength: () => _minLength,
+  minSize: () => _minSize,
+  multipleOf: () => _multipleOf,
+  nan: () => nan,
+  nanoid: () => nanoid2,
+  nativeEnum: () => nativeEnum,
+  negative: () => _negative,
+  never: () => never,
+  nonnegative: () => _nonnegative,
+  nonoptional: () => nonoptional,
+  nonpositive: () => _nonpositive,
+  normalize: () => _normalize,
+  null: () => _null3,
+  nullable: () => nullable,
+  nullish: () => nullish2,
+  number: () => number2,
+  object: () => object,
+  optional: () => optional,
+  output: () => output,
+  overwrite: () => _overwrite,
+  parse: () => parse2,
+  parseAsync: () => parseAsync2,
+  partialRecord: () => partialRecord,
+  pipe: () => pipe,
+  positive: () => _positive,
+  prefault: () => prefault,
+  preprocess: () => preprocess,
+  prettifyError: () => prettifyError,
+  promise: () => promise,
+  properties: () => _properties,
+  property: () => _property,
+  readonly: () => readonly,
+  record: () => record,
+  refine: () => refine,
+  regex: () => _regex,
+  regexes: () => regexes_exports,
+  registry: () => registry,
+  safeDecode: () => safeDecode2,
+  safeDecodeAsync: () => safeDecodeAsync2,
+  safeEncode: () => safeEncode2,
+  safeEncodeAsync: () => safeEncodeAsync2,
+  safeParse: () => safeParse2,
+  safeParseAsync: () => safeParseAsync2,
+  set: () => set,
+  setErrorMap: () => setErrorMap,
+  size: () => _size,
+  slugify: () => _slugify,
+  startsWith: () => _startsWith,
+  strictObject: () => strictObject,
+  string: () => string2,
+  stringFormat: () => stringFormat,
+  stringbool: () => stringbool,
+  success: () => success,
+  superRefine: () => superRefine,
+  symbol: () => symbol,
+  templateLiteral: () => templateLiteral,
+  toJSONSchema: () => toJSONSchema,
+  toLowerCase: () => _toLowerCase,
+  toUpperCase: () => _toUpperCase,
+  toZod: () => toZod,
+  transform: () => transform,
+  treeifyError: () => treeifyError,
+  trim: () => _trim,
+  tuple: () => tuple,
+  uint32: () => uint32,
+  uint64: () => uint64,
+  ulid: () => ulid2,
+  undefined: () => _undefined3,
+  union: () => union,
+  unknown: () => unknown,
+  uppercase: () => _uppercase,
+  url: () => url,
+  util: () => util_exports,
+  uuid: () => uuid2,
+  uuidv4: () => uuidv4,
+  uuidv6: () => uuidv6,
+  uuidv7: () => uuidv7,
+  validate: () => validate,
+  validateAsync: () => validateAsync,
+  void: () => _void2,
+  withParser: () => withParser,
+  xid: () => xid2,
+  xor: () => xor
+});
+
+// D:/Development/claude-codex-comm/node_modules/zod/v4/core/index.js
 var core_exports2 = {};
 __export(core_exports2, {
   $ZodAny: () => $ZodAny,
@@ -11211,7 +9061,7 @@ __export(core_exports2, {
   $input: () => $input,
   $output: () => $output,
   Doc: () => Doc,
-  INVALID: () => INVALID2,
+  INVALID: () => INVALID,
   JSONSchema: () => json_schema_exports,
   JSONSchemaGenerator: () => JSONSchemaGenerator,
   NEVER: () => NEVER,
@@ -11380,10 +9230,10 @@ __export(core_exports2, {
   isValidCreditCard: () => isValidCreditCard,
   isValidIBAN: () => isValidIBAN,
   isValidIPv6: () => isValidIPv6,
-  isValidJWT: () => isValidJWT2,
+  isValidJWT: () => isValidJWT,
   locales: () => locales_exports,
   memoizer: () => memoizer,
-  mergeValues: () => mergeValues2,
+  mergeValues: () => mergeValues,
   meta: () => meta,
   parse: () => parse,
   parseAsync: () => parseAsync,
@@ -11415,7 +9265,7 @@ __export(core_exports2, {
   withParser: () => withParser
 });
 
-// node_modules/zod/v4/core/util.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/core/util.js
 var util_exports = {};
 __export(util_exports, {
   BIGINT_FORMAT_RANGES: () => BIGINT_FORMAT_RANGES,
@@ -11450,11 +9300,11 @@ __export(util_exports, {
   explicitlyAborted: () => explicitlyAborted,
   extend: () => extend,
   finalizeIssue: () => finalizeIssue,
-  floatSafeRemainder: () => floatSafeRemainder2,
+  floatSafeRemainder: () => floatSafeRemainder,
   getElementAtPath: () => getElementAtPath,
   getEnumValues: () => getEnumValues,
   getLengthableOrigin: () => getLengthableOrigin,
-  getParsedType: () => getParsedType2,
+  getParsedType: () => getParsedType,
   getSizableOrigin: () => getSizableOrigin,
   hexToUint8Array: () => hexToUint8Array,
   hide: () => hide,
@@ -11548,7 +9398,7 @@ function cleanRegex(source) {
   const end = source.endsWith("$") ? source.length - 1 : source.length;
   return source.slice(start, end);
 }
-function floatSafeRemainder2(val, step) {
+function floatSafeRemainder(val, step) {
   const ratio = val / step;
   const roundedRatio = Math.round(ratio);
   const tolerance = 4 * Number.EPSILON * Math.max(Math.abs(ratio), 1);
@@ -11557,9 +9407,9 @@ function floatSafeRemainder2(val, step) {
   return ratio - roundedRatio;
 }
 var EVALUATING = /* @__PURE__ */ Symbol("evaluating");
-function defineLazy(object4, key, getter) {
+function defineLazy(object4, key2, getter) {
   let value = void 0;
-  Object.defineProperty(object4, key, {
+  Object.defineProperty(object4, key2, {
     get() {
       if (value === EVALUATING) {
         return void 0;
@@ -11571,7 +9421,7 @@ function defineLazy(object4, key, getter) {
       return value;
     },
     set(v) {
-      Object.defineProperty(object4, key, {
+      Object.defineProperty(object4, key2, {
         value: v
         // configurable: true,
       });
@@ -11597,47 +9447,47 @@ function rawShape(def) {
 function sourceShape(schema) {
   return rawShape(schema._zod.def) ?? schema._zod.def.shape;
 }
-function deferProp(target, key, getter) {
-  Object.defineProperty(target, key, {
+function deferProp(target, key2, getter) {
+  Object.defineProperty(target, key2, {
     get() {
       const value = getter();
-      assignProp(this, key, value);
+      assignProp(this, key2, value);
       return value;
     },
     enumerable: true,
     configurable: true
   });
 }
-function putProp(target, key, value) {
-  if (key in target)
-    assignProp(target, key, value);
+function putProp(target, key2, value) {
+  if (key2 in target)
+    assignProp(target, key2, value);
   else
-    target[key] = value;
+    target[key2] = value;
 }
 function mirrorShape(target, source, keys, wrap) {
   const raw = sourceShape(source);
-  for (const key of keys) {
-    const desc = Object.getOwnPropertyDescriptor(raw, key);
+  for (const key2 of keys) {
+    const desc = Object.getOwnPropertyDescriptor(raw, key2);
     if (!desc.enumerable)
       continue;
     if (desc.get) {
-      deferProp(target, key, () => {
-        const value = source._zod.def.shape[key];
-        return wrap ? wrap(value, key) : value;
+      deferProp(target, key2, () => {
+        const value = source._zod.def.shape[key2];
+        return wrap ? wrap(value, key2) : value;
       });
     } else
-      putProp(target, key, wrap ? wrap(desc.value, key) : desc.value);
+      putProp(target, key2, wrap ? wrap(desc.value, key2) : desc.value);
   }
 }
 function mirrorProps(target, source) {
-  for (const key of Reflect.ownKeys(source)) {
-    const desc = Object.getOwnPropertyDescriptor(source, key);
+  for (const key2 of Reflect.ownKeys(source)) {
+    const desc = Object.getOwnPropertyDescriptor(source, key2);
     if (!desc.enumerable)
       continue;
     if (desc.get)
-      deferProp(target, key, () => source[key]);
+      deferProp(target, key2, () => source[key2]);
     else
-      putProp(target, key, desc.value);
+      putProp(target, key2, desc.value);
   }
 }
 function mergeDefs(...defs) {
@@ -11654,11 +9504,11 @@ function cloneDef(schema) {
 function getElementAtPath(obj, path) {
   if (!path)
     return obj;
-  return path.reduce((acc, key) => acc?.[key], obj);
+  return path.reduce((acc, key2) => acc?.[key2], obj);
 }
 function promiseAllObject(promisesObj) {
   const keys = Object.keys(promisesObj);
-  const promises = keys.map((key) => promisesObj[key]);
+  const promises = keys.map((key2) => promisesObj[key2]);
   return Promise.all(promises).then((results) => {
     const resolvedObj = {};
     for (let i = 0; i < keys.length; i++) {
@@ -11730,14 +9580,14 @@ function shallowClone(o) {
 }
 function numKeys(data) {
   let keyCount = 0;
-  for (const key in data) {
-    if (Object.prototype.hasOwnProperty.call(data, key)) {
+  for (const key2 in data) {
+    if (Object.prototype.hasOwnProperty.call(data, key2)) {
       keyCount++;
     }
   }
   return keyCount;
 }
-var getParsedType2 = (data) => {
+var getParsedType = (data) => {
   const t2 = typeof data;
   switch (t2) {
     case "undefined":
@@ -11885,12 +9735,12 @@ function pick(schema, mask) {
 function maskedKeys(schema, mask) {
   const raw = sourceShape(schema);
   const keys = [];
-  for (const key of Reflect.ownKeys(mask)) {
-    if (!Object.getOwnPropertyDescriptor(raw, key)?.enumerable) {
-      throw new Error(`Unrecognized key: "${String(key)}"`);
+  for (const key2 of Reflect.ownKeys(mask)) {
+    if (!Object.getOwnPropertyDescriptor(raw, key2)?.enumerable) {
+      throw new Error(`Unrecognized key: "${String(key2)}"`);
     }
-    if (mask[key])
-      keys.push(key);
+    if (mask[key2])
+      keys.push(key2);
   }
   return keys;
 }
@@ -11903,7 +9753,7 @@ function omit(schema, mask) {
   }
   const omitted = new Set(maskedKeys(schema, mask));
   const newShape = {};
-  mirrorShape(newShape, schema, Reflect.ownKeys(sourceShape(schema)).filter((key) => !omitted.has(key)));
+  mirrorShape(newShape, schema, Reflect.ownKeys(sourceShape(schema)).filter((key2) => !omitted.has(key2)));
   return clone(schema, mergeDefs(currDef, { shape: newShape, checks: [] }));
 }
 function extend(schema, shape) {
@@ -11914,8 +9764,8 @@ function extend(schema, shape) {
   const hasChecks = checks && checks.length > 0;
   if (hasChecks) {
     const existingShape = sourceShape(schema);
-    for (const key of Reflect.ownKeys(shape)) {
-      if (Object.getOwnPropertyDescriptor(existingShape, key) !== void 0) {
+    for (const key2 of Reflect.ownKeys(shape)) {
+      if (Object.getOwnPropertyDescriptor(existingShape, key2) !== void 0) {
         throw new Error("Cannot overwrite keys on object schemas containing refinements. Use `.safeExtend()` instead.");
       }
     }
@@ -11962,15 +9812,15 @@ function partial(Class2, schema, mask, name = "partial") {
   }
   const selected = mask ? new Set(maskedKeys(schema, mask)) : void 0;
   const newShape = {};
-  mirrorShape(newShape, schema, Reflect.ownKeys(sourceShape(schema)), Class2 && ((value, key) => selected && !selected.has(key) ? value : new Class2({ type: "optional", innerType: value })));
+  mirrorShape(newShape, schema, Reflect.ownKeys(sourceShape(schema)), Class2 && ((value, key2) => selected && !selected.has(key2) ? value : new Class2({ type: "optional", innerType: value })));
   return clone(schema, mergeDefs(schema._zod.def, { shape: newShape, checks: [] }));
 }
 function required(Class2, schema, mask) {
   const selected = mask ? new Set(maskedKeys(schema, mask)) : void 0;
   const newShape = {};
-  mirrorShape(newShape, schema, Reflect.ownKeys(sourceShape(schema)), (value, key) => (
+  mirrorShape(newShape, schema, Reflect.ownKeys(sourceShape(schema)), (value, key2) => (
     // overwrite with non-optional
-    selected && !selected.has(key) ? value : new Class2({ type: "nonoptional", innerType: value })
+    selected && !selected.has(key2) ? value : new Class2({ type: "nonoptional", innerType: value })
   ));
   return clone(schema, mergeDefs(schema._zod.def, { shape: newShape }));
 }
@@ -12145,46 +9995,46 @@ var Class = class {
   }
 };
 function members(proto, table) {
-  for (const key in table) {
-    const desc = Object.getOwnPropertyDescriptor(table, key);
+  for (const key2 in table) {
+    const desc = Object.getOwnPropertyDescriptor(table, key2);
     if (desc.get)
-      Object.defineProperty(proto, key, { ...desc, enumerable: false });
+      Object.defineProperty(proto, key2, { ...desc, enumerable: false });
     else
-      defineBound(proto, key, desc.value);
+      defineBound(proto, key2, desc.value);
   }
 }
-function own(inst, key, value, enumerable = true) {
-  Object.defineProperty(inst, key, { configurable: true, writable: true, enumerable, value });
+function own(inst, key2, value, enumerable = true) {
+  Object.defineProperty(inst, key2, { configurable: true, writable: true, enumerable, value });
   return value;
 }
-function hide(inst, key, value) {
-  return own(inst, key, value, false);
+function hide(inst, key2, value) {
+  return own(inst, key2, value, false);
 }
 // @__NO_SIDE_EFFECTS__
 function derived(computes, table) {
-  for (const key in computes) {
-    const compute = computes[key];
-    Object.defineProperty(table, key, {
+  for (const key2 in computes) {
+    const compute = computes[key2];
+    Object.defineProperty(table, key2, {
       configurable: true,
       enumerable: true,
       get() {
-        return own(this, key, compute(this));
+        return own(this, key2, compute(this));
       },
       set(value) {
-        own(this, key, value);
+        own(this, key2, value);
       }
     });
   }
   return table;
 }
-function defineBound(proto, key, fn) {
-  Object.defineProperty(proto, key, {
+function defineBound(proto, key2, fn) {
+  Object.defineProperty(proto, key2, {
     configurable: true,
     get() {
-      return this == null ? fn : own(this, key, fn.bind(this));
+      return this == null ? fn : own(this, key2, fn.bind(this));
     },
     set(value) {
-      own(this, key, value);
+      own(this, key2, value);
     }
   });
 }
@@ -12201,53 +10051,53 @@ var breaker = {
     return void 0;
   }
 };
-function defineLazyInternal(inst, key, compute) {
+function defineLazyInternal(inst, key2, compute) {
   const proto = Object.getPrototypeOf(inst._zod);
-  if (key in proto && installing !== inst._zod) {
+  if (key2 in proto && installing !== inst._zod) {
     installing = void 0;
     return;
   }
   installing = inst._zod;
-  Object.defineProperty(proto, key, {
+  Object.defineProperty(proto, key2, {
     configurable: true,
     get() {
-      Object.defineProperty(this, key, breaker);
+      Object.defineProperty(this, key2, breaker);
       const outer = broke;
       broke = false;
       try {
         const value = compute(this);
         if (broke)
-          delete this[key];
+          delete this[key2];
         else
-          Object.defineProperty(this, key, { configurable: true, writable: true, value });
+          Object.defineProperty(this, key2, { configurable: true, writable: true, value });
         broke = broke || outer;
         return value;
       } catch (err) {
-        delete this[key];
+        delete this[key2];
         broke = broke || outer;
         throw err;
       }
     },
     set(value) {
-      Object.defineProperty(this, key, { configurable: true, writable: true, value });
+      Object.defineProperty(this, key2, { configurable: true, writable: true, value });
     }
   });
 }
-function installLazyProp(inst, key, make, enumerable) {
-  const proto = claim(inst, key);
+function installLazyProp(inst, key2, make, enumerable) {
+  const proto = claim(inst, key2);
   if (!proto)
     return;
-  Object.defineProperty(proto, key, {
+  Object.defineProperty(proto, key2, {
     configurable: true,
     get() {
       const desc = { configurable: true, writable: true, enumerable, value: void 0 };
-      Object.defineProperty(this, key, desc);
+      Object.defineProperty(this, key2, desc);
       desc.value = make(this);
-      Object.defineProperty(this, key, desc);
+      Object.defineProperty(this, key2, desc);
       return desc.value;
     },
     set(value) {
-      Object.defineProperty(this, key, { configurable: true, writable: true, enumerable, value });
+      Object.defineProperty(this, key2, { configurable: true, writable: true, enumerable, value });
     }
   });
 }
@@ -12258,7 +10108,7 @@ function constantCatch(value) {
   return fn;
 }
 
-// node_modules/zod/v4/core/core.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/core/core.js
 var _a;
 var NEVER = /* @__PURE__ */ Object.freeze({
   status: "aborted"
@@ -12380,7 +10230,7 @@ function config(newConfig) {
   return globalConfig;
 }
 
-// node_modules/zod/v4/core/errors.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/core/errors.js
 function _getMessage() {
   const internals = this._zod;
   internals.message ?? (internals.message = JSON.stringify(internals.def, jsonStringifyReplacer, 2));
@@ -12424,15 +10274,15 @@ var $ZodError = $constructor("$ZodError", initializer);
 var $ZodRealError = $constructor("$ZodError", initializer, void 0, {
   Parent: Error
 });
-function node(obj, key, make) {
-  if (!Object.prototype.hasOwnProperty.call(obj, key)) {
-    if (key === "__proto__") {
-      Object.defineProperty(obj, key, { value: make(), writable: true, enumerable: true, configurable: true });
+function node(obj, key2, make) {
+  if (!Object.prototype.hasOwnProperty.call(obj, key2)) {
+    if (key2 === "__proto__") {
+      Object.defineProperty(obj, key2, { value: make(), writable: true, enumerable: true, configurable: true });
     } else {
-      obj[key] = make();
+      obj[key2] = make();
     }
   }
-  return obj[key];
+  return obj[key2];
 }
 function flattenError(error62, mapper = (issue2) => issue2.message) {
   const fieldErrors = {};
@@ -12572,7 +10422,7 @@ function prettifyError(error62) {
   return lines.join("\n");
 }
 
-// node_modules/zod/v4/core/parse.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/core/parse.js
 function finalizeParams(callee, params) {
   return { callee: params?.callee ?? callee, Err: params?.Err };
 }
@@ -12732,7 +10582,7 @@ var _safeDecodeAsync = (_Err) => async (schema, value, _ctx) => {
 };
 var safeDecodeAsync = /* @__PURE__ */ _safeDecodeAsync($ZodRealError);
 
-// node_modules/zod/v4/core/regexes.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/core/regexes.js
 var regexes_exports = {};
 __export(regexes_exports, {
   anyString: () => anyString,
@@ -12904,7 +10754,7 @@ var sha512_hex = /^[0-9a-fA-F]{128}$/;
 var sha512_base64 = /* @__PURE__ */ fixedBase64(86, "==");
 var sha512_base64url = /* @__PURE__ */ fixedBase64url(86);
 
-// node_modules/zod/v4/core/checks.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/core/checks.js
 var $ZodCheck = /* @__PURE__ */ $constructor("$ZodCheck", (inst, def) => {
   var _a3;
   inst._zod ?? (inst._zod = {});
@@ -12968,7 +10818,7 @@ var $ZodCheckMultipleOf = /* @__PURE__ */ $constructor("$ZodCheckMultipleOf", (i
     const isMultiple = typeof payload.value === "bigint" ? (
       // `value % 0n` throws, and nothing is a multiple of zero — the number branch already fails this way via NaN
       def.value !== BigInt(0) && payload.value % def.value === BigInt(0)
-    ) : floatSafeRemainder2(payload.value, def.value) === 0;
+    ) : floatSafeRemainder(payload.value, def.value) === 0;
     if (isMultiple)
       return;
     payload.issues.push({
@@ -13341,16 +11191,16 @@ var $ZodCheckProperties = /* @__PURE__ */ $constructor("$ZodCheckProperties", (i
       payload.issues.push({ expected: "object", code: "invalid_type", input: payload.value, inst });
       return void 0;
     }
-    entries ?? (entries = Reflect.ownKeys(def.shape).map((key) => [key, def.shape[key]]));
+    entries ?? (entries = Reflect.ownKeys(def.shape).map((key2) => [key2, def.shape[key2]]));
     const input2 = payload.value;
     let proms;
-    for (const [key, schema] of entries) {
-      const result = schema._zod.run({ value: input2[key], issues: [] }, {});
+    for (const [key2, schema] of entries) {
+      const result = schema._zod.run({ value: input2[key2], issues: [] }, {});
       if (result instanceof Promise) {
         proms ?? (proms = []);
-        proms.push(result.then((result2) => handleCheckPropertyResult(result2, payload, key)));
+        proms.push(result.then((result2) => handleCheckPropertyResult(result2, payload, key2)));
       } else {
-        handleCheckPropertyResult(result, payload, key);
+        handleCheckPropertyResult(result, payload, key2);
       }
     }
     if (proms)
@@ -13380,7 +11230,7 @@ var $ZodCheckOverwrite = /* @__PURE__ */ $constructor("$ZodCheckOverwrite", (ins
   };
 });
 
-// node_modules/zod/v4/core/doc.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/core/doc.js
 var Doc = class {
   constructor(args = [], closed = {}) {
     this.content = [];
@@ -13421,14 +11271,14 @@ ${content.join("\n")}
   }
 };
 
-// node_modules/zod/v4/core/versions.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/core/versions.js
 var version = {
   major: 4,
   minor: 6,
   patch: 5
 };
 
-// node_modules/zod/v4/core/schemas.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/core/schemas.js
 var $ZodType = /* @__PURE__ */ $constructor("$ZodType", (inst, def) => {
   var _a3;
   inst ?? (inst = {});
@@ -13952,7 +11802,7 @@ var $ZodIBAN = /* @__PURE__ */ $constructor("$ZodIBAN", (inst, def) => {
     });
   };
 });
-function isValidJWT2(token, algorithm = null) {
+function isValidJWT(token, algorithm = null) {
   try {
     const tokensParts = token.split(".");
     if (tokensParts.length !== 3)
@@ -13975,7 +11825,7 @@ function isValidJWT2(token, algorithm = null) {
 var $ZodJWT = /* @__PURE__ */ $constructor("$ZodJWT", (inst, def) => {
   $ZodStringFormat.init(inst, def);
   inst._zod.check = (payload) => {
-    if (isValidJWT2(payload.value, def.alg))
+    if (isValidJWT(payload.value, def.alg))
       return;
     payload.issues.push({
       code: "invalid_format",
@@ -14225,8 +12075,8 @@ var $ZodArray = /* @__PURE__ */ $constructor("$ZodArray", (inst, def) => {
     return payload;
   };
 });
-function handlePropertyResult(result, final, key, input2, optin, optout) {
-  const isPresent = key in input2;
+function handlePropertyResult(result, final, key2, input2, optin, optout) {
+  const isPresent = key2 in input2;
   const isOptionalOut = optout === "optional";
   if (!isPresent && isOptionalOut && optin === "optional") {
     return;
@@ -14235,7 +12085,7 @@ function handlePropertyResult(result, final, key, input2, optin, optout) {
     if (optin !== void 0 && isOptionalOut && !isPresent) {
       return;
     }
-    final.issues.push(...prefixIssues(key, result.issues));
+    final.issues.push(...prefixIssues(key2, result.issues));
   }
   if (!isPresent && optin === void 0) {
     if (!result.issues.length) {
@@ -14243,17 +12093,17 @@ function handlePropertyResult(result, final, key, input2, optin, optout) {
         code: "invalid_type",
         expected: "nonoptional",
         input: void 0,
-        path: [key]
+        path: [key2]
       });
     }
     return;
   }
   if (result.value === void 0) {
     if (isPresent || optin === "defaulted" && !isOptionalOut) {
-      final.value[key] = void 0;
+      final.value[key2] = void 0;
     }
   } else {
-    final.value[key] = result.value;
+    final.value[key2] = result.value;
   }
 }
 var NO_SYMBOL_KEYS = [];
@@ -14286,28 +12136,28 @@ function handleCatchall(proms, input2, payload, ctx, def, inst, abortEarly) {
   const optin = _catchall.optin;
   const optout = _catchall.optout;
   let seen = 0;
-  for (const key in input2) {
+  for (const key2 in input2) {
     if (abortEarly && payload.issues.length !== seen) {
       if (aborted(payload, seen))
         break;
       seen = payload.issues.length;
     }
-    if (keySet.has(key))
+    if (keySet.has(key2))
       continue;
-    if (key === "__proto__") {
+    if (key2 === "__proto__") {
       if (t2 === "never")
-        unrecognized.push(key);
+        unrecognized.push(key2);
       continue;
     }
     if (t2 === "never") {
-      unrecognized.push(key);
+      unrecognized.push(key2);
       continue;
     }
-    const r = _catchall.run({ value: input2[key], issues: [] }, ctx);
+    const r = _catchall.run({ value: input2[key2], issues: [] }, ctx);
     if (r instanceof Promise) {
-      proms.push(r.then((r2) => handlePropertyResult(r2, payload, key, input2, optin, optout)));
+      proms.push(r.then((r2) => handlePropertyResult(r2, payload, key2, input2, optin, optout)));
     } else {
-      handlePropertyResult(r, payload, key, input2, optin, optout);
+      handlePropertyResult(r, payload, key2, input2, optin, optout);
     }
   }
   if (unrecognized.length) {
@@ -14344,16 +12194,16 @@ var $ZodObject = /* @__PURE__ */ $constructor("$ZodObject", (inst, def) => {
   defineLazyInternal(inst, "propValues", (zod) => {
     const shape = zod.def.shape;
     const propValues = {};
-    for (const key in shape) {
-      const field = shape[key]._zod;
+    for (const key2 in shape) {
+      const field = shape[key2]._zod;
       if (field.values) {
-        if (!Object.prototype.hasOwnProperty.call(propValues, key)) {
-          assignProp(propValues, key, /* @__PURE__ */ new Set());
+        if (!Object.prototype.hasOwnProperty.call(propValues, key2)) {
+          assignProp(propValues, key2, /* @__PURE__ */ new Set());
         }
         for (const v of field.values)
-          propValues[key].add(v);
+          propValues[key2].add(v);
         if (field.optin !== void 0)
-          propValues[key].add(void 0);
+          propValues[key2].add(void 0);
       }
     }
     return propValues;
@@ -14380,22 +12230,22 @@ var $ZodObject = /* @__PURE__ */ $constructor("$ZodObject", (inst, def) => {
     const shape = value.shape;
     const abortEarly = ctx?.abortEarly;
     let seen = payload.issues.length;
-    for (const key of value.allKeys) {
+    for (const key2 of value.allKeys) {
       if (abortEarly && payload.issues.length !== seen) {
         if (aborted(payload, seen))
           break;
         seen = payload.issues.length;
       }
-      if (key === "__proto__")
+      if (key2 === "__proto__")
         continue;
-      const el = shape[key];
+      const el = shape[key2];
       const optin = el._zod.optin;
       const optout = el._zod.optout;
-      const r = el._zod.run({ value: input2[key], issues: [] }, ctx);
+      const r = el._zod.run({ value: input2[key2], issues: [] }, ctx);
       if (r instanceof Promise) {
-        proms.push(r.then((r2) => handlePropertyResult(r2, payload, key, input2, optin, optout)));
+        proms.push(r.then((r2) => handlePropertyResult(r2, payload, key2, input2, optin, optout)));
       } else {
-        handlePropertyResult(r, payload, key, input2, optin, optout);
+        handlePropertyResult(r, payload, key2, input2, optin, optout);
       }
     }
     if (!catchall) {
@@ -14429,17 +12279,17 @@ var $ZodObjectJIT = /* @__PURE__ */ $constructor("$ZodObjectJIT", (inst, def) =>
     doc.write(`const input = payload.value;`);
     const ids = /* @__PURE__ */ Object.create(null);
     let counter = 0;
-    for (const key of normalized.allKeys) {
-      ids[key] = `key_${counter++}`;
+    for (const key2 of normalized.allKeys) {
+      ids[key2] = `key_${counter++}`;
     }
     doc.write(memo2 ? `const newResult = memo.alloc(inst, payload, {}, ctx);` : `const newResult = {};`);
-    for (const key of normalized.allKeys) {
-      if (key === "__proto__")
+    for (const key2 of normalized.allKeys) {
+      if (key2 === "__proto__")
         continue;
-      const id = ids[key];
-      const k = typeof key === "symbol" ? `syms[${syms.indexOf(key)}]` : esc(key);
+      const id = ids[key2];
+      const k = typeof key2 === "symbol" ? `syms[${syms.indexOf(key2)}]` : esc(key2);
       const isPresent = `${k} in input`;
-      const schema = shape[key];
+      const schema = shape[key2];
       const optin = schema?._zod?.optin;
       const isOptionalIn = optin !== void 0;
       const isOptionalOut = schema?._zod?.optout === "optional";
@@ -14764,7 +12614,7 @@ var $ZodIntersection = /* @__PURE__ */ $constructor("$ZodIntersection", (inst, d
     return handleIntersectionResults(payload, left, right);
   };
 });
-function mergeValues2(a, b) {
+function mergeValues(a, b) {
   if (a === b) {
     return { valid: true, data: a };
   }
@@ -14773,21 +12623,21 @@ function mergeValues2(a, b) {
   }
   if (isPlainObject(a) && isPlainObject(b)) {
     const bKeys = Object.keys(b);
-    const sharedKeys = Object.keys(a).filter((key) => bKeys.indexOf(key) !== -1);
+    const sharedKeys = Object.keys(a).filter((key2) => bKeys.indexOf(key2) !== -1);
     const newObj = { ...a, ...b };
     if (Object.prototype.hasOwnProperty.call(newObj, "__proto__"))
       delete newObj.__proto__;
-    for (const key of sharedKeys) {
-      if (key === "__proto__")
+    for (const key2 of sharedKeys) {
+      if (key2 === "__proto__")
         continue;
-      const sharedValue = mergeValues2(a[key], b[key]);
+      const sharedValue = mergeValues(a[key2], b[key2]);
       if (!sharedValue.valid) {
         return {
           valid: false,
-          mergeErrorPath: [key, ...sharedValue.mergeErrorPath]
+          mergeErrorPath: [key2, ...sharedValue.mergeErrorPath]
         };
       }
-      newObj[key] = sharedValue.data;
+      newObj[key2] = sharedValue.data;
     }
     return { valid: true, data: newObj };
   }
@@ -14799,7 +12649,7 @@ function mergeValues2(a, b) {
     for (let index = 0; index < a.length; index++) {
       const itemA = a[index];
       const itemB = b[index];
-      const sharedValue = mergeValues2(itemA, itemB);
+      const sharedValue = mergeValues(itemA, itemB);
       if (!sharedValue.valid) {
         return {
           valid: false,
@@ -14854,7 +12704,7 @@ function handleIntersectionResults(result, left, right) {
         result.issues.push(keyIssues.get(k));
     }
   }
-  const merged = mergeValues2(left.value, right.value);
+  const merged = mergeValues(left.value, right.value);
   if (!merged.valid) {
     if (aborted(result))
       return result;
@@ -14946,9 +12796,9 @@ var $ZodTuple = /* @__PURE__ */ $constructor("$ZodTuple", (inst, def) => {
     return handleTupleResults(itemResults, payload, items, input2, optoutStart);
   };
 });
-function getTupleOptStart(items, key) {
+function getTupleOptStart(items, key2) {
   for (let i = items.length - 1; i >= 0; i--) {
-    const omittable = key === "optin" ? items[i]._zod.optin !== void 0 : items[i]._zod.optout === "optional";
+    const omittable = key2 === "optin" ? items[i]._zod.optin !== void 0 : items[i]._zod.optout === "optional";
     if (!omittable)
       return i + 1;
   }
@@ -15006,12 +12856,12 @@ var $ZodRecord = /* @__PURE__ */ $constructor("$ZodRecord", (inst, def) => {
     if (values && !def.partial) {
       payload.value = memo2 ? memo2.alloc(inst, payload, {}, ctx) : {};
       const recordKeys = /* @__PURE__ */ new Set();
-      for (const key of values) {
-        if (typeof key === "string" || typeof key === "number" || typeof key === "symbol") {
-          recordKeys.add(typeof key === "number" ? key.toString() : key);
-          if (key === "__proto__")
+      for (const key2 of values) {
+        if (typeof key2 === "string" || typeof key2 === "number" || typeof key2 === "symbol") {
+          recordKeys.add(typeof key2 === "number" ? key2.toString() : key2);
+          if (key2 === "__proto__")
             continue;
-          const keyResult = def.keyType._zod.run({ value: key, issues: [] }, ctx);
+          const keyResult = def.keyType._zod.run({ value: key2, issues: [] }, ctx);
           if (keyResult instanceof Promise) {
             throw new Error("Async schemas not supported in object keys currently");
           }
@@ -15020,8 +12870,8 @@ var $ZodRecord = /* @__PURE__ */ $constructor("$ZodRecord", (inst, def) => {
               code: "invalid_key",
               origin: "record",
               issues: keyResult.issues.map((iss) => finalizeIssue(iss, ctx, config())),
-              input: key,
-              path: [key],
+              input: key2,
+              path: [key2],
               inst
             });
             continue;
@@ -15029,32 +12879,32 @@ var $ZodRecord = /* @__PURE__ */ $constructor("$ZodRecord", (inst, def) => {
           const outKey = keyResult.value;
           if (outKey === "__proto__")
             continue;
-          const result = def.valueType._zod.run({ value: input2[key], issues: [] }, ctx);
+          const result = def.valueType._zod.run({ value: input2[key2], issues: [] }, ctx);
           if (result instanceof Promise) {
             proms.push(result.then((result2) => {
               if (result2.issues.length) {
-                payload.issues.push(...prefixIssues(key, result2.issues));
+                payload.issues.push(...prefixIssues(key2, result2.issues));
               }
               payload.value[outKey] = result2.value;
             }));
           } else {
             if (result.issues.length) {
-              payload.issues.push(...prefixIssues(key, result.issues));
+              payload.issues.push(...prefixIssues(key2, result.issues));
             }
             payload.value[outKey] = result.value;
           }
         }
       }
       let unrecognized;
-      for (const key in input2) {
-        if (!recordKeys.has(key)) {
+      for (const key2 in input2) {
+        if (!recordKeys.has(key2)) {
           if (def.mode === "loose") {
-            if (key === "__proto__")
+            if (key2 === "__proto__")
               continue;
-            payload.value[key] = input2[key];
+            payload.value[key2] = input2[key2];
           } else {
             unrecognized = unrecognized ?? [];
-            unrecognized.push(key);
+            unrecognized.push(key2);
           }
         }
       }
@@ -15070,18 +12920,18 @@ var $ZodRecord = /* @__PURE__ */ $constructor("$ZodRecord", (inst, def) => {
     } else {
       payload.value = memo2 ? memo2.alloc(inst, payload, {}, ctx) : {};
       let unrecognized;
-      for (const key of Reflect.ownKeys(input2)) {
-        if (key === "__proto__")
+      for (const key2 of Reflect.ownKeys(input2)) {
+        if (key2 === "__proto__")
           continue;
-        if (!Object.prototype.propertyIsEnumerable.call(input2, key))
+        if (!Object.prototype.propertyIsEnumerable.call(input2, key2))
           continue;
-        let keyResult = def.keyType._zod.run({ value: key, issues: [] }, ctx);
+        let keyResult = def.keyType._zod.run({ value: key2, issues: [] }, ctx);
         if (keyResult instanceof Promise) {
           throw new Error("Async schemas not supported in object keys currently");
         }
-        const checkNumericKey = typeof key === "string" && number.test(key) && keyResult.issues.length;
+        const checkNumericKey = typeof key2 === "string" && number.test(key2) && keyResult.issues.length;
         if (checkNumericKey) {
-          const retryResult = def.keyType._zod.run({ value: Number(key), issues: [] }, ctx);
+          const retryResult = def.keyType._zod.run({ value: Number(key2), issues: [] }, ctx);
           if (retryResult instanceof Promise) {
             throw new Error("Async schemas not supported in object keys currently");
           }
@@ -15091,17 +12941,17 @@ var $ZodRecord = /* @__PURE__ */ $constructor("$ZodRecord", (inst, def) => {
         }
         if (keyResult.issues.length) {
           if (def.mode === "loose") {
-            payload.value[key] = input2[key];
+            payload.value[key2] = input2[key2];
           } else if (values) {
             unrecognized = unrecognized ?? [];
-            unrecognized.push(key);
+            unrecognized.push(key2);
           } else {
             payload.issues.push({
               code: "invalid_key",
               origin: "record",
               issues: keyResult.issues.map((iss) => finalizeIssue(iss, ctx, config())),
-              input: key,
-              path: [key],
+              input: key2,
+              path: [key2],
               inst
             });
           }
@@ -15110,17 +12960,17 @@ var $ZodRecord = /* @__PURE__ */ $constructor("$ZodRecord", (inst, def) => {
         const outKey = keyResult.value;
         if (outKey === "__proto__")
           continue;
-        const result = def.valueType._zod.run({ value: input2[key], issues: [] }, ctx);
+        const result = def.valueType._zod.run({ value: input2[key2], issues: [] }, ctx);
         if (result instanceof Promise) {
           proms.push(result.then((result2) => {
             if (result2.issues.length) {
-              payload.issues.push(...prefixIssues(key, result2.issues));
+              payload.issues.push(...prefixIssues(key2, result2.issues));
             }
             payload.value[outKey] = result2.value;
           }));
         } else {
           if (result.issues.length) {
-            payload.issues.push(...prefixIssues(key, result.issues));
+            payload.issues.push(...prefixIssues(key2, result.issues));
           }
           payload.value[outKey] = result.value;
         }
@@ -15160,20 +13010,20 @@ var $ZodMap = /* @__PURE__ */ $constructor("$ZodMap", (inst, def) => {
     payload.value = memo2 ? memo2.alloc(inst, payload, /* @__PURE__ */ new Map(), ctx) : /* @__PURE__ */ new Map();
     const abortEarly = ctx?.abortEarly;
     let seen = payload.issues.length;
-    for (const [key, value] of input2) {
+    for (const [key2, value] of input2) {
       if (abortEarly && payload.issues.length !== seen) {
         if (aborted(payload, seen))
           break;
         seen = payload.issues.length;
       }
-      const keyResult = def.keyType._zod.run({ value: key, issues: [] }, ctx);
+      const keyResult = def.keyType._zod.run({ value: key2, issues: [] }, ctx);
       const valueResult = def.valueType._zod.run({ value, issues: [] }, ctx);
       if (keyResult instanceof Promise || valueResult instanceof Promise) {
         proms.push(Promise.all([keyResult, valueResult]).then(([keyResult2, valueResult2]) => {
-          handleMapResult(keyResult2, valueResult2, payload, key, input2, inst, ctx);
+          handleMapResult(keyResult2, valueResult2, payload, key2, input2, inst, ctx);
         }));
       } else {
-        handleMapResult(keyResult, valueResult, payload, key, input2, inst, ctx);
+        handleMapResult(keyResult, valueResult, payload, key2, input2, inst, ctx);
       }
     }
     if (proms.length)
@@ -15181,10 +13031,10 @@ var $ZodMap = /* @__PURE__ */ $constructor("$ZodMap", (inst, def) => {
     return payload;
   };
 });
-function handleMapResult(keyResult, valueResult, final, key, input2, inst, ctx) {
+function handleMapResult(keyResult, valueResult, final, key2, input2, inst, ctx) {
   if (keyResult.issues.length) {
-    if (propertyKeyTypes.has(typeof key)) {
-      final.issues.push(...prefixIssues(key, keyResult.issues));
+    if (propertyKeyTypes.has(typeof key2)) {
+      final.issues.push(...prefixIssues(key2, keyResult.issues));
     } else {
       final.issues.push({
         code: "invalid_key",
@@ -15196,15 +13046,15 @@ function handleMapResult(keyResult, valueResult, final, key, input2, inst, ctx) 
     }
   }
   if (valueResult.issues.length) {
-    if (propertyKeyTypes.has(typeof key)) {
-      final.issues.push(...prefixIssues(key, valueResult.issues));
+    if (propertyKeyTypes.has(typeof key2)) {
+      final.issues.push(...prefixIssues(key2, valueResult.issues));
     } else {
       final.issues.push({
         origin: "map",
         code: "invalid_element",
         input: input2,
         inst,
-        key,
+        key: key2,
         issues: valueResult.issues.map((iss) => finalizeIssue(iss, ctx, config()))
       });
     }
@@ -15842,7 +13692,7 @@ function handleRefineResult(result, payload, input2, inst) {
   }
 }
 
-// node_modules/zod/v4/core/memoizer.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/core/memoizer.js
 var $ZodCyclicError = class extends Error {
   constructor() {
     super(`Cannot parse a reference cycle that closes through a transform`);
@@ -15878,8 +13728,8 @@ function isRecursive(inst, stack, resolve10) {
   };
   const shape = (sh, spread) => {
     let answer = NONE;
-    for (const key of Reflect.ownKeys(sh)) {
-      const desc = Object.getOwnPropertyDescriptor(sh, key);
+    for (const key2 of Reflect.ownKeys(sh)) {
+      const desc = Object.getOwnPropertyDescriptor(sh, key2);
       if (spread && !desc.enumerable)
         continue;
       const child = desc.get ? ASSUMED : desc.value?._zod ? isRecursive(desc.value, stack, resolve10) : NONE;
@@ -15975,8 +13825,8 @@ function isRecursive(inst, stack, resolve10) {
       break;
     default: {
       kind;
-      for (const key in def) {
-        const desc = Object.getOwnPropertyDescriptor(def, key);
+      for (const key2 in def) {
+        const desc = Object.getOwnPropertyDescriptor(def, key2);
         if (!desc || desc.get)
           continue;
         const value = desc.value;
@@ -16119,7 +13969,7 @@ function isBackEdge(ctx, value) {
   return backEdges !== void 0 && isRef(value) && backEdges.has(value);
 }
 
-// node_modules/zod/v4/locales/index.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/index.js
 var locales_exports = {};
 __export(locales_exports, {
   ar: () => ar_default,
@@ -16133,7 +13983,7 @@ __export(locales_exports, {
   da: () => da_default,
   de: () => de_default,
   el: () => el_default,
-  en: () => en_default2,
+  en: () => en_default,
   eo: () => eo_default,
   es: () => es_default,
   fa: () => fa_default,
@@ -16187,7 +14037,7 @@ __export(locales_exports, {
   zhTW: () => zh_TW_default
 });
 
-// node_modules/zod/v4/locales/ar.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/ar.js
 var error = () => {
   const Sizable = {
     string: { unit: "\u062D\u0631\u0641", verb: "\u0623\u0646 \u064A\u062D\u0648\u064A" },
@@ -16299,7 +14149,7 @@ function ar_default() {
   };
 }
 
-// node_modules/zod/v4/locales/az.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/az.js
 var error2 = () => {
   const Sizable = {
     string: { unit: "simvol", verb: "olmal\u0131d\u0131r" },
@@ -16410,7 +14260,7 @@ function az_default() {
   };
 }
 
-// node_modules/zod/v4/locales/be.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/be.js
 function getBelarusianPlural(count, one, few, many) {
   const absCount = Math.abs(count);
   const lastDigit = absCount % 10;
@@ -16579,7 +14429,7 @@ function be_default() {
   };
 }
 
-// node_modules/zod/v4/locales/bg.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/bg.js
 var error4 = () => {
   const Sizable = {
     string: { unit: "\u0441\u0438\u043C\u0432\u043E\u043B\u0430", verb: "\u0434\u0430 \u0441\u044A\u0434\u044A\u0440\u0436\u0430" },
@@ -16705,7 +14555,7 @@ function bg_default() {
   };
 }
 
-// node_modules/zod/v4/locales/bn.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/bn.js
 var error5 = () => {
   const Sizable = {
     string: { unit: "\u0985\u0995\u09CD\u09B7\u09B0", verb: "\u09A5\u09BE\u0995\u09A4\u09C7 \u09B9\u09AC\u09C7" },
@@ -16819,7 +14669,7 @@ function bn_default() {
   };
 }
 
-// node_modules/zod/v4/locales/ca.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/ca.js
 var error6 = () => {
   const Sizable = {
     string: { unit: "car\xE0cters", verb: "contenir" },
@@ -16933,7 +14783,7 @@ function ca_default() {
   };
 }
 
-// node_modules/zod/v4/locales/ckb.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/ckb.js
 var error7 = () => {
   const Sizable = {
     string: { unit: "\u067E\u06CC\u062A", verb: "\u0628\u06CE\u062A" },
@@ -17066,7 +14916,7 @@ function ckb_default() {
   };
 }
 
-// node_modules/zod/v4/locales/cs.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/cs.js
 var error8 = () => {
   const Sizable = {
     string: { unit: "znak\u016F", verb: "m\xEDt" },
@@ -17183,7 +15033,7 @@ function cs_default() {
   };
 }
 
-// node_modules/zod/v4/locales/da.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/da.js
 var error9 = () => {
   const Sizable = {
     string: { unit: "tegn", verb: "havde" },
@@ -17304,7 +15154,7 @@ function da_default() {
   };
 }
 
-// node_modules/zod/v4/locales/de.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/de.js
 var error10 = () => {
   const Sizable = {
     string: { unit: "Zeichen", verb: "zu haben" },
@@ -17418,7 +15268,7 @@ function de_default() {
   };
 }
 
-// node_modules/zod/v4/locales/el.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/el.js
 var error11 = () => {
   const Sizable = {
     string: { unit: "\u03C7\u03B1\u03C1\u03B1\u03BA\u03C4\u03AE\u03C1\u03B5\u03C2", verb: "\u03BD\u03B1 \u03AD\u03C7\u03B5\u03B9" },
@@ -17531,7 +15381,7 @@ function el_default() {
   };
 }
 
-// node_modules/zod/v4/locales/en.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/en.js
 var error12 = () => {
   const Sizable = {
     string: { unit: "characters", verb: "to have" },
@@ -17650,13 +15500,13 @@ var error12 = () => {
     }
   };
 };
-function en_default2() {
+function en_default() {
   return {
     localeError: error12()
   };
 }
 
-// node_modules/zod/v4/locales/eo.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/eo.js
 var error13 = () => {
   const Sizable = {
     string: { unit: "karaktrojn", verb: "havi" },
@@ -17771,7 +15621,7 @@ function eo_default() {
   };
 }
 
-// node_modules/zod/v4/locales/es.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/es.js
 var error14 = () => {
   const Sizable = {
     string: { unit: "caracteres", verb: "tener" },
@@ -17908,7 +15758,7 @@ function es_default() {
   };
 }
 
-// node_modules/zod/v4/locales/fa.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/fa.js
 var error15 = () => {
   const Sizable = {
     string: { unit: "\u06A9\u0627\u0631\u0627\u06A9\u062A\u0631", verb: "\u062F\u0627\u0634\u062A\u0647 \u0628\u0627\u0634\u062F" },
@@ -18028,7 +15878,7 @@ function fa_default() {
   };
 }
 
-// node_modules/zod/v4/locales/fi.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/fi.js
 var error16 = () => {
   const Sizable = {
     string: { unit: "merkki\xE4", subject: "merkkijonon" },
@@ -18146,7 +15996,7 @@ function fi_default() {
   };
 }
 
-// node_modules/zod/v4/locales/fr.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/fr.js
 var error17 = () => {
   const Sizable = {
     string: { unit: "caract\xE8res", verb: "avoir" },
@@ -18276,7 +16126,7 @@ function fr_default() {
   };
 }
 
-// node_modules/zod/v4/locales/fr-CA.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/fr-CA.js
 var error18 = () => {
   const Sizable = {
     string: { unit: "caract\xE8res", verb: "avoir" },
@@ -18389,7 +16239,7 @@ function fr_CA_default() {
   };
 }
 
-// node_modules/zod/v4/locales/gu.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/gu.js
 var error19 = () => {
   const Sizable = {
     string: { unit: "\u0A85\u0A95\u0ACD\u0AB7\u0AB0", verb: "\u0AB9\u0ACB\u0AB5\u0ABE \u0A9C\u0ACB\u0A88\u0A8F" },
@@ -18503,7 +16353,7 @@ function gu_default() {
   };
 }
 
-// node_modules/zod/v4/locales/he.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/he.js
 var error20 = () => {
   const TypeNames = {
     string: { label: "\u05DE\u05D7\u05E8\u05D5\u05D6\u05EA", gender: "f" },
@@ -18705,7 +16555,7 @@ function he_default() {
   };
 }
 
-// node_modules/zod/v4/locales/hi.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/hi.js
 var error21 = () => {
   const Sizable = {
     string: { unit: "\u0905\u0915\u094D\u0937\u0930", verb: "\u0930\u0916\u0928\u0947 \u0915\u0947 \u0932\u093F\u090F" },
@@ -18817,7 +16667,7 @@ function hi_default() {
   };
 }
 
-// node_modules/zod/v4/locales/hr.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/hr.js
 var error22 = () => {
   const Sizable = {
     string: { unit: "znakova", verb: "imati" },
@@ -18944,7 +16794,7 @@ function hr_default() {
   };
 }
 
-// node_modules/zod/v4/locales/hu.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/hu.js
 var error23 = () => {
   const Sizable = {
     string: { unit: "karakter", verb: "legyen" },
@@ -19058,7 +16908,7 @@ function hu_default() {
   };
 }
 
-// node_modules/zod/v4/locales/hy.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/hy.js
 function getArmenianPlural(count, one, many) {
   return Math.abs(count) === 1 ? one : many;
 }
@@ -19217,7 +17067,7 @@ function hy_default() {
   };
 }
 
-// node_modules/zod/v4/locales/id.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/id.js
 var error25 = () => {
   const Sizable = {
     string: { unit: "karakter", verb: "memiliki" },
@@ -19329,7 +17179,7 @@ function id_default() {
   };
 }
 
-// node_modules/zod/v4/locales/is.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/is.js
 var error26 = () => {
   const Sizable = {
     string: { unit: "stafi", verb: "a\xF0 hafa" },
@@ -19444,7 +17294,7 @@ function is_default() {
   };
 }
 
-// node_modules/zod/v4/locales/it.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/it.js
 var error27 = () => {
   const Sizable = {
     string: { unit: "caratteri", verb: "avere" },
@@ -19558,7 +17408,7 @@ function it_default() {
   };
 }
 
-// node_modules/zod/v4/locales/ja.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/ja.js
 var error28 = () => {
   const Sizable = {
     string: { unit: "\u6587\u5B57", verb: "\u3067\u3042\u308B" },
@@ -19671,7 +17521,7 @@ function ja_default() {
   };
 }
 
-// node_modules/zod/v4/locales/ka.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/ka.js
 var error29 = () => {
   const Sizable = {
     string: { unit: "\u10E1\u10D8\u10DB\u10D1\u10DD\u10DA\u10DD", verb: "\u10E3\u10DC\u10D3\u10D0 \u10E8\u10D4\u10D8\u10EA\u10D0\u10D5\u10D3\u10D4\u10E1" },
@@ -19789,7 +17639,7 @@ function ka_default() {
   };
 }
 
-// node_modules/zod/v4/locales/km.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/km.js
 var error30 = () => {
   const Sizable = {
     string: { unit: "\u178F\u17BD\u17A2\u1780\u17D2\u179F\u179A", verb: "\u1782\u17BD\u179A\u1798\u17B6\u1793" },
@@ -19905,12 +17755,12 @@ function km_default() {
   };
 }
 
-// node_modules/zod/v4/locales/kh.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/kh.js
 function kh_default() {
   return km_default();
 }
 
-// node_modules/zod/v4/locales/kn.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/kn.js
 var error31 = () => {
   const Sizable = {
     string: { unit: "\u0C85\u0C95\u0CCD\u0CB7\u0CB0\u0C97\u0CB3\u0CC1", verb: "\u0CB9\u0CCA\u0C82\u0CA6\u0CB2\u0CC1" },
@@ -20026,7 +17876,7 @@ function kn_default() {
   };
 }
 
-// node_modules/zod/v4/locales/ko.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/ko.js
 var error32 = () => {
   const Sizable = {
     string: { unit: "\uBB38\uC790", verb: "to have" },
@@ -20143,7 +17993,7 @@ function ko_default() {
   };
 }
 
-// node_modules/zod/v4/locales/lt.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/lt.js
 var capitalizeFirstCharacter = (text2) => {
   return text2.charAt(0).toUpperCase() + text2.slice(1);
 };
@@ -20351,7 +18201,7 @@ function lt_default() {
   };
 }
 
-// node_modules/zod/v4/locales/mk.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/mk.js
 var error34 = () => {
   const Sizable = {
     string: { unit: "\u0437\u043D\u0430\u0446\u0438", verb: "\u0434\u0430 \u0438\u043C\u0430\u0430\u0442" },
@@ -20466,7 +18316,7 @@ function mk_default() {
   };
 }
 
-// node_modules/zod/v4/locales/ms.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/ms.js
 var error35 = () => {
   const Sizable = {
     string: { unit: "aksara", verb: "mempunyai" },
@@ -20579,7 +18429,7 @@ function ms_default() {
   };
 }
 
-// node_modules/zod/v4/locales/ne.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/ne.js
 var error36 = () => {
   const Sizable = {
     string: { unit: "\u0905\u0915\u094D\u0937\u0930", verb: "\u0939\u0941\u0928\u0941\u092A\u0930\u094D\u091B" },
@@ -20691,7 +18541,7 @@ function ne_default() {
   };
 }
 
-// node_modules/zod/v4/locales/nl.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/nl.js
 var error37 = () => {
   const Sizable = {
     string: { unit: "tekens", verb: "heeft" },
@@ -20807,7 +18657,7 @@ function nl_default() {
   };
 }
 
-// node_modules/zod/v4/locales/nn.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/nn.js
 var error38 = () => {
   const Sizable = {
     string: { unit: "teikn", verb: "\xE5 ha" },
@@ -20921,7 +18771,7 @@ function nn_default() {
   };
 }
 
-// node_modules/zod/v4/locales/no.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/no.js
 var error39 = () => {
   const Sizable = {
     string: { unit: "tegn", verb: "\xE5 ha" },
@@ -21035,7 +18885,7 @@ function no_default() {
   };
 }
 
-// node_modules/zod/v4/locales/ota.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/ota.js
 var error40 = () => {
   const Sizable = {
     string: { unit: "harf", verb: "olmal\u0131d\u0131r" },
@@ -21150,7 +19000,7 @@ function ota_default() {
   };
 }
 
-// node_modules/zod/v4/locales/ps.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/ps.js
 var error41 = () => {
   const Sizable = {
     string: { unit: "\u062A\u0648\u06A9\u064A", verb: "\u0648\u0644\u0631\u064A" },
@@ -21270,7 +19120,7 @@ function ps_default() {
   };
 }
 
-// node_modules/zod/v4/locales/pl.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/pl.js
 var error42 = () => {
   const Sizable = {
     string: { unit: "znak\xF3w", verb: "mie\u0107" },
@@ -21385,7 +19235,7 @@ function pl_default() {
   };
 }
 
-// node_modules/zod/v4/locales/pt.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/pt.js
 var error43 = () => {
   const Sizable = {
     string: { unit: "caracteres" },
@@ -21529,7 +19379,7 @@ function pt_default() {
   };
 }
 
-// node_modules/zod/v4/locales/pt-BR.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/pt-BR.js
 var error44 = () => {
   const Sizable = {
     string: { unit: "caracteres" },
@@ -21674,7 +19524,7 @@ function pt_BR_default() {
   };
 }
 
-// node_modules/zod/v4/locales/ro.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/ro.js
 var error45 = () => {
   const Sizable = {
     string: { unit: "caractere", verb: "s\u0103 aib\u0103" },
@@ -21797,7 +19647,7 @@ function ro_default() {
   };
 }
 
-// node_modules/zod/v4/locales/ru.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/ru.js
 function getRussianPlural(count, one, few, many) {
   const absCount = Math.abs(count);
   const lastDigit = absCount % 10;
@@ -21966,7 +19816,7 @@ function ru_default() {
   };
 }
 
-// node_modules/zod/v4/locales/sk.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/sk.js
 var error47 = () => {
   const Sizable = {
     string: { unit: "znakov", verb: "ma\u0165" },
@@ -22083,7 +19933,7 @@ function sk_default() {
   };
 }
 
-// node_modules/zod/v4/locales/sl.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/sl.js
 var error48 = () => {
   const Sizable = {
     string: { unit: "znakov", verb: "imeti" },
@@ -22198,7 +20048,7 @@ function sl_default() {
   };
 }
 
-// node_modules/zod/v4/locales/sv.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/sv.js
 var error49 = () => {
   const Sizable = {
     string: { unit: "tecken", verb: "att ha" },
@@ -22314,7 +20164,7 @@ function sv_default() {
   };
 }
 
-// node_modules/zod/v4/locales/ta.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/ta.js
 var error50 = () => {
   const Sizable = {
     string: { unit: "\u0B8E\u0BB4\u0BC1\u0BA4\u0BCD\u0BA4\u0BC1\u0B95\u0BCD\u0B95\u0BB3\u0BCD", verb: "\u0B95\u0BCA\u0BA3\u0BCD\u0B9F\u0BBF\u0BB0\u0BC1\u0B95\u0BCD\u0B95 \u0BB5\u0BC7\u0BA3\u0BCD\u0B9F\u0BC1\u0BAE\u0BCD" },
@@ -22430,7 +20280,7 @@ function ta_default() {
   };
 }
 
-// node_modules/zod/v4/locales/tg.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/tg.js
 var error51 = () => {
   const Sizable = {
     string: { unit: "\u0430\u043B\u043E\u043C\u0430\u0442", verb: "\u0434\u043E\u0448\u0442\u0430 \u0431\u043E\u0448\u0430\u0434" },
@@ -22547,7 +20397,7 @@ function tg_default() {
   };
 }
 
-// node_modules/zod/v4/locales/th.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/th.js
 var error52 = () => {
   const Sizable = {
     string: { unit: "\u0E15\u0E31\u0E27\u0E2D\u0E31\u0E01\u0E29\u0E23", verb: "\u0E04\u0E27\u0E23\u0E21\u0E35" },
@@ -22663,7 +20513,7 @@ function th_default() {
   };
 }
 
-// node_modules/zod/v4/locales/tk.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/tk.js
 var error53 = () => {
   const Sizable = {
     string: { unit: "simwol", verb: "bolmaly" },
@@ -22771,7 +20621,7 @@ function tk_default() {
   };
 }
 
-// node_modules/zod/v4/locales/tr.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/tr.js
 var error54 = () => {
   const Sizable = {
     string: { unit: "karakter", verb: "olmal\u0131" },
@@ -22882,7 +20732,7 @@ function tr_default() {
   };
 }
 
-// node_modules/zod/v4/locales/uk.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/uk.js
 var error55 = () => {
   const Sizable = {
     string: { unit: "\u0441\u0438\u043C\u0432\u043E\u043B\u0456\u0432", verb: "\u043C\u0430\u0442\u0438\u043C\u0435" },
@@ -22996,12 +20846,12 @@ function uk_default() {
   };
 }
 
-// node_modules/zod/v4/locales/ua.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/ua.js
 function ua_default() {
   return uk_default();
 }
 
-// node_modules/zod/v4/locales/ur.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/ur.js
 var error56 = () => {
   const Sizable = {
     string: { unit: "\u062D\u0631\u0648\u0641", verb: "\u06C1\u0648\u0646\u0627" },
@@ -23117,7 +20967,7 @@ function ur_default() {
   };
 }
 
-// node_modules/zod/v4/locales/uz.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/uz.js
 var error57 = () => {
   const Sizable = {
     string: { unit: "belgi", verb: "bo\u2018lishi kerak" },
@@ -23231,7 +21081,7 @@ function uz_default() {
   };
 }
 
-// node_modules/zod/v4/locales/vi.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/vi.js
 var error58 = () => {
   const Sizable = {
     string: { unit: "k\xFD t\u1EF1", verb: "c\xF3" },
@@ -23345,7 +21195,7 @@ function vi_default() {
   };
 }
 
-// node_modules/zod/v4/locales/zh-CN.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/zh-CN.js
 var error59 = () => {
   const Sizable = {
     string: { unit: "\u5B57\u7B26", verb: "\u5305\u542B" },
@@ -23460,7 +21310,7 @@ function zh_CN_default() {
   };
 }
 
-// node_modules/zod/v4/locales/zh-TW.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/zh-TW.js
 var error60 = () => {
   const Sizable = {
     string: { unit: "\u5B57\u5143", verb: "\u64C1\u6709" },
@@ -23573,7 +21423,7 @@ function zh_TW_default() {
   };
 }
 
-// node_modules/zod/v4/locales/yo.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/yo.js
 var error61 = () => {
   const Sizable = {
     string: { unit: "\xE0mi", verb: "n\xED" },
@@ -23686,7 +21536,7 @@ function yo_default() {
   };
 }
 
-// node_modules/zod/v4/core/registries.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/core/registries.js
 var _a2;
 var $output = /* @__PURE__ */ Symbol("ZodOutput");
 var $input = /* @__PURE__ */ Symbol("ZodInput");
@@ -23736,8 +21586,8 @@ function registry() {
 (_a2 = globalThis).__zod_globalRegistry ?? (_a2.__zod_globalRegistry = registry());
 var globalRegistry = globalThis.__zod_globalRegistry;
 
-// node_modules/zod/v4/core/compile.js
-var INVALID2 = /* @__PURE__ */ Symbol.for("zod.compile.invalid");
+// D:/Development/claude-codex-comm/node_modules/zod/v4/core/compile.js
+var INVALID = /* @__PURE__ */ Symbol.for("zod.compile.invalid");
 var FALLBACK_FLAG = /* @__PURE__ */ Symbol.for("zod.compile.fallback");
 var ZodCompileAsyncError = class extends Error {
   constructor(message = "z.compile does not support async refinements, transforms, or checks") {
@@ -23786,7 +21636,7 @@ function withParser(schema, parser) {
       return originalRun(payload, ctx);
     }
     const out = parser(payload.value);
-    if (out !== INVALID2) {
+    if (out !== INVALID) {
       payload.value = out;
       return payload;
     }
@@ -23809,7 +21659,7 @@ function installCompiledUserMethods(target, source, parser) {
     const originalSafeParse = sourceAny.safeParse;
     targetAny.safeParse = (data, params) => {
       const out = parser(data);
-      if (out !== INVALID2) {
+      if (out !== INVALID) {
         return { success: true, data: out };
       }
       return originalSafeParse(data, params);
@@ -23819,7 +21669,7 @@ function installCompiledUserMethods(target, source, parser) {
     const originalParse = sourceAny.parse;
     targetAny.parse = (data, params) => {
       const out = parser(data);
-      if (out !== INVALID2) {
+      if (out !== INVALID) {
         return out;
       }
       return originalParse(data, params);
@@ -23845,7 +21695,7 @@ function compileFn(schema, options) {
   const outputAccessor = generateCheck(doc, ctx, schema, "input", !options?.assertOnly);
   doc.write(outputAccessor === null ? `return true;` : `return ${outputAccessor};`);
   const constantNames = ["INVALID", ...ctx.constants.keys()];
-  const constantValues = [INVALID2, ...ctx.constants.values()];
+  const constantValues = [INVALID, ...ctx.constants.values()];
   const code = doc.content.join("\n");
   const fullCode = options?.debug ? constantNames.length > 0 ? `// Constants: ${constantNames.join(", ")}
 ${code}` : code : "";
@@ -23885,9 +21735,9 @@ function newVar(ctx) {
 function runtimeRun(schema, value) {
   const result = schema._zod.run({ value, issues: [] }, {});
   if (result && typeof result.then === "function")
-    return INVALID2;
+    return INVALID;
   const r = result;
-  return r.issues.length === 0 ? r.value : INVALID2;
+  return r.issues.length === 0 ? r.value : INVALID;
 }
 function compileChild(doc, ctx, schema, accessor, needsValue = true) {
   const contentLen = doc.content.length;
@@ -24051,7 +21901,7 @@ function generateMultipleOfCheck(doc, ctx, def, accessor) {
       throw new ZodCompileUnsupportedError("multiple_of check with a zero divisor");
     doc.write(`if (${accessor} % ${def.value}n !== 0n) return INVALID;`);
   } else {
-    const remainder = addConstant(ctx, floatSafeRemainder2);
+    const remainder = addConstant(ctx, floatSafeRemainder);
     doc.write(`if (${remainder}(${accessor}, ${numericOperand(def.value, "multiple_of")}) !== 0) return INVALID;`);
   }
 }
@@ -24109,11 +21959,11 @@ function generatePropertiesChecks(doc, ctx, def, accessor) {
   }
   doc.write(`if (${accessor} == null) return INVALID;`);
   const shape = def.shape;
-  for (const key of Reflect.ownKeys(shape)) {
-    const keyExpr = typeof key === "symbol" ? addConstant(ctx, key) : esc(key);
+  for (const key2 of Reflect.ownKeys(shape)) {
+    const keyExpr = typeof key2 === "symbol" ? addConstant(ctx, key2) : esc(key2);
     const inputVar = newVar(ctx);
     doc.write(`const ${inputVar} = ${accessor}[${keyExpr}];`);
-    compileChild(doc, ctx, shape[key], inputVar, false);
+    compileChild(doc, ctx, shape[key2], inputVar, false);
   }
 }
 function generatePropertyCheck(doc, ctx, def, accessor) {
@@ -24161,7 +22011,7 @@ function generateCustomRefineCheck(doc, ctx, check2, accessor) {
       const result = checkFn(fakePayload);
       if (result instanceof Promise)
         throwAsync();
-      return fakePayload.issues.length === 0 ? fakePayload.value : INVALID2;
+      return fakePayload.issues.length === 0 ? fakePayload.value : INVALID;
     };
     const helperConst = addUserConstant(ctx, helperFn);
     const outVar = newVar(ctx);
@@ -24210,7 +22060,7 @@ function generateStringFormatCheck(doc, ctx, def, accessor, needsValue = true) {
     return accessor;
   }
   if (fmt === "jwt") {
-    const validator = addConstant(ctx, isValidJWT2);
+    const validator = addConstant(ctx, isValidJWT);
     const alg = addConstant(ctx, def.alg ?? null);
     doc.write(`if (!${validator}(${accessor}, ${alg})) return INVALID;`);
     return accessor;
@@ -24506,9 +22356,9 @@ function generateObjectCheck(doc, ctx, schema, accessor, buildsValue = true) {
     throw new ZodCompileUnsupportedError('object shape key "__proto__"');
   }
   const propOutputs = /* @__PURE__ */ new Map();
-  for (const key of allKeys) {
-    const propSchema = propShape[key];
-    const kx = keyExpr(key);
+  for (const key2 of allKeys) {
+    const propSchema = propShape[key2];
+    const kx = keyExpr(key2);
     const inputVar = newVar(ctx);
     doc.write(`const ${inputVar} = ${accessor}[${kx}];`);
     if (propSchema._zod.optin !== void 0) {
@@ -24529,14 +22379,14 @@ function generateObjectCheck(doc, ctx, schema, accessor, buildsValue = true) {
       } else {
         doc.write(`if (${outputVar2} === INVALID) return INVALID;`);
       }
-      propOutputs.set(key, outputVar2);
+      propOutputs.set(key2, outputVar2);
     } else {
       if (requiresPresenceCheck(propSchema)) {
         doc.write(`if (!(${kx} in ${accessor})) return INVALID;`);
       }
       const outputAccessor = compileChild(doc, ctx, propSchema, inputVar, buildsValue);
       if (outputAccessor !== null)
-        propOutputs.set(key, outputAccessor);
+        propOutputs.set(key2, outputAccessor);
     }
   }
   const catchall = def.catchall;
@@ -24951,9 +22801,9 @@ function generateTupleCheck(doc, ctx, schema, accessor) {
   }
   return outputVar;
 }
-function getTupleOptStart2(items, key) {
+function getTupleOptStart2(items, key2) {
   for (let i = items.length - 1; i >= 0; i--) {
-    const omittable = key === "optin" ? items[i]._zod.optin !== void 0 : items[i]._zod.optout === "optional";
+    const omittable = key2 === "optin" ? items[i]._zod.optin !== void 0 : items[i]._zod.optout === "optional";
     if (!omittable)
       return i + 1;
   }
@@ -25065,7 +22915,7 @@ function generateIntersectionCheck(doc, ctx, schema, accessor) {
   ctx.definite = false;
   const leftOutput = compileChild(doc, ctx, def.left, accessor);
   const rightOutput = compileChild(doc, ctx, def.right, accessor);
-  const mergeConst = addConstant(ctx, mergeValues2);
+  const mergeConst = addConstant(ctx, mergeValues);
   const mergedVar = newVar(ctx);
   doc.write(`const ${mergedVar} = ${mergeConst}(${leftOutput}, ${rightOutput});`);
   doc.write(`if (!${mergedVar}.valid) return INVALID;`);
@@ -25083,16 +22933,16 @@ function generateRecordCheck(doc, ctx, schema, accessor) {
   const keyValues = recordDef.partial ? void 0 : def.keyType._zod.values;
   if (keyValues) {
     const inputKeys = [];
-    for (const key of keyValues) {
-      if (!(typeof key === "string" || typeof key === "number" || typeof key === "symbol")) {
-        throw new ZodCompileUnsupportedError(`record key value ${String(key)}`);
+    for (const key2 of keyValues) {
+      if (!(typeof key2 === "string" || typeof key2 === "number" || typeof key2 === "symbol")) {
+        throw new ZodCompileUnsupportedError(`record key value ${String(key2)}`);
       }
-      const inputKey = typeof key === "number" ? key.toString() : key;
+      const inputKey = typeof key2 === "number" ? key2.toString() : key2;
       if (inputKey === "__proto__") {
         throw new ZodCompileUnsupportedError('record key "__proto__"');
       }
       inputKeys.push(inputKey);
-      const keyConst = addConstant(ctx, key);
+      const keyConst = addConstant(ctx, key2);
       const outKey = generateCheck(doc, ctx, def.keyType, keyConst);
       const valueVar = newVar(ctx);
       doc.write(`const ${valueVar} = ${accessor}[${literalPropertyKey(ctx, inputKey)}];`);
@@ -25170,10 +23020,10 @@ function emitOwnKeys(doc, ctx, accessor, kVar, body, onSymbol) {
   });
   doc.write(`}`);
 }
-function literalPropertyKey(ctx, key) {
-  if (typeof key === "string")
-    return esc(key);
-  return addConstant(ctx, key);
+function literalPropertyKey(ctx, key2) {
+  if (typeof key2 === "string")
+    return esc(key2);
+  return addConstant(ctx, key2);
 }
 function generateMapCheck(doc, ctx, schema, accessor) {
   const def = schema._zod.def;
@@ -25251,8 +23101,8 @@ function generatePipeCheck(doc, ctx, schema, accessor) {
       const fakePayload = { value, issues: [], addIssue: pushIssue };
       const result = transformFn(value, fakePayload);
       if (result instanceof Promise)
-        return INVALID2;
-      return fakePayload.issues.length === 0 ? result : INVALID2;
+        return INVALID;
+      return fakePayload.issues.length === 0 ? result : INVALID;
     };
     const helperConst = addUserConstant(ctx, helperFn);
     const transformedVar = newVar(ctx);
@@ -25286,7 +23136,7 @@ function generateCustomCheck(doc, ctx, schema, accessor) {
 function runtimeCatch(innerSchema, catchValue, value) {
   const result = innerSchema._zod.run({ value, issues: [] }, {});
   if (result && typeof result.then === "function")
-    return INVALID2;
+    return INVALID;
   const r = result;
   if (r.issues.length === 0)
     return r.value;
@@ -25326,8 +23176,8 @@ function generateTransformCheck(doc, ctx, schema, accessor) {
       const fakePayload = { value, issues: [], addIssue: pushIssue };
       const result = transformFn(value, fakePayload);
       if (result instanceof Promise)
-        return INVALID2;
-      return fakePayload.issues.length === 0 ? result : INVALID2;
+        return INVALID;
+      return fakePayload.issues.length === 0 ? result : INVALID;
     };
     const helperConst = addUserConstant(ctx, helperFn);
     const outputVar = newVar(ctx);
@@ -25338,7 +23188,7 @@ function generateTransformCheck(doc, ctx, schema, accessor) {
   return accessor;
 }
 
-// node_modules/zod/v4/core/api.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/core/api.js
 function snapshotChecks(def) {
   if (def.checks)
     def.checks = [...def.checks];
@@ -26397,12 +24247,12 @@ function _stringFormat(Class2, format, fnOrRegex, _params = {}) {
   return inst;
 }
 
-// node_modules/zod/v4/core/to-json-schema.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/core/to-json-schema.js
 function assignProps(target, ...sources) {
   for (const source of sources) {
-    for (const key of Reflect.ownKeys(source)) {
-      if (Object.prototype.propertyIsEnumerable.call(source, key)) {
-        assignProp(target, key, source[key]);
+    for (const key2 of Reflect.ownKeys(source)) {
+      if (Object.prototype.propertyIsEnumerable.call(source, key2)) {
+        assignProp(target, key2, source[key2]);
       }
     }
   }
@@ -26548,8 +24398,8 @@ function extractDefs(ctx, schema) {
     if (defId)
       seen.defId = defId;
     const schema2 = seen.schema;
-    for (const key in schema2) {
-      delete schema2[key];
+    for (const key2 in schema2) {
+      delete schema2[key2];
     }
     schema2.$ref = ref;
   };
@@ -26630,8 +24480,8 @@ function foldObjects(members2) {
   for (const member of members2) {
     if (typeof member !== "object" || member.type !== "object")
       return null;
-    for (const key in member) {
-      if (!FOLDABLE_KEYS.has(key))
+    for (const key2 in member) {
+      if (!FOLDABLE_KEYS.has(key2))
         return null;
     }
     objects.push(member);
@@ -26639,22 +24489,22 @@ function foldObjects(members2) {
   const properties = {};
   const required2 = /* @__PURE__ */ new Set();
   for (const object4 of objects) {
-    for (const key in object4.properties) {
-      if (Object.prototype.hasOwnProperty.call(properties, key))
+    for (const key2 in object4.properties) {
+      if (Object.prototype.hasOwnProperty.call(properties, key2))
         continue;
       const parts = [];
       for (const other of objects) {
-        const part = other.properties?.[key] ?? undeclaredConstraint(other);
+        const part = other.properties?.[key2] ?? undeclaredConstraint(other);
         if (part === null || part === void 0)
           continue;
         if (!parts.some((seen) => JSON.stringify(seen) === JSON.stringify(part)))
           parts.push(part);
       }
       const merged = parts.length === 1 ? parts[0] : foldObjects(parts) ?? { allOf: parts };
-      assignProp(properties, key, merged);
+      assignProp(properties, key2, merged);
     }
-    for (const key of object4.required ?? [])
-      required2.add(key);
+    for (const key2 of object4.required ?? [])
+      required2.add(key2);
   }
   const folded = { type: "object", properties };
   if (required2.size)
@@ -26679,8 +24529,8 @@ function foldIntersection(json2) {
   const allOf = json2.allOf;
   if (!Array.isArray(allOf) || allOf.length < 2)
     return;
-  for (const key of FOLDABLE_KEYS)
-    if (key in json2)
+  for (const key2 of FOLDABLE_KEYS)
+    if (key2 in json2)
       return;
   const unions = allOf.filter((m) => UNION_KEYS.some((k) => Array.isArray(m[k])));
   let folded = null;
@@ -26727,20 +24577,20 @@ function finalize(ctx, schema) {
       assignProps(schema2, _cached);
       const isParentRef = zodSchema._zod.parent === ref;
       if (isParentRef) {
-        for (const key in schema2) {
-          if (key === "$ref" || key === "allOf")
+        for (const key2 in schema2) {
+          if (key2 === "$ref" || key2 === "allOf")
             continue;
-          if (!(key in _cached)) {
-            delete schema2[key];
+          if (!(key2 in _cached)) {
+            delete schema2[key2];
           }
         }
       }
       if (refSchema.$ref && refSeen.def) {
-        for (const key in schema2) {
-          if (key === "$ref" || key === "allOf")
+        for (const key2 in schema2) {
+          if (key2 === "$ref" || key2 === "allOf")
             continue;
-          if (key in refSeen.def && JSON.stringify(schema2[key]) === JSON.stringify(refSeen.def[key])) {
-            delete schema2[key];
+          if (key2 in refSeen.def && JSON.stringify(schema2[key2]) === JSON.stringify(refSeen.def[key2])) {
+            delete schema2[key2];
           }
         }
       }
@@ -26752,11 +24602,11 @@ function finalize(ctx, schema) {
       if (parentSeen?.schema.$ref) {
         schema2.$ref = parentSeen.schema.$ref;
         if (parentSeen.def) {
-          for (const key in schema2) {
-            if (key === "$ref" || key === "allOf")
+          for (const key2 in schema2) {
+            if (key2 === "$ref" || key2 === "allOf")
               continue;
-            if (key in parentSeen.def && JSON.stringify(schema2[key]) === JSON.stringify(parentSeen.def[key])) {
-              delete schema2[key];
+            if (key2 in parentSeen.def && JSON.stringify(schema2[key2]) === JSON.stringify(parentSeen.def[key2])) {
+              delete schema2[key2];
             }
           }
         }
@@ -26889,8 +24739,8 @@ function isTransforming(_schema, _ctx) {
     return isTransforming(def.in, ctx) || isTransforming(def.out, ctx);
   }
   if (def.type === "object") {
-    for (const key in def.shape) {
-      if (isTransforming(def.shape[key], ctx))
+    for (const key2 in def.shape) {
+      if (isTransforming(def.shape[key2], ctx))
         return true;
     }
     return false;
@@ -26927,14 +24777,14 @@ var createStandardJSONSchemaMethod = (schema, io, processors = {}) => (params) =
   return finalize(ctx, schema);
 };
 
-// node_modules/zod/v4/core/json-schema-processors.js
-var narrowMin = (agg, key, value) => {
-  if (agg[key] === void 0 || value > agg[key])
-    agg[key] = value;
+// D:/Development/claude-codex-comm/node_modules/zod/v4/core/json-schema-processors.js
+var narrowMin = (agg, key2, value) => {
+  if (agg[key2] === void 0 || value > agg[key2])
+    agg[key2] = value;
 };
-var narrowMax = (agg, key, value) => {
-  if (agg[key] === void 0 || value < agg[key])
-    agg[key] = value;
+var narrowMax = (agg, key2, value) => {
+  if (agg[key2] === void 0 || value < agg[key2])
+    agg[key2] = value;
 };
 var narrowBoth = (agg, value) => {
   narrowMin(agg, "minimum", value);
@@ -27272,17 +25122,17 @@ var objectProcessor = (schema, ctx, _json, params) => {
   }
   json2.type = "object";
   json2.properties = {};
-  for (const key in shape) {
-    assignProp(json2.properties, key, processSchema(shape[key], ctx, {
+  for (const key2 in shape) {
+    assignProp(json2.properties, key2, processSchema(shape[key2], ctx, {
       ...params,
-      path: [...params.path, "properties", key]
+      path: [...params.path, "properties", key2]
     }));
   }
   const requiredKeys = [];
-  for (const key of Object.keys(shape)) {
-    const field = def.shape[key];
+  for (const key2 of Object.keys(shape)) {
+    const field = def.shape[key2];
     if (ctx.io === "input" ? inputOptin(field) === void 0 : field._zod.optout === void 0) {
-      requiredKeys.push(key);
+      requiredKeys.push(key2);
     }
   }
   if (requiredKeys.length > 0) {
@@ -27657,9 +25507,9 @@ function toJSONSchema(input2, params) {
     };
     ctx2.external = external;
     for (const entry of registry2._idmap.entries()) {
-      const [key, schema] = entry;
+      const [key2, schema] = entry;
       extractDefs(ctx2, schema);
-      assignProp(schemas, key, finalize(ctx2, schema));
+      assignProp(schemas, key2, finalize(ctx2, schema));
     }
     if (Object.keys(defs).length > 0) {
       const defsSegment = ctx2.target === "draft-2020-12" ? "$defs" : "definitions";
@@ -27675,7 +25525,7 @@ function toJSONSchema(input2, params) {
   return finalize(ctx, input2);
 }
 
-// node_modules/zod/v4/core/json-schema-generator.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/core/json-schema-generator.js
 var JSONSchemaGenerator = class {
   /** @deprecated Access via ctx instead */
   get metadataRegistry() {
@@ -27753,682 +25603,38 @@ var JSONSchemaGenerator = class {
   }
 };
 
-// node_modules/zod/v4/core/json-schema.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/core/json-schema.js
 var json_schema_exports = {};
 
-// node_modules/zod/v4/mini/schemas.js
-var ZodMiniType = /* @__PURE__ */ $constructor("ZodMiniType", (inst, def) => {
-  if (!inst._zod)
-    throw new Error("Uninitialized schema in ZodMiniType.");
-  $ZodType.init(inst, def);
-  inst.def = def;
-  inst.type = def.type;
-}, {
-  // `with` is an alias for `check`: the same function object, not a wrapper.
-  get with() {
-    return this.check;
-  },
-  set with(value) {
-    own(this, "with", value);
-  },
-  parse(data, params) {
-    return parse(this, data, params, { callee: this.parse });
-  },
-  parseAsync(data, params) {
-    return parseAsync(this, data, params, { callee: this.parseAsync });
-  },
-  safeParse(data, params) {
-    return safeParse(this, data, params);
-  },
-  safeParseAsync(data, params) {
-    return safeParseAsync(this, data, params);
-  },
-  check(...checks) {
-    const def = this.def;
-    return this.clone({
-      ...def,
-      checks: [
-        ...def.checks ?? [],
-        ...checks.map((ch) => typeof ch === "function" ? { _zod: { check: ch, def: { check: "custom" }, onattach: [] } } : ch)
-      ]
-    }, { parent: true });
-  },
-  clone(_def, params) {
-    return clone(this, _def, params);
-  },
-  brand() {
-    return this;
-  },
-  register(reg, meta3) {
-    reg.add(this, meta3);
-    return this;
-  },
-  apply(fn, ...args) {
-    return args.length === 0 ? fn(this) : fn(this, ...args);
-  }
-});
-var ZodMiniObject = /* @__PURE__ */ $constructor("ZodMiniObject", (inst, def) => {
-  $ZodObject.init(inst, def);
-  ZodMiniType.init(inst, def);
-  installLazyProp(inst, "shape", (self) => self._zod.def.shape, false);
-});
-// @__NO_SIDE_EFFECTS__
-function object(shape, params) {
-  const def = {
-    type: "object",
-    shape: shape ?? {},
-    ...normalizeParams(params)
-  };
-  return new ZodMiniObject(def);
-}
-
-// node_modules/zod/v4/core/visit.js
-var RESOLVING = /* @__PURE__ */ Symbol("z.visit/resolving");
-function visit(schema, fnOrHandlers) {
-  const fn = typeof fnOrHandlers === "function" ? fnOrHandlers : (node2, rewritten) => {
-    const h = fnOrHandlers[node2._zod.def.type];
-    return h ? h(node2, rewritten) : node2;
-  };
-  const cache3 = /* @__PURE__ */ new Map();
-  function run(s) {
-    const cached2 = cache3.get(s);
-    if (cached2 === RESOLVING) {
-      return new $ZodLazy({
-        type: "lazy",
-        getter: () => cache3.get(s)
-      });
-    }
-    if (cached2 !== void 0)
-      return cached2;
-    cache3.set(s, RESOLVING);
-    const inner = mapInner(s);
-    const mapped = fn(inner, inner !== s);
-    cache3.set(s, mapped);
-    return mapped;
-  }
-  function mapInner(s) {
-    const def = s._zod.def;
-    const kind = def.type;
-    switch (kind) {
-      case "object": {
-        const oldShape = def.shape;
-        const keys = Object.keys(oldShape);
-        let changed = false;
-        const newShape = {};
-        for (const k of keys) {
-          const mapped = run(oldShape[k]);
-          if (mapped !== oldShape[k])
-            changed = true;
-          newShape[k] = mapped;
-        }
-        let newCatchall = def.catchall;
-        if (def.catchall) {
-          newCatchall = run(def.catchall);
-          if (newCatchall !== def.catchall)
-            changed = true;
-        }
-        return changed ? clone(s, { ...def, shape: newShape, catchall: newCatchall }) : s;
-      }
-      case "array": {
-        const mapped = run(def.element);
-        return mapped === def.element ? s : clone(s, { ...def, element: mapped });
-      }
-      case "tuple": {
-        const oldItems = def.items;
-        let changed = false;
-        const newItems = [];
-        for (const item of oldItems) {
-          const mapped = run(item);
-          if (mapped !== item)
-            changed = true;
-          newItems.push(mapped);
-        }
-        let newRest = def.rest;
-        if (def.rest) {
-          newRest = run(def.rest);
-          if (newRest !== def.rest)
-            changed = true;
-        }
-        return changed ? clone(s, { ...def, items: newItems, rest: newRest }) : s;
-      }
-      case "record":
-      case "map": {
-        const newKey = run(def.keyType);
-        const newVal = run(def.valueType);
-        return newKey === def.keyType && newVal === def.valueType ? s : clone(s, { ...def, keyType: newKey, valueType: newVal });
-      }
-      case "set": {
-        const newVal = run(def.valueType);
-        return newVal === def.valueType ? s : clone(s, { ...def, valueType: newVal });
-      }
-      case "union": {
-        const oldOptions = def.options;
-        let changed = false;
-        const newOptions = [];
-        for (const opt of oldOptions) {
-          const mapped = run(opt);
-          if (mapped !== opt)
-            changed = true;
-          newOptions.push(mapped);
-        }
-        return changed ? clone(s, { ...def, options: newOptions }) : s;
-      }
-      case "intersection": {
-        const newLeft = run(def.left);
-        const newRight = run(def.right);
-        return newLeft === def.left && newRight === def.right ? s : clone(s, { ...def, left: newLeft, right: newRight });
-      }
-      case "optional":
-      case "nullable":
-      case "default":
-      case "prefault":
-      case "catch":
-      case "readonly":
-      case "nonoptional":
-      case "promise":
-      case "success": {
-        const newInner = run(def.innerType);
-        return newInner === def.innerType ? s : clone(s, { ...def, innerType: newInner });
-      }
-      case "pipe": {
-        const newIn = run(def.in);
-        const newOut = run(def.out);
-        return newIn === def.in && newOut === def.out ? s : clone(s, { ...def, in: newIn, out: newOut });
-      }
-      case "function": {
-        const newInput = run(def.input);
-        const newOutput = run(def.output);
-        return newInput === def.input && newOutput === def.output ? s : clone(s, { ...def, input: newInput, output: newOutput });
-      }
-      case "lazy": {
-        const original = def.getter;
-        const { _cachedInner, ...rest } = def;
-        return clone(s, { ...rest, getter: () => run(original()) });
-      }
-      // A leaf by choice: `parts` are regex fragments, not data positions.
-      case "template_literal":
-      // Leaves.
-      case "string":
-      case "number":
-      case "int":
-      case "boolean":
-      case "bigint":
-      case "symbol":
-      case "undefined":
-      case "null":
-      case "void":
-      case "never":
-      case "any":
-      case "unknown":
-      case "date":
-      case "nan":
-      case "enum":
-      case "literal":
-      case "file":
-      case "transform":
-      case "custom":
-        return s;
-      default: {
-        kind;
-        return s;
-      }
-    }
-  }
-  return run(schema);
-}
-
-// node_modules/@modelcontextprotocol/sdk/dist/esm/server/zod-compat.js
-function isZ4Schema(s) {
-  const schema = s;
-  return !!schema._zod;
-}
-function objectFromShape(shape) {
-  const values = Object.values(shape);
-  if (values.length === 0)
-    return object({});
-  const allV4 = values.every(isZ4Schema);
-  const allV3 = values.every((s) => !isZ4Schema(s));
-  if (allV4)
-    return object(shape);
-  if (allV3)
-    return objectType(shape);
-  throw new Error("Mixed Zod versions detected in object shape.");
-}
-function safeParse2(schema, data) {
-  if (isZ4Schema(schema)) {
-    const result2 = safeParse(schema, data);
-    return result2;
-  }
-  const v3Schema = schema;
-  const result = v3Schema.safeParse(data);
-  return result;
-}
-async function safeParseAsync2(schema, data) {
-  if (isZ4Schema(schema)) {
-    const result2 = await safeParseAsync(schema, data);
-    return result2;
-  }
-  const v3Schema = schema;
-  const result = await v3Schema.safeParseAsync(data);
-  return result;
-}
-function getObjectShape(schema) {
-  if (!schema)
-    return void 0;
-  let rawShape2;
-  if (isZ4Schema(schema)) {
-    const v4Schema = schema;
-    rawShape2 = v4Schema._zod?.def?.shape;
-  } else {
-    const v3Schema = schema;
-    rawShape2 = v3Schema.shape;
-  }
-  if (!rawShape2)
-    return void 0;
-  if (typeof rawShape2 === "function") {
-    try {
-      return rawShape2();
-    } catch {
-      return void 0;
-    }
-  }
-  return rawShape2;
-}
-function normalizeObjectSchema(schema) {
-  if (!schema)
-    return void 0;
-  if (typeof schema === "object") {
-    const asV3 = schema;
-    const asV4 = schema;
-    if (!asV3._def && !asV4._zod) {
-      const values = Object.values(schema);
-      if (values.length > 0 && values.every((v) => typeof v === "object" && v !== null && (v._def !== void 0 || v._zod !== void 0 || typeof v.parse === "function"))) {
-        return objectFromShape(schema);
-      }
-    }
-  }
-  if (isZ4Schema(schema)) {
-    const v4Schema = schema;
-    const def = v4Schema._zod?.def;
-    if (def && (def.type === "object" || def.shape !== void 0)) {
-      return schema;
-    }
-  } else {
-    const v3Schema = schema;
-    if (v3Schema.shape !== void 0) {
-      return schema;
-    }
-  }
-  return void 0;
-}
-function getDotPath(path) {
-  if (path.length === 0) {
-    return "object root";
-  }
-  return path.reduce((acc, seg, index) => {
-    if (index === 0) {
-      return String(seg);
-    }
-    if (typeof seg === "number") {
-      return `${acc}[${seg}]`;
-    }
-    return `${acc}.${seg}`;
-  }, "");
-}
-function getParseErrorMessage(error62) {
-  if (error62 && typeof error62 === "object") {
-    if ("issues" in error62 && Array.isArray(error62.issues) && error62.issues.length > 0) {
-      return error62.issues.map((i) => {
-        if (!i.path?.length) {
-          return i.message;
-        }
-        return `${i.message} at ${getDotPath(i.path)}`;
-      }).join("\n");
-    }
-    if ("message" in error62 && typeof error62.message === "string") {
-      return error62.message;
-    }
-    try {
-      return JSON.stringify(error62);
-    } catch {
-      return String(error62);
-    }
-  }
-  return String(error62);
-}
-function getSchemaDescription(schema) {
-  return schema.description;
-}
-function isSchemaOptional(schema) {
-  if (isZ4Schema(schema)) {
-    const v4Schema = schema;
-    return v4Schema._zod?.def?.type === "optional";
-  }
-  const v3Schema = schema;
-  if (typeof schema.isOptional === "function") {
-    return schema.isOptional();
-  }
-  return v3Schema._def?.typeName === "ZodOptional";
-}
-function getLiteralValue(schema) {
-  if (isZ4Schema(schema)) {
-    const v4Schema = schema;
-    const def2 = v4Schema._zod?.def;
-    if (def2) {
-      if (def2.value !== void 0)
-        return def2.value;
-      if (Array.isArray(def2.values) && def2.values.length > 0) {
-        return def2.values[0];
-      }
-    }
-  }
-  const v3Schema = schema;
-  const def = v3Schema._def;
-  if (def) {
-    if (def.value !== void 0)
-      return def.value;
-    if (Array.isArray(def.values) && def.values.length > 0) {
-      return def.values[0];
-    }
-  }
-  const directValue = schema.value;
-  if (directValue !== void 0)
-    return directValue;
-  return void 0;
-}
-
-// node_modules/zod/v4/classic/external.js
-var external_exports = {};
-__export(external_exports, {
-  $brand: () => $brand,
-  $input: () => $input,
-  $output: () => $output,
-  INVALID: () => INVALID2,
-  NEVER: () => NEVER,
-  TimePrecision: () => TimePrecision,
-  ZodAny: () => ZodAny2,
-  ZodArray: () => ZodArray2,
-  ZodBase64: () => ZodBase64,
-  ZodBase64URL: () => ZodBase64URL,
-  ZodBigInt: () => ZodBigInt2,
-  ZodBigIntFormat: () => ZodBigIntFormat,
-  ZodBoolean: () => ZodBoolean2,
-  ZodCIDRv4: () => ZodCIDRv4,
-  ZodCIDRv6: () => ZodCIDRv6,
-  ZodCUID: () => ZodCUID,
-  ZodCUID2: () => ZodCUID2,
-  ZodCatch: () => ZodCatch2,
-  ZodCodec: () => ZodCodec,
-  ZodCompileAsyncError: () => ZodCompileAsyncError,
-  ZodCompileUnsupportedError: () => ZodCompileUnsupportedError,
-  ZodCreditCard: () => ZodCreditCard,
-  ZodCustom: () => ZodCustom,
-  ZodCustomStringFormat: () => ZodCustomStringFormat,
-  ZodDate: () => ZodDate2,
-  ZodDefault: () => ZodDefault2,
-  ZodDiscriminatedUnion: () => ZodDiscriminatedUnion2,
-  ZodE164: () => ZodE164,
-  ZodEmail: () => ZodEmail,
-  ZodEmoji: () => ZodEmoji,
-  ZodEnum: () => ZodEnum2,
-  ZodError: () => ZodError2,
-  ZodExactOptional: () => ZodExactOptional,
-  ZodFile: () => ZodFile,
-  ZodFirstPartyTypeKind: () => ZodFirstPartyTypeKind2,
-  ZodFunction: () => ZodFunction2,
-  ZodGUID: () => ZodGUID,
-  ZodIBAN: () => ZodIBAN,
-  ZodIPv4: () => ZodIPv4,
-  ZodIPv6: () => ZodIPv6,
-  ZodISODate: () => ZodISODate,
-  ZodISODateTime: () => ZodISODateTime,
-  ZodISODuration: () => ZodISODuration,
-  ZodISOTime: () => ZodISOTime,
-  ZodInstanceOf: () => ZodInstanceOf,
-  ZodIntersection: () => ZodIntersection2,
-  ZodIssueCode: () => ZodIssueCode2,
-  ZodJWT: () => ZodJWT,
-  ZodKSUID: () => ZodKSUID,
-  ZodLazy: () => ZodLazy2,
-  ZodLiteral: () => ZodLiteral2,
-  ZodMAC: () => ZodMAC,
-  ZodMap: () => ZodMap2,
-  ZodNaN: () => ZodNaN2,
-  ZodNanoID: () => ZodNanoID,
-  ZodNever: () => ZodNever2,
-  ZodNonOptional: () => ZodNonOptional,
-  ZodNull: () => ZodNull2,
-  ZodNullable: () => ZodNullable2,
-  ZodNumber: () => ZodNumber2,
-  ZodNumberFormat: () => ZodNumberFormat,
-  ZodObject: () => ZodObject2,
-  ZodOptional: () => ZodOptional2,
-  ZodPipe: () => ZodPipe,
-  ZodPrefault: () => ZodPrefault,
-  ZodPreprocess: () => ZodPreprocess,
-  ZodPromise: () => ZodPromise2,
-  ZodReadonly: () => ZodReadonly2,
-  ZodRealError: () => ZodRealError,
-  ZodRecord: () => ZodRecord2,
-  ZodSet: () => ZodSet2,
-  ZodString: () => ZodString2,
-  ZodStringFormat: () => ZodStringFormat,
-  ZodSuccess: () => ZodSuccess,
-  ZodSymbol: () => ZodSymbol2,
-  ZodTemplateLiteral: () => ZodTemplateLiteral,
-  ZodTransform: () => ZodTransform,
-  ZodTuple: () => ZodTuple2,
-  ZodType: () => ZodType2,
-  ZodULID: () => ZodULID,
-  ZodURL: () => ZodURL,
-  ZodUUID: () => ZodUUID,
-  ZodUndefined: () => ZodUndefined2,
-  ZodUnion: () => ZodUnion2,
-  ZodUnknown: () => ZodUnknown2,
-  ZodVoid: () => ZodVoid2,
-  ZodXID: () => ZodXID,
-  ZodXor: () => ZodXor,
-  _ZodString: () => _ZodString,
-  _default: () => _default2,
-  _function: () => _function,
-  any: () => any,
-  array: () => array,
-  base64: () => base642,
-  base64url: () => base64url2,
-  bigint: () => bigint2,
-  boolean: () => boolean2,
-  catch: () => _catch2,
-  check: () => check,
-  cidrv4: () => cidrv42,
-  cidrv6: () => cidrv62,
-  clone: () => clone,
-  codec: () => codec,
-  coerce: () => coerce_exports2,
-  compile: () => compile,
-  config: () => config,
-  core: () => core_exports2,
-  creditCard: () => creditCard2,
-  cuid: () => cuid3,
-  cuid2: () => cuid22,
-  currencyCode: () => currencyCode2,
-  custom: () => custom,
-  date: () => date2,
-  decode: () => decode2,
-  decodeAsync: () => decodeAsync2,
-  deepPartial: () => deepPartial,
-  describe: () => describe2,
-  discriminatedUnion: () => discriminatedUnion,
-  e164: () => e1642,
-  email: () => email2,
-  emoji: () => emoji2,
-  encode: () => encode2,
-  encodeAsync: () => encodeAsync2,
-  endsWith: () => _endsWith,
-  enum: () => _enum2,
-  exactOptional: () => exactOptional,
-  file: () => file,
-  flattenError: () => flattenError,
-  float32: () => float32,
-  float64: () => float64,
-  formatError: () => formatError,
-  fromJSONSchema: () => fromJSONSchema,
-  function: () => _function,
-  getDiscriminatedOption: () => getDiscriminatedOption,
-  getErrorMap: () => getErrorMap2,
-  globalRegistry: () => globalRegistry,
-  gt: () => _gt,
-  gte: () => _gte,
-  guid: () => guid2,
-  hash: () => hash,
-  hex: () => hex2,
-  hostname: () => hostname2,
-  httpUrl: () => httpUrl,
-  iban: () => iban2,
-  includes: () => _includes,
-  input: () => input,
-  instanceof: () => _instanceof,
-  int: () => int,
-  int32: () => int32,
-  int64: () => int64,
-  intersection: () => intersection,
-  invertCodec: () => invertCodec,
-  ipv4: () => ipv42,
-  ipv6: () => ipv62,
-  iso: () => iso_exports2,
-  json: () => json,
-  jwt: () => jwt,
-  keyof: () => keyof,
-  ksuid: () => ksuid2,
-  lazy: () => lazy,
-  length: () => _length,
-  literal: () => literal,
-  locales: () => locales_exports,
-  looseObject: () => looseObject,
-  looseRecord: () => looseRecord,
-  lowercase: () => _lowercase,
-  lt: () => _lt,
-  lte: () => _lte,
-  mac: () => mac2,
-  map: () => map,
-  maxLength: () => _maxLength,
-  maxSize: () => _maxSize,
-  memoizer: () => memoizer,
-  meta: () => meta2,
-  mime: () => _mime,
-  minLength: () => _minLength,
-  minSize: () => _minSize,
-  multipleOf: () => _multipleOf,
-  nan: () => nan,
-  nanoid: () => nanoid2,
-  nativeEnum: () => nativeEnum,
-  negative: () => _negative,
-  never: () => never,
-  nonnegative: () => _nonnegative,
-  nonoptional: () => nonoptional,
-  nonpositive: () => _nonpositive,
-  normalize: () => _normalize,
-  null: () => _null3,
-  nullable: () => nullable,
-  nullish: () => nullish2,
-  number: () => number2,
-  object: () => object2,
-  optional: () => optional,
-  output: () => output,
-  overwrite: () => _overwrite,
-  parse: () => parse2,
-  parseAsync: () => parseAsync2,
-  partialRecord: () => partialRecord,
-  pipe: () => pipe,
-  positive: () => _positive,
-  prefault: () => prefault,
-  preprocess: () => preprocess,
-  prettifyError: () => prettifyError,
-  promise: () => promise,
-  properties: () => _properties,
-  property: () => _property,
-  readonly: () => readonly,
-  record: () => record,
-  refine: () => refine,
-  regex: () => _regex,
-  regexes: () => regexes_exports,
-  registry: () => registry,
-  safeDecode: () => safeDecode2,
-  safeDecodeAsync: () => safeDecodeAsync2,
-  safeEncode: () => safeEncode2,
-  safeEncodeAsync: () => safeEncodeAsync2,
-  safeParse: () => safeParse3,
-  safeParseAsync: () => safeParseAsync3,
-  set: () => set,
-  setErrorMap: () => setErrorMap,
-  size: () => _size,
-  slugify: () => _slugify,
-  startsWith: () => _startsWith,
-  strictObject: () => strictObject,
-  string: () => string2,
-  stringFormat: () => stringFormat,
-  stringbool: () => stringbool,
-  success: () => success,
-  superRefine: () => superRefine,
-  symbol: () => symbol,
-  templateLiteral: () => templateLiteral,
-  toJSONSchema: () => toJSONSchema,
-  toLowerCase: () => _toLowerCase,
-  toUpperCase: () => _toUpperCase,
-  toZod: () => toZod,
-  transform: () => transform,
-  treeifyError: () => treeifyError,
-  trim: () => _trim,
-  tuple: () => tuple,
-  uint32: () => uint32,
-  uint64: () => uint64,
-  ulid: () => ulid2,
-  undefined: () => _undefined3,
-  union: () => union,
-  unknown: () => unknown,
-  uppercase: () => _uppercase,
-  url: () => url,
-  util: () => util_exports,
-  uuid: () => uuid2,
-  uuidv4: () => uuidv4,
-  uuidv6: () => uuidv6,
-  uuidv7: () => uuidv7,
-  validate: () => validate,
-  validateAsync: () => validateAsync,
-  void: () => _void2,
-  withParser: () => withParser,
-  xid: () => xid2,
-  xor: () => xor
-});
-
-// node_modules/zod/v4/classic/schemas.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/classic/schemas.js
 var schemas_exports2 = {};
 __export(schemas_exports2, {
-  ZodAny: () => ZodAny2,
-  ZodArray: () => ZodArray2,
+  ZodAny: () => ZodAny,
+  ZodArray: () => ZodArray,
   ZodBase64: () => ZodBase64,
   ZodBase64URL: () => ZodBase64URL,
-  ZodBigInt: () => ZodBigInt2,
+  ZodBigInt: () => ZodBigInt,
   ZodBigIntFormat: () => ZodBigIntFormat,
-  ZodBoolean: () => ZodBoolean2,
+  ZodBoolean: () => ZodBoolean,
   ZodCIDRv4: () => ZodCIDRv4,
   ZodCIDRv6: () => ZodCIDRv6,
   ZodCUID: () => ZodCUID,
   ZodCUID2: () => ZodCUID2,
-  ZodCatch: () => ZodCatch2,
+  ZodCatch: () => ZodCatch,
   ZodCodec: () => ZodCodec,
   ZodCreditCard: () => ZodCreditCard,
   ZodCustom: () => ZodCustom,
   ZodCustomStringFormat: () => ZodCustomStringFormat,
-  ZodDate: () => ZodDate2,
-  ZodDefault: () => ZodDefault2,
-  ZodDiscriminatedUnion: () => ZodDiscriminatedUnion2,
+  ZodDate: () => ZodDate,
+  ZodDefault: () => ZodDefault,
+  ZodDiscriminatedUnion: () => ZodDiscriminatedUnion,
   ZodE164: () => ZodE164,
   ZodEmail: () => ZodEmail,
   ZodEmoji: () => ZodEmoji,
-  ZodEnum: () => ZodEnum2,
+  ZodEnum: () => ZodEnum,
   ZodExactOptional: () => ZodExactOptional,
   ZodFile: () => ZodFile,
-  ZodFunction: () => ZodFunction2,
+  ZodFunction: () => ZodFunction,
   ZodGUID: () => ZodGUID,
   ZodIBAN: () => ZodIBAN,
   ZodIPv4: () => ZodIPv4,
@@ -28438,45 +25644,45 @@ __export(schemas_exports2, {
   ZodISODuration: () => ZodISODuration,
   ZodISOTime: () => ZodISOTime,
   ZodInstanceOf: () => ZodInstanceOf,
-  ZodIntersection: () => ZodIntersection2,
+  ZodIntersection: () => ZodIntersection,
   ZodJWT: () => ZodJWT,
   ZodKSUID: () => ZodKSUID,
-  ZodLazy: () => ZodLazy2,
-  ZodLiteral: () => ZodLiteral2,
+  ZodLazy: () => ZodLazy,
+  ZodLiteral: () => ZodLiteral,
   ZodMAC: () => ZodMAC,
-  ZodMap: () => ZodMap2,
-  ZodNaN: () => ZodNaN2,
+  ZodMap: () => ZodMap,
+  ZodNaN: () => ZodNaN,
   ZodNanoID: () => ZodNanoID,
-  ZodNever: () => ZodNever2,
+  ZodNever: () => ZodNever,
   ZodNonOptional: () => ZodNonOptional,
-  ZodNull: () => ZodNull2,
-  ZodNullable: () => ZodNullable2,
-  ZodNumber: () => ZodNumber2,
+  ZodNull: () => ZodNull,
+  ZodNullable: () => ZodNullable,
+  ZodNumber: () => ZodNumber,
   ZodNumberFormat: () => ZodNumberFormat,
-  ZodObject: () => ZodObject2,
-  ZodOptional: () => ZodOptional2,
+  ZodObject: () => ZodObject,
+  ZodOptional: () => ZodOptional,
   ZodPipe: () => ZodPipe,
   ZodPrefault: () => ZodPrefault,
   ZodPreprocess: () => ZodPreprocess,
-  ZodPromise: () => ZodPromise2,
-  ZodReadonly: () => ZodReadonly2,
-  ZodRecord: () => ZodRecord2,
-  ZodSet: () => ZodSet2,
-  ZodString: () => ZodString2,
+  ZodPromise: () => ZodPromise,
+  ZodReadonly: () => ZodReadonly,
+  ZodRecord: () => ZodRecord,
+  ZodSet: () => ZodSet,
+  ZodString: () => ZodString,
   ZodStringFormat: () => ZodStringFormat,
   ZodSuccess: () => ZodSuccess,
-  ZodSymbol: () => ZodSymbol2,
+  ZodSymbol: () => ZodSymbol,
   ZodTemplateLiteral: () => ZodTemplateLiteral,
   ZodTransform: () => ZodTransform,
-  ZodTuple: () => ZodTuple2,
-  ZodType: () => ZodType2,
+  ZodTuple: () => ZodTuple,
+  ZodType: () => ZodType,
   ZodULID: () => ZodULID,
   ZodURL: () => ZodURL,
   ZodUUID: () => ZodUUID,
-  ZodUndefined: () => ZodUndefined2,
-  ZodUnion: () => ZodUnion2,
-  ZodUnknown: () => ZodUnknown2,
-  ZodVoid: () => ZodVoid2,
+  ZodUndefined: () => ZodUndefined,
+  ZodUnion: () => ZodUnion,
+  ZodUnknown: () => ZodUnknown,
+  ZodVoid: () => ZodVoid,
   ZodXID: () => ZodXID,
   ZodXor: () => ZodXor,
   _ZodString: () => _ZodString,
@@ -28544,7 +25750,7 @@ __export(schemas_exports2, {
   nullable: () => nullable,
   nullish: () => nullish2,
   number: () => number2,
-  object: () => object2,
+  object: () => object,
   optional: () => optional,
   partialRecord: () => partialRecord,
   pipe: () => pipe,
@@ -28581,7 +25787,7 @@ __export(schemas_exports2, {
   xor: () => xor
 });
 
-// node_modules/zod/v4/classic/checks.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/classic/checks.js
 var checks_exports2 = {};
 __export(checks_exports2, {
   endsWith: () => _endsWith,
@@ -28616,19 +25822,19 @@ __export(checks_exports2, {
   uppercase: () => _uppercase
 });
 
-// node_modules/zod/v4/classic/errors.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/classic/errors.js
 var _installedErrorProtos = /* @__PURE__ */ new WeakSet([Object.prototype, Error.prototype]);
-function _lazyMethod(proto, key, make) {
-  Object.defineProperty(proto, key, {
+function _lazyMethod(proto, key2, make) {
+  Object.defineProperty(proto, key2, {
     configurable: true,
     enumerable: false,
     get() {
       const value = make(this);
-      Object.defineProperty(this, key, { value, configurable: true, writable: true });
+      Object.defineProperty(this, key2, { value, configurable: true, writable: true });
       return value;
     },
     set(value) {
-      Object.defineProperty(this, key, { value, configurable: true, writable: true });
+      Object.defineProperty(this, key2, { value, configurable: true, writable: true });
     }
   });
 }
@@ -28657,16 +25863,16 @@ var initializer2 = (inst, issues) => {
     }
   });
 };
-var ZodError2 = /* @__PURE__ */ $constructor("ZodError", initializer2);
+var ZodError = /* @__PURE__ */ $constructor("ZodError", initializer2);
 var ZodRealError = /* @__PURE__ */ $constructor("ZodError", initializer2, void 0, {
   Parent: Error
 });
 
-// node_modules/zod/v4/classic/parse.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/classic/parse.js
 var parse2 = /* @__PURE__ */ _parse(ZodRealError);
 var parseAsync2 = /* @__PURE__ */ _parseAsync(ZodRealError);
-var safeParse3 = /* @__PURE__ */ _safeParse(ZodRealError);
-var safeParseAsync3 = /* @__PURE__ */ _safeParseAsync(ZodRealError);
+var safeParse2 = /* @__PURE__ */ _safeParse(ZodRealError);
+var safeParseAsync2 = /* @__PURE__ */ _safeParseAsync(ZodRealError);
 var encode2 = /* @__PURE__ */ _encode(ZodRealError);
 var decode2 = /* @__PURE__ */ _decode(ZodRealError);
 var encodeAsync2 = /* @__PURE__ */ _encodeAsync(ZodRealError);
@@ -28676,16 +25882,16 @@ var safeDecode2 = /* @__PURE__ */ _safeDecode(ZodRealError);
 var safeEncodeAsync2 = /* @__PURE__ */ _safeEncodeAsync(ZodRealError);
 var safeDecodeAsync2 = /* @__PURE__ */ _safeDecodeAsync(ZodRealError);
 
-// node_modules/zod/v4/classic/schemas.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/classic/schemas.js
 function _ensureDefaultLocale() {
   if (!globalConfig.localeError)
-    config(en_default2());
+    config(en_default());
 }
 function _ensureDefaultMemoizer() {
   if (!globalConfig.memoizer)
     config({ memoizer: memoizer() });
 }
-var ZodType2 = /* @__PURE__ */ $constructor("ZodType", (inst, def) => {
+var ZodType = /* @__PURE__ */ $constructor("ZodType", (inst, def) => {
   _ensureDefaultLocale();
   $ZodType.init(inst, def);
   inst.def = def;
@@ -28806,10 +26012,10 @@ var ZodType2 = /* @__PURE__ */ $constructor("ZodType", (inst, def) => {
     return await parseAsync2(this, data, params, { callee: _parseAsync2 });
   },
   safeParse(data, params) {
-    return safeParse3(this, data, params);
+    return safeParse2(this, data, params);
   },
   async safeParseAsync(data, params) {
-    return safeParseAsync3(this, data, params);
+    return safeParseAsync2(this, data, params);
   },
   // `spa` is an alias: same function object as `safeParseAsync`, as before.
   get spa() {
@@ -28864,7 +26070,7 @@ var _ZodString = /* @__PURE__ */ $constructor(
   "_ZodString",
   (inst, def) => {
     $ZodString.init(inst, def);
-    ZodType2.init(inst, def);
+    ZodType.init(inst, def);
     inst._zod.processJSONSchema = (ctx, json2, params) => stringProcessor(inst, ctx, json2, params);
   },
   /* @__PURE__ */ util_exports.derived({
@@ -28919,7 +26125,7 @@ var _ZodString = /* @__PURE__ */ $constructor(
     }
   })
 );
-var ZodString2 = /* @__PURE__ */ $constructor("ZodString", (inst, def) => {
+var ZodString = /* @__PURE__ */ $constructor("ZodString", (inst, def) => {
   $ZodString.init(inst, def);
   _ZodString.init(inst, def);
 }, {
@@ -29003,7 +26209,7 @@ var ZodString2 = /* @__PURE__ */ $constructor("ZodString", (inst, def) => {
   }
 });
 function string2(params) {
-  return _string(ZodString2, params);
+  return _string(ZodString, params);
 }
 var ZodStringFormat = /* @__PURE__ */ $constructor("ZodStringFormat", (inst, def) => {
   $ZodStringFormat.init(inst, def);
@@ -29219,11 +26425,11 @@ function hash(alg, params) {
     throw new Error(`Unrecognized hash format: ${format}`);
   return _stringFormat(ZodCustomStringFormat, format, regex, params);
 }
-var ZodNumber2 = /* @__PURE__ */ $constructor(
+var ZodNumber = /* @__PURE__ */ $constructor(
   "ZodNumber",
   (inst, def) => {
     $ZodNumber.init(inst, def);
-    ZodType2.init(inst, def);
+    ZodType.init(inst, def);
     inst._zod.processJSONSchema = (ctx, json2, params) => numberProcessor(inst, ctx, json2, params);
     inst.isFinite = true;
   },
@@ -29290,11 +26496,11 @@ var ZodNumber2 = /* @__PURE__ */ $constructor(
   })
 );
 function number2(params) {
-  return _number(ZodNumber2, params);
+  return _number(ZodNumber, params);
 }
 var ZodNumberFormat = /* @__PURE__ */ $constructor("ZodNumberFormat", (inst, def) => {
   $ZodNumberFormat.init(inst, def);
-  ZodNumber2.init(inst, def);
+  ZodNumber.init(inst, def);
 });
 function int(params) {
   return _int(ZodNumberFormat, params);
@@ -29311,19 +26517,19 @@ function int32(params) {
 function uint32(params) {
   return _uint32(ZodNumberFormat, params);
 }
-var ZodBoolean2 = /* @__PURE__ */ $constructor("ZodBoolean", (inst, def) => {
+var ZodBoolean = /* @__PURE__ */ $constructor("ZodBoolean", (inst, def) => {
   $ZodBoolean.init(inst, def);
-  ZodType2.init(inst, def);
+  ZodType.init(inst, def);
   inst._zod.processJSONSchema = (ctx, json2, params) => booleanProcessor(inst, ctx, json2, params);
 });
 function boolean2(params) {
-  return _boolean(ZodBoolean2, params);
+  return _boolean(ZodBoolean, params);
 }
-var ZodBigInt2 = /* @__PURE__ */ $constructor(
+var ZodBigInt = /* @__PURE__ */ $constructor(
   "ZodBigInt",
   (inst, def) => {
     $ZodBigInt.init(inst, def);
-    ZodType2.init(inst, def);
+    ZodType.init(inst, def);
     inst._zod.processJSONSchema = (ctx, json2, params) => bigintProcessor(inst, ctx, json2, params);
   },
   /* @__PURE__ */ util_exports.derived({
@@ -29367,11 +26573,11 @@ var ZodBigInt2 = /* @__PURE__ */ $constructor(
   })
 );
 function bigint2(params) {
-  return _bigint(ZodBigInt2, params);
+  return _bigint(ZodBigInt, params);
 }
 var ZodBigIntFormat = /* @__PURE__ */ $constructor("ZodBigIntFormat", (inst, def) => {
   $ZodBigIntFormat.init(inst, def);
-  ZodBigInt2.init(inst, def);
+  ZodBigInt.init(inst, def);
 });
 function int64(params) {
   return _int64(ZodBigIntFormat, params);
@@ -29379,67 +26585,67 @@ function int64(params) {
 function uint64(params) {
   return _uint64(ZodBigIntFormat, params);
 }
-var ZodSymbol2 = /* @__PURE__ */ $constructor("ZodSymbol", (inst, def) => {
+var ZodSymbol = /* @__PURE__ */ $constructor("ZodSymbol", (inst, def) => {
   $ZodSymbol.init(inst, def);
-  ZodType2.init(inst, def);
+  ZodType.init(inst, def);
   inst._zod.processJSONSchema = (ctx, json2, params) => symbolProcessor(inst, ctx, json2, params);
 });
 function symbol(params) {
-  return _symbol(ZodSymbol2, params);
+  return _symbol(ZodSymbol, params);
 }
-var ZodUndefined2 = /* @__PURE__ */ $constructor("ZodUndefined", (inst, def) => {
+var ZodUndefined = /* @__PURE__ */ $constructor("ZodUndefined", (inst, def) => {
   $ZodUndefined.init(inst, def);
-  ZodType2.init(inst, def);
+  ZodType.init(inst, def);
   inst._zod.processJSONSchema = (ctx, json2, params) => undefinedProcessor(inst, ctx, json2, params);
 });
 function _undefined3(params) {
-  return _undefined2(ZodUndefined2, params);
+  return _undefined2(ZodUndefined, params);
 }
-var ZodNull2 = /* @__PURE__ */ $constructor("ZodNull", (inst, def) => {
+var ZodNull = /* @__PURE__ */ $constructor("ZodNull", (inst, def) => {
   $ZodNull.init(inst, def);
-  ZodType2.init(inst, def);
+  ZodType.init(inst, def);
   inst._zod.processJSONSchema = (ctx, json2, params) => nullProcessor(inst, ctx, json2, params);
 });
 function _null3(params) {
-  return _null2(ZodNull2, params);
+  return _null2(ZodNull, params);
 }
-var ZodAny2 = /* @__PURE__ */ $constructor("ZodAny", (inst, def) => {
+var ZodAny = /* @__PURE__ */ $constructor("ZodAny", (inst, def) => {
   $ZodAny.init(inst, def);
-  ZodType2.init(inst, def);
+  ZodType.init(inst, def);
   inst._zod.processJSONSchema = (ctx, json2, params) => anyProcessor(inst, ctx, json2, params);
 });
 function any() {
-  return _any(ZodAny2);
+  return _any(ZodAny);
 }
-var ZodUnknown2 = /* @__PURE__ */ $constructor("ZodUnknown", (inst, def) => {
+var ZodUnknown = /* @__PURE__ */ $constructor("ZodUnknown", (inst, def) => {
   $ZodUnknown.init(inst, def);
-  ZodType2.init(inst, def);
+  ZodType.init(inst, def);
   inst._zod.processJSONSchema = (ctx, json2, params) => unknownProcessor(inst, ctx, json2, params);
 });
 function unknown() {
-  return _unknown(ZodUnknown2);
+  return _unknown(ZodUnknown);
 }
-var ZodNever2 = /* @__PURE__ */ $constructor("ZodNever", (inst, def) => {
+var ZodNever = /* @__PURE__ */ $constructor("ZodNever", (inst, def) => {
   $ZodNever.init(inst, def);
-  ZodType2.init(inst, def);
+  ZodType.init(inst, def);
   inst._zod.processJSONSchema = (ctx, json2, params) => neverProcessor(inst, ctx, json2, params);
 });
 function never(params) {
-  return _never(ZodNever2, params);
+  return _never(ZodNever, params);
 }
-var ZodVoid2 = /* @__PURE__ */ $constructor("ZodVoid", (inst, def) => {
+var ZodVoid = /* @__PURE__ */ $constructor("ZodVoid", (inst, def) => {
   $ZodVoid.init(inst, def);
-  ZodType2.init(inst, def);
+  ZodType.init(inst, def);
   inst._zod.processJSONSchema = (ctx, json2, params) => voidProcessor(inst, ctx, json2, params);
 });
 function _void2(params) {
-  return _void(ZodVoid2, params);
+  return _void(ZodVoid, params);
 }
-var ZodDate2 = /* @__PURE__ */ $constructor(
+var ZodDate = /* @__PURE__ */ $constructor(
   "ZodDate",
   (inst, def) => {
     $ZodDate.init(inst, def);
-    ZodType2.init(inst, def);
+    ZodType.init(inst, def);
     inst._zod.processJSONSchema = (ctx, json2, params) => dateProcessor(inst, ctx, json2, params);
     inst.min = (value, params) => inst.check(_gte(value, params));
     inst.max = (value, params) => inst.check(_lte(value, params));
@@ -29456,12 +26662,12 @@ var ZodDate2 = /* @__PURE__ */ $constructor(
   }, {})
 );
 function date2(params) {
-  return _date(ZodDate2, params);
+  return _date(ZodDate, params);
 }
-var ZodArray2 = /* @__PURE__ */ $constructor("ZodArray", (inst, def) => {
+var ZodArray = /* @__PURE__ */ $constructor("ZodArray", (inst, def) => {
   _ensureDefaultMemoizer();
   $ZodArray.init(inst, def);
-  ZodType2.init(inst, def);
+  ZodType.init(inst, def);
   inst._zod.processJSONSchema = (ctx, json2, params) => arrayProcessor(inst, ctx, json2, params);
   inst.element = def.element;
 }, {
@@ -29482,16 +26688,16 @@ var ZodArray2 = /* @__PURE__ */ $constructor("ZodArray", (inst, def) => {
   }
 });
 function array(element, params) {
-  return _array(ZodArray2, element, params);
+  return _array(ZodArray, element, params);
 }
 function keyof(schema) {
   const shape = schema._zod.def.shape;
   return _enum2(Object.keys(shape));
 }
-var ZodObject2 = /* @__PURE__ */ $constructor("ZodObject", (inst, def) => {
+var ZodObject = /* @__PURE__ */ $constructor("ZodObject", (inst, def) => {
   _ensureDefaultMemoizer();
   $ZodObjectJIT.init(inst, def);
-  ZodType2.init(inst, def);
+  ZodType.init(inst, def);
   inst._zod.processJSONSchema = (ctx, json2, params) => objectProcessor(inst, ctx, json2, params);
   util_exports.installLazyProp(inst, "shape", (self) => self._zod.def.shape, false);
 }, {
@@ -29529,7 +26735,7 @@ var ZodObject2 = /* @__PURE__ */ $constructor("ZodObject", (inst, def) => {
     return util_exports.omit(this, mask);
   },
   partial(...args) {
-    return util_exports.partial(ZodOptional2, this, args[0]);
+    return util_exports.partial(ZodOptional, this, args[0]);
   },
   exactPartial(...args) {
     return util_exports.partial(ZodExactOptional, this, args[0], "exactPartial");
@@ -29538,16 +26744,16 @@ var ZodObject2 = /* @__PURE__ */ $constructor("ZodObject", (inst, def) => {
     return util_exports.required(ZodNonOptional, this, args[0]);
   }
 });
-function object2(shape, params) {
+function object(shape, params) {
   const def = {
     type: "object",
     shape: shape ?? {},
     ...util_exports.normalizeParams(params)
   };
-  return new ZodObject2(def);
+  return new ZodObject(def);
 }
 function strictObject(shape, params) {
-  return new ZodObject2({
+  return new ZodObject({
     type: "object",
     shape,
     catchall: never(),
@@ -29555,28 +26761,28 @@ function strictObject(shape, params) {
   });
 }
 function looseObject(shape, params) {
-  return new ZodObject2({
+  return new ZodObject({
     type: "object",
     shape,
     catchall: unknown(),
     ...util_exports.normalizeParams(params)
   });
 }
-var ZodUnion2 = /* @__PURE__ */ $constructor("ZodUnion", (inst, def) => {
+var ZodUnion = /* @__PURE__ */ $constructor("ZodUnion", (inst, def) => {
   $ZodUnion.init(inst, def);
-  ZodType2.init(inst, def);
+  ZodType.init(inst, def);
   inst._zod.processJSONSchema = (ctx, json2, params) => unionProcessor(inst, ctx, json2, params);
   inst.options = def.options;
 });
 function union(options, params) {
-  return new ZodUnion2({
+  return new ZodUnion({
     type: "union",
     options,
     ...util_exports.normalizeParams(params)
   });
 }
 var ZodXor = /* @__PURE__ */ $constructor("ZodXor", (inst, def) => {
-  ZodUnion2.init(inst, def);
+  ZodUnion.init(inst, def);
   $ZodXor.init(inst, def);
   inst._zod.processJSONSchema = (ctx, json2, params) => unionProcessor(inst, ctx, json2, params);
   inst.options = def.options;
@@ -29589,34 +26795,34 @@ function xor(options, params) {
     ...util_exports.normalizeParams(params)
   });
 }
-var ZodDiscriminatedUnion2 = /* @__PURE__ */ $constructor("ZodDiscriminatedUnion", (inst, def) => {
-  ZodUnion2.init(inst, def);
+var ZodDiscriminatedUnion = /* @__PURE__ */ $constructor("ZodDiscriminatedUnion", (inst, def) => {
+  ZodUnion.init(inst, def);
   $ZodDiscriminatedUnion.init(inst, def);
 });
 function discriminatedUnion(discriminator, options, params) {
-  return new ZodDiscriminatedUnion2({
+  return new ZodDiscriminatedUnion({
     type: "union",
     options,
     discriminator,
     ...util_exports.normalizeParams(params)
   });
 }
-var ZodIntersection2 = /* @__PURE__ */ $constructor("ZodIntersection", (inst, def) => {
+var ZodIntersection = /* @__PURE__ */ $constructor("ZodIntersection", (inst, def) => {
   $ZodIntersection.init(inst, def);
-  ZodType2.init(inst, def);
+  ZodType.init(inst, def);
   inst._zod.processJSONSchema = (ctx, json2, params) => intersectionProcessor(inst, ctx, json2, params);
 });
 function intersection(left, right) {
-  return new ZodIntersection2({
+  return new ZodIntersection({
     type: "intersection",
     left,
     right
   });
 }
-var ZodTuple2 = /* @__PURE__ */ $constructor("ZodTuple", (inst, def) => {
+var ZodTuple = /* @__PURE__ */ $constructor("ZodTuple", (inst, def) => {
   _ensureDefaultMemoizer();
   $ZodTuple.init(inst, def);
-  ZodType2.init(inst, def);
+  ZodType.init(inst, def);
   inst._zod.processJSONSchema = (ctx, json2, params) => tupleProcessor(inst, ctx, json2, params);
 }, {
   rest(rest) {
@@ -29631,7 +26837,7 @@ var ZodTuple2 = /* @__PURE__ */ $constructor("ZodTuple", (inst, def) => {
       throw new Error(".partial() cannot be used on tuple schemas containing refinements");
     return this.clone({
       ...def,
-      items: def.items.map((item) => new ZodOptional2({ type: "optional", innerType: item }))
+      items: def.items.map((item) => new ZodOptional({ type: "optional", innerType: item }))
     });
   }
 });
@@ -29639,31 +26845,31 @@ function tuple(items, _paramsOrRest, _params) {
   const hasRest = _paramsOrRest instanceof $ZodType;
   const params = hasRest ? _params : _paramsOrRest;
   const rest = hasRest ? _paramsOrRest : null;
-  return new ZodTuple2({
+  return new ZodTuple({
     type: "tuple",
     items,
     rest,
     ...util_exports.normalizeParams(params)
   });
 }
-var ZodRecord2 = /* @__PURE__ */ $constructor("ZodRecord", (inst, def) => {
+var ZodRecord = /* @__PURE__ */ $constructor("ZodRecord", (inst, def) => {
   _ensureDefaultMemoizer();
   $ZodRecord.init(inst, def);
-  ZodType2.init(inst, def);
+  ZodType.init(inst, def);
   inst._zod.processJSONSchema = (ctx, json2, params) => recordProcessor(inst, ctx, json2, params);
   inst.keyType = def.keyType;
   inst.valueType = def.valueType;
 });
 function record(keyType, valueType, params) {
   if (!valueType || !valueType._zod) {
-    return new ZodRecord2({
+    return new ZodRecord({
       type: "record",
       keyType: string2(),
       valueType: keyType,
       ...util_exports.normalizeParams(valueType)
     });
   }
-  return new ZodRecord2({
+  return new ZodRecord({
     type: "record",
     keyType,
     valueType,
@@ -29671,7 +26877,7 @@ function record(keyType, valueType, params) {
   });
 }
 function partialRecord(keyType, valueType, params) {
-  return new ZodRecord2({
+  return new ZodRecord({
     type: "record",
     keyType,
     valueType,
@@ -29680,7 +26886,7 @@ function partialRecord(keyType, valueType, params) {
   });
 }
 function looseRecord(keyType, valueType, params) {
-  return new ZodRecord2({
+  return new ZodRecord({
     type: "record",
     keyType,
     valueType,
@@ -29688,10 +26894,10 @@ function looseRecord(keyType, valueType, params) {
     ...util_exports.normalizeParams(params)
   });
 }
-var ZodMap2 = /* @__PURE__ */ $constructor("ZodMap", (inst, def) => {
+var ZodMap = /* @__PURE__ */ $constructor("ZodMap", (inst, def) => {
   _ensureDefaultMemoizer();
   $ZodMap.init(inst, def);
-  ZodType2.init(inst, def);
+  ZodType.init(inst, def);
   inst._zod.processJSONSchema = (ctx, json2, params) => mapProcessor(inst, ctx, json2, params);
   inst.keyType = def.keyType;
   inst.valueType = def.valueType;
@@ -29701,17 +26907,17 @@ var ZodMap2 = /* @__PURE__ */ $constructor("ZodMap", (inst, def) => {
   inst.size = (...args) => inst.check(_size(...args));
 });
 function map(keyType, valueType, params) {
-  return new ZodMap2({
+  return new ZodMap({
     type: "map",
     keyType,
     valueType,
     ...util_exports.normalizeParams(params)
   });
 }
-var ZodSet2 = /* @__PURE__ */ $constructor("ZodSet", (inst, def) => {
+var ZodSet = /* @__PURE__ */ $constructor("ZodSet", (inst, def) => {
   _ensureDefaultMemoizer();
   $ZodSet.init(inst, def);
-  ZodType2.init(inst, def);
+  ZodType.init(inst, def);
   inst._zod.processJSONSchema = (ctx, json2, params) => setProcessor(inst, ctx, json2, params);
   inst.min = (...args) => inst.check(_minSize(...args));
   inst.nonempty = (params) => inst.check(_minSize(1, params));
@@ -29719,15 +26925,15 @@ var ZodSet2 = /* @__PURE__ */ $constructor("ZodSet", (inst, def) => {
   inst.size = (...args) => inst.check(_size(...args));
 });
 function set(valueType, params) {
-  return new ZodSet2({
+  return new ZodSet({
     type: "set",
     valueType,
     ...util_exports.normalizeParams(params)
   });
 }
-var ZodEnum2 = /* @__PURE__ */ $constructor("ZodEnum", (inst, def) => {
+var ZodEnum = /* @__PURE__ */ $constructor("ZodEnum", (inst, def) => {
   $ZodEnum.init(inst, def);
-  ZodType2.init(inst, def);
+  ZodType.init(inst, def);
   inst._zod.processJSONSchema = (ctx, json2, params) => enumProcessor(inst, ctx, json2, params);
   inst.enum = def.entries;
   inst.options = [...inst._zod.values];
@@ -29740,7 +26946,7 @@ var ZodEnum2 = /* @__PURE__ */ $constructor("ZodEnum", (inst, def) => {
       } else
         throw new Error(`Key ${value} not found in enum`);
     }
-    return new ZodEnum2({
+    return new ZodEnum({
       ...def,
       checks: [],
       ...util_exports.normalizeParams(params),
@@ -29755,7 +26961,7 @@ var ZodEnum2 = /* @__PURE__ */ $constructor("ZodEnum", (inst, def) => {
       } else
         throw new Error(`Key ${value} not found in enum`);
     }
-    return new ZodEnum2({
+    return new ZodEnum({
       ...def,
       checks: [],
       ...util_exports.normalizeParams(params),
@@ -29765,22 +26971,22 @@ var ZodEnum2 = /* @__PURE__ */ $constructor("ZodEnum", (inst, def) => {
 });
 function _enum2(values, params) {
   const entries = Array.isArray(values) ? Object.fromEntries(values.map((v) => [v, v])) : values;
-  return new ZodEnum2({
+  return new ZodEnum({
     type: "enum",
     entries,
     ...util_exports.normalizeParams(params)
   });
 }
 function nativeEnum(entries, params) {
-  return new ZodEnum2({
+  return new ZodEnum({
     type: "enum",
     entries,
     ...util_exports.normalizeParams(params)
   });
 }
-var ZodLiteral2 = /* @__PURE__ */ $constructor("ZodLiteral", (inst, def) => {
+var ZodLiteral = /* @__PURE__ */ $constructor("ZodLiteral", (inst, def) => {
   $ZodLiteral.init(inst, def);
-  ZodType2.init(inst, def);
+  ZodType.init(inst, def);
   inst._zod.processJSONSchema = (ctx, json2, params) => literalProcessor(inst, ctx, json2, params);
   inst.values = new Set(def.values);
   Object.defineProperty(inst, "value", {
@@ -29793,7 +26999,7 @@ var ZodLiteral2 = /* @__PURE__ */ $constructor("ZodLiteral", (inst, def) => {
   });
 });
 function literal(value, params) {
-  return new ZodLiteral2({
+  return new ZodLiteral({
     type: "literal",
     values: Array.isArray(value) ? value : [value],
     ...util_exports.normalizeParams(params)
@@ -29801,7 +27007,7 @@ function literal(value, params) {
 }
 var ZodFile = /* @__PURE__ */ $constructor("ZodFile", (inst, def) => {
   $ZodFile.init(inst, def);
-  ZodType2.init(inst, def);
+  ZodType.init(inst, def);
   inst._zod.processJSONSchema = (ctx, json2, params) => fileProcessor(inst, ctx, json2, params);
   inst.min = (size, params) => inst.check(_minSize(size, params));
   inst.max = (size, params) => inst.check(_maxSize(size, params));
@@ -29813,7 +27019,7 @@ function file(params) {
 var ZodTransform = /* @__PURE__ */ $constructor("ZodTransform", (inst, def) => {
   _ensureDefaultMemoizer();
   $ZodTransform.init(inst, def);
-  ZodType2.init(inst, def);
+  ZodType.init(inst, def);
   inst._zod.processJSONSchema = (ctx, json2, params) => transformProcessor(inst, ctx, json2, params);
   inst._zod.parse = (payload, _ctx) => {
     if (_ctx.direction === "backward") {
@@ -29850,21 +27056,21 @@ function transform(fn) {
     transform: fn
   });
 }
-var ZodOptional2 = /* @__PURE__ */ $constructor("ZodOptional", (inst, def) => {
+var ZodOptional = /* @__PURE__ */ $constructor("ZodOptional", (inst, def) => {
   $ZodOptional.init(inst, def);
-  ZodType2.init(inst, def);
+  ZodType.init(inst, def);
   inst._zod.processJSONSchema = (ctx, json2, params) => optionalProcessor(inst, ctx, json2, params);
   inst.unwrap = () => inst._zod.def.innerType;
 });
 function optional(innerType) {
-  return new ZodOptional2({
+  return new ZodOptional({
     type: "optional",
     innerType
   });
 }
 var ZodExactOptional = /* @__PURE__ */ $constructor("ZodExactOptional", (inst, def) => {
   $ZodExactOptional.init(inst, def);
-  ZodType2.init(inst, def);
+  ZodType.init(inst, def);
   inst._zod.processJSONSchema = (ctx, json2, params) => optionalProcessor(inst, ctx, json2, params);
   inst.unwrap = () => inst._zod.def.innerType;
 });
@@ -29874,14 +27080,14 @@ function exactOptional(innerType) {
     innerType
   });
 }
-var ZodNullable2 = /* @__PURE__ */ $constructor("ZodNullable", (inst, def) => {
+var ZodNullable = /* @__PURE__ */ $constructor("ZodNullable", (inst, def) => {
   $ZodNullable.init(inst, def);
-  ZodType2.init(inst, def);
+  ZodType.init(inst, def);
   inst._zod.processJSONSchema = (ctx, json2, params) => nullableProcessor(inst, ctx, json2, params);
   inst.unwrap = () => inst._zod.def.innerType;
 });
 function nullable(innerType) {
-  return new ZodNullable2({
+  return new ZodNullable({
     type: "nullable",
     innerType
   });
@@ -29889,15 +27095,15 @@ function nullable(innerType) {
 function nullish2(innerType) {
   return optional(nullable(innerType));
 }
-var ZodDefault2 = /* @__PURE__ */ $constructor("ZodDefault", (inst, def) => {
+var ZodDefault = /* @__PURE__ */ $constructor("ZodDefault", (inst, def) => {
   $ZodDefault.init(inst, def);
-  ZodType2.init(inst, def);
+  ZodType.init(inst, def);
   inst._zod.processJSONSchema = (ctx, json2, params) => defaultProcessor(inst, ctx, json2, params);
   inst.unwrap = () => inst._zod.def.innerType;
   inst.removeDefault = inst.unwrap;
 });
 function _default2(innerType, defaultValue) {
-  return new ZodDefault2({
+  return new ZodDefault({
     type: "default",
     innerType,
     get defaultValue() {
@@ -29907,7 +27113,7 @@ function _default2(innerType, defaultValue) {
 }
 var ZodPrefault = /* @__PURE__ */ $constructor("ZodPrefault", (inst, def) => {
   $ZodPrefault.init(inst, def);
-  ZodType2.init(inst, def);
+  ZodType.init(inst, def);
   inst._zod.processJSONSchema = (ctx, json2, params) => prefaultProcessor(inst, ctx, json2, params);
   inst.unwrap = () => inst._zod.def.innerType;
 });
@@ -29922,7 +27128,7 @@ function prefault(innerType, defaultValue) {
 }
 var ZodNonOptional = /* @__PURE__ */ $constructor("ZodNonOptional", (inst, def) => {
   $ZodNonOptional.init(inst, def);
-  ZodType2.init(inst, def);
+  ZodType.init(inst, def);
   inst._zod.processJSONSchema = (ctx, json2, params) => nonoptionalProcessor(inst, ctx, json2, params);
   inst.unwrap = () => inst._zod.def.innerType;
 });
@@ -29935,7 +27141,7 @@ function nonoptional(innerType, params) {
 }
 var ZodSuccess = /* @__PURE__ */ $constructor("ZodSuccess", (inst, def) => {
   $ZodSuccess.init(inst, def);
-  ZodType2.init(inst, def);
+  ZodType.init(inst, def);
   inst._zod.processJSONSchema = (ctx, json2, params) => successProcessor(inst, ctx, json2, params);
   inst.unwrap = () => inst._zod.def.innerType;
 });
@@ -29945,31 +27151,31 @@ function success(innerType) {
     innerType
   });
 }
-var ZodCatch2 = /* @__PURE__ */ $constructor("ZodCatch", (inst, def) => {
+var ZodCatch = /* @__PURE__ */ $constructor("ZodCatch", (inst, def) => {
   $ZodCatch.init(inst, def);
-  ZodType2.init(inst, def);
+  ZodType.init(inst, def);
   inst._zod.processJSONSchema = (ctx, json2, params) => catchProcessor(inst, ctx, json2, params);
   inst.unwrap = () => inst._zod.def.innerType;
   inst.removeCatch = inst.unwrap;
 });
 function _catch2(innerType, catchValue) {
-  return new ZodCatch2({
+  return new ZodCatch({
     type: "catch",
     innerType,
     catchValue: typeof catchValue === "function" ? catchValue : util_exports.constantCatch(catchValue)
   });
 }
-var ZodNaN2 = /* @__PURE__ */ $constructor("ZodNaN", (inst, def) => {
+var ZodNaN = /* @__PURE__ */ $constructor("ZodNaN", (inst, def) => {
   $ZodNaN.init(inst, def);
-  ZodType2.init(inst, def);
+  ZodType.init(inst, def);
   inst._zod.processJSONSchema = (ctx, json2, params) => nanProcessor(inst, ctx, json2, params);
 });
 function nan(params) {
-  return _nan(ZodNaN2, params);
+  return _nan(ZodNaN, params);
 }
 var ZodPipe = /* @__PURE__ */ $constructor("ZodPipe", (inst, def) => {
   $ZodPipe.init(inst, def);
-  ZodType2.init(inst, def);
+  ZodType.init(inst, def);
   inst._zod.processJSONSchema = (ctx, json2, params) => pipeProcessor(inst, ctx, json2, params);
   inst.in = def.in;
   inst.out = def.out;
@@ -30009,21 +27215,21 @@ var ZodPreprocess = /* @__PURE__ */ $constructor("ZodPreprocess", (inst, def) =>
   ZodPipe.init(inst, def);
   $ZodPreprocess.init(inst, def);
 });
-var ZodReadonly2 = /* @__PURE__ */ $constructor("ZodReadonly", (inst, def) => {
+var ZodReadonly = /* @__PURE__ */ $constructor("ZodReadonly", (inst, def) => {
   $ZodReadonly.init(inst, def);
-  ZodType2.init(inst, def);
+  ZodType.init(inst, def);
   inst._zod.processJSONSchema = (ctx, json2, params) => readonlyProcessor(inst, ctx, json2, params);
   inst.unwrap = () => inst._zod.def.innerType;
 });
 function readonly(innerType) {
-  return new ZodReadonly2({
+  return new ZodReadonly({
     type: "readonly",
     innerType
   });
 }
 var ZodTemplateLiteral = /* @__PURE__ */ $constructor("ZodTemplateLiteral", (inst, def) => {
   $ZodTemplateLiteral.init(inst, def);
-  ZodType2.init(inst, def);
+  ZodType.init(inst, def);
   inst._zod.processJSONSchema = (ctx, json2, params) => templateLiteralProcessor(inst, ctx, json2, params);
 });
 function templateLiteral(parts, params) {
@@ -30033,37 +27239,37 @@ function templateLiteral(parts, params) {
     ...util_exports.normalizeParams(params)
   });
 }
-var ZodLazy2 = /* @__PURE__ */ $constructor("ZodLazy", (inst, def) => {
+var ZodLazy = /* @__PURE__ */ $constructor("ZodLazy", (inst, def) => {
   $ZodLazy.init(inst, def);
-  ZodType2.init(inst, def);
+  ZodType.init(inst, def);
   inst._zod.processJSONSchema = (ctx, json2, params) => lazyProcessor(inst, ctx, json2, params);
   inst.unwrap = () => inst._zod.def.getter();
 });
 function lazy(getter) {
-  return new ZodLazy2({
+  return new ZodLazy({
     type: "lazy",
     getter
   });
 }
-var ZodPromise2 = /* @__PURE__ */ $constructor("ZodPromise", (inst, def) => {
+var ZodPromise = /* @__PURE__ */ $constructor("ZodPromise", (inst, def) => {
   $ZodPromise.init(inst, def);
-  ZodType2.init(inst, def);
+  ZodType.init(inst, def);
   inst._zod.processJSONSchema = (ctx, json2, params) => promiseProcessor(inst, ctx, json2, params);
   inst.unwrap = () => inst._zod.def.innerType;
 });
 function promise(innerType) {
-  return new ZodPromise2({
+  return new ZodPromise({
     type: "promise",
     innerType
   });
 }
-var ZodFunction2 = /* @__PURE__ */ $constructor("ZodFunction", (inst, def) => {
+var ZodFunction = /* @__PURE__ */ $constructor("ZodFunction", (inst, def) => {
   $ZodFunction.init(inst, def);
-  ZodType2.init(inst, def);
+  ZodType.init(inst, def);
   inst._zod.processJSONSchema = (ctx, json2, params) => functionProcessor(inst, ctx, json2, params);
 });
 function _function(params) {
-  return new ZodFunction2({
+  return new ZodFunction({
     type: "function",
     input: Array.isArray(params?.input) ? tuple(params?.input) : params?.input ?? array(unknown()),
     output: params?.output ?? unknown()
@@ -30071,7 +27277,7 @@ function _function(params) {
 }
 var ZodCustom = /* @__PURE__ */ $constructor("ZodCustom", (inst, def) => {
   $ZodCustom.init(inst, def);
-  ZodType2.init(inst, def);
+  ZodType.init(inst, def);
   inst._zod.processJSONSchema = (ctx, json2, params) => customProcessor(inst, ctx, json2, params);
 });
 function check(fn) {
@@ -30124,8 +27330,8 @@ function _instanceof(cls, params = {}) {
 }
 var stringbool = (...args) => _stringbool({
   Codec: ZodCodec,
-  Boolean: ZodBoolean2,
-  String: ZodString2
+  Boolean: ZodBoolean,
+  String: ZodString
 }, ...args);
 function json(params) {
   const jsonSchema = lazy(() => {
@@ -30141,8 +27347,8 @@ function preprocess(fn, schema) {
   });
 }
 
-// node_modules/zod/v4/classic/compat.js
-var ZodIssueCode2 = {
+// D:/Development/claude-codex-comm/node_modules/zod/v4/classic/compat.js
+var ZodIssueCode = {
   invalid_type: "invalid_type",
   too_big: "too_big",
   too_small: "too_small",
@@ -30160,16 +27366,16 @@ function setErrorMap(map2) {
     customError: map2
   });
 }
-function getErrorMap2() {
+function getErrorMap() {
   return config().customError;
 }
-var ZodFirstPartyTypeKind2;
+var ZodFirstPartyTypeKind;
 /* @__PURE__ */ (function(ZodFirstPartyTypeKind3) {
-})(ZodFirstPartyTypeKind2 || (ZodFirstPartyTypeKind2 = {}));
+})(ZodFirstPartyTypeKind || (ZodFirstPartyTypeKind = {}));
 
-// node_modules/zod/v4/classic/iso.js
-var iso_exports2 = {};
-__export(iso_exports2, {
+// D:/Development/claude-codex-comm/node_modules/zod/v4/classic/iso.js
+var iso_exports = {};
+__export(iso_exports, {
   ZodISODate: () => ZodISODate,
   ZodISODateTime: () => ZodISODateTime,
   ZodISODuration: () => ZodISODuration,
@@ -30192,11 +27398,11 @@ function duration2(params) {
   return _isoDuration(ZodISODuration, params);
 }
 
-// node_modules/zod/v4/classic/from-json-schema.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/classic/from-json-schema.js
 var z = {
   ...schemas_exports2,
   ...checks_exports2,
-  iso: iso_exports2
+  iso: iso_exports
 };
 var RECOGNIZED_KEYS = /* @__PURE__ */ new Set([
   // Schema identification
@@ -30298,11 +27504,11 @@ function resolveRef(ref, ctx) {
   }
   const defsKey = ctx.version === "draft-2020-12" ? "$defs" : "definitions";
   if (path[0] === defsKey) {
-    const key = path[1] === void 0 ? void 0 : decodeJSONPointerSegment(path[1]);
-    if (!key || !ctx.defs[key]) {
+    const key2 = path[1] === void 0 ? void 0 : decodeJSONPointerSegment(path[1]);
+    if (!key2 || !ctx.defs[key2]) {
       throw new Error(`Reference not found: ${ref}`);
     }
-    return ctx.defs[key];
+    return ctx.defs[key2];
   }
   throw new Error(`Reference not found: ${ref}`);
 }
@@ -30337,16 +27543,16 @@ function checkObjectGuards(objectSchema, guards) {
       });
     }
     if (guards.keySchema) {
-      for (const key of keys) {
-        const result = guards.keySchema.safeParse(key);
+      for (const key2 of keys) {
+        const result = guards.keySchema.safeParse(key2);
         if (result.success)
           continue;
         payload.issues.push({
           code: "invalid_key",
           origin: "record",
           issues: result.error.issues,
-          input: key,
-          path: [key],
+          input: key2,
+          path: [key2],
           continue: true
         });
       }
@@ -30371,20 +27577,20 @@ function canonicalKey(value, seen) {
     if (Array.isArray(value)) {
       const parts2 = [];
       for (const item of value) {
-        const key = canonicalKey(item, seen);
-        if (key === null)
+        const key2 = canonicalKey(item, seen);
+        if (key2 === null)
           return null;
-        parts2.push(key);
+        parts2.push(key2);
       }
       return `a${parts2.length}:[${parts2.join(",")}]`;
     }
     const keys = Object.keys(value).sort();
     const parts = [];
     for (const k of keys) {
-      const key = canonicalKey(value[k], seen);
-      if (key === null)
+      const key2 = canonicalKey(value[k], seen);
+      if (key2 === null)
         return null;
-      parts.push(`${k.length}:${k}=${key}`);
+      parts.push(`${k.length}:${k}=${key2}`);
     }
     return `o${parts.length}:{${parts.join(",")}}`;
   } finally {
@@ -30424,10 +27630,10 @@ function containsRef(value) {
     return value.some(containsRef);
   if (typeof value.$ref === "string")
     return true;
-  return Object.entries(value).some(([key, sub]) => {
-    if (SCHEMA_KEYWORDS.has(key))
+  return Object.entries(value).some(([key2, sub]) => {
+    if (SCHEMA_KEYWORDS.has(key2))
       return containsRef(sub);
-    if (!SCHEMA_MAP_KEYWORDS.has(key) || typeof sub !== "object" || sub === null)
+    if (!SCHEMA_MAP_KEYWORDS.has(key2) || typeof sub !== "object" || sub === null)
       return false;
     return Object.values(sub).some(containsRef);
   });
@@ -30443,12 +27649,12 @@ function checkArrayGuards(arraySchema, guards) {
     if (guards.uniqueItems === true) {
       const firstSeen = /* @__PURE__ */ new Map();
       for (let i = 0; i < items.length; i++) {
-        const key = canonicalKey(items[i], /* @__PURE__ */ new Set());
-        if (key === null)
+        const key2 = canonicalKey(items[i], /* @__PURE__ */ new Set());
+        if (key2 === null)
           continue;
-        const first = firstSeen.get(key);
+        const first = firstSeen.get(key2);
         if (first === void 0) {
-          firstSeen.set(key, i);
+          firstSeen.set(key2, i);
           continue;
         }
         payload.issues.push({
@@ -30687,9 +27893,9 @@ function convertBaseSchema(schema, ctx) {
       const properties = schema.properties || {};
       const requiredSet = new Set(schema.required || []);
       const additionalSchema = typeof schema.additionalProperties === "object" ? convertSchema(schema.additionalProperties, ctx) : void 0;
-      for (const [key, propSchema] of Object.entries(properties)) {
+      for (const [key2, propSchema] of Object.entries(properties)) {
         const propZodSchema = convertSchema(propSchema, ctx);
-        assignProp(shape, key, requiredSet.has(key) ? propZodSchema : propZodSchema.optional());
+        assignProp(shape, key2, requiredSet.has(key2) ? propZodSchema : propZodSchema.optional());
       }
       if (schema.patternProperties) {
         const patternProps = schema.patternProperties;
@@ -30724,12 +27930,12 @@ function convertBaseSchema(schema, ctx) {
             if (!isPlainObject(payload.value))
               return;
             const unrecognized = [];
-            for (const key of Object.keys(payload.value)) {
-              if (propertyKeys.includes(key))
+            for (const key2 of Object.keys(payload.value)) {
+              if (propertyKeys.includes(key2))
                 continue;
-              if (patterns.some((regex) => regex.test(key)))
+              if (patterns.some((regex) => regex.test(key2)))
                 continue;
-              unrecognized.push(key);
+              unrecognized.push(key2);
             }
             if (unrecognized.length) {
               payload.issues.push({
@@ -30860,38 +28066,38 @@ function convertSchema(schema, ctx) {
   }
   const extraMeta = {};
   const coreMetadataKeys = ["$id", "id", "$comment", "$anchor", "$vocabulary", "$dynamicRef", "$dynamicAnchor"];
-  for (const key of coreMetadataKeys) {
-    if (key in schema) {
-      extraMeta[key] = schema[key];
+  for (const key2 of coreMetadataKeys) {
+    if (key2 in schema) {
+      extraMeta[key2] = schema[key2];
     }
   }
   const contentMetadataKeys = ["contentEncoding", "contentMediaType", "contentSchema"];
-  for (const key of contentMetadataKeys) {
-    if (key in schema) {
-      extraMeta[key] = schema[key];
+  for (const key2 of contentMetadataKeys) {
+    if (key2 in schema) {
+      extraMeta[key2] = schema[key2];
     }
   }
   if (schema.type === "object" && schema.$ref === void 0) {
     if (schema.propertyNames !== void 0 && !containsRef(schema.propertyNames)) {
       extraMeta.propertyNames = schema.propertyNames;
     }
-    for (const key of ["minProperties", "maxProperties"]) {
-      if (schema[key] !== void 0)
-        extraMeta[key] = schema[key];
+    for (const key2 of ["minProperties", "maxProperties"]) {
+      if (schema[key2] !== void 0)
+        extraMeta[key2] = schema[key2];
     }
   }
   if (schema.type === "array" && schema.$ref === void 0) {
     if (schema.contains !== void 0 && !containsRef(schema.contains)) {
       extraMeta.contains = schema.contains;
     }
-    for (const key of ["uniqueItems", "minContains", "maxContains"]) {
-      if (schema[key] !== void 0)
-        extraMeta[key] = schema[key];
+    for (const key2 of ["uniqueItems", "minContains", "maxContains"]) {
+      if (schema[key2] !== void 0)
+        extraMeta[key2] = schema[key2];
     }
   }
-  for (const key of Object.keys(schema)) {
-    if (!RECOGNIZED_KEYS.has(key)) {
-      assignProp(extraMeta, key, schema[key]);
+  for (const key2 of Object.keys(schema)) {
+    if (!RECOGNIZED_KEYS.has(key2)) {
+      assignProp(extraMeta, key2, schema[key2]);
     }
   }
   if (Object.keys(extraMeta).length > 0) {
@@ -30925,7 +28131,162 @@ function fromJSONSchema(schema, params) {
   return convertSchema(normalized, ctx);
 }
 
-// node_modules/zod/v4/classic/deep-partial.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/core/visit.js
+var RESOLVING = /* @__PURE__ */ Symbol("z.visit/resolving");
+function visit(schema, fnOrHandlers) {
+  const fn = typeof fnOrHandlers === "function" ? fnOrHandlers : (node2, rewritten) => {
+    const h = fnOrHandlers[node2._zod.def.type];
+    return h ? h(node2, rewritten) : node2;
+  };
+  const cache3 = /* @__PURE__ */ new Map();
+  function run(s) {
+    const cached2 = cache3.get(s);
+    if (cached2 === RESOLVING) {
+      return new $ZodLazy({
+        type: "lazy",
+        getter: () => cache3.get(s)
+      });
+    }
+    if (cached2 !== void 0)
+      return cached2;
+    cache3.set(s, RESOLVING);
+    const inner = mapInner(s);
+    const mapped = fn(inner, inner !== s);
+    cache3.set(s, mapped);
+    return mapped;
+  }
+  function mapInner(s) {
+    const def = s._zod.def;
+    const kind = def.type;
+    switch (kind) {
+      case "object": {
+        const oldShape = def.shape;
+        const keys = Object.keys(oldShape);
+        let changed = false;
+        const newShape = {};
+        for (const k of keys) {
+          const mapped = run(oldShape[k]);
+          if (mapped !== oldShape[k])
+            changed = true;
+          newShape[k] = mapped;
+        }
+        let newCatchall = def.catchall;
+        if (def.catchall) {
+          newCatchall = run(def.catchall);
+          if (newCatchall !== def.catchall)
+            changed = true;
+        }
+        return changed ? clone(s, { ...def, shape: newShape, catchall: newCatchall }) : s;
+      }
+      case "array": {
+        const mapped = run(def.element);
+        return mapped === def.element ? s : clone(s, { ...def, element: mapped });
+      }
+      case "tuple": {
+        const oldItems = def.items;
+        let changed = false;
+        const newItems = [];
+        for (const item of oldItems) {
+          const mapped = run(item);
+          if (mapped !== item)
+            changed = true;
+          newItems.push(mapped);
+        }
+        let newRest = def.rest;
+        if (def.rest) {
+          newRest = run(def.rest);
+          if (newRest !== def.rest)
+            changed = true;
+        }
+        return changed ? clone(s, { ...def, items: newItems, rest: newRest }) : s;
+      }
+      case "record":
+      case "map": {
+        const newKey = run(def.keyType);
+        const newVal = run(def.valueType);
+        return newKey === def.keyType && newVal === def.valueType ? s : clone(s, { ...def, keyType: newKey, valueType: newVal });
+      }
+      case "set": {
+        const newVal = run(def.valueType);
+        return newVal === def.valueType ? s : clone(s, { ...def, valueType: newVal });
+      }
+      case "union": {
+        const oldOptions = def.options;
+        let changed = false;
+        const newOptions = [];
+        for (const opt of oldOptions) {
+          const mapped = run(opt);
+          if (mapped !== opt)
+            changed = true;
+          newOptions.push(mapped);
+        }
+        return changed ? clone(s, { ...def, options: newOptions }) : s;
+      }
+      case "intersection": {
+        const newLeft = run(def.left);
+        const newRight = run(def.right);
+        return newLeft === def.left && newRight === def.right ? s : clone(s, { ...def, left: newLeft, right: newRight });
+      }
+      case "optional":
+      case "nullable":
+      case "default":
+      case "prefault":
+      case "catch":
+      case "readonly":
+      case "nonoptional":
+      case "promise":
+      case "success": {
+        const newInner = run(def.innerType);
+        return newInner === def.innerType ? s : clone(s, { ...def, innerType: newInner });
+      }
+      case "pipe": {
+        const newIn = run(def.in);
+        const newOut = run(def.out);
+        return newIn === def.in && newOut === def.out ? s : clone(s, { ...def, in: newIn, out: newOut });
+      }
+      case "function": {
+        const newInput = run(def.input);
+        const newOutput = run(def.output);
+        return newInput === def.input && newOutput === def.output ? s : clone(s, { ...def, input: newInput, output: newOutput });
+      }
+      case "lazy": {
+        const original = def.getter;
+        const { _cachedInner, ...rest } = def;
+        return clone(s, { ...rest, getter: () => run(original()) });
+      }
+      // A leaf by choice: `parts` are regex fragments, not data positions.
+      case "template_literal":
+      // Leaves.
+      case "string":
+      case "number":
+      case "int":
+      case "boolean":
+      case "bigint":
+      case "symbol":
+      case "undefined":
+      case "null":
+      case "void":
+      case "never":
+      case "any":
+      case "unknown":
+      case "date":
+      case "nan":
+      case "enum":
+      case "literal":
+      case "file":
+      case "transform":
+      case "custom":
+        return s;
+      default: {
+        kind;
+        return s;
+      }
+    }
+  }
+  return run(schema);
+}
+
+// D:/Development/claude-codex-comm/node_modules/zod/v4/classic/deep-partial.js
 function deepPartial(schema) {
   return visit(schema, {
     object: (s) => s.partial(),
@@ -30937,7 +28298,7 @@ function deepPartial(schema) {
   });
 }
 
-// node_modules/zod/v4/classic/in-out.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/classic/in-out.js
 function withChecks(side, checks) {
   if (!checks?.length)
     return side;
@@ -30967,9 +28328,9 @@ function output(schema) {
   });
 }
 
-// node_modules/zod/v4/classic/coerce.js
-var coerce_exports2 = {};
-__export(coerce_exports2, {
+// D:/Development/claude-codex-comm/node_modules/zod/v4/classic/coerce.js
+var coerce_exports = {};
+__export(coerce_exports, {
   bigint: () => bigint3,
   boolean: () => boolean3,
   date: () => date4,
@@ -30977,22 +28338,6414 @@ __export(coerce_exports2, {
   string: () => string3
 });
 function string3(params) {
-  return _coercedString(ZodString2, params);
+  return _coercedString(ZodString, params);
 }
 function number3(params) {
-  return _coercedNumber(ZodNumber2, params);
+  return _coercedNumber(ZodNumber, params);
 }
 function boolean3(params) {
-  return _coercedBoolean(ZodBoolean2, params);
+  return _coercedBoolean(ZodBoolean, params);
 }
 function bigint3(params) {
-  return _coercedBigint(ZodBigInt2, params);
+  return _coercedBigint(ZodBigInt, params);
 }
 function date4(params) {
-  return _coercedDate(ZodDate2, params);
+  return _coercedDate(ZodDate, params);
 }
 
-// node_modules/@modelcontextprotocol/sdk/dist/esm/types.js
+// src/network/constants.ts
+var NETWORK_VERSION = 1;
+var DEFAULT_NETWORK_PORT = 48148;
+var DISCOVERY_PORT = 48149;
+var DISCOVERY_GROUP = "239.255.48.49";
+var DISCOVERY_INTERVAL_MS = 5e3;
+var DISCOVERY_TTL_MS = 2e4;
+var MAX_DISCOVERY_BYTES = 1024;
+var MAX_DISCOVERED_INSTANCES = 128;
+var MAX_NETWORK_PEERS = 256;
+var MAX_NETWORK_LINKS = 16;
+var MAX_NETWORK_FRAME_BYTES = 2 * 1024 * 1024;
+var MAX_NETWORK_REQUESTS = 64;
+var NETWORK_TIMEOUT_MS = 5e3;
+var NETWORK_REFRESH_MS = 2e3;
+var PAIRING_TTL_MS = 10 * 60 * 1e3;
+var PAIRING_KEY_BYTES = 32;
+var MAX_PAIRING_CODE_CHARS = 1024;
+var NETWORK_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+var MAX_NETWORK_NAME_CHARS = 64;
+var MAX_NETWORK_HOST_CHARS = 255;
+var MAX_PORT2 = 65535;
+var TLS_CIPHER = "TLS_AES_128_GCM_SHA256";
+var OWNER_FILE_MODE = 384;
+var OWNER_DIR_MODE = 448;
+
+// src/network/config.ts
+var networkConfigSchema = external_exports.object({
+  enabled: external_exports.boolean().default(false),
+  name: external_exports.string().regex(NETWORK_NAME_PATTERN).default(hostname3().replace(/[^A-Za-z0-9._-]/g, "-").replace(/^[^A-Za-z0-9]+/, "").slice(0, MAX_NETWORK_NAME_CHARS) || "host"),
+  bind: external_exports.string().min(1).max(MAX_NETWORK_HOST_CHARS).default("127.0.0.1"),
+  port: external_exports.number().int().min(0).max(MAX_PORT2).default(DEFAULT_NETWORK_PORT),
+  discovery: external_exports.boolean().default(false)
+});
+var DEFAULT_NETWORK_CONFIG = networkConfigSchema.parse({});
+function parseNetworkConfig(value) {
+  const result = networkConfigSchema.safeParse(value);
+  return result.success ? result.data : void 0;
+}
+function writeNetworkConfig(home, value) {
+  const config2 = networkConfigSchema.parse(value);
+  const path = join8(home, CONFIG_FILE_NAME);
+  const previous = readJsonStore(path);
+  writeJsonStore(path, mergeStoreFields(isRecord(previous) ? previous : {}, { network: config2 }), previous);
+  return config2;
+}
+
+// src/core/config.ts
+var DELIVERY_MODES = ["auto", "channel", "hooks"];
+var CODEX_SANDBOXES = ["read-only", "workspace-write", "danger-full-access"];
+var CLAUDE_PERMISSION_MODES = ["default", "manual", "acceptEdits", "plan", "auto", "dontAsk", "bypassPermissions"];
+var DEFAULT_NOTIFICATIONS = { approvals: true, finish: true, fail: true };
+var DEFAULT_CONFIG = {
+  name: null,
+  autoWake: false,
+  wakeOnDirect: true,
+  maxHops: DEFAULT_MAX_HOPS,
+  maxJobs: DEFAULT_MAX_JOBS,
+  autoApproveTools: [],
+  resourceSlots: {},
+  delivery: "auto",
+  claudeBin: DEFAULT_CLAUDE_BIN,
+  codexBin: DEFAULT_CODEX_BIN,
+  codexSandbox: "read-only",
+  codexWorktreeSandbox: null,
+  codexWorkspaceWriteNetworkAccess: null,
+  claudePermissionMode: "default",
+  lingerSec: DEFAULT_LINGER_SEC,
+  codexModel: null,
+  claudeModel: null,
+  opencodeBin: DEFAULT_OPENCODE_BIN,
+  opencodeModel: null,
+  effort: {},
+  opencodeAutoApprove: false,
+  dashboard: true,
+  dashboardPort: DEFAULT_DASHBOARD_PORT,
+  notifications: DEFAULT_NOTIFICATIONS,
+  network: DEFAULT_NETWORK_CONFIG
+};
+var TRUE_VALUES = /* @__PURE__ */ new Set(["1", "true", "yes", "on"]);
+var FALSE_VALUES = /* @__PURE__ */ new Set(["0", "false", "no", "off"]);
+function parseBool(v) {
+  if (typeof v === "boolean") return v;
+  if (typeof v !== "string") return void 0;
+  const s = v.trim().toLowerCase();
+  if (TRUE_VALUES.has(s)) return true;
+  if (FALSE_VALUES.has(s)) return false;
+  return void 0;
+}
+function notifications(v) {
+  if (!isRecord(v)) return void 0;
+  const out = { ...DEFAULT_NOTIFICATIONS };
+  for (const key2 of Object.keys(out)) {
+    if (v[key2] === void 0) continue;
+    const value = parseBool(v[key2]);
+    if (value === void 0) return void 0;
+    out[key2] = value;
+  }
+  return out;
+}
+function parseIntInRange(v, min, max) {
+  const n = typeof v === "number" ? v : typeof v === "string" ? Number.parseInt(v, 10) : Number.NaN;
+  return Number.isInteger(n) && n >= min && n <= max ? n : void 0;
+}
+function oneOf(v, allowed) {
+  return typeof v === "string" && allowed.includes(v) ? v : void 0;
+}
+var MAX_HOPS_LIMIT = 100;
+var MAX_LINGER_SEC = 3600;
+var RESOURCE_NAME_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/;
+var MAX_RESOURCE_SLOTS = 100;
+function resourceSlots(v) {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return void 0;
+  const entries = Object.entries(v);
+  if (!entries.every(([name, count]) => RESOURCE_NAME_PATTERN.test(name) && typeof count === "number" && Number.isInteger(count) && count >= 1 && count <= MAX_RESOURCE_SLOTS)) return void 0;
+  return Object.fromEntries(entries);
+}
+var MODEL_NAME_PATTERN = /^[^\s"'`&|<>^%$;()]{1,200}$/;
+function modelName(v) {
+  return typeof v === "string" && MODEL_NAME_PATTERN.test(v.trim()) ? v.trim() : void 0;
+}
+var EFFORT_NAME = /^[A-Za-z0-9_-]{1,20}$/;
+function effortLevels(v) {
+  if (typeof v === "string" && EFFORT_NAME.test(v)) return Object.fromEntries(AGENT_KINDS.map((k) => [k, v]));
+  if (!v || typeof v !== "object" || Array.isArray(v)) return void 0;
+  const out = {};
+  for (const [k, x] of Object.entries(v)) if (AGENT_KINDS.includes(k) && typeof x === "string" && EFFORT_NAME.test(x)) out[k] = x;
+  return out;
+}
+function toolPatterns(v) {
+  const list = Array.isArray(v) ? v : typeof v === "string" ? v.split(",") : null;
+  if (!list || !list.every((x) => typeof x === "string")) return void 0;
+  return list.map((x) => x.trim()).filter(Boolean);
+}
+var CONFIG_POLL_MS = 2e3;
+function watchConfig(home, agent, log, onChange) {
+  const path = join9(home, CONFIG_FILE_NAME);
+  const listener = (cur, prev) => {
+    if (cur.mtimeMs === prev.mtimeMs) return;
+    log.info("config file changed; applying it", { path });
+    onChange(loadConfig(home, agent, log));
+  };
+  watchFile(path, { interval: CONFIG_POLL_MS, persistent: false }, listener);
+  return () => unwatchFile(path, listener);
+}
+function saveConfigValue(home, key2, value) {
+  const path = join9(home, CONFIG_FILE_NAME);
+  const previous = readJsonStore(path);
+  const file2 = isRecord(previous) ? previous : {};
+  writeJsonStore(path, { ...file2, [key2]: value }, previous);
+}
+function loadConfig(home, agent, log, env = process.env) {
+  let file2 = {};
+  const path = join9(home, CONFIG_FILE_NAME);
+  try {
+    file2 = readJsonStore(path, log) ?? {};
+    log.debug("config file loaded", { path });
+  } catch (err) {
+    if (err.code !== "ENOENT") log.warn("ignoring unreadable config file", { path, err: err.message });
+  }
+  const section = isRecord(file2[agent]) ? file2[agent] : {};
+  const pick2 = (key2, envKey, parse4) => {
+    for (const v of [envKey ? env[envKey] : void 0, section[key2], file2[key2]]) {
+      if (v === void 0) continue;
+      const parsed = parse4(v);
+      if (parsed !== void 0) return parsed;
+      log.warn("ignoring invalid config value", { key: key2, value: String(v) });
+    }
+    return void 0;
+  };
+  const str = (v) => typeof v === "string" && v.trim() ? v.trim() : void 0;
+  const d = DEFAULT_CONFIG;
+  const cfg = {
+    name: pick2("name", ENV.name, str) ?? d.name,
+    autoWake: pick2("autoWake", ENV.autoWake, parseBool) ?? d.autoWake,
+    wakeOnDirect: pick2("wakeOnDirect", ENV.wakeOnDirect, parseBool) ?? d.wakeOnDirect,
+    maxHops: pick2("maxHops", ENV.maxHops, (v) => parseIntInRange(v, 0, MAX_HOPS_LIMIT)) ?? d.maxHops,
+    maxJobs: pick2("maxJobs", ENV.maxJobs, (v) => parseIntInRange(v, 1, MAX_JOBS_LIMIT)) ?? d.maxJobs,
+    autoApproveTools: pick2("autoApproveTools", ENV.autoApproveTools, toolPatterns) ?? d.autoApproveTools,
+    // Capacities must agree across agents; per-agent sections cannot override shared resources.
+    resourceSlots: resourceSlots(file2.resourceSlots) ?? d.resourceSlots,
+    delivery: pick2("delivery", ENV.delivery, (v) => oneOf(v, DELIVERY_MODES)) ?? d.delivery,
+    claudeBin: pick2("claudeBin", ENV.claudeBin, str) ?? d.claudeBin,
+    codexBin: pick2("codexBin", ENV.codexBin, str) ?? d.codexBin,
+    codexSandbox: pick2("codexSandbox", null, (v) => oneOf(v, CODEX_SANDBOXES)) ?? d.codexSandbox,
+    codexWorktreeSandbox: pick2("codexWorktreeSandbox", null, (v) => oneOf(v, CODEX_SANDBOXES)) ?? d.codexWorktreeSandbox,
+    codexWorkspaceWriteNetworkAccess: pick2("codexWorkspaceWriteNetworkAccess", null, parseBool) ?? d.codexWorkspaceWriteNetworkAccess,
+    claudePermissionMode: pick2("claudePermissionMode", null, (v) => oneOf(v, CLAUDE_PERMISSION_MODES)) ?? d.claudePermissionMode,
+    lingerSec: pick2("lingerSec", ENV.lingerSec, (v) => parseIntInRange(v, 0, MAX_LINGER_SEC)) ?? d.lingerSec,
+    codexModel: pick2("codexModel", null, modelName) ?? d.codexModel,
+    claudeModel: pick2("claudeModel", null, modelName) ?? d.claudeModel,
+    opencodeBin: pick2("opencodeBin", ENV.opencodeBin, str) ?? d.opencodeBin,
+    opencodeModel: pick2("opencodeModel", null, modelName) ?? d.opencodeModel,
+    effort: pick2("effort", null, effortLevels) ?? d.effort,
+    opencodeAutoApprove: pick2("opencodeAutoApprove", null, parseBool) ?? d.opencodeAutoApprove,
+    dashboard: pick2("dashboard", ENV.dashboard, parseBool) ?? d.dashboard,
+    dashboardPort: pick2("dashboardPort", null, (v) => parseIntInRange(v, 1, 65535)) ?? d.dashboardPort,
+    notifications: pick2("notifications", null, notifications) ?? d.notifications,
+    network: pick2("network", null, parseNetworkConfig) ?? d.network
+  };
+  log.debug("effective config", { ...cfg });
+  return cfg;
+}
+function parseAgentKind(v) {
+  return oneOf(v?.trim().toLowerCase(), AGENT_KINDS) ?? "other";
+}
+function defaultPeerName(agent, cwd) {
+  const folder = basename2(cwd).replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^[-._]+/, "").slice(0, 40);
+  return `${agent}-${folder || "session"}`;
+}
+
+// src/core/opencode-models.ts
+var LIST_TIMEOUT_MS = 6e4;
+var CACHE_TTL_MS = 10 * 60 * 1e3;
+var MODEL_LINE = /^[A-Za-z0-9._-]+\/\S+$/;
+var MAX_SUGGESTIONS = 8;
+var cache = null;
+async function listOpencodeModels(bin, cwd, log) {
+  if (cache && Date.now() - cache.at < CACHE_TTL_MS) return cache.models;
+  const res = await runProcess({ bin, args: ["models"], stdin: "", cwd, timeoutMs: LIST_TIMEOUT_MS, env: childEnv(), log });
+  const models = res.stdout.split(/\r?\n/).map((l) => l.trim()).filter((l) => MODEL_LINE.test(l));
+  if (models.length) cache = { at: Date.now(), models };
+  return models;
+}
+function resolveOpencodeModel(input2, models) {
+  const want = input2.trim();
+  if (models.length === 0) return { model: want, note: null };
+  if (models.includes(want)) return { model: want, note: null };
+  const lower = want.toLowerCase();
+  const exactCi = models.filter((m) => m.toLowerCase() === lower);
+  if (exactCi.length === 1) return { model: exactCi[0], note: null };
+  const [provider, ...rest] = lower.includes("/") ? lower.split("/") : ["", lower];
+  const name = rest.join("/");
+  const matches = models.filter((m) => {
+    const [mp, ...mr] = m.toLowerCase().split("/");
+    const mn = mr.join("/");
+    if (provider && mp !== provider) return false;
+    return mn === name || mn.startsWith(name) || mn.includes(name);
+  });
+  const prefixed = matches.filter((m) => m.toLowerCase().split("/").slice(1).join("/").startsWith(name));
+  const best = prefixed.length ? prefixed : matches;
+  if (best.length === 1) return { model: best[0], note: `model "${want}" resolved to "${best[0]}"` };
+  const suggest = (list) => list.slice(0, MAX_SUGGESTIONS).join(", ");
+  if (best.length > 1) return { error: `The opencode model "${want}" is ambiguous. Pass one of: ${suggest(best)}${best.length > MAX_SUGGESTIONS ? ", \u2026" : ""}` };
+  const near = models.filter((m) => name.split(/[-._]/).some((part) => part.length > 2 && m.toLowerCase().includes(part)));
+  return {
+    error: `Unknown opencode model "${want}". Use "provider/model" from \`opencode models\`${near.length ? `, e.g. ${suggest(near)}` : ""}.`
+  };
+}
+
+// src/core/opencode-served.ts
+import { spawn as spawn2 } from "node:child_process";
+import { randomBytes as randomBytes4 } from "node:crypto";
+import { extname as extname2 } from "node:path";
+var SERVE_START_TIMEOUT_MS = 3e4;
+var LISTEN_RE = /listening on (https?:\/\/[^\s]+)/i;
+var SERVER_USER = "opencode";
+var PASSWORD_BYTES = 24;
+var MAX_DETAIL_CHARS = 4e3;
+var OPENCODE_ASK_PERMISSIONS = { edit: "ask", bash: "ask" };
+var START_WATCHDOG_MS = 6e4;
+var SERVE_OUTPUT_TAIL_CHARS = 4e3;
+function watchServeOutput(onListening) {
+  let out = "";
+  let listening = false;
+  return {
+    onData: (d) => {
+      if (listening) return;
+      out = (out + d.toString()).slice(-SERVE_OUTPUT_TAIL_CHARS);
+      const m = LISTEN_RE.exec(out);
+      if (m) {
+        listening = true;
+        out = "";
+        onListening(m[1].replace(/\/+$/, ""));
+      }
+    },
+    tail: () => out
+  };
+}
+function startServe(bin, cwd, env) {
+  let resolved = resolveBinary(bin, env);
+  if (!resolved) return Promise.reject(new DelegateError(`executable not found: ${bin}`, "not_found"));
+  let prefix = [];
+  if (process.platform === "win32" && [".cmd", ".bat"].includes(extname2(resolved).toLowerCase())) {
+    const target = unwrapNpmShim(resolved);
+    if (!target) return Promise.reject(new DelegateError(`cannot start ${bin} without a shell`, "failed"));
+    resolved = target.command;
+    prefix = target.prefix;
+  }
+  return new Promise((resolve10, reject) => {
+    const child = spawn2(resolved, [...prefix, "serve", "--port", "0", "--hostname", "127.0.0.1"], {
+      cwd,
+      env: { ...env, PWD: cwd },
+      windowsHide: true,
+      stdio: ["ignore", "pipe", "pipe"],
+      detached: process.platform !== "win32"
+    });
+    trackChild(child);
+    const output2 = watchServeOutput((url2) => {
+      clearTimeout(timer);
+      resolve10({ child, url: url2 });
+    });
+    const timer = setTimeout(() => {
+      void killTree(child);
+      reject(new DelegateError(`opencode serve did not start within ${SERVE_START_TIMEOUT_MS / 1e3}s (startup timeout)`, "timeout", output2.tail()));
+    }, SERVE_START_TIMEOUT_MS);
+    child.stdout.on("data", output2.onData);
+    child.stderr.on("data", output2.onData);
+    child.on("error", (err) => {
+      clearTimeout(timer);
+      reject(new DelegateError(`failed to start opencode serve: ${err.message}`, "failed"));
+    });
+    child.on("exit", (code, signal) => {
+      clearTimeout(timer);
+      reject(new DelegateError(`opencode serve exited early (${signal ? `signal ${signal}` : `code ${code}`})`, "failed", output2.tail()));
+    });
+  });
+}
+async function* sse(body) {
+  const decoder = new TextDecoder();
+  let buf = "";
+  for await (const chunk of body) {
+    buf += decoder.decode(chunk, { stream: true });
+    let idx;
+    while ((idx = buf.indexOf("\n\n")) >= 0) {
+      const block = buf.slice(0, idx);
+      buf = buf.slice(idx + 2);
+      const data = block.split(/\r?\n/).filter((l) => l.startsWith("data:")).map((l) => l.slice(5).trim()).join("\n");
+      if (!data) continue;
+      try {
+        yield JSON.parse(data);
+      } catch {
+      }
+    }
+  }
+}
+function mcpToolPrefix(server) {
+  return `${server.replace(/[^a-zA-Z0-9_-]/g, "_")}_`;
+}
+function opencodePermissionRequest(p, mcpServers, cwd) {
+  const permission = String(p.permission ?? "unknown");
+  const detail = permissionDetail(p);
+  const server = [...mcpServers].sort((a, b) => b.length - a.length).find((s) => permission.startsWith(mcpToolPrefix(s)));
+  if (server) return { agent: "opencode", tool: `mcp:${server}`, detail: `${permission}: ${detail}`.slice(0, MAX_DETAIL_CHARS), cwd };
+  return { agent: "opencode", tool: permission, detail, cwd };
+}
+function permissionDetail(p) {
+  const patterns = Array.isArray(p.patterns) ? p.patterns.join(", ") : "";
+  const meta3 = p.metadata && typeof p.metadata === "object" ? p.metadata : {};
+  const cmd = typeof meta3.command === "string" ? meta3.command : typeof meta3.filepath === "string" ? meta3.filepath : "";
+  return (cmd || patterns || JSON.stringify(meta3)).slice(0, MAX_DETAIL_CHARS);
+}
+async function delegateToOpencodeServed(req) {
+  checkDepthPublic();
+  const password = randomBytes4(PASSWORD_BYTES).toString("hex");
+  const permissions = req.permissions === void 0 ? OPENCODE_ASK_PERMISSIONS : req.permissions;
+  const env = childEnvPublic({
+    ...req.extraEnv,
+    OPENCODE_SERVER_PASSWORD: password,
+    OPENCODE_SERVER_USERNAME: SERVER_USER,
+    ...permissions ? { OPENCODE_CONFIG_CONTENT: JSON.stringify({ permission: permissions }) } : {}
+  });
+  const { child, url: url2 } = await startServe(req.bin, req.cwd, env);
+  const auth = `Basic ${Buffer.from(`${SERVER_USER}:${password}`).toString("base64")}`;
+  const q = `directory=${encodeURIComponent(req.cwd)}`;
+  const ac = new AbortController();
+  const onAbort = () => ac.abort();
+  req.signal?.addEventListener("abort", onAbort, { once: true });
+  const timer = setTimeout(() => ac.abort(), req.timeoutSec * 1e3);
+  const api = async (method, path, body) => {
+    const res = await fetch(`${url2}${path}${path.includes("?") ? "&" : "?"}${q}`, {
+      method,
+      headers: { authorization: auth, "content-type": "application/json" },
+      body: body === void 0 ? void 0 : JSON.stringify(body),
+      signal: ac.signal
+    });
+    if (!res.ok) throw new DelegateError(`opencode API ${method} ${path} failed: HTTP ${res.status}`, "failed", await res.text().catch(() => ""));
+    const text2 = await res.text();
+    return text2 ? JSON.parse(text2) : null;
+  };
+  let knownSession = req.sessionId ?? null;
+  try {
+    const sessionId = req.sessionId ?? (await api("POST", "/session", {})).id;
+    req.onSession?.(sessionId);
+    knownSession = sessionId;
+    const mcpServers = Object.keys(await api("GET", "/mcp").catch(() => null) ?? {});
+    const events = await fetch(`${url2}/event?${q}`, { headers: { authorization: auth, accept: "text/event-stream" }, signal: ac.signal });
+    if (!events.ok || !events.body) throw new DelegateError(`opencode event stream failed: HTTP ${events.status}`, "failed");
+    const [providerID, ...rest] = (req.model ?? "").split("/");
+    const body = { parts: [{ type: "text", text: req.prompt }] };
+    if (req.model && rest.length) body.model = { providerID, modelID: rest.join("/") };
+    if (req.effort) body.variant = req.effort;
+    await api("POST", `/session/${sessionId}/prompt_async`, body);
+    let failure2 = null;
+    const onEvent = progressEventHandler("opencode", req.onProgress);
+    let alive2 = false;
+    const watchdog = setTimeout(() => {
+      if (alive2) return;
+      failure2 = "opencode did not start working on the prompt within 60 seconds (check the model id and the provider's login).";
+      ac.abort();
+    }, START_WATCHDOG_MS);
+    try {
+      for await (const ev of sse(events.body)) {
+        const type = String(ev.type ?? "");
+        const p = ev.properties ?? {};
+        const mine = p.sessionID === sessionId || p.part?.sessionID === sessionId || p.info?.sessionID === sessionId;
+        if (mine) alive2 = true;
+        if (type === "session.error" && !p.sessionID) {
+          failure2 = String(p.error?.data?.message ?? p.error?.message ?? "opencode reported an error");
+          break;
+        }
+        if (type === "permission.asked" && p.sessionID === sessionId) {
+          const decision = await req.onPermission(opencodePermissionRequest(p, mcpServers, req.cwd));
+          await api("POST", `/permission/${p.id}/reply`, decision.allow ? { reply: "once" } : { reply: "reject", message: decision.message });
+        } else if (type === "message.part.updated" && p.part?.sessionID === sessionId) {
+          const part = p.part;
+          const ready = part.type === "tool" && (part.state?.status === "running" || part.state?.status === "completed") || part.type === "text" && part.time?.end || part.type === "reasoning" && part.time?.end;
+          if (ready) onEvent?.({ part });
+        } else if (type === "session.error" && p.sessionID === sessionId) {
+          failure2 = String(p.error?.data?.message ?? p.error?.message ?? "opencode session error");
+          break;
+        } else if (type === "session.idle" && p.sessionID === sessionId || type === "session.status" && p.sessionID === sessionId && p.status?.type === "idle") {
+          break;
+        }
+      }
+    } catch (err) {
+      if (!failure2) throw err;
+    } finally {
+      clearTimeout(watchdog);
+    }
+    if (failure2 && !alive2) throw new DelegateError(failure2, "failed", "", "", sessionId);
+    const messages = await api("GET", `/session/${sessionId}/message`) ?? [];
+    const last = [...messages].reverse().find((m) => m.info?.role === "assistant");
+    const text2 = (last?.parts ?? []).filter((part) => part.type === "text" && typeof part.text === "string").map((part) => part.text).join("");
+    if (failure2 && !text2) throw new DelegateError(failure2, "failed", "", "", sessionId);
+    const tokens = last?.info?.tokens;
+    return {
+      sessionId,
+      text: text2,
+      isError: failure2 !== null,
+      details: {
+        error: failure2,
+        usage: tokens ? { input: Number(tokens.input) || 0, output: Number(tokens.output) || 0 } : null,
+        costUsd: typeof last?.info?.cost === "number" ? last.info.cost : null
+      }
+    };
+  } catch (err) {
+    if (ac.signal.aborted && !(err instanceof DelegateError)) {
+      if (req.signal?.aborted) throw new DelegateError("delegate aborted", "aborted", "", "", knownSession);
+      const hint = knownSession ? `. The opencode session ${knownSession} keeps its progress: call again with session_id="${knownSession}" (and a longer timeout_sec, or use spawn_opencode) to continue instead of starting over.` : "";
+      throw new DelegateError(`delegate timed out after ${req.timeoutSec}s (its time limit, timeout_sec)${hint}`, "timeout", "", "", knownSession);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+    req.signal?.removeEventListener("abort", onAbort);
+    ac.abort();
+    await killTree(child);
+  }
+}
+
+// src/core/codex-appserver.ts
+import { spawn as spawn3 } from "node:child_process";
+var STEER_HEADER = (from) => `[Message from ${from}, who gave you this task, sent while you work. Answer it briefly in your next message, then continue the task, adjusted to what it asks.]`;
+var SIBLING_STEER_HEADER = '[Message from a sibling job working for the same supervisor. Coordinate within your assigned task and answer with the agent-bridge "send" tool using to=<from> and reply_to=<id>.]';
+var OPT_OUT = [
+  "item/agentMessage/delta",
+  "item/reasoning/summaryTextDelta",
+  "item/reasoning/summaryPartAdded",
+  "item/reasoning/textDelta",
+  "item/commandExecution/outputDelta",
+  "item/fileChange/outputDelta",
+  "item/plan/delta"
+];
+var STDERR_TAIL_CHARS2 = 4e3;
+var STARTUP_TIMEOUT_MS = 18e4;
+var CODEX_FULL_ACCESS_APPROVAL_POLICY = {
+  granular: { sandbox_approval: false, rules: false, mcp_elicitations: true }
+};
+function innerCommand(s) {
+  const m = /^(?:"[^"]*[\\/]|[^\s"]*[\\/])?(?:pwsh|powershell|bash|zsh|sh|cmd)(?:\.exe)?"?\s+(?:-NoProfile\s+|-NoLogo\s+)*(?:-Command|-lc|-c|\/c)\s+([\s\S]*)$/i.exec(s.trim());
+  if (!m) return s;
+  const c = m[1].trim();
+  return /^'[\s\S]*'$|^"[\s\S]*"$/.test(c) ? c.slice(1, -1) : c;
+}
+function codexTurnSandbox(sandbox, cwd, roots = [], reported, networkAccess) {
+  if (sandbox === "danger-full-access") return { type: "dangerFullAccess" };
+  if (sandbox === "read-only") return { type: "readOnly", networkAccess: false };
+  const inherited = reported?.type === "workspaceWrite" ? reported : {};
+  return {
+    ...inherited,
+    type: "workspaceWrite",
+    writableRoots: [.../* @__PURE__ */ new Set([cwd, ...roots, ...Array.isArray(inherited.writableRoots) ? inherited.writableRoots : []])],
+    ...networkAccess !== void 0 ? { networkAccess } : {}
+  };
+}
+function asExecEvent(kind, item) {
+  const type = { agentMessage: "agent_message", commandExecution: "command_execution", fileChange: "file_change", mcpToolCall: "mcp_tool_call", webSearch: "web_search", reasoning: "reasoning" }[item?.type] ?? item?.type;
+  return { type: kind, item: { ...item, type } };
+}
+async function delegateToCodexAppServer(req) {
+  checkDepth();
+  const mappings = codexDriveMappings(`${req.cwd}
+${req.prompt}`);
+  req = { ...req, prompt: codexPathPrompt(req.prompt, mappings) };
+  const cwd = realFolder(req.cwd);
+  const env = childEnv(req.extraEnv);
+  const { resolved, args, needsShell } = resolveCommand(req.bin, ["app-server"], env, req.log);
+  req.log.debug("starting codex app-server", { bin: resolved, cwd });
+  const child = spawn3(resolved, args, { cwd, env: { ...env, PWD: cwd }, shell: needsShell, windowsHide: true, stdio: ["pipe", "pipe", "pipe"], detached: process.platform !== "win32" });
+  trackChild(child);
+  let nextId = 1;
+  const pending = /* @__PURE__ */ new Map();
+  let stderr = "";
+  let threadId = req.sessionId ?? null;
+  let turnId = null;
+  const finalAnswers = new FinalAnswers();
+  let usage = null;
+  let retryableError = null;
+  let finished = () => {
+  };
+  const turnDone = new Promise((r) => finished = r);
+  const completions = /* @__PURE__ */ new Map();
+  const answers = [];
+  let awaitingAnswer = false;
+  const onEvent = progressEventHandler("codex", req.onProgress);
+  const write = (msg) => {
+    if (!child.stdin.writable) return;
+    child.stdin.write(`${JSON.stringify(msg)}
+`);
+  };
+  const request2 = (method, params) => new Promise((resolve10, reject) => {
+    const id = nextId++;
+    pending.set(id, { resolve: resolve10, reject });
+    write({ id, method, params });
+  });
+  const editPaths = /* @__PURE__ */ new Map();
+  const denialMessages = [];
+  const deliverDenials = async () => {
+    if (!threadId || !turnId) return;
+    for (const message of denialMessages.splice(0)) {
+      try {
+        await request2("turn/steer", { threadId, expectedTurnId: turnId, input: [{ type: "text", text: message, text_elements: [] }] });
+      } catch (err) {
+        req.log.warn("could not deliver approval denial reason", { message, err: err.message });
+        req.onDenied?.(message);
+      }
+    }
+  };
+  const decide = async (tool, detail) => {
+    if (!req.approve) return { allow: false, message: "Denied by agent-bridge: no approval handler is available." };
+    try {
+      return await req.approve({ agent: "codex", tool, detail, cwd });
+    } catch (err) {
+      return { allow: false, message: `Denied by agent-bridge: approval forwarding failed: ${String(err?.message ?? err)}` };
+    }
+  };
+  const answerRequest = async (id, method, params) => {
+    const reply = (result) => write({ id, result });
+    const answer = (decision, result, tool) => {
+      reply(result);
+      if (!decision.allow) {
+        const message = `Approval denied for ${tool}. ${decision.message || "Denied by the approval handler; no reason supplied."}`;
+        req.onProgress?.(message);
+        denialMessages.push(message);
+        void deliverDenials();
+      }
+    };
+    const sandboxDenial = { allow: false, message: "Denied by agent-bridge: this job's access does not allow sandbox escalations; the supervisor was not asked." };
+    switch (method) {
+      case "mcpServer/elicitation/request": {
+        const tool = `mcp:${params.serverName ?? "tool"}`;
+        const decision = await decide(tool, String(params.message ?? "an MCP tool call"));
+        const props = params.requestedSchema?.properties ?? {};
+        const content = Object.fromEntries(Object.entries(props).filter(([, v]) => v && "default" in v).map(([k, v]) => [k, v.default]));
+        return answer(decision, decision.allow ? { action: "accept", content } : { action: "decline", content: null }, tool);
+      }
+      case "item/commandExecution/requestApproval": {
+        const decision = req.sandbox === "danger-full-access" ? { allow: true } : req.askMode || req.sandbox === "workspace-write" ? await decide("command", innerCommand(String(params.command ?? params.reason ?? "a command"))) : sandboxDenial;
+        return answer(decision, { decision: decision.allow ? "accept" : "decline" }, "command");
+      }
+      case "item/fileChange/requestApproval": {
+        const paths = editPaths.get(params.itemId) ?? [];
+        const decision = req.sandbox === "danger-full-access" ? { allow: true } : req.askMode || req.sandbox === "workspace-write" ? await decide("edit", paths.length ? paths.join(", ") : String(params.reason ?? "file changes")) : sandboxDenial;
+        return answer(decision, { decision: decision.allow ? "accept" : "decline" }, "edit");
+      }
+      default:
+        req.log.warn("codex app-server request refused", { method });
+        return write({ id, error: { code: -32601, message: "not supported by agent-bridge" } });
+    }
+  };
+  const handle = (msg) => {
+    if (msg.id !== void 0 && msg.method === void 0) {
+      const p = pending.get(msg.id);
+      if (!p) return;
+      pending.delete(msg.id);
+      if (msg.error) p.reject(new Error(msg.error.message ?? "app-server error"));
+      else p.resolve(msg.result);
+      return;
+    }
+    if (msg.id !== void 0 && msg.method) {
+      void answerRequest(msg.id, msg.method, msg.params ?? {});
+      return;
+    }
+    const params = msg.params ?? {};
+    switch (msg.method) {
+      case "item/started":
+        onEvent?.(asExecEvent("item.started", params.item));
+        if (params.item?.type === "fileChange") editPaths.set(params.item.id, (params.item.changes ?? []).map((c) => c?.path).filter(Boolean));
+        break;
+      case "item/completed": {
+        if (turnId && params.turnId && params.turnId !== turnId) break;
+        const item = params.item ?? {};
+        onEvent?.(asExecEvent("item.completed", item));
+        if (item.type === "agentMessage" && typeof item.text === "string" && item.text.trim()) {
+          finalAnswers.add(item);
+          if (awaitingAnswer) {
+            awaitingAnswer = false;
+            answers.push(item.text);
+            req.live?.onAnswer(item.text);
+          }
+        }
+        break;
+      }
+      case "thread/tokenUsage/updated":
+        usage = params.tokenUsage?.total ?? params.total ?? usage;
+        break;
+      case "error":
+        if (!params.willRetry) retryableError = params.error?.message ?? "error";
+        break;
+      case "turn/completed":
+        completions.set(String(params.turn?.id), { status: String(params.turn?.status ?? "completed"), error: params.turn?.error?.message ?? null });
+        if (turnId && completions.has(turnId)) finished(completions.get(turnId));
+        break;
+    }
+  };
+  let buf = "";
+  child.stdout.setEncoding("utf8").on("data", (d) => {
+    buf += d;
+    let nl;
+    while ((nl = buf.indexOf("\n")) >= 0) {
+      const line = buf.slice(0, nl).trim();
+      buf = buf.slice(nl + 1);
+      if (!line.startsWith("{")) continue;
+      try {
+        handle(JSON.parse(line));
+      } catch (err) {
+        req.log.debug("bad app-server line", { err: err.message });
+      }
+    }
+  });
+  child.stderr.setEncoding("utf8").on("data", (d) => {
+    stderr = (stderr + d).slice(-STDERR_TAIL_CHARS2);
+  });
+  const exited = new Promise((_, reject) => {
+    child.on("error", (err) => reject(new DelegateError(`failed to start ${req.bin}: ${err.message}`, "failed", "", "", threadId)));
+    child.on("exit", (code, signal) => reject(new DelegateError(`codex app-server ${exitDescription({ code, signal })}`, "failed", stderr, "", threadId)));
+  });
+  exited.catch(() => {
+  });
+  let timer;
+  const stopped = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new DelegateError(`delegate timed out after ${req.timeoutSec}s (its time limit, timeout_sec)`, "timeout", stderr, "", threadId)), req.timeoutSec * 1e3);
+    req.signal?.addEventListener("abort", () => reject(new DelegateError("delegate aborted", "aborted", "", "", threadId)), { once: true });
+  });
+  stopped.catch(() => {
+  });
+  const race = (p) => Promise.race([p, exited, stopped]);
+  let step = "initialize";
+  let startupTimer;
+  const startup = new Promise((_, reject) => {
+    startupTimer = setTimeout(
+      () => reject(DelegateError.startup(`codex app-server did not answer ${step} within ${Math.round((req.startupTimeoutMs ?? STARTUP_TIMEOUT_MS) / 1e3)}s (startup timeout)`, stderr, threadId)),
+      req.startupTimeoutMs ?? STARTUP_TIMEOUT_MS
+    );
+  });
+  startup.catch(() => {
+  });
+  const boot = (p) => Promise.race([p, exited, stopped, startup]);
+  const steering = {
+    rename: async (title) => {
+      if (threadId) await race(request2("thread/name/set", { threadId, name: title }));
+    },
+    send: async (message, sibling = false) => {
+      if (!threadId || !turnId) return false;
+      try {
+        const header = sibling ? SIBLING_STEER_HEADER : STEER_HEADER(req.live?.from ?? "the session that started you");
+        await request2("turn/steer", { threadId, expectedTurnId: turnId, input: [{ type: "text", text: `${header}
+
+${message}`, text_elements: [] }] });
+        if (!sibling) awaitingAnswer = true;
+        return true;
+      } catch (err) {
+        req.log.info("steering refused; the turn has ended", { err: err.message });
+        return false;
+      }
+    }
+  };
+  try {
+    await boot(request2("initialize", { clientInfo: { name: "agent-bridge", title: "agent-bridge", version: APP_VERSION }, capabilities: { experimentalApi: req.sandbox === "danger-full-access", optOutNotificationMethods: OPT_OUT } }));
+    write({ method: "initialized", params: {} });
+    const approvalPolicy = req.sandbox === "danger-full-access" ? CODEX_FULL_ACCESS_APPROVAL_POLICY : "on-request";
+    const config2 = {};
+    if (req.sandbox === "workspace-write" && (req.writableRoots?.length || req.networkAccess !== void 0)) {
+      config2.sandbox_workspace_write = {
+        ...req.writableRoots?.length ? { writable_roots: req.writableRoots.map(realFolder) } : {},
+        ...req.networkAccess !== void 0 ? { network_access: req.networkAccess } : {}
+      };
+    }
+    if (req.effort) config2.model_reasoning_effort = req.effort;
+    const threadParams = { cwd, sandbox: req.sandbox, approvalPolicy, approvalsReviewer: "user", ...Object.keys(config2).length ? { config: config2 } : {}, ...req.model ? { model: req.model } : {} };
+    step = req.sessionId ? "thread/resume" : "thread/start";
+    const thread = req.sessionId ? await boot(request2("thread/resume", { ...threadParams, threadId: req.sessionId, excludeTurns: true })) : await boot(request2("thread/start", threadParams));
+    threadId = thread?.thread?.id ?? threadId;
+    if (threadId) req.onSession?.(threadId);
+    if (threadId && req.title) {
+      step = "thread/name/set";
+      await boot(request2("thread/name/set", { threadId, name: req.title })).catch((err) => req.log.warn("could not name the Codex thread", { err: err.message }));
+    }
+    if (typeof thread?.model === "string")
+      req.onInfo?.({
+        model: thread.model,
+        effort: req.effort ?? (typeof thread.reasoningEffort === "string" ? thread.reasoningEffort : null),
+        // The sandbox Codex really applies to this thread (its config can differ from what was asked).
+        permission: typeof thread.sandbox?.type === "string" ? thread.sandbox.type : null
+      });
+    const prompt = req.askMode && req.sandbox !== "danger-full-access" ? `${req.prompt}
+
+${CODEX_ASK_HINT}` : req.prompt;
+    step = "turn/start";
+    const sandboxPolicy = codexTurnSandbox(req.sandbox, cwd, req.writableRoots?.map(realFolder), thread?.sandbox, req.networkAccess);
+    const turn = await boot(request2("turn/start", {
+      threadId,
+      input: [{ type: "text", text: prompt, text_elements: [] }],
+      ...req.model ? { model: req.model } : {},
+      sandboxPolicy,
+      approvalPolicy,
+      ...req.effort ? { effort: req.effort } : {}
+    }));
+    req.onInfo?.({ model: req.model ?? thread?.model ?? null, permission: req.sandbox, effort: req.effort ?? (typeof thread?.reasoningEffort === "string" ? thread.reasoningEffort : null) });
+    turnId = turn?.turn?.id ?? null;
+    void deliverDenials();
+    clearTimeout(startupTimer);
+    if (turnId && completions.has(turnId)) finished(completions.get(turnId));
+    req.live?.onSteering(steering);
+    const outcome = await race(turnDone);
+    req.live?.onSteering(null);
+    const error62 = outcome.error ?? (outcome.status === "failed" ? retryableError ?? "turn failed" : null);
+    req.log.info("codex turn ended", { threadId, turnId, status: outcome.status, error: outcome.error, retryableError });
+    if (outcome.status === "interrupted") throw new DelegateError(`codex interrupted the turn${outcome.error ? `: ${outcome.error}` : ""}`, "failed", stderr, "", threadId);
+    if (error62 && !finalAnswers.text()) throw new DelegateError(error62, "failed", stderr, "", threadId);
+    req.log.info("codex delegate finished", { threadId, status: outcome.status });
+    return { sessionId: threadId, text: finalAnswers.text(), isError: Boolean(error62), details: { usage, error: error62, answers: answers.length } };
+  } catch (err) {
+    req.live?.onSteering(null);
+    if (threadId && turnId) await Promise.race([request2("turn/interrupt", { threadId, turnId }).catch(() => {
+    }), new Promise((r) => setTimeout(r, 2e3))]);
+    if (err instanceof DelegateError) {
+      err.sessionId = err.sessionId ?? threadId;
+      throw err;
+    }
+    throw new DelegateError(err.message, "failed", stderr, "", threadId);
+  } finally {
+    for (const message of denialMessages.splice(0)) req.onDenied?.(message);
+    clearTimeout(timer);
+    clearTimeout(startupTimer);
+    for (const p of pending.values()) p.reject(new Error("closed"));
+    child.stdin.end();
+    await killTree(child);
+  }
+}
+
+// src/core/codex-env.ts
+import { readFileSync as readFileSync6 } from "node:fs";
+import { homedir as homedir3 } from "node:os";
+import { join as join10 } from "node:path";
+function codexWindowsSandbox(home = homedir3(), platform = process.platform) {
+  if (platform !== "win32") return null;
+  let toml;
+  try {
+    toml = readFileSync6(join10(home, ".codex", "config.toml"), "utf8");
+  } catch {
+    return null;
+  }
+  const table = /^\[windows\]\s*$([\s\S]*?)(?=^\[|(?![\s\S]))/m.exec(toml)?.[1] ?? "";
+  return /^\s*sandbox\s*=\s*"([^"]+)"/m.exec(table)?.[1] ?? null;
+}
+function codexEnvironmentNote(home = homedir3(), platform = process.platform) {
+  if (codexWindowsSandbox(home, platform) !== "elevated") return "";
+  return ` Note for this machine: Codex runs commands as a separate Windows sandbox user (elevated sandbox), which cannot read the user's profile. Tools installed there, such as Python under AppData\\Local\\Programs or user-level pip/npm installs, are missing in Codex subagents ("python is not recognized"). For work that needs them, point Codex to an interpreter inside the repository (e.g. a .venv in the worktree), or use a claude/opencode subagent.`;
+}
+
+// src/mcp/targets.ts
+var CODEX_EXEC_ENV = "AGENT_BRIDGE_CODEX_EXEC";
+var ACCESS_LEVELS = ["read", "ask", "edit"];
+var CODEX_SANDBOX_FOR = { read: "read-only", ask: "read-only", edit: "workspace-write" };
+var CLAUDE_MODE_FOR = { read: "manual", ask: "manual", edit: "acceptEdits" };
+var OPENCODE_AUTO_FOR = { read: false, ask: false, edit: true };
+function claudeModeFor(cfg, a) {
+  return a.permission_mode ?? (a.access ? CLAUDE_MODE_FOR[a.access] : cfg.claudePermissionMode);
+}
+function supportsAsk(target, relay) {
+  if (!relay) return false;
+  if (target === "opencode") return true;
+  if (target === "codex") return process.env[CODEX_EXEC_ENV] !== "1" || relay.codexHookTrusted;
+  return false;
+}
+function opencodeEditAsks(base, a) {
+  return a.access === "edit" && a.auto_approve === void 0 && Boolean(base.approve && base.canApprove);
+}
+var DELEGATION_TARGETS = {
+  codex: {
+    title: "OpenAI Codex",
+    modelExample: '"gpt-6-sol"',
+    effortExample: '"low", "medium", "high", "xhigh", "max" or "ultra" (depends on the model)',
+    defaultModel: (cfg) => cfg.codexModel,
+    schema: { sandbox: external_exports.enum(CODEX_SANDBOXES).optional().describe("Overrides access with an exact Codex sandbox mode") },
+    permissionNote: (cfg) => `Codex runs in the "${cfg.codexSandbox}" sandbox unless you pass access or sandbox. Worktree edit runs use "${cfg.codexWorktreeSandbox ?? (cfg.codexSandbox === "read-only" ? "workspace-write" : cfg.codexSandbox)}" (config codexWorktreeSandbox); workspace-write can restrict builds and network access.${codexEnvironmentNote()}`,
+    permission: (cfg, a) => a.sandbox ?? (a.access ? CODEX_SANDBOX_FOR[a.access] : cfg.codexSandbox),
+    run: async (cfg, base, a) => {
+      const sandbox = a.sandbox ?? (a.access ? CODEX_SANDBOX_FOR[a.access] : cfg.codexSandbox);
+      const relay = a.access === "ask" && Boolean(a.relay?.codexHookTrusted);
+      if (process.env[CODEX_EXEC_ENV] !== "1") {
+        let sessionId = base.sessionId ?? null;
+        for (let attempt = 1; ; attempt++) {
+          try {
+            return await delegateToCodexAppServer({ ...base, sessionId, bin: cfg.codexBin, sandbox, networkAccess: cfg.codexWorkspaceWriteNetworkAccess ?? void 0, writableRoots: base.writableRoots, askMode: a.access === "ask", approve: a.access === "ask" && a.relay ? a.relay.onPermission : base.approve });
+          } catch (err) {
+            if (err instanceof DelegateError && err.startupFailed && attempt === 1 && !base.signal?.aborted) {
+              base.log.warn("codex app-server startup timed out; retrying once", { err: err.message });
+              base.onProgress?.(`${err.message}; retrying once`);
+              sessionId = err.sessionId ?? sessionId;
+              continue;
+            }
+            if (!(err instanceof DelegateError) || err.kind !== "failed" || err.sessionId) throw err;
+            base.log.warn("codex app-server unavailable, using codex exec", { err: err.message });
+            break;
+          }
+        }
+      }
+      return delegateToCodex({
+        ...base,
+        bin: cfg.codexBin,
+        sandbox,
+        networkAccess: cfg.codexWorkspaceWriteNetworkAccess ?? void 0,
+        ...relay ? { relayApprovals: true, extraEnv: { ...base.extraEnv, ...a.relay.env } } : {}
+      });
+    }
+  },
+  claude: {
+    title: "Claude Code",
+    modelExample: '"opus", "sonnet" or a full model id',
+    effortExample: '"low", "medium", "high", "xhigh" or "max"',
+    defaultModel: (cfg) => cfg.claudeModel,
+    schema: { permission_mode: external_exports.enum(CLAUDE_PERMISSION_MODES).optional().describe("Overrides access with an exact Claude permission mode") },
+    permissionNote: (cfg) => `Claude runs with permission mode "${cfg.claudePermissionMode}" unless you pass access or permission_mode.`,
+    permission: (cfg, a) => claudeModeFor(cfg, a),
+    run: (cfg, base, a) => delegateToClaude({
+      ...base,
+      bin: cfg.claudeBin,
+      permissionMode: claudeModeFor(cfg, a)
+    })
+  },
+  opencode: {
+    title: "opencode",
+    effortExample: `the model's variant, such as "low", "high" or "max" (provider-specific)`,
+    modelExample: '"provider/model", e.g. "anthropic/claude-sonnet-5" or "opencode/muse-spark-1.3-contributor-free"',
+    defaultModel: (cfg) => cfg.opencodeModel,
+    schema: { auto_approve: external_exports.boolean().optional().describe("Overrides access: auto-approve every opencode permission request (opencode run --auto)") },
+    permissionNote: (cfg) => cfg.opencodeAutoApprove ? "opencode auto-approves permission requests unless you pass access=read or auto_approve=false." : "Headless opencode rejects every permission request (edits, commands) unless you pass access=edit or auto_approve=true.",
+    permission: (cfg, a) => a.auto_approve ?? (a.access ? OPENCODE_AUTO_FOR[a.access] : cfg.opencodeAutoApprove) ? "auto-approve" : "read-only",
+    run: async (cfg, base, a) => {
+      let note = null;
+      if (base.model) {
+        const models = await listOpencodeModels(cfg.opencodeBin, base.cwd, base.log).catch(() => []);
+        const r = resolveOpencodeModel(base.model, models);
+        if ("error" in r) throw new DelegateError(r.error, "failed");
+        base = { ...base, model: r.model };
+        note = r.note;
+      }
+      const res = a.access === "ask" && a.auto_approve === void 0 && supportsAsk("opencode", a.relay) ? await delegateToOpencodeServed({ ...base, bin: cfg.opencodeBin, onPermission: a.relay.onPermission }) : opencodeEditAsks(base, a) ? (
+        // "edit": what the user's opencode rules leave to "ask" (MCP tools, folders outside the project,
+        // commands they marked) goes to the parent instead of `opencode run --auto` approving it blindly.
+        await delegateToOpencodeServed({ ...base, bin: cfg.opencodeBin, onPermission: base.approve, permissions: null })
+      ) : await delegateToOpencode({
+        ...base,
+        bin: cfg.opencodeBin,
+        autoApprove: a.auto_approve ?? (a.access ? OPENCODE_AUTO_FOR[a.access] : cfg.opencodeAutoApprove)
+      });
+      return note ? { ...res, text: `(${note})
+
+${res.text}` } : res;
+    }
+  }
+};
+
+// src/mcp/job-settings.ts
+var JOB_SETTING_KEYS = ["model", "effort", "access", "sandbox", "permission_mode", "auto_approve"];
+var EXACT_PERMISSION_KEYS = ["sandbox", "permission_mode", "auto_approve"];
+var PERMISSION_KEY_AGENT = { sandbox: "codex", permission_mode: "claude", auto_approve: "opencode" };
+var EFFORT_PATTERN = /^[A-Za-z0-9_-]{1,20}$/;
+function changedJobArgs(args, settings) {
+  const next = { ...args };
+  if (settings.access !== void 0) for (const key2 of EXACT_PERMISSION_KEYS) delete next[key2];
+  else if (EXACT_PERMISSION_KEYS.some((key2) => settings[key2] !== void 0)) delete next.access;
+  for (const key2 of JOB_SETTING_KEYS) if (settings[key2] !== void 0) next[key2] = settings[key2];
+  return next;
+}
+function parseJobSettings(input2, agent) {
+  if (!input2 || typeof input2 !== "object" || Array.isArray(input2)) return "settings must be an object";
+  const raw = input2;
+  const unknownKey = Object.keys(raw).find((key2) => !JOB_SETTING_KEYS.includes(key2));
+  if (unknownKey) return `unknown setting: ${unknownKey}`;
+  const settings = {};
+  if (raw.model !== void 0) {
+    if (typeof raw.model !== "string" || !MODEL_NAME_PATTERN.test(raw.model)) return "invalid model";
+    settings.model = raw.model;
+  }
+  if (raw.effort !== void 0) {
+    if (typeof raw.effort !== "string" || !EFFORT_PATTERN.test(raw.effort)) return "invalid effort";
+    settings.effort = raw.effort;
+  }
+  if (raw.access !== void 0) {
+    if (!ACCESS_LEVELS.includes(raw.access)) return "invalid access";
+    settings.access = raw.access;
+  }
+  if (raw.sandbox !== void 0) {
+    if (!CODEX_SANDBOXES.includes(raw.sandbox)) return "invalid sandbox";
+    settings.sandbox = raw.sandbox;
+  }
+  if (raw.permission_mode !== void 0) {
+    if (!CLAUDE_PERMISSION_MODES.includes(raw.permission_mode)) return "invalid permission_mode";
+    settings.permission_mode = raw.permission_mode;
+  }
+  if (raw.auto_approve !== void 0) {
+    if (typeof raw.auto_approve !== "boolean") return "invalid auto_approve";
+    settings.auto_approve = raw.auto_approve;
+  }
+  for (const [key2, owner] of Object.entries(PERMISSION_KEY_AGENT)) {
+    if (settings[key2] !== void 0 && agent !== owner) return `${key2} applies only to ${owner} jobs.`;
+  }
+  if (!Object.keys(settings).length) return "no settings given";
+  return settings;
+}
+
+// src/core/notifications.ts
+import { spawn as spawn4 } from "node:child_process";
+import { mkdirSync as mkdirSync4, readFileSync as readFileSync7, rmdirSync, statSync, writeFileSync as writeFileSync3 } from "node:fs";
+import { join as join11 } from "node:path";
+var TITLE = "agent-bridge";
+var TEXT = {
+  approvals: "A subagent needs approval. Open the agent-bridge dashboard.",
+  finish: "A subagent finished. Open the agent-bridge dashboard for its report.",
+  fail: "A subagent failed. Open the agent-bridge dashboard for its report."
+};
+var NOTIFICATION_TIMEOUT_MS = 5e3;
+var EVENT_INTERVAL_MS = 5e3;
+var RATE_WINDOW_MS = 6e4;
+var MAX_NOTIFICATIONS_PER_WINDOW = 10;
+var MAX_RATE_HOMES = 100;
+var RATE_STATE_FILE = "notification-rate.json";
+var RATE_LOCK_DIR = "notification-rate.lock";
+var WINDOWS_POWERSHELL_APP_ID = "{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\\WindowsPowerShell\\v1.0\\powershell.exe";
+function notificationCommands(platform, event) {
+  const body = TEXT[event];
+  if (platform === "win32") {
+    const script = [
+      "$ErrorActionPreference = 'Stop'",
+      "[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] > $null",
+      "[Windows.UI.Notifications.ToastNotification, Windows.UI.Notifications, ContentType = WindowsRuntime] > $null",
+      "[Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime] > $null",
+      "$xml = New-Object Windows.Data.Xml.Dom.XmlDocument",
+      `$xml.LoadXml('<toast><visual><binding template="ToastGeneric"><text>${TITLE}</text><text>${body}</text></binding></visual></toast>')`,
+      "$toast = [Windows.UI.Notifications.ToastNotification]::new($xml)",
+      `[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('${WINDOWS_POWERSHELL_APP_ID}').Show($toast)`
+    ].join("; ");
+    return [{ bin: "powershell.exe", args: ["-NoLogo", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")] }];
+  }
+  if (platform === "darwin") return [
+    { bin: "terminal-notifier", args: ["-title", TITLE, "-message", body] },
+    { bin: "osascript", args: ["-e", `display notification "${body}" with title "${TITLE}"`] }
+  ];
+  if (platform === "linux") return [{ bin: "notify-send", args: ["--app-name", TITLE, "--", TITLE, body] }];
+  return [];
+}
+var NotificationLimiter = class {
+  homes = /* @__PURE__ */ new Map();
+  take(home, event, now = Date.now()) {
+    let state = this.homes.get(home);
+    if (!state) {
+      if (this.homes.size >= MAX_RATE_HOMES) this.homes.delete(this.homes.keys().next().value);
+      state = { times: [], events: {} };
+      this.homes.set(home, state);
+    }
+    state.times = state.times.filter((at) => now - at < RATE_WINDOW_MS);
+    const last = state.events[event];
+    if (last !== void 0 && now - last < EVENT_INTERVAL_MS || state.times.length >= MAX_NOTIFICATIONS_PER_WINDOW) return false;
+    state.times.push(now);
+    state.events[event] = now;
+    return true;
+  }
+};
+var limiter = new NotificationLimiter();
+function takeNotificationSlot(home, event, now = Date.now()) {
+  const lock = join11(home, RATE_LOCK_DIR);
+  try {
+    try {
+      mkdirSync4(lock);
+    } catch {
+      if (now - statSync(lock).mtimeMs < NOTIFICATION_TIMEOUT_MS) return false;
+      rmdirSync(lock);
+      mkdirSync4(lock);
+    }
+  } catch {
+    return false;
+  }
+  try {
+    const file2 = join11(home, RATE_STATE_FILE);
+    let state = { times: [], events: {} };
+    try {
+      const stored = JSON.parse(readFileSync7(file2, "utf8"));
+      if (Array.isArray(stored.times) && stored.times.every((at) => typeof at === "number") && stored.events && typeof stored.events === "object") state = stored;
+    } catch {
+    }
+    state.times = state.times.filter((at) => now - at < RATE_WINDOW_MS);
+    const last = state.events[event];
+    if (typeof last === "number" && now - last < EVENT_INTERVAL_MS || state.times.length >= MAX_NOTIFICATIONS_PER_WINDOW) return false;
+    state.times.push(now);
+    state.events[event] = now;
+    writeFileSync3(file2, JSON.stringify(state), { mode: 384 });
+    return true;
+  } catch {
+    return false;
+  } finally {
+    try {
+      rmdirSync(lock);
+    } catch {
+    }
+  }
+}
+function launch(commands, log) {
+  const command = commands[0];
+  if (!command) return;
+  try {
+    const child = spawn4(command.bin, command.args, { stdio: "ignore", windowsHide: true, detached: true });
+    const timer = setTimeout(() => child.kill(), NOTIFICATION_TIMEOUT_MS);
+    timer.unref();
+    child.once("exit", () => clearTimeout(timer));
+    child.once("error", (err) => {
+      clearTimeout(timer);
+      if (err.code === "ENOENT" && commands.length > 1) launch(commands.slice(1), log);
+      else log.debug("desktop notification unavailable");
+    });
+    child.unref();
+  } catch {
+    log.debug("desktop notification unavailable");
+  }
+}
+function notifyJobEvent(home, event, log) {
+  const task = setImmediate(() => {
+    try {
+      if (!loadConfig(home, "other", log).notifications[event] || !limiter.take(home, event) || !takeNotificationSlot(home, event)) return;
+      launch(notificationCommands(process.platform, event), log);
+    } catch {
+      log.debug("desktop notification unavailable");
+    }
+  });
+  task.unref();
+}
+
+// src/mcp/jobs.ts
+var JOB_ID_LENGTH = 8;
+var PROMPT_PREVIEW_CHARS = 120;
+var HISTORY_LIMIT = 50;
+var STORE_LIMIT = 200;
+var MAX_NOTES = 500;
+var INTERRUPTED_LISTED_MS = 24 * 60 * 60 * 1e3;
+var NOTE_CONVERSATION_SUFFIX = ":note";
+var DEFAULT_FOLLOW_UP = "Continue where you stopped and finish the task. Then give your final answer.";
+var HOST_POLL_MS = 2e3;
+var CANCEL_GRACE_MS = 5e3;
+var QUEUED_FOLLOW_UP_NOTE = "(Your queued follow-up was sent to it; its answer will arrive as another message.)";
+function jobReport(job, status, seconds, text2, cause) {
+  const how = job.sessionId ? status === "failed" ? ` To recover it with its context, call message_subagent(job="${job.name}") (optionally with a message).` : ` Continue it with its context: message_subagent(job="${job.name}", message=...).` : "";
+  const header = `Subagent ${job.name} (${job.agent}${job.model ? `, model ${job.model}` : ""}) ${status} after ${seconds}s.${how}`;
+  return [header, cause ? `Cause: ${cause}` : "", text2 && cause ? `Its last message:
+${text2}` : text2].filter(Boolean).join("\n\n");
+}
+var approvalAnswers = /* @__PURE__ */ new WeakMap();
+function denyPendingApprovals(job, reason = "job finished") {
+  for (const answer of [...approvalAnswers.get(job) ?? []]) answer(reason, "job completion");
+}
+function waitForApproval(job, question, timeoutMs, post, log, home, request2, askUser) {
+  return new Promise((resolve10) => {
+    let settled = false;
+    let cleanup;
+    const askedAt = Date.now();
+    const settle2 = (answer, by = "session") => {
+      if (settled) return false;
+      if (Date.now() >= askedAt + timeoutMs) {
+        answer = "no answer in time";
+        by = "timeout";
+      }
+      settled = true;
+      clearTimeout(timer);
+      job.controller.signal.removeEventListener("abort", aborted2);
+      const answers2 = approvalAnswers.get(job);
+      answers2?.delete(settle2);
+      job.pendingApproval = answers2?.values().next().value ?? null;
+      if (!answers2?.size) approvalAnswers.delete(job);
+      try {
+        cleanup?.();
+      } catch {
+        log.warn("could not remove pending approval", { job: job.name });
+      }
+      const allow = /^\s*(allow|yes|y|approve|approved|ok|okay|go ahead|accept)\b/i.test(answer);
+      try {
+        post(`Approval for ${job.name} ${allow ? "allowed" : "denied"} by ${by}.`);
+      } catch {
+        log.warn("could not report approval answer", { job: job.name });
+      }
+      resolve10({ allow, reason: answer.trim() });
+      return true;
+    };
+    const timer = setTimeout(() => settle2("no answer in time", "timeout"), timeoutMs);
+    timer.unref?.();
+    const aborted2 = () => settle2("job cancelled", "cancellation");
+    job.controller.signal.addEventListener("abort", aborted2, { once: true });
+    let answers = approvalAnswers.get(job);
+    if (!answers) {
+      answers = /* @__PURE__ */ new Set();
+      approvalAnswers.set(job, answers);
+    }
+    answers.add(settle2);
+    job.pendingApproval = answers.values().next().value;
+    if (job.controller.signal.aborted) {
+      aborted2();
+      return;
+    }
+    if (home) {
+      void publishApproval(home, {
+        id: newApprovalId(),
+        owner: job.owner ?? "",
+        job: job.name,
+        agent: job.agent,
+        tool: request2?.tool ?? "approval",
+        command: request2?.detail ?? question,
+        reason: request2?.reason ?? question,
+        askedAt,
+        deadline: askedAt + timeoutMs
+      }, settle2).then((close) => {
+        if (settled) close();
+        else {
+          cleanup = close;
+          notifyJobEvent(home, "approvals", log);
+        }
+      }).catch(() => log.warn("could not publish pending approval", { job: job.name }));
+    }
+    log.info("subagent asks for approval", { job: job.name });
+    post(
+      `Subagent ${job.name} asks for approval: ${question}
+
+Decide as its supervisor: answer with message_subagent(job="${job.name}", message="allow") or message="deny" (a reason may follow). It waits for your answer; no answer within ${Math.round(timeoutMs / 6e4)} minutes counts as deny.`
+    );
+    if (askUser) {
+      void Promise.resolve().then(askUser).then(
+        (decision) => settle2(decision.allow ? "allow" : `deny: ${decision.message}`, "user in session"),
+        () => settle2("deny: The permission dialog failed.", "user in session")
+      );
+    }
+  });
+}
+var JobManager = class {
+  constructor(node2, log, storePath = null, maxJobs = DEFAULT_MAX_JOBS) {
+    this.node = node2;
+    this.log = log;
+    this.storePath = storePath;
+    this.maxJobs = maxJobs;
+    node2.on("message", (m) => {
+      if (!m.from.id.startsWith("job:")) return;
+      const job = this.running.get(m.from.id.slice("job:".length));
+      if (job?.host) this.checkHosted(job);
+    });
+    node2.on("connected", () => {
+      for (const job of this.running.values()) if (job.host) this.runners?.send(job, { type: "attach" });
+    });
+  }
+  node;
+  log;
+  storePath;
+  maxJobs;
+  running = /* @__PURE__ */ new Map();
+  foreground = /* @__PURE__ */ new Map();
+  history = /* @__PURE__ */ new Map();
+  /** Finished jobs whose continuation waits for a free slot, in arrival order; the messages are in job.queue. */
+  waitingJobs = /* @__PURE__ */ new Map();
+  /** Ids of status notes from running subagents (see fromSubagent). */
+  notes = /* @__PURE__ */ new Set();
+  /** Jobs this manager started, continued or took over: only these are saved (others' entries stay as they are on disk). */
+  own = /* @__PURE__ */ new Set();
+  /** Background jobs run in detached job runners where it can (they survive a restart of this server); null: all here. */
+  runners = null;
+  hostTimer = null;
+  get limit() {
+    return this.maxJobs;
+  }
+  /** Change the limit now. A higher one starts waiting continuations; a lower one stops no running subagent. */
+  setLimit(max) {
+    this.maxJobs = max;
+    this.log.info("subagent limit changed", { max });
+    this.startWaiting();
+  }
+  /**
+   * A newer server of this session took over (the bridge replaced this one): stay out of the job store and the
+   * runners, so two servers never settle or save the same jobs. Ends when this server takes its place back.
+   */
+  dormant = false;
+  setDormant(dormant) {
+    if (this.dormant === dormant) return;
+    this.dormant = dormant;
+    this.log.info(dormant ? "another server of this session took over: jobs paused here" : "this server took its place back: jobs resumed");
+    if (dormant && this.hostTimer) {
+      clearInterval(this.hostTimer);
+      this.hostTimer = null;
+    }
+    if (!dormant && [...this.running.values()].some((j) => j.host)) this.watchHosted();
+  }
+  /** Save this session's jobs, merged with those other sessions saved. Best effort: never breaks a run. */
+  persist() {
+    if (!this.storePath || this.dormant) return;
+    let lock = () => {
+    };
+    try {
+      lock = acquireLock(`${this.storePath}.lock`);
+      const previous = readJobsDocument(this.storePath, this.log);
+      assertWritableStore(previous);
+      const entries = Array.isArray(previous) ? previous : isRecord(previous) ? previous.jobs : [];
+      const mine = [...this.history.values()].filter((j) => this.own.has(j.id)).map((j) => {
+        const old = entries.find((entry) => isRecord(entry) && entry.id === j.id);
+        return mergeStoreFields(isRecord(old) ? old : {}, toStored(j));
+      });
+      const ids = new Set(mine.map((j) => j.id));
+      const others = entries.filter((j) => !isRecord(j) || !ids.has(j.id));
+      const all = [...others, ...mine].sort((a, b) => {
+        const started = (entry) => isRecord(entry) && typeof entry.startedAt === "number" ? entry.startedAt : 0;
+        return started(a) - started(b);
+      });
+      const finished = all.filter((j) => isStoredJob(j) && (j.status === "done" || j.status === "failed")).sort((a, b) => a.startedAt - b.startedAt);
+      const limit = retentionLimit("AGENT_BRIDGE_JOB_STORE_LIMIT", STORE_LIMIT);
+      const overflow = new Set(limit ? finished.slice(0, Math.max(0, finished.length - limit)) : []);
+      if (overflow.size) {
+        const archive = `${this.storePath}.overflow.json`;
+        writeJsonStore(archive, { jobs: [...overflow] }, null);
+        archiveFile(archive);
+        this.log.info("archived finished jobs", { count: overflow.size });
+      }
+      writeJsonStore(this.storePath, { ...isRecord(previous) ? previous : {}, jobs: all.filter((j) => !overflow.has(j)) }, previous);
+    } catch (err) {
+      this.log.warn("could not save subagent jobs", { err: err.message });
+    } finally {
+      lock();
+    }
+  }
+  /**
+   * Load the jobs saved before this session (re)started, so message_subagent can continue them with their
+   * context. Jobs that were still running are marked interrupted: a follow-up without a message recovers them.
+   * A job of this session whose job runner is still at work (it outlived the old server) is running: this
+   * manager takes it over. Another session's runner-hosted job keeps its status for that session to take over.
+   */
+  restore(makeResume) {
+    if (!this.storePath) return;
+    const stored = readStore(this.storePath, this.log);
+    const adopted = [];
+    const recentIds = new Set(stored.slice(-HISTORY_LIMIT).map((s) => s.id));
+    for (const s of stored.filter((x) => recentIds.has(x.id) || x.status === "running")) {
+      if (this.history.has(s.id)) continue;
+      const hosted = s.status === "running" && Boolean(s.host);
+      const mine = this.isMine(s.owner);
+      const job = {
+        ...s,
+        status: s.status === "running" && !(hosted && !mine) ? "interrupted" : s.status,
+        controller: new AbortController(),
+        progress: null,
+        queue: [],
+        resume: makeResume(s.agent, s.args ?? {})
+      };
+      this.history.set(s.id, job);
+      if (hosted && mine && this.takeOver(job)) adopted.push(job);
+    }
+    if (stored.length) this.log.info("restored subagent jobs", { count: Math.min(stored.length, HISTORY_LIMIT), runnerHosted: adopted.length });
+    this.assignLegacySupervisors();
+    this.settleAdopted(adopted);
+    this.persist();
+  }
+  /** Whether a runner-hosted job can be taken over here (its runner lives, or finished and left its report). */
+  takeOver(job) {
+    if (!this.runners) return false;
+    const state = this.runners.state(job);
+    if (state) Object.assign(job, { sessionId: state.sessionId ?? job.sessionId, workdir: state.workdir ?? job.workdir, worktree: state.worktree ?? job.worktree });
+    if (this.runners.alive(job, state) || state && state.status !== "running") return true;
+    job.status = "interrupted";
+    if (state?.sessionId) this.own.add(job.id);
+    return false;
+  }
+  settleAdopted(adopted) {
+    for (const job of adopted) {
+      job.status = "running";
+      job.owner = this.node.name;
+      this.running.set(job.id, job);
+      this.own.add(job.id);
+      this.checkHosted(job);
+    }
+    if (adopted.length) {
+      this.watchHosted();
+      this.persist();
+    }
+  }
+  /** Record facts learned while it runs (its session, its folder), so a restart can continue it. */
+  note(job, facts) {
+    if (facts.sessionId) job.sessionId = facts.sessionId;
+    if (facts.workdir) job.workdir = facts.workdir;
+    if (facts.worktree) job.worktree = facts.worktree;
+    this.persist();
+  }
+  runningCount() {
+    return this.running.size;
+  }
+  /** Background jobs plus blocking ask_* runs, so the session (and its coordinator) can see all of them. */
+  list() {
+    for (const job of [...this.running.values()]) if (job.host) this.checkHosted(job);
+    return [...this.running.values(), ...this.foreground.values()];
+  }
+  /** Continuations waiting for a free slot, first in line first. */
+  waiting() {
+    return [...this.waitingJobs.values()];
+  }
+  /** Recently finished subagents, newest first (they can still be messaged). */
+  /**
+   * Whether a job belongs to this session. A session briefly runs under a "-N" stand-in of its name when a
+   * reload starts its new server while the old one is still connected; jobs started then are its too.
+   */
+  isMine(owner) {
+    return !owner || owner === this.node.name || this.adoptedOwners.has(owner);
+  }
+  /** "-N" stand-in names of this session whose jobs it adopted (see adoptStandIns). */
+  adoptedOwners = /* @__PURE__ */ new Set();
+  /** Whether `owner` is a "-N" stand-in of this session's name ("claude-x-2" for "claude-x"). */
+  isStandIn(owner) {
+    const base = this.node.name.replace(/-\d+$/, "");
+    return owner !== this.node.name && (owner === base || owner.startsWith(`${base}-`) && /^\d+$/.test(owner.slice(base.length + 1)));
+  }
+  /**
+   * A reload can run a session briefly under a "-N" stand-in name; jobs started then carry it. Once on the
+   * bridge, adopt those whose stand-in name no live peer holds (a live "-2" is another session of the folder).
+   */
+  adoptStandIns(online) {
+    if (this.dormant) return [];
+    const owners = new Set([...this.history.values()].map((j) => j.owner).filter((o) => Boolean(o) && this.isStandIn(o) && !online.has(o)));
+    if (!owners.size) return [];
+    for (const o of owners) this.adoptedOwners.add(o);
+    this.assignLegacySupervisors();
+    const taken = [];
+    for (const job of this.history.values()) {
+      if (!job.owner || !owners.has(job.owner)) continue;
+      if (job.status === "running" && job.host && !this.running.has(job.id) && this.takeOver(job)) taken.push(job);
+      else if (job.status === "running" && !this.running.has(job.id)) job.status = "interrupted";
+    }
+    this.log.info("adopted jobs started under a stand-in name of this session", { owners: [...owners], runnerHosted: taken.length });
+    this.settleAdopted(taken);
+    this.persist();
+    return [...owners];
+  }
+  /** Finished jobs of this session: every interrupted one (they need recovering), then the newest others. */
+  recent(limit = 5) {
+    const mine = [...this.history.values()].filter((j) => j.status !== "running" && !this.waitingJobs.has(j.id) && this.isMine(j.owner)).sort((a, b) => (b.finishedAt ?? b.startedAt) - (a.finishedAt ?? a.startedAt));
+    const interrupted = mine.filter((j) => j.status === "interrupted" && Date.now() - (j.finishedAt ?? j.startedAt) < INTERRUPTED_LISTED_MS);
+    return [...interrupted, ...mine.filter((j) => !interrupted.includes(j)).slice(0, limit)];
+  }
+  find(ref) {
+    const id = ref.replace(/^.*-(?:job|ask)-/, "");
+    return this.history.get(id) ?? [...this.history.values()].find((j) => j.name === ref);
+  }
+  remember(job) {
+    this.history.set(job.id, job);
+    this.own.add(job.id);
+    while (this.history.size > HISTORY_LIMIT) this.history.delete(this.history.keys().next().value);
+    this.persist();
+  }
+  newJob(agent, model, prompt, kind, resume, args) {
+    const id = randomUUID4().replace(/-/g, "").slice(0, JOB_ID_LENGTH);
+    return {
+      id,
+      name: `${agent}-${kind}-${id}`,
+      agent,
+      model,
+      prompt,
+      startedAt: Date.now(),
+      controller: new AbortController(),
+      progress: null,
+      status: "running",
+      sessionId: null,
+      workdir: null,
+      worktree: null,
+      resume,
+      queue: [],
+      args,
+      owner: this.node.name,
+      // Keep the first job's identity when hooks learn the session id later, or a server reload adopts it.
+      supervisor: this.supervisorIdentity()
+    };
+  }
+  supervisorIdentity() {
+    return [...this.running.values(), ...this.foreground.values(), ...this.history.values()].find((j) => this.isMine(j.owner) && j.supervisor)?.supervisor ?? this.node.currentSessionId ?? this.node.id;
+  }
+  assignLegacySupervisors() {
+    const supervisor = this.supervisorIdentity();
+    for (const job of this.history.values()) {
+      if (!job.supervisor && this.isMine(job.owner)) {
+        job.supervisor = supervisor;
+        this.own.add(job.id);
+      }
+    }
+  }
+  /**
+   * Register a blocking ask_* run for visibility in peers. Returns a progress sink and `end`, which records
+   * the outcome so the run can be continued later with message_subagent.
+   */
+  track(agent, model, prompt, resume, args) {
+    const job = { ...this.newJob(agent, model, prompt, "ask", resume, args), foreground: true };
+    this.foreground.set(job.id, job);
+    this.remember(job);
+    return {
+      job,
+      onProgress: (message) => {
+        job.progress = message;
+      },
+      end: (outcome) => {
+        denyPendingApprovals(job);
+        this.foreground.delete(job.id);
+        job.foreground = false;
+        job.finishedAt = Date.now();
+        job.status = outcome?.result && !outcome.result.isError ? "done" : "failed";
+        if (this.storePath) notifyJobEvent(dirname4(this.storePath), job.status === "done" ? "finish" : "fail", this.log);
+        job.sessionId = outcome?.result?.sessionId ?? sessionOfError(outcome?.error) ?? job.sessionId;
+        job.workdir = outcome?.result?.workdir ?? job.workdir;
+        job.worktree = outcome?.result?.worktree ?? job.worktree;
+        this.persist();
+        if (job.queue.length && job.resume && job.sessionId && !job.controller.signal.aborted) {
+          if (this.canStart()) this.launch(job, job.resume(job.queue.splice(0).join("\n\n"), job.sessionId, job.workdir, job.worktree));
+          else this.waitForSlot(job);
+        }
+      }
+    };
+  }
+  canStart() {
+    return this.running.size < this.maxJobs;
+  }
+  start(agent, model, prompt, run, resume, args) {
+    const job = this.newJob(agent, model, prompt, "job", resume, args);
+    this.remember(job);
+    this.log.info("subagent started", { job: job.name, model, prompt: prompt.slice(0, PROMPT_PREVIEW_CHARS) });
+    this.launch(job, run);
+    return job;
+  }
+  /** Save next-turn settings and send them to a runner that continues the job itself. */
+  setSettings(ref, settings) {
+    const job = this.find(ref);
+    if (!job) return false;
+    job.args = changedJobArgs(job.args, settings);
+    if (settings.model !== void 0 && job.status !== "running") job.model = settings.model;
+    if (this.hostedRunning(job)) this.runners.send(job, { type: "settings", settings });
+    this.own.add(job.id);
+    this.persist();
+    return true;
+  }
+  /** Change a job's thinking level for its next turns (a turn already running keeps its own). */
+  setEffort(ref, effort) {
+    const job = this.find(ref);
+    if (!job) return false;
+    job.args = { ...job.args, effort };
+    if (this.hostedRunning(job)) this.runners.send(job, { type: "effort", effort });
+    this.own.add(job.id);
+    this.persist();
+    return true;
+  }
+  /** Name or rename a job; its next turn (and the dashboard) uses the title. */
+  setTitle(ref, title) {
+    const job = this.find(ref);
+    if (!job) return false;
+    job.args = { ...job.args, title };
+    job.retitle?.(title);
+    if (this.hostedRunning(job)) this.runners.send(job, { type: "title", title });
+    this.own.add(job.id);
+    this.persist();
+    return true;
+  }
+  /**
+   * Send a follow-up to a subagent: queued while it runs, otherwise its session is resumed in the background,
+   * as soon as a slot is free.
+   */
+  followUp(ref, message) {
+    const job = this.find(ref);
+    if (!job) return { outcome: "unknown" };
+    if (this.hostedRunning(job)) this.checkHosted(job);
+    if (this.waitingJobs.has(job.id)) {
+      job.queue.push(message);
+      return { outcome: "waiting", job };
+    }
+    if (this.hostedRunning(job)) {
+      const state = this.runners.state(job);
+      const cid = randomUUID4();
+      (job.forwarded ??= []).push({ cid, body: message });
+      this.runners.send(job, { type: "message", body: message, cid });
+      return { outcome: state?.asking ? "answered" : state?.live ? "delivered" : "queued", job };
+    }
+    if (job.status === "running" && job.pendingApproval) {
+      const answer = job.pendingApproval;
+      job.pendingApproval = null;
+      answer(message, `session ${this.node.name}`);
+      return { outcome: "answered", job };
+    }
+    if (job.status === "running") {
+      if (job.live) {
+        job.awaitingAnswer = true;
+        job.live.post(message);
+        return { outcome: "delivered", job };
+      }
+      job.queue.push(message);
+      return { outcome: "queued", job };
+    }
+    if (!job.resume || !job.sessionId) return { outcome: "no-session", job };
+    if (!this.canStart()) {
+      job.queue.push(message);
+      this.waitForSlot(job);
+      return { outcome: "waiting", job };
+    }
+    this.log.info("subagent resumed", { job: job.name, sessionId: job.sessionId });
+    this.launch(job, job.resume(message, job.sessionId, job.workdir, job.worktree));
+    return { outcome: "started", job };
+  }
+  /** Continue this finished job (its queued messages) once a slot frees up. */
+  waitForSlot(job) {
+    this.waitingJobs.set(job.id, job);
+    this.log.info("subagent continuation waits for a free slot", { job: job.name, running: this.running.size, position: this.waitingJobs.size });
+  }
+  /** Start waiting continuations while there are free slots, oldest first. */
+  startWaiting() {
+    for (const job of this.waitingJobs.values()) {
+      if (!this.canStart()) return;
+      this.waitingJobs.delete(job.id);
+      if (!job.queue.length || !job.resume || !job.sessionId) continue;
+      this.log.info("subagent resumed (was waiting for a slot)", { job: job.name, sessionId: job.sessionId });
+      this.launch(job, job.resume(job.queue.splice(0).join("\n\n"), job.sessionId, job.workdir, job.worktree));
+    }
+  }
+  launch(job, run) {
+    if (typeof job.args?.model === "string") job.model = job.args.model;
+    job.status = "running";
+    job.startedAt = Date.now();
+    job.controller = new AbortController();
+    job.progress = null;
+    job.foreground = false;
+    this.running.set(job.id, job);
+    this.own.add(job.id);
+    job.host = this.runners ? run.hosted?.(job) ?? null : null;
+    job.forwarded = [];
+    this.persist();
+    if (job.host) {
+      this.log.info("subagent runs in a job runner", { job: job.name, peer: job.host.peer });
+      this.watchHosted();
+      return;
+    }
+    const onProgress = (message) => {
+      job.progress = message;
+      this.log.debug("subagent progress", { job: job.name, message });
+    };
+    run(job.controller.signal, onProgress, job).then(
+      (res) => {
+        job.workdir = res.workdir ?? job.workdir;
+        job.worktree = res.worktree ?? job.worktree;
+        this.finish(job, res.isError ? "failed" : "done", res.text || "(no answer text returned)", res.sessionId, res.isError ? failureCause({ result: res }) : null);
+      },
+      // The cause is the whole report here: the error says what happened (and, for a worktree, where the work is).
+      (err) => this.finish(job, "failed", "", sessionOfError(err), failureCause({ error: err }))
+    );
+  }
+  /** A running job of this manager that a job runner hosts. */
+  hostedRunning(job) {
+    return job.status === "running" && Boolean(job.host) && Boolean(this.runners) && this.running.get(job.id) === job;
+  }
+  /** Check runner-hosted jobs while any runs. */
+  watchHosted() {
+    if (this.hostTimer || this.dormant) return;
+    this.hostTimer = setInterval(() => {
+      const hosted = [...this.running.values()].filter((j) => j.host);
+      if (!hosted.length && this.hostTimer) {
+        clearInterval(this.hostTimer);
+        this.hostTimer = null;
+      }
+      for (const job of hosted) this.checkHosted(job);
+    }, HOST_POLL_MS);
+    this.hostTimer.unref();
+  }
+  /**
+   * Take what a job's runner reports: its progress and facts, and its end. The runner delivers the report
+   * itself (a message on the bridge, so it waits for the session even while no server of it runs); this
+   * session only posts it when the runner could not, or says why a runner ended without one.
+   */
+  checkHosted(job) {
+    if (!this.hostedRunning(job)) return;
+    const runners = this.runners;
+    const state = runners.state(job);
+    if (state) {
+      job.host.pid = state.pid;
+      if (state.model !== void 0) job.model = state.model;
+      job.progress = state.progress ?? job.progress;
+      if (state.percent !== void 0) {
+        job.percent = state.percent;
+        job.progressNote = state.progressNote;
+      }
+      if (state.sessionId && state.sessionId !== job.sessionId || state.workdir && state.workdir !== job.workdir || state.worktree && !job.worktree) {
+        this.note(job, { sessionId: state.sessionId, workdir: state.workdir, worktree: state.worktree });
+      }
+    }
+    const alive2 = runners.alive(job, state);
+    if (state && state.status !== "running") {
+      if (state.delivered || !alive2) this.settleHosted(job, state);
+    } else if (!alive2) this.settleHosted(job, null);
+  }
+  /** A runner-hosted job ended: with its runner's final state, or without (the runner is gone). */
+  settleHosted(job, final) {
+    const seen = new Set(final?.seen ?? this.runners?.state(job)?.seen ?? []);
+    job.queue.push(...(job.forwarded ?? []).filter((f) => !seen.has(f.cid)).map((f) => f.body));
+    job.forwarded = [];
+    const pid = job.host?.pid;
+    job.host = null;
+    if (final) {
+      this.finish(job, final.status === "done" ? "done" : "failed", "", final.sessionId ?? null, null, final.delivered ? null : final.report);
+      return;
+    }
+    const cause = job.controller.signal.aborted ? "cancelled" : `its job runner${pid ? ` (process ${pid})` : ""} ended without reporting a result`;
+    this.finish(job, "failed", "", job.sessionId, cause);
+  }
+  /** Cancel a background job, a blocking ask_* run or a continuation waiting for a slot, by name or id. */
+  cancel(ref) {
+    const id = ref.replace(/^.*-(?:job|ask)-/, "");
+    const waiting = [...this.waitingJobs.values()].find((j) => j.id === id || j.name === ref);
+    if (waiting) {
+      this.waitingJobs.delete(waiting.id);
+      waiting.queue = [];
+      this.log.info("waiting subagent continuation cancelled", { job: waiting.name });
+      return true;
+    }
+    const job = [...this.running.values(), ...this.foreground.values()].find((j) => j.id === id || j.name === ref);
+    if (!job) return false;
+    job.queue = [];
+    job.controller.abort();
+    if (this.hostedRunning(job)) {
+      job.forwarded = [];
+      const runners = this.runners;
+      runners.send(job, { type: "cancel" });
+      setTimeout(() => {
+        if (!this.hostedRunning(job)) return;
+        if (runners.alive(job, runners.state(job))) {
+          this.log.warn("job runner did not stop in time; killing it", { job: job.name, pid: job.host?.pid });
+          runners.kill(job);
+        }
+        this.checkHosted(job);
+      }, CANCEL_GRACE_MS).unref();
+    }
+    return true;
+  }
+  /**
+   * Stop every subagent of this process (the server shuts down). Runner-hosted ones keep running: the next
+   * server of this session takes them over, and their results wait for it on the bridge.
+   */
+  cancelAll() {
+    for (const j of this.waitingJobs.values()) j.queue = [];
+    this.waitingJobs.clear();
+    for (const j of this.running.values()) if (!j.host) j.controller.abort();
+    for (const j of this.foreground.values()) denyPendingApprovals(j, "session closed");
+    if (this.hostTimer) clearInterval(this.hostTimer);
+    this.hostTimer = null;
+  }
+  /** `report`: null when the runner already delivered it, a text to post as it is, or undefined to compose it here. */
+  finish(job, status, text2, sessionId, cause = null, report) {
+    denyPendingApprovals(job);
+    this.running.delete(job.id);
+    job.status = status;
+    job.finishedAt = Date.now();
+    job.sessionId = sessionId ?? job.sessionId;
+    this.persist();
+    const seconds = Math.round((Date.now() - job.startedAt) / 1e3);
+    this.log.info("subagent finished", { job: job.name, status, seconds, sessionId: job.sessionId, cause });
+    if (this.storePath && !job.host) notifyJobEvent(dirname4(this.storePath), status === "done" ? "finish" : "fail", this.log);
+    const message = report === void 0 ? jobReport(job, status, seconds, text2, cause) : report;
+    if (job.queue.length && job.resume && job.sessionId && !job.controller.signal.aborted) {
+      const queued = job.queue.splice(0).join("\n\n");
+      if (message !== null) this.post(job, `${message}
+
+${QUEUED_FOLLOW_UP_NOTE}`);
+      this.launch(job, job.resume(queued, job.sessionId, job.workdir, job.worktree));
+      return;
+    }
+    if (message !== null) this.post(job, message);
+    this.startWaiting();
+  }
+  /**
+   * Ask this session's agent to approve something the running subagent wants to do (an MCP tool call, for
+   * example). The question arrives as a message from the job; the agent answers with message_subagent.
+   * No answer within the time limit counts as "deny".
+   */
+  askParent(job, question, timeoutMs, request2) {
+    return waitForApproval(job, question, timeoutMs, (body) => this.post(job, body), this.log, this.storePath ? dirname4(this.storePath) : void 0, request2);
+  }
+  /**
+   * A message the running subagent sent to this session. An answer (to a live message, or marked as a reply)
+   * wakes the session; a note it sends on its own ("tests pass, merging next") does not: it waits for the
+   * session's next prompt or tool call, so status chatter costs no extra turn.
+   */
+  fromSubagent(job, body, replyTo, isAnswer = false) {
+    const answer = isAnswer || replyTo !== null || job.awaitingAnswer === true;
+    job.awaitingAnswer = false;
+    this.log.info("message from subagent", { job: job.name, note: !answer });
+    const id = this.post(job, body, replyTo);
+    if (!answer) {
+      this.notes.add(id);
+      if (this.notes.size > MAX_NOTES) this.notes.delete(this.notes.values().next().value);
+    }
+  }
+  /** Whether a message is a running subagent's own status note (it should not wake the session). */
+  isNote(m) {
+    return this.notes.has(m.id) || m.conversationId.endsWith(NOTE_CONVERSATION_SUFFIX);
+  }
+  post(job, body, replyTo = null) {
+    const m = {
+      id: randomUUID4(),
+      from: { id: `job:${job.id}`, name: job.name, agent: job.agent },
+      to: this.node.name,
+      recipient: this.node.name,
+      conversationId: `job-${job.id}`,
+      replyTo,
+      hop: 0,
+      body,
+      createdAt: Date.now(),
+      readAt: null
+    };
+    this.node.deliverLocal(m);
+    return m.id;
+  }
+};
+function sessionOfError(err) {
+  return err instanceof DelegateError ? err.sessionId ?? null : null;
+}
+function toStored(j) {
+  return {
+    id: j.id,
+    name: j.name,
+    agent: j.agent,
+    model: j.model,
+    prompt: j.prompt,
+    startedAt: j.startedAt,
+    status: j.status,
+    sessionId: j.sessionId,
+    workdir: j.workdir,
+    worktree: j.worktree,
+    args: j.args,
+    owner: j.owner,
+    supervisor: j.supervisor,
+    finishedAt: j.finishedAt,
+    host: j.host ?? null
+  };
+}
+function isStoredJob(j) {
+  return isRecord(j) && typeof j.id === "string" && typeof j.name === "string";
+}
+function readJobsDocument(path, log) {
+  return readJsonStore(path, log, (data) => Array.isArray(data) || isRecord(data) && Array.isArray(data.jobs));
+}
+function readStore(path, log) {
+  try {
+    const data = readJobsDocument(path, log);
+    const jobs = Array.isArray(data) ? data : isRecord(data) && Array.isArray(data.jobs) ? data.jobs : [];
+    return jobs.filter(isStoredJob);
+  } catch (err) {
+    log?.warn("could not read jobs store", { path, err: String(err) });
+    return [];
+  }
+}
+var LOCK_WAIT_MS = 2e3;
+var LOCK_STALE_MS = 1e4;
+var LOCK_RETRY_MS = 20;
+function acquireLock(path) {
+  mkdirSync5(dirname4(path), { recursive: true });
+  const deadline = Date.now() + LOCK_WAIT_MS;
+  const pause = new Int32Array(new SharedArrayBuffer(4));
+  for (; ; ) {
+    try {
+      closeSync2(openSync2(path, "wx"));
+      return () => rmSync3(path, { force: true });
+    } catch (err) {
+      if (err.code !== "EEXIST") throw err;
+      try {
+        if (Date.now() - statSync2(path).mtimeMs > LOCK_STALE_MS) rmSync3(path, { force: true });
+      } catch {
+      }
+      if (Date.now() > deadline) throw new Error("timed out locking jobs store");
+      Atomics.wait(pause, 0, 0, LOCK_RETRY_MS);
+    }
+  }
+}
+
+// src/core/worktree.ts
+import { createHash as createHash2 } from "node:crypto";
+import { existsSync as existsSync3, mkdirSync as mkdirSync6, readFileSync as readFileSync8, realpathSync as realpathSync3, rmSync as rmSync4 } from "node:fs";
+import { basename as basename3, isAbsolute as isAbsolute2, join as join12, relative, resolve as resolve3, toNamespacedPath } from "node:path";
+var GIT = "git";
+var LONG_PATH_ARGS = ["-c", "core.longpaths=true"];
+var REMOVE_RETRIES = 3;
+var GIT_TIMEOUT_MS = 18e4;
+var WORKTREE_ADD_TIMEOUT_MS = 6e5;
+var BRANCH_PREFIX = "agent-bridge/";
+var FALLBACK_COMMIT_IDENTITY = { "user.name": "agent-bridge", "user.email": "agent-bridge@localhost" };
+var MAX_DIFFSTAT_CHARS = 4e3;
+function trustArgs(...dirs) {
+  return dirs.flatMap((d) => ["-c", `safe.directory=${resolve3(d).replace(/\\/g, "/")}`]);
+}
+async function git(args, cwd, log, timeoutMs = GIT_TIMEOUT_MS) {
+  const what = `git ${args.filter((a, i) => !a.startsWith("-") && args[i - 1] !== "-c").slice(0, 2).join(" ")}`;
+  const res = await runProcess({ bin: GIT, args: [...LONG_PATH_ARGS, ...args], stdin: "", cwd, timeoutMs, env: process.env, log, what });
+  if (res.code !== 0) throw new Error(`${what} failed: ${(res.stderr || res.stdout).trim().slice(0, 500)}`);
+  return res.stdout.trimEnd();
+}
+async function createWorktree(opts) {
+  let repoRoot;
+  try {
+    repoRoot = await git(["rev-parse", "--show-toplevel"], opts.cwd, opts.log);
+  } catch {
+    throw new Error(`worktree isolation needs a git repository, but ${opts.cwd} is not inside one`);
+  }
+  const base = await git(["rev-parse", "HEAD"], repoRoot, opts.log);
+  const baseBranch = await git(["symbolic-ref", "-q", "--short", "HEAD"], repoRoot, opts.log).catch(() => "") || null;
+  let branch = `${BRANCH_PREFIX}${opts.jobId}`;
+  const dir = join12(opts.home, "worktrees");
+  mkdirSync6(dir, { recursive: true });
+  let path = join12(dir, `${basename3(repoRoot)}-${opts.jobId}`);
+  try {
+    await git(["worktree", "add", "-b", branch, path, base], repoRoot, opts.log, WORKTREE_ADD_TIMEOUT_MS);
+  } catch (err) {
+    if (!(err instanceof DelegateError && err.kind === "timeout")) {
+      await removeWorktree(repoRoot, path, branch, opts.log);
+      throw new Error(`could not create a worktree for the subagent: ${err.message}`);
+    }
+    opts.log.warn("git worktree add timed out; retrying once", { path });
+    await removeWorktree(repoRoot, path, branch, opts.log);
+    branch = `${branch}-r2`;
+    path = `${path}-r2`;
+    try {
+      await git(["worktree", "add", "-b", branch, path, base], repoRoot, opts.log, WORKTREE_ADD_TIMEOUT_MS);
+    } catch (again) {
+      await removeWorktree(repoRoot, path, branch, opts.log);
+      throw new Error(`could not create a worktree for the subagent (tried twice): ${again.message}`);
+    }
+  }
+  await unlockWorktree(repoRoot, path, opts.log);
+  const rel = relative(repoRoot, opts.cwd);
+  const cwd = rel && !rel.startsWith("..") && !isAbsolute2(rel) ? join12(path, rel) : path;
+  opts.log.info("worktree created", { repoRoot, path, branch });
+  return { repoRoot, path, cwd, branch, base, baseBranch };
+}
+async function unlockWorktree(repoRoot, path, log) {
+  await git([...trustArgs(path), "worktree", "unlock", path], repoRoot, log).catch(() => "");
+}
+async function removeWorktree(repoRoot, path, branch, log) {
+  await git([...trustArgs(path), "worktree", "remove", "--force", "--force", path], repoRoot, log).catch(() => {
+  });
+  try {
+    removeWorktreeDirectory(path);
+  } catch {
+  }
+  await git(["worktree", "prune"], repoRoot, log).catch(() => {
+  });
+  await git(["branch", "-D", branch], repoRoot, log).catch(() => {
+  });
+}
+function removeWorktreeDirectory(path) {
+  rmSync4(toNamespacedPath(resolve3(path)), { recursive: true, force: true, maxRetries: REMOVE_RETRIES });
+}
+var SUBJECT_CHARS = 72;
+function subagentCommitMessage(opts) {
+  const plain = (s) => s.replace(/[*_`#>]+/g, "").replace(/\s+/g, " ").trim();
+  const firstLine = (s) => s.split(/\r?\n/).map(plain).find((l) => l.length > 0) ?? "";
+  const clip2 = (s) => s.length > SUBJECT_CHARS ? `${s.slice(0, SUBJECT_CHARS - 1).trimEnd()}\u2026` : s;
+  const subject = clip2(firstLine(opts.answer) || firstLine(opts.task) || "subagent changes");
+  const email3 = { codex: "noreply@openai.com", claude: "noreply@anthropic.com", opencode: "noreply@opencode.ai" }[opts.agent] ?? "noreply@localhost";
+  const who = opts.model ? `${opts.model} via ${opts.agent}` : opts.agent;
+  return [
+    subject,
+    "",
+    `Committed by agent-bridge for ${opts.job ?? "a subagent"} (${who}).`,
+    `Task: ${clip2(firstLine(opts.task))}`,
+    "",
+    `Co-Authored-By: ${who} <${email3}>`
+  ].join("\n");
+}
+async function gitDirsOutside(cwd, log) {
+  try {
+    const [gitDir, common] = (await git(["rev-parse", "--path-format=absolute", "--git-dir", "--git-common-dir"], cwd, log)).split(/\r?\n/);
+    const real = (p) => {
+      try {
+        return realpathSync3.native(p);
+      } catch {
+        return resolve3(p);
+      }
+    };
+    const inside = (p) => {
+      const rel = relative(real(cwd), real(p));
+      return rel === "" || !rel.startsWith("..") && !isAbsolute2(rel);
+    };
+    return [...new Set([gitDir, common].filter((p) => Boolean(p) && !inside(p)))];
+  } catch {
+    return [];
+  }
+}
+async function reviewBase(wt, log, branch = wt.branch) {
+  const run = (args) => git(args, wt.repoRoot, log);
+  const tip = await run(["rev-parse", branch]);
+  const reflog = await git([...trustArgs(wt.path), "log", "-g", "--format=%H%x09%gs", "HEAD"], wt.path, log).catch(() => "");
+  const start = reflog.split(/\r?\n/).reverse().find((line) => line.endsWith(` to ${branch}`) && line.includes("	checkout: moving from "))?.split("	")[0];
+  const base = branch === wt.branch ? wt.base : start ?? wt.base;
+  const created = (await run(["log", "-g", "--format=%H%x09%gs", branch]).catch(() => "")).split(/\r?\n/).reverse().find((line) => line.startsWith(`${base}	branch: Created from `));
+  const source = branch !== wt.branch ? created?.split("	branch: Created from ")[1] : null;
+  const list = await run(["worktree", "list", "--porcelain"]).catch(() => "");
+  const main = /^branch refs\/heads\/(.+)$/m.exec(list.split(/\r?\n\r?\n/)[0] ?? "")?.[1];
+  const candidates = /* @__PURE__ */ new Set([base]);
+  for (const b of /* @__PURE__ */ new Set([source, wt.baseBranch, main])) {
+    if (!b || b === "HEAD" || b === branch) continue;
+    const mb = await run(["merge-base", b, branch]).catch(() => "");
+    if (mb && mb !== tip) candidates.add(mb);
+  }
+  let best = base;
+  let fewest = Infinity;
+  for (const c of candidates) {
+    const n = Number(await run(["rev-list", "--count", `${c}..${branch}`]).catch(() => "NaN"));
+    if (n < fewest) [best, fewest] = [c, n];
+  }
+  return best;
+}
+var GENERATED_DIRECTORIES = /* @__PURE__ */ new Set(["node_modules", ".vs", "__pycache__"]);
+var UNITY_GENERATED_DIRECTORIES = /* @__PURE__ */ new Set(["Library", "Temp", "Obj", "Logs", "UserSettings"]);
+var GENERATED_FILES = /* @__PURE__ */ new Set([".DS_Store", "Thumbs.db"]);
+function generatedNoise(root, file2) {
+  const parts = file2.split("/");
+  if (GENERATED_FILES.has(parts.at(-1))) return true;
+  return parts.slice(0, -1).some((part, index) => {
+    if (GENERATED_DIRECTORIES.has(part)) return true;
+    if (!UNITY_GENERATED_DIRECTORIES.has(part)) return false;
+    return existsSync3(toNamespacedPath(join12(root, ...parts.slice(0, index), "ProjectSettings", "ProjectVersion.txt")));
+  });
+}
+async function autoCommitFiles(wt, log) {
+  const trust = trustArgs(wt.path);
+  const status = await git([...trust, "status", "--porcelain=v1", "-z", "--no-renames", "--untracked-files=all"], wt.path, log);
+  const included = [];
+  const unstage = [];
+  const skipped = [];
+  for (const entry of status.split("\0").filter(Boolean)) {
+    const file2 = entry.slice(3);
+    const literal2 = `:(literal)${file2}`;
+    let reason;
+    if (generatedNoise(wt.path, file2)) reason = "generated noise";
+    else if (entry.startsWith("??") || await git([...trust, "diff", "--ignore-all-space", "--ignore-cr-at-eol", "--no-ext-diff", "--no-textconv", "--no-renames", "HEAD", "--", literal2], wt.path, log)) {
+      if (!entry.startsWith("D ")) included.push(literal2);
+    } else reason = "whitespace only";
+    if (reason) {
+      skipped.push({ path: file2, reason });
+      if (entry[0] !== "?" && entry[0] !== " ") unstage.push(literal2);
+    }
+  }
+  for (const file2 of unstage) await git([...trust, "reset", "-q", "HEAD", "--", file2], wt.path, log);
+  for (const file2 of included) await git([...trust, "add", "-A", "--", file2], wt.path, log);
+  return skipped;
+}
+async function finishWorktree(wt, message, log) {
+  const trust = trustArgs(wt.path);
+  const skippedFiles = await autoCommitFiles(wt, log);
+  const status = await git([...trust, "diff", "--cached", "--name-only", "-z"], wt.path, log);
+  if (status) {
+    const identity = [];
+    for (const [key2, fallback] of Object.entries(FALLBACK_COMMIT_IDENTITY)) {
+      const configured = (await git([...trustArgs(wt.repoRoot), "config", "--get", key2], wt.repoRoot, log).catch(() => "")).trim();
+      identity.push("-c", `${key2}=${configured || fallback}`);
+    }
+    await git([...trust, ...identity, "commit", "-q", "--no-verify", "-m", message], wt.path, log);
+  }
+  await unlockWorktree(wt.repoRoot, wt.path, log);
+  const current = await git([...trust, "branch", "--show-current"], wt.path, log).catch(() => "") || wt.branch;
+  const work = await workBranches(wt, current, log);
+  const branch = work.has(current) || !work.size ? current : [...work.keys()][0];
+  const from = await reviewBase(wt, log, branch);
+  const diffStat = await git(["diff", "--stat", `${from}..${branch}`], wt.repoRoot, log);
+  const files = (await git(["diff", "--name-only", "-z", `${from}..${branch}`], wt.repoRoot, log)).split("\0").filter(Boolean);
+  const otherBranches = [...work].filter(([name]) => name !== branch).map(([name, commits]) => ({ name, commits }));
+  return { changed: diffStat.length > 0 || otherBranches.length > 0, branch, otherBranches, diffStat: diffStat.slice(0, MAX_DIFFSTAT_CHARS), reviewBase: from, files, skippedFiles };
+}
+async function workBranches(wt, current, log) {
+  const trust = trustArgs(wt.path);
+  const visited = new Set((await git([...trust, "log", "-g", "--format=%H%x09%gs", "HEAD"], wt.path, log).catch(() => "")).split(/\r?\n/).filter((line) => line && !line.includes("	checkout: ")).map((line) => line.split("	")[0]));
+  const refs = (await git(["for-each-ref", "refs/heads", "--format=%(refname:short) %(objectname)"], wt.repoRoot, log).catch(() => "")).split(/\r?\n/).map((l) => l.split(" ")).filter((p) => p.length === 2);
+  const list = await git(["worktree", "list", "--porcelain"], wt.repoRoot, log).catch(() => "");
+  const here = resolve3(wt.path).toLowerCase();
+  const elsewhere = new Set(
+    list.split(/\r?\n\r?\n/).filter((block) => resolve3(/^worktree (.+)$/m.exec(block)?.[1] ?? "").toLowerCase() !== here).map((block) => /^branch refs\/heads\/(.+)$/m.exec(block)?.[1]).filter((b) => Boolean(b))
+  );
+  for (const b of [wt.baseBranch]) if (b) elsewhere.add(b);
+  const candidates = new Set(
+    [wt.branch, current, ...refs.filter(([, sha]) => visited.has(sha) && sha !== wt.base).map(([name]) => name)].filter((b) => b === wt.branch || !elsewhere.has(b))
+  );
+  const out = /* @__PURE__ */ new Map();
+  for (const name of candidates) {
+    const from = await reviewBase(wt, log, name).catch(() => null);
+    const commits = from ? Number(await git(["rev-list", "--count", `${from}..${name}`], wt.repoRoot, log).catch(() => "0")) : 0;
+    if (commits > 0) out.set(name, commits);
+  }
+  return out;
+}
+var HANDOFF_FILE = /(^|\/)(HANDOFF|TODO)\.md$/i;
+function handoffWarning(files) {
+  const hit = files.filter((f) => HANDOFF_FILE.test(f.replace(/\\/g, "/")));
+  return hit.length ? `WARNING: this job changed ${hit.join(", ")}. Delegated jobs should report in their answer and leave handoff and TODO files to you: check these changes before you take them.` : null;
+}
+function worktreeReport(wt, outcome) {
+  const branch = outcome.branch ?? wt.branch;
+  const skipped = outcome.skippedFiles ?? [];
+  const rule = skipped.length ? `Auto-commit skipped whitespace/line-ending-only changes and known generated noise; left on disk: ${skipped.map((f) => `${f.path} (${f.reason})`).join(", ")}.` : "";
+  const remove = "git -c core.longpaths=true worktree remove";
+  if (!outcome.changed) return [
+    `Worktree ${wt.path} (branch ${branch}) has ${skipped.length ? "no real changes" : "no changes"}; remove it with: ${remove}${skipped.length ? " --force" : ""} "${wt.path}" && git branch -D ${branch}`,
+    rule
+  ].filter(Boolean).join("\n");
+  const others = outcome.otherBranches ?? [];
+  const lines = [
+    `Changes are committed on branch ${branch} (worktree ${wt.path}), not in your working copy` + (branch !== wt.branch ? ` (the job worked on its own branch; ${wt.branch} was its starting branch)` : "") + ":"
+  ];
+  if (outcome.diffStat) lines.push(outcome.diffStat);
+  if (rule) lines.push(rule);
+  if (others.length) lines.push(`Also committed from this worktree: ${others.map((o) => `${o.name} (${o.commits} commit${o.commits === 1 ? "" : "s"})`).join(", ")}. Review those before removing anything.`);
+  lines.push(...[handoffWarning(outcome.files)].filter((w) => Boolean(w)));
+  if (outcome.diffStat) {
+    lines.push(`Review base: ${outcome.reviewBase} (job fork point).`);
+    lines.push(`Review: git diff ${outcome.reviewBase.slice(0, 12)}..${branch}`);
+    lines.push(`Take them: git merge ${branch}   (or git cherry-pick ${branch})`);
+  }
+  lines.push(`Discard: ${remove} --force "${wt.path}" && git branch -D ${[branch, ...others.map((o) => o.name)].join(" ")}`);
+  return lines.join("\n");
+}
+async function gitChangeSnapshot(cwd, log) {
+  let status;
+  try {
+    status = await git(["status", "--porcelain", "--untracked-files=all"], cwd, log);
+  } catch {
+    return null;
+  }
+  let root;
+  try {
+    root = await git(["rev-parse", "--show-toplevel"], cwd, log);
+  } catch {
+    return null;
+  }
+  const snap = /* @__PURE__ */ new Map();
+  for (const line of status.split(/\r?\n/).filter(Boolean)) {
+    const file2 = line.slice(3).replace(/^.* -> /, "").replace(/^"|"$/g, "");
+    let fp = line.slice(0, 2);
+    try {
+      fp += ":" + createHash2("sha1").update(readFileSync8(join12(root, file2))).digest("hex");
+    } catch {
+      fp += ":missing";
+    }
+    snap.set(file2, fp);
+  }
+  return snap;
+}
+function changedFiles(before, after) {
+  const out = /* @__PURE__ */ new Set();
+  for (const [f, fp] of after) if (before.get(f) !== fp) out.add(f);
+  for (const f of before.keys()) if (!after.has(f)) out.add(f);
+  return [...out].sort();
+}
+
+// src/core/local-result-receipts.ts
+import { createHash as createHash4 } from "node:crypto";
+import { existsSync as existsSync4, readdirSync as readdirSync3 } from "node:fs";
+import { join as join14 } from "node:path";
+
+// src/core/read-journal.ts
+import { createHash as createHash3 } from "node:crypto";
+import { appendFileSync, mkdirSync as mkdirSync7, readFileSync as readFileSync9 } from "node:fs";
+import { join as join13 } from "node:path";
+var ReadJournal = class {
+  dir;
+  constructor(home) {
+    this.dir = join13(home, "read-state");
+  }
+  path(identity) {
+    return join13(this.dir, `${createHash3("sha256").update(identity).digest("hex")}.jsonl`);
+  }
+  read(identity) {
+    return this.entries(identity).flatMap((entry) => entry.ids);
+  }
+  receipt(identity, id) {
+    const entries = this.entries(identity).filter((entry) => entry.ids.includes(id));
+    const times = entries.flatMap((entry) => entry.at === null ? [] : [entry.at]);
+    return { read: entries.length > 0, at: times.length ? Math.min(...times) : null };
+  }
+  entries(identity) {
+    let raw;
+    try {
+      raw = readFileSync9(this.path(identity), "utf8");
+    } catch (err) {
+      if (err.code === "ENOENT") return [];
+      throw err;
+    }
+    return raw.split("\n").flatMap((line) => {
+      if (!line) return [];
+      try {
+        const value = JSON.parse(line);
+        const timed = value && typeof value === "object" && !Array.isArray(value) ? value : null;
+        const ids = timed?.ids ?? value;
+        return Array.isArray(ids) ? [{ ids: ids.filter((id) => typeof id === "string"), at: typeof timed?.at === "number" ? timed.at : null }] : [];
+      } catch {
+        return [];
+      }
+    });
+  }
+  append(identity, ids) {
+    mkdirSync7(this.dir, { recursive: true, mode: 448 });
+    appendFileSync(this.path(identity), `
+${JSON.stringify({ ids, at: Date.now() })}
+`, { mode: 384, flush: true });
+  }
+};
+
+// src/core/local-result-receipts.ts
+var RESULT_HEADER = /^Subagent .+ (?:done|failed) after \d+s\./;
+var LOCAL_RESULTS_DIR = "local-result-receipts";
+var key = (name) => createHash4("sha256").update(name).digest("hex");
+function recordLocalResult(home, message) {
+  if (!message.from.id.startsWith("job:") || !RESULT_HEADER.test(message.body.split("\n")[0])) return;
+  const path = join14(home, LOCAL_RESULTS_DIR, key(message.from.name), `${key(message.id)}.json`);
+  const previous = readJsonStore(path);
+  if (previous) return;
+  writeJsonStore(path, { id: message.id, name: message.from.name, recipient: message.recipient, deliveredAt: message.createdAt }, previous);
+}
+function localResultReceipt(home, name, owner, after, before) {
+  const dir = join14(home, LOCAL_RESULTS_DIR, key(name));
+  if (!existsSync4(dir)) return null;
+  const records = readdirSync3(dir).filter((f) => f.endsWith(".json")).map((f) => readJsonStore(join14(dir, f))).filter((r) => isRecord(r) && typeof r.id === "string" && typeof r.recipient === "string" && typeof r.deliveredAt === "number" && (!owner || r.recipient === owner) && r.deliveredAt >= after && r.deliveredAt < before).sort((a, b) => b.deliveredAt - a.deliveredAt);
+  const record2 = records[0];
+  if (!record2) return null;
+  const receipt = new ReadJournal(home).receipt(`name:${record2.recipient}`, record2.id);
+  return {
+    status: receipt.read ? "read" : "delivered",
+    messageId: record2.id,
+    recipient: record2.recipient,
+    deliveredAt: record2.deliveredAt,
+    readAt: receipt.at
+  };
+}
+
+// src/core/job-outcomes.ts
+var MAX_HOLD_REASON_CHARS = 2e3;
+var JOB_OUTCOMES_DIR = "job-outcomes";
+var JOB_OUTCOME_CONTRACT_VERSION = 1;
+function decisionPath(home, job) {
+  const key2 = createHash5("sha256").update(`${job.name}:${job.startedAt}`).digest("hex");
+  return join15(home, JOB_OUTCOMES_DIR, `${key2}.json`);
+}
+function readOutcomeDecision(home, job) {
+  const data = readJsonStore(decisionPath(home, job));
+  if (!isRecord(data) || !isRecord(data.decision)) return null;
+  const d = data.decision;
+  return (d.state === "held" || d.state === "discarded") && typeof d.at === "number" && typeof d.by === "string" && (d.reason === null || typeof d.reason === "string") ? d : null;
+}
+function setJobOutcome(home, job, supervisor, state, reason, now = Date.now()) {
+  if (job.owner !== supervisor) throw new Error("Only this job's owning supervisor can set its outcome.");
+  if (job.status !== "done" && job.status !== "failed") throw new Error("Only finished jobs can be held or discarded.");
+  if (state !== "held" && state !== "discarded") throw new Error("Outcome must be held or discarded.");
+  const trimmed = reason?.trim() || null;
+  if (state === "held" && !trimmed) throw new Error("A held outcome requires a reason.");
+  if (trimmed && trimmed.length > MAX_HOLD_REASON_CHARS) throw new Error(`Reason must be at most ${MAX_HOLD_REASON_CHARS} characters.`);
+  const path = decisionPath(home, job);
+  const previous = readJsonStore(path);
+  const decision = { state, reason: trimmed, at: now, by: supervisor };
+  const history = isRecord(previous) && Array.isArray(previous.history) ? previous.history : [];
+  const prior = isRecord(previous) && isRecord(previous.decision) ? [previous.decision] : [];
+  writeJsonStore(path, mergeStoreFields(isRecord(previous) ? previous : {}, { job: job.name, startedAt: job.startedAt, decision, history: [...history, ...prior] }), previous);
+  return decision;
+}
+function resultDelivery(home, job, before) {
+  const unknown2 = { status: "unknown", messageId: null, recipient: null, deliveredAt: null, readAt: null };
+  const local = localResultReceipt(home, job.name, job.owner, job.startedAt, before);
+  const path = resolveDbPath(home);
+  if (!existsSync5(path)) return local ?? unknown2;
+  let db;
+  try {
+    db = new DatabaseSync(path, { readOnly: true });
+    const archived = Boolean(db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'archived_messages'").get());
+    const columns = "id, recipient, body, created_at, read_at";
+    const where = "WHERE from_name = ? AND conversation_id = ? AND created_at >= ? AND created_at < ?";
+    const args = [job.name, `job-${job.id}`, job.startedAt, before];
+    const rows = db.prepare(`SELECT ${columns} FROM messages ${where}${archived ? ` UNION ALL SELECT ${columns} FROM archived_messages ${where}` : ""} ORDER BY created_at DESC`).all(...args, ...archived ? args : []);
+    const row = rows.find((r) => (!job.owner || r.recipient === job.owner) && RESULT_HEADER.test(r.body.split("\n")[0]));
+    if (!row || local && local.deliveredAt > row.created_at) return local ?? unknown2;
+    const readAt = rows.filter((r) => r.id === row.id && r.recipient === row.recipient).reduce((at, r) => r.read_at === null ? at : Math.max(at ?? 0, r.read_at), null);
+    return { status: readAt === null ? "delivered" : "read", messageId: row.id, recipient: row.recipient, deliveredAt: row.created_at, readAt };
+  } catch {
+    return local ?? unknown2;
+  } finally {
+    db?.close();
+  }
+}
+async function deriveJobOutcome(home, job, log, opts = {}) {
+  const decision = readOutcomeDecision(home, job);
+  const branch = opts.branch ?? job.worktree?.branch ?? null;
+  const baseBranch = opts.baseBranch ?? job.worktree?.baseBranch ?? null;
+  const repoRoot = opts.repoRoot ?? job.worktree?.repoRoot;
+  let branchHead = opts.branchHead ?? job.worktree?.branchHead ?? null;
+  const merge2 = {
+    state: decision?.state ?? "unmerged",
+    branch,
+    baseBranch,
+    branchHead,
+    reason: decision?.reason ?? null,
+    checkedAt: Date.now(),
+    decisionAt: decision?.at ?? null,
+    decisionBy: decision?.by ?? null
+  };
+  if (!decision) {
+    if (!branch || !repoRoot || !baseBranch) merge2.reason = "Branch, repository, or base branch is unknown.";
+    else {
+      const run = (args) => git([...trustArgs(repoRoot), ...args], repoRoot, log);
+      branchHead ??= await run(["rev-parse", "--verify", `refs/heads/${branch}^{commit}`]).catch(() => null);
+      merge2.branchHead = branchHead;
+      if (!branchHead) merge2.reason = "Branch is missing and no saved tip is available.";
+      else {
+        const base = await run(["rev-parse", "--verify", `refs/heads/${baseBranch}^{commit}`]).catch(() => null);
+        if (!base) merge2.reason = "Base branch is unavailable.";
+        else {
+          const merged = await run(["merge-base", "--is-ancestor", branchHead, base]).then(() => true, () => false);
+          merge2.state = merged ? "merged" : "unmerged";
+          merge2.reason = merged ? null : `Has commits not merged into ${baseBranch}.`;
+        }
+      }
+    }
+  }
+  return { delivery: resultDelivery(home, job, opts.before ?? Number.MAX_SAFE_INTEGER), merge: merge2 };
+}
+async function listJobOutcomes(home, log) {
+  const jobs = readStore(join15(home, JOBS_FILE), log);
+  const out = {};
+  for (const job of jobs) {
+    if (job.status !== "done" && job.status !== "failed") continue;
+    out[job.name] = { startedAt: job.startedAt, status: job.status, outcome: await deriveJobOutcome(home, job, log) };
+  }
+  return out;
+}
+
+// src/mcp/server.ts
+import { dirname as dirname9, isAbsolute as isAbsolute6, join as join37, resolve as resolve9 } from "node:path";
+import { fileURLToPath as fileURLToPath2 } from "node:url";
+
+// D:/Development/claude-codex-comm/node_modules/zod/v3/helpers/util.js
+var util;
+(function(util2) {
+  util2.assertEqual = (_) => {
+  };
+  function assertIs2(_arg) {
+  }
+  util2.assertIs = assertIs2;
+  function assertNever2(_x) {
+    throw new Error();
+  }
+  util2.assertNever = assertNever2;
+  util2.arrayToEnum = (items) => {
+    const obj = {};
+    for (const item of items) {
+      obj[item] = item;
+    }
+    return obj;
+  };
+  util2.getValidEnumValues = (obj) => {
+    const validKeys = util2.objectKeys(obj).filter((k) => typeof obj[obj[k]] !== "number");
+    const filtered = {};
+    for (const k of validKeys) {
+      filtered[k] = obj[k];
+    }
+    return util2.objectValues(filtered);
+  };
+  util2.objectValues = (obj) => {
+    return util2.objectKeys(obj).map(function(e) {
+      return obj[e];
+    });
+  };
+  util2.objectKeys = typeof Object.keys === "function" ? (obj) => Object.keys(obj) : (object4) => {
+    const keys = [];
+    for (const key2 in object4) {
+      if (Object.prototype.hasOwnProperty.call(object4, key2)) {
+        keys.push(key2);
+      }
+    }
+    return keys;
+  };
+  util2.find = (arr, checker) => {
+    for (const item of arr) {
+      if (checker(item))
+        return item;
+    }
+    return void 0;
+  };
+  util2.isInteger = typeof Number.isInteger === "function" ? (val) => Number.isInteger(val) : (val) => typeof val === "number" && Number.isFinite(val) && Math.floor(val) === val;
+  function joinValues2(array2, separator = " | ") {
+    return array2.map((val) => typeof val === "string" ? `'${val}'` : val).join(separator);
+  }
+  util2.joinValues = joinValues2;
+  util2.jsonStringifyReplacer = (_, value) => {
+    if (typeof value === "bigint") {
+      return value.toString();
+    }
+    return value;
+  };
+})(util || (util = {}));
+var objectUtil;
+(function(objectUtil2) {
+  objectUtil2.mergeShapes = (first, second) => {
+    return {
+      ...first,
+      ...second
+      // second overwrites first
+    };
+  };
+})(objectUtil || (objectUtil = {}));
+var ZodParsedType = util.arrayToEnum([
+  "string",
+  "nan",
+  "number",
+  "integer",
+  "float",
+  "boolean",
+  "date",
+  "bigint",
+  "symbol",
+  "function",
+  "undefined",
+  "null",
+  "array",
+  "object",
+  "unknown",
+  "promise",
+  "void",
+  "never",
+  "map",
+  "set"
+]);
+var getParsedType2 = (data) => {
+  const t2 = typeof data;
+  switch (t2) {
+    case "undefined":
+      return ZodParsedType.undefined;
+    case "string":
+      return ZodParsedType.string;
+    case "number":
+      return Number.isNaN(data) ? ZodParsedType.nan : ZodParsedType.number;
+    case "boolean":
+      return ZodParsedType.boolean;
+    case "function":
+      return ZodParsedType.function;
+    case "bigint":
+      return ZodParsedType.bigint;
+    case "symbol":
+      return ZodParsedType.symbol;
+    case "object":
+      if (Array.isArray(data)) {
+        return ZodParsedType.array;
+      }
+      if (data === null) {
+        return ZodParsedType.null;
+      }
+      if (data.then && typeof data.then === "function" && data.catch && typeof data.catch === "function") {
+        return ZodParsedType.promise;
+      }
+      if (typeof Map !== "undefined" && data instanceof Map) {
+        return ZodParsedType.map;
+      }
+      if (typeof Set !== "undefined" && data instanceof Set) {
+        return ZodParsedType.set;
+      }
+      if (typeof Date !== "undefined" && data instanceof Date) {
+        return ZodParsedType.date;
+      }
+      return ZodParsedType.object;
+    default:
+      return ZodParsedType.unknown;
+  }
+};
+
+// D:/Development/claude-codex-comm/node_modules/zod/v3/ZodError.js
+var ZodIssueCode2 = util.arrayToEnum([
+  "invalid_type",
+  "invalid_literal",
+  "custom",
+  "invalid_union",
+  "invalid_union_discriminator",
+  "invalid_enum_value",
+  "unrecognized_keys",
+  "invalid_arguments",
+  "invalid_return_type",
+  "invalid_date",
+  "invalid_string",
+  "too_small",
+  "too_big",
+  "invalid_intersection_types",
+  "not_multiple_of",
+  "not_finite"
+]);
+var ZodError2 = class _ZodError extends Error {
+  get errors() {
+    return this.issues;
+  }
+  constructor(issues) {
+    super();
+    this.issues = [];
+    this.addIssue = (sub) => {
+      this.issues = [...this.issues, sub];
+    };
+    this.addIssues = (subs = []) => {
+      this.issues = [...this.issues, ...subs];
+    };
+    const actualProto = new.target.prototype;
+    if (Object.setPrototypeOf) {
+      Object.setPrototypeOf(this, actualProto);
+    } else {
+      this.__proto__ = actualProto;
+    }
+    this.name = "ZodError";
+    this.issues = issues;
+  }
+  format(_mapper) {
+    const mapper = _mapper || function(issue2) {
+      return issue2.message;
+    };
+    const fieldErrors = { _errors: [] };
+    const processError = (error62) => {
+      for (const issue2 of error62.issues) {
+        if (issue2.code === "invalid_union") {
+          issue2.unionErrors.map(processError);
+        } else if (issue2.code === "invalid_return_type") {
+          processError(issue2.returnTypeError);
+        } else if (issue2.code === "invalid_arguments") {
+          processError(issue2.argumentsError);
+        } else if (issue2.path.length === 0) {
+          fieldErrors._errors.push(mapper(issue2));
+        } else {
+          let curr = fieldErrors;
+          let i = 0;
+          while (i < issue2.path.length) {
+            const el = issue2.path[i];
+            const terminal = i === issue2.path.length - 1;
+            if (el === "_errors") {
+              if (terminal)
+                curr._errors.push(mapper(issue2));
+              i++;
+              continue;
+            }
+            if (!Object.prototype.hasOwnProperty.call(curr, el)) {
+              if (el === "__proto__") {
+                Object.defineProperty(curr, el, {
+                  value: { _errors: [] },
+                  writable: true,
+                  enumerable: true,
+                  configurable: true
+                });
+              } else {
+                curr[el] = { _errors: [] };
+              }
+            }
+            curr = curr[el];
+            if (terminal) {
+              curr._errors.push(mapper(issue2));
+            }
+            i++;
+          }
+        }
+      }
+    };
+    processError(this);
+    return fieldErrors;
+  }
+  static assert(value) {
+    if (!(value instanceof _ZodError)) {
+      throw new Error(`Not a ZodError: ${value}`);
+    }
+  }
+  toString() {
+    return this.message;
+  }
+  get message() {
+    return JSON.stringify(this.issues, util.jsonStringifyReplacer, 2);
+  }
+  get isEmpty() {
+    return this.issues.length === 0;
+  }
+  flatten(mapper = (issue2) => issue2.message) {
+    const fieldErrors = /* @__PURE__ */ Object.create(null);
+    const formErrors = [];
+    for (const sub of this.issues) {
+      if (sub.path.length > 0) {
+        const firstEl = sub.path[0];
+        fieldErrors[firstEl] = fieldErrors[firstEl] || [];
+        fieldErrors[firstEl].push(mapper(sub));
+      } else {
+        formErrors.push(mapper(sub));
+      }
+    }
+    return { formErrors, fieldErrors };
+  }
+  get formErrors() {
+    return this.flatten();
+  }
+};
+ZodError2.create = (issues) => {
+  const error62 = new ZodError2(issues);
+  return error62;
+};
+
+// D:/Development/claude-codex-comm/node_modules/zod/v3/locales/en.js
+var errorMap = (issue2, _ctx) => {
+  let message;
+  switch (issue2.code) {
+    case ZodIssueCode2.invalid_type:
+      if (issue2.received === ZodParsedType.undefined) {
+        message = "Required";
+      } else {
+        message = `Expected ${issue2.expected}, received ${issue2.received}`;
+      }
+      break;
+    case ZodIssueCode2.invalid_literal:
+      message = `Invalid literal value, expected ${JSON.stringify(issue2.expected, util.jsonStringifyReplacer)}`;
+      break;
+    case ZodIssueCode2.unrecognized_keys:
+      message = `Unrecognized key(s) in object: ${util.joinValues(issue2.keys, ", ")}`;
+      break;
+    case ZodIssueCode2.invalid_union:
+      message = `Invalid input`;
+      break;
+    case ZodIssueCode2.invalid_union_discriminator:
+      message = `Invalid discriminator value. Expected ${util.joinValues(issue2.options)}`;
+      break;
+    case ZodIssueCode2.invalid_enum_value:
+      message = `Invalid enum value. Expected ${util.joinValues(issue2.options)}, received '${issue2.received}'`;
+      break;
+    case ZodIssueCode2.invalid_arguments:
+      message = `Invalid function arguments`;
+      break;
+    case ZodIssueCode2.invalid_return_type:
+      message = `Invalid function return type`;
+      break;
+    case ZodIssueCode2.invalid_date:
+      message = `Invalid date`;
+      break;
+    case ZodIssueCode2.invalid_string:
+      if (typeof issue2.validation === "object") {
+        if ("includes" in issue2.validation) {
+          message = `Invalid input: must include "${issue2.validation.includes}"`;
+          if (typeof issue2.validation.position === "number") {
+            message = `${message} at one or more positions greater than or equal to ${issue2.validation.position}`;
+          }
+        } else if ("startsWith" in issue2.validation) {
+          message = `Invalid input: must start with "${issue2.validation.startsWith}"`;
+        } else if ("endsWith" in issue2.validation) {
+          message = `Invalid input: must end with "${issue2.validation.endsWith}"`;
+        } else {
+          util.assertNever(issue2.validation);
+        }
+      } else if (issue2.validation !== "regex") {
+        message = `Invalid ${issue2.validation}`;
+      } else {
+        message = "Invalid";
+      }
+      break;
+    case ZodIssueCode2.too_small:
+      if (issue2.type === "array")
+        message = `Array must contain ${issue2.exact ? "exactly" : issue2.inclusive ? `at least` : `more than`} ${issue2.minimum} element(s)`;
+      else if (issue2.type === "string")
+        message = `String must contain ${issue2.exact ? "exactly" : issue2.inclusive ? `at least` : `over`} ${issue2.minimum} character(s)`;
+      else if (issue2.type === "number")
+        message = `Number must be ${issue2.exact ? `exactly equal to ` : issue2.inclusive ? `greater than or equal to ` : `greater than `}${issue2.minimum}`;
+      else if (issue2.type === "bigint")
+        message = `Number must be ${issue2.exact ? `exactly equal to ` : issue2.inclusive ? `greater than or equal to ` : `greater than `}${issue2.minimum}`;
+      else if (issue2.type === "date")
+        message = `Date must be ${issue2.exact ? `exactly equal to ` : issue2.inclusive ? `greater than or equal to ` : `greater than `}${new Date(Number(issue2.minimum))}`;
+      else
+        message = "Invalid input";
+      break;
+    case ZodIssueCode2.too_big:
+      if (issue2.type === "array")
+        message = `Array must contain ${issue2.exact ? `exactly` : issue2.inclusive ? `at most` : `less than`} ${issue2.maximum} element(s)`;
+      else if (issue2.type === "string")
+        message = `String must contain ${issue2.exact ? `exactly` : issue2.inclusive ? `at most` : `under`} ${issue2.maximum} character(s)`;
+      else if (issue2.type === "number")
+        message = `Number must be ${issue2.exact ? `exactly` : issue2.inclusive ? `less than or equal to` : `less than`} ${issue2.maximum}`;
+      else if (issue2.type === "bigint")
+        message = `BigInt must be ${issue2.exact ? `exactly` : issue2.inclusive ? `less than or equal to` : `less than`} ${issue2.maximum}`;
+      else if (issue2.type === "date")
+        message = `Date must be ${issue2.exact ? `exactly` : issue2.inclusive ? `smaller than or equal to` : `smaller than`} ${new Date(Number(issue2.maximum))}`;
+      else
+        message = "Invalid input";
+      break;
+    case ZodIssueCode2.custom:
+      message = `Invalid input`;
+      break;
+    case ZodIssueCode2.invalid_intersection_types:
+      message = `Intersection results could not be merged`;
+      break;
+    case ZodIssueCode2.not_multiple_of:
+      message = `Number must be a multiple of ${issue2.multipleOf}`;
+      break;
+    case ZodIssueCode2.not_finite:
+      message = "Number must be finite";
+      break;
+    default:
+      message = _ctx.defaultError;
+      util.assertNever(issue2);
+  }
+  return { message };
+};
+var en_default2 = errorMap;
+
+// D:/Development/claude-codex-comm/node_modules/zod/v3/errors.js
+var overrideErrorMap = en_default2;
+function getErrorMap2() {
+  return overrideErrorMap;
+}
+
+// D:/Development/claude-codex-comm/node_modules/zod/v3/helpers/parseUtil.js
+var makeIssue = (params) => {
+  const { data, path, errorMaps, issueData } = params;
+  const fullPath = [...path, ...issueData.path || []];
+  const fullIssue = {
+    ...issueData,
+    path: fullPath
+  };
+  if (issueData.message !== void 0) {
+    return {
+      ...issueData,
+      path: fullPath,
+      message: issueData.message
+    };
+  }
+  let errorMessage = "";
+  const maps = errorMaps.filter((m) => !!m).slice().reverse();
+  for (const map2 of maps) {
+    errorMessage = map2(fullIssue, { data, defaultError: errorMessage }).message;
+  }
+  return {
+    ...issueData,
+    path: fullPath,
+    message: errorMessage
+  };
+};
+function addIssueToContext(ctx, issueData) {
+  const overrideMap = getErrorMap2();
+  const issue2 = makeIssue({
+    issueData,
+    data: ctx.data,
+    path: ctx.path,
+    errorMaps: [
+      ctx.common.contextualErrorMap,
+      // contextual error map is first priority
+      ctx.schemaErrorMap,
+      // then schema-bound map if available
+      overrideMap,
+      // then global override map
+      overrideMap === en_default2 ? void 0 : en_default2
+      // then global default map
+    ].filter((x) => !!x)
+  });
+  ctx.common.issues.push(issue2);
+}
+var ParseStatus = class _ParseStatus {
+  constructor() {
+    this.value = "valid";
+  }
+  dirty() {
+    if (this.value === "valid")
+      this.value = "dirty";
+  }
+  abort() {
+    if (this.value !== "aborted")
+      this.value = "aborted";
+  }
+  static mergeArray(status, results) {
+    const arrayValue = [];
+    for (const s of results) {
+      if (s.status === "aborted")
+        return INVALID2;
+      if (s.status === "dirty")
+        status.dirty();
+      arrayValue.push(s.value);
+    }
+    return { status: status.value, value: arrayValue };
+  }
+  static async mergeObjectAsync(status, pairs) {
+    const syncPairs = [];
+    for (const pair of pairs) {
+      const key2 = await pair.key;
+      const value = await pair.value;
+      syncPairs.push({
+        key: key2,
+        value
+      });
+    }
+    return _ParseStatus.mergeObjectSync(status, syncPairs);
+  }
+  static mergeObjectSync(status, pairs) {
+    const finalObject = {};
+    for (const pair of pairs) {
+      const { key: key2, value } = pair;
+      if (key2.status === "aborted")
+        return INVALID2;
+      if (value.status === "aborted")
+        return INVALID2;
+      if (key2.status === "dirty")
+        status.dirty();
+      if (value.status === "dirty")
+        status.dirty();
+      if (key2.value !== "__proto__" && (typeof value.value !== "undefined" || pair.alwaysSet)) {
+        finalObject[key2.value] = value.value;
+      }
+    }
+    return { status: status.value, value: finalObject };
+  }
+};
+var INVALID2 = Object.freeze({
+  status: "aborted"
+});
+var DIRTY = (value) => ({ status: "dirty", value });
+var OK = (value) => ({ status: "valid", value });
+var isAborted = (x) => x.status === "aborted";
+var isDirty = (x) => x.status === "dirty";
+var isValid = (x) => x.status === "valid";
+var isAsync = (x) => typeof Promise !== "undefined" && x instanceof Promise;
+
+// D:/Development/claude-codex-comm/node_modules/zod/v3/helpers/errorUtil.js
+var errorUtil;
+(function(errorUtil2) {
+  errorUtil2.errToObj = (message) => typeof message === "string" ? { message } : message || {};
+  errorUtil2.toString = (message) => typeof message === "string" ? message : message?.message;
+})(errorUtil || (errorUtil = {}));
+
+// D:/Development/claude-codex-comm/node_modules/zod/v3/types.js
+var ParseInputLazyPath = class {
+  constructor(parent2, value, path, key2) {
+    this._cachedPath = [];
+    this.parent = parent2;
+    this.data = value;
+    this._path = path;
+    this._key = key2;
+  }
+  get path() {
+    if (!this._cachedPath.length) {
+      if (Array.isArray(this._key)) {
+        this._cachedPath.push(...this._path, ...this._key);
+      } else {
+        this._cachedPath.push(...this._path, this._key);
+      }
+    }
+    return this._cachedPath;
+  }
+};
+var handleResult = (ctx, result) => {
+  if (isValid(result)) {
+    return { success: true, data: result.value };
+  } else {
+    if (!ctx.common.issues.length) {
+      throw new Error("Validation failed but no issues detected.");
+    }
+    return {
+      success: false,
+      get error() {
+        if (this._error)
+          return this._error;
+        const error62 = new ZodError2(ctx.common.issues);
+        this._error = error62;
+        return this._error;
+      }
+    };
+  }
+};
+function processCreateParams(params) {
+  if (!params)
+    return {};
+  const { errorMap: errorMap2, invalid_type_error, required_error, description } = params;
+  if (errorMap2 && (invalid_type_error || required_error)) {
+    throw new Error(`Can't use "invalid_type_error" or "required_error" in conjunction with custom error map.`);
+  }
+  if (errorMap2)
+    return { errorMap: errorMap2, description };
+  const customMap = (iss, ctx) => {
+    const { message } = params;
+    if (iss.code === "invalid_enum_value") {
+      return { message: message ?? ctx.defaultError };
+    }
+    if (typeof ctx.data === "undefined") {
+      return { message: message ?? required_error ?? ctx.defaultError };
+    }
+    if (iss.code !== "invalid_type")
+      return { message: ctx.defaultError };
+    return { message: message ?? invalid_type_error ?? ctx.defaultError };
+  };
+  return { errorMap: customMap, description };
+}
+var ZodType2 = class {
+  get description() {
+    return this._def.description;
+  }
+  _getType(input2) {
+    return getParsedType2(input2.data);
+  }
+  _getOrReturnCtx(input2, ctx) {
+    return ctx || {
+      common: input2.parent.common,
+      data: input2.data,
+      parsedType: getParsedType2(input2.data),
+      schemaErrorMap: this._def.errorMap,
+      path: input2.path,
+      parent: input2.parent
+    };
+  }
+  _processInputParams(input2) {
+    return {
+      status: new ParseStatus(),
+      ctx: {
+        common: input2.parent.common,
+        data: input2.data,
+        parsedType: getParsedType2(input2.data),
+        schemaErrorMap: this._def.errorMap,
+        path: input2.path,
+        parent: input2.parent
+      }
+    };
+  }
+  _parseSync(input2) {
+    const result = this._parse(input2);
+    if (isAsync(result)) {
+      throw new Error("Synchronous parse encountered promise.");
+    }
+    return result;
+  }
+  _parseAsync(input2) {
+    const result = this._parse(input2);
+    return Promise.resolve(result);
+  }
+  parse(data, params) {
+    const result = this.safeParse(data, params);
+    if (result.success)
+      return result.data;
+    throw result.error;
+  }
+  safeParse(data, params) {
+    const ctx = {
+      common: {
+        issues: [],
+        async: params?.async ?? false,
+        contextualErrorMap: params?.errorMap
+      },
+      path: params?.path || [],
+      schemaErrorMap: this._def.errorMap,
+      parent: null,
+      data,
+      parsedType: getParsedType2(data)
+    };
+    const result = this._parseSync({ data, path: ctx.path, parent: ctx });
+    return handleResult(ctx, result);
+  }
+  "~validate"(data) {
+    const ctx = {
+      common: {
+        issues: [],
+        async: !!this["~standard"].async
+      },
+      path: [],
+      schemaErrorMap: this._def.errorMap,
+      parent: null,
+      data,
+      parsedType: getParsedType2(data)
+    };
+    if (!this["~standard"].async) {
+      try {
+        const result = this._parseSync({ data, path: [], parent: ctx });
+        return isValid(result) ? {
+          value: result.value
+        } : {
+          issues: ctx.common.issues
+        };
+      } catch (err) {
+        if (err?.message?.toLowerCase()?.includes("encountered")) {
+          this["~standard"].async = true;
+        }
+        ctx.common = {
+          issues: [],
+          async: true
+        };
+      }
+    }
+    return this._parseAsync({ data, path: [], parent: ctx }).then((result) => isValid(result) ? {
+      value: result.value
+    } : {
+      issues: ctx.common.issues
+    });
+  }
+  async parseAsync(data, params) {
+    const result = await this.safeParseAsync(data, params);
+    if (result.success)
+      return result.data;
+    throw result.error;
+  }
+  async safeParseAsync(data, params) {
+    const ctx = {
+      common: {
+        issues: [],
+        contextualErrorMap: params?.errorMap,
+        async: true
+      },
+      path: params?.path || [],
+      schemaErrorMap: this._def.errorMap,
+      parent: null,
+      data,
+      parsedType: getParsedType2(data)
+    };
+    const maybeAsyncResult = this._parse({ data, path: ctx.path, parent: ctx });
+    const result = await (isAsync(maybeAsyncResult) ? maybeAsyncResult : Promise.resolve(maybeAsyncResult));
+    return handleResult(ctx, result);
+  }
+  refine(check2, message) {
+    const getIssueProperties = (val) => {
+      if (typeof message === "string" || typeof message === "undefined") {
+        return { message };
+      } else if (typeof message === "function") {
+        return message(val);
+      } else {
+        return message;
+      }
+    };
+    return this._refinement((val, ctx) => {
+      const result = check2(val);
+      const setError = () => ctx.addIssue({
+        code: ZodIssueCode2.custom,
+        ...getIssueProperties(val)
+      });
+      if (typeof Promise !== "undefined" && result instanceof Promise) {
+        return result.then((data) => {
+          if (!data) {
+            setError();
+            return false;
+          } else {
+            return true;
+          }
+        });
+      }
+      if (!result) {
+        setError();
+        return false;
+      } else {
+        return true;
+      }
+    });
+  }
+  refinement(check2, refinementData) {
+    return this._refinement((val, ctx) => {
+      if (!check2(val)) {
+        ctx.addIssue(typeof refinementData === "function" ? refinementData(val, ctx) : refinementData);
+        return false;
+      } else {
+        return true;
+      }
+    });
+  }
+  _refinement(refinement) {
+    return new ZodEffects({
+      schema: this,
+      typeName: ZodFirstPartyTypeKind2.ZodEffects,
+      effect: { type: "refinement", refinement }
+    });
+  }
+  superRefine(refinement) {
+    return this._refinement(refinement);
+  }
+  constructor(def) {
+    this.spa = this.safeParseAsync;
+    this._def = def;
+    this.parse = this.parse.bind(this);
+    this.safeParse = this.safeParse.bind(this);
+    this.parseAsync = this.parseAsync.bind(this);
+    this.safeParseAsync = this.safeParseAsync.bind(this);
+    this.spa = this.spa.bind(this);
+    this.refine = this.refine.bind(this);
+    this.refinement = this.refinement.bind(this);
+    this.superRefine = this.superRefine.bind(this);
+    this.optional = this.optional.bind(this);
+    this.nullable = this.nullable.bind(this);
+    this.nullish = this.nullish.bind(this);
+    this.array = this.array.bind(this);
+    this.promise = this.promise.bind(this);
+    this.or = this.or.bind(this);
+    this.and = this.and.bind(this);
+    this.transform = this.transform.bind(this);
+    this.brand = this.brand.bind(this);
+    this.default = this.default.bind(this);
+    this.catch = this.catch.bind(this);
+    this.describe = this.describe.bind(this);
+    this.pipe = this.pipe.bind(this);
+    this.readonly = this.readonly.bind(this);
+    this.isNullable = this.isNullable.bind(this);
+    this.isOptional = this.isOptional.bind(this);
+    this["~standard"] = {
+      version: 1,
+      vendor: "zod",
+      validate: (data) => this["~validate"](data)
+    };
+  }
+  optional() {
+    return ZodOptional2.create(this, this._def);
+  }
+  nullable() {
+    return ZodNullable2.create(this, this._def);
+  }
+  nullish() {
+    return this.nullable().optional();
+  }
+  array() {
+    return ZodArray2.create(this);
+  }
+  promise() {
+    return ZodPromise2.create(this, this._def);
+  }
+  or(option) {
+    return ZodUnion2.create([this, option], this._def);
+  }
+  and(incoming) {
+    return ZodIntersection2.create(this, incoming, this._def);
+  }
+  transform(transform2) {
+    return new ZodEffects({
+      ...processCreateParams(this._def),
+      schema: this,
+      typeName: ZodFirstPartyTypeKind2.ZodEffects,
+      effect: { type: "transform", transform: transform2 }
+    });
+  }
+  default(def) {
+    const defaultValueFunc = typeof def === "function" ? def : () => def;
+    return new ZodDefault2({
+      ...processCreateParams(this._def),
+      innerType: this,
+      defaultValue: defaultValueFunc,
+      typeName: ZodFirstPartyTypeKind2.ZodDefault
+    });
+  }
+  brand() {
+    return new ZodBranded({
+      typeName: ZodFirstPartyTypeKind2.ZodBranded,
+      type: this,
+      ...processCreateParams(this._def)
+    });
+  }
+  catch(def) {
+    const catchValueFunc = typeof def === "function" ? def : () => def;
+    return new ZodCatch2({
+      ...processCreateParams(this._def),
+      innerType: this,
+      catchValue: catchValueFunc,
+      typeName: ZodFirstPartyTypeKind2.ZodCatch
+    });
+  }
+  describe(description) {
+    const This = this.constructor;
+    return new This({
+      ...this._def,
+      description
+    });
+  }
+  pipe(target) {
+    return ZodPipeline.create(this, target);
+  }
+  readonly() {
+    return ZodReadonly2.create(this);
+  }
+  isOptional() {
+    return this.safeParse(void 0).success;
+  }
+  isNullable() {
+    return this.safeParse(null).success;
+  }
+};
+var cuidRegex = /^c[^\s-]{8,}$/i;
+var cuid2Regex = /^[0-9a-z]+$/;
+var ulidRegex = /^[0-9A-HJKMNP-TV-Z]{26}$/i;
+var uuidRegex = /^[0-9a-fA-F]{8}\b-[0-9a-fA-F]{4}\b-[0-9a-fA-F]{4}\b-[0-9a-fA-F]{4}\b-[0-9a-fA-F]{12}$/i;
+var nanoidRegex = /^[a-z0-9_-]{21}$/i;
+var jwtRegex = /^[A-Za-z0-9-_]+\.[A-Za-z0-9-_]+\.[A-Za-z0-9-_]*$/;
+var durationRegex = /^[-+]?P(?!$)(?:(?:[-+]?\d+Y)|(?:[-+]?\d+[.,]\d+Y$))?(?:(?:[-+]?\d+M)|(?:[-+]?\d+[.,]\d+M$))?(?:(?:[-+]?\d+W)|(?:[-+]?\d+[.,]\d+W$))?(?:(?:[-+]?\d+D)|(?:[-+]?\d+[.,]\d+D$))?(?:T(?=[\d+-])(?:(?:[-+]?\d+H)|(?:[-+]?\d+[.,]\d+H$))?(?:(?:[-+]?\d+M)|(?:[-+]?\d+[.,]\d+M$))?(?:[-+]?\d+(?:[.,]\d+)?S)?)??$/;
+var emailRegex = /^(?!\.)(?!.*\.\.)([A-Z0-9_'+\-\.]*)[A-Z0-9_+-]@([A-Z0-9][A-Z0-9\-]*\.)+[A-Z]{2,}$/i;
+var _emojiRegex = `^[\\p{Extended_Pictographic}\\p{Emoji_Component}]+$`;
+var emojiRegex;
+var ipv4Regex = /^(?:(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\.){3}(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])$/;
+var ipv4CidrRegex = /^(?:(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\.){3}(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\/(3[0-2]|[12]?[0-9])$/;
+var ipv6Regex = /^(([0-9a-fA-F]{1,4}:){7,7}[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,7}:|([0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,5}(:[0-9a-fA-F]{1,4}){1,2}|([0-9a-fA-F]{1,4}:){1,4}(:[0-9a-fA-F]{1,4}){1,3}|([0-9a-fA-F]{1,4}:){1,3}(:[0-9a-fA-F]{1,4}){1,4}|([0-9a-fA-F]{1,4}:){1,2}(:[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:((:[0-9a-fA-F]{1,4}){1,6})|:((:[0-9a-fA-F]{1,4}){1,7}|:)|fe80:(:[0-9a-fA-F]{0,4}){0,4}%[0-9a-zA-Z]{1,}|::(ffff(:0{1,4}){0,1}:){0,1}((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])|([0-9a-fA-F]{1,4}:){1,4}:((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9]))$/;
+var ipv6CidrRegex = /^(([0-9a-fA-F]{1,4}:){7,7}[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,7}:|([0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,5}(:[0-9a-fA-F]{1,4}){1,2}|([0-9a-fA-F]{1,4}:){1,4}(:[0-9a-fA-F]{1,4}){1,3}|([0-9a-fA-F]{1,4}:){1,3}(:[0-9a-fA-F]{1,4}){1,4}|([0-9a-fA-F]{1,4}:){1,2}(:[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:((:[0-9a-fA-F]{1,4}){1,6})|:((:[0-9a-fA-F]{1,4}){1,7}|:)|fe80:(:[0-9a-fA-F]{0,4}){0,4}%[0-9a-zA-Z]{1,}|::(ffff(:0{1,4}){0,1}:){0,1}((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])|([0-9a-fA-F]{1,4}:){1,4}:((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9]))\/(12[0-8]|1[01][0-9]|[1-9]?[0-9])$/;
+var base64Regex = /^([0-9a-zA-Z+/]{4})*(([0-9a-zA-Z+/]{2}==)|([0-9a-zA-Z+/]{3}=))?$/;
+var base64urlRegex = /^([0-9a-zA-Z-_]{4})*(([0-9a-zA-Z-_]{2}(==)?)|([0-9a-zA-Z-_]{3}(=)?))?$/;
+var dateRegexSource = `((\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-((0[13578]|1[02])-(0[1-9]|[12]\\d|3[01])|(0[469]|11)-(0[1-9]|[12]\\d|30)|(02)-(0[1-9]|1\\d|2[0-8])))`;
+var dateRegex = new RegExp(`^${dateRegexSource}$`);
+function timeRegexSource(args) {
+  let secondsRegexSource = `[0-5]\\d`;
+  if (args.precision) {
+    secondsRegexSource = `${secondsRegexSource}\\.\\d{${args.precision}}`;
+  } else if (args.precision == null) {
+    secondsRegexSource = `${secondsRegexSource}(\\.\\d+)?`;
+  }
+  const secondsQuantifier = args.precision ? "+" : "?";
+  return `([01]\\d|2[0-3]):[0-5]\\d(:${secondsRegexSource})${secondsQuantifier}`;
+}
+function timeRegex(args) {
+  return new RegExp(`^${timeRegexSource(args)}$`);
+}
+function datetimeRegex(args) {
+  let regex = `${dateRegexSource}T${timeRegexSource(args)}`;
+  const opts = [];
+  opts.push(args.local ? `Z?` : `Z`);
+  if (args.offset)
+    opts.push(`([+-]\\d{2}:?\\d{2})`);
+  regex = `${regex}(${opts.join("|")})`;
+  return new RegExp(`^${regex}$`);
+}
+function isValidIP(ip, version2) {
+  if ((version2 === "v4" || !version2) && ipv4Regex.test(ip)) {
+    return true;
+  }
+  if ((version2 === "v6" || !version2) && ipv6Regex.test(ip)) {
+    return true;
+  }
+  return false;
+}
+function isValidJWT2(jwt2, alg) {
+  if (!jwtRegex.test(jwt2))
+    return false;
+  try {
+    const [header] = jwt2.split(".");
+    if (!header)
+      return false;
+    const base643 = header.replace(/-/g, "+").replace(/_/g, "/").padEnd(header.length + (4 - header.length % 4) % 4, "=");
+    const decoded = JSON.parse(atob(base643));
+    if (typeof decoded !== "object" || decoded === null)
+      return false;
+    if ("typ" in decoded && decoded?.typ !== "JWT")
+      return false;
+    if (!decoded.alg)
+      return false;
+    if (alg && decoded.alg !== alg)
+      return false;
+    return true;
+  } catch {
+    return false;
+  }
+}
+function isValidCidr(ip, version2) {
+  if ((version2 === "v4" || !version2) && ipv4CidrRegex.test(ip)) {
+    return true;
+  }
+  if ((version2 === "v6" || !version2) && ipv6CidrRegex.test(ip)) {
+    return true;
+  }
+  return false;
+}
+var ZodString2 = class _ZodString2 extends ZodType2 {
+  _parse(input2) {
+    if (this._def.coerce) {
+      input2.data = String(input2.data);
+    }
+    const parsedType2 = this._getType(input2);
+    if (parsedType2 !== ZodParsedType.string) {
+      const ctx2 = this._getOrReturnCtx(input2);
+      addIssueToContext(ctx2, {
+        code: ZodIssueCode2.invalid_type,
+        expected: ZodParsedType.string,
+        received: ctx2.parsedType
+      });
+      return INVALID2;
+    }
+    const status = new ParseStatus();
+    let ctx = void 0;
+    for (const check2 of this._def.checks) {
+      if (check2.kind === "min") {
+        if (input2.data.length < check2.value) {
+          ctx = this._getOrReturnCtx(input2, ctx);
+          addIssueToContext(ctx, {
+            code: ZodIssueCode2.too_small,
+            minimum: check2.value,
+            type: "string",
+            inclusive: true,
+            exact: false,
+            message: check2.message
+          });
+          status.dirty();
+        }
+      } else if (check2.kind === "max") {
+        if (input2.data.length > check2.value) {
+          ctx = this._getOrReturnCtx(input2, ctx);
+          addIssueToContext(ctx, {
+            code: ZodIssueCode2.too_big,
+            maximum: check2.value,
+            type: "string",
+            inclusive: true,
+            exact: false,
+            message: check2.message
+          });
+          status.dirty();
+        }
+      } else if (check2.kind === "length") {
+        const tooBig = input2.data.length > check2.value;
+        const tooSmall = input2.data.length < check2.value;
+        if (tooBig || tooSmall) {
+          ctx = this._getOrReturnCtx(input2, ctx);
+          if (tooBig) {
+            addIssueToContext(ctx, {
+              code: ZodIssueCode2.too_big,
+              maximum: check2.value,
+              type: "string",
+              inclusive: true,
+              exact: true,
+              message: check2.message
+            });
+          } else if (tooSmall) {
+            addIssueToContext(ctx, {
+              code: ZodIssueCode2.too_small,
+              minimum: check2.value,
+              type: "string",
+              inclusive: true,
+              exact: true,
+              message: check2.message
+            });
+          }
+          status.dirty();
+        }
+      } else if (check2.kind === "email") {
+        if (!emailRegex.test(input2.data)) {
+          ctx = this._getOrReturnCtx(input2, ctx);
+          addIssueToContext(ctx, {
+            validation: "email",
+            code: ZodIssueCode2.invalid_string,
+            message: check2.message
+          });
+          status.dirty();
+        }
+      } else if (check2.kind === "emoji") {
+        if (!emojiRegex) {
+          emojiRegex = new RegExp(_emojiRegex, "u");
+        }
+        if (!emojiRegex.test(input2.data)) {
+          ctx = this._getOrReturnCtx(input2, ctx);
+          addIssueToContext(ctx, {
+            validation: "emoji",
+            code: ZodIssueCode2.invalid_string,
+            message: check2.message
+          });
+          status.dirty();
+        }
+      } else if (check2.kind === "uuid") {
+        if (!uuidRegex.test(input2.data)) {
+          ctx = this._getOrReturnCtx(input2, ctx);
+          addIssueToContext(ctx, {
+            validation: "uuid",
+            code: ZodIssueCode2.invalid_string,
+            message: check2.message
+          });
+          status.dirty();
+        }
+      } else if (check2.kind === "nanoid") {
+        if (!nanoidRegex.test(input2.data)) {
+          ctx = this._getOrReturnCtx(input2, ctx);
+          addIssueToContext(ctx, {
+            validation: "nanoid",
+            code: ZodIssueCode2.invalid_string,
+            message: check2.message
+          });
+          status.dirty();
+        }
+      } else if (check2.kind === "cuid") {
+        if (!cuidRegex.test(input2.data)) {
+          ctx = this._getOrReturnCtx(input2, ctx);
+          addIssueToContext(ctx, {
+            validation: "cuid",
+            code: ZodIssueCode2.invalid_string,
+            message: check2.message
+          });
+          status.dirty();
+        }
+      } else if (check2.kind === "cuid2") {
+        if (!cuid2Regex.test(input2.data)) {
+          ctx = this._getOrReturnCtx(input2, ctx);
+          addIssueToContext(ctx, {
+            validation: "cuid2",
+            code: ZodIssueCode2.invalid_string,
+            message: check2.message
+          });
+          status.dirty();
+        }
+      } else if (check2.kind === "ulid") {
+        if (!ulidRegex.test(input2.data)) {
+          ctx = this._getOrReturnCtx(input2, ctx);
+          addIssueToContext(ctx, {
+            validation: "ulid",
+            code: ZodIssueCode2.invalid_string,
+            message: check2.message
+          });
+          status.dirty();
+        }
+      } else if (check2.kind === "url") {
+        try {
+          new URL(input2.data);
+        } catch {
+          ctx = this._getOrReturnCtx(input2, ctx);
+          addIssueToContext(ctx, {
+            validation: "url",
+            code: ZodIssueCode2.invalid_string,
+            message: check2.message
+          });
+          status.dirty();
+        }
+      } else if (check2.kind === "regex") {
+        check2.regex.lastIndex = 0;
+        const testResult = check2.regex.test(input2.data);
+        if (!testResult) {
+          ctx = this._getOrReturnCtx(input2, ctx);
+          addIssueToContext(ctx, {
+            validation: "regex",
+            code: ZodIssueCode2.invalid_string,
+            message: check2.message
+          });
+          status.dirty();
+        }
+      } else if (check2.kind === "trim") {
+        input2.data = input2.data.trim();
+      } else if (check2.kind === "includes") {
+        if (!input2.data.includes(check2.value, check2.position)) {
+          ctx = this._getOrReturnCtx(input2, ctx);
+          addIssueToContext(ctx, {
+            code: ZodIssueCode2.invalid_string,
+            validation: { includes: check2.value, position: check2.position },
+            message: check2.message
+          });
+          status.dirty();
+        }
+      } else if (check2.kind === "toLowerCase") {
+        input2.data = input2.data.toLowerCase();
+      } else if (check2.kind === "toUpperCase") {
+        input2.data = input2.data.toUpperCase();
+      } else if (check2.kind === "startsWith") {
+        if (!input2.data.startsWith(check2.value)) {
+          ctx = this._getOrReturnCtx(input2, ctx);
+          addIssueToContext(ctx, {
+            code: ZodIssueCode2.invalid_string,
+            validation: { startsWith: check2.value },
+            message: check2.message
+          });
+          status.dirty();
+        }
+      } else if (check2.kind === "endsWith") {
+        if (!input2.data.endsWith(check2.value)) {
+          ctx = this._getOrReturnCtx(input2, ctx);
+          addIssueToContext(ctx, {
+            code: ZodIssueCode2.invalid_string,
+            validation: { endsWith: check2.value },
+            message: check2.message
+          });
+          status.dirty();
+        }
+      } else if (check2.kind === "datetime") {
+        const regex = datetimeRegex(check2);
+        if (!regex.test(input2.data)) {
+          ctx = this._getOrReturnCtx(input2, ctx);
+          addIssueToContext(ctx, {
+            code: ZodIssueCode2.invalid_string,
+            validation: "datetime",
+            message: check2.message
+          });
+          status.dirty();
+        }
+      } else if (check2.kind === "date") {
+        const regex = dateRegex;
+        if (!regex.test(input2.data)) {
+          ctx = this._getOrReturnCtx(input2, ctx);
+          addIssueToContext(ctx, {
+            code: ZodIssueCode2.invalid_string,
+            validation: "date",
+            message: check2.message
+          });
+          status.dirty();
+        }
+      } else if (check2.kind === "time") {
+        const regex = timeRegex(check2);
+        if (!regex.test(input2.data)) {
+          ctx = this._getOrReturnCtx(input2, ctx);
+          addIssueToContext(ctx, {
+            code: ZodIssueCode2.invalid_string,
+            validation: "time",
+            message: check2.message
+          });
+          status.dirty();
+        }
+      } else if (check2.kind === "duration") {
+        if (!durationRegex.test(input2.data)) {
+          ctx = this._getOrReturnCtx(input2, ctx);
+          addIssueToContext(ctx, {
+            validation: "duration",
+            code: ZodIssueCode2.invalid_string,
+            message: check2.message
+          });
+          status.dirty();
+        }
+      } else if (check2.kind === "ip") {
+        if (!isValidIP(input2.data, check2.version)) {
+          ctx = this._getOrReturnCtx(input2, ctx);
+          addIssueToContext(ctx, {
+            validation: "ip",
+            code: ZodIssueCode2.invalid_string,
+            message: check2.message
+          });
+          status.dirty();
+        }
+      } else if (check2.kind === "jwt") {
+        if (!isValidJWT2(input2.data, check2.alg)) {
+          ctx = this._getOrReturnCtx(input2, ctx);
+          addIssueToContext(ctx, {
+            validation: "jwt",
+            code: ZodIssueCode2.invalid_string,
+            message: check2.message
+          });
+          status.dirty();
+        }
+      } else if (check2.kind === "cidr") {
+        if (!isValidCidr(input2.data, check2.version)) {
+          ctx = this._getOrReturnCtx(input2, ctx);
+          addIssueToContext(ctx, {
+            validation: "cidr",
+            code: ZodIssueCode2.invalid_string,
+            message: check2.message
+          });
+          status.dirty();
+        }
+      } else if (check2.kind === "base64") {
+        if (!base64Regex.test(input2.data)) {
+          ctx = this._getOrReturnCtx(input2, ctx);
+          addIssueToContext(ctx, {
+            validation: "base64",
+            code: ZodIssueCode2.invalid_string,
+            message: check2.message
+          });
+          status.dirty();
+        }
+      } else if (check2.kind === "base64url") {
+        if (!base64urlRegex.test(input2.data)) {
+          ctx = this._getOrReturnCtx(input2, ctx);
+          addIssueToContext(ctx, {
+            validation: "base64url",
+            code: ZodIssueCode2.invalid_string,
+            message: check2.message
+          });
+          status.dirty();
+        }
+      } else {
+        util.assertNever(check2);
+      }
+    }
+    return { status: status.value, value: input2.data };
+  }
+  _regex(regex, validation, message) {
+    return this.refinement((data) => regex.test(data), {
+      validation,
+      code: ZodIssueCode2.invalid_string,
+      ...errorUtil.errToObj(message)
+    });
+  }
+  _addCheck(check2) {
+    return new _ZodString2({
+      ...this._def,
+      checks: [...this._def.checks, check2]
+    });
+  }
+  email(message) {
+    return this._addCheck({ kind: "email", ...errorUtil.errToObj(message) });
+  }
+  url(message) {
+    return this._addCheck({ kind: "url", ...errorUtil.errToObj(message) });
+  }
+  emoji(message) {
+    return this._addCheck({ kind: "emoji", ...errorUtil.errToObj(message) });
+  }
+  uuid(message) {
+    return this._addCheck({ kind: "uuid", ...errorUtil.errToObj(message) });
+  }
+  nanoid(message) {
+    return this._addCheck({ kind: "nanoid", ...errorUtil.errToObj(message) });
+  }
+  cuid(message) {
+    return this._addCheck({ kind: "cuid", ...errorUtil.errToObj(message) });
+  }
+  cuid2(message) {
+    return this._addCheck({ kind: "cuid2", ...errorUtil.errToObj(message) });
+  }
+  ulid(message) {
+    return this._addCheck({ kind: "ulid", ...errorUtil.errToObj(message) });
+  }
+  base64(message) {
+    return this._addCheck({ kind: "base64", ...errorUtil.errToObj(message) });
+  }
+  base64url(message) {
+    return this._addCheck({
+      kind: "base64url",
+      ...errorUtil.errToObj(message)
+    });
+  }
+  jwt(options) {
+    return this._addCheck({ kind: "jwt", ...errorUtil.errToObj(options) });
+  }
+  ip(options) {
+    return this._addCheck({ kind: "ip", ...errorUtil.errToObj(options) });
+  }
+  cidr(options) {
+    return this._addCheck({ kind: "cidr", ...errorUtil.errToObj(options) });
+  }
+  datetime(options) {
+    if (typeof options === "string") {
+      return this._addCheck({
+        kind: "datetime",
+        precision: null,
+        offset: false,
+        local: false,
+        message: options
+      });
+    }
+    return this._addCheck({
+      kind: "datetime",
+      precision: typeof options?.precision === "undefined" ? null : options?.precision,
+      offset: options?.offset ?? false,
+      local: options?.local ?? false,
+      ...errorUtil.errToObj(options?.message)
+    });
+  }
+  date(message) {
+    return this._addCheck({ kind: "date", message });
+  }
+  time(options) {
+    if (typeof options === "string") {
+      return this._addCheck({
+        kind: "time",
+        precision: null,
+        message: options
+      });
+    }
+    return this._addCheck({
+      kind: "time",
+      precision: typeof options?.precision === "undefined" ? null : options?.precision,
+      ...errorUtil.errToObj(options?.message)
+    });
+  }
+  duration(message) {
+    return this._addCheck({ kind: "duration", ...errorUtil.errToObj(message) });
+  }
+  regex(regex, message) {
+    return this._addCheck({
+      kind: "regex",
+      regex,
+      ...errorUtil.errToObj(message)
+    });
+  }
+  includes(value, options) {
+    return this._addCheck({
+      kind: "includes",
+      value,
+      position: options?.position,
+      ...errorUtil.errToObj(options?.message)
+    });
+  }
+  startsWith(value, message) {
+    return this._addCheck({
+      kind: "startsWith",
+      value,
+      ...errorUtil.errToObj(message)
+    });
+  }
+  endsWith(value, message) {
+    return this._addCheck({
+      kind: "endsWith",
+      value,
+      ...errorUtil.errToObj(message)
+    });
+  }
+  min(minLength, message) {
+    return this._addCheck({
+      kind: "min",
+      value: minLength,
+      ...errorUtil.errToObj(message)
+    });
+  }
+  max(maxLength, message) {
+    return this._addCheck({
+      kind: "max",
+      value: maxLength,
+      ...errorUtil.errToObj(message)
+    });
+  }
+  length(len, message) {
+    return this._addCheck({
+      kind: "length",
+      value: len,
+      ...errorUtil.errToObj(message)
+    });
+  }
+  /**
+   * Equivalent to `.min(1)`
+   */
+  nonempty(message) {
+    return this.min(1, errorUtil.errToObj(message));
+  }
+  trim() {
+    return new _ZodString2({
+      ...this._def,
+      checks: [...this._def.checks, { kind: "trim" }]
+    });
+  }
+  toLowerCase() {
+    return new _ZodString2({
+      ...this._def,
+      checks: [...this._def.checks, { kind: "toLowerCase" }]
+    });
+  }
+  toUpperCase() {
+    return new _ZodString2({
+      ...this._def,
+      checks: [...this._def.checks, { kind: "toUpperCase" }]
+    });
+  }
+  get isDatetime() {
+    return !!this._def.checks.find((ch) => ch.kind === "datetime");
+  }
+  get isDate() {
+    return !!this._def.checks.find((ch) => ch.kind === "date");
+  }
+  get isTime() {
+    return !!this._def.checks.find((ch) => ch.kind === "time");
+  }
+  get isDuration() {
+    return !!this._def.checks.find((ch) => ch.kind === "duration");
+  }
+  get isEmail() {
+    return !!this._def.checks.find((ch) => ch.kind === "email");
+  }
+  get isURL() {
+    return !!this._def.checks.find((ch) => ch.kind === "url");
+  }
+  get isEmoji() {
+    return !!this._def.checks.find((ch) => ch.kind === "emoji");
+  }
+  get isUUID() {
+    return !!this._def.checks.find((ch) => ch.kind === "uuid");
+  }
+  get isNANOID() {
+    return !!this._def.checks.find((ch) => ch.kind === "nanoid");
+  }
+  get isCUID() {
+    return !!this._def.checks.find((ch) => ch.kind === "cuid");
+  }
+  get isCUID2() {
+    return !!this._def.checks.find((ch) => ch.kind === "cuid2");
+  }
+  get isULID() {
+    return !!this._def.checks.find((ch) => ch.kind === "ulid");
+  }
+  get isIP() {
+    return !!this._def.checks.find((ch) => ch.kind === "ip");
+  }
+  get isCIDR() {
+    return !!this._def.checks.find((ch) => ch.kind === "cidr");
+  }
+  get isBase64() {
+    return !!this._def.checks.find((ch) => ch.kind === "base64");
+  }
+  get isBase64url() {
+    return !!this._def.checks.find((ch) => ch.kind === "base64url");
+  }
+  get minLength() {
+    let min = null;
+    for (const ch of this._def.checks) {
+      if (ch.kind === "min") {
+        if (min === null || ch.value > min)
+          min = ch.value;
+      }
+    }
+    return min;
+  }
+  get maxLength() {
+    let max = null;
+    for (const ch of this._def.checks) {
+      if (ch.kind === "max") {
+        if (max === null || ch.value < max)
+          max = ch.value;
+      }
+    }
+    return max;
+  }
+};
+ZodString2.create = (params) => {
+  return new ZodString2({
+    checks: [],
+    typeName: ZodFirstPartyTypeKind2.ZodString,
+    coerce: params?.coerce ?? false,
+    ...processCreateParams(params)
+  });
+};
+function floatSafeRemainder2(val, step) {
+  const valDecCount = (val.toString().split(".")[1] || "").length;
+  const stepDecCount = (step.toString().split(".")[1] || "").length;
+  const decCount = valDecCount > stepDecCount ? valDecCount : stepDecCount;
+  const valInt = Number.parseInt(val.toFixed(decCount).replace(".", ""));
+  const stepInt = Number.parseInt(step.toFixed(decCount).replace(".", ""));
+  return valInt % stepInt / 10 ** decCount;
+}
+var ZodNumber2 = class _ZodNumber extends ZodType2 {
+  constructor() {
+    super(...arguments);
+    this.min = this.gte;
+    this.max = this.lte;
+    this.step = this.multipleOf;
+  }
+  _parse(input2) {
+    if (this._def.coerce) {
+      input2.data = Number(input2.data);
+    }
+    const parsedType2 = this._getType(input2);
+    if (parsedType2 !== ZodParsedType.number) {
+      const ctx2 = this._getOrReturnCtx(input2);
+      addIssueToContext(ctx2, {
+        code: ZodIssueCode2.invalid_type,
+        expected: ZodParsedType.number,
+        received: ctx2.parsedType
+      });
+      return INVALID2;
+    }
+    let ctx = void 0;
+    const status = new ParseStatus();
+    for (const check2 of this._def.checks) {
+      if (check2.kind === "int") {
+        if (!util.isInteger(input2.data)) {
+          ctx = this._getOrReturnCtx(input2, ctx);
+          addIssueToContext(ctx, {
+            code: ZodIssueCode2.invalid_type,
+            expected: "integer",
+            received: "float",
+            message: check2.message
+          });
+          status.dirty();
+        }
+      } else if (check2.kind === "min") {
+        const tooSmall = check2.inclusive ? input2.data < check2.value : input2.data <= check2.value;
+        if (tooSmall) {
+          ctx = this._getOrReturnCtx(input2, ctx);
+          addIssueToContext(ctx, {
+            code: ZodIssueCode2.too_small,
+            minimum: check2.value,
+            type: "number",
+            inclusive: check2.inclusive,
+            exact: false,
+            message: check2.message
+          });
+          status.dirty();
+        }
+      } else if (check2.kind === "max") {
+        const tooBig = check2.inclusive ? input2.data > check2.value : input2.data >= check2.value;
+        if (tooBig) {
+          ctx = this._getOrReturnCtx(input2, ctx);
+          addIssueToContext(ctx, {
+            code: ZodIssueCode2.too_big,
+            maximum: check2.value,
+            type: "number",
+            inclusive: check2.inclusive,
+            exact: false,
+            message: check2.message
+          });
+          status.dirty();
+        }
+      } else if (check2.kind === "multipleOf") {
+        if (floatSafeRemainder2(input2.data, check2.value) !== 0) {
+          ctx = this._getOrReturnCtx(input2, ctx);
+          addIssueToContext(ctx, {
+            code: ZodIssueCode2.not_multiple_of,
+            multipleOf: check2.value,
+            message: check2.message
+          });
+          status.dirty();
+        }
+      } else if (check2.kind === "finite") {
+        if (!Number.isFinite(input2.data)) {
+          ctx = this._getOrReturnCtx(input2, ctx);
+          addIssueToContext(ctx, {
+            code: ZodIssueCode2.not_finite,
+            message: check2.message
+          });
+          status.dirty();
+        }
+      } else {
+        util.assertNever(check2);
+      }
+    }
+    return { status: status.value, value: input2.data };
+  }
+  gte(value, message) {
+    return this.setLimit("min", value, true, errorUtil.toString(message));
+  }
+  gt(value, message) {
+    return this.setLimit("min", value, false, errorUtil.toString(message));
+  }
+  lte(value, message) {
+    return this.setLimit("max", value, true, errorUtil.toString(message));
+  }
+  lt(value, message) {
+    return this.setLimit("max", value, false, errorUtil.toString(message));
+  }
+  setLimit(kind, value, inclusive, message) {
+    return new _ZodNumber({
+      ...this._def,
+      checks: [
+        ...this._def.checks,
+        {
+          kind,
+          value,
+          inclusive,
+          message: errorUtil.toString(message)
+        }
+      ]
+    });
+  }
+  _addCheck(check2) {
+    return new _ZodNumber({
+      ...this._def,
+      checks: [...this._def.checks, check2]
+    });
+  }
+  int(message) {
+    return this._addCheck({
+      kind: "int",
+      message: errorUtil.toString(message)
+    });
+  }
+  positive(message) {
+    return this._addCheck({
+      kind: "min",
+      value: 0,
+      inclusive: false,
+      message: errorUtil.toString(message)
+    });
+  }
+  negative(message) {
+    return this._addCheck({
+      kind: "max",
+      value: 0,
+      inclusive: false,
+      message: errorUtil.toString(message)
+    });
+  }
+  nonpositive(message) {
+    return this._addCheck({
+      kind: "max",
+      value: 0,
+      inclusive: true,
+      message: errorUtil.toString(message)
+    });
+  }
+  nonnegative(message) {
+    return this._addCheck({
+      kind: "min",
+      value: 0,
+      inclusive: true,
+      message: errorUtil.toString(message)
+    });
+  }
+  multipleOf(value, message) {
+    return this._addCheck({
+      kind: "multipleOf",
+      value,
+      message: errorUtil.toString(message)
+    });
+  }
+  finite(message) {
+    return this._addCheck({
+      kind: "finite",
+      message: errorUtil.toString(message)
+    });
+  }
+  safe(message) {
+    return this._addCheck({
+      kind: "min",
+      inclusive: true,
+      value: Number.MIN_SAFE_INTEGER,
+      message: errorUtil.toString(message)
+    })._addCheck({
+      kind: "max",
+      inclusive: true,
+      value: Number.MAX_SAFE_INTEGER,
+      message: errorUtil.toString(message)
+    });
+  }
+  get minValue() {
+    let min = null;
+    for (const ch of this._def.checks) {
+      if (ch.kind === "min") {
+        if (min === null || ch.value > min)
+          min = ch.value;
+      }
+    }
+    return min;
+  }
+  get maxValue() {
+    let max = null;
+    for (const ch of this._def.checks) {
+      if (ch.kind === "max") {
+        if (max === null || ch.value < max)
+          max = ch.value;
+      }
+    }
+    return max;
+  }
+  get isInt() {
+    return !!this._def.checks.find((ch) => ch.kind === "int" || ch.kind === "multipleOf" && util.isInteger(ch.value));
+  }
+  get isFinite() {
+    let max = null;
+    let min = null;
+    for (const ch of this._def.checks) {
+      if (ch.kind === "finite" || ch.kind === "int" || ch.kind === "multipleOf") {
+        return true;
+      } else if (ch.kind === "min") {
+        if (min === null || ch.value > min)
+          min = ch.value;
+      } else if (ch.kind === "max") {
+        if (max === null || ch.value < max)
+          max = ch.value;
+      }
+    }
+    return Number.isFinite(min) && Number.isFinite(max);
+  }
+};
+ZodNumber2.create = (params) => {
+  return new ZodNumber2({
+    checks: [],
+    typeName: ZodFirstPartyTypeKind2.ZodNumber,
+    coerce: params?.coerce || false,
+    ...processCreateParams(params)
+  });
+};
+var ZodBigInt2 = class _ZodBigInt extends ZodType2 {
+  constructor() {
+    super(...arguments);
+    this.min = this.gte;
+    this.max = this.lte;
+  }
+  _parse(input2) {
+    if (this._def.coerce) {
+      try {
+        input2.data = BigInt(input2.data);
+      } catch {
+        return this._getInvalidInput(input2);
+      }
+    }
+    const parsedType2 = this._getType(input2);
+    if (parsedType2 !== ZodParsedType.bigint) {
+      return this._getInvalidInput(input2);
+    }
+    let ctx = void 0;
+    const status = new ParseStatus();
+    for (const check2 of this._def.checks) {
+      if (check2.kind === "min") {
+        const tooSmall = check2.inclusive ? input2.data < check2.value : input2.data <= check2.value;
+        if (tooSmall) {
+          ctx = this._getOrReturnCtx(input2, ctx);
+          addIssueToContext(ctx, {
+            code: ZodIssueCode2.too_small,
+            type: "bigint",
+            minimum: check2.value,
+            inclusive: check2.inclusive,
+            message: check2.message
+          });
+          status.dirty();
+        }
+      } else if (check2.kind === "max") {
+        const tooBig = check2.inclusive ? input2.data > check2.value : input2.data >= check2.value;
+        if (tooBig) {
+          ctx = this._getOrReturnCtx(input2, ctx);
+          addIssueToContext(ctx, {
+            code: ZodIssueCode2.too_big,
+            type: "bigint",
+            maximum: check2.value,
+            inclusive: check2.inclusive,
+            message: check2.message
+          });
+          status.dirty();
+        }
+      } else if (check2.kind === "multipleOf") {
+        if (input2.data % check2.value !== BigInt(0)) {
+          ctx = this._getOrReturnCtx(input2, ctx);
+          addIssueToContext(ctx, {
+            code: ZodIssueCode2.not_multiple_of,
+            multipleOf: check2.value,
+            message: check2.message
+          });
+          status.dirty();
+        }
+      } else {
+        util.assertNever(check2);
+      }
+    }
+    return { status: status.value, value: input2.data };
+  }
+  _getInvalidInput(input2) {
+    const ctx = this._getOrReturnCtx(input2);
+    addIssueToContext(ctx, {
+      code: ZodIssueCode2.invalid_type,
+      expected: ZodParsedType.bigint,
+      received: ctx.parsedType
+    });
+    return INVALID2;
+  }
+  gte(value, message) {
+    return this.setLimit("min", value, true, errorUtil.toString(message));
+  }
+  gt(value, message) {
+    return this.setLimit("min", value, false, errorUtil.toString(message));
+  }
+  lte(value, message) {
+    return this.setLimit("max", value, true, errorUtil.toString(message));
+  }
+  lt(value, message) {
+    return this.setLimit("max", value, false, errorUtil.toString(message));
+  }
+  setLimit(kind, value, inclusive, message) {
+    return new _ZodBigInt({
+      ...this._def,
+      checks: [
+        ...this._def.checks,
+        {
+          kind,
+          value,
+          inclusive,
+          message: errorUtil.toString(message)
+        }
+      ]
+    });
+  }
+  _addCheck(check2) {
+    return new _ZodBigInt({
+      ...this._def,
+      checks: [...this._def.checks, check2]
+    });
+  }
+  positive(message) {
+    return this._addCheck({
+      kind: "min",
+      value: BigInt(0),
+      inclusive: false,
+      message: errorUtil.toString(message)
+    });
+  }
+  negative(message) {
+    return this._addCheck({
+      kind: "max",
+      value: BigInt(0),
+      inclusive: false,
+      message: errorUtil.toString(message)
+    });
+  }
+  nonpositive(message) {
+    return this._addCheck({
+      kind: "max",
+      value: BigInt(0),
+      inclusive: true,
+      message: errorUtil.toString(message)
+    });
+  }
+  nonnegative(message) {
+    return this._addCheck({
+      kind: "min",
+      value: BigInt(0),
+      inclusive: true,
+      message: errorUtil.toString(message)
+    });
+  }
+  multipleOf(value, message) {
+    return this._addCheck({
+      kind: "multipleOf",
+      value,
+      message: errorUtil.toString(message)
+    });
+  }
+  get minValue() {
+    let min = null;
+    for (const ch of this._def.checks) {
+      if (ch.kind === "min") {
+        if (min === null || ch.value > min)
+          min = ch.value;
+      }
+    }
+    return min;
+  }
+  get maxValue() {
+    let max = null;
+    for (const ch of this._def.checks) {
+      if (ch.kind === "max") {
+        if (max === null || ch.value < max)
+          max = ch.value;
+      }
+    }
+    return max;
+  }
+};
+ZodBigInt2.create = (params) => {
+  return new ZodBigInt2({
+    checks: [],
+    typeName: ZodFirstPartyTypeKind2.ZodBigInt,
+    coerce: params?.coerce ?? false,
+    ...processCreateParams(params)
+  });
+};
+var ZodBoolean2 = class extends ZodType2 {
+  _parse(input2) {
+    if (this._def.coerce) {
+      input2.data = Boolean(input2.data);
+    }
+    const parsedType2 = this._getType(input2);
+    if (parsedType2 !== ZodParsedType.boolean) {
+      const ctx = this._getOrReturnCtx(input2);
+      addIssueToContext(ctx, {
+        code: ZodIssueCode2.invalid_type,
+        expected: ZodParsedType.boolean,
+        received: ctx.parsedType
+      });
+      return INVALID2;
+    }
+    return OK(input2.data);
+  }
+};
+ZodBoolean2.create = (params) => {
+  return new ZodBoolean2({
+    typeName: ZodFirstPartyTypeKind2.ZodBoolean,
+    coerce: params?.coerce || false,
+    ...processCreateParams(params)
+  });
+};
+var ZodDate2 = class _ZodDate extends ZodType2 {
+  _parse(input2) {
+    if (this._def.coerce) {
+      input2.data = new Date(input2.data);
+    }
+    const parsedType2 = this._getType(input2);
+    if (parsedType2 !== ZodParsedType.date) {
+      const ctx2 = this._getOrReturnCtx(input2);
+      addIssueToContext(ctx2, {
+        code: ZodIssueCode2.invalid_type,
+        expected: ZodParsedType.date,
+        received: ctx2.parsedType
+      });
+      return INVALID2;
+    }
+    if (Number.isNaN(input2.data.getTime())) {
+      const ctx2 = this._getOrReturnCtx(input2);
+      addIssueToContext(ctx2, {
+        code: ZodIssueCode2.invalid_date
+      });
+      return INVALID2;
+    }
+    const status = new ParseStatus();
+    let ctx = void 0;
+    for (const check2 of this._def.checks) {
+      if (check2.kind === "min") {
+        if (input2.data.getTime() < check2.value) {
+          ctx = this._getOrReturnCtx(input2, ctx);
+          addIssueToContext(ctx, {
+            code: ZodIssueCode2.too_small,
+            message: check2.message,
+            inclusive: true,
+            exact: false,
+            minimum: check2.value,
+            type: "date"
+          });
+          status.dirty();
+        }
+      } else if (check2.kind === "max") {
+        if (input2.data.getTime() > check2.value) {
+          ctx = this._getOrReturnCtx(input2, ctx);
+          addIssueToContext(ctx, {
+            code: ZodIssueCode2.too_big,
+            message: check2.message,
+            inclusive: true,
+            exact: false,
+            maximum: check2.value,
+            type: "date"
+          });
+          status.dirty();
+        }
+      } else {
+        util.assertNever(check2);
+      }
+    }
+    return {
+      status: status.value,
+      value: new Date(input2.data.getTime())
+    };
+  }
+  _addCheck(check2) {
+    return new _ZodDate({
+      ...this._def,
+      checks: [...this._def.checks, check2]
+    });
+  }
+  min(minDate, message) {
+    return this._addCheck({
+      kind: "min",
+      value: minDate.getTime(),
+      message: errorUtil.toString(message)
+    });
+  }
+  max(maxDate, message) {
+    return this._addCheck({
+      kind: "max",
+      value: maxDate.getTime(),
+      message: errorUtil.toString(message)
+    });
+  }
+  get minDate() {
+    let min = null;
+    for (const ch of this._def.checks) {
+      if (ch.kind === "min") {
+        if (min === null || ch.value > min)
+          min = ch.value;
+      }
+    }
+    return min != null ? new Date(min) : null;
+  }
+  get maxDate() {
+    let max = null;
+    for (const ch of this._def.checks) {
+      if (ch.kind === "max") {
+        if (max === null || ch.value < max)
+          max = ch.value;
+      }
+    }
+    return max != null ? new Date(max) : null;
+  }
+};
+ZodDate2.create = (params) => {
+  return new ZodDate2({
+    checks: [],
+    coerce: params?.coerce || false,
+    typeName: ZodFirstPartyTypeKind2.ZodDate,
+    ...processCreateParams(params)
+  });
+};
+var ZodSymbol2 = class extends ZodType2 {
+  _parse(input2) {
+    const parsedType2 = this._getType(input2);
+    if (parsedType2 !== ZodParsedType.symbol) {
+      const ctx = this._getOrReturnCtx(input2);
+      addIssueToContext(ctx, {
+        code: ZodIssueCode2.invalid_type,
+        expected: ZodParsedType.symbol,
+        received: ctx.parsedType
+      });
+      return INVALID2;
+    }
+    return OK(input2.data);
+  }
+};
+ZodSymbol2.create = (params) => {
+  return new ZodSymbol2({
+    typeName: ZodFirstPartyTypeKind2.ZodSymbol,
+    ...processCreateParams(params)
+  });
+};
+var ZodUndefined2 = class extends ZodType2 {
+  _parse(input2) {
+    const parsedType2 = this._getType(input2);
+    if (parsedType2 !== ZodParsedType.undefined) {
+      const ctx = this._getOrReturnCtx(input2);
+      addIssueToContext(ctx, {
+        code: ZodIssueCode2.invalid_type,
+        expected: ZodParsedType.undefined,
+        received: ctx.parsedType
+      });
+      return INVALID2;
+    }
+    return OK(input2.data);
+  }
+};
+ZodUndefined2.create = (params) => {
+  return new ZodUndefined2({
+    typeName: ZodFirstPartyTypeKind2.ZodUndefined,
+    ...processCreateParams(params)
+  });
+};
+var ZodNull2 = class extends ZodType2 {
+  _parse(input2) {
+    const parsedType2 = this._getType(input2);
+    if (parsedType2 !== ZodParsedType.null) {
+      const ctx = this._getOrReturnCtx(input2);
+      addIssueToContext(ctx, {
+        code: ZodIssueCode2.invalid_type,
+        expected: ZodParsedType.null,
+        received: ctx.parsedType
+      });
+      return INVALID2;
+    }
+    return OK(input2.data);
+  }
+};
+ZodNull2.create = (params) => {
+  return new ZodNull2({
+    typeName: ZodFirstPartyTypeKind2.ZodNull,
+    ...processCreateParams(params)
+  });
+};
+var ZodAny2 = class extends ZodType2 {
+  constructor() {
+    super(...arguments);
+    this._any = true;
+  }
+  _parse(input2) {
+    return OK(input2.data);
+  }
+};
+ZodAny2.create = (params) => {
+  return new ZodAny2({
+    typeName: ZodFirstPartyTypeKind2.ZodAny,
+    ...processCreateParams(params)
+  });
+};
+var ZodUnknown2 = class extends ZodType2 {
+  constructor() {
+    super(...arguments);
+    this._unknown = true;
+  }
+  _parse(input2) {
+    return OK(input2.data);
+  }
+};
+ZodUnknown2.create = (params) => {
+  return new ZodUnknown2({
+    typeName: ZodFirstPartyTypeKind2.ZodUnknown,
+    ...processCreateParams(params)
+  });
+};
+var ZodNever2 = class extends ZodType2 {
+  _parse(input2) {
+    const ctx = this._getOrReturnCtx(input2);
+    addIssueToContext(ctx, {
+      code: ZodIssueCode2.invalid_type,
+      expected: ZodParsedType.never,
+      received: ctx.parsedType
+    });
+    return INVALID2;
+  }
+};
+ZodNever2.create = (params) => {
+  return new ZodNever2({
+    typeName: ZodFirstPartyTypeKind2.ZodNever,
+    ...processCreateParams(params)
+  });
+};
+var ZodVoid2 = class extends ZodType2 {
+  _parse(input2) {
+    const parsedType2 = this._getType(input2);
+    if (parsedType2 !== ZodParsedType.undefined) {
+      const ctx = this._getOrReturnCtx(input2);
+      addIssueToContext(ctx, {
+        code: ZodIssueCode2.invalid_type,
+        expected: ZodParsedType.void,
+        received: ctx.parsedType
+      });
+      return INVALID2;
+    }
+    return OK(input2.data);
+  }
+};
+ZodVoid2.create = (params) => {
+  return new ZodVoid2({
+    typeName: ZodFirstPartyTypeKind2.ZodVoid,
+    ...processCreateParams(params)
+  });
+};
+var ZodArray2 = class _ZodArray extends ZodType2 {
+  _parse(input2) {
+    const { ctx, status } = this._processInputParams(input2);
+    const def = this._def;
+    if (ctx.parsedType !== ZodParsedType.array) {
+      addIssueToContext(ctx, {
+        code: ZodIssueCode2.invalid_type,
+        expected: ZodParsedType.array,
+        received: ctx.parsedType
+      });
+      return INVALID2;
+    }
+    if (def.exactLength !== null) {
+      const tooBig = ctx.data.length > def.exactLength.value;
+      const tooSmall = ctx.data.length < def.exactLength.value;
+      if (tooBig || tooSmall) {
+        addIssueToContext(ctx, {
+          code: tooBig ? ZodIssueCode2.too_big : ZodIssueCode2.too_small,
+          minimum: tooSmall ? def.exactLength.value : void 0,
+          maximum: tooBig ? def.exactLength.value : void 0,
+          type: "array",
+          inclusive: true,
+          exact: true,
+          message: def.exactLength.message
+        });
+        status.dirty();
+      }
+    }
+    if (def.minLength !== null) {
+      if (ctx.data.length < def.minLength.value) {
+        addIssueToContext(ctx, {
+          code: ZodIssueCode2.too_small,
+          minimum: def.minLength.value,
+          type: "array",
+          inclusive: true,
+          exact: false,
+          message: def.minLength.message
+        });
+        status.dirty();
+      }
+    }
+    if (def.maxLength !== null) {
+      if (ctx.data.length > def.maxLength.value) {
+        addIssueToContext(ctx, {
+          code: ZodIssueCode2.too_big,
+          maximum: def.maxLength.value,
+          type: "array",
+          inclusive: true,
+          exact: false,
+          message: def.maxLength.message
+        });
+        status.dirty();
+      }
+    }
+    if (ctx.common.async) {
+      return Promise.all([...ctx.data].map((item, i) => {
+        return def.type._parseAsync(new ParseInputLazyPath(ctx, item, ctx.path, i));
+      })).then((result2) => {
+        return ParseStatus.mergeArray(status, result2);
+      });
+    }
+    const result = [...ctx.data].map((item, i) => {
+      return def.type._parseSync(new ParseInputLazyPath(ctx, item, ctx.path, i));
+    });
+    return ParseStatus.mergeArray(status, result);
+  }
+  get element() {
+    return this._def.type;
+  }
+  min(minLength, message) {
+    return new _ZodArray({
+      ...this._def,
+      minLength: { value: minLength, message: errorUtil.toString(message) }
+    });
+  }
+  max(maxLength, message) {
+    return new _ZodArray({
+      ...this._def,
+      maxLength: { value: maxLength, message: errorUtil.toString(message) }
+    });
+  }
+  length(len, message) {
+    return new _ZodArray({
+      ...this._def,
+      exactLength: { value: len, message: errorUtil.toString(message) }
+    });
+  }
+  nonempty(message) {
+    return this.min(1, message);
+  }
+};
+ZodArray2.create = (schema, params) => {
+  return new ZodArray2({
+    type: schema,
+    minLength: null,
+    maxLength: null,
+    exactLength: null,
+    typeName: ZodFirstPartyTypeKind2.ZodArray,
+    ...processCreateParams(params)
+  });
+};
+function deepPartialify(schema) {
+  if (schema instanceof ZodObject2) {
+    const newShape = {};
+    for (const key2 in schema.shape) {
+      const fieldSchema = schema.shape[key2];
+      newShape[key2] = ZodOptional2.create(deepPartialify(fieldSchema));
+    }
+    return new ZodObject2({
+      ...schema._def,
+      shape: () => newShape
+    });
+  } else if (schema instanceof ZodArray2) {
+    return new ZodArray2({
+      ...schema._def,
+      type: deepPartialify(schema.element)
+    });
+  } else if (schema instanceof ZodOptional2) {
+    return ZodOptional2.create(deepPartialify(schema.unwrap()));
+  } else if (schema instanceof ZodNullable2) {
+    return ZodNullable2.create(deepPartialify(schema.unwrap()));
+  } else if (schema instanceof ZodTuple2) {
+    return ZodTuple2.create(schema.items.map((item) => deepPartialify(item)));
+  } else {
+    return schema;
+  }
+}
+var ZodObject2 = class _ZodObject extends ZodType2 {
+  constructor() {
+    super(...arguments);
+    this._cached = null;
+    this.nonstrict = this.passthrough;
+    this.augment = this.extend;
+  }
+  _getCached() {
+    if (this._cached !== null)
+      return this._cached;
+    const shape = this._def.shape();
+    const keys = util.objectKeys(shape);
+    this._cached = { shape, keys };
+    return this._cached;
+  }
+  _parse(input2) {
+    const parsedType2 = this._getType(input2);
+    if (parsedType2 !== ZodParsedType.object) {
+      const ctx2 = this._getOrReturnCtx(input2);
+      addIssueToContext(ctx2, {
+        code: ZodIssueCode2.invalid_type,
+        expected: ZodParsedType.object,
+        received: ctx2.parsedType
+      });
+      return INVALID2;
+    }
+    const { status, ctx } = this._processInputParams(input2);
+    const { shape, keys: shapeKeys } = this._getCached();
+    const extraKeys = [];
+    if (!(this._def.catchall instanceof ZodNever2 && this._def.unknownKeys === "strip")) {
+      for (const key2 in ctx.data) {
+        if (!shapeKeys.includes(key2)) {
+          extraKeys.push(key2);
+        }
+      }
+    }
+    const pairs = [];
+    for (const key2 of shapeKeys) {
+      const keyValidator = shape[key2];
+      const value = ctx.data[key2];
+      pairs.push({
+        key: { status: "valid", value: key2 },
+        value: keyValidator._parse(new ParseInputLazyPath(ctx, value, ctx.path, key2)),
+        alwaysSet: key2 in ctx.data
+      });
+    }
+    if (this._def.catchall instanceof ZodNever2) {
+      const unknownKeys = this._def.unknownKeys;
+      if (unknownKeys === "passthrough") {
+        for (const key2 of extraKeys) {
+          pairs.push({
+            key: { status: "valid", value: key2 },
+            value: { status: "valid", value: ctx.data[key2] }
+          });
+        }
+      } else if (unknownKeys === "strict") {
+        if (extraKeys.length > 0) {
+          addIssueToContext(ctx, {
+            code: ZodIssueCode2.unrecognized_keys,
+            keys: extraKeys
+          });
+          status.dirty();
+        }
+      } else if (unknownKeys === "strip") {
+      } else {
+        throw new Error(`Internal ZodObject error: invalid unknownKeys value.`);
+      }
+    } else {
+      const catchall = this._def.catchall;
+      for (const key2 of extraKeys) {
+        const value = ctx.data[key2];
+        pairs.push({
+          key: { status: "valid", value: key2 },
+          value: catchall._parse(
+            new ParseInputLazyPath(ctx, value, ctx.path, key2)
+            //, ctx.child(key), value, getParsedType(value)
+          ),
+          alwaysSet: key2 in ctx.data
+        });
+      }
+    }
+    if (ctx.common.async) {
+      return Promise.resolve().then(async () => {
+        const syncPairs = [];
+        for (const pair of pairs) {
+          const key2 = await pair.key;
+          const value = await pair.value;
+          syncPairs.push({
+            key: key2,
+            value,
+            alwaysSet: pair.alwaysSet
+          });
+        }
+        return syncPairs;
+      }).then((syncPairs) => {
+        return ParseStatus.mergeObjectSync(status, syncPairs);
+      });
+    } else {
+      return ParseStatus.mergeObjectSync(status, pairs);
+    }
+  }
+  get shape() {
+    return this._def.shape();
+  }
+  strict(message) {
+    errorUtil.errToObj;
+    return new _ZodObject({
+      ...this._def,
+      unknownKeys: "strict",
+      ...message !== void 0 ? {
+        errorMap: (issue2, ctx) => {
+          const defaultError = this._def.errorMap?.(issue2, ctx).message ?? ctx.defaultError;
+          if (issue2.code === "unrecognized_keys")
+            return {
+              message: errorUtil.errToObj(message).message ?? defaultError
+            };
+          return {
+            message: defaultError
+          };
+        }
+      } : {}
+    });
+  }
+  strip() {
+    return new _ZodObject({
+      ...this._def,
+      unknownKeys: "strip"
+    });
+  }
+  passthrough() {
+    return new _ZodObject({
+      ...this._def,
+      unknownKeys: "passthrough"
+    });
+  }
+  // const AugmentFactory =
+  //   <Def extends ZodObjectDef>(def: Def) =>
+  //   <Augmentation extends ZodRawShape>(
+  //     augmentation: Augmentation
+  //   ): ZodObject<
+  //     extendShape<ReturnType<Def["shape"]>, Augmentation>,
+  //     Def["unknownKeys"],
+  //     Def["catchall"]
+  //   > => {
+  //     return new ZodObject({
+  //       ...def,
+  //       shape: () => ({
+  //         ...def.shape(),
+  //         ...augmentation,
+  //       }),
+  //     }) as any;
+  //   };
+  extend(augmentation) {
+    return new _ZodObject({
+      ...this._def,
+      shape: () => ({
+        ...this._def.shape(),
+        ...augmentation
+      })
+    });
+  }
+  /**
+   * Prior to zod@1.0.12 there was a bug in the
+   * inferred type of merged objects. Please
+   * upgrade if you are experiencing issues.
+   */
+  merge(merging) {
+    const merged = new _ZodObject({
+      unknownKeys: merging._def.unknownKeys,
+      catchall: merging._def.catchall,
+      shape: () => ({
+        ...this._def.shape(),
+        ...merging._def.shape()
+      }),
+      typeName: ZodFirstPartyTypeKind2.ZodObject
+    });
+    return merged;
+  }
+  // merge<
+  //   Incoming extends AnyZodObject,
+  //   Augmentation extends Incoming["shape"],
+  //   NewOutput extends {
+  //     [k in keyof Augmentation | keyof Output]: k extends keyof Augmentation
+  //       ? Augmentation[k]["_output"]
+  //       : k extends keyof Output
+  //       ? Output[k]
+  //       : never;
+  //   },
+  //   NewInput extends {
+  //     [k in keyof Augmentation | keyof Input]: k extends keyof Augmentation
+  //       ? Augmentation[k]["_input"]
+  //       : k extends keyof Input
+  //       ? Input[k]
+  //       : never;
+  //   }
+  // >(
+  //   merging: Incoming
+  // ): ZodObject<
+  //   extendShape<T, ReturnType<Incoming["_def"]["shape"]>>,
+  //   Incoming["_def"]["unknownKeys"],
+  //   Incoming["_def"]["catchall"],
+  //   NewOutput,
+  //   NewInput
+  // > {
+  //   const merged: any = new ZodObject({
+  //     unknownKeys: merging._def.unknownKeys,
+  //     catchall: merging._def.catchall,
+  //     shape: () =>
+  //       objectUtil.mergeShapes(this._def.shape(), merging._def.shape()),
+  //     typeName: ZodFirstPartyTypeKind.ZodObject,
+  //   }) as any;
+  //   return merged;
+  // }
+  setKey(key2, schema) {
+    return this.augment({ [key2]: schema });
+  }
+  // merge<Incoming extends AnyZodObject>(
+  //   merging: Incoming
+  // ): //ZodObject<T & Incoming["_shape"], UnknownKeys, Catchall> = (merging) => {
+  // ZodObject<
+  //   extendShape<T, ReturnType<Incoming["_def"]["shape"]>>,
+  //   Incoming["_def"]["unknownKeys"],
+  //   Incoming["_def"]["catchall"]
+  // > {
+  //   // const mergedShape = objectUtil.mergeShapes(
+  //   //   this._def.shape(),
+  //   //   merging._def.shape()
+  //   // );
+  //   const merged: any = new ZodObject({
+  //     unknownKeys: merging._def.unknownKeys,
+  //     catchall: merging._def.catchall,
+  //     shape: () =>
+  //       objectUtil.mergeShapes(this._def.shape(), merging._def.shape()),
+  //     typeName: ZodFirstPartyTypeKind.ZodObject,
+  //   }) as any;
+  //   return merged;
+  // }
+  catchall(index) {
+    return new _ZodObject({
+      ...this._def,
+      catchall: index
+    });
+  }
+  pick(mask) {
+    const shape = {};
+    for (const key2 of util.objectKeys(mask)) {
+      if (mask[key2] && this.shape[key2]) {
+        shape[key2] = this.shape[key2];
+      }
+    }
+    return new _ZodObject({
+      ...this._def,
+      shape: () => shape
+    });
+  }
+  omit(mask) {
+    const shape = {};
+    for (const key2 of util.objectKeys(this.shape)) {
+      if (!mask[key2]) {
+        shape[key2] = this.shape[key2];
+      }
+    }
+    return new _ZodObject({
+      ...this._def,
+      shape: () => shape
+    });
+  }
+  /**
+   * @deprecated
+   */
+  deepPartial() {
+    return deepPartialify(this);
+  }
+  partial(mask) {
+    const newShape = {};
+    for (const key2 of util.objectKeys(this.shape)) {
+      const fieldSchema = this.shape[key2];
+      if (mask && !mask[key2]) {
+        newShape[key2] = fieldSchema;
+      } else {
+        newShape[key2] = fieldSchema.optional();
+      }
+    }
+    return new _ZodObject({
+      ...this._def,
+      shape: () => newShape
+    });
+  }
+  required(mask) {
+    const newShape = {};
+    for (const key2 of util.objectKeys(this.shape)) {
+      if (mask && !mask[key2]) {
+        newShape[key2] = this.shape[key2];
+      } else {
+        const fieldSchema = this.shape[key2];
+        let newField = fieldSchema;
+        while (newField instanceof ZodOptional2) {
+          newField = newField._def.innerType;
+        }
+        newShape[key2] = newField;
+      }
+    }
+    return new _ZodObject({
+      ...this._def,
+      shape: () => newShape
+    });
+  }
+  keyof() {
+    return createZodEnum(util.objectKeys(this.shape));
+  }
+};
+ZodObject2.create = (shape, params) => {
+  return new ZodObject2({
+    shape: () => shape,
+    unknownKeys: "strip",
+    catchall: ZodNever2.create(),
+    typeName: ZodFirstPartyTypeKind2.ZodObject,
+    ...processCreateParams(params)
+  });
+};
+ZodObject2.strictCreate = (shape, params) => {
+  return new ZodObject2({
+    shape: () => shape,
+    unknownKeys: "strict",
+    catchall: ZodNever2.create(),
+    typeName: ZodFirstPartyTypeKind2.ZodObject,
+    ...processCreateParams(params)
+  });
+};
+ZodObject2.lazycreate = (shape, params) => {
+  return new ZodObject2({
+    shape,
+    unknownKeys: "strip",
+    catchall: ZodNever2.create(),
+    typeName: ZodFirstPartyTypeKind2.ZodObject,
+    ...processCreateParams(params)
+  });
+};
+var ZodUnion2 = class extends ZodType2 {
+  _parse(input2) {
+    const { ctx } = this._processInputParams(input2);
+    const options = this._def.options;
+    function handleResults(results) {
+      for (const result of results) {
+        if (result.result.status === "valid") {
+          return result.result;
+        }
+      }
+      for (const result of results) {
+        if (result.result.status === "dirty") {
+          ctx.common.issues.push(...result.ctx.common.issues);
+          return result.result;
+        }
+      }
+      const unionErrors = results.map((result) => new ZodError2(result.ctx.common.issues));
+      addIssueToContext(ctx, {
+        code: ZodIssueCode2.invalid_union,
+        unionErrors
+      });
+      return INVALID2;
+    }
+    if (ctx.common.async) {
+      return Promise.all(options.map(async (option) => {
+        const childCtx = {
+          ...ctx,
+          common: {
+            ...ctx.common,
+            issues: []
+          },
+          parent: null
+        };
+        return {
+          result: await option._parseAsync({
+            data: ctx.data,
+            path: ctx.path,
+            parent: childCtx
+          }),
+          ctx: childCtx
+        };
+      })).then(handleResults);
+    } else {
+      let dirty = void 0;
+      const issues = [];
+      for (const option of options) {
+        const childCtx = {
+          ...ctx,
+          common: {
+            ...ctx.common,
+            issues: []
+          },
+          parent: null
+        };
+        const result = option._parseSync({
+          data: ctx.data,
+          path: ctx.path,
+          parent: childCtx
+        });
+        if (result.status === "valid") {
+          return result;
+        } else if (result.status === "dirty" && !dirty) {
+          dirty = { result, ctx: childCtx };
+        }
+        if (childCtx.common.issues.length) {
+          issues.push(childCtx.common.issues);
+        }
+      }
+      if (dirty) {
+        ctx.common.issues.push(...dirty.ctx.common.issues);
+        return dirty.result;
+      }
+      const unionErrors = issues.map((issues2) => new ZodError2(issues2));
+      addIssueToContext(ctx, {
+        code: ZodIssueCode2.invalid_union,
+        unionErrors
+      });
+      return INVALID2;
+    }
+  }
+  get options() {
+    return this._def.options;
+  }
+};
+ZodUnion2.create = (types, params) => {
+  return new ZodUnion2({
+    options: types,
+    typeName: ZodFirstPartyTypeKind2.ZodUnion,
+    ...processCreateParams(params)
+  });
+};
+var getDiscriminator = (type) => {
+  if (type instanceof ZodLazy2) {
+    return getDiscriminator(type.schema);
+  } else if (type instanceof ZodEffects) {
+    return getDiscriminator(type.innerType());
+  } else if (type instanceof ZodLiteral2) {
+    return [type.value];
+  } else if (type instanceof ZodEnum2) {
+    return type.options;
+  } else if (type instanceof ZodNativeEnum) {
+    return util.objectValues(type.enum);
+  } else if (type instanceof ZodDefault2) {
+    return getDiscriminator(type._def.innerType);
+  } else if (type instanceof ZodUndefined2) {
+    return [void 0];
+  } else if (type instanceof ZodNull2) {
+    return [null];
+  } else if (type instanceof ZodOptional2) {
+    return [void 0, ...getDiscriminator(type.unwrap())];
+  } else if (type instanceof ZodNullable2) {
+    return [null, ...getDiscriminator(type.unwrap())];
+  } else if (type instanceof ZodBranded) {
+    return getDiscriminator(type.unwrap());
+  } else if (type instanceof ZodReadonly2) {
+    return getDiscriminator(type.unwrap());
+  } else if (type instanceof ZodCatch2) {
+    return getDiscriminator(type._def.innerType);
+  } else {
+    return [];
+  }
+};
+var ZodDiscriminatedUnion2 = class _ZodDiscriminatedUnion extends ZodType2 {
+  _parse(input2) {
+    const { ctx } = this._processInputParams(input2);
+    if (ctx.parsedType !== ZodParsedType.object) {
+      addIssueToContext(ctx, {
+        code: ZodIssueCode2.invalid_type,
+        expected: ZodParsedType.object,
+        received: ctx.parsedType
+      });
+      return INVALID2;
+    }
+    const discriminator = this.discriminator;
+    const discriminatorValue = ctx.data[discriminator];
+    const option = this.optionsMap.get(discriminatorValue);
+    if (!option) {
+      addIssueToContext(ctx, {
+        code: ZodIssueCode2.invalid_union_discriminator,
+        options: Array.from(this.optionsMap.keys()),
+        path: [discriminator]
+      });
+      return INVALID2;
+    }
+    if (ctx.common.async) {
+      return option._parseAsync({
+        data: ctx.data,
+        path: ctx.path,
+        parent: ctx
+      });
+    } else {
+      return option._parseSync({
+        data: ctx.data,
+        path: ctx.path,
+        parent: ctx
+      });
+    }
+  }
+  get discriminator() {
+    return this._def.discriminator;
+  }
+  get options() {
+    return this._def.options;
+  }
+  get optionsMap() {
+    return this._def.optionsMap;
+  }
+  /**
+   * The constructor of the discriminated union schema. Its behaviour is very similar to that of the normal z.union() constructor.
+   * However, it only allows a union of objects, all of which need to share a discriminator property. This property must
+   * have a different value for each object in the union.
+   * @param discriminator the name of the discriminator property
+   * @param types an array of object schemas
+   * @param params
+   */
+  static create(discriminator, options, params) {
+    const optionsMap = /* @__PURE__ */ new Map();
+    for (const type of options) {
+      const discriminatorValues = getDiscriminator(type.shape[discriminator]);
+      if (!discriminatorValues.length) {
+        throw new Error(`A discriminator value for key \`${discriminator}\` could not be extracted from all schema options`);
+      }
+      for (const value of discriminatorValues) {
+        if (optionsMap.has(value)) {
+          throw new Error(`Discriminator property ${String(discriminator)} has duplicate value ${String(value)}`);
+        }
+        optionsMap.set(value, type);
+      }
+    }
+    return new _ZodDiscriminatedUnion({
+      typeName: ZodFirstPartyTypeKind2.ZodDiscriminatedUnion,
+      discriminator,
+      options,
+      optionsMap,
+      ...processCreateParams(params)
+    });
+  }
+};
+function mergeValues2(a, b) {
+  const aType = getParsedType2(a);
+  const bType = getParsedType2(b);
+  if (a === b) {
+    return { valid: true, data: a };
+  } else if (aType === ZodParsedType.object && bType === ZodParsedType.object) {
+    const bKeys = util.objectKeys(b);
+    const sharedKeys = util.objectKeys(a).filter((key2) => bKeys.indexOf(key2) !== -1);
+    const newObj = { ...a, ...b };
+    if (Object.prototype.hasOwnProperty.call(newObj, "__proto__"))
+      delete newObj.__proto__;
+    for (const key2 of sharedKeys) {
+      if (key2 === "__proto__")
+        continue;
+      const sharedValue = mergeValues2(a[key2], b[key2]);
+      if (!sharedValue.valid) {
+        return { valid: false };
+      }
+      newObj[key2] = sharedValue.data;
+    }
+    return { valid: true, data: newObj };
+  } else if (aType === ZodParsedType.array && bType === ZodParsedType.array) {
+    if (a.length !== b.length) {
+      return { valid: false };
+    }
+    const newArray = [];
+    for (let index = 0; index < a.length; index++) {
+      const itemA = a[index];
+      const itemB = b[index];
+      const sharedValue = mergeValues2(itemA, itemB);
+      if (!sharedValue.valid) {
+        return { valid: false };
+      }
+      newArray.push(sharedValue.data);
+    }
+    return { valid: true, data: newArray };
+  } else if (aType === ZodParsedType.date && bType === ZodParsedType.date && +a === +b) {
+    return { valid: true, data: a };
+  } else {
+    return { valid: false };
+  }
+}
+var ZodIntersection2 = class extends ZodType2 {
+  _parse(input2) {
+    const { status, ctx } = this._processInputParams(input2);
+    const handleParsed = (parsedLeft, parsedRight) => {
+      if (isAborted(parsedLeft) || isAborted(parsedRight)) {
+        return INVALID2;
+      }
+      const merged = mergeValues2(parsedLeft.value, parsedRight.value);
+      if (!merged.valid) {
+        addIssueToContext(ctx, {
+          code: ZodIssueCode2.invalid_intersection_types
+        });
+        return INVALID2;
+      }
+      if (isDirty(parsedLeft) || isDirty(parsedRight)) {
+        status.dirty();
+      }
+      return { status: status.value, value: merged.data };
+    };
+    if (ctx.common.async) {
+      return Promise.all([
+        this._def.left._parseAsync({
+          data: ctx.data,
+          path: ctx.path,
+          parent: ctx
+        }),
+        this._def.right._parseAsync({
+          data: ctx.data,
+          path: ctx.path,
+          parent: ctx
+        })
+      ]).then(([left, right]) => handleParsed(left, right));
+    } else {
+      return handleParsed(this._def.left._parseSync({
+        data: ctx.data,
+        path: ctx.path,
+        parent: ctx
+      }), this._def.right._parseSync({
+        data: ctx.data,
+        path: ctx.path,
+        parent: ctx
+      }));
+    }
+  }
+};
+ZodIntersection2.create = (left, right, params) => {
+  return new ZodIntersection2({
+    left,
+    right,
+    typeName: ZodFirstPartyTypeKind2.ZodIntersection,
+    ...processCreateParams(params)
+  });
+};
+var ZodTuple2 = class _ZodTuple extends ZodType2 {
+  _parse(input2) {
+    const { status, ctx } = this._processInputParams(input2);
+    if (ctx.parsedType !== ZodParsedType.array) {
+      addIssueToContext(ctx, {
+        code: ZodIssueCode2.invalid_type,
+        expected: ZodParsedType.array,
+        received: ctx.parsedType
+      });
+      return INVALID2;
+    }
+    if (ctx.data.length < this._def.items.length) {
+      addIssueToContext(ctx, {
+        code: ZodIssueCode2.too_small,
+        minimum: this._def.items.length,
+        inclusive: true,
+        exact: false,
+        type: "array"
+      });
+      return INVALID2;
+    }
+    const rest = this._def.rest;
+    if (!rest && ctx.data.length > this._def.items.length) {
+      addIssueToContext(ctx, {
+        code: ZodIssueCode2.too_big,
+        maximum: this._def.items.length,
+        inclusive: true,
+        exact: false,
+        type: "array"
+      });
+      status.dirty();
+    }
+    const items = [...ctx.data].map((item, itemIndex) => {
+      const schema = this._def.items[itemIndex] || this._def.rest;
+      if (!schema)
+        return null;
+      return schema._parse(new ParseInputLazyPath(ctx, item, ctx.path, itemIndex));
+    }).filter((x) => !!x);
+    if (ctx.common.async) {
+      return Promise.all(items).then((results) => {
+        return ParseStatus.mergeArray(status, results);
+      });
+    } else {
+      return ParseStatus.mergeArray(status, items);
+    }
+  }
+  get items() {
+    return this._def.items;
+  }
+  rest(rest) {
+    return new _ZodTuple({
+      ...this._def,
+      rest
+    });
+  }
+};
+ZodTuple2.create = (schemas, params) => {
+  if (!Array.isArray(schemas)) {
+    throw new Error("You must pass an array of schemas to z.tuple([ ... ])");
+  }
+  return new ZodTuple2({
+    items: schemas,
+    typeName: ZodFirstPartyTypeKind2.ZodTuple,
+    rest: null,
+    ...processCreateParams(params)
+  });
+};
+var ZodRecord2 = class _ZodRecord extends ZodType2 {
+  get keySchema() {
+    return this._def.keyType;
+  }
+  get valueSchema() {
+    return this._def.valueType;
+  }
+  _parse(input2) {
+    const { status, ctx } = this._processInputParams(input2);
+    if (ctx.parsedType !== ZodParsedType.object) {
+      addIssueToContext(ctx, {
+        code: ZodIssueCode2.invalid_type,
+        expected: ZodParsedType.object,
+        received: ctx.parsedType
+      });
+      return INVALID2;
+    }
+    const pairs = [];
+    const keyType = this._def.keyType;
+    const valueType = this._def.valueType;
+    for (const key2 in ctx.data) {
+      pairs.push({
+        key: keyType._parse(new ParseInputLazyPath(ctx, key2, ctx.path, key2)),
+        value: valueType._parse(new ParseInputLazyPath(ctx, ctx.data[key2], ctx.path, key2)),
+        alwaysSet: key2 in ctx.data
+      });
+    }
+    if (ctx.common.async) {
+      return ParseStatus.mergeObjectAsync(status, pairs);
+    } else {
+      return ParseStatus.mergeObjectSync(status, pairs);
+    }
+  }
+  get element() {
+    return this._def.valueType;
+  }
+  static create(first, second, third) {
+    if (second instanceof ZodType2) {
+      return new _ZodRecord({
+        keyType: first,
+        valueType: second,
+        typeName: ZodFirstPartyTypeKind2.ZodRecord,
+        ...processCreateParams(third)
+      });
+    }
+    return new _ZodRecord({
+      keyType: ZodString2.create(),
+      valueType: first,
+      typeName: ZodFirstPartyTypeKind2.ZodRecord,
+      ...processCreateParams(second)
+    });
+  }
+};
+var ZodMap2 = class extends ZodType2 {
+  get keySchema() {
+    return this._def.keyType;
+  }
+  get valueSchema() {
+    return this._def.valueType;
+  }
+  _parse(input2) {
+    const { status, ctx } = this._processInputParams(input2);
+    if (ctx.parsedType !== ZodParsedType.map) {
+      addIssueToContext(ctx, {
+        code: ZodIssueCode2.invalid_type,
+        expected: ZodParsedType.map,
+        received: ctx.parsedType
+      });
+      return INVALID2;
+    }
+    const keyType = this._def.keyType;
+    const valueType = this._def.valueType;
+    const pairs = [...ctx.data.entries()].map(([key2, value], index) => {
+      return {
+        key: keyType._parse(new ParseInputLazyPath(ctx, key2, ctx.path, [index, "key"])),
+        value: valueType._parse(new ParseInputLazyPath(ctx, value, ctx.path, [index, "value"]))
+      };
+    });
+    if (ctx.common.async) {
+      const finalMap = /* @__PURE__ */ new Map();
+      return Promise.resolve().then(async () => {
+        for (const pair of pairs) {
+          const key2 = await pair.key;
+          const value = await pair.value;
+          if (key2.status === "aborted" || value.status === "aborted") {
+            return INVALID2;
+          }
+          if (key2.status === "dirty" || value.status === "dirty") {
+            status.dirty();
+          }
+          finalMap.set(key2.value, value.value);
+        }
+        return { status: status.value, value: finalMap };
+      });
+    } else {
+      const finalMap = /* @__PURE__ */ new Map();
+      for (const pair of pairs) {
+        const key2 = pair.key;
+        const value = pair.value;
+        if (key2.status === "aborted" || value.status === "aborted") {
+          return INVALID2;
+        }
+        if (key2.status === "dirty" || value.status === "dirty") {
+          status.dirty();
+        }
+        finalMap.set(key2.value, value.value);
+      }
+      return { status: status.value, value: finalMap };
+    }
+  }
+};
+ZodMap2.create = (keyType, valueType, params) => {
+  return new ZodMap2({
+    valueType,
+    keyType,
+    typeName: ZodFirstPartyTypeKind2.ZodMap,
+    ...processCreateParams(params)
+  });
+};
+var ZodSet2 = class _ZodSet extends ZodType2 {
+  _parse(input2) {
+    const { status, ctx } = this._processInputParams(input2);
+    if (ctx.parsedType !== ZodParsedType.set) {
+      addIssueToContext(ctx, {
+        code: ZodIssueCode2.invalid_type,
+        expected: ZodParsedType.set,
+        received: ctx.parsedType
+      });
+      return INVALID2;
+    }
+    const def = this._def;
+    if (def.minSize !== null) {
+      if (ctx.data.size < def.minSize.value) {
+        addIssueToContext(ctx, {
+          code: ZodIssueCode2.too_small,
+          minimum: def.minSize.value,
+          type: "set",
+          inclusive: true,
+          exact: false,
+          message: def.minSize.message
+        });
+        status.dirty();
+      }
+    }
+    if (def.maxSize !== null) {
+      if (ctx.data.size > def.maxSize.value) {
+        addIssueToContext(ctx, {
+          code: ZodIssueCode2.too_big,
+          maximum: def.maxSize.value,
+          type: "set",
+          inclusive: true,
+          exact: false,
+          message: def.maxSize.message
+        });
+        status.dirty();
+      }
+    }
+    const valueType = this._def.valueType;
+    function finalizeSet(elements2) {
+      const parsedSet = /* @__PURE__ */ new Set();
+      for (const element of elements2) {
+        if (element.status === "aborted")
+          return INVALID2;
+        if (element.status === "dirty")
+          status.dirty();
+        parsedSet.add(element.value);
+      }
+      return { status: status.value, value: parsedSet };
+    }
+    const elements = [...ctx.data.values()].map((item, i) => valueType._parse(new ParseInputLazyPath(ctx, item, ctx.path, i)));
+    if (ctx.common.async) {
+      return Promise.all(elements).then((elements2) => finalizeSet(elements2));
+    } else {
+      return finalizeSet(elements);
+    }
+  }
+  min(minSize, message) {
+    return new _ZodSet({
+      ...this._def,
+      minSize: { value: minSize, message: errorUtil.toString(message) }
+    });
+  }
+  max(maxSize, message) {
+    return new _ZodSet({
+      ...this._def,
+      maxSize: { value: maxSize, message: errorUtil.toString(message) }
+    });
+  }
+  size(size, message) {
+    return this.min(size, message).max(size, message);
+  }
+  nonempty(message) {
+    return this.min(1, message);
+  }
+};
+ZodSet2.create = (valueType, params) => {
+  return new ZodSet2({
+    valueType,
+    minSize: null,
+    maxSize: null,
+    typeName: ZodFirstPartyTypeKind2.ZodSet,
+    ...processCreateParams(params)
+  });
+};
+var ZodFunction2 = class _ZodFunction extends ZodType2 {
+  constructor() {
+    super(...arguments);
+    this.validate = this.implement;
+  }
+  _parse(input2) {
+    const { ctx } = this._processInputParams(input2);
+    if (ctx.parsedType !== ZodParsedType.function) {
+      addIssueToContext(ctx, {
+        code: ZodIssueCode2.invalid_type,
+        expected: ZodParsedType.function,
+        received: ctx.parsedType
+      });
+      return INVALID2;
+    }
+    function makeArgsIssue(args, error62) {
+      return makeIssue({
+        data: args,
+        path: ctx.path,
+        errorMaps: [ctx.common.contextualErrorMap, ctx.schemaErrorMap, getErrorMap2(), en_default2].filter((x) => !!x),
+        issueData: {
+          code: ZodIssueCode2.invalid_arguments,
+          argumentsError: error62
+        }
+      });
+    }
+    function makeReturnsIssue(returns, error62) {
+      return makeIssue({
+        data: returns,
+        path: ctx.path,
+        errorMaps: [ctx.common.contextualErrorMap, ctx.schemaErrorMap, getErrorMap2(), en_default2].filter((x) => !!x),
+        issueData: {
+          code: ZodIssueCode2.invalid_return_type,
+          returnTypeError: error62
+        }
+      });
+    }
+    const params = { errorMap: ctx.common.contextualErrorMap };
+    const fn = ctx.data;
+    if (this._def.returns instanceof ZodPromise2) {
+      const me = this;
+      return OK(async function(...args) {
+        const error62 = new ZodError2([]);
+        const parsedArgs = await me._def.args.parseAsync(args, params).catch((e) => {
+          error62.addIssue(makeArgsIssue(args, e));
+          throw error62;
+        });
+        const result = await Reflect.apply(fn, this, parsedArgs);
+        const parsedReturns = await me._def.returns._def.type.parseAsync(result, params).catch((e) => {
+          error62.addIssue(makeReturnsIssue(result, e));
+          throw error62;
+        });
+        return parsedReturns;
+      });
+    } else {
+      const me = this;
+      return OK(function(...args) {
+        const parsedArgs = me._def.args.safeParse(args, params);
+        if (!parsedArgs.success) {
+          throw new ZodError2([makeArgsIssue(args, parsedArgs.error)]);
+        }
+        const result = Reflect.apply(fn, this, parsedArgs.data);
+        const parsedReturns = me._def.returns.safeParse(result, params);
+        if (!parsedReturns.success) {
+          throw new ZodError2([makeReturnsIssue(result, parsedReturns.error)]);
+        }
+        return parsedReturns.data;
+      });
+    }
+  }
+  parameters() {
+    return this._def.args;
+  }
+  returnType() {
+    return this._def.returns;
+  }
+  args(...items) {
+    return new _ZodFunction({
+      ...this._def,
+      args: ZodTuple2.create(items).rest(ZodUnknown2.create())
+    });
+  }
+  returns(returnType) {
+    return new _ZodFunction({
+      ...this._def,
+      returns: returnType
+    });
+  }
+  implement(func) {
+    const validatedFunc = this.parse(func);
+    return validatedFunc;
+  }
+  strictImplement(func) {
+    const validatedFunc = this.parse(func);
+    return validatedFunc;
+  }
+  static create(args, returns, params) {
+    return new _ZodFunction({
+      args: args ? args : ZodTuple2.create([]).rest(ZodUnknown2.create()),
+      returns: returns || ZodUnknown2.create(),
+      typeName: ZodFirstPartyTypeKind2.ZodFunction,
+      ...processCreateParams(params)
+    });
+  }
+};
+var ZodLazy2 = class extends ZodType2 {
+  get schema() {
+    return this._def.getter();
+  }
+  _parse(input2) {
+    const { ctx } = this._processInputParams(input2);
+    const lazySchema = this._def.getter();
+    return lazySchema._parse({ data: ctx.data, path: ctx.path, parent: ctx });
+  }
+};
+ZodLazy2.create = (getter, params) => {
+  return new ZodLazy2({
+    getter,
+    typeName: ZodFirstPartyTypeKind2.ZodLazy,
+    ...processCreateParams(params)
+  });
+};
+var ZodLiteral2 = class extends ZodType2 {
+  _parse(input2) {
+    if (input2.data !== this._def.value) {
+      const ctx = this._getOrReturnCtx(input2);
+      addIssueToContext(ctx, {
+        received: ctx.data,
+        code: ZodIssueCode2.invalid_literal,
+        expected: this._def.value
+      });
+      return INVALID2;
+    }
+    return { status: "valid", value: input2.data };
+  }
+  get value() {
+    return this._def.value;
+  }
+};
+ZodLiteral2.create = (value, params) => {
+  return new ZodLiteral2({
+    value,
+    typeName: ZodFirstPartyTypeKind2.ZodLiteral,
+    ...processCreateParams(params)
+  });
+};
+function createZodEnum(values, params) {
+  return new ZodEnum2({
+    values,
+    typeName: ZodFirstPartyTypeKind2.ZodEnum,
+    ...processCreateParams(params)
+  });
+}
+var ZodEnum2 = class _ZodEnum extends ZodType2 {
+  _parse(input2) {
+    if (typeof input2.data !== "string") {
+      const ctx = this._getOrReturnCtx(input2);
+      const expectedValues = this._def.values;
+      addIssueToContext(ctx, {
+        expected: util.joinValues(expectedValues),
+        received: ctx.parsedType,
+        code: ZodIssueCode2.invalid_type
+      });
+      return INVALID2;
+    }
+    if (!this._cache) {
+      this._cache = new Set(this._def.values);
+    }
+    if (!this._cache.has(input2.data)) {
+      const ctx = this._getOrReturnCtx(input2);
+      const expectedValues = this._def.values;
+      addIssueToContext(ctx, {
+        received: ctx.data,
+        code: ZodIssueCode2.invalid_enum_value,
+        options: expectedValues
+      });
+      return INVALID2;
+    }
+    return OK(input2.data);
+  }
+  get options() {
+    return this._def.values;
+  }
+  get enum() {
+    const enumValues = {};
+    for (const val of this._def.values) {
+      enumValues[val] = val;
+    }
+    return enumValues;
+  }
+  get Values() {
+    const enumValues = {};
+    for (const val of this._def.values) {
+      enumValues[val] = val;
+    }
+    return enumValues;
+  }
+  get Enum() {
+    const enumValues = {};
+    for (const val of this._def.values) {
+      enumValues[val] = val;
+    }
+    return enumValues;
+  }
+  extract(values, newDef = this._def) {
+    return _ZodEnum.create(values, {
+      ...this._def,
+      ...newDef
+    });
+  }
+  exclude(values, newDef = this._def) {
+    return _ZodEnum.create(this.options.filter((opt) => !values.includes(opt)), {
+      ...this._def,
+      ...newDef
+    });
+  }
+};
+ZodEnum2.create = createZodEnum;
+var ZodNativeEnum = class extends ZodType2 {
+  _parse(input2) {
+    const nativeEnumValues = util.getValidEnumValues(this._def.values);
+    const ctx = this._getOrReturnCtx(input2);
+    if (ctx.parsedType !== ZodParsedType.string && ctx.parsedType !== ZodParsedType.number) {
+      const expectedValues = util.objectValues(nativeEnumValues);
+      addIssueToContext(ctx, {
+        expected: util.joinValues(expectedValues),
+        received: ctx.parsedType,
+        code: ZodIssueCode2.invalid_type
+      });
+      return INVALID2;
+    }
+    if (!this._cache) {
+      this._cache = new Set(util.getValidEnumValues(this._def.values));
+    }
+    if (!this._cache.has(input2.data)) {
+      const expectedValues = util.objectValues(nativeEnumValues);
+      addIssueToContext(ctx, {
+        received: ctx.data,
+        code: ZodIssueCode2.invalid_enum_value,
+        options: expectedValues
+      });
+      return INVALID2;
+    }
+    return OK(input2.data);
+  }
+  get enum() {
+    return this._def.values;
+  }
+};
+ZodNativeEnum.create = (values, params) => {
+  return new ZodNativeEnum({
+    values,
+    typeName: ZodFirstPartyTypeKind2.ZodNativeEnum,
+    ...processCreateParams(params)
+  });
+};
+var ZodPromise2 = class extends ZodType2 {
+  unwrap() {
+    return this._def.type;
+  }
+  _parse(input2) {
+    const { ctx } = this._processInputParams(input2);
+    if (ctx.parsedType !== ZodParsedType.promise && ctx.common.async === false) {
+      addIssueToContext(ctx, {
+        code: ZodIssueCode2.invalid_type,
+        expected: ZodParsedType.promise,
+        received: ctx.parsedType
+      });
+      return INVALID2;
+    }
+    const promisified = ctx.parsedType === ZodParsedType.promise ? ctx.data : Promise.resolve(ctx.data);
+    return OK(promisified.then((data) => {
+      return this._def.type.parseAsync(data, {
+        path: ctx.path,
+        errorMap: ctx.common.contextualErrorMap
+      });
+    }));
+  }
+};
+ZodPromise2.create = (schema, params) => {
+  return new ZodPromise2({
+    type: schema,
+    typeName: ZodFirstPartyTypeKind2.ZodPromise,
+    ...processCreateParams(params)
+  });
+};
+var ZodEffects = class extends ZodType2 {
+  innerType() {
+    return this._def.schema;
+  }
+  sourceType() {
+    return this._def.schema._def.typeName === ZodFirstPartyTypeKind2.ZodEffects ? this._def.schema.sourceType() : this._def.schema;
+  }
+  _parse(input2) {
+    const { status, ctx } = this._processInputParams(input2);
+    const effect = this._def.effect || null;
+    const checkCtx = {
+      addIssue: (arg) => {
+        addIssueToContext(ctx, arg);
+        if (arg.fatal) {
+          status.abort();
+        } else {
+          status.dirty();
+        }
+      },
+      get path() {
+        return ctx.path;
+      }
+    };
+    checkCtx.addIssue = checkCtx.addIssue.bind(checkCtx);
+    if (effect.type === "preprocess") {
+      const processed = effect.transform(ctx.data, checkCtx);
+      if (ctx.common.async) {
+        return Promise.resolve(processed).then(async (processed2) => {
+          if (status.value === "aborted")
+            return INVALID2;
+          const result = await this._def.schema._parseAsync({
+            data: processed2,
+            path: ctx.path,
+            parent: ctx
+          });
+          if (result.status === "aborted")
+            return INVALID2;
+          if (result.status === "dirty")
+            return DIRTY(result.value);
+          if (status.value === "dirty")
+            return DIRTY(result.value);
+          return result;
+        });
+      } else {
+        if (status.value === "aborted")
+          return INVALID2;
+        const result = this._def.schema._parseSync({
+          data: processed,
+          path: ctx.path,
+          parent: ctx
+        });
+        if (result.status === "aborted")
+          return INVALID2;
+        if (result.status === "dirty")
+          return DIRTY(result.value);
+        if (status.value === "dirty")
+          return DIRTY(result.value);
+        return result;
+      }
+    }
+    if (effect.type === "refinement") {
+      const executeRefinement = (acc) => {
+        const result = effect.refinement(acc, checkCtx);
+        if (ctx.common.async) {
+          return Promise.resolve(result);
+        }
+        if (result instanceof Promise) {
+          throw new Error("Async refinement encountered during synchronous parse operation. Use .parseAsync instead.");
+        }
+        return acc;
+      };
+      if (ctx.common.async === false) {
+        const inner = this._def.schema._parseSync({
+          data: ctx.data,
+          path: ctx.path,
+          parent: ctx
+        });
+        if (inner.status === "aborted")
+          return INVALID2;
+        if (inner.status === "dirty")
+          status.dirty();
+        executeRefinement(inner.value);
+        return { status: status.value, value: inner.value };
+      } else {
+        return this._def.schema._parseAsync({ data: ctx.data, path: ctx.path, parent: ctx }).then((inner) => {
+          if (inner.status === "aborted")
+            return INVALID2;
+          if (inner.status === "dirty")
+            status.dirty();
+          return executeRefinement(inner.value).then(() => {
+            return { status: status.value, value: inner.value };
+          });
+        });
+      }
+    }
+    if (effect.type === "transform") {
+      if (ctx.common.async === false) {
+        const base = this._def.schema._parseSync({
+          data: ctx.data,
+          path: ctx.path,
+          parent: ctx
+        });
+        if (!isValid(base))
+          return INVALID2;
+        const result = effect.transform(base.value, checkCtx);
+        if (result instanceof Promise) {
+          throw new Error(`Asynchronous transform encountered during synchronous parse operation. Use .parseAsync instead.`);
+        }
+        return { status: status.value, value: result };
+      } else {
+        return this._def.schema._parseAsync({ data: ctx.data, path: ctx.path, parent: ctx }).then((base) => {
+          if (!isValid(base))
+            return INVALID2;
+          return Promise.resolve(effect.transform(base.value, checkCtx)).then((result) => ({
+            status: status.value,
+            value: result
+          }));
+        });
+      }
+    }
+    util.assertNever(effect);
+  }
+};
+ZodEffects.create = (schema, effect, params) => {
+  return new ZodEffects({
+    schema,
+    typeName: ZodFirstPartyTypeKind2.ZodEffects,
+    effect,
+    ...processCreateParams(params)
+  });
+};
+ZodEffects.createWithPreprocess = (preprocess2, schema, params) => {
+  return new ZodEffects({
+    schema,
+    effect: { type: "preprocess", transform: preprocess2 },
+    typeName: ZodFirstPartyTypeKind2.ZodEffects,
+    ...processCreateParams(params)
+  });
+};
+var ZodOptional2 = class extends ZodType2 {
+  _parse(input2) {
+    const parsedType2 = this._getType(input2);
+    if (parsedType2 === ZodParsedType.undefined) {
+      return OK(void 0);
+    }
+    return this._def.innerType._parse(input2);
+  }
+  unwrap() {
+    return this._def.innerType;
+  }
+};
+ZodOptional2.create = (type, params) => {
+  return new ZodOptional2({
+    innerType: type,
+    typeName: ZodFirstPartyTypeKind2.ZodOptional,
+    ...processCreateParams(params)
+  });
+};
+var ZodNullable2 = class extends ZodType2 {
+  _parse(input2) {
+    const parsedType2 = this._getType(input2);
+    if (parsedType2 === ZodParsedType.null) {
+      return OK(null);
+    }
+    return this._def.innerType._parse(input2);
+  }
+  unwrap() {
+    return this._def.innerType;
+  }
+};
+ZodNullable2.create = (type, params) => {
+  return new ZodNullable2({
+    innerType: type,
+    typeName: ZodFirstPartyTypeKind2.ZodNullable,
+    ...processCreateParams(params)
+  });
+};
+var ZodDefault2 = class extends ZodType2 {
+  _parse(input2) {
+    const { ctx } = this._processInputParams(input2);
+    let data = ctx.data;
+    if (ctx.parsedType === ZodParsedType.undefined) {
+      data = this._def.defaultValue();
+    }
+    return this._def.innerType._parse({
+      data,
+      path: ctx.path,
+      parent: ctx
+    });
+  }
+  removeDefault() {
+    return this._def.innerType;
+  }
+};
+ZodDefault2.create = (type, params) => {
+  return new ZodDefault2({
+    innerType: type,
+    typeName: ZodFirstPartyTypeKind2.ZodDefault,
+    defaultValue: typeof params.default === "function" ? params.default : () => params.default,
+    ...processCreateParams(params)
+  });
+};
+var ZodCatch2 = class extends ZodType2 {
+  _parse(input2) {
+    const { ctx } = this._processInputParams(input2);
+    const newCtx = {
+      ...ctx,
+      common: {
+        ...ctx.common,
+        issues: []
+      }
+    };
+    const result = this._def.innerType._parse({
+      data: newCtx.data,
+      path: newCtx.path,
+      parent: {
+        ...newCtx
+      }
+    });
+    if (isAsync(result)) {
+      return result.then((result2) => {
+        return {
+          status: "valid",
+          value: result2.status === "valid" ? result2.value : this._def.catchValue({
+            get error() {
+              return new ZodError2(newCtx.common.issues);
+            },
+            input: newCtx.data
+          })
+        };
+      });
+    } else {
+      return {
+        status: "valid",
+        value: result.status === "valid" ? result.value : this._def.catchValue({
+          get error() {
+            return new ZodError2(newCtx.common.issues);
+          },
+          input: newCtx.data
+        })
+      };
+    }
+  }
+  removeCatch() {
+    return this._def.innerType;
+  }
+};
+ZodCatch2.create = (type, params) => {
+  return new ZodCatch2({
+    innerType: type,
+    typeName: ZodFirstPartyTypeKind2.ZodCatch,
+    catchValue: typeof params.catch === "function" ? params.catch : () => params.catch,
+    ...processCreateParams(params)
+  });
+};
+var ZodNaN2 = class extends ZodType2 {
+  _parse(input2) {
+    const parsedType2 = this._getType(input2);
+    if (parsedType2 !== ZodParsedType.nan) {
+      const ctx = this._getOrReturnCtx(input2);
+      addIssueToContext(ctx, {
+        code: ZodIssueCode2.invalid_type,
+        expected: ZodParsedType.nan,
+        received: ctx.parsedType
+      });
+      return INVALID2;
+    }
+    return { status: "valid", value: input2.data };
+  }
+};
+ZodNaN2.create = (params) => {
+  return new ZodNaN2({
+    typeName: ZodFirstPartyTypeKind2.ZodNaN,
+    ...processCreateParams(params)
+  });
+};
+var ZodBranded = class extends ZodType2 {
+  _parse(input2) {
+    const { ctx } = this._processInputParams(input2);
+    const data = ctx.data;
+    return this._def.type._parse({
+      data,
+      path: ctx.path,
+      parent: ctx
+    });
+  }
+  unwrap() {
+    return this._def.type;
+  }
+};
+var ZodPipeline = class _ZodPipeline extends ZodType2 {
+  _parse(input2) {
+    const { status, ctx } = this._processInputParams(input2);
+    if (ctx.common.async) {
+      const handleAsync = async () => {
+        const inResult = await this._def.in._parseAsync({
+          data: ctx.data,
+          path: ctx.path,
+          parent: ctx
+        });
+        if (inResult.status === "aborted")
+          return INVALID2;
+        if (inResult.status === "dirty") {
+          status.dirty();
+          return DIRTY(inResult.value);
+        } else {
+          return this._def.out._parseAsync({
+            data: inResult.value,
+            path: ctx.path,
+            parent: ctx
+          });
+        }
+      };
+      return handleAsync();
+    } else {
+      const inResult = this._def.in._parseSync({
+        data: ctx.data,
+        path: ctx.path,
+        parent: ctx
+      });
+      if (inResult.status === "aborted")
+        return INVALID2;
+      if (inResult.status === "dirty") {
+        status.dirty();
+        return {
+          status: "dirty",
+          value: inResult.value
+        };
+      } else {
+        return this._def.out._parseSync({
+          data: inResult.value,
+          path: ctx.path,
+          parent: ctx
+        });
+      }
+    }
+  }
+  static create(a, b) {
+    return new _ZodPipeline({
+      in: a,
+      out: b,
+      typeName: ZodFirstPartyTypeKind2.ZodPipeline
+    });
+  }
+};
+var ZodReadonly2 = class extends ZodType2 {
+  _parse(input2) {
+    const result = this._def.innerType._parse(input2);
+    const freeze = (data) => {
+      if (isValid(data)) {
+        data.value = Object.freeze(data.value);
+      }
+      return data;
+    };
+    return isAsync(result) ? result.then((data) => freeze(data)) : freeze(result);
+  }
+  unwrap() {
+    return this._def.innerType;
+  }
+};
+ZodReadonly2.create = (type, params) => {
+  return new ZodReadonly2({
+    innerType: type,
+    typeName: ZodFirstPartyTypeKind2.ZodReadonly,
+    ...processCreateParams(params)
+  });
+};
+var late = {
+  object: ZodObject2.lazycreate
+};
+var ZodFirstPartyTypeKind2;
+(function(ZodFirstPartyTypeKind3) {
+  ZodFirstPartyTypeKind3["ZodString"] = "ZodString";
+  ZodFirstPartyTypeKind3["ZodNumber"] = "ZodNumber";
+  ZodFirstPartyTypeKind3["ZodNaN"] = "ZodNaN";
+  ZodFirstPartyTypeKind3["ZodBigInt"] = "ZodBigInt";
+  ZodFirstPartyTypeKind3["ZodBoolean"] = "ZodBoolean";
+  ZodFirstPartyTypeKind3["ZodDate"] = "ZodDate";
+  ZodFirstPartyTypeKind3["ZodSymbol"] = "ZodSymbol";
+  ZodFirstPartyTypeKind3["ZodUndefined"] = "ZodUndefined";
+  ZodFirstPartyTypeKind3["ZodNull"] = "ZodNull";
+  ZodFirstPartyTypeKind3["ZodAny"] = "ZodAny";
+  ZodFirstPartyTypeKind3["ZodUnknown"] = "ZodUnknown";
+  ZodFirstPartyTypeKind3["ZodNever"] = "ZodNever";
+  ZodFirstPartyTypeKind3["ZodVoid"] = "ZodVoid";
+  ZodFirstPartyTypeKind3["ZodArray"] = "ZodArray";
+  ZodFirstPartyTypeKind3["ZodObject"] = "ZodObject";
+  ZodFirstPartyTypeKind3["ZodUnion"] = "ZodUnion";
+  ZodFirstPartyTypeKind3["ZodDiscriminatedUnion"] = "ZodDiscriminatedUnion";
+  ZodFirstPartyTypeKind3["ZodIntersection"] = "ZodIntersection";
+  ZodFirstPartyTypeKind3["ZodTuple"] = "ZodTuple";
+  ZodFirstPartyTypeKind3["ZodRecord"] = "ZodRecord";
+  ZodFirstPartyTypeKind3["ZodMap"] = "ZodMap";
+  ZodFirstPartyTypeKind3["ZodSet"] = "ZodSet";
+  ZodFirstPartyTypeKind3["ZodFunction"] = "ZodFunction";
+  ZodFirstPartyTypeKind3["ZodLazy"] = "ZodLazy";
+  ZodFirstPartyTypeKind3["ZodLiteral"] = "ZodLiteral";
+  ZodFirstPartyTypeKind3["ZodEnum"] = "ZodEnum";
+  ZodFirstPartyTypeKind3["ZodEffects"] = "ZodEffects";
+  ZodFirstPartyTypeKind3["ZodNativeEnum"] = "ZodNativeEnum";
+  ZodFirstPartyTypeKind3["ZodOptional"] = "ZodOptional";
+  ZodFirstPartyTypeKind3["ZodNullable"] = "ZodNullable";
+  ZodFirstPartyTypeKind3["ZodDefault"] = "ZodDefault";
+  ZodFirstPartyTypeKind3["ZodCatch"] = "ZodCatch";
+  ZodFirstPartyTypeKind3["ZodPromise"] = "ZodPromise";
+  ZodFirstPartyTypeKind3["ZodBranded"] = "ZodBranded";
+  ZodFirstPartyTypeKind3["ZodPipeline"] = "ZodPipeline";
+  ZodFirstPartyTypeKind3["ZodReadonly"] = "ZodReadonly";
+})(ZodFirstPartyTypeKind2 || (ZodFirstPartyTypeKind2 = {}));
+var stringType = ZodString2.create;
+var numberType = ZodNumber2.create;
+var nanType = ZodNaN2.create;
+var bigIntType = ZodBigInt2.create;
+var booleanType = ZodBoolean2.create;
+var dateType = ZodDate2.create;
+var symbolType = ZodSymbol2.create;
+var undefinedType = ZodUndefined2.create;
+var nullType = ZodNull2.create;
+var anyType = ZodAny2.create;
+var unknownType = ZodUnknown2.create;
+var neverType = ZodNever2.create;
+var voidType = ZodVoid2.create;
+var arrayType = ZodArray2.create;
+var objectType = ZodObject2.create;
+var strictObjectType = ZodObject2.strictCreate;
+var unionType = ZodUnion2.create;
+var discriminatedUnionType = ZodDiscriminatedUnion2.create;
+var intersectionType = ZodIntersection2.create;
+var tupleType = ZodTuple2.create;
+var recordType = ZodRecord2.create;
+var mapType = ZodMap2.create;
+var setType = ZodSet2.create;
+var functionType = ZodFunction2.create;
+var lazyType = ZodLazy2.create;
+var literalType = ZodLiteral2.create;
+var enumType = ZodEnum2.create;
+var nativeEnumType = ZodNativeEnum.create;
+var promiseType = ZodPromise2.create;
+var effectsType = ZodEffects.create;
+var optionalType = ZodOptional2.create;
+var nullableType = ZodNullable2.create;
+var preprocessType = ZodEffects.createWithPreprocess;
+var pipelineType = ZodPipeline.create;
+
+// D:/Development/claude-codex-comm/node_modules/zod/v4/mini/schemas.js
+var ZodMiniType = /* @__PURE__ */ $constructor("ZodMiniType", (inst, def) => {
+  if (!inst._zod)
+    throw new Error("Uninitialized schema in ZodMiniType.");
+  $ZodType.init(inst, def);
+  inst.def = def;
+  inst.type = def.type;
+}, {
+  // `with` is an alias for `check`: the same function object, not a wrapper.
+  get with() {
+    return this.check;
+  },
+  set with(value) {
+    own(this, "with", value);
+  },
+  parse(data, params) {
+    return parse(this, data, params, { callee: this.parse });
+  },
+  parseAsync(data, params) {
+    return parseAsync(this, data, params, { callee: this.parseAsync });
+  },
+  safeParse(data, params) {
+    return safeParse(this, data, params);
+  },
+  safeParseAsync(data, params) {
+    return safeParseAsync(this, data, params);
+  },
+  check(...checks) {
+    const def = this.def;
+    return this.clone({
+      ...def,
+      checks: [
+        ...def.checks ?? [],
+        ...checks.map((ch) => typeof ch === "function" ? { _zod: { check: ch, def: { check: "custom" }, onattach: [] } } : ch)
+      ]
+    }, { parent: true });
+  },
+  clone(_def, params) {
+    return clone(this, _def, params);
+  },
+  brand() {
+    return this;
+  },
+  register(reg, meta3) {
+    reg.add(this, meta3);
+    return this;
+  },
+  apply(fn, ...args) {
+    return args.length === 0 ? fn(this) : fn(this, ...args);
+  }
+});
+var ZodMiniObject = /* @__PURE__ */ $constructor("ZodMiniObject", (inst, def) => {
+  $ZodObject.init(inst, def);
+  ZodMiniType.init(inst, def);
+  installLazyProp(inst, "shape", (self) => self._zod.def.shape, false);
+});
+// @__NO_SIDE_EFFECTS__
+function object2(shape, params) {
+  const def = {
+    type: "object",
+    shape: shape ?? {},
+    ...normalizeParams(params)
+  };
+  return new ZodMiniObject(def);
+}
+
+// D:/Development/claude-codex-comm/node_modules/@modelcontextprotocol/sdk/dist/esm/server/zod-compat.js
+function isZ4Schema(s) {
+  const schema = s;
+  return !!schema._zod;
+}
+function objectFromShape(shape) {
+  const values = Object.values(shape);
+  if (values.length === 0)
+    return object2({});
+  const allV4 = values.every(isZ4Schema);
+  const allV3 = values.every((s) => !isZ4Schema(s));
+  if (allV4)
+    return object2(shape);
+  if (allV3)
+    return objectType(shape);
+  throw new Error("Mixed Zod versions detected in object shape.");
+}
+function safeParse3(schema, data) {
+  if (isZ4Schema(schema)) {
+    const result2 = safeParse(schema, data);
+    return result2;
+  }
+  const v3Schema = schema;
+  const result = v3Schema.safeParse(data);
+  return result;
+}
+async function safeParseAsync3(schema, data) {
+  if (isZ4Schema(schema)) {
+    const result2 = await safeParseAsync(schema, data);
+    return result2;
+  }
+  const v3Schema = schema;
+  const result = await v3Schema.safeParseAsync(data);
+  return result;
+}
+function getObjectShape(schema) {
+  if (!schema)
+    return void 0;
+  let rawShape2;
+  if (isZ4Schema(schema)) {
+    const v4Schema = schema;
+    rawShape2 = v4Schema._zod?.def?.shape;
+  } else {
+    const v3Schema = schema;
+    rawShape2 = v3Schema.shape;
+  }
+  if (!rawShape2)
+    return void 0;
+  if (typeof rawShape2 === "function") {
+    try {
+      return rawShape2();
+    } catch {
+      return void 0;
+    }
+  }
+  return rawShape2;
+}
+function normalizeObjectSchema(schema) {
+  if (!schema)
+    return void 0;
+  if (typeof schema === "object") {
+    const asV3 = schema;
+    const asV4 = schema;
+    if (!asV3._def && !asV4._zod) {
+      const values = Object.values(schema);
+      if (values.length > 0 && values.every((v) => typeof v === "object" && v !== null && (v._def !== void 0 || v._zod !== void 0 || typeof v.parse === "function"))) {
+        return objectFromShape(schema);
+      }
+    }
+  }
+  if (isZ4Schema(schema)) {
+    const v4Schema = schema;
+    const def = v4Schema._zod?.def;
+    if (def && (def.type === "object" || def.shape !== void 0)) {
+      return schema;
+    }
+  } else {
+    const v3Schema = schema;
+    if (v3Schema.shape !== void 0) {
+      return schema;
+    }
+  }
+  return void 0;
+}
+function getDotPath(path) {
+  if (path.length === 0) {
+    return "object root";
+  }
+  return path.reduce((acc, seg, index) => {
+    if (index === 0) {
+      return String(seg);
+    }
+    if (typeof seg === "number") {
+      return `${acc}[${seg}]`;
+    }
+    return `${acc}.${seg}`;
+  }, "");
+}
+function getParseErrorMessage(error62) {
+  if (error62 && typeof error62 === "object") {
+    if ("issues" in error62 && Array.isArray(error62.issues) && error62.issues.length > 0) {
+      return error62.issues.map((i) => {
+        if (!i.path?.length) {
+          return i.message;
+        }
+        return `${i.message} at ${getDotPath(i.path)}`;
+      }).join("\n");
+    }
+    if ("message" in error62 && typeof error62.message === "string") {
+      return error62.message;
+    }
+    try {
+      return JSON.stringify(error62);
+    } catch {
+      return String(error62);
+    }
+  }
+  return String(error62);
+}
+function getSchemaDescription(schema) {
+  return schema.description;
+}
+function isSchemaOptional(schema) {
+  if (isZ4Schema(schema)) {
+    const v4Schema = schema;
+    return v4Schema._zod?.def?.type === "optional";
+  }
+  const v3Schema = schema;
+  if (typeof schema.isOptional === "function") {
+    return schema.isOptional();
+  }
+  return v3Schema._def?.typeName === "ZodOptional";
+}
+function getLiteralValue(schema) {
+  if (isZ4Schema(schema)) {
+    const v4Schema = schema;
+    const def2 = v4Schema._zod?.def;
+    if (def2) {
+      if (def2.value !== void 0)
+        return def2.value;
+      if (Array.isArray(def2.values) && def2.values.length > 0) {
+        return def2.values[0];
+      }
+    }
+  }
+  const v3Schema = schema;
+  const def = v3Schema._def;
+  if (def) {
+    if (def.value !== void 0)
+      return def.value;
+    if (Array.isArray(def.values) && def.values.length > 0) {
+      return def.values[0];
+    }
+  }
+  const directValue = schema.value;
+  if (directValue !== void 0)
+    return directValue;
+  return void 0;
+}
+
+// D:/Development/claude-codex-comm/node_modules/@modelcontextprotocol/sdk/dist/esm/types.js
 var LATEST_PROTOCOL_VERSION = "2025-11-25";
 var SUPPORTED_PROTOCOL_VERSIONS = [LATEST_PROTOCOL_VERSION, "2025-06-18", "2025-03-26", "2024-11-05", "2024-10-07"];
 var RELATED_TASK_META_KEY = "io.modelcontextprotocol/related-task";
@@ -31010,10 +34763,10 @@ var TaskCreationParamsSchema = looseObject({
    */
   pollInterval: number2().optional()
 });
-var TaskMetadataSchema = object2({
+var TaskMetadataSchema = object({
   ttl: number2().optional()
 });
-var RelatedTaskMetadataSchema = object2({
+var RelatedTaskMetadataSchema = object({
   taskId: string2()
 });
 var RequestMetaSchema = looseObject({
@@ -31026,7 +34779,7 @@ var RequestMetaSchema = looseObject({
    */
   [RELATED_TASK_META_KEY]: RelatedTaskMetadataSchema.optional()
 });
-var BaseRequestParamsSchema = object2({
+var BaseRequestParamsSchema = object({
   /**
    * See [General fields: `_meta`](/specification/draft/basic/index#meta) for notes on `_meta` usage.
    */
@@ -31044,18 +34797,18 @@ var TaskAugmentedRequestParamsSchema = BaseRequestParamsSchema.extend({
   task: TaskMetadataSchema.optional()
 });
 var isTaskAugmentedRequestParams = (value) => TaskAugmentedRequestParamsSchema.safeParse(value).success;
-var RequestSchema = object2({
+var RequestSchema = object({
   method: string2(),
   params: BaseRequestParamsSchema.loose().optional()
 });
-var NotificationsParamsSchema = object2({
+var NotificationsParamsSchema = object({
   /**
    * See [MCP specification](https://github.com/modelcontextprotocol/modelcontextprotocol/blob/47339c03c143bb4ec01a26e721a1b8fe66634ebe/docs/specification/draft/basic/index.mdx#general-fields)
    * for notes on _meta usage.
    */
   _meta: RequestMetaSchema.optional()
 });
-var NotificationSchema = object2({
+var NotificationSchema = object({
   method: string2(),
   params: NotificationsParamsSchema.loose().optional()
 });
@@ -31067,18 +34820,18 @@ var ResultSchema = looseObject({
   _meta: RequestMetaSchema.optional()
 });
 var RequestIdSchema = union([string2(), number2().int()]);
-var JSONRPCRequestSchema = object2({
+var JSONRPCRequestSchema = object({
   jsonrpc: literal(JSONRPC_VERSION),
   id: RequestIdSchema,
   ...RequestSchema.shape
 }).strict();
 var isJSONRPCRequest = (value) => JSONRPCRequestSchema.safeParse(value).success;
-var JSONRPCNotificationSchema = object2({
+var JSONRPCNotificationSchema = object({
   jsonrpc: literal(JSONRPC_VERSION),
   ...NotificationSchema.shape
 }).strict();
 var isJSONRPCNotification = (value) => JSONRPCNotificationSchema.safeParse(value).success;
-var JSONRPCResultResponseSchema = object2({
+var JSONRPCResultResponseSchema = object({
   jsonrpc: literal(JSONRPC_VERSION),
   id: RequestIdSchema,
   result: ResultSchema
@@ -31095,10 +34848,10 @@ var ErrorCode;
   ErrorCode2[ErrorCode2["InternalError"] = -32603] = "InternalError";
   ErrorCode2[ErrorCode2["UrlElicitationRequired"] = -32042] = "UrlElicitationRequired";
 })(ErrorCode || (ErrorCode = {}));
-var JSONRPCErrorResponseSchema = object2({
+var JSONRPCErrorResponseSchema = object({
   jsonrpc: literal(JSONRPC_VERSION),
   id: RequestIdSchema.optional(),
-  error: object2({
+  error: object({
     /**
      * The error type that occurred.
      */
@@ -31138,7 +34891,7 @@ var CancelledNotificationSchema = NotificationSchema.extend({
   method: literal("notifications/cancelled"),
   params: CancelledNotificationParamsSchema
 });
-var IconSchema = object2({
+var IconSchema = object({
   /**
    * URL or data URI for the icon.
    */
@@ -31163,7 +34916,7 @@ var IconSchema = object2({
    */
   theme: _enum2(["light", "dark"]).optional()
 });
-var IconsSchema = object2({
+var IconsSchema = object({
   /**
    * Optional set of sized icons that the client can display in a user interface.
    *
@@ -31177,7 +34930,7 @@ var IconsSchema = object2({
    */
   icons: array(IconSchema).optional()
 });
-var BaseMetadataSchema = object2({
+var BaseMetadataSchema = object({
   /** Intended for programmatic or logical use, but used as a display name in past specs or fallback */
   name: string2(),
   /**
@@ -31207,7 +34960,7 @@ var ImplementationSchema = BaseMetadataSchema.extend({
    */
   description: string2().optional()
 });
-var FormElicitationCapabilitySchema = intersection(object2({
+var FormElicitationCapabilitySchema = intersection(object({
   applyDefaults: boolean2().optional()
 }), record(string2(), unknown()));
 var ElicitationCapabilitySchema = preprocess((value) => {
@@ -31217,7 +34970,7 @@ var ElicitationCapabilitySchema = preprocess((value) => {
     }
   }
   return value;
-}, intersection(object2({
+}, intersection(object({
   form: FormElicitationCapabilitySchema.optional(),
   url: AssertObjectSchema.optional()
 }), record(string2(), unknown()).optional()));
@@ -31269,7 +35022,7 @@ var ServerTasksCapabilitySchema = looseObject({
     }).optional()
   }).optional()
 });
-var ClientCapabilitiesSchema = object2({
+var ClientCapabilitiesSchema = object({
   /**
    * Experimental, non-standard capabilities that the client supports.
    */
@@ -31277,7 +35030,7 @@ var ClientCapabilitiesSchema = object2({
   /**
    * Present if the client supports sampling from an LLM.
    */
-  sampling: object2({
+  sampling: object({
     /**
      * Present if the client supports context inclusion via includeContext parameter.
      * If not declared, servers SHOULD only use `includeContext: "none"` (or omit it).
@@ -31295,7 +35048,7 @@ var ClientCapabilitiesSchema = object2({
   /**
    * Present if the client supports listing roots.
    */
-  roots: object2({
+  roots: object({
     /**
      * Whether the client supports issuing notifications for changes to the roots list.
      */
@@ -31322,7 +35075,7 @@ var InitializeRequestSchema = RequestSchema.extend({
   method: literal("initialize"),
   params: InitializeRequestParamsSchema
 });
-var ServerCapabilitiesSchema = object2({
+var ServerCapabilitiesSchema = object({
   /**
    * Experimental, non-standard capabilities that the server supports.
    */
@@ -31338,7 +35091,7 @@ var ServerCapabilitiesSchema = object2({
   /**
    * Present if the server offers any prompt templates.
    */
-  prompts: object2({
+  prompts: object({
     /**
      * Whether this server supports issuing notifications for changes to the prompt list.
      */
@@ -31347,7 +35100,7 @@ var ServerCapabilitiesSchema = object2({
   /**
    * Present if the server offers any resources to read.
    */
-  resources: object2({
+  resources: object({
     /**
      * Whether this server supports clients subscribing to resource updates.
      */
@@ -31360,7 +35113,7 @@ var ServerCapabilitiesSchema = object2({
   /**
    * Present if the server offers any tools to call.
    */
-  tools: object2({
+  tools: object({
     /**
      * Whether this server supports issuing notifications for changes to the tool list.
      */
@@ -31397,7 +35150,7 @@ var PingRequestSchema = RequestSchema.extend({
   method: literal("ping"),
   params: BaseRequestParamsSchema.optional()
 });
-var ProgressSchema = object2({
+var ProgressSchema = object({
   /**
    * The progress thus far. This should increase every time progress is made, even if the total is unknown.
    */
@@ -31411,7 +35164,7 @@ var ProgressSchema = object2({
    */
   message: optional(string2())
 });
-var ProgressNotificationParamsSchema = object2({
+var ProgressNotificationParamsSchema = object({
   ...NotificationsParamsSchema.shape,
   ...ProgressSchema.shape,
   /**
@@ -31441,7 +35194,7 @@ var PaginatedResultSchema = ResultSchema.extend({
   nextCursor: CursorSchema.optional()
 });
 var TaskStatusSchema = _enum2(["working", "input_required", "completed", "failed", "cancelled"]);
-var TaskSchema = object2({
+var TaskSchema = object({
   taskId: string2(),
   status: TaskStatusSchema,
   /**
@@ -31498,7 +35251,7 @@ var CancelTaskRequestSchema = RequestSchema.extend({
   })
 });
 var CancelTaskResultSchema = ResultSchema.merge(TaskSchema);
-var ResourceContentsSchema = object2({
+var ResourceContentsSchema = object({
   /**
    * The URI of this resource.
    */
@@ -31534,7 +35287,7 @@ var BlobResourceContentsSchema = ResourceContentsSchema.extend({
   blob: Base64Schema
 });
 var RoleSchema = _enum2(["user", "assistant"]);
-var AnnotationsSchema = object2({
+var AnnotationsSchema = object({
   /**
    * Intended audience(s) for the resource.
    */
@@ -31546,9 +35299,9 @@ var AnnotationsSchema = object2({
   /**
    * ISO 8601 timestamp for the most recent modification.
    */
-  lastModified: iso_exports2.datetime({ offset: true }).optional()
+  lastModified: iso_exports.datetime({ offset: true }).optional()
 });
-var ResourceSchema = object2({
+var ResourceSchema = object({
   ...BaseMetadataSchema.shape,
   ...IconsSchema.shape,
   /**
@@ -31581,7 +35334,7 @@ var ResourceSchema = object2({
    */
   _meta: optional(looseObject({}))
 });
-var ResourceTemplateSchema = object2({
+var ResourceTemplateSchema = object({
   ...BaseMetadataSchema.shape,
   ...IconsSchema.shape,
   /**
@@ -31660,7 +35413,7 @@ var ResourceUpdatedNotificationSchema = NotificationSchema.extend({
   method: literal("notifications/resources/updated"),
   params: ResourceUpdatedNotificationParamsSchema
 });
-var PromptArgumentSchema = object2({
+var PromptArgumentSchema = object({
   /**
    * The name of the argument.
    */
@@ -31674,7 +35427,7 @@ var PromptArgumentSchema = object2({
    */
   required: optional(boolean2())
 });
-var PromptSchema = object2({
+var PromptSchema = object({
   ...BaseMetadataSchema.shape,
   ...IconsSchema.shape,
   /**
@@ -31711,7 +35464,7 @@ var GetPromptRequestSchema = RequestSchema.extend({
   method: literal("prompts/get"),
   params: GetPromptRequestParamsSchema
 });
-var TextContentSchema = object2({
+var TextContentSchema = object({
   type: literal("text"),
   /**
    * The text content of the message.
@@ -31727,7 +35480,7 @@ var TextContentSchema = object2({
    */
   _meta: record(string2(), unknown()).optional()
 });
-var ImageContentSchema = object2({
+var ImageContentSchema = object({
   type: literal("image"),
   /**
    * The base64-encoded image data.
@@ -31747,7 +35500,7 @@ var ImageContentSchema = object2({
    */
   _meta: record(string2(), unknown()).optional()
 });
-var AudioContentSchema = object2({
+var AudioContentSchema = object({
   type: literal("audio"),
   /**
    * The base64-encoded audio data.
@@ -31767,7 +35520,7 @@ var AudioContentSchema = object2({
    */
   _meta: record(string2(), unknown()).optional()
 });
-var ToolUseContentSchema = object2({
+var ToolUseContentSchema = object({
   type: literal("tool_use"),
   /**
    * The name of the tool to invoke.
@@ -31790,7 +35543,7 @@ var ToolUseContentSchema = object2({
    */
   _meta: record(string2(), unknown()).optional()
 });
-var EmbeddedResourceSchema = object2({
+var EmbeddedResourceSchema = object({
   type: literal("resource"),
   resource: union([TextResourceContentsSchema, BlobResourceContentsSchema]),
   /**
@@ -31813,7 +35566,7 @@ var ContentBlockSchema = union([
   ResourceLinkSchema,
   EmbeddedResourceSchema
 ]);
-var PromptMessageSchema = object2({
+var PromptMessageSchema = object({
   role: RoleSchema,
   content: ContentBlockSchema
 });
@@ -31828,7 +35581,7 @@ var PromptListChangedNotificationSchema = NotificationSchema.extend({
   method: literal("notifications/prompts/list_changed"),
   params: NotificationsParamsSchema.optional()
 });
-var ToolAnnotationsSchema = object2({
+var ToolAnnotationsSchema = object({
   /**
    * A human-readable title for the tool.
    */
@@ -31867,7 +35620,7 @@ var ToolAnnotationsSchema = object2({
    */
   openWorldHint: boolean2().optional()
 });
-var ToolExecutionSchema = object2({
+var ToolExecutionSchema = object({
   /**
    * Indicates the tool's preference for task-augmented execution.
    * - "required": Clients MUST invoke the tool as a task
@@ -31878,7 +35631,7 @@ var ToolExecutionSchema = object2({
    */
   taskSupport: _enum2(["required", "optional", "forbidden"]).optional()
 });
-var ToolSchema = object2({
+var ToolSchema = object({
   ...BaseMetadataSchema.shape,
   ...IconsSchema.shape,
   /**
@@ -31889,7 +35642,7 @@ var ToolSchema = object2({
    * A JSON Schema 2020-12 object defining the expected parameters for the tool.
    * Must have type: 'object' at the root level per MCP spec.
    */
-  inputSchema: object2({
+  inputSchema: object({
     type: literal("object"),
     properties: record(string2(), AssertObjectSchema).optional(),
     required: array(string2()).optional()
@@ -31899,7 +35652,7 @@ var ToolSchema = object2({
    * returned in the structuredContent field of a CallToolResult.
    * Must have type: 'object' at the root level per MCP spec.
    */
-  outputSchema: object2({
+  outputSchema: object({
     type: literal("object"),
     properties: record(string2(), AssertObjectSchema).optional(),
     required: array(string2()).optional()
@@ -31975,7 +35728,7 @@ var ToolListChangedNotificationSchema = NotificationSchema.extend({
   method: literal("notifications/tools/list_changed"),
   params: NotificationsParamsSchema.optional()
 });
-var ListChangedOptionsBaseSchema = object2({
+var ListChangedOptionsBaseSchema = object({
   /**
    * If true, the list will be refreshed automatically when a list changed notification is received.
    * The callback will be called with the updated list.
@@ -32024,13 +35777,13 @@ var LoggingMessageNotificationSchema = NotificationSchema.extend({
   method: literal("notifications/message"),
   params: LoggingMessageNotificationParamsSchema
 });
-var ModelHintSchema = object2({
+var ModelHintSchema = object({
   /**
    * A hint for a model name.
    */
   name: string2().optional()
 });
-var ModelPreferencesSchema = object2({
+var ModelPreferencesSchema = object({
   /**
    * Optional hints to use for model selection.
    */
@@ -32048,7 +35801,7 @@ var ModelPreferencesSchema = object2({
    */
   intelligencePriority: number2().min(0).max(1).optional()
 });
-var ToolChoiceSchema = object2({
+var ToolChoiceSchema = object({
   /**
    * Controls when tools are used:
    * - "auto": Model decides whether to use tools (default)
@@ -32057,11 +35810,11 @@ var ToolChoiceSchema = object2({
    */
   mode: _enum2(["auto", "required", "none"]).optional()
 });
-var ToolResultContentSchema = object2({
+var ToolResultContentSchema = object({
   type: literal("tool_result"),
   toolUseId: string2().describe("The unique identifier for the corresponding tool call."),
   content: array(ContentBlockSchema).default([]),
-  structuredContent: object2({}).loose().optional(),
+  structuredContent: object({}).loose().optional(),
   isError: boolean2().optional(),
   /**
    * See [MCP specification](https://github.com/modelcontextprotocol/modelcontextprotocol/blob/47339c03c143bb4ec01a26e721a1b8fe66634ebe/docs/specification/draft/basic/index.mdx#general-fields)
@@ -32077,7 +35830,7 @@ var SamplingMessageContentBlockSchema = discriminatedUnion("type", [
   ToolUseContentSchema,
   ToolResultContentSchema
 ]);
-var SamplingMessageSchema = object2({
+var SamplingMessageSchema = object({
   role: RoleSchema,
   content: union([SamplingMessageContentBlockSchema, array(SamplingMessageContentBlockSchema)]),
   /**
@@ -32177,13 +35930,13 @@ var CreateMessageResultWithToolsSchema = ResultSchema.extend({
    */
   content: union([SamplingMessageContentBlockSchema, array(SamplingMessageContentBlockSchema)])
 });
-var BooleanSchemaSchema = object2({
+var BooleanSchemaSchema = object({
   type: literal("boolean"),
   title: string2().optional(),
   description: string2().optional(),
   default: boolean2().optional()
 });
-var StringSchemaSchema = object2({
+var StringSchemaSchema = object({
   type: literal("string"),
   title: string2().optional(),
   description: string2().optional(),
@@ -32192,7 +35945,7 @@ var StringSchemaSchema = object2({
   format: _enum2(["email", "uri", "date", "date-time"]).optional(),
   default: string2().optional()
 });
-var NumberSchemaSchema = object2({
+var NumberSchemaSchema = object({
   type: _enum2(["number", "integer"]),
   title: string2().optional(),
   description: string2().optional(),
@@ -32200,24 +35953,24 @@ var NumberSchemaSchema = object2({
   maximum: number2().optional(),
   default: number2().optional()
 });
-var UntitledSingleSelectEnumSchemaSchema = object2({
+var UntitledSingleSelectEnumSchemaSchema = object({
   type: literal("string"),
   title: string2().optional(),
   description: string2().optional(),
   enum: array(string2()),
   default: string2().optional()
 });
-var TitledSingleSelectEnumSchemaSchema = object2({
+var TitledSingleSelectEnumSchemaSchema = object({
   type: literal("string"),
   title: string2().optional(),
   description: string2().optional(),
-  oneOf: array(object2({
+  oneOf: array(object({
     const: string2(),
     title: string2()
   })),
   default: string2().optional()
 });
-var LegacyTitledEnumSchemaSchema = object2({
+var LegacyTitledEnumSchemaSchema = object({
   type: literal("string"),
   title: string2().optional(),
   description: string2().optional(),
@@ -32226,26 +35979,26 @@ var LegacyTitledEnumSchemaSchema = object2({
   default: string2().optional()
 });
 var SingleSelectEnumSchemaSchema = union([UntitledSingleSelectEnumSchemaSchema, TitledSingleSelectEnumSchemaSchema]);
-var UntitledMultiSelectEnumSchemaSchema = object2({
+var UntitledMultiSelectEnumSchemaSchema = object({
   type: literal("array"),
   title: string2().optional(),
   description: string2().optional(),
   minItems: number2().optional(),
   maxItems: number2().optional(),
-  items: object2({
+  items: object({
     type: literal("string"),
     enum: array(string2())
   }),
   default: array(string2()).optional()
 });
-var TitledMultiSelectEnumSchemaSchema = object2({
+var TitledMultiSelectEnumSchemaSchema = object({
   type: literal("array"),
   title: string2().optional(),
   description: string2().optional(),
   minItems: number2().optional(),
   maxItems: number2().optional(),
-  items: object2({
-    anyOf: array(object2({
+  items: object({
+    anyOf: array(object({
       const: string2(),
       title: string2()
     }))
@@ -32270,7 +36023,7 @@ var ElicitRequestFormParamsSchema = TaskAugmentedRequestParamsSchema.extend({
    * A restricted subset of JSON Schema.
    * Only top-level properties are allowed, without nesting.
    */
-  requestedSchema: object2({
+  requestedSchema: object({
     type: literal("object"),
     properties: record(string2(), PrimitiveSchemaDefinitionSchema),
     required: array(string2()).optional()
@@ -32326,14 +36079,14 @@ var ElicitResultSchema = ResultSchema.extend({
    */
   content: preprocess((val) => val === null ? void 0 : val, record(string2(), union([string2(), number2(), boolean2(), array(string2())])).optional())
 });
-var ResourceTemplateReferenceSchema = object2({
+var ResourceTemplateReferenceSchema = object({
   type: literal("ref/resource"),
   /**
    * The URI or URI template of the resource.
    */
   uri: string2()
 });
-var PromptReferenceSchema = object2({
+var PromptReferenceSchema = object({
   type: literal("ref/prompt"),
   /**
    * The name of the prompt or prompt template
@@ -32345,7 +36098,7 @@ var CompleteRequestParamsSchema = BaseRequestParamsSchema.extend({
   /**
    * The argument's information
    */
-  argument: object2({
+  argument: object({
     /**
      * The name of the argument
      */
@@ -32355,7 +36108,7 @@ var CompleteRequestParamsSchema = BaseRequestParamsSchema.extend({
      */
     value: string2()
   }),
-  context: object2({
+  context: object({
     /**
      * Previously-resolved variables in a URI template or prompt.
      */
@@ -32394,7 +36147,7 @@ var CompleteResultSchema = ResultSchema.extend({
     hasMore: optional(boolean2())
   })
 });
-var RootSchema = object2({
+var RootSchema = object({
   /**
    * The URI identifying the root. This *must* start with file:// for now.
    */
@@ -32523,12 +36276,12 @@ var UrlElicitationRequiredError = class extends McpError {
   }
 };
 
-// node_modules/@modelcontextprotocol/sdk/dist/esm/experimental/tasks/interfaces.js
+// D:/Development/claude-codex-comm/node_modules/@modelcontextprotocol/sdk/dist/esm/experimental/tasks/interfaces.js
 function isTerminal(status) {
   return status === "completed" || status === "failed" || status === "cancelled";
 }
 
-// node_modules/zod-to-json-schema/dist/esm/Options.js
+// D:/Development/claude-codex-comm/node_modules/zod-to-json-schema/dist/esm/Options.js
 var ignoreOverride = /* @__PURE__ */ Symbol("Let zodToJsonSchema decide on which parser to use");
 var defaultOptions = {
   name: void 0,
@@ -32562,7 +36315,7 @@ var getDefaultOptions = (options) => typeof options === "string" ? {
   ...options
 };
 
-// node_modules/zod-to-json-schema/dist/esm/Refs.js
+// D:/Development/claude-codex-comm/node_modules/zod-to-json-schema/dist/esm/Refs.js
 var getRefs = (options) => {
   const _options = getDefaultOptions(options);
   const currentPath = _options.name !== void 0 ? [..._options.basePath, _options.definitionPath, _options.name] : _options.basePath;
@@ -32583,23 +36336,23 @@ var getRefs = (options) => {
   };
 };
 
-// node_modules/zod-to-json-schema/dist/esm/errorMessages.js
-function addErrorMessage(res, key, errorMessage, refs) {
+// D:/Development/claude-codex-comm/node_modules/zod-to-json-schema/dist/esm/errorMessages.js
+function addErrorMessage(res, key2, errorMessage, refs) {
   if (!refs?.errorMessages)
     return;
   if (errorMessage) {
     res.errorMessage = {
       ...res.errorMessage,
-      [key]: errorMessage
+      [key2]: errorMessage
     };
   }
 }
-function setResponseValueAndErrors(res, key, value, errorMessage, refs) {
-  res[key] = value;
-  addErrorMessage(res, key, errorMessage, refs);
+function setResponseValueAndErrors(res, key2, value, errorMessage, refs) {
+  res[key2] = value;
+  addErrorMessage(res, key2, errorMessage, refs);
 }
 
-// node_modules/zod-to-json-schema/dist/esm/getRelativePath.js
+// D:/Development/claude-codex-comm/node_modules/zod-to-json-schema/dist/esm/getRelativePath.js
 var getRelativePath = (pathA, pathB) => {
   let i = 0;
   for (; i < pathA.length && i < pathB.length; i++) {
@@ -32609,7 +36362,7 @@ var getRelativePath = (pathA, pathB) => {
   return [(pathA.length - i).toString(), ...pathB.slice(i)].join("/");
 };
 
-// node_modules/zod-to-json-schema/dist/esm/parsers/any.js
+// D:/Development/claude-codex-comm/node_modules/zod-to-json-schema/dist/esm/parsers/any.js
 function parseAnyDef(refs) {
   if (refs.target !== "openAi") {
     return {};
@@ -32625,12 +36378,12 @@ function parseAnyDef(refs) {
   };
 }
 
-// node_modules/zod-to-json-schema/dist/esm/parsers/array.js
+// D:/Development/claude-codex-comm/node_modules/zod-to-json-schema/dist/esm/parsers/array.js
 function parseArrayDef(def, refs) {
   const res = {
     type: "array"
   };
-  if (def.type?._def && def.type?._def?.typeName !== ZodFirstPartyTypeKind.ZodAny) {
+  if (def.type?._def && def.type?._def?.typeName !== ZodFirstPartyTypeKind2.ZodAny) {
     res.items = parseDef(def.type._def, {
       ...refs,
       currentPath: [...refs.currentPath, "items"]
@@ -32649,7 +36402,7 @@ function parseArrayDef(def, refs) {
   return res;
 }
 
-// node_modules/zod-to-json-schema/dist/esm/parsers/bigint.js
+// D:/Development/claude-codex-comm/node_modules/zod-to-json-schema/dist/esm/parsers/bigint.js
 function parseBigintDef(def, refs) {
   const res = {
     type: "integer",
@@ -32695,24 +36448,24 @@ function parseBigintDef(def, refs) {
   return res;
 }
 
-// node_modules/zod-to-json-schema/dist/esm/parsers/boolean.js
+// D:/Development/claude-codex-comm/node_modules/zod-to-json-schema/dist/esm/parsers/boolean.js
 function parseBooleanDef() {
   return {
     type: "boolean"
   };
 }
 
-// node_modules/zod-to-json-schema/dist/esm/parsers/branded.js
+// D:/Development/claude-codex-comm/node_modules/zod-to-json-schema/dist/esm/parsers/branded.js
 function parseBrandedDef(_def, refs) {
   return parseDef(_def.type._def, refs);
 }
 
-// node_modules/zod-to-json-schema/dist/esm/parsers/catch.js
+// D:/Development/claude-codex-comm/node_modules/zod-to-json-schema/dist/esm/parsers/catch.js
 var parseCatchDef = (def, refs) => {
   return parseDef(def.innerType._def, refs);
 };
 
-// node_modules/zod-to-json-schema/dist/esm/parsers/date.js
+// D:/Development/claude-codex-comm/node_modules/zod-to-json-schema/dist/esm/parsers/date.js
 function parseDateDef(def, refs, overrideDateStrategy) {
   const strategy = overrideDateStrategy ?? refs.dateStrategy;
   if (Array.isArray(strategy)) {
@@ -32771,7 +36524,7 @@ var integerDateParser = (def, refs) => {
   return res;
 };
 
-// node_modules/zod-to-json-schema/dist/esm/parsers/default.js
+// D:/Development/claude-codex-comm/node_modules/zod-to-json-schema/dist/esm/parsers/default.js
 function parseDefaultDef(_def, refs) {
   return {
     ...parseDef(_def.innerType._def, refs),
@@ -32779,12 +36532,12 @@ function parseDefaultDef(_def, refs) {
   };
 }
 
-// node_modules/zod-to-json-schema/dist/esm/parsers/effects.js
+// D:/Development/claude-codex-comm/node_modules/zod-to-json-schema/dist/esm/parsers/effects.js
 function parseEffectsDef(_def, refs) {
   return refs.effectStrategy === "input" ? parseDef(_def.schema._def, refs) : parseAnyDef(refs);
 }
 
-// node_modules/zod-to-json-schema/dist/esm/parsers/enum.js
+// D:/Development/claude-codex-comm/node_modules/zod-to-json-schema/dist/esm/parsers/enum.js
 function parseEnumDef(def) {
   return {
     type: "string",
@@ -32792,7 +36545,7 @@ function parseEnumDef(def) {
   };
 }
 
-// node_modules/zod-to-json-schema/dist/esm/parsers/intersection.js
+// D:/Development/claude-codex-comm/node_modules/zod-to-json-schema/dist/esm/parsers/intersection.js
 var isJsonSchema7AllOfType = (type) => {
   if ("type" in type && type.type === "string")
     return false;
@@ -32834,7 +36587,7 @@ function parseIntersectionDef(def, refs) {
   } : void 0;
 }
 
-// node_modules/zod-to-json-schema/dist/esm/parsers/literal.js
+// D:/Development/claude-codex-comm/node_modules/zod-to-json-schema/dist/esm/parsers/literal.js
 function parseLiteralDef(def, refs) {
   const parsedType2 = typeof def.value;
   if (parsedType2 !== "bigint" && parsedType2 !== "number" && parsedType2 !== "boolean" && parsedType2 !== "string") {
@@ -32854,7 +36607,7 @@ function parseLiteralDef(def, refs) {
   };
 }
 
-// node_modules/zod-to-json-schema/dist/esm/parsers/string.js
+// D:/Development/claude-codex-comm/node_modules/zod-to-json-schema/dist/esm/parsers/string.js
 var emojiRegex2 = void 0;
 var zodPatterns = {
   /**
@@ -33179,20 +36932,20 @@ function stringifyRegExpWithFlags(regex, refs) {
   return pattern;
 }
 
-// node_modules/zod-to-json-schema/dist/esm/parsers/record.js
+// D:/Development/claude-codex-comm/node_modules/zod-to-json-schema/dist/esm/parsers/record.js
 function parseRecordDef(def, refs) {
   if (refs.target === "openAi") {
     console.warn("Warning: OpenAI may not support records in schemas! Try an array of key-value pairs instead.");
   }
-  if (refs.target === "openApi3" && def.keyType?._def.typeName === ZodFirstPartyTypeKind.ZodEnum) {
+  if (refs.target === "openApi3" && def.keyType?._def.typeName === ZodFirstPartyTypeKind2.ZodEnum) {
     return {
       type: "object",
       required: def.keyType._def.values,
-      properties: def.keyType._def.values.reduce((acc, key) => ({
+      properties: def.keyType._def.values.reduce((acc, key2) => ({
         ...acc,
-        [key]: parseDef(def.valueType._def, {
+        [key2]: parseDef(def.valueType._def, {
           ...refs,
-          currentPath: [...refs.currentPath, "properties", key]
+          currentPath: [...refs.currentPath, "properties", key2]
         }) ?? parseAnyDef(refs)
       }), {}),
       additionalProperties: refs.rejectedAdditionalProperties
@@ -33208,20 +36961,20 @@ function parseRecordDef(def, refs) {
   if (refs.target === "openApi3") {
     return schema;
   }
-  if (def.keyType?._def.typeName === ZodFirstPartyTypeKind.ZodString && def.keyType._def.checks?.length) {
+  if (def.keyType?._def.typeName === ZodFirstPartyTypeKind2.ZodString && def.keyType._def.checks?.length) {
     const { type, ...keyType } = parseStringDef(def.keyType._def, refs);
     return {
       ...schema,
       propertyNames: keyType
     };
-  } else if (def.keyType?._def.typeName === ZodFirstPartyTypeKind.ZodEnum) {
+  } else if (def.keyType?._def.typeName === ZodFirstPartyTypeKind2.ZodEnum) {
     return {
       ...schema,
       propertyNames: {
         enum: def.keyType._def.values
       }
     };
-  } else if (def.keyType?._def.typeName === ZodFirstPartyTypeKind.ZodBranded && def.keyType._def.type._def.typeName === ZodFirstPartyTypeKind.ZodString && def.keyType._def.type._def.checks?.length) {
+  } else if (def.keyType?._def.typeName === ZodFirstPartyTypeKind2.ZodBranded && def.keyType._def.type._def.typeName === ZodFirstPartyTypeKind2.ZodString && def.keyType._def.type._def.checks?.length) {
     const { type, ...keyType } = parseBrandedDef(def.keyType._def, refs);
     return {
       ...schema,
@@ -33231,7 +36984,7 @@ function parseRecordDef(def, refs) {
   return schema;
 }
 
-// node_modules/zod-to-json-schema/dist/esm/parsers/map.js
+// D:/Development/claude-codex-comm/node_modules/zod-to-json-schema/dist/esm/parsers/map.js
 function parseMapDef(def, refs) {
   if (refs.mapStrategy === "record") {
     return parseRecordDef(def, refs);
@@ -33256,13 +37009,13 @@ function parseMapDef(def, refs) {
   };
 }
 
-// node_modules/zod-to-json-schema/dist/esm/parsers/nativeEnum.js
+// D:/Development/claude-codex-comm/node_modules/zod-to-json-schema/dist/esm/parsers/nativeEnum.js
 function parseNativeEnumDef(def) {
   const object4 = def.values;
-  const actualKeys = Object.keys(def.values).filter((key) => {
-    return typeof object4[object4[key]] !== "number";
+  const actualKeys = Object.keys(def.values).filter((key2) => {
+    return typeof object4[object4[key2]] !== "number";
   });
-  const actualValues = actualKeys.map((key) => object4[key]);
+  const actualValues = actualKeys.map((key2) => object4[key2]);
   const parsedTypes = Array.from(new Set(actualValues.map((values) => typeof values)));
   return {
     type: parsedTypes.length === 1 ? parsedTypes[0] === "string" ? "string" : "number" : ["string", "number"],
@@ -33270,7 +37023,7 @@ function parseNativeEnumDef(def) {
   };
 }
 
-// node_modules/zod-to-json-schema/dist/esm/parsers/never.js
+// D:/Development/claude-codex-comm/node_modules/zod-to-json-schema/dist/esm/parsers/never.js
 function parseNeverDef(refs) {
   return refs.target === "openAi" ? void 0 : {
     not: parseAnyDef({
@@ -33280,7 +37033,7 @@ function parseNeverDef(refs) {
   };
 }
 
-// node_modules/zod-to-json-schema/dist/esm/parsers/null.js
+// D:/Development/claude-codex-comm/node_modules/zod-to-json-schema/dist/esm/parsers/null.js
 function parseNullDef(refs) {
   return refs.target === "openApi3" ? {
     enum: ["null"],
@@ -33290,7 +37043,7 @@ function parseNullDef(refs) {
   };
 }
 
-// node_modules/zod-to-json-schema/dist/esm/parsers/union.js
+// D:/Development/claude-codex-comm/node_modules/zod-to-json-schema/dist/esm/parsers/union.js
 var primitiveMappings = {
   ZodString: "string",
   ZodNumber: "number",
@@ -33358,7 +37111,7 @@ var asAnyOf = (def, refs) => {
   return anyOf.length ? { anyOf } : void 0;
 };
 
-// node_modules/zod-to-json-schema/dist/esm/parsers/nullable.js
+// D:/Development/claude-codex-comm/node_modules/zod-to-json-schema/dist/esm/parsers/nullable.js
 function parseNullableDef(def, refs) {
   if (["ZodString", "ZodNumber", "ZodBigInt", "ZodBoolean", "ZodNull"].includes(def.innerType._def.typeName) && (!def.innerType._def.checks || !def.innerType._def.checks.length)) {
     if (refs.target === "openApi3") {
@@ -33390,7 +37143,7 @@ function parseNullableDef(def, refs) {
   return base && { anyOf: [base, { type: "null" }] };
 }
 
-// node_modules/zod-to-json-schema/dist/esm/parsers/number.js
+// D:/Development/claude-codex-comm/node_modules/zod-to-json-schema/dist/esm/parsers/number.js
 function parseNumberDef(def, refs) {
   const res = {
     type: "number"
@@ -33439,7 +37192,7 @@ function parseNumberDef(def, refs) {
   return res;
 }
 
-// node_modules/zod-to-json-schema/dist/esm/parsers/object.js
+// D:/Development/claude-codex-comm/node_modules/zod-to-json-schema/dist/esm/parsers/object.js
 function parseObjectDef(def, refs) {
   const forceOptionalIntoNullable = refs.target === "openAi";
   const result = {
@@ -33509,7 +37262,7 @@ function safeIsOptional(schema) {
   }
 }
 
-// node_modules/zod-to-json-schema/dist/esm/parsers/optional.js
+// D:/Development/claude-codex-comm/node_modules/zod-to-json-schema/dist/esm/parsers/optional.js
 var parseOptionalDef = (def, refs) => {
   if (refs.currentPath.toString() === refs.propertyPath?.toString()) {
     return parseDef(def.innerType._def, refs);
@@ -33528,7 +37281,7 @@ var parseOptionalDef = (def, refs) => {
   } : parseAnyDef(refs);
 };
 
-// node_modules/zod-to-json-schema/dist/esm/parsers/pipeline.js
+// D:/Development/claude-codex-comm/node_modules/zod-to-json-schema/dist/esm/parsers/pipeline.js
 var parsePipelineDef = (def, refs) => {
   if (refs.pipeStrategy === "input") {
     return parseDef(def.in._def, refs);
@@ -33548,12 +37301,12 @@ var parsePipelineDef = (def, refs) => {
   };
 };
 
-// node_modules/zod-to-json-schema/dist/esm/parsers/promise.js
+// D:/Development/claude-codex-comm/node_modules/zod-to-json-schema/dist/esm/parsers/promise.js
 function parsePromiseDef(def, refs) {
   return parseDef(def.type._def, refs);
 }
 
-// node_modules/zod-to-json-schema/dist/esm/parsers/set.js
+// D:/Development/claude-codex-comm/node_modules/zod-to-json-schema/dist/esm/parsers/set.js
 function parseSetDef(def, refs) {
   const items = parseDef(def.valueType._def, {
     ...refs,
@@ -33573,7 +37326,7 @@ function parseSetDef(def, refs) {
   return schema;
 }
 
-// node_modules/zod-to-json-schema/dist/esm/parsers/tuple.js
+// D:/Development/claude-codex-comm/node_modules/zod-to-json-schema/dist/esm/parsers/tuple.js
 function parseTupleDef(def, refs) {
   if (def.rest) {
     return {
@@ -33601,100 +37354,100 @@ function parseTupleDef(def, refs) {
   }
 }
 
-// node_modules/zod-to-json-schema/dist/esm/parsers/undefined.js
+// D:/Development/claude-codex-comm/node_modules/zod-to-json-schema/dist/esm/parsers/undefined.js
 function parseUndefinedDef(refs) {
   return {
     not: parseAnyDef(refs)
   };
 }
 
-// node_modules/zod-to-json-schema/dist/esm/parsers/unknown.js
+// D:/Development/claude-codex-comm/node_modules/zod-to-json-schema/dist/esm/parsers/unknown.js
 function parseUnknownDef(refs) {
   return parseAnyDef(refs);
 }
 
-// node_modules/zod-to-json-schema/dist/esm/parsers/readonly.js
+// D:/Development/claude-codex-comm/node_modules/zod-to-json-schema/dist/esm/parsers/readonly.js
 var parseReadonlyDef = (def, refs) => {
   return parseDef(def.innerType._def, refs);
 };
 
-// node_modules/zod-to-json-schema/dist/esm/selectParser.js
+// D:/Development/claude-codex-comm/node_modules/zod-to-json-schema/dist/esm/selectParser.js
 var selectParser = (def, typeName, refs) => {
   switch (typeName) {
-    case ZodFirstPartyTypeKind.ZodString:
+    case ZodFirstPartyTypeKind2.ZodString:
       return parseStringDef(def, refs);
-    case ZodFirstPartyTypeKind.ZodNumber:
+    case ZodFirstPartyTypeKind2.ZodNumber:
       return parseNumberDef(def, refs);
-    case ZodFirstPartyTypeKind.ZodObject:
+    case ZodFirstPartyTypeKind2.ZodObject:
       return parseObjectDef(def, refs);
-    case ZodFirstPartyTypeKind.ZodBigInt:
+    case ZodFirstPartyTypeKind2.ZodBigInt:
       return parseBigintDef(def, refs);
-    case ZodFirstPartyTypeKind.ZodBoolean:
+    case ZodFirstPartyTypeKind2.ZodBoolean:
       return parseBooleanDef();
-    case ZodFirstPartyTypeKind.ZodDate:
+    case ZodFirstPartyTypeKind2.ZodDate:
       return parseDateDef(def, refs);
-    case ZodFirstPartyTypeKind.ZodUndefined:
+    case ZodFirstPartyTypeKind2.ZodUndefined:
       return parseUndefinedDef(refs);
-    case ZodFirstPartyTypeKind.ZodNull:
+    case ZodFirstPartyTypeKind2.ZodNull:
       return parseNullDef(refs);
-    case ZodFirstPartyTypeKind.ZodArray:
+    case ZodFirstPartyTypeKind2.ZodArray:
       return parseArrayDef(def, refs);
-    case ZodFirstPartyTypeKind.ZodUnion:
-    case ZodFirstPartyTypeKind.ZodDiscriminatedUnion:
+    case ZodFirstPartyTypeKind2.ZodUnion:
+    case ZodFirstPartyTypeKind2.ZodDiscriminatedUnion:
       return parseUnionDef(def, refs);
-    case ZodFirstPartyTypeKind.ZodIntersection:
+    case ZodFirstPartyTypeKind2.ZodIntersection:
       return parseIntersectionDef(def, refs);
-    case ZodFirstPartyTypeKind.ZodTuple:
+    case ZodFirstPartyTypeKind2.ZodTuple:
       return parseTupleDef(def, refs);
-    case ZodFirstPartyTypeKind.ZodRecord:
+    case ZodFirstPartyTypeKind2.ZodRecord:
       return parseRecordDef(def, refs);
-    case ZodFirstPartyTypeKind.ZodLiteral:
+    case ZodFirstPartyTypeKind2.ZodLiteral:
       return parseLiteralDef(def, refs);
-    case ZodFirstPartyTypeKind.ZodEnum:
+    case ZodFirstPartyTypeKind2.ZodEnum:
       return parseEnumDef(def);
-    case ZodFirstPartyTypeKind.ZodNativeEnum:
+    case ZodFirstPartyTypeKind2.ZodNativeEnum:
       return parseNativeEnumDef(def);
-    case ZodFirstPartyTypeKind.ZodNullable:
+    case ZodFirstPartyTypeKind2.ZodNullable:
       return parseNullableDef(def, refs);
-    case ZodFirstPartyTypeKind.ZodOptional:
+    case ZodFirstPartyTypeKind2.ZodOptional:
       return parseOptionalDef(def, refs);
-    case ZodFirstPartyTypeKind.ZodMap:
+    case ZodFirstPartyTypeKind2.ZodMap:
       return parseMapDef(def, refs);
-    case ZodFirstPartyTypeKind.ZodSet:
+    case ZodFirstPartyTypeKind2.ZodSet:
       return parseSetDef(def, refs);
-    case ZodFirstPartyTypeKind.ZodLazy:
+    case ZodFirstPartyTypeKind2.ZodLazy:
       return () => def.getter()._def;
-    case ZodFirstPartyTypeKind.ZodPromise:
+    case ZodFirstPartyTypeKind2.ZodPromise:
       return parsePromiseDef(def, refs);
-    case ZodFirstPartyTypeKind.ZodNaN:
-    case ZodFirstPartyTypeKind.ZodNever:
+    case ZodFirstPartyTypeKind2.ZodNaN:
+    case ZodFirstPartyTypeKind2.ZodNever:
       return parseNeverDef(refs);
-    case ZodFirstPartyTypeKind.ZodEffects:
+    case ZodFirstPartyTypeKind2.ZodEffects:
       return parseEffectsDef(def, refs);
-    case ZodFirstPartyTypeKind.ZodAny:
+    case ZodFirstPartyTypeKind2.ZodAny:
       return parseAnyDef(refs);
-    case ZodFirstPartyTypeKind.ZodUnknown:
+    case ZodFirstPartyTypeKind2.ZodUnknown:
       return parseUnknownDef(refs);
-    case ZodFirstPartyTypeKind.ZodDefault:
+    case ZodFirstPartyTypeKind2.ZodDefault:
       return parseDefaultDef(def, refs);
-    case ZodFirstPartyTypeKind.ZodBranded:
+    case ZodFirstPartyTypeKind2.ZodBranded:
       return parseBrandedDef(def, refs);
-    case ZodFirstPartyTypeKind.ZodReadonly:
+    case ZodFirstPartyTypeKind2.ZodReadonly:
       return parseReadonlyDef(def, refs);
-    case ZodFirstPartyTypeKind.ZodCatch:
+    case ZodFirstPartyTypeKind2.ZodCatch:
       return parseCatchDef(def, refs);
-    case ZodFirstPartyTypeKind.ZodPipeline:
+    case ZodFirstPartyTypeKind2.ZodPipeline:
       return parsePipelineDef(def, refs);
-    case ZodFirstPartyTypeKind.ZodFunction:
-    case ZodFirstPartyTypeKind.ZodVoid:
-    case ZodFirstPartyTypeKind.ZodSymbol:
+    case ZodFirstPartyTypeKind2.ZodFunction:
+    case ZodFirstPartyTypeKind2.ZodVoid:
+    case ZodFirstPartyTypeKind2.ZodSymbol:
       return void 0;
     default:
       return /* @__PURE__ */ ((_) => void 0)(typeName);
   }
 };
 
-// node_modules/zod-to-json-schema/dist/esm/parseDef.js
+// D:/Development/claude-codex-comm/node_modules/zod-to-json-schema/dist/esm/parseDef.js
 function parseDef(def, refs, forceResolution = false) {
   const seenItem = refs.seen.get(def);
   if (refs.override) {
@@ -33750,7 +37503,7 @@ var addMeta = (def, refs, jsonSchema) => {
   return jsonSchema;
 };
 
-// node_modules/zod-to-json-schema/dist/esm/zodToJsonSchema.js
+// D:/Development/claude-codex-comm/node_modules/zod-to-json-schema/dist/esm/zodToJsonSchema.js
 var zodToJsonSchema = (schema, options) => {
   const refs = getRefs(options);
   let definitions = typeof options === "object" && options.definitions ? Object.entries(options.definitions).reduce((acc, [name2, schema2]) => ({
@@ -33812,7 +37565,7 @@ var zodToJsonSchema = (schema, options) => {
   return combined;
 };
 
-// node_modules/@modelcontextprotocol/sdk/dist/esm/server/zod-json-schema-compat.js
+// D:/Development/claude-codex-comm/node_modules/@modelcontextprotocol/sdk/dist/esm/server/zod-json-schema-compat.js
 function mapMiniTarget(t2) {
   if (!t2)
     return "draft-7";
@@ -33847,14 +37600,14 @@ function getMethodLiteral(schema) {
   return value;
 }
 function parseWithCompat(schema, data) {
-  const result = safeParse2(schema, data);
+  const result = safeParse3(schema, data);
   if (!result.success) {
     throw result.error;
   }
   return result.data;
 }
 
-// node_modules/@modelcontextprotocol/sdk/dist/esm/shared/protocol.js
+// D:/Development/claude-codex-comm/node_modules/@modelcontextprotocol/sdk/dist/esm/shared/protocol.js
 var DEFAULT_REQUEST_TIMEOUT_MSEC = 6e4;
 var Protocol = class {
   constructor(_options) {
@@ -34445,7 +38198,7 @@ var Protocol = class {
           return reject(response);
         }
         try {
-          const parseResult = safeParse2(resultSchema, response.result);
+          const parseResult = safeParse3(resultSchema, response.result);
           if (!parseResult.success) {
             reject(parseResult.error);
           } else {
@@ -34793,8 +38546,8 @@ function isPlainObject2(value) {
 }
 function mergeCapabilities(base, additional) {
   const result = { ...base };
-  for (const key in additional) {
-    const k = key;
+  for (const key2 in additional) {
+    const k = key2;
     const addValue = additional[k];
     if (addValue === void 0)
       continue;
@@ -34808,7 +38561,7 @@ function mergeCapabilities(base, additional) {
   return result;
 }
 
-// node_modules/@modelcontextprotocol/sdk/dist/esm/validation/ajv-provider.js
+// D:/Development/claude-codex-comm/node_modules/@modelcontextprotocol/sdk/dist/esm/validation/ajv-provider.js
 var import_ajv = __toESM(require_ajv(), 1);
 var import_ajv_formats = __toESM(require_dist(), 1);
 function createDefaultAjvInstance() {
@@ -34876,7 +38629,7 @@ var AjvJsonSchemaValidator = class {
   }
 };
 
-// node_modules/@modelcontextprotocol/sdk/dist/esm/experimental/tasks/server.js
+// D:/Development/claude-codex-comm/node_modules/@modelcontextprotocol/sdk/dist/esm/experimental/tasks/server.js
 var ExperimentalServerTasks = class {
   constructor(_server) {
     this._server = _server;
@@ -35089,7 +38842,7 @@ var ExperimentalServerTasks = class {
   }
 };
 
-// node_modules/@modelcontextprotocol/sdk/dist/esm/experimental/tasks/helpers.js
+// D:/Development/claude-codex-comm/node_modules/@modelcontextprotocol/sdk/dist/esm/experimental/tasks/helpers.js
 function assertToolsCallTaskCapability(requests, method, entityName) {
   if (!requests) {
     throw new Error(`${entityName} does not support task creation (required for ${method})`);
@@ -35124,7 +38877,7 @@ function assertClientRequestTaskCapability(requests, method, entityName) {
   }
 }
 
-// node_modules/@modelcontextprotocol/sdk/dist/esm/server/index.js
+// D:/Development/claude-codex-comm/node_modules/@modelcontextprotocol/sdk/dist/esm/server/index.js
 var Server = class extends Protocol {
   /**
    * Initializes this server with the given name and version information.
@@ -35197,7 +38950,7 @@ var Server = class extends Protocol {
     const method = methodValue;
     if (method === "tools/call") {
       const wrappedHandler = async (request2, extra) => {
-        const validatedRequest = safeParse2(CallToolRequestSchema, request2);
+        const validatedRequest = safeParse3(CallToolRequestSchema, request2);
         if (!validatedRequest.success) {
           const errorMessage = validatedRequest.error instanceof Error ? validatedRequest.error.message : String(validatedRequest.error);
           throw new McpError(ErrorCode.InvalidParams, `Invalid tools/call request: ${errorMessage}`);
@@ -35205,14 +38958,14 @@ var Server = class extends Protocol {
         const { params } = validatedRequest.data;
         const result = await Promise.resolve(handler(request2, extra));
         if (params.task) {
-          const taskValidationResult = safeParse2(CreateTaskResultSchema, result);
+          const taskValidationResult = safeParse3(CreateTaskResultSchema, result);
           if (!taskValidationResult.success) {
             const errorMessage = taskValidationResult.error instanceof Error ? taskValidationResult.error.message : String(taskValidationResult.error);
             throw new McpError(ErrorCode.InvalidParams, `Invalid task creation result: ${errorMessage}`);
           }
           return taskValidationResult.data;
         }
-        const validationResult = safeParse2(CallToolResultSchema, result);
+        const validationResult = safeParse3(CallToolResultSchema, result);
         if (!validationResult.success) {
           const errorMessage = validationResult.error instanceof Error ? validationResult.error.message : String(validationResult.error);
           throw new McpError(ErrorCode.InvalidParams, `Invalid tools/call result: ${errorMessage}`);
@@ -35495,7 +39248,7 @@ var Server = class extends Protocol {
   }
 };
 
-// node_modules/@modelcontextprotocol/sdk/dist/esm/server/completable.js
+// D:/Development/claude-codex-comm/node_modules/@modelcontextprotocol/sdk/dist/esm/server/completable.js
 var COMPLETABLE_SYMBOL = /* @__PURE__ */ Symbol.for("mcp.completable");
 function isCompletable(schema) {
   return !!schema && typeof schema === "object" && COMPLETABLE_SYMBOL in schema;
@@ -35509,7 +39262,7 @@ var McpZodTypeKind;
   McpZodTypeKind2["Completable"] = "McpCompletable";
 })(McpZodTypeKind || (McpZodTypeKind = {}));
 
-// node_modules/@modelcontextprotocol/sdk/dist/esm/shared/toolNameValidation.js
+// D:/Development/claude-codex-comm/node_modules/@modelcontextprotocol/sdk/dist/esm/shared/toolNameValidation.js
 var TOOL_NAME_REGEX = /^[A-Za-z0-9._-]{1,128}$/;
 function validateToolName(name) {
   const warnings = [];
@@ -35567,7 +39320,7 @@ function validateAndWarnToolName(name) {
   return result.isValid;
 }
 
-// node_modules/@modelcontextprotocol/sdk/dist/esm/experimental/tasks/mcp-server.js
+// D:/Development/claude-codex-comm/node_modules/@modelcontextprotocol/sdk/dist/esm/experimental/tasks/mcp-server.js
 var ExperimentalMcpServerTasks = class {
   constructor(_mcpServer) {
     this._mcpServer = _mcpServer;
@@ -35582,7 +39335,7 @@ var ExperimentalMcpServerTasks = class {
   }
 };
 
-// node_modules/@modelcontextprotocol/sdk/dist/esm/server/mcp.js
+// D:/Development/claude-codex-comm/node_modules/@modelcontextprotocol/sdk/dist/esm/server/mcp.js
 var McpServer = class {
   constructor(serverInfo, options) {
     this._registeredResources = {};
@@ -35729,7 +39482,7 @@ var McpServer = class {
     }
     const inputObj = normalizeObjectSchema(tool.inputSchema);
     const schemaToParse = inputObj ?? tool.inputSchema;
-    const parseResult = await safeParseAsync2(schemaToParse, args);
+    const parseResult = await safeParseAsync3(schemaToParse, args);
     if (!parseResult.success) {
       const error62 = "error" in parseResult ? parseResult.error : "Unknown error";
       const errorMessage = getParseErrorMessage(error62);
@@ -35754,7 +39507,7 @@ var McpServer = class {
       throw new McpError(ErrorCode.InvalidParams, `Output validation error: Tool ${toolName} has an output schema but no structured content was provided`);
     }
     const outputObj = normalizeObjectSchema(tool.outputSchema);
-    const parseResult = await safeParseAsync2(outputObj, result.structuredContent);
+    const parseResult = await safeParseAsync3(outputObj, result.structuredContent);
     if (!parseResult.success) {
       const error62 = "error" in parseResult ? parseResult.error : "Unknown error";
       const errorMessage = getParseErrorMessage(error62);
@@ -35967,7 +39720,7 @@ var McpServer = class {
       }
       if (prompt.argsSchema) {
         const argsObj = normalizeObjectSchema(prompt.argsSchema);
-        const parseResult = await safeParseAsync2(argsObj, request2.params.arguments);
+        const parseResult = await safeParseAsync3(argsObj, request2.params.arguments);
         if (!parseResult.success) {
           const error62 = "error" in parseResult ? parseResult.error : "Unknown error";
           const errorMessage = getParseErrorMessage(error62);
@@ -36127,7 +39880,7 @@ var McpServer = class {
     this._registeredPrompts[name] = registeredPrompt;
     if (argsSchema) {
       const hasCompletable = Object.values(argsSchema).some((field) => {
-        const inner = field instanceof ZodOptional2 ? field._def?.innerType : field;
+        const inner = field instanceof ZodOptional ? field._def?.innerType : field;
         return isCompletable(inner);
       });
       if (hasCompletable) {
@@ -36374,10 +40127,10 @@ var EMPTY_COMPLETION_RESULT = {
   }
 };
 
-// node_modules/@modelcontextprotocol/sdk/dist/esm/server/stdio.js
+// D:/Development/claude-codex-comm/node_modules/@modelcontextprotocol/sdk/dist/esm/server/stdio.js
 import process2 from "node:process";
 
-// node_modules/@modelcontextprotocol/sdk/dist/esm/shared/stdio.js
+// D:/Development/claude-codex-comm/node_modules/@modelcontextprotocol/sdk/dist/esm/shared/stdio.js
 var STDIO_DEFAULT_MAX_BUFFER_SIZE = 10 * 1024 * 1024;
 var ReadBuffer = class {
   constructor(options) {
@@ -36414,7 +40167,7 @@ function serializeMessage(message) {
   return JSON.stringify(message) + "\n";
 }
 
-// node_modules/@modelcontextprotocol/sdk/dist/esm/server/stdio.js
+// D:/Development/claude-codex-comm/node_modules/@modelcontextprotocol/sdk/dist/esm/server/stdio.js
 var StdioServerTransport = class {
   constructor(_stdin = process2.stdin, _stdout = process2.stdout, options) {
     this._stdin = _stdin;
@@ -36481,1674 +40234,8 @@ var StdioServerTransport = class {
   }
 };
 
-// src/core/config.ts
-import { unwatchFile, watchFile } from "node:fs";
-import { basename as basename2, join as join4 } from "node:path";
-
-// src/core/constants.ts
-import { homedir } from "node:os";
-import { join } from "node:path";
-var APP_NAME = "agent-bridge";
-var APP_VERSION = "0.28.1";
-var PROTOCOL_VERSION = 2;
-var ENV = {
-  home: "AGENT_BRIDGE_HOME",
-  pipe: "AGENT_BRIDGE_PIPE",
-  name: "AGENT_BRIDGE_NAME",
-  agent: "AGENT_BRIDGE_AGENT",
-  logLevel: "AGENT_BRIDGE_LOG_LEVEL",
-  logConsole: "AGENT_BRIDGE_LOG_CONSOLE",
-  autoWake: "AGENT_BRIDGE_AUTO_WAKE",
-  wakeOnDirect: "AGENT_BRIDGE_WAKE_ON_DIRECT",
-  maxHops: "AGENT_BRIDGE_MAX_HOPS",
-  maxJobs: "AGENT_BRIDGE_MAX_JOBS",
-  autoApproveTools: "AGENT_BRIDGE_AUTO_APPROVE_TOOLS",
-  lingerSec: "AGENT_BRIDGE_LINGER_SEC",
-  delivery: "AGENT_BRIDGE_DELIVERY",
-  claudeBin: "AGENT_BRIDGE_CLAUDE_BIN",
-  codexBin: "AGENT_BRIDGE_CODEX_BIN",
-  opencodeBin: "AGENT_BRIDGE_OPENCODE_BIN",
-  dashboard: "AGENT_BRIDGE_DASHBOARD",
-  /** "0": background subagents run inside the session's MCP server instead of detached job runners (they then end with it). */
-  jobRunner: "AGENT_BRIDGE_JOB_RUNNER"
-};
-var DEFAULT_HOME = join(homedir(), `.${APP_NAME}`);
-var CONFIG_FILE_NAME = "config.json";
-var DB_FILE_NAME = "bridge.db";
-var LOG_DIR_NAME = "logs";
-var LOG_FILE_NAME = `${APP_NAME}.log`;
-var WINDOWS_PIPE_PREFIX = "\\\\.\\pipe\\";
-var SOCKET_FILE_NAME = "bridge.sock";
-var ELECTION_RETRY_MIN_MS = 100;
-var ELECTION_RETRY_MAX_MS = 600;
-var ELECTION_MAX_ATTEMPTS = 20;
-var RECONNECT_BACKOFF_MIN_MS = 1e3;
-var RECONNECT_BACKOFF_MAX_MS = 3e4;
-var CONNECT_TIMEOUT_MS = 2e3;
-var REQUEST_TIMEOUT_MS = 1e4;
-var MAX_FRAME_BYTES = 4 * 1024 * 1024;
-var MAX_BODY_CHARS = 2e5;
-var MESSAGE_TTL_MS = 7 * 24 * 60 * 60 * 1e3;
-var PURGE_INTERVAL_MS = 60 * 60 * 1e3;
-var QUEUED_MAIL_MAX_AGE_MS = 24 * 60 * 60 * 1e3;
-var DEFAULT_MAX_HOPS = 6;
-var DEFAULT_DELEGATE_TIMEOUT_SEC = 3600;
-var MAX_JOB_TIMEOUT_SEC = 24 * 60 * 60;
-var JOBS_FILE = "jobs.json";
-var DEFAULT_CLAUDE_BIN = "claude";
-var DEFAULT_CODEX_BIN = "codex";
-var DEFAULT_OPENCODE_BIN = "opencode";
-var DEFAULT_DASHBOARD_PORT = 4777;
-var DEFAULT_LINGER_SEC = 300;
-var STOP_WAIT_CAP_MS = 29e4;
-var DEFAULT_MAX_JOBS = 8;
-var MAX_JOBS_LIMIT = 50;
-var DEFAULT_WAIT_SEC = 110;
-var MAX_WAIT_SEC = 1800;
-var HOOK_MAX_MESSAGES = 10;
-
-// src/core/protocol.ts
-var AGENT_KINDS = ["claude", "codex", "opencode", "other"];
-var CODING_AGENTS = ["claude", "codex", "opencode"];
-var BROADCAST = "*";
-var SIBLING_CONVERSATION_PREFIX = "siblings-";
-var SIBLING_NOTE_SUFFIX = ":note";
-function isSiblingNote(m) {
-  return m.conversationId.startsWith(SIBLING_CONVERSATION_PREFIX) && m.conversationId.endsWith(SIBLING_NOTE_SUFFIX);
-}
-var BridgeError = class extends Error {
-  constructor(code, message, details) {
-    super(message);
-    this.code = code;
-    this.details = details;
-    this.name = "BridgeError";
-  }
-  code;
-  details;
-  toPayload() {
-    return { code: this.code, message: this.message, ...this.details ? { details: this.details } : {} };
-  }
-};
-var FrameDecoder = class {
-  constructor(maxBytes) {
-    this.maxBytes = maxBytes;
-  }
-  maxBytes;
-  buffer = "";
-  push(chunk) {
-    this.buffer += chunk;
-    if (this.buffer.length > this.maxBytes && !this.buffer.includes("\n")) {
-      this.buffer = "";
-      throw new BridgeError("too_large", "frame exceeds maximum size");
-    }
-    const frames = [];
-    let nl;
-    while ((nl = this.buffer.indexOf("\n")) >= 0) {
-      const line = this.buffer.slice(0, nl).trim();
-      this.buffer = this.buffer.slice(nl + 1);
-      if (!line) continue;
-      frames.push(JSON.parse(line));
-    }
-    return frames;
-  }
-};
-function encodeFrame(frame) {
-  return JSON.stringify(frame) + "\n";
-}
-
-// src/core/json-store.ts
-import { randomUUID } from "node:crypto";
-import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { basename, dirname, join as join2 } from "node:path";
-var JSON_STORE_VERSION = 1;
-var KEEP_STORE_BACKUPS = 3;
-var RENAME_ATTEMPTS = 50;
-var RENAME_RETRY_MS = 20;
-function warn(log, message, data) {
-  if (log) log.warn(message, data);
-  else process.stderr.write(`${message}: ${JSON.stringify(data)}
-`);
-}
-function isRecord(value) {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
-}
-function archiveFile(path) {
-  if (!existsSync(path)) return null;
-  const dir = join2(dirname(path), "archive");
-  mkdirSync(dir, { recursive: true, mode: 448 });
-  const target = join2(dir, `${basename(path)}-${Date.now()}-${randomUUID()}`);
-  renameSync(path, target);
-  return target;
-}
-function backupPath(path) {
-  return `${path}.backup-${Date.now()}-${randomUUID()}`;
-}
-function retainBackups(path) {
-  const prefix = `${basename(path)}.backup-`;
-  const files = readdirSync(dirname(path)).filter((f) => f.startsWith(prefix)).sort().reverse();
-  for (const file2 of files.slice(KEEP_STORE_BACKUPS)) archiveFile(join2(dirname(path), file2));
-}
-function readJsonStore(path, log, valid = isRecord) {
-  let raw;
-  try {
-    raw = readFileSync(path, "utf8");
-  } catch (err) {
-    if (err.code === "ENOENT") return null;
-    throw err;
-  }
-  try {
-    const value = JSON.parse(raw);
-    if (isRecord(value) && typeof value.version === "number" && value.version > JSON_STORE_VERSION) return value;
-    if (!valid(value)) throw new Error("invalid store structure");
-    return value;
-  } catch (err) {
-    const preserved = `${path}.corrupt-${Date.now()}-${randomUUID()}`;
-    renameSync(path, preserved);
-    warn(log, "preserved corrupt JSON store", { path, preserved, err: err.message });
-    return null;
-  }
-}
-function assertWritableStore(value) {
-  if (!isRecord(value) || value.version === void 0) return;
-  if (!Number.isInteger(value.version) || value.version < 0 || value.version > JSON_STORE_VERSION) {
-    throw new Error(`unsupported JSON store version: ${String(value.version)}`);
-  }
-}
-function mergeStoreFields(previous, next) {
-  const merged = { ...previous, ...next };
-  for (const [key, value] of Object.entries(next)) {
-    if (isRecord(previous[key]) && isRecord(value)) merged[key] = mergeStoreFields(previous[key], value);
-  }
-  return merged;
-}
-function writeJsonStore(path, value, previous) {
-  assertWritableStore(previous);
-  mkdirSync(dirname(path), { recursive: true, mode: 448 });
-  if (previous !== null && (!isRecord(previous) || previous.version !== JSON_STORE_VERSION) && existsSync(path)) {
-    copyFileSync(path, backupPath(path));
-    retainBackups(path);
-  }
-  const tmp = `${path}.${process.pid}.${randomUUID()}.tmp`;
-  writeFileSync(tmp, `${JSON.stringify({ ...value, version: JSON_STORE_VERSION }, null, 2)}
-`, { mode: 384 });
-  const pause = new Int32Array(new SharedArrayBuffer(4));
-  try {
-    for (let attempt = 1; ; attempt++) {
-      try {
-        renameSync(tmp, path);
-        return;
-      } catch (err) {
-        const code = err.code;
-        if (!["EPERM", "EBUSY", "EACCES"].includes(code ?? "") || attempt >= RENAME_ATTEMPTS) throw err;
-        Atomics.wait(pause, 0, 0, RENAME_RETRY_MS);
-      }
-    }
-  } finally {
-    rmSync(tmp, { force: true });
-  }
-}
-function retentionLimit(key, fallback) {
-  const raw = process.env[key];
-  if (raw === void 0 || !/^\d+$/.test(raw)) return fallback;
-  const value = Number(raw);
-  return Number.isSafeInteger(value) ? value : fallback;
-}
-
-// src/network/config.ts
-import { hostname as hostname3 } from "node:os";
-import { join as join3 } from "node:path";
-
-// src/network/constants.ts
-var NETWORK_VERSION = 1;
-var DEFAULT_NETWORK_PORT = 48148;
-var DISCOVERY_PORT = 48149;
-var DISCOVERY_GROUP = "239.255.48.49";
-var DISCOVERY_INTERVAL_MS = 5e3;
-var DISCOVERY_TTL_MS = 2e4;
-var MAX_DISCOVERY_BYTES = 1024;
-var MAX_DISCOVERED_INSTANCES = 128;
-var MAX_NETWORK_PEERS = 256;
-var MAX_NETWORK_LINKS = 16;
-var MAX_NETWORK_FRAME_BYTES = 2 * 1024 * 1024;
-var MAX_NETWORK_REQUESTS = 64;
-var NETWORK_TIMEOUT_MS = 5e3;
-var NETWORK_REFRESH_MS = 2e3;
-var PAIRING_TTL_MS = 10 * 60 * 1e3;
-var PAIRING_KEY_BYTES = 32;
-var MAX_PAIRING_CODE_CHARS = 1024;
-var NETWORK_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
-var MAX_NETWORK_NAME_CHARS = 64;
-var MAX_NETWORK_HOST_CHARS = 255;
-var MAX_PORT = 65535;
-var TLS_CIPHER = "TLS_AES_128_GCM_SHA256";
-var OWNER_FILE_MODE = 384;
-var OWNER_DIR_MODE = 448;
-
-// src/network/config.ts
-var networkConfigSchema = external_exports.object({
-  enabled: external_exports.boolean().default(false),
-  name: external_exports.string().regex(NETWORK_NAME_PATTERN).default(hostname3().replace(/[^A-Za-z0-9._-]/g, "-").replace(/^[^A-Za-z0-9]+/, "").slice(0, MAX_NETWORK_NAME_CHARS) || "host"),
-  bind: external_exports.string().min(1).max(MAX_NETWORK_HOST_CHARS).default("127.0.0.1"),
-  port: external_exports.number().int().min(0).max(MAX_PORT).default(DEFAULT_NETWORK_PORT),
-  discovery: external_exports.boolean().default(false)
-});
-var DEFAULT_NETWORK_CONFIG = networkConfigSchema.parse({});
-function parseNetworkConfig(value) {
-  const result = networkConfigSchema.safeParse(value);
-  return result.success ? result.data : void 0;
-}
-function writeNetworkConfig(home, value) {
-  const config2 = networkConfigSchema.parse(value);
-  const path = join3(home, CONFIG_FILE_NAME);
-  const previous = readJsonStore(path);
-  writeJsonStore(path, mergeStoreFields(isRecord(previous) ? previous : {}, { network: config2 }), previous);
-  return config2;
-}
-
-// src/core/config.ts
-var DELIVERY_MODES = ["auto", "channel", "hooks"];
-var CODEX_SANDBOXES = ["read-only", "workspace-write", "danger-full-access"];
-var CLAUDE_PERMISSION_MODES = ["default", "manual", "acceptEdits", "plan", "auto", "dontAsk", "bypassPermissions"];
-var DEFAULT_NOTIFICATIONS = { approvals: true, finish: true, fail: true };
-var DEFAULT_CONFIG = {
-  name: null,
-  autoWake: false,
-  wakeOnDirect: true,
-  maxHops: DEFAULT_MAX_HOPS,
-  maxJobs: DEFAULT_MAX_JOBS,
-  autoApproveTools: [],
-  resourceSlots: {},
-  delivery: "auto",
-  claudeBin: DEFAULT_CLAUDE_BIN,
-  codexBin: DEFAULT_CODEX_BIN,
-  codexSandbox: "read-only",
-  codexWorktreeSandbox: null,
-  codexWorkspaceWriteNetworkAccess: null,
-  claudePermissionMode: "default",
-  lingerSec: DEFAULT_LINGER_SEC,
-  codexModel: null,
-  claudeModel: null,
-  opencodeBin: DEFAULT_OPENCODE_BIN,
-  opencodeModel: null,
-  effort: {},
-  opencodeAutoApprove: false,
-  dashboard: true,
-  dashboardPort: DEFAULT_DASHBOARD_PORT,
-  notifications: DEFAULT_NOTIFICATIONS,
-  network: DEFAULT_NETWORK_CONFIG
-};
-var TRUE_VALUES = /* @__PURE__ */ new Set(["1", "true", "yes", "on"]);
-var FALSE_VALUES = /* @__PURE__ */ new Set(["0", "false", "no", "off"]);
-function parseBool(v) {
-  if (typeof v === "boolean") return v;
-  if (typeof v !== "string") return void 0;
-  const s = v.trim().toLowerCase();
-  if (TRUE_VALUES.has(s)) return true;
-  if (FALSE_VALUES.has(s)) return false;
-  return void 0;
-}
-function notifications(v) {
-  if (!isRecord(v)) return void 0;
-  const out = { ...DEFAULT_NOTIFICATIONS };
-  for (const key of Object.keys(out)) {
-    if (v[key] === void 0) continue;
-    const value = parseBool(v[key]);
-    if (value === void 0) return void 0;
-    out[key] = value;
-  }
-  return out;
-}
-function parseIntInRange(v, min, max) {
-  const n = typeof v === "number" ? v : typeof v === "string" ? Number.parseInt(v, 10) : Number.NaN;
-  return Number.isInteger(n) && n >= min && n <= max ? n : void 0;
-}
-function oneOf(v, allowed) {
-  return typeof v === "string" && allowed.includes(v) ? v : void 0;
-}
-var MAX_HOPS_LIMIT = 100;
-var MAX_LINGER_SEC = 3600;
-var RESOURCE_NAME_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/;
-var MAX_RESOURCE_SLOTS = 100;
-function resourceSlots(v) {
-  if (!v || typeof v !== "object" || Array.isArray(v)) return void 0;
-  const entries = Object.entries(v);
-  if (!entries.every(([name, count]) => RESOURCE_NAME_PATTERN.test(name) && typeof count === "number" && Number.isInteger(count) && count >= 1 && count <= MAX_RESOURCE_SLOTS)) return void 0;
-  return Object.fromEntries(entries);
-}
-var MODEL_NAME_PATTERN = /^[^\s"'`&|<>^%$;()]{1,200}$/;
-function modelName(v) {
-  return typeof v === "string" && MODEL_NAME_PATTERN.test(v.trim()) ? v.trim() : void 0;
-}
-var EFFORT_NAME = /^[A-Za-z0-9_-]{1,20}$/;
-function effortLevels(v) {
-  if (typeof v === "string" && EFFORT_NAME.test(v)) return Object.fromEntries(AGENT_KINDS.map((k) => [k, v]));
-  if (!v || typeof v !== "object" || Array.isArray(v)) return void 0;
-  const out = {};
-  for (const [k, x] of Object.entries(v)) if (AGENT_KINDS.includes(k) && typeof x === "string" && EFFORT_NAME.test(x)) out[k] = x;
-  return out;
-}
-function toolPatterns(v) {
-  const list = Array.isArray(v) ? v : typeof v === "string" ? v.split(",") : null;
-  if (!list || !list.every((x) => typeof x === "string")) return void 0;
-  return list.map((x) => x.trim()).filter(Boolean);
-}
-var CONFIG_POLL_MS = 2e3;
-function watchConfig(home, agent, log, onChange) {
-  const path = join4(home, CONFIG_FILE_NAME);
-  const listener = (cur, prev) => {
-    if (cur.mtimeMs === prev.mtimeMs) return;
-    log.info("config file changed; applying it", { path });
-    onChange(loadConfig(home, agent, log));
-  };
-  watchFile(path, { interval: CONFIG_POLL_MS, persistent: false }, listener);
-  return () => unwatchFile(path, listener);
-}
-function saveConfigValue(home, key, value) {
-  const path = join4(home, CONFIG_FILE_NAME);
-  const previous = readJsonStore(path);
-  const file2 = isRecord(previous) ? previous : {};
-  writeJsonStore(path, { ...file2, [key]: value }, previous);
-}
-function loadConfig(home, agent, log, env = process.env) {
-  let file2 = {};
-  const path = join4(home, CONFIG_FILE_NAME);
-  try {
-    file2 = readJsonStore(path, log) ?? {};
-    log.debug("config file loaded", { path });
-  } catch (err) {
-    if (err.code !== "ENOENT") log.warn("ignoring unreadable config file", { path, err: err.message });
-  }
-  const section = isRecord(file2[agent]) ? file2[agent] : {};
-  const pick2 = (key, envKey, parse4) => {
-    for (const v of [envKey ? env[envKey] : void 0, section[key], file2[key]]) {
-      if (v === void 0) continue;
-      const parsed = parse4(v);
-      if (parsed !== void 0) return parsed;
-      log.warn("ignoring invalid config value", { key, value: String(v) });
-    }
-    return void 0;
-  };
-  const str = (v) => typeof v === "string" && v.trim() ? v.trim() : void 0;
-  const d = DEFAULT_CONFIG;
-  const cfg = {
-    name: pick2("name", ENV.name, str) ?? d.name,
-    autoWake: pick2("autoWake", ENV.autoWake, parseBool) ?? d.autoWake,
-    wakeOnDirect: pick2("wakeOnDirect", ENV.wakeOnDirect, parseBool) ?? d.wakeOnDirect,
-    maxHops: pick2("maxHops", ENV.maxHops, (v) => parseIntInRange(v, 0, MAX_HOPS_LIMIT)) ?? d.maxHops,
-    maxJobs: pick2("maxJobs", ENV.maxJobs, (v) => parseIntInRange(v, 1, MAX_JOBS_LIMIT)) ?? d.maxJobs,
-    autoApproveTools: pick2("autoApproveTools", ENV.autoApproveTools, toolPatterns) ?? d.autoApproveTools,
-    // Capacities must agree across agents; per-agent sections cannot override shared resources.
-    resourceSlots: resourceSlots(file2.resourceSlots) ?? d.resourceSlots,
-    delivery: pick2("delivery", ENV.delivery, (v) => oneOf(v, DELIVERY_MODES)) ?? d.delivery,
-    claudeBin: pick2("claudeBin", ENV.claudeBin, str) ?? d.claudeBin,
-    codexBin: pick2("codexBin", ENV.codexBin, str) ?? d.codexBin,
-    codexSandbox: pick2("codexSandbox", null, (v) => oneOf(v, CODEX_SANDBOXES)) ?? d.codexSandbox,
-    codexWorktreeSandbox: pick2("codexWorktreeSandbox", null, (v) => oneOf(v, CODEX_SANDBOXES)) ?? d.codexWorktreeSandbox,
-    codexWorkspaceWriteNetworkAccess: pick2("codexWorkspaceWriteNetworkAccess", null, parseBool) ?? d.codexWorkspaceWriteNetworkAccess,
-    claudePermissionMode: pick2("claudePermissionMode", null, (v) => oneOf(v, CLAUDE_PERMISSION_MODES)) ?? d.claudePermissionMode,
-    lingerSec: pick2("lingerSec", ENV.lingerSec, (v) => parseIntInRange(v, 0, MAX_LINGER_SEC)) ?? d.lingerSec,
-    codexModel: pick2("codexModel", null, modelName) ?? d.codexModel,
-    claudeModel: pick2("claudeModel", null, modelName) ?? d.claudeModel,
-    opencodeBin: pick2("opencodeBin", ENV.opencodeBin, str) ?? d.opencodeBin,
-    opencodeModel: pick2("opencodeModel", null, modelName) ?? d.opencodeModel,
-    effort: pick2("effort", null, effortLevels) ?? d.effort,
-    opencodeAutoApprove: pick2("opencodeAutoApprove", null, parseBool) ?? d.opencodeAutoApprove,
-    dashboard: pick2("dashboard", ENV.dashboard, parseBool) ?? d.dashboard,
-    dashboardPort: pick2("dashboardPort", null, (v) => parseIntInRange(v, 1, 65535)) ?? d.dashboardPort,
-    notifications: pick2("notifications", null, notifications) ?? d.notifications,
-    network: pick2("network", null, parseNetworkConfig) ?? d.network
-  };
-  log.debug("effective config", { ...cfg });
-  return cfg;
-}
-function parseAgentKind(v) {
-  return oneOf(v?.trim().toLowerCase(), AGENT_KINDS) ?? "other";
-}
-function defaultPeerName(agent, cwd) {
-  const folder = basename2(cwd).replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^[-._]+/, "").slice(0, 40);
-  return `${agent}-${folder || "session"}`;
-}
-
-// src/core/delegate.ts
-import { spawn } from "node:child_process";
-import { existsSync as existsSync2, readFileSync as readFileSync5, realpathSync as realpathSync2 } from "node:fs";
-import { delimiter, dirname as dirname3, extname, isAbsolute, join as join8, win32 } from "node:path";
-import { fileURLToPath } from "node:url";
-import { setTimeout as delay } from "node:timers/promises";
-
-// src/core/claude-mcp.ts
-import { readFileSync as readFileSync2 } from "node:fs";
-import { homedir as homedir2 } from "node:os";
-import { join as join5, resolve } from "node:path";
-var OWN_SERVER_RULE = "mcp__plugin_agent-bridge_bridge";
-var ACCOUNT_CONNECTORS_RULE = "mcp__claude_ai_*";
-var BUILT_IN_RULES = ["mcp__claude-in-chrome"];
-function readJson(path) {
-  try {
-    return JSON.parse(readFileSync2(path, "utf8"));
-  } catch {
-    return null;
-  }
-}
-function serverNames(mcp) {
-  return mcp && typeof mcp === "object" ? Object.keys(mcp) : [];
-}
-function pluginServers(home) {
-  const installed = readJson(join5(home, ".claude", "plugins", "installed_plugins.json"));
-  const out = [];
-  for (const [key, entries] of Object.entries(installed?.plugins ?? {})) {
-    const plugin = key.split("@")[0];
-    for (const e of Array.isArray(entries) ? entries : [entries]) {
-      const root = e?.installPath;
-      if (typeof root !== "string") continue;
-      const manifest = readJson(join5(root, ".claude-plugin", "plugin.json"));
-      const declared = manifest?.mcpServers;
-      const servers = typeof declared === "string" ? readJson(resolve(root, declared))?.mcpServers ?? readJson(resolve(root, declared)) : declared;
-      const names = /* @__PURE__ */ new Set([...serverNames(servers), ...serverNames(readJson(join5(root, ".mcp.json"))?.mcpServers)]);
-      for (const s of names) out.push(`mcp__plugin_${plugin}_${s}`);
-    }
-  }
-  return out;
-}
-function claudeMcpDenyRules(cwd, home = homedir2()) {
-  const config2 = readJson(join5(home, ".claude.json"));
-  const norm = (p) => resolve(p).replace(/\\/g, "/").toLowerCase();
-  const project = Object.entries(config2?.projects ?? {}).find(([p]) => norm(p) === norm(cwd))?.[1];
-  const names = [
-    ...pluginServers(home),
-    ...serverNames(config2?.mcpServers).map((s) => `mcp__${s}`),
-    ...serverNames(project?.mcpServers).map((s) => `mcp__${s}`),
-    ...serverNames(readJson(join5(cwd, ".mcp.json"))?.mcpServers).map((s) => `mcp__${s}`),
-    ACCOUNT_CONNECTORS_RULE,
-    ...BUILT_IN_RULES
-  ];
-  return [...new Set(names)].filter((n) => n !== OWN_SERVER_RULE);
-}
-
-// src/core/parent-link.ts
-import { randomBytes as randomBytes2, randomUUID as randomUUID2 } from "node:crypto";
-import { createServer } from "node:http";
-
-// src/core/token.ts
-import { randomBytes, timingSafeEqual } from "node:crypto";
-import { chmodSync, mkdirSync as mkdirSync2, openSync, readFileSync as readFileSync3, writeSync, closeSync } from "node:fs";
-import { dirname as dirname2, join as join6 } from "node:path";
-var TOKEN_FILE_NAME = "token";
-var TOKEN_BYTES = 32;
-var OWNER_ONLY = 384;
-function tokenPath(home) {
-  return join6(home, TOKEN_FILE_NAME);
-}
-function loadOrCreateToken(home) {
-  const file2 = tokenPath(home);
-  mkdirSync2(dirname2(file2), { recursive: true, mode: 448 });
-  try {
-    const fd = openSync(file2, "wx", OWNER_ONLY);
-    try {
-      writeSync(fd, randomBytes(TOKEN_BYTES).toString("hex"));
-    } finally {
-      closeSync(fd);
-    }
-    try {
-      chmodSync(file2, OWNER_ONLY);
-    } catch {
-    }
-  } catch (err) {
-    if (err.code !== "EEXIST") throw err;
-  }
-  const token = readFileSync3(file2, "utf8").trim();
-  if (!token) throw new Error(`agent-bridge token file is empty: ${file2}`);
-  return token;
-}
-function tokensEqual(a, b) {
-  const x = Buffer.from(a);
-  const y = Buffer.from(b);
-  return x.length === y.length && timingSafeEqual(x, y);
-}
-
-// src/core/parent-link.ts
-var PARENT_URL_ENV = "AGENT_BRIDGE_PARENT_URL";
-var PARENT_TOKEN_ENV = "AGENT_BRIDGE_PARENT_TOKEN";
-var PARENT_NAME_ENV = "AGENT_BRIDGE_PARENT_NAME";
-var HOST = "127.0.0.1";
-var SECRET_BYTES = 24;
-var MAX_REQUEST_BYTES = 256 * 1024;
-var MAX_NOTE_CHARS = 200;
-var CHILD_REQUEST_TIMEOUT_MS = 5e3;
-var ParentLink = class {
-  constructor(parentName, onMessage, log, onProgress = () => {
-  }, siblings) {
-    this.parentName = parentName;
-    this.onMessage = onMessage;
-    this.log = log;
-    this.onProgress = onProgress;
-    this.siblings = siblings;
-  }
-  parentName;
-  onMessage;
-  log;
-  onProgress;
-  siblings;
-  server = null;
-  secret = randomBytes2(SECRET_BYTES).toString("hex");
-  url = "";
-  pending = [];
-  /** Picked up by the subagent but not answered yet (it may have seen them only as it finished). */
-  unanswered = [];
-  async start() {
-    this.server = createServer((req, res) => {
-      void this.handle(req).then(
-        (body) => {
-          res.writeHead(200, { "content-type": "application/json" });
-          res.end(JSON.stringify(body));
-        },
-        (err) => {
-          res.writeHead(400, { "content-type": "application/json" });
-          res.end(JSON.stringify({ error: err.message }));
-        }
-      );
-    });
-    await new Promise((resolve10, reject) => {
-      this.server.once("error", reject);
-      this.server.listen(0, HOST, () => resolve10());
-    });
-    this.url = `http://${HOST}:${this.server.address().port}`;
-  }
-  childEnv() {
-    return { [PARENT_URL_ENV]: this.url, [PARENT_TOKEN_ENV]: this.secret, [PARENT_NAME_ENV]: this.parentName };
-  }
-  /** Queue a message for the subagent; it gets it at its next step. */
-  post(body, sibling) {
-    const m = { id: sibling?.id ?? randomUUID2(), body, ...sibling ? { sibling } : {} };
-    this.pending.push(m);
-    return m;
-  }
-  /**
-   * Stop the link; returns the messages the subagent never picked up or never answered (they become a
-   * follow-up, so a message that arrived as it finished is not lost).
-   */
-  async close() {
-    const left = [...this.unanswered.splice(0), ...this.pending.splice(0)].map((m) => m.body);
-    const s = this.server;
-    this.server = null;
-    if (s) await new Promise((r) => s.close(() => r()));
-    return left;
-  }
-  async handle(req) {
-    const auth = String(req.headers.authorization ?? "").replace(/^Bearer /, "");
-    if (!tokensEqual(auth, this.secret)) throw new Error("unauthorized");
-    if (req.method === "POST" && req.url === "/inbox") {
-      const messages = this.pending.splice(0);
-      this.unanswered.push(...messages);
-      if (messages.length) this.log.info("subagent picked up messages", { count: messages.length });
-      return { messages };
-    }
-    if (req.method === "POST" && req.url === "/progress") {
-      const body = JSON.parse(await readBody(req));
-      const percent = Math.round(Number(body.percent));
-      if (!Number.isFinite(percent) || percent < 0 || percent > 100) throw new Error("percent must be 0-100");
-      this.onProgress(percent, String(body.note ?? "").trim().slice(0, MAX_NOTE_CHARS));
-      return { ok: true };
-    }
-    if (req.method === "POST" && req.url === "/siblings") {
-      return { peers: this.siblings ? await this.siblings.peers() : [] };
-    }
-    if (req.method === "POST" && req.url === "/messaging-policy") {
-      return this.siblings?.policy ? this.siblings.policy() : { maxHops: 0, sendTo: [] };
-    }
-    if (req.method === "POST" && req.url === "/sibling-message") {
-      if (!this.siblings) throw new Error("sibling messaging unavailable");
-      const body = JSON.parse(await readBody(req));
-      if (typeof body.to !== "string" || typeof body.body !== "string" || !body.body.trim()) throw new Error("invalid sibling message");
-      if (body.body.length > MAX_BODY_CHARS) throw new Error("message too large");
-      const replyTo = typeof body.reply_to === "string" ? body.reply_to : void 0;
-      const result = await this.siblings.send(body.to, body.body, replyTo);
-      if (replyTo) this.unanswered = this.unanswered.filter((m) => m.sibling?.conversationId !== result.messages[0]?.conversationId);
-      return result;
-    }
-    if (req.method === "POST" && req.url === "/message") {
-      const body = JSON.parse(await readBody(req));
-      const text2 = String(body.body ?? "").trim();
-      if (!text2) throw new Error("empty message");
-      this.unanswered = this.unanswered.filter((m) => m.sibling);
-      this.onMessage(text2, typeof body.reply_to === "string" ? body.reply_to : null);
-      return { ok: true };
-    }
-    throw new Error("not found");
-  }
-};
-async function readBody(req) {
-  let raw = "";
-  for await (const chunk of req) {
-    raw += chunk;
-    if (raw.length > MAX_REQUEST_BYTES) throw new Error("request too large");
-  }
-  return raw;
-}
-function parentFromEnv(env = process.env) {
-  const url2 = env[PARENT_URL_ENV];
-  const token = env[PARENT_TOKEN_ENV];
-  if (!url2 || !token) return null;
-  const call = async (path, payload) => {
-    const res = await fetch(`${url2}${path}`, {
-      method: "POST",
-      headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
-      body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(CHILD_REQUEST_TIMEOUT_MS)
-    });
-    const out = await res.json();
-    if (!res.ok) throw new Error(String(out.error ?? `HTTP ${res.status}`));
-    return out;
-  };
-  return {
-    name: env[PARENT_NAME_ENV] || "parent",
-    inbox: async () => (await call("/inbox", {})).messages ?? [],
-    send: async (body, replyTo) => void await call("/message", { body, reply_to: replyTo ?? null }),
-    progress: async (percent, note) => void await call("/progress", { percent, note }),
-    siblings: {
-      peers: async () => (await call("/siblings", {})).peers ?? [],
-      send: async (to, body, replyTo) => await call("/sibling-message", { to, body, reply_to: replyTo }),
-      policy: async () => await call("/messaging-policy", {})
-    }
-  };
-}
-
-// src/core/final-answers.ts
-var FinalAnswers = class {
-  finals = /* @__PURE__ */ new Map();
-  unphased = /* @__PURE__ */ new Map();
-  lastMessage = "";
-  add(item) {
-    if (!item.text.trim()) return;
-    this.lastMessage = item.text;
-    const messages = item.phase === "final_answer" ? this.finals : item.phase ? null : this.unphased;
-    messages?.set(item.id ?? String(messages.size), item.text);
-  }
-  text() {
-    const messages = this.finals.size ? this.finals : this.unphased;
-    return messages.size ? [...messages.values()].join("\n\n") : this.lastMessage;
-  }
-};
-
-// src/core/progress.ts
-var MAX_STATUS_CHARS = 140;
-var MAX_SAY_CHARS = 160;
-function txt(s, max = MAX_STATUS_CHARS) {
-  return { text: clip(s, max), full: s.trim() };
-}
-function clip(s, max = MAX_STATUS_CHARS) {
-  const one = s.replace(/\s+/g, " ").trim();
-  return one.length > max ? `${one.slice(0, max - 1)}\u2026` : one;
-}
-function firstString(o, keys) {
-  for (const k of keys) if (typeof o?.[k] === "string" && o[k]) return o[k];
-  return null;
-}
-var INPUT_KEYS = ["command", "file_path", "filePath", "path", "pattern", "query", "url", "description"];
-var EDIT_TOOLS = /^(edit|write|multiedit|patch|apply_patch|notebookedit)$/i;
-var CMD_TOOLS = /^(bash|shell|powershell)$/i;
-var READ_TOOLS = /^(read|grep|glob|list|ls|find)$/i;
-function kindOfTool(name) {
-  if (EDIT_TOOLS.test(name)) return "edit";
-  if (CMD_TOOLS.test(name)) return "cmd";
-  if (READ_TOOLS.test(name)) return "read";
-  return "tool";
-}
-function say(text2) {
-  return text2.trim() ? { kind: "say", text: `says: ${clip(text2, MAX_SAY_CHARS)}`, full: `says: ${text2.trim()}` } : null;
-}
-function describeCodexEvent(ev) {
-  const item = ev?.item;
-  if (ev?.type === "item.started" && item) {
-    switch (item.type) {
-      case "command_execution":
-        return { kind: "cmd", ...txt(`running: ${item.command ?? ""}`), id: item.id };
-      case "file_change": {
-        const paths = (item.changes ?? []).map((c) => c?.path).filter(Boolean);
-        return { kind: "edit", ...txt(`editing ${paths.join(", ") || "files"}`), id: item.id };
-      }
-      case "mcp_tool_call":
-        return { kind: "tool", ...txt(`tool ${item.server ?? ""}.${item.tool ?? ""}`), id: item.id };
-      case "web_search":
-        return { kind: "tool", ...txt(`searching the web${item.query ? `: ${item.query}` : ""}`), id: item.id };
-    }
-  }
-  if (ev?.type === "item.completed" && item?.type === "reasoning") return { kind: "think", text: "thinking" };
-  if (ev?.type === "item.completed" && item?.type === "agent_message") return say(String(item.text ?? ""));
-  return null;
-}
-function describeClaudeEvent(ev) {
-  if (ev?.type !== "assistant") return null;
-  const blocks = ev.message?.content ?? [];
-  const tool = blocks.find((b) => b?.type === "tool_use");
-  if (tool) {
-    const detail = firstString(tool.input, INPUT_KEYS);
-    return { kind: kindOfTool(String(tool.name)), ...txt(`${tool.name}${detail ? `: ${detail}` : ""}`), id: tool.id };
-  }
-  const text2 = blocks.filter((b) => b?.type === "text").map((b) => b.text).join(" ");
-  if (text2) return say(text2);
-  if (blocks.some((b) => b?.type === "thinking")) return { kind: "think", text: "thinking" };
-  return null;
-}
-function describeOpencodeEvent(ev) {
-  const part = ev?.part ?? {};
-  if (ev?.type === "tool_use" || part.type === "tool") {
-    const tool = String(part.tool ?? "tool");
-    const detail = firstString(part.state?.input, INPUT_KEYS);
-    return { kind: kindOfTool(tool), ...txt(`${tool}${detail ? `: ${detail}` : ""}`), id: part.id };
-  }
-  if (ev?.type === "text" || part.type === "text") return say(String(part.text ?? ""));
-  if (ev?.type === "reasoning" || part.type === "reasoning") return { kind: "think", text: "thinking" };
-  return null;
-}
-var DESCRIBERS = {
-  codex: describeCodexEvent,
-  claude: describeClaudeEvent,
-  opencode: describeOpencodeEvent
-};
-function formatElapsed(ms) {
-  const m = Math.floor(ms / 6e4);
-  return m < 1 ? `${Math.round(ms / 1e3)}s` : m < 60 ? `${m}m` : `${Math.floor(m / 60)}h ${m % 60}m`;
-}
-function progressEventHandler(agent, onProgress, now = Date.now) {
-  if (!onProgress) return void 0;
-  const started = now();
-  const seen = /* @__PURE__ */ new Set();
-  const counts = { cmd: 0, edit: 0, read: 0, tool: 0, say: 0, think: 0 };
-  let steps = 0;
-  let last = "";
-  return (ev) => {
-    const step = DESCRIBERS[agent](ev);
-    if (!step) return;
-    if (step.id) {
-      const key = `${step.kind}:${step.id}`;
-      if (seen.has(key)) return;
-      seen.add(key);
-    }
-    if (step.text === last) return;
-    last = step.text;
-    if (step.kind !== "think" && step.kind !== "say") steps++;
-    counts[step.kind]++;
-    const totals = [counts.cmd && `${counts.cmd} cmds`, counts.edit && `${counts.edit} edits`].filter(Boolean).join(", ");
-    const where = steps ? ` \xB7 step ${steps}${totals ? ` (${totals})` : ""}` : "";
-    const head = `${formatElapsed(now() - started)}${where} \xB7 `;
-    onProgress(head + step.text, step.full ? head + step.full : void 0);
-  };
-}
-function progressLineHandler(agent, onProgress) {
-  const handle = progressEventHandler(agent, onProgress);
-  if (!handle) return void 0;
-  return (line) => {
-    if (!line.startsWith("{")) return;
-    try {
-      handle(JSON.parse(line));
-    } catch {
-    }
-  };
-}
-
-// src/core/relay.ts
-import { randomBytes as randomBytes3, randomUUID as randomUUID3 } from "node:crypto";
-import { mkdirSync as mkdirSync3, readFileSync as readFileSync4, readdirSync as readdirSync2, rmSync as rmSync2, writeFileSync as writeFileSync2 } from "node:fs";
-import { join as join7 } from "node:path";
-import { createServer as createServer2 } from "node:http";
-var RELAY_URL_ENV = "AGENT_BRIDGE_RELAY_URL";
-var RELAY_TOKEN_ENV = "AGENT_BRIDGE_RELAY_TOKEN";
-var RELAY_HOST = "127.0.0.1";
-var RELAY_PATH = "/permission";
-var MAX_REQUEST_BYTES2 = 256 * 1024;
-var SECRET_BYTES2 = 24;
-var KEEP_ALIVE_MS = 6e4;
-var PermissionRelay = class {
-  constructor(handler, log) {
-    this.handler = handler;
-    this.log = log;
-  }
-  handler;
-  log;
-  server = null;
-  secret = randomBytes3(SECRET_BYTES2).toString("hex");
-  url = "";
-  async start() {
-    this.server = createServer2((req, res) => {
-      res.writeHead(200, { "content-type": "application/json" });
-      res.flushHeaders();
-      const keepAlive = setInterval(() => res.write(" "), KEEP_ALIVE_MS);
-      void this.handle(req).catch((err) => {
-        this.log.warn("permission relay request failed", { err: err.message });
-        return { allow: false, message: "agent-bridge relay error" };
-      }).then((body) => {
-        clearInterval(keepAlive);
-        res.end(JSON.stringify(body));
-      });
-    });
-    this.server.requestTimeout = 0;
-    this.server.headersTimeout = 0;
-    await new Promise((resolve10, reject) => {
-      this.server.once("error", reject);
-      this.server.listen(0, RELAY_HOST, () => resolve10());
-    });
-    const { port } = this.server.address();
-    this.url = `http://${RELAY_HOST}:${port}${RELAY_PATH}`;
-    this.log.debug("permission relay listening", { url: this.url });
-  }
-  /** Environment variables that let a child process reach this relay. */
-  childEnv() {
-    return { [RELAY_URL_ENV]: this.url, [RELAY_TOKEN_ENV]: this.secret };
-  }
-  async stop() {
-    const s = this.server;
-    this.server = null;
-    if (s) await new Promise((r) => s.close(() => r()));
-  }
-  async handle(req) {
-    if (req.method !== "POST" || req.url !== RELAY_PATH) throw new Error("not found");
-    const auth = String(req.headers.authorization ?? "").replace(/^Bearer /, "");
-    if (!tokensEqual(auth, this.secret)) throw new Error("unauthorized");
-    let raw = "";
-    for await (const chunk of req) {
-      raw += chunk;
-      if (raw.length > MAX_REQUEST_BYTES2) throw new Error("request too large");
-    }
-    const body = JSON.parse(raw);
-    const request2 = {
-      agent: String(body.agent ?? "subagent"),
-      tool: String(body.tool ?? "unknown"),
-      detail: String(body.detail ?? "").slice(0, 4e3),
-      cwd: body.cwd ? String(body.cwd) : void 0,
-      ...typeof body.reason === "string" ? { reason: body.reason.slice(0, MAX_APPROVAL_REASON_CHARS) } : {}
-    };
-    this.log.info("permission requested by subagent", { agent: request2.agent, tool: request2.tool });
-    const decision = await this.handler(request2);
-    this.log.info("permission decided", { tool: request2.tool, allow: decision.allow });
-    return decision;
-  }
-};
-var APPROVALS_DIR = "approvals";
-var APPROVAL_ID = /^[0-9a-f-]{36}$/;
-var ANSWER_PATH = "/answer";
-var ANSWER_TIMEOUT_MS = 5e3;
-var MAX_PORT2 = 65535;
-var MAX_APPROVAL_REASON_CHARS = 4e3;
-async function publishApproval(home, approval, answer) {
-  if (!APPROVAL_ID.test(approval.id)) throw new Error("invalid approval id");
-  const token = randomBytes3(SECRET_BYTES2).toString("hex");
-  const dir = join7(home, APPROVALS_DIR);
-  const file2 = join7(dir, `${approval.id}.json`);
-  const server = createServer2((req, res) => {
-    const reply = (status, body) => {
-      res.writeHead(status, { "content-type": "application/json", "cache-control": "no-store" });
-      res.end(JSON.stringify(body));
-    };
-    void (async () => {
-      if (req.method !== "POST" || req.url !== ANSWER_PATH || !tokensEqual(String(req.headers.authorization ?? ""), `Bearer ${token}`)) return reply(403, { error: "forbidden" });
-      let raw = "";
-      for await (const chunk of req) {
-        raw += chunk;
-        if (raw.length > MAX_REQUEST_BYTES2) return reply(400, { error: "request too large" });
-      }
-      const body = JSON.parse(raw);
-      if (!body || body.decision !== "allow" && body.decision !== "deny" || body.reason !== void 0 && (typeof body.reason !== "string" || body.reason.length > MAX_APPROVAL_REASON_CHARS)) return reply(400, { error: "invalid answer" });
-      const accepted = Date.now() < approval.deadline && answer(`${body.decision}${body.reason ? `: ${body.reason}` : ""}`, "dashboard");
-      reply(accepted ? 200 : 409, { outcome: accepted ? "answered" : "expired" });
-    })().catch(() => reply(400, { error: "invalid answer" }));
-  });
-  server.requestTimeout = ANSWER_TIMEOUT_MS;
-  server.headersTimeout = ANSWER_TIMEOUT_MS;
-  await new Promise((resolve10, reject) => {
-    server.once("error", reject);
-    server.listen(0, RELAY_HOST, resolve10);
-  });
-  server.unref();
-  try {
-    mkdirSync3(dir, { recursive: true, mode: 448 });
-    writeFileSync2(file2, JSON.stringify({ ...approval, pid: process.pid, port: server.address().port, token }), { mode: 384, flag: "wx" });
-  } catch (err) {
-    server.close();
-    throw err;
-  }
-  return () => {
-    try {
-      rmSync2(file2, { force: true });
-    } finally {
-      server.close();
-    }
-  };
-}
-function readApproval(home, id) {
-  if (!APPROVAL_ID.test(id)) return null;
-  try {
-    const r = JSON.parse(readFileSync4(join7(home, APPROVALS_DIR, `${id}.json`), "utf8"));
-    if (r.id !== id || !Number.isInteger(r.pid) || r.pid < 1 || !pidAlive(r.pid) || !Number.isSafeInteger(r.deadline) || r.deadline <= Date.now() || !Number.isSafeInteger(r.askedAt) || r.deadline <= r.askedAt || !Number.isInteger(r.port) || r.port < 1 || r.port > MAX_PORT2 || typeof r.token !== "string" || !r.token) return null;
-    if (![r.owner, r.job, r.agent, r.tool, r.command, r.reason].every((value) => typeof value === "string")) return null;
-    return r;
-  } catch {
-    return null;
-  }
-}
-function listPendingApprovals(home) {
-  let files;
-  try {
-    files = readdirSync2(join7(home, APPROVALS_DIR));
-  } catch {
-    return [];
-  }
-  return files.flatMap((file2) => {
-    if (!file2.endsWith(".json")) return [];
-    const r = readApproval(home, file2.slice(0, -5));
-    return r ? [{ id: r.id, owner: r.owner, job: r.job, agent: r.agent, tool: r.tool, command: r.command, reason: r.reason, askedAt: r.askedAt, deadline: r.deadline }] : [];
-  }).sort((a, b) => a.askedAt - b.askedAt);
-}
-function newApprovalId() {
-  return randomUUID3();
-}
-async function answerPendingApproval(home, id, body) {
-  const r = readApproval(home, id);
-  if (!r) return "expired";
-  try {
-    const res = await fetch(`http://${RELAY_HOST}:${r.port}${ANSWER_PATH}`, {
-      method: "POST",
-      headers: { "content-type": "application/json", authorization: `Bearer ${r.token}` },
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(ANSWER_TIMEOUT_MS)
-    });
-    return res.status === 200 ? "answered" : res.status === 409 ? "expired" : "unavailable";
-  } catch {
-    return readApproval(home, id) ? "unavailable" : "expired";
-  }
-}
-
-// src/core/codex-paths.ts
-import { realpathSync } from "node:fs";
-function codexDriveMappings(text2, platform = process.platform, canonical = realpathSync.native) {
-  if (platform !== "win32") return [];
-  const drives = new Set([...text2.matchAll(/\b([a-z]):[\\/]/gi)].map((m) => `${m[1].toUpperCase()}:\\`));
-  const mappings = [];
-  for (const alias of drives) {
-    try {
-      const real = canonical(alias).replace(/^\\\\\?\\UNC\\/i, "\\\\").replace(/^\\\\\?\\/, "").replace(/[\\/]*$/, "\\");
-      if (real.toLowerCase() !== alias.toLowerCase()) mappings.push({ alias, real });
-    } catch {
-    }
-  }
-  return mappings;
-}
-function codexPathPrompt(prompt, mappings) {
-  let text2 = prompt;
-  for (const { alias, real } of mappings) {
-    const drive = alias[0];
-    text2 = text2.replace(new RegExp(`\\b${drive}:[\\\\/]`, "gi"), () => real);
-  }
-  if (!mappings.length) return text2;
-  return `${text2}
-
-(agent-bridge: Windows drive aliases resolved by the supervisor: ${mappings.map((m) => `${m.alias} = ${m.real}`).join(", ")}. These are the same folders. Use the real paths supplied above, including for new output files, without requesting path confirmation. In your report name both the requested alias and the real path.)`;
-}
-function codexPathReport(mappings) {
-  return mappings.length ? `Windows path mappings (same folders): ${mappings.map((m) => `${m.alias} = ${m.real}`).join(", ")}. Outputs using the real paths are also available through these supervisor aliases.` : null;
-}
-
-// src/core/delegate.ts
-var DELEGATE_DEPTH_ENV = "AGENT_BRIDGE_DELEGATE_DEPTH";
-var MAX_DELEGATE_DEPTH = 1;
-var KILL_GRACE_MS = 3e3;
-var MAX_CAPTURE_CHARS = 8 * 1024 * 1024;
-var STDERR_TAIL_CHARS = 4e3;
-var WINDOWS_SHIM_EXTS = /* @__PURE__ */ new Set([".cmd", ".bat"]);
-var DEFAULT_PATHEXT = ".COM;.EXE;.BAT;.CMD";
-function currentDelegateDepth(env = process.env) {
-  const n = Number.parseInt(env[DELEGATE_DEPTH_ENV] ?? "0", 10);
-  return Number.isInteger(n) && n > 0 ? n : 0;
-}
-var DelegateError = class _DelegateError extends Error {
-  constructor(message, kind, stderrTail = "", partialStdout = "", sessionId = null) {
-    super(message);
-    this.kind = kind;
-    this.stderrTail = stderrTail;
-    this.partialStdout = partialStdout;
-    this.sessionId = sessionId;
-    this.name = "DelegateError";
-  }
-  kind;
-  stderrTail;
-  partialStdout;
-  sessionId;
-  /** The agent never got going (its startup timed out): trying again is safe. */
-  startupFailed = false;
-  static startup(message, stderrTail, sessionId) {
-    const err = new _DelegateError(message, "failed", stderrTail, "", sessionId);
-    err.startupFailed = true;
-    return err;
-  }
-};
-function resolveBinary(bin, env = process.env, platform = process.platform) {
-  const isWin = platform === "win32";
-  const exts = isWin ? (env.PATHEXT ?? DEFAULT_PATHEXT).split(";").filter(Boolean) : [""];
-  const candidates = (base) => isWin && !extname(base) ? exts.map((e) => base + e.toLowerCase()) : [base];
-  if (isAbsolute(bin) || bin.includes("/") || bin.includes("\\")) {
-    return candidates(bin).find((c) => existsSync2(c)) ?? null;
-  }
-  for (const dir of (env.PATH ?? env.Path ?? "").split(delimiter)) {
-    if (!dir) continue;
-    for (const c of candidates(join8(dir, bin))) if (existsSync2(c)) return c;
-  }
-  return null;
-}
-function unwrapNpmShim(shimPath, readFile2 = (p) => readFileSync5(p, "utf8")) {
-  let text2;
-  try {
-    text2 = readFile2(shimPath);
-  } catch {
-    return null;
-  }
-  const dir = win32.dirname(shimPath);
-  const exe = /"%~?dp0%?\\([^"]+?\.exe)"\s+%\*/i.exec(text2);
-  if (exe) return { command: win32.join(dir, exe[1]), prefix: [] };
-  const js = /"%~?dp0%?\\([^"]+?\.(?:c|m)?js)"\s+%\*/i.exec(text2);
-  if (js) return { command: process.execPath, prefix: [win32.join(dir, js[1])] };
-  return null;
-}
-var liveChildren = /* @__PURE__ */ new Set();
-function killTree(child) {
-  const pid = child.pid;
-  if (!pid || child.exitCode !== null) return Promise.resolve();
-  return new Promise((resolve10) => {
-    if (process.platform === "win32") {
-      const tk = spawn("taskkill", ["/PID", String(pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" });
-      tk.on("error", () => (child.kill(), resolve10()));
-      tk.on("close", () => resolve10());
-    } else {
-      try {
-        process.kill(-pid, "SIGTERM");
-      } catch {
-        child.kill("SIGTERM");
-      }
-      const force = setTimeout(() => {
-        try {
-          process.kill(-pid, "SIGKILL");
-        } catch {
-        }
-        resolve10();
-      }, KILL_GRACE_MS);
-      child.once("exit", () => (clearTimeout(force), resolve10()));
-    }
-  });
-}
-function killPid(pid) {
-  if (process.platform === "win32") {
-    const tk = spawn("taskkill", ["/PID", String(pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" });
-    tk.on("error", () => {
-      try {
-        process.kill(pid);
-      } catch {
-      }
-    });
-    return;
-  }
-  try {
-    process.kill(pid, "SIGTERM");
-  } catch {
-    return;
-  }
-  setTimeout(() => {
-    try {
-      process.kill(pid, "SIGKILL");
-    } catch {
-    }
-  }, KILL_GRACE_MS).unref();
-}
-function pidAlive(pid) {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (err) {
-    return err.code === "EPERM";
-  }
-}
-async function killAllDelegates(capMs = KILL_GRACE_MS) {
-  const all = [...liveChildren].map((c) => killTree(c));
-  await Promise.race([Promise.all(all), new Promise((r) => setTimeout(r, capMs))]);
-}
-function trackChild(child) {
-  liveChildren.add(child);
-  child.once("exit", () => liveChildren.delete(child));
-}
-function resolveCommand(bin, argsIn, env, log) {
-  let resolved = resolveBinary(bin, env);
-  if (!resolved) throw new DelegateError(`executable not found: ${bin}`, "not_found");
-  let args = argsIn;
-  let needsShell = process.platform === "win32" && WINDOWS_SHIM_EXTS.has(extname(resolved).toLowerCase());
-  if (needsShell) {
-    const target = unwrapNpmShim(resolved);
-    if (target && existsSync2(target.command) && target.prefix.every((p) => existsSync2(p))) {
-      log.debug("unwrapped npm shim", { shim: resolved, command: target.command, prefix: target.prefix });
-      resolved = target.command;
-      args = [...target.prefix, ...args];
-      needsShell = false;
-    }
-  }
-  if (needsShell) {
-    for (const a of args) {
-      if (/[&|<>^%"\s]/.test(a)) throw new DelegateError(`unsafe argument for shell invocation: ${a}`, "failed");
-    }
-  }
-  return { resolved: needsShell ? `"${resolved}"` : resolved, args, needsShell };
-}
-function exitDescription(res) {
-  return res.code === null && res.signal ? `was killed by signal ${res.signal}` : `exited with code ${res.code}`;
-}
-function runProcess(opts) {
-  let command;
-  try {
-    command = resolveCommand(opts.bin, opts.args, opts.env, opts.log);
-  } catch (err) {
-    return Promise.reject(err);
-  }
-  const { resolved, args, needsShell } = command;
-  opts.log.debug("spawning delegate", { bin: resolved, args, cwd: opts.cwd, shell: needsShell });
-  return new Promise((resolve10, reject) => {
-    const child = spawn(resolved, args, {
-      cwd: opts.cwd,
-      // Some CLIs (opencode) take their project folder from PWD rather than the real cwd; keep them in sync.
-      env: { ...opts.env, PWD: opts.cwd },
-      shell: needsShell,
-      windowsHide: true,
-      stdio: ["pipe", "pipe", "pipe"],
-      // Own process group on POSIX, so the whole tree can be killed (see killTree).
-      detached: process.platform !== "win32"
-    });
-    trackChild(child);
-    let head = "";
-    let tail = "";
-    const captured = () => tail ? `${head}
-${tail.slice(tail.indexOf("\n") + 1)}` : head;
-    let stderr = "";
-    let settled = false;
-    const finish = (fn) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      opts.signal?.removeEventListener("abort", onAbort);
-      fn();
-    };
-    const kill = () => void killTree(child);
-    const timer = setTimeout(() => {
-      kill();
-      const seconds = Math.round(opts.timeoutMs / 1e3);
-      const message = opts.what ? `${opts.what} timed out after ${seconds}s` : `delegate timed out after ${seconds}s (its time limit, timeout_sec)`;
-      finish(() => reject(new DelegateError(message, "timeout", stderr.slice(-STDERR_TAIL_CHARS), captured())));
-    }, opts.timeoutMs);
-    const onAbort = () => {
-      kill();
-      finish(() => reject(new DelegateError("delegate aborted", "aborted", "", captured())));
-    };
-    opts.signal?.addEventListener("abort", onAbort, { once: true });
-    let pending = "";
-    child.stdout.setEncoding("utf8").on("data", (d) => {
-      if (head.length < MAX_CAPTURE_CHARS / 2) head += d;
-      else tail = (tail + d).slice(-MAX_CAPTURE_CHARS / 2);
-      if (!opts.onLine) return;
-      pending += d;
-      let nl;
-      while ((nl = pending.indexOf("\n")) >= 0) {
-        const line = pending.slice(0, nl).trim();
-        pending = pending.slice(nl + 1);
-        if (line) {
-          try {
-            opts.onLine(line);
-          } catch {
-          }
-        }
-      }
-    });
-    child.stderr.setEncoding("utf8").on("data", (d) => {
-      stderr = (stderr + d).slice(-MAX_CAPTURE_CHARS);
-    });
-    child.on("error", (err) => finish(() => reject(new DelegateError(`failed to start ${opts.bin}: ${err.message}`, "failed"))));
-    child.on("close", (code, signal) => finish(() => resolve10({ code, signal, stdout: captured(), stderr })));
-    child.stdin.on("error", () => {
-    });
-    child.stdin.end(opts.stdin);
-  });
-}
-var OPENCODE_CONFIG_CONTENT_ENV = "OPENCODE_CONFIG_CONTENT";
-var CODEX_STRICT_APPROVALS = 'approvals_reviewer="user"';
-var CODEX_RELAY_APPROVALS = 'approvals_reviewer="auto_review"';
-var CODEX_ASK_POLICY = 'approval_policy="on-request"';
-var CODEX_NO_APPROVALS = 'approval_policy="never"';
-var CODEX_ASK_HINT = "(The workspace is read-only on purpose: when you need to change files or run a command the sandbox blocks, request escalated permissions for it. The user is asked and decides; if denied, stop and report.)";
-var OPENCODE_READ_ONLY_PERMISSIONS = { edit: "ask", bash: "ask" };
-var OPENCODE_READ_ONLY_TOOLS = { "*_*": false, bridge_send: true, bridge_report_progress: true };
-function childEnv(extra = {}) {
-  const { CLAUDE_PROJECT_DIR: _parentProject, ...env } = process.env;
-  return { ...env, ...extra, [DELEGATE_DEPTH_ENV]: String(currentDelegateDepth() + 1) };
-}
-function checkDepth() {
-  if (currentDelegateDepth() >= MAX_DELEGATE_DEPTH) {
-    throw new DelegateError("delegation is disabled inside a delegated session (prevents recursive delegation)", "depth");
-  }
-}
-function sessionInLine(agent, line) {
-  if (!line.startsWith("{")) return null;
-  try {
-    const ev = JSON.parse(line);
-    const id = agent === "codex" ? ev.type === "thread.started" ? ev.thread_id : null : agent === "claude" ? ev.session_id : ev.sessionID ?? ev.part?.sessionID;
-    return typeof id === "string" && id ? id : null;
-  } catch {
-    return null;
-  }
-}
-function withSessionSniffer(agent, next, onSession) {
-  if (!onSession) return next;
-  let seen = false;
-  return (line) => {
-    if (!seen) {
-      const id = sessionInLine(agent, line);
-      if (id) {
-        seen = true;
-        onSession(id);
-      }
-    }
-    next?.(line);
-  };
-}
-function parseCodexJsonl(stdout) {
-  let threadId = null;
-  const messages = new FinalAnswers();
-  let error62 = null;
-  let usage = null;
-  for (const line of stdout.split(/\r?\n/)) {
-    const s = line.trim();
-    if (!s.startsWith("{")) continue;
-    let ev;
-    try {
-      ev = JSON.parse(s);
-    } catch {
-      continue;
-    }
-    switch (ev.type) {
-      case "thread.started":
-        threadId = ev.thread_id ?? threadId;
-        break;
-      case "item.completed":
-        if (ev.item?.type === "agent_message" && typeof ev.item.text === "string") messages.add(ev.item);
-        break;
-      case "turn.completed":
-        usage = ev.usage ?? usage;
-        error62 = null;
-        break;
-      case "turn.failed":
-        error62 = ev.error?.message ?? "turn failed";
-        break;
-      case "error":
-        error62 = ev.message ?? "error";
-        break;
-    }
-  }
-  return { threadId, text: messages.text(), error: error62, usage };
-}
-function realFolder(dir) {
-  try {
-    return realpathSync2.native(dir);
-  } catch {
-    return dir;
-  }
-}
-async function delegateToCodex(req) {
-  checkDepth();
-  req = { ...req, cwd: realFolder(req.cwd), prompt: codexPathPrompt(req.prompt, codexDriveMappings(`${req.cwd}
-${req.prompt}`)) };
-  if (req.relayApprovals && req.sandbox !== "danger-full-access") req = { ...req, prompt: `${req.prompt}
-
-${CODEX_ASK_HINT}` };
-  const common = ["--json", "--skip-git-repo-check", ...req.model ? ["-m", req.model] : [], ...req.effort ? ["-c", `model_reasoning_effort="${req.effort}"`] : []];
-  if (req.writableRoots?.length && req.sandbox === "workspace-write") {
-    common.push("-c", `sandbox_workspace_write.writable_roots=${JSON.stringify(req.writableRoots.map(realFolder))}`);
-  }
-  if (req.sandbox === "workspace-write" && req.networkAccess !== void 0) common.push("-c", `sandbox_workspace_write.network_access=${req.networkAccess}`);
-  const strict = req.sandbox === "danger-full-access" ? ["-c", CODEX_STRICT_APPROVALS, "-c", CODEX_NO_APPROVALS] : req.relayApprovals ? ["-c", CODEX_RELAY_APPROVALS, "-c", CODEX_ASK_POLICY] : ["-c", CODEX_STRICT_APPROVALS];
-  const args = req.sessionId ? ["exec", "resume", ...common, ...strict, "-c", `sandbox_mode="${req.sandbox}"`, req.sessionId, "-"] : ["exec", ...common, ...strict, "-s", req.sandbox, "-C", req.cwd, "-"];
-  const res = await withResumeHint("codex", (o) => parseCodexJsonl(o).threadId, () => runProcess({
-    bin: req.bin,
-    args,
-    stdin: req.prompt,
-    cwd: req.cwd,
-    timeoutMs: req.timeoutSec * 1e3,
-    env: childEnv(req.extraEnv),
-    log: req.log,
-    signal: req.signal,
-    onLine: withSessionSniffer("codex", progressLineHandler("codex", req.onProgress), req.onSession)
-  }));
-  const parsed = parseCodexJsonl(res.stdout);
-  const isError = res.code !== 0 || parsed.error !== null;
-  if (isError && !parsed.text) {
-    throw new DelegateError(parsed.error ?? `codex ${exitDescription(res)}`, "failed", res.stderr.slice(-STDERR_TAIL_CHARS), "", parsed.threadId ?? req.sessionId ?? null);
-  }
-  req.log.info("codex delegate finished", { threadId: parsed.threadId, code: res.code, isError });
-  return {
-    sessionId: parsed.threadId ?? req.sessionId ?? null,
-    text: parsed.text,
-    isError,
-    details: { exitCode: res.code, signal: res.signal ?? null, usage: parsed.usage, error: parsed.error }
-  };
-}
-function parseClaudeJson(stdout) {
-  const lines = stdout.split(/\r?\n/).filter((l) => l.trim().startsWith("{"));
-  const resultLine = [...lines].reverse().find((l) => l.includes('"type":"result"'));
-  const candidate = resultLine ?? (stdout.indexOf("{") >= 0 ? stdout.slice(stdout.indexOf("{")) : null);
-  if (!candidate) return null;
-  try {
-    const o = JSON.parse(candidate);
-    return {
-      sessionId: typeof o.session_id === "string" ? o.session_id : null,
-      text: typeof o.result === "string" ? o.result : "",
-      isError: Boolean(o.is_error) || o.subtype === "error",
-      cost: o.total_cost_usd ?? null
-    };
-  } catch {
-    return null;
-  }
-}
-var CLAUDE_PARENT_SEND_TOOL = "mcp__plugin_agent-bridge_bridge__send";
-var CLAUDE_PARENT_PROGRESS_TOOL = "mcp__plugin_agent-bridge_bridge__report_progress";
-var CLAUDE_READ_ONLY_DENIED_TOOLS = ["Write", "Edit", "MultiEdit", "NotebookEdit", "Bash", "PowerShell"];
-function isClaudeReadOnly(mode) {
-  return CLAUDE_READ_ONLY_MODES.has(mode);
-}
-var CLAUDE_READ_ONLY_MODES = /* @__PURE__ */ new Set(["default", "manual", "plan"]);
-function bundledCli() {
-  const cli = join8(dirname3(fileURLToPath(import.meta.url)), "cli.mjs");
-  return existsSync2(cli) ? cli : null;
-}
-function spawnsWithoutShell(bin, log) {
-  try {
-    return !resolveCommand(bin, [], process.env, log).needsShell;
-  } catch {
-    return false;
-  }
-}
-function claudePermissionHookSettings(cli, node2 = process.execPath) {
-  const hook = { type: "command", command: node2, args: [cli, "permission-hook", "claude"], timeout: CLAUDE_HOOK_TIMEOUT_SEC };
-  return JSON.stringify({ hooks: { PermissionRequest: [{ hooks: [hook] }] } });
-}
-function claudeForwardsPrompts(mode, req) {
-  return !isClaudeReadOnly(mode) && Boolean(req.canApprove && req.approve);
-}
-var CLAUDE_HOOK_TIMEOUT_SEC = 900;
-function claudeInitSniffer(next, onInfo) {
-  if (!onInfo) return next;
-  let seen = false;
-  return (line) => {
-    if (!seen && line.includes('"subtype":"init"')) {
-      seen = true;
-      try {
-        const model = JSON.parse(line).model;
-        if (typeof model === "string" && model) onInfo({ model });
-      } catch {
-      }
-    }
-    next?.(line);
-  };
-}
-async function delegateToClaude(req) {
-  checkDepth();
-  const args = ["-p", "--output-format", "stream-json", "--verbose", "--permission-mode", req.permissionMode];
-  const readOnly = isClaudeReadOnly(req.permissionMode);
-  if (readOnly) args.push("--disallowedTools", [...CLAUDE_READ_ONLY_DENIED_TOOLS, ...claudeMcpDenyRules(req.cwd)].join(","));
-  if (req.model) args.push("--model", req.model);
-  if (req.effort) args.push("--effort", req.effort);
-  if (req.sessionId) args.push("--resume", req.sessionId);
-  if (req.extraEnv?.[PARENT_URL_ENV]) args.push("--allowedTools", `${CLAUDE_PARENT_SEND_TOOL},${CLAUDE_PARENT_PROGRESS_TOOL}`);
-  const hookCli = claudeForwardsPrompts(req.permissionMode, req) ? req.hookCli ?? bundledCli() : null;
-  let relay = null;
-  const extraEnv = { ...req.extraEnv };
-  if (hookCli && spawnsWithoutShell(req.bin, req.log)) {
-    const approve = req.approve;
-    relay = new PermissionRelay(async (r) => {
-      const d = await approve(r);
-      return d.allow ? { allow: true } : { allow: false, message: d.message || "Denied by the parent session." };
-    }, req.log);
-    await relay.start();
-    Object.assign(extraEnv, relay.childEnv());
-    args.push("--settings", claudePermissionHookSettings(hookCli));
-  } else if (hookCli) {
-    req.log.warn("claude runs through a shell; its permission prompts are not forwarded", { bin: req.bin });
-  }
-  let res;
-  try {
-    res = await withResumeHint("claude", (o) => claudeSessionFromStream(o), () => runProcess({
-      bin: req.bin,
-      args,
-      stdin: req.prompt,
-      cwd: req.cwd,
-      timeoutMs: req.timeoutSec * 1e3,
-      env: childEnv(extraEnv),
-      log: req.log,
-      signal: req.signal,
-      onLine: claudeInitSniffer(withSessionSniffer("claude", progressLineHandler("claude", req.onProgress), req.onSession), req.onInfo)
-    }));
-  } finally {
-    await relay?.stop();
-  }
-  const parsed = parseClaudeJson(res.stdout);
-  if (!parsed) {
-    throw new DelegateError(`claude ${exitDescription(res)} without a JSON result`, "failed", (res.stderr || res.stdout).slice(-STDERR_TAIL_CHARS), "", claudeSessionFromStream(res.stdout) ?? req.sessionId ?? null);
-  }
-  req.log.info("claude delegate finished", { sessionId: parsed.sessionId, code: res.code, isError: parsed.isError });
-  return {
-    sessionId: parsed.sessionId ?? req.sessionId ?? null,
-    text: parsed.text,
-    isError: parsed.isError || res.code !== 0,
-    details: { exitCode: res.code, signal: res.signal ?? null, costUsd: parsed.cost }
-  };
-}
-function parseOpencodeJsonl(stdout) {
-  let sessionId = null;
-  const textByMessage = /* @__PURE__ */ new Map();
-  let lastMessage = "";
-  let error62 = null;
-  let input2 = 0;
-  let output2 = 0;
-  let cost = 0;
-  let sawUsage = false;
-  for (const line of stdout.split(/\r?\n/)) {
-    const s = line.trim();
-    if (!s.startsWith("{")) continue;
-    let ev;
-    try {
-      ev = JSON.parse(s);
-    } catch {
-      continue;
-    }
-    if (typeof ev.sessionID === "string") sessionId ??= ev.sessionID;
-    if (ev.type === "step_finish" && ev.part?.tokens) {
-      sawUsage = true;
-      input2 += Number(ev.part.tokens.input) || 0;
-      output2 += Number(ev.part.tokens.output) || 0;
-      cost += Number(ev.part.cost) || 0;
-    }
-    if (ev.type === "text" && typeof ev.part?.text === "string") {
-      const mid = String(ev.part.messageID ?? "");
-      if (!textByMessage.has(mid)) textByMessage.set(mid, []);
-      textByMessage.get(mid).push(ev.part.text);
-      lastMessage = mid;
-    } else if (ev.type === "error") {
-      error62 = ev.error?.data?.message ?? ev.error?.message ?? ev.message ?? "opencode reported an error";
-    }
-  }
-  const text2 = (textByMessage.get(lastMessage) ?? []).join("");
-  return sawUsage ? { sessionId, text: text2, error: error62, usage: { input: input2, output: output2 }, cost } : { sessionId, text: text2, error: error62 };
-}
-async function delegateToOpencode(req) {
-  checkDepth();
-  const args = ["run", "--format", "json", "--dir", req.cwd];
-  if (req.model) args.push("-m", req.model);
-  if (req.effort) args.push("--variant", req.effort);
-  if (req.sessionId) args.push("-s", req.sessionId);
-  if (req.autoApprove) args.push("--auto");
-  const env = childEnv(req.extraEnv);
-  if (!req.autoApprove) env[OPENCODE_CONFIG_CONTENT_ENV] = JSON.stringify({ permission: OPENCODE_READ_ONLY_PERMISSIONS, tools: OPENCODE_READ_ONLY_TOOLS });
-  const res = await withResumeHint("opencode", (o) => parseOpencodeJsonl(o).sessionId, () => runProcess({
-    bin: req.bin,
-    args,
-    stdin: req.prompt,
-    cwd: req.cwd,
-    timeoutMs: req.timeoutSec * 1e3,
-    env,
-    log: req.log,
-    signal: req.signal,
-    onLine: withSessionSniffer("opencode", progressLineHandler("opencode", req.onProgress), req.onSession)
-  }));
-  const parsed = parseOpencodeJsonl(res.stdout);
-  const isError = res.code !== 0 || parsed.error !== null;
-  if (isError && !parsed.text) {
-    throw new DelegateError(parsed.error ?? `opencode ${exitDescription(res)}`, "failed", res.stderr.slice(-STDERR_TAIL_CHARS), "", parsed.sessionId ?? req.sessionId ?? null);
-  }
-  req.log.info("opencode delegate finished", { sessionId: parsed.sessionId, code: res.code, isError });
-  return { sessionId: parsed.sessionId ?? req.sessionId ?? null, text: parsed.text, isError, details: { exitCode: res.code, signal: res.signal ?? null, error: parsed.error, usage: parsed.usage ?? null, costUsd: parsed.cost || null } };
-}
-var checkDepthPublic = checkDepth;
-var childEnvPublic = (extra = {}) => childEnv(extra);
-function claudeSessionFromStream(stdout) {
-  const m = /"session_id":"([^"]+)"/.exec(stdout);
-  return m ? m[1] : null;
-}
-async function withResumeHint(agent, sessionOf, run) {
-  try {
-    return await run();
-  } catch (err) {
-    if (err instanceof DelegateError && !err.sessionId) err.sessionId = sessionOf(err.partialStdout);
-    if (err instanceof DelegateError && err.kind === "timeout") {
-      const id = err.sessionId;
-      if (id) {
-        throw new DelegateError(
-          `${err.message}. The ${agent} session ${id} keeps its progress: call again with session_id="${id}" (and a longer timeout_sec, or use spawn_${agent}) to continue instead of starting over.`,
-          "timeout",
-          err.stderrTail,
-          err.partialStdout,
-          id
-        );
-      }
-    }
-    throw err;
-  }
-}
-var TRANSIENT_ERROR_RE = /(?:model|selected model) is at capacity|not valid JSON|upstream|overloaded|bad gateway|service unavailable|gateway time-?out|internal server error|\b50[0-4]\b|ECONNRESET|ETIMEDOUT|EPIPE|socket hang up|connection (?:reset|closed|error|refused)|stream (?:error|closed|disconnected|ended)|network error|fetch failed|temporarily unavailable|routing discovery timed out/i;
-var CAPACITY_ERROR_RE = /model is at capacity/i;
-var CAPACITY_RETRY_DELAYS_MS = [15e3, 3e4, 6e4];
-var TRANSIENT_RETRY_LIMIT = 1;
-var MS_PER_SECOND = 1e3;
-var LIMIT_ERROR_RE = /usage limit|rate.?limit|quota|too many requests|\b429\b|insufficient (?:credits|balance)|billing/i;
-function isTransientProviderError(message) {
-  return TRANSIENT_ERROR_RE.test(message) && !LIMIT_ERROR_RE.test(message);
-}
-var TRANSIENT_RETRY_MESSAGE = "Your previous turn was cut off by a temporary provider error. Continue where you stopped and finish the task. Then give your final answer.";
-async function retryTransient(req, run) {
-  const deadline = Date.now() + req.timeoutSec * MS_PER_SECOND;
-  let sessionId = req.sessionId ?? null;
-  let model = req.model;
-  let firstCause = null;
-  let retries = 0;
-  for (; ; ) {
-    if (req.signal?.aborted) throw new DelegateError("delegate aborted", "aborted", "", "", sessionId);
-    const remainingSec = (deadline - Date.now()) / MS_PER_SECOND;
-    if (remainingSec <= 0) throw new DelegateError("delegate timed out during provider retry backoff", "timeout", "", "", sessionId);
-    let res;
-    let failure2;
-    let failed = false;
-    let cause = "";
-    try {
-      res = await run({
-        ...req,
-        model,
-        sessionId,
-        timeoutSec: remainingSec,
-        prompt: retries && sessionId ? TRANSIENT_RETRY_MESSAGE : req.prompt,
-        onSession: (id) => {
-          sessionId = id;
-          req.onSession?.(id);
-        },
-        onInfo: (info) => {
-          model ??= info.model;
-          req.onInfo?.(info);
-        }
-      });
-      sessionId = res.sessionId ?? sessionId;
-      cause = res.isError && typeof res.details?.error === "string" ? res.details.error : "";
-    } catch (err) {
-      failure2 = err;
-      failed = true;
-      if (err instanceof DelegateError) {
-        sessionId = err.sessionId ?? sessionId;
-        cause = err.kind === "failed" ? err.message : "";
-      }
-    }
-    const capacity = CAPACITY_ERROR_RE.test(cause);
-    const limit = capacity ? CAPACITY_RETRY_DELAYS_MS.length : TRANSIENT_RETRY_LIMIT;
-    if (!isTransientProviderError(cause) || !sessionId && !capacity || retries >= limit) {
-      if (failed) {
-        if (failure2 instanceof DelegateError && firstCause) {
-          failure2.message += ` (after ${retries === 1 ? "one automatic retry" : `${retries} automatic retries`}: the first attempt had failed with "${firstCause}")`;
-          failure2.sessionId ??= sessionId;
-        }
-        throw failure2;
-      }
-      if (!firstCause) return res;
-      const count = retries === 1 ? "once" : `${retries} times`;
-      const note = `(A temporary provider error interrupted the run ("${firstCause}"); agent-bridge ${sessionId ? "resumed the same session" : "retried"} ${count} on the selected model.)`;
-      return { ...res, text: `${note}
-
-${res.text}`, details: { ...res.details, retriedAfter: firstCause, retries } };
-    }
-    firstCause ??= cause;
-    const waitMs = capacity ? CAPACITY_RETRY_DELAYS_MS[retries] : 0;
-    if (Date.now() + waitMs >= deadline) throw new DelegateError("delegate timed out during provider retry backoff", "timeout", "", "", sessionId);
-    retries++;
-    req.log.warn("transient provider error; retrying on the selected model", { sessionId, model, cause, retries, waitMs });
-    req.onProgress?.(`temporary provider error: ${cause}; retry ${retries}/${limit} in ${waitMs / MS_PER_SECOND}s on the same model, ${sessionId ? "preserving session progress" : "before session start"}`);
-    try {
-      await delay(waitMs, void 0, { signal: req.signal });
-    } catch {
-      throw new DelegateError("delegate aborted", "aborted", "", "", sessionId);
-    }
-  }
-}
-function stderrSummary(stderr) {
-  const lines = stderr.trim().split(/\r?\n/).filter((l) => l.trim());
-  return lines.slice(-5).join("\n").slice(-800);
-}
-function labelError(message) {
-  return LIMIT_ERROR_RE.test(message) ? `usage or rate limit reached: ${message}` : `error: ${message}`;
-}
-function failureCause(outcome) {
-  if (outcome.result) {
-    const d = outcome.result.details ?? {};
-    const parts = [];
-    if (typeof d.error === "string" && d.error) parts.push(labelError(d.error));
-    if (typeof d.exitCode === "number" && d.exitCode !== 0) parts.push(`the agent exited with code ${d.exitCode}`);
-    else if (typeof d.signal === "string" && d.signal) parts.push(`the agent was killed by signal ${d.signal}`);
-    return parts.join("; ") || "the agent ended its turn with an error but gave no details";
-  }
-  const err = outcome.error;
-  if (!(err instanceof DelegateError)) return `error: ${String(err?.message ?? err)}`;
-  switch (err.kind) {
-    case "aborted":
-      return "cancelled: it was stopped (cancel_subagent, or the session that started it ended)";
-    case "timeout":
-      return `timeout: ${err.message}`;
-    case "not_found":
-      return `could not start: ${err.message}`;
-    default: {
-      const tail = err.stderrTail ? stderrSummary(err.stderrTail) : "";
-      return `${labelError(err.message)}${tail && !err.message.includes(tail) ? `
-Last error output:
-${tail}` : ""}`;
-    }
-  }
-}
-
 // src/core/usage.ts
-import { spawn as spawn2 } from "node:child_process";
+import { spawn as spawn5 } from "node:child_process";
 var USAGE_TIMEOUT_MS = 45e3;
 var MINUTES_PER_HOUR = 60;
 var MINUTES_PER_DAY = 1440;
@@ -38170,7 +40257,7 @@ function capture(bin, args, cwd, log, stdin) {
     } catch (err2) {
       return reject(err2);
     }
-    const child = spawn2(cmd.resolved, cmd.args, { cwd, env, shell: cmd.needsShell, windowsHide: true, stdio: ["pipe", "pipe", "pipe"], detached: process.platform !== "win32" });
+    const child = spawn5(cmd.resolved, cmd.args, { cwd, env, shell: cmd.needsShell, windowsHide: true, stdio: ["pipe", "pipe", "pipe"], detached: process.platform !== "win32" });
     let out = "";
     let err = "";
     let settled = false;
@@ -38391,7 +40478,7 @@ var en = {
   "err.delegateDepth": "Delegation is not available inside a delegated session (prevents endless recursion).",
   "err.delegateFailed": "The delegated agent failed: {detail}",
   "err.delegatedSession": "This is a delegated headless session; peer messaging is disabled here.",
-  "cli.usage": 'Usage: agent-bridge <command>\n\nCommands:\n  install [claude] [codex] [opencode] [--yes]   Install agent-bridge (all found tools by default)\n  update  [claude] [codex] [opencode] [--yes]   Update it\n  uninstall [claude] [codex] [opencode] [--yes] Remove it\n  smoke [claude] [codex] [opencode]              Check the real CLIs still work with agent-bridge\n  status                  Show the broker and the connected peers\n  send <to> <text>    Send a message as the "cli" peer\n  tail                Print messages addressed to "cli" as they arrive\n  ui [--port=N] [--no-open]  Open the web dashboard (sessions, runs, messages)\n  watch [name]            Follow a delegated run live (newest, or one whose name contains [name])\n  install-opencode        Install the opencode plugin and its @claude/@codex subagents\n  uninstall-opencode      Remove them again\n  cleanup [--dry-run] [--yes]  List (with --yes: remove) worktrees of finished jobs that are merged and clean\n  paths                   Show data, log and pipe locations\n  help                    Show this help',
+  "cli.usage": 'Usage: agent-bridge <command>\n\nCommands:\n  install [claude] [codex] [opencode] [--yes]   Install agent-bridge (all found tools by default)\n  update  [claude] [codex] [opencode] [--yes]   Update it\n  uninstall [claude] [codex] [opencode] [--yes] Remove it\n  smoke [claude] [codex] [opencode]              Check the real CLIs still work with agent-bridge\n  status                  Show the broker and the connected peers\n  send <to> <text>    Send a message as the "cli" peer\n  tail                Print messages addressed to "cli" as they arrive\n  ui [--port=N] [--no-open]  Open the web dashboard (sessions, runs, messages)\n  watch [name]            Follow a delegated run live (newest, or one whose name contains [name])\n  install-opencode        Install the opencode plugin and its @claude/@codex subagents\n  uninstall-opencode      Remove them again\n  cleanup [--dry-run] [--yes] [--all | --repo <path>]  List (with --yes: remove) worktrees of finished jobs that are merged and clean\n  paths                   Show data, log and pipe locations\n  help                    Show this help',
   "cli.opencode.noSource": "Could not find the opencode plugin files next to this CLI. Run it from an agent-bridge checkout or package.",
   "cli.opencode.installed": "Installed the agent-bridge opencode plugin into {dir}:",
   "cli.opencode.restart": "Restart opencode to load it. Requires Node.js 22.13+ on PATH.",
@@ -38444,9 +40531,9 @@ var en = {
 };
 
 // src/core/i18n.ts
-function t(key, params = {}) {
+function t(key2, params = {}) {
   const nf = new Intl.NumberFormat();
-  return en[key].replace(/\{(\w+)\}/g, (match, name) => {
+  return en[key2].replace(/\{(\w+)\}/g, (match, name) => {
     const value = params[name];
     if (value === void 0) return match;
     return typeof value === "number" ? nf.format(value) : value;
@@ -38454,8 +40541,8 @@ function t(key, params = {}) {
 }
 
 // src/core/logger.ts
-import { appendFileSync, mkdirSync as mkdirSync4, renameSync as renameSync2, statSync } from "node:fs";
-import { join as join9 } from "node:path";
+import { appendFileSync as appendFileSync2, mkdirSync as mkdirSync8, renameSync as renameSync2, statSync as statSync3 } from "node:fs";
+import { join as join16 } from "node:path";
 var LOG_LEVELS = ["debug", "info", "warn", "error", "silent"];
 var LEVEL_RANK = { debug: 10, info: 20, warn: 30, error: 40, silent: 100 };
 var DEFAULT_FILE_LEVEL = "info";
@@ -38476,7 +40563,7 @@ function serialize(data) {
 }
 function rotateIfNeeded(file2) {
   try {
-    if (statSync(file2).size > MAX_LOG_BYTES) renameSync2(file2, `${file2}.1`);
+    if (statSync3(file2).size > MAX_LOG_BYTES) renameSync2(file2, `${file2}.1`);
   } catch {
   }
 }
@@ -38489,9 +40576,9 @@ function createLogger(opts) {
     writes: 0
   };
   try {
-    const dir = join9(opts.home, LOG_DIR_NAME);
-    mkdirSync4(dir, { recursive: true });
-    sink.file = join9(dir, LOG_FILE_NAME);
+    const dir = join16(opts.home, LOG_DIR_NAME);
+    mkdirSync8(dir, { recursive: true });
+    sink.file = join16(dir, LOG_FILE_NAME);
     rotateIfNeeded(sink.file);
   } catch (err) {
     process.stderr.write(`[${opts.component}] cannot open log directory, logging to stderr only: ${String(err)}
@@ -38510,7 +40597,7 @@ function makeLogger(sink, scope) {
     if (toFile) {
       try {
         if (++sink.writes % ROTATE_CHECK_EVERY === 0) rotateIfNeeded(sink.file);
-        appendFileSync(sink.file, line);
+        appendFileSync2(sink.file, line);
       } catch {
       }
     }
@@ -38526,26 +40613,26 @@ function makeLogger(sink, scope) {
 }
 
 // src/core/node.ts
-import { randomUUID as randomUUID10 } from "node:crypto";
+import { randomUUID as randomUUID11 } from "node:crypto";
 import { EventEmitter as EventEmitter2 } from "node:events";
 import { unlinkSync } from "node:fs";
-import { dirname as dirname5, join as join13 } from "node:path";
+import { dirname as dirname6, join as join19 } from "node:path";
 
 // src/core/broker.ts
-import { randomUUID as randomUUID8 } from "node:crypto";
-import { readFileSync as readFileSync8 } from "node:fs";
+import { randomUUID as randomUUID9 } from "node:crypto";
+import { readFileSync as readFileSync12 } from "node:fs";
 import { createServer as createServer4 } from "node:net";
 
 // src/core/store.ts
-import { existsSync as existsSync4, mkdirSync as mkdirSync5 } from "node:fs";
-import { dirname as dirname4 } from "node:path";
-import { DatabaseSync as DatabaseSync2 } from "node:sqlite";
+import { existsSync as existsSync7, mkdirSync as mkdirSync9 } from "node:fs";
+import { dirname as dirname5 } from "node:path";
+import { DatabaseSync as DatabaseSync3 } from "node:sqlite";
 
 // src/core/decisions.ts
-import { randomUUID as randomUUID4 } from "node:crypto";
-import { existsSync as existsSync3 } from "node:fs";
-import { resolve as resolve2 } from "node:path";
-import { DatabaseSync } from "node:sqlite";
+import { randomUUID as randomUUID5 } from "node:crypto";
+import { existsSync as existsSync6 } from "node:fs";
+import { resolve as resolve4 } from "node:path";
+import { DatabaseSync as DatabaseSync2 } from "node:sqlite";
 var MAX_DECISION_TOPIC_CHARS = 160;
 var MAX_DECISION_TEXT_CHARS = MAX_BODY_CHARS - 1024;
 var MAX_SCOPE_SESSIONS = 100;
@@ -38583,7 +40670,7 @@ CREATE TABLE decision_deliveries (
 );
 `;
 function normalizeProject(folder) {
-  const path = resolve2(folder).replace(/\\/g, "/").replace(/\/+$/, "");
+  const path = resolve4(folder).replace(/\\/g, "/").replace(/\/+$/, "");
   return process.platform === "win32" ? path.toLowerCase() : path;
 }
 function normalizeScope(scope) {
@@ -38612,7 +40699,7 @@ var DecisionStore = class {
   db;
   record(args, author, at) {
     const topic = args.topic.trim().toLowerCase();
-    const id = randomUUID4();
+    const id = randomUUID5();
     this.db.exec("BEGIN IMMEDIATE");
     try {
       const previous = this.db.prepare("SELECT id FROM decisions WHERE topic = ? ORDER BY revision DESC LIMIT 1").get(topic);
@@ -38669,8 +40756,8 @@ function formatDecisionSummary(decisions) {
   return [`Current owner decisions (${decisions.length}; call decisions for full text):`, ...lines].join("\n");
 }
 function readDecisions(dbPath, args = {}) {
-  if (!existsSync3(dbPath)) return [];
-  const db = new DatabaseSync(dbPath, { readOnly: true });
+  if (!existsSync6(dbPath)) return [];
+  const db = new DatabaseSync2(dbPath, { readOnly: true });
   try {
     if (!db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'decisions'").get()) return [];
     return new DecisionStore(db).list(args);
@@ -38730,9 +40817,9 @@ function toMessage(r) {
 var MessageStore = class {
   constructor(file2, log) {
     this.log = log;
-    const existed = file2 !== ":memory:" && existsSync4(file2);
-    if (file2 !== ":memory:") mkdirSync5(dirname4(file2), { recursive: true, mode: 448 });
-    this.db = new DatabaseSync2(file2);
+    const existed = file2 !== ":memory:" && existsSync7(file2);
+    if (file2 !== ":memory:") mkdirSync9(dirname5(file2), { recursive: true, mode: 448 });
+    this.db = new DatabaseSync3(file2);
     try {
       const version2 = Number(this.db.prepare("PRAGMA user_version").get().user_version);
       if (version2 > SQLITE_STORE_VERSION) throw new Error(`unsupported SQLite store version: ${version2}`);
@@ -38872,7 +40959,7 @@ function siblingMaxHops(maxHops) {
 }
 
 // src/network/link.ts
-import { randomBytes as randomBytes5, randomUUID as randomUUID7 } from "node:crypto";
+import { randomBytes as randomBytes6, randomUUID as randomUUID8 } from "node:crypto";
 import { connect, createServer as createServer3 } from "node:tls";
 
 // src/network/discovery.ts
@@ -38881,22 +40968,22 @@ import { isIPv4 } from "node:net";
 
 // src/network/pairing.ts
 import { execFileSync } from "node:child_process";
-import { createHash, randomBytes as randomBytes4, randomUUID as randomUUID5 } from "node:crypto";
-import { chmodSync as chmodSync2, existsSync as existsSync5, mkdirSync as mkdirSync6, readFileSync as readFileSync6, renameSync as renameSync3, writeFileSync as writeFileSync3 } from "node:fs";
-import { join as join10 } from "node:path";
+import { createHash as createHash6, randomBytes as randomBytes5, randomUUID as randomUUID6 } from "node:crypto";
+import { chmodSync as chmodSync2, existsSync as existsSync8, mkdirSync as mkdirSync10, readFileSync as readFileSync10, renameSync as renameSync3, writeFileSync as writeFileSync4 } from "node:fs";
+import { join as join17 } from "node:path";
 var DEFAULT_SYSTEM_ROOT = "C:\\Windows";
-var SYSTEM32 = join10(process.env.SystemRoot || DEFAULT_SYSTEM_ROOT, "System32");
-var WHOAMI = join10(SYSTEM32, "whoami.exe");
-var ICACLS = join10(SYSTEM32, "icacls.exe");
+var SYSTEM32 = join17(process.env.SystemRoot || DEFAULT_SYSTEM_ROOT, "System32");
+var WHOAMI = join17(SYSTEM32, "whoami.exe");
+var ICACLS = join17(SYSTEM32, "icacls.exe");
 var keySchema = external_exports.string().regex(/^[0-9a-f]{64}$/);
 var identitySchema = external_exports.object({ id: external_exports.uuid(), key: keySchema });
 var publicIdentitySchema = external_exports.object({ id: external_exports.uuid(), name: external_exports.string().regex(NETWORK_NAME_PATTERN), fingerprint: keySchema });
 var invitationSchema = external_exports.object({ key: keySchema, expiresAt: external_exports.number().int() });
-var pairSchema = publicIdentitySchema.extend({ key: keySchema, host: external_exports.string().min(1).max(MAX_NETWORK_HOST_CHARS).optional(), port: external_exports.number().int().min(1).max(MAX_PORT).optional() });
+var pairSchema = publicIdentitySchema.extend({ key: keySchema, host: external_exports.string().min(1).max(MAX_NETWORK_HOST_CHARS).optional(), port: external_exports.number().int().min(1).max(MAX_PORT2).optional() });
 var stateSchema = external_exports.object({ identity: identitySchema, invitations: external_exports.array(invitationSchema).max(MAX_NETWORK_LINKS), pairs: external_exports.array(pairSchema).max(MAX_NETWORK_LINKS) });
 var codeSchema = publicIdentitySchema.extend({ v: external_exports.literal(NETWORK_VERSION), key: keySchema });
-function keyFingerprint(key) {
-  return createHash("sha256").update(Buffer.from(key, "hex")).digest("hex");
+function keyFingerprint(key2) {
+  return createHash6("sha256").update(Buffer.from(key2, "hex")).digest("hex");
 }
 var ACL_PRINCIPAL = /([^\s:][^:]*?):\(/;
 function protect(path, mode) {
@@ -38919,15 +41006,15 @@ var PairingStore = class {
     this.name = name;
     this.now = now;
     if (!NETWORK_NAME_PATTERN.test(name)) throw new Error("invalid network instance name");
-    this.dir = join10(home, "network");
-    this.file = join10(this.dir, "keys.json");
-    mkdirSync6(this.dir, { recursive: true, mode: OWNER_DIR_MODE });
+    this.dir = join17(home, "network");
+    this.file = join17(this.dir, "keys.json");
+    mkdirSync10(this.dir, { recursive: true, mode: OWNER_DIR_MODE });
     protect(this.dir, OWNER_DIR_MODE);
-    if (existsSync5(this.file)) {
+    if (existsSync8(this.file)) {
       protect(this.file, OWNER_FILE_MODE);
-      this.state = stateSchema.parse(JSON.parse(readFileSync6(this.file, "utf8")));
+      this.state = stateSchema.parse(JSON.parse(readFileSync10(this.file, "utf8")));
     } else {
-      this.state = { identity: { id: randomUUID5(), key: randomBytes4(PAIRING_KEY_BYTES).toString("hex") }, invitations: [], pairs: [] };
+      this.state = { identity: { id: randomUUID6(), key: randomBytes5(PAIRING_KEY_BYTES).toString("hex") }, invitations: [], pairs: [] };
       this.save();
     }
   }
@@ -38948,26 +41035,26 @@ var PairingStore = class {
   inviteWithExpiry() {
     this.state.invitations = this.state.invitations.filter((p) => p.expiresAt > this.now());
     if (this.state.invitations.length + this.state.pairs.length >= MAX_NETWORK_LINKS) throw new Error("network pairing limit reached");
-    const key = randomBytes4(PAIRING_KEY_BYTES).toString("hex");
+    const key2 = randomBytes5(PAIRING_KEY_BYTES).toString("hex");
     const expiresAt = this.now() + PAIRING_TTL_MS;
-    this.state.invitations.push({ key, expiresAt });
+    this.state.invitations.push({ key: key2, expiresAt });
     this.save();
-    return { code: Buffer.from(JSON.stringify({ v: NETWORK_VERSION, ...this.identity, key })).toString("base64url"), expiresAt };
+    return { code: Buffer.from(JSON.stringify({ v: NETWORK_VERSION, ...this.identity, key: key2 })).toString("base64url"), expiresAt };
   }
   keyFor(identity) {
     return this.state.pairs.find((p) => keyFingerprint(p.key) === identity)?.key ?? this.state.invitations.find((p) => p.expiresAt > this.now() && keyFingerprint(p.key) === identity)?.key;
   }
-  accept(key, remote) {
+  accept(key2, remote) {
     if (remote.id === this.identity.id || remote.name === this.name) throw new Error("network instance ids and names must differ");
-    const known = this.state.pairs.find((p) => p.key === key);
+    const known = this.state.pairs.find((p) => p.key === key2);
     if (known) {
       if (known.id !== remote.id || known.name !== remote.name || known.fingerprint !== remote.fingerprint) throw new Error("paired identity changed");
       return known;
     }
-    const invitation = this.state.invitations.find((p) => p.key === key && p.expiresAt > this.now());
+    const invitation = this.state.invitations.find((p) => p.key === key2 && p.expiresAt > this.now());
     if (!invitation) throw new Error("pairing code expired or revoked");
     this.checkNew(remote);
-    const pair = { ...remote, key };
+    const pair = { ...remote, key: key2 };
     this.state.pairs.push(pair);
     this.state.invitations = this.state.invitations.filter((p) => p !== invitation);
     this.save();
@@ -38997,15 +41084,15 @@ var PairingStore = class {
     this.save();
   }
   save() {
-    const temp = join10(this.dir, `${randomUUID5()}.tmp`);
-    writeFileSync3(temp, JSON.stringify(this.state, null, 2) + "\n", { mode: OWNER_FILE_MODE, flag: "wx" });
+    const temp = join17(this.dir, `${randomUUID6()}.tmp`);
+    writeFileSync4(temp, JSON.stringify(this.state, null, 2) + "\n", { mode: OWNER_FILE_MODE, flag: "wx" });
     protect(temp, OWNER_FILE_MODE);
     renameSync3(temp, this.file);
   }
 };
 
 // src/network/discovery.ts
-var announcementSchema = publicIdentitySchema.extend({ service: external_exports.literal("agent-bridge"), v: external_exports.literal(NETWORK_VERSION), port: external_exports.number().int().min(1).max(MAX_PORT) });
+var announcementSchema = publicIdentitySchema.extend({ service: external_exports.literal("agent-bridge"), v: external_exports.literal(NETWORK_VERSION), port: external_exports.number().int().min(1).max(MAX_PORT2) });
 var NetworkDiscovery = class {
   constructor(opts) {
     this.opts = opts;
@@ -39079,9 +41166,9 @@ var NetworkDiscovery = class {
 };
 
 // src/network/files.ts
-import { createHash as createHash2, randomUUID as randomUUID6 } from "node:crypto";
-import { existsSync as existsSync6, lstatSync, mkdirSync as mkdirSync7, mkdtempSync, readFileSync as readFileSync7, readdirSync as readdirSync3, renameSync as renameSync4, rmSync as rmSync3, writeFileSync as writeFileSync4 } from "node:fs";
-import { basename as basename3, join as join11, resolve as resolve3 } from "node:path";
+import { createHash as createHash7, randomUUID as randomUUID7 } from "node:crypto";
+import { existsSync as existsSync9, lstatSync, mkdirSync as mkdirSync11, mkdtempSync, readFileSync as readFileSync11, readdirSync as readdirSync4, renameSync as renameSync4, rmSync as rmSync5, writeFileSync as writeFileSync5 } from "node:fs";
+import { basename as basename4, join as join18, resolve as resolve5 } from "node:path";
 var MAX_TRANSFER_BYTES = 1024 * 1024;
 var MAX_TRANSFER_ENTRIES = 128;
 var MAX_TRANSFER_DEPTH = 16;
@@ -39102,7 +41189,7 @@ var transferSchema = external_exports.object({
 });
 var transferResultSchema = external_exports.object({ id: external_exports.uuid(), inbox: external_exports.string().max(MAX_PATH_CHARS), files: external_exports.number().int().nonnegative().max(MAX_TRANSFER_ENTRIES), bytes: external_exports.number().int().nonnegative().max(MAX_TRANSFER_BYTES) });
 function checksum(data) {
-  return createHash2("sha256").update(data).digest("hex");
+  return createHash7("sha256").update(data).digest("hex");
 }
 function safeTransferPath(path) {
   const components = path.split("/");
@@ -39119,20 +41206,20 @@ function collectTransfer(paths, cwd, to, from) {
     if (stat.isSymbolicLink()) throw new Error("file transfer does not follow symlinks or junctions");
     if (stat.isDirectory()) {
       entries.push({ kind: "directory", path });
-      for (const name of readdirSync3(source).sort()) walk(join11(source, name), `${path}/${name}`);
+      for (const name of readdirSync4(source).sort()) walk(join18(source, name), `${path}/${name}`);
     } else if (stat.isFile()) {
       if (stat.size > MAX_TRANSFER_BYTES - bytes) throw new Error("transfer exceeds size limit");
-      const data = readFileSync7(source);
+      const data = readFileSync11(source);
       bytes += data.length;
       if (bytes > MAX_TRANSFER_BYTES) throw new Error("transfer exceeds size limit");
       entries.push({ kind: "file", path, data: data.toString("base64"), sha256: checksum(data) });
     } else throw new Error("only regular files and directories can be transferred");
   };
   for (const path of paths) {
-    const source = resolve3(cwd, path);
-    walk(source, basename3(source));
+    const source = resolve5(cwd, path);
+    walk(source, basename4(source));
   }
-  const transfer = transferSchema.parse({ id: randomUUID6(), to, from, entries });
+  const transfer = transferSchema.parse({ id: randomUUID7(), to, from, entries });
   validateEntries(transfer);
   return transfer;
 }
@@ -39142,9 +41229,9 @@ function validateEntries(transfer) {
   let files = 0;
   const entries = transfer.entries.map((entry) => {
     const path = entry.path;
-    const key = path.toLowerCase();
-    if (!safeTransferPath(path) || kinds.has(key)) throw new Error("unsafe or duplicate transfer path");
-    kinds.set(key, entry.kind);
+    const key2 = path.toLowerCase();
+    if (!safeTransferPath(path) || kinds.has(key2)) throw new Error("unsafe or duplicate transfer path");
+    kinds.set(key2, entry.kind);
     if (entry.kind === "directory") return { path, data: null };
     const data = Buffer.from(entry.data, "base64");
     if (data.toString("base64") !== entry.data || checksum(data) !== entry.sha256) throw new Error("file checksum or encoding mismatch");
@@ -39162,19 +41249,19 @@ function validateEntries(transfer) {
 function receiveTransfer(home, input2) {
   const transfer = transferSchema.parse(input2);
   const { entries, bytes, files } = validateEntries(transfer);
-  const inbox = join11(home, "inbox");
-  mkdirSync7(inbox, { recursive: true, mode: OWNER_DIR_MODE });
+  const inbox = join18(home, "inbox");
+  mkdirSync11(inbox, { recursive: true, mode: OWNER_DIR_MODE });
   if (lstatSync(inbox).isSymbolicLink()) throw new Error("inbox cannot be a symlink");
-  const final = join11(inbox, transfer.id);
-  if (existsSync6(final)) throw new Error("transfer already received");
-  const staging = mkdtempSync(join11(inbox, ".partial-"));
+  const final = join18(inbox, transfer.id);
+  if (existsSync9(final)) throw new Error("transfer already received");
+  const staging = mkdtempSync(join18(inbox, ".partial-"));
   try {
-    for (const entry of entries.filter((e) => e.data === null).sort((a, b) => a.path.length - b.path.length)) mkdirSync7(join11(staging, ...entry.path.split("/")), { mode: OWNER_DIR_MODE });
-    for (const entry of entries) if (entry.data !== null) writeFileSync4(join11(staging, ...entry.path.split("/")), entry.data, { flag: "wx", mode: OWNER_FILE_MODE });
+    for (const entry of entries.filter((e) => e.data === null).sort((a, b) => a.path.length - b.path.length)) mkdirSync11(join18(staging, ...entry.path.split("/")), { mode: OWNER_DIR_MODE });
+    for (const entry of entries) if (entry.data !== null) writeFileSync5(join18(staging, ...entry.path.split("/")), entry.data, { flag: "wx", mode: OWNER_FILE_MODE });
     renameSync4(staging, final);
     return { id: transfer.id, inbox: final, files, bytes };
   } catch (err) {
-    rmSync3(staging, { recursive: true, force: true });
+    rmSync5(staging, { recursive: true, force: true });
     throw err;
   }
 }
@@ -39224,10 +41311,10 @@ var frameSchema = external_exports.discriminatedUnion("type", [
   external_exports.object({ type: external_exports.literal("result"), rid: external_exports.uuid(), delivered: external_exports.boolean().optional(), readAt: external_exports.number().nonnegative().nullable().optional(), transfer: transferResultSchema.optional(), error: external_exports.string().max(MAX_METADATA_CHARS).optional() })
 ]);
 var Link = class {
-  constructor(socket, service, key, expected) {
+  constructor(socket, service, key2, expected) {
     this.socket = socket;
     this.service = service;
-    this.key = key;
+    this.key = key2;
     this.deadline = setTimeout(() => this.fail(new Error("network hello timed out")), NETWORK_TIMEOUT_MS);
     void this.ready.catch(() => {
     });
@@ -39243,7 +41330,7 @@ var Link = class {
           if (!this.remote) {
             if (frame.type !== "hello") throw new Error("network hello required");
             if (expected && (frame.id !== expected.id || frame.name !== expected.name || frame.fingerprint !== expected.fingerprint)) throw new Error("paired identity changed");
-            this.remote = expected ?? service.keys.accept(key, frame);
+            this.remote = expected ?? service.keys.accept(key2, frame);
             this.peers = frame.peers;
             this.echoSupported = frame.echo === true;
             this.receiptsSupported = frame.receipts === true;
@@ -39297,18 +41384,18 @@ var Link = class {
     if (this.remote) this.write({ type: "peers", peers: this.service.localPeers() });
   }
   send(message) {
-    return this.request({ type: "send", rid: randomUUID7(), message: messageSchema.parse(message) });
+    return this.request({ type: "send", rid: randomUUID8(), message: messageSchema.parse(message) });
   }
   receipt(id, sender) {
     if (!this.receiptsSupported) return Promise.reject(new Error("Remote broker does not support read receipts. Update and reload its hosting sessions."));
-    return this.request({ type: "receipt", rid: randomUUID7(), id, sender });
+    return this.request({ type: "receipt", rid: randomUUID8(), id, sender });
   }
   files(transfer) {
-    return this.request({ type: "files", rid: randomUUID7(), transfer: transferSchema.parse(transfer) });
+    return this.request({ type: "files", rid: randomUUID8(), transfer: transferSchema.parse(transfer) });
   }
   async echo() {
     if (!this.echoSupported) throw new Error("Remote broker does not support verification. Update and restart its hosting sessions.");
-    const result = await this.request({ type: "echo", rid: randomUUID7() });
+    const result = await this.request({ type: "echo", rid: randomUUID8() });
     if (result !== true) throw new Error("network echo was not acknowledged");
   }
   request(frame) {
@@ -39430,15 +41517,15 @@ var NetworkService = class {
       ciphers: TLS_CIPHER,
       handshakeTimeout: NETWORK_TIMEOUT_MS,
       pskCallback: (socket, identity) => {
-        const key = this.keys.keyFor(identity);
-        if (key) acceptedKeys.set(socket, key);
-        return key ? Buffer.from(key, "hex") : randomBytes5(PAIRING_KEY_BYTES);
+        const key2 = this.keys.keyFor(identity);
+        if (key2) acceptedKeys.set(socket, key2);
+        return key2 ? Buffer.from(key2, "hex") : randomBytes6(PAIRING_KEY_BYTES);
       }
     }, (socket) => {
-      const key = acceptedKeys.get(socket);
-      if (!key || socket.getProtocol() !== "TLSv1.3") return socket.destroy();
+      const key2 = acceptedKeys.get(socket);
+      if (!key2 || socket.getProtocol() !== "TLSv1.3") return socket.destroy();
       try {
-        new Link(socket, this, key);
+        new Link(socket, this, key2);
       } catch (err) {
         socket.destroy();
         this.log.warn("network hello could not be sent", { message: err.message });
@@ -39662,7 +41749,7 @@ var Broker = class {
       networkPair: () => this.requireNetwork().keys.inviteWithExpiry(),
       networkLink: async (_, a) => {
         try {
-          const args = external_exports.object({ code: external_exports.string().min(1).max(MAX_PAIRING_CODE_CHARS), host: external_exports.string().min(1).max(MAX_NETWORK_HOST_CHARS), port: external_exports.number().int().min(1).max(MAX_PORT) }).parse(a);
+          const args = external_exports.object({ code: external_exports.string().min(1).max(MAX_PAIRING_CODE_CHARS), host: external_exports.string().min(1).max(MAX_NETWORK_HOST_CHARS), port: external_exports.number().int().min(1).max(MAX_PORT2) }).parse(a);
           return await this.requireNetwork().link(args.code, args.host, args.port);
         } catch {
           throw new BridgeError("bad_request", "Pairing failed. Check the address, code expiry, unique names and existing pairings.");
@@ -39847,7 +41934,7 @@ var Broker = class {
   storedJobs() {
     if (!this.jobsPath) return [];
     try {
-      const data = JSON.parse(readFileSync8(this.jobsPath, "utf8"));
+      const data = JSON.parse(readFileSync12(this.jobsPath, "utf8"));
       const jobs = Array.isArray(data) ? data : isRecord(data) && Array.isArray(data.jobs) ? data.jobs : [];
       return jobs.filter(isRecord);
     } catch {
@@ -39884,8 +41971,8 @@ var Broker = class {
   async onSendSibling(conn, args) {
     const sender = this.requirePeer(conn);
     const dedupeKey = args.dedupeKey ? `${SIBLING_CONVERSATION_PREFIX}${args.dedupeKey}` : void 0;
-    const key = dedupeKey ? `${sender.id}:${dedupeKey}` : null;
-    const seen = key ? this.sentByKey.get(key) : void 0;
+    const key2 = dedupeKey ? `${sender.id}:${dedupeKey}` : null;
+    const seen = key2 ? this.sentByKey.get(key2) : void 0;
     if (seen) return seen.result;
     const target = this.siblingConns(conn).find((c) => c.peer.name === args.to);
     const stored = this.storedSiblings(sender).find((s) => s.name === args.to);
@@ -39911,13 +41998,13 @@ var Broker = class {
     if (!Number.isInteger(args.maxHops) || args.maxHops < 1 || (parent2 ? parent2.hop + 1 : 0) >= args.maxHops) {
       throw new BridgeError("bad_request", `sibling conversation reached its ${args.maxHops}-message hop limit; stop this thread and report the remaining work to the supervisor`);
     }
-    const conversationId = parent2?.conversationId ?? `${SIBLING_CONVERSATION_PREFIX}${randomUUID8()}`;
+    const conversationId = parent2?.conversationId ?? `${SIBLING_CONVERSATION_PREFIX}${randomUUID9()}`;
     const result = await this.onSend(conn, { ...args, dedupeKey, conversationId });
     const message = result.messages[0];
     if (sender.jobParent) {
       const note = {
         ...message,
-        id: randomUUID8(),
+        id: randomUUID9(),
         recipient: sender.jobParent,
         conversationId: `${conversationId}${SIBLING_NOTE_SUFFIX}`,
         body: `Sibling message to ${message.recipient}:
@@ -39936,7 +42023,7 @@ ${message.body}`
       const candidate = `${requested}-${i}`;
       if (!this.connByName(candidate)) return candidate;
     }
-    return `${requested}-${randomUUID8().slice(0, 8)}`;
+    return `${requested}-${randomUUID9().slice(0, 8)}`;
   }
   onDecide(conn, value) {
     const peer = this.requirePeer(conn);
@@ -39977,7 +42064,7 @@ ${message.body}`
   }
   queueDecision(decision, peer) {
     const message = {
-      id: randomUUID8(),
+      id: randomUUID9(),
       from: decision.author,
       to: peer.name,
       recipient: peer.name,
@@ -40145,12 +42232,12 @@ Call decisions to look up current decisions or their history.`,
    * waited longer than QUEUED_MAIL_MAX_AGE_MS most likely belongs to a session that is gone; recent mail
    * still reaches a session that restarted or reconnected after a broker hand-over.
    */
-  expireStaleQueue(key) {
+  expireStaleQueue(key2) {
     try {
       const maxAge = retentionLimit("AGENT_BRIDGE_QUEUED_MAIL_MAX_AGE_MS", QUEUED_MAIL_MAX_AGE_MS);
-      if (maxAge) this.store.expireQueued(key, this.now() - maxAge);
+      if (maxAge) this.store.expireQueued(key2, this.now() - maxAge);
     } catch (err) {
-      this.log.warn("expiring queued mail failed", { key, err });
+      this.log.warn("expiring queued mail failed", { key: key2, err });
     }
   }
   /** Turns a sender-supplied target into live connections and/or offline queue keys. */
@@ -40182,22 +42269,22 @@ Call decisions to look up current decisions or their history.`,
   sendingByKey = /* @__PURE__ */ new Map();
   async onSend(conn, args) {
     const sender = this.requirePeer(conn);
-    const key = typeof args.dedupeKey === "string" && args.dedupeKey ? `${sender.id}:${args.dedupeKey}` : null;
-    const seen = key ? this.sentByKey.get(key) : void 0;
+    const key2 = typeof args.dedupeKey === "string" && args.dedupeKey ? `${sender.id}:${args.dedupeKey}` : null;
+    const seen = key2 ? this.sentByKey.get(key2) : void 0;
     if (seen) return seen.result;
-    const inFlight = key ? this.sendingByKey.get(key) : void 0;
+    const inFlight = key2 ? this.sendingByKey.get(key2) : void 0;
     if (inFlight) return inFlight;
     const sending = this.routeSend(conn, sender, args);
-    if (key) this.sendingByKey.set(key, sending);
+    if (key2) this.sendingByKey.set(key2, sending);
     let result;
     try {
       result = await sending;
     } finally {
-      if (key) this.sendingByKey.delete(key);
+      if (key2) this.sendingByKey.delete(key2);
     }
-    if (key) {
+    if (key2) {
       const now = this.now();
-      this.sentByKey.set(key, { at: now, result });
+      this.sentByKey.set(key2, { at: now, result });
       for (const [k, v] of this.sentByKey) {
         if (now - v.at < DEDUPE_KEEP_MS && this.sentByKey.size <= DEDUPE_MAX) break;
         this.sentByKey.delete(k);
@@ -40223,8 +42310,8 @@ Call decisions to look up current decisions or their history.`,
         this.log.debug("replyTo refers to an unknown message", { replyTo });
       }
     }
-    conversationId ||= randomUUID8();
-    const id = randomUUID8();
+    conversationId ||= randomUUID9();
+    const id = randomUUID9();
     const createdAt = this.now();
     const base = {
       id,
@@ -40249,7 +42336,7 @@ Call decisions to look up current decisions or their history.`,
     }
     const messages = [];
     for (const c of live) messages.push({ ...base, recipient: c.peer.name });
-    for (const key of queued) messages.push({ ...base, recipient: key });
+    for (const key2 of queued) messages.push({ ...base, recipient: key2 });
     for (const m of messages) this.store.insert(m);
     live.forEach((c, i) => this.emit(c, "message", messages[i]));
     this.log.info("message routed", {
@@ -40267,7 +42354,7 @@ Call decisions to look up current decisions or their history.`,
     if (!this.jobsPath || !messages.some((m) => m.conversationId.endsWith(SIBLING_NOTE_SUFFIX))) return messages;
     let jobs;
     try {
-      const value = JSON.parse(readFileSync8(this.jobsPath, "utf8"));
+      const value = JSON.parse(readFileSync12(this.jobsPath, "utf8"));
       jobs = Array.isArray(value) ? value : Array.isArray(value?.jobs) ? value.jobs : [];
     } catch {
       return messages;
@@ -40408,46 +42495,8 @@ var BridgeClient = class _BridgeClient extends EventEmitter {
   }
 };
 
-// src/core/read-journal.ts
-import { createHash as createHash3 } from "node:crypto";
-import { appendFileSync as appendFileSync2, mkdirSync as mkdirSync8, readFileSync as readFileSync9 } from "node:fs";
-import { join as join12 } from "node:path";
-var ReadJournal = class {
-  dir;
-  constructor(home) {
-    this.dir = join12(home, "read-state");
-  }
-  path(identity) {
-    return join12(this.dir, `${createHash3("sha256").update(identity).digest("hex")}.jsonl`);
-  }
-  read(identity) {
-    let raw;
-    try {
-      raw = readFileSync9(this.path(identity), "utf8");
-    } catch (err) {
-      if (err.code === "ENOENT") return [];
-      throw err;
-    }
-    return raw.split("\n").flatMap((line) => {
-      if (!line) return [];
-      try {
-        const ids = JSON.parse(line);
-        return Array.isArray(ids) ? ids.filter((id) => typeof id === "string") : [];
-      } catch {
-        return [];
-      }
-    });
-  }
-  append(identity, ids) {
-    mkdirSync8(this.dir, { recursive: true, mode: 448 });
-    appendFileSync2(this.path(identity), `
-${JSON.stringify(ids)}
-`, { mode: 384, flush: true });
-  }
-};
-
 // src/core/job-control.ts
-import { randomUUID as randomUUID9 } from "node:crypto";
+import { randomUUID as randomUUID10 } from "node:crypto";
 var DASHBOARD_JOB_CONVERSATION = "jobctl-dashboard";
 var CONTROL_TIMEOUT_MS = 1e4;
 var JobControlError = class extends Error {
@@ -40459,7 +42508,7 @@ var JobControlError = class extends Error {
 };
 async function controlDashboardJob(node2, owner, job, command) {
   if (!(await node2.peers()).some((p) => p.name === owner)) throw new JobControlError("The owning session is not connected. Reopen it to continue this subagent.", "offline");
-  const requestId = randomUUID9();
+  const requestId = randomUUID10();
   let receive;
   let timer;
   const reply = new Promise((resolve10, reject) => {
@@ -40496,12 +42545,12 @@ var BridgeNode = class extends EventEmitter2 {
   constructor(opts) {
     super();
     this.opts = opts;
-    this.id = opts.id ?? randomUUID10();
+    this.id = opts.id ?? randomUUID11();
     this.currentName = opts.name;
     this.currentCwd = opts.cwd;
     this.autoWake = opts.autoWake;
     this.log = opts.log.child("node");
-    this.readJournal = new ReadJournal(dirname5(opts.dbPath));
+    this.readJournal = new ReadJournal(dirname6(opts.dbPath));
     this.restoreReadState(`name:${this.currentName}`);
   }
   opts;
@@ -40642,7 +42691,7 @@ var BridgeNode = class extends EventEmitter2 {
       this.log.error("cannot open message store", { err, db: this.opts.dbPath });
       throw err;
     }
-    const broker = new Broker(this.opts.pipePath, store, this.log.child("broker"), this.opts.token, Date.now, join13(dirname5(this.opts.dbPath), JOBS_FILE), this.opts.network);
+    const broker = new Broker(this.opts.pipePath, store, this.log.child("broker"), this.opts.token, Date.now, join19(dirname6(this.opts.dbPath), JOBS_FILE), this.opts.network);
     try {
       await broker.listen();
       this.broker = broker;
@@ -40819,6 +42868,11 @@ var BridgeNode = class extends EventEmitter2 {
    * background subagent. It is handled exactly like a peer message (hooks, wait_for_message, channel).
    */
   deliverLocal(m) {
+    try {
+      recordLocalResult(dirname6(this.opts.dbPath), m);
+    } catch (err) {
+      this.log.warn("could not retain local result receipt", { id: m.id, err: String(err) });
+    }
     this.onEvent("message", m);
   }
   /** Mark messages consumed locally and on the broker. */
@@ -40920,26 +42974,6 @@ var BridgeNode = class extends EventEmitter2 {
     }
   }
 };
-
-// src/core/paths.ts
-import { createHash as createHash4 } from "node:crypto";
-import { join as join14, posix, resolve as resolve4 } from "node:path";
-var PIPE_HASH_LENGTH = 12;
-function resolveHome(env = process.env) {
-  return resolve4(env[ENV.home]?.trim() || DEFAULT_HOME);
-}
-function resolvePipePath(home, env = process.env, platform = process.platform) {
-  const override = env[ENV.pipe]?.trim();
-  if (override) return override;
-  if (platform === "win32") {
-    const hash2 = createHash4("sha256").update(home.toLowerCase()).digest("hex").slice(0, PIPE_HASH_LENGTH);
-    return `${WINDOWS_PIPE_PREFIX}${APP_NAME}-${hash2}-p${PROTOCOL_VERSION}`;
-  }
-  return posix.join(home, SOCKET_FILE_NAME.replace(/\.sock$/, `-p${PROTOCOL_VERSION}.sock`));
-}
-function resolveDbPath(home) {
-  return join14(home, DB_FILE_NAME);
-}
 
 // src/core/procinfo.ts
 import { execFile } from "node:child_process";
@@ -41214,9 +43248,9 @@ var CodexWaker = class {
 };
 
 // src/mcp/message-wait.ts
-import { randomUUID as randomUUID11 } from "node:crypto";
-import { mkdirSync as mkdirSync9, readdirSync as readdirSync4, readFileSync as readFileSync10, rmSync as rmSync4 } from "node:fs";
-import { join as join15 } from "node:path";
+import { randomUUID as randomUUID12 } from "node:crypto";
+import { mkdirSync as mkdirSync12, readdirSync as readdirSync5, readFileSync as readFileSync13, rmSync as rmSync6 } from "node:fs";
+import { join as join20 } from "node:path";
 var SINGLE_WAIT_SEC = DEFAULT_WAIT_SEC;
 var RECEIPT_POLL_MS = 1e3;
 function singleWaitTimeoutMs(requestedSec) {
@@ -41236,29 +43270,29 @@ var waitSchema = external_exports.object({
 var MessageWaitStore = class {
   dir;
   constructor(home) {
-    this.dir = join15(home, "message-waits");
+    this.dir = join20(home, "message-waits");
   }
   path(id) {
-    return join15(this.dir, `${external_exports.uuid().parse(id)}.json`);
+    return join20(this.dir, `${external_exports.uuid().parse(id)}.json`);
   }
   owns(node2, record2) {
     return record2.sessionId && node2.currentSessionId ? record2.sessionId === node2.currentSessionId : record2.owner === node2.name;
   }
   save(node2, filters) {
-    const record2 = { id: randomUUID11(), owner: node2.name, sessionId: node2.currentSessionId, filters };
+    const record2 = { id: randomUUID12(), owner: node2.name, sessionId: node2.currentSessionId, filters };
     writeJsonStore(this.path(record2.id), record2, null);
     return record2;
   }
   get(node2, id) {
-    const record2 = waitSchema.parse(JSON.parse(readFileSync10(this.path(id), "utf8")));
+    const record2 = waitSchema.parse(JSON.parse(readFileSync13(this.path(id), "utf8")));
     if (!this.owns(node2, record2)) throw new Error("This wait belongs to another session.");
     return record2;
   }
   pending(node2) {
-    mkdirSync9(this.dir, { recursive: true, mode: 448 });
-    return readdirSync4(this.dir).filter((f) => f.endsWith(".json")).flatMap((f) => {
+    mkdirSync12(this.dir, { recursive: true, mode: 448 });
+    return readdirSync5(this.dir).filter((f) => f.endsWith(".json")).flatMap((f) => {
       try {
-        const record2 = waitSchema.parse(JSON.parse(readFileSync10(join15(this.dir, f), "utf8")));
+        const record2 = waitSchema.parse(JSON.parse(readFileSync13(join20(this.dir, f), "utf8")));
         return this.owns(node2, record2) ? [record2] : [];
       } catch {
         return [];
@@ -41266,7 +43300,7 @@ var MessageWaitStore = class {
     });
   }
   remove(id) {
-    rmSync4(this.path(id), { force: true });
+    rmSync6(this.path(id), { force: true });
   }
 };
 function resumeWaitHint(record2) {
@@ -41314,10 +43348,10 @@ async function waitForReadReceipt(node2, id, timeoutMs, signal) {
 }
 
 // src/mcp/rewake.ts
-import { randomBytes as randomBytes6 } from "node:crypto";
-import { mkdirSync as mkdirSync10, rmSync as rmSync5, writeFileSync as writeFileSync5 } from "node:fs";
+import { randomBytes as randomBytes7 } from "node:crypto";
+import { mkdirSync as mkdirSync13, rmSync as rmSync7, writeFileSync as writeFileSync6 } from "node:fs";
 import { createServer as createServer5 } from "node:http";
-import { join as join16 } from "node:path";
+import { join as join21 } from "node:path";
 var SESSIONS_DIR = "sessions";
 var WAKE_HEADER = "[agent-bridge] Something you were waiting for arrived:";
 var HOST2 = "127.0.0.1";
@@ -41327,7 +43361,7 @@ var WAKE_CONFIRM_MS = 2e4;
 var STANDBY_GRACE_MS = 3e3;
 var MOD_TICK_MS = 2e3;
 function sessionFile(home, sessionId) {
-  return join16(home, SESSIONS_DIR, `${sessionId.replace(/[^\w-]/g, "_")}.json`);
+  return join21(home, SESSIONS_DIR, `${sessionId.replace(/[^\w-]/g, "_")}.json`);
 }
 function shouldWakeClaudeMessage(node2, cfg, m) {
   if (m.hop >= cfg.maxHops || m.conversationId.endsWith(SIBLING_NOTE_SUFFIX)) return false;
@@ -41346,7 +43380,7 @@ var RewakeEndpoint = class {
   shouldWake;
   log;
   server = null;
-  secret = randomBytes6(SECRET_BYTES3).toString("hex");
+  secret = randomBytes7(SECRET_BYTES3).toString("hex");
   port = 0;
   registered = null;
   /** Only the newest waiter gets messages; an older one (from an earlier turn) is released empty. */
@@ -41553,10 +43587,10 @@ var RewakeEndpoint = class {
   register(sessionId) {
     if (!this.server || this.retired || this.registered === sessionId) return;
     const file2 = sessionFile(this.home, sessionId);
-    mkdirSync10(join16(this.home, SESSIONS_DIR), { recursive: true });
+    mkdirSync13(join21(this.home, SESSIONS_DIR), { recursive: true });
     const reg = { port: this.port, secret: this.secret, pid: process.pid };
-    writeFileSync5(file2, JSON.stringify(reg), { mode: 384 });
-    if (this.registered) rmSync5(sessionFile(this.home, this.registered), { force: true });
+    writeFileSync6(file2, JSON.stringify(reg), { mode: 384 });
+    if (this.registered) rmSync7(sessionFile(this.home, this.registered), { force: true });
     this.registered = sessionId;
     this.log.debug("rewake endpoint registered", { sessionId });
   }
@@ -41565,7 +43599,7 @@ var RewakeEndpoint = class {
     this.modWaiter?.abort("superseded");
     this.standby?.release("superseded");
     clearTimeout(this.confirmTimer);
-    if (this.registered) rmSync5(sessionFile(this.home, this.registered), { force: true });
+    if (this.registered) rmSync7(sessionFile(this.home, this.registered), { force: true });
     const s = this.server;
     this.server = null;
     if (s) await new Promise((r) => s.close(() => r()));
@@ -41690,691 +43724,6 @@ ${STOP_REASON_FOOTER}` };
   }
 }
 
-// src/core/opencode-models.ts
-var LIST_TIMEOUT_MS = 6e4;
-var CACHE_TTL_MS = 10 * 60 * 1e3;
-var MODEL_LINE = /^[A-Za-z0-9._-]+\/\S+$/;
-var MAX_SUGGESTIONS = 8;
-var cache = null;
-async function listOpencodeModels(bin, cwd, log) {
-  if (cache && Date.now() - cache.at < CACHE_TTL_MS) return cache.models;
-  const res = await runProcess({ bin, args: ["models"], stdin: "", cwd, timeoutMs: LIST_TIMEOUT_MS, env: childEnv(), log });
-  const models = res.stdout.split(/\r?\n/).map((l) => l.trim()).filter((l) => MODEL_LINE.test(l));
-  if (models.length) cache = { at: Date.now(), models };
-  return models;
-}
-function resolveOpencodeModel(input2, models) {
-  const want = input2.trim();
-  if (models.length === 0) return { model: want, note: null };
-  if (models.includes(want)) return { model: want, note: null };
-  const lower = want.toLowerCase();
-  const exactCi = models.filter((m) => m.toLowerCase() === lower);
-  if (exactCi.length === 1) return { model: exactCi[0], note: null };
-  const [provider, ...rest] = lower.includes("/") ? lower.split("/") : ["", lower];
-  const name = rest.join("/");
-  const matches = models.filter((m) => {
-    const [mp, ...mr] = m.toLowerCase().split("/");
-    const mn = mr.join("/");
-    if (provider && mp !== provider) return false;
-    return mn === name || mn.startsWith(name) || mn.includes(name);
-  });
-  const prefixed = matches.filter((m) => m.toLowerCase().split("/").slice(1).join("/").startsWith(name));
-  const best = prefixed.length ? prefixed : matches;
-  if (best.length === 1) return { model: best[0], note: `model "${want}" resolved to "${best[0]}"` };
-  const suggest = (list) => list.slice(0, MAX_SUGGESTIONS).join(", ");
-  if (best.length > 1) return { error: `The opencode model "${want}" is ambiguous. Pass one of: ${suggest(best)}${best.length > MAX_SUGGESTIONS ? ", \u2026" : ""}` };
-  const near = models.filter((m) => name.split(/[-._]/).some((part) => part.length > 2 && m.toLowerCase().includes(part)));
-  return {
-    error: `Unknown opencode model "${want}". Use "provider/model" from \`opencode models\`${near.length ? `, e.g. ${suggest(near)}` : ""}.`
-  };
-}
-
-// src/core/opencode-served.ts
-import { spawn as spawn3 } from "node:child_process";
-import { randomBytes as randomBytes7 } from "node:crypto";
-import { extname as extname2 } from "node:path";
-var SERVE_START_TIMEOUT_MS = 3e4;
-var LISTEN_RE = /listening on (https?:\/\/[^\s]+)/i;
-var SERVER_USER = "opencode";
-var PASSWORD_BYTES = 24;
-var MAX_DETAIL_CHARS = 4e3;
-var OPENCODE_ASK_PERMISSIONS = { edit: "ask", bash: "ask" };
-var START_WATCHDOG_MS = 6e4;
-var SERVE_OUTPUT_TAIL_CHARS = 4e3;
-function watchServeOutput(onListening) {
-  let out = "";
-  let listening = false;
-  return {
-    onData: (d) => {
-      if (listening) return;
-      out = (out + d.toString()).slice(-SERVE_OUTPUT_TAIL_CHARS);
-      const m = LISTEN_RE.exec(out);
-      if (m) {
-        listening = true;
-        out = "";
-        onListening(m[1].replace(/\/+$/, ""));
-      }
-    },
-    tail: () => out
-  };
-}
-function startServe(bin, cwd, env) {
-  let resolved = resolveBinary(bin, env);
-  if (!resolved) return Promise.reject(new DelegateError(`executable not found: ${bin}`, "not_found"));
-  let prefix = [];
-  if (process.platform === "win32" && [".cmd", ".bat"].includes(extname2(resolved).toLowerCase())) {
-    const target = unwrapNpmShim(resolved);
-    if (!target) return Promise.reject(new DelegateError(`cannot start ${bin} without a shell`, "failed"));
-    resolved = target.command;
-    prefix = target.prefix;
-  }
-  return new Promise((resolve10, reject) => {
-    const child = spawn3(resolved, [...prefix, "serve", "--port", "0", "--hostname", "127.0.0.1"], {
-      cwd,
-      env: { ...env, PWD: cwd },
-      windowsHide: true,
-      stdio: ["ignore", "pipe", "pipe"],
-      detached: process.platform !== "win32"
-    });
-    trackChild(child);
-    const output2 = watchServeOutput((url2) => {
-      clearTimeout(timer);
-      resolve10({ child, url: url2 });
-    });
-    const timer = setTimeout(() => {
-      void killTree(child);
-      reject(new DelegateError(`opencode serve did not start within ${SERVE_START_TIMEOUT_MS / 1e3}s (startup timeout)`, "timeout", output2.tail()));
-    }, SERVE_START_TIMEOUT_MS);
-    child.stdout.on("data", output2.onData);
-    child.stderr.on("data", output2.onData);
-    child.on("error", (err) => {
-      clearTimeout(timer);
-      reject(new DelegateError(`failed to start opencode serve: ${err.message}`, "failed"));
-    });
-    child.on("exit", (code, signal) => {
-      clearTimeout(timer);
-      reject(new DelegateError(`opencode serve exited early (${signal ? `signal ${signal}` : `code ${code}`})`, "failed", output2.tail()));
-    });
-  });
-}
-async function* sse(body) {
-  const decoder = new TextDecoder();
-  let buf = "";
-  for await (const chunk of body) {
-    buf += decoder.decode(chunk, { stream: true });
-    let idx;
-    while ((idx = buf.indexOf("\n\n")) >= 0) {
-      const block = buf.slice(0, idx);
-      buf = buf.slice(idx + 2);
-      const data = block.split(/\r?\n/).filter((l) => l.startsWith("data:")).map((l) => l.slice(5).trim()).join("\n");
-      if (!data) continue;
-      try {
-        yield JSON.parse(data);
-      } catch {
-      }
-    }
-  }
-}
-function mcpToolPrefix(server) {
-  return `${server.replace(/[^a-zA-Z0-9_-]/g, "_")}_`;
-}
-function opencodePermissionRequest(p, mcpServers, cwd) {
-  const permission = String(p.permission ?? "unknown");
-  const detail = permissionDetail(p);
-  const server = [...mcpServers].sort((a, b) => b.length - a.length).find((s) => permission.startsWith(mcpToolPrefix(s)));
-  if (server) return { agent: "opencode", tool: `mcp:${server}`, detail: `${permission}: ${detail}`.slice(0, MAX_DETAIL_CHARS), cwd };
-  return { agent: "opencode", tool: permission, detail, cwd };
-}
-function permissionDetail(p) {
-  const patterns = Array.isArray(p.patterns) ? p.patterns.join(", ") : "";
-  const meta3 = p.metadata && typeof p.metadata === "object" ? p.metadata : {};
-  const cmd = typeof meta3.command === "string" ? meta3.command : typeof meta3.filepath === "string" ? meta3.filepath : "";
-  return (cmd || patterns || JSON.stringify(meta3)).slice(0, MAX_DETAIL_CHARS);
-}
-async function delegateToOpencodeServed(req) {
-  checkDepthPublic();
-  const password = randomBytes7(PASSWORD_BYTES).toString("hex");
-  const permissions = req.permissions === void 0 ? OPENCODE_ASK_PERMISSIONS : req.permissions;
-  const env = childEnvPublic({
-    ...req.extraEnv,
-    OPENCODE_SERVER_PASSWORD: password,
-    OPENCODE_SERVER_USERNAME: SERVER_USER,
-    ...permissions ? { OPENCODE_CONFIG_CONTENT: JSON.stringify({ permission: permissions }) } : {}
-  });
-  const { child, url: url2 } = await startServe(req.bin, req.cwd, env);
-  const auth = `Basic ${Buffer.from(`${SERVER_USER}:${password}`).toString("base64")}`;
-  const q = `directory=${encodeURIComponent(req.cwd)}`;
-  const ac = new AbortController();
-  const onAbort = () => ac.abort();
-  req.signal?.addEventListener("abort", onAbort, { once: true });
-  const timer = setTimeout(() => ac.abort(), req.timeoutSec * 1e3);
-  const api = async (method, path, body) => {
-    const res = await fetch(`${url2}${path}${path.includes("?") ? "&" : "?"}${q}`, {
-      method,
-      headers: { authorization: auth, "content-type": "application/json" },
-      body: body === void 0 ? void 0 : JSON.stringify(body),
-      signal: ac.signal
-    });
-    if (!res.ok) throw new DelegateError(`opencode API ${method} ${path} failed: HTTP ${res.status}`, "failed", await res.text().catch(() => ""));
-    const text2 = await res.text();
-    return text2 ? JSON.parse(text2) : null;
-  };
-  let knownSession = req.sessionId ?? null;
-  try {
-    const sessionId = req.sessionId ?? (await api("POST", "/session", {})).id;
-    req.onSession?.(sessionId);
-    knownSession = sessionId;
-    const mcpServers = Object.keys(await api("GET", "/mcp").catch(() => null) ?? {});
-    const events = await fetch(`${url2}/event?${q}`, { headers: { authorization: auth, accept: "text/event-stream" }, signal: ac.signal });
-    if (!events.ok || !events.body) throw new DelegateError(`opencode event stream failed: HTTP ${events.status}`, "failed");
-    const [providerID, ...rest] = (req.model ?? "").split("/");
-    const body = { parts: [{ type: "text", text: req.prompt }] };
-    if (req.model && rest.length) body.model = { providerID, modelID: rest.join("/") };
-    if (req.effort) body.variant = req.effort;
-    await api("POST", `/session/${sessionId}/prompt_async`, body);
-    let failure2 = null;
-    const onEvent = progressEventHandler("opencode", req.onProgress);
-    let alive2 = false;
-    const watchdog = setTimeout(() => {
-      if (alive2) return;
-      failure2 = "opencode did not start working on the prompt within 60 seconds (check the model id and the provider's login).";
-      ac.abort();
-    }, START_WATCHDOG_MS);
-    try {
-      for await (const ev of sse(events.body)) {
-        const type = String(ev.type ?? "");
-        const p = ev.properties ?? {};
-        const mine = p.sessionID === sessionId || p.part?.sessionID === sessionId || p.info?.sessionID === sessionId;
-        if (mine) alive2 = true;
-        if (type === "session.error" && !p.sessionID) {
-          failure2 = String(p.error?.data?.message ?? p.error?.message ?? "opencode reported an error");
-          break;
-        }
-        if (type === "permission.asked" && p.sessionID === sessionId) {
-          const decision = await req.onPermission(opencodePermissionRequest(p, mcpServers, req.cwd));
-          await api("POST", `/permission/${p.id}/reply`, decision.allow ? { reply: "once" } : { reply: "reject", message: decision.message });
-        } else if (type === "message.part.updated" && p.part?.sessionID === sessionId) {
-          const part = p.part;
-          const ready = part.type === "tool" && (part.state?.status === "running" || part.state?.status === "completed") || part.type === "text" && part.time?.end || part.type === "reasoning" && part.time?.end;
-          if (ready) onEvent?.({ part });
-        } else if (type === "session.error" && p.sessionID === sessionId) {
-          failure2 = String(p.error?.data?.message ?? p.error?.message ?? "opencode session error");
-          break;
-        } else if (type === "session.idle" && p.sessionID === sessionId || type === "session.status" && p.sessionID === sessionId && p.status?.type === "idle") {
-          break;
-        }
-      }
-    } catch (err) {
-      if (!failure2) throw err;
-    } finally {
-      clearTimeout(watchdog);
-    }
-    if (failure2 && !alive2) throw new DelegateError(failure2, "failed", "", "", sessionId);
-    const messages = await api("GET", `/session/${sessionId}/message`) ?? [];
-    const last = [...messages].reverse().find((m) => m.info?.role === "assistant");
-    const text2 = (last?.parts ?? []).filter((part) => part.type === "text" && typeof part.text === "string").map((part) => part.text).join("");
-    if (failure2 && !text2) throw new DelegateError(failure2, "failed", "", "", sessionId);
-    const tokens = last?.info?.tokens;
-    return {
-      sessionId,
-      text: text2,
-      isError: failure2 !== null,
-      details: {
-        error: failure2,
-        usage: tokens ? { input: Number(tokens.input) || 0, output: Number(tokens.output) || 0 } : null,
-        costUsd: typeof last?.info?.cost === "number" ? last.info.cost : null
-      }
-    };
-  } catch (err) {
-    if (ac.signal.aborted && !(err instanceof DelegateError)) {
-      if (req.signal?.aborted) throw new DelegateError("delegate aborted", "aborted", "", "", knownSession);
-      const hint = knownSession ? `. The opencode session ${knownSession} keeps its progress: call again with session_id="${knownSession}" (and a longer timeout_sec, or use spawn_opencode) to continue instead of starting over.` : "";
-      throw new DelegateError(`delegate timed out after ${req.timeoutSec}s (its time limit, timeout_sec)${hint}`, "timeout", "", "", knownSession);
-    }
-    throw err;
-  } finally {
-    clearTimeout(timer);
-    req.signal?.removeEventListener("abort", onAbort);
-    ac.abort();
-    await killTree(child);
-  }
-}
-
-// src/core/codex-appserver.ts
-import { spawn as spawn4 } from "node:child_process";
-var STEER_HEADER = (from) => `[Message from ${from}, who gave you this task, sent while you work. Answer it briefly in your next message, then continue the task, adjusted to what it asks.]`;
-var SIBLING_STEER_HEADER = '[Message from a sibling job working for the same supervisor. Coordinate within your assigned task and answer with the agent-bridge "send" tool using to=<from> and reply_to=<id>.]';
-var OPT_OUT = [
-  "item/agentMessage/delta",
-  "item/reasoning/summaryTextDelta",
-  "item/reasoning/summaryPartAdded",
-  "item/reasoning/textDelta",
-  "item/commandExecution/outputDelta",
-  "item/fileChange/outputDelta",
-  "item/plan/delta"
-];
-var STDERR_TAIL_CHARS2 = 4e3;
-var STARTUP_TIMEOUT_MS = 18e4;
-var CODEX_FULL_ACCESS_APPROVAL_POLICY = {
-  granular: { sandbox_approval: false, rules: false, mcp_elicitations: true }
-};
-function innerCommand(s) {
-  const m = /^(?:"[^"]*[\\/]|[^\s"]*[\\/])?(?:pwsh|powershell|bash|zsh|sh|cmd)(?:\.exe)?"?\s+(?:-NoProfile\s+|-NoLogo\s+)*(?:-Command|-lc|-c|\/c)\s+([\s\S]*)$/i.exec(s.trim());
-  if (!m) return s;
-  const c = m[1].trim();
-  return /^'[\s\S]*'$|^"[\s\S]*"$/.test(c) ? c.slice(1, -1) : c;
-}
-function codexTurnSandbox(sandbox, cwd, roots = [], reported, networkAccess) {
-  if (sandbox === "danger-full-access") return { type: "dangerFullAccess" };
-  if (sandbox === "read-only") return { type: "readOnly", networkAccess: false };
-  const inherited = reported?.type === "workspaceWrite" ? reported : {};
-  return {
-    ...inherited,
-    type: "workspaceWrite",
-    writableRoots: [.../* @__PURE__ */ new Set([cwd, ...roots, ...Array.isArray(inherited.writableRoots) ? inherited.writableRoots : []])],
-    ...networkAccess !== void 0 ? { networkAccess } : {}
-  };
-}
-function asExecEvent(kind, item) {
-  const type = { agentMessage: "agent_message", commandExecution: "command_execution", fileChange: "file_change", mcpToolCall: "mcp_tool_call", webSearch: "web_search", reasoning: "reasoning" }[item?.type] ?? item?.type;
-  return { type: kind, item: { ...item, type } };
-}
-async function delegateToCodexAppServer(req) {
-  checkDepth();
-  const mappings = codexDriveMappings(`${req.cwd}
-${req.prompt}`);
-  req = { ...req, prompt: codexPathPrompt(req.prompt, mappings) };
-  const cwd = realFolder(req.cwd);
-  const env = childEnv(req.extraEnv);
-  const { resolved, args, needsShell } = resolveCommand(req.bin, ["app-server"], env, req.log);
-  req.log.debug("starting codex app-server", { bin: resolved, cwd });
-  const child = spawn4(resolved, args, { cwd, env: { ...env, PWD: cwd }, shell: needsShell, windowsHide: true, stdio: ["pipe", "pipe", "pipe"], detached: process.platform !== "win32" });
-  trackChild(child);
-  let nextId = 1;
-  const pending = /* @__PURE__ */ new Map();
-  let stderr = "";
-  let threadId = req.sessionId ?? null;
-  let turnId = null;
-  const finalAnswers = new FinalAnswers();
-  let usage = null;
-  let retryableError = null;
-  let finished = () => {
-  };
-  const turnDone = new Promise((r) => finished = r);
-  const completions = /* @__PURE__ */ new Map();
-  const answers = [];
-  let awaitingAnswer = false;
-  const onEvent = progressEventHandler("codex", req.onProgress);
-  const write = (msg) => {
-    if (!child.stdin.writable) return;
-    child.stdin.write(`${JSON.stringify(msg)}
-`);
-  };
-  const request2 = (method, params) => new Promise((resolve10, reject) => {
-    const id = nextId++;
-    pending.set(id, { resolve: resolve10, reject });
-    write({ id, method, params });
-  });
-  const editPaths = /* @__PURE__ */ new Map();
-  const denialMessages = [];
-  const deliverDenials = async () => {
-    if (!threadId || !turnId) return;
-    for (const message of denialMessages.splice(0)) {
-      try {
-        await request2("turn/steer", { threadId, expectedTurnId: turnId, input: [{ type: "text", text: message, text_elements: [] }] });
-      } catch (err) {
-        req.log.warn("could not deliver approval denial reason", { message, err: err.message });
-        req.onDenied?.(message);
-      }
-    }
-  };
-  const decide = async (tool, detail) => {
-    if (!req.approve) return { allow: false, message: "Denied by agent-bridge: no approval handler is available." };
-    try {
-      return await req.approve({ agent: "codex", tool, detail, cwd });
-    } catch (err) {
-      return { allow: false, message: `Denied by agent-bridge: approval forwarding failed: ${String(err?.message ?? err)}` };
-    }
-  };
-  const answerRequest = async (id, method, params) => {
-    const reply = (result) => write({ id, result });
-    const answer = (decision, result, tool) => {
-      reply(result);
-      if (!decision.allow) {
-        const message = `Approval denied for ${tool}. ${decision.message || "Denied by the approval handler; no reason supplied."}`;
-        req.onProgress?.(message);
-        denialMessages.push(message);
-        void deliverDenials();
-      }
-    };
-    const sandboxDenial = { allow: false, message: "Denied by agent-bridge: this job's access does not allow sandbox escalations; the supervisor was not asked." };
-    switch (method) {
-      case "mcpServer/elicitation/request": {
-        const tool = `mcp:${params.serverName ?? "tool"}`;
-        const decision = await decide(tool, String(params.message ?? "an MCP tool call"));
-        const props = params.requestedSchema?.properties ?? {};
-        const content = Object.fromEntries(Object.entries(props).filter(([, v]) => v && "default" in v).map(([k, v]) => [k, v.default]));
-        return answer(decision, decision.allow ? { action: "accept", content } : { action: "decline", content: null }, tool);
-      }
-      case "item/commandExecution/requestApproval": {
-        const decision = req.sandbox === "danger-full-access" ? { allow: true } : req.askMode || req.sandbox === "workspace-write" ? await decide("command", innerCommand(String(params.command ?? params.reason ?? "a command"))) : sandboxDenial;
-        return answer(decision, { decision: decision.allow ? "accept" : "decline" }, "command");
-      }
-      case "item/fileChange/requestApproval": {
-        const paths = editPaths.get(params.itemId) ?? [];
-        const decision = req.sandbox === "danger-full-access" ? { allow: true } : req.askMode || req.sandbox === "workspace-write" ? await decide("edit", paths.length ? paths.join(", ") : String(params.reason ?? "file changes")) : sandboxDenial;
-        return answer(decision, { decision: decision.allow ? "accept" : "decline" }, "edit");
-      }
-      default:
-        req.log.warn("codex app-server request refused", { method });
-        return write({ id, error: { code: -32601, message: "not supported by agent-bridge" } });
-    }
-  };
-  const handle = (msg) => {
-    if (msg.id !== void 0 && msg.method === void 0) {
-      const p = pending.get(msg.id);
-      if (!p) return;
-      pending.delete(msg.id);
-      if (msg.error) p.reject(new Error(msg.error.message ?? "app-server error"));
-      else p.resolve(msg.result);
-      return;
-    }
-    if (msg.id !== void 0 && msg.method) {
-      void answerRequest(msg.id, msg.method, msg.params ?? {});
-      return;
-    }
-    const params = msg.params ?? {};
-    switch (msg.method) {
-      case "item/started":
-        onEvent?.(asExecEvent("item.started", params.item));
-        if (params.item?.type === "fileChange") editPaths.set(params.item.id, (params.item.changes ?? []).map((c) => c?.path).filter(Boolean));
-        break;
-      case "item/completed": {
-        if (turnId && params.turnId && params.turnId !== turnId) break;
-        const item = params.item ?? {};
-        onEvent?.(asExecEvent("item.completed", item));
-        if (item.type === "agentMessage" && typeof item.text === "string" && item.text.trim()) {
-          finalAnswers.add(item);
-          if (awaitingAnswer) {
-            awaitingAnswer = false;
-            answers.push(item.text);
-            req.live?.onAnswer(item.text);
-          }
-        }
-        break;
-      }
-      case "thread/tokenUsage/updated":
-        usage = params.tokenUsage?.total ?? params.total ?? usage;
-        break;
-      case "error":
-        if (!params.willRetry) retryableError = params.error?.message ?? "error";
-        break;
-      case "turn/completed":
-        completions.set(String(params.turn?.id), { status: String(params.turn?.status ?? "completed"), error: params.turn?.error?.message ?? null });
-        if (turnId && completions.has(turnId)) finished(completions.get(turnId));
-        break;
-    }
-  };
-  let buf = "";
-  child.stdout.setEncoding("utf8").on("data", (d) => {
-    buf += d;
-    let nl;
-    while ((nl = buf.indexOf("\n")) >= 0) {
-      const line = buf.slice(0, nl).trim();
-      buf = buf.slice(nl + 1);
-      if (!line.startsWith("{")) continue;
-      try {
-        handle(JSON.parse(line));
-      } catch (err) {
-        req.log.debug("bad app-server line", { err: err.message });
-      }
-    }
-  });
-  child.stderr.setEncoding("utf8").on("data", (d) => {
-    stderr = (stderr + d).slice(-STDERR_TAIL_CHARS2);
-  });
-  const exited = new Promise((_, reject) => {
-    child.on("error", (err) => reject(new DelegateError(`failed to start ${req.bin}: ${err.message}`, "failed", "", "", threadId)));
-    child.on("exit", (code, signal) => reject(new DelegateError(`codex app-server ${exitDescription({ code, signal })}`, "failed", stderr, "", threadId)));
-  });
-  exited.catch(() => {
-  });
-  let timer;
-  const stopped = new Promise((_, reject) => {
-    timer = setTimeout(() => reject(new DelegateError(`delegate timed out after ${req.timeoutSec}s (its time limit, timeout_sec)`, "timeout", stderr, "", threadId)), req.timeoutSec * 1e3);
-    req.signal?.addEventListener("abort", () => reject(new DelegateError("delegate aborted", "aborted", "", "", threadId)), { once: true });
-  });
-  stopped.catch(() => {
-  });
-  const race = (p) => Promise.race([p, exited, stopped]);
-  let step = "initialize";
-  let startupTimer;
-  const startup = new Promise((_, reject) => {
-    startupTimer = setTimeout(
-      () => reject(DelegateError.startup(`codex app-server did not answer ${step} within ${Math.round((req.startupTimeoutMs ?? STARTUP_TIMEOUT_MS) / 1e3)}s (startup timeout)`, stderr, threadId)),
-      req.startupTimeoutMs ?? STARTUP_TIMEOUT_MS
-    );
-  });
-  startup.catch(() => {
-  });
-  const boot = (p) => Promise.race([p, exited, stopped, startup]);
-  const steering = {
-    rename: async (title) => {
-      if (threadId) await race(request2("thread/name/set", { threadId, name: title }));
-    },
-    send: async (message, sibling = false) => {
-      if (!threadId || !turnId) return false;
-      try {
-        const header = sibling ? SIBLING_STEER_HEADER : STEER_HEADER(req.live?.from ?? "the session that started you");
-        await request2("turn/steer", { threadId, expectedTurnId: turnId, input: [{ type: "text", text: `${header}
-
-${message}`, text_elements: [] }] });
-        if (!sibling) awaitingAnswer = true;
-        return true;
-      } catch (err) {
-        req.log.info("steering refused; the turn has ended", { err: err.message });
-        return false;
-      }
-    }
-  };
-  try {
-    await boot(request2("initialize", { clientInfo: { name: "agent-bridge", title: "agent-bridge", version: APP_VERSION }, capabilities: { experimentalApi: req.sandbox === "danger-full-access", optOutNotificationMethods: OPT_OUT } }));
-    write({ method: "initialized", params: {} });
-    const approvalPolicy = req.sandbox === "danger-full-access" ? CODEX_FULL_ACCESS_APPROVAL_POLICY : "on-request";
-    const config2 = {};
-    if (req.sandbox === "workspace-write" && (req.writableRoots?.length || req.networkAccess !== void 0)) {
-      config2.sandbox_workspace_write = {
-        ...req.writableRoots?.length ? { writable_roots: req.writableRoots.map(realFolder) } : {},
-        ...req.networkAccess !== void 0 ? { network_access: req.networkAccess } : {}
-      };
-    }
-    if (req.effort) config2.model_reasoning_effort = req.effort;
-    const threadParams = { cwd, sandbox: req.sandbox, approvalPolicy, approvalsReviewer: "user", ...Object.keys(config2).length ? { config: config2 } : {}, ...req.model ? { model: req.model } : {} };
-    step = req.sessionId ? "thread/resume" : "thread/start";
-    const thread = req.sessionId ? await boot(request2("thread/resume", { ...threadParams, threadId: req.sessionId, excludeTurns: true })) : await boot(request2("thread/start", threadParams));
-    threadId = thread?.thread?.id ?? threadId;
-    if (threadId) req.onSession?.(threadId);
-    if (threadId && req.title) {
-      step = "thread/name/set";
-      await boot(request2("thread/name/set", { threadId, name: req.title })).catch((err) => req.log.warn("could not name the Codex thread", { err: err.message }));
-    }
-    if (typeof thread?.model === "string")
-      req.onInfo?.({
-        model: thread.model,
-        effort: req.effort ?? (typeof thread.reasoningEffort === "string" ? thread.reasoningEffort : null),
-        // The sandbox Codex really applies to this thread (its config can differ from what was asked).
-        permission: typeof thread.sandbox?.type === "string" ? thread.sandbox.type : null
-      });
-    const prompt = req.askMode && req.sandbox !== "danger-full-access" ? `${req.prompt}
-
-${CODEX_ASK_HINT}` : req.prompt;
-    step = "turn/start";
-    const sandboxPolicy = codexTurnSandbox(req.sandbox, cwd, req.writableRoots?.map(realFolder), thread?.sandbox, req.networkAccess);
-    const turn = await boot(request2("turn/start", {
-      threadId,
-      input: [{ type: "text", text: prompt, text_elements: [] }],
-      ...req.model ? { model: req.model } : {},
-      sandboxPolicy,
-      approvalPolicy,
-      ...req.effort ? { effort: req.effort } : {}
-    }));
-    req.onInfo?.({ model: req.model ?? thread?.model ?? null, permission: req.sandbox, effort: req.effort ?? (typeof thread?.reasoningEffort === "string" ? thread.reasoningEffort : null) });
-    turnId = turn?.turn?.id ?? null;
-    void deliverDenials();
-    clearTimeout(startupTimer);
-    if (turnId && completions.has(turnId)) finished(completions.get(turnId));
-    req.live?.onSteering(steering);
-    const outcome = await race(turnDone);
-    req.live?.onSteering(null);
-    const error62 = outcome.error ?? (outcome.status === "failed" ? retryableError ?? "turn failed" : null);
-    req.log.info("codex turn ended", { threadId, turnId, status: outcome.status, error: outcome.error, retryableError });
-    if (outcome.status === "interrupted") throw new DelegateError(`codex interrupted the turn${outcome.error ? `: ${outcome.error}` : ""}`, "failed", stderr, "", threadId);
-    if (error62 && !finalAnswers.text()) throw new DelegateError(error62, "failed", stderr, "", threadId);
-    req.log.info("codex delegate finished", { threadId, status: outcome.status });
-    return { sessionId: threadId, text: finalAnswers.text(), isError: Boolean(error62), details: { usage, error: error62, answers: answers.length } };
-  } catch (err) {
-    req.live?.onSteering(null);
-    if (threadId && turnId) await Promise.race([request2("turn/interrupt", { threadId, turnId }).catch(() => {
-    }), new Promise((r) => setTimeout(r, 2e3))]);
-    if (err instanceof DelegateError) {
-      err.sessionId = err.sessionId ?? threadId;
-      throw err;
-    }
-    throw new DelegateError(err.message, "failed", stderr, "", threadId);
-  } finally {
-    for (const message of denialMessages.splice(0)) req.onDenied?.(message);
-    clearTimeout(timer);
-    clearTimeout(startupTimer);
-    for (const p of pending.values()) p.reject(new Error("closed"));
-    child.stdin.end();
-    await killTree(child);
-  }
-}
-
-// src/core/codex-env.ts
-import { readFileSync as readFileSync11 } from "node:fs";
-import { homedir as homedir3 } from "node:os";
-import { join as join17 } from "node:path";
-function codexWindowsSandbox(home = homedir3(), platform = process.platform) {
-  if (platform !== "win32") return null;
-  let toml;
-  try {
-    toml = readFileSync11(join17(home, ".codex", "config.toml"), "utf8");
-  } catch {
-    return null;
-  }
-  const table = /^\[windows\]\s*$([\s\S]*?)(?=^\[|(?![\s\S]))/m.exec(toml)?.[1] ?? "";
-  return /^\s*sandbox\s*=\s*"([^"]+)"/m.exec(table)?.[1] ?? null;
-}
-function codexEnvironmentNote(home = homedir3(), platform = process.platform) {
-  if (codexWindowsSandbox(home, platform) !== "elevated") return "";
-  return ` Note for this machine: Codex runs commands as a separate Windows sandbox user (elevated sandbox), which cannot read the user's profile. Tools installed there, such as Python under AppData\\Local\\Programs or user-level pip/npm installs, are missing in Codex subagents ("python is not recognized"). For work that needs them, point Codex to an interpreter inside the repository (e.g. a .venv in the worktree), or use a claude/opencode subagent.`;
-}
-
-// src/mcp/targets.ts
-var CODEX_EXEC_ENV = "AGENT_BRIDGE_CODEX_EXEC";
-var ACCESS_LEVELS = ["read", "ask", "edit"];
-var CODEX_SANDBOX_FOR = { read: "read-only", ask: "read-only", edit: "workspace-write" };
-var CLAUDE_MODE_FOR = { read: "manual", ask: "manual", edit: "acceptEdits" };
-var OPENCODE_AUTO_FOR = { read: false, ask: false, edit: true };
-function claudeModeFor(cfg, a) {
-  return a.permission_mode ?? (a.access ? CLAUDE_MODE_FOR[a.access] : cfg.claudePermissionMode);
-}
-function supportsAsk(target, relay) {
-  if (!relay) return false;
-  if (target === "opencode") return true;
-  if (target === "codex") return process.env[CODEX_EXEC_ENV] !== "1" || relay.codexHookTrusted;
-  return false;
-}
-function opencodeEditAsks(base, a) {
-  return a.access === "edit" && a.auto_approve === void 0 && Boolean(base.approve && base.canApprove);
-}
-var DELEGATION_TARGETS = {
-  codex: {
-    title: "OpenAI Codex",
-    modelExample: '"gpt-6-sol"',
-    effortExample: '"low", "medium", "high", "xhigh", "max" or "ultra" (depends on the model)',
-    defaultModel: (cfg) => cfg.codexModel,
-    schema: { sandbox: external_exports.enum(CODEX_SANDBOXES).optional().describe("Overrides access with an exact Codex sandbox mode") },
-    permissionNote: (cfg) => `Codex runs in the "${cfg.codexSandbox}" sandbox unless you pass access or sandbox. Worktree edit runs use "${cfg.codexWorktreeSandbox ?? (cfg.codexSandbox === "read-only" ? "workspace-write" : cfg.codexSandbox)}" (config codexWorktreeSandbox); workspace-write can restrict builds and network access.${codexEnvironmentNote()}`,
-    permission: (cfg, a) => a.sandbox ?? (a.access ? CODEX_SANDBOX_FOR[a.access] : cfg.codexSandbox),
-    run: async (cfg, base, a) => {
-      const sandbox = a.sandbox ?? (a.access ? CODEX_SANDBOX_FOR[a.access] : cfg.codexSandbox);
-      const relay = a.access === "ask" && Boolean(a.relay?.codexHookTrusted);
-      if (process.env[CODEX_EXEC_ENV] !== "1") {
-        let sessionId = base.sessionId ?? null;
-        for (let attempt = 1; ; attempt++) {
-          try {
-            return await delegateToCodexAppServer({ ...base, sessionId, bin: cfg.codexBin, sandbox, networkAccess: cfg.codexWorkspaceWriteNetworkAccess ?? void 0, writableRoots: base.writableRoots, askMode: a.access === "ask", approve: a.access === "ask" && a.relay ? a.relay.onPermission : base.approve });
-          } catch (err) {
-            if (err instanceof DelegateError && err.startupFailed && attempt === 1 && !base.signal?.aborted) {
-              base.log.warn("codex app-server startup timed out; retrying once", { err: err.message });
-              base.onProgress?.(`${err.message}; retrying once`);
-              sessionId = err.sessionId ?? sessionId;
-              continue;
-            }
-            if (!(err instanceof DelegateError) || err.kind !== "failed" || err.sessionId) throw err;
-            base.log.warn("codex app-server unavailable, using codex exec", { err: err.message });
-            break;
-          }
-        }
-      }
-      return delegateToCodex({
-        ...base,
-        bin: cfg.codexBin,
-        sandbox,
-        networkAccess: cfg.codexWorkspaceWriteNetworkAccess ?? void 0,
-        ...relay ? { relayApprovals: true, extraEnv: { ...base.extraEnv, ...a.relay.env } } : {}
-      });
-    }
-  },
-  claude: {
-    title: "Claude Code",
-    modelExample: '"opus", "sonnet" or a full model id',
-    effortExample: '"low", "medium", "high", "xhigh" or "max"',
-    defaultModel: (cfg) => cfg.claudeModel,
-    schema: { permission_mode: external_exports.enum(CLAUDE_PERMISSION_MODES).optional().describe("Overrides access with an exact Claude permission mode") },
-    permissionNote: (cfg) => `Claude runs with permission mode "${cfg.claudePermissionMode}" unless you pass access or permission_mode.`,
-    permission: (cfg, a) => claudeModeFor(cfg, a),
-    run: (cfg, base, a) => delegateToClaude({
-      ...base,
-      bin: cfg.claudeBin,
-      permissionMode: claudeModeFor(cfg, a)
-    })
-  },
-  opencode: {
-    title: "opencode",
-    effortExample: `the model's variant, such as "low", "high" or "max" (provider-specific)`,
-    modelExample: '"provider/model", e.g. "anthropic/claude-sonnet-5" or "opencode/muse-spark-1.3-contributor-free"',
-    defaultModel: (cfg) => cfg.opencodeModel,
-    schema: { auto_approve: external_exports.boolean().optional().describe("Overrides access: auto-approve every opencode permission request (opencode run --auto)") },
-    permissionNote: (cfg) => cfg.opencodeAutoApprove ? "opencode auto-approves permission requests unless you pass access=read or auto_approve=false." : "Headless opencode rejects every permission request (edits, commands) unless you pass access=edit or auto_approve=true.",
-    permission: (cfg, a) => a.auto_approve ?? (a.access ? OPENCODE_AUTO_FOR[a.access] : cfg.opencodeAutoApprove) ? "auto-approve" : "read-only",
-    run: async (cfg, base, a) => {
-      let note = null;
-      if (base.model) {
-        const models = await listOpencodeModels(cfg.opencodeBin, base.cwd, base.log).catch(() => []);
-        const r = resolveOpencodeModel(base.model, models);
-        if ("error" in r) throw new DelegateError(r.error, "failed");
-        base = { ...base, model: r.model };
-        note = r.note;
-      }
-      const res = a.access === "ask" && a.auto_approve === void 0 && supportsAsk("opencode", a.relay) ? await delegateToOpencodeServed({ ...base, bin: cfg.opencodeBin, onPermission: a.relay.onPermission }) : opencodeEditAsks(base, a) ? (
-        // "edit": what the user's opencode rules leave to "ask" (MCP tools, folders outside the project,
-        // commands they marked) goes to the parent instead of `opencode run --auto` approving it blindly.
-        await delegateToOpencodeServed({ ...base, bin: cfg.opencodeBin, onPermission: base.approve, permissions: null })
-      ) : await delegateToOpencode({
-        ...base,
-        bin: cfg.opencodeBin,
-        autoApprove: a.auto_approve ?? (a.access ? OPENCODE_AUTO_FOR[a.access] : cfg.opencodeAutoApprove)
-      });
-      return note ? { ...res, text: `(${note})
-
-${res.text}` } : res;
-    }
-  }
-};
-
 // src/mcp/permissions.ts
 var DECISION_SCHEMA = {
   type: "object",
@@ -42418,11 +43767,11 @@ async function askUserViaElicitation(server, req, log) {
 }
 
 // src/core/auto-wake-pref.ts
-import { join as join18 } from "node:path";
+import { join as join22 } from "node:path";
 var FILE = "auto-wake.json";
 function read(home) {
   try {
-    return readJsonStore(join18(home, FILE)) ?? {};
+    return readJsonStore(join22(home, FILE)) ?? {};
   } catch {
     return {};
   }
@@ -42434,7 +43783,7 @@ function savedAutoWake(home, name) {
 }
 function saveAutoWake(home, name, enabled) {
   try {
-    const file2 = join18(home, FILE);
+    const file2 = join22(home, FILE);
     const previous = readJsonStore(file2);
     const data = isRecord(previous) ? previous : {};
     const peers = isRecord(data.peers) ? data.peers : data;
@@ -42446,27 +43795,27 @@ function saveAutoWake(home, name, enabled) {
 }
 
 // src/core/models.ts
-import { mkdirSync as mkdirSync11, readFileSync as readFileSync14, writeFileSync as writeFileSync7 } from "node:fs";
-import { join as join21 } from "node:path";
+import { mkdirSync as mkdirSync14, readFileSync as readFileSync16, writeFileSync as writeFileSync8 } from "node:fs";
+import { join as join25 } from "node:path";
 
 // src/core/effort.ts
-import { readFileSync as readFileSync13 } from "node:fs";
+import { readFileSync as readFileSync15 } from "node:fs";
 import { homedir as homedir5 } from "node:os";
-import { join as join20 } from "node:path";
+import { join as join24 } from "node:path";
 
 // src/core/codex-trust.ts
-import { readFileSync as readFileSync12, writeFileSync as writeFileSync6 } from "node:fs";
+import { readFileSync as readFileSync14, writeFileSync as writeFileSync7 } from "node:fs";
 import { homedir as homedir4 } from "node:os";
-import { join as join19 } from "node:path";
+import { join as join23 } from "node:path";
 var PERMISSION_HOOK_STATE_KEY = 'hooks.state."agent-bridge@agent-bridge:plugin.json#hooks[0]:permission_request:0:0"';
 var OBSERVATIONS_FILE = "codex-hook.json";
 function codexHome(env = process.env) {
-  return env.CODEX_HOME?.trim() || join19(homedir4(), ".codex");
+  return env.CODEX_HOME?.trim() || join23(homedir4(), ".codex");
 }
-function codexPermissionHookHash(home = codexHome(), read2 = (p) => readFileSync12(p, "utf8")) {
+function codexPermissionHookHash(home = codexHome(), read2 = (p) => readFileSync14(p, "utf8")) {
   let text2;
   try {
-    text2 = read2(join19(home, "config.toml"));
+    text2 = read2(join23(home, "config.toml"));
   } catch {
     return null;
   }
@@ -42481,7 +43830,7 @@ function codexPermissionHookHash(home = codexHome(), read2 = (p) => readFileSync
 }
 function readObservations(bridgeHome) {
   try {
-    return JSON.parse(readFileSync12(join19(bridgeHome, OBSERVATIONS_FILE), "utf8"));
+    return JSON.parse(readFileSync14(join23(bridgeHome, OBSERVATIONS_FILE), "utf8"));
   } catch {
     return {};
   }
@@ -42491,20 +43840,20 @@ function recordCodexHookObservation(bridgeHome, hash2, observation) {
   if (all[hash2] === "failed") return;
   all[hash2] = observation;
   try {
-    writeFileSync6(join19(bridgeHome, OBSERVATIONS_FILE), JSON.stringify(all, null, 2), { mode: 384 });
+    writeFileSync7(join23(bridgeHome, OBSERVATIONS_FILE), JSON.stringify(all, null, 2), { mode: 384 });
   } catch {
   }
 }
-function codexPermissionHookTrusted(bridgeHome, home = codexHome(), read2 = (p) => readFileSync12(p, "utf8")) {
+function codexPermissionHookTrusted(bridgeHome, home = codexHome(), read2 = (p) => readFileSync14(p, "utf8")) {
   const hash2 = codexPermissionHookHash(home, read2);
   return hash2 !== null && readObservations(bridgeHome)[hash2] !== "failed";
 }
 
 // src/core/effort.ts
-function defaultEffort(agent, model, read2 = (p) => readFileSync13(p, "utf8")) {
+function defaultEffort(agent, model, read2 = (p) => readFileSync15(p, "utf8")) {
   try {
-    if (agent === "codex") return codexConfigEffort(read2(join20(codexHome(), "config.toml")));
-    if (agent === "claude") return claudeSettingsEffort(read2(join20(process.env.CLAUDE_CONFIG_DIR?.trim() || join20(homedir5(), ".claude"), "settings.json")), model);
+    if (agent === "codex") return codexConfigEffort(read2(join24(codexHome(), "config.toml")));
+    if (agent === "claude") return claudeSettingsEffort(read2(join24(process.env.CLAUDE_CONFIG_DIR?.trim() || join24(homedir5(), ".claude"), "settings.json")), model);
   } catch {
   }
   return null;
@@ -42521,8 +43870,8 @@ function claudeSettingsEffort(json2, model) {
   const s = JSON.parse(json2);
   const id = model?.replace(/\[.*\]$/, "").toLowerCase() ?? "";
   if (id) {
-    for (const [key, v] of Object.entries(s.modelSettings ?? {})) {
-      const k = key.replace(/\[.*\]$/, "").toLowerCase();
+    for (const [key2, v] of Object.entries(s.modelSettings ?? {})) {
+      const k = key2.replace(/\[.*\]$/, "").toLowerCase();
       if ((id === k || id.startsWith(`${k}-`) || k.startsWith(`${id}-`)) && typeof v?.effortLevel === "string") return v.effortLevel;
     }
   }
@@ -42536,10 +43885,10 @@ var SHORT_MODEL_LIST = 6;
 var modelReads = /* @__PURE__ */ new Map();
 var modelBin = (agent, cfg) => cfg[`${agent}Bin`];
 var modelDefault = (agent, cfg) => cfg[`${agent}Model`];
-var modelCachePath = (home, agent) => join21(home, `models-${agent}.json`);
+var modelCachePath = (home, agent) => join25(home, `models-${agent}.json`);
 function cachedModels(home, agent, cfg) {
   try {
-    const cache3 = JSON.parse(readFileSync14(modelCachePath(home, agent), "utf8"));
+    const cache3 = JSON.parse(readFileSync16(modelCachePath(home, agent), "utf8"));
     const validStrings = (v) => Array.isArray(v) && v.every((s) => typeof s === "string");
     if (cache3.bin !== modelBin(agent, cfg) || cache3.effort !== (cfg.effort[agent] ?? null) || typeof cache3.at !== "number" || Date.now() - cache3.at >= MODEL_CACHE_MS) return null;
     if (cache3.report?.agent !== agent || !validStrings(cache3.report.models) || !validStrings(cache3.report.lines)) return null;
@@ -42556,8 +43905,8 @@ function modelParameterDescription(agent, cfg, home, example) {
 async function readModels(agent, cfg, cwd, log, home) {
   const cached2 = cachedModels(home, agent, cfg);
   if (cached2) return cached2;
-  const key = JSON.stringify([home, agent, modelBin(agent, cfg), modelDefault(agent, cfg), cfg.effort[agent], cwd]);
-  let reading = modelReads.get(key);
+  const key2 = JSON.stringify([home, agent, modelBin(agent, cfg), modelDefault(agent, cfg), cfg.effort[agent], cwd]);
+  let reading = modelReads.get(key2);
   if (!reading) {
     reading = (async () => {
       const lines = await describeModels(agent, cfg, cwd, log);
@@ -42569,15 +43918,15 @@ async function readModels(agent, cfg, cwd, log, home) {
       const report = { agent, defaultModel, models, lines };
       if (!lines[0]?.startsWith("Could not list")) {
         try {
-          mkdirSync11(home, { recursive: true });
-          writeFileSync7(modelCachePath(home, agent), JSON.stringify({ at: Date.now(), bin: modelBin(agent, cfg), effort: cfg.effort[agent] ?? null, report }), { mode: 384 });
+          mkdirSync14(home, { recursive: true });
+          writeFileSync8(modelCachePath(home, agent), JSON.stringify({ at: Date.now(), bin: modelBin(agent, cfg), effort: cfg.effort[agent] ?? null, report }), { mode: 384 });
         } catch (err) {
           log.debug("could not cache models", { err: err.message });
         }
       }
       return { ...report, defaultModel: modelDefault(agent, cfg) ?? defaultModel };
-    })().finally(() => modelReads.delete(key));
-    modelReads.set(key, reading);
+    })().finally(() => modelReads.delete(key2));
+    modelReads.set(key2, reading);
   }
   return reading;
 }
@@ -42621,21 +43970,21 @@ async function describeModels(agent, cfg, cwd, log, query = "") {
 
 // src/cli/dashboard.ts
 import { randomBytes as randomBytes9 } from "node:crypto";
-import { chmodSync as chmodSync3, readFileSync as readFileSync17, writeFileSync as writeFileSync8 } from "node:fs";
+import { chmodSync as chmodSync3, readFileSync as readFileSync19, writeFileSync as writeFileSync9 } from "node:fs";
 import { request } from "node:http";
-import { join as join28 } from "node:path";
+import { join as join32 } from "node:path";
 
 // src/cli/ui.ts
 import { randomBytes as randomBytes8 } from "node:crypto";
-import { existsSync as existsSync7, readdirSync as readdirSync7, readFileSync as readFileSync16, statSync as statSync4 } from "node:fs";
+import { existsSync as existsSync10, readdirSync as readdirSync8, readFileSync as readFileSync18, statSync as statSync6 } from "node:fs";
 import { createServer as createServer6 } from "node:http";
 import { networkInterfaces } from "node:os";
-import { join as join27 } from "node:path";
-import { DatabaseSync as DatabaseSync5 } from "node:sqlite";
+import { join as join31 } from "node:path";
+import { DatabaseSync as DatabaseSync6 } from "node:sqlite";
 
 // src/core/runfeed.ts
-import { appendFileSync as appendFileSync3, mkdirSync as mkdirSync12, readFileSync as readFileSync15, readdirSync as readdirSync5, statSync as statSync2 } from "node:fs";
-import { join as join22 } from "node:path";
+import { appendFileSync as appendFileSync3, mkdirSync as mkdirSync15, readFileSync as readFileSync17, readdirSync as readdirSync6, statSync as statSync4 } from "node:fs";
+import { join as join26 } from "node:path";
 var RUNS_DIR_NAME = "runs";
 var HEARTBEAT_MS = 6e4;
 var KEEP_RUN_LOGS = 50;
@@ -42651,12 +44000,12 @@ function pruneOldLogs(dir) {
   try {
     const limit = retentionLimit("AGENT_BRIDGE_RUN_LOG_LIMIT", KEEP_RUN_LOGS);
     if (!limit) return;
-    const files = readdirSync5(dir).filter((f) => f.endsWith(".log")).map((f) => ({ f, t: statSync2(join22(dir, f)).mtimeMs })).sort((a, b) => b.t - a.t);
+    const files = readdirSync6(dir).filter((f) => f.endsWith(".log")).map((f) => ({ f, t: statSync4(join26(dir, f)).mtimeMs })).sort((a, b) => b.t - a.t);
     for (const { f } of files.slice(limit)) {
-      const path = join22(dir, f);
-      if (Date.now() - statSync2(path).mtimeMs <= STALE_RUN_MS && !/^\d\d:\d\d:\d\d finished after \d+s · /m.test(readFileSync15(path, "utf8"))) continue;
+      const path = join26(dir, f);
+      if (Date.now() - statSync4(path).mtimeMs <= STALE_RUN_MS && !/^\d\d:\d\d:\d\d finished after \d+s · /m.test(readFileSync17(path, "utf8"))) continue;
       archiveFile(path);
-      archiveFile(join22(dir, runMetaPath(f)));
+      archiveFile(join26(dir, runMetaPath(f)));
     }
   } catch (err) {
     process.stderr.write(`could not archive run logs: ${String(err)}
@@ -42665,9 +44014,9 @@ function pruneOldLogs(dir) {
 }
 function startRunFeed(opts) {
   const now = opts.now ?? Date.now;
-  const dir = join22(opts.home, RUNS_DIR_NAME);
-  mkdirSync12(dir, { recursive: true });
-  const logPath = join22(dir, `${new Date(now()).toISOString().slice(0, 19).replace(/[:T]/g, "-")}-${opts.name}.log`);
+  const dir = join26(opts.home, RUNS_DIR_NAME);
+  mkdirSync15(dir, { recursive: true });
+  const logPath = join26(dir, `${new Date(now()).toISOString().slice(0, 19).replace(/[:T]/g, "-")}-${opts.name}.log`);
   const write = (line) => {
     const [first, ...rest] = line.replace(/\r/g, "").split("\n");
     const body = [first, ...rest.map((l) => `${CONTINUATION}${l}`)].join("\n");
@@ -42722,55 +44071,6 @@ function startRunFeed(opts) {
       writeMeta();
     }
   };
-}
-
-// src/mcp/job-settings.ts
-var JOB_SETTING_KEYS = ["model", "effort", "access", "sandbox", "permission_mode", "auto_approve"];
-var EXACT_PERMISSION_KEYS = ["sandbox", "permission_mode", "auto_approve"];
-var PERMISSION_KEY_AGENT = { sandbox: "codex", permission_mode: "claude", auto_approve: "opencode" };
-var EFFORT_PATTERN = /^[A-Za-z0-9_-]{1,20}$/;
-function changedJobArgs(args, settings) {
-  const next = { ...args };
-  if (settings.access !== void 0) for (const key of EXACT_PERMISSION_KEYS) delete next[key];
-  else if (EXACT_PERMISSION_KEYS.some((key) => settings[key] !== void 0)) delete next.access;
-  for (const key of JOB_SETTING_KEYS) if (settings[key] !== void 0) next[key] = settings[key];
-  return next;
-}
-function parseJobSettings(input2, agent) {
-  if (!input2 || typeof input2 !== "object" || Array.isArray(input2)) return "settings must be an object";
-  const raw = input2;
-  const unknownKey = Object.keys(raw).find((key) => !JOB_SETTING_KEYS.includes(key));
-  if (unknownKey) return `unknown setting: ${unknownKey}`;
-  const settings = {};
-  if (raw.model !== void 0) {
-    if (typeof raw.model !== "string" || !MODEL_NAME_PATTERN.test(raw.model)) return "invalid model";
-    settings.model = raw.model;
-  }
-  if (raw.effort !== void 0) {
-    if (typeof raw.effort !== "string" || !EFFORT_PATTERN.test(raw.effort)) return "invalid effort";
-    settings.effort = raw.effort;
-  }
-  if (raw.access !== void 0) {
-    if (!ACCESS_LEVELS.includes(raw.access)) return "invalid access";
-    settings.access = raw.access;
-  }
-  if (raw.sandbox !== void 0) {
-    if (!CODEX_SANDBOXES.includes(raw.sandbox)) return "invalid sandbox";
-    settings.sandbox = raw.sandbox;
-  }
-  if (raw.permission_mode !== void 0) {
-    if (!CLAUDE_PERMISSION_MODES.includes(raw.permission_mode)) return "invalid permission_mode";
-    settings.permission_mode = raw.permission_mode;
-  }
-  if (raw.auto_approve !== void 0) {
-    if (typeof raw.auto_approve !== "boolean") return "invalid auto_approve";
-    settings.auto_approve = raw.auto_approve;
-  }
-  for (const [key, owner] of Object.entries(PERMISSION_KEY_AGENT)) {
-    if (settings[key] !== void 0 && agent !== owner) return `${key} applies only to ${owner} jobs.`;
-  }
-  if (!Object.keys(settings).length) return "no settings given";
-  return settings;
 }
 
 // src/cli/logo.ts
@@ -44774,14 +46074,14 @@ setInterval(poll, POLL_MS);
 `;
 
 // src/network/firewall.ts
-import { execFile as execFile2, spawn as spawn5 } from "node:child_process";
+import { execFile as execFile2, spawn as spawn6 } from "node:child_process";
 import { promisify } from "node:util";
 var exec2 = promisify(execFile2);
 var COMMAND_TIMEOUT_MS = 1e4;
 var ELEVATION_TIMEOUT_MS = 12e4;
 var runCommand = async (file2, args) => (await exec2(file2, args, { windowsHide: true, timeout: COMMAND_TIMEOUT_MS })).stdout;
 function planFirewall(platform, port, discovery) {
-  if (!Number.isInteger(port) || port < 1 || port > MAX_PORT) throw new Error("expected a TCP port between 1 and 65535");
+  if (!Number.isInteger(port) || port < 1 || port > MAX_PORT2) throw new Error("expected a TCP port between 1 and 65535");
   const ports = [{ protocol: "TCP", port }, ...discovery ? [{ protocol: "UDP", port: DISCOVERY_PORT }] : []];
   if (platform === "win32") return {
     platform,
@@ -44822,17 +46122,17 @@ async function applyWindowsFirewall(plan, confirmed, run = runElevated) {
 function parseNetworkAddress(address) {
   const url2 = new URL(`tls://${address}`);
   const port = Number(url2.port);
-  if (!url2.hostname || !Number.isInteger(port) || port < 1 || port > MAX_PORT || url2.username || url2.password || url2.pathname || url2.search || url2.hash) throw new Error("expected host:port");
+  if (!url2.hostname || !Number.isInteger(port) || port < 1 || port > MAX_PORT2 || url2.username || url2.password || url2.pathname || url2.search || url2.hash) throw new Error("expected host:port");
   return { host: url2.hostname.replace(/^\[|\]$/g, ""), port };
 }
 
 // src/core/transcripts/claude.ts
-import { dirname as dirname6, join as join24 } from "node:path";
+import { dirname as dirname7, join as join28 } from "node:path";
 
 // src/core/transcripts/common.ts
-import { closeSync as closeSync2, fstatSync, openSync as openSync2, readSync, readdirSync as readdirSync6, realpathSync as realpathSync3, statSync as statSync3 } from "node:fs";
+import { closeSync as closeSync3, fstatSync, openSync as openSync3, readSync, readdirSync as readdirSync7, realpathSync as realpathSync4, statSync as statSync5 } from "node:fs";
 import { homedir as homedir6 } from "node:os";
-import { isAbsolute as isAbsolute2, join as join23, relative, resolve as resolve5, sep } from "node:path";
+import { isAbsolute as isAbsolute3, join as join27, relative as relative2, resolve as resolve6, sep } from "node:path";
 var MAX_TRANSCRIPT_CHUNK_BYTES = 512 * 1024;
 var MAX_TOOL_PREVIEW_CHARS = 1200;
 var MAX_TEXT_CHARS = 16e3;
@@ -44846,9 +46146,9 @@ var INITIAL_HEADER_BYTES = 8 * 1024;
 var TRANSCRIPT_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 function transcriptPaths(env = process.env, home = homedir6()) {
   return {
-    claude: resolve5(env.CLAUDE_CONFIG_DIR?.trim() || join23(home, ".claude")),
-    codex: resolve5(env.CODEX_HOME?.trim() || join23(home, ".codex")),
-    opencode: resolve5(join23(env.XDG_DATA_HOME?.trim() || join23(home, ".local", "share"), "opencode"))
+    claude: resolve6(env.CLAUDE_CONFIG_DIR?.trim() || join27(home, ".claude")),
+    codex: resolve6(env.CODEX_HOME?.trim() || join27(home, ".codex")),
+    opencode: resolve6(join27(env.XDG_DATA_HOME?.trim() || join27(home, ".local", "share"), "opencode"))
   };
 }
 function object3(value) {
@@ -44884,22 +46184,22 @@ function contentText(value) {
 }
 function directory(dir) {
   try {
-    return readdirSync6(dir);
+    return readdirSync7(dir);
   } catch {
     return [];
   }
 }
 function fileStat(file2) {
   try {
-    return statSync3(file2);
+    return statSync5(file2);
   } catch {
     return null;
   }
 }
 function safeFile(root, file2) {
   try {
-    const actual = realpathSync3(file2), rel = relative(realpathSync3(root), actual);
-    return rel && rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute2(rel) ? actual : null;
+    const actual = realpathSync4(file2), rel = relative2(realpathSync4(root), actual);
+    return rel && rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute3(rel) ? actual : null;
   } catch {
     return null;
   }
@@ -44910,7 +46210,7 @@ function readJsonl(file2, from = "0", maxBytes = MAX_TRANSCRIPT_CHUNK_BYTES) {
   if (!Number.isSafeInteger(offset)) offset = 0;
   let fd;
   try {
-    fd = openSync2(file2, "r");
+    fd = openSync3(file2, "r");
     const size = fstatSync(fd).size;
     if (offset > size) {
       offset = 0;
@@ -44940,13 +46240,13 @@ function readJsonl(file2, from = "0", maxBytes = MAX_TRANSCRIPT_CHUNK_BYTES) {
   } catch {
     return { entries: [], next: `j:${offset}:${discard ? 1 : 0}` };
   } finally {
-    if (fd !== void 0) closeSync2(fd);
+    if (fd !== void 0) closeSync3(fd);
   }
 }
 function readHead(file2) {
   let fd;
   try {
-    fd = openSync2(file2, "r");
+    fd = openSync3(file2, "r");
     const size = fstatSync(fd).size;
     for (let limit = INITIAL_HEADER_BYTES; limit <= MAX_TRANSCRIPT_CHUNK_BYTES; limit *= 2) {
       const buf = Buffer.alloc(Math.min(size, limit));
@@ -44958,7 +46258,7 @@ function readHead(file2) {
   } catch {
     return {};
   } finally {
-    if (fd !== void 0) closeSync2(fd);
+    if (fd !== void 0) closeSync3(fd);
   }
 }
 function readTail(file2) {
@@ -44980,12 +46280,12 @@ function scanJsonl(file2) {
 // src/core/transcripts/claude.ts
 function claudeSessionFile(session, paths) {
   if (!session.sessionId || !TRANSCRIPT_ID.test(session.sessionId)) return null;
-  const projects = join24(paths.claude, "projects");
+  const projects = join28(paths.claude, "projects");
   const encoded = session.cwd.replace(/[^A-Za-z0-9]/g, "-");
-  const direct = safeFile(projects, join24(projects, encoded, `${session.sessionId}.jsonl`));
+  const direct = safeFile(projects, join28(projects, encoded, `${session.sessionId}.jsonl`));
   if (direct) return direct;
   for (const dir of directory(projects)) {
-    const file2 = safeFile(projects, join24(projects, dir, `${session.sessionId}.jsonl`));
+    const file2 = safeFile(projects, join28(projects, dir, `${session.sessionId}.jsonl`));
     if (file2) return file2;
   }
   return null;
@@ -45011,7 +46311,7 @@ function claudeItems(row) {
 function readClaudeChat(session, paths, from = "0", child) {
   const main = claudeSessionFile(session, paths);
   if (!main || child !== void 0 && !TRANSCRIPT_ID.test(child)) return null;
-  const nested = child ? safeFile(paths.claude, join24(dirname6(main), session.sessionId, "subagents", `agent-${child}.jsonl`)) : null;
+  const nested = child ? safeFile(paths.claude, join28(dirname7(main), session.sessionId, "subagents", `agent-${child}.jsonl`)) : null;
   const legacy = child && !nested ? listClaudeSubagents(session, paths).some((s) => s.id === child) : false;
   if (child && !nested && !legacy) return null;
   const page = readJsonl(nested ?? main, from);
@@ -45021,11 +46321,11 @@ function listClaudeSubagents(session, paths) {
   const main = claudeSessionFile(session, paths);
   if (!main) return [];
   const out = /* @__PURE__ */ new Map();
-  const dir = join24(dirname6(main), session.sessionId, "subagents");
+  const dir = join28(dirname7(main), session.sessionId, "subagents");
   for (const name of directory(dir).slice(0, MAX_NATIVE_SUBAGENTS)) {
     const id = /^agent-([A-Za-z0-9_-]+)\.jsonl$/.exec(name)?.[1];
     if (!id || !TRANSCRIPT_ID.test(id)) continue;
-    const file2 = safeFile(paths.claude, join24(dir, name));
+    const file2 = safeFile(paths.claude, join28(dir, name));
     if (!file2) continue;
     const st = fileStat(file2), head = readHead(file2), tail = readTail(file2);
     const last = [...tail].reverse().find((r) => r.type === "assistant");
@@ -45043,8 +46343,8 @@ function listClaudeSubagents(session, paths) {
 }
 
 // src/core/transcripts/codex.ts
-import { join as join25 } from "node:path";
-import { DatabaseSync as DatabaseSync3 } from "node:sqlite";
+import { join as join29 } from "node:path";
+import { DatabaseSync as DatabaseSync4 } from "node:sqlite";
 var ROLLOUT_NAME = /^rollout-.*-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/i;
 var DISCOVERY_CACHE_MS = 1e4;
 var MAX_INDEX_PATH_CHARS = 4096;
@@ -45052,22 +46352,22 @@ var cache2 = /* @__PURE__ */ new Map();
 function rollout(file2, id, known) {
   const head = known && Object.keys(known).length ? known : object3(readHead(file2).payload);
   const data = head.id === id ? head : object3(readJsonl(file2).entries.find(({ value: r }) => r.type === "session_meta" && object3(r.payload).id === id)?.value.payload);
-  return { file: file2, id, meta: Object.fromEntries(["id", "source", "thread_source", "parent_thread_id", "timestamp", "agent_nickname", "agent_path", "subagent_history_start_ordinal"].filter((key) => data[key] !== void 0).map((key) => [key, data[key]])) };
+  return { file: file2, id, meta: Object.fromEntries(["id", "source", "thread_source", "parent_thread_id", "timestamp", "agent_nickname", "agent_path", "subagent_history_start_ordinal"].filter((key2) => data[key2] !== void 0).map((key2) => [key2, data[key2]])) };
 }
 function indexedRollouts(paths, id, parentId) {
   const name = directory(paths.codex).filter((s) => /^state_\d+\.sqlite$/.test(s)).sort((a, b) => Number(b.match(/\d+/)?.[0]) - Number(a.match(/\d+/)?.[0]))[0];
   if (!name) return null;
-  const file2 = safeFile(paths.codex, join25(paths.codex, name));
+  const file2 = safeFile(paths.codex, join29(paths.codex, name));
   if (!file2) return null;
   let db;
   try {
-    db = new DatabaseSync3(file2, { readOnly: true, timeout: SQLITE_READ_TIMEOUT_MS });
+    db = new DatabaseSync4(file2, { readOnly: true, timeout: SQLITE_READ_TIMEOUT_MS });
     const rows = id ? db.prepare("SELECT id, substr(rollout_path, 1, ?) AS path FROM threads WHERE id = ? LIMIT 1").all(MAX_INDEX_PATH_CHARS, id) : db.prepare(`SELECT id, substr(rollout_path, 1, ?) AS path FROM threads
           WHERE CASE WHEN json_valid(source) THEN json_extract(source, '$.subagent.thread_spawn.parent_thread_id') END = ? LIMIT ?`).all(MAX_INDEX_PATH_CHARS, parentId, MAX_NATIVE_SUBAGENTS);
     const out = [];
     for (const row of rows) {
       if (typeof row.id !== "string" || !TRANSCRIPT_ID.test(row.id) || typeof row.path !== "string") continue;
-      const target = safeFile(join25(paths.codex, "sessions"), row.path);
+      const target = safeFile(join29(paths.codex, "sessions"), row.path);
       if (!target) continue;
       const entry = rollout(target, row.id);
       if (entry.meta.id === row.id && (!parentId || parent(entry.meta) === parentId)) out.push(entry);
@@ -45080,17 +46380,17 @@ function indexedRollouts(paths, id, parentId) {
   }
 }
 function rollouts(paths) {
-  const root = join25(paths.codex, "sessions"), existing = cache2.get(root);
+  const root = join29(paths.codex, "sessions"), existing = cache2.get(root);
   if (existing && Date.now() - existing.at < DISCOVERY_CACHE_MS) return existing.files;
   const files = [];
   const knownFiles = new Map(existing?.files.map((r) => [r.file, r]));
   for (const year of directory(root).filter((s) => /^\d{4}$/.test(s)).sort().reverse()) {
-    for (const month of directory(join25(root, year)).filter((s) => /^\d{2}$/.test(s)).sort().reverse()) {
-      for (const day of directory(join25(root, year, month)).filter((s) => /^\d{2}$/.test(s)).sort().reverse()) {
-        for (const name of directory(join25(root, year, month, day)).sort().reverse()) {
+    for (const month of directory(join29(root, year)).filter((s) => /^\d{2}$/.test(s)).sort().reverse()) {
+      for (const day of directory(join29(root, year, month)).filter((s) => /^\d{2}$/.test(s)).sort().reverse()) {
+        for (const name of directory(join29(root, year, month, day)).sort().reverse()) {
           const id = ROLLOUT_NAME.exec(name)?.[1];
           if (!id) continue;
-          const file2 = safeFile(root, join25(root, year, month, day, name));
+          const file2 = safeFile(root, join29(root, year, month, day, name));
           if (!file2) continue;
           const known = knownFiles.get(file2);
           files.push(rollout(file2, id, known?.meta));
@@ -45147,15 +46447,15 @@ function listCodexSubagents(session, paths) {
 }
 
 // src/core/transcripts/opencode.ts
-import { join as join26 } from "node:path";
-import { DatabaseSync as DatabaseSync4 } from "node:sqlite";
+import { join as join30 } from "node:path";
+import { DatabaseSync as DatabaseSync5 } from "node:sqlite";
 var MAX_SQLITE_PARTS = 200;
 var SQLITE_CURSOR = /^o:(\d+):([A-Za-z0-9_-]*)$/;
 function openDatabase(paths) {
-  const file2 = safeFile(paths.opencode, join26(paths.opencode, "opencode.db"));
+  const file2 = safeFile(paths.opencode, join30(paths.opencode, "opencode.db"));
   if (!file2) return null;
   try {
-    return new DatabaseSync4(file2, { readOnly: true, timeout: SQLITE_READ_TIMEOUT_MS });
+    return new DatabaseSync5(file2, { readOnly: true, timeout: SQLITE_READ_TIMEOUT_MS });
   } catch {
     return null;
   }
@@ -45263,6 +46563,34 @@ var STALE_RUN_MS2 = 15e4;
 var UI_PEER_NAME = "you";
 var ALLOWED_HOSTS = /* @__PURE__ */ new Set([UI_HOST, "localhost"]);
 var RUN_NAME = /^[\w.-]+\.log$/;
+async function finishedRunOutcomes(home, log) {
+  const runs = listRuns(home);
+  const jobs = readStore(join31(home, JOBS_FILE), log);
+  const out = {};
+  for (const run of runs) {
+    if (!run.job || run.status !== "done" && run.status !== "failed") continue;
+    const stored = jobs.find((j) => j.name === run.job);
+    const startedAt = run.jobStartedAt ?? run.startedAt;
+    const latest = stored && (run.jobStartedAt !== void 0 ? stored.startedAt === startedAt : Math.abs(stored.startedAt - startedAt) < 1e3);
+    const job = {
+      id: stored?.id ?? run.job.replace(/^.*-(?:job|ask)-/, ""),
+      name: run.job,
+      owner: latest ? stored.owner : run.by,
+      startedAt: run.jobStartedAt ?? (latest ? stored.startedAt : run.startedAt),
+      status: run.status,
+      worktree: stored?.worktree
+    };
+    const next = runs.filter((r) => r.job === run.job && (r.jobStartedAt ?? r.startedAt) > startedAt).sort((a, b) => (a.jobStartedAt ?? a.startedAt) - (b.jobStartedAt ?? b.startedAt))[0];
+    out[run.name] = await deriveJobOutcome(home, job, log, {
+      branch: run.branch,
+      baseBranch: run.baseBranch,
+      repoRoot: run.repoRoot,
+      branchHead: run.branchHead,
+      before: next?.jobStartedAt ?? next?.startedAt
+    });
+  }
+  return out;
+}
 function summarizeRun(file2, text2, mtimeMs, now, meta3 = {}) {
   const lines = text2.split("\n").filter(Boolean);
   const finished = [...lines].reverse().find((l) => / finished after \d+s · /.test(l));
@@ -45289,9 +46617,9 @@ function summarizeRun(file2, text2, mtimeMs, now, meta3 = {}) {
   };
 }
 function listRuns(home, now = Date.now()) {
-  const dir = join27(home, RUNS_DIR_NAME);
-  if (!existsSync7(dir)) return [];
-  return readdirSync7(dir).filter((f) => RUN_NAME.test(f)).map((f) => ({ f, st: statSync4(join27(dir, f)) })).sort((a, b) => b.st.mtimeMs - a.st.mtimeMs).slice(0, MAX_RUNS).map(({ f, st }) => summarizeRun(f, readFileSync16(join27(dir, f), "utf8"), st.mtimeMs, now, readMeta(join27(dir, runMetaPath(f)))));
+  const dir = join31(home, RUNS_DIR_NAME);
+  if (!existsSync10(dir)) return [];
+  return readdirSync8(dir).filter((f) => RUN_NAME.test(f)).map((f) => ({ f, st: statSync6(join31(dir, f)) })).sort((a, b) => b.st.mtimeMs - a.st.mtimeMs).slice(0, MAX_RUNS).map(({ f, st }) => summarizeRun(f, readFileSync18(join31(dir, f), "utf8"), st.mtimeMs, now, readMeta(join31(dir, runMetaPath(f)))));
 }
 function readMeta(file2) {
   try {
@@ -45304,7 +46632,7 @@ function readStoredJobs(home) {
   const out = /* @__PURE__ */ new Map();
   let stored;
   try {
-    stored = JSON.parse(readFileSync16(join27(home, JOBS_FILE), "utf8"));
+    stored = JSON.parse(readFileSync18(join31(home, JOBS_FILE), "utf8"));
   } catch {
     return out;
   }
@@ -45316,7 +46644,7 @@ function readStoredJobs(home) {
     const saved = args && typeof args === "object" ? args : {};
     out.set(name, {
       owner: typeof owner === "string" && owner ? owner : null,
-      next: Object.fromEntries(JOB_SETTING_KEYS.filter((key) => saved[key] !== void 0).map((key) => [key, saved[key]]))
+      next: Object.fromEntries(JOB_SETTING_KEYS.filter((key2) => saved[key2] !== void 0).map((key2) => [key2, saved[key2]]))
     });
   }
   return out;
@@ -45326,7 +46654,7 @@ function jobOwner(home, job, original) {
 }
 function classifyPeers(peers, runs, home) {
   const norm = (p) => p.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
-  const worktrees = `${norm(join27(home, "worktrees"))}/`;
+  const worktrees = `${norm(join31(home, "worktrees"))}/`;
   return peers.map((p) => {
     const cwd = norm(p.cwd ?? "");
     const subagent = cwd.startsWith(worktrees);
@@ -45335,8 +46663,8 @@ function classifyPeers(peers, runs, home) {
   });
 }
 function recentMessages(dbPath) {
-  if (!existsSync7(dbPath)) return [];
-  const db = new DatabaseSync5(dbPath, { readOnly: true });
+  if (!existsSync10(dbPath)) return [];
+  const db = new DatabaseSync6(dbPath, { readOnly: true });
   try {
     const stmt = db.prepare(
       `SELECT id, from_name, from_agent, to_target, group_concat(recipient, ', ') AS recipients, body, created_at, hop, reply_to
@@ -45488,6 +46816,15 @@ async function startUi(opts) {
       if (outcome === "unavailable") return send(res, 504, { outcome, error: "The approval's owning process is unavailable. Refresh before answering again." });
       return send(res, 200, { outcome, id: approvalMatch[1], answeredBy: "dashboard", decision: body.decision });
     }
+    if (req.method === "GET" && url2.pathname === "/api/job-outcomes") {
+      const jobs = await listJobOutcomes(opts.home, opts.log);
+      const groups = { needsReview: [], held: [], merged: [], discarded: [] };
+      for (const [name, job] of Object.entries(jobs)) {
+        const state = job.outcome.merge.state;
+        groups[state === "unmerged" ? "needsReview" : state].push(name);
+      }
+      return send(res, 200, { contractVersion: JOB_OUTCOME_CONTRACT_VERSION, jobs, runs: await finishedRunOutcomes(opts.home, opts.log), groups });
+    }
     if (req.method === "GET" && url2.pathname === "/api/state") {
       const { brokerPid, peers } = await brokerPeers(opts.pipe, token, opts.log);
       const runs = listRuns(opts.home);
@@ -45583,10 +46920,10 @@ async function startUi(opts) {
     }
     const runMatch = /^\/api\/runs\/([\w.-]+)$/.exec(url2.pathname);
     if (req.method === "GET" && runMatch) {
-      const file2 = join27(opts.home, RUNS_DIR_NAME, `${runMatch[1]}.log`);
-      if (!existsSync7(file2)) return send(res, 404, { error: "no such run" });
+      const file2 = join31(opts.home, RUNS_DIR_NAME, `${runMatch[1]}.log`);
+      if (!existsSync10(file2)) return send(res, 404, { error: "no such run" });
       const from = Math.max(0, Number(url2.searchParams.get("from")) || 0);
-      const buf = readFileSync16(file2);
+      const buf = readFileSync18(file2);
       let end = Math.min(buf.length, from + MAX_LOG_CHUNK);
       while (end < buf.length && end > from && (buf[end] & 192) === 128) end--;
       return send(res, 200, { text: buf.subarray(from, end).toString("utf8"), next: end, size: buf.length });
@@ -45607,9 +46944,9 @@ async function startUi(opts) {
       const run = typeof body.run === "string" ? body.run : "";
       const command = jobCommand(body);
       if (!RUN_NAME.test(`${run}.log`) || !command) return send(res, 400, { error: "a valid run and request are required" });
-      const file2 = join27(opts.home, RUNS_DIR_NAME, `${run}.log`);
-      if (!existsSync7(file2)) return send(res, 404, { error: "no such run" });
-      const meta3 = readMeta(join27(opts.home, RUNS_DIR_NAME, `${run}.json`));
+      const file2 = join31(opts.home, RUNS_DIR_NAME, `${run}.log`);
+      if (!existsSync10(file2)) return send(res, 404, { error: "no such run" });
+      const meta3 = readMeta(join31(opts.home, RUNS_DIR_NAME, `${run}.json`));
       if (!meta3.by || !meta3.job) return send(res, 409, { error: "This run has no owning session or job recorded." });
       try {
         const result = await controlDashboardJob(await getSender(), jobOwner(opts.home, meta3.job, meta3.by), meta3.job, command);
@@ -45648,11 +46985,11 @@ var SECRET_BYTES5 = 24;
 var PROBE_TIMEOUT_MS = 1500;
 var OWNER_ONLY2 = 384;
 function dashboardFile(home) {
-  return join28(home, DASHBOARD_FILE);
+  return join32(home, DASHBOARD_FILE);
 }
 function readDashboardInfo(home) {
   try {
-    const d = JSON.parse(readFileSync17(dashboardFile(home), "utf8"));
+    const d = JSON.parse(readFileSync19(dashboardFile(home), "utf8"));
     return typeof d.url === "string" && typeof d.port === "number" && typeof d.pid === "number" ? d : null;
   } catch {
     return null;
@@ -45691,7 +47028,7 @@ async function hostDashboard(opts) {
   const ui = await startUi({ ...opts, secret });
   const info = { url: ui.url, port: ui.port, pid: process.pid };
   const file2 = dashboardFile(opts.home);
-  writeFileSync8(file2, JSON.stringify(info, null, 2), { mode: OWNER_ONLY2 });
+  writeFileSync9(file2, JSON.stringify(info, null, 2), { mode: OWNER_ONLY2 });
   try {
     chmodSync3(file2, OWNER_ONLY2);
   } catch {
@@ -45706,11 +47043,11 @@ async function hostDashboard(opts) {
 }
 
 // src/cli/open.ts
-import { spawn as spawn6 } from "node:child_process";
+import { spawn as spawn7 } from "node:child_process";
 function openBrowser(url2) {
   const [cmd, args] = process.platform === "win32" ? ["cmd.exe", ["/d", "/c", "start", '""', url2]] : process.platform === "darwin" ? ["open", [url2]] : ["xdg-open", [url2]];
   try {
-    const child = spawn6(cmd, args, { stdio: "ignore", detached: true, windowsHide: true, windowsVerbatimArguments: process.platform === "win32" });
+    const child = spawn7(cmd, args, { stdio: "ignore", detached: true, windowsHide: true, windowsVerbatimArguments: process.platform === "win32" });
     child.on("error", () => {
     });
     child.unref();
@@ -45718,886 +47055,14 @@ function openBrowser(url2) {
   }
 }
 
-// src/mcp/jobs.ts
-import { randomUUID as randomUUID12 } from "node:crypto";
-import { closeSync as closeSync3, mkdirSync as mkdirSync14, openSync as openSync3, rmSync as rmSync6, statSync as statSync6 } from "node:fs";
-import { dirname as dirname7 } from "node:path";
-
-// src/core/notifications.ts
-import { spawn as spawn7 } from "node:child_process";
-import { mkdirSync as mkdirSync13, readFileSync as readFileSync18, rmdirSync, statSync as statSync5, writeFileSync as writeFileSync9 } from "node:fs";
-import { join as join29 } from "node:path";
-var TITLE = "agent-bridge";
-var TEXT = {
-  approvals: "A subagent needs approval. Open the agent-bridge dashboard.",
-  finish: "A subagent finished. Open the agent-bridge dashboard for its report.",
-  fail: "A subagent failed. Open the agent-bridge dashboard for its report."
-};
-var NOTIFICATION_TIMEOUT_MS = 5e3;
-var EVENT_INTERVAL_MS = 5e3;
-var RATE_WINDOW_MS = 6e4;
-var MAX_NOTIFICATIONS_PER_WINDOW = 10;
-var MAX_RATE_HOMES = 100;
-var RATE_STATE_FILE = "notification-rate.json";
-var RATE_LOCK_DIR = "notification-rate.lock";
-var WINDOWS_POWERSHELL_APP_ID = "{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\\WindowsPowerShell\\v1.0\\powershell.exe";
-function notificationCommands(platform, event) {
-  const body = TEXT[event];
-  if (platform === "win32") {
-    const script = [
-      "$ErrorActionPreference = 'Stop'",
-      "[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] > $null",
-      "[Windows.UI.Notifications.ToastNotification, Windows.UI.Notifications, ContentType = WindowsRuntime] > $null",
-      "[Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime] > $null",
-      "$xml = New-Object Windows.Data.Xml.Dom.XmlDocument",
-      `$xml.LoadXml('<toast><visual><binding template="ToastGeneric"><text>${TITLE}</text><text>${body}</text></binding></visual></toast>')`,
-      "$toast = [Windows.UI.Notifications.ToastNotification]::new($xml)",
-      `[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('${WINDOWS_POWERSHELL_APP_ID}').Show($toast)`
-    ].join("; ");
-    return [{ bin: "powershell.exe", args: ["-NoLogo", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")] }];
-  }
-  if (platform === "darwin") return [
-    { bin: "terminal-notifier", args: ["-title", TITLE, "-message", body] },
-    { bin: "osascript", args: ["-e", `display notification "${body}" with title "${TITLE}"`] }
-  ];
-  if (platform === "linux") return [{ bin: "notify-send", args: ["--app-name", TITLE, "--", TITLE, body] }];
-  return [];
-}
-var NotificationLimiter = class {
-  homes = /* @__PURE__ */ new Map();
-  take(home, event, now = Date.now()) {
-    let state = this.homes.get(home);
-    if (!state) {
-      if (this.homes.size >= MAX_RATE_HOMES) this.homes.delete(this.homes.keys().next().value);
-      state = { times: [], events: {} };
-      this.homes.set(home, state);
-    }
-    state.times = state.times.filter((at) => now - at < RATE_WINDOW_MS);
-    const last = state.events[event];
-    if (last !== void 0 && now - last < EVENT_INTERVAL_MS || state.times.length >= MAX_NOTIFICATIONS_PER_WINDOW) return false;
-    state.times.push(now);
-    state.events[event] = now;
-    return true;
-  }
-};
-var limiter = new NotificationLimiter();
-function takeNotificationSlot(home, event, now = Date.now()) {
-  const lock = join29(home, RATE_LOCK_DIR);
-  try {
-    try {
-      mkdirSync13(lock);
-    } catch {
-      if (now - statSync5(lock).mtimeMs < NOTIFICATION_TIMEOUT_MS) return false;
-      rmdirSync(lock);
-      mkdirSync13(lock);
-    }
-  } catch {
-    return false;
-  }
-  try {
-    const file2 = join29(home, RATE_STATE_FILE);
-    let state = { times: [], events: {} };
-    try {
-      const stored = JSON.parse(readFileSync18(file2, "utf8"));
-      if (Array.isArray(stored.times) && stored.times.every((at) => typeof at === "number") && stored.events && typeof stored.events === "object") state = stored;
-    } catch {
-    }
-    state.times = state.times.filter((at) => now - at < RATE_WINDOW_MS);
-    const last = state.events[event];
-    if (typeof last === "number" && now - last < EVENT_INTERVAL_MS || state.times.length >= MAX_NOTIFICATIONS_PER_WINDOW) return false;
-    state.times.push(now);
-    state.events[event] = now;
-    writeFileSync9(file2, JSON.stringify(state), { mode: 384 });
-    return true;
-  } catch {
-    return false;
-  } finally {
-    try {
-      rmdirSync(lock);
-    } catch {
-    }
-  }
-}
-function launch(commands, log) {
-  const command = commands[0];
-  if (!command) return;
-  try {
-    const child = spawn7(command.bin, command.args, { stdio: "ignore", windowsHide: true, detached: true });
-    const timer = setTimeout(() => child.kill(), NOTIFICATION_TIMEOUT_MS);
-    timer.unref();
-    child.once("exit", () => clearTimeout(timer));
-    child.once("error", (err) => {
-      clearTimeout(timer);
-      if (err.code === "ENOENT" && commands.length > 1) launch(commands.slice(1), log);
-      else log.debug("desktop notification unavailable");
-    });
-    child.unref();
-  } catch {
-    log.debug("desktop notification unavailable");
-  }
-}
-function notifyJobEvent(home, event, log) {
-  const task = setImmediate(() => {
-    try {
-      if (!loadConfig(home, "other", log).notifications[event] || !limiter.take(home, event) || !takeNotificationSlot(home, event)) return;
-      launch(notificationCommands(process.platform, event), log);
-    } catch {
-      log.debug("desktop notification unavailable");
-    }
-  });
-  task.unref();
-}
-
-// src/mcp/jobs.ts
-var JOB_ID_LENGTH = 8;
-var PROMPT_PREVIEW_CHARS = 120;
-var HISTORY_LIMIT = 50;
-var STORE_LIMIT = 200;
-var MAX_NOTES = 500;
-var INTERRUPTED_LISTED_MS = 24 * 60 * 60 * 1e3;
-var NOTE_CONVERSATION_SUFFIX = ":note";
-var DEFAULT_FOLLOW_UP = "Continue where you stopped and finish the task. Then give your final answer.";
-var HOST_POLL_MS = 2e3;
-var CANCEL_GRACE_MS = 5e3;
-var QUEUED_FOLLOW_UP_NOTE = "(Your queued follow-up was sent to it; its answer will arrive as another message.)";
-function jobReport(job, status, seconds, text2, cause) {
-  const how = job.sessionId ? status === "failed" ? ` To recover it with its context, call message_subagent(job="${job.name}") (optionally with a message).` : ` Continue it with its context: message_subagent(job="${job.name}", message=...).` : "";
-  const header = `Subagent ${job.name} (${job.agent}${job.model ? `, model ${job.model}` : ""}) ${status} after ${seconds}s.${how}`;
-  return [header, cause ? `Cause: ${cause}` : "", text2 && cause ? `Its last message:
-${text2}` : text2].filter(Boolean).join("\n\n");
-}
-var approvalAnswers = /* @__PURE__ */ new WeakMap();
-function denyPendingApprovals(job, reason = "job finished") {
-  for (const answer of [...approvalAnswers.get(job) ?? []]) answer(reason, "job completion");
-}
-function waitForApproval(job, question, timeoutMs, post, log, home, request2, askUser) {
-  return new Promise((resolve10) => {
-    let settled = false;
-    let cleanup;
-    const askedAt = Date.now();
-    const settle2 = (answer, by = "session") => {
-      if (settled) return false;
-      if (Date.now() >= askedAt + timeoutMs) {
-        answer = "no answer in time";
-        by = "timeout";
-      }
-      settled = true;
-      clearTimeout(timer);
-      job.controller.signal.removeEventListener("abort", aborted2);
-      const answers2 = approvalAnswers.get(job);
-      answers2?.delete(settle2);
-      job.pendingApproval = answers2?.values().next().value ?? null;
-      if (!answers2?.size) approvalAnswers.delete(job);
-      try {
-        cleanup?.();
-      } catch {
-        log.warn("could not remove pending approval", { job: job.name });
-      }
-      const allow = /^\s*(allow|yes|y|approve|approved|ok|okay|go ahead|accept)\b/i.test(answer);
-      try {
-        post(`Approval for ${job.name} ${allow ? "allowed" : "denied"} by ${by}.`);
-      } catch {
-        log.warn("could not report approval answer", { job: job.name });
-      }
-      resolve10({ allow, reason: answer.trim() });
-      return true;
-    };
-    const timer = setTimeout(() => settle2("no answer in time", "timeout"), timeoutMs);
-    timer.unref?.();
-    const aborted2 = () => settle2("job cancelled", "cancellation");
-    job.controller.signal.addEventListener("abort", aborted2, { once: true });
-    let answers = approvalAnswers.get(job);
-    if (!answers) {
-      answers = /* @__PURE__ */ new Set();
-      approvalAnswers.set(job, answers);
-    }
-    answers.add(settle2);
-    job.pendingApproval = answers.values().next().value;
-    if (job.controller.signal.aborted) {
-      aborted2();
-      return;
-    }
-    if (home) {
-      void publishApproval(home, {
-        id: newApprovalId(),
-        owner: job.owner ?? "",
-        job: job.name,
-        agent: job.agent,
-        tool: request2?.tool ?? "approval",
-        command: request2?.detail ?? question,
-        reason: request2?.reason ?? question,
-        askedAt,
-        deadline: askedAt + timeoutMs
-      }, settle2).then((close) => {
-        if (settled) close();
-        else {
-          cleanup = close;
-          notifyJobEvent(home, "approvals", log);
-        }
-      }).catch(() => log.warn("could not publish pending approval", { job: job.name }));
-    }
-    log.info("subagent asks for approval", { job: job.name });
-    post(
-      `Subagent ${job.name} asks for approval: ${question}
-
-Decide as its supervisor: answer with message_subagent(job="${job.name}", message="allow") or message="deny" (a reason may follow). It waits for your answer; no answer within ${Math.round(timeoutMs / 6e4)} minutes counts as deny.`
-    );
-    if (askUser) {
-      void Promise.resolve().then(askUser).then(
-        (decision) => settle2(decision.allow ? "allow" : `deny: ${decision.message}`, "user in session"),
-        () => settle2("deny: The permission dialog failed.", "user in session")
-      );
-    }
-  });
-}
-var JobManager = class {
-  constructor(node2, log, storePath = null, maxJobs = DEFAULT_MAX_JOBS) {
-    this.node = node2;
-    this.log = log;
-    this.storePath = storePath;
-    this.maxJobs = maxJobs;
-    node2.on("message", (m) => {
-      if (!m.from.id.startsWith("job:")) return;
-      const job = this.running.get(m.from.id.slice("job:".length));
-      if (job?.host) this.checkHosted(job);
-    });
-    node2.on("connected", () => {
-      for (const job of this.running.values()) if (job.host) this.runners?.send(job, { type: "attach" });
-    });
-  }
-  node;
-  log;
-  storePath;
-  maxJobs;
-  running = /* @__PURE__ */ new Map();
-  foreground = /* @__PURE__ */ new Map();
-  history = /* @__PURE__ */ new Map();
-  /** Finished jobs whose continuation waits for a free slot, in arrival order; the messages are in job.queue. */
-  waitingJobs = /* @__PURE__ */ new Map();
-  /** Ids of status notes from running subagents (see fromSubagent). */
-  notes = /* @__PURE__ */ new Set();
-  /** Jobs this manager started, continued or took over: only these are saved (others' entries stay as they are on disk). */
-  own = /* @__PURE__ */ new Set();
-  /** Background jobs run in detached job runners where it can (they survive a restart of this server); null: all here. */
-  runners = null;
-  hostTimer = null;
-  get limit() {
-    return this.maxJobs;
-  }
-  /** Change the limit now. A higher one starts waiting continuations; a lower one stops no running subagent. */
-  setLimit(max) {
-    this.maxJobs = max;
-    this.log.info("subagent limit changed", { max });
-    this.startWaiting();
-  }
-  /**
-   * A newer server of this session took over (the bridge replaced this one): stay out of the job store and the
-   * runners, so two servers never settle or save the same jobs. Ends when this server takes its place back.
-   */
-  dormant = false;
-  setDormant(dormant) {
-    if (this.dormant === dormant) return;
-    this.dormant = dormant;
-    this.log.info(dormant ? "another server of this session took over: jobs paused here" : "this server took its place back: jobs resumed");
-    if (dormant && this.hostTimer) {
-      clearInterval(this.hostTimer);
-      this.hostTimer = null;
-    }
-    if (!dormant && [...this.running.values()].some((j) => j.host)) this.watchHosted();
-  }
-  /** Save this session's jobs, merged with those other sessions saved. Best effort: never breaks a run. */
-  persist() {
-    if (!this.storePath || this.dormant) return;
-    let lock = () => {
-    };
-    try {
-      lock = acquireLock(`${this.storePath}.lock`);
-      const previous = readJobsDocument(this.storePath, this.log);
-      assertWritableStore(previous);
-      const entries = Array.isArray(previous) ? previous : isRecord(previous) ? previous.jobs : [];
-      const mine = [...this.history.values()].filter((j) => this.own.has(j.id)).map((j) => {
-        const old = entries.find((entry) => isRecord(entry) && entry.id === j.id);
-        return mergeStoreFields(isRecord(old) ? old : {}, toStored(j));
-      });
-      const ids = new Set(mine.map((j) => j.id));
-      const others = entries.filter((j) => !isRecord(j) || !ids.has(j.id));
-      const all = [...others, ...mine].sort((a, b) => {
-        const started = (entry) => isRecord(entry) && typeof entry.startedAt === "number" ? entry.startedAt : 0;
-        return started(a) - started(b);
-      });
-      const finished = all.filter((j) => isStoredJob(j) && (j.status === "done" || j.status === "failed")).sort((a, b) => a.startedAt - b.startedAt);
-      const limit = retentionLimit("AGENT_BRIDGE_JOB_STORE_LIMIT", STORE_LIMIT);
-      const overflow = new Set(limit ? finished.slice(0, Math.max(0, finished.length - limit)) : []);
-      if (overflow.size) {
-        const archive = `${this.storePath}.overflow.json`;
-        writeJsonStore(archive, { jobs: [...overflow] }, null);
-        archiveFile(archive);
-        this.log.info("archived finished jobs", { count: overflow.size });
-      }
-      writeJsonStore(this.storePath, { ...isRecord(previous) ? previous : {}, jobs: all.filter((j) => !overflow.has(j)) }, previous);
-    } catch (err) {
-      this.log.warn("could not save subagent jobs", { err: err.message });
-    } finally {
-      lock();
-    }
-  }
-  /**
-   * Load the jobs saved before this session (re)started, so message_subagent can continue them with their
-   * context. Jobs that were still running are marked interrupted: a follow-up without a message recovers them.
-   * A job of this session whose job runner is still at work (it outlived the old server) is running: this
-   * manager takes it over. Another session's runner-hosted job keeps its status for that session to take over.
-   */
-  restore(makeResume) {
-    if (!this.storePath) return;
-    const stored = readStore(this.storePath, this.log);
-    const adopted = [];
-    const recentIds = new Set(stored.slice(-HISTORY_LIMIT).map((s) => s.id));
-    for (const s of stored.filter((x) => recentIds.has(x.id) || x.status === "running")) {
-      if (this.history.has(s.id)) continue;
-      const hosted = s.status === "running" && Boolean(s.host);
-      const mine = this.isMine(s.owner);
-      const job = {
-        ...s,
-        status: s.status === "running" && !(hosted && !mine) ? "interrupted" : s.status,
-        controller: new AbortController(),
-        progress: null,
-        queue: [],
-        resume: makeResume(s.agent, s.args ?? {})
-      };
-      this.history.set(s.id, job);
-      if (hosted && mine && this.takeOver(job)) adopted.push(job);
-    }
-    if (stored.length) this.log.info("restored subagent jobs", { count: Math.min(stored.length, HISTORY_LIMIT), runnerHosted: adopted.length });
-    this.assignLegacySupervisors();
-    this.settleAdopted(adopted);
-    this.persist();
-  }
-  /** Whether a runner-hosted job can be taken over here (its runner lives, or finished and left its report). */
-  takeOver(job) {
-    if (!this.runners) return false;
-    const state = this.runners.state(job);
-    if (state) Object.assign(job, { sessionId: state.sessionId ?? job.sessionId, workdir: state.workdir ?? job.workdir, worktree: state.worktree ?? job.worktree });
-    if (this.runners.alive(job, state) || state && state.status !== "running") return true;
-    job.status = "interrupted";
-    if (state?.sessionId) this.own.add(job.id);
-    return false;
-  }
-  settleAdopted(adopted) {
-    for (const job of adopted) {
-      job.status = "running";
-      job.owner = this.node.name;
-      this.running.set(job.id, job);
-      this.own.add(job.id);
-      this.checkHosted(job);
-    }
-    if (adopted.length) {
-      this.watchHosted();
-      this.persist();
-    }
-  }
-  /** Record facts learned while it runs (its session, its folder), so a restart can continue it. */
-  note(job, facts) {
-    if (facts.sessionId) job.sessionId = facts.sessionId;
-    if (facts.workdir) job.workdir = facts.workdir;
-    if (facts.worktree) job.worktree = facts.worktree;
-    this.persist();
-  }
-  runningCount() {
-    return this.running.size;
-  }
-  /** Background jobs plus blocking ask_* runs, so the session (and its coordinator) can see all of them. */
-  list() {
-    for (const job of [...this.running.values()]) if (job.host) this.checkHosted(job);
-    return [...this.running.values(), ...this.foreground.values()];
-  }
-  /** Continuations waiting for a free slot, first in line first. */
-  waiting() {
-    return [...this.waitingJobs.values()];
-  }
-  /** Recently finished subagents, newest first (they can still be messaged). */
-  /**
-   * Whether a job belongs to this session. A session briefly runs under a "-N" stand-in of its name when a
-   * reload starts its new server while the old one is still connected; jobs started then are its too.
-   */
-  isMine(owner) {
-    return !owner || owner === this.node.name || this.adoptedOwners.has(owner);
-  }
-  /** "-N" stand-in names of this session whose jobs it adopted (see adoptStandIns). */
-  adoptedOwners = /* @__PURE__ */ new Set();
-  /** Whether `owner` is a "-N" stand-in of this session's name ("claude-x-2" for "claude-x"). */
-  isStandIn(owner) {
-    const base = this.node.name.replace(/-\d+$/, "");
-    return owner !== this.node.name && (owner === base || owner.startsWith(`${base}-`) && /^\d+$/.test(owner.slice(base.length + 1)));
-  }
-  /**
-   * A reload can run a session briefly under a "-N" stand-in name; jobs started then carry it. Once on the
-   * bridge, adopt those whose stand-in name no live peer holds (a live "-2" is another session of the folder).
-   */
-  adoptStandIns(online) {
-    if (this.dormant) return [];
-    const owners = new Set([...this.history.values()].map((j) => j.owner).filter((o) => Boolean(o) && this.isStandIn(o) && !online.has(o)));
-    if (!owners.size) return [];
-    for (const o of owners) this.adoptedOwners.add(o);
-    this.assignLegacySupervisors();
-    const taken = [];
-    for (const job of this.history.values()) {
-      if (!job.owner || !owners.has(job.owner)) continue;
-      if (job.status === "running" && job.host && !this.running.has(job.id) && this.takeOver(job)) taken.push(job);
-      else if (job.status === "running" && !this.running.has(job.id)) job.status = "interrupted";
-    }
-    this.log.info("adopted jobs started under a stand-in name of this session", { owners: [...owners], runnerHosted: taken.length });
-    this.settleAdopted(taken);
-    this.persist();
-    return [...owners];
-  }
-  /** Finished jobs of this session: every interrupted one (they need recovering), then the newest others. */
-  recent(limit = 5) {
-    const mine = [...this.history.values()].filter((j) => j.status !== "running" && !this.waitingJobs.has(j.id) && this.isMine(j.owner)).sort((a, b) => (b.finishedAt ?? b.startedAt) - (a.finishedAt ?? a.startedAt));
-    const interrupted = mine.filter((j) => j.status === "interrupted" && Date.now() - (j.finishedAt ?? j.startedAt) < INTERRUPTED_LISTED_MS);
-    return [...interrupted, ...mine.filter((j) => !interrupted.includes(j)).slice(0, limit)];
-  }
-  find(ref) {
-    const id = ref.replace(/^.*-(?:job|ask)-/, "");
-    return this.history.get(id) ?? [...this.history.values()].find((j) => j.name === ref);
-  }
-  remember(job) {
-    this.history.set(job.id, job);
-    this.own.add(job.id);
-    while (this.history.size > HISTORY_LIMIT) this.history.delete(this.history.keys().next().value);
-    this.persist();
-  }
-  newJob(agent, model, prompt, kind, resume, args) {
-    const id = randomUUID12().replace(/-/g, "").slice(0, JOB_ID_LENGTH);
-    return {
-      id,
-      name: `${agent}-${kind}-${id}`,
-      agent,
-      model,
-      prompt,
-      startedAt: Date.now(),
-      controller: new AbortController(),
-      progress: null,
-      status: "running",
-      sessionId: null,
-      workdir: null,
-      worktree: null,
-      resume,
-      queue: [],
-      args,
-      owner: this.node.name,
-      // Keep the first job's identity when hooks learn the session id later, or a server reload adopts it.
-      supervisor: this.supervisorIdentity()
-    };
-  }
-  supervisorIdentity() {
-    return [...this.running.values(), ...this.foreground.values(), ...this.history.values()].find((j) => this.isMine(j.owner) && j.supervisor)?.supervisor ?? this.node.currentSessionId ?? this.node.id;
-  }
-  assignLegacySupervisors() {
-    const supervisor = this.supervisorIdentity();
-    for (const job of this.history.values()) {
-      if (!job.supervisor && this.isMine(job.owner)) {
-        job.supervisor = supervisor;
-        this.own.add(job.id);
-      }
-    }
-  }
-  /**
-   * Register a blocking ask_* run for visibility in peers. Returns a progress sink and `end`, which records
-   * the outcome so the run can be continued later with message_subagent.
-   */
-  track(agent, model, prompt, resume, args) {
-    const job = { ...this.newJob(agent, model, prompt, "ask", resume, args), foreground: true };
-    this.foreground.set(job.id, job);
-    this.remember(job);
-    return {
-      job,
-      onProgress: (message) => {
-        job.progress = message;
-      },
-      end: (outcome) => {
-        denyPendingApprovals(job);
-        this.foreground.delete(job.id);
-        job.foreground = false;
-        job.finishedAt = Date.now();
-        job.status = outcome?.result && !outcome.result.isError ? "done" : "failed";
-        if (this.storePath) notifyJobEvent(dirname7(this.storePath), job.status === "done" ? "finish" : "fail", this.log);
-        job.sessionId = outcome?.result?.sessionId ?? sessionOfError(outcome?.error) ?? job.sessionId;
-        job.workdir = outcome?.result?.workdir ?? job.workdir;
-        job.worktree = outcome?.result?.worktree ?? job.worktree;
-        this.persist();
-        if (job.queue.length && job.resume && job.sessionId && !job.controller.signal.aborted) {
-          if (this.canStart()) this.launch(job, job.resume(job.queue.splice(0).join("\n\n"), job.sessionId, job.workdir, job.worktree));
-          else this.waitForSlot(job);
-        }
-      }
-    };
-  }
-  canStart() {
-    return this.running.size < this.maxJobs;
-  }
-  start(agent, model, prompt, run, resume, args) {
-    const job = this.newJob(agent, model, prompt, "job", resume, args);
-    this.remember(job);
-    this.log.info("subagent started", { job: job.name, model, prompt: prompt.slice(0, PROMPT_PREVIEW_CHARS) });
-    this.launch(job, run);
-    return job;
-  }
-  /** Save next-turn settings and send them to a runner that continues the job itself. */
-  setSettings(ref, settings) {
-    const job = this.find(ref);
-    if (!job) return false;
-    job.args = changedJobArgs(job.args, settings);
-    if (settings.model !== void 0 && job.status !== "running") job.model = settings.model;
-    if (this.hostedRunning(job)) this.runners.send(job, { type: "settings", settings });
-    this.own.add(job.id);
-    this.persist();
-    return true;
-  }
-  /** Change a job's thinking level for its next turns (a turn already running keeps its own). */
-  setEffort(ref, effort) {
-    const job = this.find(ref);
-    if (!job) return false;
-    job.args = { ...job.args, effort };
-    if (this.hostedRunning(job)) this.runners.send(job, { type: "effort", effort });
-    this.own.add(job.id);
-    this.persist();
-    return true;
-  }
-  /** Name or rename a job; its next turn (and the dashboard) uses the title. */
-  setTitle(ref, title) {
-    const job = this.find(ref);
-    if (!job) return false;
-    job.args = { ...job.args, title };
-    job.retitle?.(title);
-    if (this.hostedRunning(job)) this.runners.send(job, { type: "title", title });
-    this.own.add(job.id);
-    this.persist();
-    return true;
-  }
-  /**
-   * Send a follow-up to a subagent: queued while it runs, otherwise its session is resumed in the background,
-   * as soon as a slot is free.
-   */
-  followUp(ref, message) {
-    const job = this.find(ref);
-    if (!job) return { outcome: "unknown" };
-    if (this.hostedRunning(job)) this.checkHosted(job);
-    if (this.waitingJobs.has(job.id)) {
-      job.queue.push(message);
-      return { outcome: "waiting", job };
-    }
-    if (this.hostedRunning(job)) {
-      const state = this.runners.state(job);
-      const cid = randomUUID12();
-      (job.forwarded ??= []).push({ cid, body: message });
-      this.runners.send(job, { type: "message", body: message, cid });
-      return { outcome: state?.asking ? "answered" : state?.live ? "delivered" : "queued", job };
-    }
-    if (job.status === "running" && job.pendingApproval) {
-      const answer = job.pendingApproval;
-      job.pendingApproval = null;
-      answer(message, `session ${this.node.name}`);
-      return { outcome: "answered", job };
-    }
-    if (job.status === "running") {
-      if (job.live) {
-        job.awaitingAnswer = true;
-        job.live.post(message);
-        return { outcome: "delivered", job };
-      }
-      job.queue.push(message);
-      return { outcome: "queued", job };
-    }
-    if (!job.resume || !job.sessionId) return { outcome: "no-session", job };
-    if (!this.canStart()) {
-      job.queue.push(message);
-      this.waitForSlot(job);
-      return { outcome: "waiting", job };
-    }
-    this.log.info("subagent resumed", { job: job.name, sessionId: job.sessionId });
-    this.launch(job, job.resume(message, job.sessionId, job.workdir, job.worktree));
-    return { outcome: "started", job };
-  }
-  /** Continue this finished job (its queued messages) once a slot frees up. */
-  waitForSlot(job) {
-    this.waitingJobs.set(job.id, job);
-    this.log.info("subagent continuation waits for a free slot", { job: job.name, running: this.running.size, position: this.waitingJobs.size });
-  }
-  /** Start waiting continuations while there are free slots, oldest first. */
-  startWaiting() {
-    for (const job of this.waitingJobs.values()) {
-      if (!this.canStart()) return;
-      this.waitingJobs.delete(job.id);
-      if (!job.queue.length || !job.resume || !job.sessionId) continue;
-      this.log.info("subagent resumed (was waiting for a slot)", { job: job.name, sessionId: job.sessionId });
-      this.launch(job, job.resume(job.queue.splice(0).join("\n\n"), job.sessionId, job.workdir, job.worktree));
-    }
-  }
-  launch(job, run) {
-    if (typeof job.args?.model === "string") job.model = job.args.model;
-    job.status = "running";
-    job.startedAt = Date.now();
-    job.controller = new AbortController();
-    job.progress = null;
-    job.foreground = false;
-    this.running.set(job.id, job);
-    this.own.add(job.id);
-    job.host = this.runners ? run.hosted?.(job) ?? null : null;
-    job.forwarded = [];
-    this.persist();
-    if (job.host) {
-      this.log.info("subagent runs in a job runner", { job: job.name, peer: job.host.peer });
-      this.watchHosted();
-      return;
-    }
-    const onProgress = (message) => {
-      job.progress = message;
-      this.log.debug("subagent progress", { job: job.name, message });
-    };
-    run(job.controller.signal, onProgress, job).then(
-      (res) => {
-        job.workdir = res.workdir ?? job.workdir;
-        job.worktree = res.worktree ?? job.worktree;
-        this.finish(job, res.isError ? "failed" : "done", res.text || "(no answer text returned)", res.sessionId, res.isError ? failureCause({ result: res }) : null);
-      },
-      // The cause is the whole report here: the error says what happened (and, for a worktree, where the work is).
-      (err) => this.finish(job, "failed", "", sessionOfError(err), failureCause({ error: err }))
-    );
-  }
-  /** A running job of this manager that a job runner hosts. */
-  hostedRunning(job) {
-    return job.status === "running" && Boolean(job.host) && Boolean(this.runners) && this.running.get(job.id) === job;
-  }
-  /** Check runner-hosted jobs while any runs. */
-  watchHosted() {
-    if (this.hostTimer || this.dormant) return;
-    this.hostTimer = setInterval(() => {
-      const hosted = [...this.running.values()].filter((j) => j.host);
-      if (!hosted.length && this.hostTimer) {
-        clearInterval(this.hostTimer);
-        this.hostTimer = null;
-      }
-      for (const job of hosted) this.checkHosted(job);
-    }, HOST_POLL_MS);
-    this.hostTimer.unref();
-  }
-  /**
-   * Take what a job's runner reports: its progress and facts, and its end. The runner delivers the report
-   * itself (a message on the bridge, so it waits for the session even while no server of it runs); this
-   * session only posts it when the runner could not, or says why a runner ended without one.
-   */
-  checkHosted(job) {
-    if (!this.hostedRunning(job)) return;
-    const runners = this.runners;
-    const state = runners.state(job);
-    if (state) {
-      job.host.pid = state.pid;
-      if (state.model !== void 0) job.model = state.model;
-      job.progress = state.progress ?? job.progress;
-      if (state.percent !== void 0) {
-        job.percent = state.percent;
-        job.progressNote = state.progressNote;
-      }
-      if (state.sessionId && state.sessionId !== job.sessionId || state.workdir && state.workdir !== job.workdir || state.worktree && !job.worktree) {
-        this.note(job, { sessionId: state.sessionId, workdir: state.workdir, worktree: state.worktree });
-      }
-    }
-    const alive2 = runners.alive(job, state);
-    if (state && state.status !== "running") {
-      if (state.delivered || !alive2) this.settleHosted(job, state);
-    } else if (!alive2) this.settleHosted(job, null);
-  }
-  /** A runner-hosted job ended: with its runner's final state, or without (the runner is gone). */
-  settleHosted(job, final) {
-    const seen = new Set(final?.seen ?? this.runners?.state(job)?.seen ?? []);
-    job.queue.push(...(job.forwarded ?? []).filter((f) => !seen.has(f.cid)).map((f) => f.body));
-    job.forwarded = [];
-    const pid = job.host?.pid;
-    job.host = null;
-    if (final) {
-      this.finish(job, final.status === "done" ? "done" : "failed", "", final.sessionId ?? null, null, final.delivered ? null : final.report);
-      return;
-    }
-    const cause = job.controller.signal.aborted ? "cancelled" : `its job runner${pid ? ` (process ${pid})` : ""} ended without reporting a result`;
-    this.finish(job, "failed", "", job.sessionId, cause);
-  }
-  /** Cancel a background job, a blocking ask_* run or a continuation waiting for a slot, by name or id. */
-  cancel(ref) {
-    const id = ref.replace(/^.*-(?:job|ask)-/, "");
-    const waiting = [...this.waitingJobs.values()].find((j) => j.id === id || j.name === ref);
-    if (waiting) {
-      this.waitingJobs.delete(waiting.id);
-      waiting.queue = [];
-      this.log.info("waiting subagent continuation cancelled", { job: waiting.name });
-      return true;
-    }
-    const job = [...this.running.values(), ...this.foreground.values()].find((j) => j.id === id || j.name === ref);
-    if (!job) return false;
-    job.queue = [];
-    job.controller.abort();
-    if (this.hostedRunning(job)) {
-      job.forwarded = [];
-      const runners = this.runners;
-      runners.send(job, { type: "cancel" });
-      setTimeout(() => {
-        if (!this.hostedRunning(job)) return;
-        if (runners.alive(job, runners.state(job))) {
-          this.log.warn("job runner did not stop in time; killing it", { job: job.name, pid: job.host?.pid });
-          runners.kill(job);
-        }
-        this.checkHosted(job);
-      }, CANCEL_GRACE_MS).unref();
-    }
-    return true;
-  }
-  /**
-   * Stop every subagent of this process (the server shuts down). Runner-hosted ones keep running: the next
-   * server of this session takes them over, and their results wait for it on the bridge.
-   */
-  cancelAll() {
-    for (const j of this.waitingJobs.values()) j.queue = [];
-    this.waitingJobs.clear();
-    for (const j of this.running.values()) if (!j.host) j.controller.abort();
-    for (const j of this.foreground.values()) denyPendingApprovals(j, "session closed");
-    if (this.hostTimer) clearInterval(this.hostTimer);
-    this.hostTimer = null;
-  }
-  /** `report`: null when the runner already delivered it, a text to post as it is, or undefined to compose it here. */
-  finish(job, status, text2, sessionId, cause = null, report) {
-    denyPendingApprovals(job);
-    this.running.delete(job.id);
-    job.status = status;
-    job.finishedAt = Date.now();
-    job.sessionId = sessionId ?? job.sessionId;
-    this.persist();
-    const seconds = Math.round((Date.now() - job.startedAt) / 1e3);
-    this.log.info("subagent finished", { job: job.name, status, seconds, sessionId: job.sessionId, cause });
-    if (this.storePath && !job.host) notifyJobEvent(dirname7(this.storePath), status === "done" ? "finish" : "fail", this.log);
-    const message = report === void 0 ? jobReport(job, status, seconds, text2, cause) : report;
-    if (job.queue.length && job.resume && job.sessionId && !job.controller.signal.aborted) {
-      const queued = job.queue.splice(0).join("\n\n");
-      if (message !== null) this.post(job, `${message}
-
-${QUEUED_FOLLOW_UP_NOTE}`);
-      this.launch(job, job.resume(queued, job.sessionId, job.workdir, job.worktree));
-      return;
-    }
-    if (message !== null) this.post(job, message);
-    this.startWaiting();
-  }
-  /**
-   * Ask this session's agent to approve something the running subagent wants to do (an MCP tool call, for
-   * example). The question arrives as a message from the job; the agent answers with message_subagent.
-   * No answer within the time limit counts as "deny".
-   */
-  askParent(job, question, timeoutMs, request2) {
-    return waitForApproval(job, question, timeoutMs, (body) => this.post(job, body), this.log, this.storePath ? dirname7(this.storePath) : void 0, request2);
-  }
-  /**
-   * A message the running subagent sent to this session. An answer (to a live message, or marked as a reply)
-   * wakes the session; a note it sends on its own ("tests pass, merging next") does not: it waits for the
-   * session's next prompt or tool call, so status chatter costs no extra turn.
-   */
-  fromSubagent(job, body, replyTo, isAnswer = false) {
-    const answer = isAnswer || replyTo !== null || job.awaitingAnswer === true;
-    job.awaitingAnswer = false;
-    this.log.info("message from subagent", { job: job.name, note: !answer });
-    const id = this.post(job, body, replyTo);
-    if (!answer) {
-      this.notes.add(id);
-      if (this.notes.size > MAX_NOTES) this.notes.delete(this.notes.values().next().value);
-    }
-  }
-  /** Whether a message is a running subagent's own status note (it should not wake the session). */
-  isNote(m) {
-    return this.notes.has(m.id) || m.conversationId.endsWith(NOTE_CONVERSATION_SUFFIX);
-  }
-  post(job, body, replyTo = null) {
-    const m = {
-      id: randomUUID12(),
-      from: { id: `job:${job.id}`, name: job.name, agent: job.agent },
-      to: this.node.name,
-      recipient: this.node.name,
-      conversationId: `job-${job.id}`,
-      replyTo,
-      hop: 0,
-      body,
-      createdAt: Date.now(),
-      readAt: null
-    };
-    this.node.deliverLocal(m);
-    return m.id;
-  }
-};
-function sessionOfError(err) {
-  return err instanceof DelegateError ? err.sessionId ?? null : null;
-}
-function toStored(j) {
-  return {
-    id: j.id,
-    name: j.name,
-    agent: j.agent,
-    model: j.model,
-    prompt: j.prompt,
-    startedAt: j.startedAt,
-    status: j.status,
-    sessionId: j.sessionId,
-    workdir: j.workdir,
-    worktree: j.worktree,
-    args: j.args,
-    owner: j.owner,
-    supervisor: j.supervisor,
-    finishedAt: j.finishedAt,
-    host: j.host ?? null
-  };
-}
-function isStoredJob(j) {
-  return isRecord(j) && typeof j.id === "string" && typeof j.name === "string";
-}
-function readJobsDocument(path, log) {
-  return readJsonStore(path, log, (data) => Array.isArray(data) || isRecord(data) && Array.isArray(data.jobs));
-}
-function readStore(path, log) {
-  try {
-    const data = readJobsDocument(path, log);
-    const jobs = Array.isArray(data) ? data : isRecord(data) && Array.isArray(data.jobs) ? data.jobs : [];
-    return jobs.filter(isStoredJob);
-  } catch (err) {
-    log?.warn("could not read jobs store", { path, err: String(err) });
-    return [];
-  }
-}
-var LOCK_WAIT_MS = 2e3;
-var LOCK_STALE_MS = 1e4;
-var LOCK_RETRY_MS = 20;
-function acquireLock(path) {
-  mkdirSync14(dirname7(path), { recursive: true });
-  const deadline = Date.now() + LOCK_WAIT_MS;
-  const pause = new Int32Array(new SharedArrayBuffer(4));
-  for (; ; ) {
-    try {
-      closeSync3(openSync3(path, "wx"));
-      return () => rmSync6(path, { force: true });
-    } catch (err) {
-      if (err.code !== "EEXIST") throw err;
-      try {
-        if (Date.now() - statSync6(path).mtimeMs > LOCK_STALE_MS) rmSync6(path, { force: true });
-      } catch {
-      }
-      if (Date.now() > deadline) throw new Error("timed out locking jobs store");
-      Atomics.wait(pause, 0, 0, LOCK_RETRY_MS);
-    }
-  }
-}
-
 // src/mcp/delegate-run.ts
 import { randomUUID as randomUUID13 } from "node:crypto";
-import { isAbsolute as isAbsolute5, join as join33, relative as relative4, resolve as resolve8 } from "node:path";
+import { isAbsolute as isAbsolute5, join as join35, relative as relative4, resolve as resolve8 } from "node:path";
 
 // src/core/resource-slots.ts
-import { mkdirSync as mkdirSync15 } from "node:fs";
-import { join as join30 } from "node:path";
-import { DatabaseSync as DatabaseSync6 } from "node:sqlite";
+import { mkdirSync as mkdirSync16 } from "node:fs";
+import { join as join33 } from "node:path";
+import { DatabaseSync as DatabaseSync7 } from "node:sqlite";
 import { setTimeout as delay2 } from "node:timers/promises";
 var SLOT_OWNER_ENV = "AGENT_BRIDGE_SLOT_OWNER";
 var SLOT_PID_ENV = "AGENT_BRIDGE_SLOT_PID";
@@ -46618,8 +47083,8 @@ var ResourceSlots = class {
   constructor(home, isAlive = alive, now = Date.now) {
     this.isAlive = isAlive;
     this.now = now;
-    mkdirSync15(home, { recursive: true });
-    this.db = new DatabaseSync6(join30(home, SLOT_DB_NAME));
+    mkdirSync16(home, { recursive: true });
+    this.db = new DatabaseSync7(join33(home, SLOT_DB_NAME));
     this.db.exec(`PRAGMA busy_timeout = ${LOCK_WAIT_MS2};
       CREATE TABLE IF NOT EXISTS slots (
         ticket INTEGER PRIMARY KEY AUTOINCREMENT, resource TEXT NOT NULL, id TEXT NOT NULL,
@@ -46755,35 +47220,35 @@ function isHandoffToolCall(r) {
 }
 
 // src/core/worktree-links.ts
-import { lstatSync as lstatSync2, readdirSync as readdirSync8, readlinkSync, realpathSync as realpathSync4 } from "node:fs";
-import { dirname as dirname8, isAbsolute as isAbsolute3, join as join31, relative as relative2, resolve as resolve6, toNamespacedPath } from "node:path";
+import { lstatSync as lstatSync2, readdirSync as readdirSync9, readlinkSync, realpathSync as realpathSync5 } from "node:fs";
+import { dirname as dirname8, isAbsolute as isAbsolute4, join as join34, relative as relative3, resolve as resolve7, toNamespacedPath as toNamespacedPath2 } from "node:path";
 var WORKTREE_LINK_HINT = "(agent-bridge: worktree isolation is mandatory. Never create symlinks, directory junctions or other reparse points whose targets leave this worktree, including Unity Library folders in the owner's main checkout. Copy caches if needed; do not share them through links. Never follow an existing external link to modify its target. Request cleanup approval through the supervisor and report the link and target if cleanup is denied.)";
 function scanWorktreeLinks(root) {
   const scan = { externalLinks: [], errors: [] };
-  const canonicalRoot = lstatSync2(toNamespacedPath(root)).isSymbolicLink() ? resolve6(root) : realpathSync4.native(root);
+  const canonicalRoot = lstatSync2(toNamespacedPath2(root)).isSymbolicLink() ? resolve7(root) : realpathSync5.native(root);
   const inside = (target) => {
-    const rel = relative2(canonicalRoot, target);
-    return rel === "" || rel !== ".." && !rel.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`) && !isAbsolute3(rel);
+    const rel = relative3(canonicalRoot, target);
+    return rel === "" || rel !== ".." && !rel.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`) && !isAbsolute4(rel);
   };
   const visit2 = (path) => {
     try {
-      const stat = lstatSync2(toNamespacedPath(path));
+      const stat = lstatSync2(toNamespacedPath2(path));
       if (stat.isSymbolicLink()) {
-        const raw = readlinkSync(toNamespacedPath(path));
-        let target = resolve6(dirname8(path), raw);
+        const raw = readlinkSync(toNamespacedPath2(path));
+        let target = resolve7(dirname8(path), raw);
         try {
-          target = realpathSync4.native(path);
+          target = realpathSync5.native(path);
         } catch {
         }
         if (!inside(target)) scan.externalLinks.push({ path, target });
       } else if (stat.isDirectory()) {
-        for (const entry of readdirSync8(toNamespacedPath(path))) visit2(join31(path, entry));
+        for (const entry of readdirSync9(toNamespacedPath2(path))) visit2(join34(path, entry));
       }
     } catch (err) {
       scan.errors.push(`${path}: ${err.message}`);
     }
   };
-  visit2(resolve6(root));
+  visit2(resolve7(root));
   return scan;
 }
 function worktreeLinkWarning(scan) {
@@ -46792,283 +47257,6 @@ function worktreeLinkWarning(scan) {
   if (scan.errors.length) lines.push(`WARNING: worktree link inspection incomplete:
 ${scan.errors.join("\n")}`);
   return lines.length ? lines.join("\n") : null;
-}
-
-// src/core/worktree.ts
-import { createHash as createHash5 } from "node:crypto";
-import { existsSync as existsSync8, mkdirSync as mkdirSync16, readFileSync as readFileSync19, realpathSync as realpathSync5, rmSync as rmSync7 } from "node:fs";
-import { basename as basename4, isAbsolute as isAbsolute4, join as join32, relative as relative3, resolve as resolve7, toNamespacedPath as toNamespacedPath2 } from "node:path";
-var GIT = "git";
-var LONG_PATH_ARGS = ["-c", "core.longpaths=true"];
-var REMOVE_RETRIES = 3;
-var GIT_TIMEOUT_MS = 18e4;
-var WORKTREE_ADD_TIMEOUT_MS = 6e5;
-var BRANCH_PREFIX = "agent-bridge/";
-var FALLBACK_COMMIT_IDENTITY = { "user.name": "agent-bridge", "user.email": "agent-bridge@localhost" };
-var MAX_DIFFSTAT_CHARS = 4e3;
-function trustArgs(...dirs) {
-  return dirs.flatMap((d) => ["-c", `safe.directory=${resolve7(d).replace(/\\/g, "/")}`]);
-}
-async function git(args, cwd, log, timeoutMs = GIT_TIMEOUT_MS) {
-  const what = `git ${args.filter((a, i) => !a.startsWith("-") && args[i - 1] !== "-c").slice(0, 2).join(" ")}`;
-  const res = await runProcess({ bin: GIT, args: [...LONG_PATH_ARGS, ...args], stdin: "", cwd, timeoutMs, env: process.env, log, what });
-  if (res.code !== 0) throw new Error(`${what} failed: ${(res.stderr || res.stdout).trim().slice(0, 500)}`);
-  return res.stdout.trimEnd();
-}
-async function createWorktree(opts) {
-  let repoRoot;
-  try {
-    repoRoot = await git(["rev-parse", "--show-toplevel"], opts.cwd, opts.log);
-  } catch {
-    throw new Error(`worktree isolation needs a git repository, but ${opts.cwd} is not inside one`);
-  }
-  const base = await git(["rev-parse", "HEAD"], repoRoot, opts.log);
-  const baseBranch = await git(["symbolic-ref", "-q", "--short", "HEAD"], repoRoot, opts.log).catch(() => "") || null;
-  let branch = `${BRANCH_PREFIX}${opts.jobId}`;
-  const dir = join32(opts.home, "worktrees");
-  mkdirSync16(dir, { recursive: true });
-  let path = join32(dir, `${basename4(repoRoot)}-${opts.jobId}`);
-  try {
-    await git(["worktree", "add", "-b", branch, path, base], repoRoot, opts.log, WORKTREE_ADD_TIMEOUT_MS);
-  } catch (err) {
-    if (!(err instanceof DelegateError && err.kind === "timeout")) {
-      await removeWorktree(repoRoot, path, branch, opts.log);
-      throw new Error(`could not create a worktree for the subagent: ${err.message}`);
-    }
-    opts.log.warn("git worktree add timed out; retrying once", { path });
-    await removeWorktree(repoRoot, path, branch, opts.log);
-    branch = `${branch}-r2`;
-    path = `${path}-r2`;
-    try {
-      await git(["worktree", "add", "-b", branch, path, base], repoRoot, opts.log, WORKTREE_ADD_TIMEOUT_MS);
-    } catch (again) {
-      await removeWorktree(repoRoot, path, branch, opts.log);
-      throw new Error(`could not create a worktree for the subagent (tried twice): ${again.message}`);
-    }
-  }
-  await unlockWorktree(repoRoot, path, opts.log);
-  const rel = relative3(repoRoot, opts.cwd);
-  const cwd = rel && !rel.startsWith("..") && !isAbsolute4(rel) ? join32(path, rel) : path;
-  opts.log.info("worktree created", { repoRoot, path, branch });
-  return { repoRoot, path, cwd, branch, base, baseBranch };
-}
-async function unlockWorktree(repoRoot, path, log) {
-  await git([...trustArgs(path), "worktree", "unlock", path], repoRoot, log).catch(() => "");
-}
-async function removeWorktree(repoRoot, path, branch, log) {
-  await git([...trustArgs(path), "worktree", "remove", "--force", "--force", path], repoRoot, log).catch(() => {
-  });
-  try {
-    removeWorktreeDirectory(path);
-  } catch {
-  }
-  await git(["worktree", "prune"], repoRoot, log).catch(() => {
-  });
-  await git(["branch", "-D", branch], repoRoot, log).catch(() => {
-  });
-}
-function removeWorktreeDirectory(path) {
-  rmSync7(toNamespacedPath2(resolve7(path)), { recursive: true, force: true, maxRetries: REMOVE_RETRIES });
-}
-var SUBJECT_CHARS = 72;
-function subagentCommitMessage(opts) {
-  const plain = (s) => s.replace(/[*_`#>]+/g, "").replace(/\s+/g, " ").trim();
-  const firstLine = (s) => s.split(/\r?\n/).map(plain).find((l) => l.length > 0) ?? "";
-  const clip2 = (s) => s.length > SUBJECT_CHARS ? `${s.slice(0, SUBJECT_CHARS - 1).trimEnd()}\u2026` : s;
-  const subject = clip2(firstLine(opts.answer) || firstLine(opts.task) || "subagent changes");
-  const email3 = { codex: "noreply@openai.com", claude: "noreply@anthropic.com", opencode: "noreply@opencode.ai" }[opts.agent] ?? "noreply@localhost";
-  const who = opts.model ? `${opts.model} via ${opts.agent}` : opts.agent;
-  return [
-    subject,
-    "",
-    `Committed by agent-bridge for ${opts.job ?? "a subagent"} (${who}).`,
-    `Task: ${clip2(firstLine(opts.task))}`,
-    "",
-    `Co-Authored-By: ${who} <${email3}>`
-  ].join("\n");
-}
-async function gitDirsOutside(cwd, log) {
-  try {
-    const [gitDir, common] = (await git(["rev-parse", "--path-format=absolute", "--git-dir", "--git-common-dir"], cwd, log)).split(/\r?\n/);
-    const real = (p) => {
-      try {
-        return realpathSync5.native(p);
-      } catch {
-        return resolve7(p);
-      }
-    };
-    const inside = (p) => {
-      const rel = relative3(real(cwd), real(p));
-      return rel === "" || !rel.startsWith("..") && !isAbsolute4(rel);
-    };
-    return [...new Set([gitDir, common].filter((p) => Boolean(p) && !inside(p)))];
-  } catch {
-    return [];
-  }
-}
-async function reviewBase(wt, log, branch = wt.branch) {
-  const run = (args) => git(args, wt.repoRoot, log);
-  const tip = await run(["rev-parse", branch]);
-  const reflog = await git([...trustArgs(wt.path), "log", "-g", "--format=%H%x09%gs", "HEAD"], wt.path, log).catch(() => "");
-  const start = reflog.split(/\r?\n/).reverse().find((line) => line.endsWith(` to ${branch}`) && line.includes("	checkout: moving from "))?.split("	")[0];
-  const base = branch === wt.branch ? wt.base : start ?? wt.base;
-  const created = (await run(["log", "-g", "--format=%H%x09%gs", branch]).catch(() => "")).split(/\r?\n/).reverse().find((line) => line.startsWith(`${base}	branch: Created from `));
-  const source = branch !== wt.branch ? created?.split("	branch: Created from ")[1] : null;
-  const list = await run(["worktree", "list", "--porcelain"]).catch(() => "");
-  const main = /^branch refs\/heads\/(.+)$/m.exec(list.split(/\r?\n\r?\n/)[0] ?? "")?.[1];
-  const candidates = /* @__PURE__ */ new Set([base]);
-  for (const b of /* @__PURE__ */ new Set([source, wt.baseBranch, main])) {
-    if (!b || b === "HEAD" || b === branch) continue;
-    const mb = await run(["merge-base", b, branch]).catch(() => "");
-    if (mb && mb !== tip) candidates.add(mb);
-  }
-  let best = base;
-  let fewest = Infinity;
-  for (const c of candidates) {
-    const n = Number(await run(["rev-list", "--count", `${c}..${branch}`]).catch(() => "NaN"));
-    if (n < fewest) [best, fewest] = [c, n];
-  }
-  return best;
-}
-var GENERATED_DIRECTORIES = /* @__PURE__ */ new Set(["node_modules", ".vs", "__pycache__"]);
-var UNITY_GENERATED_DIRECTORIES = /* @__PURE__ */ new Set(["Library", "Temp", "Obj", "Logs", "UserSettings"]);
-var GENERATED_FILES = /* @__PURE__ */ new Set([".DS_Store", "Thumbs.db"]);
-function generatedNoise(root, file2) {
-  const parts = file2.split("/");
-  if (GENERATED_FILES.has(parts.at(-1))) return true;
-  return parts.slice(0, -1).some((part, index) => {
-    if (GENERATED_DIRECTORIES.has(part)) return true;
-    if (!UNITY_GENERATED_DIRECTORIES.has(part)) return false;
-    return existsSync8(toNamespacedPath2(join32(root, ...parts.slice(0, index), "ProjectSettings", "ProjectVersion.txt")));
-  });
-}
-async function autoCommitFiles(wt, log) {
-  const trust = trustArgs(wt.path);
-  const status = await git([...trust, "status", "--porcelain=v1", "-z", "--no-renames", "--untracked-files=all"], wt.path, log);
-  const included = [];
-  const unstage = [];
-  const skipped = [];
-  for (const entry of status.split("\0").filter(Boolean)) {
-    const file2 = entry.slice(3);
-    const literal2 = `:(literal)${file2}`;
-    let reason;
-    if (generatedNoise(wt.path, file2)) reason = "generated noise";
-    else if (entry.startsWith("??") || await git([...trust, "diff", "--ignore-all-space", "--ignore-cr-at-eol", "--no-ext-diff", "--no-textconv", "--no-renames", "HEAD", "--", literal2], wt.path, log)) {
-      if (!entry.startsWith("D ")) included.push(literal2);
-    } else reason = "whitespace only";
-    if (reason) {
-      skipped.push({ path: file2, reason });
-      if (entry[0] !== "?" && entry[0] !== " ") unstage.push(literal2);
-    }
-  }
-  for (const file2 of unstage) await git([...trust, "reset", "-q", "HEAD", "--", file2], wt.path, log);
-  for (const file2 of included) await git([...trust, "add", "-A", "--", file2], wt.path, log);
-  return skipped;
-}
-async function finishWorktree(wt, message, log) {
-  const trust = trustArgs(wt.path);
-  const skippedFiles = await autoCommitFiles(wt, log);
-  const status = await git([...trust, "diff", "--cached", "--name-only", "-z"], wt.path, log);
-  if (status) {
-    const identity = [];
-    for (const [key, fallback] of Object.entries(FALLBACK_COMMIT_IDENTITY)) {
-      const configured = (await git([...trustArgs(wt.repoRoot), "config", "--get", key], wt.repoRoot, log).catch(() => "")).trim();
-      identity.push("-c", `${key}=${configured || fallback}`);
-    }
-    await git([...trust, ...identity, "commit", "-q", "--no-verify", "-m", message], wt.path, log);
-  }
-  await unlockWorktree(wt.repoRoot, wt.path, log);
-  const current = await git([...trust, "branch", "--show-current"], wt.path, log).catch(() => "") || wt.branch;
-  const work = await workBranches(wt, current, log);
-  const branch = work.has(current) || !work.size ? current : [...work.keys()][0];
-  const from = await reviewBase(wt, log, branch);
-  const diffStat = await git(["diff", "--stat", `${from}..${branch}`], wt.repoRoot, log);
-  const files = (await git(["diff", "--name-only", "-z", `${from}..${branch}`], wt.repoRoot, log)).split("\0").filter(Boolean);
-  const otherBranches = [...work].filter(([name]) => name !== branch).map(([name, commits]) => ({ name, commits }));
-  return { changed: diffStat.length > 0 || otherBranches.length > 0, branch, otherBranches, diffStat: diffStat.slice(0, MAX_DIFFSTAT_CHARS), reviewBase: from, files, skippedFiles };
-}
-async function workBranches(wt, current, log) {
-  const trust = trustArgs(wt.path);
-  const visited = new Set((await git([...trust, "log", "-g", "--format=%H%x09%gs", "HEAD"], wt.path, log).catch(() => "")).split(/\r?\n/).filter((line) => line && !line.includes("	checkout: ")).map((line) => line.split("	")[0]));
-  const refs = (await git(["for-each-ref", "refs/heads", "--format=%(refname:short) %(objectname)"], wt.repoRoot, log).catch(() => "")).split(/\r?\n/).map((l) => l.split(" ")).filter((p) => p.length === 2);
-  const list = await git(["worktree", "list", "--porcelain"], wt.repoRoot, log).catch(() => "");
-  const here = resolve7(wt.path).toLowerCase();
-  const elsewhere = new Set(
-    list.split(/\r?\n\r?\n/).filter((block) => resolve7(/^worktree (.+)$/m.exec(block)?.[1] ?? "").toLowerCase() !== here).map((block) => /^branch refs\/heads\/(.+)$/m.exec(block)?.[1]).filter((b) => Boolean(b))
-  );
-  for (const b of [wt.baseBranch]) if (b) elsewhere.add(b);
-  const candidates = new Set(
-    [wt.branch, current, ...refs.filter(([, sha]) => visited.has(sha) && sha !== wt.base).map(([name]) => name)].filter((b) => b === wt.branch || !elsewhere.has(b))
-  );
-  const out = /* @__PURE__ */ new Map();
-  for (const name of candidates) {
-    const from = await reviewBase(wt, log, name).catch(() => null);
-    const commits = from ? Number(await git(["rev-list", "--count", `${from}..${name}`], wt.repoRoot, log).catch(() => "0")) : 0;
-    if (commits > 0) out.set(name, commits);
-  }
-  return out;
-}
-var HANDOFF_FILE = /(^|\/)(HANDOFF|TODO)\.md$/i;
-function handoffWarning(files) {
-  const hit = files.filter((f) => HANDOFF_FILE.test(f.replace(/\\/g, "/")));
-  return hit.length ? `WARNING: this job changed ${hit.join(", ")}. Delegated jobs should report in their answer and leave handoff and TODO files to you: check these changes before you take them.` : null;
-}
-function worktreeReport(wt, outcome) {
-  const branch = outcome.branch ?? wt.branch;
-  const skipped = outcome.skippedFiles ?? [];
-  const rule = skipped.length ? `Auto-commit skipped whitespace/line-ending-only changes and known generated noise; left on disk: ${skipped.map((f) => `${f.path} (${f.reason})`).join(", ")}.` : "";
-  const remove = "git -c core.longpaths=true worktree remove";
-  if (!outcome.changed) return [
-    `Worktree ${wt.path} (branch ${branch}) has ${skipped.length ? "no real changes" : "no changes"}; remove it with: ${remove}${skipped.length ? " --force" : ""} "${wt.path}" && git branch -D ${branch}`,
-    rule
-  ].filter(Boolean).join("\n");
-  const others = outcome.otherBranches ?? [];
-  const lines = [
-    `Changes are committed on branch ${branch} (worktree ${wt.path}), not in your working copy` + (branch !== wt.branch ? ` (the job worked on its own branch; ${wt.branch} was its starting branch)` : "") + ":"
-  ];
-  if (outcome.diffStat) lines.push(outcome.diffStat);
-  if (rule) lines.push(rule);
-  if (others.length) lines.push(`Also committed from this worktree: ${others.map((o) => `${o.name} (${o.commits} commit${o.commits === 1 ? "" : "s"})`).join(", ")}. Review those before removing anything.`);
-  lines.push(...[handoffWarning(outcome.files)].filter((w) => Boolean(w)));
-  if (outcome.diffStat) {
-    lines.push(`Review base: ${outcome.reviewBase} (job fork point).`);
-    lines.push(`Review: git diff ${outcome.reviewBase.slice(0, 12)}..${branch}`);
-    lines.push(`Take them: git merge ${branch}   (or git cherry-pick ${branch})`);
-  }
-  lines.push(`Discard: ${remove} --force "${wt.path}" && git branch -D ${[branch, ...others.map((o) => o.name)].join(" ")}`);
-  return lines.join("\n");
-}
-async function gitChangeSnapshot(cwd, log) {
-  let status;
-  try {
-    status = await git(["status", "--porcelain", "--untracked-files=all"], cwd, log);
-  } catch {
-    return null;
-  }
-  let root;
-  try {
-    root = await git(["rev-parse", "--show-toplevel"], cwd, log);
-  } catch {
-    return null;
-  }
-  const snap = /* @__PURE__ */ new Map();
-  for (const line of status.split(/\r?\n/).filter(Boolean)) {
-    const file2 = line.slice(3).replace(/^.* -> /, "").replace(/^"|"$/g, "");
-    let fp = line.slice(0, 2);
-    try {
-      fp += ":" + createHash5("sha1").update(readFileSync19(join32(root, file2))).digest("hex");
-    } catch {
-      fp += ":missing";
-    }
-    snap.set(file2, fp);
-  }
-  return snap;
-}
-function changedFiles(before, after) {
-  const out = /* @__PURE__ */ new Set();
-  for (const [f, fp] of after) if (before.get(f) !== fp) out.add(f);
-  for (const f of before.keys()) if (!after.has(f)) out.add(f);
-  return [...out].sort();
 }
 
 // src/mcp/siblings.ts
@@ -47115,11 +47303,11 @@ var DELEGATED_JOB_NOTE = "(agent-bridge: you are a delegated job. Report what yo
 var HANDOFF_DECLINED = "Declined by agent-bridge: delegated jobs do not write the project handoff. Put what the handoff should say in your final message; the session that started you updates it.";
 var PARENT_APPROVAL_TIMEOUT_MS = 10 * 6e4;
 function isBridgeWorktree(dir, home) {
-  return isInside(dir, join33(home, "worktrees")) && resolve8(dir) !== resolve8(join33(home, "worktrees"));
+  return isInside(dir, join35(home, "worktrees")) && resolve8(dir) !== resolve8(join35(home, "worktrees"));
 }
 function bridgeWorktreeRoot(dir, home) {
   if (!isBridgeWorktree(dir, home)) return null;
-  return join33(home, "worktrees", relative4(join33(home, "worktrees"), resolve8(dir)).split(/[\\/]/)[0]);
+  return join35(home, "worktrees", relative4(join35(home, "worktrees"), resolve8(dir)).split(/[\\/]/)[0]);
 }
 function isInside(child, parent2) {
   const rel = relative4(resolve8(parent2), resolve8(child));
@@ -47128,8 +47316,8 @@ function isInside(child, parent2) {
 function resumeArgs(a, job, message, sessionId, workdir, worktree, saved) {
   if (saved) {
     a = { ...a };
-    for (const key of JOB_SETTING_KEYS) delete a[key];
-    a = { ...a, ...Object.fromEntries(JOB_SETTING_KEYS.filter((key) => saved[key] !== void 0).map((key) => [key, saved[key]])) };
+    for (const key2 of JOB_SETTING_KEYS) delete a[key2];
+    a = { ...a, ...Object.fromEntries(JOB_SETTING_KEYS.filter((key2) => saved[key2] !== void 0).map((key2) => [key2, saved[key2]])) };
   }
   return { ...a, _job: job, prompt: message, session_id: sessionId, cwd: workdir ?? a.cwd, worktree: false, _worktree: worktree ?? void 0, access: a.worktree ? a.access ?? "edit" : a.access };
 }
@@ -47234,6 +47422,8 @@ ${a.prompt}
         access: access ?? "default",
         permission: profile.permission(cfg, { ...a, access }),
         workdir,
+        ...wt ? { branch: wt.branch, baseBranch: wt.baseBranch, repoRoot: wt.repoRoot } : {},
+        jobStartedAt: job?.startedAt,
         continues: a.session_id ?? null
       }
     });
@@ -47380,6 +47570,11 @@ ${a.prompt}
     feed.end(res.isError ? "failed" : "done", res.text);
   } catch (err) {
     if (err instanceof DelegateError && err.sessionId) feed.meta({ session: err.sessionId });
+    if (wt) {
+      const branch = await git([...trustArgs(wt.path), "branch", "--show-current"], wt.path, dlog).catch(() => wt.branch);
+      const branchHead = await git([...trustArgs(wt.path), "rev-parse", "HEAD"], wt.path, dlog).catch(() => void 0);
+      feed.meta({ branch: branch || wt.branch, branchHead });
+    }
     feed.end(`failed: ${err?.message ?? err}`);
     if (wt && err instanceof Error) err.message += `
 
@@ -47450,7 +47645,11 @@ ${asked.join("\n")}` : "No permission requests were needed." : t("ask.unsupporte
   } else if (wt) {
     try {
       const message = subagentCommitMessage({ answer: res.text, task: a.prompt, job: a._job, agent: target, model: a.model ?? defaultModel });
-      notes.push(worktreeReport(wt, await finishWorktree(wt, message, dlog)));
+      const outcome = await finishWorktree(wt, message, dlog);
+      wt.branch = outcome.branch;
+      wt.branchHead = await git([...trustArgs(wt.repoRoot, wt.path), "rev-parse", "HEAD"], wt.path, dlog);
+      feed.meta({ branch: wt.branch, branchHead: wt.branchHead });
+      notes.push(worktreeReport(wt, outcome));
     } catch (err) {
       notes.push(`Could not commit the changes in worktree ${wt.path} (branch ${wt.branch}): ${err.message}`);
     }
@@ -47478,8 +47677,8 @@ ${notes.join("\n\n")}` : res.text };
 
 // src/mcp/job-host.ts
 import { spawn as spawn8 } from "node:child_process";
-import { mkdirSync as mkdirSync17, readdirSync as readdirSync9, statSync as statSync7 } from "node:fs";
-import { join as join34 } from "node:path";
+import { mkdirSync as mkdirSync17, readdirSync as readdirSync10, statSync as statSync7 } from "node:fs";
+import { join as join36 } from "node:path";
 var RUNNERS_DIR_NAME = "jobs";
 var CONTROL_CONVERSATION_PREFIX = "jobctl-";
 var RUNNER_HEARTBEAT_MS = 15e3;
@@ -47488,10 +47687,10 @@ var START_GRACE_MS = 3e4;
 var KEEP_FILES_MS = 7 * 24 * 60 * 60 * 1e3;
 var DETACH_LAUNCHER = "require('node:child_process').spawn(process.execPath,process.argv.slice(1),{detached:true,stdio:'ignore',windowsHide:true}).unref()";
 function runnerStatePath(home, id) {
-  return join34(home, RUNNERS_DIR_NAME, `${id}.json`);
+  return join36(home, RUNNERS_DIR_NAME, `${id}.json`);
 }
 function specPath(home, id) {
-  return join34(home, RUNNERS_DIR_NAME, `${id}.spec.json`);
+  return join36(home, RUNNERS_DIR_NAME, `${id}.spec.json`);
 }
 function readRunnerState(home, id) {
   try {
@@ -47508,11 +47707,11 @@ var JobRunners = class {
     this.cli = cli;
     this.log = log;
     try {
-      const dir = join34(home, RUNNERS_DIR_NAME);
+      const dir = join36(home, RUNNERS_DIR_NAME);
       const keepMs = retentionLimit("AGENT_BRIDGE_RUNNER_KEEP_MS", KEEP_FILES_MS);
       if (!keepMs) return;
-      for (const f of readdirSync9(dir)) {
-        const path = join34(dir, f);
+      for (const f of readdirSync10(dir)) {
+        const path = join36(dir, f);
         if (!f.endsWith(".json") || f.endsWith(".spec.json") || Date.now() - statSync7(path).mtimeMs <= keepMs) continue;
         const id = f.replace(/\.json$/, "");
         const state = readRunnerState(home, id);
@@ -47532,7 +47731,7 @@ var JobRunners = class {
   /** Start a turn of this job in a new runner; null when that is not possible (the turn then runs in the server). */
   start(job, spec) {
     try {
-      mkdirSync17(join34(this.home, RUNNERS_DIR_NAME), { recursive: true });
+      mkdirSync17(join36(this.home, RUNNERS_DIR_NAME), { recursive: true });
       const statePath = runnerStatePath(this.home, job.id);
       const file2 = specPath(this.home, job.id);
       assertWritableStore(readJsonStore(statePath, this.log));
@@ -47636,7 +47835,7 @@ function changeSettings(node2, jobs, ref, input2, log) {
   if (typeof settings === "string") return { outcome: "invalid", text: settings, isError: true };
   jobs.setSettings(job.name, settings);
   log.info("dashboard changed subagent settings", { job: job.name, settings });
-  const list = Object.entries(settings).map(([key, value]) => `${key}=${value}`).join(", ");
+  const list = Object.entries(settings).map(([key2, value]) => `${key2}=${value}`).join(", ");
   const when = job.status === "running" ? "Applies from its next turn; the turn running now keeps its settings." : "Applies when it continues.";
   return { outcome: "saved", text: `Saved settings for ${job.name}: ${list}. ${when}`, isError: false };
 }
@@ -47744,7 +47943,7 @@ async function startServer(argv = process.argv.slice(2)) {
   const launchKnown = new Promise((r) => launchInspected = r);
   const ctx = { agent, cfg, node: node2, log, home, cwd: () => node2?.cwd ?? cwd, channelActive: () => channel, parent: delegated ? parentFromEnv() : null, launchKnown };
   if (node2) {
-    ctx.jobs = new JobManager(node2, log.child("jobs"), join35(home, JOBS_FILE), cfg.maxJobs);
+    ctx.jobs = new JobManager(node2, log.child("jobs"), join37(home, JOBS_FILE), cfg.maxJobs);
     node2.on("replaced", () => ctx.jobs?.setDormant(true));
     node2.on("reclaimed", () => ctx.jobs?.setDormant(false));
     const cli = process.env[ENV.jobRunner] === "0" ? null : bundledCli();
@@ -47912,14 +48111,14 @@ async function startServer(argv = process.argv.slice(2)) {
       adopt();
       setTimeout(adopt, STAND_IN_RECHECK_MS).unref();
     });
-    const join36 = () => node2.start().catch((err) => log.error("could not join the bridge", { err: err.message }));
+    const join38 = () => node2.start().catch((err) => log.error("could not join the bridge", { err: err.message }));
     if (ctx.headless) {
       log.info("headless claude -p run: not joining the bridge unless a bridge tool is used");
     } else if (cwdKnown) {
-      void join36();
+      void join38();
     } else {
       log.info("project directory unknown yet; deferring bridge join", { graceMs: CWD_DISCOVERY_GRACE_MS });
-      setTimeout(() => void join36(), CWD_DISCOVERY_GRACE_MS).unref();
+      setTimeout(() => void join38(), CWD_DISCOVERY_GRACE_MS).unref();
     }
   }
 }
@@ -48354,6 +48553,25 @@ ${r.lines.map((l) => `  ${l}`).join("\n")}`).join("\n\n"));
     })
   );
   register(
+    "set_job_outcome",
+    {
+      title: "Set a finished job's outcome",
+      description: "Record that your finished job is held with a reason or discarded. This records a decision; it does not merge or delete its branch. Only its owning supervisor can set it.",
+      inputSchema: { job: external_exports.string().min(1), state: external_exports.enum(["held", "discarded"]), reason: external_exports.string().max(MAX_HOLD_REASON_CHARS).optional() }
+    },
+    guarded("set_job_outcome", async (a) => {
+      const n = requireNode();
+      const job = ctx.jobs?.find(a.job);
+      if (!job) throw new BridgeError("bad_request", "Unknown job.");
+      try {
+        setJobOutcome(ctx.home, job, n.name, a.state, a.reason);
+        return text(JSON.stringify({ job: job.name, outcome: await deriveJobOutcome(ctx.home, job, log) }));
+      } catch (err) {
+        throw new BridgeError("bad_request", err.message);
+      }
+    })
+  );
+  register(
     "message_subagent",
     {
       title: "Message a subagent",
@@ -48375,11 +48593,11 @@ ${r.lines.map((l) => `  ${l}`).join("\n")}`).join("\n\n"));
       if (!jobs) throw new BridgeError("bad_request", t("err.delegatedSession"));
       const existing = jobs.find(a.job);
       if (existing) {
-        for (const [key, agent] of Object.entries(PERMISSION_KEY_AGENT)) {
-          if (a[key] !== void 0 && existing.agent !== agent) throw new BridgeError("bad_request", `${key} applies only to ${agent} jobs.`);
+        for (const [key2, agent] of Object.entries(PERMISSION_KEY_AGENT)) {
+          if (a[key2] !== void 0 && existing.agent !== agent) throw new BridgeError("bad_request", `${key2} applies only to ${agent} jobs.`);
         }
       }
-      const settings = Object.fromEntries(JOB_SETTING_KEYS.filter((key) => a[key] !== void 0).map((key) => [key, a[key]]));
+      const settings = Object.fromEntries(JOB_SETTING_KEYS.filter((key2) => a[key2] !== void 0).map((key2) => [key2, a[key2]]));
       const wasRunning = existing?.status === "running";
       if (a.title?.trim()) {
         jobs.setTitle(a.job, a.title.trim());
@@ -48391,7 +48609,7 @@ ${r.lines.map((l) => `  ${l}`).join("\n")}`).join("\n\n"));
       const { outcome, job } = jobs.followUp(a.job, a.message?.trim() || DEFAULT_FOLLOW_UP);
       const position = job ? jobs.waiting().indexOf(job) + 1 : 0;
       const settingsNote = job && Object.keys(settings).length ? `
-Saved settings: ${Object.entries(settings).map(([key, value]) => `${key}=${value}`).join(", ")}.${wasRunning ? " Applies from its next turn; the turn running now keeps its settings." : " Applies to this continuation and later turns."}` : "";
+Saved settings: ${Object.entries(settings).map(([key2, value]) => `${key2}=${value}`).join(", ")}.${wasRunning ? " Applies from its next turn; the turn running now keeps its settings." : " Applies to this continuation and later turns."}` : "";
       return text(
         t(`followUp.${outcome}`, { name: job?.name ?? a.job, max: jobs.limit, running: jobs.runningCount(), ahead: position > 1 ? ` (${position - 1} queued before it)` : "" }) + settingsNote,
         outcome === "unknown" || outcome === "no-session"
