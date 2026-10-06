@@ -99,12 +99,18 @@ const liveChildren = new Set<ChildProcess>();
  */
 export function killTree(child: ChildProcess): Promise<void> {
   const pid = child.pid;
-  if (!pid || child.exitCode !== null) return Promise.resolve();
-  return new Promise((resolve) => {
+  if (!pid || child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
+  // taskkill finishing is not the child closing. In particular, Windows can still hold its cwd
+  // while the caller tears down the run. Subscribe before sending any signal so a fast exit is kept.
+  const closed = new Promise<void>((resolve) => child.once("close", () => resolve()));
+  return new Promise<void>((resolve) => {
     if (process.platform === "win32") {
       const tk = spawn("taskkill", ["/PID", String(pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" });
       tk.on("error", () => (child.kill(), resolve()));
-      tk.on("close", () => resolve());
+      tk.on("close", (code) => {
+        if (code !== 0 && child.exitCode === null && child.signalCode === null) child.kill();
+        resolve();
+      });
     } else {
       try {
         process.kill(-pid, "SIGTERM");
@@ -121,7 +127,7 @@ export function killTree(child: ChildProcess): Promise<void> {
       }, KILL_GRACE_MS);
       child.once("exit", () => (clearTimeout(force), resolve()));
     }
-  });
+  }).then(() => closed);
 }
 
 /**

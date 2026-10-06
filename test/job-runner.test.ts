@@ -74,6 +74,9 @@ async function startSession(inProcess = false): Promise<{ client: Client; transp
   await client.connect(transport);
   const s = { client, transport };
   sessions.push(s);
+  // The MCP handshake precedes broker registration and session recovery.
+  // This fixture represents a connected supervisor, including on replacement.
+  await call(s, "peers");
   return s;
 }
 
@@ -109,18 +112,24 @@ async function spawnHeld(s: { client: Client; transport: StdioClientTransport },
 }
 
 beforeEach(() => {
-  home = mkdtempSync(join(tmpdir(), "agent-bridge-runner-"));
+  // Leave room for the broker socket under macOS's 104-byte Unix socket path limit.
+  home = mkdtempSync(join(tmpdir(), "abj-"));
   claudeBin = installFakeClaude(join(home, "bin"));
 });
 
 afterEach(async () => {
   await ui?.close();
   ui = undefined;
-  for (const s of sessions.splice(0)) await s.client.close().catch(() => {});
-  for (const n of nodes.splice(0)) await n.stop().catch(() => {});
   // Let every fake finish, and stop runners a test left behind.
   for (const r of releases.splice(0)) writeFileSync(r, "");
-  await new Promise((r) => setTimeout(r, 500));
+  const runners = join(home, "jobs");
+  const pids = existsSync(runners) ? readdirSync(runners)
+    .filter((file) => file.endsWith(".json") && !file.endsWith(".spec.json"))
+    .map((file) => readRunnerState(home, file.slice(0, -5))?.pid).filter((pid): pid is number => Boolean(pid)) : [];
+  for (const pid of pids) if (pidAlive(pid)) killPid(pid);
+  await waitFor(() => pids.every((pid) => !pidAlive(pid)));
+  for (const s of sessions.splice(0)) await stopSession(s).catch(() => {});
+  for (const n of nodes.splice(0)) await n.stop().catch(() => {});
   rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 });
 });
 
@@ -171,7 +180,11 @@ describe.skipIf(!existsSync(SERVER))("background subagents in job runners", () =
     await waitFor(async () => external.isConnected && (await external.peers().catch(() => [])).some((p) => p.name === external.name));
     expect((await continued.siblings.send(external.name, "Follow-up deliverable", reply.id)).deliveredTo).toEqual([external.name]);
     writeFileSync(release, "");
-    await waitFor(() => readRunnerState(home, a.id)?.status === "done");
+    // A final state is saved before report delivery and broker disconnect finish.
+    await waitFor(() => {
+      const state = readRunnerState(home, a.id);
+      return state?.status === "done" && !pidAlive(state.pid);
+    });
   }, TEST_TIMEOUT_MS);
 
   it("applies model and permission changes on the next turn after a takeover, with matching metadata", async () => {

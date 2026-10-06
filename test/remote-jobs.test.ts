@@ -62,7 +62,7 @@ beforeEach(() => {
   cleanup = [];
 });
 afterEach(async () => {
-  if (existsSync(join(remoteHome, "jobs"))) for (const file of readdirSync(join(remoteHome, "jobs"))) {
+  if (existsSync(join(remoteHome, "jobs"))) for (const file of readdirSync(join(remoteHome, "jobs")).filter((file) => file.endsWith(".json") && !file.endsWith(".spec.json"))) {
     const state = readRunnerState(remoteHome, file.replace(/\.json$/, ""));
     if (state?.pid) pids.add(state.pid);
   }
@@ -71,7 +71,6 @@ afterEach(async () => {
   pids.clear();
   for (const close of cleanup.reverse()) await close();
   vi.useRealTimers();
-  await new Promise((r) => setTimeout(r, 200));
   rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 });
 async function waitFor(test: () => boolean | Promise<boolean>, ms = 30_000): Promise<void> {
@@ -89,7 +88,12 @@ async function session(home: string, name: string, agent = "codex"): Promise<Cli
   const transport = new StdioClientTransport({ command: process.execPath, args: [SERVER, `--agent=${agent}`],
     env: { ...process.env, AGENT_BRIDGE_HOME: home, AGENT_BRIDGE_NAME: name, AGENT_BRIDGE_DASHBOARD: "off", AGENT_BRIDGE_LOG_LEVEL: "debug" } as Record<string, string>, stderr: "ignore" });
   const client = new Client({ name: "remote-test", version: "1" }); await client.connect(transport);
-  cleanup.push(() => client.close());
+  cleanup.push(async () => {
+    const pid = transport.pid;
+    await client.close();
+    if (pid) await waitFor(() => !pidAlive(pid));
+  });
+  await call(client, "peers", {});
   return client;
 }
 async function admin(home: string): Promise<BridgeClient> {
@@ -111,8 +115,10 @@ async function paired(agent = "codex"): Promise<{ local: Client; admin: BridgeCl
   await a.request("networkLink", { code: invitation.code, host: LOOPBACK, port: status.port! });
   const inspector = new BridgeNode({ pipePath: resolvePipePath(localHome, {}), token: loadOrCreateToken(localHome), dbPath: resolveDbPath(localHome), name: "test-inspector", agent: "claude", cwd: root, autoWake: false, canHostBroker: false, log: nullLogger });
   await inspector.start(); cleanup.push(() => inspector.stop());
-  // Refresh the advertised peers after the inspector registers.
+  // Pairing can precede the remote MCP session's registration. Wait for its real advertisement;
+  // networkVerify only refreshes our outgoing peers, not the remote session's startup.
   await a.request("networkVerify", { id: status.identity!.id });
+  await waitFor(async () => (await call(local, "peers", {})).includes("mac/codex-remote"));
   return { local, admin: a, inspector };
 }
 const textOf = (r: any) => r.content.map((c: any) => c.text).join("\n");
@@ -325,7 +331,12 @@ rl.on("line", (line) => {
     const id = /claude-job-([0-9a-f]{8})/.exec(text)![1]!;
     await call(local, "cancel_subagent", { job: `claude-job-${id}` });
     await waitFor(() => readRunnerState(remoteHome, id)?.status === "failed");
-    expect(await call(local, "peers", {})).toContain("remote");
+    // The remote state file and the requester's cached job state settle independently.
+    await waitFor(async () => {
+      const peers = await call(local, "peers", {});
+      return peers.includes(`Remote job claude-job-${id}: mac/claude-job-${id}`) &&
+        peers.includes(`claude-job-${id} "Cancel during startup": failed`);
+    });
     const state = readRunnerState(remoteHome, id)!; pids.add(state.pid);
     await waitFor(() => !pidAlive(state.pid));
   }, TEST_TIMEOUT_MS);
@@ -343,7 +354,10 @@ rl.on("line", (line) => {
     expect(state.workdir).toBe(state.worktree?.cwd);
     const oldFinishedAt = state.finishedAt;
     await call(local, "message_subagent", { job: `claude-ask-${match[1]}`, message: "continue remote worktree" });
-    await waitFor(() => readRunnerState(remoteHome, match[1]!)?.status === "done" && readRunnerState(remoteHome, match[1]!)?.finishedAt !== oldFinishedAt);
+    await waitFor(() => {
+      const continued = readRunnerState(remoteHome, match[1]!);
+      return continued?.status === "done" && continued.finishedAt !== oldFinishedAt && continued.pid !== state.pid && !pidAlive(continued.pid);
+    });
     expect(readRunnerState(remoteHome, match[1]!)?.worktree?.path).toBe(state.worktree?.path);
   }, TEST_TIMEOUT_MS);
 });
