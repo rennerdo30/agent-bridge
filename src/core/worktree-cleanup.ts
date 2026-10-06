@@ -1,10 +1,10 @@
 import { existsSync, lstatSync, realpathSync, readdirSync } from "node:fs";
-import { join, resolve, toNamespacedPath } from "node:path";
+import { dirname, join, resolve, toNamespacedPath } from "node:path";
 import { JOBS_FILE } from "./constants.js";
 import type { Logger } from "./logger.js";
 import { BRANCH_PREFIX, git, removeWorktreeDirectory, trustArgs, type Worktree } from "./worktree.js";
 import { readStore } from "../mcp/jobs.js";
-import { unlinkLinks, scanWorktreeLinks, worktreeLinkWarning, type WorktreeLinkScan } from "./worktree-links.js";
+import { resolveWorktreeRemovalPath, unlinkLinks, scanWorktreeLinks, worktreeLinkWarning, type WorktreeLinkScan } from "./worktree-links.js";
 
 /**
  * `agent-bridge cleanup`: remove the worktrees of finished agent-bridge jobs (~/.agent-bridge/worktrees) whose
@@ -68,6 +68,7 @@ async function mergedInto(branch: string, targets: string[], cwd: string, trust:
 }
 
 async function inspect(path: string, jobs: StoredJob[], apply: boolean, log: Logger): Promise<CleanupEntry> {
+  const removalPath = resolveWorktreeRemovalPath(path, dirname(path));
   const scan = scanWorktreeLinks(path);
   const warning = worktreeLinkWarning(scan);
   const entry = (branch: string | null, action: CleanupEntry["action"], reason: string): CleanupEntry => ({ path, branch, action, reason: warning ? `${reason}\n${warning}` : reason, externalLinks: scan.externalLinks });
@@ -77,8 +78,8 @@ async function inspect(path: string, jobs: StoredJob[], apply: boolean, log: Log
     const why = "leftover of a removed worktree: no .git, only empty folders and links";
     if (!apply) return entry(null, "would remove", why);
     try {
-      const links = unlinkLinks(path);
-      removeWorktreeDirectory(path);
+      const links = unlinkLinks(removalPath);
+      removeWorktreeDirectory(removalPath);
       return entry(null, "removed", links ? `${why}; unlinked ${links} link(s) first` : why);
     } catch (err) {
       return entry(null, "failed", (err as Error).message.split("\n")[0]!);
@@ -123,14 +124,14 @@ async function inspect(path: string, jobs: StoredJob[], apply: boolean, log: Log
   const why = `merged into ${into}, clean`;
   if (!apply) return entry(branch, "would remove", why);
   try {
-    const links = unlinkLinks(path);
+    const links = unlinkLinks(removalPath);
     // A lock (e.g. "initializing" left by an interrupted `worktree add`) blocks removal.
-    await git([...trust, "worktree", "unlock", path], mainPath, log).catch(() => "");
-    await git([...trust, "worktree", "remove", path], mainPath, log).catch(async (err) => {
+    await git([...trust, "worktree", "unlock", removalPath], mainPath, log).catch(() => "");
+    await git([...trust, "worktree", "remove", removalPath], mainPath, log).catch(async (err) => {
       // Git could not delete it all (files of another account, open handles): delete what is left ourselves.
       if (!existsSync(toNamespacedPath(path))) return;
       log.warn("git worktree remove failed; deleting the folder", { path, err: (err as Error).message });
-      removeWorktreeDirectory(path);
+      removeWorktreeDirectory(removalPath);
       await git(["worktree", "prune"], mainPath, log);
     });
     await git(["branch", "-D", branch], mainPath, log);
@@ -149,7 +150,7 @@ export interface CleanupScope {
 /** Common directory identifies a repository even from one of its linked worktrees. */
 export async function repositoryCommonDir(cwd: string, log: Logger): Promise<string> {
   const common = await git([...trustArgs(cwd), "rev-parse", "--path-format=absolute", "--git-common-dir"], cwd, log);
-  return realpathSync(resolve(cwd, common));
+  return realpathSync.native(resolve(cwd, common));
 }
 
 /** Resolve and announce the complete scope before any mutation. Unknown repositories stay scoped out. */
@@ -160,6 +161,7 @@ export async function cleanupWorktrees(opts: {
   if (opts.all && opts.repo) throw new Error("Use either --all or --repo, not both.");
   const repository = opts.all ? null : await repositoryCommonDir(opts.repo ?? opts.cwd ?? process.cwd(), opts.log);
   const dir = join(opts.home, "worktrees");
+  if (existsSync(dir)) resolveWorktreeRemovalPath(dir);
   const jobs = readJobs(opts.home);
   const candidates: { path: string; repository: string | null }[] = [];
   for (const d of existsSync(dir) ? readdirSync(dir, { withFileTypes: true }) : []) {

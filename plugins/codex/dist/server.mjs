@@ -31084,39 +31084,66 @@ function acquireLock(path) {
 
 // src/core/worktree.ts
 import { createHash as createHash3 } from "node:crypto";
-import { existsSync as existsSync7, mkdirSync as mkdirSync11, readFileSync as readFileSync13, realpathSync as realpathSync5, rmSync as rmSync4 } from "node:fs";
-import { basename as basename6, isAbsolute as isAbsolute5, join as join21, relative as relative3, resolve as resolve5, toNamespacedPath as toNamespacedPath2 } from "node:path";
+import { existsSync as existsSync7, mkdirSync as mkdirSync12, readFileSync as readFileSync13, realpathSync as realpathSync5, rmSync as rmSync5 } from "node:fs";
+import { basename as basename6, dirname as dirname8, isAbsolute as isAbsolute5, join as join21, relative as relative3, resolve as resolve5, toNamespacedPath as toNamespacedPath2 } from "node:path";
 
 // src/core/worktree-links.ts
 import { execFileSync } from "node:child_process";
-import { existsSync as existsSync6, lstatSync, readdirSync as readdirSync9, readlinkSync, realpathSync as realpathSync4, rmdirSync as rmdirSync2, unlinkSync } from "node:fs";
-import { basename as basename5, dirname as dirname7, isAbsolute as isAbsolute4, join as join20, relative as relative2, resolve as resolve4, toNamespacedPath } from "node:path";
+import { copyFileSync as copyFileSync3, existsSync as existsSync6, lstatSync, mkdirSync as mkdirSync11, mkdtempSync, readdirSync as readdirSync9, readlinkSync, realpathSync as realpathSync4, rmSync as rmSync4, rmdirSync as rmdirSync2, unlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { basename as basename5, dirname as dirname7, isAbsolute as isAbsolute4, join as join20, relative as relative2, resolve as resolve4, sep as sep2, toNamespacedPath } from "node:path";
 var WORKTREE_LINK_HINT = "(agent-bridge: worktree isolation is mandatory for source and writable files. External directory links may be used only for read-only access to Git-ignored caches: node_modules, .vs, __pycache__, or Library beside a Unity ProjectSettings/ProjectVersion.txt. Never write, delete, truncate or change permissions in a linked source, including through an internal link chain. A junction does not enforce read-only access: do not run Unity imports, package installers or other cache-writing tools through it. Prefer a project's external-cache env/config option (e.g. ANIMASKY_LIBRARY_ROOT) when available; never substitute an incomplete cache copy. Other external links remain forbidden. Cleanup must unlink only the link itself and never recurse into its target. Request cleanup approval through the supervisor and report the link and target if cleanup is denied.)";
 function ignoredCacheLink(root, path) {
   const name2 = basename5(path);
   const cache3 = ["node_modules", ".vs", "__pycache__"].includes(name2) || name2 === "Library" && existsSync6(join20(dirname7(path), "ProjectSettings", "ProjectVersion.txt"));
   if (!cache3 || path === root) return false;
-  const rel = relative2(root, path).replace(/\\/g, "/");
+  const rel = relative2(root, path).split(sep2).join("/");
   try {
-    const args = ["-c", `safe.directory=${root.replace(/\\/g, "/")}`];
+    root = realpathSync4.native(root);
+    const args = ["-c", `safe.directory=${root.split(sep2).join("/")}`];
     const tracked = execFileSync("git", [...args, "ls-files", "-z", "--", `:(literal)${rel}`], { cwd: root, encoding: "utf8", timeout: 1e4, stdio: ["pipe", "pipe", "pipe"] });
     if (tracked) return false;
-    execFileSync("git", [...args, "check-ignore", "--quiet", "--", `${rel}/`], { cwd: root, timeout: 1e4, stdio: ["pipe", "pipe", "pipe"] });
-    return true;
+    const gitDir = execFileSync("git", [...args, "rev-parse", "--absolute-git-dir"], { cwd: root, encoding: "utf8", timeout: 1e4, stdio: ["pipe", "pipe", "pipe"] }).trim();
+    let excludes = "";
+    try {
+      excludes = execFileSync("git", [...args, "config", "--path", "--get", "core.excludesFile"], { cwd: root, encoding: "utf8", timeout: 1e4, stdio: ["pipe", "pipe", "pipe"] }).trim();
+    } catch (err) {
+      if (err.status !== 1) throw err;
+    }
+    const ignoreArgs = excludes ? [...args, "-c", `core.excludesFile=${resolve4(root, excludes)}`] : args;
+    const probe = realpathSync4.native(mkdtempSync(join20(tmpdir(), "ab-cache-ignore-")));
+    try {
+      mkdirSync11(join20(probe, rel), { recursive: true });
+      const parts = rel.split("/");
+      for (let i = 0; i < parts.length; i++) {
+        const parent2 = join20(root, ...parts.slice(0, i));
+        const ignore = join20(parent2, ".gitignore");
+        if (existsSync6(ignore) && lstatSync(ignore).isFile()) copyFileSync3(ignore, join20(probe, ...parts.slice(0, i), ".gitignore"));
+      }
+      execFileSync("git", [...ignoreArgs, `--git-dir=${gitDir}`, `--work-tree=${probe}`, "check-ignore", "--no-index", "--quiet", "--", `${rel}/`], { cwd: probe, timeout: 1e4, stdio: ["pipe", "pipe", "pipe"] });
+      return true;
+    } finally {
+      rmSync4(probe, { recursive: true, force: true });
+    }
   } catch {
     return false;
   }
 }
-function unlinkLinks(dir) {
-  const parents = [];
-  for (let parent2 = resolve4(dir); ; parent2 = dirname7(parent2)) {
-    if (dirname7(parent2) === parent2) break;
-    parents.push(parent2);
+function resolveWorktreeRemovalPath(path, managedRoot = path) {
+  const boundary = resolve4(managedRoot);
+  const rel = relative2(boundary, resolve4(path));
+  if (rel === ".." || rel.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`) || isAbsolute4(rel) || dirname7(boundary) === boundary) {
+    throw new Error(`Refusing cleanup outside the managed worktree area: ${path}`);
   }
-  for (const parent2 of parents.reverse()) {
-    if (lstatSync(toNamespacedPath(parent2)).isSymbolicLink()) throw new Error(`Refusing cleanup through a linked path: ${parent2}`);
+  let checked = join20(realpathSync4.native(dirname7(boundary)), basename5(boundary));
+  for (const part of ["", ...rel ? rel.split(sep2) : []]) {
+    checked = join20(checked, part);
+    if (lstatSync(toNamespacedPath(checked)).isSymbolicLink()) throw new Error(`Refusing cleanup through a linked path: ${checked}`);
   }
-  return unlinkChildren(dir);
+  return checked;
+}
+function unlinkLinks(dir, managedRoot = dir) {
+  return unlinkChildren(resolveWorktreeRemovalPath(dir, managedRoot));
 }
 function unlinkChildren(dir) {
   dir = toNamespacedPath(resolve4(dir));
@@ -31212,7 +31239,7 @@ async function createWorktree(opts) {
   const baseBranch = await git(["symbolic-ref", "-q", "--short", "HEAD"], repoRoot, opts.log).catch(() => "") || null;
   let branch = `${BRANCH_PREFIX}${opts.jobId}`;
   const dir = join21(opts.home, "worktrees");
-  mkdirSync11(dir, { recursive: true });
+  mkdirSync12(dir, { recursive: true });
   let path = join21(dir, `${basename6(repoRoot)}-${opts.jobId}`);
   try {
     await git(["worktree", "add", "-b", branch, path, base2], repoRoot, opts.log, WORKTREE_ADD_TIMEOUT_MS);
@@ -31244,6 +31271,7 @@ async function unlockWorktree(repoRoot, path, log) {
 async function removeWorktree(repoRoot, path, branch, log) {
   if (existsSync7(toNamespacedPath2(path))) {
     try {
+      path = resolveWorktreeRemovalPath(path, dirname8(path));
       unlinkLinks(path);
     } catch (err) {
       log.warn("worktree cleanup refused; preserving checkout and branch", { path, err: err.message });
@@ -31261,10 +31289,11 @@ async function removeWorktree(repoRoot, path, branch, log) {
   await git(["branch", "-D", branch], repoRoot, log).catch(() => {
   });
 }
-function removeWorktreeDirectory(path) {
+function removeWorktreeDirectory(path, managedRoot = path) {
   if (!existsSync7(toNamespacedPath2(path))) return;
+  path = resolveWorktreeRemovalPath(path, managedRoot);
   unlinkLinks(path);
-  rmSync4(toNamespacedPath2(resolve5(path)), { recursive: true, force: true, maxRetries: REMOVE_RETRIES });
+  rmSync5(toNamespacedPath2(resolve5(path)), { recursive: true, force: true, maxRetries: REMOVE_RETRIES });
 }
 var SUBJECT_CHARS = 72;
 function subagentCommitMessage(opts) {
@@ -31469,7 +31498,7 @@ function changedFiles(before, after) {
 
 // src/core/sqlite-maintenance.ts
 import { existsSync as existsSync8 } from "node:fs";
-import { dirname as dirname8, join as join23 } from "node:path";
+import { dirname as dirname9, join as join23 } from "node:path";
 import { DatabaseSync as DatabaseSync4 } from "node:sqlite";
 
 // src/core/sqlite-migrations.ts
@@ -31541,7 +31570,7 @@ function migrateSqlite(db, file2, existed, target, migrations, log) {
 }
 
 // src/core/logger.ts
-import { appendFileSync as appendFileSync2, mkdirSync as mkdirSync12, renameSync as renameSync3, statSync as statSync7 } from "node:fs";
+import { appendFileSync as appendFileSync2, mkdirSync as mkdirSync13, renameSync as renameSync3, statSync as statSync7 } from "node:fs";
 import { join as join22 } from "node:path";
 var LOG_LEVELS = ["debug", "info", "warn", "error", "silent"];
 var LEVEL_RANK = { debug: 10, info: 20, warn: 30, error: 40, silent: 100 };
@@ -31577,7 +31606,7 @@ function createLogger(opts) {
   };
   try {
     const dir = join22(opts.home, LOG_DIR_NAME);
-    mkdirSync12(dir, { recursive: true });
+    mkdirSync13(dir, { recursive: true });
     sink.file = join22(dir, LOG_FILE_NAME);
     rotateIfNeeded(sink.file);
   } catch (err) {
@@ -31672,7 +31701,7 @@ function openArchive(path) {
   }
 }
 function archiveDbPath(file2) {
-  return file2 === ":memory:" ? ":memory:" : join23(dirname8(file2), ARCHIVE_DB_NAME);
+  return file2 === ":memory:" ? ":memory:" : join23(dirname9(file2), ARCHIVE_DB_NAME);
 }
 function archiveMessages(source, archive, where, args, reason, table = "messages") {
   source.exec("BEGIN IMMEDIATE");
@@ -31708,7 +31737,7 @@ import { join as join25 } from "node:path";
 
 // src/core/read-journal.ts
 import { createHash as createHash4 } from "node:crypto";
-import { appendFileSync as appendFileSync3, mkdirSync as mkdirSync13, readFileSync as readFileSync14 } from "node:fs";
+import { appendFileSync as appendFileSync3, mkdirSync as mkdirSync14, readFileSync as readFileSync14 } from "node:fs";
 import { join as join24 } from "node:path";
 var ReadJournal = class {
   constructor(home) {
@@ -31751,7 +31780,7 @@ var ReadJournal = class {
   append(identity, ids) {
     const release = storageLease(this.home);
     try {
-      mkdirSync13(this.dir, { recursive: true, mode: 448 });
+      mkdirSync14(this.dir, { recursive: true, mode: 448 });
       appendFileSync3(this.path(identity), `
 ${JSON.stringify({ ids, at: Date.now() })}
 `, { mode: 384, flush: true });
@@ -31895,7 +31924,7 @@ async function listJobOutcomes(home, log, names) {
 }
 
 // src/mcp/server.ts
-import { dirname as dirname17, isAbsolute as isAbsolute9, join as join52, resolve as resolve12 } from "node:path";
+import { dirname as dirname18, isAbsolute as isAbsolute9, join as join52, resolve as resolve12 } from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 
 // node_modules/zod/v3/helpers/util.js
@@ -41945,16 +41974,16 @@ function t(key2, params = {}) {
 import { randomUUID as randomUUID19 } from "node:crypto";
 import { EventEmitter as EventEmitter2 } from "node:events";
 import { unlinkSync as unlinkSync2 } from "node:fs";
-import { dirname as dirname14, join as join42 } from "node:path";
+import { dirname as dirname15, join as join42 } from "node:path";
 
 // src/core/history.ts
 import { createHash as createHash7 } from "node:crypto";
 import { closeSync as closeSync7, existsSync as existsSync11, fstatSync as fstatSync2, openSync as openSync7, opendirSync, readSync as readSync2 } from "node:fs";
-import { basename as basename7, dirname as dirname10, join as join30 } from "node:path";
+import { basename as basename7, dirname as dirname11, join as join30 } from "node:path";
 import { DatabaseSync as DatabaseSync8 } from "node:sqlite";
 
 // src/core/transcripts/claude.ts
-import { dirname as dirname9, join as join27 } from "node:path";
+import { dirname as dirname10, join as join27 } from "node:path";
 function claudeSessionFile(session, paths) {
   if (!session.sessionId || !TRANSCRIPT_ID.test(session.sessionId)) return null;
   const projects = join27(paths.claude, "projects");
@@ -41988,7 +42017,7 @@ function claudeItems(row) {
 function readClaudeChat(session, paths, from = "0", child) {
   const main = claudeSessionFile(session, paths);
   if (!main || child !== void 0 && !TRANSCRIPT_ID.test(child)) return null;
-  const nested = child ? safeFile(paths.claude, join27(dirname9(main), session.sessionId, "subagents", `agent-${child}.jsonl`)) : null;
+  const nested = child ? safeFile(paths.claude, join27(dirname10(main), session.sessionId, "subagents", `agent-${child}.jsonl`)) : null;
   const legacy = child && !nested ? listClaudeSubagents(session, paths).some((s) => s.id === child) : false;
   if (child && !nested && !legacy) return null;
   const page = readJsonl(nested ?? main, from);
@@ -41998,7 +42027,7 @@ function listClaudeSubagents(session, paths) {
   const main = claudeSessionFile(session, paths);
   if (!main) return [];
   const out = /* @__PURE__ */ new Map();
-  const dir = join27(dirname9(main), session.sessionId, "subagents");
+  const dir = join27(dirname10(main), session.sessionId, "subagents");
   for (const name2 of directory(dir).slice(0, MAX_NATIVE_SUBAGENTS)) {
     const id = /^agent-([A-Za-z0-9_-]+)\.jsonl$/.exec(name2)?.[1];
     if (!id || !TRANSCRIPT_ID.test(id)) continue;
@@ -42436,7 +42465,7 @@ ${row.body}`,
         const id = rolloutId ?? (typeof meta3.id === "string" ? meta3.id : typeof meta3.sessionId === "string" ? meta3.sessionId : basename7(path2, ".jsonl"));
         if (!TRANSCRIPT_ID.test(id)) continue;
         const child = entry.agent === "claude" && basename7(entry.path) === "subagents" ? basename7(path2, ".jsonl").replace(/^agent-/, "") : null;
-        this.register({ path: path2, kind: "transcript", agent: entry.agent, session: child ? basename7(dirname10(entry.path)) : id, cwd: typeof meta3.cwd === "string" ? meta3.cwd : "", child });
+        this.register({ path: path2, kind: "transcript", agent: entry.agent, session: child ? basename7(dirname11(entry.path)) : id, cwd: typeof meta3.cwd === "string" ? meta3.cwd : "", child });
       }
     }
     const path = safeFile(this.paths.opencode, join30(this.paths.opencode, "opencode.db"));
@@ -42664,14 +42693,14 @@ import { readFileSync as readFileSync22 } from "node:fs";
 import { createServer as createServer4 } from "node:net";
 
 // src/core/store.ts
-import { existsSync as existsSync14, mkdirSync as mkdirSync15, realpathSync as realpathSync6 } from "node:fs";
-import { dirname as dirname12, resolve as resolve8 } from "node:path";
+import { existsSync as existsSync14, mkdirSync as mkdirSync16, realpathSync as realpathSync6 } from "node:fs";
+import { dirname as dirname13, resolve as resolve8 } from "node:path";
 import { DatabaseSync as DatabaseSync11 } from "node:sqlite";
 
 // src/core/backups.ts
 import { createHash as createHash8, randomUUID as randomUUID8 } from "node:crypto";
-import { closeSync as closeSync8, copyFileSync as copyFileSync3, existsSync as existsSync12, fsyncSync as fsyncSync3, lstatSync as lstatSync2, mkdirSync as mkdirSync14, openSync as openSync8, readFileSync as readFileSync15, readdirSync as readdirSync11, renameSync as renameSync4, writeFileSync as writeFileSync5 } from "node:fs";
-import { dirname as dirname11, join as join31, relative as relative4, resolve as resolve6, sep as sep2 } from "node:path";
+import { closeSync as closeSync8, copyFileSync as copyFileSync4, existsSync as existsSync12, fsyncSync as fsyncSync3, lstatSync as lstatSync2, mkdirSync as mkdirSync15, openSync as openSync8, readFileSync as readFileSync15, readdirSync as readdirSync11, renameSync as renameSync4, writeFileSync as writeFileSync5 } from "node:fs";
+import { dirname as dirname12, join as join31, relative as relative4, resolve as resolve6, sep as sep3 } from "node:path";
 var BACKUPS_DIR_NAME = "backups";
 var BACKUP_MANIFEST_VERSION = 1;
 var DEFAULT_BACKUP_RETENTION = 7;
@@ -42730,17 +42759,17 @@ function createBackup(home, now = Date.now(), rotate = true) {
 }
 function createBackupUnlocked(home, now, rotate) {
   const root = join31(home, BACKUPS_DIR_NAME);
-  mkdirSync14(root, { recursive: true, mode: 448 });
+  mkdirSync15(root, { recursive: true, mode: 448 });
   const name2 = `${BACKUP_PREFIX}${String(now).padStart(13, "0")}-${randomUUID8()}`;
   const staging = join31(root, `.pending-${name2}`);
-  mkdirSync14(staging, { mode: 448 });
+  mkdirSync15(staging, { mode: 448 });
   const manifest = { version: BACKUP_MANIFEST_VERSION, createdAt: now, files: [] };
   const capture2 = (source, sqlite) => {
-    const path = relative4(home, source).split(sep2).join("/");
+    const path = relative4(home, source).split(sep3).join("/");
     const target = join31(staging, path);
-    mkdirSync14(dirname11(target), { recursive: true, mode: 448 });
+    mkdirSync15(dirname12(target), { recursive: true, mode: 448 });
     if (sqlite) snapshotDatabase(source, target);
-    else copyFileSync3(source, target);
+    else copyFileSync4(source, target);
     syncFile(target);
     const raw = readFileSync15(target);
     manifest.files.push({ path, sha256: createHash8("sha256").update(raw).digest("hex"), bytes: raw.length });
@@ -42755,7 +42784,7 @@ function createBackupUnlocked(home, now, rotate) {
     const retention = retentionLimit(BACKUP_RETENTION_ENV, DEFAULT_BACKUP_RETENTION);
     if (retention) for (const backup of listBackups(home).slice(retention)) {
       const cold = join31(root, "archive");
-      mkdirSync14(cold, { recursive: true, mode: 448 });
+      mkdirSync15(cold, { recursive: true, mode: 448 });
       renameSync4(backup.path, join31(cold, backup.path.split(/[\\/]/).at(-1)));
     }
   }
@@ -43028,10 +43057,10 @@ var MessageStore = class {
   constructor(file2, log) {
     this.log = log;
     const existed = file2 !== ":memory:" && existsSync14(file2);
-    this.home = file2 === ":memory:" ? null : dirname12(file2);
-    if (file2 !== ":memory:") mkdirSync15(dirname12(file2), { recursive: true, mode: 448 });
+    this.home = file2 === ":memory:" ? null : dirname13(file2);
+    if (file2 !== ":memory:") mkdirSync16(dirname13(file2), { recursive: true, mode: 448 });
     this.release = file2 === ":memory:" ? () => {
-    } : storageLease(dirname12(file2));
+    } : storageLease(dirname13(file2));
     try {
       this.db = new DatabaseSync11(file2);
     } catch (err) {
@@ -43080,7 +43109,7 @@ var MessageStore = class {
     log.debug("message store opened", { file: file2 });
     if (file2 !== ":memory:") {
       try {
-        backupIfDue(dirname12(file2));
+        backupIfDue(dirname13(file2));
       } catch (err) {
         log.warn("automatic backup failed", { err: String(err) });
       }
@@ -43088,7 +43117,7 @@ var MessageStore = class {
       if (interval) {
         this.backupTimer = setInterval(() => {
           try {
-            backupIfDue(dirname12(file2));
+            backupIfDue(dirname13(file2));
           } catch (err) {
             log.warn("automatic backup failed", { err: String(err) });
           }
@@ -43213,7 +43242,7 @@ import { networkInterfaces } from "node:os";
 // src/network/pairing.ts
 import { execFileSync as execFileSync2 } from "node:child_process";
 import { createHash as createHash9, randomBytes as randomBytes5, randomUUID as randomUUID10 } from "node:crypto";
-import { chmodSync as chmodSync2, existsSync as existsSync15, mkdirSync as mkdirSync16, readFileSync as readFileSync16, renameSync as renameSync5, writeFileSync as writeFileSync6 } from "node:fs";
+import { chmodSync as chmodSync2, existsSync as existsSync15, mkdirSync as mkdirSync17, readFileSync as readFileSync16, renameSync as renameSync5, writeFileSync as writeFileSync6 } from "node:fs";
 import { join as join32 } from "node:path";
 var DEFAULT_SYSTEM_ROOT = "C:\\Windows";
 var SYSTEM32 = join32(process.env.SystemRoot || DEFAULT_SYSTEM_ROOT, "System32");
@@ -43252,7 +43281,7 @@ var PairingStore = class {
     if (!NETWORK_NAME_PATTERN.test(name2)) throw new Error("invalid network instance name");
     this.dir = join32(home, "network");
     this.file = join32(this.dir, "keys.json");
-    mkdirSync16(this.dir, { recursive: true, mode: OWNER_DIR_MODE });
+    mkdirSync17(this.dir, { recursive: true, mode: OWNER_DIR_MODE });
     protect(this.dir, OWNER_DIR_MODE);
     if (existsSync15(this.file)) {
       protect(this.file, OWNER_FILE_MODE);
@@ -43542,8 +43571,8 @@ var NetworkDiscovery = class {
 
 // src/network/files.ts
 import { createHash as createHash10, randomUUID as randomUUID11 } from "node:crypto";
-import { existsSync as existsSync16, lstatSync as lstatSync3, mkdirSync as mkdirSync17, mkdtempSync, readFileSync as readFileSync17, readdirSync as readdirSync12, renameSync as renameSync6, rmSync as rmSync5, statfsSync, writeFileSync as writeFileSync7 } from "node:fs";
-import { basename as basename8, join as join33, parse as parse4, resolve as resolve9, sep as sep3 } from "node:path";
+import { existsSync as existsSync16, lstatSync as lstatSync3, mkdirSync as mkdirSync18, mkdtempSync as mkdtempSync2, readFileSync as readFileSync17, readdirSync as readdirSync12, renameSync as renameSync6, rmSync as rmSync6, statfsSync, writeFileSync as writeFileSync7 } from "node:fs";
+import { basename as basename8, join as join33, parse as parse4, resolve as resolve9, sep as sep4 } from "node:path";
 var MAX_TRANSFER_BYTES = 1024 * 1024;
 var MAX_TRANSFER_ENTRIES = 128;
 var MAX_TRANSFER_DEPTH = 16;
@@ -43569,7 +43598,7 @@ function checksum(data) {
 function assertTransferPath(path) {
   const absolute = resolve9(path);
   let current = parse4(absolute).root;
-  for (const component of absolute.slice(current.length).split(sep3).filter(Boolean)) {
+  for (const component of absolute.slice(current.length).split(sep4).filter(Boolean)) {
     current = join33(current, component);
     if (lstatSync3(current).isSymbolicLink()) throw new Error("file transfer does not follow symlinks or junctions");
   }
@@ -43578,7 +43607,7 @@ function ensureTransferDirectory(path) {
   if (!existsSync16(path)) {
     const parent2 = resolve9(path, "..");
     ensureTransferDirectory(parent2);
-    mkdirSync17(path, { mode: OWNER_DIR_MODE });
+    mkdirSync18(path, { mode: OWNER_DIR_MODE });
   }
   assertTransferPath(path);
   if (!lstatSync3(path).isDirectory()) throw new Error("transfer directory is not a directory");
@@ -43651,23 +43680,23 @@ function receiveTransfer(home, input2) {
   assertTransferPath(inbox);
   const final = join33(inbox, transfer.id);
   if (existsSync16(final)) throw new Error("transfer already received");
-  const staging = mkdtempSync(join33(inbox, ".partial-"));
+  const staging = mkdtempSync2(join33(inbox, ".partial-"));
   try {
-    for (const entry of entries.filter((e) => e.data === null).sort((a, b) => a.path.length - b.path.length)) mkdirSync17(join33(staging, ...entry.path.split("/")), { mode: OWNER_DIR_MODE });
+    for (const entry of entries.filter((e) => e.data === null).sort((a, b) => a.path.length - b.path.length)) mkdirSync18(join33(staging, ...entry.path.split("/")), { mode: OWNER_DIR_MODE });
     for (const entry of entries) if (entry.data !== null) writeFileSync7(join33(staging, ...entry.path.split("/")), entry.data, { flag: "wx", mode: OWNER_FILE_MODE });
     renameSync6(staging, final);
     return { id: transfer.id, inbox: final, files: files2, bytes };
   } catch (err) {
-    rmSync5(staging, { recursive: true, force: true });
+    rmSync6(staging, { recursive: true, force: true });
     throw err;
   }
 }
 
 // src/network/transfers.ts
 import { createHash as createHash11, randomUUID as randomUUID12 } from "node:crypto";
-import { constants, existsSync as existsSync17, lstatSync as lstatSync4, mkdirSync as mkdirSync18, readdirSync as readdirSync13, readFileSync as readFileSync18, renameSync as renameSync7, statSync as statSync8, writeFileSync as writeFileSync8 } from "node:fs";
+import { constants, existsSync as existsSync17, lstatSync as lstatSync4, mkdirSync as mkdirSync19, readdirSync as readdirSync13, readFileSync as readFileSync18, renameSync as renameSync7, statSync as statSync8, writeFileSync as writeFileSync8 } from "node:fs";
 import { open as open2, link, unlink, statfs, lstat, opendir } from "node:fs/promises";
-import { basename as basename9, dirname as dirname13, isAbsolute as isAbsolute6, join as join34, relative as relative5, resolve as resolve10, sep as sep4 } from "node:path";
+import { basename as basename9, dirname as dirname14, isAbsolute as isAbsolute6, join as join34, relative as relative5, resolve as resolve10, sep as sep5 } from "node:path";
 var FILE_STREAM_CAPABILITY = "file-stream-v1";
 var TRANSFER_CHUNK_BYTES = 256 * 1024;
 var DEFAULT_MAX_STREAM_BYTES = 8 * 1024 * 1024 * 1024;
@@ -43766,7 +43795,7 @@ function allowedFetchPath(path, cwd, roots) {
     if (!isAbsolute6(root)) return false;
     assertTransferPath(root);
     const rel = relative5(resolve10(root), source);
-    return rel === "" || !isAbsolute6(rel) && rel !== ".." && !rel.startsWith(`..${sep4}`);
+    return rel === "" || !isAbsolute6(rel) && rel !== ".." && !rel.startsWith(`..${sep5}`);
   })) throw new Error("fetch is disabled or path is outside allowed fetch roots");
   return source;
 }
@@ -44243,7 +44272,7 @@ var TransferManager = class {
     const verifiedPath = this.verified(state, index);
     if (entry.sha256 && existsSync17(verifiedPath)) {
       if (await this.hashFile(verifiedPath, state) !== entry.sha256) throw new Error("verified file checksum mismatch");
-      assertTransferPath(dirname13(target));
+      assertTransferPath(dirname14(target));
       await link(verifiedPath, target);
       await unlink(verifiedPath);
       entry.complete = true;
@@ -44286,20 +44315,20 @@ var TransferManager = class {
     const final = join34(inbox, state.id);
     const parts = join34(this.root, state.id);
     for (const dir of [final, parts]) {
-      if (!existsSync17(dir)) mkdirSync18(dir, { mode: OWNER_DIR_MODE });
+      if (!existsSync17(dir)) mkdirSync19(dir, { mode: OWNER_DIR_MODE });
       assertTransferPath(dir);
       if (!lstatSync4(dir).isDirectory()) throw new Error("transfer directory is not a directory");
     }
     for (const entry of state.entries.filter((entry2) => entry2.kind === "directory").sort((a, b) => a.path.length - b.path.length)) {
       const dir = this.target(state, entry);
-      assertTransferPath(dirname13(dir));
-      if (!existsSync17(dir)) mkdirSync18(dir, { mode: OWNER_DIR_MODE });
+      assertTransferPath(dirname14(dir));
+      if (!existsSync17(dir)) mkdirSync19(dir, { mode: OWNER_DIR_MODE });
       assertTransferPath(dir);
       if (!lstatSync4(dir).isDirectory()) throw new Error("transfer directory is not a directory");
     }
     for (let i = 0; i < state.entries.length; i++) if (state.entries[i].kind === "file") {
       for (const file2 of [this.part(state, i), `${this.part(state, i)}.sha256`]) {
-        assertTransferPath(dirname13(file2));
+        assertTransferPath(dirname14(file2));
         if (!existsSync17(file2)) writeFileSync8(file2, "", { flag: "wx", mode: OWNER_FILE_MODE, flush: true });
         assertTransferPath(file2);
         if (!lstatSync4(file2).isFile() || lstatSync4(file2).size !== 0) throw new Error("invalid initial partial file");
@@ -44470,7 +44499,7 @@ var TransferManager = class {
         entry.sha256 = request2.sha256;
         this.save(state);
         const target = this.target(state, entry);
-        assertTransferPath(dirname13(target));
+        assertTransferPath(dirname14(target));
         assertTransferPath(part);
         const verified = this.verified(state, request2.index);
         if (existsSync17(verified)) throw new Error("verified file already exists");
@@ -46237,7 +46266,7 @@ ${notes.join("\n\n")}` : res.text };
 
 // src/mcp/job-host.ts
 import { spawn as spawn6 } from "node:child_process";
-import { mkdirSync as mkdirSync19, readdirSync as readdirSync14, statSync as statSync10 } from "node:fs";
+import { mkdirSync as mkdirSync20, readdirSync as readdirSync14, statSync as statSync10 } from "node:fs";
 import { join as join40 } from "node:path";
 
 // src/mcp/remote-job-host.ts
@@ -46360,7 +46389,7 @@ var JobRunners = class {
   start(job, spec) {
     if (spec.args.host) return this.remote.start(job, spec.args.host, spec.target, spec.args);
     try {
-      mkdirSync19(join40(this.home, RUNNERS_DIR_NAME), { recursive: true });
+      mkdirSync20(join40(this.home, RUNNERS_DIR_NAME), { recursive: true });
       const statePath = runnerStatePath(this.home, job.id);
       const file2 = specPath(this.home, job.id);
       assertWritableStore(readJsonStore(statePath, this.log));
@@ -47773,7 +47802,7 @@ var BridgeNode = class extends EventEmitter2 {
     this.currentCwd = opts.cwd;
     this.autoWake = opts.autoWake;
     this.log = opts.log.child("node");
-    this.readJournal = new ReadJournal(dirname14(opts.dbPath));
+    this.readJournal = new ReadJournal(dirname15(opts.dbPath));
     this.restoreReadState(`name:${this.currentName}`);
   }
   opts;
@@ -47914,7 +47943,7 @@ var BridgeNode = class extends EventEmitter2 {
       this.log.error("cannot open message store", { err, db: this.opts.dbPath });
       throw err;
     }
-    const broker = new Broker(this.opts.pipePath, store, this.log.child("broker"), this.opts.token, Date.now, join42(dirname14(this.opts.dbPath), JOBS_FILE), this.opts.network);
+    const broker = new Broker(this.opts.pipePath, store, this.log.child("broker"), this.opts.token, Date.now, join42(dirname15(this.opts.dbPath), JOBS_FILE), this.opts.network);
     try {
       await broker.listen();
       this.broker = broker;
@@ -48116,7 +48145,7 @@ var BridgeNode = class extends EventEmitter2 {
    */
   deliverLocal(m) {
     try {
-      recordLocalResult(dirname14(this.opts.dbPath), m);
+      recordLocalResult(dirname15(this.opts.dbPath), m);
     } catch (err) {
       this.log.warn("could not retain local result receipt", { id: m.id, err: String(err) });
     }
@@ -48384,7 +48413,7 @@ var CodexWaker = class {
 
 // src/mcp/message-wait.ts
 import { randomUUID as randomUUID20 } from "node:crypto";
-import { mkdirSync as mkdirSync20, readdirSync as readdirSync15, readFileSync as readFileSync23 } from "node:fs";
+import { mkdirSync as mkdirSync21, readdirSync as readdirSync15, readFileSync as readFileSync23 } from "node:fs";
 import { join as join43 } from "node:path";
 var SINGLE_WAIT_SEC = DEFAULT_WAIT_SEC;
 var RECEIPT_POLL_MS = 1e3;
@@ -48424,7 +48453,7 @@ var MessageWaitStore = class {
     return record2;
   }
   pending(node2) {
-    mkdirSync20(this.dir, { recursive: true, mode: 448 });
+    mkdirSync21(this.dir, { recursive: true, mode: 448 });
     return readdirSync15(this.dir).filter((f) => f.endsWith(".json")).flatMap((f) => {
       try {
         const record2 = waitSchema.parse(JSON.parse(readFileSync23(join43(this.dir, f), "utf8")));
@@ -48484,7 +48513,7 @@ async function waitForReadReceipt(node2, id, timeoutMs, signal) {
 
 // src/mcp/rewake.ts
 import { randomBytes as randomBytes7 } from "node:crypto";
-import { mkdirSync as mkdirSync21, rmSync as rmSync6, writeFileSync as writeFileSync10 } from "node:fs";
+import { mkdirSync as mkdirSync22, rmSync as rmSync7, writeFileSync as writeFileSync10 } from "node:fs";
 import { createServer as createServer5 } from "node:http";
 import { join as join44 } from "node:path";
 var SESSIONS_DIR = "sessions";
@@ -48722,10 +48751,10 @@ var RewakeEndpoint = class {
   register(sessionId) {
     if (!this.server || this.retired || this.registered === sessionId) return;
     const file2 = sessionFile(this.home, sessionId);
-    mkdirSync21(join44(this.home, SESSIONS_DIR), { recursive: true });
+    mkdirSync22(join44(this.home, SESSIONS_DIR), { recursive: true });
     const reg = { port: this.port, secret: this.secret, pid: process.pid };
     writeFileSync10(file2, JSON.stringify(reg), { mode: 384 });
-    if (this.registered) rmSync6(sessionFile(this.home, this.registered), { force: true });
+    if (this.registered) rmSync7(sessionFile(this.home, this.registered), { force: true });
     this.registered = sessionId;
     this.log.debug("rewake endpoint registered", { sessionId });
   }
@@ -48734,7 +48763,7 @@ var RewakeEndpoint = class {
     this.modWaiter?.abort("superseded");
     this.standby?.release("superseded");
     clearTimeout(this.confirmTimer);
-    if (this.registered) rmSync6(sessionFile(this.home, this.registered), { force: true });
+    if (this.registered) rmSync7(sessionFile(this.home, this.registered), { force: true });
     const s = this.server;
     this.server = null;
     if (s) await new Promise((r) => s.close(() => r()));
@@ -48982,7 +49011,7 @@ function saveAutoWake(home, name2, enabled) {
 }
 
 // src/core/models.ts
-import { mkdirSync as mkdirSync22, readFileSync as readFileSync24, writeFileSync as writeFileSync11 } from "node:fs";
+import { mkdirSync as mkdirSync23, readFileSync as readFileSync24, writeFileSync as writeFileSync11 } from "node:fs";
 import { join as join46 } from "node:path";
 var MAX_LISTED = 80;
 var MODEL_CACHE_MS = 10 * 60 * 1e3;
@@ -49023,7 +49052,7 @@ async function readModels(agent, cfg, cwd, log, home) {
       const report = { agent, defaultModel, models, lines };
       if (!lines[0]?.startsWith("Could not list")) {
         try {
-          mkdirSync22(home, { recursive: true });
+          mkdirSync23(home, { recursive: true });
           writeFileSync11(modelCachePath(home, agent), JSON.stringify({ at: Date.now(), bin: modelBin(agent, cfg), effort: cfg.effort[agent] ?? null, report }), { mode: 384 });
         } catch (err) {
           log.debug("could not cache models", { err: err.message });
@@ -51720,8 +51749,8 @@ function parseNetworkAddress(address) {
 }
 
 // src/core/doctor.ts
-import { existsSync as existsSync19, lstatSync as lstatSync5, mkdirSync as mkdirSync23, readFileSync as readFileSync25, readdirSync as readdirSync16, renameSync as renameSync8 } from "node:fs";
-import { basename as basename10, dirname as dirname15, join as join47, relative as relative7 } from "node:path";
+import { existsSync as existsSync19, lstatSync as lstatSync5, mkdirSync as mkdirSync24, readFileSync as readFileSync25, readdirSync as readdirSync16, renameSync as renameSync8 } from "node:fs";
+import { basename as basename10, dirname as dirname16, join as join47, relative as relative7 } from "node:path";
 import { randomUUID as randomUUID21 } from "node:crypto";
 import { DatabaseSync as DatabaseSync12 } from "node:sqlite";
 function doctor(home, now = Date.now()) {
@@ -51790,16 +51819,16 @@ function doctor(home, now = Date.now()) {
       if (version2 === void 0 || version2 === 0) finding("warning", "json-legacy", path, "Legacy version; next versioned write will preserve a migration backup");
       else if (!Number.isInteger(version2) || version2 < 0 || version2 > JSON_STORE_VERSION) finding("error", "json-version", path, `Unsupported JSON version ${String(version2)}; code expects ${JSON_STORE_VERSION}`);
       else if (version2 < JSON_STORE_VERSION) finding("warning", "json-legacy", path, `Earlier JSON version ${String(version2)}; code expects ${JSON_STORE_VERSION}`);
-      if (dirname15(path) === join47(home, "runs") && path.endsWith(".json") && !existsSync19(path.replace(/\.json$/, ".log"))) finding("warning", "orphan-metadata", path, "Run metadata has no matching active log; preserved for review");
-      if (dirname15(path) === join47(home, "jobs") && path.endsWith(".spec.json") && !existsSync19(path.replace(/\.spec\.json$/, ".json"))) finding("warning", "orphan-runner-spec", path, "Runner specification has no state; it may still be starting");
+      if (dirname16(path) === join47(home, "runs") && path.endsWith(".json") && !existsSync19(path.replace(/\.json$/, ".log"))) finding("warning", "orphan-metadata", path, "Run metadata has no matching active log; preserved for review");
+      if (dirname16(path) === join47(home, "jobs") && path.endsWith(".spec.json") && !existsSync19(path.replace(/\.spec\.json$/, ".json"))) finding("warning", "orphan-runner-spec", path, "Runner specification has no state; it may still be starting");
     } catch (err) {
       finding("error", "json-parse", path, String(err));
     }
   }
   const logs = runLogFiles(home);
   for (const path of logs) {
-    const meta3 = join47(dirname15(path), runFileName(path).replace(/\.log$/, ".json"));
-    if (!existsSync19(meta3) && !readdirSync16(dirname15(path)).some((f) => f.startsWith(basename10(meta3) + "-"))) finding("warning", "orphan-log", path, "Run log has no metadata; log remains readable");
+    const meta3 = join47(dirname16(path), runFileName(path).replace(/\.log$/, ".json"));
+    if (!existsSync19(meta3) && !readdirSync16(dirname16(path)).some((f) => f.startsWith(basename10(meta3) + "-"))) finding("warning", "orphan-log", path, "Run log has no metadata; log remains readable");
   }
   report.ok = !report.findings.some((f) => f.severity === "error");
   return report;
@@ -51807,7 +51836,7 @@ function doctor(home, now = Date.now()) {
 
 // src/core/message-history.ts
 import { existsSync as existsSync20 } from "node:fs";
-import { dirname as dirname16, join as join48 } from "node:path";
+import { dirname as dirname17, join as join48 } from "node:path";
 import { DatabaseSync as DatabaseSync13 } from "node:sqlite";
 var DEFAULT_HISTORY_LIMIT = 100;
 var MAX_HISTORY_LIMIT = 1e3;
@@ -51815,7 +51844,7 @@ function searchMessages(file2, opts = {}) {
   const limit = Math.min(MAX_HISTORY_LIMIT, Math.max(1, Math.floor(opts.limit ?? DEFAULT_HISTORY_LIMIT)));
   const query = `%${(opts.query ?? "").replace(/[\\%_]/g, "\\$&")}%`;
   const rows = [];
-  for (const path of [file2, join48(dirname16(file2), ARCHIVE_DB_NAME)]) {
+  for (const path of [file2, join48(dirname17(file2), ARCHIVE_DB_NAME)]) {
     if (!existsSync20(path)) continue;
     const db = new DatabaseSync13(path, { readOnly: true });
     try {
@@ -51839,8 +51868,8 @@ function searchMessages(file2, opts = {}) {
 }
 
 // src/core/history-answer.ts
-import { mkdtempSync as mkdtempSync2, rmSync as rmSync7 } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdtempSync as mkdtempSync3, rmSync as rmSync8 } from "node:fs";
+import { tmpdir as tmpdir2 } from "node:os";
 import { join as join49 } from "node:path";
 var HISTORY_ANSWER_TIMEOUT_MS = 6e4;
 var HISTORY_ANSWER_MAX_HITS = 8;
@@ -51893,7 +51922,7 @@ async function answerHistory(query, result, cfg, home, log, deps = {}) {
   }
 }
 async function runAnswer(agent, model, prompt, cfg, log) {
-  const cwd = mkdtempSync2(join49(tmpdir(), "agent-bridge-answer-"));
+  const cwd = mkdtempSync3(join49(tmpdir2(), "agent-bridge-answer-"));
   const env = childEnv();
   try {
     let args;
@@ -51914,7 +51943,7 @@ async function runAnswer(agent, model, prompt, cfg, log) {
     if (parsed.error) throw new Error(parsed.error);
     return parsed.text;
   } finally {
-    rmSync7(cwd, { recursive: true, force: true });
+    rmSync8(cwd, { recursive: true, force: true });
   }
 }
 
@@ -52511,7 +52540,7 @@ var MAX_TITLE_CHARS3 = 80;
 var SUBAGENT_TOOLS = /* @__PURE__ */ new Set(["peers", "send", "report_progress", "hook_event"]);
 var STAND_IN_RECHECK_MS = 3e4;
 var KEPT_ARGS = ["host", "model", "effort", "cwd", "timeout_sec", "worktree", "access", "sandbox", "approvals_reviewer", "permission_mode", "auto_approve", "allow_tools", "send_to", "title"];
-var PLUGIN_ROOT = resolve12(dirname17(fileURLToPath2(import.meta.url)), "..");
+var PLUGIN_ROOT = resolve12(dirname18(fileURLToPath2(import.meta.url)), "..");
 function pathFromUriOrPath(v) {
   if (typeof v !== "string" || !v) return null;
   if (v.startsWith("file:")) {

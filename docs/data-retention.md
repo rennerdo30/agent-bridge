@@ -29,7 +29,7 @@ transcript bytes after reads. No automated test uses the owner's actual data roo
 | `core/resource-slots.ts` | Expired/released process concurrency leases in `slots`, not messages. |
 | `network/files.ts` | Unpublished `.partial-*` transfer staging directory after a failed receive. The sender's original is retained. |
 | `cli/smoke.ts`, `cli/reliability.ts`, `cli/reliability-live.ts` | Explicitly created temporary test homes/repositories only. |
-| `core/worktree-links.ts` | Symlink/junction itself only; never its destination. Shared by normal cleanup and failed-checkout removal; linked roots are refused. |
+| `core/worktree-links.ts` | Symlink/junction itself only; never its destination. Shared by normal cleanup and failed-checkout removal; traversal through a linked root/container or linked components inside that boundary is refused; leaf link entries are detached without traversal. System/home aliases above that boundary are resolved before removal. The private `ab-cache-ignore-*` mkdtemp view contains only empty directories and copies of ignore rules; its exact removal is permitted and never reaches linked caches. |
 | `core/worktree.ts` | A disposable worktree copy after its callers verify clean, merged Git content, or an unpublished failed checkout. Git retains tracked content. Uncommitted, unmerged and ignored real files are retained. Ignored links and empty folders contain no unique file bytes. |
 | `core/sqlite-maintenance.ts` | Exact archived row selection, after archive commit; copy failure rolls the source transaction back. |
 | `core/sqlite-migrations.ts` | Backup recovery under the migration writer lock, after reading original rows from the durable pre-migration snapshot. Failure rolls back and retains the snapshot. |

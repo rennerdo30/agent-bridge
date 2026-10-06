@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, lstatSync, readdirSync, readlinkSync, realpathSync, rmdirSync, unlinkSync } from "node:fs";
-import { basename, dirname, isAbsolute, join, relative, resolve, toNamespacedPath } from "node:path";
+import { copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readlinkSync, realpathSync, rmSync, rmdirSync, unlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep, toNamespacedPath } from "node:path";
 
 export const WORKTREE_LINK_HINT =
   "(agent-bridge: worktree isolation is mandatory for source and writable files. External directory links may be used only for read-only access to Git-ignored caches: node_modules, .vs, __pycache__, or Library beside a Unity ProjectSettings/ProjectVersion.txt. Never write, delete, truncate or change permissions in a linked source, including through an internal link chain. A junction does not enforce read-only access: do not run Unity imports, package installers or other cache-writing tools through it. Prefer a project's external-cache env/config option (e.g. ANIMASKY_LIBRARY_ROOT) when available; never substitute an incomplete cache copy. Other external links remain forbidden. Cleanup must unlink only the link itself and never recurse into its target. Request cleanup approval through the supervisor and report the link and target if cleanup is denied.)";
@@ -18,32 +19,62 @@ function ignoredCacheLink(root: string, path: string): boolean {
   const cache = ["node_modules", ".vs", "__pycache__"].includes(name) ||
     (name === "Library" && existsSync(join(dirname(path), "ProjectSettings", "ProjectVersion.txt")));
   if (!cache || path === root) return false;
-  const rel = relative(root, path).replace(/\\/g, "/");
+  const rel = relative(root, path).split(sep).join("/");
   try {
-    const args = ["-c", `safe.directory=${root.replace(/\\/g, "/")}`];
+    root = realpathSync.native(root);
+    const args = ["-c", `safe.directory=${root.split(sep).join("/")}`];
     const tracked = execFileSync("git", [...args, "ls-files", "-z", "--", `:(literal)${rel}`], { cwd: root, encoding: "utf8", timeout: 10_000, stdio: ["pipe", "pipe", "pipe"] });
     if (tracked) return false;
-    execFileSync("git", [...args, "check-ignore", "--quiet", "--", `${rel}/`], { cwd: root, timeout: 10_000, stdio: ["pipe", "pipe", "pipe"] });
-    return true;
+    // POSIX Git refuses cache/ through a symlink; cache alone cannot match directory-only rules.
+    // Ask Git about an empty physical directory in a private view of the ancestor ignore files.
+    // Keep the real git-dir so repository/global excludes and Git's own matching semantics apply.
+    const gitDir = execFileSync("git", [...args, "rev-parse", "--absolute-git-dir"], { cwd: root, encoding: "utf8", timeout: 10_000, stdio: ["pipe", "pipe", "pipe"] }).trim();
+    let excludes = "";
+    try {
+      excludes = execFileSync("git", [...args, "config", "--path", "--get", "core.excludesFile"], { cwd: root, encoding: "utf8", timeout: 10_000, stdio: ["pipe", "pipe", "pipe"] }).trim();
+    } catch (err) { if ((err as { status?: number }).status !== 1) throw err; }
+    const ignoreArgs = excludes ? [...args, "-c", `core.excludesFile=${resolve(root, excludes)}`] : args;
+    const probe = realpathSync.native(mkdtempSync(join(tmpdir(), "ab-cache-ignore-")));
+    try {
+      mkdirSync(join(probe, rel), { recursive: true });
+      const parts = rel.split("/");
+      for (let i = 0; i < parts.length; i++) {
+        const parent = join(root, ...parts.slice(0, i));
+        const ignore = join(parent, ".gitignore");
+        if (existsSync(ignore) && lstatSync(ignore).isFile()) copyFileSync(ignore, join(probe, ...parts.slice(0, i), ".gitignore"));
+      }
+      execFileSync("git", [...ignoreArgs, `--git-dir=${gitDir}`, `--work-tree=${probe}`, "check-ignore", "--no-index", "--quiet", "--", `${rel}/`], { cwd: probe, timeout: 10_000, stdio: ["pipe", "pipe", "pipe"] });
+      return true;
+    } finally {
+      // Only the private mkdtemp view (empty cache directories and copied ignore rules), never source.
+      rmSync(probe, { recursive: true, force: true });
+    }
   } catch { return false; }
 }
 
 /**
- * Remove only link entries, never their contents. Refuse a linked root before reading its target.
- * Shared by every worktree removal path, including failed worktree creation.
+ * Resolve aliases above a protected boundary and check every component at/below it without following
+ * links. Shared by every worktree removal path, including failed worktree creation.
  */
-export function unlinkLinks(dir: string): number {
-  // lstat on the leaf alone would follow a junction in a parent component into owner data.
-  const parents: string[] = [];
-  for (let parent = resolve(dir); ; parent = dirname(parent)) {
-    if (dirname(parent) === parent) break;
-    parents.push(parent);
+export function resolveWorktreeRemovalPath(path: string, managedRoot = path): string {
+  const boundary = resolve(managedRoot);
+  const rel = relative(boundary, resolve(path));
+  if (rel === ".." || rel.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`) || isAbsolute(rel) || dirname(boundary) === boundary) {
+    throw new Error(`Refusing cleanup outside the managed worktree area: ${path}`);
   }
-  // Inspect from the volume root down, so even metadata reads cannot cross a linked parent.
-  for (const parent of parents.reverse()) {
-    if (lstatSync(toNamespacedPath(parent)).isSymbolicLink()) throw new Error(`Refusing cleanup through a linked path: ${parent}`);
+  // System/home aliases above the explicit boundary are legitimate. Resolve them once, then never
+  // follow a link at or below the boundary (including a worktree-container/root replacement).
+  let checked = join(realpathSync.native(dirname(boundary)), basename(boundary));
+  for (const part of ["", ...(rel ? rel.split(sep) : [])]) {
+    checked = join(checked, part);
+    if (lstatSync(toNamespacedPath(checked)).isSymbolicLink()) throw new Error(`Refusing cleanup through a linked path: ${checked}`);
   }
-  return unlinkChildren(dir);
+  return checked;
+}
+
+/** Pass the worktree/container root when unlinking a nested directory. */
+export function unlinkLinks(dir: string, managedRoot = dir): number {
+  return unlinkChildren(resolveWorktreeRemovalPath(dir, managedRoot));
 }
 
 function unlinkChildren(dir: string): number {

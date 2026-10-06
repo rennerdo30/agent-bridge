@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -14,7 +14,7 @@ let first: string;
 let second: string;
 const git = (cwd: string, ...args: string[]) => execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
 beforeEach(() => {
-  root = mkdtempSync(join(tmpdir(), "ab-cleanup-scope-"));
+  root = realpathSync.native(mkdtempSync(join(tmpdir(), "ab-cleanup-scope-")));
   home = join(root, "home");
   first = join(root, "first");
   second = join(root, "second");
@@ -28,6 +28,31 @@ afterEach(() => rmSync(root, { recursive: true, force: true, maxRetries: 5, retr
 const worktree = (cwd: string, jobId: string) => createWorktree({ cwd, home, jobId, log: nullLogger });
 
 describe("cleanup repository scope", () => {
+  it("cleans through a home alias above the container while preserving linked cache sources", async () => {
+    const a = await worktree(first, "alias-one");
+    const alias = join(root, "home-alias"), cache = join(root, "cache-source");
+    mkdirSync(cache);
+    writeFileSync(join(cache, "keep.txt"), "unique cache bytes\n");
+    symlinkSync(home, alias, "junction");
+    writeFileSync(join(first, ".git", "info", "exclude"), "Library\n");
+    symlinkSync(cache, join(a.path, "Library"), "junction");
+    const entries = await cleanupWorktrees({ home: alias, cwd: first, apply: true, log: nullLogger });
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.action).toBe("removed");
+    expect(existsSync(a.path)).toBe(false);
+    expect(existsSync(alias)).toBe(true);
+    expect(readFileSync(join(cache, "keep.txt"), "utf8")).toBe("unique cache bytes\n");
+  });
+
+  it("refuses a linked worktree container and never removes its target contents", async () => {
+    const owner = join(root, "owner"), container = join(home, "worktrees");
+    mkdirSync(owner); mkdirSync(home);
+    writeFileSync(join(owner, "keep.txt"), "unique owner bytes\n");
+    symlinkSync(owner, container, "junction");
+    await expect(cleanupWorktrees({ home, cwd: first, apply: true, log: nullLogger })).rejects.toThrow("linked path");
+    expect(readFileSync(join(owner, "keep.txt"), "utf8")).toBe("unique owner bytes\n");
+  });
+
   it("defaults to the caller repository even from a linked worktree and nested folder", async () => {
     const a = await worktree(first, "one");
     const b = await worktree(second, "two");
