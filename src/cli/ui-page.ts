@@ -476,10 +476,42 @@ code.addr { font-family: var(--mono); font-size: 12px; padding: 2px 8px; border-
 .kids-box { margin-left: 36px; padding: 10px 14px; border-radius: 10px; background: var(--panel-2); display: flex; flex-direction: column; gap: 6px; max-width: min(780px, calc(100% - 36px)); }
 .kids-box a { font-size: 13px; color: var(--text); }
 .kids-box a:hover { color: var(--accent); }
-/* Search */
-.search-form { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; border: 0; background: none; padding: 0 0 16px; }
-.search-form input[type="search"] { flex: 1 1 320px; padding: 9px 12px; font-size: 14px; }
-.search-form label.check { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
+/* Search: one prominent field, segmented filters, a quiet toggle */
+form.searchbar { display: flex; flex-direction: column; gap: 12px; border: 0; background: none; padding: 0 0 20px; }
+.search-field { position: relative; display: flex; align-items: center; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); transition: border-color .12s, box-shadow .12s; }
+.search-field:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.search-ico { position: absolute; left: 16px; color: var(--faint); pointer-events: none; }
+.search-field input { flex: 1; min-width: 0; height: 48px; padding: 0 12px 0 44px; border: 0; background: none; font-size: 15px; box-shadow: none; }
+.search-field input:focus-visible { outline: none; }
+.search-field button { margin: 6px; height: 36px; padding: 0 18px; border-radius: 8px; }
+.search-filters { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; }
+.seg { display: inline-flex; padding: 3px; gap: 2px; border-radius: 9px; background: var(--panel-2); border: 1px solid var(--line); }
+.seg button { height: 28px; padding: 0 12px; border: 0; border-radius: 7px; background: none; color: var(--muted); font-size: 12.5px; font-weight: 500; filter: none; }
+.seg button:hover { color: var(--text); filter: none; }
+.seg button[aria-checked="true"] { background: var(--panel); color: var(--text); font-weight: 600; box-shadow: var(--shadow), 0 0 0 1px var(--line); }
+.toggle { display: inline-flex; align-items: center; gap: 8px; margin-left: auto; font-size: 13px; color: var(--muted); cursor: pointer; user-select: none; }
+.toggle input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.toggle .track { position: relative; width: 32px; height: 18px; border-radius: 9px; background: var(--line); transition: background .15s; }
+.toggle .track::after { content: ""; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: var(--panel); box-shadow: 0 1px 2px rgba(0, 0, 0, .3); transition: transform .15s; }
+.toggle input:checked + .track { background: var(--accent); }
+.toggle input:checked + .track::after { transform: translateX(14px); }
+.toggle input:focus-visible + .track { outline: 2px solid var(--accent); outline-offset: 2px; }
+.toggle:has(input:checked) { color: var(--text); }
+.search-empty { padding: 28px 4px; color: var(--muted); }
+.search-empty p { margin: 0 0 12px; }
+.examples { display: flex; flex-wrap: wrap; gap: 8px; }
+button.example { height: 30px; padding: 0 12px; border-radius: 15px; border: 1px solid var(--line); background: var(--panel); color: var(--text); font-size: 13px; font-weight: 500; }
+button.example:hover { border-color: var(--accent); filter: none; }
+
+/* Form controls: one height, radius and colour language everywhere */
+input:not([type="checkbox"]):not([type="radio"]), select { min-height: 36px; border-radius: 8px; font-size: 13.5px; }
+select { appearance: none; -webkit-appearance: none; padding-right: 32px; cursor: pointer;
+  background: linear-gradient(45deg, transparent 50%, var(--muted) 50%) right 16px center / 5px 5px no-repeat,
+    linear-gradient(135deg, var(--muted) 50%, transparent 50%) right 11px center / 5px 5px no-repeat, var(--panel); }
+input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); width: 15px; height: 15px; cursor: pointer; }
+button { min-height: 34px; border-radius: 8px; }
+button.ghost { min-height: 32px; }
+.seg button, .theme button, .twist, .linkbtn, .icon-btn, button.menu-item { min-height: 0; }
 .answer-box { padding: 16px 20px; margin-bottom: 16px; border-left: 3px solid var(--accent); line-height: 1.6; }
 .hit { padding: 14px 18px; border-bottom: 1px solid var(--panel-2); }
 .hit:last-child { border-bottom: 0; }
@@ -580,12 +612,22 @@ code.addr { font-family: var(--mono); font-size: 12px; padding: 2px 8px; border-
 
   <div id="search" class="hidden">
     <div class="page-head"><div><h2>Search history</h2><p class="muted">Messages between sessions, subagent runs, decisions and the CLIs' own conversations, including archived ones.</p></div></div>
-    <form id="searchForm" class="search-form">
-      <input id="sq" type="search" placeholder="What are you looking for?" autocomplete="off" aria-label="Search text">
-      <select id="sKind" aria-label="Kind"><option value="">Everything</option><option value="message">Messages</option><option value="run">Subagent runs</option><option value="decision">Decisions</option><option value="transcript">Chats</option></select>
-      <select id="sAgent" aria-label="Agent"><option value="">All agents</option><option>claude</option><option>codex</option><option>opencode</option></select>
-      <label class="check"><input type="checkbox" id="sAnswer"> Also answer with a low-cost model</label>
-      <button type="submit" id="sGo">Search</button>
+    <form id="searchForm" class="searchbar" role="search">
+      <div class="search-field">
+        <svg class="search-ico" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><circle cx="7" cy="7" r="4.6"/><path d="m10.4 10.4 3.6 3.6" stroke-linecap="round"/></svg>
+        <input id="sq" type="search" placeholder="Search messages, subagent runs, decisions and chats" autocomplete="off" aria-label="Search text">
+        <button type="submit" id="sGo">Search</button>
+      </div>
+      <div class="search-filters">
+        <div class="seg" role="radiogroup" aria-label="What to search" data-seg="sKind">
+          <button type="button" role="radio" aria-checked="true" data-v="">Everything</button><button type="button" role="radio" aria-checked="false" data-v="message">Messages</button><button type="button" role="radio" aria-checked="false" data-v="run">Subagent runs</button><button type="button" role="radio" aria-checked="false" data-v="decision">Decisions</button><button type="button" role="radio" aria-checked="false" data-v="transcript">Chats</button>
+        </div>
+        <div class="seg" role="radiogroup" aria-label="Agent" data-seg="sAgent">
+          <button type="button" role="radio" aria-checked="true" data-v="">All agents</button><button type="button" role="radio" aria-checked="false" data-v="claude">Claude</button><button type="button" role="radio" aria-checked="false" data-v="codex">Codex</button><button type="button" role="radio" aria-checked="false" data-v="opencode">opencode</button>
+        </div>
+        <label class="toggle" title="A low-cost model (Haiku, Luna or a free opencode model) reads the top results and answers with sources"><input type="checkbox" id="sAnswer"><span class="track" aria-hidden="true"></span>Summarize</label>
+        <input type="hidden" id="sKind" value=""><input type="hidden" id="sAgent" value="">
+      </div>
     </form>
     <div id="sAnswerBox"></div>
     <div id="sResults"></div>
@@ -2227,9 +2269,11 @@ function renderTransfers() {
 let searchResult = null, searchBusy = false;
 const searchSources = new Map();
 const KIND_LABEL = { message: "message", run: "subagent run", decision: "decision", transcript: "chat" };
+const SEARCH_EXAMPLES = ["friend list decision", "Library junction", "build failed", "pairing code"];
 function renderSearch() {
   if (searchBusy) return setHtml("sResults", '<div class="panel empty">Searching…</div>');
-  if (!searchResult) return setHtml("sResults", '<div class="panel empty">Search across everything agents said and did, archived history included.</div>');
+  if (!searchResult) return setHtml("sResults", '<div class="search-empty"><p>Everything agents said and did is searchable here, archived history included. Try:</p><div class="examples">' +
+    SEARCH_EXAMPLES.map((q) => '<button type="button" class="example" data-q="' + esc(q) + '">' + esc(q) + "</button>").join("") + "</div></div>");
   if (searchResult.error) return setHtml("sResults", '<div class="panel empty">' + esc(searchResult.error) + "</div>");
   const a = searchResult.answer;
   setHtml("sAnswerBox", a ? '<div class="panel answer-box">' + (a.error ? '<div class="note err">' + esc(a.error) + "</div>" : '<div class="small muted">Answer by ' + esc(a.agent + (a.model ? " · " + a.model : "")) + "</div>" + md(a.text || "") + (a.sources && a.sources.length ? '<div class="small muted">Sources: ' + a.sources.map((s) => esc(s.id)).join(", ") + "</div>" : "")) + "</div>" : "");
@@ -2263,6 +2307,19 @@ async function runSearch() {
 }
 
 $("searchForm").addEventListener("submit", (e) => { e.preventDefault(); void runSearch(); });
+// Segmented filters: one choice per group, stored in the hidden input the search reads; a new filter re-runs the search.
+$("searchForm").addEventListener("click", (e) => {
+  const b = e.target.closest(".seg [data-v]");
+  if (!b) return;
+  const seg = b.closest(".seg");
+  for (const x of seg.querySelectorAll("[data-v]")) x.setAttribute("aria-checked", String(x === b));
+  $(seg.dataset.seg).value = b.dataset.v;
+  if ($("sq").value.trim()) void runSearch();
+});
+$("sResults").addEventListener("click", (e) => {
+  const ex = e.target.closest("[data-q]");
+  if (ex) { $("sq").value = ex.dataset.q; void runSearch(); }
+});
 $("sResults").addEventListener("click", async (e) => {
   const b = e.target.closest("[data-hit]");
   if (!b) return;
