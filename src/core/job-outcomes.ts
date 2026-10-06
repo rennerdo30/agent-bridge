@@ -8,6 +8,7 @@ import type { Logger } from "./logger.js";
 import { resolveDbPath } from "./paths.js";
 import { readStore } from "../mcp/jobs.js";
 import { git, trustArgs, type Worktree } from "./worktree.js";
+import { archiveDbPath } from "./sqlite-maintenance.js";
 import { localResultReceipt, RESULT_HEADER } from "./local-result-receipts.js";
 
 export const MAX_HOLD_REASON_CHARS = 2_000;
@@ -21,6 +22,8 @@ export interface OutcomeJob {
   startedAt: number;
   status: string;
   worktree?: Worktree | null;
+  /** A requester projection may carry paths that only exist on the paired PC. */
+  remote?: { host: string; name: string };
 }
 
 export interface OutcomeDecision {
@@ -86,23 +89,26 @@ function resultDelivery(home: string, job: OutcomeJob, before: number): JobOutco
   const unknown: JobOutcome["delivery"] = { status: "unknown", messageId: null, recipient: null, deliveredAt: null, readAt: null };
   const local = localResultReceipt(home, job.name, job.owner, job.startedAt, before);
   const path = resolveDbPath(home);
-  if (!existsSync(path)) return local ?? unknown;
-  let db: DatabaseSync | undefined;
-  try {
-    db = new DatabaseSync(path, { readOnly: true });
-    const archived = Boolean(db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'archived_messages'").get());
-    const columns = "id, recipient, body, created_at, read_at";
-    const where = "WHERE from_name = ? AND conversation_id = ? AND created_at >= ? AND created_at < ?";
-    const args = [job.name, `job-${job.id}`, job.startedAt, before];
-    const rows = db.prepare(`SELECT ${columns} FROM messages ${where}${archived ? ` UNION ALL SELECT ${columns} FROM archived_messages ${where}` : ""} ORDER BY created_at DESC`)
-      .all(...args, ...(archived ? args : [])) as unknown as { id: string; recipient: string; body: string; created_at: number; read_at: number | null }[];
-    const row = rows.find((r) => (!job.owner || r.recipient === job.owner) && RESULT_HEADER.test(r.body.split("\n")[0]!));
-    if (!row || (local && local.deliveredAt > row.created_at)) return local ?? unknown;
-    const readAt = rows.filter((r) => r.id === row.id && r.recipient === row.recipient).reduce<number | null>((at, r) => r.read_at === null ? at : Math.max(at ?? 0, r.read_at), null);
-    return { status: readAt === null ? "delivered" : "read", messageId: row.id, recipient: row.recipient, deliveredAt: row.created_at, readAt };
-  } catch {
-    return local ?? unknown;
-  } finally { db?.close(); }
+  const rows: { id: string; recipient: string; body: string; created_at: number; read_at: number | null }[] = [];
+  for (const file of [path, archiveDbPath(path)]) {
+    if (!existsSync(file)) continue;
+    let db: DatabaseSync | undefined;
+    try {
+      db = new DatabaseSync(file, { readOnly: true });
+      for (const table of ["messages", "archived_messages"]) {
+        if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(table)) continue;
+        rows.push(...db.prepare(`SELECT id, recipient, body, created_at, read_at FROM ${table}
+          WHERE from_name = ? AND conversation_id = ? AND created_at >= ? AND created_at < ?`)
+          .all(job.name, `job-${job.id}`, job.startedAt, before) as unknown as typeof rows);
+      }
+    } catch { /* Unavailable evidence stays unknown; the other store can still be read. */ }
+    finally { db?.close(); }
+  }
+  rows.sort((a, b) => b.created_at - a.created_at);
+  const row = rows.find((r) => (!job.owner || r.recipient === job.owner) && RESULT_HEADER.test(r.body.split("\n")[0]!));
+  if (!row || (local && local.deliveredAt > row.created_at)) return local ?? unknown;
+  const readAt = rows.filter((r) => r.id === row.id && r.recipient === row.recipient).reduce<number | null>((at, r) => r.read_at === null ? at : Math.max(at ?? 0, r.read_at), null);
+  return { status: readAt === null ? "delivered" : "read", messageId: row.id, recipient: row.recipient, deliveredAt: row.created_at, readAt };
 }
 
 export async function deriveJobOutcome(home: string, job: OutcomeJob, log: Logger, opts: {
@@ -110,11 +116,15 @@ export async function deriveJobOutcome(home: string, job: OutcomeJob, log: Logge
 } = {}): Promise<JobOutcome> {
   const decision = readOutcomeDecision(home, job);
   const branch = opts.branch ?? job.worktree?.branch ?? null;
-  const baseBranch = opts.baseBranch ?? job.worktree?.baseBranch ?? null;
+  const baseBranch = opts.baseBranch !== undefined ? opts.baseBranch : job.worktree?.baseBranch ?? null;
   const repoRoot = opts.repoRoot ?? job.worktree?.repoRoot;
   let branchHead = opts.branchHead ?? job.worktree?.branchHead ?? null;
   const merge: JobOutcome["merge"] = { state: decision?.state ?? "unmerged", branch, baseBranch, branchHead, reason: decision?.reason ?? null,
     checkedAt: Date.now(), decisionAt: decision?.at ?? null, decisionBy: decision?.by ?? null };
+  if (job.remote) {
+    if (!decision) merge.reason = `Merge and receipt evidence is on paired PC ${job.remote.host}; local Git was not inspected.`;
+    return { delivery: { status: "unknown", messageId: null, recipient: null, deliveredAt: null, readAt: null }, merge };
+  }
   if (!decision) {
     if (!branch || !repoRoot || !baseBranch) merge.reason = "Branch, repository, or base branch is unknown.";
     else {
@@ -138,7 +148,7 @@ export async function deriveJobOutcome(home: string, job: OutcomeJob, log: Logge
 }
 
 export async function listJobOutcomes(home: string, log: Logger): Promise<Record<string, { startedAt: number; status: string; outcome: JobOutcome }>> {
-  const jobs = readStore(join(home, JOBS_FILE), log);
+  const jobs = readStore(join(home, JOBS_FILE), log, true);
   const out: Record<string, { startedAt: number; status: string; outcome: JobOutcome }> = {};
   for (const job of jobs) {
     if (job.status !== "done" && job.status !== "failed") continue;

@@ -60,6 +60,11 @@ describe("web dashboard", () => {
     expect(state.runs[RUN].merge.state).toBe("held");
     expect(state.groups).toEqual({ needsReview: [], held: [job.name], merged: [], discarded: [] });
     expect(readFileSync(meta, "utf8")).toBe(legacy);
+    writeFileSync(join(env.home, JOBS_FILE), JSON.stringify([{ ...job, startedAt: startedAt + 10_000, remote: { host: "paired-pc", name: "remote-job" } }]));
+    writeFileSync(meta, JSON.stringify({ job: job.name, by: "supervisor", jobStartedAt: startedAt + 10_000, remote: { host: "paired-pc", name: "remote-job" } }));
+    const remote = await (await fetch(`${base()}/api/job-outcomes`, { headers: { cookie } })).json() as any;
+    expect(remote.jobs[job.name].outcome.merge.reason).toContain("paired PC");
+    expect(remote.runs[RUN].merge.reason).toContain("paired PC");
   });
   it("refuses requests without the secret, a wrong link or a foreign Host", async () => {
     expect((await fetch(`${base()}/api/state`)).status).toBe(403);

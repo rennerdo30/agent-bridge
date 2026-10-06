@@ -3,8 +3,8 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { deriveJobOutcome, JOB_OUTCOMES_DIR, MAX_HOLD_REASON_CHARS, readOutcomeDecision, setJobOutcome, type OutcomeJob } from "../src/core/job-outcomes.js";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { deriveJobOutcome, listJobOutcomes, JOB_OUTCOMES_DIR, MAX_HOLD_REASON_CHARS, readOutcomeDecision, setJobOutcome, type OutcomeJob } from "../src/core/job-outcomes.js";
 import { recordLocalResult } from "../src/core/local-result-receipts.js";
 import { JSON_STORE_VERSION } from "../src/core/json-store.js";
 import { ReadJournal } from "../src/core/read-journal.js";
@@ -16,6 +16,11 @@ import { resolveDbPath } from "../src/core/paths.js";
 import { createWorktree, finishWorktree } from "../src/core/worktree.js";
 import { JobManager } from "../src/mcp/jobs.js";
 import { makeEnv, until, type TestEnv } from "./helpers.js";
+import { archiveJobs } from "../src/core/job-archive.js";
+import { createBackup, readBackup, restoreBackup } from "../src/core/backups.js";
+import { doctor } from "../src/core/doctor.js";
+import { maintenanceLock } from "../src/core/storage-lock.js";
+import * as worktreeHelpers from "../src/core/worktree.js";
 
 let home: string;
 let store: MessageStore;
@@ -63,6 +68,40 @@ describe("finished job delivery", () => {
 });
 
 describe("supervisor decisions and migration", () => {
+  it("includes archived jobs without rewriting the archive or losing active precedence", async () => {
+    const path = join(home, "jobs.json");
+    const archived = archiveJobs(path, [{ ...job(), worktree: null, agent: "codex", prompt: "task", model: null, sessionId: null, workdir: null }]);
+    const old = readFileSync(archived, "utf8").replace('"version": 2', '"version": 1');
+    writeFileSync(archived, old);
+    writeFileSync(path, JSON.stringify({ version: 1, jobs: [] }));
+    setJobOutcome(home, job(), "supervisor", "held", "archive hold");
+    expect((await listJobOutcomes(home, nullLogger))[job().name]?.outcome.merge.state).toBe("held");
+    expect(readFileSync(archived, "utf8")).toBe(old);
+    writeFileSync(path, JSON.stringify({ jobs: [{ ...job(), startedAt: 600, status: "running" }] }));
+    expect(await listJobOutcomes(home, nullLogger)).toEqual({});
+  });
+
+  it("backs up and restores decisions and local receipts under the home maintenance lock", async () => {
+    store.close();
+    const result = message();
+    recordLocalResult(home, result);
+    new ReadJournal(home).append("name:supervisor", [result.id]);
+    setJobOutcome(home, job(), "supervisor", "held", "original", 400);
+    const backup = createBackup(home);
+    expect(readBackup(backup).files.some((f) => f.path.startsWith("job-outcomes/"))).toBe(true);
+    expect(readBackup(backup).files.some((f) => f.path.startsWith("local-result-receipts/"))).toBe(true);
+    expect(doctor(home).findings.some((f) => f.code.startsWith("journal-"))).toBe(false);
+    setJobOutcome(home, job(), "supervisor", "discarded", "later", 500);
+    restoreBackup(home, backup, true);
+    expect(readOutcomeDecision(home, job())?.reason).toBe("original");
+    expect((await deriveJobOutcome(home, job(), nullLogger)).delivery.status).toBe("read");
+    const unlock = maintenanceLock(home);
+    try {
+      expect(() => setJobOutcome(home, job(), "supervisor", "discarded")).toThrow("maintenance");
+      expect(() => recordLocalResult(home, message(600))).toThrow("maintenance");
+    } finally { unlock(); }
+    store = new MessageStore(resolveDbPath(home), nullLogger);
+  });
   it("requires a finished owned job and a bounded nonblank hold reason", () => {
     expect(() => setJobOutcome(home, job(), "other", "discarded")).toThrow("supervisor");
     expect(() => setJobOutcome(home, { ...job(), status: "running" }, "supervisor", "held", "wait")).toThrow("finished");
@@ -103,6 +142,17 @@ describe("supervisor decisions and migration", () => {
 });
 
 describe("Git outcome derivation", () => {
+  it("never checks paired-PC worktrees or receipts against local evidence", async () => {
+    const remote = { ...job(), remote: { host: "paired-pc", name: "codex-job-remote" }, worktree: { repoRoot: home, path: home, cwd: home, branch: "main", base: "base", baseBranch: "main" } };
+    const local = message(); store.insert(local); store.markRead("supervisor", [local.id], 300);
+    const git = vi.spyOn(worktreeHelpers, "git");
+    try {
+      expect(await deriveJobOutcome(home, remote, nullLogger)).toMatchObject({ delivery: { status: "unknown" }, merge: { state: "unmerged", reason: expect.stringContaining("paired PC") } });
+      setJobOutcome(home, remote, "supervisor", "held", "remote review");
+      expect((await deriveJobOutcome(home, remote, nullLogger)).merge.state).toBe("held");
+      expect(git).not.toHaveBeenCalled();
+    } finally { git.mockRestore(); }
+  });
   it("checks the recorded base, respects held/discarded, and uses a saved tip after deletion", async () => {
     const repo = join(home, "repo"); mkdirSync(repo);
     const git = (...args: string[]) => execFileSync("git", args, { cwd: repo, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
@@ -110,6 +160,7 @@ describe("Git outcome derivation", () => {
     git("-c", "user.name=Test", "-c", "user.email=test@example.test", "commit", "--allow-empty", "-qm", "base");
     const wt = await createWorktree({ cwd: repo, home, jobId: job().id, log: nullLogger });
     const j = { ...job(), worktree: wt };
+    expect((await deriveJobOutcome(home, j, nullLogger, { baseBranch: null })).merge).toMatchObject({ state: "unmerged", baseBranch: null });
     writeFileSync(join(wt.path, "a.txt"), "work\n");
     await finishWorktree(wt, "work", nullLogger);
     const head = git("rev-parse", wt.branch);

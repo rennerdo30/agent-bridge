@@ -1,3 +1,4 @@
+import { JSON_STORE_VERSION } from "../src/core/json-store.js";
 import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -44,7 +45,7 @@ describe("safe network configuration", () => {
     const old = { maxJobs: 9, codex: { model: "custom" }, future: { nested: true }, network: { enabled: false, futureOption: "keep" } };
     writeFileSync(file, JSON.stringify(old));
     writeNetworkConfig(home, enabled);
-    expect(JSON.parse(readFileSync(file, "utf8"))).toMatchObject({ ...old, version: 1, network: { ...enabled, futureOption: "keep" } });
+    expect(JSON.parse(readFileSync(file, "utf8"))).toMatchObject({ ...old, version: JSON_STORE_VERSION, network: { ...enabled, futureOption: "keep" } });
     expect(readdirSync(home).filter((f) => f.startsWith("config.json.backup-"))).toHaveLength(1);
     writeNetworkConfig(home, { ...enabled, enabled: false });
     expect(JSON.parse(readFileSync(file, "utf8"))).toMatchObject({ maxJobs: 9, codex: old.codex, network: { enabled: false, futureOption: "keep" } });
@@ -65,7 +66,7 @@ describe("safe network configuration", () => {
     writeNetworkConfig(home, enabled);
     const preserved = readdirSync(home).find((f) => f.startsWith("config.json.corrupt-"))!;
     expect(readFileSync(join(home, preserved), "utf8")).toBe("{invalid");
-    expect(JSON.parse(readFileSync(join(home, "config.json"), "utf8"))).toMatchObject({ version: 1, network: enabled });
+    expect(JSON.parse(readFileSync(join(home, "config.json"), "utf8"))).toMatchObject({ version: JSON_STORE_VERSION, network: enabled });
   });
 });
 

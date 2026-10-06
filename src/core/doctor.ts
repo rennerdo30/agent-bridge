@@ -71,8 +71,10 @@ export function doctor(home: string, now = Date.now()): DoctorReport {
         const lines = readFileSync(path, "utf8").split("\n").filter((s) => s.trim());
         for (const line of lines) {
           try {
-            const ids: unknown = JSON.parse(line);
-            if (!Array.isArray(ids) || ids.some((id) => typeof id !== "string")) finding("error", "journal-shape", path, "Expected a read-id array");
+            const value: unknown = JSON.parse(line);
+            const timed = isRecord(value) && typeof value.at === "number" && Number.isFinite(value.at);
+            const ids = timed ? value.ids : value;
+            if (!Array.isArray(ids) || ids.some((id) => typeof id !== "string")) finding("error", "journal-shape", path, "Expected read ids with an optional consumption timestamp");
           } catch { finding("warning", "journal-partial", path, "Preserved incomplete read-journal append"); }
         }
         continue;

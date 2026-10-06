@@ -46,6 +46,7 @@ const MAX_LOG_CHUNK = 512 * 1024;
 const MAX_POST_BYTES = 256 * 1024;
 /** A run whose log has not been written for this long (heartbeats come every minute) was interrupted. */
 const STALE_RUN_MS = 150_000;
+const LEGACY_JOB_START_TOLERANCE_MS = 1_000;
 const UI_PEER_NAME = "you";
 const ALLOWED_HOSTS = new Set([UI_HOST, "localhost"]);
 const RUN_NAME = /^[\w.-]+\.log$/;
@@ -65,18 +66,19 @@ export interface RunSummary extends RunMeta {
 /** Read-only projection: legacy metadata stays byte-for-byte intact. */
 export async function finishedRunOutcomes(home: string, log: Logger): Promise<Record<string, JobOutcome>> {
   const runs = listRuns(home);
-  const jobs = readStore(join(home, JOBS_FILE), log);
+  const jobs = readStore(join(home, JOBS_FILE), log, true);
   const out: Record<string, JobOutcome> = {};
   for (const run of runs) {
     if (!run.job || (run.status !== "done" && run.status !== "failed")) continue;
     const stored = jobs.find((j) => j.name === run.job);
     const startedAt = run.jobStartedAt ?? run.startedAt;
-    const latest = stored && (run.jobStartedAt !== undefined ? stored.startedAt === startedAt : Math.abs(stored.startedAt - startedAt) < 1_000);
+    const latest = stored && (run.jobStartedAt !== undefined ? stored.startedAt === startedAt : Math.abs(stored.startedAt - startedAt) < LEGACY_JOB_START_TOLERANCE_MS);
     const job: OutcomeJob = {
       id: stored?.id ?? run.job.replace(/^.*-(?:job|ask)-/, ""), name: run.job,
       owner: latest ? stored.owner : run.by,
       startedAt: run.jobStartedAt ?? (latest ? stored.startedAt : run.startedAt),
       status: run.status, worktree: stored?.worktree,
+      remote: (run as RunSummary & { remote?: OutcomeJob["remote"] }).remote ?? (stored as OutcomeJob | undefined)?.remote,
     };
     const next = runs.filter((r) => r.job === run.job && (r.jobStartedAt ?? r.startedAt) > startedAt)
       .sort((a, b) => (a.jobStartedAt ?? a.startedAt) - (b.jobStartedAt ?? b.startedAt))[0];

@@ -8134,6 +8134,8 @@ import { closeSync, existsSync, mkdirSync as mkdirSync2, openSync, readdirSync, 
 import { dirname, join as join3 } from "node:path";
 var LOCK_FILE = ".maintenance-lock";
 var USERS_DIR = ".storage-users";
+var SCOPED_STORE_DIRS = /* @__PURE__ */ new Set(["runs", "jobs", "job-outcomes"]);
+var NESTED_STORE_DIRS = /* @__PURE__ */ new Set(["local-result-receipts"]);
 function storageLease(home) {
   const lock = join3(home, LOCK_FILE);
   if (existsSync(lock)) throw new Error("storage maintenance is in progress");
@@ -8149,7 +8151,8 @@ function storageLease(home) {
 }
 function storeHome(path) {
   const dir = dirname(path);
-  return ["runs", "jobs"].includes(dir.split(/[\\/]/).at(-1) ?? "") ? dirname(dir) : dir;
+  if (NESTED_STORE_DIRS.has(dirname(dir).split(/[\\/]/).at(-1) ?? "")) return dirname(dirname(dir));
+  return SCOPED_STORE_DIRS.has(dir.split(/[\\/]/).at(-1) ?? "") ? dirname(dir) : dir;
 }
 function maintenanceLock(home) {
   mkdirSync2(home, { recursive: true, mode: 448 });
@@ -8477,7 +8480,7 @@ function jsonStoreFiles(home) {
     }
   };
   visit2(home, false);
-  for (const dir of ["jobs", "runs", "archive", "read-state"]) visit2(join6(home, dir), true);
+  for (const dir of ["jobs", "runs", "archive", "read-state", "job-outcomes", "local-result-receipts"]) visit2(join6(home, dir), true);
   return files;
 }
 function listBackups(home) {
@@ -8540,7 +8543,7 @@ function backupIfDue(home, now = Date.now()) {
   return createBackup(home, now);
 }
 function allowedPath(path) {
-  return path === DB_FILE_NAME || path === ARCHIVE_DB_NAME || /^[\w.-]+\.json$/.test(path) && !["dashboard.json"].includes(path) || /^(jobs|runs|archive|read-state)\/[\w./-]+$/.test(path) && !path.split("/").some((s) => s === ".." || s === ".") && /\.jsonl?(?:-\d+-[\w-]+)?$/.test(path);
+  return path === DB_FILE_NAME || path === ARCHIVE_DB_NAME || /^[\w.-]+\.json$/.test(path) && !["dashboard.json"].includes(path) || /^(jobs|runs|archive|read-state|job-outcomes|local-result-receipts)\/[\w./-]+$/.test(path) && !path.split("/").some((s) => s === ".." || s === ".") && /\.jsonl?(?:-\d+-[\w-]+)?$/.test(path);
 }
 function createRecovery(home) {
   const root = join6(home, BACKUPS_DIR_NAME, `recovery-${Date.now()}-${randomUUID3()}`);
@@ -36241,8 +36244,10 @@ function doctor(home, now = Date.now()) {
         const lines = readFileSync21(path, "utf8").split("\n").filter((s) => s.trim());
         for (const line of lines) {
           try {
-            const ids = JSON.parse(line);
-            if (!Array.isArray(ids) || ids.some((id) => typeof id !== "string")) finding("error", "journal-shape", path, "Expected a read-id array");
+            const value2 = JSON.parse(line);
+            const timed2 = isRecord(value2) && typeof value2.at === "number" && Number.isFinite(value2.at);
+            const ids = timed2 ? value2.ids : value2;
+            if (!Array.isArray(ids) || ids.some((id) => typeof id !== "string")) finding("error", "journal-shape", path, "Expected read ids with an optional consumption timestamp");
           } catch {
             finding("warning", "journal-partial", path, "Preserved incomplete read-journal append");
           }
@@ -37086,29 +37091,32 @@ function resultDelivery(home, job, before) {
   const unknown2 = { status: "unknown", messageId: null, recipient: null, deliveredAt: null, readAt: null };
   const local = localResultReceipt(home, job.name, job.owner, job.startedAt, before);
   const path = resolveDbPath(home);
-  if (!existsSync18(path)) return local ?? unknown2;
-  let db;
-  try {
-    db = new DatabaseSync9(path, { readOnly: true });
-    const archived = Boolean(db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'archived_messages'").get());
-    const columns = "id, recipient, body, created_at, read_at";
-    const where = "WHERE from_name = ? AND conversation_id = ? AND created_at >= ? AND created_at < ?";
-    const args = [job.name, `job-${job.id}`, job.startedAt, before];
-    const rows = db.prepare(`SELECT ${columns} FROM messages ${where}${archived ? ` UNION ALL SELECT ${columns} FROM archived_messages ${where}` : ""} ORDER BY created_at DESC`).all(...args, ...archived ? args : []);
-    const row = rows.find((r) => (!job.owner || r.recipient === job.owner) && RESULT_HEADER.test(r.body.split("\n")[0]));
-    if (!row || local && local.deliveredAt > row.created_at) return local ?? unknown2;
-    const readAt = rows.filter((r) => r.id === row.id && r.recipient === row.recipient).reduce((at, r) => r.read_at === null ? at : Math.max(at ?? 0, r.read_at), null);
-    return { status: readAt === null ? "delivered" : "read", messageId: row.id, recipient: row.recipient, deliveredAt: row.created_at, readAt };
-  } catch {
-    return local ?? unknown2;
-  } finally {
-    db?.close();
+  const rows = [];
+  for (const file2 of [path, archiveDbPath(path)]) {
+    if (!existsSync18(file2)) continue;
+    let db;
+    try {
+      db = new DatabaseSync9(file2, { readOnly: true });
+      for (const table of ["messages", "archived_messages"]) {
+        if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(table)) continue;
+        rows.push(...db.prepare(`SELECT id, recipient, body, created_at, read_at FROM ${table}
+          WHERE from_name = ? AND conversation_id = ? AND created_at >= ? AND created_at < ?`).all(job.name, `job-${job.id}`, job.startedAt, before));
+      }
+    } catch {
+    } finally {
+      db?.close();
+    }
   }
+  rows.sort((a, b) => b.created_at - a.created_at);
+  const row = rows.find((r) => (!job.owner || r.recipient === job.owner) && RESULT_HEADER.test(r.body.split("\n")[0]));
+  if (!row || local && local.deliveredAt > row.created_at) return local ?? unknown2;
+  const readAt = rows.filter((r) => r.id === row.id && r.recipient === row.recipient).reduce((at, r) => r.read_at === null ? at : Math.max(at ?? 0, r.read_at), null);
+  return { status: readAt === null ? "delivered" : "read", messageId: row.id, recipient: row.recipient, deliveredAt: row.created_at, readAt };
 }
 async function deriveJobOutcome(home, job, log, opts = {}) {
   const decision = readOutcomeDecision(home, job);
   const branch = opts.branch ?? job.worktree?.branch ?? null;
-  const baseBranch = opts.baseBranch ?? job.worktree?.baseBranch ?? null;
+  const baseBranch = opts.baseBranch !== void 0 ? opts.baseBranch : job.worktree?.baseBranch ?? null;
   const repoRoot = opts.repoRoot ?? job.worktree?.repoRoot;
   let branchHead = opts.branchHead ?? job.worktree?.branchHead ?? null;
   const merge2 = {
@@ -37121,6 +37129,10 @@ async function deriveJobOutcome(home, job, log, opts = {}) {
     decisionAt: decision?.at ?? null,
     decisionBy: decision?.by ?? null
   };
+  if (job.remote) {
+    if (!decision) merge2.reason = `Merge and receipt evidence is on paired PC ${job.remote.host}; local Git was not inspected.`;
+    return { delivery: { status: "unknown", messageId: null, recipient: null, deliveredAt: null, readAt: null }, merge: merge2 };
+  }
   if (!decision) {
     if (!branch || !repoRoot || !baseBranch) merge2.reason = "Branch, repository, or base branch is unknown.";
     else {
@@ -37142,7 +37154,7 @@ async function deriveJobOutcome(home, job, log, opts = {}) {
   return { delivery: resultDelivery(home, job, opts.before ?? Number.MAX_SAFE_INTEGER), merge: merge2 };
 }
 async function listJobOutcomes(home, log) {
-  const jobs = readStore(join37(home, JOBS_FILE), log);
+  const jobs = readStore(join37(home, JOBS_FILE), log, true);
   const out2 = {};
   for (const job of jobs) {
     if (job.status !== "done" && job.status !== "failed") continue;
@@ -37161,25 +37173,27 @@ var MAX_MESSAGES = 200;
 var MAX_LOG_CHUNK = 512 * 1024;
 var MAX_POST_BYTES = 256 * 1024;
 var STALE_RUN_MS2 = 15e4;
+var LEGACY_JOB_START_TOLERANCE_MS = 1e3;
 var UI_PEER_NAME = "you";
 var ALLOWED_HOSTS = /* @__PURE__ */ new Set([UI_HOST, "localhost"]);
 var RUN_NAME = /^[\w.-]+\.log$/;
 async function finishedRunOutcomes(home, log) {
   const runs = listRuns(home);
-  const jobs = readStore(join38(home, JOBS_FILE), log);
+  const jobs = readStore(join38(home, JOBS_FILE), log, true);
   const out2 = {};
   for (const run2 of runs) {
     if (!run2.job || run2.status !== "done" && run2.status !== "failed") continue;
     const stored = jobs.find((j) => j.name === run2.job);
     const startedAt = run2.jobStartedAt ?? run2.startedAt;
-    const latest = stored && (run2.jobStartedAt !== void 0 ? stored.startedAt === startedAt : Math.abs(stored.startedAt - startedAt) < 1e3);
+    const latest = stored && (run2.jobStartedAt !== void 0 ? stored.startedAt === startedAt : Math.abs(stored.startedAt - startedAt) < LEGACY_JOB_START_TOLERANCE_MS);
     const job = {
       id: stored?.id ?? run2.job.replace(/^.*-(?:job|ask)-/, ""),
       name: run2.job,
       owner: latest ? stored.owner : run2.by,
       startedAt: run2.jobStartedAt ?? (latest ? stored.startedAt : run2.startedAt),
       status: run2.status,
-      worktree: stored?.worktree
+      worktree: stored?.worktree,
+      remote: run2.remote ?? stored?.remote
     };
     const next = runs.filter((r) => r.job === run2.job && (r.jobStartedAt ?? r.startedAt) > startedAt).sort((a, b) => (a.jobStartedAt ?? a.startedAt) - (b.jobStartedAt ?? b.startedAt))[0];
     out2[run2.name] = await deriveJobOutcome(home, job, log, {
@@ -41891,7 +41905,7 @@ ${scan.errors.join("\n")}`);
 // src/core/worktree-cleanup.ts
 function readJobs(home) {
   try {
-    return readStore(join44(home, JOBS_FILE));
+    return readStore(join44(home, JOBS_FILE), void 0, true);
   } catch {
     return [];
   }

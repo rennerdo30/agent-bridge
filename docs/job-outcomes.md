@@ -53,6 +53,12 @@ so ancestry can still be checked after cleanup removes the branch and worktree.
 Missing Git evidence conservatively gives `unmerged` with an explanatory reason.
 An explicit supervisor decision takes precedence over Git ancestry.
 
+Requester records marked `remote` keep delivery unknown and merge `unmerged`
+with a paired-PC evidence reason, unless the supervisor explicitly held or
+discarded them. Remote paths and receipt namespaces are never tested against
+local Git or local message rows. Paired-PC outcome evidence needs integration
+with the remote-jobs contract.
+
 The supervisor MCP tool is:
 
 ```json

@@ -23,7 +23,7 @@ type StoredJob = { name?: string; status?: string; worktree?: Worktree | null };
 
 function readJobs(home: string): StoredJob[] {
   try {
-    return readStore(join(home, JOBS_FILE));
+    return readStore(join(home, JOBS_FILE), undefined, true);
   } catch {
     return [];
   }
