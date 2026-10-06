@@ -1,8 +1,8 @@
-import { existsSync, lstatSync, readdirSync, readFileSync, rmdirSync, rmSync, unlinkSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { existsSync, lstatSync, readdirSync, readFileSync, rmdirSync, unlinkSync } from "node:fs";
+import { join, resolve, toNamespacedPath } from "node:path";
 import { JOBS_FILE } from "./constants.js";
 import type { Logger } from "./logger.js";
-import { BRANCH_PREFIX, git, trustArgs, type Worktree } from "./worktree.js";
+import { BRANCH_PREFIX, git, removeWorktreeDirectory, trustArgs, type Worktree } from "./worktree.js";
 
 /**
  * `agent-bridge cleanup`: remove the worktrees of finished agent-bridge jobs (~/.agent-bridge/worktrees) whose
@@ -34,6 +34,7 @@ const samePath = (a: string, b: string) =>
  * folder, e.g. a Unity Library): deleting the tree afterwards cannot reach through them. Returns the count.
  */
 export function unlinkLinks(dir: string): number {
+  dir = toNamespacedPath(resolve(dir));
   let count = 0;
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     const path = join(dir, entry.name);
@@ -54,6 +55,7 @@ export function unlinkLinks(dir: string): number {
 
 /** Whether `dir` holds nothing but folders and links (what a half-removed worktree with a junction leaves). */
 function onlyFoldersAndLinks(dir: string): boolean {
+  dir = toNamespacedPath(resolve(dir));
   return readdirSync(dir, { withFileTypes: true }).every((e) => {
     const path = join(dir, e.name);
     if (e.isSymbolicLink() || lstatSync(path).isSymbolicLink()) return true;
@@ -76,13 +78,13 @@ async function mergedInto(branch: string, targets: string[], cwd: string, trust:
 
 async function inspect(path: string, jobs: StoredJob[], apply: boolean, log: Logger): Promise<CleanupEntry> {
   const entry = (branch: string | null, action: CleanupEntry["action"], reason: string): CleanupEntry => ({ path, branch, action, reason });
-  if (!existsSync(join(path, ".git"))) {
+  if (!existsSync(toNamespacedPath(join(path, ".git")))) {
     if (!onlyFoldersAndLinks(path)) return entry(null, "kept", "not a git worktree (no .git), and it holds files");
     const why = "leftover of a removed worktree: no .git, only empty folders and links";
     if (!apply) return entry(null, "would remove", why);
     try {
       const links = unlinkLinks(path);
-      rmSync(path, { recursive: true, force: true, maxRetries: 3 });
+      removeWorktreeDirectory(path);
       return entry(null, "removed", links ? `${why}; unlinked ${links} link(s) first` : why);
     } catch (err) {
       return entry(null, "failed", (err as Error).message.split("\n")[0]!);
@@ -121,9 +123,9 @@ async function inspect(path: string, jobs: StoredJob[], apply: boolean, log: Log
     await git([...trust, "worktree", "unlock", path], mainPath, log).catch(() => "");
     await git([...trust, "worktree", "remove", path], mainPath, log).catch(async (err) => {
       // Git could not delete it all (files of another account, open handles): delete what is left ourselves.
-      if (!existsSync(path)) return;
+      if (!existsSync(toNamespacedPath(path))) return;
       log.warn("git worktree remove failed; deleting the folder", { path, err: (err as Error).message });
-      rmSync(path, { recursive: true, force: true, maxRetries: 3 });
+      removeWorktreeDirectory(path);
       await git(["worktree", "prune"], mainPath, log);
     });
     await git(["branch", "-D", branch], mainPath, log);

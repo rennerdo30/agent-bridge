@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync, realpathSync, rmSync } from "node:fs";
-import { basename, isAbsolute, join, relative, resolve } from "node:path";
+import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync } from "node:fs";
+import { basename, isAbsolute, join, relative, resolve, toNamespacedPath } from "node:path";
 import { DelegateError, runProcess } from "./delegate.js";
 import type { Logger } from "./logger.js";
 
@@ -9,6 +9,8 @@ import type { Logger } from "./logger.js";
  * parallel subagents never touch each other's files or the user's working copy.
  */
 const GIT = "git";
+const LONG_PATH_ARGS = ["-c", "core.longpaths=true"];
+const REMOVE_RETRIES = 3;
 /** Most git commands; generous, since many parallel subagents (and virus scanners) slow the disk down. */
 const GIT_TIMEOUT_MS = 180_000;
 /** `git worktree add` checks out the whole tree: on a large repository under load that takes minutes. */
@@ -41,7 +43,7 @@ export function trustArgs(...dirs: string[]): string[] {
 export async function git(args: string[], cwd: string, log: Logger, timeoutMs = GIT_TIMEOUT_MS): Promise<string> {
   // Name the command in errors ("git worktree add timed out after 600s"), not the -c options before it.
   const what = `git ${args.filter((a, i) => !a.startsWith("-") && args[i - 1] !== "-c").slice(0, 2).join(" ")}`;
-  const res = await runProcess({ bin: GIT, args, stdin: "", cwd, timeoutMs, env: process.env, log, what });
+  const res = await runProcess({ bin: GIT, args: [...LONG_PATH_ARGS, ...args], stdin: "", cwd, timeoutMs, env: process.env, log, what });
   if (res.code !== 0) throw new Error(`${what} failed: ${(res.stderr || res.stdout).trim().slice(0, 500)}`);
   // Only trailing whitespace: leading spaces are meaningful in `git status --porcelain`.
   return res.stdout.trimEnd();
@@ -100,13 +102,20 @@ async function unlockWorktree(repoRoot: string, path: string, log: Logger): Prom
 async function removeWorktree(repoRoot: string, path: string, branch: string, log: Logger): Promise<void> {
   await git([...trustArgs(path), "worktree", "remove", "--force", "--force", path], repoRoot, log).catch(() => {});
   try {
-    rmSync(path, { recursive: true, force: true });
+    removeWorktreeDirectory(path);
   } catch {
     // files still locked: prune below forgets it anyway
   }
   await git(["worktree", "prune"], repoRoot, log).catch(() => {});
   await git(["branch", "-D", branch], repoRoot, log).catch(() => {});
 }
+
+/** Node's namespaced Windows paths also cover deep ignored folders that Git could not remove. */
+export function removeWorktreeDirectory(path: string): void {
+  rmSync(toNamespacedPath(resolve(path)), { recursive: true, force: true, maxRetries: REMOVE_RETRIES });
+}
+
+type SkippedFile = { path: string; reason: "whitespace only" | "generated noise" };
 
 export interface WorktreeOutcome {
   changed: boolean;
@@ -119,6 +128,8 @@ export interface WorktreeOutcome {
   reviewBase: string;
   /** Files the job's diff touches. */
   files: string[];
+  /** Auto-commit exclusions left on disk for the supervisor to inspect or discard. */
+  skippedFiles?: SkippedFile[];
 }
 
 const SUBJECT_CHARS = 72;
@@ -177,17 +188,24 @@ export async function gitDirsOutside(cwd: string, log: Logger): Promise<string[]
 export async function reviewBase(wt: Worktree, log: Logger, branch = wt.branch): Promise<string> {
   const run = (args: string[]) => git(args, wt.repoRoot, log);
   const tip = await run(["rev-parse", branch]);
+  // A checkout into a job-created branch records its actual starting commit, even from another base.
+  const reflog = await git([...trustArgs(wt.path), "log", "-g", "--format=%H%x09%gs", "HEAD"], wt.path, log).catch(() => "");
+  const start = reflog.split(/\r?\n/).reverse().find((line) => line.endsWith(` to ${branch}`) && line.includes("\tcheckout: moving from "))?.split("\t")[0];
+  const base = branch === wt.branch ? wt.base : start ?? wt.base;
+  const created = (await run(["log", "-g", "--format=%H%x09%gs", branch]).catch(() => ""))
+    .split(/\r?\n/).reverse().find((line) => line.startsWith(`${base}\tbranch: Created from `));
+  const source = branch !== wt.branch ? created?.split("\tbranch: Created from ")[1] : null;
   // The branch of the main checkout (the first entry of `git worktree list`).
   const list = await run(["worktree", "list", "--porcelain"]).catch(() => "");
   const main = /^branch refs\/heads\/(.+)$/m.exec(list.split(/\r?\n\r?\n/)[0] ?? "")?.[1];
-  const candidates = new Set([wt.base]);
-  for (const b of new Set([wt.baseBranch, main])) {
-    if (!b || b === branch) continue;
+  const candidates = new Set([base]);
+  for (const b of new Set([source, wt.baseBranch, main])) {
+    if (!b || b === "HEAD" || b === branch) continue;
     const mb = await run(["merge-base", b, branch]).catch(() => "");
     // A fork point at the tip itself means the branch is already merged there: nothing to learn from it.
     if (mb && mb !== tip) candidates.add(mb);
   }
-  let best = wt.base;
+  let best = base;
   let fewest = Infinity;
   for (const c of candidates) {
     const n = Number(await run(["rev-list", "--count", `${c}..${branch}`]).catch(() => "NaN"));
@@ -196,11 +214,52 @@ export async function reviewBase(wt: Worktree, log: Logger, branch = wt.branch):
   return best;
 }
 
-/** Commit whatever the subagent changed onto its branch and summarize the diff of its work. */
+const GENERATED_DIRECTORIES = new Set(["node_modules", ".vs", "__pycache__"]);
+const UNITY_GENERATED_DIRECTORIES = new Set(["Library", "Temp", "Obj", "Logs", "UserSettings"]);
+const GENERATED_FILES = new Set([".DS_Store", "Thumbs.db"]);
+
+function generatedNoise(root: string, file: string): boolean {
+  const parts = file.split("/");
+  if (GENERATED_FILES.has(parts.at(-1)!)) return true;
+  return parts.slice(0, -1).some((part, index) => {
+    if (GENERATED_DIRECTORIES.has(part)) return true;
+    if (!UNITY_GENERATED_DIRECTORIES.has(part)) return false;
+    // Unity's settings are source files; only its known generated folders in a Unity project are noise.
+    return existsSync(toNamespacedPath(join(root, ...parts.slice(0, index), "ProjectSettings", "ProjectVersion.txt")));
+  });
+}
+
+async function autoCommitFiles(wt: Worktree, log: Logger): Promise<SkippedFile[]> {
+  const trust = trustArgs(wt.path);
+  const status = await git([...trust, "status", "--porcelain=v1", "-z", "--no-renames", "--untracked-files=all"], wt.path, log);
+  const included: string[] = [];
+  const unstage: string[] = [];
+  const skipped: SkippedFile[] = [];
+  for (const entry of status.split("\0").filter(Boolean)) {
+    const file = entry.slice(3);
+    const literal = `:(literal)${file}`;
+    let reason: SkippedFile["reason"] | undefined;
+    if (generatedNoise(wt.path, file)) reason = "generated noise";
+    else if (entry.startsWith("??") || await git([...trust, "diff", "--ignore-all-space", "--ignore-cr-at-eol", "--no-ext-diff", "--no-textconv", "--no-renames", "HEAD", "--", literal], wt.path, log)) {
+      // An already staged deletion has no path left in the index for `git add` to match.
+      if (!entry.startsWith("D ")) included.push(literal);
+    } else reason = "whitespace only";
+    if (reason) {
+      skipped.push({ path: file, reason });
+      if (entry[0] !== "?" && entry[0] !== " ") unstage.push(literal);
+    }
+  }
+  // The job may already have staged noise. Unstage it without changing the files on disk.
+  for (const file of unstage) await git([...trust, "reset", "-q", "HEAD", "--", file], wt.path, log);
+  for (const file of included) await git([...trust, "add", "-A", "--", file], wt.path, log);
+  return skipped;
+}
+
+/** Commit substantive, non-generated changes and summarize the diff of the job's work. */
 export async function finishWorktree(wt: Worktree, message: string, log: Logger): Promise<WorktreeOutcome> {
   const trust = trustArgs(wt.path);
-  await git([...trust, "add", "-A"], wt.path, log);
-  const status = await git([...trust, "status", "--porcelain"], wt.path, log);
+  const skippedFiles = await autoCommitFiles(wt, log);
+  const status = await git([...trust, "diff", "--cached", "--name-only", "-z"], wt.path, log);
   if (status) await git([...trust, ...COMMIT_IDENTITY, "commit", "-q", "--no-verify", "-m", message], wt.path, log);
   await unlockWorktree(wt.repoRoot, wt.path, log);
   // The job may have switched to (or created) a branch of its own: its work is wherever it committed.
@@ -210,9 +269,9 @@ export async function finishWorktree(wt: Worktree, message: string, log: Logger)
   const branch = work.has(current) || !work.size ? current : [...work.keys()][0]!;
   const from = await reviewBase(wt, log, branch);
   const diffStat = await git(["diff", "--stat", `${from}..${branch}`], wt.repoRoot, log);
-  const files = (await git(["diff", "--name-only", `${from}..${branch}`], wt.repoRoot, log)).split(/\r?\n/).filter(Boolean);
+  const files = (await git(["diff", "--name-only", "-z", `${from}..${branch}`], wt.repoRoot, log)).split("\0").filter(Boolean);
   const otherBranches = [...work].filter(([name]) => name !== branch).map(([name, commits]) => ({ name, commits }));
-  return { changed: diffStat.length > 0 || otherBranches.length > 0, branch, otherBranches, diffStat: diffStat.slice(0, MAX_DIFFSTAT_CHARS), reviewBase: from, files };
+  return { changed: diffStat.length > 0 || otherBranches.length > 0, branch, otherBranches, diffStat: diffStat.slice(0, MAX_DIFFSTAT_CHARS), reviewBase: from, files, skippedFiles };
 }
 
 /**
@@ -222,7 +281,8 @@ export async function finishWorktree(wt: Worktree, message: string, log: Logger)
  */
 async function workBranches(wt: Worktree, current: string, log: Logger): Promise<Map<string, number>> {
   const trust = trustArgs(wt.path);
-  const visited = new Set((await git([...trust, "log", "-g", "--format=%H", "HEAD"], wt.path, log).catch(() => "")).split(/\r?\n/).filter(Boolean));
+  const visited = new Set((await git([...trust, "log", "-g", "--format=%H%x09%gs", "HEAD"], wt.path, log).catch(() => ""))
+    .split(/\r?\n/).filter((line) => line && !line.includes("\tcheckout: ")).map((line) => line.split("\t")[0]));
   const refs = (await git(["for-each-ref", "refs/heads", "--format=%(refname:short) %(objectname)"], wt.repoRoot, log).catch(() => ""))
     .split(/\r?\n/)
     .map((l) => l.split(" "))
@@ -265,8 +325,16 @@ export function handoffWarning(files: readonly string[]): string | null {
 /** Human/agent-readable instructions for taking or discarding the subagent's work. */
 export function worktreeReport(wt: Worktree, outcome: WorktreeOutcome): string {
   const branch = outcome.branch ?? wt.branch;
+  const skipped = outcome.skippedFiles ?? [];
+  const rule = skipped.length
+    ? `Auto-commit skipped whitespace/line-ending-only changes and known generated noise; left on disk: ${skipped.map((f) => `${f.path} (${f.reason})`).join(", ")}.`
+    : "";
+  const remove = "git -c core.longpaths=true worktree remove";
   // Only a worktree without any work of its own may be removed.
-  if (!outcome.changed) return `Worktree ${wt.path} (branch ${branch}) has no changes; remove it with: git worktree remove "${wt.path}" && git branch -D ${branch}`;
+  if (!outcome.changed) return [
+    `Worktree ${wt.path} (branch ${branch}) has ${skipped.length ? "no real changes" : "no changes"}; remove it with: ${remove}${skipped.length ? " --force" : ""} "${wt.path}" && git branch -D ${branch}`,
+    rule,
+  ].filter(Boolean).join("\n");
   const others = outcome.otherBranches ?? [];
   const lines = [
     `Changes are committed on branch ${branch} (worktree ${wt.path}), not in your working copy` +
@@ -274,13 +342,15 @@ export function worktreeReport(wt: Worktree, outcome: WorktreeOutcome): string {
       ":",
   ];
   if (outcome.diffStat) lines.push(outcome.diffStat);
+  if (rule) lines.push(rule);
   if (others.length) lines.push(`Also committed from this worktree: ${others.map((o) => `${o.name} (${o.commits} commit${o.commits === 1 ? "" : "s"})`).join(", ")}. Review those before removing anything.`);
   lines.push(...[handoffWarning(outcome.files)].filter((w): w is string => Boolean(w)));
   if (outcome.diffStat) {
+    lines.push(`Review base: ${outcome.reviewBase} (job fork point).`);
     lines.push(`Review: git diff ${outcome.reviewBase.slice(0, 12)}..${branch}`);
     lines.push(`Take them: git merge ${branch}   (or git cherry-pick ${branch})`);
   }
-  lines.push(`Discard: git worktree remove --force "${wt.path}" && git branch -D ${[branch, ...others.map((o) => o.name)].join(" ")}`);
+  lines.push(`Discard: ${remove} --force "${wt.path}" && git branch -D ${[branch, ...others.map((o) => o.name)].join(" ")}`);
   return lines.join("\n");
 }
 
