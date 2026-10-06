@@ -8177,8 +8177,30 @@ function kindOfTool(name2) {
 function say(text2) {
   return text2.trim() ? { kind: "say", text: `says: ${clip(text2, MAX_SAY_CHARS)}`, full: `says: ${text2.trim()}` } : null;
 }
+function codexCommandFailure(item) {
+  const code = item.exitCode ?? item.exit_code;
+  const status = typeof item.status === "string" ? item.status : "unknown";
+  const output2 = String(item.aggregatedOutput ?? item.aggregated_output ?? "");
+  const timedOut = item.timedOut === true || item.timed_out === true || status === "timedOut" || status === "timed_out" || /^Command failed because it timed out\.(?:\r?\n|$)/.test(output2);
+  if (!timedOut && !(typeof code === "number" && code !== 0) && !["failed", "declined", "interrupted", "cancelled"].includes(status)) return null;
+  const outcome = timedOut ? "timeout reported by Codex command tool" : status === "declined" ? "declined by Codex" : "termination cause not reported";
+  const duration3 = item.durationMs ?? item.duration_ms;
+  const detail = `command failed [${item.id ?? "unknown id"}]: exit=${typeof code === "number" ? code : "unknown"}, status=${status}${typeof duration3 === "number" ? `, duration=${duration3}ms` : ""}; ${outcome}`;
+  const command = Array.isArray(item.command) ? item.command.join(" ") : String(item.command ?? "");
+  return {
+    kind: "failure",
+    id: item.id,
+    text: detail,
+    full: `${detail}
+Command: ${command}
+${output2.trim() ? `Output tail:
+${output2.slice(-4e3)}` : "No command output was reported."}
+A forced termination can skip finally/cleanup; verify owned locks and child processes before retrying.`
+  };
+}
 function describeCodexEvent(ev) {
   const item = ev?.item;
+  if (ev?.type === "item.completed" && item?.type === "command_execution") return codexCommandFailure(item);
   if (ev?.type === "item.started" && item) {
     switch (item.type) {
       case "command_execution":
@@ -8234,7 +8256,7 @@ function progressEventHandler(agent, onProgress, now = Date.now) {
   if (!onProgress) return void 0;
   const started = now();
   const seen = /* @__PURE__ */ new Set();
-  const counts = { cmd: 0, edit: 0, read: 0, tool: 0, say: 0, think: 0 };
+  const counts = { cmd: 0, edit: 0, read: 0, tool: 0, say: 0, think: 0, failure: 0 };
   let steps = 0;
   let last = "";
   return (ev) => {
@@ -8247,7 +8269,7 @@ function progressEventHandler(agent, onProgress, now = Date.now) {
     }
     if (step.text === last) return;
     last = step.text;
-    if (step.kind !== "think" && step.kind !== "say") steps++;
+    if (step.kind !== "think" && step.kind !== "say" && step.kind !== "failure") steps++;
     counts[step.kind]++;
     const totals = [counts.cmd && `${counts.cmd} cmds`, counts.edit && `${counts.edit} edits`].filter(Boolean).join(", ");
     const where = steps ? ` \xB7 step ${steps}${totals ? ` (${totals})` : ""}` : "";
@@ -8542,10 +8564,11 @@ function unwrapNpmShim(shimPath, readFile3 = (p) => readFileSync9(p, "utf8")) {
   if (js) return { command: process.execPath, prefix: [win32.join(dir, js[1])] };
   return null;
 }
-var liveChildren = /* @__PURE__ */ new Set();
-function killTree(child) {
+var liveChildren = /* @__PURE__ */ new Map();
+function killTree(child, reason = "delegate cleanup") {
   const pid = child.pid;
   if (!pid || child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
+  liveChildren.get(child)?.info("stopping delegate process tree", { pid, reason, method: process.platform === "win32" ? "taskkill /PID /T /F" : "process group signals" });
   const closed = new Promise((resolve13) => child.once("close", () => resolve13()));
   return new Promise((resolve13) => {
     if (process.platform === "win32") {
@@ -8572,7 +8595,8 @@ function killTree(child) {
     }
   }).then(() => closed);
 }
-function killPid(pid) {
+function killPid(pid, log) {
+  log?.info("stopping job runner process tree", { pid, reason: "job cancellation fallback", method: process.platform === "win32" ? "taskkill /PID /T /F" : "runner signals" });
   if (process.platform === "win32") {
     const tk = spawn("taskkill", ["/PID", String(pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" });
     tk.on("error", () => {
@@ -8604,11 +8628,12 @@ function pidAlive(pid) {
   }
 }
 async function killAllDelegates(capMs = KILL_GRACE_MS) {
-  const all = [...liveChildren].map((c) => killTree(c));
+  const all = [...liveChildren.keys()].map((c) => killTree(c, "server shutdown"));
   await Promise.race([Promise.all(all), new Promise((r) => setTimeout(r, capMs))]);
 }
-function trackChild(child) {
-  liveChildren.add(child);
+function trackChild(child, log) {
+  liveChildren.set(child, log);
+  log?.info("delegate process started", { pid: child.pid });
   child.once("exit", () => liveChildren.delete(child));
 }
 function resolveCommand(bin, argsIn, env, log) {
@@ -8655,7 +8680,7 @@ function runProcess(opts) {
       // Own process group on POSIX, so the whole tree can be killed (see killTree).
       detached: process.platform !== "win32"
     });
-    trackChild(child);
+    trackChild(child, opts.log);
     let head = "";
     let tail = "";
     const captured = () => tail ? `${head}
@@ -8669,15 +8694,15 @@ ${tail.slice(tail.indexOf("\n") + 1)}` : head;
       opts.signal?.removeEventListener("abort", onAbort);
       fn();
     };
-    const kill = () => void killTree(child);
+    const kill = (reason) => void killTree(child, reason);
     const timer = setTimeout(() => {
-      kill();
+      kill("delegate time limit");
       const seconds = Math.round(opts.timeoutMs / 1e3);
       const message = opts.what ? `${opts.what} timed out after ${seconds}s` : `delegate timed out after ${seconds}s (its time limit, timeout_sec)`;
       finish(() => reject(new DelegateError(message, "timeout", stderr.slice(-STDERR_TAIL_CHARS), captured())));
     }, opts.timeoutMs);
     const onAbort = () => {
-      kill();
+      kill("delegate aborted");
       finish(() => reject(new DelegateError("delegate aborted", "aborted", "", captured())));
     };
     opts.signal?.addEventListener("abort", onAbort, { once: true });
@@ -29238,7 +29263,7 @@ function watchServeOutput(onListening) {
     tail: () => out
   };
 }
-function startServe(bin, cwd, env) {
+function startServe(bin, cwd, env, log) {
   let resolved = resolveBinary(bin, env);
   if (!resolved) return Promise.reject(new DelegateError(`executable not found: ${bin}`, "not_found"));
   let prefix = [];
@@ -29256,13 +29281,13 @@ function startServe(bin, cwd, env) {
       stdio: ["ignore", "pipe", "pipe"],
       detached: process.platform !== "win32"
     });
-    trackChild(child);
+    trackChild(child, log);
     const output2 = watchServeOutput((url2) => {
       clearTimeout(timer);
       resolve13({ child, url: url2 });
     });
     const timer = setTimeout(() => {
-      void killTree(child);
+      void killTree(child, "opencode startup timeout");
       reject(new DelegateError(`opencode serve did not start within ${SERVE_START_TIMEOUT_MS / 1e3}s (startup timeout)`, "timeout", output2.tail()));
     }, SERVE_START_TIMEOUT_MS);
     child.stdout.on("data", output2.onData);
@@ -29321,7 +29346,7 @@ async function delegateToOpencodeServed(req) {
     OPENCODE_SERVER_USERNAME: SERVER_USER,
     ...permissions ? { OPENCODE_CONFIG_CONTENT: JSON.stringify({ permission: permissions }) } : {}
   });
-  const { child, url: url2 } = await startServe(req.bin, req.cwd, env);
+  const { child, url: url2 } = await startServe(req.bin, req.cwd, env, req.log);
   const auth = `Basic ${Buffer.from(`${SERVER_USER}:${password}`).toString("base64")}`;
   const q = `directory=${encodeURIComponent(req.cwd)}`;
   const ac = new AbortController();
@@ -29473,7 +29498,7 @@ ${req.prompt}`);
   const { resolved, args, needsShell } = resolveCommand(req.bin, ["app-server", ...startupArgs], env, req.log);
   req.log.debug("starting codex app-server", { bin: resolved, cwd });
   const child = spawn3(resolved, args, { cwd, env: { ...env, PWD: cwd }, shell: needsShell, windowsHide: true, stdio: ["pipe", "pipe", "pipe"], detached: process.platform !== "win32" });
-  trackChild(child);
+  trackChild(child, req.log);
   let nextId = 1;
   const pending = /* @__PURE__ */ new Map();
   let stderr = "";
@@ -29706,6 +29731,7 @@ ${message}`, text_elements: [] }] });
       }
     }
   };
+  let stopReason = "codex turn completed";
   try {
     await boot(request2("initialize", { clientInfo: { name: "agent-bridge", title: "agent-bridge", version: APP_VERSION }, capabilities: { experimentalApi: req.sandbox === "danger-full-access", optOutNotificationMethods: OPT_OUT } }));
     write({ method: "initialized", params: {} });
@@ -29779,6 +29805,7 @@ ${approvalsReviewer === "auto_review" ? AUTO_REVIEW_ASK_HINT : CODEX_ASK_HINT}` 
     req.log.info("codex delegate finished", { threadId, status: outcome.status });
     return { sessionId: threadId, text: finalAnswers.text(), isError: Boolean(error62), details: { usage, error: error62, answers: answers.length } };
   } catch (err) {
+    stopReason = err instanceof DelegateError ? `codex delegate ${err.kind}` : "codex delegate failed";
     req.live?.onSteering(null);
     if (threadId && turnId) await Promise.race([request2("turn/interrupt", { threadId, turnId }).catch(() => {
     }), new Promise((r) => setTimeout(r, 2e3))]);
@@ -29793,7 +29820,7 @@ ${approvalsReviewer === "auto_review" ? AUTO_REVIEW_ASK_HINT : CODEX_ASK_HINT}` 
     clearTimeout(startupTimer);
     for (const p of pending.values()) p.reject(new Error("closed"));
     child.stdin.end();
-    await killTree(child);
+    await killTree(child, stopReason);
   }
 }
 
@@ -46565,7 +46592,7 @@ var JobRunners = class {
   kill(job) {
     if (job.remote) return this.remote.send(job, { type: "cancel" });
     const pid = this.state(job)?.pid ?? job.host?.pid;
-    if (pid) killPid(pid);
+    if (pid) killPid(pid, this.log);
   }
 };
 

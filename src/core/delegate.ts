@@ -92,15 +92,16 @@ export function unwrapNpmShim(shimPath: string, readFile: (p: string) => string 
 }
 
 /** Every process tree started by a delegate, so shutdown can stop them all. */
-const liveChildren = new Set<ChildProcess>();
+const liveChildren = new Map<ChildProcess, Logger | undefined>();
 
 /**
  * Stop a delegate and everything it started (the agent's own tool processes, the native binary behind
  * a node launcher). child.kill() alone only stops the direct child on Windows.
  */
-export function killTree(child: ChildProcess): Promise<void> {
+export function killTree(child: ChildProcess, reason = "delegate cleanup"): Promise<void> {
   const pid = child.pid;
   if (!pid || child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
+  liveChildren.get(child)?.info("stopping delegate process tree", { pid, reason, method: process.platform === "win32" ? "taskkill /PID /T /F" : "process group signals" });
   // taskkill finishing is not the child closing. In particular, Windows can still hold its cwd
   // while the caller tears down the run. Subscribe before sending any signal so a fast exit is kept.
   const closed = new Promise<void>((resolve) => child.once("close", () => resolve()));
@@ -135,7 +136,8 @@ export function killTree(child: ChildProcess): Promise<void> {
  * Stop a process this one did not start (a detached job runner) and everything it started. On POSIX it gets
  * SIGTERM first (the runner then stops its subagent's own process group), SIGKILL after the grace period.
  */
-export function killPid(pid: number): void {
+export function killPid(pid: number, log?: Logger): void {
+  log?.info("stopping job runner process tree", { pid, reason: "job cancellation fallback", method: process.platform === "win32" ? "taskkill /PID /T /F" : "runner signals" });
   if (process.platform === "win32") {
     const tk = spawn("taskkill", ["/PID", String(pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" });
     tk.on("error", () => {
@@ -174,12 +176,13 @@ export function pidAlive(pid: number): boolean {
 
 /** Kill every running delegate's process tree (on shutdown); resolves when they are gone or after a cap. */
 export async function killAllDelegates(capMs = KILL_GRACE_MS): Promise<void> {
-  const all = [...liveChildren].map((c) => killTree(c));
+  const all = [...liveChildren.keys()].map((c) => killTree(c, "server shutdown"));
   await Promise.race([Promise.all(all), new Promise((r) => setTimeout(r, capMs))]);
 }
 
-export function trackChild(child: ChildProcess): void {
-  liveChildren.add(child);
+export function trackChild(child: ChildProcess, log?: Logger): void {
+  liveChildren.set(child, log);
+  log?.info("delegate process started", { pid: child.pid });
   child.once("exit", () => liveChildren.delete(child));
 }
 
@@ -258,7 +261,7 @@ export function runProcess(opts: {
       // Own process group on POSIX, so the whole tree can be killed (see killTree).
       detached: process.platform !== "win32",
     });
-    trackChild(child);
+    trackChild(child, opts.log);
     // Long runs can print more than the cap: keep the start (session id) and the end (final answer).
     let head = "";
     let tail = "";
@@ -272,15 +275,15 @@ export function runProcess(opts: {
       opts.signal?.removeEventListener("abort", onAbort);
       fn();
     };
-    const kill = () => void killTree(child);
+    const kill = (reason: string) => void killTree(child, reason);
     const timer = setTimeout(() => {
-      kill();
+      kill("delegate time limit");
       const seconds = Math.round(opts.timeoutMs / 1000);
       const message = opts.what ? `${opts.what} timed out after ${seconds}s` : `delegate timed out after ${seconds}s (its time limit, timeout_sec)`;
       finish(() => reject(new DelegateError(message, "timeout", stderr.slice(-STDERR_TAIL_CHARS), captured())));
     }, opts.timeoutMs);
     const onAbort = () => {
-      kill();
+      kill("delegate aborted");
       finish(() => reject(new DelegateError("delegate aborted", "aborted", "", captured())));
     };
     opts.signal?.addEventListener("abort", onAbort, { once: true });

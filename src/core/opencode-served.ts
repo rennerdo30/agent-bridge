@@ -49,7 +49,7 @@ export function watchServeOutput(onListening: (url: string) => void): { onData: 
   };
 }
 
-function startServe(bin: string, cwd: string, env: NodeJS.ProcessEnv): Promise<{ child: ChildProcess; url: string }> {
+function startServe(bin: string, cwd: string, env: NodeJS.ProcessEnv, log: DelegateRequest["log"]): Promise<{ child: ChildProcess; url: string }> {
   let resolved = resolveBinary(bin, env);
   if (!resolved) return Promise.reject(new DelegateError(`executable not found: ${bin}`, "not_found"));
   let prefix: string[] = [];
@@ -67,13 +67,13 @@ function startServe(bin: string, cwd: string, env: NodeJS.ProcessEnv): Promise<{
       stdio: ["ignore", "pipe", "pipe"],
       detached: process.platform !== "win32",
     });
-    trackChild(child);
+    trackChild(child, log);
     const output = watchServeOutput((url) => {
       clearTimeout(timer);
       resolve({ child, url });
     });
     const timer = setTimeout(() => {
-      void killTree(child);
+      void killTree(child, "opencode startup timeout");
       reject(new DelegateError(`opencode serve did not start within ${SERVE_START_TIMEOUT_MS / 1000}s (startup timeout)`, "timeout", output.tail()));
     }, SERVE_START_TIMEOUT_MS);
     child.stdout!.on("data", output.onData);
@@ -155,7 +155,7 @@ export async function delegateToOpencodeServed(
     OPENCODE_SERVER_USERNAME: SERVER_USER,
     ...(permissions ? { OPENCODE_CONFIG_CONTENT: JSON.stringify({ permission: permissions }) } : {}),
   });
-  const { child, url } = await startServe(req.bin, req.cwd, env);
+  const { child, url } = await startServe(req.bin, req.cwd, env, req.log);
   const auth = `Basic ${Buffer.from(`${SERVER_USER}:${password}`).toString("base64")}`;
   const q = `directory=${encodeURIComponent(req.cwd)}`;
   const ac = new AbortController();

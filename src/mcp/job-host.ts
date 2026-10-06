@@ -188,6 +188,6 @@ export class JobRunners implements JobHost {
   kill(job: Job): void {
     if (job.remote) return this.remote.send(job, { type: "cancel" });
     const pid = this.state(job)?.pid ?? job.host?.pid;
-    if (pid) killPid(pid);
+    if (pid) killPid(pid, this.log);
   }
 }

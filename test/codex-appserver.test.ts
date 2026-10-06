@@ -62,6 +62,24 @@ describe("innerCommand", () => {
   });
 });
 
+it("records native command failures even when the Codex turn recovers successfully", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "ab-command-failure-"));
+  writeFileSync(join(dir, "app-server"), FAKE_CODEX_APPSERVER.replace(
+    'const finish = () => {',
+    `const finish = () => {
+      write({ method: "item/started", params: { turnId: "turn-1", item: { id: "cmd-1", type: "commandExecution", command: "pwsh wrapper.ps1" } } });
+      write({ method: "item/completed", params: { turnId: "turn-1", item: { id: "cmd-1", type: "commandExecution", command: "pwsh wrapper.ps1", status: "failed", exitCode: 1, durationMs: 7538, aggregatedOutput: "" } } });`,
+  ));
+  try {
+    const progress: string[] = [];
+    const result = await delegateToCodexAppServer({ bin: process.execPath, cwd: dir, prompt: "task", sandbox: "read-only", timeoutSec: 10, log: nullLogger, onProgress: (short, full) => progress.push(full ?? short) });
+    expect(result).toMatchObject({ isError: false, text: "finished" });
+    expect(progress.join("\n")).toContain("command failed [cmd-1]: exit=1, status=failed, duration=7538ms; termination cause not reported");
+  } finally {
+    rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  }
+});
+
 describe("next-turn Codex settings", () => {
   it.each(["read-only", "workspace-write", "danger-full-access"] as const)("keeps %s consistent across app-server start, resume and turn", async (sandbox) => {
     const dir = mkdtempSync(join(tmpdir(), "ab-startup-sandbox-"));
