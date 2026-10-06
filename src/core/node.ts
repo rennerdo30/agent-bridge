@@ -28,6 +28,7 @@ import type { RemoteJobRequest } from "../network/remote-job-protocol.js";
 import { REMOTE_JOB_LOCAL_TIMEOUT_MS } from "../network/remote-job-protocol.js";
 import type { RemoteJobSnapshot } from "../network/remote-jobs.js";
 import type { HistorySearch, HistoryResult } from "./history.js";
+import type { TransferStarted } from "../network/transfers.js";
 import type { DecideArgs, DecisionsArgs, OwnerDecision } from "./decisions.js";
 
 export interface BridgeNodeOptions {
@@ -435,8 +436,16 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
     });
   }
 
-  sendFiles(to: string, paths: string[]): Promise<TransferResult> {
+  sendFiles(to: string, paths: string[]): Promise<TransferResult | TransferStarted> {
     return this.withClient((c) => c.request("sendFiles", { to, paths }));
+  }
+
+  fetchFiles(from: string, paths: string[]): Promise<TransferStarted> {
+    return this.withClient((c) => c.request("fetchFiles", { from, paths }));
+  }
+
+  cancelTransfer(id: string): Promise<{ id: string; cancelled: boolean }> {
+    return this.withClient((c) => c.request("cancelTransfer", { id }));
   }
 
   /** Locally buffered unread messages, oldest first. */

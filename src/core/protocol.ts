@@ -13,6 +13,7 @@ import type { TransferResult } from "../network/files.js";
 import type { RemoteJobRequest } from "../network/remote-job-protocol.js";
 import type { RemoteJobSnapshot } from "../network/remote-jobs.js";
 import type { HistorySearch, HistoryResult } from "./history.js";
+import type { TransferProgress, TransferStarted } from "../network/transfers.js";
 import type { DecideArgs, DecisionsArgs, OwnerDecision } from "./decisions.js";
 
 export type AgentKind = "claude" | "codex" | "opencode" | "other";
@@ -187,7 +188,10 @@ export interface RequestMap {
   networkPair: [Record<string, never>, { code: string; expiresAt: number }];
   networkLink: [{ code: string; host: string; port: number }, NetworkIdentity];
   networkUnlink: [{ id: string }, { removed: boolean }];
-  sendFiles: [{ to: string; paths: string[] }, TransferResult];
+  sendFiles: [{ to: string; paths: string[] }, TransferResult | TransferStarted];
+  fetchFiles: [{ from: string; paths: string[] }, TransferStarted];
+  transfers: [Record<string, never>, { transfers: TransferProgress[] }];
+  cancelTransfer: [{ id: string }, { id: string; cancelled: boolean }];
 }
 export type Op = keyof RequestMap;
 

@@ -454,6 +454,17 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
       const config = status.config ?? loadConfig(opts.home, "other", opts.log).network;
       return send(res, 200, { ...status, config, addresses: lanAddresses() });
     }
+    if (req.method === "GET" && url.pathname === "/api/transfers") {
+      try { return send(res, 200, await networkRequest("transfers", {})); }
+      catch (error) { return send(res, 503, { error: (error as Error).message }); }
+    }
+    const transferCancel = /^\/api\/transfers\/([^/]+)\/cancel$/.exec(url.pathname);
+    if (req.method === "POST" && transferCancel) {
+      if (req.headers["x-agent-bridge"] !== "1") return send(res, 403, { error: "missing header" });
+      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(transferCancel[1]!)) return send(res, 400, { error: "Invalid transfer id." });
+      try { return send(res, 200, await networkRequest("cancelTransfer", { id: transferCancel[1]! })); }
+      catch (error) { return send(res, (error as Error).message === "unknown transfer" ? 404 : 503, { error: (error as Error).message }); }
+    }
     if (req.method === "POST" && url.pathname.startsWith("/api/network/")) {
       if (req.headers["x-agent-bridge"] !== "1") return send(res, 403, { error: "missing header" });
       // Never return or log parsing/validation errors containing a pairing secret.
