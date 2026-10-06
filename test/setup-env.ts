@@ -1,3 +1,11 @@
+import { vi } from "vitest";
+
+// Unit and integration tests inspect commands, never display desktop notifications on the developer's PC.
+vi.mock("../src/core/notifications.js", async (original) => ({
+  ...await original<typeof import("../src/core/notifications.js")>(),
+  notifyJobEvent: vi.fn(),
+}));
+
 /**
  * When the suite runs inside an agent-bridge subagent, these point at that subagent's real parent session:
  * fake subagents started by the tests would then message it ("ping from opencode"). Tests start clean.

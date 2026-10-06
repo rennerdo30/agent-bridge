@@ -8,6 +8,8 @@ import { ResourceSlots, SLOT_OWNER_ENV, SLOT_PID_ENV } from "../src/core/resourc
 import { runDelegate, type RunContext } from "../src/mcp/delegate-run.js";
 import type { Job } from "../src/mcp/jobs.js";
 import { DELEGATION_TARGETS } from "../src/mcp/targets.js";
+import { answerPendingApproval, listPendingApprovals, type PermissionDecision, type PermissionRequest } from "../src/core/relay.js";
+import { until } from "./helpers.js";
 
 let home: string;
 beforeEach(() => {
@@ -23,6 +25,26 @@ const context = (): RunContext => ({ agent: "claude", cfg: { ...DEFAULT_CONFIG }
 const job = (): Job => ({ id: "test", name: "codex-job-test", agent: "codex", model: null, prompt: "task", startedAt: Date.now(), controller: new AbortController(), progress: null, status: "running", sessionId: null, workdir: null, worktree: null, queue: [] });
 
 describe("delegation approval routing", () => {
+  it("publishes native-dialog approvals without changing foreground routing", async () => {
+    const rc = context();
+    rc.askUser = vi.fn(() => new Promise<PermissionDecision>(() => {}));
+    const j = { ...job(), owner: "parent", foreground: true };
+    vi.spyOn(DELEGATION_TARGETS.codex, "run").mockImplementation(async (_cfg, req) => {
+      const permission: PermissionRequest = { agent: "codex", tool: "shell", detail: "npm test", reason: "Run checks" };
+      const decision = req.approve!(permission);
+      await until(() => listPendingApprovals(home).length === 1);
+      const [entry] = listPendingApprovals(home);
+      expect(entry).toMatchObject({ job: j.name, owner: "parent", command: "npm test", reason: "Run checks" });
+      expect(await answerPendingApproval(home, entry!.id, { decision: "deny", reason: "Revise it" })).toBe("answered");
+      expect(await decision).toEqual({ allow: false, message: "Revise it" });
+      return { sessionId: "saved", text: "done", isError: false, details: {} };
+    });
+    await runDelegate(rc, "codex", { title: "test", prompt: "task", access: "edit" }, j.controller.signal, undefined, false, j);
+    expect(rc.askUser).toHaveBeenCalledOnce();
+    expect(rc.jobs!.askParent).not.toHaveBeenCalled();
+    expect(listPendingApprovals(home)).toEqual([]);
+  });
+
   for (const target of ["codex", "claude", "opencode"] as const) it(`keeps supervisor denial reasons and worker access for ${target}`, async () => {
     const rc = context();
     const j = job();

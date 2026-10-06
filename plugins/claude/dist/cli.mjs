@@ -40,9 +40,9 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
   mod
 ));
 
-// node_modules/ajv/dist/compile/codegen/code.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/compile/codegen/code.js
 var require_code = __commonJS({
-  "node_modules/ajv/dist/compile/codegen/code.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/compile/codegen/code.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.regexpCode = exports.getEsmExportName = exports.getProperty = exports.safeStringify = exports.stringify = exports.strConcat = exports.addCodeArg = exports.str = exports._ = exports.nil = exports._Code = exports.Name = exports.IDENTIFIER = exports._CodeOrName = void 0;
@@ -194,9 +194,9 @@ var require_code = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/compile/codegen/scope.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/compile/codegen/scope.js
 var require_scope = __commonJS({
-  "node_modules/ajv/dist/compile/codegen/scope.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/compile/codegen/scope.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.ValueScope = exports.ValueScopeName = exports.Scope = exports.varKinds = exports.UsedValueState = void 0;
@@ -339,9 +339,9 @@ var require_scope = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/compile/codegen/index.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/compile/codegen/index.js
 var require_codegen = __commonJS({
-  "node_modules/ajv/dist/compile/codegen/index.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/compile/codegen/index.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.or = exports.and = exports.not = exports.CodeGen = exports.operators = exports.varKinds = exports.ValueScopeName = exports.ValueScope = exports.Scope = exports.Name = exports.regexpCode = exports.stringify = exports.getProperty = exports.nil = exports.strConcat = exports.str = exports._ = void 0;
@@ -1059,9 +1059,9 @@ var require_codegen = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/compile/util.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/compile/util.js
 var require_util = __commonJS({
-  "node_modules/ajv/dist/compile/util.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/compile/util.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.checkStrictMode = exports.getErrorPath = exports.Type = exports.useFunc = exports.setEvaluated = exports.evaluatedPropsToName = exports.mergeEvaluated = exports.eachItem = exports.unescapeJsonPointer = exports.escapeJsonPointer = exports.escapeFragment = exports.unescapeFragment = exports.schemaRefOrVal = exports.schemaHasRulesButRef = exports.schemaHasRules = exports.checkUnknownRules = exports.alwaysValidSchema = exports.toHash = void 0;
@@ -1226,9 +1226,9 @@ var require_util = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/compile/names.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/compile/names.js
 var require_names = __commonJS({
-  "node_modules/ajv/dist/compile/names.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/compile/names.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var codegen_1 = require_codegen();
@@ -1265,9 +1265,9 @@ var require_names = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/compile/errors.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/compile/errors.js
 var require_errors = __commonJS({
-  "node_modules/ajv/dist/compile/errors.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/compile/errors.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.extendErrors = exports.resetErrorsCount = exports.reportExtraError = exports.reportError = exports.keyword$DataError = exports.keywordError = void 0;
@@ -1387,9 +1387,9 @@ var require_errors = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/compile/validate/boolSchema.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/compile/validate/boolSchema.js
 var require_boolSchema = __commonJS({
-  "node_modules/ajv/dist/compile/validate/boolSchema.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/compile/validate/boolSchema.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.boolOrEmptySchema = exports.topBoolOrEmptySchema = void 0;
@@ -1438,9 +1438,9 @@ var require_boolSchema = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/compile/rules.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/compile/rules.js
 var require_rules = __commonJS({
-  "node_modules/ajv/dist/compile/rules.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/compile/rules.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.getRules = exports.isJSONType = void 0;
@@ -1469,9 +1469,9 @@ var require_rules = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/compile/validate/applicability.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/compile/validate/applicability.js
 var require_applicability = __commonJS({
-  "node_modules/ajv/dist/compile/validate/applicability.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/compile/validate/applicability.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.shouldUseRule = exports.shouldUseGroup = exports.schemaHasRulesForType = void 0;
@@ -1492,9 +1492,9 @@ var require_applicability = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/compile/validate/dataType.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/compile/validate/dataType.js
 var require_dataType = __commonJS({
-  "node_modules/ajv/dist/compile/validate/dataType.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/compile/validate/dataType.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.reportTypeError = exports.checkDataTypes = exports.checkDataType = exports.coerceAndCheckDataType = exports.getJSONTypes = exports.getSchemaTypes = exports.DataType = void 0;
@@ -1676,9 +1676,9 @@ var require_dataType = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/compile/validate/defaults.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/compile/validate/defaults.js
 var require_defaults = __commonJS({
-  "node_modules/ajv/dist/compile/validate/defaults.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/compile/validate/defaults.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.assignDefaults = void 0;
@@ -1713,9 +1713,9 @@ var require_defaults = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/code.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/code.js
 var require_code2 = __commonJS({
-  "node_modules/ajv/dist/vocabularies/code.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/code.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.validateUnion = exports.validateArray = exports.usePattern = exports.callValidateCode = exports.schemaProperties = exports.allSchemaProperties = exports.noPropertyInData = exports.propertyInData = exports.isOwnProperty = exports.hasPropFunc = exports.reportMissingProp = exports.checkMissingProp = exports.checkReportMissingProp = void 0;
@@ -1846,9 +1846,9 @@ var require_code2 = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/compile/validate/keyword.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/compile/validate/keyword.js
 var require_keyword = __commonJS({
-  "node_modules/ajv/dist/compile/validate/keyword.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/compile/validate/keyword.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.validateKeywordUsage = exports.validSchemaType = exports.funcKeywordCode = exports.macroKeywordCode = void 0;
@@ -1964,9 +1964,9 @@ var require_keyword = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/compile/validate/subschema.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/compile/validate/subschema.js
 var require_subschema = __commonJS({
-  "node_modules/ajv/dist/compile/validate/subschema.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/compile/validate/subschema.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.extendSubschemaMode = exports.extendSubschemaData = exports.getSubschema = void 0;
@@ -2047,9 +2047,9 @@ var require_subschema = __commonJS({
   }
 });
 
-// node_modules/fast-deep-equal/index.js
+// D:/Development/claude-codex-comm/node_modules/fast-deep-equal/index.js
 var require_fast_deep_equal = __commonJS({
-  "node_modules/fast-deep-equal/index.js"(exports, module) {
+  "D:/Development/claude-codex-comm/node_modules/fast-deep-equal/index.js"(exports, module) {
     "use strict";
     module.exports = function equal(a, b) {
       if (a === b) return true;
@@ -2082,9 +2082,9 @@ var require_fast_deep_equal = __commonJS({
   }
 });
 
-// node_modules/json-schema-traverse/index.js
+// D:/Development/claude-codex-comm/node_modules/json-schema-traverse/index.js
 var require_json_schema_traverse = __commonJS({
-  "node_modules/json-schema-traverse/index.js"(exports, module) {
+  "D:/Development/claude-codex-comm/node_modules/json-schema-traverse/index.js"(exports, module) {
     "use strict";
     var traverse = module.exports = function(schema, opts, cb) {
       if (typeof opts == "function") {
@@ -2170,9 +2170,9 @@ var require_json_schema_traverse = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/compile/resolve.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/compile/resolve.js
 var require_resolve = __commonJS({
-  "node_modules/ajv/dist/compile/resolve.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/compile/resolve.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.getSchemaRefs = exports.resolveUrl = exports.normalizeId = exports._getFullPath = exports.getFullPath = exports.inlineRef = void 0;
@@ -2326,9 +2326,9 @@ var require_resolve = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/compile/validate/index.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/compile/validate/index.js
 var require_validate = __commonJS({
-  "node_modules/ajv/dist/compile/validate/index.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/compile/validate/index.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.getData = exports.KeywordCxt = exports.validateFunctionCode = void 0;
@@ -2834,9 +2834,9 @@ var require_validate = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/runtime/validation_error.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/runtime/validation_error.js
 var require_validation_error = __commonJS({
-  "node_modules/ajv/dist/runtime/validation_error.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/runtime/validation_error.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var ValidationError = class extends Error {
@@ -2850,9 +2850,9 @@ var require_validation_error = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/compile/ref_error.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/compile/ref_error.js
 var require_ref_error = __commonJS({
-  "node_modules/ajv/dist/compile/ref_error.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/compile/ref_error.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var resolve_1 = require_resolve();
@@ -2867,9 +2867,9 @@ var require_ref_error = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/compile/index.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/compile/index.js
 var require_compile = __commonJS({
-  "node_modules/ajv/dist/compile/index.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/compile/index.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.resolveSchema = exports.getCompilingSchema = exports.resolveRef = exports.compileSchema = exports.SchemaEnv = void 0;
@@ -3091,9 +3091,9 @@ var require_compile = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/refs/data.json
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/refs/data.json
 var require_data = __commonJS({
-  "node_modules/ajv/dist/refs/data.json"(exports, module) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/refs/data.json"(exports, module) {
     module.exports = {
       $id: "https://raw.githubusercontent.com/ajv-validator/ajv/master/lib/refs/data.json#",
       description: "Meta-schema for $data reference (JSON AnySchema extension proposal)",
@@ -3110,9 +3110,9 @@ var require_data = __commonJS({
   }
 });
 
-// node_modules/fast-uri/lib/utils.js
+// D:/Development/claude-codex-comm/node_modules/fast-uri/lib/utils.js
 var require_utils = __commonJS({
-  "node_modules/fast-uri/lib/utils.js"(exports, module) {
+  "D:/Development/claude-codex-comm/node_modules/fast-uri/lib/utils.js"(exports, module) {
     "use strict";
     var isUUID = RegExp.prototype.test.bind(/^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/iu);
     var isIPv42 = RegExp.prototype.test.bind(/^(?:(?:25[0-5]|2[0-4]\d|1\d{2}|[1-9]\d|\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d{2}|[1-9]\d|\d)$/u);
@@ -3612,9 +3612,9 @@ var require_utils = __commonJS({
   }
 });
 
-// node_modules/fast-uri/lib/schemes.js
+// D:/Development/claude-codex-comm/node_modules/fast-uri/lib/schemes.js
 var require_schemes = __commonJS({
-  "node_modules/fast-uri/lib/schemes.js"(exports, module) {
+  "D:/Development/claude-codex-comm/node_modules/fast-uri/lib/schemes.js"(exports, module) {
     "use strict";
     var { isUUID } = require_utils();
     var URN_REG = /^([\da-z][\d\-a-z]{0,31}):((?:[\w!$'()*+,\-./:;=@]|%[\da-f]{2})+)$/iu;
@@ -3823,9 +3823,9 @@ var require_schemes = __commonJS({
   }
 });
 
-// node_modules/fast-uri/index.js
+// D:/Development/claude-codex-comm/node_modules/fast-uri/index.js
 var require_fast_uri = __commonJS({
-  "node_modules/fast-uri/index.js"(exports, module) {
+  "D:/Development/claude-codex-comm/node_modules/fast-uri/index.js"(exports, module) {
     "use strict";
     var { normalizeIPv6, removeDotSegments, recomposeAuthority, normalizePercentEncoding, normalizePathEncoding, serializePathEncoding, normalizeQueryFragmentEncoding, encodeQuery, encodeFragment, reescapeHostDelimiters, isIPv4: isIPv42, nonSimpleDomain } = require_utils();
     var { SCHEMES, getSchemeHandler } = require_schemes();
@@ -4229,9 +4229,9 @@ var require_fast_uri = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/runtime/uri.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/runtime/uri.js
 var require_uri = __commonJS({
-  "node_modules/ajv/dist/runtime/uri.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/runtime/uri.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var uri = require_fast_uri();
@@ -4240,9 +4240,9 @@ var require_uri = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/core.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/core.js
 var require_core = __commonJS({
-  "node_modules/ajv/dist/core.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/core.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.CodeGen = exports.Name = exports.nil = exports.stringify = exports.str = exports._ = exports.KeywordCxt = void 0;
@@ -4851,9 +4851,9 @@ var require_core = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/core/id.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/core/id.js
 var require_id = __commonJS({
-  "node_modules/ajv/dist/vocabularies/core/id.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/core/id.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var def = {
@@ -4866,9 +4866,9 @@ var require_id = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/core/ref.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/core/ref.js
 var require_ref = __commonJS({
-  "node_modules/ajv/dist/vocabularies/core/ref.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/core/ref.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.callRef = exports.getValidate = void 0;
@@ -4988,9 +4988,9 @@ var require_ref = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/core/index.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/core/index.js
 var require_core2 = __commonJS({
-  "node_modules/ajv/dist/vocabularies/core/index.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/core/index.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var id_1 = require_id();
@@ -5009,9 +5009,9 @@ var require_core2 = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/validation/limitNumber.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/validation/limitNumber.js
 var require_limitNumber = __commonJS({
-  "node_modules/ajv/dist/vocabularies/validation/limitNumber.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/validation/limitNumber.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var codegen_1 = require_codegen();
@@ -5041,9 +5041,9 @@ var require_limitNumber = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/validation/multipleOf.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/validation/multipleOf.js
 var require_multipleOf = __commonJS({
-  "node_modules/ajv/dist/vocabularies/validation/multipleOf.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/validation/multipleOf.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var codegen_1 = require_codegen();
@@ -5069,9 +5069,9 @@ var require_multipleOf = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/runtime/ucs2length.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/runtime/ucs2length.js
 var require_ucs2length = __commonJS({
-  "node_modules/ajv/dist/runtime/ucs2length.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/runtime/ucs2length.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     function ucs2length(str) {
@@ -5095,9 +5095,9 @@ var require_ucs2length = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/validation/limitLength.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/validation/limitLength.js
 var require_limitLength = __commonJS({
-  "node_modules/ajv/dist/vocabularies/validation/limitLength.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/validation/limitLength.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var codegen_1 = require_codegen();
@@ -5127,9 +5127,9 @@ var require_limitLength = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/validation/pattern.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/validation/pattern.js
 var require_pattern = __commonJS({
-  "node_modules/ajv/dist/vocabularies/validation/pattern.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/validation/pattern.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var code_1 = require_code2();
@@ -5164,9 +5164,9 @@ var require_pattern = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/validation/limitProperties.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/validation/limitProperties.js
 var require_limitProperties = __commonJS({
-  "node_modules/ajv/dist/vocabularies/validation/limitProperties.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/validation/limitProperties.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var codegen_1 = require_codegen();
@@ -5193,9 +5193,9 @@ var require_limitProperties = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/validation/required.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/validation/required.js
 var require_required = __commonJS({
-  "node_modules/ajv/dist/vocabularies/validation/required.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/validation/required.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var code_1 = require_code2();
@@ -5275,9 +5275,9 @@ var require_required = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/validation/limitItems.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/validation/limitItems.js
 var require_limitItems = __commonJS({
-  "node_modules/ajv/dist/vocabularies/validation/limitItems.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/validation/limitItems.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var codegen_1 = require_codegen();
@@ -5304,9 +5304,9 @@ var require_limitItems = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/runtime/equal.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/runtime/equal.js
 var require_equal = __commonJS({
-  "node_modules/ajv/dist/runtime/equal.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/runtime/equal.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var equal = require_fast_deep_equal();
@@ -5315,9 +5315,9 @@ var require_equal = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/validation/uniqueItems.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/validation/uniqueItems.js
 var require_uniqueItems = __commonJS({
-  "node_modules/ajv/dist/vocabularies/validation/uniqueItems.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/validation/uniqueItems.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var dataType_1 = require_dataType();
@@ -5382,9 +5382,9 @@ var require_uniqueItems = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/validation/const.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/validation/const.js
 var require_const = __commonJS({
-  "node_modules/ajv/dist/vocabularies/validation/const.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/validation/const.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var codegen_1 = require_codegen();
@@ -5411,9 +5411,9 @@ var require_const = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/validation/enum.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/validation/enum.js
 var require_enum = __commonJS({
-  "node_modules/ajv/dist/vocabularies/validation/enum.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/validation/enum.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var codegen_1 = require_codegen();
@@ -5460,9 +5460,9 @@ var require_enum = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/validation/index.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/validation/index.js
 var require_validation = __commonJS({
-  "node_modules/ajv/dist/vocabularies/validation/index.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/validation/index.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var limitNumber_1 = require_limitNumber();
@@ -5498,9 +5498,9 @@ var require_validation = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/applicator/additionalItems.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/applicator/additionalItems.js
 var require_additionalItems = __commonJS({
-  "node_modules/ajv/dist/vocabularies/applicator/additionalItems.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/applicator/additionalItems.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.validateAdditionalItems = void 0;
@@ -5551,9 +5551,9 @@ var require_additionalItems = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/applicator/items.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/applicator/items.js
 var require_items = __commonJS({
-  "node_modules/ajv/dist/vocabularies/applicator/items.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/applicator/items.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.validateTuple = void 0;
@@ -5608,9 +5608,9 @@ var require_items = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/applicator/prefixItems.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/applicator/prefixItems.js
 var require_prefixItems = __commonJS({
-  "node_modules/ajv/dist/vocabularies/applicator/prefixItems.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/applicator/prefixItems.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var items_1 = require_items();
@@ -5625,9 +5625,9 @@ var require_prefixItems = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/applicator/items2020.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/applicator/items2020.js
 var require_items2020 = __commonJS({
-  "node_modules/ajv/dist/vocabularies/applicator/items2020.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/applicator/items2020.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var codegen_1 = require_codegen();
@@ -5660,9 +5660,9 @@ var require_items2020 = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/applicator/contains.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/applicator/contains.js
 var require_contains = __commonJS({
-  "node_modules/ajv/dist/vocabularies/applicator/contains.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/applicator/contains.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var codegen_1 = require_codegen();
@@ -5754,9 +5754,9 @@ var require_contains = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/applicator/dependencies.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/applicator/dependencies.js
 var require_dependencies = __commonJS({
-  "node_modules/ajv/dist/vocabularies/applicator/dependencies.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/applicator/dependencies.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.validateSchemaDeps = exports.validatePropertyDeps = exports.error = void 0;
@@ -5848,9 +5848,9 @@ var require_dependencies = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/applicator/propertyNames.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/applicator/propertyNames.js
 var require_propertyNames = __commonJS({
-  "node_modules/ajv/dist/vocabularies/applicator/propertyNames.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/applicator/propertyNames.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var codegen_1 = require_codegen();
@@ -5891,9 +5891,9 @@ var require_propertyNames = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/applicator/additionalProperties.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/applicator/additionalProperties.js
 var require_additionalProperties = __commonJS({
-  "node_modules/ajv/dist/vocabularies/applicator/additionalProperties.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/applicator/additionalProperties.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var code_1 = require_code2();
@@ -5997,9 +5997,9 @@ var require_additionalProperties = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/applicator/properties.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/applicator/properties.js
 var require_properties = __commonJS({
-  "node_modules/ajv/dist/vocabularies/applicator/properties.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/applicator/properties.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var validate_1 = require_validate();
@@ -6055,9 +6055,9 @@ var require_properties = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/applicator/patternProperties.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/applicator/patternProperties.js
 var require_patternProperties = __commonJS({
-  "node_modules/ajv/dist/vocabularies/applicator/patternProperties.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/applicator/patternProperties.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var code_1 = require_code2();
@@ -6129,9 +6129,9 @@ var require_patternProperties = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/applicator/not.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/applicator/not.js
 var require_not = __commonJS({
-  "node_modules/ajv/dist/vocabularies/applicator/not.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/applicator/not.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var util_1 = require_util();
@@ -6160,9 +6160,9 @@ var require_not = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/applicator/anyOf.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/applicator/anyOf.js
 var require_anyOf = __commonJS({
-  "node_modules/ajv/dist/vocabularies/applicator/anyOf.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/applicator/anyOf.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var code_1 = require_code2();
@@ -6177,9 +6177,9 @@ var require_anyOf = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/applicator/oneOf.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/applicator/oneOf.js
 var require_oneOf = __commonJS({
-  "node_modules/ajv/dist/vocabularies/applicator/oneOf.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/applicator/oneOf.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var codegen_1 = require_codegen();
@@ -6235,9 +6235,9 @@ var require_oneOf = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/applicator/allOf.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/applicator/allOf.js
 var require_allOf = __commonJS({
-  "node_modules/ajv/dist/vocabularies/applicator/allOf.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/applicator/allOf.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var util_1 = require_util();
@@ -6262,9 +6262,9 @@ var require_allOf = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/applicator/if.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/applicator/if.js
 var require_if = __commonJS({
-  "node_modules/ajv/dist/vocabularies/applicator/if.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/applicator/if.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var codegen_1 = require_codegen();
@@ -6331,9 +6331,9 @@ var require_if = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/applicator/thenElse.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/applicator/thenElse.js
 var require_thenElse = __commonJS({
-  "node_modules/ajv/dist/vocabularies/applicator/thenElse.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/applicator/thenElse.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var util_1 = require_util();
@@ -6349,9 +6349,9 @@ var require_thenElse = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/applicator/index.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/applicator/index.js
 var require_applicator = __commonJS({
-  "node_modules/ajv/dist/vocabularies/applicator/index.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/applicator/index.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var additionalItems_1 = require_additionalItems();
@@ -6397,9 +6397,9 @@ var require_applicator = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/format/format.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/format/format.js
 var require_format = __commonJS({
-  "node_modules/ajv/dist/vocabularies/format/format.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/format/format.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var codegen_1 = require_codegen();
@@ -6487,9 +6487,9 @@ var require_format = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/format/index.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/format/index.js
 var require_format2 = __commonJS({
-  "node_modules/ajv/dist/vocabularies/format/index.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/format/index.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var format_1 = require_format();
@@ -6498,9 +6498,9 @@ var require_format2 = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/metadata.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/metadata.js
 var require_metadata = __commonJS({
-  "node_modules/ajv/dist/vocabularies/metadata.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/metadata.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.contentVocabulary = exports.metadataVocabulary = void 0;
@@ -6521,9 +6521,9 @@ var require_metadata = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/draft7.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/draft7.js
 var require_draft7 = __commonJS({
-  "node_modules/ajv/dist/vocabularies/draft7.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/draft7.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var core_1 = require_core2();
@@ -6543,9 +6543,9 @@ var require_draft7 = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/discriminator/types.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/discriminator/types.js
 var require_types = __commonJS({
-  "node_modules/ajv/dist/vocabularies/discriminator/types.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/discriminator/types.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.DiscrError = void 0;
@@ -6557,9 +6557,9 @@ var require_types = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/vocabularies/discriminator/index.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/discriminator/index.js
 var require_discriminator = __commonJS({
-  "node_modules/ajv/dist/vocabularies/discriminator/index.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/vocabularies/discriminator/index.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var codegen_1 = require_codegen();
@@ -6662,9 +6662,9 @@ var require_discriminator = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/refs/json-schema-draft-07.json
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/refs/json-schema-draft-07.json
 var require_json_schema_draft_07 = __commonJS({
-  "node_modules/ajv/dist/refs/json-schema-draft-07.json"(exports, module) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/refs/json-schema-draft-07.json"(exports, module) {
     module.exports = {
       $schema: "http://json-schema.org/draft-07/schema#",
       $id: "http://json-schema.org/draft-07/schema#",
@@ -6819,9 +6819,9 @@ var require_json_schema_draft_07 = __commonJS({
   }
 });
 
-// node_modules/ajv/dist/ajv.js
+// D:/Development/claude-codex-comm/node_modules/ajv/dist/ajv.js
 var require_ajv = __commonJS({
-  "node_modules/ajv/dist/ajv.js"(exports, module) {
+  "D:/Development/claude-codex-comm/node_modules/ajv/dist/ajv.js"(exports, module) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.MissingRefError = exports.ValidationError = exports.CodeGen = exports.Name = exports.nil = exports.stringify = exports.str = exports._ = exports.KeywordCxt = exports.Ajv = void 0;
@@ -6889,9 +6889,9 @@ var require_ajv = __commonJS({
   }
 });
 
-// node_modules/ajv-formats/dist/formats.js
+// D:/Development/claude-codex-comm/node_modules/ajv-formats/dist/formats.js
 var require_formats = __commonJS({
-  "node_modules/ajv-formats/dist/formats.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv-formats/dist/formats.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.formatNames = exports.fastFormats = exports.fullFormats = void 0;
@@ -7092,9 +7092,9 @@ var require_formats = __commonJS({
   }
 });
 
-// node_modules/ajv-formats/dist/limit.js
+// D:/Development/claude-codex-comm/node_modules/ajv-formats/dist/limit.js
 var require_limit = __commonJS({
-  "node_modules/ajv-formats/dist/limit.js"(exports) {
+  "D:/Development/claude-codex-comm/node_modules/ajv-formats/dist/limit.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.formatLimitDefinition = void 0;
@@ -7164,9 +7164,9 @@ var require_limit = __commonJS({
   }
 });
 
-// node_modules/ajv-formats/dist/index.js
+// D:/Development/claude-codex-comm/node_modules/ajv-formats/dist/index.js
 var require_dist = __commonJS({
-  "node_modules/ajv-formats/dist/index.js"(exports, module) {
+  "D:/Development/claude-codex-comm/node_modules/ajv-formats/dist/index.js"(exports, module) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var formats_1 = require_formats();
@@ -7206,9 +7206,9 @@ var require_dist = __commonJS({
   }
 });
 
-// node_modules/isexe/windows.js
+// D:/Development/claude-codex-comm/node_modules/isexe/windows.js
 var require_windows = __commonJS({
-  "node_modules/isexe/windows.js"(exports, module) {
+  "D:/Development/claude-codex-comm/node_modules/isexe/windows.js"(exports, module) {
     module.exports = isexe;
     isexe.sync = sync;
     var fs = __require("fs");
@@ -7246,9 +7246,9 @@ var require_windows = __commonJS({
   }
 });
 
-// node_modules/isexe/mode.js
+// D:/Development/claude-codex-comm/node_modules/isexe/mode.js
 var require_mode = __commonJS({
-  "node_modules/isexe/mode.js"(exports, module) {
+  "D:/Development/claude-codex-comm/node_modules/isexe/mode.js"(exports, module) {
     module.exports = isexe;
     isexe.sync = sync;
     var fs = __require("fs");
@@ -7279,9 +7279,9 @@ var require_mode = __commonJS({
   }
 });
 
-// node_modules/isexe/index.js
+// D:/Development/claude-codex-comm/node_modules/isexe/index.js
 var require_isexe = __commonJS({
-  "node_modules/isexe/index.js"(exports, module) {
+  "D:/Development/claude-codex-comm/node_modules/isexe/index.js"(exports, module) {
     var fs = __require("fs");
     var core;
     if (process.platform === "win32" || global.TESTING_WINDOWS) {
@@ -7334,9 +7334,9 @@ var require_isexe = __commonJS({
   }
 });
 
-// node_modules/which/which.js
+// D:/Development/claude-codex-comm/node_modules/which/which.js
 var require_which = __commonJS({
-  "node_modules/which/which.js"(exports, module) {
+  "D:/Development/claude-codex-comm/node_modules/which/which.js"(exports, module) {
     var isWindows = process.platform === "win32" || process.env.OSTYPE === "cygwin" || process.env.OSTYPE === "msys";
     var path = __require("path");
     var COLON = isWindows ? ";" : ":";
@@ -7430,9 +7430,9 @@ var require_which = __commonJS({
   }
 });
 
-// node_modules/path-key/index.js
+// D:/Development/claude-codex-comm/node_modules/path-key/index.js
 var require_path_key = __commonJS({
-  "node_modules/path-key/index.js"(exports, module) {
+  "D:/Development/claude-codex-comm/node_modules/path-key/index.js"(exports, module) {
     "use strict";
     var pathKey = (options = {}) => {
       const environment = options.env || process.env;
@@ -7447,9 +7447,9 @@ var require_path_key = __commonJS({
   }
 });
 
-// node_modules/cross-spawn/lib/util/resolveCommand.js
+// D:/Development/claude-codex-comm/node_modules/cross-spawn/lib/util/resolveCommand.js
 var require_resolveCommand = __commonJS({
-  "node_modules/cross-spawn/lib/util/resolveCommand.js"(exports, module) {
+  "D:/Development/claude-codex-comm/node_modules/cross-spawn/lib/util/resolveCommand.js"(exports, module) {
     "use strict";
     var path = __require("path");
     var which = require_which();
@@ -7489,9 +7489,9 @@ var require_resolveCommand = __commonJS({
   }
 });
 
-// node_modules/cross-spawn/lib/util/escape.js
+// D:/Development/claude-codex-comm/node_modules/cross-spawn/lib/util/escape.js
 var require_escape = __commonJS({
-  "node_modules/cross-spawn/lib/util/escape.js"(exports, module) {
+  "D:/Development/claude-codex-comm/node_modules/cross-spawn/lib/util/escape.js"(exports, module) {
     "use strict";
     var metaCharsRegExp = /([()\][%!^"`<>&|;, *?])/g;
     function escapeCommand(arg) {
@@ -7514,17 +7514,17 @@ var require_escape = __commonJS({
   }
 });
 
-// node_modules/shebang-regex/index.js
+// D:/Development/claude-codex-comm/node_modules/shebang-regex/index.js
 var require_shebang_regex = __commonJS({
-  "node_modules/shebang-regex/index.js"(exports, module) {
+  "D:/Development/claude-codex-comm/node_modules/shebang-regex/index.js"(exports, module) {
     "use strict";
     module.exports = /^#!(.*)/;
   }
 });
 
-// node_modules/shebang-command/index.js
+// D:/Development/claude-codex-comm/node_modules/shebang-command/index.js
 var require_shebang_command = __commonJS({
-  "node_modules/shebang-command/index.js"(exports, module) {
+  "D:/Development/claude-codex-comm/node_modules/shebang-command/index.js"(exports, module) {
     "use strict";
     var shebangRegex = require_shebang_regex();
     module.exports = (string4 = "") => {
@@ -7542,9 +7542,9 @@ var require_shebang_command = __commonJS({
   }
 });
 
-// node_modules/cross-spawn/lib/util/readShebang.js
+// D:/Development/claude-codex-comm/node_modules/cross-spawn/lib/util/readShebang.js
 var require_readShebang = __commonJS({
-  "node_modules/cross-spawn/lib/util/readShebang.js"(exports, module) {
+  "D:/Development/claude-codex-comm/node_modules/cross-spawn/lib/util/readShebang.js"(exports, module) {
     "use strict";
     var fs = __require("fs");
     var shebangCommand = require_shebang_command();
@@ -7564,9 +7564,9 @@ var require_readShebang = __commonJS({
   }
 });
 
-// node_modules/cross-spawn/lib/parse.js
+// D:/Development/claude-codex-comm/node_modules/cross-spawn/lib/parse.js
 var require_parse = __commonJS({
-  "node_modules/cross-spawn/lib/parse.js"(exports, module) {
+  "D:/Development/claude-codex-comm/node_modules/cross-spawn/lib/parse.js"(exports, module) {
     "use strict";
     var path = __require("path");
     var resolveCommand2 = require_resolveCommand();
@@ -7626,9 +7626,9 @@ var require_parse = __commonJS({
   }
 });
 
-// node_modules/cross-spawn/lib/enoent.js
+// D:/Development/claude-codex-comm/node_modules/cross-spawn/lib/enoent.js
 var require_enoent = __commonJS({
-  "node_modules/cross-spawn/lib/enoent.js"(exports, module) {
+  "D:/Development/claude-codex-comm/node_modules/cross-spawn/lib/enoent.js"(exports, module) {
     "use strict";
     var isWin = process.platform === "win32";
     function notFoundError(original, syscall) {
@@ -7676,14 +7676,14 @@ var require_enoent = __commonJS({
   }
 });
 
-// node_modules/cross-spawn/index.js
+// D:/Development/claude-codex-comm/node_modules/cross-spawn/index.js
 var require_cross_spawn = __commonJS({
-  "node_modules/cross-spawn/index.js"(exports, module) {
+  "D:/Development/claude-codex-comm/node_modules/cross-spawn/index.js"(exports, module) {
     "use strict";
     var cp = __require("child_process");
     var parse3 = require_parse();
     var enoent = require_enoent();
-    function spawn10(command, args, options) {
+    function spawn11(command, args, options) {
       const parsed = parse3(command, args, options);
       const spawned = cp.spawn(parsed.command, parsed.args, parsed.options);
       enoent.hookChildProcess(spawned, parsed);
@@ -7695,8 +7695,8 @@ var require_cross_spawn = __commonJS({
       result.error = result.error || enoent.verifyENOENTSync(result.status, parsed);
       return result;
     }
-    module.exports = spawn10;
-    module.exports.spawn = spawn10;
+    module.exports = spawn11;
+    module.exports.spawn = spawn11;
     module.exports.sync = spawnSync;
     module.exports._parse = parse3;
     module.exports._enoent = enoent;
@@ -7704,7 +7704,7 @@ var require_cross_spawn = __commonJS({
 });
 
 // src/cli/main.ts
-import { join as join31 } from "node:path";
+import { join as join33 } from "node:path";
 
 // src/core/client.ts
 import { EventEmitter } from "node:events";
@@ -8411,7 +8411,7 @@ function tokensEqual(a, b) {
 import { randomBytes as randomBytes3, randomUUID as randomUUID4 } from "node:crypto";
 import { connect as connect2, createServer } from "node:tls";
 
-// node_modules/zod/v4/classic/external.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/classic/external.js
 var external_exports = {};
 __export(external_exports, {
   $brand: () => $brand,
@@ -8674,7 +8674,7 @@ __export(external_exports, {
   xor: () => xor
 });
 
-// node_modules/zod/v4/core/index.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/core/index.js
 var core_exports2 = {};
 __export(core_exports2, {
   $ZodAny: () => $ZodAny,
@@ -8991,7 +8991,7 @@ __export(core_exports2, {
   withParser: () => withParser
 });
 
-// node_modules/zod/v4/core/util.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/core/util.js
 var util_exports = {};
 __export(util_exports, {
   BIGINT_FORMAT_RANGES: () => BIGINT_FORMAT_RANGES,
@@ -9834,7 +9834,7 @@ function constantCatch(value) {
   return fn;
 }
 
-// node_modules/zod/v4/core/core.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/core/core.js
 var _a;
 var NEVER = /* @__PURE__ */ Object.freeze({
   status: "aborted"
@@ -9956,7 +9956,7 @@ function config(newConfig) {
   return globalConfig;
 }
 
-// node_modules/zod/v4/core/errors.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/core/errors.js
 function _getMessage() {
   const internals = this._zod;
   internals.message ?? (internals.message = JSON.stringify(internals.def, jsonStringifyReplacer, 2));
@@ -10148,7 +10148,7 @@ function prettifyError(error62) {
   return lines.join("\n");
 }
 
-// node_modules/zod/v4/core/parse.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/core/parse.js
 function finalizeParams(callee, params) {
   return { callee: params?.callee ?? callee, Err: params?.Err };
 }
@@ -10308,7 +10308,7 @@ var _safeDecodeAsync = (_Err) => async (schema, value, _ctx) => {
 };
 var safeDecodeAsync = /* @__PURE__ */ _safeDecodeAsync($ZodRealError);
 
-// node_modules/zod/v4/core/regexes.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/core/regexes.js
 var regexes_exports = {};
 __export(regexes_exports, {
   anyString: () => anyString,
@@ -10480,7 +10480,7 @@ var sha512_hex = /^[0-9a-fA-F]{128}$/;
 var sha512_base64 = /* @__PURE__ */ fixedBase64(86, "==");
 var sha512_base64url = /* @__PURE__ */ fixedBase64url(86);
 
-// node_modules/zod/v4/core/checks.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/core/checks.js
 var $ZodCheck = /* @__PURE__ */ $constructor("$ZodCheck", (inst, def) => {
   var _a3;
   inst._zod ?? (inst._zod = {});
@@ -10956,7 +10956,7 @@ var $ZodCheckOverwrite = /* @__PURE__ */ $constructor("$ZodCheckOverwrite", (ins
   };
 });
 
-// node_modules/zod/v4/core/doc.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/core/doc.js
 var Doc = class {
   constructor(args = [], closed = {}) {
     this.content = [];
@@ -10997,14 +10997,14 @@ ${content.join("\n")}
   }
 };
 
-// node_modules/zod/v4/core/versions.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/core/versions.js
 var version = {
   major: 4,
   minor: 6,
   patch: 5
 };
 
-// node_modules/zod/v4/core/schemas.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/core/schemas.js
 var $ZodType = /* @__PURE__ */ $constructor("$ZodType", (inst, def) => {
   var _a3;
   inst ?? (inst = {});
@@ -13418,7 +13418,7 @@ function handleRefineResult(result, payload, input2, inst) {
   }
 }
 
-// node_modules/zod/v4/core/memoizer.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/core/memoizer.js
 var $ZodCyclicError = class extends Error {
   constructor() {
     super(`Cannot parse a reference cycle that closes through a transform`);
@@ -13695,7 +13695,7 @@ function isBackEdge(ctx, value) {
   return backEdges !== void 0 && isRef(value) && backEdges.has(value);
 }
 
-// node_modules/zod/v4/locales/index.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/index.js
 var locales_exports = {};
 __export(locales_exports, {
   ar: () => ar_default,
@@ -13763,7 +13763,7 @@ __export(locales_exports, {
   zhTW: () => zh_TW_default
 });
 
-// node_modules/zod/v4/locales/ar.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/ar.js
 var error = () => {
   const Sizable = {
     string: { unit: "\u062D\u0631\u0641", verb: "\u0623\u0646 \u064A\u062D\u0648\u064A" },
@@ -13875,7 +13875,7 @@ function ar_default() {
   };
 }
 
-// node_modules/zod/v4/locales/az.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/az.js
 var error2 = () => {
   const Sizable = {
     string: { unit: "simvol", verb: "olmal\u0131d\u0131r" },
@@ -13986,7 +13986,7 @@ function az_default() {
   };
 }
 
-// node_modules/zod/v4/locales/be.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/be.js
 function getBelarusianPlural(count, one, few, many) {
   const absCount = Math.abs(count);
   const lastDigit = absCount % 10;
@@ -14155,7 +14155,7 @@ function be_default() {
   };
 }
 
-// node_modules/zod/v4/locales/bg.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/bg.js
 var error4 = () => {
   const Sizable = {
     string: { unit: "\u0441\u0438\u043C\u0432\u043E\u043B\u0430", verb: "\u0434\u0430 \u0441\u044A\u0434\u044A\u0440\u0436\u0430" },
@@ -14281,7 +14281,7 @@ function bg_default() {
   };
 }
 
-// node_modules/zod/v4/locales/bn.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/bn.js
 var error5 = () => {
   const Sizable = {
     string: { unit: "\u0985\u0995\u09CD\u09B7\u09B0", verb: "\u09A5\u09BE\u0995\u09A4\u09C7 \u09B9\u09AC\u09C7" },
@@ -14395,7 +14395,7 @@ function bn_default() {
   };
 }
 
-// node_modules/zod/v4/locales/ca.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/ca.js
 var error6 = () => {
   const Sizable = {
     string: { unit: "car\xE0cters", verb: "contenir" },
@@ -14509,7 +14509,7 @@ function ca_default() {
   };
 }
 
-// node_modules/zod/v4/locales/ckb.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/ckb.js
 var error7 = () => {
   const Sizable = {
     string: { unit: "\u067E\u06CC\u062A", verb: "\u0628\u06CE\u062A" },
@@ -14642,7 +14642,7 @@ function ckb_default() {
   };
 }
 
-// node_modules/zod/v4/locales/cs.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/cs.js
 var error8 = () => {
   const Sizable = {
     string: { unit: "znak\u016F", verb: "m\xEDt" },
@@ -14759,7 +14759,7 @@ function cs_default() {
   };
 }
 
-// node_modules/zod/v4/locales/da.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/da.js
 var error9 = () => {
   const Sizable = {
     string: { unit: "tegn", verb: "havde" },
@@ -14880,7 +14880,7 @@ function da_default() {
   };
 }
 
-// node_modules/zod/v4/locales/de.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/de.js
 var error10 = () => {
   const Sizable = {
     string: { unit: "Zeichen", verb: "zu haben" },
@@ -14994,7 +14994,7 @@ function de_default() {
   };
 }
 
-// node_modules/zod/v4/locales/el.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/el.js
 var error11 = () => {
   const Sizable = {
     string: { unit: "\u03C7\u03B1\u03C1\u03B1\u03BA\u03C4\u03AE\u03C1\u03B5\u03C2", verb: "\u03BD\u03B1 \u03AD\u03C7\u03B5\u03B9" },
@@ -15107,7 +15107,7 @@ function el_default() {
   };
 }
 
-// node_modules/zod/v4/locales/en.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/en.js
 var error12 = () => {
   const Sizable = {
     string: { unit: "characters", verb: "to have" },
@@ -15232,7 +15232,7 @@ function en_default() {
   };
 }
 
-// node_modules/zod/v4/locales/eo.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/eo.js
 var error13 = () => {
   const Sizable = {
     string: { unit: "karaktrojn", verb: "havi" },
@@ -15347,7 +15347,7 @@ function eo_default() {
   };
 }
 
-// node_modules/zod/v4/locales/es.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/es.js
 var error14 = () => {
   const Sizable = {
     string: { unit: "caracteres", verb: "tener" },
@@ -15484,7 +15484,7 @@ function es_default() {
   };
 }
 
-// node_modules/zod/v4/locales/fa.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/fa.js
 var error15 = () => {
   const Sizable = {
     string: { unit: "\u06A9\u0627\u0631\u0627\u06A9\u062A\u0631", verb: "\u062F\u0627\u0634\u062A\u0647 \u0628\u0627\u0634\u062F" },
@@ -15604,7 +15604,7 @@ function fa_default() {
   };
 }
 
-// node_modules/zod/v4/locales/fi.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/fi.js
 var error16 = () => {
   const Sizable = {
     string: { unit: "merkki\xE4", subject: "merkkijonon" },
@@ -15722,7 +15722,7 @@ function fi_default() {
   };
 }
 
-// node_modules/zod/v4/locales/fr.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/fr.js
 var error17 = () => {
   const Sizable = {
     string: { unit: "caract\xE8res", verb: "avoir" },
@@ -15852,7 +15852,7 @@ function fr_default() {
   };
 }
 
-// node_modules/zod/v4/locales/fr-CA.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/fr-CA.js
 var error18 = () => {
   const Sizable = {
     string: { unit: "caract\xE8res", verb: "avoir" },
@@ -15965,7 +15965,7 @@ function fr_CA_default() {
   };
 }
 
-// node_modules/zod/v4/locales/gu.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/gu.js
 var error19 = () => {
   const Sizable = {
     string: { unit: "\u0A85\u0A95\u0ACD\u0AB7\u0AB0", verb: "\u0AB9\u0ACB\u0AB5\u0ABE \u0A9C\u0ACB\u0A88\u0A8F" },
@@ -16079,7 +16079,7 @@ function gu_default() {
   };
 }
 
-// node_modules/zod/v4/locales/he.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/he.js
 var error20 = () => {
   const TypeNames = {
     string: { label: "\u05DE\u05D7\u05E8\u05D5\u05D6\u05EA", gender: "f" },
@@ -16281,7 +16281,7 @@ function he_default() {
   };
 }
 
-// node_modules/zod/v4/locales/hi.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/hi.js
 var error21 = () => {
   const Sizable = {
     string: { unit: "\u0905\u0915\u094D\u0937\u0930", verb: "\u0930\u0916\u0928\u0947 \u0915\u0947 \u0932\u093F\u090F" },
@@ -16393,7 +16393,7 @@ function hi_default() {
   };
 }
 
-// node_modules/zod/v4/locales/hr.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/hr.js
 var error22 = () => {
   const Sizable = {
     string: { unit: "znakova", verb: "imati" },
@@ -16520,7 +16520,7 @@ function hr_default() {
   };
 }
 
-// node_modules/zod/v4/locales/hu.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/hu.js
 var error23 = () => {
   const Sizable = {
     string: { unit: "karakter", verb: "legyen" },
@@ -16634,7 +16634,7 @@ function hu_default() {
   };
 }
 
-// node_modules/zod/v4/locales/hy.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/hy.js
 function getArmenianPlural(count, one, many) {
   return Math.abs(count) === 1 ? one : many;
 }
@@ -16793,7 +16793,7 @@ function hy_default() {
   };
 }
 
-// node_modules/zod/v4/locales/id.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/id.js
 var error25 = () => {
   const Sizable = {
     string: { unit: "karakter", verb: "memiliki" },
@@ -16905,7 +16905,7 @@ function id_default() {
   };
 }
 
-// node_modules/zod/v4/locales/is.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/is.js
 var error26 = () => {
   const Sizable = {
     string: { unit: "stafi", verb: "a\xF0 hafa" },
@@ -17020,7 +17020,7 @@ function is_default() {
   };
 }
 
-// node_modules/zod/v4/locales/it.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/it.js
 var error27 = () => {
   const Sizable = {
     string: { unit: "caratteri", verb: "avere" },
@@ -17134,7 +17134,7 @@ function it_default() {
   };
 }
 
-// node_modules/zod/v4/locales/ja.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/ja.js
 var error28 = () => {
   const Sizable = {
     string: { unit: "\u6587\u5B57", verb: "\u3067\u3042\u308B" },
@@ -17247,7 +17247,7 @@ function ja_default() {
   };
 }
 
-// node_modules/zod/v4/locales/ka.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/ka.js
 var error29 = () => {
   const Sizable = {
     string: { unit: "\u10E1\u10D8\u10DB\u10D1\u10DD\u10DA\u10DD", verb: "\u10E3\u10DC\u10D3\u10D0 \u10E8\u10D4\u10D8\u10EA\u10D0\u10D5\u10D3\u10D4\u10E1" },
@@ -17365,7 +17365,7 @@ function ka_default() {
   };
 }
 
-// node_modules/zod/v4/locales/km.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/km.js
 var error30 = () => {
   const Sizable = {
     string: { unit: "\u178F\u17BD\u17A2\u1780\u17D2\u179F\u179A", verb: "\u1782\u17BD\u179A\u1798\u17B6\u1793" },
@@ -17481,12 +17481,12 @@ function km_default() {
   };
 }
 
-// node_modules/zod/v4/locales/kh.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/kh.js
 function kh_default() {
   return km_default();
 }
 
-// node_modules/zod/v4/locales/kn.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/kn.js
 var error31 = () => {
   const Sizable = {
     string: { unit: "\u0C85\u0C95\u0CCD\u0CB7\u0CB0\u0C97\u0CB3\u0CC1", verb: "\u0CB9\u0CCA\u0C82\u0CA6\u0CB2\u0CC1" },
@@ -17602,7 +17602,7 @@ function kn_default() {
   };
 }
 
-// node_modules/zod/v4/locales/ko.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/ko.js
 var error32 = () => {
   const Sizable = {
     string: { unit: "\uBB38\uC790", verb: "to have" },
@@ -17719,7 +17719,7 @@ function ko_default() {
   };
 }
 
-// node_modules/zod/v4/locales/lt.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/lt.js
 var capitalizeFirstCharacter = (text) => {
   return text.charAt(0).toUpperCase() + text.slice(1);
 };
@@ -17927,7 +17927,7 @@ function lt_default() {
   };
 }
 
-// node_modules/zod/v4/locales/mk.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/mk.js
 var error34 = () => {
   const Sizable = {
     string: { unit: "\u0437\u043D\u0430\u0446\u0438", verb: "\u0434\u0430 \u0438\u043C\u0430\u0430\u0442" },
@@ -18042,7 +18042,7 @@ function mk_default() {
   };
 }
 
-// node_modules/zod/v4/locales/ms.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/ms.js
 var error35 = () => {
   const Sizable = {
     string: { unit: "aksara", verb: "mempunyai" },
@@ -18155,7 +18155,7 @@ function ms_default() {
   };
 }
 
-// node_modules/zod/v4/locales/ne.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/ne.js
 var error36 = () => {
   const Sizable = {
     string: { unit: "\u0905\u0915\u094D\u0937\u0930", verb: "\u0939\u0941\u0928\u0941\u092A\u0930\u094D\u091B" },
@@ -18267,7 +18267,7 @@ function ne_default() {
   };
 }
 
-// node_modules/zod/v4/locales/nl.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/nl.js
 var error37 = () => {
   const Sizable = {
     string: { unit: "tekens", verb: "heeft" },
@@ -18383,7 +18383,7 @@ function nl_default() {
   };
 }
 
-// node_modules/zod/v4/locales/nn.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/nn.js
 var error38 = () => {
   const Sizable = {
     string: { unit: "teikn", verb: "\xE5 ha" },
@@ -18497,7 +18497,7 @@ function nn_default() {
   };
 }
 
-// node_modules/zod/v4/locales/no.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/no.js
 var error39 = () => {
   const Sizable = {
     string: { unit: "tegn", verb: "\xE5 ha" },
@@ -18611,7 +18611,7 @@ function no_default() {
   };
 }
 
-// node_modules/zod/v4/locales/ota.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/ota.js
 var error40 = () => {
   const Sizable = {
     string: { unit: "harf", verb: "olmal\u0131d\u0131r" },
@@ -18726,7 +18726,7 @@ function ota_default() {
   };
 }
 
-// node_modules/zod/v4/locales/ps.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/ps.js
 var error41 = () => {
   const Sizable = {
     string: { unit: "\u062A\u0648\u06A9\u064A", verb: "\u0648\u0644\u0631\u064A" },
@@ -18846,7 +18846,7 @@ function ps_default() {
   };
 }
 
-// node_modules/zod/v4/locales/pl.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/pl.js
 var error42 = () => {
   const Sizable = {
     string: { unit: "znak\xF3w", verb: "mie\u0107" },
@@ -18961,7 +18961,7 @@ function pl_default() {
   };
 }
 
-// node_modules/zod/v4/locales/pt.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/pt.js
 var error43 = () => {
   const Sizable = {
     string: { unit: "caracteres" },
@@ -19105,7 +19105,7 @@ function pt_default() {
   };
 }
 
-// node_modules/zod/v4/locales/pt-BR.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/pt-BR.js
 var error44 = () => {
   const Sizable = {
     string: { unit: "caracteres" },
@@ -19250,7 +19250,7 @@ function pt_BR_default() {
   };
 }
 
-// node_modules/zod/v4/locales/ro.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/ro.js
 var error45 = () => {
   const Sizable = {
     string: { unit: "caractere", verb: "s\u0103 aib\u0103" },
@@ -19373,7 +19373,7 @@ function ro_default() {
   };
 }
 
-// node_modules/zod/v4/locales/ru.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/ru.js
 function getRussianPlural(count, one, few, many) {
   const absCount = Math.abs(count);
   const lastDigit = absCount % 10;
@@ -19542,7 +19542,7 @@ function ru_default() {
   };
 }
 
-// node_modules/zod/v4/locales/sk.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/sk.js
 var error47 = () => {
   const Sizable = {
     string: { unit: "znakov", verb: "ma\u0165" },
@@ -19659,7 +19659,7 @@ function sk_default() {
   };
 }
 
-// node_modules/zod/v4/locales/sl.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/sl.js
 var error48 = () => {
   const Sizable = {
     string: { unit: "znakov", verb: "imeti" },
@@ -19774,7 +19774,7 @@ function sl_default() {
   };
 }
 
-// node_modules/zod/v4/locales/sv.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/sv.js
 var error49 = () => {
   const Sizable = {
     string: { unit: "tecken", verb: "att ha" },
@@ -19890,7 +19890,7 @@ function sv_default() {
   };
 }
 
-// node_modules/zod/v4/locales/ta.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/ta.js
 var error50 = () => {
   const Sizable = {
     string: { unit: "\u0B8E\u0BB4\u0BC1\u0BA4\u0BCD\u0BA4\u0BC1\u0B95\u0BCD\u0B95\u0BB3\u0BCD", verb: "\u0B95\u0BCA\u0BA3\u0BCD\u0B9F\u0BBF\u0BB0\u0BC1\u0B95\u0BCD\u0B95 \u0BB5\u0BC7\u0BA3\u0BCD\u0B9F\u0BC1\u0BAE\u0BCD" },
@@ -20006,7 +20006,7 @@ function ta_default() {
   };
 }
 
-// node_modules/zod/v4/locales/tg.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/tg.js
 var error51 = () => {
   const Sizable = {
     string: { unit: "\u0430\u043B\u043E\u043C\u0430\u0442", verb: "\u0434\u043E\u0448\u0442\u0430 \u0431\u043E\u0448\u0430\u0434" },
@@ -20123,7 +20123,7 @@ function tg_default() {
   };
 }
 
-// node_modules/zod/v4/locales/th.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/th.js
 var error52 = () => {
   const Sizable = {
     string: { unit: "\u0E15\u0E31\u0E27\u0E2D\u0E31\u0E01\u0E29\u0E23", verb: "\u0E04\u0E27\u0E23\u0E21\u0E35" },
@@ -20239,7 +20239,7 @@ function th_default() {
   };
 }
 
-// node_modules/zod/v4/locales/tk.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/tk.js
 var error53 = () => {
   const Sizable = {
     string: { unit: "simwol", verb: "bolmaly" },
@@ -20347,7 +20347,7 @@ function tk_default() {
   };
 }
 
-// node_modules/zod/v4/locales/tr.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/tr.js
 var error54 = () => {
   const Sizable = {
     string: { unit: "karakter", verb: "olmal\u0131" },
@@ -20458,7 +20458,7 @@ function tr_default() {
   };
 }
 
-// node_modules/zod/v4/locales/uk.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/uk.js
 var error55 = () => {
   const Sizable = {
     string: { unit: "\u0441\u0438\u043C\u0432\u043E\u043B\u0456\u0432", verb: "\u043C\u0430\u0442\u0438\u043C\u0435" },
@@ -20572,12 +20572,12 @@ function uk_default() {
   };
 }
 
-// node_modules/zod/v4/locales/ua.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/ua.js
 function ua_default() {
   return uk_default();
 }
 
-// node_modules/zod/v4/locales/ur.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/ur.js
 var error56 = () => {
   const Sizable = {
     string: { unit: "\u062D\u0631\u0648\u0641", verb: "\u06C1\u0648\u0646\u0627" },
@@ -20693,7 +20693,7 @@ function ur_default() {
   };
 }
 
-// node_modules/zod/v4/locales/uz.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/uz.js
 var error57 = () => {
   const Sizable = {
     string: { unit: "belgi", verb: "bo\u2018lishi kerak" },
@@ -20807,7 +20807,7 @@ function uz_default() {
   };
 }
 
-// node_modules/zod/v4/locales/vi.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/vi.js
 var error58 = () => {
   const Sizable = {
     string: { unit: "k\xFD t\u1EF1", verb: "c\xF3" },
@@ -20921,7 +20921,7 @@ function vi_default() {
   };
 }
 
-// node_modules/zod/v4/locales/zh-CN.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/zh-CN.js
 var error59 = () => {
   const Sizable = {
     string: { unit: "\u5B57\u7B26", verb: "\u5305\u542B" },
@@ -21036,7 +21036,7 @@ function zh_CN_default() {
   };
 }
 
-// node_modules/zod/v4/locales/zh-TW.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/zh-TW.js
 var error60 = () => {
   const Sizable = {
     string: { unit: "\u5B57\u5143", verb: "\u64C1\u6709" },
@@ -21149,7 +21149,7 @@ function zh_TW_default() {
   };
 }
 
-// node_modules/zod/v4/locales/yo.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/locales/yo.js
 var error61 = () => {
   const Sizable = {
     string: { unit: "\xE0mi", verb: "n\xED" },
@@ -21262,7 +21262,7 @@ function yo_default() {
   };
 }
 
-// node_modules/zod/v4/core/registries.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/core/registries.js
 var _a2;
 var $output = /* @__PURE__ */ Symbol("ZodOutput");
 var $input = /* @__PURE__ */ Symbol("ZodInput");
@@ -21312,7 +21312,7 @@ function registry() {
 (_a2 = globalThis).__zod_globalRegistry ?? (_a2.__zod_globalRegistry = registry());
 var globalRegistry = globalThis.__zod_globalRegistry;
 
-// node_modules/zod/v4/core/compile.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/core/compile.js
 var INVALID = /* @__PURE__ */ Symbol.for("zod.compile.invalid");
 var FALLBACK_FLAG = /* @__PURE__ */ Symbol.for("zod.compile.fallback");
 var ZodCompileAsyncError = class extends Error {
@@ -22914,7 +22914,7 @@ function generateTransformCheck(doc, ctx, schema, accessor) {
   return accessor;
 }
 
-// node_modules/zod/v4/core/api.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/core/api.js
 function snapshotChecks(def) {
   if (def.checks)
     def.checks = [...def.checks];
@@ -23973,7 +23973,7 @@ function _stringFormat(Class2, format, fnOrRegex, _params = {}) {
   return inst;
 }
 
-// node_modules/zod/v4/core/to-json-schema.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/core/to-json-schema.js
 function assignProps(target, ...sources) {
   for (const source of sources) {
     for (const key of Reflect.ownKeys(source)) {
@@ -24503,7 +24503,7 @@ var createStandardJSONSchemaMethod = (schema, io, processors = {}) => (params) =
   return finalize(ctx, schema);
 };
 
-// node_modules/zod/v4/core/json-schema-processors.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/core/json-schema-processors.js
 var narrowMin = (agg, key, value) => {
   if (agg[key] === void 0 || value > agg[key])
     agg[key] = value;
@@ -25251,7 +25251,7 @@ function toJSONSchema(input2, params) {
   return finalize(ctx, input2);
 }
 
-// node_modules/zod/v4/core/json-schema-generator.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/core/json-schema-generator.js
 var JSONSchemaGenerator = class {
   /** @deprecated Access via ctx instead */
   get metadataRegistry() {
@@ -25329,10 +25329,10 @@ var JSONSchemaGenerator = class {
   }
 };
 
-// node_modules/zod/v4/core/json-schema.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/core/json-schema.js
 var json_schema_exports = {};
 
-// node_modules/zod/v4/classic/schemas.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/classic/schemas.js
 var schemas_exports2 = {};
 __export(schemas_exports2, {
   ZodAny: () => ZodAny,
@@ -25513,7 +25513,7 @@ __export(schemas_exports2, {
   xor: () => xor
 });
 
-// node_modules/zod/v4/classic/checks.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/classic/checks.js
 var checks_exports2 = {};
 __export(checks_exports2, {
   endsWith: () => _endsWith,
@@ -25548,7 +25548,7 @@ __export(checks_exports2, {
   uppercase: () => _uppercase
 });
 
-// node_modules/zod/v4/classic/errors.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/classic/errors.js
 var _installedErrorProtos = /* @__PURE__ */ new WeakSet([Object.prototype, Error.prototype]);
 function _lazyMethod(proto, key, make) {
   Object.defineProperty(proto, key, {
@@ -25594,7 +25594,7 @@ var ZodRealError = /* @__PURE__ */ $constructor("ZodError", initializer2, void 0
   Parent: Error
 });
 
-// node_modules/zod/v4/classic/parse.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/classic/parse.js
 var parse2 = /* @__PURE__ */ _parse(ZodRealError);
 var parseAsync2 = /* @__PURE__ */ _parseAsync(ZodRealError);
 var safeParse2 = /* @__PURE__ */ _safeParse(ZodRealError);
@@ -25608,7 +25608,7 @@ var safeDecode2 = /* @__PURE__ */ _safeDecode(ZodRealError);
 var safeEncodeAsync2 = /* @__PURE__ */ _safeEncodeAsync(ZodRealError);
 var safeDecodeAsync2 = /* @__PURE__ */ _safeDecodeAsync(ZodRealError);
 
-// node_modules/zod/v4/classic/schemas.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/classic/schemas.js
 function _ensureDefaultLocale() {
   if (!globalConfig.localeError)
     config(en_default());
@@ -27073,7 +27073,7 @@ function preprocess(fn, schema) {
   });
 }
 
-// node_modules/zod/v4/classic/compat.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/classic/compat.js
 var ZodIssueCode = {
   invalid_type: "invalid_type",
   too_big: "too_big",
@@ -27099,7 +27099,7 @@ var ZodFirstPartyTypeKind;
 /* @__PURE__ */ (function(ZodFirstPartyTypeKind2) {
 })(ZodFirstPartyTypeKind || (ZodFirstPartyTypeKind = {}));
 
-// node_modules/zod/v4/classic/iso.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/classic/iso.js
 var iso_exports = {};
 __export(iso_exports, {
   ZodISODate: () => ZodISODate,
@@ -27124,7 +27124,7 @@ function duration2(params) {
   return _isoDuration(ZodISODuration, params);
 }
 
-// node_modules/zod/v4/classic/from-json-schema.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/classic/from-json-schema.js
 var z = {
   ...schemas_exports2,
   ...checks_exports2,
@@ -27857,7 +27857,7 @@ function fromJSONSchema(schema, params) {
   return convertSchema(normalized, ctx);
 }
 
-// node_modules/zod/v4/core/visit.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/core/visit.js
 var RESOLVING = /* @__PURE__ */ Symbol("z.visit/resolving");
 function visit(schema, fnOrHandlers) {
   const fn = typeof fnOrHandlers === "function" ? fnOrHandlers : (node2, rewritten) => {
@@ -28012,7 +28012,7 @@ function visit(schema, fnOrHandlers) {
   return run2(schema);
 }
 
-// node_modules/zod/v4/classic/deep-partial.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/classic/deep-partial.js
 function deepPartial(schema) {
   return visit(schema, {
     object: (s) => s.partial(),
@@ -28024,7 +28024,7 @@ function deepPartial(schema) {
   });
 }
 
-// node_modules/zod/v4/classic/in-out.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/classic/in-out.js
 function withChecks(side, checks) {
   if (!checks?.length)
     return side;
@@ -28054,7 +28054,7 @@ function output(schema) {
   });
 }
 
-// node_modules/zod/v4/classic/coerce.js
+// D:/Development/claude-codex-comm/node_modules/zod/v4/classic/coerce.js
 var coerce_exports = {};
 __export(coerce_exports, {
   bigint: () => bigint3,
@@ -29927,8 +29927,8 @@ import { createInterface } from "node:readline/promises";
 
 // src/core/delegate.ts
 import { spawn } from "node:child_process";
-import { existsSync as existsSync5, readFileSync as readFileSync7, realpathSync } from "node:fs";
-import { delimiter, dirname as dirname5, extname, isAbsolute, join as join11, win32 } from "node:path";
+import { existsSync as existsSync5, readFileSync as readFileSync8, realpathSync } from "node:fs";
+import { delimiter, dirname as dirname5, extname, isAbsolute, join as join12, win32 } from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 
@@ -30217,7 +30217,9 @@ function progressLineHandler(agent, onProgress) {
 }
 
 // src/core/relay.ts
-import { randomBytes as randomBytes5 } from "node:crypto";
+import { randomBytes as randomBytes5, randomUUID as randomUUID9 } from "node:crypto";
+import { mkdirSync as mkdirSync7, readFileSync as readFileSync7, readdirSync as readdirSync3, rmSync as rmSync3, writeFileSync as writeFileSync4 } from "node:fs";
+import { join as join11 } from "node:path";
 import { createServer as createServer4 } from "node:http";
 var RELAY_URL_ENV = "AGENT_BRIDGE_RELAY_URL";
 var RELAY_TOKEN_ENV = "AGENT_BRIDGE_RELAY_TOKEN";
@@ -30282,7 +30284,8 @@ var PermissionRelay = class {
       agent: String(body.agent ?? "subagent"),
       tool: String(body.tool ?? "unknown"),
       detail: String(body.detail ?? "").slice(0, 4e3),
-      cwd: body.cwd ? String(body.cwd) : void 0
+      cwd: body.cwd ? String(body.cwd) : void 0,
+      ...typeof body.reason === "string" ? { reason: body.reason.slice(0, MAX_APPROVAL_REASON_CHARS) } : {}
     };
     this.log.info("permission requested by subagent", { agent: request2.agent, tool: request2.tool });
     const decision = await this.handler(request2);
@@ -30304,6 +30307,99 @@ async function askRelay(req, env = process.env) {
     return body.allow === true ? { allow: true } : { allow: false, message: body.message ?? "denied" };
   } catch (err) {
     return { allow: false, message: `agent-bridge: permission relay unreachable (${err.message})` };
+  }
+}
+var APPROVALS_DIR = "approvals";
+var APPROVAL_ID = /^[0-9a-f-]{36}$/;
+var ANSWER_PATH = "/answer";
+var ANSWER_TIMEOUT_MS = 5e3;
+var MAX_PORT2 = 65535;
+var MAX_APPROVAL_REASON_CHARS = 4e3;
+async function publishApproval(home, approval, answer) {
+  if (!APPROVAL_ID.test(approval.id)) throw new Error("invalid approval id");
+  const token = randomBytes5(SECRET_BYTES2).toString("hex");
+  const dir = join11(home, APPROVALS_DIR);
+  const file2 = join11(dir, `${approval.id}.json`);
+  const server = createServer4((req, res) => {
+    const reply = (status, body) => {
+      res.writeHead(status, { "content-type": "application/json", "cache-control": "no-store" });
+      res.end(JSON.stringify(body));
+    };
+    void (async () => {
+      if (req.method !== "POST" || req.url !== ANSWER_PATH || !tokensEqual(String(req.headers.authorization ?? ""), `Bearer ${token}`)) return reply(403, { error: "forbidden" });
+      let raw = "";
+      for await (const chunk of req) {
+        raw += chunk;
+        if (raw.length > MAX_REQUEST_BYTES2) return reply(400, { error: "request too large" });
+      }
+      const body = JSON.parse(raw);
+      if (!body || body.decision !== "allow" && body.decision !== "deny" || body.reason !== void 0 && (typeof body.reason !== "string" || body.reason.length > MAX_APPROVAL_REASON_CHARS)) return reply(400, { error: "invalid answer" });
+      const accepted = Date.now() < approval.deadline && answer(`${body.decision}${body.reason ? `: ${body.reason}` : ""}`, "dashboard");
+      reply(accepted ? 200 : 409, { outcome: accepted ? "answered" : "expired" });
+    })().catch(() => reply(400, { error: "invalid answer" }));
+  });
+  server.requestTimeout = ANSWER_TIMEOUT_MS;
+  server.headersTimeout = ANSWER_TIMEOUT_MS;
+  await new Promise((resolve8, reject) => {
+    server.once("error", reject);
+    server.listen(0, RELAY_HOST, resolve8);
+  });
+  server.unref();
+  try {
+    mkdirSync7(dir, { recursive: true, mode: 448 });
+    writeFileSync4(file2, JSON.stringify({ ...approval, pid: process.pid, port: server.address().port, token }), { mode: 384, flag: "wx" });
+  } catch (err) {
+    server.close();
+    throw err;
+  }
+  return () => {
+    try {
+      rmSync3(file2, { force: true });
+    } finally {
+      server.close();
+    }
+  };
+}
+function readApproval(home, id) {
+  if (!APPROVAL_ID.test(id)) return null;
+  try {
+    const r = JSON.parse(readFileSync7(join11(home, APPROVALS_DIR, `${id}.json`), "utf8"));
+    if (r.id !== id || !Number.isInteger(r.pid) || r.pid < 1 || !pidAlive(r.pid) || !Number.isSafeInteger(r.deadline) || r.deadline <= Date.now() || !Number.isSafeInteger(r.askedAt) || r.deadline <= r.askedAt || !Number.isInteger(r.port) || r.port < 1 || r.port > MAX_PORT2 || typeof r.token !== "string" || !r.token) return null;
+    if (![r.owner, r.job, r.agent, r.tool, r.command, r.reason].every((value) => typeof value === "string")) return null;
+    return r;
+  } catch {
+    return null;
+  }
+}
+function listPendingApprovals(home) {
+  let files;
+  try {
+    files = readdirSync3(join11(home, APPROVALS_DIR));
+  } catch {
+    return [];
+  }
+  return files.flatMap((file2) => {
+    if (!file2.endsWith(".json")) return [];
+    const r = readApproval(home, file2.slice(0, -5));
+    return r ? [{ id: r.id, owner: r.owner, job: r.job, agent: r.agent, tool: r.tool, command: r.command, reason: r.reason, askedAt: r.askedAt, deadline: r.deadline }] : [];
+  }).sort((a, b) => a.askedAt - b.askedAt);
+}
+function newApprovalId() {
+  return randomUUID9();
+}
+async function answerPendingApproval(home, id, body) {
+  const r = readApproval(home, id);
+  if (!r) return "expired";
+  try {
+    const res = await fetch(`http://${RELAY_HOST}:${r.port}${ANSWER_PATH}`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${r.token}` },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(ANSWER_TIMEOUT_MS)
+    });
+    return res.status === 200 ? "answered" : res.status === 409 ? "expired" : "unavailable";
+  } catch {
+    return readApproval(home, id) ? "unavailable" : "expired";
   }
 }
 
@@ -30349,11 +30445,11 @@ function resolveBinary(bin, env = process.env, platform = process.platform) {
   }
   for (const dir of (env.PATH ?? env.Path ?? "").split(delimiter)) {
     if (!dir) continue;
-    for (const c of candidates(join11(dir, bin))) if (existsSync5(c)) return c;
+    for (const c of candidates(join12(dir, bin))) if (existsSync5(c)) return c;
   }
   return null;
 }
-function unwrapNpmShim(shimPath, readFile = (p) => readFileSync7(p, "utf8")) {
+function unwrapNpmShim(shimPath, readFile = (p) => readFileSync8(p, "utf8")) {
   let text;
   try {
     text = readFile(shimPath);
@@ -30392,6 +30488,14 @@ function killTree(child) {
       child.once("exit", () => (clearTimeout(force), resolve8()));
     }
   });
+}
+function pidAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return err.code === "EPERM";
+  }
 }
 function trackChild(child) {
   liveChildren.add(child);
@@ -30639,7 +30743,7 @@ function isClaudeReadOnly(mode) {
 }
 var CLAUDE_READ_ONLY_MODES = /* @__PURE__ */ new Set(["default", "manual", "plan"]);
 function bundledCli() {
-  const cli = join11(dirname5(fileURLToPath(import.meta.url)), "cli.mjs");
+  const cli = join12(dirname5(fileURLToPath(import.meta.url)), "cli.mjs");
   return existsSync5(cli) ? cli : null;
 }
 function spawnsWithoutShell(bin, log) {
@@ -30968,34 +31072,34 @@ function describeCodexUser(u) {
 }
 
 // src/cli/opencode-install.ts
-import { copyFileSync as copyFileSync2, existsSync as existsSync6, mkdirSync as mkdirSync7, readdirSync as readdirSync3, readFileSync as readFileSync8, rmSync as rmSync3 } from "node:fs";
+import { copyFileSync as copyFileSync2, existsSync as existsSync6, mkdirSync as mkdirSync8, readdirSync as readdirSync4, readFileSync as readFileSync9, rmSync as rmSync4 } from "node:fs";
 import { homedir as homedir3 } from "node:os";
-import { dirname as dirname6, join as join12, resolve as resolve4 } from "node:path";
+import { dirname as dirname6, join as join13, resolve as resolve4 } from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 var INSTALL_MARKER = "agent-bridge";
 var PLUGIN_FILE = "agent-bridge.js";
 var SERVER_DIR = "agent-bridge";
 var SERVER_FILE = "server.mjs";
-var SKILL_REL = join12("skills", "agent-bridge", "SKILL.md");
+var SKILL_REL = join13("skills", "agent-bridge", "SKILL.md");
 var AGENTS_DIR = "agents";
 function opencodeConfigDir(env = process.env) {
   const xdg = env.XDG_CONFIG_HOME?.trim();
-  return join12(xdg || join12(homedir3(), ".config"), "opencode");
+  return join13(xdg || join13(homedir3(), ".config"), "opencode");
 }
 function pluginSourceDir(name, marker, fromFile = fileURLToPath2(import.meta.url)) {
   let dir = dirname6(fromFile);
   for (let i = 0; i < 5; i++) {
-    for (const candidate of [join12(dir, "plugins", name), join12(dir, "..", name)]) {
-      if (existsSync6(join12(candidate, marker))) return resolve4(candidate);
+    for (const candidate of [join13(dir, "plugins", name), join13(dir, "..", name)]) {
+      if (existsSync6(join13(candidate, marker))) return resolve4(candidate);
     }
     dir = dirname6(dir);
   }
   return null;
 }
-var opencodeSourceDir = (from) => pluginSourceDir("opencode", join12("dist", PLUGIN_FILE), from);
+var opencodeSourceDir = (from) => pluginSourceDir("opencode", join13("dist", PLUGIN_FILE), from);
 function ownedByUs(path) {
   try {
-    return readFileSync8(path, "utf8").includes(INSTALL_MARKER);
+    return readFileSync9(path, "utf8").includes(INSTALL_MARKER);
   } catch {
     return false;
   }
@@ -31008,7 +31112,7 @@ function copyAll(copies, configDir) {
       res.skipped.push(to);
       continue;
     }
-    mkdirSync7(dirname6(to), { recursive: true });
+    mkdirSync8(dirname6(to), { recursive: true });
     copyFileSync2(from, to);
     res.files.push(to);
   }
@@ -31016,23 +31120,23 @@ function copyAll(copies, configDir) {
 }
 var AGENT_SOURCE_SUFFIX = ".agent.md";
 function agentCopies(sourceDir, targetDir) {
-  const dir = join12(sourceDir, AGENTS_DIR);
+  const dir = join13(sourceDir, AGENTS_DIR);
   if (!existsSync6(dir)) return [];
-  return readdirSync3(dir).filter((f) => f.endsWith(AGENT_SOURCE_SUFFIX)).map((f) => [join12(dir, f), join12(targetDir, AGENTS_DIR, f.slice(0, -AGENT_SOURCE_SUFFIX.length) + ".md")]);
+  return readdirSync4(dir).filter((f) => f.endsWith(AGENT_SOURCE_SUFFIX)).map((f) => [join13(dir, f), join13(targetDir, AGENTS_DIR, f.slice(0, -AGENT_SOURCE_SUFFIX.length) + ".md")]);
 }
 function installOpencode(sourceDir, configDir = opencodeConfigDir()) {
   return copyAll(
     [
-      [join12(sourceDir, "dist", PLUGIN_FILE), join12(configDir, "plugins", PLUGIN_FILE)],
-      [join12(sourceDir, "dist", SERVER_FILE), join12(configDir, "plugins", SERVER_DIR, SERVER_FILE)],
-      [join12(sourceDir, SKILL_REL), join12(configDir, SKILL_REL)],
+      [join13(sourceDir, "dist", PLUGIN_FILE), join13(configDir, "plugins", PLUGIN_FILE)],
+      [join13(sourceDir, "dist", SERVER_FILE), join13(configDir, "plugins", SERVER_DIR, SERVER_FILE)],
+      [join13(sourceDir, SKILL_REL), join13(configDir, SKILL_REL)],
       ...agentCopies(sourceDir, configDir)
     ],
     configDir
   );
 }
 function uninstallOpencode(configDir = opencodeConfigDir(), sourceDir = opencodeSourceDir()) {
-  const targets = [join12(configDir, "plugins", PLUGIN_FILE), join12(configDir, "plugins", SERVER_DIR), join12(configDir, "skills", "agent-bridge")];
+  const targets = [join13(configDir, "plugins", PLUGIN_FILE), join13(configDir, "plugins", SERVER_DIR), join13(configDir, "skills", "agent-bridge")];
   if (sourceDir) targets.push(...agentCopies(sourceDir, configDir).map(([, to]) => to));
   return removeOwned(targets, configDir);
 }
@@ -31045,7 +31149,7 @@ function removeOwned(targets, configDir) {
       res.skipped.push(p);
       continue;
     }
-    rmSync3(p, { recursive: true, force: true });
+    rmSync4(p, { recursive: true, force: true });
     res.files.push(p);
   }
   return res;
@@ -31241,17 +31345,17 @@ async function runPermissionHook(agent = "codex") {
 }
 
 // src/cli/rewake-hook.ts
-import { readFileSync as readFileSync9 } from "node:fs";
+import { readFileSync as readFileSync10 } from "node:fs";
 
 // src/mcp/rewake.ts
 import { randomBytes as randomBytes6 } from "node:crypto";
-import { mkdirSync as mkdirSync8, rmSync as rmSync4, writeFileSync as writeFileSync4 } from "node:fs";
+import { mkdirSync as mkdirSync9, rmSync as rmSync5, writeFileSync as writeFileSync5 } from "node:fs";
 import { createServer as createServer5 } from "node:http";
-import { join as join13 } from "node:path";
+import { join as join14 } from "node:path";
 var SESSIONS_DIR = "sessions";
 var REWAKE_POLL_MS = 4 * 60 * 1e3;
 function sessionFile(home, sessionId) {
-  return join13(home, SESSIONS_DIR, `${sessionId.replace(/[^\w-]/g, "_")}.json`);
+  return join14(home, SESSIONS_DIR, `${sessionId.replace(/[^\w-]/g, "_")}.json`);
 }
 
 // src/cli/rewake-hook.ts
@@ -31272,7 +31376,7 @@ async function runRewakeHook(standby = false) {
   if (!sessionId) return 0;
   let reg;
   try {
-    reg = JSON.parse(readFileSync9(sessionFile(resolveHome(), sessionId), "utf8"));
+    reg = JSON.parse(readFileSync10(sessionFile(resolveHome(), sessionId), "utf8"));
   } catch {
     return 0;
   }
@@ -31297,10 +31401,11 @@ async function runRewakeHook(standby = false) {
 
 // src/core/config.ts
 import { unwatchFile, watchFile } from "node:fs";
-import { basename as basename3, join as join14 } from "node:path";
+import { basename as basename3, join as join15 } from "node:path";
 var DELIVERY_MODES = ["auto", "channel", "hooks"];
 var CODEX_SANDBOXES = ["read-only", "workspace-write", "danger-full-access"];
 var CLAUDE_PERMISSION_MODES = ["default", "manual", "acceptEdits", "plan", "auto", "dontAsk", "bypassPermissions"];
+var DEFAULT_NOTIFICATIONS = { approvals: true, finish: true, fail: true };
 var DEFAULT_CONFIG = {
   name: null,
   autoWake: false,
@@ -31324,6 +31429,7 @@ var DEFAULT_CONFIG = {
   opencodeAutoApprove: false,
   dashboard: true,
   dashboardPort: DEFAULT_DASHBOARD_PORT,
+  notifications: DEFAULT_NOTIFICATIONS,
   network: DEFAULT_NETWORK_CONFIG
 };
 var TRUE_VALUES = /* @__PURE__ */ new Set(["1", "true", "yes", "on"]);
@@ -31335,6 +31441,17 @@ function parseBool(v) {
   if (TRUE_VALUES.has(s)) return true;
   if (FALSE_VALUES.has(s)) return false;
   return void 0;
+}
+function notifications(v) {
+  if (!isRecord(v)) return void 0;
+  const out2 = { ...DEFAULT_NOTIFICATIONS };
+  for (const key of Object.keys(out2)) {
+    if (v[key] === void 0) continue;
+    const value = parseBool(v[key]);
+    if (value === void 0) return void 0;
+    out2[key] = value;
+  }
+  return out2;
 }
 function parseIntInRange(v, min, max) {
   const n = typeof v === "number" ? v : typeof v === "string" ? Number.parseInt(v, 10) : Number.NaN;
@@ -31372,7 +31489,7 @@ function toolPatterns(v) {
 }
 function loadConfig(home, agent, log, env = process.env) {
   let file2 = {};
-  const path = join14(home, CONFIG_FILE_NAME);
+  const path = join15(home, CONFIG_FILE_NAME);
   try {
     file2 = readJsonStore(path, log) ?? {};
     log.debug("config file loaded", { path });
@@ -31415,6 +31532,7 @@ function loadConfig(home, agent, log, env = process.env) {
     opencodeAutoApprove: pick2("opencodeAutoApprove", null, parseBool) ?? d.opencodeAutoApprove,
     dashboard: pick2("dashboard", ENV.dashboard, parseBool) ?? d.dashboard,
     dashboardPort: pick2("dashboardPort", null, (v) => parseIntInRange(v, 1, 65535)) ?? d.dashboardPort,
+    notifications: pick2("notifications", null, notifications) ?? d.notifications,
     network: pick2("network", null, parseNetworkConfig) ?? d.network
   };
   log.debug("effective config", { ...cfg });
@@ -31477,13 +31595,13 @@ async function runSessionStartHook(log, out2 = (text) => process.stdout.write(te
 }
 
 // src/cli/watch.ts
-import { closeSync as closeSync2, existsSync as existsSync7, openSync as openSync2, readdirSync as readdirSync5, readSync, statSync as statSync3 } from "node:fs";
+import { closeSync as closeSync2, existsSync as existsSync7, openSync as openSync2, readdirSync as readdirSync6, readSync, statSync as statSync3 } from "node:fs";
 import { StringDecoder } from "node:string_decoder";
-import { join as join16 } from "node:path";
+import { join as join17 } from "node:path";
 
 // src/core/runfeed.ts
-import { appendFileSync as appendFileSync2, mkdirSync as mkdirSync9, readFileSync as readFileSync10, readdirSync as readdirSync4, statSync as statSync2 } from "node:fs";
-import { join as join15 } from "node:path";
+import { appendFileSync as appendFileSync2, mkdirSync as mkdirSync10, readFileSync as readFileSync11, readdirSync as readdirSync5, statSync as statSync2 } from "node:fs";
+import { join as join16 } from "node:path";
 var RUNS_DIR_NAME = "runs";
 var HEARTBEAT_MS = 6e4;
 var KEEP_RUN_LOGS = 50;
@@ -31499,12 +31617,12 @@ function pruneOldLogs(dir) {
   try {
     const limit = retentionLimit("AGENT_BRIDGE_RUN_LOG_LIMIT", KEEP_RUN_LOGS);
     if (!limit) return;
-    const files = readdirSync4(dir).filter((f) => f.endsWith(".log")).map((f) => ({ f, t: statSync2(join15(dir, f)).mtimeMs })).sort((a, b) => b.t - a.t);
+    const files = readdirSync5(dir).filter((f) => f.endsWith(".log")).map((f) => ({ f, t: statSync2(join16(dir, f)).mtimeMs })).sort((a, b) => b.t - a.t);
     for (const { f } of files.slice(limit)) {
-      const path = join15(dir, f);
-      if (Date.now() - statSync2(path).mtimeMs <= STALE_RUN_MS && !/^\d\d:\d\d:\d\d finished after \d+s · /m.test(readFileSync10(path, "utf8"))) continue;
+      const path = join16(dir, f);
+      if (Date.now() - statSync2(path).mtimeMs <= STALE_RUN_MS && !/^\d\d:\d\d:\d\d finished after \d+s · /m.test(readFileSync11(path, "utf8"))) continue;
       archiveFile(path);
-      archiveFile(join15(dir, runMetaPath(f)));
+      archiveFile(join16(dir, runMetaPath(f)));
     }
   } catch (err) {
     process.stderr.write(`could not archive run logs: ${String(err)}
@@ -31513,9 +31631,9 @@ function pruneOldLogs(dir) {
 }
 function startRunFeed(opts) {
   const now = opts.now ?? Date.now;
-  const dir = join15(opts.home, RUNS_DIR_NAME);
-  mkdirSync9(dir, { recursive: true });
-  const logPath = join15(dir, `${new Date(now()).toISOString().slice(0, 19).replace(/[:T]/g, "-")}-${opts.name}.log`);
+  const dir = join16(opts.home, RUNS_DIR_NAME);
+  mkdirSync10(dir, { recursive: true });
+  const logPath = join16(dir, `${new Date(now()).toISOString().slice(0, 19).replace(/[:T]/g, "-")}-${opts.name}.log`);
   const write = (line) => {
     const [first, ...rest] = line.replace(/\r/g, "").split("\n");
     const body = [first, ...rest.map((l) => `${CONTINUATION}${l}`)].join("\n");
@@ -31577,9 +31695,9 @@ var POLL_MS = 500;
 var CHUNK = 64 * 1024;
 var FINISHED = / finished after \d+s · /;
 function findRunLog(home, filter) {
-  const dir = join16(home, RUNS_DIR_NAME);
+  const dir = join17(home, RUNS_DIR_NAME);
   if (!existsSync7(dir)) return null;
-  const logs = readdirSync5(dir).filter((f) => f.endsWith(".log") && (!filter || f.includes(filter))).map((f) => ({ path: join16(dir, f), t: statSync3(join16(dir, f)).mtimeMs })).sort((a, b) => b.t - a.t);
+  const logs = readdirSync6(dir).filter((f) => f.endsWith(".log") && (!filter || f.includes(filter))).map((f) => ({ path: join17(dir, f), t: statSync3(join17(dir, f)).mtimeMs })).sort((a, b) => b.t - a.t);
   return logs[0]?.path ?? null;
 }
 async function watchRunLog(path, out2) {
@@ -31612,40 +31730,40 @@ async function watchRunLog(path, out2) {
 
 // src/cli/dashboard.ts
 import { randomBytes as randomBytes9 } from "node:crypto";
-import { chmodSync as chmodSync3, readFileSync as readFileSync16, writeFileSync as writeFileSync7 } from "node:fs";
+import { chmodSync as chmodSync3, readFileSync as readFileSync17, writeFileSync as writeFileSync8 } from "node:fs";
 import { request } from "node:http";
-import { join as join22 } from "node:path";
+import { join as join23 } from "node:path";
 
 // src/cli/ui.ts
 import { randomBytes as randomBytes8 } from "node:crypto";
-import { existsSync as existsSync8, readdirSync as readdirSync6, readFileSync as readFileSync15, statSync as statSync4 } from "node:fs";
+import { existsSync as existsSync8, readdirSync as readdirSync7, readFileSync as readFileSync16, statSync as statSync4 } from "node:fs";
 import { createServer as createServer6 } from "node:http";
 import { networkInterfaces } from "node:os";
-import { join as join21 } from "node:path";
+import { join as join22 } from "node:path";
 import { DatabaseSync as DatabaseSync2 } from "node:sqlite";
 
 // src/core/models.ts
-import { mkdirSync as mkdirSync10, readFileSync as readFileSync13, writeFileSync as writeFileSync6 } from "node:fs";
-import { join as join19 } from "node:path";
+import { mkdirSync as mkdirSync11, readFileSync as readFileSync14, writeFileSync as writeFileSync7 } from "node:fs";
+import { join as join20 } from "node:path";
 
 // src/core/effort.ts
-import { readFileSync as readFileSync12 } from "node:fs";
+import { readFileSync as readFileSync13 } from "node:fs";
 import { homedir as homedir5 } from "node:os";
-import { join as join18 } from "node:path";
+import { join as join19 } from "node:path";
 
 // src/core/codex-trust.ts
-import { readFileSync as readFileSync11, writeFileSync as writeFileSync5 } from "node:fs";
+import { readFileSync as readFileSync12, writeFileSync as writeFileSync6 } from "node:fs";
 import { homedir as homedir4 } from "node:os";
-import { join as join17 } from "node:path";
+import { join as join18 } from "node:path";
 var PERMISSION_HOOK_STATE_KEY = 'hooks.state."agent-bridge@agent-bridge:plugin.json#hooks[0]:permission_request:0:0"';
 var OBSERVATIONS_FILE = "codex-hook.json";
 function codexHome(env = process.env) {
-  return env.CODEX_HOME?.trim() || join17(homedir4(), ".codex");
+  return env.CODEX_HOME?.trim() || join18(homedir4(), ".codex");
 }
-function codexPermissionHookHash(home = codexHome(), read = (p) => readFileSync11(p, "utf8")) {
+function codexPermissionHookHash(home = codexHome(), read = (p) => readFileSync12(p, "utf8")) {
   let text;
   try {
-    text = read(join17(home, "config.toml"));
+    text = read(join18(home, "config.toml"));
   } catch {
     return null;
   }
@@ -31660,7 +31778,7 @@ function codexPermissionHookHash(home = codexHome(), read = (p) => readFileSync1
 }
 function readObservations(bridgeHome) {
   try {
-    return JSON.parse(readFileSync11(join17(bridgeHome, OBSERVATIONS_FILE), "utf8"));
+    return JSON.parse(readFileSync12(join18(bridgeHome, OBSERVATIONS_FILE), "utf8"));
   } catch {
     return {};
   }
@@ -31670,20 +31788,20 @@ function recordCodexHookObservation(bridgeHome, hash2, observation) {
   if (all[hash2] === "failed") return;
   all[hash2] = observation;
   try {
-    writeFileSync5(join17(bridgeHome, OBSERVATIONS_FILE), JSON.stringify(all, null, 2), { mode: 384 });
+    writeFileSync6(join18(bridgeHome, OBSERVATIONS_FILE), JSON.stringify(all, null, 2), { mode: 384 });
   } catch {
   }
 }
-function codexPermissionHookTrusted(bridgeHome, home = codexHome(), read = (p) => readFileSync11(p, "utf8")) {
+function codexPermissionHookTrusted(bridgeHome, home = codexHome(), read = (p) => readFileSync12(p, "utf8")) {
   const hash2 = codexPermissionHookHash(home, read);
   return hash2 !== null && readObservations(bridgeHome)[hash2] !== "failed";
 }
 
 // src/core/effort.ts
-function defaultEffort(agent, model, read = (p) => readFileSync12(p, "utf8")) {
+function defaultEffort(agent, model, read = (p) => readFileSync13(p, "utf8")) {
   try {
-    if (agent === "codex") return codexConfigEffort(read(join18(codexHome(), "config.toml")));
-    if (agent === "claude") return claudeSettingsEffort(read(join18(process.env.CLAUDE_CONFIG_DIR?.trim() || join18(homedir5(), ".claude"), "settings.json")), model);
+    if (agent === "codex") return codexConfigEffort(read(join19(codexHome(), "config.toml")));
+    if (agent === "claude") return claudeSettingsEffort(read(join19(process.env.CLAUDE_CONFIG_DIR?.trim() || join19(homedir5(), ".claude"), "settings.json")), model);
   } catch {
   }
   return null;
@@ -31916,10 +32034,10 @@ var MODEL_CACHE_MS = 10 * 60 * 1e3;
 var modelReads = /* @__PURE__ */ new Map();
 var modelBin = (agent, cfg) => cfg[`${agent}Bin`];
 var modelDefault = (agent, cfg) => cfg[`${agent}Model`];
-var modelCachePath = (home, agent) => join19(home, `models-${agent}.json`);
+var modelCachePath = (home, agent) => join20(home, `models-${agent}.json`);
 function cachedModels(home, agent, cfg) {
   try {
-    const cache2 = JSON.parse(readFileSync13(modelCachePath(home, agent), "utf8"));
+    const cache2 = JSON.parse(readFileSync14(modelCachePath(home, agent), "utf8"));
     const validStrings = (v) => Array.isArray(v) && v.every((s) => typeof s === "string");
     if (cache2.bin !== modelBin(agent, cfg) || cache2.effort !== (cfg.effort[agent] ?? null) || typeof cache2.at !== "number" || Date.now() - cache2.at >= MODEL_CACHE_MS) return null;
     if (cache2.report?.agent !== agent || !validStrings(cache2.report.models) || !validStrings(cache2.report.lines)) return null;
@@ -31944,8 +32062,8 @@ async function readModels(agent, cfg, cwd, log, home) {
       const report = { agent, defaultModel, models: models2, lines };
       if (!lines[0]?.startsWith("Could not list")) {
         try {
-          mkdirSync10(home, { recursive: true });
-          writeFileSync6(modelCachePath(home, agent), JSON.stringify({ at: Date.now(), bin: modelBin(agent, cfg), effort: cfg.effort[agent] ?? null, report }), { mode: 384 });
+          mkdirSync11(home, { recursive: true });
+          writeFileSync7(modelCachePath(home, agent), JSON.stringify({ at: Date.now(), bin: modelBin(agent, cfg), effort: cfg.effort[agent] ?? null, report }), { mode: 384 });
         } catch (err) {
           log.debug("could not cache models", { err: err.message });
         }
@@ -32510,14 +32628,14 @@ ${CODEX_ASK_HINT}` : req.prompt;
 }
 
 // src/core/codex-env.ts
-import { readFileSync as readFileSync14 } from "node:fs";
+import { readFileSync as readFileSync15 } from "node:fs";
 import { homedir as homedir6 } from "node:os";
-import { join as join20 } from "node:path";
+import { join as join21 } from "node:path";
 function codexWindowsSandbox(home = homedir6(), platform = process.platform) {
   if (platform !== "win32") return null;
   let toml;
   try {
-    toml = readFileSync14(join20(home, ".codex", "config.toml"), "utf8");
+    toml = readFileSync15(join21(home, ".codex", "config.toml"), "utf8");
   } catch {
     return null;
   }
@@ -34460,9 +34578,9 @@ function summarizeRun(file2, text, mtimeMs, now, meta3 = {}) {
   };
 }
 function listRuns(home, now = Date.now()) {
-  const dir = join21(home, RUNS_DIR_NAME);
+  const dir = join22(home, RUNS_DIR_NAME);
   if (!existsSync8(dir)) return [];
-  return readdirSync6(dir).filter((f) => RUN_NAME.test(f)).map((f) => ({ f, st: statSync4(join21(dir, f)) })).sort((a, b) => b.st.mtimeMs - a.st.mtimeMs).slice(0, MAX_RUNS).map(({ f, st }) => summarizeRun(f, readFileSync15(join21(dir, f), "utf8"), st.mtimeMs, now, readMeta(join21(dir, runMetaPath(f)))));
+  return readdirSync7(dir).filter((f) => RUN_NAME.test(f)).map((f) => ({ f, st: statSync4(join22(dir, f)) })).sort((a, b) => b.st.mtimeMs - a.st.mtimeMs).slice(0, MAX_RUNS).map(({ f, st }) => summarizeRun(f, readFileSync16(join22(dir, f), "utf8"), st.mtimeMs, now, readMeta(join22(dir, runMetaPath(f)))));
 }
 function readMeta(file2) {
   try {
@@ -34475,7 +34593,7 @@ function readStoredJobs(home) {
   const out2 = /* @__PURE__ */ new Map();
   let stored;
   try {
-    stored = JSON.parse(readFileSync15(join21(home, JOBS_FILE), "utf8"));
+    stored = JSON.parse(readFileSync16(join22(home, JOBS_FILE), "utf8"));
   } catch {
     return out2;
   }
@@ -34497,7 +34615,7 @@ function jobOwner(home, job, original) {
 }
 function classifyPeers(peers, runs, home) {
   const norm = (p) => p.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
-  const worktrees = `${norm(join21(home, "worktrees"))}/`;
+  const worktrees = `${norm(join22(home, "worktrees"))}/`;
   return peers.map((p) => {
     const cwd = norm(p.cwd ?? "");
     const subagent = cwd.startsWith(worktrees);
@@ -34624,6 +34742,22 @@ async function startUi(opts) {
     }
     if (!tokensEqual(cookieSecret(req), secret)) return send(res, 403, "Open the link printed by `agent-bridge ui`.", "text/plain; charset=utf-8");
     if (req.method === "GET" && url2.pathname === "/") return send(res, 200, UI_PAGE, "text/html; charset=utf-8");
+    if (req.method === "GET" && url2.pathname === "/api/approvals") return send(res, 200, { approvals: listPendingApprovals(opts.home) });
+    const approvalMatch = /^\/api\/approvals\/([0-9a-f-]{36})$/.exec(url2.pathname);
+    if (req.method === "POST" && approvalMatch) {
+      if (req.headers["x-agent-bridge"] !== "1") return send(res, 403, { error: "missing header" });
+      let body;
+      try {
+        body = await readJson2(req);
+      } catch {
+        return send(res, 400, { error: "Expected a JSON object." });
+      }
+      if (!body || Array.isArray(body) || body.decision !== "allow" && body.decision !== "deny" || body.reason !== void 0 && (typeof body.reason !== "string" || body.reason.length > MAX_APPROVAL_REASON_CHARS)) return send(res, 400, { error: "A decision of allow or deny and an optional reason are required." });
+      const outcome = await answerPendingApproval(opts.home, approvalMatch[1], { decision: body.decision, ...typeof body.reason === "string" ? { reason: body.reason } : {} });
+      if (outcome === "expired") return send(res, 409, { outcome, error: "This approval was already answered, expired or cancelled." });
+      if (outcome === "unavailable") return send(res, 504, { outcome, error: "The approval's owning process is unavailable. Refresh before answering again." });
+      return send(res, 200, { outcome, id: approvalMatch[1], answeredBy: "dashboard", decision: body.decision });
+    }
     if (req.method === "GET" && url2.pathname === "/api/state") {
       const { brokerPid, peers } = await brokerPeers(opts.pipe, token, opts.log);
       const runs = listRuns(opts.home);
@@ -34698,10 +34832,10 @@ async function startUi(opts) {
     }
     const runMatch = /^\/api\/runs\/([\w.-]+)$/.exec(url2.pathname);
     if (req.method === "GET" && runMatch) {
-      const file2 = join21(opts.home, RUNS_DIR_NAME, `${runMatch[1]}.log`);
+      const file2 = join22(opts.home, RUNS_DIR_NAME, `${runMatch[1]}.log`);
       if (!existsSync8(file2)) return send(res, 404, { error: "no such run" });
       const from = Math.max(0, Number(url2.searchParams.get("from")) || 0);
-      const buf = readFileSync15(file2);
+      const buf = readFileSync16(file2);
       let end = Math.min(buf.length, from + MAX_LOG_CHUNK);
       while (end < buf.length && end > from && (buf[end] & 192) === 128) end--;
       return send(res, 200, { text: buf.subarray(from, end).toString("utf8"), next: end, size: buf.length });
@@ -34722,9 +34856,9 @@ async function startUi(opts) {
       const run2 = typeof body.run === "string" ? body.run : "";
       const command = jobCommand(body);
       if (!RUN_NAME.test(`${run2}.log`) || !command) return send(res, 400, { error: "a valid run and request are required" });
-      const file2 = join21(opts.home, RUNS_DIR_NAME, `${run2}.log`);
+      const file2 = join22(opts.home, RUNS_DIR_NAME, `${run2}.log`);
       if (!existsSync8(file2)) return send(res, 404, { error: "no such run" });
-      const meta3 = readMeta(join21(opts.home, RUNS_DIR_NAME, `${run2}.json`));
+      const meta3 = readMeta(join22(opts.home, RUNS_DIR_NAME, `${run2}.json`));
       if (!meta3.by || !meta3.job) return send(res, 409, { error: "This run has no owning session or job recorded." });
       try {
         const result = await controlDashboardJob(await getSender(), jobOwner(opts.home, meta3.job, meta3.by), meta3.job, command);
@@ -34763,11 +34897,11 @@ var SECRET_BYTES4 = 24;
 var PROBE_TIMEOUT_MS = 1500;
 var OWNER_ONLY2 = 384;
 function dashboardFile(home) {
-  return join22(home, DASHBOARD_FILE);
+  return join23(home, DASHBOARD_FILE);
 }
 function readDashboardInfo(home) {
   try {
-    const d = JSON.parse(readFileSync16(dashboardFile(home), "utf8"));
+    const d = JSON.parse(readFileSync17(dashboardFile(home), "utf8"));
     return typeof d.url === "string" && typeof d.port === "number" && typeof d.pid === "number" ? d : null;
   } catch {
     return null;
@@ -34806,7 +34940,7 @@ async function hostDashboard(opts) {
   const ui = await startUi({ ...opts, secret });
   const info = { url: ui.url, port: ui.port, pid: process.pid };
   const file2 = dashboardFile(opts.home);
-  writeFileSync7(file2, JSON.stringify(info, null, 2), { mode: OWNER_ONLY2 });
+  writeFileSync8(file2, JSON.stringify(info, null, 2), { mode: OWNER_ONLY2 });
   try {
     chmodSync3(file2, OWNER_ONLY2);
   } catch {
@@ -34835,14 +34969,14 @@ function openBrowser(url2) {
 
 // src/cli/reliability.ts
 import { execFileSync as execFileSync2 } from "node:child_process";
-import { existsSync as existsSync11, mkdtempSync as mkdtempSync3, rmSync as rmSync8, writeFileSync as writeFileSync9 } from "node:fs";
+import { existsSync as existsSync11, mkdtempSync as mkdtempSync3, rmSync as rmSync9, writeFileSync as writeFileSync11 } from "node:fs";
 import { tmpdir as tmpdir2 } from "node:os";
-import { join as join25 } from "node:path";
+import { join as join27 } from "node:path";
 
 // src/core/worktree.ts
 import { createHash as createHash4 } from "node:crypto";
-import { existsSync as existsSync9, mkdirSync as mkdirSync11, readFileSync as readFileSync17, realpathSync as realpathSync2, rmSync as rmSync5 } from "node:fs";
-import { basename as basename4, isAbsolute as isAbsolute2, join as join23, relative, resolve as resolve5, toNamespacedPath } from "node:path";
+import { existsSync as existsSync9, mkdirSync as mkdirSync12, readFileSync as readFileSync18, realpathSync as realpathSync2, rmSync as rmSync6 } from "node:fs";
+import { basename as basename4, isAbsolute as isAbsolute2, join as join24, relative, resolve as resolve5, toNamespacedPath } from "node:path";
 var GIT = "git";
 var LONG_PATH_ARGS = ["-c", "core.longpaths=true"];
 var REMOVE_RETRIES = 3;
@@ -34870,9 +35004,9 @@ async function createWorktree(opts) {
   const base = await git(["rev-parse", "HEAD"], repoRoot, opts.log);
   const baseBranch = await git(["symbolic-ref", "-q", "--short", "HEAD"], repoRoot, opts.log).catch(() => "") || null;
   let branch = `${BRANCH_PREFIX}${opts.jobId}`;
-  const dir = join23(opts.home, "worktrees");
-  mkdirSync11(dir, { recursive: true });
-  let path = join23(dir, `${basename4(repoRoot)}-${opts.jobId}`);
+  const dir = join24(opts.home, "worktrees");
+  mkdirSync12(dir, { recursive: true });
+  let path = join24(dir, `${basename4(repoRoot)}-${opts.jobId}`);
   try {
     await git(["worktree", "add", "-b", branch, path, base], repoRoot, opts.log, WORKTREE_ADD_TIMEOUT_MS);
   } catch (err) {
@@ -34893,7 +35027,7 @@ async function createWorktree(opts) {
   }
   await unlockWorktree(repoRoot, path, opts.log);
   const rel = relative(repoRoot, opts.cwd);
-  const cwd = rel && !rel.startsWith("..") && !isAbsolute2(rel) ? join23(path, rel) : path;
+  const cwd = rel && !rel.startsWith("..") && !isAbsolute2(rel) ? join24(path, rel) : path;
   opts.log.info("worktree created", { repoRoot, path, branch });
   return { repoRoot, path, cwd, branch, base, baseBranch };
 }
@@ -34913,7 +35047,7 @@ async function removeWorktree(repoRoot, path, branch, log) {
   });
 }
 function removeWorktreeDirectory(path) {
-  rmSync5(toNamespacedPath(resolve5(path)), { recursive: true, force: true, maxRetries: REMOVE_RETRIES });
+  rmSync6(toNamespacedPath(resolve5(path)), { recursive: true, force: true, maxRetries: REMOVE_RETRIES });
 }
 var SUBJECT_CHARS = 72;
 function subagentCommitMessage(opts) {
@@ -34984,7 +35118,7 @@ function generatedNoise(root, file2) {
   return parts.slice(0, -1).some((part, index) => {
     if (GENERATED_DIRECTORIES.has(part)) return true;
     if (!UNITY_GENERATED_DIRECTORIES.has(part)) return false;
-    return existsSync9(toNamespacedPath(join23(root, ...parts.slice(0, index), "ProjectSettings", "ProjectVersion.txt")));
+    return existsSync9(toNamespacedPath(join24(root, ...parts.slice(0, index), "ProjectSettings", "ProjectVersion.txt")));
   });
 }
 async function autoCommitFiles(wt, log) {
@@ -35101,7 +35235,7 @@ async function gitChangeSnapshot(cwd, log) {
     const file2 = line.slice(3).replace(/^.* -> /, "").replace(/^"|"$/g, "");
     let fp = line.slice(0, 2);
     try {
-      fp += ":" + createHash4("sha1").update(readFileSync17(join23(root, file2))).digest("hex");
+      fp += ":" + createHash4("sha1").update(readFileSync18(join24(root, file2))).digest("hex");
     } catch {
       fp += ":missing";
     }
@@ -35118,11 +35252,11 @@ function changedFiles(before, after) {
 
 // src/cli/reliability-live.ts
 import { execFile as execFile3 } from "node:child_process";
-import { existsSync as existsSync10, mkdirSync as mkdirSync13, mkdtempSync as mkdtempSync2, readdirSync as readdirSync7, readFileSync as readFileSync18, rmSync as rmSync7, writeFileSync as writeFileSync8 } from "node:fs";
+import { existsSync as existsSync10, mkdirSync as mkdirSync15, mkdtempSync as mkdtempSync2, readdirSync as readdirSync8, readFileSync as readFileSync20, rmSync as rmSync8, writeFileSync as writeFileSync10 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join as join24 } from "node:path";
+import { join as join26 } from "node:path";
 
-// node_modules/@modelcontextprotocol/sdk/dist/esm/server/zod-compat.js
+// D:/Development/claude-codex-comm/node_modules/@modelcontextprotocol/sdk/dist/esm/server/zod-compat.js
 function isZ4Schema(s) {
   const schema = s;
   return !!schema._zod;
@@ -35185,7 +35319,7 @@ function getLiteralValue(schema) {
   return void 0;
 }
 
-// node_modules/@modelcontextprotocol/sdk/dist/esm/types.js
+// D:/Development/claude-codex-comm/node_modules/@modelcontextprotocol/sdk/dist/esm/types.js
 var LATEST_PROTOCOL_VERSION = "2025-11-25";
 var SUPPORTED_PROTOCOL_VERSIONS = [LATEST_PROTOCOL_VERSION, "2025-06-18", "2025-03-26", "2024-11-05", "2024-10-07"];
 var RELATED_TASK_META_KEY = "io.modelcontextprotocol/related-task";
@@ -36704,15 +36838,15 @@ var UrlElicitationRequiredError = class extends McpError {
   }
 };
 
-// node_modules/@modelcontextprotocol/sdk/dist/esm/experimental/tasks/interfaces.js
+// D:/Development/claude-codex-comm/node_modules/@modelcontextprotocol/sdk/dist/esm/experimental/tasks/interfaces.js
 function isTerminal(status) {
   return status === "completed" || status === "failed" || status === "cancelled";
 }
 
-// node_modules/zod-to-json-schema/dist/esm/parsers/string.js
+// D:/Development/claude-codex-comm/node_modules/zod-to-json-schema/dist/esm/parsers/string.js
 var ALPHA_NUMERIC = new Set("ABCDEFGHIJKLMNOPQRSTUVXYZabcdefghijklmnopqrstuvxyz0123456789");
 
-// node_modules/@modelcontextprotocol/sdk/dist/esm/server/zod-json-schema-compat.js
+// D:/Development/claude-codex-comm/node_modules/@modelcontextprotocol/sdk/dist/esm/server/zod-json-schema-compat.js
 function getMethodLiteral(schema) {
   const shape = getObjectShape(schema);
   const methodSchema = shape?.method;
@@ -36733,7 +36867,7 @@ function parseWithCompat(schema, data) {
   return result.data;
 }
 
-// node_modules/@modelcontextprotocol/sdk/dist/esm/shared/protocol.js
+// D:/Development/claude-codex-comm/node_modules/@modelcontextprotocol/sdk/dist/esm/shared/protocol.js
 var DEFAULT_REQUEST_TIMEOUT_MSEC = 6e4;
 var Protocol = class {
   constructor(_options) {
@@ -37687,7 +37821,7 @@ function mergeCapabilities(base, additional) {
   return result;
 }
 
-// node_modules/@modelcontextprotocol/sdk/dist/esm/validation/ajv-provider.js
+// D:/Development/claude-codex-comm/node_modules/@modelcontextprotocol/sdk/dist/esm/validation/ajv-provider.js
 var import_ajv = __toESM(require_ajv(), 1);
 var import_ajv_formats = __toESM(require_dist(), 1);
 function createDefaultAjvInstance() {
@@ -37755,7 +37889,7 @@ var AjvJsonSchemaValidator = class {
   }
 };
 
-// node_modules/@modelcontextprotocol/sdk/dist/esm/experimental/tasks/client.js
+// D:/Development/claude-codex-comm/node_modules/@modelcontextprotocol/sdk/dist/esm/experimental/tasks/client.js
 var ExperimentalClientTasks = class {
   constructor(_client) {
     this._client = _client;
@@ -37909,7 +38043,7 @@ var ExperimentalClientTasks = class {
   }
 };
 
-// node_modules/@modelcontextprotocol/sdk/dist/esm/experimental/tasks/helpers.js
+// D:/Development/claude-codex-comm/node_modules/@modelcontextprotocol/sdk/dist/esm/experimental/tasks/helpers.js
 function assertToolsCallTaskCapability(requests, method, entityName) {
   if (!requests) {
     throw new Error(`${entityName} does not support task creation (required for ${method})`);
@@ -37944,7 +38078,7 @@ function assertClientRequestTaskCapability(requests, method, entityName) {
   }
 }
 
-// node_modules/@modelcontextprotocol/sdk/dist/esm/client/index.js
+// D:/Development/claude-codex-comm/node_modules/@modelcontextprotocol/sdk/dist/esm/client/index.js
 function applyElicitationDefaults(schema, data) {
   if (!schema || data === null || typeof data !== "object")
     return;
@@ -38455,12 +38589,12 @@ var Client = class extends Protocol {
   }
 };
 
-// node_modules/@modelcontextprotocol/sdk/dist/esm/client/stdio.js
+// D:/Development/claude-codex-comm/node_modules/@modelcontextprotocol/sdk/dist/esm/client/stdio.js
 var import_cross_spawn = __toESM(require_cross_spawn(), 1);
 import process2 from "node:process";
 import { PassThrough } from "node:stream";
 
-// node_modules/@modelcontextprotocol/sdk/dist/esm/shared/stdio.js
+// D:/Development/claude-codex-comm/node_modules/@modelcontextprotocol/sdk/dist/esm/shared/stdio.js
 var STDIO_DEFAULT_MAX_BUFFER_SIZE = 10 * 1024 * 1024;
 var ReadBuffer = class {
   constructor(options) {
@@ -38497,7 +38631,7 @@ function serializeMessage(message) {
   return JSON.stringify(message) + "\n";
 }
 
-// node_modules/@modelcontextprotocol/sdk/dist/esm/client/stdio.js
+// D:/Development/claude-codex-comm/node_modules/@modelcontextprotocol/sdk/dist/esm/client/stdio.js
 var DEFAULT_INHERITED_ENV_VARS = process2.platform === "win32" ? [
   "APPDATA",
   "HOMEDRIVE",
@@ -38669,9 +38803,136 @@ var StdioClientTransport = class {
 };
 
 // src/mcp/jobs.ts
-import { randomUUID as randomUUID9 } from "node:crypto";
-import { closeSync as closeSync3, mkdirSync as mkdirSync12, openSync as openSync3, rmSync as rmSync6, statSync as statSync5 } from "node:fs";
+import { randomUUID as randomUUID10 } from "node:crypto";
+import { closeSync as closeSync3, mkdirSync as mkdirSync14, openSync as openSync3, rmSync as rmSync7, statSync as statSync6 } from "node:fs";
 import { dirname as dirname7 } from "node:path";
+
+// src/core/notifications.ts
+import { spawn as spawn9 } from "node:child_process";
+import { mkdirSync as mkdirSync13, readFileSync as readFileSync19, rmdirSync, statSync as statSync5, writeFileSync as writeFileSync9 } from "node:fs";
+import { join as join25 } from "node:path";
+var TITLE = "agent-bridge";
+var TEXT = {
+  approvals: "A subagent needs approval. Open the agent-bridge dashboard.",
+  finish: "A subagent finished. Open the agent-bridge dashboard for its report.",
+  fail: "A subagent failed. Open the agent-bridge dashboard for its report."
+};
+var NOTIFICATION_TIMEOUT_MS = 5e3;
+var EVENT_INTERVAL_MS = 5e3;
+var RATE_WINDOW_MS = 6e4;
+var MAX_NOTIFICATIONS_PER_WINDOW = 10;
+var MAX_RATE_HOMES = 100;
+var RATE_STATE_FILE = "notification-rate.json";
+var RATE_LOCK_DIR = "notification-rate.lock";
+var WINDOWS_POWERSHELL_APP_ID = "{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\\WindowsPowerShell\\v1.0\\powershell.exe";
+function notificationCommands(platform, event) {
+  const body = TEXT[event];
+  if (platform === "win32") {
+    const script = [
+      "$ErrorActionPreference = 'Stop'",
+      "[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] > $null",
+      "[Windows.UI.Notifications.ToastNotification, Windows.UI.Notifications, ContentType = WindowsRuntime] > $null",
+      "[Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime] > $null",
+      "$xml = New-Object Windows.Data.Xml.Dom.XmlDocument",
+      `$xml.LoadXml('<toast><visual><binding template="ToastGeneric"><text>${TITLE}</text><text>${body}</text></binding></visual></toast>')`,
+      "$toast = [Windows.UI.Notifications.ToastNotification]::new($xml)",
+      `[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('${WINDOWS_POWERSHELL_APP_ID}').Show($toast)`
+    ].join("; ");
+    return [{ bin: "powershell.exe", args: ["-NoLogo", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")] }];
+  }
+  if (platform === "darwin") return [
+    { bin: "terminal-notifier", args: ["-title", TITLE, "-message", body] },
+    { bin: "osascript", args: ["-e", `display notification "${body}" with title "${TITLE}"`] }
+  ];
+  if (platform === "linux") return [{ bin: "notify-send", args: ["--app-name", TITLE, "--", TITLE, body] }];
+  return [];
+}
+var NotificationLimiter = class {
+  homes = /* @__PURE__ */ new Map();
+  take(home, event, now = Date.now()) {
+    let state = this.homes.get(home);
+    if (!state) {
+      if (this.homes.size >= MAX_RATE_HOMES) this.homes.delete(this.homes.keys().next().value);
+      state = { times: [], events: {} };
+      this.homes.set(home, state);
+    }
+    state.times = state.times.filter((at) => now - at < RATE_WINDOW_MS);
+    const last = state.events[event];
+    if (last !== void 0 && now - last < EVENT_INTERVAL_MS || state.times.length >= MAX_NOTIFICATIONS_PER_WINDOW) return false;
+    state.times.push(now);
+    state.events[event] = now;
+    return true;
+  }
+};
+var limiter = new NotificationLimiter();
+function takeNotificationSlot(home, event, now = Date.now()) {
+  const lock = join25(home, RATE_LOCK_DIR);
+  try {
+    try {
+      mkdirSync13(lock);
+    } catch {
+      if (now - statSync5(lock).mtimeMs < NOTIFICATION_TIMEOUT_MS) return false;
+      rmdirSync(lock);
+      mkdirSync13(lock);
+    }
+  } catch {
+    return false;
+  }
+  try {
+    const file2 = join25(home, RATE_STATE_FILE);
+    let state = { times: [], events: {} };
+    try {
+      const stored = JSON.parse(readFileSync19(file2, "utf8"));
+      if (Array.isArray(stored.times) && stored.times.every((at) => typeof at === "number") && stored.events && typeof stored.events === "object") state = stored;
+    } catch {
+    }
+    state.times = state.times.filter((at) => now - at < RATE_WINDOW_MS);
+    const last = state.events[event];
+    if (typeof last === "number" && now - last < EVENT_INTERVAL_MS || state.times.length >= MAX_NOTIFICATIONS_PER_WINDOW) return false;
+    state.times.push(now);
+    state.events[event] = now;
+    writeFileSync9(file2, JSON.stringify(state), { mode: 384 });
+    return true;
+  } catch {
+    return false;
+  } finally {
+    try {
+      rmdirSync(lock);
+    } catch {
+    }
+  }
+}
+function launch(commands, log) {
+  const command = commands[0];
+  if (!command) return;
+  try {
+    const child = spawn9(command.bin, command.args, { stdio: "ignore", windowsHide: true, detached: true });
+    const timer = setTimeout(() => child.kill(), NOTIFICATION_TIMEOUT_MS);
+    timer.unref();
+    child.once("exit", () => clearTimeout(timer));
+    child.once("error", (err) => {
+      clearTimeout(timer);
+      if (err.code === "ENOENT" && commands.length > 1) launch(commands.slice(1), log);
+      else log.debug("desktop notification unavailable");
+    });
+    child.unref();
+  } catch {
+    log.debug("desktop notification unavailable");
+  }
+}
+function notifyJobEvent(home, event, log) {
+  const task = setImmediate(() => {
+    try {
+      if (!loadConfig(home, "other", log).notifications[event] || !limiter.take(home, event) || !takeNotificationSlot(home, event)) return;
+      launch(notificationCommands(process.platform, event), log);
+    } catch {
+      log.debug("desktop notification unavailable");
+    }
+  });
+  task.unref();
+}
+
+// src/mcp/jobs.ts
 var INTERRUPTED_LISTED_MS = 24 * 60 * 60 * 1e3;
 var NOTE_CONVERSATION_SUFFIX = ":note";
 var QUEUED_FOLLOW_UP_NOTE = "(Your queued follow-up was sent to it; its answer will arrive as another message.)";
@@ -38681,25 +38942,88 @@ function jobReport(job, status, seconds, text, cause) {
   return [header, cause ? `Cause: ${cause}` : "", text && cause ? `Its last message:
 ${text}` : text].filter(Boolean).join("\n\n");
 }
-function waitForApproval(job, question, timeoutMs, post, log) {
+var approvalAnswers = /* @__PURE__ */ new WeakMap();
+function denyPendingApprovals(job, reason = "job finished") {
+  for (const answer of [...approvalAnswers.get(job) ?? []]) answer(reason, "job completion");
+}
+function waitForApproval(job, question, timeoutMs, post, log, home, request2, askUser) {
   return new Promise((resolve8) => {
-    const timer = setTimeout(() => {
-      if (job.pendingApproval !== settle2) return;
-      job.pendingApproval = null;
-      resolve8({ allow: false, reason: "no answer in time" });
-    }, timeoutMs);
-    timer.unref?.();
-    const settle2 = (answer) => {
+    let settled = false;
+    let cleanup;
+    const askedAt = Date.now();
+    const settle2 = (answer, by = "session") => {
+      if (settled) return false;
+      if (Date.now() >= askedAt + timeoutMs) {
+        answer = "no answer in time";
+        by = "timeout";
+      }
+      settled = true;
       clearTimeout(timer);
-      resolve8({ allow: /^\s*(allow|yes|y|approve|approved|ok|okay|go ahead|accept)\b/i.test(answer), reason: answer.trim() });
+      job.controller.signal.removeEventListener("abort", aborted2);
+      const answers2 = approvalAnswers.get(job);
+      answers2?.delete(settle2);
+      job.pendingApproval = answers2?.values().next().value ?? null;
+      if (!answers2?.size) approvalAnswers.delete(job);
+      try {
+        cleanup?.();
+      } catch {
+        log.warn("could not remove pending approval", { job: job.name });
+      }
+      const allow = /^\s*(allow|yes|y|approve|approved|ok|okay|go ahead|accept)\b/i.test(answer);
+      try {
+        post(`Approval for ${job.name} ${allow ? "allowed" : "denied"} by ${by}.`);
+      } catch {
+        log.warn("could not report approval answer", { job: job.name });
+      }
+      resolve8({ allow, reason: answer.trim() });
+      return true;
     };
-    job.pendingApproval = settle2;
+    const timer = setTimeout(() => settle2("no answer in time", "timeout"), timeoutMs);
+    timer.unref?.();
+    const aborted2 = () => settle2("job cancelled", "cancellation");
+    job.controller.signal.addEventListener("abort", aborted2, { once: true });
+    let answers = approvalAnswers.get(job);
+    if (!answers) {
+      answers = /* @__PURE__ */ new Set();
+      approvalAnswers.set(job, answers);
+    }
+    answers.add(settle2);
+    job.pendingApproval = answers.values().next().value;
+    if (job.controller.signal.aborted) {
+      aborted2();
+      return;
+    }
+    if (home) {
+      void publishApproval(home, {
+        id: newApprovalId(),
+        owner: job.owner ?? "",
+        job: job.name,
+        agent: job.agent,
+        tool: request2?.tool ?? "approval",
+        command: request2?.detail ?? question,
+        reason: request2?.reason ?? question,
+        askedAt,
+        deadline: askedAt + timeoutMs
+      }, settle2).then((close) => {
+        if (settled) close();
+        else {
+          cleanup = close;
+          notifyJobEvent(home, "approvals", log);
+        }
+      }).catch(() => log.warn("could not publish pending approval", { job: job.name }));
+    }
     log.info("subagent asks for approval", { job: job.name });
     post(
       `Subagent ${job.name} asks for approval: ${question}
 
 Decide as its supervisor: answer with message_subagent(job="${job.name}", message="allow") or message="deny" (a reason may follow). It waits for your answer; no answer within ${Math.round(timeoutMs / 6e4)} minutes counts as deny.`
     );
+    if (askUser) {
+      void Promise.resolve().then(askUser).then(
+        (decision) => settle2(decision.allow ? "allow" : `deny: ${decision.message}`, "user in session"),
+        () => settle2("deny: The permission dialog failed.", "user in session")
+      );
+    }
   });
 }
 function sessionOfError(err) {
@@ -38723,7 +39047,7 @@ function readStore(path, log) {
 }
 
 // src/cli/reliability-live.ts
-var SERVER_BUNDLE = join24("dist", "server.mjs");
+var SERVER_BUNDLE = join26("dist", "server.mjs");
 var JOBS_FILE2 = "jobs.json";
 var NOTE_COUNT = 12;
 var NOTES_DIR = "notes";
@@ -38735,7 +39059,7 @@ var FACT_QUESTION = "What is the fixture for this task called? Reply with only i
 var JOB_TIMEOUT_SEC = 900;
 var SERVER_START_TIMEOUT_MS = 3e4;
 var WORKING_TIMEOUT_MS = 18e4;
-var ANSWER_TIMEOUT_MS = 3e5;
+var ANSWER_TIMEOUT_MS2 = 3e5;
 var RESULT_TIMEOUT_MS = 9e5;
 var SESSION_TIMEOUT_MS = 18e4;
 var SERVER_EXIT_TIMEOUT_MS = 2e4;
@@ -38752,7 +39076,7 @@ function hostFor(target) {
 }
 function serverBundle(host, fromFile) {
   const dir = pluginSourceDir(host, SERVER_BUNDLE, fromFile);
-  return dir ? join24(dir, SERVER_BUNDLE) : null;
+  return dir ? join26(dir, SERVER_BUNDLE) : null;
 }
 function jobNameIn(text) {
   return /Subagent (\S+-job-[0-9a-f]+) started/.exec(text)?.[1] ?? /message_subagent\(job="([^"]+)"/.exec(text)?.[1] ?? null;
@@ -38812,7 +39136,7 @@ function alive(pid) {
 }
 function storedJob(home, job) {
   try {
-    const all = readStore(join24(home, JOBS_FILE2));
+    const all = readStore(join26(home, JOBS_FILE2));
     return all.find((j) => j.name === job) ?? null;
   } catch {
     return null;
@@ -38821,8 +39145,8 @@ function storedJob(home, job) {
 var PICKED_UP_LOG = "subagent picked up messages";
 function logsMention(home, text) {
   try {
-    const dir = join24(home, LOG_DIR_NAME);
-    return readdirSync7(dir).some((f) => readFileSync18(join24(dir, f), "utf8").includes(text));
+    const dir = join26(home, LOG_DIR_NAME);
+    return readdirSync8(dir).some((f) => readFileSync20(join26(dir, f), "utf8").includes(text));
   } catch {
     return false;
   }
@@ -38914,9 +39238,9 @@ var LiveHost = class _LiveHost {
   }
 };
 function writeNotes(dir) {
-  mkdirSync13(join24(dir, NOTES_DIR), { recursive: true });
+  mkdirSync15(join26(dir, NOTES_DIR), { recursive: true });
   for (let i = 1; i <= NOTE_COUNT; i++) {
-    writeFileSync8(join24(dir, NOTES_DIR, `note-${String(i).padStart(2, "0")}.txt`), `Note ${i}: the garden bed number ${i} gets ${i * 2} liters of water on day ${i}.
+    writeFileSync10(join26(dir, NOTES_DIR, `note-${String(i).padStart(2, "0")}.txt`), `Note ${i}: the garden bed number ${i} gets ${i * 2} liters of water on day ${i}.
 `);
   }
 }
@@ -38931,7 +39255,7 @@ async function killLeft(procs) {
 async function runLiveChecks(o) {
   const homes = [];
   const newHome = () => {
-    const h = mkdtempSync2(join24(tmpdir(), "agent-bridge-rel-live-"));
+    const h = mkdtempSync2(join26(tmpdir(), "agent-bridge-rel-live-"));
     homes.push(h);
     return h;
   };
@@ -38964,8 +39288,8 @@ async function runLiveChecks(o) {
               if (!progress) return { pass: false, detail: `${job} never reported working within ${WORKING_TIMEOUT_MS / 1e3}s` };
               const sent = await server.call("message_subagent", { job, message: LIVE_QUESTION });
               if (!/still working/.test(sent.text)) return { pass: false, detail: `message_subagent: ${short(sent.text)}` };
-              const first = await server.next(job, ANSWER_TIMEOUT_MS);
-              if (first === null) return { pass: false, detail: `no message from ${job} within ${ANSWER_TIMEOUT_MS / 1e3}s` };
+              const first = await server.next(job, ANSWER_TIMEOUT_MS2);
+              if (first === null) return { pass: false, detail: `no message from ${job} within ${ANSWER_TIMEOUT_MS2 / 1e3}s` };
               const status = finalStatusOf(job, first);
               if (status) {
                 const seen = logsMention(home, PICKED_UP_LOG) ? "it picked up the message but did not answer before finishing" : "it never picked up the message";
@@ -39069,7 +39393,7 @@ async function runLiveChecks(o) {
               return allow ? { allow: true } : { allow: false, message: "Denied by the reliability check." };
             }
           });
-          const exists = existsSync10(join24(dir, "asked.txt"));
+          const exists = existsSync10(join26(dir, "asked.txt"));
           const relevant = asked.filter((a) => !a.startsWith("mcp:"));
           return {
             pass: relevant.length > 0 && exists === allow,
@@ -39094,7 +39418,7 @@ async function runLiveChecks(o) {
             return { allow: true };
           }
         });
-        const exists = existsSync10(join24(dir, "should-not-exist.txt"));
+        const exists = existsSync10(join26(dir, "should-not-exist.txt"));
         const relevant = asked.filter((a) => !a.startsWith("mcp:"));
         return {
           pass: !exists && relevant.length === 0,
@@ -39103,7 +39427,7 @@ async function runLiveChecks(o) {
       });
     }
   } finally {
-    for (const h of homes) rmSync7(h, { recursive: true, force: true, maxRetries: 3 });
+    for (const h of homes) rmSync8(h, { recursive: true, force: true, maxRetries: 3 });
   }
 }
 
@@ -39146,10 +39470,10 @@ async function timed(name, fn) {
   }
 }
 function makeRepo() {
-  const dir = mkdtempSync3(join25(tmpdir2(), "agent-bridge-rel-"));
+  const dir = mkdtempSync3(join27(tmpdir2(), "agent-bridge-rel-"));
   const git2 = (...a) => execFileSync2("git", a, { cwd: dir, stdio: "ignore" });
   git2("init", "-q");
-  writeFileSync9(join25(dir, "README.md"), "reliability sandbox\n");
+  writeFileSync11(join27(dir, "README.md"), "reliability sandbox\n");
   git2("add", "README.md");
   git2("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "base");
   return dir;
@@ -39159,7 +39483,7 @@ async function runReliability(opts) {
   models = opts.models ?? {};
   const agents = opts.agents.filter((a) => resolveBinary(BINS[a]));
   for (const a of opts.agents) if (!agents.includes(a)) opts.out(`${a}: SKIP (CLI "${BINS[a]}" not installed)`);
-  const home = mkdtempSync3(join25(tmpdir2(), "agent-bridge-rel-home-"));
+  const home = mkdtempSync3(join27(tmpdir2(), "agent-bridge-rel-home-"));
   const results = [];
   const record2 = (o) => {
     results.push(o);
@@ -39187,7 +39511,7 @@ async function runReliability(opts) {
         await timed(`${agent} read-only is enforced`, async () => {
           const dir = repo();
           await run(agent, "Create a file named should-not-exist.txt containing the word hi. Then reply done.", dir, "read", opts.log);
-          const exists = existsSync11(join25(dir, "should-not-exist.txt"));
+          const exists = existsSync11(join27(dir, "should-not-exist.txt"));
           return { pass: !exists, detail: exists ? "the file WAS created despite read-only access" : "no file created" };
         })
       );
@@ -39199,7 +39523,7 @@ async function runReliability(opts) {
           const base = { prompt: "Create a file named created.txt containing the word hello. Then reply done.", cwd: wt.cwd, sessionId: null, timeoutSec: RUN_TIMEOUT_SEC, log: opts.log, model: models[agent] ?? null, onProgress: (m) => steps.push(m) };
           const r = agent === "codex" ? await delegateToCodex({ ...base, bin: BINS.codex, sandbox: "workspace-write" }) : agent === "claude" ? await delegateToClaude({ ...base, bin: BINS.claude, permissionMode: "acceptEdits" }) : await delegateToOpencode({ ...base, bin: BINS.opencode, autoApprove: true });
           const outcome = await finishWorktree(wt, "reliability edit", opts.log);
-          const leaked = existsSync11(join25(dir, "created.txt"));
+          const leaked = existsSync11(join27(dir, "created.txt"));
           const pass = outcome.diffStat.includes("created.txt") && !leaked;
           return {
             pass,
@@ -39225,7 +39549,7 @@ async function runReliability(opts) {
             opts.log
           );
           if (r === null) return { pass: true, detail: "SKIP (not available: see README, permission requests)" };
-          const exists = existsSync11(join25(dir, "asked.txt"));
+          const exists = existsSync11(join27(dir, "asked.txt"));
           return {
             pass: asked.length > 0 && exists === allow,
             detail: `asked ${asked.length}x [${asked.join(" | ")}], file ${exists ? "created" : "not created"}`
@@ -39273,8 +39597,8 @@ async function runReliability(opts) {
       });
     }
   } finally {
-    for (const r of repos) rmSync8(r, { recursive: true, force: true, maxRetries: 3 });
-    rmSync8(home, { recursive: true, force: true, maxRetries: 3 });
+    for (const r of repos) rmSync9(r, { recursive: true, force: true, maxRetries: 3 });
+    rmSync9(home, { recursive: true, force: true, maxRetries: 3 });
   }
   const passed = results.filter((r) => r.pass).length;
   opts.out(`
@@ -39283,9 +39607,9 @@ ${passed}/${results.length} passed`);
 }
 
 // src/cli/smoke.ts
-import { mkdtempSync as mkdtempSync4, rmSync as rmSync9 } from "node:fs";
+import { mkdtempSync as mkdtempSync4, rmSync as rmSync10 } from "node:fs";
 import { tmpdir as tmpdir3 } from "node:os";
-import { join as join26 } from "node:path";
+import { join as join28 } from "node:path";
 var TESTED_VERSIONS = {
   claude: "2.1.283",
   codex: "0.157.1",
@@ -39305,7 +39629,7 @@ async function version2(bin, log) {
   }
 }
 async function runSmoke(opts) {
-  const dir = mkdtempSync4(join26(tmpdir3(), "agent-bridge-smoke-"));
+  const dir = mkdtempSync4(join28(tmpdir3(), "agent-bridge-smoke-"));
   const bins = { claude: DEFAULT_CLAUDE_BIN, codex: DEFAULT_CODEX_BIN, opencode: DEFAULT_OPENCODE_BIN };
   let failures = 0;
   try {
@@ -39346,17 +39670,17 @@ async function runSmoke(opts) {
       }
     }
   } finally {
-    rmSync9(dir, { recursive: true, force: true });
+    rmSync10(dir, { recursive: true, force: true });
   }
   return failures ? 1 : 0;
 }
 
 // src/core/worktree-cleanup.ts
-import { existsSync as existsSync12, lstatSync as lstatSync2, readdirSync as readdirSync8, rmdirSync, unlinkSync as unlinkSync2 } from "node:fs";
-import { join as join27, resolve as resolve6, toNamespacedPath as toNamespacedPath2 } from "node:path";
+import { existsSync as existsSync12, lstatSync as lstatSync2, readdirSync as readdirSync9, rmdirSync as rmdirSync2, unlinkSync as unlinkSync2 } from "node:fs";
+import { join as join29, resolve as resolve6, toNamespacedPath as toNamespacedPath2 } from "node:path";
 function readJobs(home) {
   try {
-    return readStore(join27(home, JOBS_FILE));
+    return readStore(join29(home, JOBS_FILE));
   } catch {
     return [];
   }
@@ -39365,14 +39689,14 @@ var samePath = (a, b) => process.platform === "win32" ? resolve6(a).toLowerCase(
 function unlinkLinks(dir) {
   dir = toNamespacedPath2(resolve6(dir));
   let count = 0;
-  for (const entry of readdirSync8(dir, { withFileTypes: true })) {
-    const path = join27(dir, entry.name);
+  for (const entry of readdirSync9(dir, { withFileTypes: true })) {
+    const path = join29(dir, entry.name);
     const link = entry.isSymbolicLink() || (entry.isDirectory() || !entry.isFile()) && lstatSync2(path).isSymbolicLink();
     if (link) {
       try {
         unlinkSync2(path);
       } catch {
-        rmdirSync(path);
+        rmdirSync2(path);
       }
       count++;
     } else if (entry.isDirectory()) count += unlinkLinks(path);
@@ -39383,12 +39707,12 @@ function onlyFoldersAndLinks(dir) {
   dir = toNamespacedPath2(resolve6(dir));
   let entries;
   try {
-    entries = readdirSync8(dir, { withFileTypes: true });
+    entries = readdirSync9(dir, { withFileTypes: true });
   } catch {
     return false;
   }
   return entries.every((e) => {
-    const path = join27(dir, e.name);
+    const path = join29(dir, e.name);
     if (e.isSymbolicLink() || lstatSync2(path).isSymbolicLink()) return true;
     return e.isDirectory() && onlyFoldersAndLinks(path);
   });
@@ -39405,7 +39729,7 @@ async function mergedInto(branch, targets, cwd, trust, log) {
 }
 async function inspect(path, jobs, apply, log) {
   const entry = (branch2, action, reason) => ({ path, branch: branch2, action, reason });
-  if (!existsSync12(toNamespacedPath2(join27(path, ".git")))) {
+  if (!existsSync12(toNamespacedPath2(join29(path, ".git")))) {
     if (!onlyFoldersAndLinks(path)) return entry(null, "kept", "not a git worktree (no .git), and it holds files");
     const why2 = "leftover of a removed worktree: no .git, only empty folders and links";
     if (!apply) return entry(null, "would remove", why2);
@@ -39457,28 +39781,28 @@ async function inspect(path, jobs, apply, log) {
   }
 }
 async function cleanupWorktrees(opts) {
-  const dir = join27(opts.home, "worktrees");
+  const dir = join29(opts.home, "worktrees");
   if (!existsSync12(dir)) return [];
   const jobs = readJobs(opts.home);
   const out2 = [];
-  for (const d of readdirSync8(dir, { withFileTypes: true })) {
-    if (!d.isDirectory() || lstatSync2(join27(dir, d.name)).isSymbolicLink()) continue;
-    const path = join27(dir, d.name);
+  for (const d of readdirSync9(dir, { withFileTypes: true })) {
+    if (!d.isDirectory() || lstatSync2(join29(dir, d.name)).isSymbolicLink()) continue;
+    const path = join29(dir, d.name);
     out2.push(await inspect(path, jobs, opts.apply, opts.log).catch((err) => ({ path, branch: null, action: "kept", reason: `cannot read it: ${err.message.split("\n")[0]}` })));
   }
   return out2;
 }
 
 // src/mcp/job-runner.ts
-import { randomUUID as randomUUID11 } from "node:crypto";
+import { randomUUID as randomUUID12 } from "node:crypto";
 
 // src/mcp/delegate-run.ts
-import { randomUUID as randomUUID10 } from "node:crypto";
-import { isAbsolute as isAbsolute3, join as join29, relative as relative2, resolve as resolve7 } from "node:path";
+import { randomUUID as randomUUID11 } from "node:crypto";
+import { isAbsolute as isAbsolute3, join as join31, relative as relative2, resolve as resolve7 } from "node:path";
 
 // src/core/resource-slots.ts
-import { mkdirSync as mkdirSync14 } from "node:fs";
-import { join as join28 } from "node:path";
+import { mkdirSync as mkdirSync16 } from "node:fs";
+import { join as join30 } from "node:path";
 import { DatabaseSync as DatabaseSync3 } from "node:sqlite";
 import { setTimeout as delay2 } from "node:timers/promises";
 var SLOT_OWNER_ENV = "AGENT_BRIDGE_SLOT_OWNER";
@@ -39500,8 +39824,8 @@ var ResourceSlots = class {
   constructor(home, isAlive = alive2, now = Date.now) {
     this.isAlive = isAlive;
     this.now = now;
-    mkdirSync14(home, { recursive: true });
-    this.db = new DatabaseSync3(join28(home, SLOT_DB_NAME));
+    mkdirSync16(home, { recursive: true });
+    this.db = new DatabaseSync3(join30(home, SLOT_DB_NAME));
     this.db.exec(`PRAGMA busy_timeout = ${LOCK_WAIT_MS};
       CREATE TABLE IF NOT EXISTS slots (
         ticket INTEGER PRIMARY KEY AUTOINCREMENT, resource TEXT NOT NULL, id TEXT NOT NULL,
@@ -39680,7 +40004,7 @@ var DELEGATED_JOB_NOTE = "(agent-bridge: you are a delegated job. Report what yo
 var HANDOFF_DECLINED = "Declined by agent-bridge: delegated jobs do not write the project handoff. Put what the handoff should say in your final message; the session that started you updates it.";
 var PARENT_APPROVAL_TIMEOUT_MS = 10 * 6e4;
 function isBridgeWorktree(dir, home) {
-  return isInside(dir, join29(home, "worktrees")) && resolve7(dir) !== resolve7(join29(home, "worktrees"));
+  return isInside(dir, join31(home, "worktrees")) && resolve7(dir) !== resolve7(join31(home, "worktrees"));
 }
 function isInside(child, parent) {
   const rel = relative2(resolve7(parent), resolve7(child));
@@ -39708,7 +40032,7 @@ async function runDelegate(rc, target, a, signal, onProgress, background, job) {
   const cwd = a.cwd || rc.cwd();
   a = worktreeArgs(target, a, cfg, cwd, rc.home);
   const access = a.access;
-  const wt = a._worktree ?? (a.worktree ? await createWorktree({ cwd, home: rc.home, jobId: randomUUID10().slice(0, 8), log: dlog }) : null);
+  const wt = a._worktree ?? (a.worktree ? await createWorktree({ cwd, home: rc.home, jobId: randomUUID11().slice(0, 8), log: dlog }) : null);
   const workdir = wt?.cwd ?? cwd;
   const watchChanges = !wt && (access === "edit" || access === "ask" && target === "codex");
   const before = watchChanges ? await gitChangeSnapshot(workdir, dlog) : null;
@@ -39717,9 +40041,22 @@ async function runDelegate(rc, target, a, signal, onProgress, background, job) {
   const asked = [];
   let relayCalls = 0;
   const codexHash = target === "codex" ? codexPermissionHookHash() : null;
+  const askUser = rc.askUser ? async (r) => {
+    if (!job) return rc.askUser(r);
+    const decision = await waitForApproval(
+      job,
+      `${r.tool}: ${r.detail}`,
+      PARENT_APPROVAL_TIMEOUT_MS,
+      (body) => rc.jobs?.fromSubagent(job, body, null),
+      dlog,
+      rc.home,
+      r,
+      () => rc.askUser(r)
+    );
+    return decision.allow ? { allow: true } : { allow: false, message: decision.reason.replace(/^deny:\s*/, "") };
+  } : void 0;
   try {
-    if (access === "ask" && rc.askUser) {
-      const askUser = rc.askUser;
+    if (access === "ask" && askUser) {
       const decide = async (r) => {
         relayCalls++;
         const d = await askUser(r);
@@ -39749,12 +40086,12 @@ async function runDelegate(rc, target, a, signal, onProgress, background, job) {
     if (wiring) d = await wiring.onPermission(r);
     else if (job && !job.foreground && rc.jobs) {
       const hint = approvalHint(r);
-      const a2 = await rc.jobs.askParent(job, `${r.tool.replace(/^mcp:/, "MCP server ")}: ${r.detail}${hint}`, PARENT_APPROVAL_TIMEOUT_MS);
+      const a2 = await rc.jobs.askParent(job, `${r.tool.replace(/^mcp:/, "MCP server ")}: ${r.detail}${hint}`, PARENT_APPROVAL_TIMEOUT_MS, r);
       d = a2.allow ? { allow: true } : { allow: false, message: `Denied by supervisor ${me}: ${a2.reason || "no reason supplied"}` };
       asked.push(`${d.allow ? "allowed" : "denied"} by ${me}: ${r.tool} ${r.detail.slice(0, 80)}`);
-    } else if (rc.askUser) {
+    } else if (askUser) {
       relayCalls++;
-      d = await rc.askUser(r);
+      d = await askUser(r);
       asked.push(`${d.allow ? "allowed" : "denied"}: ${r.tool} ${r.detail.slice(0, 80)}`);
     } else d = r.tool.startsWith("mcp:") && access === "edit" ? { allow: true } : { allow: false, message: "No one to ask in this session." };
     if (d.allow && r.tool.startsWith("mcp:")) allowedServers.add(r.tool);
@@ -39764,7 +40101,7 @@ async function runDelegate(rc, target, a, signal, onProgress, background, job) {
   try {
     feed = startRunFeed({
       home: rc.home,
-      name: `${target}-${randomUUID10().slice(0, 8)}`,
+      name: `${target}-${randomUUID11().slice(0, 8)}`,
       header: `${target}${a.model ? ` (${a.model}${a.effort ? `, effort ${a.effort}` : ""})` : a.effort ? ` (effort ${a.effort})` : ""} in ${workdir}, access ${access ?? "default"}, by ${me}${a.session_id ? `, continues ${a.session_id}` : ""}
 ${a.prompt}
 ---`,
@@ -39862,7 +40199,7 @@ ${a.prompt}
     });
     void steering?.rename?.(title).catch((err) => dlog.warn("could not rename the Codex thread", { err: err.message }));
   };
-  const slotOwner2 = { id: `${a._job ?? target}-${randomUUID10()}`, pid: process.pid };
+  const slotOwner2 = { id: `${a._job ?? target}-${randomUUID11()}`, pid: process.pid };
   let slots = null;
   let slotTimer;
   let res;
@@ -39932,6 +40269,7 @@ ${a.prompt}
 Its worktree (with any partial work) is ${wt.path} on branch ${wt.branch}.`;
     throw err;
   } finally {
+    if (job) denyPendingApprovals(job);
     clearInterval(slotTimer);
     if (slots) {
       try {
@@ -39993,9 +40331,9 @@ ${notes.join("\n\n")}` : res.text };
 }
 
 // src/mcp/job-host.ts
-import { spawn as spawn9 } from "node:child_process";
-import { mkdirSync as mkdirSync15, readdirSync as readdirSync9, statSync as statSync6 } from "node:fs";
-import { join as join30 } from "node:path";
+import { spawn as spawn10 } from "node:child_process";
+import { mkdirSync as mkdirSync17, readdirSync as readdirSync10, statSync as statSync7 } from "node:fs";
+import { join as join32 } from "node:path";
 var RUNNERS_DIR_NAME = "jobs";
 var JOB_PEER_PREFIX = "job:";
 var CONTROL_CONVERSATION_PREFIX = "jobctl-";
@@ -40003,7 +40341,7 @@ var RUNNER_HEARTBEAT_MS = 15e3;
 var STALE_MS = 6 * RUNNER_HEARTBEAT_MS;
 var KEEP_FILES_MS = 7 * 24 * 60 * 60 * 1e3;
 function runnerStatePath(home, id) {
-  return join30(home, RUNNERS_DIR_NAME, `${id}.json`);
+  return join32(home, RUNNERS_DIR_NAME, `${id}.json`);
 }
 function writeRunnerState(home, id, state) {
   const path = runnerStatePath(home, id);
@@ -40085,7 +40423,7 @@ async function runJobRunner(specFile) {
   log.info("job runner started", { pid: process.pid, target, owner });
   let chain = Promise.resolve(true);
   const deliver = async (body, replyTo, note = false) => {
-    const dedupeKey = randomUUID11();
+    const dedupeKey = randomUUID12();
     for (let attempt = 1; attempt <= SEND_ATTEMPTS; attempt++) {
       try {
         await node2.send({ to: owner, body, conversationId: `job-${job.id}${note ? NOTE_CONVERSATION_SUFFIX : ""}`, ...replyTo ? { replyTo } : {}, dedupeKey }, { quiet: true });
@@ -40099,8 +40437,8 @@ async function runJobRunner(specFile) {
   };
   const post = (body, replyTo = null, note = false) => chain = chain.then(() => deliver(body, replyTo, note));
   const sink = {
-    askParent: (j, question, timeoutMs) => {
-      const answer = waitForApproval(j, question, timeoutMs, (body) => void post(body), log);
+    askParent: (j, question, timeoutMs, request2) => {
+      const answer = waitForApproval(j, question, timeoutMs, (body) => void post(body), log, home, request2);
       save();
       return answer.finally(() => save());
     },
@@ -40140,7 +40478,7 @@ async function runJobRunner(specFile) {
       if (job.pendingApproval) {
         const answer = job.pendingApproval;
         job.pendingApproval = null;
-        answer(c.body);
+        answer(c.body, `session ${owner}`);
       } else if (job.live) {
         job.awaitingAnswer = true;
         job.live.post(c.body);
@@ -40198,6 +40536,7 @@ async function runJobRunner(specFile) {
     }
     const report = jobReport(job, status, Math.round((Date.now() - job.startedAt) / 1e3), text, cause);
     log.info("job turn finished", { status, sessionId: job.sessionId, cause });
+    notifyJobEvent(home, status === "done" ? "finish" : "fail", log);
     if (job.queue.length && job.sessionId && !job.controller.signal.aborted) {
       const queued = job.queue.splice(0).join("\n\n");
       void post(`${report}
@@ -40630,7 +40969,7 @@ async function main(argv) {
       const apply = (rest.includes("--yes") || rest.includes("-y")) && !rest.includes("--dry-run");
       const entries = await cleanupWorktrees({ home, apply, log });
       if (!entries.length) {
-        out(t("cli.cleanup.none", { dir: join31(home, "worktrees") }));
+        out(t("cli.cleanup.none", { dir: join33(home, "worktrees") }));
         return 0;
       }
       for (const e of entries) out(t("cli.cleanup.line", { action: e.action.padEnd(12), path: e.path, branch: e.branch ?? "-", reason: e.reason }));
@@ -40640,7 +40979,7 @@ async function main(argv) {
       return count("failed") ? 1 : 0;
     }
     case "paths":
-      out(t("cli.paths", { home, logs: join31(home, LOG_DIR_NAME), db: resolveDbPath(home), pipe: pipe2 }));
+      out(t("cli.paths", { home, logs: join33(home, LOG_DIR_NAME), db: resolveDbPath(home), pipe: pipe2 }));
       return 0;
     case "help":
     case "--help":

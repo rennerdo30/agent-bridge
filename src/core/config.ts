@@ -22,6 +22,9 @@ const CODEX_SANDBOXES: readonly CodexSandbox[] = ["read-only", "workspace-write"
 export type ClaudePermissionMode = "default" | "manual" | "acceptEdits" | "plan" | "auto" | "dontAsk" | "bypassPermissions";
 const CLAUDE_PERMISSION_MODES: readonly ClaudePermissionMode[] = ["default", "manual", "acceptEdits", "plan", "auto", "dontAsk", "bypassPermissions"];
 
+export interface NotificationConfig { approvals: boolean; finish: boolean; fail: boolean }
+const DEFAULT_NOTIFICATIONS: NotificationConfig = { approvals: true, finish: true, fail: true };
+
 export interface BridgeConfig {
   /** Peer name; defaults to "<agent>-<cwd basename>". */
   name: string | null;
@@ -59,6 +62,8 @@ export interface BridgeConfig {
   /** Run the web dashboard inside whichever session hosts the bridge. */
   dashboard: boolean;
   dashboardPort: number;
+  /** Desktop notifications contain only fixed event text, never job commands or reports. */
+  notifications: NotificationConfig;
   /** Broker federation is opt-in and read only when the broker starts. */
   network: NetworkConfig;
 }
@@ -86,6 +91,7 @@ export const DEFAULT_CONFIG: BridgeConfig = {
   opencodeAutoApprove: false,
   dashboard: true,
   dashboardPort: DEFAULT_DASHBOARD_PORT,
+  notifications: DEFAULT_NOTIFICATIONS,
   network: DEFAULT_NETWORK_CONFIG,
 };
 
@@ -99,6 +105,18 @@ function parseBool(v: unknown): boolean | undefined {
   if (TRUE_VALUES.has(s)) return true;
   if (FALSE_VALUES.has(s)) return false;
   return undefined;
+}
+
+function notifications(v: unknown): NotificationConfig | undefined {
+  if (!isRecord(v)) return undefined;
+  const out = { ...DEFAULT_NOTIFICATIONS };
+  for (const key of Object.keys(out) as (keyof NotificationConfig)[]) {
+    if (v[key] === undefined) continue;
+    const value = parseBool(v[key]);
+    if (value === undefined) return undefined;
+    out[key] = value;
+  }
+  return out;
 }
 
 function parseIntInRange(v: unknown, min: number, max: number): number | undefined {
@@ -223,6 +241,7 @@ export function loadConfig(home: string, agent: AgentKind, log: Logger, env: Nod
     opencodeAutoApprove: pick("opencodeAutoApprove", null, parseBool) ?? d.opencodeAutoApprove,
     dashboard: pick("dashboard", ENV.dashboard, parseBool) ?? d.dashboard,
     dashboardPort: pick("dashboardPort", null, (v) => parseIntInRange(v, 1, 65_535)) ?? d.dashboardPort,
+    notifications: pick("notifications", null, notifications) ?? d.notifications,
     network: pick("network", null, parseNetworkConfig) ?? d.network,
   };
   log.debug("effective config", { ...cfg });

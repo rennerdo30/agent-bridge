@@ -24,6 +24,7 @@ import { planFirewall, detectFirewall, applyWindowsFirewall } from "../network/f
 import { parseNetworkAddress } from "../network/address.js";
 import type { Op, RequestMap } from "../core/protocol.js";
 import { readJsonStore } from "../core/json-store.js";
+import { answerPendingApproval, listPendingApprovals, MAX_APPROVAL_REASON_CHARS } from "../core/relay.js";
 
 /**
  * `agent-bridge ui`: a local dashboard for sessions, delegated runs and messages.
@@ -337,6 +338,18 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
     if (!tokensEqual(cookieSecret(req), secret)) return send(res, 403, "Open the link printed by `agent-bridge ui`.", "text/plain; charset=utf-8");
 
     if (req.method === "GET" && url.pathname === "/") return send(res, 200, UI_PAGE, "text/html; charset=utf-8");
+    if (req.method === "GET" && url.pathname === "/api/approvals") return send(res, 200, { approvals: listPendingApprovals(opts.home) });
+    const approvalMatch = /^\/api\/approvals\/([0-9a-f-]{36})$/.exec(url.pathname);
+    if (req.method === "POST" && approvalMatch) {
+      if (req.headers["x-agent-bridge"] !== "1") return send(res, 403, { error: "missing header" });
+      let body;
+      try { body = await readJson(req); } catch { return send(res, 400, { error: "Expected a JSON object." }); }
+      if (!body || Array.isArray(body) || (body.decision !== "allow" && body.decision !== "deny") || (body.reason !== undefined && (typeof body.reason !== "string" || body.reason.length > MAX_APPROVAL_REASON_CHARS))) return send(res, 400, { error: "A decision of allow or deny and an optional reason are required." });
+      const outcome = await answerPendingApproval(opts.home, approvalMatch[1]!, { decision: body.decision, ...(typeof body.reason === "string" ? { reason: body.reason } : {}) });
+      if (outcome === "expired") return send(res, 409, { outcome, error: "This approval was already answered, expired or cancelled." });
+      if (outcome === "unavailable") return send(res, 504, { outcome, error: "The approval's owning process is unavailable. Refresh before answering again." });
+      return send(res, 200, { outcome, id: approvalMatch[1], answeredBy: "dashboard", decision: body.decision });
+    }
     if (req.method === "GET" && url.pathname === "/api/state") {
       const { brokerPid, peers } = await brokerPeers(opts.pipe, token, opts.log);
       const runs = listRuns(opts.home);
