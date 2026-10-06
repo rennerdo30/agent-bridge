@@ -7258,7 +7258,7 @@ var QUEUED_MAIL_MAX_AGE_MS = 24 * 60 * 60 * 1e3;
 var DEFAULT_MAX_HOPS = 6;
 var DEFAULT_DELEGATE_TIMEOUT_SEC = 3600;
 var MAX_JOB_TIMEOUT_SEC = 24 * 60 * 60;
-var JOBS_FILE2 = "jobs.json";
+var JOBS_FILE = "jobs.json";
 var DEFAULT_CLAUDE_BIN = "claude";
 var DEFAULT_CODEX_BIN = "codex";
 var DEFAULT_OPENCODE_BIN = "opencode";
@@ -31297,7 +31297,7 @@ async function deriveJobOutcome(home, job, log, opts = {}) {
   return { delivery: resultDelivery(home, job, opts.before ?? Number.MAX_SAFE_INTEGER), merge: merge2 };
 }
 async function listJobOutcomes(home, log) {
-  const jobs = readStore(join22(home, JOBS_FILE2), log, true);
+  const jobs = readStore(join22(home, JOBS_FILE), log, true);
   const out = {};
   for (const job of jobs) {
     if (job.status !== "done" && job.status !== "failed") continue;
@@ -46902,7 +46902,7 @@ var BridgeNode = class extends EventEmitter2 {
       this.log.error("cannot open message store", { err, db: this.opts.dbPath });
       throw err;
     }
-    const broker = new Broker(this.opts.pipePath, store, this.log.child("broker"), this.opts.token, Date.now, join40(dirname14(this.opts.dbPath), JOBS_FILE2), this.opts.network);
+    const broker = new Broker(this.opts.pipePath, store, this.log.child("broker"), this.opts.token, Date.now, join40(dirname14(this.opts.dbPath), JOBS_FILE), this.opts.network);
     try {
       await broker.listen();
       this.broker = broker;
@@ -50519,7 +50519,7 @@ function doctor(home, now = Date.now()) {
         continue;
       }
       const value = JSON.parse(readFileSync22(path, "utf8"));
-      const jobs = basename9(path) === JOBS_FILE2 || path.includes("jobs.json.overflow.json-") || /^jobs-.*\.json$/.test(basename9(path));
+      const jobs = basename9(path) === JOBS_FILE || path.includes("jobs.json.overflow.json-") || /^jobs-.*\.json$/.test(basename9(path));
       if (jobs ? !(Array.isArray(value) || isRecord(value) && Array.isArray(value.jobs)) : !isRecord(value)) {
         finding("error", "json-shape", path, jobs ? "Expected a jobs array or jobs envelope" : "Expected a JSON object");
         continue;
@@ -50632,8 +50632,8 @@ function readRunLogs(home) {
 function readHistoryJobs(home) {
   const out = /* @__PURE__ */ new Map();
   const archive = join47(home, "archive");
-  const archived = files(archive).filter((name) => name.startsWith(`${JOBS_FILE2}.`) || name.startsWith(`${JOBS_FILE2}-`) || /^jobs-.*\.json$/.test(name)).sort();
-  const backups = files(home).filter((name) => name.startsWith(`${JOBS_FILE2}.backup-`) || name === `${JOBS_FILE2}.overflow.json`).sort();
+  const archived = files(archive).filter((name) => name.startsWith(`${JOBS_FILE}.`) || name.startsWith(`${JOBS_FILE}-`) || /^jobs-.*\.json$/.test(name)).sort();
+  const backups = files(home).filter((name) => name.startsWith(`${JOBS_FILE}.backup-`) || name === `${JOBS_FILE}.overflow.json`).sort();
   const snapshots = [...archived.map((name) => join47(archive, name)), ...backups.map((name) => join47(home, name))];
   const snapshotTime = (file2) => {
     const stamp2 = /(?:jobs-|\.backup-|\.overflow\.json-|jobs\.json-)(\d+)/.exec(file2)?.[1];
@@ -50645,7 +50645,7 @@ function readHistoryJobs(home) {
     }
   };
   snapshots.sort((a, b) => snapshotTime(a) - snapshotTime(b) || (a < b ? -1 : a > b ? 1 : 0));
-  for (const candidate of [...snapshots, join47(home, JOBS_FILE2)]) {
+  for (const candidate of [...snapshots, join47(home, JOBS_FILE)]) {
     const file2 = safeFile(home, candidate);
     const value = file2 ? readHistoryJson(file2) : null;
     const jobs = Array.isArray(value) ? value : isRecord(value) && Array.isArray(value.jobs) ? value.jobs : [];
@@ -51534,7 +51534,7 @@ async function startServer(argv = process.argv.slice(2)) {
     const parentJob = process.env[PARENT_JOB_ENV];
     const rootSession = process.env[ROOT_SESSION_ENV];
     const coordinator = ctx.childInbox = new LocalCoordinator(parentJob, rootSession);
-    ctx.jobs = new JobManager(coordinator, log.child("jobs"), join51(home, JOBS_FILE2), cfg.maxJobs, {
+    ctx.jobs = new JobManager(coordinator, log.child("jobs"), join51(home, JOBS_FILE), cfg.maxJobs, {
       parentJob,
       rootSession,
       rootName: process.env[ROOT_NAME_ENV] || ctx.parent.name,
@@ -51542,7 +51542,7 @@ async function startServer(argv = process.argv.slice(2)) {
     });
   }
   if (node2) {
-    ctx.jobs = new JobManager(node2, log.child("jobs"), join51(home, JOBS_FILE2), cfg.maxJobs);
+    ctx.jobs = new JobManager(node2, log.child("jobs"), join51(home, JOBS_FILE), cfg.maxJobs);
     node2.on("replaced", () => ctx.jobs?.setDormant(true));
     node2.on("reclaimed", () => ctx.jobs?.setDormant(false));
     const cli = process.env[ENV.jobRunner] === "0" ? null : bundledCli();

@@ -431,7 +431,7 @@ describe("cleanup", () => {
     writeFileSync(join(repo, ".git", "info", "exclude"), "owner-notes.txt\n");
     const wt = await createWorktree({ cwd: repo, home, jobId: "ignored-owner", log: nullLogger });
     writeFileSync(join(wt.path, "owner-notes.txt"), "unique owner data\n");
-    const entries = await cleanupWorktrees({ home, apply: true, log: nullLogger });
+    const entries = await cleanupWorktrees({ cwd: repo, home, all: true, apply: true, log: nullLogger });
     expect(entries.find((e) => e.path === wt.path)?.action).toBe("kept");
     expect(readFileSync(join(wt.path, "owner-notes.txt"), "utf8")).toBe("unique owner data\n");
     expect(git("branch", "--list", wt.branch)).toContain(wt.branch);

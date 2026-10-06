@@ -29,6 +29,13 @@ const REVIEWED_REMOVALS: Record<string, string[]> = {
   "core/resource-slots.ts": ['"DELETE FROM slots WHERE expiresAt <= ?"', '"DELETE FROM slots WHERE pid = ?"', '`DELETE FROM slots WHERE id = ? AND pid = ?${resource ? " AND resource = ?" : ""}`'],
   "core/sqlite-maintenance.ts": ["`DELETE FROM ${table} WHERE ${where}`"],
   "core/sqlite-migrations.ts": ["`DELETE FROM ${quoted}`"],
+  // Temporary working folder (mkdtempSync) of the low-cost model that answers search questions.
+  "core/history-answer.ts": ["rmSync(cwd, { recursive: true, force: true })"],
+  // Derived search index only (pending queue, full rebuild by reindex); source messages, logs and transcripts are read-only.
+  "core/history.ts": ['"DELETE FROM history_pending WHERE id=? AND recipient=?"', '"DELETE FROM history_documents; DELETE FROM history_tags; DELETE FROM history_cursors; DELETE FROM history_files;"'],
+  // Temporary duplicates after whole-file SHA-256 verification and exclusive publication of the final file; truncation trims
+  // only unverified tails of private .part files and their checksum journal on resume. Received files are never removed.
+  "network/transfers.ts": ["unlink(part)", "unlink(verified)", "unlink(verifiedPath)", "unlink(verified)", "file.truncate(verified)", "journal.truncate(chunks * SHA_RECORD_BYTES)"],
 };
 function sources(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => entry.isDirectory() ? sources(join(dir, entry.name)) : entry.name.endsWith(".ts") ? [join(dir, entry.name)] : []);

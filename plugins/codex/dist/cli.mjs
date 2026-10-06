@@ -7763,7 +7763,7 @@ var QUEUED_MAIL_MAX_AGE_MS = 24 * 60 * 60 * 1e3;
 var DEFAULT_MAX_HOPS = 6;
 var DEFAULT_DELEGATE_TIMEOUT_SEC = 3600;
 var MAX_JOB_TIMEOUT_SEC = 24 * 60 * 60;
-var JOBS_FILE2 = "jobs.json";
+var JOBS_FILE = "jobs.json";
 var DEFAULT_CLAUDE_BIN = "claude";
 var DEFAULT_CODEX_BIN = "codex";
 var DEFAULT_OPENCODE_BIN = "opencode";
@@ -36804,7 +36804,7 @@ var BridgeNode = class extends EventEmitter2 {
       this.log.error("cannot open message store", { err, db: this.opts.dbPath });
       throw err;
     }
-    const broker = new Broker(this.opts.pipePath, store, this.log.child("broker"), this.opts.token, Date.now, join39(dirname14(this.opts.dbPath), JOBS_FILE2), this.opts.network);
+    const broker = new Broker(this.opts.pipePath, store, this.log.child("broker"), this.opts.token, Date.now, join39(dirname14(this.opts.dbPath), JOBS_FILE), this.opts.network);
     try {
       await broker.listen();
       this.broker = broker;
@@ -40342,7 +40342,7 @@ function doctor(home, now = Date.now()) {
         continue;
       }
       const value = JSON.parse(readFileSync23(path, "utf8"));
-      const jobs = basename9(path) === JOBS_FILE2 || path.includes("jobs.json.overflow.json-") || /^jobs-.*\.json$/.test(basename9(path));
+      const jobs = basename9(path) === JOBS_FILE || path.includes("jobs.json.overflow.json-") || /^jobs-.*\.json$/.test(basename9(path));
       if (jobs ? !(Array.isArray(value) || isRecord(value) && Array.isArray(value.jobs)) : !isRecord(value)) {
         finding("error", "json-shape", path, jobs ? "Expected a jobs array or jobs envelope" : "Expected a JSON object");
         continue;
@@ -40398,7 +40398,7 @@ function archiveHome(home, confirmed, now = Date.now()) {
       }
     }
     let jobs = 0;
-    const path = join44(home, JOBS_FILE2);
+    const path = join44(home, JOBS_FILE);
     if (existsSync19(path)) {
       const unlock = acquireLock(`${path}.lock`);
       try {
@@ -40510,8 +40510,8 @@ function readRunLogs(home) {
 function readHistoryJobs(home) {
   const out2 = /* @__PURE__ */ new Map();
   const archive = join46(home, "archive");
-  const archived = files(archive).filter((name) => name.startsWith(`${JOBS_FILE2}.`) || name.startsWith(`${JOBS_FILE2}-`) || /^jobs-.*\.json$/.test(name)).sort();
-  const backups = files(home).filter((name) => name.startsWith(`${JOBS_FILE2}.backup-`) || name === `${JOBS_FILE2}.overflow.json`).sort();
+  const archived = files(archive).filter((name) => name.startsWith(`${JOBS_FILE}.`) || name.startsWith(`${JOBS_FILE}-`) || /^jobs-.*\.json$/.test(name)).sort();
+  const backups = files(home).filter((name) => name.startsWith(`${JOBS_FILE}.backup-`) || name === `${JOBS_FILE}.overflow.json`).sort();
   const snapshots = [...archived.map((name) => join46(archive, name)), ...backups.map((name) => join46(home, name))];
   const snapshotTime = (file2) => {
     const stamp2 = /(?:jobs-|\.backup-|\.overflow\.json-|jobs\.json-)(\d+)/.exec(file2)?.[1];
@@ -40523,7 +40523,7 @@ function readHistoryJobs(home) {
     }
   };
   snapshots.sort((a, b) => snapshotTime(a) - snapshotTime(b) || (a < b ? -1 : a > b ? 1 : 0));
-  for (const candidate of [...snapshots, join46(home, JOBS_FILE2)]) {
+  for (const candidate of [...snapshots, join46(home, JOBS_FILE)]) {
     const file2 = safeFile(home, candidate);
     const value = file2 ? readHistoryJson(file2) : null;
     const jobs = Array.isArray(value) ? value : isRecord(value) && Array.isArray(value.jobs) ? value.jobs : [];
@@ -40712,7 +40712,7 @@ async function deriveJobOutcome(home, job, log, opts = {}) {
   return { delivery: resultDelivery(home, job, opts.before ?? Number.MAX_SAFE_INTEGER), merge: merge2 };
 }
 async function listJobOutcomes(home, log) {
-  const jobs = readStore(join48(home, JOBS_FILE2), log, true);
+  const jobs = readStore(join48(home, JOBS_FILE), log, true);
   const out2 = {};
   for (const job of jobs) {
     if (job.status !== "done" && job.status !== "failed") continue;
@@ -44915,7 +44915,7 @@ var StdioClientTransport = class {
 
 // src/cli/reliability-live.ts
 var SERVER_BUNDLE = join51("dist", "server.mjs");
-var JOBS_FILE3 = "jobs.json";
+var JOBS_FILE2 = "jobs.json";
 var NOTE_COUNT = 12;
 var NOTES_DIR = "notes";
 var LONG_TASK = `Read the files ${NOTES_DIR}/note-01.txt to ${NOTES_DIR}/note-${String(NOTE_COUNT).padStart(2, "0")}.txt one at a time, in order. Use a separate tool call for each file; never read several files in one call. After each file, write one sentence that summarizes it before you read the next one. At the end, list all your summaries.`;
@@ -45003,7 +45003,7 @@ function alive2(pid) {
 }
 function storedJob(home, job) {
   try {
-    const all = readStore(join51(home, JOBS_FILE3));
+    const all = readStore(join51(home, JOBS_FILE2));
     return all.find((j) => j.name === job) ?? null;
   } catch {
     return null;
@@ -45202,7 +45202,7 @@ async function runLiveChecks(o) {
               const s = storedJob(home, name);
               return s?.sessionId ? s : null;
             });
-            if (!before) return { pass: false, detail: `${name} has no session in ${JOBS_FILE3} after ${SESSION_TIMEOUT_MS / 1e3}s` };
+            if (!before) return { pass: false, detail: `${name} has no session in ${JOBS_FILE2} after ${SESSION_TIMEOUT_MS / 1e3}s` };
             const all = await listProcesses();
             const tree = processTree(all, server.pid);
             const ownGroup = all.find((p) => p.pid === process.pid)?.pgid;
@@ -45224,14 +45224,14 @@ async function runLiveChecks(o) {
             server = await LiveHost.start(bundle, host, home, cwd);
             const listed = await server.listedStatus(name);
             const sent = await server.call("message_subagent", { job: name });
-            if (!/^Sent to/.test(sent.text)) return { pass: false, detail: `${JOBS_FILE3}: ${onDisk}, listed as ${listed}; message_subagent: ${short(sent.text)}` };
+            if (!/^Sent to/.test(sent.text)) return { pass: false, detail: `${JOBS_FILE2}: ${onDisk}, listed as ${listed}; message_subagent: ${short(sent.text)}` };
             const final = await server.result(name, RESULT_TIMEOUT_MS);
             const after = storedJob(home, name);
             const sameSession = after?.sessionId === kept.sessionId;
             const recovered = listed === "interrupted" || listed === "failed";
             return {
               pass: recovered && final?.status === "done" && sameSession,
-              detail: `${JOBS_FILE3}: ${onDisk}, restored as ${listed ?? "unlisted"} -> started; result ${final?.status ?? "none in time"}; session ${sameSession ? "same" : `changed ${kept.sessionId} -> ${after?.sessionId ?? "none"}`}`
+              detail: `${JOBS_FILE2}: ${onDisk}, restored as ${listed ?? "unlisted"} -> started; result ${final?.status ?? "none in time"}; session ${sameSession ? "same" : `changed ${kept.sessionId} -> ${after?.sessionId ?? "none"}`}`
             };
           });
         } finally {
@@ -45550,7 +45550,7 @@ import { existsSync as existsSync25, lstatSync as lstatSync6, realpathSync as re
 import { join as join54, resolve as resolve12, toNamespacedPath as toNamespacedPath3 } from "node:path";
 function readJobs(home) {
   try {
-    return readStore(join54(home, JOBS_FILE2), void 0, true);
+    return readStore(join54(home, JOBS_FILE), void 0, true);
   } catch {
     return [];
   }
