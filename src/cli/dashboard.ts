@@ -44,11 +44,13 @@ function processAlive(pid: number): boolean {
 }
 
 /** Is an agent-bridge dashboard answering on this port? (It returns 403 without the secret.) */
-export function probeDashboard(port: number): Promise<boolean> {
+export function probeDashboard(port: number, secret?: string): Promise<boolean> {
   return new Promise((resolve) => {
-    const req = request({ host: "127.0.0.1", port, path: "/api/state", timeout: PROBE_TIMEOUT_MS }, (res) => {
+    const req = request({ host: "127.0.0.1", port, path: secret ? `/?t=${secret}` : "/api/state", timeout: PROBE_TIMEOUT_MS }, (res) => {
       res.resume();
-      resolve(res.statusCode === 403 || res.statusCode === 200);
+      resolve(secret
+        ? res.statusCode === 302 && res.headers["set-cookie"]?.some((cookie) => cookie.startsWith(`ab_ui=${secret};`)) === true
+        : res.statusCode === 403 || res.statusCode === 200);
     });
     req.on("timeout", () => req.destroy());
     req.on("error", () => resolve(false));
@@ -66,12 +68,50 @@ function previousSecret(home: string): string | null {
 export async function findRunningDashboard(home: string): Promise<DashboardInfo | null> {
   const info = readDashboardInfo(home);
   if (!info || !processAlive(info.pid)) return null;
-  return (await probeDashboard(info.port)) ? info : null;
+  const secret = info.url.match(/[?&]t=([0-9a-f]{16,})/)?.[1];
+  if (!secret) return null;
+  return (await probeDashboard(info.port, secret)) ? info : null;
 }
 
 export interface HostedDashboard {
   info: DashboardInfo;
   close: () => Promise<void>;
+}
+
+/** Share startup attempts inside a session and recover a winner in another session's race. */
+export class DashboardController {
+  private hosted: HostedDashboard | null = null;
+  private starting: Promise<DashboardInfo> | null = null;
+  constructor(private readonly opts: { home: string; pipe: string; port: number; log: Logger }) {}
+
+  ensure(): Promise<DashboardInfo> {
+    return this.starting ??= this.open().finally(() => { this.starting = null; });
+  }
+
+  private async open(): Promise<DashboardInfo> {
+    if (this.hosted) return this.hosted.info;
+    const running = await findRunningDashboard(this.opts.home);
+    if (running) return running;
+    try {
+      this.hosted = await hostDashboard(this.opts);
+      return this.hosted.info;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "EADDRINUSE") throw err;
+      // The successful host may still be publishing dashboard.json after binding its listener.
+      for (let attempt = 0; attempt < 10; attempt++) {
+        const winner = await findRunningDashboard(this.opts.home);
+        if (winner) return winner;
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      throw err;
+    }
+  }
+
+  async close(): Promise<void> {
+    await this.starting?.catch(() => {});
+    await this.hosted?.close();
+    this.hosted = null;
+  }
 }
 
 /** Start the dashboard in this process and publish its link. Fails with EADDRINUSE if the port is taken. */

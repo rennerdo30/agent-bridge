@@ -72,6 +72,14 @@ Older runners gain lineage from their durable local job record where available.
 Local runners receive the same dashboard classification, while normal broker
 session lists keep their existing routing behavior.
 
+Sessions recover their chat identity on reload from the previous registration of
+the same CLI process (parent PID and creation identity, agent, native working
+folder and session name). The broker retains these bindings in SQLite schema 5;
+existing stores receive a pre-migration backup. This also works after broker
+takeover, so local and paired session chat reads need no new prompt. A process
+whose creation identity cannot be read stays unbound until its next hook, rather
+than inheriting another process's transcript through a reused PID.
+
 Errors retain the local reader's HTTP status and `{error}` for missing records,
 unbound sessions and invalid cursors. Link errors have `{code, error, host}`:
 

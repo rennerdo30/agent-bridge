@@ -36,7 +36,7 @@ import { isRecord, retentionLimit } from "./json-store.js";
 import { readArchivedJobs } from "./job-archive.js";
 import { isJobSendTarget, MAX_JOB_SEND_TARGETS } from "./job-messaging.js";
 import { NetworkService, type NetworkStatus } from "../network/link.js";
-import { writeNetworkConfig, type NetworkConfig } from "../network/config.js";
+import { readNetworkConfig, writeNetworkConfig, type NetworkConfig } from "../network/config.js";
 import { z } from "zod";
 import { collectTransfer, receiveTransfer, type TransferResult } from "../network/files.js";
 import { cancelStoredTransfer, MAX_STREAM_ENTRIES, readTransferHistory, type TransferStarted } from "../network/transfers.js";
@@ -206,6 +206,8 @@ export class Broker {
         this.historyTimer.unref();
         this.purge();
         this.log.info("broker listening", { pipe: this.pipePath });
+        // Another broker may have enabled or changed pairing since this session started.
+        if (this.networking) this.networking.config = readNetworkConfig(this.networking.home, this.networking.config);
         if (this.networking?.config.enabled) {
           try {
             this.network = new NetworkService(this.networking.home, this.networking.config, {
@@ -216,6 +218,11 @@ export class Broker {
             this.installRemoteJobs(this.network);
             await this.network.start();
           } catch (err) {
+            this.remoteDashboard?.close();
+            this.remoteDashboard = null;
+            this.remoteJobs?.close();
+            this.remoteJobs = null;
+            await this.network?.close();
             this.network = null;
             this.log.warn("networking could not start; local broker remains available", { message: (err as Error).message });
           }
@@ -570,6 +577,7 @@ export class Broker {
       cwd: String(p.cwd ?? ""),
       pid: Number(p.pid),
       agentPid: p.agentPid ?? null,
+      agentStartedAt: typeof p.agentStartedAt === "string" && p.agentStartedAt.length <= 128 ? p.agentStartedAt : null,
       sessionId: p.sessionId ?? null,
       startedAt: Number(p.startedAt) || this.now(),
       autoWake: Boolean(p.autoWake),
@@ -588,6 +596,8 @@ export class Broker {
         jobSendTo: Array.isArray(p.jobSendTo) ? p.jobSendTo.filter(isJobSendTarget).slice(0, MAX_JOB_SEND_TARGETS) : [],
       } : {}),
     };
+    if (!peer.sessionId) peer.sessionId = this.store.recoverSession(peer);
+    this.store.rememberSession(peer, this.now());
     conn.peer = peer;
     if (peer.sessionId) this.replaceStale(conn, peer);
     this.expireStaleQueue(peer.name);
@@ -604,7 +614,7 @@ export class Broker {
       this.queueCurrentDecisions(peer);
       for (const m of this.unreadMail(peer.name, PENDING_MAX_LIMIT)) this.emit(conn, "message", m);
     });
-    return { brokerPid: process.pid, name: peer.name, peers: this.livePeers().filter((x) => x.id !== peer.id) };
+    return { brokerPid: process.pid, name: peer.name, sessionId: peer.sessionId, peers: this.livePeers().filter((x) => x.id !== peer.id) };
   }
 
   /**
@@ -659,6 +669,7 @@ export class Broker {
       });
     }
     this.log.debug("peer updated", { name: peer.name, sessionId: peer.sessionId, autoWake: peer.autoWake, cwd: peer.cwd });
+    this.store.rememberSession(peer, this.now());
     for (const message of this.queueCurrentDecisions(peer)) this.emit(conn, "message", message);
     return peer;
   }

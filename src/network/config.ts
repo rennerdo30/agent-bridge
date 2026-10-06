@@ -1,4 +1,5 @@
 import { hostname } from "node:os";
+import { readFileSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { CONFIG_FILE_NAME } from "../core/constants.js";
 import { isRecord, mergeStoreFields, readJsonStore, writeJsonStore } from "../core/json-store.js";
@@ -31,6 +32,14 @@ export const DEFAULT_NETWORK_CONFIG = networkConfigSchema.parse({});
 export function parseNetworkConfig(value: unknown): NetworkConfig | undefined {
   const result = networkConfigSchema.safeParse(value);
   return result.success ? result.data : undefined;
+}
+
+/** Election reads the shared configuration without repairing or rewriting owner files. */
+export function readNetworkConfig(home: string, fallback: NetworkConfig): NetworkConfig {
+  try {
+    const value: unknown = JSON.parse(readFileSync(join(home, CONFIG_FILE_NAME), "utf8"));
+    return isRecord(value) ? parseNetworkConfig(value.network) ?? fallback : fallback;
+  } catch { return fallback; }
 }
 
 /** Preserve unrelated and future fields; version checks and atomic replacement belong to the store. */
