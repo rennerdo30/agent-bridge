@@ -25,7 +25,14 @@ const CLAUDE_PERMISSION_MODES: readonly ClaudePermissionMode[] = ["default", "ma
 export interface NotificationConfig { approvals: boolean; finish: boolean; fail: boolean }
 const DEFAULT_NOTIFICATIONS: NotificationConfig = { approvals: true, finish: true, fail: true };
 
+export interface HistoryAnswerConfig {
+  preference: ("claude" | "codex" | "opencode")[];
+  claudeModel: string; codexModel: string; opencodeModel: string | null;
+}
+const DEFAULT_HISTORY_ANSWER: HistoryAnswerConfig = { preference: ["codex", "claude", "opencode"], claudeModel: "haiku", codexModel: "gpt-6-luna", opencodeModel: null };
+
 export interface BridgeConfig {
+  historyAnswer: HistoryAnswerConfig;
   /** Peer name; defaults to "<agent>-<cwd basename>". */
   name: string | null;
   autoWake: boolean;
@@ -71,6 +78,7 @@ export interface BridgeConfig {
 }
 
 export const DEFAULT_CONFIG: BridgeConfig = {
+  historyAnswer: DEFAULT_HISTORY_ANSWER,
   name: null,
   autoWake: false,
   wakeOnDirect: true,
@@ -108,6 +116,22 @@ function parseBool(v: unknown): boolean | undefined {
   if (TRUE_VALUES.has(s)) return true;
   if (FALSE_VALUES.has(s)) return false;
   return undefined;
+}
+
+function historyAnswer(v: unknown): HistoryAnswerConfig | undefined {
+  if (!isRecord(v)) return undefined;
+  const agents = ["claude", "codex", "opencode"];
+  if (v.preference !== undefined && (!Array.isArray(v.preference) || !v.preference.length || !v.preference.every((a) => agents.includes(String(a))))) return undefined;
+  const out = { ...DEFAULT_HISTORY_ANSWER, preference: [...DEFAULT_HISTORY_ANSWER.preference] };
+  if (Array.isArray(v.preference)) out.preference = [...new Set(v.preference)] as HistoryAnswerConfig["preference"];
+  for (const key of ["claudeModel", "codexModel", "opencodeModel"] as const) {
+    if (v[key] === undefined) continue;
+    if (key === "opencodeModel" && v[key] === null) { out.opencodeModel = null; continue; }
+    const model = modelName(v[key]);
+    if (!model) return undefined;
+    out[key] = model;
+  }
+  return out;
 }
 
 function notifications(v: unknown): NotificationConfig | undefined {
@@ -245,6 +269,7 @@ export function loadConfig(home: string, agent: AgentKind, log: Logger, env: Nod
     opencodeAutoApprove: pick("opencodeAutoApprove", null, parseBool) ?? d.opencodeAutoApprove,
     dashboard: pick("dashboard", ENV.dashboard, parseBool) ?? d.dashboard,
     dashboardPort: pick("dashboardPort", null, (v) => parseIntInRange(v, 1, 65_535)) ?? d.dashboardPort,
+    historyAnswer: pick("historyAnswer", null, historyAnswer) ?? d.historyAnswer,
     notifications: pick("notifications", null, notifications) ?? d.notifications,
     network: pick("network", null, parseNetworkConfig) ?? d.network,
   };
