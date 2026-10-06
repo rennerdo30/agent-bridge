@@ -471,6 +471,7 @@ form#send { background: transparent; border-top: 0; padding: 12px 0 0; }
     <a href="#/approvals" id="tabApprovals"><span class="ico" aria-hidden="true">!</span>Waiting for you</a>
     <a href="#/network" id="tabNet"><span class="ico" aria-hidden="true">⇄</span>Network</a>
     <a href="#/decisions" id="tabDecisions"><span class="ico" aria-hidden="true">✓</span>Decisions</a>
+    <a href="#/search" id="tabSearch"><span class="ico" aria-hidden="true">⌕</span>Search history</a>
   </nav>
   <div class="side-tree" id="sideTree"></div>
   <div class="side-foot">
@@ -499,6 +500,19 @@ form#send { background: transparent; border-top: 0; padding: 12px 0 0; }
       <button type="button" class="ghost" id="notifyBtn">Notify me in this browser</button>
     </div>
     <div id="apList"></div>
+  </div>
+
+  <div id="search" class="hidden">
+    <div class="page-head"><div><h2>Search history</h2><p class="muted">Messages between sessions, subagent runs, decisions and the CLIs' own conversations, including archived ones.</p></div></div>
+    <form id="searchForm" class="search-form">
+      <input id="sq" type="search" placeholder="What are you looking for?" autocomplete="off" aria-label="Search text">
+      <select id="sKind" aria-label="Kind"><option value="">Everything</option><option value="message">Messages</option><option value="run">Subagent runs</option><option value="decision">Decisions</option><option value="transcript">Chats</option></select>
+      <select id="sAgent" aria-label="Agent"><option value="">All agents</option><option>claude</option><option>codex</option><option>opencode</option></select>
+      <label class="check"><input type="checkbox" id="sAnswer"> Also answer with a low-cost model</label>
+      <button type="submit" id="sGo">Search</button>
+    </form>
+    <div id="sAnswerBox"></div>
+    <div id="sResults"></div>
   </div>
 
   <div id="decisions" class="hidden">
@@ -540,6 +554,7 @@ form#send { background: transparent; border-top: 0; padding: 12px 0 0; }
       </div>
     </div>
     <div class="block"><h3>Paired PCs <span class="n" id="netPairedN"></span></h3><div class="panel" id="netPaired"></div></div>
+    <div class="block hidden" id="netTransfersBox"><h3>File transfers <span class="n" id="netTransfersN"></span></h3><div class="panel" id="netTransfers"></div></div>
   </div>
 
   <div id="session" class="split hidden">
