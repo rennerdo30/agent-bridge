@@ -100,9 +100,10 @@ export class Broker {
       peers: () => this.livePeers(),
       siblings: (c) => this.siblingPeers(c),
       sendSibling: (c, a) => this.onSendSibling(c, a),
+      messageReceipt: (c, a) => this.messageReceipt(c, a.id),
       ack: (c, a) => ({ acked: this.store.markRead(this.requirePeer(c).name, a.ids ?? [], this.now()) }),
       pending: (c, a) =>
-        this.store.unread(this.requirePeer(c).name, Math.min(Math.max(1, a.limit ?? PENDING_DEFAULT_LIMIT), PENDING_MAX_LIMIT)),
+        this.unreadMail(this.requirePeer(c).name, Math.min(Math.max(1, a.limit ?? PENDING_DEFAULT_LIMIT), PENDING_MAX_LIMIT)),
       updatePeer: (c, a) => this.onUpdatePeer(c, a),
       claimMail: (c, a) => this.onClaimMail(c, a),
       ping: () => ({ brokerPid: process.pid, protocol: PROTOCOL_VERSION }),
@@ -152,6 +153,7 @@ export class Broker {
             this.network = new NetworkService(this.networking.home, this.networking.config, {
               peers: () => [...this.conns].flatMap((c) => c.peer ? [c.peer] : []),
               receive: (message) => this.receiveRemote(message),
+        receipt: (id, sender) => this.remoteReceipt(id, sender),
             }, this.log);
             await this.network.start();
           } catch (err) {
@@ -192,6 +194,7 @@ export class Broker {
       const service = new NetworkService(this.networking.home, config, {
         peers: () => [...this.conns].flatMap((c) => c.peer ? [c.peer] : []),
         receive: (message) => this.receiveRemote(message),
+        receipt: (id, sender) => this.remoteReceipt(id, sender),
       }, this.log);
       try { await service.start(); this.network = service; }
       catch (err) { await service.close(); throw err; }
@@ -475,6 +478,9 @@ export class Broker {
       sessionId: p.sessionId ?? null,
       startedAt: Number(p.startedAt) || this.now(),
       autoWake: Boolean(p.autoWake),
+      wakeOnDirect: Boolean(p.wakeOnDirect),
+      wakeAvailable: Boolean(p.wakeAvailable),
+      wakeMaxHops: typeof p.wakeMaxHops === "number" ? p.wakeMaxHops : undefined,
       activity: p.activity === "busy" || p.activity === "idle" ? p.activity : null,
       version: typeof p.version === "string" ? p.version.slice(0, 32) : undefined,
       ...(p.jobAgent && AGENT_KINDS.includes(p.jobAgent) ? { jobAgent: p.jobAgent } : {}),
@@ -498,7 +504,7 @@ export class Broker {
     // Deliver the backlog right after the hello response has been written.
     setImmediate(() => {
       this.queueCurrentDecisions(peer);
-      for (const m of this.store.unread(peer.name, PENDING_MAX_LIMIT)) this.emit(conn, "message", m);
+      for (const m of this.unreadMail(peer.name, PENDING_MAX_LIMIT)) this.emit(conn, "message", m);
     });
     return { brokerPid: process.pid, name: peer.name, peers: this.livePeers().filter((x) => x.id !== peer.id) };
   }
@@ -519,7 +525,7 @@ export class Broker {
     if (moved) {
       this.log.info("mail of a stand-in name moved to its session", { to: peer.name, moved });
       setImmediate(() => {
-        for (const m of this.store.unread(peer.name, PENDING_MAX_LIMIT)) this.emit(conn, "message", m);
+        for (const m of this.unreadMail(peer.name, PENDING_MAX_LIMIT)) this.emit(conn, "message", m);
       });
     }
     return { moved };
@@ -538,6 +544,9 @@ export class Broker {
       if (peer.sessionId) this.replaceStale(conn, peer);
     }
     if (args.autoWake !== undefined) peer.autoWake = Boolean(args.autoWake);
+    if (args.wakeOnDirect !== undefined) peer.wakeOnDirect = Boolean(args.wakeOnDirect);
+    if (args.wakeAvailable !== undefined) peer.wakeAvailable = Boolean(args.wakeAvailable);
+    if (typeof args.wakeMaxHops === "number") peer.wakeMaxHops = args.wakeMaxHops;
     if (typeof args.cwd === "string" && args.cwd) peer.cwd = args.cwd;
     if (args.activity === "busy" || args.activity === "idle") peer.activity = args.activity;
     if (typeof args.name === "string" && args.name !== peer.name) {
@@ -548,7 +557,7 @@ export class Broker {
       this.expireStaleQueue(peer.name);
       // Mail that was waiting under the new name is now ours.
       setImmediate(() => {
-        for (const m of this.store.unread(peer.name, PENDING_MAX_LIMIT)) this.emit(conn, "message", m);
+        for (const m of this.unreadMail(peer.name, PENDING_MAX_LIMIT)) this.emit(conn, "message", m);
       });
     }
     this.log.debug("peer updated", { name: peer.name, sessionId: peer.sessionId, autoWake: peer.autoWake, cwd: peer.cwd });
@@ -579,7 +588,8 @@ export class Broker {
         if (peer.name.startsWith(`${oldName}-`) && /^\d+$/.test(peer.name.slice(oldName.length + 1))) peer.name = oldName;
         // Either way, mail that waited under the old name is the session's.
         setImmediate(() => {
-          for (const name of new Set([oldName, peer.name])) for (const m of this.store.unread(name, PENDING_MAX_LIMIT)) this.emit(conn, "message", m);
+          this.store.claim(oldName, peer.name);
+          for (const m of this.unreadMail(peer.name, PENDING_MAX_LIMIT)) this.emit(conn, "message", m);
         });
       }
     }
@@ -713,7 +723,37 @@ export class Broker {
       deliveredTo: live.map((c) => c.peer!.name),
       queuedFor: queued,
     });
-    return { messages, deliveredTo: live.map((c) => c.peer!.name), queuedFor: queued };
+    return { messages, deliveredTo: live.map((c) => c.peer!.name), queuedFor: queued, recipientStates: live.map((c) => ({ name: c.peer!.name, activity: c.peer!.activity, autoWake: c.peer!.autoWake, wakeOnDirect: c.peer!.wakeOnDirect, wakeAvailable: c.peer!.wakeAvailable, wakeMaxHops: c.peer!.wakeMaxHops })) };
+  }
+
+  private unreadMail(recipient: string, limit: number): BridgeMessage[] {
+    const messages = this.store.unread(recipient, limit);
+    if (!this.jobsPath || !messages.some((m) => m.conversationId.endsWith(SIBLING_NOTE_SUFFIX))) return messages;
+    let jobs: { id?: string; status?: string }[];
+    try {
+      const value = JSON.parse(readFileSync(this.jobsPath, "utf8"));
+      jobs = Array.isArray(value) ? value : Array.isArray(value?.jobs) ? value.jobs : [];
+    } catch { return messages; }
+    const finished = new Set(jobs.filter((j) => j.status && j.status !== "running").map((j) => `job:${j.id}`));
+    const stale = messages.filter((m) => m.conversationId.endsWith(SIBLING_NOTE_SUFFIX) && finished.has(m.from.id));
+    this.store.markRead(recipient, stale.map((m) => m.id), this.now());
+    return messages.filter((m) => !stale.includes(m));
+  }
+
+  private remoteReceipt(id: string, sender: string): number | null {
+    const message = this.store.byId(id);
+    if (!message || message.from.id !== sender) throw new BridgeError("unauthorized", "receipt is only available to the sender");
+    return this.store.receipts(id)[0]?.readAt ?? null;
+  }
+
+  private async messageReceipt(conn: Conn, id: string) {
+    const sender = this.requirePeer(conn);
+    const message = this.store.byId(z.uuid().parse(id));
+    if (!message || message.from.name !== sender.name) throw new BridgeError("unauthorized", "receipt is only available to the sender");
+    const receipts = this.store.receipts(id);
+    return Promise.all(receipts.map(async (r) => r.recipient.includes("/")
+      ? { ...r, readAt: await this.requireNetwork().receipt(r.recipient, id, message.from.id) }
+      : r));
   }
 
   private requireNetwork(): NetworkService {

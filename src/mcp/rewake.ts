@@ -3,15 +3,16 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { join } from "node:path";
+import type { BridgeConfig } from "../core/config.js";
 import type { Logger } from "../core/logger.js";
 import type { BridgeNode } from "../core/node.js";
-import type { BridgeMessage } from "../core/protocol.js";
+import { SIBLING_NOTE_SUFFIX, type BridgeMessage } from "../core/protocol.js";
 import { tokensEqual } from "../core/token.js";
 import { formatMessages } from "./format.js";
 
 /**
  * Wake an idle Claude Code session when something it is waiting for arrives: a background subagent's
- * result, a reply to a question it asked, or (with auto-wake) any peer message.
+ * result, a reply to a question it asked, a direct session message, or (with auto-wake) any peer message.
  *
  * Claude Code's `asyncRewake` Stop hook (`agent-bridge rewake-hook`) runs in the background after a turn
  * ends and long-polls this endpoint. When it returns messages, the hook prints them and exits 2, which
@@ -39,6 +40,14 @@ export interface RewakeRegistration {
 
 export function sessionFile(home: string, sessionId: string): string {
   return join(home, SESSIONS_DIR, `${sessionId.replace(/[^\w-]/g, "_")}.json`);
+}
+
+/** Remote envelopes preserve host/name in to; recipient is the receiving PC's local name. */
+export function shouldWakeClaudeMessage(node: BridgeNode, cfg: BridgeConfig, m: BridgeMessage): boolean {
+  if (m.hop >= cfg.maxHops || m.conversationId.endsWith(SIBLING_NOTE_SUFFIX)) return false;
+  const direct = m.to === node.name ||
+    (m.from.id.includes("/") && m.to.slice(m.to.indexOf("/") + 1) === node.name);
+  return node.autoWakeEnabled || (direct && (m.from.id.startsWith("job:") || node.isAwaitedReply(m) || cfg.wakeOnDirect));
 }
 
 export class RewakeEndpoint {

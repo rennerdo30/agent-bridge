@@ -138,7 +138,7 @@ export class MessageStore {
         `SELECT * FROM messages WHERE recipient = ? AND read_at IS NULL ORDER BY created_at ASC, id ASC LIMIT ?`,
       ),
       markRead: this.db.prepare(`UPDATE messages SET read_at = ? WHERE id = ? AND recipient = ? AND read_at IS NULL`),
-      claim: this.db.prepare(`UPDATE messages SET recipient = ? WHERE recipient = ? AND read_at IS NULL`),
+      claim: this.db.prepare(`UPDATE OR IGNORE messages SET recipient = ? WHERE recipient = ? AND read_at IS NULL`),
       byId: this.db.prepare(`SELECT * FROM messages WHERE id = ? ORDER BY created_at ASC LIMIT 1`),
       purge: this.db.prepare(`DELETE FROM messages WHERE created_at < ?`),
       expireQueued: this.db.prepare(`DELETE FROM messages WHERE recipient = ? AND read_at IS NULL AND created_at < ?`),
@@ -176,7 +176,21 @@ export class MessageStore {
 
   /** Move messages waiting for "any <agent>" to a concrete peer name. */
   claim(fromKey: string, toName: string): number {
-    return Number(this.stmt.claim.run(toName, fromKey).changes);
+    if (fromKey === toName) return 0;
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      const moved = Number(this.stmt.claim.run(toName, fromKey).changes);
+      // A broadcast can have reached both servers before their shared session id was learned.
+      // Keep the destination copy and retire the duplicate alias without replaying it later.
+      const duplicates = Number(this.db.prepare(`UPDATE messages SET read_at = ?
+        WHERE recipient = ? AND read_at IS NULL AND id IN (SELECT id FROM messages WHERE recipient = ?)`)
+        .run(Date.now(), fromKey, toName).changes);
+      this.db.exec("COMMIT");
+      return moved + duplicates;
+    } catch (err) {
+      this.db.exec("ROLLBACK");
+      throw err;
+    }
   }
 
   /** Archive unread mail waiting for a queue key or name that is older than the cutoff. */
@@ -184,6 +198,10 @@ export class MessageStore {
     const n = this.archive(this.stmt.archiveQueued, this.stmt.expireQueued, [recipient, cutoff]);
     if (n > 0) this.log.info("archived stale queued messages", { recipient, count: n });
     return n;
+  }
+
+  receipts(id: string): { recipient: string; readAt: number | null }[] {
+    return (this.db.prepare("SELECT recipient, read_at AS readAt FROM messages WHERE id = ?").all(id) as unknown as { recipient: string; readAt: number | null }[]);
   }
 
   byId(id: string): BridgeMessage | null {

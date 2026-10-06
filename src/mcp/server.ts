@@ -29,9 +29,9 @@ import { resolveDbPath, resolveHome, resolvePipePath } from "../core/paths.js";
 import { inspectClaudeLaunch } from "../core/procinfo.js";
 import { loadOrCreateToken } from "../core/token.js";
 import { BridgeError, BROADCAST, CODING_AGENTS, isSiblingNote, SIBLING_CONVERSATION_PREFIX, type AgentKind, type BridgeMessage, type CodingAgent } from "../core/protocol.js";
-import { formatDuration, formatMessage, formatMessages, formatPeer } from "./format.js";
+import { formatDelivery, formatDuration, formatMessage, formatMessages, formatPeer } from "./format.js";
 import { CodexWaker, type Activity } from "./codex-wake.js";
-import { buildHookResponse, type HookEvent } from "./hooks.js";
+import { buildHookResponse, discardFinishedNotes, type HookEvent } from "./hooks.js";
 import { ACCESS_LEVELS, DELEGATION_TARGETS, type Access } from "./targets.js";
 import { askUserViaElicitation } from "./permissions.js";
 import type { PermissionDecision, PermissionRequest } from "../core/relay.js";
@@ -40,7 +40,8 @@ import { describeModels, modelParameterDescription, readModels } from "../core/m
 import { parentFromEnv, type ParentClient } from "../core/parent-link.js";
 import { findRunningDashboard, hostDashboard, type DashboardInfo, type HostedDashboard } from "../cli/dashboard.js";
 import { openBrowser } from "../cli/open.js";
-import { RewakeEndpoint } from "./rewake.js";
+import { MessageWaitStore, resumeWaitHint, singleWaitTimeoutMs, SINGLE_WAIT_SEC, waitForReadReceipt, type WaitFilters } from "./message-wait.js";
+import { RewakeEndpoint, shouldWakeClaudeMessage } from "./rewake.js";
 import { DEFAULT_FOLLOW_UP, JobManager, type Job, type Resume, type Run, type RunResult } from "./jobs.js";
 import { isBridgeWorktree, isInside, resumeArgs, runDelegate, type DelegateArgs, type RunContext } from "./delegate-run.js";
 import { JobRunners } from "./job-host.js";
@@ -256,6 +257,7 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
       const limitChanged = next.maxJobs !== cfg.maxJobs;
       Object.assign(cfg, next);
       if (limitChanged) jobs.setLimit(next.maxJobs);
+      void node.setWakePolicy(agent === "claude" && next.wakeOnDirect, (agent === "claude" && Boolean(ctx.rewakeAvailable || ctx.channelActive())) || agent === "opencode" || (agent === "codex" && Boolean(node.currentSessionId)), next.maxHops).catch(() => {});
     });
     ctx.activity = (s) => node.setActivity(s);
     // Learn the project folder once, when it was unknown at start (Codex starts us in the plugin folder).
@@ -280,6 +282,7 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
       if (typeof id === "string" && id) {
         waker.setThreadId(id);
         await node.setSessionId(id).catch(() => {});
+        await node.setWakePolicy(false, true, cfg.maxHops).catch(() => {});
       }
       // ... and, because we declare codex/sandbox-state-meta, the session's working directory.
       const sandbox = meta?.[CODEX_SANDBOX_META] as { sandboxCwd?: unknown } | undefined;
@@ -305,7 +308,9 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
   if (node && ctx.jobs) attachDashboardJobControl(node, ctx.jobs, log);
 
   const pushChannel = async (m: BridgeMessage) => {
-    if (!channel || !node || m.hop >= cfg.maxHops || isSiblingNote(m)) return;
+    if (!channel || !node || m.hop >= cfg.maxHops || ctx.jobs?.isNote(m) || isSiblingNote(m)) return;
+    // Messages excluded from waking use hooks even during an active turn, avoiding a channel/hook race.
+    if (!shouldWakeClaudeMessage(node, cfg, m)) return;
     try {
       await mcp.server.notification({
         method: CHANNEL_NOTIFICATION,
@@ -329,6 +334,7 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
   };
   node?.on("message", (m) => void pushChannel(m));
   if (agent === "opencode" && node) {
+    await node.setWakePolicy(false, true, cfg.maxHops);
     // The opencode plugin is our MCP client; tell it about new mail so it can wake or feed the session.
     node.on("message", (m) => {
       if (isSiblingNote(m)) return;
@@ -338,7 +344,7 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
     });
   }
 
-  // Claude Code: wake the idle session for subagent results and awaited replies (see rewake.ts).
+  // Claude Code: wake for direct session messages, subagent results and awaited replies (see rewake.ts).
   let rewake: RewakeEndpoint | null = null;
   if (agent === "claude" && node) {
     // With the channel active, messages already arrive as channel events: waking too would deliver them twice.
@@ -347,11 +353,12 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
       m.hop < cfg.maxHops &&
       // A running subagent's status note waits for the next prompt or tool call (see JobManager.fromSubagent).
       !ctx.jobs?.isNote(m) &&
-      (m.from.id.startsWith("job:") || node.isAwaitedReply(m) || node.autoWakeEnabled);
+      shouldWakeClaudeMessage(node, cfg, m);
     rewake = new RewakeEndpoint(home, node, shouldWake, log.child("rewake"));
     try {
       await rewake.start();
       ctx.rewakeAvailable = true;
+      await node.setWakePolicy(cfg.wakeOnDirect, true, cfg.maxHops);
       ctx.onSessionId = (sid) => rewake?.register(sid);
       // Only the server the session uses serves wake-ups (see RewakeEndpoint.retire).
       node.on("replaced", () => rewake?.retire());
@@ -416,6 +423,7 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
       log.info("delivery mode resolved", { delivery: channel ? "channel" : "hooks" });
     }
   }
+  if (agent === "claude" && node) await node.setWakePolicy(cfg.wakeOnDirect, Boolean(ctx.rewakeAvailable || channel), cfg.maxHops);
   launchInspected();
   if (node) {
     node.on("connected", ({ isBroker }) => {
@@ -454,12 +462,14 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
 
 function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[]): void {
   const { node, log, cfg } = ctx;
+  const waits = new MessageWaitStore(ctx.home);
   // A subagent talks to its parent and siblings: no spawning of further agents, no bridge tools it
   // cannot use. Hidden rather than refused, so its CLI never even asks for approval to call them.
   const register = ((name: string, ...rest: unknown[]) =>
     node || SUBAGENT_TOOLS.has(name) ? (mcp.registerTool as (...a: unknown[]) => unknown)(name, ...rest) : undefined) as typeof mcp.registerTool;
   const requireNode = (): BridgeNode => {
     if (!node) throw new BridgeError("bad_request", t("err.delegatedSession"));
+    discardFinishedNotes(ctx);
     return node;
   };
   const guarded =
@@ -569,6 +579,7 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
         lines.push(t("peers.recent"));
         for (const j of recent) lines.push(t("peers.recentJob", { name: j.name + (j.args?.title ? ` "${j.args.title}"` : ""), status: j.status, ago: formatDuration(Date.now() - (j.finishedAt ?? Date.now())), session: j.sessionId ? "can be continued" : "no session" }));
       }
+      lines.push(...waits.pending(n).map(resumeWaitHint));
       return text(lines.join("\n"));
     }),
   );
@@ -579,6 +590,8 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
       title: "Send message",
       description:
         `Send a message to another agent. "to" is a peer name from "peers", an agent kind ("claude", "codex") when exactly one is online, or "${BROADCAST}" for everyone. ` +
+        "Delivery means queued in the recipient inbox, not read. Direct messages wake an idle Claude session by default (wakeOnDirect); other recipients may read them on their next turn. " +
+        "Auto-wake is handled on the recipient PC, including paired PCs; it is never enabled by send. Use wait_for_message(read_receipt_of=<sent id>) to wait for consumption. " +
         "If the recipient is offline the message waits for it. When answering a message, pass its id as reply_to. " +
         "Delegated jobs can send to their parent, siblings, or exact session names explicitly granted with send_to at spawn. Sibling messages arrive live or wait for the next turn, with a quiet supervisor copy. Sending to a finished sibling does not start a new turn. Other sessions and broadcasts are unavailable. Peers shows grants and the sibling thread limit before composing.",
       inputSchema: {
@@ -616,9 +629,10 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
       const res = await n.send({ to: a.to, body: a.message, replyTo: a.reply_to, conversationId: a.conversation_id });
       const first = res.messages[0]!;
       const lines = [t("send.ok", { id: first.id, conversation: first.conversationId })];
-      if (res.deliveredTo.length) lines.push(t("send.delivered", { names: res.deliveredTo.join(", ") }));
+      lines.push(...formatDelivery(res, cfg.maxHops));
       if (res.queuedFor.length) lines.push(t("send.queued", { names: res.queuedFor.join(", ") }));
       lines.push(t("send.waitHint"));
+      lines.push(`For a consumption receipt, call wait_for_message(read_receipt_of="${first.id}").`);
       return text(lines.join("\n"));
     }),
   );
@@ -672,28 +686,52 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
       title: "Wait for a message",
       description:
         "Block until a message from another agent arrives (or the timeout passes) and return it, marked as read. " +
-        "Use after sending a question to a peer. Optional filters restrict which message counts.",
+        `Use after sending a question to a peer. Single waits are capped at ${SINGLE_WAIT_SEC} seconds; repeat with the same filters for longer waits. ` +
+        "Claude Code may background calls after 120 seconds; background calls do not survive session exit. " +
+        "A stdio call cannot survive /reload-plugins: peers and SessionStart show a saved resume_id and filters after reconnect. " +
+        "read_receipt_of waits for bridge consumption, not a reply or completed work.",
       inputSchema: {
-        timeout_sec: z.number().int().min(1).max(MAX_WAIT_SEC).optional().describe(`Default ${DEFAULT_WAIT_SEC}`),
+        timeout_sec: z.number().int().min(1).max(MAX_WAIT_SEC).optional().describe(`Default and single-call cap ${SINGLE_WAIT_SEC}; larger values are accepted but capped`),
         from: z.string().optional().describe("Only accept messages from this peer name or agent kind"),
         reply_to: z.string().optional().describe("Only accept replies to this message id"),
         conversation_id: z.string().optional(),
+        read_receipt_of: z.uuid().optional().describe("Wait until all recipients consumed this sent message"),
+        resume_id: z.uuid().optional().describe("Saved wait id shown by peers or SessionStart after a reload"),
       },
     },
-    guarded("wait_for_message", async (a: { timeout_sec?: number; from?: string; reply_to?: string; conversation_id?: string }, extra) => {
+    guarded("wait_for_message", async (a: WaitFilters & { timeout_sec?: number; resume_id?: string }, extra) => {
       const n = requireNode();
-      const timeout = (a.timeout_sec ?? DEFAULT_WAIT_SEC) * 1000;
-      const m = await n.waitForMessage(
-        timeout,
-        (x) =>
-          (!a.from || x.from.name === a.from || x.from.agent === a.from) &&
-          (!a.reply_to || x.replyTo === a.reply_to) &&
-          (!a.conversation_id || x.conversationId === a.conversation_id),
-        extra.signal,
-      );
-      if (!m) return text(t("wait.timeout", { seconds: Math.round(timeout / 1000) }));
-      n.markRead([m.id]);
-      return text(formatMessages([m], { header: "[agent-bridge] Message received." }));
+      if (a.read_receipt_of && (a.from || a.reply_to || a.conversation_id)) return text("Use read_receipt_of alone; reply filters are for incoming messages.", true);
+      const record = a.resume_id ? waits.get(n, a.resume_id) : waits.save(n, {
+        from: a.from, reply_to: a.reply_to, conversation_id: a.conversation_id, read_receipt_of: a.read_receipt_of,
+      });
+      const filters = record.filters;
+      const timeout = singleWaitTimeoutMs(a.timeout_sec ?? DEFAULT_WAIT_SEC);
+      progressReporter(extra, log)?.(resumeWaitHint(record));
+      try {
+        if (filters.read_receipt_of) {
+          const receipts = await waitForReadReceipt(n, filters.read_receipt_of, timeout, extra.signal);
+          if (receipts) {
+            waits.remove(record.id);
+            return text(`Read receipt for ${filters.read_receipt_of}: ` + receipts.map((r) => `${r.recipient} consumed at ${new Date(r.readAt!).toISOString()}`).join(", ") + ". This confirms bridge consumption, not completed work.");
+          }
+        } else {
+          const m = await n.waitForMessage(timeout, (x) =>
+            (!filters.from || x.from.name === filters.from || x.from.agent === filters.from) &&
+            (!filters.reply_to || x.replyTo === filters.reply_to) &&
+            (!filters.conversation_id || x.conversationId === filters.conversation_id), extra.signal);
+          if (m) {
+            n.markRead([m.id]);
+            waits.remove(record.id);
+            return text(formatMessages([m], { header: "[agent-bridge] Message received." }));
+          }
+        }
+        if (extra.signal.aborted || n.wasReplaced || !n.isConnected) return text(`Wait interrupted. ${resumeWaitHint(record)}`);
+        waits.remove(record.id);
+        return text(`${t("wait.timeout", { seconds: Math.round(timeout / 1000) })} Single waits are capped at ${SINGLE_WAIT_SEC}s. Repeat wait_for_message(${JSON.stringify(filters)}) to keep listening.`);
+      } catch (err) {
+        return text(`Wait stopped: ${(err as Error).message}. ${resumeWaitHint(record)}`, true);
+      }
     }),
   );
 

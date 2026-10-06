@@ -174,7 +174,7 @@ describe("opencode plugin", () => {
   it("sends through a native tool and delivers the reply by starting a turn when idle", async () => {
     await hooks["chat.message"]({ sessionID: "ses_A" });
     const sent = await hooks.tool.bridge_send.execute({ to: "claude-peer", message: "ping from opencode" }, { sessionID: "ses_A", abort: new AbortController().signal });
-    expect(sent).toContain("Delivered to: claude-peer");
+    expect(sent).toContain("Delivered to inbox: claude-peer");
     const got = await peer.waitForMessage(3_000);
     expect(got?.body).toBe("ping from opencode");
 
