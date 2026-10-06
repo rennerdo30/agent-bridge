@@ -27,7 +27,7 @@ import { BridgeNode } from "../core/node.js";
 import { resolveDbPath, resolveHome, resolvePipePath } from "../core/paths.js";
 import { inspectClaudeLaunch } from "../core/procinfo.js";
 import { loadOrCreateToken } from "../core/token.js";
-import { BridgeError, BROADCAST, CODING_AGENTS, type AgentKind, type BridgeMessage, type CodingAgent } from "../core/protocol.js";
+import { BridgeError, BROADCAST, CODING_AGENTS, isSiblingNote, type AgentKind, type BridgeMessage, type CodingAgent } from "../core/protocol.js";
 import { formatDuration, formatMessage, formatMessages, formatPeer } from "./format.js";
 import { CodexWaker, type Activity } from "./codex-wake.js";
 import { buildHookResponse, type HookEvent } from "./hooks.js";
@@ -299,7 +299,7 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
   registerTools(mcp, ctx, targets);
 
   const pushChannel = async (m: BridgeMessage) => {
-    if (!channel || !node || m.hop >= cfg.maxHops) return;
+    if (!channel || !node || m.hop >= cfg.maxHops || isSiblingNote(m)) return;
     try {
       await mcp.server.notification({
         method: CHANNEL_NOTIFICATION,
@@ -325,6 +325,7 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
   if (agent === "opencode" && node) {
     // The opencode plugin is our MCP client; tell it about new mail so it can wake or feed the session.
     node.on("message", (m) => {
+      if (isSiblingNote(m)) return;
       mcp.server
         .notification({ method: OPENCODE_NOTIFICATION, params: { message_id: m.id, from: m.from.name, hop: m.hop } })
         .catch((err) => log.debug("opencode notification failed", { err: (err as Error).message }));
@@ -447,7 +448,7 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
 
 function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[]): void {
   const { node, log, cfg } = ctx;
-  // A subagent (delegated run) only talks to its parent: no spawning of further agents, no bridge tools it
+  // A subagent talks to its parent and siblings: no spawning of further agents, no bridge tools it
   // cannot use. Hidden rather than refused, so its CLI never even asks for approval to call them.
   const register = ((name: string, ...rest: unknown[]) =>
     node || SUBAGENT_TOOLS.has(name) ? (mcp.registerTool as (...a: unknown[]) => unknown)(name, ...rest) : undefined) as typeof mcp.registerTool;
@@ -476,13 +477,20 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
       title: "List peers",
       description:
         "List the open agent sessions on this machine (Claude Code, Codex, opencode): name, agent type, busy/idle, uptime, working directory and session id. " +
-        "Also shows your own name and settings and your running subagents. Use it to pick whom to message.",
+        "Also shows your own name and settings and your running subagents. Delegated jobs see their parent and siblings (job name, title, agent and status). Use it to pick whom to message.",
       inputSchema: {},
       annotations: { readOnlyHint: true },
     },
     guarded("peers", async () => {
-      // A subagent has no view of the bridge; tell it whom it can talk to instead of failing.
-      if (!node && ctx.parent) return text(t("peers.subagent", { name: ctx.parent.name }));
+      if (!node && ctx.parent) {
+        const siblings = await ctx.parent.siblings.peers();
+        return text([
+          `You are a delegated job of ${ctx.parent.name}. Use send(to="${ctx.parent.name}", message=...) to message your parent.`,
+          siblings.length ? "Sibling jobs:" : "No sibling jobs are available right now.",
+          ...siblings.map((s) => `- ${s.name}${s.title ? ` "${s.title}"` : ""} (${s.agent}, ${s.status})`),
+          "Use send(to=<sibling job name>, message=...) to coordinate directly. The supervisor receives a quiet copy.",
+        ].join("\n"));
+      }
       const n = requireNode();
       const peers = await n.peers();
       // Job runners are this or another session's subagents, not sessions (an older broker still lists them).
@@ -525,7 +533,8 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
       title: "Send message",
       description:
         `Send a message to another agent. "to" is a peer name from "peers", an agent kind ("claude", "codex") when exactly one is online, or "${BROADCAST}" for everyone. ` +
-        "If the recipient is offline the message waits for it. When answering a message, pass its id as reply_to.",
+        "If the recipient is offline the message waits for it. When answering a message, pass its id as reply_to. " +
+        "Delegated jobs can send to their parent or a sibling's exact job name from peers; sibling messages arrive live or wait for its next turn, with a quiet supervisor copy. Sending to a finished sibling does not start a new turn. Other sessions and broadcasts are unavailable to delegated jobs.",
       inputSchema: {
         to: z.string().min(1).describe('Peer name, agent kind ("claude" / "codex") or "*"'),
         message: z.string().min(1).max(MAX_BODY_CHARS).describe("Message text (Markdown is fine)"),
@@ -534,8 +543,13 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
       },
     },
     guarded("send", async (a: { to: string; message: string; reply_to?: string; conversation_id?: string }) => {
-      // A subagent talks to the session that runs it, whatever name it uses.
       if (!node && ctx.parent) {
+        if (a.to !== ctx.parent.name && a.to !== "parent") {
+          const result = await ctx.parent.siblings.send(a.to, a.message, a.reply_to);
+          const m = result.messages[0]!;
+          const delivery = result.queuedFor.length ? "queued for the sibling's next turn" : "sent to sibling";
+          return text(`Message ${m.id} ${delivery} ${a.to} (conversation ${m.conversationId}, hop ${m.hop}). The supervisor received a quiet copy.`);
+        }
         await ctx.parent.send(a.message, a.reply_to);
         return text(t("send.toParent", { name: ctx.parent.name }));
       }

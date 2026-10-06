@@ -14,6 +14,20 @@ export const CODING_AGENTS: readonly CodingAgent[] = ["claude", "codex", "openco
 
 /** Broadcast target. */
 export const BROADCAST = "*";
+/** Direct job chat; observer copies end in :note so they do not wake the supervisor. */
+export const SIBLING_CONVERSATION_PREFIX = "siblings-";
+export const SIBLING_NOTE_SUFFIX = ":note";
+
+export function isSiblingNote(m: Pick<BridgeMessage, "conversationId">): boolean {
+  return m.conversationId.startsWith(SIBLING_CONVERSATION_PREFIX) && m.conversationId.endsWith(SIBLING_NOTE_SUFFIX);
+}
+
+export interface SiblingPeer {
+  name: string;
+  title: string;
+  agent: AgentKind;
+  status: "running" | "done" | "failed" | "interrupted";
+}
 
 export interface PeerInfo {
   /** Unique per process. */
@@ -35,6 +49,10 @@ export interface PeerInfo {
   version?: string;
   /** Set for a job runner (it hosts a background subagent of a session): that subagent's agent. Hidden from peer lists. */
   jobAgent?: AgentKind;
+  /** Stable supervisor session identity, shared only by its jobs. */
+  jobOwner?: string;
+  jobParent?: string;
+  jobTitle?: string;
 }
 
 export type PeerActivity = "busy" | "idle";
@@ -102,6 +120,8 @@ export interface PendingArgs {
 }
 
 export interface UpdatePeerArgs {
+  jobParent?: string;
+  jobTitle?: string;
   sessionId?: string | null;
   autoWake?: boolean;
   cwd?: string;
@@ -120,6 +140,8 @@ export interface RequestMap {
   hello: [HelloArgs, HelloResult];
   send: [SendArgs, SendResult];
   peers: [Record<string, never>, PeerInfo[]];
+  siblings: [Record<string, never>, SiblingPeer[]];
+  sendSibling: [SendArgs & { maxHops: number }, SendResult];
   ack: [AckArgs, { acked: number }];
   pending: [PendingArgs, BridgeMessage[]];
   updatePeer: [UpdatePeerArgs, PeerInfo];

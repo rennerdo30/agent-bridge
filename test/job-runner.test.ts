@@ -9,6 +9,7 @@ import { nullLogger } from "../src/core/logger.js";
 import { BridgeNode } from "../src/core/node.js";
 import { resolveDbPath, resolvePipePath } from "../src/core/paths.js";
 import { loadOrCreateToken } from "../src/core/token.js";
+import { parentFromEnv } from "../src/core/parent-link.js";
 import { readRunnerState } from "../src/mcp/job-host.js";
 import { readStore } from "../src/mcp/jobs.js";
 
@@ -21,7 +22,7 @@ const SESSION = "codex-host";
 const TEST_TIMEOUT_MS = 90_000;
 
 const FAKE_CLAUDE = `
-import { appendFileSync, existsSync } from "node:fs";
+import { appendFileSync, existsSync, writeFileSync } from "node:fs";
 let prompt = "";
 process.stdin.setEncoding("utf8");
 process.stdin.on("data", (d) => (prompt += d));
@@ -32,6 +33,9 @@ process.stdin.on("end", async () => {
   appendFileSync(new URL("calls.jsonl", import.meta.url), JSON.stringify({ args, session }) + "\\n");
   console.log(JSON.stringify({ type: "system", subtype: "init", session_id: session, model: value("--model") || "fake" }));
   const release = /release=(\\S+)/.exec(prompt)?.[1];
+  const link = /link=(\\S+)/.exec(prompt)?.[1];
+  if (link) writeFileSync(link, JSON.stringify(Object.fromEntries(Object.entries(process.env).filter(([k]) => k.startsWith("AGENT_BRIDGE_PARENT_")))));
+  if (link) writeFileSync(link + ".prompt", prompt);
   while (release && !existsSync(release)) await new Promise((r) => setTimeout(r, 100));
   console.log(JSON.stringify({ type: "result", subtype: "success", is_error: false, result: "fake answer: finished", session_id: session }));
 });
@@ -56,11 +60,11 @@ function installFakeClaude(dir: string): string {
 }
 
 /** One server of the session (a Codex session: it spawns Claude subagents). */
-async function startSession(): Promise<{ client: Client; transport: StdioClientTransport }> {
+async function startSession(inProcess = false): Promise<{ client: Client; transport: StdioClientTransport }> {
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [SERVER, "--agent=codex"],
-    env: { ...process.env, AGENT_BRIDGE_HOME: home, AGENT_BRIDGE_NAME: SESSION, AGENT_BRIDGE_CLAUDE_BIN: claudeBin, AGENT_BRIDGE_DASHBOARD: "off", AGENT_BRIDGE_LOG_LEVEL: "debug" } as Record<string, string>,
+    env: { ...process.env, AGENT_BRIDGE_HOME: home, AGENT_BRIDGE_NAME: SESSION, AGENT_BRIDGE_CLAUDE_BIN: claudeBin, AGENT_BRIDGE_DASHBOARD: "off", AGENT_BRIDGE_LOG_LEVEL: "debug", AGENT_BRIDGE_JOB_RUNNER: inProcess ? "0" : "1" } as Record<string, string>,
     stderr: "ignore",
   });
   const client = new Client({ name: "test-codex", version: "0.0.0" });
@@ -89,15 +93,16 @@ async function waitFor(fn: () => boolean | Promise<boolean>, ms = 30_000): Promi
 }
 
 /** Spawn a subagent that runs until its release file exists; resolves once its runner reported in. */
-async function spawnHeld(s: { client: Client }): Promise<{ job: string; id: string; release: string; pid: number }> {
+async function spawnHeld(s: { client: Client; transport: StdioClientTransport }, runner = true): Promise<{ job: string; id: string; release: string; pid: number; link: string }> {
   const release = join(home, `release-${releases.length}`);
+  const link = `${release}.link.json`;
   releases.push(release);
-  const out = await call(s, "spawn_claude", { prompt: `release=${release} build the castle`, title: "Runner test" });
+  const out = await call(s, "spawn_claude", { prompt: `release=${release} link=${link} build the castle`, title: "Runner test" });
   const job = /Subagent (claude-job-([0-9a-f]+)) started/.exec(out);
   expect(job, out).not.toBeNull();
   const id = job![2]!;
-  await waitFor(() => readRunnerState(home, id)?.sessionId?.startsWith("fake-") === true);
-  return { job: job![1]!, id, release, pid: readRunnerState(home, id)!.pid };
+  await waitFor(() => existsSync(link) && (!runner || readRunnerState(home, id)?.sessionId?.startsWith("fake-") === true));
+  return { job: job![1]!, id, release, pid: runner ? readRunnerState(home, id)!.pid : s.transport.pid!, link };
 }
 
 beforeEach(() => {
@@ -142,6 +147,48 @@ describe.skipIf(!existsSync(SERVER))("background subagents in job runners", () =
     const invalid = await b.client.callTool({ name: "message_subagent", arguments: { job, sandbox: "read-only" } });
     expect(invalid.isError).toBe(true);
     expect(textOf(invalid)).toContain("sandbox applies only to codex jobs");
+  }, TEST_TIMEOUT_MS);
+
+  it("lets detached sibling runners discover and message each other directly", async () => {
+    const session = await startSession();
+    const a = await spawnHeld(session);
+    await stopSession(session);
+    const replacement = await startSession();
+    const b = await spawnHeld(replacement);
+    const first = parentFromEnv(JSON.parse(readFileSync(a.link, "utf8")))!;
+    const second = parentFromEnv(JSON.parse(readFileSync(b.link, "utf8")))!;
+    expect(await first.siblings.peers()).toEqual([{ name: b.job, title: "Runner test", agent: "claude", status: "running" }]);
+    expect(readFileSync(a.link + ".prompt", "utf8")).toContain("call peers to find sibling jobs");
+    const message = (await first.siblings.send(b.job, "The shared lock is free")).messages[0]!;
+    expect(await second.inbox()).toMatchObject([{ sibling: { from: { name: a.job }, body: "The shared lock is free" } }]);
+    await second.siblings.send(a.job, "Capture folder saved", message.id);
+    expect(await first.inbox()).toMatchObject([{ sibling: { from: { name: b.job }, hop: 1, body: "Capture folder saved" } }]);
+    // Chat is distinct from supervisor control: neither runner changes its owner or control history.
+    expect(readRunnerState(home, a.id)?.seen).toEqual([]);
+    expect(readRunnerState(home, b.id)?.seen).toEqual([]);
+    await waitFor(async () => (await call(replacement, "inbox", { mark_read: false })).includes("Capture folder saved"));
+    const copies = await call(replacement, "inbox");
+    expect(copies).toContain(":note");
+    expect(copies).toContain("Sibling message to");
+    writeFileSync(a.release, "");
+    writeFileSync(b.release, "");
+    await waitFor(() => !pidAlive(a.pid) && !pidAlive(b.pid));
+  }, TEST_TIMEOUT_MS);
+
+  it("also connects sibling jobs hosted inside the supervisor's MCP server", async () => {
+    const session = await startSession(true);
+    const a = await spawnHeld(session, false);
+    const b = await spawnHeld(session, false);
+    const first = parentFromEnv(JSON.parse(readFileSync(a.link, "utf8")))!;
+    const second = parentFromEnv(JSON.parse(readFileSync(b.link, "utf8")))!;
+    expect(await first.siblings.peers()).toEqual([{ name: b.job, title: "Runner test", agent: "claude", status: "running" }]);
+    const message = (await first.siblings.send(b.job, "In-process handover")).messages[0]!;
+    expect(await second.inbox()).toMatchObject([{ sibling: { from: { name: a.job }, body: "In-process handover" } }]);
+    await second.siblings.send(a.job, "Received", message.id);
+    await waitFor(async () => (await call(session, "inbox", { mark_read: false })).includes("In-process handover"));
+    writeFileSync(a.release, "");
+    writeFileSync(b.release, "");
+    await waitFor(async () => (await call(session, "peers")).includes(`${b.job} "Runner test": done`));
   }, TEST_TIMEOUT_MS);
 
   it("keep running across a restart of the session's server, which takes them over and gets the result", async () => {

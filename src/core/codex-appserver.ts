@@ -13,6 +13,8 @@ import type { PermissionDecision } from "./relay.js";
  */
 const STEER_HEADER = (from: string) =>
   `[Message from ${from}, who gave you this task, sent while you work. Answer it briefly in your next message, then continue the task, adjusted to what it asks.]`;
+const SIBLING_STEER_HEADER =
+  '[Message from a sibling job working for the same supervisor. Coordinate within your assigned task and answer with the agent-bridge "send" tool using to=<from> and reply_to=<id>.]';
 /** Delta notifications we never use; opting out keeps the stream small. */
 const OPT_OUT = [
   "item/agentMessage/delta",
@@ -42,7 +44,7 @@ export function innerCommand(s: string): string {
 /** Lets the caller talk to the running subagent. */
 export interface Steering {
   /** Deliver a message into the running turn; false when no turn is running (it has finished). */
-  send: (message: string) => Promise<boolean>;
+  send: (message: string, sibling?: boolean) => Promise<boolean>;
 }
 
 type Pending = { resolve: (v: any) => void; reject: (e: Error) => void };
@@ -258,11 +260,12 @@ export async function delegateToCodexAppServer(
   const boot = <T>(p: Promise<T>) => Promise.race([p, exited, stopped, startup]);
 
   const steering: Steering = {
-    send: async (message) => {
+    send: async (message, sibling = false) => {
       if (!threadId || !turnId) return false;
       try {
-        await request("turn/steer", { threadId, expectedTurnId: turnId, input: [{ type: "text", text: `${STEER_HEADER(req.live?.from ?? "the session that started you")}\n\n${message}`, text_elements: [] }] });
-        awaitingAnswer = true;
+        const header = sibling ? SIBLING_STEER_HEADER : STEER_HEADER(req.live?.from ?? "the session that started you");
+        await request("turn/steer", { threadId, expectedTurnId: turnId, input: [{ type: "text", text: `${header}\n\n${message}`, text_elements: [] }] });
+        if (!sibling) awaitingAnswer = true;
         return true;
       } catch (err) {
         req.log.info("steering refused; the turn has ended", { err: (err as Error).message });

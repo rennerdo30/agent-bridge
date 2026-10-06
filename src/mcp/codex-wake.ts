@@ -2,7 +2,7 @@ import type { BridgeConfig } from "../core/config.js";
 import { runProcess } from "../core/delegate.js";
 import type { Logger } from "../core/logger.js";
 import type { BridgeNode } from "../core/node.js";
-import type { BridgeMessage } from "../core/protocol.js";
+import { isSiblingNote, type BridgeMessage } from "../core/protocol.js";
 
 /** Collect bursts of messages into one wake-up. */
 const WAKE_DEBOUNCE_MS = 1_500;
@@ -50,7 +50,7 @@ export class CodexWaker {
   }
 
   private hasWakeableMail(): boolean {
-    return this.node.autoWakeEnabled && this.node.unread().some((m) => m.hop < this.cfg.maxHops);
+    return this.node.autoWakeEnabled && this.node.unread().some((m) => m.hop < this.cfg.maxHops && !isSiblingNote(m));
   }
 
   private idleWithMail(): boolean {
@@ -58,6 +58,7 @@ export class CodexWaker {
   }
 
   private onMessage(m: BridgeMessage): void {
+    if (isSiblingNote(m)) return;
     if (m.hop >= this.cfg.maxHops) {
       this.log.info("not waking codex: hop limit reached", { id: m.id, hop: m.hop });
       return;

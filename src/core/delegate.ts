@@ -335,7 +335,7 @@ export interface DelegateRequest {
   /** Talking to the running subagent, where the target supports it natively (Codex app-server). */
   live?: {
     from: string;
-    onSteering: (s: { send: (message: string) => Promise<boolean> } | null) => void;
+    onSteering: (s: { send: (message: string, sibling?: boolean) => Promise<boolean> } | null) => void;
     /** Its reply to a message delivered this way. */
     onAnswer: (text: string) => void;
   };

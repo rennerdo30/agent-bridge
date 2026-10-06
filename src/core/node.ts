@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { unlinkSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { Broker } from "./broker.js";
 import { BridgeClient } from "./client.js";
 import {
@@ -8,12 +9,13 @@ import {
   ELECTION_RETRY_MAX_MS,
   APP_VERSION,
   ELECTION_RETRY_MIN_MS,
+  JOBS_FILE,
   PROTOCOL_VERSION,
   RECONNECT_BACKOFF_MAX_MS,
   RECONNECT_BACKOFF_MIN_MS,
 } from "./constants.js";
 import type { Logger } from "./logger.js";
-import { BridgeError, type AgentKind, type BridgeMessage, type PeerActivity, type PeerInfo, type SendArgs, type SendResult } from "./protocol.js";
+import { BridgeError, type AgentKind, type BridgeMessage, type PeerActivity, type PeerInfo, type SendArgs, type SendResult, type SiblingPeer } from "./protocol.js";
 import { MessageStore } from "./store.js";
 
 export interface BridgeNodeOptions {
@@ -31,6 +33,9 @@ export interface BridgeNodeOptions {
   id?: string;
   /** A job runner: the agent of the subagent it runs. The broker keeps such peers out of listings and agent-kind routing. */
   jobAgent?: AgentKind;
+  jobOwner?: string;
+  jobParent?: string;
+  jobTitle?: string;
   /** false: only connect to a broker, never become one (a short-lived job runner would take the bridge down with it). */
   canHostBroker?: boolean;
 }
@@ -214,7 +219,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
       this.log.error("cannot open message store", { err, db: this.opts.dbPath });
       throw err;
     }
-    const broker = new Broker(this.opts.pipePath, store, this.log.child("broker"), this.opts.token);
+    const broker = new Broker(this.opts.pipePath, store, this.log.child("broker"), this.opts.token, Date.now, join(dirname(this.opts.dbPath), JOBS_FILE));
     try {
       await broker.listen();
       this.broker = broker;
@@ -271,6 +276,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
         activity: this.activity,
         version: APP_VERSION,
         ...(this.opts.jobAgent ? { jobAgent: this.opts.jobAgent } : {}),
+        ...(this.opts.jobOwner ? { jobOwner: this.opts.jobOwner, jobParent: this.opts.jobParent, jobTitle: this.opts.jobTitle } : {}),
       },
     };
   }
@@ -348,6 +354,19 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
 
   peers(): Promise<PeerInfo[]> {
     return this.withClient((c) => c.request("peers", {}));
+  }
+
+  siblings(): Promise<SiblingPeer[]> {
+    return this.withClient((c) => c.request("siblings", {}));
+  }
+
+  sendSibling(args: SendArgs, maxHops: number): Promise<SendResult> {
+    return this.withClient((c) => c.request("sendSibling", { ...args, maxHops }));
+  }
+
+  async updateJob(patch: { jobParent?: string; jobTitle?: string }): Promise<void> {
+    Object.assign(this.opts, patch);
+    if (this.isConnected) await this.client!.request("updatePeer", patch);
   }
 
   /** Locally buffered unread messages, oldest first. */

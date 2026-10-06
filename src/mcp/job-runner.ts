@@ -5,6 +5,7 @@ import { createLogger } from "../core/logger.js";
 import { BridgeNode } from "../core/node.js";
 import { resolveDbPath, resolvePipePath } from "../core/paths.js";
 import { loadOrCreateToken } from "../core/token.js";
+import { SIBLING_CONVERSATION_PREFIX } from "../core/protocol.js";
 import { resumeArgs, runDelegate, type JobSink, type RunContext } from "./delegate-run.js";
 import { CONTROL_CONVERSATION_PREFIX, JOB_PEER_PREFIX, RUNNER_HEARTBEAT_MS, writeRunnerState, type RunnerSpec } from "./job-host.js";
 import { jobReport, NOTE_CONVERSATION_SUFFIX, QUEUED_FOLLOW_UP_NOTE, sessionOfError, waitForApproval, type Job, type RunnerControl, type RunnerState } from "./jobs.js";
@@ -80,6 +81,9 @@ export async function runJobRunner(specFile: string | undefined): Promise<number
     // "other" keeps an older broker from routing "any codex" mail here; a current one hides the runner anyway.
     agent: "other",
     jobAgent: job.agent,
+    jobOwner: job.supervisor ?? job.owner ?? owner,
+    jobParent: owner,
+    jobTitle: typeof job.args?.title === "string" ? job.args.title : spec.args.title,
     id: `${JOB_PEER_PREFIX}${job.id}`,
     name: job.name,
     cwd: spec.cwd,
@@ -132,6 +136,8 @@ export async function runJobRunner(specFile: string | undefined): Promise<number
   };
 
   node.on("message", (m) => {
+    // Direct sibling chat is handled by the current turn's SiblingLink, never as supervisor control.
+    if (m.conversationId.startsWith(SIBLING_CONVERSATION_PREFIX)) return;
     node.markRead([m.id]);
     if (!m.conversationId.startsWith(CONTROL_CONVERSATION_PREFIX)) {
       log.info("ignoring a message that is not from the job's session", { from: m.from.name });
@@ -146,6 +152,7 @@ export async function runJobRunner(specFile: string | undefined): Promise<number
     // The session may be a new server now, maybe under another name: answer where it is.
     if (m.from.name !== owner) log.info("the job's session is now", { name: m.from.name, was: owner });
     owner = m.from.name;
+    void node.updateJob({ jobParent: owner }).catch(() => {});
     if (c.type === "message") {
       if (closing) return;
       seen.push(c.cid);
@@ -192,7 +199,7 @@ export async function runJobRunner(specFile: string | undefined): Promise<number
       save();
     }, PROGRESS_SAVE_MS);
   };
-  const rc: RunContext = { agent: spec.byAgent, cfg: spec.cfg, home, log, me: () => owner, cwd: () => spec.cwd, jobs: sink };
+  const rc: RunContext = { agent: spec.byAgent, cfg: spec.cfg, home, log, me: () => owner, cwd: () => spec.cwd, jobs: sink, jobNode: node };
 
   let args = spec.args;
   for (;;) {
