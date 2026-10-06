@@ -49157,7 +49157,7 @@ function pendingChips(g) {
   return out.length ? ' <span class="chip next" title="saved; applies from its next turn">next turn: ' + esc(out.join(" \xB7 ")) + "</span>" : "";
 }
 
-let state = null, model = null, route = parseRoute(), pulling = false, lastChat = "";
+let state = null, model = null, route = parseRoute(), lastChat = "";
 let settingsGroup = null, modelLists = null;
 /** Loaded run logs: name -> { raw, offset, done }. */
 const logs = new Map();
@@ -49470,6 +49470,12 @@ async function showNative(x, key) {
   $("cNote").textContent = "";
   $("cSub").textContent = (key === CHAT_KEY ? "the session's own conversation" : jc ? "its own subagent of " + jc[0] : "a subagent of " + p.agent + " itself") + " \xB7 read-only" + (p.cwd ? " \xB7 " + p.cwd : "");
   $("cHint").classList.add("hidden");
+  // Switching: never leave the previous conversation on screen while this one loads.
+  if ($("chat").dataset.key !== x.name + key && !chats.has(x.name + "|" + key)) {
+    lastChat = '<div class="sys">Loading conversation\u2026</div>';
+    $("chat").innerHTML = lastChat;
+    $("chat").dataset.key = x.name + key;
+  }
   const c = await pullChat(x, key);
   if (route.session !== x.name || route.group !== key) return;
   const body = c.error ? '<div class="empty">' + esc(c.error) + "</div>" : c.items.length ? chatHtml(c.items, p.agent || "other", x.name) : '<div class="empty">' + (c.loading ? "Loading\u2026" : "Nothing in this conversation yet.") + "</div>";
@@ -49731,31 +49737,39 @@ async function fillModels(agent) {
 const settingsHidden = () => $("jobSettings").classList.contains("hidden");
 
 /** Load (the rest of) every turn's log, then render the conversation. */
+/** Subagents whose logs are loading; one load per subagent, so switching never waits for another one. */
+const pullingGroups = new Set();
+const isShown = (g) => !(route.group && route.group !== g.key && model.groups.has(route.group));
+
 async function showGroup(g) {
-  if (pulling) return;
-  pulling = true;
+  // Switching: show this subagent at once (header plus what is already loaded, or a loading note), never the old chat.
+  if ($("chat").dataset.key !== g.key) renderConversation(g);
+  if (pullingGroups.has(g.key)) return;
+  pullingGroups.add(g.key);
   try {
     if (g.job) void loadJobChildren(g.job);
     for (const r of g.turns) {
       // Its step log was lost (recovered from the job record): read the turn from the CLI's own transcript.
       if (r.hasLog === false) { await pullChatFrom("run|" + r.name, "/api/runs/" + encodeURIComponent(r.name) + "/chat"); continue; }
       let l = logs.get(r.name);
-      if (!l) logs.set(r.name, (l = { raw: "", offset: 0, done: false }));
+      if (!l) logs.set(r.name, (l = { raw: "", offset: 0, done: false, loaded: false }));
       if (l.done) continue;
       for (let i = 0; i < LOG_PAGES; i++) {
         const res = await fetch("/api/runs/" + encodeURIComponent(r.name) + "?from=" + l.offset);
         if (!res.ok) break;
         const d = await res.json();
-        l.raw += d.text; l.offset = d.next;
+        l.raw += d.text; l.offset = d.next; l.loaded = true;
         if (d.next >= d.size) break;
+        // A long log: show the first part right away, load the rest behind it.
+        if (i === 0 && isShown(g)) renderConversation(g);
       }
+      l.loaded = true;
       l.done = r.status !== "running";
     }
   } finally {
-    pulling = false;
+    pullingGroups.delete(g.key);
   }
-  if (route.group && route.group !== g.key && model.groups.has(route.group)) return;
-  renderConversation(g);
+  if (isShown(g)) renderConversation(g);
 }
 
 /** A turn's log: the task (header line, prompt, "---"), then the steps. */
@@ -49779,6 +49793,13 @@ function renderConversation(g) {
     : "";
   $("cHint").innerHTML = hint;
   $("cHint").classList.toggle("hidden", !hint);
+  // Nothing of this subagent loaded yet: a loading note instead of an empty or stale conversation.
+  const nothingYet = g.turns.every((r) => (r.hasLog === false ? !chats.has("run|" + r.name) : !(logs.get(r.name) || {}).loaded));
+  if (nothingYet) {
+    const chat = $("chat"), note = '<div class="sys">Loading conversation\u2026</div>' + (jobResults.get(g.key) || []).map((text) => '<div class="sys">' + esc(text) + "</div>").join("");
+    if (lastChat !== note || chat.dataset.key !== g.key) { lastChat = note; chat.innerHTML = note; chat.dataset.key = g.key; }
+    return;
+  }
   let n = 0;
   const html = g.turns.map((r, i) => {
     const turnHead = g.turns.length > 1 ? '<div class="turn">' + (i === 0 ? "Task" : "Follow-up " + i) + " \xB7 " + time(r.startedAt) + " \xB7 " + pill(r.status) + "</div>" : "";
