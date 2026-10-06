@@ -6,7 +6,7 @@ import { join } from "node:path";
 import type { BridgeConfig } from "../core/config.js";
 import type { Logger } from "../core/logger.js";
 import type { BridgeNode } from "../core/node.js";
-import { BROADCAST, isQuietMessage, type BridgeMessage } from "../core/protocol.js";
+import { AGENT_KINDS, BROADCAST, isQuietMessage, type BridgeMessage } from "../core/protocol.js";
 import { tokensEqual } from "../core/token.js";
 import { formatMessages } from "./format.js";
 
@@ -46,6 +46,7 @@ export function sessionFile(home: string, sessionId: string): string {
 export function shouldWakeClaudeMessage(node: BridgeNode, cfg: BridgeConfig, m: BridgeMessage): boolean {
   if (m.hop >= cfg.maxHops || isQuietMessage(m) || m.conversationId.endsWith(":note")) return false;
   const direct = m.to === node.name ||
+    (m.recipient === node.name && m.to !== BROADCAST && !(AGENT_KINDS as readonly string[]).includes(m.to)) ||
     (m.from.id.includes("/") && m.to.slice(m.to.indexOf("/") + 1) === node.name);
   return node.autoWakeEnabled || (direct && (m.from.id.startsWith("job:") || node.isAwaitedReply(m))) ||
     ((direct || m.to === BROADCAST) && cfg.wakeOnDirect);

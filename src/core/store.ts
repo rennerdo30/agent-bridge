@@ -14,7 +14,7 @@ import { DECISIONS_SCHEMA, DecisionStore } from "./decisions.js";
 
 const BACKUP_CHECK_INTERVAL_MS = 60 * 60 * 1_000;
 
-export const SQLITE_STORE_VERSION = 5;
+export const SQLITE_STORE_VERSION = 6;
 
 /** Recipient key used while a message waits for "any peer of this agent kind". */
 export function agentQueueKey(agent: AgentKind): string {
@@ -59,9 +59,32 @@ const MIGRATIONS = [
     );
     PRAGMA user_version = 5;
   ` },
+  { version: 6, sql: `
+    CREATE TABLE IF NOT EXISTS peer_names (
+      identity TEXT NOT NULL, name TEXT NOT NULL, session_id TEXT, agent TEXT NOT NULL,
+      learned_at INTEGER NOT NULL, PRIMARY KEY (identity, name)
+    );
+    CREATE TABLE IF NOT EXISTS peer_name_owners (
+      name TEXT PRIMARY KEY, identity TEXT NOT NULL
+    );
+    INSERT INTO peer_names
+      SELECT binding.identity, json_extract(binding.identity, '$[4]'), binding.session_id, json_extract(binding.identity, '$[0]'), binding.learned_at
+      FROM session_bindings binding WHERE json_valid(binding.identity)
+        AND json_type(binding.identity, '$[4]')='text' AND json_type(binding.identity, '$[0]')='text'
+        AND NOT EXISTS (
+          SELECT 1 FROM session_bindings other WHERE json_valid(other.identity)
+            AND other.identity<>binding.identity
+            AND json_extract(other.identity, '$[4]')=json_extract(binding.identity, '$[4]')
+        )
+      ORDER BY binding.learned_at ASC
+      ON CONFLICT(identity, name) DO UPDATE SET session_id=excluded.session_id, learned_at=excluded.learned_at;
+    INSERT INTO peer_name_owners SELECT name, identity FROM peer_names WHERE 1 ORDER BY learned_at ASC
+      ON CONFLICT(name) DO UPDATE SET identity=excluded.identity;
+    PRAGMA user_version = 6;
+  ` },
 ] as const;
 
-function registrationIdentity(peer: PeerInfo): string | null {
+export function registrationIdentity(peer: PeerInfo): string | null {
   if (peer.jobAgent || !Number.isSafeInteger(peer.agentPid) || !peer.agentPid || peer.agentPid <= 0 || !peer.agentStartedAt) return null;
   let cwd = resolve(peer.cwd);
   try { cwd = realpathSync.native(cwd); } catch { /* A removed working folder still has a stable absolute spelling. */ }
@@ -185,6 +208,29 @@ export class MessageStore {
     if (!identity) return null;
     const row = this.db.prepare("SELECT session_id FROM session_bindings WHERE identity=? ORDER BY learned_at DESC, rowid DESC LIMIT 1").get(identity);
     return row ? String(row.session_id) : null;
+  }
+
+  /** Retain names only with CLI or hook identity; a similar spelling is never an alias. */
+  rememberName(peer: PeerInfo, at: number): void {
+    const identity = registrationIdentity(peer) ?? (!peer.jobAgent && peer.sessionId ? JSON.stringify(["session", peer.agent, peer.sessionId]) : null);
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      if (identity) this.db.prepare(`INSERT INTO peer_names VALUES (?,?,?,?,?) ON CONFLICT(identity,name)
+        DO UPDATE SET session_id=COALESCE(excluded.session_id,peer_names.session_id), learned_at=MIN(peer_names.learned_at,excluded.learned_at)`)
+        .run(identity, peer.name, peer.sessionId, peer.agent, at);
+      // Even an older or unidentified server supersedes historical ownership of its exact name.
+      this.db.prepare(`INSERT INTO peer_name_owners VALUES (?,?) ON CONFLICT(name)
+        DO UPDATE SET identity=excluded.identity`).run(peer.name, identity ?? `unidentified:${peer.id}`);
+      this.db.exec("COMMIT");
+    } catch (err) { this.db.exec("ROLLBACK"); throw err; }
+  }
+
+  namesFor(peer: PeerInfo): string[] {
+    const identity = registrationIdentity(peer);
+    if (peer.jobAgent || (!identity && !peer.sessionId)) return [];
+    return this.db.prepare(`SELECT name FROM peer_names JOIN peer_name_owners USING(name,identity)
+      WHERE identity=? OR (session_id=? AND agent=?) GROUP BY name ORDER BY MIN(learned_at) ASC, MIN(peer_names.rowid) ASC`)
+      .all(identity, peer.sessionId, peer.agent).map((r) => String(r.name));
   }
 
   insert(m: BridgeMessage): void {

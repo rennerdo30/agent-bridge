@@ -28873,6 +28873,7 @@ var MAX_NETWORK_FRAME_BYTES = 2 * 1024 * 1024;
 var MAX_NETWORK_REQUESTS = 64;
 var NETWORK_TIMEOUT_MS = 5e3;
 var NETWORK_REFRESH_MS = 2e3;
+var NETWORK_HEARTBEAT_TIMEOUT_MS = 3e4;
 var PAIRING_TTL_MS = 10 * 60 * 1e3;
 var PAIRING_KEY_BYTES = 32;
 var MAX_PAIRING_CODE_CHARS = 1024;
@@ -41846,7 +41847,7 @@ var en = {
   "jobs.unknown": "No running or queued subagent named {name}.",
   "send.ok": "Message {id} sent (conversation {conversation}).",
   "send.delivered": "Delivered to: {names}.",
-  "send.queued": "Recipient offline, queued for: {names}.",
+  "send.queued": "Recipient not connected right now; queued for: {names}. This does not prove the session is closed. Mail is saved until reconnect or queue retention expiry; on reconnect it is delivered, with wake requested when the receiving session's wake policy and hook permit.",
   "send.waitHint": "Use wait_for_message to wait for the answer.",
   "usage.none": "None of Codex, Claude Code or opencode is installed here.",
   "peers.subagent": "You are a subagent of {name}, which gave you your current task. Other sessions are not visible from here; to tell {name} something, use the send tool (it goes straight to {name}).",
@@ -42958,7 +42959,7 @@ function readDecisions(dbPath, args = {}) {
 
 // src/core/store.ts
 var BACKUP_CHECK_INTERVAL_MS = 60 * 60 * 1e3;
-var SQLITE_STORE_VERSION = 5;
+var SQLITE_STORE_VERSION = 6;
 function agentQueueKey(agent) {
   return `agent:${agent}`;
 }
@@ -42998,6 +42999,29 @@ var MIGRATIONS = [
       PRIMARY KEY (identity, session_id)
     );
     PRAGMA user_version = 5;
+  ` },
+  { version: 6, sql: `
+    CREATE TABLE IF NOT EXISTS peer_names (
+      identity TEXT NOT NULL, name TEXT NOT NULL, session_id TEXT, agent TEXT NOT NULL,
+      learned_at INTEGER NOT NULL, PRIMARY KEY (identity, name)
+    );
+    CREATE TABLE IF NOT EXISTS peer_name_owners (
+      name TEXT PRIMARY KEY, identity TEXT NOT NULL
+    );
+    INSERT INTO peer_names
+      SELECT binding.identity, json_extract(binding.identity, '$[4]'), binding.session_id, json_extract(binding.identity, '$[0]'), binding.learned_at
+      FROM session_bindings binding WHERE json_valid(binding.identity)
+        AND json_type(binding.identity, '$[4]')='text' AND json_type(binding.identity, '$[0]')='text'
+        AND NOT EXISTS (
+          SELECT 1 FROM session_bindings other WHERE json_valid(other.identity)
+            AND other.identity<>binding.identity
+            AND json_extract(other.identity, '$[4]')=json_extract(binding.identity, '$[4]')
+        )
+      ORDER BY binding.learned_at ASC
+      ON CONFLICT(identity, name) DO UPDATE SET session_id=excluded.session_id, learned_at=excluded.learned_at;
+    INSERT INTO peer_name_owners SELECT name, identity FROM peer_names WHERE 1 ORDER BY learned_at ASC
+      ON CONFLICT(name) DO UPDATE SET identity=excluded.identity;
+    PRAGMA user_version = 6;
   ` }
 ];
 function registrationIdentity(peer) {
@@ -43118,6 +43142,27 @@ var MessageStore = class {
     if (!identity) return null;
     const row = this.db.prepare("SELECT session_id FROM session_bindings WHERE identity=? ORDER BY learned_at DESC, rowid DESC LIMIT 1").get(identity);
     return row ? String(row.session_id) : null;
+  }
+  /** Retain names only with CLI or hook identity; a similar spelling is never an alias. */
+  rememberName(peer, at) {
+    const identity = registrationIdentity(peer) ?? (!peer.jobAgent && peer.sessionId ? JSON.stringify(["session", peer.agent, peer.sessionId]) : null);
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      if (identity) this.db.prepare(`INSERT INTO peer_names VALUES (?,?,?,?,?) ON CONFLICT(identity,name)
+        DO UPDATE SET session_id=COALESCE(excluded.session_id,peer_names.session_id), learned_at=MIN(peer_names.learned_at,excluded.learned_at)`).run(identity, peer.name, peer.sessionId, peer.agent, at);
+      this.db.prepare(`INSERT INTO peer_name_owners VALUES (?,?) ON CONFLICT(name)
+        DO UPDATE SET identity=excluded.identity`).run(peer.name, identity ?? `unidentified:${peer.id}`);
+      this.db.exec("COMMIT");
+    } catch (err) {
+      this.db.exec("ROLLBACK");
+      throw err;
+    }
+  }
+  namesFor(peer) {
+    const identity = registrationIdentity(peer);
+    if (peer.jobAgent || !identity && !peer.sessionId) return [];
+    return this.db.prepare(`SELECT name FROM peer_names JOIN peer_name_owners USING(name,identity)
+      WHERE identity=? OR (session_id=? AND agent=?) GROUP BY name ORDER BY MIN(learned_at) ASC, MIN(peer_names.rowid) ASC`).all(identity, peer.sessionId, peer.agent).map((r) => String(r.name));
   }
   insert(m) {
     this.stmt.insert.run(
@@ -44596,7 +44641,7 @@ var frameSchema = external_exports.discriminatedUnion("type", [
   external_exports.object({ type: external_exports.literal("echo"), rid: external_exports.uuid() }),
   external_exports.object({ type: external_exports.literal("receipt"), rid: external_exports.uuid(), id: external_exports.uuid(), sender: textId, recipient: external_exports.string().regex(NETWORK_NAME_PATTERN).optional() }),
   external_exports.object({ type: external_exports.literal("files"), rid: external_exports.uuid(), transfer: transferSchema }),
-  external_exports.object({ type: external_exports.literal("result"), rid: external_exports.uuid(), delivered: external_exports.boolean().optional(), readAt: external_exports.number().nonnegative().nullable().optional(), transfer: transferResultSchema.optional(), error: external_exports.string().max(MAX_METADATA_CHARS).optional() })
+  external_exports.object({ type: external_exports.literal("result"), rid: external_exports.uuid(), delivered: external_exports.boolean().optional(), recipient: external_exports.string().regex(NETWORK_NAME_PATTERN).optional(), readAt: external_exports.number().nonnegative().nullable().optional(), transfer: transferResultSchema.optional(), error: external_exports.string().max(MAX_METADATA_CHARS).optional() })
 ]);
 var Link = class {
   constructor(socket, service, key2, expected) {
@@ -44604,6 +44649,7 @@ var Link = class {
     this.service = service;
     this.key = key2;
     this.expected = expected;
+    socket.setKeepAlive(true, NETWORK_REFRESH_MS);
     this.deadline = setTimeout(() => this.fail(new Error("network hello timed out")), NETWORK_TIMEOUT_MS);
     void this.ready.catch(() => {
     });
@@ -44633,6 +44679,7 @@ var Link = class {
   remote = null;
   peers = [];
   echoSupported = false;
+  heartbeatPending = false;
   receiptsSupported = false;
   capabilities = [];
   extensionHandlers = 0;
@@ -44714,6 +44761,14 @@ var Link = class {
   send(message) {
     return this.request({ type: "send", rid: randomUUID13(), message: messageSchema.parse(message) });
   }
+  /** Detect a half-open link even when nobody sends work; activity never expires a peer. */
+  heartbeat() {
+    if (!this.remote || !this.echoSupported || this.heartbeatPending) return;
+    this.heartbeatPending = true;
+    void this.echo(NETWORK_HEARTBEAT_TIMEOUT_MS).catch((error62) => this.fail(error62)).finally(() => {
+      this.heartbeatPending = false;
+    });
+  }
   receipt(id, sender, recipient, requireRecipient = false) {
     if (!this.receiptsSupported) return Promise.reject(new Error("Remote broker does not support read receipts. Update and reload its hosting sessions."));
     if (requireRecipient && !this.supports("recipient-receipts-v1")) return Promise.reject(new Error("Remote broker does not support per-recipient broadcast receipts. Update and reload its hosting sessions."));
@@ -44722,22 +44777,22 @@ var Link = class {
   files(transfer) {
     return this.request({ type: "files", rid: randomUUID13(), transfer: transferSchema.parse(transfer) });
   }
-  async echo() {
+  async echo(timeoutMs = NETWORK_TIMEOUT_MS) {
     if (!this.echoSupported) throw new Error("Remote broker does not support verification. Update and restart its hosting sessions.");
-    const result = await this.request({ type: "echo", rid: randomUUID13() });
+    const result = await this.request({ type: "echo", rid: randomUUID13() }, timeoutMs);
     if (result !== true) throw new Error("network echo was not acknowledged");
   }
-  request(frame) {
+  request(frame, timeoutMs = NETWORK_TIMEOUT_MS) {
     if (this.pending.size >= MAX_NETWORK_REQUESTS) return Promise.reject(new Error("too many network requests"));
     return new Promise((resolve13, reject) => {
       const rid = frame.rid;
       const timer = setTimeout(() => {
         this.pending.delete(rid);
         reject(new Error("network send timed out; delivery may have occurred"));
-      }, NETWORK_TIMEOUT_MS);
+      }, timeoutMs);
       this.pending.set(rid, { resolve: resolve13, reject, timer, kind: frame.type });
       try {
-        this.refresh();
+        if (frame.type === "send" || frame.type === "files") this.refresh();
         this.write(frame);
       } catch (err) {
         clearTimeout(timer);
@@ -44765,7 +44820,8 @@ var Link = class {
       clearTimeout(pending.timer);
       this.pending.delete(frame.rid);
       if (frame.error) pending.reject(new Error(frame.error));
-      else if ((pending.kind === "send" || pending.kind === "echo") && frame.delivered !== void 0) pending.resolve(frame.delivered);
+      else if (pending.kind === "send" && frame.delivered !== void 0) pending.resolve({ delivered: frame.delivered, recipient: frame.recipient });
+      else if (pending.kind === "echo" && frame.delivered !== void 0) pending.resolve(frame.delivered);
       else if (pending.kind === "receipt" && frame.readAt !== void 0) pending.resolve(frame.readAt);
       else if (pending.kind === "files" && frame.transfer) pending.resolve(frame.transfer);
       else pending.reject(new Error("invalid network result"));
@@ -44793,7 +44849,7 @@ var Link = class {
       const message = { ...frame.message, from: { ...frame.message.from, id: `${remote.id}/${frame.message.from.id}`, name: `${remote.name}/${frame.message.from.name}` } };
       const result = this.service.receive(message);
       this.refresh();
-      this.write({ type: "result", rid: frame.rid, delivered: result.delivered });
+      this.write({ type: "result", rid: frame.rid, delivered: result.delivered, recipient: result.recipient });
     } catch (err) {
       this.write({ type: "result", rid: frame.rid, error: String(err.message).slice(0, MAX_METADATA_CHARS) });
     }
@@ -44943,6 +44999,7 @@ var NetworkService = class {
         for (const link2 of this.links.values()) {
           try {
             link2.refresh();
+            link2.heartbeat();
           } catch (err) {
             link2.fail(err);
           }
@@ -45067,9 +45124,10 @@ var NetworkService = class {
   }
   async send(message) {
     const { link: link2, target } = this.target(message.recipient);
-    const recipient = `${link2.remote.name}/${target}`;
-    const delivered = await link2.send({ ...message, recipient: target });
-    return { messages: [{ ...message, recipient }], deliveredTo: delivered ? [recipient] : [], queuedFor: delivered ? [] : [recipient], recipientStates: link2.peers.filter((p) => p.name === target).map((p) => ({ name: recipient, activity: p.activity, autoWake: p.autoWake, wakeOnDirect: p.wakeOnDirect, wakeAvailable: p.wakeAvailable, wakeMaxHops: p.wakeMaxHops })) };
+    const result = await link2.send({ ...message, recipient: target });
+    const actual = result.recipient ?? target;
+    const recipient = `${link2.remote.name}/${actual}`;
+    return { messages: [{ ...message, recipient }], deliveredTo: result.delivered ? [recipient] : [], queuedFor: result.delivered ? [] : [recipient], recipientStates: link2.peers.filter((p) => p.name === actual).map((p) => ({ name: recipient, activity: p.activity, autoWake: p.autoWake, wakeOnDirect: p.wakeOnDirect, wakeAvailable: p.wakeAvailable, wakeMaxHops: p.wakeMaxHops })) };
   }
   target(address) {
     const slash = address.indexOf("/");
@@ -45763,7 +45821,7 @@ function formatDelivery(result, maxHops = DEFAULT_MAX_HOPS) {
   return result.deliveredTo.map((name2) => {
     const peer = result.recipientStates?.find((p) => p.name === name2);
     const message = result.messages.find((m) => m.recipient === name2);
-    const direct = message?.to === name2 || name2.includes("/") && message?.to.includes("/") && message.to.split("/").at(-1) === name2.split("/").at(-1);
+    const direct = message && (message.to === name2 || message.to !== BROADCAST && !AGENT_KINDS.includes(message.to) && message.recipient === name2);
     const canWake = message && message.hop < (peer?.wakeMaxHops ?? maxHops) && !isQuietMessage(message) && !message.conversationId.endsWith(":note") && peer?.wakeAvailable && (peer.autoWake || peer.wakeOnDirect && (direct || message.to === BROADCAST));
     const hint = peer?.activity === "idle" ? canWake ? "idle; wake requested on the receiving PC, awaiting consumption" : "idle; will be read on its next turn (no wake for this delivery)" : "waiting for the peer to consume it";
     return `Delivered to inbox: ${name2} (${hint}). Delivery does not mean read.`;
@@ -47312,7 +47370,8 @@ Call decisions to look up current decisions or their history.`,
     if (!peer.sessionId) peer.sessionId = this.store.recoverSession(peer);
     this.store.rememberSession(peer, this.now());
     conn.peer = peer;
-    if (peer.sessionId) this.replaceStale(conn, peer);
+    this.replaceStale(conn, peer);
+    this.restoreNames(conn, peer, { reclaim: true, replay: false });
     this.expireStaleQueue(peer.name);
     let claimed = 0;
     if (!peer.jobAgent) {
@@ -47369,6 +47428,7 @@ Call decisions to look up current decisions or their history.`,
     if (typeof args.name === "string" && args.name !== peer.name) {
       if (!PEER_NAME_PATTERN.test(args.name)) throw new BridgeError("bad_request", "invalid peer name");
       const old = peer.name;
+      this.store.rememberName(peer, this.now());
       peer.name = this.uniqueName(args.name);
       this.log.info("peer renamed", { from: old, to: peer.name });
       this.expireStaleQueue(peer.name);
@@ -47378,6 +47438,8 @@ Call decisions to look up current decisions or their history.`,
     }
     this.log.debug("peer updated", { name: peer.name, sessionId: peer.sessionId, autoWake: peer.autoWake, cwd: peer.cwd });
     this.store.rememberSession(peer, this.now());
+    this.store.rememberName(peer, this.now());
+    this.restoreNames(conn, peer, { reclaim: args.sessionId !== void 0, replay: true });
     for (const message of this.queueCurrentDecisions(peer)) this.emit(conn, "message", message);
     return peer;
   }
@@ -47390,7 +47452,12 @@ Call decisions to look up current decisions or their history.`,
   replaceStale(conn, peer) {
     for (const c of [...this.conns]) {
       const old = c.peer;
-      if (c === conn || !old || old.agent !== peer.agent || old.sessionId !== peer.sessionId) continue;
+      if (c === conn || !old || old.agent !== peer.agent) continue;
+      const sameSession = peer.sessionId && old.sessionId === peer.sessionId;
+      const identity = registrationIdentity(peer);
+      const sameProcess = (old.pid !== peer.pid || old.id === peer.id) && identity && identity === registrationIdentity(old) && (!old.sessionId || !peer.sessionId || old.sessionId === peer.sessionId);
+      if (!sameSession && !sameProcess) continue;
+      this.store.rememberName(old, this.now());
       this.log.info("session connected again from a new server; replacing the old connection", { name: old.name, by: peer.name, sessionId: peer.sessionId });
       this.emit(c, "replaced", { by: peer.name });
       this.conns.delete(c);
@@ -47406,6 +47473,32 @@ Call decisions to look up current decisions or their history.`,
         });
       }
     }
+  }
+  restoreNames(conn, peer, options) {
+    const names = this.store.namesFor(peer);
+    const previous = peer.name;
+    if (options.reclaim) {
+      const base2 = peer.name.replace(/-\d+$/, "");
+      const original = names.find((name2) => name2.replace(/-\d+$/, "") === base2 && (name2 === peer.name || !this.connByName(name2)));
+      if (original) peer.name = original;
+    }
+    let moved = 0;
+    for (const name2 of names) {
+      if (name2 === peer.name || this.connByName(name2)) continue;
+      moved += this.store.claim(name2, peer.name);
+    }
+    this.store.rememberName(peer, this.now());
+    if (options.replay && (moved || previous !== peer.name)) setImmediate(() => {
+      if (conn.peer !== peer) return;
+      for (const m of this.unreadMail(peer.name, PENDING_MAX_LIMIT)) this.emit(conn, "message", m);
+    });
+  }
+  /** Exact registrations win; an unoccupied retained alias must identify one live session. */
+  recipientConn(name2) {
+    const exact = this.connByName(name2);
+    if (exact) return exact;
+    const matches = [...this.conns].filter((c) => c.peer && this.store.namesFor(c.peer).includes(name2));
+    return matches.length === 1 ? matches[0] : void 0;
   }
   /**
    * Before a peer takes over queued mail. Names are derived from the project folder and reused by every
@@ -47429,9 +47522,10 @@ Call decisions to look up current decisions or their history.`,
       if (others.length === 0) throw new BridgeError("unknown_target", "no other peers are online");
       return { live: others, queued: [] };
     }
-    const exact = all.find((c) => c.peer.id === to || c.peer.name === to);
+    const recipient = this.recipientConn(to);
+    const exact = all.find((c) => c.peer.id === to || c === recipient);
     if (exact) return { live: [exact], queued: [] };
-    if (to === sender.name || to === sender.id) throw new BridgeError("bad_request", "cannot send a message to yourself");
+    if (recipient?.peer?.id === sender.id || to === sender.name || to === sender.id) throw new BridgeError("bad_request", "cannot send a message to yourself");
     if (AGENT_KINDS.includes(to)) {
       const ofKind = others.filter((c) => c.peer.agent === to);
       if (ofKind.length === 1) return { live: ofKind, queued: [] };
@@ -47560,7 +47654,9 @@ Call decisions to look up current decisions or their history.`,
     const message = this.store.byId(id);
     if (!message || message.from.id !== sender) throw new BridgeError("unauthorized", "receipt is only available to the sender");
     const receipts = this.store.receipts(id);
-    return (recipient ? receipts.find((r) => r.recipient === recipient) : receipts[0])?.readAt ?? null;
+    const receipt = recipient ? receipts.find((r) => r.recipient === recipient) : receipts[0];
+    const addressedAlias = recipient && message.to !== BROADCAST && message.to.split("/").at(-1) === recipient;
+    return (receipt ?? (addressedAlias ? receipts.find((r) => r.recipient === message.recipient) : void 0))?.readAt ?? null;
   }
   async messageReceipt(conn, id) {
     const sender = this.requirePeer(conn);
@@ -47593,16 +47689,17 @@ Call decisions to look up current decisions or their history.`,
     return result;
   }
   receiveRemote(message) {
-    const target = this.connByName(message.recipient);
+    const target = this.recipientConn(message.recipient);
+    if (target?.peer) message = { ...message, recipient: target.peer.name };
     const existing = this.store.byId(message.id);
     if (existing) {
       const broadcastCopy = existing.to === BROADCAST && message.to === BROADCAST;
       if (existing.from.id !== message.from.id || !broadcastCopy && existing.recipient !== message.recipient || existing.to !== message.to || existing.body !== message.body || existing.conversationId !== message.conversationId || existing.replyTo !== message.replyTo || existing.hop !== message.hop) throw new BridgeError("bad_request", "message id already used");
-      if (this.store.receipts(message.id).some((r) => r.recipient === message.recipient)) return { delivered: Boolean(target) };
+      if (this.store.receipts(message.id).some((r) => r.recipient === message.recipient)) return { delivered: Boolean(target), recipient: message.recipient };
     }
     this.store.insert(message);
     if (target) this.emit(target, "message", message);
-    return { delivered: Boolean(target) };
+    return { delivered: Boolean(target), recipient: message.recipient };
   }
 };
 
@@ -48500,7 +48597,7 @@ function sessionFile(home, sessionId) {
 }
 function shouldWakeClaudeMessage(node2, cfg, m) {
   if (m.hop >= cfg.maxHops || isQuietMessage(m) || m.conversationId.endsWith(":note")) return false;
-  const direct = m.to === node2.name || m.from.id.includes("/") && m.to.slice(m.to.indexOf("/") + 1) === node2.name;
+  const direct = m.to === node2.name || m.recipient === node2.name && m.to !== BROADCAST && !AGENT_KINDS.includes(m.to) || m.from.id.includes("/") && m.to.slice(m.to.indexOf("/") + 1) === node2.name;
   return node2.autoWakeEnabled || direct && (m.from.id.startsWith("job:") || node2.isAwaitedReply(m)) || (direct || m.to === BROADCAST) && cfg.wakeOnDirect;
 }
 var RewakeEndpoint = class {
