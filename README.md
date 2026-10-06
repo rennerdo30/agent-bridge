@@ -4,12 +4,16 @@
 
 **Let Claude Code, OpenAI Codex and opencode talk to each other.**
 
-agent-bridge is a set of plugins for Claude Code, Codex and opencode, built on a shared core. Agents on the same machine can:
+agent-bridge is a set of plugins for Claude Code, Codex and opencode, built on a shared core. In **0.29.9**, agents on the same machine or explicitly paired PCs can:
 
-- **Message each other live.** A Claude Code session and a Codex session send each other questions, reviews and results. Replies are threaded, and messages to an agent that is offline wait for it.
+- **Message each other live.** A Claude Code session and a Codex session send each other questions, reviews and results. Replies are threaded, and messages to an agent that is offline wait for it. Notify-mode waits register once and deliver replies later, surviving reloads and session exit.
 - **Delegate.** `ask_<agent>` runs another agent headlessly for a one-off task and returns its answer; for example `ask_codex` and `ask_opencode` from Claude, or `ask_claude` from Codex. You can continue that session later.
 - **Spawn each other as subagents.** `spawn_codex` / `spawn_claude` start the other agent in the background and return immediately. The result arrives later as a message, and several subagents can run in parallel.
 - **Pick any model.** `ask_*` and `spawn_*` accept any model id or alias the target CLI accepts, for example `gpt-6-sol`, `opus`, or a full Claude model id. Ids are passed through verbatim, so new models work without a plugin update.
+- **Follow work in the dashboard.** A sessions sidebar, nested subagent trees, chat bubbles and progress with ETA show who is doing what. Search history, review pinned Decisions, answer approvals in Waiting for you, and manage paired PCs on the Network page.
+- **Work across paired PCs.** Pair with TLS and LAN discovery, transfer files, start remote jobs, and read the other PC's chats and subagents through your local dashboard.
+- **Coordinate nested jobs.** Subagents can delegate within a shared depth and concurrency budget. Codex jobs can use their own native subagents; exact cross-session messaging grants are opt-in, and finished jobs retain delivery and review outcomes.
+- **Keep history.** Messages, jobs, run logs and completed approvals are archived instead of deleted. Backed-up migrations and verified snapshots preserve data across upgrades.
 
 ```
  Claude Code session                               Codex session
@@ -75,9 +79,9 @@ npx -y github:rennerdo30/agent-bridge status     # which sessions still run an o
 3. **Restart your agent sessions** to load the new version. There is deliberately no command for this: the sessions are your own windows, often with work in progress. `status` lists every connected session with its agent-bridge version and marks old ones `OUTDATED`:
 
    ```
-   claude-myrepo  [claude, busy, v0.5.0 OUTDATED]  since …  E:\work\myrepo
-   codex-myrepo   [codex, idle, v0.5.4]            since …  E:\work\myrepo
-   1 session(s) run an older agent-bridge than 0.5.4. Restart them (after finishing their current work) to load the update.
+   claude-myrepo  [claude, busy, v0.29.8 OUTDATED]  since …  /home/demo/myrepo
+   codex-myrepo   [codex, idle, v0.29.9]            since …  /home/demo/myrepo
+   1 session(s) run an older agent-bridge than 0.29.9. Restart them (after finishing their current work) to load the update.
    ```
 4. In Codex, check `/hooks` after an update. Newly added agent-bridge hooks, such as the `PermissionRequest` hook in 0.5.0, must be trusted once.
 
@@ -106,15 +110,21 @@ Just ask in plain language, for example:
 | `message_subagent` | Talk to a subagent started with `ask_*` or `spawn_*`: a running one gets the message while it works and answers right away; a finished or failed one continues in its own session with its full context (see below) |
 | `usage_limits` | How much of each agent's account limits is used (Codex and Claude: 5-hour and weekly windows with reset times; opencode: today's spend and which models are free), so the driving agent can pick who gets large work |
 | `cancel_subagent` | Stop a running subagent (background job or blocking `ask_*` run) by its job name |
+| `report_progress` | A delegated job reports `percent`, a short `note` and optional `eta_minutes`; its supervisor and dashboard see the estimate |
+| `set_job_outcome` | Record a finished job as held (with a reason) or discarded; delivery/read receipts and Git merge evidence are tracked separately |
+| `search_history` | Search messages, runs, decisions and CLI chats, including archives; optional sourced summaries use a model |
+| `decide` / `decisions` | Record and retrieve scoped owner decisions, retaining every revision |
 | `auto_wake` | Let incoming messages make this session keep working (see below) |
 
-sk_* and spawn_* take these optional parameters:
+`ask_*` and `spawn_*` take these parameters:
 
-- `title` (required): a short name for the job, 3-7 words, like a chat title. The dashboard and `peers` show it.
+- `title` (required for `ask_*`, optional for `spawn_*`): a short name for the job, 3-7 words, like a chat title. The dashboard and `peers` show it. If omitted, spawn tools derive one from the prompt and report the fallback. Other parameters below are optional.
 
 - `model`: any id or alias the target accepts, passed through verbatim. For opencode, short or partial names like `muse-spark` are resolved against `opencode models`. An ambiguous or unknown name fails immediately and lists the candidates.
 - `effort`: reasoning effort, e.g. `low`, `medium`, `high`, `xhigh` (Claude also `max`; for opencode the model's variant). Passed as Claude `--effort`, Codex `model_reasoning_effort` and opencode `--variant`. Without it the config's `effort` applies (`"high"` for every subagent, or per target: `{ "codex": "xhigh", "claude": "high" }`), else the CLI's own default. The dashboard shows the effort each subagent runs at: the one asked for, what Codex reports for its thread, or the default from the Claude or Codex config.
-- `session_id`: continue an earlier run. `cwd`: working folder.
+- `session_id`: continue an earlier run. `cwd`: working folder. `host`: run the job on a paired PC; see [remote jobs](docs/remote-jobs.md).
+- `native_subagents` (Codex): how many of Codex's own child threads a job may run, default 6, range 0–32; 0 disables them. This is separate from bridge delegation depth and concurrency.
+- `send_to`: opt-in messaging to exact local sessions or jobs outside the supervisor's siblings; see [cross-session job messaging](#exact-cross-session-job-messaging).
 - `timeout_sec`: 60 minutes by default for `ask_*`; background `spawn_*` jobs have no practical limit (24 hours). A run that times out is not lost: the error names its session (`call again with session_id="…"`), so the caller continues it instead of starting over. The relay subagents do that automatically, once.
 - `access` and `worktree`, see below.
 - Target-specific options: `sandbox` and `approvals_reviewer` for Codex, `permission_mode` for Claude, or `auto_approve` for opencode. Codex uses `approvals_reviewer: "auto_review"` (Approve for me) by default; `"user"` forwards approval requests directly. Headless opencode rejects every permission request unless `auto_approve` is set.
@@ -186,7 +196,7 @@ Every `ask_*` and `spawn_*` run is a job with a name like `codex-job-1a2b3c4d` o
 - **Command lifetime:** a native command can fail while its job continues. Codex command failures retain their item ID, exit/status and reported timeout evidence in run progress and logs; an unattributed exit is labelled `termination cause not reported`. Detached tools are not automatically independent of tree cancellation. See [command lifetime and durable tools](docs/command-lifetime.md).
 - **Approvals:** when a background subagent needs approval, the question goes to the agent that started it as a message: "codex-job-… asks for approval: …". Codex automatically reviews eligible approval requests first; refusals and requests left to the client reach the supervisor/dashboard. opencode with `access: "edit"` asks for whatever your opencode rules leave to "ask" (MCP tools you marked, folders outside the project, commands you marked); agent-bridge runs it through a private `opencode serve` for that instead of `opencode run --auto`, which approved all of it. Claude with `access: "edit"` asks for every permission prompt (a command or MCP tool your rules don't allow) through a `PermissionRequest` hook that agent-bridge adds with `--settings`; Claude Code before 2.1.268 does not run that hook in `-p` mode. Claude and opencode read-only runs keep their deny rules; Codex read-only escalation requests can be reviewed or forwarded. The agent answers with `message_subagent(job=..., message="allow")` or `"deny"`, so this works in auto mode and while you're away; no answer within 10 minutes counts as deny. One allow covers that MCP server for the rest of the run. A blocking `ask_*` caller can't answer while it waits, so those questions are shown to you instead; if your host can't show dialogs, opencode and Claude keep their old behavior (`--auto`, and Claude's own handling of prompts). For Codex direct user approval, combine `access: "ask"` with `approvals_reviewer: "user"`; the default automatic reviewer still applies to ask jobs.
 
-- **Progress:** subagents are asked to report how far they are with `report_progress` (percent and a note); `peers` and the dashboard show it as a percentage and a progress bar. It is the subagent's own estimate.
+- **Progress:** subagents report `percent`, a short `note` and optional `eta_minutes` with `report_progress`; `peers` and the dashboard show the progress and time left. Both are the subagent's own estimates.
 - **Read-only tools without asking:** list MCP tools that subagents may call without an approval question, as `server.tool` patterns with `*`: `"autoApproveTools": ["pair-desk.get_*", "pair-desk.list_*"]` in the config (or `AGENT_BRIDGE_AUTO_APPROVE_TOOLS`, comma-separated), or `allow_tools=[...]` on a single `spawn_*` / `ask_*`. An "allow" answer covers that MCP server for the rest of the job, follow-ups included.
 - **Desk workers:** `allow_tools=["pair-desk:worker"]` allows `get_*`, `list_*`, `comment`, `progress`, `set_plan`, `update_step`, `create_issue`, `update_issue` and `set_location`. It excludes status changes, build publication and handoff writes. Add `"pair-desk.set_build"` separately when a job should publish a build. Read patterns alone do not allow plans or issue edits.
 - **Capacity errors:** jobs retry model-capacity failures after 15, 30 and 60 seconds within their original time limit, preserving the session and selected model. No model fallback is used. The step log records each retry.
@@ -212,9 +222,21 @@ finally { agent-bridge slot release unity }
 `agent-bridge slot status` prints holders and FIFO waiters as JSON. SQLite file locks in `resource-slots.sqlite` serialize acquisition across processes and recover automatically after a crash; no extra daemon or dependency is needed. Dead owner processes are reclaimed on the next acquire or status call. Runs renew their six-hour leases every minute and release all their slots when the run ends. Outside a delegated job the owner defaults to the calling shell process; keep that shell alive and use `agent-bridge slot renew unity` before its six-hour lease expires. Acquiring twice is idempotent: one job holds one slot per resource. Lowering a capacity leaves current holders in place and blocks new acquisitions until usage falls below the new limit.
 
 Slots are cooperative: commands that skip acquisition remain unrestricted. Queue inspection is available through `slot status`; dashboard and `peers` integration are not included.
-- **Subagents don't spawn agents:** inside a subagent, agent-bridge offers only `send` (to its parent) and `peers`; `ask_*`, `spawn_*` and the other bridge tools are not there.
+- **Nested delegation:** a top session is depth 0. With `maxDelegateDepth: 2` (default, range 1–3), its children can start another generation. Every generation shares the root session's `maxJobs` budget; results return to the direct parent. See [nested delegation](docs/nested-delegation.md).
 - **Results reach the right agent:** messages are not handed to Claude Code's native subagents (Task/Agent tool) through their tool calls; they wait for the main agent. After `/reload-plugins` the new agent-bridge server of a session replaces the old one and keeps its name.
 `peers` lists running jobs and the recent finished ones. This works the same whichever agent is the host (Claude Code, Codex or opencode, where the tool is `bridge_message_subagent`) and whichever is the subagent. Cancelling or ending a session stops its subagents with their whole process tree.
+
+### Exact cross-session job messaging
+
+Jobs are isolated from other sessions by default. At spawn, a session can opt in with
+`send_to: ["opencode-job-12345678"]` (or an exact local session name). Each direction needs
+its own grant: the other job must include the sender's exact name in its `send_to` to reply.
+`peers` lists granted jobs alongside siblings with their titles and status. Wildcards,
+agent kinds, and paired-PC addresses are rejected; granting a session does not grant its jobs.
+Grants persist across continuations, and cross-session job threads keep the sibling hop
+limit and durable undelivered-text notices. Both owners retain quiet inbox/dashboard copies;
+these copies do not enter their context automatically. Finished jobs return their saved
+report immediately: do not wait for a reply or receipt unless their owner continues them.
 
 ## Native subagents
 
@@ -251,14 +273,32 @@ The dashboard starts automatically: whichever agent session hosts the bridge als
 
 Turn the automatic start off with `"dashboard": false` in `~/.agent-bridge/config.json` (or `AGENT_BRIDGE_DASHBOARD=off`); change the port with `"dashboardPort"`.
 
-The dashboard has an **Overview** and a **tab per session**:
+The dashboard has a **sessions sidebar**, grouped by PC, with search and folding:
 
-- **Overview:** every connected Claude Code, Codex and opencode session as a card (busy or idle, folder, version, how many subagents it started and how many are working), the latest subagents of all sessions, and the message history with a box to send a message yourself (as "you").
-- **Session tab:** the subagents this session started (finished ones older than 30 minutes fold into an archive), and for the selected one its whole conversation: the task, what it said, its commands (bursts fold into one row), its answer, and every follow-up as a further turn. Runs are grouped under the session that started them, never shown as sessions of their own.
+- **Overview:** connected sessions, usage left, working and finished jobs, and message history with a box to send a message yourself (as "you"). Finished jobs show merge/review outcomes.
+- **Session page:** its own read-only chat and a subagent tree with nested bridge jobs and the CLIs' own subagents. Conversations use chat bubbles; commands fold into rows, and follow-ups stay in the same job. Progress and ETA appear in the job row and conversation header. Older finished runs fold into an archive and remain readable.
+- **Search history:** search messages, subagent runs, Decisions and CLI chats, including archived history; filter by kind or agent, inspect sources, or opt into a model-generated summary.
+- **Decisions:** pinned owner choices with scope and revision history.
+- **Waiting for you:** pending approvals with countdowns and allow/deny controls, plus optional browser notifications.
+- **Network:** pairing, discovery details, connection checks, firewall guidance and file-transfer progress. Paired sessions appear in the sidebar, with their chats and subagents readable over the authenticated link.
+
+These screenshots use synthetic demo data only.
+
+| Overview · dark | Overview · light |
+|---|---|
+| ![Dashboard overview in dark theme](docs/images/dashboard-overview-dark.png) | ![Dashboard overview in light theme](docs/images/dashboard-overview-light.png) |
+
+| Session · dark | Session · light |
+|---|---|
+| ![Session conversation, nested jobs, native subagents and ETA in dark theme](docs/images/dashboard-session-dark.png) | ![Session conversation, nested jobs, native subagents and ETA in light theme](docs/images/dashboard-session-light.png) |
+
+| Network | Search history |
+|---|---|
+| ![Network page with a connected demo PC](docs/images/dashboard-network.png) | ![Search history with synthetic checkout results](docs/images/dashboard-search.png) |
 
 It only listens on 127.0.0.1. Its link contains a secret (stored in `~/.agent-bridge/dashboard.json`, readable only by you on Unix); without it the dashboard refuses every request, also from other local programs and web pages. `ui` options: `--port=N`, `--no-open`.
 
-Local sessions also have read-only transcript APIs for their normal chat and their CLI's native subagents: Claude Code JSONL, Codex rollout JSONL, and OpenCode SQLite. They use the peer's session id, the same dashboard cookie, and bounded incremental reads. CLI files are never edited. `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, and OpenCode's `XDG_DATA_HOME` storage override are respected. Sessions on paired PCs are unavailable through these readers. See [the transcript API](docs/transcripts.md) for routes, cursors and limits.
+Local sessions also have read-only transcript APIs for their normal chat and their CLI's native subagents: Claude Code JSONL, Codex rollout JSONL, and OpenCode SQLite. They use the peer's session id, the same dashboard cookie, and bounded incremental reads. CLI files are never edited. `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, and OpenCode's `XDG_DATA_HOME` storage override are respected. Paired-PC reads use the existing TLS link; update and restart hosting sessions on both PCs. See [the transcript API](docs/transcripts.md) and [paired dashboard reads](docs/remote-dashboard.md).
 
 ### Run logs
 
@@ -321,7 +361,7 @@ See [notification-wait design and tradeoffs](docs/message-waits.md).
 
 Auto-wake is **off by default**. Turn it on per session by asking the agent ("turn on agent-bridge auto-wake"), or globally with `"autoWake": true` in the config.
 
-Every reply increments a conversation's hop count. Messages at or above `maxHops` (default 6) never wake an agent; they are still shown on the next prompt. Delegated headless sessions cannot delegate again.
+Every reply increments a conversation's hop count. Messages at or above `maxHops` (default 6) never wake an agent; they are still shown on the next prompt. Delegated sessions retain parent/sibling messaging restrictions and the configured delegation-depth limit.
 
 ## Configuration
 
@@ -370,14 +410,18 @@ Logs are written to `~/.agent-bridge/logs/agent-bridge.log`.
 
 ### Stored data and upgrades
 
-`bridge.db` uses SQLite `PRAGMA user_version`: version 1 is the original message schema;
-version 2 adds `archived_messages`. Unversioned databases upgrade through version 1. Pending
+History is **archived, never automatically deleted**: messages, jobs, run logs, completed
+approvals and wait records remain available after maintenance. `agent-bridge doctor` checks
+storage; `doctor --backup` creates a verified snapshot. See [storage and recovery](docs/storage.md).
+
+`bridge.db` uses SQLite `PRAGMA user_version` (currently schema 6), with ordered migrations
+for messages, decisions, history search and session identity. Unversioned databases upgrade through version 1. Pending
 migrations run in order in one transaction, after a consistent SQLite backup (including committed
 WAL data). Opening a newer schema fails without changing it. Three recent `.backup-*` copies
 stay beside the store; older backups move into `archive/` and are never deleted automatically.
 
-JSON stores use `version: 1`. Legacy config, preferences, jobs and runner state remain readable;
-the first versioned write backs up the old file. `jobs.json` is now `{ "version": 1, "jobs": [...] }`;
+JSON stores use `version: 2`. Legacy config, preferences, jobs and runner state remain readable;
+the first upgraded write backs up the old file. `jobs.json` is now `{ "version": 2, "jobs": [...] }`;
 `auto-wake.json` keeps preferences under `peers`. Unknown fields survive updates. Writes replace
 files atomically and refuse newer versions. Corrupt JSON moves to `.corrupt-<time>-<id>` with a
 warning, preserving its original bytes. Other read errors prevent replacement rather than treating
@@ -403,9 +447,9 @@ are retained in full; only displayed previews and the in-memory recent-job list 
 
 ### Paired PCs
 
-Networking is **off by default**. Pair two PCs once, then their agents can message each other and send files. Start an agent-bridge session (Claude Code, Codex or opencode) on each PC first.
+Networking is **off by default**. Pair two PCs once, then their agents can message each other, send files and start remote jobs. Your local dashboard can also read the other PC's chats, bridge jobs and native subagents. Start an agent-bridge session (Claude Code, Codex or opencode) on each PC first.
 
-**In the dashboard** (`agent-bridge ui`, tab **Network**):
+**In the dashboard** (`agent-bridge ui`, page **Network**):
 
 1. On both PCs: name the PC, keep "Other PCs on this network" and press **Turn on**. If the firewall blocks other PCs, the page says so; on Windows **Open the ports…** shows the rules and adds them after you confirm and accept the administrator prompt. macOS and Linux show the commands to run yourself.
 2. On one PC: **Create pairing code**. The code is copied to the clipboard and is valid once, for ten minutes. The page shows the address the other PC should use and turns to "Connected" when it pairs.
@@ -421,9 +465,13 @@ For unattended setup, use `agent-bridge connect --non-interactive --yes --create
 
 Manual fallback: enable top-level `network: { enabled: true, name: "unique-pc", bind: "0.0.0.0", port: 48148, discovery: true }` in config on each PC, restart all hosting sessions, allow TCP 48148 and UDP 48149 on the trusted LAN, then run `agent-bridge pair` on one PC and `agent-bridge link <host:port> <code>` on the other. `agent-bridge network` shows status; `agent-bridge unlink <instance-id>` on both PCs revokes a pairing.
 
-Remote sessions and job runners appear as `mac-studio/claude-app`; the existing `send` tool routes to those names and replies across the link. Agent-kind and broadcast targets remain local. Running subagents also need the AB-51 runner forwarding change. `send_files(to, paths)` streams files/folders to a paired peer's inbox with SHA-256, progress messages, cancellation and persisted restart resume (default maximum 8 GiB, configurable with `network.maxTransferBytes`). `fetch_files(from, paths)` pulls from the other PC's explicitly configured absolute `network.fetchRoots`; fetching is off by default. `cancel_transfer(id)` cancels an active transfer. Local delivery and older brokers keep the one-MiB/128-entry path. Files never overwrite existing targets or execute automatically. See [file transfer and dashboard contracts](docs/network.md#file-transfer).
+Remote sessions and job runners appear as `demo-desktop/claude-webshop`; `send` routes to those names and replies across the link. Broadcasts include connected paired PCs; agent-kind targets remain local. `ask_*` and `spawn_*` accept `host` to run on a paired PC, with the remote folder and worktree managed there. The requester retains its job controls and result history; see [remote jobs](docs/remote-jobs.md).
 
-See [docs/network.md](docs/network.md) for the protocol, threat model, limits and remaining LAN validation. Discovery metadata is unencrypted; application traffic is encrypted. Large-file streaming is not included. Real two-PC LAN discovery, firewall policy and clipboard behavior require validation on your machines.
+Remote jobs are separately opt-in: the execution PC must enable `network.remoteJobs` and allow the requesting PC, target agents and repository roots. Pairing alone does not permit delegation.
+
+`send_files(to, paths)` streams files/folders to a paired peer's inbox with SHA-256, quiet progress reports, cancellation and persisted restart resume (default maximum 8 GiB, configurable with `network.maxTransferBytes`). `fetch_files(from, paths)` pulls from the other PC's explicitly configured absolute `network.fetchRoots`; fetching is off by default. `cancel_transfer(id)` cancels an active transfer. Local delivery and older brokers keep the one-MiB/128-entry path. Files never overwrite existing targets or execute automatically. See [file transfer and dashboard contracts](docs/network.md#file-transfer).
+
+See [docs/network.md](docs/network.md) for the protocol, threat model and limits. Discovery metadata is unencrypted; application traffic is encrypted. Real two-PC LAN discovery, firewall policy and clipboard behavior require validation on your machines.
 
 ## CLI
 
@@ -480,18 +528,3 @@ npm run check   # typecheck + tests + build
 ## License
 
 MIT
-
-### Exact cross-session job messaging
-
-Jobs are isolated from other sessions by default. At spawn, a session can opt in with
-`send_to: ["opencode-job-12345678"]` (or an exact local session name). Each direction needs
-its own grant: the other job must include the sender's exact name in its `send_to` to reply.
-`peers` lists granted jobs alongside siblings with their titles and status. Wildcards,
-agent kinds, and paired-PC addresses are rejected; granting a session does not grant its jobs.
-Grants persist across continuations, and cross-session job threads keep the sibling hop
-limit and durable undelivered-text notices. Both owners retain quiet inbox/dashboard copies;
-these copies do not enter their context automatically. Finished jobs return their saved
-report immediately: do not wait for a reply or receipt unless their owner continues them.
-
-Spawn tools accept an omitted `title`: they derive a short title from the prompt's first
-nonempty line and state that fallback in the result. Supplying a title keeps it unchanged.
