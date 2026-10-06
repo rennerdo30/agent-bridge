@@ -15,6 +15,7 @@ import { loadOrCreateToken, tokensEqual } from "../core/token.js";
 import { loadConfig } from "../core/config.js";
 import { readUsage, type UsageReport } from "../core/usage.js";
 import { UI_PAGE } from "./ui-page.js";
+import { readJsonStore } from "../core/json-store.js";
 
 /**
  * `agent-bridge ui`: a local dashboard for sessions, delegated runs and messages.
@@ -96,7 +97,7 @@ export function listRuns(home: string, now = Date.now()): RunSummary[] {
 
 function readMeta(file: string): RunMeta {
   try {
-    return JSON.parse(readFileSync(file, "utf8")) as RunMeta;
+    return (readJsonStore(file) ?? {}) as RunMeta;
   } catch {
     return {};
   }

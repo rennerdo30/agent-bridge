@@ -1,8 +1,9 @@
-import { mkdirSync, readFileSync, unwatchFile, watchFile, writeFileSync } from "node:fs";
+import { unwatchFile, watchFile } from "node:fs";
 import { basename, join } from "node:path";
 import { CONFIG_FILE_NAME, DEFAULT_CLAUDE_BIN, DEFAULT_CODEX_BIN, DEFAULT_LINGER_SEC, DEFAULT_MAX_HOPS, DEFAULT_MAX_JOBS, DEFAULT_OPENCODE_BIN, DEFAULT_DASHBOARD_PORT, ENV, MAX_JOBS_LIMIT } from "./constants.js";
 import type { Logger } from "./logger.js";
 import { AGENT_KINDS, type AgentKind } from "./protocol.js";
+import { isRecord, readJsonStore, writeJsonStore } from "./json-store.js";
 
 /**
  * How incoming messages reach a Claude Code session.
@@ -147,15 +148,9 @@ export function watchConfig(home: string, agent: AgentKind, log: Logger, onChang
 /** Set one top-level value in config.json, keeping the rest of the file. */
 export function saveConfigValue(home: string, key: string, value: unknown): void {
   const path = join(home, CONFIG_FILE_NAME);
-  let file: Record<string, unknown> = {};
-  try {
-    file = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
-  } catch {
-    // missing or unreadable: start a new file
-  }
-  file[key] = value;
-  mkdirSync(home, { recursive: true });
-  writeFileSync(path, `${JSON.stringify(file, null, 2)}\n`);
+  const previous = readJsonStore(path);
+  const file = isRecord(previous) ? previous : {};
+  writeJsonStore(path, { ...file, [key]: value }, previous);
 }
 
 /** Config file (~/.agent-bridge/config.json) with optional per-agent sections, overridden by env vars. */
@@ -163,12 +158,12 @@ export function loadConfig(home: string, agent: AgentKind, log: Logger, env: Nod
   let file: Record<string, unknown> = {};
   const path = join(home, CONFIG_FILE_NAME);
   try {
-    file = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
+    file = (readJsonStore(path, log) ?? {}) as Record<string, unknown>;
     log.debug("config file loaded", { path });
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code !== "ENOENT") log.warn("ignoring unreadable config file", { path, err: (err as Error).message });
   }
-  const section = (file[agent] ?? {}) as Record<string, unknown>;
+  const section = isRecord(file[agent]) ? file[agent] : {};
   /** First valid value wins: env var, then the agent section, then the top level of the file. */
   const pick = <T>(key: keyof BridgeConfig, envKey: string | null, parse: (v: unknown) => T | undefined): T | undefined => {
     for (const v of [envKey ? env[envKey] : undefined, section[key], file[key]]) {

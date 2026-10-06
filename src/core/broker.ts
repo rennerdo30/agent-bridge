@@ -27,6 +27,7 @@ import {
 } from "./protocol.js";
 import { agentQueueKey, MessageStore } from "./store.js";
 import { tokensEqual } from "./token.js";
+import { retentionLimit } from "./json-store.js";
 
 /** Peer names double as offline queue keys, so keep them simple and unambiguous. */
 export const PEER_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
@@ -122,7 +123,8 @@ export class Broker {
 
   private purge(): void {
     try {
-      this.store.purgeOlderThan(this.now() - MESSAGE_TTL_MS);
+      const ttl = retentionLimit("AGENT_BRIDGE_MESSAGE_TTL_MS", MESSAGE_TTL_MS);
+      if (ttl) this.store.purgeOlderThan(this.now() - ttl);
     } catch (err) {
       this.log.warn("purge failed", { err });
     }
@@ -348,7 +350,8 @@ export class Broker {
    */
   private expireStaleQueue(key: string): void {
     try {
-      this.store.expireQueued(key, this.now() - QUEUED_MAIL_MAX_AGE_MS);
+      const maxAge = retentionLimit("AGENT_BRIDGE_QUEUED_MAIL_MAX_AGE_MS", QUEUED_MAIL_MAX_AGE_MS);
+      if (maxAge) this.store.expireQueued(key, this.now() - maxAge);
     } catch (err) {
       this.log.warn("expiring queued mail failed", { key, err });
     }

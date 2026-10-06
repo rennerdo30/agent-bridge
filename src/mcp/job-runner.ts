@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { readFileSync, rmSync } from "node:fs";
+import { archiveFile, assertWritableStore, readJsonStore } from "../core/json-store.js";
 import { failureCause } from "../core/delegate.js";
 import { createLogger } from "../core/logger.js";
 import { BridgeNode } from "../core/node.js";
@@ -26,8 +26,11 @@ const STOP_DEADLINE_MS = 15_000;
  */
 export async function runJobRunner(specFile: string | undefined): Promise<number> {
   if (!specFile) return 2;
-  const spec = JSON.parse(readFileSync(specFile, "utf8")) as RunnerSpec;
-  rmSync(specFile, { force: true });
+  const data = readJsonStore(specFile);
+  assertWritableStore(data);
+  if (!data) return 2;
+  const spec = data as unknown as RunnerSpec;
+  archiveFile(specFile);
   const { home, target } = spec;
   const log = createLogger({ home, component: "job-runner" }).child(spec.job.name);
   const job: Job = {

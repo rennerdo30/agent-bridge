@@ -1,5 +1,5 @@
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
+import { isRecord, readJsonStore, writeJsonStore } from "./json-store.js";
 
 /**
  * Auto-wake as the user last set it for a session (by peer name), so /reload-plugins or a restart of the
@@ -7,27 +7,29 @@ import { dirname, join } from "node:path";
  */
 const FILE = "auto-wake.json";
 
-function read(home: string): Record<string, boolean> {
+function read(home: string): Record<string, unknown> {
   try {
-    const data = JSON.parse(readFileSync(join(home, FILE), "utf8")) as unknown;
-    return data && typeof data === "object" ? (data as Record<string, boolean>) : {};
+    return (readJsonStore(join(home, FILE)) ?? {}) as Record<string, unknown>;
   } catch {
     return {};
   }
 }
 
 export function savedAutoWake(home: string, name: string): boolean | undefined {
-  const v = read(home)[name];
+  const data = read(home);
+  const v = (isRecord(data.peers) ? data.peers : data)[name];
   return typeof v === "boolean" ? v : undefined;
 }
 
 export function saveAutoWake(home: string, name: string, enabled: boolean): void {
   try {
-    const all = { ...read(home), [name]: enabled };
     const file = join(home, FILE);
-    mkdirSync(dirname(file), { recursive: true });
-    writeFileSync(file, JSON.stringify(all, null, 2), { mode: 0o600 });
-  } catch {
+    const previous = readJsonStore(file);
+    const data = isRecord(previous) ? previous : {};
+    const peers = isRecord(data.peers) ? data.peers : data;
+    writeJsonStore(file, { ...data, peers: { ...peers, [name]: enabled } }, previous);
+  } catch (err) {
+    process.stderr.write(`could not save auto-wake preference: ${String(err)}\n`);
     // best effort: the setting still applies to this session
   }
 }

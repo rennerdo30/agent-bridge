@@ -1,8 +1,9 @@
-import { existsSync, lstatSync, readdirSync, readFileSync, rmdirSync, rmSync, unlinkSync } from "node:fs";
+import { existsSync, lstatSync, readdirSync, rmdirSync, rmSync, unlinkSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { JOBS_FILE } from "./constants.js";
 import type { Logger } from "./logger.js";
 import { BRANCH_PREFIX, git, trustArgs, type Worktree } from "./worktree.js";
+import { readStore } from "../mcp/jobs.js";
 
 /**
  * `agent-bridge cleanup`: remove the worktrees of finished agent-bridge jobs (~/.agent-bridge/worktrees) whose
@@ -19,8 +20,7 @@ type StoredJob = { name?: string; status?: string; worktree?: Worktree | null };
 
 function readJobs(home: string): StoredJob[] {
   try {
-    const data = JSON.parse(readFileSync(join(home, JOBS_FILE), "utf8")) as unknown;
-    return Array.isArray(data) ? (data as StoredJob[]) : [];
+    return readStore(join(home, JOBS_FILE));
   } catch {
     return [];
   }

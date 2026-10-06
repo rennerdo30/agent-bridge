@@ -189,7 +189,7 @@ describe.skipIf(!existsSync(SERVER))("background subagents in job runners", () =
     await waitFor(() => !pidAlive(pid));
     const b = await startSession();
     expect(await call(b, "peers")).toMatch(new RegExp(`${job} "Runner test": interrupted .*can be continued`));
-    const stored = JSON.parse(readFileSync(join(home, "jobs.json"), "utf8")) as { id: string; host?: unknown }[];
+    const stored = (JSON.parse(readFileSync(join(home, "jobs.json"), "utf8")) as { jobs: { id: string; host?: unknown }[] }).jobs;
     expect(stored.find((j) => j.id === id)?.host).toBeTruthy();
   }, TEST_TIMEOUT_MS);
 });

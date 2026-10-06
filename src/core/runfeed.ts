@@ -1,5 +1,6 @@
-import { appendFileSync, mkdirSync, readdirSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { archiveFile, isRecord, mergeStoreFields, readJsonStore, retentionLimit, writeJsonStore } from "./json-store.js";
 
 /**
  * Live feed of one delegated run: every progress line goes to ~/.agent-bridge/runs/<name>.log (so the
@@ -10,6 +11,7 @@ export const RUNS_DIR_NAME = "runs";
 /** Report a quiet phase after this long without a new step, then again at the same interval. */
 export const HEARTBEAT_MS = 60_000;
 const KEEP_RUN_LOGS = 50;
+const STALE_RUN_MS = 150_000;
 
 export interface RunFeed {
   logPath: string;
@@ -59,20 +61,20 @@ function stamp(t: number): string {
 
 function pruneOldLogs(dir: string): void {
   try {
+    const limit = retentionLimit("AGENT_BRIDGE_RUN_LOG_LIMIT", KEEP_RUN_LOGS);
+    if (!limit) return;
     const files = readdirSync(dir)
       .filter((f) => f.endsWith(".log"))
       .map((f) => ({ f, t: statSync(join(dir, f)).mtimeMs }))
       .sort((a, b) => b.t - a.t);
-    for (const { f } of files.slice(KEEP_RUN_LOGS)) {
-      unlinkSync(join(dir, f));
-      try {
-        unlinkSync(join(dir, runMetaPath(f)));
-      } catch {
-        // older runs have no metadata
-      }
+    for (const { f } of files.slice(limit)) {
+      const path = join(dir, f);
+      if (Date.now() - statSync(path).mtimeMs <= STALE_RUN_MS && !/^\d\d:\d\d:\d\d finished after \d+s · /m.test(readFileSync(path, "utf8"))) continue;
+      archiveFile(path);
+      archiveFile(join(dir, runMetaPath(f)));
     }
-  } catch {
-    // best effort
+  } catch (err) {
+    process.stderr.write(`could not archive run logs: ${String(err)}\n`);
   }
 }
 
@@ -88,7 +90,6 @@ export function startRunFeed(opts: {
   const now = opts.now ?? Date.now;
   const dir = join(opts.home, RUNS_DIR_NAME);
   mkdirSync(dir, { recursive: true });
-  pruneOldLogs(dir);
   const logPath = join(dir, `${new Date(now()).toISOString().slice(0, 19).replace(/[:T]/g, "-")}-${opts.name}.log`);
   /** One entry; extra lines of a multi-line text are indented under it. */
   const write = (line: string) => {
@@ -103,13 +104,17 @@ export function startRunFeed(opts: {
   let meta: RunMeta = { ...opts.meta };
   const writeMeta = () => {
     try {
-      writeFileSync(runMetaPath(logPath), JSON.stringify(meta));
-    } catch {
+      const path = runMetaPath(logPath);
+      const previous = readJsonStore(path);
+      writeJsonStore(path, mergeStoreFields(isRecord(previous) ? previous : {}, { ...meta }), previous);
+    } catch (err) {
+      process.stderr.write(`could not save run metadata: ${String(err)}\n`);
       // never break a run because of the feed
     }
   };
   writeMeta();
   write(opts.header);
+  pruneOldLogs(dir);
 
   const started = now();
   let lastStep = "starting";

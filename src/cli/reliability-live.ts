@@ -9,6 +9,7 @@ import { delegateToCodexAppServer } from "../core/codex-appserver.js";
 import type { Logger } from "../core/logger.js";
 import type { CodingAgent } from "../core/protocol.js";
 import { pluginSourceDir } from "./opencode-install.js";
+import { readStore } from "../mcp/jobs.js";
 
 /**
  * Real-CLI checks of the subagent features that live in the MCP server: live messages to a running
@@ -166,7 +167,7 @@ interface StoredJob {
 
 function storedJob(home: string, job: string): StoredJob | null {
   try {
-    const all = JSON.parse(readFileSync(join(home, JOBS_FILE), "utf8")) as StoredJob[];
+    const all = readStore(join(home, JOBS_FILE));
     return all.find((j) => j.name === job) ?? null;
   } catch {
     return null;

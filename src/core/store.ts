@@ -1,8 +1,12 @@
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync, type StatementSync } from "node:sqlite";
 import type { Logger } from "./logger.js";
 import type { AgentKind, BridgeMessage } from "./protocol.js";
+import { backupPath, retainBackups } from "./json-store.js";
+
+export const SQLITE_STORE_VERSION = 2;
+const BUSY_TIMEOUT_MS = 3_000;
 
 /** Recipient key used while a message waits for "any peer of this agent kind". */
 export function agentQueueKey(agent: AgentKind): string {
@@ -28,6 +32,15 @@ CREATE TABLE IF NOT EXISTS messages (
 CREATE INDEX IF NOT EXISTS idx_messages_unread ON messages (recipient, read_at, created_at);
 CREATE INDEX IF NOT EXISTS idx_messages_id ON messages (id);
 `;
+
+const MIGRATIONS = [
+  { version: 1, sql: `${SCHEMA} PRAGMA user_version = 1;` },
+  { version: SQLITE_STORE_VERSION, sql: `
+    CREATE TABLE IF NOT EXISTS archived_messages AS
+      SELECT *, '' AS archive_reason, 0 AS archived_at FROM messages WHERE 0;
+    PRAGMA user_version = 2;
+  ` },
+] as const;
 
 interface Row {
   id: string;
@@ -73,16 +86,45 @@ export class MessageStore {
     byId: StatementSync;
     purge: StatementSync;
     expireQueued: StatementSync;
+    archiveOld: StatementSync;
+    archiveQueued: StatementSync;
   };
 
   constructor(
     file: string,
     private readonly log: Logger,
   ) {
+    const existed = file !== ":memory:" && existsSync(file);
     if (file !== ":memory:") mkdirSync(dirname(file), { recursive: true, mode: 0o700 }); // owner-only on Unix
     this.db = new DatabaseSync(file);
-    this.db.exec("PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 3000;");
-    this.db.exec(SCHEMA);
+    try {
+      const version = Number(this.db.prepare("PRAGMA user_version").get()!.user_version);
+      if (version > SQLITE_STORE_VERSION) throw new Error(`unsupported SQLite store version: ${version}`);
+      this.db.exec(`PRAGMA busy_timeout = ${BUSY_TIMEOUT_MS};`);
+      if (version < SQLITE_STORE_VERSION) {
+        if (existed) {
+          const backup = backupPath(file);
+          this.db.prepare("VACUUM INTO ?").run(backup);
+          retainBackups(file);
+          log.info("backed up message store before migration", { file, backup, version });
+        }
+        this.db.exec("BEGIN IMMEDIATE");
+        try {
+          // Re-read under the writer lock: another process may have migrated while we backed up.
+          const current = Number(this.db.prepare("PRAGMA user_version").get()!.user_version);
+          if (current > SQLITE_STORE_VERSION) throw new Error(`unsupported SQLite store version: ${current}`);
+          for (const migration of MIGRATIONS) if (migration.version > current) this.db.exec(migration.sql);
+          this.db.exec("COMMIT");
+        } catch (err) {
+          this.db.exec("ROLLBACK");
+          throw err;
+        }
+      }
+      this.db.exec("PRAGMA journal_mode = WAL;");
+    } catch (err) {
+      this.db.close();
+      throw err;
+    }
     this.stmt = {
       insert: this.db.prepare(
         `INSERT INTO messages (id, recipient, from_id, from_name, from_agent, to_target, conversation_id, reply_to, hop, body, created_at, read_at)
@@ -96,6 +138,8 @@ export class MessageStore {
       byId: this.db.prepare(`SELECT * FROM messages WHERE id = ? ORDER BY created_at ASC LIMIT 1`),
       purge: this.db.prepare(`DELETE FROM messages WHERE created_at < ?`),
       expireQueued: this.db.prepare(`DELETE FROM messages WHERE recipient = ? AND read_at IS NULL AND created_at < ?`),
+      archiveOld: this.db.prepare(`INSERT INTO archived_messages SELECT *, 'expired', ? FROM messages WHERE created_at < ?`),
+      archiveQueued: this.db.prepare(`INSERT INTO archived_messages SELECT *, 'stale queue', ? FROM messages WHERE recipient = ? AND read_at IS NULL AND created_at < ?`),
     };
     log.debug("message store opened", { file });
   }
@@ -131,10 +175,10 @@ export class MessageStore {
     return Number(this.stmt.claim.run(toName, fromKey).changes);
   }
 
-  /** Drop unread mail waiting for a queue key or name that is older than the cutoff. */
+  /** Archive unread mail waiting for a queue key or name that is older than the cutoff. */
   expireQueued(recipient: string, cutoff: number): number {
-    const n = Number(this.stmt.expireQueued.run(recipient, cutoff).changes);
-    if (n > 0) this.log.info("dropped stale queued messages", { recipient, count: n });
+    const n = this.archive(this.stmt.archiveQueued, this.stmt.expireQueued, [recipient, cutoff]);
+    if (n > 0) this.log.info("archived stale queued messages", { recipient, count: n });
     return n;
   }
 
@@ -144,9 +188,22 @@ export class MessageStore {
   }
 
   purgeOlderThan(cutoff: number): number {
-    const n = Number(this.stmt.purge.run(cutoff).changes);
-    if (n > 0) this.log.info("purged expired messages", { count: n });
+    const n = this.archive(this.stmt.archiveOld, this.stmt.purge, [cutoff]);
+    if (n > 0) this.log.info("archived expired messages", { count: n });
     return n;
+  }
+
+  private archive(copy: StatementSync, remove: StatementSync, args: (string | number)[]): number {
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      copy.run(Date.now(), ...args);
+      const count = Number(remove.run(...args).changes);
+      this.db.exec("COMMIT");
+      return count;
+    } catch (err) {
+      this.db.exec("ROLLBACK");
+      throw err;
+    }
   }
 
   close(): void {

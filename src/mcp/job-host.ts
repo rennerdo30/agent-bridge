@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { BridgeConfig } from "../core/config.js";
 import { killPid, pidAlive } from "../core/delegate.js";
@@ -8,6 +8,7 @@ import type { BridgeNode } from "../core/node.js";
 import type { AgentKind, CodingAgent } from "../core/protocol.js";
 import type { DelegateArgs } from "./delegate-run.js";
 import type { Job, JobHost, JobHostInfo, RunnerControl, RunnerState } from "./jobs.js";
+import { archiveFile, assertWritableStore, isRecord, mergeStoreFields, readJsonStore, retentionLimit, writeJsonStore } from "../core/json-store.js";
 
 /**
  * Job runners: a background subagent runs in a detached process of its own (`agent-bridge job-runner`), not
@@ -28,14 +29,9 @@ export const RUNNER_HEARTBEAT_MS = 15_000;
 const STALE_MS = 6 * RUNNER_HEARTBEAT_MS;
 /** How long a starting runner may take to report in. */
 const START_GRACE_MS = 30_000;
-/**
- * Windows: started through a short-lived launcher, so the runner's parent is gone at once. Whoever stops the
- * server with its process tree (taskkill /T follows parent pids) then leaves the runner alone.
- */
-const RENAME_ATTEMPTS = 50;
-const RENAME_RETRY_MS = 20;
-/** Runner files of jobs that ended long ago are removed. */
+/** Runner files of jobs that ended long ago are archived. Zero disables the limit. */
 const KEEP_FILES_MS = 7 * 24 * 60 * 60 * 1000;
+/** Windows: a short-lived launcher keeps the runner out of the session's process tree. */
 const DETACH_LAUNCHER = "require('node:child_process').spawn(process.execPath,process.argv.slice(1),{detached:true,stdio:'ignore',windowsHide:true}).unref()";
 
 /** Everything a runner needs to run one job (written by the server next to the state file). */
@@ -65,7 +61,7 @@ function specPath(home: string, id: string): string {
 
 export function readRunnerState(home: string, id: string): RunnerState | null {
   try {
-    const s = JSON.parse(readFileSync(runnerStatePath(home, id), "utf8")) as RunnerState;
+    const s = readJsonStore(runnerStatePath(home, id), undefined, (value) => isRecord(value) && typeof value.pid === "number" && typeof value.status === "string") as RunnerState | null;
     return s && typeof s.pid === "number" && typeof s.status === "string" ? s : null;
   } catch {
     return null;
@@ -75,24 +71,8 @@ export function readRunnerState(home: string, id: string): RunnerState | null {
 /** Atomic, so the server never reads half a file. */
 export function writeRunnerState(home: string, id: string, state: RunnerState): void {
   const path = runnerStatePath(home, id);
-  mkdirSync(join(home, RUNNERS_DIR_NAME), { recursive: true });
-  const tmp = `${path}.${process.pid}.tmp`;
-  writeFileSync(tmp, JSON.stringify(state), { mode: 0o600 });
-  // Windows refuses the rename while the server reads the file (EPERM/EBUSY): that takes milliseconds.
-  const pause = new Int32Array(new SharedArrayBuffer(4));
-  for (let attempt = 1; ; attempt++) {
-    try {
-      renameSync(tmp, path);
-      return;
-    } catch (err) {
-      const code = (err as NodeJS.ErrnoException).code;
-      if ((code !== "EPERM" && code !== "EBUSY" && code !== "EACCES") || attempt >= RENAME_ATTEMPTS) {
-        rmSync(tmp, { force: true });
-        throw err;
-      }
-      Atomics.wait(pause, 0, 0, RENAME_RETRY_MS);
-    }
-  }
+  const previous = readJsonStore(path);
+  writeJsonStore(path, mergeStoreFields(isRecord(previous) ? previous : {}, { ...state }), previous);
 }
 
 /** The session's side: starts runners and talks to them. */
@@ -106,12 +86,20 @@ export class JobRunners implements JobHost {
   ) {
     try {
       const dir = join(home, RUNNERS_DIR_NAME);
+      const keepMs = retentionLimit("AGENT_BRIDGE_RUNNER_KEEP_MS", KEEP_FILES_MS);
+      if (!keepMs) return;
       for (const f of readdirSync(dir)) {
         const path = join(dir, f);
-        if (Date.now() - statSync(path).mtimeMs > KEEP_FILES_MS) rmSync(path, { force: true });
+        if (!f.endsWith(".json") || f.endsWith(".spec.json") || Date.now() - statSync(path).mtimeMs <= keepMs) continue;
+        const id = f.replace(/\.json$/, "");
+        const state = readRunnerState(home, id);
+        if (state?.status === "done" || state?.status === "failed") {
+          archiveFile(path);
+          archiveFile(specPath(home, id));
+        }
       }
-    } catch {
-      // none yet
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") this.log.warn("could not archive runner files", { err: String(err) });
     }
   }
 
@@ -120,7 +108,11 @@ export class JobRunners implements JobHost {
     try {
       mkdirSync(join(this.home, RUNNERS_DIR_NAME), { recursive: true });
       // An earlier turn's final state must not count for this one.
-      rmSync(runnerStatePath(this.home, job.id), { force: true });
+      const statePath = runnerStatePath(this.home, job.id);
+      const file = specPath(this.home, job.id);
+      assertWritableStore(readJsonStore(statePath, this.log));
+      assertWritableStore(readJsonStore(file, this.log));
+      archiveFile(statePath);
       const full: RunnerSpec = {
         ...spec,
         home: this.home,
@@ -139,8 +131,8 @@ export class JobRunners implements JobHost {
           allowedServers: [...(job.allowedServers ?? [])],
         },
       };
-      const file = specPath(this.home, job.id);
-      writeFileSync(file, JSON.stringify(full), { mode: 0o600 });
+      archiveFile(file);
+      writeJsonStore(file, { ...full }, null);
       const args = [this.cli, "job-runner", file];
       let pid: number | null = null;
       if (process.platform === "win32") {

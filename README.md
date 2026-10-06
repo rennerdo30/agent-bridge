@@ -300,6 +300,37 @@ Every reply increments a conversation's hop count. Messages at or above `maxHops
 
 Logs are written to `~/.agent-bridge/logs/agent-bridge.log`.
 
+### Stored data and upgrades
+
+`bridge.db` uses SQLite `PRAGMA user_version`: version 1 is the original message schema;
+version 2 adds `archived_messages`. Unversioned databases upgrade through version 1. Pending
+migrations run in order in one transaction, after a consistent SQLite backup (including committed
+WAL data). Opening a newer schema fails without changing it. Three recent `.backup-*` copies
+stay beside the store; older backups move into `archive/` and are never deleted automatically.
+
+JSON stores use `version: 1`. Legacy config, preferences, jobs and runner state remain readable;
+the first versioned write backs up the old file. `jobs.json` is now `{ "version": 1, "jobs": [...] }`;
+`auto-wake.json` keeps preferences under `peers`. Unknown fields survive updates. Writes replace
+files atomically and refuse newer versions. Corrupt JSON moves to `.corrupt-<time>-<id>` with a
+warning, preserving its original bytes. Other read errors prevent replacement rather than treating
+an unreadable file as empty.
+
+Retention controls are environment variables (nonnegative integers; `0` disables pruning):
+
+| Env var | Default | Retention behavior |
+|---|---|---|
+| `AGENT_BRIDGE_MESSAGE_TTL_MS` | `604800000` (7 days) | Expired messages move into `archived_messages` transactionally |
+| `AGENT_BRIDGE_QUEUED_MAIL_MAX_AGE_MS` | `86400000` (1 day) | Stale queued messages move into the same table before a peer claims mail |
+| `AGENT_BRIDGE_JOB_STORE_LIMIT` | `200` | Finished jobs beyond the limit move into `archive/jobs.json.overflow.json-*`; running and interrupted jobs stay active |
+| `AGENT_BRIDGE_RUN_LOG_LIMIT` | `50` | Older finished or stale logs and their metadata move into `runs/archive/`; live feeds stay active |
+| `AGENT_BRIDGE_RUNNER_KEEP_MS` | `604800000` (7 days) | Old finished runner state/spec files move into `jobs/archive/`; running state stays active |
+
+Archives are outside the active dashboard and recovery lists. Inspect the JSON/log files directly,
+or query `archived_messages` in a copy of the database to recover historical data. Retain these
+archives with your normal backups; they have no automatic size cap. Runner specs are archived
+after consumption and earlier runner state is archived before a new turn starts. Stored job prompts
+are retained in full; only displayed previews and the in-memory recent-job list are bounded.
+
 ## CLI
 
 The plugins bundle a small CLI for debugging:

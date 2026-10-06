@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { closeSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { closeSync, mkdirSync, openSync, rmSync, statSync } from "node:fs";
 import { dirname } from "node:path";
 import { DEFAULT_MAX_JOBS } from "../core/constants.js";
 import { DelegateError, failureCause, type DelegateResult } from "../core/delegate.js";
@@ -7,12 +7,13 @@ import type { Logger } from "../core/logger.js";
 import type { BridgeNode } from "../core/node.js";
 import type { AgentKind, BridgeMessage } from "../core/protocol.js";
 import type { Worktree } from "../core/worktree.js";
+import { archiveFile, assertWritableStore, isRecord, mergeStoreFields, readJsonStore, retentionLimit, writeJsonStore } from "../core/json-store.js";
 
 const JOB_ID_LENGTH = 8;
 const PROMPT_PREVIEW_CHARS = 120;
 /** Finished subagents stay addressable (message_subagent) for this many jobs. */
 const HISTORY_LIMIT = 50;
-/** Jobs kept on disk (all sessions together), and how much of each task: the file stays small. */
+/** Finished jobs kept in the active store; overflow is archived. Zero disables the limit. */
 const STORE_LIMIT = 200;
 /** Status note ids remembered (they are read long before this many pile up). */
 const MAX_NOTES = 500;
@@ -20,7 +21,6 @@ const MAX_NOTES = 500;
 const INTERRUPTED_LISTED_MS = 24 * 60 * 60 * 1000;
 /** A job runner's status note travels as conversation "job-<id>" plus this. */
 export const NOTE_CONVERSATION_SUFFIX = ":note";
-const STORED_PROMPT_CHARS = 1_000;
 /** Follow-up sent when a subagent is resumed without a message (e.g. after a failure). */
 export const DEFAULT_FOLLOW_UP = "Continue where you stopped and finish the task. Then give your final answer.";
 
@@ -246,16 +246,33 @@ export class JobManager {
   /** Save this session's jobs, merged with those other sessions saved. Best effort: never breaks a run. */
   persist(): void {
     if (!this.storePath || this.dormant) return;
-    const lock = acquireLock(`${this.storePath}.lock`);
+    let lock = () => {};
     try {
-      const mine = [...this.history.values()].filter((j) => this.own.has(j.id)).map(toStored);
+      lock = acquireLock(`${this.storePath}.lock`);
+      const previous = readJobsDocument(this.storePath, this.log);
+      assertWritableStore(previous);
+      const entries = Array.isArray(previous) ? previous : isRecord(previous) ? previous.jobs as unknown[] : [];
+      const mine = [...this.history.values()].filter((j) => this.own.has(j.id)).map((j) => {
+        const old = entries.find((entry) => isRecord(entry) && entry.id === j.id);
+        return mergeStoreFields(isRecord(old) ? old : {}, toStored(j)) as StoredJob;
+      });
       const ids = new Set(mine.map((j) => j.id));
-      const others = readStore(this.storePath).filter((j) => !ids.has(j.id));
-      const all = [...others, ...mine].sort((a, b) => a.startedAt - b.startedAt).slice(-STORE_LIMIT);
-      mkdirSync(dirname(this.storePath), { recursive: true });
-      const tmp = `${this.storePath}.${process.pid}.tmp`;
-      writeFileSync(tmp, JSON.stringify(all), { mode: 0o600 });
-      renameSync(tmp, this.storePath);
+      const others = entries.filter((j) => !isRecord(j) || !ids.has(j.id as string));
+      const all = [...others, ...mine].sort((a, b) => {
+        const started = (entry: unknown) => isRecord(entry) && typeof entry.startedAt === "number" ? entry.startedAt : 0;
+        return started(a) - started(b);
+      });
+      const finished = all.filter((j): j is StoredJob => isStoredJob(j) && (j.status === "done" || j.status === "failed"))
+        .sort((a, b) => a.startedAt - b.startedAt);
+      const limit = retentionLimit("AGENT_BRIDGE_JOB_STORE_LIMIT", STORE_LIMIT);
+      const overflow = new Set(limit ? finished.slice(0, Math.max(0, finished.length - limit)) : []);
+      if (overflow.size) {
+        const archive = `${this.storePath}.overflow.json`;
+        writeJsonStore(archive, { jobs: [...overflow] }, null);
+        archiveFile(archive);
+        this.log.info("archived finished jobs", { count: overflow.size });
+      }
+      writeJsonStore(this.storePath, { ...(isRecord(previous) ? previous : {}), jobs: all.filter((j) => !overflow.has(j as StoredJob)) }, previous);
     } catch (err) {
       this.log.warn("could not save subagent jobs", { err: (err as Error).message });
     } finally {
@@ -271,7 +288,7 @@ export class JobManager {
    */
   restore(makeResume: (agent: AgentKind, args: Record<string, unknown>) => Resume | undefined): void {
     if (!this.storePath) return;
-    const stored = readStore(this.storePath);
+    const stored = readStore(this.storePath, this.log);
     const adopted: Job[] = [];
     // The newest ones, plus every job still marked running however old (its runner may still be at work).
     const recentIds = new Set(stored.slice(-HISTORY_LIMIT).map((s) => s.id));
@@ -786,7 +803,7 @@ function toStored(j: Job): StoredJob {
     name: j.name,
     agent: j.agent,
     model: j.model,
-    prompt: j.prompt.slice(0, STORED_PROMPT_CHARS),
+    prompt: j.prompt,
     startedAt: j.startedAt,
     status: j.status,
     sessionId: j.sessionId,
@@ -799,11 +816,21 @@ function toStored(j: Job): StoredJob {
   };
 }
 
-function readStore(path: string): StoredJob[] {
+function isStoredJob(j: unknown): j is StoredJob {
+  return isRecord(j) && typeof j.id === "string" && typeof j.name === "string";
+}
+
+export function readJobsDocument(path: string, log?: Logger): unknown {
+  return readJsonStore(path, log, (data) => Array.isArray(data) || (isRecord(data) && Array.isArray(data.jobs)));
+}
+
+export function readStore(path: string, log?: Logger): StoredJob[] {
   try {
-    const data = JSON.parse(readFileSync(path, "utf8")) as unknown;
-    return Array.isArray(data) ? (data as StoredJob[]).filter((j) => j && typeof j.id === "string" && typeof j.name === "string") : [];
-  } catch {
+    const data = readJobsDocument(path, log);
+    const jobs = Array.isArray(data) ? data : isRecord(data) && Array.isArray(data.jobs) ? data.jobs : [];
+    return jobs.filter(isStoredJob);
+  } catch (err) {
+    log?.warn("could not read jobs store", { path, err: String(err) });
     return [];
   }
 }
@@ -825,13 +852,13 @@ function acquireLock(path: string): () => void {
       closeSync(openSync(path, "wx"));
       return () => rmSync(path, { force: true });
     } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== "EEXIST") return () => {};
+      if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
       try {
         if (Date.now() - statSync(path).mtimeMs > LOCK_STALE_MS) rmSync(path, { force: true });
       } catch {
         // gone meanwhile
       }
-      if (Date.now() > deadline) return () => {};
+      if (Date.now() > deadline) throw new Error("timed out locking jobs store");
       Atomics.wait(pause, 0, 0, LOCK_RETRY_MS);
     }
   }
