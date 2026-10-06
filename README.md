@@ -366,17 +366,19 @@ are retained in full; only displayed previews and the in-memory recent-job list 
 
 ### Paired PCs
 
-Networking is **off by default**. Start an agent-bridge hosting session on each PC, then run:
+Networking is **off by default**. Pair two PCs once, then their agents can message each other and send files. Start an agent-bridge session (Claude Code, Codex or opencode) on each PC first.
 
-```sh
-agent-bridge connect
-```
+**In the dashboard** (`agent-bridge ui`, tab **Network**):
 
-The wizard suggests the hostname, asks for the LAN bind address and TCP port, preserves other `config.json` settings, reviews firewall commands and reloads the elected broker without restarting sessions. On Windows, adding Private-network/LocalSubnet TCP and discovery UDP rules requires a separate explicit confirmation and a UAC prompt; `--yes` never confirms firewall changes. macOS and Linux show commands and instructions for you to review and run yourself.
+1. On both PCs: name the PC, keep "Other PCs on this network" and press **Turn on**. If the firewall blocks other PCs, the page says so; on Windows **Open the ports…** shows the rules and adds them after you confirm and accept the administrator prompt. macOS and Linux show the commands to run yourself.
+2. On one PC: **Create pairing code**. The code is copied to the clipboard and is valid once, for ten minutes. The page shows the address the other PC should use and turns to "Connected" when it pairs.
+3. On the other PC: under **Connect to another PC**, pick the PC from the list (or enter its address) and paste the code.
 
-Choose **create** on one PC: the secret code is copied to the clipboard when available, shown with a ten-minute countdown, and consumed by the first authenticated counterpart. On the other PC choose **connect**, select a discovered PC or enter its LAN `host:port`, and paste the code into the hidden prompt. The wizard lists remote peers and verifies a test message echo round trip between brokers. Keep codes out of logs and shell histories. If clipboard access fails, copy the displayed code securely.
+Paired PCs are listed with their status. **Check** asks the other PC which agents are online and how fast it answers. **Unlink** removes the pairing on this PC.
 
-The dashboard integration uses authenticated network JSON endpoints for status, settings, pairing and verification. Networking uses TLS 1.3 PSK; secrets live in the protected `~/.agent-bridge/network/keys.json`. Discovery hints are public and untrusted. Match network settings in per-agent sections/environment overrides before a future broker election; update/restart both PCs' hosting sessions if their brokers predate the wizard.
+**In a terminal**, `agent-bridge connect` runs the same steps. It suggests the hostname, keeps your other `config.json` settings, shows firewall commands, and reloads the broker without restarting sessions. Choose **create** on one PC and **connect** on the other; the code prompt is hidden, and the wizard ends with a test message there and back. `--yes` never confirms firewall changes.
+
+Networking uses TLS 1.3 with the pairing key; secrets live in the protected `~/.agent-bridge/network/keys.json`. Discovery only lists PCs, it never connects: a PC without your code cannot pair. Keep codes out of chats, logs and shell histories. If a PC's sessions run a version from before the wizard, update and restart them.
 
 For unattended setup, use `agent-bridge connect --non-interactive --yes --create` (waits up to ten minutes), or `agent-bridge connect --non-interactive --yes --address <host:port> --code <code>`. Optional `--name`, `--bind`, `--port` and `--no-discovery` select settings. Passing a secret as an argument can expose it in process listings/history; prefer the interactive code prompt. Review firewall rules separately.
 

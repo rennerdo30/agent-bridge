@@ -48,7 +48,7 @@ The dashboard remains loopback-only. All endpoints require its per-launch HttpOn
 
 | Method and path | Request | Response |
 | --- | --- | --- |
-| GET `/api/network` | None | `enabled`, `config` (name/bind/port/discovery/enabled), optional `identity` and listening `port`, `discovered`, `paired` |
+| GET `/api/network` | None | `enabled`, `config` (name/bind/port/discovery/enabled), optional `identity` and listening `port`, `discovered`, `paired`, and `addresses` (this PC's LAN IPv4 addresses, to tell the other PC) |
 | POST `/api/network/configure` | `confirm: true` and any network config fields | Status after atomic save and live reload; omitted fields keep current settings |
 | POST `/api/network/pair` | `{}` | Secret `code`, `expiresAt` in epoch milliseconds |
 | POST `/api/network/link` | `address` as host:port, `code` | Public remote `id`, `name`, `fingerprint` |
@@ -56,7 +56,9 @@ The dashboard remains loopback-only. All endpoints require its per-launch HttpOn
 | POST `/api/network/verify` | `id` | Remote `peers` and echo `roundTripMs` |
 | POST `/api/network/firewall` | `{}` to inspect; `apply: true, confirm: true` for Windows UAC | `plan` (platform, commands, explanation), `status` (allowed/unknown, detail) |
 
-Discovered entries include `id`, `name`, `fingerprint`, `host`, `port`, `seenAt`. Paired entries include public identity, `connected`, and optional `health: { lastVerifiedAt, roundTripMs }` from the last successful verification; consult `connected` before interpreting old health. A failed reload leaves the settings saved but networking unavailable; the local broker stays available for retry. Invalid requests return 400, missing authentication/header/allowed Host return 403, unavailable network actions return 409, and unknown paths return 404.
+Discovered entries include `id`, `name`, `fingerprint`, `host`, `port`, `seenAt`. Paired entries include public identity, `connected`, and optional `health: { lastVerifiedAt, roundTripMs }` from the last successful verification; consult `connected` before interpreting old health. A failed reload leaves the settings saved but networking unavailable; the local broker stays available for retry. Invalid requests return 400, missing authentication/header/allowed Host return 403, unavailable network actions return 409, and unknown paths return 404. A 409 carries the broker's own refusal text when it is short and contains nothing code-like (no run of 24 or more code characters); otherwise a generic message.
+
+The dashboard's **Network** tab uses these endpoints: settings with Turn on/off, a firewall check with a confirmed Windows rule step, pairing code with copy and countdown (it polls status until a new paired PC appears), discovered PCs, connect by code, and paired PCs with Check and a confirmed Unlink.
 
 ## Threat model
 

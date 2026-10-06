@@ -31620,6 +31620,7 @@ import { join as join22 } from "node:path";
 import { randomBytes as randomBytes8 } from "node:crypto";
 import { existsSync as existsSync8, readdirSync as readdirSync6, readFileSync as readFileSync15, statSync as statSync4 } from "node:fs";
 import { createServer as createServer6 } from "node:http";
+import { networkInterfaces } from "node:os";
 import { join as join21 } from "node:path";
 import { DatabaseSync as DatabaseSync2 } from "node:sqlite";
 
@@ -32900,6 +32901,43 @@ button:disabled { opacity: .6; cursor: default; }
 .model-list { max-height: 260px; overflow: auto; font-size: 12.5px; }
 .model-list ul { padding-left: 18px; }
 
+/* Network */
+nav a.net { margin-left: auto; }
+.net-card { padding: 18px 20px; display: flex; flex-direction: column; gap: 14px; }
+.net-card h4 { margin: 0; font-size: 15px; font-weight: 650; }
+.net-card p { margin: 0; color: var(--muted); font-size: 13px; }
+.net-head { display: flex; flex-wrap: wrap; gap: 6px 16px; align-items: baseline; justify-content: space-between; }
+.net-title { display: flex; align-items: center; gap: 9px; font-size: 16px; }
+.net-two { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 380px), 1fr)); gap: 16px; }
+form.net-form { border: 0; background: none; padding: 0; gap: 12px 14px; align-items: flex-end; }
+.net-form label { display: flex; flex-direction: column; gap: 4px; font-size: 11.5px; font-weight: 600; color: var(--muted); flex: 1 1 180px; min-width: 0; }
+.net-form label.narrow { flex: 0 1 110px; }
+.net-form label.check { flex-direction: row; align-items: center; gap: 7px; font-size: 13px; font-weight: 500; color: var(--text); flex: 0 1 auto; padding-bottom: 9px; }
+.net-form input:not([type="checkbox"]), .net-form select { width: 100%; padding: 7px 10px; font-weight: 400; }
+.net-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.net-card .note { font-size: 12.5px; color: var(--muted); width: 100%; }
+.net-card .note.ok { color: var(--ok); } .net-card .note.err { color: var(--bad); }
+.net-card .note:empty { display: none; }
+.net-fw { border-top: 1px solid var(--line); padding-top: 14px; display: flex; flex-direction: column; gap: 10px; font-size: 13px; }
+.net-fw .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.cmds { margin: 0; padding: 10px 12px; border-radius: 8px; background: var(--panel-2); border: 1px solid var(--line); font-family: var(--mono); font-size: 11.5px; overflow-x: auto; white-space: pre; }
+.confirm { padding: 12px 14px; border-radius: 10px; background: var(--warn-soft); display: flex; flex-direction: column; gap: 10px; }
+.code { display: flex; gap: 8px; align-items: stretch; }
+.code output { flex: 1; min-width: 0; padding: 10px 12px; border-radius: 8px; background: var(--accent-soft); font-family: var(--mono); font-size: 12px; overflow-wrap: anywhere; user-select: all; }
+.steps-list { margin: 0; padding-left: 20px; font-size: 13px; color: var(--muted); display: flex; flex-direction: column; gap: 4px; }
+.steps-list b { color: var(--text); font-weight: 600; }
+.found { display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.found > div { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-bottom: 1px solid var(--line); }
+.found > div:last-child { border-bottom: 0; }
+.found .grow, .peer-row .grow { flex: 1; min-width: 0; }
+.peer-row { display: flex; align-items: center; gap: 12px; padding: 13px 16px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+.peer-row:last-child { border-bottom: 0; }
+.peer-row .acts { display: flex; gap: 6px; flex-wrap: wrap; }
+button.danger { background: var(--bad); border-color: var(--bad); }
+button.ghost.danger { background: transparent; color: var(--bad); border-color: var(--line); }
+.big-ok { display: flex; gap: 10px; align-items: center; padding: 12px 14px; border-radius: 10px; background: var(--ok-soft); color: var(--ok); font-weight: 600; }
+.disabled-hint { padding: 10px 12px; border-radius: 8px; background: var(--panel-2); color: var(--muted); font-size: 12.5px; }
+
 /* Session view */
 .split { display: grid; grid-template-columns: minmax(300px, 380px) minmax(0, 1fr); gap: 20px; align-items: start; }
 @media (max-width: 960px) { .split { grid-template-columns: 1fr; } }
@@ -32991,6 +33029,39 @@ details[open] > summary::before { content: "\u25BE "; }
     <div class="block" id="ovMsgBox"><h3>Messages</h3><div class="panel"><div id="ovMsgs" class="msgs"></div></div></div>
   </div>
 
+  <div id="network" class="hidden">
+    <div class="block"><div class="panel net-card">
+      <div class="net-head">
+        <div class="net-title"><span class="dot off" id="netDot"></span><b id="netState">Reading the network status\u2026</b></div>
+        <div class="small muted" id="netWhere"></div>
+      </div>
+      <p>Paired PCs can message each other's agents and send files. Traffic is encrypted, and only PCs you pair with a code can connect.</p>
+      <form id="netConfig" class="net-form">
+        <label>Name of this PC<input id="netName" maxlength="40" autocomplete="off" spellcheck="false" placeholder="e.g. office-pc"></label>
+        <label>Reachable from<select id="netBind"><option value="0.0.0.0">Other PCs on this network</option><option value="127.0.0.1">This PC only (for testing)</option></select></label>
+        <label class="narrow">Port<input id="netPort" type="number" min="1" max="65535"></label>
+        <label class="check"><input type="checkbox" id="netDiscovery"> Find PCs automatically</label>
+        <div class="net-actions"><button type="submit" id="netSave">Turn on</button><button type="button" class="ghost hidden" id="netOff">Turn off</button></div>
+        <div class="note" id="netConfigInfo" role="status" aria-live="polite"></div>
+      </form>
+      <div class="net-fw hidden" id="netFw"></div>
+    </div></div>
+    <div class="block net-two">
+      <div class="panel net-card" id="netShare"></div>
+      <div class="panel net-card">
+        <div><h4>Connect to another PC</h4><p>Enter the code shown on the other PC.</p></div>
+        <div id="netFound"></div>
+        <form id="netJoin" class="net-form">
+          <label>Address<input id="netAddr" placeholder="192.168.1.20:48148" autocomplete="off" spellcheck="false"></label>
+          <label>Pairing code<input id="netCode" type="password" autocomplete="off" spellcheck="false" placeholder="paste the code"></label>
+          <div class="net-actions"><button type="submit" id="netJoinBtn">Connect</button></div>
+          <div class="note" id="netJoinInfo" role="status" aria-live="polite"></div>
+        </form>
+      </div>
+    </div>
+    <div class="block"><h3>Paired PCs <span class="n" id="netPairedN"></span></h3><div class="panel" id="netPaired"></div></div>
+  </div>
+
   <div id="session" class="split hidden">
     <div class="side-col">
       <div class="panel sess" id="sHead"></div>
@@ -33036,6 +33107,11 @@ const LOG_PAGES = 20;
 const FOLD_STEPS = 3;
 /** Finished subagents older than this move into the session's archive. */
 const ARCHIVE_AFTER_MS = 30 * 60_000;
+const NETWORK_HASH = "#/network";
+/** Network status refresh while the tab is open, and faster while a pairing code waits for the other PC. */
+const NET_POLL_MS = 3000, NET_PAIR_POLL_MS = 1500;
+const DEFAULT_NETWORK_PORT = ${DEFAULT_NETWORK_PORT};
+const NETWORK_NAME = /${NETWORK_NAME_PATTERN.source}/;
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
 /** Markdown of agent messages (escaped first; see markdown.ts). */
@@ -33096,6 +33172,7 @@ const jobDrafts = new Map(), jobResults = new Map(), jobSending = new Set();
 let composerGroup = null;
 
 function parseRoute() {
+  if (location.hash === NETWORK_HASH) return { session: null, group: null, network: true };
   const m = /^#\\/s\\/([^/]+)(?:\\/(.+))?$/.exec(location.hash);
   return m ? { session: decodeURIComponent(m[1]), group: m[2] ? decodeURIComponent(m[2]) : null } : { session: null, group: null };
 }
@@ -33108,6 +33185,7 @@ window.addEventListener("hashchange", () => {
   // A new tab starts at the top; picking a subagent in the same session keeps the list where it is.
   if (route.session !== previous) window.scrollTo(0, 0);
   render();
+  if (route.network) void loadNetwork();
 });
 
 /** Which session started a run: its peer name, or (renamed since) the live session of that agent in that folder. */
@@ -33182,10 +33260,13 @@ function render() {
   if (!state) return;
   model = buildModel(state);
   renderTabs();
-  const inSession = Boolean(route.session);
-  $("overview").classList.toggle("hidden", inSession);
+  const inSession = Boolean(route.session), inNetwork = Boolean(route.network);
+  $("overview").classList.toggle("hidden", inSession || inNetwork);
   $("session").classList.toggle("hidden", !inSession);
-  if (inSession) renderSession(); else renderOverview();
+  $("network").classList.toggle("hidden", !inNetwork);
+  if (inNetwork) renderNetwork();
+  else if (inSession) renderSession();
+  else renderOverview();
   renderSendForm(inSession);
 }
 
@@ -33193,9 +33274,10 @@ function renderTabs() {
   const tabs = model.sessions.filter((x) => x.live);
   const cur = route.session && model.byName.get(route.session);
   if (route.session && !(cur && cur.live)) tabs.push(cur || { name: route.session, live: false, running: 0 });
-  $("tabs").innerHTML = '<a href="#/" class="' + (route.session ? "" : "on") + '">Overview</a>' + tabs.map((t) =>
+  $("tabs").innerHTML = '<a href="#/" class="' + (route.session || route.network ? "" : "on") + '">Overview</a>' + tabs.map((t) =>
     '<a href="' + href(t.name) + '" class="' + (t.name === route.session ? "on" : "") + (t.live ? "" : " ended") + '">' +
-    (t.live ? dot(t.peer.activity) : "") + esc(t.name) + (t.running ? '<span class="count" title="subagents working">' + t.running + "</span>" : "") + "</a>").join("");
+    (t.live ? dot(t.peer.activity) : "") + esc(t.name) + (t.running ? '<span class="count" title="subagents working">' + t.running + "</span>" : "") + "</a>").join("") +
+    '<a href="' + NETWORK_HASH + '" class="net' + (route.network ? " on" : "") + '">' + networkTabDot() + "Network" + "</a>";
 }
 
 /** "0.12.0" vs "0.11.3": negative when a is older. */
@@ -33664,6 +33746,295 @@ $("jobSettings").addEventListener("submit", async (e) => {
   }
 });
 
+/* ---- Network: this PC's settings, pairing codes, paired PCs (see docs/network.md) ---- */
+let net = null, netError = "", netLoadedAt = 0, netLoading = false, netFormFilled = false;
+/** The pairing code shown here: { code, expiresAt, before: ids paired before it, done: name of the PC that used it }. */
+let invite = null;
+let fw = null, fwAsked = false, fwConfirm = false, fwBusy = false, unlinkAsk = null;
+const peerNotes = new Map();
+const lastNetHtml = {};
+
+const netPost = async (action, body) => {
+  const r = await fetch("/api/network/" + action, { method: "POST", headers: { "content-type": "application/json", "x-agent-bridge": "1" }, body: JSON.stringify(body || {}) });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(d.error || "HTTP " + r.status);
+  return d;
+};
+const inviteActive = () => Boolean(invite && !invite.done && invite.expiresAt > Date.now());
+const mmss = (ms) => { const s = Math.max(0, Math.ceil(ms / 1000)); return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0"); };
+/** Replace a block only when it changed, so buttons keep focus between refreshes. */
+function setHtml(id, html) {
+  if (lastNetHtml[id] === html) return;
+  lastNetHtml[id] = html;
+  $(id).innerHTML = html;
+}
+function networkTabDot() {
+  if (!net || !net.enabled) return '<span class="dot off"></span>';
+  return '<span class="dot ' + (net.paired.some((p) => p.connected) ? "idle" : "busy") + '"></span>';
+}
+
+async function loadNetwork() {
+  if (netLoading) return;
+  netLoading = true;
+  try {
+    const r = await fetch("/api/network");
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.error || "HTTP " + r.status);
+    net = d;
+    netError = "";
+    if (invite && !invite.done) {
+      const fresh = net.paired.find((p) => !invite.before.has(p.id));
+      if (fresh) invite.done = fresh.name;
+    }
+  } catch (err) {
+    netError = err.message;
+  } finally {
+    netLoading = false;
+    netLoadedAt = Date.now();
+  }
+  if (model) renderTabs();
+  if (route.network) renderNetwork();
+}
+
+function renderNetwork() {
+  const n = net, cfg = n && n.config;
+  if (!n) {
+    $("netDot").className = "dot off";
+    $("netState").textContent = netError ? "No bridge running" : "Reading the network status\u2026";
+    $("netWhere").textContent = netError ? "Start a Claude Code, Codex or opencode session with agent-bridge, then reload." : "";
+  } else {
+    $("netDot").className = "dot " + (n.enabled ? "idle" : "off");
+    $("netState").textContent = n.enabled ? "Networking is on" + (n.identity ? " as " + n.identity.name : "") : "Networking is off";
+    const local = cfg.bind === "127.0.0.1";
+    const addrs = (n.addresses || []).map((a) => a + ":" + (n.port || cfg.port));
+    $("netWhere").textContent = n.enabled
+      ? [local ? "reachable from this PC only" : addrs.length ? "other PCs connect to " + addrs.join(" or ") : "port " + (n.port || cfg.port), cfg.discovery ? "finding PCs automatically" : ""].filter(Boolean).join(" \xB7 ")
+      : "Turn it on to connect this PC with others on your network.";
+    if (!netFormFilled) fillNetForm(n);
+  }
+  $("netSave").textContent = n && n.enabled ? "Save" : "Turn on";
+  $("netSave").disabled = !n;
+  $("netOff").classList.toggle("hidden", !(n && n.enabled));
+  renderFirewall();
+  renderShare();
+  renderFound();
+  renderPaired();
+  $("netJoinBtn").disabled = !(n && n.enabled);
+}
+
+function fillNetForm(n) {
+  const cfg = n.config;
+  $("netName").value = cfg.name || "";
+  // Not yet on: suggest what pairing needs (other PCs can reach it, discovery on).
+  $("netBind").value = n.enabled && cfg.bind === "127.0.0.1" ? "127.0.0.1" : "0.0.0.0";
+  $("netPort").value = String(cfg.port || DEFAULT_NETWORK_PORT);
+  $("netDiscovery").checked = n.enabled ? Boolean(cfg.discovery) : true;
+  netFormFilled = true;
+}
+
+function renderFirewall() {
+  const n = net, box = $("netFw");
+  const show = Boolean(n && n.enabled && n.config.bind !== "127.0.0.1");
+  box.classList.toggle("hidden", !show);
+  if (!show) return;
+  if (!fw && !fwAsked) void loadFirewall(false);
+  let html;
+  if (!fw) html = '<div class="row muted"><span class="dot off"></span>Checking the firewall\u2026</div>';
+  else if (fw.status.state === "allowed") html = '<div class="row"><span class="dot idle"></span><span>Firewall: other PCs can reach this one.</span> <span class="small muted">' + esc(fw.status.detail) + "</span></div>";
+  else {
+    const win = fw.plan.platform === "win32";
+    html = '<div class="row"><span class="dot busy"></span><b>The firewall may block other PCs.</b> <span class="small muted">' + esc(fw.status.detail) + "</span></div>" +
+      '<div class="small muted">' + esc(fw.plan.explanation) + "</div>" +
+      (fwConfirm
+        ? '<div class="confirm"><div><b>Add these firewall rules?</b> Windows asks for administrator permission next.</div><pre class="cmds">' + esc(fw.plan.commands.join("\\n")) + '</pre><div class="net-actions"><button type="button" data-act="fw-apply"' + (fwBusy ? " disabled" : "") + ">" + (fwBusy ? "Waiting for Windows\u2026" : "Add rules") + '</button><button type="button" class="ghost" data-act="fw-cancel">Cancel</button></div></div>'
+        : '<details><summary class="small muted">' + (win ? "Rules it adds" : "Run these in a terminal") + '</summary><pre class="cmds">' + esc(fw.plan.commands.join("\\n")) + "</pre></details>" +
+          '<div class="net-actions">' + (win ? '<button type="button" data-act="fw-ask">Open the ports\u2026</button>' : '<button type="button" class="ghost" data-act="fw-copy">Copy commands</button>') + '<button type="button" class="ghost" data-act="fw-check">Check again</button></div>');
+  }
+  setHtml("netFw", html + '<div class="note" id="netFwInfo"></div>');
+}
+
+async function loadFirewall(apply) {
+  fwAsked = true;
+  try {
+    fw = await netPost("firewall", apply ? { apply: true, confirm: true } : {});
+    fwConfirm = false;
+  } catch (err) {
+    fw = fw || { plan: { platform: "", commands: [], explanation: "" }, status: { state: "unknown", detail: err.message } };
+    if (apply) fw.status = { state: "unknown", detail: "Rules not added: " + err.message };
+  }
+  fwBusy = false;
+  if (route.network) renderNetwork();
+}
+
+function renderShare() {
+  const n = net;
+  const head = '<div><h4>Let another PC connect</h4><p>Create a one-time code here and enter it on the other PC. It works once and expires after 10 minutes.</p></div>';
+  let body;
+  if (!n || !n.enabled) body = '<div class="disabled-hint">Turn on networking above first.</div>';
+  else if (invite && invite.done) body = '<div class="big-ok">\u2713 Connected to ' + esc(invite.done) + '</div><div class="net-actions"><button type="button" class="ghost" data-act="pair">Create another code</button></div>';
+  else if (inviteActive()) {
+    const addrs = (n.addresses || []).map((a) => a + ":" + (n.port || n.config.port));
+    body = '<div class="code"><output id="netCodeText">' + esc(invite.code) + '</output><button type="button" data-act="copy-code">Copy</button></div>' +
+      '<div class="small muted"><span class="pill running">waiting for the other PC</span> expires in <b id="netCountdown">' + mmss(invite.expiresAt - Date.now()) + "</b></div>" +
+      '<ol class="steps-list"><li>On the other PC, open the agent-bridge dashboard and go to <b>Network</b>.</li>' +
+      "<li>Under <b>Connect to another PC</b>, pick <b>" + esc(n.identity ? n.identity.name : "this PC") + "</b>" + (addrs.length ? " or enter <b>" + esc(addrs[0]) + "</b>" : "") + ".</li>" +
+      "<li>Paste the code and press <b>Connect</b>.</li></ol>" +
+      '<div class="small faint">Anyone with this code can pair once. Share it only with your own PCs.</div>';
+  } else body = (invite ? '<div class="note err">That code expired without being used.</div>' : "") + '<div class="net-actions"><button type="button" data-act="pair">Create pairing code</button></div>';
+  setHtml("netShare", head + body + '<div class="note" id="netShareInfo"></div>');
+}
+
+function renderFound() {
+  const n = net;
+  if (!n || !n.enabled) return setHtml("netFound", "");
+  const paired = new Set(n.paired.map((p) => p.id));
+  const found = n.discovered.filter((d) => !paired.has(d.id));
+  setHtml("netFound", !n.config.discovery
+    ? '<div class="small muted">Finding PCs automatically is off: enter the address shown on the other PC.</div>'
+    : found.length
+      ? '<div class="found">' + found.map((d) => '<div><span class="dot idle"></span><div class="grow"><b>' + esc(d.name) + '</b><div class="small muted">' + esc(d.host + ":" + d.port) + " \xB7 seen " + ago(d.seenAt) + '</div></div><button type="button" class="ghost" data-act="use" data-addr="' + esc(d.host + ":" + d.port) + '">Use</button></div>').join("") + "</div>"
+      : '<div class="small muted">No other PCs found yet. The other PC needs networking on with \u201CFind PCs automatically\u201D, or enter its address.</div>');
+}
+
+function renderPaired() {
+  const n = net;
+  const list = n ? n.paired : [];
+  $("netPairedN").textContent = list.length || "";
+  setHtml("netPaired", list.length
+    ? list.map((p) => {
+        const h = p.health, note = peerNotes.get(p.id);
+        const status = p.connected ? "online" : "offline";
+        const health = p.connected && h ? " \xB7 checked " + ago(h.lastVerifiedAt) + " \xB7 " + h.roundTripMs + " ms" : "";
+        const acts = unlinkAsk === p.id
+          ? '<span class="small">Unlink ' + esc(p.name) + '? Pairing again needs a new code.</span><button type="button" class="danger" data-act="unlink" data-id="' + esc(p.id) + '">Unlink</button><button type="button" class="ghost" data-act="unlink-cancel">Keep</button>'
+          : '<button type="button" class="ghost" data-act="verify" data-id="' + esc(p.id) + '"' + (p.connected ? "" : " disabled") + '>Check</button><button type="button" class="ghost danger" data-act="unlink-ask" data-id="' + esc(p.id) + '">Unlink</button>';
+        return '<div class="peer-row"><span class="dot ' + (p.connected ? "idle" : "off") + '"></span><div class="grow"><b>' + esc(p.name) + '</b><div class="small muted">' + status + health + ' \xB7 key <code>' + esc(p.fingerprint.slice(0, 12)) + "</code></div>" +
+          (note ? '<div class="small ' + (note.err ? "" : "muted") + '" style="' + (note.err ? "color:var(--bad)" : "") + '">' + esc(note.text) + "</div>" : "") + '</div><div class="acts">' + acts + "</div></div>";
+      }).join("")
+    : '<div class="empty">No paired PCs yet. Create a code on one PC and enter it on the other.</div>');
+}
+
+const noteEl = (id, text, kind) => { const el = $(id); if (el) { el.textContent = text; el.className = "note" + (kind ? " " + kind : ""); } };
+
+$("netConfig").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const name = $("netName").value.trim(), port = Number($("netPort").value);
+  if (!NETWORK_NAME.test(name)) return noteEl("netConfigInfo", "Use 1-64 letters, digits, dots, dashes or underscores for the name, starting with a letter or digit.", "err");
+  if (!Number.isInteger(port) || port < 1 || port > 65535) return noteEl("netConfigInfo", "The port must be a number from 1 to 65535.", "err");
+  $("netSave").disabled = true;
+  noteEl("netConfigInfo", "Saving and restarting the network listener\u2026");
+  try {
+    const d = await netPost("configure", { confirm: true, enabled: true, name, bind: $("netBind").value, port, discovery: $("netDiscovery").checked });
+    net = { ...d, addresses: net && net.addresses };
+    netFormFilled = false;
+    fw = null; fwAsked = false;
+    noteEl("netConfigInfo", "Saved. Networking is on.", "ok");
+  } catch (err) {
+    noteEl("netConfigInfo", "Not saved: " + err.message, "err");
+  } finally {
+    $("netSave").disabled = false;
+  }
+  void loadNetwork();
+});
+
+$("netOff").addEventListener("click", async () => {
+  $("netOff").disabled = true;
+  try {
+    await netPost("configure", { confirm: true, enabled: false });
+    invite = null;
+    noteEl("netConfigInfo", "Networking is off. Paired PCs stay paired and reconnect when you turn it on again.", "ok");
+  } catch (err) {
+    noteEl("netConfigInfo", "Could not turn it off: " + err.message, "err");
+  } finally {
+    $("netOff").disabled = false;
+  }
+  void loadNetwork();
+});
+
+$("netJoin").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  let address = $("netAddr").value.trim();
+  const code = $("netCode").value.trim();
+  if (!address || !code) return noteEl("netJoinInfo", "Enter the other PC's address and its pairing code.", "err");
+  // A bare host or IPv4 address: the default port.
+  if (!address.includes(":")) address += ":" + DEFAULT_NETWORK_PORT;
+  $("netJoinBtn").disabled = true;
+  noteEl("netJoinInfo", "Connecting\u2026");
+  try {
+    const d = await netPost("link", { address, code });
+    $("netCode").value = "";
+    noteEl("netJoinInfo", "\u2713 Paired with " + d.name + ". It is listed under Paired PCs.", "ok");
+  } catch (err) {
+    noteEl("netJoinInfo", "Not connected: " + err.message, "err");
+  } finally {
+    $("netJoinBtn").disabled = false;
+  }
+  void loadNetwork();
+});
+
+$("network").addEventListener("click", async (e) => {
+  const b = e.target.closest("button[data-act]");
+  if (!b) return;
+  const act = b.dataset.act, id = b.dataset.id;
+  if (act === "use") { $("netAddr").value = b.dataset.addr; $("netCode").focus(); return; }
+  if (act === "fw-ask") { fwConfirm = true; return renderNetwork(); }
+  if (act === "fw-cancel") { fwConfirm = false; return renderNetwork(); }
+  if (act === "fw-check") { fw = null; return void loadFirewall(false); }
+  if (act === "fw-apply") { fwBusy = true; renderNetwork(); return void loadFirewall(true); }
+  if (act === "fw-copy") return copyText(fw.plan.commands.join("\\n"), "netFwInfo");
+  if (act === "copy-code") return copyText(invite.code, "netShareInfo");
+  if (act === "unlink-ask") { unlinkAsk = id; return renderPaired(); }
+  if (act === "unlink-cancel") { unlinkAsk = null; return renderPaired(); }
+  b.disabled = true;
+  if (act === "pair") {
+    try {
+      const before = new Set((net ? net.paired : []).map((p) => p.id));
+      const d = await netPost("pair", {});
+      invite = { code: d.code, expiresAt: d.expiresAt, before, done: null };
+      renderShare();
+      void copyText(d.code, "netShareInfo", true);
+    } catch (err) {
+      renderShare();
+      noteEl("netShareInfo", "No code created: " + err.message, "err");
+    }
+  } else if (act === "verify") {
+    try {
+      const d = await netPost("verify", { id });
+      const names = d.peers.map((p) => p.name);
+      peerNotes.set(id, { text: names.length + " agent" + (names.length === 1 ? "" : "s") + " online there" + (names.length ? ": " + names.join(", ") : "") + " \xB7 answered in " + d.roundTripMs + " ms" });
+    } catch (err) {
+      peerNotes.set(id, { text: "No answer: " + err.message, err: true });
+    }
+    void loadNetwork();
+  } else if (act === "unlink") {
+    try {
+      await netPost("unlink", { id });
+      unlinkAsk = null;
+      peerNotes.delete(id);
+    } catch (err) {
+      peerNotes.set(id, { text: "Not unlinked: " + err.message, err: true });
+    }
+    void loadNetwork();
+  }
+});
+
+async function copyText(text, noteId, auto) {
+  try {
+    await navigator.clipboard.writeText(text);
+    noteEl(noteId, auto ? "Code copied to the clipboard." : "Copied.", "ok");
+  } catch {
+    if (!auto) noteEl(noteId, "Copy failed: select the text and copy it by hand.", "err");
+  }
+}
+
+setInterval(() => {
+  const el = $("netCountdown");
+  if (invite && !invite.done && invite.expiresAt <= Date.now() && route.network) renderShare();
+  else if (el && invite) el.textContent = mmss(invite.expiresAt - Date.now());
+  const due = inviteActive() ? NET_PAIR_POLL_MS : NET_POLL_MS;
+  if ((route.network || inviteActive()) && Date.now() - netLoadedAt >= due) void loadNetwork();
+}, 1000);
+
 /** Auto follows the system; Light and Dark override it. Remembered in this browser. */
 function applyTheme(theme) {
   const root = document.documentElement;
@@ -33681,6 +34052,7 @@ $("theme").addEventListener("click", (e) => {
 });
 applyTheme(document.documentElement.dataset.theme || "auto");
 poll();
+void loadNetwork();
 loadUsage(false);
 setInterval(() => loadUsage(false), 5 * 60 * 1000);
 $("usageRefresh").addEventListener("click", () => loadUsage(true));
@@ -33894,6 +34266,17 @@ function cookieSecret(req) {
   const m = new RegExp(`(?:^|;\\s*)${COOKIE}=([0-9a-f]+)`).exec(String(req.headers.cookie ?? ""));
   return m?.[1] ?? "";
 }
+function lanAddresses(interfaces = networkInterfaces()) {
+  return Object.values(interfaces).flatMap((list) => list ?? []).filter((a) => a.family === "IPv4" && !a.internal && !a.address.startsWith(LINK_LOCAL_PREFIX)).map((a) => a.address);
+}
+var LINK_LOCAL_PREFIX = "169.254.";
+var MAX_NETWORK_ERROR_CHARS = 240;
+var SECRET_LIKE = /[A-Za-z0-9_-]{24,}/;
+function safeNetworkError(err) {
+  if (!(err instanceof BridgeError)) return null;
+  const message = err.message.trim();
+  return message && message.length <= MAX_NETWORK_ERROR_CHARS && !SECRET_LIKE.test(message) ? message : null;
+}
 var JOB_COMMANDS = {
   "/api/subagents/message": (body) => {
     const text = typeof body.body === "string" ? body.body.trim() : "";
@@ -33977,7 +34360,7 @@ async function startUi(opts) {
     if (req.method === "GET" && url2.pathname === "/api/network") {
       const status = await networkRequest("networkStatus", {});
       const config2 = status.config ?? loadConfig(opts.home, "other", opts.log).network;
-      return send(res, 200, { ...status, config: config2 });
+      return send(res, 200, { ...status, config: config2, addresses: lanAddresses() });
     }
     if (req.method === "POST" && url2.pathname.startsWith("/api/network/")) {
       if (req.headers["x-agent-bridge"] !== "1") return send(res, 403, { error: "missing header" });
@@ -34020,8 +34403,8 @@ async function startUi(opts) {
           default:
             return send(res, 404, { error: "not found" });
         }
-      } catch {
-        return send(res, 409, { error: "Network action failed. Check settings, broker availability, the address and code, or restart all local agent-bridge hosting sessions if the broker is older. A failed listener reload leaves saved settings for the next broker start." });
+      } catch (err) {
+        return send(res, 409, { error: safeNetworkError(err) ?? "Network action failed. Check settings, broker availability, the address and code, or restart all local agent-bridge hosting sessions if the broker is older. A failed listener reload leaves saved settings for the next broker start." });
       }
     }
     if (req.method === "GET" && url2.pathname === "/api/usage") {

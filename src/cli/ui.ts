@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
+import { networkInterfaces } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { BridgeClient } from "../core/client.js";
@@ -9,7 +10,7 @@ import { APP_VERSION, JOBS_FILE, MAX_BODY_CHARS, PROTOCOL_VERSION } from "../cor
 import type { Logger } from "../core/logger.js";
 import { BridgeNode } from "../core/node.js";
 import { resolveDbPath } from "../core/paths.js";
-import { CODING_AGENTS, type PeerInfo } from "../core/protocol.js";
+import { BridgeError, CODING_AGENTS, type PeerInfo } from "../core/protocol.js";
 import { readModels, type ModelReport } from "../core/models.js";
 import { RUNS_DIR_NAME, runMetaPath, type RunMeta } from "../core/runfeed.js";
 import { loadOrCreateToken, tokensEqual } from "../core/token.js";
@@ -220,6 +221,29 @@ function cookieSecret(req: IncomingMessage): string {
   return m?.[1] ?? "";
 }
 
+/** This PC's IPv4 addresses on its networks, so the other PC knows what to connect to. */
+export function lanAddresses(interfaces: ReturnType<typeof networkInterfaces> = networkInterfaces()): string[] {
+  return Object.values(interfaces)
+    .flatMap((list) => list ?? [])
+    .filter((a) => a.family === "IPv4" && !a.internal && !a.address.startsWith(LINK_LOCAL_PREFIX))
+    .map((a) => a.address);
+}
+const LINK_LOCAL_PREFIX = "169.254.";
+
+const MAX_NETWORK_ERROR_CHARS = 240;
+/** A run this long of code characters may be part of a pairing secret. */
+const SECRET_LIKE = /[A-Za-z0-9_-]{24,}/;
+
+/**
+ * The broker's own refusal (e.g. "networking is disabled"), shown as is: those are fixed texts. Anything else,
+ * or anything that could quote a pairing code, gets the generic message.
+ */
+export function safeNetworkError(err: unknown): string | null {
+  if (!(err instanceof BridgeError)) return null;
+  const message = err.message.trim();
+  return message && message.length <= MAX_NETWORK_ERROR_CHARS && !SECRET_LIKE.test(message) ? message : null;
+}
+
 /** Subagent commands by path: the request body as a command for the owning session, or null when invalid. */
 const JOB_COMMANDS: Record<string, (body: Record<string, unknown>) => DashboardJobCommand | null> = {
   "/api/subagents/message": (body) => {
@@ -329,7 +353,7 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
     if (req.method === "GET" && url.pathname === "/api/network") {
       const status = await networkRequest("networkStatus", {});
       const config = status.config ?? loadConfig(opts.home, "other", opts.log).network;
-      return send(res, 200, { ...status, config });
+      return send(res, 200, { ...status, config, addresses: lanAddresses() });
     }
     if (req.method === "POST" && url.pathname.startsWith("/api/network/")) {
       if (req.headers["x-agent-bridge"] !== "1") return send(res, 403, { error: "missing header" });
@@ -371,8 +395,8 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
           }
           default: return send(res, 404, { error: "not found" });
         }
-      } catch {
-        return send(res, 409, { error: "Network action failed. Check settings, broker availability, the address and code, or restart all local agent-bridge hosting sessions if the broker is older. A failed listener reload leaves saved settings for the next broker start." });
+      } catch (err) {
+        return send(res, 409, { error: safeNetworkError(err) ?? "Network action failed. Check settings, broker availability, the address and code, or restart all local agent-bridge hosting sessions if the broker is older. A failed listener reload leaves saved settings for the next broker start." });
       }
     }
     if (req.method === "GET" && url.pathname === "/api/usage") {

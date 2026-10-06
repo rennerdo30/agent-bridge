@@ -21,7 +21,7 @@ function page() {
   };
   const fetch = vi.fn(() => new Promise(() => {}));
   const document = { getElementById: element, documentElement: { dataset: {} }, addEventListener() {}, querySelectorAll: () => [] };
-  const api = new Function("document", "window", "location", "localStorage", "setInterval", "fetch", `${script}\nreturn { renderJobForm, renderSendForm, modelsCard, setModel: (m) => { model = m; state = { peers: [] }; }, setRoute: (r) => route = r };`)(document, { addEventListener() {} }, { hash: "" }, { setItem() {}, removeItem() {} }, () => 0, fetch);
+  const api = new Function("document", "window", "location", "localStorage", "setInterval", "fetch", `${script}\nreturn { renderJobForm, renderSendForm, modelsCard, renderNetwork, setModel: (m) => { model = m; state = { peers: [] }; }, setRoute: (r) => route = r, setNet: (n, i) => { net = n; invite = i || null; } };`)(document, { addEventListener() {} }, { hash: "" }, { setItem() {}, removeItem() {} }, () => 0, fetch);
   return { ...api, element, fetch };
 }
 const group = (key: string) => ({ key, job: `codex-job-${key}`, owner: "claude-app", agent: "codex", status: "done", percent: null, turns: [{ name: `run-${key}`, startedAt: 0 }] });
@@ -110,5 +110,77 @@ describe("dashboard chat inputs", () => {
     expect(html).toContain("Default: &lt;model&gt;");
     expect(html).toContain("Efforts: low, high");
     expect(html).not.toContain("<script>");
+  });
+});
+
+describe("dashboard network tab", () => {
+  const status = (over: Record<string, unknown> = {}) => ({
+    enabled: true,
+    config: { enabled: true, name: "office-pc", bind: "0.0.0.0", port: 48148, discovery: true },
+    identity: { id: "self", name: "office-pc", fingerprint: "f".repeat(64) },
+    port: 48148,
+    addresses: ["192.168.1.20"],
+    discovered: [{ id: "lap", name: "laptop", fingerprint: "a".repeat(64), host: "192.168.1.30", port: 48148, seenAt: Date.now() }],
+    paired: [{ id: "mac", name: "<mac>", fingerprint: "b".repeat(64), connected: true, health: { lastVerifiedAt: Date.now(), roundTripMs: 12 } }],
+    ...over,
+  });
+
+  it("shows a waiting code with the steps for the other PC", () => {
+    const p = page();
+    p.setNet(status(), { code: "secret-code", expiresAt: Date.now() + 60_000, before: new Set(["mac"]), done: null });
+    p.renderNetwork();
+    const share = p.element("netShare").innerHTML;
+    expect(share).toContain("secret-code");
+    expect(share).toContain("192.168.1.20:48148");
+    expect(share).toContain("waiting for the other PC");
+    expect(p.element("netState").textContent).toBe("Networking is on as office-pc");
+  });
+
+  it("lists discovered PCs that are not paired yet, and escapes paired names", () => {
+    const p = page();
+    p.setNet(status());
+    p.renderNetwork();
+    expect(p.element("netFound").innerHTML).toContain('data-addr="192.168.1.30:48148"');
+    expect(p.element("netPaired").innerHTML).toContain("&lt;mac&gt;");
+    expect(p.element("netPaired").innerHTML).toContain("12 ms");
+  });
+
+  it("asks before unlinking and never posts on the first click", async () => {
+    const p = page();
+    p.setNet(status());
+    p.renderNetwork();
+    const click = p.element("network").listeners.get("click");
+    const button = (act: string) => ({ target: { closest: () => ({ dataset: { act, id: "mac" }, disabled: false }) } });
+    await click(button("unlink-ask"));
+    expect(p.element("netPaired").innerHTML).toContain("Pairing again needs a new code.");
+    expect(p.fetch.mock.calls.some(([url]: any[]) => String(url).includes("unlink"))).toBe(false);
+    p.fetch.mockResolvedValueOnce({ ok: true, json: async () => ({ removed: true }) });
+    await click(button("unlink"));
+    const request = p.fetch.mock.calls.find(([url]: any[]) => url === "/api/network/unlink");
+    expect(JSON.parse(request[1].body)).toEqual({ id: "mac" });
+  });
+
+  it("adds the default port to a bare address when connecting", async () => {
+    const p = page();
+    p.setNet(status());
+    p.element("netAddr").value = "192.168.1.30";
+    p.element("netCode").value = "the-code";
+    p.fetch.mockResolvedValueOnce({ ok: true, json: async () => ({ name: "laptop" }) });
+    await p.element("netJoin").listeners.get("submit")({ preventDefault() {} });
+    const request = p.fetch.mock.calls.find(([url]: any[]) => url === "/api/network/link");
+    expect(JSON.parse(request[1].body)).toEqual({ address: "192.168.1.30:48148", code: "the-code" });
+    expect(p.element("netCode").value).toBe("");
+    expect(p.element("netJoinInfo").textContent).toContain("Paired with laptop");
+  });
+
+  it("asks to turn networking on before pairing", () => {
+    const p = page();
+    p.setNet(status({ enabled: false, config: { enabled: false, name: "office-pc", bind: "127.0.0.1", port: 48148, discovery: false } }));
+    p.renderNetwork();
+    expect(p.element("netShare").innerHTML).toContain("Turn on networking above first.");
+    expect(p.element("netSave").textContent).toBe("Turn on");
+    // Suggested for pairing: reachable from other PCs, discovery on.
+    expect(p.element("netBind").value).toBe("0.0.0.0");
+    expect(p.element("netDiscovery").checked).toBe(true);
   });
 });

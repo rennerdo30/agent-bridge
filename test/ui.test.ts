@@ -295,3 +295,19 @@ describe("classifyPeers", () => {
     ]);
   });
 });
+
+describe("network helpers", () => {
+  it("shows the broker's fixed refusals but never text that could hold a pairing code", async () => {
+    const { safeNetworkError } = await import("../src/cli/ui.js");
+    const { BridgeError } = await import("../src/core/protocol.js");
+    expect(safeNetworkError(new BridgeError("bad_request", "networking is disabled or unavailable; enable it and restart the broker"))).toContain("networking is disabled");
+    expect(safeNetworkError(new BridgeError("bad_request", "bad code eyJ2IjoxLCJpZCI6ImFiYyJ9eyJ2IjoxLCJpZCI6"))).toBeNull();
+    expect(safeNetworkError(new Error("Unexpected token in JSON"))).toBeNull();
+  });
+
+  it("lists this PC's LAN IPv4 addresses only", async () => {
+    const { lanAddresses } = await import("../src/cli/ui.js");
+    const nic = (address: string, family: "IPv4" | "IPv6", internal = false) => ({ address, family, internal, netmask: "", mac: "", cidr: null });
+    expect(lanAddresses({ lo: [nic("127.0.0.1", "IPv4", true)], eth: [nic("192.168.1.20", "IPv4"), nic("fe80::1", "IPv6")], apipa: [nic("169.254.3.4", "IPv4")] } as any)).toEqual(["192.168.1.20"]);
+  });
+});
