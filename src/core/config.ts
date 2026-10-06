@@ -1,6 +1,6 @@
 import { unwatchFile, watchFile } from "node:fs";
 import { basename, join } from "node:path";
-import { CONFIG_FILE_NAME, DEFAULT_CLAUDE_BIN, DEFAULT_CODEX_BIN, DEFAULT_LINGER_SEC, DEFAULT_MAX_HOPS, DEFAULT_MAX_JOBS, DEFAULT_OPENCODE_BIN, DEFAULT_DASHBOARD_PORT, ENV, MAX_JOBS_LIMIT } from "./constants.js";
+import { CONFIG_FILE_NAME, DEFAULT_CLAUDE_BIN, DEFAULT_CODEX_BIN, DEFAULT_LINGER_SEC, DEFAULT_MAX_HOPS, DEFAULT_MAX_JOBS, DEFAULT_MAX_DELEGATE_DEPTH, DEFAULT_OPENCODE_BIN, DEFAULT_DASHBOARD_PORT, ENV, MAX_DELEGATE_DEPTH_LIMIT, MAX_JOBS_LIMIT } from "./constants.js";
 import type { Logger } from "./logger.js";
 import { AGENT_KINDS, type AgentKind } from "./protocol.js";
 import { isRecord, readJsonStore, writeJsonStore } from "./json-store.js";
@@ -41,6 +41,8 @@ export interface BridgeConfig {
   maxHops: number;
   /** Background subagents running at once per session. */
   maxJobs: number;
+  /** Maximum child depth, counted from the top session at depth zero. */
+  maxDelegateDepth: number;
   /** MCP tools subagents may call without asking the parent (server.tool patterns or presets; see tool-allow.ts). */
   autoApproveTools: string[];
   /** Machine-wide named resource capacities, shared by all jobs using this home directory. */
@@ -84,6 +86,7 @@ export const DEFAULT_CONFIG: BridgeConfig = {
   wakeOnDirect: true,
   maxHops: DEFAULT_MAX_HOPS,
   maxJobs: DEFAULT_MAX_JOBS,
+  maxDelegateDepth: DEFAULT_MAX_DELEGATE_DEPTH,
   autoApproveTools: [],
   resourceSlots: {},
   delivery: "auto",
@@ -250,6 +253,7 @@ export function loadConfig(home: string, agent: AgentKind, log: Logger, env: Nod
     wakeOnDirect: pick("wakeOnDirect", ENV.wakeOnDirect, parseBool) ?? d.wakeOnDirect,
     maxHops: pick("maxHops", ENV.maxHops, (v) => parseIntInRange(v, 0, MAX_HOPS_LIMIT)) ?? d.maxHops,
     maxJobs: pick("maxJobs", ENV.maxJobs, (v) => parseIntInRange(v, 1, MAX_JOBS_LIMIT)) ?? d.maxJobs,
+    maxDelegateDepth: pick("maxDelegateDepth", ENV.maxDelegateDepth, (v) => parseIntInRange(v, 1, MAX_DELEGATE_DEPTH_LIMIT)) ?? d.maxDelegateDepth,
     autoApproveTools: pick("autoApproveTools", ENV.autoApproveTools, toolPatterns) ?? d.autoApproveTools,
     // Capacities must agree across agents; per-agent sections cannot override shared resources.
     resourceSlots: resourceSlots(file.resourceSlots) ?? d.resourceSlots,

@@ -11,10 +11,14 @@ import { FinalAnswers } from "./final-answers.js";
 import { progressLineHandler } from "./progress.js";
 import { PermissionRelay, type PermissionDecision } from "./relay.js";
 import { codexDriveMappings, codexPathPrompt } from "./codex-paths.js";
+import { DEFAULT_MAX_DELEGATE_DEPTH, ENV, MAX_DELEGATE_DEPTH_LIMIT } from "./constants.js";
 
 /** Env var tracking nested delegation, so a delegated agent cannot delegate back forever. */
 export const DELEGATE_DEPTH_ENV = "AGENT_BRIDGE_DELEGATE_DEPTH";
-export const MAX_DELEGATE_DEPTH = 1;
+export const MAX_DELEGATE_DEPTH = MAX_DELEGATE_DEPTH_LIMIT;
+export const PARENT_JOB_ENV = "AGENT_BRIDGE_PARENT_JOB";
+export const ROOT_SESSION_ENV = "AGENT_BRIDGE_ROOT_SESSION";
+export const ROOT_NAME_ENV = "AGENT_BRIDGE_ROOT_NAME";
 const KILL_GRACE_MS = 3_000;
 const MAX_CAPTURE_CHARS = 8 * 1024 * 1024;
 const STDERR_TAIL_CHARS = 4_000;
@@ -305,6 +309,7 @@ export function runProcess(opts: {
 }
 
 export interface DelegateRequest {
+  maxDelegateDepth?: number;
   prompt: string;
   /** The job's title, used as its Codex thread name. */
   title?: string;
@@ -372,7 +377,11 @@ export const CODEX_ASK_HINT =
 // `opencode run` rejects every ask without --auto, so nothing is changed.
 export const OPENCODE_READ_ONLY_PERMISSIONS = { edit: "ask", bash: "ask" } as const;
 /** MCP tools (named <server>_<tool>) can change things too: read-only runs keep only agent-bridge's send (to answer the parent). */
-export const OPENCODE_READ_ONLY_TOOLS = { "*_*": false, bridge_send: true, bridge_report_progress: true } as const;
+export const OPENCODE_READ_ONLY_TOOLS = {
+  "*_*": false, bridge_send: true, bridge_report_progress: true, bridge_peers: true,
+  bridge_spawn_codex: true, bridge_spawn_claude: true, bridge_ask_codex: true, bridge_ask_claude: true,
+  bridge_message_subagent: true, bridge_cancel_subagent: true, bridge_inbox: true, bridge_wait_for_message: true,
+} as const;
 
 export function childEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
   // The parent's project dir would point a delegated Claude (it may work in a worktree) at the wrong folder.
@@ -380,9 +389,10 @@ export function childEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv 
   return { ...env, ...extra, [DELEGATE_DEPTH_ENV]: String(currentDelegateDepth() + 1) };
 }
 
-export function checkDepth(): void {
-  if (currentDelegateDepth() >= MAX_DELEGATE_DEPTH) {
-    throw new DelegateError("delegation is disabled inside a delegated session (prevents recursive delegation)", "depth");
+export function checkDepth(max = Number(process.env[ENV.maxDelegateDepth] ?? DEFAULT_MAX_DELEGATE_DEPTH), env: NodeJS.ProcessEnv = process.env): void {
+  const limit = Number.isInteger(max) && max >= 1 ? Math.min(max, MAX_DELEGATE_DEPTH_LIMIT) : DEFAULT_MAX_DELEGATE_DEPTH;
+  if (currentDelegateDepth(env) >= limit) {
+    throw new DelegateError(`delegation depth limit ${limit} reached`, "depth");
   }
 }
 
@@ -464,7 +474,7 @@ export function realFolder(dir: string): string {
 export async function delegateToCodex(
   req: DelegateRequest & { bin: string; sandbox: CodexSandbox; relayApprovals?: boolean; networkAccess?: boolean },
 ): Promise<DelegateResult> {
-  checkDepth();
+  checkDepth(req.maxDelegateDepth);
   // Codex's Windows sandbox runs as a separate user that does not see per-user drive mappings (a mapped
   // or subst'ed E: drive): commands fail with "no E: drive". Hand it the real path instead.
   req = { ...req, cwd: realFolder(req.cwd), prompt: codexPathPrompt(req.prompt, codexDriveMappings(`${req.cwd}\n${req.prompt}`)) };
@@ -599,7 +609,7 @@ function claudeInitSniffer(next: ((line: string) => void) | undefined, onInfo: D
 export async function delegateToClaude(
   req: DelegateRequest & { bin: string; permissionMode: ClaudePermissionMode; hookCli?: string },
 ): Promise<DelegateResult> {
-  checkDepth();
+  checkDepth(req.maxDelegateDepth);
   // stream-json lets us report progress; the final "result" line matches --output-format json.
   const args = ["-p", "--output-format", "stream-json", "--verbose", "--permission-mode", req.permissionMode];
   // Read-only also means no MCP tools: those of the user's plugins can change things. Each server is denied by
@@ -704,7 +714,7 @@ export function parseOpencodeJsonl(stdout: string): {
 }
 
 export async function delegateToOpencode(req: DelegateRequest & { bin: string; autoApprove: boolean }): Promise<DelegateResult> {
-  checkDepth();
+  checkDepth(req.maxDelegateDepth);
   // --dir as well: opencode must not fall back to an inherited PWD (it then works in the wrong folder).
   const args = ["run", "--format", "json", "--dir", req.cwd];
   if (req.model) args.push("-m", req.model);

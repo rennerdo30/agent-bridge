@@ -319,6 +319,7 @@ Every reply increments a conversation's hop count. Messages at or above `maxHops
   "wakeOnDirect": true,
   "maxHops": 6,
   "maxJobs": 8,
+  "maxDelegateDepth": 2,
   "autoApproveTools": ["pair-desk.get_*", "pair-desk.list_*"],
   "lingerSec": 300,
   "codex": { "name": "codex-main", "claudeBin": "claude", "claudePermissionMode": "default", "claudeModel": "opus" },
@@ -335,7 +336,8 @@ Every reply increments a conversation's hop count. Messages at or above `maxHops
 | `AGENT_BRIDGE_AUTO_WAKE` | `on` / `off` |
 | `AGENT_BRIDGE_WAKE_ON_DIRECT` | Wake idle Claude for messages addressed to its session name (default `on`); `wakeOnDirect` in config |
 | `AGENT_BRIDGE_MAX_HOPS` | Loop limit |
-| `AGENT_BRIDGE_MAX_JOBS` | Background subagents running at once per session (default 8, max 50); `maxJobs` in the config file. Continuing a finished subagent while all slots are taken queues it; it starts when one frees up. Mid-session, ask the agent to change it ("allow 10 subagents"): the `max_subagents` tool applies it at once, with `save=true` also for new sessions |
+| `AGENT_BRIDGE_MAX_JOBS` | Subagents running at once per top-level session, including blocking asks and every nested generation (default 8, max 50); `maxJobs` in the config file. Continuing a finished subagent while all slots are taken queues it; it starts when one frees up. Mid-session, ask the top supervisor to change it ("allow 10 subagents"): the `max_subagents` tool applies it at once, with `save=true` also for new sessions |
+| `AGENT_BRIDGE_MAX_DELEGATE_DEPTH` | Maximum delegation depth (`maxDelegateDepth` in config), default 2, allowed range 1–3. A top session has depth 0; its child has depth 1 and can start depth 2 children. Every generation shares the top session's subagent budget. |
 | `AGENT_BRIDGE_LINGER_SEC` | Listen window after sending (0 disables) |
 | `AGENT_BRIDGE_DELIVERY` | Claude only: `auto`, `channel`, `hooks` |
 | `AGENT_BRIDGE_CLAUDE_BIN` / `AGENT_BRIDGE_CODEX_BIN` / `AGENT_BRIDGE_OPENCODE_BIN` | Paths of the CLIs used for delegation |

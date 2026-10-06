@@ -7200,10 +7200,10 @@ var require_dist = __commonJS({
 });
 
 // src/core/job-outcomes.ts
-import { createHash as createHash5 } from "node:crypto";
+import { createHash as createHash6 } from "node:crypto";
 import { existsSync as existsSync9 } from "node:fs";
-import { join as join20 } from "node:path";
-import { DatabaseSync as DatabaseSync3 } from "node:sqlite";
+import { join as join22 } from "node:path";
+import { DatabaseSync as DatabaseSync5 } from "node:sqlite";
 
 // src/core/constants.ts
 import { homedir } from "node:os";
@@ -7222,6 +7222,7 @@ var ENV = {
   wakeOnDirect: "AGENT_BRIDGE_WAKE_ON_DIRECT",
   maxHops: "AGENT_BRIDGE_MAX_HOPS",
   maxJobs: "AGENT_BRIDGE_MAX_JOBS",
+  maxDelegateDepth: "AGENT_BRIDGE_MAX_DELEGATE_DEPTH",
   autoApproveTools: "AGENT_BRIDGE_AUTO_APPROVE_TOOLS",
   lingerSec: "AGENT_BRIDGE_LINGER_SEC",
   delivery: "AGENT_BRIDGE_DELIVERY",
@@ -7232,6 +7233,9 @@ var ENV = {
   /** "0": background subagents run inside the session's MCP server instead of detached job runners (they then end with it). */
   jobRunner: "AGENT_BRIDGE_JOB_RUNNER"
 };
+var DEFAULT_MAX_DELEGATE_DEPTH = 2;
+var MAX_DELEGATE_DEPTH_LIMIT = 3;
+var DELEGATION_METADATA_VERSION = 2;
 var DEFAULT_HOME = join(homedir(), `.${APP_NAME}`);
 var CONFIG_FILE_NAME = "config.json";
 var DB_FILE_NAME = "bridge.db";
@@ -7435,7 +7439,7 @@ function resolveDbPath(home) {
 
 // src/mcp/jobs.ts
 import { randomUUID as randomUUID6 } from "node:crypto";
-import { closeSync as closeSync5, mkdirSync as mkdirSync8, openSync as openSync5, rmSync as rmSync3, statSync as statSync3 } from "node:fs";
+import { closeSync as closeSync5, mkdirSync as mkdirSync9, openSync as openSync5, rmSync as rmSync3, statSync as statSync3 } from "node:fs";
 import { dirname as dirname6 } from "node:path";
 
 // src/core/delegate.ts
@@ -7546,18 +7550,20 @@ var MAX_NOTE_CHARS = 200;
 var CHILD_REQUEST_TIMEOUT_MS = 5e3;
 var ParentLink = class {
   constructor(parentName, onMessage, log, onProgress = () => {
-  }, siblings) {
+  }, siblings, onEscalate) {
     this.parentName = parentName;
     this.onMessage = onMessage;
     this.log = log;
     this.onProgress = onProgress;
     this.siblings = siblings;
+    this.onEscalate = onEscalate;
   }
   parentName;
   onMessage;
   log;
   onProgress;
   siblings;
+  onEscalate;
   server = null;
   secret = randomBytes2(SECRET_BYTES).toString("hex");
   url = "";
@@ -7643,6 +7649,13 @@ var ParentLink = class {
       this.onMessage(text2, typeof body.reply_to === "string" ? body.reply_to : null);
       return { ok: true };
     }
+    if (req.method === "POST" && req.url === "/escalate") {
+      if (!this.onEscalate) throw new Error("approval escalation unavailable");
+      const body = JSON.parse(await readBody(req));
+      if (typeof body.body !== "string" || !body.body.trim() || body.body.length > MAX_BODY_CHARS) throw new Error("invalid escalation");
+      await this.onEscalate(body.body);
+      return { ok: true };
+    }
     throw new Error("not found");
   }
 };
@@ -7673,6 +7686,7 @@ function parentFromEnv(env = process.env) {
     name: env[PARENT_NAME_ENV] || "parent",
     inbox: async () => (await call("/inbox", {})).messages ?? [],
     send: async (body, replyTo) => void await call("/message", { body, reply_to: replyTo ?? null }),
+    escalate: async (body) => void await call("/escalate", { body }),
     progress: async (percent, note) => void await call("/progress", { percent, note }),
     siblings: {
       peers: async () => (await call("/siblings", {})).peers ?? [],
@@ -7965,7 +7979,19 @@ function listPendingApprovals(home) {
   return files.flatMap((file2) => {
     if (!file2.endsWith(".json")) return [];
     const r = readApproval(home, file2.slice(0, -5));
-    return r ? [{ id: r.id, owner: r.owner, job: r.job, agent: r.agent, tool: r.tool, command: r.command, reason: r.reason, askedAt: r.askedAt, deadline: r.deadline }] : [];
+    return r ? [{
+      id: r.id,
+      owner: r.owner,
+      job: r.job,
+      agent: r.agent,
+      tool: r.tool,
+      command: r.command,
+      reason: r.reason,
+      askedAt: r.askedAt,
+      deadline: r.deadline,
+      ...typeof r.parentJob === "string" ? { parentJob: r.parentJob } : {},
+      ...typeof r.rootSession === "string" ? { rootSession: r.rootSession } : {}
+    }] : [];
   }).sort((a, b) => a.askedAt - b.askedAt);
 }
 function newApprovalId() {
@@ -8019,7 +8045,9 @@ function codexPathReport(mappings) {
 
 // src/core/delegate.ts
 var DELEGATE_DEPTH_ENV = "AGENT_BRIDGE_DELEGATE_DEPTH";
-var MAX_DELEGATE_DEPTH = 1;
+var PARENT_JOB_ENV = "AGENT_BRIDGE_PARENT_JOB";
+var ROOT_SESSION_ENV = "AGENT_BRIDGE_ROOT_SESSION";
+var ROOT_NAME_ENV = "AGENT_BRIDGE_ROOT_NAME";
 var KILL_GRACE_MS = 3e3;
 var MAX_CAPTURE_CHARS = 8 * 1024 * 1024;
 var STDERR_TAIL_CHARS = 4e3;
@@ -8247,14 +8275,28 @@ var CODEX_ASK_POLICY = 'approval_policy="on-request"';
 var CODEX_NO_APPROVALS = 'approval_policy="never"';
 var CODEX_ASK_HINT = "(The workspace is read-only on purpose: when you need to change files or run a command the sandbox blocks, request escalated permissions for it. The user is asked and decides; if denied, stop and report.)";
 var OPENCODE_READ_ONLY_PERMISSIONS = { edit: "ask", bash: "ask" };
-var OPENCODE_READ_ONLY_TOOLS = { "*_*": false, bridge_send: true, bridge_report_progress: true };
+var OPENCODE_READ_ONLY_TOOLS = {
+  "*_*": false,
+  bridge_send: true,
+  bridge_report_progress: true,
+  bridge_peers: true,
+  bridge_spawn_codex: true,
+  bridge_spawn_claude: true,
+  bridge_ask_codex: true,
+  bridge_ask_claude: true,
+  bridge_message_subagent: true,
+  bridge_cancel_subagent: true,
+  bridge_inbox: true,
+  bridge_wait_for_message: true
+};
 function childEnv(extra = {}) {
   const { CLAUDE_PROJECT_DIR: _parentProject, ...env } = process.env;
   return { ...env, ...extra, [DELEGATE_DEPTH_ENV]: String(currentDelegateDepth() + 1) };
 }
-function checkDepth() {
-  if (currentDelegateDepth() >= MAX_DELEGATE_DEPTH) {
-    throw new DelegateError("delegation is disabled inside a delegated session (prevents recursive delegation)", "depth");
+function checkDepth(max = Number(process.env[ENV.maxDelegateDepth] ?? DEFAULT_MAX_DELEGATE_DEPTH), env = process.env) {
+  const limit = Number.isInteger(max) && max >= 1 ? Math.min(max, MAX_DELEGATE_DEPTH_LIMIT) : DEFAULT_MAX_DELEGATE_DEPTH;
+  if (currentDelegateDepth(env) >= limit) {
+    throw new DelegateError(`delegation depth limit ${limit} reached`, "depth");
   }
 }
 function sessionInLine(agent, line) {
@@ -8324,7 +8366,7 @@ function realFolder(dir) {
   }
 }
 async function delegateToCodex(req) {
-  checkDepth();
+  checkDepth(req.maxDelegateDepth);
   req = { ...req, cwd: realFolder(req.cwd), prompt: codexPathPrompt(req.prompt, codexDriveMappings(`${req.cwd}
 ${req.prompt}`)) };
   if (req.relayApprovals && req.sandbox !== "danger-full-access") req = { ...req, prompt: `${req.prompt}
@@ -8420,7 +8462,7 @@ function claudeInitSniffer(next, onInfo) {
   };
 }
 async function delegateToClaude(req) {
-  checkDepth();
+  checkDepth(req.maxDelegateDepth);
   const args = ["-p", "--output-format", "stream-json", "--verbose", "--permission-mode", req.permissionMode];
   const readOnly = isClaudeReadOnly(req.permissionMode);
   if (readOnly) args.push("--disallowedTools", [...CLAUDE_READ_ONLY_DENIED_TOOLS, ...claudeMcpDenyRules(req.cwd)].join(","));
@@ -8509,7 +8551,7 @@ function parseOpencodeJsonl(stdout) {
   return sawUsage ? { sessionId, text: text2, error: error62, usage: { input: input2, output: output2 }, cost } : { sessionId, text: text2, error: error62 };
 }
 async function delegateToOpencode(req) {
-  checkDepth();
+  checkDepth(req.maxDelegateDepth);
   const args = ["run", "--format", "json", "--dir", req.cwd];
   if (req.model) args.push("-m", req.model);
   if (req.effort) args.push("--variant", req.effort);
@@ -28472,6 +28514,7 @@ var DEFAULT_CONFIG = {
   wakeOnDirect: true,
   maxHops: DEFAULT_MAX_HOPS,
   maxJobs: DEFAULT_MAX_JOBS,
+  maxDelegateDepth: DEFAULT_MAX_DELEGATE_DEPTH,
   autoApproveTools: [],
   resourceSlots: {},
   delivery: "auto",
@@ -28610,6 +28653,7 @@ function loadConfig(home, agent, log, env = process.env) {
     wakeOnDirect: pick2("wakeOnDirect", ENV.wakeOnDirect, parseBool) ?? d.wakeOnDirect,
     maxHops: pick2("maxHops", ENV.maxHops, (v) => parseIntInRange(v, 0, MAX_HOPS_LIMIT)) ?? d.maxHops,
     maxJobs: pick2("maxJobs", ENV.maxJobs, (v) => parseIntInRange(v, 1, MAX_JOBS_LIMIT)) ?? d.maxJobs,
+    maxDelegateDepth: pick2("maxDelegateDepth", ENV.maxDelegateDepth, (v) => parseIntInRange(v, 1, MAX_DELEGATE_DEPTH_LIMIT)) ?? d.maxDelegateDepth,
     autoApproveTools: pick2("autoApproveTools", ENV.autoApproveTools, toolPatterns) ?? d.autoApproveTools,
     // Capacities must agree across agents; per-agent sections cannot override shared resources.
     resourceSlots: resourceSlots(file2.resourceSlots) ?? d.resourceSlots,
@@ -28786,7 +28830,7 @@ function permissionDetail(p) {
   return (cmd || patterns || JSON.stringify(meta3)).slice(0, MAX_DETAIL_CHARS);
 }
 async function delegateToOpencodeServed(req) {
-  checkDepthPublic();
+  checkDepthPublic(req.maxDelegateDepth);
   const password = randomBytes4(PASSWORD_BYTES).toString("hex");
   const permissions = req.permissions === void 0 ? OPENCODE_ASK_PERMISSIONS : req.permissions;
   const env = childEnvPublic({
@@ -28934,7 +28978,7 @@ function asExecEvent(kind, item) {
   return { type: kind, item: { ...item, type } };
 }
 async function delegateToCodexAppServer(req) {
-  checkDepth();
+  checkDepth(req.maxDelegateDepth);
   const mappings = codexDriveMappings(`${req.cwd}
 ${req.prompt}`);
   req = { ...req, prompt: codexPathPrompt(req.prompt, mappings) };
@@ -29568,6 +29612,160 @@ function notifyJobEvent(home, event, log) {
   task.unref();
 }
 
+// src/core/root-concurrency.ts
+import { createHash as createHash2 } from "node:crypto";
+import { join as join16 } from "node:path";
+import { DatabaseSync as DatabaseSync2 } from "node:sqlite";
+
+// src/core/resource-slots.ts
+import { mkdirSync as mkdirSync8 } from "node:fs";
+import { join as join15 } from "node:path";
+import { DatabaseSync } from "node:sqlite";
+import { setTimeout as delay2 } from "node:timers/promises";
+var SLOT_OWNER_ENV = "AGENT_BRIDGE_SLOT_OWNER";
+var SLOT_PID_ENV = "AGENT_BRIDGE_SLOT_PID";
+var SLOT_LEASE_MS = 6 * 60 * 6e4;
+var SLOT_RENEW_MS = 6e4;
+var SLOT_POLL_MS = 250;
+var SLOT_DB_NAME = "resource-slots.sqlite";
+var LOCK_WAIT_MS = 3e3;
+function alive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return err.code !== "ESRCH";
+  }
+}
+var ResourceSlots = class {
+  constructor(home, isAlive = alive, now = Date.now) {
+    this.isAlive = isAlive;
+    this.now = now;
+    mkdirSync8(home, { recursive: true });
+    this.db = new DatabaseSync(join15(home, SLOT_DB_NAME));
+    this.db.exec(`PRAGMA busy_timeout = ${LOCK_WAIT_MS};
+      CREATE TABLE IF NOT EXISTS slots (
+        ticket INTEGER PRIMARY KEY AUTOINCREMENT, resource TEXT NOT NULL, id TEXT NOT NULL,
+        pid INTEGER NOT NULL, held INTEGER NOT NULL, expiresAt INTEGER NOT NULL, UNIQUE(resource, id)
+      );`);
+  }
+  isAlive;
+  now;
+  db;
+  transaction(fn) {
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      const result = fn();
+      this.db.exec("COMMIT");
+      return result;
+    } catch (err) {
+      this.db.exec("ROLLBACK");
+      throw err;
+    }
+  }
+  prune() {
+    this.db.prepare("DELETE FROM slots WHERE expiresAt <= ?").run(this.now());
+    const pids = this.db.prepare("SELECT DISTINCT pid FROM slots").all();
+    for (const row of pids) if (!this.isAlive(Number(row.pid))) this.db.prepare("DELETE FROM slots WHERE pid = ?").run(row.pid);
+  }
+  tryAcquire(resource, count, owner) {
+    if (!RESOURCE_NAME_PATTERN.test(resource) || !Number.isInteger(count) || count < 1) throw new Error("Invalid resource name or capacity.");
+    if (!owner.id || !Number.isSafeInteger(owner.pid) || owner.pid <= 0 || !this.isAlive(owner.pid)) throw new Error("A resource slot needs a live owner process.");
+    return this.transaction(() => {
+      this.prune();
+      this.db.prepare("INSERT INTO slots(resource, id, pid, held, expiresAt) VALUES (?, ?, ?, 0, ?) ON CONFLICT(resource, id) DO NOTHING").run(resource, owner.id, owner.pid, this.now() + SLOT_LEASE_MS);
+      const own2 = this.db.prepare("SELECT ticket, pid, held FROM slots WHERE resource = ? AND id = ?").get(resource, owner.id);
+      if (Number(own2.pid) !== owner.pid) throw new Error("Resource slot owner does not match.");
+      this.db.prepare("UPDATE slots SET expiresAt = ? WHERE resource = ? AND id = ?").run(this.now() + SLOT_LEASE_MS, resource, owner.id);
+      if (own2.held) return true;
+      const held = Number(this.db.prepare("SELECT COUNT(*) AS n FROM slots WHERE resource = ? AND held = 1").get(resource).n);
+      const ahead = Number(this.db.prepare("SELECT COUNT(*) AS n FROM slots WHERE resource = ? AND held = 0 AND ticket < ?").get(resource, own2.ticket).n);
+      if (held + ahead >= count) return false;
+      this.db.prepare("UPDATE slots SET held = 1 WHERE ticket = ?").run(own2.ticket);
+      return true;
+    });
+  }
+  async acquire(resource, count, owner, signal) {
+    try {
+      for (; ; ) {
+        signal?.throwIfAborted();
+        if (this.tryAcquire(resource, count, owner)) return;
+        await delay2(SLOT_POLL_MS, void 0, { signal });
+      }
+    } catch (err) {
+      this.release(owner, resource);
+      throw err;
+    }
+  }
+  release(owner, resource) {
+    this.db.prepare(`DELETE FROM slots WHERE id = ? AND pid = ?${resource ? " AND resource = ?" : ""}`).run(...resource ? [owner.id, owner.pid, resource] : [owner.id, owner.pid]);
+  }
+  renew(owner, resource) {
+    const args = [this.now() + SLOT_LEASE_MS, owner.id, owner.pid, this.now()];
+    this.db.prepare(`UPDATE slots SET expiresAt = ? WHERE id = ? AND pid = ? AND expiresAt > ?${resource ? " AND resource = ?" : ""}`).run(...resource ? [...args, resource] : args);
+  }
+  list() {
+    return this.transaction(() => {
+      this.prune();
+      return this.db.prepare("SELECT * FROM slots ORDER BY ticket").all().map((row) => ({ resource: String(row.resource), id: String(row.id), pid: Number(row.pid), ticket: Number(row.ticket), held: Boolean(row.held), expiresAt: Number(row.expiresAt) }));
+    });
+  }
+  close() {
+    this.db.close();
+  }
+};
+function resourceSlotHint(counts, cli) {
+  if (!Object.keys(counts).length) return null;
+  const command = cli ? `node "${cli}"` : "agent-bridge";
+  return `(agent-bridge: shared resource slots are enabled: ${JSON.stringify(counts)}. Before a heavy command, run ${command} slot acquire <resource>; it waits in FIFO order. Always run ${command} slot release <resource> afterward, including on failure (use try/finally or a shell trap). ${command} slot status shows holders and waiters. Slots are shared across jobs and released when your run ends or its owner process dies. Acquiring twice is idempotent; hold one slot per resource per job.)`;
+}
+
+// src/core/root-concurrency.ts
+var ROOT_LIMIT_DB = "root-limits.sqlite";
+var LOCK_WAIT_MS2 = 3e3;
+var RootConcurrency = class {
+  constructor(home, rootSession) {
+    this.rootSession = rootSession;
+    this.resource = `root-${createHash2("sha256").update(rootSession).digest("hex").slice(0, 40)}`;
+    this.slots = new ResourceSlots(home);
+    this.db = new DatabaseSync2(join16(home, ROOT_LIMIT_DB));
+    this.db.exec(`PRAGMA busy_timeout = ${LOCK_WAIT_MS2}; CREATE TABLE IF NOT EXISTS root_limits (root TEXT PRIMARY KEY, capacity INTEGER NOT NULL);`);
+  }
+  rootSession;
+  slots;
+  db;
+  resource;
+  setLimit(capacity) {
+    this.db.prepare("INSERT INTO root_limits(root, capacity) VALUES (?, ?) ON CONFLICT(root) DO UPDATE SET capacity = excluded.capacity").run(this.rootSession, capacity);
+  }
+  ensureLimit(capacity) {
+    this.db.prepare("INSERT INTO root_limits(root, capacity) VALUES (?, ?) ON CONFLICT(root) DO NOTHING").run(this.rootSession, capacity);
+  }
+  limit() {
+    return Number(this.db.prepare("SELECT capacity FROM root_limits WHERE root = ?").get(this.rootSession)?.capacity ?? 0);
+  }
+  available() {
+    return this.slots.list().filter((s) => s.resource === this.resource && s.held).length < this.limit();
+  }
+  acquire(owner) {
+    const limit = this.limit();
+    if (limit < 1) return false;
+    if (this.slots.tryAcquire(this.resource, limit, owner)) return true;
+    this.slots.release(owner, this.resource);
+    return false;
+  }
+  release(owner) {
+    this.slots.release(owner, this.resource);
+  }
+  renew(owner) {
+    this.slots.renew(owner, this.resource);
+  }
+  close() {
+    this.slots.close();
+    this.db.close();
+  }
+};
+
 // src/mcp/jobs.ts
 var JOB_ID_LENGTH = 8;
 var PROMPT_PREVIEW_CHARS = 120;
@@ -29575,6 +29773,7 @@ var HISTORY_LIMIT = 50;
 var STORE_LIMIT = 200;
 var MAX_NOTES = 500;
 var INTERRUPTED_LISTED_MS = 24 * 60 * 60 * 1e3;
+var ROOT_WAIT_POLL_MS = 1e3;
 var NOTE_CONVERSATION_SUFFIX = ":note";
 var DEFAULT_FOLLOW_UP = "Continue where you stopped and finish the task. Then give your final answer.";
 var HOST_POLL_MS = 2e3;
@@ -29590,13 +29789,35 @@ var approvalAnswers = /* @__PURE__ */ new WeakMap();
 function denyPendingApprovals(job, reason = "job finished") {
   for (const answer of [...approvalAnswers.get(job) ?? []]) answer(reason, "job completion");
 }
-function waitForApproval(job, question, timeoutMs, post, log, home, request2, askUser) {
+function waitForApproval(job, question, timeoutMs, post, log, home, request2, askUser, escalate, forceEscalate = false) {
   return new Promise((resolve12) => {
     let settled = false;
     let cleanup;
     const askedAt = Date.now();
+    const approvalId = newApprovalId();
+    let escalated = false;
+    let published = !home;
+    let escalationRequested = forceEscalate;
+    const escalateOnce = () => {
+      if (!escalate || escalated || settled) return;
+      if (!published) {
+        escalationRequested = true;
+        return;
+      }
+      escalated = true;
+      void escalate(`Nested subagent ${job.name} asks its top supervisor for approval: ${question}
+
+Answer the pending dashboard approval ${approvalId}, or message_subagent(job="${job.name}", message="allow" or "deny").`).catch(() => {
+        escalated = false;
+        log.warn("could not escalate nested approval", { job: job.name });
+      });
+    };
     const settle2 = (answer, by = "session") => {
       if (settled) return false;
+      if (/^\s*escalate\b/i.test(answer) && escalate && Date.now() < askedAt + timeoutMs) {
+        escalateOnce();
+        return true;
+      }
       if (Date.now() >= askedAt + timeoutMs) {
         answer = "no answer in time";
         by = "timeout";
@@ -29639,10 +29860,12 @@ function waitForApproval(job, question, timeoutMs, post, log, home, request2, as
     }
     if (home) {
       void publishApproval(home, {
-        id: newApprovalId(),
-        owner: job.owner ?? "",
+        id: approvalId,
+        owner: job.rootName ?? job.owner ?? "",
         job: job.name,
         agent: job.agent,
+        parentJob: job.parentJob,
+        rootSession: job.rootSession,
         tool: request2?.tool ?? "approval",
         command: request2?.detail ?? question,
         reason: request2?.reason ?? question,
@@ -29652,7 +29875,9 @@ function waitForApproval(job, question, timeoutMs, post, log, home, request2, as
         if (settled) close();
         else {
           cleanup = close;
+          published = true;
           notifyJobEvent(home, "approvals", log);
+          if (escalationRequested) escalateOnce();
         }
       }).catch(() => log.warn("could not publish pending approval", { job: job.name }));
     }
@@ -29660,7 +29885,7 @@ function waitForApproval(job, question, timeoutMs, post, log, home, request2, as
     post(
       `Subagent ${job.name} asks for approval: ${question}
 
-Decide as its supervisor: answer with message_subagent(job="${job.name}", message="allow") or message="deny" (a reason may follow). It waits for your answer; no answer within ${Math.round(timeoutMs / 6e4)} minutes counts as deny.`
+Decide as its supervisor: answer with message_subagent(job="${job.name}", message="allow") or message="deny" (a reason may follow). ` + (escalate ? 'If the decision needs the owner, answer message="escalate" to forward the same pending request. ' : "") + `It waits for your answer; no answer within ${Math.round(timeoutMs / 6e4)} minutes counts as deny.`
     );
     if (askUser) {
       void Promise.resolve().then(askUser).then(
@@ -29671,11 +29896,12 @@ Decide as its supervisor: answer with message_subagent(job="${job.name}", messag
   });
 }
 var JobManager = class {
-  constructor(node2, log, storePath = null, maxJobs = DEFAULT_MAX_JOBS) {
+  constructor(node2, log, storePath = null, maxJobs = DEFAULT_MAX_JOBS, lineage) {
     this.node = node2;
     this.log = log;
     this.storePath = storePath;
     this.maxJobs = maxJobs;
+    this.lineage = lineage;
     node2.on("message", (m) => {
       const jobId = /(?:^|\/)job:([0-9a-f]+)$/.exec(m.from.id)?.[1];
       if (!jobId) return;
@@ -29690,6 +29916,7 @@ var JobManager = class {
   log;
   storePath;
   maxJobs;
+  lineage;
   running = /* @__PURE__ */ new Map();
   foreground = /* @__PURE__ */ new Map();
   history = /* @__PURE__ */ new Map();
@@ -29703,12 +29930,15 @@ var JobManager = class {
   runners = null;
   hostTimer = null;
   restoreResume = null;
+  rootWaitTimer = null;
   get limit() {
     return this.maxJobs;
   }
   /** Change the limit now. A higher one starts waiting continuations; a lower one stops no running subagent. */
   setLimit(max) {
+    if (this.lineage) throw new Error("Only the top session can change the root subagent limit.");
     this.maxJobs = max;
+    this.withRootBudget((budget) => budget.setLimit(max));
     this.log.info("subagent limit changed", { max });
     this.startWaiting();
   }
@@ -29781,6 +30011,8 @@ var JobManager = class {
     const adopted = [];
     const recentIds = new Set(stored.slice(-HISTORY_LIMIT).map((s) => s.id));
     for (const s of stored.filter((x) => recentIds.has(x.id) || x.status === "running")) {
+      if (this.lineage && s.parentJob !== this.lineage.parentJob) continue;
+      if (!this.lineage && s.parentJob) continue;
       if (this.history.has(s.id)) continue;
       const hosted = s.status === "running" && Boolean(s.host);
       const mine = this.isMine(s.owner);
@@ -29920,11 +30152,19 @@ var JobManager = class {
       args,
       owner: this.node.name,
       // Keep the first job's identity when hooks learn the session id later, or a server reload adopts it.
-      supervisor: this.supervisorIdentity()
+      supervisor: this.supervisorIdentity(),
+      metadataVersion: DELEGATION_METADATA_VERSION,
+      parentJob: this.lineage?.parentJob,
+      rootSession: this.lineage?.rootSession ?? this.supervisorIdentity(),
+      rootName: this.lineage?.rootName ?? this.node.name
     };
   }
   supervisorIdentity() {
-    return [...this.running.values(), ...this.foreground.values(), ...this.history.values()].find((j) => this.isMine(j.owner) && j.supervisor)?.supervisor ?? this.node.currentSessionId ?? this.node.id;
+    if (this.lineage) return this.lineage.rootSession;
+    return [...this.running.values(), ...this.foreground.values(), ...this.history.values()].find((j) => this.isMine(j.owner) && j.supervisor)?.supervisor ?? this.node.currentSessionId ?? this.node.id ?? this.node.name;
+  }
+  rootIdentity() {
+    return this.lineage?.rootSession ?? this.supervisorIdentity();
   }
   assignLegacySupervisors() {
     const supervisor = this.supervisorIdentity();
@@ -29967,7 +30207,19 @@ var JobManager = class {
     };
   }
   canStart() {
-    return this.running.size < this.maxJobs;
+    return this.running.size + this.foreground.size < this.maxJobs && this.withRootBudget((budget) => {
+      if (!this.lineage) budget.setLimit(this.maxJobs);
+      return budget.available();
+    });
+  }
+  withRootBudget(fn) {
+    if (!this.storePath) return true;
+    const budget = new RootConcurrency(dirname6(this.storePath), this.lineage?.rootSession ?? this.supervisorIdentity());
+    try {
+      return fn(budget);
+    } finally {
+      budget.close();
+    }
   }
   start(agent, model, prompt, run, resume, args) {
     const job = this.newJob(agent, model, prompt, "job", resume, args);
@@ -30032,8 +30284,8 @@ var JobManager = class {
     }
     if (job.status === "running" && job.pendingApproval) {
       const answer = job.pendingApproval;
-      job.pendingApproval = null;
       answer(message, `session ${this.node.name}`);
+      if (job.pendingApproval === answer && !/^\s*escalate\b/i.test(message)) job.pendingApproval = null;
       return { outcome: "answered", job };
     }
     if (job.status === "running") {
@@ -30058,6 +30310,20 @@ var JobManager = class {
   /** Continue this finished job (its queued messages) once a slot frees up. */
   waitForSlot(job) {
     this.waitingJobs.set(job.id, job);
+    if (this.storePath && !this.rootWaitTimer) {
+      this.rootWaitTimer = setInterval(() => {
+        try {
+          if (!this.dormant) this.startWaiting();
+        } catch (err) {
+          this.log.warn("could not check waiting root slots", { err: String(err) });
+        }
+        if (!this.waitingJobs.size && this.rootWaitTimer) {
+          clearInterval(this.rootWaitTimer);
+          this.rootWaitTimer = null;
+        }
+      }, ROOT_WAIT_POLL_MS);
+      this.rootWaitTimer.unref();
+    }
     this.log.info("subagent continuation waits for a free slot", { job: job.name, running: this.running.size, position: this.waitingJobs.size });
   }
   /** Start waiting continuations while there are free slots, oldest first. */
@@ -30192,6 +30458,10 @@ var JobManager = class {
    * server of this session takes them over, and their results wait for it on the bridge.
    */
   cancelAll() {
+    if (this.rootWaitTimer) {
+      clearInterval(this.rootWaitTimer);
+      this.rootWaitTimer = null;
+    }
     for (const j of this.waitingJobs.values()) j.queue = [];
     this.waitingJobs.clear();
     for (const j of this.running.values()) if (!j.host) j.controller.abort();
@@ -30228,7 +30498,11 @@ ${QUEUED_FOLLOW_UP_NOTE}`);
    * No answer within the time limit counts as "deny".
    */
   askParent(job, question, timeoutMs, request2) {
-    return waitForApproval(job, question, timeoutMs, (body) => this.post(job, body), this.log, this.storePath ? dirname6(this.storePath) : void 0, request2);
+    return waitForApproval(job, question, timeoutMs, (body) => this.post(job, body), this.log, this.storePath ? dirname6(this.storePath) : void 0, request2, void 0, this.lineage?.escalate, Boolean(job.foreground && this.lineage));
+  }
+  async escalateApproval(job, body) {
+    if (this.lineage) await this.lineage.escalate(body);
+    else this.post(job, body);
   }
   /**
    * A message the running subagent sent to this session. An answer (to a live message, or marked as a reply)
@@ -30284,6 +30558,10 @@ function toStored(j) {
     args: j.args,
     owner: j.owner,
     supervisor: j.supervisor,
+    metadataVersion: j.metadataVersion,
+    parentJob: j.parentJob,
+    rootSession: j.rootSession,
+    rootName: j.rootName,
     finishedAt: j.finishedAt,
     host: j.host ?? null,
     remote: j.remote
@@ -30308,12 +30586,12 @@ function readStore(path, log, includeArchived = false) {
     return [];
   }
 }
-var LOCK_WAIT_MS = 2e3;
+var LOCK_WAIT_MS3 = 2e3;
 var LOCK_STALE_MS = 1e4;
 var LOCK_RETRY_MS = 20;
 function acquireLock(path) {
-  mkdirSync8(dirname6(path), { recursive: true });
-  const deadline = Date.now() + LOCK_WAIT_MS;
+  mkdirSync9(dirname6(path), { recursive: true });
+  const deadline = Date.now() + LOCK_WAIT_MS3;
   const pause = new Int32Array(new SharedArrayBuffer(4));
   for (; ; ) {
     try {
@@ -30332,9 +30610,9 @@ function acquireLock(path) {
 }
 
 // src/core/worktree.ts
-import { createHash as createHash2 } from "node:crypto";
-import { existsSync as existsSync6, mkdirSync as mkdirSync9, readFileSync as readFileSync10, realpathSync as realpathSync3, rmSync as rmSync4 } from "node:fs";
-import { basename as basename5, isAbsolute as isAbsolute3, join as join15, relative, resolve as resolve3, toNamespacedPath } from "node:path";
+import { createHash as createHash3 } from "node:crypto";
+import { existsSync as existsSync6, mkdirSync as mkdirSync10, readFileSync as readFileSync10, realpathSync as realpathSync3, rmSync as rmSync4 } from "node:fs";
+import { basename as basename5, isAbsolute as isAbsolute3, join as join17, relative, resolve as resolve3, toNamespacedPath } from "node:path";
 var GIT = "git";
 var LONG_PATH_ARGS = ["-c", "core.longpaths=true"];
 var REMOVE_RETRIES = 3;
@@ -30362,9 +30640,9 @@ async function createWorktree(opts) {
   const base2 = await git(["rev-parse", "HEAD"], repoRoot, opts.log);
   const baseBranch = await git(["symbolic-ref", "-q", "--short", "HEAD"], repoRoot, opts.log).catch(() => "") || null;
   let branch = `${BRANCH_PREFIX}${opts.jobId}`;
-  const dir = join15(opts.home, "worktrees");
-  mkdirSync9(dir, { recursive: true });
-  let path = join15(dir, `${basename5(repoRoot)}-${opts.jobId}`);
+  const dir = join17(opts.home, "worktrees");
+  mkdirSync10(dir, { recursive: true });
+  let path = join17(dir, `${basename5(repoRoot)}-${opts.jobId}`);
   try {
     await git(["worktree", "add", "-b", branch, path, base2], repoRoot, opts.log, WORKTREE_ADD_TIMEOUT_MS);
   } catch (err) {
@@ -30385,7 +30663,7 @@ async function createWorktree(opts) {
   }
   await unlockWorktree(repoRoot, path, opts.log);
   const rel = relative(repoRoot, opts.cwd);
-  const cwd = rel && !rel.startsWith("..") && !isAbsolute3(rel) ? join15(path, rel) : path;
+  const cwd = rel && !rel.startsWith("..") && !isAbsolute3(rel) ? join17(path, rel) : path;
   opts.log.info("worktree created", { repoRoot, path, branch });
   return { repoRoot, path, cwd, branch, base: base2, baseBranch };
 }
@@ -30476,7 +30754,7 @@ function generatedNoise(root, file2) {
   return parts.slice(0, -1).some((part, index) => {
     if (GENERATED_DIRECTORIES.has(part)) return true;
     if (!UNITY_GENERATED_DIRECTORIES.has(part)) return false;
-    return existsSync6(toNamespacedPath(join15(root, ...parts.slice(0, index), "ProjectSettings", "ProjectVersion.txt")));
+    return existsSync6(toNamespacedPath(join17(root, ...parts.slice(0, index), "ProjectSettings", "ProjectVersion.txt")));
   });
 }
 async function autoCommitFiles(wt, log) {
@@ -30593,7 +30871,7 @@ async function gitChangeSnapshot(cwd, log) {
     const file2 = line.slice(3).replace(/^.* -> /, "").replace(/^"|"$/g, "");
     let fp = line.slice(0, 2);
     try {
-      fp += ":" + createHash2("sha1").update(readFileSync10(join15(root, file2))).digest("hex");
+      fp += ":" + createHash3("sha1").update(readFileSync10(join17(root, file2))).digest("hex");
     } catch {
       fp += ":missing";
     }
@@ -30610,11 +30888,11 @@ function changedFiles(before, after) {
 
 // src/core/sqlite-maintenance.ts
 import { existsSync as existsSync7 } from "node:fs";
-import { dirname as dirname7, join as join17 } from "node:path";
-import { DatabaseSync as DatabaseSync2 } from "node:sqlite";
+import { dirname as dirname7, join as join19 } from "node:path";
+import { DatabaseSync as DatabaseSync4 } from "node:sqlite";
 
 // src/core/sqlite-migrations.ts
-import { DatabaseSync } from "node:sqlite";
+import { DatabaseSync as DatabaseSync3 } from "node:sqlite";
 var MAX_SNAPSHOT_ATTEMPTS = 10;
 function migrateSqlite(db, file2, existed, target, migrations, log) {
   db.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
@@ -30645,7 +30923,7 @@ function migrateSqlite(db, file2, existed, target, migrations, log) {
   } catch (err) {
     db.exec("ROLLBACK TO schema_migration");
     if (backup) {
-      const original = new DatabaseSync(backup, { readOnly: true });
+      const original = new DatabaseSync3(backup, { readOnly: true });
       try {
         const tables = original.prepare("PRAGMA table_list").all().filter((r) => r.schema === "main" && r.type === "table" && !String(r.name).startsWith("sqlite_"));
         for (const row of tables) {
@@ -30682,8 +30960,8 @@ function migrateSqlite(db, file2, existed, target, migrations, log) {
 }
 
 // src/core/logger.ts
-import { appendFileSync, mkdirSync as mkdirSync10, renameSync as renameSync3, statSync as statSync4 } from "node:fs";
-import { join as join16 } from "node:path";
+import { appendFileSync, mkdirSync as mkdirSync11, renameSync as renameSync3, statSync as statSync4 } from "node:fs";
+import { join as join18 } from "node:path";
 var LOG_LEVELS = ["debug", "info", "warn", "error", "silent"];
 var LEVEL_RANK = { debug: 10, info: 20, warn: 30, error: 40, silent: 100 };
 var DEFAULT_FILE_LEVEL = "info";
@@ -30717,9 +30995,9 @@ function createLogger(opts) {
     writes: 0
   };
   try {
-    const dir = join16(opts.home, LOG_DIR_NAME);
-    mkdirSync10(dir, { recursive: true });
-    sink.file = join16(dir, LOG_FILE_NAME);
+    const dir = join18(opts.home, LOG_DIR_NAME);
+    mkdirSync11(dir, { recursive: true });
+    sink.file = join18(dir, LOG_FILE_NAME);
     rotateIfNeeded(sink.file);
   } catch (err) {
     process.stderr.write(`[${opts.component}] cannot open log directory, logging to stderr only: ${String(err)}
@@ -30774,14 +31052,14 @@ function checkDatabase(db) {
   return [...integrity.filter((s) => s !== "ok"), ...foreign.map((r) => `foreign key: ${JSON.stringify(r)}`)];
 }
 function snapshotDatabase(source, target) {
-  const db = new DatabaseSync2(source, { readOnly: true });
+  const db = new DatabaseSync4(source, { readOnly: true });
   try {
     db.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
     db.prepare("VACUUM INTO ?").run(target);
   } finally {
     db.close();
   }
-  const copy = new DatabaseSync2(target, { readOnly: true });
+  const copy = new DatabaseSync4(target, { readOnly: true });
   try {
     const findings = checkDatabase(copy);
     if (findings.length) throw new Error(`invalid database backup: ${findings.join(", ")}`);
@@ -30802,7 +31080,7 @@ PRAGMA user_version = 1;
 `;
 function openArchive(path) {
   const existed = existsSync7(path);
-  const db = new DatabaseSync2(path);
+  const db = new DatabaseSync4(path);
   try {
     db.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
     migrateSqlite(db, path, existed, ARCHIVE_STORE_VERSION, [{ version: 1, sql: ARCHIVE_SCHEMA }], nullLogger);
@@ -30813,7 +31091,7 @@ function openArchive(path) {
   }
 }
 function archiveDbPath(file2) {
-  return file2 === ":memory:" ? ":memory:" : join17(dirname7(file2), ARCHIVE_DB_NAME);
+  return file2 === ":memory:" ? ":memory:" : join19(dirname7(file2), ARCHIVE_DB_NAME);
 }
 function archiveMessages(source, archive, where, args, reason, table = "messages") {
   source.exec("BEGIN IMMEDIATE");
@@ -30843,23 +31121,23 @@ function archiveMessages(source, archive, where, args, reason, table = "messages
 }
 
 // src/core/local-result-receipts.ts
-import { createHash as createHash4 } from "node:crypto";
+import { createHash as createHash5 } from "node:crypto";
 import { existsSync as existsSync8, readdirSync as readdirSync6 } from "node:fs";
-import { join as join19 } from "node:path";
+import { join as join21 } from "node:path";
 
 // src/core/read-journal.ts
-import { createHash as createHash3 } from "node:crypto";
-import { appendFileSync as appendFileSync2, mkdirSync as mkdirSync11, readFileSync as readFileSync11 } from "node:fs";
-import { join as join18 } from "node:path";
+import { createHash as createHash4 } from "node:crypto";
+import { appendFileSync as appendFileSync2, mkdirSync as mkdirSync12, readFileSync as readFileSync11 } from "node:fs";
+import { join as join20 } from "node:path";
 var ReadJournal = class {
   constructor(home) {
     this.home = home;
-    this.dir = join18(home, "read-state");
+    this.dir = join20(home, "read-state");
   }
   home;
   dir;
   path(identity) {
-    return join18(this.dir, `${createHash3("sha256").update(identity).digest("hex")}.jsonl`);
+    return join20(this.dir, `${createHash4("sha256").update(identity).digest("hex")}.jsonl`);
   }
   read(identity) {
     return this.entries(identity).flatMap((entry) => entry.ids);
@@ -30892,7 +31170,7 @@ var ReadJournal = class {
   append(identity, ids) {
     const release = storageLease(this.home);
     try {
-      mkdirSync11(this.dir, { recursive: true, mode: 448 });
+      mkdirSync12(this.dir, { recursive: true, mode: 448 });
       appendFileSync2(this.path(identity), `
 ${JSON.stringify({ ids, at: Date.now() })}
 `, { mode: 384, flush: true });
@@ -30905,18 +31183,18 @@ ${JSON.stringify({ ids, at: Date.now() })}
 // src/core/local-result-receipts.ts
 var RESULT_HEADER = /^Subagent .+ (?:done|failed) after \d+s\./;
 var LOCAL_RESULTS_DIR = "local-result-receipts";
-var key = (name) => createHash4("sha256").update(name).digest("hex");
+var key = (name) => createHash5("sha256").update(name).digest("hex");
 function recordLocalResult(home, message) {
   if (!message.from.id.startsWith("job:") || !RESULT_HEADER.test(message.body.split("\n")[0])) return;
-  const path = join19(home, LOCAL_RESULTS_DIR, key(message.from.name), `${key(message.id)}.json`);
+  const path = join21(home, LOCAL_RESULTS_DIR, key(message.from.name), `${key(message.id)}.json`);
   const previous = readJsonStore(path);
   if (previous) return;
   writeJsonStore(path, { id: message.id, name: message.from.name, recipient: message.recipient, deliveredAt: message.createdAt }, previous);
 }
 function localResultReceipt(home, name, owner, after, before) {
-  const dir = join19(home, LOCAL_RESULTS_DIR, key(name));
+  const dir = join21(home, LOCAL_RESULTS_DIR, key(name));
   if (!existsSync8(dir)) return null;
-  const records = readdirSync6(dir).filter((f) => f.endsWith(".json")).map((f) => readJsonStore(join19(dir, f))).filter((r) => isRecord(r) && typeof r.id === "string" && typeof r.recipient === "string" && typeof r.deliveredAt === "number" && (!owner || r.recipient === owner) && r.deliveredAt >= after && r.deliveredAt < before).sort((a, b) => b.deliveredAt - a.deliveredAt);
+  const records = readdirSync6(dir).filter((f) => f.endsWith(".json")).map((f) => readJsonStore(join21(dir, f))).filter((r) => isRecord(r) && typeof r.id === "string" && typeof r.recipient === "string" && typeof r.deliveredAt === "number" && (!owner || r.recipient === owner) && r.deliveredAt >= after && r.deliveredAt < before).sort((a, b) => b.deliveredAt - a.deliveredAt);
   const record2 = records[0];
   if (!record2) return null;
   const receipt = new ReadJournal(home).receipt(`name:${record2.recipient}`, record2.id);
@@ -30934,8 +31212,8 @@ var MAX_HOLD_REASON_CHARS = 2e3;
 var JOB_OUTCOMES_DIR = "job-outcomes";
 var JOB_OUTCOME_CONTRACT_VERSION = 1;
 function decisionPath(home, job) {
-  const key2 = createHash5("sha256").update(`${job.name}:${job.startedAt}`).digest("hex");
-  return join20(home, JOB_OUTCOMES_DIR, `${key2}.json`);
+  const key2 = createHash6("sha256").update(`${job.name}:${job.startedAt}`).digest("hex");
+  return join22(home, JOB_OUTCOMES_DIR, `${key2}.json`);
 }
 function readOutcomeDecision(home, job) {
   const data = readJsonStore(decisionPath(home, job));
@@ -30967,7 +31245,7 @@ function resultDelivery(home, job, before) {
     if (!existsSync9(file2)) continue;
     let db;
     try {
-      db = new DatabaseSync3(file2, { readOnly: true });
+      db = new DatabaseSync5(file2, { readOnly: true });
       for (const table of ["messages", "archived_messages"]) {
         if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(table)) continue;
         rows.push(...db.prepare(`SELECT id, recipient, body, created_at, read_at FROM ${table}
@@ -31025,7 +31303,7 @@ async function deriveJobOutcome(home, job, log, opts = {}) {
   return { delivery: resultDelivery(home, job, opts.before ?? Number.MAX_SAFE_INTEGER), merge: merge2 };
 }
 async function listJobOutcomes(home, log) {
-  const jobs = readStore(join20(home, JOBS_FILE), log, true);
+  const jobs = readStore(join22(home, JOBS_FILE), log, true);
   const out = {};
   for (const job of jobs) {
     if (job.status !== "done" && job.status !== "failed") continue;
@@ -31035,7 +31313,7 @@ async function listJobOutcomes(home, log) {
 }
 
 // src/mcp/server.ts
-import { dirname as dirname17, isAbsolute as isAbsolute9, join as join49, resolve as resolve11 } from "node:path";
+import { dirname as dirname17, isAbsolute as isAbsolute9, join as join50, resolve as resolve11 } from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 
 // node_modules/zod/v3/helpers/util.js
@@ -40649,7 +40927,7 @@ var StdioServerTransport = class {
 };
 
 // src/mcp/remote-ask.ts
-import { setTimeout as delay2 } from "node:timers/promises";
+import { setTimeout as delay3 } from "node:timers/promises";
 import { randomUUID as randomUUID7 } from "node:crypto";
 
 // src/network/remote-job-protocol.ts
@@ -40761,7 +41039,7 @@ async function runRemoteAsk(node2, target, args, job, signal, onProgress) {
       }
       if (state && state.status !== "running" && !snapshot.alive) return { text: state.report ?? "Remote job ended without a report.", sessionId: state.sessionId ?? null, isError: state.status === "failed", details: {}, workdir: state.workdir ?? void 0, worktree: state.worktree ?? void 0 };
       if (!snapshot.alive) throw new Error("Remote job runner ended without a result.");
-      await delay2(REMOTE_JOB_POLL_MS, void 0, { signal: combined });
+      await delay3(REMOTE_JOB_POLL_MS, void 0, { signal: combined });
       snapshot = await node2.remoteJob(host, { op: "state", job: job.id });
     }
   } finally {
@@ -41081,21 +41359,21 @@ function t(key2, params = {}) {
 import { randomUUID as randomUUID18 } from "node:crypto";
 import { EventEmitter as EventEmitter2 } from "node:events";
 import { unlinkSync } from "node:fs";
-import { dirname as dirname14, join as join39 } from "node:path";
+import { dirname as dirname14, join as join40 } from "node:path";
 
 // src/core/history.ts
-import { createHash as createHash6 } from "node:crypto";
+import { createHash as createHash7 } from "node:crypto";
 import { closeSync as closeSync7, existsSync as existsSync10, fstatSync as fstatSync2, openSync as openSync7, opendirSync, readSync as readSync2 } from "node:fs";
-import { basename as basename6, dirname as dirname9, join as join25 } from "node:path";
-import { DatabaseSync as DatabaseSync6 } from "node:sqlite";
+import { basename as basename6, dirname as dirname9, join as join27 } from "node:path";
+import { DatabaseSync as DatabaseSync8 } from "node:sqlite";
 
 // src/core/transcripts/claude.ts
-import { dirname as dirname8, join as join22 } from "node:path";
+import { dirname as dirname8, join as join24 } from "node:path";
 
 // src/core/transcripts/common.ts
 import { closeSync as closeSync6, fstatSync, openSync as openSync6, readSync, readdirSync as readdirSync7, realpathSync as realpathSync4, statSync as statSync5 } from "node:fs";
 import { homedir as homedir4 } from "node:os";
-import { isAbsolute as isAbsolute4, join as join21, relative as relative2, resolve as resolve4, sep } from "node:path";
+import { isAbsolute as isAbsolute4, join as join23, relative as relative2, resolve as resolve4, sep } from "node:path";
 var MAX_TRANSCRIPT_CHUNK_BYTES = 512 * 1024;
 var MAX_TOOL_PREVIEW_CHARS = 1200;
 var MAX_TEXT_CHARS = 16e3;
@@ -41109,9 +41387,9 @@ var INITIAL_HEADER_BYTES = 8 * 1024;
 var TRANSCRIPT_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 function transcriptPaths(env = process.env, home = homedir4()) {
   return {
-    claude: resolve4(env.CLAUDE_CONFIG_DIR?.trim() || join21(home, ".claude")),
-    codex: resolve4(env.CODEX_HOME?.trim() || join21(home, ".codex")),
-    opencode: resolve4(join21(env.XDG_DATA_HOME?.trim() || join21(home, ".local", "share"), "opencode"))
+    claude: resolve4(env.CLAUDE_CONFIG_DIR?.trim() || join23(home, ".claude")),
+    codex: resolve4(env.CODEX_HOME?.trim() || join23(home, ".codex")),
+    opencode: resolve4(join23(env.XDG_DATA_HOME?.trim() || join23(home, ".local", "share"), "opencode"))
   };
 }
 function object3(value) {
@@ -41243,12 +41521,12 @@ function scanJsonl(file2) {
 // src/core/transcripts/claude.ts
 function claudeSessionFile(session, paths) {
   if (!session.sessionId || !TRANSCRIPT_ID.test(session.sessionId)) return null;
-  const projects = join22(paths.claude, "projects");
+  const projects = join24(paths.claude, "projects");
   const encoded = session.cwd.replace(/[^A-Za-z0-9]/g, "-");
-  const direct = safeFile(projects, join22(projects, encoded, `${session.sessionId}.jsonl`));
+  const direct = safeFile(projects, join24(projects, encoded, `${session.sessionId}.jsonl`));
   if (direct) return direct;
   for (const dir of directory(projects)) {
-    const file2 = safeFile(projects, join22(projects, dir, `${session.sessionId}.jsonl`));
+    const file2 = safeFile(projects, join24(projects, dir, `${session.sessionId}.jsonl`));
     if (file2) return file2;
   }
   return null;
@@ -41274,7 +41552,7 @@ function claudeItems(row) {
 function readClaudeChat(session, paths, from = "0", child) {
   const main = claudeSessionFile(session, paths);
   if (!main || child !== void 0 && !TRANSCRIPT_ID.test(child)) return null;
-  const nested = child ? safeFile(paths.claude, join22(dirname8(main), session.sessionId, "subagents", `agent-${child}.jsonl`)) : null;
+  const nested = child ? safeFile(paths.claude, join24(dirname8(main), session.sessionId, "subagents", `agent-${child}.jsonl`)) : null;
   const legacy = child && !nested ? listClaudeSubagents(session, paths).some((s) => s.id === child) : false;
   if (child && !nested && !legacy) return null;
   const page = readJsonl(nested ?? main, from);
@@ -41284,11 +41562,11 @@ function listClaudeSubagents(session, paths) {
   const main = claudeSessionFile(session, paths);
   if (!main) return [];
   const out = /* @__PURE__ */ new Map();
-  const dir = join22(dirname8(main), session.sessionId, "subagents");
+  const dir = join24(dirname8(main), session.sessionId, "subagents");
   for (const name of directory(dir).slice(0, MAX_NATIVE_SUBAGENTS)) {
     const id = /^agent-([A-Za-z0-9_-]+)\.jsonl$/.exec(name)?.[1];
     if (!id || !TRANSCRIPT_ID.test(id)) continue;
-    const file2 = safeFile(paths.claude, join22(dir, name));
+    const file2 = safeFile(paths.claude, join24(dir, name));
     if (!file2) continue;
     const st = fileStat(file2), head = readHead(file2), tail = readTail(file2);
     const last = [...tail].reverse().find((r) => r.type === "assistant");
@@ -41306,8 +41584,8 @@ function listClaudeSubagents(session, paths) {
 }
 
 // src/core/transcripts/codex.ts
-import { join as join23 } from "node:path";
-import { DatabaseSync as DatabaseSync4 } from "node:sqlite";
+import { join as join25 } from "node:path";
+import { DatabaseSync as DatabaseSync6 } from "node:sqlite";
 var ROLLOUT_NAME = /^rollout-.*-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/i;
 var DISCOVERY_CACHE_MS = 1e4;
 var MAX_INDEX_PATH_CHARS = 4096;
@@ -41320,17 +41598,17 @@ function rollout(file2, id, known) {
 function indexedRollouts(paths, id, parentId) {
   const name = directory(paths.codex).filter((s) => /^state_\d+\.sqlite$/.test(s)).sort((a, b) => Number(b.match(/\d+/)?.[0]) - Number(a.match(/\d+/)?.[0]))[0];
   if (!name) return null;
-  const file2 = safeFile(paths.codex, join23(paths.codex, name));
+  const file2 = safeFile(paths.codex, join25(paths.codex, name));
   if (!file2) return null;
   let db;
   try {
-    db = new DatabaseSync4(file2, { readOnly: true, timeout: SQLITE_READ_TIMEOUT_MS });
+    db = new DatabaseSync6(file2, { readOnly: true, timeout: SQLITE_READ_TIMEOUT_MS });
     const rows = id ? db.prepare("SELECT id, substr(rollout_path, 1, ?) AS path FROM threads WHERE id = ? LIMIT 1").all(MAX_INDEX_PATH_CHARS, id) : db.prepare(`SELECT id, substr(rollout_path, 1, ?) AS path FROM threads
           WHERE CASE WHEN json_valid(source) THEN json_extract(source, '$.subagent.thread_spawn.parent_thread_id') END = ? LIMIT ?`).all(MAX_INDEX_PATH_CHARS, parentId, MAX_NATIVE_SUBAGENTS);
     const out = [];
     for (const row of rows) {
       if (typeof row.id !== "string" || !TRANSCRIPT_ID.test(row.id) || typeof row.path !== "string") continue;
-      const target = safeFile(join23(paths.codex, "sessions"), row.path);
+      const target = safeFile(join25(paths.codex, "sessions"), row.path);
       if (!target) continue;
       const entry = rollout(target, row.id);
       if (entry.meta.id === row.id && (!parentId || parent(entry.meta) === parentId)) out.push(entry);
@@ -41343,17 +41621,17 @@ function indexedRollouts(paths, id, parentId) {
   }
 }
 function rollouts(paths) {
-  const root = join23(paths.codex, "sessions"), existing = cache2.get(root);
+  const root = join25(paths.codex, "sessions"), existing = cache2.get(root);
   if (existing && Date.now() - existing.at < DISCOVERY_CACHE_MS) return existing.files;
   const files = [];
   const knownFiles = new Map(existing?.files.map((r) => [r.file, r]));
   for (const year of directory(root).filter((s) => /^\d{4}$/.test(s)).sort().reverse()) {
-    for (const month of directory(join23(root, year)).filter((s) => /^\d{2}$/.test(s)).sort().reverse()) {
-      for (const day of directory(join23(root, year, month)).filter((s) => /^\d{2}$/.test(s)).sort().reverse()) {
-        for (const name of directory(join23(root, year, month, day)).sort().reverse()) {
+    for (const month of directory(join25(root, year)).filter((s) => /^\d{2}$/.test(s)).sort().reverse()) {
+      for (const day of directory(join25(root, year, month)).filter((s) => /^\d{2}$/.test(s)).sort().reverse()) {
+        for (const name of directory(join25(root, year, month, day)).sort().reverse()) {
           const id = ROLLOUT_NAME.exec(name)?.[1];
           if (!id) continue;
-          const file2 = safeFile(root, join23(root, year, month, day, name));
+          const file2 = safeFile(root, join25(root, year, month, day, name));
           if (!file2) continue;
           const known = knownFiles.get(file2);
           files.push(rollout(file2, id, known?.meta));
@@ -41410,15 +41688,15 @@ function listCodexSubagents(session, paths) {
 }
 
 // src/core/transcripts/opencode.ts
-import { join as join24 } from "node:path";
-import { DatabaseSync as DatabaseSync5 } from "node:sqlite";
+import { join as join26 } from "node:path";
+import { DatabaseSync as DatabaseSync7 } from "node:sqlite";
 var MAX_SQLITE_PARTS = 200;
 var SQLITE_CURSOR = /^o:(\d+):([A-Za-z0-9_-]*)$/;
 function openDatabase(paths) {
-  const file2 = safeFile(paths.opencode, join24(paths.opencode, "opencode.db"));
+  const file2 = safeFile(paths.opencode, join26(paths.opencode, "opencode.db"));
   if (!file2) return null;
   try {
-    return new DatabaseSync5(file2, { readOnly: true, timeout: SQLITE_READ_TIMEOUT_MS });
+    return new DatabaseSync7(file2, { readOnly: true, timeout: SQLITE_READ_TIMEOUT_MS });
   } catch {
     return null;
   }
@@ -41651,9 +41929,9 @@ ${row.body}`,
         }, [row.author_id, row.author_name, ...sessions]);
       });
       if (this.home) {
-        const archivePath = join25(this.home, ARCHIVE_DB_NAME);
+        const archivePath = join27(this.home, ARCHIVE_DB_NAME);
         if (existsSync10(archivePath)) {
-          const archive = new DatabaseSync6(archivePath, { readOnly: true, timeout: HISTORY_READ_TIMEOUT_MS });
+          const archive = new DatabaseSync8(archivePath, { readOnly: true, timeout: HISTORY_READ_TIMEOUT_MS });
           try {
             work += this.rows("archive", archive, "messages", (row) => this.message(row));
           } finally {
@@ -41686,9 +41964,9 @@ ${row.body}`,
       this.lastDiscovery = Date.now();
       this.opencodeComplete = false;
       this.queue = [
-        { path: join25(this.home, "runs"), root: join25(this.home, "runs"), kind: "run", agent: "other" },
-        { path: join25(this.paths.claude, "projects"), root: this.paths.claude, kind: "transcript", agent: "claude" },
-        ...["sessions", "archived_sessions"].map((dir) => ({ path: join25(this.paths.codex, dir), root: this.paths.codex, kind: "transcript", agent: "codex" }))
+        { path: join27(this.home, "runs"), root: join27(this.home, "runs"), kind: "run", agent: "other" },
+        { path: join27(this.paths.claude, "projects"), root: this.paths.claude, kind: "transcript", agent: "claude" },
+        ...["sessions", "archived_sessions"].map((dir) => ({ path: join27(this.paths.codex, dir), root: this.paths.codex, kind: "transcript", agent: "codex" }))
       ];
     }
     let work = 0;
@@ -41708,7 +41986,7 @@ ${row.body}`,
         this.walk = null;
         continue;
       }
-      const path2 = join25(entry.path, item.name);
+      const path2 = join27(entry.path, item.name);
       if (item.isDirectory()) {
         this.queue.push({ ...entry, path: path2 });
         continue;
@@ -41725,9 +42003,9 @@ ${row.body}`,
         this.register({ path: path2, kind: "transcript", agent: entry.agent, session: child ? basename6(dirname9(entry.path)) : id, cwd: typeof meta3.cwd === "string" ? meta3.cwd : "", child });
       }
     }
-    const path = safeFile(this.paths.opencode, join25(this.paths.opencode, "opencode.db"));
+    const path = safeFile(this.paths.opencode, join27(this.paths.opencode, "opencode.db"));
     if (path && !this.opencodeComplete) {
-      const db = new DatabaseSync6(path, { readOnly: true, timeout: HISTORY_READ_TIMEOUT_MS });
+      const db = new DatabaseSync8(path, { readOnly: true, timeout: HISTORY_READ_TIMEOUT_MS });
       try {
         const after = this.cursor("opencode-discovery");
         const rows = db.prepare("SELECT id FROM session WHERE id > ? ORDER BY id LIMIT ?").all(after === "0" ? "" : after, HISTORY_DISCOVERY_PER_TICK);
@@ -41761,7 +42039,7 @@ ${row.body}`,
   }
   indexFile(file2) {
     if (file2.agent !== "opencode") {
-      const root = file2.kind === "run" ? join25(this.home, "runs") : this.paths[file2.agent];
+      const root = file2.kind === "run" ? join27(this.home, "runs") : this.paths[file2.agent];
       if (!safeFile(root, file2.path)) return 0;
     }
     const from = this.cursor(file2.path);
@@ -41797,7 +42075,7 @@ ${row.body}`,
       let meta3 = {};
       let metaText = "";
       const metaPath = file2.path.replace(/\.log(?:-\d+-[\w-]+)?$/, ".json");
-      const safeMeta = safeFile(join25(this.home, "runs"), metaPath);
+      const safeMeta = safeFile(join27(this.home, "runs"), metaPath);
       if (safeMeta) {
         const metaFd = openSync7(safeMeta, "r");
         try {
@@ -41818,7 +42096,7 @@ ${row.body}`,
       if (session) this.rememberSession(session, session, job);
       let metadataChanged = 0;
       if (Object.keys(meta3).length) {
-        const hash2 = createHash6("sha256").update(metaText).digest("hex"), source = `metadata:${metaPath}`;
+        const hash2 = createHash7("sha256").update(metaText).digest("hex"), source = `metadata:${metaPath}`;
         if (hash2 !== this.cursor(source)) {
           this.put({
             id: `run:${run}:metadata`,
@@ -41925,7 +42203,7 @@ ${buffer.subarray(0, length).toString("utf8")}`,
 function readHistory(file2, input2) {
   historySearchSchema.parse(input2);
   if (!existsSync10(file2)) return { engine: "plain", hits: [] };
-  const db = new DatabaseSync6(file2, { readOnly: true, timeout: HISTORY_READ_TIMEOUT_MS });
+  const db = new DatabaseSync8(file2, { readOnly: true, timeout: HISTORY_READ_TIMEOUT_MS });
   try {
     if (!db.prepare("SELECT name FROM sqlite_master WHERE name='history_documents'").get()) return { engine: "plain", hits: [] };
     return new HistoryIndex(db, null).search(input2);
@@ -41935,7 +42213,7 @@ function readHistory(file2, input2) {
 }
 function readHistorySource(file2, id) {
   if (!existsSync10(file2)) return null;
-  const db = new DatabaseSync6(file2, { readOnly: true, timeout: HISTORY_READ_TIMEOUT_MS });
+  const db = new DatabaseSync8(file2, { readOnly: true, timeout: HISTORY_READ_TIMEOUT_MS });
   try {
     if (!db.prepare("SELECT name FROM sqlite_master WHERE name='history_documents'").get()) return null;
     return db.prepare("SELECT id,kind,agent,at,body,link,message,job,run,session,cursor FROM history_documents WHERE id=?").get(id) ?? null;
@@ -41950,14 +42228,14 @@ import { readFileSync as readFileSync19 } from "node:fs";
 import { createServer as createServer4 } from "node:net";
 
 // src/core/store.ts
-import { existsSync as existsSync13, mkdirSync as mkdirSync13 } from "node:fs";
+import { existsSync as existsSync13, mkdirSync as mkdirSync14 } from "node:fs";
 import { dirname as dirname11 } from "node:path";
-import { DatabaseSync as DatabaseSync9 } from "node:sqlite";
+import { DatabaseSync as DatabaseSync11 } from "node:sqlite";
 
 // src/core/backups.ts
-import { createHash as createHash7, randomUUID as randomUUID8 } from "node:crypto";
-import { closeSync as closeSync8, copyFileSync as copyFileSync3, existsSync as existsSync11, fsyncSync as fsyncSync3, lstatSync, mkdirSync as mkdirSync12, openSync as openSync8, readFileSync as readFileSync12, readdirSync as readdirSync8, renameSync as renameSync4, writeFileSync as writeFileSync5 } from "node:fs";
-import { dirname as dirname10, join as join26, relative as relative3, resolve as resolve5, sep as sep2 } from "node:path";
+import { createHash as createHash8, randomUUID as randomUUID8 } from "node:crypto";
+import { closeSync as closeSync8, copyFileSync as copyFileSync3, existsSync as existsSync11, fsyncSync as fsyncSync3, lstatSync, mkdirSync as mkdirSync13, openSync as openSync8, readFileSync as readFileSync12, readdirSync as readdirSync8, renameSync as renameSync4, writeFileSync as writeFileSync5 } from "node:fs";
+import { dirname as dirname10, join as join28, relative as relative3, resolve as resolve5, sep as sep2 } from "node:path";
 var BACKUPS_DIR_NAME = "backups";
 var BACKUP_MANIFEST_VERSION = 1;
 var DEFAULT_BACKUP_RETENTION = 7;
@@ -41982,7 +42260,7 @@ function jsonStoreFiles(home) {
     const root = lstatSync(dir);
     if (root.isSymbolicLink() || !root.isDirectory()) return;
     for (const name of readdirSync8(dir).sort()) {
-      const path = join26(dir, name);
+      const path = join28(dir, name);
       const st = lstatSync(path);
       if (st.isSymbolicLink()) continue;
       if (st.isDirectory() && recurse) visit2(path, true);
@@ -41990,16 +42268,16 @@ function jsonStoreFiles(home) {
     }
   };
   visit2(home, false);
-  for (const dir of ["jobs", "runs", "archive", "read-state", "job-outcomes", "local-result-receipts"]) visit2(join26(home, dir), true);
+  for (const dir of ["jobs", "runs", "archive", "read-state", "job-outcomes", "local-result-receipts"]) visit2(join28(home, dir), true);
   return files;
 }
 function listBackups(home) {
-  const dir = join26(home, BACKUPS_DIR_NAME);
+  const dir = join28(home, BACKUPS_DIR_NAME);
   if (!existsSync11(dir)) return [];
   return readdirSync8(dir).filter((f) => f.startsWith(BACKUP_PREFIX)).flatMap((f) => {
-    const path = join26(dir, f);
+    const path = join28(dir, f);
     try {
-      const manifest = JSON.parse(readFileSync12(join26(path, MANIFEST_NAME), "utf8"));
+      const manifest = JSON.parse(readFileSync12(join28(path, MANIFEST_NAME), "utf8"));
       return [{ path, createdAt: manifest.createdAt }];
     } catch {
       return [];
@@ -42015,34 +42293,34 @@ function createBackup(home, now = Date.now(), rotate = true) {
   }
 }
 function createBackupUnlocked(home, now, rotate) {
-  const root = join26(home, BACKUPS_DIR_NAME);
-  mkdirSync12(root, { recursive: true, mode: 448 });
+  const root = join28(home, BACKUPS_DIR_NAME);
+  mkdirSync13(root, { recursive: true, mode: 448 });
   const name = `${BACKUP_PREFIX}${String(now).padStart(13, "0")}-${randomUUID8()}`;
-  const staging = join26(root, `.pending-${name}`);
-  mkdirSync12(staging, { mode: 448 });
+  const staging = join28(root, `.pending-${name}`);
+  mkdirSync13(staging, { mode: 448 });
   const manifest = { version: BACKUP_MANIFEST_VERSION, createdAt: now, files: [] };
   const capture2 = (source, sqlite) => {
     const path = relative3(home, source).split(sep2).join("/");
-    const target = join26(staging, path);
-    mkdirSync12(dirname10(target), { recursive: true, mode: 448 });
+    const target = join28(staging, path);
+    mkdirSync13(dirname10(target), { recursive: true, mode: 448 });
     if (sqlite) snapshotDatabase(source, target);
     else copyFileSync3(source, target);
     syncFile(target);
     const raw = readFileSync12(target);
-    manifest.files.push({ path, sha256: createHash7("sha256").update(raw).digest("hex"), bytes: raw.length });
+    manifest.files.push({ path, sha256: createHash8("sha256").update(raw).digest("hex"), bytes: raw.length });
   };
-  for (const name2 of [DB_FILE_NAME, ARCHIVE_DB_NAME]) if (existsSync11(join26(home, name2))) capture2(join26(home, name2), true);
+  for (const name2 of [DB_FILE_NAME, ARCHIVE_DB_NAME]) if (existsSync11(join28(home, name2))) capture2(join28(home, name2), true);
   for (const file2 of jsonStoreFiles(home)) capture2(file2, false);
-  writeFileSync5(join26(staging, MANIFEST_NAME), JSON.stringify(manifest, null, 2) + "\n", { mode: 384 });
-  syncFile(join26(staging, MANIFEST_NAME));
-  const published = join26(root, name);
+  writeFileSync5(join28(staging, MANIFEST_NAME), JSON.stringify(manifest, null, 2) + "\n", { mode: 384 });
+  syncFile(join28(staging, MANIFEST_NAME));
+  const published = join28(root, name);
   renameSync4(staging, published);
   if (rotate) {
     const retention = retentionLimit(BACKUP_RETENTION_ENV, DEFAULT_BACKUP_RETENTION);
     if (retention) for (const backup of listBackups(home).slice(retention)) {
-      const cold = join26(root, "archive");
-      mkdirSync12(cold, { recursive: true, mode: 448 });
-      renameSync4(backup.path, join26(cold, backup.path.split(/[\\/]/).at(-1)));
+      const cold = join28(root, "archive");
+      mkdirSync13(cold, { recursive: true, mode: 448 });
+      renameSync4(backup.path, join28(cold, backup.path.split(/[\\/]/).at(-1)));
     }
   }
   return published;
@@ -42054,9 +42332,9 @@ function backupIfDue(home, now = Date.now()) {
 }
 
 // src/core/history-schema.ts
-import { DatabaseSync as DatabaseSync7 } from "node:sqlite";
+import { DatabaseSync as DatabaseSync9 } from "node:sqlite";
 function supportsHistoryFts() {
-  const probe = new DatabaseSync7(":memory:");
+  const probe = new DatabaseSync9(":memory:");
   try {
     probe.exec("CREATE VIRTUAL TABLE probe USING fts5(body)");
     return true;
@@ -42108,7 +42386,7 @@ PRAGMA user_version = 4;
 import { randomUUID as randomUUID9 } from "node:crypto";
 import { existsSync as existsSync12 } from "node:fs";
 import { resolve as resolve6 } from "node:path";
-import { DatabaseSync as DatabaseSync8 } from "node:sqlite";
+import { DatabaseSync as DatabaseSync10 } from "node:sqlite";
 var MAX_DECISION_TOPIC_CHARS = 160;
 var MAX_DECISION_TEXT_CHARS = MAX_BODY_CHARS - 1024;
 var MAX_SCOPE_SESSIONS = 100;
@@ -42233,7 +42511,7 @@ function formatDecisionSummary(decisions) {
 }
 function readDecisions(dbPath, args = {}) {
   if (!existsSync12(dbPath)) return [];
-  const db = new DatabaseSync8(dbPath, { readOnly: true });
+  const db = new DatabaseSync10(dbPath, { readOnly: true });
   try {
     if (!db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'decisions'").get()) return [];
     return new DecisionStore(db).list(args);
@@ -42296,11 +42574,11 @@ var MessageStore = class {
     this.log = log;
     const existed = file2 !== ":memory:" && existsSync13(file2);
     this.home = file2 === ":memory:" ? null : dirname11(file2);
-    if (file2 !== ":memory:") mkdirSync13(dirname11(file2), { recursive: true, mode: 448 });
+    if (file2 !== ":memory:") mkdirSync14(dirname11(file2), { recursive: true, mode: 448 });
     this.release = file2 === ":memory:" ? () => {
     } : storageLease(dirname11(file2));
     try {
-      this.db = new DatabaseSync9(file2);
+      this.db = new DatabaseSync11(file2);
     } catch (err) {
       this.release();
       throw err;
@@ -42474,13 +42752,13 @@ import { isIPv4 } from "node:net";
 
 // src/network/pairing.ts
 import { execFileSync } from "node:child_process";
-import { createHash as createHash8, randomBytes as randomBytes5, randomUUID as randomUUID10 } from "node:crypto";
-import { chmodSync as chmodSync2, existsSync as existsSync14, mkdirSync as mkdirSync14, readFileSync as readFileSync13, renameSync as renameSync5, writeFileSync as writeFileSync6 } from "node:fs";
-import { join as join27 } from "node:path";
+import { createHash as createHash9, randomBytes as randomBytes5, randomUUID as randomUUID10 } from "node:crypto";
+import { chmodSync as chmodSync2, existsSync as existsSync14, mkdirSync as mkdirSync15, readFileSync as readFileSync13, renameSync as renameSync5, writeFileSync as writeFileSync6 } from "node:fs";
+import { join as join29 } from "node:path";
 var DEFAULT_SYSTEM_ROOT = "C:\\Windows";
-var SYSTEM32 = join27(process.env.SystemRoot || DEFAULT_SYSTEM_ROOT, "System32");
-var WHOAMI = join27(SYSTEM32, "whoami.exe");
-var ICACLS = join27(SYSTEM32, "icacls.exe");
+var SYSTEM32 = join29(process.env.SystemRoot || DEFAULT_SYSTEM_ROOT, "System32");
+var WHOAMI = join29(SYSTEM32, "whoami.exe");
+var ICACLS = join29(SYSTEM32, "icacls.exe");
 var keySchema = external_exports.string().regex(/^[0-9a-f]{64}$/);
 var identitySchema = external_exports.object({ id: external_exports.uuid(), key: keySchema });
 var publicIdentitySchema = external_exports.object({ id: external_exports.uuid(), name: external_exports.string().regex(NETWORK_NAME_PATTERN), fingerprint: keySchema });
@@ -42489,7 +42767,7 @@ var pairSchema = publicIdentitySchema.extend({ key: keySchema, host: external_ex
 var stateSchema = external_exports.object({ identity: identitySchema, invitations: external_exports.array(invitationSchema).max(MAX_NETWORK_LINKS), pairs: external_exports.array(pairSchema).max(MAX_NETWORK_LINKS) });
 var codeSchema = publicIdentitySchema.extend({ v: external_exports.literal(NETWORK_VERSION), key: keySchema });
 function keyFingerprint(key2) {
-  return createHash8("sha256").update(Buffer.from(key2, "hex")).digest("hex");
+  return createHash9("sha256").update(Buffer.from(key2, "hex")).digest("hex");
 }
 var ACL_PRINCIPAL = /([^\s:][^:]*?):\(/;
 function protect(path, mode) {
@@ -42512,9 +42790,9 @@ var PairingStore = class {
     this.name = name;
     this.now = now;
     if (!NETWORK_NAME_PATTERN.test(name)) throw new Error("invalid network instance name");
-    this.dir = join27(home, "network");
-    this.file = join27(this.dir, "keys.json");
-    mkdirSync14(this.dir, { recursive: true, mode: OWNER_DIR_MODE });
+    this.dir = join29(home, "network");
+    this.file = join29(this.dir, "keys.json");
+    mkdirSync15(this.dir, { recursive: true, mode: OWNER_DIR_MODE });
     protect(this.dir, OWNER_DIR_MODE);
     if (existsSync14(this.file)) {
       protect(this.file, OWNER_FILE_MODE);
@@ -42590,7 +42868,7 @@ var PairingStore = class {
     this.save();
   }
   save() {
-    const temp = join27(this.dir, `${randomUUID10()}.tmp`);
+    const temp = join29(this.dir, `${randomUUID10()}.tmp`);
     writeFileSync6(temp, JSON.stringify(this.state, null, 2) + "\n", { mode: OWNER_FILE_MODE, flag: "wx" });
     protect(temp, OWNER_FILE_MODE);
     renameSync5(temp, this.file);
@@ -42672,9 +42950,9 @@ var NetworkDiscovery = class {
 };
 
 // src/network/files.ts
-import { createHash as createHash9, randomUUID as randomUUID11 } from "node:crypto";
-import { existsSync as existsSync15, lstatSync as lstatSync2, mkdirSync as mkdirSync15, mkdtempSync, readFileSync as readFileSync14, readdirSync as readdirSync9, renameSync as renameSync6, rmSync as rmSync5, statfsSync, writeFileSync as writeFileSync7 } from "node:fs";
-import { basename as basename7, join as join28, parse as parse4, resolve as resolve7, sep as sep3 } from "node:path";
+import { createHash as createHash10, randomUUID as randomUUID11 } from "node:crypto";
+import { existsSync as existsSync15, lstatSync as lstatSync2, mkdirSync as mkdirSync16, mkdtempSync, readFileSync as readFileSync14, readdirSync as readdirSync9, renameSync as renameSync6, rmSync as rmSync5, statfsSync, writeFileSync as writeFileSync7 } from "node:fs";
+import { basename as basename7, join as join30, parse as parse4, resolve as resolve7, sep as sep3 } from "node:path";
 var MAX_TRANSFER_BYTES = 1024 * 1024;
 var MAX_TRANSFER_ENTRIES = 128;
 var MAX_TRANSFER_DEPTH = 16;
@@ -42695,13 +42973,13 @@ var transferSchema = external_exports.object({
 });
 var transferResultSchema = external_exports.object({ id: external_exports.uuid(), inbox: external_exports.string().max(MAX_PATH_CHARS2), files: external_exports.number().int().nonnegative().max(MAX_TRANSFER_ENTRIES), bytes: external_exports.number().int().nonnegative().max(MAX_TRANSFER_BYTES) });
 function checksum(data) {
-  return createHash9("sha256").update(data).digest("hex");
+  return createHash10("sha256").update(data).digest("hex");
 }
 function assertTransferPath(path) {
   const absolute = resolve7(path);
   let current = parse4(absolute).root;
   for (const component of absolute.slice(current.length).split(sep3).filter(Boolean)) {
-    current = join28(current, component);
+    current = join30(current, component);
     if (lstatSync2(current).isSymbolicLink()) throw new Error("file transfer does not follow symlinks or junctions");
   }
 }
@@ -42709,7 +42987,7 @@ function ensureTransferDirectory(path) {
   if (!existsSync15(path)) {
     const parent2 = resolve7(path, "..");
     ensureTransferDirectory(parent2);
-    mkdirSync15(path, { mode: OWNER_DIR_MODE });
+    mkdirSync16(path, { mode: OWNER_DIR_MODE });
   }
   assertTransferPath(path);
   if (!lstatSync2(path).isDirectory()) throw new Error("transfer directory is not a directory");
@@ -42730,7 +43008,7 @@ function collectTransfer(paths, cwd, to, from) {
     if (stat.isSymbolicLink()) throw new Error("file transfer does not follow symlinks or junctions");
     if (stat.isDirectory()) {
       entries.push({ kind: "directory", path });
-      for (const name of readdirSync9(source).sort()) walk(join28(source, name), `${path}/${name}`);
+      for (const name of readdirSync9(source).sort()) walk(join30(source, name), `${path}/${name}`);
     } else if (stat.isFile()) {
       if (stat.size > MAX_TRANSFER_BYTES - bytes) throw new Error("transfer exceeds size limit");
       const data = readFileSync14(source);
@@ -42776,16 +43054,16 @@ function receiveTransfer(home, input2) {
   assertTransferPath(home);
   const disk = statfsSync(home, { bigint: true });
   if (disk.bavail * disk.bsize < BigInt(bytes)) throw new Error("insufficient free disk space for transfer");
-  const inbox = join28(home, "inbox");
+  const inbox = join30(home, "inbox");
   ensureTransferDirectory(inbox);
   if (lstatSync2(inbox).isSymbolicLink()) throw new Error("inbox cannot be a symlink");
   assertTransferPath(inbox);
-  const final = join28(inbox, transfer.id);
+  const final = join30(inbox, transfer.id);
   if (existsSync15(final)) throw new Error("transfer already received");
-  const staging = mkdtempSync(join28(inbox, ".partial-"));
+  const staging = mkdtempSync(join30(inbox, ".partial-"));
   try {
-    for (const entry of entries.filter((e) => e.data === null).sort((a, b) => a.path.length - b.path.length)) mkdirSync15(join28(staging, ...entry.path.split("/")), { mode: OWNER_DIR_MODE });
-    for (const entry of entries) if (entry.data !== null) writeFileSync7(join28(staging, ...entry.path.split("/")), entry.data, { flag: "wx", mode: OWNER_FILE_MODE });
+    for (const entry of entries.filter((e) => e.data === null).sort((a, b) => a.path.length - b.path.length)) mkdirSync16(join30(staging, ...entry.path.split("/")), { mode: OWNER_DIR_MODE });
+    for (const entry of entries) if (entry.data !== null) writeFileSync7(join30(staging, ...entry.path.split("/")), entry.data, { flag: "wx", mode: OWNER_FILE_MODE });
     renameSync6(staging, final);
     return { id: transfer.id, inbox: final, files, bytes };
   } catch (err) {
@@ -42795,10 +43073,10 @@ function receiveTransfer(home, input2) {
 }
 
 // src/network/transfers.ts
-import { createHash as createHash10, randomUUID as randomUUID12 } from "node:crypto";
-import { constants, existsSync as existsSync16, lstatSync as lstatSync3, mkdirSync as mkdirSync16, readdirSync as readdirSync10, readFileSync as readFileSync15, renameSync as renameSync7, statSync as statSync6, writeFileSync as writeFileSync8 } from "node:fs";
+import { createHash as createHash11, randomUUID as randomUUID12 } from "node:crypto";
+import { constants, existsSync as existsSync16, lstatSync as lstatSync3, mkdirSync as mkdirSync17, readdirSync as readdirSync10, readFileSync as readFileSync15, renameSync as renameSync7, statSync as statSync6, writeFileSync as writeFileSync8 } from "node:fs";
 import { open as open2, link, unlink, statfs, lstat, opendir } from "node:fs/promises";
-import { basename as basename8, dirname as dirname12, isAbsolute as isAbsolute5, join as join29, relative as relative4, resolve as resolve8, sep as sep4 } from "node:path";
+import { basename as basename8, dirname as dirname12, isAbsolute as isAbsolute5, join as join31, relative as relative4, resolve as resolve8, sep as sep4 } from "node:path";
 var FILE_STREAM_CAPABILITY = "file-stream-v1";
 var TRANSFER_CHUNK_BYTES = 256 * 1024;
 var DEFAULT_MAX_STREAM_BYTES = 8 * 1024 * 1024 * 1024;
@@ -42833,7 +43111,7 @@ var responseSchema = external_exports.object({ kind: external_exports.literal("r
 var RemoteTransferError = class extends Error {
 };
 function digest(data) {
-  return createHash10("sha256").update(data).digest("hex");
+  return createHash11("sha256").update(data).digest("hex");
 }
 function transferSummary(home, state) {
   const bytes = state.entries.reduce((sum, entry) => sum + entry.offset, 0);
@@ -42849,14 +43127,14 @@ function transferSummary(home, state) {
     percent: state.status === "completed" ? 100 : state.totalBytes ? Math.floor(bytes / state.totalBytes * 100) : 0,
     createdAt: state.createdAt,
     updatedAt: state.updatedAt,
-    ...state.direction === "receive" ? { inbox: join29(home, "inbox", state.id) } : {},
+    ...state.direction === "receive" ? { inbox: join31(home, "inbox", state.id) } : {},
     ...state.error ? { error: state.error } : {}
   };
 }
 function persistTransfer(root, state) {
   assertTransferPath(root);
   state.updatedAt = Date.now();
-  const file2 = join29(root, `${state.id}.json`);
+  const file2 = join31(root, `${state.id}.json`);
   if (existsSync16(file2)) assertTransferPath(file2);
   const temp = `${file2}.${randomUUID12()}.tmp`;
   writeFileSync8(temp, JSON.stringify(state), { flag: "wx", mode: OWNER_FILE_MODE, flush: true });
@@ -42864,8 +43142,8 @@ function persistTransfer(root, state) {
 }
 function cancelStoredTransfer(home, id) {
   external_exports.uuid().parse(id);
-  const root = join29(home, "network", "transfers");
-  const path = join29(root, `${id}.json`);
+  const root = join31(home, "network", "transfers");
+  const path = join31(root, `${id}.json`);
   if (!existsSync16(path)) throw new Error("unknown transfer");
   assertTransferPath(path);
   const state = JSON.parse(readFileSync15(path, "utf8"));
@@ -42877,11 +43155,11 @@ function cancelStoredTransfer(home, id) {
   return { id, cancelled: true };
 }
 function readTransferHistory(home) {
-  const root = join29(home, "network", "transfers");
+  const root = join31(home, "network", "transfers");
   if (!existsSync16(root)) return [];
   assertTransferPath(root);
   return readdirSync10(root).filter((file2) => /^[0-9a-f-]{36}\.json$/.test(file2)).map((file2) => {
-    const path = join29(root, file2);
+    const path = join31(root, file2);
     assertTransferPath(path);
     return { path, mtime: statSync6(path).mtimeMs };
   }).sort((a, b) => b.mtime - a.mtime).slice(0, MAX_TRANSFER_HISTORY).map(({ path }) => {
@@ -42916,7 +43194,7 @@ var TransferManager = class {
     this.log = log;
     this.options = options;
     assertTransferPath(home);
-    this.root = join29(home, "network", "transfers");
+    this.root = join31(home, "network", "transfers");
     ensureTransferDirectory(this.root);
     assertTransferPath(this.root);
     for (const file2 of readdirSync10(this.root).filter((file3) => /^[0-9a-f-]{36}\.json$/.test(file3))) {
@@ -42946,7 +43224,7 @@ var TransferManager = class {
   closed = false;
   root;
   read(id) {
-    const file2 = join29(this.root, `${id}.json`);
+    const file2 = join31(this.root, `${id}.json`);
     if (!existsSync16(file2)) return void 0;
     assertTransferPath(file2);
     const state = JSON.parse(readFileSync15(file2, "utf8"));
@@ -43179,7 +43457,7 @@ var TransferManager = class {
           if (names.length + entries.length >= MAX_STREAM_ENTRIES) throw new Error("too many transfer entries");
           names.push(child.name);
         }
-        for (const name of names.sort()) await walk(join29(source, name), `${path}/${name}`);
+        for (const name of names.sort()) await walk(join31(source, name), `${path}/${name}`);
       } else if (st.isFile()) {
         total += st.size;
         if (total > (this.options.maxBytes ?? DEFAULT_MAX_STREAM_BYTES)) throw new Error("transfer exceeds size limit");
@@ -43276,7 +43554,7 @@ var TransferManager = class {
         if (offset > entry.size || offset !== entry.size && offset % TRANSFER_CHUNK_BYTES !== 0) throw new RemoteTransferError("invalid resume offset");
         entry.offset = offset;
         const file2 = await this.source(state, entry);
-        const hash2 = createHash10("sha256");
+        const hash2 = createHash11("sha256");
         const buffer = Buffer.alloc(TRANSFER_CHUNK_BYTES);
         try {
           for (let position = 0; position < entry.size; ) {
@@ -43322,13 +43600,13 @@ var TransferManager = class {
     }
   }
   part(state, index) {
-    return join29(this.root, state.id, `${index}.part`);
+    return join31(this.root, state.id, `${index}.part`);
   }
   verified(state, index) {
-    return join29(this.root, state.id, `${index}.verified`);
+    return join31(this.root, state.id, `${index}.verified`);
   }
   target(state, entry) {
-    return join29(this.home, "inbox", state.id, ...entry.path.split("/"));
+    return join31(this.home, "inbox", state.id, ...entry.path.split("/"));
   }
   async freeDisk(bytes) {
     const disk = await statfs(this.home, { bigint: true });
@@ -43338,7 +43616,7 @@ var TransferManager = class {
   async hashFile(path, state) {
     assertTransferPath(path);
     const file2 = await open2(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
-    const hash2 = createHash10("sha256");
+    const hash2 = createHash11("sha256");
     const buffer = Buffer.alloc(TRANSFER_CHUNK_BYTES);
     try {
       for (; ; ) {
@@ -43412,19 +43690,19 @@ var TransferManager = class {
     }
   }
   initialize(state) {
-    const inbox = join29(this.home, "inbox");
+    const inbox = join31(this.home, "inbox");
     ensureTransferDirectory(inbox);
-    const final = join29(inbox, state.id);
-    const parts = join29(this.root, state.id);
+    const final = join31(inbox, state.id);
+    const parts = join31(this.root, state.id);
     for (const dir of [final, parts]) {
-      if (!existsSync16(dir)) mkdirSync16(dir, { mode: OWNER_DIR_MODE });
+      if (!existsSync16(dir)) mkdirSync17(dir, { mode: OWNER_DIR_MODE });
       assertTransferPath(dir);
       if (!lstatSync3(dir).isDirectory()) throw new Error("transfer directory is not a directory");
     }
     for (const entry of state.entries.filter((entry2) => entry2.kind === "directory").sort((a, b) => a.path.length - b.path.length)) {
       const dir = this.target(state, entry);
       assertTransferPath(dirname12(dir));
-      if (!existsSync16(dir)) mkdirSync16(dir, { mode: OWNER_DIR_MODE });
+      if (!existsSync16(dir)) mkdirSync17(dir, { mode: OWNER_DIR_MODE });
       assertTransferPath(dir);
       if (!lstatSync3(dir).isDirectory()) throw new Error("transfer directory is not a directory");
     }
@@ -43533,9 +43811,9 @@ var TransferManager = class {
       try {
         if (!state || !state.entries.length) {
           if (!state) this.ensureCapacity();
-          const inbox = join29(this.home, "inbox");
+          const inbox = join31(this.home, "inbox");
           ensureTransferDirectory(inbox);
-          if (existsSync16(join29(inbox, request2.id)) || existsSync16(join29(this.root, request2.id))) throw new Error("transfer destination already exists");
+          if (existsSync16(join31(inbox, request2.id)) || existsSync16(join31(this.root, request2.id))) throw new Error("transfer destination already exists");
           const receiving = {
             version: 1,
             id: request2.id,
@@ -44228,11 +44506,11 @@ var NetworkService = class {
 // src/network/remote-jobs.ts
 import { randomUUID as randomUUID15 } from "node:crypto";
 import { existsSync as existsSync17, realpathSync as realpathSync6, statSync as statSync9 } from "node:fs";
-import { isAbsolute as isAbsolute8, join as join38 } from "node:path";
+import { isAbsolute as isAbsolute8, join as join39 } from "node:path";
 
 // src/core/runfeed.ts
-import { appendFileSync as appendFileSync3, mkdirSync as mkdirSync17, readFileSync as readFileSync16, readdirSync as readdirSync11, statSync as statSync7 } from "node:fs";
-import { join as join30 } from "node:path";
+import { appendFileSync as appendFileSync3, mkdirSync as mkdirSync18, readFileSync as readFileSync16, readdirSync as readdirSync11, statSync as statSync7 } from "node:fs";
+import { join as join32 } from "node:path";
 var RUNS_DIR_NAME = "runs";
 var HEARTBEAT_MS = 6e4;
 var KEEP_RUN_LOGS = 50;
@@ -44246,12 +44524,12 @@ function stamp(t2) {
 }
 function pruneOldLogs(dir) {
   try {
-    archiveOldRuns(join30(dir, ".."));
+    archiveOldRuns(join32(dir, ".."));
     const limit = retentionLimit("AGENT_BRIDGE_RUN_LOG_LIMIT", KEEP_RUN_LOGS);
     if (!limit) return;
-    const files = readdirSync11(dir).filter((f) => f.endsWith(".log")).map((f) => ({ f, t: statSync7(join30(dir, f)).mtimeMs })).sort((a, b) => b.t - a.t);
+    const files = readdirSync11(dir).filter((f) => f.endsWith(".log")).map((f) => ({ f, t: statSync7(join32(dir, f)).mtimeMs })).sort((a, b) => b.t - a.t);
     for (const { f } of files.slice(limit)) {
-      const path = join30(dir, f);
+      const path = join32(dir, f);
       if (Date.now() - statSync7(path).mtimeMs <= STALE_RUN_MS && !/^\d\d:\d\d:\d\d finished after \d+s · /m.test(readFileSync16(path, "utf8"))) continue;
       archiveRun(path);
     }
@@ -44263,9 +44541,9 @@ function pruneOldLogs(dir) {
 function startRunFeed(opts) {
   const now = opts.now ?? Date.now;
   const release = storageLease(opts.home);
-  const dir = join30(opts.home, RUNS_DIR_NAME);
-  mkdirSync17(dir, { recursive: true });
-  const logPath = join30(dir, `${new Date(now()).toISOString().slice(0, 19).replace(/[:T]/g, "-")}-${opts.name}.log`);
+  const dir = join32(opts.home, RUNS_DIR_NAME);
+  mkdirSync18(dir, { recursive: true });
+  const logPath = join32(dir, `${new Date(now()).toISOString().slice(0, 19).replace(/[:T]/g, "-")}-${opts.name}.log`);
   const write = (line) => {
     const [first, ...rest] = line.replace(/\r/g, "").split("\n");
     const body = [first, ...rest.map((l) => `${CONTINUATION}${l}`)].join("\n");
@@ -44325,26 +44603,26 @@ function startRunFeed(opts) {
 
 // src/mcp/delegate-run.ts
 import { randomUUID as randomUUID14 } from "node:crypto";
-import { isAbsolute as isAbsolute7, join as join35, relative as relative6, resolve as resolve10 } from "node:path";
+import { isAbsolute as isAbsolute7, join as join36, relative as relative6, resolve as resolve10 } from "node:path";
 
 // src/core/effort.ts
 import { readFileSync as readFileSync18 } from "node:fs";
 import { homedir as homedir6 } from "node:os";
-import { join as join32 } from "node:path";
+import { join as join34 } from "node:path";
 
 // src/core/codex-trust.ts
 import { readFileSync as readFileSync17, writeFileSync as writeFileSync9 } from "node:fs";
 import { homedir as homedir5 } from "node:os";
-import { join as join31 } from "node:path";
+import { join as join33 } from "node:path";
 var PERMISSION_HOOK_STATE_KEY = 'hooks.state."agent-bridge@agent-bridge:plugin.json#hooks[0]:permission_request:0:0"';
 var OBSERVATIONS_FILE = "codex-hook.json";
 function codexHome(env = process.env) {
-  return env.CODEX_HOME?.trim() || join31(homedir5(), ".codex");
+  return env.CODEX_HOME?.trim() || join33(homedir5(), ".codex");
 }
 function codexPermissionHookHash(home = codexHome(), read2 = (p) => readFileSync17(p, "utf8")) {
   let text2;
   try {
-    text2 = read2(join31(home, "config.toml"));
+    text2 = read2(join33(home, "config.toml"));
   } catch {
     return null;
   }
@@ -44359,7 +44637,7 @@ function codexPermissionHookHash(home = codexHome(), read2 = (p) => readFileSync
 }
 function readObservations(bridgeHome) {
   try {
-    return JSON.parse(readFileSync17(join31(bridgeHome, OBSERVATIONS_FILE), "utf8"));
+    return JSON.parse(readFileSync17(join33(bridgeHome, OBSERVATIONS_FILE), "utf8"));
   } catch {
     return {};
   }
@@ -44369,7 +44647,7 @@ function recordCodexHookObservation(bridgeHome, hash2, observation) {
   if (all[hash2] === "failed") return;
   all[hash2] = observation;
   try {
-    writeFileSync9(join31(bridgeHome, OBSERVATIONS_FILE), JSON.stringify(all, null, 2), { mode: 384 });
+    writeFileSync9(join33(bridgeHome, OBSERVATIONS_FILE), JSON.stringify(all, null, 2), { mode: 384 });
   } catch {
   }
 }
@@ -44381,8 +44659,8 @@ function codexPermissionHookTrusted(bridgeHome, home = codexHome(), read2 = (p) 
 // src/core/effort.ts
 function defaultEffort(agent, model, read2 = (p) => readFileSync18(p, "utf8")) {
   try {
-    if (agent === "codex") return codexConfigEffort(read2(join32(codexHome(), "config.toml")));
-    if (agent === "claude") return claudeSettingsEffort(read2(join32(process.env.CLAUDE_CONFIG_DIR?.trim() || join32(homedir6(), ".claude"), "settings.json")), model);
+    if (agent === "codex") return codexConfigEffort(read2(join34(codexHome(), "config.toml")));
+    if (agent === "claude") return claudeSettingsEffort(read2(join34(process.env.CLAUDE_CONFIG_DIR?.trim() || join34(homedir6(), ".claude"), "settings.json")), model);
   } catch {
   }
   return null;
@@ -44405,109 +44683,6 @@ function claudeSettingsEffort(json2, model) {
     }
   }
   return typeof s.effortLevel === "string" ? s.effortLevel : null;
-}
-
-// src/core/resource-slots.ts
-import { mkdirSync as mkdirSync18 } from "node:fs";
-import { join as join33 } from "node:path";
-import { DatabaseSync as DatabaseSync10 } from "node:sqlite";
-import { setTimeout as delay3 } from "node:timers/promises";
-var SLOT_OWNER_ENV = "AGENT_BRIDGE_SLOT_OWNER";
-var SLOT_PID_ENV = "AGENT_BRIDGE_SLOT_PID";
-var SLOT_LEASE_MS = 6 * 60 * 6e4;
-var SLOT_RENEW_MS = 6e4;
-var SLOT_POLL_MS = 250;
-var SLOT_DB_NAME = "resource-slots.sqlite";
-var LOCK_WAIT_MS2 = 3e3;
-function alive(pid) {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (err) {
-    return err.code !== "ESRCH";
-  }
-}
-var ResourceSlots = class {
-  constructor(home, isAlive = alive, now = Date.now) {
-    this.isAlive = isAlive;
-    this.now = now;
-    mkdirSync18(home, { recursive: true });
-    this.db = new DatabaseSync10(join33(home, SLOT_DB_NAME));
-    this.db.exec(`PRAGMA busy_timeout = ${LOCK_WAIT_MS2};
-      CREATE TABLE IF NOT EXISTS slots (
-        ticket INTEGER PRIMARY KEY AUTOINCREMENT, resource TEXT NOT NULL, id TEXT NOT NULL,
-        pid INTEGER NOT NULL, held INTEGER NOT NULL, expiresAt INTEGER NOT NULL, UNIQUE(resource, id)
-      );`);
-  }
-  isAlive;
-  now;
-  db;
-  transaction(fn) {
-    this.db.exec("BEGIN IMMEDIATE");
-    try {
-      const result = fn();
-      this.db.exec("COMMIT");
-      return result;
-    } catch (err) {
-      this.db.exec("ROLLBACK");
-      throw err;
-    }
-  }
-  prune() {
-    this.db.prepare("DELETE FROM slots WHERE expiresAt <= ?").run(this.now());
-    const pids = this.db.prepare("SELECT DISTINCT pid FROM slots").all();
-    for (const row of pids) if (!this.isAlive(Number(row.pid))) this.db.prepare("DELETE FROM slots WHERE pid = ?").run(row.pid);
-  }
-  tryAcquire(resource, count, owner) {
-    if (!RESOURCE_NAME_PATTERN.test(resource) || !Number.isInteger(count) || count < 1) throw new Error("Invalid resource name or capacity.");
-    if (!owner.id || !Number.isSafeInteger(owner.pid) || owner.pid <= 0 || !this.isAlive(owner.pid)) throw new Error("A resource slot needs a live owner process.");
-    return this.transaction(() => {
-      this.prune();
-      this.db.prepare("INSERT INTO slots(resource, id, pid, held, expiresAt) VALUES (?, ?, ?, 0, ?) ON CONFLICT(resource, id) DO NOTHING").run(resource, owner.id, owner.pid, this.now() + SLOT_LEASE_MS);
-      const own2 = this.db.prepare("SELECT ticket, pid, held FROM slots WHERE resource = ? AND id = ?").get(resource, owner.id);
-      if (Number(own2.pid) !== owner.pid) throw new Error("Resource slot owner does not match.");
-      this.db.prepare("UPDATE slots SET expiresAt = ? WHERE resource = ? AND id = ?").run(this.now() + SLOT_LEASE_MS, resource, owner.id);
-      if (own2.held) return true;
-      const held = Number(this.db.prepare("SELECT COUNT(*) AS n FROM slots WHERE resource = ? AND held = 1").get(resource).n);
-      const ahead = Number(this.db.prepare("SELECT COUNT(*) AS n FROM slots WHERE resource = ? AND held = 0 AND ticket < ?").get(resource, own2.ticket).n);
-      if (held + ahead >= count) return false;
-      this.db.prepare("UPDATE slots SET held = 1 WHERE ticket = ?").run(own2.ticket);
-      return true;
-    });
-  }
-  async acquire(resource, count, owner, signal) {
-    try {
-      for (; ; ) {
-        signal?.throwIfAborted();
-        if (this.tryAcquire(resource, count, owner)) return;
-        await delay3(SLOT_POLL_MS, void 0, { signal });
-      }
-    } catch (err) {
-      this.release(owner, resource);
-      throw err;
-    }
-  }
-  release(owner, resource) {
-    this.db.prepare(`DELETE FROM slots WHERE id = ? AND pid = ?${resource ? " AND resource = ?" : ""}`).run(...resource ? [owner.id, owner.pid, resource] : [owner.id, owner.pid]);
-  }
-  renew(owner, resource) {
-    const args = [this.now() + SLOT_LEASE_MS, owner.id, owner.pid, this.now()];
-    this.db.prepare(`UPDATE slots SET expiresAt = ? WHERE id = ? AND pid = ? AND expiresAt > ?${resource ? " AND resource = ?" : ""}`).run(...resource ? [...args, resource] : args);
-  }
-  list() {
-    return this.transaction(() => {
-      this.prune();
-      return this.db.prepare("SELECT * FROM slots ORDER BY ticket").all().map((row) => ({ resource: String(row.resource), id: String(row.id), pid: Number(row.pid), ticket: Number(row.ticket), held: Boolean(row.held), expiresAt: Number(row.expiresAt) }));
-    });
-  }
-  close() {
-    this.db.close();
-  }
-};
-function resourceSlotHint(counts, cli) {
-  if (!Object.keys(counts).length) return null;
-  const command = cli ? `node "${cli}"` : "agent-bridge";
-  return `(agent-bridge: shared resource slots are enabled: ${JSON.stringify(counts)}. Before a heavy command, run ${command} slot acquire <resource>; it waits in FIFO order. Always run ${command} slot release <resource> afterward, including on failure (use try/finally or a shell trap). ${command} slot status shows holders and waiters. Slots are shared across jobs and released when your run ends or its owner process dies. Acquiring twice is idempotent; hold one slot per resource per job.)`;
 }
 
 // src/core/tool-allow.ts
@@ -44569,7 +44744,7 @@ function isHandoffToolCall(r) {
 
 // src/core/worktree-links.ts
 import { lstatSync as lstatSync4, readdirSync as readdirSync12, readlinkSync, realpathSync as realpathSync5 } from "node:fs";
-import { dirname as dirname13, isAbsolute as isAbsolute6, join as join34, relative as relative5, resolve as resolve9, toNamespacedPath as toNamespacedPath2 } from "node:path";
+import { dirname as dirname13, isAbsolute as isAbsolute6, join as join35, relative as relative5, resolve as resolve9, toNamespacedPath as toNamespacedPath2 } from "node:path";
 var WORKTREE_LINK_HINT = "(agent-bridge: worktree isolation is mandatory. Never create symlinks, directory junctions or other reparse points whose targets leave this worktree, including Unity Library folders in the owner's main checkout. Copy caches if needed; do not share them through links. Never follow an existing external link to modify its target. Request cleanup approval through the supervisor and report the link and target if cleanup is denied.)";
 function scanWorktreeLinks(root) {
   const scan = { externalLinks: [], errors: [] };
@@ -44590,7 +44765,7 @@ function scanWorktreeLinks(root) {
         }
         if (!inside(target)) scan.externalLinks.push({ path, target });
       } else if (stat.isDirectory()) {
-        for (const entry of readdirSync12(toNamespacedPath2(path))) visit2(join34(path, entry));
+        for (const entry of readdirSync12(toNamespacedPath2(path))) visit2(join35(path, entry));
       }
     } catch (err) {
       scan.errors.push(`${path}: ${err.message}`);
@@ -44763,11 +44938,11 @@ var DELEGATED_JOB_NOTE = "(agent-bridge: you are a delegated job. Report what yo
 var HANDOFF_DECLINED = "Declined by agent-bridge: delegated jobs do not write the project handoff. Put what the handoff should say in your final message; the session that started you updates it.";
 var PARENT_APPROVAL_TIMEOUT_MS = 10 * 6e4;
 function isBridgeWorktree(dir, home) {
-  return isInside(dir, join35(home, "worktrees")) && resolve10(dir) !== resolve10(join35(home, "worktrees"));
+  return isInside(dir, join36(home, "worktrees")) && resolve10(dir) !== resolve10(join36(home, "worktrees"));
 }
 function bridgeWorktreeRoot(dir, home) {
   if (!isBridgeWorktree(dir, home)) return null;
-  return join35(home, "worktrees", relative6(join35(home, "worktrees"), resolve10(dir)).split(/[\\/]/)[0]);
+  return join36(home, "worktrees", relative6(join36(home, "worktrees"), resolve10(dir)).split(/[\\/]/)[0]);
 }
 function isInside(child, parent2) {
   const rel = relative6(resolve10(parent2), resolve10(child));
@@ -44788,6 +44963,30 @@ function worktreeArgs(target, a, cfg, cwd, home) {
   return { ...a, access, ...sandbox !== void 0 ? { sandbox } : {} };
 }
 async function runDelegate(rc, target, a, signal, onProgress, background, job) {
+  checkDepth(rc.cfg.maxDelegateDepth);
+  if (!job?.rootSession) return runDelegateInner(rc, target, a, signal, onProgress, background, job);
+  const budget = new RootConcurrency(rc.home, job.rootSession);
+  const owner = { id: `${job.name}-${randomUUID14()}`, pid: process.pid };
+  let timer;
+  try {
+    if (!job.parentJob) budget.ensureLimit(rc.cfg.maxJobs);
+    if (!budget.acquire(owner)) throw new Error("The top session's subagent concurrency limit is reached.");
+    timer = setInterval(() => {
+      try {
+        budget.renew(owner);
+      } catch (err) {
+        rc.log.warn("could not renew root concurrency lease", { err: String(err) });
+      }
+    }, SLOT_RENEW_MS);
+    timer.unref();
+    return await runDelegateInner(rc, target, a, signal, onProgress, background, job);
+  } finally {
+    clearInterval(timer);
+    budget.release(owner);
+    budget.close();
+  }
+}
+async function runDelegateInner(rc, target, a, signal, onProgress, background, job) {
   const { cfg, log } = rc;
   const profile = DELEGATION_TARGETS[target];
   const defaultModel = profile.defaultModel(cfg);
@@ -44848,7 +45047,7 @@ async function runDelegate(rc, target, a, signal, onProgress, background, job) {
     if (isOwnServerCall(r) || isAutoApproved(r, autoApprove)) return { allow: true };
     let d;
     if (wiring) d = await wiring.onPermission(r);
-    else if (job && !job.foreground && rc.jobs) {
+    else if (job && (!job.foreground || job.parentJob) && rc.jobs) {
       const hint = approvalHint(r);
       const a2 = await rc.jobs.askParent(job, `${r.tool.replace(/^mcp:/, "MCP server ")}: ${r.detail}${hint}`, PARENT_APPROVAL_TIMEOUT_MS, r);
       d = a2.allow ? { allow: true } : { allow: false, message: `Denied by supervisor ${me}: ${a2.reason || "no reason supplied"}` };
@@ -44871,6 +45070,10 @@ ${a.prompt}
 ---`,
       forward: onProgress,
       meta: {
+        metadataVersion: DELEGATION_METADATA_VERSION,
+        bridgeVersion: APP_VERSION,
+        parentJob: job?.parentJob,
+        rootSession: job?.rootSession,
         by: me,
         byAgent: rc.agent,
         byCwd: rc.cwd(),
@@ -44930,7 +45133,8 @@ ${a.prompt}
         feed.meta({ percent, progressNote: note, progressAt: Date.now() });
         feed.report(`progress ${percent}%${note ? `: ${note}` : ""}`);
       },
-      siblingLink
+      siblingLink,
+      (body) => jobs.escalateApproval ? jobs.escalateApproval(job, body) : Promise.reject(new Error("approval escalation unavailable"))
     );
     try {
       await l.start();
@@ -44991,6 +45195,7 @@ ${a.prompt}
         cwd: workdir,
         sessionId: a.session_id ?? null,
         timeoutSec: a.timeout_sec ?? (background ? MAX_JOB_TIMEOUT_SEC : DEFAULT_DELEGATE_TIMEOUT_SEC),
+        maxDelegateDepth: cfg.maxDelegateDepth,
         model: a.model ?? defaultModel,
         effort: a.effort ?? cfg.effort[target] ?? null,
         // What it really runs (a CLI default or an alias resolved), for the dashboard.
@@ -44998,7 +45203,13 @@ ${a.prompt}
         log: dlog,
         signal,
         onProgress: feed.report,
-        extraEnv: { ...link2?.childEnv(), ...slots ? { [ENV.home]: rc.home, [SLOT_OWNER_ENV]: slotOwner.id, [SLOT_PID_ENV]: String(slotOwner.pid) } : {} },
+        extraEnv: {
+          ...link2?.childEnv(),
+          [ENV.home]: rc.home,
+          [ENV.maxDelegateDepth]: String(cfg.maxDelegateDepth),
+          ...job ? { [PARENT_JOB_ENV]: job.name, [ROOT_SESSION_ENV]: job.rootSession ?? job.supervisor ?? me, [ROOT_NAME_ENV]: job.rootName ?? me } : {},
+          ...slots ? { [SLOT_OWNER_ENV]: slotOwner.id, [SLOT_PID_ENV]: String(slotOwner.pid) } : {}
+        },
         writableRoots,
         onSession: (id) => {
           feed.meta({ session: id });
@@ -45010,7 +45221,7 @@ ${a.prompt}
         },
         // Someone answers approve's questions: the user ("ask" relay or a dialog) or, for a background
         // subagent, the parent agent. Else targets keep their own behavior (Claude and opencode).
-        canApprove: Boolean(wiring) || Boolean(job && !job.foreground && rc.jobs) || Boolean(rc.askUser && rc.userCanAnswer?.()),
+        canApprove: Boolean(wiring) || Boolean(job && (!job.foreground || job.parentJob) && rc.jobs) || Boolean(rc.askUser && rc.userCanAnswer?.()),
         live: job ? {
           from: me,
           onSteering: (s) => {
@@ -45138,10 +45349,10 @@ ${notes.join("\n\n")}` : res.text };
 // src/mcp/job-host.ts
 import { spawn as spawn6 } from "node:child_process";
 import { mkdirSync as mkdirSync19, readdirSync as readdirSync13, statSync as statSync8 } from "node:fs";
-import { join as join37 } from "node:path";
+import { join as join38 } from "node:path";
 
 // src/mcp/remote-job-host.ts
-import { join as join36 } from "node:path";
+import { join as join37 } from "node:path";
 var REMOTE_STATE_GRACE_MS = 9e4;
 var RemoteJobHost = class {
   constructor(node2, home, log) {
@@ -45155,7 +45366,7 @@ var RemoteJobHost = class {
   busy = /* @__PURE__ */ new Set();
   cache = /* @__PURE__ */ new Map();
   path(job) {
-    return join36(this.home, "remote-job-states", `${job.id}.json`);
+    return join37(this.home, "remote-job-states", `${job.id}.json`);
   }
   read(job) {
     return this.cache.get(job.id) ?? readJsonStore(this.path(job));
@@ -45213,10 +45424,10 @@ var START_GRACE_MS = 3e4;
 var KEEP_FILES_MS = 7 * 24 * 60 * 60 * 1e3;
 var DETACH_LAUNCHER = "require('node:child_process').spawn(process.execPath,process.argv.slice(1),{detached:true,stdio:'ignore',windowsHide:true}).unref()";
 function runnerStatePath(home, id) {
-  return join37(home, RUNNERS_DIR_NAME, `${id}.json`);
+  return join38(home, RUNNERS_DIR_NAME, `${id}.json`);
 }
 function specPath(home, id) {
-  return join37(home, RUNNERS_DIR_NAME, `${id}.spec.json`);
+  return join38(home, RUNNERS_DIR_NAME, `${id}.spec.json`);
 }
 function readRunnerState(home, id) {
   try {
@@ -45234,11 +45445,11 @@ var JobRunners = class {
     this.log = log;
     this.remote = new RemoteJobHost(node2, home, log);
     try {
-      const dir = join37(home, RUNNERS_DIR_NAME);
+      const dir = join38(home, RUNNERS_DIR_NAME);
       const keepMs = retentionLimit("AGENT_BRIDGE_RUNNER_KEEP_MS", KEEP_FILES_MS);
       if (!keepMs) return;
       for (const f of readdirSync13(dir)) {
-        const path = join37(dir, f);
+        const path = join38(dir, f);
         if (!f.endsWith(".json") || f.endsWith(".spec.json") || Date.now() - statSync8(path).mtimeMs <= keepMs) continue;
         const id = f.replace(/\.json$/, "");
         const state = readRunnerState(home, id);
@@ -45260,7 +45471,7 @@ var JobRunners = class {
   start(job, spec) {
     if (spec.args.host) return this.remote.start(job, spec.args.host, spec.target, spec.args);
     try {
-      mkdirSync19(join37(this.home, RUNNERS_DIR_NAME), { recursive: true });
+      mkdirSync19(join38(this.home, RUNNERS_DIR_NAME), { recursive: true });
       const statePath = runnerStatePath(this.home, job.id);
       const file2 = specPath(this.home, job.id);
       assertWritableStore(readJsonStore(statePath, this.log));
@@ -45282,6 +45493,10 @@ var JobRunners = class {
           worktree: job.worktree,
           owner: job.owner,
           supervisor: job.supervisor,
+          metadataVersion: job.metadataVersion,
+          parentJob: job.parentJob,
+          rootSession: job.rootSession,
+          rootName: job.rootName,
           allowedServers: [...job.allowedServers ?? []]
         }
       };
@@ -45347,7 +45562,7 @@ var RemoteJobs = class {
     this.control = control;
     const cli = bundledCli();
     this.runners = cli ? new JobRunners({}, home, cli, log) : null;
-    const stored = readJsonStore(join38(home, REMOTE_JOBS_FILE));
+    const stored = readJsonStore(join39(home, REMOTE_JOBS_FILE));
     if (isRecord(stored) && Array.isArray(stored.jobs)) for (const r of stored.jobs) {
       if (typeof r.pair !== "string" || typeof r.peer !== "string" || !r.job?.id || !r.args) continue;
       this.records.set(r.job.id, { ...r, job: { ...r.job, controller: new AbortController(), queue: [] } });
@@ -45471,7 +45686,7 @@ var RemoteJobs = class {
         args = resumeArgs(args, record2.job.name, args.prompt, state.sessionId, cwd, worktree, { ...args });
       } else if (args.worktree) {
         const repo = allowedRemoteDirectory(await git(["rev-parse", "--show-toplevel"], cwd, this.log), policy.allowRoots);
-        if (existsSync17(join38(repo, "worktrees"))) allowedRemoteDirectory(join38(repo, "worktrees"), policy.allowRoots);
+        if (existsSync17(join39(repo, "worktrees"))) allowedRemoteDirectory(join39(repo, "worktrees"), policy.allowRoots);
         worktree = await createWorktree({ cwd, home: repo, jobId: request2.job, log: this.log });
         cwd = allowedRemoteDirectory(worktree.cwd, policy.allowRoots);
         args = { ...args, cwd, worktree: false, _worktree: worktree };
@@ -45533,10 +45748,10 @@ var RemoteJobs = class {
     return { state, alive: alive2, approvals: listPendingApprovals(this.home).filter((a) => a.job === record2.job.name && a.owner === record2.owner) };
   }
   persist() {
-    writeJsonStore(join38(this.home, REMOTE_JOBS_FILE), { jobs: [...this.records.values()].map((r) => {
+    writeJsonStore(join39(this.home, REMOTE_JOBS_FILE), { jobs: [...this.records.values()].map((r) => {
       const { controller, queue, ...job } = r.job;
       return { ...r, job };
-    }) }, readJsonStore(join38(this.home, REMOTE_JOBS_FILE)));
+    }) }, readJsonStore(join39(this.home, REMOTE_JOBS_FILE)));
   }
   async mirror(host, peer, request2, snapshot, supervisor, localJobName) {
     const owner = peer.name;
@@ -46693,7 +46908,7 @@ var BridgeNode = class extends EventEmitter2 {
       this.log.error("cannot open message store", { err, db: this.opts.dbPath });
       throw err;
     }
-    const broker = new Broker(this.opts.pipePath, store, this.log.child("broker"), this.opts.token, Date.now, join39(dirname14(this.opts.dbPath), JOBS_FILE), this.opts.network);
+    const broker = new Broker(this.opts.pipePath, store, this.log.child("broker"), this.opts.token, Date.now, join40(dirname14(this.opts.dbPath), JOBS_FILE), this.opts.network);
     try {
       await broker.listen();
       this.broker = broker;
@@ -47158,7 +47373,7 @@ var CodexWaker = class {
 // src/mcp/message-wait.ts
 import { randomUUID as randomUUID19 } from "node:crypto";
 import { mkdirSync as mkdirSync20, readdirSync as readdirSync14, readFileSync as readFileSync20, rmSync as rmSync6 } from "node:fs";
-import { join as join40 } from "node:path";
+import { join as join41 } from "node:path";
 var SINGLE_WAIT_SEC = DEFAULT_WAIT_SEC;
 var RECEIPT_POLL_MS = 1e3;
 function singleWaitTimeoutMs(requestedSec) {
@@ -47178,10 +47393,10 @@ var waitSchema = external_exports.object({
 var MessageWaitStore = class {
   dir;
   constructor(home) {
-    this.dir = join40(home, "message-waits");
+    this.dir = join41(home, "message-waits");
   }
   path(id) {
-    return join40(this.dir, `${external_exports.uuid().parse(id)}.json`);
+    return join41(this.dir, `${external_exports.uuid().parse(id)}.json`);
   }
   owns(node2, record2) {
     return record2.sessionId && node2.currentSessionId ? record2.sessionId === node2.currentSessionId : record2.owner === node2.name;
@@ -47200,7 +47415,7 @@ var MessageWaitStore = class {
     mkdirSync20(this.dir, { recursive: true, mode: 448 });
     return readdirSync14(this.dir).filter((f) => f.endsWith(".json")).flatMap((f) => {
       try {
-        const record2 = waitSchema.parse(JSON.parse(readFileSync20(join40(this.dir, f), "utf8")));
+        const record2 = waitSchema.parse(JSON.parse(readFileSync20(join41(this.dir, f), "utf8")));
         return this.owns(node2, record2) ? [record2] : [];
       } catch {
         return [];
@@ -47259,7 +47474,7 @@ async function waitForReadReceipt(node2, id, timeoutMs, signal) {
 import { randomBytes as randomBytes7 } from "node:crypto";
 import { mkdirSync as mkdirSync21, rmSync as rmSync7, writeFileSync as writeFileSync10 } from "node:fs";
 import { createServer as createServer5 } from "node:http";
-import { join as join41 } from "node:path";
+import { join as join42 } from "node:path";
 var SESSIONS_DIR = "sessions";
 var WAKE_HEADER = "[agent-bridge] Something you were waiting for arrived:";
 var HOST2 = "127.0.0.1";
@@ -47269,7 +47484,7 @@ var WAKE_CONFIRM_MS = 2e4;
 var STANDBY_GRACE_MS = 3e3;
 var MOD_TICK_MS = 2e3;
 function sessionFile(home, sessionId) {
-  return join41(home, SESSIONS_DIR, `${sessionId.replace(/[^\w-]/g, "_")}.json`);
+  return join42(home, SESSIONS_DIR, `${sessionId.replace(/[^\w-]/g, "_")}.json`);
 }
 function shouldWakeClaudeMessage(node2, cfg, m) {
   if (m.hop >= cfg.maxHops || m.conversationId.endsWith(SIBLING_NOTE_SUFFIX)) return false;
@@ -47495,7 +47710,7 @@ var RewakeEndpoint = class {
   register(sessionId) {
     if (!this.server || this.retired || this.registered === sessionId) return;
     const file2 = sessionFile(this.home, sessionId);
-    mkdirSync21(join41(this.home, SESSIONS_DIR), { recursive: true });
+    mkdirSync21(join42(this.home, SESSIONS_DIR), { recursive: true });
     const reg = { port: this.port, secret: this.secret, pid: process.pid };
     writeFileSync10(file2, JSON.stringify(reg), { mode: 384 });
     if (this.registered) rmSync7(sessionFile(this.home, this.registered), { force: true });
@@ -47543,9 +47758,14 @@ async function subagentHook(ctx, input2) {
     ctx.log.debug("parent inbox unavailable", { err: err.message });
     return [];
   });
-  if (msgs.length === 0) return {};
+  if (input2.event === "Stop" && !msgs.length && ctx.jobs?.runningCount()) await ctx.childInbox?.wait(STOP_WAIT_CAP_MS, input2.signal);
+  const children = ctx.childInbox?.take() ?? [];
+  if (msgs.length === 0 && children.length === 0) {
+    if (input2.event === "Stop" && ctx.jobs?.runningCount()) return { decision: "block", reason: "Your nested subagents are still running. Wait for their results or cancel them before ending your task." };
+    return {};
+  }
   ctx.log.info("delivering parent messages to the subagent", { count: msgs.length, event: input2.event });
-  const text2 = formatParentMessages(parent2.name, msgs);
+  const text2 = [msgs.length ? formatParentMessages(parent2.name, msgs) : "", children.length ? formatMessages(children) : ""].filter(Boolean).join("\n\n");
   if (input2.event === "Stop") return { decision: "block", reason: text2 };
   if (input2.event === "PostToolUse") return { decision: "block", reason: text2, hookSpecificOutput: { hookEventName: input2.event, additionalContext: text2 } };
   return context(input2.event, text2);
@@ -47674,12 +47894,58 @@ async function askUserViaElicitation(server, req, log) {
   }
 }
 
+// src/mcp/local-coordinator.ts
+import { EventEmitter as EventEmitter3 } from "node:events";
+var LocalCoordinator = class extends EventEmitter3 {
+  constructor(name, rootSession) {
+    super();
+    this.name = name;
+    this.id = `nested:${name}`;
+    this.currentSessionId = rootSession;
+  }
+  name;
+  id;
+  currentSessionId;
+  messages = [];
+  deliverLocal(message) {
+    this.messages.push(message);
+    this.emit("message", message);
+  }
+  take() {
+    return this.messages.splice(0);
+  }
+  unread() {
+    return [...this.messages];
+  }
+  markRead(ids) {
+    const read2 = new Set(ids);
+    this.messages = this.messages.filter((m) => !read2.has(m.id));
+  }
+  async wait(timeoutMs, signal, match = () => true) {
+    if (this.messages.some(match) || signal?.aborted) return;
+    await new Promise((resolve12) => {
+      const arrived = (message) => {
+        if (match(message)) done();
+      };
+      const done = () => {
+        clearTimeout(timer);
+        this.off("message", arrived);
+        signal?.removeEventListener("abort", done);
+        resolve12();
+      };
+      const timer = setTimeout(done, timeoutMs);
+      this.on("message", arrived);
+      signal?.addEventListener("abort", done, { once: true });
+    });
+  }
+};
+
 // src/core/auto-wake-pref.ts
-import { join as join42 } from "node:path";
+import { join as join43 } from "node:path";
 var FILE = "auto-wake.json";
 function read(home) {
   try {
-    return readJsonStore(join42(home, FILE)) ?? {};
+    return readJsonStore(join43(home, FILE)) ?? {};
   } catch {
     return {};
   }
@@ -47691,7 +47957,7 @@ function savedAutoWake(home, name) {
 }
 function saveAutoWake(home, name, enabled) {
   try {
-    const file2 = join42(home, FILE);
+    const file2 = join43(home, FILE);
     const previous = readJsonStore(file2);
     const data = isRecord(previous) ? previous : {};
     const peers = isRecord(data.peers) ? data.peers : data;
@@ -47704,14 +47970,14 @@ function saveAutoWake(home, name, enabled) {
 
 // src/core/models.ts
 import { mkdirSync as mkdirSync22, readFileSync as readFileSync21, writeFileSync as writeFileSync11 } from "node:fs";
-import { join as join43 } from "node:path";
+import { join as join44 } from "node:path";
 var MAX_LISTED = 80;
 var MODEL_CACHE_MS = 10 * 60 * 1e3;
 var SHORT_MODEL_LIST = 6;
 var modelReads = /* @__PURE__ */ new Map();
 var modelBin = (agent, cfg) => cfg[`${agent}Bin`];
 var modelDefault = (agent, cfg) => cfg[`${agent}Model`];
-var modelCachePath = (home, agent) => join43(home, `models-${agent}.json`);
+var modelCachePath = (home, agent) => join44(home, `models-${agent}.json`);
 function cachedModels(home, agent, cfg) {
   try {
     const cache3 = JSON.parse(readFileSync21(modelCachePath(home, agent), "utf8"));
@@ -47798,14 +48064,14 @@ async function describeModels(agent, cfg, cwd, log, query = "") {
 import { randomBytes as randomBytes9 } from "node:crypto";
 import { chmodSync as chmodSync3, readFileSync as readFileSync24, writeFileSync as writeFileSync12 } from "node:fs";
 import { request } from "node:http";
-import { join as join48 } from "node:path";
+import { join as join49 } from "node:path";
 
 // src/cli/ui.ts
 import { randomBytes as randomBytes8 } from "node:crypto";
 import { existsSync as existsSync20, readFileSync as readFileSync23, statSync as statSync10 } from "node:fs";
 import { createServer as createServer6 } from "node:http";
 import { networkInterfaces } from "node:os";
-import { join as join47 } from "node:path";
+import { join as join48 } from "node:path";
 
 // src/cli/logo.ts
 var LOGO_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="agent-bridge"><defs><linearGradient id="ab-bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#1e1b4b"/><stop offset="1" stop-color="#4338ca"/></linearGradient><linearGradient id="ab-l" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffb088"/><stop offset="1" stop-color="#e2603b"/></linearGradient><linearGradient id="ab-r" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#7cf0c0"/><stop offset="1" stop-color="#0e9f6e"/></linearGradient><radialGradient id="ab-glow"><stop offset="0" stop-color="#fff" stop-opacity=".55"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></radialGradient></defs><rect width="64" height="64" rx="16" fill="url(#ab-bg)"/><path d="M9 52V32A20 20 0 0 1 27 12.1v10.2A10 10 0 0 0 19 32v20z" fill="url(#ab-l)"/><path d="M55 52V32A20 20 0 0 0 37 12.1v10.2A10 10 0 0 1 45 32v20z" fill="url(#ab-r)"/><circle cx="32" cy="17" r="11" fill="url(#ab-glow)"/><path d="M32 9.5c.9 4.6 2.9 6.6 7.5 7.5-4.6.9-6.6 2.9-7.5 7.5-.9-4.6-2.9-6.6-7.5-7.5 4.6-.9 6.6-2.9 7.5-7.5z" fill="#fff"/></svg>';
@@ -50199,16 +50465,16 @@ function parseNetworkAddress(address) {
 
 // src/core/doctor.ts
 import { existsSync as existsSync18, lstatSync as lstatSync5, mkdirSync as mkdirSync23, readFileSync as readFileSync22, readdirSync as readdirSync15, renameSync as renameSync8 } from "node:fs";
-import { basename as basename9, dirname as dirname15, join as join44, relative as relative7 } from "node:path";
+import { basename as basename9, dirname as dirname15, join as join45, relative as relative7 } from "node:path";
 import { randomUUID as randomUUID20 } from "node:crypto";
-import { DatabaseSync as DatabaseSync11 } from "node:sqlite";
+import { DatabaseSync as DatabaseSync12 } from "node:sqlite";
 function doctor(home, now = Date.now()) {
   const report = { checkedAt: now, ok: true, schema: [], findings: [], sizes: [], totalBytes: 0, backups: listBackups(home) };
   const finding = (severity, code, path, detail, fixable = false) => report.findings.push({ severity, code, path, detail, fixable });
   const walk = (dir) => {
     if (!existsSync18(dir)) return;
     for (const file2 of readdirSync15(dir)) {
-      const path = join44(dir, file2);
+      const path = join45(dir, file2);
       const st = lstatSync5(path);
       if (st.isSymbolicLink()) {
         finding("warning", "symlink", path, "Skipped symbolic link");
@@ -50225,12 +50491,12 @@ function doctor(home, now = Date.now()) {
   };
   walk(home);
   for (const [name, expected] of [[DB_FILE_NAME, SQLITE_STORE_VERSION], [ARCHIVE_DB_NAME, ARCHIVE_STORE_VERSION]]) {
-    const path = join44(home, name);
+    const path = join45(home, name);
     let actual = null;
     if (existsSync18(path)) {
       let db = null;
       try {
-        db = new DatabaseSync11(path, { readOnly: true });
+        db = new DatabaseSync12(path, { readOnly: true });
         actual = Number(db.prepare("PRAGMA user_version").get().user_version);
         for (const detail of checkDatabase(db)) finding("error", "sqlite-integrity", path, detail);
         if (actual !== expected) finding(actual > expected ? "error" : "warning", "schema-version", path, `Schema ${actual}; code expects ${expected}`);
@@ -50268,15 +50534,15 @@ function doctor(home, now = Date.now()) {
       if (version2 === void 0 || version2 === 0) finding("warning", "json-legacy", path, "Legacy version; next versioned write will preserve a migration backup");
       else if (!Number.isInteger(version2) || version2 < 0 || version2 > JSON_STORE_VERSION) finding("error", "json-version", path, `Unsupported JSON version ${String(version2)}; code expects ${JSON_STORE_VERSION}`);
       else if (version2 < JSON_STORE_VERSION) finding("warning", "json-legacy", path, `Earlier JSON version ${String(version2)}; code expects ${JSON_STORE_VERSION}`);
-      if (dirname15(path) === join44(home, "runs") && path.endsWith(".json") && !existsSync18(path.replace(/\.json$/, ".log"))) finding("warning", "orphan-metadata", path, "Run metadata has no matching active log; preserved for review");
-      if (dirname15(path) === join44(home, "jobs") && path.endsWith(".spec.json") && !existsSync18(path.replace(/\.spec\.json$/, ".json"))) finding("warning", "orphan-runner-spec", path, "Runner specification has no state; it may still be starting");
+      if (dirname15(path) === join45(home, "runs") && path.endsWith(".json") && !existsSync18(path.replace(/\.json$/, ".log"))) finding("warning", "orphan-metadata", path, "Run metadata has no matching active log; preserved for review");
+      if (dirname15(path) === join45(home, "jobs") && path.endsWith(".spec.json") && !existsSync18(path.replace(/\.spec\.json$/, ".json"))) finding("warning", "orphan-runner-spec", path, "Runner specification has no state; it may still be starting");
     } catch (err) {
       finding("error", "json-parse", path, String(err));
     }
   }
   const logs = runLogFiles(home);
   for (const path of logs) {
-    const meta3 = join44(dirname15(path), runFileName(path).replace(/\.log$/, ".json"));
+    const meta3 = join45(dirname15(path), runFileName(path).replace(/\.log$/, ".json"));
     if (!existsSync18(meta3) && !readdirSync15(dirname15(path)).some((f) => f.startsWith(basename9(meta3) + "-"))) finding("warning", "orphan-log", path, "Run log has no metadata; log remains readable");
   }
   report.ok = !report.findings.some((f) => f.severity === "error");
@@ -50285,17 +50551,17 @@ function doctor(home, now = Date.now()) {
 
 // src/core/message-history.ts
 import { existsSync as existsSync19 } from "node:fs";
-import { dirname as dirname16, join as join45 } from "node:path";
-import { DatabaseSync as DatabaseSync12 } from "node:sqlite";
+import { dirname as dirname16, join as join46 } from "node:path";
+import { DatabaseSync as DatabaseSync13 } from "node:sqlite";
 var DEFAULT_HISTORY_LIMIT = 100;
 var MAX_HISTORY_LIMIT = 1e3;
 function searchMessages(file2, opts = {}) {
   const limit = Math.min(MAX_HISTORY_LIMIT, Math.max(1, Math.floor(opts.limit ?? DEFAULT_HISTORY_LIMIT)));
   const query = `%${(opts.query ?? "").replace(/[\\%_]/g, "\\$&")}%`;
   const rows = [];
-  for (const path of [file2, join45(dirname16(file2), ARCHIVE_DB_NAME)]) {
+  for (const path of [file2, join46(dirname16(file2), ARCHIVE_DB_NAME)]) {
     if (!existsSync19(path)) continue;
-    const db = new DatabaseSync12(path, { readOnly: true });
+    const db = new DatabaseSync13(path, { readOnly: true });
     try {
       for (const table of ["messages", "archived_messages"]) {
         if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table)) continue;
@@ -50319,7 +50585,7 @@ function searchMessages(file2, opts = {}) {
 // src/core/history-answer.ts
 import { mkdtempSync as mkdtempSync2, rmSync as rmSync8 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join as join46 } from "node:path";
+import { join as join47 } from "node:path";
 var HISTORY_ANSWER_TIMEOUT_MS = 6e4;
 var HISTORY_ANSWER_MAX_HITS = 8;
 var HISTORY_ANSWER_MAX_CHARS = 4e3;
@@ -50371,7 +50637,7 @@ async function answerHistory(query, result, cfg, home, log, deps = {}) {
   }
 }
 async function runAnswer(agent, model, prompt, cfg, log) {
-  const cwd = mkdtempSync2(join46(tmpdir(), "agent-bridge-answer-"));
+  const cwd = mkdtempSync2(join47(tmpdir(), "agent-bridge-answer-"));
   const env = childEnv();
   try {
     let args;
@@ -50412,7 +50678,7 @@ var ALLOWED_HOSTS = /* @__PURE__ */ new Set([UI_HOST, "localhost"]);
 var RUN_NAME = /^[\w.-]+\.log$/;
 async function finishedRunOutcomes(home, log) {
   const runs = listRuns(home);
-  const jobs = readStore(join47(home, JOBS_FILE), log, true);
+  const jobs = readStore(join48(home, JOBS_FILE), log, true);
   const out = {};
   for (const run of runs) {
     if (!run.job || run.status !== "done" && run.status !== "failed") continue;
@@ -50465,7 +50731,7 @@ function summarizeRun(file2, text2, mtimeMs, now, meta3 = {}) {
   };
 }
 function listRuns(home, now = Date.now()) {
-  const dir = join47(home, RUNS_DIR_NAME);
+  const dir = join48(home, RUNS_DIR_NAME);
   if (!existsSync20(dir)) return [];
   return runLogFiles(home).filter((f) => RUN_NAME.test(runFileName(f))).map((f) => ({ f, st: statSync10(f) })).sort((a, b) => b.st.mtimeMs - a.st.mtimeMs).slice(0, MAX_RUNS).map(({ f, st }) => summarizeRun(runFileName(f), readFileSync23(f, "utf8"), st.mtimeMs, now, readMeta(archivedRunMeta(f))));
 }
@@ -50480,12 +50746,12 @@ function readStoredJobs(home) {
   const out = /* @__PURE__ */ new Map();
   let stored;
   try {
-    stored = JSON.parse(readFileSync23(join47(home, JOBS_FILE), "utf8"));
+    stored = JSON.parse(readFileSync23(join48(home, JOBS_FILE), "utf8"));
   } catch {
     stored = [];
   }
   const active = Array.isArray(stored) ? stored : Array.isArray(stored?.jobs) ? stored.jobs : [];
-  const list = [...readArchivedJobs(join47(home, JOBS_FILE)), ...active];
+  const list = [...readArchivedJobs(join48(home, JOBS_FILE)), ...active];
   for (const j of list) {
     if (!j || typeof j !== "object") continue;
     const { name, owner, args, remote } = j;
@@ -50504,7 +50770,7 @@ function jobOwner(home, job, original) {
 }
 function classifyPeers(peers, runs, home) {
   const norm = (p) => p.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
-  const worktrees = `${norm(join47(home, "worktrees"))}/`;
+  const worktrees = `${norm(join48(home, "worktrees"))}/`;
   return peers.map((p) => {
     const cwd = norm(p.cwd ?? "");
     const subagent = cwd.startsWith(worktrees);
@@ -50832,9 +51098,9 @@ async function startUi(opts) {
       const run = typeof body.run === "string" ? body.run : "";
       const command = jobCommand(body);
       if (!RUN_NAME.test(`${run}.log`) || !command) return send(res, 400, { error: "a valid run and request are required" });
-      const file2 = join47(opts.home, RUNS_DIR_NAME, `${run}.log`);
+      const file2 = join48(opts.home, RUNS_DIR_NAME, `${run}.log`);
       if (!existsSync20(file2)) return send(res, 404, { error: "no such run" });
-      const meta3 = readMeta(join47(opts.home, RUNS_DIR_NAME, `${run}.json`));
+      const meta3 = readMeta(join48(opts.home, RUNS_DIR_NAME, `${run}.json`));
       if (!meta3.by || !meta3.job) return send(res, 409, { error: "This run has no owning session or job recorded." });
       try {
         const result = await controlDashboardJob(await getSender(), jobOwner(opts.home, meta3.job, meta3.by), meta3.job, command);
@@ -50873,7 +51139,7 @@ var SECRET_BYTES5 = 24;
 var PROBE_TIMEOUT_MS = 1500;
 var OWNER_ONLY2 = 384;
 function dashboardFile(home) {
-  return join48(home, DASHBOARD_FILE);
+  return join49(home, DASHBOARD_FILE);
 }
 function readDashboardInfo(home) {
   try {
@@ -51036,7 +51302,7 @@ ${err.stderrTail}` : "";
       case "timeout":
         return t("err.delegateTimeout", { detail: err.message }) + tail;
       case "depth":
-        return t("err.delegateDepth");
+        return err.message;
       default:
         return t("err.delegateFailed", { detail: err.message }) + tail;
     }
@@ -51089,8 +51355,19 @@ async function startServer(argv = process.argv.slice(2)) {
   };
   const launchKnown = new Promise((r) => launchInspected = r);
   const ctx = { agent, cfg, node: node2, log, home, cwd: () => node2?.cwd ?? cwd, channelActive: () => channel, parent: delegated ? parentFromEnv() : null, launchKnown };
+  if (!node2 && ctx.parent && process.env[PARENT_JOB_ENV] && process.env[ROOT_SESSION_ENV]) {
+    const parentJob = process.env[PARENT_JOB_ENV];
+    const rootSession = process.env[ROOT_SESSION_ENV];
+    const coordinator = ctx.childInbox = new LocalCoordinator(parentJob, rootSession);
+    ctx.jobs = new JobManager(coordinator, log.child("jobs"), join50(home, JOBS_FILE), cfg.maxJobs, {
+      parentJob,
+      rootSession,
+      rootName: process.env[ROOT_NAME_ENV] || ctx.parent.name,
+      escalate: (body) => ctx.parent.escalate ? ctx.parent.escalate(body) : ctx.parent.send(body)
+    });
+  }
   if (node2) {
-    ctx.jobs = new JobManager(node2, log.child("jobs"), join49(home, JOBS_FILE), cfg.maxJobs);
+    ctx.jobs = new JobManager(node2, log.child("jobs"), join50(home, JOBS_FILE), cfg.maxJobs);
     node2.on("replaced", () => ctx.jobs?.setDormant(true));
     node2.on("reclaimed", () => ctx.jobs?.setDormant(false));
     const cli = process.env[ENV.jobRunner] === "0" ? null : bundledCli();
@@ -51140,8 +51417,10 @@ async function startServer(argv = process.argv.slice(2)) {
       instructions: instructionsFor(agent, targets)
     }
   );
-  ctx.askUser = (req) => askUserViaElicitation(mcp.server, req, log.child("permissions"));
-  ctx.userCanAnswer = () => Boolean(mcp.server.getClientCapabilities()?.elicitation);
+  if (!delegated) {
+    ctx.askUser = (req) => askUserViaElicitation(mcp.server, req, log.child("permissions"));
+    ctx.userCanAnswer = () => Boolean(mcp.server.getClientCapabilities()?.elicitation);
+  }
   registerTools(mcp, ctx, targets);
   if (node2 && ctx.jobs) attachDashboardJobControl(node2, ctx.jobs, log);
   const pushChannel = async (m) => {
@@ -51258,21 +51537,21 @@ async function startServer(argv = process.argv.slice(2)) {
       adopt();
       setTimeout(adopt, STAND_IN_RECHECK_MS).unref();
     });
-    const join50 = () => node2.start().catch((err) => log.error("could not join the bridge", { err: err.message }));
+    const join51 = () => node2.start().catch((err) => log.error("could not join the bridge", { err: err.message }));
     if (ctx.headless) {
       log.info("headless claude -p run: not joining the bridge unless a bridge tool is used");
     } else if (cwdKnown) {
-      void join50();
+      void join51();
     } else {
       log.info("project directory unknown yet; deferring bridge join", { graceMs: CWD_DISCOVERY_GRACE_MS });
-      setTimeout(() => void join50(), CWD_DISCOVERY_GRACE_MS).unref();
+      setTimeout(() => void join51(), CWD_DISCOVERY_GRACE_MS).unref();
     }
   }
 }
 function registerTools(mcp, ctx, targets) {
   const { node: node2, log, cfg } = ctx;
   const waits = new MessageWaitStore(ctx.home);
-  const register = ((name, ...rest) => node2 || SUBAGENT_TOOLS.has(name) ? mcp.registerTool(name, ...rest) : void 0);
+  const register = ((name, ...rest) => node2 || SUBAGENT_TOOLS.has(name) || ctx.jobs && (name === "message_subagent" || name === "cancel_subagent" || name === "inbox" || name === "wait_for_message" || currentDelegateDepth() < cfg.maxDelegateDepth && (name.startsWith("spawn_") || name.startsWith("ask_") || name === "list_models")) ? mcp.registerTool(name, ...rest) : void 0);
   const requireNode = () => {
     if (!node2) throw new BridgeError("bad_request", t("err.delegatedSession"));
     discardFinishedNotes(ctx);
@@ -51359,6 +51638,7 @@ function registerTools(mcp, ctx, targets) {
           siblings.length ? "Sibling jobs:" : "No sibling jobs are available right now.",
           ...siblings.map((s) => `- ${s.name}${s.title ? ` "${s.title}"` : ""} (${s.agent}, ${s.status})`),
           "Use send(to=<sibling job name>, message=...) to coordinate directly. The supervisor receives a quiet copy.",
+          ...ctx.jobs?.list().map((j) => `Your child: ${j.name}${j.args?.title ? ` "${j.args.title}"` : ""} (${j.agent}, ${j.status})`) ?? [],
           ...policy ? [
             `Sibling threads allow ${policy.maxHops} messages, including the first message. Incoming messages show replies remaining before you compose.`,
             `Explicit send_to grants: ${policy.sendTo.length ? policy.sendTo.join(", ") : "none"}. Only these exact external session names are allowed.`
@@ -51415,6 +51695,10 @@ function registerTools(mcp, ctx, targets) {
     },
     guarded("send", async (a) => {
       if (!node2 && ctx.parent) {
+        if (ctx.jobs?.find(a.to)) {
+          const result = ctx.jobs.followUp(a.to, a.message);
+          return text(`Child message ${result.outcome}.`);
+        }
         if (a.to !== ctx.parent.name && a.to !== "parent") {
           const result = await ctx.parent.siblings.send(a.to, a.message, a.reply_to);
           const m = result.messages[0];
@@ -51500,6 +51784,11 @@ function registerTools(mcp, ctx, targets) {
       }
     },
     guarded("inbox", async (a) => {
+      if (ctx.childInbox) {
+        const msgs2 = ctx.childInbox.unread().slice(0, a.limit ?? HOOK_MAX_MESSAGES);
+        if (a.mark_read !== false) ctx.childInbox.markRead(msgs2.map((m) => m.id));
+        return text(msgs2.length ? formatMessages(msgs2) : t("inbox.empty"));
+      }
       const n = requireNode();
       const msgs = n.unread().slice(0, a.limit ?? HOOK_MAX_MESSAGES);
       if (msgs.length === 0) return text(t("inbox.empty"));
@@ -51522,6 +51811,14 @@ function registerTools(mcp, ctx, targets) {
       }
     },
     guarded("wait_for_message", async (a, extra) => {
+      if (ctx.childInbox) {
+        if (a.read_receipt_of || a.resume_id) return text("Nested waits support child-message filters only.", true);
+        const matches = (m) => (!a.from || m.from.name === a.from || m.from.agent === a.from) && (!a.reply_to || m.replyTo === a.reply_to) && (!a.conversation_id || m.conversationId === a.conversation_id);
+        if (!ctx.childInbox.unread().some(matches)) await ctx.childInbox.wait(singleWaitTimeoutMs(a.timeout_sec ?? DEFAULT_WAIT_SEC), extra.signal, matches);
+        const msgs = ctx.childInbox.unread().filter(matches).slice(0, HOOK_MAX_MESSAGES);
+        ctx.childInbox.markRead(msgs.map((m) => m.id));
+        return text(msgs.length ? formatMessages(msgs) : t("inbox.empty"));
+      }
       const n = requireNode();
       if (a.read_receipt_of && (a.from || a.reply_to || a.conversation_id)) return text("Use read_receipt_of alone; reply filters are for incoming messages.", true);
       const record2 = a.resume_id ? waits.get(n, a.resume_id) : waits.save(n, {
@@ -51591,7 +51888,7 @@ function registerTools(mcp, ctx, targets) {
     cfg,
     home: ctx.home,
     log,
-    me: () => node2?.name ?? ctx.agent,
+    me: () => node2?.name ?? ctx.childInbox?.name ?? ctx.agent,
     cwd: ctx.cwd,
     askUser: ctx.askUser,
     userCanAnswer: ctx.userCanAnswer,
@@ -51654,6 +51951,7 @@ function registerTools(mcp, ctx, targets) {
           remoteSpawnArgsSchema.parse(args);
           if (!ctx.jobs) throw new BridgeError("bad_request", "Remote asks require a supervisor session.");
         }
+        if (ctx.jobs && !ctx.jobs.canStart()) return text(t("jobs.limit", { max: ctx.jobs.limit }), true);
         const tracked = ctx.jobs?.track(target, a.model ?? defaultModel, a.prompt, resumeFor(a), keep(a));
         if (a.host && tracked) {
           tracked.job.remote = { host: a.host, name: `${target}-job-${tracked.job.id}` };
@@ -51800,6 +52098,14 @@ ${r.lines.map((l) => `  ${l}`).join("\n")}`).join("\n\n"));
       const jobs = ctx.jobs;
       if (!jobs) throw new BridgeError("bad_request", t("err.delegatedSession"));
       const existing = jobs.find(a.job);
+      if (node2 && a.message) {
+        const approval = listPendingApprovals(ctx.home).find((entry) => entry.job === a.job && entry.parentJob && (entry.owner === node2.name || entry.rootSession === jobs.rootIdentity()));
+        if (approval && /^(allow|deny)\b/i.test(a.message.trim())) {
+          const decision = /^allow\b/i.test(a.message.trim()) ? "allow" : "deny";
+          const result = await answerPendingApproval(ctx.home, approval.id, { decision, reason: a.message.trim().replace(/^(allow|deny)\b\s*:?\s*/i, "") });
+          return text(`Nested approval ${result}.`, result !== "answered");
+        }
+      }
       if (existing) {
         for (const [key2, agent] of Object.entries(PERMISSION_KEY_AGENT)) {
           if (a[key2] !== void 0 && existing.agent !== agent) throw new BridgeError("bad_request", `${key2} applies only to ${agent} jobs.`);

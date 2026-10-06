@@ -70,9 +70,14 @@ async function subagentHook(ctx: ServerContext, input: HookInput): Promise<HookO
     ctx.log.debug("parent inbox unavailable", { err: (err as Error).message });
     return [];
   });
-  if (msgs.length === 0) return {};
+  if (input.event === "Stop" && !msgs.length && ctx.jobs?.runningCount()) await ctx.childInbox?.wait(STOP_WAIT_CAP_MS, input.signal);
+  const children = ctx.childInbox?.take() ?? [];
+  if (msgs.length === 0 && children.length === 0) {
+    if (input.event === "Stop" && ctx.jobs?.runningCount()) return { decision: "block", reason: "Your nested subagents are still running. Wait for their results or cancel them before ending your task." };
+    return {};
+  }
   ctx.log.info("delivering parent messages to the subagent", { count: msgs.length, event: input.event });
-  const text = formatParentMessages(parent.name, msgs);
+  const text = [msgs.length ? formatParentMessages(parent.name, msgs) : "", children.length ? formatMessages(children) : ""].filter(Boolean).join("\n\n");
   // Before it ends its turn: keep it going so it answers (and adjusts) instead of finishing without seeing them.
   if (input.event === "Stop") return { decision: "block", reason: text };
   // After a tool call, "block" feeds the reason back to the model as feedback on that call (the call itself

@@ -1,8 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import type { BridgeConfig } from "../core/config.js";
-import { DEFAULT_DELEGATE_TIMEOUT_SEC, ENV, MAX_JOB_TIMEOUT_SEC } from "../core/constants.js";
-import { bundledCli, DelegateError, retryTransient, type DelegateResult } from "../core/delegate.js";
+import { APP_VERSION, DEFAULT_DELEGATE_TIMEOUT_SEC, DELEGATION_METADATA_VERSION, ENV, MAX_JOB_TIMEOUT_SEC } from "../core/constants.js";
+import { bundledCli, checkDepth, DelegateError, PARENT_JOB_ENV, ROOT_NAME_ENV, ROOT_SESSION_ENV, retryTransient, type DelegateResult } from "../core/delegate.js";
+import { RootConcurrency } from "../core/root-concurrency.js";
 import { defaultEffort } from "../core/effort.js";
 import { t } from "../core/i18n.js";
 import type { Logger } from "../core/logger.js";
@@ -48,6 +49,7 @@ export type DelegateArgs = { prompt: string; host?: string; model?: string; effo
 
 /** Where a background job's approval questions, answers and facts go: this session's JobManager, or a job runner's link to it. */
 export interface JobSink {
+  escalateApproval?: (job: Job, body: string) => Promise<void>;
   askParent(job: Job, question: string, timeoutMs: number, request?: PermissionRequest): Promise<{ allow: boolean; reason: string }>;
   /** isAnswer: its answer to a live message (wakes the session); else a note unless it replies to something. */
   fromSubagent(job: Job, body: string, replyTo: string | null, isAnswer?: boolean): void;
@@ -111,6 +113,24 @@ export function worktreeArgs(target: CodingAgent, a: DelegateArgs, cfg: BridgeCo
 
 /** Run the delegate; returns its result plus a report of what it changed. */
 export async function runDelegate(
+  rc: RunContext, target: CodingAgent, a: DelegateArgs, signal: AbortSignal,
+  onProgress: ((message: string) => void) | undefined, background: boolean, job?: Job,
+): Promise<RunResult> {
+  checkDepth(rc.cfg.maxDelegateDepth);
+  if (!job?.rootSession) return runDelegateInner(rc, target, a, signal, onProgress, background, job);
+  const budget = new RootConcurrency(rc.home, job.rootSession);
+  const owner = { id: `${job.name}-${randomUUID()}`, pid: process.pid };
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    if (!job.parentJob) budget.ensureLimit(rc.cfg.maxJobs);
+    if (!budget.acquire(owner)) throw new Error("The top session's subagent concurrency limit is reached.");
+    timer = setInterval(() => { try { budget.renew(owner); } catch (err) { rc.log.warn("could not renew root concurrency lease", { err: String(err) }); } }, SLOT_RENEW_MS);
+    timer.unref();
+    return await runDelegateInner(rc, target, a, signal, onProgress, background, job);
+  } finally { clearInterval(timer); budget.release(owner); budget.close(); }
+}
+
+async function runDelegateInner(
   rc: RunContext,
   target: CodingAgent,
   a: DelegateArgs,
@@ -184,7 +204,7 @@ export async function runDelegate(
     if (isOwnServerCall(r) || isAutoApproved(r, autoApprove)) return { allow: true };
     let d: PermissionDecision;
     if (wiring) d = await wiring.onPermission(r);
-    else if (job && !job.foreground && rc.jobs) {
+    else if (job && (!job.foreground || job.parentJob) && rc.jobs) {
       // A background subagent asks the agent that started it (it can decide, also in auto mode or with
       // the user away). A blocking ask_* caller cannot answer while it waits, so that one asks the user.
       // Name the allow_tools pattern that would cover this call, so the next spawn need not ask.
@@ -208,6 +228,10 @@ export async function runDelegate(
       header: `${target}${a.model ? ` (${a.model}${a.effort ? `, effort ${a.effort}` : ""})` : a.effort ? ` (effort ${a.effort})` : ""} in ${workdir}, access ${access ?? "default"}, by ${me}${a.session_id ? `, continues ${a.session_id}` : ""}\n${a.prompt}\n---`,
       forward: onProgress,
       meta: {
+        metadataVersion: DELEGATION_METADATA_VERSION,
+        bridgeVersion: APP_VERSION,
+        parentJob: job?.parentJob,
+        rootSession: job?.rootSession,
         by: me,
         byAgent: rc.agent,
         byCwd: rc.cwd(),
@@ -260,6 +284,7 @@ export async function runDelegate(
         feed.report(`progress ${percent}%${note ? `: ${note}` : ""}`);
       },
       siblingLink,
+      (body) => jobs.escalateApproval ? jobs.escalateApproval(job, body) : Promise.reject(new Error("approval escalation unavailable")),
     );
     try {
       await l.start();
@@ -315,6 +340,7 @@ export async function runDelegate(
         cwd: workdir,
         sessionId: a.session_id ?? null,
         timeoutSec: a.timeout_sec ?? (background ? MAX_JOB_TIMEOUT_SEC : DEFAULT_DELEGATE_TIMEOUT_SEC),
+        maxDelegateDepth: cfg.maxDelegateDepth,
         model: a.model ?? defaultModel,
         effort: a.effort ?? cfg.effort[target] ?? null,
         // What it really runs (a CLI default or an alias resolved), for the dashboard.
@@ -322,7 +348,9 @@ export async function runDelegate(
         log: dlog,
         signal,
         onProgress: feed.report,
-        extraEnv: { ...link?.childEnv(), ...(slots ? { [ENV.home]: rc.home, [SLOT_OWNER_ENV]: slotOwner.id, [SLOT_PID_ENV]: String(slotOwner.pid) } : {}) },
+        extraEnv: { ...link?.childEnv(), [ENV.home]: rc.home, [ENV.maxDelegateDepth]: String(cfg.maxDelegateDepth),
+          ...(job ? { [PARENT_JOB_ENV]: job.name, [ROOT_SESSION_ENV]: job.rootSession ?? job.supervisor ?? me, [ROOT_NAME_ENV]: job.rootName ?? me } : {}),
+          ...(slots ? { [SLOT_OWNER_ENV]: slotOwner.id, [SLOT_PID_ENV]: String(slotOwner.pid) } : {}) },
         writableRoots,
         onSession: (id) => {
           feed.meta({ session: id });
@@ -332,7 +360,7 @@ export async function runDelegate(
         onDenied: (message) => { link?.post(message); },
         // Someone answers approve's questions: the user ("ask" relay or a dialog) or, for a background
         // subagent, the parent agent. Else targets keep their own behavior (Claude and opencode).
-        canApprove: Boolean(wiring) || Boolean(job && !job.foreground && rc.jobs) || Boolean(rc.askUser && rc.userCanAnswer?.()),
+        canApprove: Boolean(wiring) || Boolean(job && (!job.foreground || job.parentJob) && rc.jobs) || Boolean(rc.askUser && rc.userCanAnswer?.()),
         live: job
           ? {
               from: me,

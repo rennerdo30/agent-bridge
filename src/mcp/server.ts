@@ -20,8 +20,8 @@ import {
   MAX_JOBS_LIMIT,
   MAX_WAIT_SEC,
 } from "../core/constants.js";
-import { bundledCli, currentDelegateDepth, DelegateError, failureCause, killAllDelegates, resolveBinary } from "../core/delegate.js";
 import { runRemoteAsk } from "./remote-ask.js";
+import { bundledCli, currentDelegateDepth, DelegateError, failureCause, killAllDelegates, PARENT_JOB_ENV, ROOT_NAME_ENV, ROOT_SESSION_ENV, resolveBinary } from "../core/delegate.js";
 import { readUsage, codexAppServerCall } from "../core/usage.js";
 import { t } from "../core/i18n.js";
 import { createLogger, type Logger } from "../core/logger.js";
@@ -39,7 +39,8 @@ import { CodexWaker, type Activity } from "./codex-wake.js";
 import { buildHookResponse, discardFinishedNotes, type HookEvent } from "./hooks.js";
 import { ACCESS_LEVELS, DELEGATION_TARGETS, type Access } from "./targets.js";
 import { askUserViaElicitation } from "./permissions.js";
-import type { PermissionDecision, PermissionRequest } from "../core/relay.js";
+import { answerPendingApproval, listPendingApprovals, type PermissionDecision, type PermissionRequest } from "../core/relay.js";
+import { LocalCoordinator } from "./local-coordinator.js";
 import { saveAutoWake, savedAutoWake } from "../core/auto-wake-pref.js";
 import { describeModels, modelParameterDescription, readModels } from "../core/models.js";
 import { parentFromEnv, type ParentClient } from "../core/parent-link.js";
@@ -117,7 +118,7 @@ function describeError(err: unknown): string {
       case "timeout":
         return t("err.delegateTimeout", { detail: err.message }) + tail;
       case "depth":
-        return t("err.delegateDepth");
+        return err.message;
       default:
         return t("err.delegateFailed", { detail: err.message }) + tail;
     }
@@ -127,6 +128,7 @@ function describeError(err: unknown): string {
 
 /** Everything the tool and hook handlers share. */
 export interface ServerContext {
+  childInbox?: LocalCoordinator;
   agent: AgentKind;
   cfg: BridgeConfig;
   node: BridgeNode | null;
@@ -249,6 +251,15 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
   let launchInspected: () => void = () => {};
   const launchKnown = new Promise<void>((r) => (launchInspected = r));
   const ctx: ServerContext = { agent, cfg, node, log, home, cwd: () => node?.cwd ?? cwd, channelActive: () => channel, parent: delegated ? parentFromEnv() : null, launchKnown };
+  if (!node && ctx.parent && process.env[PARENT_JOB_ENV] && process.env[ROOT_SESSION_ENV]) {
+    const parentJob = process.env[PARENT_JOB_ENV]!;
+    const rootSession = process.env[ROOT_SESSION_ENV]!;
+    const coordinator = ctx.childInbox = new LocalCoordinator(parentJob, rootSession);
+    ctx.jobs = new JobManager(coordinator, log.child("jobs"), join(home, JOBS_FILE), cfg.maxJobs, {
+      parentJob, rootSession, rootName: process.env[ROOT_NAME_ENV] || ctx.parent.name,
+      escalate: (body) => ctx.parent!.escalate ? ctx.parent!.escalate(body) : ctx.parent!.send(body),
+    });
+  }
   if (node) {
     ctx.jobs = new JobManager(node, log.child("jobs"), join(home, JOBS_FILE), cfg.maxJobs);
     // Only the server the session uses tends the jobs: a replaced one pauses until it takes its place back.
@@ -309,8 +320,10 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
       instructions: instructionsFor(agent, targets),
     },
   );
-  ctx.askUser = (req) => askUserViaElicitation(mcp.server, req, log.child("permissions"));
-  ctx.userCanAnswer = () => Boolean(mcp.server.getClientCapabilities()?.elicitation);
+  if (!delegated) {
+    ctx.askUser = (req) => askUserViaElicitation(mcp.server, req, log.child("permissions"));
+    ctx.userCanAnswer = () => Boolean(mcp.server.getClientCapabilities()?.elicitation);
+  }
   registerTools(mcp, ctx, targets);
   if (node && ctx.jobs) attachDashboardJobControl(node, ctx.jobs, log);
 
@@ -467,13 +480,15 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
   }
 }
 
-function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[]): void {
+export function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[]): void {
   const { node, log, cfg } = ctx;
   const waits = new MessageWaitStore(ctx.home);
-  // A subagent talks to its parent and siblings: no spawning of further agents, no bridge tools it
-  // cannot use. Hidden rather than refused, so its CLI never even asks for approval to call them.
+  // Nested supervisors keep private child tools without independent-session bridge privileges.
   const register = ((name: string, ...rest: unknown[]) =>
-    node || SUBAGENT_TOOLS.has(name) ? (mcp.registerTool as (...a: unknown[]) => unknown)(name, ...rest) : undefined) as typeof mcp.registerTool;
+    node || SUBAGENT_TOOLS.has(name) || (ctx.jobs && (
+      name === "message_subagent" || name === "cancel_subagent" || name === "inbox" || name === "wait_for_message" ||
+      (currentDelegateDepth() < cfg.maxDelegateDepth && (name.startsWith("spawn_") || name.startsWith("ask_") || name === "list_models"))
+    )) ? (mcp.registerTool as (...a: unknown[]) => unknown)(name, ...rest) : undefined) as typeof mcp.registerTool;
   const requireNode = (): BridgeNode => {
     if (!node) throw new BridgeError("bad_request", t("err.delegatedSession"));
     discardFinishedNotes(ctx);
@@ -570,6 +585,7 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
           siblings.length ? "Sibling jobs:" : "No sibling jobs are available right now.",
           ...siblings.map((s) => `- ${s.name}${s.title ? ` "${s.title}"` : ""} (${s.agent}, ${s.status})`),
           "Use send(to=<sibling job name>, message=...) to coordinate directly. The supervisor receives a quiet copy.",
+          ...(ctx.jobs?.list().map((j) => `Your child: ${j.name}${j.args?.title ? ` "${j.args.title}"` : ""} (${j.agent}, ${j.status})`) ?? []),
           ...(policy ? [`Sibling threads allow ${policy.maxHops} messages, including the first message. Incoming messages show replies remaining before you compose.`,
             `Explicit send_to grants: ${policy.sendTo.length ? policy.sendTo.join(", ") : "none"}. Only these exact external session names are allowed.`] : []),
         ].join("\n"));
@@ -631,6 +647,10 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
     },
     guarded("send", async (a: { to: string; message: string; reply_to?: string; conversation_id?: string }) => {
       if (!node && ctx.parent) {
+        if (ctx.jobs?.find(a.to)) {
+          const result = ctx.jobs.followUp(a.to, a.message);
+          return text(`Child message ${result.outcome}.`);
+        }
         if (a.to !== ctx.parent.name && a.to !== "parent") {
           const result = await ctx.parent.siblings.send(a.to, a.message, a.reply_to);
           const m = result.messages[0]!;
@@ -723,6 +743,11 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
       },
     },
     guarded("inbox", async (a: { mark_read?: boolean; limit?: number }) => {
+      if (ctx.childInbox) {
+        const msgs = ctx.childInbox.unread().slice(0, a.limit ?? HOOK_MAX_MESSAGES);
+        if (a.mark_read !== false) ctx.childInbox.markRead(msgs.map((m) => m.id));
+        return text(msgs.length ? formatMessages(msgs) : t("inbox.empty"));
+      }
       const n = requireNode();
       const msgs = n.unread().slice(0, a.limit ?? HOOK_MAX_MESSAGES);
       if (msgs.length === 0) return text(t("inbox.empty"));
@@ -751,6 +776,14 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
       },
     },
     guarded("wait_for_message", async (a: WaitFilters & { timeout_sec?: number; resume_id?: string }, extra) => {
+      if (ctx.childInbox) {
+        if (a.read_receipt_of || a.resume_id) return text("Nested waits support child-message filters only.", true);
+        const matches = (m: BridgeMessage) => (!a.from || m.from.name === a.from || m.from.agent === a.from) && (!a.reply_to || m.replyTo === a.reply_to) && (!a.conversation_id || m.conversationId === a.conversation_id);
+        if (!ctx.childInbox.unread().some(matches)) await ctx.childInbox.wait(singleWaitTimeoutMs(a.timeout_sec ?? DEFAULT_WAIT_SEC), extra.signal, matches);
+        const msgs = ctx.childInbox.unread().filter(matches).slice(0, HOOK_MAX_MESSAGES);
+        ctx.childInbox.markRead(msgs.map((m) => m.id));
+        return text(msgs.length ? formatMessages(msgs) : t("inbox.empty"));
+      }
       const n = requireNode();
       if (a.read_receipt_of && (a.from || a.reply_to || a.conversation_id)) return text("Use read_receipt_of alone; reply filters are for incoming messages.", true);
       const record = a.resume_id ? waits.get(n, a.resume_id) : waits.save(n, {
@@ -827,7 +860,7 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
     cfg,
     home: ctx.home,
     log,
-    me: () => node?.name ?? ctx.agent,
+    me: () => node?.name ?? ctx.childInbox?.name ?? ctx.agent,
     cwd: ctx.cwd,
     askUser: ctx.askUser,
     userCanAnswer: ctx.userCanAnswer,
@@ -938,6 +971,7 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
           remoteSpawnArgsSchema.parse(args);
           if (!ctx.jobs) throw new BridgeError("bad_request", "Remote asks require a supervisor session.");
         }
+        if (ctx.jobs && !ctx.jobs.canStart()) return text(t("jobs.limit", { max: ctx.jobs.limit }), true);
         // Visible in peers while it runs (the caller is blocked, but its coordinator may ask).
         const tracked = ctx.jobs?.track(target, a.model ?? defaultModel, a.prompt, resumeFor(a), keep(a));
         if (a.host && tracked) {
@@ -1109,6 +1143,15 @@ ${res.text || t("delegate.empty")}`, res.isError);
       const jobs = ctx.jobs;
       if (!jobs) throw new BridgeError("bad_request", t("err.delegatedSession"));
       const existing = jobs.find(a.job);
+      // A top supervisor can answer an escalated descendant wait without taking over that child job.
+      if (node && a.message) {
+        const approval = listPendingApprovals(ctx.home).find((entry) => entry.job === a.job && entry.parentJob && (entry.owner === node.name || entry.rootSession === jobs.rootIdentity()));
+        if (approval && /^(allow|deny)\b/i.test(a.message.trim())) {
+          const decision = /^allow\b/i.test(a.message.trim()) ? "allow" : "deny";
+          const result = await answerPendingApproval(ctx.home, approval.id, { decision, reason: a.message.trim().replace(/^(allow|deny)\b\s*:?\s*/i, "") });
+          return text(`Nested approval ${result}.`, result !== "answered");
+        }
+      }
       if (existing) {
         for (const [key, agent] of Object.entries(PERMISSION_KEY_AGENT) as [keyof typeof PERMISSION_KEY_AGENT, string][]) {
           if (a[key] !== undefined && existing.agent !== agent) throw new BridgeError("bad_request", `${key} applies only to ${agent} jobs.`);
