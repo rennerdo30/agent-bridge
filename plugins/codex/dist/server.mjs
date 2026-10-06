@@ -42932,8 +42932,7 @@ a { color: inherit; text-decoration: none; }
 .side-search { padding: 0 12px 8px; }
 .side-search input { width: 100%; padding: 7px 10px; font-size: 13px; background: var(--panel-2); }
 .side-nav { display: flex; flex-direction: column; gap: 1px; padding: 0 8px 8px; border-bottom: 1px solid var(--line); }
-.side-nav a, .tree-row { display: flex; align-items: center; gap: 9px; padding: 6px 8px; border-radius: 7px; color: var(--muted); font-size: 13.5px; min-width: 0; }
-.side-nav a:hover, .tree-row:hover { background: var(--panel-2); color: var(--text); }
+.side-nav a { display: flex; align-items: center; gap: 9px; padding: 6px 8px; border-radius: 7px; color: var(--muted); font-size: 13.5px; min-width: 0; }
 .side-nav a.on { background: var(--accent-soft); color: var(--text); font-weight: 600; }
 .side-nav .ico { width: 16px; text-align: center; color: var(--faint); }
 .side-tree { flex: 1; overflow-y: auto; padding: 6px 8px 16px; scrollbar-width: thin; }
@@ -42942,24 +42941,11 @@ a { color: inherit; text-decoration: none; }
 .tree-sess:hover { background: var(--panel-2); }
 .tree-sess.cur { background: var(--accent-soft); }
 .tree-sess.ended { opacity: .6; }
-.twist { flex: none; width: 22px; height: 26px; padding: 0; background: none; border: 0; color: var(--faint); font-size: 10px; cursor: pointer; transition: transform .12s; }
-.twist[aria-expanded="true"] { transform: rotate(90deg); }
-.twist:disabled { visibility: hidden; }
 .tree-sess > a { flex: 1; display: flex; align-items: center; gap: 8px; padding: 6px 8px 6px 2px; min-width: 0; color: var(--text); font-size: 13.5px; }
 .tree-sess.cur > a { font-weight: 600; }
 .tree-sess .lbl { flex: 1; min-width: 0; }
 .tree-sess .lbl small { display: block; font-size: 11.5px; color: var(--faint); font-weight: 400; }
-.tree-kids { margin: 1px 0 4px 21px; padding-left: 9px; border-left: 1px solid var(--line); display: flex; flex-direction: column; gap: 1px; }
-.tree-row { padding: 4px 8px; font-size: 12.5px; }
-.tree-row.sel { background: var(--accent-soft); color: var(--text); font-weight: 600; }
-.tree-row .lbl { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tree-row .meta { flex: none; font-size: 11px; color: var(--faint); font-variant-numeric: tabular-nums; }
-.tree-row.more { background: none; border: 0; font: inherit; font-size: 12px; color: var(--faint); cursor: pointer; text-align: left; }
-.sdot { width: 7px; height: 7px; border-radius: 50%; flex: none; background: var(--faint); }
-.sdot.running { background: var(--busy); animation: pulse 1.4s infinite; } .sdot.done { background: var(--ok); }
-.sdot.failed { background: var(--bad); } .sdot.interrupted { background: var(--warn); }
 .chip.own { color: var(--accent); background: var(--accent-soft); border-color: transparent; font-size: 10.5px; padding: 0 6px; }
-.tree-row .ico { width: 12px; display: inline-flex; justify-content: center; color: var(--accent); }
 .tree-empty { padding: 16px 8px; color: var(--faint); font-size: 12.5px; }
 .side-foot { border-top: 1px solid var(--line); padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; }
 .side-foot .theme { align-self: flex-start; }
@@ -43123,9 +43109,8 @@ button.ghost.danger { background: transparent; color: var(--bad); border-color: 
 .disabled-hint { padding: 10px 12px; border-radius: 8px; background: var(--panel-2); color: var(--muted); font-size: 12.5px; }
 
 /* Session view */
-.split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, 340px); gap: 20px; align-items: start; }
-.split > .side-col { order: 2; }
-@media (max-width: 1180px) { .split { grid-template-columns: 1fr; } .conv { position: static; height: 72vh; } }
+.split { display: grid; grid-template-columns: minmax(300px, 380px) minmax(0, 1fr); gap: 20px; align-items: start; }
+@media (max-width: 1100px) { .split { grid-template-columns: 1fr; } .conv { position: static; height: 72vh; } }
 .side-col { display: flex; flex-direction: column; gap: 20px; }
 .sess { padding: 16px; display: flex; flex-direction: column; gap: 10px; }
 .kv { display: grid; grid-template-columns: 72px 1fr; gap: 4px 10px; font-size: 12.5px; }
@@ -43219,13 +43204,11 @@ main.wrap { padding-top: 32px; max-width: 1240px; }
 .tree-sess.cur { background: var(--panel); box-shadow: var(--shadow); }
 .tree-sess > a { font-weight: 550; }
 .tree-sess .lbl small { margin-top: 1px; }
-.tree-kids { border-left-color: color-mix(in srgb, var(--line) 70%, transparent); margin-left: 22px; }
-.tree-row { position: relative; color: var(--muted); border-radius: 6px; }
-.tree-row.sel { background: var(--panel); color: var(--text); box-shadow: var(--shadow); }
 /* The one bold element: anything working carries a thin live bar on its left edge. */
-.tree-row:has(.sdot.running)::before, .rows > a:has(.pill.running)::before { content: ""; position: absolute; left: -10px; top: 6px; bottom: 6px; width: 2px; border-radius: 2px; background: var(--accent); }
-.rows > a:has(.pill.running)::before { left: 0; top: 0; bottom: 0; border-radius: 0; }
-.tree-row.tree-chat .lbl { color: var(--text); font-weight: 500; }
+.rows > a:has(.pill.running)::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 2px; background: var(--accent); }
+.side-nav a:hover { background: var(--panel-2); color: var(--text); }
+.rows-head { padding: 12px 16px 6px; font-size: 12px; font-weight: 600; color: var(--muted); border-top: 1px solid var(--panel-2); }
+.rows > a.chat-row .task { color: var(--faint); }
 .side-foot { border-top-color: color-mix(in srgb, var(--line) 70%, transparent); }
 .theme { background: var(--panel); border-color: transparent; }
 .theme button + button { border-left-color: var(--line); }
@@ -43408,7 +43391,7 @@ form#send { background: transparent; border-top: 0; padding: 12px 0 0; }
   <div id="session" class="split hidden">
     <div class="side-col">
       <div class="panel sess" id="sHead"></div>
-      <div class="small muted" id="sCount"></div>
+      <div><h3>Subagents <span class="counts" id="sCount"></span></h3><div class="panel rows" id="sGroups"></div></div>
       <div id="sMsgBox"><h3>Messages</h3><div class="panel"><div id="sMsgs" class="msgs"></div></div></div>
     </div>
     <div class="panel conv">
@@ -43629,14 +43612,9 @@ const pcOf = (name) => { const i = String(name).indexOf("/"); return i > 0 ? nam
 const shortName = (name) => { const i = String(name).indexOf("/"); return i > 0 ? name.slice(i + 1) : name; };
 const LOCAL_PC = "This PC";
 /** Subagents listed under a session before a "more" row. */
-const SIDE_RECENT = 6;
-const SIDE_TOGGLED_KEY = "ab-side-toggled", SIDE_COLLAPSED_KEY = "ab-side-collapsed";
-/** Sessions whose fold state the user flipped (live ones start open, ended ones folded); kept in this browser. */
-const sideToggled = new Set((() => { try { return JSON.parse(localStorage.getItem(SIDE_TOGGLED_KEY) || "[]"); } catch { return []; } })());
-const saveSideToggled = () => { try { localStorage.setItem(SIDE_TOGGLED_KEY, JSON.stringify([...sideToggled])); } catch {} };
+const SIDE_COLLAPSED_KEY = "ab-side-collapsed";
 let lastTree = "";
 
-const groupLabel = (g) => g.title || g.agent + " \xB7 " + (g.task || g.last || "subagent");
 const groupMatches = (g, q) => [g.title, g.task, g.agent, g.model, g.job].some((s) => String(s || "").toLowerCase().includes(q));
 const sessionMatches = (x, q) => x.name.toLowerCase().includes(q) || String((x.peer && x.peer.cwd) || "").toLowerCase().includes(q);
 const sessionTitle = (x) => (x.peer ? folder(x.peer.cwd) : "") || shortName(x.name);
@@ -43762,44 +43740,14 @@ async function showNative(x, key) {
   chat.dataset.key = x.name + key;
 }
 
-function sideSession(x, q) {
-  const p = x.peer, searching = Boolean(q);
-  const open = searching || (x.live !== sideToggled.has(x.name));
-  const cur = x.name === route.session;
-  const selKey = cur ? selectedKey(x) : null;
-  const chat = hasNativeChat(x);
-  let kids = searching && !sessionMatches(x, q) ? x.groups.filter((g) => groupMatches(g, q)) : x.groups;
-  const all = searching || opened.has("side-all:" + x.name);
-  const recent = kids.filter((g) => g.status === "running" || Date.now() - g.updatedAt < ARCHIVE_AFTER_MS || g.key === selKey);
-  const shown = all ? kids : (recent.length ? recent : kids).slice(0, SIDE_RECENT);
-  // The CLI's own subagents (read from its transcript), after agent-bridge's.
-  const natives = chat ? ((nativeLists.get(x.name) || {}).list || []).filter((s) => !searching || sessionMatches(x, q) || String(s.title || "").toLowerCase().includes(q)) : [];
-  const nativeRecent = natives.filter((s) => Date.now() - s.updatedAt < ARCHIVE_AFTER_MS || NATIVE_PREFIX + s.id === selKey);
-  const nativeShown = all ? natives : nativeRecent.slice(0, SIDE_RECENT);
-  const hidden = kids.length - shown.length + natives.length - nativeShown.length;
-  const anyKids = chat || x.groups.length > 0;
+/** One session in the sidebar: folder, name and state, with how many subagents work. Subagents are listed on its page. */
+function sideSession(x) {
+  const p = x.peer, cur = x.name === route.session;
   const sub = shortName(x.name) + (p ? " \xB7 " + (p.activity || "connected") : " \xB7 ended");
-  const row = '<div class="tree-sess' + (cur ? " cur" : "") + (x.live ? "" : " ended") + '">' +
-    '<button type="button" class="twist" data-fold="' + esc(x.name) + '" aria-expanded="' + open + '" aria-label="Show or hide its subagents"' + (anyKids ? "" : " disabled") + ">\u25B6</button>" +
+  return '<div class="tree-sess' + (cur ? " cur" : "") + (x.live ? "" : " ended") + '">' +
     '<a href="' + href(x.name) + '" title="' + esc(x.name + (p ? " \xB7 " + p.cwd : "")) + '"' + (cur ? ' aria-current="page"' : "") + ">" + (p ? dot(p.activity) : '<span class="dot off"></span>') +
     '<span class="lbl ell">' + esc(sessionTitle(x)) + '<small class="ell">' + esc(sub) + "</small></span>" +
     (x.running ? '<span class="count" title="subagents working">' + x.running + "</span>" : "") + "</a></div>";
-  if (!open || !anyKids) return row;
-  const chatRow = chat && (!searching || sessionMatches(x, q))
-    ? '<a class="tree-row tree-chat' + (selKey === CHAT_KEY ? " sel" : "") + '" href="' + href(x.name, CHAT_KEY) + '" title="The session\\'s own conversation (read-only)"><span class="ico" aria-hidden="true"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M2.5 3.5h11v7h-6l-3.5 3v-3h-1.5z"/></svg></span><span class="lbl">Chat</span></a>'
-    : "";
-  const nativeRows = nativeShown.map((s) =>
-    '<a class="tree-row' + (NATIVE_PREFIX + s.id === selKey ? " sel" : "") + '" href="' + href(x.name, NATIVE_PREFIX + s.id) + '" title="' + esc((s.title || "subagent") + " \xB7 its own subagent, read-only") + '">' +
-    '<span class="sdot ' + esc(s.status) + '"></span><span class="lbl">' + esc(s.title || "subagent") + '</span><span class="chip own">own</span></a>').join("");
-  const kidRows = chatRow + shown.map((g) => {
-    const meta = g.status === "running" ? (g.percent !== null ? g.percent + "%" : "working") : ago(g.updatedAt).replace(" ago", "");
-    return '<a class="tree-row' + (g.key === selKey ? " sel" : "") + '" href="' + href(x.name, g.key) + '" title="' + esc(groupLabel(g) + " \xB7 " + g.status) + '">' +
-      '<span class="sdot ' + esc(g.status) + '"></span><span class="lbl">' + esc(groupLabel(g)) + '</span><span class="meta">' + esc(meta) + "</span></a>";
-  }).join("");
-  const more = hidden > 0 || (all && !searching && (kids.length > SIDE_RECENT || natives.length > nativeRecent.length))
-    ? '<button type="button" class="tree-row more" data-more="' + esc(x.name) + '">' + (hidden > 0 ? hidden + " more" : "show fewer") + "</button>"
-    : "";
-  return row + '<div class="tree-kids">' + kidRows + nativeRows + more + "</div>";
 }
 
 function renderSide() {
@@ -43814,7 +43762,7 @@ function renderSide() {
   const q = $("sessFilter").value.trim().toLowerCase();
   const groups = sideGroups(q);
   const html = groups.length
-    ? groups.map((pc) => '<div class="tree-pc"><span>' + esc(pc.title) + "</span><span>" + pc.items.length + "</span></div>" + pc.items.map((x) => sideSession(x, q)).join("")).join("")
+    ? groups.map((pc) => '<div class="tree-pc"><span>' + esc(pc.title) + "</span><span>" + pc.items.length + "</span></div>" + pc.items.map((x) => sideSession(x)).join("")).join("")
     : '<div class="tree-empty">' + (q ? "Nothing matches." : "No sessions connected yet.") + "</div>";
   if (html !== lastTree) { lastTree = html; $("sideTree").innerHTML = html; }
 }
@@ -43911,8 +43859,8 @@ function renderSession() {
     : '<div class="head" style="display:flex;gap:12px;align-items:center">' + av("other") + '<div><div style="font-weight:650">' + esc(x.name) + '</div><div class="small muted">' +
       (x.name === "earlier runs" ? "Runs from before sessions were recorded, or from sessions in other folders." : "This session has ended. Its subagents are kept for reference.") + "</div></div></div>";
   $("sCount").innerHTML = x.groups.length ? countsLine(countGroups(x.groups)) : "";
-  // The subagents themselves are listed in the sidebar under the session.
   const sel = route.group && x.groups.find((g) => g.key === route.group) ? route.group : x.groups[0] && x.groups[0].key;
+  renderSessionList(x, selectedKey(x));
   const mine = state.messages.filter((m) => m.from_name === x.name || m.to_target === x.name || String(m.recipients || "").split(", ").includes(x.name));
   $("sMsgs").innerHTML = messagesHtml(mine);
   const key = selectedKey(x);
@@ -43927,6 +43875,35 @@ function renderSession() {
     $("cAvatar").innerHTML = ""; $("cTitle").textContent = "No subagent selected"; $("cSub").textContent = ""; $("cHint").classList.add("hidden");
     $("chat").innerHTML = '<div class="empty">Pick a subagent on the left to see its conversation.</div>'; lastChat = "";
   }
+}
+
+/**
+ * The session's column: its own chat first, agent-bridge subagents (running and recent on top, older ones in a
+ * folded archive), then the CLI's own subagents read from its transcript.
+ */
+function renderSessionList(x, selKey) {
+  const chat = hasNativeChat(x);
+  const fresh = (g) => g.status === "running" || Date.now() - g.updatedAt < ARCHIVE_AFTER_MS || g.key === selKey;
+  const active = x.groups.filter(fresh), archived = x.groups.filter((g) => !fresh(g));
+  const archiveOpen = opened.has("archive:" + x.name);
+  const natives = chat ? (nativeLists.get(x.name) || {}).list || [] : [];
+  const p = x.peer || {};
+  const chatRow = chat
+    ? '<a href="' + href(x.name, CHAT_KEY) + '" class="chat-row' + (selKey === CHAT_KEY ? " sel" : "") + '">' + av(p.agent || "other") +
+      '<div style="min-width:0"><div class="line1"><b>Chat</b><span class="chip">' + esc(p.agent || "") + '</span></div><div class="task">The session\\'s own conversation, read-only</div></div><div class="side"></div></a>'
+    : "";
+  const nativeRows = natives.length
+    ? '<div class="rows-head">Its own subagents <span class="faint">' + natives.length + "</span></div>" + natives.map((s) =>
+        '<a href="' + href(x.name, NATIVE_PREFIX + s.id) + '" class="' + (NATIVE_PREFIX + s.id === selKey ? "sel" : "") + '">' + av(p.agent || "other") +
+        '<div style="min-width:0"><div class="line1"><b class="ell">' + esc(s.title || "subagent") + '</b><span class="chip own">own</span></div><div class="task">' + esc(p.agent + " subagent \xB7 read-only") + "</div></div>" +
+        '<div class="side"><span>' + ago(s.updatedAt) + "</span></div></a>").join("")
+    : "";
+  const bridgeRows = x.groups.length
+    ? (active.length ? active.map((g) => groupRow(g, g.key === selKey, false)).join("") : '<div class="empty">Nothing running or recent.</div>') +
+      (archived.length ? '<details class="archive" data-open="archive:' + esc(x.name) + '"' + (archiveOpen ? " open" : "") + "><summary>Archive \xB7 " + archived.length + " older subagent" + (archived.length === 1 ? "" : "s") + "</summary>" + archived.map((g) => groupRow(g, false, false)).join("") + "</details>" : "")
+    : chat ? "" : '<div class="empty">No subagents started from this session yet.</div>';
+  const html = chatRow + bridgeRows + nativeRows;
+  if ($("sGroups").innerHTML !== html) $("sGroups").innerHTML = html;
 }
 
 function messagesHtml(msgs) {
@@ -44589,24 +44566,14 @@ setInterval(() => {
 $("sessFilter").addEventListener("input", () => { if (model) renderSide(); });
 $("sessFilter").addEventListener("keydown", (e) => {
   if (e.key === "Escape") { $("sessFilter").value = ""; if (model) renderSide(); }
-  // Enter opens the first match: the first session, or its first matching subagent.
+  // Enter opens the first matching session.
   if (e.key === "Enter") {
-    const first = $("sideTree").querySelector(".tree-row, .tree-sess > a");
+    const first = $("sideTree").querySelector(".tree-sess > a");
     if (first) location.hash = first.getAttribute("href");
   }
 });
 $("sideTree").addEventListener("click", (e) => {
-  const fold = e.target.closest("[data-fold]"), more = e.target.closest("[data-more]");
-  if (fold) {
-    const name = fold.dataset.fold;
-    sideToggled.has(name) ? sideToggled.delete(name) : sideToggled.add(name);
-    saveSideToggled();
-    renderSide();
-  } else if (more) {
-    const id = "side-all:" + more.dataset.more;
-    opened.has(id) ? opened.delete(id) : opened.add(id);
-    renderSide();
-  } else if (e.target.closest("a") && narrow()) setSidebar(false);
+  if (e.target.closest("a") && narrow()) setSidebar(false);
 });
 $("sideHide").addEventListener("click", () => setSidebar(false));
 $("sideShow").addEventListener("click", () => setSidebar(true));
