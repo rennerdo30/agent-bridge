@@ -98,7 +98,7 @@ export async function delegateToCodexAppServer(
   const { resolved, args, needsShell } = resolveCommand(req.bin, ["app-server", ...startupArgs], env, req.log);
   req.log.debug("starting codex app-server", { bin: resolved, cwd });
   const child = spawn(resolved, args, { cwd, env: { ...env, PWD: cwd }, shell: needsShell, windowsHide: true, stdio: ["pipe", "pipe", "pipe"], detached: process.platform !== "win32" });
-  trackChild(child);
+  trackChild(child, req.log);
 
   let nextId = 1;
   const pending = new Map<number, Pending>();
@@ -334,6 +334,7 @@ export async function delegateToCodexAppServer(
     },
   };
 
+  let stopReason = "codex turn completed";
   try {
     // Granular policy is experimental in the installed app-server schema; opt in only when we use it.
     await boot(request("initialize", { clientInfo: { name: "agent-bridge", title: "agent-bridge", version: APP_VERSION }, capabilities: { experimentalApi: req.sandbox === "danger-full-access", optOutNotificationMethods: OPT_OUT } }));
@@ -412,6 +413,7 @@ export async function delegateToCodexAppServer(
     req.log.info("codex delegate finished", { threadId, status: outcome.status });
     return { sessionId: threadId, text: finalAnswers.text(), isError: Boolean(error), details: { usage, error, answers: answers.length } };
   } catch (err) {
+    stopReason = err instanceof DelegateError ? `codex delegate ${err.kind}` : "codex delegate failed";
     req.live?.onSteering(null);
     // Stop the turn properly before the process goes, so the session file stays consistent for a resume.
     if (threadId && turnId) await Promise.race([request("turn/interrupt", { threadId, turnId }).catch(() => {}), new Promise((r) => setTimeout(r, 2_000))]);
@@ -426,6 +428,6 @@ export async function delegateToCodexAppServer(
     clearTimeout(startupTimer);
     for (const p of pending.values()) p.reject(new Error("closed"));
     child.stdin.end();
-    await killTree(child);
+    await killTree(child, stopReason);
   }
 }

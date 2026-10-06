@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { findRunLog, watchRunLog } from "../src/cli/watch.js";
-import { progressEventHandler } from "../src/core/progress.js";
+import { describeCodexEvent, progressEventHandler } from "../src/core/progress.js";
 import { startRunFeed } from "../src/core/runfeed.js";
 
 describe("progress lines", () => {
@@ -31,6 +31,50 @@ describe("progress lines", () => {
     const claude = progressEventHandler("claude", (m) => out.push(m), () => 0)!;
     claude({ type: "assistant", message: { content: [{ type: "tool_use", id: "u1", name: "Edit", input: { file_path: "x.ts" } }] } });
     expect(out).toEqual(["0s · step 1 (1 cmds) · running: cargo test", "0s · step 1 (1 cmds) · says: All green.", "0s · step 1 (1 edits) · Edit: x.ts"]);
+  });
+
+  it("retains a silent failed completion once without double-counting its command", () => {
+    const out: { short: string; full?: string }[] = [];
+    const handle = progressEventHandler("codex", (short, full) => out.push({ short, full }), () => 0)!;
+    const item = { id: "exec-incident", type: "command_execution", command: "pwsh -File wrapper.ps1", status: "failed", exitCode: 1, durationMs: 7538, aggregatedOutput: "" };
+    handle({ type: "item.started", item });
+    handle({ type: "item.completed", item });
+    handle({ type: "item.completed", item });
+    expect(out).toHaveLength(2);
+    const failure = out[1]!;
+    expect(failure.short).toContain("step 1 (1 cmds)");
+    expect(failure.short).toContain("command failed [exec-incident]: exit=1, status=failed, duration=7538ms; termination cause not reported");
+    expect(failure.full).toContain("No command output was reported.");
+    expect(failure.full).toContain("finally/cleanup");
+    expect(failure.full).not.toContain("timeout reported");
+  });
+
+  it("reports native timeout evidence without treating arbitrary timeout text or exit 124 as proof", () => {
+    const event = (item: object) => describeCodexEvent({ type: "item.completed", item: { id: "timeout", type: "command_execution", command: "test", ...item } });
+    expect(event({ exit_code: 1, status: "failed", aggregated_output: "Command failed because it timed out.\npartial output" })?.full).toContain("timeout reported by Codex command tool");
+    expect(event({ timedOut: true, exitCode: null })?.text).toContain("timeout reported");
+    expect(event({ exit_code: 124, status: "failed", aggregated_output: "application timed out" })?.text).toContain("termination cause not reported");
+    expect(event({ exitCode: 0, status: "completed", aggregatedOutput: "timeout test passed" })).toBeNull();
+    expect(event({ exitCode: 0, status: "completed" })).toBeNull();
+    expect(event({ exitCode: null, status: "declined" })?.text).toContain("declined by Codex");
+    expect(event({ exitCode: null, status: "failed" })?.text).toContain("exit=unknown");
+  });
+
+  it("writes failure evidence and output tail to a retained run feed", () => {
+    const home = mkdtempSync(join(tmpdir(), "ab-failure-feed-"));
+    const feed = startRunFeed({ home, name: "incident", header: "incident" });
+    try {
+      const handle = progressEventHandler("codex", feed.report, () => 0)!;
+      handle({ type: "item.completed", item: { id: "exec-incident", type: "command_execution", command: "wrapper", exit_code: 1, status: "failed", aggregated_output: "x".repeat(5000) + "last evidence" } });
+      const log = readFileSync(feed.logPath, "utf8");
+      expect(log).toContain("exec-incident");
+      expect(log).toContain("last evidence");
+      expect(log).toContain("termination cause not reported");
+      expect(log.length).toBeLessThan(5000);
+    } finally {
+      feed.end("done");
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 });
 

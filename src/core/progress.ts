@@ -10,7 +10,7 @@ import type { CodingAgent } from "./protocol.js";
 const MAX_STATUS_CHARS = 140;
 const MAX_SAY_CHARS = 160;
 
-export type StepKind = "cmd" | "edit" | "read" | "tool" | "say" | "think";
+export type StepKind = "cmd" | "edit" | "read" | "tool" | "say" | "think" | "failure";
 export interface Step {
   kind: StepKind;
   text: string;
@@ -51,9 +51,31 @@ function say(text: string): Step | null {
   return text.trim() ? { kind: "say", text: `says: ${clip(text, MAX_SAY_CHARS)}`, full: `says: ${text.trim()}` } : null;
 }
 
+/** A nonzero command exit is evidence of failure, not evidence of who killed it. */
+function codexCommandFailure(item: any): Step | null {
+  // app-server uses camelCase; exec --json uses snake_case.
+  const code = item.exitCode ?? item.exit_code;
+  const status = typeof item.status === "string" ? item.status : "unknown";
+  const output = String(item.aggregatedOutput ?? item.aggregated_output ?? "");
+  // Only the native tool's explicit timeout marker counts, never exit 1/124 or a phrase
+  // inside arbitrary program output (e.g. a successful test of timeout handling).
+  const timedOut = item.timedOut === true || item.timed_out === true || status === "timedOut" || status === "timed_out" ||
+    /^Command failed because it timed out\.(?:\r?\n|$)/.test(output);
+  if (!timedOut && !(typeof code === "number" && code !== 0) && !["failed", "declined", "interrupted", "cancelled"].includes(status)) return null;
+  const outcome = timedOut ? "timeout reported by Codex command tool" : status === "declined" ? "declined by Codex" : "termination cause not reported";
+  const duration = item.durationMs ?? item.duration_ms;
+  const detail = `command failed [${item.id ?? "unknown id"}]: exit=${typeof code === "number" ? code : "unknown"}, status=${status}${typeof duration === "number" ? `, duration=${duration}ms` : ""}; ${outcome}`;
+  const command = Array.isArray(item.command) ? item.command.join(" ") : String(item.command ?? "");
+  return {
+    kind: "failure", id: item.id, text: detail,
+    full: `${detail}\nCommand: ${command}\n${output.trim() ? `Output tail:\n${output.slice(-4_000)}` : "No command output was reported."}\nA forced termination can skip finally/cleanup; verify owned locks and child processes before retrying.`,
+  };
+}
+
 /** `codex exec --json` events. */
 export function describeCodexEvent(ev: any): Step | null {
   const item = ev?.item;
+  if (ev?.type === "item.completed" && item?.type === "command_execution") return codexCommandFailure(item);
   if (ev?.type === "item.started" && item) {
     switch (item.type) {
       case "command_execution":
@@ -124,7 +146,7 @@ export function progressEventHandler(
   if (!onProgress) return undefined;
   const started = now();
   const seen = new Set<string>();
-  const counts: Record<StepKind, number> = { cmd: 0, edit: 0, read: 0, tool: 0, say: 0, think: 0 };
+  const counts: Record<StepKind, number> = { cmd: 0, edit: 0, read: 0, tool: 0, say: 0, think: 0, failure: 0 };
   let steps = 0;
   let last = "";
   return (ev) => {
@@ -137,7 +159,7 @@ export function progressEventHandler(
     }
     if (step.text === last) return;
     last = step.text;
-    if (step.kind !== "think" && step.kind !== "say") steps++;
+    if (step.kind !== "think" && step.kind !== "say" && step.kind !== "failure") steps++;
     counts[step.kind]++;
     const totals = [counts.cmd && `${counts.cmd} cmds`, counts.edit && `${counts.edit} edits`].filter(Boolean).join(", ");
     const where = steps ? ` · step ${steps}${totals ? ` (${totals})` : ""}` : "";
