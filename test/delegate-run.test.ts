@@ -42,7 +42,9 @@ describe("delegation approval routing", () => {
     const result = await runDelegate(rc, "codex", { title: "task", prompt: "task", access: "edit", worktree: true, _job: j.name }, j.controller.signal, undefined, true, j);
     const metadata = readdirSync(join(home, "runs")).find((f) => f.endsWith(".json"))!;
     const saved = JSON.parse(readFileSync(join(home, "runs", metadata), "utf8"));
-    expect(saved).toMatchObject({ branch: "finished-work", repoRoot: repo.replace(/\\/g, "/"), jobStartedAt: j.startedAt });
+    expect(saved).toMatchObject({ branch: "finished-work", jobStartedAt: j.startedAt });
+    // On a subst drive (E: for D:) git reports the backing drive: compare without the drive letter.
+    expect(String(saved.repoRoot).replace(/^[A-Za-z]:/, "")).toBe(repo.replace(/\\/g, "/").replace(/^[A-Za-z]:/, ""));
     expect(saved.branchHead).toMatch(/^[a-f0-9]{40}$/);
     expect(result.worktree?.branch).toBe("finished-work");
     expect(result.worktree?.branchHead).toBe(saved.branchHead);
