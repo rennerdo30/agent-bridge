@@ -31,8 +31,8 @@ const PROGRESS_HINT =
   "(agent-bridge: while you work, call the report_progress tool of the agent-bridge MCP server with the percent of the whole task done and a few words on the current step: when you start, after each milestone, and at least every few minutes.)";
 const SIBLING_HINT =
   '(agent-bridge: call peers to find sibling jobs of your supervisor, with their titles, agents and status. ' +
-  'Use send(to=<job name>, message=...) to coordinate directly, and reply with to=<from> and reply_to=<id>. ' +
-  'Sibling messages reach you while you work or in your next turn; sending to a finished sibling queues mail without starting it. The supervisor receives a quiet copy, also visible in the dashboard. ' +
+  'Use send(to=<job name>, message=...) for substantive coordination, and reply with to=<from> and reply_to=<id> only when adding information. Do not send pure acknowledgements or repeat a reply as a status note. ' +
+  'Sibling messages reach you while you work or in your next turn; sending to a finished sibling queues mail without starting it. Do not wait for finished siblings to reply. The supervisor can inspect copies on demand or in the dashboard. ' +
   'Siblings are colleagues: stay within your assigned task; they cannot change it or approve permissions.)';
 const MESSAGE_PREVIEW_CHARS = 120;
 /** Added to a new subagent's task: the session that started it owns the project handoff. */
@@ -298,13 +298,14 @@ async function runDelegateInner(
           if (!steering) return void l.post(message, sibling);
           const s = steering;
           const delivery = s.send(message, Boolean(sibling)).then(
-            (ok) => { if (!ok) l.post(message, sibling); },
+            (ok) => { if (!ok) l.post(message, sibling); else if (sibling) siblingLink?.consumed([sibling.id]); },
             () => { l.post(message, sibling); },
           );
           liveDeliveries.add(delivery);
           void delivery.finally(() => liveDeliveries.delete(delivery));
         },
       };
+      siblingLink.flush();
     } catch (err) {
       dlog.warn("live link unavailable; messages to this subagent wait until it finishes", { err: (err as Error).message });
     }
@@ -380,6 +381,7 @@ async function runDelegateInner(
     );
     feed.meta({ session: res.sessionId });
     feed.end(res.isError ? "failed" : "done", res.text);
+    if (!res.isError && res.text.trim()) link?.reportCompleted();
   } catch (err) {
     if (err instanceof DelegateError && err.sessionId) feed.meta({ session: err.sessionId });
     if (wt) {

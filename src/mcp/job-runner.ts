@@ -5,7 +5,8 @@ import { createLogger } from "../core/logger.js";
 import { BridgeNode } from "../core/node.js";
 import { resolveDbPath, resolvePipePath } from "../core/paths.js";
 import { loadOrCreateToken } from "../core/token.js";
-import { SIBLING_CONVERSATION_PREFIX } from "../core/protocol.js";
+import { ACK_CONVERSATION_SUFFIX, SIBLING_CONVERSATION_PREFIX } from "../core/protocol.js";
+import { isPureAcknowledgement } from "../core/job-messaging.js";
 import { resumeArgs, runDelegate, type JobSink, type RunContext } from "./delegate-run.js";
 import { CONTROL_CONVERSATION_PREFIX, JOB_PEER_PREFIX, RUNNER_HEARTBEAT_MS, writeRunnerState, type RunnerSpec } from "./job-host.js";
 import { jobReport, NOTE_CONVERSATION_SUFFIX, QUEUED_FOLLOW_UP_NOTE, sessionOfError, waitForApproval, type Job, type RunnerControl, type RunnerState } from "./jobs.js";
@@ -109,7 +110,8 @@ export async function runJobRunner(specFile: string | undefined): Promise<number
     const dedupeKey = randomUUID();
     for (let attempt = 1; attempt <= SEND_ATTEMPTS; attempt++) {
       try {
-        await node.send({ to: owner, body, conversationId: `job-${job.id}${note ? NOTE_CONVERSATION_SUFFIX : ""}`, ...(replyTo ? { replyTo } : {}), dedupeKey }, { quiet: true });
+        const suffix = isPureAcknowledgement(body) ? ACK_CONVERSATION_SUFFIX : note ? NOTE_CONVERSATION_SUFFIX : "";
+        await node.send({ to: owner, body, conversationId: `job-${job.id}${suffix}`, ...(replyTo ? { replyTo } : {}), dedupeKey }, { quiet: true });
         return true;
       } catch (err) {
         log.warn("could not deliver to the session; retrying", { owner, attempt, err: (err as Error).message });

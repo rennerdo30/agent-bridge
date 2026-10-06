@@ -8,6 +8,15 @@ import type { ServerContext } from "../src/mcp/server.js";
 import { makeEnv, until, type TestEnv } from "./helpers.js";
 
 describe("parent link", () => {
+  it("uses the task report to answer consumed instructions while retaining unseen instructions", async () => {
+    const link = new ParentLink("parent", () => {}, nullLogger);
+    await link.start();
+    link.post("Use the new scope");
+    await parentFromEnv(link.childEnv())!.inbox();
+    link.post("Arrived after the report");
+    link.reportCompleted();
+    expect(await link.close()).toEqual(["Arrived after the report"]);
+  });
   it("delivers the parent's messages once and carries the subagent's answers back", async () => {
     const answers: [string, string | null][] = [];
     const link = new ParentLink("claude-app", (body, replyTo) => answers.push([body, replyTo]), nullLogger);

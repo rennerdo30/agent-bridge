@@ -3,12 +3,12 @@ import type { BridgeNode } from "../core/node.js";
 import type { SiblingClient } from "../core/parent-link.js";
 import { SIBLING_CONVERSATION_PREFIX, type BridgeMessage } from "../core/protocol.js";
 import type { Job } from "./jobs.js";
-import { formatSiblingMessages } from "./format.js";
 import { isJobSendTarget, siblingMaxHops } from "../core/job-messaging.js";
 
 /** A hidden job peer's chat, independent of its supervisor's control messages and approval requests. */
 export class SiblingLink implements SiblingClient {
   readonly maxHops: number;
+  private readonly delivered = new Set<string>();
   constructor(
     private readonly node: BridgeNode,
     private readonly job: Job,
@@ -32,14 +32,23 @@ export class SiblingLink implements SiblingClient {
     return this.node.sendSibling({ to, body, replyTo }, this.maxHops);
   }
 
+  consumed(ids: string[]): void {
+    this.node.markRead(ids);
+  }
+
+  /** Replay durable next-turn mail only after a real task turn has a live context. */
+  flush(): void {
+    for (const message of this.node.unread()) this.receive(message);
+  }
+
   private readonly receive = (message: BridgeMessage): void => {
     if (!message.conversationId.startsWith(SIBLING_CONVERSATION_PREFIX)) return;
-    this.node.markRead([message.id]);
     if (message.hop >= this.maxHops) return;
+    if (!this.job.live || this.delivered.has(message.id)) return;
+    this.delivered.add(message.id);
     this.log.info("message from sibling", { from: message.from.name, to: this.job.name, hop: message.hop });
     // Never answer pendingApproval or mark the job as awaiting a reply to its supervisor.
-    if (this.job.live) this.job.live.post(message.body, { ...message, replyLimit: this.maxHops });
-    else this.job.queue.push(formatSiblingMessages([message], this.maxHops));
+    this.job.live.post(message.body, { ...message, replyLimit: this.maxHops });
   };
 
   close(): void {

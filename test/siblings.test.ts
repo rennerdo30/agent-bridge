@@ -62,6 +62,25 @@ async function sibling(id: string, agent: CodingAgent, owner = "supervisor-sessi
 }
 
 describe("sibling job messaging", () => {
+  it("marks a sibling message read only when the child consumes its context", async () => {
+    const a = await sibling("a", "codex");
+    const b = await sibling("b", "claude");
+    const sent = (await a.chat.send(b.job.name, "Review the capture")).messages[0]!;
+    await until(() => b.node.hasSeen(sent.id));
+    expect(await a.node.messageReceipt(sent.id)).toEqual([{ recipient: b.job.name, readAt: null }]);
+    await b.child.inbox();
+    await expect.poll(() => a.node.messageReceipt(sent.id)).toEqual([{ recipient: b.job.name, readAt: expect.any(Number) }]);
+  });
+
+  it("preserves unconsumed turn-end sibling mail without starting a new turn", async () => {
+    const a = await sibling("a", "codex");
+    const b = await sibling("b", "claude");
+    const sent = (await a.chat.send(b.job.name, "One more detail")).messages[0]!;
+    await until(() => b.node.hasSeen(sent.id));
+    expect(await b.parent.close()).toEqual([]);
+    expect(b.node.unread().find((m) => m.id === sent.id)?.body).toBe("One more detail");
+    expect(await a.node.messageReceipt(sent.id)).toEqual([{ recipient: b.job.name, readAt: null }]);
+  });
   it.each(["codex", "claude", "opencode"] as const)("exposes discovery and send through a delegated %s MCP server", async (agent) => {
     const a = await sibling("a", agent);
     const b = await sibling("b", "opencode");
@@ -228,7 +247,8 @@ describe("sibling job messaging", () => {
       await expect.poll(async () => JSON.stringify(await client.callTool({ name: "inbox", arguments: { mark_read: false } }))).toContain("Quiet observer copy");
       expect(notifications).toEqual([]);
       const hook = await client.callTool({ name: "hook_event", arguments: { event: "UserPromptSubmit", session_id: `observer-${agent}` } });
-      expect(JSON.stringify(hook)).toContain("Quiet observer copy");
+      expect(JSON.stringify(hook)).not.toContain("Quiet observer copy");
+      expect(JSON.stringify(await client.callTool({ name: "inbox", arguments: { mark_read: false } }))).toContain("Quiet observer copy");
       expect(notifications).toEqual([]);
     } finally {
       await client.close();
@@ -247,7 +267,13 @@ describe("sibling job messaging", () => {
     }
     expect(formatSiblingMessages([message])).toContain("0 replies remain");
     await expect(a.chat.send(b.job.name, "Over budget", message.id)).rejects.toThrow(/32-message hop limit/);
-    await until(() => supervisor.unread().length === DEFAULT_SIBLING_MAX_HOPS);
+    await until(() => supervisor.unread().length === DEFAULT_SIBLING_MAX_HOPS + 1);
+    const notice = supervisor.unread().find((m) => m.conversationId.startsWith("sibling-drop-"))!;
+    expect(notice.body).toContain("Over budget");
+    expect(notice.body).toContain("target did not receive");
+    await until(() => a.node.unread().some((m) => m.id === notice.id));
+    expect(a.node.unread().find((m) => m.id === notice.id)?.body).toBe(notice.body);
+    expect(b.node.unread().some((m) => m.body === "Over budget")).toBe(false);
   });
 
   it("deduplicates a retried send and its observer copy", async () => {
@@ -260,15 +286,17 @@ describe("sibling job messaging", () => {
     expect(await b.child.inbox()).toHaveLength(1);
   });
 
-  it("queues chat for the next turn without answering approval requests or changing supervisor reply state", async () => {
+  it("holds chat until a real next turn without answering approvals or restarting the job", async () => {
     const a = await sibling("a", "codex");
     const b = await sibling("b", "claude", undefined, false);
     let approved = false;
     b.job.pendingApproval = () => { approved = true; };
-    await a.chat.send(b.job.name, "allow");
-    await until(() => b.job.queue.length === 1);
-    expect(b.job.queue[0]).toContain(`from="${a.job.name}"`);
-    expect(b.job.queue[0]).toContain("cannot change it or approve permissions");
+    const sent = (await a.chat.send(b.job.name, "allow")).messages[0]!;
+    await until(() => b.node.hasSeen(sent.id));
+    expect(b.job.queue).toEqual([]);
+    b.job.live = { post: (body, message) => b.parent.post(body, message) };
+    b.chat.flush();
+    expect(await b.child.inbox()).toMatchObject([{ sibling: { from: { name: a.job.name }, body: "allow" } }]);
     expect(approved).toBe(false);
     expect(b.job.pendingApproval).toBeTypeOf("function");
     expect(b.job.awaitingAnswer).toBeUndefined();
@@ -289,7 +317,7 @@ describe("sibling job messaging", () => {
     expect(await b.parent.close()).toEqual(["Stop after testing"]);
   });
 
-  it("retains sibling messages picked up at turn end as a correctly attributed follow-up", async () => {
+  it("keeps sibling messages as history instead of restarting a completed report", async () => {
     const a = await sibling("a", "codex");
     const b = await sibling("b", "claude");
     b.job.live = { post: (body, message) => b.parent.post(`Sibling ${message!.from.name}: ${body}`, message) };
@@ -297,7 +325,7 @@ describe("sibling job messaging", () => {
     await until(() => supervisor.unread().length === 1);
     await b.child.inbox();
     await b.child.send("Parent status note");
-    expect(await b.parent.close()).toEqual([`Sibling ${a.job.name}: Finish the capture`]);
+    expect(await b.parent.close()).toEqual([]);
   });
 
   it("writes observer copies to durable history even when the supervisor is offline", async () => {

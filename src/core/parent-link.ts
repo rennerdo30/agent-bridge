@@ -35,6 +35,7 @@ export interface SiblingClient {
   peers(): Promise<SiblingPeer[]>;
   send(to: string, body: string, replyTo?: string): Promise<SendResult>;
   policy?(): Promise<JobMessagingPolicy>;
+  consumed?(ids: string[]): void;
 }
 
 export class ParentLink {
@@ -87,12 +88,19 @@ export class ParentLink {
     return m;
   }
 
+  /** A task report answers instructions already consumed in that turn; no separate ack is needed. */
+  reportCompleted(): void {
+    this.unanswered = this.unanswered.filter((m) => m.sibling);
+  }
+
   /**
    * Stop the link; returns the messages the subagent never picked up or never answered (they become a
    * follow-up, so a message that arrived as it finished is not lost).
    */
   async close(): Promise<string[]> {
-    const left = [...this.unanswered.splice(0), ...this.pending.splice(0)].map((m) => m.body);
+    // Only supervisor instructions can start a continuation. Sibling mail remains in broker history
+    // (unconsumed mail stays in its inbox) and must never replace a completed task's report.
+    const left = [...this.unanswered.splice(0), ...this.pending.splice(0)].filter((m) => !m.sibling).map((m) => m.body);
     const s = this.server;
     this.server = null;
     if (s) await new Promise<void>((r) => s.close(() => r()));
@@ -105,6 +113,7 @@ export class ParentLink {
     if (req.method === "POST" && req.url === "/inbox") {
       const messages = this.pending.splice(0);
       this.unanswered.push(...messages);
+      this.siblings?.consumed?.(messages.filter((m) => m.sibling).map((m) => m.id));
       if (messages.length) this.log.info("subagent picked up messages", { count: messages.length });
       return { messages };
     }

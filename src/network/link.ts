@@ -44,7 +44,7 @@ const frameSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("peers"), peers: peersSchema }),
   z.object({ type: z.literal("send"), rid: z.uuid(), message: messageSchema }),
   z.object({ type: z.literal("echo"), rid: z.uuid() }),
-  z.object({ type: z.literal("receipt"), rid: z.uuid(), id: z.uuid(), sender: textId }),
+  z.object({ type: z.literal("receipt"), rid: z.uuid(), id: z.uuid(), sender: textId, recipient: z.string().regex(NETWORK_NAME_PATTERN).optional() }),
   z.object({ type: z.literal("files"), rid: z.uuid(), transfer: transferSchema }),
   z.object({ type: z.literal("result"), rid: z.uuid(), delivered: z.boolean().optional(), readAt: z.number().nonnegative().nullable().optional(), transfer: transferResultSchema.optional(), error: z.string().max(MAX_METADATA_CHARS).optional() }),
 ]);
@@ -52,7 +52,8 @@ type NetworkFrame = z.infer<typeof frameSchema>;
 
 export interface NetworkBroker {
   peers(): PeerInfo[];
-  receipt?(id: string, sender: string): number | null;
+  receipt?(id: string, sender: string, recipient?: string): number | null;
+  recipientReceipts?: boolean;
   receive(message: BridgeMessage): { delivered: boolean };
 }
 export interface NetworkStatus {
@@ -167,9 +168,10 @@ class Link {
     return this.request({ type: "send", rid: randomUUID(), message: messageSchema.parse(message) }) as Promise<boolean>;
   }
 
-  receipt(id: string, sender: string): Promise<number | null> {
+  receipt(id: string, sender: string, recipient?: string, requireRecipient = false): Promise<number | null> {
     if (!this.receiptsSupported) return Promise.reject(new Error("Remote broker does not support read receipts. Update and reload its hosting sessions."));
-    return this.request({ type: "receipt", rid: randomUUID(), id, sender }) as Promise<number | null>;
+    if (requireRecipient && !this.supports("recipient-receipts-v1")) return Promise.reject(new Error("Remote broker does not support per-recipient broadcast receipts. Update and reload its hosting sessions."));
+    return this.request({ type: "receipt", rid: randomUUID(), id, sender, recipient }) as Promise<number | null>;
   }
 
   files(transfer: FileTransfer): Promise<TransferResult> {
@@ -222,7 +224,7 @@ class Link {
     if (frame.type === "echo") { this.write({ type: "result", rid: frame.rid, delivered: true }); return; }
     try {
       if (frame.type === "receipt") {
-        const readAt = this.service.readReceipt(frame.id, `${this.remote!.id}/${frame.sender}`);
+        const readAt = this.service.readReceipt(frame.id, `${this.remote!.id}/${frame.sender}`, frame.recipient);
         this.write({ type: "result", rid: frame.rid, readAt });
         return;
       }
@@ -293,7 +295,9 @@ export class NetworkService {
     this.extensions.set(type, { capability, handler });
   }
 
-  extensionCapabilities(): string[] { return [...this.extensions.values()].map((extension) => extension.capability); }
+  extensionCapabilities(): string[] {
+    return [...this.extensions.values()].map((extension) => extension.capability).concat(this.broker.recipientReceipts ? ["recipient-receipts-v1"] : []);
+  }
 
   receiveExtension(type: NetworkExtensionType, payload: Record<string, unknown>, remote: NetworkPair): void | Promise<void> {
     const extension = this.extensions.get(type);
@@ -321,12 +325,13 @@ export class NetworkService {
   }
 
   get supportsReceipts(): boolean { return Boolean(this.broker.receipt); }
-  readReceipt(id: string, sender: string): number | null {
+  readReceipt(id: string, sender: string, recipient?: string): number | null {
     if (!this.broker.receipt) throw new Error("read receipts unavailable");
-    return this.broker.receipt(id, sender);
+    return this.broker.receipt(id, sender, recipient);
   }
-  async receipt(address: string, id: string, sender: string): Promise<number | null> {
-    return this.target(address).link.receipt(id, sender);
+  async receipt(address: string, id: string, sender: string, requireRecipient = false): Promise<number | null> {
+    const { link, target } = this.target(address);
+    return link.receipt(id, sender, target, requireRecipient);
   }
 
   localPeers(): PeerInfo[] { return peersSchema.parse(this.broker.peers()); }

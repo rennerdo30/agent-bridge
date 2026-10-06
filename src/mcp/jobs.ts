@@ -4,7 +4,8 @@ import { dirname } from "node:path";
 import { DEFAULT_MAX_JOBS, DELEGATION_METADATA_VERSION } from "../core/constants.js";
 import { DelegateError, failureCause, type DelegateResult } from "../core/delegate.js";
 import type { Logger } from "../core/logger.js";
-import type { AgentKind, BridgeMessage } from "../core/protocol.js";
+import { ACK_CONVERSATION_SUFFIX, isQuietMessage, type AgentKind, type BridgeMessage } from "../core/protocol.js";
+import { isPureAcknowledgement } from "../core/job-messaging.js";
 import type { Worktree } from "../core/worktree.js";
 import { archiveFile, assertWritableStore, isRecord, mergeStoreFields, readJsonStore, retentionLimit, writeJsonStore } from "../core/json-store.js";
 import { changedJobArgs, type JobSettings } from "./job-settings.js";
@@ -946,7 +947,7 @@ export class JobManager {
     const answer = isAnswer || replyTo !== null || job.awaitingAnswer === true;
     job.awaitingAnswer = false;
     this.log.info("message from subagent", { job: job.name, note: !answer });
-    const id = this.post(job, body, replyTo);
+    const id = this.post(job, body, replyTo, isPureAcknowledgement(body) ? ACK_CONVERSATION_SUFFIX : answer ? "" : NOTE_CONVERSATION_SUFFIX);
     if (!answer) {
       this.notes.add(id);
       if (this.notes.size > MAX_NOTES) this.notes.delete(this.notes.values().next().value!);
@@ -956,16 +957,16 @@ export class JobManager {
   /** Whether a message is a running subagent's own status note (it should not wake the session). */
   isNote(m: Pick<BridgeMessage, "id" | "conversationId">): boolean {
     // A job runner marks its notes in the conversation id (they reach this session over the bridge).
-    return this.notes.has(m.id) || m.conversationId.endsWith(NOTE_CONVERSATION_SUFFIX);
+    return this.notes.has(m.id) || m.conversationId.endsWith(NOTE_CONVERSATION_SUFFIX) || isQuietMessage(m);
   }
 
-  private post(job: Job, body: string, replyTo: string | null = null): string {
+  private post(job: Job, body: string, replyTo: string | null = null, suffix = ""): string {
     const m: BridgeMessage = {
       id: randomUUID(),
       from: { id: `job:${job.id}`, name: job.name, agent: job.agent },
       to: this.node.name,
       recipient: this.node.name,
-      conversationId: `job-${job.id}`,
+      conversationId: `job-${job.id}${suffix}`,
       replyTo,
       hop: 0,
       body,

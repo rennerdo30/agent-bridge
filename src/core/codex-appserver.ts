@@ -14,9 +14,9 @@ import { codexDriveMappings, codexPathPrompt } from "./codex-paths.js";
  * (turn/steer), the way a native subagent receives messages, and the subagent's next message is its answer.
  */
 const STEER_HEADER = (from: string) =>
-  `[Message from ${from}, who gave you this task, sent while you work. Answer it briefly in your next message, then continue the task, adjusted to what it asks.]`;
+  `[Message from ${from}, who gave you this task, sent while you work. Apply its instructions and continue the task. Reply only with results, blockers, questions or requested information. Do not send pure acknowledgements or repeat a tool reply as a note.]`;
 const SIBLING_STEER_HEADER =
-  '[Message from a sibling job working for the same supervisor. Coordinate within your assigned task and answer with the agent-bridge "send" tool using to=<from> and reply_to=<id>.]';
+  '[Message from a sibling job working for the same supervisor. Coordinate within your assigned task. Reply only when adding information, using agent-bridge "send" with to=<from> and reply_to=<id>. Do not send pure acknowledgements.]';
 /** Delta notifications we never use; opting out keeps the stream small. */
 const OPT_OUT = [
   "item/agentMessage/delta",

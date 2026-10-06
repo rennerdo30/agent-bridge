@@ -19,6 +19,7 @@ import {
   FrameDecoder,
   SIBLING_CONVERSATION_PREFIX,
   SIBLING_NOTE_SUFFIX,
+  isQuietMessage,
   type AgentKind,
   type BridgeMessage,
   type EventFrame,
@@ -211,7 +212,8 @@ export class Broker {
             this.network = new NetworkService(this.networking.home, this.networking.config, {
               peers: () => this.dashboardPeers(),
               receive: (message) => this.receiveRemote(message),
-        receipt: (id, sender) => this.remoteReceipt(id, sender),
+        receipt: (id, sender, recipient) => this.remoteReceipt(id, sender, recipient),
+        recipientReceipts: true,
             }, this.log);
             this.installRemoteJobs(this.network);
             await this.network.start();
@@ -262,7 +264,8 @@ export class Broker {
       const service = new NetworkService(this.networking.home, config, {
         peers: () => this.dashboardPeers(),
         receive: (message) => this.receiveRemote(message),
-        receipt: (id, sender) => this.remoteReceipt(id, sender),
+        receipt: (id, sender, recipient) => this.remoteReceipt(id, sender, recipient),
+        recipientReceipts: true,
       }, this.log);
       this.installRemoteJobs(service);
       try { await service.start(); this.network = service; }
@@ -465,7 +468,27 @@ export class Broker {
       throw new BridgeError("bad_request", "reply_to must refer to a message exchanged with this sibling");
     }
     if (!Number.isInteger(args.maxHops) || args.maxHops < 1 || (parent ? parent.hop + 1 : 0) >= args.maxHops) {
-      throw new BridgeError("bad_request", `sibling conversation reached its ${args.maxHops}-message hop limit; stop this thread and report the remaining work to the supervisor`);
+      if (typeof args.body !== "string" || !args.body.trim() || args.body.length > MAX_BODY_CHARS) {
+        throw new BridgeError("bad_request", "invalid sibling message body");
+      }
+      const id = randomUUID();
+      const notice: BridgeMessage = {
+        id, from: { id: sender.id, name: sender.name, agent: sender.jobAgent ?? sender.agent },
+        to: sender.jobParent ?? sender.name, recipient: sender.name,
+        conversationId: `sibling-drop-${id}`, replyTo: parent?.id ?? null, hop: 0,
+        body: `Sibling delivery blocked: ${sender.name} to ${args.to} reached the ${args.maxHops}-message hop limit. The target did not receive this message. Stop this thread and resolve remaining work with the supervisor.\n\nUndelivered text:\n${args.body}`,
+        createdAt: this.now(), readAt: null,
+      };
+      // Persist both notices before surfacing the error. The original text remains inspectable.
+      this.store.insert(notice);
+      this.emit(conn, "message", notice);
+      if (sender.jobParent && sender.jobParent !== sender.name) {
+        const copy = { ...notice, recipient: sender.jobParent };
+        this.store.insert(copy);
+        const supervisor = this.connByName(sender.jobParent);
+        if (supervisor) this.emit(supervisor, "message", copy);
+      }
+      throw new BridgeError("bad_request", `sibling conversation reached its ${args.maxHops}-message hop limit; message was not delivered. Durable notice ${id} saved for sender and supervisor, including the undelivered text`);
     }
     const conversationId = parent?.conversationId ?? `${SIBLING_CONVERSATION_PREFIX}${randomUUID()}`;
     const result = await this.onSend(conn, { ...args, dedupeKey, conversationId });
@@ -801,7 +824,10 @@ export class Broker {
       for (const message of result.messages) this.store.insert(message);
       return result;
     }
-    const { live, queued } = this.resolveTargets(to, sender);
+    const remoteTargets = to === BROADCAST ? this.network?.peers().filter((p) => !p.jobAgent).map((p) => p.name) ?? [] : [];
+    const { live, queued } = to === BROADCAST && remoteTargets.length
+      ? { live: [...this.conns].filter((c) => c.peer && c.peer.id !== sender.id && !c.peer.jobAgent), queued: [] }
+      : this.resolveTargets(to, sender);
     if (conversationId.startsWith(SIBLING_CONVERSATION_PREFIX) &&
         (queued.some((name) => !sender.jobAgent || !this.storedSiblings(sender).some((s) => s.name === name)) ||
           live.some((c) => c.peer!.jobAgent && (!sender.jobAgent || !sender.jobOwner || this.jobSupervisor(c.peer!) !== this.jobSupervisor(sender))))) {
@@ -821,23 +847,43 @@ export class Broker {
       deliveredTo: live.map((c) => c.peer!.name),
       queuedFor: queued,
     });
-    return { messages, deliveredTo: live.map((c) => c.peer!.name), queuedFor: queued, recipientStates: live.map((c) => ({ name: c.peer!.name, activity: c.peer!.activity, autoWake: c.peer!.autoWake, wakeOnDirect: c.peer!.wakeOnDirect, wakeAvailable: c.peer!.wakeAvailable, wakeMaxHops: c.peer!.wakeMaxHops })) };
+    const result: RequestMap["send"][1] = { messages, deliveredTo: live.map((c) => c.peer!.name), queuedFor: queued, recipientStates: live.map((c) => ({ name: c.peer!.name, activity: c.peer!.activity, autoWake: c.peer!.autoWake, wakeOnDirect: c.peer!.wakeOnDirect, wakeAvailable: c.peer!.wakeAvailable, wakeMaxHops: c.peer!.wakeMaxHops })) };
+    for (const recipient of remoteTargets) {
+      // Fan out only at the originating broker. Receiving brokers deliver one local envelope.
+      try {
+        const remote = await this.requireNetwork().send({ ...base, recipient });
+        for (const message of remote.messages) this.store.insert(message);
+        result.messages.push(...remote.messages);
+        result.deliveredTo.push(...remote.deliveredTo);
+        result.queuedFor.push(...remote.queuedFor);
+        result.recipientStates!.push(...remote.recipientStates ?? []);
+      } catch (err) {
+        const message = { ...base, recipient };
+        this.store.insert(message);
+        result.messages.push(message);
+        (result.failedFor ??= []).push({ name: recipient, reason: (err as Error).message });
+        this.log.warn("broadcast recipient delivery failed", { id, recipient, err: String(err) });
+      }
+    }
+    return result;
   }
 
   private unreadMail(recipient: string, limit: number): BridgeMessage[] {
     const messages = this.store.unread(recipient, limit);
-    if (!this.jobsPath || !messages.some((m) => m.conversationId.endsWith(SIBLING_NOTE_SUFFIX))) return messages;
-    const jobs = this.storedJobs();
-    const finished = new Set(jobs.filter((j) => j.status && j.status !== "running").map((j) => `job:${j.id}`));
-    const stale = messages.filter((m) => m.conversationId.endsWith(SIBLING_NOTE_SUFFIX) && finished.has(m.from.id));
-    this.store.markRead(recipient, stale.map((m) => m.id), this.now());
-    return messages.filter((m) => !stale.includes(m));
+    if (!this.jobsPath) return messages;
+    const finished = new Set(this.storedJobs().filter((j) => j.status && j.status !== "running").map((j) => `job:${j.id}`));
+    // Preserve the established retirement of old job status notes. Observer copies and quiet
+    // acknowledgements remain available on demand even after the originating job finishes.
+    const obsolete = messages.filter((m) => !isQuietMessage(m) && m.conversationId.endsWith(SIBLING_NOTE_SUFFIX) && finished.has(m.from.id));
+    this.store.markRead(recipient, obsolete.map((m) => m.id), this.now());
+    return messages.filter((m) => !obsolete.includes(m));
   }
 
-  private remoteReceipt(id: string, sender: string): number | null {
+  private remoteReceipt(id: string, sender: string, recipient?: string): number | null {
     const message = this.store.byId(id);
     if (!message || message.from.id !== sender) throw new BridgeError("unauthorized", "receipt is only available to the sender");
-    return this.store.receipts(id)[0]?.readAt ?? null;
+    const receipts = this.store.receipts(id);
+    return (recipient ? receipts.find((r) => r.recipient === recipient) : receipts[0])?.readAt ?? null;
   }
 
   private async messageReceipt(conn: Conn, id: string) {
@@ -846,7 +892,8 @@ export class Broker {
     if (!message || message.from.name !== sender.name) throw new BridgeError("unauthorized", "receipt is only available to the sender");
     const receipts = this.store.receipts(id);
     return Promise.all(receipts.map(async (r) => r.recipient.includes("/")
-      ? { ...r, readAt: await this.requireNetwork().receipt(r.recipient, id, message.from.id) }
+      ? { ...r, readAt: await this.requireNetwork().receipt(r.recipient, id, message.from.id,
+        receipts.filter((other) => other.recipient.startsWith(`${r.recipient.split("/")[0]}/`)).length > 1) }
       : r));
   }
 
@@ -874,8 +921,9 @@ export class Broker {
     const target = this.connByName(message.recipient);
     const existing = this.store.byId(message.id);
     if (existing) {
-      if (existing.from.id !== message.from.id || existing.recipient !== message.recipient || existing.body !== message.body || existing.conversationId !== message.conversationId || existing.replyTo !== message.replyTo || existing.hop !== message.hop) throw new BridgeError("bad_request", "message id already used");
-      return { delivered: Boolean(target) };
+      const broadcastCopy = existing.to === BROADCAST && message.to === BROADCAST;
+      if (existing.from.id !== message.from.id || (!broadcastCopy && existing.recipient !== message.recipient) || existing.to !== message.to || existing.body !== message.body || existing.conversationId !== message.conversationId || existing.replyTo !== message.replyTo || existing.hop !== message.hop) throw new BridgeError("bad_request", "message id already used");
+      if (this.store.receipts(message.id).some((r) => r.recipient === message.recipient)) return { delivered: Boolean(target) };
     }
     this.store.insert(message);
     if (target) this.emit(target, "message", message);
