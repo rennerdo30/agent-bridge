@@ -23,34 +23,34 @@ export const UI_PAGE = `<!doctype html>
 <script>try { const t = localStorage.getItem("ab-theme"); if (t === "light" || t === "dark") document.documentElement.dataset.theme = t; } catch {}</script>
 <style>
 /*
- * A quiet instrument panel: cool neutral surfaces separated by tone rather than frames, one signal colour (teal)
- * for "live" and selection, and amber kept for what needs the owner (approvals, failures, warnings).
+ * The original agent-bridge palette (indigo accent, blue for work in progress) on calm surfaces separated by tone;
+ * amber is kept for what needs the owner (approvals, warnings). The dark theme is lifted for readability.
  */
 :root {
-  --bg: #edf0f2; --panel: #ffffff; --panel-2: #f4f6f7; --sunk: #e3e8eb; --text: #12171c; --muted: #56626b; --faint: #8a959e; --line: #d9dfe3;
-  --accent: #0b7a83; --accent-soft: #daeff0; --on-accent: #ffffff; --ok: #2c7a47; --ok-soft: #e1f0e6; --warn: #a86400; --warn-soft: #f9ecd4;
-  --bad: #b23d2b; --bad-soft: #f7e3de; --busy: #0b7a83; --busy-soft: #daeff0;
-  --claude: #d97757; --codex: #12936f; --opencode: #4f6ef0; --other: #7d8a93;
-  --shadow: 0 1px 0 rgba(18, 23, 28, .04);
-  --pop: 0 16px 40px rgba(18, 23, 28, .16);
+  --bg: #f4f5f7; --panel: #ffffff; --panel-2: #f8f9fb; --sunk: #eceef2; --text: #161b26; --muted: #5f6779; --faint: #949bab; --line: #e4e7ec;
+  --accent: #4f46e5; --accent-soft: #eef0ff; --on-accent: #ffffff; --ok: #15803d; --ok-soft: #e8f6ed; --warn: #b45309; --warn-soft: #fdf3e2;
+  --bad: #c2410c; --bad-soft: #fdeee6; --busy: #2563eb; --busy-soft: #e8efff;
+  --claude: #d97757; --codex: #0f9d76; --opencode: #3b82f6; --other: #8b93a5;
+  --shadow: 0 1px 2px rgba(16, 24, 40, .05);
+  --pop: 0 16px 40px rgba(16, 24, 40, .16);
   --sans: "Segoe UI Variable Text", "Segoe UI Variable", "SF Pro Text", system-ui, -apple-system, "Segoe UI", sans-serif;
   --mono: ui-monospace, "Cascadia Code", "SF Mono", Consolas, monospace;
   color-scheme: light;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --bg: #161b20; --panel: #1e252b; --panel-2: #252d34; --sunk: #12171b; --text: #edf2f4; --muted: #b0bcc3; --faint: #8593a0; --line: #323d45;
-    --accent: #4fcfd8; --accent-soft: #17414a; --on-accent: #062a2e; --ok: #6fd69a; --ok-soft: #173424; --warn: #f4bd55; --warn-soft: #3c2d12;
-    --bad: #f48a77; --bad-soft: #43221c; --busy: #4fcfd8; --busy-soft: #17414a;
+    --bg: #14181f; --panel: #1b2029; --panel-2: #212733; --sunk: #10141a; --text: #eceef3; --muted: #aab2c2; --faint: #7d8699; --line: #2d3442;
+    --accent: #8b87ff; --accent-soft: #2a2a55; --on-accent: #ffffff; --ok: #4ade80; --ok-soft: #173524; --warn: #fbbf24; --warn-soft: #3a2e12;
+    --bad: #fb923c; --bad-soft: #40241a; --busy: #60a5fa; --busy-soft: #1b2e4a;
     --shadow: none; --pop: 0 18px 48px rgba(0, 0, 0, .5);
     color-scheme: dark;
   }
 }
 /* Chosen in the sidebar: dark regardless of the system. */
 :root[data-theme="dark"] {
-  --bg: #161b20; --panel: #1e252b; --panel-2: #252d34; --sunk: #12171b; --text: #edf2f4; --muted: #b0bcc3; --faint: #8593a0; --line: #323d45;
-  --accent: #4fcfd8; --accent-soft: #17414a; --on-accent: #062a2e; --ok: #6fd69a; --ok-soft: #173424; --warn: #f4bd55; --warn-soft: #3c2d12;
-  --bad: #f48a77; --bad-soft: #43221c; --busy: #4fcfd8; --busy-soft: #17414a;
+  --bg: #14181f; --panel: #1b2029; --panel-2: #212733; --sunk: #10141a; --text: #eceef3; --muted: #aab2c2; --faint: #7d8699; --line: #2d3442;
+  --accent: #8b87ff; --accent-soft: #2a2a55; --on-accent: #ffffff; --ok: #4ade80; --ok-soft: #173524; --warn: #fbbf24; --warn-soft: #3a2e12;
+  --bad: #fb923c; --bad-soft: #40241a; --busy: #60a5fa; --busy-soft: #1b2e4a;
   --shadow: none; --pop: 0 18px 48px rgba(0, 0, 0, .5);
   color-scheme: dark;
 }
@@ -63,8 +63,8 @@ a { color: inherit; text-decoration: none; }
 /* App shell: sessions sidebar on the left (a drawer on narrow screens), content on the right. */
 .app { display: grid; grid-template-columns: var(--side-w, 288px) minmax(0, 1fr); min-height: 100vh; }
 .app.collapsed { --side-w: 0px; }
-.app.collapsed .side { visibility: hidden; }
-.side { position: sticky; top: 0; height: 100vh; display: flex; flex-direction: column; background: var(--panel); border-right: 1px solid var(--line); min-width: 0; overflow: hidden; z-index: 30; }
+.app.collapsed .sidebar { visibility: hidden; }
+.sidebar { position: sticky; top: 0; height: 100vh; display: flex; flex-direction: column; background: var(--panel); border-right: 1px solid var(--line); min-width: 0; overflow: hidden; z-index: 30; }
 .side-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 14px 12px 10px 16px; }
 .brand { display: flex; align-items: center; gap: 10px; font-weight: 650; font-size: 15px; }
 .logo { width: 28px; height: 28px; display: block; }
@@ -97,11 +97,11 @@ a { color: inherit; text-decoration: none; }
 .scrim { display: none; }
 @media (max-width: 860px) {
   .app { grid-template-columns: minmax(0, 1fr); }
-  .side { position: fixed; left: 0; top: 0; bottom: 0; width: min(320px, 86vw); transform: translateX(-100%); transition: transform .18s ease; box-shadow: 0 0 40px rgba(0, 0, 0, .25); }
-  .app.open .side { transform: none; visibility: visible; }
+  .sidebar { position: fixed; left: 0; top: 0; bottom: 0; width: min(320px, 86vw); transform: translateX(-100%); transition: transform .18s ease; box-shadow: 0 0 40px rgba(0, 0, 0, .25); }
+  .app.open .sidebar { transform: none; visibility: visible; }
   .app.open .scrim { display: block; position: fixed; inset: 0; z-index: 25; background: rgba(0, 0, 0, .35); }
   .mbar { display: flex; }
-  .app.collapsed .side { visibility: visible; }
+  .app.collapsed .sidebar { visibility: visible; }
 }
 .theme { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
 .theme button { background: transparent; color: var(--muted); border: 0; border-radius: 0; padding: 4px 10px; font-size: 12px; font-weight: 500; cursor: pointer; }
@@ -331,7 +331,7 @@ h3 .n { font-weight: 400; color: var(--faint); }
 main.wrap { padding-top: 32px; max-width: 1240px; }
 
 /* Sidebar: a darker strip; the selection is a tinted row with the live signal on its left edge. */
-.side { background: var(--sunk); border-right-color: transparent; }
+.sidebar { background: var(--sunk); border-right-color: transparent; }
 .brand { font-size: 15px; letter-spacing: -.01em; }
 .side-search input { background: var(--panel); border-color: transparent; border-radius: 8px; padding: 7px 11px; }
 .side-search input:focus { border-color: var(--accent); outline: none; }
@@ -347,7 +347,7 @@ main.wrap { padding-top: 32px; max-width: 1240px; }
 .tree-sess > a { font-weight: 550; }
 .tree-sess .lbl small { margin-top: 1px; }
 /* The one bold element: anything working carries a thin live bar on its left edge. */
-.rows > a:has(.pill.running)::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 2px; background: var(--accent); }
+.rows > a:has(.pill.running)::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 2px; background: var(--busy); }
 .side-nav a:hover { background: var(--panel-2); color: var(--text); }
 .rows-head { padding: 12px 16px 6px; font-size: 12px; font-weight: 600; color: var(--muted); border-top: 1px solid var(--panel-2); }
 .rows > a.chat-row .task { color: var(--faint); }
@@ -355,12 +355,12 @@ main.wrap { padding-top: 32px; max-width: 1240px; }
 .theme { background: var(--panel); border-color: transparent; }
 .theme button + button { border-left-color: var(--line); }
 .theme button.on { background: var(--accent-soft); color: var(--text); font-weight: 600; }
-.count { background: var(--accent-soft); color: var(--accent); border-radius: 6px; font-variant-numeric: tabular-nums; }
+.count { background: var(--busy-soft); color: var(--busy); border-radius: 6px; font-variant-numeric: tabular-nums; }
 
 /* Status vocabulary */
-.dot.busy { background: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.dot.busy { background: var(--busy); box-shadow: 0 0 0 3px var(--busy-soft); }
 .pill { border-radius: 6px; font-weight: 600; padding: 1px 8px; }
-.pill.running { background: var(--accent-soft); color: var(--accent); }
+.pill.running { background: var(--busy-soft); color: var(--busy); }
 .pill.failed, .pill.interrupted { background: var(--warn-soft); color: var(--warn); }
 .pill.failed { background: var(--bad-soft); color: var(--bad); }
 .chip { border-radius: 5px; border-color: transparent; background: var(--panel-2); }
@@ -448,7 +448,7 @@ form#send { background: transparent; border-top: 0; padding: 12px 0 0; }
 </head>
 <body>
 <div class="app" id="app">
-<aside class="side" id="side" aria-label="Sessions and subagents">
+<aside class="sidebar" id="side" aria-label="Sessions and subagents">
   <div class="side-top">
     <a class="brand" href="#/"><span class="logo">${LOGO_SVG}</span>agent-bridge</a>
     <button type="button" class="icon-btn" id="sideHide" title="Hide the sidebar" aria-label="Hide the sidebar">«</button>
