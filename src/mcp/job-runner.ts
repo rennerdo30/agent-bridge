@@ -118,6 +118,7 @@ export async function runJobRunner(specFile: string | undefined): Promise<number
   const post = (body: string, replyTo: string | null = null, note = false): Promise<boolean> => (chain = chain.then(() => deliver(body, replyTo, note)));
 
   const sink: JobSink = {
+    escalateApproval: async (_job, body) => { await post(body); },
     askParent: (j, question, timeoutMs, request) => {
       const answer = waitForApproval(j, question, timeoutMs, (body) => void post(body), log, home, request);
       save();

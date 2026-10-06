@@ -137,6 +137,8 @@ export const MAX_APPROVAL_REASON_CHARS = 4_000;
 
 /** Public dashboard data. Times are milliseconds since the Unix epoch; text is untrusted plain text. */
 export interface PendingApproval {
+  parentJob?: string;
+  rootSession?: string;
   id: string;
   owner: string;
   job: string;
@@ -220,7 +222,8 @@ export function listPendingApprovals(home: string): PendingApproval[] {
   return files.flatMap((file) => {
     if (!file.endsWith(".json")) return [];
     const r = readApproval(home, file.slice(0, -5));
-    return r ? [{ id: r.id, owner: r.owner, job: r.job, agent: r.agent, tool: r.tool, command: r.command, reason: r.reason, askedAt: r.askedAt, deadline: r.deadline }] : [];
+    return r ? [{ id: r.id, owner: r.owner, job: r.job, agent: r.agent, tool: r.tool, command: r.command, reason: r.reason, askedAt: r.askedAt, deadline: r.deadline,
+      ...(typeof r.parentJob === "string" ? { parentJob: r.parentJob } : {}), ...(typeof r.rootSession === "string" ? { rootSession: r.rootSession } : {}) }] : [];
   }).sort((a, b) => a.askedAt - b.askedAt);
 }
 

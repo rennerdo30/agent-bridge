@@ -27,6 +27,11 @@ export interface RunFeed {
 export interface RunMeta {
   /** Remote job location, on the requesting PC's mirrored feed. */
   remote?: { host: string; name: string };
+  /** Additive ancestry contract, independent of the JSON store envelope version. */
+  metadataVersion?: number;
+  bridgeVersion?: string;
+  parentJob?: string;
+  rootSession?: string;
   /** Peer name of the session that started it, its agent kind and project folder. */
   by?: string;
   byAgent?: string;

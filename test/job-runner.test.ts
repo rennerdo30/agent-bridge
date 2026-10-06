@@ -12,6 +12,7 @@ import { loadOrCreateToken } from "../src/core/token.js";
 import { parentFromEnv } from "../src/core/parent-link.js";
 import { readRunnerState } from "../src/mcp/job-host.js";
 import { readStore } from "../src/mcp/jobs.js";
+import { RootConcurrency } from "../src/core/root-concurrency.js";
 import { startUi } from "../src/cli/ui.js";
 
 /**
@@ -124,6 +125,25 @@ afterEach(async () => {
 });
 
 describe.skipIf(!existsSync(SERVER))("background subagents in job runners", () => {
+  it("counts detached jobs in the root budget and forwards descendant approval escalation", async () => {
+    const session = await startSession();
+    const held = await spawnHeld(session);
+    const stored = readStore(join(home, "jobs.json")).find((job) => job.name === held.job)!;
+    expect(stored).toMatchObject({ metadataVersion: 2, rootSession: expect.any(String), rootName: SESSION });
+    const budget = new RootConcurrency(home, stored.rootSession!);
+    const extra = { id: "nested-test-child", pid: process.pid };
+    try {
+      budget.setLimit(1);
+      expect(budget.acquire(extra)).toBe(false);
+      const child = parentFromEnv(JSON.parse(readFileSync(held.link, "utf8")))!;
+      await child.escalate!("Nested child requests owner approval");
+      expect(await call(session, "wait_for_message", { from: held.job, timeout_sec: 10 })).toContain("Nested child requests owner approval");
+      writeFileSync(held.release, "");
+      await waitFor(() => readRunnerState(home, held.id)?.status === "done" && !pidAlive(held.pid));
+      expect(budget.acquire(extra)).toBe(true);
+    } finally { budget.release(extra); budget.close(); }
+  }, TEST_TIMEOUT_MS);
+
   it("keeps explicit session reply grants across a detached job continuation", async () => {
     const session = await startSession();
     const external = new BridgeNode({ pipePath: resolvePipePath(home), token: loadOrCreateToken(home), dbPath: resolveDbPath(home),

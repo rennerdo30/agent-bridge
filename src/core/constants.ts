@@ -20,6 +20,7 @@ export const ENV = {
   wakeOnDirect: "AGENT_BRIDGE_WAKE_ON_DIRECT",
   maxHops: "AGENT_BRIDGE_MAX_HOPS",
   maxJobs: "AGENT_BRIDGE_MAX_JOBS",
+  maxDelegateDepth: "AGENT_BRIDGE_MAX_DELEGATE_DEPTH",
   autoApproveTools: "AGENT_BRIDGE_AUTO_APPROVE_TOOLS",
   lingerSec: "AGENT_BRIDGE_LINGER_SEC",
   delivery: "AGENT_BRIDGE_DELIVERY",
@@ -30,6 +31,10 @@ export const ENV = {
   /** "0": background subagents run inside the session's MCP server instead of detached job runners (they then end with it). */
   jobRunner: "AGENT_BRIDGE_JOB_RUNNER",
 } as const;
+
+export const DEFAULT_MAX_DELEGATE_DEPTH = 2;
+export const MAX_DELEGATE_DEPTH_LIMIT = 3;
+export const DELEGATION_METADATA_VERSION = 2;
 
 /** Default data directory; holds the message store, logs and config. */
 export const DEFAULT_HOME = join(homedir(), `.${APP_NAME}`);
