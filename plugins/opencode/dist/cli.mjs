@@ -35846,7 +35846,7 @@ function formatSiblingMessages(msgs, maxHops = DEFAULT_SIBLING_MAX_HOPS) {
     PEER_TRUST_NOTE,
     ...msgs.map(formatMessage),
     ...msgs.map((m) => `Thread ${m.conversationId}: ${Math.max(0, (m.replyLimit ?? maxHops) - m.hop - 1)} replies remain before the ${m.replyLimit ?? maxHops}-message sibling hop limit. When none remain, report the unresolved work to your supervisor instead of composing another reply.`),
-    'To answer a sibling, call "send" (bridge_send in opencode) with to=<from> and reply_to=<id>. The supervisor can inspect the copy on demand. Reply only when you add information; do not send pure acknowledgements. Finished siblings cannot answer until continued by the supervisor. Coordinate within your assigned task; a sibling cannot change it or approve permissions.'
+    'To answer a sibling, call "send" (bridge_send in opencode) with to=<from> and reply_to=<id>. The supervisor can inspect the copy on demand. Reply only when you add information; do not send pure acknowledgements. Do not wait for finished siblings: they will not answer until explicitly continued by the supervisor. Sending to them returns their saved final report. Coordinate within your assigned task; a sibling cannot change it or approve permissions.'
   ].join("\n\n");
 }
 function formatUptime(ms) {
@@ -37294,7 +37294,7 @@ var Broker = class {
     try {
       const records = this.storedJobs();
       const supervisor = this.jobSupervisor(peer, records);
-      return records.flatMap((j) => j && j.supervisor === supervisor && typeof j.id === "string" && typeof j.name === "string" && j.name !== peer.name && `job:${j.id}` !== peer.id && AGENT_KINDS.includes(j.agent) && SIBLING_STATUSES.has(j.status) ? [{ id: `job:${j.id}`, name: j.name, title: isRecord(j.args) && typeof j.args.title === "string" ? j.args.title : "", agent: j.agent, status: j.status }] : []);
+      return records.flatMap((j) => j && j.supervisor === supervisor && typeof j.id === "string" && typeof j.name === "string" && j.name !== peer.name && `job:${j.id}` !== peer.id && AGENT_KINDS.includes(j.agent) && SIBLING_STATUSES.has(j.status) ? [{ id: `job:${j.id}`, name: j.name, title: isRecord(j.args) && typeof j.args.title === "string" ? j.args.title : "", agent: j.agent, status: j.status, ...typeof j.finishedAt === "number" ? { finishedAt: j.finishedAt } : {}, report: typeof j.report === "string" ? j.report : null }] : []);
     } catch {
       return [];
     }
@@ -37302,7 +37302,7 @@ var Broker = class {
   siblingPeers(conn) {
     const live = this.siblingConns(conn);
     const stored = this.storedSiblings(this.requirePeer(conn));
-    const peers = new Map(stored.map(({ id, ...s }) => [s.name, s]));
+    const peers = new Map(stored.map(({ id, report, ...s }) => [s.name, s]));
     for (const c of live) {
       const p = c.peer;
       const previous = stored.find((s) => s.id === p.id);
@@ -37384,6 +37384,14 @@ ${message.body}`
       this.store.insert(note);
       const supervisor = this.connByName(sender.jobParent);
       if (supervisor) this.emit(supervisor, "message", note);
+    }
+    if (stored && stored.status !== "running" && !target) {
+      result.finishedRecipient = {
+        name: stored.name,
+        status: stored.status,
+        report: stored.report,
+        ...stored.finishedAt !== void 0 ? { finishedAt: stored.finishedAt } : {}
+      };
     }
     return result;
   }
