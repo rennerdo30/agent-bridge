@@ -177,6 +177,10 @@ h3 .n { color: var(--faint); font-weight: 500; }
 .card .stats { display: flex; gap: 16px; padding-top: 12px; border-top: 1px solid var(--line); font-size: 12.5px; color: var(--muted); }
 .card .stats b { color: var(--text); font-size: 15px; font-weight: 650; margin-right: 4px; }
 .kids { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; color: var(--muted); }
+.kids-fold > summary { cursor: pointer; font-size: 12.5px; color: var(--muted); padding: 2px 0; }
+.kids-fold > summary:hover { color: var(--text); }
+.kids-fold[open] > summary { margin-bottom: 6px; }
+.kids-fold .kids { max-height: 260px; overflow-y: auto; }
 
 /* Subagent rows */
 .rows > a { position: relative; display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; gap: 14px; align-items: center; padding: 13px 16px; border-bottom: 1px solid var(--line); }
@@ -1209,6 +1213,21 @@ const cmpVersion = (a, b) => { const x = String(a).split(".").map(Number), y = S
 const newestVersion = () => [state.version, ...state.peers.map((p) => p.version)].filter(Boolean).reduce((m, v) => (cmpVersion(v, m) > 0 ? v : m), "0.0.0");
 const versionChip = (p) => p.version && cmpVersion(p.version, newestVersion()) < 0 ? '<span class="chip old">v' + esc(p.version) + " · outdated</span>" : "";
 const childLine = (c) => '<div class="ell">' + dot(c.activity) + " subagent session <b>" + esc(c.name) + "</b></div>";
+/** Up to this many subagent sessions are listed in full; more fold into one summary line. */
+const KIDS_SHOWN = 3;
+const kidsSummary = (list) => {
+  const busy = list.filter((c) => c.activity === "busy").length;
+  return list.length + " subagent session" + (list.length === 1 ? "" : "s") + (busy ? " · " + busy + " working" : "");
+};
+/** A session's subagent sessions: a short list, or a fold (closed by default) when there are many. */
+function kidsBlock(x, foldable) {
+  if (!x.children.length) return "";
+  if (x.children.length <= KIDS_SHOWN) return '<div class="kids">' + x.children.map(childLine).join("") + "</div>";
+  // Inside a link card a fold would swallow the click: there, only the summary.
+  if (!foldable) return '<div class="kids"><div class="ell">' + dot(x.children.some((c) => c.activity === "busy") ? "busy" : "idle") + " " + esc(kidsSummary(x.children)) + "</div></div>";
+  const id = "kids:" + x.name;
+  return '<details class="kids-fold" data-open="' + esc(id) + '"' + (opened.has(id) ? " open" : "") + "><summary>" + esc(kidsSummary(x.children)) + '</summary><div class="kids">' + x.children.map(childLine).join("") + "</div></details>";
+}
 
 function groupRow(g, sel, showOwner) {
   return '<a href="' + href(g.owner, g.key) + '" class="' + (sel ? "sel" : "") + '">' + av(g.agent) +
@@ -1264,7 +1283,7 @@ function renderOverview() {
       : '<div class="head">' + av("other") + '<div style="min-width:0;flex:1"><div class="title ell">' + esc(x.name) + '</div><div class="small muted">not connected</div></div></div>';
     const stats = '<div class="stats"><span><b>' + x.groups.length + "</b>subagents</span>" + (x.running ? '<span style="color:var(--busy)"><b style="color:inherit">' + x.running + "</b>working</span>" : "") +
       (p ? "<span><b>" + up(p.startedAt) + "</b>connected</span>" : x.groups[0] ? "<span>last " + ago(x.groups[0].updatedAt) + "</span>" : "") + "</div>";
-    const kids = x.children.length ? '<div class="kids">' + x.children.map(childLine).join("") + "</div>" : "";
+    const kids = kidsBlock(x, false);
     return '<a class="card' + (x.live ? "" : " ended") + '" href="' + href(x.name) + '">' + head + (p ? versionChip(p) : "") + kids + stats + "</a>";
   };
   // One heading per PC once sessions of paired PCs are online.
@@ -1287,7 +1306,7 @@ function renderSession() {
     ? '<div class="head" style="display:flex;gap:12px;align-items:center">' + av(p.agent) + '<div style="min-width:0;flex:1"><div class="title ell" style="font-weight:650;font-size:15px">' + esc(folder(p.cwd)) + '</div><div class="small muted ell">' + esc(p.name) + "</div></div>" + dot(p.activity) + "</div>" +
       '<div class="kv"><span>status</span><span>' + esc(p.activity || "unknown") + "</span><span>folder</span><span>" + esc(p.cwd) + "</span><span>connected</span><span>" + up(p.startedAt) + " ago</span>" +
       (p.sessionId ? "<span>session</span><span>" + esc(p.sessionId) + "</span>" : "") + "<span>version</span><span>" + esc(p.version || "?") + " " + versionChip(p) + "</span></div>" +
-      (x.children.length ? '<div class="kids">' + x.children.map(childLine).join("") + "</div>" : "")
+      kidsBlock(x, true)
     : '<div class="head" style="display:flex;gap:12px;align-items:center">' + av("other") + '<div><div style="font-weight:650">' + esc(x.name) + '</div><div class="small muted">' +
       (x.name === "earlier runs" ? "Runs from before sessions were recorded, or from sessions in other folders." : "This session has ended. Its subagents are kept for reference.") + "</div></div></div>";
   $("sCount").innerHTML = x.groups.length ? countsLine(countGroups(x.groups)) : "";
