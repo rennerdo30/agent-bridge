@@ -58,6 +58,8 @@ export interface PeerInfo {
   jobOwner?: string;
   jobParent?: string;
   jobTitle?: string;
+  /** Exact session names explicitly granted by the supervisor at spawn. */
+  jobSendTo?: string[];
 }
 
 export type PeerActivity = "busy" | "idle";
@@ -79,6 +81,8 @@ export interface BridgeMessage {
   replyTo: string | null;
   /** Number of agent-to-agent hops in this conversation; used for loop protection. */
   hop: number;
+  /** Local job delivery hint; lets hooks show the sender's sibling reply budget before composing. */
+  replyLimit?: number;
   body: string;
   createdAt: number;
   readAt: number | null;

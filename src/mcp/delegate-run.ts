@@ -42,7 +42,7 @@ const HANDOFF_DECLINED =
 export const PARENT_APPROVAL_TIMEOUT_MS = 10 * 60_000;
 
 /** _worktree: internal, a follow-up continuing in an existing worktree. _job: the job's name. */
-export type DelegateArgs = { prompt: string; model?: string; effort?: string; session_id?: string; cwd?: string; timeout_sec?: number; worktree?: boolean; allow_tools?: string[]; title: string; _worktree?: Worktree; _job?: string } & TargetArgs;
+export type DelegateArgs = { prompt: string; model?: string; effort?: string; session_id?: string; cwd?: string; timeout_sec?: number; worktree?: boolean; allow_tools?: string[]; send_to?: string[]; title: string; _worktree?: Worktree; _job?: string } & TargetArgs;
 
 /** Where a background job's approval questions, answers and facts go: this session's JobManager, or a job runner's link to it. */
 export interface JobSink {
@@ -224,6 +224,7 @@ export async function runDelegate(
       pipePath: resolvePipePath(rc.home), token: loadOrCreateToken(rc.home), dbPath: resolveDbPath(rc.home),
       agent: "other", jobAgent: job.agent, id: `job:${job.id}`, name: job.name, cwd: workdir,
       jobOwner: job.supervisor ?? job.owner ?? me, jobParent: me, jobTitle: a.title,
+      jobSendTo: a.send_to,
       autoWake: false, canHostBroker: false, log: dlog,
     });
     siblingLink = new SiblingLink(jobNode, job, cfg.maxHops, dlog);
@@ -249,7 +250,7 @@ export async function runDelegate(
       job.live = {
         post: (m, sibling) => {
           const from = sibling?.from.name ?? me;
-          const message = sibling ? formatSiblingMessages([sibling]) : m;
+          const message = sibling ? formatSiblingMessages([sibling], siblingLink?.maxHops) : m;
           feed.report(`message from ${from}: ${m.split("\n")[0]!.slice(0, MESSAGE_PREVIEW_CHARS)}`, `message from ${from}: ${m}`);
           // Natively where the target supports it (a real user message in the running turn), else at its next hook.
           if (!steering) return void l.post(message, sibling);

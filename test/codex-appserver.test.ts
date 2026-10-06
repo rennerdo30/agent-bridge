@@ -182,6 +182,30 @@ createInterface({ input: process.stdin }).on("line", (line) => {
 });
 
 describe("native Codex message steering", () => {
+  it("preserves the final deliverable before a later sibling acknowledgement", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "ab-final-deliverable-"));
+    const fake = FAKE_APP_SERVER.replace('output({ id: request.id, result });', `
+      output({ id: request.id, result });
+      if (request.method === "turn/start") {
+        output({ method: "item/completed", params: { turnId: "turn", item: { id: "progress", type: "agentMessage", phase: "commentary", text: "Reading inventory" } } });
+        output({ method: "item/completed", params: { turnId: "turn", item: { id: "inventory", type: "agentMessage", phase: "final_answer", text: "Full inventory table" } } });
+      }
+    `).replace('type: "agentMessage", text: "Received"', 'id: "ack", type: "agentMessage", phase: "final_answer", text: "Received"');
+    writeFileSync(join(dir, "app-server"), fake);
+    try {
+      const answers: string[] = [];
+      const result = await delegateToCodexAppServer({ bin: process.execPath, cwd: dir, prompt: "Inventory", timeoutSec: TIMEOUT_SEC,
+        sandbox: "read-only", log: nullLogger,
+        live: { from: "claude-supervisor", onAnswer: (answer) => answers.push(answer), onSteering: (steering) => {
+          if (steering) void steering.send("Sibling scope confirmed", true);
+        } } });
+      expect(result.text).toBe("Full inventory table\n\nReceived");
+      expect(answers).toEqual([]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    }
+  });
+
   it.each([false, true])("preserves sibling=%s attribution and parent answer behavior", async (sibling) => {
     const dir = mkdtempSync(join(tmpdir(), "ab-sibling-steer-"));
     writeFileSync(join(dir, "app-server"), FAKE_APP_SERVER);

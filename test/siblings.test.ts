@@ -7,6 +7,9 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { nullLogger } from "../src/core/logger.js";
 import { DELEGATE_DEPTH_ENV } from "../src/core/delegate.js";
 import { JOBS_FILE } from "../src/core/constants.js";
+import { DEFAULT_SIBLING_MAX_HOPS, isJobSendTarget } from "../src/core/job-messaging.js";
+import { formatSiblingMessages } from "../src/mcp/format.js";
+import { readStore } from "../src/mcp/jobs.js";
 import { BridgeNode } from "../src/core/node.js";
 import { ParentLink, parentFromEnv } from "../src/core/parent-link.js";
 import { isSiblingNote, type CodingAgent } from "../src/core/protocol.js";
@@ -39,12 +42,13 @@ afterEach(async () => {
   await env.cleanup();
 });
 
-async function sibling(id: string, agent: CodingAgent, owner = "supervisor-session", live = true) {
+async function sibling(id: string, agent: CodingAgent, owner = "supervisor-session", live = true, sendTo: string[] = []) {
   const name = `${agent}-job-${id}`;
   const job: Job = { id, name, agent, model: null, prompt: "task", startedAt: Date.now(), controller: new AbortController(),
-    progress: null, status: "running", sessionId: null, workdir: null, worktree: null, queue: [] };
+    progress: null, status: "running", sessionId: null, workdir: null, worktree: null, queue: [], args: { send_to: sendTo } };
   const node = new BridgeNode({ pipePath: env.pipe, token: loadOrCreateToken(env.home), dbPath: env.db,
     agent: "other", jobAgent: agent, jobOwner: owner, jobParent: supervisor.name, jobTitle: `Task ${id}`,
+    jobSendTo: sendTo,
     id: `job:${id}`, name, cwd: env.home, autoWake: false, canHostBroker: false, log: nullLogger });
   nodes.push(node);
   const chat = new SiblingLink(node, job, MAX_HOPS, nullLogger);
@@ -72,6 +76,8 @@ describe("sibling job messaging", () => {
       const peers = await call("peers");
       expect(JSON.stringify(peers)).toContain(b.job.name);
       expect(JSON.stringify(peers)).toContain("Task b");
+      expect(JSON.stringify(peers)).toContain("32 messages");
+      expect(JSON.stringify(peers)).toContain("Explicit send_to grants: none");
       const sent = await call("send", { to: b.job.name, message: "Direct handover" });
       expect(sent.isError).toBeUndefined();
       const messageId = /Message (\S+) sent/.exec(JSON.stringify(sent))![1]!;
@@ -132,10 +138,10 @@ describe("sibling job messaging", () => {
 
   it("lists completed siblings and queues their mail until their next turn", async () => {
     const a = await sibling("a", "codex");
-    writeFileSync(join(env.home, JOBS_FILE), JSON.stringify([
+    writeFileSync(join(env.home, JOBS_FILE), JSON.stringify({ version: 1, jobs: [
       { id: "past", name: "opencode-job-past", agent: "opencode", status: "done", supervisor: "supervisor-session", args: { title: "Earlier task" } },
       { id: "other", name: "claude-job-other", agent: "claude", status: "failed", supervisor: "other-session" },
-    ]));
+    ] }));
     expect(await a.child.siblings.peers()).toEqual([{ name: "opencode-job-past", title: "Earlier task", agent: "opencode", status: "done" }]);
     await expect(a.child.siblings.send("claude-job-other", "Cross-session mail")).rejects.toThrow(/no sibling/);
     const queued = await a.child.siblings.send("opencode-job-past", "Next-turn handover");
@@ -153,6 +159,54 @@ describe("sibling job messaging", () => {
     const second = jobs.start("claude", null, "second", held);
     expect(second.supervisor).toBe(first.supervisor);
     jobs.cancelAll();
+  });
+
+  it("keeps completed batches and continued legacy jobs in the supervisor's group after restore", async () => {
+    const path = join(env.home, JOBS_FILE);
+    const jobs = new JobManager(supervisor, nullLogger, path);
+    const first = jobs.start("codex", null, "first batch", async () => ({ sessionId: "thread-first", text: "done", isError: false, details: {} }));
+    await until(() => first.status === "done");
+    await supervisor.setSessionId("learned-session");
+    const second = jobs.start("claude", null, "later batch", async () => ({ sessionId: "thread-second", text: "done", isError: false, details: {} }));
+    await until(() => second.status === "done");
+    expect(second.supervisor).toBe(first.supervisor);
+    const stored = readStore(path);
+    stored.push({ ...stored[0]!, id: "legacy", name: "codex-job-legacy", supervisor: undefined });
+    writeFileSync(path, JSON.stringify({ version: 1, jobs: stored }));
+    const restored = new JobManager(supervisor, nullLogger, path);
+    restored.restore(() => () => () => new Promise<never>(() => {}));
+    const legacy = restored.find("codex-job-legacy")!;
+    expect(legacy.supervisor).toBe(first.supervisor);
+    expect(restored.followUp(legacy.name, "continue").outcome).toBe("started");
+    // A runner from before the migration still advertises the supervisor name until restarted.
+    const old = await sibling("legacy", "codex", supervisor.name);
+    const later = await sibling(second.id, "claude", first.supervisor);
+    expect((await old.chat.peers()).map((p) => p.name)).toContain(later.job.name);
+    const sent = await old.chat.send(later.job.name, "Cross-batch handover");
+    expect(sent.deliveredTo).toEqual([later.job.name]);
+    restored.cancelAll();
+    jobs.cancelAll();
+  });
+
+  it("allows only explicit named session grants and preserves the supervisor's reply thread", async () => {
+    const external = env.node("claude-reviewer");
+    await external.start();
+    const request = (await external.send({ to: supervisor.name, body: "Review this contract" })).messages[0]!;
+    const denied = await sibling("denied", "codex");
+    await expect(denied.child.siblings.send(external.name, "Unsolicited reply", request.id)).rejects.toThrow(/explicit send_to/);
+    const allowed = await sibling("allowed", "codex", undefined, true, [external.name]);
+    expect(await allowed.child.siblings.policy!()).toEqual({ maxHops: DEFAULT_SIBLING_MAX_HOPS, sendTo: [external.name] });
+    const reply = (await allowed.child.siblings.send(external.name, "Review deliverable", request.id)).messages[0]!;
+    expect(reply).toMatchObject({ replyTo: request.id, conversationId: request.conversationId, hop: 1 });
+    await until(() => external.unread().length === 1);
+    expect(external.unread()[0]!.from.name).toBe(allowed.job.name);
+    for (const to of ["*", "claude", "codex", "opencode", "remote/session", denied.job.name]) expect(isJobSendTarget(to)).toBe(false);
+    await expect(allowed.child.siblings.send(external.name, "Wrong reply", "missing")).rejects.toThrow(/reply_to/);
+    const unrelated = (await external.send({ to: denied.job.name, body: "Other job request" })).messages[0]!;
+    await expect(allowed.child.siblings.send(external.name, "Wrong job reply", unrelated.id)).rejects.toThrow(/reply_to/);
+    await external.stop();
+    await expect.poll(async () => (await supervisor.peers()).map((p) => p.name)).not.toContain(external.name);
+    expect((await allowed.chat.send(external.name, "Queued deliverable")).queuedFor).toEqual([external.name]);
   });
 
   it.each(["claude", "opencode"] as const)("keeps supervisor copies quiet for a %s notification client", async (agent) => {
@@ -184,12 +238,16 @@ describe("sibling job messaging", () => {
   it("keeps hop counts through replies and prevents another hop at the limit", async () => {
     const a = await sibling("a", "codex");
     const b = await sibling("b", "claude");
-    const first = (await a.chat.send(b.job.name, "one")).messages[0]!;
-    const second = (await b.chat.send(a.job.name, "two", first.id)).messages[0]!;
-    const third = (await a.chat.send(b.job.name, "three", second.id)).messages[0]!;
-    expect(third.hop).toBe(MAX_HOPS - 1);
-    await expect(b.chat.send(a.job.name, "four", third.id)).rejects.toThrow(/hop limit/);
-    await until(() => supervisor.unread().length === MAX_HOPS);
+    let message = (await a.chat.send(b.job.name, "Contract question")).messages[0]!;
+    for (let hop = 1; hop < DEFAULT_SIBLING_MAX_HOPS; hop++) {
+      const sender = hop % 2 ? b : a;
+      const recipient = hop % 2 ? a : b;
+      message = (await sender.chat.send(recipient.job.name, `Contract detail ${hop}`, message.id)).messages[0]!;
+      expect(message.hop).toBe(hop);
+    }
+    expect(formatSiblingMessages([message])).toContain("0 replies remain");
+    await expect(a.chat.send(b.job.name, "Over budget", message.id)).rejects.toThrow(/32-message hop limit/);
+    await until(() => supervisor.unread().length === DEFAULT_SIBLING_MAX_HOPS);
   });
 
   it("deduplicates a retried send and its observer copy", async () => {

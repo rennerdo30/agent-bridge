@@ -7,6 +7,7 @@ import type { ClaudePermissionMode, CodexSandbox } from "./config.js";
 import type { Logger } from "./logger.js";
 import { claudeMcpDenyRules } from "./claude-mcp.js";
 import { PARENT_URL_ENV } from "./parent-link.js";
+import { FinalAnswers } from "./final-answers.js";
 import { progressLineHandler } from "./progress.js";
 import { PermissionRelay, type PermissionDecision } from "./relay.js";
 
@@ -414,7 +415,7 @@ function withSessionSniffer(agent: "codex" | "claude" | "opencode", next: ((line
 /** Parse `codex exec --json` JSONL output. */
 export function parseCodexJsonl(stdout: string): { threadId: string | null; text: string; error: string | null; usage: unknown } {
   let threadId: string | null = null;
-  const messages: string[] = [];
+  const messages = new FinalAnswers();
   let error: string | null = null;
   let usage: unknown = null;
   for (const line of stdout.split(/\r?\n/)) {
@@ -431,7 +432,7 @@ export function parseCodexJsonl(stdout: string): { threadId: string | null; text
         threadId = ev.thread_id ?? threadId;
         break;
       case "item.completed":
-        if (ev.item?.type === "agent_message" && typeof ev.item.text === "string") messages.push(ev.item.text);
+        if (ev.item?.type === "agent_message" && typeof ev.item.text === "string") messages.add(ev.item);
         break;
       case "turn.completed":
         usage = ev.usage ?? usage;
@@ -446,7 +447,7 @@ export function parseCodexJsonl(stdout: string): { threadId: string | null; text
         break;
     }
   }
-  return { threadId, text: messages.at(-1) ?? "", error, usage };
+  return { threadId, text: messages.text(), error, usage };
 }
 
 /** The canonical path of a folder (drive mappings and junctions resolved); the input on any error. */

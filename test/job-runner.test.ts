@@ -95,11 +95,11 @@ async function waitFor(fn: () => boolean | Promise<boolean>, ms = 30_000): Promi
 }
 
 /** Spawn a subagent that runs until its release file exists; resolves once its runner reported in. */
-async function spawnHeld(s: { client: Client; transport: StdioClientTransport }, runner = true): Promise<{ job: string; id: string; release: string; pid: number; link: string }> {
+async function spawnHeld(s: { client: Client; transport: StdioClientTransport }, runner = true, sendTo: string[] = []): Promise<{ job: string; id: string; release: string; pid: number; link: string }> {
   const release = join(home, `release-${releases.length}`);
   const link = `${release}.link.json`;
   releases.push(release);
-  const out = await call(s, "spawn_claude", { prompt: `release=${release} link=${link} build the castle`, title: "Runner test" });
+  const out = await call(s, "spawn_claude", { prompt: `release=${release} link=${link} build the castle`, title: "Runner test", send_to: sendTo });
   const job = /Subagent (claude-job-([0-9a-f]+)) started/.exec(out);
   expect(job, out).not.toBeNull();
   const id = job![2]!;
@@ -124,6 +124,34 @@ afterEach(async () => {
 });
 
 describe.skipIf(!existsSync(SERVER))("background subagents in job runners", () => {
+  it("keeps explicit session reply grants across a detached job continuation", async () => {
+    const session = await startSession();
+    const external = new BridgeNode({ pipePath: resolvePipePath(home), token: loadOrCreateToken(home), dbPath: resolveDbPath(home),
+      name: "claude-reviewer", agent: "claude", cwd: home, autoWake: false, log: nullLogger });
+    nodes.push(external);
+    await external.start();
+    const request = (await external.send({ to: SESSION, body: "Review the contract" })).messages[0]!;
+    const a = await spawnHeld(session, true, [external.name]);
+    const first = parentFromEnv(JSON.parse(readFileSync(a.link, "utf8")))!;
+    const reply = (await first.siblings.send(external.name, "Contract deliverable", request.id)).messages[0]!;
+    expect(reply).toMatchObject({ conversationId: request.conversationId, replyTo: request.id });
+    expect((await first.siblings.policy!()).sendTo).toEqual([external.name]);
+    writeFileSync(a.release, "");
+    await waitFor(() => readRunnerState(home, a.id)?.status === "done" && !pidAlive(a.pid));
+    await stopSession(session);
+    const replacement = await startSession();
+    const release = join(home, "release-continued");
+    const link = `${release}.link.json`;
+    releases.push(release);
+    await call(replacement, "message_subagent", { job: a.job, message: `release=${release} link=${link} continue the review` });
+    await waitFor(() => existsSync(link));
+    const continued = parentFromEnv(JSON.parse(readFileSync(link, "utf8")))!;
+    expect((await continued.siblings.policy!()).sendTo).toEqual([external.name]);
+    expect((await continued.siblings.send(external.name, "Follow-up deliverable", reply.id)).deliveredTo).toEqual([external.name]);
+    writeFileSync(release, "");
+    await waitFor(() => readRunnerState(home, a.id)?.status === "done");
+  }, TEST_TIMEOUT_MS);
+
   it("applies model and permission changes on the next turn after a takeover, with matching metadata", async () => {
     const a = await startSession();
     const { job, id, release, pid } = await spawnHeld(a);
