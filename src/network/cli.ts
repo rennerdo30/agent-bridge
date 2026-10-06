@@ -9,6 +9,7 @@ import { loadConfig } from "../core/config.js";
 import { applyWindowsFirewall, copyPairingCode, detectFirewall } from "./firewall.js";
 import { parseConnectOptions, runConnectWizard } from "./wizard.js";
 import { parseNetworkAddress } from "./address.js";
+import { networkProfileStatus } from "./profiles.js";
 export { parseNetworkAddress } from "./address.js";
 
 const NETWORK_USAGE = "agent-bridge network | pair | pair <code> <host:port> | link <host:port> <code> | unlink <instance-id>";
@@ -51,7 +52,7 @@ export async function runNetworkCommand(command: string, args: string[], home: s
         return 1;
       } finally { process.off("SIGINT", cancel); prompts?.close(); }
     } else if (command === "network") {
-      out(JSON.stringify(await client.request("networkStatus", {}), null, 2));
+      out(JSON.stringify({ ...await client.request("networkStatus", {}), ...await networkProfileStatus() }, null, 2));
     } else if (command === "pair" && args.length === 0) {
       out((await client.request("networkPair", {})).code);
     } else if ((command === "link" || command === "pair") && args.length === 2) {

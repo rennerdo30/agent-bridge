@@ -7,7 +7,7 @@ import type { Logger } from "../core/logger.js";
 import { AGENT_KINDS, BridgeError, type BridgeMessage, type PeerInfo, type SendResult } from "../core/protocol.js";
 import type { NetworkConfig } from "./config.js";
 import { MAX_NETWORK_FRAME_BYTES, MAX_NETWORK_LINKS, MAX_NETWORK_PEERS, MAX_NETWORK_REQUESTS, NETWORK_NAME_PATTERN, NETWORK_REFRESH_MS, NETWORK_TIMEOUT_MS, NETWORK_VERSION, PAIRING_KEY_BYTES, TLS_CIPHER } from "./constants.js";
-import { NetworkDiscovery, type DiscoveredInstance } from "./discovery.js";
+import { NetworkDiscovery, type DiscoveredInstance, type DiscoveryDiagnostics } from "./discovery.js";
 import { decodePairingCode, keyFingerprint, PairingStore, publicIdentitySchema, type NetworkIdentity, type NetworkPair } from "./pairing.js";
 import { receiveTransfer, transferResultSchema, transferSchema, type FileTransfer, type TransferResult } from "./files.js";
 import { FILE_STREAM_CAPABILITY, TransferManager, type TransferStarted } from "./transfers.js";
@@ -57,6 +57,7 @@ export interface NetworkStatus {
   identity?: NetworkIdentity;
   port?: number;
   discovered: DiscoveredInstance[];
+  discoveryDiagnostics?: DiscoveryDiagnostics;
   paired: (NetworkIdentity & { connected: boolean; health?: { lastVerifiedAt: number; roundTripMs: number } })[];
 }
 interface Pending {
@@ -383,7 +384,7 @@ export class NetworkService {
   }
 
   status(): NetworkStatus {
-    return { enabled: true, config: this.cfg, identity: this.keys.identity, port: this.port, discovered: this.discovery?.instances() ?? [], paired: this.keys.pairs().map(({ id, name, fingerprint }) => ({ id, name, fingerprint, connected: this.links.has(id), ...(this.health.has(id) ? { health: this.health.get(id)! } : {}) })) };
+    return { enabled: true, config: this.cfg, identity: this.keys.identity, port: this.port, discovered: this.discovery?.instances() ?? [], ...(this.discovery ? { discoveryDiagnostics: this.discovery.diagnostics() } : {}), paired: this.keys.pairs().map(({ id, name, fingerprint }) => ({ id, name, fingerprint, connected: this.links.has(id), ...(this.health.has(id) ? { health: this.health.get(id)! } : {}) })) };
   }
 
   async verify(id: string): Promise<{ peers: PeerInfo[]; roundTripMs: number }> {
