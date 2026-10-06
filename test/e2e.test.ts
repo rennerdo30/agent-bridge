@@ -50,8 +50,8 @@ describe.skipIf(!existsSync(SERVER))("bundled MCP server end-to-end", () => {
   it("exposes the expected tools per agent", async () => {
     const c = (await claude.listTools()).tools.map((t) => t.name).sort();
     const x = (await codex.listTools()).tools.map((t) => t.name).sort();
-    expect(c).toEqual(["ask_codex", "ask_opencode", "auto_wake", "cancel_subagent", "dashboard", "hook_event", "inbox", "list_models", "max_subagents", "message_subagent", "network_status", "peers", "send", "send_files", "spawn_codex", "spawn_opencode", "usage_limits", "wait_for_message"]);
-    expect(x).toEqual(["ask_claude", "ask_opencode", "auto_wake", "cancel_subagent", "dashboard", "hook_event", "inbox", "list_models", "max_subagents", "message_subagent", "network_status", "peers", "send", "send_files", "spawn_claude", "spawn_opencode", "usage_limits", "wait_for_message"]);
+    expect(c).toEqual(["ask_codex", "ask_opencode", "auto_wake", "cancel_subagent", "dashboard", "decide", "decisions", "hook_event", "inbox", "list_models", "max_subagents", "message_subagent", "network_status", "peers", "send", "send_files", "spawn_codex", "spawn_opencode", "usage_limits", "wait_for_message"]);
+    expect(x).toEqual(["ask_claude", "ask_opencode", "auto_wake", "cancel_subagent", "dashboard", "decide", "decisions", "hook_event", "inbox", "list_models", "max_subagents", "message_subagent", "network_status", "peers", "send", "send_files", "spawn_claude", "spawn_opencode", "usage_limits", "wait_for_message"]);
   });
 
   it("declares the Claude channel capability only for Claude", () => {
@@ -87,5 +87,23 @@ describe.skipIf(!existsSync(SERVER))("bundled MCP server end-to-end", () => {
 
   it("reports an empty inbox after everything was consumed", async () => {
     expect(textOf(await codex.callTool({ name: "inbox", arguments: {} }))).toContain("No unread messages");
+  });
+
+  it("returns structured decision revisions and searchable history through MCP", async () => {
+    const tool = (await claude.listTools()).tools.find((t) => t.name === "decisions")!;
+    expect(tool.annotations?.readOnlyHint).toBe(true);
+    const first = JSON.parse(textOf(await claude.callTool({ name: "decide", arguments: { topic: "Test decision", text: "Original choice", scope: "all" } })));
+    expect(first.decision).toMatchObject({ topic: "test decision", text: "Original choice", current: true, author: { name: "claude-e2e" }, sourceMessageId: null });
+    expect(first.deliveredTo).toContain("codex-e2e");
+    const second = JSON.parse(textOf(await codex.callTool({ name: "decide", arguments: { topic: "TEST DECISION", text: "Updated choice", scope: "all" } })));
+    expect(second.decision.supersedes).toBe(first.decision.id);
+    const current = JSON.parse(textOf(await claude.callTool({ name: "decisions", arguments: { query: "CHOICE", scope: "all" } })));
+    expect(current).toHaveLength(1);
+    expect(current[0].text).toBe("Updated choice");
+    const history = JSON.parse(textOf(await codex.callTool({ name: "decisions", arguments: { query: "test decision", scope: "all", history: true } })));
+    expect(history.map((d: any) => d.current)).toEqual([true, false]);
+    const invalid = await claude.callTool({ name: "decide", arguments: { topic: "invalid source", text: "choice", source_message_id: "missing" } });
+    expect(invalid.isError).toBe(true);
+    expect(textOf(invalid)).toContain("Source message does not exist");
   });
 });

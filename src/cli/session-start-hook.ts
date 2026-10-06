@@ -2,10 +2,11 @@ import { BridgeClient } from "../core/client.js";
 import { defaultPeerName, loadConfig } from "../core/config.js";
 import { PROTOCOL_VERSION } from "../core/constants.js";
 import type { Logger } from "../core/logger.js";
-import { resolveHome, resolvePipePath } from "../core/paths.js";
+import { resolveDbPath, resolveHome, resolvePipePath } from "../core/paths.js";
 import type { PeerInfo } from "../core/protocol.js";
 import { loadOrCreateToken } from "../core/token.js";
 import { formatPeer } from "../mcp/format.js";
+import { formatDecisionSummary, readDecisions, type OwnerDecision } from "../core/decisions.js";
 
 /**
  * Claude Code `SessionStart` command hook. At launch and on --continue/--resume, SessionStart fires before the
@@ -21,7 +22,7 @@ async function readStdin(): Promise<string> {
   return raw;
 }
 
-async function onlinePeers(home: string, log: Logger): Promise<PeerInfo[]> {
+async function startupState(home: string, cwd: string, name: string, log: Logger): Promise<{ peers: PeerInfo[]; decisions: OwnerDecision[] }> {
   let client: BridgeClient | null = null;
   const timeout = new Promise<never>((_, reject) => setTimeout(() => reject(new Error("broker timeout")), BROKER_TIMEOUT_MS).unref());
   // Lost the race: never an unhandled rejection.
@@ -31,7 +32,10 @@ async function onlinePeers(home: string, log: Logger): Promise<PeerInfo[]> {
       (async () => {
         client = await BridgeClient.connect(resolvePipePath(home), log);
         await client.request("auth", { protocol: PROTOCOL_VERSION, token: loadOrCreateToken(home) });
-        return client.request("peers", {});
+        const peers = await client.request("peers", {});
+        // An older broker may not support decisions yet; the presence note still works.
+        const decisions = await client.request("decisions", { scope: { project: cwd }, session: name }).catch(() => []);
+        return { peers, decisions };
       })(),
       timeout,
     ]);
@@ -41,12 +45,13 @@ async function onlinePeers(home: string, log: Logger): Promise<PeerInfo[]> {
 }
 
 /** The startup note for the session: its bridge name and who else is online. */
-export function sessionStartContext(name: string, peers: PeerInfo[] | null): string {
+export function sessionStartContext(name: string, peers: PeerInfo[] | null, decisions: OwnerDecision[] = []): string {
   const others = (peers ?? []).filter((p) => p.name !== name);
   return [
     `[agent-bridge] You are connected to agent-bridge as "${name}".`,
     others.length ? `Peers online:\n${others.map((p) => formatPeer(p)).join("\n")}` : "No other agents are online right now.",
-  ].join("\n");
+    formatDecisionSummary(decisions),
+  ].filter(Boolean).join("\n");
 }
 
 export async function runSessionStartHook(log: Logger, out: (text: string) => void = (text) => process.stdout.write(text), read: () => Promise<string> = readStdin): Promise<number> {
@@ -59,10 +64,11 @@ export async function runSessionStartHook(log: Logger, out: (text: string) => vo
   }
   const home = resolveHome();
   const name = loadConfig(home, "claude", log).name ?? defaultPeerName("claude", cwd);
-  const peers = await onlinePeers(home, log).catch((err) => {
+  const state = await startupState(home, cwd, name, log).catch((err) => {
     log.debug("session start: broker not reachable", { err: (err as Error).message });
-    return null;
+    try { return { peers: [], decisions: readDecisions(resolveDbPath(home), { scope: { project: cwd }, session: name }) }; }
+    catch { return null; }
   });
-  out(JSON.stringify({ hookSpecificOutput: { hookEventName: HOOK_EVENT, additionalContext: sessionStartContext(name, peers) } }));
+  out(JSON.stringify({ hookSpecificOutput: { hookEventName: HOOK_EVENT, additionalContext: sessionStartContext(name, state?.peers ?? null, state?.decisions) } }));
   return 0;
 }

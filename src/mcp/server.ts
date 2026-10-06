@@ -46,6 +46,7 @@ import { isBridgeWorktree, isInside, resumeArgs, runDelegate, type DelegateArgs,
 import { JobRunners } from "./job-host.js";
 import { JOB_SETTING_KEYS, PERMISSION_KEY_AGENT, type JobSettings } from "./job-settings.js";
 import { attachDashboardJobControl } from "./dashboard-control.js";
+import { decisionScopeSchema, MAX_DECISION_TOPIC_CHARS, MAX_DECISION_TEXT_CHARS, type DecideArgs, type DecisionsArgs } from "../core/decisions.js";
 
 export { DELEGATED_JOB_NOTE } from "./delegate-run.js";
 
@@ -474,6 +475,39 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
         return text(describeError(err), true);
       }
     };
+
+  register(
+    "decide",
+    {
+      title: "Pin owner decision",
+      description: "Record an owner's decision after researching it. A newer decision on the same topic supersedes the previous revision across scopes; history is always retained. Notifications reach sessions in scope once without waking idle sessions. Scope defaults to this project folder.",
+      inputSchema: {
+        topic: z.string().trim().min(1).max(MAX_DECISION_TOPIC_CHARS).describe("Stable topic; trimmed and case-insensitive"),
+        text: z.string().trim().min(1).max(MAX_DECISION_TEXT_CHARS).describe("The owner's decision text"),
+        scope: decisionScopeSchema.optional().describe('"all", {project: folder}, or {sessions: [peer names, ids or session ids]}'),
+        source_message_id: z.string().optional().describe("Optional existing bridge message id recording the owner's choice"),
+      },
+    },
+    guarded("decide", async (a: DecideArgs & { source_message_id?: string }) => {
+      const { source_message_id, ...args } = a;
+      return text(JSON.stringify(await requireNode().decide({ ...args, sourceMessageId: source_message_id })));
+    }),
+  );
+
+  register(
+    "decisions",
+    {
+      title: "Look up owner decisions",
+      description: "List current owner decisions or search topic and text (case-insensitive substring). Scope defaults to this project, including decisions for all sessions and this session. history=true also includes superseded revisions, newest first.",
+      inputSchema: {
+        query: z.string().max(MAX_DECISION_TEXT_CHARS).optional(),
+        scope: decisionScopeSchema.optional().describe('"all" for global decisions, {project: folder}, or {sessions: [names or ids]}; project/session filters include global decisions'),
+        history: z.boolean().optional(),
+      },
+      annotations: { readOnlyHint: true },
+    },
+    guarded("decisions", async (a: DecisionsArgs) => text(JSON.stringify(await requireNode().decisions(a)))),
+  );
 
   register(
     "peers",

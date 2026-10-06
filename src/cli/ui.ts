@@ -24,6 +24,7 @@ import { planFirewall, detectFirewall, applyWindowsFirewall } from "../network/f
 import { parseNetworkAddress } from "../network/address.js";
 import type { Op, RequestMap } from "../core/protocol.js";
 import { readJsonStore } from "../core/json-store.js";
+import { readDecisions, decisionScopeSchema, MAX_DECISION_TEXT_CHARS, MAX_DECISION_TOPIC_CHARS, type DecisionsArgs } from "../core/decisions.js";
 
 /**
  * `agent-bridge ui`: a local dashboard for sessions, delegated runs and messages.
@@ -337,6 +338,23 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
     if (!tokensEqual(cookieSecret(req), secret)) return send(res, 403, "Open the link printed by `agent-bridge ui`.", "text/plain; charset=utf-8");
 
     if (req.method === "GET" && url.pathname === "/") return send(res, 200, UI_PAGE, "text/html; charset=utf-8");
+    if (req.method === "GET" && (url.pathname === "/api/decisions" || /^\/api\/decisions\/[^/]+\/history$/.test(url.pathname))) {
+      let args: DecisionsArgs;
+      let topic: string | undefined;
+      try {
+        const scopeText = url.searchParams.get("scope");
+        const scope = scopeText ? decisionScopeSchema.parse(scopeText === "all" ? "all" : JSON.parse(scopeText)) : undefined;
+        const query = url.searchParams.get("q") ?? undefined;
+        if (query && query.length > MAX_DECISION_TEXT_CHARS) throw new Error("query too long");
+        if (url.pathname !== "/api/decisions") {
+          topic = decodeURIComponent(url.pathname.slice("/api/decisions/".length, -"/history".length)).trim().toLowerCase();
+          if (!topic || topic.length > MAX_DECISION_TOPIC_CHARS) throw new Error("invalid topic");
+        }
+        args = { query, scope, ...(topic ? { topic, history: true } : {}) };
+      } catch { return send(res, 400, { error: 'Invalid decisions query, topic or scope. Scope must be "all" or JSON {project: folder}/{sessions: [names or ids]}.' }); }
+      const decisions = readDecisions(dbPath, args);
+      return send(res, 200, topic ? { topic, decisions } : { decisions });
+    }
     if (req.method === "GET" && url.pathname === "/api/state") {
       const { brokerPid, peers } = await brokerPeers(opts.pipe, token, opts.log);
       const runs = listRuns(opts.home);

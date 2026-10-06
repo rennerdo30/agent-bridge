@@ -4,8 +4,9 @@ import { DatabaseSync, type StatementSync } from "node:sqlite";
 import type { Logger } from "./logger.js";
 import type { AgentKind, BridgeMessage } from "./protocol.js";
 import { backupPath, retainBackups } from "./json-store.js";
+import { DECISIONS_SCHEMA, DecisionStore } from "./decisions.js";
 
-export const SQLITE_STORE_VERSION = 2;
+export const SQLITE_STORE_VERSION = 3;
 const BUSY_TIMEOUT_MS = 3_000;
 
 /** Recipient key used while a message waits for "any peer of this agent kind". */
@@ -35,11 +36,12 @@ CREATE INDEX IF NOT EXISTS idx_messages_id ON messages (id);
 
 const MIGRATIONS = [
   { version: 1, sql: `${SCHEMA} PRAGMA user_version = 1;` },
-  { version: SQLITE_STORE_VERSION, sql: `
+  { version: 2, sql: `
     CREATE TABLE IF NOT EXISTS archived_messages AS
       SELECT *, '' AS archive_reason, 0 AS archived_at FROM messages WHERE 0;
     PRAGMA user_version = 2;
   ` },
+  { version: 3, sql: `${DECISIONS_SCHEMA} PRAGMA user_version = 3;` },
 ] as const;
 
 interface Row {
@@ -78,6 +80,7 @@ function toMessage(r: Row): BridgeMessage {
  */
 export class MessageStore {
   private readonly db: DatabaseSync;
+  readonly decisions: DecisionStore;
   private readonly stmt: {
     insert: StatementSync;
     unread: StatementSync;
@@ -125,6 +128,7 @@ export class MessageStore {
       this.db.close();
       throw err;
     }
+    this.decisions = new DecisionStore(this.db);
     this.stmt = {
       insert: this.db.prepare(
         `INSERT INTO messages (id, recipient, from_id, from_name, from_agent, to_target, conversation_id, reply_to, hop, body, created_at, read_at)

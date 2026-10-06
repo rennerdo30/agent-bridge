@@ -10,6 +10,7 @@ import type { NetworkConfig } from "../network/config.js";
 import type { NetworkStatus } from "../network/link.js";
 import type { NetworkIdentity } from "../network/pairing.js";
 import type { TransferResult } from "../network/files.js";
+import type { DecideArgs, DecisionsArgs, OwnerDecision } from "./decisions.js";
 
 export type AgentKind = "claude" | "codex" | "opencode" | "other";
 export const AGENT_KINDS: readonly AgentKind[] = ["claude", "codex", "opencode", "other"];
@@ -144,6 +145,8 @@ export interface RequestMap {
   auth: [AuthArgs, { brokerPid: number }];
   hello: [HelloArgs, HelloResult];
   send: [SendArgs, SendResult];
+  decide: [DecideArgs, { decision: OwnerDecision; deliveredTo: string[] }];
+  decisions: [DecisionsArgs, OwnerDecision[]];
   peers: [Record<string, never>, PeerInfo[]];
   siblings: [Record<string, never>, SiblingPeer[]];
   sendSibling: [SendArgs & { maxHops: number }, SendResult];

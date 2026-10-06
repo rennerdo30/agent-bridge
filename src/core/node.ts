@@ -21,6 +21,7 @@ import { DASHBOARD_JOB_CONVERSATION } from "./job-control.js";
 import type { NetworkConfig } from "../network/config.js";
 import type { NetworkStatus } from "../network/link.js";
 import type { TransferResult } from "../network/files.js";
+import type { DecideArgs, DecisionsArgs, OwnerDecision } from "./decisions.js";
 
 export interface BridgeNodeOptions {
   pipePath: string;
@@ -365,6 +366,14 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
 
   peers(): Promise<PeerInfo[]> {
     return this.withClient((c) => c.request("peers", {}));
+  }
+
+  decide(args: DecideArgs): Promise<{ decision: OwnerDecision; deliveredTo: string[] }> {
+    return this.withClient((c) => c.request("decide", args));
+  }
+
+  decisions(args: DecisionsArgs = {}): Promise<OwnerDecision[]> {
+    return this.withClient((c) => c.request("decisions", args));
   }
 
   siblings(): Promise<SiblingPeer[]> {

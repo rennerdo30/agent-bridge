@@ -37,6 +37,7 @@ import { writeNetworkConfig, type NetworkConfig } from "../network/config.js";
 import { z } from "zod";
 import { collectTransfer, MAX_TRANSFER_ENTRIES, receiveTransfer, type TransferResult } from "../network/files.js";
 import { MAX_NETWORK_HOST_CHARS, MAX_PAIRING_CODE_CHARS, MAX_PORT } from "../network/constants.js";
+import { DECISION_MESSAGE_HOP, MAX_DECISION_TEXT_CHARS, MAX_DECISION_TOPIC_CHARS, decisionApplies, decisionScopeSchema, type OwnerDecision } from "./decisions.js";
 
 /** Peer names double as offline queue keys, so keep them simple and unambiguous. */
 export const PEER_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
@@ -93,6 +94,8 @@ export class Broker {
       },
       hello: (c, a) => this.onHello(c, a),
       send: (c, a) => this.onSend(c, a),
+      decide: (c, a) => this.onDecide(c, a),
+      decisions: (c, a) => this.onDecisions(c, a),
       peers: () => this.livePeers(),
       siblings: (c) => this.siblingPeers(c),
       sendSibling: (c, a) => this.onSendSibling(c, a),
@@ -353,6 +356,59 @@ export class Broker {
     return `${requested}-${randomUUID().slice(0, 8)}`;
   }
 
+  private onDecide(conn: Conn, value: RequestMap["decide"][0]): RequestMap["decide"][1] {
+    const peer = this.requirePeer(conn);
+    const parsed = z.object({
+      topic: z.string().trim().min(1).max(MAX_DECISION_TOPIC_CHARS),
+      text: z.string().trim().min(1).max(MAX_DECISION_TEXT_CHARS),
+      scope: decisionScopeSchema.optional(), sourceMessageId: z.string().min(1).optional(),
+    }).strict().safeParse(value);
+    if (!parsed.success) throw new BridgeError("bad_request", "Invalid decision topic, text or scope.");
+    if (parsed.data.sourceMessageId && !this.store.byId(parsed.data.sourceMessageId)) throw new BridgeError("bad_request", "Source message does not exist.");
+    const decision = this.store.decisions.record({ ...parsed.data, scope: parsed.data.scope ?? { project: peer.cwd } }, { id: peer.id, name: peer.name, agent: peer.agent }, this.now());
+    const deliveredTo: string[] = [];
+    for (const c of this.conns) {
+      if (!c.peer || c.peer.jobAgent || !decisionApplies(decision, c.peer)) continue;
+      const message = this.queueDecision(decision, c.peer);
+      if (message) { this.emit(c, "message", message); deliveredTo.push(c.peer.name); }
+    }
+    return { decision, deliveredTo };
+  }
+
+  private onDecisions(conn: Conn, value: RequestMap["decisions"][0]): RequestMap["decisions"][1] {
+    const parsed = z.object({
+      query: z.string().max(MAX_DECISION_TEXT_CHARS).optional(), scope: decisionScopeSchema.optional(),
+      history: z.boolean().optional(), topic: z.string().max(MAX_DECISION_TOPIC_CHARS).optional(), session: z.string().optional(),
+    }).strict().safeParse(value);
+    if (!parsed.success) throw new BridgeError("bad_request", "Invalid decisions query or scope.");
+    const scope = parsed.data.scope ?? (conn.peer ? { project: conn.peer.cwd } : undefined);
+    return this.store.decisions.list({ ...parsed.data, scope }, conn.peer ?? undefined);
+  }
+
+  private decisionSessionKey(peer: PeerInfo): string {
+    return `${peer.agent}:${peer.sessionId ?? peer.id}`;
+  }
+
+  private queueDecision(decision: OwnerDecision, peer: PeerInfo): BridgeMessage | null {
+    const message: BridgeMessage = {
+      id: randomUUID(), from: decision.author, to: peer.name, recipient: peer.name,
+      conversationId: `decision-${decision.id}`, replyTo: decision.sourceMessageId, hop: DECISION_MESSAGE_HOP,
+      body: `Pinned owner decision: ${decision.topic}\n\n${decision.text}\n\nCall decisions to look up current decisions or their history.`,
+      createdAt: this.now(), readAt: null,
+    };
+    return this.store.decisions.enqueue(decision, this.decisionSessionKey(peer), message, () => this.store.insert(message)) ? message : null;
+  }
+
+  private queueCurrentDecisions(peer: PeerInfo): BridgeMessage[] {
+    // Hello may precede the hook that identifies this session. Waiting for that identity avoids
+    // sending a second copy on reload before its previous receipt can be found.
+    if (peer.jobAgent || !peer.sessionId) return [];
+    return this.store.decisions.list().filter((d) => decisionApplies(d, peer)).flatMap((d) => {
+      const message = this.queueDecision(d, peer);
+      return message ? [message] : [];
+    });
+  }
+
   private checkAuth(protocol: number, token: unknown): void {
     if (protocol !== PROTOCOL_VERSION) {
       throw new BridgeError("protocol_mismatch", `broker speaks protocol ${PROTOCOL_VERSION}, client ${protocol}`, {
@@ -405,6 +461,7 @@ export class Broker {
     if (!peer.jobAgent) this.broadcastEvent("peer_joined", peer, conn);
     // Deliver the backlog right after the hello response has been written.
     setImmediate(() => {
+      this.queueCurrentDecisions(peer);
       for (const m of this.store.unread(peer.name, PENDING_MAX_LIMIT)) this.emit(conn, "message", m);
     });
     return { brokerPid: process.pid, name: peer.name, peers: this.livePeers().filter((x) => x.id !== peer.id) };
@@ -439,7 +496,9 @@ export class Broker {
       if (typeof args.jobTitle === "string") peer.jobTitle = args.jobTitle;
     }
     if (args.sessionId !== undefined) {
+      const previousKey = this.decisionSessionKey(peer);
       peer.sessionId = args.sessionId;
+      this.store.decisions.linkSession(previousKey, this.decisionSessionKey(peer));
       if (peer.sessionId) this.replaceStale(conn, peer);
     }
     if (args.autoWake !== undefined) peer.autoWake = Boolean(args.autoWake);
@@ -457,6 +516,7 @@ export class Broker {
       });
     }
     this.log.debug("peer updated", { name: peer.name, sessionId: peer.sessionId, autoWake: peer.autoWake, cwd: peer.cwd });
+    for (const message of this.queueCurrentDecisions(peer)) this.emit(conn, "message", message);
     return peer;
   }
 
