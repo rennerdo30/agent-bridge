@@ -173,7 +173,7 @@ export class MessageStore {
       ),
       unread: this.db.prepare(
         `SELECT * FROM messages WHERE recipient = ? AND read_at IS NULL
-         ORDER BY CASE WHEN (conversation_id LIKE 'siblings-%:note' OR conversation_id LIKE '%:ack') THEN 1 ELSE 0 END,
+         ORDER BY CASE WHEN (conversation_id LIKE 'siblings-%:note' OR conversation_id LIKE '%:ack' OR conversation_id LIKE 'files-progress-%') THEN 1 ELSE 0 END,
                   created_at ASC, id ASC LIMIT ?`,
       ),
       markRead: this.db.prepare(`UPDATE messages SET read_at = ? WHERE id = ? AND recipient = ? AND read_at IS NULL`),

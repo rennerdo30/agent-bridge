@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DEFAULT_CONFIG } from "../src/core/config.js";
 import { isPureAcknowledgement } from "../src/core/job-messaging.js";
-import { isQuietMessage, type BridgeMessage } from "../src/core/protocol.js";
+import { isQuietMessage, TRANSFER_PROGRESS_PREFIX, type BridgeMessage } from "../src/core/protocol.js";
 import { MessageStore } from "../src/core/store.js";
 import { nullLogger } from "../src/core/logger.js";
 import { JobManager } from "../src/mcp/jobs.js";
@@ -22,6 +22,26 @@ function mail(conversationId: string, body: string, createdAt = Date.now()): Bri
 }
 
 describe("messaging context policy", () => {
+  it.each([false, true])("keeps transfer updates pollable without waking or hook injection with channel=%s", async (channel) => {
+    const node = env.node("supervisor");
+    await node.start();
+    await node.setAutoWake(true);
+    const progress = ["queued", "preparing", "transferring", "paused"].map((status) =>
+      mail(`${TRANSFER_PROGRESS_PREFIX}transfer-id`, `files: 10% · ${status}`));
+    progress.forEach((m) => node.deliverLocal(m));
+    expect(progress.every(isQuietMessage)).toBe(true);
+    expect(progress.every((m) => !shouldWakeClaudeMessage(node, DEFAULT_CONFIG, m))).toBe(true);
+    const ctx = { node, home: env.home, log: nullLogger, cfg: DEFAULT_CONFIG, channelActive: () => channel } as unknown as ServerContext;
+    const output = await buildHookResponse(ctx, { event: "PostToolUse", sessionId: null, stopHookActive: false });
+    expect(JSON.stringify(output)).not.toContain("files:");
+    expect(node.unread()).toEqual(progress);
+    for (const status of ["completed", "failed", "cancelled"]) {
+      const result = mail("transfer-id", `files: ${status}`);
+      expect(isQuietMessage(result)).toBe(false);
+      expect(shouldWakeClaudeMessage(node, DEFAULT_CONFIG, result)).toBe(true);
+    }
+  });
+
   it.each([false, true])("never injects observer backlog even with channel=%s", async (channel) => {
     const node = env.node("supervisor");
     await node.start();
@@ -40,7 +60,7 @@ describe("messaging context policy", () => {
   it("prioritizes active mail over more than a pending page of quiet copies without removing data", () => {
     const store = new MessageStore(env.db, nullLogger);
     try {
-      for (let i = 0; i < 501; i++) store.insert(mail(`siblings-${i}:note`, `History ${i}`, i));
+      for (let i = 0; i < 501; i++) store.insert(mail(i % 2 ? `siblings-${i}:note` : `${TRANSFER_PROGRESS_PREFIX}${i}`, `History ${i}`, i));
       const blocker = mail("job-worker", "Blocked: missing permission", 502);
       store.insert(blocker);
       expect(store.unread("supervisor", 500)[0]?.id).toBe(blocker.id);

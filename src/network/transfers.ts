@@ -4,7 +4,7 @@ import { open, link, unlink, statfs, lstat, opendir, type FileHandle } from "nod
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { z } from "zod";
 import type { Logger } from "../core/logger.js";
-import { AGENT_KINDS, type BridgeMessage } from "../core/protocol.js";
+import { AGENT_KINDS, TRANSFER_PROGRESS_PREFIX, type BridgeMessage } from "../core/protocol.js";
 import { OWNER_DIR_MODE, OWNER_FILE_MODE, NETWORK_NAME_PATTERN, MAX_NETWORK_FRAME_BYTES } from "./constants.js";
 import { assertTransferPath, ensureTransferDirectory, safeTransferPath, MAX_TRANSFER_DEPTH, collectTransfer, type FileTransfer, type TransferResult } from "./files.js";
 
@@ -194,7 +194,7 @@ export class TransferManager {
     const recipient = state.direction === "send" ? state.from.name : state.to;
     const from = state.direction === "receive" ? { ...state.from, id: `${state.remote}/${state.from.id}`, name: `${state.peer.split("/")[0]}/${state.from.name}` } : { id: `files-${state.id}`, name: "files", agent: "other" as const };
     this.transport.notify({ id: state.direction === "receive" && state.status === "completed" ? state.id : randomUUID(), from, to: recipient, recipient,
-      conversationId: state.id, replyTo: null, hop: 0, createdAt: now, readAt: null,
+      conversationId: TERMINAL.has(state.status) ? state.id : `${TRANSFER_PROGRESS_PREFIX}${state.id}`, replyTo: null, hop: 0, createdAt: now, readAt: null,
       body: `files: ${progress.percent}% · ${progress.bytes} / ${progress.totalBytes} bytes · ${state.status} · ${state.id}${progress.inbox ? ` · ${progress.inbox}` : ""}${state.error ? ` · ${state.error}` : ""}` });
     if (TERMINAL.has(state.status)) this.notified.delete(state.id);
   }

@@ -9167,11 +9167,12 @@ var BROADCAST = "*";
 var SIBLING_CONVERSATION_PREFIX = "siblings-";
 var SIBLING_NOTE_SUFFIX = ":note";
 var ACK_CONVERSATION_SUFFIX = ":ack";
+var TRANSFER_PROGRESS_PREFIX = "files-progress-";
 function isSiblingNote(m) {
   return m.conversationId.startsWith(SIBLING_CONVERSATION_PREFIX) && m.conversationId.endsWith(SIBLING_NOTE_SUFFIX);
 }
 function isQuietMessage(m) {
-  return isSiblingNote(m) || m.conversationId.endsWith(ACK_CONVERSATION_SUFFIX);
+  return isSiblingNote(m) || m.conversationId.endsWith(ACK_CONVERSATION_SUFFIX) || m.conversationId.startsWith(TRANSFER_PROGRESS_PREFIX);
 }
 var BridgeError = class extends Error {
   constructor(code, message, details) {
@@ -43166,7 +43167,7 @@ var MessageStore = class {
       ),
       unread: this.db.prepare(
         `SELECT * FROM messages WHERE recipient = ? AND read_at IS NULL
-         ORDER BY CASE WHEN (conversation_id LIKE 'siblings-%:note' OR conversation_id LIKE '%:ack') THEN 1 ELSE 0 END,
+         ORDER BY CASE WHEN (conversation_id LIKE 'siblings-%:note' OR conversation_id LIKE '%:ack' OR conversation_id LIKE 'files-progress-%') THEN 1 ELSE 0 END,
                   created_at ASC, id ASC LIMIT ?`
       ),
       markRead: this.db.prepare(`UPDATE messages SET read_at = ? WHERE id = ? AND recipient = ? AND read_at IS NULL`),
@@ -43995,7 +43996,7 @@ var TransferManager = class {
       from,
       to: recipient,
       recipient,
-      conversationId: state.id,
+      conversationId: TERMINAL.has(state.status) ? state.id : `${TRANSFER_PROGRESS_PREFIX}${state.id}`,
       replyTo: null,
       hop: 0,
       createdAt: now,
@@ -53163,7 +53164,7 @@ function registerTools(mcp, ctx, targets) {
     "peers",
     {
       title: "List peers",
-      description: "List the open agent sessions on this machine (Claude Code, Codex, opencode): name, agent type, busy/idle, uptime, working directory and session id. Also shows your own name and settings and your running subagents. Delegated jobs see their parent and siblings (job name, title, agent and status). Use it to pick whom to message.",
+      description: "List the open agent sessions on this machine (Claude Code, Codex, opencode): name, agent type, busy/idle, uptime, working directory and session id. Also shows your own name and settings, your running subagents and the latest unread file-transfer progress on request. Delegated jobs see their parent and siblings (job name, title, agent and status). Use it to pick whom to message.",
       inputSchema: {},
       annotations: { readOnlyHint: true }
     },
@@ -53200,6 +53201,14 @@ function registerTools(mcp, ctx, targets) {
         others.length ? t("peers.header", { count: others.length }) : t("peers.none"),
         ...others.map((p) => formatPeer(p))
       ];
+      const transferNotes = /* @__PURE__ */ new Map();
+      for (const message of n.unread()) {
+        if (message.conversationId.startsWith(TRANSFER_PROGRESS_PREFIX)) transferNotes.set(message.conversationId, message);
+      }
+      if (transferNotes.size) {
+        lines.push("Latest unread file-transfer progress (retained notes, not live status):");
+        for (const message of transferNotes.values()) lines.push(`- ${message.body}`);
+      }
       const jobs = ctx.jobs?.list() ?? [];
       if (jobs.length) {
         lines.push(t("peers.jobs", { count: jobs.length }));
@@ -53293,7 +53302,7 @@ ${f.report ?? "No final report is saved. Ask your parent for its result."}`);
     "send_files",
     {
       title: "Send files and folders",
-      description: "Deliver files or folders into an online peer's inbox. Paired PCs stream bounded chunks with SHA-256 and restart resume, returning a transfer id immediately; progress and results arrive as messages. Limits come from network.maxTransferBytes (default 8 GiB). Older brokers and local delivery keep the one MiB / 128 entry path. Symlinks and junctions are rejected; received files are never executed.",
+      description: "Deliver files or folders into an online peer's inbox. Paired PCs stream bounded chunks with SHA-256 and restart resume, returning a transfer id immediately; progress stays available in the dashboard and inbox on request; only completed, failed or cancelled results are delivered automatically. Limits come from network.maxTransferBytes (default 8 GiB). Older brokers and local delivery keep the one MiB / 128 entry path. Symlinks and junctions are rejected; received files are never executed.",
       inputSchema: {
         to: external_exports.string().min(1).describe("Peer name, including host/peer for a paired instance"),
         paths: external_exports.array(external_exports.string().min(1)).min(1).max(MAX_STREAM_ENTRIES).describe("Files or folders relative to this session's working directory, or absolute paths")
@@ -53305,7 +53314,7 @@ ${f.report ?? "No final report is saved. Ask your parent for its result."}`);
     "fetch_files",
     {
       title: "Fetch files from a paired PC",
-      description: "Pull files into this PC's inbox over a paired encrypted link. The other PC must explicitly configure network.fetchRoots (off by default). Paths are absolute or relative to the source session's working directory and must stay under an allowed root. Returns a transfer id immediately; progress and results arrive as messages.",
+      description: "Pull files into this PC's inbox over a paired encrypted link. The other PC must explicitly configure network.fetchRoots (off by default). Paths are absolute or relative to the source session's working directory and must stay under an allowed root. Returns a transfer id immediately; progress stays available in the dashboard and inbox on request; only completed, failed or cancelled results are delivered automatically.",
       inputSchema: {
         from: external_exports.string().min(1).describe("Paired host/peer to fetch from"),
         paths: external_exports.array(external_exports.string().min(1)).min(1).max(MAX_STREAM_ENTRIES)
@@ -53326,7 +53335,7 @@ ${f.report ?? "No final report is saved. Ask your parent for its result."}`);
     "inbox",
     {
       title: "Read inbox",
-      description: "Read unread messages from other agents, including quiet sibling copies and acknowledgements on demand. Messages are marked read unless mark_read is false. Peeking with mark_read=false does not produce a read receipt.",
+      description: "Read unread messages from other agents, including quiet transfer progress, sibling copies and acknowledgements on demand. Messages are marked read unless mark_read is false. Peeking with mark_read=false does not produce a read receipt.",
       inputSchema: {
         mark_read: external_exports.boolean().optional().describe("Mark returned messages as read (default true)"),
         limit: external_exports.number().int().min(1).max(100).optional()

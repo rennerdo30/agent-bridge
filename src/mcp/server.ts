@@ -33,7 +33,7 @@ import { MAX_STREAM_ENTRIES } from "../network/transfers.js";
 import { resolveDbPath, resolveHome, resolvePipePath } from "../core/paths.js";
 import { inspectClaudeLaunch } from "../core/procinfo.js";
 import { loadOrCreateToken } from "../core/token.js";
-import { BridgeError, BROADCAST, CODING_AGENTS, isQuietMessage, SIBLING_CONVERSATION_PREFIX, type AgentKind, type BridgeMessage, type CodingAgent } from "../core/protocol.js";
+import { BridgeError, BROADCAST, CODING_AGENTS, isQuietMessage, SIBLING_CONVERSATION_PREFIX, TRANSFER_PROGRESS_PREFIX, type AgentKind, type BridgeMessage, type CodingAgent } from "../core/protocol.js";
 import { formatDelivery, formatDuration, formatMessage, formatMessages, formatPeer } from "./format.js";
 import { CodexWaker, type Activity } from "./codex-wake.js";
 import { buildHookResponse, discardFinishedNotes, type HookEvent } from "./hooks.js";
@@ -567,7 +567,7 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
       title: "List peers",
       description:
         "List the open agent sessions on this machine (Claude Code, Codex, opencode): name, agent type, busy/idle, uptime, working directory and session id. " +
-        "Also shows your own name and settings and your running subagents. Delegated jobs see their parent and siblings (job name, title, agent and status). Use it to pick whom to message.",
+        "Also shows your own name and settings, your running subagents and the latest unread file-transfer progress on request. Delegated jobs see their parent and siblings (job name, title, agent and status). Use it to pick whom to message.",
       inputSchema: {},
       annotations: { readOnlyHint: true },
     },
@@ -604,6 +604,14 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
         others.length ? t("peers.header", { count: others.length }) : t("peers.none"),
         ...others.map((p) => formatPeer(p)),
       ];
+      const transferNotes = new Map<string, BridgeMessage>();
+      for (const message of n.unread()) {
+        if (message.conversationId.startsWith(TRANSFER_PROGRESS_PREFIX)) transferNotes.set(message.conversationId, message);
+      }
+      if (transferNotes.size) {
+        lines.push("Latest unread file-transfer progress (retained notes, not live status):");
+        for (const message of transferNotes.values()) lines.push(`- ${message.body}`);
+      }
       const jobs = ctx.jobs?.list() ?? [];
       if (jobs.length) {
         lines.push(t("peers.jobs", { count: jobs.length }));
@@ -704,7 +712,7 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
     "send_files",
     {
       title: "Send files and folders",
-      description: "Deliver files or folders into an online peer's inbox. Paired PCs stream bounded chunks with SHA-256 and restart resume, returning a transfer id immediately; progress and results arrive as messages. Limits come from network.maxTransferBytes (default 8 GiB). Older brokers and local delivery keep the one MiB / 128 entry path. Symlinks and junctions are rejected; received files are never executed.",
+      description: "Deliver files or folders into an online peer's inbox. Paired PCs stream bounded chunks with SHA-256 and restart resume, returning a transfer id immediately; progress stays available in the dashboard and inbox on request; only completed, failed or cancelled results are delivered automatically. Limits come from network.maxTransferBytes (default 8 GiB). Older brokers and local delivery keep the one MiB / 128 entry path. Symlinks and junctions are rejected; received files are never executed.",
       inputSchema: {
         to: z.string().min(1).describe("Peer name, including host/peer for a paired instance"),
         paths: z.array(z.string().min(1)).min(1).max(MAX_STREAM_ENTRIES).describe("Files or folders relative to this session's working directory, or absolute paths"),
@@ -717,7 +725,7 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
     "fetch_files",
     {
       title: "Fetch files from a paired PC",
-      description: "Pull files into this PC's inbox over a paired encrypted link. The other PC must explicitly configure network.fetchRoots (off by default). Paths are absolute or relative to the source session's working directory and must stay under an allowed root. Returns a transfer id immediately; progress and results arrive as messages.",
+      description: "Pull files into this PC's inbox over a paired encrypted link. The other PC must explicitly configure network.fetchRoots (off by default). Paths are absolute or relative to the source session's working directory and must stay under an allowed root. Returns a transfer id immediately; progress stays available in the dashboard and inbox on request; only completed, failed or cancelled results are delivered automatically.",
       inputSchema: {
         from: z.string().min(1).describe("Paired host/peer to fetch from"),
         paths: z.array(z.string().min(1)).min(1).max(MAX_STREAM_ENTRIES),
@@ -740,7 +748,7 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
     "inbox",
     {
       title: "Read inbox",
-      description: "Read unread messages from other agents, including quiet sibling copies and acknowledgements on demand. Messages are marked read unless mark_read is false. Peeking with mark_read=false does not produce a read receipt.",
+      description: "Read unread messages from other agents, including quiet transfer progress, sibling copies and acknowledgements on demand. Messages are marked read unless mark_read is false. Peeking with mark_read=false does not produce a read receipt.",
       inputSchema: {
         mark_read: z.boolean().optional().describe("Mark returned messages as read (default true)"),
         limit: z.number().int().min(1).max(100).optional(),

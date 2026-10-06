@@ -7782,11 +7782,12 @@ var BROADCAST = "*";
 var SIBLING_CONVERSATION_PREFIX = "siblings-";
 var SIBLING_NOTE_SUFFIX = ":note";
 var ACK_CONVERSATION_SUFFIX = ":ack";
+var TRANSFER_PROGRESS_PREFIX = "files-progress-";
 function isSiblingNote(m) {
   return m.conversationId.startsWith(SIBLING_CONVERSATION_PREFIX) && m.conversationId.endsWith(SIBLING_NOTE_SUFFIX);
 }
 function isQuietMessage(m) {
-  return isSiblingNote(m) || m.conversationId.endsWith(ACK_CONVERSATION_SUFFIX);
+  return isSiblingNote(m) || m.conversationId.endsWith(ACK_CONVERSATION_SUFFIX) || m.conversationId.startsWith(TRANSFER_PROGRESS_PREFIX);
 }
 var BridgeError = class extends Error {
   constructor(code, message, details) {
@@ -29489,7 +29490,7 @@ var MessageStore = class {
       ),
       unread: this.db.prepare(
         `SELECT * FROM messages WHERE recipient = ? AND read_at IS NULL
-         ORDER BY CASE WHEN (conversation_id LIKE 'siblings-%:note' OR conversation_id LIKE '%:ack') THEN 1 ELSE 0 END,
+         ORDER BY CASE WHEN (conversation_id LIKE 'siblings-%:note' OR conversation_id LIKE '%:ack' OR conversation_id LIKE 'files-progress-%') THEN 1 ELSE 0 END,
                   created_at ASC, id ASC LIMIT ?`
       ),
       markRead: this.db.prepare(`UPDATE messages SET read_at = ? WHERE id = ? AND recipient = ? AND read_at IS NULL`),
@@ -30429,7 +30430,7 @@ var TransferManager = class {
       from,
       to: recipient,
       recipient,
-      conversationId: state.id,
+      conversationId: TERMINAL.has(state.status) ? state.id : `${TRANSFER_PROGRESS_PREFIX}${state.id}`,
       replyTo: null,
       hop: 0,
       createdAt: now,
