@@ -449,6 +449,11 @@ code.addr { font-family: var(--mono); font-size: 12px; padding: 2px 8px; border-
 .peer-row { padding: 14px 18px; }
 .peer-name { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 
+.disc-table { overflow-x: auto; margin-top: 10px; }
+.disc-table table { border-collapse: collapse; width: 100%; font-size: 12.5px; }
+.disc-table th, .disc-table td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--panel-2); }
+.disc-table th { color: var(--muted); font-weight: 600; }
+
 /* The conversation's "⋯" menu, top right */
 .conv-menu { position: relative; flex: none; }
 .menu-btn { font-size: 18px; line-height: 1; padding: 4px 10px; letter-spacing: .05em; }
@@ -660,6 +665,7 @@ button.ghost { min-height: 32px; }
       </form>
       </details>
       <div class="net-fw hidden" id="netFw"></div>
+      <div id="netDisc"></div>
     </div></div>
     <div class="block net-two">
       <div class="panel net-card" id="netShare"></div>
@@ -1761,10 +1767,26 @@ function renderNetwork() {
   $("netSave").disabled = !n;
   $("netOff").classList.toggle("hidden", !(n && n.enabled));
   renderFirewall();
+  renderDiscovery();
   renderShare();
   renderFound();
   renderPaired();
   $("netJoinBtn").disabled = !(n && n.enabled);
+}
+
+/** Why PCs may not find each other: the Windows network profile hint first, then per-adapter discovery details. */
+function renderDiscovery() {
+  const n = net;
+  if (!n || !n.enabled) return setHtml("netDisc", "");
+  const d = n.discoveryDiagnostics, hint = n.networkProfileHint;
+  const when = (t) => (t ? ago(t) : "never");
+  const rows = d ? (d.interfaces || []).map((i) => "<tr><td>" + esc(i.name) + "</td><td><code>" + esc(i.address) + "</code></td><td>" + (i.announcing ? "announcing" : "not announcing") + "</td><td>" + esc(when(i.lastSentAt)) + "</td></tr>").join("") +
+    (d.skippedInterfaces || []).map((i) => '<tr class="faint"><td>' + esc(i.name) + "</td><td><code>" + esc(i.address) + "</code></td><td>skipped: " + esc(i.reason) + "</td><td></td></tr>").join("") : "";
+  setHtml("netDisc",
+    (hint ? '<div class="net-fw"><div class="row"><span class="dot busy"></span><b>' + esc(hint) + "</b></div></div>" : "") +
+    (d ? '<details class="net-settings"><summary>Discovery details · last heard from another PC ' + esc(when(d.lastReceivedAt)) + "</summary>" +
+      '<div class="small muted">Group ' + esc(d.multicastGroup) + " · UDP " + esc(d.port) + " · last sent " + esc(when(d.lastSentAt)) + (d.lastError ? ' · <span style="color:var(--bad)">last error ' + esc(d.lastError.message) + "</span>" : "") + "</div>" +
+      (rows ? '<div class="disc-table"><table><thead><tr><th>Adapter</th><th>Address</th><th>State</th><th>Last sent</th></tr></thead><tbody>' + rows + "</tbody></table></div>" : "") + "</details>" : ""));
 }
 
 function fillNetForm(n) {
