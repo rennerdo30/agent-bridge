@@ -30,6 +30,8 @@ export interface PermissionRequest {
   detail: string;
   cwd?: string;
   reason?: string;
+  /** A terminal Codex auto-review refusal needs an explicit supervisor decision, not an allowlist. */
+  automaticReview?: boolean;
 }
 
 export type PermissionDecision = { allow: true } | { allow: false; message: string };

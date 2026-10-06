@@ -447,6 +447,7 @@ export async function runLiveChecks(o: LiveOptions): Promise<void> {
             log: o.log,
             bin: o.bins.codex,
             sandbox: "read-only",
+            approvalsReviewer: "user",
             askMode: true,
             approve: async (req) => {
               asked.push(`${req.tool}: ${req.detail.slice(0, 60)}`);
@@ -475,6 +476,7 @@ export async function runLiveChecks(o: LiveOptions): Promise<void> {
           log: o.log,
           bin: o.bins.codex,
           sandbox: "read-only",
+          approvalsReviewer: "user",
           approve: async (req) => {
             asked.push(`${req.tool}: ${req.detail.slice(0, 60)}`);
             return { allow: true };

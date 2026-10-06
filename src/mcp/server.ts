@@ -5,7 +5,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import type { CallToolResult, ServerNotification } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
-import { CLAUDE_PERMISSION_MODES, CODEX_SANDBOXES, defaultPeerName, loadConfig, parseAgentKind, saveConfigValue, watchConfig, type BridgeConfig, MODEL_NAME_PATTERN } from "../core/config.js";
+import { CLAUDE_PERMISSION_MODES, CODEX_APPROVALS_REVIEWERS, CODEX_SANDBOXES, defaultPeerName, loadConfig, parseAgentKind, saveConfigValue, watchConfig, type BridgeConfig, MODEL_NAME_PATTERN } from "../core/config.js";
 import {
   APP_NAME,
   APP_VERSION,
@@ -74,7 +74,7 @@ const SUBAGENT_TOOLS = new Set(["peers", "send", "report_progress", "hook_event"
 /** The options of a job worth keeping to continue it the same way later (no prompt, no internals). */
 /** When to look again for jobs under a stand-in name (a replaced server of the session may still be leaving). */
 const STAND_IN_RECHECK_MS = 30_000;
-const KEPT_ARGS = ["host", "model", "effort", "cwd", "timeout_sec", "worktree", "access", "sandbox", "permission_mode", "auto_approve", "allow_tools", "send_to", "title"] as const;
+const KEPT_ARGS = ["host", "model", "effort", "cwd", "timeout_sec", "worktree", "access", "sandbox", "approvals_reviewer", "permission_mode", "auto_approve", "allow_tools", "send_to", "title"] as const;
 /** Plugin root: dist/server.mjs lives one level below it. */
 const PLUGIN_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -1135,6 +1135,7 @@ ${res.text || t("delegate.empty")}`, res.isError);
         model: z.string().regex(MODEL_NAME_PATTERN).optional().describe("Model for this continuation and later turns. A running turn keeps its model."),
         access: z.enum(ACCESS_LEVELS as [Access, ...Access[]]).optional().describe("Access for the next turn: read, ask or edit. Replaces earlier exact permission overrides."),
         sandbox: z.enum(CODEX_SANDBOXES as [string, ...string[]]).optional().describe("Codex sandbox for the next turn. A running turn keeps its sandbox."),
+        approvals_reviewer: z.enum(CODEX_APPROVALS_REVIEWERS).optional().describe("Codex reviewer for the next turn: auto_review or user. A running turn keeps its reviewer."),
         permission_mode: z.enum(CLAUDE_PERMISSION_MODES as [string, ...string[]]).optional().describe("Claude permission mode for the next turn."),
         auto_approve: z.boolean().optional().describe("opencode auto-approval for the next turn."),
       },

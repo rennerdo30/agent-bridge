@@ -1,5 +1,10 @@
 # Dashboard approvals
 
+Codex jobs use automatic approval review by default (`codexApprovalsReviewer: "auto_review"`).
+Terminal refusals and timeouts enter this same registry when a supervisor can answer. An allow
+requests one exact retry as continuation context, retaining Codex's reviewer and sandbox; it cannot
+override Codex policy. A deny is delivered with its reason. See [delegated access](delegated-access.md#automatic-approval-review-ab-92).
+
 All requests use the local dashboard's `ab_ui` HttpOnly cookie, obtained by opening its launch link.
 POSTs also require `x-agent-bridge: 1` and `Content-Type: application/json`.
 The dashboard is bound to `127.0.0.1` and rejects foreign Host headers.

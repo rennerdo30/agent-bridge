@@ -199,9 +199,9 @@ async function runDelegateInner(
       asked.push(`declined (handoff tool): ${r.tool} ${r.detail.slice(0, 80)}`);
       return { allow: false, message: HANDOFF_DECLINED };
     }
-    if (r.tool.startsWith("mcp:") && allowedServers.has(r.tool)) return { allow: true };
+    if (!r.automaticReview && r.tool.startsWith("mcp:") && allowedServers.has(r.tool)) return { allow: true };
     // Its own agent-bridge tools (answering the parent, report_progress) never need a question.
-    if (isOwnServerCall(r) || isAutoApproved(r, autoApprove)) return { allow: true };
+    if (!r.automaticReview && (isOwnServerCall(r) || isAutoApproved(r, autoApprove))) return { allow: true };
     let d: PermissionDecision;
     if (wiring) d = await wiring.onPermission(r);
     else if (job && (!job.foreground || job.parentJob) && rc.jobs) {
@@ -217,7 +217,7 @@ async function runDelegateInner(
       d = await askUser(r);
       asked.push(`${d.allow ? "allowed" : "denied"}: ${r.tool} ${r.detail.slice(0, 80)}`);
     } else d = r.tool.startsWith("mcp:") && access === "edit" ? { allow: true } : { allow: false, message: "No one to ask in this session." };
-    if (d.allow && r.tool.startsWith("mcp:")) allowedServers.add(r.tool);
+    if (d.allow && !r.automaticReview && r.tool.startsWith("mcp:")) allowedServers.add(r.tool);
     return d;
   };
   let feed: ReturnType<typeof startRunFeed>;

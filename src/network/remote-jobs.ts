@@ -130,7 +130,7 @@ export class RemoteJobs {
       if ([...this.records.values()].filter((r) => this.snapshot(r).alive).length + this.starting.size > cfg.maxJobs) throw new Error("Remote subagent limit reached.");
       if (!record && this.records.size >= MAX_REMOTE_JOBS) throw new Error("Remote job registry is full.");
       if (!record && request.args.session_id) throw new Error("Remote session continuation requires a job owned by this supervisor.");
-      const settings = Object.fromEntries(["model", "effort", "access", "sandbox", "permission_mode", "auto_approve"].filter((key) => key in request.args).map((key) => [key, (request.args as Record<string, unknown>)[key]]));
+      const settings = Object.fromEntries(["model", "effort", "access", "sandbox", "approvals_reviewer", "permission_mode", "auto_approve"].filter((key) => key in request.args).map((key) => [key, (request.args as Record<string, unknown>)[key]]));
       if (Object.keys(settings).length) { const parsed = parseJobSettings(settings, request.target); if (typeof parsed === "string") throw new Error(parsed); }
       let args: DelegateArgs = { ...request.args };
       let cwd = allowedRemoteDirectory(args.cwd!, policy.allowRoots);

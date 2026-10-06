@@ -16,13 +16,65 @@ Full-access threads and turns now use a granular policy: sandbox and rule approv
 MCP elicitations remain enabled. The installed app-server requires `experimentalApi: true` for this
 policy. Legacy command/file callbacks are accepted for full access. The exec fallback explicitly
 sets `approval_policy="never"` and `approvals_reviewer="user"`, overriding inherited auto-review.
-Read-only command/edit callbacks still cannot widen access. Workspace-write and ask-mode callbacks
-are forwarded to the supervisor, including cleanup requests, rather than silently declined.
+Command/edit callbacks are forwarded when a supervisor is available, including read-only escalations
+and cleanup requests. Without supervision, read-only callbacks are declined with an explicit reason.
 
 The protocol was checked against the installed `codex app-server generate-json-schema` output and
 the [official app-server documentation](https://learn.chatgpt.com/docs/app-server). A direct local
 app-server smoke accepted the granular thread policy and ran a hidden, immediately exiting
 `Start-Process` command under `dangerFullAccess` with exit code 0. No model inference was needed.
+
+## Automatic approval review (AB-92)
+
+Research on 2026-10-06 used `codex --version` (`codex-cli 0.160.1`) and
+`codex app-server generate-json-schema --out <temporary-directory>`, also checking the experimental
+schema. The [official configuration reference](https://learn.chatgpt.com/docs/config-file/config-reference),
+[Auto-review documentation](https://learn.chatgpt.com/docs/sandboxing/auto-review), and
+[changelog](https://learn.chatgpt.com/docs/changelog) establish the feature and current release.
+
+- Native Codex config: `approvals_reviewer = "auto_review"` or `"user"`.
+- App-server: `approvalsReviewer` on `thread/start`, `thread/resume`, and `turn/start`.
+  The schema also accepts the legacy `guardian_subagent` alias; the bridge exposes the canonical values.
+- Bridge config: `codexApprovalsReviewer`, default `"auto_review"`, with normal per-agent overrides.
+- Job override: `approvals_reviewer` on ask/spawn and `message_subagent`. It persists independently of
+  `access` and `sandbox`; a running turn keeps its current reviewer. Remote spawn accepts it too.
+- Non-full-access approval policy remains `on-request`. Automatic review applies only to eligible
+  approval requests, including command, file, blocked network, MCP, and permission requests. Routine
+  sandboxed actions continue without review. Codex's managed requirements and protected paths still apply.
+- `read-only` and `workspace-write` keep their configured roots and network limits. An eligible
+  escalation can be approved by the reviewer, so `read-only` describes the initial sandbox boundary,
+  not a guarantee that an authorized escalation can never write. For direct supervision use `user`.
+- Full access retains the AB-60 granular policy and `user` reviewer: no command/edit review or prompts;
+  existing MCP elicitation checks remain. The bridge never writes the owner's Codex configuration.
+
+Codex's risk-based reviewer can approve authorized, bounded actions. Its documented policy blocks
+secret exfiltration, credential probing, broad security weakening, and destructive operations with
+significant irreversible risk. Local `auto_review.policy` / `auto_review.extra_policy` and managed
+`guardian_policy_config` / `guardian_extra_policy` can customize policy; the bridge sets none of them.
+
+The installed schema reports terminal decisions via `item/autoApprovalReview/completed` with
+`reviewId`, `action`, and `review.status` (`approved`, `denied`, `timedOut`, `aborted`). These payloads
+are marked unstable. A refusal or inability to decide is forwarded once to the existing approval
+handler and AB-81 registry when someone can answer. The runner interrupts the affected turn, waits
+for the decision (even if the turn already completed), and continues the same thread with the exact
+action, reviewer rationale, and supervisor decision. Cached MCP allows and automatic tool allowlists
+cannot approve terminal refusals. A supervisor allow requests one exact retry with the same automatic
+reviewer and sandbox; a deny supplies its reason and prohibits retry or workarounds. Repeated review
+refusals require another explicit decision. Without a supervisor, progress and denial callbacks report
+the refusal rather than silently dropping it.
+
+This is continuation context, not the TUI `/approve` developer-scoped marker: no equivalent override
+method exists in this installed app-server schema. Codex may still refuse the retry, including denials
+the user cannot override. Codex itself has a denial circuit breaker. The bridge does not replay a shell
+command, weaken policy, or change the reviewer to force execution. Pending command/file approvals and
+`item/permissions/requestApproval` still use normal forwarding; permission grants last only for the turn.
+Unsupported dynamic tools and user-input forms remain unsupported.
+
+The legacy `AGENT_BRIDGE_CODEX_EXEC=1` / older-server exec fallback keeps existing strict/relay handling:
+it cannot consume app-server review notifications or provide this supervisor continuation workflow.
+Fake-server tests verify configuration, overrides, sandbox preservation, terminal deduplication,
+dashboard settlement, and allow/deny continuations. Real reviewer inference, managed-policy rejection,
+the TUI marker, native sandbox execution, and live supervisor/dashboard UI remain unverified.
 
 ## Windows drive aliases (AB-72)
 

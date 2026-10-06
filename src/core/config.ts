@@ -17,6 +17,9 @@ const DELIVERY_MODES: readonly DeliveryMode[] = ["auto", "channel", "hooks"];
 
 export type CodexSandbox = "read-only" | "workspace-write" | "danger-full-access";
 const CODEX_SANDBOXES: readonly CodexSandbox[] = ["read-only", "workspace-write", "danger-full-access"];
+export type CodexApprovalsReviewer = "user" | "auto_review";
+export const CODEX_APPROVALS_REVIEWERS: readonly CodexApprovalsReviewer[] = ["user", "auto_review"];
+export const DEFAULT_CODEX_APPROVALS_REVIEWER: CodexApprovalsReviewer = "auto_review";
 
 /** "manual" is the newer name of "default" (Claude Code 2.1.28x); both are accepted. */
 export type ClaudePermissionMode = "default" | "manual" | "acceptEdits" | "plan" | "auto" | "dontAsk" | "bypassPermissions";
@@ -52,6 +55,8 @@ export interface BridgeConfig {
   codexBin: string;
   /** Default sandbox for delegated Codex runs. */
   codexSandbox: CodexSandbox;
+  /** Reviewer for eligible delegated Codex approvals; does not change the sandbox. */
+  codexApprovalsReviewer: CodexApprovalsReviewer;
   /** Worktree edit runs: null inherits codexSandbox, with workspace-write for a read-only default. */
   codexWorktreeSandbox: CodexSandbox | null;
   /** null keeps Codex's own sandbox_workspace_write.network_access setting. */
@@ -93,6 +98,7 @@ export const DEFAULT_CONFIG: BridgeConfig = {
   claudeBin: DEFAULT_CLAUDE_BIN,
   codexBin: DEFAULT_CODEX_BIN,
   codexSandbox: "read-only",
+  codexApprovalsReviewer: DEFAULT_CODEX_APPROVALS_REVIEWER,
   codexWorktreeSandbox: null,
   codexWorkspaceWriteNetworkAccess: null,
   claudePermissionMode: "default",
@@ -261,6 +267,7 @@ export function loadConfig(home: string, agent: AgentKind, log: Logger, env: Nod
     claudeBin: pick("claudeBin", ENV.claudeBin, str) ?? d.claudeBin,
     codexBin: pick("codexBin", ENV.codexBin, str) ?? d.codexBin,
     codexSandbox: pick("codexSandbox", null, (v) => oneOf(v, CODEX_SANDBOXES)) ?? d.codexSandbox,
+    codexApprovalsReviewer: pick("codexApprovalsReviewer", null, (v) => oneOf(v, CODEX_APPROVALS_REVIEWERS)) ?? d.codexApprovalsReviewer,
     codexWorktreeSandbox: pick("codexWorktreeSandbox", null, (v) => oneOf(v, CODEX_SANDBOXES)) ?? d.codexWorktreeSandbox,
     codexWorkspaceWriteNetworkAccess: pick("codexWorkspaceWriteNetworkAccess", null, parseBool) ?? d.codexWorkspaceWriteNetworkAccess,
     claudePermissionMode: pick("claudePermissionMode", null, (v) => oneOf(v, CLAUDE_PERMISSION_MODES)) ?? d.claudePermissionMode,
