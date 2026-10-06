@@ -7,7 +7,8 @@ function page() {
   const element = (id: string): any => {
     if (!elements.has(id)) elements.set(id, {
       value: "", innerHTML: "", textContent: "", dataset: {}, checked: true, attrs: {} as Record<string, string>,
-      classes: new Set<string>(id === "jobSettings" ? ["hidden"] : []),
+      classes: new Set<string>(id === "jobSettings" || id === "sessPop" ? ["hidden"] : []),
+      focus() {},
       get classList() {
         const c = this.classes as Set<string>;
         return { toggle: (n: string, on?: boolean) => ((on ?? !c.has(n)) ? c.add(n) : c.delete(n)), add: (n: string) => c.add(n), remove: (n: string) => c.delete(n), contains: (n: string) => c.has(n) };
@@ -21,8 +22,9 @@ function page() {
   };
   const fetch = vi.fn(() => new Promise(() => {}));
   const document = { getElementById: element, documentElement: { dataset: {} }, addEventListener() {}, querySelectorAll: () => [] };
-  const api = new Function("document", "window", "location", "localStorage", "setInterval", "fetch", `${script}\nreturn { renderJobForm, renderSendForm, modelsCard, renderNetwork, setModel: (m) => { model = m; state = { peers: [] }; }, setRoute: (r) => route = r, setNet: (n, i) => { net = n; invite = i || null; } };`)(document, { addEventListener() {} }, { hash: "" }, { setItem() {}, removeItem() {} }, () => 0, fetch);
-  return { ...api, element, fetch };
+  const location = { hash: "" };
+  const api = new Function("document", "window", "location", "localStorage", "setInterval", "fetch", `${script}\nreturn { renderJobForm, renderSendForm, modelsCard, renderNetwork, renderTabs, openSessions, setModel: (m) => { model = m; state = { peers: [] }; }, setRoute: (r) => route = r, setNet: (n, i) => { net = n; invite = i || null; } };`)(document, { addEventListener() {} }, location, { setItem() {}, removeItem() {} }, () => 0, fetch);
+  return { ...api, element, fetch, location };
 }
 const group = (key: string) => ({ key, job: `codex-job-${key}`, owner: "claude-app", agent: "codex", status: "done", percent: null, turns: [{ name: `run-${key}`, startedAt: 0 }] });
 
@@ -182,5 +184,42 @@ describe("dashboard network tab", () => {
     // Suggested for pairing: reachable from other PCs, discovery on.
     expect(p.element("netBind").value).toBe("0.0.0.0");
     expect(p.element("netDiscovery").checked).toBe(true);
+  });
+});
+
+describe("session switcher", () => {
+  const live = (name: string, cwd: string, running = 0) => ({ name, live: true, running, groups: [], peer: { agent: "claude", activity: "idle", cwd, startedAt: Date.now() } });
+  const sessions = [
+    live("Dominics-MacBook-Pro.local/claude-Development", "/Users/d/Development"),
+    live("claude-strategy-game", "E:/Development/strategy-game", 5),
+    live("claude-project-mmorpg", "E:/Development/project-mmorpg", 2),
+    { name: "claude-old", live: false, running: 0, groups: [{}], peer: null },
+  ];
+
+  it("groups sessions by PC with this PC first, busiest first, and ended ones last", () => {
+    const p = page();
+    p.setModel({ sessions, byName: new Map(sessions.map((x) => [x.name, x])) });
+    p.setRoute({ session: null });
+    p.renderTabs();
+    expect(p.element("sessBtn").innerHTML).toContain("Sessions");
+    p.openSessions(true);
+    const html = p.element("sessList").innerHTML;
+    const order = ["This PC", "claude-strategy-game", "claude-project-mmorpg", "Dominics-MacBook-Pro.local", "Ended", "claude-old"].map((s) => html.indexOf(s));
+    expect(order.every((at) => at >= 0)).toBe(true);
+    expect([...order].sort((a, b) => a - b)).toEqual(order);
+  });
+
+  it("filters by name or folder and opens the highlighted session with Enter", () => {
+    const p = page();
+    p.setModel({ sessions, byName: new Map(sessions.map((x) => [x.name, x])) });
+    p.setRoute({ session: null });
+    p.openSessions(true);
+    p.element("sessFilter").value = "mmorpg";
+    p.element("sessFilter").listeners.get("input")();
+    const html = p.element("sessList").innerHTML;
+    expect(html).toContain("claude-project-mmorpg");
+    expect(html).not.toContain("claude-strategy-game");
+    p.element("sessFilter").listeners.get("keydown")({ key: "Enter", preventDefault() {} });
+    expect(p.location.hash).toBe("#/s/claude-project-mmorpg");
   });
 });

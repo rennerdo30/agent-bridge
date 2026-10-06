@@ -32793,11 +32793,28 @@ header { position: sticky; top: 0; z-index: 5; background: var(--panel); border-
 .theme button + button { border-left: 1px solid var(--line); }
 .theme button.on { background: var(--accent-soft); color: var(--text); }
 .conn { display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px; color: var(--muted); }
-nav { display: flex; gap: 4px; overflow-x: auto; scrollbar-width: none; }
-nav a { display: inline-flex; align-items: center; gap: 7px; padding: 10px 12px; color: var(--muted); border-bottom: 2px solid transparent; white-space: nowrap; font-size: 13.5px; }
-nav a:hover { color: var(--text); }
-nav a.on { color: var(--text); border-bottom-color: var(--accent); font-weight: 600; }
-nav a.ended { opacity: .7; }
+nav { display: flex; gap: 4px; align-items: stretch; }
+nav a, .switch-btn { display: inline-flex; align-items: center; gap: 7px; padding: 10px 12px; color: var(--muted); border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: none; white-space: nowrap; font-size: 13.5px; font-weight: 400; cursor: pointer; }
+nav a:hover, .switch-btn:hover { color: var(--text); }
+nav a.on, .switch-btn.on { color: var(--text); border-bottom-color: var(--accent); font-weight: 600; }
+/* Session switcher: one entry however many sessions run, a searchable list grouped by PC. */
+.switch { position: relative; min-width: 0; display: flex; }
+.switch-btn { max-width: min(420px, 52vw); }
+.switch-btn .lbl { overflow: hidden; text-overflow: ellipsis; }
+.switch-btn .caret { color: var(--faint); font-size: 10px; }
+.switch-pop { position: absolute; top: calc(100% + 6px); left: 0; z-index: 20; width: min(440px, calc(100vw - 32px)); max-height: min(70vh, 560px); display: flex; flex-direction: column; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 12px 32px rgba(16, 24, 40, .18); overflow: hidden; }
+.switch-pop input { margin: 10px; padding: 8px 11px; }
+#sessList { overflow-y: auto; padding: 0 6px 8px; }
+.sess-group { padding: 10px 10px 4px; font-size: 11px; font-weight: 650; letter-spacing: .05em; text-transform: uppercase; color: var(--faint); display: flex; justify-content: space-between; }
+.sess-item { display: grid; grid-template-columns: 26px minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 7px 10px; border-radius: 8px; color: var(--text); }
+.sess-item .sub { font-size: 12px; color: var(--muted); }
+.sess-item.cur { background: var(--accent-soft); }
+.sess-item.act, .sess-item:hover { background: var(--panel-2); outline: 1px solid var(--line); }
+.sess-item.ended { opacity: .65; }
+.sess-empty { padding: 16px; text-align: center; color: var(--muted); font-size: 13px; }
+.pc-head { grid-column: 1 / -1; display: flex; align-items: center; gap: 8px; font-size: 12.5px; font-weight: 650; color: var(--muted); margin-top: 6px; }
+.pc-head:first-child { margin-top: 0; }
+.pc-head::after { content: ""; flex: 1; height: 1px; background: var(--line); }
 .count { min-width: 18px; padding: 0 6px; border-radius: 9px; background: var(--busy-soft); color: var(--busy); font-size: 11px; font-weight: 700; text-align: center; }
 
 main.wrap { padding-top: 28px; padding-bottom: 48px; }
@@ -33015,7 +33032,17 @@ details[open] > summary::before { content: "\u25BE "; }
         <div class="theme" id="theme" role="group" aria-label="Theme"><button data-theme="auto">Auto</button><button data-theme="light">Light</button><button data-theme="dark">Dark</button></div>
       </div>
     </div>
-    <nav id="tabs"></nav>
+    <nav id="tabs">
+      <a href="#/" id="tabOverview">Overview</a>
+      <div class="switch">
+        <button type="button" class="switch-btn" id="sessBtn" aria-haspopup="dialog" aria-expanded="false" aria-controls="sessPop"></button>
+        <div class="switch-pop hidden" id="sessPop" role="dialog" aria-label="Switch session">
+          <input id="sessFilter" placeholder="Find a session or folder" autocomplete="off" spellcheck="false" aria-label="Find a session">
+          <div id="sessList" role="listbox" aria-label="Sessions"></div>
+        </div>
+      </div>
+      <a href="#/network" id="tabNet" class="net">Network</a>
+    </nav>
   </div>
 </header>
 
@@ -33270,14 +33297,67 @@ function render() {
   renderSendForm(inSession);
 }
 
+/** Remote sessions are named "<pc>/<name>"; local ones have no PC part. */
+const pcOf = (name) => { const i = String(name).indexOf("/"); return i > 0 ? name.slice(0, i) : ""; };
+const shortName = (name) => { const i = String(name).indexOf("/"); return i > 0 ? name.slice(i + 1) : name; };
+const LOCAL_PC = "This PC";
+let sessActive = 0, lastSessList = "";
+
 function renderTabs() {
-  const tabs = model.sessions.filter((x) => x.live);
   const cur = route.session && model.byName.get(route.session);
-  if (route.session && !(cur && cur.live)) tabs.push(cur || { name: route.session, live: false, running: 0 });
-  $("tabs").innerHTML = '<a href="#/" class="' + (route.session || route.network ? "" : "on") + '">Overview</a>' + tabs.map((t) =>
-    '<a href="' + href(t.name) + '" class="' + (t.name === route.session ? "on" : "") + (t.live ? "" : " ended") + '">' +
-    (t.live ? dot(t.peer.activity) : "") + esc(t.name) + (t.running ? '<span class="count" title="subagents working">' + t.running + "</span>" : "") + "</a>").join("") +
-    '<a href="' + NETWORK_HASH + '" class="net' + (route.network ? " on" : "") + '">' + networkTabDot() + "Network" + "</a>";
+  $("tabOverview").className = route.session || route.network ? "" : "on";
+  $("tabNet").className = "net" + (route.network ? " on" : "");
+  setHtml("tabNet", networkTabDot() + "Network");
+  const running = model.sessions.reduce((n, x) => n + (x.running || 0), 0);
+  const live = model.sessions.filter((x) => x.live).length;
+  const btn = $("sessBtn");
+  btn.classList.toggle("on", Boolean(route.session));
+  setHtml("sessBtn", route.session
+    ? (cur && cur.live ? dot(cur.peer.activity) : "") + '<span class="lbl">' + esc(route.session) + "</span>" + (cur && cur.running ? '<span class="count" title="subagents working">' + cur.running + "</span>" : "") + '<span class="caret" aria-hidden="true">\u25BC</span>'
+    : '<span class="lbl">Sessions</span><span class="chip">' + live + "</span>" + (running ? '<span class="count" title="subagents working">' + running + "</span>" : "") + '<span class="caret" aria-hidden="true">\u25BC</span>');
+  btn.title = live + " session" + (live === 1 ? "" : "s") + " connected" + (running ? ", " + running + " subagent" + (running === 1 ? "" : "s") + " working" : "");
+  if (!$("sessPop").classList.contains("hidden")) renderSessList();
+}
+
+/** Sessions matching the filter: live ones grouped by PC (this PC first), then ended ones with subagents. */
+function sessEntries() {
+  const q = $("sessFilter").value.trim().toLowerCase();
+  const match = (x) => !q || x.name.toLowerCase().includes(q) || String((x.peer && x.peer.cwd) || "").toLowerCase().includes(q);
+  const live = model.sessions.filter((x) => x.live && match(x));
+  const pcs = [...new Set(live.map((x) => pcOf(x.name)))].sort((a, b) => (a === "") !== (b === "") ? (a === "" ? -1 : 1) : a.localeCompare(b));
+  const groups = pcs.map((pc) => ({ title: pc || LOCAL_PC, items: live.filter((x) => pcOf(x.name) === pc).sort((a, b) => b.running - a.running || a.name.localeCompare(b.name)) }));
+  const ended = model.sessions.filter((x) => !x.live && x.groups.length && match(x));
+  if (ended.length) groups.push({ title: "Ended", items: ended });
+  return groups;
+}
+
+function renderSessList() {
+  const groups = sessEntries(), flat = groups.flatMap((g) => g.items);
+  sessActive = Math.min(sessActive, Math.max(0, flat.length - 1));
+  let i = 0;
+  const html = flat.length
+    ? groups.map((g) => '<div class="sess-group"><span>' + esc(g.title) + "</span><span>" + g.items.length + "</span></div>" + g.items.map((x) => {
+        const p = x.peer, n = i++;
+        const sub = p ? [folder(p.cwd), p.activity || "", "up " + up(p.startedAt)].filter(Boolean).join(" \xB7 ") : x.groups.length + " subagents";
+        return '<a role="option" href="' + href(x.name) + '" data-i="' + n + '" class="sess-item' + (x.name === route.session ? " cur" : "") + (n === sessActive ? " act" : "") + (x.live ? "" : " ended") + '"' + (x.name === route.session ? ' aria-selected="true"' : "") + ">" +
+          av(p ? p.agent : "other", true) + '<div style="min-width:0"><div class="ell">' + (p ? dot(p.activity) + " " : "") + esc(shortName(x.name)) + '</div><div class="sub ell">' + esc(sub) + "</div></div>" +
+          (x.running ? '<span class="count" title="subagents working">' + x.running + "</span>" : "<span></span>") + "</a>";
+      }).join("")).join("")
+    : '<div class="sess-empty">No session matches.</div>';
+  if (html !== lastSessList) { lastSessList = html; $("sessList").innerHTML = html; }
+}
+
+function openSessions(open) {
+  $("sessPop").classList.toggle("hidden", !open);
+  $("sessBtn").setAttribute("aria-expanded", String(open));
+  if (open) {
+    $("sessFilter").value = "";
+    const flat = sessEntries().flatMap((g) => g.items);
+    sessActive = Math.max(0, flat.findIndex((x) => x.name === route.session));
+    lastSessList = "";
+    renderSessList();
+    $("sessFilter").focus();
+  }
 }
 
 /** "0.12.0" vs "0.11.3": negative when a is older. */
@@ -33339,8 +33419,13 @@ function renderOverview() {
     const kids = x.children.length ? '<div class="kids">' + x.children.map(childLine).join("") + "</div>" : "";
     return '<a class="card' + (x.live ? "" : " ended") + '" href="' + href(x.name) + '">' + head + (p ? versionChip(p) : "") + kids + stats + "</a>";
   };
+  // One heading per PC once sessions of paired PCs are online.
+  const pcs = [...new Set(live.map((x) => pcOf(x.name)))].sort((a, b) => (a === "") !== (b === "") ? (a === "" ? -1 : 1) : a.localeCompare(b));
+  const byPc = pcs.length > 1
+    ? pcs.map((pc) => '<div class="pc-head">' + esc(pc || LOCAL_PC) + "</div>" + live.filter((x) => pcOf(x.name) === pc).map(card).join("")).join("")
+    : live.map(card).join("");
   $("ovSessions").innerHTML =
-    (live.length ? live.map(card).join("") : '<div class="panel empty">No sessions connected. Start Claude Code, Codex or opencode with agent-bridge installed.</div>') +
+    (live.length ? byPc : '<div class="panel empty">No sessions connected. Start Claude Code, Codex or opencode with agent-bridge installed.</div>') +
     ended.map(card).join("") +
     (model.orphans.length ? '<div class="card ended"><div class="small muted">Subagent sessions in worktrees</div><div class="kids">' + model.orphans.map(childLine).join("") + "</div></div>" : "");
   $("ovRuns").innerHTML = model.sorted.length ? model.sorted.filter((g) => g.status === "running" || Date.now() - g.updatedAt < ARCHIVE_AFTER_MS).concat(model.sorted.filter((g) => !(g.status === "running" || Date.now() - g.updatedAt < ARCHIVE_AFTER_MS))).slice(0, 12).map((g) => groupRow(g, false, true)).join("") : '<div class="empty">No subagents yet. They appear here when a session uses ask_* or spawn_*.</div>';
@@ -34034,6 +34119,28 @@ setInterval(() => {
   const due = inviteActive() ? NET_PAIR_POLL_MS : NET_POLL_MS;
   if ((route.network || inviteActive()) && Date.now() - netLoadedAt >= due) void loadNetwork();
 }, 1000);
+
+$("sessBtn").addEventListener("click", () => openSessions($("sessPop").classList.contains("hidden")));
+$("sessFilter").addEventListener("input", () => { sessActive = 0; renderSessList(); });
+$("sessFilter").addEventListener("keydown", (e) => {
+  const flat = sessEntries().flatMap((g) => g.items);
+  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+    e.preventDefault();
+    if (flat.length) sessActive = (sessActive + (e.key === "ArrowDown" ? 1 : flat.length - 1)) % flat.length;
+    renderSessList();
+  } else if (e.key === "Enter") {
+    e.preventDefault();
+    const x = flat[sessActive];
+    if (x) { location.hash = href(x.name); openSessions(false); }
+  } else if (e.key === "Escape") {
+    openSessions(false);
+    $("sessBtn").focus();
+  }
+});
+$("sessList").addEventListener("click", (e) => { if (e.target.closest(".sess-item")) openSessions(false); });
+document.addEventListener("click", (e) => {
+  if (!$("sessPop").classList.contains("hidden") && !e.target.closest(".switch")) openSessions(false);
+});
 
 /** Auto follows the system; Light and Dark override it. Remembered in this browser. */
 function applyTheme(theme) {
@@ -39101,7 +39208,13 @@ function unlinkLinks(dir) {
 }
 function onlyFoldersAndLinks(dir) {
   dir = toNamespacedPath2(resolve6(dir));
-  return readdirSync8(dir, { withFileTypes: true }).every((e) => {
+  let entries;
+  try {
+    entries = readdirSync8(dir, { withFileTypes: true });
+  } catch {
+    return false;
+  }
+  return entries.every((e) => {
     const path = join27(dir, e.name);
     if (e.isSymbolicLink() || lstatSync2(path).isSymbolicLink()) return true;
     return e.isDirectory() && onlyFoldersAndLinks(path);
@@ -39177,7 +39290,8 @@ async function cleanupWorktrees(opts) {
   const out2 = [];
   for (const d of readdirSync8(dir, { withFileTypes: true })) {
     if (!d.isDirectory() || lstatSync2(join27(dir, d.name)).isSymbolicLink()) continue;
-    out2.push(await inspect(join27(dir, d.name), jobs, opts.apply, opts.log));
+    const path = join27(dir, d.name);
+    out2.push(await inspect(path, jobs, opts.apply, opts.log).catch((err) => ({ path, branch: null, action: "kept", reason: `cannot read it: ${err.message.split("\n")[0]}` })));
   }
   return out2;
 }
