@@ -32,6 +32,7 @@ import {
 import { agentQueueKey, MessageStore } from "./store.js";
 import { tokensEqual } from "./token.js";
 import { isRecord, retentionLimit } from "./json-store.js";
+import { readArchivedJobs } from "./job-archive.js";
 import { isJobSendTarget, MAX_JOB_SEND_TARGETS } from "./job-messaging.js";
 import { NetworkService, type NetworkStatus } from "../network/link.js";
 import { writeNetworkConfig, type NetworkConfig } from "../network/config.js";
@@ -299,7 +300,11 @@ export class Broker {
     try {
       const data: unknown = JSON.parse(readFileSync(this.jobsPath, "utf8"));
       const jobs = Array.isArray(data) ? data : isRecord(data) && Array.isArray(data.jobs) ? data.jobs : [];
-      return jobs.filter(isRecord);
+      const merged = new Map<string, Record<string, unknown>>();
+      for (const job of [...readArchivedJobs(this.jobsPath), ...jobs.filter(isRecord)]) {
+        if (typeof job.id === "string") merged.set(job.id, job);
+      }
+      return [...merged.values()];
     } catch {
       return [];
     }
@@ -729,11 +734,7 @@ export class Broker {
   private unreadMail(recipient: string, limit: number): BridgeMessage[] {
     const messages = this.store.unread(recipient, limit);
     if (!this.jobsPath || !messages.some((m) => m.conversationId.endsWith(SIBLING_NOTE_SUFFIX))) return messages;
-    let jobs: { id?: string; status?: string }[];
-    try {
-      const value = JSON.parse(readFileSync(this.jobsPath, "utf8"));
-      jobs = Array.isArray(value) ? value : Array.isArray(value?.jobs) ? value.jobs : [];
-    } catch { return messages; }
+    const jobs = this.storedJobs();
     const finished = new Set(jobs.filter((j) => j.status && j.status !== "running").map((j) => `job:${j.id}`));
     const stale = messages.filter((m) => m.conversationId.endsWith(SIBLING_NOTE_SUFFIX) && finished.has(m.from.id));
     this.store.markRead(recipient, stale.map((m) => m.id), this.now());

@@ -4,7 +4,6 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import type { AddressInfo } from "node:net";
 import { networkInterfaces } from "node:os";
 import { join } from "node:path";
-import { DatabaseSync } from "node:sqlite";
 import { BridgeClient } from "../core/client.js";
 import { APP_VERSION, MAX_BODY_CHARS, PROTOCOL_VERSION } from "../core/constants.js";
 import type { Logger } from "../core/logger.js";
@@ -24,6 +23,8 @@ import { planFirewall, detectFirewall, applyWindowsFirewall } from "../network/f
 import { parseNetworkAddress } from "../network/address.js";
 import type { Op, RequestMap } from "../core/protocol.js";
 import { isRecord } from "../core/json-store.js";
+import { doctor } from "../core/doctor.js";
+import { MAX_HISTORY_LIMIT, searchMessages } from "../core/message-history.js";
 import { DEFAULT_RUN_PAGE_SIZE, MAX_RUN_PAGE_SIZE, pageRuns, readHistoryJobs, readHistoryJson, readRunLogs } from "../core/run-history.js";
 import type { Worktree } from "../core/worktree.js";
 import { listNativeSubagents, readTranscript, TRANSCRIPT_ID, validTranscriptCursor, type TranscriptPaths } from "../core/transcripts/index.js";
@@ -203,17 +204,7 @@ interface MessageRow {
 
 /** Recent messages (one row per message, recipients joined), newest first; not the control messages to job runners. Read-only access. */
 export function recentMessages(dbPath: string): MessageRow[] {
-  if (!existsSync(dbPath)) return [];
-  const db = new DatabaseSync(dbPath, { readOnly: true });
-  try {
-    const stmt = db.prepare(
-      `SELECT id, from_name, from_agent, to_target, group_concat(recipient, ', ') AS recipients, body, created_at, hop, reply_to
-       FROM messages WHERE conversation_id NOT LIKE 'jobctl-%' GROUP BY id ORDER BY created_at DESC LIMIT ?`,
-    );
-    return stmt.all(MAX_MESSAGES) as unknown as MessageRow[];
-  } finally {
-    db.close();
-  }
+  return searchMessages(dbPath, { limit: MAX_MESSAGES });
 }
 
 async function brokerPeers(pipe: string, token: string, log: Logger): Promise<{ brokerPid: number | null; peers: PeerInfo[] }> {
@@ -366,6 +357,13 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
     if (!tokensEqual(cookieSecret(req), secret)) return send(res, 403, "Open the link printed by `agent-bridge ui`.", "text/plain; charset=utf-8");
 
     if (req.method === "GET" && url.pathname === "/") return send(res, 200, UI_PAGE, "text/html; charset=utf-8");
+    if (req.method === "GET" && url.pathname === "/api/storage") return send(res, 200, doctor(opts.home));
+    if (req.method === "GET" && url.pathname === "/api/archive/messages") {
+      const limit = url.searchParams.get("limit");
+      const before = url.searchParams.get("before");
+      if (limit !== null && (!/^\d+$/.test(limit) || Number(limit) < 1 || Number(limit) > MAX_HISTORY_LIMIT) || before !== null && (!/^\d+$/.test(before) || !Number.isSafeInteger(Number(before)))) return send(res, 400, { error: "invalid limit or before" });
+      return send(res, 200, { messages: searchMessages(dbPath, { query: url.searchParams.get("query") ?? "", limit: limit === null ? undefined : Number(limit), before: before === null ? undefined : Number(before) }) });
+    }
     if (req.method === "GET" && (url.pathname === "/api/decisions" || /^\/api\/decisions\/[^/]+\/history$/.test(url.pathname))) {
       let args: DecisionsArgs;
       let topic: string | undefined;
