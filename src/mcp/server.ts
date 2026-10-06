@@ -24,6 +24,7 @@ import { readUsage, codexAppServerCall } from "../core/usage.js";
 import { t } from "../core/i18n.js";
 import { createLogger, type Logger } from "../core/logger.js";
 import { BridgeNode } from "../core/node.js";
+import { MAX_TRANSFER_ENTRIES } from "../network/files.js";
 import { resolveDbPath, resolveHome, resolvePipePath } from "../core/paths.js";
 import { inspectClaudeLaunch } from "../core/procinfo.js";
 import { loadOrCreateToken } from "../core/token.js";
@@ -224,6 +225,7 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
         pipePath: resolvePipePath(home),
         token: loadOrCreateToken(home),
         dbPath: resolveDbPath(home),
+        network: { home, config: cfg.network },
         agent,
         // Until the project dir is known, the folder name would be the plugin version.
         name: cfg.name ?? defaultPeerName(agent, cwdKnown ? cwd : ""),
@@ -576,6 +578,30 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
       lines.push(t("send.waitHint"));
       return text(lines.join("\n"));
     }),
+  );
+
+  register(
+    "network_status",
+    {
+      title: "Network instances",
+      description: "List discovered LAN instances and explicitly paired broker links. Discovery is untrusted and never connects automatically. Pair using the local CLI.",
+      inputSchema: {},
+      annotations: { readOnlyHint: true },
+    },
+    guarded("network_status", async () => text(JSON.stringify(await requireNode().networkStatus(), null, 2))),
+  );
+
+  register(
+    "send_files",
+    {
+      title: "Send files and folders",
+      description: "Deliver files or folders into an online peer's inbox, locally or over a paired encrypted link. Maximum one MiB and 128 entries; symlinks are rejected. Received files are never executed or written into a project.",
+      inputSchema: {
+        to: z.string().min(1).describe("Peer name, including host/peer for a paired instance"),
+        paths: z.array(z.string().min(1)).min(1).max(MAX_TRANSFER_ENTRIES).describe("Files or folders relative to this session's working directory, or absolute paths"),
+      },
+    },
+    guarded("send_files", async (args: { to: string; paths: string[] }) => text(JSON.stringify(await requireNode().sendFiles(args.to, args.paths), null, 2))),
   );
 
   register(

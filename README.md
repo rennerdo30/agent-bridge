@@ -301,7 +301,7 @@ Every reply increments a conversation's hop count. Messages at or above `maxHops
 
 ## Configuration
 
-`~/.agent-bridge/config.json` (all keys optional; per-agent sections override the top level; env vars override both). Running sessions pick up changes within a few seconds; only `name`, `delivery` and the dashboard port need a restart:
+`~/.agent-bridge/config.json` (all keys optional; per-agent sections override the top level; env vars override both). Running sessions pick up changes within a few seconds; `name`, `delivery`, the dashboard port and `network` settings need a restart:
 
 ```json
 {
@@ -363,6 +363,30 @@ or query `archived_messages` in a copy of the database to recover historical dat
 archives with your normal backups; they have no automatic size cap. Runner specs are archived
 after consumption and earlier runner state is archived before a new turn starts. Stored job prompts
 are retained in full; only displayed previews and the in-memory recent-job list are bounded.
+
+### Paired PCs
+
+Networking is **off by default**. To use a LAN, set the same top-level `network` settings for every agent on each PC, with a unique instance name:
+
+```json
+{
+  "network": {
+    "enabled": true,
+    "name": "mac-studio",
+    "bind": "0.0.0.0",
+    "port": 48148,
+    "discovery": true
+  }
+}
+```
+
+Restart the hosting sessions. The default bind is `127.0.0.1`; a LAN address or `0.0.0.0` enables remote access. `discovery` is separately off by default. It lists public, untrusted LAN hints through `agent-bridge network` or MCP `network_status`; it never connects automatically. Allow TCP 48148 and UDP 48149 in your firewall.
+
+On one PC, run `agent-bridge pair` (or `node <plugin>/dist/cli.mjs pair`) and securely copy the generated code. On the other PC, run `agent-bridge link <host:port> <code>`. The code expires after ten minutes and pins its first authenticated counterpart. A TLS 1.3 PSK link encrypts peer lists, messages and files; pairing secrets live in the protected `~/.agent-bridge/network/keys.json`. Only explicitly paired endpoints reconnect. Use `agent-bridge unlink <instance-id>` on both PCs to revoke a pairing.
+
+Remote sessions and job runners appear as `mac-studio/claude-app`; the existing `send` tool routes to those names and replies across the link. Agent-kind and broadcast targets remain local. Running subagents also need the AB-51 runner forwarding change. The `send_files(to, paths)` tool transfers local files/folders to an online local or remote peer's inbox, with checksums and a one-MiB/128-entry limit. It never overwrites a project or executes received files.
+
+See [docs/network.md](docs/network.md) for the protocol, threat model, limits and remaining LAN validation. Discovery metadata is unencrypted; application traffic is encrypted. Dashboard discovery controls and large-file streaming are not included in this first version.
 
 ## CLI
 

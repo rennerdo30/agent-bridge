@@ -32,6 +32,11 @@ import {
 import { agentQueueKey, MessageStore } from "./store.js";
 import { tokensEqual } from "./token.js";
 import { retentionLimit } from "./json-store.js";
+import { NetworkService } from "../network/link.js";
+import type { NetworkConfig } from "../network/config.js";
+import { z } from "zod";
+import { collectTransfer, MAX_TRANSFER_ENTRIES, receiveTransfer, type TransferResult } from "../network/files.js";
+import { MAX_NETWORK_HOST_CHARS, MAX_PAIRING_CODE_CHARS, MAX_PORT } from "../network/constants.js";
 
 /** Peer names double as offline queue keys, so keep them simple and unambiguous. */
 export const PEER_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
@@ -66,6 +71,7 @@ export class Broker {
   private server: Server | null = null;
   private readonly conns = new Set<Conn>();
   private purgeTimer: NodeJS.Timeout | null = null;
+  private network: NetworkService | null = null;
   private readonly handlers: { [O in Op]: Handler<O> };
 
   constructor(
@@ -76,6 +82,7 @@ export class Broker {
     private readonly now: () => number = Date.now,
     /** The supervisor's job registry, for siblings whose peers are not connected between turns. */
     private readonly jobsPath?: string,
+    private readonly networking?: { home: string; config: NetworkConfig },
   ) {
     this.handlers = {
       auth: (c, a) => {
@@ -94,6 +101,20 @@ export class Broker {
       updatePeer: (c, a) => this.onUpdatePeer(c, a),
       claimMail: (c, a) => this.onClaimMail(c, a),
       ping: () => ({ brokerPid: process.pid, protocol: PROTOCOL_VERSION }),
+      networkStatus: () => this.network?.status() ?? { enabled: false, discovered: [], paired: [] },
+      networkPair: () => ({ code: this.requireNetwork().keys.invite() }),
+      networkLink: (_, a) => {
+        const args = z.object({ code: z.string().min(1).max(MAX_PAIRING_CODE_CHARS), host: z.string().min(1).max(MAX_NETWORK_HOST_CHARS), port: z.number().int().min(1).max(MAX_PORT) }).parse(a);
+        return this.requireNetwork().link(args.code, args.host, args.port);
+      },
+      networkUnlink: (_, a) => {
+        const id = z.uuid().parse(a.id);
+        const network = this.requireNetwork();
+        const removed = network.status().paired.some((p) => p.id === id);
+        network.unlink(id);
+        return { removed };
+      },
+      sendFiles: (c, a) => this.onSendFiles(c, a),
     };
   }
 
@@ -105,7 +126,7 @@ export class Broker {
         server.removeListener("listening", onListening);
         reject(err);
       };
-      const onListening = () => {
+      const onListening = async () => {
         server.removeListener("error", onError);
         server.on("error", (err) => this.log.error("broker server error", { err }));
         this.server = server;
@@ -113,6 +134,18 @@ export class Broker {
         this.purgeTimer.unref();
         this.purge();
         this.log.info("broker listening", { pipe: this.pipePath });
+        if (this.networking?.config.enabled) {
+          try {
+            this.network = new NetworkService(this.networking.home, this.networking.config, {
+              peers: () => [...this.conns].flatMap((c) => c.peer ? [c.peer] : []),
+              receive: (message) => this.receiveRemote(message),
+            }, this.log);
+            await this.network.start();
+          } catch (err) {
+            this.network = null;
+            this.log.warn("networking could not start; local broker remains available", { message: (err as Error).message });
+          }
+        }
         resolve();
       };
       server.once("error", onError);
@@ -123,6 +156,8 @@ export class Broker {
 
   async close(): Promise<void> {
     if (this.purgeTimer) clearInterval(this.purgeTimer);
+    await this.network?.close();
+    this.network = null;
     for (const c of this.conns) c.socket.destroy();
     this.conns.clear();
     const server = this.server;
@@ -206,9 +241,9 @@ export class Broker {
     return conn.peer;
   }
 
-  /** Sessions, without job runners (they are reached by name only; see job-host.ts). */
+  /** Local sessions and paired remote peers; local job runners stay hidden (see job-host.ts). */
   private livePeers(): PeerInfo[] {
-    return [...this.conns].flatMap((c) => (c.peer && !c.peer.jobAgent ? [c.peer] : []));
+    return [...this.conns].flatMap((c) => (c.peer && !c.peer.jobAgent ? [c.peer] : [])).concat(this.network?.peers() ?? []);
   }
 
   private connByName(name: string): Conn | undefined {
@@ -249,7 +284,7 @@ export class Broker {
     return [...peers.values()];
   }
 
-  private onSendSibling(conn: Conn, args: RequestMap["sendSibling"][0]): RequestMap["sendSibling"][1] {
+  private async onSendSibling(conn: Conn, args: RequestMap["sendSibling"][0]): Promise<RequestMap["sendSibling"][1]> {
     const sender = this.requirePeer(conn);
     const dedupeKey = args.dedupeKey ? `${SIBLING_CONVERSATION_PREFIX}${args.dedupeKey}` : undefined;
     const key = dedupeKey ? `${sender.id}:${dedupeKey}` : null;
@@ -269,7 +304,7 @@ export class Broker {
       throw new BridgeError("bad_request", "sibling conversation reached the hop limit");
     }
     const conversationId = parent?.conversationId ?? `${SIBLING_CONVERSATION_PREFIX}${randomUUID()}`;
-    const result = this.onSend(conn, { ...args, dedupeKey, conversationId });
+    const result = await this.onSend(conn, { ...args, dedupeKey, conversationId });
     const message = result.messages[0]!;
     if (sender.jobParent) {
       const note = { ...message, id: randomUUID(), recipient: sender.jobParent,
@@ -469,13 +504,20 @@ export class Broker {
 
   /** Results of recent sends by dedupe key (see SendArgs.dedupeKey), so a retry is not sent twice. */
   private readonly sentByKey = new Map<string, { at: number; result: RequestMap["send"][1] }>();
+  private readonly sendingByKey = new Map<string, Promise<RequestMap["send"][1]>>();
 
-  private onSend(conn: Conn, args: RequestMap["send"][0]): RequestMap["send"][1] {
+  private async onSend(conn: Conn, args: RequestMap["send"][0]): Promise<RequestMap["send"][1]> {
     const sender = this.requirePeer(conn);
     const key = typeof args.dedupeKey === "string" && args.dedupeKey ? `${sender.id}:${args.dedupeKey}` : null;
     const seen = key ? this.sentByKey.get(key) : undefined;
     if (seen) return seen.result;
-    const result = this.routeSend(conn, sender, args);
+    const inFlight = key ? this.sendingByKey.get(key) : undefined;
+    if (inFlight) return inFlight;
+    const sending = this.routeSend(conn, sender, args);
+    if (key) this.sendingByKey.set(key, sending);
+    let result: RequestMap["send"][1];
+    try { result = await sending; }
+    finally { if (key) this.sendingByKey.delete(key); }
     if (key) {
       const now = this.now();
       this.sentByKey.set(key, { at: now, result });
@@ -487,7 +529,7 @@ export class Broker {
     return result;
   }
 
-  private routeSend(conn: Conn, sender: PeerInfo, args: RequestMap["send"][0]): RequestMap["send"][1] {
+  private async routeSend(conn: Conn, sender: PeerInfo, args: RequestMap["send"][0]): Promise<RequestMap["send"][1]> {
     const body = typeof args.body === "string" ? args.body : "";
     if (!body.trim()) throw new BridgeError("bad_request", "message body is empty");
     if (body.length > MAX_BODY_CHARS) throw new BridgeError("too_large", `message body exceeds ${MAX_BODY_CHARS} characters`);
@@ -508,12 +550,6 @@ export class Broker {
     }
     conversationId ||= randomUUID();
 
-    const { live, queued } = this.resolveTargets(to, sender);
-    if (conversationId.startsWith(SIBLING_CONVERSATION_PREFIX) &&
-        (queued.some((name) => !sender.jobAgent || !this.storedSiblings(sender).some((s) => s.name === name)) ||
-          live.some((c) => c.peer!.jobAgent && (!sender.jobAgent || !sender.jobOwner || c.peer!.jobOwner !== sender.jobOwner)))) {
-      throw new BridgeError("unauthorized", "sibling chat is restricted to jobs of the same supervisor");
-    }
     const id = randomUUID();
     const createdAt = this.now();
     const base = {
@@ -528,6 +564,17 @@ export class Broker {
       createdAt,
       readAt: null,
     };
+    if (to.includes("/")) {
+      const result = await this.requireNetwork().send({ ...base, recipient: to });
+      for (const message of result.messages) this.store.insert(message);
+      return result;
+    }
+    const { live, queued } = this.resolveTargets(to, sender);
+    if (conversationId.startsWith(SIBLING_CONVERSATION_PREFIX) &&
+        (queued.some((name) => !sender.jobAgent || !this.storedSiblings(sender).some((s) => s.name === name)) ||
+          live.some((c) => c.peer!.jobAgent && (!sender.jobAgent || !sender.jobOwner || c.peer!.jobOwner !== sender.jobOwner)))) {
+      throw new BridgeError("unauthorized", "sibling chat is restricted to jobs of the same supervisor");
+    }
     const messages: BridgeMessage[] = [];
     for (const c of live) messages.push({ ...base, recipient: c.peer!.name });
     for (const key of queued) messages.push({ ...base, recipient: key });
@@ -543,5 +590,37 @@ export class Broker {
       queuedFor: queued,
     });
     return { messages, deliveredTo: live.map((c) => c.peer!.name), queuedFor: queued };
+  }
+
+  private requireNetwork(): NetworkService {
+    if (!this.network) throw new BridgeError("bad_request", "networking is disabled or unavailable; enable it and restart the broker");
+    return this.network;
+  }
+
+  private async onSendFiles(conn: Conn, args: RequestMap["sendFiles"][0]): Promise<TransferResult> {
+    const sender = this.requirePeer(conn);
+    const parsed = z.object({ to: z.string().min(1), paths: z.array(z.string().min(1)).min(1).max(MAX_TRANSFER_ENTRIES) }).parse(args);
+    const remote = parsed.to.includes("/");
+    const target = remote ? this.requireNetwork().fileTarget(parsed.to) : parsed.to;
+    const transfer = collectTransfer(parsed.paths, sender.cwd, target, { id: sender.id, name: sender.name, agent: sender.jobAgent ?? sender.agent });
+    if (remote) return this.requireNetwork().sendFiles(parsed.to, transfer);
+    if (!this.connByName(target)) throw new BridgeError("unknown_target", "file recipient must be online");
+    const home = this.networking?.home;
+    if (!home) throw new BridgeError("bad_request", "file inbox home is unavailable");
+    const result = receiveTransfer(home, transfer);
+    this.receiveRemote({ id: transfer.id, from: transfer.from, to: target, recipient: target, conversationId: transfer.id, replyTo: null, hop: 0, body: `Received ${result.files} files (${result.bytes} bytes) in ${result.inbox}`, createdAt: this.now(), readAt: null });
+    return result;
+  }
+
+  private receiveRemote(message: BridgeMessage): { delivered: boolean } {
+    const target = this.connByName(message.recipient);
+    const existing = this.store.byId(message.id);
+    if (existing) {
+      if (existing.from.id !== message.from.id || existing.recipient !== message.recipient || existing.body !== message.body || existing.conversationId !== message.conversationId || existing.replyTo !== message.replyTo || existing.hop !== message.hop) throw new BridgeError("bad_request", "message id already used");
+      return { delivered: Boolean(target) };
+    }
+    this.store.insert(message);
+    if (target) this.emit(target, "message", message);
+    return { delivered: Boolean(target) };
   }
 }
