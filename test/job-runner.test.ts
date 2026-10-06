@@ -10,6 +10,7 @@ import { BridgeNode } from "../src/core/node.js";
 import { resolveDbPath, resolvePipePath } from "../src/core/paths.js";
 import { loadOrCreateToken } from "../src/core/token.js";
 import { readRunnerState } from "../src/mcp/job-host.js";
+import { startUi } from "../src/cli/ui.js";
 
 /**
  * Background subagents in detached job runners (bundled server and CLI: npm run build first). A fake
@@ -38,6 +39,7 @@ let claudeBin: string;
 const releases: string[] = [];
 const sessions: { client: Client; transport: StdioClientTransport }[] = [];
 const nodes: BridgeNode[] = [];
+let ui: Awaited<ReturnType<typeof startUi>> | undefined;
 
 /** The fake as Claude Code's CLI would be installed: an npm .cmd shim on Windows, an executable script elsewhere. */
 function installFakeClaude(dir: string): string {
@@ -102,6 +104,8 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
+  await ui?.close();
+  ui = undefined;
   for (const s of sessions.splice(0)) await s.client.close().catch(() => {});
   for (const n of nodes.splice(0)) await n.stop().catch(() => {});
   // Let every fake finish, and stop runners a test left behind.
@@ -111,6 +115,34 @@ afterEach(async () => {
 });
 
 describe.skipIf(!existsSync(SERVER))("background subagents in job runners", () => {
+  it("routes dashboard messages through the owning session to its detached runner and continues it later", async () => {
+    const s = await startSession();
+    const { job, id, release, pid } = await spawnHeld(s);
+    ui = await startUi({ home, pipe: resolvePipePath(home, {}), port: 0, log: nullLogger });
+    const first = await fetch(ui.url, { redirect: "manual" });
+    const cookie = first.headers.get("set-cookie")!.split(";")[0]!;
+    const base = ui.url.replace(/\/\?t=.*$/, "");
+    const state = await (await fetch(`${base}/api/state`, { headers: { cookie } })).json();
+    const run = state.runs.find((r: any) => r.job === job).name;
+    const post = async (body: string) => {
+      const r = await fetch(`${base}/api/subagents/message`, { method: "POST", headers: { cookie, "x-agent-bridge": "1", "content-type": "application/json" }, body: JSON.stringify({ run, body }) });
+      const data = await r.json();
+      expect(r.status, JSON.stringify(data)).toBe(200);
+      return data;
+    };
+    expect((await post("also paint the walls")).outcome).toMatch(/delivered|queued/);
+    await waitFor(() => (readRunnerState(home, id)?.seen?.length ?? 0) === 1);
+    writeFileSync(release, "");
+    expect(await call(s, "wait_for_message", { from: job, timeout_sec: 60 })).toContain("Your queued follow-up was sent to it");
+    expect(await call(s, "wait_for_message", { from: job, timeout_sec: 60 })).toContain("fake answer: finished");
+    await waitFor(() => !pidAlive(pid));
+    expect(await post("continue the finished job")).toMatchObject({ outcome: "started" });
+    expect(await call(s, "wait_for_message", { from: job, timeout_sec: 60 })).toContain("fake answer: finished");
+    await waitFor(() => readRunnerState(home, id)?.status === "done");
+    const resumedPid = readRunnerState(home, id)!.pid;
+    await waitFor(() => !pidAlive(resumedPid));
+  }, TEST_TIMEOUT_MS);
+
   it("keep running across a restart of the session's server, which takes them over and gets the result", async () => {
     const a = await startSession();
     const { job, id, release, pid } = await spawnHeld(a);

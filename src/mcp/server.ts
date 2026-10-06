@@ -20,7 +20,7 @@ import {
   MAX_WAIT_SEC,
 } from "../core/constants.js";
 import { bundledCli, currentDelegateDepth, DelegateError, failureCause, killAllDelegates, resolveBinary } from "../core/delegate.js";
-import { readUsage } from "../core/usage.js";
+import { readUsage, codexAppServerCall } from "../core/usage.js";
 import { t } from "../core/i18n.js";
 import { createLogger, type Logger } from "../core/logger.js";
 import { BridgeNode } from "../core/node.js";
@@ -35,7 +35,7 @@ import { ACCESS_LEVELS, DELEGATION_TARGETS, type Access } from "./targets.js";
 import { askUserViaElicitation } from "./permissions.js";
 import type { PermissionDecision, PermissionRequest } from "../core/relay.js";
 import { saveAutoWake, savedAutoWake } from "../core/auto-wake-pref.js";
-import { describeModels } from "../core/models.js";
+import { describeModels, modelParameterDescription, readModels } from "../core/models.js";
 import { parentFromEnv, type ParentClient } from "../core/parent-link.js";
 import { findRunningDashboard, hostDashboard, type DashboardInfo, type HostedDashboard } from "../cli/dashboard.js";
 import { openBrowser } from "../cli/open.js";
@@ -43,6 +43,7 @@ import { RewakeEndpoint } from "./rewake.js";
 import { DEFAULT_FOLLOW_UP, JobManager, type Job, type Resume, type Run, type RunResult } from "./jobs.js";
 import { isBridgeWorktree, isInside, resumeArgs, runDelegate, type DelegateArgs, type RunContext } from "./delegate-run.js";
 import { JobRunners } from "./job-host.js";
+import { attachDashboardJobControl } from "./dashboard-control.js";
 
 export { DELEGATED_JOB_NOTE } from "./delegate-run.js";
 
@@ -296,6 +297,7 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
   ctx.askUser = (req) => askUserViaElicitation(mcp.server, req, log.child("permissions"));
   ctx.userCanAnswer = () => Boolean(mcp.server.getClientCapabilities()?.elicitation);
   registerTools(mcp, ctx, targets);
+  if (node && ctx.jobs) attachDashboardJobControl(node, ctx.jobs, log);
 
   const pushChannel = async (m: BridgeMessage) => {
     if (!channel || !node || m.hop >= cfg.maxHops) return;
@@ -669,10 +671,7 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
         .string()
         .regex(MODEL_NAME_PATTERN)
         .optional()
-        .describe(
-          `Any model id or alias ${target} accepts, passed through verbatim (e.g. ${profile.modelExample}). ` +
-            `Default: ${defaultModel ?? `${target}'s own default`}.`,
-        ),
+        .describe(modelParameterDescription(target, cfg, ctx.home, profile.modelExample)),
       effort: z
         .string()
         .regex(/^[A-Za-z0-9_-]{1,20}$/)
@@ -846,7 +845,7 @@ ${res.text || t("delegate.empty")}`, res.isError);
       },
       annotations: { readOnlyHint: true },
     },
-    guarded("list_models", async (a: { agent: CodingAgent; query?: string }) => text((await describeModels(a.agent, cfg, ctx.cwd(), log, a.query)).join("\n"))),
+    guarded("list_models", async (a: { agent: CodingAgent; query?: string }) => text((a.query ? await describeModels(a.agent, cfg, ctx.cwd(), log, a.query) : (await readModels(a.agent, cfg, ctx.cwd(), log, ctx.home)).lines).join("\n"))),
   );
   register(
     "dashboard",
@@ -888,7 +887,13 @@ ${res.text || t("delegate.empty")}`, res.isError);
     guarded("message_subagent", async (a: { job: string; message?: string; title?: string; effort?: string }) => {
       const jobs = ctx.jobs;
       if (!jobs) throw new BridgeError("bad_request", t("err.delegatedSession"));
-      if (a.title?.trim()) jobs.setTitle(a.job, a.title.trim());
+      if (a.title?.trim()) {
+        jobs.setTitle(a.job, a.title.trim());
+        const job = jobs.find(a.job);
+        if (job?.agent === "codex" && job.sessionId && job.status !== "running") {
+          await codexAppServerCall(cfg.codexBin, job.workdir ?? ctx.cwd(), log, "thread/name/set", { threadId: job.sessionId, name: a.title.trim() }).catch((err) => log.warn("could not rename the Codex thread", { err: (err as Error).message }));
+        }
+      }
       if (a.effort) jobs.setEffort(a.job, a.effort);
       const { outcome, job } = jobs.followUp(a.job, a.message?.trim() || DEFAULT_FOLLOW_UP);
       const position = job ? jobs.waiting().indexOf(job) + 1 : 0;

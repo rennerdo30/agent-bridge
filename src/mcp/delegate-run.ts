@@ -187,7 +187,7 @@ export async function runDelegate(
   // Live link: this session's messages reach the subagent while it works, and it can answer at once.
   let link: ParentLink | null = null;
 
-  let steering: { send: (message: string) => Promise<boolean> } | null = null;
+  let steering: { send: (message: string) => Promise<boolean>; rename?: (title: string) => Promise<void> } | null = null;
   if (job && rc.jobs) {
     const jobs = rc.jobs;
     const l = new ParentLink(
@@ -225,7 +225,10 @@ export async function runDelegate(
   // A linked worktree's git data lives in the main repository: writable, so the subagent can commit.
   const writableRoots = access === "edit" || (a as { sandbox?: string }).sandbox === "workspace-write" ? await gitDirsOutside(workdir, dlog) : undefined;
   if (writableRoots?.length) dlog.info("extra writable folders for the subagent", { workdir, writableRoots });
-  if (job) job.retitle = (title) => feed.meta({ title });
+  if (job) job.retitle = (title) => {
+    feed.meta({ title });
+    void steering?.rename?.(title).catch((err) => dlog.warn("could not rename the Codex thread", { err: (err as Error).message }));
+  };
   let res: DelegateResult;
   try {
     // A temporary provider error (an invalid upstream response, say) gets one automatic resume first.
@@ -234,6 +237,7 @@ export async function runDelegate(
         // With a live link the subagent can report how far it is (report_progress; shown in the dashboard).
         // A new session learns once that it reports back and leaves the handoff alone.
         prompt: [a.prompt, a.session_id ? null : DELEGATED_JOB_NOTE, link ? PROGRESS_HINT : null].filter(Boolean).join("\n\n"),
+        title: (typeof job?.args?.title === "string" && job.args.title) || a.title,
         cwd: workdir,
         sessionId: a.session_id ?? null,
         timeoutSec: a.timeout_sec ?? (background ? MAX_JOB_TIMEOUT_SEC : DEFAULT_DELEGATE_TIMEOUT_SEC),
@@ -257,7 +261,11 @@ export async function runDelegate(
         live: job
           ? {
               from: me,
-              onSteering: (s) => void (steering = s),
+              onSteering: (s) => {
+                steering = s;
+                const title = job.args?.title;
+                if (s && typeof title === "string" && title !== a.title) job.retitle?.(title);
+              },
               onAnswer: (answer) => {
                 feed.report(`answer to ${me}: ${answer.split("\n")[0]!.slice(0, 120)}`, `answer to ${me}: ${answer}`);
                 rc.jobs?.fromSubagent(job, answer, null, true);

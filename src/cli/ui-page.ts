@@ -166,8 +166,10 @@ select, textarea, button { font: inherit; color: var(--text); background: var(--
 textarea { flex: 1 1 220px; min-height: 40px; resize: vertical; }
 button { background: var(--accent); color: #fff; border-color: var(--accent); font-weight: 600; cursor: pointer; padding: 8px 16px; }
 button:disabled { opacity: .6; cursor: default; }
-#sendInfo { width: 100%; color: var(--muted); font-size: 12px; }
-#sendInfo:empty { display: none; }
+#sendInfo, #jobSendInfo { width: 100%; color: var(--muted); font-size: 12px; }
+#sendInfo:empty, #jobSendInfo:empty { display: none; }
+.model-list { max-height: 260px; overflow: auto; font-size: 12.5px; }
+.model-list ul { padding-left: 18px; }
 
 /* Session view */
 .split { display: grid; grid-template-columns: minmax(300px, 380px) minmax(0, 1fr); gap: 20px; align-items: start; }
@@ -242,6 +244,7 @@ details[open] > summary::before { content: "▾ "; }
   <div id="overview">
     <div class="block stats" id="ovStats"></div>
     <div class="block"><h3>Usage left <span class="n" id="usageAt"></span><button class="linkbtn" id="usageRefresh" title="Read the limits again">refresh</button></h3><div id="ovUsage" class="cards usage"><div class="panel empty small muted">Reading the agents' limits…</div></div></div>
+    <div class="block"><details><summary class="small muted">Available models</summary><div id="ovModels" class="cards usage"><div class="panel empty small muted">Open to read the available models.</div></div></details></div>
     <div class="block"><h3>Sessions <span class="n" id="ovCount"></span></h3><div id="ovSessions" class="cards"></div></div>
     <div class="block"><h3>Subagents <span class="n">working first, then newest finished</span></h3><div class="panel rows" id="ovRuns"></div></div>
     <div class="block" id="ovMsgBox"><h3>Messages</h3><div class="panel"><div id="ovMsgs" class="msgs"></div></div></div>
@@ -261,6 +264,11 @@ details[open] > summary::before { content: "▾ "; }
       </div>
       <div class="hint hidden" id="cHint"></div>
       <div id="chat" class="chat"></div>
+      <form id="jobSend" class="hidden">
+        <textarea id="jobBody" placeholder="Message this subagent" aria-label="Message this subagent"></textarea>
+        <button type="submit" id="jobSendBtn">Send</button>
+        <div id="jobSendInfo" role="status" aria-live="polite"></div>
+      </form>
     </div>
   </div>
 </main>
@@ -305,11 +313,13 @@ const dot = (activity) => '<span class="dot ' + (activity === "busy" ? "busy" : 
     }
     const pill = (status, percent) => '<span class="pill ' + status + '">' + (status === "running" ? (typeof percent === "number" ? "working · " + percent + "%" : "working") : status) + "</span>";
 
-let state = null, model = null, route = parseRoute(), lastTo = "", pulling = false, lastChat = "";
+let state = null, model = null, route = parseRoute(), pulling = false, lastChat = "";
 /** Loaded run logs: name -> { raw, offset, done }. */
 const logs = new Map();
 /** Expanded step groups and bubbles survive re-renders. */
 const opened = new Set();
+const jobDrafts = new Map(), jobResults = new Map(), jobSending = new Set();
+let composerGroup = null;
 
 function parseRoute() {
   const m = /^#\\/s\\/([^/]+)(?:\\/(.+))?$/.exec(location.hash);
@@ -504,6 +514,7 @@ function renderSession() {
   const mine = state.messages.filter((m) => m.from_name === x.name || m.to_target === x.name || String(m.recipients || "").split(", ").includes(x.name));
   $("sMsgs").innerHTML = messagesHtml(mine);
   const g = sel && model.groups.get(sel);
+  renderJobForm(g);
   if (g) void showGroup(g);
   else {
     $("cAvatar").innerHTML = ""; $("cTitle").textContent = "No subagent selected"; $("cSub").textContent = ""; $("cHint").classList.add("hidden");
@@ -522,11 +533,24 @@ function renderSendForm(inSession) {
   if (form.previousElementSibling !== box) box.after(form);
   const to = $("to"), current = to.value;
   const names = model.sessions.filter((x) => x.live).map((x) => x.name);
+  if (inSession && !names.includes(route.session)) names.push(route.session);
   to.innerHTML = names.map((n) => "<option>" + esc(n) + "</option>").join("") + '<option value="*">everyone</option>';
   // Opening a session tab addresses that session; otherwise keep the user's choice.
-  const want = inSession && route.session !== lastTo && names.includes(route.session) ? route.session : current;
+  const want = inSession ? route.session : current;
   if ([...names, "*"].includes(want)) to.value = want;
-  lastTo = inSession ? route.session : "";
+  to.disabled = inSession;
+}
+
+function renderJobForm(g) {
+  const key = g && g.key;
+  if (composerGroup !== key) {
+    if (composerGroup) jobDrafts.set(composerGroup, $("jobBody").value);
+    $("jobBody").value = jobDrafts.get(key) || "";
+    composerGroup = key;
+  }
+  $("jobSend").classList.toggle("hidden", !g || !g.job || g.owner === "earlier runs");
+  $("jobSendBtn").disabled = jobSending.has(key);
+  $("jobSendInfo").textContent = (jobResults.get(key) || []).at(-1) || "";
 }
 
 /** Load (the rest of) every turn's log, then render the conversation. */
@@ -581,7 +605,7 @@ function renderConversation(g) {
       '<div class="msgrow me">' + av(state.peers.find((p) => p.name === g.owner)?.agent || "other", true) +
       '<div class="bubble' + (long ? " clamp" : "") + '" data-open="' + esc(id) + '"><span class="who">' + (i === 0 ? esc(g.owner) : "follow-up from " + esc(g.owner)) + "</span>" + md(t.prompt.trim()) + "</div></div>" +
       stepsHtml(t.steps, g.agent, r.name, () => n++);
-  }).join("");
+  }).join("") + (jobResults.get(g.key) || []).map((text) => '<div class="sys">' + esc(text) + "</div>").join("");
   if (html === lastChat) return;
   lastChat = html;
   const chat = $("chat"), atEnd = chat.scrollHeight - chat.scrollTop - chat.clientHeight < 40;
@@ -695,6 +719,19 @@ async function loadUsage(refresh) {
     btn.textContent = "refresh";
   }
 }
+function modelsCard(rep) {
+  return '<div class="card"><div class="head">' + av(rep.agent, true) + esc(rep.agent) + '</div><div class="small muted">Default: ' + esc(rep.defaultModel || rep.agent + "'s own default") + '</div><div class="model-list">' + md(rep.lines.join("\\n")) + "</div></div>";
+}
+async function loadModels() {
+  try {
+    const r = await fetch("/api/models");
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const data = await r.json();
+    $("ovModels").innerHTML = data.reports.map(modelsCard).join("");
+  } catch (err) {
+    $("ovModels").innerHTML = '<div class="panel empty small muted">Could not read models: ' + esc(err.message) + "</div>";
+  }
+}
 function usageCard(rep) {
   const body = rep.limits.length
     ? rep.limits.map((l) => {
@@ -742,6 +779,34 @@ $("send").addEventListener("submit", async (e) => {
   }
 });
 
+$("jobSend").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const key = composerGroup, g = model.groups.get(key), body = $("jobBody").value.trim();
+  if (!body || !g || !g.job || jobSending.has(key)) return;
+  const run = g.turns[g.turns.length - 1].name;
+  jobSending.add(key);
+  renderJobForm(g);
+  let result;
+  try {
+    const r = await fetch("/api/subagents/message", { method: "POST", headers: { "content-type": "application/json", "x-agent-bridge": "1" }, body: JSON.stringify({ run, body }) });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || d.text || "HTTP " + r.status);
+    result = d.text;
+    jobDrafts.delete(key);
+    if (composerGroup === key && $("jobBody").value.trim() === body) $("jobBody").value = "";
+    void poll();
+  } catch (err) {
+    result = "Message error: " + err.message;
+  } finally {
+    jobSending.delete(key);
+    jobResults.set(key, [...(jobResults.get(key) || []), result]);
+    if (composerGroup === key) {
+      renderJobForm(g);
+      renderConversation(g);
+    }
+  }
+});
+
 /** Auto follows the system; Light and Dark override it. Remembered in this browser. */
 function applyTheme(theme) {
   const root = document.documentElement;
@@ -762,6 +827,7 @@ poll();
 loadUsage(false);
 setInterval(() => loadUsage(false), 5 * 60 * 1000);
 $("usageRefresh").addEventListener("click", () => loadUsage(true));
+$("ovModels").parentElement.addEventListener("toggle", (e) => { if (e.target.open) void loadModels(); });
 setInterval(poll, POLL_MS);
 </script>
 </body>

@@ -303,6 +303,8 @@ export function runProcess(opts: {
 
 export interface DelegateRequest {
   prompt: string;
+  /** The job's title, used as its Codex thread name. */
+  title?: string;
   cwd: string;
   sessionId?: string | null;
   timeoutSec: number;
@@ -332,7 +334,7 @@ export interface DelegateRequest {
   /** Talking to the running subagent, where the target supports it natively (Codex app-server). */
   live?: {
     from: string;
-    onSteering: (s: { send: (message: string) => Promise<boolean> } | null) => void;
+    onSteering: (s: { send: (message: string) => Promise<boolean>; rename?: (title: string) => Promise<void> } | null) => void;
     /** Its reply to a message delivered this way. */
     onAnswer: (text: string) => void;
   };
