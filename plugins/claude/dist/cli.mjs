@@ -7915,6 +7915,7 @@ var en = {
   "peers.header": "{count} other peer(s) online:",
   "peers.none": "No other peers are online. Messages you send to an offline peer name wait until it connects.",
   "peers.jobs": "Your running subagents ({count}):",
+  "peers.eta": "~{minutes} min left",
   "peers.job": "- {name} (model: {model}, running {duration}): {progress}",
   "peers.waiting": "Queued continuations ({count}; each starts when one of the {max} subagent slots frees up, in this order):",
   "peers.waitingJob": "- {name}: {messages} message(s) waiting; cancel_subagent drops it",
@@ -31745,6 +31746,8 @@ function startRunFeed(opts) {
     },
     end: (summary, answer) => {
       clearInterval(timer);
+      meta3 = { ...meta3, etaAt: void 0, etaReportedAt: void 0 };
+      writeMeta();
       if (answer?.trim()) write(`answer: ${answer.trim()}`);
       write(`finished after ${Math.round((now() - started) / 1e3)}s \xB7 ${summary}`);
       release();
@@ -32019,7 +32022,13 @@ var ParentLink = class {
       const body = JSON.parse(await readBody(req));
       const percent = Math.round(Number(body.percent));
       if (!Number.isFinite(percent) || percent < 0 || percent > 100) throw new Error("percent must be 0-100");
-      this.onProgress(percent, String(body.note ?? "").trim().slice(0, MAX_NOTE_CHARS));
+      let eta;
+      if (body.eta_minutes !== void 0) {
+        if (typeof body.eta_minutes !== "number" || !Number.isFinite(body.eta_minutes) || body.eta_minutes < 0 || body.eta_minutes > 1440) throw new Error("eta_minutes must be 0-1440");
+        const etaReportedAt = Date.now();
+        eta = { etaAt: etaReportedAt + body.eta_minutes * 6e4, etaReportedAt };
+      }
+      this.onProgress(percent, String(body.note ?? "").trim().slice(0, MAX_NOTE_CHARS), eta);
       return { ok: true };
     }
     if (req.method === "POST" && req.url === "/siblings") {
@@ -35066,6 +35075,7 @@ function summarizeRun(file2, text, mtimeMs, now, meta3 = {}) {
     workdir: / in (.+?), access /.exec(header)?.[1],
     continues: /, continues (\S+)/.exec(header)?.[1] ?? null,
     ...meta3,
+    ...status !== "running" ? { etaAt: void 0, etaReportedAt: void 0 } : {},
     name: file2.replace(/\.log$/, ""),
     agent: m?.[7] ?? "agent",
     header,
@@ -35851,10 +35861,12 @@ ${a.prompt}
         jobs.fromSubagent(job, body, replyTo);
       },
       dlog,
-      (percent, note) => {
+      (percent, note, eta) => {
         job.percent = percent;
         job.progressNote = note;
-        feed.meta({ percent, progressNote: note, progressAt: Date.now() });
+        if (eta) Object.assign(job, eta);
+        jobs.persist?.();
+        feed.meta({ percent, progressNote: note, progressAt: Date.now(), ...eta ?? {} });
         feed.report(`progress ${percent}%${note ? `: ${note}` : ""}`);
       },
       siblingLink,
@@ -36136,6 +36148,8 @@ var remoteJobSnapshotSchema = external_exports.object({
     progress: external_exports.string().nullable().optional(),
     percent: external_exports.number().min(0).max(100).optional(),
     progressNote: external_exports.string().optional(),
+    etaAt: external_exports.number().finite().nonnegative().optional(),
+    etaReportedAt: external_exports.number().finite().nonnegative().optional(),
     asking: external_exports.boolean().optional(),
     live: external_exports.boolean().optional(),
     seen: external_exports.array(external_exports.string()).optional(),
@@ -36583,7 +36597,7 @@ ${request2.args.prompt}
     }
     const feed = this.feeds.get(key2);
     if (state) {
-      feed?.meta({ session: state.sessionId, workdir: state.workdir ?? void 0, model: state.model, percent: state.percent, progressNote: state.progressNote });
+      feed?.meta({ session: state.sessionId, workdir: state.workdir ?? void 0, model: state.model, percent: state.percent, progressNote: state.progressNote, etaAt: state.etaAt, etaReportedAt: state.etaReportedAt });
       if (state.progress) feed?.report(state.progress);
       if (state.status !== "running") {
         feed?.end(state.status, state.report);
@@ -46508,6 +46522,8 @@ async function runJobRunner(specFile) {
         progress: job.progress,
         percent: job.percent,
         progressNote: job.progressNote,
+        etaAt: job.etaAt,
+        etaReportedAt: job.etaReportedAt,
         asking: Boolean(job.pendingApproval),
         live: Boolean(job.live),
         seen: seen.slice(-SEEN_LIMIT)
@@ -46557,6 +46573,7 @@ async function runJobRunner(specFile) {
   };
   const post = (body, replyTo = null, note = false) => chain = chain.then(() => deliver(body, replyTo, note));
   const sink = {
+    persist: () => save(),
     escalateApproval: async (_job, body) => {
       await post(body);
     },
@@ -46661,6 +46678,8 @@ async function runJobRunner(specFile) {
       status = "failed";
       cause = failureCause({ error: err });
     }
+    job.etaAt = void 0;
+    job.etaReportedAt = void 0;
     const report = jobReport(job, status, Math.round((Date.now() - job.startedAt) / 1e3), text, cause);
     log.info("job turn finished", { status, sessionId: job.sessionId, cause });
     notifyJobEvent(home, status === "done" ? "finish" : "fail", log);

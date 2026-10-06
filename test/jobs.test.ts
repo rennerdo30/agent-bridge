@@ -26,6 +26,28 @@ afterEach(async () => {
 const result = (text: string): DelegateResult => ({ sessionId: "s-9", text, isError: false, details: {} });
 
 describe("background subagents", () => {
+  it("persists optional ETA and clears it when a job completes", async () => {
+    const { join } = await import("node:path");
+    const { readStore } = await import("../src/mcp/jobs.js");
+    const store = join(env.home, "jobs.json");
+    jobs = new JobManager(me, nullLogger, store);
+    let release!: (value: DelegateResult) => void;
+    const job = jobs.start("codex", null, "estimate", (_signal, _progress, current) => {
+      current.percent = 40;
+      current.progressNote = "tests";
+      current.etaReportedAt = Date.now();
+      current.etaAt = current.etaReportedAt + 720_000;
+      jobs.persist();
+      return new Promise((resolve) => { release = resolve; });
+    });
+    expect(readStore(store).find((j) => j.id === job.id)).toMatchObject({ percent: 40, etaAt: job.etaAt, etaReportedAt: job.etaReportedAt });
+    release(result("done"));
+    await until(() => job.status === "done");
+    expect(job.etaAt).toBeUndefined();
+    expect(job.etaReportedAt).toBeUndefined();
+    expect(readStore(store).find((j) => j.id === job.id)).not.toHaveProperty("etaAt");
+  });
+
   it("delivers the result to the spawner's inbox", async () => {
     const job = jobs.start("codex", "gpt-6-sol", "do it", async () => result("all done"));
     expect(job.name).toMatch(/^codex-job-[0-9a-f]{8}$/);

@@ -51,7 +51,7 @@ export class ParentLink {
     private readonly onMessage: (body: string, replyTo: string | null) => void,
     private readonly log: Logger,
     /** The subagent's own estimate of how far it is (report_progress). */
-    private readonly onProgress: (percent: number, note: string) => void = () => {},
+    private readonly onProgress: (percent: number, note: string, eta?: { etaAt: number; etaReportedAt: number }) => void = () => {},
     private readonly siblings?: SiblingClient,
     private readonly onEscalate?: (body: string) => Promise<void>,
   ) {}
@@ -109,10 +109,16 @@ export class ParentLink {
       return { messages };
     }
     if (req.method === "POST" && req.url === "/progress") {
-      const body = JSON.parse(await readBody(req)) as { percent?: unknown; note?: unknown };
+      const body = JSON.parse(await readBody(req)) as { percent?: unknown; note?: unknown; eta_minutes?: unknown };
       const percent = Math.round(Number(body.percent));
       if (!Number.isFinite(percent) || percent < 0 || percent > 100) throw new Error("percent must be 0-100");
-      this.onProgress(percent, String(body.note ?? "").trim().slice(0, MAX_NOTE_CHARS));
+      let eta: { etaAt: number; etaReportedAt: number } | undefined;
+      if (body.eta_minutes !== undefined) {
+        if (typeof body.eta_minutes !== "number" || !Number.isFinite(body.eta_minutes) || body.eta_minutes < 0 || body.eta_minutes > 1440) throw new Error("eta_minutes must be 0-1440");
+        const etaReportedAt = Date.now();
+        eta = { etaAt: etaReportedAt + body.eta_minutes * 60_000, etaReportedAt };
+      }
+      this.onProgress(percent, String(body.note ?? "").trim().slice(0, MAX_NOTE_CHARS), eta);
       return { ok: true };
     }
     if (req.method === "POST" && req.url === "/siblings") {
@@ -167,7 +173,7 @@ export interface ParentClient {
   name: string;
   inbox(): Promise<LinkMessage[]>;
   send(body: string, replyTo?: string): Promise<void>;
-  progress(percent: number, note: string): Promise<void>;
+  progress(percent: number, note: string, etaMinutes?: number): Promise<void>;
   siblings: SiblingClient;
 }
 
@@ -191,7 +197,7 @@ export function parentFromEnv(env: NodeJS.ProcessEnv = process.env): ParentClien
     inbox: async () => ((await call("/inbox", {})).messages as LinkMessage[]) ?? [],
     send: async (body, replyTo) => void (await call("/message", { body, reply_to: replyTo ?? null })),
     escalate: async (body) => void (await call("/escalate", { body })),
-    progress: async (percent, note) => void (await call("/progress", { percent, note })),
+    progress: async (percent, note, etaMinutes) => void (await call("/progress", { percent, note, eta_minutes: etaMinutes })),
     siblings: {
       peers: async () => ((await call("/siblings", {})).peers as SiblingPeer[]) ?? [],
       send: async (to, body, replyTo) => (await call("/sibling-message", { to, body, reply_to: replyTo })) as unknown as SendResult,

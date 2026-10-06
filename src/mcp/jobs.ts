@@ -83,6 +83,9 @@ export interface Job {
   /** The subagent's own estimate of how far it is (report_progress), and its note. */
   percent?: number;
   progressNote?: string;
+  /** Absolute estimated completion and report receipt time, in epoch milliseconds. */
+  etaAt?: number;
+  etaReportedAt?: number;
   /** This session sent it a live message and its answer is still to come (that answer wakes the session). */
   awaitingAnswer?: boolean;
   /** MCP servers the parent allowed for this job (kept across its follow-ups). */
@@ -120,6 +123,9 @@ export interface RunnerState {
   progress?: string | null;
   percent?: number;
   progressNote?: string;
+  /** Absolute estimated completion and report receipt time, in epoch milliseconds. */
+  etaAt?: number;
+  etaReportedAt?: number;
   /** It waits for an answer to an approval question. */
   asking?: boolean;
   /** Messages reach the running subagent live. */
@@ -608,6 +614,8 @@ export class JobManager {
         denyPendingApprovals(job);
         this.foreground.delete(job.id);
         job.foreground = false;
+        job.etaAt = undefined;
+        job.etaReportedAt = undefined;
         job.finishedAt = Date.now();
         job.status = outcome?.result && !outcome.result.isError ? "done" : "failed";
         if (this.storePath) notifyJobEvent(dirname(this.storePath), job.status === "done" ? "finish" : "fail", this.log);
@@ -763,6 +771,8 @@ export class JobManager {
     job.startedAt = Date.now();
     job.controller = new AbortController();
     job.progress = null;
+    job.etaAt = undefined;
+    job.etaReportedAt = undefined;
     job.foreground = false;
     this.running.set(job.id, job);
     this.own.add(job.id);
@@ -823,8 +833,14 @@ export class JobManager {
       if (state.model !== undefined) job.model = state.model;
       job.progress = state.progress ?? job.progress;
       if (state.percent !== undefined) {
+        const etaAt = state.status === "running" ? state.etaAt : undefined;
+        const etaReportedAt = state.status === "running" ? state.etaReportedAt : undefined;
+        const changed = job.percent !== state.percent || job.progressNote !== state.progressNote || job.etaAt !== etaAt || job.etaReportedAt !== etaReportedAt;
         job.percent = state.percent;
         job.progressNote = state.progressNote;
+        job.etaAt = etaAt;
+        job.etaReportedAt = etaReportedAt;
+        if (changed) this.persist();
       }
       if ((state.sessionId && state.sessionId !== job.sessionId) || (state.workdir && state.workdir !== job.workdir) || (state.worktree && !job.worktree)) {
         this.note(job, { sessionId: state.sessionId, workdir: state.workdir, worktree: state.worktree });
@@ -902,6 +918,8 @@ export class JobManager {
   private finish(job: Job, status: "done" | "failed", text: string, sessionId: string | null, cause: string | null = null, report?: string | null): void {
     denyPendingApprovals(job);
     this.running.delete(job.id);
+    job.etaAt = undefined;
+    job.etaReportedAt = undefined;
     job.status = status;
     job.finishedAt = Date.now();
     job.sessionId = sessionId ?? job.sessionId;
@@ -982,7 +1000,7 @@ export function sessionOfError(err: unknown): string | null {
   return err instanceof DelegateError ? (err.sessionId ?? null) : null;
 }
 
-type StoredJob = Pick<Job, "id" | "name" | "agent" | "model" | "prompt" | "startedAt" | "status" | "sessionId" | "workdir" | "worktree" | "args" | "owner" | "supervisor" | "finishedAt" | "host" | "remote" | "metadataVersion" | "parentJob" | "rootSession" | "rootName">;
+type StoredJob = Pick<Job, "id" | "name" | "agent" | "model" | "prompt" | "startedAt" | "status" | "sessionId" | "workdir" | "worktree" | "args" | "owner" | "supervisor" | "finishedAt" | "host" | "remote" | "metadataVersion" | "parentJob" | "rootSession" | "rootName" | "percent" | "progressNote" | "etaAt" | "etaReportedAt">;
 
 function toStored(j: Job): StoredJob {
   return {
@@ -1003,6 +1021,10 @@ function toStored(j: Job): StoredJob {
     parentJob: j.parentJob,
     rootSession: j.rootSession,
     rootName: j.rootName,
+    percent: j.percent,
+    progressNote: j.progressNote,
+    etaAt: j.etaAt,
+    etaReportedAt: j.etaReportedAt,
     finishedAt: j.finishedAt,
     host: j.host ?? null,
     remote: j.remote,

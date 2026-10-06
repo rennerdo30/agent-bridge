@@ -50,7 +50,7 @@ export const remoteJobSnapshotSchema = z.object({
   alive: z.boolean(),
   state: z.object({ pid: z.number().int().nonnegative(), peer: z.string().regex(NETWORK_NAME_PATTERN), status: z.enum(["running", "done", "failed"]), updatedAt: z.number().nonnegative(),
     model: z.string().nullable().optional(), sessionId: z.string().nullable().optional(), workdir: z.string().nullable().optional(), worktree: worktreeSchema.nullable().optional(),
-    progress: z.string().nullable().optional(), percent: z.number().min(0).max(100).optional(), progressNote: z.string().optional(), asking: z.boolean().optional(), live: z.boolean().optional(),
+    progress: z.string().nullable().optional(), percent: z.number().min(0).max(100).optional(), progressNote: z.string().optional(), etaAt: z.number().finite().nonnegative().optional(), etaReportedAt: z.number().finite().nonnegative().optional(), asking: z.boolean().optional(), live: z.boolean().optional(),
     seen: z.array(z.string()).optional(), report: z.string().optional(), delivered: z.boolean().optional(), finishedAt: z.number().optional() }).nullable(),
   approvals: z.array(z.object({ id: z.uuid(), owner: z.string(), job: z.string(), agent: z.string(), tool: z.string(), command: z.string(), reason: z.string(), askedAt: z.number(), deadline: z.number() })).max(50),
 });

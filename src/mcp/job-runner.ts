@@ -66,6 +66,8 @@ export async function runJobRunner(specFile: string | undefined): Promise<number
         progress: job.progress,
         percent: job.percent,
         progressNote: job.progressNote,
+        etaAt: job.etaAt,
+        etaReportedAt: job.etaReportedAt,
         asking: Boolean(job.pendingApproval),
         live: Boolean(job.live),
         seen: seen.slice(-SEEN_LIMIT),
@@ -121,6 +123,7 @@ export async function runJobRunner(specFile: string | undefined): Promise<number
   const post = (body: string, replyTo: string | null = null, note = false): Promise<boolean> => (chain = chain.then(() => deliver(body, replyTo, note)));
 
   const sink: JobSink = {
+    persist: () => save(),
     escalateApproval: async (_job, body) => { await post(body); },
     askParent: (j, question, timeoutMs, request) => {
       const answer = waitForApproval(j, question, timeoutMs, (body) => void post(body), log, home, request);
@@ -230,6 +233,8 @@ export async function runJobRunner(specFile: string | undefined): Promise<number
       status = "failed";
       cause = failureCause({ error: err });
     }
+    job.etaAt = undefined;
+    job.etaReportedAt = undefined;
     const report = jobReport(job, status, Math.round((Date.now() - job.startedAt) / 1000), text, cause);
     log.info("job turn finished", { status, sessionId: job.sessionId, cause });
     notifyJobEvent(home, status === "done" ? "finish" : "fail", log);

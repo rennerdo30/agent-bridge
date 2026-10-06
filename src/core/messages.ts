@@ -9,6 +9,7 @@ export const en = {
   "peers.none": "No other peers are online. Messages you send to an offline peer name wait until it connects.",
 
   "peers.jobs": "Your running subagents ({count}):",
+  "peers.eta": "~{minutes} min left",
   "peers.job": "- {name} (model: {model}, running {duration}): {progress}",
   "peers.waiting": "Queued continuations ({count}; each starts when one of the {max} subagent slots frees up, in this order):",
   "peers.waitingJob": "- {name}: {messages} message(s) waiting; cancel_subagent drops it",

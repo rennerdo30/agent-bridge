@@ -49,6 +49,7 @@ export type DelegateArgs = { prompt: string; host?: string; model?: string; effo
 
 /** Where a background job's approval questions, answers and facts go: this session's JobManager, or a job runner's link to it. */
 export interface JobSink {
+  persist?: () => void;
   escalateApproval?: (job: Job, body: string) => Promise<void>;
   askParent(job: Job, question: string, timeoutMs: number, request?: PermissionRequest): Promise<{ allow: boolean; reason: string }>;
   /** isAnswer: its answer to a live message (wakes the session); else a note unless it replies to something. */
@@ -277,10 +278,12 @@ async function runDelegateInner(
         jobs.fromSubagent(job, body, replyTo);
       },
       dlog,
-      (percent, note) => {
+      (percent, note, eta) => {
         job.percent = percent;
         job.progressNote = note;
-        feed.meta({ percent, progressNote: note, progressAt: Date.now() });
+        if (eta) Object.assign(job, eta);
+        jobs.persist?.();
+        feed.meta({ percent, progressNote: note, progressAt: Date.now(), ...(eta ?? {}) });
         feed.report(`progress ${percent}%${note ? `: ${note}` : ""}`);
       },
       siblingLink,

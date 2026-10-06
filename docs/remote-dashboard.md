@@ -126,3 +126,19 @@ paging, UTF-8 chunks, native child membership, strict routes, timeout/rate limit
 old-peer fallback, advertisements/classification, encoded HTTP identities, token
 authentication and read-only routing. Browser layout and real two-PC acceptance
 remain the supervisor's UI/playtest work.
+
+## Job completion estimates
+
+`report_progress` accepts optional `eta_minutes` (0-1440, fractional minutes allowed).
+The parent computes `etaAt` (estimated completion epoch milliseconds) and
+`etaReportedAt` (report receipt epoch milliseconds). Omitting an estimate keeps
+the last one; reporting it again replaces both timestamps. Zero means due now.
+
+`/api/state.runs[]` exposes these optional fields beside `percent`, `progressNote`
+and `progressAt`. The remote projection keeps the same values in merged `runs[]`
+and `remoteRuns[host].runs[]`; host qualification does not alter timestamps.
+They also travel in job records, runner state and remote-jobs snapshot `state`.
+Older records and peers may omit both fields. No stored envelope version changes.
+Finished jobs and runs clear both fields; stale terminal run metadata is hidden
+on read. `peers` displays the remaining time rounded up to minutes and clamped
+at zero. Dashboard rendering is handled separately.

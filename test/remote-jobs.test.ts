@@ -14,6 +14,7 @@ import type { PeerInfo } from "../src/core/protocol.js";
 import { BridgeNode } from "../src/core/node.js";
 import { resolveDbPath, resolvePipePath } from "../src/core/paths.js";
 import { answerPendingApproval, listPendingApprovals } from "../src/core/relay.js";
+import { parentFromEnv } from "../src/core/parent-link.js";
 import { loadOrCreateToken } from "../src/core/token.js";
 import { listRuns, startUi } from "../src/cli/ui.js";
 import { readRunnerState } from "../src/mcp/job-host.js";
@@ -216,6 +217,13 @@ describe.skipIf(!existsSync(SERVER))("remote jobs with two paired TLS brokers", 
   it("starts remotely, applies follow-up settings, returns results, logs on both PCs and shows remote dashboard runs", async () => {
     const { local } = await paired(); const job = await held(local);
     expect(readRunnerState(localHome, job.id)).toBeNull();
+    const child = parentFromEnv(JSON.parse(readFileSync(job.marker, "utf8")))!;
+    await child.progress(40, "ETA integration", 12);
+    await waitFor(async () => (await call(local, "peers", {})).includes("~12 min left"));
+    const remoteEta = readRunnerState(remoteHome, job.id)!;
+    expect(remoteEta.etaAt! - remoteEta.etaReportedAt!).toBe(720_000);
+    await waitFor(() => listRuns(localHome).some((r) => r.etaAt === remoteEta.etaAt));
+
     // The detached runner survives a requester reload, and the saved supervisor id authorizes the new peer.
     await local.close();
     const replacement = await session(localHome, "codex-supervisor");
@@ -227,6 +235,8 @@ describe.skipIf(!existsSync(SERVER))("remote jobs with two paired TLS brokers", 
     await waitFor(async () => (await call(replacement, "inbox", { mark_read: false })).includes("remote fake finished"));
     await waitFor(async () => (await call(replacement, "peers", {})).includes(`${job.name} "Remote fake runner": done`));
     const calls = readFileSync(join(remoteHome, "calls.jsonl"), "utf8").trim().split("\n").map((s) => JSON.parse(s));
+    expect(readRunnerState(remoteHome, job.id)!.etaAt).toBeUndefined();
+    expect(listRuns(localHome).filter((r) => r.remote?.name === job.name).every((r) => r.etaAt === undefined)).toBe(true);
     expect(calls).toHaveLength(2); expect(calls[1].session).toBe(calls[0].session); expect(calls[1].args).toContain("remote-model");
     const saved = readStore(join(localHome, "jobs.json")).find((j) => j.id === job.id)!;
     expect(saved.remote).toEqual({ host: "mac", name: job.name });

@@ -43,6 +43,9 @@ export interface RunMeta {
   /** The subagent's own progress estimate (report_progress) and when it came. */
   percent?: number;
   progressNote?: string;
+  /** Absolute estimated completion and report receipt time, in epoch milliseconds. */
+  etaAt?: number;
+  etaReportedAt?: number;
   progressAt?: number;
   model?: string | null;
   /** Reasoning effort: the one asked for, else what the CLI reported or its configured default. */
@@ -157,6 +160,8 @@ export function startRunFeed(opts: {
     },
     end: (summary, answer) => {
       clearInterval(timer);
+      meta = { ...meta, etaAt: undefined, etaReportedAt: undefined };
+      writeMeta();
       if (answer?.trim()) write(`answer: ${answer.trim()}`);
       write(`finished after ${Math.round((now() - started) / 1000)}s · ${summary}`);
       release();

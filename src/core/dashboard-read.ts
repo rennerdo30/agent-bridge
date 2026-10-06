@@ -95,6 +95,7 @@ export function summarizeRun(file: string, text: string, mtimeMs: number, now: n
     workdir: / in (.+?), access /.exec(header)?.[1],
     continues: /, continues (\S+)/.exec(header)?.[1] ?? null,
     ...meta,
+    ...(status !== "running" ? { etaAt: undefined, etaReportedAt: undefined } : {}),
     name: file.replace(/\.log$/, ""),
     agent: m?.[7] ?? "agent",
     header,
