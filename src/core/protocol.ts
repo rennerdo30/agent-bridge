@@ -44,6 +44,7 @@ export interface SiblingPeer {
   title: string;
   agent: AgentKind;
   status: "running" | "done" | "failed" | "interrupted";
+  finishedAt?: number;
 }
 
 export interface PeerInfo {
@@ -144,6 +145,8 @@ export interface MessageReceipt {
 }
 
 export interface SendResult {
+  /** Terminal job mail is retained, but will not be answered without an explicit continuation. */
+  finishedRecipient?: { name: string; status: SiblingPeer["status"]; finishedAt?: number; report: string | null };
   /** Failed fan-out attempts are explicit; they are not queued for automatic retry. */
   failedFor?: { name: string; reason: string }[];
   /** Presence at routing time; delivery does not mean consumption. */

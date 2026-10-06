@@ -59,7 +59,7 @@ const MAX_FILE_ADDRESS_CHARS = 256;
 const MAX_FILE_PATH_CHARS = 1_024;
 const SIBLING_STATUSES = new Set<SiblingPeer["status"]>(["running", "done", "failed", "interrupted"]);
 
-type StoredSibling = SiblingPeer & { id: string };
+type StoredSibling = SiblingPeer & { id: string; report: string | null };
 
 interface Conn {
   socket: Socket;
@@ -424,7 +424,7 @@ export class Broker {
       return records.flatMap((j) => j && j.supervisor === supervisor && typeof j.id === "string" &&
         typeof j.name === "string" && j.name !== peer.name && `job:${j.id}` !== peer.id &&
         AGENT_KINDS.includes(j.agent as AgentKind) && SIBLING_STATUSES.has(j.status as SiblingPeer["status"])
-        ? [{ id: `job:${j.id}`, name: j.name, title: isRecord(j.args) && typeof j.args.title === "string" ? j.args.title : "", agent: j.agent as AgentKind, status: j.status as SiblingPeer["status"] }]
+        ? [{ id: `job:${j.id}`, name: j.name, title: isRecord(j.args) && typeof j.args.title === "string" ? j.args.title : "", agent: j.agent as AgentKind, status: j.status as SiblingPeer["status"], ...(typeof j.finishedAt === "number" ? { finishedAt: j.finishedAt } : {}), report: typeof j.report === "string" ? j.report : null }]
         : []);
     } catch {
       return [];
@@ -434,7 +434,7 @@ export class Broker {
   private siblingPeers(conn: Conn): SiblingPeer[] {
     const live = this.siblingConns(conn);
     const stored = this.storedSiblings(this.requirePeer(conn));
-    const peers = new Map(stored.map(({ id, ...s }) => [s.name, s]));
+    const peers = new Map(stored.map(({ id, report, ...s }) => [s.name, s]));
     for (const c of live) {
       const p = c.peer!;
       const previous = stored.find((s) => s.id === p.id);
@@ -506,6 +506,10 @@ export class Broker {
       this.store.insert(note);
       const supervisor = this.connByName(sender.jobParent);
       if (supervisor) this.emit(supervisor, "message", note);
+    }
+    if (stored && stored.status !== "running" && !target) {
+      result.finishedRecipient = { name: stored.name, status: stored.status, report: stored.report,
+        ...(stored.finishedAt !== undefined ? { finishedAt: stored.finishedAt } : {}) };
     }
     return result;
   }

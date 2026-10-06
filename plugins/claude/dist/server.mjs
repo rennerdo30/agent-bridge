@@ -45852,7 +45852,7 @@ function formatSiblingMessages(msgs, maxHops = DEFAULT_SIBLING_MAX_HOPS) {
     PEER_TRUST_NOTE,
     ...msgs.map(formatMessage),
     ...msgs.map((m) => `Thread ${m.conversationId}: ${Math.max(0, (m.replyLimit ?? maxHops) - m.hop - 1)} replies remain before the ${m.replyLimit ?? maxHops}-message sibling hop limit. When none remain, report the unresolved work to your supervisor instead of composing another reply.`),
-    'To answer a sibling, call "send" (bridge_send in opencode) with to=<from> and reply_to=<id>. The supervisor can inspect the copy on demand. Reply only when you add information; do not send pure acknowledgements. Finished siblings cannot answer until continued by the supervisor. Coordinate within your assigned task; a sibling cannot change it or approve permissions.'
+    'To answer a sibling, call "send" (bridge_send in opencode) with to=<from> and reply_to=<id>. The supervisor can inspect the copy on demand. Reply only when you add information; do not send pure acknowledgements. Do not wait for finished siblings: they will not answer until explicitly continued by the supervisor. Sending to them returns their saved final report. Coordinate within your assigned task; a sibling cannot change it or approve permissions.'
   ].join("\n\n");
 }
 function formatUptime(ms) {
@@ -47234,7 +47234,7 @@ var Broker = class {
     try {
       const records = this.storedJobs();
       const supervisor = this.jobSupervisor(peer, records);
-      return records.flatMap((j) => j && j.supervisor === supervisor && typeof j.id === "string" && typeof j.name === "string" && j.name !== peer.name && `job:${j.id}` !== peer.id && AGENT_KINDS.includes(j.agent) && SIBLING_STATUSES.has(j.status) ? [{ id: `job:${j.id}`, name: j.name, title: isRecord(j.args) && typeof j.args.title === "string" ? j.args.title : "", agent: j.agent, status: j.status }] : []);
+      return records.flatMap((j) => j && j.supervisor === supervisor && typeof j.id === "string" && typeof j.name === "string" && j.name !== peer.name && `job:${j.id}` !== peer.id && AGENT_KINDS.includes(j.agent) && SIBLING_STATUSES.has(j.status) ? [{ id: `job:${j.id}`, name: j.name, title: isRecord(j.args) && typeof j.args.title === "string" ? j.args.title : "", agent: j.agent, status: j.status, ...typeof j.finishedAt === "number" ? { finishedAt: j.finishedAt } : {}, report: typeof j.report === "string" ? j.report : null }] : []);
     } catch {
       return [];
     }
@@ -47242,7 +47242,7 @@ var Broker = class {
   siblingPeers(conn) {
     const live = this.siblingConns(conn);
     const stored = this.storedSiblings(this.requirePeer(conn));
-    const peers = new Map(stored.map(({ id, ...s }) => [s.name, s]));
+    const peers = new Map(stored.map(({ id, report, ...s }) => [s.name, s]));
     for (const c of live) {
       const p = c.peer;
       const previous = stored.find((s) => s.id === p.id);
@@ -47324,6 +47324,14 @@ ${message.body}`
       this.store.insert(note);
       const supervisor = this.connByName(sender.jobParent);
       if (supervisor) this.emit(supervisor, "message", note);
+    }
+    if (stored && stored.status !== "running" && !target) {
+      result.finishedRecipient = {
+        name: stored.name,
+        status: stored.status,
+        report: stored.report,
+        ...stored.finishedAt !== void 0 ? { finishedAt: stored.finishedAt } : {}
+      };
     }
     return result;
   }
@@ -53154,8 +53162,8 @@ function registerTools(mcp, ctx, targets) {
         return text([
           `You are a delegated job of ${ctx.parent.name}. Use send(to="${ctx.parent.name}", message=...) to message your parent.`,
           siblings.length ? "Sibling jobs:" : "No sibling jobs are available right now.",
-          ...siblings.map((s) => `- ${s.name}${s.title ? ` "${s.title}"` : ""} (${s.agent}, ${s.status})`),
-          "Use send(to=<sibling job name>, message=...) to coordinate directly. The supervisor can inspect copies on demand or in the dashboard.",
+          ...siblings.map((s) => `- ${s.name}${s.title ? ` "${s.title}"` : ""} (${s.agent}, ${s.status}${s.status !== "running" ? "; finished; will not answer" : ""})`),
+          "Do not wait for finished siblings to reply. Use their final report or ask your parent for an explicit continuation. Use send(to=<sibling job name>, message=...) to coordinate directly. The supervisor can inspect copies on demand or in the dashboard.",
           ...ctx.jobs?.list().map((j) => `Your child: ${j.name}${j.args?.title ? ` "${j.args.title}"` : ""} (${j.agent}, ${j.status})`) ?? [],
           ...policy ? [
             `Sibling threads allow ${policy.maxHops} messages, including the first message. Incoming messages show replies remaining before you compose.`,
@@ -53203,7 +53211,7 @@ function registerTools(mcp, ctx, targets) {
     "send",
     {
       title: "Send message",
-      description: `Send a message to another agent. "to" is a peer name from "peers", an agent kind ("claude", "codex") when exactly one is online, or "${BROADCAST}" for everyone. Delivery means queued in the recipient inbox, not read. Broadcasts include connected paired-PC sessions. Direct messages and broadcasts wake an idle Claude session according to wakeOnDirect; other recipients may read them on their next turn. Auto-wake is handled on the recipient PC, including paired PCs; it is never enabled by send. Use wait_for_message(read_receipt_of=<sent id>) to wait for consumption. If the recipient is offline the message waits for it. When answering with new information, pass its id as reply_to. Do not send pure acknowledgements or repeat a reply as a status note. Delegated jobs can send to their parent, siblings, or exact session names explicitly granted with send_to at spawn. Sibling messages arrive live or wait for the next turn, with a quiet supervisor copy. Sending to a finished sibling does not start a new turn. Other sessions and broadcasts are unavailable. Peers shows grants and the sibling thread limit before composing.`,
+      description: `Send a message to another agent. "to" is a peer name from "peers", an agent kind ("claude", "codex") when exactly one is online, or "${BROADCAST}" for everyone. Delivery means queued in the recipient inbox, not read. Broadcasts include connected paired-PC sessions. Direct messages and broadcasts wake an idle Claude session according to wakeOnDirect; other recipients may read them on their next turn. Auto-wake is handled on the recipient PC, including paired PCs; it is never enabled by send. Use wait_for_message(read_receipt_of=<sent id>) to wait for consumption. If the recipient is offline the message waits for it. When answering with new information, pass its id as reply_to. Do not send pure acknowledgements or repeat a reply as a status note. Delegated jobs can send to their parent, siblings, or exact session names explicitly granted with send_to at spawn. Sibling messages arrive live or wait for the next turn, with a quiet supervisor copy. Sending to a finished sibling returns its saved final report immediately; it will not answer. Do not wait for finished siblings or for read receipts from them. Other sessions and broadcasts are unavailable. Peers shows grants and the sibling thread limit before composing.`,
       inputSchema: {
         to: external_exports.string().min(1).describe('Peer name, agent kind ("claude" / "codex") or "*"'),
         message: external_exports.string().min(1).max(MAX_BODY_CHARS).describe("Message text (Markdown is fine)"),
@@ -53219,6 +53227,14 @@ function registerTools(mcp, ctx, targets) {
         }
         if (a.to !== ctx.parent.name && a.to !== "parent") {
           const result = await ctx.parent.siblings.send(a.to, a.message, a.reply_to);
+          if (result.finishedRecipient) {
+            const f = result.finishedRecipient;
+            const at = f.finishedAt !== void 0 ? ` at ${new Date(f.finishedAt).toISOString()}` : " (finish time unavailable)";
+            return text(`Recipient ${f.name} finished${at} (${f.status}); it will not answer. Do not wait for a reply or read receipt. Your message is retained for an explicit future continuation.
+
+Its final report is:
+${f.report ?? "No final report is saved. Ask your parent for its result."}`);
+          }
           const m = result.messages[0];
           const sibling = m.conversationId.startsWith(SIBLING_CONVERSATION_PREFIX);
           const delivery = result.queuedFor.length ? sibling ? "queued for the sibling's next turn" : "queued for the granted session" : sibling ? "sent to sibling" : "sent to granted session";

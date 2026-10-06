@@ -106,6 +106,14 @@ describe("sibling job messaging", () => {
       expect(JSON.stringify(hook)).toContain(b.job.name);
       expect(JSON.stringify(hook)).toContain("Acknowledged");
       expect((await call("send", { to: "unknown-job", message: "Wrong target" })).isError).toBe(true);
+      writeFileSync(join(env.home, JOBS_FILE), JSON.stringify({ version: 1, jobs: [
+        { id: "past", name: "opencode-job-past", agent: "opencode", status: "failed", supervisor: "supervisor-session", finishedAt: 123, report: "Final findings" },
+      ] }));
+      expect(JSON.stringify(await call("peers"))).toContain("finished; will not answer");
+      const finished = JSON.stringify(await call("send", { to: "opencode-job-past", message: "Any findings?" }));
+      expect(finished).toContain("it will not answer");
+      expect(finished).toContain("Final findings");
+      expect(finished).toContain("1970-01-01T00:00:00.123Z");
     } finally {
       await client.close();
     }
@@ -158,13 +166,14 @@ describe("sibling job messaging", () => {
   it("lists completed siblings and queues their mail until their next turn", async () => {
     const a = await sibling("a", "codex");
     writeFileSync(join(env.home, JOBS_FILE), JSON.stringify({ version: 1, jobs: [
-      { id: "past", name: "opencode-job-past", agent: "opencode", status: "done", supervisor: "supervisor-session", args: { title: "Earlier task" } },
+      { id: "past", name: "opencode-job-past", agent: "opencode", status: "done", finishedAt: 123, report: "Saved final report", supervisor: "supervisor-session", args: { title: "Earlier task" } },
       { id: "other", name: "claude-job-other", agent: "claude", status: "failed", supervisor: "other-session" },
     ] }));
-    expect(await a.child.siblings.peers()).toEqual([{ name: "opencode-job-past", title: "Earlier task", agent: "opencode", status: "done" }]);
+    expect(await a.child.siblings.peers()).toEqual([{ name: "opencode-job-past", title: "Earlier task", agent: "opencode", status: "done", finishedAt: 123 }]);
     await expect(a.child.siblings.send("claude-job-other", "Cross-session mail")).rejects.toThrow(/no sibling/);
     const queued = await a.child.siblings.send("opencode-job-past", "Next-turn handover");
     expect(queued.queuedFor).toEqual(["opencode-job-past"]);
+    expect(queued.finishedRecipient).toEqual({ name: "opencode-job-past", status: "done", finishedAt: 123, report: "Saved final report" });
     const resumed = await sibling("past", "opencode");
     await until(() => resumed.node.hasSeen(queued.messages[0]!.id));
     expect(await resumed.child.inbox()).toMatchObject([{ sibling: { body: "Next-turn handover", from: { name: a.job.name } } }]);
