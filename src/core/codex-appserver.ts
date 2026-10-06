@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { APP_VERSION } from "./constants.js";
-import type { CodexSandbox } from "./config.js";
+import { DEFAULT_CODEX_APPROVALS_REVIEWER, type CodexApprovalsReviewer, type CodexSandbox } from "./config.js";
 import { checkDepth, childEnv, DelegateError, exitDescription, killTree, realFolder, resolveCommand, trackChild, type DelegateRequest, type DelegateResult } from "./delegate.js";
 import { progressEventHandler } from "./progress.js";
 import { CODEX_ASK_HINT } from "./delegate.js";
@@ -28,6 +28,9 @@ const OPT_OUT = [
   "item/plan/delta",
 ];
 const STDERR_TAIL_CHARS = 4_000;
+const AUTO_REVIEW_COMPLETED = "item/autoApprovalReview/completed";
+const AUTO_REVIEW_REFUSALS = new Set(["denied", "timedOut", "aborted"]);
+const AUTO_REVIEW_ASK_HINT = "(The workspace is read-only on purpose: request escalated permissions when a necessary command or edit is blocked. Codex automatically reviews eligible requests. Refusals go to the supervisor when available; never work around a denial.)";
 /**
  * Longest wait for app-server to answer the handshake (initialize, thread start or resume, turn start).
  * Usually seconds, but with many Codex processes running it can take a minute or more.
@@ -79,7 +82,7 @@ function asExecEvent(kind: "item.started" | "item.completed", item: any): unknow
 }
 
 export async function delegateToCodexAppServer(
-  req: DelegateRequest & { bin: string; sandbox: CodexSandbox; askMode?: boolean; writableRoots?: string[]; networkAccess?: boolean; startupTimeoutMs?: number },
+  req: DelegateRequest & { bin: string; sandbox: CodexSandbox; approvalsReviewer?: CodexApprovalsReviewer; askMode?: boolean; writableRoots?: string[]; networkAccess?: boolean; startupTimeoutMs?: number },
 ): Promise<DelegateResult> {
   checkDepth(req.maxDelegateDepth);
   const mappings = codexDriveMappings(`${req.cwd}\n${req.prompt}`);
@@ -97,11 +100,17 @@ export async function delegateToCodexAppServer(
   let stderr = "";
   let threadId: string | null = req.sessionId ?? null;
   let turnId: string | null = null;
-  const finalAnswers = new FinalAnswers();
+  let finalAnswers = new FinalAnswers();
   let usage: unknown = null;
   let retryableError: string | null = null;
   let finished: (v: { status: string; error: string | null }) => void = () => {};
-  const turnDone = new Promise<{ status: string; error: string | null }>((r) => (finished = r));
+  let turnDone = new Promise<{ status: string; error: string | null }>((r) => (finished = r));
+  const approvalsReviewer = req.sandbox === "danger-full-access" ? "user" : req.approvalsReviewer ?? DEFAULT_CODEX_APPROVALS_REVIEWER;
+  const reviewed = new Set<string>();
+  const reviewTasks: Promise<void>[] = [];
+  const reviewInputs: string[] = [];
+  const earlyReviews: any[] = [];
+  let reviewInterrupted = false;
   const completions = new Map<string, { status: string; error: string | null }>();
   // After a steered message, the subagent's next message is its answer to it.
   const answers: string[] = [];
@@ -133,13 +142,37 @@ export async function delegateToCodexAppServer(
       }
     }
   };
-  const decide = async (tool: string, detail: string): Promise<PermissionDecision> => {
+  const decide = async (tool: string, detail: string, automaticReview = false): Promise<PermissionDecision> => {
     if (!req.approve) return { allow: false, message: "Denied by agent-bridge: no approval handler is available." };
     try {
-      return await req.approve({ agent: "codex", tool, detail, cwd });
+      return await req.approve({ agent: "codex", tool, detail, cwd, ...(automaticReview ? { automaticReview } : {}) });
     } catch (err) {
       return { allow: false, message: `Denied by agent-bridge: approval forwarding failed: ${String((err as Error)?.message ?? err)}` };
     }
+  };
+  // These notifications are terminal decisions, not pending JSON-RPC requests. Pause before asking
+  // the supervisor, then continue in the same thread with explicit context, keeping Codex's reviewer.
+  const forwardReview = (params: any) => {
+    if (approvalsReviewer !== "auto_review" || req.signal?.aborted || !AUTO_REVIEW_REFUSALS.has(params.review?.status)) return;
+    if (!turnId) { earlyReviews.push(params); return; }
+    if (params.threadId !== threadId || (turnId && params.turnId !== turnId) || typeof params.reviewId !== "string" || reviewed.has(params.reviewId)) return;
+    reviewed.add(params.reviewId);
+    const action = params.action ?? {};
+    const tool = action.type === "mcpToolCall" ? `mcp:${action.server}` : action.type === "applyPatch" ? "edit" : action.type === "command" || action.type === "execve" || action.type === "writeStdin" ? "command" : String(action.type ?? "approval");
+    const detail = JSON.stringify(action);
+    const reason = `Automatic approval review ${params.review.status}: ${params.review.rationale ?? "no rationale supplied"}`;
+    req.onProgress?.(`${reason}. ${detail}`);
+    if (!req.approve || !req.canApprove) {
+      req.onDenied?.(`${reason}. No supervisor approval handler is available. ${detail}`);
+      return;
+    }
+    const pause = reviewInterrupted ? Promise.resolve() : request("turn/interrupt", { threadId, turnId: params.turnId }).catch((err) => req.log.debug("review turn already ended", { err: (err as Error).message }));
+    reviewInterrupted = true;
+    reviewTasks.push((async () => {
+      await pause;
+      const decision = await decide(tool, `${action.type === "mcpToolCall" ? `tool "${action.toolName}"\n` : ""}${reason}\nAction: ${detail}\nApprove a retry of this exact action? Codex policy still applies.`, true);
+      reviewInputs.push(`Supervisor ${decision.allow ? "approved one retry of" : "denied"} this exact action after ${reason}.\nAction: ${detail}\n${decision.allow ? "Retry only if Codex policy permits; retain automatic review and all sandbox limits. This is not a blanket approval or a policy override." : `Supervisor reason: ${decision.message || "no reason supplied"}\nDo not retry or work around this denial. Continue with a materially safer alternative, or report the blocker.`}`);
+    })());
   };
   const answerRequest = async (id: number | string, method: string, params: any) => {
     const reply = (result: unknown) => write({ id, result });
@@ -165,16 +198,22 @@ export async function delegateToCodexAppServer(
         return answer(decision, decision.allow ? { action: "accept", content } : { action: "decline", content: null }, tool);
       }
       case "item/commandExecution/requestApproval": {
-        const decision: PermissionDecision = req.sandbox === "danger-full-access" ? { allow: true } : req.askMode || req.sandbox === "workspace-write" ? await decide("command", innerCommand(String(params.command ?? params.reason ?? "a command"))) : sandboxDenial;
+        const decision: PermissionDecision = req.sandbox === "danger-full-access" ? { allow: true } : req.canApprove || req.askMode || req.sandbox === "workspace-write" ? await decide("command", innerCommand(String(params.command ?? params.reason ?? "a command"))) : sandboxDenial;
         return answer(decision, { decision: decision.allow ? "accept" : "decline" }, "command");
       }
       case "item/fileChange/requestApproval": {
         const paths = editPaths.get(params.itemId) ?? [];
-        const decision: PermissionDecision = req.sandbox === "danger-full-access" ? { allow: true } : req.askMode || req.sandbox === "workspace-write" ? await decide("edit", paths.length ? paths.join(", ") : String(params.reason ?? "file changes")) : sandboxDenial;
+        const decision: PermissionDecision = req.sandbox === "danger-full-access" ? { allow: true } : req.canApprove || req.askMode || req.sandbox === "workspace-write" ? await decide("edit", paths.length ? paths.join(", ") : String(params.reason ?? "file changes")) : sandboxDenial;
         return answer(decision, { decision: decision.allow ? "accept" : "decline" }, "edit");
       }
+      case "item/permissions/requestApproval": {
+        const decision = req.canApprove || req.askMode || req.sandbox === "workspace-write"
+          ? await decide("permissions", `${params.reason ?? "additional permissions"}\n${JSON.stringify(params.permissions ?? {})}`)
+          : sandboxDenial;
+        return answer(decision, { permissions: decision.allow ? params.permissions ?? {} : {}, scope: "turn" }, "permissions");
+      }
       default:
-        // Questions and permission-profile requests: not forwarded; refuse rather than let the turn hang.
+        // Unsupported questions and dynamic tools: refuse rather than let the turn hang.
         req.log.warn("codex app-server request refused", { method });
         return write({ id, error: { code: -32601, message: "not supported by agent-bridge" } });
     }
@@ -194,6 +233,9 @@ export async function delegateToCodexAppServer(
     }
     const params = msg.params ?? {};
     switch (msg.method) {
+      case AUTO_REVIEW_COMPLETED:
+        forwardReview(params);
+        break;
       case "item/started":
         onEvent?.(asExecEvent("item.started", params.item));
         if (params.item?.type === "fileChange") editPaths.set(params.item.id, (params.item.changes ?? []).map((c: any) => c?.path).filter(Boolean));
@@ -291,8 +333,8 @@ export async function delegateToCodexAppServer(
     // Granular policy is experimental in the installed app-server schema; opt in only when we use it.
     await boot(request("initialize", { clientInfo: { name: "agent-bridge", title: "agent-bridge", version: APP_VERSION }, capabilities: { experimentalApi: req.sandbox === "danger-full-access", optOutNotificationMethods: OPT_OUT } }));
     write({ method: "initialized", params: {} });
-    // Keep MCP approvals independent of unrestricted command execution. Read-only escalations are refused;
-    // ask/edit questions go to the supervisor, including requests to clean up a job's own artifacts.
+    // Keep MCP approvals independent of unrestricted command execution. Eligible sandboxed requests
+    // use the configured reviewer; remaining client requests go to the supervisor when available.
     const approvalPolicy = req.sandbox === "danger-full-access" ? CODEX_FULL_ACCESS_APPROVAL_POLICY : "on-request";
     // Extra writable folders for workspace-write (a worktree's git admin dir lives in the main repo).
     const config: Record<string, unknown> = {};
@@ -303,7 +345,7 @@ export async function delegateToCodexAppServer(
       };
     }
     if (req.effort) config.model_reasoning_effort = req.effort;
-    const threadParams = { cwd, sandbox: req.sandbox, approvalPolicy, approvalsReviewer: "user", ...(Object.keys(config).length ? { config } : {}), ...(req.model ? { model: req.model } : {}) };
+    const threadParams = { cwd, sandbox: req.sandbox, approvalPolicy, approvalsReviewer, ...(Object.keys(config).length ? { config } : {}), ...(req.model ? { model: req.model } : {}) };
     step = req.sessionId ? "thread/resume" : "thread/start";
     const thread = req.sessionId
       ? await boot(request("thread/resume", { ...threadParams, threadId: req.sessionId, excludeTurns: true }))
@@ -322,24 +364,41 @@ export async function delegateToCodexAppServer(
         // The sandbox Codex really applies to this thread (its config can differ from what was asked).
         permission: typeof thread.sandbox?.type === "string" ? thread.sandbox.type : null,
       });
-    const prompt = req.askMode && req.sandbox !== "danger-full-access" ? `${req.prompt}\n\n${CODEX_ASK_HINT}` : req.prompt;
+    const prompt = req.askMode && req.sandbox !== "danger-full-access" ? `${req.prompt}\n\n${approvalsReviewer === "auto_review" ? AUTO_REVIEW_ASK_HINT : CODEX_ASK_HINT}` : req.prompt;
     step = "turn/start";
     const sandboxPolicy = codexTurnSandbox(req.sandbox, cwd, req.writableRoots?.map(realFolder), thread?.sandbox, req.networkAccess);
-    const turn = await boot(request("turn/start", {
+    const startTurn = (text: string) => request("turn/start", {
       threadId,
-      input: [{ type: "text", text: prompt, text_elements: [] }],
+      input: [{ type: "text", text, text_elements: [] }],
       ...(req.model ? { model: req.model } : {}),
       sandboxPolicy,
       approvalPolicy,
+      approvalsReviewer,
       ...(req.effort ? { effort: req.effort } : {}),
-    }));
+    });
+    const turn = await boot(startTurn(prompt));
     req.onInfo?.({ model: req.model ?? thread?.model ?? null, permission: req.sandbox, effort: req.effort ?? (typeof thread?.reasoningEffort === "string" ? thread.reasoningEffort : null) });
     turnId = turn?.turn?.id ?? null;
+    for (const review of earlyReviews.splice(0)) forwardReview(review);
     void deliverDenials();
     clearTimeout(startupTimer);
     if (turnId && completions.has(turnId)) finished(completions.get(turnId)!);
     req.live?.onSteering(steering);
-    const outcome = await race(turnDone);
+    let outcome = await race(turnDone);
+    while (reviewTasks.length) {
+      while (reviewTasks.length) await race(Promise.all(reviewTasks.splice(0)));
+      if (!reviewInputs.length) break;
+      turnId = null;
+      retryableError = null;
+      reviewInterrupted = false;
+      finalAnswers = new FinalAnswers();
+      turnDone = new Promise((r) => (finished = r));
+      const continuation = await race(startTurn(reviewInputs.splice(0).join("\n\n")));
+      turnId = continuation?.turn?.id ?? null;
+      for (const review of earlyReviews.splice(0)) forwardReview(review);
+      if (turnId && completions.has(turnId)) finished(completions.get(turnId)!);
+      outcome = await race(turnDone);
+    }
     req.live?.onSteering(null);
     const error = outcome.error ?? (outcome.status === "failed" ? (retryableError ?? "turn failed") : null);
     req.log.info("codex turn ended", { threadId, turnId, status: outcome.status, error: outcome.error, retryableError });

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { CLAUDE_PERMISSION_MODES, CODEX_SANDBOXES, type BridgeConfig, type ClaudePermissionMode, type CodexSandbox } from "../core/config.js";
+import { CLAUDE_PERMISSION_MODES, CODEX_APPROVALS_REVIEWERS, CODEX_SANDBOXES, type BridgeConfig, type ClaudePermissionMode, type CodexApprovalsReviewer, type CodexSandbox } from "../core/config.js";
 import { DelegateError, delegateToClaude, delegateToCodex, delegateToOpencode, type DelegateRequest, type DelegateResult } from "../core/delegate.js";
 import { listOpencodeModels, resolveOpencodeModel } from "../core/opencode-models.js";
 import { delegateToOpencodeServed } from "../core/opencode-served.js";
@@ -32,6 +32,7 @@ export interface TargetArgs {
   access?: Access;
   relay?: RelayWiring;
   sandbox?: string;
+  approvals_reviewer?: CodexApprovalsReviewer;
   permission_mode?: string;
   auto_approve?: boolean;
 }
@@ -90,7 +91,10 @@ export const DELEGATION_TARGETS: Record<CodingAgent, DelegationTarget> = {
     modelExample: '"gpt-6-sol"',
     effortExample: '"low", "medium", "high", "xhigh", "max" or "ultra" (depends on the model)',
     defaultModel: (cfg) => cfg.codexModel,
-    schema: { sandbox: z.enum(CODEX_SANDBOXES as [string, ...string[]]).optional().describe("Overrides access with an exact Codex sandbox mode") },
+    schema: {
+      sandbox: z.enum(CODEX_SANDBOXES as [string, ...string[]]).optional().describe("Overrides access with an exact Codex sandbox mode"),
+      approvals_reviewer: z.enum(CODEX_APPROVALS_REVIEWERS).optional().describe("Codex reviewer: auto_review (approve for me, default) or user (forward approvals). Does not change the sandbox."),
+    },
     permissionNote: (cfg) => `Codex runs in the "${cfg.codexSandbox}" sandbox unless you pass access or sandbox. Worktree edit runs use "${cfg.codexWorktreeSandbox ?? (cfg.codexSandbox === "read-only" ? "workspace-write" : cfg.codexSandbox)}" (config codexWorktreeSandbox); workspace-write can restrict builds and network access.${codexEnvironmentNote()}`,
     permission: (cfg, a) => (a.sandbox as CodexSandbox | undefined) ?? (a.access ? CODEX_SANDBOX_FOR[a.access] : cfg.codexSandbox),
     run: async (cfg, base, a) => {
@@ -102,7 +106,7 @@ export const DELEGATION_TARGETS: Record<CodingAgent, DelegationTarget> = {
         let sessionId = base.sessionId ?? null;
         for (let attempt = 1; ; attempt++) {
           try {
-            return await delegateToCodexAppServer({ ...base, sessionId, bin: cfg.codexBin, sandbox, networkAccess: cfg.codexWorkspaceWriteNetworkAccess ?? undefined, writableRoots: base.writableRoots, askMode: a.access === "ask", approve: a.access === "ask" && a.relay ? a.relay.onPermission : base.approve });
+            return await delegateToCodexAppServer({ ...base, sessionId, bin: cfg.codexBin, sandbox, approvalsReviewer: a.approvals_reviewer ?? cfg.codexApprovalsReviewer, networkAccess: cfg.codexWorkspaceWriteNetworkAccess ?? undefined, writableRoots: base.writableRoots, askMode: a.access === "ask", approve: a.access === "ask" && a.relay ? a.relay.onPermission : base.approve });
           } catch (err) {
             // A slow start (many Codex processes running): try once more, in the thread it may already have.
             if (err instanceof DelegateError && err.startupFailed && attempt === 1 && !base.signal?.aborted) {

@@ -26,6 +26,19 @@ const context = (): RunContext => ({ agent: "claude", cfg: { ...DEFAULT_CONFIG }
 const job = (): Job => ({ id: "test", name: "codex-job-test", agent: "codex", model: null, prompt: "task", startedAt: Date.now(), controller: new AbortController(), progress: null, status: "running", sessionId: null, workdir: null, worktree: null, queue: [] });
 
 describe("delegation approval routing", () => {
+  it("requires a supervisor decision for reviewer refusals despite tool allowlists or cached allows", async () => {
+    const rc = context();
+    rc.cfg.autoApproveTools = ["pair-desk.get_*"];
+    const j = job();
+    j.allowedServers = new Set(["mcp:pair-desk"]);
+    vi.spyOn(DELEGATION_TARGETS.codex, "run").mockImplementation(async (_cfg, req) => {
+      expect(await req.approve!({ agent: "codex", tool: "mcp:pair-desk", detail: 'tool "get_issue" refused', automaticReview: true })).toMatchObject({ allow: false });
+      expect(await req.approve!({ agent: "codex", tool: "mcp:pair-desk", detail: 'tool "list_projects" refused', automaticReview: true })).toMatchObject({ allow: false });
+      return { sessionId: "saved", text: "done", isError: false, details: {} };
+    });
+    await runDelegate(rc, "codex", { title: "review", prompt: "task", access: "read" }, j.controller.signal, undefined, true, j);
+    expect(rc.jobs!.askParent).toHaveBeenCalledTimes(2);
+  });
   it("records the actual finished branch and tip in run metadata and the saved worktree", async () => {
     const repo = join(home, "repo");
     mkdirSync(repo);

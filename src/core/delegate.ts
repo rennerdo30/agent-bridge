@@ -332,7 +332,7 @@ export interface DelegateRequest {
    * Answers the subagent's approval questions: the parent agent (background subagents) or the user decides.
    * Used by Codex app-server, opencode served mode and the Claude PermissionRequest hook.
    */
-  approve?: (r: { agent: string; tool: string; detail: string; cwd?: string }) => Promise<PermissionDecision>;
+  approve?: (r: { agent: string; tool: string; detail: string; cwd?: string; automaticReview?: boolean }) => Promise<PermissionDecision>;
   /** Deliver denial context through hooks if native live input cannot reach the running turn. */
   onDenied?: (message: string) => void;
   /**

@@ -28504,6 +28504,8 @@ function writeNetworkConfig(home, value) {
 // src/core/config.ts
 var DELIVERY_MODES = ["auto", "channel", "hooks"];
 var CODEX_SANDBOXES = ["read-only", "workspace-write", "danger-full-access"];
+var CODEX_APPROVALS_REVIEWERS = ["user", "auto_review"];
+var DEFAULT_CODEX_APPROVALS_REVIEWER = "auto_review";
 var CLAUDE_PERMISSION_MODES = ["default", "manual", "acceptEdits", "plan", "auto", "dontAsk", "bypassPermissions"];
 var DEFAULT_NOTIFICATIONS = { approvals: true, finish: true, fail: true };
 var DEFAULT_HISTORY_ANSWER = { preference: ["codex", "claude", "opencode"], claudeModel: "haiku", codexModel: "gpt-6-luna", opencodeModel: null };
@@ -28521,6 +28523,7 @@ var DEFAULT_CONFIG = {
   claudeBin: DEFAULT_CLAUDE_BIN,
   codexBin: DEFAULT_CODEX_BIN,
   codexSandbox: "read-only",
+  codexApprovalsReviewer: DEFAULT_CODEX_APPROVALS_REVIEWER,
   codexWorktreeSandbox: null,
   codexWorkspaceWriteNetworkAccess: null,
   claudePermissionMode: "default",
@@ -28661,6 +28664,7 @@ function loadConfig(home, agent, log, env = process.env) {
     claudeBin: pick2("claudeBin", ENV.claudeBin, str) ?? d.claudeBin,
     codexBin: pick2("codexBin", ENV.codexBin, str) ?? d.codexBin,
     codexSandbox: pick2("codexSandbox", null, (v) => oneOf(v, CODEX_SANDBOXES)) ?? d.codexSandbox,
+    codexApprovalsReviewer: pick2("codexApprovalsReviewer", null, (v) => oneOf(v, CODEX_APPROVALS_REVIEWERS)) ?? d.codexApprovalsReviewer,
     codexWorktreeSandbox: pick2("codexWorktreeSandbox", null, (v) => oneOf(v, CODEX_SANDBOXES)) ?? d.codexWorktreeSandbox,
     codexWorkspaceWriteNetworkAccess: pick2("codexWorkspaceWriteNetworkAccess", null, parseBool) ?? d.codexWorkspaceWriteNetworkAccess,
     claudePermissionMode: pick2("claudePermissionMode", null, (v) => oneOf(v, CLAUDE_PERMISSION_MODES)) ?? d.claudePermissionMode,
@@ -28952,6 +28956,9 @@ var OPT_OUT = [
   "item/plan/delta"
 ];
 var STDERR_TAIL_CHARS2 = 4e3;
+var AUTO_REVIEW_COMPLETED = "item/autoApprovalReview/completed";
+var AUTO_REVIEW_REFUSALS = /* @__PURE__ */ new Set(["denied", "timedOut", "aborted"]);
+var AUTO_REVIEW_ASK_HINT = "(The workspace is read-only on purpose: request escalated permissions when a necessary command or edit is blocked. Codex automatically reviews eligible requests. Refusals go to the supervisor when available; never work around a denial.)";
 var STARTUP_TIMEOUT_MS = 18e4;
 var CODEX_FULL_ACCESS_APPROVAL_POLICY = {
   granular: { sandbox_approval: false, rules: false, mcp_elicitations: true }
@@ -28993,12 +29000,18 @@ ${req.prompt}`);
   let stderr = "";
   let threadId = req.sessionId ?? null;
   let turnId = null;
-  const finalAnswers = new FinalAnswers();
+  let finalAnswers = new FinalAnswers();
   let usage = null;
   let retryableError = null;
   let finished = () => {
   };
-  const turnDone = new Promise((r) => finished = r);
+  let turnDone = new Promise((r) => finished = r);
+  const approvalsReviewer = req.sandbox === "danger-full-access" ? "user" : req.approvalsReviewer ?? DEFAULT_CODEX_APPROVALS_REVIEWER;
+  const reviewed = /* @__PURE__ */ new Set();
+  const reviewTasks = [];
+  const reviewInputs = [];
+  const earlyReviews = [];
+  let reviewInterrupted = false;
   const completions = /* @__PURE__ */ new Map();
   const answers = [];
   let awaitingAnswer = false;
@@ -29026,13 +29039,44 @@ ${req.prompt}`);
       }
     }
   };
-  const decide = async (tool, detail) => {
+  const decide = async (tool, detail, automaticReview = false) => {
     if (!req.approve) return { allow: false, message: "Denied by agent-bridge: no approval handler is available." };
     try {
-      return await req.approve({ agent: "codex", tool, detail, cwd });
+      return await req.approve({ agent: "codex", tool, detail, cwd, ...automaticReview ? { automaticReview } : {} });
     } catch (err) {
       return { allow: false, message: `Denied by agent-bridge: approval forwarding failed: ${String(err?.message ?? err)}` };
     }
+  };
+  const forwardReview = (params) => {
+    if (approvalsReviewer !== "auto_review" || req.signal?.aborted || !AUTO_REVIEW_REFUSALS.has(params.review?.status)) return;
+    if (!turnId) {
+      earlyReviews.push(params);
+      return;
+    }
+    if (params.threadId !== threadId || turnId && params.turnId !== turnId || typeof params.reviewId !== "string" || reviewed.has(params.reviewId)) return;
+    reviewed.add(params.reviewId);
+    const action = params.action ?? {};
+    const tool = action.type === "mcpToolCall" ? `mcp:${action.server}` : action.type === "applyPatch" ? "edit" : action.type === "command" || action.type === "execve" || action.type === "writeStdin" ? "command" : String(action.type ?? "approval");
+    const detail = JSON.stringify(action);
+    const reason = `Automatic approval review ${params.review.status}: ${params.review.rationale ?? "no rationale supplied"}`;
+    req.onProgress?.(`${reason}. ${detail}`);
+    if (!req.approve || !req.canApprove) {
+      req.onDenied?.(`${reason}. No supervisor approval handler is available. ${detail}`);
+      return;
+    }
+    const pause = reviewInterrupted ? Promise.resolve() : request2("turn/interrupt", { threadId, turnId: params.turnId }).catch((err) => req.log.debug("review turn already ended", { err: err.message }));
+    reviewInterrupted = true;
+    reviewTasks.push((async () => {
+      await pause;
+      const decision = await decide(tool, `${action.type === "mcpToolCall" ? `tool "${action.toolName}"
+` : ""}${reason}
+Action: ${detail}
+Approve a retry of this exact action? Codex policy still applies.`, true);
+      reviewInputs.push(`Supervisor ${decision.allow ? "approved one retry of" : "denied"} this exact action after ${reason}.
+Action: ${detail}
+${decision.allow ? "Retry only if Codex policy permits; retain automatic review and all sandbox limits. This is not a blanket approval or a policy override." : `Supervisor reason: ${decision.message || "no reason supplied"}
+Do not retry or work around this denial. Continue with a materially safer alternative, or report the blocker.`}`);
+    })());
   };
   const answerRequest = async (id, method, params) => {
     const reply = (result) => write({ id, result });
@@ -29055,13 +29099,18 @@ ${req.prompt}`);
         return answer(decision, decision.allow ? { action: "accept", content } : { action: "decline", content: null }, tool);
       }
       case "item/commandExecution/requestApproval": {
-        const decision = req.sandbox === "danger-full-access" ? { allow: true } : req.askMode || req.sandbox === "workspace-write" ? await decide("command", innerCommand(String(params.command ?? params.reason ?? "a command"))) : sandboxDenial;
+        const decision = req.sandbox === "danger-full-access" ? { allow: true } : req.canApprove || req.askMode || req.sandbox === "workspace-write" ? await decide("command", innerCommand(String(params.command ?? params.reason ?? "a command"))) : sandboxDenial;
         return answer(decision, { decision: decision.allow ? "accept" : "decline" }, "command");
       }
       case "item/fileChange/requestApproval": {
         const paths = editPaths.get(params.itemId) ?? [];
-        const decision = req.sandbox === "danger-full-access" ? { allow: true } : req.askMode || req.sandbox === "workspace-write" ? await decide("edit", paths.length ? paths.join(", ") : String(params.reason ?? "file changes")) : sandboxDenial;
+        const decision = req.sandbox === "danger-full-access" ? { allow: true } : req.canApprove || req.askMode || req.sandbox === "workspace-write" ? await decide("edit", paths.length ? paths.join(", ") : String(params.reason ?? "file changes")) : sandboxDenial;
         return answer(decision, { decision: decision.allow ? "accept" : "decline" }, "edit");
+      }
+      case "item/permissions/requestApproval": {
+        const decision = req.canApprove || req.askMode || req.sandbox === "workspace-write" ? await decide("permissions", `${params.reason ?? "additional permissions"}
+${JSON.stringify(params.permissions ?? {})}`) : sandboxDenial;
+        return answer(decision, { permissions: decision.allow ? params.permissions ?? {} : {}, scope: "turn" }, "permissions");
       }
       default:
         req.log.warn("codex app-server request refused", { method });
@@ -29083,6 +29132,9 @@ ${req.prompt}`);
     }
     const params = msg.params ?? {};
     switch (msg.method) {
+      case AUTO_REVIEW_COMPLETED:
+        forwardReview(params);
+        break;
       case "item/started":
         onEvent?.(asExecEvent("item.started", params.item));
         if (params.item?.type === "fileChange") editPaths.set(params.item.id, (params.item.changes ?? []).map((c) => c?.path).filter(Boolean));
@@ -29187,7 +29239,7 @@ ${message}`, text_elements: [] }] });
       };
     }
     if (req.effort) config2.model_reasoning_effort = req.effort;
-    const threadParams = { cwd, sandbox: req.sandbox, approvalPolicy, approvalsReviewer: "user", ...Object.keys(config2).length ? { config: config2 } : {}, ...req.model ? { model: req.model } : {} };
+    const threadParams = { cwd, sandbox: req.sandbox, approvalPolicy, approvalsReviewer, ...Object.keys(config2).length ? { config: config2 } : {}, ...req.model ? { model: req.model } : {} };
     step = req.sessionId ? "thread/resume" : "thread/start";
     const thread = req.sessionId ? await boot(request2("thread/resume", { ...threadParams, threadId: req.sessionId, excludeTurns: true })) : await boot(request2("thread/start", threadParams));
     threadId = thread?.thread?.id ?? threadId;
@@ -29205,24 +29257,41 @@ ${message}`, text_elements: [] }] });
       });
     const prompt = req.askMode && req.sandbox !== "danger-full-access" ? `${req.prompt}
 
-${CODEX_ASK_HINT}` : req.prompt;
+${approvalsReviewer === "auto_review" ? AUTO_REVIEW_ASK_HINT : CODEX_ASK_HINT}` : req.prompt;
     step = "turn/start";
     const sandboxPolicy = codexTurnSandbox(req.sandbox, cwd, req.writableRoots?.map(realFolder), thread?.sandbox, req.networkAccess);
-    const turn = await boot(request2("turn/start", {
+    const startTurn = (text2) => request2("turn/start", {
       threadId,
-      input: [{ type: "text", text: prompt, text_elements: [] }],
+      input: [{ type: "text", text: text2, text_elements: [] }],
       ...req.model ? { model: req.model } : {},
       sandboxPolicy,
       approvalPolicy,
+      approvalsReviewer,
       ...req.effort ? { effort: req.effort } : {}
-    }));
+    });
+    const turn = await boot(startTurn(prompt));
     req.onInfo?.({ model: req.model ?? thread?.model ?? null, permission: req.sandbox, effort: req.effort ?? (typeof thread?.reasoningEffort === "string" ? thread.reasoningEffort : null) });
     turnId = turn?.turn?.id ?? null;
+    for (const review of earlyReviews.splice(0)) forwardReview(review);
     void deliverDenials();
     clearTimeout(startupTimer);
     if (turnId && completions.has(turnId)) finished(completions.get(turnId));
     req.live?.onSteering(steering);
-    const outcome = await race(turnDone);
+    let outcome = await race(turnDone);
+    while (reviewTasks.length) {
+      while (reviewTasks.length) await race(Promise.all(reviewTasks.splice(0)));
+      if (!reviewInputs.length) break;
+      turnId = null;
+      retryableError = null;
+      reviewInterrupted = false;
+      finalAnswers = new FinalAnswers();
+      turnDone = new Promise((r) => finished = r);
+      const continuation = await race(startTurn(reviewInputs.splice(0).join("\n\n")));
+      turnId = continuation?.turn?.id ?? null;
+      for (const review of earlyReviews.splice(0)) forwardReview(review);
+      if (turnId && completions.has(turnId)) finished(completions.get(turnId));
+      outcome = await race(turnDone);
+    }
     req.live?.onSteering(null);
     const error62 = outcome.error ?? (outcome.status === "failed" ? retryableError ?? "turn failed" : null);
     req.log.info("codex turn ended", { threadId, turnId, status: outcome.status, error: outcome.error, retryableError });
@@ -29293,7 +29362,10 @@ var DELEGATION_TARGETS = {
     modelExample: '"gpt-6-sol"',
     effortExample: '"low", "medium", "high", "xhigh", "max" or "ultra" (depends on the model)',
     defaultModel: (cfg) => cfg.codexModel,
-    schema: { sandbox: external_exports.enum(CODEX_SANDBOXES).optional().describe("Overrides access with an exact Codex sandbox mode") },
+    schema: {
+      sandbox: external_exports.enum(CODEX_SANDBOXES).optional().describe("Overrides access with an exact Codex sandbox mode"),
+      approvals_reviewer: external_exports.enum(CODEX_APPROVALS_REVIEWERS).optional().describe("Codex reviewer: auto_review (approve for me, default) or user (forward approvals). Does not change the sandbox.")
+    },
     permissionNote: (cfg) => `Codex runs in the "${cfg.codexSandbox}" sandbox unless you pass access or sandbox. Worktree edit runs use "${cfg.codexWorktreeSandbox ?? (cfg.codexSandbox === "read-only" ? "workspace-write" : cfg.codexSandbox)}" (config codexWorktreeSandbox); workspace-write can restrict builds and network access.${codexEnvironmentNote()}`,
     permission: (cfg, a) => a.sandbox ?? (a.access ? CODEX_SANDBOX_FOR[a.access] : cfg.codexSandbox),
     run: async (cfg, base2, a) => {
@@ -29303,7 +29375,7 @@ var DELEGATION_TARGETS = {
         let sessionId = base2.sessionId ?? null;
         for (let attempt = 1; ; attempt++) {
           try {
-            return await delegateToCodexAppServer({ ...base2, sessionId, bin: cfg.codexBin, sandbox, networkAccess: cfg.codexWorkspaceWriteNetworkAccess ?? void 0, writableRoots: base2.writableRoots, askMode: a.access === "ask", approve: a.access === "ask" && a.relay ? a.relay.onPermission : base2.approve });
+            return await delegateToCodexAppServer({ ...base2, sessionId, bin: cfg.codexBin, sandbox, approvalsReviewer: a.approvals_reviewer ?? cfg.codexApprovalsReviewer, networkAccess: cfg.codexWorkspaceWriteNetworkAccess ?? void 0, writableRoots: base2.writableRoots, askMode: a.access === "ask", approve: a.access === "ask" && a.relay ? a.relay.onPermission : base2.approve });
           } catch (err) {
             if (err instanceof DelegateError && err.startupFailed && attempt === 1 && !base2.signal?.aborted) {
               base2.log.warn("codex app-server startup timed out; retrying once", { err: err.message });
@@ -29374,9 +29446,9 @@ ${res.text}` } : res;
 };
 
 // src/mcp/job-settings.ts
-var JOB_SETTING_KEYS = ["model", "effort", "access", "sandbox", "permission_mode", "auto_approve"];
+var JOB_SETTING_KEYS = ["model", "effort", "access", "sandbox", "approvals_reviewer", "permission_mode", "auto_approve"];
 var EXACT_PERMISSION_KEYS = ["sandbox", "permission_mode", "auto_approve"];
-var PERMISSION_KEY_AGENT = { sandbox: "codex", permission_mode: "claude", auto_approve: "opencode" };
+var PERMISSION_KEY_AGENT = { sandbox: "codex", approvals_reviewer: "codex", permission_mode: "claude", auto_approve: "opencode" };
 var EFFORT_PATTERN = /^[A-Za-z0-9_-]{1,20}$/;
 function changedJobArgs(args, settings) {
   const next = { ...args };
@@ -29406,6 +29478,10 @@ function parseJobSettings(input2, agent) {
   if (raw.sandbox !== void 0) {
     if (!CODEX_SANDBOXES.includes(raw.sandbox)) return "invalid sandbox";
     settings.sandbox = raw.sandbox;
+  }
+  if (raw.approvals_reviewer !== void 0) {
+    if (!CODEX_APPROVALS_REVIEWERS.includes(raw.approvals_reviewer)) return "invalid approvals_reviewer";
+    settings.approvals_reviewer = raw.approvals_reviewer;
   }
   if (raw.permission_mode !== void 0) {
     if (!CLAUDE_PERMISSION_MODES.includes(raw.permission_mode)) return "invalid permission_mode";
@@ -40949,7 +41025,8 @@ var remoteSpawnArgsSchema = external_exports.object({
   allow_tools: external_exports.array(external_exports.string().min(1).max(200)).max(50).optional(),
   sandbox: external_exports.enum(CODEX_SANDBOXES).optional(),
   permission_mode: external_exports.enum(CLAUDE_PERMISSION_MODES).optional(),
-  auto_approve: external_exports.boolean().optional()
+  auto_approve: external_exports.boolean().optional(),
+  approvals_reviewer: external_exports.enum(CODEX_APPROVALS_REVIEWERS).optional()
 }).strict();
 var settingsSchema = external_exports.record(external_exports.string(), external_exports.unknown());
 var remoteControlSchema = external_exports.discriminatedUnion("type", [
@@ -45037,8 +45114,8 @@ async function runDelegateInner(rc, target, a, signal, onProgress, background, j
       asked.push(`declined (handoff tool): ${r.tool} ${r.detail.slice(0, 80)}`);
       return { allow: false, message: HANDOFF_DECLINED };
     }
-    if (r.tool.startsWith("mcp:") && allowedServers.has(r.tool)) return { allow: true };
-    if (isOwnServerCall(r) || isAutoApproved(r, autoApprove)) return { allow: true };
+    if (!r.automaticReview && r.tool.startsWith("mcp:") && allowedServers.has(r.tool)) return { allow: true };
+    if (!r.automaticReview && (isOwnServerCall(r) || isAutoApproved(r, autoApprove))) return { allow: true };
     let d;
     if (wiring) d = await wiring.onPermission(r);
     else if (job && (!job.foreground || job.parentJob) && rc.jobs) {
@@ -45051,7 +45128,7 @@ async function runDelegateInner(rc, target, a, signal, onProgress, background, j
       d = await askUser(r);
       asked.push(`${d.allow ? "allowed" : "denied"}: ${r.tool} ${r.detail.slice(0, 80)}`);
     } else d = r.tool.startsWith("mcp:") && access === "edit" ? { allow: true } : { allow: false, message: "No one to ask in this session." };
-    if (d.allow && r.tool.startsWith("mcp:")) allowedServers.add(r.tool);
+    if (d.allow && !r.automaticReview && r.tool.startsWith("mcp:")) allowedServers.add(r.tool);
     return d;
   };
   let feed;
@@ -45663,7 +45740,7 @@ var RemoteJobs = class {
       if ([...this.records.values()].filter((r) => this.snapshot(r).alive).length + this.starting.size > cfg.maxJobs) throw new Error("Remote subagent limit reached.");
       if (!record2 && this.records.size >= MAX_REMOTE_JOBS) throw new Error("Remote job registry is full.");
       if (!record2 && request2.args.session_id) throw new Error("Remote session continuation requires a job owned by this supervisor.");
-      const settings = Object.fromEntries(["model", "effort", "access", "sandbox", "permission_mode", "auto_approve"].filter((key2) => key2 in request2.args).map((key2) => [key2, request2.args[key2]]));
+      const settings = Object.fromEntries(["model", "effort", "access", "sandbox", "approvals_reviewer", "permission_mode", "auto_approve"].filter((key2) => key2 in request2.args).map((key2) => [key2, request2.args[key2]]));
       if (Object.keys(settings).length) {
         const parsed = parseJobSettings(settings, request2.target);
         if (typeof parsed === "string") throw new Error(parsed);
@@ -51560,7 +51637,7 @@ var CWD_DISCOVERY_GRACE_MS = 15e3;
 var MAX_TITLE_CHARS3 = 80;
 var SUBAGENT_TOOLS = /* @__PURE__ */ new Set(["peers", "send", "report_progress", "hook_event"]);
 var STAND_IN_RECHECK_MS = 3e4;
-var KEPT_ARGS = ["host", "model", "effort", "cwd", "timeout_sec", "worktree", "access", "sandbox", "permission_mode", "auto_approve", "allow_tools", "send_to", "title"];
+var KEPT_ARGS = ["host", "model", "effort", "cwd", "timeout_sec", "worktree", "access", "sandbox", "approvals_reviewer", "permission_mode", "auto_approve", "allow_tools", "send_to", "title"];
 var PLUGIN_ROOT = resolve11(dirname17(fileURLToPath2(import.meta.url)), "..");
 function pathFromUriOrPath(v) {
   if (typeof v !== "string" || !v) return null;
@@ -52389,6 +52466,7 @@ ${r.lines.map((l) => `  ${l}`).join("\n")}`).join("\n\n"));
         model: external_exports.string().regex(MODEL_NAME_PATTERN).optional().describe("Model for this continuation and later turns. A running turn keeps its model."),
         access: external_exports.enum(ACCESS_LEVELS).optional().describe("Access for the next turn: read, ask or edit. Replaces earlier exact permission overrides."),
         sandbox: external_exports.enum(CODEX_SANDBOXES).optional().describe("Codex sandbox for the next turn. A running turn keeps its sandbox."),
+        approvals_reviewer: external_exports.enum(CODEX_APPROVALS_REVIEWERS).optional().describe("Codex reviewer for the next turn: auto_review or user. A running turn keeps its reviewer."),
         permission_mode: external_exports.enum(CLAUDE_PERMISSION_MODES).optional().describe("Claude permission mode for the next turn."),
         auto_approve: external_exports.boolean().optional().describe("opencode auto-approval for the next turn.")
       }
