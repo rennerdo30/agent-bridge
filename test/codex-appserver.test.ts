@@ -33,6 +33,7 @@ createInterface({ input: process.stdin }).on("line", (line) => {
 export const FAKE_CODEX_APPSERVER = `
 const { appendFileSync } = require("node:fs");
 const { createInterface } = require("node:readline");
+if (process.env.AB_TEST_ARGS) require("node:fs").writeFileSync(process.env.AB_TEST_ARGS, JSON.stringify(process.argv.slice(2)));
 const FINISH_DELAY_MS = 20;
 const write = (m) => console.log(JSON.stringify(m));
 const finish = () => {
@@ -62,6 +63,54 @@ describe("innerCommand", () => {
 });
 
 describe("next-turn Codex settings", () => {
+  it.each(["read-only", "workspace-write", "danger-full-access"] as const)("keeps %s consistent across app-server start, resume and turn", async (sandbox) => {
+    const dir = mkdtempSync(join(tmpdir(), "ab-startup-sandbox-"));
+    const argsFile = join(dir, "args.json");
+    const requests = join(dir, "requests.jsonl");
+    writeFileSync(join(dir, "app-server"), FAKE_CODEX_APPSERVER);
+    try {
+      for (const sessionId of [undefined, "saved-thread"]) {
+        writeFileSync(requests, "");
+        await delegateToCodexAppServer({ bin: process.execPath, cwd: dir, prompt: "inspect phone", sandbox, sessionId, askMode: true, timeoutSec: 10, log: nullLogger, extraEnv: { AB_TEST_ARGS: argsFile, AB_TEST_REQUESTS: requests } });
+        const args: string[] = JSON.parse(readFileSync(argsFile, "utf8"));
+        expect(args).toEqual(sandbox === "danger-full-access" ? ["-c", 'sandbox_mode="danger-full-access"'] : []);
+        const calls = readFileSync(requests, "utf8").trim().split("\n").map((line) => JSON.parse(line));
+        const thread = calls.find((call) => call.method === (sessionId ? "thread/resume" : "thread/start"));
+        expect(thread.params.sandbox).toBe(sandbox);
+        expect(JSON.stringify(thread.params.config)).not.toContain("windows.sandbox");
+        const turn = calls.find((call) => call.method === "turn/start").params;
+        expect(turn.sandboxPolicy.type).toBe(sandbox === "danger-full-access" ? "dangerFullAccess" : sandbox === "read-only" ? "readOnly" : "workspaceWrite");
+        expect(turn.input[0].text.includes("can't see devices from the sandbox")).toBe(process.platform === "win32");
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    }
+  });
+
+  it.each(["read-only", "workspace-write", "danger-full-access"] as const)("keeps %s in exec start and resume without changing the Windows backend", async (sandbox) => {
+    const dir = mkdtempSync(join(tmpdir(), "ab-exec-sandbox-"));
+    writeFileSync(join(dir, "exec"), `
+const fs = require("node:fs");
+fs.writeFileSync("args.json", JSON.stringify(process.argv.slice(2)));
+let prompt = "";
+process.stdin.on("data", (chunk) => prompt += chunk);
+process.stdin.on("end", () => {
+  fs.writeFileSync("prompt.txt", prompt);
+  console.log(JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: "done" } }));
+});`);
+    try {
+      for (const sessionId of [undefined, "saved-thread"]) {
+        await delegateToCodex({ bin: process.execPath, cwd: dir, prompt: "inspect phone", sandbox, sessionId, timeoutSec: 10, log: nullLogger });
+        const args: string[] = JSON.parse(readFileSync(join(dir, "args.json"), "utf8"));
+        expect(args).toEqual(expect.arrayContaining(sessionId ? ["resume", "-c", `sandbox_mode="${sandbox}"`, sessionId] : ["-s", sandbox]));
+        expect(args.some((arg) => arg.startsWith("windows.sandbox="))).toBe(false);
+        expect(readFileSync(join(dir, "prompt.txt"), "utf8").includes("can't see devices from the sandbox")).toBe(process.platform === "win32");
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    }
+  });
+
   it("forwards workspace network access to exec without enabling it for read-only", async () => {
     const dir = mkdtempSync(join(tmpdir(), "ab-exec-network-"));
     writeFileSync(join(dir, "exec"), `

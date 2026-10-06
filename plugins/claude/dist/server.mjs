@@ -7841,23 +7841,50 @@ function codexSubagentConfig(count = DEFAULT_CODEX_SUBAGENTS) {
   };
 }
 
+// src/core/codex-env.ts
+import { readFileSync as readFileSync5 } from "node:fs";
+import { homedir as homedir3 } from "node:os";
+import { join as join9 } from "node:path";
+function codexWindowsSandbox(home = homedir3(), platform = process.platform) {
+  if (platform !== "win32") return null;
+  let toml;
+  try {
+    toml = readFileSync5(join9(home, ".codex", "config.toml"), "utf8");
+  } catch {
+    return null;
+  }
+  const table = /^\[windows\]\s*$([\s\S]*?)(?=^\[|(?![\s\S]))/m.exec(toml)?.[1] ?? "";
+  return /^\s*sandbox\s*=\s*"([^"]+)"/m.exec(table)?.[1] ?? null;
+}
+function codexEnvironmentNote(home = homedir3(), platform = process.platform) {
+  if (platform !== "win32") return "";
+  const elevated = codexWindowsSandbox(home, platform) === "elevated";
+  return ` On Windows, danger-full-access executes as the bridge process user, normally the logged-in user, even when windows.sandbox is elevated. Sandboxed jobs may lack USB/adb or user-profile access; use danger-full-access when authorized, or a claude/opencode subagent for device work. An empty adb list does not prove no device is connected: verify whoami and the adb executable/server first. If running as the sandbox user, report "can't see devices from the sandbox".` + (elevated ? ` This machine uses a separate Windows sandbox user for sandboxed commands (elevated sandbox), which cannot read the user's profile. Tools installed there, such as Python under AppData\\Local\\Programs or user-level pip/npm installs, are unavailable to that user ("python is not recognized"). For sandboxed work that needs them, point Codex to an interpreter inside the repository (e.g. a .venv in the worktree), or use a claude/opencode subagent.` : "");
+}
+function codexExecutionPrompt(prompt, sandbox, platform = process.platform) {
+  if (platform !== "win32") return prompt;
+  return `${prompt}
+
+(Windows device probes: ${sandbox === "danger-full-access" ? "Full-access commands should run as the bridge process user; verify with whoami before device work." : "Sandboxed commands may run as a separate user without USB/adb or user-profile access; verify with whoami."} An empty adb devices result is not proof that no device is connected. Check the adb executable and server context. If the command runs as the sandbox user, report "can't see devices from the sandbox" and ask the supervisor to use an authorized full-access job or a claude/opencode subagent for device work. Do not change permissions or switch users yourself.)`;
+}
+
 // src/core/delegate.ts
 import { spawn } from "node:child_process";
-import { existsSync as existsSync4, readFileSync as readFileSync8, realpathSync as realpathSync3 } from "node:fs";
-import { delimiter, dirname as dirname4, extname, isAbsolute as isAbsolute2, join as join12, win32 } from "node:path";
+import { existsSync as existsSync4, readFileSync as readFileSync9, realpathSync as realpathSync3 } from "node:fs";
+import { delimiter, dirname as dirname4, extname, isAbsolute as isAbsolute2, join as join13, win32 } from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 
 // src/core/claude-mcp.ts
-import { readFileSync as readFileSync5 } from "node:fs";
-import { homedir as homedir3 } from "node:os";
-import { join as join9, resolve as resolve3 } from "node:path";
+import { readFileSync as readFileSync6 } from "node:fs";
+import { homedir as homedir4 } from "node:os";
+import { join as join10, resolve as resolve3 } from "node:path";
 var OWN_SERVER_RULE = "mcp__plugin_agent-bridge_bridge";
 var ACCOUNT_CONNECTORS_RULE = "mcp__claude_ai_*";
 var BUILT_IN_RULES = ["mcp__claude-in-chrome"];
 function readJson(path) {
   try {
-    return JSON.parse(readFileSync5(path, "utf8"));
+    return JSON.parse(readFileSync6(path, "utf8"));
   } catch {
     return null;
   }
@@ -7866,31 +7893,31 @@ function serverNames(mcp) {
   return mcp && typeof mcp === "object" ? Object.keys(mcp) : [];
 }
 function pluginServers(home) {
-  const installed = readJson(join9(home, ".claude", "plugins", "installed_plugins.json"));
+  const installed = readJson(join10(home, ".claude", "plugins", "installed_plugins.json"));
   const out = [];
   for (const [key2, entries] of Object.entries(installed?.plugins ?? {})) {
     const plugin = key2.split("@")[0];
     for (const e of Array.isArray(entries) ? entries : [entries]) {
       const root = e?.installPath;
       if (typeof root !== "string") continue;
-      const manifest = readJson(join9(root, ".claude-plugin", "plugin.json"));
+      const manifest = readJson(join10(root, ".claude-plugin", "plugin.json"));
       const declared = manifest?.mcpServers;
       const servers = typeof declared === "string" ? readJson(resolve3(root, declared))?.mcpServers ?? readJson(resolve3(root, declared)) : declared;
-      const names = /* @__PURE__ */ new Set([...serverNames(servers), ...serverNames(readJson(join9(root, ".mcp.json"))?.mcpServers)]);
+      const names = /* @__PURE__ */ new Set([...serverNames(servers), ...serverNames(readJson(join10(root, ".mcp.json"))?.mcpServers)]);
       for (const s of names) out.push(`mcp__plugin_${plugin}_${s}`);
     }
   }
   return out;
 }
-function claudeMcpDenyRules(cwd, home = homedir3()) {
-  const config2 = readJson(join9(home, ".claude.json"));
+function claudeMcpDenyRules(cwd, home = homedir4()) {
+  const config2 = readJson(join10(home, ".claude.json"));
   const norm = (p) => resolve3(p).replace(/\\/g, "/").toLowerCase();
   const project = Object.entries(config2?.projects ?? {}).find(([p]) => norm(p) === norm(cwd))?.[1];
   const names = [
     ...pluginServers(home),
     ...serverNames(config2?.mcpServers).map((s) => `mcp__${s}`),
     ...serverNames(project?.mcpServers).map((s) => `mcp__${s}`),
-    ...serverNames(readJson(join9(cwd, ".mcp.json"))?.mcpServers).map((s) => `mcp__${s}`),
+    ...serverNames(readJson(join10(cwd, ".mcp.json"))?.mcpServers).map((s) => `mcp__${s}`),
     ACCOUNT_CONNECTORS_RULE,
     ...BUILT_IN_RULES
   ];
@@ -7903,13 +7930,13 @@ import { createServer } from "node:http";
 
 // src/core/token.ts
 import { randomBytes, timingSafeEqual } from "node:crypto";
-import { chmodSync, mkdirSync as mkdirSync5, openSync as openSync4, readFileSync as readFileSync6, writeSync, closeSync as closeSync4 } from "node:fs";
-import { dirname as dirname3, join as join10 } from "node:path";
+import { chmodSync, mkdirSync as mkdirSync5, openSync as openSync4, readFileSync as readFileSync7, writeSync, closeSync as closeSync4 } from "node:fs";
+import { dirname as dirname3, join as join11 } from "node:path";
 var TOKEN_FILE_NAME = "token";
 var TOKEN_BYTES = 32;
 var OWNER_ONLY = 384;
 function tokenPath(home) {
-  return join10(home, TOKEN_FILE_NAME);
+  return join11(home, TOKEN_FILE_NAME);
 }
 function loadOrCreateToken(home) {
   const file2 = tokenPath(home);
@@ -7928,7 +7955,7 @@ function loadOrCreateToken(home) {
   } catch (err) {
     if (err.code !== "EEXIST") throw err;
   }
-  const token = readFileSync6(file2, "utf8").trim();
+  const token = readFileSync7(file2, "utf8").trim();
   if (!token) throw new Error(`agent-bridge token file is empty: ${file2}`);
   return token;
 }
@@ -8242,8 +8269,8 @@ function progressLineHandler(agent, onProgress) {
 
 // src/core/relay.ts
 import { randomBytes as randomBytes3, randomUUID as randomUUID4 } from "node:crypto";
-import { mkdirSync as mkdirSync6, readFileSync as readFileSync7, readdirSync as readdirSync7, writeFileSync as writeFileSync2 } from "node:fs";
-import { join as join11 } from "node:path";
+import { mkdirSync as mkdirSync6, readFileSync as readFileSync8, readdirSync as readdirSync7, writeFileSync as writeFileSync2 } from "node:fs";
+import { join as join12 } from "node:path";
 import { createServer as createServer2 } from "node:http";
 var RELAY_URL_ENV = "AGENT_BRIDGE_RELAY_URL";
 var RELAY_TOKEN_ENV = "AGENT_BRIDGE_RELAY_TOKEN";
@@ -8326,8 +8353,8 @@ var MAX_APPROVAL_REASON_CHARS = 4e3;
 async function publishApproval(home, approval, answer) {
   if (!APPROVAL_ID.test(approval.id)) throw new Error("invalid approval id");
   const token = randomBytes3(SECRET_BYTES2).toString("hex");
-  const dir = join11(home, APPROVALS_DIR);
-  const file2 = join11(dir, `${approval.id}.json`);
+  const dir = join12(home, APPROVALS_DIR);
+  const file2 = join12(dir, `${approval.id}.json`);
   const server = createServer2((req, res) => {
     const reply2 = (status, body) => {
       res.writeHead(status, { "content-type": "application/json", "cache-control": "no-store" });
@@ -8371,7 +8398,7 @@ async function publishApproval(home, approval, answer) {
 function readApproval(home, id) {
   if (!APPROVAL_ID.test(id)) return null;
   try {
-    const r = JSON.parse(readFileSync7(join11(home, APPROVALS_DIR, `${id}.json`), "utf8"));
+    const r = JSON.parse(readFileSync8(join12(home, APPROVALS_DIR, `${id}.json`), "utf8"));
     if (r.id !== id || !Number.isInteger(r.pid) || r.pid < 1 || !pidAlive(r.pid) || !Number.isSafeInteger(r.deadline) || r.deadline <= Date.now() || !Number.isSafeInteger(r.askedAt) || r.deadline <= r.askedAt || !Number.isInteger(r.port) || r.port < 1 || r.port > MAX_PORT || typeof r.token !== "string" || !r.token) return null;
     if (![r.owner, r.job, r.agent, r.tool, r.command, r.reason].every((value) => typeof value === "string")) return null;
     return r;
@@ -8382,7 +8409,7 @@ function readApproval(home, id) {
 function listPendingApprovals(home) {
   let files2;
   try {
-    files2 = readdirSync7(join11(home, APPROVALS_DIR));
+    files2 = readdirSync7(join12(home, APPROVALS_DIR));
   } catch {
     return [];
   }
@@ -8497,11 +8524,11 @@ function resolveBinary(bin, env = process.env, platform = process.platform) {
   }
   for (const dir of (env.PATH ?? env.Path ?? "").split(delimiter)) {
     if (!dir) continue;
-    for (const c of candidates(join12(dir, bin))) if (existsSync4(c)) return c;
+    for (const c of candidates(join13(dir, bin))) if (existsSync4(c)) return c;
   }
   return null;
 }
-function unwrapNpmShim(shimPath, readFile3 = (p) => readFileSync8(p, "utf8")) {
+function unwrapNpmShim(shimPath, readFile3 = (p) => readFileSync9(p, "utf8")) {
   let text2;
   try {
     text2 = readFile3(shimPath);
@@ -8781,8 +8808,8 @@ function realFolder(dir) {
 }
 async function delegateToCodex(req) {
   checkDepth(req.maxDelegateDepth);
-  req = { ...req, cwd: realFolder(req.cwd), prompt: codexPathPrompt(req.prompt, codexDriveMappings(`${req.cwd}
-${req.prompt}`)) };
+  req = { ...req, cwd: realFolder(req.cwd), prompt: codexExecutionPrompt(codexPathPrompt(req.prompt, codexDriveMappings(`${req.cwd}
+${req.prompt}`)), req.sandbox) };
   if (req.relayApprovals && req.sandbox !== "danger-full-access") req = { ...req, prompt: `${req.prompt}
 
 ${CODEX_ASK_HINT}` };
@@ -8843,7 +8870,7 @@ function isClaudeReadOnly(mode) {
 }
 var CLAUDE_READ_ONLY_MODES = /* @__PURE__ */ new Set(["default", "manual", "plan"]);
 function bundledCli() {
-  const cli = join12(dirname4(fileURLToPath(import.meta.url)), "cli.mjs");
+  const cli = join13(dirname4(fileURLToPath(import.meta.url)), "cli.mjs");
   return existsSync4(cli) ? cli : null;
 }
 function spawnsWithoutShell(bin, log) {
@@ -9203,12 +9230,12 @@ function siblingMaxHops(maxHops) {
 
 // src/core/config.ts
 import { unwatchFile, watchFile } from "node:fs";
-import { basename as basename3, join as join14 } from "node:path";
+import { basename as basename3, join as join15 } from "node:path";
 
 // src/network/config.ts
 import { hostname as hostname3 } from "node:os";
-import { readFileSync as readFileSync9 } from "node:fs";
-import { isAbsolute as isAbsolute3, join as join13 } from "node:path";
+import { readFileSync as readFileSync10 } from "node:fs";
+import { isAbsolute as isAbsolute3, join as join14 } from "node:path";
 
 // node_modules/zod/v4/classic/external.js
 var external_exports = {};
@@ -28933,7 +28960,7 @@ function parseNetworkConfig(value) {
 }
 function readNetworkConfig(home, fallback) {
   try {
-    const value = JSON.parse(readFileSync9(join13(home, CONFIG_FILE_NAME), "utf8"));
+    const value = JSON.parse(readFileSync10(join14(home, CONFIG_FILE_NAME), "utf8"));
     return isRecord(value) ? parseNetworkConfig(value.network) ?? fallback : fallback;
   } catch {
     return fallback;
@@ -28941,7 +28968,7 @@ function readNetworkConfig(home, fallback) {
 }
 function writeNetworkConfig(home, value) {
   const config2 = networkConfigSchema.parse(value);
-  const path = join13(home, CONFIG_FILE_NAME);
+  const path = join14(home, CONFIG_FILE_NAME);
   const previous = readJsonStore(path);
   writeJsonStore(path, mergeStoreFields(isRecord(previous) ? previous : {}, { network: config2 }), previous);
   return config2;
@@ -29061,7 +29088,7 @@ function toolPatterns(v) {
 }
 var CONFIG_POLL_MS = 2e3;
 function watchConfig(home, agent, log, onChange) {
-  const path = join14(home, CONFIG_FILE_NAME);
+  const path = join15(home, CONFIG_FILE_NAME);
   const listener = (cur, prev) => {
     if (cur.mtimeMs === prev.mtimeMs) return;
     log.info("config file changed; applying it", { path });
@@ -29071,14 +29098,14 @@ function watchConfig(home, agent, log, onChange) {
   return () => unwatchFile(path, listener);
 }
 function saveConfigValue(home, key2, value) {
-  const path = join14(home, CONFIG_FILE_NAME);
+  const path = join15(home, CONFIG_FILE_NAME);
   const previous = readJsonStore(path);
   const file2 = isRecord(previous) ? previous : {};
   writeJsonStore(path, { ...file2, [key2]: value }, previous);
 }
 function loadConfig(home, agent, log, env = process.env) {
   let file2 = {};
-  const path = join14(home, CONFIG_FILE_NAME);
+  const path = join15(home, CONFIG_FILE_NAME);
   try {
     file2 = readJsonStore(path, log) ?? {};
     log.debug("config file loaded", { path });
@@ -29439,10 +29466,11 @@ async function delegateToCodexAppServer(req) {
   checkDepth(req.maxDelegateDepth);
   const mappings = codexDriveMappings(`${req.cwd}
 ${req.prompt}`);
-  req = { ...req, prompt: codexPathPrompt(req.prompt, mappings) };
+  req = { ...req, prompt: codexExecutionPrompt(codexPathPrompt(req.prompt, mappings), req.sandbox) };
   const cwd = realFolder(req.cwd);
   const env = childEnv(req.extraEnv);
-  const { resolved, args, needsShell } = resolveCommand(req.bin, ["app-server"], env, req.log);
+  const startupArgs = req.sandbox === "danger-full-access" ? ["-c", 'sandbox_mode="danger-full-access"'] : [];
+  const { resolved, args, needsShell } = resolveCommand(req.bin, ["app-server", ...startupArgs], env, req.log);
   req.log.debug("starting codex app-server", { bin: resolved, cwd });
   const child = spawn3(resolved, args, { cwd, env: { ...env, PWD: cwd }, shell: needsShell, windowsHide: true, stdio: ["pipe", "pipe", "pipe"], detached: process.platform !== "win32" });
   trackChild(child);
@@ -29767,26 +29795,6 @@ ${approvalsReviewer === "auto_review" ? AUTO_REVIEW_ASK_HINT : CODEX_ASK_HINT}` 
     child.stdin.end();
     await killTree(child);
   }
-}
-
-// src/core/codex-env.ts
-import { readFileSync as readFileSync10 } from "node:fs";
-import { homedir as homedir4 } from "node:os";
-import { join as join15 } from "node:path";
-function codexWindowsSandbox(home = homedir4(), platform = process.platform) {
-  if (platform !== "win32") return null;
-  let toml;
-  try {
-    toml = readFileSync10(join15(home, ".codex", "config.toml"), "utf8");
-  } catch {
-    return null;
-  }
-  const table = /^\[windows\]\s*$([\s\S]*?)(?=^\[|(?![\s\S]))/m.exec(toml)?.[1] ?? "";
-  return /^\s*sandbox\s*=\s*"([^"]+)"/m.exec(table)?.[1] ?? null;
-}
-function codexEnvironmentNote(home = homedir4(), platform = process.platform) {
-  if (codexWindowsSandbox(home, platform) !== "elevated") return "";
-  return ` Note for this machine: Codex runs commands as a separate Windows sandbox user (elevated sandbox), which cannot read the user's profile. Tools installed there, such as Python under AppData\\Local\\Programs or user-level pip/npm installs, are missing in Codex subagents ("python is not recognized"). For work that needs them, point Codex to an interpreter inside the repository (e.g. a .venv in the worktree), or use a claude/opencode subagent.`;
 }
 
 // src/mcp/targets.ts
