@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { createServer, connect, type Socket } from "node:net";
 import { join } from "node:path";
 import { connect as tlsConnect } from "node:tls";
@@ -33,7 +33,7 @@ let cleanup: (() => void | Promise<void>)[];
 beforeEach(() => {
   const root = join(process.cwd(), ".agent-bridge-test");
   mkdirSync(root, { recursive: true });
-  home = mkdtempSync(join(root, "network-"));
+  home = realpathSync.native(mkdtempSync(join(root, "network-")));
   cleanup = [];
 });
 afterEach(async () => {

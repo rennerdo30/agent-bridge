@@ -310,6 +310,8 @@ export class NetworkService {
     const extension = this.extensions.get(type);
     const link = this.instanceLink(instance);
     if (!extension || !link.supports(extension.capability)) return Promise.reject(new Error("remote broker does not support this extension"));
+    // A session can join/reload between periodic refreshes. Advertise it before the remote authorization check.
+    if (type === "remote-job" && payload.kind === "request") link.refresh();
     return link.writeExtension(type, payload);
   }
 

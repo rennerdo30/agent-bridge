@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { appendFileSync, createReadStream, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { appendFileSync, createReadStream, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { open, statfs } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { setTimeout as realDelay } from "node:timers/promises";
@@ -21,7 +21,7 @@ const BIG_FILE_BYTES = 32 * 1024 * 1024 + 17;
 const TRANSFER_TEST_WAIT_MS = 90_000;
 let home: string;
 let services: NetworkService[];
-beforeEach(() => { home = mkdtempSync(join(tmpdir(), "ab-transfers-")); services = []; });
+beforeEach(() => { home = realpathSync.native(mkdtempSync(join(tmpdir(), "ab-transfers-"))); services = []; });
 afterEach(async () => { vi.useRealTimers(); for (const service of services.reverse()) await service.close(); vi.restoreAllMocks(); rmSync(home, { recursive: true, force: true, maxRetries: 5 }); });
 const peer = (name: string): PeerInfo => ({ id: randomUUID(), name, agent: "codex", cwd: home, pid: process.pid, agentPid: null, sessionId: null, startedAt: Date.now(), autoWake: false });
 async function wait(check: () => boolean, timeout = TRANSFER_TEST_WAIT_MS): Promise<void> {
