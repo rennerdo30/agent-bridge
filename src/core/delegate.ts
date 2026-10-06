@@ -454,7 +454,7 @@ export function realFolder(dir: string): string {
 }
 
 export async function delegateToCodex(
-  req: DelegateRequest & { bin: string; sandbox: CodexSandbox; relayApprovals?: boolean },
+  req: DelegateRequest & { bin: string; sandbox: CodexSandbox; relayApprovals?: boolean; networkAccess?: boolean },
 ): Promise<DelegateResult> {
   checkDepth();
   // Codex's Windows sandbox runs as a separate user that does not see per-user drive mappings (a mapped
@@ -467,6 +467,7 @@ export async function delegateToCodex(
   if (req.writableRoots?.length && req.sandbox === "workspace-write") {
     common.push("-c", `sandbox_workspace_write.writable_roots=${JSON.stringify(req.writableRoots.map(realFolder))}`);
   }
+  if (req.sandbox === "workspace-write" && req.networkAccess !== undefined) common.push("-c", `sandbox_workspace_write.network_access=${req.networkAccess}`);
   // With approvals_reviewer="auto_review" in the user's config, codex exec lets a reviewer model approve
   // escalations, so a read-only sandbox would not hold. Route approvals to "user": exec then never
   // escalates and the sandbox is enforced (verified: read-only then refuses to create files).

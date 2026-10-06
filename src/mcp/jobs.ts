@@ -8,6 +8,7 @@ import type { BridgeNode } from "../core/node.js";
 import type { AgentKind, BridgeMessage } from "../core/protocol.js";
 import type { Worktree } from "../core/worktree.js";
 import { archiveFile, assertWritableStore, isRecord, mergeStoreFields, readJsonStore, retentionLimit, writeJsonStore } from "../core/json-store.js";
+import { changedJobArgs, type JobSettings } from "./job-settings.js";
 
 const JOB_ID_LENGTH = 8;
 const PROMPT_PREVIEW_CHARS = 120;
@@ -33,7 +34,7 @@ export type RunResult = DelegateResult & { workdir?: string; worktree?: Worktree
 export type Run = ((signal: AbortSignal, onProgress: (message: string, full?: string) => void, job: Job) => Promise<RunResult>) & {
   hosted?: (job: Job) => JobHostInfo | null;
 };
-/** Continue a subagent's own session with a new message (same agent, model, access and folder). */
+/** Continue a subagent's own session with a new message and its saved next-turn settings. */
 export type Resume = (message: string, sessionId: string, workdir: string | null, worktree: Worktree | null) => Run;
 
 export interface Job {
@@ -51,7 +52,7 @@ export interface Job {
   foreground?: boolean;
   /** "interrupted": it was running when its session ended (agent-bridge restarted); it can be recovered. */
   status: "running" | "done" | "failed" | "interrupted";
-  /** The options it was started with (access, model, folder, ...), to continue it the same way after a restart. */
+  /** Saved options (access, model, folder, ...), including changes for its next turn. */
   args?: Record<string, unknown>;
   /** Peer name of the session that started it. */
   owner?: string;
@@ -96,6 +97,8 @@ export interface RunnerState {
   status: "running" | "done" | "failed";
   /** Heartbeat: a runner that stopped writing is gone, even if its pid was reused. */
   updatedAt: number;
+  /** Model of its current turn; saved next-turn settings may differ while it runs. */
+  model?: string | null;
   sessionId?: string | null;
   workdir?: string | null;
   worktree?: Worktree | null;
@@ -115,7 +118,7 @@ export interface RunnerState {
 }
 
 /** A message from the session to the runner of one of its jobs. */
-export type RunnerControl = { type: "message"; body: string; cid: string } | { type: "title"; title: string } | { type: "effort"; effort: string } | { type: "cancel" } | { type: "attach" };
+export type RunnerControl = { type: "message"; body: string; cid: string } | { type: "title"; title: string } | { type: "effort"; effort: string } | { type: "settings"; settings: JobSettings } | { type: "cancel" } | { type: "attach" };
 
 /** The session's side of job runners (implemented in job-host.ts). */
 export interface JobHost {
@@ -493,7 +496,18 @@ export class JobManager {
     return job;
   }
 
-  /** Name or rename a job; its next turn (and the dashboard) uses the title. */
+  /** Save next-turn settings and send them to a runner that continues the job itself. */
+  setSettings(ref: string, settings: JobSettings): boolean {
+    const job = this.find(ref);
+    if (!job) return false;
+    job.args = changedJobArgs(job.args, settings);
+    if (settings.model !== undefined && job.status !== "running") job.model = settings.model;
+    if (this.hostedRunning(job)) this.runners!.send(job, { type: "settings", settings });
+    this.own.add(job.id);
+    this.persist();
+    return true;
+  }
+
   /** Change a job's thinking level for its next turns (a turn already running keeps its own). */
   setEffort(ref: string, effort: string): boolean {
     const job = this.find(ref);
@@ -506,6 +520,7 @@ export class JobManager {
     return true;
   }
 
+  /** Name or rename a job; its next turn (and the dashboard) uses the title. */
   setTitle(ref: string, title: string): boolean {
     const job = this.find(ref);
     if (!job) return false;
@@ -582,6 +597,7 @@ export class JobManager {
   }
 
   private launch(job: Job, run: Run): void {
+    if (typeof job.args?.model === "string") job.model = job.args.model;
     job.status = "running";
     job.startedAt = Date.now();
     job.controller = new AbortController();
@@ -643,6 +659,7 @@ export class JobManager {
     const state = runners.state(job);
     if (state) {
       job.host!.pid = state.pid;
+      if (state.model !== undefined) job.model = state.model;
       job.progress = state.progress ?? job.progress;
       if (state.percent !== undefined) {
         job.percent = state.percent;

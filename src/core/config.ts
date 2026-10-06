@@ -35,6 +35,10 @@ export interface BridgeConfig {
   codexBin: string;
   /** Default sandbox for delegated Codex runs. */
   codexSandbox: CodexSandbox;
+  /** Worktree edit runs: null inherits codexSandbox, with workspace-write for a read-only default. */
+  codexWorktreeSandbox: CodexSandbox | null;
+  /** null keeps Codex's own sandbox_workspace_write.network_access setting. */
+  codexWorkspaceWriteNetworkAccess: boolean | null;
   /** Default permission mode for delegated Claude runs. */
   claudePermissionMode: ClaudePermissionMode;
   /** Listen window after sending, in seconds (0 disables). */
@@ -64,6 +68,8 @@ export const DEFAULT_CONFIG: BridgeConfig = {
   claudeBin: DEFAULT_CLAUDE_BIN,
   codexBin: DEFAULT_CODEX_BIN,
   codexSandbox: "read-only",
+  codexWorktreeSandbox: null,
+  codexWorkspaceWriteNetworkAccess: null,
   claudePermissionMode: "default",
   lingerSec: DEFAULT_LINGER_SEC,
   codexModel: null,
@@ -187,6 +193,8 @@ export function loadConfig(home: string, agent: AgentKind, log: Logger, env: Nod
     claudeBin: pick("claudeBin", ENV.claudeBin, str) ?? d.claudeBin,
     codexBin: pick("codexBin", ENV.codexBin, str) ?? d.codexBin,
     codexSandbox: pick("codexSandbox", null, (v) => oneOf(v, CODEX_SANDBOXES)) ?? d.codexSandbox,
+    codexWorktreeSandbox: pick("codexWorktreeSandbox", null, (v) => oneOf(v, CODEX_SANDBOXES)) ?? d.codexWorktreeSandbox,
+    codexWorkspaceWriteNetworkAccess: pick("codexWorkspaceWriteNetworkAccess", null, parseBool) ?? d.codexWorkspaceWriteNetworkAccess,
     claudePermissionMode: pick("claudePermissionMode", null, (v) => oneOf(v, CLAUDE_PERMISSION_MODES)) ?? d.claudePermissionMode,
     lingerSec: pick("lingerSec", ENV.lingerSec, (v) => parseIntInRange(v, 0, MAX_LINGER_SEC)) ?? d.lingerSec,
     codexModel: pick("codexModel", null, modelName) ?? d.codexModel,

@@ -9857,6 +9857,7 @@ ${CODEX_ASK_HINT}` };
   if (req.writableRoots?.length && req.sandbox === "workspace-write") {
     common.push("-c", `sandbox_workspace_write.writable_roots=${JSON.stringify(req.writableRoots.map(realFolder))}`);
   }
+  if (req.sandbox === "workspace-write" && req.networkAccess !== void 0) common.push("-c", `sandbox_workspace_write.network_access=${req.networkAccess}`);
   const strict = req.relayApprovals ? ["-c", CODEX_RELAY_APPROVALS, "-c", CODEX_ASK_POLICY] : ["-c", CODEX_STRICT_APPROVALS];
   const args = req.sessionId ? ["exec", "resume", ...common, ...strict, "-c", `sandbox_mode="${req.sandbox}"`, req.sessionId, "-"] : ["exec", ...common, ...strict, "-s", req.sandbox, "-C", req.cwd, "-"];
   const res = await withResumeHint("codex", (o) => parseCodexJsonl(o).threadId, () => runProcess({
@@ -10686,6 +10687,8 @@ var DEFAULT_CONFIG = {
   claudeBin: DEFAULT_CLAUDE_BIN,
   codexBin: DEFAULT_CODEX_BIN,
   codexSandbox: "read-only",
+  codexWorktreeSandbox: null,
+  codexWorkspaceWriteNetworkAccess: null,
   claudePermissionMode: "default",
   lingerSec: DEFAULT_LINGER_SEC,
   codexModel: null,
@@ -10764,6 +10767,8 @@ function loadConfig(home, agent, log, env = process.env) {
     claudeBin: pick2("claudeBin", ENV.claudeBin, str) ?? d.claudeBin,
     codexBin: pick2("codexBin", ENV.codexBin, str) ?? d.codexBin,
     codexSandbox: pick2("codexSandbox", null, (v) => oneOf(v, CODEX_SANDBOXES)) ?? d.codexSandbox,
+    codexWorktreeSandbox: pick2("codexWorktreeSandbox", null, (v) => oneOf(v, CODEX_SANDBOXES)) ?? d.codexWorktreeSandbox,
+    codexWorkspaceWriteNetworkAccess: pick2("codexWorkspaceWriteNetworkAccess", null, parseBool) ?? d.codexWorkspaceWriteNetworkAccess,
     claudePermissionMode: pick2("claudePermissionMode", null, (v) => oneOf(v, CLAUDE_PERMISSION_MODES)) ?? d.claudePermissionMode,
     lingerSec: pick2("lingerSec", ENV.lingerSec, (v) => parseIntInRange(v, 0, MAX_LINGER_SEC)) ?? d.lingerSec,
     codexModel: pick2("codexModel", null, modelName) ?? d.codexModel,
@@ -12093,7 +12098,7 @@ var REMOVE_RETRIES = 3;
 var GIT_TIMEOUT_MS = 18e4;
 var WORKTREE_ADD_TIMEOUT_MS = 6e5;
 var BRANCH_PREFIX = "agent-bridge/";
-var COMMIT_IDENTITY = ["-c", "user.name=agent-bridge", "-c", "user.email=agent-bridge@localhost"];
+var FALLBACK_COMMIT_IDENTITY = { "user.name": "agent-bridge", "user.email": "agent-bridge@localhost" };
 var MAX_DIFFSTAT_CHARS = 4e3;
 function trustArgs(...dirs) {
   return dirs.flatMap((d) => ["-c", `safe.directory=${resolve4(d).replace(/\\/g, "/")}`]);
@@ -12258,7 +12263,14 @@ async function finishWorktree(wt, message, log) {
   const trust = trustArgs(wt.path);
   const skippedFiles = await autoCommitFiles(wt, log);
   const status = await git([...trust, "diff", "--cached", "--name-only", "-z"], wt.path, log);
-  if (status) await git([...trust, ...COMMIT_IDENTITY, "commit", "-q", "--no-verify", "-m", message], wt.path, log);
+  if (status) {
+    const identity = [];
+    for (const [key, fallback] of Object.entries(FALLBACK_COMMIT_IDENTITY)) {
+      const configured = (await git([...trustArgs(wt.repoRoot), "config", "--get", key], wt.repoRoot, log).catch(() => "")).trim();
+      identity.push("-c", `${key}=${configured || fallback}`);
+    }
+    await git([...trust, ...identity, "commit", "-q", "--no-verify", "-m", message], wt.path, log);
+  }
   await unlockWorktree(wt.repoRoot, wt.path, log);
   const current = await git([...trust, "branch", "--show-current"], wt.path, log).catch(() => "") || wt.branch;
   const work = await workBranches(wt, current, log);
@@ -35850,6 +35862,17 @@ function innerCommand(s) {
   const c = m[1].trim();
   return /^'[\s\S]*'$|^"[\s\S]*"$/.test(c) ? c.slice(1, -1) : c;
 }
+function codexTurnSandbox(sandbox, cwd, roots = [], reported, networkAccess) {
+  if (sandbox === "danger-full-access") return { type: "dangerFullAccess" };
+  if (sandbox === "read-only") return { type: "readOnly", networkAccess: false };
+  const inherited = reported?.type === "workspaceWrite" ? reported : {};
+  return {
+    ...inherited,
+    type: "workspaceWrite",
+    writableRoots: [.../* @__PURE__ */ new Set([cwd, ...roots, ...Array.isArray(inherited.writableRoots) ? inherited.writableRoots : []])],
+    ...networkAccess !== void 0 ? { networkAccess } : {}
+  };
+}
 function asExecEvent(kind, item) {
   const type = { agentMessage: "agent_message", commandExecution: "command_execution", fileChange: "file_change", mcpToolCall: "mcp_tool_call", webSearch: "web_search", reasoning: "reasoning" }[item?.type] ?? item?.type;
   return { type: kind, item: { ...item, type } };
@@ -36027,7 +36050,12 @@ ${message}`, text_elements: [] }] });
     write({ method: "initialized", params: {} });
     const approvalPolicy = "on-request";
     const config2 = {};
-    if (req.writableRoots?.length && req.sandbox === "workspace-write") config2.sandbox_workspace_write = { writable_roots: req.writableRoots.map(realFolder) };
+    if (req.sandbox === "workspace-write" && (req.writableRoots?.length || req.networkAccess !== void 0)) {
+      config2.sandbox_workspace_write = {
+        ...req.writableRoots?.length ? { writable_roots: req.writableRoots.map(realFolder) } : {},
+        ...req.networkAccess !== void 0 ? { network_access: req.networkAccess } : {}
+      };
+    }
     if (req.effort) config2.model_reasoning_effort = req.effort;
     const threadParams = { cwd, sandbox: req.sandbox, approvalPolicy, approvalsReviewer: "user", ...Object.keys(config2).length ? { config: config2 } : {}, ...req.model ? { model: req.model } : {} };
     step = req.sessionId ? "thread/resume" : "thread/start";
@@ -36045,7 +36073,15 @@ ${message}`, text_elements: [] }] });
 
 ${CODEX_ASK_HINT}` : req.prompt;
     step = "turn/start";
-    const turn = await boot(request2("turn/start", { threadId, input: [{ type: "text", text: prompt, text_elements: [] }], ...req.effort ? { effort: req.effort } : {} }));
+    const sandboxPolicy = codexTurnSandbox(req.sandbox, cwd, req.writableRoots?.map(realFolder), thread?.sandbox, req.networkAccess);
+    const turn = await boot(request2("turn/start", {
+      threadId,
+      input: [{ type: "text", text: prompt, text_elements: [] }],
+      ...req.model ? { model: req.model } : {},
+      sandboxPolicy,
+      ...req.effort ? { effort: req.effort } : {}
+    }));
+    req.onInfo?.({ model: req.model ?? thread?.model ?? null, permission: req.sandbox, effort: req.effort ?? (typeof thread?.reasoningEffort === "string" ? thread.reasoningEffort : null) });
     turnId = turn?.turn?.id ?? null;
     clearTimeout(startupTimer);
     if (turnId && completions.has(turnId)) finished(completions.get(turnId));
@@ -36080,6 +36116,19 @@ ${CODEX_ASK_HINT}` : req.prompt;
 import { randomUUID as randomUUID5 } from "node:crypto";
 import { closeSync as closeSync3, mkdirSync as mkdirSync9, openSync as openSync3, rmSync as rmSync5, statSync as statSync5 } from "node:fs";
 import { dirname as dirname6 } from "node:path";
+
+// src/mcp/job-settings.ts
+var JOB_SETTING_KEYS = ["model", "effort", "access", "sandbox", "permission_mode", "auto_approve"];
+var EXACT_PERMISSION_KEYS = ["sandbox", "permission_mode", "auto_approve"];
+function changedJobArgs(args, settings) {
+  const next = { ...args };
+  if (settings.access !== void 0) for (const key of EXACT_PERMISSION_KEYS) delete next[key];
+  else if (EXACT_PERMISSION_KEYS.some((key) => settings[key] !== void 0)) delete next.access;
+  for (const key of JOB_SETTING_KEYS) if (settings[key] !== void 0) next[key] = settings[key];
+  return next;
+}
+
+// src/mcp/jobs.ts
 var INTERRUPTED_LISTED_MS = 24 * 60 * 60 * 1e3;
 var NOTE_CONVERSATION_SUFFIX = ":note";
 var QUEUED_FOLLOW_UP_NOTE = "(Your queued follow-up was sent to it; its answer will arrive as another message.)";
@@ -37031,7 +37080,7 @@ var DELEGATION_TARGETS = {
     effortExample: '"low", "medium", "high", "xhigh", "max" or "ultra" (depends on the model)',
     defaultModel: (cfg) => cfg.codexModel,
     schema: { sandbox: external_exports.enum(CODEX_SANDBOXES).optional().describe("Overrides access with an exact Codex sandbox mode") },
-    permissionNote: (cfg) => `Codex runs in the "${cfg.codexSandbox}" sandbox unless you pass access or sandbox.${codexEnvironmentNote()}`,
+    permissionNote: (cfg) => `Codex runs in the "${cfg.codexSandbox}" sandbox unless you pass access or sandbox. Worktree edit runs use "${cfg.codexWorktreeSandbox ?? (cfg.codexSandbox === "read-only" ? "workspace-write" : cfg.codexSandbox)}" (config codexWorktreeSandbox); workspace-write can restrict builds and network access.${codexEnvironmentNote()}`,
     permission: (cfg, a) => a.sandbox ?? (a.access ? CODEX_SANDBOX_FOR[a.access] : cfg.codexSandbox),
     run: async (cfg, base, a) => {
       const sandbox = a.sandbox ?? (a.access ? CODEX_SANDBOX_FOR[a.access] : cfg.codexSandbox);
@@ -37040,7 +37089,7 @@ var DELEGATION_TARGETS = {
         let sessionId = base.sessionId ?? null;
         for (let attempt = 1; ; attempt++) {
           try {
-            return await delegateToCodexAppServer({ ...base, sessionId, bin: cfg.codexBin, sandbox, writableRoots: base.writableRoots, askMode: a.access === "ask", approve: a.access === "ask" && a.relay ? a.relay.onPermission : base.approve });
+            return await delegateToCodexAppServer({ ...base, sessionId, bin: cfg.codexBin, sandbox, networkAccess: cfg.codexWorkspaceWriteNetworkAccess ?? void 0, writableRoots: base.writableRoots, askMode: a.access === "ask", approve: a.access === "ask" && a.relay ? a.relay.onPermission : base.approve });
           } catch (err) {
             if (err instanceof DelegateError && err.startupFailed && attempt === 1 && !base.signal?.aborted) {
               base.log.warn("codex app-server startup timed out; retrying once", { err: err.message });
@@ -37058,6 +37107,7 @@ var DELEGATION_TARGETS = {
         ...base,
         bin: cfg.codexBin,
         sandbox,
+        networkAccess: cfg.codexWorkspaceWriteNetworkAccess ?? void 0,
         ...relay ? { relayApprovals: true, extraEnv: { ...base.extraEnv, ...a.relay.env } } : {}
       });
     }
@@ -37121,8 +37171,19 @@ function isInside(child, parent) {
   const rel = relative2(resolve6(parent), resolve6(child));
   return rel === "" || !rel.startsWith("..") && !isAbsolute3(rel);
 }
-function resumeArgs(a, job, message, sessionId, workdir, worktree) {
+function resumeArgs(a, job, message, sessionId, workdir, worktree, saved) {
+  if (saved) {
+    a = { ...a };
+    for (const key of JOB_SETTING_KEYS) delete a[key];
+    a = { ...a, ...Object.fromEntries(JOB_SETTING_KEYS.filter((key) => saved[key] !== void 0).map((key) => [key, saved[key]])) };
+  }
   return { ...a, _job: job, prompt: message, session_id: sessionId, cwd: workdir ?? a.cwd, worktree: false, _worktree: worktree ?? void 0, access: a.worktree ? a.access ?? "edit" : a.access };
+}
+function worktreeArgs(target, a, cfg, cwd, home) {
+  const worktree = Boolean(a.worktree || a._worktree || isBridgeWorktree(cwd, home));
+  const access = worktree ? a.access ?? "edit" : a.access;
+  const sandbox = target === "codex" && worktree && access === "edit" && a.sandbox === void 0 ? cfg.codexWorktreeSandbox ?? (cfg.codexSandbox === "read-only" ? "workspace-write" : cfg.codexSandbox) : a.sandbox;
+  return { ...a, access, ...sandbox !== void 0 ? { sandbox } : {} };
 }
 async function runDelegate(rc, target, a, signal, onProgress, background, job) {
   const { cfg, log } = rc;
@@ -37130,7 +37191,8 @@ async function runDelegate(rc, target, a, signal, onProgress, background, job) {
   const defaultModel = profile.defaultModel(cfg);
   const dlog = log.child("delegate");
   const cwd = a.cwd || rc.cwd();
-  const access = a.worktree || a._worktree || isBridgeWorktree(cwd, rc.home) ? a.access ?? "edit" : a.access;
+  a = worktreeArgs(target, a, cfg, cwd, rc.home);
+  const access = a.access;
   const wt = a._worktree ?? (a.worktree ? await createWorktree({ cwd, home: rc.home, jobId: randomUUID6().slice(0, 8), log: dlog }) : null);
   const workdir = wt?.cwd ?? cwd;
   const watchChanges = !wt && (access === "edit" || access === "ask" && target === "codex");
@@ -37401,6 +37463,7 @@ async function runJobRunner(specFile) {
         status: "running",
         ...extra,
         updatedAt: Date.now(),
+        model: job.model,
         sessionId: job.sessionId,
         workdir: job.workdir,
         worktree: job.worktree,
@@ -37499,6 +37562,9 @@ async function runJobRunner(specFile) {
     } else if (c.type === "effort") {
       job.args = { ...job.args, effort: c.effort };
       save();
+    } else if (c.type === "settings") {
+      job.args = changedJobArgs(job.args, c.settings);
+      save();
     } else if (c.type === "cancel") {
       log.info("cancelled by the session");
       job.queue = [];
@@ -37547,8 +37613,8 @@ async function runJobRunner(specFile) {
       void post(`${report}
 
 ${QUEUED_FOLLOW_UP_NOTE}`);
-      const effort = typeof job.args?.effort === "string" ? { effort: job.args.effort } : {};
-      args = resumeArgs({ ...spec.base, ...effort }, job.name, queued, job.sessionId, job.workdir, job.worktree);
+      args = resumeArgs(spec.base, job.name, queued, job.sessionId, job.workdir, job.worktree, job.args);
+      if (args.model !== void 0) job.model = args.model;
       job.startedAt = Date.now();
       job.progress = null;
       save();

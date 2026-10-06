@@ -46,6 +46,19 @@ export interface Steering {
 
 type Pending = { resolve: (v: any) => void; reject: (e: Error) => void };
 
+/** Explicit turn policy, keeping Codex's configured network and temporary-folder rules. */
+export function codexTurnSandbox(sandbox: CodexSandbox, cwd: string, roots: string[] = [], reported?: Record<string, unknown>, networkAccess?: boolean): Record<string, unknown> {
+  if (sandbox === "danger-full-access") return { type: "dangerFullAccess" };
+  if (sandbox === "read-only") return { type: "readOnly", networkAccess: false };
+  const inherited = reported?.type === "workspaceWrite" ? reported : {};
+  return {
+    ...inherited,
+    type: "workspaceWrite",
+    writableRoots: [...new Set([cwd, ...roots, ...(Array.isArray(inherited.writableRoots) ? inherited.writableRoots as string[] : [])])],
+    ...(networkAccess !== undefined ? { networkAccess } : {}),
+  };
+}
+
 /** app-server item types, as the exec-style events the progress describer knows. */
 function asExecEvent(kind: "item.started" | "item.completed", item: any): unknown {
   const type =
@@ -55,7 +68,7 @@ function asExecEvent(kind: "item.started" | "item.completed", item: any): unknow
 }
 
 export async function delegateToCodexAppServer(
-  req: DelegateRequest & { bin: string; sandbox: CodexSandbox; askMode?: boolean; writableRoots?: string[]; startupTimeoutMs?: number },
+  req: DelegateRequest & { bin: string; sandbox: CodexSandbox; askMode?: boolean; writableRoots?: string[]; networkAccess?: boolean; startupTimeoutMs?: number },
 ): Promise<DelegateResult> {
   checkDepth();
   // See delegateToCodex: the Windows sandbox user does not see drive mappings.
@@ -241,7 +254,12 @@ export async function delegateToCodexAppServer(
     const approvalPolicy = "on-request";
     // Extra writable folders for workspace-write (a worktree's git admin dir lives in the main repo).
     const config: Record<string, unknown> = {};
-    if (req.writableRoots?.length && req.sandbox === "workspace-write") config.sandbox_workspace_write = { writable_roots: req.writableRoots.map(realFolder) };
+    if (req.sandbox === "workspace-write" && (req.writableRoots?.length || req.networkAccess !== undefined)) {
+      config.sandbox_workspace_write = {
+        ...(req.writableRoots?.length ? { writable_roots: req.writableRoots.map(realFolder) } : {}),
+        ...(req.networkAccess !== undefined ? { network_access: req.networkAccess } : {}),
+      };
+    }
     if (req.effort) config.model_reasoning_effort = req.effort;
     const threadParams = { cwd, sandbox: req.sandbox, approvalPolicy, approvalsReviewer: "user", ...(Object.keys(config).length ? { config } : {}), ...(req.model ? { model: req.model } : {}) };
     step = req.sessionId ? "thread/resume" : "thread/start";
@@ -260,7 +278,15 @@ export async function delegateToCodexAppServer(
       });
     const prompt = req.askMode ? `${req.prompt}\n\n${CODEX_ASK_HINT}` : req.prompt;
     step = "turn/start";
-    const turn = await boot(request("turn/start", { threadId, input: [{ type: "text", text: prompt, text_elements: [] }], ...(req.effort ? { effort: req.effort } : {}) }));
+    const sandboxPolicy = codexTurnSandbox(req.sandbox, cwd, req.writableRoots?.map(realFolder), thread?.sandbox, req.networkAccess);
+    const turn = await boot(request("turn/start", {
+      threadId,
+      input: [{ type: "text", text: prompt, text_elements: [] }],
+      ...(req.model ? { model: req.model } : {}),
+      sandboxPolicy,
+      ...(req.effort ? { effort: req.effort } : {}),
+    }));
+    req.onInfo?.({ model: req.model ?? thread?.model ?? null, permission: req.sandbox, effort: req.effort ?? (typeof thread?.reasoningEffort === "string" ? thread.reasoningEffort : null) });
     turnId = turn?.turn?.id ?? null;
     clearTimeout(startupTimer);
     if (turnId && completions.has(turnId)) finished(completions.get(turnId)!);

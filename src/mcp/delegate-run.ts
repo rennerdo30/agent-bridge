@@ -16,6 +16,7 @@ import { changedFiles, createWorktree, finishWorktree, gitChangeSnapshot, gitDir
 import { formatUsage } from "./format.js";
 import type { Job, RunResult } from "./jobs.js";
 import { DELEGATION_TARGETS, supportsAsk, type Access, type RelayWiring, type TargetArgs } from "./targets.js";
+import { JOB_SETTING_KEYS } from "./job-settings.js";
 
 /** Added to a subagent's task when it can report progress. */
 const PROGRESS_HINT =
@@ -67,9 +68,24 @@ export function isInside(child: string, parent: string): boolean {
   return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
 }
 
-/** The arguments of a follow-up turn: same agent, model and access, in the folder (or worktree) the job used. */
-export function resumeArgs(a: DelegateArgs, job: string, message: string, sessionId: string, workdir: string | null, worktree: Worktree | null): DelegateArgs {
+/** Follow-up arguments: saved settings in the session and folder (or worktree) the job used. */
+export function resumeArgs(a: DelegateArgs, job: string, message: string, sessionId: string, workdir: string | null, worktree: Worktree | null, saved?: Record<string, unknown>): DelegateArgs {
+  if (saved) {
+    a = { ...a };
+    for (const key of JOB_SETTING_KEYS) delete a[key];
+    a = { ...a, ...Object.fromEntries(JOB_SETTING_KEYS.filter((key) => saved[key] !== undefined).map((key) => [key, saved[key]])) };
+  }
   return { ...a, _job: job, prompt: message, session_id: sessionId, cwd: workdir ?? a.cwd, worktree: false, _worktree: worktree ?? undefined, access: a.worktree ? (a.access ?? "edit") : a.access };
+}
+
+/** Plain jobs stay read-only; worktree edit jobs honor their separate default and exact overrides. */
+export function worktreeArgs(target: CodingAgent, a: DelegateArgs, cfg: BridgeConfig, cwd: string, home: string): DelegateArgs {
+  const worktree = Boolean(a.worktree || a._worktree || isBridgeWorktree(cwd, home));
+  const access = worktree ? (a.access ?? "edit") : a.access;
+  const sandbox = target === "codex" && worktree && access === "edit" && a.sandbox === undefined
+    ? cfg.codexWorktreeSandbox ?? (cfg.codexSandbox === "read-only" ? "workspace-write" : cfg.codexSandbox)
+    : a.sandbox;
+  return { ...a, access, ...(sandbox !== undefined ? { sandbox } : {}) };
 }
 
 /** Run the delegate; returns its result plus a report of what it changed. */
@@ -88,7 +104,8 @@ export async function runDelegate(
   const dlog = log.child("delegate");
   const cwd = a.cwd || rc.cwd();
   // Worktrees (new, continued, or an agent-bridge worktree given as cwd) exist to be edited in: edit by default.
-  const access: Access | undefined = a.worktree || a._worktree || isBridgeWorktree(cwd, rc.home) ? (a.access ?? "edit") : a.access;
+  a = worktreeArgs(target, a, cfg, cwd, rc.home);
+  const access: Access | undefined = a.access;
   // A follow-up to a worktree job keeps working (and committing) in that worktree.
   const wt = a._worktree ?? (a.worktree ? await createWorktree({ cwd, home: rc.home, jobId: randomUUID().slice(0, 8), log: dlog }) : null);
   const workdir = wt?.cwd ?? cwd;
@@ -175,7 +192,7 @@ export async function runDelegate(
         model: a.model ?? defaultModel ?? null,
         effort: a.effort ?? cfg.effort[target] ?? defaultEffort(target, a.model ?? defaultModel ?? null),
         access: access ?? "default",
-      permission: profile.permission(cfg, { ...a, access }),
+        permission: profile.permission(cfg, { ...a, access }),
         workdir,
         continues: a.session_id ?? null,
       },
