@@ -8,6 +8,7 @@ import { CODEX_ASK_HINT } from "./delegate.js";
 import type { PermissionDecision } from "./relay.js";
 import { FinalAnswers } from "./final-answers.js";
 import { codexDriveMappings, codexPathPrompt } from "./codex-paths.js";
+import { codexExecutionPrompt } from "./codex-env.js";
 
 /**
  * Codex subagents through `codex app-server` (JSON-RPC over stdio) instead of `codex exec`. The same
@@ -87,11 +88,14 @@ export async function delegateToCodexAppServer(
 ): Promise<DelegateResult> {
   checkDepth(req.maxDelegateDepth);
   const mappings = codexDriveMappings(`${req.cwd}\n${req.prompt}`);
-  req = { ...req, prompt: codexPathPrompt(req.prompt, mappings) };
+  req = { ...req, prompt: codexExecutionPrompt(codexPathPrompt(req.prompt, mappings), req.sandbox) };
   // See delegateToCodex: the Windows sandbox user does not see drive mappings.
   const cwd = realFolder(req.cwd);
   const env = childEnv(req.extraEnv);
-  const { resolved, args, needsShell } = resolveCommand(req.bin, ["app-server"], env, req.log);
+  // Full access also applies to server-level commands that do not supply a thread/turn policy.
+  // Do not change windows.sandbox: unrestricted execution already bypasses that backend.
+  const startupArgs = req.sandbox === "danger-full-access" ? ["-c", 'sandbox_mode="danger-full-access"'] : [];
+  const { resolved, args, needsShell } = resolveCommand(req.bin, ["app-server", ...startupArgs], env, req.log);
   req.log.debug("starting codex app-server", { bin: resolved, cwd });
   const child = spawn(resolved, args, { cwd, env: { ...env, PWD: cwd }, shell: needsShell, windowsHide: true, stdio: ["pipe", "pipe", "pipe"], detached: process.platform !== "win32" });
   trackChild(child);

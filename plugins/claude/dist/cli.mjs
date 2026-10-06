@@ -32012,23 +32012,50 @@ function codexSubagentConfig(count = DEFAULT_CODEX_SUBAGENTS) {
   };
 }
 
+// src/core/codex-env.ts
+import { readFileSync as readFileSync12 } from "node:fs";
+import { homedir as homedir3 } from "node:os";
+import { join as join22 } from "node:path";
+function codexWindowsSandbox(home = homedir3(), platform = process.platform) {
+  if (platform !== "win32") return null;
+  let toml;
+  try {
+    toml = readFileSync12(join22(home, ".codex", "config.toml"), "utf8");
+  } catch {
+    return null;
+  }
+  const table = /^\[windows\]\s*$([\s\S]*?)(?=^\[|(?![\s\S]))/m.exec(toml)?.[1] ?? "";
+  return /^\s*sandbox\s*=\s*"([^"]+)"/m.exec(table)?.[1] ?? null;
+}
+function codexEnvironmentNote(home = homedir3(), platform = process.platform) {
+  if (platform !== "win32") return "";
+  const elevated = codexWindowsSandbox(home, platform) === "elevated";
+  return ` On Windows, danger-full-access executes as the bridge process user, normally the logged-in user, even when windows.sandbox is elevated. Sandboxed jobs may lack USB/adb or user-profile access; use danger-full-access when authorized, or a claude/opencode subagent for device work. An empty adb list does not prove no device is connected: verify whoami and the adb executable/server first. If running as the sandbox user, report "can't see devices from the sandbox".` + (elevated ? ` This machine uses a separate Windows sandbox user for sandboxed commands (elevated sandbox), which cannot read the user's profile. Tools installed there, such as Python under AppData\\Local\\Programs or user-level pip/npm installs, are unavailable to that user ("python is not recognized"). For sandboxed work that needs them, point Codex to an interpreter inside the repository (e.g. a .venv in the worktree), or use a claude/opencode subagent.` : "");
+}
+function codexExecutionPrompt(prompt, sandbox, platform = process.platform) {
+  if (platform !== "win32") return prompt;
+  return `${prompt}
+
+(Windows device probes: ${sandbox === "danger-full-access" ? "Full-access commands should run as the bridge process user; verify with whoami before device work." : "Sandboxed commands may run as a separate user without USB/adb or user-profile access; verify with whoami."} An empty adb devices result is not proof that no device is connected. Check the adb executable and server context. If the command runs as the sandbox user, report "can't see devices from the sandbox" and ask the supervisor to use an authorized full-access job or a claude/opencode subagent for device work. Do not change permissions or switch users yourself.)`;
+}
+
 // src/core/delegate.ts
 import { spawn } from "node:child_process";
-import { existsSync as existsSync13, readFileSync as readFileSync14, realpathSync as realpathSync4 } from "node:fs";
-import { delimiter, dirname as dirname11, extname, isAbsolute as isAbsolute4, join as join24, win32 } from "node:path";
+import { existsSync as existsSync13, readFileSync as readFileSync15, realpathSync as realpathSync4 } from "node:fs";
+import { delimiter, dirname as dirname11, extname, isAbsolute as isAbsolute4, join as join25, win32 } from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 
 // src/core/claude-mcp.ts
-import { readFileSync as readFileSync12 } from "node:fs";
-import { homedir as homedir3 } from "node:os";
-import { join as join22, resolve as resolve8 } from "node:path";
+import { readFileSync as readFileSync13 } from "node:fs";
+import { homedir as homedir4 } from "node:os";
+import { join as join23, resolve as resolve8 } from "node:path";
 var OWN_SERVER_RULE = "mcp__plugin_agent-bridge_bridge";
 var ACCOUNT_CONNECTORS_RULE = "mcp__claude_ai_*";
 var BUILT_IN_RULES = ["mcp__claude-in-chrome"];
 function readJson(path) {
   try {
-    return JSON.parse(readFileSync12(path, "utf8"));
+    return JSON.parse(readFileSync13(path, "utf8"));
   } catch {
     return null;
   }
@@ -32037,31 +32064,31 @@ function serverNames(mcp) {
   return mcp && typeof mcp === "object" ? Object.keys(mcp) : [];
 }
 function pluginServers(home) {
-  const installed = readJson(join22(home, ".claude", "plugins", "installed_plugins.json"));
+  const installed = readJson(join23(home, ".claude", "plugins", "installed_plugins.json"));
   const out2 = [];
   for (const [key2, entries] of Object.entries(installed?.plugins ?? {})) {
     const plugin = key2.split("@")[0];
     for (const e of Array.isArray(entries) ? entries : [entries]) {
       const root = e?.installPath;
       if (typeof root !== "string") continue;
-      const manifest = readJson(join22(root, ".claude-plugin", "plugin.json"));
+      const manifest = readJson(join23(root, ".claude-plugin", "plugin.json"));
       const declared = manifest?.mcpServers;
       const servers = typeof declared === "string" ? readJson(resolve8(root, declared))?.mcpServers ?? readJson(resolve8(root, declared)) : declared;
-      const names = /* @__PURE__ */ new Set([...serverNames(servers), ...serverNames(readJson(join22(root, ".mcp.json"))?.mcpServers)]);
+      const names = /* @__PURE__ */ new Set([...serverNames(servers), ...serverNames(readJson(join23(root, ".mcp.json"))?.mcpServers)]);
       for (const s of names) out2.push(`mcp__plugin_${plugin}_${s}`);
     }
   }
   return out2;
 }
-function claudeMcpDenyRules(cwd, home = homedir3()) {
-  const config2 = readJson(join22(home, ".claude.json"));
+function claudeMcpDenyRules(cwd, home = homedir4()) {
+  const config2 = readJson(join23(home, ".claude.json"));
   const norm = (p) => resolve8(p).replace(/\\/g, "/").toLowerCase();
   const project = Object.entries(config2?.projects ?? {}).find(([p]) => norm(p) === norm(cwd))?.[1];
   const names = [
     ...pluginServers(home),
     ...serverNames(config2?.mcpServers).map((s) => `mcp__${s}`),
     ...serverNames(project?.mcpServers).map((s) => `mcp__${s}`),
-    ...serverNames(readJson(join22(cwd, ".mcp.json"))?.mcpServers).map((s) => `mcp__${s}`),
+    ...serverNames(readJson(join23(cwd, ".mcp.json"))?.mcpServers).map((s) => `mcp__${s}`),
     ACCOUNT_CONNECTORS_RULE,
     ...BUILT_IN_RULES
   ];
@@ -32345,8 +32372,8 @@ function progressLineHandler(agent, onProgress) {
 
 // src/core/relay.ts
 import { randomBytes as randomBytes5, randomUUID as randomUUID11 } from "node:crypto";
-import { mkdirSync as mkdirSync13, readFileSync as readFileSync13, readdirSync as readdirSync11, writeFileSync as writeFileSync7 } from "node:fs";
-import { join as join23 } from "node:path";
+import { mkdirSync as mkdirSync13, readFileSync as readFileSync14, readdirSync as readdirSync11, writeFileSync as writeFileSync7 } from "node:fs";
+import { join as join24 } from "node:path";
 import { createServer as createServer3 } from "node:http";
 var RELAY_URL_ENV = "AGENT_BRIDGE_RELAY_URL";
 var RELAY_TOKEN_ENV = "AGENT_BRIDGE_RELAY_TOKEN";
@@ -32445,8 +32472,8 @@ var MAX_APPROVAL_REASON_CHARS = 4e3;
 async function publishApproval(home, approval, answer) {
   if (!APPROVAL_ID.test(approval.id)) throw new Error("invalid approval id");
   const token = randomBytes5(SECRET_BYTES2).toString("hex");
-  const dir = join23(home, APPROVALS_DIR);
-  const file2 = join23(dir, `${approval.id}.json`);
+  const dir = join24(home, APPROVALS_DIR);
+  const file2 = join24(dir, `${approval.id}.json`);
   const server = createServer3((req, res) => {
     const reply2 = (status, body) => {
       res.writeHead(status, { "content-type": "application/json", "cache-control": "no-store" });
@@ -32490,7 +32517,7 @@ async function publishApproval(home, approval, answer) {
 function readApproval(home, id) {
   if (!APPROVAL_ID.test(id)) return null;
   try {
-    const r = JSON.parse(readFileSync13(join23(home, APPROVALS_DIR, `${id}.json`), "utf8"));
+    const r = JSON.parse(readFileSync14(join24(home, APPROVALS_DIR, `${id}.json`), "utf8"));
     if (r.id !== id || !Number.isInteger(r.pid) || r.pid < 1 || !pidAlive(r.pid) || !Number.isSafeInteger(r.deadline) || r.deadline <= Date.now() || !Number.isSafeInteger(r.askedAt) || r.deadline <= r.askedAt || !Number.isInteger(r.port) || r.port < 1 || r.port > MAX_PORT2 || typeof r.token !== "string" || !r.token) return null;
     if (![r.owner, r.job, r.agent, r.tool, r.command, r.reason].every((value) => typeof value === "string")) return null;
     return r;
@@ -32501,7 +32528,7 @@ function readApproval(home, id) {
 function listPendingApprovals(home) {
   let files2;
   try {
-    files2 = readdirSync11(join23(home, APPROVALS_DIR));
+    files2 = readdirSync11(join24(home, APPROVALS_DIR));
   } catch {
     return [];
   }
@@ -32616,11 +32643,11 @@ function resolveBinary(bin, env = process.env, platform = process.platform) {
   }
   for (const dir of (env.PATH ?? env.Path ?? "").split(delimiter)) {
     if (!dir) continue;
-    for (const c of candidates(join24(dir, bin))) if (existsSync13(c)) return c;
+    for (const c of candidates(join25(dir, bin))) if (existsSync13(c)) return c;
   }
   return null;
 }
-function unwrapNpmShim(shimPath, readFile2 = (p) => readFileSync14(p, "utf8")) {
+function unwrapNpmShim(shimPath, readFile2 = (p) => readFileSync15(p, "utf8")) {
   let text;
   try {
     text = readFile2(shimPath);
@@ -32896,8 +32923,8 @@ function realFolder(dir) {
 }
 async function delegateToCodex(req) {
   checkDepth(req.maxDelegateDepth);
-  req = { ...req, cwd: realFolder(req.cwd), prompt: codexPathPrompt(req.prompt, codexDriveMappings(`${req.cwd}
-${req.prompt}`)) };
+  req = { ...req, cwd: realFolder(req.cwd), prompt: codexExecutionPrompt(codexPathPrompt(req.prompt, codexDriveMappings(`${req.cwd}
+${req.prompt}`)), req.sandbox) };
   if (req.relayApprovals && req.sandbox !== "danger-full-access") req = { ...req, prompt: `${req.prompt}
 
 ${CODEX_ASK_HINT}` };
@@ -32958,7 +32985,7 @@ function isClaudeReadOnly(mode) {
 }
 var CLAUDE_READ_ONLY_MODES = /* @__PURE__ */ new Set(["default", "manual", "plan"]);
 function bundledCli() {
-  const cli = join24(dirname11(fileURLToPath(import.meta.url)), "cli.mjs");
+  const cli = join25(dirname11(fileURLToPath(import.meta.url)), "cli.mjs");
   return existsSync13(cli) ? cli : null;
 }
 function spawnsWithoutShell(bin, log) {
@@ -33250,7 +33277,7 @@ ${tail}` : ""}`;
 
 // src/core/config.ts
 import { unwatchFile, watchFile } from "node:fs";
-import { basename as basename7, join as join25 } from "node:path";
+import { basename as basename7, join as join26 } from "node:path";
 var DELIVERY_MODES = ["auto", "channel", "hooks"];
 var CODEX_SANDBOXES = ["read-only", "workspace-write", "danger-full-access"];
 var CODEX_APPROVALS_REVIEWERS = ["user", "auto_review"];
@@ -33363,14 +33390,14 @@ function toolPatterns(v) {
   return list.map((x) => x.trim()).filter(Boolean);
 }
 function saveConfigValue(home, key2, value) {
-  const path = join25(home, CONFIG_FILE_NAME);
+  const path = join26(home, CONFIG_FILE_NAME);
   const previous = readJsonStore(path);
   const file2 = isRecord(previous) ? previous : {};
   writeJsonStore(path, { ...file2, [key2]: value }, previous);
 }
 function loadConfig(home, agent, log, env = process.env) {
   let file2 = {};
-  const path = join25(home, CONFIG_FILE_NAME);
+  const path = join26(home, CONFIG_FILE_NAME);
   try {
     file2 = readJsonStore(path, log) ?? {};
     log.debug("config file loaded", { path });
@@ -33728,10 +33755,11 @@ async function delegateToCodexAppServer(req) {
   checkDepth(req.maxDelegateDepth);
   const mappings = codexDriveMappings(`${req.cwd}
 ${req.prompt}`);
-  req = { ...req, prompt: codexPathPrompt(req.prompt, mappings) };
+  req = { ...req, prompt: codexExecutionPrompt(codexPathPrompt(req.prompt, mappings), req.sandbox) };
   const cwd = realFolder(req.cwd);
   const env = childEnv(req.extraEnv);
-  const { resolved, args, needsShell } = resolveCommand(req.bin, ["app-server"], env, req.log);
+  const startupArgs = req.sandbox === "danger-full-access" ? ["-c", 'sandbox_mode="danger-full-access"'] : [];
+  const { resolved, args, needsShell } = resolveCommand(req.bin, ["app-server", ...startupArgs], env, req.log);
   req.log.debug("starting codex app-server", { bin: resolved, cwd });
   const child = spawn3(resolved, args, { cwd, env: { ...env, PWD: cwd }, shell: needsShell, windowsHide: true, stdio: ["pipe", "pipe", "pipe"], detached: process.platform !== "win32" });
   trackChild(child);
@@ -34056,26 +34084,6 @@ ${approvalsReviewer === "auto_review" ? AUTO_REVIEW_ASK_HINT : CODEX_ASK_HINT}` 
     child.stdin.end();
     await killTree(child);
   }
-}
-
-// src/core/codex-env.ts
-import { readFileSync as readFileSync15 } from "node:fs";
-import { homedir as homedir4 } from "node:os";
-import { join as join26 } from "node:path";
-function codexWindowsSandbox(home = homedir4(), platform = process.platform) {
-  if (platform !== "win32") return null;
-  let toml;
-  try {
-    toml = readFileSync15(join26(home, ".codex", "config.toml"), "utf8");
-  } catch {
-    return null;
-  }
-  const table = /^\[windows\]\s*$([\s\S]*?)(?=^\[|(?![\s\S]))/m.exec(toml)?.[1] ?? "";
-  return /^\s*sandbox\s*=\s*"([^"]+)"/m.exec(table)?.[1] ?? null;
-}
-function codexEnvironmentNote(home = homedir4(), platform = process.platform) {
-  if (codexWindowsSandbox(home, platform) !== "elevated") return "";
-  return ` Note for this machine: Codex runs commands as a separate Windows sandbox user (elevated sandbox), which cannot read the user's profile. Tools installed there, such as Python under AppData\\Local\\Programs or user-level pip/npm installs, are missing in Codex subagents ("python is not recognized"). For work that needs them, point Codex to an interpreter inside the repository (e.g. a .venv in the worktree), or use a claude/opencode subagent.`;
 }
 
 // src/mcp/targets.ts
