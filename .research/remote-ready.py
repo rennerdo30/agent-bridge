@@ -1,0 +1,2 @@
+from pathlib import Path
+p=Path('test/remote-jobs.test.ts');s=p.read_text().replace('const local = await session(localHome, "codex-supervisor", agent); await session(remoteHome, "codex-remote");','const local = await session(localHome, "codex-supervisor", agent);\n  const remote = await session(remoteHome, "codex-remote");\n  if (agent === "claude") {\n    await local.callTool({ name: "peers", arguments: {} });\n    await remote.callTool({ name: "peers", arguments: {} });\n  }');p.write_text(s,newline='\n')
