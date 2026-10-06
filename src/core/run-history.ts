@@ -81,7 +81,12 @@ export function readHistoryJobs(home: string): Map<string, Record<string, unknow
 }
 
 export interface RunPage<T> { runs: T[]; next: string | null; total: number }
-export function pageRuns<T extends { name: string; startedAt: number }>(runs: T[], before: string | null, limit: number): RunPage<T> {
+/**
+ * A page of runs, newest first. The first page also carries every run still running, however old, so a
+ * long job never drops out of the dashboard behind newer finished ones (later pages may repeat it; the page
+ * dedupes by name).
+ */
+export function pageRuns<T extends { name: string; startedAt: number; status?: string }>(runs: T[], before: string | null, limit: number): RunPage<T> {
   let at: number | undefined, name: string | undefined;
   if (before !== null) {
     const match = /^(\d+)(?::([\w.-]+))?$/.exec(before);
@@ -91,5 +96,6 @@ export function pageRuns<T extends { name: string; startedAt: number }>(runs: T[
   const sorted = [...runs].sort((a, b) => b.startedAt - a.startedAt || (a.name < b.name ? 1 : a.name > b.name ? -1 : 0));
   const older = sorted.filter((run) => at === undefined || run.startedAt < at || (name !== undefined && run.startedAt === at && run.name < name));
   const page = older.slice(0, limit), last = page.at(-1);
-  return { runs: page, next: older.length > page.length && last ? `${last.startedAt}:${last.name}` : null, total: runs.length };
+  const running = before === null ? older.slice(limit).filter((run) => run.status === "running") : [];
+  return { runs: [...page, ...running], next: older.length > page.length && last ? `${last.startedAt}:${last.name}` : null, total: runs.length };
 }

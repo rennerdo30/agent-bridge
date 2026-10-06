@@ -7798,7 +7798,8 @@ function pageRuns(runs, before, limit) {
   const sorted = [...runs].sort((a, b) => b.startedAt - a.startedAt || (a.name < b.name ? 1 : a.name > b.name ? -1 : 0));
   const older = sorted.filter((run) => at === void 0 || run.startedAt < at || name2 !== void 0 && run.startedAt === at && run.name < name2);
   const page = older.slice(0, limit), last = page.at(-1);
-  return { runs: page, next: older.length > page.length && last ? `${last.startedAt}:${last.name}` : null, total: runs.length };
+  const running = before === null ? older.slice(limit).filter((run) => run.status === "running") : [];
+  return { runs: [...page, ...running], next: older.length > page.length && last ? `${last.startedAt}:${last.name}` : null, total: runs.length };
 }
 
 // src/core/paths.ts

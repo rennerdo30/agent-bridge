@@ -150,3 +150,17 @@ it("timestamp-only cursors remain supported while composite cursors preserve equ
   expect(pageRuns(runs, "100", 5).runs).toEqual([runs[2]]);
   expect(pageRuns(runs, "100:b", 5).runs).toEqual([runs[1], runs[2]]);
 });
+
+it("keeps an old running job on the first page behind newer finished ones (AB-112)", () => {
+  const runs = [
+    { name: "new", startedAt: 300, status: "done" },
+    { name: "mid", startedAt: 200, status: "done" },
+    { name: "old-running", startedAt: 100, status: "running" },
+    { name: "old-done", startedAt: 50, status: "done" },
+  ];
+  const first = pageRuns(runs, null, 2);
+  expect(first.runs.map((r) => r.name)).toEqual(["new", "mid", "old-running"]);
+  expect(first.next).toBe("200:mid");
+  // Later pages are unchanged (the page dedupes the repeat by name).
+  expect(pageRuns(runs, first.next, 5).runs.map((r) => r.name)).toEqual(["old-running", "old-done"]);
+});
