@@ -47232,7 +47232,13 @@ var Broker = class {
       const p = c.peer;
       const previous = stored.find((s) => s.id === p.id);
       if (previous) peers.delete(previous.name);
-      peers.set(p.name, { name: p.name, title: p.jobTitle ?? "", agent: p.jobAgent, status: "running" });
+      peers.set(p.name, {
+        name: p.name,
+        title: p.jobTitle ?? "",
+        agent: p.jobAgent,
+        status: previous?.status ?? "running",
+        ...previous?.finishedAt !== void 0 ? { finishedAt: previous.finishedAt } : {}
+      });
     }
     return [...peers.values()];
   }
@@ -47312,7 +47318,7 @@ ${message.body}`
       const supervisor = this.connByName(owner);
       if (supervisor) this.emit(supervisor, "message", note);
     }
-    if (stored && stored.status !== "running" && !target) {
+    if (stored && stored.status !== "running") {
       result.finishedRecipient = {
         name: stored.name,
         status: stored.status,
@@ -52749,6 +52755,13 @@ function changeSettings(node2, jobs, ref, input2, log) {
   return { outcome: "saved", text: `Saved settings for ${job.name}: ${list}. ${when}`, isError: false };
 }
 
+// src/mcp/job-title.ts
+function deriveJobTitle(prompt, maxChars = 80) {
+  const line = prompt.split(/\r?\n/).find((line2) => line2.trim())?.trim() ?? "";
+  const title = line.replace(/^(?:#{1,6}\s+|[-*]\s+)/, "").split(/\s+/).slice(0, 7).join(" ");
+  return title.slice(0, maxChars).trim() || "Background task";
+}
+
 // src/mcp/server.ts
 var CHANNEL_NOTIFICATION = "notifications/claude/channel";
 var OPENCODE_NOTIFICATION = "notifications/agent-bridge/message";
@@ -53491,9 +53504,11 @@ ${res.text || t("delegate.empty")}`, res.isError);
       {
         title: `Spawn ${target} subagent`,
         description: `Start ${profile.title} as a background subagent and return immediately with a job id. Keep working meanwhile; the result arrives as a message from "${target}-job-<id>" (injected automatically, or use wait_for_message with from=<job name>). Several subagents can run in parallel (max ${cfg.maxJobs}). ` + profile.permissionNote(cfg),
-        inputSchema: schema
+        inputSchema: { ...schema, title: schema.title.optional().describe("A short title, 3-7 words. Optional: if omitted, derived from the prompt's first nonempty line and noted in the result.") }
       },
-      guarded(spawnName, async (a) => {
+      guarded(spawnName, async (input2) => {
+        const derivedTitle = input2.title === void 0;
+        let a = { ...input2, title: input2.title ?? deriveJobTitle(input2.prompt, MAX_TITLE_CHARS3) };
         if (target === "codex" && !a.host) a = { ...a, native_subagents: a.native_subagents ?? cfg.codexSubagents };
         if (a.host && (!a.cwd || a.send_to?.length)) throw new BridgeError("bad_request", "Remote jobs require an absolute remote cwd; send_to is local-only.");
         if (a.host) {
@@ -53510,7 +53525,8 @@ ${res.text || t("delegate.empty")}`, res.isError);
         const exact = a.sandbox !== void 0 || a.permission_mode !== void 0 || a.auto_approve !== void 0;
         const note = exact ? "" : `
 ${access === "edit" ? t("jobs.accessEdit") : access === "ask" ? t("jobs.accessAsk") : t("jobs.accessRead")}`;
-        return text(`${t("jobs.started", { name: job.name })}${note}`);
+        return text(`${t("jobs.started", { name: job.name })}${note}${derivedTitle ? `
+Title derived from prompt: "${a.title}".` : ""}`);
       })
     );
   }
