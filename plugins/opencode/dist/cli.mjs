@@ -40366,7 +40366,14 @@ function renderSessionList(x, selKey) {
   const nested = (list) => {
     const byJob = new Set(list.map((g) => g.job).filter(Boolean));
     const kids = (g) => list.filter((c) => c.parentJob && c.parentJob === g.job);
-    const row = (g, depth) => (depth ? groupRow(g, g.key === selKey, false).replace('class="', 'class="nest' + Math.min(depth, 2) + " ") : groupRow(g, g.key === selKey, false)) + kids(g).map((c) => row(c, depth + 1)).join("");
+    const indent = (html, depth) => (depth ? html.replace('class="', 'class="nest' + Math.min(depth, 2) + " ") : html);
+    // The subagent's own CLI subagents (e.g. a Codex job's native helpers) hang beneath it, like nested jobs.
+    const ownKids = (g, depth) => {
+      if (!g.job) return "";
+      if (g.status === "running" || g.key === selKey) void loadJobChildren(g.job);
+      return ((jobChildren.get(g.job) || {}).list || []).map((s) => indent(jobChildRow(g, s, selKey), depth)).join("");
+    };
+    const row = (g, depth) => indent(groupRow(g, g.key === selKey, false), depth) + ownKids(g, depth + 1) + kids(g).map((c) => row(c, depth + 1)).join("");
     return list.filter((g) => !g.parentJob || !byJob.has(g.parentJob)).map((g) => row(g, 0)).join("");
   };
   const bridgeRows = x.groups.length
@@ -41350,8 +41357,21 @@ async function loadJobChildren(job) {
   jobChildren.set(job, { at: Date.now(), list: c ? c.list : [] });
   try {
     const r = await fetch("/api/jobs/" + encodeURIComponent(job) + "/subagents");
-    if (r.ok) { jobChildren.set(job, { at: Date.now(), list: (await r.json()).subagents || [] }); lastChat = ""; }
+    if (r.ok) {
+      const list = (await r.json()).subagents || [];
+      const before = JSON.stringify((c || {}).list || []);
+      jobChildren.set(job, { at: Date.now(), list });
+      lastChat = "";
+      if (model && JSON.stringify(list) !== before) renderSide();
+    }
   } catch {}
+}
+/** A row for one of a subagent's own CLI subagents in the session column, beneath that subagent. */
+function jobChildRow(g, s, selKey) {
+  const key = JOB_CHILD_PREFIX + g.job + "|" + s.id;
+  return '<a href="' + href(g.owner, key) + '" class="' + (key === selKey ? "sel" : "") + '">' + av(g.agent) +
+    '<div style="min-width:0"><div class="line1"><b class="ell">' + esc(s.title || "subagent") + '</b><span class="chip own">own</span></div><div class="task">' + esc(g.agent + " subagent of " + (g.title || g.job) + " \xB7 read-only") + "</div></div>" +
+    '<div class="side"><span>' + ago(s.updatedAt) + "</span></div></a>";
 }
 function jobChildrenHtml(g) {
   const list = g.job && jobChildren.get(g.job) ? jobChildren.get(g.job).list : [];
