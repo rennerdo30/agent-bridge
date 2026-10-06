@@ -23,6 +23,7 @@ import { DASHBOARD_JOB_CONVERSATION } from "./job-control.js";
 import type { NetworkConfig } from "../network/config.js";
 import type { NetworkStatus } from "../network/link.js";
 import type { TransferResult } from "../network/files.js";
+import type { TransferStarted } from "../network/transfers.js";
 import type { DecideArgs, DecisionsArgs, OwnerDecision } from "./decisions.js";
 
 export interface BridgeNodeOptions {
@@ -415,8 +416,16 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
     return this.withClient((c) => c.request("networkStatus", {}));
   }
 
-  sendFiles(to: string, paths: string[]): Promise<TransferResult> {
+  sendFiles(to: string, paths: string[]): Promise<TransferResult | TransferStarted> {
     return this.withClient((c) => c.request("sendFiles", { to, paths }));
+  }
+
+  fetchFiles(from: string, paths: string[]): Promise<TransferStarted> {
+    return this.withClient((c) => c.request("fetchFiles", { from, paths }));
+  }
+
+  cancelTransfer(id: string): Promise<{ id: string; cancelled: boolean }> {
+    return this.withClient((c) => c.request("cancelTransfer", { id }));
   }
 
   /** Locally buffered unread messages, oldest first. */

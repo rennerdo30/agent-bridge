@@ -36,7 +36,8 @@ import { isJobSendTarget, MAX_JOB_SEND_TARGETS } from "./job-messaging.js";
 import { NetworkService, type NetworkStatus } from "../network/link.js";
 import { writeNetworkConfig, type NetworkConfig } from "../network/config.js";
 import { z } from "zod";
-import { collectTransfer, MAX_TRANSFER_ENTRIES, receiveTransfer, type TransferResult } from "../network/files.js";
+import { collectTransfer, receiveTransfer, type TransferResult } from "../network/files.js";
+import { cancelStoredTransfer, MAX_STREAM_ENTRIES, readTransferHistory, type TransferStarted } from "../network/transfers.js";
 import { MAX_NETWORK_HOST_CHARS, MAX_PAIRING_CODE_CHARS, MAX_PORT } from "../network/constants.js";
 import { DECISION_MESSAGE_HOP, MAX_DECISION_TEXT_CHARS, MAX_DECISION_TOPIC_CHARS, decisionApplies, decisionScopeSchema, type OwnerDecision } from "./decisions.js";
 
@@ -48,6 +49,8 @@ const DEDUPE_KEEP_MS = 30 * 60 * 1000;
 const DEDUPE_MAX = 5_000;
 const PENDING_MAX_LIMIT = 500;
 const NAME_SUFFIX_LIMIT = 100;
+const MAX_FILE_ADDRESS_CHARS = 256;
+const MAX_FILE_PATH_CHARS = 1_024;
 const SIBLING_STATUSES = new Set<SiblingPeer["status"]>(["running", "done", "failed", "interrupted"]);
 
 type StoredSibling = SiblingPeer & { id: string };
@@ -129,6 +132,18 @@ export class Broker {
         return { removed };
       },
       sendFiles: (c, a) => this.onSendFiles(c, a),
+      fetchFiles: (c, a) => {
+        const sender = this.requirePeer(c);
+        const args = z.object({ from: z.string().min(1).max(MAX_FILE_ADDRESS_CHARS), paths: z.array(z.string().min(1).max(MAX_FILE_PATH_CHARS)).min(1).max(MAX_STREAM_ENTRIES) }).parse(a);
+        return this.requireNetwork().startFiles(args.from, args.paths, sender.cwd, { id: sender.id, name: sender.name, agent: sender.jobAgent ?? sender.agent }, true);
+      },
+      transfers: () => ({ transfers: this.network?.transfers.list() ?? (this.networking ? readTransferHistory(this.networking.home) : []) }),
+      cancelTransfer: (_, a) => {
+        const id = z.uuid().parse(a.id);
+        if (this.network) return this.network.transfers.cancel(id);
+        if (!this.networking) throw new Error("transfer inbox home is unavailable");
+        return cancelStoredTransfer(this.networking.home, id);
+      },
     };
   }
 
@@ -761,13 +776,13 @@ export class Broker {
     return this.network;
   }
 
-  private async onSendFiles(conn: Conn, args: RequestMap["sendFiles"][0]): Promise<TransferResult> {
+  private async onSendFiles(conn: Conn, args: RequestMap["sendFiles"][0]): Promise<TransferResult | TransferStarted> {
     const sender = this.requirePeer(conn);
-    const parsed = z.object({ to: z.string().min(1), paths: z.array(z.string().min(1)).min(1).max(MAX_TRANSFER_ENTRIES) }).parse(args);
+    const parsed = z.object({ to: z.string().min(1).max(MAX_FILE_ADDRESS_CHARS), paths: z.array(z.string().min(1).max(MAX_FILE_PATH_CHARS)).min(1).max(MAX_STREAM_ENTRIES) }).parse(args);
     const remote = parsed.to.includes("/");
-    const target = remote ? this.requireNetwork().fileTarget(parsed.to) : parsed.to;
+    if (remote) return this.requireNetwork().startFiles(parsed.to, parsed.paths, sender.cwd, { id: sender.id, name: sender.name, agent: sender.jobAgent ?? sender.agent });
+    const target = parsed.to;
     const transfer = collectTransfer(parsed.paths, sender.cwd, target, { id: sender.id, name: sender.name, agent: sender.jobAgent ?? sender.agent });
-    if (remote) return this.requireNetwork().sendFiles(parsed.to, transfer);
     if (!this.connByName(target)) throw new BridgeError("unknown_target", "file recipient must be online");
     const home = this.networking?.home;
     if (!home) throw new BridgeError("bad_request", "file inbox home is unavailable");

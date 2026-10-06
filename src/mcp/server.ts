@@ -24,7 +24,7 @@ import { readUsage, codexAppServerCall } from "../core/usage.js";
 import { t } from "../core/i18n.js";
 import { createLogger, type Logger } from "../core/logger.js";
 import { BridgeNode } from "../core/node.js";
-import { MAX_TRANSFER_ENTRIES } from "../network/files.js";
+import { MAX_STREAM_ENTRIES } from "../network/transfers.js";
 import { resolveDbPath, resolveHome, resolvePipePath } from "../core/paths.js";
 import { inspectClaudeLaunch } from "../core/procinfo.js";
 import { loadOrCreateToken } from "../core/token.js";
@@ -652,13 +652,36 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
     "send_files",
     {
       title: "Send files and folders",
-      description: "Deliver files or folders into an online peer's inbox, locally or over a paired encrypted link. Maximum one MiB and 128 entries; symlinks are rejected. Received files are never executed or written into a project.",
+      description: "Deliver files or folders into an online peer's inbox. Paired PCs stream bounded chunks with SHA-256 and restart resume, returning a transfer id immediately; progress and results arrive as messages. Limits come from network.maxTransferBytes (default 8 GiB). Older brokers and local delivery keep the one MiB / 128 entry path. Symlinks and junctions are rejected; received files are never executed.",
       inputSchema: {
         to: z.string().min(1).describe("Peer name, including host/peer for a paired instance"),
-        paths: z.array(z.string().min(1)).min(1).max(MAX_TRANSFER_ENTRIES).describe("Files or folders relative to this session's working directory, or absolute paths"),
+        paths: z.array(z.string().min(1)).min(1).max(MAX_STREAM_ENTRIES).describe("Files or folders relative to this session's working directory, or absolute paths"),
       },
     },
     guarded("send_files", async (args: { to: string; paths: string[] }) => text(JSON.stringify(await requireNode().sendFiles(args.to, args.paths), null, 2))),
+  );
+
+  register(
+    "fetch_files",
+    {
+      title: "Fetch files from a paired PC",
+      description: "Pull files into this PC's inbox over a paired encrypted link. The other PC must explicitly configure network.fetchRoots (off by default). Paths are absolute or relative to the source session's working directory and must stay under an allowed root. Returns a transfer id immediately; progress and results arrive as messages.",
+      inputSchema: {
+        from: z.string().min(1).describe("Paired host/peer to fetch from"),
+        paths: z.array(z.string().min(1)).min(1).max(MAX_STREAM_ENTRIES),
+      },
+    },
+    guarded("fetch_files", async (args: { from: string; paths: string[] }) => text(JSON.stringify(await requireNode().fetchFiles(args.from, args.paths), null, 2))),
+  );
+
+  register(
+    "cancel_transfer",
+    {
+      title: "Cancel a file transfer",
+      description: "Cancel a paired-PC file transfer by its id. Partial files stay unpublished; cancellation is delivered when the peer reconnects. A completed transfer cannot be cancelled.",
+      inputSchema: { id: z.uuid() },
+    },
+    guarded("cancel_transfer", async (args: { id: string }) => text(JSON.stringify(await requireNode().cancelTransfer(args.id), null, 2))),
   );
 
   register(
