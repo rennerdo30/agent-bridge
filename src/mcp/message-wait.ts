@@ -1,10 +1,10 @@
 import { randomUUID } from "node:crypto";
-import { mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
 import { DEFAULT_WAIT_SEC } from "../core/constants.js";
 import type { BridgeNode } from "../core/node.js";
-import { writeJsonStore } from "../core/json-store.js";
+import { archiveFile, writeJsonStore } from "../core/json-store.js";
 
 /** Below Claude Code's default 120-second automatic background threshold. */
 export const SINGLE_WAIT_SEC = DEFAULT_WAIT_SEC;
@@ -51,7 +51,7 @@ export class MessageWaitStore {
       } catch { return []; }
     });
   }
-  remove(id: string): void { rmSync(this.path(id), { force: true }); }
+  remove(id: string): void { archiveFile(this.path(id)); }
 }
 
 export function resumeWaitHint(record: SavedWait): string {

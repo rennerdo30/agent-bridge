@@ -1,7 +1,8 @@
-import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { archiveFile } from "../core/json-store.js";
 
 /** Every file agent-bridge installs outside of a plugin manager carries this marker. */
 export const INSTALL_MARKER = "agent-bridge";
@@ -105,7 +106,7 @@ function removeOwned(targets: string[], configDir: string): InstallResult {
       res.skipped.push(p);
       continue;
     }
-    rmSync(p, { recursive: true, force: true });
+    archiveFile(p);
     res.files.push(p);
   }
   return res;
