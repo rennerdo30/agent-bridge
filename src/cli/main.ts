@@ -43,6 +43,7 @@ async function main(argv: string[]): Promise<number> {
   switch (command) {
     case "slot":
       return runSlot(rest, home, loadConfig(home, "other", log), out);
+    case "connect":
     case "network":
     case "pair":
     case "link":
@@ -199,7 +200,7 @@ async function main(argv: string[]): Promise<number> {
     case "--help":
     case "-h":
       out(t("cli.usage"));
-      out("Network: network | pair | link <host:port> <code> | unlink <instance-id>");
+      out("Network: connect [--yes] [--non-interactive --create | --address <host:port> --code <code>] | network | pair | link <host:port> <code> | unlink <instance-id>");
       return 0;
     default:
       out(t("cli.unknownCommand", { command }));

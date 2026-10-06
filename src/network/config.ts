@@ -1,4 +1,7 @@
 import { hostname } from "node:os";
+import { join } from "node:path";
+import { CONFIG_FILE_NAME } from "../core/constants.js";
+import { isRecord, mergeStoreFields, readJsonStore, writeJsonStore } from "../core/json-store.js";
 import { z } from "zod";
 import { DEFAULT_NETWORK_PORT, MAX_NETWORK_HOST_CHARS, MAX_NETWORK_NAME_CHARS, MAX_PORT, NETWORK_NAME_PATTERN } from "./constants.js";
 
@@ -16,4 +19,13 @@ export const DEFAULT_NETWORK_CONFIG = networkConfigSchema.parse({});
 export function parseNetworkConfig(value: unknown): NetworkConfig | undefined {
   const result = networkConfigSchema.safeParse(value);
   return result.success ? result.data : undefined;
+}
+
+/** Preserve unrelated and future fields; version checks and atomic replacement belong to the store. */
+export function writeNetworkConfig(home: string, value: unknown): NetworkConfig {
+  const config = networkConfigSchema.parse(value);
+  const path = join(home, CONFIG_FILE_NAME);
+  const previous = readJsonStore(path);
+  writeJsonStore(path, mergeStoreFields(isRecord(previous) ? previous : {}, { network: config }), previous);
+  return config;
 }
