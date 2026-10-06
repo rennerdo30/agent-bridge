@@ -42,6 +42,10 @@ export type Run = ((signal: AbortSignal, onProgress: (message: string, full?: st
 export type Resume = (message: string, sessionId: string, workdir: string | null, worktree: Worktree | null) => Run;
 
 export interface Job {
+  /** Paired PC hosting this job; remote PIDs must never be signalled locally. */
+  remote?: { host: string; name: string };
+  /** Blocking remote asks forward next-turn settings through the same authenticated control path. */
+  remoteControl?: (control: RunnerControl) => void;
   id: string;
   /** Pseudo peer name the result arrives from, e.g. "codex-job-1a2b3c4d". */
   name: string;
@@ -256,8 +260,9 @@ export class JobManager {
   ) {
     // A message from a runner-hosted job may be its result: look at its runner right away.
     node.on("message", (m) => {
-      if (!m.from.id.startsWith("job:")) return;
-      const job = this.running.get(m.from.id.slice("job:".length));
+      const jobId = /(?:^|\/)job:([0-9a-f]+)$/.exec(m.from.id)?.[1];
+      if (!jobId) return;
+      const job = this.running.get(jobId);
       if (job?.host) this.checkHosted(job);
     });
     // Runners send to this session by name: tell them where it is now (a new server, maybe a new name).
@@ -587,6 +592,7 @@ export class JobManager {
     job.args = changedJobArgs(job.args, settings);
     if (settings.model !== undefined && job.status !== "running") job.model = settings.model;
     if (this.hostedRunning(job)) this.runners!.send(job, { type: "settings", settings });
+    else job.remoteControl?.({ type: "settings", settings });
     this.own.add(job.id);
     this.persist();
     return true;
@@ -599,6 +605,7 @@ export class JobManager {
     job.args = { ...job.args, effort };
     // A runner continues queued follow-ups itself: it needs the new level too.
     if (this.hostedRunning(job)) this.runners!.send(job, { type: "effort", effort });
+    else job.remoteControl?.({ type: "effort", effort });
     this.own.add(job.id);
     this.persist();
     return true;
@@ -611,6 +618,7 @@ export class JobManager {
     job.args = { ...job.args, title };
     job.retitle?.(title);
     if (this.hostedRunning(job)) this.runners!.send(job, { type: "title", title });
+    else job.remoteControl?.({ type: "title", title });
     this.own.add(job.id);
     this.persist();
     return true;
@@ -756,7 +764,7 @@ export class JobManager {
     const alive = runners.alive(job, state);
     // A finished runner may still be delivering its report: wait for that (or for it to give up).
     if (state && state.status !== "running") {
-      if (state.delivered || !alive) this.settleHosted(job, state);
+      if ((!job.remote && state.delivered) || !alive) this.settleHosted(job, state);
     } else if (!alive) this.settleHosted(job, null);
   }
 
@@ -899,7 +907,7 @@ export function sessionOfError(err: unknown): string | null {
   return err instanceof DelegateError ? (err.sessionId ?? null) : null;
 }
 
-type StoredJob = Pick<Job, "id" | "name" | "agent" | "model" | "prompt" | "startedAt" | "status" | "sessionId" | "workdir" | "worktree" | "args" | "owner" | "supervisor" | "finishedAt" | "host">;
+type StoredJob = Pick<Job, "id" | "name" | "agent" | "model" | "prompt" | "startedAt" | "status" | "sessionId" | "workdir" | "worktree" | "args" | "owner" | "supervisor" | "finishedAt" | "host" | "remote">;
 
 function toStored(j: Job): StoredJob {
   return {
@@ -918,6 +926,7 @@ function toStored(j: Job): StoredJob {
     supervisor: j.supervisor,
     finishedAt: j.finishedAt,
     host: j.host ?? null,
+    remote: j.remote,
   };
 }
 

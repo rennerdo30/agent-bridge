@@ -14,6 +14,9 @@ import { receiveTransfer, transferResultSchema, transferSchema, type FileTransfe
 const MAX_METADATA_CHARS = 4_096;
 const MAX_ID_CHARS = 128;
 const MAX_HOP_COUNT = 100;
+const MAX_EXTENSION_HANDLERS = 8;
+export type NetworkExtensionType = "file-stream" | "remote-job";
+export type NetworkExtensionHandler = (payload: Record<string, unknown>, remote: NetworkPair) => void | Promise<void>;
 const textId = z.string().min(1).max(MAX_ID_CHARS);
 const peerSchema = z.object({
   id: textId, name: z.string().regex(NETWORK_NAME_PATTERN), agent: z.enum(AGENT_KINDS),
@@ -30,7 +33,9 @@ const messageSchema = z.object({
   body: z.string().min(1).max(MAX_BODY_CHARS), createdAt: z.number().nonnegative(), readAt: z.null(),
 });
 const frameSchema = z.discriminatedUnion("type", [
-  publicIdentitySchema.extend({ type: z.literal("hello"), v: z.literal(NETWORK_VERSION), peers: peersSchema, echo: z.boolean().optional(), receipts: z.boolean().optional() }),
+  publicIdentitySchema.extend({ type: z.literal("hello"), v: z.literal(NETWORK_VERSION), peers: peersSchema, echo: z.boolean().optional(), receipts: z.boolean().optional(), capabilities: z.array(z.string().min(1).max(MAX_ID_CHARS)).max(MAX_EXTENSION_HANDLERS).optional() }),
+  z.object({ type: z.literal("file-stream"), payload: z.record(z.string(), z.unknown()) }),
+  z.object({ type: z.literal("remote-job"), payload: z.record(z.string(), z.unknown()) }),
   z.object({ type: z.literal("peers"), peers: peersSchema }),
   z.object({ type: z.literal("send"), rid: z.uuid(), message: messageSchema }),
   z.object({ type: z.literal("echo"), rid: z.uuid() }),
@@ -66,6 +71,8 @@ class Link {
   peers: PeerInfo[] = [];
   private echoSupported = false;
   private receiptsSupported = false;
+  private capabilities: string[] = [];
+  private extensionHandlers = 0;
   private buffer = Buffer.alloc(0);
   private readonly pending = new Map<string, Pending>();
   private readyResolve!: () => void;
@@ -93,6 +100,7 @@ class Link {
             this.peers = frame.peers;
             this.echoSupported = frame.echo === true;
             this.receiptsSupported = frame.receipts === true;
+            this.capabilities = frame.capabilities ?? [];
             service.attach(this);
             clearTimeout(this.deadline);
             this.readyResolve();
@@ -110,7 +118,7 @@ class Link {
       this.pending.clear();
       service.detach(this);
     });
-    this.write({ type: "hello", v: NETWORK_VERSION, ...service.keys.identity, peers: service.localPeers(), echo: true, receipts: Boolean(service.supportsReceipts) });
+    this.write({ type: "hello", v: NETWORK_VERSION, ...service.keys.identity, peers: service.localPeers(), echo: true, receipts: Boolean(service.supportsReceipts), capabilities: service.extensionCapabilities() });
   }
 
   write(frame: NetworkFrame): void {
@@ -118,6 +126,21 @@ class Link {
     if (Buffer.byteLength(data) > MAX_NETWORK_FRAME_BYTES || this.socket.writableLength > MAX_NETWORK_FRAME_BYTES) throw new Error("network write limit reached");
     if (this.socket.destroyed) throw new Error("network link closed");
     this.socket.write(data);
+  }
+
+  supports(capability: string): boolean { return this.capabilities.includes(capability); }
+
+  /** Complete only after the stream has consumed this bounded record; callers await each write. */
+  writeExtension(type: NetworkExtensionType, payload: Record<string, unknown>): Promise<void> {
+    const data = JSON.stringify({ type, payload }) + "\n";
+    if (Buffer.byteLength(data) > MAX_NETWORK_FRAME_BYTES || this.socket.writableLength > MAX_NETWORK_FRAME_BYTES) return Promise.reject(new Error("network write limit reached"));
+    if (this.socket.destroyed) return Promise.reject(new Error("network link closed"));
+    return new Promise((resolve, reject) => {
+      const closed = () => { cleanup(); reject(new Error("network link closed")); };
+      const cleanup = () => this.socket.off("close", closed);
+      this.socket.once("close", closed);
+      this.socket.write(data, (error) => { cleanup(); if (error) reject(error); else resolve(); });
+    });
   }
 
   refresh(): void {
@@ -161,6 +184,12 @@ class Link {
   }
 
   private onFrame(frame: Exclude<NetworkFrame, { type: "hello" }>): void {
+    if (frame.type === "file-stream" || frame.type === "remote-job") {
+      if (++this.extensionHandlers > MAX_EXTENSION_HANDLERS) throw new Error("too many extension handlers");
+      void Promise.resolve().then(() => this.service.receiveExtension(frame.type, frame.payload, this.remote!))
+        .catch((error: Error) => this.fail(error)).finally(() => { this.extensionHandlers--; });
+      return;
+    }
     if (frame.type === "peers") { this.peers = frame.peers; return; }
     if (frame.type === "result") {
       const pending = this.pending.get(frame.rid);
@@ -216,6 +245,7 @@ export class NetworkService {
   private discovery: NetworkDiscovery | null = null;
   private timer: NodeJS.Timeout | null = null;
   private closed = false;
+  private readonly extensions = new Map<NetworkExtensionType, { capability: string; handler: NetworkExtensionHandler }>();
 
   constructor(private readonly home: string, private readonly cfg: NetworkConfig, private readonly broker: NetworkBroker, private readonly log: Logger) {
     this.keys = new PairingStore(home, cfg.name);
@@ -224,6 +254,36 @@ export class NetworkService {
   get port(): number {
     const address = this.server?.address();
     return address && typeof address !== "string" ? address.port : 0;
+  }
+
+  registerExtension(type: NetworkExtensionType, capability: string, handler: NetworkExtensionHandler): void {
+    if (this.server || this.extensions.has(type)) throw new Error("register extensions once before starting networking");
+    this.extensions.set(type, { capability, handler });
+  }
+
+  extensionCapabilities(): string[] { return [...this.extensions.values()].map((extension) => extension.capability); }
+
+  receiveExtension(type: NetworkExtensionType, payload: Record<string, unknown>, remote: NetworkPair): void | Promise<void> {
+    const extension = this.extensions.get(type);
+    if (!extension) throw new Error("unsupported network extension");
+    return extension.handler(payload, remote);
+  }
+
+  private instanceLink(instance: string): Link {
+    const link = [...this.links.values()].find((candidate) => candidate.remote!.id === instance || candidate.remote!.name === instance);
+    if (!link) throw new Error("paired instance is not connected");
+    return link;
+  }
+
+  peerSupports(instance: string, capability: string): boolean {
+    try { return this.instanceLink(instance).supports(capability); } catch { return false; }
+  }
+
+  sendExtension(instance: string, type: NetworkExtensionType, payload: Record<string, unknown>): Promise<void> {
+    const extension = this.extensions.get(type);
+    const link = this.instanceLink(instance);
+    if (!extension || !link.supports(extension.capability)) return Promise.reject(new Error("remote broker does not support this extension"));
+    return link.writeExtension(type, payload);
   }
 
   get supportsReceipts(): boolean { return Boolean(this.broker.receipt); }

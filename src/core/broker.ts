@@ -39,6 +39,8 @@ import { writeNetworkConfig, type NetworkConfig } from "../network/config.js";
 import { z } from "zod";
 import { collectTransfer, MAX_TRANSFER_ENTRIES, receiveTransfer, type TransferResult } from "../network/files.js";
 import { MAX_NETWORK_HOST_CHARS, MAX_PAIRING_CODE_CHARS, MAX_PORT } from "../network/constants.js";
+import { RemoteJobs } from "../network/remote-jobs.js";
+import { CONTROL_CONVERSATION_PREFIX } from "../mcp/job-host.js";
 import { DECISION_MESSAGE_HOP, MAX_DECISION_TEXT_CHARS, MAX_DECISION_TOPIC_CHARS, decisionApplies, decisionScopeSchema, type OwnerDecision } from "./decisions.js";
 
 /** Peer names double as offline queue keys, so keep them simple and unambiguous. */
@@ -75,6 +77,8 @@ export class Broker {
   private readonly conns = new Set<Conn>();
   private purgeTimer: NodeJS.Timeout | null = null;
   private network: NetworkService | null = null;
+  private remoteJobs: RemoteJobs | null = null;
+  private readonly remoteProgress = new Map<string, string>();
   private networkChange: Promise<unknown> = Promise.resolve();
   private readonly handlers: { [O in Op]: Handler<O> };
 
@@ -109,6 +113,24 @@ export class Broker {
       claimMail: (c, a) => this.onClaimMail(c, a),
       ping: () => ({ brokerPid: process.pid, protocol: PROTOCOL_VERSION }),
       networkStatus: () => this.network?.status() ?? { enabled: false, config: this.networking?.config, discovered: [], paired: [] },
+      remoteJob: async (c, a) => {
+        const peer = this.requirePeer(c);
+        if (peer.jobAgent) throw new BridgeError("bad_request", "Only supervisor sessions can request remote jobs.");
+        if (!this.remoteJobs) throw new BridgeError("bad_request", "Remote broker update needed or networking unavailable.");
+        const saved = this.storedJobs().find((job) => job.id === a.request.job && job.owner === peer.name);
+        const supervisor = typeof saved?.supervisor === "string" ? saved.supervisor : peer.sessionId ?? peer.id;
+        const snapshot = await this.remoteJobs.request(a.host, peer, a.request, supervisor, typeof saved?.name === "string" ? saved.name : undefined);
+        const progress = snapshot.state?.progress;
+        const key = `${a.host}/${a.request.job}`;
+        if (progress && this.remoteProgress.get(key) !== progress) {
+          this.remoteProgress.set(key, progress);
+          const pair = this.requireNetwork().status().paired.find((p) => p.id === a.host || p.name === a.host);
+          const name = snapshot.state!.peer;
+          this.receiveRemote({ id: randomUUID(), from: { id: `${pair?.id ?? a.host}/job:${a.request.job}`, name: `${pair?.name ?? a.host}/${name}`, agent: "other" },
+            to: peer.name, recipient: peer.name, body: progress, conversationId: `job-${a.request.job}:note`, replyTo: null, hop: 0, createdAt: this.now(), readAt: null });
+        }
+        return snapshot;
+      },
       networkConfigure: (_, a) => {
         const change = this.networkChange.then(() => this.configureNetwork(a));
         this.networkChange = change.catch(() => {});
@@ -156,6 +178,7 @@ export class Broker {
               receive: (message) => this.receiveRemote(message),
         receipt: (id, sender) => this.remoteReceipt(id, sender),
             }, this.log);
+            this.installRemoteJobs(this.network);
             await this.network.start();
           } catch (err) {
             this.network = null;
@@ -173,6 +196,8 @@ export class Broker {
   async close(): Promise<void> {
     if (this.purgeTimer) clearInterval(this.purgeTimer);
     await this.networkChange;
+    this.remoteJobs?.close();
+    this.remoteJobs = null;
     await this.network?.close();
     this.network = null;
     for (const c of this.conns) c.socket.destroy();
@@ -188,6 +213,8 @@ export class Broker {
   private async configureNetwork(value: NetworkConfig): Promise<NetworkStatus> {
     if (!this.networking) throw new BridgeError("bad_request", "Restart all agent-bridge hosting sessions to load this wizard-capable broker.");
     const config = writeNetworkConfig(this.networking.home, value);
+    this.remoteJobs?.close();
+    this.remoteJobs = null;
     await this.network?.close();
     this.network = null;
     this.networking.config = config;
@@ -197,10 +224,19 @@ export class Broker {
         receive: (message) => this.receiveRemote(message),
         receipt: (id, sender) => this.remoteReceipt(id, sender),
       }, this.log);
+      this.installRemoteJobs(service);
       try { await service.start(); this.network = service; }
       catch (err) { await service.close(); throw err; }
     }
     return this.network?.status() ?? { enabled: false, config, discovered: [], paired: [] };
+  }
+
+  private installRemoteJobs(service: NetworkService): void {
+    this.remoteJobs = new RemoteJobs(service, this.networking!.home, this.log, async (record, control) => {
+      this.receiveRemote({ id: randomUUID(), from: { id: record.owner, name: record.owner, agent: "other" },
+        to: record.name, recipient: record.name, conversationId: `${CONTROL_CONVERSATION_PREFIX}${record.id}`,
+        replyTo: null, hop: 0, body: JSON.stringify(control), createdAt: this.now(), readAt: null });
+    });
   }
 
   private purge(): void {

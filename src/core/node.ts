@@ -24,6 +24,9 @@ import { DASHBOARD_JOB_CONVERSATION } from "./job-control.js";
 import type { NetworkConfig } from "../network/config.js";
 import type { NetworkStatus } from "../network/link.js";
 import type { TransferResult } from "../network/files.js";
+import type { RemoteJobRequest } from "../network/remote-job-protocol.js";
+import { REMOTE_JOB_LOCAL_TIMEOUT_MS } from "../network/remote-job-protocol.js";
+import type { RemoteJobSnapshot } from "../network/remote-jobs.js";
 import type { DecideArgs, DecisionsArgs, OwnerDecision } from "./decisions.js";
 
 export interface BridgeNodeOptions {
@@ -414,6 +417,13 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
 
   networkStatus(): Promise<NetworkStatus> {
     return this.withClient((c) => c.request("networkStatus", {}));
+  }
+
+  remoteJob(host: string, request: RemoteJobRequest): Promise<RemoteJobSnapshot> {
+    return this.withClient((c) => c.request("remoteJob", { host, request }, REMOTE_JOB_LOCAL_TIMEOUT_MS)).catch((err) => {
+      if (/unknown op.*remoteJob/.test((err as Error).message)) throw new BridgeError("bad_request", "Local broker update needed: restart its hosting sessions to enable remote jobs.");
+      throw err;
+    });
   }
 
   sendFiles(to: string, paths: string[]): Promise<TransferResult> {

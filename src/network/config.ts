@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { CONFIG_FILE_NAME } from "../core/constants.js";
 import { isRecord, mergeStoreFields, readJsonStore, writeJsonStore } from "../core/json-store.js";
 import { z } from "zod";
+import { CODING_AGENTS } from "../core/protocol.js";
 import { DEFAULT_NETWORK_PORT, MAX_NETWORK_HOST_CHARS, MAX_NETWORK_NAME_CHARS, MAX_PORT, NETWORK_NAME_PATTERN } from "./constants.js";
 
 export const networkConfigSchema = z.object({
@@ -11,6 +12,13 @@ export const networkConfigSchema = z.object({
   bind: z.string().min(1).max(MAX_NETWORK_HOST_CHARS).default("127.0.0.1"),
   port: z.number().int().min(0).max(MAX_PORT).default(DEFAULT_NETWORK_PORT),
   discovery: z.boolean().default(false),
+  remoteJobs: z.object({
+    enabled: z.boolean().default(false),
+    allowRoots: z.array(z.string().min(1).max(4_096)).max(50).default([]),
+    agents: z.array(z.enum(CODING_AGENTS)).max(3).default([]),
+    /** Pair names explicitly permitted to request jobs; no pair is trusted implicitly. */
+    allowPeers: z.array(z.string().regex(NETWORK_NAME_PATTERN)).max(50).default([]),
+  }).default({ enabled: false, allowRoots: [], agents: [], allowPeers: [] }),
 });
 
 export type NetworkConfig = z.infer<typeof networkConfigSchema>;
