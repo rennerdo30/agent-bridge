@@ -392,7 +392,7 @@ export class Broker {
     if (!peer.jobAgent || !peer.jobOwner) throw new BridgeError("bad_request", "not a linked job");
     const jobs = this.storedJobs();
     const supervisor = this.jobSupervisor(peer, jobs);
-    return [...this.conns].filter((c) => c !== conn && c.peer?.jobAgent && this.jobSupervisor(c.peer, jobs) === supervisor);
+    return [...this.conns].filter((c) => c !== conn && c.peer?.jobAgent && (this.jobSupervisor(c.peer, jobs) === supervisor || peer.jobSendTo?.includes(c.peer.name)));
   }
 
   private storedJobs(): Record<string, unknown>[] {
@@ -421,7 +421,7 @@ export class Broker {
     try {
       const records = this.storedJobs();
       const supervisor = this.jobSupervisor(peer, records);
-      return records.flatMap((j) => j && j.supervisor === supervisor && typeof j.id === "string" &&
+      return records.flatMap((j) => j && (j.supervisor === supervisor || peer.jobSendTo?.includes(String(j.name))) && typeof j.id === "string" &&
         typeof j.name === "string" && j.name !== peer.name && `job:${j.id}` !== peer.id &&
         AGENT_KINDS.includes(j.agent as AgentKind) && SIBLING_STATUSES.has(j.status as SiblingPeer["status"])
         ? [{ id: `job:${j.id}`, name: j.name, title: isRecord(j.args) && typeof j.args.title === "string" ? j.args.title : "", agent: j.agent as AgentKind, status: j.status as SiblingPeer["status"], ...(typeof j.finishedAt === "number" ? { finishedAt: j.finishedAt } : {}), report: typeof j.report === "string" ? j.report : null }]
@@ -453,7 +453,7 @@ export class Broker {
     const target = this.siblingConns(conn).find((c) => c.peer!.name === args.to);
     const stored = this.storedSiblings(sender).find((s) => s.name === args.to);
     if (!target && !stored) {
-      if (!isJobSendTarget(args.to) || !sender.jobSendTo?.includes(args.to) || this.connByName(args.to)?.peer?.jobAgent) {
+      if (!isJobSendTarget(args.to) || !sender.jobSendTo?.includes(args.to) || args.to.includes("-job-") || args.to.includes("-ask-") || this.connByName(args.to)?.peer?.jobAgent) {
         throw new BridgeError("unknown_target", "no sibling with that job name or explicit send_to grant");
       }
       if (args.replyTo) {
@@ -500,11 +500,13 @@ export class Broker {
     const conversationId = parent?.conversationId ?? `${SIBLING_CONVERSATION_PREFIX}${randomUUID()}`;
     const result = await this.onSend(conn, { ...args, dedupeKey, conversationId });
     const message = result.messages[0]!;
-    if (sender.jobParent) {
-      const note = { ...message, id: randomUUID(), recipient: sender.jobParent,
+    const recipientOwner = target?.peer?.jobParent ?? this.storedJobs().find((j) => j.name === args.to)?.owner;
+    const observers = new Set([sender.jobParent, recipientOwner].filter((owner): owner is string => typeof owner === "string"));
+    for (const owner of observers) {
+      const note = { ...message, id: randomUUID(), recipient: owner,
         conversationId: `${conversationId}${SIBLING_NOTE_SUFFIX}`, body: `Sibling message to ${message.recipient}:\n\n${message.body}` };
       this.store.insert(note);
-      const supervisor = this.connByName(sender.jobParent);
+      const supervisor = this.connByName(owner);
       if (supervisor) this.emit(supervisor, "message", note);
     }
     if (stored && stored.status !== "running" && !target) {
@@ -885,8 +887,8 @@ export class Broker {
       : this.resolveTargets(to, sender);
     if (conversationId.startsWith(SIBLING_CONVERSATION_PREFIX) &&
         (queued.some((name) => !sender.jobAgent || !this.storedSiblings(sender).some((s) => s.name === name)) ||
-          live.some((c) => c.peer!.jobAgent && (!sender.jobAgent || !sender.jobOwner || this.jobSupervisor(c.peer!) !== this.jobSupervisor(sender))))) {
-      throw new BridgeError("unauthorized", "sibling chat is restricted to jobs of the same supervisor");
+          live.some((c) => c.peer!.jobAgent && (!sender.jobAgent || !sender.jobOwner || (this.jobSupervisor(c.peer!) !== this.jobSupervisor(sender) && !sender.jobSendTo?.includes(c.peer!.name)))))) {
+      throw new BridgeError("unauthorized", "sibling chat requires the same supervisor or an explicit send_to job grant");
     }
     const messages: BridgeMessage[] = [];
     for (const c of live) messages.push({ ...base, recipient: c.peer!.name });

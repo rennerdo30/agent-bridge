@@ -468,3 +468,15 @@ npm run check   # typecheck + tests + build
 ## License
 
 MIT
+
+### Exact cross-session job messaging
+
+Jobs are isolated from other sessions by default. At spawn, a session can opt in with
+`send_to: ["opencode-job-12345678"]` (or an exact local session name). Each direction needs
+its own grant: the other job must include the sender's exact name in its `send_to` to reply.
+`peers` lists granted jobs alongside siblings with their titles and status. Wildcards,
+agent kinds, and paired-PC addresses are rejected; granting a session does not grant its jobs.
+Grants persist across continuations, and cross-session job threads keep the sibling hop
+limit and durable undelivered-text notices. Both owners retain quiet inbox/dashboard copies;
+these copies do not enter their context automatically. Finished jobs return their saved
+report immediately: do not wait for a reply or receipt unless their owner continues them.

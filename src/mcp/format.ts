@@ -78,7 +78,7 @@ export function formatParentMessages(parent: string, msgs: LinkMessage[]): strin
 
 export function formatSiblingMessages(msgs: BridgeMessage[], maxHops = DEFAULT_SIBLING_MAX_HOPS): string {
   return [
-    `[agent-bridge] ${msgs.length} message(s) from sibling jobs working for the same supervisor.`,
+    `[agent-bridge] ${msgs.length} message(s) from sibling or explicitly granted jobs.`,
     PEER_TRUST_NOTE,
     ...msgs.map(formatMessage),
     ...msgs.map((m) => `Thread ${m.conversationId}: ${Math.max(0, (m.replyLimit ?? maxHops) - m.hop - 1)} replies remain before the ${m.replyLimit ?? maxHops}-message sibling hop limit. ` +

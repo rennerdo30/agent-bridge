@@ -9222,7 +9222,7 @@ function isPureAcknowledgement(body) {
 }
 var EXACT_PEER_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 function isJobSendTarget(value) {
-  return typeof value === "string" && EXACT_PEER_NAME_PATTERN.test(value) && !AGENT_KINDS.includes(value) && !value.includes("-job-") && !value.includes("-ask-");
+  return typeof value === "string" && EXACT_PEER_NAME_PATTERN.test(value) && !AGENT_KINDS.includes(value);
 }
 function siblingMaxHops(maxHops) {
   return maxHops > 0 ? Math.max(maxHops, DEFAULT_SIBLING_MAX_HOPS) : 0;
@@ -45848,7 +45848,7 @@ ${neutralizeBody(m.body)}
 }
 function formatSiblingMessages(msgs, maxHops = DEFAULT_SIBLING_MAX_HOPS) {
   return [
-    `[agent-bridge] ${msgs.length} message(s) from sibling jobs working for the same supervisor.`,
+    `[agent-bridge] ${msgs.length} message(s) from sibling or explicitly granted jobs.`,
     PEER_TRUST_NOTE,
     ...msgs.map(formatMessage),
     ...msgs.map((m) => `Thread ${m.conversationId}: ${Math.max(0, (m.replyLimit ?? maxHops) - m.hop - 1)} replies remain before the ${m.replyLimit ?? maxHops}-message sibling hop limit. When none remain, report the unresolved work to your supervisor instead of composing another reply.`),
@@ -47208,7 +47208,7 @@ var Broker = class {
     if (!peer.jobAgent || !peer.jobOwner) throw new BridgeError("bad_request", "not a linked job");
     const jobs = this.storedJobs();
     const supervisor = this.jobSupervisor(peer, jobs);
-    return [...this.conns].filter((c) => c !== conn && c.peer?.jobAgent && this.jobSupervisor(c.peer, jobs) === supervisor);
+    return [...this.conns].filter((c) => c !== conn && c.peer?.jobAgent && (this.jobSupervisor(c.peer, jobs) === supervisor || peer.jobSendTo?.includes(c.peer.name)));
   }
   storedJobs() {
     if (!this.jobsPath) return [];
@@ -47234,7 +47234,7 @@ var Broker = class {
     try {
       const records = this.storedJobs();
       const supervisor = this.jobSupervisor(peer, records);
-      return records.flatMap((j) => j && j.supervisor === supervisor && typeof j.id === "string" && typeof j.name === "string" && j.name !== peer.name && `job:${j.id}` !== peer.id && AGENT_KINDS.includes(j.agent) && SIBLING_STATUSES.has(j.status) ? [{ id: `job:${j.id}`, name: j.name, title: isRecord(j.args) && typeof j.args.title === "string" ? j.args.title : "", agent: j.agent, status: j.status, ...typeof j.finishedAt === "number" ? { finishedAt: j.finishedAt } : {}, report: typeof j.report === "string" ? j.report : null }] : []);
+      return records.flatMap((j) => j && (j.supervisor === supervisor || peer.jobSendTo?.includes(String(j.name))) && typeof j.id === "string" && typeof j.name === "string" && j.name !== peer.name && `job:${j.id}` !== peer.id && AGENT_KINDS.includes(j.agent) && SIBLING_STATUSES.has(j.status) ? [{ id: `job:${j.id}`, name: j.name, title: isRecord(j.args) && typeof j.args.title === "string" ? j.args.title : "", agent: j.agent, status: j.status, ...typeof j.finishedAt === "number" ? { finishedAt: j.finishedAt } : {}, report: typeof j.report === "string" ? j.report : null }] : []);
     } catch {
       return [];
     }
@@ -47260,7 +47260,7 @@ var Broker = class {
     const target = this.siblingConns(conn).find((c) => c.peer.name === args.to);
     const stored = this.storedSiblings(sender).find((s) => s.name === args.to);
     if (!target && !stored) {
-      if (!isJobSendTarget(args.to) || !sender.jobSendTo?.includes(args.to) || this.connByName(args.to)?.peer?.jobAgent) {
+      if (!isJobSendTarget(args.to) || !sender.jobSendTo?.includes(args.to) || args.to.includes("-job-") || args.to.includes("-ask-") || this.connByName(args.to)?.peer?.jobAgent) {
         throw new BridgeError("unknown_target", "no sibling with that job name or explicit send_to grant");
       }
       if (args.replyTo) {
@@ -47311,18 +47311,20 @@ ${args.body}`,
     const conversationId = parent2?.conversationId ?? `${SIBLING_CONVERSATION_PREFIX}${randomUUID17()}`;
     const result = await this.onSend(conn, { ...args, dedupeKey, conversationId });
     const message = result.messages[0];
-    if (sender.jobParent) {
+    const recipientOwner = target?.peer?.jobParent ?? this.storedJobs().find((j) => j.name === args.to)?.owner;
+    const observers = new Set([sender.jobParent, recipientOwner].filter((owner) => typeof owner === "string"));
+    for (const owner of observers) {
       const note = {
         ...message,
         id: randomUUID17(),
-        recipient: sender.jobParent,
+        recipient: owner,
         conversationId: `${conversationId}${SIBLING_NOTE_SUFFIX}`,
         body: `Sibling message to ${message.recipient}:
 
 ${message.body}`
       };
       this.store.insert(note);
-      const supervisor = this.connByName(sender.jobParent);
+      const supervisor = this.connByName(owner);
       if (supervisor) this.emit(supervisor, "message", note);
     }
     if (stored && stored.status !== "running" && !target) {
@@ -47693,8 +47695,8 @@ Call decisions to look up current decisions or their history.`,
     }
     const remoteTargets = to === BROADCAST ? this.network?.peers().filter((p) => !p.jobAgent).map((p) => p.name) ?? [] : [];
     const { live, queued } = to === BROADCAST && remoteTargets.length ? { live: [...this.conns].filter((c) => c.peer && c.peer.id !== sender.id && !c.peer.jobAgent), queued: [] } : this.resolveTargets(to, sender);
-    if (conversationId.startsWith(SIBLING_CONVERSATION_PREFIX) && (queued.some((name2) => !sender.jobAgent || !this.storedSiblings(sender).some((s) => s.name === name2)) || live.some((c) => c.peer.jobAgent && (!sender.jobAgent || !sender.jobOwner || this.jobSupervisor(c.peer) !== this.jobSupervisor(sender))))) {
-      throw new BridgeError("unauthorized", "sibling chat is restricted to jobs of the same supervisor");
+    if (conversationId.startsWith(SIBLING_CONVERSATION_PREFIX) && (queued.some((name2) => !sender.jobAgent || !this.storedSiblings(sender).some((s) => s.name === name2)) || live.some((c) => c.peer.jobAgent && (!sender.jobAgent || !sender.jobOwner || this.jobSupervisor(c.peer) !== this.jobSupervisor(sender) && !sender.jobSendTo?.includes(c.peer.name))))) {
+      throw new BridgeError("unauthorized", "sibling chat requires the same supervisor or an explicit send_to job grant");
     }
     const messages = [];
     for (const c of live) messages.push({ ...base2, recipient: c.peer.name });
@@ -53161,13 +53163,13 @@ function registerTools(mcp, ctx, targets) {
         });
         return text([
           `You are a delegated job of ${ctx.parent.name}. Use send(to="${ctx.parent.name}", message=...) to message your parent.`,
-          siblings.length ? "Sibling jobs:" : "No sibling jobs are available right now.",
+          siblings.length ? "Sibling and explicitly granted jobs:" : "No sibling jobs are available right now.",
           ...siblings.map((s) => `- ${s.name}${s.title ? ` "${s.title}"` : ""} (${s.agent}, ${s.status}${s.status !== "running" ? "; finished; will not answer" : ""})`),
           "Do not wait for finished siblings to reply. Use their final report or ask your parent for an explicit continuation. Use send(to=<sibling job name>, message=...) to coordinate directly. The supervisor can inspect copies on demand or in the dashboard.",
           ...ctx.jobs?.list().map((j) => `Your child: ${j.name}${j.args?.title ? ` "${j.args.title}"` : ""} (${j.agent}, ${j.status})`) ?? [],
           ...policy ? [
             `Sibling threads allow ${policy.maxHops} messages, including the first message. Incoming messages show replies remaining before you compose.`,
-            `Explicit send_to grants: ${policy.sendTo.length ? policy.sendTo.join(", ") : "none"}. Only these exact external session names are allowed.`
+            `Explicit send_to grants: ${policy.sendTo.length ? policy.sendTo.join(", ") : "none"}. Only these exact external session or job names are allowed. External jobs need their own reciprocal grant to reply.`
           ] : []
         ].join("\n"));
       }
@@ -53211,7 +53213,7 @@ function registerTools(mcp, ctx, targets) {
     "send",
     {
       title: "Send message",
-      description: `Send a message to another agent. "to" is a peer name from "peers", an agent kind ("claude", "codex") when exactly one is online, or "${BROADCAST}" for everyone. Delivery means queued in the recipient inbox, not read. Broadcasts include connected paired-PC sessions. Direct messages and broadcasts wake an idle Claude session according to wakeOnDirect; other recipients may read them on their next turn. Auto-wake is handled on the recipient PC, including paired PCs; it is never enabled by send. Use wait_for_message(read_receipt_of=<sent id>) to wait for consumption. If the recipient is offline the message waits for it. When answering with new information, pass its id as reply_to. Do not send pure acknowledgements or repeat a reply as a status note. Delegated jobs can send to their parent, siblings, or exact session names explicitly granted with send_to at spawn. Sibling messages arrive live or wait for the next turn, with a quiet supervisor copy. Sending to a finished sibling returns its saved final report immediately; it will not answer. Do not wait for finished siblings or for read receipts from them. Other sessions and broadcasts are unavailable. Peers shows grants and the sibling thread limit before composing.`,
+      description: `Send a message to another agent. "to" is a peer name from "peers", an agent kind ("claude", "codex") when exactly one is online, or "${BROADCAST}" for everyone. Delivery means queued in the recipient inbox, not read. Broadcasts include connected paired-PC sessions. Direct messages and broadcasts wake an idle Claude session according to wakeOnDirect; other recipients may read them on their next turn. Auto-wake is handled on the recipient PC, including paired PCs; it is never enabled by send. Use wait_for_message(read_receipt_of=<sent id>) to wait for consumption. If the recipient is offline the message waits for it. When answering with new information, pass its id as reply_to. Do not send pure acknowledgements or repeat a reply as a status note. Delegated jobs can send to their parent, siblings, or exact local session/job names explicitly granted with send_to at spawn. Sibling messages arrive live or wait for the next turn, with a quiet supervisor copy. Sending to a finished sibling returns its saved final report immediately; it will not answer. Do not wait for finished siblings or for read receipts from them. Other sessions and broadcasts are unavailable. Peers shows grants and the sibling thread limit before composing.`,
       inputSchema: {
         to: external_exports.string().min(1).describe('Peer name, agent kind ("claude" / "codex") or "*"'),
         message: external_exports.string().min(1).max(MAX_BODY_CHARS).describe("Message text (Markdown is fine)"),
@@ -53451,7 +53453,7 @@ ${f.report ?? "No final report is saved. Ask your parent for its result."}`);
       allow_tools: external_exports.array(external_exports.string().min(1).max(200)).max(50).optional().describe(
         'MCP tools the subagent may call without asking you, as "server.tool" patterns with *, e.g. ["pair-desk.get_*", "pair-desk.list_*"] (reads only), "pair-desk:worker" (reads, comments, progress, plans, issue edits and review locations; excludes status, builds and handoff writes), or "server" for all of its tools. Add "pair-desk.set_build" separately to allow build publication.'
       ),
-      send_to: external_exports.array(external_exports.string().refine(isJobSendTarget, "Use an exact local session name, not an agent kind, broadcast or job name")).max(MAX_JOB_SEND_TARGETS).optional().describe("Explicitly allow this job to send to these exact local session names, including replies to messages received by its supervisor. No other external recipients are allowed. Kept across continuations."),
+      send_to: external_exports.array(external_exports.string().refine(isJobSendTarget, "Use an exact local session or job name, not an agent kind, broadcast, wildcard or remote address")).max(MAX_JOB_SEND_TARGETS).optional().describe("Explicitly allow this job to send to these exact local session or job names, including replies to messages received by its supervisor. Default is closed. Cross-session jobs require a separate reciprocal grant to answer; they retain hop limits and quiet copies for both owners. No other external recipients are allowed. Kept across continuations."),
       ...profile.schema
     };
     const run = (a, signal, onProgress, background2, job) => {

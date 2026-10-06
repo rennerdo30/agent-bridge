@@ -580,12 +580,12 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
         });
         return text([
           `You are a delegated job of ${ctx.parent.name}. Use send(to="${ctx.parent.name}", message=...) to message your parent.`,
-          siblings.length ? "Sibling jobs:" : "No sibling jobs are available right now.",
+          siblings.length ? "Sibling and explicitly granted jobs:" : "No sibling jobs are available right now.",
           ...siblings.map((s) => `- ${s.name}${s.title ? ` "${s.title}"` : ""} (${s.agent}, ${s.status}${s.status !== "running" ? "; finished; will not answer" : ""})`),
           "Do not wait for finished siblings to reply. Use their final report or ask your parent for an explicit continuation. Use send(to=<sibling job name>, message=...) to coordinate directly. The supervisor can inspect copies on demand or in the dashboard.",
           ...(ctx.jobs?.list().map((j) => `Your child: ${j.name}${j.args?.title ? ` "${j.args.title}"` : ""} (${j.agent}, ${j.status})`) ?? []),
           ...(policy ? [`Sibling threads allow ${policy.maxHops} messages, including the first message. Incoming messages show replies remaining before you compose.`,
-            `Explicit send_to grants: ${policy.sendTo.length ? policy.sendTo.join(", ") : "none"}. Only these exact external session names are allowed.`] : []),
+            `Explicit send_to grants: ${policy.sendTo.length ? policy.sendTo.join(", ") : "none"}. Only these exact external session or job names are allowed. External jobs need their own reciprocal grant to reply.`] : []),
         ].join("\n"));
       }
       const n = requireNode();
@@ -635,7 +635,7 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
         "Delivery means queued in the recipient inbox, not read. Broadcasts include connected paired-PC sessions. Direct messages and broadcasts wake an idle Claude session according to wakeOnDirect; other recipients may read them on their next turn. " +
         "Auto-wake is handled on the recipient PC, including paired PCs; it is never enabled by send. Use wait_for_message(read_receipt_of=<sent id>) to wait for consumption. " +
         "If the recipient is offline the message waits for it. When answering with new information, pass its id as reply_to. Do not send pure acknowledgements or repeat a reply as a status note. " +
-        "Delegated jobs can send to their parent, siblings, or exact session names explicitly granted with send_to at spawn. Sibling messages arrive live or wait for the next turn, with a quiet supervisor copy. Sending to a finished sibling returns its saved final report immediately; it will not answer. Do not wait for finished siblings or for read receipts from them. Other sessions and broadcasts are unavailable. Peers shows grants and the sibling thread limit before composing.",
+        "Delegated jobs can send to their parent, siblings, or exact local session/job names explicitly granted with send_to at spawn. Sibling messages arrive live or wait for the next turn, with a quiet supervisor copy. Sending to a finished sibling returns its saved final report immediately; it will not answer. Do not wait for finished siblings or for read receipts from them. Other sessions and broadcasts are unavailable. Peers shows grants and the sibling thread limit before composing.",
       inputSchema: {
         to: z.string().min(1).describe('Peer name, agent kind ("claude" / "codex") or "*"'),
         message: z.string().min(1).max(MAX_BODY_CHARS).describe("Message text (Markdown is fine)"),
@@ -924,9 +924,9 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
         .describe(
           'MCP tools the subagent may call without asking you, as "server.tool" patterns with *, e.g. ["pair-desk.get_*", "pair-desk.list_*"] (reads only), "pair-desk:worker" (reads, comments, progress, plans, issue edits and review locations; excludes status, builds and handoff writes), or "server" for all of its tools. Add "pair-desk.set_build" separately to allow build publication.',
         ),
-      send_to: z.array(z.string().refine(isJobSendTarget, "Use an exact local session name, not an agent kind, broadcast or job name"))
+      send_to: z.array(z.string().refine(isJobSendTarget, "Use an exact local session or job name, not an agent kind, broadcast, wildcard or remote address"))
         .max(MAX_JOB_SEND_TARGETS).optional()
-        .describe("Explicitly allow this job to send to these exact local session names, including replies to messages received by its supervisor. No other external recipients are allowed. Kept across continuations."),
+        .describe("Explicitly allow this job to send to these exact local session or job names, including replies to messages received by its supervisor. Default is closed. Cross-session jobs require a separate reciprocal grant to answer; they retain hop limits and quiet copies for both owners. No other external recipients are allowed. Kept across continuations."),
       ...profile.schema,
     };
     /** Run the delegate in this process. */

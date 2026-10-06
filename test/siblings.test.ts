@@ -228,13 +228,59 @@ describe("sibling job messaging", () => {
     expect(reply).toMatchObject({ replyTo: request.id, conversationId: request.conversationId, hop: 1 });
     await until(() => external.unread().length === 1);
     expect(external.unread()[0]!.from.name).toBe(allowed.job.name);
-    for (const to of ["*", "claude", "codex", "opencode", "remote/session", denied.job.name]) expect(isJobSendTarget(to)).toBe(false);
+    for (const to of ["*", "claude", "codex", "opencode", "remote/session", "claude-*"]) expect(isJobSendTarget(to)).toBe(false);
     await expect(allowed.child.siblings.send(external.name, "Wrong reply", "missing")).rejects.toThrow(/reply_to/);
     const unrelated = (await external.send({ to: denied.job.name, body: "Other job request" })).messages[0]!;
     await expect(allowed.child.siblings.send(external.name, "Wrong job reply", unrelated.id)).rejects.toThrow(/reply_to/);
     await external.stop();
     await expect.poll(async () => (await supervisor.peers()).map((p) => p.name)).not.toContain(external.name);
     expect((await allowed.chat.send(external.name, "Queued deliverable")).queuedFor).toEqual([external.name]);
+  });
+
+  it("permits only exact cross-session job grants with quiet copies for both owners", async () => {
+    const otherOwner = env.node("claude-other-owner");
+    await otherOwner.start();
+    const a = await sibling("a", "codex", "session-a", true, ["opencode-job-b"]);
+    const b = await sibling("b", "opencode", "session-b");
+    await b.node.updateJob({ jobParent: otherOwner.name });
+    const outsider = await sibling("outsider", "claude", "session-b");
+    expect(await a.child.siblings.peers()).toEqual([{ name: b.job.name, title: "Task b", agent: "opencode", status: "running" }]);
+    await expect(a.chat.send(outsider.job.name, "Not granted")).rejects.toThrow(/explicit send_to/);
+    const first = (await a.child.siblings.send(b.job.name, "Contract update")).messages[0]!;
+    await until(() => b.node.hasSeen(first.id) && otherOwner.unread().length === 1 && supervisor.unread().length === 1);
+    expect((await b.child.inbox())[0]?.body).toBe("Contract update");
+    expect(otherOwner.unread().every(isSiblingNote)).toBe(true);
+    expect(supervisor.unread().every(isSiblingNote)).toBe(true);
+    await expect(b.chat.send(a.job.name, "No reciprocal grant", first.id)).rejects.toThrow(/explicit send_to/);
+    await b.node.stop();
+    await expect.poll(() => a.chat.peers()).toEqual([]);
+    const resumed = await sibling("b", "opencode", "session-b", true, [a.job.name]);
+    await resumed.node.updateJob({ jobParent: otherOwner.name });
+    const reply = (await resumed.chat.send(a.job.name, "Granted reply", first.id)).messages[0]!;
+    expect(reply).toMatchObject({ hop: 1, conversationId: first.conversationId, replyTo: first.id });
+    await expect(a.chat.send(b.job.name, "Wrong reply", "missing")).rejects.toThrow(/reply_to/);
+    await expect(outsider.node.send({ to: a.job.name, body: "Forged thread", conversationId: first.conversationId })).rejects.toThrow(/explicit send_to/);
+    let message = reply;
+    for (let hop = 2; hop < DEFAULT_SIBLING_MAX_HOPS; hop++) {
+      const sender = hop % 2 ? resumed : a;
+      const recipient = hop % 2 ? a : resumed;
+      message = (await sender.chat.send(recipient.job.name, `Detail ${hop}`, message.id)).messages[0]!;
+    }
+    await expect(a.chat.send(resumed.job.name, "Cross-session over budget", message.id)).rejects.toThrow(/Durable notice/);
+    await until(() => a.node.unread().some((m) => m.conversationId.startsWith("sibling-drop-")));
+    expect(supervisor.unread().find((m) => m.conversationId.startsWith("sibling-drop-"))?.body).toContain("Cross-session over budget");
+    expect(resumed.node.unread().some((m) => m.body === "Cross-session over budget")).toBe(false);
+    await otherOwner.stop();
+  });
+
+  it("returns the saved report for an explicitly granted finished job from another session", async () => {
+    const a = await sibling("a", "codex", undefined, true, ["opencode-job-past"]);
+    writeFileSync(join(env.home, JOBS_FILE), JSON.stringify({ version: 1, jobs: [
+      { id: "past", name: "opencode-job-past", agent: "opencode", status: "interrupted", supervisor: "other-session", owner: "claude-other", report: "Interrupted findings" },
+    ] }));
+    expect((await a.chat.peers())[0]).toMatchObject({ name: "opencode-job-past", status: "interrupted" });
+    expect((await a.chat.send("opencode-job-past", "Follow up")).finishedRecipient).toMatchObject({ report: "Interrupted findings" });
+    await expect(a.chat.send("opencode-job-missing", "Unknown job")).rejects.toThrow(/explicit send_to/);
   });
 
   it.each(["claude", "opencode"] as const)("keeps supervisor copies quiet for a %s notification client", async (agent) => {

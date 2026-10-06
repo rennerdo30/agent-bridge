@@ -12,10 +12,10 @@ export function isPureAcknowledgement(body: string): boolean {
 }
 const EXACT_PEER_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 
-/** Only exact local session names can be granted; never broadcasts, agent kinds or job names. */
+/** Only exact local session or job names can be granted; never broadcasts, agent kinds or wildcard session families. */
 export function isJobSendTarget(value: unknown): value is string {
   return typeof value === "string" && EXACT_PEER_NAME_PATTERN.test(value) &&
-    !(AGENT_KINDS as readonly string[]).includes(value) && !value.includes("-job-") && !value.includes("-ask-");
+    !(AGENT_KINDS as readonly string[]).includes(value);
 }
 
 export function siblingMaxHops(maxHops: number): number {
