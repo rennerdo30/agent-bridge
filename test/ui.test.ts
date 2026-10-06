@@ -5,25 +5,38 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { classifyPeers, startUi, summarizeRun, type RunSummary } from "../src/cli/ui.js";
 import type { PeerInfo } from "../src/core/protocol.js";
 import { nullLogger } from "../src/core/logger.js";
-import { makeEnv, type TestEnv } from "./helpers.js";
+import { makeEnv, until, type TestEnv } from "./helpers.js";
+import { attachDashboardJobControl } from "../src/mcp/dashboard-control.js";
+import { JobManager, type Job } from "../src/mcp/jobs.js";
+import { JOBS_FILE } from "../src/core/constants.js";
+import { DASHBOARD_JOB_CONVERSATION } from "../src/core/job-control.js";
 
 let env: TestEnv;
 let ui: { url: string; close: () => Promise<void> };
 let cookie = "";
+const managers: JobManager[] = [];
 
 beforeEach(async () => {
   env = makeEnv();
-  ui = await startUi({ home: env.home, pipe: env.pipe, port: 0, log: nullLogger });
+  ui = await startUi({ home: env.home, pipe: env.pipe, port: 0, log: nullLogger, models: async () => [{ agent: "codex", defaultModel: "test-model", models: ["test-model"], lines: ["- test-model (default): Test. Efforts: low, high"] }] });
   const first = await fetch(ui.url, { redirect: "manual" });
   expect(first.status).toBe(302);
   cookie = String(first.headers.get("set-cookie")).split(";")[0]!;
 });
 afterEach(async () => {
+  for (const manager of managers.splice(0)) manager.cancelAll();
   await ui.close();
   await env.cleanup();
 });
 
 const base = () => ui.url.replace(/\/\?t=.*$/, "");
+const POST_HEADERS = () => ({ cookie, "x-agent-bridge": "1", "content-type": "application/json" });
+const RUN = "2026-10-06-06-32-18-codex-dashboard";
+function recordJob(owner: string, job: Job): void {
+  mkdirSync(join(env.home, "runs"), { recursive: true });
+  writeFileSync(join(env.home, "runs", `${RUN}.log`), "06:32:18 codex\n");
+  writeFileSync(join(env.home, "runs", `${RUN}.json`), JSON.stringify({ by: owner, job: job.name }));
+}
 
 describe("web dashboard", () => {
   it("refuses requests without the secret, a wrong link or a foreign Host", async () => {
@@ -92,6 +105,117 @@ describe("web dashboard", () => {
     expect(results.every((r) => r.deliveredTo?.[0] === "claude-app")).toBe(true);
     const senders = (await peer.peers()).filter((p) => p.agent === "other").map((p) => p.name);
     expect(senders).toEqual(["you"]);
+  });
+
+  it("routes a dashboard message live to only the selected job, without waking the parent", async () => {
+    const peer = env.node("claude-owner", "claude");
+    await peer.start();
+    const jobs = new JobManager(peer, nullLogger);
+    managers.push(jobs);
+    attachDashboardJobControl(peer, jobs, nullLogger);
+    const received: string[] = [], other: string[] = [];
+    const job = jobs.start("codex", null, "task", async (_s, _p, j) => {
+      j.live = { post: (text) => received.push(text) };
+      return new Promise(() => {});
+    });
+    jobs.start("codex", null, "other task", async (_s, _p, j) => {
+      j.live = { post: (text) => other.push(text) };
+      return new Promise(() => {});
+    });
+    recordJob(peer.name, job);
+    const r = await fetch(`${base()}/api/subagents/message`, { method: "POST", headers: POST_HEADERS(), body: JSON.stringify({ run: RUN, body: "check the tests" }) });
+    expect(r.status).toBe(200);
+    expect(await r.json()).toMatchObject({ outcome: "delivered", isError: false });
+    expect(received).toEqual(["check the tests"]);
+    expect(other).toEqual([]);
+    expect(peer.unread()).toEqual([]);
+    const state = await (await fetch(`${base()}/api/state`, { headers: { cookie } })).json();
+    expect(state.messages).toEqual([]);
+  });
+
+  it("continues a finished job with its own session and folder", async () => {
+    const peer = env.node("claude-owner", "claude");
+    await peer.start();
+    const jobs = new JobManager(peer, nullLogger);
+    managers.push(jobs);
+    attachDashboardJobControl(peer, jobs, nullLogger);
+    const calls: unknown[] = [];
+    const job = jobs.start("codex", null, "task", async () => ({ sessionId: "thread-1", text: "done", isError: false, details: {}, workdir: env.home }), (body, sessionId, workdir) => async () => {
+      calls.push({ body, sessionId, workdir });
+      return { sessionId, text: "continued", isError: false, details: {} };
+    });
+    await until(() => job.status === "done");
+    recordJob(peer.name, job);
+    const r = await fetch(`${base()}/api/subagents/message`, { method: "POST", headers: POST_HEADERS(), body: JSON.stringify({ run: RUN, body: "one more thing" }) });
+    expect(await r.json()).toMatchObject({ outcome: "started", isError: false });
+    expect(calls).toEqual([{ body: "one more thing", sessionId: "thread-1", workdir: env.home }]);
+  });
+
+  it("uses the current owner when a session adopted a job from a former name", async () => {
+    const peer = env.node("current-owner", "claude");
+    await peer.start();
+    const jobs = new JobManager(peer, nullLogger);
+    managers.push(jobs);
+    attachDashboardJobControl(peer, jobs, nullLogger);
+    const received: string[] = [];
+    const job = jobs.start("codex", null, "task", async (_s, _p, j) => {
+      j.live = { post: (body) => received.push(body) };
+      return new Promise(() => {});
+    });
+    recordJob("former-owner", job);
+    writeFileSync(join(env.home, JOBS_FILE), JSON.stringify([{ name: job.name, owner: peer.name }]));
+    const r = await fetch(`${base()}/api/subagents/message`, { method: "POST", headers: POST_HEADERS(), body: JSON.stringify({ run: RUN, body: "after adoption" }) });
+    expect(r.status).toBe(200);
+    expect(received).toEqual(["after adoption"]);
+  });
+
+  it("ignores malformed control commands and does not route another session's restored job", async () => {
+    const peer = env.node("owner", "claude"), sender = env.node("test-sender", "other");
+    await peer.start();
+    await sender.start();
+    const jobs = new JobManager(peer, nullLogger);
+    managers.push(jobs);
+    attachDashboardJobControl(peer, jobs, nullLogger);
+    const job = jobs.start("codex", null, "foreign task", async () => new Promise(() => {}));
+    job.owner = "another-session";
+    const sent = await sender.send({ to: peer.name, body: "null", conversationId: DASHBOARD_JOB_CONVERSATION }, { quiet: true });
+    await until(() => peer.hasSeen(sent.messages[0]!.id));
+    expect(peer.unread()).toEqual([]);
+    recordJob(peer.name, job);
+    const r = await fetch(`${base()}/api/subagents/message`, { method: "POST", headers: POST_HEADERS(), body: JSON.stringify({ run: RUN, body: "wrong owner" }) });
+    expect(r.status).toBe(409);
+    expect(await r.json()).toMatchObject({ outcome: "unknown" });
+    expect(job.queue).toEqual([]);
+  });
+
+  it("authenticates job messages and rejects missing metadata, invalid input and unavailable jobs", async () => {
+    const post = (args: unknown, headers = POST_HEADERS()) => fetch(`${base()}/api/subagents/message`, { method: "POST", headers, body: JSON.stringify(args) });
+    expect((await post({ run: RUN, body: "hi" }, { "x-agent-bridge": "1", "content-type": "application/json" } as ReturnType<typeof POST_HEADERS>)).status).toBe(403);
+    expect((await post({ run: RUN, body: "hi" }, { cookie } as ReturnType<typeof POST_HEADERS>)).status).toBe(403);
+    expect((await post({ run: "../secret", body: "hi" })).status).toBe(400);
+    expect((await post({ run: RUN, body: " " })).status).toBe(400);
+    expect((await post({ run: RUN, body: "hi" })).status).toBe(404);
+    mkdirSync(join(env.home, "runs"), { recursive: true });
+    writeFileSync(join(env.home, "runs", `${RUN}.log`), "06:32:18 codex\n");
+    expect((await post({ run: RUN, body: "hi" })).status).toBe(409);
+    writeFileSync(join(env.home, "runs", `${RUN}.json`), JSON.stringify({ by: "offline", job: "codex-job-missing" }));
+    const offline = await post({ run: RUN, body: "hi" });
+    expect(offline.status).toBe(409);
+    expect(await offline.json()).toMatchObject({ error: expect.stringContaining("not connected") });
+    const peer = env.node("offline", "claude");
+    await peer.start();
+    const jobs = new JobManager(peer, nullLogger);
+    managers.push(jobs);
+    attachDashboardJobControl(peer, jobs, nullLogger);
+    const missing = await post({ run: RUN, body: "hi", to: "another-session", job: "ignored" });
+    expect(missing.status).toBe(409);
+    expect(await missing.json()).toMatchObject({ outcome: "unknown", isError: true });
+  });
+
+  it("serves models and defaults only to an authenticated dashboard", async () => {
+    expect((await fetch(`${base()}/api/models`)).status).toBe(403);
+    const r = await fetch(`${base()}/api/models`, { headers: { cookie } });
+    expect(await r.json()).toMatchObject({ reports: [{ agent: "codex", defaultModel: "test-model", models: ["test-model"] }] });
   });
 });
 

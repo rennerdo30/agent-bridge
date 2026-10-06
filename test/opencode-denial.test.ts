@@ -34,5 +34,5 @@ server.listen(0, "127.0.0.1", () => console.log("listening on http://127.0.0.1:"
       },
     });
     expect(JSON.parse(res.text)).toEqual({ reply: "reject", message: "Denied by supervisor parent: publish only from merged master" });
-  } finally { rmSync(dir, { recursive: true, force: true }); }
+  } finally { rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 }, 15_000);

@@ -17,6 +17,7 @@ import {
 import type { Logger } from "./logger.js";
 import { BridgeError, type AgentKind, type BridgeMessage, type PeerActivity, type PeerInfo, type SendArgs, type SendResult, type SiblingPeer } from "./protocol.js";
 import { MessageStore } from "./store.js";
+import { DASHBOARD_JOB_CONVERSATION } from "./job-control.js";
 
 export interface BridgeNodeOptions {
   pipePath: string;
@@ -42,6 +43,7 @@ export interface BridgeNodeOptions {
 
 export interface BridgeNodeEvents {
   message: [BridgeMessage];
+  job_control: [BridgeMessage];
   peer_joined: [PeerInfo];
   peer_left: [PeerInfo];
   connected: [{ name: string; isBroker: boolean }];
@@ -312,6 +314,11 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
       const m = data as BridgeMessage;
       if (this.readIds.has(m.id) || this.inbox.has(m.id)) return;
       this.inbox.set(m.id, m);
+      if (m.conversationId === DASHBOARD_JOB_CONVERSATION) {
+        this.markRead([m.id]);
+        this.emit("job_control", m);
+        return;
+      }
       this.log.debug("message received", { id: m.id, from: m.from.name, hop: m.hop });
       this.emit("message", m);
     } else if (ev === "peer_joined" || ev === "peer_left") {

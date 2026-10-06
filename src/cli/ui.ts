@@ -5,15 +5,17 @@ import type { AddressInfo } from "node:net";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { BridgeClient } from "../core/client.js";
-import { APP_VERSION, PROTOCOL_VERSION } from "../core/constants.js";
+import { APP_VERSION, JOBS_FILE, MAX_BODY_CHARS, PROTOCOL_VERSION } from "../core/constants.js";
 import type { Logger } from "../core/logger.js";
 import { BridgeNode } from "../core/node.js";
 import { resolveDbPath } from "../core/paths.js";
-import type { PeerInfo } from "../core/protocol.js";
+import { CODING_AGENTS, type PeerInfo } from "../core/protocol.js";
+import { readModels, type ModelReport } from "../core/models.js";
 import { RUNS_DIR_NAME, runMetaPath, type RunMeta } from "../core/runfeed.js";
 import { loadOrCreateToken, tokensEqual } from "../core/token.js";
 import { loadConfig } from "../core/config.js";
 import { readUsage, type UsageReport } from "../core/usage.js";
+import { JobControlError, messageDashboardJob } from "../core/job-control.js";
 import { UI_PAGE } from "./ui-page.js";
 import { readJsonStore } from "../core/json-store.js";
 
@@ -103,6 +105,17 @@ function readMeta(file: string): RunMeta {
   }
 }
 
+/** A server may have adopted a job from an earlier stand-in name since its log was written. */
+function jobOwner(home: string, job: string, original: string): string {
+  try {
+    const stored = JSON.parse(readFileSync(join(home, JOBS_FILE), "utf8"));
+    const owner = Array.isArray(stored) ? stored.find((j) => j?.name === job)?.owner : null;
+    return typeof owner === "string" && owner ? owner : original;
+  } catch {
+    return original;
+  }
+}
+
 export type DashboardPeer = PeerInfo & { subagent: boolean; parent: string | null };
 
 /**
@@ -188,6 +201,7 @@ export interface UiOptions {
   log: Logger;
   /** Reads the agents' usage limits (default: each CLI, see usage.ts); replaceable for tests. */
   usage?: () => Promise<UsageReport[]>;
+  models?: () => Promise<ModelReport[]>;
 }
 
 /** Usage is read by running each CLI briefly: keep it this long unless the page asks for a refresh. */
@@ -267,6 +281,11 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
       const reports = await getUsage(url.searchParams.get("refresh") === "1");
       return send(res, 200, { at: usage?.at ?? Date.now(), reports });
     }
+    if (req.method === "GET" && url.pathname === "/api/models") {
+      const cfg = loadConfig(opts.home, "other", opts.log);
+      const reports = await (opts.models ?? (() => Promise.all(CODING_AGENTS.map((agent) => readModels(agent, cfg, opts.home, opts.log, opts.home)))))();
+      return send(res, 200, { reports });
+    }
     const runMatch = /^\/api\/runs\/([\w.-]+)$/.exec(url.pathname);
     if (req.method === "GET" && runMatch) {
       const file = join(opts.home, RUNS_DIR_NAME, `${runMatch[1]}.log`);
@@ -287,6 +306,24 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
       if (!to || !text) return send(res, 400, { error: "to and body are required" });
       const r = await (await getSender()).send({ to, body: text });
       return send(res, 200, { id: r.messages[0]?.id, deliveredTo: r.deliveredTo, queuedFor: r.queuedFor });
+    }
+    if (req.method === "POST" && url.pathname === "/api/subagents/message") {
+      if (req.headers["x-agent-bridge"] !== "1") return send(res, 403, { error: "missing header" });
+      const body = await readJson(req);
+      const run = typeof body.run === "string" ? body.run : "";
+      const text = typeof body.body === "string" ? body.body.trim() : "";
+      if (!RUN_NAME.test(`${run}.log`) || !text || text.length > MAX_BODY_CHARS) return send(res, 400, { error: "a valid run and message are required" });
+      const file = join(opts.home, RUNS_DIR_NAME, `${run}.log`);
+      if (!existsSync(file)) return send(res, 404, { error: "no such run" });
+      const meta = readMeta(join(opts.home, RUNS_DIR_NAME, `${run}.json`));
+      if (!meta.by || !meta.job) return send(res, 409, { error: "This run has no owning session or job recorded." });
+      try {
+        const result = await messageDashboardJob(await getSender(), jobOwner(opts.home, meta.job, meta.by), meta.job, text);
+        return send(res, result.isError ? 409 : 200, result);
+      } catch (err) {
+        if (err instanceof JobControlError) return send(res, err.reason === "offline" ? 409 : 504, { error: err.message });
+        throw err;
+      }
     }
     return send(res, 404, { error: "not found" });
   };

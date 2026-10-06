@@ -1,3 +1,5 @@
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import type { BridgeConfig } from "./config.js";
 import { defaultEffort } from "./effort.js";
 import type { Logger } from "./logger.js";
@@ -12,6 +14,76 @@ import { captureOutput, codexAppServerCall } from "./usage.js";
  *  - opencode: `opencode models` (every provider/model it is logged in to); efforts are per-model "variants"
  */
 const MAX_LISTED = 80;
+const MODEL_CACHE_MS = 10 * 60 * 1000;
+const SHORT_MODEL_LIST = 6;
+const modelReads = new Map<string, Promise<ModelReport>>();
+
+export interface ModelReport {
+  agent: CodingAgent;
+  defaultModel: string | null;
+  models: string[];
+  lines: string[];
+}
+
+const modelBin = (agent: CodingAgent, cfg: BridgeConfig): string => cfg[`${agent}Bin`];
+const modelDefault = (agent: CodingAgent, cfg: BridgeConfig): string | null => cfg[`${agent}Model`];
+const modelCachePath = (home: string, agent: CodingAgent): string => join(home, `models-${agent}.json`);
+
+/** Startup reads only this small file; listing models never holds up MCP registration. */
+function cachedModels(home: string, agent: CodingAgent, cfg: BridgeConfig): ModelReport | null {
+  try {
+    const cache = JSON.parse(readFileSync(modelCachePath(home, agent), "utf8"));
+    const validStrings = (v: unknown): boolean => Array.isArray(v) && v.every((s: unknown) => typeof s === "string");
+    if (cache.bin !== modelBin(agent, cfg) || cache.effort !== (cfg.effort[agent] ?? null) || typeof cache.at !== "number" || Date.now() - cache.at >= MODEL_CACHE_MS) return null;
+    if (cache.report?.agent !== agent || !validStrings(cache.report.models) || !validStrings(cache.report.lines)) return null;
+    return { ...cache.report, defaultModel: modelDefault(agent, cfg) ?? cache.report.defaultModel };
+  } catch {
+    return null;
+  }
+}
+
+export function modelParameterDescription(agent: CodingAgent, cfg: BridgeConfig, home: string, example: string): string {
+  const cached = cachedModels(home, agent, cfg);
+  const models = cached?.models ?? (agent === "claude" ? ["opus", "sonnet"] : []);
+  return (
+    `Any model id or alias ${agent} accepts, passed through verbatim (e.g. ${example}). ` +
+    `Default: ${modelDefault(agent, cfg) ?? cached?.defaultModel ?? `${agent}'s own default`}. ` +
+    (models.length ? `Available${models.length > SHORT_MODEL_LIST ? " (short list)" : ""}: ${models.slice(0, SHORT_MODEL_LIST).join(", ")}. ` : "") +
+    `Use list_models(agent="${agent}") for the full list and effort levels.`
+  );
+}
+
+/** Shared by list_models and the dashboard; concurrent reads start each CLI only once. */
+export async function readModels(agent: CodingAgent, cfg: BridgeConfig, cwd: string, log: Logger, home: string): Promise<ModelReport> {
+  const cached = cachedModels(home, agent, cfg);
+  if (cached) return cached;
+  const key = JSON.stringify([home, agent, modelBin(agent, cfg), modelDefault(agent, cfg), cfg.effort[agent], cwd]);
+  let reading = modelReads.get(key);
+  if (!reading) {
+    reading = (async () => {
+      const lines = await describeModels(agent, cfg, cwd, log);
+      const models = agent === "claude"
+        ? /Aliases for the latest of each family: ([^;]+)/.exec(lines[0] ?? "")?.[1]?.split(", ") ?? []
+        : lines.flatMap((l) => {
+            const id = /^- (\S+)/.exec(l)?.[1];
+            return id ? [agent === "codex" ? id.replace(/:$/, "") : id] : [];
+          });
+      const defaultModel = lines.flatMap((l) => /^- (\S+) \(default\)/.exec(l)?.[1] ?? [])[0] ?? null;
+      const report: ModelReport = { agent, defaultModel, models, lines };
+      if (!lines[0]?.startsWith("Could not list")) {
+        try {
+          mkdirSync(home, { recursive: true });
+          writeFileSync(modelCachePath(home, agent), JSON.stringify({ at: Date.now(), bin: modelBin(agent, cfg), effort: cfg.effort[agent] ?? null, report }), { mode: 0o600 });
+        } catch (err) {
+          log.debug("could not cache models", { err: (err as Error).message });
+        }
+      }
+      return { ...report, defaultModel: modelDefault(agent, cfg) ?? defaultModel };
+    })().finally(() => modelReads.delete(key));
+    modelReads.set(key, reading);
+  }
+  return reading;
+}
 
 export async function describeModels(agent: CodingAgent, cfg: BridgeConfig, cwd: string, log: Logger, query = ""): Promise<string[]> {
   const q = query.trim().toLowerCase();

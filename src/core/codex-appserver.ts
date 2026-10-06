@@ -45,6 +45,8 @@ export function innerCommand(s: string): string {
 export interface Steering {
   /** Deliver a message into the running turn; false when no turn is running (it has finished). */
   send: (message: string, sibling?: boolean) => Promise<boolean>;
+  /** Name the Codex thread (the job's title). */
+  rename?: (title: string) => Promise<void>;
 }
 
 type Pending = { resolve: (v: any) => void; reject: (e: Error) => void };
@@ -260,6 +262,9 @@ export async function delegateToCodexAppServer(
   const boot = <T>(p: Promise<T>) => Promise.race([p, exited, stopped, startup]);
 
   const steering: Steering = {
+    rename: async (title) => {
+      if (threadId) await race(request("thread/name/set", { threadId, name: title }));
+    },
     send: async (message, sibling = false) => {
       if (!threadId || !turnId) return false;
       try {
@@ -297,6 +302,10 @@ export async function delegateToCodexAppServer(
       : await boot(request("thread/start", threadParams));
     threadId = thread?.thread?.id ?? threadId;
     if (threadId) req.onSession?.(threadId);
+    if (threadId && req.title) {
+      step = "thread/name/set";
+      await boot(request("thread/name/set", { threadId, name: req.title })).catch((err) => req.log.warn("could not name the Codex thread", { err: (err as Error).message }));
+    }
     // The model and effort this thread really uses (the user's config defaults included).
     if (typeof thread?.model === "string")
       req.onInfo?.({

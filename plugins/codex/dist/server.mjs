@@ -7200,7 +7200,7 @@ var require_dist = __commonJS({
 });
 
 // src/mcp/server.ts
-import { dirname as dirname7, isAbsolute as isAbsolute4, join as join22, resolve as resolve5 } from "node:path";
+import { dirname as dirname7, isAbsolute as isAbsolute4, join as join23, resolve as resolve5 } from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 
 // node_modules/zod/v3/helpers/util.js
@@ -38281,7 +38281,7 @@ function makeLogger(sink, scope) {
 }
 
 // src/core/node.ts
-import { randomUUID as randomUUID4 } from "node:crypto";
+import { randomUUID as randomUUID5 } from "node:crypto";
 import { EventEmitter as EventEmitter2 } from "node:events";
 import { unlinkSync } from "node:fs";
 import { dirname as dirname5, join as join8 } from "node:path";
@@ -39005,6 +39005,45 @@ var BridgeClient = class _BridgeClient extends EventEmitter {
   }
 };
 
+// src/core/job-control.ts
+import { randomUUID as randomUUID4 } from "node:crypto";
+var DASHBOARD_JOB_CONVERSATION = "jobctl-dashboard";
+var CONTROL_TIMEOUT_MS = 1e4;
+var JobControlError = class extends Error {
+  constructor(message, reason) {
+    super(message);
+    this.reason = reason;
+  }
+  reason;
+};
+async function messageDashboardJob(node2, owner, job, body) {
+  if (!(await node2.peers()).some((p) => p.name === owner)) throw new JobControlError("The owning session is not connected. Reopen it to continue this subagent.", "offline");
+  const requestId = randomUUID4();
+  let receive;
+  let timer;
+  const reply = new Promise((resolve6, reject) => {
+    receive = (m) => {
+      if (m.from.name !== owner) return;
+      try {
+        const result = JSON.parse(m.body);
+        if (result.type === "result" && result.requestId === requestId && typeof result.text === "string" && typeof result.outcome === "string" && typeof result.isError === "boolean") resolve6(result);
+      } catch {
+      }
+    };
+    node2.on("job_control", receive);
+    timer = setTimeout(() => reject(new JobControlError("The owning session did not confirm delivery. Check its chat before sending again.", "timeout")), CONTROL_TIMEOUT_MS);
+  });
+  reply.catch(() => {
+  });
+  try {
+    await node2.send({ to: owner, body: JSON.stringify({ type: "message", requestId, job, body }), conversationId: DASHBOARD_JOB_CONVERSATION }, { quiet: true });
+    return await reply;
+  } finally {
+    clearTimeout(timer);
+    node2.off("job_control", receive);
+  }
+}
+
 // src/core/node.ts
 var READ_ID_MEMORY = 2e3;
 var jitter = () => ELECTION_RETRY_MIN_MS + Math.floor(Math.random() * (ELECTION_RETRY_MAX_MS - ELECTION_RETRY_MIN_MS));
@@ -39016,7 +39055,7 @@ var BridgeNode = class extends EventEmitter2 {
   constructor(opts) {
     super();
     this.opts = opts;
-    this.id = opts.id ?? randomUUID4();
+    this.id = opts.id ?? randomUUID5();
     this.currentName = opts.name;
     this.currentCwd = opts.cwd;
     this.autoWake = opts.autoWake;
@@ -39241,6 +39280,11 @@ var BridgeNode = class extends EventEmitter2 {
       const m = data;
       if (this.readIds.has(m.id) || this.inbox.has(m.id)) return;
       this.inbox.set(m.id, m);
+      if (m.conversationId === DASHBOARD_JOB_CONVERSATION) {
+        this.markRead([m.id]);
+        this.emit("job_control", m);
+        return;
+      }
       this.log.debug("message received", { id: m.id, from: m.from.name, hop: m.hop });
       this.emit("message", m);
     } else if (ev === "peer_joined" || ev === "peer_left") {
@@ -40482,6 +40526,9 @@ async function delegateToCodexAppServer(req) {
   });
   const boot = (p) => Promise.race([p, exited, stopped, startup]);
   const steering = {
+    rename: async (title) => {
+      if (threadId) await race(request2("thread/name/set", { threadId, name: title }));
+    },
     send: async (message, sibling = false) => {
       if (!threadId || !turnId) return false;
       try {
@@ -40514,6 +40561,10 @@ ${message}`, text_elements: [] }] });
     const thread = req.sessionId ? await boot(request2("thread/resume", { ...threadParams, threadId: req.sessionId, excludeTurns: true })) : await boot(request2("thread/start", threadParams));
     threadId = thread?.thread?.id ?? threadId;
     if (threadId) req.onSession?.(threadId);
+    if (threadId && req.title) {
+      step = "thread/name/set";
+      await boot(request2("thread/name/set", { threadId, name: req.title })).catch((err) => req.log.warn("could not name the Codex thread", { err: err.message }));
+    }
     if (typeof thread?.model === "string")
       req.onInfo?.({
         model: thread.model,
@@ -40760,6 +40811,10 @@ function saveAutoWake(home, name, enabled) {
   }
 }
 
+// src/core/models.ts
+import { mkdirSync as mkdirSync6, readFileSync as readFileSync9, writeFileSync as writeFileSync4 } from "node:fs";
+import { join as join15 } from "node:path";
+
 // src/core/effort.ts
 import { readFileSync as readFileSync8 } from "node:fs";
 import { homedir as homedir5 } from "node:os";
@@ -40842,6 +40897,56 @@ function claudeSettingsEffort(json2, model) {
 
 // src/core/models.ts
 var MAX_LISTED = 80;
+var MODEL_CACHE_MS = 10 * 60 * 1e3;
+var SHORT_MODEL_LIST = 6;
+var modelReads = /* @__PURE__ */ new Map();
+var modelBin = (agent, cfg) => cfg[`${agent}Bin`];
+var modelDefault = (agent, cfg) => cfg[`${agent}Model`];
+var modelCachePath = (home, agent) => join15(home, `models-${agent}.json`);
+function cachedModels(home, agent, cfg) {
+  try {
+    const cache2 = JSON.parse(readFileSync9(modelCachePath(home, agent), "utf8"));
+    const validStrings = (v) => Array.isArray(v) && v.every((s) => typeof s === "string");
+    if (cache2.bin !== modelBin(agent, cfg) || cache2.effort !== (cfg.effort[agent] ?? null) || typeof cache2.at !== "number" || Date.now() - cache2.at >= MODEL_CACHE_MS) return null;
+    if (cache2.report?.agent !== agent || !validStrings(cache2.report.models) || !validStrings(cache2.report.lines)) return null;
+    return { ...cache2.report, defaultModel: modelDefault(agent, cfg) ?? cache2.report.defaultModel };
+  } catch {
+    return null;
+  }
+}
+function modelParameterDescription(agent, cfg, home, example) {
+  const cached2 = cachedModels(home, agent, cfg);
+  const models = cached2?.models ?? (agent === "claude" ? ["opus", "sonnet"] : []);
+  return `Any model id or alias ${agent} accepts, passed through verbatim (e.g. ${example}). Default: ${modelDefault(agent, cfg) ?? cached2?.defaultModel ?? `${agent}'s own default`}. ` + (models.length ? `Available${models.length > SHORT_MODEL_LIST ? " (short list)" : ""}: ${models.slice(0, SHORT_MODEL_LIST).join(", ")}. ` : "") + `Use list_models(agent="${agent}") for the full list and effort levels.`;
+}
+async function readModels(agent, cfg, cwd, log, home) {
+  const cached2 = cachedModels(home, agent, cfg);
+  if (cached2) return cached2;
+  const key = JSON.stringify([home, agent, modelBin(agent, cfg), modelDefault(agent, cfg), cfg.effort[agent], cwd]);
+  let reading = modelReads.get(key);
+  if (!reading) {
+    reading = (async () => {
+      const lines = await describeModels(agent, cfg, cwd, log);
+      const models = agent === "claude" ? /Aliases for the latest of each family: ([^;]+)/.exec(lines[0] ?? "")?.[1]?.split(", ") ?? [] : lines.flatMap((l) => {
+        const id = /^- (\S+)/.exec(l)?.[1];
+        return id ? [agent === "codex" ? id.replace(/:$/, "") : id] : [];
+      });
+      const defaultModel = lines.flatMap((l) => /^- (\S+) \(default\)/.exec(l)?.[1] ?? [])[0] ?? null;
+      const report = { agent, defaultModel, models, lines };
+      if (!lines[0]?.startsWith("Could not list")) {
+        try {
+          mkdirSync6(home, { recursive: true });
+          writeFileSync4(modelCachePath(home, agent), JSON.stringify({ at: Date.now(), bin: modelBin(agent, cfg), effort: cfg.effort[agent] ?? null, report }), { mode: 384 });
+        } catch (err) {
+          log.debug("could not cache models", { err: err.message });
+        }
+      }
+      return { ...report, defaultModel: modelDefault(agent, cfg) ?? defaultModel };
+    })().finally(() => modelReads.delete(key));
+    modelReads.set(key, reading);
+  }
+  return reading;
+}
 async function describeModels(agent, cfg, cwd, log, query = "") {
   const q = query.trim().toLowerCase();
   const match = (...s) => !q || s.some((x) => x?.toLowerCase().includes(q));
@@ -40882,20 +40987,20 @@ async function describeModels(agent, cfg, cwd, log, query = "") {
 
 // src/cli/dashboard.ts
 import { randomBytes as randomBytes7 } from "node:crypto";
-import { chmodSync as chmodSync2, readFileSync as readFileSync11, writeFileSync as writeFileSync4 } from "node:fs";
+import { chmodSync as chmodSync2, readFileSync as readFileSync12, writeFileSync as writeFileSync5 } from "node:fs";
 import { request } from "node:http";
-import { join as join17 } from "node:path";
+import { join as join18 } from "node:path";
 
 // src/cli/ui.ts
 import { randomBytes as randomBytes6 } from "node:crypto";
-import { existsSync as existsSync4, readdirSync as readdirSync3, readFileSync as readFileSync10, statSync as statSync3 } from "node:fs";
+import { existsSync as existsSync4, readdirSync as readdirSync3, readFileSync as readFileSync11, statSync as statSync3 } from "node:fs";
 import { createServer as createServer5 } from "node:http";
-import { join as join16 } from "node:path";
+import { join as join17 } from "node:path";
 import { DatabaseSync as DatabaseSync2 } from "node:sqlite";
 
 // src/core/runfeed.ts
-import { appendFileSync as appendFileSync2, mkdirSync as mkdirSync6, readFileSync as readFileSync9, readdirSync as readdirSync2, statSync as statSync2 } from "node:fs";
-import { join as join15 } from "node:path";
+import { appendFileSync as appendFileSync2, mkdirSync as mkdirSync7, readFileSync as readFileSync10, readdirSync as readdirSync2, statSync as statSync2 } from "node:fs";
+import { join as join16 } from "node:path";
 var RUNS_DIR_NAME = "runs";
 var HEARTBEAT_MS = 6e4;
 var KEEP_RUN_LOGS = 50;
@@ -40911,12 +41016,12 @@ function pruneOldLogs(dir) {
   try {
     const limit = retentionLimit("AGENT_BRIDGE_RUN_LOG_LIMIT", KEEP_RUN_LOGS);
     if (!limit) return;
-    const files = readdirSync2(dir).filter((f) => f.endsWith(".log")).map((f) => ({ f, t: statSync2(join15(dir, f)).mtimeMs })).sort((a, b) => b.t - a.t);
+    const files = readdirSync2(dir).filter((f) => f.endsWith(".log")).map((f) => ({ f, t: statSync2(join16(dir, f)).mtimeMs })).sort((a, b) => b.t - a.t);
     for (const { f } of files.slice(limit)) {
-      const path = join15(dir, f);
-      if (Date.now() - statSync2(path).mtimeMs <= STALE_RUN_MS && !/^\d\d:\d\d:\d\d finished after \d+s · /m.test(readFileSync9(path, "utf8"))) continue;
+      const path = join16(dir, f);
+      if (Date.now() - statSync2(path).mtimeMs <= STALE_RUN_MS && !/^\d\d:\d\d:\d\d finished after \d+s · /m.test(readFileSync10(path, "utf8"))) continue;
       archiveFile(path);
-      archiveFile(join15(dir, runMetaPath(f)));
+      archiveFile(join16(dir, runMetaPath(f)));
     }
   } catch (err) {
     process.stderr.write(`could not archive run logs: ${String(err)}
@@ -40925,9 +41030,9 @@ function pruneOldLogs(dir) {
 }
 function startRunFeed(opts) {
   const now = opts.now ?? Date.now;
-  const dir = join15(opts.home, RUNS_DIR_NAME);
-  mkdirSync6(dir, { recursive: true });
-  const logPath = join15(dir, `${new Date(now()).toISOString().slice(0, 19).replace(/[:T]/g, "-")}-${opts.name}.log`);
+  const dir = join16(opts.home, RUNS_DIR_NAME);
+  mkdirSync7(dir, { recursive: true });
+  const logPath = join16(dir, `${new Date(now()).toISOString().slice(0, 19).replace(/[:T]/g, "-")}-${opts.name}.log`);
   const write = (line) => {
     const [first, ...rest] = line.replace(/\r/g, "").split("\n");
     const body = [first, ...rest.map((l) => `${CONTINUATION}${l}`)].join("\n");
@@ -41236,8 +41341,10 @@ select, textarea, button { font: inherit; color: var(--text); background: var(--
 textarea { flex: 1 1 220px; min-height: 40px; resize: vertical; }
 button { background: var(--accent); color: #fff; border-color: var(--accent); font-weight: 600; cursor: pointer; padding: 8px 16px; }
 button:disabled { opacity: .6; cursor: default; }
-#sendInfo { width: 100%; color: var(--muted); font-size: 12px; }
-#sendInfo:empty { display: none; }
+#sendInfo, #jobSendInfo { width: 100%; color: var(--muted); font-size: 12px; }
+#sendInfo:empty, #jobSendInfo:empty { display: none; }
+.model-list { max-height: 260px; overflow: auto; font-size: 12.5px; }
+.model-list ul { padding-left: 18px; }
 
 /* Session view */
 .split { display: grid; grid-template-columns: minmax(300px, 380px) minmax(0, 1fr); gap: 20px; align-items: start; }
@@ -41312,6 +41419,7 @@ details[open] > summary::before { content: "\u25BE "; }
   <div id="overview">
     <div class="block stats" id="ovStats"></div>
     <div class="block"><h3>Usage left <span class="n" id="usageAt"></span><button class="linkbtn" id="usageRefresh" title="Read the limits again">refresh</button></h3><div id="ovUsage" class="cards usage"><div class="panel empty small muted">Reading the agents' limits\u2026</div></div></div>
+    <div class="block"><details><summary class="small muted">Available models</summary><div id="ovModels" class="cards usage"><div class="panel empty small muted">Open to read the available models.</div></div></details></div>
     <div class="block"><h3>Sessions <span class="n" id="ovCount"></span></h3><div id="ovSessions" class="cards"></div></div>
     <div class="block"><h3>Subagents <span class="n">working first, then newest finished</span></h3><div class="panel rows" id="ovRuns"></div></div>
     <div class="block" id="ovMsgBox"><h3>Messages</h3><div class="panel"><div id="ovMsgs" class="msgs"></div></div></div>
@@ -41331,6 +41439,11 @@ details[open] > summary::before { content: "\u25BE "; }
       </div>
       <div class="hint hidden" id="cHint"></div>
       <div id="chat" class="chat"></div>
+      <form id="jobSend" class="hidden">
+        <textarea id="jobBody" placeholder="Message this subagent" aria-label="Message this subagent"></textarea>
+        <button type="submit" id="jobSendBtn">Send</button>
+        <div id="jobSendInfo" role="status" aria-live="polite"></div>
+      </form>
     </div>
   </div>
 </main>
@@ -41375,11 +41488,13 @@ const dot = (activity) => '<span class="dot ' + (activity === "busy" ? "busy" : 
     }
     const pill = (status, percent) => '<span class="pill ' + status + '">' + (status === "running" ? (typeof percent === "number" ? "working \xB7 " + percent + "%" : "working") : status) + "</span>";
 
-let state = null, model = null, route = parseRoute(), lastTo = "", pulling = false, lastChat = "";
+let state = null, model = null, route = parseRoute(), pulling = false, lastChat = "";
 /** Loaded run logs: name -> { raw, offset, done }. */
 const logs = new Map();
 /** Expanded step groups and bubbles survive re-renders. */
 const opened = new Set();
+const jobDrafts = new Map(), jobResults = new Map(), jobSending = new Set();
+let composerGroup = null;
 
 function parseRoute() {
   const m = /^#\\/s\\/([^/]+)(?:\\/(.+))?$/.exec(location.hash);
@@ -41574,6 +41689,7 @@ function renderSession() {
   const mine = state.messages.filter((m) => m.from_name === x.name || m.to_target === x.name || String(m.recipients || "").split(", ").includes(x.name));
   $("sMsgs").innerHTML = messagesHtml(mine);
   const g = sel && model.groups.get(sel);
+  renderJobForm(g);
   if (g) void showGroup(g);
   else {
     $("cAvatar").innerHTML = ""; $("cTitle").textContent = "No subagent selected"; $("cSub").textContent = ""; $("cHint").classList.add("hidden");
@@ -41592,11 +41708,24 @@ function renderSendForm(inSession) {
   if (form.previousElementSibling !== box) box.after(form);
   const to = $("to"), current = to.value;
   const names = model.sessions.filter((x) => x.live).map((x) => x.name);
+  if (inSession && !names.includes(route.session)) names.push(route.session);
   to.innerHTML = names.map((n) => "<option>" + esc(n) + "</option>").join("") + '<option value="*">everyone</option>';
   // Opening a session tab addresses that session; otherwise keep the user's choice.
-  const want = inSession && route.session !== lastTo && names.includes(route.session) ? route.session : current;
+  const want = inSession ? route.session : current;
   if ([...names, "*"].includes(want)) to.value = want;
-  lastTo = inSession ? route.session : "";
+  to.disabled = inSession;
+}
+
+function renderJobForm(g) {
+  const key = g && g.key;
+  if (composerGroup !== key) {
+    if (composerGroup) jobDrafts.set(composerGroup, $("jobBody").value);
+    $("jobBody").value = jobDrafts.get(key) || "";
+    composerGroup = key;
+  }
+  $("jobSend").classList.toggle("hidden", !g || !g.job || g.owner === "earlier runs");
+  $("jobSendBtn").disabled = jobSending.has(key);
+  $("jobSendInfo").textContent = (jobResults.get(key) || []).at(-1) || "";
 }
 
 /** Load (the rest of) every turn's log, then render the conversation. */
@@ -41651,7 +41780,7 @@ function renderConversation(g) {
       '<div class="msgrow me">' + av(state.peers.find((p) => p.name === g.owner)?.agent || "other", true) +
       '<div class="bubble' + (long ? " clamp" : "") + '" data-open="' + esc(id) + '"><span class="who">' + (i === 0 ? esc(g.owner) : "follow-up from " + esc(g.owner)) + "</span>" + md(t.prompt.trim()) + "</div></div>" +
       stepsHtml(t.steps, g.agent, r.name, () => n++);
-  }).join("");
+  }).join("") + (jobResults.get(g.key) || []).map((text) => '<div class="sys">' + esc(text) + "</div>").join("");
   if (html === lastChat) return;
   lastChat = html;
   const chat = $("chat"), atEnd = chat.scrollHeight - chat.scrollTop - chat.clientHeight < 40;
@@ -41765,6 +41894,19 @@ async function loadUsage(refresh) {
     btn.textContent = "refresh";
   }
 }
+function modelsCard(rep) {
+  return '<div class="card"><div class="head">' + av(rep.agent, true) + esc(rep.agent) + '</div><div class="small muted">Default: ' + esc(rep.defaultModel || rep.agent + "'s own default") + '</div><div class="model-list">' + md(rep.lines.join("\\n")) + "</div></div>";
+}
+async function loadModels() {
+  try {
+    const r = await fetch("/api/models");
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const data = await r.json();
+    $("ovModels").innerHTML = data.reports.map(modelsCard).join("");
+  } catch (err) {
+    $("ovModels").innerHTML = '<div class="panel empty small muted">Could not read models: ' + esc(err.message) + "</div>";
+  }
+}
 function usageCard(rep) {
   const body = rep.limits.length
     ? rep.limits.map((l) => {
@@ -41812,6 +41954,34 @@ $("send").addEventListener("submit", async (e) => {
   }
 });
 
+$("jobSend").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const key = composerGroup, g = model.groups.get(key), body = $("jobBody").value.trim();
+  if (!body || !g || !g.job || jobSending.has(key)) return;
+  const run = g.turns[g.turns.length - 1].name;
+  jobSending.add(key);
+  renderJobForm(g);
+  let result;
+  try {
+    const r = await fetch("/api/subagents/message", { method: "POST", headers: { "content-type": "application/json", "x-agent-bridge": "1" }, body: JSON.stringify({ run, body }) });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || d.text || "HTTP " + r.status);
+    result = d.text;
+    jobDrafts.delete(key);
+    if (composerGroup === key && $("jobBody").value.trim() === body) $("jobBody").value = "";
+    void poll();
+  } catch (err) {
+    result = "Message error: " + err.message;
+  } finally {
+    jobSending.delete(key);
+    jobResults.set(key, [...(jobResults.get(key) || []), result]);
+    if (composerGroup === key) {
+      renderJobForm(g);
+      renderConversation(g);
+    }
+  }
+});
+
 /** Auto follows the system; Light and Dark override it. Remembered in this browser. */
 function applyTheme(theme) {
   const root = document.documentElement;
@@ -41832,6 +42002,7 @@ poll();
 loadUsage(false);
 setInterval(() => loadUsage(false), 5 * 60 * 1000);
 $("usageRefresh").addEventListener("click", () => loadUsage(true));
+$("ovModels").parentElement.addEventListener("toggle", (e) => { if (e.target.open) void loadModels(); });
 setInterval(poll, POLL_MS);
 </script>
 </body>
@@ -41877,9 +42048,9 @@ function summarizeRun(file2, text2, mtimeMs, now, meta3 = {}) {
   };
 }
 function listRuns(home, now = Date.now()) {
-  const dir = join16(home, RUNS_DIR_NAME);
+  const dir = join17(home, RUNS_DIR_NAME);
   if (!existsSync4(dir)) return [];
-  return readdirSync3(dir).filter((f) => RUN_NAME.test(f)).map((f) => ({ f, st: statSync3(join16(dir, f)) })).sort((a, b) => b.st.mtimeMs - a.st.mtimeMs).slice(0, MAX_RUNS).map(({ f, st }) => summarizeRun(f, readFileSync10(join16(dir, f), "utf8"), st.mtimeMs, now, readMeta(join16(dir, runMetaPath(f)))));
+  return readdirSync3(dir).filter((f) => RUN_NAME.test(f)).map((f) => ({ f, st: statSync3(join17(dir, f)) })).sort((a, b) => b.st.mtimeMs - a.st.mtimeMs).slice(0, MAX_RUNS).map(({ f, st }) => summarizeRun(f, readFileSync11(join17(dir, f), "utf8"), st.mtimeMs, now, readMeta(join17(dir, runMetaPath(f)))));
 }
 function readMeta(file2) {
   try {
@@ -41888,9 +42059,18 @@ function readMeta(file2) {
     return {};
   }
 }
+function jobOwner(home, job, original) {
+  try {
+    const stored = JSON.parse(readFileSync11(join17(home, JOBS_FILE), "utf8"));
+    const owner = Array.isArray(stored) ? stored.find((j) => j?.name === job)?.owner : null;
+    return typeof owner === "string" && owner ? owner : original;
+  } catch {
+    return original;
+  }
+}
 function classifyPeers(peers, runs, home) {
   const norm = (p) => p.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
-  const worktrees = `${norm(join16(home, "worktrees"))}/`;
+  const worktrees = `${norm(join17(home, "worktrees"))}/`;
   return peers.map((p) => {
     const cwd = norm(p.cwd ?? "");
     const subagent = cwd.startsWith(worktrees);
@@ -42004,12 +42184,17 @@ async function startUi(opts) {
       const reports = await getUsage(url2.searchParams.get("refresh") === "1");
       return send(res, 200, { at: usage?.at ?? Date.now(), reports });
     }
+    if (req.method === "GET" && url2.pathname === "/api/models") {
+      const cfg = loadConfig(opts.home, "other", opts.log);
+      const reports = await (opts.models ?? (() => Promise.all(CODING_AGENTS.map((agent) => readModels(agent, cfg, opts.home, opts.log, opts.home)))))();
+      return send(res, 200, { reports });
+    }
     const runMatch = /^\/api\/runs\/([\w.-]+)$/.exec(url2.pathname);
     if (req.method === "GET" && runMatch) {
-      const file2 = join16(opts.home, RUNS_DIR_NAME, `${runMatch[1]}.log`);
+      const file2 = join17(opts.home, RUNS_DIR_NAME, `${runMatch[1]}.log`);
       if (!existsSync4(file2)) return send(res, 404, { error: "no such run" });
       const from = Math.max(0, Number(url2.searchParams.get("from")) || 0);
-      const buf = readFileSync10(file2);
+      const buf = readFileSync11(file2);
       let end = Math.min(buf.length, from + MAX_LOG_CHUNK);
       while (end < buf.length && end > from && (buf[end] & 192) === 128) end--;
       return send(res, 200, { text: buf.subarray(from, end).toString("utf8"), next: end, size: buf.length });
@@ -42022,6 +42207,24 @@ async function startUi(opts) {
       if (!to || !text2) return send(res, 400, { error: "to and body are required" });
       const r = await (await getSender()).send({ to, body: text2 });
       return send(res, 200, { id: r.messages[0]?.id, deliveredTo: r.deliveredTo, queuedFor: r.queuedFor });
+    }
+    if (req.method === "POST" && url2.pathname === "/api/subagents/message") {
+      if (req.headers["x-agent-bridge"] !== "1") return send(res, 403, { error: "missing header" });
+      const body = await readJson2(req);
+      const run = typeof body.run === "string" ? body.run : "";
+      const text2 = typeof body.body === "string" ? body.body.trim() : "";
+      if (!RUN_NAME.test(`${run}.log`) || !text2 || text2.length > MAX_BODY_CHARS) return send(res, 400, { error: "a valid run and message are required" });
+      const file2 = join17(opts.home, RUNS_DIR_NAME, `${run}.log`);
+      if (!existsSync4(file2)) return send(res, 404, { error: "no such run" });
+      const meta3 = readMeta(join17(opts.home, RUNS_DIR_NAME, `${run}.json`));
+      if (!meta3.by || !meta3.job) return send(res, 409, { error: "This run has no owning session or job recorded." });
+      try {
+        const result = await messageDashboardJob(await getSender(), jobOwner(opts.home, meta3.job, meta3.by), meta3.job, text2);
+        return send(res, result.isError ? 409 : 200, result);
+      } catch (err) {
+        if (err instanceof JobControlError) return send(res, err.reason === "offline" ? 409 : 504, { error: err.message });
+        throw err;
+      }
     }
     return send(res, 404, { error: "not found" });
   };
@@ -42052,11 +42255,11 @@ var SECRET_BYTES5 = 24;
 var PROBE_TIMEOUT_MS = 1500;
 var OWNER_ONLY2 = 384;
 function dashboardFile(home) {
-  return join17(home, DASHBOARD_FILE);
+  return join18(home, DASHBOARD_FILE);
 }
 function readDashboardInfo(home) {
   try {
-    const d = JSON.parse(readFileSync11(dashboardFile(home), "utf8"));
+    const d = JSON.parse(readFileSync12(dashboardFile(home), "utf8"));
     return typeof d.url === "string" && typeof d.port === "number" && typeof d.pid === "number" ? d : null;
   } catch {
     return null;
@@ -42095,7 +42298,7 @@ async function hostDashboard(opts) {
   const ui = await startUi({ ...opts, secret });
   const info = { url: ui.url, port: ui.port, pid: process.pid };
   const file2 = dashboardFile(opts.home);
-  writeFileSync4(file2, JSON.stringify(info, null, 2), { mode: OWNER_ONLY2 });
+  writeFileSync5(file2, JSON.stringify(info, null, 2), { mode: OWNER_ONLY2 });
   try {
     chmodSync2(file2, OWNER_ONLY2);
   } catch {
@@ -42123,8 +42326,8 @@ function openBrowser(url2) {
 }
 
 // src/mcp/jobs.ts
-import { randomUUID as randomUUID5 } from "node:crypto";
-import { closeSync as closeSync2, mkdirSync as mkdirSync7, openSync as openSync2, rmSync as rmSync3, statSync as statSync4 } from "node:fs";
+import { randomUUID as randomUUID6 } from "node:crypto";
+import { closeSync as closeSync2, mkdirSync as mkdirSync8, openSync as openSync2, rmSync as rmSync3, statSync as statSync4 } from "node:fs";
 import { dirname as dirname6 } from "node:path";
 
 // src/mcp/job-settings.ts
@@ -42390,7 +42593,7 @@ var JobManager = class {
     this.persist();
   }
   newJob(agent, model, prompt, kind, resume, args) {
-    const id = randomUUID5().replace(/-/g, "").slice(0, JOB_ID_LENGTH);
+    const id = randomUUID6().replace(/-/g, "").slice(0, JOB_ID_LENGTH);
     return {
       id,
       name: `${agent}-${kind}-${id}`,
@@ -42497,7 +42700,7 @@ var JobManager = class {
     }
     if (this.hostedRunning(job)) {
       const state = this.runners.state(job);
-      const cid = randomUUID5();
+      const cid = randomUUID6();
       (job.forwarded ??= []).push({ cid, body: message });
       this.runners.send(job, { type: "message", body: message, cid });
       return { outcome: state?.asking ? "answered" : state?.live ? "delivered" : "queued", job };
@@ -42720,7 +42923,7 @@ ${QUEUED_FOLLOW_UP_NOTE}`);
   }
   post(job, body, replyTo = null) {
     const m = {
-      id: randomUUID5(),
+      id: randomUUID6(),
       from: { id: `job:${job.id}`, name: job.name, agent: job.agent },
       to: this.node.name,
       recipient: this.node.name,
@@ -42777,7 +42980,7 @@ var LOCK_WAIT_MS = 2e3;
 var LOCK_STALE_MS = 1e4;
 var LOCK_RETRY_MS = 20;
 function acquireLock(path) {
-  mkdirSync7(dirname6(path), { recursive: true });
+  mkdirSync8(dirname6(path), { recursive: true });
   const deadline = Date.now() + LOCK_WAIT_MS;
   const pause = new Int32Array(new SharedArrayBuffer(4));
   for (; ; ) {
@@ -42797,12 +43000,12 @@ function acquireLock(path) {
 }
 
 // src/mcp/delegate-run.ts
-import { randomUUID as randomUUID6 } from "node:crypto";
-import { isAbsolute as isAbsolute3, join as join20, relative as relative2, resolve as resolve4 } from "node:path";
+import { randomUUID as randomUUID7 } from "node:crypto";
+import { isAbsolute as isAbsolute3, join as join21, relative as relative2, resolve as resolve4 } from "node:path";
 
 // src/core/resource-slots.ts
-import { mkdirSync as mkdirSync8 } from "node:fs";
-import { join as join18 } from "node:path";
+import { mkdirSync as mkdirSync9 } from "node:fs";
+import { join as join19 } from "node:path";
 import { DatabaseSync as DatabaseSync3 } from "node:sqlite";
 import { setTimeout as delay2 } from "node:timers/promises";
 var SLOT_OWNER_ENV = "AGENT_BRIDGE_SLOT_OWNER";
@@ -42824,8 +43027,8 @@ var ResourceSlots = class {
   constructor(home, isAlive = alive, now = Date.now) {
     this.isAlive = isAlive;
     this.now = now;
-    mkdirSync8(home, { recursive: true });
-    this.db = new DatabaseSync3(join18(home, SLOT_DB_NAME));
+    mkdirSync9(home, { recursive: true });
+    this.db = new DatabaseSync3(join19(home, SLOT_DB_NAME));
     this.db.exec(`PRAGMA busy_timeout = ${LOCK_WAIT_MS2};
       CREATE TABLE IF NOT EXISTS slots (
         ticket INTEGER PRIMARY KEY AUTOINCREMENT, resource TEXT NOT NULL, id TEXT NOT NULL,
@@ -42961,8 +43164,8 @@ function isHandoffToolCall(r) {
 
 // src/core/worktree.ts
 import { createHash as createHash2 } from "node:crypto";
-import { existsSync as existsSync5, mkdirSync as mkdirSync9, readFileSync as readFileSync12, realpathSync as realpathSync2, rmSync as rmSync4 } from "node:fs";
-import { basename as basename3, isAbsolute as isAbsolute2, join as join19, relative, resolve as resolve3, toNamespacedPath } from "node:path";
+import { existsSync as existsSync5, mkdirSync as mkdirSync10, readFileSync as readFileSync13, realpathSync as realpathSync2, rmSync as rmSync4 } from "node:fs";
+import { basename as basename3, isAbsolute as isAbsolute2, join as join20, relative, resolve as resolve3, toNamespacedPath } from "node:path";
 var GIT = "git";
 var LONG_PATH_ARGS = ["-c", "core.longpaths=true"];
 var REMOVE_RETRIES = 3;
@@ -42990,9 +43193,9 @@ async function createWorktree(opts) {
   const base = await git(["rev-parse", "HEAD"], repoRoot, opts.log);
   const baseBranch = await git(["symbolic-ref", "-q", "--short", "HEAD"], repoRoot, opts.log).catch(() => "") || null;
   let branch = `${BRANCH_PREFIX}${opts.jobId}`;
-  const dir = join19(opts.home, "worktrees");
-  mkdirSync9(dir, { recursive: true });
-  let path = join19(dir, `${basename3(repoRoot)}-${opts.jobId}`);
+  const dir = join20(opts.home, "worktrees");
+  mkdirSync10(dir, { recursive: true });
+  let path = join20(dir, `${basename3(repoRoot)}-${opts.jobId}`);
   try {
     await git(["worktree", "add", "-b", branch, path, base], repoRoot, opts.log, WORKTREE_ADD_TIMEOUT_MS);
   } catch (err) {
@@ -43013,7 +43216,7 @@ async function createWorktree(opts) {
   }
   await unlockWorktree(repoRoot, path, opts.log);
   const rel = relative(repoRoot, opts.cwd);
-  const cwd = rel && !rel.startsWith("..") && !isAbsolute2(rel) ? join19(path, rel) : path;
+  const cwd = rel && !rel.startsWith("..") && !isAbsolute2(rel) ? join20(path, rel) : path;
   opts.log.info("worktree created", { repoRoot, path, branch });
   return { repoRoot, path, cwd, branch, base, baseBranch };
 }
@@ -43104,7 +43307,7 @@ function generatedNoise(root, file2) {
   return parts.slice(0, -1).some((part, index) => {
     if (GENERATED_DIRECTORIES.has(part)) return true;
     if (!UNITY_GENERATED_DIRECTORIES.has(part)) return false;
-    return existsSync5(toNamespacedPath(join19(root, ...parts.slice(0, index), "ProjectSettings", "ProjectVersion.txt")));
+    return existsSync5(toNamespacedPath(join20(root, ...parts.slice(0, index), "ProjectSettings", "ProjectVersion.txt")));
   });
 }
 async function autoCommitFiles(wt, log) {
@@ -43221,7 +43424,7 @@ async function gitChangeSnapshot(cwd, log) {
     const file2 = line.slice(3).replace(/^.* -> /, "").replace(/^"|"$/g, "");
     let fp = line.slice(0, 2);
     try {
-      fp += ":" + createHash2("sha1").update(readFileSync12(join19(root, file2))).digest("hex");
+      fp += ":" + createHash2("sha1").update(readFileSync13(join20(root, file2))).digest("hex");
     } catch {
       fp += ":missing";
     }
@@ -43277,7 +43480,7 @@ var DELEGATED_JOB_NOTE = "(agent-bridge: you are a delegated job. Report what yo
 var HANDOFF_DECLINED = "Declined by agent-bridge: delegated jobs do not write the project handoff. Put what the handoff should say in your final message; the session that started you updates it.";
 var PARENT_APPROVAL_TIMEOUT_MS = 10 * 6e4;
 function isBridgeWorktree(dir, home) {
-  return isInside(dir, join20(home, "worktrees")) && resolve4(dir) !== resolve4(join20(home, "worktrees"));
+  return isInside(dir, join21(home, "worktrees")) && resolve4(dir) !== resolve4(join21(home, "worktrees"));
 }
 function isInside(child, parent) {
   const rel = relative2(resolve4(parent), resolve4(child));
@@ -43305,7 +43508,7 @@ async function runDelegate(rc, target, a, signal, onProgress, background, job) {
   const cwd = a.cwd || rc.cwd();
   a = worktreeArgs(target, a, cfg, cwd, rc.home);
   const access = a.access;
-  const wt = a._worktree ?? (a.worktree ? await createWorktree({ cwd, home: rc.home, jobId: randomUUID6().slice(0, 8), log: dlog }) : null);
+  const wt = a._worktree ?? (a.worktree ? await createWorktree({ cwd, home: rc.home, jobId: randomUUID7().slice(0, 8), log: dlog }) : null);
   const workdir = wt?.cwd ?? cwd;
   const watchChanges = !wt && (access === "edit" || access === "ask" && target === "codex");
   const before = watchChanges ? await gitChangeSnapshot(workdir, dlog) : null;
@@ -43361,7 +43564,7 @@ async function runDelegate(rc, target, a, signal, onProgress, background, job) {
   try {
     feed = startRunFeed({
       home: rc.home,
-      name: `${target}-${randomUUID6().slice(0, 8)}`,
+      name: `${target}-${randomUUID7().slice(0, 8)}`,
       header: `${target}${a.model ? ` (${a.model}${a.effort ? `, effort ${a.effort}` : ""})` : a.effort ? ` (effort ${a.effort})` : ""} in ${workdir}, access ${access ?? "default"}, by ${me}${a.session_id ? `, continues ${a.session_id}` : ""}
 ${a.prompt}
 ---`,
@@ -43457,8 +43660,9 @@ ${a.prompt}
     feed.meta({ title });
     void jobNode?.updateJob({ jobTitle: title }).catch(() => {
     });
+    void steering?.rename?.(title).catch((err) => dlog.warn("could not rename the Codex thread", { err: err.message }));
   };
-  const slotOwner = { id: `${a._job ?? target}-${randomUUID6()}`, pid: process.pid };
+  const slotOwner = { id: `${a._job ?? target}-${randomUUID7()}`, pid: process.pid };
   let slots = null;
   let slotTimer;
   let res;
@@ -43479,6 +43683,7 @@ ${a.prompt}
         // With a live link the subagent can report how far it is (report_progress; shown in the dashboard).
         // A new session learns once that it reports back and leaves the handoff alone.
         prompt: [a.prompt, a.session_id ? null : DELEGATED_JOB_NOTE, link ? PROGRESS_HINT : null, link ? SIBLING_HINT : null, resourceSlotHint(cfg.resourceSlots, bundledCli())].filter(Boolean).join("\n\n"),
+        title: typeof job?.args?.title === "string" && job.args.title || a.title,
         cwd: workdir,
         sessionId: a.session_id ?? null,
         timeoutSec: a.timeout_sec ?? (background ? MAX_JOB_TIMEOUT_SEC : DEFAULT_DELEGATE_TIMEOUT_SEC),
@@ -43504,7 +43709,11 @@ ${a.prompt}
         canApprove: Boolean(wiring) || Boolean(job && !job.foreground && rc.jobs) || Boolean(rc.askUser && rc.userCanAnswer?.()),
         live: job ? {
           from: me,
-          onSteering: (s) => void (steering = s),
+          onSteering: (s) => {
+            steering = s;
+            const title = job.args?.title;
+            if (s && typeof title === "string" && title !== a.title) job.retitle?.(title);
+          },
           onAnswer: (answer) => {
             feed.report(`answer to ${me}: ${answer.split("\n")[0].slice(0, 120)}`, `answer to ${me}: ${answer}`);
             rc.jobs?.fromSubagent(job, answer, null, true);
@@ -43585,8 +43794,8 @@ ${notes.join("\n\n")}` : res.text };
 
 // src/mcp/job-host.ts
 import { spawn as spawn6 } from "node:child_process";
-import { mkdirSync as mkdirSync10, readdirSync as readdirSync4, statSync as statSync5 } from "node:fs";
-import { join as join21 } from "node:path";
+import { mkdirSync as mkdirSync11, readdirSync as readdirSync4, statSync as statSync5 } from "node:fs";
+import { join as join22 } from "node:path";
 var RUNNERS_DIR_NAME = "jobs";
 var CONTROL_CONVERSATION_PREFIX = "jobctl-";
 var RUNNER_HEARTBEAT_MS = 15e3;
@@ -43595,10 +43804,10 @@ var START_GRACE_MS = 3e4;
 var KEEP_FILES_MS = 7 * 24 * 60 * 60 * 1e3;
 var DETACH_LAUNCHER = "require('node:child_process').spawn(process.execPath,process.argv.slice(1),{detached:true,stdio:'ignore',windowsHide:true}).unref()";
 function runnerStatePath(home, id) {
-  return join21(home, RUNNERS_DIR_NAME, `${id}.json`);
+  return join22(home, RUNNERS_DIR_NAME, `${id}.json`);
 }
 function specPath(home, id) {
-  return join21(home, RUNNERS_DIR_NAME, `${id}.spec.json`);
+  return join22(home, RUNNERS_DIR_NAME, `${id}.spec.json`);
 }
 function readRunnerState(home, id) {
   try {
@@ -43615,11 +43824,11 @@ var JobRunners = class {
     this.cli = cli;
     this.log = log;
     try {
-      const dir = join21(home, RUNNERS_DIR_NAME);
+      const dir = join22(home, RUNNERS_DIR_NAME);
       const keepMs = retentionLimit("AGENT_BRIDGE_RUNNER_KEEP_MS", KEEP_FILES_MS);
       if (!keepMs) return;
       for (const f of readdirSync4(dir)) {
-        const path = join21(dir, f);
+        const path = join22(dir, f);
         if (!f.endsWith(".json") || f.endsWith(".spec.json") || Date.now() - statSync5(path).mtimeMs <= keepMs) continue;
         const id = f.replace(/\.json$/, "");
         const state = readRunnerState(home, id);
@@ -43639,7 +43848,7 @@ var JobRunners = class {
   /** Start a turn of this job in a new runner; null when that is not possible (the turn then runs in the server). */
   start(job, spec) {
     try {
-      mkdirSync10(join21(this.home, RUNNERS_DIR_NAME), { recursive: true });
+      mkdirSync11(join22(this.home, RUNNERS_DIR_NAME), { recursive: true });
       const statePath = runnerStatePath(this.home, job.id);
       const file2 = specPath(this.home, job.id);
       assertWritableStore(readJsonStore(statePath, this.log));
@@ -43703,6 +43912,30 @@ var JobRunners = class {
     if (pid) killPid(pid);
   }
 };
+
+// src/mcp/dashboard-control.ts
+function attachDashboardJobControl(node2, jobs, log) {
+  node2.on("job_control", (m) => {
+    let command;
+    try {
+      command = JSON.parse(m.body);
+    } catch {
+      return;
+    }
+    if (!command || command.type !== "message" || typeof command.requestId !== "string" || typeof command.job !== "string" || typeof command.body !== "string" || !command.body.trim() || command.body.length > MAX_BODY_CHARS) return;
+    const owned = jobs.find(command.job);
+    const { outcome, job } = owned?.owner === node2.name ? jobs.followUp(command.job, command.body) : { outcome: "unknown", job: void 0 };
+    const position = job ? jobs.waiting().indexOf(job) + 1 : 0;
+    const result = {
+      type: "result",
+      requestId: command.requestId,
+      outcome,
+      text: t(`followUp.${outcome}`, { name: job?.name ?? command.job, max: jobs.limit, running: jobs.runningCount(), ahead: position > 1 ? ` (${position - 1} queued before it)` : "" }),
+      isError: outcome === "unknown" || outcome === "no-session"
+    };
+    void node2.send({ to: m.from.name, replyTo: m.id, body: JSON.stringify(result), conversationId: DASHBOARD_JOB_CONVERSATION }, { quiet: true }).catch((err) => log.warn("dashboard job reply failed", { err: err.message }));
+  });
+}
 
 // src/mcp/server.ts
 var CHANNEL_NOTIFICATION = "notifications/claude/channel";
@@ -43806,7 +44039,7 @@ async function startServer(argv = process.argv.slice(2)) {
   const launchKnown = new Promise((r) => launchInspected = r);
   const ctx = { agent, cfg, node: node2, log, home, cwd: () => node2?.cwd ?? cwd, channelActive: () => channel, parent: delegated ? parentFromEnv() : null, launchKnown };
   if (node2) {
-    ctx.jobs = new JobManager(node2, log.child("jobs"), join22(home, JOBS_FILE), cfg.maxJobs);
+    ctx.jobs = new JobManager(node2, log.child("jobs"), join23(home, JOBS_FILE), cfg.maxJobs);
     node2.on("replaced", () => ctx.jobs?.setDormant(true));
     node2.on("reclaimed", () => ctx.jobs?.setDormant(false));
     const cli = process.env[ENV.jobRunner] === "0" ? null : bundledCli();
@@ -43855,6 +44088,7 @@ async function startServer(argv = process.argv.slice(2)) {
   ctx.askUser = (req) => askUserViaElicitation(mcp.server, req, log.child("permissions"));
   ctx.userCanAnswer = () => Boolean(mcp.server.getClientCapabilities()?.elicitation);
   registerTools(mcp, ctx, targets);
+  if (node2 && ctx.jobs) attachDashboardJobControl(node2, ctx.jobs, log);
   const pushChannel = async (m) => {
     if (!channel || !node2 || m.hop >= cfg.maxHops || isSiblingNote(m)) return;
     try {
@@ -43965,14 +44199,14 @@ async function startServer(argv = process.argv.slice(2)) {
       adopt();
       setTimeout(adopt, STAND_IN_RECHECK_MS).unref();
     });
-    const join23 = () => node2.start().catch((err) => log.error("could not join the bridge", { err: err.message }));
+    const join24 = () => node2.start().catch((err) => log.error("could not join the bridge", { err: err.message }));
     if (ctx.headless) {
       log.info("headless claude -p run: not joining the bridge unless a bridge tool is used");
     } else if (cwdKnown) {
-      void join23();
+      void join24();
     } else {
       log.info("project directory unknown yet; deferring bridge join", { graceMs: CWD_DISCOVERY_GRACE_MS });
-      setTimeout(() => void join23(), CWD_DISCOVERY_GRACE_MS).unref();
+      setTimeout(() => void join24(), CWD_DISCOVERY_GRACE_MS).unref();
     }
   }
 }
@@ -44180,9 +44414,7 @@ function registerTools(mcp, ctx, targets) {
     const defaultModel = profile.defaultModel(cfg);
     const schema = {
       prompt: external_exports.string().min(1).describe("Complete, self-contained instructions"),
-      model: external_exports.string().regex(MODEL_NAME_PATTERN).optional().describe(
-        `Any model id or alias ${target} accepts, passed through verbatim (e.g. ${profile.modelExample}). Default: ${defaultModel ?? `${target}'s own default`}.`
-      ),
+      model: external_exports.string().regex(MODEL_NAME_PATTERN).optional().describe(modelParameterDescription(target, cfg, ctx.home, profile.modelExample)),
       effort: external_exports.string().regex(/^[A-Za-z0-9_-]{1,20}$/).optional().describe(`Thinking level (reasoning effort), e.g. ${profile.effortExample}; list_models shows what each model supports. Default: ${cfg.effort[target] ?? `${target}'s own default`} (config "effort"; shown in the dashboard).`),
       session_id: external_exports.string().optional().describe("Continue a previous delegated session"),
       cwd: external_exports.string().optional().describe(`Working directory, and for worktree=true the repository the worktree comes from. Default: ${ctx.cwd()} (where this session started); pass it whenever the work lives elsewhere.`),
@@ -44297,7 +44529,7 @@ ${r.lines.map((l) => `  ${l}`).join("\n")}`).join("\n\n"));
       },
       annotations: { readOnlyHint: true }
     },
-    guarded("list_models", async (a) => text((await describeModels(a.agent, cfg, ctx.cwd(), log, a.query)).join("\n")))
+    guarded("list_models", async (a) => text((a.query ? await describeModels(a.agent, cfg, ctx.cwd(), log, a.query) : (await readModels(a.agent, cfg, ctx.cwd(), log, ctx.home)).lines).join("\n")))
   );
   register(
     "dashboard",
@@ -44339,7 +44571,12 @@ ${r.lines.map((l) => `  ${l}`).join("\n")}`).join("\n\n"));
       }
       const settings = Object.fromEntries(JOB_SETTING_KEYS.filter((key) => a[key] !== void 0).map((key) => [key, a[key]]));
       const wasRunning = existing?.status === "running";
-      if (a.title?.trim()) jobs.setTitle(a.job, a.title.trim());
+      if (a.title?.trim()) {
+        jobs.setTitle(a.job, a.title.trim());
+        if (existing?.agent === "codex" && existing.sessionId && existing.status !== "running") {
+          await codexAppServerCall(cfg.codexBin, existing.workdir ?? ctx.cwd(), log, "thread/name/set", { threadId: existing.sessionId, name: a.title.trim() }).catch((err) => log.warn("could not rename the Codex thread", { err: err.message }));
+        }
+      }
       if (Object.keys(settings).length) jobs.setSettings(a.job, settings);
       const { outcome, job } = jobs.followUp(a.job, a.message?.trim() || DEFAULT_FOLLOW_UP);
       const position = job ? jobs.waiting().indexOf(job) + 1 : 0;
