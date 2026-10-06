@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
-import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { closeSync, copyFileSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import type { Logger } from "./logger.js";
+import { storageLease, storeHome } from "./storage-lock.js";
 
 export const JSON_STORE_VERSION = 1;
 export const KEEP_STORE_BACKUPS = 3;
@@ -52,7 +53,8 @@ export function readJsonStore(path: string, log?: Logger, valid: (value: unknown
     return value;
   } catch (err) {
     const preserved = `${path}.corrupt-${Date.now()}-${randomUUID()}`;
-    renameSync(path, preserved);
+    const release = storageLease(storeHome(path));
+    try { renameSync(path, preserved); } finally { release(); }
     warn(log, "preserved corrupt JSON store", { path, preserved, err: (err as Error).message });
     return null;
   }
@@ -76,6 +78,11 @@ export function mergeStoreFields(previous: Record<string, unknown>, next: Record
 
 /** Back up legacy data before its first versioned write, then replace atomically. */
 export function writeJsonStore(path: string, value: Record<string, unknown>, previous: unknown): void {
+  const release = storageLease(storeHome(path));
+  try { writeJsonStoreUnlocked(path, value, previous); } finally { release(); }
+}
+
+function writeJsonStoreUnlocked(path: string, value: Record<string, unknown>, previous: unknown): void {
   assertWritableStore(previous);
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
   if (previous !== null && (!isRecord(previous) || previous.version !== JSON_STORE_VERSION) && existsSync(path)) {
@@ -84,6 +91,8 @@ export function writeJsonStore(path: string, value: Record<string, unknown>, pre
   }
   const tmp = `${path}.${process.pid}.${randomUUID()}.tmp`;
   writeFileSync(tmp, `${JSON.stringify({ ...value, version: JSON_STORE_VERSION }, null, 2)}\n`, { mode: 0o600 });
+  const fd = openSync(tmp, "r+");
+  try { fsyncSync(fd); } finally { closeSync(fd); }
   const pause = new Int32Array(new SharedArrayBuffer(4));
   try {
     for (let attempt = 1; ; attempt++) {

@@ -88,7 +88,7 @@ describe("SQLite migrations", () => {
     const before = readFileSync(path);
     expect(() => new MessageStore(path, nullLogger)).toThrow("unsupported SQLite store version");
     expect(readFileSync(path)).toEqual(before);
-    expect(readdirSync(home)).toEqual(["bridge.db"]);
+    expect(readdirSync(home).filter((f) => !f.startsWith("."))).toEqual(["bridge.db"]);
   });
 
   it("rolls back a failed migration and preserves its backup", () => {
@@ -117,14 +117,14 @@ describe("SQLite migrations", () => {
     store.insert({ ...message, id: "recent", createdAt: 100 });
     expect(store.expireQueued("agent:codex", 2)).toBe(2);
     expect(store.expireQueued("agent:codex", 2)).toBe(0);
-    const db = new DatabaseSync(path);
-    expect(db.prepare("SELECT body, archive_reason FROM archived_messages").all()).toHaveLength(2);
-    db.exec("CREATE TRIGGER fail_archive BEFORE INSERT ON archived_messages BEGIN SELECT RAISE(ABORT, 'archive failed'); END;");
+    const db = new DatabaseSync(join(home, "archive.db"));
+    expect(db.prepare("SELECT body, archive_reason FROM messages").all()).toHaveLength(2);
+    db.exec("CREATE TRIGGER fail_archive BEFORE INSERT ON messages BEGIN SELECT RAISE(ABORT, 'archive failed'); END;");
     expect(() => store.purgeOlderThan(101)).toThrow("archive failed");
     expect(store.byId("recent")).not.toBeNull();
     db.exec("DROP TRIGGER fail_archive");
     expect(store.purgeOlderThan(101)).toBe(1);
-    expect(db.prepare("SELECT archive_reason FROM archived_messages WHERE id = ?").get("recent")!.archive_reason).toBe("expired");
+    expect(db.prepare("SELECT archive_reason FROM messages WHERE id = ?").get("recent")!.archive_reason).toBe("expired");
     db.close();
     store.close();
   });

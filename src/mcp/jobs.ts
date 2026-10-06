@@ -9,6 +9,8 @@ import type { AgentKind, BridgeMessage } from "../core/protocol.js";
 import type { Worktree } from "../core/worktree.js";
 import { archiveFile, assertWritableStore, isRecord, mergeStoreFields, readJsonStore, retentionLimit, writeJsonStore } from "../core/json-store.js";
 import { changedJobArgs, type JobSettings } from "./job-settings.js";
+import { readArchivedJobs } from "../core/job-archive.js";
+import { ARCHIVE_AGE_ENV, DEFAULT_ARCHIVE_AGE_MS } from "../core/run-archive.js";
 
 const JOB_ID_LENGTH = 8;
 const PROMPT_PREVIEW_CHARS = 120;
@@ -257,8 +259,9 @@ export class JobManager {
       const previous = readJobsDocument(this.storePath, this.log);
       assertWritableStore(previous);
       const entries = Array.isArray(previous) ? previous : isRecord(previous) ? previous.jobs as unknown[] : [];
+      const archived = new Map(readArchivedJobs(this.storePath).map((j) => [j.id, j]));
       const mine = [...this.history.values()].filter((j) => this.own.has(j.id)).map((j) => {
-        const old = entries.find((entry) => isRecord(entry) && entry.id === j.id);
+        const old = entries.find((entry) => isRecord(entry) && entry.id === j.id) ?? archived.get(j.id);
         return mergeStoreFields(isRecord(old) ? old : {}, toStored(j)) as StoredJob;
       });
       const ids = new Set(mine.map((j) => j.id));
@@ -270,7 +273,11 @@ export class JobManager {
       const finished = all.filter((j): j is StoredJob => isStoredJob(j) && (j.status === "done" || j.status === "failed"))
         .sort((a, b) => a.startedAt - b.startedAt);
       const limit = retentionLimit("AGENT_BRIDGE_JOB_STORE_LIMIT", STORE_LIMIT);
-      const overflow = new Set(limit ? finished.slice(0, Math.max(0, finished.length - limit)) : []);
+      const age = retentionLimit(ARCHIVE_AGE_ENV, DEFAULT_ARCHIVE_AGE_MS);
+      const overflow = new Set([
+        ...(limit ? finished.slice(0, Math.max(0, finished.length - limit)) : []),
+        ...finished.filter((j) => age > 0 && typeof j.finishedAt === "number" && j.finishedAt < Date.now() - age),
+      ]);
       if (overflow.size) {
         const archive = `${this.storePath}.overflow.json`;
         writeJsonStore(archive, { jobs: [...overflow] }, null);
@@ -293,7 +300,7 @@ export class JobManager {
    */
   restore(makeResume: (agent: AgentKind, args: Record<string, unknown>) => Resume | undefined): void {
     if (!this.storePath) return;
-    const stored = readStore(this.storePath, this.log);
+    const stored = readStore(this.storePath, this.log, true);
     const adopted: Job[] = [];
     // The newest ones, plus every job still marked running however old (its runner may still be at work).
     const recentIds = new Set(stored.slice(-HISTORY_LIMIT).map((s) => s.id));
@@ -846,11 +853,14 @@ export function readJobsDocument(path: string, log?: Logger): unknown {
   return readJsonStore(path, log, (data) => Array.isArray(data) || (isRecord(data) && Array.isArray(data.jobs)));
 }
 
-export function readStore(path: string, log?: Logger): StoredJob[] {
+export function readStore(path: string, log?: Logger, includeArchived = false): StoredJob[] {
   try {
     const data = readJobsDocument(path, log);
     const jobs = Array.isArray(data) ? data : isRecord(data) && Array.isArray(data.jobs) ? data.jobs : [];
-    return jobs.filter(isStoredJob);
+    const all = new Map<string, StoredJob>();
+    if (includeArchived) for (const job of readArchivedJobs(path).filter(isStoredJob)) all.set(job.id, job);
+    for (const job of jobs.filter(isStoredJob)) all.set(job.id, job);
+    return [...all.values()];
   } catch (err) {
     log?.warn("could not read jobs store", { path, err: String(err) });
     return [];
@@ -865,7 +875,7 @@ const LOCK_RETRY_MS = 20;
  * Serialize read-merge-write of the job store across sessions (processes). Returns the release function.
  * Gives up waiting after a short time (saving is best effort) and breaks locks left by a crashed process.
  */
-function acquireLock(path: string): () => void {
+export function acquireLock(path: string): () => void {
   mkdirSync(dirname(path), { recursive: true });
   const deadline = Date.now() + LOCK_WAIT_MS;
   const pause = new Int32Array(new SharedArrayBuffer(4));
