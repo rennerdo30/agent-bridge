@@ -3,6 +3,7 @@ import { isSiblingNote, type BridgeMessage } from "../core/protocol.js";
 import { formatMessages, formatParentMessages, formatPeer } from "./format.js";
 import { WAKE_HEADER } from "./rewake.js";
 import type { ServerContext } from "./server.js";
+import { formatDecisionSummary } from "../core/decisions.js";
 
 /** Hook events agent-bridge subscribes to in both Claude Code and Codex. */
 export type HookEvent = "SessionStart" | "UserPromptSubmit" | "PostToolUse" | "Stop";
@@ -102,6 +103,9 @@ export async function buildHookResponse(ctx: ServerContext, input: HookInput): P
         peers.length ? `Peers online:\n${peers.map((p) => formatPeer(p)).join("\n")}` : "No other agents are online right now.",
       ];
       const unread = node.unread().length;
+      const decisions = await node.decisions({ scope: { project: ctx.cwd() } }).catch(() => []);
+      const summary = formatDecisionSummary(decisions);
+      if (summary) lines.push(summary);
       if (unread > 0 && !channel) lines.push(`You have ${unread} unread peer message(s); call the "inbox" tool to read them.`);
       return context("SessionStart", lines.join("\n"));
     }

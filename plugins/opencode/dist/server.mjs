@@ -3874,49 +3874,49 @@ var require_fast_uri = __commonJS({
       schemelessOptions.skipEscape = true;
       return serialize2(resolved, schemelessOptions);
     }
-    function resolveComponent(base, relative4, options, skipNormalization) {
+    function resolveComponent(base, relative3, options, skipNormalization) {
       const target = {};
       if (!skipNormalization) {
         base = parse3(serialize2(base, options), options);
-        relative4 = parse3(serialize2(relative4, options), options);
+        relative3 = parse3(serialize2(relative3, options), options);
       }
       options = options || {};
-      if (!options.tolerant && relative4.scheme) {
-        target.scheme = relative4.scheme;
-        target.userinfo = relative4.userinfo;
-        target.host = relative4.host;
-        target.port = relative4.port;
-        target.path = removeDotSegments(relative4.path || "");
-        target.query = relative4.query;
+      if (!options.tolerant && relative3.scheme) {
+        target.scheme = relative3.scheme;
+        target.userinfo = relative3.userinfo;
+        target.host = relative3.host;
+        target.port = relative3.port;
+        target.path = removeDotSegments(relative3.path || "");
+        target.query = relative3.query;
       } else {
-        if (relative4.userinfo !== void 0 || relative4.host !== void 0 || relative4.port !== void 0) {
-          target.userinfo = relative4.userinfo;
-          target.host = relative4.host;
-          target.port = relative4.port;
-          target.path = removeDotSegments(relative4.path || "");
-          target.query = relative4.query;
+        if (relative3.userinfo !== void 0 || relative3.host !== void 0 || relative3.port !== void 0) {
+          target.userinfo = relative3.userinfo;
+          target.host = relative3.host;
+          target.port = relative3.port;
+          target.path = removeDotSegments(relative3.path || "");
+          target.query = relative3.query;
         } else {
-          if (!relative4.path) {
+          if (!relative3.path) {
             target.path = base.path;
-            if (relative4.query !== void 0) {
-              target.query = relative4.query;
+            if (relative3.query !== void 0) {
+              target.query = relative3.query;
             } else {
               target.query = base.query;
             }
           } else {
-            if (relative4.path[0] === "/") {
-              target.path = removeDotSegments(relative4.path);
+            if (relative3.path[0] === "/") {
+              target.path = removeDotSegments(relative3.path);
             } else {
               if ((base.userinfo !== void 0 || base.host !== void 0 || base.port !== void 0) && !base.path) {
-                target.path = "/" + relative4.path;
+                target.path = "/" + relative3.path;
               } else if (!base.path) {
-                target.path = relative4.path;
+                target.path = relative3.path;
               } else {
-                target.path = base.path.slice(0, base.path.lastIndexOf("/") + 1) + relative4.path;
+                target.path = base.path.slice(0, base.path.lastIndexOf("/") + 1) + relative3.path;
               }
               target.path = removeDotSegments(target.path);
             }
-            target.query = relative4.query;
+            target.query = relative3.query;
           }
           target.userinfo = base.userinfo;
           target.host = base.host;
@@ -3924,7 +3924,7 @@ var require_fast_uri = __commonJS({
         }
         target.scheme = base.scheme;
       }
-      target.fragment = relative4.fragment;
+      target.fragment = relative3.fragment;
       return target;
     }
     function equal(uriA, uriB, options) {
@@ -7200,7 +7200,7 @@ var require_dist = __commonJS({
 });
 
 // src/mcp/server.ts
-import { dirname as dirname8, isAbsolute as isAbsolute5, join as join27, resolve as resolve7 } from "node:path";
+import { dirname as dirname7, isAbsolute as isAbsolute4, join as join26, resolve as resolve7 } from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 
 // D:/Development/claude-codex-comm/node_modules/zod/v3/helpers/util.js
@@ -36894,7 +36894,7 @@ function defaultPeerName(agent, cwd) {
 
 // src/core/delegate.ts
 import { spawn } from "node:child_process";
-import { existsSync as existsSync2, readFileSync as readFileSync4, realpathSync as realpathSync2 } from "node:fs";
+import { existsSync as existsSync2, readFileSync as readFileSync4, realpathSync } from "node:fs";
 import { delimiter, dirname as dirname3, extname, isAbsolute, join as join7, win32 } from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
@@ -37324,36 +37324,6 @@ var PermissionRelay = class {
   }
 };
 
-// src/core/codex-paths.ts
-import { realpathSync } from "node:fs";
-function codexDriveMappings(text2, platform = process.platform, canonical = realpathSync.native) {
-  if (platform !== "win32") return [];
-  const drives = new Set([...text2.matchAll(/\b([a-z]):[\\/]/gi)].map((m) => `${m[1].toUpperCase()}:\\`));
-  const mappings = [];
-  for (const alias of drives) {
-    try {
-      const real = canonical(alias).replace(/^\\\\\?\\UNC\\/i, "\\\\").replace(/^\\\\\?\\/, "").replace(/[\\/]*$/, "\\");
-      if (real.toLowerCase() !== alias.toLowerCase()) mappings.push({ alias, real });
-    } catch {
-    }
-  }
-  return mappings;
-}
-function codexPathPrompt(prompt, mappings) {
-  let text2 = prompt;
-  for (const { alias, real } of mappings) {
-    const drive = alias[0];
-    text2 = text2.replace(new RegExp(`\\b${drive}:[\\\\/]`, "gi"), () => real);
-  }
-  if (!mappings.length) return text2;
-  return `${text2}
-
-(agent-bridge: Windows drive aliases resolved by the supervisor: ${mappings.map((m) => `${m.alias} = ${m.real}`).join(", ")}. These are the same folders. Use the real paths supplied above, including for new output files, without requesting path confirmation. In your report name both the requested alias and the real path.)`;
-}
-function codexPathReport(mappings) {
-  return mappings.length ? `Windows path mappings (same folders): ${mappings.map((m) => `${m.alias} = ${m.real}`).join(", ")}. Outputs using the real paths are also available through these supervisor aliases.` : null;
-}
-
 // src/core/delegate.ts
 var DELEGATE_DEPTH_ENV = "AGENT_BRIDGE_DELEGATE_DEPTH";
 var MAX_DELEGATE_DEPTH = 1;
@@ -37581,7 +37551,6 @@ var OPENCODE_CONFIG_CONTENT_ENV = "OPENCODE_CONFIG_CONTENT";
 var CODEX_STRICT_APPROVALS = 'approvals_reviewer="user"';
 var CODEX_RELAY_APPROVALS = 'approvals_reviewer="auto_review"';
 var CODEX_ASK_POLICY = 'approval_policy="on-request"';
-var CODEX_NO_APPROVALS = 'approval_policy="never"';
 var CODEX_ASK_HINT = "(The workspace is read-only on purpose: when you need to change files or run a command the sandbox blocks, request escalated permissions for it. The user is asked and decides; if denied, stop and report.)";
 var OPENCODE_READ_ONLY_PERMISSIONS = { edit: "ask", bash: "ask" };
 var OPENCODE_READ_ONLY_TOOLS = { "*_*": false, bridge_send: true, bridge_report_progress: true };
@@ -37655,16 +37624,15 @@ function parseCodexJsonl(stdout) {
 }
 function realFolder(dir) {
   try {
-    return realpathSync2.native(dir);
+    return realpathSync.native(dir);
   } catch {
     return dir;
   }
 }
 async function delegateToCodex(req) {
   checkDepth();
-  req = { ...req, cwd: realFolder(req.cwd), prompt: codexPathPrompt(req.prompt, codexDriveMappings(`${req.cwd}
-${req.prompt}`)) };
-  if (req.relayApprovals && req.sandbox !== "danger-full-access") req = { ...req, prompt: `${req.prompt}
+  req = { ...req, cwd: realFolder(req.cwd) };
+  if (req.relayApprovals) req = { ...req, prompt: `${req.prompt}
 
 ${CODEX_ASK_HINT}` };
   const common = ["--json", "--skip-git-repo-check", ...req.model ? ["-m", req.model] : [], ...req.effort ? ["-c", `model_reasoning_effort="${req.effort}"`] : []];
@@ -37672,7 +37640,7 @@ ${CODEX_ASK_HINT}` };
     common.push("-c", `sandbox_workspace_write.writable_roots=${JSON.stringify(req.writableRoots.map(realFolder))}`);
   }
   if (req.sandbox === "workspace-write" && req.networkAccess !== void 0) common.push("-c", `sandbox_workspace_write.network_access=${req.networkAccess}`);
-  const strict = req.sandbox === "danger-full-access" ? ["-c", CODEX_STRICT_APPROVALS, "-c", CODEX_NO_APPROVALS] : req.relayApprovals ? ["-c", CODEX_RELAY_APPROVALS, "-c", CODEX_ASK_POLICY] : ["-c", CODEX_STRICT_APPROVALS];
+  const strict = req.relayApprovals ? ["-c", CODEX_RELAY_APPROVALS, "-c", CODEX_ASK_POLICY] : ["-c", CODEX_STRICT_APPROVALS];
   const args = req.sessionId ? ["exec", "resume", ...common, ...strict, "-c", `sandbox_mode="${req.sandbox}"`, req.sessionId, "-"] : ["exec", ...common, ...strict, "-s", req.sandbox, "-C", req.cwd, "-"];
   const res = await withResumeHint("codex", (o) => parseCodexJsonl(o).threadId, () => runProcess({
     bin: req.bin,
@@ -38366,21 +38334,161 @@ function makeLogger(sink, scope) {
 }
 
 // src/core/node.ts
-import { randomUUID as randomUUID8 } from "node:crypto";
+import { randomUUID as randomUUID9 } from "node:crypto";
 import { EventEmitter as EventEmitter2 } from "node:events";
 import { unlinkSync } from "node:fs";
 import { dirname as dirname5, join as join11 } from "node:path";
 
 // src/core/broker.ts
-import { randomUUID as randomUUID6 } from "node:crypto";
+import { randomUUID as randomUUID7 } from "node:crypto";
 import { readFileSync as readFileSync7 } from "node:fs";
 import { createServer as createServer4 } from "node:net";
 
 // src/core/store.ts
-import { existsSync as existsSync3, mkdirSync as mkdirSync4 } from "node:fs";
+import { existsSync as existsSync4, mkdirSync as mkdirSync4 } from "node:fs";
 import { dirname as dirname4 } from "node:path";
+import { DatabaseSync as DatabaseSync2 } from "node:sqlite";
+
+// src/core/decisions.ts
+import { randomUUID as randomUUID3 } from "node:crypto";
+import { existsSync as existsSync3 } from "node:fs";
+import { resolve as resolve2 } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-var SQLITE_STORE_VERSION = 2;
+var MAX_DECISION_TOPIC_CHARS = 160;
+var MAX_DECISION_TEXT_CHARS = MAX_BODY_CHARS - 1024;
+var MAX_SCOPE_SESSIONS = 100;
+var MAX_SCOPE_PATH_CHARS = 4096;
+var DECISION_MESSAGE_HOP = 100;
+var SUMMARY_LIMIT = 5;
+var SUMMARY_TEXT_CHARS = 160;
+var decisionScopeSchema = external_exports.union([
+  external_exports.literal("all"),
+  external_exports.object({ project: external_exports.string().trim().min(1).max(MAX_SCOPE_PATH_CHARS) }).strict(),
+  external_exports.object({ sessions: external_exports.array(external_exports.string().trim().min(1).max(MAX_SCOPE_PATH_CHARS)).min(1).max(MAX_SCOPE_SESSIONS) }).strict()
+]);
+var DECISIONS_SCHEMA = `
+CREATE TABLE decisions (
+  revision INTEGER PRIMARY KEY AUTOINCREMENT,
+  id TEXT NOT NULL UNIQUE,
+  topic TEXT NOT NULL,
+  body TEXT NOT NULL,
+  scope TEXT NOT NULL,
+  author_id TEXT NOT NULL,
+  author_name TEXT NOT NULL,
+  author_agent TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  source_message_id TEXT,
+  supersedes TEXT
+);
+CREATE INDEX idx_decisions_topic ON decisions (topic, revision);
+CREATE INDEX idx_decisions_supersedes ON decisions (supersedes);
+CREATE TABLE decision_deliveries (
+  decision_id TEXT NOT NULL,
+  session_key TEXT NOT NULL,
+  message_id TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  PRIMARY KEY (decision_id, session_key)
+);
+`;
+function normalizeProject(folder) {
+  const path = resolve2(folder).replace(/\\/g, "/").replace(/\/+$/, "");
+  return process.platform === "win32" ? path.toLowerCase() : path;
+}
+function normalizeScope(scope) {
+  if (scope === "all") return scope;
+  if ("project" in scope) return { project: normalizeProject(scope.project) };
+  return { sessions: [...new Set(scope.sessions)].sort() };
+}
+function decisionApplies(decision, peer) {
+  if (decision.scope === "all") return true;
+  if ("project" in decision.scope) return decision.scope.project === normalizeProject(peer.cwd);
+  return decision.scope.sessions.some((s) => s === peer.name || s === peer.id || s === peer.sessionId);
+}
+function scopeMatches(decision, filter, sessions = []) {
+  const stored = decision.scope;
+  if (!filter || stored === "all") return true;
+  if (filter === "all") return false;
+  if ("project" in filter) {
+    return "project" in stored ? stored.project === filter.project : sessions.some((s) => stored.sessions.includes(s));
+  }
+  return "sessions" in stored && filter.sessions.some((s) => stored.sessions.includes(s));
+}
+var DecisionStore = class {
+  constructor(db) {
+    this.db = db;
+  }
+  db;
+  record(args, author, at) {
+    const topic = args.topic.trim().toLowerCase();
+    const id = randomUUID3();
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      const previous = this.db.prepare("SELECT id FROM decisions WHERE topic = ? ORDER BY revision DESC LIMIT 1").get(topic);
+      this.db.prepare(`INSERT INTO decisions (id, topic, body, scope, author_id, author_name, author_agent, created_at, source_message_id, supersedes)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(id, topic, args.text.trim(), JSON.stringify(normalizeScope(args.scope)), author.id, author.name, author.agent, at, args.sourceMessageId ?? null, previous?.id ?? null);
+      this.db.exec("COMMIT");
+    } catch (err) {
+      this.db.exec("ROLLBACK");
+      throw err;
+    }
+    return this.list({ topic, history: true }).find((d) => d.id === id);
+  }
+  list(args = {}, peer) {
+    const rows = this.db.prepare(`SELECT d.*, NOT EXISTS (SELECT 1 FROM decisions newer WHERE newer.supersedes = d.id) AS current
+      FROM decisions d ORDER BY revision DESC`).all();
+    const query = args.query?.trim().toLowerCase();
+    const scope = args.scope ? normalizeScope(args.scope) : void 0;
+    const sessions = [...args.session ? [args.session] : [], ...peer ? [peer.name, peer.id, ...peer.sessionId ? [peer.sessionId] : []] : []];
+    return rows.map((r) => ({
+      id: r.id,
+      topic: r.topic,
+      text: r.body,
+      scope: JSON.parse(r.scope),
+      author: { id: r.author_id, name: r.author_name, agent: r.author_agent },
+      createdAt: r.created_at,
+      sourceMessageId: r.source_message_id,
+      supersedes: r.supersedes,
+      current: Boolean(r.current)
+    })).filter((d) => (args.history || d.current) && (!args.topic || d.topic === args.topic.trim().toLowerCase()) && (!query || `${d.topic}
+${d.text}`.toLowerCase().includes(query)) && scopeMatches(d, scope, sessions));
+  }
+  /** The receipt and durable message commit together, before emitting any event. */
+  enqueue(decision, sessionKey, message, insert) {
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      const changed = this.db.prepare("INSERT OR IGNORE INTO decision_deliveries VALUES (?, ?, ?, ?)").run(decision.id, sessionKey, message.id, message.createdAt).changes;
+      if (changed) insert();
+      this.db.exec("COMMIT");
+      return Boolean(changed);
+    } catch (err) {
+      this.db.exec("ROLLBACK");
+      throw err;
+    }
+  }
+  /** A hook learns the host session id after hello; retain the provisional receipt as well. */
+  linkSession(from, to) {
+    this.db.prepare(`INSERT OR IGNORE INTO decision_deliveries
+      SELECT decision_id, ?, message_id, created_at FROM decision_deliveries WHERE session_key = ?`).run(to, from);
+  }
+};
+function formatDecisionSummary(decisions) {
+  if (!decisions.length) return "";
+  const lines = decisions.slice(0, SUMMARY_LIMIT).map((d) => `- ${d.topic}: ${d.text.replace(/\s+/g, " ").slice(0, SUMMARY_TEXT_CHARS)}${d.text.length > SUMMARY_TEXT_CHARS ? "\u2026" : ""}`);
+  return [`Current owner decisions (${decisions.length}; call decisions for full text):`, ...lines].join("\n");
+}
+function readDecisions(dbPath, args = {}) {
+  if (!existsSync3(dbPath)) return [];
+  const db = new DatabaseSync(dbPath, { readOnly: true });
+  try {
+    if (!db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'decisions'").get()) return [];
+    return new DecisionStore(db).list(args);
+  } finally {
+    db.close();
+  }
+}
+
+// src/core/store.ts
+var SQLITE_STORE_VERSION = 3;
 var BUSY_TIMEOUT_MS = 3e3;
 function agentQueueKey(agent) {
   return `agent:${agent}`;
@@ -38406,11 +38514,12 @@ CREATE INDEX IF NOT EXISTS idx_messages_id ON messages (id);
 `;
 var MIGRATIONS = [
   { version: 1, sql: `${SCHEMA} PRAGMA user_version = 1;` },
-  { version: SQLITE_STORE_VERSION, sql: `
+  { version: 2, sql: `
     CREATE TABLE IF NOT EXISTS archived_messages AS
       SELECT *, '' AS archive_reason, 0 AS archived_at FROM messages WHERE 0;
     PRAGMA user_version = 2;
-  ` }
+  ` },
+  { version: 3, sql: `${DECISIONS_SCHEMA} PRAGMA user_version = 3;` }
 ];
 function toMessage(r) {
   return {
@@ -38429,9 +38538,9 @@ function toMessage(r) {
 var MessageStore = class {
   constructor(file2, log) {
     this.log = log;
-    const existed = file2 !== ":memory:" && existsSync3(file2);
+    const existed = file2 !== ":memory:" && existsSync4(file2);
     if (file2 !== ":memory:") mkdirSync4(dirname4(file2), { recursive: true, mode: 448 });
-    this.db = new DatabaseSync(file2);
+    this.db = new DatabaseSync2(file2);
     try {
       const version2 = Number(this.db.prepare("PRAGMA user_version").get().user_version);
       if (version2 > SQLITE_STORE_VERSION) throw new Error(`unsupported SQLite store version: ${version2}`);
@@ -38459,6 +38568,7 @@ var MessageStore = class {
       this.db.close();
       throw err;
     }
+    this.decisions = new DecisionStore(this.db);
     this.stmt = {
       insert: this.db.prepare(
         `INSERT INTO messages (id, recipient, from_id, from_name, from_agent, to_target, conversation_id, reply_to, hop, body, created_at, read_at)
@@ -38479,6 +38589,7 @@ var MessageStore = class {
   }
   log;
   db;
+  decisions;
   stmt;
   insert(m) {
     this.stmt.insert.run(
@@ -38544,7 +38655,7 @@ var MessageStore = class {
 };
 
 // src/network/link.ts
-import { randomBytes as randomBytes5, randomUUID as randomUUID5 } from "node:crypto";
+import { randomBytes as randomBytes5, randomUUID as randomUUID6 } from "node:crypto";
 import { connect, createServer as createServer3 } from "node:tls";
 
 // src/network/discovery.ts
@@ -38553,8 +38664,8 @@ import { isIPv4 } from "node:net";
 
 // src/network/pairing.ts
 import { execFileSync } from "node:child_process";
-import { createHash, randomBytes as randomBytes4, randomUUID as randomUUID3 } from "node:crypto";
-import { chmodSync as chmodSync2, existsSync as existsSync4, mkdirSync as mkdirSync5, readFileSync as readFileSync5, renameSync as renameSync3, writeFileSync as writeFileSync2 } from "node:fs";
+import { createHash, randomBytes as randomBytes4, randomUUID as randomUUID4 } from "node:crypto";
+import { chmodSync as chmodSync2, existsSync as existsSync5, mkdirSync as mkdirSync5, readFileSync as readFileSync5, renameSync as renameSync3, writeFileSync as writeFileSync2 } from "node:fs";
 import { join as join9 } from "node:path";
 var DEFAULT_SYSTEM_ROOT = "C:\\Windows";
 var SYSTEM32 = join9(process.env.SystemRoot || DEFAULT_SYSTEM_ROOT, "System32");
@@ -38595,11 +38706,11 @@ var PairingStore = class {
     this.file = join9(this.dir, "keys.json");
     mkdirSync5(this.dir, { recursive: true, mode: OWNER_DIR_MODE });
     protect(this.dir, OWNER_DIR_MODE);
-    if (existsSync4(this.file)) {
+    if (existsSync5(this.file)) {
       protect(this.file, OWNER_FILE_MODE);
       this.state = stateSchema.parse(JSON.parse(readFileSync5(this.file, "utf8")));
     } else {
-      this.state = { identity: { id: randomUUID3(), key: randomBytes4(PAIRING_KEY_BYTES).toString("hex") }, invitations: [], pairs: [] };
+      this.state = { identity: { id: randomUUID4(), key: randomBytes4(PAIRING_KEY_BYTES).toString("hex") }, invitations: [], pairs: [] };
       this.save();
     }
   }
@@ -38669,7 +38780,7 @@ var PairingStore = class {
     this.save();
   }
   save() {
-    const temp = join9(this.dir, `${randomUUID3()}.tmp`);
+    const temp = join9(this.dir, `${randomUUID4()}.tmp`);
     writeFileSync2(temp, JSON.stringify(this.state, null, 2) + "\n", { mode: OWNER_FILE_MODE, flag: "wx" });
     protect(temp, OWNER_FILE_MODE);
     renameSync3(temp, this.file);
@@ -38751,9 +38862,9 @@ var NetworkDiscovery = class {
 };
 
 // src/network/files.ts
-import { createHash as createHash2, randomUUID as randomUUID4 } from "node:crypto";
-import { existsSync as existsSync5, lstatSync, mkdirSync as mkdirSync6, mkdtempSync, readFileSync as readFileSync6, readdirSync as readdirSync2, renameSync as renameSync4, rmSync as rmSync2, writeFileSync as writeFileSync3 } from "node:fs";
-import { basename as basename3, join as join10, resolve as resolve2 } from "node:path";
+import { createHash as createHash2, randomUUID as randomUUID5 } from "node:crypto";
+import { existsSync as existsSync6, lstatSync, mkdirSync as mkdirSync6, mkdtempSync, readFileSync as readFileSync6, readdirSync as readdirSync2, renameSync as renameSync4, rmSync as rmSync2, writeFileSync as writeFileSync3 } from "node:fs";
+import { basename as basename3, join as join10, resolve as resolve3 } from "node:path";
 var MAX_TRANSFER_BYTES = 1024 * 1024;
 var MAX_TRANSFER_ENTRIES = 128;
 var MAX_TRANSFER_DEPTH = 16;
@@ -38801,10 +38912,10 @@ function collectTransfer(paths, cwd, to, from) {
     } else throw new Error("only regular files and directories can be transferred");
   };
   for (const path of paths) {
-    const source = resolve2(cwd, path);
+    const source = resolve3(cwd, path);
     walk(source, basename3(source));
   }
-  const transfer = transferSchema.parse({ id: randomUUID4(), to, from, entries });
+  const transfer = transferSchema.parse({ id: randomUUID5(), to, from, entries });
   validateEntries(transfer);
   return transfer;
 }
@@ -38838,7 +38949,7 @@ function receiveTransfer(home, input2) {
   mkdirSync6(inbox, { recursive: true, mode: OWNER_DIR_MODE });
   if (lstatSync(inbox).isSymbolicLink()) throw new Error("inbox cannot be a symlink");
   const final = join10(inbox, transfer.id);
-  if (existsSync5(final)) throw new Error("transfer already received");
+  if (existsSync6(final)) throw new Error("transfer already received");
   const staging = mkdtempSync(join10(inbox, ".partial-"));
   try {
     for (const entry of entries.filter((e) => e.data === null).sort((a, b) => a.path.length - b.path.length)) mkdirSync6(join10(staging, ...entry.path.split("/")), { mode: OWNER_DIR_MODE });
@@ -38963,14 +39074,14 @@ var Link = class {
     if (this.remote) this.write({ type: "peers", peers: this.service.localPeers() });
   }
   send(message) {
-    return this.request({ type: "send", rid: randomUUID5(), message: messageSchema.parse(message) });
+    return this.request({ type: "send", rid: randomUUID6(), message: messageSchema.parse(message) });
   }
   files(transfer) {
-    return this.request({ type: "files", rid: randomUUID5(), transfer: transferSchema.parse(transfer) });
+    return this.request({ type: "files", rid: randomUUID6(), transfer: transferSchema.parse(transfer) });
   }
   async echo() {
     if (!this.echoSupported) throw new Error("Remote broker does not support verification. Update and restart its hosting sessions.");
-    const result = await this.request({ type: "echo", rid: randomUUID5() });
+    const result = await this.request({ type: "echo", rid: randomUUID6() });
     if (result !== true) throw new Error("network echo was not acknowledged");
   }
   request(frame) {
@@ -39285,6 +39396,8 @@ var Broker = class {
       },
       hello: (c, a) => this.onHello(c, a),
       send: (c, a) => this.onSend(c, a),
+      decide: (c, a) => this.onDecide(c, a),
+      decisions: (c, a) => this.onDecisions(c, a),
       peers: () => this.livePeers(),
       siblings: (c) => this.siblingPeers(c),
       sendSibling: (c, a) => this.onSendSibling(c, a),
@@ -39521,13 +39634,13 @@ var Broker = class {
     if (!Number.isInteger(args.maxHops) || args.maxHops < 1 || (parent ? parent.hop + 1 : 0) >= args.maxHops) {
       throw new BridgeError("bad_request", "sibling conversation reached the hop limit");
     }
-    const conversationId = parent?.conversationId ?? `${SIBLING_CONVERSATION_PREFIX}${randomUUID6()}`;
+    const conversationId = parent?.conversationId ?? `${SIBLING_CONVERSATION_PREFIX}${randomUUID7()}`;
     const result = await this.onSend(conn, { ...args, dedupeKey, conversationId });
     const message = result.messages[0];
     if (sender.jobParent) {
       const note = {
         ...message,
-        id: randomUUID6(),
+        id: randomUUID7(),
         recipient: sender.jobParent,
         conversationId: `${conversationId}${SIBLING_NOTE_SUFFIX}`,
         body: `Sibling message to ${message.recipient}:
@@ -39546,7 +39659,70 @@ ${message.body}`
       const candidate = `${requested}-${i}`;
       if (!this.connByName(candidate)) return candidate;
     }
-    return `${requested}-${randomUUID6().slice(0, 8)}`;
+    return `${requested}-${randomUUID7().slice(0, 8)}`;
+  }
+  onDecide(conn, value) {
+    const peer = this.requirePeer(conn);
+    const parsed = external_exports.object({
+      topic: external_exports.string().trim().min(1).max(MAX_DECISION_TOPIC_CHARS),
+      text: external_exports.string().trim().min(1).max(MAX_DECISION_TEXT_CHARS),
+      scope: decisionScopeSchema.optional(),
+      sourceMessageId: external_exports.string().min(1).optional()
+    }).strict().safeParse(value);
+    if (!parsed.success) throw new BridgeError("bad_request", "Invalid decision topic, text or scope.");
+    if (parsed.data.sourceMessageId && !this.store.byId(parsed.data.sourceMessageId)) throw new BridgeError("bad_request", "Source message does not exist.");
+    const decision = this.store.decisions.record({ ...parsed.data, scope: parsed.data.scope ?? { project: peer.cwd } }, { id: peer.id, name: peer.name, agent: peer.agent }, this.now());
+    const deliveredTo = [];
+    for (const c of this.conns) {
+      if (!c.peer || c.peer.jobAgent || !decisionApplies(decision, c.peer)) continue;
+      const message = this.queueDecision(decision, c.peer);
+      if (message) {
+        this.emit(c, "message", message);
+        deliveredTo.push(c.peer.name);
+      }
+    }
+    return { decision, deliveredTo };
+  }
+  onDecisions(conn, value) {
+    const parsed = external_exports.object({
+      query: external_exports.string().max(MAX_DECISION_TEXT_CHARS).optional(),
+      scope: decisionScopeSchema.optional(),
+      history: external_exports.boolean().optional(),
+      topic: external_exports.string().max(MAX_DECISION_TOPIC_CHARS).optional(),
+      session: external_exports.string().optional()
+    }).strict().safeParse(value);
+    if (!parsed.success) throw new BridgeError("bad_request", "Invalid decisions query or scope.");
+    const scope = parsed.data.scope ?? (conn.peer ? { project: conn.peer.cwd } : void 0);
+    return this.store.decisions.list({ ...parsed.data, scope }, conn.peer ?? void 0);
+  }
+  decisionSessionKey(peer) {
+    return `${peer.agent}:${peer.sessionId ?? peer.id}`;
+  }
+  queueDecision(decision, peer) {
+    const message = {
+      id: randomUUID7(),
+      from: decision.author,
+      to: peer.name,
+      recipient: peer.name,
+      conversationId: `decision-${decision.id}`,
+      replyTo: decision.sourceMessageId,
+      hop: DECISION_MESSAGE_HOP,
+      body: `Pinned owner decision: ${decision.topic}
+
+${decision.text}
+
+Call decisions to look up current decisions or their history.`,
+      createdAt: this.now(),
+      readAt: null
+    };
+    return this.store.decisions.enqueue(decision, this.decisionSessionKey(peer), message, () => this.store.insert(message)) ? message : null;
+  }
+  queueCurrentDecisions(peer) {
+    if (peer.jobAgent || !peer.sessionId) return [];
+    return this.store.decisions.list().filter((d) => decisionApplies(d, peer)).flatMap((d) => {
+      const message = this.queueDecision(d, peer);
+      return message ? [message] : [];
+    });
   }
   checkAuth(protocol, token) {
     if (protocol !== PROTOCOL_VERSION) {
@@ -39598,6 +39774,7 @@ ${message.body}`
     this.log.info("peer joined", { name, agent: peer.agent, jobAgent: peer.jobAgent, cwd: peer.cwd, claimed });
     if (!peer.jobAgent) this.broadcastEvent("peer_joined", peer, conn);
     setImmediate(() => {
+      this.queueCurrentDecisions(peer);
       for (const m of this.store.unread(peer.name, PENDING_MAX_LIMIT)) this.emit(conn, "message", m);
     });
     return { brokerPid: process.pid, name: peer.name, peers: this.livePeers().filter((x) => x.id !== peer.id) };
@@ -39630,7 +39807,9 @@ ${message.body}`
       if (typeof args.jobTitle === "string") peer.jobTitle = args.jobTitle;
     }
     if (args.sessionId !== void 0) {
+      const previousKey = this.decisionSessionKey(peer);
       peer.sessionId = args.sessionId;
+      this.store.decisions.linkSession(previousKey, this.decisionSessionKey(peer));
       if (peer.sessionId) this.replaceStale(conn, peer);
     }
     if (args.autoWake !== void 0) peer.autoWake = Boolean(args.autoWake);
@@ -39647,6 +39826,7 @@ ${message.body}`
       });
     }
     this.log.debug("peer updated", { name: peer.name, sessionId: peer.sessionId, autoWake: peer.autoWake, cwd: peer.cwd });
+    for (const message of this.queueCurrentDecisions(peer)) this.emit(conn, "message", message);
     return peer;
   }
   /**
@@ -39758,8 +39938,8 @@ ${message.body}`
         this.log.debug("replyTo refers to an unknown message", { replyTo });
       }
     }
-    conversationId ||= randomUUID6();
-    const id = randomUUID6();
+    conversationId ||= randomUUID7();
+    const id = randomUUID7();
     const createdAt = this.now();
     const base = {
       id,
@@ -39917,7 +40097,7 @@ var BridgeClient = class _BridgeClient extends EventEmitter {
 };
 
 // src/core/job-control.ts
-import { randomUUID as randomUUID7 } from "node:crypto";
+import { randomUUID as randomUUID8 } from "node:crypto";
 var DASHBOARD_JOB_CONVERSATION = "jobctl-dashboard";
 var CONTROL_TIMEOUT_MS = 1e4;
 var JobControlError = class extends Error {
@@ -39929,7 +40109,7 @@ var JobControlError = class extends Error {
 };
 async function controlDashboardJob(node2, owner, job, command) {
   if (!(await node2.peers()).some((p) => p.name === owner)) throw new JobControlError("The owning session is not connected. Reopen it to continue this subagent.", "offline");
-  const requestId = randomUUID7();
+  const requestId = randomUUID8();
   let receive;
   let timer;
   const reply = new Promise((resolve8, reject) => {
@@ -39966,7 +40146,7 @@ var BridgeNode = class extends EventEmitter2 {
   constructor(opts) {
     super();
     this.opts = opts;
-    this.id = opts.id ?? randomUUID8();
+    this.id = opts.id ?? randomUUID9();
     this.currentName = opts.name;
     this.currentCwd = opts.cwd;
     this.autoWake = opts.autoWake;
@@ -40233,6 +40413,12 @@ var BridgeNode = class extends EventEmitter2 {
   peers() {
     return this.withClient((c) => c.request("peers", {}));
   }
+  decide(args) {
+    return this.withClient((c) => c.request("decide", args));
+  }
+  decisions(args = {}) {
+    return this.withClient((c) => c.request("decisions", args));
+  }
   siblings() {
     return this.withClient((c) => c.request("siblings", {}));
   }
@@ -40345,10 +40531,10 @@ var BridgeNode = class extends EventEmitter2 {
 
 // src/core/paths.ts
 import { createHash as createHash3 } from "node:crypto";
-import { join as join12, posix, resolve as resolve3 } from "node:path";
+import { join as join12, posix, resolve as resolve4 } from "node:path";
 var PIPE_HASH_LENGTH = 12;
 function resolveHome(env = process.env) {
-  return resolve3(env[ENV.home]?.trim() || DEFAULT_HOME);
+  return resolve4(env[ENV.home]?.trim() || DEFAULT_HOME);
 }
 function resolvePipePath(home, env = process.env, platform = process.platform) {
   const override = env[ENV.pipe]?.trim();
@@ -40931,6 +41117,9 @@ async function buildHookResponse(ctx, input2) {
 ${peers.map((p) => formatPeer(p)).join("\n")}` : "No other agents are online right now."
       ];
       const unread = node2.unread().length;
+      const decisions = await node2.decisions({ scope: { project: ctx.cwd() } }).catch(() => []);
+      const summary = formatDecisionSummary(decisions);
+      if (summary) lines.push(summary);
       if (unread > 0 && !channel) lines.push(`You have ${unread} unread peer message(s); call the "inbox" tool to read them.`);
       return context("SessionStart", lines.join("\n"));
     }
@@ -41245,9 +41434,6 @@ var OPT_OUT = [
 ];
 var STDERR_TAIL_CHARS2 = 4e3;
 var STARTUP_TIMEOUT_MS = 18e4;
-var CODEX_FULL_ACCESS_APPROVAL_POLICY = {
-  granular: { sandbox_approval: false, rules: false, mcp_elicitations: true }
-};
 function innerCommand(s) {
   const m = /^(?:"[^"]*[\\/]|[^\s"]*[\\/])?(?:pwsh|powershell|bash|zsh|sh|cmd)(?:\.exe)?"?\s+(?:-NoProfile\s+|-NoLogo\s+)*(?:-Command|-lc|-c|\/c)\s+([\s\S]*)$/i.exec(s.trim());
   if (!m) return s;
@@ -41271,9 +41457,6 @@ function asExecEvent(kind, item) {
 }
 async function delegateToCodexAppServer(req) {
   checkDepth();
-  const mappings = codexDriveMappings(`${req.cwd}
-${req.prompt}`);
-  req = { ...req, prompt: codexPathPrompt(req.prompt, mappings) };
   const cwd = realFolder(req.cwd);
   const env = childEnv(req.extraEnv);
   const { resolved, args, needsShell } = resolveCommand(req.bin, ["app-server"], env, req.log);
@@ -41347,12 +41530,12 @@ ${req.prompt}`);
         return answer(decision, decision.allow ? { action: "accept", content } : { action: "decline", content: null }, tool);
       }
       case "item/commandExecution/requestApproval": {
-        const decision = req.sandbox === "danger-full-access" ? { allow: true } : req.askMode || req.sandbox === "workspace-write" ? await decide("command", innerCommand(String(params.command ?? params.reason ?? "a command"))) : sandboxDenial;
+        const decision = req.askMode ? await decide("command", innerCommand(String(params.command ?? params.reason ?? "a command"))) : sandboxDenial;
         return answer(decision, { decision: decision.allow ? "accept" : "decline" }, "command");
       }
       case "item/fileChange/requestApproval": {
         const paths = editPaths.get(params.itemId) ?? [];
-        const decision = req.sandbox === "danger-full-access" ? { allow: true } : req.askMode || req.sandbox === "workspace-write" ? await decide("edit", paths.length ? paths.join(", ") : String(params.reason ?? "file changes")) : sandboxDenial;
+        const decision = req.askMode ? await decide("edit", paths.length ? paths.join(", ") : String(params.reason ?? "file changes")) : sandboxDenial;
         return answer(decision, { decision: decision.allow ? "accept" : "decline" }, "edit");
       }
       default:
@@ -41468,9 +41651,9 @@ ${message}`, text_elements: [] }] });
     }
   };
   try {
-    await boot(request2("initialize", { clientInfo: { name: "agent-bridge", title: "agent-bridge", version: APP_VERSION }, capabilities: { experimentalApi: req.sandbox === "danger-full-access", optOutNotificationMethods: OPT_OUT } }));
+    await boot(request2("initialize", { clientInfo: { name: "agent-bridge", title: "agent-bridge", version: APP_VERSION }, capabilities: { experimentalApi: false, optOutNotificationMethods: OPT_OUT } }));
     write({ method: "initialized", params: {} });
-    const approvalPolicy = req.sandbox === "danger-full-access" ? CODEX_FULL_ACCESS_APPROVAL_POLICY : "on-request";
+    const approvalPolicy = "on-request";
     const config2 = {};
     if (req.sandbox === "workspace-write" && (req.writableRoots?.length || req.networkAccess !== void 0)) {
       config2.sandbox_workspace_write = {
@@ -41495,7 +41678,7 @@ ${message}`, text_elements: [] }] });
         // The sandbox Codex really applies to this thread (its config can differ from what was asked).
         permission: typeof thread.sandbox?.type === "string" ? thread.sandbox.type : null
       });
-    const prompt = req.askMode && req.sandbox !== "danger-full-access" ? `${req.prompt}
+    const prompt = req.askMode ? `${req.prompt}
 
 ${CODEX_ASK_HINT}` : req.prompt;
     step = "turn/start";
@@ -41505,7 +41688,6 @@ ${CODEX_ASK_HINT}` : req.prompt;
       input: [{ type: "text", text: prompt, text_elements: [] }],
       ...req.model ? { model: req.model } : {},
       sandboxPolicy,
-      approvalPolicy,
       ...req.effort ? { effort: req.effort } : {}
     }));
     req.onInfo?.({ model: req.model ?? thread?.model ?? null, permission: req.sandbox, effort: req.effort ?? (typeof thread?.reasoningEffort === "string" ? thread.reasoningEffort : null) });
@@ -41917,11 +42099,11 @@ import { join as join21 } from "node:path";
 
 // src/cli/ui.ts
 import { randomBytes as randomBytes8 } from "node:crypto";
-import { existsSync as existsSync6, readdirSync as readdirSync4, readFileSync as readFileSync13, statSync as statSync3 } from "node:fs";
+import { existsSync as existsSync7, readdirSync as readdirSync4, readFileSync as readFileSync13, statSync as statSync3 } from "node:fs";
 import { createServer as createServer6 } from "node:http";
 import { networkInterfaces } from "node:os";
 import { join as join20 } from "node:path";
-import { DatabaseSync as DatabaseSync2 } from "node:sqlite";
+import { DatabaseSync as DatabaseSync3 } from "node:sqlite";
 
 // src/core/runfeed.ts
 import { appendFileSync as appendFileSync2, mkdirSync as mkdirSync9, readFileSync as readFileSync12, readdirSync as readdirSync3, statSync as statSync2 } from "node:fs";
@@ -42202,36 +42384,68 @@ a { color: inherit; text-decoration: none; }
 .wrap { max-width: 1320px; margin: 0 auto; padding: 0 24px; }
 @media (max-width: 700px) { .wrap { padding: 0 16px; } }
 
-header { position: sticky; top: 0; z-index: 5; background: var(--panel); border-bottom: 1px solid var(--line); }
-.top { display: flex; align-items: center; justify-content: space-between; gap: 12px; height: 56px; }
+/* App shell: sessions sidebar on the left (a drawer on narrow screens), content on the right. */
+.app { display: grid; grid-template-columns: var(--side-w, 288px) minmax(0, 1fr); min-height: 100vh; }
+.app.collapsed { --side-w: 0px; }
+.app.collapsed .side { visibility: hidden; }
+.side { position: sticky; top: 0; height: 100vh; display: flex; flex-direction: column; background: var(--panel); border-right: 1px solid var(--line); min-width: 0; overflow: hidden; z-index: 30; }
+.side-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 14px 12px 10px 16px; }
 .brand { display: flex; align-items: center; gap: 10px; font-weight: 650; font-size: 15px; }
 .logo { width: 28px; height: 28px; display: block; }
 .logo svg { width: 100%; height: 100%; display: block; }
-.right { display: flex; align-items: center; gap: 14px; }
+.icon-btn { background: transparent; color: var(--muted); border: 1px solid transparent; border-radius: 7px; padding: 3px 9px; font-size: 14px; font-weight: 500; line-height: 1.4; }
+.icon-btn:hover { color: var(--text); background: var(--panel-2); border-color: var(--line); }
+.side-search { padding: 0 12px 8px; }
+.side-search input { width: 100%; padding: 7px 10px; font-size: 13px; background: var(--panel-2); }
+.side-nav { display: flex; flex-direction: column; gap: 1px; padding: 0 8px 8px; border-bottom: 1px solid var(--line); }
+.side-nav a, .tree-row { display: flex; align-items: center; gap: 9px; padding: 6px 8px; border-radius: 7px; color: var(--muted); font-size: 13.5px; min-width: 0; }
+.side-nav a:hover, .tree-row:hover { background: var(--panel-2); color: var(--text); }
+.side-nav a.on { background: var(--accent-soft); color: var(--text); font-weight: 600; }
+.side-nav .ico { width: 16px; text-align: center; color: var(--faint); }
+.side-tree { flex: 1; overflow-y: auto; padding: 6px 8px 16px; scrollbar-width: thin; }
+.tree-pc { display: flex; justify-content: space-between; padding: 12px 8px 4px; font-size: 11px; font-weight: 650; letter-spacing: .05em; text-transform: uppercase; color: var(--faint); }
+.tree-sess { display: flex; align-items: center; gap: 2px; border-radius: 7px; }
+.tree-sess:hover { background: var(--panel-2); }
+.tree-sess.cur { background: var(--accent-soft); }
+.tree-sess.ended { opacity: .6; }
+.twist { flex: none; width: 22px; height: 26px; padding: 0; background: none; border: 0; color: var(--faint); font-size: 10px; cursor: pointer; transition: transform .12s; }
+.twist[aria-expanded="true"] { transform: rotate(90deg); }
+.twist:disabled { visibility: hidden; }
+.tree-sess > a { flex: 1; display: flex; align-items: center; gap: 8px; padding: 6px 8px 6px 2px; min-width: 0; color: var(--text); font-size: 13.5px; }
+.tree-sess.cur > a { font-weight: 600; }
+.tree-sess .lbl { flex: 1; min-width: 0; }
+.tree-sess .lbl small { display: block; font-size: 11.5px; color: var(--faint); font-weight: 400; }
+.tree-kids { margin: 1px 0 4px 21px; padding-left: 9px; border-left: 1px solid var(--line); display: flex; flex-direction: column; gap: 1px; }
+.tree-row { padding: 4px 8px; font-size: 12.5px; }
+.tree-row.sel { background: var(--accent-soft); color: var(--text); font-weight: 600; }
+.tree-row .lbl { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tree-row .meta { flex: none; font-size: 11px; color: var(--faint); font-variant-numeric: tabular-nums; }
+.tree-row.more { background: none; border: 0; font: inherit; font-size: 12px; color: var(--faint); cursor: pointer; text-align: left; }
+.sdot { width: 7px; height: 7px; border-radius: 50%; flex: none; background: var(--faint); }
+.sdot.running { background: var(--busy); animation: pulse 1.4s infinite; } .sdot.done { background: var(--ok); }
+.sdot.failed { background: var(--bad); } .sdot.interrupted { background: var(--warn); }
+.chip.own { color: var(--accent); background: var(--accent-soft); border-color: transparent; font-size: 10.5px; padding: 0 6px; }
+.tree-row .ico { width: 7px; display: inline-flex; justify-content: center; font-size: 11px; }
+.tree-empty { padding: 16px 8px; color: var(--faint); font-size: 12.5px; }
+.side-foot { border-top: 1px solid var(--line); padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; }
+.side-foot .theme { align-self: flex-start; }
+.mbar { display: none; position: sticky; top: 0; z-index: 20; align-items: center; gap: 10px; height: 48px; padding: 0 12px; background: var(--panel); border-bottom: 1px solid var(--line); }
+.app.collapsed .mbar { display: flex; }
+.mtitle { font-weight: 600; font-size: 14px; }
+.scrim { display: none; }
+@media (max-width: 860px) {
+  .app { grid-template-columns: minmax(0, 1fr); }
+  .side { position: fixed; left: 0; top: 0; bottom: 0; width: min(320px, 86vw); transform: translateX(-100%); transition: transform .18s ease; box-shadow: 0 0 40px rgba(0, 0, 0, .25); }
+  .app.open .side { transform: none; visibility: visible; }
+  .app.open .scrim { display: block; position: fixed; inset: 0; z-index: 25; background: rgba(0, 0, 0, .35); }
+  .mbar { display: flex; }
+  .app.collapsed .side { visibility: visible; }
+}
 .theme { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
 .theme button { background: transparent; color: var(--muted); border: 0; border-radius: 0; padding: 4px 10px; font-size: 12px; font-weight: 500; cursor: pointer; }
 .theme button + button { border-left: 1px solid var(--line); }
 .theme button.on { background: var(--accent-soft); color: var(--text); }
 .conn { display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px; color: var(--muted); }
-nav { display: flex; gap: 4px; align-items: stretch; }
-nav a, .switch-btn { display: inline-flex; align-items: center; gap: 7px; padding: 10px 12px; color: var(--muted); border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: none; white-space: nowrap; font-size: 13.5px; font-weight: 400; cursor: pointer; }
-nav a:hover, .switch-btn:hover { color: var(--text); }
-nav a.on, .switch-btn.on { color: var(--text); border-bottom-color: var(--accent); font-weight: 600; }
-/* Session switcher: one entry however many sessions run, a searchable list grouped by PC. */
-.switch { position: relative; min-width: 0; display: flex; }
-.switch-btn { max-width: min(420px, 52vw); }
-.switch-btn .lbl { overflow: hidden; text-overflow: ellipsis; }
-.switch-btn .caret { color: var(--faint); font-size: 10px; }
-.switch-pop { position: absolute; top: calc(100% + 6px); left: 0; z-index: 20; width: min(440px, calc(100vw - 32px)); max-height: min(70vh, 560px); display: flex; flex-direction: column; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 12px 32px rgba(16, 24, 40, .18); overflow: hidden; }
-.switch-pop input { margin: 10px; padding: 8px 11px; }
-#sessList { overflow-y: auto; padding: 0 6px 8px; }
-.sess-group { padding: 10px 10px 4px; font-size: 11px; font-weight: 650; letter-spacing: .05em; text-transform: uppercase; color: var(--faint); display: flex; justify-content: space-between; }
-.sess-item { display: grid; grid-template-columns: 26px minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 7px 10px; border-radius: 8px; color: var(--text); }
-.sess-item .sub { font-size: 12px; color: var(--muted); }
-.sess-item.cur { background: var(--accent-soft); }
-.sess-item.act, .sess-item:hover { background: var(--panel-2); outline: 1px solid var(--line); }
-.sess-item.ended { opacity: .65; }
-.sess-empty { padding: 16px; text-align: center; color: var(--muted); font-size: 13px; }
 .pc-head { grid-column: 1 / -1; display: flex; align-items: center; gap: 8px; font-size: 12.5px; font-weight: 650; color: var(--muted); margin-top: 6px; }
 .pc-head:first-child { margin-top: 0; }
 .pc-head::after { content: ""; flex: 1; height: 1px; background: var(--line); }
@@ -42339,7 +42553,6 @@ button:disabled { opacity: .6; cursor: default; }
 .model-list ul { padding-left: 18px; }
 
 /* Network */
-nav a.net { margin-left: auto; }
 .net-card { padding: 18px 20px; display: flex; flex-direction: column; gap: 14px; }
 .net-card h4 { margin: 0; font-size: 15px; font-weight: 650; }
 .net-card p { margin: 0; color: var(--muted); font-size: 13px; }
@@ -42376,14 +42589,15 @@ button.ghost.danger { background: transparent; color: var(--bad); border-color: 
 .disabled-hint { padding: 10px 12px; border-radius: 8px; background: var(--panel-2); color: var(--muted); font-size: 12.5px; }
 
 /* Session view */
-.split { display: grid; grid-template-columns: minmax(300px, 380px) minmax(0, 1fr); gap: 20px; align-items: start; }
-@media (max-width: 960px) { .split { grid-template-columns: 1fr; } }
+.split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, 340px); gap: 20px; align-items: start; }
+.split > .side-col { order: 2; }
+@media (max-width: 1180px) { .split { grid-template-columns: 1fr; } .conv { position: static; height: 72vh; } }
 .side-col { display: flex; flex-direction: column; gap: 20px; }
 .sess { padding: 16px; display: flex; flex-direction: column; gap: 10px; }
 .kv { display: grid; grid-template-columns: 72px 1fr; gap: 4px 10px; font-size: 12.5px; }
 .kv span:nth-child(odd) { color: var(--faint); }
 .kv span:nth-child(even) { overflow-wrap: anywhere; }
-.conv { display: flex; flex-direction: column; min-width: 0; height: calc(100vh - 150px); min-height: 480px; position: sticky; top: 124px; }
+.conv { display: flex; flex-direction: column; min-width: 0; height: calc(100vh - 56px); min-height: 480px; position: sticky; top: 28px; }
 .conv-head { padding: 14px 18px; border-bottom: 1px solid var(--line); display: flex; gap: 12px; align-items: center; }
 .conv-head .grow { flex: 1; min-width: 0; }
 .conv-head .title { font-weight: 650; font-size: 15px; display: flex; gap: 8px; align-items: center; }
@@ -42443,28 +42657,26 @@ details[open] > summary::before { content: "\u25BE "; }
 </style>
 </head>
 <body>
-<header>
-  <div class="wrap">
-    <div class="top">
-      <div class="brand"><span class="logo">${LOGO_SVG}</span>agent-bridge</div>
-      <div class="right">
-        <span class="conn" id="status">connecting\u2026</span>
-        <div class="theme" id="theme" role="group" aria-label="Theme"><button data-theme="auto">Auto</button><button data-theme="light">Light</button><button data-theme="dark">Dark</button></div>
-      </div>
-    </div>
-    <nav id="tabs">
-      <a href="#/" id="tabOverview">Overview</a>
-      <div class="switch">
-        <button type="button" class="switch-btn" id="sessBtn" aria-haspopup="dialog" aria-expanded="false" aria-controls="sessPop"></button>
-        <div class="switch-pop hidden" id="sessPop" role="dialog" aria-label="Switch session">
-          <input id="sessFilter" placeholder="Find a session or folder" autocomplete="off" spellcheck="false" aria-label="Find a session">
-          <div id="sessList" role="listbox" aria-label="Sessions"></div>
-        </div>
-      </div>
-      <a href="#/network" id="tabNet" class="net">Network</a>
-    </nav>
+<div class="app" id="app">
+<aside class="side" id="side" aria-label="Sessions and subagents">
+  <div class="side-top">
+    <a class="brand" href="#/"><span class="logo">${LOGO_SVG}</span>agent-bridge</a>
+    <button type="button" class="icon-btn" id="sideHide" title="Hide the sidebar" aria-label="Hide the sidebar">\xAB</button>
   </div>
-</header>
+  <div class="side-search"><input id="sessFilter" type="search" placeholder="Search sessions and subagents" autocomplete="off" spellcheck="false" aria-label="Search sessions and subagents"></div>
+  <nav class="side-nav">
+    <a href="#/" id="tabOverview"><span class="ico" aria-hidden="true">\u25A6</span>Overview</a>
+    <a href="#/network" id="tabNet"><span class="ico" aria-hidden="true">\u21C4</span>Network</a>
+  </nav>
+  <div class="side-tree" id="sideTree"></div>
+  <div class="side-foot">
+    <span class="conn" id="status">connecting\u2026</span>
+    <div class="theme" id="theme" role="group" aria-label="Theme"><button data-theme="auto">Auto</button><button data-theme="light">Light</button><button data-theme="dark">Dark</button></div>
+  </div>
+</aside>
+<div class="scrim" id="scrim"></div>
+<div class="main-col">
+<div class="mbar" id="mbar"><button type="button" class="icon-btn" id="sideShow" aria-label="Show sessions" aria-controls="side">\u2630</button><span class="mtitle ell" id="mTitle">agent-bridge</span></div>
 
 <main class="wrap">
   <div id="overview">
@@ -42512,7 +42724,7 @@ details[open] > summary::before { content: "\u25BE "; }
   <div id="session" class="split hidden">
     <div class="side-col">
       <div class="panel sess" id="sHead"></div>
-      <div><h3>Subagents <span class="counts" id="sCount"></span></h3><div class="panel rows" id="sGroups"></div></div>
+      <div class="small muted" id="sCount"></div>
       <div id="sMsgBox"><h3>Messages</h3><div class="panel"><div id="sMsgs" class="msgs"></div></div></div>
     </div>
     <div class="panel conv">
@@ -42546,6 +42758,8 @@ details[open] > summary::before { content: "\u25BE "; }
   <button type="submit" id="sendBtn">Send</button>
   <div id="sendInfo"></div>
 </form>
+</div>
+</div>
 
 <script>
 const POLL_MS = 1500;
@@ -42706,7 +42920,8 @@ function buildModel(s) {
 function render() {
   if (!state) return;
   model = buildModel(state);
-  renderTabs();
+  for (const x of model.sessions) if (hasNativeChat(x)) void loadNativeList(x);
+  renderSide();
   const inSession = Boolean(route.session), inNetwork = Boolean(route.network);
   $("overview").classList.toggle("hidden", inSession || inNetwork);
   $("session").classList.toggle("hidden", !inSession);
@@ -42721,63 +42936,200 @@ function render() {
 const pcOf = (name) => { const i = String(name).indexOf("/"); return i > 0 ? name.slice(0, i) : ""; };
 const shortName = (name) => { const i = String(name).indexOf("/"); return i > 0 ? name.slice(i + 1) : name; };
 const LOCAL_PC = "This PC";
-let sessActive = 0, lastSessList = "";
+/** Subagents listed under a session before a "more" row. */
+const SIDE_RECENT = 6;
+const SIDE_TOGGLED_KEY = "ab-side-toggled", SIDE_COLLAPSED_KEY = "ab-side-collapsed";
+/** Sessions whose fold state the user flipped (live ones start open, ended ones folded); kept in this browser. */
+const sideToggled = new Set((() => { try { return JSON.parse(localStorage.getItem(SIDE_TOGGLED_KEY) || "[]"); } catch { return []; } })());
+const saveSideToggled = () => { try { localStorage.setItem(SIDE_TOGGLED_KEY, JSON.stringify([...sideToggled])); } catch {} };
+let lastTree = "";
 
-function renderTabs() {
-  const cur = route.session && model.byName.get(route.session);
-  $("tabOverview").className = route.session || route.network ? "" : "on";
-  $("tabNet").className = "net" + (route.network ? " on" : "");
-  setHtml("tabNet", networkTabDot() + "Network");
-  const running = model.sessions.reduce((n, x) => n + (x.running || 0), 0);
-  const live = model.sessions.filter((x) => x.live).length;
-  const btn = $("sessBtn");
-  btn.classList.toggle("on", Boolean(route.session));
-  setHtml("sessBtn", route.session
-    ? (cur && cur.live ? dot(cur.peer.activity) : "") + '<span class="lbl">' + esc(route.session) + "</span>" + (cur && cur.running ? '<span class="count" title="subagents working">' + cur.running + "</span>" : "") + '<span class="caret" aria-hidden="true">\u25BC</span>'
-    : '<span class="lbl">Sessions</span><span class="chip">' + live + "</span>" + (running ? '<span class="count" title="subagents working">' + running + "</span>" : "") + '<span class="caret" aria-hidden="true">\u25BC</span>');
-  btn.title = live + " session" + (live === 1 ? "" : "s") + " connected" + (running ? ", " + running + " subagent" + (running === 1 ? "" : "s") + " working" : "");
-  if (!$("sessPop").classList.contains("hidden")) renderSessList();
-}
+const groupLabel = (g) => g.title || g.agent + " \xB7 " + (g.task || g.last || "subagent");
+const groupMatches = (g, q) => [g.title, g.task, g.agent, g.model, g.job].some((s) => String(s || "").toLowerCase().includes(q));
+const sessionMatches = (x, q) => x.name.toLowerCase().includes(q) || String((x.peer && x.peer.cwd) || "").toLowerCase().includes(q);
+const sessionTitle = (x) => (x.peer ? folder(x.peer.cwd) : "") || shortName(x.name);
 
-/** Sessions matching the filter: live ones grouped by PC (this PC first), then ended ones with subagents. */
-function sessEntries() {
-  const q = $("sessFilter").value.trim().toLowerCase();
-  const match = (x) => !q || x.name.toLowerCase().includes(q) || String((x.peer && x.peer.cwd) || "").toLowerCase().includes(q);
-  const live = model.sessions.filter((x) => x.live && match(x));
+/** Live sessions grouped by PC (this PC first, busiest first), then ended sessions that have subagents. */
+function sideGroups(q) {
+  const keep = (x) => !q || sessionMatches(x, q) || x.groups.some((g) => groupMatches(g, q));
+  const live = model.sessions.filter((x) => x.live && keep(x));
   const pcs = [...new Set(live.map((x) => pcOf(x.name)))].sort((a, b) => (a === "") !== (b === "") ? (a === "" ? -1 : 1) : a.localeCompare(b));
-  const groups = pcs.map((pc) => ({ title: pc || LOCAL_PC, items: live.filter((x) => pcOf(x.name) === pc).sort((a, b) => b.running - a.running || a.name.localeCompare(b.name)) }));
-  const ended = model.sessions.filter((x) => !x.live && x.groups.length && match(x));
-  if (ended.length) groups.push({ title: "Ended", items: ended });
-  return groups;
+  const out = pcs.map((pc) => ({ title: pc || LOCAL_PC, items: live.filter((x) => pcOf(x.name) === pc).sort((a, b) => b.running - a.running || sessionTitle(a).localeCompare(sessionTitle(b))) }));
+  const ended = model.sessions.filter((x) => !x.live && x.groups.length && keep(x));
+  if (ended.length) out.push({ title: "Ended", items: ended });
+  return out;
 }
 
-function renderSessList() {
-  const groups = sessEntries(), flat = groups.flatMap((g) => g.items);
-  sessActive = Math.min(sessActive, Math.max(0, flat.length - 1));
-  let i = 0;
-  const html = flat.length
-    ? groups.map((g) => '<div class="sess-group"><span>' + esc(g.title) + "</span><span>" + g.items.length + "</span></div>" + g.items.map((x) => {
-        const p = x.peer, n = i++;
-        const sub = p ? [folder(p.cwd), p.activity || "", "up " + up(p.startedAt)].filter(Boolean).join(" \xB7 ") : x.groups.length + " subagents";
-        return '<a role="option" href="' + href(x.name) + '" data-i="' + n + '" class="sess-item' + (x.name === route.session ? " cur" : "") + (n === sessActive ? " act" : "") + (x.live ? "" : " ended") + '"' + (x.name === route.session ? ' aria-selected="true"' : "") + ">" +
-          av(p ? p.agent : "other", true) + '<div style="min-width:0"><div class="ell">' + (p ? dot(p.activity) + " " : "") + esc(shortName(x.name)) + '</div><div class="sub ell">' + esc(sub) + "</div></div>" +
-          (x.running ? '<span class="count" title="subagents working">' + x.running + "</span>" : "<span></span>") + "</a>";
-      }).join("")).join("")
-    : '<div class="sess-empty">No session matches.</div>';
-  if (html !== lastSessList) { lastSessList = html; $("sessList").innerHTML = html; }
-}
+/* ---- The CLIs' own conversations and subagents, read from their transcripts (GET /api/sessions/...) ---- */
+const CHAT_KEY = "~chat", NATIVE_PREFIX = "~native:";
+/** Native subagent lists are re-read this often per session; the open chat follows like a run log. */
+const NATIVE_LIST_MS = 10_000;
+/** Chat items kept per conversation in the page (the oldest go first). */
+const MAX_CHAT_ITEMS = 3000;
+/** Session name -> { at, list } of its native subagents. */
+const nativeLists = new Map();
+/** "<session>|<key>" -> { items, byId, next, loading, error }. */
+const chats = new Map();
 
-function openSessions(open) {
-  $("sessPop").classList.toggle("hidden", !open);
-  $("sessBtn").setAttribute("aria-expanded", String(open));
-  if (open) {
-    $("sessFilter").value = "";
-    const flat = sessEntries().flatMap((g) => g.items);
-    sessActive = Math.max(0, flat.findIndex((x) => x.name === route.session));
-    lastSessList = "";
-    renderSessList();
-    $("sessFilter").focus();
+/** Only sessions of this PC with a known CLI session have a transcript to read. */
+const hasNativeChat = (x) => Boolean(x.live && x.peer && x.peer.sessionId && !pcOf(x.name));
+function selectedKey(x) {
+  if (route.group && route.group.startsWith("~")) return route.group;
+  return route.group && x.groups.some((g) => g.key === route.group) ? route.group : x.groups[0] ? x.groups[0].key : hasNativeChat(x) ? CHAT_KEY : null;
+}
+const sessionApi = (name) => "/api/sessions/" + encodeURIComponent(name);
+
+async function loadNativeList(x) {
+  const cached = nativeLists.get(x.name);
+  if (cached && Date.now() - cached.at < NATIVE_LIST_MS) return;
+  nativeLists.set(x.name, { at: Date.now(), list: cached ? cached.list : [] });
+  try {
+    const r = await fetch(sessionApi(x.name) + "/subagents");
+    if (!r.ok) return;
+    const d = await r.json();
+    nativeLists.set(x.name, { at: Date.now(), list: [...(d.subagents || [])].sort((a, b) => b.updatedAt - a.updatedAt) });
+    if (model) renderSide();
+  } catch {
+    // Shown as no native subagents; the next round tries again.
   }
+}
+
+/** Fetch the new part of a transcript (several chunks when it is long) and merge it. */
+async function pullChat(x, key) {
+  const id = x.name + "|" + key;
+  let c = chats.get(id);
+  if (!c) chats.set(id, (c = { items: [], byId: new Map(), next: null, loading: false, error: "" }));
+  if (c.loading) return c;
+  c.loading = true;
+  const url = key === CHAT_KEY ? sessionApi(x.name) + "/chat" : sessionApi(x.name) + "/subagents/" + encodeURIComponent(key.slice(NATIVE_PREFIX.length));
+  try {
+    for (let i = 0; i < LOG_PAGES; i++) {
+      const r = await fetch(url + (c.next ? "?from=" + encodeURIComponent(c.next) : ""));
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(r.status === 409 ? "This session has not reported its CLI session yet: it appears after its next prompt." : d.error || "HTTP " + r.status);
+      for (const item of d.items || []) {
+        // opencode streams parts: a later version of the same item replaces the earlier one.
+        if (item.id && c.byId.has(item.id)) c.items[c.byId.get(item.id)] = item;
+        else { if (item.id) c.byId.set(item.id, c.items.length); c.items.push(item); }
+      }
+      if (c.items.length > MAX_CHAT_ITEMS) {
+        c.items = c.items.slice(-MAX_CHAT_ITEMS);
+        c.byId = new Map(c.items.flatMap((it, n) => (it.id ? [[it.id, n]] : [])));
+      }
+      const moved = d.next && d.next !== c.next;
+      c.next = d.next || c.next;
+      if (!moved || !(d.items || []).length) break;
+    }
+    c.error = "";
+  } catch (err) {
+    c.error = err.message;
+  } finally {
+    c.loading = false;
+  }
+  return c;
+}
+
+/** A transcript as chat: your prompts, the agent's answers, tool steps folded like a run log. */
+function chatHtml(items, agent, session) {
+  let html = "", buf = [], block = 0;
+  const flush = () => {
+    if (!buf.length) return;
+    const rows = buf.map((s) => '<div class="step"><span class="t">' + esc(time(s.at)) + '</span><span class="k">' + esc(s.tool || "tool") + "</span><code title=\\"" + esc(s.summary || "") + "\\">" + esc(s.summary || "") + "</code></div>").join("");
+    const id = session + ":native-steps:" + block++;
+    html += buf.length > FOLD_STEPS
+      ? '<div class="steps"><details data-open="' + esc(id) + '"' + (opened.has(id) ? " open" : "") + "><summary>" + buf.length + " steps \xB7 last: " + esc((buf[buf.length - 1].tool || "") + " " + (buf[buf.length - 1].summary || "").slice(0, 70)) + "</summary>" + rows + "</details></div>"
+      : '<div class="steps">' + rows + "</div>";
+    buf = [];
+  };
+  for (const it of items) {
+    if (it.kind === "tool") { buf.push(it); continue; }
+    flush();
+    if (it.kind === "user") html += '<div class="msgrow me">' + av("other", true) + '<div class="bubble"><span class="who">You \xB7 ' + esc(time(it.at)) + "</span>" + md(it.text || "") + "</div></div>";
+    else if (it.kind === "assistant") html += '<div class="msgrow">' + av(agent, true) + '<div class="bubble">' + md(it.text || "") + "</div></div>";
+    else if (it.kind === "subagent" && it.subagent) html += '<div class="sys">\u21B3 started its own subagent <a href="' + href(session, NATIVE_PREFIX + it.subagent.id) + '">' + esc(it.subagent.title || it.subagent.id) + "</a></div>";
+  }
+  flush();
+  return html;
+}
+
+async function showNative(x, key) {
+  const p = x.peer || {};
+  const native = key.startsWith(NATIVE_PREFIX) ? ((nativeLists.get(x.name) || {}).list || []).find((s) => NATIVE_PREFIX + s.id === key) : null;
+  $("cAvatar").innerHTML = av(p.agent || "other");
+  $("cTitle").innerHTML = key === CHAT_KEY ? "Chat <span class=\\"chip\\">" + esc(p.agent || "") + "</span>" : esc((native && native.title) || "Subagent") + ' <span class="chip own">own subagent</span>';
+  $("cSub").textContent = (key === CHAT_KEY ? "the session's own conversation" : "a subagent of " + p.agent + " itself") + " \xB7 read-only" + (p.cwd ? " \xB7 " + p.cwd : "");
+  $("cHint").classList.add("hidden");
+  const c = await pullChat(x, key);
+  if (route.session !== x.name || route.group !== key) return;
+  const body = c.error ? '<div class="empty">' + esc(c.error) + "</div>" : c.items.length ? chatHtml(c.items, p.agent || "other", x.name) : '<div class="empty">' + (c.loading ? "Loading\u2026" : "Nothing in this conversation yet.") + "</div>";
+  if (body === lastChat) return;
+  lastChat = body;
+  const chat = $("chat"), atEnd = chat.scrollHeight - chat.scrollTop - chat.clientHeight < 40;
+  chat.innerHTML = body;
+  if ($("follow").checked && (atEnd || chat.dataset.key !== x.name + key)) chat.scrollTop = chat.scrollHeight;
+  chat.dataset.key = x.name + key;
+}
+
+function sideSession(x, q) {
+  const p = x.peer, searching = Boolean(q);
+  const open = searching || (x.live !== sideToggled.has(x.name));
+  const cur = x.name === route.session;
+  const selKey = cur ? selectedKey(x) : null;
+  const chat = hasNativeChat(x);
+  let kids = searching && !sessionMatches(x, q) ? x.groups.filter((g) => groupMatches(g, q)) : x.groups;
+  const all = searching || opened.has("side-all:" + x.name);
+  const recent = kids.filter((g) => g.status === "running" || Date.now() - g.updatedAt < ARCHIVE_AFTER_MS || g.key === selKey);
+  const shown = all ? kids : (recent.length ? recent : kids).slice(0, SIDE_RECENT);
+  // The CLI's own subagents (read from its transcript), after agent-bridge's.
+  const natives = chat ? ((nativeLists.get(x.name) || {}).list || []).filter((s) => !searching || sessionMatches(x, q) || String(s.title || "").toLowerCase().includes(q)) : [];
+  const nativeRecent = natives.filter((s) => Date.now() - s.updatedAt < ARCHIVE_AFTER_MS || NATIVE_PREFIX + s.id === selKey);
+  const nativeShown = all ? natives : nativeRecent.slice(0, SIDE_RECENT);
+  const hidden = kids.length - shown.length + natives.length - nativeShown.length;
+  const anyKids = chat || x.groups.length > 0;
+  const sub = shortName(x.name) + (p ? " \xB7 " + (p.activity || "connected") : " \xB7 ended");
+  const row = '<div class="tree-sess' + (cur ? " cur" : "") + (x.live ? "" : " ended") + '">' +
+    '<button type="button" class="twist" data-fold="' + esc(x.name) + '" aria-expanded="' + open + '" aria-label="Show or hide its subagents"' + (anyKids ? "" : " disabled") + ">\u25B6</button>" +
+    '<a href="' + href(x.name) + '" title="' + esc(x.name + (p ? " \xB7 " + p.cwd : "")) + '"' + (cur ? ' aria-current="page"' : "") + ">" + (p ? dot(p.activity) : '<span class="dot off"></span>') +
+    '<span class="lbl ell">' + esc(sessionTitle(x)) + '<small class="ell">' + esc(sub) + "</small></span>" +
+    (x.running ? '<span class="count" title="subagents working">' + x.running + "</span>" : "") + "</a></div>";
+  if (!open || !anyKids) return row;
+  const chatRow = chat && (!searching || sessionMatches(x, q))
+    ? '<a class="tree-row chat' + (selKey === CHAT_KEY ? " sel" : "") + '" href="' + href(x.name, CHAT_KEY) + '" title="The session\\'s own conversation (read-only)"><span class="ico" aria-hidden="true">\u{1F4AC}</span><span class="lbl">Chat</span></a>'
+    : "";
+  const nativeRows = nativeShown.map((s) =>
+    '<a class="tree-row' + (NATIVE_PREFIX + s.id === selKey ? " sel" : "") + '" href="' + href(x.name, NATIVE_PREFIX + s.id) + '" title="' + esc((s.title || "subagent") + " \xB7 its own subagent, read-only") + '">' +
+    '<span class="sdot ' + esc(s.status) + '"></span><span class="lbl">' + esc(s.title || "subagent") + '</span><span class="chip own">own</span></a>').join("");
+  const kidRows = chatRow + shown.map((g) => {
+    const meta = g.status === "running" ? (g.percent !== null ? g.percent + "%" : "working") : ago(g.updatedAt).replace(" ago", "");
+    return '<a class="tree-row' + (g.key === selKey ? " sel" : "") + '" href="' + href(x.name, g.key) + '" title="' + esc(groupLabel(g) + " \xB7 " + g.status) + '">' +
+      '<span class="sdot ' + esc(g.status) + '"></span><span class="lbl">' + esc(groupLabel(g)) + '</span><span class="meta">' + esc(meta) + "</span></a>";
+  }).join("");
+  const more = hidden > 0 || (all && !searching && (kids.length > SIDE_RECENT || natives.length > nativeRecent.length))
+    ? '<button type="button" class="tree-row more" data-more="' + esc(x.name) + '">' + (hidden > 0 ? hidden + " more" : "show fewer") + "</button>"
+    : "";
+  return row + '<div class="tree-kids">' + kidRows + nativeRows + more + "</div>";
+}
+
+function renderSide() {
+  $("tabOverview").className = route.session || route.network ? "" : "on";
+  $("tabNet").className = route.network ? "on" : "";
+  setHtml("tabNet", '<span class="ico" aria-hidden="true">\u21C4</span>Network' + networkTabDot());
+  const cur = route.session && model.byName.get(route.session);
+  $("mTitle").textContent = route.network ? "Network" : route.session ? (cur ? sessionTitle(cur) : route.session) : "Overview";
+  const q = $("sessFilter").value.trim().toLowerCase();
+  const groups = sideGroups(q);
+  const html = groups.length
+    ? groups.map((pc) => '<div class="tree-pc"><span>' + esc(pc.title) + "</span><span>" + pc.items.length + "</span></div>" + pc.items.map((x) => sideSession(x, q)).join("")).join("")
+    : '<div class="tree-empty">' + (q ? "Nothing matches." : "No sessions connected yet.") + "</div>";
+  if (html !== lastTree) { lastTree = html; $("sideTree").innerHTML = html; }
+}
+
+const narrow = () => typeof matchMedia === "function" && matchMedia("(max-width: 860px)").matches;
+function setSidebar(show) {
+  const app = $("app");
+  if (narrow()) { app.classList.toggle("open", show); return; }
+  app.classList.toggle("collapsed", !show);
+  try { show ? localStorage.removeItem(SIDE_COLLAPSED_KEY) : localStorage.setItem(SIDE_COLLAPSED_KEY, "1"); } catch {}
 }
 
 /** "0.12.0" vs "0.11.3": negative when a is older. */
@@ -42835,7 +43187,7 @@ function renderOverview() {
       ? '<div class="head">' + av(p.agent) + '<div style="min-width:0;flex:1"><div class="title ell">' + esc(folder(p.cwd)) + '</div><div class="small muted ell">' + esc(x.name) + "</div></div>" + dot(p.activity) + "</div>"
       : '<div class="head">' + av("other") + '<div style="min-width:0;flex:1"><div class="title ell">' + esc(x.name) + '</div><div class="small muted">not connected</div></div></div>';
     const stats = '<div class="stats"><span><b>' + x.groups.length + "</b>subagents</span>" + (x.running ? '<span style="color:var(--busy)"><b style="color:inherit">' + x.running + "</b>working</span>" : "") +
-      (p ? "<span><b>" + up(p.startedAt) + "</b>up</span>" : x.groups[0] ? "<span>last " + ago(x.groups[0].updatedAt) + "</span>" : "") + "</div>";
+      (p ? "<span><b>" + up(p.startedAt) + "</b>connected</span>" : x.groups[0] ? "<span>last " + ago(x.groups[0].updatedAt) + "</span>" : "") + "</div>";
     const kids = x.children.length ? '<div class="kids">' + x.children.map(childLine).join("") + "</div>" : "";
     return '<a class="card' + (x.live ? "" : " ended") + '" href="' + href(x.name) + '">' + head + (p ? versionChip(p) : "") + kids + stats + "</a>";
   };
@@ -42857,23 +43209,21 @@ function renderSession() {
   const p = x.peer;
   $("sHead").innerHTML = p
     ? '<div class="head" style="display:flex;gap:12px;align-items:center">' + av(p.agent) + '<div style="min-width:0;flex:1"><div class="title ell" style="font-weight:650;font-size:15px">' + esc(folder(p.cwd)) + '</div><div class="small muted ell">' + esc(p.name) + "</div></div>" + dot(p.activity) + "</div>" +
-      '<div class="kv"><span>status</span><span>' + esc(p.activity || "unknown") + "</span><span>folder</span><span>" + esc(p.cwd) + "</span><span>up</span><span>" + up(p.startedAt) + "</span>" +
+      '<div class="kv"><span>status</span><span>' + esc(p.activity || "unknown") + "</span><span>folder</span><span>" + esc(p.cwd) + "</span><span>connected</span><span>" + up(p.startedAt) + " ago</span>" +
       (p.sessionId ? "<span>session</span><span>" + esc(p.sessionId) + "</span>" : "") + "<span>version</span><span>" + esc(p.version || "?") + " " + versionChip(p) + "</span></div>" +
       (x.children.length ? '<div class="kids">' + x.children.map(childLine).join("") + "</div>" : "")
     : '<div class="head" style="display:flex;gap:12px;align-items:center">' + av("other") + '<div><div style="font-weight:650">' + esc(x.name) + '</div><div class="small muted">' +
       (x.name === "earlier runs" ? "Runs from before sessions were recorded, or from sessions in other folders." : "This session has ended. Its subagents are kept for reference.") + "</div></div></div>";
   $("sCount").innerHTML = x.groups.length ? countsLine(countGroups(x.groups)) : "";
+  // The subagents themselves are listed in the sidebar under the session.
   const sel = route.group && x.groups.find((g) => g.key === route.group) ? route.group : x.groups[0] && x.groups[0].key;
-  // Running and recently finished subagents on top; older ones in a folded archive (the selected one stays visible).
-  const fresh = (g) => g.status === "running" || Date.now() - g.updatedAt < ARCHIVE_AFTER_MS || g.key === sel;
-  const active = x.groups.filter(fresh), archived = x.groups.filter((g) => !fresh(g));
-  const archiveOpen = opened.has("archive:" + x.name);
-  $("sGroups").innerHTML = x.groups.length
-    ? (active.length ? active.map((g) => groupRow(g, g.key === sel, false)).join("") : '<div class="empty">Nothing running or recent.</div>') +
-      (archived.length ? '<details class="archive" data-open="archive:' + esc(x.name) + '"' + (archiveOpen ? " open" : "") + '><summary>Archive \xB7 ' + archived.length + " older subagent" + (archived.length === 1 ? "" : "s") + "</summary>" + archived.map((g) => groupRow(g, false, false)).join("") + "</details>" : "")
-    : '<div class="empty">No subagents started from this session yet.</div>';
   const mine = state.messages.filter((m) => m.from_name === x.name || m.to_target === x.name || String(m.recipients || "").split(", ").includes(x.name));
   $("sMsgs").innerHTML = messagesHtml(mine);
+  const key = selectedKey(x);
+  if (key && key.startsWith("~")) {
+    renderJobForm(null);
+    return void showNative(x, key);
+  }
   const g = sel && model.groups.get(sel);
   renderJobForm(g);
   if (g) void showGroup(g);
@@ -43297,7 +43647,7 @@ async function loadNetwork() {
     netLoading = false;
     netLoadedAt = Date.now();
   }
-  if (model) renderTabs();
+  if (model) renderSide();
   if (route.network) renderNetwork();
 }
 
@@ -43540,27 +43890,32 @@ setInterval(() => {
   if ((route.network || inviteActive()) && Date.now() - netLoadedAt >= due) void loadNetwork();
 }, 1000);
 
-$("sessBtn").addEventListener("click", () => openSessions($("sessPop").classList.contains("hidden")));
-$("sessFilter").addEventListener("input", () => { sessActive = 0; renderSessList(); });
+$("sessFilter").addEventListener("input", () => { if (model) renderSide(); });
 $("sessFilter").addEventListener("keydown", (e) => {
-  const flat = sessEntries().flatMap((g) => g.items);
-  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
-    e.preventDefault();
-    if (flat.length) sessActive = (sessActive + (e.key === "ArrowDown" ? 1 : flat.length - 1)) % flat.length;
-    renderSessList();
-  } else if (e.key === "Enter") {
-    e.preventDefault();
-    const x = flat[sessActive];
-    if (x) { location.hash = href(x.name); openSessions(false); }
-  } else if (e.key === "Escape") {
-    openSessions(false);
-    $("sessBtn").focus();
+  if (e.key === "Escape") { $("sessFilter").value = ""; if (model) renderSide(); }
+  // Enter opens the first match: the first session, or its first matching subagent.
+  if (e.key === "Enter") {
+    const first = $("sideTree").querySelector(".tree-row, .tree-sess > a");
+    if (first) location.hash = first.getAttribute("href");
   }
 });
-$("sessList").addEventListener("click", (e) => { if (e.target.closest(".sess-item")) openSessions(false); });
-document.addEventListener("click", (e) => {
-  if (!$("sessPop").classList.contains("hidden") && !e.target.closest(".switch")) openSessions(false);
+$("sideTree").addEventListener("click", (e) => {
+  const fold = e.target.closest("[data-fold]"), more = e.target.closest("[data-more]");
+  if (fold) {
+    const name = fold.dataset.fold;
+    sideToggled.has(name) ? sideToggled.delete(name) : sideToggled.add(name);
+    saveSideToggled();
+    renderSide();
+  } else if (more) {
+    const id = "side-all:" + more.dataset.more;
+    opened.has(id) ? opened.delete(id) : opened.add(id);
+    renderSide();
+  } else if (e.target.closest("a") && narrow()) setSidebar(false);
 });
+$("sideHide").addEventListener("click", () => setSidebar(false));
+$("sideShow").addEventListener("click", () => setSidebar(true));
+$("scrim").addEventListener("click", () => setSidebar(false));
+try { if (localStorage.getItem(SIDE_COLLAPSED_KEY) === "1" && !narrow()) $("app").classList.add("collapsed"); } catch {}
 
 /** Auto follows the system; Light and Dark override it. Remembered in this browser. */
 function applyTheme(theme) {
@@ -43683,7 +44038,7 @@ function summarizeRun(file2, text2, mtimeMs, now, meta3 = {}) {
 }
 function listRuns(home, now = Date.now()) {
   const dir = join20(home, RUNS_DIR_NAME);
-  if (!existsSync6(dir)) return [];
+  if (!existsSync7(dir)) return [];
   return readdirSync4(dir).filter((f) => RUN_NAME.test(f)).map((f) => ({ f, st: statSync3(join20(dir, f)) })).sort((a, b) => b.st.mtimeMs - a.st.mtimeMs).slice(0, MAX_RUNS).map(({ f, st }) => summarizeRun(f, readFileSync13(join20(dir, f), "utf8"), st.mtimeMs, now, readMeta(join20(dir, runMetaPath(f)))));
 }
 function readMeta(file2) {
@@ -43728,8 +44083,8 @@ function classifyPeers(peers, runs, home) {
   });
 }
 function recentMessages(dbPath) {
-  if (!existsSync6(dbPath)) return [];
-  const db = new DatabaseSync2(dbPath, { readOnly: true });
+  if (!existsSync7(dbPath)) return [];
+  const db = new DatabaseSync3(dbPath, { readOnly: true });
   try {
     const stmt = db.prepare(
       `SELECT id, from_name, from_agent, to_target, group_concat(recipient, ', ') AS recipients, body, created_at, hop, reply_to
@@ -43846,6 +44201,25 @@ async function startUi(opts) {
     }
     if (!tokensEqual(cookieSecret(req), secret)) return send(res, 403, "Open the link printed by `agent-bridge ui`.", "text/plain; charset=utf-8");
     if (req.method === "GET" && url2.pathname === "/") return send(res, 200, UI_PAGE, "text/html; charset=utf-8");
+    if (req.method === "GET" && (url2.pathname === "/api/decisions" || /^\/api\/decisions\/[^/]+\/history$/.test(url2.pathname))) {
+      let args;
+      let topic;
+      try {
+        const scopeText = url2.searchParams.get("scope");
+        const scope = scopeText ? decisionScopeSchema.parse(scopeText === "all" ? "all" : JSON.parse(scopeText)) : void 0;
+        const query = url2.searchParams.get("q") ?? void 0;
+        if (query && query.length > MAX_DECISION_TEXT_CHARS) throw new Error("query too long");
+        if (url2.pathname !== "/api/decisions") {
+          topic = decodeURIComponent(url2.pathname.slice("/api/decisions/".length, -"/history".length)).trim().toLowerCase();
+          if (!topic || topic.length > MAX_DECISION_TOPIC_CHARS) throw new Error("invalid topic");
+        }
+        args = { query, scope, ...topic ? { topic, history: true } : {} };
+      } catch {
+        return send(res, 400, { error: 'Invalid decisions query, topic or scope. Scope must be "all" or JSON {project: folder}/{sessions: [names or ids]}.' });
+      }
+      const decisions = readDecisions(dbPath, args);
+      return send(res, 200, topic ? { topic, decisions } : { decisions });
+    }
     if (req.method === "GET" && url2.pathname === "/api/state") {
       const { brokerPid, peers } = await brokerPeers(opts.pipe, token, opts.log);
       const runs = listRuns(opts.home);
@@ -43921,7 +44295,7 @@ async function startUi(opts) {
     const runMatch = /^\/api\/runs\/([\w.-]+)$/.exec(url2.pathname);
     if (req.method === "GET" && runMatch) {
       const file2 = join20(opts.home, RUNS_DIR_NAME, `${runMatch[1]}.log`);
-      if (!existsSync6(file2)) return send(res, 404, { error: "no such run" });
+      if (!existsSync7(file2)) return send(res, 404, { error: "no such run" });
       const from = Math.max(0, Number(url2.searchParams.get("from")) || 0);
       const buf = readFileSync13(file2);
       let end = Math.min(buf.length, from + MAX_LOG_CHUNK);
@@ -43945,7 +44319,7 @@ async function startUi(opts) {
       const command = jobCommand(body);
       if (!RUN_NAME.test(`${run}.log`) || !command) return send(res, 400, { error: "a valid run and request are required" });
       const file2 = join20(opts.home, RUNS_DIR_NAME, `${run}.log`);
-      if (!existsSync6(file2)) return send(res, 404, { error: "no such run" });
+      if (!existsSync7(file2)) return send(res, 404, { error: "no such run" });
       const meta3 = readMeta(join20(opts.home, RUNS_DIR_NAME, `${run}.json`));
       if (!meta3.by || !meta3.job) return send(res, 409, { error: "This run has no owning session or job recorded." });
       try {
@@ -44056,7 +44430,7 @@ function openBrowser(url2) {
 }
 
 // src/mcp/jobs.ts
-import { randomUUID as randomUUID9 } from "node:crypto";
+import { randomUUID as randomUUID10 } from "node:crypto";
 import { closeSync as closeSync2, mkdirSync as mkdirSync10, openSync as openSync2, rmSync as rmSync4, statSync as statSync4 } from "node:fs";
 import { dirname as dirname6 } from "node:path";
 var JOB_ID_LENGTH = 8;
@@ -44310,7 +44684,7 @@ var JobManager = class {
     this.persist();
   }
   newJob(agent, model, prompt, kind, resume, args) {
-    const id = randomUUID9().replace(/-/g, "").slice(0, JOB_ID_LENGTH);
+    const id = randomUUID10().replace(/-/g, "").slice(0, JOB_ID_LENGTH);
     return {
       id,
       name: `${agent}-${kind}-${id}`,
@@ -44417,7 +44791,7 @@ var JobManager = class {
     }
     if (this.hostedRunning(job)) {
       const state = this.runners.state(job);
-      const cid = randomUUID9();
+      const cid = randomUUID10();
       (job.forwarded ??= []).push({ cid, body: message });
       this.runners.send(job, { type: "message", body: message, cid });
       return { outcome: state?.asking ? "answered" : state?.live ? "delivered" : "queued", job };
@@ -44640,7 +45014,7 @@ ${QUEUED_FOLLOW_UP_NOTE}`);
   }
   post(job, body, replyTo = null) {
     const m = {
-      id: randomUUID9(),
+      id: randomUUID10(),
       from: { id: `job:${job.id}`, name: job.name, agent: job.agent },
       to: this.node.name,
       recipient: this.node.name,
@@ -44717,13 +45091,13 @@ function acquireLock(path) {
 }
 
 // src/mcp/delegate-run.ts
-import { randomUUID as randomUUID10 } from "node:crypto";
-import { isAbsolute as isAbsolute4, join as join25, relative as relative3, resolve as resolve6 } from "node:path";
+import { randomUUID as randomUUID11 } from "node:crypto";
+import { isAbsolute as isAbsolute3, join as join24, relative as relative2, resolve as resolve6 } from "node:path";
 
 // src/core/resource-slots.ts
 import { mkdirSync as mkdirSync11 } from "node:fs";
 import { join as join22 } from "node:path";
-import { DatabaseSync as DatabaseSync3 } from "node:sqlite";
+import { DatabaseSync as DatabaseSync4 } from "node:sqlite";
 import { setTimeout as delay2 } from "node:timers/promises";
 var SLOT_OWNER_ENV = "AGENT_BRIDGE_SLOT_OWNER";
 var SLOT_PID_ENV = "AGENT_BRIDGE_SLOT_PID";
@@ -44745,7 +45119,7 @@ var ResourceSlots = class {
     this.isAlive = isAlive;
     this.now = now;
     mkdirSync11(home, { recursive: true });
-    this.db = new DatabaseSync3(join22(home, SLOT_DB_NAME));
+    this.db = new DatabaseSync4(join22(home, SLOT_DB_NAME));
     this.db.exec(`PRAGMA busy_timeout = ${LOCK_WAIT_MS2};
       CREATE TABLE IF NOT EXISTS slots (
         ticket INTEGER PRIMARY KEY AUTOINCREMENT, resource TEXT NOT NULL, id TEXT NOT NULL,
@@ -44848,7 +45222,6 @@ function mcpToolOf(r) {
   return { server, tool };
 }
 var DESK_WORKER_PRESET = "pair-desk:worker";
-var DESK_READ_PATTERNS = ["pair-desk.get_*", "pair-desk.list_*"];
 var DESK_WORKER_PATTERNS = ["pair-desk.get_*", "pair-desk.list_*", "pair-desk.comment", "pair-desk.progress", "pair-desk.set_plan", "pair-desk.update_step", "pair-desk.create_issue", "pair-desk.update_issue"];
 function approvalHint(r) {
   const call = mcpToolOf(r);
@@ -44880,50 +45253,10 @@ function isHandoffToolCall(r) {
   return Boolean(tool && HANDOFF_TOOL.test(tool));
 }
 
-// src/core/worktree-links.ts
-import { lstatSync as lstatSync2, readdirSync as readdirSync5, readlinkSync, realpathSync as realpathSync3 } from "node:fs";
-import { dirname as dirname7, isAbsolute as isAbsolute2, join as join23, relative, resolve as resolve4, toNamespacedPath } from "node:path";
-var WORKTREE_LINK_HINT = "(agent-bridge: worktree isolation is mandatory. Never create symlinks, directory junctions or other reparse points whose targets leave this worktree, including Unity Library folders in the owner's main checkout. Copy caches if needed; do not share them through links. Never follow an existing external link to modify its target. Request cleanup approval through the supervisor and report the link and target if cleanup is denied.)";
-function scanWorktreeLinks(root) {
-  const scan = { externalLinks: [], errors: [] };
-  const canonicalRoot = lstatSync2(toNamespacedPath(root)).isSymbolicLink() ? resolve4(root) : realpathSync3.native(root);
-  const inside = (target) => {
-    const rel = relative(canonicalRoot, target);
-    return rel === "" || rel !== ".." && !rel.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`) && !isAbsolute2(rel);
-  };
-  const visit2 = (path) => {
-    try {
-      const stat = lstatSync2(toNamespacedPath(path));
-      if (stat.isSymbolicLink()) {
-        const raw = readlinkSync(toNamespacedPath(path));
-        let target = resolve4(dirname7(path), raw);
-        try {
-          target = realpathSync3.native(path);
-        } catch {
-        }
-        if (!inside(target)) scan.externalLinks.push({ path, target });
-      } else if (stat.isDirectory()) {
-        for (const entry of readdirSync5(toNamespacedPath(path))) visit2(join23(path, entry));
-      }
-    } catch (err) {
-      scan.errors.push(`${path}: ${err.message}`);
-    }
-  };
-  visit2(resolve4(root));
-  return scan;
-}
-function worktreeLinkWarning(scan) {
-  const lines = scan.externalLinks.map((link) => `${link.path} -> ${link.target}`);
-  if (lines.length) lines.unshift("WARNING: external worktree links/reparse points found. Do not run tools through these links; unlink the link itself without recursively deleting its target:");
-  if (scan.errors.length) lines.push(`WARNING: worktree link inspection incomplete:
-${scan.errors.join("\n")}`);
-  return lines.length ? lines.join("\n") : null;
-}
-
 // src/core/worktree.ts
 import { createHash as createHash4 } from "node:crypto";
-import { existsSync as existsSync7, mkdirSync as mkdirSync12, readFileSync as readFileSync15, realpathSync as realpathSync4, rmSync as rmSync5 } from "node:fs";
-import { basename as basename4, isAbsolute as isAbsolute3, join as join24, relative as relative2, resolve as resolve5, toNamespacedPath as toNamespacedPath2 } from "node:path";
+import { existsSync as existsSync8, mkdirSync as mkdirSync12, readFileSync as readFileSync15, realpathSync as realpathSync2, rmSync as rmSync5 } from "node:fs";
+import { basename as basename4, isAbsolute as isAbsolute2, join as join23, relative, resolve as resolve5, toNamespacedPath } from "node:path";
 var GIT = "git";
 var LONG_PATH_ARGS = ["-c", "core.longpaths=true"];
 var REMOVE_RETRIES = 3;
@@ -44951,9 +45284,9 @@ async function createWorktree(opts) {
   const base = await git(["rev-parse", "HEAD"], repoRoot, opts.log);
   const baseBranch = await git(["symbolic-ref", "-q", "--short", "HEAD"], repoRoot, opts.log).catch(() => "") || null;
   let branch = `${BRANCH_PREFIX}${opts.jobId}`;
-  const dir = join24(opts.home, "worktrees");
+  const dir = join23(opts.home, "worktrees");
   mkdirSync12(dir, { recursive: true });
-  let path = join24(dir, `${basename4(repoRoot)}-${opts.jobId}`);
+  let path = join23(dir, `${basename4(repoRoot)}-${opts.jobId}`);
   try {
     await git(["worktree", "add", "-b", branch, path, base], repoRoot, opts.log, WORKTREE_ADD_TIMEOUT_MS);
   } catch (err) {
@@ -44973,8 +45306,8 @@ async function createWorktree(opts) {
     }
   }
   await unlockWorktree(repoRoot, path, opts.log);
-  const rel = relative2(repoRoot, opts.cwd);
-  const cwd = rel && !rel.startsWith("..") && !isAbsolute3(rel) ? join24(path, rel) : path;
+  const rel = relative(repoRoot, opts.cwd);
+  const cwd = rel && !rel.startsWith("..") && !isAbsolute2(rel) ? join23(path, rel) : path;
   opts.log.info("worktree created", { repoRoot, path, branch });
   return { repoRoot, path, cwd, branch, base, baseBranch };
 }
@@ -44994,7 +45327,7 @@ async function removeWorktree(repoRoot, path, branch, log) {
   });
 }
 function removeWorktreeDirectory(path) {
-  rmSync5(toNamespacedPath2(resolve5(path)), { recursive: true, force: true, maxRetries: REMOVE_RETRIES });
+  rmSync5(toNamespacedPath(resolve5(path)), { recursive: true, force: true, maxRetries: REMOVE_RETRIES });
 }
 var SUBJECT_CHARS = 72;
 function subagentCommitMessage(opts) {
@@ -45018,14 +45351,14 @@ async function gitDirsOutside(cwd, log) {
     const [gitDir, common] = (await git(["rev-parse", "--path-format=absolute", "--git-dir", "--git-common-dir"], cwd, log)).split(/\r?\n/);
     const real = (p) => {
       try {
-        return realpathSync4.native(p);
+        return realpathSync2.native(p);
       } catch {
         return resolve5(p);
       }
     };
     const inside = (p) => {
-      const rel = relative2(real(cwd), real(p));
-      return rel === "" || !rel.startsWith("..") && !isAbsolute3(rel);
+      const rel = relative(real(cwd), real(p));
+      return rel === "" || !rel.startsWith("..") && !isAbsolute2(rel);
     };
     return [...new Set([gitDir, common].filter((p) => Boolean(p) && !inside(p)))];
   } catch {
@@ -45065,7 +45398,7 @@ function generatedNoise(root, file2) {
   return parts.slice(0, -1).some((part, index) => {
     if (GENERATED_DIRECTORIES.has(part)) return true;
     if (!UNITY_GENERATED_DIRECTORIES.has(part)) return false;
-    return existsSync7(toNamespacedPath2(join24(root, ...parts.slice(0, index), "ProjectSettings", "ProjectVersion.txt")));
+    return existsSync8(toNamespacedPath(join23(root, ...parts.slice(0, index), "ProjectSettings", "ProjectVersion.txt")));
   });
 }
 async function autoCommitFiles(wt, log) {
@@ -45182,7 +45515,7 @@ async function gitChangeSnapshot(cwd, log) {
     const file2 = line.slice(3).replace(/^.* -> /, "").replace(/^"|"$/g, "");
     let fp = line.slice(0, 2);
     try {
-      fp += ":" + createHash4("sha1").update(readFileSync15(join24(root, file2))).digest("hex");
+      fp += ":" + createHash4("sha1").update(readFileSync15(join23(root, file2))).digest("hex");
     } catch {
       fp += ":missing";
     }
@@ -45238,15 +45571,11 @@ var DELEGATED_JOB_NOTE = "(agent-bridge: you are a delegated job. Report what yo
 var HANDOFF_DECLINED = "Declined by agent-bridge: delegated jobs do not write the project handoff. Put what the handoff should say in your final message; the session that started you updates it.";
 var PARENT_APPROVAL_TIMEOUT_MS = 10 * 6e4;
 function isBridgeWorktree(dir, home) {
-  return isInside(dir, join25(home, "worktrees")) && resolve6(dir) !== resolve6(join25(home, "worktrees"));
-}
-function bridgeWorktreeRoot(dir, home) {
-  if (!isBridgeWorktree(dir, home)) return null;
-  return join25(home, "worktrees", relative3(join25(home, "worktrees"), resolve6(dir)).split(/[\\/]/)[0]);
+  return isInside(dir, join24(home, "worktrees")) && resolve6(dir) !== resolve6(join24(home, "worktrees"));
 }
 function isInside(child, parent) {
-  const rel = relative3(resolve6(parent), resolve6(child));
-  return rel === "" || !rel.startsWith("..") && !isAbsolute4(rel);
+  const rel = relative2(resolve6(parent), resolve6(child));
+  return rel === "" || !rel.startsWith("..") && !isAbsolute3(rel);
 }
 function resumeArgs(a, job, message, sessionId, workdir, worktree, saved) {
   if (saved) {
@@ -45270,9 +45599,8 @@ async function runDelegate(rc, target, a, signal, onProgress, background, job) {
   const cwd = a.cwd || rc.cwd();
   a = worktreeArgs(target, a, cfg, cwd, rc.home);
   const access = a.access;
-  const wt = a._worktree ?? (a.worktree ? await createWorktree({ cwd, home: rc.home, jobId: randomUUID10().slice(0, 8), log: dlog }) : null);
+  const wt = a._worktree ?? (a.worktree ? await createWorktree({ cwd, home: rc.home, jobId: randomUUID11().slice(0, 8), log: dlog }) : null);
   const workdir = wt?.cwd ?? cwd;
-  const linkRoot = wt?.path ?? bridgeWorktreeRoot(workdir, rc.home);
   const watchChanges = !wt && (access === "edit" || access === "ask" && target === "codex");
   const before = watchChanges ? await gitChangeSnapshot(workdir, dlog) : null;
   let relay = null;
@@ -45300,7 +45628,7 @@ async function runDelegate(rc, target, a, signal, onProgress, background, job) {
   const forwarding = access === "ask" && supportsAsk(target, wiring);
   const me = rc.me();
   const allowedServers = job ? job.allowedServers ??= /* @__PURE__ */ new Set() : /* @__PURE__ */ new Set();
-  const autoApprove = [...cfg.autoApproveTools, ...access === "read" ? DESK_READ_PATTERNS : [], ...a.allow_tools ?? []];
+  const autoApprove = [...cfg.autoApproveTools, ...a.allow_tools ?? []];
   const approve = async (r) => {
     if (isHandoffToolCall(r)) {
       asked.push(`declined (handoff tool): ${r.tool} ${r.detail.slice(0, 80)}`);
@@ -45327,7 +45655,7 @@ async function runDelegate(rc, target, a, signal, onProgress, background, job) {
   try {
     feed = startRunFeed({
       home: rc.home,
-      name: `${target}-${randomUUID10().slice(0, 8)}`,
+      name: `${target}-${randomUUID11().slice(0, 8)}`,
       header: `${target}${a.model ? ` (${a.model}${a.effort ? `, effort ${a.effort}` : ""})` : a.effort ? ` (effort ${a.effort})` : ""} in ${workdir}, access ${access ?? "default"}, by ${me}${a.session_id ? `, continues ${a.session_id}` : ""}
 ${a.prompt}
 ---`,
@@ -45425,7 +45753,7 @@ ${a.prompt}
     });
     void steering?.rename?.(title).catch((err) => dlog.warn("could not rename the Codex thread", { err: err.message }));
   };
-  const slotOwner = { id: `${a._job ?? target}-${randomUUID10()}`, pid: process.pid };
+  const slotOwner = { id: `${a._job ?? target}-${randomUUID11()}`, pid: process.pid };
   let slots = null;
   let slotTimer;
   let res;
@@ -45445,7 +45773,7 @@ ${a.prompt}
       {
         // With a live link the subagent can report how far it is (report_progress; shown in the dashboard).
         // A new session learns once that it reports back and leaves the handoff alone.
-        prompt: [a.prompt, a.session_id ? null : DELEGATED_JOB_NOTE, linkRoot ? WORKTREE_LINK_HINT : null, link ? PROGRESS_HINT : null, link ? SIBLING_HINT : null, resourceSlotHint(cfg.resourceSlots, bundledCli())].filter(Boolean).join("\n\n"),
+        prompt: [a.prompt, a.session_id ? null : DELEGATED_JOB_NOTE, link ? PROGRESS_HINT : null, link ? SIBLING_HINT : null, resourceSlotHint(cfg.resourceSlots, bundledCli())].filter(Boolean).join("\n\n"),
         title: typeof job?.args?.title === "string" && job.args.title || a.title,
         cwd: workdir,
         sessionId: a.session_id ?? null,
@@ -45493,17 +45821,6 @@ ${a.prompt}
     if (wt && err instanceof Error) err.message += `
 
 Its worktree (with any partial work) is ${wt.path} on branch ${wt.branch}.`;
-    if (linkRoot && err instanceof Error) {
-      try {
-        const warning = worktreeLinkWarning(scanWorktreeLinks(linkRoot));
-        if (warning) err.message += `
-
-${warning}`;
-      } catch (scanError) {
-        err.message += `
-WARNING: worktree link inspection failed: ${scanError.message}`;
-      }
-    }
     throw err;
   } finally {
     clearInterval(slotTimer);
@@ -45527,22 +45844,6 @@ WARNING: worktree link inspection failed: ${scanError.message}`;
     }
   }
   const notes = [`Step-by-step log: ${feed.logPath}`];
-  if (target === "codex") {
-    const mappingNote = codexPathReport(codexDriveMappings(`${cwd}
-${a.prompt}`));
-    if (mappingNote) notes.push(mappingNote);
-  }
-  let linkedWorktreeRoot = false;
-  if (linkRoot) {
-    try {
-      const scan = scanWorktreeLinks(linkRoot);
-      linkedWorktreeRoot = scan.externalLinks.some((link2) => link2.path === resolve6(linkRoot));
-      const warning = worktreeLinkWarning(scan);
-      if (warning) notes.push(warning);
-    } catch (err) {
-      notes.push(`WARNING: worktree link inspection failed: ${err.message}`);
-    }
-  }
   if (access !== "ask" && asked.length) notes.push(`Approval requests forwarded:
 ${asked.join("\n")}`);
   if (access === "ask") {
@@ -45553,9 +45854,7 @@ ${asked.join("\n")}` : "No permission requests were needed." : t("ask.unsupporte
   }
   const usage = formatUsage(res.details);
   if (usage) notes.push(usage);
-  if (wt && linkedWorktreeRoot) {
-    notes.push("Auto-commit skipped: the worktree root is an external link. Restore worktree isolation before running git or cleanup through it.");
-  } else if (wt) {
+  if (wt) {
     try {
       const message = subagentCommitMessage({ answer: res.text, task: a.prompt, job: a._job, agent: target, model: a.model ?? defaultModel });
       notes.push(worktreeReport(wt, await finishWorktree(wt, message, dlog)));
@@ -45586,8 +45885,8 @@ ${notes.join("\n\n")}` : res.text };
 
 // src/mcp/job-host.ts
 import { spawn as spawn7 } from "node:child_process";
-import { mkdirSync as mkdirSync13, readdirSync as readdirSync6, statSync as statSync5 } from "node:fs";
-import { join as join26 } from "node:path";
+import { mkdirSync as mkdirSync13, readdirSync as readdirSync5, statSync as statSync5 } from "node:fs";
+import { join as join25 } from "node:path";
 var RUNNERS_DIR_NAME = "jobs";
 var CONTROL_CONVERSATION_PREFIX = "jobctl-";
 var RUNNER_HEARTBEAT_MS = 15e3;
@@ -45596,10 +45895,10 @@ var START_GRACE_MS = 3e4;
 var KEEP_FILES_MS = 7 * 24 * 60 * 60 * 1e3;
 var DETACH_LAUNCHER = "require('node:child_process').spawn(process.execPath,process.argv.slice(1),{detached:true,stdio:'ignore',windowsHide:true}).unref()";
 function runnerStatePath(home, id) {
-  return join26(home, RUNNERS_DIR_NAME, `${id}.json`);
+  return join25(home, RUNNERS_DIR_NAME, `${id}.json`);
 }
 function specPath(home, id) {
-  return join26(home, RUNNERS_DIR_NAME, `${id}.spec.json`);
+  return join25(home, RUNNERS_DIR_NAME, `${id}.spec.json`);
 }
 function readRunnerState(home, id) {
   try {
@@ -45616,11 +45915,11 @@ var JobRunners = class {
     this.cli = cli;
     this.log = log;
     try {
-      const dir = join26(home, RUNNERS_DIR_NAME);
+      const dir = join25(home, RUNNERS_DIR_NAME);
       const keepMs = retentionLimit("AGENT_BRIDGE_RUNNER_KEEP_MS", KEEP_FILES_MS);
       if (!keepMs) return;
-      for (const f of readdirSync6(dir)) {
-        const path = join26(dir, f);
+      for (const f of readdirSync5(dir)) {
+        const path = join25(dir, f);
         if (!f.endsWith(".json") || f.endsWith(".spec.json") || Date.now() - statSync5(path).mtimeMs <= keepMs) continue;
         const id = f.replace(/\.json$/, "");
         const state = readRunnerState(home, id);
@@ -45640,7 +45939,7 @@ var JobRunners = class {
   /** Start a turn of this job in a new runner; null when that is not possible (the turn then runs in the server). */
   start(job, spec) {
     try {
-      mkdirSync13(join26(this.home, RUNNERS_DIR_NAME), { recursive: true });
+      mkdirSync13(join25(this.home, RUNNERS_DIR_NAME), { recursive: true });
       const statePath = runnerStatePath(this.home, job.id);
       const file2 = specPath(this.home, job.id);
       assertWritableStore(readJsonStore(statePath, this.log));
@@ -45758,7 +46057,7 @@ var MAX_TITLE_CHARS = 80;
 var SUBAGENT_TOOLS = /* @__PURE__ */ new Set(["peers", "send", "report_progress", "hook_event"]);
 var STAND_IN_RECHECK_MS = 3e4;
 var KEPT_ARGS = ["model", "effort", "cwd", "timeout_sec", "worktree", "access", "sandbox", "permission_mode", "auto_approve", "allow_tools", "title"];
-var PLUGIN_ROOT = resolve7(dirname8(fileURLToPath2(import.meta.url)), "..");
+var PLUGIN_ROOT = resolve7(dirname7(fileURLToPath2(import.meta.url)), "..");
 function pathFromUriOrPath(v) {
   if (typeof v !== "string" || !v) return null;
   if (v.startsWith("file:")) {
@@ -45768,7 +46067,7 @@ function pathFromUriOrPath(v) {
       return null;
     }
   }
-  return isAbsolute5(v) ? v : null;
+  return isAbsolute4(v) ? v : null;
 }
 function text(s, isError = false) {
   return { content: [{ type: "text", text: s }], ...isError ? { isError: true } : {} };
@@ -45852,7 +46151,7 @@ async function startServer(argv = process.argv.slice(2)) {
   const launchKnown = new Promise((r) => launchInspected = r);
   const ctx = { agent, cfg, node: node2, log, home, cwd: () => node2?.cwd ?? cwd, channelActive: () => channel, parent: delegated ? parentFromEnv() : null, launchKnown };
   if (node2) {
-    ctx.jobs = new JobManager(node2, log.child("jobs"), join27(home, JOBS_FILE), cfg.maxJobs);
+    ctx.jobs = new JobManager(node2, log.child("jobs"), join26(home, JOBS_FILE), cfg.maxJobs);
     node2.on("replaced", () => ctx.jobs?.setDormant(true));
     node2.on("reclaimed", () => ctx.jobs?.setDormant(false));
     const cli = process.env[ENV.jobRunner] === "0" ? null : bundledCli();
@@ -46012,14 +46311,14 @@ async function startServer(argv = process.argv.slice(2)) {
       adopt();
       setTimeout(adopt, STAND_IN_RECHECK_MS).unref();
     });
-    const join28 = () => node2.start().catch((err) => log.error("could not join the bridge", { err: err.message }));
+    const join27 = () => node2.start().catch((err) => log.error("could not join the bridge", { err: err.message }));
     if (ctx.headless) {
       log.info("headless claude -p run: not joining the bridge unless a bridge tool is used");
     } else if (cwdKnown) {
-      void join28();
+      void join27();
     } else {
       log.info("project directory unknown yet; deferring bridge join", { graceMs: CWD_DISCOVERY_GRACE_MS });
-      setTimeout(() => void join28(), CWD_DISCOVERY_GRACE_MS).unref();
+      setTimeout(() => void join27(), CWD_DISCOVERY_GRACE_MS).unref();
     }
   }
 }
@@ -46041,6 +46340,37 @@ function registerTools(mcp, ctx, targets) {
       return text(describeError(err), true);
     }
   };
+  register(
+    "decide",
+    {
+      title: "Pin owner decision",
+      description: "Record an owner's decision after researching it. A newer decision on the same topic supersedes the previous revision across scopes; history is always retained. Notifications reach sessions in scope once without waking idle sessions. Scope defaults to this project folder.",
+      inputSchema: {
+        topic: external_exports.string().trim().min(1).max(MAX_DECISION_TOPIC_CHARS).describe("Stable topic; trimmed and case-insensitive"),
+        text: external_exports.string().trim().min(1).max(MAX_DECISION_TEXT_CHARS).describe("The owner's decision text"),
+        scope: decisionScopeSchema.optional().describe('"all", {project: folder}, or {sessions: [peer names, ids or session ids]}'),
+        source_message_id: external_exports.string().optional().describe("Optional existing bridge message id recording the owner's choice")
+      }
+    },
+    guarded("decide", async (a) => {
+      const { source_message_id, ...args } = a;
+      return text(JSON.stringify(await requireNode().decide({ ...args, sourceMessageId: source_message_id })));
+    })
+  );
+  register(
+    "decisions",
+    {
+      title: "Look up owner decisions",
+      description: "List current owner decisions or search topic and text (case-insensitive substring). Scope defaults to this project, including decisions for all sessions and this session. history=true also includes superseded revisions, newest first.",
+      inputSchema: {
+        query: external_exports.string().max(MAX_DECISION_TEXT_CHARS).optional(),
+        scope: decisionScopeSchema.optional().describe('"all" for global decisions, {project: folder}, or {sessions: [names or ids]}; project/session filters include global decisions'),
+        history: external_exports.boolean().optional()
+      },
+      annotations: { readOnlyHint: true }
+    },
+    guarded("decisions", async (a) => text(JSON.stringify(await requireNode().decisions(a))))
+  );
   register(
     "peers",
     {
