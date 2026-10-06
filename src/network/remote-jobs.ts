@@ -12,7 +12,7 @@ import { startRunFeed, type RunFeed } from "../core/runfeed.js";
 import { createWorktree, git, gitDirsOutside, type Worktree } from "../core/worktree.js";
 import { isInside, resumeArgs, type DelegateArgs } from "../mcp/delegate-run.js";
 import { JobRunners, readRunnerState } from "../mcp/job-host.js";
-import { parseJobSettings } from "../mcp/job-settings.js";
+import { JOB_SETTING_KEYS, parseJobSettings } from "../mcp/job-settings.js";
 import type { Job, RunnerControl, RunnerState } from "../mcp/jobs.js";
 import type { NetworkService } from "./link.js";
 import type { NetworkPair } from "./pairing.js";
@@ -131,9 +131,9 @@ export class RemoteJobs {
       if ([...this.records.values()].filter((r) => this.snapshot(r).alive).length + this.starting.size > cfg.maxJobs) throw new Error("Remote subagent limit reached.");
       if (!record && this.records.size >= MAX_REMOTE_JOBS) throw new Error("Remote job registry is full.");
       if (!record && request.args.session_id) throw new Error("Remote session continuation requires a job owned by this supervisor.");
-      const settings = Object.fromEntries(["model", "effort", "access", "sandbox", "approvals_reviewer", "permission_mode", "auto_approve"].filter((key) => key in request.args).map((key) => [key, (request.args as Record<string, unknown>)[key]]));
+      const settings = Object.fromEntries(JOB_SETTING_KEYS.filter((key) => key in request.args).map((key) => [key, (request.args as Record<string, unknown>)[key]]));
       if (Object.keys(settings).length) { const parsed = parseJobSettings(settings, request.target); if (typeof parsed === "string") throw new Error(parsed); }
-      let args: DelegateArgs = { ...request.args };
+      let args: DelegateArgs = { ...request.args, ...(request.target === "codex" ? { native_subagents: request.args.native_subagents ?? cfg.codexSubagents } : {}) };
       let cwd = allowedRemoteDirectory(args.cwd!, policy.allowRoots);
       for (const directory of await gitDirsOutside(cwd, this.log) ?? []) allowedRemoteDirectory(directory, policy.allowRoots);
       let worktree: Worktree | null = null;

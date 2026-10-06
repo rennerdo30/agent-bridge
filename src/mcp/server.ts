@@ -37,7 +37,7 @@ import { BridgeError, BROADCAST, CODING_AGENTS, isQuietMessage, SIBLING_CONVERSA
 import { formatDelivery, formatDuration, formatMessage, formatMessages, formatPeer } from "./format.js";
 import { CodexWaker, type Activity } from "./codex-wake.js";
 import { buildHookResponse, discardFinishedNotes, type HookEvent } from "./hooks.js";
-import { ACCESS_LEVELS, DELEGATION_TARGETS, type Access } from "./targets.js";
+import { ACCESS_LEVELS, DELEGATION_TARGETS, nativeSubagentsSchema, type Access } from "./targets.js";
 import { askUserViaElicitation } from "./permissions.js";
 import { answerPendingApproval, listPendingApprovals, type PermissionDecision, type PermissionRequest } from "../core/relay.js";
 import { LocalCoordinator } from "./local-coordinator.js";
@@ -74,7 +74,7 @@ const SUBAGENT_TOOLS = new Set(["peers", "send", "report_progress", "hook_event"
 /** The options of a job worth keeping to continue it the same way later (no prompt, no internals). */
 /** When to look again for jobs under a stand-in name (a replaced server of the session may still be leaving). */
 const STAND_IN_RECHECK_MS = 30_000;
-const KEPT_ARGS = ["host", "model", "effort", "cwd", "timeout_sec", "worktree", "access", "sandbox", "approvals_reviewer", "permission_mode", "auto_approve", "allow_tools", "send_to", "title"] as const;
+const KEPT_ARGS = ["native_subagents", "host", "model", "effort", "cwd", "timeout_sec", "worktree", "access", "sandbox", "approvals_reviewer", "permission_mode", "auto_approve", "allow_tools", "send_to", "title"] as const;
 /** Plugin root: dist/server.mjs lives one level below it. */
 const PLUGIN_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -964,6 +964,7 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
         inputSchema: schema,
       },
       guarded(askName, async (a: DelegateArgs, extra) => {
+        if (target === "codex" && !a.host) a = { ...a, native_subagents: a.native_subagents ?? cfg.codexSubagents };
         if (a.host && (!a.cwd || a.send_to?.length)) throw new BridgeError("bad_request", "Remote jobs require an absolute remote cwd; send_to is local-only.");
         if (a.host) {
           const { host, send_to, ...args } = a;
@@ -1019,6 +1020,7 @@ ${res.text || t("delegate.empty")}`, res.isError);
         inputSchema: schema,
       },
       guarded(spawnName, async (a: DelegateArgs) => {
+        if (target === "codex" && !a.host) a = { ...a, native_subagents: a.native_subagents ?? cfg.codexSubagents };
         if (a.host && (!a.cwd || a.send_to?.length)) throw new BridgeError("bad_request", "Remote jobs require an absolute remote cwd; send_to is local-only.");
         if (a.host) { const { host, send_to, ...args } = a; remoteSpawnArgsSchema.parse(args); }
         if (a.host && !ctx.runners) throw new BridgeError("bad_request", "Remote jobs require the bundled runner. Update and reload this session.");
@@ -1134,6 +1136,7 @@ ${res.text || t("delegate.empty")}`, res.isError);
         model: z.string().regex(MODEL_NAME_PATTERN).optional().describe("Model for this continuation and later turns. A running turn keeps its model."),
         access: z.enum(ACCESS_LEVELS as [Access, ...Access[]]).optional().describe("Access for the next turn: read, ask or edit. Replaces earlier exact permission overrides."),
         sandbox: z.enum(CODEX_SANDBOXES as [string, ...string[]]).optional().describe("Codex sandbox for the next turn. A running turn keeps its sandbox."),
+        native_subagents: nativeSubagentsSchema,
         approvals_reviewer: z.enum(CODEX_APPROVALS_REVIEWERS).optional().describe("Codex reviewer for the next turn: auto_review or user. A running turn keeps its reviewer."),
         permission_mode: z.enum(CLAUDE_PERMISSION_MODES as [string, ...string[]]).optional().describe("Claude permission mode for the next turn."),
         auto_approve: z.boolean().optional().describe("opencode auto-approval for the next turn."),

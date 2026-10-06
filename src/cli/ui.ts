@@ -5,7 +5,7 @@ import type { AddressInfo } from "node:net";
 import { networkInterfaces } from "node:os";
 import { join } from "node:path";
 import { BridgeClient } from "../core/client.js";
-import { APP_VERSION, MAX_BODY_CHARS, PROTOCOL_VERSION } from "../core/constants.js";
+import { DEFAULT_CODEX_SUBAGENTS, MAX_CODEX_SUBAGENTS, APP_VERSION, MAX_BODY_CHARS, PROTOCOL_VERSION } from "../core/constants.js";
 import type { Logger } from "../core/logger.js";
 import { BridgeNode } from "../core/node.js";
 import { resolveDbPath } from "../core/paths.js";
@@ -13,7 +13,7 @@ import { BridgeError, CODING_AGENTS, type PeerInfo } from "../core/protocol.js";
 import { readModels, type ModelReport } from "../core/models.js";
 import { RUNS_DIR_NAME } from "../core/runfeed.js";
 import { loadOrCreateToken, tokensEqual } from "../core/token.js";
-import { loadConfig } from "../core/config.js";
+import { loadConfig, saveConfigValue } from "../core/config.js";
 import { readUsage, type UsageReport } from "../core/usage.js";
 import { controlDashboardJob, JobControlError, type DashboardJobCommand } from "../core/job-control.js";
 import { UI_PAGE } from "./ui-page.js";
@@ -241,6 +241,16 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
     if (!tokensEqual(cookieSecret(req), secret)) return send(res, 403, "Open the link printed by `agent-bridge ui`.", "text/plain; charset=utf-8");
 
     if (req.method === "GET" && url.pathname === "/") return send(res, 200, UI_PAGE, "text/html; charset=utf-8");
+    const nativeDefaults = () => ({ codexSubagents: loadConfig(opts.home, "other", opts.log).codexSubagents, defaultCodexSubagents: DEFAULT_CODEX_SUBAGENTS, maxCodexSubagents: MAX_CODEX_SUBAGENTS });
+    if (req.method === "GET" && url.pathname === "/api/config/codex-subagents") return send(res, 200, nativeDefaults());
+    if (req.method === "POST" && url.pathname === "/api/config/codex-subagents") {
+      if (req.headers["x-agent-bridge"] !== "1") return send(res, 403, { error: "missing header" });
+      let body;
+      try { body = await readJson(req); } catch { return send(res, 400, { error: "Expected a JSON object." }); }
+      if (!isRecord(body) || Object.keys(body).length !== 1 || typeof body.codexSubagents !== "number" || !Number.isInteger(body.codexSubagents) || body.codexSubagents < 0 || body.codexSubagents > MAX_CODEX_SUBAGENTS) return send(res, 400, { error: `codexSubagents must be an integer from 0 to ${MAX_CODEX_SUBAGENTS}` });
+      saveConfigValue(opts.home, "codexSubagents", body.codexSubagents);
+      return send(res, 200, nativeDefaults());
+    }
     if (req.method === "GET" && url.pathname === "/api/storage") return send(res, 200, doctor(opts.home));
     if (req.method === "GET" && url.pathname === "/api/archive/messages") {
       const limit = url.searchParams.get("limit");

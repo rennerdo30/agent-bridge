@@ -8,6 +8,7 @@ import { nullLogger } from "../src/core/logger.js";
 import { makeEnv, until, type TestEnv } from "./helpers.js";
 import { attachDashboardJobControl } from "../src/mcp/dashboard-control.js";
 import { JobManager, type Job } from "../src/mcp/jobs.js";
+import { loadConfig } from "../src/core/config.js";
 import { JOBS_FILE } from "../src/core/constants.js";
 import { DASHBOARD_JOB_CONVERSATION } from "../src/core/job-control.js";
 import { setJobOutcome } from "../src/core/job-outcomes.js";
@@ -214,6 +215,25 @@ describe("web dashboard", () => {
     expect(received).toEqual(["after adoption"]);
   });
 
+  it("reads and saves the global native subagent default without changing other config", async () => {
+    const fs = await import("node:fs");
+    fs.writeFileSync(join(env.home, "config.json"), JSON.stringify({ name: "keep", custom: { data: "keep" }, codex: { effort: "high" } }));
+    const url = `${base()}/api/config/codex-subagents`;
+    expect((await fetch(url)).status).toBe(403);
+    expect(await (await fetch(url, { headers: { cookie } })).json()).toEqual({ codexSubagents: 6, defaultCodexSubagents: 6, maxCodexSubagents: 32 });
+    expect((await fetch(url, { method: "POST", headers: { cookie }, body: "{}" })).status).toBe(403);
+    for (const value of [-1, 33, 1.5, "2", null]) expect((await fetch(url, { method: "POST", headers: POST_HEADERS(), body: JSON.stringify({ codexSubagents: value }) })).status).toBe(400);
+    for (const value of [0, 32]) {
+      const response = await fetch(url, { method: "POST", headers: POST_HEADERS(), body: JSON.stringify({ codexSubagents: value }) });
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({ codexSubagents: value });
+      expect(loadConfig(env.home, "codex", nullLogger, {}).codexSubagents).toBe(value);
+    }
+    expect(JSON.parse(fs.readFileSync(join(env.home, "config.json"), "utf8"))).toMatchObject({ name: "keep", custom: { data: "keep" }, codex: { effort: "high" } });
+    expect((await fetch(url, { method: "POST", headers: POST_HEADERS(), body: JSON.stringify({ codexSubagents: 2, unknown: true }) })).status).toBe(400);
+    expect((await fetch(url, { method: "POST", headers: POST_HEADERS(), body: "{" })).status).toBe(400);
+  });
+
   it("saves a job's next-turn settings without continuing it, and lists them in the state", async () => {
     const peer = env.node("claude-owner", "claude");
     await peer.start();
@@ -227,14 +247,14 @@ describe("web dashboard", () => {
     });
     recordJob(peer.name, job);
     const post = (settings: unknown) => fetch(`${base()}/api/subagents/settings`, { method: "POST", headers: POST_HEADERS(), body: JSON.stringify({ run: RUN, settings }) });
-    const r = await post({ model: "gpt-6-luna", effort: "high", sandbox: "danger-full-access" });
+    const r = await post({ model: "gpt-6-luna", effort: "high", sandbox: "danger-full-access", native_subagents: 0 });
     expect(r.status).toBe(200);
     expect(await r.json()).toMatchObject({ outcome: "saved", isError: false, text: expect.stringContaining("Applies from its next turn") });
-    expect(job.args).toMatchObject({ model: "gpt-6-luna", effort: "high", sandbox: "danger-full-access" });
+    expect(job.args).toMatchObject({ model: "gpt-6-luna", effort: "high", sandbox: "danger-full-access", native_subagents: 0 });
     expect(received).toEqual([]);
     expect(job.queue).toEqual([]);
     const state = await (await fetch(`${base()}/api/state`, { headers: { cookie } })).json();
-    expect(state.jobs[job.name].next).toMatchObject({ model: "gpt-6-luna", effort: "high", sandbox: "danger-full-access" });
+    expect(state.jobs[job.name].next).toMatchObject({ model: "gpt-6-luna", effort: "high", sandbox: "danger-full-access", native_subagents: 0 });
 
     const wrongAgent = await post({ permission_mode: "bypassPermissions" });
     expect(wrongAgent.status).toBe(409);

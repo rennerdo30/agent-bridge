@@ -1,3 +1,4 @@
+import { DEFAULT_CODEX_SUBAGENTS, MAX_CODEX_SUBAGENTS } from "../core/constants.js";
 import { z } from "zod";
 import { CLAUDE_PERMISSION_MODES, CODEX_APPROVALS_REVIEWERS, CODEX_SANDBOXES, type BridgeConfig, type ClaudePermissionMode, type CodexApprovalsReviewer, type CodexSandbox } from "../core/config.js";
 import { DelegateError, delegateToClaude, delegateToCodex, delegateToOpencode, type DelegateRequest, type DelegateResult } from "../core/delegate.js";
@@ -5,6 +6,8 @@ import { listOpencodeModels, resolveOpencodeModel } from "../core/opencode-model
 import { delegateToOpencodeServed } from "../core/opencode-served.js";
 import { delegateToCodexAppServer } from "../core/codex-appserver.js";
 import { codexEnvironmentNote } from "../core/codex-env.js";
+
+export const nativeSubagentsSchema = z.number().int().min(0).max(MAX_CODEX_SUBAGENTS).optional().describe(`Maximum concurrent native Codex child threads per job (0 disables). Default: config codexSubagents (${DEFAULT_CODEX_SUBAGENTS}). Separate from bridge maxJobs/depth. Changes apply from the next turn.`);
 
 /** Set to 1 to run Codex subagents with `codex exec` (no live messages) instead of `codex app-server`. */
 export const CODEX_EXEC_ENV = "AGENT_BRIDGE_CODEX_EXEC";
@@ -33,6 +36,7 @@ export interface TargetArgs {
   relay?: RelayWiring;
   sandbox?: string;
   approvals_reviewer?: CodexApprovalsReviewer;
+  native_subagents?: number;
   permission_mode?: string;
   auto_approve?: boolean;
 }
@@ -92,12 +96,14 @@ export const DELEGATION_TARGETS: Record<CodingAgent, DelegationTarget> = {
     effortExample: '"low", "medium", "high", "xhigh", "max" or "ultra" (depends on the model)',
     defaultModel: (cfg) => cfg.codexModel,
     schema: {
+      native_subagents: nativeSubagentsSchema,
       sandbox: z.enum(CODEX_SANDBOXES as [string, ...string[]]).optional().describe("Overrides access with an exact Codex sandbox mode"),
       approvals_reviewer: z.enum(CODEX_APPROVALS_REVIEWERS).optional().describe("Codex reviewer: auto_review (approve for me, default) or user (forward approvals). Does not change the sandbox."),
     },
     permissionNote: (cfg) => `Codex runs in the "${cfg.codexSandbox}" sandbox unless you pass access or sandbox. Worktree edit runs use "${cfg.codexWorktreeSandbox ?? (cfg.codexSandbox === "read-only" ? "workspace-write" : cfg.codexSandbox)}" (config codexWorktreeSandbox); workspace-write can restrict builds and network access.${codexEnvironmentNote()}`,
     permission: (cfg, a) => (a.sandbox as CodexSandbox | undefined) ?? (a.access ? CODEX_SANDBOX_FOR[a.access] : cfg.codexSandbox),
     run: async (cfg, base, a) => {
+      base = { ...base, nativeSubagents: a.native_subagents ?? cfg.codexSubagents };
       const sandbox = (a.sandbox as CodexSandbox | undefined) ?? (a.access ? CODEX_SANDBOX_FOR[a.access] : cfg.codexSandbox);
       const relay = a.access === "ask" && Boolean(a.relay?.codexHookTrusted);
       // app-server lets messages reach the running subagent (turn/steer) and hands us its approval questions

@@ -324,6 +324,7 @@ Every reply increments a conversation's hop count. Messages at or above `maxHops
   "maxDelegateDepth": 2,
   "autoApproveTools": ["pair-desk.get_*", "pair-desk.list_*"],
   "codexApprovalsReviewer": "auto_review",
+  "codexSubagents": 6,
   "lingerSec": 300,
   "codex": { "name": "codex-main", "claudeBin": "claude", "claudePermissionMode": "default", "claudeModel": "opus" },
   "claude": { "delivery": "auto", "codexBin": "codex", "codexSandbox": "read-only", "codexModel": "gpt-6-sol" },
@@ -331,6 +332,11 @@ Every reply increments a conversation's hop count. Messages at or above `maxHops
   "opencodeAutoApprove": false
 }
 ```
+
+`codexSubagents` sets the default native Codex child-thread budget per delegated job
+(6 by default, integers 0–32; 0 disables). Override it with `native_subagents` on
+`spawn_codex`, `ask_codex` or `message_subagent`. This is separate from bridge job
+concurrency and delegation depth. See [native subagent settings and dashboard APIs](docs/codex-subagents.md).
 
 | Env var | Meaning |
 |---|---|

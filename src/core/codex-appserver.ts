@@ -1,3 +1,4 @@
+import { codexSubagentConfig } from "./codex-subagents.js";
 import { spawn } from "node:child_process";
 import { APP_VERSION } from "./constants.js";
 import { DEFAULT_CODEX_APPROVALS_REVIEWER, type CodexApprovalsReviewer, type CodexSandbox } from "./config.js";
@@ -337,7 +338,7 @@ export async function delegateToCodexAppServer(
     // use the configured reviewer; remaining client requests go to the supervisor when available.
     const approvalPolicy = req.sandbox === "danger-full-access" ? CODEX_FULL_ACCESS_APPROVAL_POLICY : "on-request";
     // Extra writable folders for workspace-write (a worktree's git admin dir lives in the main repo).
-    const config: Record<string, unknown> = {};
+    const config: Record<string, unknown> = codexSubagentConfig(req.nativeSubagents);
     if (req.sandbox === "workspace-write" && (req.writableRoots?.length || req.networkAccess !== undefined)) {
       config.sandbox_workspace_write = {
         ...(req.writableRoots?.length ? { writable_roots: req.writableRoots.map(realFolder) } : {}),

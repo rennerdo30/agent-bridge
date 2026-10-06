@@ -1,6 +1,6 @@
 import { unwatchFile, watchFile } from "node:fs";
 import { basename, join } from "node:path";
-import { CONFIG_FILE_NAME, DEFAULT_CLAUDE_BIN, DEFAULT_CODEX_BIN, DEFAULT_LINGER_SEC, DEFAULT_MAX_HOPS, DEFAULT_MAX_JOBS, DEFAULT_MAX_DELEGATE_DEPTH, DEFAULT_OPENCODE_BIN, DEFAULT_DASHBOARD_PORT, ENV, MAX_DELEGATE_DEPTH_LIMIT, MAX_JOBS_LIMIT } from "./constants.js";
+import { DEFAULT_CODEX_SUBAGENTS, MAX_CODEX_SUBAGENTS, CONFIG_FILE_NAME, DEFAULT_CLAUDE_BIN, DEFAULT_CODEX_BIN, DEFAULT_LINGER_SEC, DEFAULT_MAX_HOPS, DEFAULT_MAX_JOBS, DEFAULT_MAX_DELEGATE_DEPTH, DEFAULT_OPENCODE_BIN, DEFAULT_DASHBOARD_PORT, ENV, MAX_DELEGATE_DEPTH_LIMIT, MAX_JOBS_LIMIT } from "./constants.js";
 import type { Logger } from "./logger.js";
 import { AGENT_KINDS, type AgentKind } from "./protocol.js";
 import { isRecord, readJsonStore, writeJsonStore } from "./json-store.js";
@@ -53,6 +53,8 @@ export interface BridgeConfig {
   delivery: DeliveryMode;
   claudeBin: string;
   codexBin: string;
+  /** Open native Codex child threads per job (0 disables); separate from bridge maxJobs. */
+  codexSubagents: number;
   /** Default sandbox for delegated Codex runs. */
   codexSandbox: CodexSandbox;
   /** Reviewer for eligible delegated Codex approvals; does not change the sandbox. */
@@ -97,6 +99,7 @@ export const DEFAULT_CONFIG: BridgeConfig = {
   delivery: "auto",
   claudeBin: DEFAULT_CLAUDE_BIN,
   codexBin: DEFAULT_CODEX_BIN,
+  codexSubagents: DEFAULT_CODEX_SUBAGENTS,
   codexSandbox: "read-only",
   codexApprovalsReviewer: DEFAULT_CODEX_APPROVALS_REVIEWER,
   codexWorktreeSandbox: null,
@@ -266,6 +269,10 @@ export function loadConfig(home: string, agent: AgentKind, log: Logger, env: Nod
     delivery: pick("delivery", ENV.delivery, (v) => oneOf(v, DELIVERY_MODES)) ?? d.delivery,
     claudeBin: pick("claudeBin", ENV.claudeBin, str) ?? d.claudeBin,
     codexBin: pick("codexBin", ENV.codexBin, str) ?? d.codexBin,
+    codexSubagents: pick("codexSubagents", null, (v) => {
+      const n = typeof v === "string" && /^\d+$/.test(v) ? Number(v) : v;
+      return typeof n === "number" && Number.isInteger(n) && n >= 0 && n <= MAX_CODEX_SUBAGENTS ? n : undefined;
+    }) ?? d.codexSubagents,
     codexSandbox: pick("codexSandbox", null, (v) => oneOf(v, CODEX_SANDBOXES)) ?? d.codexSandbox,
     codexApprovalsReviewer: pick("codexApprovalsReviewer", null, (v) => oneOf(v, CODEX_APPROVALS_REVIEWERS)) ?? d.codexApprovalsReviewer,
     codexWorktreeSandbox: pick("codexWorktreeSandbox", null, (v) => oneOf(v, CODEX_SANDBOXES)) ?? d.codexWorktreeSandbox,

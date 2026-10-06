@@ -56,13 +56,13 @@ describe("next-turn job settings", () => {
   it("persists new settings and removes stale exact overrides from continuations", async () => {
     const job = jobs.start("codex", BASE.model!, BASE.prompt, async () => ({ text: "done", sessionId: "thread-1", isError: false, details: {} }), undefined, { ...BASE });
     await until(() => job.status === "done");
-    expect(jobs.setSettings(job.name, { model: "new-model", access: "read", effort: "high" })).toBe(true);
+    expect(jobs.setSettings(job.name, { model: "new-model", access: "read", effort: "high", native_subagents: 0 })).toBe(true);
     const args = resumeArgs(BASE, job.name, "continue", job.sessionId!, "/same-folder", null, job.args);
-    expect(args).toMatchObject({ model: "new-model", access: "read", effort: "high", session_id: "thread-1", cwd: "/same-folder" });
+    expect(args).toMatchObject({ model: "new-model", access: "read", effort: "high", native_subagents: 0, session_id: "thread-1", cwd: "/same-folder" });
     expect(args.sandbox).toBeUndefined();
     const restored = new JobManager(env.node("claude-restored"), nullLogger, join(env.home, "jobs.json"));
     restored.restore(() => undefined);
-    expect(restored.find(job.name)).toMatchObject({ model: "new-model", args: { model: "new-model", access: "read", effort: "high" } });
+    expect(restored.find(job.name)).toMatchObject({ model: "new-model", args: { model: "new-model", access: "read", effort: "high", native_subagents: 0 } });
     expect(jobs.setSettings("missing", { access: "edit" })).toBe(false);
   });
 

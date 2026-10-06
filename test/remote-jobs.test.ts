@@ -85,8 +85,8 @@ function config(home: string, name: string, allowed = false): void {
   if (process.platform === "win32") { claudeBin = join(remoteHome, "claude.cmd"); writeFileSync(claudeBin, '@ECHO off\r\n"%dp0%\\fake-claude.mjs" %*\r\n'); }
   writeFileSync(join(home, "config.json"), JSON.stringify({ dashboard: false, claudeBin, network: { ...DEFAULT_NETWORK_CONFIG, enabled: true, name, bind: LOOPBACK, port: 0, remoteJobs: { enabled: allowed, allowRoots: [repo], agents: ["claude"], allowPeers: allowed ? ["windows"] : [] } } }));
 }
-async function session(home: string, name: string): Promise<Client> {
-  const transport = new StdioClientTransport({ command: process.execPath, args: [SERVER, "--agent=codex"],
+async function session(home: string, name: string, agent = "codex"): Promise<Client> {
+  const transport = new StdioClientTransport({ command: process.execPath, args: [SERVER, `--agent=${agent}`],
     env: { ...process.env, AGENT_BRIDGE_HOME: home, AGENT_BRIDGE_NAME: name, AGENT_BRIDGE_DASHBOARD: "off", AGENT_BRIDGE_LOG_LEVEL: "debug" } as Record<string, string>, stderr: "ignore" });
   const client = new Client({ name: "remote-test", version: "1" }); await client.connect(transport);
   cleanup.push(() => client.close());
@@ -97,9 +97,14 @@ async function admin(home: string): Promise<BridgeClient> {
   await client.request("auth", { protocol: PROTOCOL_VERSION, token: loadOrCreateToken(home) });
   cleanup.push(() => client.close()); return client;
 }
-async function paired(): Promise<{ local: Client; admin: BridgeClient; inspector: BridgeNode }> {
+async function paired(agent = "codex"): Promise<{ local: Client; admin: BridgeClient; inspector: BridgeNode }> {
   config(localHome, "windows"); config(remoteHome, "mac", true);
-  const local = await session(localHome, "codex-supervisor"); await session(remoteHome, "codex-remote");
+  const local = await session(localHome, "codex-supervisor", agent);
+  const remote = await session(remoteHome, "codex-remote");
+  if (agent === "claude") {
+    await local.callTool({ name: "peers", arguments: {} });
+    await remote.callTool({ name: "peers", arguments: {} });
+  }
   const a = await admin(localHome); const b = await admin(remoteHome);
   const invitation = await b.request("networkPair", {});
   const status = await b.request("networkStatus", {});
@@ -181,6 +186,54 @@ describe("remote jobs security", () => {
 });
 
 describe.skipIf(!existsSync(SERVER))("remote jobs with two paired TLS brokers", () => {
+  it("passes native Codex limits through spawn, continuation and blocking ask", async () => {
+    const { local } = await paired("claude");
+    const path = join(remoteHome, "config.json");
+    const cfg = JSON.parse(readFileSync(path, "utf8"));
+    cfg.codexBin = process.execPath;
+    cfg.codexSubagents = 2;
+    cfg.network.remoteJobs.agents.push("codex");
+    writeFileSync(path, JSON.stringify(cfg));
+    const callsPath = join(repo, "native-calls.jsonl");
+    writeFileSync(join(repo, "app-server"), `
+const fs = require("node:fs");
+const rl = require("node:readline").createInterface({ input: process.stdin });
+const send = (m) => console.log(JSON.stringify(m));
+rl.on("line", (line) => {
+  const m = JSON.parse(line);
+  if (m.id === undefined) return;
+  let result = {};
+  if (m.method === "thread/start" || m.method === "thread/resume") {
+    fs.appendFileSync(${JSON.stringify(callsPath)}, JSON.stringify(m) + "\\n");
+    result = { thread: { id: m.params.threadId || "native-thread" } };
+  }
+  if (m.method === "turn/start") result = { turn: { id: "turn-1" } };
+  send({ id: m.id, result });
+  if (m.method === "turn/start") {
+    send({ method: "item/completed", params: { turnId: "turn-1", item: { type: "agentMessage", text: "native fake finished" } } });
+    send({ method: "turn/completed", params: { turn: { id: "turn-1", status: "completed" } } });
+  }
+});
+`);
+    const result = await call(local, "spawn_codex", { host: "mac", cwd: repo, title: "Native default", prompt: "finish" });
+    const match = /codex-job-([0-9a-f]{8})/.exec(result);
+    expect(match, result).not.toBeNull();
+    const id = match![1]!;
+    const name = `codex-job-${id}`;
+    await waitFor(async () => (await call(local, "peers", {})).includes(`${name} "Native default": done`));
+    await call(local, "message_subagent", { job: name, message: "continue", native_subagents: 0 });
+    const calls = () => readFileSync(callsPath, "utf8").trim().split("\n").map((line) => JSON.parse(line));
+    await waitFor(() => calls().length === 2 && readRunnerState(remoteHome, id)?.status === "done");
+    expect(calls()[0].params.config).toMatchObject({ "agents.max_threads": 2, "agents.enabled": true });
+    expect(calls()[1]).toMatchObject({ method: "thread/resume", params: { threadId: "native-thread", config: { "agents.max_threads": 1, "agents.enabled": false, "features.multi_agent_v2": false } } });
+    const ask = await call(local, "ask_codex", { host: "mac", cwd: repo, title: "Native ask", prompt: "finish", native_subagents: 32 });
+    expect(ask).toContain("native fake finished");
+    expect(calls()[2].params.config["agents.max_threads"]).toBe(32);
+    expect(readStore(join(localHome, "jobs.json")).find((j) => j.id === id)!.args).toMatchObject({ native_subagents: 0 });
+    const remote = JSON.parse(readFileSync(join(remoteHome, "remote-jobs.json"), "utf8"));
+    expect(remote.jobs.find((j: any) => j.job.id === id).job.args.native_subagents).toBe(0);
+  }, TEST_TIMEOUT_MS);
+
   it("denies disabled pairs, roots, agents and another supervisor, and rate limits requests", async () => {
     const { inspector } = await paired();
     const spawn = { op: "spawn", job: "a1234567", target: "claude", args: { prompt: "done", title: "test", cwd: root } } as const;

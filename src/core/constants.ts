@@ -33,6 +33,10 @@ export const ENV = {
 } as const;
 
 export const DEFAULT_MAX_DELEGATE_DEPTH = 2;
+/** Codex V1 default: six open native child threads, excluding the delegated job itself. */
+export const DEFAULT_CODEX_SUBAGENTS = 6;
+/** Bridge validation ceiling, independent of the root bridge-job concurrency budget. */
+export const MAX_CODEX_SUBAGENTS = 32;
 export const MAX_DELEGATE_DEPTH_LIMIT = 3;
 export const DELEGATION_METADATA_VERSION = 2;
 
