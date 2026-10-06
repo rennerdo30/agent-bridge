@@ -16,7 +16,7 @@ const MAX_METADATA_CHARS = 4_096;
 const MAX_ID_CHARS = 128;
 const MAX_HOP_COUNT = 100;
 const MAX_EXTENSION_HANDLERS = 8;
-export type NetworkExtensionType = "file-stream" | "remote-job";
+export type NetworkExtensionType = "file-stream" | "remote-job" | "dashboard-read";
 export type NetworkExtensionHandler = (payload: Record<string, unknown>, remote: NetworkPair) => void | Promise<void>;
 const textId = z.string().min(1).max(MAX_ID_CHARS);
 const peerSchema = z.object({
@@ -25,6 +25,9 @@ const peerSchema = z.object({
   sessionId: z.string().max(MAX_METADATA_CHARS).nullable(), startedAt: z.number().nonnegative(), autoWake: z.boolean(),
   wakeOnDirect: z.boolean().optional(), wakeAvailable: z.boolean().optional(), wakeMaxHops: z.number().int().min(0).max(MAX_HOP_COUNT).optional(),
   activity: z.enum(["busy", "idle"]).nullable().optional(), version: z.string().max(MAX_ID_CHARS).optional(), jobAgent: z.enum(AGENT_KINDS).optional(),
+  jobParent: z.string().max(MAX_METADATA_CHARS).optional(), jobTitle: z.string().max(MAX_METADATA_CHARS).optional(),
+  parentJob: z.string().max(MAX_METADATA_CHARS).optional(), rootSession: z.string().max(MAX_METADATA_CHARS).optional(),
+  rootName: z.string().max(MAX_METADATA_CHARS).optional(), subagent: z.boolean().optional(), title: z.string().max(MAX_METADATA_CHARS).optional(),
 });
 const peersSchema = z.array(peerSchema).max(MAX_NETWORK_PEERS).refine((peers) => new Set(peers.map((p) => p.name)).size === peers.length && new Set(peers.map((p) => p.id)).size === peers.length);
 const messageSchema = z.object({
@@ -37,6 +40,7 @@ const frameSchema = z.discriminatedUnion("type", [
   publicIdentitySchema.extend({ type: z.literal("hello"), v: z.literal(NETWORK_VERSION), peers: peersSchema, echo: z.boolean().optional(), receipts: z.boolean().optional(), capabilities: z.array(z.string().min(1).max(MAX_ID_CHARS)).max(MAX_EXTENSION_HANDLERS).optional() }),
   z.object({ type: z.literal("file-stream"), payload: z.record(z.string(), z.unknown()) }),
   z.object({ type: z.literal("remote-job"), payload: z.record(z.string(), z.unknown()) }),
+  z.object({ type: z.literal("dashboard-read"), payload: z.record(z.string(), z.unknown()) }),
   z.object({ type: z.literal("peers"), peers: peersSchema }),
   z.object({ type: z.literal("send"), rid: z.uuid(), message: messageSchema }),
   z.object({ type: z.literal("echo"), rid: z.uuid() }),
@@ -196,7 +200,7 @@ class Link {
   }
 
   private onFrame(frame: Exclude<NetworkFrame, { type: "hello" }>): void {
-    if (frame.type === "file-stream" || frame.type === "remote-job") {
+    if (frame.type === "file-stream" || frame.type === "remote-job" || frame.type === "dashboard-read") {
       if (++this.extensionHandlers > MAX_EXTENSION_HANDLERS) throw new Error("too many extension handlers");
       void Promise.resolve().then(() => this.service.receiveExtension(frame.type, frame.payload, this.remote!))
         .catch((error: Error) => this.fail(error)).finally(() => { this.extensionHandlers--; this.processBuffer(); });
@@ -382,7 +386,12 @@ export class NetworkService {
   }
 
   peers(): PeerInfo[] {
-    return [...this.links.values()].flatMap((link) => link.peers.map((p) => ({ ...p, agent: p.jobAgent ?? p.agent, id: `${link.remote!.id}/${p.id}`, name: `${link.remote!.name}/${p.name}` })));
+    return [...this.links.values()].flatMap((link) => link.peers.map((p) => {
+      const host = link.remote!.name;
+      const qualify = (value: string | undefined, prefix = host) => value && !value.includes("/") ? `${prefix}/${value}` : value;
+      return { ...p, agent: p.jobAgent ?? p.agent, host, id: `${link.remote!.id}/${p.id}`, name: `${host}/${p.name}`,
+        jobParent: qualify(p.jobParent), parentJob: qualify(p.parentJob), rootName: qualify(p.rootName), rootSession: qualify(p.rootSession, link.remote!.id) };
+    }));
   }
 
   status(): NetworkStatus {

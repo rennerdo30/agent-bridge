@@ -6,6 +6,7 @@
  *   broker -> client   {"t":"evt","ev":"message","data":{...}}
  */
 
+import type { DashboardReadRequest, DashboardReadResult } from "../network/dashboard-protocol.js";
 import type { NetworkConfig } from "../network/config.js";
 import type { NetworkStatus } from "../network/link.js";
 import type { NetworkIdentity } from "../network/pairing.js";
@@ -65,6 +66,12 @@ export interface PeerInfo {
   jobAgent?: AgentKind;
   /** Stable supervisor session identity, shared only by its jobs. */
   jobOwner?: string;
+  parentJob?: string;
+  rootSession?: string;
+  rootName?: string;
+  subagent?: boolean;
+  title?: string;
+  host?: string;
   jobParent?: string;
   jobTitle?: string;
   /** Exact session names explicitly granted by the supervisor at spawn. */
@@ -181,6 +188,8 @@ export interface RequestMap {
   /** Take over the unread mail of "-N" stand-in names of this peer that no one holds (after a reload). */
   claimMail: [{ names: string[] }, { moved: number }];
   ping: [Record<string, never>, { brokerPid: number; protocol: number }];
+  dashboardRead: [{ host: string; request: DashboardReadRequest }, DashboardReadResult];
+  dashboardPeers: [Record<string, never>, PeerInfo[]];
   networkStatus: [Record<string, never>, NetworkStatus];
   remoteJob: [{ host: string; request: RemoteJobRequest }, RemoteJobSnapshot];
   networkConfigure: [NetworkConfig, NetworkStatus];

@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { JOBS_FILE } from "./constants.js";
+import { readHistoryJson } from "./run-history.js";
 import { isRecord, mergeStoreFields, readJsonStore, writeJsonStore } from "./json-store.js";
 import type { Logger } from "./logger.js";
 import { resolveDbPath } from "./paths.js";
@@ -59,7 +60,7 @@ function decisionPath(home: string, job: Pick<OutcomeJob, "name" | "startedAt">)
 }
 
 export function readOutcomeDecision(home: string, job: OutcomeJob): OutcomeDecision | null {
-  const data = readJsonStore(decisionPath(home, job));
+  const data = readHistoryJson(decisionPath(home, job));
   if (!isRecord(data) || !isRecord(data.decision)) return null;
   const d = data.decision;
   return (d.state === "held" || d.state === "discarded") && typeof d.at === "number" && typeof d.by === "string"
@@ -147,10 +148,11 @@ export async function deriveJobOutcome(home: string, job: OutcomeJob, log: Logge
   return { delivery: resultDelivery(home, job, opts.before ?? Number.MAX_SAFE_INTEGER), merge };
 }
 
-export async function listJobOutcomes(home: string, log: Logger): Promise<Record<string, { startedAt: number; status: string; outcome: JobOutcome }>> {
+export async function listJobOutcomes(home: string, log: Logger, names?: Set<string>): Promise<Record<string, { startedAt: number; status: string; outcome: JobOutcome }>> {
   const jobs = readStore(join(home, JOBS_FILE), log, true);
   const out: Record<string, { startedAt: number; status: string; outcome: JobOutcome }> = {};
   for (const job of jobs) {
+    if (names && !names.has(job.name)) continue;
     if (job.status !== "done" && job.status !== "failed") continue;
     out[job.name] = { startedAt: job.startedAt, status: job.status, outcome: await deriveJobOutcome(home, job, log) };
   }

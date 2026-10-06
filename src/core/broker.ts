@@ -41,6 +41,7 @@ import { z } from "zod";
 import { collectTransfer, receiveTransfer, type TransferResult } from "../network/files.js";
 import { cancelStoredTransfer, MAX_STREAM_ENTRIES, readTransferHistory, type TransferStarted } from "../network/transfers.js";
 import { MAX_NETWORK_HOST_CHARS, MAX_PAIRING_CODE_CHARS, MAX_PORT } from "../network/constants.js";
+import { RemoteDashboard, dashboardError } from "../network/remote-dashboard.js";
 import { RemoteJobs } from "../network/remote-jobs.js";
 import { CONTROL_CONVERSATION_PREFIX } from "../mcp/job-host.js";
 import { DECISION_MESSAGE_HOP, MAX_DECISION_TEXT_CHARS, MAX_DECISION_TOPIC_CHARS, decisionApplies, decisionScopeSchema, type OwnerDecision } from "./decisions.js";
@@ -83,6 +84,7 @@ export class Broker {
   private purgeTimer: NodeJS.Timeout | null = null;
   private network: NetworkService | null = null;
   private remoteJobs: RemoteJobs | null = null;
+  private remoteDashboard: RemoteDashboard | null = null;
   private readonly remoteProgress = new Map<string, string>();
   private networkChange: Promise<unknown> = Promise.resolve();
   private readonly handlers: { [O in Op]: Handler<O> };
@@ -118,6 +120,8 @@ export class Broker {
         return this.store.history.tick();
       },
       peers: () => this.livePeers(),
+      dashboardPeers: () => this.dashboardPeers().concat(this.network?.peers() ?? []),
+      dashboardRead: (_, a) => this.remoteDashboard?.request(a.host, a.request) ?? dashboardError("remote_offline", "Networking is unavailable."),
       siblings: (c) => this.siblingPeers(c),
       sendSibling: (c, a) => this.onSendSibling(c, a),
       messageReceipt: (c, a) => this.messageReceipt(c, a.id),
@@ -205,7 +209,7 @@ export class Broker {
         if (this.networking?.config.enabled) {
           try {
             this.network = new NetworkService(this.networking.home, this.networking.config, {
-              peers: () => [...this.conns].flatMap((c) => c.peer ? [c.peer] : []),
+              peers: () => this.dashboardPeers(),
               receive: (message) => this.receiveRemote(message),
         receipt: (id, sender) => this.remoteReceipt(id, sender),
             }, this.log);
@@ -228,6 +232,8 @@ export class Broker {
     if (this.historyTimer) clearInterval(this.historyTimer);
     if (this.purgeTimer) clearInterval(this.purgeTimer);
     await this.networkChange;
+    this.remoteDashboard?.close();
+    this.remoteDashboard = null;
     this.remoteJobs?.close();
     this.remoteJobs = null;
     await this.network?.close();
@@ -245,6 +251,8 @@ export class Broker {
   private async configureNetwork(value: NetworkConfig): Promise<NetworkStatus> {
     if (!this.networking) throw new BridgeError("bad_request", "Restart all agent-bridge hosting sessions to load this wizard-capable broker.");
     const config = writeNetworkConfig(this.networking.home, value);
+    this.remoteDashboard?.close();
+    this.remoteDashboard = null;
     this.remoteJobs?.close();
     this.remoteJobs = null;
     await this.network?.close();
@@ -252,7 +260,7 @@ export class Broker {
     this.networking.config = config;
     if (config.enabled) {
       const service = new NetworkService(this.networking.home, config, {
-        peers: () => [...this.conns].flatMap((c) => c.peer ? [c.peer] : []),
+        peers: () => this.dashboardPeers(),
         receive: (message) => this.receiveRemote(message),
         receipt: (id, sender) => this.remoteReceipt(id, sender),
       }, this.log);
@@ -264,6 +272,7 @@ export class Broker {
   }
 
   private installRemoteJobs(service: NetworkService): void {
+    this.remoteDashboard = new RemoteDashboard(service, { home: this.networking!.home, log: this.log, peers: () => this.dashboardPeers() });
     this.remoteJobs = new RemoteJobs(service, this.networking!.home, this.log, async (record, control) => {
       this.receiveRemote({ id: randomUUID(), from: { id: record.owner, name: record.owner, agent: "other" },
         to: record.name, recipient: record.name, conversationId: `${CONTROL_CONVERSATION_PREFIX}${record.id}`,
@@ -348,6 +357,19 @@ export class Broker {
   /** Local sessions and paired remote peers; local job runners stay hidden (see job-host.ts). */
   private livePeers(): PeerInfo[] {
     return [...this.conns].flatMap((c) => (c.peer && !c.peer.jobAgent ? [c.peer] : [])).concat(this.network?.peers() ?? []);
+  }
+
+  /** Project local runner lineage from durable jobs; do not alter broker routing identities. */
+  private dashboardPeers(): PeerInfo[] {
+    const jobs = this.storedJobs();
+    return [...this.conns].flatMap((c) => {
+      const peer = c.peer;
+      if (!peer) return [];
+      const job = jobs.find((j) => j.name === peer.name || `job:${j.id}` === peer.id);
+      const field = (key: string): string | undefined => typeof job?.[key] === "string" ? job[key] as string : undefined;
+      return [{ ...peer, agent: peer.jobAgent ?? peer.agent, parentJob: field("parentJob") ?? peer.parentJob, rootSession: field("rootSession") ?? peer.rootSession ?? peer.jobOwner,
+        rootName: field("rootName") ?? peer.rootName ?? peer.jobParent, title: peer.jobTitle, subagent: Boolean(peer.jobAgent) }];
+    });
   }
 
   private connByName(name: string): Conn | undefined {
@@ -558,6 +580,9 @@ export class Broker {
       version: typeof p.version === "string" ? p.version.slice(0, 32) : undefined,
       ...(p.jobAgent && AGENT_KINDS.includes(p.jobAgent) ? { jobAgent: p.jobAgent } : {}),
       ...(p.jobAgent && typeof p.jobOwner === "string" && p.jobOwner ? {
+        parentJob: typeof p.parentJob === "string" ? p.parentJob : undefined,
+        rootSession: typeof p.rootSession === "string" ? p.rootSession : undefined,
+        rootName: typeof p.rootName === "string" ? p.rootName : undefined,
         jobOwner: p.jobOwner, jobParent: typeof p.jobParent === "string" ? p.jobParent : undefined,
         jobTitle: typeof p.jobTitle === "string" ? p.jobTitle : undefined,
         jobSendTo: Array.isArray(p.jobSendTo) ? p.jobSendTo.filter(isJobSendTarget).slice(0, MAX_JOB_SEND_TARGETS) : [],

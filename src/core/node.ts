@@ -48,6 +48,9 @@ export interface BridgeNodeOptions {
   jobAgent?: AgentKind;
   jobOwner?: string;
   jobParent?: string;
+  parentJob?: string;
+  rootSession?: string;
+  rootName?: string;
   jobTitle?: string;
   jobSendTo?: string[];
   /** false: only connect to a broker, never become one (a short-lived job runner would take the bridge down with it). */
@@ -302,7 +305,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
         activity: this.activity,
         version: APP_VERSION,
         ...(this.opts.jobAgent ? { jobAgent: this.opts.jobAgent } : {}),
-        ...(this.opts.jobOwner ? { jobOwner: this.opts.jobOwner, jobParent: this.opts.jobParent, jobTitle: this.opts.jobTitle, jobSendTo: this.opts.jobSendTo } : {}),
+        ...(this.opts.jobOwner ? { jobOwner: this.opts.jobOwner, jobParent: this.opts.jobParent, parentJob: this.opts.parentJob, rootSession: this.opts.rootSession, rootName: this.opts.rootName, jobTitle: this.opts.jobTitle, jobSendTo: this.opts.jobSendTo } : {}),
       },
     };
   }

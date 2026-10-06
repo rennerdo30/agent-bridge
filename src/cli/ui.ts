@@ -5,18 +5,17 @@ import type { AddressInfo } from "node:net";
 import { networkInterfaces } from "node:os";
 import { join } from "node:path";
 import { BridgeClient } from "../core/client.js";
-import { APP_VERSION, JOBS_FILE, MAX_BODY_CHARS, PROTOCOL_VERSION } from "../core/constants.js";
+import { APP_VERSION, MAX_BODY_CHARS, PROTOCOL_VERSION } from "../core/constants.js";
 import type { Logger } from "../core/logger.js";
 import { BridgeNode } from "../core/node.js";
 import { resolveDbPath } from "../core/paths.js";
 import { BridgeError, CODING_AGENTS, type PeerInfo } from "../core/protocol.js";
 import { readModels, type ModelReport } from "../core/models.js";
-import { RUNS_DIR_NAME, type RunMeta } from "../core/runfeed.js";
+import { RUNS_DIR_NAME } from "../core/runfeed.js";
 import { loadOrCreateToken, tokensEqual } from "../core/token.js";
 import { loadConfig } from "../core/config.js";
 import { readUsage, type UsageReport } from "../core/usage.js";
 import { controlDashboardJob, JobControlError, type DashboardJobCommand } from "../core/job-control.js";
-import { JOB_SETTING_KEYS } from "../mcp/job-settings.js";
 import { UI_PAGE } from "./ui-page.js";
 import { networkConfigSchema } from "../network/config.js";
 import { planFirewall, detectFirewall, applyWindowsFirewall } from "../network/firewall.js";
@@ -26,15 +25,18 @@ import type { Op, RequestMap } from "../core/protocol.js";
 import { isRecord } from "../core/json-store.js";
 import { doctor } from "../core/doctor.js";
 import { MAX_HISTORY_LIMIT, searchMessages } from "../core/message-history.js";
-import { DEFAULT_RUN_PAGE_SIZE, MAX_RUN_PAGE_SIZE, pageRuns, readHistoryJobs, readHistoryJson, readRunLogs } from "../core/run-history.js";
-import type { Worktree } from "../core/worktree.js";
-import { listNativeSubagents, readTranscript, TRANSCRIPT_ID, validTranscriptCursor, type TranscriptPaths } from "../core/transcripts/index.js";
+import { DEFAULT_RUN_PAGE_SIZE, pageRuns } from "../core/run-history.js";
+import { type TranscriptPaths } from "../core/transcripts/index.js";
 import { HISTORY_MAX_QUERY_CHARS, historySearchSchema, readHistory, readHistorySource } from "../core/history.js";
 import { answerHistory, type HistoryAnswerDependencies } from "../core/history-answer.js";
 import { readDecisions, decisionScopeSchema, MAX_DECISION_TEXT_CHARS, MAX_DECISION_TOPIC_CHARS, type DecisionsArgs } from "../core/decisions.js";
 import { answerPendingApproval, listPendingApprovals, MAX_APPROVAL_REASON_CHARS } from "../core/relay.js";
-import { deriveJobOutcome, listJobOutcomes, JOB_OUTCOME_CONTRACT_VERSION, type JobOutcome, type OutcomeJob } from "../core/job-outcomes.js";
-import { readStore } from "../mcp/jobs.js";
+import { classifyPeers, listRuns, readStoredJobs, readDashboard, readMeta } from "../core/dashboard-read.js";
+export { classifyPeers, listRuns, readStoredJobs, summarizeRun, finishedRunOutcomes } from "../core/dashboard-read.js";
+export type { RunSummary, DashboardPeer, StoredJobView } from "../core/dashboard-read.js";
+import { dashboardError } from "../network/remote-dashboard.js";
+import { markRemoteDashboard } from "../network/dashboard-projection.js";
+import { dashboardRequestSchema, isDashboardReadPath, DASHBOARD_TIMEOUT_MS, type DashboardReadRequest, type DashboardReadResult } from "../network/dashboard-protocol.js";
 
 /**
  * `agent-bridge ui`: a local dashboard for sessions, delegated runs and messages.
@@ -43,189 +45,15 @@ import { readStore } from "../mcp/jobs.js";
 const UI_HOST = "127.0.0.1";
 const COOKIE = "ab_ui";
 const SECRET_BYTES = 24;
-const TASK_PREVIEW_CHARS = 300;
 const MAX_MESSAGES = 200;
-const MAX_LOG_CHUNK = 512 * 1024;
 const MAX_POST_BYTES = 256 * 1024;
-/** A run whose log has not been written for this long (heartbeats come every minute) was interrupted. */
-const STALE_RUN_MS = 150_000;
-const LEGACY_JOB_START_TOLERANCE_MS = 1_000;
 const UI_PEER_NAME = "you";
 const ALLOWED_HOSTS = new Set([UI_HOST, "localhost"]);
 const RUN_NAME = /^[\w.-]+\.log$/;
 
-export interface RunSummary extends RunMeta {
-  name: string;
-  agent: string;
-  header: string;
-  startedAt: number;
-  updatedAt: number;
-  status: "running" | "done" | "failed" | "interrupted";
-  last: string;
-  /** Start of the prompt, for lists. */
-  task: string;
-  archived?: boolean;
-  recovered?: boolean;
-  hasLog?: boolean;
-  owner?: string | null;
-  sessionId?: string | null;
-  prompt?: string;
-  finishedAt?: number;
-  worktree?: Worktree | null;
-  branch?: string;
-  parentJob?: string;
-  rootSession?: string;
-}
-
-/** Read-only projection: legacy metadata stays byte-for-byte intact. */
-export async function finishedRunOutcomes(home: string, log: Logger): Promise<Record<string, JobOutcome>> {
-  const runs = listRuns(home);
-  const jobs = readStore(join(home, JOBS_FILE), log, true);
-  const out: Record<string, JobOutcome> = {};
-  for (const run of runs) {
-    if (!run.job || (run.status !== "done" && run.status !== "failed")) continue;
-    const stored = jobs.find((j) => j.name === run.job);
-    const startedAt = run.jobStartedAt ?? run.startedAt;
-    const latest = stored && (run.jobStartedAt !== undefined ? stored.startedAt === startedAt : Math.abs(stored.startedAt - startedAt) < LEGACY_JOB_START_TOLERANCE_MS);
-    const job: OutcomeJob = {
-      id: stored?.id ?? run.job.replace(/^.*-(?:job|ask)-/, ""), name: run.job,
-      owner: latest ? stored.owner : run.by,
-      startedAt: run.jobStartedAt ?? (latest ? stored.startedAt : run.startedAt),
-      status: run.status, worktree: stored?.worktree,
-      remote: (run as RunSummary & { remote?: OutcomeJob["remote"] }).remote ?? (stored as OutcomeJob | undefined)?.remote,
-    };
-    const next = runs.filter((r) => r.job === run.job && (r.jobStartedAt ?? r.startedAt) > startedAt)
-      .sort((a, b) => (a.jobStartedAt ?? a.startedAt) - (b.jobStartedAt ?? b.startedAt))[0];
-    out[run.name] = await deriveJobOutcome(home, job, log, {
-      branch: run.branch, baseBranch: run.baseBranch, repoRoot: run.repoRoot,
-      branchHead: run.branchHead, before: next?.jobStartedAt ?? next?.startedAt,
-    });
-  }
-  return out;
-}
-
-/** Parse the head and tail of a run log written by runfeed.ts, plus its metadata (older runs: from the header). */
-export function summarizeRun(file: string, text: string, mtimeMs: number, now: number, meta: RunMeta = {}): RunSummary {
-  const lines = text.split("\n").filter(Boolean);
-  const finished = [...lines].reverse().find((l) => / finished after \d+s · /.test(l));
-  const last = (finished ?? lines.at(-1) ?? "").replace(/^\d\d:\d\d:\d\d /, "");
-  const status: RunSummary["status"] = finished
-    ? / · done$/.test(finished)
-      ? "done"
-      : "failed"
-    : now - mtimeMs > STALE_RUN_MS
-      ? "interrupted"
-      : "running";
-  const m = /^(\d{4})-(\d\d)-(\d\d)-(\d\d)-(\d\d)-(\d\d)-([a-z]+)-/.exec(file);
-  const startedAt = m ? Date.UTC(+m[1]!, +m[2]! - 1, +m[3]!, +m[4]!, +m[5]!, +m[6]!) : Math.floor(mtimeMs);
-  const header = (lines[0] ?? "").replace(/^\d\d:\d\d:\d\d /, "");
-  const end = lines.findIndex((l) => l.trim() === "---");
-  const task = lines
-    .slice(1, end > 0 ? end : 1)
-    .map((l) => l.trim())
-    .join(" ")
-    .slice(0, TASK_PREVIEW_CHARS);
-  return {
-    by: / by ([\w.-]+)/.exec(header)?.[1],
-    workdir: / in (.+?), access /.exec(header)?.[1],
-    continues: /, continues (\S+)/.exec(header)?.[1] ?? null,
-    ...meta,
-    name: file.replace(/\.log$/, ""),
-    agent: m?.[7] ?? "agent",
-    header,
-    startedAt,
-    updatedAt: mtimeMs,
-    status,
-    last,
-    task,
-  };
-}
-
-export function listRuns(home: string, now = Date.now()): RunSummary[] {
-  const runs: RunSummary[] = [];
-  for (const log of readRunLogs(home)) {
-    try { runs.push({ ...summarizeRun(`${log.name}.log`, readFileSync(log.file, "utf8"), log.updatedAt, now, log.meta), archived: log.archived, recovered: false, hasLog: true }); }
-    catch { /* A concurrent archive operation is retried on the next refresh. */ }
-  }
-  for (const [name, job] of readHistoryJobs(home)) {
-    // Older logs lack job metadata; their filename still includes the original agent/job id.
-    if (runs.some((run) => run.job === name || (typeof job.id === "string" && run.name.endsWith(`-${job.agent}-${job.id}`)))) continue;
-    const args = isRecord(job.args) ? job.args : {};
-    const worktree = isRecord(job.worktree) ? job.worktree as unknown as Worktree : null;
-    const prompt = typeof job.prompt === "string" ? job.prompt : "";
-    const owner = typeof job.owner === "string" ? job.owner : null;
-    const sessionId = typeof job.sessionId === "string" ? job.sessionId : typeof job.threadId === "string" ? job.threadId : null;
-    const startedAt = typeof job.startedAt === "number" && Number.isSafeInteger(job.startedAt) && job.startedAt >= 0 ? job.startedAt : 0;
-    const finishedAt = typeof job.finishedAt === "number" && Number.isSafeInteger(job.finishedAt) ? job.finishedAt : undefined;
-    runs.push({
-      name, job: name, agent: typeof job.agent === "string" ? job.agent : "agent", model: typeof job.model === "string" ? job.model : null,
-      title: typeof args.title === "string" ? args.title : typeof job.title === "string" ? job.title : undefined,
-      by: owner ?? undefined, owner, session: sessionId, sessionId, prompt, task: prompt.slice(0, TASK_PREVIEW_CHARS),
-      workdir: typeof job.workdir === "string" ? job.workdir : worktree?.cwd ?? (typeof args.cwd === "string" ? args.cwd : undefined),
-      worktree, branch: worktree?.branch ?? (typeof job.branch === "string" ? job.branch : undefined),
-      parentJob: typeof job.parentJob === "string" ? job.parentJob : undefined, rootSession: typeof job.rootSession === "string" ? job.rootSession : undefined,
-      startedAt, finishedAt, updatedAt: finishedAt ?? startedAt,
-      // A historical snapshot does not prove that an old process is still running.
-      status: job.status === "done" || job.status === "failed" ? job.status : "interrupted",
-      header: `Recovered ${name}`, last: "Run log unavailable; conversation may be available in the CLI transcript.", recovered: true, hasLog: false,
-    });
-  }
-  return pageRuns(runs, null, runs.length).runs;
-}
-
-function readMeta(file: string): RunMeta {
-  try {
-    const value = readHistoryJson(file);
-    return isRecord(value) ? value as RunMeta : {};
-  } catch {
-    return {};
-  }
-}
-
-/** What the dashboard reads of a stored job: its owner and the settings its next turn uses. */
-export interface StoredJobView {
-  owner: string | null;
-  next: Record<string, unknown>;
-  remote?: { host: string; name: string };
-}
-
-/** Jobs from the sessions' store (`{ jobs: [...] }`; before 0.26 a bare array). Read-only and best effort. */
-export function readStoredJobs(home: string): Map<string, StoredJobView> {
-  const out = new Map<string, StoredJobView>();
-  for (const j of readHistoryJobs(home).values()) {
-    if (!j || typeof j !== "object") continue;
-    const { name, owner, args, remote } = j as { name?: unknown; owner?: unknown; args?: unknown; remote?: { host: string; name: string } };
-    if (typeof name !== "string") continue;
-    const saved = args && typeof args === "object" ? (args as Record<string, unknown>) : {};
-    out.set(name, {
-      owner: typeof owner === "string" && owner ? owner : null,
-      next: Object.fromEntries(JOB_SETTING_KEYS.filter((key) => saved[key] !== undefined).map((key) => [key, saved[key]])),
-      ...(remote && typeof remote.host === "string" && typeof remote.name === "string" ? { remote } : {}),
-    });
-  }
-  return out;
-}
-
 /** A server may have adopted a job from an earlier stand-in name since its log was written. */
 function jobOwner(home: string, job: string, original: string): string {
   return readStoredJobs(home).get(job)?.owner ?? original;
-}
-
-export type DashboardPeer = PeerInfo & { subagent: boolean; parent: string | null };
-
-/**
- * Sessions in a subagent worktree are subagents, not sessions of their own (older versions let them join):
- * show them under the session whose run used that folder.
- */
-export function classifyPeers(peers: PeerInfo[], runs: RunSummary[], home: string): DashboardPeer[] {
-  const norm = (p: string) => p.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
-  const worktrees = `${norm(join(home, "worktrees"))}/`;
-  return peers.map((p) => {
-    const cwd = norm(p.cwd ?? "");
-    const subagent = cwd.startsWith(worktrees);
-    const run = subagent ? runs.find((r) => r.workdir && norm(r.workdir) === cwd) : undefined;
-    return { ...p, subagent, parent: run?.by ?? null };
-  });
 }
 
 interface MessageRow {
@@ -250,7 +78,7 @@ async function brokerPeers(pipe: string, token: string, log: Logger): Promise<{ 
   try {
     client = await BridgeClient.connect(pipe, log);
     const { brokerPid } = await client.request("auth", { protocol: PROTOCOL_VERSION, token });
-    return { brokerPid, peers: await client.request("peers", {}) };
+    return { brokerPid, peers: await client.request("dashboardPeers", {}).catch(() => client!.request("peers", {})) };
   } catch {
     return { brokerPid: null, peers: [] };
   } finally {
@@ -366,8 +194,25 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
     const client = await BridgeClient.connect(opts.pipe, opts.log);
     try {
       await client.request("auth", { protocol: PROTOCOL_VERSION, token });
-      return await client.request(op, args);
+      return await client.request(op, args, op === "dashboardRead" ? DASHBOARD_TIMEOUT_MS + 2_000 : undefined);
     } finally { client.close(); }
+  };
+
+  const remoteRead = async (host: string, request: DashboardReadRequest): Promise<DashboardReadResult> => {
+    try {
+      const paired = (await networkRequest("networkStatus", {})).paired.find((p) => p.name === host || p.id === host);
+      if (!paired) return dashboardError("remote_offline", "No such paired PC.", 404);
+      const result = await networkRequest("dashboardRead", { host: paired.id, request });
+      return { ...result, body: markRemoteDashboard(result.body, host) };
+    } catch (error) {
+      if (error instanceof BridgeError && error.code === "bad_request") return dashboardError("remote_update_needed", "Restart local hosting sessions to load dashboard-read-v1.", 409);
+      return dashboardError("remote_offline", "The paired broker is unavailable.");
+    }
+  };
+  const pairedReads = async (path: string): Promise<Record<string, DashboardReadResult>> => {
+    let hosts: string[] = [];
+    try { hosts = (await networkRequest("networkStatus", {})).paired.map((p) => p.name); } catch { return {}; }
+    return Object.fromEntries(await Promise.all(hosts.map(async (host) => [host, await remoteRead(host, { path })])));
   };
 
   let usage: { at: number; reports: Promise<UsageReport[]> } | null = null;
@@ -453,29 +298,25 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
       if (outcome === "unavailable") return send(res, 504, { outcome, error: "The approval's owning process is unavailable. Refresh before answering again." });
       return send(res, 200, { outcome, id: approvalMatch[1], answeredBy: "dashboard", decision: body.decision });
     }
-    if (req.method === "GET" && url.pathname === "/api/job-outcomes") {
-      const jobs = await listJobOutcomes(opts.home, opts.log);
-      const groups: Record<string, string[]> = { needsReview: [], held: [], merged: [], discarded: [] };
-      for (const [name, job] of Object.entries(jobs)) {
-        const state = job.outcome.merge.state;
-        groups[state === "unmerged" ? "needsReview" : state]!.push(name);
-      }
-      return send(res, 200, { contractVersion: JOB_OUTCOME_CONTRACT_VERSION, jobs, runs: await finishedRunOutcomes(opts.home, opts.log), groups });
-    }
     if (req.method === "GET" && url.pathname === "/api/state") {
       const { brokerPid, peers } = await brokerPeers(opts.pipe, token, opts.log);
       const runs = listRuns(opts.home);
       const page = pageRuns(runs, null, DEFAULT_RUN_PAGE_SIZE);
+      const remote = await pairedReads("/api/state");
+      const remoteStates = Object.values(remote).filter((r) => r.status === 200).map((r) => r.body as { runs: unknown[]; jobs: Record<string, unknown> });
+      const remoteErrors = Object.fromEntries(Object.entries(remote).filter(([, r]) => r.status !== 200).map(([host, r]) => [host, r.body]));
       return send(res, 200, {
         version: APP_VERSION,
         brokerPid,
         peers: classifyPeers(peers, runs, opts.home),
-        runs: page.runs,
+        runs: [...page.runs, ...remoteStates.flatMap((r) => r.runs)],
         runsNext: page.next,
         runsTotal: page.total,
+        remoteRuns: Object.fromEntries(Object.entries(remote).filter(([, r]) => r.status === 200).map(([host, r]) => [host, r.body])),
+        remoteErrors,
         messages: recentMessages(dbPath),
         // Saved next-turn settings per job (message_subagent or the dashboard may have changed them).
-        jobs: Object.fromEntries([...readStoredJobs(opts.home)].map(([name, j]) => [name, { next: j.next, ...(j.remote ? { remote: j.remote } : {}) }])),
+        jobs: { ...Object.fromEntries([...readStoredJobs(opts.home)].map(([name, j]) => [name, { next: j.next, ...(j.remote ? { remote: j.remote } : {}) }])), ...Object.assign({}, ...remoteStates.map((r) => r.jobs)) },
       });
     }
     if (req.method === "GET" && url.pathname === "/api/network") {
@@ -547,77 +388,34 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
       const reports = await (opts.models ?? (() => Promise.all(CODING_AGENTS.map((agent) => readModels(agent, cfg, opts.home, opts.log, opts.home)))))();
       return send(res, 200, { reports });
     }
-    const sessionMatch = /^\/api\/sessions\/([^/]+)\/(chat|subagents)(?:\/([^/]+))?$/.exec(url.pathname);
-    if (req.method === "GET" && sessionMatch) {
-      let name: string, child: string | undefined;
-      try { name = decodeURIComponent(sessionMatch[1]!); child = sessionMatch[3] === undefined ? undefined : decodeURIComponent(sessionMatch[3]); }
-      catch { return send(res, 404, { error: "no such local session" }); }
-      if (name.includes("/") || name.includes("\\") || (child !== undefined && !TRANSCRIPT_ID.test(child)) || (sessionMatch[2] === "chat" && child !== undefined)) return send(res, 404, { error: "no such local session or subagent" });
-      const { peers } = await brokerPeers(opts.pipe, token, opts.log);
-      const peer = peers.find((p) => p.name === name && !p.name.includes("/"));
-      if (!peer) return send(res, 404, { error: "no such local session" });
-      if (!peer.sessionId) return send(res, 409, { error: "This session has no sessionId yet." });
-      if (!TRANSCRIPT_ID.test(peer.sessionId) || !CODING_AGENTS.includes(peer.agent as typeof CODING_AGENTS[number])) return send(res, 404, { error: "no transcript for this session" });
-      if (sessionMatch[2] === "subagents" && child === undefined) return send(res, 200, { subagents: listNativeSubagents(peer, opts.transcripts) });
-      const from = url.searchParams.get("from") ?? "0";
-      if (!validTranscriptCursor(from)) return send(res, 400, { error: "invalid transcript cursor" });
-      const page = readTranscript(peer, from, child, opts.transcripts);
-      return page ? send(res, 200, page) : send(res, 404, { error: "no transcript for this session or subagent" });
-    }
-    if (req.method === "GET" && url.pathname === "/api/runs") {
-      const rawLimit = url.searchParams.get("limit");
-      const limit = rawLimit === null ? DEFAULT_RUN_PAGE_SIZE : /^\d+$/.test(rawLimit) ? Number(rawLimit) : NaN;
-      if (!Number.isSafeInteger(limit) || limit < 1 || limit > MAX_RUN_PAGE_SIZE) return send(res, 400, { error: `limit must be an integer from 1 to ${MAX_RUN_PAGE_SIZE}` });
-      try { return send(res, 200, pageRuns(listRuns(opts.home), url.searchParams.get("before"), limit)); }
-      catch { return send(res, 400, { error: "invalid run cursor" }); }
-    }
-    const jobChildrenMatch = /^\/api\/jobs\/([\w.-]+)\/subagents(?:\/([^/]+))?$/.exec(url.pathname);
-    if (req.method === "GET" && jobChildrenMatch) {
-      const name = jobChildrenMatch[1]!;
-      let child: string | undefined;
-      try { child = jobChildrenMatch[2] === undefined ? undefined : decodeURIComponent(jobChildrenMatch[2]); }
-      catch { return send(res, 404, { error: "no such job or subagent" }); }
-      if (child !== undefined && !TRANSCRIPT_ID.test(child)) return send(res, 404, { error: "no such job or subagent" });
-      const job = readHistoryJobs(opts.home).get(name);
-      const run = listRuns(opts.home).find((r) => r.job === name);
-      if (!job && !run) return send(res, 404, { error: "no such job" });
-      const agent = typeof job?.agent === "string" ? job.agent : run?.agent;
-      const sessionId = typeof job?.sessionId === "string" ? job.sessionId : typeof job?.threadId === "string" ? job.threadId : run?.sessionId ?? run?.session;
-      if (!sessionId) return send(res, 409, { error: "This job has no sessionId yet." });
-      if (!TRANSCRIPT_ID.test(sessionId) || !CODING_AGENTS.includes(agent as typeof CODING_AGENTS[number])) return send(res, 404, { error: "no transcript for this job" });
-      const session = { agent: agent as PeerInfo["agent"], sessionId, cwd: typeof job?.workdir === "string" ? job.workdir : run?.workdir ?? "" };
-      if (child === undefined) return send(res, 200, { subagents: listNativeSubagents(session, opts.transcripts) });
-      const from = url.searchParams.get("from") ?? "0";
-      if (!validTranscriptCursor(from)) return send(res, 400, { error: "invalid transcript cursor" });
-      const page = readTranscript(session, from, child, opts.transcripts);
-      return page ? send(res, 200, page) : send(res, 404, { error: "no transcript for this job or subagent" });
-    }
-    const runChatMatch = /^\/api\/runs\/([\w.-]+)\/chat$/.exec(url.pathname);
-    if (req.method === "GET" && runChatMatch) {
-      const from = url.searchParams.get("from") ?? "0";
-      if (!validTranscriptCursor(from)) return send(res, 400, { error: "invalid transcript cursor" });
-      const run = listRuns(opts.home).find((r) => r.name === runChatMatch[1]);
-      if (!run) return send(res, 404, { error: "no such run" });
-      const job = run.job ? readHistoryJobs(opts.home).get(run.job) : undefined;
-      const sessionId = run.sessionId ?? run.session ?? (typeof job?.sessionId === "string" ? job.sessionId : typeof job?.threadId === "string" ? job.threadId : null);
-      if (!sessionId) return send(res, 409, { error: "This run has no sessionId yet." });
-      if (!TRANSCRIPT_ID.test(sessionId) || !CODING_AGENTS.includes(run.agent as typeof CODING_AGENTS[number])) return send(res, 404, { error: "no transcript for this run" });
-      const page = readTranscript({ agent: run.agent as PeerInfo["agent"], sessionId, cwd: run.workdir ?? "" }, from, undefined, opts.transcripts);
-      return page ? send(res, 200, page) : send(res, 404, { error: "no transcript for this run" });
-    }
-    const runMatch = /^\/api\/runs\/([\w.-]+)$/.exec(url.pathname);
-    if (req.method === "GET" && runMatch) {
-      const log = readRunLogs(opts.home).find((record) => record.name === runMatch[1]);
-      if (!log) {
-        const recovered = listRuns(opts.home).find((run) => run.name === runMatch[1] && run.recovered);
-        return recovered ? send(res, 200, { text: "", next: 0, size: 0, recovered: true, hasLog: false }) : send(res, 404, { error: "no such run" });
+    // Decode the route identity once: the page sends Host/name as one encoded segment.
+    const remoteRoute = /^\/api\/(runs|sessions|jobs)\/(.+?)(\/chat|\/subagents(?:\/[^/]+)?)?$/.exec(url.pathname);
+    if (req.method === "GET" && remoteRoute) {
+      let identity: string;
+      try { identity = decodeURIComponent(remoteRoute[2]!); } catch { return send(res, 400, { error: "invalid dashboard identity" }); }
+      const match = /^([A-Za-z0-9][A-Za-z0-9._-]{0,63})\/([\w.-]{1,256})$/.exec(identity);
+      const address = match ? { instance: match[1]!, target: match[2]! } : null;
+      if (address) {
+        const path = `/api/${remoteRoute[1]}/${encodeURIComponent(address.target)}${remoteRoute[3] ?? ""}`;
+        const parsed = dashboardRequestSchema.safeParse({ path, query: Object.fromEntries(url.searchParams) });
+        if (!parsed.success) return send(res, 400, { error: "invalid dashboard read request" });
+        const result = await remoteRead(address.instance, parsed.data);
+        return send(res, result.status, result.body);
       }
-      const from = Math.max(0, Number(url.searchParams.get("from")) || 0);
-      const buf = readFileSync(log.file);
-      let end = Math.min(buf.length, from + MAX_LOG_CHUNK);
-      // Never cut a UTF-8 character in half: step back over continuation bytes (10xxxxxx).
-      while (end < buf.length && end > from && (buf[end]! & 0xc0) === 0x80) end--;
-      return send(res, 200, { text: buf.subarray(from, end).toString("utf8"), next: end, size: buf.length });
+    }
+    if (req.method === "GET" && (url.pathname === "/api/runs" || url.pathname === "/api/job-outcomes") && url.searchParams.has("host")) {
+      const host = url.searchParams.get("host")!;
+      const query = Object.fromEntries([...url.searchParams].filter(([key]) => key !== "host"));
+      const parsed = dashboardRequestSchema.safeParse({ path: url.pathname, query });
+      if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(host) || !parsed.success) return send(res, 400, { error: "invalid remote dashboard request" });
+      const result = await remoteRead(host, parsed.data);
+      return send(res, result.status, result.body);
+    }
+    if (req.method === "GET" && isDashboardReadPath(url.pathname)) {
+      const read = dashboardRequestSchema.safeParse({ path: url.pathname, query: Object.fromEntries(url.searchParams) });
+      if (!read.success) return send(res, 400, { error: "invalid dashboard read request" });
+      const result = await readDashboard({ home: opts.home, log: opts.log, transcripts: opts.transcripts, peers: async () => (await brokerPeers(opts.pipe, token, opts.log)).peers }, read.data);
+      return send(res, result.status, result.body);
     }
     if (req.method === "POST" && url.pathname === "/api/send") {
       // Also guards against cross-site form posts: they cannot set this header.
