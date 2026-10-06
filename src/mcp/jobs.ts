@@ -525,6 +525,8 @@ export class JobManager {
     if (current || !this.storePath || !this.restoreResume) return current;
     const saved = readStore(this.storePath, this.log, true).find((j) => j.id === id || j.name === ref);
     if (!saved || saved.status === "running") return undefined;
+    // The same lineage rule as restore(): a nested coordinator sees only its own children, a session only top-level jobs.
+    if (this.lineage ? saved.parentJob !== this.lineage.parentJob : saved.parentJob) return undefined;
     const job: Job = { ...saved, controller: new AbortController(), progress: null, queue: [], resume: this.restoreResume(saved.agent, saved.args ?? {}) };
     this.history.set(job.id, job);
     return job;
