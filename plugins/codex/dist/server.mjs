@@ -46863,7 +46863,7 @@ function renderMarkdown(src) {
   };
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
-    const fence = /^\s*(```|~~~)\s*([\w+-]*)\s*$/.exec(line);
+    const fence = /^\s*(```|~~~)[^`]*$/.exec(line);
     if (fence) {
       flush();
       const body = [];

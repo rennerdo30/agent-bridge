@@ -55,3 +55,13 @@ describe("dashboard steps", () => {
     expect(count(stepsHtml(log, "codex", {}), "merge the base")).toBe(1);
   });
 });
+
+describe("code fences with any info string", () => {
+  it("renders a fence labelled with punctuation as code, not as text plus an empty block", () => {
+    const html = md("Evidence remains in `.cache/x/`.\n```verify:\nstages: flora-leaf\nissue: AS-1984\n```\nAfter");
+    expect(html).toContain("<pre><code>stages: flora-leaf\nissue: AS-1984</code></pre>");
+    expect(html).not.toContain("```");
+    expect(html.match(/<pre>/g)?.length).toBe(1);
+    expect(html).toContain("After");
+  });
+});

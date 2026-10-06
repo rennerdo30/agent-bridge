@@ -36,7 +36,8 @@ export function renderMarkdown(src: string): string {
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]!;
-    const fence = /^\s*(```|~~~)\s*([\w+-]*)\s*$/.exec(line);
+    // Any info string after the fence (```ts, ```verify:, ``` json title="x"), as in CommonMark; only backticks end it.
+    const fence = /^\s*(```|~~~)[^`]*$/.exec(line);
     if (fence) {
       flush();
       const body: string[] = [];
