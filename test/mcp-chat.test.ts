@@ -109,6 +109,18 @@ describe.skipIf(!existsSync(SERVER))("dashboard and Codex jobs through the bundl
     expect(requests()).toEqual([]);
   });
 
+  it("derives an omitted spawn title, persists it and notes the fallback (AB-111)", async () => {
+    const tool = (await client.listTools()).tools.find((t) => t.name === "spawn_codex")!;
+    expect(tool.inputSchema.required).not.toContain("title");
+    writeFileSync(join(home, "finish-turn"), "finish");
+    const spawned = await call("spawn_codex", { prompt: "\n# Repair the castle gate\nKeep the arch intact.", cwd: home });
+    const job = /Subagent (codex-job-[\da-f]+) started/.exec(spawned)![1]!;
+    expect(spawned).toContain('Title derived from prompt: "Repair the castle gate".');
+    await waitFor(async () => (await call("peers")).includes(`${job} "Repair the castle gate": done`));
+    expect(requests().find((r) => r.method === "thread/name/set").params.name).toBe("Repair the castle gate");
+    expect(JSON.parse(readFileSync(join(home, "jobs.json"), "utf8")).jobs.find((j: any) => j.name === job).args.title).toBe("Repair the castle gate");
+  });
+
   it("reports credit-backed availability through usage_limits (AB-71)", async () => {
     const report = await call("usage_limits", { agent: "codex" });
     expect(report).toContain("usable, plan limit reached, running on credits (45,914 left)");

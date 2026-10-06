@@ -480,3 +480,6 @@ Grants persist across continuations, and cross-session job threads keep the sibl
 limit and durable undelivered-text notices. Both owners retain quiet inbox/dashboard copies;
 these copies do not enter their context automatically. Finished jobs return their saved
 report immediately: do not wait for a reply or receipt unless their owner continues them.
+
+Spawn tools accept an omitted `title`: they derive a short title from the prompt's first
+nonempty line and state that fallback in the result. Supplying a title keeps it unchanged.

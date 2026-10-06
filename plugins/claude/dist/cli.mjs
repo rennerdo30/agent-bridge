@@ -37322,7 +37322,13 @@ var Broker = class {
       const p = c.peer;
       const previous = stored.find((s) => s.id === p.id);
       if (previous) peers.delete(previous.name);
-      peers.set(p.name, { name: p.name, title: p.jobTitle ?? "", agent: p.jobAgent, status: "running" });
+      peers.set(p.name, {
+        name: p.name,
+        title: p.jobTitle ?? "",
+        agent: p.jobAgent,
+        status: previous?.status ?? "running",
+        ...previous?.finishedAt !== void 0 ? { finishedAt: previous.finishedAt } : {}
+      });
     }
     return [...peers.values()];
   }
@@ -37402,7 +37408,7 @@ ${message.body}`
       const supervisor = this.connByName(owner);
       if (supervisor) this.emit(supervisor, "message", note);
     }
-    if (stored && stored.status !== "running" && !target) {
+    if (stored && stored.status !== "running") {
       result.finishedRecipient = {
         name: stored.name,
         status: stored.status,

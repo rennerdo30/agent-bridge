@@ -53,6 +53,7 @@ import { isBridgeWorktree, isInside, resumeArgs, runDelegate, type DelegateArgs,
 import { JobRunners } from "./job-host.js";
 import { JOB_SETTING_KEYS, PERMISSION_KEY_AGENT, type JobSettings } from "./job-settings.js";
 import { attachDashboardJobControl } from "./dashboard-control.js";
+import { deriveJobTitle } from "./job-title.js";
 import { isJobSendTarget, MAX_JOB_SEND_TARGETS } from "../core/job-messaging.js";
 import { historyFiltersSchema, HISTORY_MAX_QUERY_CHARS, HISTORY_MAX_LIMIT, type HistorySearch } from "../core/history.js";
 import { answerHistory } from "../core/history-answer.js";
@@ -1022,9 +1023,11 @@ ${res.text || t("delegate.empty")}`, res.isError);
           `the result arrives as a message from "${target}-job-<id>" (injected automatically, or use wait_for_message with from=<job name>). ` +
           `Several subagents can run in parallel (max ${cfg.maxJobs}). ` +
           profile.permissionNote(cfg),
-        inputSchema: schema,
+        inputSchema: { ...schema, title: schema.title.optional().describe("A short title, 3-7 words. Optional: if omitted, derived from the prompt's first nonempty line and noted in the result.") },
       },
-      guarded(spawnName, async (a: DelegateArgs) => {
+      guarded(spawnName, async (input: Omit<DelegateArgs, "title"> & { title?: string }) => {
+        const derivedTitle = input.title === undefined;
+        let a: DelegateArgs = { ...input, title: input.title ?? deriveJobTitle(input.prompt, MAX_TITLE_CHARS) };
         if (target === "codex" && !a.host) a = { ...a, native_subagents: a.native_subagents ?? cfg.codexSubagents };
         if (a.host && (!a.cwd || a.send_to?.length)) throw new BridgeError("bad_request", "Remote jobs require an absolute remote cwd; send_to is local-only.");
         if (a.host) { const { host, send_to, ...args } = a; remoteSpawnArgsSchema.parse(args); }
@@ -1038,7 +1041,7 @@ ${res.text || t("delegate.empty")}`, res.isError);
         // Exact target options (sandbox, permission_mode, auto_approve) say it themselves.
         const exact = a.sandbox !== undefined || a.permission_mode !== undefined || a.auto_approve !== undefined;
         const note = exact ? "" : `\n${access === "edit" ? t("jobs.accessEdit") : access === "ask" ? t("jobs.accessAsk") : t("jobs.accessRead")}`;
-        return text(`${t("jobs.started", { name: job.name })}${note}`);
+        return text(`${t("jobs.started", { name: job.name })}${note}${derivedTitle ? `\nTitle derived from prompt: "${a.title}".` : ""}`);
       }),
     );
   }
