@@ -6,6 +6,10 @@
  *   broker -> client   {"t":"evt","ev":"message","data":{...}}
  */
 
+import type { NetworkStatus } from "../network/link.js";
+import type { NetworkIdentity } from "../network/pairing.js";
+import type { TransferResult } from "../network/files.js";
+
 export type AgentKind = "claude" | "codex" | "opencode" | "other";
 export const AGENT_KINDS: readonly AgentKind[] = ["claude", "codex", "opencode", "other"];
 /** Agents that agent-bridge can run headlessly (delegation / subagents). */
@@ -126,6 +130,11 @@ export interface RequestMap {
   /** Take over the unread mail of "-N" stand-in names of this peer that no one holds (after a reload). */
   claimMail: [{ names: string[] }, { moved: number }];
   ping: [Record<string, never>, { brokerPid: number; protocol: number }];
+  networkStatus: [Record<string, never>, NetworkStatus];
+  networkPair: [Record<string, never>, { code: string }];
+  networkLink: [{ code: string; host: string; port: number }, NetworkIdentity];
+  networkUnlink: [{ id: string }, { removed: boolean }];
+  sendFiles: [{ to: string; paths: string[] }, TransferResult];
 }
 export type Op = keyof RequestMap;
 

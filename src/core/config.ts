@@ -3,6 +3,7 @@ import { basename, join } from "node:path";
 import { CONFIG_FILE_NAME, DEFAULT_CLAUDE_BIN, DEFAULT_CODEX_BIN, DEFAULT_LINGER_SEC, DEFAULT_MAX_HOPS, DEFAULT_MAX_JOBS, DEFAULT_OPENCODE_BIN, DEFAULT_DASHBOARD_PORT, ENV, MAX_JOBS_LIMIT } from "./constants.js";
 import type { Logger } from "./logger.js";
 import { AGENT_KINDS, type AgentKind } from "./protocol.js";
+import { DEFAULT_NETWORK_CONFIG, parseNetworkConfig, type NetworkConfig } from "../network/config.js";
 
 /**
  * How incoming messages reach a Claude Code session.
@@ -51,6 +52,8 @@ export interface BridgeConfig {
   /** Run the web dashboard inside whichever session hosts the bridge. */
   dashboard: boolean;
   dashboardPort: number;
+  /** Broker federation is opt-in and read only when the broker starts. */
+  network: NetworkConfig;
 }
 
 export const DEFAULT_CONFIG: BridgeConfig = {
@@ -73,6 +76,7 @@ export const DEFAULT_CONFIG: BridgeConfig = {
   opencodeAutoApprove: false,
   dashboard: true,
   dashboardPort: DEFAULT_DASHBOARD_PORT,
+  network: DEFAULT_NETWORK_CONFIG,
 };
 
 const TRUE_VALUES = new Set(["1", "true", "yes", "on"]);
@@ -202,6 +206,7 @@ export function loadConfig(home: string, agent: AgentKind, log: Logger, env: Nod
     opencodeAutoApprove: pick("opencodeAutoApprove", null, parseBool) ?? d.opencodeAutoApprove,
     dashboard: pick("dashboard", ENV.dashboard, parseBool) ?? d.dashboard,
     dashboardPort: pick("dashboardPort", null, (v) => parseIntInRange(v, 1, 65_535)) ?? d.dashboardPort,
+    network: pick("network", null, parseNetworkConfig) ?? d.network,
   };
   log.debug("effective config", { ...cfg });
   return cfg;

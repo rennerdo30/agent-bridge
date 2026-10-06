@@ -15,6 +15,9 @@ import {
 import type { Logger } from "./logger.js";
 import { BridgeError, type AgentKind, type BridgeMessage, type PeerActivity, type PeerInfo, type SendArgs, type SendResult } from "./protocol.js";
 import { MessageStore } from "./store.js";
+import type { NetworkConfig } from "../network/config.js";
+import type { NetworkStatus } from "../network/link.js";
+import type { TransferResult } from "../network/files.js";
 
 export interface BridgeNodeOptions {
   pipePath: string;
@@ -33,6 +36,7 @@ export interface BridgeNodeOptions {
   jobAgent?: AgentKind;
   /** false: only connect to a broker, never become one (a short-lived job runner would take the bridge down with it). */
   canHostBroker?: boolean;
+  network?: { home: string; config: NetworkConfig };
 }
 
 export interface BridgeNodeEvents {
@@ -214,7 +218,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
       this.log.error("cannot open message store", { err, db: this.opts.dbPath });
       throw err;
     }
-    const broker = new Broker(this.opts.pipePath, store, this.log.child("broker"), this.opts.token);
+    const broker = new Broker(this.opts.pipePath, store, this.log.child("broker"), this.opts.token, Date.now, this.opts.network);
     try {
       await broker.listen();
       this.broker = broker;
@@ -348,6 +352,14 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
 
   peers(): Promise<PeerInfo[]> {
     return this.withClient((c) => c.request("peers", {}));
+  }
+
+  networkStatus(): Promise<NetworkStatus> {
+    return this.withClient((c) => c.request("networkStatus", {}));
+  }
+
+  sendFiles(to: string, paths: string[]): Promise<TransferResult> {
+    return this.withClient((c) => c.request("sendFiles", { to, paths }));
   }
 
   /** Locally buffered unread messages, oldest first. */

@@ -50,8 +50,8 @@ describe.skipIf(!existsSync(SERVER))("bundled MCP server end-to-end", () => {
   it("exposes the expected tools per agent", async () => {
     const c = (await claude.listTools()).tools.map((t) => t.name).sort();
     const x = (await codex.listTools()).tools.map((t) => t.name).sort();
-    expect(c).toEqual(["ask_codex", "ask_opencode", "auto_wake", "cancel_subagent", "dashboard", "hook_event", "inbox", "list_models", "max_subagents", "message_subagent", "peers", "send", "spawn_codex", "spawn_opencode", "usage_limits", "wait_for_message"]);
-    expect(x).toEqual(["ask_claude", "ask_opencode", "auto_wake", "cancel_subagent", "dashboard", "hook_event", "inbox", "list_models", "max_subagents", "message_subagent", "peers", "send", "spawn_claude", "spawn_opencode", "usage_limits", "wait_for_message"]);
+    expect(c).toEqual(["ask_codex", "ask_opencode", "auto_wake", "cancel_subagent", "dashboard", "hook_event", "inbox", "list_models", "max_subagents", "message_subagent", "network_status", "peers", "send", "send_files", "spawn_codex", "spawn_opencode", "usage_limits", "wait_for_message"]);
+    expect(x).toEqual(["ask_claude", "ask_opencode", "auto_wake", "cancel_subagent", "dashboard", "hook_event", "inbox", "list_models", "max_subagents", "message_subagent", "network_status", "peers", "send", "send_files", "spawn_claude", "spawn_opencode", "usage_limits", "wait_for_message"]);
   });
 
   it("declares the Claude channel capability only for Claude", () => {
