@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { request } from "node:http";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -10,6 +10,7 @@ import { attachDashboardJobControl } from "../src/mcp/dashboard-control.js";
 import { JobManager, type Job } from "../src/mcp/jobs.js";
 import { JOBS_FILE } from "../src/core/constants.js";
 import { DASHBOARD_JOB_CONVERSATION } from "../src/core/job-control.js";
+import { setJobOutcome } from "../src/core/job-outcomes.js";
 
 let env: TestEnv;
 let ui: { url: string; close: () => Promise<void> };
@@ -39,6 +40,27 @@ function recordJob(owner: string, job: Job): void {
 }
 
 describe("web dashboard", () => {
+  it("authenticates outcomes and derives legacy runs without rewriting their metadata", async () => {
+    expect((await fetch(`${base()}/api/job-outcomes`)).status).toBe(403);
+    const startedAt = Date.UTC(2026, 9, 6, 6, 32, 18);
+    const job = { id: "deadbeef", name: "codex-job-deadbeef", owner: "supervisor", agent: "codex", model: null, prompt: "task", startedAt,
+      status: "done", sessionId: null, workdir: null, worktree: { repoRoot: env.home, path: env.home, cwd: env.home, branch: "agent-bridge/deadbeef", base: "unknown", baseBranch: "main" } };
+    writeFileSync(join(env.home, JOBS_FILE), JSON.stringify([job]));
+    mkdirSync(join(env.home, "runs"), { recursive: true });
+    writeFileSync(join(env.home, "runs", `${RUN}.log`), "06:32:18 codex\n06:32:19 finished after 1s · done\n");
+    const legacy = JSON.stringify({ job: job.name, by: "supervisor", future: "keep" });
+    const meta = join(env.home, "runs", `${RUN}.json`);
+    writeFileSync(meta, legacy);
+    setJobOutcome(env.home, job, "supervisor", "held", "CPU A/B", startedAt + 2_000);
+    const response = await fetch(`${base()}/api/job-outcomes`, { headers: { cookie } });
+    expect(response.status).toBe(200);
+    const state = await response.json() as any;
+    expect(state.contractVersion).toBe(1);
+    expect(state.jobs[job.name].outcome).toMatchObject({ delivery: { status: "unknown" }, merge: { state: "held", branch: job.worktree.branch, reason: "CPU A/B" } });
+    expect(state.runs[RUN].merge.state).toBe("held");
+    expect(state.groups).toEqual({ needsReview: [], held: [job.name], merged: [], discarded: [] });
+    expect(readFileSync(meta, "utf8")).toBe(legacy);
+  });
   it("refuses requests without the secret, a wrong link or a foreign Host", async () => {
     expect((await fetch(`${base()}/api/state`)).status).toBe(403);
     expect((await fetch(`${base()}/?t=nope`)).status).toBe(403);

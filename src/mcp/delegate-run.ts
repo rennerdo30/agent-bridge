@@ -18,7 +18,7 @@ import { ResourceSlots, resourceSlotHint, SLOT_OWNER_ENV, SLOT_PID_ENV, SLOT_REN
 import { approvalHint, DESK_READ_PATTERNS, isAutoApproved, isHandoffToolCall, isOwnServerCall } from "../core/tool-allow.js";
 import { codexDriveMappings, codexPathReport } from "../core/codex-paths.js";
 import { scanWorktreeLinks, WORKTREE_LINK_HINT, worktreeLinkWarning } from "../core/worktree-links.js";
-import { changedFiles, createWorktree, finishWorktree, gitChangeSnapshot, gitDirsOutside, handoffWarning, subagentCommitMessage, worktreeReport, type Worktree } from "../core/worktree.js";
+import { changedFiles, createWorktree, finishWorktree, git, trustArgs, gitChangeSnapshot, gitDirsOutside, handoffWarning, subagentCommitMessage, worktreeReport, type Worktree } from "../core/worktree.js";
 import { formatSiblingMessages, formatUsage } from "./format.js";
 import { SiblingLink } from "./siblings.js";
 import { denyPendingApprovals, waitForApproval, type Job, type RunResult } from "./jobs.js";
@@ -219,6 +219,8 @@ export async function runDelegate(
         access: access ?? "default",
         permission: profile.permission(cfg, { ...a, access }),
         workdir,
+        ...(wt ? { branch: wt.branch, baseBranch: wt.baseBranch, repoRoot: wt.repoRoot } : {}),
+        jobStartedAt: job?.startedAt,
         continues: a.session_id ?? null,
       },
     });
@@ -352,6 +354,11 @@ export async function runDelegate(
     feed.end(res.isError ? "failed" : "done", res.text);
   } catch (err) {
     if (err instanceof DelegateError && err.sessionId) feed.meta({ session: err.sessionId });
+    if (wt) {
+      const branch = await git([...trustArgs(wt.path), "branch", "--show-current"], wt.path, dlog).catch(() => wt.branch);
+      const branchHead = await git([...trustArgs(wt.path), "rev-parse", "HEAD"], wt.path, dlog).catch(() => undefined);
+      feed.meta({ branch: branch || wt.branch, branchHead });
+    }
     feed.end(`failed: ${(err as Error)?.message ?? err}`);
     // The worktree keeps whatever the subagent did before failing: say where it is.
     if (wt && err instanceof Error) err.message += `\n\nIts worktree (with any partial work) is ${wt.path} on branch ${wt.branch}.`;
@@ -412,7 +419,11 @@ export async function runDelegate(
   } else if (wt) {
     try {
       const message = subagentCommitMessage({ answer: res.text, task: a.prompt, job: a._job, agent: target, model: a.model ?? defaultModel });
-      notes.push(worktreeReport(wt, await finishWorktree(wt, message, dlog)));
+      const outcome = await finishWorktree(wt, message, dlog);
+      wt.branch = outcome.branch;
+      wt.branchHead = await git([...trustArgs(wt.repoRoot, wt.path), "rev-parse", "HEAD"], wt.path, dlog);
+      feed.meta({ branch: wt.branch, branchHead: wt.branchHead });
+      notes.push(worktreeReport(wt, outcome));
     } catch (err) {
       // Never lose the answer over a git problem.
       notes.push(`Could not commit the changes in worktree ${wt.path} (branch ${wt.branch}): ${(err as Error).message}`);

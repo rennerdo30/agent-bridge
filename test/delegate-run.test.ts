@@ -1,4 +1,5 @@
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync, readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync, readFileSync, readdirSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_CONFIG } from "../src/core/config.js";
@@ -25,6 +26,27 @@ const context = (): RunContext => ({ agent: "claude", cfg: { ...DEFAULT_CONFIG }
 const job = (): Job => ({ id: "test", name: "codex-job-test", agent: "codex", model: null, prompt: "task", startedAt: Date.now(), controller: new AbortController(), progress: null, status: "running", sessionId: null, workdir: null, worktree: null, queue: [] });
 
 describe("delegation approval routing", () => {
+  it("records the actual finished branch and tip in run metadata and the saved worktree", async () => {
+    const repo = join(home, "repo");
+    mkdirSync(repo);
+    const git = (cwd: string, ...args: string[]) => execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+    git(repo, "init", "-q");
+    git(repo, "-c", "user.name=Test", "-c", "user.email=test@example.test", "commit", "--allow-empty", "-qm", "base");
+    const rc = { ...context(), cwd: () => repo };
+    const j = job();
+    vi.spyOn(DELEGATION_TARGETS.codex, "run").mockImplementation(async (_cfg, req) => {
+      git(req.cwd, "checkout", "-qb", "finished-work");
+      writeFileSync(join(req.cwd, "result.txt"), "done\n");
+      return { sessionId: "saved", text: "done", isError: false, details: {} };
+    });
+    const result = await runDelegate(rc, "codex", { title: "task", prompt: "task", access: "edit", worktree: true, _job: j.name }, j.controller.signal, undefined, true, j);
+    const metadata = readdirSync(join(home, "runs")).find((f) => f.endsWith(".json"))!;
+    const saved = JSON.parse(readFileSync(join(home, "runs", metadata), "utf8"));
+    expect(saved).toMatchObject({ branch: "finished-work", repoRoot: repo.replace(/\\/g, "/"), jobStartedAt: j.startedAt });
+    expect(saved.branchHead).toMatch(/^[a-f0-9]{40}$/);
+    expect(result.worktree?.branch).toBe("finished-work");
+    expect(result.worktree?.branchHead).toBe(saved.branchHead);
+  });
   it.each(["codex", "claude", "opencode"] as const)("allows desk reads by default without granting writes for %s", async (target) => {
     const rc = context();
     const j = job();

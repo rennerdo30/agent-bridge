@@ -18,6 +18,7 @@ import {
 import type { Logger } from "./logger.js";
 import { BridgeError, type AgentKind, type BridgeMessage, type PeerActivity, type PeerInfo, type SendArgs, type SendResult, type SiblingPeer } from "./protocol.js";
 import { ReadJournal } from "./read-journal.js";
+import { recordLocalResult } from "./local-result-receipts.js";
 import { MessageStore } from "./store.js";
 import { DASHBOARD_JOB_CONVERSATION } from "./job-control.js";
 import type { NetworkConfig } from "../network/config.js";
@@ -438,6 +439,8 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
    * background subagent. It is handled exactly like a peer message (hooks, wait_for_message, channel).
    */
   deliverLocal(m: BridgeMessage): void {
+    try { recordLocalResult(dirname(this.opts.dbPath), m); }
+    catch (err) { this.log.warn("could not retain local result receipt", { id: m.id, err: String(err) }); }
     this.onEvent("message", m);
   }
 

@@ -3,7 +3,7 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameS
 import { basename, dirname, join } from "node:path";
 import type { Logger } from "./logger.js";
 
-export const JSON_STORE_VERSION = 1;
+export const JSON_STORE_VERSION = 2;
 export const KEEP_STORE_BACKUPS = 3;
 const RENAME_ATTEMPTS = 50;
 const RENAME_RETRY_MS = 20;
