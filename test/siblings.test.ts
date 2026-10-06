@@ -3,7 +3,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { join } from "node:path";
 import { writeFileSync } from "node:fs";
 import { z } from "zod";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { nullLogger } from "../src/core/logger.js";
 import { DELEGATE_DEPTH_ENV } from "../src/core/delegate.js";
 import { JOBS_FILE } from "../src/core/constants.js";
@@ -12,7 +12,7 @@ import { formatSiblingMessages } from "../src/mcp/format.js";
 import { readStore } from "../src/mcp/jobs.js";
 import { BridgeNode } from "../src/core/node.js";
 import { ParentLink, parentFromEnv } from "../src/core/parent-link.js";
-import { isSiblingNote, type CodingAgent } from "../src/core/protocol.js";
+import { isSiblingNote, type BridgeMessage, type CodingAgent } from "../src/core/protocol.js";
 import { loadOrCreateToken } from "../src/core/token.js";
 import { startUi } from "../src/cli/ui.js";
 import { buildHookResponse } from "../src/mcp/hooks.js";
@@ -278,9 +278,51 @@ describe("sibling job messaging", () => {
     }
     await expect(a.chat.send(resumed.job.name, "Cross-session over budget", message.id)).rejects.toThrow(/Durable notice/);
     await until(() => a.node.unread().some((m) => m.conversationId.startsWith("sibling-drop-")));
-    expect(supervisor.unread().find((m) => m.conversationId.startsWith("sibling-drop-"))?.body).toContain("Cross-session over budget");
+    const notice = a.node.unread().find((m) => m.conversationId.startsWith("sibling-drop-"))!;
+    // Different sockets have no shared delivery order: wait for this owner's exact copy too.
+    await expect.poll(() => supervisor.get(notice.id)).toMatchObject({
+      id: notice.id, recipient: supervisor.name, body: notice.body,
+    });
+    expect(notice.body).toContain("Cross-session over budget");
     expect(resumed.node.unread().some((m) => m.body === "Cross-session over budget")).toBe(false);
     await otherOwner.stop();
+  });
+
+  it("waits for supervisor hop notices when sender delivery arrives first", async () => {
+    const a = await sibling("a", "codex", "session-a", true, ["opencode-job-b"]);
+    const b = await sibling("b", "opencode", "session-b", true, [a.job.name]);
+    const first = (await b.chat.send(a.job.name, "Contract question")).messages[0]!;
+    // Hold only the supervisor's event before it enters the local inbox. This deterministically
+    // reproduces independent socket delivery, while the real broker still persists both copies.
+    const receiver = supervisor as unknown as { onEvent(event: string, data: unknown): void };
+    const receive = receiver.onEvent.bind(receiver);
+    let held: BridgeMessage | undefined;
+    let release: NodeJS.Immediate | undefined;
+    const gate = vi.spyOn(receiver, "onEvent").mockImplementation((event, data) => {
+      const message = data as BridgeMessage;
+      if (event === "message" && message.conversationId.startsWith("sibling-drop-")) held = message;
+      else receive(event, data);
+    });
+    try {
+      await expect(a.node.sendSibling({ to: b.job.name, body: "Delayed-owner over budget", replyTo: first.id }, 1)).rejects.toThrow(/Durable notice/);
+      await until(() => held !== undefined && a.node.unread().some((m) => m.id === held!.id));
+      const notice = a.node.get(held!.id)!;
+      expect(supervisor.get(notice.id)).toBeUndefined();
+      expect(await a.node.messageReceipt(notice.id)).toEqual(expect.arrayContaining([
+        { recipient: supervisor.name, readAt: null },
+      ]));
+      // An immediate assertion here used to fail. Release on the next event-loop turn, without sleeps.
+      release = setImmediate(() => { gate.mockRestore(); receive("message", held!); });
+      await expect.poll(() => supervisor.get(notice.id)).toMatchObject({
+        id: notice.id, recipient: supervisor.name, body: notice.body,
+      });
+      expect(notice.body).toContain("Delayed-owner over budget");
+      expect(b.node.unread().some((m) => m.body === "Delayed-owner over budget")).toBe(false);
+    } finally {
+      if (release) clearImmediate(release);
+      gate.mockRestore();
+      if (held && !supervisor.hasSeen(held.id)) receive("message", held);
+    }
   });
 
   it("returns the saved report for an explicitly granted finished job from another session", async () => {
