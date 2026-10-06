@@ -1,3 +1,4 @@
+import { HISTORY_TICK_MS, historySearchSchema } from "./history.js";
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { createServer, type Server, type Socket } from "node:net";
@@ -73,6 +74,7 @@ type Handler<O extends Op> = (conn: Conn, args: RequestMap[O][0]) => RequestMap[
 export class Broker {
   private server: Server | null = null;
   private readonly conns = new Set<Conn>();
+  private historyTimer: NodeJS.Timeout | null = null;
   private purgeTimer: NodeJS.Timeout | null = null;
   private network: NetworkService | null = null;
   private networkChange: Promise<unknown> = Promise.resolve();
@@ -94,10 +96,20 @@ export class Broker {
         c.authed = true;
         return { brokerPid: process.pid };
       },
-      hello: (c, a) => this.onHello(c, a),
+      hello: (c, a) => { const result = this.onHello(c, a); this.store.history.rememberPeer(c.peer!); return result; },
       send: (c, a) => this.onSend(c, a),
       decide: (c, a) => this.onDecide(c, a),
       decisions: (c, a) => this.onDecisions(c, a),
+      searchHistory: (_, a) => {
+        const parsed = historySearchSchema.safeParse(a);
+        if (!parsed.success) throw new BridgeError("bad_request", "Invalid history query or filters.");
+        return this.store.history.search(parsed.data);
+      },
+      reindexHistory: (_, a) => {
+        const args = z.object({ reset: z.boolean().optional() }).strict().parse(a);
+        if (args.reset) this.store.history.reset();
+        return this.store.history.tick();
+      },
       peers: () => this.livePeers(),
       siblings: (c) => this.siblingPeers(c),
       sendSibling: (c, a) => this.onSendSibling(c, a),
@@ -105,7 +117,7 @@ export class Broker {
       ack: (c, a) => ({ acked: this.store.markRead(this.requirePeer(c).name, a.ids ?? [], this.now()) }),
       pending: (c, a) =>
         this.unreadMail(this.requirePeer(c).name, Math.min(Math.max(1, a.limit ?? PENDING_DEFAULT_LIMIT), PENDING_MAX_LIMIT)),
-      updatePeer: (c, a) => this.onUpdatePeer(c, a),
+      updatePeer: (c, a) => { const peer = this.onUpdatePeer(c, a); this.store.history.rememberPeer(peer); return peer; },
       claimMail: (c, a) => this.onClaimMail(c, a),
       ping: () => ({ brokerPid: process.pid, protocol: PROTOCOL_VERSION }),
       networkStatus: () => this.network?.status() ?? { enabled: false, config: this.networking?.config, discovered: [], paired: [] },
@@ -147,6 +159,10 @@ export class Broker {
         this.server = server;
         this.purgeTimer = setInterval(() => this.purge(), PURGE_INTERVAL_MS);
         this.purgeTimer.unref();
+        this.historyTimer = setInterval(() => {
+          try { this.store.history.tick(); } catch (err) { this.log.warn("history indexing failed", { err: String(err) }); }
+        }, HISTORY_TICK_MS);
+        this.historyTimer.unref();
         this.purge();
         this.log.info("broker listening", { pipe: this.pipePath });
         if (this.networking?.config.enabled) {
@@ -171,6 +187,7 @@ export class Broker {
   }
 
   async close(): Promise<void> {
+    if (this.historyTimer) clearInterval(this.historyTimer);
     if (this.purgeTimer) clearInterval(this.purgeTimer);
     await this.networkChange;
     await this.network?.close();

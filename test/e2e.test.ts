@@ -1,6 +1,9 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { promisify } from "node:util";
+import { execFile } from "node:child_process";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { DatabaseSync } from "node:sqlite";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -13,7 +16,7 @@ async function spawnAgent(agent: "claude" | "codex", name: string): Promise<Clie
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [SERVER, `--agent=${agent}`],
-    env: { ...process.env, AGENT_BRIDGE_HOME: home, AGENT_BRIDGE_NAME: name, AGENT_BRIDGE_DELIVERY: "hooks", AGENT_BRIDGE_DASHBOARD: "off", AGENT_BRIDGE_LOG_LEVEL: "debug" } as Record<string, string>,
+    env: { ...process.env, AGENT_BRIDGE_HOME: home, AGENT_BRIDGE_NAME: name, AGENT_BRIDGE_DELIVERY: "hooks", AGENT_BRIDGE_DASHBOARD: "off", AGENT_BRIDGE_LOG_LEVEL: "debug", CLAUDE_CONFIG_DIR: join(home, "claude"), CODEX_HOME: join(home, "codex"), XDG_DATA_HOME: home } as Record<string, string>,
     stderr: "ignore",
   });
   const client = new Client({ name: `test-${agent}`, version: "0.0.0" });
@@ -50,8 +53,8 @@ describe.skipIf(!existsSync(SERVER))("bundled MCP server end-to-end", () => {
   it("exposes the expected tools per agent", async () => {
     const c = (await claude.listTools()).tools.map((t) => t.name).sort();
     const x = (await codex.listTools()).tools.map((t) => t.name).sort();
-    expect(c).toEqual(["ask_codex", "ask_opencode", "auto_wake", "cancel_subagent", "dashboard", "decide", "decisions", "hook_event", "inbox", "list_models", "max_subagents", "message_subagent", "network_status", "peers", "send", "send_files", "spawn_codex", "spawn_opencode", "usage_limits", "wait_for_message"]);
-    expect(x).toEqual(["ask_claude", "ask_opencode", "auto_wake", "cancel_subagent", "dashboard", "decide", "decisions", "hook_event", "inbox", "list_models", "max_subagents", "message_subagent", "network_status", "peers", "send", "send_files", "spawn_claude", "spawn_opencode", "usage_limits", "wait_for_message"]);
+    expect(c).toEqual(["ask_codex", "ask_opencode", "auto_wake", "cancel_subagent", "dashboard", "decide", "decisions", "hook_event", "inbox", "list_models", "max_subagents", "message_subagent", "network_status", "peers", "search_history", "send", "send_files", "spawn_codex", "spawn_opencode", "usage_limits", "wait_for_message"]);
+    expect(x).toEqual(["ask_claude", "ask_opencode", "auto_wake", "cancel_subagent", "dashboard", "decide", "decisions", "hook_event", "inbox", "list_models", "max_subagents", "message_subagent", "network_status", "peers", "search_history", "send", "send_files", "spawn_claude", "spawn_opencode", "usage_limits", "wait_for_message"]);
   });
 
   it("declares the Claude channel capability only for Claude", () => {
@@ -87,6 +90,25 @@ describe.skipIf(!existsSync(SERVER))("bundled MCP server end-to-end", () => {
 
   it("reports an empty inbox after everything was consumed", async () => {
     expect(textOf(await codex.callTool({ name: "inbox", arguments: {} }))).toContain("No unread messages");
+  });
+
+  it("rebuilds through the bundled CLI and searches bounded linked hits through MCP", async () => {
+    const sent = textOf(await claude.callTool({ name: "send", arguments: { to: "codex-e2e", message: "walnut bundled history" } }));
+    const id = /Message (\S+) sent/.exec(sent)![1]!;
+    const cli = join(import.meta.dirname, "..", "plugins", "claude", "dist", "cli.mjs");
+    await claude.callTool({ name: "decide", arguments: { topic: "Maintenance", text: "Keep source data", scope: "all" } });
+    const source = new DatabaseSync(join(home, "bridge.db"), { readOnly: true });
+    const before = source.prepare("SELECT id,recipient,body,read_at FROM messages ORDER BY id,recipient").all();
+    const result = await promisify(execFile)(process.execPath, [cli, "reindex"], { env: { ...process.env, AGENT_BRIDGE_HOME: home, AGENT_BRIDGE_DASHBOARD: "off", CLAUDE_CONFIG_DIR: join(home, "claude"), CODEX_HOME: join(home, "codex"), XDG_DATA_HOME: home }, timeout: 30_000 });
+    expect(result.stdout).toContain("History index rebuilt");
+    expect(source.prepare("SELECT id,recipient,body,read_at FROM messages ORDER BY id,recipient").all()).toEqual(before); source.close();
+    const found = JSON.parse(textOf(await codex.callTool({ name: "search_history", arguments: { query: "walnut bundled", filters: { kind: "message", agent: "claude" }, limit: 1 } })));
+    expect(found.hits).toMatchObject([{ message: id, snippet: "walnut bundled history", sourceLink: `/api/history/message%3A${id}` }]);
+    expect(found.answer).toBeUndefined();
+    const empty = JSON.parse(textOf(await codex.callTool({ name: "search_history", arguments: { query: "unfindable-query-xyz", answer: true } })));
+    expect(empty.answer).toMatchObject({ agent: null, model: null, sources: [] });
+    const invalid = await codex.callTool({ name: "search_history", arguments: { query: "walnut", filters: { since: 200, until: 100 } } });
+    expect(invalid.isError).toBe(true);
   });
 
   it("returns structured decision revisions and searchable history through MCP", async () => {

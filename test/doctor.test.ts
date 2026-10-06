@@ -247,11 +247,13 @@ describe("lossless, readable archives", () => {
     manager.cancelAll();
   });
   it("archives completed run pairs by age, keeps live runs, and reads current and legacy archives", () => {
-    vi.stubEnv("AGENT_BRIDGE_ARCHIVE_AGE_MS", "10");
+    // Creating the next fixture must not auto-archive the finished run before the age check.
+    vi.stubEnv("AGENT_BRIDGE_ARCHIVE_AGE_MS", "0");
     const finished = startRunFeed({ home, name: "old", header: "codex", meta: { title: "keep title" } }); finished.end("done");
     const active = startRunFeed({ home, name: "live", header: "codex" });
     utimesSync(finished.logPath, new Date(0), new Date(0));
     utimesSync(active.logPath, new Date(0), new Date(0));
+    vi.stubEnv("AGENT_BRIDGE_ARCHIVE_AGE_MS", "10");
     expect(archiveHome(home, true, 100).runs).toBe(1);
     expect(existsSync(finished.logPath)).toBe(false);
     expect(existsSync(active.logPath)).toBe(true);

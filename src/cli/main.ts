@@ -22,6 +22,7 @@ import { runSmoke } from "./smoke.js";
 import { cleanupWorktrees } from "../core/worktree-cleanup.js";
 import { installOpencode, opencodeSourceDir, uninstallOpencode, type InstallResult } from "./opencode-install.js";
 import { runJobRunner } from "../mcp/job-runner.js";
+import { runReindex } from "./reindex.js";
 import { runSlot } from "./slot.js";
 import { runNetworkCommand } from "../network/cli.js";
 import { runDoctor } from "./doctor.js";
@@ -45,6 +46,9 @@ async function main(argv: string[]): Promise<number> {
   switch (command) {
     case "doctor":
       return runDoctor(rest, home, out);
+    case "reindex":
+      if (rest.length) { out("Usage: agent-bridge reindex"); return 2; }
+      return runReindex(home, pipe, log, out);
     case "slot":
       return runSlot(rest, home, loadConfig(home, "other", log), out);
     case "connect":

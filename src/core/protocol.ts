@@ -10,6 +10,7 @@ import type { NetworkConfig } from "../network/config.js";
 import type { NetworkStatus } from "../network/link.js";
 import type { NetworkIdentity } from "../network/pairing.js";
 import type { TransferResult } from "../network/files.js";
+import type { HistorySearch, HistoryResult } from "./history.js";
 import type { DecideArgs, DecisionsArgs, OwnerDecision } from "./decisions.js";
 
 export type AgentKind = "claude" | "codex" | "opencode" | "other";
@@ -165,6 +166,8 @@ export interface RequestMap {
   send: [SendArgs, SendResult];
   decide: [DecideArgs, { decision: OwnerDecision; deliveredTo: string[] }];
   decisions: [DecisionsArgs, OwnerDecision[]];
+  searchHistory: [HistorySearch, HistoryResult];
+  reindexHistory: [{ reset?: boolean }, { work: number; discovering: boolean }];
   peers: [Record<string, never>, PeerInfo[]];
   siblings: [Record<string, never>, SiblingPeer[]];
   sendSibling: [SendArgs & { maxHops: number }, SendResult];

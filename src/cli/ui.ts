@@ -27,6 +27,8 @@ import { searchMessages } from "../core/message-history.js";
 import { archivedRunMeta, runFileName, runLogFiles } from "../core/run-archive.js";
 import { readArchivedJobs } from "../core/job-archive.js";
 import { listNativeSubagents, readTranscript, TRANSCRIPT_ID, validTranscriptCursor, type TranscriptPaths } from "../core/transcripts/index.js";
+import { HISTORY_MAX_QUERY_CHARS, historySearchSchema, readHistory, readHistorySource } from "../core/history.js";
+import { answerHistory, type HistoryAnswerDependencies } from "../core/history-answer.js";
 import { readDecisions, decisionScopeSchema, MAX_DECISION_TEXT_CHARS, MAX_DECISION_TOPIC_CHARS, type DecisionsArgs } from "../core/decisions.js";
 import { answerPendingApproval, listPendingApprovals, MAX_APPROVAL_REASON_CHARS } from "../core/relay.js";
 
@@ -263,6 +265,7 @@ export interface UiOptions {
   models?: () => Promise<ModelReport[]>;
   /** CLI storage roots; default to the current user's CLI homes. Replaceable for tests. */
   transcripts?: TranscriptPaths;
+  historyAnswer?: HistoryAnswerDependencies;
 }
 
 /** Usage is read by running each CLI briefly: keep it this long unless the page asks for a refresh. */
@@ -341,6 +344,27 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
       const before = url.searchParams.get("before");
       if (limit !== null && (!/^\d+$/.test(limit) || Number(limit) < 1 || Number(limit) > 1_000) || before !== null && (!/^\d+$/.test(before) || !Number.isSafeInteger(Number(before)))) return send(res, 400, { error: "invalid limit or before" });
       return send(res, 200, { messages: searchMessages(dbPath, { query: url.searchParams.get("query") ?? "", limit: limit === null ? undefined : Number(limit), before: before === null ? undefined : Number(before) }) });
+    }
+    if (req.method === "GET" && url.pathname.startsWith("/api/history/")) {
+      let id: string;
+      try { id = decodeURIComponent(url.pathname.slice("/api/history/".length)); }
+      catch { return send(res, 400, { error: "Invalid history source id." }); }
+      if (!id || id.length > HISTORY_MAX_QUERY_CHARS) return send(res, 400, { error: "Invalid history source id." });
+      const source = readHistorySource(dbPath, id);
+      return source ? send(res, 200, source) : send(res, 404, { error: "No such indexed history source." });
+    }
+    if (req.method === "GET" && url.pathname === "/api/search") {
+      const allowed = new Set(["q", "session", "job", "agent", "kind", "since", "until", "limit", "answer"]);
+      if ([...url.searchParams.keys()].some((key) => !allowed.has(key) || url.searchParams.getAll(key).length !== 1)) return send(res, 400, { error: "Unknown or duplicate search parameter." });
+      const filters = Object.fromEntries(["session", "job", "agent", "kind", "since", "until"].flatMap((key) => {
+        const value = url.searchParams.get(key);
+        return value === null ? [] : [[key, (key === "since" || key === "until") && /^\d+$/.test(value) ? Number(value) : value]];
+      }));
+      const args = historySearchSchema.safeParse({ query: url.searchParams.get("q"), filters, ...(url.searchParams.has("limit") ? { limit: Number(url.searchParams.get("limit")) } : {}) });
+      const answer = url.searchParams.get("answer");
+      if (!args.success || (answer !== null && !["true", "false"].includes(answer))) return send(res, 400, { error: "Invalid history query, filters, limit or answer flag." });
+      const result = readHistory(dbPath, args.data);
+      return send(res, 200, answer === "true" ? { ...result, answer: await answerHistory(args.data.query, result, loadConfig(opts.home, "other", opts.log), opts.home, opts.log, opts.historyAnswer) } : result);
     }
     if (req.method === "GET" && (url.pathname === "/api/decisions" || /^\/api\/decisions\/[^/]+\/history$/.test(url.pathname))) {
       let args: DecisionsArgs;

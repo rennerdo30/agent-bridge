@@ -41,15 +41,25 @@ export function migrateSqlite(db: DatabaseSync, file: string, existed: boolean, 
     if (backup) {
       const original = new DatabaseSync(backup, { readOnly: true });
       try {
-        const tables = original.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'").all();
+        // Virtual tables and their shadows were restored by the savepoint. Never rewrite FTS internals.
+        const tables = original.prepare("PRAGMA table_list").all().filter((r) => r.schema === "main" && r.type === "table" && !String(r.name).startsWith("sqlite_"));
         for (const row of tables) {
           const name = String(row.name);
-          const quoted = `"${name.replaceAll('"', '""')}"`;
-          const rows = original.prepare(`SELECT * FROM ${quoted}`).all();
+          const quote = (s: string) => `"${s.replaceAll('"', '""')}"`;
+          const quoted = quote(name);
+          const columns = original.prepare(`PRAGMA table_xinfo(${quoted})`).all().filter((r) => r.hidden === 0).map((r) => String(r.name));
+          let rowidAlias = "__bridge_backup_rowid";
+          while (columns.includes(rowidAlias)) rowidAlias += "_";
+          const rowid = ["rowid", "_rowid_", "oid"].find((s) => !columns.includes(s));
+          const hasRowid = row.wr === 0 && rowid !== undefined;
+          const select = original.prepare(`SELECT ${hasRowid ? `${quote(rowid)} AS ${quote(rowidAlias)}, ` : ""}${columns.map(quote).join(", ")} FROM ${quoted}`);
+          select.setReadBigInts(true);
+          const rows = select.all();
           db.exec(`DELETE FROM ${quoted}`);
           for (const data of rows) {
-            const columns = Object.keys(data).map((s) => `"${s.replaceAll('"', '""')}"`).join(", ");
-            db.prepare(`INSERT INTO ${quoted} (${columns}) VALUES (${Object.keys(data).map(() => "?").join(", ")})`).run(...Object.values(data));
+            const insertColumns = hasRowid ? [rowid, ...columns] : columns;
+            const values = hasRowid ? [data[rowidAlias]!, ...columns.map((s) => data[s]!)] : columns.map((s) => data[s]!);
+            db.prepare(`INSERT INTO ${quoted} (${insertColumns.map(quote).join(", ")}) VALUES (${values.map(() => "?").join(", ")})`).run(...values);
           }
         }
         db.exec(`PRAGMA user_version = ${Number(original.prepare("PRAGMA user_version").get()!.user_version)}`);

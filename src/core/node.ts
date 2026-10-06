@@ -23,6 +23,7 @@ import { DASHBOARD_JOB_CONVERSATION } from "./job-control.js";
 import type { NetworkConfig } from "../network/config.js";
 import type { NetworkStatus } from "../network/link.js";
 import type { TransferResult } from "../network/files.js";
+import type { HistorySearch, HistoryResult } from "./history.js";
 import type { DecideArgs, DecisionsArgs, OwnerDecision } from "./decisions.js";
 
 export interface BridgeNodeOptions {
@@ -392,6 +393,14 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
 
   decide(args: DecideArgs): Promise<{ decision: OwnerDecision; deliveredTo: string[] }> {
     return this.withClient((c) => c.request("decide", args));
+  }
+
+  searchHistory(args: HistorySearch): Promise<HistoryResult> {
+    return this.withClient((c) => c.request("searchHistory", args));
+  }
+
+  reindexHistory(reset = false): Promise<{ work: number; discovering: boolean }> {
+    return this.withClient((c) => c.request("reindexHistory", { reset }));
   }
 
   decisions(args: DecisionsArgs = {}): Promise<OwnerDecision[]> {
