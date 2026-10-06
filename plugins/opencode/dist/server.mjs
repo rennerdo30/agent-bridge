@@ -48579,7 +48579,15 @@ form#send { background: transparent; border-top: 0; padding: 12px 0 0; }
 .cnote { margin-top: 6px; font-size: 13px; color: var(--muted); }
 .cnote:empty { display: none; }
 .conv-head #cSub { margin-top: 4px; }
-.conv-head .follow, .conv-head #setToggle { margin-top: 2px; }
+
+/* The conversation's "\u22EF" menu, top right */
+.conv-menu { position: relative; flex: none; }
+.menu-btn { font-size: 18px; line-height: 1; padding: 4px 10px; letter-spacing: .05em; }
+.menu-btn[aria-expanded="true"] { color: var(--text); background: var(--panel-2); border-color: var(--line); }
+.menu-pop { position: absolute; right: 0; top: calc(100% + 6px); z-index: 20; min-width: 240px; padding: 6px; display: flex; flex-direction: column; gap: 2px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--pop); }
+.menu-item, button.menu-item { display: flex; align-items: center; gap: 9px; width: 100%; padding: 8px 10px; border: 0; border-radius: 7px; background: none; color: var(--text); font: inherit; font-size: 13px; font-weight: 400; text-align: left; cursor: pointer; filter: none; }
+.menu-item:hover, button.menu-item:hover:not(:disabled) { background: var(--panel-2); filter: none; }
+.menu-item input { margin: 0; }
 
 /* Messages: a feed with the sender's agent */
 .msg { display: grid; grid-template-columns: 24px minmax(0, 1fr); gap: 10px; align-items: start; padding: 12px 16px; }
@@ -48767,8 +48775,13 @@ form#send { background: transparent; border-top: 0; padding: 12px 0 0; }
       <div class="conv-head">
         <div id="cAvatar"></div>
         <div class="grow"><div class="title" id="cTitle">Conversation</div><div class="cmeta" id="cMeta"></div><div class="cnote" id="cNote"></div><div class="small muted ell" id="cSub"></div></div>
-        <button type="button" class="ghost hidden" id="setToggle" aria-expanded="false" aria-controls="jobSettings" title="Model, effort and permission for its next turn">Settings</button>
-        <label class="follow"><input type="checkbox" id="follow" checked> follow</label>
+        <div class="conv-menu">
+          <button type="button" class="icon-btn menu-btn" id="convMenuBtn" aria-haspopup="menu" aria-expanded="false" aria-controls="convMenu" title="Options for this conversation">\u22EF</button>
+          <div class="menu-pop hidden" id="convMenu" role="menu">
+            <button type="button" role="menuitem" class="menu-item hidden" id="setToggle" aria-expanded="false" aria-controls="jobSettings">Settings for its next turn\u2026</button>
+            <label class="menu-item" role="menuitemcheckbox"><input type="checkbox" id="follow" checked> Follow new output</label>
+          </div>
+        </div>
       </div>
       <form id="jobSettings" class="settings hidden" aria-label="Settings for the next turn">
         <label class="wide">Model<input id="setModel" list="setModels" autocomplete="off" spellcheck="false"><datalist id="setModels"></datalist></label>
@@ -49703,7 +49716,17 @@ $("jobSend").addEventListener("submit", async (e) => {
   }
 });
 
+/** The conversation's "\u22EF" menu: settings for the next turn and following new output. */
+function setConvMenu(open) {
+  $("convMenu").classList.toggle("hidden", !open);
+  $("convMenuBtn").setAttribute("aria-expanded", String(open));
+}
+$("convMenuBtn").addEventListener("click", () => setConvMenu($("convMenu").classList.contains("hidden")));
+document.addEventListener("click", (e) => { if (!e.target.closest(".conv-menu")) setConvMenu(false); });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") setConvMenu(false); });
+
 $("setToggle").addEventListener("click", () => {
+  setConvMenu(false);
   const open = settingsHidden();
   $("jobSettings").classList.toggle("hidden", !open);
   $("setToggle").setAttribute("aria-expanded", String(open));
