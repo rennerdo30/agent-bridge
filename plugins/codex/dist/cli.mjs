@@ -32563,12 +32563,16 @@ function unwrapNpmShim(shimPath, readFile2 = (p) => readFileSync14(p, "utf8")) {
 var liveChildren = /* @__PURE__ */ new Set();
 function killTree(child) {
   const pid = child.pid;
-  if (!pid || child.exitCode !== null) return Promise.resolve();
+  if (!pid || child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
+  const closed = new Promise((resolve14) => child.once("close", () => resolve14()));
   return new Promise((resolve14) => {
     if (process.platform === "win32") {
       const tk = spawn("taskkill", ["/PID", String(pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" });
       tk.on("error", () => (child.kill(), resolve14()));
-      tk.on("close", () => resolve14());
+      tk.on("close", (code) => {
+        if (code !== 0 && child.exitCode === null && child.signalCode === null) child.kill();
+        resolve14();
+      });
     } else {
       try {
         process.kill(-pid, "SIGTERM");
@@ -32584,7 +32588,7 @@ function killTree(child) {
       }, KILL_GRACE_MS);
       child.once("exit", () => (clearTimeout(force), resolve14()));
     }
-  });
+  }).then(() => closed);
 }
 function killPid(pid) {
   if (process.platform === "win32") {

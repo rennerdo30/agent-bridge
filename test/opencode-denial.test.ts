@@ -1,8 +1,9 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 import { nullLogger } from "../src/core/logger.js";
 import { delegateToOpencodeServed } from "../src/core/opencode-served.js";
+import { pidAlive } from "../src/core/delegate.js";
 
 it("passes the supervisor's denial reason through opencode's permission reply", async () => {
   const root = join(process.cwd(), ".agent-bridge-test");
@@ -10,6 +11,8 @@ it("passes the supervisor's denial reason through opencode's permission reply", 
   const dir = mkdtempSync(join(root, "opencode-denial-"));
   writeFileSync(join(dir, "serve"), `
 import { createServer } from "node:http";
+import { writeFileSync } from "node:fs";
+writeFileSync("serve.pid", String(process.pid));
 let events; let decision;
 const event = (type, properties) => events.write("data: " + JSON.stringify({ type, properties }) + "\\n\\n");
 const server = createServer(async (req, res) => {
@@ -34,5 +37,6 @@ server.listen(0, "127.0.0.1", () => console.log("listening on http://127.0.0.1:"
       },
     });
     expect(JSON.parse(res.text)).toEqual({ reply: "reject", message: "Denied by supervisor parent: publish only from merged master" });
+    expect(pidAlive(Number(readFileSync(join(dir, "serve.pid"), "utf8")))).toBe(false);
   } finally { rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 }, 15_000);
