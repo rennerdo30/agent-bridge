@@ -147,6 +147,8 @@ describe.skipIf(!existsSync(SERVER))("background subagents in job runners", () =
     await waitFor(() => existsSync(link));
     const continued = parentFromEnv(JSON.parse(readFileSync(link, "utf8")))!;
     expect((await continued.siblings.policy!()).sendTo).toEqual([external.name]);
+    // The broker moved with the replaced session: the external session reconnects on its own schedule (slow CI runners).
+    await waitFor(async () => external.isConnected && (await external.peers().catch(() => [])).some((p) => p.name === external.name));
     expect((await continued.siblings.send(external.name, "Follow-up deliverable", reply.id)).deliveredTo).toEqual([external.name]);
     writeFileSync(release, "");
     await waitFor(() => readRunnerState(home, a.id)?.status === "done");
