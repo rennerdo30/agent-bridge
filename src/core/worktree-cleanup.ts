@@ -53,10 +53,19 @@ export function unlinkLinks(dir: string): number {
   return count;
 }
 
-/** Whether `dir` holds nothing but folders and links (what a half-removed worktree with a junction leaves). */
+/**
+ * Whether `dir` holds nothing but folders and links (what a half-removed worktree with a junction leaves).
+ * A folder it cannot read counts as holding files: unknown content is never deleted.
+ */
 function onlyFoldersAndLinks(dir: string): boolean {
   dir = toNamespacedPath(resolve(dir));
-  return readdirSync(dir, { withFileTypes: true }).every((e) => {
+  let entries;
+  try {
+    entries = readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return false;
+  }
+  return entries.every((e) => {
     const path = join(dir, e.name);
     if (e.isSymbolicLink() || lstatSync(path).isSymbolicLink()) return true;
     return e.isDirectory() && onlyFoldersAndLinks(path);
@@ -144,7 +153,9 @@ export async function cleanupWorktrees(opts: { home: string; apply: boolean; log
   for (const d of readdirSync(dir, { withFileTypes: true })) {
     // Links in the worktrees folder itself are not ours to follow either.
     if (!d.isDirectory() || lstatSync(join(dir, d.name)).isSymbolicLink()) continue;
-    out.push(await inspect(join(dir, d.name), jobs, opts.apply, opts.log));
+    const path = join(dir, d.name);
+    // One unreadable worktree (e.g. files of another account) must not stop the others.
+    out.push(await inspect(path, jobs, opts.apply, opts.log).catch((err): CleanupEntry => ({ path, branch: null, action: "kept", reason: `cannot read it: ${(err as Error).message.split("\n")[0]}` })));
   }
   return out;
 }

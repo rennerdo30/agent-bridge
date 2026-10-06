@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, toNamespacedPath } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -496,5 +496,23 @@ describe("cleanup", () => {
     for (const wt of [unmerged, dirty, running]) expect(existsSync(wt.path)).toBe(true);
     expect(existsSync(leftover)).toBe(false);
     expect(readFileSync(join(foreign, "notes.txt"), "utf8")).toBe("mine\n");
+  });
+});
+
+describe("cleanup with unreadable folders", () => {
+  // Windows ACL denial needs another account; POSIX modes stand in for it (root reads anything).
+  it.skipIf(process.platform === "win32" || process.getuid?.() === 0)("keeps a leftover folder it cannot read and still inspects the rest", async () => {
+    const worktrees = join(home, "worktrees");
+    const locked = join(worktrees, "other-project-1234abcd", "cache", "locked");
+    mkdirSync(locked, { recursive: true });
+    mkdirSync(join(worktrees, "empty-leftover-5678abcd", "folder"), { recursive: true });
+    chmodSync(locked, 0o000);
+    try {
+      const entries = await cleanupWorktrees({ home, apply: false, log: nullLogger });
+      expect(entries.find((e) => e.path.includes("other-project"))).toMatchObject({ action: "kept" });
+      expect(entries.find((e) => e.path.includes("empty-leftover"))).toMatchObject({ action: "would remove" });
+    } finally {
+      chmodSync(locked, 0o700);
+    }
   });
 });
