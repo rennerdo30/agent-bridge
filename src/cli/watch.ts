@@ -1,7 +1,8 @@
-import { closeSync, existsSync, openSync, readdirSync, readSync, statSync } from "node:fs";
+import { closeSync, existsSync, openSync, readSync, statSync } from "node:fs";
 import { StringDecoder } from "node:string_decoder";
 import { join } from "node:path";
 import { RUNS_DIR_NAME } from "../core/runfeed.js";
+import { runLogFiles } from "../core/run-archive.js";
 
 const POLL_MS = 500;
 const CHUNK = 64 * 1024;
@@ -11,9 +12,9 @@ const FINISHED = / finished after \d+s · /;
 export function findRunLog(home: string, filter?: string): string | null {
   const dir = join(home, RUNS_DIR_NAME);
   if (!existsSync(dir)) return null;
-  const logs = readdirSync(dir)
-    .filter((f) => f.endsWith(".log") && (!filter || f.includes(filter)))
-    .map((f) => ({ path: join(dir, f), t: statSync(join(dir, f)).mtimeMs }))
+  const logs = runLogFiles(home)
+    .filter((f) => !filter || f.includes(filter))
+    .map((path) => ({ path, t: statSync(path).mtimeMs }))
     .sort((a, b) => b.t - a.t);
   return logs[0]?.path ?? null;
 }
