@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { basename, join, resolve } from "node:path";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statfsSync, writeFileSync } from "node:fs";
+import { basename, join, parse, resolve, sep } from "node:path";
 import { z } from "zod";
 import { AGENT_KINDS } from "../core/protocol.js";
 import { NETWORK_NAME_PATTERN, OWNER_DIR_MODE, OWNER_FILE_MODE } from "./constants.js";
@@ -28,6 +28,26 @@ export type TransferResult = z.infer<typeof transferResultSchema>;
 
 function checksum(data: Buffer): string { return createHash("sha256").update(data).digest("hex"); }
 
+/** Check every ancestor: lstat never follows a symlink or Windows junction. */
+export function assertTransferPath(path: string): void {
+  const absolute = resolve(path);
+  let current = parse(absolute).root;
+  for (const component of absolute.slice(current.length).split(sep).filter(Boolean)) {
+    current = join(current, component);
+    if (lstatSync(current).isSymbolicLink()) throw new Error("file transfer does not follow symlinks or junctions");
+  }
+}
+
+export function ensureTransferDirectory(path: string): void {
+  if (!existsSync(path)) {
+    const parent = resolve(path, "..");
+    ensureTransferDirectory(parent);
+    mkdirSync(path, { mode: OWNER_DIR_MODE });
+  }
+  assertTransferPath(path);
+  if (!lstatSync(path).isDirectory()) throw new Error("transfer directory is not a directory");
+}
+
 /** Portable names also exclude Windows alternate streams, device names and case aliases. */
 export function safeTransferPath(path: string): boolean {
   const components = path.split("/");
@@ -43,6 +63,7 @@ export function collectTransfer(paths: string[], cwd: string, to: string, from: 
   const walk = (source: string, path: string) => {
     if (!safeTransferPath(path)) throw new Error("unsafe or too deep transfer path");
     if (entries.length >= MAX_TRANSFER_ENTRIES) throw new Error("too many transfer entries");
+    assertTransferPath(source);
     const stat = lstatSync(source);
     if (stat.isSymbolicLink()) throw new Error("file transfer does not follow symlinks or junctions");
     if (stat.isDirectory()) {
@@ -90,9 +111,13 @@ function validateEntries(transfer: FileTransfer): { entries: { path: string; dat
 export function receiveTransfer(home: string, input: FileTransfer): TransferResult {
   const transfer = transferSchema.parse(input);
   const { entries, bytes, files } = validateEntries(transfer);
+  assertTransferPath(home);
+  const disk = statfsSync(home, { bigint: true });
+  if (disk.bavail * disk.bsize < BigInt(bytes)) throw new Error("insufficient free disk space for transfer");
   const inbox = join(home, "inbox");
-  mkdirSync(inbox, { recursive: true, mode: OWNER_DIR_MODE });
+  ensureTransferDirectory(inbox);
   if (lstatSync(inbox).isSymbolicLink()) throw new Error("inbox cannot be a symlink");
+  assertTransferPath(inbox);
   const final = join(inbox, transfer.id);
   if (existsSync(final)) throw new Error("transfer already received");
   const staging = mkdtempSync(join(inbox, ".partial-"));

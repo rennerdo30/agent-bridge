@@ -410,11 +410,11 @@ var require_codegen = __commonJS({
         const rhs = this.rhs === void 0 ? "" : ` = ${this.rhs}`;
         return `${varKind} ${this.name}${rhs};` + _n;
       }
-      optimizeNames(names, constants) {
+      optimizeNames(names, constants2) {
         if (!names[this.name.str])
           return;
         if (this.rhs)
-          this.rhs = optimizeExpr(this.rhs, names, constants);
+          this.rhs = optimizeExpr(this.rhs, names, constants2);
         return this;
       }
       get names() {
@@ -431,10 +431,10 @@ var require_codegen = __commonJS({
       render({ _n }) {
         return `${this.lhs} = ${this.rhs};` + _n;
       }
-      optimizeNames(names, constants) {
+      optimizeNames(names, constants2) {
         if (this.lhs instanceof code_1.Name && !names[this.lhs.str] && !this.sideEffects)
           return;
-        this.rhs = optimizeExpr(this.rhs, names, constants);
+        this.rhs = optimizeExpr(this.rhs, names, constants2);
         return this;
       }
       get names() {
@@ -495,8 +495,8 @@ var require_codegen = __commonJS({
       optimizeNodes() {
         return `${this.code}` ? this : void 0;
       }
-      optimizeNames(names, constants) {
-        this.code = optimizeExpr(this.code, names, constants);
+      optimizeNames(names, constants2) {
+        this.code = optimizeExpr(this.code, names, constants2);
         return this;
       }
       get names() {
@@ -525,12 +525,12 @@ var require_codegen = __commonJS({
         }
         return nodes.length > 0 ? this : void 0;
       }
-      optimizeNames(names, constants) {
+      optimizeNames(names, constants2) {
         const { nodes } = this;
         let i = nodes.length;
         while (i--) {
           const n = nodes[i];
-          if (n.optimizeNames(names, constants))
+          if (n.optimizeNames(names, constants2))
             continue;
           subtractNames(names, n.names);
           nodes.splice(i, 1);
@@ -583,12 +583,12 @@ var require_codegen = __commonJS({
           return void 0;
         return this;
       }
-      optimizeNames(names, constants) {
+      optimizeNames(names, constants2) {
         var _a3;
-        this.else = (_a3 = this.else) === null || _a3 === void 0 ? void 0 : _a3.optimizeNames(names, constants);
-        if (!(super.optimizeNames(names, constants) || this.else))
+        this.else = (_a3 = this.else) === null || _a3 === void 0 ? void 0 : _a3.optimizeNames(names, constants2);
+        if (!(super.optimizeNames(names, constants2) || this.else))
           return;
-        this.condition = optimizeExpr(this.condition, names, constants);
+        this.condition = optimizeExpr(this.condition, names, constants2);
         return this;
       }
       get names() {
@@ -611,10 +611,10 @@ var require_codegen = __commonJS({
       render(opts) {
         return `for(${this.iteration})` + super.render(opts);
       }
-      optimizeNames(names, constants) {
-        if (!super.optimizeNames(names, constants))
+      optimizeNames(names, constants2) {
+        if (!super.optimizeNames(names, constants2))
           return;
-        this.iteration = optimizeExpr(this.iteration, names, constants);
+        this.iteration = optimizeExpr(this.iteration, names, constants2);
         return this;
       }
       get names() {
@@ -650,10 +650,10 @@ var require_codegen = __commonJS({
       render(opts) {
         return `for(${this.varKind} ${this.name} ${this.loop} ${this.iterable})` + super.render(opts);
       }
-      optimizeNames(names, constants) {
-        if (!super.optimizeNames(names, constants))
+      optimizeNames(names, constants2) {
+        if (!super.optimizeNames(names, constants2))
           return;
-        this.iterable = optimizeExpr(this.iterable, names, constants);
+        this.iterable = optimizeExpr(this.iterable, names, constants2);
         return this;
       }
       get names() {
@@ -695,11 +695,11 @@ var require_codegen = __commonJS({
         (_b = this.finally) === null || _b === void 0 ? void 0 : _b.optimizeNodes();
         return this;
       }
-      optimizeNames(names, constants) {
+      optimizeNames(names, constants2) {
         var _a3, _b;
-        super.optimizeNames(names, constants);
-        (_a3 = this.catch) === null || _a3 === void 0 ? void 0 : _a3.optimizeNames(names, constants);
-        (_b = this.finally) === null || _b === void 0 ? void 0 : _b.optimizeNames(names, constants);
+        super.optimizeNames(names, constants2);
+        (_a3 = this.catch) === null || _a3 === void 0 ? void 0 : _a3.optimizeNames(names, constants2);
+        (_b = this.finally) === null || _b === void 0 ? void 0 : _b.optimizeNames(names, constants2);
         return this;
       }
       get names() {
@@ -1000,7 +1000,7 @@ var require_codegen = __commonJS({
     function addExprNames(names, from) {
       return from instanceof code_1._CodeOrName ? addNames(names, from.names) : names;
     }
-    function optimizeExpr(expr, names, constants) {
+    function optimizeExpr(expr, names, constants2) {
       if (expr instanceof code_1.Name)
         return replaceName(expr);
       if (!canOptimize(expr))
@@ -1015,14 +1015,14 @@ var require_codegen = __commonJS({
         return items;
       }, []));
       function replaceName(n) {
-        const c = constants[n.str];
+        const c = constants2[n.str];
         if (c === void 0 || names[n.str] !== 1)
           return n;
         delete names[n.str];
         return c;
       }
       function canOptimize(e) {
-        return e instanceof code_1._Code && e._items.some((c) => c instanceof code_1.Name && names[c.str] === 1 && constants[c.str] !== void 0);
+        return e instanceof code_1._Code && e._items.some((c) => c instanceof code_1.Name && names[c.str] === 1 && constants2[c.str] !== void 0);
       }
     }
     function subtractNames(names, from) {
@@ -2984,7 +2984,7 @@ var require_compile = __commonJS({
       const schOrFunc = root.refs[ref];
       if (schOrFunc)
         return schOrFunc;
-      let _sch = resolve11.call(this, root, ref);
+      let _sch = resolve12.call(this, root, ref);
       if (_sch === void 0) {
         const schema = (_a3 = root.localRefs) === null || _a3 === void 0 ? void 0 : _a3[ref];
         const { schemaId } = this.opts;
@@ -3011,7 +3011,7 @@ var require_compile = __commonJS({
     function sameSchemaEnv(s1, s2) {
       return s1.schema === s2.schema && s1.root === s2.root && s1.baseId === s2.baseId;
     }
-    function resolve11(root, ref) {
+    function resolve12(root, ref) {
       let sch;
       while (typeof (sch = this.refs[ref]) == "string")
         ref = sch;
@@ -3837,11 +3837,11 @@ var require_fast_uri = __commonJS({
         normalizeString(uri, options);
       } else if (typeof uri === "object") {
         uri = /** @type {T} */
-        parse4(serialize2(uri, options), options);
+        parse5(serialize2(uri, options), options);
       }
       return uri;
     }
-    function resolve11(baseURI, relativeURI, options) {
+    function resolve12(baseURI, relativeURI, options) {
       const schemelessOptions = options ? Object.assign({ scheme: "null" }, options) : { scheme: "null" };
       const {
         parsed: baseParsed,
@@ -3874,57 +3874,57 @@ var require_fast_uri = __commonJS({
       schemelessOptions.skipEscape = true;
       return serialize2(resolved, schemelessOptions);
     }
-    function resolveComponent(base, relative7, options, skipNormalization) {
+    function resolveComponent(base2, relative8, options, skipNormalization) {
       const target = {};
       if (!skipNormalization) {
-        base = parse4(serialize2(base, options), options);
-        relative7 = parse4(serialize2(relative7, options), options);
+        base2 = parse5(serialize2(base2, options), options);
+        relative8 = parse5(serialize2(relative8, options), options);
       }
       options = options || {};
-      if (!options.tolerant && relative7.scheme) {
-        target.scheme = relative7.scheme;
-        target.userinfo = relative7.userinfo;
-        target.host = relative7.host;
-        target.port = relative7.port;
-        target.path = removeDotSegments(relative7.path || "");
-        target.query = relative7.query;
+      if (!options.tolerant && relative8.scheme) {
+        target.scheme = relative8.scheme;
+        target.userinfo = relative8.userinfo;
+        target.host = relative8.host;
+        target.port = relative8.port;
+        target.path = removeDotSegments(relative8.path || "");
+        target.query = relative8.query;
       } else {
-        if (relative7.userinfo !== void 0 || relative7.host !== void 0 || relative7.port !== void 0) {
-          target.userinfo = relative7.userinfo;
-          target.host = relative7.host;
-          target.port = relative7.port;
-          target.path = removeDotSegments(relative7.path || "");
-          target.query = relative7.query;
+        if (relative8.userinfo !== void 0 || relative8.host !== void 0 || relative8.port !== void 0) {
+          target.userinfo = relative8.userinfo;
+          target.host = relative8.host;
+          target.port = relative8.port;
+          target.path = removeDotSegments(relative8.path || "");
+          target.query = relative8.query;
         } else {
-          if (!relative7.path) {
-            target.path = base.path;
-            if (relative7.query !== void 0) {
-              target.query = relative7.query;
+          if (!relative8.path) {
+            target.path = base2.path;
+            if (relative8.query !== void 0) {
+              target.query = relative8.query;
             } else {
-              target.query = base.query;
+              target.query = base2.query;
             }
           } else {
-            if (relative7.path[0] === "/") {
-              target.path = removeDotSegments(relative7.path);
+            if (relative8.path[0] === "/") {
+              target.path = removeDotSegments(relative8.path);
             } else {
-              if ((base.userinfo !== void 0 || base.host !== void 0 || base.port !== void 0) && !base.path) {
-                target.path = "/" + relative7.path;
-              } else if (!base.path) {
-                target.path = relative7.path;
+              if ((base2.userinfo !== void 0 || base2.host !== void 0 || base2.port !== void 0) && !base2.path) {
+                target.path = "/" + relative8.path;
+              } else if (!base2.path) {
+                target.path = relative8.path;
               } else {
-                target.path = base.path.slice(0, base.path.lastIndexOf("/") + 1) + relative7.path;
+                target.path = base2.path.slice(0, base2.path.lastIndexOf("/") + 1) + relative8.path;
               }
               target.path = removeDotSegments(target.path);
             }
-            target.query = relative7.query;
+            target.query = relative8.query;
           }
-          target.userinfo = base.userinfo;
-          target.host = base.host;
-          target.port = base.port;
+          target.userinfo = base2.userinfo;
+          target.host = base2.host;
+          target.port = base2.port;
         }
-        target.scheme = base.scheme;
+        target.scheme = base2.scheme;
       }
-      target.fragment = relative7.fragment;
+      target.fragment = relative8.fragment;
       return target;
     }
     function equal(uriA, uriB, options) {
@@ -4177,7 +4177,7 @@ var require_fast_uri = __commonJS({
       }
       return { parsed, malformedAuthorityOrPort, malformedPercentEncoding, malformedSchemeSpecific, malformedHost, malformedScheme };
     }
-    function parse4(uri, opts) {
+    function parse5(uri, opts) {
       return parseWithStatus(uri, opts).parsed;
     }
     function normalizeString(uri, opts) {
@@ -4210,11 +4210,11 @@ var require_fast_uri = __commonJS({
     var fastUri = {
       SCHEMES,
       normalize,
-      resolve: resolve11,
+      resolve: resolve12,
       resolveComponent,
       equal,
       serialize: serialize2,
-      parse: parse4
+      parse: parse5
     };
     module.exports = fastUri;
     module.exports.default = fastUri;
@@ -7577,9 +7577,9 @@ var ParentLink = class {
         }
       );
     });
-    await new Promise((resolve11, reject) => {
+    await new Promise((resolve12, reject) => {
       this.server.once("error", reject);
-      this.server.listen(0, HOST, () => resolve11());
+      this.server.listen(0, HOST, () => resolve12());
     });
     this.url = `http://${HOST}:${this.server.address().port}`;
   }
@@ -7853,9 +7853,9 @@ var PermissionRelay = class {
     });
     this.server.requestTimeout = 0;
     this.server.headersTimeout = 0;
-    await new Promise((resolve11, reject) => {
+    await new Promise((resolve12, reject) => {
       this.server.once("error", reject);
-      this.server.listen(0, RELAY_HOST, () => resolve11());
+      this.server.listen(0, RELAY_HOST, () => resolve12());
     });
     const { port } = this.server.address();
     this.url = `http://${RELAY_HOST}:${port}${RELAY_PATH}`;
@@ -7924,9 +7924,9 @@ async function publishApproval(home, approval, answer) {
   });
   server.requestTimeout = ANSWER_TIMEOUT_MS;
   server.headersTimeout = ANSWER_TIMEOUT_MS;
-  await new Promise((resolve11, reject) => {
+  await new Promise((resolve12, reject) => {
     server.once("error", reject);
-    server.listen(0, RELAY_HOST, resolve11);
+    server.listen(0, RELAY_HOST, resolve12);
   });
   server.unref();
   try {
@@ -8053,7 +8053,7 @@ var DelegateError = class _DelegateError extends Error {
 function resolveBinary(bin, env = process.env, platform = process.platform) {
   const isWin = platform === "win32";
   const exts = isWin ? (env.PATHEXT ?? DEFAULT_PATHEXT).split(";").filter(Boolean) : [""];
-  const candidates = (base) => isWin && !extname(base) ? exts.map((e) => base + e.toLowerCase()) : [base];
+  const candidates = (base2) => isWin && !extname(base2) ? exts.map((e) => base2 + e.toLowerCase()) : [base2];
   if (isAbsolute(bin) || bin.includes("/") || bin.includes("\\")) {
     return candidates(bin).find((c) => existsSync3(c)) ?? null;
   }
@@ -8081,11 +8081,11 @@ var liveChildren = /* @__PURE__ */ new Set();
 function killTree(child) {
   const pid = child.pid;
   if (!pid || child.exitCode !== null) return Promise.resolve();
-  return new Promise((resolve11) => {
+  return new Promise((resolve12) => {
     if (process.platform === "win32") {
       const tk = spawn("taskkill", ["/PID", String(pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" });
-      tk.on("error", () => (child.kill(), resolve11()));
-      tk.on("close", () => resolve11());
+      tk.on("error", () => (child.kill(), resolve12()));
+      tk.on("close", () => resolve12());
     } else {
       try {
         process.kill(-pid, "SIGTERM");
@@ -8097,9 +8097,9 @@ function killTree(child) {
           process.kill(-pid, "SIGKILL");
         } catch {
         }
-        resolve11();
+        resolve12();
       }, KILL_GRACE_MS);
-      child.once("exit", () => (clearTimeout(force), resolve11()));
+      child.once("exit", () => (clearTimeout(force), resolve12()));
     }
   });
 }
@@ -8175,7 +8175,7 @@ function runProcess(opts) {
   }
   const { resolved, args, needsShell } = command;
   opts.log.debug("spawning delegate", { bin: resolved, args, cwd: opts.cwd, shell: needsShell });
-  return new Promise((resolve11, reject) => {
+  return new Promise((resolve12, reject) => {
     const child = spawn(resolved, args, {
       cwd: opts.cwd,
       // Some CLIs (opencode) take their project folder from PWD rather than the real cwd; keep them in sync.
@@ -8234,7 +8234,7 @@ ${tail.slice(tail.indexOf("\n") + 1)}` : head;
       stderr = (stderr + d).slice(-MAX_CAPTURE_CHARS);
     });
     child.on("error", (err) => finish(() => reject(new DelegateError(`failed to start ${opts.bin}: ${err.message}`, "failed"))));
-    child.on("close", (code, signal) => finish(() => resolve11({ code, signal, stdout: captured(), stderr })));
+    child.on("close", (code, signal) => finish(() => resolve12({ code, signal, stdout: captured(), stderr })));
     child.stdin.on("error", () => {
     });
     child.stdin.end(opts.stdin);
@@ -8731,7 +8731,7 @@ function encodeFrame(frame) {
 
 // src/network/config.ts
 import { hostname as hostname3 } from "node:os";
-import { join as join9 } from "node:path";
+import { isAbsolute as isAbsolute2, join as join9 } from "node:path";
 
 // node_modules/zod/v4/classic/external.js
 var external_exports = {};
@@ -10578,18 +10578,18 @@ var validateAsync = async (schema, value, _ctx) => {
   return result.issues.length === 0;
 };
 var _encode = (_Err) => {
-  const parse4 = _parse(_Err);
+  const parse5 = _parse(_Err);
   const fn = (schema, value, _ctx, _params) => {
     const ctx = _ctx ? { ..._ctx, direction: "backward" } : { direction: "backward" };
-    return parse4(schema, value, ctx, finalizeParams(fn, _params));
+    return parse5(schema, value, ctx, finalizeParams(fn, _params));
   };
   return fn;
 };
 var encode = /* @__PURE__ */ _encode($ZodRealError);
 var _decode = (_Err) => {
-  const parse4 = _parse(_Err);
+  const parse5 = _parse(_Err);
   const fn = (schema, value, _ctx, _params) => {
-    return parse4(schema, value, _ctx, finalizeParams(fn, _params));
+    return parse5(schema, value, _ctx, finalizeParams(fn, _params));
   };
   return fn;
 };
@@ -13759,7 +13759,7 @@ var recursive = /* @__PURE__ */ new WeakMap();
 var NONE = 0;
 var ASSUMED = 1;
 var PROVEN = 2;
-function isRecursive(inst, stack, resolve11) {
+function isRecursive(inst, stack, resolve12) {
   const cached2 = recursive.get(inst);
   if (cached2 !== void 0)
     return cached2 ? PROVEN : NONE;
@@ -13769,7 +13769,7 @@ function isRecursive(inst, stack, resolve11) {
   let result = NONE;
   const check2 = (child) => {
     if (result !== PROVEN && child?._zod) {
-      const answer = isRecursive(child, stack, resolve11);
+      const answer = isRecursive(child, stack, resolve12);
       if (answer > result)
         result = answer;
     }
@@ -13780,7 +13780,7 @@ function isRecursive(inst, stack, resolve11) {
       const desc = Object.getOwnPropertyDescriptor(sh, key2);
       if (spread && !desc.enumerable)
         continue;
-      const child = desc.get ? ASSUMED : desc.value?._zod ? isRecursive(desc.value, stack, resolve11) : NONE;
+      const child = desc.get ? ASSUMED : desc.value?._zod ? isRecursive(desc.value, stack, resolve12) : NONE;
       if (child > answer)
         answer = child;
     }
@@ -13844,7 +13844,7 @@ function isRecursive(inst, stack, resolve11) {
       break;
     // `$ZodLazy` caches its inner on the def, so a resolved edge is followed exactly
     case "lazy": {
-      const inner = def._cachedInner ?? (resolve11 ? inst._zod.innerType : void 0);
+      const inner = def._cachedInner ?? (resolve12 ? inst._zod.innerType : void 0);
       merge2(inner ? isRecursive(inner, stack, false) : ASSUMED);
       break;
     }
@@ -13924,14 +13924,14 @@ var memo = {
     var _a3;
     (_a3 = inst._zod).deferred ?? (_a3.deferred = []);
     inst._zod.deferred.push(() => {
-      const base = inst._zod.parse;
+      const base2 = inst._zod.parse;
       const wrapped = (payload, ctx) => {
         if (ctx.direction !== "backward" && isBackEdge(ctx, payload.value))
           throw new $ZodCyclicError();
-        return base(payload, ctx);
+        return base2(payload, ctx);
       };
       inst._zod.parse = wrapped;
-      if (inst._zod.run === base)
+      if (inst._zod.run === base2)
         inst._zod.run = wrapped;
     });
   },
@@ -13943,15 +13943,15 @@ var memo = {
     let lastBucket;
     (_a3 = inst._zod).deferred ?? (_a3.deferred = []);
     inst._zod.deferred.push(() => {
-      const base = inst._zod.parse;
+      const base2 = inst._zod.parse;
       const wrapped = (payload, ctx) => {
         if (isRecursiveInst === void 0) {
           const walked = isRecursive(inst, /* @__PURE__ */ new Set(), false);
           if (walked === NONE) {
-            inst._zod.parse = base;
+            inst._zod.parse = base2;
             if (inst._zod.run === wrapped)
-              inst._zod.run = base;
-            return base(payload, ctx);
+              inst._zod.run = base2;
+            return base2(payload, ctx);
           }
           if (walked === PROVEN || rechecked)
             isRecursiveInst = true;
@@ -13960,7 +13960,7 @@ var memo = {
         }
         const input2 = payload.value;
         if (!isRef(input2))
-          return base(payload, ctx);
+          return base2(payload, ctx);
         let state = ctx[STATE];
         if (!state) {
           state = { buckets: /* @__PURE__ */ new WeakMap(), backEdges: void 0 };
@@ -13989,7 +13989,7 @@ var memo = {
         }
         handoff = bucket;
         const depth = open.length;
-        const result = base(payload, ctx);
+        const result = base2(payload, ctx);
         handoff = void 0;
         const entry = open.length > depth ? open.pop() : void 0;
         if (result instanceof Promise) {
@@ -14004,7 +14004,7 @@ var memo = {
         return result;
       };
       inst._zod.parse = wrapped;
-      if (inst._zod.run === base)
+      if (inst._zod.run === base2)
         inst._zod.run = wrapped;
     });
   }
@@ -28428,6 +28428,8 @@ var OWNER_FILE_MODE = 384;
 var OWNER_DIR_MODE = 448;
 
 // src/network/config.ts
+var MAX_FETCH_ROOT_CHARS = 1024;
+var MAX_FETCH_ROOTS = 128;
 var networkConfigSchema = external_exports.object({
   enabled: external_exports.boolean().default(false),
   name: external_exports.string().regex(NETWORK_NAME_PATTERN).default(hostname3().replace(/[^A-Za-z0-9._-]/g, "-").replace(/^[^A-Za-z0-9]+/, "").slice(0, MAX_NETWORK_NAME_CHARS) || "host"),
@@ -28440,7 +28442,9 @@ var networkConfigSchema = external_exports.object({
     agents: external_exports.array(external_exports.enum(CODING_AGENTS)).max(3).default([]),
     /** Pair names explicitly permitted to request jobs; no pair is trusted implicitly. */
     allowPeers: external_exports.array(external_exports.string().regex(NETWORK_NAME_PATTERN)).max(50).default([])
-  }).default({ enabled: false, allowRoots: [], agents: [], allowPeers: [] })
+  }).default({ enabled: false, allowRoots: [], agents: [], allowPeers: [] }),
+  maxTransferBytes: external_exports.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
+  fetchRoots: external_exports.array(external_exports.string().min(1).max(MAX_FETCH_ROOT_CHARS).refine(isAbsolute2, "fetch roots must be absolute paths")).max(MAX_FETCH_ROOTS).optional()
 });
 var DEFAULT_NETWORK_CONFIG = networkConfigSchema.parse({});
 function parseNetworkConfig(value) {
@@ -28589,10 +28593,10 @@ function loadConfig(home, agent, log, env = process.env) {
     if (err.code !== "ENOENT") log.warn("ignoring unreadable config file", { path, err: err.message });
   }
   const section = isRecord(file2[agent]) ? file2[agent] : {};
-  const pick2 = (key2, envKey, parse4) => {
+  const pick2 = (key2, envKey, parse5) => {
     for (const v of [envKey ? env[envKey] : void 0, section[key2], file2[key2]]) {
       if (v === void 0) continue;
-      const parsed = parse4(v);
+      const parsed = parse5(v);
       if (parsed !== void 0) return parsed;
       log.warn("ignoring invalid config value", { key: key2, value: String(v) });
     }
@@ -28718,7 +28722,7 @@ function startServe(bin, cwd, env) {
     resolved = target.command;
     prefix = target.prefix;
   }
-  return new Promise((resolve11, reject) => {
+  return new Promise((resolve12, reject) => {
     const child = spawn2(resolved, [...prefix, "serve", "--port", "0", "--hostname", "127.0.0.1"], {
       cwd,
       env: { ...env, PWD: cwd },
@@ -28729,7 +28733,7 @@ function startServe(bin, cwd, env) {
     trackChild(child);
     const output2 = watchServeOutput((url2) => {
       clearTimeout(timer);
-      resolve11({ child, url: url2 });
+      resolve12({ child, url: url2 });
     });
     const timer = setTimeout(() => {
       void killTree(child);
@@ -28960,9 +28964,9 @@ ${req.prompt}`);
     child.stdin.write(`${JSON.stringify(msg)}
 `);
   };
-  const request2 = (method, params) => new Promise((resolve11, reject) => {
+  const request2 = (method, params) => new Promise((resolve12, reject) => {
     const id = nextId++;
-    pending.set(id, { resolve: resolve11, reject });
+    pending.set(id, { resolve: resolve12, reject });
     write({ id, method, params });
   });
   const editPaths = /* @__PURE__ */ new Map();
@@ -29236,8 +29240,8 @@ function supportsAsk(target, relay) {
   if (target === "codex") return process.env[CODEX_EXEC_ENV] !== "1" || relay.codexHookTrusted;
   return false;
 }
-function opencodeEditAsks(base, a) {
-  return a.access === "edit" && a.auto_approve === void 0 && Boolean(base.approve && base.canApprove);
+function opencodeEditAsks(base2, a) {
+  return a.access === "edit" && a.auto_approve === void 0 && Boolean(base2.approve && base2.canApprove);
 }
 var DELEGATION_TARGETS = {
   codex: {
@@ -29248,33 +29252,33 @@ var DELEGATION_TARGETS = {
     schema: { sandbox: external_exports.enum(CODEX_SANDBOXES).optional().describe("Overrides access with an exact Codex sandbox mode") },
     permissionNote: (cfg) => `Codex runs in the "${cfg.codexSandbox}" sandbox unless you pass access or sandbox. Worktree edit runs use "${cfg.codexWorktreeSandbox ?? (cfg.codexSandbox === "read-only" ? "workspace-write" : cfg.codexSandbox)}" (config codexWorktreeSandbox); workspace-write can restrict builds and network access.${codexEnvironmentNote()}`,
     permission: (cfg, a) => a.sandbox ?? (a.access ? CODEX_SANDBOX_FOR[a.access] : cfg.codexSandbox),
-    run: async (cfg, base, a) => {
+    run: async (cfg, base2, a) => {
       const sandbox = a.sandbox ?? (a.access ? CODEX_SANDBOX_FOR[a.access] : cfg.codexSandbox);
       const relay = a.access === "ask" && Boolean(a.relay?.codexHookTrusted);
       if (process.env[CODEX_EXEC_ENV] !== "1") {
-        let sessionId = base.sessionId ?? null;
+        let sessionId = base2.sessionId ?? null;
         for (let attempt = 1; ; attempt++) {
           try {
-            return await delegateToCodexAppServer({ ...base, sessionId, bin: cfg.codexBin, sandbox, networkAccess: cfg.codexWorkspaceWriteNetworkAccess ?? void 0, writableRoots: base.writableRoots, askMode: a.access === "ask", approve: a.access === "ask" && a.relay ? a.relay.onPermission : base.approve });
+            return await delegateToCodexAppServer({ ...base2, sessionId, bin: cfg.codexBin, sandbox, networkAccess: cfg.codexWorkspaceWriteNetworkAccess ?? void 0, writableRoots: base2.writableRoots, askMode: a.access === "ask", approve: a.access === "ask" && a.relay ? a.relay.onPermission : base2.approve });
           } catch (err) {
-            if (err instanceof DelegateError && err.startupFailed && attempt === 1 && !base.signal?.aborted) {
-              base.log.warn("codex app-server startup timed out; retrying once", { err: err.message });
-              base.onProgress?.(`${err.message}; retrying once`);
+            if (err instanceof DelegateError && err.startupFailed && attempt === 1 && !base2.signal?.aborted) {
+              base2.log.warn("codex app-server startup timed out; retrying once", { err: err.message });
+              base2.onProgress?.(`${err.message}; retrying once`);
               sessionId = err.sessionId ?? sessionId;
               continue;
             }
             if (!(err instanceof DelegateError) || err.kind !== "failed" || err.sessionId) throw err;
-            base.log.warn("codex app-server unavailable, using codex exec", { err: err.message });
+            base2.log.warn("codex app-server unavailable, using codex exec", { err: err.message });
             break;
           }
         }
       }
       return delegateToCodex({
-        ...base,
+        ...base2,
         bin: cfg.codexBin,
         sandbox,
         networkAccess: cfg.codexWorkspaceWriteNetworkAccess ?? void 0,
-        ...relay ? { relayApprovals: true, extraEnv: { ...base.extraEnv, ...a.relay.env } } : {}
+        ...relay ? { relayApprovals: true, extraEnv: { ...base2.extraEnv, ...a.relay.env } } : {}
       });
     }
   },
@@ -29286,8 +29290,8 @@ var DELEGATION_TARGETS = {
     schema: { permission_mode: external_exports.enum(CLAUDE_PERMISSION_MODES).optional().describe("Overrides access with an exact Claude permission mode") },
     permissionNote: (cfg) => `Claude runs with permission mode "${cfg.claudePermissionMode}" unless you pass access or permission_mode.`,
     permission: (cfg, a) => claudeModeFor(cfg, a),
-    run: (cfg, base, a) => delegateToClaude({
-      ...base,
+    run: (cfg, base2, a) => delegateToClaude({
+      ...base2,
       bin: cfg.claudeBin,
       permissionMode: claudeModeFor(cfg, a)
     })
@@ -29300,21 +29304,21 @@ var DELEGATION_TARGETS = {
     schema: { auto_approve: external_exports.boolean().optional().describe("Overrides access: auto-approve every opencode permission request (opencode run --auto)") },
     permissionNote: (cfg) => cfg.opencodeAutoApprove ? "opencode auto-approves permission requests unless you pass access=read or auto_approve=false." : "Headless opencode rejects every permission request (edits, commands) unless you pass access=edit or auto_approve=true.",
     permission: (cfg, a) => a.auto_approve ?? (a.access ? OPENCODE_AUTO_FOR[a.access] : cfg.opencodeAutoApprove) ? "auto-approve" : "read-only",
-    run: async (cfg, base, a) => {
+    run: async (cfg, base2, a) => {
       let note = null;
-      if (base.model) {
-        const models = await listOpencodeModels(cfg.opencodeBin, base.cwd, base.log).catch(() => []);
-        const r = resolveOpencodeModel(base.model, models);
+      if (base2.model) {
+        const models = await listOpencodeModels(cfg.opencodeBin, base2.cwd, base2.log).catch(() => []);
+        const r = resolveOpencodeModel(base2.model, models);
         if ("error" in r) throw new DelegateError(r.error, "failed");
-        base = { ...base, model: r.model };
+        base2 = { ...base2, model: r.model };
         note = r.note;
       }
-      const res = a.access === "ask" && a.auto_approve === void 0 && supportsAsk("opencode", a.relay) ? await delegateToOpencodeServed({ ...base, bin: cfg.opencodeBin, onPermission: a.relay.onPermission }) : opencodeEditAsks(base, a) ? (
+      const res = a.access === "ask" && a.auto_approve === void 0 && supportsAsk("opencode", a.relay) ? await delegateToOpencodeServed({ ...base2, bin: cfg.opencodeBin, onPermission: a.relay.onPermission }) : opencodeEditAsks(base2, a) ? (
         // "edit": what the user's opencode rules leave to "ask" (MCP tools, folders outside the project,
         // commands they marked) goes to the parent instead of `opencode run --auto` approving it blindly.
-        await delegateToOpencodeServed({ ...base, bin: cfg.opencodeBin, onPermission: base.approve, permissions: null })
+        await delegateToOpencodeServed({ ...base2, bin: cfg.opencodeBin, onPermission: base2.approve, permissions: null })
       ) : await delegateToOpencode({
-        ...base,
+        ...base2,
         bin: cfg.opencodeBin,
         autoApprove: a.auto_approve ?? (a.access ? OPENCODE_AUTO_FOR[a.access] : cfg.opencodeAutoApprove)
       });
@@ -29587,7 +29591,7 @@ function denyPendingApprovals(job, reason = "job finished") {
   for (const answer of [...approvalAnswers.get(job) ?? []]) answer(reason, "job completion");
 }
 function waitForApproval(job, question, timeoutMs, post, log, home, request2, askUser) {
-  return new Promise((resolve11) => {
+  return new Promise((resolve12) => {
     let settled = false;
     let cleanup;
     const askedAt = Date.now();
@@ -29615,7 +29619,7 @@ function waitForApproval(job, question, timeoutMs, post, log, home, request2, as
       } catch {
         log.warn("could not report approval answer", { job: job.name });
       }
-      resolve11({ allow, reason: answer.trim() });
+      resolve12({ allow, reason: answer.trim() });
       return true;
     };
     const timer = setTimeout(() => settle2("no answer in time", "timeout"), timeoutMs);
@@ -29850,8 +29854,8 @@ var JobManager = class {
   adoptedOwners = /* @__PURE__ */ new Set();
   /** Whether `owner` is a "-N" stand-in of this session's name ("claude-x-2" for "claude-x"). */
   isStandIn(owner) {
-    const base = this.node.name.replace(/-\d+$/, "");
-    return owner !== this.node.name && (owner === base || owner.startsWith(`${base}-`) && /^\d+$/.test(owner.slice(base.length + 1)));
+    const base2 = this.node.name.replace(/-\d+$/, "");
+    return owner !== this.node.name && (owner === base2 || owner.startsWith(`${base2}-`) && /^\d+$/.test(owner.slice(base2.length + 1)));
   }
   /**
    * A reload can run a session briefly under a "-N" stand-in name; jobs started then carry it. Once on the
@@ -30330,7 +30334,7 @@ function acquireLock(path) {
 // src/core/worktree.ts
 import { createHash as createHash2 } from "node:crypto";
 import { existsSync as existsSync6, mkdirSync as mkdirSync9, readFileSync as readFileSync10, realpathSync as realpathSync3, rmSync as rmSync4 } from "node:fs";
-import { basename as basename5, isAbsolute as isAbsolute2, join as join15, relative, resolve as resolve3, toNamespacedPath } from "node:path";
+import { basename as basename5, isAbsolute as isAbsolute3, join as join15, relative, resolve as resolve3, toNamespacedPath } from "node:path";
 var GIT = "git";
 var LONG_PATH_ARGS = ["-c", "core.longpaths=true"];
 var REMOVE_RETRIES = 3;
@@ -30355,14 +30359,14 @@ async function createWorktree(opts) {
   } catch {
     throw new Error(`worktree isolation needs a git repository, but ${opts.cwd} is not inside one`);
   }
-  const base = await git(["rev-parse", "HEAD"], repoRoot, opts.log);
+  const base2 = await git(["rev-parse", "HEAD"], repoRoot, opts.log);
   const baseBranch = await git(["symbolic-ref", "-q", "--short", "HEAD"], repoRoot, opts.log).catch(() => "") || null;
   let branch = `${BRANCH_PREFIX}${opts.jobId}`;
   const dir = join15(opts.home, "worktrees");
   mkdirSync9(dir, { recursive: true });
   let path = join15(dir, `${basename5(repoRoot)}-${opts.jobId}`);
   try {
-    await git(["worktree", "add", "-b", branch, path, base], repoRoot, opts.log, WORKTREE_ADD_TIMEOUT_MS);
+    await git(["worktree", "add", "-b", branch, path, base2], repoRoot, opts.log, WORKTREE_ADD_TIMEOUT_MS);
   } catch (err) {
     if (!(err instanceof DelegateError && err.kind === "timeout")) {
       await removeWorktree(repoRoot, path, branch, opts.log);
@@ -30373,7 +30377,7 @@ async function createWorktree(opts) {
     branch = `${branch}-r2`;
     path = `${path}-r2`;
     try {
-      await git(["worktree", "add", "-b", branch, path, base], repoRoot, opts.log, WORKTREE_ADD_TIMEOUT_MS);
+      await git(["worktree", "add", "-b", branch, path, base2], repoRoot, opts.log, WORKTREE_ADD_TIMEOUT_MS);
     } catch (again) {
       await removeWorktree(repoRoot, path, branch, opts.log);
       throw new Error(`could not create a worktree for the subagent (tried twice): ${again.message}`);
@@ -30381,9 +30385,9 @@ async function createWorktree(opts) {
   }
   await unlockWorktree(repoRoot, path, opts.log);
   const rel = relative(repoRoot, opts.cwd);
-  const cwd = rel && !rel.startsWith("..") && !isAbsolute2(rel) ? join15(path, rel) : path;
+  const cwd = rel && !rel.startsWith("..") && !isAbsolute3(rel) ? join15(path, rel) : path;
   opts.log.info("worktree created", { repoRoot, path, branch });
-  return { repoRoot, path, cwd, branch, base, baseBranch };
+  return { repoRoot, path, cwd, branch, base: base2, baseBranch };
 }
 async function unlockWorktree(repoRoot, path, log) {
   await git([...trustArgs(path), "worktree", "unlock", path], repoRoot, log).catch(() => "");
@@ -30432,7 +30436,7 @@ async function gitDirsOutside(cwd, log) {
     };
     const inside = (p) => {
       const rel = relative(real(cwd), real(p));
-      return rel === "" || !rel.startsWith("..") && !isAbsolute2(rel);
+      return rel === "" || !rel.startsWith("..") && !isAbsolute3(rel);
     };
     return [...new Set([gitDir, common].filter((p) => Boolean(p) && !inside(p)))];
   } catch {
@@ -30444,18 +30448,18 @@ async function reviewBase(wt, log, branch = wt.branch) {
   const tip = await run(["rev-parse", branch]);
   const reflog = await git([...trustArgs(wt.path), "log", "-g", "--format=%H%x09%gs", "HEAD"], wt.path, log).catch(() => "");
   const start = reflog.split(/\r?\n/).reverse().find((line) => line.endsWith(` to ${branch}`) && line.includes("	checkout: moving from "))?.split("	")[0];
-  const base = branch === wt.branch ? wt.base : start ?? wt.base;
-  const created = (await run(["log", "-g", "--format=%H%x09%gs", branch]).catch(() => "")).split(/\r?\n/).reverse().find((line) => line.startsWith(`${base}	branch: Created from `));
+  const base2 = branch === wt.branch ? wt.base : start ?? wt.base;
+  const created = (await run(["log", "-g", "--format=%H%x09%gs", branch]).catch(() => "")).split(/\r?\n/).reverse().find((line) => line.startsWith(`${base2}	branch: Created from `));
   const source = branch !== wt.branch ? created?.split("	branch: Created from ")[1] : null;
   const list = await run(["worktree", "list", "--porcelain"]).catch(() => "");
   const main = /^branch refs\/heads\/(.+)$/m.exec(list.split(/\r?\n\r?\n/)[0] ?? "")?.[1];
-  const candidates = /* @__PURE__ */ new Set([base]);
+  const candidates = /* @__PURE__ */ new Set([base2]);
   for (const b of /* @__PURE__ */ new Set([source, wt.baseBranch, main])) {
     if (!b || b === "HEAD" || b === branch) continue;
     const mb = await run(["merge-base", b, branch]).catch(() => "");
     if (mb && mb !== tip) candidates.add(mb);
   }
-  let best = base;
+  let best = base2;
   let fewest = Infinity;
   for (const c of candidates) {
     const n = Number(await run(["rev-list", "--count", `${c}..${branch}`]).catch(() => "NaN"));
@@ -31008,10 +31012,10 @@ async function deriveJobOutcome(home, job, log, opts = {}) {
       merge2.branchHead = branchHead;
       if (!branchHead) merge2.reason = "Branch is missing and no saved tip is available.";
       else {
-        const base = await run(["rev-parse", "--verify", `refs/heads/${baseBranch}^{commit}`]).catch(() => null);
-        if (!base) merge2.reason = "Base branch is unavailable.";
+        const base2 = await run(["rev-parse", "--verify", `refs/heads/${baseBranch}^{commit}`]).catch(() => null);
+        if (!base2) merge2.reason = "Base branch is unavailable.";
         else {
-          const merged = await run(["merge-base", "--is-ancestor", branchHead, base]).then(() => true, () => false);
+          const merged = await run(["merge-base", "--is-ancestor", branchHead, base2]).then(() => true, () => false);
           merge2.state = merged ? "merged" : "unmerged";
           merge2.reason = merged ? null : `Has commits not merged into ${baseBranch}.`;
         }
@@ -31031,7 +31035,7 @@ async function listJobOutcomes(home, log) {
 }
 
 // src/mcp/server.ts
-import { dirname as dirname16, isAbsolute as isAbsolute7, join as join48, resolve as resolve10 } from "node:path";
+import { dirname as dirname17, isAbsolute as isAbsolute9, join as join49, resolve as resolve11 } from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 
 // node_modules/zod/v3/helpers/util.js
@@ -34582,23 +34586,23 @@ var ZodEffects = class extends ZodType2 {
     }
     if (effect.type === "transform") {
       if (ctx.common.async === false) {
-        const base = this._def.schema._parseSync({
+        const base2 = this._def.schema._parseSync({
           data: ctx.data,
           path: ctx.path,
           parent: ctx
         });
-        if (!isValid(base))
+        if (!isValid(base2))
           return INVALID2;
-        const result = effect.transform(base.value, checkCtx);
+        const result = effect.transform(base2.value, checkCtx);
         if (result instanceof Promise) {
           throw new Error(`Asynchronous transform encountered during synchronous parse operation. Use .parseAsync instead.`);
         }
         return { status: status.value, value: result };
       } else {
-        return this._def.schema._parseAsync({ data: ctx.data, path: ctx.path, parent: ctx }).then((base) => {
-          if (!isValid(base))
+        return this._def.schema._parseAsync({ data: ctx.data, path: ctx.path, parent: ctx }).then((base2) => {
+          if (!isValid(base2))
             return INVALID2;
-          return Promise.resolve(effect.transform(base.value, checkCtx)).then((result) => ({
+          return Promise.resolve(effect.transform(base2.value, checkCtx)).then((result) => ({
             status: status.value,
             value: result
           }));
@@ -37538,19 +37542,19 @@ function parseNullableDef(def, refs) {
     };
   }
   if (refs.target === "openApi3") {
-    const base2 = parseDef(def.innerType._def, {
+    const base3 = parseDef(def.innerType._def, {
       ...refs,
       currentPath: [...refs.currentPath]
     });
-    if (base2 && "$ref" in base2)
-      return { allOf: [base2], nullable: true };
-    return base2 && { ...base2, nullable: true };
+    if (base3 && "$ref" in base3)
+      return { allOf: [base3], nullable: true };
+    return base3 && { ...base3, nullable: true };
   }
-  const base = parseDef(def.innerType._def, {
+  const base2 = parseDef(def.innerType._def, {
     ...refs,
     currentPath: [...refs.currentPath, "anyOf", "0"]
   });
-  return base && { anyOf: [base, { type: "null" }] };
+  return base2 && { anyOf: [base2, { type: "null" }] };
 }
 
 // node_modules/zod-to-json-schema/dist/esm/parsers/number.js
@@ -38517,7 +38521,7 @@ var Protocol = class {
           return;
         }
         const pollInterval = task2.pollInterval ?? this._options?.defaultTaskPollInterval ?? 1e3;
-        await new Promise((resolve11) => setTimeout(resolve11, pollInterval));
+        await new Promise((resolve12) => setTimeout(resolve12, pollInterval));
         options?.signal?.throwIfAborted();
       }
     } catch (error62) {
@@ -38534,7 +38538,7 @@ var Protocol = class {
    */
   request(request2, resultSchema, options) {
     const { relatedRequestId, resumptionToken, onresumptiontoken, task, relatedTask } = options ?? {};
-    return new Promise((resolve11, reject) => {
+    return new Promise((resolve12, reject) => {
       const earlyReject = (error62) => {
         reject(error62);
       };
@@ -38612,7 +38616,7 @@ var Protocol = class {
           if (!parseResult.success) {
             reject(parseResult.error);
           } else {
-            resolve11(parseResult.data);
+            resolve12(parseResult.data);
           }
         } catch (error62) {
           reject(error62);
@@ -38873,12 +38877,12 @@ var Protocol = class {
       }
     } catch {
     }
-    return new Promise((resolve11, reject) => {
+    return new Promise((resolve12, reject) => {
       if (signal.aborted) {
         reject(new McpError(ErrorCode.InvalidRequest, "Request cancelled"));
         return;
       }
-      const timeoutId = setTimeout(resolve11, interval);
+      const timeoutId = setTimeout(resolve12, interval);
       signal.addEventListener("abort", () => {
         clearTimeout(timeoutId);
         reject(new McpError(ErrorCode.InvalidRequest, "Request cancelled"));
@@ -38954,8 +38958,8 @@ var Protocol = class {
 function isPlainObject2(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
-function mergeCapabilities(base, additional) {
-  const result = { ...base };
+function mergeCapabilities(base2, additional) {
+  const result = { ...base2 };
   for (const key2 in additional) {
     const k = key2;
     const addValue = additional[k];
@@ -39969,7 +39973,7 @@ var McpServer = class {
     let task = createTaskResult.task;
     const pollInterval = task.pollInterval ?? 5e3;
     while (task.status !== "completed" && task.status !== "failed" && task.status !== "cancelled") {
-      await new Promise((resolve11) => setTimeout(resolve11, pollInterval));
+      await new Promise((resolve12) => setTimeout(resolve12, pollInterval));
       const updatedTask = await extra.taskStore.getTask(taskId);
       if (!updatedTask) {
         throw new McpError(ErrorCode.InternalError, `Task ${taskId} not found during polling`);
@@ -40633,12 +40637,12 @@ var StdioServerTransport = class {
     this.onclose?.();
   }
   send(message) {
-    return new Promise((resolve11) => {
+    return new Promise((resolve12) => {
       const json2 = serializeMessage(message);
       if (this._stdout.write(json2)) {
-        resolve11();
+        resolve12();
       } else {
-        this._stdout.once("drain", resolve11);
+        this._stdout.once("drain", resolve12);
       }
     });
   }
@@ -40782,7 +40786,7 @@ var BLOCKING_LIMIT_TYPES = /* @__PURE__ */ new Set([
 var FULL_USAGE_PERCENT = 100;
 var CREDIT_SIGNIFICANT_DIGITS = 3;
 function capture(bin, args, cwd, log, stdin) {
-  return new Promise((resolve11, reject) => {
+  return new Promise((resolve12, reject) => {
     const env = childEnv();
     let cmd;
     try {
@@ -40805,8 +40809,8 @@ function capture(bin, args, cwd, log, stdin) {
     child.stdout.setEncoding("utf8").on("data", (d) => out += d);
     child.stderr.setEncoding("utf8").on("data", (d) => err += d);
     child.on("error", (e) => finish(() => reject(e)));
-    child.on("close", (code) => finish(() => code === 0 || out ? resolve11(out) : reject(new Error(err.trim().slice(-300) || `exit code ${code}`))));
-    if (stdin) stdin((s) => child.stdin.write(s), () => out, () => finish(() => resolve11(out)));
+    child.on("close", (code) => finish(() => code === 0 || out ? resolve12(out) : reject(new Error(err.trim().slice(-300) || `exit code ${code}`))));
+    if (stdin) stdin((s) => child.stdin.write(s), () => out, () => finish(() => resolve12(out)));
     else child.stdin.end();
   });
 }
@@ -41074,10 +41078,10 @@ function t(key2, params = {}) {
 }
 
 // src/core/node.ts
-import { randomUUID as randomUUID17 } from "node:crypto";
+import { randomUUID as randomUUID18 } from "node:crypto";
 import { EventEmitter as EventEmitter2 } from "node:events";
 import { unlinkSync } from "node:fs";
-import { dirname as dirname13, join as join38 } from "node:path";
+import { dirname as dirname14, join as join39 } from "node:path";
 
 // src/core/history.ts
 import { createHash as createHash6 } from "node:crypto";
@@ -41091,7 +41095,7 @@ import { dirname as dirname8, join as join22 } from "node:path";
 // src/core/transcripts/common.ts
 import { closeSync as closeSync6, fstatSync, openSync as openSync6, readSync, readdirSync as readdirSync7, realpathSync as realpathSync4, statSync as statSync5 } from "node:fs";
 import { homedir as homedir4 } from "node:os";
-import { isAbsolute as isAbsolute3, join as join21, relative as relative2, resolve as resolve4, sep } from "node:path";
+import { isAbsolute as isAbsolute4, join as join21, relative as relative2, resolve as resolve4, sep } from "node:path";
 var MAX_TRANSCRIPT_CHUNK_BYTES = 512 * 1024;
 var MAX_TOOL_PREVIEW_CHARS = 1200;
 var MAX_TEXT_CHARS = 16e3;
@@ -41158,7 +41162,7 @@ function fileStat(file2) {
 function safeFile(root, file2) {
   try {
     const actual = realpathSync4(file2), rel = relative2(realpathSync4(root), actual);
-    return rel && rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute3(rel) ? actual : null;
+    return rel && rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute4(rel) ? actual : null;
   } catch {
     return null;
   }
@@ -41941,8 +41945,8 @@ function readHistorySource(file2, id) {
 }
 
 // src/core/broker.ts
-import { randomUUID as randomUUID15 } from "node:crypto";
-import { readFileSync as readFileSync18 } from "node:fs";
+import { randomUUID as randomUUID16 } from "node:crypto";
+import { readFileSync as readFileSync19 } from "node:fs";
 import { createServer as createServer4 } from "node:net";
 
 // src/core/store.ts
@@ -42461,7 +42465,7 @@ function siblingMaxHops(maxHops) {
 }
 
 // src/network/link.ts
-import { randomBytes as randomBytes6, randomUUID as randomUUID12 } from "node:crypto";
+import { randomBytes as randomBytes6, randomUUID as randomUUID13 } from "node:crypto";
 import { connect, createServer as createServer3 } from "node:tls";
 
 // src/network/discovery.ts
@@ -42614,11 +42618,11 @@ var NetworkDiscovery = class {
     this.socket = socket;
     socket.on("message", (data, source) => this.observe(data, source.address));
     socket.on("error", (err) => this.opts.onError?.(err));
-    await new Promise((resolve11, reject) => {
+    await new Promise((resolve12, reject) => {
       socket.once("error", reject);
       socket.bind(this.opts.udpPort ?? DISCOVERY_PORT, this.opts.bind ?? "0.0.0.0", () => {
         socket.off("error", reject);
-        resolve11();
+        resolve12();
       });
     });
     if ((this.opts.destination ?? DISCOVERY_GROUP) === DISCOVERY_GROUP) {
@@ -42656,11 +42660,11 @@ var NetworkDiscovery = class {
     this.timer = null;
     const socket = this.socket;
     this.socket = null;
-    if (socket) await new Promise((resolve11) => {
+    if (socket) await new Promise((resolve12) => {
       try {
-        socket.close(() => resolve11());
+        socket.close(() => resolve12());
       } catch {
-        resolve11();
+        resolve12();
       }
     });
     this.found.clear();
@@ -42669,8 +42673,8 @@ var NetworkDiscovery = class {
 
 // src/network/files.ts
 import { createHash as createHash9, randomUUID as randomUUID11 } from "node:crypto";
-import { existsSync as existsSync15, lstatSync as lstatSync2, mkdirSync as mkdirSync15, mkdtempSync, readFileSync as readFileSync14, readdirSync as readdirSync9, renameSync as renameSync6, rmSync as rmSync5, writeFileSync as writeFileSync7 } from "node:fs";
-import { basename as basename7, join as join28, resolve as resolve7 } from "node:path";
+import { existsSync as existsSync15, lstatSync as lstatSync2, mkdirSync as mkdirSync15, mkdtempSync, readFileSync as readFileSync14, readdirSync as readdirSync9, renameSync as renameSync6, rmSync as rmSync5, statfsSync, writeFileSync as writeFileSync7 } from "node:fs";
+import { basename as basename7, join as join28, parse as parse4, resolve as resolve7, sep as sep3 } from "node:path";
 var MAX_TRANSFER_BYTES = 1024 * 1024;
 var MAX_TRANSFER_ENTRIES = 128;
 var MAX_TRANSFER_DEPTH = 16;
@@ -42693,6 +42697,23 @@ var transferResultSchema = external_exports.object({ id: external_exports.uuid()
 function checksum(data) {
   return createHash9("sha256").update(data).digest("hex");
 }
+function assertTransferPath(path) {
+  const absolute = resolve7(path);
+  let current = parse4(absolute).root;
+  for (const component of absolute.slice(current.length).split(sep3).filter(Boolean)) {
+    current = join28(current, component);
+    if (lstatSync2(current).isSymbolicLink()) throw new Error("file transfer does not follow symlinks or junctions");
+  }
+}
+function ensureTransferDirectory(path) {
+  if (!existsSync15(path)) {
+    const parent2 = resolve7(path, "..");
+    ensureTransferDirectory(parent2);
+    mkdirSync15(path, { mode: OWNER_DIR_MODE });
+  }
+  assertTransferPath(path);
+  if (!lstatSync2(path).isDirectory()) throw new Error("transfer directory is not a directory");
+}
 function safeTransferPath(path) {
   const components = path.split("/");
   return path.length <= MAX_PATH_CHARS2 && components.length <= MAX_TRANSFER_DEPTH && components.every((part) => part.length > 0 && part.length <= MAX_COMPONENT_CHARS && part !== "." && part !== ".." && !/[<>:"\\|?*\x00-\x1f]/.test(part) && !/[. ]$/.test(part) && !/^(CON|PRN|AUX|NUL|CONIN\$|CONOUT\$|COM[1-9¹²³]|LPT[1-9¹²³])(?:\.|$)/i.test(part));
@@ -42704,6 +42725,7 @@ function collectTransfer(paths, cwd, to, from) {
   const walk = (source, path) => {
     if (!safeTransferPath(path)) throw new Error("unsafe or too deep transfer path");
     if (entries.length >= MAX_TRANSFER_ENTRIES) throw new Error("too many transfer entries");
+    assertTransferPath(source);
     const stat = lstatSync2(source);
     if (stat.isSymbolicLink()) throw new Error("file transfer does not follow symlinks or junctions");
     if (stat.isDirectory()) {
@@ -42751,9 +42773,13 @@ function validateEntries(transfer) {
 function receiveTransfer(home, input2) {
   const transfer = transferSchema.parse(input2);
   const { entries, bytes, files } = validateEntries(transfer);
+  assertTransferPath(home);
+  const disk = statfsSync(home, { bigint: true });
+  if (disk.bavail * disk.bsize < BigInt(bytes)) throw new Error("insufficient free disk space for transfer");
   const inbox = join28(home, "inbox");
-  mkdirSync15(inbox, { recursive: true, mode: OWNER_DIR_MODE });
+  ensureTransferDirectory(inbox);
   if (lstatSync2(inbox).isSymbolicLink()) throw new Error("inbox cannot be a symlink");
+  assertTransferPath(inbox);
   const final = join28(inbox, transfer.id);
   if (existsSync15(final)) throw new Error("transfer already received");
   const staging = mkdtempSync(join28(inbox, ".partial-"));
@@ -42767,6 +42793,886 @@ function receiveTransfer(home, input2) {
     throw err;
   }
 }
+
+// src/network/transfers.ts
+import { createHash as createHash10, randomUUID as randomUUID12 } from "node:crypto";
+import { constants, existsSync as existsSync16, lstatSync as lstatSync3, mkdirSync as mkdirSync16, readdirSync as readdirSync10, readFileSync as readFileSync15, renameSync as renameSync7, statSync as statSync6, writeFileSync as writeFileSync8 } from "node:fs";
+import { open as open2, link, unlink, statfs, lstat, opendir } from "node:fs/promises";
+import { basename as basename8, dirname as dirname12, isAbsolute as isAbsolute5, join as join29, relative as relative4, resolve as resolve8, sep as sep4 } from "node:path";
+var FILE_STREAM_CAPABILITY = "file-stream-v1";
+var TRANSFER_CHUNK_BYTES = 256 * 1024;
+var DEFAULT_MAX_STREAM_BYTES = 8 * 1024 * 1024 * 1024;
+var MAX_STREAM_ENTRIES = 4096;
+var MAX_ACTIVE_TRANSFERS = 4;
+var MAX_TRANSFER_HISTORY = 200;
+var TRANSFER_REQUEST_TIMEOUT_MS = 3e4;
+var TRANSFER_HEARTBEAT_MS = 5e3;
+var TRANSFER_RETRY_MS = 2e3;
+var TRANSFER_PROGRESS_MS = 1e3;
+var SHA_RECORD_BYTES = 65;
+var MAX_PATH_CHARS3 = 1024;
+var MAX_SENDER_ID_CHARS = 128;
+var MAX_ERROR_CHARS = 512;
+var MIN_TRANSFER_FREE_BYTES = 16 * 1024 * 1024;
+var SHA_PATTERN = /^[0-9a-f]{64}$/;
+var RETRYABLE_TRANSFER_ERROR = /^(network link closed|network write limit reached|paired instance is not connected|file transfer request timed out|sender not advertised by paired instance|file (source peer|recipient|sender) is not online|transfer operation already in progress|too many active file transfers)$/;
+var TERMINAL = /* @__PURE__ */ new Set(["completed", "cancelled", "failed"]);
+var senderSchema = external_exports.object({ id: external_exports.string().min(1).max(MAX_SENDER_ID_CHARS), name: external_exports.string().regex(NETWORK_NAME_PATTERN), agent: external_exports.enum(AGENT_KINDS) });
+var entrySchema2 = external_exports.object({ path: external_exports.string().min(1).max(MAX_PATH_CHARS3), kind: external_exports.enum(["file", "directory"]), size: external_exports.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER) });
+var base = { id: external_exports.uuid(), rid: external_exports.uuid(), kind: external_exports.literal("request") };
+var fileStreamRequestSchema = external_exports.discriminatedUnion("op", [
+  external_exports.object({ ...base, op: external_exports.literal("offer"), from: senderSchema, to: external_exports.string().regex(NETWORK_NAME_PATTERN), entries: external_exports.array(entrySchema2).min(1).max(MAX_STREAM_ENTRIES) }),
+  external_exports.object({ ...base, op: external_exports.literal("chunk"), index: external_exports.number().int().nonnegative().max(MAX_STREAM_ENTRIES - 1), offset: external_exports.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER), data: external_exports.string().max(Math.ceil(TRANSFER_CHUNK_BYTES / 3) * 4), sha256: external_exports.string().regex(SHA_PATTERN) }),
+  external_exports.object({ ...base, op: external_exports.literal("finish-file"), index: external_exports.number().int().nonnegative().max(MAX_STREAM_ENTRIES - 1), sha256: external_exports.string().regex(SHA_PATTERN) }),
+  external_exports.object({ ...base, op: external_exports.literal("finish") }),
+  external_exports.object({ ...base, op: external_exports.literal("cancel") }),
+  external_exports.object({ ...base, op: external_exports.literal("abort"), error: external_exports.string().min(1).max(MAX_ERROR_CHARS) }),
+  external_exports.object({ ...base, op: external_exports.literal("fetch"), from: senderSchema, source: external_exports.string().regex(NETWORK_NAME_PATTERN), paths: external_exports.array(external_exports.string().min(1).max(MAX_PATH_CHARS3)).min(1).max(MAX_STREAM_ENTRIES) })
+]);
+var responseSchema = external_exports.object({ kind: external_exports.literal("response"), rid: external_exports.uuid(), id: external_exports.uuid(), error: external_exports.string().max(MAX_ERROR_CHARS).optional(), data: external_exports.object({ offsets: external_exports.array(external_exports.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER)).max(MAX_STREAM_ENTRIES).optional(), status: external_exports.enum(["queued", "preparing", "running", "paused", "completed", "cancelled", "failed"]).optional() }).default({}) });
+var RemoteTransferError = class extends Error {
+};
+function digest(data) {
+  return createHash10("sha256").update(data).digest("hex");
+}
+function transferSummary(home, state) {
+  const bytes = state.entries.reduce((sum, entry) => sum + entry.offset, 0);
+  return {
+    id: state.id,
+    direction: state.direction,
+    peer: state.peer,
+    status: state.status,
+    bytes,
+    totalBytes: state.totalBytes,
+    files: state.entries.filter((entry) => entry.kind === "file" && entry.complete).length,
+    totalFiles: state.entries.filter((entry) => entry.kind === "file").length,
+    percent: state.status === "completed" ? 100 : state.totalBytes ? Math.floor(bytes / state.totalBytes * 100) : 0,
+    createdAt: state.createdAt,
+    updatedAt: state.updatedAt,
+    ...state.direction === "receive" ? { inbox: join29(home, "inbox", state.id) } : {},
+    ...state.error ? { error: state.error } : {}
+  };
+}
+function persistTransfer(root, state) {
+  assertTransferPath(root);
+  state.updatedAt = Date.now();
+  const file2 = join29(root, `${state.id}.json`);
+  if (existsSync16(file2)) assertTransferPath(file2);
+  const temp = `${file2}.${randomUUID12()}.tmp`;
+  writeFileSync8(temp, JSON.stringify(state), { flag: "wx", mode: OWNER_FILE_MODE, flush: true });
+  renameSync7(temp, file2);
+}
+function cancelStoredTransfer(home, id) {
+  external_exports.uuid().parse(id);
+  const root = join29(home, "network", "transfers");
+  const path = join29(root, `${id}.json`);
+  if (!existsSync16(path)) throw new Error("unknown transfer");
+  assertTransferPath(path);
+  const state = JSON.parse(readFileSync15(path, "utf8"));
+  if (state.version !== 1 || state.id !== id) throw new Error("invalid persisted transfer");
+  if (state.status === "completed" || state.status === "failed" || state.legacySent) return { id, cancelled: false };
+  state.status = "cancelled";
+  state.cancelPending = !state.legacy;
+  persistTransfer(root, state);
+  return { id, cancelled: true };
+}
+function readTransferHistory(home) {
+  const root = join29(home, "network", "transfers");
+  if (!existsSync16(root)) return [];
+  assertTransferPath(root);
+  return readdirSync10(root).filter((file2) => /^[0-9a-f-]{36}\.json$/.test(file2)).map((file2) => {
+    const path = join29(root, file2);
+    assertTransferPath(path);
+    return { path, mtime: statSync6(path).mtimeMs };
+  }).sort((a, b) => b.mtime - a.mtime).slice(0, MAX_TRANSFER_HISTORY).map(({ path }) => {
+    const state = JSON.parse(readFileSync15(path, "utf8"));
+    if (state.version !== 1 || !Array.isArray(state.entries) || state.entries.length > MAX_STREAM_ENTRIES) throw new Error("invalid persisted transfer");
+    return transferSummary(home, state);
+  }).sort((a, b) => b.updatedAt - a.updatedAt);
+}
+function allowedFetchPath(path, cwd, roots) {
+  const source = resolve8(cwd, path);
+  assertTransferPath(source);
+  if (!roots.some((root) => {
+    if (!isAbsolute5(root)) return false;
+    assertTransferPath(root);
+    const rel = relative4(resolve8(root), source);
+    return rel === "" || !isAbsolute5(rel) && rel !== ".." && !rel.startsWith(`..${sep4}`);
+  })) throw new Error("fetch is disabled or path is outside allowed fetch roots");
+  return source;
+}
+async function writeAll(file2, data, position) {
+  let written = 0;
+  while (written < data.length) {
+    const result = await file2.write(data, written, data.length - written, position + written);
+    if (!result.bytesWritten) throw new Error("file write made no progress");
+    written += result.bytesWritten;
+  }
+}
+var TransferManager = class {
+  constructor(home, transport, log, options = {}) {
+    this.home = home;
+    this.transport = transport;
+    this.log = log;
+    this.options = options;
+    assertTransferPath(home);
+    this.root = join29(home, "network", "transfers");
+    ensureTransferDirectory(this.root);
+    assertTransferPath(this.root);
+    for (const file2 of readdirSync10(this.root).filter((file3) => /^[0-9a-f-]{36}\.json$/.test(file3))) {
+      const state = this.read(file2.slice(0, -5));
+      if (state && (!TERMINAL.has(state.status) || state.cancelPending || state.abortPending)) {
+        if (this.states.size >= MAX_ACTIVE_TRANSFERS) {
+          this.log.warn("transfer recovery limit reached", { id: state.id });
+          continue;
+        }
+        state.status = TERMINAL.has(state.status) ? state.status : "paused";
+        this.save(state);
+      }
+    }
+    this.timer = setInterval(() => this.resume(), TRANSFER_RETRY_MS);
+    this.timer.unref();
+  }
+  home;
+  transport;
+  log;
+  options;
+  states = /* @__PURE__ */ new Map();
+  active = /* @__PURE__ */ new Set();
+  receiving = /* @__PURE__ */ new Set();
+  pending = /* @__PURE__ */ new Map();
+  notified = /* @__PURE__ */ new Map();
+  timer;
+  closed = false;
+  root;
+  read(id) {
+    const file2 = join29(this.root, `${id}.json`);
+    if (!existsSync16(file2)) return void 0;
+    assertTransferPath(file2);
+    const state = JSON.parse(readFileSync15(file2, "utf8"));
+    if (state.version !== 1 || state.id !== id || !Array.isArray(state.entries) || state.entries.length > MAX_STREAM_ENTRIES) throw new Error("invalid persisted transfer");
+    return state;
+  }
+  get(id) {
+    return this.states.get(id) ?? this.read(id);
+  }
+  save(state) {
+    persistTransfer(this.root, state);
+    if (!TERMINAL.has(state.status) || state.cancelPending || state.abortPending) this.states.set(state.id, state);
+    else this.states.delete(state.id);
+  }
+  summary(state) {
+    return transferSummary(this.home, state);
+  }
+  list() {
+    return readTransferHistory(this.home);
+  }
+  recordLegacy(transfer, remote, peer) {
+    const entries = transfer.entries.map((entry) => ({
+      kind: entry.kind,
+      path: entry.path,
+      size: entry.kind === "file" ? Buffer.byteLength(entry.data, "base64") : 0,
+      offset: entry.kind === "file" ? Buffer.byteLength(entry.data, "base64") : 0,
+      complete: true,
+      ...entry.kind === "file" ? { sha256: entry.sha256 } : {}
+    }));
+    this.save({
+      version: 1,
+      id: transfer.id,
+      direction: "receive",
+      remote,
+      peer,
+      from: transfer.from,
+      to: transfer.to,
+      paths: [],
+      cwd: "",
+      entries,
+      totalBytes: entries.reduce((sum, entry) => sum + entry.size, 0),
+      status: "completed",
+      legacy: true,
+      initialized: true,
+      createdAt: Date.now(),
+      updatedAt: Date.now()
+    });
+  }
+  report(state, force = false) {
+    if (this.closed) return;
+    const now = Date.now();
+    if (!force && now - (this.notified.get(state.id) ?? 0) < TRANSFER_PROGRESS_MS) return;
+    this.notified.set(state.id, now);
+    const progress = this.summary(state);
+    this.log.info("file transfer progress", { ...progress });
+    const recipient = state.direction === "send" ? state.from.name : state.to;
+    const from = state.direction === "receive" ? { ...state.from, id: `${state.remote}/${state.from.id}`, name: `${state.peer.split("/")[0]}/${state.from.name}` } : { id: `files-${state.id}`, name: "files", agent: "other" };
+    this.transport.notify({
+      id: state.direction === "receive" && state.status === "completed" ? state.id : randomUUID12(),
+      from,
+      to: recipient,
+      recipient,
+      conversationId: state.id,
+      replyTo: null,
+      hop: 0,
+      createdAt: now,
+      readAt: null,
+      body: `files: ${progress.percent}% \xB7 ${progress.bytes} / ${progress.totalBytes} bytes \xB7 ${state.status} \xB7 ${state.id}${progress.inbox ? ` \xB7 ${progress.inbox}` : ""}${state.error ? ` \xB7 ${state.error}` : ""}`
+    });
+    if (TERMINAL.has(state.status)) this.notified.delete(state.id);
+  }
+  ensureCapacity() {
+    if (this.states.size >= MAX_ACTIVE_TRANSFERS) throw new Error("too many active file transfers");
+  }
+  start(remote, peer, to, paths, cwd, from, pull = false, id = randomUUID12(), legacy = false) {
+    this.ensureCapacity();
+    const state = {
+      version: 1,
+      id,
+      direction: pull ? "receive" : "send",
+      remote,
+      peer,
+      to,
+      paths,
+      cwd,
+      from,
+      status: "queued",
+      entries: [],
+      totalBytes: 0,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      ...pull ? { pull: true } : {},
+      ...legacy ? { legacy: true } : {}
+    };
+    this.save(state);
+    this.report(state, true);
+    setImmediate(() => this.resume());
+    return { id, status: "queued" };
+  }
+  resume() {
+    if (this.closed) return;
+    for (const state of this.states.values()) {
+      if (this.active.has(state.id) || !state.legacy && !this.transport.supports(state.remote)) continue;
+      if (state.cancelPending || state.abortPending) {
+        this.active.add(state.id);
+        void this.rpc(state.remote, state.id, state.cancelPending ? { op: "cancel" } : { op: "abort", error: state.error ?? "transfer failed" }).then(() => {
+          state.cancelPending = false;
+          state.abortPending = false;
+          this.save(state);
+        }).catch(() => {
+        }).finally(() => this.active.delete(state.id));
+      } else if (!TERMINAL.has(state.status) && (state.direction === "send" || state.pull && !state.entries.length)) {
+        this.active.add(state.id);
+        void this.run(state).finally(() => this.active.delete(state.id));
+      }
+    }
+  }
+  disconnected(remote) {
+    for (const [rid, pending] of this.pending) if (pending.remote === remote) {
+      clearTimeout(pending.timer);
+      this.pending.delete(rid);
+      pending.reject(new Error("network link closed"));
+    }
+    for (const state of this.states.values()) if (state.remote === remote && !TERMINAL.has(state.status)) {
+      state.status = "paused";
+      this.save(state);
+      this.report(state, true);
+    }
+  }
+  rpc(remote, id, fields) {
+    if (this.closed) return Promise.reject(new Error("transfer manager closed"));
+    const rid = randomUUID12();
+    return new Promise((resolve12, reject) => {
+      const timer = setTimeout(() => {
+        this.pending.delete(rid);
+        reject(new Error("file transfer request timed out"));
+      }, TRANSFER_REQUEST_TIMEOUT_MS);
+      this.pending.set(rid, { remote, id, resolve: resolve12, reject, timer });
+      void Promise.resolve().then(() => this.transport.send(remote, { kind: "request", rid, id, ...fields })).catch((error62) => {
+        clearTimeout(timer);
+        this.pending.delete(rid);
+        reject(error62);
+      });
+    });
+  }
+  async handle(payload, remote, remoteName) {
+    if (payload.kind === "heartbeat") {
+      const heartbeat2 = external_exports.object({ id: external_exports.uuid(), rid: external_exports.uuid() }).parse(payload);
+      const pending = this.pending.get(heartbeat2.rid);
+      if (pending?.remote === remote && pending.id === heartbeat2.id) {
+        clearTimeout(pending.timer);
+        pending.timer = setTimeout(() => {
+          this.pending.delete(heartbeat2.rid);
+          pending.reject(new Error("file transfer request timed out"));
+        }, TRANSFER_REQUEST_TIMEOUT_MS);
+      }
+      return;
+    }
+    if (payload.kind === "response") {
+      const response = responseSchema.parse(payload);
+      const pending = this.pending.get(response.rid);
+      if (!pending || pending.remote !== remote || pending.id !== response.id) return;
+      clearTimeout(pending.timer);
+      this.pending.delete(response.rid);
+      if (response.error) pending.reject(new RemoteTransferError(response.error));
+      else pending.resolve(response.data);
+      return;
+    }
+    const request2 = fileStreamRequestSchema.parse(payload);
+    let data = {};
+    let error62;
+    let heartbeatSending = false;
+    const heartbeat = setInterval(() => {
+      if (this.closed || heartbeatSending) return;
+      heartbeatSending = true;
+      void Promise.resolve().then(() => this.transport.send(remote, { kind: "heartbeat", rid: request2.rid, id: request2.id })).catch(() => {
+      }).finally(() => {
+        heartbeatSending = false;
+      });
+    }, TRANSFER_HEARTBEAT_MS);
+    heartbeat.unref();
+    try {
+      data = await this.receive(request2, remote, remoteName);
+    } catch (err) {
+      error62 = err.message.slice(0, MAX_ERROR_CHARS);
+      this.log.warn("file transfer rejected", { id: request2.id, remote, error: error62 });
+      const state = this.get(request2.id);
+      if (state?.remote === remote && state.direction === "receive" && !TERMINAL.has(state.status) && /checksum|encoding mismatch|insufficient free disk|invalid initial|EACCES|ENOSPC|EEXIST|ENOENT|symlinks or junctions/.test(error62)) {
+        state.status = "failed";
+        state.error = error62;
+        this.save(state);
+        this.report(state, true);
+      }
+    } finally {
+      clearInterval(heartbeat);
+    }
+    await this.transport.send(remote, { kind: "response", rid: request2.rid, id: request2.id, data, ...error62 ? { error: error62 } : {} });
+  }
+  validateEntries(entries) {
+    const kinds = /* @__PURE__ */ new Map();
+    let total = 0;
+    for (const entry of entries) {
+      const key2 = entry.path.toLowerCase();
+      if (!safeTransferPath(entry.path) || kinds.has(key2)) throw new Error("unsafe or duplicate transfer path");
+      kinds.set(key2, entry.kind);
+      if (entry.kind === "directory" && entry.size !== 0) throw new Error("invalid directory size");
+      total += entry.size;
+      if (!Number.isSafeInteger(total) || total > (this.options.maxBytes ?? DEFAULT_MAX_STREAM_BYTES)) throw new Error("transfer exceeds size limit");
+    }
+    for (const key2 of kinds.keys()) {
+      const parts = key2.split("/");
+      for (let i = 1; i < parts.length; i++) if (kinds.get(parts.slice(0, i).join("/")) !== "directory") throw new Error("missing directory or file used as parent");
+    }
+    if (Buffer.byteLength(JSON.stringify(entries.map(({ path, kind, size }) => ({ path, kind, size })))) > MAX_NETWORK_FRAME_BYTES / 2) throw new Error("transfer manifest exceeds network frame limit");
+    return total;
+  }
+  async collect(state) {
+    const entries = [];
+    let total = 0;
+    const walk = async (source, path) => {
+      if (this.closed || state.status === "cancelled") throw new Error("transfer cancelled");
+      if (!safeTransferPath(path) || path.split("/").length > MAX_TRANSFER_DEPTH || entries.length >= MAX_STREAM_ENTRIES) throw new Error("unsafe or too many transfer entries");
+      assertTransferPath(source);
+      const st = await lstat(source);
+      if (st.isDirectory()) {
+        entries.push({ kind: "directory", path, size: 0, offset: 0 });
+        const dir = await opendir(source);
+        const names = [];
+        for await (const child of dir) {
+          if (names.length + entries.length >= MAX_STREAM_ENTRIES) throw new Error("too many transfer entries");
+          names.push(child.name);
+        }
+        for (const name of names.sort()) await walk(join29(source, name), `${path}/${name}`);
+      } else if (st.isFile()) {
+        total += st.size;
+        if (total > (this.options.maxBytes ?? DEFAULT_MAX_STREAM_BYTES)) throw new Error("transfer exceeds size limit");
+        entries.push({ kind: "file", path, size: st.size, offset: 0, source, mtimeMs: st.mtimeMs, ino: st.ino, dev: st.dev });
+      } else throw new Error("only regular files and directories can be transferred");
+    };
+    for (const path of state.paths) {
+      const source = resolve8(state.cwd, path);
+      await walk(source, basename8(source));
+    }
+    this.validateEntries(entries);
+    return entries;
+  }
+  async source(state, entry) {
+    if (state.fetched) allowedFetchPath(entry.source, state.cwd, this.options.fetchRoots ?? []);
+    assertTransferPath(entry.source);
+    const file2 = await open2(entry.source, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+    const st = await file2.stat();
+    if (!st.isFile() || st.size !== entry.size || st.mtimeMs !== entry.mtimeMs || st.ino !== entry.ino || st.dev !== entry.dev) {
+      await file2.close();
+      throw new RemoteTransferError("source file changed since transfer started");
+    }
+    return file2;
+  }
+  stopped(state) {
+    return state.status === "cancelled" || state.status === "failed" || this.closed;
+  }
+  async run(state) {
+    try {
+      if (state.direction === "send" || state.pull) {
+        const sender = this.transport.localPeer(state.from.name);
+        if (!sender) throw new Error("file sender is not online");
+        if (sender.agent !== state.from.agent) throw new RemoteTransferError("file sender agent changed");
+        state.from = { id: sender.id, name: sender.name, agent: sender.agent };
+      }
+      if (state.fetched) for (const path of state.paths) allowedFetchPath(path, state.cwd, this.options.fetchRoots ?? []);
+      if (state.legacy) {
+        if (state.legacySent) throw new RemoteTransferError("legacy transfer interrupted; delivery may have occurred");
+        state.status = "running";
+        const transfer = { ...collectTransfer(state.paths, state.cwd, state.to, state.from), id: state.id };
+        state.entries = transfer.entries.map((entry) => ({ kind: entry.kind, path: entry.path, size: entry.kind === "file" ? Buffer.byteLength(entry.data, "base64") : 0, offset: 0 }));
+        state.totalBytes = this.validateEntries(state.entries);
+        state.legacySent = true;
+        this.save(state);
+        const result = await this.transport.legacy(state.remote, transfer);
+        if (this.stopped(state)) return;
+        state.status = "completed";
+        for (const entry of state.entries) {
+          entry.offset = entry.size;
+          entry.complete = true;
+        }
+        this.save(state);
+        this.report(state, true);
+        this.log.info("legacy file transfer complete", result);
+        return;
+      }
+      if (state.pull && !state.entries.length) {
+        await this.rpc(state.remote, state.id, { op: "fetch", from: state.from, source: state.to, paths: state.paths });
+        if (!TERMINAL.has(state.status) && !state.entries.length) {
+          state.status = "paused";
+          this.save(state);
+        }
+        return;
+      }
+      if (!state.entries.length) {
+        state.status = "preparing";
+        this.save(state);
+        state.entries = await this.collect(state);
+        state.totalBytes = this.validateEntries(state.entries);
+        this.save(state);
+      }
+      if (this.stopped(state)) return;
+      const reply = await this.rpc(state.remote, state.id, { op: "offer", from: state.from, to: state.to, entries: state.entries.map(({ path, kind, size }) => ({ path, kind, size })) });
+      if (this.stopped(state)) return;
+      if (reply.status === "completed") {
+        state.status = "completed";
+        for (const entry of state.entries) {
+          entry.offset = entry.size;
+          entry.complete = true;
+        }
+        this.save(state);
+        this.report(state, true);
+        return;
+      }
+      if (!reply.offsets || reply.offsets.length !== state.entries.length) throw new RemoteTransferError("invalid resume offsets");
+      state.status = "running";
+      delete state.error;
+      this.save(state);
+      this.report(state, true);
+      for (let index = 0; index < state.entries.length; index++) {
+        const entry = state.entries[index];
+        if (entry.kind !== "file") continue;
+        const offset = reply.offsets[index];
+        if (offset > entry.size || offset !== entry.size && offset % TRANSFER_CHUNK_BYTES !== 0) throw new RemoteTransferError("invalid resume offset");
+        entry.offset = offset;
+        const file2 = await this.source(state, entry);
+        const hash2 = createHash10("sha256");
+        const buffer = Buffer.alloc(TRANSFER_CHUNK_BYTES);
+        try {
+          for (let position = 0; position < entry.size; ) {
+            if (this.stopped(state)) return;
+            const length = Math.min(TRANSFER_CHUNK_BYTES, entry.size - position);
+            const { bytesRead } = await file2.read(buffer, 0, length, position);
+            if (bytesRead !== length) throw new RemoteTransferError("source file changed while reading");
+            const chunk = buffer.subarray(0, length);
+            hash2.update(chunk);
+            if (position >= offset) {
+              await this.rpc(state.remote, state.id, { op: "chunk", index, offset: position, data: chunk.toString("base64"), sha256: digest(chunk) });
+              if (this.stopped(state)) return;
+              entry.offset = position + length;
+              this.save(state);
+              this.report(state);
+            }
+            position += length;
+          }
+          const st = await file2.stat();
+          if (st.size !== entry.size || st.mtimeMs !== entry.mtimeMs) throw new RemoteTransferError("source file changed while reading");
+        } finally {
+          await file2.close();
+        }
+        entry.sha256 = hash2.digest("hex");
+        await this.rpc(state.remote, state.id, { op: "finish-file", index, sha256: entry.sha256 });
+        if (this.stopped(state)) return;
+        entry.complete = true;
+        this.save(state);
+      }
+      await this.rpc(state.remote, state.id, { op: "finish" });
+      if (!this.stopped(state)) {
+        state.status = "completed";
+        this.save(state);
+        this.report(state, true);
+      }
+    } catch (error62) {
+      if (this.stopped(state)) return;
+      state.status = state.legacy || !RETRYABLE_TRANSFER_ERROR.test(error62.message) ? "failed" : "paused";
+      state.error = error62.message.slice(0, MAX_ERROR_CHARS);
+      state.abortPending = state.status === "failed" && !state.legacy;
+      this.save(state);
+      this.report(state, true);
+    }
+  }
+  part(state, index) {
+    return join29(this.root, state.id, `${index}.part`);
+  }
+  verified(state, index) {
+    return join29(this.root, state.id, `${index}.verified`);
+  }
+  target(state, entry) {
+    return join29(this.home, "inbox", state.id, ...entry.path.split("/"));
+  }
+  async freeDisk(bytes) {
+    const disk = await statfs(this.home, { bigint: true });
+    const reserved = [...this.states.values()].filter((state) => state.direction === "receive" && !TERMINAL.has(state.status)).reduce((sum, state) => sum + BigInt(state.totalBytes) - BigInt(this.summary(state).bytes) + BigInt(Math.ceil(state.totalBytes / TRANSFER_CHUNK_BYTES)) * BigInt(SHA_RECORD_BYTES) + BigInt(MAX_NETWORK_FRAME_BYTES), 0n);
+    if (disk.bavail * disk.bsize < BigInt(bytes + MIN_TRANSFER_FREE_BYTES) + reserved) throw new Error("insufficient free disk space for transfer");
+  }
+  async hashFile(path, state) {
+    assertTransferPath(path);
+    const file2 = await open2(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+    const hash2 = createHash10("sha256");
+    const buffer = Buffer.alloc(TRANSFER_CHUNK_BYTES);
+    try {
+      for (; ; ) {
+        if (this.closed || state && this.stopped(state)) throw new Error("transfer cancelled or manager closed");
+        const { bytesRead } = await file2.read(buffer);
+        if (!bytesRead) break;
+        hash2.update(buffer.subarray(0, bytesRead));
+      }
+    } finally {
+      await file2.close();
+    }
+    return hash2.digest("hex");
+  }
+  async recover(state, entry, index) {
+    if (entry.kind !== "file") return;
+    const target = this.target(state, entry);
+    if (entry.complete || entry.sha256 && existsSync16(target)) {
+      if (await this.hashFile(target, state) !== entry.sha256) throw new Error("completed file checksum mismatch");
+      entry.complete = true;
+      entry.offset = entry.size;
+      const part = this.part(state, index);
+      if (existsSync16(part)) {
+        assertTransferPath(part);
+        await unlink(part);
+      }
+      const verified2 = this.verified(state, index);
+      if (existsSync16(verified2)) {
+        assertTransferPath(verified2);
+        await unlink(verified2);
+      }
+      return;
+    }
+    const verifiedPath = this.verified(state, index);
+    if (entry.sha256 && existsSync16(verifiedPath)) {
+      if (await this.hashFile(verifiedPath, state) !== entry.sha256) throw new Error("verified file checksum mismatch");
+      assertTransferPath(dirname12(target));
+      await link(verifiedPath, target);
+      await unlink(verifiedPath);
+      entry.complete = true;
+      entry.offset = entry.size;
+      return;
+    }
+    const path = this.part(state, index);
+    assertTransferPath(path);
+    assertTransferPath(`${path}.sha256`);
+    const file2 = await open2(path, constants.O_RDWR | (constants.O_NOFOLLOW ?? 0));
+    const journal = await open2(`${path}.sha256`, constants.O_RDWR | (constants.O_NOFOLLOW ?? 0));
+    const buffer = Buffer.alloc(TRANSFER_CHUNK_BYTES);
+    const record2 = Buffer.alloc(SHA_RECORD_BYTES);
+    let verified = 0;
+    let chunks = 0;
+    try {
+      while (verified < entry.offset) {
+        if (this.stopped(state)) throw new Error("transfer cancelled or manager closed");
+        const length = Math.min(TRANSFER_CHUNK_BYTES, entry.size - verified);
+        const a = await file2.read(buffer, 0, length, verified);
+        const b = await journal.read(record2, 0, SHA_RECORD_BYTES, chunks * SHA_RECORD_BYTES);
+        if (a.bytesRead !== length || b.bytesRead !== SHA_RECORD_BYTES || record2.toString() !== `${digest(buffer.subarray(0, length))}
+`) break;
+        verified += length;
+        chunks++;
+      }
+      await file2.truncate(verified);
+      await journal.truncate(chunks * SHA_RECORD_BYTES);
+      await file2.sync();
+      await journal.sync();
+      entry.offset = verified;
+    } finally {
+      await file2.close();
+      await journal.close();
+    }
+  }
+  initialize(state) {
+    const inbox = join29(this.home, "inbox");
+    ensureTransferDirectory(inbox);
+    const final = join29(inbox, state.id);
+    const parts = join29(this.root, state.id);
+    for (const dir of [final, parts]) {
+      if (!existsSync16(dir)) mkdirSync16(dir, { mode: OWNER_DIR_MODE });
+      assertTransferPath(dir);
+      if (!lstatSync3(dir).isDirectory()) throw new Error("transfer directory is not a directory");
+    }
+    for (const entry of state.entries.filter((entry2) => entry2.kind === "directory").sort((a, b) => a.path.length - b.path.length)) {
+      const dir = this.target(state, entry);
+      assertTransferPath(dirname12(dir));
+      if (!existsSync16(dir)) mkdirSync16(dir, { mode: OWNER_DIR_MODE });
+      assertTransferPath(dir);
+      if (!lstatSync3(dir).isDirectory()) throw new Error("transfer directory is not a directory");
+    }
+    for (let i = 0; i < state.entries.length; i++) if (state.entries[i].kind === "file") {
+      for (const file2 of [this.part(state, i), `${this.part(state, i)}.sha256`]) {
+        assertTransferPath(dirname12(file2));
+        if (!existsSync16(file2)) writeFileSync8(file2, "", { flag: "wx", mode: OWNER_FILE_MODE, flush: true });
+        assertTransferPath(file2);
+        if (!lstatSync3(file2).isFile() || lstatSync3(file2).size !== 0) throw new Error("invalid initial partial file");
+      }
+    }
+    state.initialized = true;
+    this.save(state);
+  }
+  async receive(request2, remote, remoteName) {
+    let state = this.get(request2.id);
+    if (state && state.remote !== remote) throw new Error("transfer belongs to another paired instance");
+    if (request2.op === "abort") {
+      if (!state) {
+        state = {
+          version: 1,
+          id: request2.id,
+          direction: "receive",
+          remote,
+          peer: remoteName,
+          from: { id: "files", name: "files", agent: "other" },
+          to: "files",
+          status: "failed",
+          error: request2.error,
+          paths: [],
+          cwd: "",
+          entries: [],
+          totalBytes: 0,
+          createdAt: Date.now(),
+          updatedAt: Date.now()
+        };
+        this.save(state);
+        this.log.warn("remote file transfer failed", { id: state.id, remote, error: request2.error });
+      } else if (!TERMINAL.has(state.status)) {
+        state.status = "failed";
+        state.error = request2.error;
+        state.abortPending = false;
+        this.save(state);
+        this.report(state, true);
+        for (const [rid, pending] of this.pending) if (pending.id === state.id) {
+          clearTimeout(pending.timer);
+          this.pending.delete(rid);
+          pending.reject(new RemoteTransferError(request2.error));
+        }
+      }
+      return { status: state.status };
+    }
+    if (request2.op === "cancel") {
+      if (!state) {
+        this.save({
+          version: 1,
+          id: request2.id,
+          direction: "receive",
+          remote,
+          peer: remoteName,
+          from: { id: "files", name: "files", agent: "other" },
+          to: "files",
+          status: "cancelled",
+          paths: [],
+          cwd: "",
+          entries: [],
+          totalBytes: 0,
+          createdAt: Date.now(),
+          updatedAt: Date.now()
+        });
+        return { status: "cancelled" };
+      }
+      await this.cancel(request2.id, false);
+      return { status: state.status };
+    }
+    if (state?.status === "cancelled" || state?.status === "failed") throw new Error(`transfer ${state.status}`);
+    if (request2.op === "fetch") {
+      if (!this.transport.validSender(remote, request2.from)) throw new Error("sender not advertised by paired instance");
+      const source = this.transport.localPeer(request2.source);
+      if (!source) throw new Error("file source peer is not online");
+      if (!this.options.fetchRoots?.length) throw new Error("fetch is disabled or path is outside allowed fetch roots");
+      const paths = request2.paths.map((path) => allowedFetchPath(path, source.cwd, this.options.fetchRoots));
+      if (state && (state.direction !== "send" || state.to !== request2.from.name || state.from.name !== request2.source || JSON.stringify(state.paths) !== JSON.stringify(paths))) throw new Error("fetch request changed");
+      if (!state) {
+        this.start(remote, `${remoteName}/${request2.from.name}`, request2.from.name, paths, source.cwd, source, false, request2.id);
+        const fetched = this.get(request2.id);
+        fetched.fetched = true;
+        this.save(fetched);
+      }
+      return { status: state?.status ?? "queued" };
+    }
+    if (request2.op === "offer") {
+      if (!this.transport.validSender(remote, request2.from)) throw new Error("sender not advertised by paired instance");
+      if (!this.transport.localPeer(request2.to)) throw new Error("file recipient is not online");
+      const entries = request2.entries.map((entry) => ({ ...entry, offset: 0 }));
+      const totalBytes = this.validateEntries(entries);
+      if (state?.pull && !state.entries.length) {
+        if (state.to !== request2.from.name || state.from.name !== request2.to) throw new Error("pull offer does not match request");
+        state.from = request2.from;
+        state.to = request2.to;
+        state.pull = false;
+      } else if (state && (state.direction !== "receive" || JSON.stringify(state.entries.map(({ path, kind, size }) => ({ path, kind, size }))) !== JSON.stringify(request2.entries) || state.from.name !== request2.from.name || state.from.agent !== request2.from.agent || state.to !== request2.to)) throw new Error("transfer manifest changed");
+      if (state) state.from = request2.from;
+      if (this.receiving.has(request2.id)) throw new Error("transfer operation already in progress");
+      this.receiving.add(request2.id);
+      try {
+        if (!state || !state.entries.length) {
+          if (!state) this.ensureCapacity();
+          const inbox = join29(this.home, "inbox");
+          ensureTransferDirectory(inbox);
+          if (existsSync16(join29(inbox, request2.id)) || existsSync16(join29(this.root, request2.id))) throw new Error("transfer destination already exists");
+          const receiving = {
+            version: 1,
+            id: request2.id,
+            direction: "receive",
+            remote,
+            peer: `${remoteName}/${request2.from.name}`,
+            from: request2.from,
+            to: request2.to,
+            paths: [],
+            cwd: "",
+            status: "preparing",
+            entries,
+            totalBytes,
+            createdAt: state?.createdAt ?? Date.now(),
+            updatedAt: Date.now()
+          };
+          state = state ? Object.assign(state, receiving, { pull: false }) : receiving;
+          this.save(state);
+          await this.freeDisk(0);
+          if (this.stopped(state)) throw new Error("transfer cancelled");
+        }
+        if (!state.initialized) this.initialize(state);
+        else {
+          for (let i = 0; i < state.entries.length; i++) await this.recover(state, state.entries[i], i);
+          await this.freeDisk(0);
+        }
+        if (this.stopped(state)) throw new Error("transfer cancelled");
+        if (state.status !== "completed") {
+          state.status = "running";
+          delete state.error;
+        }
+        this.save(state);
+        this.report(state, true);
+        return { offsets: state.entries.map((entry) => entry.offset), status: state.status };
+      } finally {
+        this.receiving.delete(request2.id);
+      }
+    }
+    if (!state || state.direction !== "receive") throw new Error("unknown receiving transfer");
+    if (this.receiving.has(state.id)) throw new Error("transfer operation already in progress");
+    this.receiving.add(state.id);
+    try {
+      if (request2.op === "finish") {
+        if (state.entries.some((entry2) => entry2.kind === "file" && !entry2.complete)) throw new Error("transfer has incomplete files");
+        if (state.status !== "completed") {
+          state.status = "completed";
+          this.save(state);
+          this.report(state, true);
+        }
+        return { status: state.status };
+      }
+      const entry = state.entries[request2.index];
+      if (!entry || entry.kind !== "file") throw new Error("invalid file index");
+      if (request2.op === "finish-file") {
+        if (entry.offset !== entry.size) throw new Error("file is incomplete");
+        if (entry.complete) {
+          if (entry.sha256 !== request2.sha256) throw new Error("file checksum mismatch");
+          return {};
+        }
+        const part = this.part(state, request2.index);
+        if (await this.hashFile(part, state) !== request2.sha256) throw new Error("file checksum mismatch");
+        if (this.stopped(state)) throw new Error("transfer cancelled");
+        entry.sha256 = request2.sha256;
+        this.save(state);
+        const target = this.target(state, entry);
+        assertTransferPath(dirname12(target));
+        assertTransferPath(part);
+        const verified = this.verified(state, request2.index);
+        if (existsSync16(verified)) throw new Error("verified file already exists");
+        renameSync7(part, verified);
+        await link(verified, target);
+        await unlink(verified);
+        entry.complete = true;
+        this.save(state);
+        return {};
+      }
+      if (entry.complete || request2.offset !== entry.offset) throw new Error("chunk offset mismatch");
+      const data = Buffer.from(request2.data, "base64");
+      if (!data.length || data.length !== Math.min(TRANSFER_CHUNK_BYTES, entry.size - entry.offset) || data.toString("base64") !== request2.data || digest(data) !== request2.sha256) throw new Error("chunk checksum or encoding mismatch");
+      await this.freeDisk(0);
+      if (this.stopped(state)) throw new Error("transfer cancelled or manager closed");
+      const path = this.part(state, request2.index);
+      assertTransferPath(path);
+      assertTransferPath(`${path}.sha256`);
+      const file2 = await open2(path, constants.O_RDWR | (constants.O_NOFOLLOW ?? 0));
+      const journal = await open2(`${path}.sha256`, constants.O_RDWR | (constants.O_NOFOLLOW ?? 0));
+      try {
+        await writeAll(file2, data, entry.offset);
+        await file2.sync();
+        const record2 = Buffer.from(`${request2.sha256}
+`);
+        await writeAll(journal, record2, Math.floor(entry.offset / TRANSFER_CHUNK_BYTES) * SHA_RECORD_BYTES);
+        await journal.sync();
+      } finally {
+        await file2.close();
+        await journal.close();
+      }
+      entry.offset += data.length;
+      if (!this.stopped(state)) state.status = "running";
+      this.save(state);
+      this.report(state);
+      return {};
+    } finally {
+      this.receiving.delete(state.id);
+    }
+  }
+  async cancel(id, notifyRemote = true) {
+    const state = this.get(external_exports.uuid().parse(id));
+    if (!state) throw new Error("unknown transfer");
+    if (state.status === "completed" || state.status === "failed") return { id, cancelled: false };
+    if (state.legacySent) return { id, cancelled: false };
+    state.status = "cancelled";
+    state.cancelPending = notifyRemote && !state.legacy;
+    this.save(state);
+    this.report(state, true);
+    for (const [rid, pending] of this.pending) if (pending.id === id) {
+      clearTimeout(pending.timer);
+      this.pending.delete(rid);
+      pending.reject(new Error("transfer cancelled"));
+    }
+    if (notifyRemote) this.resume();
+    return { id, cancelled: true };
+  }
+  close() {
+    this.closed = true;
+    clearInterval(this.timer);
+    for (const state of this.states.values()) if (!TERMINAL.has(state.status)) {
+      state.status = "paused";
+      this.save(state);
+    }
+    for (const pending of this.pending.values()) {
+      clearTimeout(pending.timer);
+      pending.reject(new Error("transfer manager closed"));
+    }
+    this.pending.clear();
+  }
+};
 
 // src/network/link.ts
 var MAX_METADATA_CHARS = 4096;
@@ -42820,36 +43726,13 @@ var Link = class {
     this.socket = socket;
     this.service = service;
     this.key = key2;
+    this.expected = expected;
     this.deadline = setTimeout(() => this.fail(new Error("network hello timed out")), NETWORK_TIMEOUT_MS);
     void this.ready.catch(() => {
     });
     socket.on("data", (chunk) => {
-      try {
-        this.buffer = Buffer.concat([this.buffer, chunk]);
-        let nl;
-        while ((nl = this.buffer.indexOf("\n")) >= 0) {
-          if (nl > MAX_NETWORK_FRAME_BYTES) throw new Error("network frame too large");
-          const line = this.buffer.subarray(0, nl);
-          this.buffer = this.buffer.subarray(nl + 1);
-          const frame = frameSchema.parse(JSON.parse(line.toString("utf8")));
-          if (!this.remote) {
-            if (frame.type !== "hello") throw new Error("network hello required");
-            if (expected && (frame.id !== expected.id || frame.name !== expected.name || frame.fingerprint !== expected.fingerprint)) throw new Error("paired identity changed");
-            this.remote = expected ?? service.keys.accept(key2, frame);
-            this.peers = frame.peers;
-            this.echoSupported = frame.echo === true;
-            this.receiptsSupported = frame.receipts === true;
-            this.capabilities = frame.capabilities ?? [];
-            service.attach(this);
-            clearTimeout(this.deadline);
-            this.readyResolve();
-          } else if (frame.type === "hello") throw new Error("duplicate network hello");
-          else this.onFrame(frame);
-        }
-        if (this.buffer.length > MAX_NETWORK_FRAME_BYTES) throw new Error("network frame too large");
-      } catch (err) {
-        this.fail(err);
-      }
+      this.buffer = Buffer.concat([this.buffer, chunk]);
+      this.processBuffer();
     });
     socket.on("error", (err) => this.fail(err));
     socket.on("close", () => {
@@ -42860,6 +43743,8 @@ var Link = class {
         p.reject(new Error("network link closed"));
       }
       this.pending.clear();
+      for (const reject of this.extensionWrites) reject(new Error("network link closed"));
+      this.extensionWrites.clear();
       service.detach(this);
     });
     this.write({ type: "hello", v: NETWORK_VERSION, ...service.keys.identity, peers: service.localPeers(), echo: true, receipts: Boolean(service.supportsReceipts), capabilities: service.extensionCapabilities() });
@@ -42867,6 +43752,7 @@ var Link = class {
   socket;
   service;
   key;
+  expected;
   remote = null;
   peers = [];
   echoSupported = false;
@@ -42875,13 +43761,45 @@ var Link = class {
   extensionHandlers = 0;
   buffer = Buffer.alloc(0);
   pending = /* @__PURE__ */ new Map();
+  extensionWrites = /* @__PURE__ */ new Set();
   readyResolve;
   readyReject;
-  ready = new Promise((resolve11, reject) => {
-    this.readyResolve = resolve11;
+  ready = new Promise((resolve12, reject) => {
+    this.readyResolve = resolve12;
     this.readyReject = reject;
   });
   deadline;
+  processBuffer() {
+    if (this.socket.destroyed) return;
+    try {
+      let nl;
+      while (this.extensionHandlers < MAX_EXTENSION_HANDLERS && (nl = this.buffer.indexOf("\n")) >= 0) {
+        if (nl > MAX_NETWORK_FRAME_BYTES) throw new Error("network frame too large");
+        const line = this.buffer.subarray(0, nl);
+        this.buffer = this.buffer.subarray(nl + 1);
+        const frame = frameSchema.parse(JSON.parse(line.toString("utf8")));
+        if (!this.remote) {
+          if (frame.type !== "hello") throw new Error("network hello required");
+          const expected = this.expected;
+          if (expected && (frame.id !== expected.id || frame.name !== expected.name || frame.fingerprint !== expected.fingerprint)) throw new Error("paired identity changed");
+          this.remote = expected ?? this.service.keys.accept(this.key, frame);
+          this.peers = frame.peers;
+          this.echoSupported = frame.echo === true;
+          this.receiptsSupported = frame.receipts === true;
+          this.capabilities = frame.capabilities ?? [];
+          this.service.attach(this);
+          clearTimeout(this.deadline);
+          this.readyResolve();
+        } else if (frame.type === "hello") throw new Error("duplicate network hello");
+        else this.onFrame(frame);
+      }
+      if (this.buffer.length > MAX_NETWORK_FRAME_BYTES) throw new Error("network frame too large");
+      if (this.extensionHandlers >= MAX_EXTENSION_HANDLERS) this.socket.pause();
+      else this.socket.resume();
+    } catch (error62) {
+      this.fail(error62);
+    }
+  }
   write(frame) {
     const data = JSON.stringify(frame) + "\n";
     if (Buffer.byteLength(data) > MAX_NETWORK_FRAME_BYTES || this.socket.writableLength > MAX_NETWORK_FRAME_BYTES) throw new Error("network write limit reached");
@@ -42894,49 +43812,52 @@ var Link = class {
   /** Complete only after the stream has consumed this bounded record; callers await each write. */
   writeExtension(type, payload) {
     const data = JSON.stringify({ type, payload }) + "\n";
-    if (Buffer.byteLength(data) > MAX_NETWORK_FRAME_BYTES || this.socket.writableLength > MAX_NETWORK_FRAME_BYTES) return Promise.reject(new Error("network write limit reached"));
+    if (Buffer.byteLength(data) > MAX_NETWORK_FRAME_BYTES || this.socket.writableLength > MAX_NETWORK_FRAME_BYTES || this.extensionWrites.size >= MAX_NETWORK_REQUESTS) return Promise.reject(new Error("network write limit reached"));
     if (this.socket.destroyed) return Promise.reject(new Error("network link closed"));
-    return new Promise((resolve11, reject) => {
-      const closed = () => {
-        cleanup();
-        reject(new Error("network link closed"));
+    return new Promise((resolve12, reject) => {
+      const failed = (error62) => {
+        this.extensionWrites.delete(failed);
+        reject(error62);
       };
-      const cleanup = () => this.socket.off("close", closed);
-      this.socket.once("close", closed);
-      this.socket.write(data, (error62) => {
-        cleanup();
-        if (error62) reject(error62);
-        else resolve11();
-      });
+      this.extensionWrites.add(failed);
+      try {
+        this.socket.write(data, (error62) => {
+          this.extensionWrites.delete(failed);
+          if (error62) reject(error62);
+          else resolve12();
+        });
+      } catch (error62) {
+        failed(error62);
+      }
     });
   }
   refresh() {
     if (this.remote) this.write({ type: "peers", peers: this.service.localPeers() });
   }
   send(message) {
-    return this.request({ type: "send", rid: randomUUID12(), message: messageSchema.parse(message) });
+    return this.request({ type: "send", rid: randomUUID13(), message: messageSchema.parse(message) });
   }
   receipt(id, sender) {
     if (!this.receiptsSupported) return Promise.reject(new Error("Remote broker does not support read receipts. Update and reload its hosting sessions."));
-    return this.request({ type: "receipt", rid: randomUUID12(), id, sender });
+    return this.request({ type: "receipt", rid: randomUUID13(), id, sender });
   }
   files(transfer) {
-    return this.request({ type: "files", rid: randomUUID12(), transfer: transferSchema.parse(transfer) });
+    return this.request({ type: "files", rid: randomUUID13(), transfer: transferSchema.parse(transfer) });
   }
   async echo() {
     if (!this.echoSupported) throw new Error("Remote broker does not support verification. Update and restart its hosting sessions.");
-    const result = await this.request({ type: "echo", rid: randomUUID12() });
+    const result = await this.request({ type: "echo", rid: randomUUID13() });
     if (result !== true) throw new Error("network echo was not acknowledged");
   }
   request(frame) {
     if (this.pending.size >= MAX_NETWORK_REQUESTS) return Promise.reject(new Error("too many network requests"));
-    return new Promise((resolve11, reject) => {
+    return new Promise((resolve12, reject) => {
       const rid = frame.rid;
       const timer = setTimeout(() => {
         this.pending.delete(rid);
         reject(new Error("network send timed out; delivery may have occurred"));
       }, NETWORK_TIMEOUT_MS);
-      this.pending.set(rid, { resolve: resolve11, reject, timer, kind: frame.type });
+      this.pending.set(rid, { resolve: resolve12, reject, timer, kind: frame.type });
       try {
         this.refresh();
         this.write(frame);
@@ -42952,6 +43873,7 @@ var Link = class {
       if (++this.extensionHandlers > MAX_EXTENSION_HANDLERS) throw new Error("too many extension handlers");
       void Promise.resolve().then(() => this.service.receiveExtension(frame.type, frame.payload, this.remote)).catch((error62) => this.fail(error62)).finally(() => {
         this.extensionHandlers--;
+        this.processBuffer();
       });
       return;
     }
@@ -43010,12 +43932,30 @@ var NetworkService = class {
     this.broker = broker;
     this.log = log;
     this.keys = new PairingStore(home, cfg.name);
+    this.transfers = new TransferManager(home, {
+      supports: (remote) => this.peerSupports(remote, FILE_STREAM_CAPABILITY),
+      send: (remote, payload) => {
+        if (payload.op === "offer" || payload.op === "fetch") this.instanceLink(remote).refresh();
+        return this.sendExtension(remote, "file-stream", payload);
+      },
+      validSender: (remote, sender) => this.links.get(remote)?.peers.some((peer) => peer.id === sender.id && peer.name === sender.name && (peer.jobAgent ?? peer.agent) === sender.agent) ?? false,
+      localPeer: (name) => {
+        const peer = this.broker.peers().find((peer2) => peer2.name === name);
+        return peer ? { id: peer.id, name: peer.name, agent: peer.jobAgent ?? peer.agent, cwd: peer.cwd } : void 0;
+      },
+      notify: (message) => {
+        this.broker.receive(message);
+      },
+      legacy: (remote, transfer) => this.instanceLink(remote).files(transfer)
+    }, log, { maxBytes: cfg.maxTransferBytes, fetchRoots: cfg.fetchRoots });
+    this.registerExtension("file-stream", FILE_STREAM_CAPABILITY, (payload, remote) => this.transfers.handle(payload, remote.id, remote.name));
   }
   home;
   cfg;
   broker;
   log;
   keys;
+  transfers;
   server = null;
   sockets = /* @__PURE__ */ new Set();
   links = /* @__PURE__ */ new Map();
@@ -43042,9 +43982,9 @@ var NetworkService = class {
     return extension.handler(payload, remote);
   }
   instanceLink(instance) {
-    const link = [...this.links.values()].find((candidate) => candidate.remote.id === instance || candidate.remote.name === instance);
-    if (!link) throw new Error("paired instance is not connected");
-    return link;
+    const link2 = [...this.links.values()].find((candidate) => candidate.remote.id === instance || candidate.remote.name === instance);
+    if (!link2) throw new Error("paired instance is not connected");
+    return link2;
   }
   peerSupports(instance, capability) {
     try {
@@ -43053,11 +43993,11 @@ var NetworkService = class {
       return false;
     }
   }
-  sendExtension(instance, type, payload) {
+  async sendExtension(instance, type, payload) {
     const extension = this.extensions.get(type);
-    const link = this.instanceLink(instance);
-    if (!extension || !link.supports(extension.capability)) return Promise.reject(new Error("remote broker does not support this extension"));
-    return link.writeExtension(type, payload);
+    const link2 = this.instanceLink(instance);
+    if (!extension || !link2.supports(extension.capability)) return Promise.reject(new Error("remote broker does not support this extension"));
+    return link2.writeExtension(type, payload);
   }
   get supportsReceipts() {
     return Boolean(this.broker.receipt);
@@ -43108,11 +44048,11 @@ var NetworkService = class {
     server.on("tlsClientError", () => this.log.debug("network TLS authentication failed"));
     server.on("error", (err) => this.log.warn("network listener error", { message: err.message }));
     try {
-      await new Promise((resolve11, reject) => {
+      await new Promise((resolve12, reject) => {
         server.once("error", reject);
         server.listen(this.cfg.port, this.cfg.bind, () => {
           server.off("error", reject);
-          resolve11();
+          resolve12();
         });
       });
       if (this.cfg.discovery) {
@@ -43120,11 +44060,11 @@ var NetworkService = class {
         await this.discovery.start();
       }
       this.timer = setInterval(() => {
-        for (const link of this.links.values()) {
+        for (const link2 of this.links.values()) {
           try {
-            link.refresh();
+            link2.refresh();
           } catch (err) {
-            link.fail(err);
+            link2.fail(err);
           }
         }
         for (const pair of this.keys.pairs()) if (pair.host && pair.port && !this.links.has(pair.id) && !this.connecting.has(pair.id)) void this.connectPair(pair).catch(() => {
@@ -43138,27 +44078,31 @@ var NetworkService = class {
       throw err;
     }
   }
-  attach(link) {
-    const remote = link.remote;
+  attach(link2) {
+    const remote = link2.remote;
     if (this.closed) throw new Error("network service closed");
     const existing = this.links.get(remote.id);
-    if (existing && existing !== link) throw new Error("instance already connected");
-    this.links.set(remote.id, link);
+    if (existing && existing !== link2) throw new Error("instance already connected");
+    this.links.set(remote.id, link2);
+    setImmediate(() => this.transfers.resume());
   }
-  detach(link) {
-    if (link.remote && this.links.get(link.remote.id) === link) this.links.delete(link.remote.id);
+  detach(link2) {
+    if (link2.remote && this.links.get(link2.remote.id) === link2) {
+      this.links.delete(link2.remote.id);
+      this.transfers.disconnected(link2.remote.id);
+    }
   }
   peers() {
-    return [...this.links.values()].flatMap((link) => link.peers.map((p) => ({ ...p, agent: p.jobAgent ?? p.agent, id: `${link.remote.id}/${p.id}`, name: `${link.remote.name}/${p.name}` })));
+    return [...this.links.values()].flatMap((link2) => link2.peers.map((p) => ({ ...p, agent: p.jobAgent ?? p.agent, id: `${link2.remote.id}/${p.id}`, name: `${link2.remote.name}/${p.name}` })));
   }
   status() {
     return { enabled: true, config: this.cfg, identity: this.keys.identity, port: this.port, discovered: this.discovery?.instances() ?? [], paired: this.keys.pairs().map(({ id, name, fingerprint }) => ({ id, name, fingerprint, connected: this.links.has(id), ...this.health.has(id) ? { health: this.health.get(id) } : {} })) };
   }
   async verify(id) {
-    const link = this.links.get(id);
-    if (!link) throw new Error("paired instance is not connected");
+    const link2 = this.links.get(id);
+    if (!link2) throw new Error("paired instance is not connected");
     const start = performance.now();
-    await link.echo();
+    await link2.echo();
     const roundTripMs = Math.round(performance.now() - start);
     this.health.set(id, { lastVerifiedAt: Date.now(), roundTripMs });
     return { peers: this.peers().filter((p) => p.id.startsWith(`${id}/`)), roundTripMs };
@@ -43194,7 +44138,7 @@ var NetworkService = class {
       this.sockets.add(socket);
       socket.once("close", () => this.sockets.delete(socket));
       const secured = socket;
-      await new Promise((resolve11, reject) => {
+      await new Promise((resolve12, reject) => {
         const timer = setTimeout(() => {
           secured.destroy();
           reject(new Error("network TLS handshake timed out"));
@@ -43207,7 +44151,7 @@ var NetworkService = class {
         secured.once("secureConnect", () => {
           clearTimeout(timer);
           secured.off("error", onError);
-          resolve11();
+          resolve12();
         });
       });
       if (secured.getProtocol() !== "TLSv1.3" || Object.keys(secured.getPeerCertificate()).length) throw new Error("TLS-PSK required");
@@ -43228,35 +44172,47 @@ var NetworkService = class {
     }
   }
   async send(message) {
-    const { link, target } = this.target(message.recipient);
-    const recipient = `${link.remote.name}/${target}`;
-    const delivered = await link.send({ ...message, recipient: target });
-    return { messages: [{ ...message, recipient }], deliveredTo: delivered ? [recipient] : [], queuedFor: delivered ? [] : [recipient], recipientStates: link.peers.filter((p) => p.name === target).map((p) => ({ name: recipient, activity: p.activity, autoWake: p.autoWake, wakeOnDirect: p.wakeOnDirect, wakeAvailable: p.wakeAvailable, wakeMaxHops: p.wakeMaxHops })) };
+    const { link: link2, target } = this.target(message.recipient);
+    const recipient = `${link2.remote.name}/${target}`;
+    const delivered = await link2.send({ ...message, recipient: target });
+    return { messages: [{ ...message, recipient }], deliveredTo: delivered ? [recipient] : [], queuedFor: delivered ? [] : [recipient], recipientStates: link2.peers.filter((p) => p.name === target).map((p) => ({ name: recipient, activity: p.activity, autoWake: p.autoWake, wakeOnDirect: p.wakeOnDirect, wakeAvailable: p.wakeAvailable, wakeMaxHops: p.wakeMaxHops })) };
   }
   target(address) {
     const slash = address.indexOf("/");
     const host = address.slice(0, slash);
     const raw = address.slice(slash + 1);
-    const link = [...this.links.values()].find((l) => l.remote.name === host || l.remote.id === host);
-    const target = link?.peers.find((p) => p.name === raw || p.id === raw)?.name ?? raw;
-    if (!link || !NETWORK_NAME_PATTERN.test(target)) throw new BridgeError("unknown_target", "paired instance is not connected or target is invalid");
-    return { link, target };
+    const link2 = [...this.links.values()].find((l) => l.remote.name === host || l.remote.id === host);
+    const target = link2?.peers.find((p) => p.name === raw || p.id === raw)?.name ?? raw;
+    if (!link2 || !NETWORK_NAME_PATTERN.test(target)) throw new BridgeError("unknown_target", "paired instance is not connected or target is invalid");
+    return { link: link2, target };
   }
   async sendFiles(address, transfer) {
-    const { link, target } = this.target(address);
-    return link.files({ ...transfer, to: target });
+    const { link: link2, target } = this.target(address);
+    return link2.files({ ...transfer, to: target });
+  }
+  startFiles(address, paths, cwd, from, pull = false) {
+    const { link: link2, target } = this.target(address);
+    if (!link2.peers.some((peer) => peer.name === target)) throw new Error("file recipient is not online");
+    const streaming = link2.supports(FILE_STREAM_CAPABILITY);
+    if (pull && !streaming) throw new Error("remote broker does not support fetch_files; update its hosting sessions");
+    return this.transfers.start(link2.remote.id, `${link2.remote.name}/${target}`, target, paths, cwd, from, pull, void 0, !streaming);
   }
   fileTarget(address) {
     return this.target(address).target;
   }
   receiveFiles(transfer, name, id) {
     if (!this.broker.peers().some((p) => p.name === transfer.to)) throw new Error("file recipient is not online");
+    const bytes = transfer.entries.reduce((sum, entry) => sum + (entry.kind === "file" ? Buffer.byteLength(entry.data, "base64") : 0), 0);
+    if (this.cfg.maxTransferBytes !== void 0 && bytes > this.cfg.maxTransferBytes) throw new Error("transfer exceeds size limit");
     const result = receiveTransfer(this.home, transfer);
+    this.transfers.recordLegacy(transfer, id.split("/")[0], name);
+    this.log.info("legacy files received", { ...result, sender: name });
     this.broker.receive({ id: transfer.id, from: { ...transfer.from, name, id }, to: transfer.to, recipient: transfer.to, conversationId: transfer.id, replyTo: null, hop: 0, body: `Received ${result.files} files (${result.bytes} bytes) in ${result.inbox}`, createdAt: Date.now(), readAt: null });
     return result;
   }
   async close() {
     this.closed = true;
+    this.transfers.close();
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
     await this.discovery?.close();
@@ -43265,18 +44221,18 @@ var NetworkService = class {
     this.links.clear();
     const server = this.server;
     this.server = null;
-    if (server) await new Promise((resolve11) => server.close(() => resolve11()));
+    if (server) await new Promise((resolve12) => server.close(() => resolve12()));
   }
 };
 
 // src/network/remote-jobs.ts
-import { randomUUID as randomUUID14 } from "node:crypto";
-import { existsSync as existsSync16, realpathSync as realpathSync6, statSync as statSync8 } from "node:fs";
-import { isAbsolute as isAbsolute6, join as join37 } from "node:path";
+import { randomUUID as randomUUID15 } from "node:crypto";
+import { existsSync as existsSync17, realpathSync as realpathSync6, statSync as statSync9 } from "node:fs";
+import { isAbsolute as isAbsolute8, join as join38 } from "node:path";
 
 // src/core/runfeed.ts
-import { appendFileSync as appendFileSync3, mkdirSync as mkdirSync16, readFileSync as readFileSync15, readdirSync as readdirSync10, statSync as statSync6 } from "node:fs";
-import { join as join29 } from "node:path";
+import { appendFileSync as appendFileSync3, mkdirSync as mkdirSync17, readFileSync as readFileSync16, readdirSync as readdirSync11, statSync as statSync7 } from "node:fs";
+import { join as join30 } from "node:path";
 var RUNS_DIR_NAME = "runs";
 var HEARTBEAT_MS = 6e4;
 var KEEP_RUN_LOGS = 50;
@@ -43290,13 +44246,13 @@ function stamp(t2) {
 }
 function pruneOldLogs(dir) {
   try {
-    archiveOldRuns(join29(dir, ".."));
+    archiveOldRuns(join30(dir, ".."));
     const limit = retentionLimit("AGENT_BRIDGE_RUN_LOG_LIMIT", KEEP_RUN_LOGS);
     if (!limit) return;
-    const files = readdirSync10(dir).filter((f) => f.endsWith(".log")).map((f) => ({ f, t: statSync6(join29(dir, f)).mtimeMs })).sort((a, b) => b.t - a.t);
+    const files = readdirSync11(dir).filter((f) => f.endsWith(".log")).map((f) => ({ f, t: statSync7(join30(dir, f)).mtimeMs })).sort((a, b) => b.t - a.t);
     for (const { f } of files.slice(limit)) {
-      const path = join29(dir, f);
-      if (Date.now() - statSync6(path).mtimeMs <= STALE_RUN_MS && !/^\d\d:\d\d:\d\d finished after \d+s · /m.test(readFileSync15(path, "utf8"))) continue;
+      const path = join30(dir, f);
+      if (Date.now() - statSync7(path).mtimeMs <= STALE_RUN_MS && !/^\d\d:\d\d:\d\d finished after \d+s · /m.test(readFileSync16(path, "utf8"))) continue;
       archiveRun(path);
     }
   } catch (err) {
@@ -43307,9 +44263,9 @@ function pruneOldLogs(dir) {
 function startRunFeed(opts) {
   const now = opts.now ?? Date.now;
   const release = storageLease(opts.home);
-  const dir = join29(opts.home, RUNS_DIR_NAME);
-  mkdirSync16(dir, { recursive: true });
-  const logPath = join29(dir, `${new Date(now()).toISOString().slice(0, 19).replace(/[:T]/g, "-")}-${opts.name}.log`);
+  const dir = join30(opts.home, RUNS_DIR_NAME);
+  mkdirSync17(dir, { recursive: true });
+  const logPath = join30(dir, `${new Date(now()).toISOString().slice(0, 19).replace(/[:T]/g, "-")}-${opts.name}.log`);
   const write = (line) => {
     const [first, ...rest] = line.replace(/\r/g, "").split("\n");
     const body = [first, ...rest.map((l) => `${CONTINUATION}${l}`)].join("\n");
@@ -43368,27 +44324,27 @@ function startRunFeed(opts) {
 }
 
 // src/mcp/delegate-run.ts
-import { randomUUID as randomUUID13 } from "node:crypto";
-import { isAbsolute as isAbsolute5, join as join34, relative as relative5, resolve as resolve9 } from "node:path";
+import { randomUUID as randomUUID14 } from "node:crypto";
+import { isAbsolute as isAbsolute7, join as join35, relative as relative6, resolve as resolve10 } from "node:path";
 
 // src/core/effort.ts
-import { readFileSync as readFileSync17 } from "node:fs";
+import { readFileSync as readFileSync18 } from "node:fs";
 import { homedir as homedir6 } from "node:os";
-import { join as join31 } from "node:path";
+import { join as join32 } from "node:path";
 
 // src/core/codex-trust.ts
-import { readFileSync as readFileSync16, writeFileSync as writeFileSync8 } from "node:fs";
+import { readFileSync as readFileSync17, writeFileSync as writeFileSync9 } from "node:fs";
 import { homedir as homedir5 } from "node:os";
-import { join as join30 } from "node:path";
+import { join as join31 } from "node:path";
 var PERMISSION_HOOK_STATE_KEY = 'hooks.state."agent-bridge@agent-bridge:plugin.json#hooks[0]:permission_request:0:0"';
 var OBSERVATIONS_FILE = "codex-hook.json";
 function codexHome(env = process.env) {
-  return env.CODEX_HOME?.trim() || join30(homedir5(), ".codex");
+  return env.CODEX_HOME?.trim() || join31(homedir5(), ".codex");
 }
-function codexPermissionHookHash(home = codexHome(), read2 = (p) => readFileSync16(p, "utf8")) {
+function codexPermissionHookHash(home = codexHome(), read2 = (p) => readFileSync17(p, "utf8")) {
   let text2;
   try {
-    text2 = read2(join30(home, "config.toml"));
+    text2 = read2(join31(home, "config.toml"));
   } catch {
     return null;
   }
@@ -43403,7 +44359,7 @@ function codexPermissionHookHash(home = codexHome(), read2 = (p) => readFileSync
 }
 function readObservations(bridgeHome) {
   try {
-    return JSON.parse(readFileSync16(join30(bridgeHome, OBSERVATIONS_FILE), "utf8"));
+    return JSON.parse(readFileSync17(join31(bridgeHome, OBSERVATIONS_FILE), "utf8"));
   } catch {
     return {};
   }
@@ -43413,20 +44369,20 @@ function recordCodexHookObservation(bridgeHome, hash2, observation) {
   if (all[hash2] === "failed") return;
   all[hash2] = observation;
   try {
-    writeFileSync8(join30(bridgeHome, OBSERVATIONS_FILE), JSON.stringify(all, null, 2), { mode: 384 });
+    writeFileSync9(join31(bridgeHome, OBSERVATIONS_FILE), JSON.stringify(all, null, 2), { mode: 384 });
   } catch {
   }
 }
-function codexPermissionHookTrusted(bridgeHome, home = codexHome(), read2 = (p) => readFileSync16(p, "utf8")) {
+function codexPermissionHookTrusted(bridgeHome, home = codexHome(), read2 = (p) => readFileSync17(p, "utf8")) {
   const hash2 = codexPermissionHookHash(home, read2);
   return hash2 !== null && readObservations(bridgeHome)[hash2] !== "failed";
 }
 
 // src/core/effort.ts
-function defaultEffort(agent, model, read2 = (p) => readFileSync17(p, "utf8")) {
+function defaultEffort(agent, model, read2 = (p) => readFileSync18(p, "utf8")) {
   try {
-    if (agent === "codex") return codexConfigEffort(read2(join31(codexHome(), "config.toml")));
-    if (agent === "claude") return claudeSettingsEffort(read2(join31(process.env.CLAUDE_CONFIG_DIR?.trim() || join31(homedir6(), ".claude"), "settings.json")), model);
+    if (agent === "codex") return codexConfigEffort(read2(join32(codexHome(), "config.toml")));
+    if (agent === "claude") return claudeSettingsEffort(read2(join32(process.env.CLAUDE_CONFIG_DIR?.trim() || join32(homedir6(), ".claude"), "settings.json")), model);
   } catch {
   }
   return null;
@@ -43452,8 +44408,8 @@ function claudeSettingsEffort(json2, model) {
 }
 
 // src/core/resource-slots.ts
-import { mkdirSync as mkdirSync17 } from "node:fs";
-import { join as join32 } from "node:path";
+import { mkdirSync as mkdirSync18 } from "node:fs";
+import { join as join33 } from "node:path";
 import { DatabaseSync as DatabaseSync10 } from "node:sqlite";
 import { setTimeout as delay3 } from "node:timers/promises";
 var SLOT_OWNER_ENV = "AGENT_BRIDGE_SLOT_OWNER";
@@ -43475,8 +44431,8 @@ var ResourceSlots = class {
   constructor(home, isAlive = alive, now = Date.now) {
     this.isAlive = isAlive;
     this.now = now;
-    mkdirSync17(home, { recursive: true });
-    this.db = new DatabaseSync10(join32(home, SLOT_DB_NAME));
+    mkdirSync18(home, { recursive: true });
+    this.db = new DatabaseSync10(join33(home, SLOT_DB_NAME));
     this.db.exec(`PRAGMA busy_timeout = ${LOCK_WAIT_MS2};
       CREATE TABLE IF NOT EXISTS slots (
         ticket INTEGER PRIMARY KEY AUTOINCREMENT, resource TEXT NOT NULL, id TEXT NOT NULL,
@@ -43612,39 +44568,39 @@ function isHandoffToolCall(r) {
 }
 
 // src/core/worktree-links.ts
-import { lstatSync as lstatSync3, readdirSync as readdirSync11, readlinkSync, realpathSync as realpathSync5 } from "node:fs";
-import { dirname as dirname12, isAbsolute as isAbsolute4, join as join33, relative as relative4, resolve as resolve8, toNamespacedPath as toNamespacedPath2 } from "node:path";
+import { lstatSync as lstatSync4, readdirSync as readdirSync12, readlinkSync, realpathSync as realpathSync5 } from "node:fs";
+import { dirname as dirname13, isAbsolute as isAbsolute6, join as join34, relative as relative5, resolve as resolve9, toNamespacedPath as toNamespacedPath2 } from "node:path";
 var WORKTREE_LINK_HINT = "(agent-bridge: worktree isolation is mandatory. Never create symlinks, directory junctions or other reparse points whose targets leave this worktree, including Unity Library folders in the owner's main checkout. Copy caches if needed; do not share them through links. Never follow an existing external link to modify its target. Request cleanup approval through the supervisor and report the link and target if cleanup is denied.)";
 function scanWorktreeLinks(root) {
   const scan = { externalLinks: [], errors: [] };
-  const canonicalRoot = lstatSync3(toNamespacedPath2(root)).isSymbolicLink() ? resolve8(root) : realpathSync5.native(root);
+  const canonicalRoot = lstatSync4(toNamespacedPath2(root)).isSymbolicLink() ? resolve9(root) : realpathSync5.native(root);
   const inside = (target) => {
-    const rel = relative4(canonicalRoot, target);
-    return rel === "" || rel !== ".." && !rel.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`) && !isAbsolute4(rel);
+    const rel = relative5(canonicalRoot, target);
+    return rel === "" || rel !== ".." && !rel.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`) && !isAbsolute6(rel);
   };
   const visit2 = (path) => {
     try {
-      const stat = lstatSync3(toNamespacedPath2(path));
+      const stat = lstatSync4(toNamespacedPath2(path));
       if (stat.isSymbolicLink()) {
         const raw = readlinkSync(toNamespacedPath2(path));
-        let target = resolve8(dirname12(path), raw);
+        let target = resolve9(dirname13(path), raw);
         try {
           target = realpathSync5.native(path);
         } catch {
         }
         if (!inside(target)) scan.externalLinks.push({ path, target });
       } else if (stat.isDirectory()) {
-        for (const entry of readdirSync11(toNamespacedPath2(path))) visit2(join33(path, entry));
+        for (const entry of readdirSync12(toNamespacedPath2(path))) visit2(join34(path, entry));
       }
     } catch (err) {
       scan.errors.push(`${path}: ${err.message}`);
     }
   };
-  visit2(resolve8(root));
+  visit2(resolve9(root));
   return scan;
 }
 function worktreeLinkWarning(scan) {
-  const lines = scan.externalLinks.map((link) => `${link.path} -> ${link.target}`);
+  const lines = scan.externalLinks.map((link2) => `${link2.path} -> ${link2.target}`);
   if (lines.length) lines.unshift("WARNING: external worktree links/reparse points found. Do not run tools through these links; unlink the link itself without recursively deleting its target:");
   if (scan.errors.length) lines.push(`WARNING: worktree link inspection incomplete:
 ${scan.errors.join("\n")}`);
@@ -43807,15 +44763,15 @@ var DELEGATED_JOB_NOTE = "(agent-bridge: you are a delegated job. Report what yo
 var HANDOFF_DECLINED = "Declined by agent-bridge: delegated jobs do not write the project handoff. Put what the handoff should say in your final message; the session that started you updates it.";
 var PARENT_APPROVAL_TIMEOUT_MS = 10 * 6e4;
 function isBridgeWorktree(dir, home) {
-  return isInside(dir, join34(home, "worktrees")) && resolve9(dir) !== resolve9(join34(home, "worktrees"));
+  return isInside(dir, join35(home, "worktrees")) && resolve10(dir) !== resolve10(join35(home, "worktrees"));
 }
 function bridgeWorktreeRoot(dir, home) {
   if (!isBridgeWorktree(dir, home)) return null;
-  return join34(home, "worktrees", relative5(join34(home, "worktrees"), resolve9(dir)).split(/[\\/]/)[0]);
+  return join35(home, "worktrees", relative6(join35(home, "worktrees"), resolve10(dir)).split(/[\\/]/)[0]);
 }
 function isInside(child, parent2) {
-  const rel = relative5(resolve9(parent2), resolve9(child));
-  return rel === "" || !rel.startsWith("..") && !isAbsolute5(rel);
+  const rel = relative6(resolve10(parent2), resolve10(child));
+  return rel === "" || !rel.startsWith("..") && !isAbsolute7(rel);
 }
 function resumeArgs(a, job, message, sessionId, workdir, worktree, saved) {
   if (saved) {
@@ -43839,7 +44795,7 @@ async function runDelegate(rc, target, a, signal, onProgress, background, job) {
   const cwd = a.cwd || rc.cwd();
   a = worktreeArgs(target, a, cfg, cwd, rc.home);
   const access = a.access;
-  const wt = a._worktree ?? (a.worktree ? await createWorktree({ cwd, home: rc.home, jobId: randomUUID13().slice(0, 8), log: dlog }) : null);
+  const wt = a._worktree ?? (a.worktree ? await createWorktree({ cwd, home: rc.home, jobId: randomUUID14().slice(0, 8), log: dlog }) : null);
   const workdir = wt?.cwd ?? cwd;
   const linkRoot = wt?.path ?? bridgeWorktreeRoot(workdir, rc.home);
   const watchChanges = !wt && (access === "edit" || access === "ask" && target === "codex");
@@ -43909,7 +44865,7 @@ async function runDelegate(rc, target, a, signal, onProgress, background, job) {
   try {
     feed = startRunFeed({
       home: rc.home,
-      name: `${target}-${randomUUID13().slice(0, 8)}`,
+      name: `${target}-${randomUUID14().slice(0, 8)}`,
       header: `${target}${a.model ? ` (${a.model}${a.effort ? `, effort ${a.effort}` : ""})` : a.effort ? ` (effort ${a.effort})` : ""} in ${workdir}, access ${access ?? "default"}, by ${me}${a.session_id ? `, continues ${a.session_id}` : ""}
 ${a.prompt}
 ---`,
@@ -43935,7 +44891,7 @@ ${a.prompt}
     await relay?.stop();
     throw err;
   }
-  let link = null;
+  let link2 = null;
   let siblingLink = null;
   let jobNode = null;
   const liveDeliveries = /* @__PURE__ */ new Set();
@@ -43978,7 +44934,7 @@ ${a.prompt}
     );
     try {
       await l.start();
-      link = l;
+      link2 = l;
       job.live = {
         post: (m, sibling) => {
           const from = sibling?.from.name ?? me;
@@ -44010,7 +44966,7 @@ ${a.prompt}
     });
     void steering?.rename?.(title).catch((err) => dlog.warn("could not rename the Codex thread", { err: err.message }));
   };
-  const slotOwner = { id: `${a._job ?? target}-${randomUUID13()}`, pid: process.pid };
+  const slotOwner = { id: `${a._job ?? target}-${randomUUID14()}`, pid: process.pid };
   let slots = null;
   let slotTimer;
   let res;
@@ -44030,7 +44986,7 @@ ${a.prompt}
       {
         // With a live link the subagent can report how far it is (report_progress; shown in the dashboard).
         // A new session learns once that it reports back and leaves the handoff alone.
-        prompt: [a.prompt, a.session_id ? null : DELEGATED_JOB_NOTE, linkRoot ? WORKTREE_LINK_HINT : null, link ? PROGRESS_HINT : null, link ? SIBLING_HINT : null, resourceSlotHint(cfg.resourceSlots, bundledCli())].filter(Boolean).join("\n\n"),
+        prompt: [a.prompt, a.session_id ? null : DELEGATED_JOB_NOTE, linkRoot ? WORKTREE_LINK_HINT : null, link2 ? PROGRESS_HINT : null, link2 ? SIBLING_HINT : null, resourceSlotHint(cfg.resourceSlots, bundledCli())].filter(Boolean).join("\n\n"),
         title: typeof job?.args?.title === "string" && job.args.title || a.title,
         cwd: workdir,
         sessionId: a.session_id ?? null,
@@ -44042,7 +44998,7 @@ ${a.prompt}
         log: dlog,
         signal,
         onProgress: feed.report,
-        extraEnv: { ...link?.childEnv(), ...slots ? { [ENV.home]: rc.home, [SLOT_OWNER_ENV]: slotOwner.id, [SLOT_PID_ENV]: String(slotOwner.pid) } : {} },
+        extraEnv: { ...link2?.childEnv(), ...slots ? { [ENV.home]: rc.home, [SLOT_OWNER_ENV]: slotOwner.id, [SLOT_PID_ENV]: String(slotOwner.pid) } : {} },
         writableRoots,
         onSession: (id) => {
           feed.meta({ session: id });
@@ -44050,7 +45006,7 @@ ${a.prompt}
         },
         approve,
         onDenied: (message) => {
-          link?.post(message);
+          link2?.post(message);
         },
         // Someone answers approve's questions: the user ("ask" relay or a dialog) or, for a background
         // subagent, the parent agent. Else targets keep their own behavior (Claude and opencode).
@@ -44112,9 +45068,9 @@ WARNING: worktree link inspection failed: ${scanError.message}`;
     await Promise.allSettled(liveDeliveries);
     await relay?.stop();
     if (job) job.retitle = null;
-    if (job && link) {
+    if (job && link2) {
       job.live = null;
-      job.queue.unshift(...await link.close());
+      job.queue.unshift(...await link2.close());
     }
   }
   const notes = [`Step-by-step log: ${feed.logPath}`];
@@ -44127,7 +45083,7 @@ ${a.prompt}`));
   if (linkRoot) {
     try {
       const scan = scanWorktreeLinks(linkRoot);
-      linkedWorktreeRoot = scan.externalLinks.some((link2) => link2.path === resolve9(linkRoot));
+      linkedWorktreeRoot = scan.externalLinks.some((link3) => link3.path === resolve10(linkRoot));
       const warning = worktreeLinkWarning(scan);
       if (warning) notes.push(warning);
     } catch (err) {
@@ -44181,11 +45137,11 @@ ${notes.join("\n\n")}` : res.text };
 
 // src/mcp/job-host.ts
 import { spawn as spawn6 } from "node:child_process";
-import { mkdirSync as mkdirSync18, readdirSync as readdirSync12, statSync as statSync7 } from "node:fs";
-import { join as join36 } from "node:path";
+import { mkdirSync as mkdirSync19, readdirSync as readdirSync13, statSync as statSync8 } from "node:fs";
+import { join as join37 } from "node:path";
 
 // src/mcp/remote-job-host.ts
-import { join as join35 } from "node:path";
+import { join as join36 } from "node:path";
 var REMOTE_STATE_GRACE_MS = 9e4;
 var RemoteJobHost = class {
   constructor(node2, home, log) {
@@ -44199,7 +45155,7 @@ var RemoteJobHost = class {
   busy = /* @__PURE__ */ new Set();
   cache = /* @__PURE__ */ new Map();
   path(job) {
-    return join35(this.home, "remote-job-states", `${job.id}.json`);
+    return join36(this.home, "remote-job-states", `${job.id}.json`);
   }
   read(job) {
     return this.cache.get(job.id) ?? readJsonStore(this.path(job));
@@ -44257,10 +45213,10 @@ var START_GRACE_MS = 3e4;
 var KEEP_FILES_MS = 7 * 24 * 60 * 60 * 1e3;
 var DETACH_LAUNCHER = "require('node:child_process').spawn(process.execPath,process.argv.slice(1),{detached:true,stdio:'ignore',windowsHide:true}).unref()";
 function runnerStatePath(home, id) {
-  return join36(home, RUNNERS_DIR_NAME, `${id}.json`);
+  return join37(home, RUNNERS_DIR_NAME, `${id}.json`);
 }
 function specPath(home, id) {
-  return join36(home, RUNNERS_DIR_NAME, `${id}.spec.json`);
+  return join37(home, RUNNERS_DIR_NAME, `${id}.spec.json`);
 }
 function readRunnerState(home, id) {
   try {
@@ -44278,12 +45234,12 @@ var JobRunners = class {
     this.log = log;
     this.remote = new RemoteJobHost(node2, home, log);
     try {
-      const dir = join36(home, RUNNERS_DIR_NAME);
+      const dir = join37(home, RUNNERS_DIR_NAME);
       const keepMs = retentionLimit("AGENT_BRIDGE_RUNNER_KEEP_MS", KEEP_FILES_MS);
       if (!keepMs) return;
-      for (const f of readdirSync12(dir)) {
-        const path = join36(dir, f);
-        if (!f.endsWith(".json") || f.endsWith(".spec.json") || Date.now() - statSync7(path).mtimeMs <= keepMs) continue;
+      for (const f of readdirSync13(dir)) {
+        const path = join37(dir, f);
+        if (!f.endsWith(".json") || f.endsWith(".spec.json") || Date.now() - statSync8(path).mtimeMs <= keepMs) continue;
         const id = f.replace(/\.json$/, "");
         const state = readRunnerState(home, id);
         if (state?.status === "done" || state?.status === "failed") {
@@ -44304,7 +45260,7 @@ var JobRunners = class {
   start(job, spec) {
     if (spec.args.host) return this.remote.start(job, spec.args.host, spec.target, spec.args);
     try {
-      mkdirSync18(join36(this.home, RUNNERS_DIR_NAME), { recursive: true });
+      mkdirSync19(join37(this.home, RUNNERS_DIR_NAME), { recursive: true });
       const statePath = runnerStatePath(this.home, job.id);
       const file2 = specPath(this.home, job.id);
       assertWritableStore(readJsonStore(statePath, this.log));
@@ -44376,9 +45332,9 @@ var JobRunners = class {
 // src/network/remote-jobs.ts
 var REMOTE_JOBS_FILE = "remote-jobs.json";
 function allowedRemoteDirectory(directory2, roots) {
-  if (!isAbsolute6(directory2)) throw new Error("Remote cwd must be an absolute path on the paired PC.");
+  if (!isAbsolute8(directory2)) throw new Error("Remote cwd must be an absolute path on the paired PC.");
   const canonical = realpathSync6(directory2);
-  if (!statSync8(canonical).isDirectory() || !roots.some((root) => isAbsolute6(root) && isInside(canonical, realpathSync6(root)))) {
+  if (!statSync9(canonical).isDirectory() || !roots.some((root) => isAbsolute8(root) && isInside(canonical, realpathSync6(root)))) {
     throw new Error("Remote folder is outside network.remoteJobs.allowRoots.");
   }
   return canonical;
@@ -44391,7 +45347,7 @@ var RemoteJobs = class {
     this.control = control;
     const cli = bundledCli();
     this.runners = cli ? new JobRunners({}, home, cli, log) : null;
-    const stored = readJsonStore(join37(home, REMOTE_JOBS_FILE));
+    const stored = readJsonStore(join38(home, REMOTE_JOBS_FILE));
     if (isRecord(stored) && Array.isArray(stored.jobs)) for (const r of stored.jobs) {
       if (typeof r.pair !== "string" || typeof r.peer !== "string" || !r.job?.id || !r.args) continue;
       this.records.set(r.job.id, { ...r, job: { ...r.job, controller: new AbortController(), queue: [] } });
@@ -44415,13 +45371,13 @@ var RemoteJobs = class {
     const request2 = remoteJobRequestSchema.parse(raw);
     if (!this.network.peerSupports(host, REMOTE_JOB_CAPABILITY)) throw new Error("Remote broker update needed or paired PC disconnected: install remote-jobs-v1 support and restart its hosting sessions.");
     if (this.pending.size >= REMOTE_JOB_RATE_LIMIT) throw new Error("Too many pending remote job requests.");
-    const rid = randomUUID14();
-    const response = new Promise((resolve11, reject) => {
+    const rid = randomUUID15();
+    const response = new Promise((resolve12, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(rid);
         reject(new Error("Remote job request timed out; check the paired PC before retrying a spawn."));
       }, REMOTE_JOB_REQUEST_TIMEOUT_MS);
-      this.pending.set(rid, { host, resolve: resolve11, reject, timer });
+      this.pending.set(rid, { host, resolve: resolve12, reject, timer });
     });
     void response.catch(() => {
     });
@@ -44515,7 +45471,7 @@ var RemoteJobs = class {
         args = resumeArgs(args, record2.job.name, args.prompt, state.sessionId, cwd, worktree, { ...args });
       } else if (args.worktree) {
         const repo = allowedRemoteDirectory(await git(["rev-parse", "--show-toplevel"], cwd, this.log), policy.allowRoots);
-        if (existsSync16(join37(repo, "worktrees"))) allowedRemoteDirectory(join37(repo, "worktrees"), policy.allowRoots);
+        if (existsSync17(join38(repo, "worktrees"))) allowedRemoteDirectory(join38(repo, "worktrees"), policy.allowRoots);
         worktree = await createWorktree({ cwd, home: repo, jobId: request2.job, log: this.log });
         cwd = allowedRemoteDirectory(worktree.cwd, policy.allowRoots);
         args = { ...args, cwd, worktree: false, _worktree: worktree };
@@ -44577,10 +45533,10 @@ var RemoteJobs = class {
     return { state, alive: alive2, approvals: listPendingApprovals(this.home).filter((a) => a.job === record2.job.name && a.owner === record2.owner) };
   }
   persist() {
-    writeJsonStore(join37(this.home, REMOTE_JOBS_FILE), { jobs: [...this.records.values()].map((r) => {
+    writeJsonStore(join38(this.home, REMOTE_JOBS_FILE), { jobs: [...this.records.values()].map((r) => {
       const { controller, queue, ...job } = r.job;
       return { ...r, job };
-    }) }, readJsonStore(join37(this.home, REMOTE_JOBS_FILE)));
+    }) }, readJsonStore(join38(this.home, REMOTE_JOBS_FILE)));
   }
   async mirror(host, peer, request2, snapshot, supervisor, localJobName) {
     const owner = peer.name;
@@ -44662,6 +45618,8 @@ var DEDUPE_KEEP_MS = 30 * 60 * 1e3;
 var DEDUPE_MAX = 5e3;
 var PENDING_MAX_LIMIT = 500;
 var NAME_SUFFIX_LIMIT = 100;
+var MAX_FILE_ADDRESS_CHARS = 256;
+var MAX_FILE_PATH_CHARS = 1024;
 var SIBLING_STATUSES = /* @__PURE__ */ new Set(["running", "done", "failed", "interrupted"]);
 var UNAUTHENTICATED_OPS = /* @__PURE__ */ new Set(["hello", "auth", "ping"]);
 var Broker = class {
@@ -44725,7 +45683,7 @@ var Broker = class {
           const pair = this.requireNetwork().status().paired.find((p) => p.id === a.host || p.name === a.host);
           const name = snapshot.state.peer;
           this.receiveRemote({
-            id: randomUUID15(),
+            id: randomUUID16(),
             from: { id: `${pair?.id ?? a.host}/job:${a.request.job}`, name: `${pair?.name ?? a.host}/${name}`, agent: "other" },
             to: peer.name,
             recipient: peer.name,
@@ -44762,7 +45720,19 @@ var Broker = class {
         network.unlink(id);
         return { removed };
       },
-      sendFiles: (c, a) => this.onSendFiles(c, a)
+      sendFiles: (c, a) => this.onSendFiles(c, a),
+      fetchFiles: (c, a) => {
+        const sender = this.requirePeer(c);
+        const args = external_exports.object({ from: external_exports.string().min(1).max(MAX_FILE_ADDRESS_CHARS), paths: external_exports.array(external_exports.string().min(1).max(MAX_FILE_PATH_CHARS)).min(1).max(MAX_STREAM_ENTRIES) }).parse(a);
+        return this.requireNetwork().startFiles(args.from, args.paths, sender.cwd, { id: sender.id, name: sender.name, agent: sender.jobAgent ?? sender.agent }, true);
+      },
+      transfers: () => ({ transfers: this.network?.transfers.list() ?? (this.networking ? readTransferHistory(this.networking.home) : []) }),
+      cancelTransfer: (_, a) => {
+        const id = external_exports.uuid().parse(a.id);
+        if (this.network) return this.network.transfers.cancel(id);
+        if (!this.networking) throw new Error("transfer inbox home is unavailable");
+        return cancelStoredTransfer(this.networking.home, id);
+      }
     };
   }
   pipePath;
@@ -44783,7 +45753,7 @@ var Broker = class {
   handlers;
   /** Bind the endpoint. Rejects with the socket error (EADDRINUSE when another broker owns it). */
   listen() {
-    return new Promise((resolve11, reject) => {
+    return new Promise((resolve12, reject) => {
       const server = createServer4((socket) => this.accept(socket));
       const onError = (err) => {
         server.removeListener("listening", onListening);
@@ -44819,7 +45789,7 @@ var Broker = class {
             this.log.warn("networking could not start; local broker remains available", { message: err.message });
           }
         }
-        resolve11();
+        resolve12();
       };
       server.once("error", onError);
       server.once("listening", onListening);
@@ -44871,7 +45841,7 @@ var Broker = class {
   installRemoteJobs(service) {
     this.remoteJobs = new RemoteJobs(service, this.networking.home, this.log, async (record2, control) => {
       this.receiveRemote({
-        id: randomUUID15(),
+        id: randomUUID16(),
         from: { id: record2.owner, name: record2.owner, agent: "other" },
         to: record2.name,
         recipient: record2.name,
@@ -44968,7 +45938,7 @@ var Broker = class {
   storedJobs() {
     if (!this.jobsPath) return [];
     try {
-      const data = JSON.parse(readFileSync18(this.jobsPath, "utf8"));
+      const data = JSON.parse(readFileSync19(this.jobsPath, "utf8"));
       const jobs = Array.isArray(data) ? data : isRecord(data) && Array.isArray(data.jobs) ? data.jobs : [];
       const merged = /* @__PURE__ */ new Map();
       for (const job of [...readArchivedJobs(this.jobsPath), ...jobs.filter(isRecord)]) {
@@ -45036,13 +46006,13 @@ var Broker = class {
     if (!Number.isInteger(args.maxHops) || args.maxHops < 1 || (parent2 ? parent2.hop + 1 : 0) >= args.maxHops) {
       throw new BridgeError("bad_request", `sibling conversation reached its ${args.maxHops}-message hop limit; stop this thread and report the remaining work to the supervisor`);
     }
-    const conversationId = parent2?.conversationId ?? `${SIBLING_CONVERSATION_PREFIX}${randomUUID15()}`;
+    const conversationId = parent2?.conversationId ?? `${SIBLING_CONVERSATION_PREFIX}${randomUUID16()}`;
     const result = await this.onSend(conn, { ...args, dedupeKey, conversationId });
     const message = result.messages[0];
     if (sender.jobParent) {
       const note = {
         ...message,
-        id: randomUUID15(),
+        id: randomUUID16(),
         recipient: sender.jobParent,
         conversationId: `${conversationId}${SIBLING_NOTE_SUFFIX}`,
         body: `Sibling message to ${message.recipient}:
@@ -45061,7 +46031,7 @@ ${message.body}`
       const candidate = `${requested}-${i}`;
       if (!this.connByName(candidate)) return candidate;
     }
-    return `${requested}-${randomUUID15().slice(0, 8)}`;
+    return `${requested}-${randomUUID16().slice(0, 8)}`;
   }
   onDecide(conn, value) {
     const peer = this.requirePeer(conn);
@@ -45102,7 +46072,7 @@ ${message.body}`
   }
   queueDecision(decision, peer) {
     const message = {
-      id: randomUUID15(),
+      id: randomUUID16(),
       from: decision.author,
       to: peer.name,
       recipient: peer.name,
@@ -45191,10 +46161,10 @@ Call decisions to look up current decisions or their history.`,
    */
   onClaimMail(conn, args) {
     const peer = this.requirePeer(conn);
-    const base = peer.name.replace(/-\d+$/, "");
+    const base2 = peer.name.replace(/-\d+$/, "");
     let moved = 0;
     for (const name of new Set(args.names ?? [])) {
-      const standIn = name !== peer.name && (name === base || name.startsWith(`${base}-`) && /^\d+$/.test(name.slice(base.length + 1)));
+      const standIn = name !== peer.name && (name === base2 || name.startsWith(`${base2}-`) && /^\d+$/.test(name.slice(base2.length + 1)));
       if (!standIn || this.connByName(name)) continue;
       moved += this.store.claim(name, peer.name);
     }
@@ -45348,10 +46318,10 @@ Call decisions to look up current decisions or their history.`,
         this.log.debug("replyTo refers to an unknown message", { replyTo });
       }
     }
-    conversationId ||= randomUUID15();
-    const id = randomUUID15();
+    conversationId ||= randomUUID16();
+    const id = randomUUID16();
     const createdAt = this.now();
-    const base = {
+    const base2 = {
       id,
       // A job runner speaks for its job: from the subagent's agent, like a job run inside the session's server.
       from: { id: sender.id, name: sender.name, agent: sender.jobAgent ?? sender.agent },
@@ -45364,7 +46334,7 @@ Call decisions to look up current decisions or their history.`,
       readAt: null
     };
     if (to.includes("/")) {
-      const result = await this.requireNetwork().send({ ...base, recipient: to });
+      const result = await this.requireNetwork().send({ ...base2, recipient: to });
       for (const message of result.messages) this.store.insert(message);
       return result;
     }
@@ -45373,8 +46343,8 @@ Call decisions to look up current decisions or their history.`,
       throw new BridgeError("unauthorized", "sibling chat is restricted to jobs of the same supervisor");
     }
     const messages = [];
-    for (const c of live) messages.push({ ...base, recipient: c.peer.name });
-    for (const key2 of queued) messages.push({ ...base, recipient: key2 });
+    for (const c of live) messages.push({ ...base2, recipient: c.peer.name });
+    for (const key2 of queued) messages.push({ ...base2, recipient: key2 });
     for (const m of messages) this.store.insert(m);
     live.forEach((c, i) => this.emit(c, "message", messages[i]));
     this.log.info("message routed", {
@@ -45414,11 +46384,11 @@ Call decisions to look up current decisions or their history.`,
   }
   async onSendFiles(conn, args) {
     const sender = this.requirePeer(conn);
-    const parsed = external_exports.object({ to: external_exports.string().min(1), paths: external_exports.array(external_exports.string().min(1)).min(1).max(MAX_TRANSFER_ENTRIES) }).parse(args);
+    const parsed = external_exports.object({ to: external_exports.string().min(1).max(MAX_FILE_ADDRESS_CHARS), paths: external_exports.array(external_exports.string().min(1).max(MAX_FILE_PATH_CHARS)).min(1).max(MAX_STREAM_ENTRIES) }).parse(args);
     const remote = parsed.to.includes("/");
-    const target = remote ? this.requireNetwork().fileTarget(parsed.to) : parsed.to;
+    if (remote) return this.requireNetwork().startFiles(parsed.to, parsed.paths, sender.cwd, { id: sender.id, name: sender.name, agent: sender.jobAgent ?? sender.agent });
+    const target = parsed.to;
     const transfer = collectTransfer(parsed.paths, sender.cwd, target, { id: sender.id, name: sender.name, agent: sender.jobAgent ?? sender.agent });
-    if (remote) return this.requireNetwork().sendFiles(parsed.to, transfer);
     if (!this.connByName(target)) throw new BridgeError("unknown_target", "file recipient must be online");
     const home = this.networking?.home;
     if (!home) throw new BridgeError("bad_request", "file inbox home is unavailable");
@@ -45481,7 +46451,7 @@ var BridgeClient = class _BridgeClient extends EventEmitter {
   closed = false;
   /** Connect to an existing broker. Rejects with the socket error (ENOENT/ECONNREFUSED if nobody listens). */
   static connect(pipePath, log, timeoutMs = CONNECT_TIMEOUT_MS) {
-    return new Promise((resolve11, reject) => {
+    return new Promise((resolve12, reject) => {
       const socket = connect2(pipePath);
       const timer = setTimeout(() => {
         socket.destroy();
@@ -45490,7 +46460,7 @@ var BridgeClient = class _BridgeClient extends EventEmitter {
       socket.once("connect", () => {
         clearTimeout(timer);
         socket.removeAllListeners("error");
-        resolve11(new _BridgeClient(socket, log));
+        resolve12(new _BridgeClient(socket, log));
       });
       socket.once("error", (err) => {
         clearTimeout(timer);
@@ -45504,12 +46474,12 @@ var BridgeClient = class _BridgeClient extends EventEmitter {
   request(op, args, timeoutMs = REQUEST_TIMEOUT_MS) {
     if (this.closed) return Promise.reject(new Error("connection to broker closed"));
     const id = this.nextId++;
-    return new Promise((resolve11, reject) => {
+    return new Promise((resolve12, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
         reject(new Error(`broker request timed out: ${op}`));
       }, timeoutMs);
-      this.pending.set(id, { resolve: resolve11, reject, timer });
+      this.pending.set(id, { resolve: resolve12, reject, timer });
       this.socket.write(encodeFrame({ t: "req", id, op, args }));
     });
   }
@@ -45528,7 +46498,7 @@ var BridgeClient = class _BridgeClient extends EventEmitter {
 };
 
 // src/core/job-control.ts
-import { randomUUID as randomUUID16 } from "node:crypto";
+import { randomUUID as randomUUID17 } from "node:crypto";
 var DASHBOARD_JOB_CONVERSATION = "jobctl-dashboard";
 var CONTROL_TIMEOUT_MS = 1e4;
 var JobControlError = class extends Error {
@@ -45540,15 +46510,15 @@ var JobControlError = class extends Error {
 };
 async function controlDashboardJob(node2, owner, job, command) {
   if (!(await node2.peers()).some((p) => p.name === owner)) throw new JobControlError("The owning session is not connected. Reopen it to continue this subagent.", "offline");
-  const requestId = randomUUID16();
+  const requestId = randomUUID17();
   let receive;
   let timer;
-  const reply = new Promise((resolve11, reject) => {
+  const reply = new Promise((resolve12, reject) => {
     receive = (m) => {
       if (m.from.name !== owner) return;
       try {
         const result = JSON.parse(m.body);
-        if (result.type === "result" && result.requestId === requestId && typeof result.text === "string" && typeof result.outcome === "string" && typeof result.isError === "boolean") resolve11(result);
+        if (result.type === "result" && result.requestId === requestId && typeof result.text === "string" && typeof result.outcome === "string" && typeof result.isError === "boolean") resolve12(result);
       } catch {
       }
     };
@@ -45577,12 +46547,12 @@ var BridgeNode = class extends EventEmitter2 {
   constructor(opts) {
     super();
     this.opts = opts;
-    this.id = opts.id ?? randomUUID17();
+    this.id = opts.id ?? randomUUID18();
     this.currentName = opts.name;
     this.currentCwd = opts.cwd;
     this.autoWake = opts.autoWake;
     this.log = opts.log.child("node");
-    this.readJournal = new ReadJournal(dirname13(opts.dbPath));
+    this.readJournal = new ReadJournal(dirname14(opts.dbPath));
     this.restoreReadState(`name:${this.currentName}`);
   }
   opts;
@@ -45723,7 +46693,7 @@ var BridgeNode = class extends EventEmitter2 {
       this.log.error("cannot open message store", { err, db: this.opts.dbPath });
       throw err;
     }
-    const broker = new Broker(this.opts.pipePath, store, this.log.child("broker"), this.opts.token, Date.now, join38(dirname13(this.opts.dbPath), JOBS_FILE), this.opts.network);
+    const broker = new Broker(this.opts.pipePath, store, this.log.child("broker"), this.opts.token, Date.now, join39(dirname14(this.opts.dbPath), JOBS_FILE), this.opts.network);
     try {
       await broker.listen();
       this.broker = broker;
@@ -45896,6 +46866,12 @@ var BridgeNode = class extends EventEmitter2 {
   sendFiles(to, paths) {
     return this.withClient((c) => c.request("sendFiles", { to, paths }));
   }
+  fetchFiles(from, paths) {
+    return this.withClient((c) => c.request("fetchFiles", { from, paths }));
+  }
+  cancelTransfer(id) {
+    return this.withClient((c) => c.request("cancelTransfer", { id }));
+  }
   /** Locally buffered unread messages, oldest first. */
   unread() {
     return [...this.inbox.values()].sort((a, b) => a.createdAt - b.createdAt);
@@ -45913,7 +46889,7 @@ var BridgeNode = class extends EventEmitter2 {
    */
   deliverLocal(m) {
     try {
-      recordLocalResult(dirname13(this.opts.dbPath), m);
+      recordLocalResult(dirname14(this.opts.dbPath), m);
     } catch (err) {
       this.log.warn("could not retain local result receipt", { id: m.id, err: String(err) });
     }
@@ -45953,14 +46929,14 @@ var BridgeNode = class extends EventEmitter2 {
     if (signal?.aborted) return Promise.resolve(null);
     const existing = this.unread().find(predicate);
     if (existing) return Promise.resolve(existing);
-    return new Promise((resolve11) => {
+    return new Promise((resolve12) => {
       const done = (m) => {
         clearTimeout(timer);
         this.off("message", onMessage);
         this.off("replaced", onAbort);
         this.off("stopped", onAbort);
         signal?.removeEventListener("abort", onAbort);
-        resolve11(m);
+        resolve12(m);
       };
       const onMessage = (m) => {
         if (predicate(m)) done(m);
@@ -46025,12 +47001,12 @@ import { readFile } from "node:fs/promises";
 var LOOKUP_TIMEOUT_MS = 5e3;
 var MAX_ANCESTORS = 4;
 function exec(file2, args) {
-  return new Promise((resolve11, reject) => {
+  return new Promise((resolve12, reject) => {
     execFile(
       file2,
       args,
       { timeout: LOOKUP_TIMEOUT_MS, windowsHide: true, maxBuffer: 1024 * 1024 },
-      (err, stdout) => err ? reject(err) : resolve11(stdout)
+      (err, stdout) => err ? reject(err) : resolve12(stdout)
     );
   });
 }
@@ -46180,9 +47156,9 @@ var CodexWaker = class {
 };
 
 // src/mcp/message-wait.ts
-import { randomUUID as randomUUID18 } from "node:crypto";
-import { mkdirSync as mkdirSync19, readdirSync as readdirSync13, readFileSync as readFileSync19, rmSync as rmSync6 } from "node:fs";
-import { join as join39 } from "node:path";
+import { randomUUID as randomUUID19 } from "node:crypto";
+import { mkdirSync as mkdirSync20, readdirSync as readdirSync14, readFileSync as readFileSync20, rmSync as rmSync6 } from "node:fs";
+import { join as join40 } from "node:path";
 var SINGLE_WAIT_SEC = DEFAULT_WAIT_SEC;
 var RECEIPT_POLL_MS = 1e3;
 function singleWaitTimeoutMs(requestedSec) {
@@ -46202,29 +47178,29 @@ var waitSchema = external_exports.object({
 var MessageWaitStore = class {
   dir;
   constructor(home) {
-    this.dir = join39(home, "message-waits");
+    this.dir = join40(home, "message-waits");
   }
   path(id) {
-    return join39(this.dir, `${external_exports.uuid().parse(id)}.json`);
+    return join40(this.dir, `${external_exports.uuid().parse(id)}.json`);
   }
   owns(node2, record2) {
     return record2.sessionId && node2.currentSessionId ? record2.sessionId === node2.currentSessionId : record2.owner === node2.name;
   }
   save(node2, filters) {
-    const record2 = { id: randomUUID18(), owner: node2.name, sessionId: node2.currentSessionId, filters };
+    const record2 = { id: randomUUID19(), owner: node2.name, sessionId: node2.currentSessionId, filters };
     writeJsonStore(this.path(record2.id), record2, null);
     return record2;
   }
   get(node2, id) {
-    const record2 = waitSchema.parse(JSON.parse(readFileSync19(this.path(id), "utf8")));
+    const record2 = waitSchema.parse(JSON.parse(readFileSync20(this.path(id), "utf8")));
     if (!this.owns(node2, record2)) throw new Error("This wait belongs to another session.");
     return record2;
   }
   pending(node2) {
-    mkdirSync19(this.dir, { recursive: true, mode: 448 });
-    return readdirSync13(this.dir).filter((f) => f.endsWith(".json")).flatMap((f) => {
+    mkdirSync20(this.dir, { recursive: true, mode: 448 });
+    return readdirSync14(this.dir).filter((f) => f.endsWith(".json")).flatMap((f) => {
       try {
-        const record2 = waitSchema.parse(JSON.parse(readFileSync19(join39(this.dir, f), "utf8")));
+        const record2 = waitSchema.parse(JSON.parse(readFileSync20(join40(this.dir, f), "utf8")));
         return this.owns(node2, record2) ? [record2] : [];
       } catch {
         return [];
@@ -46241,20 +47217,20 @@ function resumeWaitHint(record2) {
 async function waitForReadReceipt(node2, id, timeoutMs, signal) {
   const deadline = Date.now() + timeoutMs;
   while (!signal.aborted && !node2.wasReplaced) {
-    const receipts = await new Promise((resolve11, reject) => {
+    const receipts = await new Promise((resolve12, reject) => {
       const cleanup = () => {
         clearTimeout(timer);
         signal.removeEventListener("abort", onAbort);
       };
       const onAbort = () => {
         cleanup();
-        resolve11(null);
+        resolve12(null);
       };
       const timer = setTimeout(onAbort, Math.max(0, deadline - Date.now()));
       signal.addEventListener("abort", onAbort, { once: true });
       node2.messageReceipt(id).then((value) => {
         cleanup();
-        resolve11(value);
+        resolve12(value);
       }, (err) => {
         cleanup();
         reject(err);
@@ -46265,11 +47241,11 @@ async function waitForReadReceipt(node2, id, timeoutMs, signal) {
     if (receipts.length && receipts.every((r) => r.readAt !== null)) return receipts;
     const remaining = deadline - Date.now();
     if (remaining <= 0) break;
-    await new Promise((resolve11) => {
+    await new Promise((resolve12) => {
       const done = () => {
         clearTimeout(timer);
         signal.removeEventListener("abort", done);
-        resolve11();
+        resolve12();
       };
       const timer = setTimeout(done, Math.min(RECEIPT_POLL_MS, remaining));
       signal.addEventListener("abort", done, { once: true });
@@ -46281,9 +47257,9 @@ async function waitForReadReceipt(node2, id, timeoutMs, signal) {
 
 // src/mcp/rewake.ts
 import { randomBytes as randomBytes7 } from "node:crypto";
-import { mkdirSync as mkdirSync20, rmSync as rmSync7, writeFileSync as writeFileSync9 } from "node:fs";
+import { mkdirSync as mkdirSync21, rmSync as rmSync7, writeFileSync as writeFileSync10 } from "node:fs";
 import { createServer as createServer5 } from "node:http";
-import { join as join40 } from "node:path";
+import { join as join41 } from "node:path";
 var SESSIONS_DIR = "sessions";
 var WAKE_HEADER = "[agent-bridge] Something you were waiting for arrived:";
 var HOST2 = "127.0.0.1";
@@ -46293,7 +47269,7 @@ var WAKE_CONFIRM_MS = 2e4;
 var STANDBY_GRACE_MS = 3e3;
 var MOD_TICK_MS = 2e3;
 function sessionFile(home, sessionId) {
-  return join40(home, SESSIONS_DIR, `${sessionId.replace(/[^\w-]/g, "_")}.json`);
+  return join41(home, SESSIONS_DIR, `${sessionId.replace(/[^\w-]/g, "_")}.json`);
 }
 function shouldWakeClaudeMessage(node2, cfg, m) {
   if (m.hop >= cfg.maxHops || m.conversationId.endsWith(SIBLING_NOTE_SUFFIX)) return false;
@@ -46355,9 +47331,9 @@ var RewakeEndpoint = class {
     });
     this.server.requestTimeout = 0;
     this.server.headersTimeout = 0;
-    await new Promise((resolve11, reject) => {
+    await new Promise((resolve12, reject) => {
       this.server.once("error", reject);
-      this.server.listen(0, HOST2, () => resolve11());
+      this.server.listen(0, HOST2, () => resolve12());
     });
     this.port = this.server.address().port;
   }
@@ -46519,9 +47495,9 @@ var RewakeEndpoint = class {
   register(sessionId) {
     if (!this.server || this.retired || this.registered === sessionId) return;
     const file2 = sessionFile(this.home, sessionId);
-    mkdirSync20(join40(this.home, SESSIONS_DIR), { recursive: true });
+    mkdirSync21(join41(this.home, SESSIONS_DIR), { recursive: true });
     const reg = { port: this.port, secret: this.secret, pid: process.pid };
-    writeFileSync9(file2, JSON.stringify(reg), { mode: 384 });
+    writeFileSync10(file2, JSON.stringify(reg), { mode: 384 });
     if (this.registered) rmSync7(sessionFile(this.home, this.registered), { force: true });
     this.registered = sessionId;
     this.log.debug("rewake endpoint registered", { sessionId });
@@ -46699,11 +47675,11 @@ async function askUserViaElicitation(server, req, log) {
 }
 
 // src/core/auto-wake-pref.ts
-import { join as join41 } from "node:path";
+import { join as join42 } from "node:path";
 var FILE = "auto-wake.json";
 function read(home) {
   try {
-    return readJsonStore(join41(home, FILE)) ?? {};
+    return readJsonStore(join42(home, FILE)) ?? {};
   } catch {
     return {};
   }
@@ -46715,7 +47691,7 @@ function savedAutoWake(home, name) {
 }
 function saveAutoWake(home, name, enabled) {
   try {
-    const file2 = join41(home, FILE);
+    const file2 = join42(home, FILE);
     const previous = readJsonStore(file2);
     const data = isRecord(previous) ? previous : {};
     const peers = isRecord(data.peers) ? data.peers : data;
@@ -46727,18 +47703,18 @@ function saveAutoWake(home, name, enabled) {
 }
 
 // src/core/models.ts
-import { mkdirSync as mkdirSync21, readFileSync as readFileSync20, writeFileSync as writeFileSync10 } from "node:fs";
-import { join as join42 } from "node:path";
+import { mkdirSync as mkdirSync22, readFileSync as readFileSync21, writeFileSync as writeFileSync11 } from "node:fs";
+import { join as join43 } from "node:path";
 var MAX_LISTED = 80;
 var MODEL_CACHE_MS = 10 * 60 * 1e3;
 var SHORT_MODEL_LIST = 6;
 var modelReads = /* @__PURE__ */ new Map();
 var modelBin = (agent, cfg) => cfg[`${agent}Bin`];
 var modelDefault = (agent, cfg) => cfg[`${agent}Model`];
-var modelCachePath = (home, agent) => join42(home, `models-${agent}.json`);
+var modelCachePath = (home, agent) => join43(home, `models-${agent}.json`);
 function cachedModels(home, agent, cfg) {
   try {
-    const cache3 = JSON.parse(readFileSync20(modelCachePath(home, agent), "utf8"));
+    const cache3 = JSON.parse(readFileSync21(modelCachePath(home, agent), "utf8"));
     const validStrings = (v) => Array.isArray(v) && v.every((s) => typeof s === "string");
     if (cache3.bin !== modelBin(agent, cfg) || cache3.effort !== (cfg.effort[agent] ?? null) || typeof cache3.at !== "number" || Date.now() - cache3.at >= MODEL_CACHE_MS) return null;
     if (cache3.report?.agent !== agent || !validStrings(cache3.report.models) || !validStrings(cache3.report.lines)) return null;
@@ -46768,8 +47744,8 @@ async function readModels(agent, cfg, cwd, log, home) {
       const report = { agent, defaultModel, models, lines };
       if (!lines[0]?.startsWith("Could not list")) {
         try {
-          mkdirSync21(home, { recursive: true });
-          writeFileSync10(modelCachePath(home, agent), JSON.stringify({ at: Date.now(), bin: modelBin(agent, cfg), effort: cfg.effort[agent] ?? null, report }), { mode: 384 });
+          mkdirSync22(home, { recursive: true });
+          writeFileSync11(modelCachePath(home, agent), JSON.stringify({ at: Date.now(), bin: modelBin(agent, cfg), effort: cfg.effort[agent] ?? null, report }), { mode: 384 });
         } catch (err) {
           log.debug("could not cache models", { err: err.message });
         }
@@ -46820,16 +47796,16 @@ async function describeModels(agent, cfg, cwd, log, query = "") {
 
 // src/cli/dashboard.ts
 import { randomBytes as randomBytes9 } from "node:crypto";
-import { chmodSync as chmodSync3, readFileSync as readFileSync23, writeFileSync as writeFileSync11 } from "node:fs";
+import { chmodSync as chmodSync3, readFileSync as readFileSync24, writeFileSync as writeFileSync12 } from "node:fs";
 import { request } from "node:http";
-import { join as join47 } from "node:path";
+import { join as join48 } from "node:path";
 
 // src/cli/ui.ts
 import { randomBytes as randomBytes8 } from "node:crypto";
-import { existsSync as existsSync19, readFileSync as readFileSync22, statSync as statSync9 } from "node:fs";
+import { existsSync as existsSync20, readFileSync as readFileSync23, statSync as statSync10 } from "node:fs";
 import { createServer as createServer6 } from "node:http";
 import { networkInterfaces } from "node:os";
-import { join as join46 } from "node:path";
+import { join as join47 } from "node:path";
 
 // src/cli/logo.ts
 var LOGO_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="agent-bridge"><defs><linearGradient id="ab-bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#1e1b4b"/><stop offset="1" stop-color="#4338ca"/></linearGradient><linearGradient id="ab-l" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffb088"/><stop offset="1" stop-color="#e2603b"/></linearGradient><linearGradient id="ab-r" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#7cf0c0"/><stop offset="1" stop-color="#0e9f6e"/></linearGradient><radialGradient id="ab-glow"><stop offset="0" stop-color="#fff" stop-opacity=".55"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></radialGradient></defs><rect width="64" height="64" rx="16" fill="url(#ab-bg)"/><path d="M9 52V32A20 20 0 0 1 27 12.1v10.2A10 10 0 0 0 19 32v20z" fill="url(#ab-l)"/><path d="M55 52V32A20 20 0 0 0 37 12.1v10.2A10 10 0 0 1 45 32v20z" fill="url(#ab-r)"/><circle cx="32" cy="17" r="11" fill="url(#ab-glow)"/><path d="M32 9.5c.9 4.6 2.9 6.6 7.5 7.5-4.6.9-6.6 2.9-7.5 7.5-.9-4.6-2.9-6.6-7.5-7.5 4.6-.9 6.6-2.9 7.5-7.5z" fill="#fff"/></svg>';
@@ -49222,36 +50198,36 @@ function parseNetworkAddress(address) {
 }
 
 // src/core/doctor.ts
-import { existsSync as existsSync17, lstatSync as lstatSync4, mkdirSync as mkdirSync22, readFileSync as readFileSync21, readdirSync as readdirSync14, renameSync as renameSync7 } from "node:fs";
-import { basename as basename8, dirname as dirname14, join as join43, relative as relative6 } from "node:path";
-import { randomUUID as randomUUID19 } from "node:crypto";
+import { existsSync as existsSync18, lstatSync as lstatSync5, mkdirSync as mkdirSync23, readFileSync as readFileSync22, readdirSync as readdirSync15, renameSync as renameSync8 } from "node:fs";
+import { basename as basename9, dirname as dirname15, join as join44, relative as relative7 } from "node:path";
+import { randomUUID as randomUUID20 } from "node:crypto";
 import { DatabaseSync as DatabaseSync11 } from "node:sqlite";
 function doctor(home, now = Date.now()) {
   const report = { checkedAt: now, ok: true, schema: [], findings: [], sizes: [], totalBytes: 0, backups: listBackups(home) };
   const finding = (severity, code, path, detail, fixable = false) => report.findings.push({ severity, code, path, detail, fixable });
   const walk = (dir) => {
-    if (!existsSync17(dir)) return;
-    for (const file2 of readdirSync14(dir)) {
-      const path = join43(dir, file2);
-      const st = lstatSync4(path);
+    if (!existsSync18(dir)) return;
+    for (const file2 of readdirSync15(dir)) {
+      const path = join44(dir, file2);
+      const st = lstatSync5(path);
       if (st.isSymbolicLink()) {
         finding("warning", "symlink", path, "Skipped symbolic link");
         continue;
       }
       if (st.isDirectory()) walk(path);
       else {
-        report.sizes.push({ path: relative6(home, path), bytes: st.size });
+        report.sizes.push({ path: relative7(home, path), bytes: st.size });
         report.totalBytes += st.size;
-        if (file2.endsWith(".tmp") && !relative6(home, path).split(/[\\/]/).some((s) => ["archive", "backups"].includes(s))) finding("warning", "orphan-temp", path, "Temporary file; quarantine only with all writers stopped", true);
+        if (file2.endsWith(".tmp") && !relative7(home, path).split(/[\\/]/).some((s) => ["archive", "backups"].includes(s))) finding("warning", "orphan-temp", path, "Temporary file; quarantine only with all writers stopped", true);
         if (file2.includes(".corrupt-")) finding("error", "preserved-corrupt", path, "Preserved corrupt data needs manual recovery");
       }
     }
   };
   walk(home);
   for (const [name, expected] of [[DB_FILE_NAME, SQLITE_STORE_VERSION], [ARCHIVE_DB_NAME, ARCHIVE_STORE_VERSION]]) {
-    const path = join43(home, name);
+    const path = join44(home, name);
     let actual = null;
-    if (existsSync17(path)) {
+    if (existsSync18(path)) {
       let db = null;
       try {
         db = new DatabaseSync11(path, { readOnly: true });
@@ -49269,7 +50245,7 @@ function doctor(home, now = Date.now()) {
   for (const path of jsonStoreFiles(home)) {
     try {
       if (path.endsWith(".jsonl")) {
-        const lines = readFileSync21(path, "utf8").split("\n").filter((s) => s.trim());
+        const lines = readFileSync22(path, "utf8").split("\n").filter((s) => s.trim());
         for (const line of lines) {
           try {
             const value2 = JSON.parse(line);
@@ -49282,8 +50258,8 @@ function doctor(home, now = Date.now()) {
         }
         continue;
       }
-      const value = JSON.parse(readFileSync21(path, "utf8"));
-      const jobs = basename8(path) === JOBS_FILE || path.includes("jobs.json.overflow.json-") || /^jobs-.*\.json$/.test(basename8(path));
+      const value = JSON.parse(readFileSync22(path, "utf8"));
+      const jobs = basename9(path) === JOBS_FILE || path.includes("jobs.json.overflow.json-") || /^jobs-.*\.json$/.test(basename9(path));
       if (jobs ? !(Array.isArray(value) || isRecord(value) && Array.isArray(value.jobs)) : !isRecord(value)) {
         finding("error", "json-shape", path, jobs ? "Expected a jobs array or jobs envelope" : "Expected a JSON object");
         continue;
@@ -49292,24 +50268,24 @@ function doctor(home, now = Date.now()) {
       if (version2 === void 0 || version2 === 0) finding("warning", "json-legacy", path, "Legacy version; next versioned write will preserve a migration backup");
       else if (!Number.isInteger(version2) || version2 < 0 || version2 > JSON_STORE_VERSION) finding("error", "json-version", path, `Unsupported JSON version ${String(version2)}; code expects ${JSON_STORE_VERSION}`);
       else if (version2 < JSON_STORE_VERSION) finding("warning", "json-legacy", path, `Earlier JSON version ${String(version2)}; code expects ${JSON_STORE_VERSION}`);
-      if (dirname14(path) === join43(home, "runs") && path.endsWith(".json") && !existsSync17(path.replace(/\.json$/, ".log"))) finding("warning", "orphan-metadata", path, "Run metadata has no matching active log; preserved for review");
-      if (dirname14(path) === join43(home, "jobs") && path.endsWith(".spec.json") && !existsSync17(path.replace(/\.spec\.json$/, ".json"))) finding("warning", "orphan-runner-spec", path, "Runner specification has no state; it may still be starting");
+      if (dirname15(path) === join44(home, "runs") && path.endsWith(".json") && !existsSync18(path.replace(/\.json$/, ".log"))) finding("warning", "orphan-metadata", path, "Run metadata has no matching active log; preserved for review");
+      if (dirname15(path) === join44(home, "jobs") && path.endsWith(".spec.json") && !existsSync18(path.replace(/\.spec\.json$/, ".json"))) finding("warning", "orphan-runner-spec", path, "Runner specification has no state; it may still be starting");
     } catch (err) {
       finding("error", "json-parse", path, String(err));
     }
   }
   const logs = runLogFiles(home);
   for (const path of logs) {
-    const meta3 = join43(dirname14(path), runFileName(path).replace(/\.log$/, ".json"));
-    if (!existsSync17(meta3) && !readdirSync14(dirname14(path)).some((f) => f.startsWith(basename8(meta3) + "-"))) finding("warning", "orphan-log", path, "Run log has no metadata; log remains readable");
+    const meta3 = join44(dirname15(path), runFileName(path).replace(/\.log$/, ".json"));
+    if (!existsSync18(meta3) && !readdirSync15(dirname15(path)).some((f) => f.startsWith(basename9(meta3) + "-"))) finding("warning", "orphan-log", path, "Run log has no metadata; log remains readable");
   }
   report.ok = !report.findings.some((f) => f.severity === "error");
   return report;
 }
 
 // src/core/message-history.ts
-import { existsSync as existsSync18 } from "node:fs";
-import { dirname as dirname15, join as join44 } from "node:path";
+import { existsSync as existsSync19 } from "node:fs";
+import { dirname as dirname16, join as join45 } from "node:path";
 import { DatabaseSync as DatabaseSync12 } from "node:sqlite";
 var DEFAULT_HISTORY_LIMIT = 100;
 var MAX_HISTORY_LIMIT = 1e3;
@@ -49317,8 +50293,8 @@ function searchMessages(file2, opts = {}) {
   const limit = Math.min(MAX_HISTORY_LIMIT, Math.max(1, Math.floor(opts.limit ?? DEFAULT_HISTORY_LIMIT)));
   const query = `%${(opts.query ?? "").replace(/[\\%_]/g, "\\$&")}%`;
   const rows = [];
-  for (const path of [file2, join44(dirname15(file2), ARCHIVE_DB_NAME)]) {
-    if (!existsSync18(path)) continue;
+  for (const path of [file2, join45(dirname16(file2), ARCHIVE_DB_NAME)]) {
+    if (!existsSync19(path)) continue;
     const db = new DatabaseSync12(path, { readOnly: true });
     try {
       for (const table of ["messages", "archived_messages"]) {
@@ -49343,7 +50319,7 @@ function searchMessages(file2, opts = {}) {
 // src/core/history-answer.ts
 import { mkdtempSync as mkdtempSync2, rmSync as rmSync8 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join as join45 } from "node:path";
+import { join as join46 } from "node:path";
 var HISTORY_ANSWER_TIMEOUT_MS = 6e4;
 var HISTORY_ANSWER_MAX_HITS = 8;
 var HISTORY_ANSWER_MAX_CHARS = 4e3;
@@ -49395,7 +50371,7 @@ async function answerHistory(query, result, cfg, home, log, deps = {}) {
   }
 }
 async function runAnswer(agent, model, prompt, cfg, log) {
-  const cwd = mkdtempSync2(join45(tmpdir(), "agent-bridge-answer-"));
+  const cwd = mkdtempSync2(join46(tmpdir(), "agent-bridge-answer-"));
   const env = childEnv();
   try {
     let args;
@@ -49436,7 +50412,7 @@ var ALLOWED_HOSTS = /* @__PURE__ */ new Set([UI_HOST, "localhost"]);
 var RUN_NAME = /^[\w.-]+\.log$/;
 async function finishedRunOutcomes(home, log) {
   const runs = listRuns(home);
-  const jobs = readStore(join46(home, JOBS_FILE), log, true);
+  const jobs = readStore(join47(home, JOBS_FILE), log, true);
   const out = {};
   for (const run of runs) {
     if (!run.job || run.status !== "done" && run.status !== "failed") continue;
@@ -49489,13 +50465,13 @@ function summarizeRun(file2, text2, mtimeMs, now, meta3 = {}) {
   };
 }
 function listRuns(home, now = Date.now()) {
-  const dir = join46(home, RUNS_DIR_NAME);
-  if (!existsSync19(dir)) return [];
-  return runLogFiles(home).filter((f) => RUN_NAME.test(runFileName(f))).map((f) => ({ f, st: statSync9(f) })).sort((a, b) => b.st.mtimeMs - a.st.mtimeMs).slice(0, MAX_RUNS).map(({ f, st }) => summarizeRun(runFileName(f), readFileSync22(f, "utf8"), st.mtimeMs, now, readMeta(archivedRunMeta(f))));
+  const dir = join47(home, RUNS_DIR_NAME);
+  if (!existsSync20(dir)) return [];
+  return runLogFiles(home).filter((f) => RUN_NAME.test(runFileName(f))).map((f) => ({ f, st: statSync10(f) })).sort((a, b) => b.st.mtimeMs - a.st.mtimeMs).slice(0, MAX_RUNS).map(({ f, st }) => summarizeRun(runFileName(f), readFileSync23(f, "utf8"), st.mtimeMs, now, readMeta(archivedRunMeta(f))));
 }
 function readMeta(file2) {
   try {
-    return JSON.parse(readFileSync22(file2, "utf8"));
+    return JSON.parse(readFileSync23(file2, "utf8"));
   } catch {
     return {};
   }
@@ -49504,12 +50480,12 @@ function readStoredJobs(home) {
   const out = /* @__PURE__ */ new Map();
   let stored;
   try {
-    stored = JSON.parse(readFileSync22(join46(home, JOBS_FILE), "utf8"));
+    stored = JSON.parse(readFileSync23(join47(home, JOBS_FILE), "utf8"));
   } catch {
     stored = [];
   }
   const active = Array.isArray(stored) ? stored : Array.isArray(stored?.jobs) ? stored.jobs : [];
-  const list = [...readArchivedJobs(join46(home, JOBS_FILE)), ...active];
+  const list = [...readArchivedJobs(join47(home, JOBS_FILE)), ...active];
   for (const j of list) {
     if (!j || typeof j !== "object") continue;
     const { name, owner, args, remote } = j;
@@ -49528,7 +50504,7 @@ function jobOwner(home, job, original) {
 }
 function classifyPeers(peers, runs, home) {
   const norm = (p) => p.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
-  const worktrees = `${norm(join46(home, "worktrees"))}/`;
+  const worktrees = `${norm(join47(home, "worktrees"))}/`;
   return peers.map((p) => {
     const cwd = norm(p.cwd ?? "");
     const subagent = cwd.startsWith(worktrees);
@@ -49738,6 +50714,23 @@ async function startUi(opts) {
       const config2 = status.config ?? loadConfig(opts.home, "other", opts.log).network;
       return send(res, 200, { ...status, config: config2, addresses: lanAddresses() });
     }
+    if (req.method === "GET" && url2.pathname === "/api/transfers") {
+      try {
+        return send(res, 200, await networkRequest("transfers", {}));
+      } catch (error62) {
+        return send(res, 503, { error: error62.message });
+      }
+    }
+    const transferCancel = /^\/api\/transfers\/([^/]+)\/cancel$/.exec(url2.pathname);
+    if (req.method === "POST" && transferCancel) {
+      if (req.headers["x-agent-bridge"] !== "1") return send(res, 403, { error: "missing header" });
+      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(transferCancel[1])) return send(res, 400, { error: "Invalid transfer id." });
+      try {
+        return send(res, 200, await networkRequest("cancelTransfer", { id: transferCancel[1] }));
+      } catch (error62) {
+        return send(res, error62.message === "unknown transfer" ? 404 : 503, { error: error62.message });
+      }
+    }
     if (req.method === "POST" && url2.pathname.startsWith("/api/network/")) {
       if (req.headers["x-agent-bridge"] !== "1") return send(res, 403, { error: "missing header" });
       try {
@@ -49818,7 +50811,7 @@ async function startUi(opts) {
       const file2 = runLogFiles(opts.home).find((p) => runFileName(p) === `${runMatch[1]}.log`);
       if (!file2) return send(res, 404, { error: "no such run" });
       const from = Math.max(0, Number(url2.searchParams.get("from")) || 0);
-      const buf = readFileSync22(file2);
+      const buf = readFileSync23(file2);
       let end = Math.min(buf.length, from + MAX_LOG_CHUNK);
       while (end < buf.length && end > from && (buf[end] & 192) === 128) end--;
       return send(res, 200, { text: buf.subarray(from, end).toString("utf8"), next: end, size: buf.length });
@@ -49839,9 +50832,9 @@ async function startUi(opts) {
       const run = typeof body.run === "string" ? body.run : "";
       const command = jobCommand(body);
       if (!RUN_NAME.test(`${run}.log`) || !command) return send(res, 400, { error: "a valid run and request are required" });
-      const file2 = join46(opts.home, RUNS_DIR_NAME, `${run}.log`);
-      if (!existsSync19(file2)) return send(res, 404, { error: "no such run" });
-      const meta3 = readMeta(join46(opts.home, RUNS_DIR_NAME, `${run}.json`));
+      const file2 = join47(opts.home, RUNS_DIR_NAME, `${run}.log`);
+      if (!existsSync20(file2)) return send(res, 404, { error: "no such run" });
+      const meta3 = readMeta(join47(opts.home, RUNS_DIR_NAME, `${run}.json`));
       if (!meta3.by || !meta3.job) return send(res, 409, { error: "This run has no owning session or job recorded." });
       try {
         const result = await controlDashboardJob(await getSender(), jobOwner(opts.home, meta3.job, meta3.by), meta3.job, command);
@@ -49859,9 +50852,9 @@ async function startUi(opts) {
       if (!res.headersSent) send(res, 500, { error: String(err.message) });
     });
   });
-  await new Promise((resolve11, reject) => {
+  await new Promise((resolve12, reject) => {
     server.once("error", reject);
-    server.listen(opts.port, UI_HOST, () => resolve11());
+    server.listen(opts.port, UI_HOST, () => resolve12());
   });
   const { port } = server.address();
   return {
@@ -49880,11 +50873,11 @@ var SECRET_BYTES5 = 24;
 var PROBE_TIMEOUT_MS = 1500;
 var OWNER_ONLY2 = 384;
 function dashboardFile(home) {
-  return join47(home, DASHBOARD_FILE);
+  return join48(home, DASHBOARD_FILE);
 }
 function readDashboardInfo(home) {
   try {
-    const d = JSON.parse(readFileSync23(dashboardFile(home), "utf8"));
+    const d = JSON.parse(readFileSync24(dashboardFile(home), "utf8"));
     return typeof d.url === "string" && typeof d.port === "number" && typeof d.pid === "number" ? d : null;
   } catch {
     return null;
@@ -49899,13 +50892,13 @@ function processAlive(pid) {
   }
 }
 function probeDashboard(port) {
-  return new Promise((resolve11) => {
+  return new Promise((resolve12) => {
     const req = request({ host: "127.0.0.1", port, path: "/api/state", timeout: PROBE_TIMEOUT_MS }, (res) => {
       res.resume();
-      resolve11(res.statusCode === 403 || res.statusCode === 200);
+      resolve12(res.statusCode === 403 || res.statusCode === 200);
     });
     req.on("timeout", () => req.destroy());
-    req.on("error", () => resolve11(false));
+    req.on("error", () => resolve12(false));
     req.end();
   });
 }
@@ -49923,7 +50916,7 @@ async function hostDashboard(opts) {
   const ui = await startUi({ ...opts, secret });
   const info = { url: ui.url, port: ui.port, pid: process.pid };
   const file2 = dashboardFile(opts.home);
-  writeFileSync11(file2, JSON.stringify(info, null, 2), { mode: OWNER_ONLY2 });
+  writeFileSync12(file2, JSON.stringify(info, null, 2), { mode: OWNER_ONLY2 });
   try {
     chmodSync3(file2, OWNER_ONLY2);
   } catch {
@@ -50003,7 +50996,7 @@ var MAX_TITLE_CHARS3 = 80;
 var SUBAGENT_TOOLS = /* @__PURE__ */ new Set(["peers", "send", "report_progress", "hook_event"]);
 var STAND_IN_RECHECK_MS = 3e4;
 var KEPT_ARGS = ["host", "model", "effort", "cwd", "timeout_sec", "worktree", "access", "sandbox", "permission_mode", "auto_approve", "allow_tools", "send_to", "title"];
-var PLUGIN_ROOT = resolve10(dirname16(fileURLToPath2(import.meta.url)), "..");
+var PLUGIN_ROOT = resolve11(dirname17(fileURLToPath2(import.meta.url)), "..");
 function pathFromUriOrPath(v) {
   if (typeof v !== "string" || !v) return null;
   if (v.startsWith("file:")) {
@@ -50013,7 +51006,7 @@ function pathFromUriOrPath(v) {
       return null;
     }
   }
-  return isAbsolute7(v) ? v : null;
+  return isAbsolute9(v) ? v : null;
 }
 function text(s, isError = false) {
   return { content: [{ type: "text", text: s }], ...isError ? { isError: true } : {} };
@@ -50097,7 +51090,7 @@ async function startServer(argv = process.argv.slice(2)) {
   const launchKnown = new Promise((r) => launchInspected = r);
   const ctx = { agent, cfg, node: node2, log, home, cwd: () => node2?.cwd ?? cwd, channelActive: () => channel, parent: delegated ? parentFromEnv() : null, launchKnown };
   if (node2) {
-    ctx.jobs = new JobManager(node2, log.child("jobs"), join48(home, JOBS_FILE), cfg.maxJobs);
+    ctx.jobs = new JobManager(node2, log.child("jobs"), join49(home, JOBS_FILE), cfg.maxJobs);
     node2.on("replaced", () => ctx.jobs?.setDormant(true));
     node2.on("reclaimed", () => ctx.jobs?.setDormant(false));
     const cli = process.env[ENV.jobRunner] === "0" ? null : bundledCli();
@@ -50265,14 +51258,14 @@ async function startServer(argv = process.argv.slice(2)) {
       adopt();
       setTimeout(adopt, STAND_IN_RECHECK_MS).unref();
     });
-    const join49 = () => node2.start().catch((err) => log.error("could not join the bridge", { err: err.message }));
+    const join50 = () => node2.start().catch((err) => log.error("could not join the bridge", { err: err.message }));
     if (ctx.headless) {
       log.info("headless claude -p run: not joining the bridge unless a bridge tool is used");
     } else if (cwdKnown) {
-      void join49();
+      void join50();
     } else {
       log.info("project directory unknown yet; deferring bridge join", { graceMs: CWD_DISCOVERY_GRACE_MS });
-      setTimeout(() => void join49(), CWD_DISCOVERY_GRACE_MS).unref();
+      setTimeout(() => void join50(), CWD_DISCOVERY_GRACE_MS).unref();
     }
   }
 }
@@ -50467,13 +51460,34 @@ function registerTools(mcp, ctx, targets) {
     "send_files",
     {
       title: "Send files and folders",
-      description: "Deliver files or folders into an online peer's inbox, locally or over a paired encrypted link. Maximum one MiB and 128 entries; symlinks are rejected. Received files are never executed or written into a project.",
+      description: "Deliver files or folders into an online peer's inbox. Paired PCs stream bounded chunks with SHA-256 and restart resume, returning a transfer id immediately; progress and results arrive as messages. Limits come from network.maxTransferBytes (default 8 GiB). Older brokers and local delivery keep the one MiB / 128 entry path. Symlinks and junctions are rejected; received files are never executed.",
       inputSchema: {
         to: external_exports.string().min(1).describe("Peer name, including host/peer for a paired instance"),
-        paths: external_exports.array(external_exports.string().min(1)).min(1).max(MAX_TRANSFER_ENTRIES).describe("Files or folders relative to this session's working directory, or absolute paths")
+        paths: external_exports.array(external_exports.string().min(1)).min(1).max(MAX_STREAM_ENTRIES).describe("Files or folders relative to this session's working directory, or absolute paths")
       }
     },
     guarded("send_files", async (args) => text(JSON.stringify(await requireNode().sendFiles(args.to, args.paths), null, 2)))
+  );
+  register(
+    "fetch_files",
+    {
+      title: "Fetch files from a paired PC",
+      description: "Pull files into this PC's inbox over a paired encrypted link. The other PC must explicitly configure network.fetchRoots (off by default). Paths are absolute or relative to the source session's working directory and must stay under an allowed root. Returns a transfer id immediately; progress and results arrive as messages.",
+      inputSchema: {
+        from: external_exports.string().min(1).describe("Paired host/peer to fetch from"),
+        paths: external_exports.array(external_exports.string().min(1)).min(1).max(MAX_STREAM_ENTRIES)
+      }
+    },
+    guarded("fetch_files", async (args) => text(JSON.stringify(await requireNode().fetchFiles(args.from, args.paths), null, 2)))
+  );
+  register(
+    "cancel_transfer",
+    {
+      title: "Cancel a file transfer",
+      description: "Cancel a paired-PC file transfer by its id. Partial files stay unpublished; cancellation is delivered when the peer reconnects. A completed transfer cannot be cancelled.",
+      inputSchema: { id: external_exports.uuid() }
+    },
+    guarded("cancel_transfer", async (args) => text(JSON.stringify(await requireNode().cancelTransfer(args.id), null, 2)))
   );
   register(
     "inbox",
@@ -50613,11 +51627,11 @@ function registerTools(mcp, ctx, targets) {
       if (a.host) return Promise.reject(new Error("Remote jobs require the remote runner; local execution is unavailable for a host request."));
       return runDelegate(rc, target, a, signal, onProgress, background2, job);
     };
-    const background = (args, base) => Object.assign((signal, onProgress, job) => run(args(job), signal, onProgress, true, job), {
+    const background = (args, base2) => Object.assign((signal, onProgress, job) => run(args(job), signal, onProgress, true, job), {
       hosted: (job) => {
         const a = args(job);
         if (!ctx.runners || a.access === "ask" && !a.host) return null;
-        return ctx.runners.start(job, { target, args: a, base, owner: node2?.name ?? ctx.agent, byAgent: ctx.agent, cwd: ctx.cwd(), cfg });
+        return ctx.runners.start(job, { target, args: a, base: base2, owner: node2?.name ?? ctx.agent, byAgent: ctx.agent, cwd: ctx.cwd(), cfg });
       }
     });
     const resumeFor = (a) => (message, sessionId, workdir, worktree) => (

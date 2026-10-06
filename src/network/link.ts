@@ -10,6 +10,7 @@ import { MAX_NETWORK_FRAME_BYTES, MAX_NETWORK_LINKS, MAX_NETWORK_PEERS, MAX_NETW
 import { NetworkDiscovery, type DiscoveredInstance } from "./discovery.js";
 import { decodePairingCode, keyFingerprint, PairingStore, publicIdentitySchema, type NetworkIdentity, type NetworkPair } from "./pairing.js";
 import { receiveTransfer, transferResultSchema, transferSchema, type FileTransfer, type TransferResult } from "./files.js";
+import { FILE_STREAM_CAPABILITY, TransferManager, type TransferStarted } from "./transfers.js";
 
 const MAX_METADATA_CHARS = 4_096;
 const MAX_ID_CHARS = 128;
@@ -75,40 +76,19 @@ class Link {
   private extensionHandlers = 0;
   private buffer = Buffer.alloc(0);
   private readonly pending = new Map<string, Pending>();
+  private readonly extensionWrites = new Set<(error: Error) => void>();
   private readyResolve!: () => void;
   private readyReject!: (error: Error) => void;
   readonly ready = new Promise<void>((resolve, reject) => { this.readyResolve = resolve; this.readyReject = reject; });
   private readonly deadline: NodeJS.Timeout;
 
-  constructor(readonly socket: TLSSocket, private readonly service: NetworkService, private readonly key: string, expected?: NetworkPair) {
+  constructor(readonly socket: TLSSocket, private readonly service: NetworkService, private readonly key: string, private readonly expected?: NetworkPair) {
     this.deadline = setTimeout(() => this.fail(new Error("network hello timed out")), NETWORK_TIMEOUT_MS);
     // Accepted links have no caller waiting for ready; still handle rejection.
     void this.ready.catch(() => {});
     socket.on("data", (chunk: Buffer) => {
-      try {
-        this.buffer = Buffer.concat([this.buffer, chunk]);
-        let nl: number;
-        while ((nl = this.buffer.indexOf("\n")) >= 0) {
-          if (nl > MAX_NETWORK_FRAME_BYTES) throw new Error("network frame too large");
-          const line = this.buffer.subarray(0, nl);
-          this.buffer = this.buffer.subarray(nl + 1);
-          const frame = frameSchema.parse(JSON.parse(line.toString("utf8")));
-          if (!this.remote) {
-            if (frame.type !== "hello") throw new Error("network hello required");
-            if (expected && (frame.id !== expected.id || frame.name !== expected.name || frame.fingerprint !== expected.fingerprint)) throw new Error("paired identity changed");
-            this.remote = expected ?? service.keys.accept(key, frame);
-            this.peers = frame.peers;
-            this.echoSupported = frame.echo === true;
-            this.receiptsSupported = frame.receipts === true;
-            this.capabilities = frame.capabilities ?? [];
-            service.attach(this);
-            clearTimeout(this.deadline);
-            this.readyResolve();
-          } else if (frame.type === "hello") throw new Error("duplicate network hello");
-          else this.onFrame(frame);
-        }
-        if (this.buffer.length > MAX_NETWORK_FRAME_BYTES) throw new Error("network frame too large");
-      } catch (err) { this.fail(err as Error); }
+      this.buffer = Buffer.concat([this.buffer, chunk]);
+      this.processBuffer();
     });
     socket.on("error", (err) => this.fail(err));
     socket.on("close", () => {
@@ -116,9 +96,40 @@ class Link {
       this.readyReject(new Error("network link closed"));
       for (const p of this.pending.values()) { clearTimeout(p.timer); p.reject(new Error("network link closed")); }
       this.pending.clear();
+      for (const reject of this.extensionWrites) reject(new Error("network link closed"));
+      this.extensionWrites.clear();
       service.detach(this);
     });
     this.write({ type: "hello", v: NETWORK_VERSION, ...service.keys.identity, peers: service.localPeers(), echo: true, receipts: Boolean(service.supportsReceipts), capabilities: service.extensionCapabilities() });
+  }
+
+  private processBuffer(): void {
+    if (this.socket.destroyed) return;
+    try {
+      let nl: number;
+      while (this.extensionHandlers < MAX_EXTENSION_HANDLERS && (nl = this.buffer.indexOf("\n")) >= 0) {
+        if (nl > MAX_NETWORK_FRAME_BYTES) throw new Error("network frame too large");
+        const line = this.buffer.subarray(0, nl);
+        this.buffer = this.buffer.subarray(nl + 1);
+        const frame = frameSchema.parse(JSON.parse(line.toString("utf8")));
+        if (!this.remote) {
+          if (frame.type !== "hello") throw new Error("network hello required");
+          const expected = this.expected;
+          if (expected && (frame.id !== expected.id || frame.name !== expected.name || frame.fingerprint !== expected.fingerprint)) throw new Error("paired identity changed");
+          this.remote = expected ?? this.service.keys.accept(this.key, frame);
+          this.peers = frame.peers;
+          this.echoSupported = frame.echo === true;
+          this.receiptsSupported = frame.receipts === true;
+          this.capabilities = frame.capabilities ?? [];
+          this.service.attach(this);
+          clearTimeout(this.deadline); this.readyResolve();
+        } else if (frame.type === "hello") throw new Error("duplicate network hello");
+        else this.onFrame(frame);
+      }
+      if (this.buffer.length > MAX_NETWORK_FRAME_BYTES) throw new Error("network frame too large");
+      if (this.extensionHandlers >= MAX_EXTENSION_HANDLERS) this.socket.pause();
+      else this.socket.resume();
+    } catch (error) { this.fail(error as Error); }
   }
 
   write(frame: NetworkFrame): void {
@@ -133,13 +144,13 @@ class Link {
   /** Complete only after the stream has consumed this bounded record; callers await each write. */
   writeExtension(type: NetworkExtensionType, payload: Record<string, unknown>): Promise<void> {
     const data = JSON.stringify({ type, payload }) + "\n";
-    if (Buffer.byteLength(data) > MAX_NETWORK_FRAME_BYTES || this.socket.writableLength > MAX_NETWORK_FRAME_BYTES) return Promise.reject(new Error("network write limit reached"));
+    if (Buffer.byteLength(data) > MAX_NETWORK_FRAME_BYTES || this.socket.writableLength > MAX_NETWORK_FRAME_BYTES || this.extensionWrites.size >= MAX_NETWORK_REQUESTS) return Promise.reject(new Error("network write limit reached"));
     if (this.socket.destroyed) return Promise.reject(new Error("network link closed"));
     return new Promise((resolve, reject) => {
-      const closed = () => { cleanup(); reject(new Error("network link closed")); };
-      const cleanup = () => this.socket.off("close", closed);
-      this.socket.once("close", closed);
-      this.socket.write(data, (error) => { cleanup(); if (error) reject(error); else resolve(); });
+      const failed = (error: Error) => { this.extensionWrites.delete(failed); reject(error); };
+      this.extensionWrites.add(failed);
+      try { this.socket.write(data, (error) => { this.extensionWrites.delete(failed); if (error) reject(error); else resolve(); }); }
+      catch (error) { failed(error as Error); }
     });
   }
 
@@ -187,7 +198,7 @@ class Link {
     if (frame.type === "file-stream" || frame.type === "remote-job") {
       if (++this.extensionHandlers > MAX_EXTENSION_HANDLERS) throw new Error("too many extension handlers");
       void Promise.resolve().then(() => this.service.receiveExtension(frame.type, frame.payload, this.remote!))
-        .catch((error: Error) => this.fail(error)).finally(() => { this.extensionHandlers--; });
+        .catch((error: Error) => this.fail(error)).finally(() => { this.extensionHandlers--; this.processBuffer(); });
       return;
     }
     if (frame.type === "peers") { this.peers = frame.peers; return; }
@@ -237,6 +248,7 @@ class Link {
 /** One per elected local broker. Discovery cannot call link(); only an authenticated local request can. */
 export class NetworkService {
   readonly keys: PairingStore;
+  readonly transfers: TransferManager;
   private server: Server | null = null;
   private readonly sockets = new Set<Socket>();
   private readonly links = new Map<string, Link>();
@@ -249,6 +261,21 @@ export class NetworkService {
 
   constructor(private readonly home: string, private readonly cfg: NetworkConfig, private readonly broker: NetworkBroker, private readonly log: Logger) {
     this.keys = new PairingStore(home, cfg.name);
+    this.transfers = new TransferManager(home, {
+      supports: (remote) => this.peerSupports(remote, FILE_STREAM_CAPABILITY),
+      send: (remote, payload) => {
+        if (payload.op === "offer" || payload.op === "fetch") this.instanceLink(remote).refresh();
+        return this.sendExtension(remote, "file-stream", payload);
+      },
+      validSender: (remote, sender) => this.links.get(remote)?.peers.some((peer) => peer.id === sender.id && peer.name === sender.name && (peer.jobAgent ?? peer.agent) === sender.agent) ?? false,
+      localPeer: (name) => {
+        const peer = this.broker.peers().find((peer) => peer.name === name);
+        return peer ? { id: peer.id, name: peer.name, agent: peer.jobAgent ?? peer.agent, cwd: peer.cwd } : undefined;
+      },
+      notify: (message) => { this.broker.receive(message); },
+      legacy: (remote, transfer) => this.instanceLink(remote).files(transfer),
+    }, log, { maxBytes: cfg.maxTransferBytes, fetchRoots: cfg.fetchRoots });
+    this.registerExtension("file-stream", FILE_STREAM_CAPABILITY, (payload, remote) => this.transfers.handle(payload, remote.id, remote.name));
   }
 
   get port(): number {
@@ -279,7 +306,7 @@ export class NetworkService {
     try { return this.instanceLink(instance).supports(capability); } catch { return false; }
   }
 
-  sendExtension(instance: string, type: NetworkExtensionType, payload: Record<string, unknown>): Promise<void> {
+  async sendExtension(instance: string, type: NetworkExtensionType, payload: Record<string, unknown>): Promise<void> {
     const extension = this.extensions.get(type);
     const link = this.instanceLink(instance);
     if (!extension || !link.supports(extension.capability)) return Promise.reject(new Error("remote broker does not support this extension"));
@@ -344,10 +371,11 @@ export class NetworkService {
     const existing = this.links.get(remote.id);
     if (existing && existing !== link) throw new Error("instance already connected");
     this.links.set(remote.id, link);
+    setImmediate(() => this.transfers.resume());
   }
 
   detach(link: Link): void {
-    if (link.remote && this.links.get(link.remote.id) === link) this.links.delete(link.remote.id);
+    if (link.remote && this.links.get(link.remote.id) === link) { this.links.delete(link.remote.id); this.transfers.disconnected(link.remote.id); }
   }
 
   peers(): PeerInfo[] {
@@ -432,17 +460,30 @@ export class NetworkService {
     return link.files({ ...transfer, to: target });
   }
 
+  startFiles(address: string, paths: string[], cwd: string, from: FileTransfer["from"], pull = false): TransferStarted {
+    const { link, target } = this.target(address);
+    if (!link.peers.some((peer) => peer.name === target)) throw new Error("file recipient is not online");
+    const streaming = link.supports(FILE_STREAM_CAPABILITY);
+    if (pull && !streaming) throw new Error("remote broker does not support fetch_files; update its hosting sessions");
+    return this.transfers.start(link.remote!.id, `${link.remote!.name}/${target}`, target, paths, cwd, from, pull, undefined, !streaming);
+  }
+
   fileTarget(address: string): string { return this.target(address).target; }
 
   receiveFiles(transfer: FileTransfer, name: string, id: string): TransferResult {
     if (!this.broker.peers().some((p) => p.name === transfer.to)) throw new Error("file recipient is not online");
+    const bytes = transfer.entries.reduce((sum, entry) => sum + (entry.kind === "file" ? Buffer.byteLength(entry.data, "base64") : 0), 0);
+    if (this.cfg.maxTransferBytes !== undefined && bytes > this.cfg.maxTransferBytes) throw new Error("transfer exceeds size limit");
     const result = receiveTransfer(this.home, transfer);
+    this.transfers.recordLegacy(transfer, id.split("/")[0]!, name);
+    this.log.info("legacy files received", { ...result, sender: name });
     this.broker.receive({ id: transfer.id, from: { ...transfer.from, name, id }, to: transfer.to, recipient: transfer.to, conversationId: transfer.id, replyTo: null, hop: 0, body: `Received ${result.files} files (${result.bytes} bytes) in ${result.inbox}`, createdAt: Date.now(), readAt: null });
     return result;
   }
 
   async close(): Promise<void> {
     this.closed = true;
+    this.transfers.close();
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
     await this.discovery?.close();

@@ -1,5 +1,7 @@
 import { JSON_STORE_VERSION } from "../src/core/json-store.js";
 import { readFileSync, writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { open } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { startUi } from "../src/cli/ui.js";
@@ -46,14 +48,48 @@ afterEach(async () => {
 });
 
 describe("authenticated dashboard network flow", () => {
+  it("reports a missing broker as unavailable for both transfer endpoints", async () => {
+    await nodes[0]!.stop();
+    expect((await fetch(`${base()}/api/transfers`, { headers: { cookie } })).status).toBe(503);
+    expect((await fetch(`${base()}/api/transfers/${randomUUID()}/cancel`, { method: "POST", headers: headers() })).status).toBe(503);
+  });
   it("requires the dashboard secret for status and the custom header for every POST", async () => {
     expect((await fetch(`${base()}/api/network`)).status).toBe(403);
+    expect((await fetch(`${base()}/api/transfers`)).status).toBe(403);
+    expect((await fetch(`${base()}/api/transfers/${randomUUID()}/cancel`, { method: "POST", headers: { "x-agent-bridge": "1" } })).status).toBe(403);
+    expect((await fetch(`${base()}/api/transfers/${randomUUID()}/cancel`, { method: "POST", headers: { cookie } })).status).toBe(403);
     for (const action of ACTIONS) {
       expect((await fetch(`${base()}/api/network/${action}`, { method: "POST", headers: { "x-agent-bridge": "1" }, body: "{}" })).status).toBe(403);
       expect((await fetch(`${base()}/api/network/${action}`, { method: "POST", headers: { cookie }, body: "{}" })).status).toBe(403);
     }
     expect(applyWindowsFirewall).not.toHaveBeenCalled();
     expect(detectFirewall).not.toHaveBeenCalled();
+  });
+
+  it("lists progress and cancels paired transfers using authenticated dashboard endpoints", async () => {
+    expect(await (await fetch(`${base()}/api/transfers`, { headers: { cookie } })).json()).toEqual({ transfers: [] });
+    await post("configure", { ...config("local-pc"), confirm: true });
+    const other = makeEnv(); environments.push(other);
+    const otherHost = host(other, "remote-pc"); await otherHost.start();
+    const otherUi = await startUi({ home: other.home, pipe: other.pipe, port: 0, log: nullLogger, usage: async () => [] }); dashboards.push(otherUi);
+    const login = await fetch(otherUi.url, { redirect: "manual" });
+    const otherHeaders = { ...headers(), cookie: login.headers.get("set-cookie")!.split(";")[0]! }; const otherBase = new URL(otherUi.url).origin;
+    await fetch(`${otherBase}/api/network/configure`, { method: "POST", headers: otherHeaders, body: JSON.stringify({ ...config("remote-pc"), confirm: true }) });
+    const status = await (await fetch(`${otherBase}/api/network`, { headers: otherHeaders })).json();
+    const invitation = await (await fetch(`${otherBase}/api/network/pair`, { method: "POST", headers: otherHeaders, body: "{}" })).json();
+    await post("link", { code: invitation.code, address: `${LOOPBACK}:${status.port}` });
+    const source = join(env.home, "cancel.bin"); const file = await open(source, "wx"); await file.truncate(64 * 1024 * 1024); await file.close();
+    // A large disk-backed file keeps the transfer active while the authenticated endpoint cancels it.
+    const sender = nodes[0]!;
+    const started = await sender.sendFiles("remote-pc/remote-pc", [source]);
+    const cancelled = await fetch(`${base()}/api/transfers/${started.id}/cancel`, { method: "POST", headers: headers() });
+    expect(cancelled.status).toBe(200); expect(await cancelled.json()).toEqual({ id: started.id, cancelled: true });
+    const listed = await (await fetch(`${base()}/api/transfers`, { headers: { cookie } })).json();
+    expect(listed.transfers.find((transfer: { id: string }) => transfer.id === started.id)).toMatchObject({ id: started.id, direction: "send", status: "cancelled", bytes: expect.any(Number), totalBytes: expect.any(Number), percent: expect.any(Number), createdAt: expect.any(Number), updatedAt: expect.any(Number) });
+    expect((await fetch(`${base()}/api/transfers/bad/cancel`, { method: "POST", headers: headers() })).status).toBe(400);
+    expect((await fetch(`${base()}/api/transfers/${randomUUID()}/cancel`, { method: "POST", headers: headers() })).status).toBe(404);
+    await post("configure", { enabled: false, confirm: true });
+    expect((await (await fetch(`${base()}/api/transfers`, { headers: { cookie } })).json()).transfers).toHaveLength(1);
   });
 
   it("saves only confirmed valid settings, preserves other keys and reloads without restarting sessions", async () => {
