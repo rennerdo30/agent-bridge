@@ -83,4 +83,22 @@ describe("cleanup repository scope", () => {
     expect(entries.map((e) => e.path)).toEqual([a.path]);
     expect(existsSync(orphan)).toBe(true);
   });
+
+  it("does not inherit repository identity from the parent of an orphan folder", async () => {
+    const scopedHome = join(first, "bridge-home");
+    mkdirSync(join(scopedHome, "worktrees", "orphan"), { recursive: true });
+    const entries = await cleanupWorktrees({ home: scopedHome, cwd: first, apply: true, log: nullLogger });
+    expect(entries).toEqual([]);
+    expect(existsSync(join(scopedHome, "worktrees", "orphan"))).toBe(true);
+  });
+
+  it("keeps a candidate rebound to another repository after the scope listing", async () => {
+    const a = await worktree(first, "one");
+    const entries = await cleanupWorktrees({ home, cwd: first, apply: true, log: nullLogger, onScope: () => {
+      git(first, "worktree", "remove", a.path);
+      git(second, "worktree", "add", "-b", "agent-bridge/rebound", a.path);
+    } });
+    expect(entries[0]).toMatchObject({ action: "kept", reason: "repository changed after scope selection" });
+    expect(existsSync(a.path)).toBe(true);
+  });
 });

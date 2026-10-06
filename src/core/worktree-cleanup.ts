@@ -175,7 +175,7 @@ export async function cleanupWorktrees(opts: {
   for (const d of existsSync(dir) ? readdirSync(dir, { withFileTypes: true }) : []) {
     const path = join(dir, d.name);
     if (!d.isDirectory() || lstatSync(path).isSymbolicLink()) continue;
-    let common = await repositoryCommonDir(path, opts.log).catch(() => null);
+    let common = existsSync(join(path, ".git")) ? await repositoryCommonDir(path, opts.log).catch(() => null) : null;
     // A removed worktree may still have a durable job record. Never guess by folder/branch name.
     if (!common && !existsSync(join(path, ".git"))) {
       const job = jobs.find((j) => j.worktree && samePath(j.worktree.path, path));
@@ -194,7 +194,7 @@ export async function cleanupWorktrees(opts: {
   const out: CleanupEntry[] = [];
   for (const candidate of candidates) {
     // Verify identity again immediately before inspection/deletion in case the scope changed meanwhile.
-    const current = await repositoryCommonDir(candidate.path, opts.log).catch(() => null);
+    const current = existsSync(join(candidate.path, ".git")) ? await repositoryCommonDir(candidate.path, opts.log).catch(() => null) : null;
     if (!opts.all && current && repository && !samePath(current, repository)) {
       out.push({ ...candidate, branch: null, action: "kept", reason: "repository changed after scope selection" });
       continue;
