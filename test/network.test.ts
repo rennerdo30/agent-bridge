@@ -49,6 +49,21 @@ function service(name: string, peers: PeerInfo[] = [], received: BridgeMessage[]
 }
 
 describe("network pairing", () => {
+  it("negotiates optional extensions and gives handlers the authenticated paired identity", async () => {
+    const a = service("windows");
+    const b = service("mac");
+    const received: unknown[] = [];
+    a.registerExtension("remote-job", "remote-jobs-v1", () => {});
+    b.registerExtension("remote-job", "remote-jobs-v1", async (payload, remote) => { received.push({ payload, id: remote.id }); });
+    await a.start(); await b.start();
+    await a.link(b.keys.invite(), LOOPBACK, b.port);
+    expect(a.peerSupports("mac", "remote-jobs-v1")).toBe(true);
+    expect(a.peerSupports(b.keys.identity.id, "file-stream-v1")).toBe(false);
+    await a.sendExtension("mac", "remote-job", { action: "probe", data: "x".repeat(128 * 1024) });
+    await until(() => received.length === 1);
+    expect(received[0]).toMatchObject({ id: a.keys.identity.id, payload: { action: "probe" } });
+    await expect(a.sendExtension("mac", "file-stream", {})).rejects.toThrow(/support/);
+  });
   it("is off by default and rejects malformed configuration", () => {
     expect(loadConfig(home, "other", nullLogger, {}).network.enabled).toBe(false);
     writeFileSync(join(home, "config.json"), JSON.stringify({ network: { enabled: true, port: -1 } }));
