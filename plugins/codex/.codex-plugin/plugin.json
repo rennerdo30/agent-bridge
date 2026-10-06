@@ -1,6 +1,6 @@
 {
   "name": "agent-bridge",
-  "version": "0.29.2",
+  "version": "0.29.3",
   "description": "Talk to Claude Code from Codex: live peer messaging over a local pipe, plus headless delegation (ask_claude).",
   "author": {
     "name": "rennerdo30",
