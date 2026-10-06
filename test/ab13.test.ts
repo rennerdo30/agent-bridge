@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DEFAULT_CONFIG } from "../src/core/config.js";
 import { nullLogger } from "../src/core/logger.js";
-import { isAutoApproved, isHandoffToolCall, isOwnServerCall, mcpToolOf } from "../src/core/tool-allow.js";
+import { approvalHint, isAutoApproved, isHandoffToolCall, isOwnServerCall, mcpToolOf } from "../src/core/tool-allow.js";
+import { hookRequest } from "../src/cli/permission-hook.js";
+import { opencodePermissionRequest } from "../src/core/opencode-served.js";
 import { buildHookResponse } from "../src/mcp/hooks.js";
 import { JobManager, NOTE_CONVERSATION_SUFFIX } from "../src/mcp/jobs.js";
 import type { ServerContext } from "../src/mcp/server.js";
@@ -42,6 +44,42 @@ describe("MCP tool allow-list", () => {
     expect(isHandoffToolCall({ tool: "mcp:pair-desk", detail: "pair-desk_set_handoff: *" })).toBe(true);
     expect(isHandoffToolCall(claude)).toBe(false);
     expect(isHandoffToolCall({ tool: "command", detail: "set_handoff" })).toBe(false);
+  });
+
+  it("matches common desk writes in actual CLI request formats", () => {
+    for (const tool of ["set_plan", "update_issue", "create_issue"]) {
+      const requests = [
+        { tool: "mcp:pair-desk", detail: `Allow the pair-desk MCP server to run tool '${tool}'?` },
+        hookRequest("codex", { tool_name: `mcp__pair-desk__${tool}`, tool_input: {} }),
+        hookRequest("claude", { tool_name: `mcp__plugin_agent-pair-programming_pair-desk__${tool}`, tool_input: {} }),
+        opencodePermissionRequest({ permission: `pair-desk_${tool}` }, ["pair-desk"], "/w"),
+        { tool: `functions.mcp__pair_desk__${tool}`, detail: "{}" },
+      ];
+      for (const request of requests) {
+        expect(isAutoApproved(request, [`pair-desk.${tool.split("_")[0]}_*`])).toBe(true);
+        expect(isAutoApproved(request, ["pair-desk:worker"])).toBe(true);
+        expect(isAutoApproved(request, ["pair-desk.get_*", "pair-desk.list_*"])).toBe(false);
+        expect(approvalHint(request)).toContain("pair-desk:worker");
+      }
+    }
+  });
+
+  it("normalizes opencode server prefixes and does not guess a tool from a sentence", () => {
+    const request = opencodePermissionRequest({ permission: "my_server_set_plan" }, ["my server"], "/w");
+    expect(mcpToolOf(request)).toEqual({ server: "my server", tool: "set_plan" });
+    expect(isAutoApproved(request, ["my server.set_*"])).toBe(true);
+    expect(mcpToolOf({ tool: "mcp:desk", detail: "Allow this server to run a tool?" })?.tool).toBeNull();
+    expect(isAutoApproved({ tool: "mcp:desk", detail: "Allow this server to run a tool?" }, ["desk.Allow"])).toBe(false);
+  });
+
+  it("keeps the worker preset scoped to desk workers", () => {
+    for (const tool of ["set_status", "set_build", "set_handoff", "update_handoff", "merge_issues", "delete_issue"]) {
+      const request = { tool: "mcp:pair-desk", detail: `${tool}: {}` };
+      expect(isAutoApproved(request, ["pair-desk:worker"])).toBe(false);
+      expect(approvalHint(request)).not.toContain("pair-desk:worker");
+    }
+    expect(isAutoApproved({ tool: "mcp:another-desk", detail: "set_plan: {}" }, ["pair-desk:worker"])).toBe(false);
+    expect(isHandoffToolCall({ tool: "mcp__pair_desk__update_handoff", detail: "{}" })).toBe(true);
   });
 });
 

@@ -12,8 +12,8 @@ import { askRelay, RELAY_URL_ENV, type PermissionRequest } from "../core/relay.j
  * with "claude" as argument.
  */
 const MAX_DETAIL_CHARS = 4_000;
-/** Claude Code names MCP tools mcp__<server>__<tool>. */
-const CLAUDE_MCP_TOOL = /^mcp__(.+?)__(.+)$/;
+/** Codex and Claude Code name MCP tools mcp__<server>__<tool>. */
+const MCP_TOOL = /^mcp__(.+?)__(.+)$/;
 
 function describe(toolInput: unknown): string {
   if (toolInput && typeof toolInput === "object") {
@@ -24,12 +24,12 @@ function describe(toolInput: unknown): string {
   return JSON.stringify(toolInput ?? {}).slice(0, MAX_DETAIL_CHARS);
 }
 
-/** The relay request for one hook input. Claude's MCP tools become "mcp:<server>" (one allow covers the server). */
+/** The relay request for one hook input. MCP tools become "mcp:<server>" (one allow covers the server). */
 export function hookRequest(agent: string, input: Record<string, unknown>): PermissionRequest {
   const tool = String(input.tool_name ?? "unknown");
   const cwd = typeof input.cwd === "string" ? input.cwd : undefined;
   const detail = describe(input.tool_input);
-  const mcp = agent === "claude" ? CLAUDE_MCP_TOOL.exec(tool) : null;
+  const mcp = MCP_TOOL.exec(tool);
   if (mcp) return { agent, tool: `mcp:${mcp[1]}`, detail: `${mcp[2]}: ${detail}`.slice(0, MAX_DETAIL_CHARS), cwd };
   return { agent, tool, detail: detail.slice(0, MAX_DETAIL_CHARS), cwd };
 }

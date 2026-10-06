@@ -21,6 +21,7 @@ import { runSmoke } from "./smoke.js";
 import { cleanupWorktrees } from "../core/worktree-cleanup.js";
 import { installOpencode, opencodeSourceDir, uninstallOpencode, type InstallResult } from "./opencode-install.js";
 import { runJobRunner } from "../mcp/job-runner.js";
+import { runSlot } from "./slot.js";
 
 const CLI_PEER_NAME = "cli";
 const out = (s: string) => process.stdout.write(s + "\n");
@@ -39,6 +40,8 @@ async function main(argv: string[]): Promise<number> {
     new BridgeNode({ pipePath: pipe, token: loadOrCreateToken(home), dbPath: resolveDbPath(home), agent: "other", name: CLI_PEER_NAME, cwd: process.cwd(), autoWake: false, log });
 
   switch (command) {
+    case "slot":
+      return runSlot(rest, home, loadConfig(home, "other", log), out);
     case "status": {
       let client: BridgeClient;
       try {
