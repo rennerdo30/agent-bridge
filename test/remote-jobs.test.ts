@@ -54,8 +54,9 @@ process.stdin.on('end',async()=>{
 
 beforeEach(() => {
   // Transfer fixtures must have no linked ancestors (/var on macOS); native also expands Windows 8.3 names.
-  root = realpathSync.native(mkdtempSync(join(tmpdir(), "agent-bridge-remote-")));
-  localHome = join(root, "windows"); remoteHome = join(root, "mac"); repo = join(root, "allowed");
+  // Short names: macOS caps Unix socket paths at 104 bytes, and its real temp path (/private/var/folders/…) is long.
+  root = realpathSync.native(mkdtempSync(join(tmpdir(), "abr-")));
+  localHome = join(root, "w"); remoteHome = join(root, "m"); repo = join(root, "allowed");
   for (const path of [localHome, remoteHome, repo]) mkdirSync(path, { recursive: true });
   cleanup = [];
 });
