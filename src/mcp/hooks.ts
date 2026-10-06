@@ -1,5 +1,5 @@
 import { HOOK_MAX_MESSAGES, STOP_WAIT_CAP_MS } from "../core/constants.js";
-import { isSiblingNote, type BridgeMessage } from "../core/protocol.js";
+import { isQuietMessage, type BridgeMessage } from "../core/protocol.js";
 import { formatMessages, formatParentMessages, formatPeer } from "./format.js";
 import { MessageWaitStore, resumeWaitHint } from "./message-wait.js";
 import { shouldWakeClaudeMessage, WAKE_HEADER } from "./rewake.js";
@@ -41,6 +41,7 @@ export function discardFinishedNotes(ctx: ServerContext): void {
   if (!node) return;
   // A completed job's old status chatter is history, never a new instruction.
   const obsolete = node.unread().filter((m) => {
+    if (isQuietMessage(m)) return false;
     if (!ctx.jobs?.isNote(m)) return false;
     const job = ctx.jobs.find(m.from.name);
     return job !== undefined && job.status !== "running";
@@ -54,7 +55,10 @@ function take(ctx: ServerContext, wakeOnly: boolean, notesOnly = false): BridgeM
   discardFinishedNotes(ctx);
   const msgs = node
     .unread()
-    .filter((m) => !notesOnly || isSiblingNote(m) || ctx.jobs?.isNote(m) || !shouldWakeClaudeMessage(node, ctx.cfg, m))
+    // Observer copies and acknowledgements remain available in inbox/history on demand.
+    // Filter before the batch limit so old chatter cannot delay current results or blockers.
+    .filter((m) => !isQuietMessage(m))
+    .filter((m) => !notesOnly || ctx.jobs?.isNote(m) || !shouldWakeClaudeMessage(node, ctx.cfg, m))
     // Ending a turn: a running subagent's status note does not keep it going; it comes with the next prompt.
     .filter((m) => !wakeOnly || (m.hop < ctx.cfg.maxHops && !ctx.jobs?.isNote(m)))
     .slice(0, HOOK_MAX_MESSAGES);
@@ -132,7 +136,7 @@ export async function buildHookResponse(ctx: ServerContext, input: HookInput): P
     case "UserPromptSubmit":
     case "PostToolUse": {
       ctx.activity?.("busy");
-      // Quiet sibling copies use the next active hook even with a channel, which would wake an idle session.
+      // Muted session messages use active hooks; observer copies stay on demand.
       const msgs = take(ctx, false, channel);
       return msgs.length ? context(input.event, formatMessages(msgs)) : {};
     }

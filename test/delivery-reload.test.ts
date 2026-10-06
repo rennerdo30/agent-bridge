@@ -102,7 +102,7 @@ describe("delivery and reload recovery", () => {
     await until(() => recipient.unread().length === 1);
     expect(recipient.unread()[0]!.id).toBe(final.messages[0]!.id);
     expect((await job.messageReceipt(note.messages[0]!.id))[0]!.readAt).toBeTypeOf("number");
-    const ctx: ServerContext = { agent: "claude", cfg: { ...DEFAULT_CONFIG }, node: recipient, log: nullLogger, home: env.home, cwd: () => env.home, channelActive: () => false,
+    const ctx: ServerContext = { agent: "claude", cfg: { ...DEFAULT_CONFIG, wakeOnDirect: false }, node: recipient, log: nullLogger, home: env.home, cwd: () => env.home, channelActive: () => false,
       jobs: { isNote: (m: BridgeMessage) => m.conversationId.endsWith(":note"), find: () => ({ status: "done" }) } as any };
     // Also discard a note that was buffered while the job was running, then finished.
     recipient.deliverLocal(note.messages[0]!);
@@ -162,13 +162,17 @@ describe("delivery and reload recovery", () => {
     expect(node.autoWakeEnabled).toBe(false);
     expect(shouldWakeClaudeMessage(node, cfg, message)).toBe(true);
     expect(shouldWakeClaudeMessage(node, { ...cfg, wakeOnDirect: false }, message)).toBe(false);
-    for (const to of ["*", "claude"]) expect(shouldWakeClaudeMessage(node, cfg, { ...message, to })).toBe(false);
+    expect(shouldWakeClaudeMessage(node, cfg, { ...message, to: "*" })).toBe(true);
+    expect(shouldWakeClaudeMessage(node, { ...cfg, wakeOnDirect: false }, { ...message, to: "*" })).toBe(false);
+    expect(shouldWakeClaudeMessage(node, cfg, { ...message, to: "claude" })).toBe(false);
     expect(shouldWakeClaudeMessage(node, cfg, { ...message, hop: 2 })).toBe(false);
     expect(shouldWakeClaudeMessage(node, cfg, { ...message, conversationId: "job-old:note" })).toBe(false);
     expect(shouldWakeClaudeMessage(node, cfg, { ...message, from: { ...message.from, id: "paired-id/peer-id" }, to: "mac/claude-app" })).toBe(true);
     vi.spyOn(node, "isAwaitedReply").mockReturnValue(true);
     expect(shouldWakeClaudeMessage(node, { ...cfg, wakeOnDirect: false }, message)).toBe(true);
-    for (const to of ["*", "claude"]) expect(shouldWakeClaudeMessage(node, cfg, { ...message, to })).toBe(false);
+    expect(shouldWakeClaudeMessage(node, cfg, { ...message, to: "*" })).toBe(true);
+    expect(shouldWakeClaudeMessage(node, { ...cfg, wakeOnDirect: false }, { ...message, to: "*" })).toBe(false);
+    expect(shouldWakeClaudeMessage(node, cfg, { ...message, to: "claude" })).toBe(false);
     await node.setAutoWake(true);
     expect(shouldWakeClaudeMessage(node, cfg, { ...message, to: "*" })).toBe(true);
     expect(shouldWakeClaudeMessage(node, cfg, { ...message, hop: 2 })).toBe(false);
@@ -187,7 +191,7 @@ describe("delivery and reload recovery", () => {
     await sender.start(); await recipient.start();
     await sender.send({ to: "*", body: "broadcast without wake" });
     await until(() => recipient.unread().length === 1);
-    const ctx: ServerContext = { agent: "claude", cfg: { ...DEFAULT_CONFIG }, node: recipient, log: nullLogger, home: env.home, cwd: () => env.home, channelActive: () => true };
+    const ctx: ServerContext = { agent: "claude", cfg: { ...DEFAULT_CONFIG, wakeOnDirect: false }, node: recipient, log: nullLogger, home: env.home, cwd: () => env.home, channelActive: () => true };
     const out = await buildHookResponse(ctx, { event: "UserPromptSubmit", sessionId: null, stopHookActive: false });
     expect(JSON.stringify(out)).toContain("broadcast without wake");
     expect(recipient.unread()).toEqual([]);

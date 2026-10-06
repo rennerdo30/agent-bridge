@@ -28,9 +28,15 @@ export const BROADCAST = "*";
 /** Direct job chat; observer copies end in :note so they do not wake the supervisor. */
 export const SIBLING_CONVERSATION_PREFIX = "siblings-";
 export const SIBLING_NOTE_SUFFIX = ":note";
+/** Acknowledgements are retained for inspection, never injected as new work. */
+export const ACK_CONVERSATION_SUFFIX = ":ack";
 
 export function isSiblingNote(m: Pick<BridgeMessage, "conversationId">): boolean {
   return m.conversationId.startsWith(SIBLING_CONVERSATION_PREFIX) && m.conversationId.endsWith(SIBLING_NOTE_SUFFIX);
+}
+
+export function isQuietMessage(m: Pick<BridgeMessage, "conversationId">): boolean {
+  return isSiblingNote(m) || m.conversationId.endsWith(ACK_CONVERSATION_SUFFIX);
 }
 
 export interface SiblingPeer {
@@ -134,6 +140,8 @@ export interface MessageReceipt {
 }
 
 export interface SendResult {
+  /** Failed fan-out attempts are explicit; they are not queued for automatic retry. */
+  failedFor?: { name: string; reason: string }[];
   /** Presence at routing time; delivery does not mean consumption. */
   recipientStates?: Pick<PeerInfo, "name" | "activity" | "autoWake" | "wakeOnDirect" | "wakeAvailable" | "wakeMaxHops">[];
   messages: BridgeMessage[];

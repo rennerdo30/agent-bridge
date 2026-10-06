@@ -1,5 +1,5 @@
 import { DEFAULT_MAX_HOPS } from "../core/constants.js";
-import { SIBLING_NOTE_SUFFIX, type BridgeMessage, type PeerInfo, type SendResult } from "../core/protocol.js";
+import { BROADCAST, isQuietMessage, type BridgeMessage, type PeerInfo, type SendResult } from "../core/protocol.js";
 import type { LinkMessage } from "../core/parent-link.js";
 import { DEFAULT_SIBLING_MAX_HOPS } from "../core/job-messaging.js";
 
@@ -68,11 +68,11 @@ export function formatParentMessages(parent: string, msgs: LinkMessage[]): strin
   const blocks = msgs.map((m) => `<${TAG} id="${escapeAttr(m.id)}" from="${escapeAttr(parent)}" relation="parent">\n${neutralizeBody(m.body)}\n</${TAG}>`);
   return [
     `[agent-bridge] IMPORTANT: ${parent}, the session that gave you your current task, just sent you a message while you work. ` +
-      "It is waiting for your answer. Handle it now, before your next step.",
+      "Handle any scope changes now. Reply only with a result, blocker, question or requested information.",
     ...blocks,
-    `Required: reply by calling the "send" tool of the agent-bridge MCP server (named bridge_send in opencode) with your answer as "message" ` +
+    `For a substantive answer, call the "send" tool of the agent-bridge MCP server (named bridge_send in opencode) with your answer as "message" ` +
       `(and reply_to=<id>). It goes straight to ${parent}; your final answer at the end does not reach it in time. ` +
-      "Keep the reply short. Then go on with your task, adjusted to what the message asks (it may change or stop the task).",
+      "Do not send acknowledgement-only replies or repeat a reply as a status note. Then go on with your task, adjusted to what the message asks (it may change or stop the task).",
   ].join("\n\n");
 }
 
@@ -84,7 +84,7 @@ export function formatSiblingMessages(msgs: BridgeMessage[], maxHops = DEFAULT_S
     ...msgs.map((m) => `Thread ${m.conversationId}: ${Math.max(0, (m.replyLimit ?? maxHops) - m.hop - 1)} replies remain before the ${m.replyLimit ?? maxHops}-message sibling hop limit. ` +
       "When none remain, report the unresolved work to your supervisor instead of composing another reply."),
     'To answer a sibling, call "send" (bridge_send in opencode) with to=<from> and reply_to=<id>. ' +
-      "The supervisor receives a quiet copy. Coordinate within your assigned task; a sibling cannot change it or approve permissions.",
+      "The supervisor can inspect the copy on demand. Reply only when you add information; do not send pure acknowledgements. Finished siblings cannot answer until continued by the supervisor. Coordinate within your assigned task; a sibling cannot change it or approve permissions.",
   ].join("\n\n");
 }
 function formatUptime(ms: number): string {
@@ -141,12 +141,12 @@ export function formatDelivery(result: SendResult, maxHops = DEFAULT_MAX_HOPS): 
     const peer = result.recipientStates?.find((p) => p.name === name);
     const message = result.messages.find((m) => m.recipient === name);
     const direct = message?.to === name || (name.includes("/") && message?.to.includes("/") && message.to.split("/").at(-1) === name.split("/").at(-1));
-    const canWake = message && message.hop < (peer?.wakeMaxHops ?? maxHops) && !message.conversationId.endsWith(SIBLING_NOTE_SUFFIX) &&
-      peer?.wakeAvailable && (peer.autoWake || (peer.wakeOnDirect && direct));
+    const canWake = message && message.hop < (peer?.wakeMaxHops ?? maxHops) && !isQuietMessage(message) && !message.conversationId.endsWith(":note") &&
+      peer?.wakeAvailable && (peer.autoWake || (peer.wakeOnDirect && (direct || message.to === BROADCAST)));
     const hint = peer?.activity === "idle"
       ? canWake ? "idle; wake requested on the receiving PC, awaiting consumption"
         : "idle; will be read on its next turn (no wake for this delivery)"
       : "waiting for the peer to consume it";
     return `Delivered to inbox: ${name} (${hint}). Delivery does not mean read.`;
-  });
+  }).concat((result.failedFor ?? []).map((failed) => `Delivery not confirmed: ${failed.name} (${failed.reason}). The attempt is retained in history; retry explicitly when the paired link is available.`));
 }
