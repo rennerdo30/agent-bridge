@@ -428,6 +428,26 @@ form#send { background: transparent; border-top: 0; padding: 12px 0 0; }
 .cnote:empty { display: none; }
 .conv-head #cSub { margin-top: 4px; }
 
+/* Network page */
+.net-card { padding: 20px 22px; gap: 16px; }
+.net-head { align-items: center; }
+.net-title { font-size: 17px; }
+#netWhere { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+code.addr { font-family: var(--mono); font-size: 12px; padding: 2px 8px; border-radius: 6px; background: var(--accent-soft); color: var(--text); user-select: all; }
+.net-settings { border-top: 1px solid var(--panel-2); padding-top: 12px; }
+.net-settings > summary { cursor: pointer; list-style: none; font-size: 13px; font-weight: 600; color: var(--muted); }
+.net-settings > summary::-webkit-details-marker { display: none; }
+.net-settings > summary::before { content: "▸ "; }
+.net-settings[open] > summary::before { content: "▾ "; }
+.net-settings[open] > summary { margin-bottom: 12px; }
+.net-fw { border: 0; padding: 12px 14px; border-radius: 10px; background: var(--warn-soft); }
+.net-fw:has(.dot.idle) { background: var(--ok-soft); }
+.net-two { align-items: stretch; }
+.net-two > .net-card { justify-content: space-between; }
+.net-two > .net-card .net-actions { margin-top: auto; }
+.peer-row { padding: 14px 18px; }
+.peer-name { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+
 /* The conversation's "⋯" menu, top right */
 .conv-menu { position: relative; flex: none; }
 .menu-btn { font-size: 18px; line-height: 1; padding: 4px 10px; letter-spacing: .05em; }
@@ -586,6 +606,7 @@ form#send { background: transparent; border-top: 0; padding: 12px 0 0; }
         <div class="net-title"><span class="dot off" id="netDot"></span><b id="netState">Reading the network status…</b></div>
         <div class="small muted" id="netWhere"></div>
       </div>
+      <details class="net-settings" id="netSettings"><summary>Settings for this PC</summary>
       <form id="netConfig" class="net-form">
         <label>Name of this PC<input id="netName" maxlength="40" autocomplete="off" spellcheck="false" placeholder="e.g. office-pc"></label>
         <label>Reachable from<select id="netBind"><option value="0.0.0.0">Other PCs on this network</option><option value="127.0.0.1">This PC only (for testing)</option></select></label>
@@ -594,6 +615,7 @@ form#send { background: transparent; border-top: 0; padding: 12px 0 0; }
         <div class="net-actions"><button type="submit" id="netSave">Turn on</button><button type="button" class="ghost hidden" id="netOff">Turn off</button></div>
         <div class="note" id="netConfigInfo" role="status" aria-live="polite"></div>
       </form>
+      </details>
       <div class="net-fw hidden" id="netFw"></div>
     </div></div>
     <div class="block net-two">
@@ -1684,10 +1706,13 @@ function renderNetwork() {
     $("netState").textContent = n.enabled ? "Networking is on" + (n.identity ? " as " + n.identity.name : "") : "Networking is off";
     const local = cfg.bind === "127.0.0.1";
     const addrs = (n.addresses || []).map((a) => a + ":" + (n.port || cfg.port));
-    $("netWhere").textContent = n.enabled
-      ? [local ? "reachable from this PC only" : addrs.length ? "other PCs connect to " + addrs.join(" or ") : "port " + (n.port || cfg.port), cfg.discovery ? "finding PCs automatically" : ""].filter(Boolean).join(" · ")
-      : "Turn it on to connect this PC with others on your network.";
-    if (!netFormFilled) fillNetForm(n);
+    // The addresses other PCs use, as chips; the first one is usually the LAN address.
+    setHtml("netWhere", n.enabled
+      ? (local ? '<span class="chip">reachable from this PC only</span>'
+        : addrs.length ? '<span class="small muted">Other PCs connect to</span> ' + addrs.map((a) => '<code class="addr">' + esc(a) + "</code>").join(" ") : '<span class="chip">port ' + esc(n.port || cfg.port) + "</span>") +
+        (cfg.discovery ? ' <span class="chip">finding PCs automatically</span>' : "")
+      : '<span class="small muted">Turn it on to connect this PC with others on your network.</span>');
+    if (!netFormFilled) { fillNetForm(n); $("netSettings").open = !n.enabled; }
   }
   $("netSave").textContent = n && n.enabled ? "Save" : "Turn on";
   $("netSave").disabled = !n;
@@ -1785,7 +1810,8 @@ function renderPaired() {
         const acts = unlinkAsk === p.id
           ? '<span class="small">Unlink ' + esc(p.name) + '? Pairing again needs a new code.</span><button type="button" class="danger" data-act="unlink" data-id="' + esc(p.id) + '">Unlink</button><button type="button" class="ghost" data-act="unlink-cancel">Keep</button>'
           : '<button type="button" class="ghost" data-act="verify" data-id="' + esc(p.id) + '"' + (p.connected ? "" : " disabled") + '>Check</button><button type="button" class="ghost danger" data-act="unlink-ask" data-id="' + esc(p.id) + '">Unlink</button>';
-        return '<div class="peer-row"><span class="dot ' + (p.connected ? "idle" : "off") + '"></span><div class="grow"><b>' + esc(p.name) + '</b><div class="small muted">' + status + health + ' · key <code>' + esc(p.fingerprint.slice(0, 12)) + "</code></div>" +
+        return '<div class="peer-row">' + av("other") + '<div class="grow"><div class="peer-name"><b>' + esc(p.name) + '</b><span class="pill ' + (p.connected ? "done" : "interrupted") + '">' + status + "</span></div>" +
+          '<div class="small muted">' + (health ? health.slice(3) + " · " : "") + 'key <code>' + esc(p.fingerprint.slice(0, 12)) + "</code></div>" +
           (note ? '<div class="small ' + (note.err ? "" : "muted") + '" style="' + (note.err ? "color:var(--bad)" : "") + '">' + esc(note.text) + "</div>" : "") + '</div><div class="acts">' + acts + "</div></div>";
       }).join("")
     : '<div class="empty">No paired PCs yet. Create a code on one PC and enter it on the other.</div>');
