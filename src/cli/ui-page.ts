@@ -386,9 +386,10 @@ main.wrap { padding-top: 32px; max-width: 1240px; }
 .conv-head .title { font-size: 16px; letter-spacing: -.01em; flex-wrap: wrap; }
 .chat { padding: 24px 28px 32px; gap: 14px; }
 .msgrow { max-width: min(780px, 100%); }
-.msgrow:not(.me) { align-self: stretch; max-width: 780px; gap: 12px; }
-.msgrow:not(.me) .bubble { background: none; border: 0; padding: 2px 0 0; line-height: 1.6; }
-.msgrow:not(.me) .bubble.answer { background: var(--ok-soft); border-left: 3px solid var(--ok); border-radius: 4px 10px 10px 4px; padding: 10px 14px; }
+.msgrow:not(.me) { max-width: min(860px, 92%); gap: 10px; }
+/* Agent replies are bubbles too: grey on the left, yours tinted on the right. */
+.msgrow:not(.me) .bubble { background: var(--panel-2); border: 1px solid var(--line); border-radius: 14px 14px 14px 4px; padding: 10px 14px; line-height: 1.6; }
+.msgrow:not(.me) .bubble.answer { background: var(--ok-soft); border-color: transparent; border-left: 3px solid var(--ok); }
 .msgrow.me .bubble { background: var(--accent-soft); border: 0; border-radius: 14px 14px 4px 14px; padding: 10px 14px; }
 .msgrow.me .bubble.clamp::before { background: linear-gradient(transparent, var(--accent-soft)); }
 .bubble .who { font-weight: 600; color: var(--muted); }
