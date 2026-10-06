@@ -24,6 +24,7 @@ import { installOpencode, opencodeSourceDir, uninstallOpencode, type InstallResu
 import { runJobRunner } from "../mcp/job-runner.js";
 import { runSlot } from "./slot.js";
 import { runNetworkCommand } from "../network/cli.js";
+import { runDoctor } from "./doctor.js";
 
 const CLI_PEER_NAME = "cli";
 const out = (s: string) => process.stdout.write(s + "\n");
@@ -42,6 +43,8 @@ async function main(argv: string[]): Promise<number> {
     new BridgeNode({ pipePath: pipe, token: loadOrCreateToken(home), dbPath: resolveDbPath(home), agent: "other", name: CLI_PEER_NAME, cwd: process.cwd(), autoWake: false, log });
 
   switch (command) {
+    case "doctor":
+      return runDoctor(rest, home, out);
     case "slot":
       return runSlot(rest, home, loadConfig(home, "other", log), out);
     case "connect":
@@ -192,6 +195,7 @@ async function main(argv: string[]): Promise<number> {
     case "-h":
       out(t("cli.usage"));
       out("Network: connect [--yes] [--non-interactive --create | --address <host:port> --code <code>] | network | pair | link <host:port> <code> | unlink <instance-id>");
+      out("Storage: doctor [--json] [--backup | --fix | --archive | --restore <backup>] [--yes]");
       return 0;
     default:
       out(t("cli.unknownCommand", { command }));

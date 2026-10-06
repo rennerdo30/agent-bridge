@@ -364,15 +364,17 @@ Retention controls are environment variables (nonnegative integers; `0` disables
 
 | Env var | Default | Retention behavior |
 |---|---|---|
-| `AGENT_BRIDGE_MESSAGE_TTL_MS` | `604800000` (7 days) | Expired messages move into `archived_messages` transactionally |
-| `AGENT_BRIDGE_QUEUED_MAIL_MAX_AGE_MS` | `86400000` (1 day) | Stale queued messages move into the same table before a peer claims mail |
+| `AGENT_BRIDGE_MESSAGE_TTL_MS` | `604800000` (7 days) | Expired messages move into separate `archive.db` before removal from the primary |
+| `AGENT_BRIDGE_QUEUED_MAIL_MAX_AGE_MS` | `86400000` (1 day) | Stale queued messages move into `archive.db` before a peer claims mail |
 | `AGENT_BRIDGE_JOB_STORE_LIMIT` | `200` | Finished jobs beyond the limit move into `archive/jobs.json.overflow.json-*`; running and interrupted jobs stay active |
-| `AGENT_BRIDGE_RUN_LOG_LIMIT` | `50` | Older finished or stale logs and their metadata move into `runs/archive/`; live feeds stay active |
+| `AGENT_BRIDGE_RUN_LOG_LIMIT` | `50` | Older finished logs and their metadata move into `runs/archive/`; unfinished feeds stay active |
 | `AGENT_BRIDGE_RUNNER_KEEP_MS` | `604800000` (7 days) | Old finished runner state/spec files move into `jobs/archive/`; running state stays active |
 
-Archives are outside the active dashboard and recovery lists. Inspect the JSON/log files directly,
-or query `archived_messages` in a copy of the database to recover historical data. Retain these
-archives with your normal backups; they have no automatic size cap. Runner specs are archived
+Archived messages remain visible in history and searchable through the authenticated history API.
+Archived jobs remain continuable, and archived run logs stay readable in the dashboard and `watch`.
+Legacy `archived_messages` rows move into `archive.db` without changing the primary schema;
+the archive has its own versioned migrations. Retain these archives with your normal backups;
+they have no automatic size cap. Runner specs are archived
 after consumption and earlier runner state is archived before a new turn starts. Stored job prompts
 are retained in full; only displayed previews and the in-memory recent-job list are bounded.
 

@@ -53,8 +53,13 @@ describe("decision schema migrations", () => {
     const check = new DatabaseSync(env.db, { readOnly: true });
     try {
       expect(check.prepare("PRAGMA user_version").get()!.user_version).toBe(SQLITE_STORE_VERSION);
-      if (version === 2) expect(check.prepare("SELECT body FROM archived_messages").get()!.body).toBe("old mail");
+      if (version === 2) expect(check.prepare("SELECT count(*) AS n FROM archived_messages").get()!.n).toBe(0);
     } finally { check.close(); }
+    if (version === 2) {
+      const archive = new DatabaseSync(join(env.home, "archive.db"), { readOnly: true });
+      try { expect(archive.prepare("SELECT body FROM messages").get()!.body).toBe("old mail"); }
+      finally { archive.close(); }
+    }
     const reopened = new MessageStore(env.db, nullLogger);
     try { expect(reopened.decisions.list()).toHaveLength(1); } finally { reopened.close(); }
     expect(readdirSync(env.home).filter((f) => f.startsWith("bridge.db.backup-"))).toEqual(backups);

@@ -1,6 +1,8 @@
 import { appendFileSync, mkdirSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { archiveFile, isRecord, mergeStoreFields, readJsonStore, retentionLimit, writeJsonStore } from "./json-store.js";
+import { isRecord, mergeStoreFields, readJsonStore, retentionLimit, writeJsonStore } from "./json-store.js";
+import { archiveOldRuns, archiveRun } from "./run-archive.js";
+import { storageLease } from "./storage-lock.js";
 
 /**
  * Live feed of one delegated run: every progress line goes to ~/.agent-bridge/runs/<name>.log (so the
@@ -67,6 +69,7 @@ function stamp(t: number): string {
 
 function pruneOldLogs(dir: string): void {
   try {
+    archiveOldRuns(join(dir, ".."));
     const limit = retentionLimit("AGENT_BRIDGE_RUN_LOG_LIMIT", KEEP_RUN_LOGS);
     if (!limit) return;
     const files = readdirSync(dir)
@@ -76,8 +79,7 @@ function pruneOldLogs(dir: string): void {
     for (const { f } of files.slice(limit)) {
       const path = join(dir, f);
       if (Date.now() - statSync(path).mtimeMs <= STALE_RUN_MS && !/^\d\d:\d\d:\d\d finished after \d+s · /m.test(readFileSync(path, "utf8"))) continue;
-      archiveFile(path);
-      archiveFile(join(dir, runMetaPath(f)));
+      archiveRun(path);
     }
   } catch (err) {
     process.stderr.write(`could not archive run logs: ${String(err)}\n`);
@@ -94,6 +96,7 @@ export function startRunFeed(opts: {
   heartbeatMs?: number;
 }): RunFeed {
   const now = opts.now ?? Date.now;
+  const release = storageLease(opts.home);
   const dir = join(opts.home, RUNS_DIR_NAME);
   mkdirSync(dir, { recursive: true });
   const logPath = join(dir, `${new Date(now()).toISOString().slice(0, 19).replace(/[:T]/g, "-")}-${opts.name}.log`);
@@ -149,6 +152,7 @@ export function startRunFeed(opts: {
       clearInterval(timer);
       if (answer?.trim()) write(`answer: ${answer.trim()}`);
       write(`finished after ${Math.round((now() - started) / 1000)}s · ${summary}`);
+      release();
     },
     meta: (patch) => {
       meta = { ...meta, ...patch };
