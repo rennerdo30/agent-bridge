@@ -7209,7 +7209,7 @@ import { DatabaseSync as DatabaseSync5 } from "node:sqlite";
 import { homedir } from "node:os";
 import { join } from "node:path";
 var APP_NAME = "agent-bridge";
-var APP_VERSION = "0.29.3";
+var APP_VERSION = "0.29.4";
 var PROTOCOL_VERSION = 2;
 var ENV = {
   home: "AGENT_BRIDGE_HOME",
@@ -49863,6 +49863,18 @@ function selectedKey(x) {
 }
 const sessionApi = (name) => "/api/sessions/" + encodeURIComponent(name);
 
+/** Readable text for a failed read from the paired PC (see docs/remote-dashboard.md), or "" for local errors. */
+const REMOTE_ERRORS = {
+  remote_update_needed: "The other PC runs an older agent-bridge. Update it (and restart its sessions) to see its chats here.",
+  remote_offline: "The other PC is not connected right now.",
+  remote_timeout: "The other PC did not answer in time. Try again in a moment.",
+  remote_busy: "The other PC is busy answering other requests. Try again in a moment.",
+  remote_rate_limited: "Too many requests to the other PC. Try again in a minute.",
+  remote_response_too_large: "This conversation is too large to fetch from the other PC in one piece.",
+  remote_read_failed: "The other PC could not read this conversation.",
+};
+const remoteErrorText = (d) => (d && d.code && REMOTE_ERRORS[d.code] ? REMOTE_ERRORS[d.code] + (d.host ? " (" + d.host + ")" : "") : "");
+
 async function loadNativeList(x) {
   const cached = nativeLists.get(x.name);
   if (cached && Date.now() - cached.at < NATIVE_LIST_MS) return;
@@ -49902,7 +49914,7 @@ async function pullChatFrom(id, url) {
     for (let i = 0; i < LOG_PAGES; i++) {
       const r = await fetch(url + (c.next ? "?from=" + encodeURIComponent(c.next) : ""));
       const d = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(r.status === 409 ? "This session has not reported its CLI session yet: it appears after its next prompt." : d.error || "HTTP " + r.status);
+      if (!r.ok) throw new Error(remoteErrorText(d) || (r.status === 409 ? "This session has not reported its CLI session yet: it appears after its next prompt." : d.error || "HTTP " + r.status));
       for (const item of d.items || []) {
         // opencode streams parts: a later version of the same item replaces the earlier one.
         if (item.id && c.byId.has(item.id)) c.items[c.byId.get(item.id)] = item;
@@ -50297,7 +50309,14 @@ async function showGroup(g) {
       if (l.done) continue;
       for (let i = 0; i < LOG_PAGES; i++) {
         const res = await fetch("/api/runs/" + encodeURIComponent(r.name) + "?from=" + l.offset);
-        if (!res.ok) break;
+        if (!res.ok) {
+          // Unreadable (e.g. the paired PC is offline or older): say so instead of loading forever.
+          const e = await res.json().catch(() => ({}));
+          l.error = remoteErrorText(e) || e.error || "HTTP " + res.status;
+          l.loaded = true;
+          break;
+        }
+        l.error = "";
         const d = await res.json();
         l.raw += d.text; l.offset = d.next; l.loaded = true;
         if (d.next >= d.size) break;
@@ -50352,7 +50371,9 @@ function renderConversation(g) {
         : c.items.length ? chatHtml(c.items, g.agent, g.owner) : '<div class="sys">Its step log was lost and its transcript has no entries.</div>';
       return turnHead + '<div class="sys">Recovered from the job record and ' + esc(g.agent) + "'s own transcript</div>" + body;
     }
-    const t = splitTurn((logs.get(r.name) || { raw: "" }).raw);
+    const log = logs.get(r.name) || { raw: "" };
+    if (log.error && !log.raw) return turnHead + '<div class="sys">Its log could not be read: ' + esc(log.error) + "</div>";
+    const t = splitTurn(log.raw);
     const id = r.name + ":task";
     const long = t.prompt.length > 600 && !opened.has(id);
     return (g.turns.length > 1 ? '<div class="turn">' + (i === 0 ? "Task" : "Follow-up " + i) + " \xB7 " + time(r.startedAt) + " \xB7 " + pill(r.status) + "</div>" : "") +
