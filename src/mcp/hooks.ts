@@ -157,13 +157,22 @@ export async function buildHookResponse(ctx: ServerContext, input: HookInput): P
       const jobsRunning = ctx.jobs?.runningCount() ?? 0;
       const inConversation = lingerRemaining > 0 || jobsRunning > 0;
       if (!node.autoWakeEnabled && !inConversation) {
+        // A notify wait is explicit permission to deliver its match, even after the listen window ends.
+        const awaited = node.unread().filter((m) => node.isNotificationAwaited(m) && m.hop < ctx.cfg.maxHops &&
+          !isQuietMessage(m) && !m.conversationId.endsWith(":note")).slice(0, HOOK_MAX_MESSAGES);
+        if (awaited.length) {
+          node.markRead(awaited.map((m) => m.id));
+          ctx.activity?.("busy");
+          return { decision: "block", reason: formatMessages(awaited, { replyHint: false }) };
+        }
         ctx.activity?.("idle");
         return {};
       }
       let msgs = take(ctx, true);
       // With background wake-ups (Claude Code's asyncRewake hook) the turn never waits: it ends now and
       // the session is woken when a result or reply arrives. Hosts without that keep the listen window.
-      if (msgs.length === 0 && inConversation && !ctx.rewakeAvailable) {
+      const notifyPending = new MessageWaitStore(ctx.home).pending(node).some((r) => r.mode === "notify");
+      if (msgs.length === 0 && inConversation && !ctx.rewakeAvailable && !notifyPending) {
         const waitMs = Math.min(STOP_WAIT_CAP_MS, jobsRunning > 0 ? STOP_WAIT_CAP_MS : lingerRemaining);
         ctx.log.info("listening for replies before ending the turn", { waitMs, jobsRunning });
         const arrived = await node.waitForMessage(waitMs, (m) => m.hop < ctx.cfg.maxHops, input.signal);

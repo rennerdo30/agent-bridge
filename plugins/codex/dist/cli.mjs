@@ -7939,7 +7939,7 @@ var en = {
   "send.ok": "Message {id} sent (conversation {conversation}).",
   "send.delivered": "Delivered to: {names}.",
   "send.queued": "Recipient not connected right now; queued for: {names}. This does not prove the session is closed. Mail is saved until reconnect or queue retention expiry; on reconnect it is delivered, with wake requested when the receiving session's wake policy and hook permit.",
-  "send.waitHint": "Use wait_for_message to wait for the answer.",
+  "send.waitHint": 'Call wait_for_message(mode="notify", reply_to=<sent id>) once, then keep working or end the turn. The reply arrives through existing wake delivery; do not loop on waits.',
   "usage.none": "None of Codex, Claude Code or opencode is installed here.",
   "peers.subagent": "You are a subagent of {name}, which gave you your current task. Other sessions are not visible from here; to tell {name} something, use the send tool (it goes straight to {name}).",
   "progress.reported": "Progress {percent}% reported. Go on with your task.",
@@ -38006,6 +38006,9 @@ var BridgeNode = class extends EventEmitter2 {
   lastSent = 0;
   /** Ids of messages this peer sent as new questions (not replies); replies to them are awaited. */
   asked = /* @__PURE__ */ new Set();
+  notificationMatch = () => false;
+  notificationConsumed = () => {
+  };
   activity = null;
   log;
   get name() {
@@ -38334,11 +38337,27 @@ var BridgeNode = class extends EventEmitter2 {
     if (!real.length) return;
     this.readJournal.append(`name:${this.currentName}`, real);
     if (this.sessionId) this.readJournal.append(`session:${this.sessionId}`, real);
+    const messages = real.map((id) => this.inbox.get(id));
     for (const id of real) {
       this.inbox.delete(id);
       this.readIds.add(id);
     }
     this.acknowledge(real);
+    try {
+      this.notificationConsumed(messages);
+    } catch (err) {
+      this.log.warn("could not archive completed notification wait", { err: String(err) });
+    }
+  }
+  setNotificationWaitHandlers(matches, consumed) {
+    this.notificationMatch = matches;
+    this.notificationConsumed = consumed;
+  }
+  isNotificationAwaited(m) {
+    return this.notificationMatch(m);
+  }
+  notificationWaitsChanged() {
+    this.emit("notification_waits_changed");
   }
   restoreReadState(identity) {
     for (const id of this.readJournal.read(identity)) this.readIds.add(id);
@@ -38366,6 +38385,7 @@ var BridgeNode = class extends EventEmitter2 {
       const done = (m) => {
         clearTimeout(timer);
         this.off("message", onMessage);
+        this.off("notification_waits_changed", onChanged);
         this.off("replaced", onAbort);
         this.off("stopped", onAbort);
         signal?.removeEventListener("abort", onAbort);
@@ -38375,8 +38395,13 @@ var BridgeNode = class extends EventEmitter2 {
         if (predicate(m)) done(m);
       };
       const onAbort = () => done(null);
+      const onChanged = () => {
+        const m = this.unread().find(predicate);
+        if (m) done(m);
+      };
       const timer = setTimeout(() => done(null), timeoutMs);
       this.on("message", onMessage);
+      this.on("notification_waits_changed", onChanged);
       this.once("replaced", onAbort);
       this.once("stopped", onAbort);
       signal?.addEventListener("abort", onAbort, { once: true });
@@ -38387,6 +38412,7 @@ var BridgeNode = class extends EventEmitter2 {
     this.sessionId = sessionId;
     if (this.isConnected) this.currentName = (await this.client.request("updatePeer", { sessionId })).name;
     if (sessionId) this.restoreReadState(`session:${sessionId}`);
+    this.notificationWaitsChanged();
   }
   /** Report busy/idle to the broker so peers can see who is free. Only changes are sent. */
   setActivity(state) {

@@ -25,7 +25,7 @@ export const en = {
   "send.ok":"Message {id} sent (conversation {conversation}).",
   "send.delivered": "Delivered to: {names}.",
   "send.queued": "Recipient not connected right now; queued for: {names}. This does not prove the session is closed. Mail is saved until reconnect or queue retention expiry; on reconnect it is delivered, with wake requested when the receiving session's wake policy and hook permit.",
-  "send.waitHint": "Use wait_for_message to wait for the answer.",
+  "send.waitHint": "Call wait_for_message(mode=\"notify\", reply_to=<sent id>) once, then keep working or end the turn. The reply arrives through existing wake delivery; do not loop on waits.",
   "usage.none": "None of Codex, Claude Code or opencode is installed here.",
   "peers.subagent": "You are a subagent of {name}, which gave you your current task. Other sessions are not visible from here; to tell {name} something, use the send tool (it goes straight to {name}).",
   "progress.reported": "Progress {percent}% reported. Go on with your task.",
