@@ -2991,7 +2991,7 @@ var require_compile = __commonJS({
       const schOrFunc = root.refs[ref];
       if (schOrFunc)
         return schOrFunc;
-      let _sch = resolve13.call(this, root, ref);
+      let _sch = resolve14.call(this, root, ref);
       if (_sch === void 0) {
         const schema = (_a3 = root.localRefs) === null || _a3 === void 0 ? void 0 : _a3[ref];
         const { schemaId } = this.opts;
@@ -3018,7 +3018,7 @@ var require_compile = __commonJS({
     function sameSchemaEnv(s1, s2) {
       return s1.schema === s2.schema && s1.root === s2.root && s1.baseId === s2.baseId;
     }
-    function resolve13(root, ref) {
+    function resolve14(root, ref) {
       let sch;
       while (typeof (sch = this.refs[ref]) == "string")
         ref = sch;
@@ -3848,7 +3848,7 @@ var require_fast_uri = __commonJS({
       }
       return uri;
     }
-    function resolve13(baseURI, relativeURI, options) {
+    function resolve14(baseURI, relativeURI, options) {
       const schemelessOptions = options ? Object.assign({ scheme: "null" }, options) : { scheme: "null" };
       const {
         parsed: baseParsed,
@@ -4217,7 +4217,7 @@ var require_fast_uri = __commonJS({
     var fastUri = {
       SCHEMES,
       normalize,
-      resolve: resolve13,
+      resolve: resolve14,
       resolveComponent,
       equal,
       serialize: serialize2,
@@ -7300,12 +7300,12 @@ var require_isexe = __commonJS({
         if (typeof Promise !== "function") {
           throw new TypeError("callback not provided");
         }
-        return new Promise(function(resolve13, reject) {
+        return new Promise(function(resolve14, reject) {
           isexe(path, options || {}, function(er, is) {
             if (er) {
               reject(er);
             } else {
-              resolve13(is);
+              resolve14(is);
             }
           });
         });
@@ -7371,27 +7371,27 @@ var require_which = __commonJS({
         opt = {};
       const { pathEnv, pathExt, pathExtExe } = getPathInfo(cmd, opt);
       const found = [];
-      const step = (i) => new Promise((resolve13, reject) => {
+      const step = (i) => new Promise((resolve14, reject) => {
         if (i === pathEnv.length)
-          return opt.all && found.length ? resolve13(found) : reject(getNotFoundError(cmd));
+          return opt.all && found.length ? resolve14(found) : reject(getNotFoundError(cmd));
         const ppRaw = pathEnv[i];
         const pathPart = /^".*"$/.test(ppRaw) ? ppRaw.slice(1, -1) : ppRaw;
         const pCmd = path.join(pathPart, cmd);
         const p = !pathPart && /^\.[\\\/]/.test(cmd) ? cmd.slice(0, 2) + pCmd : pCmd;
-        resolve13(subStep(p, i, 0));
+        resolve14(subStep(p, i, 0));
       });
-      const subStep = (p, i, ii) => new Promise((resolve13, reject) => {
+      const subStep = (p, i, ii) => new Promise((resolve14, reject) => {
         if (ii === pathExt.length)
-          return resolve13(step(i + 1));
+          return resolve14(step(i + 1));
         const ext = pathExt[ii];
         isexe(p + ext, { pathExt: pathExtExe }, (er, is) => {
           if (!er && is) {
             if (opt.all)
               found.push(p + ext);
             else
-              return resolve13(p + ext);
+              return resolve14(p + ext);
           }
-          return resolve13(subStep(p, i, ii + 1));
+          return resolve14(subStep(p, i, ii + 1));
         });
       });
       return cb ? step(0).then((res) => cb(null, res), cb) : step(0);
@@ -7714,7 +7714,7 @@ import { connect } from "node:net";
 import { homedir } from "node:os";
 import { join } from "node:path";
 var APP_NAME = "agent-bridge";
-var APP_VERSION = "0.29.4";
+var APP_VERSION = "0.29.5";
 var PROTOCOL_VERSION = 2;
 var ENV = {
   home: "AGENT_BRIDGE_HOME",
@@ -7866,7 +7866,7 @@ var BridgeClient = class _BridgeClient extends EventEmitter {
   closed = false;
   /** Connect to an existing broker. Rejects with the socket error (ENOENT/ECONNREFUSED if nobody listens). */
   static connect(pipePath, log, timeoutMs = CONNECT_TIMEOUT_MS) {
-    return new Promise((resolve13, reject) => {
+    return new Promise((resolve14, reject) => {
       const socket = connect(pipePath);
       const timer = setTimeout(() => {
         socket.destroy();
@@ -7875,7 +7875,7 @@ var BridgeClient = class _BridgeClient extends EventEmitter {
       socket.once("connect", () => {
         clearTimeout(timer);
         socket.removeAllListeners("error");
-        resolve13(new _BridgeClient(socket, log));
+        resolve14(new _BridgeClient(socket, log));
       });
       socket.once("error", (err) => {
         clearTimeout(timer);
@@ -7889,12 +7889,12 @@ var BridgeClient = class _BridgeClient extends EventEmitter {
   request(op, args, timeoutMs = REQUEST_TIMEOUT_MS) {
     if (this.closed) return Promise.reject(new Error("connection to broker closed"));
     const id = this.nextId++;
-    return new Promise((resolve13, reject) => {
+    return new Promise((resolve14, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
         reject(new Error(`broker request timed out: ${op}`));
       }, timeoutMs);
-      this.pending.set(id, { resolve: resolve13, reject, timer });
+      this.pending.set(id, { resolve: resolve14, reject, timer });
       this.socket.write(encodeFrame({ t: "req", id, op, args }));
     });
   }
@@ -13154,7 +13154,7 @@ var recursive = /* @__PURE__ */ new WeakMap();
 var NONE = 0;
 var ASSUMED = 1;
 var PROVEN = 2;
-function isRecursive(inst, stack, resolve13) {
+function isRecursive(inst, stack, resolve14) {
   const cached3 = recursive.get(inst);
   if (cached3 !== void 0)
     return cached3 ? PROVEN : NONE;
@@ -13164,7 +13164,7 @@ function isRecursive(inst, stack, resolve13) {
   let result = NONE;
   const check2 = (child) => {
     if (result !== PROVEN && child?._zod) {
-      const answer = isRecursive(child, stack, resolve13);
+      const answer = isRecursive(child, stack, resolve14);
       if (answer > result)
         result = answer;
     }
@@ -13175,7 +13175,7 @@ function isRecursive(inst, stack, resolve13) {
       const desc = Object.getOwnPropertyDescriptor(sh, key2);
       if (spread && !desc.enumerable)
         continue;
-      const child = desc.get ? ASSUMED : desc.value?._zod ? isRecursive(desc.value, stack, resolve13) : NONE;
+      const child = desc.get ? ASSUMED : desc.value?._zod ? isRecursive(desc.value, stack, resolve14) : NONE;
       if (child > answer)
         answer = child;
     }
@@ -13239,7 +13239,7 @@ function isRecursive(inst, stack, resolve13) {
       break;
     // `$ZodLazy` caches its inner on the def, so a resolved edge is followed exactly
     case "lazy": {
-      const inner = def._cachedInner ?? (resolve13 ? inst._zod.innerType : void 0);
+      const inner = def._cachedInner ?? (resolve14 ? inst._zod.innerType : void 0);
       merge2(inner ? isRecursive(inner, stack, false) : ASSUMED);
       break;
     }
@@ -28976,12 +28976,12 @@ function readHistorySource(file2, id) {
 
 // src/core/broker.ts
 import { randomUUID as randomUUID16 } from "node:crypto";
-import { readFileSync as readFileSync21 } from "node:fs";
+import { readFileSync as readFileSync22 } from "node:fs";
 import { createServer as createServer4 } from "node:net";
 
 // src/core/store.ts
-import { existsSync as existsSync7, mkdirSync as mkdirSync5 } from "node:fs";
-import { dirname as dirname7 } from "node:path";
+import { existsSync as existsSync7, mkdirSync as mkdirSync5, realpathSync as realpathSync2 } from "node:fs";
+import { dirname as dirname7, resolve as resolve4 } from "node:path";
 import { DatabaseSync as DatabaseSync8 } from "node:sqlite";
 
 // src/core/backups.ts
@@ -29352,7 +29352,7 @@ function readDecisions(dbPath, args = {}) {
 
 // src/core/store.ts
 var BACKUP_CHECK_INTERVAL_MS = 60 * 60 * 1e3;
-var SQLITE_STORE_VERSION = 4;
+var SQLITE_STORE_VERSION = 5;
 function agentQueueKey(agent) {
   return `agent:${agent}`;
 }
@@ -29383,8 +29383,27 @@ var MIGRATIONS = [
     PRAGMA user_version = 2;
   ` },
   { version: 3, sql: `${DECISIONS_SCHEMA} PRAGMA user_version = 3;` },
-  { version: 4, sql: historySchema() }
+  { version: 4, sql: historySchema() },
+  { version: 5, sql: `
+    CREATE TABLE IF NOT EXISTS session_bindings (
+      identity TEXT NOT NULL,
+      session_id TEXT NOT NULL,
+      learned_at INTEGER NOT NULL,
+      PRIMARY KEY (identity, session_id)
+    );
+    PRAGMA user_version = 5;
+  ` }
 ];
+function registrationIdentity(peer) {
+  if (peer.jobAgent || !Number.isSafeInteger(peer.agentPid) || !peer.agentPid || peer.agentPid <= 0 || !peer.agentStartedAt) return null;
+  let cwd = resolve4(peer.cwd);
+  try {
+    cwd = realpathSync2.native(cwd);
+  } catch {
+  }
+  if (process.platform === "win32") cwd = cwd.toLowerCase();
+  return JSON.stringify([peer.agent, peer.agentPid, peer.agentStartedAt, cwd, peer.name.replace(/-\d+$/, "")]);
+}
 function toMessage(r) {
   return {
     id: r.id,
@@ -29481,6 +29500,19 @@ var MessageStore = class {
   decisions;
   history;
   stmt;
+  /** Append identities learned from hooks; previous session bindings remain retained. */
+  rememberSession(peer, at) {
+    const identity = registrationIdentity(peer);
+    if (!identity || !peer.sessionId) return;
+    this.db.prepare(`INSERT INTO session_bindings VALUES (?,?,?) ON CONFLICT(identity,session_id)
+      DO UPDATE SET learned_at=excluded.learned_at`).run(identity, peer.sessionId, at);
+  }
+  recoverSession(peer) {
+    const identity = registrationIdentity(peer);
+    if (!identity) return null;
+    const row = this.db.prepare("SELECT session_id FROM session_bindings WHERE identity=? ORDER BY learned_at DESC, rowid DESC LIMIT 1").get(identity);
+    return row ? String(row.session_id) : null;
+  }
   insert(m) {
     this.stmt.insert.run(
       m.id,
@@ -29881,11 +29913,11 @@ var NetworkDiscovery = class {
     return socket;
   }
   bind(socket, port, address) {
-    return new Promise((resolve13, reject) => {
+    return new Promise((resolve14, reject) => {
       socket.once("error", reject);
       socket.bind(port, address, () => {
         socket.off("error", reject);
-        resolve13();
+        resolve14();
       });
     });
   }
@@ -30002,11 +30034,11 @@ var NetworkDiscovery = class {
     this.found.clear();
   }
   closeSocket(socket) {
-    return new Promise((resolve13) => {
+    return new Promise((resolve14) => {
       try {
-        socket.close(() => resolve13());
+        socket.close(() => resolve14());
       } catch {
-        resolve13();
+        resolve14();
       }
     });
   }
@@ -30015,7 +30047,7 @@ var NetworkDiscovery = class {
 // src/network/files.ts
 import { createHash as createHash4, randomUUID as randomUUID7 } from "node:crypto";
 import { existsSync as existsSync10, lstatSync as lstatSync2, mkdirSync as mkdirSync9, mkdtempSync, readFileSync as readFileSync6, readdirSync as readdirSync6, renameSync as renameSync5, rmSync as rmSync3, statfsSync, writeFileSync as writeFileSync5 } from "node:fs";
-import { basename as basename4, join as join15, parse as parse4, resolve as resolve4, sep as sep3 } from "node:path";
+import { basename as basename4, join as join15, parse as parse4, resolve as resolve5, sep as sep3 } from "node:path";
 var MAX_TRANSFER_BYTES = 1024 * 1024;
 var MAX_TRANSFER_ENTRIES = 128;
 var MAX_TRANSFER_DEPTH = 16;
@@ -30039,7 +30071,7 @@ function checksum(data) {
   return createHash4("sha256").update(data).digest("hex");
 }
 function assertTransferPath(path) {
-  const absolute = resolve4(path);
+  const absolute = resolve5(path);
   let current = parse4(absolute).root;
   for (const component of absolute.slice(current.length).split(sep3).filter(Boolean)) {
     current = join15(current, component);
@@ -30048,7 +30080,7 @@ function assertTransferPath(path) {
 }
 function ensureTransferDirectory(path) {
   if (!existsSync10(path)) {
-    const parent2 = resolve4(path, "..");
+    const parent2 = resolve5(path, "..");
     ensureTransferDirectory(parent2);
     mkdirSync9(path, { mode: OWNER_DIR_MODE });
   }
@@ -30081,7 +30113,7 @@ function collectTransfer(paths, cwd, to, from) {
     } else throw new Error("only regular files and directories can be transferred");
   };
   for (const path of paths) {
-    const source = resolve4(cwd, path);
+    const source = resolve5(cwd, path);
     walk(source, basename4(source));
   }
   const transfer = transferSchema.parse({ id: randomUUID7(), to, from, entries });
@@ -30139,7 +30171,7 @@ function receiveTransfer(home, input2) {
 import { createHash as createHash5, randomUUID as randomUUID8 } from "node:crypto";
 import { constants, existsSync as existsSync11, lstatSync as lstatSync3, mkdirSync as mkdirSync10, readdirSync as readdirSync7, readFileSync as readFileSync7, renameSync as renameSync6, statSync as statSync3, writeFileSync as writeFileSync6 } from "node:fs";
 import { open as open2, link, unlink, statfs, lstat, opendir } from "node:fs/promises";
-import { basename as basename5, dirname as dirname10, isAbsolute as isAbsolute2, join as join16, relative as relative3, resolve as resolve5, sep as sep4 } from "node:path";
+import { basename as basename5, dirname as dirname10, isAbsolute as isAbsolute2, join as join16, relative as relative3, resolve as resolve6, sep as sep4 } from "node:path";
 var FILE_STREAM_CAPABILITY = "file-stream-v1";
 var TRANSFER_CHUNK_BYTES = 256 * 1024;
 var DEFAULT_MAX_STREAM_BYTES = 8 * 1024 * 1024 * 1024;
@@ -30232,12 +30264,12 @@ function readTransferHistory(home) {
   }).sort((a, b) => b.updatedAt - a.updatedAt);
 }
 function allowedFetchPath(path, cwd, roots) {
-  const source = resolve5(cwd, path);
+  const source = resolve6(cwd, path);
   assertTransferPath(source);
   if (!roots.some((root) => {
     if (!isAbsolute2(root)) return false;
     assertTransferPath(root);
-    const rel = relative3(resolve5(root), source);
+    const rel = relative3(resolve6(root), source);
     return rel === "" || !isAbsolute2(rel) && rel !== ".." && !rel.startsWith(`..${sep4}`);
   })) throw new Error("fetch is disabled or path is outside allowed fetch roots");
   return source;
@@ -30420,12 +30452,12 @@ var TransferManager = class {
   rpc(remote, id, fields) {
     if (this.closed) return Promise.reject(new Error("transfer manager closed"));
     const rid = randomUUID8();
-    return new Promise((resolve13, reject) => {
+    return new Promise((resolve14, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(rid);
         reject(new Error("file transfer request timed out"));
       }, TRANSFER_REQUEST_TIMEOUT_MS);
-      this.pending.set(rid, { remote, id, resolve: resolve13, reject, timer });
+      this.pending.set(rid, { remote, id, resolve: resolve14, reject, timer });
       void Promise.resolve().then(() => this.transport.send(remote, { kind: "request", rid, id, ...fields })).catch((error62) => {
         clearTimeout(timer);
         this.pending.delete(rid);
@@ -30528,7 +30560,7 @@ var TransferManager = class {
       } else throw new Error("only regular files and directories can be transferred");
     };
     for (const path of state.paths) {
-      const source = resolve5(state.cwd, path);
+      const source = resolve6(state.cwd, path);
       await walk(source, basename5(source));
     }
     this.validateEntries(entries);
@@ -31113,8 +31145,8 @@ var Link = class {
   extensionWrites = /* @__PURE__ */ new Set();
   readyResolve;
   readyReject;
-  ready = new Promise((resolve13, reject) => {
-    this.readyResolve = resolve13;
+  ready = new Promise((resolve14, reject) => {
+    this.readyResolve = resolve14;
     this.readyReject = reject;
   });
   deadline;
@@ -31163,7 +31195,7 @@ var Link = class {
     const data = JSON.stringify({ type, payload }) + "\n";
     if (Buffer.byteLength(data) > MAX_NETWORK_FRAME_BYTES || this.socket.writableLength > MAX_NETWORK_FRAME_BYTES || this.extensionWrites.size >= MAX_NETWORK_REQUESTS) return Promise.reject(new Error("network write limit reached"));
     if (this.socket.destroyed) return Promise.reject(new Error("network link closed"));
-    return new Promise((resolve13, reject) => {
+    return new Promise((resolve14, reject) => {
       const failed = (error62) => {
         this.extensionWrites.delete(failed);
         reject(error62);
@@ -31173,7 +31205,7 @@ var Link = class {
         this.socket.write(data, (error62) => {
           this.extensionWrites.delete(failed);
           if (error62) reject(error62);
-          else resolve13();
+          else resolve14();
         });
       } catch (error62) {
         failed(error62);
@@ -31201,13 +31233,13 @@ var Link = class {
   }
   request(frame) {
     if (this.pending.size >= MAX_NETWORK_REQUESTS) return Promise.reject(new Error("too many network requests"));
-    return new Promise((resolve13, reject) => {
+    return new Promise((resolve14, reject) => {
       const rid = frame.rid;
       const timer = setTimeout(() => {
         this.pending.delete(rid);
         reject(new Error("network send timed out; delivery may have occurred"));
       }, NETWORK_TIMEOUT_MS);
-      this.pending.set(rid, { resolve: resolve13, reject, timer, kind: frame.type });
+      this.pending.set(rid, { resolve: resolve14, reject, timer, kind: frame.type });
       try {
         this.refresh();
         this.write(frame);
@@ -31400,11 +31432,11 @@ var NetworkService = class {
     server.on("tlsClientError", () => this.log.debug("network TLS authentication failed"));
     server.on("error", (err) => this.log.warn("network listener error", { message: err.message }));
     try {
-      await new Promise((resolve13, reject) => {
+      await new Promise((resolve14, reject) => {
         server.once("error", reject);
         server.listen(this.cfg.port, this.cfg.bind, () => {
           server.off("error", reject);
-          resolve13();
+          resolve14();
         });
       });
       if (this.cfg.discovery) {
@@ -31504,7 +31536,7 @@ var NetworkService = class {
       this.sockets.add(socket);
       socket.once("close", () => this.sockets.delete(socket));
       const secured = socket;
-      await new Promise((resolve13, reject) => {
+      await new Promise((resolve14, reject) => {
         const timer = setTimeout(() => {
           secured.destroy();
           reject(new Error("network TLS handshake timed out"));
@@ -31517,7 +31549,7 @@ var NetworkService = class {
         secured.once("secureConnect", () => {
           clearTimeout(timer);
           secured.off("error", onError);
-          resolve13();
+          resolve14();
         });
       });
       if (secured.getProtocol() !== "TLSv1.3" || Object.keys(secured.getPeerCertificate()).length) throw new Error("TLS-PSK required");
@@ -31587,12 +31619,13 @@ var NetworkService = class {
     this.links.clear();
     const server = this.server;
     this.server = null;
-    if (server) await new Promise((resolve13) => server.close(() => resolve13()));
+    if (server) await new Promise((resolve14) => server.close(() => resolve14()));
   }
 };
 
 // src/network/config.ts
 import { hostname as hostname3 } from "node:os";
+import { readFileSync as readFileSync8 } from "node:fs";
 import { isAbsolute as isAbsolute3, join as join17 } from "node:path";
 var MAX_FETCH_ROOT_CHARS = 1024;
 var MAX_FETCH_ROOTS = 128;
@@ -31617,6 +31650,14 @@ function parseNetworkConfig(value) {
   const result = networkConfigSchema.safeParse(value);
   return result.success ? result.data : void 0;
 }
+function readNetworkConfig(home, fallback) {
+  try {
+    const value = JSON.parse(readFileSync8(join17(home, CONFIG_FILE_NAME), "utf8"));
+    return isRecord(value) ? parseNetworkConfig(value.network) ?? fallback : fallback;
+  } catch {
+    return fallback;
+  }
+}
 function writeNetworkConfig(home, value) {
   const config2 = networkConfigSchema.parse(value);
   const path = join17(home, CONFIG_FILE_NAME);
@@ -31629,25 +31670,25 @@ function writeNetworkConfig(home, value) {
 import { randomUUID as randomUUID13 } from "node:crypto";
 
 // src/core/dashboard-read.ts
-import { closeSync as closeSync9, openSync as openSync9, readFileSync as readFileSync18, readSync as readSync3, statSync as statSync9 } from "node:fs";
+import { closeSync as closeSync9, openSync as openSync9, readFileSync as readFileSync19, readSync as readSync3, statSync as statSync9 } from "node:fs";
 import { join as join35 } from "node:path";
 
 // src/core/run-history.ts
-import { readFileSync as readFileSync10, readdirSync as readdirSync10, statSync as statSync6 } from "node:fs";
+import { readFileSync as readFileSync11, readdirSync as readdirSync10, statSync as statSync6 } from "node:fs";
 import { join as join20 } from "node:path";
 
 // src/core/runfeed.ts
-import { appendFileSync as appendFileSync2, mkdirSync as mkdirSync12, readFileSync as readFileSync9, readdirSync as readdirSync9, statSync as statSync5 } from "node:fs";
+import { appendFileSync as appendFileSync2, mkdirSync as mkdirSync12, readFileSync as readFileSync10, readdirSync as readdirSync9, statSync as statSync5 } from "node:fs";
 import { join as join19 } from "node:path";
 
 // src/core/run-archive.ts
-import { copyFileSync as copyFileSync3, existsSync as existsSync12, mkdirSync as mkdirSync11, readFileSync as readFileSync8, readdirSync as readdirSync8, renameSync as renameSync7, statSync as statSync4 } from "node:fs";
+import { copyFileSync as copyFileSync3, existsSync as existsSync12, mkdirSync as mkdirSync11, readFileSync as readFileSync9, readdirSync as readdirSync8, renameSync as renameSync7, statSync as statSync4 } from "node:fs";
 import { basename as basename6, join as join18 } from "node:path";
 var DEFAULT_ARCHIVE_AGE_MS = 30 * 24 * 60 * 60 * 1e3;
 var ARCHIVE_AGE_ENV = "AGENT_BRIDGE_ARCHIVE_AGE_MS";
 var FINISHED_RUN = /^\d\d:\d\d:\d\d finished after \d+s · /m;
 function archiveRun(log) {
-  if (!FINISHED_RUN.test(readFileSync8(log, "utf8"))) return;
+  if (!FINISHED_RUN.test(readFileSync9(log, "utf8"))) return;
   const dir = join18(log, "..", "archive");
   mkdirSync11(dir, { recursive: true, mode: 448 });
   const target = join18(dir, basename6(log));
@@ -31673,7 +31714,7 @@ function archiveOldRuns(home, now = Date.now()) {
   if (!age) return 0;
   let count = 0;
   for (const file2 of runLogFiles(home).filter((p) => !p.includes(`${join18("runs", "archive")}`))) {
-    if (statSync4(file2).mtimeMs < now - age && FINISHED_RUN.test(readFileSync8(file2, "utf8"))) {
+    if (statSync4(file2).mtimeMs < now - age && FINISHED_RUN.test(readFileSync9(file2, "utf8"))) {
       archiveRun(file2);
       count++;
     }
@@ -31701,7 +31742,7 @@ function pruneOldLogs(dir) {
     const files2 = readdirSync9(dir).filter((f) => f.endsWith(".log")).map((f) => ({ f, t: statSync5(join19(dir, f)).mtimeMs })).sort((a, b) => b.t - a.t);
     for (const { f } of files2.slice(limit)) {
       const path = join19(dir, f);
-      if (Date.now() - statSync5(path).mtimeMs <= STALE_RUN_MS && !/^\d\d:\d\d:\d\d finished after \d+s · /m.test(readFileSync9(path, "utf8"))) continue;
+      if (Date.now() - statSync5(path).mtimeMs <= STALE_RUN_MS && !/^\d\d:\d\d:\d\d finished after \d+s · /m.test(readFileSync10(path, "utf8"))) continue;
       archiveRun(path);
     }
   } catch (err) {
@@ -31781,7 +31822,7 @@ var RUN_LOG_NAME = /^[\w.-]+\.log$/;
 var ARCHIVE_SUFFIX = /(\.(?:log|json))-\d+-[\w-]+$/;
 function readHistoryJson(file2) {
   try {
-    return JSON.parse(readFileSync10(file2, "utf8"));
+    return JSON.parse(readFileSync11(file2, "utf8"));
   } catch {
     return null;
   }
@@ -31874,10 +31915,10 @@ import { DatabaseSync as DatabaseSync11 } from "node:sqlite";
 
 // src/core/paths.ts
 import { createHash as createHash6 } from "node:crypto";
-import { join as join21, posix, resolve as resolve6 } from "node:path";
+import { join as join21, posix, resolve as resolve7 } from "node:path";
 var PIPE_HASH_LENGTH = 12;
 function resolveHome(env = process.env) {
-  return resolve6(env[ENV.home]?.trim() || DEFAULT_HOME);
+  return resolve7(env[ENV.home]?.trim() || DEFAULT_HOME);
 }
 function resolvePipePath(home, env = process.env, platform = process.platform) {
   const override = env[ENV.pipe]?.trim();
@@ -31899,21 +31940,21 @@ import { dirname as dirname12 } from "node:path";
 
 // src/core/delegate.ts
 import { spawn } from "node:child_process";
-import { existsSync as existsSync13, readFileSync as readFileSync13, realpathSync as realpathSync3 } from "node:fs";
+import { existsSync as existsSync13, readFileSync as readFileSync14, realpathSync as realpathSync4 } from "node:fs";
 import { delimiter, dirname as dirname11, extname, isAbsolute as isAbsolute4, join as join24, win32 } from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 
 // src/core/claude-mcp.ts
-import { readFileSync as readFileSync11 } from "node:fs";
+import { readFileSync as readFileSync12 } from "node:fs";
 import { homedir as homedir3 } from "node:os";
-import { join as join22, resolve as resolve7 } from "node:path";
+import { join as join22, resolve as resolve8 } from "node:path";
 var OWN_SERVER_RULE = "mcp__plugin_agent-bridge_bridge";
 var ACCOUNT_CONNECTORS_RULE = "mcp__claude_ai_*";
 var BUILT_IN_RULES = ["mcp__claude-in-chrome"];
 function readJson(path) {
   try {
-    return JSON.parse(readFileSync11(path, "utf8"));
+    return JSON.parse(readFileSync12(path, "utf8"));
   } catch {
     return null;
   }
@@ -31931,7 +31972,7 @@ function pluginServers(home) {
       if (typeof root !== "string") continue;
       const manifest = readJson(join22(root, ".claude-plugin", "plugin.json"));
       const declared = manifest?.mcpServers;
-      const servers = typeof declared === "string" ? readJson(resolve7(root, declared))?.mcpServers ?? readJson(resolve7(root, declared)) : declared;
+      const servers = typeof declared === "string" ? readJson(resolve8(root, declared))?.mcpServers ?? readJson(resolve8(root, declared)) : declared;
       const names = /* @__PURE__ */ new Set([...serverNames(servers), ...serverNames(readJson(join22(root, ".mcp.json"))?.mcpServers)]);
       for (const s of names) out2.push(`mcp__plugin_${plugin}_${s}`);
     }
@@ -31940,7 +31981,7 @@ function pluginServers(home) {
 }
 function claudeMcpDenyRules(cwd, home = homedir3()) {
   const config2 = readJson(join22(home, ".claude.json"));
-  const norm = (p) => resolve7(p).replace(/\\/g, "/").toLowerCase();
+  const norm = (p) => resolve8(p).replace(/\\/g, "/").toLowerCase();
   const project = Object.entries(config2?.projects ?? {}).find(([p]) => norm(p) === norm(cwd))?.[1];
   const names = [
     ...pluginServers(home),
@@ -31998,9 +32039,9 @@ var ParentLink = class {
         }
       );
     });
-    await new Promise((resolve13, reject) => {
+    await new Promise((resolve14, reject) => {
       this.server.once("error", reject);
-      this.server.listen(0, HOST, () => resolve13());
+      this.server.listen(0, HOST, () => resolve14());
     });
     this.url = `http://${HOST}:${this.server.address().port}`;
   }
@@ -32230,7 +32271,7 @@ function progressLineHandler(agent, onProgress) {
 
 // src/core/relay.ts
 import { randomBytes as randomBytes5, randomUUID as randomUUID11 } from "node:crypto";
-import { mkdirSync as mkdirSync13, readFileSync as readFileSync12, readdirSync as readdirSync11, writeFileSync as writeFileSync7 } from "node:fs";
+import { mkdirSync as mkdirSync13, readFileSync as readFileSync13, readdirSync as readdirSync11, writeFileSync as writeFileSync7 } from "node:fs";
 import { join as join23 } from "node:path";
 import { createServer as createServer3 } from "node:http";
 var RELAY_URL_ENV = "AGENT_BRIDGE_RELAY_URL";
@@ -32265,9 +32306,9 @@ var PermissionRelay = class {
     });
     this.server.requestTimeout = 0;
     this.server.headersTimeout = 0;
-    await new Promise((resolve13, reject) => {
+    await new Promise((resolve14, reject) => {
       this.server.once("error", reject);
-      this.server.listen(0, RELAY_HOST, () => resolve13());
+      this.server.listen(0, RELAY_HOST, () => resolve14());
     });
     const { port } = this.server.address();
     this.url = `http://${RELAY_HOST}:${port}${RELAY_PATH}`;
@@ -32352,9 +32393,9 @@ async function publishApproval(home, approval, answer) {
   });
   server.requestTimeout = ANSWER_TIMEOUT_MS;
   server.headersTimeout = ANSWER_TIMEOUT_MS;
-  await new Promise((resolve13, reject) => {
+  await new Promise((resolve14, reject) => {
     server.once("error", reject);
-    server.listen(0, RELAY_HOST, resolve13);
+    server.listen(0, RELAY_HOST, resolve14);
   });
   server.unref();
   try {
@@ -32375,7 +32416,7 @@ async function publishApproval(home, approval, answer) {
 function readApproval(home, id) {
   if (!APPROVAL_ID.test(id)) return null;
   try {
-    const r = JSON.parse(readFileSync12(join23(home, APPROVALS_DIR, `${id}.json`), "utf8"));
+    const r = JSON.parse(readFileSync13(join23(home, APPROVALS_DIR, `${id}.json`), "utf8"));
     if (r.id !== id || !Number.isInteger(r.pid) || r.pid < 1 || !pidAlive(r.pid) || !Number.isSafeInteger(r.deadline) || r.deadline <= Date.now() || !Number.isSafeInteger(r.askedAt) || r.deadline <= r.askedAt || !Number.isInteger(r.port) || r.port < 1 || r.port > MAX_PORT2 || typeof r.token !== "string" || !r.token) return null;
     if (![r.owner, r.job, r.agent, r.tool, r.command, r.reason].every((value) => typeof value === "string")) return null;
     return r;
@@ -32428,8 +32469,8 @@ async function answerPendingApproval(home, id, body) {
 }
 
 // src/core/codex-paths.ts
-import { realpathSync as realpathSync2 } from "node:fs";
-function codexDriveMappings(text, platform = process.platform, canonical = realpathSync2.native) {
+import { realpathSync as realpathSync3 } from "node:fs";
+function codexDriveMappings(text, platform = process.platform, canonical = realpathSync3.native) {
   if (platform !== "win32") return [];
   const drives = new Set([...text.matchAll(/\b([a-z]):[\\/]/gi)].map((m) => `${m[1].toUpperCase()}:\\`));
   const mappings = [];
@@ -32505,10 +32546,10 @@ function resolveBinary(bin, env = process.env, platform = process.platform) {
   }
   return null;
 }
-function unwrapNpmShim(shimPath, readFile = (p) => readFileSync13(p, "utf8")) {
+function unwrapNpmShim(shimPath, readFile2 = (p) => readFileSync14(p, "utf8")) {
   let text;
   try {
-    text = readFile(shimPath);
+    text = readFile2(shimPath);
   } catch {
     return null;
   }
@@ -32523,11 +32564,11 @@ var liveChildren = /* @__PURE__ */ new Set();
 function killTree(child) {
   const pid = child.pid;
   if (!pid || child.exitCode !== null) return Promise.resolve();
-  return new Promise((resolve13) => {
+  return new Promise((resolve14) => {
     if (process.platform === "win32") {
       const tk = spawn("taskkill", ["/PID", String(pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" });
-      tk.on("error", () => (child.kill(), resolve13()));
-      tk.on("close", () => resolve13());
+      tk.on("error", () => (child.kill(), resolve14()));
+      tk.on("close", () => resolve14());
     } else {
       try {
         process.kill(-pid, "SIGTERM");
@@ -32539,9 +32580,9 @@ function killTree(child) {
           process.kill(-pid, "SIGKILL");
         } catch {
         }
-        resolve13();
+        resolve14();
       }, KILL_GRACE_MS);
-      child.once("exit", () => (clearTimeout(force), resolve13()));
+      child.once("exit", () => (clearTimeout(force), resolve14()));
     }
   });
 }
@@ -32613,7 +32654,7 @@ function runProcess(opts) {
   }
   const { resolved, args, needsShell } = command;
   opts.log.debug("spawning delegate", { bin: resolved, args, cwd: opts.cwd, shell: needsShell });
-  return new Promise((resolve13, reject) => {
+  return new Promise((resolve14, reject) => {
     const child = spawn(resolved, args, {
       cwd: opts.cwd,
       // Some CLIs (opencode) take their project folder from PWD rather than the real cwd; keep them in sync.
@@ -32672,7 +32713,7 @@ ${tail.slice(tail.indexOf("\n") + 1)}` : head;
       stderr = (stderr + d).slice(-MAX_CAPTURE_CHARS);
     });
     child.on("error", (err) => finish(() => reject(new DelegateError(`failed to start ${opts.bin}: ${err.message}`, "failed"))));
-    child.on("close", (code, signal) => finish(() => resolve13({ code, signal, stdout: captured(), stderr })));
+    child.on("close", (code, signal) => finish(() => resolve14({ code, signal, stdout: captured(), stderr })));
     child.stdin.on("error", () => {
     });
     child.stdin.end(opts.stdin);
@@ -32770,7 +32811,7 @@ function parseCodexJsonl(stdout) {
 }
 function realFolder(dir) {
   try {
-    return realpathSync3.native(dir);
+    return realpathSync4.native(dir);
   } catch {
     return dir;
   }
@@ -33379,7 +33420,7 @@ function startServe(bin, cwd, env) {
     resolved = target.command;
     prefix = target.prefix;
   }
-  return new Promise((resolve13, reject) => {
+  return new Promise((resolve14, reject) => {
     const child = spawn2(resolved, [...prefix, "serve", "--port", "0", "--hostname", "127.0.0.1"], {
       cwd,
       env: { ...env, PWD: cwd },
@@ -33390,7 +33431,7 @@ function startServe(bin, cwd, env) {
     trackChild(child);
     const output2 = watchServeOutput((url2) => {
       clearTimeout(timer);
-      resolve13({ child, url: url2 });
+      resolve14({ child, url: url2 });
     });
     const timer = setTimeout(() => {
       void killTree(child);
@@ -33630,9 +33671,9 @@ ${req.prompt}`);
     child.stdin.write(`${JSON.stringify(msg)}
 `);
   };
-  const request2 = (method, params) => new Promise((resolve13, reject) => {
+  const request2 = (method, params) => new Promise((resolve14, reject) => {
     const id = nextId++;
-    pending.set(id, { resolve: resolve13, reject });
+    pending.set(id, { resolve: resolve14, reject });
     write({ id, method, params });
   });
   const editPaths = /* @__PURE__ */ new Map();
@@ -33928,14 +33969,14 @@ ${approvalsReviewer === "auto_review" ? AUTO_REVIEW_ASK_HINT : CODEX_ASK_HINT}` 
 }
 
 // src/core/codex-env.ts
-import { readFileSync as readFileSync14 } from "node:fs";
+import { readFileSync as readFileSync15 } from "node:fs";
 import { homedir as homedir4 } from "node:os";
 import { join as join26 } from "node:path";
 function codexWindowsSandbox(home = homedir4(), platform = process.platform) {
   if (platform !== "win32") return null;
   let toml;
   try {
-    toml = readFileSync14(join26(home, ".codex", "config.toml"), "utf8");
+    toml = readFileSync15(join26(home, ".codex", "config.toml"), "utf8");
   } catch {
     return null;
   }
@@ -34109,7 +34150,7 @@ function parseJobSettings(input2, agent) {
 
 // src/core/notifications.ts
 import { spawn as spawn4 } from "node:child_process";
-import { mkdirSync as mkdirSync14, readFileSync as readFileSync15, rmdirSync, statSync as statSync7, writeFileSync as writeFileSync8 } from "node:fs";
+import { mkdirSync as mkdirSync14, readFileSync as readFileSync16, rmdirSync, statSync as statSync7, writeFileSync as writeFileSync8 } from "node:fs";
 import { join as join27 } from "node:path";
 var TITLE = "agent-bridge";
 var TEXT = {
@@ -34182,7 +34223,7 @@ function takeNotificationSlot(home, event, now = Date.now()) {
     const file2 = join27(home, RATE_STATE_FILE);
     let state = { times: [], events: {} };
     try {
-      const stored = JSON.parse(readFileSync15(file2, "utf8"));
+      const stored = JSON.parse(readFileSync16(file2, "utf8"));
       if (Array.isArray(stored.times) && stored.times.every((at) => typeof at === "number") && stored.events && typeof stored.events === "object") state = stored;
     } catch {
     }
@@ -34405,7 +34446,7 @@ function denyPendingApprovals(job, reason = "job finished") {
   for (const answer of [...approvalAnswers.get(job) ?? []]) answer(reason, "job completion");
 }
 function waitForApproval(job, question, timeoutMs, post, log, home, request2, askUser, escalate, forceEscalate = false) {
-  return new Promise((resolve13) => {
+  return new Promise((resolve14) => {
     let settled = false;
     let cleanup;
     const askedAt = Date.now();
@@ -34455,7 +34496,7 @@ Answer the pending dashboard approval ${approvalId}, or message_subagent(job="${
       } catch {
         log.warn("could not report approval answer", { job: job.name });
       }
-      resolve13({ allow, reason: answer.trim() });
+      resolve14({ allow, reason: answer.trim() });
       return true;
     };
     const timer = setTimeout(() => settle2("no answer in time", "timeout"), timeoutMs);
@@ -34557,13 +34598,13 @@ function acquireLock(path) {
 
 // src/core/worktree.ts
 import { createHash as createHash8 } from "node:crypto";
-import { existsSync as existsSync15, mkdirSync as mkdirSync17, readFileSync as readFileSync16, realpathSync as realpathSync5, rmSync as rmSync5 } from "node:fs";
-import { basename as basename9, isAbsolute as isAbsolute6, join as join31, relative as relative5, resolve as resolve9, toNamespacedPath as toNamespacedPath2 } from "node:path";
+import { existsSync as existsSync15, mkdirSync as mkdirSync17, readFileSync as readFileSync17, realpathSync as realpathSync6, rmSync as rmSync5 } from "node:fs";
+import { basename as basename9, isAbsolute as isAbsolute6, join as join31, relative as relative5, resolve as resolve10, toNamespacedPath as toNamespacedPath2 } from "node:path";
 
 // src/core/worktree-links.ts
 import { execFileSync as execFileSync2 } from "node:child_process";
-import { existsSync as existsSync14, lstatSync as lstatSync4, readdirSync as readdirSync12, readlinkSync, realpathSync as realpathSync4, rmdirSync as rmdirSync2, unlinkSync } from "node:fs";
-import { basename as basename8, dirname as dirname13, isAbsolute as isAbsolute5, join as join30, relative as relative4, resolve as resolve8, toNamespacedPath } from "node:path";
+import { existsSync as existsSync14, lstatSync as lstatSync4, readdirSync as readdirSync12, readlinkSync, realpathSync as realpathSync5, rmdirSync as rmdirSync2, unlinkSync } from "node:fs";
+import { basename as basename8, dirname as dirname13, isAbsolute as isAbsolute5, join as join30, relative as relative4, resolve as resolve9, toNamespacedPath } from "node:path";
 var WORKTREE_LINK_HINT = "(agent-bridge: worktree isolation is mandatory for source and writable files. External directory links may be used only for read-only access to Git-ignored caches: node_modules, .vs, __pycache__, or Library beside a Unity ProjectSettings/ProjectVersion.txt. Never write, delete, truncate or change permissions in a linked source, including through an internal link chain. A junction does not enforce read-only access: do not run Unity imports, package installers or other cache-writing tools through it. Prefer a project's external-cache env/config option (e.g. ANIMASKY_LIBRARY_ROOT) when available; never substitute an incomplete cache copy. Other external links remain forbidden. Cleanup must unlink only the link itself and never recurse into its target. Request cleanup approval through the supervisor and report the link and target if cleanup is denied.)";
 function ignoredCacheLink(root, path) {
   const name2 = basename8(path);
@@ -34582,7 +34623,7 @@ function ignoredCacheLink(root, path) {
 }
 function unlinkLinks(dir) {
   const parents = [];
-  for (let parent2 = resolve8(dir); ; parent2 = dirname13(parent2)) {
+  for (let parent2 = resolve9(dir); ; parent2 = dirname13(parent2)) {
     if (dirname13(parent2) === parent2) break;
     parents.push(parent2);
   }
@@ -34592,7 +34633,7 @@ function unlinkLinks(dir) {
   return unlinkChildren(dir);
 }
 function unlinkChildren(dir) {
-  dir = toNamespacedPath(resolve8(dir));
+  dir = toNamespacedPath(resolve9(dir));
   if (lstatSync4(dir).isSymbolicLink()) throw new Error(`Refusing cleanup through a linked worktree root: ${dir}`);
   let count = 0;
   for (const entry of readdirSync12(dir, { withFileTypes: true })) {
@@ -34611,7 +34652,7 @@ function unlinkChildren(dir) {
 }
 function scanWorktreeLinks(root) {
   const scan = { externalLinks: [], errors: [] };
-  const canonicalRoot = lstatSync4(toNamespacedPath(root)).isSymbolicLink() ? resolve8(root) : realpathSync4.native(root);
+  const canonicalRoot = lstatSync4(toNamespacedPath(root)).isSymbolicLink() ? resolve9(root) : realpathSync5.native(root);
   const inside = (target) => {
     const rel = relative4(canonicalRoot, target);
     return rel === "" || rel !== ".." && !rel.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`) && !isAbsolute5(rel);
@@ -34621,9 +34662,9 @@ function scanWorktreeLinks(root) {
       const stat = lstatSync4(toNamespacedPath(path));
       if (stat.isSymbolicLink()) {
         const raw = readlinkSync(toNamespacedPath(path));
-        let target = resolve8(dirname13(path), raw);
+        let target = resolve9(dirname13(path), raw);
         try {
-          target = realpathSync4.native(path);
+          target = realpathSync5.native(path);
         } catch {
         }
         if (!inside(target)) {
@@ -34634,7 +34675,7 @@ function scanWorktreeLinks(root) {
             directory2 = lstatSync4(toNamespacedPath(target)).isDirectory();
           } catch {
           }
-          if (directory2 && ignoredCacheLink(resolve8(root), path)) (scan.readOnlyCacheLinks ??= []).push(link2);
+          if (directory2 && ignoredCacheLink(resolve9(root), path)) (scan.readOnlyCacheLinks ??= []).push(link2);
         }
       } else if (stat.isDirectory()) {
         for (const entry of readdirSync12(toNamespacedPath(path))) visit2(join30(path, entry));
@@ -34643,7 +34684,7 @@ function scanWorktreeLinks(root) {
       scan.errors.push(`${path}: ${err.message}`);
     }
   };
-  visit2(resolve8(root));
+  visit2(resolve9(root));
   return scan;
 }
 function worktreeLinkWarning(scan) {
@@ -34666,7 +34707,7 @@ var BRANCH_PREFIX = "agent-bridge/";
 var FALLBACK_COMMIT_IDENTITY = { "user.name": "agent-bridge", "user.email": "agent-bridge@localhost" };
 var MAX_DIFFSTAT_CHARS = 4e3;
 function trustArgs(...dirs) {
-  return dirs.flatMap((d) => ["-c", `safe.directory=${resolve9(d).replace(/\\/g, "/")}`]);
+  return dirs.flatMap((d) => ["-c", `safe.directory=${resolve10(d).replace(/\\/g, "/")}`]);
 }
 async function git(args, cwd, log, timeoutMs = GIT_TIMEOUT_MS) {
   const what = `git ${args.filter((a, i) => !a.startsWith("-") && args[i - 1] !== "-c").slice(0, 2).join(" ")}`;
@@ -34737,7 +34778,7 @@ async function removeWorktree(repoRoot, path, branch, log) {
 function removeWorktreeDirectory(path) {
   if (!existsSync15(toNamespacedPath2(path))) return;
   unlinkLinks(path);
-  rmSync5(toNamespacedPath2(resolve9(path)), { recursive: true, force: true, maxRetries: REMOVE_RETRIES });
+  rmSync5(toNamespacedPath2(resolve10(path)), { recursive: true, force: true, maxRetries: REMOVE_RETRIES });
 }
 var SUBJECT_CHARS = 72;
 function subagentCommitMessage(opts) {
@@ -34761,9 +34802,9 @@ async function gitDirsOutside(cwd, log) {
     const [gitDir, common] = (await git(["rev-parse", "--path-format=absolute", "--git-dir", "--git-common-dir"], cwd, log)).split(/\r?\n/);
     const real = (p) => {
       try {
-        return realpathSync5.native(p);
+        return realpathSync6.native(p);
       } catch {
-        return resolve9(p);
+        return resolve10(p);
       }
     };
     const inside = (p) => {
@@ -34861,9 +34902,9 @@ async function workBranches(wt, current, log) {
   const visited = new Set((await git([...trust, "log", "-g", "--format=%H%x09%gs", "HEAD"], wt.path, log).catch(() => "")).split(/\r?\n/).filter((line) => line && !line.includes("	checkout: ")).map((line) => line.split("	")[0]));
   const refs = (await git(["for-each-ref", "refs/heads", "--format=%(refname:short) %(objectname)"], wt.repoRoot, log).catch(() => "")).split(/\r?\n/).map((l) => l.split(" ")).filter((p) => p.length === 2);
   const list = await git(["worktree", "list", "--porcelain"], wt.repoRoot, log).catch(() => "");
-  const here = resolve9(wt.path).toLowerCase();
+  const here = resolve10(wt.path).toLowerCase();
   const elsewhere = new Set(
-    list.split(/\r?\n\r?\n/).filter((block) => resolve9(/^worktree (.+)$/m.exec(block)?.[1] ?? "").toLowerCase() !== here).map((block) => /^branch refs\/heads\/(.+)$/m.exec(block)?.[1]).filter((b) => Boolean(b))
+    list.split(/\r?\n\r?\n/).filter((block) => resolve10(/^worktree (.+)$/m.exec(block)?.[1] ?? "").toLowerCase() !== here).map((block) => /^branch refs\/heads\/(.+)$/m.exec(block)?.[1]).filter((b) => Boolean(b))
   );
   for (const b of [wt.baseBranch]) if (b) elsewhere.add(b);
   const candidates = new Set(
@@ -34925,7 +34966,7 @@ async function gitChangeSnapshot(cwd, log) {
     const file2 = line.slice(3).replace(/^.* -> /, "").replace(/^"|"$/g, "");
     let fp = line.slice(0, 2);
     try {
-      fp += ":" + createHash8("sha1").update(readFileSync16(join31(root, file2))).digest("hex");
+      fp += ":" + createHash8("sha1").update(readFileSync17(join31(root, file2))).digest("hex");
     } catch {
       fp += ":missing";
     }
@@ -34947,7 +34988,7 @@ import { join as join33 } from "node:path";
 
 // src/core/read-journal.ts
 import { createHash as createHash9 } from "node:crypto";
-import { appendFileSync as appendFileSync3, mkdirSync as mkdirSync18, readFileSync as readFileSync17 } from "node:fs";
+import { appendFileSync as appendFileSync3, mkdirSync as mkdirSync18, readFileSync as readFileSync18 } from "node:fs";
 import { join as join32 } from "node:path";
 var ReadJournal = class {
   constructor(home) {
@@ -34970,7 +35011,7 @@ var ReadJournal = class {
   entries(identity) {
     let raw;
     try {
-      raw = readFileSync17(this.path(identity), "utf8");
+      raw = readFileSync18(this.path(identity), "utf8");
     } catch (err) {
       if (err.code === "ENOENT") return [];
       throw err;
@@ -35218,7 +35259,7 @@ function listRuns(home, now = Date.now()) {
   const runs = [];
   for (const log of readRunLogs(home)) {
     try {
-      runs.push({ ...summarizeRun(`${log.name}.log`, readFileSync18(log.file, "utf8"), log.updatedAt, now, log.meta), archived: log.archived, recovered: false, hasLog: true });
+      runs.push({ ...summarizeRun(`${log.name}.log`, readFileSync19(log.file, "utf8"), log.updatedAt, now, log.meta), archived: log.archived, recovered: false, hasLog: true });
     } catch {
     }
   }
@@ -35438,12 +35479,12 @@ var RemoteDashboard = class {
     if (!this.network.peerSupports(host, DASHBOARD_CAPABILITY)) return dashboardError("remote_update_needed", "Update and restart the paired PC's hosting sessions to read its dashboard.", 409);
     if (this.pending.size >= DASHBOARD_MAX_PENDING) return dashboardError("remote_busy", "Too many pending dashboard reads.", 429);
     const rid = randomUUID13();
-    const response = new Promise((resolve13) => {
+    const response = new Promise((resolve14) => {
       const timer = setTimeout(() => {
         this.pending.delete(rid);
-        resolve13(dashboardError("remote_timeout", "The paired dashboard read timed out.", 504));
+        resolve14(dashboardError("remote_timeout", "The paired dashboard read timed out.", 504));
       }, DASHBOARD_TIMEOUT_MS);
-      this.pending.set(rid, { host: pair.id, resolve: resolve13, timer });
+      this.pending.set(rid, { host: pair.id, resolve: resolve14, timer });
     });
     try {
       await this.network.sendExtension(host, DASHBOARD_FRAME, { kind: "request", rid, request: parsed.data });
@@ -35505,20 +35546,20 @@ var RemoteDashboard = class {
 
 // src/network/remote-jobs.ts
 import { randomUUID as randomUUID15 } from "node:crypto";
-import { existsSync as existsSync18, realpathSync as realpathSync6, statSync as statSync11 } from "node:fs";
+import { existsSync as existsSync18, realpathSync as realpathSync7, statSync as statSync11 } from "node:fs";
 import { isAbsolute as isAbsolute8, join as join41 } from "node:path";
 
 // src/mcp/delegate-run.ts
 import { randomUUID as randomUUID14 } from "node:crypto";
-import { isAbsolute as isAbsolute7, join as join38, relative as relative6, resolve as resolve10 } from "node:path";
+import { isAbsolute as isAbsolute7, join as join38, relative as relative6, resolve as resolve11 } from "node:path";
 
 // src/core/effort.ts
-import { readFileSync as readFileSync20 } from "node:fs";
+import { readFileSync as readFileSync21 } from "node:fs";
 import { homedir as homedir6 } from "node:os";
 import { join as join37 } from "node:path";
 
 // src/core/codex-trust.ts
-import { readFileSync as readFileSync19, writeFileSync as writeFileSync9 } from "node:fs";
+import { readFileSync as readFileSync20, writeFileSync as writeFileSync9 } from "node:fs";
 import { homedir as homedir5 } from "node:os";
 import { join as join36 } from "node:path";
 var PERMISSION_HOOK_STATE_KEY = 'hooks.state."agent-bridge@agent-bridge:plugin.json#hooks[0]:permission_request:0:0"';
@@ -35526,7 +35567,7 @@ var OBSERVATIONS_FILE = "codex-hook.json";
 function codexHome(env = process.env) {
   return env.CODEX_HOME?.trim() || join36(homedir5(), ".codex");
 }
-function codexPermissionHookHash(home = codexHome(), read = (p) => readFileSync19(p, "utf8")) {
+function codexPermissionHookHash(home = codexHome(), read = (p) => readFileSync20(p, "utf8")) {
   let text;
   try {
     text = read(join36(home, "config.toml"));
@@ -35544,7 +35585,7 @@ function codexPermissionHookHash(home = codexHome(), read = (p) => readFileSync1
 }
 function readObservations(bridgeHome) {
   try {
-    return JSON.parse(readFileSync19(join36(bridgeHome, OBSERVATIONS_FILE), "utf8"));
+    return JSON.parse(readFileSync20(join36(bridgeHome, OBSERVATIONS_FILE), "utf8"));
   } catch {
     return {};
   }
@@ -35558,13 +35599,13 @@ function recordCodexHookObservation(bridgeHome, hash2, observation) {
   } catch {
   }
 }
-function codexPermissionHookTrusted(bridgeHome, home = codexHome(), read = (p) => readFileSync19(p, "utf8")) {
+function codexPermissionHookTrusted(bridgeHome, home = codexHome(), read = (p) => readFileSync20(p, "utf8")) {
   const hash2 = codexPermissionHookHash(home, read);
   return hash2 !== null && readObservations(bridgeHome)[hash2] !== "failed";
 }
 
 // src/core/effort.ts
-function defaultEffort(agent, model, read = (p) => readFileSync20(p, "utf8")) {
+function defaultEffort(agent, model, read = (p) => readFileSync21(p, "utf8")) {
   try {
     if (agent === "codex") return codexConfigEffort(read(join37(codexHome(), "config.toml")));
     if (agent === "claude") return claudeSettingsEffort(read(join37(process.env.CLAUDE_CONFIG_DIR?.trim() || join37(homedir6(), ".claude"), "settings.json")), model);
@@ -35768,14 +35809,14 @@ var DELEGATED_JOB_NOTE = "(agent-bridge: you are a delegated job. Report what yo
 var HANDOFF_DECLINED = "Declined by agent-bridge: delegated jobs do not write the project handoff. Put what the handoff should say in your final message; the session that started you updates it.";
 var PARENT_APPROVAL_TIMEOUT_MS = 10 * 6e4;
 function isBridgeWorktree(dir, home) {
-  return isInside(dir, join38(home, "worktrees")) && resolve10(dir) !== resolve10(join38(home, "worktrees"));
+  return isInside(dir, join38(home, "worktrees")) && resolve11(dir) !== resolve11(join38(home, "worktrees"));
 }
 function bridgeWorktreeRoot(dir, home) {
   if (!isBridgeWorktree(dir, home)) return null;
-  return join38(home, "worktrees", relative6(join38(home, "worktrees"), resolve10(dir)).split(/[\\/]/)[0]);
+  return join38(home, "worktrees", relative6(join38(home, "worktrees"), resolve11(dir)).split(/[\\/]/)[0]);
 }
 function isInside(child, parent2) {
-  const rel = relative6(resolve10(parent2), resolve10(child));
+  const rel = relative6(resolve11(parent2), resolve11(child));
   return rel === "" || !rel.startsWith("..") && !isAbsolute7(rel);
 }
 function resumeArgs(a, job, message, sessionId, workdir, worktree, saved) {
@@ -36129,7 +36170,7 @@ ${a.prompt}`));
   if (linkRoot) {
     try {
       const scan = scanWorktreeLinks(linkRoot);
-      linkedWorktreeRoot = scan.externalLinks.some((link3) => link3.path === resolve10(linkRoot));
+      linkedWorktreeRoot = scan.externalLinks.some((link3) => link3.path === resolve11(linkRoot));
       const warning = worktreeLinkWarning(scan);
       if (warning) notes.push(warning);
     } catch (err) {
@@ -36465,8 +36506,8 @@ var JobRunners = class {
 var REMOTE_JOBS_FILE = "remote-jobs.json";
 function allowedRemoteDirectory(directory2, roots) {
   if (!isAbsolute8(directory2)) throw new Error("Remote cwd must be an absolute path on the paired PC.");
-  const canonical = realpathSync6.native(directory2);
-  if (!statSync11(canonical).isDirectory() || !roots.some((root) => isAbsolute8(root) && isInside(canonical, realpathSync6.native(root)))) {
+  const canonical = realpathSync7.native(directory2);
+  if (!statSync11(canonical).isDirectory() || !roots.some((root) => isAbsolute8(root) && isInside(canonical, realpathSync7.native(root)))) {
     throw new Error("Remote folder is outside network.remoteJobs.allowRoots.");
   }
   return canonical;
@@ -36504,12 +36545,12 @@ var RemoteJobs = class {
     if (!this.network.peerSupports(host, REMOTE_JOB_CAPABILITY)) throw new Error("Remote broker update needed or paired PC disconnected: install remote-jobs-v1 support and restart its hosting sessions.");
     if (this.pending.size >= REMOTE_JOB_RATE_LIMIT) throw new Error("Too many pending remote job requests.");
     const rid = randomUUID15();
-    const response = new Promise((resolve13, reject) => {
+    const response = new Promise((resolve14, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(rid);
         reject(new Error("Remote job request timed out; check the paired PC before retrying a spawn."));
       }, REMOTE_JOB_REQUEST_TIMEOUT_MS);
-      this.pending.set(rid, { host, resolve: resolve13, reject, timer });
+      this.pending.set(rid, { host, resolve: resolve14, reject, timer });
     });
     void response.catch(() => {
     });
@@ -36888,7 +36929,7 @@ var Broker = class {
   handlers;
   /** Bind the endpoint. Rejects with the socket error (EADDRINUSE when another broker owns it). */
   listen() {
-    return new Promise((resolve13, reject) => {
+    return new Promise((resolve14, reject) => {
       const server = createServer4((socket) => this.accept(socket));
       const onError = (err) => {
         server.removeListener("listening", onListening);
@@ -36910,6 +36951,7 @@ var Broker = class {
         this.historyTimer.unref();
         this.purge();
         this.log.info("broker listening", { pipe: this.pipePath });
+        if (this.networking) this.networking.config = readNetworkConfig(this.networking.home, this.networking.config);
         if (this.networking?.config.enabled) {
           try {
             this.network = new NetworkService(this.networking.home, this.networking.config, {
@@ -36921,11 +36963,16 @@ var Broker = class {
             this.installRemoteJobs(this.network);
             await this.network.start();
           } catch (err) {
+            this.remoteDashboard?.close();
+            this.remoteDashboard = null;
+            this.remoteJobs?.close();
+            this.remoteJobs = null;
+            await this.network?.close();
             this.network = null;
             this.log.warn("networking could not start; local broker remains available", { message: err.message });
           }
         }
-        resolve13();
+        resolve14();
       };
       server.once("error", onError);
       server.once("listening", onListening);
@@ -37099,7 +37146,7 @@ var Broker = class {
   storedJobs() {
     if (!this.jobsPath) return [];
     try {
-      const data = JSON.parse(readFileSync21(this.jobsPath, "utf8"));
+      const data = JSON.parse(readFileSync22(this.jobsPath, "utf8"));
       const jobs = Array.isArray(data) ? data : isRecord(data) && Array.isArray(data.jobs) ? data.jobs : [];
       const merged = /* @__PURE__ */ new Map();
       for (const job of [...readArchivedJobs(this.jobsPath), ...jobs.filter(isRecord)]) {
@@ -37311,6 +37358,7 @@ Call decisions to look up current decisions or their history.`,
       cwd: String(p.cwd ?? ""),
       pid: Number(p.pid),
       agentPid: p.agentPid ?? null,
+      agentStartedAt: typeof p.agentStartedAt === "string" && p.agentStartedAt.length <= 128 ? p.agentStartedAt : null,
       sessionId: p.sessionId ?? null,
       startedAt: Number(p.startedAt) || this.now(),
       autoWake: Boolean(p.autoWake),
@@ -37330,6 +37378,8 @@ Call decisions to look up current decisions or their history.`,
         jobSendTo: Array.isArray(p.jobSendTo) ? p.jobSendTo.filter(isJobSendTarget).slice(0, MAX_JOB_SEND_TARGETS) : []
       } : {}
     };
+    if (!peer.sessionId) peer.sessionId = this.store.recoverSession(peer);
+    this.store.rememberSession(peer, this.now());
     conn.peer = peer;
     if (peer.sessionId) this.replaceStale(conn, peer);
     this.expireStaleQueue(peer.name);
@@ -37344,7 +37394,7 @@ Call decisions to look up current decisions or their history.`,
       this.queueCurrentDecisions(peer);
       for (const m of this.unreadMail(peer.name, PENDING_MAX_LIMIT)) this.emit(conn, "message", m);
     });
-    return { brokerPid: process.pid, name: peer.name, peers: this.livePeers().filter((x) => x.id !== peer.id) };
+    return { brokerPid: process.pid, name: peer.name, sessionId: peer.sessionId, peers: this.livePeers().filter((x) => x.id !== peer.id) };
   }
   /**
    * Mail sent to a "-N" stand-in of this peer's name (a reload ran the session under it briefly) moves to the
@@ -37396,6 +37446,7 @@ Call decisions to look up current decisions or their history.`,
       });
     }
     this.log.debug("peer updated", { name: peer.name, sessionId: peer.sessionId, autoWake: peer.autoWake, cwd: peer.cwd });
+    this.store.rememberSession(peer, this.now());
     for (const message of this.queueCurrentDecisions(peer)) this.emit(conn, "message", message);
     return peer;
   }
@@ -37624,6 +37675,30 @@ Call decisions to look up current decisions or their history.`,
   }
 };
 
+// src/core/process-identity.ts
+import { execFile } from "node:child_process";
+import { readFile } from "node:fs/promises";
+import { promisify } from "node:util";
+var exec = promisify(execFile);
+var parentIdentity;
+function parentProcessIdentity() {
+  return parentIdentity ??= processIdentity(process.ppid);
+}
+async function processIdentity(pid) {
+  if (!Number.isSafeInteger(pid) || pid <= 0) return null;
+  try {
+    if (process.platform === "linux") {
+      const [stat, boot] = await Promise.all([readFile(`/proc/${pid}/stat`, "utf8"), readFile("/proc/sys/kernel/random/boot_id", "utf8")]);
+      const start = stat.slice(stat.lastIndexOf(")") + 2).split(" ")[19];
+      return start ? `${boot.trim()}:${start}` : null;
+    }
+    const { stdout } = process.platform === "win32" ? await exec("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", `(Get-Process -Id ${pid} -ErrorAction Stop).StartTime.ToUniversalTime().Ticks`], { windowsHide: true, timeout: 5e3 }) : await exec("ps", ["-p", String(pid), "-o", "lstart="], { timeout: 5e3, env: { ...process.env, LC_ALL: "C" } });
+    return stdout.trim() || null;
+  } catch {
+    return null;
+  }
+}
+
 // src/core/job-control.ts
 import { randomUUID as randomUUID17 } from "node:crypto";
 var DASHBOARD_JOB_CONVERSATION = "jobctl-dashboard";
@@ -37640,12 +37715,12 @@ async function controlDashboardJob(node2, owner, job, command) {
   const requestId = randomUUID17();
   let receive;
   let timer;
-  const reply2 = new Promise((resolve13, reject) => {
+  const reply2 = new Promise((resolve14, reject) => {
     receive = (m) => {
       if (m.from.name !== owner) return;
       try {
         const result = JSON.parse(m.body);
-        if (result.type === "result" && result.requestId === requestId && typeof result.text === "string" && typeof result.outcome === "string" && typeof result.isError === "boolean") resolve13(result);
+        if (result.type === "result" && result.requestId === requestId && typeof result.text === "string" && typeof result.outcome === "string" && typeof result.isError === "boolean") resolve14(result);
       } catch {
       }
     };
@@ -37850,7 +37925,9 @@ var BridgeNode = class extends EventEmitter2 {
   }
   async adopt(client) {
     client.on("event", (ev, data) => this.onEvent(ev, data));
-    const hello = await client.request("hello", this.helloArgs()).catch((err) => {
+    const agentStartedAt = this.opts.jobAgent ? null : await parentProcessIdentity();
+    const args = this.helloArgs();
+    const hello = await client.request("hello", { ...args, peer: { ...args.peer, agentStartedAt } }).catch((err) => {
       client.close();
       throw err;
     });
@@ -37883,6 +37960,10 @@ var BridgeNode = class extends EventEmitter2 {
   afterHello(client, hello) {
     this.client = client;
     this.currentName = hello.name;
+    if (!this.sessionId && hello.sessionId) {
+      this.sessionId = hello.sessionId;
+      this.restoreReadState(`session:${this.sessionId}`);
+    }
     this.restoreReadState(`name:${this.currentName}`);
     this.reconnectDelay = RECONNECT_BACKOFF_MIN_MS;
     client.once("close", () => this.onClose(client));
@@ -38056,14 +38137,14 @@ var BridgeNode = class extends EventEmitter2 {
     if (signal?.aborted) return Promise.resolve(null);
     const existing = this.unread().find(predicate);
     if (existing) return Promise.resolve(existing);
-    return new Promise((resolve13) => {
+    return new Promise((resolve14) => {
       const done = (m) => {
         clearTimeout(timer);
         this.off("message", onMessage);
         this.off("replaced", onAbort);
         this.off("stopped", onAbort);
         signal?.removeEventListener("abort", onAbort);
-        resolve13(m);
+        resolve14(m);
       };
       const onMessage = (m) => {
         if (predicate(m)) done(m);
@@ -38127,7 +38208,7 @@ import { spawn as spawn6 } from "node:child_process";
 import { createInterface } from "node:readline/promises";
 
 // src/cli/codex-users.ts
-import { execFile } from "node:child_process";
+import { execFile as execFile2 } from "node:child_process";
 var LOOKUP_TIMEOUT_MS = 1e4;
 function classifyCodexProcesses(procs) {
   const byPid = new Map(procs.map((p) => [p.ProcessId, p]));
@@ -38146,14 +38227,14 @@ function classifyCodexProcesses(procs) {
 function listCodexUsers() {
   if (process.platform !== "win32") return Promise.resolve([]);
   const script = "Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,Name,CommandLine,@{n='CreationDate';e={$_.CreationDate.ToString('o')}} | ConvertTo-Json -Compress";
-  return new Promise((resolve13) => {
-    execFile("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], { timeout: LOOKUP_TIMEOUT_MS, windowsHide: true, maxBuffer: 64 * 1024 * 1024 }, (err, stdout) => {
-      if (err) return resolve13([]);
+  return new Promise((resolve14) => {
+    execFile2("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], { timeout: LOOKUP_TIMEOUT_MS, windowsHide: true, maxBuffer: 64 * 1024 * 1024 }, (err, stdout) => {
+      if (err) return resolve14([]);
       try {
         const data = JSON.parse(stdout);
-        resolve13(classifyCodexProcesses(Array.isArray(data) ? data : [data]));
+        resolve14(classifyCodexProcesses(Array.isArray(data) ? data : [data]));
       } catch {
-        resolve13([]);
+        resolve14([]);
       }
     });
   });
@@ -38165,9 +38246,9 @@ function describeCodexUser(u) {
 }
 
 // src/cli/opencode-install.ts
-import { copyFileSync as copyFileSync4, existsSync as existsSync19, mkdirSync as mkdirSync20, readdirSync as readdirSync15, readFileSync as readFileSync22 } from "node:fs";
+import { copyFileSync as copyFileSync4, existsSync as existsSync19, mkdirSync as mkdirSync20, readdirSync as readdirSync15, readFileSync as readFileSync23 } from "node:fs";
 import { homedir as homedir7 } from "node:os";
-import { dirname as dirname15, join as join43, resolve as resolve11 } from "node:path";
+import { dirname as dirname15, join as join43, resolve as resolve12 } from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 var INSTALL_MARKER = "agent-bridge";
 var PLUGIN_FILE = "agent-bridge.js";
@@ -38183,7 +38264,7 @@ function pluginSourceDir(name2, marker, fromFile = fileURLToPath2(import.meta.ur
   let dir = dirname15(fromFile);
   for (let i = 0; i < 5; i++) {
     for (const candidate of [join43(dir, "plugins", name2), join43(dir, "..", name2)]) {
-      if (existsSync19(join43(candidate, marker))) return resolve11(candidate);
+      if (existsSync19(join43(candidate, marker))) return resolve12(candidate);
     }
     dir = dirname15(dir);
   }
@@ -38192,7 +38273,7 @@ function pluginSourceDir(name2, marker, fromFile = fileURLToPath2(import.meta.ur
 var opencodeSourceDir = (from) => pluginSourceDir("opencode", join43("dist", PLUGIN_FILE), from);
 function ownedByUs(path) {
   try {
-    return readFileSync22(path, "utf8").includes(INSTALL_MARKER);
+    return readFileSync23(path, "utf8").includes(INSTALL_MARKER);
   } catch {
     return false;
   }
@@ -38301,22 +38382,22 @@ function runInherited(bin, args) {
   const shim = /\.(cmd|bat)$/i.test(resolved) ? unwrapNpmShim(resolved) : null;
   const command = shim?.command ?? resolved;
   const fullArgs = [...shim?.prefix ?? [], ...args];
-  return new Promise((resolve13) => {
+  return new Promise((resolve14) => {
     const child = spawn6(command, fullArgs, { stdio: "inherit", shell: false });
-    child.on("error", () => resolve13(1));
-    child.on("close", (code) => resolve13(code ?? 1));
+    child.on("error", () => resolve14(1));
+    child.on("close", (code) => resolve14(code ?? 1));
   });
 }
 function ask(rl, question) {
-  return new Promise((resolve13) => {
-    const onClose = () => resolve13("");
+  return new Promise((resolve14) => {
+    const onClose = () => resolve14("");
     rl.once("close", onClose);
     rl.question(question).then(
       (a) => {
         rl.off("close", onClose);
-        resolve13(a);
+        resolve14(a);
       },
-      () => resolve13("")
+      () => resolve14("")
     );
   });
 }
@@ -38438,7 +38519,7 @@ async function runPermissionHook(agent = "codex") {
 }
 
 // src/cli/rewake-hook.ts
-import { readFileSync as readFileSync23 } from "node:fs";
+import { readFileSync as readFileSync24 } from "node:fs";
 
 // src/mcp/rewake.ts
 import { randomBytes as randomBytes7 } from "node:crypto";
@@ -38469,7 +38550,7 @@ async function runRewakeHook(standby = false) {
   if (!sessionId) return 0;
   let reg;
   try {
-    reg = JSON.parse(readFileSync23(sessionFile(resolveHome(), sessionId), "utf8"));
+    reg = JSON.parse(readFileSync24(sessionFile(resolveHome(), sessionId), "utf8"));
   } catch {
     return 0;
   }
@@ -38593,7 +38674,7 @@ async function watchRunLog(path, out2) {
 
 // src/cli/dashboard.ts
 import { randomBytes as randomBytes9 } from "node:crypto";
-import { chmodSync as chmodSync3, readFileSync as readFileSync27, writeFileSync as writeFileSync12 } from "node:fs";
+import { chmodSync as chmodSync3, readFileSync as readFileSync28, writeFileSync as writeFileSync12 } from "node:fs";
 import { request } from "node:http";
 import { join as join51 } from "node:path";
 
@@ -38605,7 +38686,7 @@ import { networkInterfaces as networkInterfaces2 } from "node:os";
 import { join as join50 } from "node:path";
 
 // src/core/models.ts
-import { mkdirSync as mkdirSync22, readFileSync as readFileSync24, writeFileSync as writeFileSync11 } from "node:fs";
+import { mkdirSync as mkdirSync22, readFileSync as readFileSync25, writeFileSync as writeFileSync11 } from "node:fs";
 import { join as join46 } from "node:path";
 
 // src/core/usage.ts
@@ -38623,7 +38704,7 @@ var BLOCKING_LIMIT_TYPES = /* @__PURE__ */ new Set([
 var FULL_USAGE_PERCENT = 100;
 var CREDIT_SIGNIFICANT_DIGITS = 3;
 function capture(bin, args, cwd, log, stdin) {
-  return new Promise((resolve13, reject) => {
+  return new Promise((resolve14, reject) => {
     const env = childEnv();
     let cmd;
     try {
@@ -38646,8 +38727,8 @@ function capture(bin, args, cwd, log, stdin) {
     child.stdout.setEncoding("utf8").on("data", (d) => out2 += d);
     child.stderr.setEncoding("utf8").on("data", (d) => err += d);
     child.on("error", (e) => finish(() => reject(e)));
-    child.on("close", (code) => finish(() => code === 0 || out2 ? resolve13(out2) : reject(new Error(err.trim().slice(-300) || `exit code ${code}`))));
-    if (stdin) stdin((s) => child.stdin.write(s), () => out2, () => finish(() => resolve13(out2)));
+    child.on("close", (code) => finish(() => code === 0 || out2 ? resolve14(out2) : reject(new Error(err.trim().slice(-300) || `exit code ${code}`))));
+    if (stdin) stdin((s) => child.stdin.write(s), () => out2, () => finish(() => resolve14(out2)));
     else child.stdin.end();
   });
 }
@@ -38806,7 +38887,7 @@ var modelDefault = (agent, cfg) => cfg[`${agent}Model`];
 var modelCachePath = (home, agent) => join46(home, `models-${agent}.json`);
 function cachedModels(home, agent, cfg) {
   try {
-    const cache3 = JSON.parse(readFileSync24(modelCachePath(home, agent), "utf8"));
+    const cache3 = JSON.parse(readFileSync25(modelCachePath(home, agent), "utf8"));
     const validStrings = (v) => Array.isArray(v) && v.every((s) => typeof s === "string");
     if (cache3.bin !== modelBin(agent, cfg) || cache3.effort !== (cfg.effort[agent] ?? null) || typeof cache3.at !== "number" || Date.now() - cache3.at >= MODEL_CACHE_MS) return null;
     if (cache3.report?.agent !== agent || !validStrings(cache3.report.models) || !validStrings(cache3.report.lines)) return null;
@@ -41418,12 +41499,12 @@ setInterval(poll, POLL_MS);
 `;
 
 // src/network/firewall.ts
-import { execFile as execFile2, spawn as spawn8 } from "node:child_process";
-import { promisify } from "node:util";
-var exec = promisify(execFile2);
+import { execFile as execFile3, spawn as spawn8 } from "node:child_process";
+import { promisify as promisify2 } from "node:util";
+var exec2 = promisify2(execFile3);
 var COMMAND_TIMEOUT_MS = 1e4;
 var ELEVATION_TIMEOUT_MS = 12e4;
-var runCommand = async (file2, args) => (await exec(file2, args, { windowsHide: true, timeout: COMMAND_TIMEOUT_MS })).stdout;
+var runCommand = async (file2, args) => (await exec2(file2, args, { windowsHide: true, timeout: COMMAND_TIMEOUT_MS })).stdout;
 function planFirewall(platform, port, discovery) {
   if (!Number.isInteger(port) || port < 1 || port > MAX_PORT) throw new Error("expected a TCP port between 1 and 65535");
   const ports = [{ protocol: "TCP", port }, ...discovery ? [{ protocol: "UDP", port: DISCOVERY_PORT }] : []];
@@ -41454,7 +41535,7 @@ async function detectFirewall(plan, run2 = runCommand) {
   }
   return { state: "unknown", detail: "No matching allow rules could be confirmed. Check the host firewall and trusted LAN profile." };
 }
-var runElevated = async (file2, args) => (await exec(file2, args, { windowsHide: true, timeout: ELEVATION_TIMEOUT_MS })).stdout;
+var runElevated = async (file2, args) => (await exec2(file2, args, { windowsHide: true, timeout: ELEVATION_TIMEOUT_MS })).stdout;
 async function applyWindowsFirewall(plan, confirmed, run2 = runElevated) {
   if (!confirmed || plan.platform !== "win32") throw new Error("explicit Windows firewall confirmation required");
   const script = plan.commands.map((command) => `& ${command}; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }`).join("; ");
@@ -41464,19 +41545,19 @@ async function applyWindowsFirewall(plan, confirmed, run2 = runElevated) {
 async function copyPairingCode(code, platform = process.platform) {
   const commands = platform === "win32" ? [["clip.exe"]] : platform === "darwin" ? [["pbcopy"]] : [["xclip", "-selection", "clipboard"]];
   for (const [file2, ...args] of commands) {
-    const copied = await new Promise((resolve13) => {
+    const copied = await new Promise((resolve14) => {
       const child = spawn8(file2, args, { windowsHide: true, stdio: ["pipe", "ignore", "ignore"] });
       const timer = setTimeout(() => {
         child.kill();
-        resolve13(false);
+        resolve14(false);
       }, COMMAND_TIMEOUT_MS);
       child.on("error", () => {
         clearTimeout(timer);
-        resolve13(false);
+        resolve14(false);
       });
       child.on("close", (code2) => {
         clearTimeout(timer);
-        resolve13(code2 === 0);
+        resolve14(code2 === 0);
       });
       child.stdin.on("error", () => {
       });
@@ -41520,7 +41601,7 @@ function parseNetworkAddress(address) {
 }
 
 // src/core/doctor.ts
-import { existsSync as existsSync21, lstatSync as lstatSync5, mkdirSync as mkdirSync23, readFileSync as readFileSync25, readdirSync as readdirSync16, renameSync as renameSync8 } from "node:fs";
+import { existsSync as existsSync21, lstatSync as lstatSync5, mkdirSync as mkdirSync23, readFileSync as readFileSync26, readdirSync as readdirSync16, renameSync as renameSync8 } from "node:fs";
 import { basename as basename10, dirname as dirname16, join as join47, relative as relative7 } from "node:path";
 import { randomUUID as randomUUID19 } from "node:crypto";
 import { DatabaseSync as DatabaseSync12 } from "node:sqlite";
@@ -41567,7 +41648,7 @@ function doctor(home, now = Date.now()) {
   for (const path of jsonStoreFiles(home)) {
     try {
       if (path.endsWith(".jsonl")) {
-        const lines = readFileSync25(path, "utf8").split("\n").filter((s) => s.trim());
+        const lines = readFileSync26(path, "utf8").split("\n").filter((s) => s.trim());
         for (const line of lines) {
           try {
             const value2 = JSON.parse(line);
@@ -41580,7 +41661,7 @@ function doctor(home, now = Date.now()) {
         }
         continue;
       }
-      const value = JSON.parse(readFileSync25(path, "utf8"));
+      const value = JSON.parse(readFileSync26(path, "utf8"));
       const jobs = basename10(path) === JOBS_FILE || path.includes("jobs.json.overflow.json-") || /^jobs-.*\.json$/.test(basename10(path));
       if (jobs ? !(Array.isArray(value) || isRecord(value) && Array.isArray(value.jobs)) : !isRecord(value)) {
         finding("error", "json-shape", path, jobs ? "Expected a jobs array or jobs envelope" : "Expected a JSON object");
@@ -41641,7 +41722,7 @@ function archiveHome(home, confirmed, now = Date.now()) {
     if (existsSync21(path)) {
       const unlock = acquireLock(`${path}.lock`);
       try {
-        const previous = JSON.parse(readFileSync25(path, "utf8"));
+        const previous = JSON.parse(readFileSync26(path, "utf8"));
         if (!Array.isArray(previous) && !(isRecord(previous) && Array.isArray(previous.jobs))) throw new Error("invalid jobs store");
         const entries = Array.isArray(previous) ? previous : previous.jobs;
         const old = entries.filter((j) => isRecord(j) && (j.status === "done" || j.status === "failed") && typeof j.finishedAt === "number" && j.finishedAt < now - age);
@@ -42167,9 +42248,9 @@ async function startUi(opts) {
       if (!res.headersSent) send(res, 500, { error: String(err.message) });
     });
   });
-  await new Promise((resolve13, reject) => {
+  await new Promise((resolve14, reject) => {
     server.once("error", reject);
-    server.listen(opts.port, UI_HOST, () => resolve13());
+    server.listen(opts.port, UI_HOST, () => resolve14());
   });
   const { port } = server.address();
   return {
@@ -42192,7 +42273,7 @@ function dashboardFile(home) {
 }
 function readDashboardInfo(home) {
   try {
-    const d = JSON.parse(readFileSync27(dashboardFile(home), "utf8"));
+    const d = JSON.parse(readFileSync28(dashboardFile(home), "utf8"));
     return typeof d.url === "string" && typeof d.port === "number" && typeof d.pid === "number" ? d : null;
   } catch {
     return null;
@@ -42206,14 +42287,14 @@ function processAlive(pid) {
     return err.code === "EPERM";
   }
 }
-function probeDashboard(port) {
-  return new Promise((resolve13) => {
-    const req = request({ host: "127.0.0.1", port, path: "/api/state", timeout: PROBE_TIMEOUT_MS }, (res) => {
+function probeDashboard(port, secret) {
+  return new Promise((resolve14) => {
+    const req = request({ host: "127.0.0.1", port, path: secret ? `/?t=${secret}` : "/api/state", timeout: PROBE_TIMEOUT_MS }, (res) => {
       res.resume();
-      resolve13(res.statusCode === 403 || res.statusCode === 200);
+      resolve14(secret ? res.statusCode === 302 && res.headers["set-cookie"]?.some((cookie) => cookie.startsWith(`ab_ui=${secret};`)) === true : res.statusCode === 403 || res.statusCode === 200);
     });
     req.on("timeout", () => req.destroy());
-    req.on("error", () => resolve13(false));
+    req.on("error", () => resolve14(false));
     req.end();
   });
 }
@@ -42224,7 +42305,9 @@ function previousSecret(home) {
 async function findRunningDashboard(home) {
   const info = readDashboardInfo(home);
   if (!info || !processAlive(info.pid)) return null;
-  return await probeDashboard(info.port) ? info : null;
+  const secret = info.url.match(/[?&]t=([0-9a-f]{16,})/)?.[1];
+  if (!secret) return null;
+  return await probeDashboard(info.port, secret) ? info : null;
 }
 async function hostDashboard(opts) {
   const secret = previousSecret(opts.home) ?? randomBytes9(SECRET_BYTES4).toString("hex");
@@ -42265,8 +42348,8 @@ import { tmpdir as tmpdir3 } from "node:os";
 import { join as join53 } from "node:path";
 
 // src/cli/reliability-live.ts
-import { execFile as execFile3 } from "node:child_process";
-import { existsSync as existsSync24, mkdirSync as mkdirSync24, mkdtempSync as mkdtempSync3, readdirSync as readdirSync17, readFileSync as readFileSync28, rmSync as rmSync8, writeFileSync as writeFileSync13 } from "node:fs";
+import { execFile as execFile4 } from "node:child_process";
+import { existsSync as existsSync24, mkdirSync as mkdirSync24, mkdtempSync as mkdtempSync3, readdirSync as readdirSync17, readFileSync as readFileSync29, rmSync as rmSync8, writeFileSync as writeFileSync13 } from "node:fs";
 import { tmpdir as tmpdir2 } from "node:os";
 import { join as join52 } from "node:path";
 
@@ -44381,7 +44464,7 @@ var Protocol = class {
           return;
         }
         const pollInterval = task2.pollInterval ?? this._options?.defaultTaskPollInterval ?? 1e3;
-        await new Promise((resolve13) => setTimeout(resolve13, pollInterval));
+        await new Promise((resolve14) => setTimeout(resolve14, pollInterval));
         options?.signal?.throwIfAborted();
       }
     } catch (error62) {
@@ -44398,7 +44481,7 @@ var Protocol = class {
    */
   request(request2, resultSchema, options) {
     const { relatedRequestId, resumptionToken, onresumptiontoken, task, relatedTask } = options ?? {};
-    return new Promise((resolve13, reject) => {
+    return new Promise((resolve14, reject) => {
       const earlyReject = (error62) => {
         reject(error62);
       };
@@ -44476,7 +44559,7 @@ var Protocol = class {
           if (!parseResult.success) {
             reject(parseResult.error);
           } else {
-            resolve13(parseResult.data);
+            resolve14(parseResult.data);
           }
         } catch (error62) {
           reject(error62);
@@ -44737,12 +44820,12 @@ var Protocol = class {
       }
     } catch {
     }
-    return new Promise((resolve13, reject) => {
+    return new Promise((resolve14, reject) => {
       if (signal.aborted) {
         reject(new McpError(ErrorCode.InvalidRequest, "Request cancelled"));
         return;
       }
-      const timeoutId = setTimeout(resolve13, interval);
+      const timeoutId = setTimeout(resolve14, interval);
       signal.addEventListener("abort", () => {
         clearTimeout(timeoutId);
         reject(new McpError(ErrorCode.InvalidRequest, "Request cancelled"));
@@ -45693,7 +45776,7 @@ var StdioClientTransport = class {
     if (this._process) {
       throw new Error("StdioClientTransport already started! If using Client class, note that connect() calls start() automatically.");
     }
-    return new Promise((resolve13, reject) => {
+    return new Promise((resolve14, reject) => {
       this._process = (0, import_cross_spawn.default)(this._serverParams.command, this._serverParams.args ?? [], {
         // merge default env with server env because mcp server needs some env vars
         env: {
@@ -45710,7 +45793,7 @@ var StdioClientTransport = class {
         this.onerror?.(error62);
       });
       this._process.on("spawn", () => {
-        resolve13();
+        resolve14();
       });
       this._process.on("close", (_code) => {
         this._process = void 0;
@@ -45775,22 +45858,22 @@ var StdioClientTransport = class {
     if (this._process) {
       const processToClose = this._process;
       this._process = void 0;
-      const closePromise = new Promise((resolve13) => {
+      const closePromise = new Promise((resolve14) => {
         processToClose.once("close", () => {
-          resolve13();
+          resolve14();
         });
       });
       try {
         processToClose.stdin?.end();
       } catch {
       }
-      await Promise.race([closePromise, new Promise((resolve13) => setTimeout(resolve13, 2e3).unref())]);
+      await Promise.race([closePromise, new Promise((resolve14) => setTimeout(resolve14, 2e3).unref())]);
       if (processToClose.exitCode === null) {
         try {
           processToClose.kill("SIGTERM");
         } catch {
         }
-        await Promise.race([closePromise, new Promise((resolve13) => setTimeout(resolve13, 2e3).unref())]);
+        await Promise.race([closePromise, new Promise((resolve14) => setTimeout(resolve14, 2e3).unref())]);
       }
       if (processToClose.exitCode === null) {
         try {
@@ -45802,15 +45885,15 @@ var StdioClientTransport = class {
     this._readBuffer.clear();
   }
   send(message) {
-    return new Promise((resolve13) => {
+    return new Promise((resolve14) => {
       if (!this._process?.stdin) {
         throw new Error("Not connected");
       }
       const json2 = serializeMessage(message);
       if (this._process.stdin.write(json2)) {
-        resolve13();
+        resolve14();
       } else {
-        this._process.stdin.once("drain", resolve13);
+        this._process.stdin.once("drain", resolve14);
       }
     });
   }
@@ -45870,8 +45953,8 @@ function listProcesses() {
       'Get-CimInstance Win32_Process | ForEach-Object { "$($_.ProcessId) $($_.ParentProcessId) $(if ($_.CreationDate) { $_.CreationDate.ToFileTimeUtc() } else { 0 })" }'
     ]
   ] : ["ps", ["-A", "-o", "pid=,ppid=,pgid="]];
-  return new Promise((resolve13, reject) => {
-    execFile3(file2, args, { timeout: PROCESS_LIST_TIMEOUT_MS, windowsHide: true, maxBuffer: 16 * 1024 * 1024 }, (err, stdout) => {
+  return new Promise((resolve14, reject) => {
+    execFile4(file2, args, { timeout: PROCESS_LIST_TIMEOUT_MS, windowsHide: true, maxBuffer: 16 * 1024 * 1024 }, (err, stdout) => {
       if (err) return reject(err);
       const procs = [];
       for (const line of stdout.split(/\r?\n/)) {
@@ -45879,7 +45962,7 @@ function listProcesses() {
         if (!a || !b || !/^\d+$/.test(a)) continue;
         procs.push(win ? { pid: Number(a), ppid: Number(b), started: c } : { pid: Number(a), ppid: Number(b), pgid: Number(c) });
       }
-      resolve13(procs);
+      resolve14(procs);
     });
   });
 }
@@ -45916,7 +45999,7 @@ var PICKED_UP_LOG = "subagent picked up messages";
 function logsMention(home, text) {
   try {
     const dir = join52(home, LOG_DIR_NAME);
-    return readdirSync17(dir).some((f) => readFileSync28(join52(dir, f), "utf8").includes(text));
+    return readdirSync17(dir).some((f) => readFileSync29(join52(dir, f), "utf8").includes(text));
   } catch {
     return false;
   }
@@ -46451,8 +46534,8 @@ async function runSmoke(opts) {
 import { join as join56 } from "node:path";
 
 // src/core/worktree-cleanup.ts
-import { existsSync as existsSync26, lstatSync as lstatSync6, realpathSync as realpathSync7, readdirSync as readdirSync18 } from "node:fs";
-import { join as join55, resolve as resolve12, toNamespacedPath as toNamespacedPath3 } from "node:path";
+import { existsSync as existsSync26, lstatSync as lstatSync6, realpathSync as realpathSync8, readdirSync as readdirSync18 } from "node:fs";
+import { join as join55, resolve as resolve13, toNamespacedPath as toNamespacedPath3 } from "node:path";
 function readJobs(home) {
   try {
     return readStore(join55(home, JOBS_FILE), void 0, true);
@@ -46460,9 +46543,9 @@ function readJobs(home) {
     return [];
   }
 }
-var samePath = (a, b) => process.platform === "win32" ? resolve12(a).toLowerCase() === resolve12(b).toLowerCase() : resolve12(a) === resolve12(b);
+var samePath = (a, b) => process.platform === "win32" ? resolve13(a).toLowerCase() === resolve13(b).toLowerCase() : resolve13(a) === resolve13(b);
 function onlyFoldersAndLinks(dir) {
-  dir = toNamespacedPath3(resolve12(dir));
+  dir = toNamespacedPath3(resolve13(dir));
   let entries;
   try {
     entries = readdirSync18(dir, { withFileTypes: true });
@@ -46556,7 +46639,7 @@ ${warning}` : reason, externalLinks: scan.externalLinks });
 }
 async function repositoryCommonDir(cwd, log) {
   const common = await git([...trustArgs(cwd), "rev-parse", "--path-format=absolute", "--git-common-dir"], cwd, log);
-  return realpathSync7(resolve12(cwd, common));
+  return realpathSync8(resolve13(cwd, common));
 }
 async function cleanupWorktrees(opts) {
   if (opts.all && opts.repo) throw new Error("Use either --all or --repo, not both.");
@@ -46880,7 +46963,7 @@ async function runReindex(home, pipe2, log, out2) {
     }
     let result = await batch(true), ticks = 1;
     while (result.work || result.discovering) {
-      await new Promise((resolve13) => setImmediate(resolve13));
+      await new Promise((resolve14) => setImmediate(resolve14));
       result = await batch(false);
       ticks++;
     }
@@ -47273,7 +47356,7 @@ async function main(argv) {
       });
       await node2.start();
       out(t("cli.tail.listening", { name: node2.name }));
-      await new Promise((resolve13) => process.once("SIGINT", resolve13));
+      await new Promise((resolve14) => process.once("SIGINT", resolve14));
       await node2.stop();
       return 0;
     }
@@ -47294,7 +47377,7 @@ async function main(argv) {
       const hosted = await hostDashboard({ home, pipe: pipe2, port, log });
       out(t("cli.ui.running", { url: hosted.info.url }));
       if (!noOpen) openBrowser(hosted.info.url);
-      await new Promise((resolve13) => process.once("SIGINT", resolve13));
+      await new Promise((resolve14) => process.once("SIGINT", resolve14));
       await hosted.close();
       return 0;
     }

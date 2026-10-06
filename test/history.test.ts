@@ -61,8 +61,9 @@ describe("history migration", () => {
     const db = new DatabaseSync(env.db); cleanups.push(() => db.close());
     db.prepare("DELETE FROM history_documents WHERE id='message:one'").run();
     const rows = db.prepare("SELECT rowid,id FROM history_documents ORDER BY rowid").all();
-    expect(() => migrateSqlite(db, env.db, true, 5, [{ version: 5, sql: "ALTER TABLE messages ADD COLUMN future TEXT; UPDATE history_documents SET body='changed'; SELECT invalid FROM missing; PRAGMA user_version=5;" }], nullLogger)).toThrow();
-    expect(db.prepare("PRAGMA user_version").get()!.user_version).toBe(4);
+    const version = Number(db.prepare("PRAGMA user_version").get()!.user_version);
+    expect(() => migrateSqlite(db, env.db, true, version + 1, [{ version: version + 1, sql: `ALTER TABLE messages ADD COLUMN future TEXT; UPDATE history_documents SET body='changed'; SELECT invalid FROM missing; PRAGMA user_version=${version + 1};` }], nullLogger)).toThrow();
+    expect(db.prepare("PRAGMA user_version").get()!.user_version).toBe(version);
     expect(db.prepare("SELECT rowid,id FROM history_documents ORDER BY rowid").all()).toEqual(rows);
     expect(s.history.search({ query: "walnut second" }).hits).toMatchObject([{ message: "two" }]);
     expect(s.byId("two")!.body).toBe("walnut second");

@@ -101,7 +101,9 @@ describe("sessions and native subagents", () => {
     await old.setSessionId("sess-1");
     const fresh = env.node("claude-app", "claude");
     await fresh.start();
-    expect(fresh.name).toBe("claude-app-2");
+    // Reload recovery identifies the same CLI immediately, before a new hook or prompt.
+    expect(fresh.name).toBe("claude-app");
+    expect(fresh.currentSessionId).toBe("sess-1");
     await fresh.setSessionId("sess-1");
     expect(fresh.name).toBe("claude-app");
     await until(() => !old.isConnected);

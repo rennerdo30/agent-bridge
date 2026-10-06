@@ -56,6 +56,8 @@ export interface PeerInfo {
   pid: number;
   /** PID of the process that spawned this MCP server (normally the agent CLI). */
   agentPid: number | null;
+  /** CLI process creation identity; distinguishes reused PIDs when recovering a reload. */
+  agentStartedAt?: string | null;
   /** Agent session / thread id, when known (learned from hooks). */
   sessionId: string | null;
   startedAt: number;
@@ -120,6 +122,8 @@ export interface HelloResult {
   brokerPid: number;
   /** Final name; may carry a suffix if the requested name was taken. */
   name: string;
+  /** Recovered identity of the same CLI process, before its next hook event. */
+  sessionId?: string | null;
   peers: PeerInfo[];
 }
 

@@ -18,7 +18,7 @@ export interface TestEnv {
 /** An isolated bridge endpoint per test: its own home dir, so its own pipe and database. */
 export function makeEnv(): TestEnv {
   // macOS tmpdir uses the /var alias; transfer fixtures deliberately require unlinked ancestors.
-  const home = realpathSync.native(mkdtempSync(join(tmpdir(), "agent-bridge-test-")));
+  const home = realpathSync.native(mkdtempSync(join(tmpdir(), "abt-")));
   const pipe = resolvePipePath(home, {});
   const db = resolveDbPath(home);
   const nodes: BridgeNode[] = [];

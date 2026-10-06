@@ -44,7 +44,7 @@ import { LocalCoordinator } from "./local-coordinator.js";
 import { saveAutoWake, savedAutoWake } from "../core/auto-wake-pref.js";
 import { describeModels, modelParameterDescription, readModels } from "../core/models.js";
 import { parentFromEnv, type ParentClient } from "../core/parent-link.js";
-import { findRunningDashboard, hostDashboard, type DashboardInfo, type HostedDashboard } from "../cli/dashboard.js";
+import { DashboardController, type DashboardInfo } from "../cli/dashboard.js";
 import { openBrowser } from "../cli/open.js";
 import { MessageWaitStore, resumeWaitHint, singleWaitTimeoutMs, SINGLE_WAIT_SEC, waitForReadReceipt, type WaitFilters } from "./message-wait.js";
 import { RewakeEndpoint, shouldWakeClaudeMessage } from "./rewake.js";
@@ -391,14 +391,11 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
   }
 
   /** Web dashboard hosted by this process, if any. */
-  let dashboard: HostedDashboard | null = null;
+  const dashboard = new DashboardController({ home, pipe: resolvePipePath(home), port: cfg.dashboardPort, log: log.child("dashboard") });
   const ensureDashboard = async (force: boolean): Promise<DashboardInfo | null> => {
     try {
-      const running = await findRunningDashboard(home);
-      if (running) return running;
       if (!force && !cfg.dashboard) return null;
-      dashboard ??= await hostDashboard({ home, pipe: resolvePipePath(home), port: cfg.dashboardPort, log: log.child("dashboard") });
-      return dashboard.info;
+      return await dashboard.ensure();
     } catch (err) {
       log.warn("could not start the dashboard", { err: (err as Error).message, port: cfg.dashboardPort });
       return null;
@@ -422,7 +419,7 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
     // Stop every delegated CLI this process runs itself, with its whole process tree; nothing may keep working unobserved.
     await killAllDelegates();
     await mcp.close().catch(() => {});
-    await dashboard?.close().catch(() => {});
+    await dashboard.close().catch(() => {});
     await rewake?.stop().catch(() => {});
     await node?.stop().catch(() => {});
     process.exit(0);
@@ -447,6 +444,7 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
   launchInspected();
   if (node) {
     node.on("connected", ({ isBroker }) => {
+      if (node.currentSessionId) ctx.onSessionId?.(node.currentSessionId);
       if (channel) for (const m of node.unread()) void pushChannel(m);
       // The session that hosts the bridge also hosts the web dashboard (not a short headless run).
       if (isBroker && cfg.dashboard && !ctx.headless) void ensureDashboard(false);

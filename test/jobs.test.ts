@@ -48,6 +48,26 @@ describe("background subagents", () => {
     expect(readStore(store).find((j) => j.id === job.id)).not.toHaveProperty("etaAt");
   });
 
+  it("keeps old active jobs addressable after newer jobs evict their history entries", () => {
+    const tracked = jobs.track("codex", null, "long blocking ask");
+    const running = jobs.start("codex", null, "long background job", () => new Promise(() => {}));
+    for (let i = 0; i < 55; i++) {
+      const newer = jobs.track("codex", null, `newer ${i}`);
+      newer.end();
+    }
+    for (const job of [tracked.job, running]) {
+      expect(jobs.list()).toContain(job);
+      expect(jobs.find(job.name)).toBe(job);
+      expect(jobs.find(job.id)).toBe(job);
+      expect(jobs.followUp(job.name, "check progress").outcome).toBe("queued");
+      expect(jobs.setTitle(job.name, "Still working")).toBe(true);
+      expect(jobs.setEffort(job.id, "high")).toBe(true);
+      expect(jobs.setSettings(job.name, { model: "sample" })).toBe(true);
+    }
+    tracked.end();
+    jobs.cancel(running.name);
+  });
+
   it("delivers the result to the spawner's inbox", async () => {
     const job = jobs.start("codex", "gpt-6-sol", "do it", async () => result("all done"));
     expect(job.name).toMatch(/^codex-job-[0-9a-f]{8}$/);

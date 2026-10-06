@@ -1,5 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { findRunningDashboard, hostDashboard, readDashboardInfo } from "../src/cli/dashboard.js";
+import { DashboardController, findRunningDashboard, hostDashboard, readDashboardInfo } from "../src/cli/dashboard.js";
+import { writeFileSync } from "node:fs";
+import { createServer } from "node:http";
+import { join } from "node:path";
 import { nullLogger } from "../src/core/logger.js";
 import { makeEnv, type TestEnv } from "./helpers.js";
 
@@ -12,6 +15,41 @@ afterEach(async () => {
 });
 
 describe("shared dashboard", () => {
+  it("returns one URL for concurrent opens and repeated calls from another session", async () => {
+    const reservation = createServer();
+    await new Promise<void>((resolve) => reservation.listen(0, "127.0.0.1", resolve));
+    const port = (reservation.address() as { port: number }).port;
+    await new Promise<void>((resolve) => reservation.close(() => resolve()));
+    const options = { home: env.home, pipe: env.pipe, port, log: nullLogger };
+    const first = new DashboardController(options);
+    const second = new DashboardController(options);
+    try {
+      const opened = await Promise.all([first.ensure(), first.ensure(), second.ensure()]);
+      expect(opened[0]).toEqual(opened[1]);
+      expect(opened[0]).toEqual(opened[2]);
+      expect(await first.ensure()).toEqual(opened[0]);
+    } finally { await first.close(); await second.close(); }
+    const hosted = await hostDashboard(options);
+    const reuse = new DashboardController({ ...options, port: hosted.info.port });
+    try {
+      expect(await reuse.ensure()).toEqual(hosted.info);
+      expect(await reuse.ensure()).toEqual(hosted.info);
+      await reuse.close();
+      expect(await findRunningDashboard(env.home)).toEqual(hosted.info);
+    } finally { await reuse.close(); await hosted.close(); }
+  });
+
+  it("does not reuse an unrelated server that answers forbidden on the old port", async () => {
+    const server = createServer((_req, res) => { res.writeHead(403); res.end(); });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const port = (server.address() as { port: number }).port;
+    writeFileSync(join(env.home, "dashboard.json"), JSON.stringify({ pid: process.pid, port, url: `http://127.0.0.1:${port}/?t=${"a".repeat(48)}` }));
+    const controller = new DashboardController({ home: env.home, pipe: env.pipe, port, log: nullLogger });
+    try {
+      expect(await findRunningDashboard(env.home)).toBeNull();
+      await expect(controller.ensure()).rejects.toMatchObject({ code: "EADDRINUSE" });
+    } finally { await controller.close(); await new Promise<void>((resolve) => server.close(() => resolve())); }
+  });
   it("publishes its link, is found by others, and keeps its secret for the next host", async () => {
     expect(await findRunningDashboard(env.home)).toBeNull();
     const hosted = await hostDashboard({ home: env.home, pipe: env.pipe, port: 0, log: nullLogger });

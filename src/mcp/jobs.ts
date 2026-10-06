@@ -528,7 +528,11 @@ export class JobManager {
 
   find(ref: string): Job | undefined {
     const id = ref.replace(/^.*-(?:job|ask)-/, "");
-    const current = this.history.get(id) ?? [...this.history.values()].find((j) => j.name === ref);
+    // The bounded history can evict a long-running job while newer jobs finish.
+    // Every job listed by peers (including blocking asks and waiting continuations) stays addressable.
+    const active = [...this.running.values(), ...this.foreground.values(), ...this.waitingJobs.values()];
+    const current = active.find((j) => j.id === id || j.name === ref)
+      ?? this.history.get(id) ?? [...this.history.values()].find((j) => j.name === ref);
     if (current || !this.storePath || !this.restoreResume) return current;
     const saved = readStore(this.storePath, this.log, true).find((j) => j.id === id || j.name === ref);
     if (!saved || saved.status === "running") return undefined;
@@ -542,7 +546,11 @@ export class JobManager {
   private remember(job: Job): void {
     this.history.set(job.id, job);
     this.own.add(job.id);
-    while (this.history.size > HISTORY_LIMIT) this.history.delete(this.history.keys().next().value!);
+    while (this.history.size > HISTORY_LIMIT) {
+      const oldest = [...this.history.values()].find((entry) => entry.status !== "running" && !this.waitingJobs.has(entry.id));
+      if (!oldest) break; // Active jobs are retained even when they outnumber the finished-history limit.
+      this.history.delete(oldest.id);
+    }
     this.persist();
   }
 

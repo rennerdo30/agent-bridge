@@ -20,6 +20,7 @@ import { BridgeError, type AgentKind, type BridgeMessage, type PeerActivity, typ
 import { ReadJournal } from "./read-journal.js";
 import { recordLocalResult } from "./local-result-receipts.js";
 import { MessageStore } from "./store.js";
+import { parentProcessIdentity } from "./process-identity.js";
 import { DASHBOARD_JOB_CONVERSATION } from "./job-control.js";
 import type { NetworkConfig } from "../network/config.js";
 import type { NetworkStatus } from "../network/link.js";
@@ -278,7 +279,9 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
 
   private async adopt(client: BridgeClient): Promise<void> {
     client.on("event", (ev, data) => this.onEvent(ev, data));
-    const hello = await client.request("hello", this.helloArgs()).catch((err) => {
+    const agentStartedAt = this.opts.jobAgent ? null : await parentProcessIdentity();
+    const args = this.helloArgs();
+    const hello = await client.request("hello", { ...args, peer: { ...args.peer, agentStartedAt } }).catch((err) => {
       client.close();
       throw err;
     });
@@ -310,9 +313,13 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
     };
   }
 
-  private afterHello(client: BridgeClient, hello: { name: string; brokerPid: number }): void {
+  private afterHello(client: BridgeClient, hello: { name: string; brokerPid: number; sessionId?: string | null }): void {
     this.client = client;
     this.currentName = hello.name;
+    if (!this.sessionId && hello.sessionId) {
+      this.sessionId = hello.sessionId;
+      this.restoreReadState(`session:${this.sessionId}`);
+    }
     this.restoreReadState(`name:${this.currentName}`);
     this.reconnectDelay = RECONNECT_BACKOFF_MIN_MS;
     client.once("close", () => this.onClose(client));

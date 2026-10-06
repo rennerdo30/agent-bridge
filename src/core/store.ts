@@ -1,8 +1,8 @@
-import { existsSync, mkdirSync } from "node:fs";
-import { dirname } from "node:path";
+import { existsSync, mkdirSync, realpathSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 import { DatabaseSync, type StatementSync } from "node:sqlite";
 import type { Logger } from "./logger.js";
-import type { AgentKind, BridgeMessage } from "./protocol.js";
+import type { AgentKind, BridgeMessage, PeerInfo } from "./protocol.js";
 import { migrateSqlite } from "./sqlite-migrations.js";
 import { archiveDbPath, archiveMessages, openArchive } from "./sqlite-maintenance.js";
 import { storageLease } from "./storage-lock.js";
@@ -14,7 +14,7 @@ import { DECISIONS_SCHEMA, DecisionStore } from "./decisions.js";
 
 const BACKUP_CHECK_INTERVAL_MS = 60 * 60 * 1_000;
 
-export const SQLITE_STORE_VERSION = 4;
+export const SQLITE_STORE_VERSION = 5;
 
 /** Recipient key used while a message waits for "any peer of this agent kind". */
 export function agentQueueKey(agent: AgentKind): string {
@@ -50,7 +50,24 @@ const MIGRATIONS = [
   ` },
   { version: 3, sql: `${DECISIONS_SCHEMA} PRAGMA user_version = 3;` },
   { version: 4, sql: historySchema() },
+  { version: 5, sql: `
+    CREATE TABLE IF NOT EXISTS session_bindings (
+      identity TEXT NOT NULL,
+      session_id TEXT NOT NULL,
+      learned_at INTEGER NOT NULL,
+      PRIMARY KEY (identity, session_id)
+    );
+    PRAGMA user_version = 5;
+  ` },
 ] as const;
+
+function registrationIdentity(peer: PeerInfo): string | null {
+  if (peer.jobAgent || !Number.isSafeInteger(peer.agentPid) || !peer.agentPid || peer.agentPid <= 0 || !peer.agentStartedAt) return null;
+  let cwd = resolve(peer.cwd);
+  try { cwd = realpathSync.native(cwd); } catch { /* A removed working folder still has a stable absolute spelling. */ }
+  if (process.platform === "win32") cwd = cwd.toLowerCase();
+  return JSON.stringify([peer.agent, peer.agentPid, peer.agentStartedAt, cwd, peer.name.replace(/-\d+$/, "")]);
+}
 
 interface Row {
   id: string;
@@ -153,6 +170,21 @@ export class MessageStore {
         this.backupTimer.unref();
       }
     }
+  }
+
+  /** Append identities learned from hooks; previous session bindings remain retained. */
+  rememberSession(peer: PeerInfo, at: number): void {
+    const identity = registrationIdentity(peer);
+    if (!identity || !peer.sessionId) return;
+    this.db.prepare(`INSERT INTO session_bindings VALUES (?,?,?) ON CONFLICT(identity,session_id)
+      DO UPDATE SET learned_at=excluded.learned_at`).run(identity, peer.sessionId, at);
+  }
+
+  recoverSession(peer: PeerInfo): string | null {
+    const identity = registrationIdentity(peer);
+    if (!identity) return null;
+    const row = this.db.prepare("SELECT session_id FROM session_bindings WHERE identity=? ORDER BY learned_at DESC, rowid DESC LIMIT 1").get(identity);
+    return row ? String(row.session_id) : null;
   }
 
   insert(m: BridgeMessage): void {
