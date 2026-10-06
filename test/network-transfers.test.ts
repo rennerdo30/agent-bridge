@@ -7,7 +7,7 @@ import { join } from "node:path";
 import type { TLSSocket } from "node:tls";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { nullLogger } from "../src/core/logger.js";
-import type { BridgeMessage, PeerInfo } from "../src/core/protocol.js";
+import { isQuietMessage, type BridgeMessage, type PeerInfo } from "../src/core/protocol.js";
 import { DEFAULT_NETWORK_CONFIG, type NetworkConfig } from "../src/network/config.js";
 import { NetworkService } from "../src/network/link.js";
 import { FILE_STREAM_CAPABILITY, TRANSFER_CHUNK_BYTES } from "../src/network/transfers.js";
@@ -69,6 +69,14 @@ describe("chunked paired-PC file transfers", () => {
     expect(b.transfers.list()[0]).toMatchObject({ status: "completed", bytes: BIG_FILE_BYTES, files: 2, percent: 100 });
     expect(aMessages.some((message) => message.body.includes("files: 100%"))).toBe(true);
     expect(bMessages.some((message) => message.id === started.id)).toBe(true);
+    for (const messages of [aMessages, bMessages]) {
+      const progress = messages.filter((message) => message.conversationId !== started.id);
+      expect(progress.length).toBeGreaterThan(0);
+      expect(progress.every(isQuietMessage)).toBe(true);
+      const outcomes = messages.filter((message) => !isQuietMessage(message));
+      expect(outcomes.length).toBeGreaterThan(0);
+      expect(outcomes.every((message) => message.conversationId === started.id && message.body.includes("completed"))).toBe(true);
+    }
   }, 60_000);
 
   it("restarts both brokers and resumes after the last verified chunk, repairing a corrupt part", async () => {
@@ -97,11 +105,12 @@ describe("chunked paired-PC file transfers", () => {
   }, 60_000);
 
   it("rejects corrupt chunks and never publishes the damaged file", async () => {
-    const { a, b, sender } = await paired(); const source = join(home, "corrupt.bin"); await generate(source, 2 * TRANSFER_CHUNK_BYTES);
+    const { a, b, sender, aMessages } = await paired(); const source = join(home, "corrupt.bin"); await generate(source, 2 * TRANSFER_CHUNK_BYTES);
     const original = a.sendExtension.bind(a);
     vi.spyOn(a, "sendExtension").mockImplementation((remote, type, payload) => original(remote, type, payload.op === "chunk" ? { ...payload, sha256: "0".repeat(64) } : payload));
     const started = a.startFiles("mac/receiver", [source], home, sender);
     await wait(() => a.transfers.list()[0]?.status === "failed");
+    expect(aMessages.filter((message) => !isQuietMessage(message))).toEqual([expect.objectContaining({ conversationId: started.id, body: expect.stringContaining("failed") })]);
     expect(a.transfers.list()[0]?.error).toMatch(/checksum/); expect(b.transfers.list()[0]?.bytes).toBe(0);
     expect(existsSync(join(home, "mac", "inbox", started.id, "corrupt.bin"))).toBe(false);
   });
@@ -190,7 +199,7 @@ describe("chunked paired-PC file transfers", () => {
   });
 
   it("cancels a running transfer on both sides and persists the cancellation", async () => {
-    const { a, b, sender } = await paired(); const source = join(home, "cancel.bin"); await generate(source);
+    const { a, b, sender, aMessages, bMessages } = await paired(); const source = join(home, "cancel.bin"); await generate(source);
     const original = a.sendExtension.bind(a); let id = "";
     vi.spyOn(a, "sendExtension").mockImplementation(async (remote, type, payload) => {
       if (payload.op === "chunk" && payload.offset === TRANSFER_CHUNK_BYTES) await a.transfers.cancel(id);
@@ -198,6 +207,9 @@ describe("chunked paired-PC file transfers", () => {
     });
     id = a.startFiles("mac/receiver", [source], home, sender).id;
     await wait(() => a.transfers.list()[0]?.status === "cancelled" && b.transfers.list()[0]?.status === "cancelled");
+    for (const messages of [aMessages, bMessages]) {
+      expect(messages.filter((message) => !isQuietMessage(message))).toEqual([expect.objectContaining({ conversationId: id, body: expect.stringContaining("cancelled") })]);
+    }
     expect(b.transfers.list()[0]!.bytes).toBeLessThan(BIG_FILE_BYTES);
     expect(existsSync(join(home, "mac", "inbox", id, "cancel.bin"))).toBe(false);
     expect(JSON.parse(readFileSync(join(home, "pc", "network", "transfers", `${id}.json`), "utf8")).status).toBe("cancelled");

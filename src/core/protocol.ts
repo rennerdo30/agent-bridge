@@ -30,13 +30,15 @@ export const SIBLING_CONVERSATION_PREFIX = "siblings-";
 export const SIBLING_NOTE_SUFFIX = ":note";
 /** Acknowledgements are retained for inspection, never injected as new work. */
 export const ACK_CONVERSATION_SUFFIX = ":ack";
+/** Transfer updates stay available on demand, without becoming new session work. */
+export const TRANSFER_PROGRESS_PREFIX = "files-progress-";
 
 export function isSiblingNote(m: Pick<BridgeMessage, "conversationId">): boolean {
   return m.conversationId.startsWith(SIBLING_CONVERSATION_PREFIX) && m.conversationId.endsWith(SIBLING_NOTE_SUFFIX);
 }
 
 export function isQuietMessage(m: Pick<BridgeMessage, "conversationId">): boolean {
-  return isSiblingNote(m) || m.conversationId.endsWith(ACK_CONVERSATION_SUFFIX);
+  return isSiblingNote(m) || m.conversationId.endsWith(ACK_CONVERSATION_SUFFIX) || m.conversationId.startsWith(TRANSFER_PROGRESS_PREFIX);
 }
 
 export interface SiblingPeer {

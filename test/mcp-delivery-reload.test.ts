@@ -34,6 +34,20 @@ afterEach(async () => {
 });
 
 describe.skipIf(!existsSync(SERVER))("stdio message wait recovery", () => {
+  it("ignores transfer progress in default waits and hooks but exposes it on request", async () => {
+    const sender = await connect("sender");
+    const listener = await connect("listener");
+    const conversation = "files-progress-transfer-id";
+    await call(sender, "send", { to: "listener", conversation_id: conversation, message: "files: 19% transferring" });
+    expect(await call(listener, "wait_for_message", { timeout_sec: 1 })).not.toContain("files: 19%");
+    expect(await call(listener, "hook_event", { event: "PostToolUse" })).not.toContain("files: 19%");
+    expect(await call(listener, "peers")).toContain("files: 19%");
+    expect(await call(listener, "inbox", { mark_read: false })).toContain("files: 19%");
+    expect(await call(listener, "wait_for_message", { conversation_id: conversation, timeout_sec: 1 })).toContain("files: 19%");
+    await call(sender, "send", { to: "listener", conversation_id: "transfer-id", message: "files: completed" });
+    expect(await call(listener, "wait_for_message", { timeout_sec: 1 })).toContain("files: completed");
+  }, TEST_TIMEOUT_MS);
+
   it("offers the saved wait after transport replacement and resumes the original reply filters", async () => {
     const sender = await connect("sender");
     const listener = await connect("listener");
