@@ -179,6 +179,16 @@ describe("sibling job messaging", () => {
     expect(await resumed.child.inbox()).toMatchObject([{ sibling: { body: "Next-turn handover", from: { name: a.job.name } } }]);
   });
 
+  it("uses terminal stored status while a finished runner is still connected", async () => {
+    const a = await sibling("a", "codex");
+    const b = await sibling("b", "opencode");
+    writeFileSync(join(env.home, JOBS_FILE), JSON.stringify({ version: 1, jobs: [
+      { id: "b", name: b.job.name, agent: "opencode", status: "done", supervisor: "supervisor-session", finishedAt: 456, report: "Complete" },
+    ] }));
+    expect((await a.chat.peers())[0]).toMatchObject({ status: "done", finishedAt: 456 });
+    expect((await a.chat.send(b.job.name, "Any result?")).finishedRecipient).toMatchObject({ status: "done", report: "Complete" });
+  });
+
   it("keeps the sibling group stable when the supervisor session id becomes known after spawning", async () => {
     const jobs = new JobManager(supervisor, nullLogger);
     const held = () => new Promise<never>(() => {});

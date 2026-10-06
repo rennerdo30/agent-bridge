@@ -439,7 +439,8 @@ export class Broker {
       const p = c.peer!;
       const previous = stored.find((s) => s.id === p.id);
       if (previous) peers.delete(previous.name);
-      peers.set(p.name, { name: p.name, title: p.jobTitle ?? "", agent: p.jobAgent!, status: "running" });
+      peers.set(p.name, { name: p.name, title: p.jobTitle ?? "", agent: p.jobAgent!, status: previous?.status ?? "running",
+        ...(previous?.finishedAt !== undefined ? { finishedAt: previous.finishedAt } : {}) });
     }
     return [...peers.values()];
   }
@@ -509,7 +510,7 @@ export class Broker {
       const supervisor = this.connByName(owner);
       if (supervisor) this.emit(supervisor, "message", note);
     }
-    if (stored && stored.status !== "running" && !target) {
+    if (stored && stored.status !== "running") {
       result.finishedRecipient = { name: stored.name, status: stored.status, report: stored.report,
         ...(stored.finishedAt !== undefined ? { finishedAt: stored.finishedAt } : {}) };
     }
