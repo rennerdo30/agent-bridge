@@ -38367,6 +38367,18 @@ form#send { background: transparent; border-top: 0; padding: 12px 0 0; }
 .sysrow.fold[open] { color: var(--text); white-space: normal; overflow-wrap: anywhere; }
 .msgrow.peer .bubble { background: var(--panel-2); border: 1px solid var(--line); border-radius: 14px 14px 14px 4px; padding: 10px 14px; }
 
+/* Conversation header: title and state, a quiet facts row, the progress note, where it runs */
+.conv-head { align-items: flex-start; gap: 14px; }
+.conv-head #cAvatar { padding-top: 2px; }
+.conv-head .title { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 16px; font-weight: 650; line-height: 1.3; }
+.conv-head .title .ttl { min-width: 0; overflow-wrap: anywhere; }
+.cmeta { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+.cmeta .chip { font-size: 11px; padding: 0 6px; }
+.cnote { margin-top: 6px; font-size: 13px; color: var(--muted); }
+.cnote:empty { display: none; }
+.conv-head #cSub { margin-top: 4px; }
+.conv-head .follow, .conv-head #setToggle { margin-top: 2px; }
+
 /* Messages: a feed with the sender's agent */
 .msg { display: grid; grid-template-columns: 24px minmax(0, 1fr); gap: 10px; align-items: start; padding: 12px 16px; }
 .msg .meta { display: flex; gap: 6px; align-items: baseline; flex-wrap: wrap; }
@@ -38552,7 +38564,7 @@ form#send { background: transparent; border-top: 0; padding: 12px 0 0; }
     <div class="panel conv">
       <div class="conv-head">
         <div id="cAvatar"></div>
-        <div class="grow"><div class="title" id="cTitle">Conversation</div><div class="small muted ell" id="cSub"></div></div>
+        <div class="grow"><div class="title" id="cTitle">Conversation</div><div class="cmeta" id="cMeta"></div><div class="cnote" id="cNote"></div><div class="small muted ell" id="cSub"></div></div>
         <button type="button" class="ghost hidden" id="setToggle" aria-expanded="false" aria-controls="jobSettings" title="Model, effort and permission for its next turn">Settings</button>
         <label class="follow"><input type="checkbox" id="follow" checked> follow</label>
       </div>
@@ -38955,7 +38967,9 @@ async function showNative(x, key) {
   const native = key.startsWith(NATIVE_PREFIX) ? ((nativeLists.get(x.name) || {}).list || []).find((s) => NATIVE_PREFIX + s.id === key)
     : jc ? ((jobChildren.get(jc[0]) || {}).list || []).find((s) => s.id === jc[1]) : null;
   $("cAvatar").innerHTML = av(p.agent || "other");
-  $("cTitle").innerHTML = key === CHAT_KEY ? "Chat <span class=\\"chip\\">" + esc(p.agent || "") + "</span>" : esc((native && native.title) || "Subagent") + ' <span class="chip own">own subagent</span>';
+  $("cTitle").innerHTML = '<span class="ttl">' + (key === CHAT_KEY ? "Chat" : esc((native && native.title) || "Subagent")) + "</span>";
+  $("cMeta").innerHTML = '<span class="chip">' + esc(p.agent || "") + "</span>" + (key === CHAT_KEY ? "" : '<span class="chip own">own subagent</span>') + '<span class="chip">read-only</span>';
+  $("cNote").textContent = "";
   $("cSub").textContent = (key === CHAT_KEY ? "the session's own conversation" : jc ? "its own subagent of " + jc[0] : "a subagent of " + p.agent + " itself") + " \xB7 read-only" + (p.cwd ? " \xB7 " + p.cwd : "");
   $("cHint").classList.add("hidden");
   const c = await pullChat(x, key);
@@ -39106,7 +39120,7 @@ function renderSession() {
   renderJobForm(g);
   if (g) void showGroup(g);
   else {
-    $("cAvatar").innerHTML = ""; $("cTitle").textContent = "No subagent selected"; $("cSub").textContent = ""; $("cHint").classList.add("hidden");
+    $("cAvatar").innerHTML = ""; $("cTitle").textContent = "No subagent selected"; $("cMeta").innerHTML = ""; $("cNote").textContent = ""; $("cSub").textContent = ""; $("cHint").classList.add("hidden");
     $("chat").innerHTML = '<div class="empty">Pick a subagent on the left to see its conversation.</div>'; lastChat = "";
   }
 }
@@ -39257,7 +39271,10 @@ function splitTurn(raw) {
 function renderConversation(g) {
   const first = g.turns[0], last = g.turns[g.turns.length - 1];
   $("cAvatar").innerHTML = av(g.agent);
-  $("cTitle").innerHTML = (g.title ? esc(g.title) + ' <span class="chip">' + esc(g.agent) + "</span>" : esc(g.agent)) + (g.model ? ' <span class="chip">' + esc(g.model) + "</span>" : "") + (g.effort ? " " + effortChip(g.effort) : "") + (g.permission ? " " + permChip(g.permission) : "") + pendingChips(g) + " " + pill(g.status, g.percent) + (g.progressNote && g.percent !== null ? ' <span class="small muted">' + esc(g.progressNote) + "</span>" : "");
+  // Line 1: what it is and how it stands; line 2: quiet facts; line 3: its own progress note.
+  $("cTitle").innerHTML = '<span class="ttl">' + esc(g.title || g.agent) + "</span>" + pill(g.status, g.percent) + outcomeChip(g);
+  $("cMeta").innerHTML = '<span class="chip">' + esc(g.agent) + "</span>" + (g.model ? '<span class="chip">' + esc(g.model) + "</span>" : "") + (g.effort ? effortChip(g.effort) : "") + (g.permission ? permChip(g.permission) : "") + runChips(g) + pendingChips(g);
+  $("cNote").textContent = g.progressNote && g.percent !== null ? g.progressNote : "";
   $("cSub").textContent = (g.owner === "earlier runs" ? "" : "started by " + g.owner + " \xB7 ") + time(first.startedAt) + " \xB7 " + (first.access || "default") + " access" + (first.workdir ? " \xB7 " + first.workdir : "");
   const hint = g.job && g.status !== "running"
     ? (g.status === "done" ? "Continue it with its context from " : "Recover it with its context from ") + esc(g.owner) + ': <code>message_subagent(job="' + esc(g.job) + '")</code>'
