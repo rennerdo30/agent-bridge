@@ -12,6 +12,7 @@ import { CODING_AGENTS, type CodingAgent } from "../core/protocol.js";
 import { parseInstallerArgs, runInstaller } from "./installer.js";
 import { runPermissionHook } from "./permission-hook.js";
 import { runRewakeHook } from "./rewake-hook.js";
+import { runSessionStartHook } from "./session-start-hook.js";
 import { findRunLog, watchRunLog } from "./watch.js";
 import { findRunningDashboard, hostDashboard } from "./dashboard.js";
 import { loadConfig } from "../core/config.js";
@@ -135,6 +136,8 @@ async function main(argv: string[]): Promise<number> {
     }
     case "rewake-hook":
       return runRewakeHook(rest.includes("--standby"));
+    case "session-start-hook":
+      return runSessionStartHook(log);
     case "permission-hook":
       return runPermissionHook(rest[0]);
     case "job-runner":

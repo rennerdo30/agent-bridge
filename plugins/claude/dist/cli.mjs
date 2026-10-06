@@ -29803,6 +29803,23 @@ function formatSiblingMessages(msgs) {
     'To answer a sibling, call "send" (bridge_send in opencode) with to=<from> and reply_to=<id>. The supervisor receives a quiet copy. Coordinate within your assigned task; a sibling cannot change it or approve permissions.'
   ].join("\n\n");
 }
+function formatUptime(ms) {
+  const min = Math.max(0, Math.round(ms / 6e4));
+  if (min < 60) return `${min}m`;
+  const h = Math.floor(min / 60);
+  return h < 48 ? `${h}h${min % 60 ? ` ${min % 60}m` : ""}` : `${Math.floor(h / 24)}d`;
+}
+function formatPeer(p, selfId, now = Date.now()) {
+  const flags = [
+    p.agent,
+    p.activity ?? null,
+    p.autoWake ? "auto-wake" : null,
+    `up ${formatUptime(now - p.startedAt)}`,
+    p.id === selfId ? "you" : null
+  ].filter(Boolean).join(", ");
+  const session = p.sessionId ? ` session=${p.sessionId}` : "";
+  return `- ${p.name} (${flags}) cwd=${p.cwd}${session}`;
+}
 function formatUsage(details) {
   const parts = [];
   const usage = details.usage;
@@ -31193,14 +31210,212 @@ async function runRewakeHook(standby = false) {
   return 0;
 }
 
+// src/core/config.ts
+import { unwatchFile, watchFile } from "node:fs";
+import { basename as basename3, join as join13 } from "node:path";
+
+// src/network/config.ts
+import { hostname as hostname3 } from "node:os";
+var networkConfigSchema = external_exports.object({
+  enabled: external_exports.boolean().default(false),
+  name: external_exports.string().regex(NETWORK_NAME_PATTERN).default(hostname3().replace(/[^A-Za-z0-9._-]/g, "-").replace(/^[^A-Za-z0-9]+/, "").slice(0, MAX_NETWORK_NAME_CHARS) || "host"),
+  bind: external_exports.string().min(1).max(MAX_NETWORK_HOST_CHARS).default("127.0.0.1"),
+  port: external_exports.number().int().min(0).max(MAX_PORT).default(DEFAULT_NETWORK_PORT),
+  discovery: external_exports.boolean().default(false)
+});
+var DEFAULT_NETWORK_CONFIG = networkConfigSchema.parse({});
+function parseNetworkConfig(value) {
+  const result = networkConfigSchema.safeParse(value);
+  return result.success ? result.data : void 0;
+}
+
+// src/core/config.ts
+var DELIVERY_MODES = ["auto", "channel", "hooks"];
+var CODEX_SANDBOXES = ["read-only", "workspace-write", "danger-full-access"];
+var CLAUDE_PERMISSION_MODES = ["default", "manual", "acceptEdits", "plan", "auto", "dontAsk", "bypassPermissions"];
+var DEFAULT_CONFIG = {
+  name: null,
+  autoWake: false,
+  maxHops: DEFAULT_MAX_HOPS,
+  maxJobs: DEFAULT_MAX_JOBS,
+  autoApproveTools: [],
+  resourceSlots: {},
+  delivery: "auto",
+  claudeBin: DEFAULT_CLAUDE_BIN,
+  codexBin: DEFAULT_CODEX_BIN,
+  codexSandbox: "read-only",
+  codexWorktreeSandbox: null,
+  codexWorkspaceWriteNetworkAccess: null,
+  claudePermissionMode: "default",
+  lingerSec: DEFAULT_LINGER_SEC,
+  codexModel: null,
+  claudeModel: null,
+  opencodeBin: DEFAULT_OPENCODE_BIN,
+  opencodeModel: null,
+  effort: {},
+  opencodeAutoApprove: false,
+  dashboard: true,
+  dashboardPort: DEFAULT_DASHBOARD_PORT,
+  network: DEFAULT_NETWORK_CONFIG
+};
+var TRUE_VALUES = /* @__PURE__ */ new Set(["1", "true", "yes", "on"]);
+var FALSE_VALUES = /* @__PURE__ */ new Set(["0", "false", "no", "off"]);
+function parseBool(v) {
+  if (typeof v === "boolean") return v;
+  if (typeof v !== "string") return void 0;
+  const s = v.trim().toLowerCase();
+  if (TRUE_VALUES.has(s)) return true;
+  if (FALSE_VALUES.has(s)) return false;
+  return void 0;
+}
+function parseIntInRange(v, min, max) {
+  const n = typeof v === "number" ? v : typeof v === "string" ? Number.parseInt(v, 10) : Number.NaN;
+  return Number.isInteger(n) && n >= min && n <= max ? n : void 0;
+}
+function oneOf(v, allowed) {
+  return typeof v === "string" && allowed.includes(v) ? v : void 0;
+}
+var MAX_HOPS_LIMIT = 100;
+var MAX_LINGER_SEC = 3600;
+var RESOURCE_NAME_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/;
+var MAX_RESOURCE_SLOTS = 100;
+function resourceSlots(v) {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return void 0;
+  const entries = Object.entries(v);
+  if (!entries.every(([name, count]) => RESOURCE_NAME_PATTERN.test(name) && typeof count === "number" && Number.isInteger(count) && count >= 1 && count <= MAX_RESOURCE_SLOTS)) return void 0;
+  return Object.fromEntries(entries);
+}
+var MODEL_NAME_PATTERN = /^[^\s"'`&|<>^%$;()]{1,200}$/;
+function modelName(v) {
+  return typeof v === "string" && MODEL_NAME_PATTERN.test(v.trim()) ? v.trim() : void 0;
+}
+var EFFORT_NAME = /^[A-Za-z0-9_-]{1,20}$/;
+function effortLevels(v) {
+  if (typeof v === "string" && EFFORT_NAME.test(v)) return Object.fromEntries(AGENT_KINDS.map((k) => [k, v]));
+  if (!v || typeof v !== "object" || Array.isArray(v)) return void 0;
+  const out2 = {};
+  for (const [k, x] of Object.entries(v)) if (AGENT_KINDS.includes(k) && typeof x === "string" && EFFORT_NAME.test(x)) out2[k] = x;
+  return out2;
+}
+function toolPatterns(v) {
+  const list = Array.isArray(v) ? v : typeof v === "string" ? v.split(",") : null;
+  if (!list || !list.every((x) => typeof x === "string")) return void 0;
+  return list.map((x) => x.trim()).filter(Boolean);
+}
+function loadConfig(home, agent, log, env = process.env) {
+  let file2 = {};
+  const path = join13(home, CONFIG_FILE_NAME);
+  try {
+    file2 = readJsonStore(path, log) ?? {};
+    log.debug("config file loaded", { path });
+  } catch (err) {
+    if (err.code !== "ENOENT") log.warn("ignoring unreadable config file", { path, err: err.message });
+  }
+  const section = isRecord(file2[agent]) ? file2[agent] : {};
+  const pick2 = (key, envKey, parse3) => {
+    for (const v of [envKey ? env[envKey] : void 0, section[key], file2[key]]) {
+      if (v === void 0) continue;
+      const parsed = parse3(v);
+      if (parsed !== void 0) return parsed;
+      log.warn("ignoring invalid config value", { key, value: String(v) });
+    }
+    return void 0;
+  };
+  const str = (v) => typeof v === "string" && v.trim() ? v.trim() : void 0;
+  const d = DEFAULT_CONFIG;
+  const cfg = {
+    name: pick2("name", ENV.name, str) ?? d.name,
+    autoWake: pick2("autoWake", ENV.autoWake, parseBool) ?? d.autoWake,
+    maxHops: pick2("maxHops", ENV.maxHops, (v) => parseIntInRange(v, 0, MAX_HOPS_LIMIT)) ?? d.maxHops,
+    maxJobs: pick2("maxJobs", ENV.maxJobs, (v) => parseIntInRange(v, 1, MAX_JOBS_LIMIT)) ?? d.maxJobs,
+    autoApproveTools: pick2("autoApproveTools", ENV.autoApproveTools, toolPatterns) ?? d.autoApproveTools,
+    // Capacities must agree across agents; per-agent sections cannot override shared resources.
+    resourceSlots: resourceSlots(file2.resourceSlots) ?? d.resourceSlots,
+    delivery: pick2("delivery", ENV.delivery, (v) => oneOf(v, DELIVERY_MODES)) ?? d.delivery,
+    claudeBin: pick2("claudeBin", ENV.claudeBin, str) ?? d.claudeBin,
+    codexBin: pick2("codexBin", ENV.codexBin, str) ?? d.codexBin,
+    codexSandbox: pick2("codexSandbox", null, (v) => oneOf(v, CODEX_SANDBOXES)) ?? d.codexSandbox,
+    codexWorktreeSandbox: pick2("codexWorktreeSandbox", null, (v) => oneOf(v, CODEX_SANDBOXES)) ?? d.codexWorktreeSandbox,
+    codexWorkspaceWriteNetworkAccess: pick2("codexWorkspaceWriteNetworkAccess", null, parseBool) ?? d.codexWorkspaceWriteNetworkAccess,
+    claudePermissionMode: pick2("claudePermissionMode", null, (v) => oneOf(v, CLAUDE_PERMISSION_MODES)) ?? d.claudePermissionMode,
+    lingerSec: pick2("lingerSec", ENV.lingerSec, (v) => parseIntInRange(v, 0, MAX_LINGER_SEC)) ?? d.lingerSec,
+    codexModel: pick2("codexModel", null, modelName) ?? d.codexModel,
+    claudeModel: pick2("claudeModel", null, modelName) ?? d.claudeModel,
+    opencodeBin: pick2("opencodeBin", ENV.opencodeBin, str) ?? d.opencodeBin,
+    opencodeModel: pick2("opencodeModel", null, modelName) ?? d.opencodeModel,
+    effort: pick2("effort", null, effortLevels) ?? d.effort,
+    opencodeAutoApprove: pick2("opencodeAutoApprove", null, parseBool) ?? d.opencodeAutoApprove,
+    dashboard: pick2("dashboard", ENV.dashboard, parseBool) ?? d.dashboard,
+    dashboardPort: pick2("dashboardPort", null, (v) => parseIntInRange(v, 1, 65535)) ?? d.dashboardPort,
+    network: pick2("network", null, parseNetworkConfig) ?? d.network
+  };
+  log.debug("effective config", { ...cfg });
+  return cfg;
+}
+function defaultPeerName(agent, cwd) {
+  const folder = basename3(cwd).replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^[-._]+/, "").slice(0, 40);
+  return `${agent}-${folder || "session"}`;
+}
+
+// src/cli/session-start-hook.ts
+var BROKER_TIMEOUT_MS = 3e3;
+var HOOK_EVENT = "SessionStart";
+async function readStdin3() {
+  let raw = "";
+  for await (const chunk of process.stdin) raw += chunk;
+  return raw;
+}
+async function onlinePeers(home, log) {
+  let client = null;
+  const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error("broker timeout")), BROKER_TIMEOUT_MS).unref());
+  timeout.catch(() => {
+  });
+  try {
+    return await Promise.race([
+      (async () => {
+        client = await BridgeClient.connect(resolvePipePath(home), log);
+        await client.request("auth", { protocol: PROTOCOL_VERSION, token: loadOrCreateToken(home) });
+        return client.request("peers", {});
+      })(),
+      timeout
+    ]);
+  } finally {
+    client?.close();
+  }
+}
+function sessionStartContext(name, peers) {
+  const others = (peers ?? []).filter((p) => p.name !== name);
+  return [
+    `[agent-bridge] You are connected to agent-bridge as "${name}".`,
+    others.length ? `Peers online:
+${others.map((p) => formatPeer(p)).join("\n")}` : "No other agents are online right now."
+  ].join("\n");
+}
+async function runSessionStartHook(log, out2 = (text) => process.stdout.write(text), read = readStdin3) {
+  let cwd = process.cwd();
+  try {
+    const input2 = JSON.parse(await read() || "{}");
+    if (typeof input2.cwd === "string" && input2.cwd) cwd = input2.cwd;
+  } catch {
+  }
+  const home = resolveHome();
+  const name = loadConfig(home, "claude", log).name ?? defaultPeerName("claude", cwd);
+  const peers = await onlinePeers(home, log).catch((err) => {
+    log.debug("session start: broker not reachable", { err: err.message });
+    return null;
+  });
+  out2(JSON.stringify({ hookSpecificOutput: { hookEventName: HOOK_EVENT, additionalContext: sessionStartContext(name, peers) } }));
+  return 0;
+}
+
 // src/cli/watch.ts
 import { closeSync as closeSync2, existsSync as existsSync7, openSync as openSync2, readdirSync as readdirSync5, readSync, statSync as statSync3 } from "node:fs";
 import { StringDecoder } from "node:string_decoder";
-import { join as join14 } from "node:path";
+import { join as join15 } from "node:path";
 
 // src/core/runfeed.ts
 import { appendFileSync as appendFileSync2, mkdirSync as mkdirSync9, readFileSync as readFileSync10, readdirSync as readdirSync4, statSync as statSync2 } from "node:fs";
-import { join as join13 } from "node:path";
+import { join as join14 } from "node:path";
 var RUNS_DIR_NAME = "runs";
 var HEARTBEAT_MS = 6e4;
 var KEEP_RUN_LOGS = 50;
@@ -31216,12 +31431,12 @@ function pruneOldLogs(dir) {
   try {
     const limit = retentionLimit("AGENT_BRIDGE_RUN_LOG_LIMIT", KEEP_RUN_LOGS);
     if (!limit) return;
-    const files = readdirSync4(dir).filter((f) => f.endsWith(".log")).map((f) => ({ f, t: statSync2(join13(dir, f)).mtimeMs })).sort((a, b) => b.t - a.t);
+    const files = readdirSync4(dir).filter((f) => f.endsWith(".log")).map((f) => ({ f, t: statSync2(join14(dir, f)).mtimeMs })).sort((a, b) => b.t - a.t);
     for (const { f } of files.slice(limit)) {
-      const path = join13(dir, f);
+      const path = join14(dir, f);
       if (Date.now() - statSync2(path).mtimeMs <= STALE_RUN_MS && !/^\d\d:\d\d:\d\d finished after \d+s · /m.test(readFileSync10(path, "utf8"))) continue;
       archiveFile(path);
-      archiveFile(join13(dir, runMetaPath(f)));
+      archiveFile(join14(dir, runMetaPath(f)));
     }
   } catch (err) {
     process.stderr.write(`could not archive run logs: ${String(err)}
@@ -31230,9 +31445,9 @@ function pruneOldLogs(dir) {
 }
 function startRunFeed(opts) {
   const now = opts.now ?? Date.now;
-  const dir = join13(opts.home, RUNS_DIR_NAME);
+  const dir = join14(opts.home, RUNS_DIR_NAME);
   mkdirSync9(dir, { recursive: true });
-  const logPath = join13(dir, `${new Date(now()).toISOString().slice(0, 19).replace(/[:T]/g, "-")}-${opts.name}.log`);
+  const logPath = join14(dir, `${new Date(now()).toISOString().slice(0, 19).replace(/[:T]/g, "-")}-${opts.name}.log`);
   const write = (line) => {
     const [first, ...rest] = line.replace(/\r/g, "").split("\n");
     const body = [first, ...rest.map((l) => `${CONTINUATION}${l}`)].join("\n");
@@ -31294,9 +31509,9 @@ var POLL_MS = 500;
 var CHUNK = 64 * 1024;
 var FINISHED = / finished after \d+s · /;
 function findRunLog(home, filter) {
-  const dir = join14(home, RUNS_DIR_NAME);
+  const dir = join15(home, RUNS_DIR_NAME);
   if (!existsSync7(dir)) return null;
-  const logs = readdirSync5(dir).filter((f) => f.endsWith(".log") && (!filter || f.includes(filter))).map((f) => ({ path: join14(dir, f), t: statSync3(join14(dir, f)).mtimeMs })).sort((a, b) => b.t - a.t);
+  const logs = readdirSync5(dir).filter((f) => f.endsWith(".log") && (!filter || f.includes(filter))).map((f) => ({ path: join15(dir, f), t: statSync3(join15(dir, f)).mtimeMs })).sort((a, b) => b.t - a.t);
   return logs[0]?.path ?? null;
 }
 async function watchRunLog(path, out2) {
@@ -31342,26 +31557,26 @@ import { DatabaseSync as DatabaseSync2 } from "node:sqlite";
 
 // src/core/models.ts
 import { mkdirSync as mkdirSync10, readFileSync as readFileSync13, writeFileSync as writeFileSync6 } from "node:fs";
-import { join as join17 } from "node:path";
+import { join as join18 } from "node:path";
 
 // src/core/effort.ts
 import { readFileSync as readFileSync12 } from "node:fs";
 import { homedir as homedir5 } from "node:os";
-import { join as join16 } from "node:path";
+import { join as join17 } from "node:path";
 
 // src/core/codex-trust.ts
 import { readFileSync as readFileSync11, writeFileSync as writeFileSync5 } from "node:fs";
 import { homedir as homedir4 } from "node:os";
-import { join as join15 } from "node:path";
+import { join as join16 } from "node:path";
 var PERMISSION_HOOK_STATE_KEY = 'hooks.state."agent-bridge@agent-bridge:plugin.json#hooks[0]:permission_request:0:0"';
 var OBSERVATIONS_FILE = "codex-hook.json";
 function codexHome(env = process.env) {
-  return env.CODEX_HOME?.trim() || join15(homedir4(), ".codex");
+  return env.CODEX_HOME?.trim() || join16(homedir4(), ".codex");
 }
 function codexPermissionHookHash(home = codexHome(), read = (p) => readFileSync11(p, "utf8")) {
   let text;
   try {
-    text = read(join15(home, "config.toml"));
+    text = read(join16(home, "config.toml"));
   } catch {
     return null;
   }
@@ -31376,7 +31591,7 @@ function codexPermissionHookHash(home = codexHome(), read = (p) => readFileSync1
 }
 function readObservations(bridgeHome) {
   try {
-    return JSON.parse(readFileSync11(join15(bridgeHome, OBSERVATIONS_FILE), "utf8"));
+    return JSON.parse(readFileSync11(join16(bridgeHome, OBSERVATIONS_FILE), "utf8"));
   } catch {
     return {};
   }
@@ -31386,7 +31601,7 @@ function recordCodexHookObservation(bridgeHome, hash2, observation) {
   if (all[hash2] === "failed") return;
   all[hash2] = observation;
   try {
-    writeFileSync5(join15(bridgeHome, OBSERVATIONS_FILE), JSON.stringify(all, null, 2), { mode: 384 });
+    writeFileSync5(join16(bridgeHome, OBSERVATIONS_FILE), JSON.stringify(all, null, 2), { mode: 384 });
   } catch {
   }
 }
@@ -31398,8 +31613,8 @@ function codexPermissionHookTrusted(bridgeHome, home = codexHome(), read = (p) =
 // src/core/effort.ts
 function defaultEffort(agent, model, read = (p) => readFileSync12(p, "utf8")) {
   try {
-    if (agent === "codex") return codexConfigEffort(read(join16(codexHome(), "config.toml")));
-    if (agent === "claude") return claudeSettingsEffort(read(join16(process.env.CLAUDE_CONFIG_DIR?.trim() || join16(homedir5(), ".claude"), "settings.json")), model);
+    if (agent === "codex") return codexConfigEffort(read(join17(codexHome(), "config.toml")));
+    if (agent === "claude") return claudeSettingsEffort(read(join17(process.env.CLAUDE_CONFIG_DIR?.trim() || join17(homedir5(), ".claude"), "settings.json")), model);
   } catch {
   }
   return null;
@@ -31632,7 +31847,7 @@ var MODEL_CACHE_MS = 10 * 60 * 1e3;
 var modelReads = /* @__PURE__ */ new Map();
 var modelBin = (agent, cfg) => cfg[`${agent}Bin`];
 var modelDefault = (agent, cfg) => cfg[`${agent}Model`];
-var modelCachePath = (home, agent) => join17(home, `models-${agent}.json`);
+var modelCachePath = (home, agent) => join18(home, `models-${agent}.json`);
 function cachedModels(home, agent, cfg) {
   try {
     const cache2 = JSON.parse(readFileSync13(modelCachePath(home, agent), "utf8"));
@@ -31708,149 +31923,6 @@ async function describeModels(agent, cfg, cwd, log, query = "") {
   } catch (err) {
     return [`Could not list ${agent} models: ${err.message}`];
   }
-}
-
-// src/core/config.ts
-import { unwatchFile, watchFile } from "node:fs";
-import { basename as basename3, join as join18 } from "node:path";
-
-// src/network/config.ts
-import { hostname as hostname3 } from "node:os";
-var networkConfigSchema = external_exports.object({
-  enabled: external_exports.boolean().default(false),
-  name: external_exports.string().regex(NETWORK_NAME_PATTERN).default(hostname3().replace(/[^A-Za-z0-9._-]/g, "-").replace(/^[^A-Za-z0-9]+/, "").slice(0, MAX_NETWORK_NAME_CHARS) || "host"),
-  bind: external_exports.string().min(1).max(MAX_NETWORK_HOST_CHARS).default("127.0.0.1"),
-  port: external_exports.number().int().min(0).max(MAX_PORT).default(DEFAULT_NETWORK_PORT),
-  discovery: external_exports.boolean().default(false)
-});
-var DEFAULT_NETWORK_CONFIG = networkConfigSchema.parse({});
-function parseNetworkConfig(value) {
-  const result = networkConfigSchema.safeParse(value);
-  return result.success ? result.data : void 0;
-}
-
-// src/core/config.ts
-var DELIVERY_MODES = ["auto", "channel", "hooks"];
-var CODEX_SANDBOXES = ["read-only", "workspace-write", "danger-full-access"];
-var CLAUDE_PERMISSION_MODES = ["default", "manual", "acceptEdits", "plan", "auto", "dontAsk", "bypassPermissions"];
-var DEFAULT_CONFIG = {
-  name: null,
-  autoWake: false,
-  maxHops: DEFAULT_MAX_HOPS,
-  maxJobs: DEFAULT_MAX_JOBS,
-  autoApproveTools: [],
-  resourceSlots: {},
-  delivery: "auto",
-  claudeBin: DEFAULT_CLAUDE_BIN,
-  codexBin: DEFAULT_CODEX_BIN,
-  codexSandbox: "read-only",
-  codexWorktreeSandbox: null,
-  codexWorkspaceWriteNetworkAccess: null,
-  claudePermissionMode: "default",
-  lingerSec: DEFAULT_LINGER_SEC,
-  codexModel: null,
-  claudeModel: null,
-  opencodeBin: DEFAULT_OPENCODE_BIN,
-  opencodeModel: null,
-  effort: {},
-  opencodeAutoApprove: false,
-  dashboard: true,
-  dashboardPort: DEFAULT_DASHBOARD_PORT,
-  network: DEFAULT_NETWORK_CONFIG
-};
-var TRUE_VALUES = /* @__PURE__ */ new Set(["1", "true", "yes", "on"]);
-var FALSE_VALUES = /* @__PURE__ */ new Set(["0", "false", "no", "off"]);
-function parseBool(v) {
-  if (typeof v === "boolean") return v;
-  if (typeof v !== "string") return void 0;
-  const s = v.trim().toLowerCase();
-  if (TRUE_VALUES.has(s)) return true;
-  if (FALSE_VALUES.has(s)) return false;
-  return void 0;
-}
-function parseIntInRange(v, min, max) {
-  const n = typeof v === "number" ? v : typeof v === "string" ? Number.parseInt(v, 10) : Number.NaN;
-  return Number.isInteger(n) && n >= min && n <= max ? n : void 0;
-}
-function oneOf(v, allowed) {
-  return typeof v === "string" && allowed.includes(v) ? v : void 0;
-}
-var MAX_HOPS_LIMIT = 100;
-var MAX_LINGER_SEC = 3600;
-var RESOURCE_NAME_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/;
-var MAX_RESOURCE_SLOTS = 100;
-function resourceSlots(v) {
-  if (!v || typeof v !== "object" || Array.isArray(v)) return void 0;
-  const entries = Object.entries(v);
-  if (!entries.every(([name, count]) => RESOURCE_NAME_PATTERN.test(name) && typeof count === "number" && Number.isInteger(count) && count >= 1 && count <= MAX_RESOURCE_SLOTS)) return void 0;
-  return Object.fromEntries(entries);
-}
-var MODEL_NAME_PATTERN = /^[^\s"'`&|<>^%$;()]{1,200}$/;
-function modelName(v) {
-  return typeof v === "string" && MODEL_NAME_PATTERN.test(v.trim()) ? v.trim() : void 0;
-}
-var EFFORT_NAME = /^[A-Za-z0-9_-]{1,20}$/;
-function effortLevels(v) {
-  if (typeof v === "string" && EFFORT_NAME.test(v)) return Object.fromEntries(AGENT_KINDS.map((k) => [k, v]));
-  if (!v || typeof v !== "object" || Array.isArray(v)) return void 0;
-  const out2 = {};
-  for (const [k, x] of Object.entries(v)) if (AGENT_KINDS.includes(k) && typeof x === "string" && EFFORT_NAME.test(x)) out2[k] = x;
-  return out2;
-}
-function toolPatterns(v) {
-  const list = Array.isArray(v) ? v : typeof v === "string" ? v.split(",") : null;
-  if (!list || !list.every((x) => typeof x === "string")) return void 0;
-  return list.map((x) => x.trim()).filter(Boolean);
-}
-function loadConfig(home, agent, log, env = process.env) {
-  let file2 = {};
-  const path = join18(home, CONFIG_FILE_NAME);
-  try {
-    file2 = readJsonStore(path, log) ?? {};
-    log.debug("config file loaded", { path });
-  } catch (err) {
-    if (err.code !== "ENOENT") log.warn("ignoring unreadable config file", { path, err: err.message });
-  }
-  const section = isRecord(file2[agent]) ? file2[agent] : {};
-  const pick2 = (key, envKey, parse3) => {
-    for (const v of [envKey ? env[envKey] : void 0, section[key], file2[key]]) {
-      if (v === void 0) continue;
-      const parsed = parse3(v);
-      if (parsed !== void 0) return parsed;
-      log.warn("ignoring invalid config value", { key, value: String(v) });
-    }
-    return void 0;
-  };
-  const str = (v) => typeof v === "string" && v.trim() ? v.trim() : void 0;
-  const d = DEFAULT_CONFIG;
-  const cfg = {
-    name: pick2("name", ENV.name, str) ?? d.name,
-    autoWake: pick2("autoWake", ENV.autoWake, parseBool) ?? d.autoWake,
-    maxHops: pick2("maxHops", ENV.maxHops, (v) => parseIntInRange(v, 0, MAX_HOPS_LIMIT)) ?? d.maxHops,
-    maxJobs: pick2("maxJobs", ENV.maxJobs, (v) => parseIntInRange(v, 1, MAX_JOBS_LIMIT)) ?? d.maxJobs,
-    autoApproveTools: pick2("autoApproveTools", ENV.autoApproveTools, toolPatterns) ?? d.autoApproveTools,
-    // Capacities must agree across agents; per-agent sections cannot override shared resources.
-    resourceSlots: resourceSlots(file2.resourceSlots) ?? d.resourceSlots,
-    delivery: pick2("delivery", ENV.delivery, (v) => oneOf(v, DELIVERY_MODES)) ?? d.delivery,
-    claudeBin: pick2("claudeBin", ENV.claudeBin, str) ?? d.claudeBin,
-    codexBin: pick2("codexBin", ENV.codexBin, str) ?? d.codexBin,
-    codexSandbox: pick2("codexSandbox", null, (v) => oneOf(v, CODEX_SANDBOXES)) ?? d.codexSandbox,
-    codexWorktreeSandbox: pick2("codexWorktreeSandbox", null, (v) => oneOf(v, CODEX_SANDBOXES)) ?? d.codexWorktreeSandbox,
-    codexWorkspaceWriteNetworkAccess: pick2("codexWorkspaceWriteNetworkAccess", null, parseBool) ?? d.codexWorkspaceWriteNetworkAccess,
-    claudePermissionMode: pick2("claudePermissionMode", null, (v) => oneOf(v, CLAUDE_PERMISSION_MODES)) ?? d.claudePermissionMode,
-    lingerSec: pick2("lingerSec", ENV.lingerSec, (v) => parseIntInRange(v, 0, MAX_LINGER_SEC)) ?? d.lingerSec,
-    codexModel: pick2("codexModel", null, modelName) ?? d.codexModel,
-    claudeModel: pick2("claudeModel", null, modelName) ?? d.claudeModel,
-    opencodeBin: pick2("opencodeBin", ENV.opencodeBin, str) ?? d.opencodeBin,
-    opencodeModel: pick2("opencodeModel", null, modelName) ?? d.opencodeModel,
-    effort: pick2("effort", null, effortLevels) ?? d.effort,
-    opencodeAutoApprove: pick2("opencodeAutoApprove", null, parseBool) ?? d.opencodeAutoApprove,
-    dashboard: pick2("dashboard", ENV.dashboard, parseBool) ?? d.dashboard,
-    dashboardPort: pick2("dashboardPort", null, (v) => parseIntInRange(v, 1, 65535)) ?? d.dashboardPort,
-    network: pick2("network", null, parseNetworkConfig) ?? d.network
-  };
-  log.debug("effective config", { ...cfg });
-  return cfg;
 }
 
 // src/core/opencode-served.ts
@@ -39452,6 +39524,8 @@ async function main(argv) {
     }
     case "rewake-hook":
       return runRewakeHook(rest.includes("--standby"));
+    case "session-start-hook":
+      return runSessionStartHook(log);
     case "permission-hook":
       return runPermissionHook(rest[0]);
     case "job-runner":

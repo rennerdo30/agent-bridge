@@ -4,14 +4,13 @@
       {
         "hooks": [
           {
-            "type": "mcp_tool",
-            "server": "plugin:agent-bridge:bridge",
-            "tool": "hook_event",
-            "input": {
-              "event": "SessionStart",
-              "session_id": "${session_id}",
-              "cwd": "${cwd}"
-            }
+            "type": "command",
+            "command": "node",
+            "args": [
+              "${CLAUDE_PLUGIN_ROOT}/dist/cli.mjs",
+              "session-start-hook"
+            ],
+            "timeout": 10
           }
         ]
       }
