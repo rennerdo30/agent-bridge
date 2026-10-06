@@ -26,6 +26,7 @@ import type { Op, RequestMap } from "../core/protocol.js";
 import { readJsonStore } from "../core/json-store.js";
 import { listNativeSubagents, readTranscript, TRANSCRIPT_ID, validTranscriptCursor, type TranscriptPaths } from "../core/transcripts/index.js";
 import { readDecisions, decisionScopeSchema, MAX_DECISION_TEXT_CHARS, MAX_DECISION_TOPIC_CHARS, type DecisionsArgs } from "../core/decisions.js";
+import { answerPendingApproval, listPendingApprovals, MAX_APPROVAL_REASON_CHARS } from "../core/relay.js";
 
 /**
  * `agent-bridge ui`: a local dashboard for sessions, delegated runs and messages.
@@ -357,6 +358,18 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
       } catch { return send(res, 400, { error: 'Invalid decisions query, topic or scope. Scope must be "all" or JSON {project: folder}/{sessions: [names or ids]}.' }); }
       const decisions = readDecisions(dbPath, args);
       return send(res, 200, topic ? { topic, decisions } : { decisions });
+    }
+    if (req.method === "GET" && url.pathname === "/api/approvals") return send(res, 200, { approvals: listPendingApprovals(opts.home) });
+    const approvalMatch = /^\/api\/approvals\/([0-9a-f-]{36})$/.exec(url.pathname);
+    if (req.method === "POST" && approvalMatch) {
+      if (req.headers["x-agent-bridge"] !== "1") return send(res, 403, { error: "missing header" });
+      let body;
+      try { body = await readJson(req); } catch { return send(res, 400, { error: "Expected a JSON object." }); }
+      if (!body || Array.isArray(body) || (body.decision !== "allow" && body.decision !== "deny") || (body.reason !== undefined && (typeof body.reason !== "string" || body.reason.length > MAX_APPROVAL_REASON_CHARS))) return send(res, 400, { error: "A decision of allow or deny and an optional reason are required." });
+      const outcome = await answerPendingApproval(opts.home, approvalMatch[1]!, { decision: body.decision, ...(typeof body.reason === "string" ? { reason: body.reason } : {}) });
+      if (outcome === "expired") return send(res, 409, { outcome, error: "This approval was already answered, expired or cancelled." });
+      if (outcome === "unavailable") return send(res, 504, { outcome, error: "The approval's owning process is unavailable. Refresh before answering again." });
+      return send(res, 200, { outcome, id: approvalMatch[1], answeredBy: "dashboard", decision: body.decision });
     }
     if (req.method === "GET" && url.pathname === "/api/state") {
       const { brokerPid, peers } = await brokerPeers(opts.pipe, token, opts.log);

@@ -9,6 +9,8 @@ import type { AgentKind, BridgeMessage } from "../core/protocol.js";
 import type { Worktree } from "../core/worktree.js";
 import { archiveFile, assertWritableStore, isRecord, mergeStoreFields, readJsonStore, retentionLimit, writeJsonStore } from "../core/json-store.js";
 import { changedJobArgs, type JobSettings } from "./job-settings.js";
+import { newApprovalId, publishApproval, type PermissionDecision, type PermissionRequest } from "../core/relay.js";
+import { notifyJobEvent } from "../core/notifications.js";
 
 const JOB_ID_LENGTH = 8;
 const PROMPT_PREVIEW_CHARS = 120;
@@ -75,7 +77,7 @@ export interface Job {
   /** MCP servers the parent allowed for this job (kept across its follow-ups). */
   allowedServers?: Set<string>;
   /** An approval question the subagent is waiting on; the next message to the job answers it. */
-  pendingApproval?: ((answer: string) => void) | null;
+  pendingApproval?: ((answer: string, by?: string) => boolean | void) | null;
   /** While it runs: delivers a message into the running subagent (see parent-link.ts). */
   live?: { post: (message: string, sibling?: BridgeMessage) => void } | null;
   finishedAt?: number;
@@ -155,25 +157,66 @@ export function jobReport(job: Pick<Job, "name" | "agent" | "model" | "sessionId
  * Ask the session's agent to approve something a running subagent wants to do; `post` delivers the question
  * as a message from the job. The next message to the job (job.pendingApproval) answers it; none in time is "deny".
  */
-export function waitForApproval(job: Job, question: string, timeoutMs: number, post: (body: string) => void, log: Logger): Promise<{ allow: boolean; reason: string }> {
+const approvalAnswers = new WeakMap<Job, Set<(answer: string, by?: string) => boolean>>();
+
+/** Ending a turn must never leave an approval waiting after the job is gone. */
+export function denyPendingApprovals(job: Job, reason = "job finished"): void {
+  for (const answer of [...(approvalAnswers.get(job) ?? [])]) answer(reason, "job completion");
+}
+
+export function waitForApproval(job: Job, question: string, timeoutMs: number, post: (body: string) => void, log: Logger, home?: string, request?: PermissionRequest, askUser?: () => Promise<PermissionDecision>): Promise<{ allow: boolean; reason: string }> {
   return new Promise((resolve) => {
-    const timer = setTimeout(() => {
-      if (job.pendingApproval !== settle) return;
-      job.pendingApproval = null;
-      resolve({ allow: false, reason: "no answer in time" });
-    }, timeoutMs);
-    timer.unref?.();
-    const settle = (answer: string) => {
+    let settled = false;
+    let cleanup: (() => void) | undefined;
+    const askedAt = Date.now();
+    const settle = (answer: string, by = "session") => {
+      if (settled) return false;
+      if (Date.now() >= askedAt + timeoutMs) { answer = "no answer in time"; by = "timeout"; }
+      settled = true;
       clearTimeout(timer);
-      resolve({ allow: /^\s*(allow|yes|y|approve|approved|ok|okay|go ahead|accept)\b/i.test(answer), reason: answer.trim() });
+      job.controller.signal.removeEventListener("abort", aborted);
+      const answers = approvalAnswers.get(job);
+      answers?.delete(settle);
+      job.pendingApproval = answers?.values().next().value ?? null;
+      if (!answers?.size) approvalAnswers.delete(job);
+      try { cleanup?.(); } catch { log.warn("could not remove pending approval", { job: job.name }); }
+      const allow = /^\s*(allow|yes|y|approve|approved|ok|okay|go ahead|accept)\b/i.test(answer);
+      try { post(`Approval for ${job.name} ${allow ? "allowed" : "denied"} by ${by}.`); }
+      catch { log.warn("could not report approval answer", { job: job.name }); }
+      resolve({ allow, reason: answer.trim() });
+      return true;
     };
-    job.pendingApproval = settle;
+    const timer = setTimeout(() => settle("no answer in time", "timeout"), timeoutMs);
+    timer.unref?.();
+    const aborted = () => settle("job cancelled", "cancellation");
+    job.controller.signal.addEventListener("abort", aborted, { once: true });
+    let answers = approvalAnswers.get(job);
+    if (!answers) { answers = new Set(); approvalAnswers.set(job, answers); }
+    answers.add(settle);
+    job.pendingApproval = answers.values().next().value!;
+    if (job.controller.signal.aborted) { aborted(); return; }
+    if (home) {
+      void publishApproval(home, {
+        id: newApprovalId(), owner: job.owner ?? "", job: job.name, agent: job.agent,
+        tool: request?.tool ?? "approval", command: request?.detail ?? question,
+        reason: request?.reason ?? question, askedAt, deadline: askedAt + timeoutMs,
+      }, settle).then((close) => {
+        if (settled) close();
+        else { cleanup = close; notifyJobEvent(home, "approvals", log); }
+      }).catch(() => log.warn("could not publish pending approval", { job: job.name }));
+    }
     log.info("subagent asks for approval", { job: job.name });
     post(
       `Subagent ${job.name} asks for approval: ${question}\n\n` +
         `Decide as its supervisor: answer with message_subagent(job="${job.name}", message="allow") or message="deny" (a reason may follow). ` +
         `It waits for your answer; no answer within ${Math.round(timeoutMs / 60_000)} minutes counts as deny.`,
     );
+    if (askUser) {
+      void Promise.resolve().then(askUser).then(
+        (decision) => settle(decision.allow ? "allow" : `deny: ${decision.message}`, "user in session"),
+        () => settle("deny: The permission dialog failed.", "user in session"),
+      );
+    }
   });
 }
 
@@ -491,10 +534,12 @@ export class JobManager {
         job.progress = message;
       },
       end: (outcome) => {
+        denyPendingApprovals(job);
         this.foreground.delete(job.id);
         job.foreground = false;
         job.finishedAt = Date.now();
         job.status = outcome?.result && !outcome.result.isError ? "done" : "failed";
+        if (this.storePath) notifyJobEvent(dirname(this.storePath), job.status === "done" ? "finish" : "fail", this.log);
         job.sessionId = outcome?.result?.sessionId ?? sessionOfError(outcome?.error) ?? job.sessionId;
         job.workdir = outcome?.result?.workdir ?? job.workdir;
         job.worktree = outcome?.result?.worktree ?? job.worktree;
@@ -579,7 +624,7 @@ export class JobManager {
     if (job.status === "running" && job.pendingApproval) {
       const answer = job.pendingApproval;
       job.pendingApproval = null;
-      answer(message);
+      answer(message, `session ${this.node.name}`);
       return { outcome: "answered", job };
     }
     if (job.status === "running") {
@@ -755,12 +800,14 @@ export class JobManager {
     for (const j of this.waitingJobs.values()) j.queue = [];
     this.waitingJobs.clear();
     for (const j of this.running.values()) if (!j.host) j.controller.abort();
+    for (const j of this.foreground.values()) denyPendingApprovals(j, "session closed");
     if (this.hostTimer) clearInterval(this.hostTimer);
     this.hostTimer = null;
   }
 
   /** `report`: null when the runner already delivered it, a text to post as it is, or undefined to compose it here. */
   private finish(job: Job, status: "done" | "failed", text: string, sessionId: string | null, cause: string | null = null, report?: string | null): void {
+    denyPendingApprovals(job);
     this.running.delete(job.id);
     job.status = status;
     job.finishedAt = Date.now();
@@ -768,6 +815,7 @@ export class JobManager {
     this.persist();
     const seconds = Math.round((Date.now() - job.startedAt) / 1000);
     this.log.info("subagent finished", { job: job.name, status, seconds, sessionId: job.sessionId, cause });
+    if (this.storePath && !job.host) notifyJobEvent(dirname(this.storePath), status === "done" ? "finish" : "fail", this.log);
     const message = report === undefined ? jobReport(job, status, seconds, text, cause) : report;
 
     // Follow-ups that arrived meanwhile go out right away, into the same session (it keeps its slot).
@@ -787,8 +835,8 @@ export class JobManager {
    * example). The question arrives as a message from the job; the agent answers with message_subagent.
    * No answer within the time limit counts as "deny".
    */
-  askParent(job: Job, question: string, timeoutMs: number): Promise<{ allow: boolean; reason: string }> {
-    return waitForApproval(job, question, timeoutMs, (body) => this.post(job, body), this.log);
+  askParent(job: Job, question: string, timeoutMs: number, request?: PermissionRequest): Promise<{ allow: boolean; reason: string }> {
+    return waitForApproval(job, question, timeoutMs, (body) => this.post(job, body), this.log, this.storePath ? dirname(this.storePath) : undefined, request);
   }
 
   /**
