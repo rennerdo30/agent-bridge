@@ -787,6 +787,7 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
         title: `Ask ${target}`,
         description:
           `Run ${profile.title} headlessly in this project with the given prompt and wait for its final answer. ` +
+          "This is one blocking call, not a background job or a polling loop. Return its job id and result as received, including errors; do not automatically start another ask call after a timeout. " +
           `Good for quick second opinions or reviews. For longer or parallel work use spawn_${target}. ` +
           "Pass the returned session_id back to continue the same conversation. " +
           profile.permissionNote(cfg),
@@ -806,10 +807,13 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
           res = await run({ ...a, _job: tracked?.job.name }, tracked ? AbortSignal.any([extra.signal, tracked.job.controller.signal]) : extra.signal, onProgress, false, tracked?.job);
         } catch (err) {
           tracked?.end({ error: err });
-          throw err;
+          log.warn("ask failed", { job: tracked?.job.name, err: (err as Error).message });
+          const identity = tracked ? `Job: ${tracked.job.name}\n${target} session_id: ${tracked.job.sessionId ?? "-"}\n\n` : "";
+          return text(`${identity}${describeError(err)}`, true);
         }
         tracked?.end({ result: res });
         const header =
+          (tracked ? `Job: ${tracked.job.name}\n` : "") +
           t("delegate.done", { agent: target, session: res.sessionId ?? "-" }) +
           (res.isError ? "\n" + t("delegate.cause", { cause: failureCause({ result: res }) }) : "") +
           (tracked && res.sessionId ? "\n" + t("delegate.followUp", { job: tracked.job.name }) : "");
