@@ -33400,18 +33400,18 @@ var UI_PAGE = `<!doctype html>
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --bg: #0c1013; --panel: #13191d; --panel-2: #182025; --sunk: #0e1316; --text: #e2e8eb; --muted: #94a1a9; --faint: #64717a; --line: #222c32;
-    --accent: #3bc2cc; --accent-soft: #10333a; --on-accent: #052226; --ok: #5cc98a; --ok-soft: #11281c; --warn: #f0b140; --warn-soft: #32250d;
-    --bad: #f07a66; --bad-soft: #391b16; --busy: #3bc2cc; --busy-soft: #10333a;
+    --bg: #161b20; --panel: #1e252b; --panel-2: #252d34; --sunk: #12171b; --text: #edf2f4; --muted: #b0bcc3; --faint: #8593a0; --line: #323d45;
+    --accent: #4fcfd8; --accent-soft: #17414a; --on-accent: #062a2e; --ok: #6fd69a; --ok-soft: #173424; --warn: #f4bd55; --warn-soft: #3c2d12;
+    --bad: #f48a77; --bad-soft: #43221c; --busy: #4fcfd8; --busy-soft: #17414a;
     --shadow: none; --pop: 0 18px 48px rgba(0, 0, 0, .5);
     color-scheme: dark;
   }
 }
 /* Chosen in the sidebar: dark regardless of the system. */
 :root[data-theme="dark"] {
-  --bg: #0c1013; --panel: #13191d; --panel-2: #182025; --sunk: #0e1316; --text: #e2e8eb; --muted: #94a1a9; --faint: #64717a; --line: #222c32;
-  --accent: #3bc2cc; --accent-soft: #10333a; --on-accent: #052226; --ok: #5cc98a; --ok-soft: #11281c; --warn: #f0b140; --warn-soft: #32250d;
-  --bad: #f07a66; --bad-soft: #391b16; --busy: #3bc2cc; --busy-soft: #10333a;
+  --bg: #161b20; --panel: #1e252b; --panel-2: #252d34; --sunk: #12171b; --text: #edf2f4; --muted: #b0bcc3; --faint: #8593a0; --line: #323d45;
+  --accent: #4fcfd8; --accent-soft: #17414a; --on-accent: #062a2e; --ok: #6fd69a; --ok-soft: #173424; --warn: #f4bd55; --warn-soft: #3c2d12;
+  --bad: #f48a77; --bad-soft: #43221c; --busy: #4fcfd8; --busy-soft: #17414a;
   --shadow: none; --pop: 0 18px 48px rgba(0, 0, 0, .5);
   color-scheme: dark;
 }

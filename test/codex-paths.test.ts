@@ -49,11 +49,13 @@ describe("Codex drive aliases", () => {
       const cwd = `${drive}\\`;
       const prompt = `Write ${drive}/new-report.md`;
       await delegateToCodex({ bin: process.execPath, cwd, prompt, sandbox: "read-only", timeoutSec: 10, log: nullLogger });
-      expect(readFileSync(join(dir, "prompt.txt"), "utf8")).toContain(`${dir}\\new-report.md`);
+      // When the repo itself sits on a subst drive (E: for D:), the real path is reported on the backing drive.
+      const tail = dir.slice(2);
+      expect(readFileSync(join(dir, "prompt.txt"), "utf8")).toContain(`${tail}\\new-report.md`);
       await delegateToCodexAppServer({ bin: process.execPath, cwd, prompt, sandbox: "read-only", timeoutSec: 10, log: nullLogger });
       const calls = readFileSync(join(dir, "requests.jsonl"), "utf8").trim().split("\n").map((s) => JSON.parse(s));
-      expect(calls.find((c) => c.method === "thread/start").params.cwd).toBe(dir);
-      expect(calls.find((c) => c.method === "turn/start").params.input[0].text).toContain(`${dir}\\new-report.md`);
+      expect(calls.find((c) => c.method === "thread/start").params.cwd.slice(2)).toBe(tail);
+      expect(calls.find((c) => c.method === "turn/start").params.input[0].text).toContain(`${tail}\\new-report.md`);
     } finally {
       if (mapped) execFileSync("subst", [drive, "/D"]);
       rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
