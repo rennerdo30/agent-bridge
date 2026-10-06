@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { nullLogger } from "../src/core/logger.js";
@@ -17,7 +17,8 @@ export interface TestEnv {
 
 /** An isolated bridge endpoint per test: its own home dir, so its own pipe and database. */
 export function makeEnv(): TestEnv {
-  const home = mkdtempSync(join(tmpdir(), "agent-bridge-test-"));
+  // macOS tmpdir uses the /var alias; transfer fixtures deliberately require unlinked ancestors.
+  const home = realpathSync.native(mkdtempSync(join(tmpdir(), "agent-bridge-test-")));
   const pipe = resolvePipePath(home, {});
   const db = resolveDbPath(home);
   const nodes: BridgeNode[] = [];

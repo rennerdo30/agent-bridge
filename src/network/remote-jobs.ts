@@ -27,8 +27,9 @@ interface Pending { host: string; resolve: (value: RemoteJobSnapshot) => void; r
 /** Canonical containment rejects traversal, sibling-prefix paths and symlink/junction escapes. */
 export function allowedRemoteDirectory(directory: string, roots: string[]): string {
   if (!isAbsolute(directory)) throw new Error("Remote cwd must be an absolute path on the paired PC.");
-  const canonical = realpathSync(directory);
-  if (!statSync(canonical).isDirectory() || !roots.some((root) => isAbsolute(root) && isInside(canonical, realpathSync(root)))) {
+  // Native resolution expands Windows 8.3 names too: Git and Node may spell the same temp root differently.
+  const canonical = realpathSync.native(directory);
+  if (!statSync(canonical).isDirectory() || !roots.some((root) => isAbsolute(root) && isInside(canonical, realpathSync.native(root)))) {
     throw new Error("Remote folder is outside network.remoteJobs.allowRoots.");
   }
   return canonical;

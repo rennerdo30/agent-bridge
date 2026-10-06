@@ -167,7 +167,8 @@ describe("codex app-server startup", () => {
       expect(err.message).toBe("codex app-server did not answer initialize within 1s (startup timeout)");
       expect(Date.now() - started).toBeLessThan(15_000);
     } finally {
-      rmSync(dir, { recursive: true, force: true });
+      // Windows may release the child's cwd handle just after taskkill exits.
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     }
   }, 20_000);
 });

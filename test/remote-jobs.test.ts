@@ -2,14 +2,15 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { BridgeClient } from "../src/core/client.js";
 import { PROTOCOL_VERSION } from "../src/core/constants.js";
 import { killPid, pidAlive } from "../src/core/delegate.js";
 import { nullLogger } from "../src/core/logger.js";
+import type { PeerInfo } from "../src/core/protocol.js";
 import { BridgeNode } from "../src/core/node.js";
 import { resolveDbPath, resolvePipePath } from "../src/core/paths.js";
 import { answerPendingApproval, listPendingApprovals } from "../src/core/relay.js";
@@ -52,7 +53,8 @@ process.stdin.on('end',async()=>{
 `;
 
 beforeEach(() => {
-  root = mkdtempSync(join(tmpdir(), "agent-bridge-remote-"));
+  // Transfer fixtures must have no linked ancestors (/var on macOS); native also expands Windows 8.3 names.
+  root = realpathSync.native(mkdtempSync(join(tmpdir(), "agent-bridge-remote-")));
   localHome = join(root, "windows"); remoteHome = join(root, "mac"); repo = join(root, "allowed");
   for (const path of [localHome, remoteHome, repo]) mkdirSync(path, { recursive: true });
   cleanup = [];
@@ -66,6 +68,7 @@ afterEach(async () => {
   await waitFor(() => [...pids].every((pid) => !pidAlive(pid)));
   pids.clear();
   for (const close of cleanup.reverse()) await close();
+  vi.useRealTimers();
   await new Promise((r) => setTimeout(r, 200));
   rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 });
@@ -122,6 +125,39 @@ async function held(client: Client, extra: Record<string, unknown> = {}): Promis
 }
 
 describe("remote jobs security", () => {
+  it("canonicalizes allowed-root aliases without allowing sibling folders or linked escapes", () => {
+    const alias = join(root, "repo-alias"); symlinkSync(repo, alias, process.platform === "win32" ? "junction" : "dir");
+    expect(allowedRemoteDirectory(repo, [alias])).toBe(repo);
+    expect(allowedRemoteDirectory(alias, [repo])).toBe(repo);
+    if (process.platform === "win32") {
+      // CI's RUNNER~1 temp root uses this spelling; JS realpath retains it while native realpath expands it.
+      const short = execFileSync(process.env.ComSpec ?? "cmd.exe", ["/d", "/c", "for %I in (.) do @echo %~fsI"], { cwd: repo, encoding: "utf8", windowsHide: true }).trim();
+      expect(allowedRemoteDirectory(repo, [short])).toBe(repo);
+      expect(allowedRemoteDirectory(short, [repo])).toBe(repo);
+    }
+    const sibling = `${repo}-sibling`; mkdirSync(sibling);
+    expect(() => allowedRemoteDirectory(sibling, [alias])).toThrow(/outside/);
+    const escape = join(repo, "outside"); symlinkSync(remoteHome, escape, process.platform === "win32" ? "junction" : "dir");
+    expect(() => allowedRemoteDirectory(escape, [alias])).toThrow(/outside/);
+  });
+
+  it("authorizes a newly joined supervisor before the periodic peer refresh", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    config(localHome, "windows"); config(remoteHome, "mac", true);
+    const peers: PeerInfo[] = [];
+    const a = new NetworkService(localHome, { ...DEFAULT_NETWORK_CONFIG, enabled: true, name: "windows", bind: LOOPBACK, port: 0, discovery: false }, { peers: () => peers, receive: () => ({ delivered: true }) }, nullLogger);
+    const b = new NetworkService(remoteHome, { ...DEFAULT_NETWORK_CONFIG, enabled: true, name: "mac", bind: LOOPBACK, port: 0, discovery: false }, { peers: () => [], receive: () => ({ delivered: true }) }, nullLogger);
+    const requester = new RemoteJobs(a, localHome, nullLogger, async () => {});
+    const receiver = new RemoteJobs(b, remoteHome, nullLogger, async () => {});
+    cleanup.push(() => a.close(), () => b.close(), () => { requester.close(); receiver.close(); });
+    await a.start(); await b.start(); await a.link(b.keys.invite(), LOOPBACK, b.port);
+    const peer: PeerInfo = { id: randomUUID(), name: "supervisor", agent: "codex", cwd: repo, pid: process.pid, agentPid: null, sessionId: null, startedAt: Date.now(), autoWake: false };
+    peers.push(peer);
+    // Reaching the job lookup proves the advertised-session check passed; no job was spawned.
+    await expect(requester.request("mac", peer, { op: "state", job: "12345678" })).rejects.toThrow("Unknown remote job.");
+    await expect(requester.request("mac", { ...peer, id: randomUUID() }, { op: "state", job: "12345678" })).rejects.toThrow("not an advertised supervisor");
+  });
+
   it("is off by default and rejects arbitrary runner arguments and folder escapes", () => {
     expect(DEFAULT_NETWORK_CONFIG.remoteJobs).toEqual({ enabled: false, allowRoots: [], agents: [], allowPeers: [] });
     expect(remoteSpawnArgsSchema.safeParse({ prompt: "test", title: "test", cwd: repo, bin: "anything" }).success).toBe(false);

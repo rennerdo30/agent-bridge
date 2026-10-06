@@ -31324,6 +31324,7 @@ var NetworkService = class {
     const extension = this.extensions.get(type);
     const link2 = this.instanceLink(instance);
     if (!extension || !link2.supports(extension.capability)) return Promise.reject(new Error("remote broker does not support this extension"));
+    if (type === "remote-job" && payload.kind === "request") link2.refresh();
     return link2.writeExtension(type, payload);
   }
   get supportsReceipts() {
@@ -35658,8 +35659,8 @@ var JobRunners = class {
 var REMOTE_JOBS_FILE = "remote-jobs.json";
 function allowedRemoteDirectory(directory2, roots) {
   if (!isAbsolute8(directory2)) throw new Error("Remote cwd must be an absolute path on the paired PC.");
-  const canonical = realpathSync6(directory2);
-  if (!statSync9(canonical).isDirectory() || !roots.some((root) => isAbsolute8(root) && isInside(canonical, realpathSync6(root)))) {
+  const canonical = realpathSync6.native(directory2);
+  if (!statSync9(canonical).isDirectory() || !roots.some((root) => isAbsolute8(root) && isInside(canonical, realpathSync6.native(root)))) {
     throw new Error("Remote folder is outside network.remoteJobs.allowRoots.");
   }
   return canonical;
