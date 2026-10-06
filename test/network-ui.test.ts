@@ -9,6 +9,7 @@ import { BridgeNode } from "../src/core/node.js";
 import { loadOrCreateToken } from "../src/core/token.js";
 import { nullLogger } from "../src/core/logger.js";
 import { DEFAULT_NETWORK_CONFIG } from "../src/network/config.js";
+import { NetworkDiscovery } from "../src/network/discovery.js";
 import { applyWindowsFirewall, detectFirewall } from "../src/network/firewall.js";
 import { makeEnv, type TestEnv } from "./helpers.js";
 
@@ -19,6 +20,12 @@ vi.mock("../src/network/firewall.js", async (original) => ({
   applyWindowsFirewall: vi.fn(async () => {}),
 }));
 const ACTIONS = ["configure", "pair", "link", "unlink", "verify", "firewall"];
+vi.mock("../src/network/profiles.js", () => ({
+  networkProfileStatus: vi.fn(async () => ({
+    networkProfiles: [{ interfaceAlias: "test LAN", interfaceIndex: 10, category: "Public" }],
+    networkProfileHint: "Windows Public network profile on test LAN. Private firewall rules do not apply.",
+  })),
+}));
 const LOOPBACK = "127.0.0.1";
 const environments: TestEnv[] = [];
 const nodes: BridgeNode[] = [];
@@ -48,6 +55,24 @@ afterEach(async () => {
 });
 
 describe("authenticated dashboard network flow", () => {
+  it("exposes broker discovery diagnostics and the Windows Public profile hint", async () => {
+    const diagnostics = {
+      bind: "0.0.0.0", port: 48149, multicastGroup: "239.255.48.49", multicastTTL: 1,
+      interfaces: [{ name: "test LAN", address: "192.0.2.10", netmask: "255.255.255.0", broadcast: "192.0.2.255", announcing: true, multicast: true, lastSentAt: 100 }],
+      skippedInterfaces: [], lastSentAt: 100, lastReceivedAt: 200, lastError: null,
+    };
+    const start = vi.spyOn(NetworkDiscovery.prototype, "start").mockResolvedValue();
+    const snapshot = vi.spyOn(NetworkDiscovery.prototype, "diagnostics").mockReturnValue(diagnostics);
+    try {
+      expect((await post("configure", { ...config("local-pc"), discovery: true, confirm: true })).status).toBe(200);
+      const state = await (await fetch(`${base()}/api/network`, { headers: { cookie } })).json();
+      expect(state.discoveryDiagnostics).toEqual(diagnostics);
+      expect(state.networkProfiles).toEqual([{ interfaceAlias: "test LAN", interfaceIndex: 10, category: "Public" }]);
+      expect(state.networkProfileHint).toContain("Private firewall rules do not apply");
+      expect(state.discovered).toEqual([]);
+    } finally { start.mockRestore(); snapshot.mockRestore(); }
+  });
+
   it("reports a missing broker as unavailable for both transfer endpoints", async () => {
     await nodes[0]!.stop();
     expect((await fetch(`${base()}/api/transfers`, { headers: { cookie } })).status).toBe(503);

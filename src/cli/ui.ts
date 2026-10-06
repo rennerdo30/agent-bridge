@@ -20,6 +20,7 @@ import { JOB_SETTING_KEYS } from "../mcp/job-settings.js";
 import { UI_PAGE } from "./ui-page.js";
 import { networkConfigSchema } from "../network/config.js";
 import { planFirewall, detectFirewall, applyWindowsFirewall } from "../network/firewall.js";
+import { networkProfileStatus } from "../network/profiles.js";
 import { parseNetworkAddress } from "../network/address.js";
 import type { Op, RequestMap } from "../core/protocol.js";
 import { isRecord } from "../core/json-store.js";
@@ -480,7 +481,7 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
     if (req.method === "GET" && url.pathname === "/api/network") {
       const status = await networkRequest("networkStatus", {});
       const config = status.config ?? loadConfig(opts.home, "other", opts.log).network;
-      return send(res, 200, { ...status, config, addresses: lanAddresses() });
+      return send(res, 200, { ...status, config, addresses: lanAddresses(), ...await networkProfileStatus() });
     }
     if (req.method === "GET" && url.pathname === "/api/transfers") {
       try { return send(res, 200, await networkRequest("transfers", {})); }
