@@ -28,7 +28,7 @@ import { MAX_TRANSFER_ENTRIES } from "../network/files.js";
 import { resolveDbPath, resolveHome, resolvePipePath } from "../core/paths.js";
 import { inspectClaudeLaunch } from "../core/procinfo.js";
 import { loadOrCreateToken } from "../core/token.js";
-import { BridgeError, BROADCAST, CODING_AGENTS, isSiblingNote, type AgentKind, type BridgeMessage, type CodingAgent } from "../core/protocol.js";
+import { BridgeError, BROADCAST, CODING_AGENTS, isSiblingNote, SIBLING_CONVERSATION_PREFIX, type AgentKind, type BridgeMessage, type CodingAgent } from "../core/protocol.js";
 import { formatDuration, formatMessage, formatMessages, formatPeer } from "./format.js";
 import { CodexWaker, type Activity } from "./codex-wake.js";
 import { buildHookResponse, type HookEvent } from "./hooks.js";
@@ -46,6 +46,7 @@ import { isBridgeWorktree, isInside, resumeArgs, runDelegate, type DelegateArgs,
 import { JobRunners } from "./job-host.js";
 import { JOB_SETTING_KEYS, PERMISSION_KEY_AGENT, type JobSettings } from "./job-settings.js";
 import { attachDashboardJobControl } from "./dashboard-control.js";
+import { isJobSendTarget, MAX_JOB_SEND_TARGETS } from "../core/job-messaging.js";
 
 export { DELEGATED_JOB_NOTE } from "./delegate-run.js";
 
@@ -63,7 +64,7 @@ const SUBAGENT_TOOLS = new Set(["peers", "send", "report_progress", "hook_event"
 /** The options of a job worth keeping to continue it the same way later (no prompt, no internals). */
 /** When to look again for jobs under a stand-in name (a replaced server of the session may still be leaving). */
 const STAND_IN_RECHECK_MS = 30_000;
-const KEPT_ARGS = ["model", "effort", "cwd", "timeout_sec", "worktree", "access", "sandbox", "permission_mode", "auto_approve", "allow_tools", "title"] as const;
+const KEPT_ARGS = ["model", "effort", "cwd", "timeout_sec", "worktree", "access", "sandbox", "permission_mode", "auto_approve", "allow_tools", "send_to", "title"] as const;
 /** Plugin root: dist/server.mjs lives one level below it. */
 const PLUGIN_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -488,11 +489,18 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
     guarded("peers", async () => {
       if (!node && ctx.parent) {
         const siblings = await ctx.parent.siblings.peers();
+        // A runner already alive during an upgrade may still serve the earlier parent-link API.
+        const policy = await ctx.parent.siblings.policy?.().catch((err: unknown) => {
+          if (String(err).includes("not found")) return undefined;
+          throw err;
+        });
         return text([
           `You are a delegated job of ${ctx.parent.name}. Use send(to="${ctx.parent.name}", message=...) to message your parent.`,
           siblings.length ? "Sibling jobs:" : "No sibling jobs are available right now.",
           ...siblings.map((s) => `- ${s.name}${s.title ? ` "${s.title}"` : ""} (${s.agent}, ${s.status})`),
           "Use send(to=<sibling job name>, message=...) to coordinate directly. The supervisor receives a quiet copy.",
+          ...(policy ? [`Sibling threads allow ${policy.maxHops} messages, including the first message. Incoming messages show replies remaining before you compose.`,
+            `Explicit send_to grants: ${policy.sendTo.length ? policy.sendTo.join(", ") : "none"}. Only these exact external session names are allowed.`] : []),
         ].join("\n"));
       }
       const n = requireNode();
@@ -538,7 +546,7 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
       description:
         `Send a message to another agent. "to" is a peer name from "peers", an agent kind ("claude", "codex") when exactly one is online, or "${BROADCAST}" for everyone. ` +
         "If the recipient is offline the message waits for it. When answering a message, pass its id as reply_to. " +
-        "Delegated jobs can send to their parent or a sibling's exact job name from peers; sibling messages arrive live or wait for its next turn, with a quiet supervisor copy. Sending to a finished sibling does not start a new turn. Other sessions and broadcasts are unavailable to delegated jobs.",
+        "Delegated jobs can send to their parent, siblings, or exact session names explicitly granted with send_to at spawn. Sibling messages arrive live or wait for the next turn, with a quiet supervisor copy. Sending to a finished sibling does not start a new turn. Other sessions and broadcasts are unavailable. Peers shows grants and the sibling thread limit before composing.",
       inputSchema: {
         to: z.string().min(1).describe('Peer name, agent kind ("claude" / "codex") or "*"'),
         message: z.string().min(1).max(MAX_BODY_CHARS).describe("Message text (Markdown is fine)"),
@@ -551,8 +559,9 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
         if (a.to !== ctx.parent.name && a.to !== "parent") {
           const result = await ctx.parent.siblings.send(a.to, a.message, a.reply_to);
           const m = result.messages[0]!;
-          const delivery = result.queuedFor.length ? "queued for the sibling's next turn" : "sent to sibling";
-          return text(`Message ${m.id} ${delivery} ${a.to} (conversation ${m.conversationId}, hop ${m.hop}). The supervisor received a quiet copy.`);
+          const sibling = m.conversationId.startsWith(SIBLING_CONVERSATION_PREFIX);
+          const delivery = result.queuedFor.length ? sibling ? "queued for the sibling's next turn" : "queued for the granted session" : sibling ? "sent to sibling" : "sent to granted session";
+          return text(`Message ${m.id} ${delivery} ${a.to} (conversation ${m.conversationId}, hop ${m.hop}).${sibling ? " The supervisor received a quiet copy." : ""}`);
         }
         await ctx.parent.send(a.message, a.reply_to);
         return text(t("send.toParent", { name: ctx.parent.name }));
@@ -754,6 +763,9 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
         .describe(
           'MCP tools the subagent may call without asking you, as "server.tool" patterns with *, e.g. ["pair-desk.get_*", "pair-desk.list_*"] (reads only), "pair-desk:worker" (reads, comments, progress, plans and issue edits; excludes status, builds and handoff writes), or "server" for all of its tools.',
         ),
+      send_to: z.array(z.string().refine(isJobSendTarget, "Use an exact local session name, not an agent kind, broadcast or job name"))
+        .max(MAX_JOB_SEND_TARGETS).optional()
+        .describe("Explicitly allow this job to send to these exact local session names, including replies to messages received by its supervisor. No other external recipients are allowed. Kept across continuations."),
       ...profile.schema,
     };
     /** Run the delegate in this process. */

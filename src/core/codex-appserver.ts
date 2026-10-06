@@ -5,6 +5,7 @@ import { checkDepth, childEnv, DelegateError, exitDescription, killTree, realFol
 import { progressEventHandler } from "./progress.js";
 import { CODEX_ASK_HINT } from "./delegate.js";
 import type { PermissionDecision } from "./relay.js";
+import { FinalAnswers } from "./final-answers.js";
 
 /**
  * Codex subagents through `codex app-server` (JSON-RPC over stdio) instead of `codex exec`. The same
@@ -89,7 +90,7 @@ export async function delegateToCodexAppServer(
   let stderr = "";
   let threadId: string | null = req.sessionId ?? null;
   let turnId: string | null = null;
-  let lastMessage = "";
+  const finalAnswers = new FinalAnswers();
   let usage: unknown = null;
   let retryableError: string | null = null;
   let finished: (v: { status: string; error: string | null }) => void = () => {};
@@ -195,7 +196,7 @@ export async function delegateToCodexAppServer(
         const item = params.item ?? {};
         onEvent?.(asExecEvent("item.completed", item));
         if (item.type === "agentMessage" && typeof item.text === "string" && item.text.trim()) {
-          lastMessage = item.text;
+          finalAnswers.add(item);
           if (awaitingAnswer) {
             awaitingAnswer = false;
             answers.push(item.text);
@@ -335,9 +336,9 @@ export async function delegateToCodexAppServer(
     const error = outcome.error ?? (outcome.status === "failed" ? (retryableError ?? "turn failed") : null);
     req.log.info("codex turn ended", { threadId, turnId, status: outcome.status, error: outcome.error, retryableError });
     if (outcome.status === "interrupted") throw new DelegateError(`codex interrupted the turn${outcome.error ? `: ${outcome.error}` : ""}`, "failed", stderr, "", threadId);
-    if (error && !lastMessage) throw new DelegateError(error, "failed", stderr, "", threadId);
+    if (error && !finalAnswers.text()) throw new DelegateError(error, "failed", stderr, "", threadId);
     req.log.info("codex delegate finished", { threadId, status: outcome.status });
-    return { sessionId: threadId, text: lastMessage, isError: Boolean(error), details: { usage, error, answers: answers.length } };
+    return { sessionId: threadId, text: finalAnswers.text(), isError: Boolean(error), details: { usage, error, answers: answers.length } };
   } catch (err) {
     req.live?.onSteering(null);
     // Stop the turn properly before the process goes, so the session file stays consistent for a resume.

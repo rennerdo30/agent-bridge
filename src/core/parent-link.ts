@@ -5,6 +5,7 @@ import type { Logger } from "./logger.js";
 import { tokensEqual } from "./token.js";
 import type { BridgeMessage, SendResult, SiblingPeer } from "./protocol.js";
 import { MAX_BODY_CHARS } from "./constants.js";
+import type { JobMessagingPolicy } from "./job-messaging.js";
 
 /**
  * Live link between a session and a subagent it runs, like a native subagent's: the session's messages
@@ -33,6 +34,7 @@ export interface LinkMessage {
 export interface SiblingClient {
   peers(): Promise<SiblingPeer[]>;
   send(to: string, body: string, replyTo?: string): Promise<SendResult>;
+  policy?(): Promise<JobMessagingPolicy>;
 }
 
 export class ParentLink {
@@ -115,6 +117,9 @@ export class ParentLink {
     if (req.method === "POST" && req.url === "/siblings") {
       return { peers: this.siblings ? await this.siblings.peers() : [] };
     }
+    if (req.method === "POST" && req.url === "/messaging-policy") {
+      return this.siblings?.policy ? this.siblings.policy() : { maxHops: 0, sendTo: [] };
+    }
     if (req.method === "POST" && req.url === "/sibling-message") {
       if (!this.siblings) throw new Error("sibling messaging unavailable");
       const body = JSON.parse(await readBody(req)) as { to?: unknown; body?: unknown; reply_to?: unknown };
@@ -180,6 +185,7 @@ export function parentFromEnv(env: NodeJS.ProcessEnv = process.env): ParentClien
     siblings: {
       peers: async () => ((await call("/siblings", {})).peers as SiblingPeer[]) ?? [],
       send: async (to, body, replyTo) => (await call("/sibling-message", { to, body, reply_to: replyTo })) as unknown as SendResult,
+      policy: async () => await call("/messaging-policy", {}) as unknown as JobMessagingPolicy,
     },
   };
 }

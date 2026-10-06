@@ -313,7 +313,10 @@ export class JobManager {
       if (hosted && mine && this.takeOver(job)) adopted.push(job);
     }
     if (stored.length) this.log.info("restored subagent jobs", { count: Math.min(stored.length, HISTORY_LIMIT), runnerHosted: adopted.length });
+    // Jobs saved before sibling identities existed need the same group as later jobs of their supervisor.
+    this.assignLegacySupervisors();
     this.settleAdopted(adopted);
+    this.persist();
   }
 
   /** Whether a runner-hosted job can be taken over here (its runner lives, or finished and left its report). */
@@ -395,6 +398,7 @@ export class JobManager {
     const owners = new Set([...this.history.values()].map((j) => j.owner).filter((o): o is string => Boolean(o) && this.isStandIn(o!) && !online.has(o!)));
     if (!owners.size) return [];
     for (const o of owners) this.adoptedOwners.add(o);
+    this.assignLegacySupervisors();
     const taken: Job[] = [];
     for (const job of this.history.values()) {
       if (!job.owner || !owners.has(job.owner)) continue;
@@ -403,6 +407,7 @@ export class JobManager {
     }
     this.log.info("adopted jobs started under a stand-in name of this session", { owners: [...owners], runnerHosted: taken.length });
     this.settleAdopted(taken);
+    this.persist();
     return [...owners];
   }
 
@@ -447,8 +452,23 @@ export class JobManager {
       args,
       owner: this.node.name,
       // Keep the first job's identity when hooks learn the session id later, or a server reload adopts it.
-      supervisor: [...this.running.values(), ...this.foreground.values()].find((j) => this.isMine(j.owner))?.supervisor ?? this.node.currentSessionId ?? this.node.id,
+      supervisor: this.supervisorIdentity(),
     };
+  }
+
+  private supervisorIdentity(): string {
+    return [...this.running.values(), ...this.foreground.values(), ...this.history.values()]
+      .find((j) => this.isMine(j.owner) && j.supervisor)?.supervisor ?? this.node.currentSessionId ?? this.node.id;
+  }
+
+  private assignLegacySupervisors(): void {
+    const supervisor = this.supervisorIdentity();
+    for (const job of this.history.values()) {
+      if (!job.supervisor && this.isMine(job.owner)) {
+        job.supervisor = supervisor;
+        this.own.add(job.id);
+      }
+    }
   }
 
   /**

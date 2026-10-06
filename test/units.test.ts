@@ -25,7 +25,7 @@ const msg = (over: Partial<BridgeMessage> = {}): BridgeMessage => ({
 });
 
 describe("parseCodexJsonl", () => {
-  it("extracts thread id and last agent message", () => {
+  it("extracts thread id and preserves unphased completed answers", () => {
     const out = [
       '{"type":"thread.started","thread_id":"th-1"}',
       '{"type":"turn.started"}',
@@ -35,7 +35,17 @@ describe("parseCodexJsonl", () => {
       '{"type":"item.completed","item":{"id":"i2","type":"agent_message","text":"final answer"}}',
       '{"type":"turn.completed","usage":{"input_tokens":5}}',
     ].join("\n");
-    expect(parseCodexJsonl(out)).toEqual({ threadId: "th-1", text: "final answer", error: null, usage: { input_tokens: 5 } });
+    expect(parseCodexJsonl(out)).toEqual({ threadId: "th-1", text: "first\n\nfinal answer", error: null, usage: { input_tokens: 5 } });
+  });
+
+  it("keeps the deliverable when a later final answer only acknowledges a sibling", () => {
+    const out = [
+      { type: "item.completed", item: { id: "progress", type: "agent_message", phase: "commentary", text: "Reading inventory" } },
+      { type: "item.completed", item: { id: "deliverable", type: "agent_message", phase: "final_answer", text: "| File | Finding |\n| source.ts | Contract preserved |" } },
+      { type: "item.completed", item: { id: "ack", type: "agent_message", phase: "final_answer", text: "Acknowledged sibling scope" } },
+      { type: "item.completed", item: { id: "ack", type: "agent_message", phase: "final_answer", text: "Acknowledged sibling scope" } },
+    ].map((value) => JSON.stringify(value)).join("\n");
+    expect(parseCodexJsonl(out).text).toBe("| File | Finding |\n| source.ts | Contract preserved |\n\nAcknowledged sibling scope");
   });
 
   it("ignores transient errors when the turn completes", () => {
