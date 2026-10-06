@@ -23,7 +23,7 @@ function page() {
   const fetch = vi.fn(() => new Promise(() => {}));
   const document = { getElementById: element, documentElement: { dataset: {} }, addEventListener() {}, querySelectorAll: () => [] };
   const location = { hash: "" };
-  const api = new Function("document", "window", "location", "localStorage", "setInterval", "fetch", `${script}\nreturn { renderJobForm, renderSendForm, modelsCard, renderNetwork, renderSide, renderSessionList, chatHtml, setNativeList: (name, list) => nativeLists.set(name, { at: Date.now(), list }), renderApprovals, answerApproval, renderDecisions, setApprovals: (a) => { approvals = a; }, setDecisions: (d) => { decisions = d; decLoadedAt = Date.now(); }, setModel: (m) => { model = m; state = { peers: [] }; }, setRoute: (r) => route = r, setNet: (n, i) => { net = n; invite = i || null; } };`)(document, { addEventListener() {} }, location, { setItem() {}, removeItem() {} }, () => 0, fetch);
+  const api = new Function("document", "window", "location", "localStorage", "setInterval", "fetch", `${script}\nreturn { renderJobForm, renderSendForm, modelsCard, renderNetwork, renderSide, renderSessionList, chatHtml, renderConversation, renderSearch, renderTransfers, loadOlderButton, setOutcomes: (o) => { outcomes = o; }, setSearch: (r) => { searchResult = r; }, setTransfers: (t) => { transfers = t; }, setState: (s) => { state = s; }, setChat: (id, c) => chats.set(id, c), setNativeList: (name, list) => nativeLists.set(name, { at: Date.now(), list }), renderApprovals, answerApproval, renderDecisions, setApprovals: (a) => { approvals = a; }, setDecisions: (d) => { decisions = d; decLoadedAt = Date.now(); }, setModel: (m) => { model = m; state = { peers: [] }; }, setRoute: (r) => route = r, setNet: (n, i) => { net = n; invite = i || null; } };`)(document, { addEventListener() {} }, location, { setItem() {}, removeItem() {} }, () => 0, fetch);
   return { ...api, element, fetch, location };
 }
 const group = (key: string) => ({ key, job: `codex-job-${key}`, owner: "claude-app", agent: "codex", status: "done", percent: null, turns: [{ name: `run-${key}`, startedAt: 0 }] });
@@ -340,5 +340,54 @@ describe("system turns in native chats", () => {
     expect(html).toContain("/reload-plugins");
     expect(html).toContain("Context added by the CLI");
     expect(html.match(/You · /g)?.length).toBe(1);
+  });
+});
+
+describe("history, outcomes, transfers", () => {
+  const g = (key: string, extra: Record<string, unknown> = {}) => ({ key, job: key, owner: "claude-app", agent: "codex", status: "done", percent: null, title: "Task " + key, task: "", updatedAt: Date.now(), startedAt: Date.now(), turns: [{ name: "run-" + key, startedAt: Date.now(), status: "done" }], ...extra });
+
+  it("shows merge outcomes and nests subagents under the subagent that started them", () => {
+    const p = page();
+    const parent = g("parent"), child = g("child", { parentJob: "parent" });
+    const x = { name: "claude-app", live: true, running: 0, groups: [parent, child], children: [], peer: null };
+    p.setModel({ sessions: [x], byName: new Map([[x.name, x]]), groups: new Map([[parent.key, parent], [child.key, child]]) });
+    p.setRoute({ session: x.name });
+    p.setOutcomes({ parent: { outcome: { merge: { state: "held", reason: "waits for A/B" } } } });
+    p.renderSessionList(x, null);
+    const html = p.element("sGroups").innerHTML;
+    expect(html).toContain('class="chip outcome warn" title="waits for A/B">held');
+    expect(html.indexOf("Task parent")).toBeLessThan(html.indexOf("Task child"));
+    expect(html).toContain('class="nest1');
+  });
+
+  it("offers older subagents while the server has more", () => {
+    const p = page();
+    p.setState({ peers: [], runs: [], messages: [], runsNext: "123:run-x", runsTotal: 640 });
+    expect(p.loadOlderButton()).toContain("Load older subagents · 640 in total");
+    p.setState({ peers: [], runs: [], messages: [], runsNext: null });
+    expect(p.loadOlderButton()).toBe("");
+  });
+
+  it("tells a recovered turn from its transcript", () => {
+    const p = page();
+    const rec = g("rec", { turns: [{ name: "codex-job-rec", startedAt: 0, status: "done", hasLog: false, recovered: true }] });
+    p.setModel({ sessions: [], byName: new Map(), groups: new Map([[rec.key, rec]]) });
+    p.setChat("run|codex-job-rec", { items: [{ kind: "assistant", at: 0, text: "Recovered <answer>" }], byId: new Map(), next: null, loading: false, error: "" });
+    p.renderConversation(rec);
+    const html = p.element("chat").innerHTML;
+    expect(html).toContain("Recovered from the job record");
+    expect(html).toContain("Recovered &lt;answer&gt;");
+  });
+
+  it("lists search hits escaped and transfers with progress and cancel", () => {
+    const p = page();
+    p.setSearch({ engine: "fts5", hits: [{ id: "message:1", kind: "message", agent: "claude", at: Date.now(), snippet: "friend <list>", sourceLink: "/api/history/message%3A1" }] });
+    p.renderSearch();
+    expect(p.element("sResults").innerHTML).toContain("friend &lt;list&gt;");
+    p.setTransfers([{ id: "t1", direction: "send", peer: "mac", status: "running", bytes: 1048576, totalBytes: 4194304, files: 1, totalFiles: 3, percent: 25, createdAt: 0, updatedAt: Date.now() }]);
+    p.renderTransfers();
+    const html = p.element("netTransfers").innerHTML;
+    expect(html).toContain("1.0 MB of 4.0 MB");
+    expect(html).toContain('data-xfer-cancel="t1"');
   });
 });
