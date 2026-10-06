@@ -5,6 +5,7 @@ import { z } from "zod";
 import { DEFAULT_WAIT_SEC } from "../core/constants.js";
 import type { BridgeNode } from "../core/node.js";
 import { archiveFile, writeJsonStore } from "../core/json-store.js";
+import { isQuietMessage, type BridgeMessage } from "../core/protocol.js";
 
 /** Below Claude Code's default 120-second automatic background threshold. */
 export const SINGLE_WAIT_SEC = DEFAULT_WAIT_SEC;
@@ -15,13 +16,27 @@ export function singleWaitTimeoutMs(requestedSec: number): number {
 }
 const waitSchema = z.object({
   id: z.uuid(), owner: z.string(), sessionId: z.string().nullable(),
+  mode: z.enum(["block", "notify"]).default("block"),
   filters: z.object({
     from: z.string().optional(), reply_to: z.string().optional(),
     conversation_id: z.string().optional(), read_receipt_of: z.string().optional(),
   }),
 });
 export type WaitFilters = z.infer<typeof waitSchema>["filters"];
-type SavedWait = z.infer<typeof waitSchema>;
+export type SavedWait = z.infer<typeof waitSchema>;
+
+export function matchesWait(filters: WaitFilters, m: BridgeMessage): boolean {
+  return !filters.read_receipt_of &&
+    (!isQuietMessage(m) || Boolean(filters.from || filters.conversation_id || filters.reply_to)) &&
+    (!filters.from || m.from.name === filters.from || m.from.agent === filters.from) &&
+    (!filters.reply_to || m.replyTo === filters.reply_to) &&
+    (!filters.conversation_id || m.conversationId === filters.conversation_id);
+}
+
+/** Retained status/observer mail must not complete a wait for the eventual reply. */
+export function matchesNotificationWait(filters: WaitFilters, m: BridgeMessage): boolean {
+  return !isQuietMessage(m) && !m.conversationId.endsWith(":note") && matchesWait(filters, m);
+}
 
 /** Individual atomic records avoid losing concurrent waits when a stdio server is replaced. */
 export class MessageWaitStore {
@@ -32,8 +47,12 @@ export class MessageWaitStore {
     return record.sessionId && node.currentSessionId
       ? record.sessionId === node.currentSessionId : record.owner === node.name;
   }
-  save(node: BridgeNode, filters: WaitFilters): SavedWait {
-    const record = { id: randomUUID(), owner: node.name, sessionId: node.currentSessionId, filters };
+  save(node: BridgeNode, filters: WaitFilters, mode: SavedWait["mode"] = "block"): SavedWait {
+    // Re-arming the same notification does not create another subscription or wake-up.
+    const existing = mode === "notify" ? this.pending(node).find((r) => r.mode === mode &&
+      ["from", "reply_to", "conversation_id", "read_receipt_of"].every((k) => r.filters[k as keyof WaitFilters] === filters[k as keyof WaitFilters])) : undefined;
+    if (existing) return existing;
+    const record = { id: randomUUID(), owner: node.name, sessionId: node.currentSessionId, filters, mode };
     writeJsonStore(this.path(record.id), record, null);
     return record;
   }
@@ -52,9 +71,29 @@ export class MessageWaitStore {
     });
   }
   remove(id: string): void { archiveFile(this.path(id)); }
+
+  setMode(node: BridgeNode, id: string, mode: SavedWait["mode"]): SavedWait {
+    const record = this.get(node, id);
+    const previous = JSON.parse(readFileSync(this.path(id), "utf8"));
+    writeJsonStore(this.path(id), { ...previous, mode }, previous);
+    return { ...record, mode };
+  }
+
+  /** No timers or per-subscription listeners: existing delivery asks whether unread mail is awaited. */
+  attach(node: BridgeNode): void {
+    node.setNotificationWaitHandlers(
+      (m) => this.pending(node).some((r) => r.mode === "notify" && matchesNotificationWait(r.filters, m)),
+      (messages) => {
+        for (const r of this.pending(node)) {
+          if (r.mode === "notify" && messages.some((m) => matchesNotificationWait(r.filters, m))) this.remove(r.id);
+        }
+      },
+    );
+  }
 }
 
 export function resumeWaitHint(record: SavedWait): string {
+  if (record.mode === "notify") return `Notification wait ${record.id} is armed (${JSON.stringify(record.filters)}). It survives /reload-plugins; do not repeat it. Matching mail stays queued until delivered. Use wait_for_message(${JSON.stringify({ resume_id: record.id, mode: "notify" })}) to inspect or re-arm it.`;
   return `If the wait was interrupted by /reload-plugins or Connection closed, resume with wait_for_message(${JSON.stringify({ resume_id: record.id, ...record.filters })}). Unconsumed messages remain queued.`;
 }
 

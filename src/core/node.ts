@@ -61,6 +61,7 @@ export interface BridgeNodeOptions {
 
 export interface BridgeNodeEvents {
   message: [BridgeMessage];
+  notification_waits_changed: [];
   job_control: [BridgeMessage];
   peer_joined: [PeerInfo];
   peer_left: [PeerInfo];
@@ -106,6 +107,8 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
   private lastSent = 0;
   /** Ids of messages this peer sent as new questions (not replies); replies to them are awaited. */
   private readonly asked = new Set<string>();
+  private notificationMatch: (m: BridgeMessage) => boolean = () => false;
+  private notificationConsumed: (messages: BridgeMessage[]) => void = () => {};
   private activity: PeerActivity | null = null;
   private readonly log: Logger;
 
@@ -488,12 +491,24 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
     if (!real.length) return;
     this.readJournal.append(`name:${this.currentName}`, real);
     if (this.sessionId) this.readJournal.append(`session:${this.sessionId}`, real);
+    const messages = real.map((id) => this.inbox.get(id)!);
     for (const id of real) {
       this.inbox.delete(id);
       this.readIds.add(id);
     }
     this.acknowledge(real);
+    // Complete notification waits only after the durable delivery receipt, never on arrival or hand-out.
+    try { this.notificationConsumed(messages); }
+    catch (err) { this.log.warn("could not archive completed notification wait", { err: String(err) }); }
   }
+
+  setNotificationWaitHandlers(matches: (m: BridgeMessage) => boolean, consumed: (messages: BridgeMessage[]) => void): void {
+    this.notificationMatch = matches;
+    this.notificationConsumed = consumed;
+  }
+
+  isNotificationAwaited(m: BridgeMessage): boolean { return this.notificationMatch(m); }
+  notificationWaitsChanged(): void { this.emit("notification_waits_changed"); }
 
   private restoreReadState(identity: string): void {
     for (const id of this.readJournal.read(identity)) this.readIds.add(id);
@@ -523,6 +538,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
       const done = (m: BridgeMessage | null) => {
         clearTimeout(timer);
         this.off("message", onMessage);
+        this.off("notification_waits_changed", onChanged);
         this.off("replaced", onAbort);
         this.off("stopped", onAbort);
         signal?.removeEventListener("abort", onAbort);
@@ -532,8 +548,10 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
         if (predicate(m)) done(m);
       };
       const onAbort = () => done(null);
+      const onChanged = () => { const m = this.unread().find(predicate); if (m) done(m); };
       const timer = setTimeout(() => done(null), timeoutMs);
       this.on("message", onMessage);
+      this.on("notification_waits_changed", onChanged);
       this.once("replaced", onAbort);
       this.once("stopped", onAbort);
       signal?.addEventListener("abort", onAbort, { once: true });
@@ -546,6 +564,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
     // The broker may hand us the name of an older server of this session that we replace.
     if (this.isConnected) this.currentName = (await this.client!.request("updatePeer", { sessionId })).name;
     if (sessionId) this.restoreReadState(`session:${sessionId}`);
+    this.notificationWaitsChanged();
   }
 
   /** Report busy/idle to the broker so peers can see who is free. Only changes are sent. */

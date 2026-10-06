@@ -99,7 +99,7 @@ Just ask in plain language, for example:
 |---|---|
 | `peers` | Who is online (busy or idle, uptime, session id), your own name and settings, and every running delegation (background jobs and blocking `ask_*` calls) with its runtime and current step |
 | `send` | Message a peer: `to` = peer name, `claude`/`codex` (if exactly one is online) or `*`; `reply_to` threads answers |
-| `wait_for_message` | Block until a (matching) message arrives, e.g. the answer to your question |
+| `wait_for_message` | Register once for a matching reply and return immediately; short blocking waits remain available |
 | `inbox` | Read unread messages |
 | `ask_claude` / `ask_codex` / `ask_opencode` | Headless delegation to another agent (every agent gets the other two); waits and returns the answer and a `session_id` to continue |
 | `spawn_claude` / `spawn_codex` / `spawn_opencode` | Same, but as a background subagent: returns a job name at once; the result arrives as a message from `<agent>-job-<id>`; `peers` shows each job's current step |
@@ -301,10 +301,21 @@ agent-bridge detects this flag on its parent process and switches to channel del
 `send` reports inbox delivery separately from wake policy. A read receipt is available with
 `wait_for_message(read_receipt_of=<sent message id>)`, locally and across paired PCs. It confirms
 consumption by the bridge's hook, tool or channel, not that the agent completed the work.
-Single waits are capped at 110 seconds to stay below Claude Code's default 120-second automatic
-background threshold; repeat with the same filters for longer waits. Stdio calls cannot survive
-`/reload-plugins`. Pending filters are saved before waiting; after reconnect, `peers` and
-`SessionStart` show a `resume_id` for `wait_for_message`. Messages remain queued until consumed.
+`wait_for_message(mode="notify", reply_to=<sent id>)` registers a durable one-shot wait and
+returns immediately. This is the default for incoming messages. Keep working or end the turn;
+do not repeat the call. A queued match is returned immediately; a later match uses the existing
+wake/channel paths without enabling global auto-wake. If the host cannot wake, the session is
+offline, or a quiet/hop guard applies, mail stays queued for the next hook or inbox call.
+Subscriptions survive `/reload-plugins` and session exit and finish only when matching mail is
+consumed. `peers` and `SessionStart` show armed waits and their `resume_id`.
+
+`mode="block"` retains the 110-second cap below the host's 120-second background threshold.
+A blocking message timeout automatically arms notify instead of requesting another wait.
+For compatibility, `timeout_sec` without `mode` selects block; `read_receipt_of` and nested
+child waits support block only. Existing interrupted blocking waits retain their filters and
+can resume as before, or convert with `wait_for_message(resume_id=<id>, mode="notify")`.
+Cancel a saved wait with `mode="cancel"` and `resume_id`; its record is archived, mail untouched.
+See [notification-wait design and tradeoffs](docs/message-waits.md).
 
 ### Auto-wake and loop protection
 

@@ -48,7 +48,7 @@ export function shouldWakeClaudeMessage(node: BridgeNode, cfg: BridgeConfig, m: 
   const direct = m.to === node.name ||
     (m.recipient === node.name && m.to !== BROADCAST && !(AGENT_KINDS as readonly string[]).includes(m.to)) ||
     (m.from.id.includes("/") && m.to.slice(m.to.indexOf("/") + 1) === node.name);
-  return node.autoWakeEnabled || (direct && (m.from.id.startsWith("job:") || node.isAwaitedReply(m))) ||
+  return node.autoWakeEnabled || node.isNotificationAwaited(m) || (direct && (m.from.id.startsWith("job:") || node.isAwaitedReply(m))) ||
     ((direct || m.to === BROADCAST) && cfg.wakeOnDirect);
 }
 

@@ -4,9 +4,9 @@ import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { z } from "zod";
 
 const SERVER = join(import.meta.dirname, "..", "plugins", "claude", "dist", "server.mjs");
-const TEST_TIMEOUT_MS = 30_000;
 let home: string;
 let clients: Client[];
 const textOf = (r: any): string => r.content.map((c: any) => c.text).join("\n");
@@ -18,9 +18,9 @@ async function until(fn: () => boolean | Promise<boolean>): Promise<void> {
     await new Promise((resolve) => setTimeout(resolve, 20));
   }
 }
-async function connect(name: string): Promise<Client> {
-  const transport = new StdioClientTransport({ command: process.execPath, args: [SERVER, "--agent=other"],
-    env: { ...process.env, AGENT_BRIDGE_HOME: home, AGENT_BRIDGE_NAME: name, AGENT_BRIDGE_DELIVERY: "hooks", AGENT_BRIDGE_DASHBOARD: "off", AGENT_BRIDGE_DELEGATE_DEPTH: "0" } as Record<string, string>, stderr: "ignore" });
+async function connect(name: string, agent = "other", delivery = "hooks"): Promise<Client> {
+  const transport = new StdioClientTransport({ command: process.execPath, args: [SERVER, `--agent=${agent}`],
+    env: { ...process.env, AGENT_BRIDGE_HOME: home, AGENT_BRIDGE_NAME: name, AGENT_BRIDGE_DELIVERY: delivery, AGENT_BRIDGE_WAKE_ON_DIRECT: "off", AGENT_BRIDGE_AUTO_WAKE: "off", AGENT_BRIDGE_DASHBOARD: "off", AGENT_BRIDGE_DELEGATE_DEPTH: "0" } as Record<string, string>, stderr: "ignore" });
   const client = new Client({ name: "reload-test", version: "1" });
   clients.push(client);
   await client.connect(transport);
@@ -46,7 +46,7 @@ describe.skipIf(!existsSync(SERVER))("stdio message wait recovery", () => {
     expect(await call(listener, "wait_for_message", { conversation_id: conversation, timeout_sec: 1 })).toContain("files: 19%");
     await call(sender, "send", { to: "listener", conversation_id: "transfer-id", message: "files: completed" });
     expect(await call(listener, "wait_for_message", { timeout_sec: 1 })).toContain("files: completed");
-  }, TEST_TIMEOUT_MS);
+  });
 
   it("offers the saved wait after transport replacement and resumes the original reply filters", async () => {
     const sender = await connect("sender");
@@ -70,7 +70,7 @@ describe.skipIf(!existsSync(SERVER))("stdio message wait recovery", () => {
     expect(tool.description).toContain("110 seconds");
     expect(tool.description).toContain("120 seconds");
     expect(tool.description).toContain("/reload-plugins");
-  }, TEST_TIMEOUT_MS);
+  });
 
   it("returns a consumption receipt through the MCP wait tool", async () => {
     const sender = await connect("sender");
@@ -83,5 +83,55 @@ describe.skipIf(!existsSync(SERVER))("stdio message wait recovery", () => {
     await until(async () => (await call(recipient, "inbox", { mark_read: false })).includes("work"));
     await call(recipient, "inbox");
     expect(await receipt).toContain(`Read receipt for ${id}`);
-  }, TEST_TIMEOUT_MS);
+  });
+
+  it("keeps a notification armed across session exit and returns the reply queued offline", async () => {
+    const sender = await connect("sender");
+    const listener = await connect("listener");
+    await call(listener, "hook_event", { event: "SessionStart", session_id: "notify-session" });
+    const sent = await call(listener, "send", { to: "sender", message: "slow question" });
+    const id = /Message (\S+) sent/.exec(sent)![1]!;
+    const registration = await call(listener, "wait_for_message", { from: "sender", reply_to: id });
+    expect(registration).toContain("is armed");
+    const resumeId = /Notification wait (\S+) is armed/.exec(registration)![1]!;
+    await listener.close();
+    await call(sender, "send", { to: "listener", message: "reply while offline", reply_to: id });
+    await call(sender, "send", { to: "listener", message: "unrelated mail" });
+    const replacement = await connect("listener");
+    expect(await call(replacement, "peers")).toContain(resumeId);
+    await call(replacement, "hook_event", { event: "SessionStart", session_id: "notify-session" });
+    expect(await call(replacement, "wait_for_message", { resume_id: resumeId })).toContain("reply while offline");
+    const inbox = await call(replacement, "inbox", { mark_read: false });
+    expect(inbox).toContain("unrelated mail"); expect(inbox).not.toContain("reply while offline");
+    expect(await call(replacement, "peers")).not.toContain(resumeId);
+    const tool = (await replacement.listTools()).tools.find((t) => t.name === "wait_for_message")!;
+    expect(tool.description).toContain('Default mode="notify"');
+    expect(tool.description).not.toContain("repeat with the same filters");
+  });
+
+  it("pushes a matching notification through the channel with global and direct wake off", async () => {
+    const sender = await connect("sender");
+    const listener = await connect("listener", "claude", "channel");
+    const pushed: string[] = [];
+    listener.setNotificationHandler(z.object({ method: z.literal("notifications/claude/channel"), params: z.any() }),
+      (notification) => { pushed.push(notification.params.content); });
+    await call(listener, "wait_for_message", { from: "sender", conversation_id: "awaited-thread", mode: "notify" });
+    // An agent-kind envelope normally cannot use direct wake. Only this subscription permits it.
+    await call(sender, "send", { to: "claude", conversation_id: "unrelated-thread", message: "unrelated mail" });
+    await call(sender, "send", { to: "claude", conversation_id: "awaited-thread", message: "channel answer" });
+    await until(() => pushed.length > 0);
+    expect(pushed).toEqual(["channel answer"]);
+    await until(async () => !(await call(listener, "peers")).includes("Notification wait"));
+    const inbox = await call(listener, "inbox", { mark_read: false });
+    expect(inbox).toContain("unrelated mail"); expect(inbox).not.toContain("channel answer");
+    // Muted mail already queued before registration is delivered through the channel once,
+    // rather than being acknowledged in both the tool result and a channel notification.
+    await call(sender, "send", { to: "claude", conversation_id: "queued-thread", message: "queued channel answer" });
+    await until(async () => (await call(listener, "inbox", { mark_read: false })).includes("queued channel answer"));
+    const registration = await call(listener, "wait_for_message", { from: "sender", conversation_id: "queued-thread", mode: "notify" });
+    expect(registration).not.toContain("queued channel answer");
+    await until(() => pushed.length === 2);
+    expect(pushed).toEqual(["channel answer", "queued channel answer"]);
+    await until(async () => !(await call(listener, "inbox", { mark_read: false })).includes("queued channel answer"));
+  });
 });

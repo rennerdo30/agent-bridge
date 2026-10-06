@@ -32,8 +32,10 @@ export class CodexWaker {
     private readonly node: BridgeNode,
     private readonly cfg: BridgeConfig,
     private readonly log: Logger,
+    private readonly timings = { debounceMs: WAKE_DEBOUNCE_MS, queueTimeoutMs: QUEUE_TIMEOUT_MS },
   ) {
     node.on("message", (m) => this.onMessage(m));
+    node.on("notification_waits_changed", () => { if (this.idleWithMail()) this.schedule(); });
   }
 
   setThreadId(id: string | null): void {
@@ -50,7 +52,8 @@ export class CodexWaker {
   }
 
   private hasWakeableMail(): boolean {
-    return this.node.autoWakeEnabled && this.node.unread().some((m) => m.hop < this.cfg.maxHops && !isQuietMessage(m));
+    return this.node.unread().some((m) => m.hop < this.cfg.maxHops && !isQuietMessage(m) &&
+      (this.node.autoWakeEnabled || (!m.conversationId.endsWith(":note") && this.node.isNotificationAwaited(m))));
   }
 
   private idleWithMail(): boolean {
@@ -63,7 +66,7 @@ export class CodexWaker {
       this.log.info("not waking codex: hop limit reached", { id: m.id, hop: m.hop });
       return;
     }
-    if (this.node.autoWakeEnabled && this.state === "idle") this.schedule();
+    if (this.idleWithMail()) this.schedule();
   }
 
   private schedule(): void {
@@ -71,12 +74,12 @@ export class CodexWaker {
     this.timer = setTimeout(() => {
       this.timer = null;
       void this.wake();
-    }, WAKE_DEBOUNCE_MS);
+    }, this.timings.debounceMs);
     this.timer.unref();
   }
 
   private async wake(): Promise<void> {
-    if (this.state !== "idle" || !this.node.autoWakeEnabled) return;
+    if (!this.idleWithMail()) return;
     if (!this.threadId) {
       this.log.warn("cannot auto-wake codex: thread id unknown until the session makes its first agent-bridge call");
       return;
@@ -95,7 +98,7 @@ export class CodexWaker {
         args: ["queue", "--thread", this.threadId, "--message", WAKE_PROMPT],
         stdin: "",
         cwd: this.node.cwd,
-        timeoutMs: QUEUE_TIMEOUT_MS,
+        timeoutMs: this.timings.queueTimeoutMs,
         env: process.env,
         log: this.log,
       });
