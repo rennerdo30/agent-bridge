@@ -1,0 +1,183 @@
+{
+  "sessions": [
+    {
+      "id": "ses_parent",
+      "parent_id": null,
+      "title": "Module work",
+      "time_created": 1791277200000,
+      "time_updated": 1791277200010
+    },
+    {
+      "id": "ses_child",
+      "parent_id": "ses_parent",
+      "title": "Module review (@general subagent)",
+      "time_created": 1791277200000,
+      "time_updated": 1791277200010
+    },
+    {
+      "id": "ses_grandchild",
+      "parent_id": "ses_child",
+      "title": "Nested review",
+      "time_created": 1791277200000,
+      "time_updated": 1791277200010
+    }
+  ],
+  "messages": [
+    {
+      "id": "msg_0",
+      "session_id": "ses_child",
+      "time_created": 1791277200000,
+      "time_updated": 1791277200000,
+      "data": {
+        "role": "user",
+        "time": {
+          "created": 1791277200000
+        },
+        "agent": "general"
+      }
+    },
+    {
+      "id": "msg_1",
+      "session_id": "ses_child",
+      "time_created": 1791277200001,
+      "time_updated": 1791277200001,
+      "data": {
+        "role": "assistant",
+        "time": {
+          "created": 1791277200001
+        },
+        "agent": "general"
+      }
+    }
+  ],
+  "parts": [
+    {
+      "id": "prt_0",
+      "message_id": "msg_0",
+      "session_id": "ses_child",
+      "time_created": 1791277200000,
+      "time_updated": 1791277200000,
+      "data": {
+        "type": "text",
+        "text": "Module review."
+      }
+    },
+    {
+      "id": "prt_1",
+      "message_id": "msg_1",
+      "session_id": "ses_child",
+      "time_created": 1791277200001,
+      "time_updated": 1791277200001,
+      "data": {
+        "type": "step-start"
+      }
+    },
+    {
+      "id": "prt_2",
+      "message_id": "msg_1",
+      "session_id": "ses_child",
+      "time_created": 1791277200002,
+      "time_updated": 1791277200002,
+      "data": {
+        "type": "reasoning"
+      }
+    },
+    {
+      "id": "prt_3",
+      "message_id": "msg_1",
+      "session_id": "ses_child",
+      "time_created": 1791277200003,
+      "time_updated": 1791277200003,
+      "data": {
+        "type": "text",
+        "text": "Module review."
+      }
+    },
+    {
+      "id": "prt_4",
+      "message_id": "msg_1",
+      "session_id": "ses_child",
+      "time_created": 1791277200004,
+      "time_updated": 1791277200004,
+      "data": {
+        "type": "tool",
+        "tool": "read",
+        "callID": "call_example",
+        "state": {
+          "status": "completed",
+          "input": {
+            "filePath": "module.ts"
+          },
+          "output": "Module contents.",
+          "title": "module.ts",
+          "time": {
+            "start": 1791277200000,
+            "end": 1791277200001
+          }
+        }
+      }
+    },
+    {
+      "id": "prt_5",
+      "message_id": "msg_1",
+      "session_id": "ses_child",
+      "time_created": 1791277200005,
+      "time_updated": 1791277200005,
+      "data": {
+        "type": "tool",
+        "tool": "read",
+        "callID": "call_example",
+        "state": {
+          "status": "completed",
+          "input": {
+            "filePath": "module.ts"
+          },
+          "output": "Module contents.",
+          "title": "module.ts",
+          "time": {
+            "start": 1791277200000,
+            "end": 1791277200001
+          }
+        }
+      }
+    },
+    {
+      "id": "prt_6",
+      "message_id": "msg_1",
+      "session_id": "ses_child",
+      "time_created": 1791277200006,
+      "time_updated": 1791277200006,
+      "data": {
+        "type": "step-finish"
+      }
+    },
+    {
+      "id": "prt_task",
+      "message_id": "msg_1",
+      "session_id": "ses_child",
+      "time_created": 1791277200010,
+      "time_updated": 1791277200010,
+      "data": {
+        "type": "tool",
+        "tool": "task",
+        "callID": "call_task",
+        "state": {
+          "status": "completed",
+          "input": {
+            "description": "Review the module"
+          },
+          "output": "Review complete.",
+          "metadata": {
+            "sessionId": "ses_grandchild",
+            "parentSessionId": "ses_child"
+          },
+          "title": "Review the module",
+          "time": {
+            "start": 1791277200000,
+            "end": 1791277200010
+          }
+        }
+      }
+    }
+  ]
+}

@@ -24,6 +24,7 @@ import { planFirewall, detectFirewall, applyWindowsFirewall } from "../network/f
 import { parseNetworkAddress } from "../network/address.js";
 import type { Op, RequestMap } from "../core/protocol.js";
 import { readJsonStore } from "../core/json-store.js";
+import { listNativeSubagents, readTranscript, TRANSCRIPT_ID, validTranscriptCursor, type TranscriptPaths } from "../core/transcripts/index.js";
 
 /**
  * `agent-bridge ui`: a local dashboard for sessions, delegated runs and messages.
@@ -265,6 +266,8 @@ export interface UiOptions {
   /** Reads the agents' usage limits (default: each CLI, see usage.ts); replaceable for tests. */
   usage?: () => Promise<UsageReport[]>;
   models?: () => Promise<ModelReport[]>;
+  /** CLI storage roots; default to the current user's CLI homes. Replaceable for tests. */
+  transcripts?: TranscriptPaths;
 }
 
 /** Usage is read by running each CLI briefly: keep it this long unless the page asks for a refresh. */
@@ -407,6 +410,23 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
       const cfg = loadConfig(opts.home, "other", opts.log);
       const reports = await (opts.models ?? (() => Promise.all(CODING_AGENTS.map((agent) => readModels(agent, cfg, opts.home, opts.log, opts.home)))))();
       return send(res, 200, { reports });
+    }
+    const sessionMatch = /^\/api\/sessions\/([^/]+)\/(chat|subagents)(?:\/([^/]+))?$/.exec(url.pathname);
+    if (req.method === "GET" && sessionMatch) {
+      let name: string, child: string | undefined;
+      try { name = decodeURIComponent(sessionMatch[1]!); child = sessionMatch[3] === undefined ? undefined : decodeURIComponent(sessionMatch[3]); }
+      catch { return send(res, 404, { error: "no such local session" }); }
+      if (name.includes("/") || name.includes("\\") || (child !== undefined && !TRANSCRIPT_ID.test(child)) || (sessionMatch[2] === "chat" && child !== undefined)) return send(res, 404, { error: "no such local session or subagent" });
+      const { peers } = await brokerPeers(opts.pipe, token, opts.log);
+      const peer = peers.find((p) => p.name === name && !p.name.includes("/"));
+      if (!peer) return send(res, 404, { error: "no such local session" });
+      if (!peer.sessionId) return send(res, 409, { error: "This session has no sessionId yet." });
+      if (!TRANSCRIPT_ID.test(peer.sessionId) || !CODING_AGENTS.includes(peer.agent as typeof CODING_AGENTS[number])) return send(res, 404, { error: "no transcript for this session" });
+      if (sessionMatch[2] === "subagents" && child === undefined) return send(res, 200, { subagents: listNativeSubagents(peer, opts.transcripts) });
+      const from = url.searchParams.get("from") ?? "0";
+      if (!validTranscriptCursor(from)) return send(res, 400, { error: "invalid transcript cursor" });
+      const page = readTranscript(peer, from, child, opts.transcripts);
+      return page ? send(res, 200, page) : send(res, 404, { error: "no transcript for this session or subagent" });
     }
     const runMatch = /^\/api\/runs\/([\w.-]+)$/.exec(url.pathname);
     if (req.method === "GET" && runMatch) {
