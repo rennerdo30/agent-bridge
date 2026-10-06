@@ -121,6 +121,17 @@ async function inspect(path: string, jobs: StoredJob[], apply: boolean, log: Log
   const status = await git([...trust, "status", "--porcelain"], path, log).catch(() => null);
   if (status === null) return entry(branch, "kept", "git status failed");
   if (status) return entry(branch, "kept", `uncommitted changes (${status.split(/\r?\n/).length} files)`);
+  // Normal status hides ignored files, which can contain unique owner data as well as generated caches.
+  const ignored = await git([...trust, "ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z"], path, log).catch(() => null);
+  if (ignored === null) return entry(branch, "kept", "ignored-file inspection failed");
+  for (const file of ignored.split("\0").filter(Boolean)) {
+    const ignoredPath = toNamespacedPath(join(path, file.replace(/[\\/]+$/, "")));
+    try {
+      const st = lstatSync(ignoredPath);
+      if (st.isSymbolicLink() || (st.isDirectory() && onlyFoldersAndLinks(ignoredPath))) continue;
+      return entry(branch, "kept", "ignored files may contain unique user data; refusing cleanup");
+    } catch { return entry(branch, "kept", "ignored-file inspection incomplete; refusing cleanup"); }
+  }
   // Its base branch when the job recorded one, else any local branch that is not a job branch.
   const base = job?.worktree?.baseBranch;
   const locals = (await git([...trust, "for-each-ref", "--format=%(refname:short)", "refs/heads"], path, log).catch(() => ""))

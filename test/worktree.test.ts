@@ -410,7 +410,7 @@ describe("cleanup", () => {
   const DEEP_SEGMENT = "unity-cache-with-a-long-generated-folder-name";
   const deepPath = (root: string) => join(root, "Library", ...Array<string>(DEEP_SEGMENTS).fill(DEEP_SEGMENT));
 
-  it("removes deep ignored Unity folders with repository long paths disabled", async () => {
+  it("preserves deep ignored files with repository long paths disabled", async () => {
     git("config", "core.longpaths", "false");
     writeFileSync(join(repo, ".git", "info", "exclude"), "Library/\n");
     const wt = await createWorktree({ cwd: repo, home, jobId: "deep", log: nullLogger });
@@ -418,12 +418,22 @@ describe("cleanup", () => {
     mkdirSync(deep, { recursive: true });
     writeFileSync(join(deep, "cache.asset"), "generated\n");
     const entries = await cleanupWorktrees({ home, apply: true, log: nullLogger });
-    expect(entries.find((e) => e.path === wt.path)?.action).toBe("removed");
-    expect(existsSync(wt.path)).toBe(false);
-    expect(git("worktree", "list", "--porcelain")).not.toContain(wt.path.replace(/\\/g, "/"));
+    expect(entries.find((e) => e.path === wt.path)?.action).toBe("kept");
+    expect(entries.find((e) => e.path === wt.path)?.reason).toContain("unique user data");
+    expect(readFileSync(join(deep, "cache.asset"), "utf8")).toBe("generated\n");
     expect(git("config", "core.longpaths")).toBe("false");
     expect(worktreeReport(wt, { changed: false, branch: wt.branch, otherBranches: [], diffStat: "", reviewBase: wt.base, files: [] }))
       .toContain("git -c core.longpaths=true worktree remove");
+  });
+
+  it("preserves ignored owner notes in an otherwise clean merged worktree", async () => {
+    writeFileSync(join(repo, ".git", "info", "exclude"), "owner-notes.txt\n");
+    const wt = await createWorktree({ cwd: repo, home, jobId: "ignored-owner", log: nullLogger });
+    writeFileSync(join(wt.path, "owner-notes.txt"), "unique owner data\n");
+    const entries = await cleanupWorktrees({ home, apply: true, log: nullLogger });
+    expect(entries.find((e) => e.path === wt.path)?.action).toBe("kept");
+    expect(readFileSync(join(wt.path, "owner-notes.txt"), "utf8")).toBe("unique owner data\n");
+    expect(git("branch", "--list", wt.branch)).toContain(wt.branch);
   });
 
   it("deletes deep leftovers through the filesystem fallback", async () => {

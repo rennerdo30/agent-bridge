@@ -41980,6 +41980,18 @@ ${warning}` : reason, externalLinks: scan.externalLinks });
   const status = await git([...trust, "status", "--porcelain"], path, log).catch(() => null);
   if (status === null) return entry(branch, "kept", "git status failed");
   if (status) return entry(branch, "kept", `uncommitted changes (${status.split(/\r?\n/).length} files)`);
+  const ignored = await git([...trust, "ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z"], path, log).catch(() => null);
+  if (ignored === null) return entry(branch, "kept", "ignored-file inspection failed");
+  for (const file2 of ignored.split("\0").filter(Boolean)) {
+    const ignoredPath = toNamespacedPath3(join43(path, file2.replace(/[\\/]+$/, "")));
+    try {
+      const st = lstatSync5(ignoredPath);
+      if (st.isSymbolicLink() || st.isDirectory() && onlyFoldersAndLinks(ignoredPath)) continue;
+      return entry(branch, "kept", "ignored files may contain unique user data; refusing cleanup");
+    } catch {
+      return entry(branch, "kept", "ignored-file inspection incomplete; refusing cleanup");
+    }
+  }
   const base = job?.worktree?.baseBranch;
   const locals = (await git([...trust, "for-each-ref", "--format=%(refname:short)", "refs/heads"], path, log).catch(() => "")).split(/\r?\n/).filter((b) => b && !b.startsWith(BRANCH_PREFIX));
   const targets = base && locals.includes(base) ? [base] : locals;

@@ -74,6 +74,7 @@ describe("owner data retention rule", () => {
     expect(archiveRun).toContain("renameSync(log, target)");
     expect(removalOperations(runfeed)).toEqual([]);
     expect(removalOperations(readFileSync(join(SOURCE_ROOT, "core/relay.ts"), "utf8"))).toEqual([]);
+    expect(readFileSync(join(SOURCE_ROOT, "core/worktree-cleanup.ts"), "utf8")).toContain('"ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z"');
   });
 
   it("keeps original messages when an archive copy fails, and all recipients after expiry", () => {

@@ -30,7 +30,7 @@ transcript bytes after reads. No automated test uses the owner's actual data roo
 | `network/files.ts` | Unpublished `.partial-*` transfer staging directory after a failed receive. The sender's original is retained. |
 | `cli/smoke.ts`, `cli/reliability.ts`, `cli/reliability-live.ts` | Explicitly created temporary test homes/repositories only. |
 | `core/worktree-cleanup.ts` | Symlink/junction itself only; never its destination. |
-| `core/worktree.ts` | A disposable worktree copy after its callers verify clean, merged Git content, or an unpublished failed checkout. Git retains tracked content. Uncommitted or unmerged work is retained. |
+| `core/worktree.ts` | A disposable worktree copy after its callers verify clean, merged Git content, or an unpublished failed checkout. Git retains tracked content. Uncommitted, unmerged and ignored real files are retained. Ignored links and empty folders contain no unique file bytes. |
 | `core/sqlite-maintenance.ts` | Exact archived row selection, after archive commit; copy failure rolls the source transaction back. |
 | `core/sqlite-migrations.ts` | Backup recovery under the migration writer lock, after reading original rows from the durable pre-migration snapshot. Failure rolls back and retains the snapshot. |
 
