@@ -52002,6 +52002,8 @@ var JOB_COMMANDS = {
   // The owning session checks the values against the job's agent (job-settings.ts).
   "/api/subagents/settings": (body) => body.settings && typeof body.settings === "object" && !Array.isArray(body.settings) && Object.keys(body.settings).length ? { type: "settings", settings: body.settings } : null
 };
+var REMOTE_STATE_REFRESH_MS = 5e3;
+var REMOTE_STATE_FIRST_WAIT_MS = 1500;
 var USAGE_CACHE_MS = 5 * 60 * 1e3;
 var USAGE_REFRESH_MIN_MS = 15 * 1e3;
 function readAllUsage(home, log) {
@@ -52059,6 +52061,21 @@ async function startUi(opts) {
       return {};
     }
     return Object.fromEntries(await Promise.all(hosts.map(async (host) => [host, await remoteRead(host, { path })])));
+  };
+  let remoteState = null;
+  let remoteStateLoad = null;
+  const remoteStateNow = async () => {
+    if (!remoteStateLoad && (!remoteState || Date.now() - remoteState.at > REMOTE_STATE_REFRESH_MS)) {
+      remoteStateLoad = pairedReads("/api/state").then((value) => {
+        remoteState = { at: Date.now(), value };
+        return value;
+      }).finally(() => {
+        remoteStateLoad = null;
+      });
+    }
+    if (remoteState) return remoteState.value;
+    const waited = await Promise.race([remoteStateLoad, new Promise((resolve13) => setTimeout(() => resolve13(null), REMOTE_STATE_FIRST_WAIT_MS))]);
+    return waited ?? {};
   };
   let usage = null;
   const getUsage = (refresh) => {
@@ -52151,7 +52168,7 @@ async function startUi(opts) {
       const { brokerPid, peers } = await brokerPeers(opts.pipe, token, opts.log);
       const runs = listRuns(opts.home);
       const page = pageRuns(runs, null, DEFAULT_RUN_PAGE_SIZE);
-      const remote = await pairedReads("/api/state");
+      const remote = await remoteStateNow();
       const remoteStates = Object.values(remote).filter((r) => r.status === 200).map((r) => r.body);
       const remoteErrors = Object.fromEntries(Object.entries(remote).filter(([, r]) => r.status !== 200).map(([host2, r]) => [host2, r.body]));
       return send(res, 200, {

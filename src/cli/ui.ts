@@ -154,6 +154,10 @@ export interface UiOptions {
   historyAnswer?: HistoryAnswerDependencies;
 }
 
+/** The paired PCs' runs in /api/state are re-fetched in the background at most this often. */
+const REMOTE_STATE_REFRESH_MS = 5_000;
+/** The very first /api/state waits this long for the paired PCs before answering without them. */
+const REMOTE_STATE_FIRST_WAIT_MS = 1_500;
 /** Usage is read by running each CLI briefly: keep it this long unless the page asks for a refresh. */
 const USAGE_CACHE_MS = 5 * 60 * 1000;
 /** A refresh click re-reads at most this often (each read starts the CLIs). */
@@ -213,6 +217,23 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
     let hosts: string[] = [];
     try { hosts = (await networkRequest("networkStatus", {})).paired.map((p) => p.name); } catch { return {}; }
     return Object.fromEntries(await Promise.all(hosts.map(async (host) => [host, await remoteRead(host, { path })])));
+  };
+
+  /**
+   * The paired PCs' state is fetched in the background and the last answer is served at once, so a slow or
+   * distant PC never holds up the page's frequent /api/state polls. The first poll waits a short moment for it.
+   */
+  let remoteState: { at: number; value: Record<string, DashboardReadResult> } | null = null;
+  let remoteStateLoad: Promise<Record<string, DashboardReadResult>> | null = null;
+  const remoteStateNow = async (): Promise<Record<string, DashboardReadResult>> => {
+    if (!remoteStateLoad && (!remoteState || Date.now() - remoteState.at > REMOTE_STATE_REFRESH_MS)) {
+      remoteStateLoad = pairedReads("/api/state")
+        .then((value) => { remoteState = { at: Date.now(), value }; return value; })
+        .finally(() => { remoteStateLoad = null; });
+    }
+    if (remoteState) return remoteState.value;
+    const waited = await Promise.race([remoteStateLoad!, new Promise<null>((resolve) => setTimeout(() => resolve(null), REMOTE_STATE_FIRST_WAIT_MS))]);
+    return waited ?? {};
   };
 
   let usage: { at: number; reports: Promise<UsageReport[]> } | null = null;
@@ -302,7 +323,7 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
       const { brokerPid, peers } = await brokerPeers(opts.pipe, token, opts.log);
       const runs = listRuns(opts.home);
       const page = pageRuns(runs, null, DEFAULT_RUN_PAGE_SIZE);
-      const remote = await pairedReads("/api/state");
+      const remote = await remoteStateNow();
       const remoteStates = Object.values(remote).filter((r) => r.status === 200).map((r) => r.body as { runs: unknown[]; jobs: Record<string, unknown> });
       const remoteErrors = Object.fromEntries(Object.entries(remote).filter(([, r]) => r.status !== 200).map(([host, r]) => [host, r.body]));
       return send(res, 200, {
