@@ -1,18 +1,18 @@
 import { randomBytes } from "node:crypto";
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { networkInterfaces } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { BridgeClient } from "../core/client.js";
-import { APP_VERSION, JOBS_FILE, MAX_BODY_CHARS, PROTOCOL_VERSION } from "../core/constants.js";
+import { APP_VERSION, MAX_BODY_CHARS, PROTOCOL_VERSION } from "../core/constants.js";
 import type { Logger } from "../core/logger.js";
 import { BridgeNode } from "../core/node.js";
 import { resolveDbPath } from "../core/paths.js";
 import { BridgeError, CODING_AGENTS, type PeerInfo } from "../core/protocol.js";
 import { readModels, type ModelReport } from "../core/models.js";
-import { RUNS_DIR_NAME, runMetaPath, type RunMeta } from "../core/runfeed.js";
+import { RUNS_DIR_NAME, type RunMeta } from "../core/runfeed.js";
 import { loadOrCreateToken, tokensEqual } from "../core/token.js";
 import { loadConfig } from "../core/config.js";
 import { readUsage, type UsageReport } from "../core/usage.js";
@@ -23,7 +23,9 @@ import { networkConfigSchema } from "../network/config.js";
 import { planFirewall, detectFirewall, applyWindowsFirewall } from "../network/firewall.js";
 import { parseNetworkAddress } from "../network/address.js";
 import type { Op, RequestMap } from "../core/protocol.js";
-import { readJsonStore } from "../core/json-store.js";
+import { isRecord } from "../core/json-store.js";
+import { DEFAULT_RUN_PAGE_SIZE, MAX_RUN_PAGE_SIZE, pageRuns, readHistoryJobs, readHistoryJson, readRunLogs } from "../core/run-history.js";
+import type { Worktree } from "../core/worktree.js";
 import { listNativeSubagents, readTranscript, TRANSCRIPT_ID, validTranscriptCursor, type TranscriptPaths } from "../core/transcripts/index.js";
 import { readDecisions, decisionScopeSchema, MAX_DECISION_TEXT_CHARS, MAX_DECISION_TOPIC_CHARS, type DecisionsArgs } from "../core/decisions.js";
 import { answerPendingApproval, listPendingApprovals, MAX_APPROVAL_REASON_CHARS } from "../core/relay.js";
@@ -35,7 +37,6 @@ import { answerPendingApproval, listPendingApprovals, MAX_APPROVAL_REASON_CHARS 
 const UI_HOST = "127.0.0.1";
 const COOKIE = "ab_ui";
 const SECRET_BYTES = 24;
-const MAX_RUNS = 50;
 const TASK_PREVIEW_CHARS = 300;
 const MAX_MESSAGES = 200;
 const MAX_LOG_CHUNK = 512 * 1024;
@@ -56,6 +57,15 @@ export interface RunSummary extends RunMeta {
   last: string;
   /** Start of the prompt, for lists. */
   task: string;
+  archived?: boolean;
+  recovered?: boolean;
+  hasLog?: boolean;
+  owner?: string | null;
+  sessionId?: string | null;
+  prompt?: string;
+  finishedAt?: number;
+  worktree?: Worktree | null;
+  branch?: string;
 }
 
 /** Parse the head and tail of a run log written by runfeed.ts, plus its metadata (older runs: from the header). */
@@ -96,19 +106,40 @@ export function summarizeRun(file: string, text: string, mtimeMs: number, now: n
 }
 
 export function listRuns(home: string, now = Date.now()): RunSummary[] {
-  const dir = join(home, RUNS_DIR_NAME);
-  if (!existsSync(dir)) return [];
-  return readdirSync(dir)
-    .filter((f) => RUN_NAME.test(f))
-    .map((f) => ({ f, st: statSync(join(dir, f)) }))
-    .sort((a, b) => b.st.mtimeMs - a.st.mtimeMs)
-    .slice(0, MAX_RUNS)
-    .map(({ f, st }) => summarizeRun(f, readFileSync(join(dir, f), "utf8"), st.mtimeMs, now, readMeta(join(dir, runMetaPath(f)))));
+  const runs: RunSummary[] = [];
+  for (const log of readRunLogs(home)) {
+    try { runs.push({ ...summarizeRun(`${log.name}.log`, readFileSync(log.file, "utf8"), log.updatedAt, now, log.meta), archived: log.archived, recovered: false, hasLog: true }); }
+    catch { /* A concurrent archive operation is retried on the next refresh. */ }
+  }
+  for (const [name, job] of readHistoryJobs(home)) {
+    // Older logs lack job metadata; their filename still includes the original agent/job id.
+    if (runs.some((run) => run.job === name || (typeof job.id === "string" && run.name.endsWith(`-${job.agent}-${job.id}`)))) continue;
+    const args = isRecord(job.args) ? job.args : {};
+    const worktree = isRecord(job.worktree) ? job.worktree as unknown as Worktree : null;
+    const prompt = typeof job.prompt === "string" ? job.prompt : "";
+    const owner = typeof job.owner === "string" ? job.owner : null;
+    const sessionId = typeof job.sessionId === "string" ? job.sessionId : typeof job.threadId === "string" ? job.threadId : null;
+    const startedAt = typeof job.startedAt === "number" && Number.isSafeInteger(job.startedAt) && job.startedAt >= 0 ? job.startedAt : 0;
+    const finishedAt = typeof job.finishedAt === "number" && Number.isSafeInteger(job.finishedAt) ? job.finishedAt : undefined;
+    runs.push({
+      name, job: name, agent: typeof job.agent === "string" ? job.agent : "agent", model: typeof job.model === "string" ? job.model : null,
+      title: typeof args.title === "string" ? args.title : typeof job.title === "string" ? job.title : undefined,
+      by: owner ?? undefined, owner, session: sessionId, sessionId, prompt, task: prompt.slice(0, TASK_PREVIEW_CHARS),
+      workdir: typeof job.workdir === "string" ? job.workdir : worktree?.cwd ?? (typeof args.cwd === "string" ? args.cwd : undefined),
+      worktree, branch: worktree?.branch ?? (typeof job.branch === "string" ? job.branch : undefined),
+      startedAt, finishedAt, updatedAt: finishedAt ?? startedAt,
+      // A historical snapshot does not prove that an old process is still running.
+      status: job.status === "done" || job.status === "failed" ? job.status : "interrupted",
+      header: `Recovered ${name}`, last: "Run log unavailable; conversation may be available in the CLI transcript.", recovered: true, hasLog: false,
+    });
+  }
+  return pageRuns(runs, null, runs.length).runs;
 }
 
 function readMeta(file: string): RunMeta {
   try {
-    return (readJsonStore(file) ?? {}) as RunMeta;
+    const value = readHistoryJson(file);
+    return isRecord(value) ? value as RunMeta : {};
   } catch {
     return {};
   }
@@ -123,14 +154,7 @@ export interface StoredJobView {
 /** Jobs from the sessions' store (`{ jobs: [...] }`; before 0.26 a bare array). Read-only and best effort. */
 export function readStoredJobs(home: string): Map<string, StoredJobView> {
   const out = new Map<string, StoredJobView>();
-  let stored: unknown;
-  try {
-    stored = JSON.parse(readFileSync(join(home, JOBS_FILE), "utf8"));
-  } catch {
-    return out;
-  }
-  const list: unknown[] = Array.isArray(stored) ? stored : Array.isArray((stored as { jobs?: unknown })?.jobs) ? (stored as { jobs: unknown[] }).jobs : [];
-  for (const j of list) {
+  for (const j of readHistoryJobs(home).values()) {
     if (!j || typeof j !== "object") continue;
     const { name, owner, args } = j as { name?: unknown; owner?: unknown; args?: unknown };
     if (typeof name !== "string") continue;
@@ -374,11 +398,14 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
     if (req.method === "GET" && url.pathname === "/api/state") {
       const { brokerPid, peers } = await brokerPeers(opts.pipe, token, opts.log);
       const runs = listRuns(opts.home);
+      const page = pageRuns(runs, null, DEFAULT_RUN_PAGE_SIZE);
       return send(res, 200, {
         version: APP_VERSION,
         brokerPid,
         peers: classifyPeers(peers, runs, opts.home),
-        runs,
+        runs: page.runs,
+        runsNext: page.next,
+        runsTotal: page.total,
         messages: recentMessages(dbPath),
         // Saved next-turn settings per job (message_subagent or the dashboard may have changed them).
         jobs: Object.fromEntries([...readStoredJobs(opts.home)].map(([name, j]) => [name, { next: j.next }])),
@@ -459,12 +486,35 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
       const page = readTranscript(peer, from, child, opts.transcripts);
       return page ? send(res, 200, page) : send(res, 404, { error: "no transcript for this session or subagent" });
     }
+    if (req.method === "GET" && url.pathname === "/api/runs") {
+      const rawLimit = url.searchParams.get("limit");
+      const limit = rawLimit === null ? DEFAULT_RUN_PAGE_SIZE : /^\d+$/.test(rawLimit) ? Number(rawLimit) : NaN;
+      if (!Number.isSafeInteger(limit) || limit < 1 || limit > MAX_RUN_PAGE_SIZE) return send(res, 400, { error: `limit must be an integer from 1 to ${MAX_RUN_PAGE_SIZE}` });
+      try { return send(res, 200, pageRuns(listRuns(opts.home), url.searchParams.get("before"), limit)); }
+      catch { return send(res, 400, { error: "invalid run cursor" }); }
+    }
+    const runChatMatch = /^\/api\/runs\/([\w.-]+)\/chat$/.exec(url.pathname);
+    if (req.method === "GET" && runChatMatch) {
+      const from = url.searchParams.get("from") ?? "0";
+      if (!validTranscriptCursor(from)) return send(res, 400, { error: "invalid transcript cursor" });
+      const run = listRuns(opts.home).find((r) => r.name === runChatMatch[1]);
+      if (!run) return send(res, 404, { error: "no such run" });
+      const job = run.job ? readHistoryJobs(opts.home).get(run.job) : undefined;
+      const sessionId = run.sessionId ?? run.session ?? (typeof job?.sessionId === "string" ? job.sessionId : typeof job?.threadId === "string" ? job.threadId : null);
+      if (!sessionId) return send(res, 409, { error: "This run has no sessionId yet." });
+      if (!TRANSCRIPT_ID.test(sessionId) || !CODING_AGENTS.includes(run.agent as typeof CODING_AGENTS[number])) return send(res, 404, { error: "no transcript for this run" });
+      const page = readTranscript({ agent: run.agent as PeerInfo["agent"], sessionId, cwd: run.workdir ?? "" }, from, undefined, opts.transcripts);
+      return page ? send(res, 200, page) : send(res, 404, { error: "no transcript for this run" });
+    }
     const runMatch = /^\/api\/runs\/([\w.-]+)$/.exec(url.pathname);
     if (req.method === "GET" && runMatch) {
-      const file = join(opts.home, RUNS_DIR_NAME, `${runMatch[1]}.log`);
-      if (!existsSync(file)) return send(res, 404, { error: "no such run" });
+      const log = readRunLogs(opts.home).find((record) => record.name === runMatch[1]);
+      if (!log) {
+        const recovered = listRuns(opts.home).find((run) => run.name === runMatch[1] && run.recovered);
+        return recovered ? send(res, 200, { text: "", next: 0, size: 0, recovered: true, hasLog: false }) : send(res, 404, { error: "no such run" });
+      }
       const from = Math.max(0, Number(url.searchParams.get("from")) || 0);
-      const buf = readFileSync(file);
+      const buf = readFileSync(log.file);
       let end = Math.min(buf.length, from + MAX_LOG_CHUNK);
       // Never cut a UTF-8 character in half: step back over continuation bytes (10xxxxxx).
       while (end < buf.length && end > from && (buf[end]! & 0xc0) === 0x80) end--;
