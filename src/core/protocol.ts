@@ -10,6 +10,8 @@ import type { NetworkConfig } from "../network/config.js";
 import type { NetworkStatus } from "../network/link.js";
 import type { NetworkIdentity } from "../network/pairing.js";
 import type { TransferResult } from "../network/files.js";
+import type { RemoteJobRequest } from "../network/remote-job-protocol.js";
+import type { RemoteJobSnapshot } from "../network/remote-jobs.js";
 import type { DecideArgs, DecisionsArgs, OwnerDecision } from "./decisions.js";
 
 export type AgentKind = "claude" | "codex" | "opencode" | "other";
@@ -176,6 +178,7 @@ export interface RequestMap {
   claimMail: [{ names: string[] }, { moved: number }];
   ping: [Record<string, never>, { brokerPid: number; protocol: number }];
   networkStatus: [Record<string, never>, NetworkStatus];
+  remoteJob: [{ host: string; request: RemoteJobRequest }, RemoteJobSnapshot];
   networkConfigure: [NetworkConfig, NetworkStatus];
   networkVerify: [{ id: string }, { peers: PeerInfo[]; roundTripMs: number }];
   networkPair: [Record<string, never>, { code: string; expiresAt: number }];

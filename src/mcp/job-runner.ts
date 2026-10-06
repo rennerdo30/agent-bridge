@@ -145,6 +145,11 @@ export async function runJobRunner(specFile: string | undefined): Promise<number
       log.info("ignoring a message that is not from the job's session", { from: m.from.name });
       return;
     }
+    // A remote job's supervisor is fixed by the authenticated spawn, never by an incoming message.
+    if (owner.includes("/") && m.from.name !== owner) {
+      log.warn("ignoring remote job control from another supervisor", { from: m.from.name });
+      return;
+    }
     let c: RunnerControl;
     try {
       c = JSON.parse(m.body) as RunnerControl;

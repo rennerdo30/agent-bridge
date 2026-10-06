@@ -9,6 +9,7 @@ import type { AgentKind, CodingAgent } from "../core/protocol.js";
 import type { DelegateArgs } from "./delegate-run.js";
 import type { Job, JobHost, JobHostInfo, RunnerControl, RunnerState } from "./jobs.js";
 import { archiveFile, assertWritableStore, isRecord, mergeStoreFields, readJsonStore, retentionLimit, writeJsonStore } from "../core/json-store.js";
+import { RemoteJobHost } from "./remote-job-host.js";
 
 /**
  * Job runners: a background subagent runs in a detached process of its own (`agent-bridge job-runner`), not
@@ -77,6 +78,7 @@ export function writeRunnerState(home: string, id: string, state: RunnerState): 
 
 /** The session's side: starts runners and talks to them. */
 export class JobRunners implements JobHost {
+  private readonly remote: RemoteJobHost;
   constructor(
     private readonly node: BridgeNode,
     private readonly home: string,
@@ -84,6 +86,7 @@ export class JobRunners implements JobHost {
     private readonly cli: string,
     private readonly log: Logger,
   ) {
+    this.remote = new RemoteJobHost(node, home, log);
     try {
       const dir = join(home, RUNNERS_DIR_NAME);
       const keepMs = retentionLimit("AGENT_BRIDGE_RUNNER_KEEP_MS", KEEP_FILES_MS);
@@ -105,6 +108,7 @@ export class JobRunners implements JobHost {
 
   /** Start a turn of this job in a new runner; null when that is not possible (the turn then runs in the server). */
   start(job: Job, spec: Omit<RunnerSpec, "home" | "job">): JobHostInfo | null {
+    if (spec.args.host) return this.remote.start(job, spec.args.host, spec.target, spec.args);
     try {
       mkdirSync(join(this.home, RUNNERS_DIR_NAME), { recursive: true });
       // An earlier turn's final state must not count for this one.
@@ -154,10 +158,12 @@ export class JobRunners implements JobHost {
   }
 
   state(job: Job): RunnerState | null {
+    if (job.remote) return this.remote.state(job);
     return readRunnerState(this.home, job.id);
   }
 
   alive(job: Job, state: RunnerState | null): boolean {
+    if (job.remote) return this.remote.alive(job);
     if (!state) {
       // Not reported in yet: still starting, for a while.
       const host = job.host;
@@ -167,6 +173,7 @@ export class JobRunners implements JobHost {
   }
 
   send(job: Job, control: RunnerControl): void {
+    if (job.remote) return this.remote.send(job, control);
     const to = this.state(job)?.peer ?? job.host?.peer ?? job.name;
     // Not a conversation of this session's agent: no listen window, no awaited reply.
     this.node
@@ -175,6 +182,7 @@ export class JobRunners implements JobHost {
   }
 
   kill(job: Job): void {
+    if (job.remote) return this.remote.send(job, { type: "cancel" });
     const pid = this.state(job)?.pid ?? job.host?.pid;
     if (pid) killPid(pid);
   }

@@ -44,7 +44,7 @@ const HANDOFF_DECLINED =
 export const PARENT_APPROVAL_TIMEOUT_MS = 10 * 60_000;
 
 /** _worktree: internal, a follow-up continuing in an existing worktree. _job: the job's name. */
-export type DelegateArgs = { prompt: string; model?: string; effort?: string; session_id?: string; cwd?: string; timeout_sec?: number; worktree?: boolean; allow_tools?: string[]; send_to?: string[]; title: string; _worktree?: Worktree; _job?: string } & TargetArgs;
+export type DelegateArgs = { prompt: string; host?: string; model?: string; effort?: string; session_id?: string; cwd?: string; timeout_sec?: number; worktree?: boolean; allow_tools?: string[]; send_to?: string[]; title: string; _worktree?: Worktree; _job?: string } & TargetArgs;
 
 /** Where a background job's approval questions, answers and facts go: this session's JobManager, or a job runner's link to it. */
 export interface JobSink {
