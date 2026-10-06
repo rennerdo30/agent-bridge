@@ -18,7 +18,7 @@ const textOf = (r: any): string => r.content.map((c: any) => c.text).join("\n");
 
 /** Holds each turn until a steer, and records names across resumed app-server processes. */
 const FAKE_CODEX = `
-const { appendFileSync } = require("node:fs");
+const { appendFileSync, existsSync } = require("node:fs");
 const { createInterface } = require("node:readline");
 const FINISH_DELAY_MS = 20;
 const write = (m) => console.log(JSON.stringify(m));
@@ -27,9 +27,21 @@ createInterface({ input: process.stdin }).on("line", (line) => {
   appendFileSync("requests.jsonl", JSON.stringify({ ...m, pid: process.pid }) + "\\n");
   if (!m.id) return;
   let result = {};
+  if (m.method === "account/rateLimits/read") result = {
+    ordinaryUsageAllowed: false,
+    rateLimits: { limitId: "codex", planType: "pro", secondary: { usedPercent: 100, windowDurationMins: 10080 }, credits: { hasCredits: true, balance: "45914" }, rateLimitReachedType: "rate_limit_reached" },
+  };
   if (m.method === "thread/start" || m.method === "thread/resume") result = { thread: { id: m.params.threadId || "thread-test" } };
   if (m.method === "turn/start") result = { turn: { id: "turn-test" } };
   write({ id: m.id, result });
+  if (m.method === "turn/start") {
+    const finish = setInterval(() => {
+      if (!existsSync("finish-turn")) return;
+      clearInterval(finish);
+      write({ method: "item/completed", params: { turnId: "turn-test", item: { type: "agentMessage", text: "fake answer" } } });
+      write({ method: "turn/completed", params: { turn: { id: "turn-test", status: "completed" } } });
+    }, FINISH_DELAY_MS);
+  }
   if (m.method === "turn/steer") setTimeout(() => {
     write({ method: "item/completed", params: { turnId: "turn-test", item: { type: "agentMessage", text: "fake answer" } } });
     write({ method: "turn/completed", params: { turn: { id: "turn-test", status: "completed" } } });
@@ -96,6 +108,48 @@ describe.skipIf(!existsSync(SERVER))("dashboard and Codex jobs through the bundl
     }
     expect(requests()).toEqual([]);
   });
+
+  it("reports credit-backed availability through usage_limits (AB-71)", async () => {
+    const report = await call("usage_limits", { agent: "codex" });
+    expect(report).toContain("usable, plan limit reached, running on credits (45,914 left)");
+    expect(report).not.toMatch(/unusable|LIMIT REACHED|does not allow ordinary usage/);
+  }, TEST_TIMEOUT_MS);
+
+  it("keeps one ask call blocked until its Codex run finishes and returns its identity (AB-74)", async () => {
+    let settled = false;
+    const answer = client.callTool({ name: "ask_codex", arguments: { prompt: "wait for completion", title: "Blocking relay", cwd: home } }).then((r) => {
+      settled = true;
+      return r;
+    });
+    await waitFor(() => requests().some((r) => r.method === "turn/start"));
+    const peers = await call("peers");
+    const job = /codex-ask-[\da-f]+/.exec(peers)![0];
+    expect(settled).toBe(false);
+    expect(await call("inbox")).not.toContain("fake answer");
+    writeFileSync(join(home, "finish-turn"), "finish");
+    const result = await answer;
+    expect(result.isError).not.toBe(true);
+    expect(textOf(result)).toContain(`Job: ${job}`);
+    expect(textOf(result)).toContain("thread-test");
+    expect(textOf(result)).toContain("fake answer");
+    expect(requests().filter((r) => r.method === "thread/start")).toHaveLength(1);
+    expect(requests().filter((r) => r.method === "turn/start")).toHaveLength(1);
+    expect(requests().some((r) => r.method === "thread/resume")).toBe(false);
+    expect(await call("inbox")).not.toContain("fake answer"); // No duplicate completion mail.
+  }, TEST_TIMEOUT_MS);
+
+  it("returns the same job and session on a cancelled ask without starting a replacement (AB-74)", async () => {
+    const answer = client.callTool({ name: "ask_codex", arguments: { prompt: "wait for cancellation", title: "Cancelled relay", cwd: home } });
+    await waitFor(() => requests().some((r) => r.method === "turn/start"));
+    const job = /codex-ask-[\da-f]+/.exec(await call("peers"))![0];
+    await call("cancel_subagent", { job });
+    const result = await answer;
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toContain(`Job: ${job}`);
+    expect(textOf(result)).toContain("codex session_id: thread-test");
+    expect(requests().filter((r) => r.method === "thread/start")).toHaveLength(1);
+    expect(requests().some((r) => r.method === "thread/resume")).toBe(false);
+  }, TEST_TIMEOUT_MS);
 
   it("renames a running and a finished Codex job when message_subagent changes its title", async () => {
     const spawned = await call("spawn_codex", { prompt: "wait for a message", title: "First job title", cwd: home });
