@@ -4,6 +4,7 @@ import type { CodexSandbox } from "./config.js";
 import { checkDepth, childEnv, DelegateError, exitDescription, killTree, realFolder, resolveCommand, trackChild, type DelegateRequest, type DelegateResult } from "./delegate.js";
 import { progressEventHandler } from "./progress.js";
 import { CODEX_ASK_HINT } from "./delegate.js";
+import type { PermissionDecision } from "./relay.js";
 
 /**
  * Codex subagents through `codex app-server` (JSON-RPC over stdio) instead of `codex exec`. The same
@@ -108,32 +109,57 @@ export async function delegateToCodexAppServer(
 
   // Approval questions from Codex go to the session that started the subagent (see DelegateRequest.approve).
   const editPaths = new Map<string, string[]>();
-  const decide = async (tool: string, detail: string): Promise<boolean> => {
-    if (!req.approve) return false;
+  const denialMessages: string[] = [];
+  const deliverDenials = async () => {
+    if (!threadId || !turnId) return;
+    for (const message of denialMessages.splice(0)) {
+      try {
+        await request("turn/steer", { threadId, expectedTurnId: turnId, input: [{ type: "text", text: message, text_elements: [] }] });
+      } catch (err) {
+        req.log.warn("could not deliver approval denial reason", { message, err: (err as Error).message });
+        req.onDenied?.(message);
+      }
+    }
+  };
+  const decide = async (tool: string, detail: string): Promise<PermissionDecision> => {
+    if (!req.approve) return { allow: false, message: "Denied by agent-bridge: no approval handler is available." };
     try {
-      const d = await req.approve({ agent: "codex", tool, detail, cwd });
-      return d.allow;
-    } catch {
-      return false;
+      return await req.approve({ agent: "codex", tool, detail, cwd });
+    } catch (err) {
+      return { allow: false, message: `Denied by agent-bridge: approval forwarding failed: ${String((err as Error)?.message ?? err)}` };
     }
   };
   const answerRequest = async (id: number | string, method: string, params: any) => {
     const reply = (result: unknown) => write({ id, result });
+    const answer = (decision: PermissionDecision, result: unknown, tool: string) => {
+      reply(result);
+      // Codex's elicitation and command/edit decisions have no denial-reason field. Send it as live input
+      // after the decision, so the approval can finish before Codex processes the explanation.
+      if (!decision.allow) {
+        const message = `Approval denied for ${tool}. ${decision.message || "Denied by the approval handler; no reason supplied."}`;
+        req.onProgress?.(message);
+        denialMessages.push(message);
+        void deliverDenials();
+      }
+    };
+    const sandboxDenial: PermissionDecision = { allow: false, message: "Denied by agent-bridge: this job's access does not allow sandbox escalations; the supervisor was not asked." };
     switch (method) {
       case "mcpServer/elicitation/request": {
-        const ok = await decide(`mcp:${params.serverName ?? "tool"}`, String(params.message ?? "an MCP tool call"));
+        const tool = `mcp:${params.serverName ?? "tool"}`;
+        const decision = await decide(tool, String(params.message ?? "an MCP tool call"));
         // Form elicitations get their defaults; tool-call approvals have no fields to fill.
         const props = params.requestedSchema?.properties ?? {};
         const content = Object.fromEntries(Object.entries(props).filter(([, v]: [string, any]) => v && "default" in v).map(([k, v]: [string, any]) => [k, v.default]));
-        return reply(ok ? { action: "accept", content } : { action: "decline", content: null });
+        return answer(decision, decision.allow ? { action: "accept", content } : { action: "decline", content: null }, tool);
       }
-      case "item/commandExecution/requestApproval":
-        if (!req.askMode) return reply({ decision: "decline" });
-        return reply({ decision: (await decide("command", innerCommand(String(params.command ?? params.reason ?? "a command")))) ? "accept" : "decline" });
+      case "item/commandExecution/requestApproval": {
+        const decision = req.askMode ? await decide("command", innerCommand(String(params.command ?? params.reason ?? "a command"))) : sandboxDenial;
+        return answer(decision, { decision: decision.allow ? "accept" : "decline" }, "command");
+      }
       case "item/fileChange/requestApproval": {
-        if (!req.askMode) return reply({ decision: "decline" });
         const paths = editPaths.get(params.itemId) ?? [];
-        return reply({ decision: (await decide("edit", paths.length ? paths.join(", ") : String(params.reason ?? "file changes"))) ? "accept" : "decline" });
+        const decision = req.askMode ? await decide("edit", paths.length ? paths.join(", ") : String(params.reason ?? "file changes")) : sandboxDenial;
+        return answer(decision, { decision: decision.allow ? "accept" : "decline" }, "edit");
       }
       default:
         // Questions and permission-profile requests: not forwarded; refuse rather than let the turn hang.
@@ -288,6 +314,7 @@ export async function delegateToCodexAppServer(
     }));
     req.onInfo?.({ model: req.model ?? thread?.model ?? null, permission: req.sandbox, effort: req.effort ?? (typeof thread?.reasoningEffort === "string" ? thread.reasoningEffort : null) });
     turnId = turn?.turn?.id ?? null;
+    void deliverDenials();
     clearTimeout(startupTimer);
     if (turnId && completions.has(turnId)) finished(completions.get(turnId)!);
     req.live?.onSteering(steering);
@@ -309,6 +336,7 @@ export async function delegateToCodexAppServer(
     }
     throw new DelegateError((err as Error).message, "failed", stderr, "", threadId);
   } finally {
+    for (const message of denialMessages.splice(0)) req.onDenied?.(message);
     clearTimeout(timer);
     clearTimeout(startupTimer);
     for (const p of pending.values()) p.reject(new Error("closed"));

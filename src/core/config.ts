@@ -28,8 +28,10 @@ export interface BridgeConfig {
   maxHops: number;
   /** Background subagents running at once per session. */
   maxJobs: number;
-  /** MCP tools subagents may call without asking the parent (\server.tool\ patterns with *; see tool-allow.ts). */
+  /** MCP tools subagents may call without asking the parent (server.tool patterns or presets; see tool-allow.ts). */
   autoApproveTools: string[];
+  /** Machine-wide named resource capacities, shared by all jobs using this home directory. */
+  resourceSlots: Record<string, number>;
   delivery: DeliveryMode;
   claudeBin: string;
   codexBin: string;
@@ -64,6 +66,7 @@ export const DEFAULT_CONFIG: BridgeConfig = {
   maxHops: DEFAULT_MAX_HOPS,
   maxJobs: DEFAULT_MAX_JOBS,
   autoApproveTools: [],
+  resourceSlots: {},
   delivery: "auto",
   claudeBin: DEFAULT_CLAUDE_BIN,
   codexBin: DEFAULT_CODEX_BIN,
@@ -105,6 +108,15 @@ function oneOf<T extends string>(v: unknown, allowed: readonly T[]): T | undefin
 
 const MAX_HOPS_LIMIT = 100;
 const MAX_LINGER_SEC = 3_600;
+export const RESOURCE_NAME_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/;
+const MAX_RESOURCE_SLOTS = 100;
+
+function resourceSlots(v: unknown): Record<string, number> | undefined {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return undefined;
+  const entries = Object.entries(v);
+  if (!entries.every(([name, count]) => RESOURCE_NAME_PATTERN.test(name) && typeof count === "number" && Number.isInteger(count) && count >= 1 && count <= MAX_RESOURCE_SLOTS)) return undefined;
+  return Object.fromEntries(entries);
+}
 
 /**
  * Model ids are passed through verbatim to the CLI, so new models work without a plugin update.
@@ -189,6 +201,8 @@ export function loadConfig(home: string, agent: AgentKind, log: Logger, env: Nod
     maxHops: pick("maxHops", ENV.maxHops, (v) => parseIntInRange(v, 0, MAX_HOPS_LIMIT)) ?? d.maxHops,
     maxJobs: pick("maxJobs", ENV.maxJobs, (v) => parseIntInRange(v, 1, MAX_JOBS_LIMIT)) ?? d.maxJobs,
     autoApproveTools: pick("autoApproveTools", ENV.autoApproveTools, toolPatterns) ?? d.autoApproveTools,
+    // Capacities must agree across agents; per-agent sections cannot override shared resources.
+    resourceSlots: resourceSlots(file.resourceSlots) ?? d.resourceSlots,
     delivery: pick("delivery", ENV.delivery, (v) => oneOf(v, DELIVERY_MODES)) ?? d.delivery,
     claudeBin: pick("claudeBin", ENV.claudeBin, str) ?? d.claudeBin,
     codexBin: pick("codexBin", ENV.codexBin, str) ?? d.codexBin,

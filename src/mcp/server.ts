@@ -713,7 +713,7 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
         .max(50)
         .optional()
         .describe(
-          'MCP tools the subagent may call without asking you, as "server.tool" patterns with *, e.g. ["pair-desk.get_*", "pair-desk.list_*"] (read-only tools), or "server" for all of its tools.',
+          'MCP tools the subagent may call without asking you, as "server.tool" patterns with *, e.g. ["pair-desk.get_*", "pair-desk.list_*"] (reads only), "pair-desk:worker" (reads, comments, progress, plans and issue edits; excludes status, builds and handoff writes), or "server" for all of its tools.',
         ),
       ...profile.schema,
     };

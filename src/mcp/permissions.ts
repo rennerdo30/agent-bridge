@@ -12,6 +12,7 @@ const DECISION_SCHEMA = {
       enum: ["allow", "deny"],
       enumNames: ["Allow", "Deny"],
     },
+    reason: { type: "string" as const, title: "Reason (optional)" },
   },
   required: ["decision"],
 };
@@ -40,7 +41,8 @@ export async function askUserViaElicitation(server: Server, req: PermissionReque
     );
     const allowed = res.action === "accept" && (res.content as { decision?: string } | undefined)?.decision === "allow";
     log.info("user answered subagent permission request", { tool: req.tool, action: res.action, allowed });
-    return allowed ? { allow: true } : { allow: false, message: "The user denied this request." };
+    const reason = typeof res.content?.reason === "string" ? res.content.reason.trim() : "";
+    return allowed ? { allow: true } : { allow: false, message: `Denied by the user in the parent session${reason ? `: ${reason}` : "."}` };
   } catch (err) {
     log.warn("permission dialog failed; denying", { err: (err as Error).message });
     return { allow: false, message: "Denied: the permission dialog could not be shown or was not answered in time." };

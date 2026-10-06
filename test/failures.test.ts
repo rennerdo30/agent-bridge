@@ -1,19 +1,23 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { setTimeout as delay } from "node:timers/promises";
 import { delegateToCodexAppServer } from "../src/core/codex-appserver.js";
-import { DelegateError, failureCause, isTransientProviderError, retryTransient, runProcess, TRANSIENT_RETRY_MESSAGE, type DelegateRequest, type DelegateResult } from "../src/core/delegate.js";
+import { CAPACITY_RETRY_DELAYS_MS, DelegateError, failureCause, isTransientProviderError, retryTransient, runProcess, TRANSIENT_RETRY_MESSAGE, type DelegateRequest, type DelegateResult } from "../src/core/delegate.js";
 import { nullLogger } from "../src/core/logger.js";
 
 const req = (over: Partial<DelegateRequest> = {}): DelegateRequest => ({ prompt: "do the task", cwd: ".", sessionId: null, timeoutSec: 600, log: nullLogger, ...over });
 const result = (over: Partial<DelegateResult> = {}): DelegateResult => ({ sessionId: "ses-1", text: "answer", isError: false, details: {}, ...over });
+vi.mock("node:timers/promises", () => ({ setTimeout: vi.fn(async (_ms, _value, opts) => { opts?.signal?.throwIfAborted(); }) }));
+afterEach(() => { vi.clearAllMocks(); vi.restoreAllMocks(); });
 
 describe("transient provider errors", () => {
   it("tells provider hiccups from limits and real failures", () => {
     expect(isTransientProviderError("Error from provider (Console): Upstream response was not valid JSON")).toBe(true);
     expect(isTransientProviderError("stream disconnected before completion")).toBe(true);
     expect(isTransientProviderError("HTTP 503 Service Unavailable")).toBe(true);
+    expect(isTransientProviderError("Selected model is at capacity. Please try a different model.")).toBe(true);
     expect(isTransientProviderError("You've hit your usage limit")).toBe(false);
     expect(isTransientProviderError("429 Too Many Requests from upstream")).toBe(false);
     expect(isTransientProviderError("model not found: gpt-x")).toBe(false);
@@ -67,6 +71,61 @@ describe("transient provider errors", () => {
       }).catch(() => {});
       expect(n).toBe(1);
     }
+  });
+
+  it("backs off capacity errors without changing the selected model or losing progress", async () => {
+    const calls: DelegateRequest[] = [];
+    const progress: string[] = [];
+    const res = await retryTransient(req({ model: "gpt-6-sol", onProgress: (s) => progress.push(s) }), async (r) => {
+      calls.push(r);
+      if (calls.length <= CAPACITY_RETRY_DELAYS_MS.length) throw new DelegateError("Selected model is at capacity. Please try a different model.", "failed", "", "", "saved-session");
+      return result({ sessionId: "saved-session", text: "finished" });
+    });
+    expect(vi.mocked(delay).mock.calls.map((c) => c[0])).toEqual([...CAPACITY_RETRY_DELAYS_MS]);
+    expect(calls.every((c) => c.model === "gpt-6-sol")).toBe(true);
+    expect(calls.slice(1).every((c) => c.sessionId === "saved-session" && c.prompt === TRANSIENT_RETRY_MESSAGE)).toBe(true);
+    expect(progress.every((s) => s.includes("same model") && s.includes("preserving session progress"))).toBe(true);
+    expect(res.details.retries).toBe(CAPACITY_RETRY_DELAYS_MS.length);
+    expect(res.isError).toBe(false);
+  });
+
+  it("keeps the resolved default model and session reported before a capacity error", async () => {
+    const calls: DelegateRequest[] = [];
+    await retryTransient(req(), async (r) => {
+      calls.push(r);
+      if (calls.length === 1) {
+        r.onInfo?.({ model: "gpt-6-sol" });
+        r.onSession?.("saved");
+        throw new DelegateError("Selected model is at capacity", "failed");
+      }
+      return result();
+    });
+    expect(calls[1]).toMatchObject({ model: "gpt-6-sol", sessionId: "saved", prompt: TRANSIENT_RETRY_MESSAGE });
+  });
+
+  it("retries capacity before session start with the original task and has a bounded retry limit", async () => {
+    const calls: DelegateRequest[] = [];
+    const err = await retryTransient(req({ model: "gpt-6-sol" }), async (r) => {
+      calls.push(r);
+      throw new DelegateError("Selected model is at capacity", "failed");
+    }).catch((e) => e);
+    expect(calls).toHaveLength(CAPACITY_RETRY_DELAYS_MS.length + 1);
+    expect(calls.every((c) => c.prompt === "do the task" && c.model === "gpt-6-sol")).toBe(true);
+    expect(err.message).toContain("3 automatic retries");
+  });
+
+  it("respects cancellation and the original deadline during capacity backoff", async () => {
+    const controller = new AbortController();
+    const abort = await retryTransient(req({ signal: controller.signal, onProgress: () => controller.abort() }), async () => {
+      throw new DelegateError("Selected model is at capacity", "failed", "", "", "saved");
+    }).catch((e) => e);
+    expect(abort).toMatchObject({ kind: "aborted", sessionId: "saved" });
+    expect(vi.mocked(delay).mock.calls[0]?.[2]?.signal).toBe(controller.signal);
+    const timeout = await retryTransient(req({ timeoutSec: 1 }), async () => {
+      throw new DelegateError("Selected model is at capacity", "failed", "", "", "saved");
+    }).catch((e) => e);
+    expect(timeout).toMatchObject({ kind: "timeout", sessionId: "saved" });
+    expect(vi.mocked(delay)).toHaveBeenCalledTimes(1);
   });
 });
 

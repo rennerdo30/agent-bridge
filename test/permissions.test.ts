@@ -55,6 +55,10 @@ async function serverWithClient(elicit: ((req: any) => any) | null): Promise<Ser
 }
 
 describe("asking the user via elicitation", () => {
+  it("passes a user's denial reason and identifies the refusing layer", async () => {
+    const server = await serverWithClient(() => ({ action: "accept", content: { decision: "deny", reason: "Publish builds only from merged master" } }));
+    expect(await askUserViaElicitation(server, REQ, nullLogger)).toEqual({ allow: false, message: "Denied by the user in the parent session: Publish builds only from merged master" });
+  });
   it("allows only on an explicit Allow", async () => {
     let message = "";
     const allowServer = await serverWithClient((r) => ((message = r.params.message), { action: "accept", content: { decision: "allow" } }));
@@ -117,18 +121,20 @@ describe.skipIf(!existsSync(CLI))("codex permission-hook command", () => {
     try {
       // spawnSync would block the relay's event loop; run the hook asynchronously.
       const { spawn } = await import("node:child_process");
-      const call = (input: object) =>
+      const call = (input: object, agent: string) =>
         new Promise<string>((resolve) => {
-          const child = spawn(process.execPath, [CLI, "permission-hook"], { env: { ...process.env, ...relay.childEnv() } });
+          const child = spawn(process.execPath, [CLI, "permission-hook", agent], { env: { ...process.env, ...relay.childEnv() } });
           let out = "";
           child.stdout.on("data", (d) => (out += d));
           child.on("close", () => resolve(out));
           child.stdin.end(JSON.stringify(input));
         });
-      const allowed = JSON.parse(await call({ tool_name: "Bash", tool_input: { command: "npm test" }, cwd: "/w" }));
-      expect(allowed).toEqual({ hookSpecificOutput: { hookEventName: "PermissionRequest", decision: { behavior: "allow" } } });
-      const denied = JSON.parse(await call({ tool_name: "Bash", tool_input: { command: "rm -rf x" } }));
-      expect(denied.hookSpecificOutput.decision).toEqual({ behavior: "deny", message: "not that" });
+      for (const agent of ["codex", "claude"]) {
+        const allowed = JSON.parse(await call({ tool_name: "Bash", tool_input: { command: "npm test" }, cwd: "/w" }, agent));
+        expect(allowed).toEqual({ hookSpecificOutput: { hookEventName: "PermissionRequest", decision: { behavior: "allow" } } });
+        const denied = JSON.parse(await call({ tool_name: "Bash", tool_input: { command: "rm -rf x" } }, agent));
+        expect(denied.hookSpecificOutput.decision).toEqual({ behavior: "deny", message: "not that" });
+      }
     } finally {
       await relay.stop();
     }

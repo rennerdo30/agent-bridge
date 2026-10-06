@@ -2,6 +2,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { delimiter, dirname, extname, isAbsolute, join, win32 } from "node:path";
 import { fileURLToPath } from "node:url";
+import { setTimeout as delay } from "node:timers/promises";
 import type { ClaudePermissionMode, CodexSandbox } from "./config.js";
 import type { Logger } from "./logger.js";
 import { claudeMcpDenyRules } from "./claude-mcp.js";
@@ -323,6 +324,8 @@ export interface DelegateRequest {
    * Used by Codex app-server, opencode served mode and the Claude PermissionRequest hook.
    */
   approve?: (r: { agent: string; tool: string; detail: string; cwd?: string }) => Promise<PermissionDecision>;
+  /** Deliver denial context through hooks if native live input cannot reach the running turn. */
+  onDenied?: (message: string) => void;
   /**
    * Whether someone can really answer approve's questions in this run (the parent agent of a background
    * subagent, or a user who can see permission dialogs). Where a target would otherwise approve blindly or
@@ -762,9 +765,13 @@ export async function withResumeHint<T>(agent: string, sessionOf: (stdout: strin
   }
 }
 
-/** Provider hiccups worth one automatic retry: the session is fine, the provider's answer was not. */
+/** Provider hiccups worth retrying: the session is fine, the provider's answer was not. */
 const TRANSIENT_ERROR_RE =
-  /not valid JSON|upstream|overloaded|bad gateway|service unavailable|gateway time-?out|internal server error|\b50[0-4]\b|ECONNRESET|ETIMEDOUT|EPIPE|socket hang up|connection (?:reset|closed|error|refused)|stream (?:error|closed|disconnected|ended)|network error|fetch failed|temporarily unavailable|routing discovery timed out/i;
+  /(?:model|selected model) is at capacity|not valid JSON|upstream|overloaded|bad gateway|service unavailable|gateway time-?out|internal server error|\b50[0-4]\b|ECONNRESET|ETIMEDOUT|EPIPE|socket hang up|connection (?:reset|closed|error|refused)|stream (?:error|closed|disconnected|ended)|network error|fetch failed|temporarily unavailable|routing discovery timed out/i;
+const CAPACITY_ERROR_RE = /model is at capacity/i;
+export const CAPACITY_RETRY_DELAYS_MS = [15_000, 30_000, 60_000] as const;
+const TRANSIENT_RETRY_LIMIT = 1;
+const MS_PER_SECOND = 1_000;
 /** Usage and rate limits: retrying at once only fails again, so these are reported, not retried. */
 const LIMIT_ERROR_RE = /usage limit|rate.?limit|quota|too many requests|\b429\b|insufficient (?:credits|balance)|billing/i;
 
@@ -777,39 +784,71 @@ export const TRANSIENT_RETRY_MESSAGE =
   "Your previous turn was cut off by a temporary provider error. Continue where you stopped and finish the task. Then give your final answer.";
 
 /**
- * Run a delegate; if a transient provider error ("Upstream response was not valid JSON") ends it, resume the
- * same session once with a short "continue" message before reporting a failure. Long runs are not lost to a
- * single bad response. The result (or the final error) says that it was retried.
+ * Resume after provider hiccups. Capacity errors back off on the selected model, within the original
+ * deadline; other transient errors get one immediate retry. Existing session state is preserved.
  */
 export async function retryTransient(req: DelegateRequest, run: (req: DelegateRequest) => Promise<DelegateResult>): Promise<DelegateResult> {
-  const started = Date.now();
-  let cause: string;
-  let sessionId: string;
-  try {
-    const res = await run(req);
-    const error = typeof res.details?.error === "string" ? res.details.error : null;
-    if (!res.isError || !error || !res.sessionId || !isTransientProviderError(error)) return res;
-    cause = error;
-    sessionId = res.sessionId;
-  } catch (err) {
-    if (!(err instanceof DelegateError) || err.kind !== "failed" || !err.sessionId || !isTransientProviderError(err.message)) throw err;
-    cause = err.message;
-    sessionId = err.sessionId;
-  }
-  if (req.signal?.aborted) throw new DelegateError("delegate aborted", "aborted", "", "", sessionId);
-  req.log.warn("transient provider error; resuming the session once", { sessionId, cause });
-  req.onProgress?.(`temporary provider error, resuming the session: ${cause.slice(0, 120)}`);
-  const note = `(A temporary provider error interrupted the run ("${cause}"); agent-bridge resumed the same session once with a short "continue" message.)`;
-  const remainingSec = Math.max(60, req.timeoutSec - Math.round((Date.now() - started) / 1000));
-  try {
-    const res = await run({ ...req, sessionId, prompt: TRANSIENT_RETRY_MESSAGE, timeoutSec: remainingSec });
-    return { ...res, text: `${note}\n\n${res.text}`, details: { ...res.details, retriedAfter: cause } };
-  } catch (err) {
-    if (err instanceof DelegateError) {
-      err.message += ` (after one automatic retry: the first attempt had failed with "${cause}")`;
-      err.sessionId ??= sessionId;
+  const deadline = Date.now() + req.timeoutSec * MS_PER_SECOND;
+  let sessionId = req.sessionId ?? null;
+  let model = req.model;
+  let firstCause: string | null = null;
+  let retries = 0;
+  for (;;) {
+    if (req.signal?.aborted) throw new DelegateError("delegate aborted", "aborted", "", "", sessionId);
+    const remainingSec = (deadline - Date.now()) / MS_PER_SECOND;
+    if (remainingSec <= 0) throw new DelegateError("delegate timed out during provider retry backoff", "timeout", "", "", sessionId);
+    let res: DelegateResult | undefined;
+    let failure: unknown;
+    let failed = false;
+    let cause = "";
+    try {
+      res = await run({
+        ...req, model, sessionId, timeoutSec: remainingSec, prompt: retries && sessionId ? TRANSIENT_RETRY_MESSAGE : req.prompt,
+        onSession: (id) => {
+          sessionId = id;
+          req.onSession?.(id);
+        },
+        onInfo: (info) => {
+          model ??= info.model;
+          req.onInfo?.(info);
+        },
+      });
+      sessionId = res.sessionId ?? sessionId;
+      cause = res.isError && typeof res.details?.error === "string" ? res.details.error : "";
+    } catch (err) {
+      failure = err;
+      failed = true;
+      if (err instanceof DelegateError) {
+        sessionId = err.sessionId ?? sessionId;
+        cause = err.kind === "failed" ? err.message : "";
+      }
     }
-    throw err;
+    const capacity = CAPACITY_ERROR_RE.test(cause);
+    const limit = capacity ? CAPACITY_RETRY_DELAYS_MS.length : TRANSIENT_RETRY_LIMIT;
+    if (!isTransientProviderError(cause) || (!sessionId && !capacity) || retries >= limit) {
+      if (failed) {
+        if (failure instanceof DelegateError && firstCause) {
+          failure.message += ` (after ${retries === 1 ? "one automatic retry" : `${retries} automatic retries`}: the first attempt had failed with "${firstCause}")`;
+          failure.sessionId ??= sessionId;
+        }
+        throw failure;
+      }
+      if (!firstCause) return res!;
+      const count = retries === 1 ? "once" : `${retries} times`;
+      const note = `(A temporary provider error interrupted the run ("${firstCause}"); agent-bridge ${sessionId ? "resumed the same session" : "retried"} ${count} on the selected model.)`;
+      return { ...res!, text: `${note}\n\n${res!.text}`, details: { ...res!.details, retriedAfter: firstCause, retries } };
+    }
+    firstCause ??= cause;
+    const waitMs = capacity ? CAPACITY_RETRY_DELAYS_MS[retries]! : 0;
+    if (Date.now() + waitMs >= deadline) throw new DelegateError("delegate timed out during provider retry backoff", "timeout", "", "", sessionId);
+    retries++;
+    req.log.warn("transient provider error; retrying on the selected model", { sessionId, model, cause, retries, waitMs });
+    req.onProgress?.(`temporary provider error: ${cause}; retry ${retries}/${limit} in ${waitMs / MS_PER_SECOND}s on the same model, ${sessionId ? "preserving session progress" : "before session start"}`);
+    try {
+      await delay(waitMs, undefined, { signal: req.signal });
+    } catch {
+      throw new DelegateError("delegate aborted", "aborted", "", "", sessionId);
+    }
   }
 }
 

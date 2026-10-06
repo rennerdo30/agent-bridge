@@ -185,6 +185,30 @@ Every `ask_*` and `spawn_*` run is a job with a name like `codex-job-1a2b3c4d` o
 
 - **Progress:** subagents are asked to report how far they are with `report_progress` (percent and a note); `peers` and the dashboard show it as a percentage and a progress bar. It is the subagent's own estimate.
 - **Read-only tools without asking:** list MCP tools that subagents may call without an approval question, as `server.tool` patterns with `*`: `"autoApproveTools": ["pair-desk.get_*", "pair-desk.list_*"]` in the config (or `AGENT_BRIDGE_AUTO_APPROVE_TOOLS`, comma-separated), or `allow_tools=[...]` on a single `spawn_*` / `ask_*`. An "allow" answer covers that MCP server for the rest of the job, follow-ups included.
+- **Desk workers:** `allow_tools=["pair-desk:worker"]` allows `get_*`, `list_*`, `comment`, `progress`, `set_plan`, `update_step`, `create_issue` and `update_issue`. It excludes status changes, build publication and handoff writes. Read patterns alone do not allow plans or issue edits.
+- **Capacity errors:** jobs retry model-capacity failures after 15, 30 and 60 seconds within their original time limit, preserving the session and selected model. No model fallback is used. The step log records each retry.
+- **Denial reasons:** supervisor denials identify the supervisor and carry its reason. Claude hooks and opencode replies pass it in their protocol response; Codex approval responses have no reason field, so the running turn receives a live explanation. Bridge policy refusals identify agent-bridge separately.
+
+### Shared resource slots
+
+To limit heavy commands across parallel jobs and projects, opt in with a top-level config entry:
+
+```json
+{ "resourceSlots": { "unity": 2, "gpu": 1 } }
+```
+
+All jobs using the same `AGENT_BRIDGE_HOME` share these capacities; per-agent sections cannot override them. Jobs receive slot instructions in their preamble and a stable owner identity in their environment. Around a heavy command, use `agent-bridge slot acquire unity` and always `agent-bridge slot release unity` in a `finally` block or shell trap. The preamble gives the bundled CLI path when `agent-bridge` is not on PATH. For example, in PowerShell:
+
+```powershell
+agent-bridge slot acquire unity
+if ($LASTEXITCODE -ne 0) { throw "Could not acquire Unity slot" }
+try { & $unityEditor -batchmode -quit -projectPath $projectPath }
+finally { agent-bridge slot release unity }
+```
+
+`agent-bridge slot status` prints holders and FIFO waiters as JSON. SQLite file locks in `resource-slots.sqlite` serialize acquisition across processes and recover automatically after a crash; no extra daemon or dependency is needed. Dead owner processes are reclaimed on the next acquire or status call. Runs renew their six-hour leases every minute and release all their slots when the run ends. Outside a delegated job the owner defaults to the calling shell process; keep that shell alive and use `agent-bridge slot renew unity` before its six-hour lease expires. Acquiring twice is idempotent: one job holds one slot per resource. Lowering a capacity leaves current holders in place and blocks new acquisitions until usage falls below the new limit.
+
+Slots are cooperative: commands that skip acquisition remain unrestricted. Queue inspection is available through `slot status`; dashboard and `peers` integration are not included.
 - **Subagents don't spawn agents:** inside a subagent, agent-bridge offers only `send` (to its parent) and `peers`; `ask_*`, `spawn_*` and the other bridge tools are not there.
 - **Results reach the right agent:** messages are not handed to Claude Code's native subagents (Task/Agent tool) through their tool calls; they wait for the main agent. After `/reload-plugins` the new agent-bridge server of a session replaces the old one and keeps its name.
 `peers` lists running jobs and the recent finished ones. This works the same whichever agent is the host (Claude Code, Codex or opencode, where the tool is `bridge_message_subagent`) and whichever is the subagent. Cancelling or ending a session stops its subagents with their whole process tree.

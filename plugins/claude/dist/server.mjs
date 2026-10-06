@@ -7200,7 +7200,7 @@ var require_dist = __commonJS({
 });
 
 // src/mcp/server.ts
-import { dirname as dirname6, isAbsolute as isAbsolute4, join as join20, resolve as resolve5 } from "node:path";
+import { dirname as dirname6, isAbsolute as isAbsolute4, join as join21, resolve as resolve5 } from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 
 // node_modules/zod/v3/helpers/util.js
@@ -36698,6 +36698,7 @@ var DEFAULT_CONFIG = {
   maxHops: DEFAULT_MAX_HOPS,
   maxJobs: DEFAULT_MAX_JOBS,
   autoApproveTools: [],
+  resourceSlots: {},
   delivery: "auto",
   claudeBin: DEFAULT_CLAUDE_BIN,
   codexBin: DEFAULT_CODEX_BIN,
@@ -36734,6 +36735,14 @@ function oneOf(v, allowed) {
 }
 var MAX_HOPS_LIMIT = 100;
 var MAX_LINGER_SEC = 3600;
+var RESOURCE_NAME_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/;
+var MAX_RESOURCE_SLOTS = 100;
+function resourceSlots(v) {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return void 0;
+  const entries = Object.entries(v);
+  if (!entries.every(([name, count]) => RESOURCE_NAME_PATTERN.test(name) && typeof count === "number" && Number.isInteger(count) && count >= 1 && count <= MAX_RESOURCE_SLOTS)) return void 0;
+  return Object.fromEntries(entries);
+}
 var MODEL_NAME_PATTERN = /^[^\s"'`&|<>^%$;()]{1,200}$/;
 function modelName(v) {
   return typeof v === "string" && MODEL_NAME_PATTERN.test(v.trim()) ? v.trim() : void 0;
@@ -36795,6 +36804,8 @@ function loadConfig(home, agent, log, env = process.env) {
     maxHops: pick2("maxHops", ENV.maxHops, (v) => parseIntInRange(v, 0, MAX_HOPS_LIMIT)) ?? d.maxHops,
     maxJobs: pick2("maxJobs", ENV.maxJobs, (v) => parseIntInRange(v, 1, MAX_JOBS_LIMIT)) ?? d.maxJobs,
     autoApproveTools: pick2("autoApproveTools", ENV.autoApproveTools, toolPatterns) ?? d.autoApproveTools,
+    // Capacities must agree across agents; per-agent sections cannot override shared resources.
+    resourceSlots: resourceSlots(file2.resourceSlots) ?? d.resourceSlots,
     delivery: pick2("delivery", ENV.delivery, (v) => oneOf(v, DELIVERY_MODES)) ?? d.delivery,
     claudeBin: pick2("claudeBin", ENV.claudeBin, str) ?? d.claudeBin,
     codexBin: pick2("codexBin", ENV.codexBin, str) ?? d.codexBin,
@@ -36828,6 +36839,7 @@ import { spawn } from "node:child_process";
 import { existsSync as existsSync2, readFileSync as readFileSync4, realpathSync } from "node:fs";
 import { delimiter, dirname as dirname3, extname, isAbsolute, join as join6, win32 } from "node:path";
 import { fileURLToPath } from "node:url";
+import { setTimeout as delay } from "node:timers/promises";
 
 // src/core/claude-mcp.ts
 import { readFileSync as readFileSync2 } from "node:fs";
@@ -37778,43 +37790,84 @@ async function withResumeHint(agent, sessionOf, run) {
     throw err;
   }
 }
-var TRANSIENT_ERROR_RE = /not valid JSON|upstream|overloaded|bad gateway|service unavailable|gateway time-?out|internal server error|\b50[0-4]\b|ECONNRESET|ETIMEDOUT|EPIPE|socket hang up|connection (?:reset|closed|error|refused)|stream (?:error|closed|disconnected|ended)|network error|fetch failed|temporarily unavailable|routing discovery timed out/i;
+var TRANSIENT_ERROR_RE = /(?:model|selected model) is at capacity|not valid JSON|upstream|overloaded|bad gateway|service unavailable|gateway time-?out|internal server error|\b50[0-4]\b|ECONNRESET|ETIMEDOUT|EPIPE|socket hang up|connection (?:reset|closed|error|refused)|stream (?:error|closed|disconnected|ended)|network error|fetch failed|temporarily unavailable|routing discovery timed out/i;
+var CAPACITY_ERROR_RE = /model is at capacity/i;
+var CAPACITY_RETRY_DELAYS_MS = [15e3, 3e4, 6e4];
+var TRANSIENT_RETRY_LIMIT = 1;
+var MS_PER_SECOND = 1e3;
 var LIMIT_ERROR_RE = /usage limit|rate.?limit|quota|too many requests|\b429\b|insufficient (?:credits|balance)|billing/i;
 function isTransientProviderError(message) {
   return TRANSIENT_ERROR_RE.test(message) && !LIMIT_ERROR_RE.test(message);
 }
 var TRANSIENT_RETRY_MESSAGE = "Your previous turn was cut off by a temporary provider error. Continue where you stopped and finish the task. Then give your final answer.";
 async function retryTransient(req, run) {
-  const started = Date.now();
-  let cause;
-  let sessionId;
-  try {
-    const res = await run(req);
-    const error62 = typeof res.details?.error === "string" ? res.details.error : null;
-    if (!res.isError || !error62 || !res.sessionId || !isTransientProviderError(error62)) return res;
-    cause = error62;
-    sessionId = res.sessionId;
-  } catch (err) {
-    if (!(err instanceof DelegateError) || err.kind !== "failed" || !err.sessionId || !isTransientProviderError(err.message)) throw err;
-    cause = err.message;
-    sessionId = err.sessionId;
-  }
-  if (req.signal?.aborted) throw new DelegateError("delegate aborted", "aborted", "", "", sessionId);
-  req.log.warn("transient provider error; resuming the session once", { sessionId, cause });
-  req.onProgress?.(`temporary provider error, resuming the session: ${cause.slice(0, 120)}`);
-  const note = `(A temporary provider error interrupted the run ("${cause}"); agent-bridge resumed the same session once with a short "continue" message.)`;
-  const remainingSec = Math.max(60, req.timeoutSec - Math.round((Date.now() - started) / 1e3));
-  try {
-    const res = await run({ ...req, sessionId, prompt: TRANSIENT_RETRY_MESSAGE, timeoutSec: remainingSec });
-    return { ...res, text: `${note}
-
-${res.text}`, details: { ...res.details, retriedAfter: cause } };
-  } catch (err) {
-    if (err instanceof DelegateError) {
-      err.message += ` (after one automatic retry: the first attempt had failed with "${cause}")`;
-      err.sessionId ??= sessionId;
+  const deadline = Date.now() + req.timeoutSec * MS_PER_SECOND;
+  let sessionId = req.sessionId ?? null;
+  let model = req.model;
+  let firstCause = null;
+  let retries = 0;
+  for (; ; ) {
+    if (req.signal?.aborted) throw new DelegateError("delegate aborted", "aborted", "", "", sessionId);
+    const remainingSec = (deadline - Date.now()) / MS_PER_SECOND;
+    if (remainingSec <= 0) throw new DelegateError("delegate timed out during provider retry backoff", "timeout", "", "", sessionId);
+    let res;
+    let failure2;
+    let failed = false;
+    let cause = "";
+    try {
+      res = await run({
+        ...req,
+        model,
+        sessionId,
+        timeoutSec: remainingSec,
+        prompt: retries && sessionId ? TRANSIENT_RETRY_MESSAGE : req.prompt,
+        onSession: (id) => {
+          sessionId = id;
+          req.onSession?.(id);
+        },
+        onInfo: (info) => {
+          model ??= info.model;
+          req.onInfo?.(info);
+        }
+      });
+      sessionId = res.sessionId ?? sessionId;
+      cause = res.isError && typeof res.details?.error === "string" ? res.details.error : "";
+    } catch (err) {
+      failure2 = err;
+      failed = true;
+      if (err instanceof DelegateError) {
+        sessionId = err.sessionId ?? sessionId;
+        cause = err.kind === "failed" ? err.message : "";
+      }
     }
-    throw err;
+    const capacity = CAPACITY_ERROR_RE.test(cause);
+    const limit = capacity ? CAPACITY_RETRY_DELAYS_MS.length : TRANSIENT_RETRY_LIMIT;
+    if (!isTransientProviderError(cause) || !sessionId && !capacity || retries >= limit) {
+      if (failed) {
+        if (failure2 instanceof DelegateError && firstCause) {
+          failure2.message += ` (after ${retries === 1 ? "one automatic retry" : `${retries} automatic retries`}: the first attempt had failed with "${firstCause}")`;
+          failure2.sessionId ??= sessionId;
+        }
+        throw failure2;
+      }
+      if (!firstCause) return res;
+      const count = retries === 1 ? "once" : `${retries} times`;
+      const note = `(A temporary provider error interrupted the run ("${firstCause}"); agent-bridge ${sessionId ? "resumed the same session" : "retried"} ${count} on the selected model.)`;
+      return { ...res, text: `${note}
+
+${res.text}`, details: { ...res.details, retriedAfter: firstCause, retries } };
+    }
+    firstCause ??= cause;
+    const waitMs = capacity ? CAPACITY_RETRY_DELAYS_MS[retries] : 0;
+    if (Date.now() + waitMs >= deadline) throw new DelegateError("delegate timed out during provider retry backoff", "timeout", "", "", sessionId);
+    retries++;
+    req.log.warn("transient provider error; retrying on the selected model", { sessionId, model, cause, retries, waitMs });
+    req.onProgress?.(`temporary provider error: ${cause}; retry ${retries}/${limit} in ${waitMs / MS_PER_SECOND}s on the same model, ${sessionId ? "preserving session progress" : "before session start"}`);
+    try {
+      await delay(waitMs, void 0, { signal: req.signal });
+    } catch {
+      throw new DelegateError("delegate aborted", "aborted", "", "", sessionId);
+    }
   }
 }
 function stderrSummary(stderr) {
@@ -38947,9 +39000,9 @@ var BridgeNode = class extends EventEmitter2 {
   }
   /** Doubling delay for background retries, capped; reset once connected. */
   nextBackoff() {
-    const delay = this.reconnectDelay;
-    this.reconnectDelay = Math.min(delay * 2, RECONNECT_BACKOFF_MAX_MS);
-    return delay;
+    const delay3 = this.reconnectDelay;
+    this.reconnectDelay = Math.min(delay3 * 2, RECONNECT_BACKOFF_MAX_MS);
+    return delay3;
   }
   /**
    * Retry the election later until connected or stopped. Also after "unauthorized" / "protocol_mismatch":
@@ -40020,9 +40073,9 @@ async function delegateToOpencodeServed(req) {
     await api("POST", `/session/${sessionId}/prompt_async`, body);
     let failure2 = null;
     const onEvent = progressEventHandler("opencode", req.onProgress);
-    let alive = false;
+    let alive2 = false;
     const watchdog = setTimeout(() => {
-      if (alive) return;
+      if (alive2) return;
       failure2 = "opencode did not start working on the prompt within 60 seconds (check the model id and the provider's login).";
       ac.abort();
     }, START_WATCHDOG_MS);
@@ -40031,7 +40084,7 @@ async function delegateToOpencodeServed(req) {
         const type = String(ev.type ?? "");
         const p = ev.properties ?? {};
         const mine = p.sessionID === sessionId || p.part?.sessionID === sessionId || p.info?.sessionID === sessionId;
-        if (mine) alive = true;
+        if (mine) alive2 = true;
         if (type === "session.error" && !p.sessionID) {
           failure2 = String(p.error?.data?.message ?? p.error?.message ?? "opencode reported an error");
           break;
@@ -40055,7 +40108,7 @@ async function delegateToOpencodeServed(req) {
     } finally {
       clearTimeout(watchdog);
     }
-    if (failure2 && !alive) throw new DelegateError(failure2, "failed", "", "", sessionId);
+    if (failure2 && !alive2) throw new DelegateError(failure2, "failed", "", "", sessionId);
     const messages = await api("GET", `/session/${sessionId}/message`) ?? [];
     const last = [...messages].reverse().find((m) => m.info?.role === "assistant");
     const text2 = (last?.parts ?? []).filter((part) => part.type === "text" && typeof part.text === "string").map((part) => part.text).join("");
@@ -40155,31 +40208,54 @@ async function delegateToCodexAppServer(req) {
     write({ id, method, params });
   });
   const editPaths = /* @__PURE__ */ new Map();
+  const denialMessages = [];
+  const deliverDenials = async () => {
+    if (!threadId || !turnId) return;
+    for (const message of denialMessages.splice(0)) {
+      try {
+        await request2("turn/steer", { threadId, expectedTurnId: turnId, input: [{ type: "text", text: message, text_elements: [] }] });
+      } catch (err) {
+        req.log.warn("could not deliver approval denial reason", { message, err: err.message });
+        req.onDenied?.(message);
+      }
+    }
+  };
   const decide = async (tool, detail) => {
-    if (!req.approve) return false;
+    if (!req.approve) return { allow: false, message: "Denied by agent-bridge: no approval handler is available." };
     try {
-      const d = await req.approve({ agent: "codex", tool, detail, cwd });
-      return d.allow;
-    } catch {
-      return false;
+      return await req.approve({ agent: "codex", tool, detail, cwd });
+    } catch (err) {
+      return { allow: false, message: `Denied by agent-bridge: approval forwarding failed: ${String(err?.message ?? err)}` };
     }
   };
   const answerRequest = async (id, method, params) => {
     const reply = (result) => write({ id, result });
+    const answer = (decision, result, tool) => {
+      reply(result);
+      if (!decision.allow) {
+        const message = `Approval denied for ${tool}. ${decision.message || "Denied by the approval handler; no reason supplied."}`;
+        req.onProgress?.(message);
+        denialMessages.push(message);
+        void deliverDenials();
+      }
+    };
+    const sandboxDenial = { allow: false, message: "Denied by agent-bridge: this job's access does not allow sandbox escalations; the supervisor was not asked." };
     switch (method) {
       case "mcpServer/elicitation/request": {
-        const ok = await decide(`mcp:${params.serverName ?? "tool"}`, String(params.message ?? "an MCP tool call"));
+        const tool = `mcp:${params.serverName ?? "tool"}`;
+        const decision = await decide(tool, String(params.message ?? "an MCP tool call"));
         const props = params.requestedSchema?.properties ?? {};
         const content = Object.fromEntries(Object.entries(props).filter(([, v]) => v && "default" in v).map(([k, v]) => [k, v.default]));
-        return reply(ok ? { action: "accept", content } : { action: "decline", content: null });
+        return answer(decision, decision.allow ? { action: "accept", content } : { action: "decline", content: null }, tool);
       }
-      case "item/commandExecution/requestApproval":
-        if (!req.askMode) return reply({ decision: "decline" });
-        return reply({ decision: await decide("command", innerCommand(String(params.command ?? params.reason ?? "a command"))) ? "accept" : "decline" });
+      case "item/commandExecution/requestApproval": {
+        const decision = req.askMode ? await decide("command", innerCommand(String(params.command ?? params.reason ?? "a command"))) : sandboxDenial;
+        return answer(decision, { decision: decision.allow ? "accept" : "decline" }, "command");
+      }
       case "item/fileChange/requestApproval": {
-        if (!req.askMode) return reply({ decision: "decline" });
         const paths = editPaths.get(params.itemId) ?? [];
-        return reply({ decision: await decide("edit", paths.length ? paths.join(", ") : String(params.reason ?? "file changes")) ? "accept" : "decline" });
+        const decision = req.askMode ? await decide("edit", paths.length ? paths.join(", ") : String(params.reason ?? "file changes")) : sandboxDenial;
+        return answer(decision, { decision: decision.allow ? "accept" : "decline" }, "edit");
       }
       default:
         req.log.warn("codex app-server request refused", { method });
@@ -40327,6 +40403,7 @@ ${CODEX_ASK_HINT}` : req.prompt;
     }));
     req.onInfo?.({ model: req.model ?? thread?.model ?? null, permission: req.sandbox, effort: req.effort ?? (typeof thread?.reasoningEffort === "string" ? thread.reasoningEffort : null) });
     turnId = turn?.turn?.id ?? null;
+    void deliverDenials();
     clearTimeout(startupTimer);
     if (turnId && completions.has(turnId)) finished(completions.get(turnId));
     req.live?.onSteering(steering);
@@ -40348,6 +40425,7 @@ ${CODEX_ASK_HINT}` : req.prompt;
     }
     throw new DelegateError(err.message, "failed", stderr, "", threadId);
   } finally {
+    for (const message of denialMessages.splice(0)) req.onDenied?.(message);
     clearTimeout(timer);
     clearTimeout(startupTimer);
     for (const p of pending.values()) p.reject(new Error("closed"));
@@ -40489,7 +40567,8 @@ var DECISION_SCHEMA = {
       title: "Decision",
       enum: ["allow", "deny"],
       enumNames: ["Allow", "Deny"]
-    }
+    },
+    reason: { type: "string", title: "Reason (optional)" }
   },
   required: ["decision"]
 };
@@ -40513,7 +40592,8 @@ async function askUserViaElicitation(server, req, log) {
     );
     const allowed = res.action === "accept" && res.content?.decision === "allow";
     log.info("user answered subagent permission request", { tool: req.tool, action: res.action, allowed });
-    return allowed ? { allow: true } : { allow: false, message: "The user denied this request." };
+    const reason = typeof res.content?.reason === "string" ? res.content.reason.trim() : "";
+    return allowed ? { allow: true } : { allow: false, message: `Denied by the user in the parent session${reason ? `: ${reason}` : "."}` };
   } catch (err) {
     log.warn("permission dialog failed; denying", { err: err.message });
     return { allow: false, message: "Denied: the permission dialog could not be shown or was not answered in time." };
@@ -42397,10 +42477,10 @@ var JobManager = class {
         this.note(job, { sessionId: state.sessionId, workdir: state.workdir, worktree: state.worktree });
       }
     }
-    const alive = runners.alive(job, state);
+    const alive2 = runners.alive(job, state);
     if (state && state.status !== "running") {
-      if (state.delivered || !alive) this.settleHosted(job, state);
-    } else if (!alive) this.settleHosted(job, null);
+      if (state.delivered || !alive2) this.settleHosted(job, state);
+    } else if (!alive2) this.settleHosted(job, null);
   }
   /** A runner-hosted job ended: with its runner's final state, or without (the runner is gone). */
   settleHosted(job, final) {
@@ -42583,23 +42663,143 @@ function acquireLock(path) {
 
 // src/mcp/delegate-run.ts
 import { randomUUID as randomUUID6 } from "node:crypto";
-import { isAbsolute as isAbsolute3, join as join18, relative as relative2, resolve as resolve4 } from "node:path";
+import { isAbsolute as isAbsolute3, join as join19, relative as relative2, resolve as resolve4 } from "node:path";
+
+// src/core/resource-slots.ts
+import { mkdirSync as mkdirSync8 } from "node:fs";
+import { join as join17 } from "node:path";
+import { DatabaseSync as DatabaseSync3 } from "node:sqlite";
+import { setTimeout as delay2 } from "node:timers/promises";
+var SLOT_OWNER_ENV = "AGENT_BRIDGE_SLOT_OWNER";
+var SLOT_PID_ENV = "AGENT_BRIDGE_SLOT_PID";
+var SLOT_LEASE_MS = 6 * 60 * 6e4;
+var SLOT_RENEW_MS = 6e4;
+var SLOT_POLL_MS = 250;
+var SLOT_DB_NAME = "resource-slots.sqlite";
+var LOCK_WAIT_MS2 = 3e3;
+function alive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return err.code !== "ESRCH";
+  }
+}
+var ResourceSlots = class {
+  constructor(home, isAlive = alive, now = Date.now) {
+    this.isAlive = isAlive;
+    this.now = now;
+    mkdirSync8(home, { recursive: true });
+    this.db = new DatabaseSync3(join17(home, SLOT_DB_NAME));
+    this.db.exec(`PRAGMA busy_timeout = ${LOCK_WAIT_MS2};
+      CREATE TABLE IF NOT EXISTS slots (
+        ticket INTEGER PRIMARY KEY AUTOINCREMENT, resource TEXT NOT NULL, id TEXT NOT NULL,
+        pid INTEGER NOT NULL, held INTEGER NOT NULL, expiresAt INTEGER NOT NULL, UNIQUE(resource, id)
+      );`);
+  }
+  isAlive;
+  now;
+  db;
+  transaction(fn) {
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      const result = fn();
+      this.db.exec("COMMIT");
+      return result;
+    } catch (err) {
+      this.db.exec("ROLLBACK");
+      throw err;
+    }
+  }
+  prune() {
+    this.db.prepare("DELETE FROM slots WHERE expiresAt <= ?").run(this.now());
+    const pids = this.db.prepare("SELECT DISTINCT pid FROM slots").all();
+    for (const row of pids) if (!this.isAlive(Number(row.pid))) this.db.prepare("DELETE FROM slots WHERE pid = ?").run(row.pid);
+  }
+  tryAcquire(resource, count, owner) {
+    if (!RESOURCE_NAME_PATTERN.test(resource) || !Number.isInteger(count) || count < 1) throw new Error("Invalid resource name or capacity.");
+    if (!owner.id || !Number.isSafeInteger(owner.pid) || owner.pid <= 0 || !this.isAlive(owner.pid)) throw new Error("A resource slot needs a live owner process.");
+    return this.transaction(() => {
+      this.prune();
+      this.db.prepare("INSERT INTO slots(resource, id, pid, held, expiresAt) VALUES (?, ?, ?, 0, ?) ON CONFLICT(resource, id) DO NOTHING").run(resource, owner.id, owner.pid, this.now() + SLOT_LEASE_MS);
+      const own2 = this.db.prepare("SELECT ticket, pid, held FROM slots WHERE resource = ? AND id = ?").get(resource, owner.id);
+      if (Number(own2.pid) !== owner.pid) throw new Error("Resource slot owner does not match.");
+      this.db.prepare("UPDATE slots SET expiresAt = ? WHERE resource = ? AND id = ?").run(this.now() + SLOT_LEASE_MS, resource, owner.id);
+      if (own2.held) return true;
+      const held = Number(this.db.prepare("SELECT COUNT(*) AS n FROM slots WHERE resource = ? AND held = 1").get(resource).n);
+      const ahead = Number(this.db.prepare("SELECT COUNT(*) AS n FROM slots WHERE resource = ? AND held = 0 AND ticket < ?").get(resource, own2.ticket).n);
+      if (held + ahead >= count) return false;
+      this.db.prepare("UPDATE slots SET held = 1 WHERE ticket = ?").run(own2.ticket);
+      return true;
+    });
+  }
+  async acquire(resource, count, owner, signal) {
+    try {
+      for (; ; ) {
+        signal?.throwIfAborted();
+        if (this.tryAcquire(resource, count, owner)) return;
+        await delay2(SLOT_POLL_MS, void 0, { signal });
+      }
+    } catch (err) {
+      this.release(owner, resource);
+      throw err;
+    }
+  }
+  release(owner, resource) {
+    this.db.prepare(`DELETE FROM slots WHERE id = ? AND pid = ?${resource ? " AND resource = ?" : ""}`).run(...resource ? [owner.id, owner.pid, resource] : [owner.id, owner.pid]);
+  }
+  renew(owner, resource) {
+    const args = [this.now() + SLOT_LEASE_MS, owner.id, owner.pid, this.now()];
+    this.db.prepare(`UPDATE slots SET expiresAt = ? WHERE id = ? AND pid = ? AND expiresAt > ?${resource ? " AND resource = ?" : ""}`).run(...resource ? [...args, resource] : args);
+  }
+  list() {
+    return this.transaction(() => {
+      this.prune();
+      return this.db.prepare("SELECT * FROM slots ORDER BY ticket").all().map((row) => ({ resource: String(row.resource), id: String(row.id), pid: Number(row.pid), ticket: Number(row.ticket), held: Boolean(row.held), expiresAt: Number(row.expiresAt) }));
+    });
+  }
+  close() {
+    this.db.close();
+  }
+};
+function resourceSlotHint(counts, cli) {
+  if (!Object.keys(counts).length) return null;
+  const command = cli ? `node "${cli}"` : "agent-bridge";
+  return `(agent-bridge: shared resource slots are enabled: ${JSON.stringify(counts)}. Before a heavy command, run ${command} slot acquire <resource>; it waits in FIFO order. Always run ${command} slot release <resource> afterward, including on failure (use try/finally or a shell trap). ${command} slot status shows holders and waiters. Slots are shared across jobs and released when your run ends or its owner process dies. Acquiring twice is idempotent; hold one slot per resource per job.)`;
+}
 
 // src/core/tool-allow.ts
 function serverNames2(server) {
   const short = /^plugin_[^_]+_(.+)$/.exec(server)?.[1];
-  return short ? [server, short] : [server];
+  const names = short ? [server, short] : [server];
+  if (names.includes("pair_desk")) names.push("pair-desk");
+  return names;
 }
 function shortServer(server) {
   return serverNames2(server).at(-1);
 }
 function mcpToolOf(r) {
+  const raw = /^(?:[\w]+\.)?mcp__(.+?)__(.+)$/.exec(r.tool);
+  if (raw) return { server: raw[1], tool: raw[2] };
   if (!r.tool.startsWith("mcp:")) return null;
   const server = r.tool.slice("mcp:".length);
-  const quoted = /tool "([^"]+)"/.exec(r.detail)?.[1];
-  let tool = quoted ?? /^\s*([\w.-]+)/.exec(r.detail)?.[1] ?? null;
-  for (const name of serverNames2(server)) if (tool?.startsWith(`${name}_`)) tool = tool.slice(name.length + 1);
+  const quoted = /\btool\s+["'`]([\w.-]+)["'`]/i.exec(r.detail)?.[1];
+  let tool = quoted ?? /^\s*([\w.-]+)(?:\s*:|\s*$)/.exec(r.detail)?.[1] ?? null;
+  const prefixes = serverNames2(server).flatMap((name) => [name, name.replace(/[^a-zA-Z0-9_-]/g, "_")]).sort((a, b) => b.length - a.length);
+  for (const name of prefixes) if (tool?.startsWith(`${name}_`)) {
+    tool = tool.slice(name.length + 1);
+    break;
+  }
   return { server, tool };
+}
+var DESK_WORKER_PRESET = "pair-desk:worker";
+var DESK_WORKER_PATTERNS = ["pair-desk.get_*", "pair-desk.list_*", "pair-desk.comment", "pair-desk.progress", "pair-desk.set_plan", "pair-desk.update_step", "pair-desk.create_issue", "pair-desk.update_issue"];
+function approvalHint(r) {
+  const call = mcpToolOf(r);
+  if (!call?.tool) return "";
+  const server = shortServer(call.server);
+  const preset = isAutoApproved(r, [DESK_WORKER_PRESET]) ? ` or "${DESK_WORKER_PRESET}" (desk reads, comments, plans and issue edits; excludes status, builds and handoff writes)` : "";
+  return ` (not covered by this job's allow_tools; add "${server}.${call.tool}"${preset} to allow it without asking; get_* and list_* only cover reads)`;
 }
 function glob(pattern) {
   return new RegExp(`^${pattern.split("*").map((s) => s.replace(/[.+?^${}()|[\]\\]/g, "\\$&")).join(".*")}$`, "i");
@@ -42613,7 +42813,7 @@ function isAutoApproved(r, patterns) {
   const call = mcpToolOf(r);
   if (!call || patterns.length === 0) return false;
   const names = serverNames2(call.server).flatMap((s) => [s, call.tool ? `${s}.${call.tool}` : null]).filter((n) => Boolean(n));
-  return patterns.some((p) => {
+  return patterns.flatMap((p) => p.trim() === DESK_WORKER_PRESET ? DESK_WORKER_PATTERNS : [p]).some((p) => {
     const re = glob(p.trim());
     return names.some((n) => re.test(n));
   });
@@ -42626,8 +42826,8 @@ function isHandoffToolCall(r) {
 
 // src/core/worktree.ts
 import { createHash as createHash2 } from "node:crypto";
-import { existsSync as existsSync5, mkdirSync as mkdirSync8, readFileSync as readFileSync11, realpathSync as realpathSync2, rmSync as rmSync4 } from "node:fs";
-import { basename as basename3, isAbsolute as isAbsolute2, join as join17, relative, resolve as resolve3, toNamespacedPath } from "node:path";
+import { existsSync as existsSync5, mkdirSync as mkdirSync9, readFileSync as readFileSync11, realpathSync as realpathSync2, rmSync as rmSync4 } from "node:fs";
+import { basename as basename3, isAbsolute as isAbsolute2, join as join18, relative, resolve as resolve3, toNamespacedPath } from "node:path";
 var GIT = "git";
 var LONG_PATH_ARGS = ["-c", "core.longpaths=true"];
 var REMOVE_RETRIES = 3;
@@ -42655,9 +42855,9 @@ async function createWorktree(opts) {
   const base = await git(["rev-parse", "HEAD"], repoRoot, opts.log);
   const baseBranch = await git(["symbolic-ref", "-q", "--short", "HEAD"], repoRoot, opts.log).catch(() => "") || null;
   let branch = `${BRANCH_PREFIX}${opts.jobId}`;
-  const dir = join17(opts.home, "worktrees");
-  mkdirSync8(dir, { recursive: true });
-  let path = join17(dir, `${basename3(repoRoot)}-${opts.jobId}`);
+  const dir = join18(opts.home, "worktrees");
+  mkdirSync9(dir, { recursive: true });
+  let path = join18(dir, `${basename3(repoRoot)}-${opts.jobId}`);
   try {
     await git(["worktree", "add", "-b", branch, path, base], repoRoot, opts.log, WORKTREE_ADD_TIMEOUT_MS);
   } catch (err) {
@@ -42678,7 +42878,7 @@ async function createWorktree(opts) {
   }
   await unlockWorktree(repoRoot, path, opts.log);
   const rel = relative(repoRoot, opts.cwd);
-  const cwd = rel && !rel.startsWith("..") && !isAbsolute2(rel) ? join17(path, rel) : path;
+  const cwd = rel && !rel.startsWith("..") && !isAbsolute2(rel) ? join18(path, rel) : path;
   opts.log.info("worktree created", { repoRoot, path, branch });
   return { repoRoot, path, cwd, branch, base, baseBranch };
 }
@@ -42769,7 +42969,7 @@ function generatedNoise(root, file2) {
   return parts.slice(0, -1).some((part, index) => {
     if (GENERATED_DIRECTORIES.has(part)) return true;
     if (!UNITY_GENERATED_DIRECTORIES.has(part)) return false;
-    return existsSync5(toNamespacedPath(join17(root, ...parts.slice(0, index), "ProjectSettings", "ProjectVersion.txt")));
+    return existsSync5(toNamespacedPath(join18(root, ...parts.slice(0, index), "ProjectSettings", "ProjectVersion.txt")));
   });
 }
 async function autoCommitFiles(wt, log) {
@@ -42886,7 +43086,7 @@ async function gitChangeSnapshot(cwd, log) {
     const file2 = line.slice(3).replace(/^.* -> /, "").replace(/^"|"$/g, "");
     let fp = line.slice(0, 2);
     try {
-      fp += ":" + createHash2("sha1").update(readFileSync11(join17(root, file2))).digest("hex");
+      fp += ":" + createHash2("sha1").update(readFileSync11(join18(root, file2))).digest("hex");
     } catch {
       fp += ":missing";
     }
@@ -42907,7 +43107,7 @@ var DELEGATED_JOB_NOTE = "(agent-bridge: you are a delegated job. Report what yo
 var HANDOFF_DECLINED = "Declined by agent-bridge: delegated jobs do not write the project handoff. Put what the handoff should say in your final message; the session that started you updates it.";
 var PARENT_APPROVAL_TIMEOUT_MS = 10 * 6e4;
 function isBridgeWorktree(dir, home) {
-  return isInside(dir, join18(home, "worktrees")) && resolve4(dir) !== resolve4(join18(home, "worktrees"));
+  return isInside(dir, join19(home, "worktrees")) && resolve4(dir) !== resolve4(join19(home, "worktrees"));
 }
 function isInside(child, parent) {
   const rel = relative2(resolve4(parent), resolve4(child));
@@ -42968,7 +43168,6 @@ async function runDelegate(rc, target, a, signal, onProgress, background, job) {
   const approve = async (r) => {
     if (isHandoffToolCall(r)) {
       asked.push(`declined (handoff tool): ${r.tool} ${r.detail.slice(0, 80)}`);
-      if (target === "codex") job?.live?.post(HANDOFF_DECLINED);
       return { allow: false, message: HANDOFF_DECLINED };
     }
     if (r.tool.startsWith("mcp:") && allowedServers.has(r.tool)) return { allow: true };
@@ -42976,10 +43175,9 @@ async function runDelegate(rc, target, a, signal, onProgress, background, job) {
     let d;
     if (wiring) d = await wiring.onPermission(r);
     else if (job && !job.foreground && rc.jobs) {
-      const call = mcpToolOf(r);
-      const hint = call?.tool ? ` (not covered by this job's allow_tools; "${shortServer(call.server)}.${call.tool}" or "${shortServer(call.server)}" would allow it without asking)` : "";
+      const hint = approvalHint(r);
       const a2 = await rc.jobs.askParent(job, `${r.tool.replace(/^mcp:/, "MCP server ")}: ${r.detail}${hint}`, PARENT_APPROVAL_TIMEOUT_MS);
-      d = a2.allow ? { allow: true } : { allow: false, message: `Denied by ${me}: ${a2.reason}` };
+      d = a2.allow ? { allow: true } : { allow: false, message: `Denied by supervisor ${me}: ${a2.reason || "no reason supplied"}` };
       asked.push(`${d.allow ? "allowed" : "denied"} by ${me}: ${r.tool} ${r.detail.slice(0, 80)}`);
     } else if (rc.askUser) {
       relayCalls++;
@@ -43055,13 +43253,27 @@ ${a.prompt}
   const writableRoots = access === "edit" || a.sandbox === "workspace-write" ? await gitDirsOutside(workdir, dlog) : void 0;
   if (writableRoots?.length) dlog.info("extra writable folders for the subagent", { workdir, writableRoots });
   if (job) job.retitle = (title) => feed.meta({ title });
+  const slotOwner = { id: `${a._job ?? target}-${randomUUID6()}`, pid: process.pid };
+  let slots = null;
+  let slotTimer;
   let res;
   try {
+    if (Object.keys(cfg.resourceSlots).length) {
+      slots = new ResourceSlots(rc.home);
+      slotTimer = setInterval(() => {
+        try {
+          slots?.renew(slotOwner);
+        } catch (err) {
+          dlog.warn("could not renew resource slots", { err: err.message });
+        }
+      }, SLOT_RENEW_MS);
+      slotTimer.unref();
+    }
     res = await retryTransient(
       {
         // With a live link the subagent can report how far it is (report_progress; shown in the dashboard).
         // A new session learns once that it reports back and leaves the handoff alone.
-        prompt: [a.prompt, a.session_id ? null : DELEGATED_JOB_NOTE, link ? PROGRESS_HINT : null].filter(Boolean).join("\n\n"),
+        prompt: [a.prompt, a.session_id ? null : DELEGATED_JOB_NOTE, link ? PROGRESS_HINT : null, resourceSlotHint(cfg.resourceSlots, bundledCli())].filter(Boolean).join("\n\n"),
         cwd: workdir,
         sessionId: a.session_id ?? null,
         timeoutSec: a.timeout_sec ?? (background ? MAX_JOB_TIMEOUT_SEC : DEFAULT_DELEGATE_TIMEOUT_SEC),
@@ -43072,13 +43284,16 @@ ${a.prompt}
         log: dlog,
         signal,
         onProgress: feed.report,
-        extraEnv: link?.childEnv(),
+        extraEnv: { ...link?.childEnv(), ...slots ? { [ENV.home]: rc.home, [SLOT_OWNER_ENV]: slotOwner.id, [SLOT_PID_ENV]: String(slotOwner.pid) } : {} },
         writableRoots,
         onSession: (id) => {
           feed.meta({ session: id });
           if (job) rc.jobs?.note(job, { sessionId: id, workdir, worktree: wt });
         },
         approve,
+        onDenied: (message) => {
+          link?.post(message);
+        },
         // Someone answers approve's questions: the user ("ask" relay or a dialog) or, for a background
         // subagent, the parent agent. Else targets keep their own behavior (Claude and opencode).
         canApprove: Boolean(wiring) || Boolean(job && !job.foreground && rc.jobs) || Boolean(rc.askUser && rc.userCanAnswer?.()),
@@ -43103,6 +43318,16 @@ ${a.prompt}
 Its worktree (with any partial work) is ${wt.path} on branch ${wt.branch}.`;
     throw err;
   } finally {
+    clearInterval(slotTimer);
+    if (slots) {
+      try {
+        slots.release(slotOwner);
+      } catch (err) {
+        dlog.warn("could not release resource slots; leases will expire", { err: err.message });
+      } finally {
+        slots.close();
+      }
+    }
     await relay?.stop();
     if (job) job.retitle = null;
     if (job && link) {
@@ -43152,8 +43377,8 @@ ${notes.join("\n\n")}` : res.text };
 
 // src/mcp/job-host.ts
 import { spawn as spawn6 } from "node:child_process";
-import { mkdirSync as mkdirSync9, readdirSync as readdirSync4, statSync as statSync5 } from "node:fs";
-import { join as join19 } from "node:path";
+import { mkdirSync as mkdirSync10, readdirSync as readdirSync4, statSync as statSync5 } from "node:fs";
+import { join as join20 } from "node:path";
 var RUNNERS_DIR_NAME = "jobs";
 var CONTROL_CONVERSATION_PREFIX = "jobctl-";
 var RUNNER_HEARTBEAT_MS = 15e3;
@@ -43162,10 +43387,10 @@ var START_GRACE_MS = 3e4;
 var KEEP_FILES_MS = 7 * 24 * 60 * 60 * 1e3;
 var DETACH_LAUNCHER = "require('node:child_process').spawn(process.execPath,process.argv.slice(1),{detached:true,stdio:'ignore',windowsHide:true}).unref()";
 function runnerStatePath(home, id) {
-  return join19(home, RUNNERS_DIR_NAME, `${id}.json`);
+  return join20(home, RUNNERS_DIR_NAME, `${id}.json`);
 }
 function specPath(home, id) {
-  return join19(home, RUNNERS_DIR_NAME, `${id}.spec.json`);
+  return join20(home, RUNNERS_DIR_NAME, `${id}.spec.json`);
 }
 function readRunnerState(home, id) {
   try {
@@ -43182,11 +43407,11 @@ var JobRunners = class {
     this.cli = cli;
     this.log = log;
     try {
-      const dir = join19(home, RUNNERS_DIR_NAME);
+      const dir = join20(home, RUNNERS_DIR_NAME);
       const keepMs = retentionLimit("AGENT_BRIDGE_RUNNER_KEEP_MS", KEEP_FILES_MS);
       if (!keepMs) return;
       for (const f of readdirSync4(dir)) {
-        const path = join19(dir, f);
+        const path = join20(dir, f);
         if (!f.endsWith(".json") || f.endsWith(".spec.json") || Date.now() - statSync5(path).mtimeMs <= keepMs) continue;
         const id = f.replace(/\.json$/, "");
         const state = readRunnerState(home, id);
@@ -43206,7 +43431,7 @@ var JobRunners = class {
   /** Start a turn of this job in a new runner; null when that is not possible (the turn then runs in the server). */
   start(job, spec) {
     try {
-      mkdirSync9(join19(this.home, RUNNERS_DIR_NAME), { recursive: true });
+      mkdirSync10(join20(this.home, RUNNERS_DIR_NAME), { recursive: true });
       const statePath = runnerStatePath(this.home, job.id);
       const file2 = specPath(this.home, job.id);
       assertWritableStore(readJsonStore(statePath, this.log));
@@ -43372,7 +43597,7 @@ async function startServer(argv = process.argv.slice(2)) {
   const launchKnown = new Promise((r) => launchInspected = r);
   const ctx = { agent, cfg, node: node2, log, home, cwd: () => node2?.cwd ?? cwd, channelActive: () => channel, parent: delegated ? parentFromEnv() : null, launchKnown };
   if (node2) {
-    ctx.jobs = new JobManager(node2, log.child("jobs"), join20(home, JOBS_FILE), cfg.maxJobs);
+    ctx.jobs = new JobManager(node2, log.child("jobs"), join21(home, JOBS_FILE), cfg.maxJobs);
     node2.on("replaced", () => ctx.jobs?.setDormant(true));
     node2.on("reclaimed", () => ctx.jobs?.setDormant(false));
     const cli = process.env[ENV.jobRunner] === "0" ? null : bundledCli();
@@ -43530,14 +43755,14 @@ async function startServer(argv = process.argv.slice(2)) {
       adopt();
       setTimeout(adopt, STAND_IN_RECHECK_MS).unref();
     });
-    const join21 = () => node2.start().catch((err) => log.error("could not join the bridge", { err: err.message }));
+    const join22 = () => node2.start().catch((err) => log.error("could not join the bridge", { err: err.message }));
     if (ctx.headless) {
       log.info("headless claude -p run: not joining the bridge unless a bridge tool is used");
     } else if (cwdKnown) {
-      void join21();
+      void join22();
     } else {
       log.info("project directory unknown yet; deferring bridge join", { graceMs: CWD_DISCOVERY_GRACE_MS });
-      setTimeout(() => void join21(), CWD_DISCOVERY_GRACE_MS).unref();
+      setTimeout(() => void join22(), CWD_DISCOVERY_GRACE_MS).unref();
     }
   }
 }
@@ -43746,7 +43971,7 @@ function registerTools(mcp, ctx, targets) {
       ),
       title: external_exports.string().min(1).max(MAX_TITLE_CHARS).describe('A short title for this subagent, 3-7 words, like a chat title (e.g. "Fix castle gate alignment"). Required. Shown in peers and the dashboard.'),
       allow_tools: external_exports.array(external_exports.string().min(1).max(200)).max(50).optional().describe(
-        'MCP tools the subagent may call without asking you, as "server.tool" patterns with *, e.g. ["pair-desk.get_*", "pair-desk.list_*"] (read-only tools), or "server" for all of its tools.'
+        'MCP tools the subagent may call without asking you, as "server.tool" patterns with *, e.g. ["pair-desk.get_*", "pair-desk.list_*"] (reads only), "pair-desk:worker" (reads, comments, progress, plans and issue edits; excludes status, builds and handoff writes), or "server" for all of its tools.'
       ),
       ...profile.schema
     };

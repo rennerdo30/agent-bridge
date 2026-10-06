@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import type { BridgeConfig } from "../core/config.js";
-import { DEFAULT_DELEGATE_TIMEOUT_SEC, MAX_JOB_TIMEOUT_SEC } from "../core/constants.js";
-import { DelegateError, retryTransient, type DelegateResult } from "../core/delegate.js";
+import { DEFAULT_DELEGATE_TIMEOUT_SEC, ENV, MAX_JOB_TIMEOUT_SEC } from "../core/constants.js";
+import { bundledCli, DelegateError, retryTransient, type DelegateResult } from "../core/delegate.js";
 import { defaultEffort } from "../core/effort.js";
 import { t } from "../core/i18n.js";
 import type { Logger } from "../core/logger.js";
@@ -11,7 +11,8 @@ import type { AgentKind, CodingAgent } from "../core/protocol.js";
 import { PermissionRelay, type PermissionDecision, type PermissionRequest } from "../core/relay.js";
 import { codexPermissionHookHash, codexPermissionHookTrusted, recordCodexHookObservation } from "../core/codex-trust.js";
 import { startRunFeed } from "../core/runfeed.js";
-import { isAutoApproved, isHandoffToolCall, isOwnServerCall, mcpToolOf, shortServer } from "../core/tool-allow.js";
+import { ResourceSlots, resourceSlotHint, SLOT_OWNER_ENV, SLOT_PID_ENV, SLOT_RENEW_MS } from "../core/resource-slots.js";
+import { approvalHint, isAutoApproved, isHandoffToolCall, isOwnServerCall } from "../core/tool-allow.js";
 import { changedFiles, createWorktree, finishWorktree, gitChangeSnapshot, gitDirsOutside, handoffWarning, subagentCommitMessage, worktreeReport, type Worktree } from "../core/worktree.js";
 import { formatUsage } from "./format.js";
 import type { Job, RunResult } from "./jobs.js";
@@ -149,8 +150,6 @@ export async function runDelegate(
     // Handoff tools first: no allow pattern or earlier "allow" for their server covers them.
     if (isHandoffToolCall(r)) {
       asked.push(`declined (handoff tool): ${r.tool} ${r.detail.slice(0, 80)}`);
-      // Codex's decline carries no reason: tell the running subagent directly.
-      if (target === "codex") job?.live?.post(HANDOFF_DECLINED);
       return { allow: false, message: HANDOFF_DECLINED };
     }
     if (r.tool.startsWith("mcp:") && allowedServers.has(r.tool)) return { allow: true };
@@ -162,10 +161,9 @@ export async function runDelegate(
       // A background subagent asks the agent that started it (it can decide, also in auto mode or with
       // the user away). A blocking ask_* caller cannot answer while it waits, so that one asks the user.
       // Name the allow_tools pattern that would cover this call, so the next spawn need not ask.
-      const call = mcpToolOf(r);
-      const hint = call?.tool ? ` (not covered by this job's allow_tools; "${shortServer(call.server)}.${call.tool}" or "${shortServer(call.server)}" would allow it without asking)` : "";
+      const hint = approvalHint(r);
       const a = await rc.jobs.askParent(job, `${r.tool.replace(/^mcp:/, "MCP server ")}: ${r.detail}${hint}`, PARENT_APPROVAL_TIMEOUT_MS);
-      d = a.allow ? { allow: true } : { allow: false, message: `Denied by ${me}: ${a.reason}` };
+      d = a.allow ? { allow: true } : { allow: false, message: `Denied by supervisor ${me}: ${a.reason || "no reason supplied"}` };
       asked.push(`${d.allow ? "allowed" : "denied"} by ${me}: ${r.tool} ${r.detail.slice(0, 80)}`);
     } else if (rc.askUser) {
       relayCalls++;
@@ -243,14 +241,25 @@ export async function runDelegate(
   const writableRoots = access === "edit" || (a as { sandbox?: string }).sandbox === "workspace-write" ? await gitDirsOutside(workdir, dlog) : undefined;
   if (writableRoots?.length) dlog.info("extra writable folders for the subagent", { workdir, writableRoots });
   if (job) job.retitle = (title) => feed.meta({ title });
+  const slotOwner = { id: `${a._job ?? target}-${randomUUID()}`, pid: process.pid };
+  let slots: ResourceSlots | null = null;
+  let slotTimer: NodeJS.Timeout | undefined;
   let res: DelegateResult;
   try {
-    // A temporary provider error (an invalid upstream response, say) gets one automatic resume first.
+    if (Object.keys(cfg.resourceSlots).length) {
+      slots = new ResourceSlots(rc.home);
+      slotTimer = setInterval(() => {
+        try { slots?.renew(slotOwner); }
+        catch (err) { dlog.warn("could not renew resource slots", { err: (err as Error).message }); }
+      }, SLOT_RENEW_MS);
+      slotTimer.unref();
+    }
+    // Provider hiccups resume the same session; capacity retries back off on the selected model.
     res = await retryTransient(
       {
         // With a live link the subagent can report how far it is (report_progress; shown in the dashboard).
         // A new session learns once that it reports back and leaves the handoff alone.
-        prompt: [a.prompt, a.session_id ? null : DELEGATED_JOB_NOTE, link ? PROGRESS_HINT : null].filter(Boolean).join("\n\n"),
+        prompt: [a.prompt, a.session_id ? null : DELEGATED_JOB_NOTE, link ? PROGRESS_HINT : null, resourceSlotHint(cfg.resourceSlots, bundledCli())].filter(Boolean).join("\n\n"),
         cwd: workdir,
         sessionId: a.session_id ?? null,
         timeoutSec: a.timeout_sec ?? (background ? MAX_JOB_TIMEOUT_SEC : DEFAULT_DELEGATE_TIMEOUT_SEC),
@@ -261,13 +270,14 @@ export async function runDelegate(
         log: dlog,
         signal,
         onProgress: feed.report,
-        extraEnv: link?.childEnv(),
+        extraEnv: { ...link?.childEnv(), ...(slots ? { [ENV.home]: rc.home, [SLOT_OWNER_ENV]: slotOwner.id, [SLOT_PID_ENV]: String(slotOwner.pid) } : {}) },
         writableRoots,
         onSession: (id) => {
           feed.meta({ session: id });
           if (job) rc.jobs?.note(job, { sessionId: id, workdir, worktree: wt });
         },
         approve,
+        onDenied: (message) => { link?.post(message); },
         // Someone answers approve's questions: the user ("ask" relay or a dialog) or, for a background
         // subagent, the parent agent. Else targets keep their own behavior (Claude and opencode).
         canApprove: Boolean(wiring) || Boolean(job && !job.foreground && rc.jobs) || Boolean(rc.askUser && rc.userCanAnswer?.()),
@@ -293,6 +303,12 @@ export async function runDelegate(
     if (wt && err instanceof Error) err.message += `\n\nIts worktree (with any partial work) is ${wt.path} on branch ${wt.branch}.`;
     throw err;
   } finally {
+    clearInterval(slotTimer);
+    if (slots) {
+      try { slots.release(slotOwner); }
+      catch (err) { dlog.warn("could not release resource slots; leases will expire", { err: (err as Error).message }); }
+      finally { slots.close(); }
+    }
     await relay?.stop();
     if (job) job.retitle = null;
     if (job && link) {
