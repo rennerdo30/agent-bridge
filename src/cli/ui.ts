@@ -67,6 +67,8 @@ export interface RunSummary extends RunMeta {
   finishedAt?: number;
   worktree?: Worktree | null;
   branch?: string;
+  parentJob?: string;
+  rootSession?: string;
 }
 
 /** Parse the head and tail of a run log written by runfeed.ts, plus its metadata (older runs: from the header). */
@@ -82,7 +84,7 @@ export function summarizeRun(file: string, text: string, mtimeMs: number, now: n
       ? "interrupted"
       : "running";
   const m = /^(\d{4})-(\d\d)-(\d\d)-(\d\d)-(\d\d)-(\d\d)-([a-z]+)-/.exec(file);
-  const startedAt = m ? Date.UTC(+m[1]!, +m[2]! - 1, +m[3]!, +m[4]!, +m[5]!, +m[6]!) : mtimeMs;
+  const startedAt = m ? Date.UTC(+m[1]!, +m[2]! - 1, +m[3]!, +m[4]!, +m[5]!, +m[6]!) : Math.floor(mtimeMs);
   const header = (lines[0] ?? "").replace(/^\d\d:\d\d:\d\d /, "");
   const end = lines.findIndex((l) => l.trim() === "---");
   const task = lines
@@ -128,6 +130,7 @@ export function listRuns(home: string, now = Date.now()): RunSummary[] {
       by: owner ?? undefined, owner, session: sessionId, sessionId, prompt, task: prompt.slice(0, TASK_PREVIEW_CHARS),
       workdir: typeof job.workdir === "string" ? job.workdir : worktree?.cwd ?? (typeof args.cwd === "string" ? args.cwd : undefined),
       worktree, branch: worktree?.branch ?? (typeof job.branch === "string" ? job.branch : undefined),
+      parentJob: typeof job.parentJob === "string" ? job.parentJob : undefined, rootSession: typeof job.rootSession === "string" ? job.rootSession : undefined,
       startedAt, finishedAt, updatedAt: finishedAt ?? startedAt,
       // A historical snapshot does not prove that an old process is still running.
       status: job.status === "done" || job.status === "failed" ? job.status : "interrupted",
@@ -490,6 +493,27 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
       if (!Number.isSafeInteger(limit) || limit < 1 || limit > MAX_RUN_PAGE_SIZE) return send(res, 400, { error: `limit must be an integer from 1 to ${MAX_RUN_PAGE_SIZE}` });
       try { return send(res, 200, pageRuns(listRuns(opts.home), url.searchParams.get("before"), limit)); }
       catch { return send(res, 400, { error: "invalid run cursor" }); }
+    }
+    const jobChildrenMatch = /^\/api\/jobs\/([\w.-]+)\/subagents(?:\/([^/]+))?$/.exec(url.pathname);
+    if (req.method === "GET" && jobChildrenMatch) {
+      const name = jobChildrenMatch[1]!;
+      let child: string | undefined;
+      try { child = jobChildrenMatch[2] === undefined ? undefined : decodeURIComponent(jobChildrenMatch[2]); }
+      catch { return send(res, 404, { error: "no such job or subagent" }); }
+      if (child !== undefined && !TRANSCRIPT_ID.test(child)) return send(res, 404, { error: "no such job or subagent" });
+      const job = readHistoryJobs(opts.home).get(name);
+      const run = listRuns(opts.home).find((r) => r.job === name);
+      if (!job && !run) return send(res, 404, { error: "no such job" });
+      const agent = typeof job?.agent === "string" ? job.agent : run?.agent;
+      const sessionId = typeof job?.sessionId === "string" ? job.sessionId : typeof job?.threadId === "string" ? job.threadId : run?.sessionId ?? run?.session;
+      if (!sessionId) return send(res, 409, { error: "This job has no sessionId yet." });
+      if (!TRANSCRIPT_ID.test(sessionId) || !CODING_AGENTS.includes(agent as typeof CODING_AGENTS[number])) return send(res, 404, { error: "no transcript for this job" });
+      const session = { agent: agent as PeerInfo["agent"], sessionId, cwd: typeof job?.workdir === "string" ? job.workdir : run?.workdir ?? "" };
+      if (child === undefined) return send(res, 200, { subagents: listNativeSubagents(session, opts.transcripts) });
+      const from = url.searchParams.get("from") ?? "0";
+      if (!validTranscriptCursor(from)) return send(res, 400, { error: "invalid transcript cursor" });
+      const page = readTranscript(session, from, child, opts.transcripts);
+      return page ? send(res, 200, page) : send(res, 404, { error: "no transcript for this job or subagent" });
     }
     const runChatMatch = /^\/api\/runs\/([\w.-]+)\/chat$/.exec(url.pathname);
     if (req.method === "GET" && runChatMatch) {

@@ -8,7 +8,8 @@ import { safeFile } from "./transcripts/common.js";
 export const DEFAULT_RUN_PAGE_SIZE = 50;
 export const MAX_RUN_PAGE_SIZE = 500;
 export const RUN_LOG_NAME = /^[\w.-]+\.log$/;
-const ARCHIVE_SUFFIX = /-\d+-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+// AB-84 also accepts older short unique suffixes; only strip after a known file extension.
+const ARCHIVE_SUFFIX = /(\.(?:log|json))-\d+-[\w-]+$/;
 
 /** Unlike readJsonStore, inspection never repairs or renames malformed data. */
 export function readHistoryJson(file: string): unknown {
@@ -30,14 +31,14 @@ export function readRunLogs(home: string): RunLogRecord[] {
     const names = files(dir).sort();
     const metadata = new Map<string, RunMeta>();
     for (const name of names) {
-      const original = archived ? name.replace(ARCHIVE_SUFFIX, "") : name;
+      const original = archived ? name.replace(ARCHIVE_SUFFIX, "$1") : name;
       if (!original.endsWith(".json")) continue;
       const file = safeFile(root, join(dir, name));
       const value = file ? readHistoryJson(file) : null;
       if (isRecord(value)) metadata.set(original, value as RunMeta);
     }
     for (const name of names) {
-      const original = archived ? name.replace(ARCHIVE_SUFFIX, "") : name;
+      const original = archived ? name.replace(ARCHIVE_SUFFIX, "$1") : name;
       if (!RUN_LOG_NAME.test(original)) continue;
       const file = safeFile(root, join(dir, name));
       if (!file) continue;
@@ -60,7 +61,14 @@ export function readHistoryJobs(home: string): Map<string, Record<string, unknow
   const archive = join(home, "archive");
   const archived = files(archive).filter((name) => name.startsWith(`${JOBS_FILE}.`) || name.startsWith(`${JOBS_FILE}-`) || /^jobs-.*\.json$/.test(name)).sort();
   const backups = files(home).filter((name) => name.startsWith(`${JOBS_FILE}.backup-`) || name === `${JOBS_FILE}.overflow.json`).sort();
-  for (const candidate of [...archived.map((name) => join(archive, name)), ...backups.map((name) => join(home, name)), join(home, JOBS_FILE)]) {
+  const snapshots = [...archived.map((name) => join(archive, name)), ...backups.map((name) => join(home, name))];
+  const snapshotTime = (file: string) => {
+    const stamp = /(?:jobs-|\.backup-|\.overflow\.json-|jobs\.json-)(\d+)/.exec(file)?.[1];
+    if (stamp) return Number(stamp);
+    try { return statSync(file).mtimeMs; } catch { return 0; }
+  };
+  snapshots.sort((a, b) => snapshotTime(a) - snapshotTime(b) || (a < b ? -1 : a > b ? 1 : 0));
+  for (const candidate of [...snapshots, join(home, JOBS_FILE)]) {
     const file = safeFile(home, candidate);
     const value = file ? readHistoryJson(file) : null;
     const jobs = Array.isArray(value) ? value : isRecord(value) && Array.isArray(value.jobs) ? value.jobs : [];

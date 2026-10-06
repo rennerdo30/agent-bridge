@@ -1,5 +1,54 @@
 # Dashboard transcript API
 
+## Durable run and job history
+
+All routes below require the dashboard's `ab_ui` cookie and local Host. They
+inspect data only: no broker peer needs to be online to read a historical chat.
+
+| Route | Response |
+| --- | --- |
+| `/api/state` | Existing state, with newest 50 `runs`, `runsNext: string|null`, `runsTotal: number`. |
+| `/api/runs?before=<cursor>&limit=<n>` | `{ runs, next: string|null, total: number }` |
+| `/api/runs/<name>?from=<byte offset>` | `{ text, next: number, size: number }` for active or archived logs. |
+| `/api/runs/<name>/chat?from=<cursor>` | `{ items, next }`, the same transcript item contract as session chat. |
+| `/api/jobs/<job name>/subagents` | `{ subagents: [{ id, title, status, startedAt, updatedAt }] }` |
+| `/api/jobs/<job name>/subagents/<id>?from=<cursor>` | `{ items, next }`, with actual native-parent ownership checked. |
+
+Run inventory has no hard cap. The collection defaults to 50 entries per page;
+`limit` accepts integers 1 through 500. It sorts by `startedAt` descending, then
+name descending. Pass `next` unchanged through `encodeURIComponent` as `before`.
+The composite cursor `<startedAt>:<name>` includes every tied timestamp across
+pages; a bare millisecond timestamp also works but selects strictly older times.
+`total` counts all distinct entries, and `next` is null at the end. `runsNext`
+starts paging immediately after the initial live-state page.
+
+Archived logs keep their original public run name even when the archived log and
+metadata were independently renamed to `<original>-<timestamp>-<uuid>`. Both
+legacy and current archive layouts are supported; active files win duplicates.
+Job recovery reads active jobs, legacy arrays, overflow archives, migration
+backups, and AB-84 `archive/jobs-*.json` documents. Active jobs win archive copies.
+Malformed snapshots are skipped without repairing, moving or overwriting them.
+
+Existing run summary fields remain. Additions are `archived`, `recovered` and
+`hasLog`. A job with no matching log is represented once with `name` and `job`
+equal to its saved job name and `recovered:true, hasLog:false`. It exposes saved
+`agent`, `model`, `title`, full `prompt`, preview `task`, `by`/`owner`, `session`/
+`sessionId`, `startedAt`, `finishedAt`, `updatedAt`, `workdir`, `worktree`, `branch`,
+and optional `parentJob`/`rootSession`. Finished status remains `done` or `failed`;
+an old running snapshot is `interrupted` because it does not prove liveness.
+Its log endpoint returns `{ text:"", next:0, size:0, recovered:true, hasLog:false }`.
+Use the `/chat` route for its actual CLI conversation. Job-native routes work for
+live and recovered jobs, resolving saved `sessionId` or legacy Codex `threadId`,
+with logged run metadata as a fallback.
+
+Errors: 400 for invalid collection limit/cursor or transcript cursor; 403 for
+missing/invalid authentication or foreign Host; 404 for unknown run/job, invalid
+native child, foreign child or missing transcript; 409 when the saved session id
+is absent. A missing native-child store gives an empty list. Only GET is accepted.
+Existing log byte cursors and transcript cursors remain separate contracts.
+
+## Live session transcripts
+
 These GET-only routes read a local peer's own CLI store. They require the same
 `ab_ui` cookie as the dashboard, and resolve the peer by its current broker name:
 
