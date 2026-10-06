@@ -260,7 +260,7 @@ describe("native chats", () => {
     p.setRoute({ session: null });
     p.renderSide();
     const html = p.element("sideTree").innerHTML;
-    expect(html.match(/tree-row chat/g)?.length).toBe(1);
+    expect(html.match(/tree-row tree-chat/g)?.length).toBe(1);
     expect(html).toContain('href="#/s/claude-app/~chat"');
   });
 });
