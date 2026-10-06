@@ -6,6 +6,7 @@
  *   broker -> client   {"t":"evt","ev":"message","data":{...}}
  */
 
+import type { NetworkConfig } from "../network/config.js";
 import type { NetworkStatus } from "../network/link.js";
 import type { NetworkIdentity } from "../network/pairing.js";
 import type { TransferResult } from "../network/files.js";
@@ -153,7 +154,9 @@ export interface RequestMap {
   claimMail: [{ names: string[] }, { moved: number }];
   ping: [Record<string, never>, { brokerPid: number; protocol: number }];
   networkStatus: [Record<string, never>, NetworkStatus];
-  networkPair: [Record<string, never>, { code: string }];
+  networkConfigure: [NetworkConfig, NetworkStatus];
+  networkVerify: [{ id: string }, { peers: PeerInfo[]; roundTripMs: number }];
+  networkPair: [Record<string, never>, { code: string; expiresAt: number }];
   networkLink: [{ code: string; host: string; port: number }, NetworkIdentity];
   networkUnlink: [{ id: string }, { removed: boolean }];
   sendFiles: [{ to: string; paths: string[] }, TransferResult];

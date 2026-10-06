@@ -6,7 +6,9 @@ This first version connects two explicitly paired brokers. Networking is off by 
 
 ## Configuration and pairing
 
-Set the same top-level configuration on every local agent that can host a broker. Network settings take effect when the elected broker starts; restart its sessions after changing them.
+Run `agent-bridge connect` with a hosting session running on each PC. The guided flow saves settings atomically while preserving other keys, reviews firewall commands, and reloads the elected broker. Choose create on one PC and connect on the other; use discovery or a manual LAN address and the secret code. Verification lists remote peers and sends a broker echo round trip without messaging an agent. Windows firewall rules require separate explicit confirmation and UAC; macOS/Linux show commands for manual review. `--yes` only confirms config writes, never firewall changes.
+
+Keep the same top-level configuration on every local agent that can host a broker. Per-agent and environment overrides must match before future broker elections. Old brokers require updating and restarting all local hosting sessions. Manual config edits take effect when the elected broker starts:
 
 ```json
 {
@@ -22,7 +24,7 @@ Set the same top-level configuration on every local agent that can host a broker
 
 Names must be unique among paired instances and use letters, digits, dots, underscores or hyphens (maximum 64 characters, starting with a letter or digit). The default name is the hostname; the default bind address is `127.0.0.1`. Set a LAN interface address or `0.0.0.0` deliberately for cross-PC use. Allow TCP 48148 and, for discovery, UDP 48149 in your firewall. TCP ports may be changed; `0` requests an ephemeral test port. Discovery is independently opt-in.
 
-Use the bundled CLI of a running agent-bridge broker:
+Manual fallback using the bundled CLI of a running agent-bridge broker:
 
 ```sh
 agent-bridge network
@@ -40,6 +42,22 @@ Secrets and instance identity live in `~/.agent-bridge/network/keys.json`, separ
 
 The initiating side stores the explicitly supplied host and port. It reconnects only that stored endpoint, every two seconds while disconnected. The receiving side accepts its already paired key. Neither side takes connection addresses from discovery. To change an instance's name, identity, key or address, unlink it and pair again; unlink on both PCs to remove both copies of the secret. An interrupted first pairing can leave the receiving side paired before the initiating side saves its state; inspect `network` and unlink before retrying.
 
+## Dashboard JSON API
+
+The dashboard remains loopback-only. All endpoints require its per-launch HttpOnly cookie; every POST also requires `x-agent-bridge: 1` and JSON. Codes appear only in the explicit pairing response, never status or errors.
+
+| Method and path | Request | Response |
+| --- | --- | --- |
+| GET `/api/network` | None | `enabled`, `config` (name/bind/port/discovery/enabled), optional `identity` and listening `port`, `discovered`, `paired` |
+| POST `/api/network/configure` | `confirm: true` and any network config fields | Status after atomic save and live reload; omitted fields keep current settings |
+| POST `/api/network/pair` | `{}` | Secret `code`, `expiresAt` in epoch milliseconds |
+| POST `/api/network/link` | `address` as host:port, `code` | Public remote `id`, `name`, `fingerprint` |
+| POST `/api/network/unlink` | `id` | `removed` |
+| POST `/api/network/verify` | `id` | Remote `peers` and echo `roundTripMs` |
+| POST `/api/network/firewall` | `{}` to inspect; `apply: true, confirm: true` for Windows UAC | `plan` (platform, commands, explanation), `status` (allowed/unknown, detail) |
+
+Discovered entries include `id`, `name`, `fingerprint`, `host`, `port`, `seenAt`. Paired entries include public identity, `connected`, and optional `health: { lastVerifiedAt, roundTripMs }` from the last successful verification; consult `connected` before interpreting old health. A failed reload leaves the settings saved but networking unavailable; the local broker stays available for retry. Invalid requests return 400, missing authentication/header/allowed Host return 403, unavailable network actions return 409, and unknown paths return 404.
+
 ## Threat model
 
 Protect application traffic against an untrusted LAN, passive listeners, altered traffic, replay of TLS records, and instances without a pairing secret. TLS 1.3 with `TLS_AES_128_GCM_SHA256` and pre-shared keys provides mutual proof of key possession and encrypted application records. OpenSSL handles cryptographic negotiation; agent-bridge does not implement a custom cipher or handshake. There is no plaintext application transport or older TLS fallback. A client rejects certificate-based handshakes even though ordinary certificate verification is disabled for the certificate-free PSK mode. Each side checks the remote instance id, name and fingerprint inside TLS against its pairing record (the invitation holder is pinned on first use). The local pipe token never crosses the network.
@@ -50,13 +68,13 @@ Pairing trusts the remote broker to represent its sessions and job runners. A co
 
 IPv4 UDP multicast uses group `239.255.48.49`, port 48149, TTL 1. Announcements every five seconds contain a service marker, protocol version, instance id, human name, TCP port and identity fingerprint. These public discovery hints are **unencrypted and unauthenticated**; agent lists, messages, file contents and pairing secrets are never included. The source IP comes from the datagram, not its JSON payload. Discovery never pairs or connects.
 
-Hints expire after twenty seconds. Invalid, self and oversized datagrams are ignored; the cache holds at most 128 instances and each datagram is limited to 1024 bytes. Multicast is sensitive to firewalls, VPNs, Wi-Fi isolation and interface routing; a manual address works without discovery. Instances are visible through CLI `network` and MCP `network_status`. A dashboard pairing/discovery view is not included yet. Tests use unicast UDP on `127.0.0.1`; real multicast and multi-interface behavior remain owner validation.
+Hints expire after twenty seconds. Invalid, self and oversized datagrams are ignored; the cache holds at most 128 instances and each datagram is limited to 1024 bytes. Multicast is sensitive to firewalls, VPNs, Wi-Fi isolation and interface routing; a manual address works without discovery. Instances are visible through CLI `network` and MCP `network_status`. Authenticated dashboard JSON endpoints expose discovery and paired health, expiring code creation, link verification and unlink controls. Tests use unicast UDP on `127.0.0.1`; real multicast and multi-interface behavior remain owner validation.
 
 ## Protocol and routing
 
 Network protocol 1 is separate from the unchanged local pipe protocol. After TLS, both sides exchange a validated `hello` with their pinned identity and a local peer snapshot. Snapshots refresh every two seconds and before a send. They include job runners, but never peers learned from other network links: routing is direct, with no transitive federation.
 
-Encrypted newline-delimited JSON records carry `hello`, `peers`, `send`, `files` and correlated `result` responses. Every record is checked with bounded schemas. Connections require a hello within five seconds. Frames are limited to two MiB; snapshots hold at most 256 peers; the store caps paired instances and invitations at 16 each, with 16 inbound TCP connections and 64 outstanding requests per link. Slow writers are disconnected rather than accumulating unlimited output.
+Encrypted newline-delimited JSON records carry `hello`, `peers`, `send`, `files`, a bounded `echo` health request and correlated `result` responses. Echo support is advertised in hello; verification of an older broker reports that it needs updating without dropping its link. Every record is checked with bounded schemas. Connections require a hello within five seconds. Frames are limited to two MiB; snapshots hold at most 256 peers; the store caps paired instances and invitations at 16 each, with 16 inbound TCP connections and 64 outstanding requests per link. Slow writers are disconnected rather than accumulating unlimited output.
 
 Remote peers appear in `peers` as `mac-studio/claude-app` or `mac-studio/codex-job-12345678`. Their ids are also namespaced. Send to that address with the existing `send` tool; replies use the prefixed sender name. Agent-kind targets and `*` retain their local meaning. Remote sends must name a paired instance explicitly, preventing accidental cross-PC broadcasts. Senders must be present in their broker's current snapshot. A job runner speaks as its job's agent kind.
 
@@ -74,4 +92,4 @@ The tool returns transfer id, inbox path, file count and decoded byte count. Loc
 
 ## Validation boundary
 
-Tests run two in-process brokers and TLS/UDP instances on `127.0.0.1`, including a ciphertext-observing TCP proxy. They cover pairing rejection, persistence, reconnection, revocation, remote names and ids, offline message delivery, reply hops, sender validation, passive discovery, folder transfer, size limits, checksums and unsafe paths. Builds and the full Vitest suite validate local integration. They do not prove Windows-to-macOS operation, actual LAN multicast discovery, firewall setup, dashboard presentation or the sibling subagent forwarding lane.
+Tests run two in-process brokers and TLS/UDP instances on `127.0.0.1`, including a ciphertext-observing TCP proxy. They cover pairing rejection, persistence, reconnection, revocation, remote names and ids, offline message delivery, reply hops, sender validation, passive discovery, folder transfer, size limits, checksums and unsafe paths. Builds and the full Vitest suite validate local integration. They do not prove Windows-to-macOS operation, actual LAN multicast discovery, firewall setup, OS clipboard behavior, dashboard presentation or the sibling subagent forwarding lane.

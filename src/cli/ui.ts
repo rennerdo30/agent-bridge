@@ -18,6 +18,10 @@ import { readUsage, type UsageReport } from "../core/usage.js";
 import { controlDashboardJob, JobControlError, type DashboardJobCommand } from "../core/job-control.js";
 import { JOB_SETTING_KEYS } from "../mcp/job-settings.js";
 import { UI_PAGE } from "./ui-page.js";
+import { networkConfigSchema } from "../network/config.js";
+import { planFirewall, detectFirewall, applyWindowsFirewall } from "../network/firewall.js";
+import { parseNetworkAddress } from "../network/address.js";
+import type { Op, RequestMap } from "../core/protocol.js";
 import { readJsonStore } from "../core/json-store.js";
 
 /**
@@ -261,7 +265,7 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
   let sender: Promise<BridgeNode> | null = null;
   const getSender = (): Promise<BridgeNode> => {
     sender ??= (async () => {
-      const node = new BridgeNode({ pipePath: opts.pipe, token, dbPath, agent: "other", name: UI_PEER_NAME, cwd: opts.home, autoWake: false, log: opts.log });
+      const node = new BridgeNode({ pipePath: opts.pipe, token, dbPath, agent: "other", name: UI_PEER_NAME, cwd: opts.home, autoWake: false, log: opts.log, network: { home: opts.home, config: loadConfig(opts.home, "other", opts.log).network } });
       try {
         await node.start();
         return node;
@@ -273,6 +277,14 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
       }
     })();
     return sender;
+  };
+
+  const networkRequest = async <O extends Op>(op: O, args: RequestMap[O][0]): Promise<RequestMap[O][1]> => {
+    const client = await BridgeClient.connect(opts.pipe, opts.log);
+    try {
+      await client.request("auth", { protocol: PROTOCOL_VERSION, token });
+      return await client.request(op, args);
+    } finally { client.close(); }
   };
 
   let usage: { at: number; reports: Promise<UsageReport[]> } | null = null;
@@ -313,6 +325,55 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
         // Saved next-turn settings per job (message_subagent or the dashboard may have changed them).
         jobs: Object.fromEntries([...readStoredJobs(opts.home)].map(([name, j]) => [name, { next: j.next }])),
       });
+    }
+    if (req.method === "GET" && url.pathname === "/api/network") {
+      const status = await networkRequest("networkStatus", {});
+      const config = status.config ?? loadConfig(opts.home, "other", opts.log).network;
+      return send(res, 200, { ...status, config });
+    }
+    if (req.method === "POST" && url.pathname.startsWith("/api/network/")) {
+      if (req.headers["x-agent-bridge"] !== "1") return send(res, 403, { error: "missing header" });
+      // Never return or log parsing/validation errors containing a pairing secret.
+      try {
+        const body = await readJson(req);
+        if (!body || typeof body !== "object" || Array.isArray(body)) return send(res, 400, { error: "Expected a JSON object." });
+        switch (url.pathname) {
+          case "/api/network/configure": {
+            const current = await networkRequest("networkStatus", {});
+            const config = current.config ?? loadConfig(opts.home, "other", opts.log).network;
+            const parsed = networkConfigSchema.safeParse({ ...config, ...body });
+            if (!parsed.success) return send(res, 400, { error: "Invalid network settings." });
+            if (body.confirm !== true) return send(res, 400, { error: "Confirm saving network settings first." });
+            return send(res, 200, await networkRequest("networkConfigure", parsed.data));
+          }
+          case "/api/network/pair": return send(res, 200, await networkRequest("networkPair", {}));
+          case "/api/network/link": {
+            if (typeof body.address !== "string" || typeof body.code !== "string") return send(res, 400, { error: "Address and code are required." });
+            return send(res, 200, await networkRequest("networkLink", { ...parseNetworkAddress(body.address), code: body.code }));
+          }
+          case "/api/network/unlink": {
+            if (typeof body.id !== "string") return send(res, 400, { error: "Instance id is required." });
+            return send(res, 200, await networkRequest("networkUnlink", { id: body.id }));
+          }
+          case "/api/network/verify": {
+            if (typeof body.id !== "string") return send(res, 400, { error: "Instance id is required." });
+            return send(res, 200, await networkRequest("networkVerify", { id: body.id }));
+          }
+          case "/api/network/firewall": {
+            const status = await networkRequest("networkStatus", {});
+            const cfg = status.config ?? loadConfig(opts.home, "other", opts.log).network;
+            const plan = planFirewall(process.platform, status.port || cfg.port, cfg.discovery);
+            if (body.apply === true) {
+              if (body.confirm !== true) return send(res, 400, { error: "Explicit firewall confirmation required." });
+              await applyWindowsFirewall(plan, true);
+            }
+            return send(res, 200, { plan, status: await detectFirewall(plan) });
+          }
+          default: return send(res, 404, { error: "not found" });
+        }
+      } catch {
+        return send(res, 409, { error: "Network action failed. Check settings, broker availability, the address and code, or restart all local agent-bridge hosting sessions if the broker is older. A failed listener reload leaves saved settings for the next broker start." });
+      }
     }
     if (req.method === "GET" && url.pathname === "/api/usage") {
       const reports = await getUsage(url.searchParams.get("refresh") === "1");

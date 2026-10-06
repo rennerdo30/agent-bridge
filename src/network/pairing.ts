@@ -83,13 +83,16 @@ export class PairingStore {
     return this.state.pairs.map((p) => ({ ...p }));
   }
 
-  invite(): string {
+  invite(): string { return this.inviteWithExpiry().code; }
+
+  inviteWithExpiry(): { code: string; expiresAt: number } {
     this.state.invitations = this.state.invitations.filter((p) => p.expiresAt > this.now());
     if (this.state.invitations.length + this.state.pairs.length >= MAX_NETWORK_LINKS) throw new Error("network pairing limit reached");
     const key = randomBytes(PAIRING_KEY_BYTES).toString("hex");
-    this.state.invitations.push({ key, expiresAt: this.now() + PAIRING_TTL_MS });
+    const expiresAt = this.now() + PAIRING_TTL_MS;
+    this.state.invitations.push({ key, expiresAt });
     this.save();
-    return Buffer.from(JSON.stringify({ v: NETWORK_VERSION, ...this.identity, key })).toString("base64url");
+    return { code: Buffer.from(JSON.stringify({ v: NETWORK_VERSION, ...this.identity, key })).toString("base64url"), expiresAt };
   }
 
   keyFor(identity: string): string | undefined {

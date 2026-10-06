@@ -29,9 +29,10 @@ const messageSchema = z.object({
   body: z.string().min(1).max(MAX_BODY_CHARS), createdAt: z.number().nonnegative(), readAt: z.null(),
 });
 const frameSchema = z.discriminatedUnion("type", [
-  publicIdentitySchema.extend({ type: z.literal("hello"), v: z.literal(NETWORK_VERSION), peers: peersSchema }),
+  publicIdentitySchema.extend({ type: z.literal("hello"), v: z.literal(NETWORK_VERSION), peers: peersSchema, echo: z.boolean().optional() }),
   z.object({ type: z.literal("peers"), peers: peersSchema }),
   z.object({ type: z.literal("send"), rid: z.uuid(), message: messageSchema }),
+  z.object({ type: z.literal("echo"), rid: z.uuid() }),
   z.object({ type: z.literal("files"), rid: z.uuid(), transfer: transferSchema }),
   z.object({ type: z.literal("result"), rid: z.uuid(), delivered: z.boolean().optional(), transfer: transferResultSchema.optional(), error: z.string().max(MAX_METADATA_CHARS).optional() }),
 ]);
@@ -43,22 +44,24 @@ export interface NetworkBroker {
 }
 export interface NetworkStatus {
   enabled: boolean;
+  config?: NetworkConfig;
   identity?: NetworkIdentity;
   port?: number;
   discovered: DiscoveredInstance[];
-  paired: (NetworkIdentity & { connected: boolean })[];
+  paired: (NetworkIdentity & { connected: boolean; health?: { lastVerifiedAt: number; roundTripMs: number } })[];
 }
 interface Pending {
   resolve: (result: boolean | TransferResult) => void;
   reject: (error: Error) => void;
   timer: NodeJS.Timeout;
-  kind: "send" | "files";
+  kind: "send" | "files" | "echo";
 }
 
 /** Bounded JSON records, only after TLS has authenticated possession of a pairing key. */
 class Link {
   remote: NetworkPair | null = null;
   peers: PeerInfo[] = [];
+  private echoSupported = false;
   private buffer = Buffer.alloc(0);
   private readonly pending = new Map<string, Pending>();
   private readyResolve!: () => void;
@@ -84,6 +87,7 @@ class Link {
             if (expected && (frame.id !== expected.id || frame.name !== expected.name || frame.fingerprint !== expected.fingerprint)) throw new Error("paired identity changed");
             this.remote = expected ?? service.keys.accept(key, frame);
             this.peers = frame.peers;
+            this.echoSupported = frame.echo === true;
             service.attach(this);
             clearTimeout(this.deadline);
             this.readyResolve();
@@ -101,7 +105,7 @@ class Link {
       this.pending.clear();
       service.detach(this);
     });
-    this.write({ type: "hello", v: NETWORK_VERSION, ...service.keys.identity, peers: service.localPeers() });
+    this.write({ type: "hello", v: NETWORK_VERSION, ...service.keys.identity, peers: service.localPeers(), echo: true });
   }
 
   write(frame: NetworkFrame): void {
@@ -123,7 +127,13 @@ class Link {
     return this.request({ type: "files", rid: randomUUID(), transfer: transferSchema.parse(transfer) }) as Promise<TransferResult>;
   }
 
-  private request(frame: Extract<NetworkFrame, { type: "send" | "files" }>): Promise<boolean | TransferResult> {
+  async echo(): Promise<void> {
+    if (!this.echoSupported) throw new Error("Remote broker does not support verification. Update and restart its hosting sessions.");
+    const result = await this.request({ type: "echo", rid: randomUUID() });
+    if (result !== true) throw new Error("network echo was not acknowledged");
+  }
+
+  private request(frame: Extract<NetworkFrame, { type: "send" | "files" | "echo" }>): Promise<boolean | TransferResult> {
     if (this.pending.size >= MAX_NETWORK_REQUESTS) return Promise.reject(new Error("too many network requests"));
     return new Promise((resolve, reject) => {
       const rid = frame.rid;
@@ -148,11 +158,12 @@ class Link {
       clearTimeout(pending.timer);
       this.pending.delete(frame.rid);
       if (frame.error) pending.reject(new Error(frame.error));
-      else if (pending.kind === "send" && frame.delivered !== undefined) pending.resolve(frame.delivered);
+      else if ((pending.kind === "send" || pending.kind === "echo") && frame.delivered !== undefined) pending.resolve(frame.delivered);
       else if (pending.kind === "files" && frame.transfer) pending.resolve(frame.transfer);
       else pending.reject(new Error("invalid network result"));
       return;
     }
+    if (frame.type === "echo") { this.write({ type: "result", rid: frame.rid, delivered: true }); return; }
     try {
       const from = frame.type === "send" ? frame.message.from : frame.transfer.from;
       const sender = this.peers.find((p) => p.id === from.id && p.name === from.name);
@@ -184,6 +195,7 @@ export class NetworkService {
   private readonly sockets = new Set<Socket>();
   private readonly links = new Map<string, Link>();
   private readonly connecting = new Set<string>();
+  private readonly health = new Map<string, { lastVerifiedAt: number; roundTripMs: number }>();
   private discovery: NetworkDiscovery | null = null;
   private timer: NodeJS.Timeout | null = null;
   private closed = false;
@@ -257,7 +269,17 @@ export class NetworkService {
   }
 
   status(): NetworkStatus {
-    return { enabled: true, identity: this.keys.identity, port: this.port, discovered: this.discovery?.instances() ?? [], paired: this.keys.pairs().map(({ id, name, fingerprint }) => ({ id, name, fingerprint, connected: this.links.has(id) })) };
+    return { enabled: true, config: this.cfg, identity: this.keys.identity, port: this.port, discovered: this.discovery?.instances() ?? [], paired: this.keys.pairs().map(({ id, name, fingerprint }) => ({ id, name, fingerprint, connected: this.links.has(id), ...(this.health.has(id) ? { health: this.health.get(id)! } : {}) })) };
+  }
+
+  async verify(id: string): Promise<{ peers: PeerInfo[]; roundTripMs: number }> {
+    const link = this.links.get(id);
+    if (!link) throw new Error("paired instance is not connected");
+    const start = performance.now();
+    await link.echo();
+    const roundTripMs = Math.round(performance.now() - start);
+    this.health.set(id, { lastVerifiedAt: Date.now(), roundTripMs });
+    return { peers: this.peers().filter((p) => p.id.startsWith(`${id}/`)), roundTripMs };
   }
 
   async link(code: string, host: string, port: number): Promise<NetworkIdentity> {
@@ -298,7 +320,7 @@ export class NetworkService {
   }
 
   unlink(id: string): void {
-    try { this.keys.remove(id); }
+    try { this.keys.remove(id); this.health.delete(id); }
     finally { this.links.get(id)?.socket.destroy(); }
   }
 

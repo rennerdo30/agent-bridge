@@ -7683,7 +7683,7 @@ var require_cross_spawn = __commonJS({
     var cp = __require("child_process");
     var parse3 = require_parse();
     var enoent = require_enoent();
-    function spawn9(command, args, options) {
+    function spawn10(command, args, options) {
       const parsed = parse3(command, args, options);
       const spawned = cp.spawn(parsed.command, parsed.args, parsed.options);
       enoent.hookChildProcess(spawned, parsed);
@@ -7695,8 +7695,8 @@ var require_cross_spawn = __commonJS({
       result.error = result.error || enoent.verifyENOENTSync(result.status, parsed);
       return result;
     }
-    module.exports = spawn9;
-    module.exports.spawn = spawn9;
+    module.exports = spawn10;
+    module.exports.spawn = spawn10;
     module.exports.sync = spawnSync;
     module.exports._parse = parse3;
     module.exports._enoent = enoent;
@@ -7704,7 +7704,7 @@ var require_cross_spawn = __commonJS({
 });
 
 // src/cli/main.ts
-import { join as join30 } from "node:path";
+import { join as join31 } from "node:path";
 
 // src/core/client.ts
 import { EventEmitter } from "node:events";
@@ -8096,7 +8096,7 @@ function makeLogger(sink, scope) {
 import { randomUUID as randomUUID7 } from "node:crypto";
 import { EventEmitter as EventEmitter2 } from "node:events";
 import { unlinkSync } from "node:fs";
-import { dirname as dirname4, join as join7 } from "node:path";
+import { dirname as dirname4, join as join8 } from "node:path";
 
 // src/core/broker.ts
 import { randomUUID as randomUUID5 } from "node:crypto";
@@ -28173,12 +28173,16 @@ var PairingStore = class {
     return this.state.pairs.map((p) => ({ ...p }));
   }
   invite() {
+    return this.inviteWithExpiry().code;
+  }
+  inviteWithExpiry() {
     this.state.invitations = this.state.invitations.filter((p) => p.expiresAt > this.now());
     if (this.state.invitations.length + this.state.pairs.length >= MAX_NETWORK_LINKS) throw new Error("network pairing limit reached");
     const key = randomBytes2(PAIRING_KEY_BYTES).toString("hex");
-    this.state.invitations.push({ key, expiresAt: this.now() + PAIRING_TTL_MS });
+    const expiresAt = this.now() + PAIRING_TTL_MS;
+    this.state.invitations.push({ key, expiresAt });
     this.save();
-    return Buffer.from(JSON.stringify({ v: NETWORK_VERSION, ...this.identity, key })).toString("base64url");
+    return { code: Buffer.from(JSON.stringify({ v: NETWORK_VERSION, ...this.identity, key })).toString("base64url"), expiresAt };
   }
   keyFor(identity) {
     return this.state.pairs.find((p) => keyFingerprint(p.key) === identity)?.key ?? this.state.invitations.find((p) => p.expiresAt > this.now() && keyFingerprint(p.key) === identity)?.key;
@@ -28438,9 +28442,10 @@ var messageSchema = external_exports.object({
   readAt: external_exports.null()
 });
 var frameSchema = external_exports.discriminatedUnion("type", [
-  publicIdentitySchema.extend({ type: external_exports.literal("hello"), v: external_exports.literal(NETWORK_VERSION), peers: peersSchema }),
+  publicIdentitySchema.extend({ type: external_exports.literal("hello"), v: external_exports.literal(NETWORK_VERSION), peers: peersSchema, echo: external_exports.boolean().optional() }),
   external_exports.object({ type: external_exports.literal("peers"), peers: peersSchema }),
   external_exports.object({ type: external_exports.literal("send"), rid: external_exports.uuid(), message: messageSchema }),
+  external_exports.object({ type: external_exports.literal("echo"), rid: external_exports.uuid() }),
   external_exports.object({ type: external_exports.literal("files"), rid: external_exports.uuid(), transfer: transferSchema }),
   external_exports.object({ type: external_exports.literal("result"), rid: external_exports.uuid(), delivered: external_exports.boolean().optional(), transfer: transferResultSchema.optional(), error: external_exports.string().max(MAX_METADATA_CHARS).optional() })
 ]);
@@ -28466,6 +28471,7 @@ var Link = class {
             if (expected && (frame.id !== expected.id || frame.name !== expected.name || frame.fingerprint !== expected.fingerprint)) throw new Error("paired identity changed");
             this.remote = expected ?? service.keys.accept(key, frame);
             this.peers = frame.peers;
+            this.echoSupported = frame.echo === true;
             service.attach(this);
             clearTimeout(this.deadline);
             this.readyResolve();
@@ -28488,13 +28494,14 @@ var Link = class {
       this.pending.clear();
       service.detach(this);
     });
-    this.write({ type: "hello", v: NETWORK_VERSION, ...service.keys.identity, peers: service.localPeers() });
+    this.write({ type: "hello", v: NETWORK_VERSION, ...service.keys.identity, peers: service.localPeers(), echo: true });
   }
   socket;
   service;
   key;
   remote = null;
   peers = [];
+  echoSupported = false;
   buffer = Buffer.alloc(0);
   pending = /* @__PURE__ */ new Map();
   readyResolve;
@@ -28518,6 +28525,11 @@ var Link = class {
   }
   files(transfer) {
     return this.request({ type: "files", rid: randomUUID4(), transfer: transferSchema.parse(transfer) });
+  }
+  async echo() {
+    if (!this.echoSupported) throw new Error("Remote broker does not support verification. Update and restart its hosting sessions.");
+    const result = await this.request({ type: "echo", rid: randomUUID4() });
+    if (result !== true) throw new Error("network echo was not acknowledged");
   }
   request(frame) {
     if (this.pending.size >= MAX_NETWORK_REQUESTS) return Promise.reject(new Error("too many network requests"));
@@ -28549,9 +28561,13 @@ var Link = class {
       clearTimeout(pending.timer);
       this.pending.delete(frame.rid);
       if (frame.error) pending.reject(new Error(frame.error));
-      else if (pending.kind === "send" && frame.delivered !== void 0) pending.resolve(frame.delivered);
+      else if ((pending.kind === "send" || pending.kind === "echo") && frame.delivered !== void 0) pending.resolve(frame.delivered);
       else if (pending.kind === "files" && frame.transfer) pending.resolve(frame.transfer);
       else pending.reject(new Error("invalid network result"));
+      return;
+    }
+    if (frame.type === "echo") {
+      this.write({ type: "result", rid: frame.rid, delivered: true });
       return;
     }
     try {
@@ -28593,6 +28609,7 @@ var NetworkService = class {
   sockets = /* @__PURE__ */ new Set();
   links = /* @__PURE__ */ new Map();
   connecting = /* @__PURE__ */ new Set();
+  health = /* @__PURE__ */ new Map();
   discovery = null;
   timer = null;
   closed = false;
@@ -28683,7 +28700,16 @@ var NetworkService = class {
     return [...this.links.values()].flatMap((link) => link.peers.map((p) => ({ ...p, agent: p.jobAgent ?? p.agent, id: `${link.remote.id}/${p.id}`, name: `${link.remote.name}/${p.name}` })));
   }
   status() {
-    return { enabled: true, identity: this.keys.identity, port: this.port, discovered: this.discovery?.instances() ?? [], paired: this.keys.pairs().map(({ id, name, fingerprint }) => ({ id, name, fingerprint, connected: this.links.has(id) })) };
+    return { enabled: true, config: this.cfg, identity: this.keys.identity, port: this.port, discovered: this.discovery?.instances() ?? [], paired: this.keys.pairs().map(({ id, name, fingerprint }) => ({ id, name, fingerprint, connected: this.links.has(id), ...this.health.has(id) ? { health: this.health.get(id) } : {} })) };
+  }
+  async verify(id) {
+    const link = this.links.get(id);
+    if (!link) throw new Error("paired instance is not connected");
+    const start = performance.now();
+    await link.echo();
+    const roundTripMs = Math.round(performance.now() - start);
+    this.health.set(id, { lastVerifiedAt: Date.now(), roundTripMs });
+    return { peers: this.peers().filter((p) => p.id.startsWith(`${id}/`)), roundTripMs };
   }
   async link(code, host, port) {
     const decoded = decodePairingCode(code);
@@ -28744,6 +28770,7 @@ var NetworkService = class {
   unlink(id) {
     try {
       this.keys.remove(id);
+      this.health.delete(id);
     } finally {
       this.links.get(id)?.socket.destroy();
     }
@@ -28790,6 +28817,29 @@ var NetworkService = class {
   }
 };
 
+// src/network/config.ts
+import { hostname as hostname3 } from "node:os";
+import { join as join7 } from "node:path";
+var networkConfigSchema = external_exports.object({
+  enabled: external_exports.boolean().default(false),
+  name: external_exports.string().regex(NETWORK_NAME_PATTERN).default(hostname3().replace(/[^A-Za-z0-9._-]/g, "-").replace(/^[^A-Za-z0-9]+/, "").slice(0, MAX_NETWORK_NAME_CHARS) || "host"),
+  bind: external_exports.string().min(1).max(MAX_NETWORK_HOST_CHARS).default("127.0.0.1"),
+  port: external_exports.number().int().min(0).max(MAX_PORT).default(DEFAULT_NETWORK_PORT),
+  discovery: external_exports.boolean().default(false)
+});
+var DEFAULT_NETWORK_CONFIG = networkConfigSchema.parse({});
+function parseNetworkConfig(value) {
+  const result = networkConfigSchema.safeParse(value);
+  return result.success ? result.data : void 0;
+}
+function writeNetworkConfig(home, value) {
+  const config2 = networkConfigSchema.parse(value);
+  const path = join7(home, CONFIG_FILE_NAME);
+  const previous = readJsonStore(path);
+  writeJsonStore(path, mergeStoreFields(isRecord(previous) ? previous : {}, { network: config2 }), previous);
+  return config2;
+}
+
 // src/core/broker.ts
 var PEER_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 var PENDING_DEFAULT_LIMIT = 50;
@@ -28824,11 +28874,22 @@ var Broker = class {
       updatePeer: (c, a) => this.onUpdatePeer(c, a),
       claimMail: (c, a) => this.onClaimMail(c, a),
       ping: () => ({ brokerPid: process.pid, protocol: PROTOCOL_VERSION }),
-      networkStatus: () => this.network?.status() ?? { enabled: false, discovered: [], paired: [] },
-      networkPair: () => ({ code: this.requireNetwork().keys.invite() }),
-      networkLink: (_, a) => {
-        const args = external_exports.object({ code: external_exports.string().min(1).max(MAX_PAIRING_CODE_CHARS), host: external_exports.string().min(1).max(MAX_NETWORK_HOST_CHARS), port: external_exports.number().int().min(1).max(MAX_PORT) }).parse(a);
-        return this.requireNetwork().link(args.code, args.host, args.port);
+      networkStatus: () => this.network?.status() ?? { enabled: false, config: this.networking?.config, discovered: [], paired: [] },
+      networkConfigure: (_, a) => {
+        const change = this.networkChange.then(() => this.configureNetwork(a));
+        this.networkChange = change.catch(() => {
+        });
+        return change;
+      },
+      networkVerify: (_, a) => this.requireNetwork().verify(external_exports.uuid().parse(a.id)),
+      networkPair: () => this.requireNetwork().keys.inviteWithExpiry(),
+      networkLink: async (_, a) => {
+        try {
+          const args = external_exports.object({ code: external_exports.string().min(1).max(MAX_PAIRING_CODE_CHARS), host: external_exports.string().min(1).max(MAX_NETWORK_HOST_CHARS), port: external_exports.number().int().min(1).max(MAX_PORT) }).parse(a);
+          return await this.requireNetwork().link(args.code, args.host, args.port);
+        } catch {
+          throw new BridgeError("bad_request", "Pairing failed. Check the address, code expiry, unique names and existing pairings.");
+        }
       },
       networkUnlink: (_, a) => {
         const id = external_exports.uuid().parse(a.id);
@@ -28851,6 +28912,7 @@ var Broker = class {
   conns = /* @__PURE__ */ new Set();
   purgeTimer = null;
   network = null;
+  networkChange = Promise.resolve();
   handlers;
   /** Bind the endpoint. Rejects with the socket error (EADDRINUSE when another broker owns it). */
   listen() {
@@ -28889,6 +28951,7 @@ var Broker = class {
   }
   async close() {
     if (this.purgeTimer) clearInterval(this.purgeTimer);
+    await this.networkChange;
     await this.network?.close();
     this.network = null;
     for (const c of this.conns) c.socket.destroy();
@@ -28898,6 +28961,28 @@ var Broker = class {
     if (server) await new Promise((r) => server.close(() => r()));
     this.store.close();
     this.log.info("broker closed");
+  }
+  /** Serialize listener changes and let the elected broker remain the sole network writer. */
+  async configureNetwork(value) {
+    if (!this.networking) throw new BridgeError("bad_request", "Restart all agent-bridge hosting sessions to load this wizard-capable broker.");
+    const config2 = writeNetworkConfig(this.networking.home, value);
+    await this.network?.close();
+    this.network = null;
+    this.networking.config = config2;
+    if (config2.enabled) {
+      const service = new NetworkService(this.networking.home, config2, {
+        peers: () => [...this.conns].flatMap((c) => c.peer ? [c.peer] : []),
+        receive: (message) => this.receiveRemote(message)
+      }, this.log);
+      try {
+        await service.start();
+        this.network = service;
+      } catch (err) {
+        await service.close();
+        throw err;
+      }
+    }
+    return this.network?.status() ?? { enabled: false, config: config2, discovered: [], paired: [] };
   }
   purge() {
     try {
@@ -29464,9 +29549,9 @@ var BridgeNode = class extends EventEmitter2 {
   }
   /** Doubling delay for background retries, capped; reset once connected. */
   nextBackoff() {
-    const delay3 = this.reconnectDelay;
-    this.reconnectDelay = Math.min(delay3 * 2, RECONNECT_BACKOFF_MAX_MS);
-    return delay3;
+    const delay4 = this.reconnectDelay;
+    this.reconnectDelay = Math.min(delay4 * 2, RECONNECT_BACKOFF_MAX_MS);
+    return delay4;
   }
   /**
    * Retry the election later until connected or stopped. Also after "unauthorized" / "protocol_mismatch":
@@ -29513,7 +29598,7 @@ var BridgeNode = class extends EventEmitter2 {
       this.log.error("cannot open message store", { err, db: this.opts.dbPath });
       throw err;
     }
-    const broker = new Broker(this.opts.pipePath, store, this.log.child("broker"), this.opts.token, Date.now, join7(dirname4(this.opts.dbPath), JOBS_FILE), this.opts.network);
+    const broker = new Broker(this.opts.pipePath, store, this.log.child("broker"), this.opts.token, Date.now, join8(dirname4(this.opts.dbPath), JOBS_FILE), this.opts.network);
     try {
       await broker.listen();
       this.broker = broker;
@@ -29753,7 +29838,7 @@ var BridgeNode = class extends EventEmitter2 {
 
 // src/core/paths.ts
 import { createHash as createHash3 } from "node:crypto";
-import { join as join8, posix, resolve as resolve2 } from "node:path";
+import { join as join9, posix, resolve as resolve2 } from "node:path";
 var PIPE_HASH_LENGTH = 12;
 function resolveHome(env = process.env) {
   return resolve2(env[ENV.home]?.trim() || DEFAULT_HOME);
@@ -29768,7 +29853,7 @@ function resolvePipePath(home, env = process.env, platform = process.platform) {
   return posix.join(home, SOCKET_FILE_NAME.replace(/\.sock$/, `-p${PROTOCOL_VERSION}.sock`));
 }
 function resolveDbPath(home) {
-  return join8(home, DB_FILE_NAME);
+  return join9(home, DB_FILE_NAME);
 }
 
 // src/mcp/format.ts
@@ -29843,14 +29928,14 @@ import { createInterface } from "node:readline/promises";
 // src/core/delegate.ts
 import { spawn } from "node:child_process";
 import { existsSync as existsSync5, readFileSync as readFileSync7, realpathSync } from "node:fs";
-import { delimiter, dirname as dirname5, extname, isAbsolute, join as join10, win32 } from "node:path";
+import { delimiter, dirname as dirname5, extname, isAbsolute, join as join11, win32 } from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 
 // src/core/claude-mcp.ts
 import { readFileSync as readFileSync6 } from "node:fs";
 import { homedir as homedir2 } from "node:os";
-import { join as join9, resolve as resolve3 } from "node:path";
+import { join as join10, resolve as resolve3 } from "node:path";
 var OWN_SERVER_RULE = "mcp__plugin_agent-bridge_bridge";
 var ACCOUNT_CONNECTORS_RULE = "mcp__claude_ai_*";
 var BUILT_IN_RULES = ["mcp__claude-in-chrome"];
@@ -29865,31 +29950,31 @@ function serverNames(mcp) {
   return mcp && typeof mcp === "object" ? Object.keys(mcp) : [];
 }
 function pluginServers(home) {
-  const installed = readJson(join9(home, ".claude", "plugins", "installed_plugins.json"));
+  const installed = readJson(join10(home, ".claude", "plugins", "installed_plugins.json"));
   const out2 = [];
   for (const [key, entries] of Object.entries(installed?.plugins ?? {})) {
     const plugin = key.split("@")[0];
     for (const e of Array.isArray(entries) ? entries : [entries]) {
       const root = e?.installPath;
       if (typeof root !== "string") continue;
-      const manifest = readJson(join9(root, ".claude-plugin", "plugin.json"));
+      const manifest = readJson(join10(root, ".claude-plugin", "plugin.json"));
       const declared = manifest?.mcpServers;
       const servers = typeof declared === "string" ? readJson(resolve3(root, declared))?.mcpServers ?? readJson(resolve3(root, declared)) : declared;
-      const names = /* @__PURE__ */ new Set([...serverNames(servers), ...serverNames(readJson(join9(root, ".mcp.json"))?.mcpServers)]);
+      const names = /* @__PURE__ */ new Set([...serverNames(servers), ...serverNames(readJson(join10(root, ".mcp.json"))?.mcpServers)]);
       for (const s of names) out2.push(`mcp__plugin_${plugin}_${s}`);
     }
   }
   return out2;
 }
 function claudeMcpDenyRules(cwd, home = homedir2()) {
-  const config2 = readJson(join9(home, ".claude.json"));
+  const config2 = readJson(join10(home, ".claude.json"));
   const norm = (p) => resolve3(p).replace(/\\/g, "/").toLowerCase();
   const project = Object.entries(config2?.projects ?? {}).find(([p]) => norm(p) === norm(cwd))?.[1];
   const names = [
     ...pluginServers(home),
     ...serverNames(config2?.mcpServers).map((s) => `mcp__${s}`),
     ...serverNames(project?.mcpServers).map((s) => `mcp__${s}`),
-    ...serverNames(readJson(join9(cwd, ".mcp.json"))?.mcpServers).map((s) => `mcp__${s}`),
+    ...serverNames(readJson(join10(cwd, ".mcp.json"))?.mcpServers).map((s) => `mcp__${s}`),
     ACCOUNT_CONNECTORS_RULE,
     ...BUILT_IN_RULES
   ];
@@ -30264,7 +30349,7 @@ function resolveBinary(bin, env = process.env, platform = process.platform) {
   }
   for (const dir of (env.PATH ?? env.Path ?? "").split(delimiter)) {
     if (!dir) continue;
-    for (const c of candidates(join10(dir, bin))) if (existsSync5(c)) return c;
+    for (const c of candidates(join11(dir, bin))) if (existsSync5(c)) return c;
   }
   return null;
 }
@@ -30554,7 +30639,7 @@ function isClaudeReadOnly(mode) {
 }
 var CLAUDE_READ_ONLY_MODES = /* @__PURE__ */ new Set(["default", "manual", "plan"]);
 function bundledCli() {
-  const cli = join10(dirname5(fileURLToPath(import.meta.url)), "cli.mjs");
+  const cli = join11(dirname5(fileURLToPath(import.meta.url)), "cli.mjs");
   return existsSync5(cli) ? cli : null;
 }
 function spawnsWithoutShell(bin, log) {
@@ -30885,29 +30970,29 @@ function describeCodexUser(u) {
 // src/cli/opencode-install.ts
 import { copyFileSync as copyFileSync2, existsSync as existsSync6, mkdirSync as mkdirSync7, readdirSync as readdirSync3, readFileSync as readFileSync8, rmSync as rmSync3 } from "node:fs";
 import { homedir as homedir3 } from "node:os";
-import { dirname as dirname6, join as join11, resolve as resolve4 } from "node:path";
+import { dirname as dirname6, join as join12, resolve as resolve4 } from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 var INSTALL_MARKER = "agent-bridge";
 var PLUGIN_FILE = "agent-bridge.js";
 var SERVER_DIR = "agent-bridge";
 var SERVER_FILE = "server.mjs";
-var SKILL_REL = join11("skills", "agent-bridge", "SKILL.md");
+var SKILL_REL = join12("skills", "agent-bridge", "SKILL.md");
 var AGENTS_DIR = "agents";
 function opencodeConfigDir(env = process.env) {
   const xdg = env.XDG_CONFIG_HOME?.trim();
-  return join11(xdg || join11(homedir3(), ".config"), "opencode");
+  return join12(xdg || join12(homedir3(), ".config"), "opencode");
 }
 function pluginSourceDir(name, marker, fromFile = fileURLToPath2(import.meta.url)) {
   let dir = dirname6(fromFile);
   for (let i = 0; i < 5; i++) {
-    for (const candidate of [join11(dir, "plugins", name), join11(dir, "..", name)]) {
-      if (existsSync6(join11(candidate, marker))) return resolve4(candidate);
+    for (const candidate of [join12(dir, "plugins", name), join12(dir, "..", name)]) {
+      if (existsSync6(join12(candidate, marker))) return resolve4(candidate);
     }
     dir = dirname6(dir);
   }
   return null;
 }
-var opencodeSourceDir = (from) => pluginSourceDir("opencode", join11("dist", PLUGIN_FILE), from);
+var opencodeSourceDir = (from) => pluginSourceDir("opencode", join12("dist", PLUGIN_FILE), from);
 function ownedByUs(path) {
   try {
     return readFileSync8(path, "utf8").includes(INSTALL_MARKER);
@@ -30931,23 +31016,23 @@ function copyAll(copies, configDir) {
 }
 var AGENT_SOURCE_SUFFIX = ".agent.md";
 function agentCopies(sourceDir, targetDir) {
-  const dir = join11(sourceDir, AGENTS_DIR);
+  const dir = join12(sourceDir, AGENTS_DIR);
   if (!existsSync6(dir)) return [];
-  return readdirSync3(dir).filter((f) => f.endsWith(AGENT_SOURCE_SUFFIX)).map((f) => [join11(dir, f), join11(targetDir, AGENTS_DIR, f.slice(0, -AGENT_SOURCE_SUFFIX.length) + ".md")]);
+  return readdirSync3(dir).filter((f) => f.endsWith(AGENT_SOURCE_SUFFIX)).map((f) => [join12(dir, f), join12(targetDir, AGENTS_DIR, f.slice(0, -AGENT_SOURCE_SUFFIX.length) + ".md")]);
 }
 function installOpencode(sourceDir, configDir = opencodeConfigDir()) {
   return copyAll(
     [
-      [join11(sourceDir, "dist", PLUGIN_FILE), join11(configDir, "plugins", PLUGIN_FILE)],
-      [join11(sourceDir, "dist", SERVER_FILE), join11(configDir, "plugins", SERVER_DIR, SERVER_FILE)],
-      [join11(sourceDir, SKILL_REL), join11(configDir, SKILL_REL)],
+      [join12(sourceDir, "dist", PLUGIN_FILE), join12(configDir, "plugins", PLUGIN_FILE)],
+      [join12(sourceDir, "dist", SERVER_FILE), join12(configDir, "plugins", SERVER_DIR, SERVER_FILE)],
+      [join12(sourceDir, SKILL_REL), join12(configDir, SKILL_REL)],
       ...agentCopies(sourceDir, configDir)
     ],
     configDir
   );
 }
 function uninstallOpencode(configDir = opencodeConfigDir(), sourceDir = opencodeSourceDir()) {
-  const targets = [join11(configDir, "plugins", PLUGIN_FILE), join11(configDir, "plugins", SERVER_DIR), join11(configDir, "skills", "agent-bridge")];
+  const targets = [join12(configDir, "plugins", PLUGIN_FILE), join12(configDir, "plugins", SERVER_DIR), join12(configDir, "skills", "agent-bridge")];
   if (sourceDir) targets.push(...agentCopies(sourceDir, configDir).map(([, to]) => to));
   return removeOwned(targets, configDir);
 }
@@ -31162,11 +31247,11 @@ import { readFileSync as readFileSync9 } from "node:fs";
 import { randomBytes as randomBytes6 } from "node:crypto";
 import { mkdirSync as mkdirSync8, rmSync as rmSync4, writeFileSync as writeFileSync4 } from "node:fs";
 import { createServer as createServer5 } from "node:http";
-import { join as join12 } from "node:path";
+import { join as join13 } from "node:path";
 var SESSIONS_DIR = "sessions";
 var REWAKE_POLL_MS = 4 * 60 * 1e3;
 function sessionFile(home, sessionId) {
-  return join12(home, SESSIONS_DIR, `${sessionId.replace(/[^\w-]/g, "_")}.json`);
+  return join13(home, SESSIONS_DIR, `${sessionId.replace(/[^\w-]/g, "_")}.json`);
 }
 
 // src/cli/rewake-hook.ts
@@ -31212,24 +31297,7 @@ async function runRewakeHook(standby = false) {
 
 // src/core/config.ts
 import { unwatchFile, watchFile } from "node:fs";
-import { basename as basename3, join as join13 } from "node:path";
-
-// src/network/config.ts
-import { hostname as hostname3 } from "node:os";
-var networkConfigSchema = external_exports.object({
-  enabled: external_exports.boolean().default(false),
-  name: external_exports.string().regex(NETWORK_NAME_PATTERN).default(hostname3().replace(/[^A-Za-z0-9._-]/g, "-").replace(/^[^A-Za-z0-9]+/, "").slice(0, MAX_NETWORK_NAME_CHARS) || "host"),
-  bind: external_exports.string().min(1).max(MAX_NETWORK_HOST_CHARS).default("127.0.0.1"),
-  port: external_exports.number().int().min(0).max(MAX_PORT).default(DEFAULT_NETWORK_PORT),
-  discovery: external_exports.boolean().default(false)
-});
-var DEFAULT_NETWORK_CONFIG = networkConfigSchema.parse({});
-function parseNetworkConfig(value) {
-  const result = networkConfigSchema.safeParse(value);
-  return result.success ? result.data : void 0;
-}
-
-// src/core/config.ts
+import { basename as basename3, join as join14 } from "node:path";
 var DELIVERY_MODES = ["auto", "channel", "hooks"];
 var CODEX_SANDBOXES = ["read-only", "workspace-write", "danger-full-access"];
 var CLAUDE_PERMISSION_MODES = ["default", "manual", "acceptEdits", "plan", "auto", "dontAsk", "bypassPermissions"];
@@ -31304,7 +31372,7 @@ function toolPatterns(v) {
 }
 function loadConfig(home, agent, log, env = process.env) {
   let file2 = {};
-  const path = join13(home, CONFIG_FILE_NAME);
+  const path = join14(home, CONFIG_FILE_NAME);
   try {
     file2 = readJsonStore(path, log) ?? {};
     log.debug("config file loaded", { path });
@@ -31411,11 +31479,11 @@ async function runSessionStartHook(log, out2 = (text) => process.stdout.write(te
 // src/cli/watch.ts
 import { closeSync as closeSync2, existsSync as existsSync7, openSync as openSync2, readdirSync as readdirSync5, readSync, statSync as statSync3 } from "node:fs";
 import { StringDecoder } from "node:string_decoder";
-import { join as join15 } from "node:path";
+import { join as join16 } from "node:path";
 
 // src/core/runfeed.ts
 import { appendFileSync as appendFileSync2, mkdirSync as mkdirSync9, readFileSync as readFileSync10, readdirSync as readdirSync4, statSync as statSync2 } from "node:fs";
-import { join as join14 } from "node:path";
+import { join as join15 } from "node:path";
 var RUNS_DIR_NAME = "runs";
 var HEARTBEAT_MS = 6e4;
 var KEEP_RUN_LOGS = 50;
@@ -31431,12 +31499,12 @@ function pruneOldLogs(dir) {
   try {
     const limit = retentionLimit("AGENT_BRIDGE_RUN_LOG_LIMIT", KEEP_RUN_LOGS);
     if (!limit) return;
-    const files = readdirSync4(dir).filter((f) => f.endsWith(".log")).map((f) => ({ f, t: statSync2(join14(dir, f)).mtimeMs })).sort((a, b) => b.t - a.t);
+    const files = readdirSync4(dir).filter((f) => f.endsWith(".log")).map((f) => ({ f, t: statSync2(join15(dir, f)).mtimeMs })).sort((a, b) => b.t - a.t);
     for (const { f } of files.slice(limit)) {
-      const path = join14(dir, f);
+      const path = join15(dir, f);
       if (Date.now() - statSync2(path).mtimeMs <= STALE_RUN_MS && !/^\d\d:\d\d:\d\d finished after \d+s · /m.test(readFileSync10(path, "utf8"))) continue;
       archiveFile(path);
-      archiveFile(join14(dir, runMetaPath(f)));
+      archiveFile(join15(dir, runMetaPath(f)));
     }
   } catch (err) {
     process.stderr.write(`could not archive run logs: ${String(err)}
@@ -31445,9 +31513,9 @@ function pruneOldLogs(dir) {
 }
 function startRunFeed(opts) {
   const now = opts.now ?? Date.now;
-  const dir = join14(opts.home, RUNS_DIR_NAME);
+  const dir = join15(opts.home, RUNS_DIR_NAME);
   mkdirSync9(dir, { recursive: true });
-  const logPath = join14(dir, `${new Date(now()).toISOString().slice(0, 19).replace(/[:T]/g, "-")}-${opts.name}.log`);
+  const logPath = join15(dir, `${new Date(now()).toISOString().slice(0, 19).replace(/[:T]/g, "-")}-${opts.name}.log`);
   const write = (line) => {
     const [first, ...rest] = line.replace(/\r/g, "").split("\n");
     const body = [first, ...rest.map((l) => `${CONTINUATION}${l}`)].join("\n");
@@ -31509,9 +31577,9 @@ var POLL_MS = 500;
 var CHUNK = 64 * 1024;
 var FINISHED = / finished after \d+s · /;
 function findRunLog(home, filter) {
-  const dir = join15(home, RUNS_DIR_NAME);
+  const dir = join16(home, RUNS_DIR_NAME);
   if (!existsSync7(dir)) return null;
-  const logs = readdirSync5(dir).filter((f) => f.endsWith(".log") && (!filter || f.includes(filter))).map((f) => ({ path: join15(dir, f), t: statSync3(join15(dir, f)).mtimeMs })).sort((a, b) => b.t - a.t);
+  const logs = readdirSync5(dir).filter((f) => f.endsWith(".log") && (!filter || f.includes(filter))).map((f) => ({ path: join16(dir, f), t: statSync3(join16(dir, f)).mtimeMs })).sort((a, b) => b.t - a.t);
   return logs[0]?.path ?? null;
 }
 async function watchRunLog(path, out2) {
@@ -31546,37 +31614,37 @@ async function watchRunLog(path, out2) {
 import { randomBytes as randomBytes9 } from "node:crypto";
 import { chmodSync as chmodSync3, readFileSync as readFileSync16, writeFileSync as writeFileSync7 } from "node:fs";
 import { request } from "node:http";
-import { join as join21 } from "node:path";
+import { join as join22 } from "node:path";
 
 // src/cli/ui.ts
 import { randomBytes as randomBytes8 } from "node:crypto";
 import { existsSync as existsSync8, readdirSync as readdirSync6, readFileSync as readFileSync15, statSync as statSync4 } from "node:fs";
 import { createServer as createServer6 } from "node:http";
-import { join as join20 } from "node:path";
+import { join as join21 } from "node:path";
 import { DatabaseSync as DatabaseSync2 } from "node:sqlite";
 
 // src/core/models.ts
 import { mkdirSync as mkdirSync10, readFileSync as readFileSync13, writeFileSync as writeFileSync6 } from "node:fs";
-import { join as join18 } from "node:path";
+import { join as join19 } from "node:path";
 
 // src/core/effort.ts
 import { readFileSync as readFileSync12 } from "node:fs";
 import { homedir as homedir5 } from "node:os";
-import { join as join17 } from "node:path";
+import { join as join18 } from "node:path";
 
 // src/core/codex-trust.ts
 import { readFileSync as readFileSync11, writeFileSync as writeFileSync5 } from "node:fs";
 import { homedir as homedir4 } from "node:os";
-import { join as join16 } from "node:path";
+import { join as join17 } from "node:path";
 var PERMISSION_HOOK_STATE_KEY = 'hooks.state."agent-bridge@agent-bridge:plugin.json#hooks[0]:permission_request:0:0"';
 var OBSERVATIONS_FILE = "codex-hook.json";
 function codexHome(env = process.env) {
-  return env.CODEX_HOME?.trim() || join16(homedir4(), ".codex");
+  return env.CODEX_HOME?.trim() || join17(homedir4(), ".codex");
 }
 function codexPermissionHookHash(home = codexHome(), read = (p) => readFileSync11(p, "utf8")) {
   let text;
   try {
-    text = read(join16(home, "config.toml"));
+    text = read(join17(home, "config.toml"));
   } catch {
     return null;
   }
@@ -31591,7 +31659,7 @@ function codexPermissionHookHash(home = codexHome(), read = (p) => readFileSync1
 }
 function readObservations(bridgeHome) {
   try {
-    return JSON.parse(readFileSync11(join16(bridgeHome, OBSERVATIONS_FILE), "utf8"));
+    return JSON.parse(readFileSync11(join17(bridgeHome, OBSERVATIONS_FILE), "utf8"));
   } catch {
     return {};
   }
@@ -31601,7 +31669,7 @@ function recordCodexHookObservation(bridgeHome, hash2, observation) {
   if (all[hash2] === "failed") return;
   all[hash2] = observation;
   try {
-    writeFileSync5(join16(bridgeHome, OBSERVATIONS_FILE), JSON.stringify(all, null, 2), { mode: 384 });
+    writeFileSync5(join17(bridgeHome, OBSERVATIONS_FILE), JSON.stringify(all, null, 2), { mode: 384 });
   } catch {
   }
 }
@@ -31613,8 +31681,8 @@ function codexPermissionHookTrusted(bridgeHome, home = codexHome(), read = (p) =
 // src/core/effort.ts
 function defaultEffort(agent, model, read = (p) => readFileSync12(p, "utf8")) {
   try {
-    if (agent === "codex") return codexConfigEffort(read(join17(codexHome(), "config.toml")));
-    if (agent === "claude") return claudeSettingsEffort(read(join17(process.env.CLAUDE_CONFIG_DIR?.trim() || join17(homedir5(), ".claude"), "settings.json")), model);
+    if (agent === "codex") return codexConfigEffort(read(join18(codexHome(), "config.toml")));
+    if (agent === "claude") return claudeSettingsEffort(read(join18(process.env.CLAUDE_CONFIG_DIR?.trim() || join18(homedir5(), ".claude"), "settings.json")), model);
   } catch {
   }
   return null;
@@ -31847,7 +31915,7 @@ var MODEL_CACHE_MS = 10 * 60 * 1e3;
 var modelReads = /* @__PURE__ */ new Map();
 var modelBin = (agent, cfg) => cfg[`${agent}Bin`];
 var modelDefault = (agent, cfg) => cfg[`${agent}Model`];
-var modelCachePath = (home, agent) => join18(home, `models-${agent}.json`);
+var modelCachePath = (home, agent) => join19(home, `models-${agent}.json`);
 function cachedModels(home, agent, cfg) {
   try {
     const cache2 = JSON.parse(readFileSync13(modelCachePath(home, agent), "utf8"));
@@ -32443,12 +32511,12 @@ ${CODEX_ASK_HINT}` : req.prompt;
 // src/core/codex-env.ts
 import { readFileSync as readFileSync14 } from "node:fs";
 import { homedir as homedir6 } from "node:os";
-import { join as join19 } from "node:path";
+import { join as join20 } from "node:path";
 function codexWindowsSandbox(home = homedir6(), platform = process.platform) {
   if (platform !== "win32") return null;
   let toml;
   try {
-    toml = readFileSync14(join19(home, ".codex", "config.toml"), "utf8");
+    toml = readFileSync14(join20(home, ".codex", "config.toml"), "utf8");
   } catch {
     return null;
   }
@@ -33623,6 +33691,84 @@ setInterval(poll, POLL_MS);
 </html>
 `;
 
+// src/network/firewall.ts
+import { execFile as execFile2, spawn as spawn6 } from "node:child_process";
+import { promisify } from "node:util";
+var exec = promisify(execFile2);
+var COMMAND_TIMEOUT_MS = 1e4;
+var ELEVATION_TIMEOUT_MS = 12e4;
+var runCommand = async (file2, args) => (await exec(file2, args, { windowsHide: true, timeout: COMMAND_TIMEOUT_MS })).stdout;
+function planFirewall(platform, port, discovery) {
+  if (!Number.isInteger(port) || port < 1 || port > MAX_PORT) throw new Error("expected a TCP port between 1 and 65535");
+  const ports = [{ protocol: "TCP", port }, ...discovery ? [{ protocol: "UDP", port: DISCOVERY_PORT }] : []];
+  if (platform === "win32") return {
+    platform,
+    commands: ports.map((p) => `netsh advfirewall firewall add rule name="agent-bridge ${p.protocol} ${p.port}" dir=in action=allow protocol=${p.protocol} localport=${p.port} profile=private remoteip=LocalSubnet`),
+    explanation: "Allow inbound traffic from the local subnet on Private networks only. Administrator permission is required; Windows will show a UAC prompt. Public networks remain blocked."
+  };
+  if (platform === "darwin") return {
+    platform,
+    commands: [`sudo /usr/libexec/ApplicationFirewall/socketfilterfw --add "${process.execPath}"`, `sudo /usr/libexec/ApplicationFirewall/socketfilterfw --unblockapp "${process.execPath}"`],
+    explanation: `Allow the Node executable in System Settings > Network > Firewall > Options. macOS uses application rules, not port rules. If another firewall is installed, allow TCP ${port}${discovery ? ` and UDP ${DISCOVERY_PORT}` : ""} on the LAN. Review and run these commands yourself.`
+  };
+  return { platform, commands: ports.map((p) => `sudo ufw allow from 192.168.1.0/24 to any port ${p.port} proto ${p.protocol.toLowerCase()}`), explanation: "Check your distribution's firewall (ufw, firewalld or nftables). Replace the example 192.168.1.0/24 with your trusted LAN subnet before running these commands. No rules are changed automatically." };
+}
+async function detectFirewall(plan, run2 = runCommand) {
+  try {
+    if (plan.platform === "win32") {
+      const names = plan.commands.map((c) => /name="([^"]+)"/.exec(c)[1]);
+      const script = `$names = @(${names.map((n) => `'${n}'`).join(",")}); $found = @(Get-NetFirewallRule -PolicyStore ActiveStore -ErrorAction Stop | Where-Object { $_.DisplayName -in $names -and $_.Enabled -eq 'True' -and $_.Direction -eq 'Inbound' -and $_.Action -eq 'Allow' -and $_.Profile -eq 'Private' } | ForEach-Object { $rule = $_; $port = $rule | Get-NetFirewallPortFilter; $address = $rule | Get-NetFirewallAddressFilter; [pscustomobject]@{ name=$rule.DisplayName; port=[string]$port.LocalPort; protocol=[string]$port.Protocol; remote=[string]$address.RemoteAddress } }); ConvertTo-Json -InputObject $found -Compress`;
+      const found = JSON.parse(await run2("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script]));
+      if (names.every((name) => found.some((r) => r.name === name && r.remote === "LocalSubnet" && name === `agent-bridge ${r.protocol === "6" ? "TCP" : r.protocol === "17" ? "UDP" : r.protocol} ${r.port}`))) return { state: "allowed", detail: "Matching inbound Private/LocalSubnet rules found. Group policy, block rules and third-party firewalls can still prevent access." };
+    } else if (plan.platform === "darwin") {
+      const state = await run2("/usr/libexec/ApplicationFirewall/socketfilterfw", ["--getglobalstate"]);
+      return { state: "unknown", detail: `macOS application firewall: ${state.trim()}. Check Node in Firewall Options; port access cannot be established by a local check.` };
+    }
+  } catch {
+  }
+  return { state: "unknown", detail: "No matching allow rules could be confirmed. Check the host firewall and trusted LAN profile." };
+}
+var runElevated = async (file2, args) => (await exec(file2, args, { windowsHide: true, timeout: ELEVATION_TIMEOUT_MS })).stdout;
+async function applyWindowsFirewall(plan, confirmed, run2 = runElevated) {
+  if (!confirmed || plan.platform !== "win32") throw new Error("explicit Windows firewall confirmation required");
+  const script = plan.commands.map((command) => `& ${command}; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }`).join("; ");
+  const encoded = Buffer.from(script, "utf16le").toString("base64");
+  await run2("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", `$p = Start-Process powershell.exe -Verb RunAs -WindowStyle Hidden -Wait -PassThru -ArgumentList '-NoProfile -NonInteractive -EncodedCommand ${encoded}'; if ($p.ExitCode -ne 0) { throw 'Firewall setup failed or was cancelled' }`]);
+}
+async function copyPairingCode(code, platform = process.platform) {
+  const commands = platform === "win32" ? [["clip.exe"]] : platform === "darwin" ? [["pbcopy"]] : [["xclip", "-selection", "clipboard"]];
+  for (const [file2, ...args] of commands) {
+    const copied = await new Promise((resolve8) => {
+      const child = spawn6(file2, args, { windowsHide: true, stdio: ["pipe", "ignore", "ignore"] });
+      const timer = setTimeout(() => {
+        child.kill();
+        resolve8(false);
+      }, COMMAND_TIMEOUT_MS);
+      child.on("error", () => {
+        clearTimeout(timer);
+        resolve8(false);
+      });
+      child.on("close", (code2) => {
+        clearTimeout(timer);
+        resolve8(code2 === 0);
+      });
+      child.stdin.on("error", () => {
+      });
+      child.stdin.end(code);
+    });
+    if (copied) return true;
+  }
+  return false;
+}
+
+// src/network/address.ts
+function parseNetworkAddress(address) {
+  const url2 = new URL(`tls://${address}`);
+  const port = Number(url2.port);
+  if (!url2.hostname || !Number.isInteger(port) || port < 1 || port > MAX_PORT || url2.username || url2.password || url2.pathname || url2.search || url2.hash) throw new Error("expected host:port");
+  return { host: url2.hostname.replace(/^\[|\]$/g, ""), port };
+}
+
 // src/cli/ui.ts
 var UI_HOST = "127.0.0.1";
 var COOKIE = "ab_ui";
@@ -33662,9 +33808,9 @@ function summarizeRun(file2, text, mtimeMs, now, meta3 = {}) {
   };
 }
 function listRuns(home, now = Date.now()) {
-  const dir = join20(home, RUNS_DIR_NAME);
+  const dir = join21(home, RUNS_DIR_NAME);
   if (!existsSync8(dir)) return [];
-  return readdirSync6(dir).filter((f) => RUN_NAME.test(f)).map((f) => ({ f, st: statSync4(join20(dir, f)) })).sort((a, b) => b.st.mtimeMs - a.st.mtimeMs).slice(0, MAX_RUNS).map(({ f, st }) => summarizeRun(f, readFileSync15(join20(dir, f), "utf8"), st.mtimeMs, now, readMeta(join20(dir, runMetaPath(f)))));
+  return readdirSync6(dir).filter((f) => RUN_NAME.test(f)).map((f) => ({ f, st: statSync4(join21(dir, f)) })).sort((a, b) => b.st.mtimeMs - a.st.mtimeMs).slice(0, MAX_RUNS).map(({ f, st }) => summarizeRun(f, readFileSync15(join21(dir, f), "utf8"), st.mtimeMs, now, readMeta(join21(dir, runMetaPath(f)))));
 }
 function readMeta(file2) {
   try {
@@ -33677,7 +33823,7 @@ function readStoredJobs(home) {
   const out2 = /* @__PURE__ */ new Map();
   let stored;
   try {
-    stored = JSON.parse(readFileSync15(join20(home, JOBS_FILE), "utf8"));
+    stored = JSON.parse(readFileSync15(join21(home, JOBS_FILE), "utf8"));
   } catch {
     return out2;
   }
@@ -33699,7 +33845,7 @@ function jobOwner(home, job, original) {
 }
 function classifyPeers(peers, runs, home) {
   const norm = (p) => p.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
-  const worktrees = `${norm(join20(home, "worktrees"))}/`;
+  const worktrees = `${norm(join21(home, "worktrees"))}/`;
   return peers.map((p) => {
     const cwd = norm(p.cwd ?? "");
     const subagent = cwd.startsWith(worktrees);
@@ -33773,7 +33919,7 @@ async function startUi(opts) {
   let sender = null;
   const getSender = () => {
     sender ??= (async () => {
-      const node2 = new BridgeNode({ pipePath: opts.pipe, token, dbPath, agent: "other", name: UI_PEER_NAME, cwd: opts.home, autoWake: false, log: opts.log });
+      const node2 = new BridgeNode({ pipePath: opts.pipe, token, dbPath, agent: "other", name: UI_PEER_NAME, cwd: opts.home, autoWake: false, log: opts.log, network: { home: opts.home, config: loadConfig(opts.home, "other", opts.log).network } });
       try {
         await node2.start();
         return node2;
@@ -33784,6 +33930,15 @@ async function startUi(opts) {
       }
     })();
     return sender;
+  };
+  const networkRequest = async (op, args) => {
+    const client = await BridgeClient.connect(opts.pipe, opts.log);
+    try {
+      await client.request("auth", { protocol: PROTOCOL_VERSION, token });
+      return await client.request(op, args);
+    } finally {
+      client.close();
+    }
   };
   let usage = null;
   const getUsage = (refresh) => {
@@ -33819,6 +33974,56 @@ async function startUi(opts) {
         jobs: Object.fromEntries([...readStoredJobs(opts.home)].map(([name, j]) => [name, { next: j.next }]))
       });
     }
+    if (req.method === "GET" && url2.pathname === "/api/network") {
+      const status = await networkRequest("networkStatus", {});
+      const config2 = status.config ?? loadConfig(opts.home, "other", opts.log).network;
+      return send(res, 200, { ...status, config: config2 });
+    }
+    if (req.method === "POST" && url2.pathname.startsWith("/api/network/")) {
+      if (req.headers["x-agent-bridge"] !== "1") return send(res, 403, { error: "missing header" });
+      try {
+        const body = await readJson2(req);
+        if (!body || typeof body !== "object" || Array.isArray(body)) return send(res, 400, { error: "Expected a JSON object." });
+        switch (url2.pathname) {
+          case "/api/network/configure": {
+            const current = await networkRequest("networkStatus", {});
+            const config2 = current.config ?? loadConfig(opts.home, "other", opts.log).network;
+            const parsed = networkConfigSchema.safeParse({ ...config2, ...body });
+            if (!parsed.success) return send(res, 400, { error: "Invalid network settings." });
+            if (body.confirm !== true) return send(res, 400, { error: "Confirm saving network settings first." });
+            return send(res, 200, await networkRequest("networkConfigure", parsed.data));
+          }
+          case "/api/network/pair":
+            return send(res, 200, await networkRequest("networkPair", {}));
+          case "/api/network/link": {
+            if (typeof body.address !== "string" || typeof body.code !== "string") return send(res, 400, { error: "Address and code are required." });
+            return send(res, 200, await networkRequest("networkLink", { ...parseNetworkAddress(body.address), code: body.code }));
+          }
+          case "/api/network/unlink": {
+            if (typeof body.id !== "string") return send(res, 400, { error: "Instance id is required." });
+            return send(res, 200, await networkRequest("networkUnlink", { id: body.id }));
+          }
+          case "/api/network/verify": {
+            if (typeof body.id !== "string") return send(res, 400, { error: "Instance id is required." });
+            return send(res, 200, await networkRequest("networkVerify", { id: body.id }));
+          }
+          case "/api/network/firewall": {
+            const status = await networkRequest("networkStatus", {});
+            const cfg = status.config ?? loadConfig(opts.home, "other", opts.log).network;
+            const plan = planFirewall(process.platform, status.port || cfg.port, cfg.discovery);
+            if (body.apply === true) {
+              if (body.confirm !== true) return send(res, 400, { error: "Explicit firewall confirmation required." });
+              await applyWindowsFirewall(plan, true);
+            }
+            return send(res, 200, { plan, status: await detectFirewall(plan) });
+          }
+          default:
+            return send(res, 404, { error: "not found" });
+        }
+      } catch {
+        return send(res, 409, { error: "Network action failed. Check settings, broker availability, the address and code, or restart all local agent-bridge hosting sessions if the broker is older. A failed listener reload leaves saved settings for the next broker start." });
+      }
+    }
     if (req.method === "GET" && url2.pathname === "/api/usage") {
       const reports = await getUsage(url2.searchParams.get("refresh") === "1");
       return send(res, 200, { at: usage?.at ?? Date.now(), reports });
@@ -33830,7 +34035,7 @@ async function startUi(opts) {
     }
     const runMatch = /^\/api\/runs\/([\w.-]+)$/.exec(url2.pathname);
     if (req.method === "GET" && runMatch) {
-      const file2 = join20(opts.home, RUNS_DIR_NAME, `${runMatch[1]}.log`);
+      const file2 = join21(opts.home, RUNS_DIR_NAME, `${runMatch[1]}.log`);
       if (!existsSync8(file2)) return send(res, 404, { error: "no such run" });
       const from = Math.max(0, Number(url2.searchParams.get("from")) || 0);
       const buf = readFileSync15(file2);
@@ -33854,9 +34059,9 @@ async function startUi(opts) {
       const run2 = typeof body.run === "string" ? body.run : "";
       const command = jobCommand(body);
       if (!RUN_NAME.test(`${run2}.log`) || !command) return send(res, 400, { error: "a valid run and request are required" });
-      const file2 = join20(opts.home, RUNS_DIR_NAME, `${run2}.log`);
+      const file2 = join21(opts.home, RUNS_DIR_NAME, `${run2}.log`);
       if (!existsSync8(file2)) return send(res, 404, { error: "no such run" });
-      const meta3 = readMeta(join20(opts.home, RUNS_DIR_NAME, `${run2}.json`));
+      const meta3 = readMeta(join21(opts.home, RUNS_DIR_NAME, `${run2}.json`));
       if (!meta3.by || !meta3.job) return send(res, 409, { error: "This run has no owning session or job recorded." });
       try {
         const result = await controlDashboardJob(await getSender(), jobOwner(opts.home, meta3.job, meta3.by), meta3.job, command);
@@ -33895,7 +34100,7 @@ var SECRET_BYTES4 = 24;
 var PROBE_TIMEOUT_MS = 1500;
 var OWNER_ONLY2 = 384;
 function dashboardFile(home) {
-  return join21(home, DASHBOARD_FILE);
+  return join22(home, DASHBOARD_FILE);
 }
 function readDashboardInfo(home) {
   try {
@@ -33953,11 +34158,11 @@ async function hostDashboard(opts) {
 }
 
 // src/cli/open.ts
-import { spawn as spawn6 } from "node:child_process";
+import { spawn as spawn7 } from "node:child_process";
 function openBrowser(url2) {
   const [cmd, args] = process.platform === "win32" ? ["cmd.exe", ["/d", "/c", "start", '""', url2]] : process.platform === "darwin" ? ["open", [url2]] : ["xdg-open", [url2]];
   try {
-    const child = spawn6(cmd, args, { stdio: "ignore", detached: true, windowsHide: true, windowsVerbatimArguments: process.platform === "win32" });
+    const child = spawn7(cmd, args, { stdio: "ignore", detached: true, windowsHide: true, windowsVerbatimArguments: process.platform === "win32" });
     child.on("error", () => {
     });
     child.unref();
@@ -33969,12 +34174,12 @@ function openBrowser(url2) {
 import { execFileSync as execFileSync2 } from "node:child_process";
 import { existsSync as existsSync11, mkdtempSync as mkdtempSync3, rmSync as rmSync8, writeFileSync as writeFileSync9 } from "node:fs";
 import { tmpdir as tmpdir2 } from "node:os";
-import { join as join24 } from "node:path";
+import { join as join25 } from "node:path";
 
 // src/core/worktree.ts
 import { createHash as createHash4 } from "node:crypto";
 import { existsSync as existsSync9, mkdirSync as mkdirSync11, readFileSync as readFileSync17, realpathSync as realpathSync2, rmSync as rmSync5 } from "node:fs";
-import { basename as basename4, isAbsolute as isAbsolute2, join as join22, relative, resolve as resolve5, toNamespacedPath } from "node:path";
+import { basename as basename4, isAbsolute as isAbsolute2, join as join23, relative, resolve as resolve5, toNamespacedPath } from "node:path";
 var GIT = "git";
 var LONG_PATH_ARGS = ["-c", "core.longpaths=true"];
 var REMOVE_RETRIES = 3;
@@ -34002,9 +34207,9 @@ async function createWorktree(opts) {
   const base = await git(["rev-parse", "HEAD"], repoRoot, opts.log);
   const baseBranch = await git(["symbolic-ref", "-q", "--short", "HEAD"], repoRoot, opts.log).catch(() => "") || null;
   let branch = `${BRANCH_PREFIX}${opts.jobId}`;
-  const dir = join22(opts.home, "worktrees");
+  const dir = join23(opts.home, "worktrees");
   mkdirSync11(dir, { recursive: true });
-  let path = join22(dir, `${basename4(repoRoot)}-${opts.jobId}`);
+  let path = join23(dir, `${basename4(repoRoot)}-${opts.jobId}`);
   try {
     await git(["worktree", "add", "-b", branch, path, base], repoRoot, opts.log, WORKTREE_ADD_TIMEOUT_MS);
   } catch (err) {
@@ -34025,7 +34230,7 @@ async function createWorktree(opts) {
   }
   await unlockWorktree(repoRoot, path, opts.log);
   const rel = relative(repoRoot, opts.cwd);
-  const cwd = rel && !rel.startsWith("..") && !isAbsolute2(rel) ? join22(path, rel) : path;
+  const cwd = rel && !rel.startsWith("..") && !isAbsolute2(rel) ? join23(path, rel) : path;
   opts.log.info("worktree created", { repoRoot, path, branch });
   return { repoRoot, path, cwd, branch, base, baseBranch };
 }
@@ -34116,7 +34321,7 @@ function generatedNoise(root, file2) {
   return parts.slice(0, -1).some((part, index) => {
     if (GENERATED_DIRECTORIES.has(part)) return true;
     if (!UNITY_GENERATED_DIRECTORIES.has(part)) return false;
-    return existsSync9(toNamespacedPath(join22(root, ...parts.slice(0, index), "ProjectSettings", "ProjectVersion.txt")));
+    return existsSync9(toNamespacedPath(join23(root, ...parts.slice(0, index), "ProjectSettings", "ProjectVersion.txt")));
   });
 }
 async function autoCommitFiles(wt, log) {
@@ -34233,7 +34438,7 @@ async function gitChangeSnapshot(cwd, log) {
     const file2 = line.slice(3).replace(/^.* -> /, "").replace(/^"|"$/g, "");
     let fp = line.slice(0, 2);
     try {
-      fp += ":" + createHash4("sha1").update(readFileSync17(join22(root, file2))).digest("hex");
+      fp += ":" + createHash4("sha1").update(readFileSync17(join23(root, file2))).digest("hex");
     } catch {
       fp += ":missing";
     }
@@ -34249,10 +34454,10 @@ function changedFiles(before, after) {
 }
 
 // src/cli/reliability-live.ts
-import { execFile as execFile2 } from "node:child_process";
+import { execFile as execFile3 } from "node:child_process";
 import { existsSync as existsSync10, mkdirSync as mkdirSync13, mkdtempSync as mkdtempSync2, readdirSync as readdirSync7, readFileSync as readFileSync18, rmSync as rmSync7, writeFileSync as writeFileSync8 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join as join23 } from "node:path";
+import { join as join24 } from "node:path";
 
 // node_modules/@modelcontextprotocol/sdk/dist/esm/server/zod-compat.js
 function isZ4Schema(s) {
@@ -37855,7 +38060,7 @@ function readStore(path, log) {
 }
 
 // src/cli/reliability-live.ts
-var SERVER_BUNDLE = join23("dist", "server.mjs");
+var SERVER_BUNDLE = join24("dist", "server.mjs");
 var JOBS_FILE2 = "jobs.json";
 var NOTE_COUNT = 12;
 var NOTES_DIR = "notes";
@@ -37884,7 +38089,7 @@ function hostFor(target) {
 }
 function serverBundle(host, fromFile) {
   const dir = pluginSourceDir(host, SERVER_BUNDLE, fromFile);
-  return dir ? join23(dir, SERVER_BUNDLE) : null;
+  return dir ? join24(dir, SERVER_BUNDLE) : null;
 }
 function jobNameIn(text) {
   return /Subagent (\S+-job-[0-9a-f]+) started/.exec(text)?.[1] ?? /message_subagent\(job="([^"]+)"/.exec(text)?.[1] ?? null;
@@ -37909,7 +38114,7 @@ function listProcesses() {
     ]
   ] : ["ps", ["-A", "-o", "pid=,ppid=,pgid="]];
   return new Promise((resolve8, reject) => {
-    execFile2(file2, args, { timeout: PROCESS_LIST_TIMEOUT_MS, windowsHide: true, maxBuffer: 16 * 1024 * 1024 }, (err, stdout) => {
+    execFile3(file2, args, { timeout: PROCESS_LIST_TIMEOUT_MS, windowsHide: true, maxBuffer: 16 * 1024 * 1024 }, (err, stdout) => {
       if (err) return reject(err);
       const procs = [];
       for (const line of stdout.split(/\r?\n/)) {
@@ -37944,7 +38149,7 @@ function alive(pid) {
 }
 function storedJob(home, job) {
   try {
-    const all = readStore(join23(home, JOBS_FILE2));
+    const all = readStore(join24(home, JOBS_FILE2));
     return all.find((j) => j.name === job) ?? null;
   } catch {
     return null;
@@ -37953,8 +38158,8 @@ function storedJob(home, job) {
 var PICKED_UP_LOG = "subagent picked up messages";
 function logsMention(home, text) {
   try {
-    const dir = join23(home, LOG_DIR_NAME);
-    return readdirSync7(dir).some((f) => readFileSync18(join23(dir, f), "utf8").includes(text));
+    const dir = join24(home, LOG_DIR_NAME);
+    return readdirSync7(dir).some((f) => readFileSync18(join24(dir, f), "utf8").includes(text));
   } catch {
     return false;
   }
@@ -38046,9 +38251,9 @@ var LiveHost = class _LiveHost {
   }
 };
 function writeNotes(dir) {
-  mkdirSync13(join23(dir, NOTES_DIR), { recursive: true });
+  mkdirSync13(join24(dir, NOTES_DIR), { recursive: true });
   for (let i = 1; i <= NOTE_COUNT; i++) {
-    writeFileSync8(join23(dir, NOTES_DIR, `note-${String(i).padStart(2, "0")}.txt`), `Note ${i}: the garden bed number ${i} gets ${i * 2} liters of water on day ${i}.
+    writeFileSync8(join24(dir, NOTES_DIR, `note-${String(i).padStart(2, "0")}.txt`), `Note ${i}: the garden bed number ${i} gets ${i * 2} liters of water on day ${i}.
 `);
   }
 }
@@ -38063,7 +38268,7 @@ async function killLeft(procs) {
 async function runLiveChecks(o) {
   const homes = [];
   const newHome = () => {
-    const h = mkdtempSync2(join23(tmpdir(), "agent-bridge-rel-live-"));
+    const h = mkdtempSync2(join24(tmpdir(), "agent-bridge-rel-live-"));
     homes.push(h);
     return h;
   };
@@ -38201,7 +38406,7 @@ async function runLiveChecks(o) {
               return allow ? { allow: true } : { allow: false, message: "Denied by the reliability check." };
             }
           });
-          const exists = existsSync10(join23(dir, "asked.txt"));
+          const exists = existsSync10(join24(dir, "asked.txt"));
           const relevant = asked.filter((a) => !a.startsWith("mcp:"));
           return {
             pass: relevant.length > 0 && exists === allow,
@@ -38226,7 +38431,7 @@ async function runLiveChecks(o) {
             return { allow: true };
           }
         });
-        const exists = existsSync10(join23(dir, "should-not-exist.txt"));
+        const exists = existsSync10(join24(dir, "should-not-exist.txt"));
         const relevant = asked.filter((a) => !a.startsWith("mcp:"));
         return {
           pass: !exists && relevant.length === 0,
@@ -38278,10 +38483,10 @@ async function timed(name, fn) {
   }
 }
 function makeRepo() {
-  const dir = mkdtempSync3(join24(tmpdir2(), "agent-bridge-rel-"));
+  const dir = mkdtempSync3(join25(tmpdir2(), "agent-bridge-rel-"));
   const git2 = (...a) => execFileSync2("git", a, { cwd: dir, stdio: "ignore" });
   git2("init", "-q");
-  writeFileSync9(join24(dir, "README.md"), "reliability sandbox\n");
+  writeFileSync9(join25(dir, "README.md"), "reliability sandbox\n");
   git2("add", "README.md");
   git2("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "base");
   return dir;
@@ -38291,7 +38496,7 @@ async function runReliability(opts) {
   models = opts.models ?? {};
   const agents = opts.agents.filter((a) => resolveBinary(BINS[a]));
   for (const a of opts.agents) if (!agents.includes(a)) opts.out(`${a}: SKIP (CLI "${BINS[a]}" not installed)`);
-  const home = mkdtempSync3(join24(tmpdir2(), "agent-bridge-rel-home-"));
+  const home = mkdtempSync3(join25(tmpdir2(), "agent-bridge-rel-home-"));
   const results = [];
   const record2 = (o) => {
     results.push(o);
@@ -38319,7 +38524,7 @@ async function runReliability(opts) {
         await timed(`${agent} read-only is enforced`, async () => {
           const dir = repo();
           await run(agent, "Create a file named should-not-exist.txt containing the word hi. Then reply done.", dir, "read", opts.log);
-          const exists = existsSync11(join24(dir, "should-not-exist.txt"));
+          const exists = existsSync11(join25(dir, "should-not-exist.txt"));
           return { pass: !exists, detail: exists ? "the file WAS created despite read-only access" : "no file created" };
         })
       );
@@ -38331,7 +38536,7 @@ async function runReliability(opts) {
           const base = { prompt: "Create a file named created.txt containing the word hello. Then reply done.", cwd: wt.cwd, sessionId: null, timeoutSec: RUN_TIMEOUT_SEC, log: opts.log, model: models[agent] ?? null, onProgress: (m) => steps.push(m) };
           const r = agent === "codex" ? await delegateToCodex({ ...base, bin: BINS.codex, sandbox: "workspace-write" }) : agent === "claude" ? await delegateToClaude({ ...base, bin: BINS.claude, permissionMode: "acceptEdits" }) : await delegateToOpencode({ ...base, bin: BINS.opencode, autoApprove: true });
           const outcome = await finishWorktree(wt, "reliability edit", opts.log);
-          const leaked = existsSync11(join24(dir, "created.txt"));
+          const leaked = existsSync11(join25(dir, "created.txt"));
           const pass = outcome.diffStat.includes("created.txt") && !leaked;
           return {
             pass,
@@ -38357,7 +38562,7 @@ async function runReliability(opts) {
             opts.log
           );
           if (r === null) return { pass: true, detail: "SKIP (not available: see README, permission requests)" };
-          const exists = existsSync11(join24(dir, "asked.txt"));
+          const exists = existsSync11(join25(dir, "asked.txt"));
           return {
             pass: asked.length > 0 && exists === allow,
             detail: `asked ${asked.length}x [${asked.join(" | ")}], file ${exists ? "created" : "not created"}`
@@ -38417,7 +38622,7 @@ ${passed}/${results.length} passed`);
 // src/cli/smoke.ts
 import { mkdtempSync as mkdtempSync4, rmSync as rmSync9 } from "node:fs";
 import { tmpdir as tmpdir3 } from "node:os";
-import { join as join25 } from "node:path";
+import { join as join26 } from "node:path";
 var TESTED_VERSIONS = {
   claude: "2.1.283",
   codex: "0.157.1",
@@ -38437,7 +38642,7 @@ async function version2(bin, log) {
   }
 }
 async function runSmoke(opts) {
-  const dir = mkdtempSync4(join25(tmpdir3(), "agent-bridge-smoke-"));
+  const dir = mkdtempSync4(join26(tmpdir3(), "agent-bridge-smoke-"));
   const bins = { claude: DEFAULT_CLAUDE_BIN, codex: DEFAULT_CODEX_BIN, opencode: DEFAULT_OPENCODE_BIN };
   let failures = 0;
   try {
@@ -38485,10 +38690,10 @@ async function runSmoke(opts) {
 
 // src/core/worktree-cleanup.ts
 import { existsSync as existsSync12, lstatSync as lstatSync2, readdirSync as readdirSync8, rmdirSync, unlinkSync as unlinkSync2 } from "node:fs";
-import { join as join26, resolve as resolve6, toNamespacedPath as toNamespacedPath2 } from "node:path";
+import { join as join27, resolve as resolve6, toNamespacedPath as toNamespacedPath2 } from "node:path";
 function readJobs(home) {
   try {
-    return readStore(join26(home, JOBS_FILE));
+    return readStore(join27(home, JOBS_FILE));
   } catch {
     return [];
   }
@@ -38498,7 +38703,7 @@ function unlinkLinks(dir) {
   dir = toNamespacedPath2(resolve6(dir));
   let count = 0;
   for (const entry of readdirSync8(dir, { withFileTypes: true })) {
-    const path = join26(dir, entry.name);
+    const path = join27(dir, entry.name);
     const link = entry.isSymbolicLink() || (entry.isDirectory() || !entry.isFile()) && lstatSync2(path).isSymbolicLink();
     if (link) {
       try {
@@ -38514,7 +38719,7 @@ function unlinkLinks(dir) {
 function onlyFoldersAndLinks(dir) {
   dir = toNamespacedPath2(resolve6(dir));
   return readdirSync8(dir, { withFileTypes: true }).every((e) => {
-    const path = join26(dir, e.name);
+    const path = join27(dir, e.name);
     if (e.isSymbolicLink() || lstatSync2(path).isSymbolicLink()) return true;
     return e.isDirectory() && onlyFoldersAndLinks(path);
   });
@@ -38531,7 +38736,7 @@ async function mergedInto(branch, targets, cwd, trust, log) {
 }
 async function inspect(path, jobs, apply, log) {
   const entry = (branch2, action, reason) => ({ path, branch: branch2, action, reason });
-  if (!existsSync12(toNamespacedPath2(join26(path, ".git")))) {
+  if (!existsSync12(toNamespacedPath2(join27(path, ".git")))) {
     if (!onlyFoldersAndLinks(path)) return entry(null, "kept", "not a git worktree (no .git), and it holds files");
     const why2 = "leftover of a removed worktree: no .git, only empty folders and links";
     if (!apply) return entry(null, "would remove", why2);
@@ -38583,13 +38788,13 @@ async function inspect(path, jobs, apply, log) {
   }
 }
 async function cleanupWorktrees(opts) {
-  const dir = join26(opts.home, "worktrees");
+  const dir = join27(opts.home, "worktrees");
   if (!existsSync12(dir)) return [];
   const jobs = readJobs(opts.home);
   const out2 = [];
   for (const d of readdirSync8(dir, { withFileTypes: true })) {
-    if (!d.isDirectory() || lstatSync2(join26(dir, d.name)).isSymbolicLink()) continue;
-    out2.push(await inspect(join26(dir, d.name), jobs, opts.apply, opts.log));
+    if (!d.isDirectory() || lstatSync2(join27(dir, d.name)).isSymbolicLink()) continue;
+    out2.push(await inspect(join27(dir, d.name), jobs, opts.apply, opts.log));
   }
   return out2;
 }
@@ -38599,11 +38804,11 @@ import { randomUUID as randomUUID11 } from "node:crypto";
 
 // src/mcp/delegate-run.ts
 import { randomUUID as randomUUID10 } from "node:crypto";
-import { isAbsolute as isAbsolute3, join as join28, relative as relative2, resolve as resolve7 } from "node:path";
+import { isAbsolute as isAbsolute3, join as join29, relative as relative2, resolve as resolve7 } from "node:path";
 
 // src/core/resource-slots.ts
 import { mkdirSync as mkdirSync14 } from "node:fs";
-import { join as join27 } from "node:path";
+import { join as join28 } from "node:path";
 import { DatabaseSync as DatabaseSync3 } from "node:sqlite";
 import { setTimeout as delay2 } from "node:timers/promises";
 var SLOT_OWNER_ENV = "AGENT_BRIDGE_SLOT_OWNER";
@@ -38626,7 +38831,7 @@ var ResourceSlots = class {
     this.isAlive = isAlive;
     this.now = now;
     mkdirSync14(home, { recursive: true });
-    this.db = new DatabaseSync3(join27(home, SLOT_DB_NAME));
+    this.db = new DatabaseSync3(join28(home, SLOT_DB_NAME));
     this.db.exec(`PRAGMA busy_timeout = ${LOCK_WAIT_MS};
       CREATE TABLE IF NOT EXISTS slots (
         ticket INTEGER PRIMARY KEY AUTOINCREMENT, resource TEXT NOT NULL, id TEXT NOT NULL,
@@ -38805,7 +39010,7 @@ var DELEGATED_JOB_NOTE = "(agent-bridge: you are a delegated job. Report what yo
 var HANDOFF_DECLINED = "Declined by agent-bridge: delegated jobs do not write the project handoff. Put what the handoff should say in your final message; the session that started you updates it.";
 var PARENT_APPROVAL_TIMEOUT_MS = 10 * 6e4;
 function isBridgeWorktree(dir, home) {
-  return isInside(dir, join28(home, "worktrees")) && resolve7(dir) !== resolve7(join28(home, "worktrees"));
+  return isInside(dir, join29(home, "worktrees")) && resolve7(dir) !== resolve7(join29(home, "worktrees"));
 }
 function isInside(child, parent) {
   const rel = relative2(resolve7(parent), resolve7(child));
@@ -39118,9 +39323,9 @@ ${notes.join("\n\n")}` : res.text };
 }
 
 // src/mcp/job-host.ts
-import { spawn as spawn8 } from "node:child_process";
+import { spawn as spawn9 } from "node:child_process";
 import { mkdirSync as mkdirSync15, readdirSync as readdirSync9, statSync as statSync6 } from "node:fs";
-import { join as join29 } from "node:path";
+import { join as join30 } from "node:path";
 var RUNNERS_DIR_NAME = "jobs";
 var JOB_PEER_PREFIX = "job:";
 var CONTROL_CONVERSATION_PREFIX = "jobctl-";
@@ -39128,7 +39333,7 @@ var RUNNER_HEARTBEAT_MS = 15e3;
 var STALE_MS = 6 * RUNNER_HEARTBEAT_MS;
 var KEEP_FILES_MS = 7 * 24 * 60 * 60 * 1e3;
 function runnerStatePath(home, id) {
-  return join29(home, RUNNERS_DIR_NAME, `${id}.json`);
+  return join30(home, RUNNERS_DIR_NAME, `${id}.json`);
 }
 function writeRunnerState(home, id, state) {
   const path = runnerStatePath(home, id);
@@ -39385,18 +39590,201 @@ Resource must be configured in resourceSlots.`);
 }
 
 // src/network/cli.ts
-var NETWORK_USAGE = "agent-bridge network | pair | pair <code> <host:port> | link <host:port> <code> | unlink <instance-id>";
-function parseNetworkAddress(address) {
-  const url2 = new URL(`tls://${address}`);
-  const port = Number(url2.port);
-  if (!url2.hostname || !Number.isInteger(port) || port < 1 || port > MAX_PORT || url2.username || url2.password || url2.pathname || url2.search || url2.hash) throw new Error("expected host:port");
-  return { host: url2.hostname.replace(/^\[|\]$/g, ""), port };
+import { createInterface as createInterface2 } from "node:readline/promises";
+import { setTimeout as delay3 } from "node:timers/promises";
+import { Writable } from "node:stream";
+
+// src/network/wizard.ts
+var WAIT_POLL_MS = 1e3;
+var SECONDS_PER_MINUTE = 60;
+function parseConnectOptions(args) {
+  const options = { yes: false, nonInteractive: false, create: false, firewall: false };
+  for (let i = 0; i < args.length; i++) {
+    const flag = args[i];
+    if (flag === "--yes") options.yes = true;
+    else if (flag === "--non-interactive") options.nonInteractive = true;
+    else if (flag === "--create") options.create = true;
+    else if (flag === "--firewall") options.firewall = true;
+    else if (flag === "--no-discovery") options.discovery = false;
+    else if (["--address", "--code", "--name", "--bind", "--port"].includes(flag)) {
+      const value = args[++i];
+      if (!value || value.startsWith("--")) throw new Error(`${flag} requires a value`);
+      if (flag === "--port") options.port = Number(value);
+      else if (flag === "--address") options.address = value;
+      else if (flag === "--code") options.code = value;
+      else if (flag === "--name") options.name = value;
+      else options.bind = value;
+    } else throw new Error(`unknown connect option: ${flag}`);
+  }
+  if (options.create && (options.address || options.code)) throw new Error("choose either --create or --address with --code");
+  if (options.nonInteractive && !options.create && !(options.address && options.code)) throw new Error("--non-interactive requires --create or --address and --code");
+  if (options.nonInteractive && options.firewall) throw new Error("firewall setup requires an interactive explicit confirmation");
+  return options;
 }
+async function runConnectWizard(options, deps) {
+  const { out: out2, request: request2 } = deps;
+  const step = (value) => {
+    deps.signal?.throwIfAborted();
+    deps.step?.(value);
+    out2(`
+${value === "done" ? "Connected" : value[0].toUpperCase() + value.slice(1)}:`);
+  };
+  const ask2 = (label, fallback, secret = false) => options.nonInteractive ? Promise.resolve(fallback) : deps.prompt(label, fallback, secret);
+  const accept = (label) => options.yes || !options.nonInteractive && deps.confirm(label);
+  step("enable");
+  let status = await request2("networkStatus", {});
+  const base = status.config ?? deps.config;
+  const needsSetup = !status.enabled || options.name !== void 0 || options.bind !== void 0 || options.port !== void 0 || options.discovery !== void 0;
+  let config2 = base;
+  if (needsSetup) {
+    config2 = networkConfigSchema.parse({
+      ...base,
+      enabled: true,
+      name: options.name ?? await ask2("Instance name", base.name),
+      bind: options.bind ?? await ask2("LAN bind address (0.0.0.0 exposes trusted LAN interfaces)", base.bind === "127.0.0.1" ? "0.0.0.0" : base.bind),
+      port: options.port ?? Number(await ask2("TCP port", String(base.port))),
+      discovery: options.discovery ?? true
+    });
+    planFirewall(deps.platform, config2.port, config2.discovery);
+    out2(`Save network settings in config.json: ${config2.name}, ${config2.bind}:${config2.port}, discovery ${config2.discovery ? "on" : "off"}. Other settings are preserved. This exposes the listener to the selected interfaces; use a trusted LAN only.`);
+    if (!await accept("Save and enable networking?")) {
+      out2("Setup cancelled; configuration unchanged.");
+      return 1;
+    }
+  } else out2(`Networking already enabled for ${status.identity?.name ?? base.name}.`);
+  step("firewall");
+  const plan = planFirewall(deps.platform, needsSetup ? config2.port : status.port || config2.port, config2.discovery);
+  const firewall = await deps.firewallStatus(plan);
+  out2(firewall.detail);
+  out2(plan.explanation);
+  for (const command of plan.commands) out2(command);
+  if (deps.platform === "win32" && (firewall.state !== "allowed" || options.firewall) && !options.nonInteractive && await deps.confirm("Add these exact firewall rules now? Requires administrator permission (UAC).")) {
+    await deps.applyFirewall(plan);
+    out2((await deps.firewallStatus(plan)).detail);
+  } else out2("Firewall unchanged. You can review and run the commands yourself.");
+  step("reload");
+  if (needsSetup) status = await request2("networkConfigure", config2);
+  if (!status.enabled) throw new Error("Networking unavailable. Restart all local agent-bridge hosting sessions, then run connect again.");
+  out2("Broker network configuration is active. No session restart is required now. Keep network settings consistent in per-agent config and environment overrides before future broker elections.");
+  step("choose");
+  status = await request2("networkStatus", {});
+  for (const [i, instance] of status.discovered.entries()) out2(`${i + 1}. ${instance.name} \u2014 ${instance.host}:${instance.port} (untrusted discovery hint)`);
+  if (!status.discovered.length) out2("No PCs discovered yet. Use a manual host:port, or create a code on this PC. Multicast may take a few seconds.");
+  const mode = options.create ? "create" : options.address ? "connect" : (await ask2("Create a code on this PC, or connect to another PC? (create/connect)", "create")).toLowerCase();
+  if (mode !== "create" && mode !== "connect") throw new Error("choose create or connect");
+  step("pair");
+  let id;
+  if (mode === "create") {
+    const previous = new Set(status.paired.map((p) => p.id));
+    out2("Creating a one-use invitation in the protected network key store. It expires after ten minutes.");
+    const invitation = await request2("networkPair", {});
+    const expiresAt = invitation.expiresAt ?? deps.now() + PAIRING_TTL_MS;
+    out2(await deps.clipboard(invitation.code) ? "Pairing code copied to clipboard." : "Clipboard unavailable; copy the code below securely.");
+    out2("Secret pairing code (share only with the other PC; keep out of logs and shell history):");
+    out2(invitation.code);
+    out2(`On the other PC run agent-bridge connect and choose connect. Use this PC's LAN address with TCP port ${status.port}.`);
+    let remote2;
+    while (deps.now() < expiresAt) {
+      deps.signal?.throwIfAborted();
+      const seconds = Math.max(0, Math.ceil((expiresAt - deps.now()) / 1e3));
+      out2(`Waiting for the other PC: ${Math.floor(seconds / SECONDS_PER_MINUTE)}:${String(seconds % SECONDS_PER_MINUTE).padStart(2, "0")} remaining (Ctrl+C cancels).`);
+      status = await request2("networkStatus", {});
+      remote2 = status.paired.find((p) => p.connected && !previous.has(p.id));
+      if (remote2) break;
+      await deps.sleep(WAIT_POLL_MS);
+    }
+    if (!remote2) {
+      out2("Pairing code expired. Run connect again to create a fresh code.");
+      return 1;
+    }
+    id = remote2.id;
+  } else {
+    const choice = options.address ?? await ask2("Discovered PC number or manual host:port", "");
+    const index = /^\d+$/.test(choice) ? Number(choice) - 1 : -1;
+    const discovered = status.discovered[index];
+    const address = discovered ? `${discovered.host}:${discovered.port}` : choice;
+    const endpoint = parseNetworkAddress(address);
+    const code = options.code ?? await ask2("Secret code from the other PC", "", true);
+    if (!code) throw new Error("pairing code is required");
+    out2(`Pairing with ${address} will save its identity and secret in the protected network key store and reconnect this endpoint in future.`);
+    id = (await request2("networkLink", { ...endpoint, code })).id;
+  }
+  step("verify");
+  const result = await request2("networkVerify", { id });
+  for (const peer of result.peers) out2(`Remote peer: ${peer.name} (${peer.agent})`);
+  if (!result.peers.length) out2("No remote agent sessions currently advertised; start one on the other PC to exchange agent messages.");
+  out2(`Test message echo round trip acknowledged in ${result.roundTripMs} ms.`);
+  step("done");
+  status = await request2("networkStatus", {});
+  const remote = status.paired.find((p) => p.id === id);
+  out2(`Paired with ${remote?.name ?? id}. Encrypted link verified. Use the instance/peer name with send. Unlink on both PCs to revoke pairing; the clipboard may still contain the code.`);
+  return 0;
+}
+
+// src/network/cli.ts
+var NETWORK_USAGE = "agent-bridge network | pair | pair <code> <host:port> | link <host:port> <code> | unlink <instance-id>";
 async function runNetworkCommand(command, args, home, pipe2, log, out2) {
-  const client = await BridgeClient.connect(pipe2, log);
+  const client = await BridgeClient.connect(pipe2, log).catch((error62) => {
+    if (command === "connect") throw new Error("No local broker is available. Start an agent-bridge hosting session, then run connect again. If its broker predates the wizard, restart all local hosting sessions after updating.");
+    throw error62;
+  });
   try {
     await client.request("auth", { protocol: PROTOCOL_VERSION, token: loadOrCreateToken(home) });
-    if (command === "network") {
+    if (command === "connect") {
+      const options = parseConnectOptions(args);
+      if (!process.stdin.isTTY && !options.nonInteractive) throw new Error("Use --non-interactive --yes with --create or --address and --code when stdin is not a terminal.");
+      const cancellation = new AbortController();
+      const cancel = () => {
+        cancellation.abort();
+        client.close();
+      };
+      process.on("SIGINT", cancel);
+      let muted = false;
+      const output2 = new Writable({ write(chunk, _encoding, done) {
+        if (!muted) process.stdout.write(chunk);
+        done();
+      } });
+      const prompts = options.nonInteractive ? null : createInterface2({ input: process.stdin, output: output2, terminal: true });
+      prompts?.on("SIGINT", cancel);
+      const prompt = async (label, fallback = "", secret = false) => {
+        if (!prompts) throw new Error("interactive prompt unavailable");
+        if (secret) {
+          process.stdout.write(`${label}: `);
+          muted = true;
+        }
+        try {
+          return (await prompts.question(secret ? "" : `${label}${fallback ? ` [${fallback}]` : ""}: `, { signal: cancellation.signal })).trim() || fallback;
+        } finally {
+          if (secret) {
+            muted = false;
+            process.stdout.write("\n");
+          }
+        }
+      };
+      try {
+        return await runConnectWizard(options, {
+          request: client.request.bind(client),
+          config: loadConfig(home, "other", log).network,
+          platform: process.platform,
+          prompt,
+          confirm: async (label) => /^(y|yes)$/i.test(await prompt(`${label} [y/N]`)),
+          out: out2,
+          firewallStatus: detectFirewall,
+          applyFirewall: (plan) => applyWindowsFirewall(plan, true),
+          clipboard: copyPairingCode,
+          now: Date.now,
+          signal: cancellation.signal,
+          sleep: (ms) => delay3(ms, void 0, { signal: cancellation.signal })
+        });
+      } catch (error62) {
+        if (!cancellation.signal.aborted) throw error62;
+        out2("Setup cancelled. Already saved settings/pairings remain; an unused code expires after ten minutes.");
+        return 1;
+      } finally {
+        process.off("SIGINT", cancel);
+        prompts?.close();
+      }
+    } else if (command === "network") {
       out2(JSON.stringify(await client.request("networkStatus", {}), null, 2));
     } else if (command === "pair" && args.length === 0) {
       out2((await client.request("networkPair", {})).code);
@@ -39433,6 +39821,7 @@ async function main(argv) {
   switch (command) {
     case "slot":
       return runSlot(rest, home, loadConfig(home, "other", log), out);
+    case "connect":
     case "network":
     case "pair":
     case "link":
@@ -39571,7 +39960,7 @@ async function main(argv) {
       const apply = (rest.includes("--yes") || rest.includes("-y")) && !rest.includes("--dry-run");
       const entries = await cleanupWorktrees({ home, apply, log });
       if (!entries.length) {
-        out(t("cli.cleanup.none", { dir: join30(home, "worktrees") }));
+        out(t("cli.cleanup.none", { dir: join31(home, "worktrees") }));
         return 0;
       }
       for (const e of entries) out(t("cli.cleanup.line", { action: e.action.padEnd(12), path: e.path, branch: e.branch ?? "-", reason: e.reason }));
@@ -39581,13 +39970,13 @@ async function main(argv) {
       return count("failed") ? 1 : 0;
     }
     case "paths":
-      out(t("cli.paths", { home, logs: join30(home, LOG_DIR_NAME), db: resolveDbPath(home), pipe: pipe2 }));
+      out(t("cli.paths", { home, logs: join31(home, LOG_DIR_NAME), db: resolveDbPath(home), pipe: pipe2 }));
       return 0;
     case "help":
     case "--help":
     case "-h":
       out(t("cli.usage"));
-      out("Network: network | pair | link <host:port> <code> | unlink <instance-id>");
+      out("Network: connect [--yes] [--non-interactive --create | --address <host:port> --code <code>] | network | pair | link <host:port> <code> | unlink <instance-id>");
       return 0;
     default:
       out(t("cli.unknownCommand", { command }));

@@ -32,8 +32,8 @@ import {
 import { agentQueueKey, MessageStore } from "./store.js";
 import { tokensEqual } from "./token.js";
 import { retentionLimit } from "./json-store.js";
-import { NetworkService } from "../network/link.js";
-import type { NetworkConfig } from "../network/config.js";
+import { NetworkService, type NetworkStatus } from "../network/link.js";
+import { writeNetworkConfig, type NetworkConfig } from "../network/config.js";
 import { z } from "zod";
 import { collectTransfer, MAX_TRANSFER_ENTRIES, receiveTransfer, type TransferResult } from "../network/files.js";
 import { MAX_NETWORK_HOST_CHARS, MAX_PAIRING_CODE_CHARS, MAX_PORT } from "../network/constants.js";
@@ -72,6 +72,7 @@ export class Broker {
   private readonly conns = new Set<Conn>();
   private purgeTimer: NodeJS.Timeout | null = null;
   private network: NetworkService | null = null;
+  private networkChange: Promise<unknown> = Promise.resolve();
   private readonly handlers: { [O in Op]: Handler<O> };
 
   constructor(
@@ -101,11 +102,19 @@ export class Broker {
       updatePeer: (c, a) => this.onUpdatePeer(c, a),
       claimMail: (c, a) => this.onClaimMail(c, a),
       ping: () => ({ brokerPid: process.pid, protocol: PROTOCOL_VERSION }),
-      networkStatus: () => this.network?.status() ?? { enabled: false, discovered: [], paired: [] },
-      networkPair: () => ({ code: this.requireNetwork().keys.invite() }),
-      networkLink: (_, a) => {
-        const args = z.object({ code: z.string().min(1).max(MAX_PAIRING_CODE_CHARS), host: z.string().min(1).max(MAX_NETWORK_HOST_CHARS), port: z.number().int().min(1).max(MAX_PORT) }).parse(a);
-        return this.requireNetwork().link(args.code, args.host, args.port);
+      networkStatus: () => this.network?.status() ?? { enabled: false, config: this.networking?.config, discovered: [], paired: [] },
+      networkConfigure: (_, a) => {
+        const change = this.networkChange.then(() => this.configureNetwork(a));
+        this.networkChange = change.catch(() => {});
+        return change;
+      },
+      networkVerify: (_, a) => this.requireNetwork().verify(z.uuid().parse(a.id)),
+      networkPair: () => this.requireNetwork().keys.inviteWithExpiry(),
+      networkLink: async (_, a) => {
+        try {
+          const args = z.object({ code: z.string().min(1).max(MAX_PAIRING_CODE_CHARS), host: z.string().min(1).max(MAX_NETWORK_HOST_CHARS), port: z.number().int().min(1).max(MAX_PORT) }).parse(a);
+          return await this.requireNetwork().link(args.code, args.host, args.port);
+        } catch { throw new BridgeError("bad_request", "Pairing failed. Check the address, code expiry, unique names and existing pairings."); }
       },
       networkUnlink: (_, a) => {
         const id = z.uuid().parse(a.id);
@@ -156,6 +165,7 @@ export class Broker {
 
   async close(): Promise<void> {
     if (this.purgeTimer) clearInterval(this.purgeTimer);
+    await this.networkChange;
     await this.network?.close();
     this.network = null;
     for (const c of this.conns) c.socket.destroy();
@@ -165,6 +175,24 @@ export class Broker {
     if (server) await new Promise<void>((r) => server.close(() => r()));
     this.store.close();
     this.log.info("broker closed");
+  }
+
+  /** Serialize listener changes and let the elected broker remain the sole network writer. */
+  private async configureNetwork(value: NetworkConfig): Promise<NetworkStatus> {
+    if (!this.networking) throw new BridgeError("bad_request", "Restart all agent-bridge hosting sessions to load this wizard-capable broker.");
+    const config = writeNetworkConfig(this.networking.home, value);
+    await this.network?.close();
+    this.network = null;
+    this.networking.config = config;
+    if (config.enabled) {
+      const service = new NetworkService(this.networking.home, config, {
+        peers: () => [...this.conns].flatMap((c) => c.peer ? [c.peer] : []),
+        receive: (message) => this.receiveRemote(message),
+      }, this.log);
+      try { await service.start(); this.network = service; }
+      catch (err) { await service.close(); throw err; }
+    }
+    return this.network?.status() ?? { enabled: false, config, discovered: [], paired: [] };
   }
 
   private purge(): void {
