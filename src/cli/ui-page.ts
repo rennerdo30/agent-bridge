@@ -1034,11 +1034,17 @@ function renderSessionList(x, selKey) {
     ? '<a href="' + href(x.name, CHAT_KEY) + '" class="chat-row' + (selKey === CHAT_KEY ? " sel" : "") + '">' + av(p.agent || "other") +
       '<div style="min-width:0"><div class="line1"><b>Chat</b><span class="chip">' + esc(p.agent || "") + '</span></div><div class="task">The session\\'s own conversation, read-only</div></div><div class="side"></div></a>'
     : "";
+  const nativeRow = (s) =>
+    '<a href="' + href(x.name, NATIVE_PREFIX + s.id) + '" class="' + (NATIVE_PREFIX + s.id === selKey ? "sel" : "") + '">' + av(p.agent || "other") +
+    '<div style="min-width:0"><div class="line1"><b class="ell">' + esc(s.title || "subagent") + '</b><span class="chip own">own</span></div><div class="task">' + esc(p.agent + " subagent · read-only") + "</div></div>" +
+    '<div class="side"><span>' + ago(s.updatedAt) + "</span></div></a>";
+  // Like the bridge subagents: recent ones (and the open one) stay visible, older ones fold away.
+  const nativeFresh = (s) => Date.now() - s.updatedAt < ARCHIVE_AFTER_MS || NATIVE_PREFIX + s.id === selKey;
+  const nativeActive = natives.filter(nativeFresh), nativeOld = natives.filter((s) => !nativeFresh(s));
+  const nativeOpen = opened.has("native-archive:" + x.name);
   const nativeRows = natives.length
-    ? '<div class="rows-head">Its own subagents <span class="faint">' + natives.length + "</span></div>" + natives.map((s) =>
-        '<a href="' + href(x.name, NATIVE_PREFIX + s.id) + '" class="' + (NATIVE_PREFIX + s.id === selKey ? "sel" : "") + '">' + av(p.agent || "other") +
-        '<div style="min-width:0"><div class="line1"><b class="ell">' + esc(s.title || "subagent") + '</b><span class="chip own">own</span></div><div class="task">' + esc(p.agent + " subagent · read-only") + "</div></div>" +
-        '<div class="side"><span>' + ago(s.updatedAt) + "</span></div></a>").join("")
+    ? '<div class="rows-head">Its own subagents <span class="faint">' + natives.length + "</span></div>" + nativeActive.map(nativeRow).join("") +
+      (nativeOld.length ? '<details class="archive" data-open="native-archive:' + esc(x.name) + '"' + (nativeOpen ? " open" : "") + "><summary>Older · " + nativeOld.length + " own subagent" + (nativeOld.length === 1 ? "" : "s") + "</summary>" + nativeOld.map(nativeRow).join("") + "</details>" : "")
     : "";
   const bridgeRows = x.groups.length
     ? (active.length ? active.map((g) => groupRow(g, g.key === selKey, false)).join("") : '<div class="empty">Nothing running or recent.</div>') +

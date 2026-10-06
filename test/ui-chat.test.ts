@@ -23,7 +23,7 @@ function page() {
   const fetch = vi.fn(() => new Promise(() => {}));
   const document = { getElementById: element, documentElement: { dataset: {} }, addEventListener() {}, querySelectorAll: () => [] };
   const location = { hash: "" };
-  const api = new Function("document", "window", "location", "localStorage", "setInterval", "fetch", `${script}\nreturn { renderJobForm, renderSendForm, modelsCard, renderNetwork, renderSide, renderSessionList, chatHtml, renderApprovals, answerApproval, renderDecisions, setApprovals: (a) => { approvals = a; }, setDecisions: (d) => { decisions = d; decLoadedAt = Date.now(); }, setModel: (m) => { model = m; state = { peers: [] }; }, setRoute: (r) => route = r, setNet: (n, i) => { net = n; invite = i || null; } };`)(document, { addEventListener() {} }, location, { setItem() {}, removeItem() {} }, () => 0, fetch);
+  const api = new Function("document", "window", "location", "localStorage", "setInterval", "fetch", `${script}\nreturn { renderJobForm, renderSendForm, modelsCard, renderNetwork, renderSide, renderSessionList, chatHtml, setNativeList: (name, list) => nativeLists.set(name, { at: Date.now(), list }), renderApprovals, answerApproval, renderDecisions, setApprovals: (a) => { approvals = a; }, setDecisions: (d) => { decisions = d; decLoadedAt = Date.now(); }, setModel: (m) => { model = m; state = { peers: [] }; }, setRoute: (r) => route = r, setNet: (n, i) => { net = n; invite = i || null; } };`)(document, { addEventListener() {} }, location, { setItem() {}, removeItem() {} }, () => 0, fetch);
   return { ...api, element, fetch, location };
 }
 const group = (key: string) => ({ key, job: `codex-job-${key}`, owner: "claude-app", agent: "codex", status: "done", percent: null, turns: [{ name: `run-${key}`, startedAt: 0 }] });
@@ -303,5 +303,23 @@ describe("waiting for you and decisions", () => {
     expect(html).toContain("&lt;friend&gt;");
     expect(html).toContain(">game<");
     expect(html).toContain("Show earlier versions");
+  });
+});
+
+describe("own subagents list", () => {
+  it("keeps recent own subagents visible and folds older ones", () => {
+    const p = page();
+    const x = { name: "claude-app", live: true, running: 0, groups: [], children: [], peer: { agent: "claude", activity: "idle", cwd: "E:/Development/app", startedAt: Date.now(), sessionId: "s-1" } };
+    p.setModel({ sessions: [x], byName: new Map([[x.name, x]]), groups: new Map() });
+    p.setRoute({ session: x.name });
+    p.setNativeList(x.name, [
+      { id: "new", title: "Recent explore", status: "done", startedAt: Date.now(), updatedAt: Date.now() },
+      ...Array.from({ length: 30 }, (_, i) => ({ id: "old" + i, title: "Old task " + i, status: "done", startedAt: 0, updatedAt: Date.now() - 86_400_000 })),
+    ]);
+    p.renderSessionList(x, null);
+    const html = p.element("sGroups").innerHTML;
+    expect(html).toContain("Recent explore");
+    expect(html).toContain("Older · 30 own subagents");
+    expect(html.indexOf("Old task 0")).toBeGreaterThan(html.indexOf("<details"));
   });
 });
