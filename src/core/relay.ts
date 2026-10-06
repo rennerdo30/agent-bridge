@@ -1,11 +1,12 @@
 import { randomBytes, randomUUID } from "node:crypto";
-import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createServer, type IncomingMessage, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import type { Logger } from "./logger.js";
 import { tokensEqual } from "./token.js";
 import { pidAlive } from "./delegate.js";
+import { archiveFile } from "./json-store.js";
 
 /**
  * Permission relay: a delegated subagent that needs a permission asks the process that started it
@@ -198,7 +199,7 @@ export async function publishApproval(home: string, approval: PendingApproval, a
     throw err;
   }
   return () => {
-    try { rmSync(file, { force: true }); }
+    try { archiveFile(file); }
     finally { server.close(); }
   };
 }

@@ -1,12 +1,13 @@
 import { createHash } from "node:crypto";
 import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { storageLease } from "./storage-lock.js";
 
 /** Write consumption before returning context: the broker ack can be lost during a plugin reload. */
 export class ReadJournal {
   private readonly dir: string;
 
-  constructor(home: string) {
+  constructor(private readonly home: string) {
     this.dir = join(home, "read-state");
   }
 
@@ -31,7 +32,10 @@ export class ReadJournal {
   }
 
   append(identity: string, ids: string[]): void {
-    mkdirSync(this.dir, { recursive: true, mode: 0o700 });
-    appendFileSync(this.path(identity), `\n${JSON.stringify(ids)}\n`, { mode: 0o600, flush: true });
+    const release = storageLease(this.home);
+    try {
+      mkdirSync(this.dir, { recursive: true, mode: 0o700 });
+      appendFileSync(this.path(identity), `\n${JSON.stringify(ids)}\n`, { mode: 0o600, flush: true });
+    } finally { release(); }
   }
 }

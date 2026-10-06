@@ -3,11 +3,16 @@ import { dirname } from "node:path";
 import { DatabaseSync, type StatementSync } from "node:sqlite";
 import type { Logger } from "./logger.js";
 import type { AgentKind, BridgeMessage } from "./protocol.js";
-import { backupPath, retainBackups } from "./json-store.js";
+import { migrateSqlite } from "./sqlite-migrations.js";
+import { archiveDbPath, archiveMessages, openArchive } from "./sqlite-maintenance.js";
+import { storageLease } from "./storage-lock.js";
+import { backupIfDue, BACKUP_INTERVAL_ENV, DEFAULT_BACKUP_INTERVAL_MS } from "./backups.js";
+import { retentionLimit } from "./json-store.js";
 import { DECISIONS_SCHEMA, DecisionStore } from "./decisions.js";
 
+const BACKUP_CHECK_INTERVAL_MS = 60 * 60 * 1_000;
+
 export const SQLITE_STORE_VERSION = 3;
-const BUSY_TIMEOUT_MS = 3_000;
 
 /** Recipient key used while a message waits for "any peer of this agent kind". */
 export function agentQueueKey(agent: AgentKind): string {
@@ -80,6 +85,10 @@ function toMessage(r: Row): BridgeMessage {
  */
 export class MessageStore {
   private readonly db: DatabaseSync;
+  private readonly archiveDb: DatabaseSync;
+  private readonly release: () => void;
+  private readonly home: string | null;
+  private backupTimer: ReturnType<typeof setInterval> | null = null;
   readonly decisions: DecisionStore;
   private readonly stmt: {
     insert: StatementSync;
@@ -87,10 +96,6 @@ export class MessageStore {
     markRead: StatementSync;
     claim: StatementSync;
     byId: StatementSync;
-    purge: StatementSync;
-    expireQueued: StatementSync;
-    archiveOld: StatementSync;
-    archiveQueued: StatementSync;
   };
 
   constructor(
@@ -98,36 +103,23 @@ export class MessageStore {
     private readonly log: Logger,
   ) {
     const existed = file !== ":memory:" && existsSync(file);
+    this.home = file === ":memory:" ? null : dirname(file);
     if (file !== ":memory:") mkdirSync(dirname(file), { recursive: true, mode: 0o700 }); // owner-only on Unix
-    this.db = new DatabaseSync(file);
+    this.release = file === ":memory:" ? () => {} : storageLease(dirname(file));
+    try { this.db = new DatabaseSync(file); }
+    catch (err) { this.release(); throw err; }
     try {
-      const version = Number(this.db.prepare("PRAGMA user_version").get()!.user_version);
-      if (version > SQLITE_STORE_VERSION) throw new Error(`unsupported SQLite store version: ${version}`);
-      this.db.exec(`PRAGMA busy_timeout = ${BUSY_TIMEOUT_MS};`);
-      if (version < SQLITE_STORE_VERSION) {
-        if (existed) {
-          const backup = backupPath(file);
-          this.db.prepare("VACUUM INTO ?").run(backup);
-          retainBackups(file);
-          log.info("backed up message store before migration", { file, backup, version });
-        }
-        this.db.exec("BEGIN IMMEDIATE");
-        try {
-          // Re-read under the writer lock: another process may have migrated while we backed up.
-          const current = Number(this.db.prepare("PRAGMA user_version").get()!.user_version);
-          if (current > SQLITE_STORE_VERSION) throw new Error(`unsupported SQLite store version: ${current}`);
-          for (const migration of MIGRATIONS) if (migration.version > current) this.db.exec(migration.sql);
-          this.db.exec("COMMIT");
-        } catch (err) {
-          this.db.exec("ROLLBACK");
-          throw err;
-        }
-      }
+      migrateSqlite(this.db, file, existed, SQLITE_STORE_VERSION, MIGRATIONS, log);
       this.db.exec("PRAGMA journal_mode = WAL;");
     } catch (err) {
       this.db.close();
+      this.release();
       throw err;
     }
+    try { this.archiveDb = openArchive(archiveDbPath(file)); }
+    catch (err) { this.db.close(); this.release(); throw err; }
+    try { archiveMessages(this.db, this.archiveDb, "1", [], "legacy", "archived_messages"); }
+    catch (err) { this.archiveDb.close(); this.db.close(); this.release(); throw err; }
     this.decisions = new DecisionStore(this.db);
     this.stmt = {
       insert: this.db.prepare(
@@ -140,12 +132,20 @@ export class MessageStore {
       markRead: this.db.prepare(`UPDATE messages SET read_at = ? WHERE id = ? AND recipient = ? AND read_at IS NULL`),
       claim: this.db.prepare(`UPDATE OR IGNORE messages SET recipient = ? WHERE recipient = ? AND read_at IS NULL`),
       byId: this.db.prepare(`SELECT * FROM messages WHERE id = ? ORDER BY created_at ASC LIMIT 1`),
-      purge: this.db.prepare(`DELETE FROM messages WHERE created_at < ?`),
-      expireQueued: this.db.prepare(`DELETE FROM messages WHERE recipient = ? AND read_at IS NULL AND created_at < ?`),
-      archiveOld: this.db.prepare(`INSERT INTO archived_messages SELECT *, 'expired', ? FROM messages WHERE created_at < ?`),
-      archiveQueued: this.db.prepare(`INSERT INTO archived_messages SELECT *, 'stale queue', ? FROM messages WHERE recipient = ? AND read_at IS NULL AND created_at < ?`),
     };
     log.debug("message store opened", { file });
+    if (file !== ":memory:") {
+      try { backupIfDue(dirname(file)); }
+      catch (err) { log.warn("automatic backup failed", { err: String(err) }); }
+      const interval = retentionLimit(BACKUP_INTERVAL_ENV, DEFAULT_BACKUP_INTERVAL_MS);
+      if (interval) {
+        this.backupTimer = setInterval(() => {
+          try { backupIfDue(dirname(file)); }
+          catch (err) { log.warn("automatic backup failed", { err: String(err) }); }
+        }, Math.min(interval, BACKUP_CHECK_INTERVAL_MS));
+        this.backupTimer.unref();
+      }
+    }
   }
 
   insert(m: BridgeMessage): void {
@@ -195,44 +195,45 @@ export class MessageStore {
 
   /** Archive unread mail waiting for a queue key or name that is older than the cutoff. */
   expireQueued(recipient: string, cutoff: number): number {
-    const n = this.archive(this.stmt.archiveQueued, this.stmt.expireQueued, [recipient, cutoff]);
+    const n = archiveMessages(this.db, this.archiveDb, "recipient = ? AND read_at IS NULL AND created_at < ?", [recipient, cutoff], "stale queue");
     if (n > 0) this.log.info("archived stale queued messages", { recipient, count: n });
     return n;
   }
 
   receipts(id: string): { recipient: string; readAt: number | null }[] {
-    return (this.db.prepare("SELECT recipient, read_at AS readAt FROM messages WHERE id = ?").all(id) as unknown as { recipient: string; readAt: number | null }[]);
+    const merged = new Map<string, { recipient: string; readAt: number | null }>();
+    for (const [db, table] of [[this.archiveDb, "messages"], [this.db, "archived_messages"], [this.db, "messages"]] as const) {
+      const rows = db.prepare(`SELECT recipient, read_at AS readAt FROM ${table} WHERE id = ?`).all(id) as unknown as { recipient: string; readAt: number | null }[];
+      for (const row of rows) merged.set(row.recipient, row);
+    }
+    return [...merged.values()];
   }
 
   byId(id: string): BridgeMessage | null {
-    const row = this.stmt.byId.get(id) as unknown as Row | undefined;
+    const row = (this.stmt.byId.get(id) ?? this.archiveDb.prepare("SELECT * FROM messages WHERE id = ? LIMIT 1").get(id) ??
+      this.db.prepare("SELECT * FROM archived_messages WHERE id = ? LIMIT 1").get(id)) as unknown as Row | undefined;
     return row ? toMessage(row) : null;
   }
 
   purgeOlderThan(cutoff: number): number {
-    const n = this.archive(this.stmt.archiveOld, this.stmt.purge, [cutoff]);
+    const n = archiveMessages(this.db, this.archiveDb, "created_at < ?", [cutoff], "expired");
     if (n > 0) this.log.info("archived expired messages", { count: n });
+    if (this.home) {
+      try { backupIfDue(this.home); }
+      catch (err) { this.log.warn("automatic backup failed", { err: String(err) }); }
+    }
     return n;
   }
 
-  private archive(copy: StatementSync, remove: StatementSync, args: (string | number)[]): number {
-    this.db.exec("BEGIN IMMEDIATE");
-    try {
-      copy.run(Date.now(), ...args);
-      const count = Number(remove.run(...args).changes);
-      this.db.exec("COMMIT");
-      return count;
-    } catch (err) {
-      this.db.exec("ROLLBACK");
-      throw err;
-    }
-  }
-
   close(): void {
+    if (this.backupTimer) clearInterval(this.backupTimer);
     try {
       this.db.close();
+      this.archiveDb.close();
     } catch (err) {
       this.log.warn("error closing message store", { err });
+    } finally {
+      this.release();
     }
   }
 }
