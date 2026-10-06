@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, toNamespacedPath } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -14,8 +14,9 @@ let home: string;
 const git = (...args: string[]) => execFileSync("git", args, { cwd: repo, encoding: "utf8" }).trim();
 
 beforeEach(() => {
-  repo = mkdtempSync(join(tmpdir(), "ab-repo-"));
-  home = mkdtempSync(join(tmpdir(), "ab-home-"));
+  // Real paths: macOS /var is /private/var and Windows runners use short names, while link targets resolve fully.
+  repo = realpathSync.native(mkdtempSync(join(tmpdir(), "ab-repo-")));
+  home = realpathSync.native(mkdtempSync(join(tmpdir(), "ab-home-")));
   vi.stubEnv("GIT_CONFIG_GLOBAL", join(home, "global.gitconfig"));
   vi.stubEnv("GIT_CONFIG_NOSYSTEM", "1");
   git("init", "-q");
