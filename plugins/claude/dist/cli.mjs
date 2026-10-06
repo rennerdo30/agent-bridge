@@ -39812,6 +39812,13 @@ button.ghost { min-height: 32px; }
     <div class="block stats" id="ovStats"></div>
     <div class="block"><h3>Usage left <span class="n" id="usageAt"></span><button class="linkbtn" id="usageRefresh" title="Read the limits again">refresh</button></h3><div id="ovUsage" class="cards usage"><div class="panel empty small muted">Reading the agents' limits\u2026</div></div></div>
     <div class="block"><details><summary class="small muted">Available models</summary><div id="ovModels" class="cards usage"><div class="panel empty small muted">Open to read the available models.</div></div></details></div>
+    <div class="block"><details id="defaultsBox"><summary class="small muted">Defaults for new subagents</summary>
+      <form id="defaultsForm" class="settings panel" aria-label="Defaults for new subagents">
+        <label class="wide" title="Codex jobs started by agent-bridge may run this many of Codex's own subagents at once; 0 turns them off">Codex: own subagents per job<input id="defCodexSubs" type="number" min="0" max="32" step="1" inputmode="numeric"></label>
+        <button type="submit" id="defSave">Save</button>
+        <div class="note" id="defInfo" role="status" aria-live="polite"></div>
+      </form>
+    </details></div>
     <div class="block"><h3>Sessions <span class="n" id="ovCount"></span></h3><div id="ovSessions" class="cards"></div></div>
     <div class="block"><h3>Subagents <span class="n">working first, then newest finished</span></h3><div class="panel rows" id="ovRuns"></div></div>
     <div class="block" id="ovMsgBox"><h3>Messages</h3><div class="panel"><div id="ovMsgs" class="msgs"></div></div></div>
@@ -39915,6 +39922,7 @@ button.ghost { min-height: 32px; }
         <label class="wide">Model<input id="setModel" list="setModels" autocomplete="off" spellcheck="false"><datalist id="setModels"></datalist></label>
         <label>Effort<select id="setEffort"></select></label>
         <label class="wide">Permission<select id="setPerm"></select></label>
+        <label id="setNativeBox" class="hidden" title="How many of Codex's own subagents this job may run at once; 0 turns them off">Own subagents<input id="setNative" type="number" min="0" max="32" step="1" inputmode="numeric"></label>
         <button type="submit" id="setApply">Apply</button>
         <div class="note" id="setInfo" role="status" aria-live="polite"></div>
       </form>
@@ -40592,6 +40600,11 @@ function renderSettings(g) {
   $("setEffort").innerHTML = '<option value="">keep: ' + esc(g.effort || "default") + "</option>" + EFFORTS.map((e) => "<option>" + e + "</option>").join("");
   $("setPerm").innerHTML = perm ? '<option value="">keep: ' + esc(g.permission || "default") + "</option>" + perm.options.map((o) => '<option value="' + o[0] + '">' + esc(o[1]) + "</option>").join("") : "";
   $("setPerm").disabled = !perm;
+  // Codex jobs may run Codex's own subagents (native_subagents, 0 = off); other agents have no such limit here.
+  const codex = g.agent === "codex", next = ((state && state.jobs && state.jobs[g.job]) || {}).next || {};
+  $("setNativeBox").classList.toggle("hidden", !codex);
+  $("setNative").value = "";
+  $("setNative").placeholder = "keep: " + (typeof next.native_subagents === "number" ? next.native_subagents : "default");
   $("setInfo").textContent = "";
   $("setInfo").classList.remove("err");
   fillModels(g.agent);
@@ -40924,12 +40937,48 @@ $("setToggle").addEventListener("click", () => {
   }
 });
 
+/* ---- Defaults for new subagents (GET/POST /api/config/codex-subagents) ---- */
+async function loadDefaults() {
+  const info = $("defInfo"), input = $("defCodexSubs");
+  info.classList.remove("err");
+  try {
+    const r = await fetch("/api/config/codex-subagents");
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || "HTTP " + r.status);
+    input.max = String(d.maxCodexSubagents);
+    input.value = String(d.codexSubagents);
+    info.textContent = "0 turns them off \xB7 built-in default " + d.defaultCodexSubagents + ", at most " + d.maxCodexSubagents + ". Applies to new Codex jobs; a running job keeps its own.";
+  } catch (err) {
+    info.classList.add("err");
+    info.textContent = "Could not read the defaults: " + err.message;
+  }
+}
+$("defaultsBox").addEventListener("toggle", () => { if ($("defaultsBox").open) void loadDefaults(); });
+$("defaultsForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const info = $("defInfo"), value = Number($("defCodexSubs").value);
+  info.classList.remove("err");
+  $("defSave").disabled = true;
+  try {
+    const r = await fetch("/api/config/codex-subagents", { method: "POST", headers: { "content-type": "application/json", "x-agent-bridge": "1" }, body: JSON.stringify({ codexSubagents: value }) });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || "HTTP " + r.status);
+    info.textContent = d.codexSubagents === 0 ? "Saved: new Codex jobs run without their own subagents." : "Saved: new Codex jobs may run up to " + d.codexSubagents + " of their own subagents at once.";
+  } catch (err) {
+    info.classList.add("err");
+    info.textContent = "Not saved: " + err.message;
+  }
+  $("defSave").disabled = false;
+});
+
 /** Only the fields the user set; a turn already running keeps its own settings. */
 function chosenSettings(agent) {
   const out = {}, modelName = $("setModel").value.trim(), effort = $("setEffort").value, perm = $("setPerm").value, spec = PERMISSIONS[agent];
   if (modelName) out.model = modelName;
   if (effort) out.effort = effort;
   if (perm && spec) out[spec.key] = spec.key === "auto_approve" ? perm === "true" : perm;
+  const native = $("setNative").value.trim();
+  if (agent === "codex" && native !== "") out.native_subagents = Number(native);
   return out;
 }
 
@@ -40939,7 +40988,7 @@ $("jobSettings").addEventListener("submit", async (e) => {
   if (!g || !g.job) return;
   const settings = chosenSettings(g.agent), info = $("setInfo");
   info.classList.remove("err");
-  if (!Object.keys(settings).length) { info.textContent = "Nothing to change: pick a model, effort or permission."; return; }
+  if (!Object.keys(settings).length) { info.textContent = "Nothing to change: pick a model, effort or permission" + (g.agent === "codex" ? ", or set its own subagents." : "."); return; }
   $("setApply").disabled = true;
   let result;
   try {
