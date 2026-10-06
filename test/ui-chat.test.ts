@@ -323,3 +323,22 @@ describe("own subagents list", () => {
     expect(html.indexOf("Old task 0")).toBeGreaterThan(html.indexOf("<details"));
   });
 });
+
+describe("system turns in native chats", () => {
+  it("shows CLI-inserted turns as system lines, not as the owner's words", () => {
+    const p = page();
+    const html = p.chatHtml([
+      { kind: "user", at: 0, text: "<task-notification>\n<task-id>bi0</task-id>\n<status>completed</status>\n<summary>Background command \"Run <capture>\" completed (exit code 0)</summary>\n</task-notification>" },
+      { kind: "user", at: 0, text: '<agent-bridge-message id="1" from="claude-Development" agent="claude">Please review</agent-bridge-message>' },
+      { kind: "user", at: 0, text: "<command-name>/reload-plugins</command-name>\n<command-message>reload-plugins</command-message>" },
+      { kind: "user", at: 0, text: "<system-reminder>Background context</system-reminder>" },
+      { kind: "user", at: 0, text: "Plain request" },
+    ], "claude", "claude-app");
+    expect(html).toContain("Background task completed");
+    expect(html).toContain("Run &lt;capture&gt;");
+    expect(html).toContain("Message from claude-Development");
+    expect(html).toContain("/reload-plugins");
+    expect(html).toContain("Context added by the CLI");
+    expect(html.match(/You · /g)?.length).toBe(1);
+  });
+});

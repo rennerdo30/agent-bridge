@@ -405,6 +405,18 @@ form#jobSend textarea { background: var(--panel-2); border-color: transparent; b
 .msg { border-bottom-color: var(--panel-2); }
 form#send { background: transparent; border-top: 0; padding: 12px 0 0; }
 
+/* System turns in a CLI transcript: not the owner's words */
+.sysrow { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-left: 36px; padding: 6px 12px; border-radius: 8px; background: var(--panel-2); color: var(--muted); font-size: 12.5px; max-width: min(780px, calc(100% - 36px)); }
+.sysrow b { color: var(--text); font-weight: 600; }
+.sysrow code { font-family: var(--mono); font-size: 12px; color: var(--accent); }
+.sysrow.fold { display: block; }
+.sysrow.fold summary { cursor: pointer; list-style: none; }
+.sysrow.fold summary::-webkit-details-marker { display: none; }
+.sysrow.fold summary::before { content: "▸ "; }
+.sysrow.fold[open] summary::before { content: "▾ "; }
+.sysrow.fold[open] { color: var(--text); white-space: normal; overflow-wrap: anywhere; }
+.msgrow.peer .bubble { background: var(--panel-2); border: 1px solid var(--line); border-radius: 14px 14px 14px 4px; padding: 10px 14px; }
+
 /* Pages: approvals and decisions */
 .page-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 12px 24px; flex-wrap: wrap; margin-bottom: 20px; }
 .page-head h2 { margin: 0 0 4px; font-size: 22px; font-weight: 650; letter-spacing: -.015em; }
@@ -841,6 +853,58 @@ async function pullChat(x, key) {
   return c;
 }
 
+/** The text inside the first <tag ...>…</tag> of s, or null. */
+function tagText(s, tag) {
+  const open = s.indexOf("<" + tag), start = open < 0 ? -1 : s.indexOf(">", open);
+  const end = start < 0 ? -1 : s.indexOf("</" + tag + ">", start);
+  return end < 0 ? null : s.slice(start + 1, end).trim();
+}
+/** An attribute of the first <tag ...> in s, or "". */
+function tagAttr(s, tag, attr) {
+  const open = s.indexOf("<" + tag), close = open < 0 ? -1 : s.indexOf(">", open);
+  if (close < 0) return "";
+  const head = s.slice(open, close), at = head.indexOf(attr + '="');
+  return at < 0 ? "" : head.slice(at + attr.length + 2, head.indexOf('"', at + attr.length + 2));
+}
+const SYSTEM_TAGS = ["system-reminder", "local-command-caveat", "command-message", "command-args", "user-prompt-submit-hook"];
+
+/**
+ * Turns the CLI wraps in tags (background task results, peer messages, slash commands, hook context) are not the
+ * owner's words: show them as compact system lines instead of "You" bubbles.
+ */
+function systemTurn(text, session) {
+  const s = String(text || "").trim();
+  if (!s.startsWith("<")) return null;
+  const task = tagText(s, "task-notification");
+  if (task !== null) {
+    const status = tagText(task, "status") || "done";
+    const pillStatus = status === "completed" ? "done" : status === "failed" || status === "killed" ? "failed" : "running";
+    return '<div class="sysrow">' + pill(pillStatus) + '<span><b>Background task ' + esc(status) + "</b> · " + esc(tagText(task, "summary") || tagText(task, "task-id") || "") + "</span></div>";
+  }
+  const peer = tagText(s, "agent-bridge-message");
+  if (peer !== null) {
+    const from = tagAttr(s, "agent-bridge-message", "from") || "a peer";
+    return '<div class="msgrow peer">' + av(tagAttr(s, "agent-bridge-message", "agent") || "other", true) + '<div class="bubble"><span class="who">Message from ' + esc(from) + "</span>" + md(peer) + "</div></div>";
+  }
+  const channel = tagText(s, "channel");
+  if (channel !== null) {
+    return '<div class="msgrow peer">' + av("other", true) + '<div class="bubble"><span class="who">' + esc(tagAttr(s, "channel", "source") || "channel") + "</span>" + md(channel) + "</div></div>";
+  }
+  const command = tagText(s, "command-name");
+  if (command !== null) {
+    const args = tagText(s, "command-args");
+    return '<div class="sysrow"><code>' + esc(command + (args ? " " + args : "")) + "</code><span>slash command</span></div>";
+  }
+  const output = tagText(s, "local-command-stdout");
+  if (output !== null) return '<div class="sysrow"><span class="faint">' + esc(output.slice(0, 300)) + "</span></div>";
+  const tag = SYSTEM_TAGS.find((t) => tagText(s, t) !== null);
+  if (tag) {
+    const id = session + ":sys:" + s.length + ":" + s.slice(0, 40);
+    return '<details class="sysrow fold" data-open="' + esc(id) + '"' + (opened.has(id) ? " open" : "") + "><summary>Context added by the CLI</summary>" + md(s) + "</details>";
+  }
+  return null;
+}
+
 /** A transcript as chat: your prompts, the agent's answers, tool steps folded like a run log. */
 function chatHtml(items, agent, session) {
   let html = "", buf = [], block = 0;
@@ -856,7 +920,7 @@ function chatHtml(items, agent, session) {
   for (const it of items) {
     if (it.kind === "tool") { buf.push(it); continue; }
     flush();
-    if (it.kind === "user") html += '<div class="msgrow me">' + av("other", true) + '<div class="bubble"><span class="who">You · ' + esc(time(it.at)) + "</span>" + md(it.text || "") + "</div></div>";
+    if (it.kind === "user") html += systemTurn(it.text, session) || '<div class="msgrow me">' + av("other", true) + '<div class="bubble"><span class="who">You · ' + esc(time(it.at)) + "</span>" + md(it.text || "") + "</div></div>";
     else if (it.kind === "assistant") html += '<div class="msgrow">' + av(agent, true) + '<div class="bubble">' + md(it.text || "") + "</div></div>";
     else if (it.kind === "subagent" && it.subagent) html += '<div class="sys">↳ started its own subagent <a href="' + href(session, NATIVE_PREFIX + it.subagent.id) + '">' + esc(it.subagent.title || it.subagent.id) + "</a></div>";
   }
