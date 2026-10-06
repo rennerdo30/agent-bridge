@@ -7,6 +7,20 @@ import { nullLogger } from "../src/core/logger.js";
 import { until } from "./helpers.js";
 
 describe("config file", () => {
+  it("loads worktree sandbox and workspace network options with safe defaults", () => {
+    const home = mkdtempSync(join(tmpdir(), "ab-cfg-"));
+    try {
+      expect(loadConfig(home, "claude", nullLogger, {})).toMatchObject({ codexSandbox: "read-only", codexWorktreeSandbox: null, codexWorkspaceWriteNetworkAccess: null });
+      writeFileSync(join(home, "config.json"), JSON.stringify({ codexWorktreeSandbox: "danger-full-access", codexWorkspaceWriteNetworkAccess: true, claude: { codexWorktreeSandbox: "workspace-write", codexWorkspaceWriteNetworkAccess: false } }));
+      expect(loadConfig(home, "codex", nullLogger, {})).toMatchObject({ codexWorktreeSandbox: "danger-full-access", codexWorkspaceWriteNetworkAccess: true });
+      expect(loadConfig(home, "claude", nullLogger, {})).toMatchObject({ codexWorktreeSandbox: "workspace-write", codexWorkspaceWriteNetworkAccess: false });
+      saveConfigValue(home, "codexWorktreeSandbox", "invalid");
+      expect(loadConfig(home, "codex", nullLogger, {}).codexWorktreeSandbox).toBeNull();
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   it("is applied again when it changes", async () => {
     const home = mkdtempSync(join(tmpdir(), "ab-cfg-"));
     try {

@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { nullLogger } from "../src/core/logger.js";
 import { createWorktree, finishWorktree, gitDirsOutside, gitStatusSnapshot, handoffWarning, subagentCommitMessage, worktreeReport } from "../src/core/worktree.js";
 import { cleanupWorktrees, type CleanupEntry } from "../src/core/worktree-cleanup.js";
@@ -15,6 +15,8 @@ const git = (...args: string[]) => execFileSync("git", args, { cwd: repo, encodi
 beforeEach(() => {
   repo = mkdtempSync(join(tmpdir(), "ab-repo-"));
   home = mkdtempSync(join(tmpdir(), "ab-home-"));
+  vi.stubEnv("GIT_CONFIG_GLOBAL", join(home, "global.gitconfig"));
+  vi.stubEnv("GIT_CONFIG_NOSYSTEM", "1");
   git("init", "-q");
   // Like the real repo, pin line endings with .gitattributes so a global core.autocrlf=true
   // (set on the CI Windows runners) cannot rewrite them on merge.
@@ -34,9 +36,35 @@ afterEach(() => {
   }
   rmSync(repo, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  vi.unstubAllEnvs();
 });
 
 describe("worktree isolation", () => {
+  it("commits with the repository identity instead of the neutral fallback", async () => {
+    git("config", "user.name", "Repository Owner");
+    git("config", "user.email", "owner@example.test");
+    const wt = await createWorktree({ cwd: repo, home, jobId: "identity", log: nullLogger });
+    writeFileSync(join(wt.path, "a.txt"), "changed\n");
+    await finishWorktree(wt, "use repository identity", nullLogger);
+    expect(git("log", "-1", "--format=%an <%ae>|%cn <%ce>", wt.branch)).toBe("Repository Owner <owner@example.test>|Repository Owner <owner@example.test>");
+  });
+
+  it("inherits global identity when the repository has no local identity", async () => {
+    writeFileSync(join(home, "global.gitconfig"), "[user]\nname = Global Owner\nemail = global@example.test\n");
+    const wt = await createWorktree({ cwd: repo, home, jobId: "global-identity", log: nullLogger });
+    writeFileSync(join(wt.path, "a.txt"), "changed\n");
+    await finishWorktree(wt, "inherit global identity", nullLogger);
+    expect(git("log", "-1", "--format=%an <%ae>", wt.branch)).toBe("Global Owner <global@example.test>");
+  });
+
+  it.each([false, true])("falls back only for missing identity fields (configured name: %s)", async (nameSet) => {
+    if (nameSet) git("config", "user.name", "Repository Owner");
+    const wt = await createWorktree({ cwd: repo, home, jobId: "fallback", log: nullLogger });
+    writeFileSync(join(wt.path, "a.txt"), "changed\n");
+    await finishWorktree(wt, "fallback identity", nullLogger);
+    expect(git("log", "-1", "--format=%an <%ae>", wt.branch)).toBe(`${nameSet ? "Repository Owner" : "agent-bridge"} <agent-bridge@localhost>`);
+  });
+
   it("keeps the working copy untouched and commits the subagent's changes on a branch", async () => {
     const wt = await createWorktree({ cwd: repo, home, jobId: "job1", log: nullLogger });
     expect(wt.branch).toBe("agent-bridge/job1");

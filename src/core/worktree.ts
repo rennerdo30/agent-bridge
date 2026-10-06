@@ -14,8 +14,8 @@ const GIT_TIMEOUT_MS = 180_000;
 /** `git worktree add` checks out the whole tree: on a large repository under load that takes minutes. */
 const WORKTREE_ADD_TIMEOUT_MS = 600_000;
 export const BRANCH_PREFIX = "agent-bridge/";
-/** Commit identity for subagent work; local branches only, so a neutral identity is fine. */
-const COMMIT_IDENTITY = ["-c", "user.name=agent-bridge", "-c", "user.email=agent-bridge@localhost"];
+/** Used only for identity fields missing from the repository's effective config. */
+const FALLBACK_COMMIT_IDENTITY = { "user.name": "agent-bridge", "user.email": "agent-bridge@localhost" };
 const MAX_DIFFSTAT_CHARS = 4_000;
 
 export interface Worktree {
@@ -201,7 +201,14 @@ export async function finishWorktree(wt: Worktree, message: string, log: Logger)
   const trust = trustArgs(wt.path);
   await git([...trust, "add", "-A"], wt.path, log);
   const status = await git([...trust, "status", "--porcelain"], wt.path, log);
-  if (status) await git([...trust, ...COMMIT_IDENTITY, "commit", "-q", "--no-verify", "-m", message], wt.path, log);
+  if (status) {
+    const identity: string[] = [];
+    for (const [key, fallback] of Object.entries(FALLBACK_COMMIT_IDENTITY)) {
+      const configured = (await git([...trustArgs(wt.repoRoot), "config", "--get", key], wt.repoRoot, log).catch(() => "")).trim();
+      identity.push("-c", `${key}=${configured || fallback}`);
+    }
+    await git([...trust, ...identity, "commit", "-q", "--no-verify", "-m", message], wt.path, log);
+  }
   await unlockWorktree(wt.repoRoot, wt.path, log);
   // The job may have switched to (or created) a branch of its own: its work is wherever it committed.
   const current = (await git([...trust, "branch", "--show-current"], wt.path, log).catch(() => "")) || wt.branch;

@@ -1,6 +1,6 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -20,13 +20,16 @@ const SESSION = "codex-host";
 const TEST_TIMEOUT_MS = 90_000;
 
 const FAKE_CLAUDE = `
-import { existsSync } from "node:fs";
+import { appendFileSync, existsSync } from "node:fs";
 let prompt = "";
 process.stdin.setEncoding("utf8");
 process.stdin.on("data", (d) => (prompt += d));
 process.stdin.on("end", async () => {
-  const session = "fake-" + process.pid;
-  console.log(JSON.stringify({ type: "system", subtype: "init", session_id: session, model: "fake" }));
+  const args = process.argv.slice(2);
+  const value = (flag) => args.includes(flag) ? args[args.indexOf(flag) + 1] : undefined;
+  const session = value("--resume") || "fake-" + process.pid;
+  appendFileSync(new URL("calls.jsonl", import.meta.url), JSON.stringify({ args, session }) + "\\n");
+  console.log(JSON.stringify({ type: "system", subtype: "init", session_id: session, model: value("--model") || "fake" }));
   const release = /release=(\\S+)/.exec(prompt)?.[1];
   while (release && !existsSync(release)) await new Promise((r) => setTimeout(r, 100));
   console.log(JSON.stringify({ type: "result", subtype: "success", is_error: false, result: "fake answer: finished", session_id: session }));
@@ -111,6 +114,35 @@ afterEach(async () => {
 });
 
 describe.skipIf(!existsSync(SERVER))("background subagents in job runners", () => {
+  it("applies model and permission changes on the next turn after a takeover, with matching metadata", async () => {
+    const a = await startSession();
+    const { job, id, release, pid } = await spawnHeld(a);
+    await stopSession(a);
+    const b = await startSession();
+    const reply = await call(b, "message_subagent", { job, model: "new-model", permission_mode: "bypassPermissions", message: "finish with the new settings" });
+    expect(reply).toContain("the turn running now keeps its settings");
+    await waitFor(() => (readRunnerState(home, id)?.seen?.length ?? 0) === 1);
+    const metadata = () => readdirSync(join(home, "runs")).filter((file) => file.endsWith(".json")).map((file) => JSON.parse(readFileSync(join(home, "runs", file), "utf8"))).filter((meta) => meta.job === job);
+    expect(metadata()).toContainEqual(expect.objectContaining({ model: "fake", permission: "default" }));
+    expect(metadata().some((meta) => meta.model === "new-model")).toBe(false);
+    writeFileSync(release, "");
+    expect(await call(b, "wait_for_message", { from: job, timeout_sec: 60 })).toContain("Your queued follow-up was sent to it");
+    expect(await call(b, "wait_for_message", { from: job, timeout_sec: 60 })).toContain("fake answer: finished");
+    await waitFor(() => !pidAlive(pid));
+    const calls = readFileSync(join(home, "bin", "calls.jsonl"), "utf8").trim().split("\n").map((line) => JSON.parse(line));
+    expect(calls).toHaveLength(2);
+    expect(calls[1].args).toEqual(expect.arrayContaining(["--model", "new-model", "--permission-mode", "bypassPermissions", "--resume", calls[0].session]));
+    expect(calls[1].session).toBe(calls[0].session);
+    expect(metadata()).toContainEqual(expect.objectContaining({ model: "new-model", permission: "bypassPermissions", continues: calls[0].session }));
+    await waitFor(async () => (await call(b, "peers")).includes(`${job} "Runner test": done`));
+    const saved = JSON.parse(readFileSync(join(home, "jobs.json"), "utf8"));
+    expect(saved.find((entry: { id: string }) => entry.id === id).args).toMatchObject({ model: "new-model", permission_mode: "bypassPermissions" });
+    expect(saved.find((entry: { id: string }) => entry.id === id).model).toBe("new-model");
+    const invalid = await b.client.callTool({ name: "message_subagent", arguments: { job, sandbox: "read-only" } });
+    expect(invalid.isError).toBe(true);
+    expect(textOf(invalid)).toContain("sandbox applies only to codex jobs");
+  }, TEST_TIMEOUT_MS);
+
   it("keep running across a restart of the session's server, which takes them over and gets the result", async () => {
     const a = await startSession();
     const { job, id, release, pid } = await spawnHeld(a);

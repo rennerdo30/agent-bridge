@@ -8,6 +8,7 @@ import { loadOrCreateToken } from "../core/token.js";
 import { resumeArgs, runDelegate, type JobSink, type RunContext } from "./delegate-run.js";
 import { CONTROL_CONVERSATION_PREFIX, JOB_PEER_PREFIX, RUNNER_HEARTBEAT_MS, writeRunnerState, type RunnerSpec } from "./job-host.js";
 import { jobReport, NOTE_CONVERSATION_SUFFIX, QUEUED_FOLLOW_UP_NOTE, sessionOfError, waitForApproval, type Job, type RunnerControl, type RunnerState } from "./jobs.js";
+import { changedJobArgs } from "./job-settings.js";
 
 /** Delivering a message to the session: tries for several minutes (the bridge may be changing hands, or no session hosts it). */
 const SEND_ATTEMPTS = 30;
@@ -53,6 +54,7 @@ export async function runJobRunner(specFile: string | undefined): Promise<number
         status: "running",
         ...extra,
         updatedAt: Date.now(),
+        model: job.model,
         sessionId: job.sessionId,
         workdir: job.workdir,
         worktree: job.worktree,
@@ -161,6 +163,9 @@ export async function runJobRunner(specFile: string | undefined): Promise<number
       // From the next turn on (a running turn keeps its level).
       job.args = { ...job.args, effort: c.effort };
       save();
+    } else if (c.type === "settings") {
+      job.args = changedJobArgs(job.args, c.settings);
+      save();
     } else if (c.type === "cancel") {
       log.info("cancelled by the session");
       job.queue = [];
@@ -210,8 +215,8 @@ export async function runJobRunner(specFile: string | undefined): Promise<number
     if (job.queue.length && job.sessionId && !job.controller.signal.aborted) {
       const queued = job.queue.splice(0).join("\n\n");
       void post(`${report}\n\n${QUEUED_FOLLOW_UP_NOTE}`);
-      const effort = typeof job.args?.effort === "string" ? { effort: job.args.effort } : {};
-      args = resumeArgs({ ...spec.base, ...effort }, job.name, queued, job.sessionId, job.workdir, job.worktree);
+      args = resumeArgs(spec.base, job.name, queued, job.sessionId, job.workdir, job.worktree, job.args);
+      if (args.model !== undefined) job.model = args.model;
       job.startedAt = Date.now();
       job.progress = null;
       save();

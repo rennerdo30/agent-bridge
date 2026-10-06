@@ -4,7 +4,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import type { CallToolResult, ServerNotification } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
-import { defaultPeerName, loadConfig, parseAgentKind, saveConfigValue, watchConfig, type BridgeConfig, MODEL_NAME_PATTERN } from "../core/config.js";
+import { CLAUDE_PERMISSION_MODES, CODEX_SANDBOXES, defaultPeerName, loadConfig, parseAgentKind, saveConfigValue, watchConfig, type BridgeConfig, MODEL_NAME_PATTERN } from "../core/config.js";
 import {
   APP_NAME,
   APP_VERSION,
@@ -43,6 +43,7 @@ import { RewakeEndpoint } from "./rewake.js";
 import { DEFAULT_FOLLOW_UP, JobManager, type Job, type Resume, type Run, type RunResult } from "./jobs.js";
 import { isBridgeWorktree, isInside, resumeArgs, runDelegate, type DelegateArgs, type RunContext } from "./delegate-run.js";
 import { JobRunners } from "./job-host.js";
+import { JOB_SETTING_KEYS, type JobSettings } from "./job-settings.js";
 
 export { DELEGATED_JOB_NOTE } from "./delegate-run.js";
 
@@ -732,12 +733,12 @@ function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[
         },
       });
 
-    /** Continue a subagent's session: same agent, model and access, in the folder (or worktree) it used. */
+    /** Continue a subagent's session with its saved settings, in the folder (or worktree) it used. */
     const resumeFor =
       (a: DelegateArgs): Resume =>
       (message, sessionId, workdir, worktree) =>
-        // The job's saved effort wins: message_subagent(effort=...) changes it for the following turns.
-        background((job) => resumeArgs({ ...a, ...(typeof job.args?.effort === "string" ? { effort: job.args.effort } : {}) }, job.name, message, sessionId, workdir, worktree), a);
+        // Saved settings win, including removal of an earlier exact permission override.
+        background((job) => resumeArgs(a, job.name, message, sessionId, workdir, worktree, job.args), a);
     resumers[target] = resumeFor;
 
     const askName = `ask_${target}`;
@@ -883,19 +884,33 @@ ${res.text || t("delegate.empty")}`, res.isError);
           .regex(/^[A-Za-z0-9_-]{1,20}$/)
           .optional()
           .describe("Thinking level for this continuation and the job's later turns (e.g. low, medium, high, xhigh). A turn already running keeps its level: to apply it now, cancel_subagent and continue it with message_subagent."),
+        model: z.string().regex(MODEL_NAME_PATTERN).optional().describe("Model for this continuation and later turns. A running turn keeps its model."),
+        access: z.enum(ACCESS_LEVELS as [Access, ...Access[]]).optional().describe("Access for the next turn: read, ask or edit. Replaces earlier exact permission overrides."),
+        sandbox: z.enum(CODEX_SANDBOXES as [string, ...string[]]).optional().describe("Codex sandbox for the next turn. A running turn keeps its sandbox."),
+        permission_mode: z.enum(CLAUDE_PERMISSION_MODES as [string, ...string[]]).optional().describe("Claude permission mode for the next turn."),
+        auto_approve: z.boolean().optional().describe("opencode auto-approval for the next turn."),
       },
     },
-    guarded("message_subagent", async (a: { job: string; message?: string; title?: string; effort?: string }) => {
+    guarded("message_subagent", async (a: { job: string; message?: string; title?: string } & JobSettings) => {
       const jobs = ctx.jobs;
       if (!jobs) throw new BridgeError("bad_request", t("err.delegatedSession"));
+      const existing = jobs.find(a.job);
+      if (existing) {
+        for (const [key, agent] of [["sandbox", "codex"], ["permission_mode", "claude"], ["auto_approve", "opencode"]] as const) {
+          if (a[key] !== undefined && existing.agent !== agent) throw new BridgeError("bad_request", `${key} applies only to ${agent} jobs.`);
+        }
+      }
+      const settings = Object.fromEntries(JOB_SETTING_KEYS.filter((key) => a[key] !== undefined).map((key) => [key, a[key]])) as JobSettings;
+      const wasRunning = existing?.status === "running";
       if (a.title?.trim()) jobs.setTitle(a.job, a.title.trim());
-      if (a.effort) jobs.setEffort(a.job, a.effort);
+      if (Object.keys(settings).length) jobs.setSettings(a.job, settings);
       const { outcome, job } = jobs.followUp(a.job, a.message?.trim() || DEFAULT_FOLLOW_UP);
       const position = job ? jobs.waiting().indexOf(job) + 1 : 0;
-      // A level cannot change inside a running turn: say so, so nobody assumes it already applies.
-      const effortNote = a.effort && job?.status === "running" ? `\nThinking level ${a.effort} applies from its next turn; the turn running now keeps its level.` : a.effort ? `\nThinking level: ${a.effort}.` : "";
+      const settingsNote = job && Object.keys(settings).length
+        ? `\nSaved settings: ${Object.entries(settings).map(([key, value]) => `${key}=${value}`).join(", ")}.${wasRunning ? " Applies from its next turn; the turn running now keeps its settings." : " Applies to this continuation and later turns."}`
+        : "";
       return text(
-        t(`followUp.${outcome}`, { name: job?.name ?? a.job, max: jobs.limit, running: jobs.runningCount(), ahead: position > 1 ? ` (${position - 1} queued before it)` : "" }) + effortNote,
+        t(`followUp.${outcome}`, { name: job?.name ?? a.job, max: jobs.limit, running: jobs.runningCount(), ahead: position > 1 ? ` (${position - 1} queued before it)` : "" }) + settingsNote,
         outcome === "unknown" || outcome === "no-session",
       );
     }),
