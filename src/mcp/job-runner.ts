@@ -11,7 +11,8 @@ import { resumeArgs, runDelegate, type JobSink, type RunContext } from "./delega
 import { CONTROL_CONVERSATION_PREFIX, JOB_PEER_PREFIX, RUNNER_HEARTBEAT_MS, writeRunnerState, type RunnerSpec } from "./job-host.js";
 import { jobReport, NOTE_CONVERSATION_SUFFIX, QUEUED_FOLLOW_UP_NOTE, sessionOfError, waitForApproval, type Job, type RunnerControl, type RunnerState } from "./jobs.js";
 import { changedJobArgs } from "./job-settings.js";
-import { notifyJobEvent } from "../core/notifications.js";
+import { processCleanupReport, startWindowsJobScope, type WindowsJobScope } from "../core/windows-job-scope.js";
+import type { Logger } from "../core/logger.js";
 
 /** Delivering a message to the session: tries for several minutes (the bridge may be changing hands, or no session hosts it). */
 const SEND_ATTEMPTS = 30;
@@ -35,8 +36,28 @@ export async function runJobRunner(specFile: string | undefined): Promise<number
   if (!data) return 2;
   const spec = data as unknown as RunnerSpec;
   archiveFile(specFile);
-  const { home, target } = spec;
+  const { home } = spec;
   const log = createLogger({ home, component: "job-runner" }).child(spec.job.name);
+  // This is a dedicated runner, never the shared broker/MCP server. Establish ownership
+  // before any delegate can create tools, including tools whose intermediate parents exit.
+  let scope: WindowsJobScope | null = null;
+  try {
+    if (process.platform === "win32") scope = await startWindowsJobScope(log);
+  } catch (err) {
+    const cause = "job process ownership could not be established: " + (err as Error).message;
+    log.error(cause);
+    writeRunnerState(home, spec.job.id, { pid: process.pid, peer: spec.job.name, status: "failed", updatedAt: Date.now(), finishedAt: Date.now(), report: "Subagent " + spec.job.name + " failed before starting. " + cause, delivered: false });
+    return 1;
+  }
+  try {
+    return await runOwnedJobRunner(spec, log, scope);
+  } finally {
+    scope?.detach();
+  }
+}
+
+async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: WindowsJobScope | null): Promise<number> {
+  const { home, target } = spec;
   const job: Job = {
     ...spec.job,
     controller: new AbortController(),
@@ -235,11 +256,27 @@ export async function runJobRunner(specFile: string | undefined): Promise<number
       status = "failed";
       cause = failureCause({ error: err });
     }
+    if (scope) {
+      try {
+        const cleanup = await scope.cleanup();
+        text += "\n\n" + processCleanupReport(cleanup);
+        if (cleanup.remaining.length) {
+          status = "failed";
+          cause = "job-owned background processes did not stop: " + cleanup.remaining.join(", ");
+        }
+      } catch (err) {
+        status = "failed";
+        cause = "job process cleanup failed: " + (err as Error).message;
+        log.error("job process cleanup failed", { cause });
+        text += "\n\n" + cause + ". Ownership containment remains active until the runner exits.";
+      }
+    }
     job.etaAt = undefined;
     job.etaReportedAt = undefined;
     const report = jobReport(job, status, Math.round((Date.now() - job.startedAt) / 1000), text, cause);
     log.info("job turn finished", { status, sessionId: job.sessionId, cause });
-    notifyJobEvent(home, status === "done" ? "finish" : "fail", log);
+    // The supervisor's JobManager emits the finish/fail notification when it settles this
+    // result. A detached notifier here would remain inside this runner's owned job scope.
     // Follow-ups that arrived meanwhile go out right away, into the same session, from this runner.
     if (job.queue.length && job.sessionId && !job.controller.signal.aborted) {
       const queued = job.queue.splice(0).join("\n\n");

@@ -8634,7 +8634,16 @@ async function killAllDelegates(capMs = KILL_GRACE_MS) {
 function trackChild(child, log) {
   liveChildren.set(child, log);
   log?.info("delegate process started", { pid: child.pid });
-  child.once("exit", () => liveChildren.delete(child));
+  child.once("exit", () => {
+    if (process.platform !== "win32" && child.pid) {
+      try {
+        process.kill(-child.pid, "SIGKILL");
+        log?.info("stopped surviving delegate process group", { pgid: child.pid, reason: "delegate root exited" });
+      } catch {
+      }
+    }
+    liveChildren.delete(child);
+  });
 }
 function resolveCommand(bin, argsIn, env, log) {
   let resolved = resolveBinary(bin, env);

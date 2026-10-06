@@ -134,6 +134,34 @@ afterEach(async () => {
 });
 
 describe.skipIf(!existsSync(SERVER))("background subagents in job runners", () => {
+  it.skipIf(process.platform !== "win32")("stops orphaned tools before publishing done without stopping a sibling job", async () => {
+    const marker = join(home, "owned-orphan.pid");
+    const detached = "require('node:fs').writeFileSync(process.argv[1],String(process.pid));setInterval(()=>{},1000);";
+    const intermediate = "require('node:child_process').spawn(process.execPath,['-e'," + JSON.stringify(detached) + ",process.argv[1]],{detached:true,windowsHide:true,stdio:'ignore'}).unref();";
+    const setup = `
+      const background=/background=(\\S+)/.exec(prompt)?.[1];
+      if (background) {
+        const child=spawn(process.execPath,['-e',${JSON.stringify(intermediate)},background],{windowsHide:true,stdio:'ignore'});
+        await new Promise(resolve=>child.once('exit',resolve));
+        while(!existsSync(background)) await new Promise(resolve=>setTimeout(resolve,20));
+      }
+    `;
+    writeFileSync(join(home, "bin", "fake-claude.mjs"), "#!/usr/bin/env node\nimport { spawn } from 'node:child_process';\n" + FAKE_CLAUDE.replace('  const args = process.argv.slice(2);', setup + '  const args = process.argv.slice(2);'));
+    const session = await startSession();
+    const sibling = await spawnHeld(session);
+    const output = await call(session, "spawn_claude", { prompt: "background=" + marker, title: "Orphan cleanup test" });
+    const id = /claude-job-([0-9a-f]+)/.exec(output)![1]!;
+    await waitFor(() => readRunnerState(home, id)?.status === "done");
+    const state = readRunnerState(home, id)!;
+    const orphan = Number(readFileSync(marker, "utf8"));
+    expect(pidAlive(orphan)).toBe(false);
+    expect(state.report).toContain("Background process cleanup: stopped 1 surviving job-owned processes (PIDs " + orphan + "); 0 still running.");
+    expect(readRunnerState(home, sibling.id)?.status).toBe("running");
+    expect(pidAlive(sibling.pid)).toBe(true);
+    writeFileSync(sibling.release, "");
+    await waitFor(() => !pidAlive(state.pid) && !pidAlive(sibling.pid));
+  });
+
   it("counts detached jobs in the root budget and forwards descendant approval escalation", async () => {
     const session = await startSession();
     const held = await spawnHeld(session);

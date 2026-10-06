@@ -183,7 +183,20 @@ export async function killAllDelegates(capMs = KILL_GRACE_MS): Promise<void> {
 export function trackChild(child: ChildProcess, log?: Logger): void {
   liveChildren.set(child, log);
   log?.info("delegate process started", { pid: child.pid });
-  child.once("exit", () => liveChildren.delete(child));
+  child.once("exit", () => {
+    // Every POSIX delegate above owns a fresh process group. Its leader exiting does not
+    // mean its tools exited, and killTree deliberately skips a dead ChildProcess PID.
+    // Clean the original group at the exit event, never retain a stale PID for a later sweep.
+    if (process.platform !== "win32" && child.pid) {
+      try {
+        process.kill(-child.pid, "SIGKILL");
+        log?.info("stopped surviving delegate process group", { pgid: child.pid, reason: "delegate root exited" });
+      } catch {
+        // No members remain in the original group.
+      }
+    }
+    liveChildren.delete(child);
+  });
 }
 
 /** What to spawn for a CLI: its real executable (npm .cmd shims unwrapped), or the shim through a shell. */

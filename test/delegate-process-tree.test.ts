@@ -1,8 +1,35 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
+import { readFileSync } from "node:fs";
 import { setTimeout as delay } from "node:timers/promises";
 import { expect, it } from "vitest";
-import { killTree, pidAlive } from "../src/core/delegate.js";
+import { killTree, pidAlive, trackChild } from "../src/core/delegate.js";
+
+it.skipIf(process.platform === "win32")("stops tools left in an owned process group when its leader exits naturally", async () => {
+  const root = spawn(process.execPath, ["-e", `
+    const child = require('node:child_process').spawn(process.execPath,['-e',"process.send('ready');setInterval(()=>{},1000);"],{stdio:['ignore','ignore','ignore','ipc']});
+    child.once('message',()=>process.send(child.pid,()=>process.exit(0)));
+  `], { detached: true, stdio: ["ignore", "ignore", "ignore", "ipc"] });
+  trackChild(root);
+  const closed = once(root, "close");
+  let pid: number | undefined;
+  const running = (n: number) => {
+    if (!pidAlive(n)) return false;
+    // Some Linux containers do not reap PID 1's adopted zombies; those cannot execute work.
+    if (process.platform === "linux") {
+      try { return !/\) Z /.test(readFileSync("/proc/" + n + "/stat", "utf8")); } catch { return false; }
+    }
+    return true;
+  };
+  try {
+    [pid] = await once(root, "message");
+    await closed;
+    for (let n = 0; n < 40 && running(pid!); n++) await delay(50);
+    expect(running(pid!)).toBe(false);
+  } finally {
+    await killTree(root, "test-owned cleanup");
+  }
+});
 
 it("terminates a real owned tree while an independently supervised tool survives", async () => {
   const children: ChildProcess[] = [];

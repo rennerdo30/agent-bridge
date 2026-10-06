@@ -7683,7 +7683,7 @@ var require_cross_spawn = __commonJS({
     var cp = __require("child_process");
     var parse5 = require_parse();
     var enoent = require_enoent();
-    function spawn11(command, args, options) {
+    function spawn12(command, args, options) {
       const parsed = parse5(command, args, options);
       const spawned = cp.spawn(parsed.command, parsed.args, parsed.options);
       enoent.hookChildProcess(spawned, parsed);
@@ -7695,8 +7695,8 @@ var require_cross_spawn = __commonJS({
       result.error = result.error || enoent.verifyENOENTSync(result.status, parsed);
       return result;
     }
-    module.exports = spawn11;
-    module.exports.spawn = spawn11;
+    module.exports = spawn12;
+    module.exports.spawn = spawn12;
     module.exports.sync = spawnSync;
     module.exports._parse = parse5;
     module.exports._enoent = enoent;
@@ -7704,7 +7704,7 @@ var require_cross_spawn = __commonJS({
 });
 
 // src/cli/main.ts
-import { join as join57 } from "node:path";
+import { join as join58 } from "node:path";
 
 // src/core/client.ts
 import { EventEmitter } from "node:events";
@@ -28079,9 +28079,9 @@ function rollouts(paths) {
   return files2;
 }
 function parent(meta3) {
-  const spawn11 = object2(object2(object2(meta3.source).subagent).thread_spawn);
-  if (!Object.keys(spawn11).length && meta3.thread_source !== "subagent") return void 0;
-  return typeof meta3.parent_thread_id === "string" ? meta3.parent_thread_id : typeof spawn11.parent_thread_id === "string" ? spawn11.parent_thread_id : void 0;
+  const spawn12 = object2(object2(object2(meta3.source).subagent).thread_spawn);
+  if (!Object.keys(spawn12).length && meta3.thread_source !== "subagent") return void 0;
+  return typeof meta3.parent_thread_id === "string" ? meta3.parent_thread_id : typeof spawn12.parent_thread_id === "string" ? spawn12.parent_thread_id : void 0;
 }
 function codexItems(row) {
   if (row.type !== "response_item") return [];
@@ -28114,8 +28114,8 @@ function listCodexSubagents(session, paths) {
     const st = fileStat(file2);
     const last = [...readTail(file2)].reverse().find((r) => r.type === "event_msg" && ["task_started", "task_complete", "turn_aborted"].includes(object2(r.payload).type));
     const state = object2(last?.payload).type;
-    const spawn11 = object2(object2(object2(meta3.source).subagent).thread_spawn);
-    return { id, title: preview(meta3.agent_nickname || spawn11.agent_nickname || meta3.agent_path || spawn11.agent_path || `Subagent ${id}`, MAX_TITLE_CHARS), status: state === "task_complete" ? "done" : state === "turn_aborted" ? "interrupted" : "unknown", startedAt: time3(meta3.timestamp) || st?.birthtimeMs || 0, updatedAt: st?.mtimeMs || 0 };
+    const spawn12 = object2(object2(object2(meta3.source).subagent).thread_spawn);
+    return { id, title: preview(meta3.agent_nickname || spawn12.agent_nickname || meta3.agent_path || spawn12.agent_path || `Subagent ${id}`, MAX_TITLE_CHARS), status: state === "task_complete" ? "done" : state === "turn_aborted" ? "interrupted" : "unknown", startedAt: time3(meta3.timestamp) || st?.birthtimeMs || 0, updatedAt: st?.mtimeMs || 0 };
   });
 }
 
@@ -32757,7 +32757,16 @@ function pidAlive(pid) {
 function trackChild(child, log) {
   liveChildren.set(child, log);
   log?.info("delegate process started", { pid: child.pid });
-  child.once("exit", () => liveChildren.delete(child));
+  child.once("exit", () => {
+    if (process.platform !== "win32" && child.pid) {
+      try {
+        process.kill(-child.pid, "SIGKILL");
+        log?.info("stopped surviving delegate process group", { pgid: child.pid, reason: "delegate root exited" });
+      } catch {
+      }
+    }
+    liveChildren.delete(child);
+  });
 }
 function resolveCommand(bin, argsIn, env, log) {
   let resolved = resolveBinary(bin, env);
@@ -47069,6 +47078,185 @@ async function runCleanup(args, opts) {
 
 // src/mcp/job-runner.ts
 import { randomUUID as randomUUID20 } from "node:crypto";
+
+// src/core/windows-job-scope.ts
+import { spawn as spawn11 } from "node:child_process";
+import { join as join57 } from "node:path";
+var GUARD = String.raw`
+using System;
+using System.Collections.Generic;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+using System.Threading;
+public static class BridgeJobScope {
+  [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)] static extern IntPtr CreateJobObject(IntPtr attributes, string name);
+  [DllImport("kernel32.dll", SetLastError=true)] static extern bool SetInformationJobObject(IntPtr job, int kind, IntPtr data, uint size);
+  [DllImport("kernel32.dll", SetLastError=true)] static extern bool QueryInformationJobObject(IntPtr job, int kind, IntPtr data, uint size, IntPtr returned);
+  [DllImport("kernel32.dll", SetLastError=true)] static extern bool AssignProcessToJobObject(IntPtr job, IntPtr process);
+  [DllImport("kernel32.dll", SetLastError=true)] static extern bool IsProcessInJob(IntPtr process, IntPtr job, out bool member);
+  [DllImport("kernel32.dll", SetLastError=true)] static extern IntPtr OpenProcess(uint rights, bool inherit, int pid);
+  [DllImport("kernel32.dll", SetLastError=true)] static extern bool TerminateProcess(IntPtr process, uint code);
+  [DllImport("kernel32.dll")] static extern uint WaitForSingleObject(IntPtr handle, uint timeout);
+  [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr handle);
+  [StructLayout(LayoutKind.Sequential)] struct BasicLimits {
+    public long processTime, jobTime; public uint flags; public UIntPtr minWorkingSet, maxWorkingSet;
+    public uint activeProcessLimit; public UIntPtr affinity; public uint priority, scheduling;
+  }
+  [StructLayout(LayoutKind.Sequential)] struct IoCounters { public ulong read, write, other, readBytes, writeBytes, otherBytes; }
+  [StructLayout(LayoutKind.Sequential)] struct Limits {
+    public BasicLimits basic; public IoCounters io;
+    public UIntPtr processMemory, jobMemory, peakProcessMemory, peakJobMemory;
+  }
+  static void Check(bool ok) { if (!ok) throw new Win32Exception(Marshal.GetLastWin32Error()); }
+  static int[] Members(IntPtr job, int runner) {
+    for (int size=4096; size<=8388608; size*=2) {
+      IntPtr data=Marshal.AllocHGlobal(size);
+      try {
+        if (!QueryInformationJobObject(job, 3, data, (uint)size, IntPtr.Zero)) {
+          if (Marshal.GetLastWin32Error()==234) continue;
+          throw new Win32Exception(Marshal.GetLastWin32Error());
+        }
+        int count=Marshal.ReadInt32(data, 4);
+        if (count> (size-8)/IntPtr.Size || Marshal.ReadInt32(data, 0)>count) continue;
+        var ids=new List<int>();
+        for (int n=0; n<count; n++) {
+          int pid=(int)Marshal.ReadIntPtr(data, 8+n*IntPtr.Size).ToInt64();
+          if (pid!=runner) ids.Add(pid);
+        }
+        return ids.ToArray();
+      } finally { Marshal.FreeHGlobal(data); }
+    }
+    throw new Exception("Job membership list exceeded its bound");
+  }
+  static void Cleanup(IntPtr job, int runner) {
+    var stopped=new HashSet<int>();
+    DateTime deadline=DateTime.UtcNow.AddSeconds(5);
+    int[] remaining;
+    do {
+      remaining=Members(job, runner);
+      if (remaining.Length==0) break;
+      foreach (int pid in remaining) {
+        // Keep the handle through the membership check and termination. A reused PID outside
+        // this job can never pass IsProcessInJob, even if it appeared in the prior snapshot.
+        IntPtr process=OpenProcess(0x00101001, false, pid);
+        if (process==IntPtr.Zero) continue;
+        try {
+          bool member;
+          if (IsProcessInJob(process, job, out member) && member && TerminateProcess(process, 1)) stopped.Add(pid);
+        } finally { CloseHandle(process); }
+      }
+      Thread.Sleep(10);
+    } while (DateTime.UtcNow<deadline);
+    remaining=Members(job, runner);
+    Console.WriteLine("{\"type\":\"cleaned\",\"stopped\":["+String.Join(",",stopped)+"],\"remaining\":["+String.Join(",",remaining)+"]}");
+    Console.Out.Flush();
+  }
+  public static void Run(int runner) {
+    IntPtr job=CreateJobObject(IntPtr.Zero, null);
+    Check(job!=IntPtr.Zero);
+    IntPtr owner=IntPtr.Zero;
+    try {
+      var limits=new Limits(); limits.basic.flags=0x2000; // KILL_ON_JOB_CLOSE; no breakaway permission.
+      int size=Marshal.SizeOf(limits); IntPtr data=Marshal.AllocHGlobal(size);
+      try { Marshal.StructureToPtr(limits, data, false); Check(SetInformationJobObject(job, 9, data, (uint)size)); }
+      finally { Marshal.FreeHGlobal(data); }
+      owner=OpenProcess(0x00101101, false, runner); Check(owner!=IntPtr.Zero);
+      Check(AssignProcessToJobObject(job, owner));
+      Console.WriteLine("{\"type\":\"ready\"}"); Console.Out.Flush();
+      string command;
+      while ((command=Console.ReadLine())!=null) {
+        if (command=="cleanup") Cleanup(job, runner);
+      }
+      // EOF releases the runner's pipes, not the containment. Closing this last job handle
+      // after owner exit also catches tools started while the final report was being delivered.
+      WaitForSingleObject(owner, 0xffffffff);
+    } finally {
+      if (owner!=IntPtr.Zero) CloseHandle(owner);
+      CloseHandle(job);
+    }
+  }
+}
+`;
+function startWindowsJobScope(log, runnerPid = process.pid) {
+  if (process.platform !== "win32") return Promise.reject(new Error("Windows job scopes require Windows"));
+  const script = "$ErrorActionPreference='Stop'; [Console]::OutputEncoding=New-Object Text.UTF8Encoding($false); Add-Type -TypeDefinition @'\n" + GUARD + "\n'@; [BridgeJobScope]::Run(" + runnerPid + ")";
+  const bin = join57(process.env.SystemRoot ?? "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
+  const guardian = spawn11(bin, ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")], { windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
+  return new Promise((resolve14, reject) => {
+    let stderr = "", buffer = "", ready = false;
+    let pending = null;
+    const fail = (err) => {
+      clearTimeout(startup);
+      if (!ready) reject(err);
+      if (pending) {
+        clearTimeout(pending.timer);
+        pending.reject(err);
+        pending = null;
+      }
+    };
+    const startup = setTimeout(() => {
+      fail(new Error("Windows job ownership setup timed out"));
+      guardian.kill();
+    }, 25e3);
+    guardian.on("error", fail);
+    guardian.on("exit", (code) => fail(new Error("Windows job guardian exited (" + code + "): " + stderr.slice(-2e3))));
+    guardian.stdin.on("error", fail);
+    guardian.stderr.setEncoding("utf8").on("data", (chunk) => {
+      stderr = (stderr + chunk).slice(-4e3);
+    });
+    guardian.stdout.setEncoding("utf8").on("data", (chunk) => {
+      buffer += chunk;
+      let index;
+      while ((index = buffer.indexOf("\n")) >= 0) {
+        const line = buffer.slice(0, index).trim();
+        buffer = buffer.slice(index + 1);
+        let message;
+        try {
+          message = JSON.parse(line);
+        } catch {
+          continue;
+        }
+        if (message.type === "ready" && !ready) {
+          ready = true;
+          clearTimeout(startup);
+          log.info("job process ownership established", { runnerPid, guardianPid: guardian.pid, method: "private Windows job object" });
+          resolve14({
+            guardian,
+            cleanup: () => new Promise((yes, no) => {
+              if (pending) return no(new Error("Job cleanup already in progress"));
+              if (guardian.exitCode !== null || guardian.signalCode !== null) return no(new Error("Windows job guardian is gone"));
+              pending = { resolve: yes, reject: no, timer: setTimeout(() => {
+                if (pending) {
+                  pending.reject(new Error("Windows job cleanup timed out"));
+                  pending = null;
+                }
+              }, 1e4) };
+              guardian.stdin.write("cleanup\n");
+            }),
+            detach: () => {
+              guardian.stdin.end();
+              guardian.stdout.destroy();
+              guardian.stderr.destroy();
+              guardian.unref();
+            }
+          });
+        } else if (message.type === "cleaned" && pending) {
+          clearTimeout(pending.timer);
+          const result = { stopped: message.stopped, remaining: message.remaining };
+          log.info("job background process cleanup", { ...result });
+          pending.resolve(result);
+          pending = null;
+        }
+      }
+    });
+  });
+}
+function processCleanupReport(result) {
+  const ids = (pids) => pids.length ? " (PIDs " + pids.join(", ") + ")" : "";
+  return "Background process cleanup: stopped " + result.stopped.length + " surviving job-owned processes" + ids(result.stopped) + "; " + result.remaining.length + " still running" + ids(result.remaining) + ".";
+}
+
+// src/mcp/job-runner.ts
 var SEND_ATTEMPTS = 30;
 var SEND_RETRY_MAX_MS = 1e4;
 var PROGRESS_SAVE_MS = 1e3;
@@ -47081,8 +47269,25 @@ async function runJobRunner(specFile) {
   if (!data) return 2;
   const spec = data;
   archiveFile(specFile);
-  const { home, target } = spec;
+  const { home } = spec;
   const log = createLogger({ home, component: "job-runner" }).child(spec.job.name);
+  let scope = null;
+  try {
+    if (process.platform === "win32") scope = await startWindowsJobScope(log);
+  } catch (err) {
+    const cause = "job process ownership could not be established: " + err.message;
+    log.error(cause);
+    writeRunnerState(home, spec.job.id, { pid: process.pid, peer: spec.job.name, status: "failed", updatedAt: Date.now(), finishedAt: Date.now(), report: "Subagent " + spec.job.name + " failed before starting. " + cause, delivered: false });
+    return 1;
+  }
+  try {
+    return await runOwnedJobRunner(spec, log, scope);
+  } finally {
+    scope?.detach();
+  }
+}
+async function runOwnedJobRunner(spec, log, scope) {
+  const { home, target } = spec;
   const job = {
     ...spec.job,
     controller: new AbortController(),
@@ -47268,11 +47473,25 @@ async function runJobRunner(specFile) {
       status = "failed";
       cause = failureCause({ error: err });
     }
+    if (scope) {
+      try {
+        const cleanup = await scope.cleanup();
+        text += "\n\n" + processCleanupReport(cleanup);
+        if (cleanup.remaining.length) {
+          status = "failed";
+          cause = "job-owned background processes did not stop: " + cleanup.remaining.join(", ");
+        }
+      } catch (err) {
+        status = "failed";
+        cause = "job process cleanup failed: " + err.message;
+        log.error("job process cleanup failed", { cause });
+        text += "\n\n" + cause + ". Ownership containment remains active until the runner exits.";
+      }
+    }
     job.etaAt = void 0;
     job.etaReportedAt = void 0;
     const report = jobReport(job, status, Math.round((Date.now() - job.startedAt) / 1e3), text, cause);
     log.info("job turn finished", { status, sessionId: job.sessionId, cause });
-    notifyJobEvent(home, status === "done" ? "finish" : "fail", log);
     if (job.queue.length && job.sessionId && !job.controller.signal.aborted) {
       const queued = job.queue.splice(0).join("\n\n");
       void post(`${report}
@@ -47799,7 +48018,7 @@ async function main(argv) {
     case "cleanup":
       return runCleanup(rest, { home, cwd: process.cwd(), log, out });
     case "paths":
-      out(t("cli.paths", { home, logs: join57(home, LOG_DIR_NAME), db: resolveDbPath(home), pipe: pipe2 }));
+      out(t("cli.paths", { home, logs: join58(home, LOG_DIR_NAME), db: resolveDbPath(home), pipe: pipe2 }));
       return 0;
     case "help":
     case "--help":

@@ -41,6 +41,50 @@ Background `spawn_*` jobs have an independent runner and survive the session MCP
 `/reload-plugins`. That protects the **agent job**. It does not promise that every native
 tool outlives command cleanup, job cancellation, or the agent's app-server process.
 
+### Finished jobs and background tools (AB-113)
+
+New dedicated Windows job runners establish a private, unnamed
+[Windows job object](https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects)
+before launching the delegate. Future descendants inherit its membership, including ordinary
+detached tools and orphans whose intermediate shell has exited. The guardian is created before
+assignment and holds the non-inherited job handle outside that scope. No breakaway permission
+is enabled. This contains the dedicated runner's descendants; the shared broker, supervisor,
+user's existing processes and separately launched sibling runners are not assigned.
+
+Before each turn's result is published, the guardian stops surviving members except the
+runner. It checks membership on an open process handle before termination, so PID reuse cannot
+select a process outside the private job. The result reports stopped PIDs and the number still
+running. Any remaining members or failed cleanup make the job fail. Ownership setup failure
+also fails before the delegate starts. The guardian retains the job until the runner exits;
+`KILL_ON_JOB_CLOSE` then catches tools started during final delivery, or a forcibly ended runner.
+Forced cleanup can skip tool `finally` blocks: resource owners still need recovery records.
+
+On POSIX, delegates own separate process groups. A delegate root's natural exit now immediately
+stops its surviving group, as well as the existing timeout/cancellation group cleanup. A process
+that deliberately creates another session can escape a POSIX process group; this is not a
+kernel descendant-containment guarantee. Windows containment applies to dedicated background
+runners, not legacy in-process mode (`AGENT_BRIDGE_JOB_RUNNER=0`) or blocking `ask_*` calls.
+Those modes retain delegate tree/group cleanup. Do not use either boundary as a durable-tool
+contract; use the independently owned service/scheduler route below. Existing already-running
+jobs are not retroactively assigned to new ownership scopes when plugins reload.
+
+AB-113 retained metadata identifies `codex-job-087d8327`, bridge `0.29.2`, thread
+`01a1111f-1d9d-7c61-b8a7-ae72fdaac35e`, and run
+`2026-10-06-12-10-14-codex-5d837b77`. Its native rollout records the delayed nested PowerShell
+launch at `13:21:58.907Z` (command session `77307`), then a failed outer command at
+`13:49:39.221Z`: exit `1`, empty output, duration `1659.8780653s` (entry 1484). Immediately
+before it, entry 1483 (`13:49:39.069Z`) shows the agent sending Ctrl-C with
+`write_stdin(session_id=77307, chars="\\u0003")`, then telling its sibling the waiting wrapper
+was stopped. That completed native command did not verify the nested PowerShell process
+was gone. A terminal interrupt is not an ownership/lifetime boundary for all descendants.
+The bridge logs
+app-server turn completion at `13:58:29.375Z` and runner completion at `13:58:43.878Z`.
+The issue reports surviving wrapper `39876` and compile children `10180`/`15112`; its reported
+`13:56` compile start precedes the recorded job completion. The complete original OS parent
+chain was not retained, and those PIDs were gone when investigated. A real regression reproduces
+the ownership gap with an exited intermediate parent and detached surviving grandchild, and
+verifies cleanup before the done report without stopping a sibling job.
+
 For tools that need `finally` to release a resource:
 
 1. Keep the command session alive and monitor it to completion. A yield/poll interval is
@@ -56,6 +100,13 @@ For tools that need `finally` to release a resource:
    Use an explicit service/task identity and completion record. Set that lifetime up before
    acquiring the resource; do not bypass a denied approval or sandbox restriction. Cancelling
    the agent then leaves that external work running until its own owner stops it.
+
+   For example, the owner can provision a Windows scheduled task with an agreed account,
+   command, working directory, deadline and result-file location. The agent triggers that
+   existing task with `Start-ScheduledTask -TaskName 'OwnerApprovedTool'` and monitors its
+   completion record (and `Get-ScheduledTaskInfo`). The Task Scheduler service launches it
+   outside the agent runner's private job. Merely calling `Start-Process -WindowStyle Hidden`
+   from the agent remains inside the owned scope and will be stopped at job completion.
 
 Never recover by deleting arbitrary lock files, killing every shell/Unity process, or
 removing logs. Preserve the evidence and verify the exact resource owner first. On this
