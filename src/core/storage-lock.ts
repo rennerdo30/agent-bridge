@@ -4,6 +4,8 @@ import { dirname, join } from "node:path";
 
 const LOCK_FILE = ".maintenance-lock";
 const USERS_DIR = ".storage-users";
+const SCOPED_STORE_DIRS = new Set(["runs", "jobs", "job-outcomes"]);
+const NESTED_STORE_DIRS = new Set(["local-result-receipts"]);
 
 /** Writers register before opening data. The second check closes the restore/open race. */
 export function storageLease(home: string): () => void {
@@ -22,7 +24,8 @@ export function storageLease(home: string): () => void {
 
 export function storeHome(path: string): string {
   const dir = dirname(path);
-  return ["runs", "jobs"].includes(dir.split(/[\\/]/).at(-1) ?? "") ? dirname(dir) : dir;
+  if (NESTED_STORE_DIRS.has(dirname(dir).split(/[\\/]/).at(-1) ?? "")) return dirname(dirname(dir));
+  return SCOPED_STORE_DIRS.has(dir.split(/[\\/]/).at(-1) ?? "") ? dirname(dir) : dir;
 }
 
 /** Never expires a live process's lease by age. Stale files are safe to remove after PID checks. */

@@ -1,3 +1,4 @@
+import { MAX_HOLD_REASON_CHARS, setJobOutcome, deriveJobOutcome } from "../core/job-outcomes.js";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -988,6 +989,24 @@ ${res.text || t("delegate.empty")}`, res.isError);
     guarded("dashboard", async () => {
       const url = await ctx.openDashboard?.();
       return url ? text(t("dashboard.opened", { url })) : text(t("dashboard.failed"), true);
+    }),
+  );
+
+  register(
+    "set_job_outcome",
+    {
+      title: "Set a finished job's outcome",
+      description: "Record that your finished job is held with a reason or discarded. This records a decision; it does not merge or delete its branch. Only its owning supervisor can set it.",
+      inputSchema: { job: z.string().min(1), state: z.enum(["held", "discarded"]), reason: z.string().max(MAX_HOLD_REASON_CHARS).optional() },
+    },
+    guarded("set_job_outcome", async (a: { job: string; state: "held" | "discarded"; reason?: string }) => {
+      const n = requireNode();
+      const job = ctx.jobs?.find(a.job);
+      if (!job) throw new BridgeError("bad_request", "Unknown job.");
+      try {
+        setJobOutcome(ctx.home, job, n.name, a.state, a.reason);
+        return text(JSON.stringify({ job: job.name, outcome: await deriveJobOutcome(ctx.home, job, log) }));
+      } catch (err) { throw new BridgeError("bad_request", (err as Error).message); }
     }),
   );
 

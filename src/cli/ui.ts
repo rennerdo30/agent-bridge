@@ -29,6 +29,8 @@ import { readArchivedJobs } from "../core/job-archive.js";
 import { listNativeSubagents, readTranscript, TRANSCRIPT_ID, validTranscriptCursor, type TranscriptPaths } from "../core/transcripts/index.js";
 import { readDecisions, decisionScopeSchema, MAX_DECISION_TEXT_CHARS, MAX_DECISION_TOPIC_CHARS, type DecisionsArgs } from "../core/decisions.js";
 import { answerPendingApproval, listPendingApprovals, MAX_APPROVAL_REASON_CHARS } from "../core/relay.js";
+import { deriveJobOutcome, listJobOutcomes, JOB_OUTCOME_CONTRACT_VERSION, type JobOutcome, type OutcomeJob } from "../core/job-outcomes.js";
+import { readStore } from "../mcp/jobs.js";
 
 /**
  * `agent-bridge ui`: a local dashboard for sessions, delegated runs and messages.
@@ -44,6 +46,7 @@ const MAX_LOG_CHUNK = 512 * 1024;
 const MAX_POST_BYTES = 256 * 1024;
 /** A run whose log has not been written for this long (heartbeats come every minute) was interrupted. */
 const STALE_RUN_MS = 150_000;
+const LEGACY_JOB_START_TOLERANCE_MS = 1_000;
 const UI_PEER_NAME = "you";
 const ALLOWED_HOSTS = new Set([UI_HOST, "localhost"]);
 const RUN_NAME = /^[\w.-]+\.log$/;
@@ -58,6 +61,33 @@ export interface RunSummary extends RunMeta {
   last: string;
   /** Start of the prompt, for lists. */
   task: string;
+}
+
+/** Read-only projection: legacy metadata stays byte-for-byte intact. */
+export async function finishedRunOutcomes(home: string, log: Logger): Promise<Record<string, JobOutcome>> {
+  const runs = listRuns(home);
+  const jobs = readStore(join(home, JOBS_FILE), log, true);
+  const out: Record<string, JobOutcome> = {};
+  for (const run of runs) {
+    if (!run.job || (run.status !== "done" && run.status !== "failed")) continue;
+    const stored = jobs.find((j) => j.name === run.job);
+    const startedAt = run.jobStartedAt ?? run.startedAt;
+    const latest = stored && (run.jobStartedAt !== undefined ? stored.startedAt === startedAt : Math.abs(stored.startedAt - startedAt) < LEGACY_JOB_START_TOLERANCE_MS);
+    const job: OutcomeJob = {
+      id: stored?.id ?? run.job.replace(/^.*-(?:job|ask)-/, ""), name: run.job,
+      owner: latest ? stored.owner : run.by,
+      startedAt: run.jobStartedAt ?? (latest ? stored.startedAt : run.startedAt),
+      status: run.status, worktree: stored?.worktree,
+      remote: (run as RunSummary & { remote?: OutcomeJob["remote"] }).remote ?? (stored as OutcomeJob | undefined)?.remote,
+    };
+    const next = runs.filter((r) => r.job === run.job && (r.jobStartedAt ?? r.startedAt) > startedAt)
+      .sort((a, b) => (a.jobStartedAt ?? a.startedAt) - (b.jobStartedAt ?? b.startedAt))[0];
+    out[run.name] = await deriveJobOutcome(home, job, log, {
+      branch: run.branch, baseBranch: run.baseBranch, repoRoot: run.repoRoot,
+      branchHead: run.branchHead, before: next?.jobStartedAt ?? next?.startedAt,
+    });
+  }
+  return out;
 }
 
 /** Parse the head and tail of a run log written by runfeed.ts, plus its metadata (older runs: from the header). */
@@ -370,6 +400,15 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
       if (outcome === "expired") return send(res, 409, { outcome, error: "This approval was already answered, expired or cancelled." });
       if (outcome === "unavailable") return send(res, 504, { outcome, error: "The approval's owning process is unavailable. Refresh before answering again." });
       return send(res, 200, { outcome, id: approvalMatch[1], answeredBy: "dashboard", decision: body.decision });
+    }
+    if (req.method === "GET" && url.pathname === "/api/job-outcomes") {
+      const jobs = await listJobOutcomes(opts.home, opts.log);
+      const groups: Record<string, string[]> = { needsReview: [], held: [], merged: [], discarded: [] };
+      for (const [name, job] of Object.entries(jobs)) {
+        const state = job.outcome.merge.state;
+        groups[state === "unmerged" ? "needsReview" : state]!.push(name);
+      }
+      return send(res, 200, { contractVersion: JOB_OUTCOME_CONTRACT_VERSION, jobs, runs: await finishedRunOutcomes(opts.home, opts.log), groups });
     }
     if (req.method === "GET" && url.pathname === "/api/state") {
       const { brokerPid, peers } = await brokerPeers(opts.pipe, token, opts.log);

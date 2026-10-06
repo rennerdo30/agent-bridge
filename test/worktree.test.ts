@@ -417,7 +417,7 @@ describe("cleanup", () => {
     const deep = toNamespacedPath(deepPath(wt.path));
     mkdirSync(deep, { recursive: true });
     writeFileSync(join(deep, "cache.asset"), "generated\n");
-    const entries = await cleanupWorktrees({ home, apply: true, log: nullLogger });
+    const entries = await cleanupWorktrees({ cwd: repo, home, all: true, apply: true, log: nullLogger });
     expect(entries.find((e) => e.path === wt.path)?.action).toBe("removed");
     expect(existsSync(wt.path)).toBe(false);
     expect(git("worktree", "list", "--porcelain")).not.toContain(wt.path.replace(/\\/g, "/"));
@@ -445,11 +445,11 @@ describe("cleanup", () => {
     const deep = toNamespacedPath(deepPath(orphan));
     mkdirSync(deep, { recursive: true });
     symlinkSync(shared, join(deep, "shared"), "junction");
-    const dry = await cleanupWorktrees({ home, apply: false, log: nullLogger });
+    const dry = await cleanupWorktrees({ cwd: repo, home, all: true, apply: false, log: nullLogger });
     expect(dry.find((e) => e.path === orphan)?.action).toBe("would remove");
     expect(dry.find((e) => e.path === orphan)?.externalLinks?.map((l) => ({ ...l, path: toNamespacedPath(l.path) }))).toEqual([{ path: join(deep, "shared"), target: shared }]);
     expect(dry.find((e) => e.path === orphan)?.reason).toContain("external worktree links");
-    const entries = await cleanupWorktrees({ home, apply: true, log: nullLogger });
+    const entries = await cleanupWorktrees({ cwd: repo, home, all: true, apply: true, log: nullLogger });
     expect(entries.find((e) => e.path === orphan)?.action).toBe("removed");
     expect(existsSync(orphan)).toBe(false);
     expect(readFileSync(join(shared, "keep.txt"), "utf8")).toBe("keep\n");
@@ -480,18 +480,18 @@ describe("cleanup", () => {
     writeFileSync(join(foreign, "notes.txt"), "mine\n");
 
     const byBranch = (entries: CleanupEntry[]) => Object.fromEntries(entries.map((e) => [e.branch, e]));
-    const dry = byBranch(await cleanupWorktrees({ home, apply: false, log: nullLogger }));
+    const dry = byBranch(await cleanupWorktrees({ cwd: repo, home, all: true, apply: false, log: nullLogger }));
     expect(dry["agent-bridge/done"]!.action).toBe("would remove");
     expect(dry["agent-bridge/unmerged"]!.action).toBe("kept");
     expect(dry["agent-bridge/unmerged"]!.reason).toMatch(/not merged/);
     expect(dry["agent-bridge/dirty"]!.reason).toMatch(/uncommitted/);
     expect(dry["agent-bridge/running"]!.reason).toMatch(/codex-job-running is running/);
     expect(existsSync(done.path)).toBe(true);
-    const leftovers = (await cleanupWorktrees({ home, apply: false, log: nullLogger })).filter((e) => !e.branch);
+    const leftovers = (await cleanupWorktrees({ cwd: repo, home, all: true, apply: false, log: nullLogger })).filter((e) => !e.branch);
     expect(leftovers.find((e) => e.path === leftover)?.action).toBe("would remove");
     expect(leftovers.find((e) => e.path === foreign)?.action).toBe("kept");
 
-    const res = byBranch(await cleanupWorktrees({ home, apply: true, log: nullLogger }));
+    const res = byBranch(await cleanupWorktrees({ cwd: repo, home, all: true, apply: true, log: nullLogger }));
     expect(res["agent-bridge/done"]!.action).toBe("removed");
     expect(res["agent-bridge/done"]!.reason).toMatch(/unlinked 1 link/);
     expect(existsSync(done.path)).toBe(false);
@@ -512,7 +512,7 @@ describe("cleanup with unreadable folders", () => {
     mkdirSync(join(worktrees, "empty-leftover-5678abcd", "folder"), { recursive: true });
     chmodSync(locked, 0o000);
     try {
-      const entries = await cleanupWorktrees({ home, apply: false, log: nullLogger });
+      const entries = await cleanupWorktrees({ cwd: repo, home, all: true, apply: false, log: nullLogger });
       expect(entries.find((e) => e.path.includes("other-project"))).toMatchObject({ action: "kept" });
       expect(entries.find((e) => e.path.includes("empty-leftover"))).toMatchObject({ action: "would remove" });
     } finally {

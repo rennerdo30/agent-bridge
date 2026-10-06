@@ -1,4 +1,4 @@
-import { existsSync, lstatSync, readdirSync, rmdirSync, unlinkSync } from "node:fs";
+import { existsSync, lstatSync, realpathSync, readdirSync, rmdirSync, unlinkSync } from "node:fs";
 import { join, resolve, toNamespacedPath } from "node:path";
 import { JOBS_FILE } from "./constants.js";
 import type { Logger } from "./logger.js";
@@ -15,6 +15,7 @@ export interface CleanupEntry {
   branch: string | null;
   action: "removed" | "would remove" | "kept" | "failed";
   reason: string;
+  repository?: string | null;
   externalLinks?: WorktreeLinkScan["externalLinks"];
 }
 
@@ -22,7 +23,7 @@ type StoredJob = { name?: string; status?: string; worktree?: Worktree | null };
 
 function readJobs(home: string): StoredJob[] {
   try {
-    return readStore(join(home, JOBS_FILE));
+    return readStore(join(home, JOBS_FILE), undefined, true);
   } catch {
     return [];
   }
@@ -149,18 +150,57 @@ async function inspect(path: string, jobs: StoredJob[], apply: boolean, log: Log
   }
 }
 
-/** Inspect (and with `apply`, remove) the job worktrees in `home`/worktrees. */
-export async function cleanupWorktrees(opts: { home: string; apply: boolean; log: Logger }): Promise<CleanupEntry[]> {
+export interface CleanupScope {
+  all: boolean;
+  repository: string | null;
+  projects: { repository: string | null; paths: string[] }[];
+}
+
+/** Common directory identifies a repository even from one of its linked worktrees. */
+export async function repositoryCommonDir(cwd: string, log: Logger): Promise<string> {
+  const common = await git([...trustArgs(cwd), "rev-parse", "--path-format=absolute", "--git-common-dir"], cwd, log);
+  return realpathSync(resolve(cwd, common));
+}
+
+/** Resolve and announce the complete scope before any mutation. Unknown repositories stay scoped out. */
+export async function cleanupWorktrees(opts: {
+  home: string; apply: boolean; log: Logger; cwd?: string; repo?: string; all?: boolean;
+  onScope?: (scope: CleanupScope) => void;
+}): Promise<CleanupEntry[]> {
+  if (opts.all && opts.repo) throw new Error("Use either --all or --repo, not both.");
+  const repository = opts.all ? null : await repositoryCommonDir(opts.repo ?? opts.cwd ?? process.cwd(), opts.log);
   const dir = join(opts.home, "worktrees");
-  if (!existsSync(dir)) return [];
   const jobs = readJobs(opts.home);
-  const out: CleanupEntry[] = [];
-  for (const d of readdirSync(dir, { withFileTypes: true })) {
-    // Links in the worktrees folder itself are not ours to follow either.
-    if (!d.isDirectory() || lstatSync(join(dir, d.name)).isSymbolicLink()) continue;
+  const candidates: { path: string; repository: string | null }[] = [];
+  for (const d of existsSync(dir) ? readdirSync(dir, { withFileTypes: true }) : []) {
     const path = join(dir, d.name);
-    // One unreadable worktree (e.g. files of another account) must not stop the others.
-    out.push(await inspect(path, jobs, opts.apply, opts.log).catch((err): CleanupEntry => ({ path, branch: null, action: "kept", reason: `cannot read it: ${(err as Error).message.split("\n")[0]}` })));
+    if (!d.isDirectory() || lstatSync(path).isSymbolicLink()) continue;
+    let common = existsSync(join(path, ".git")) ? await repositoryCommonDir(path, opts.log).catch(() => null) : null;
+    // A removed worktree may still have a durable job record. Never guess by folder/branch name.
+    if (!common && !existsSync(join(path, ".git"))) {
+      const job = jobs.find((j) => j.worktree && samePath(j.worktree.path, path));
+      if (job?.worktree) common = await repositoryCommonDir(job.worktree.repoRoot, opts.log).catch(() => null);
+    }
+    if (opts.all || (common && repository && samePath(common, repository))) candidates.push({ path, repository: common });
+  }
+  const projects: CleanupScope["projects"] = [];
+  for (const candidate of candidates) {
+    let project = projects.find((p) => p.repository === candidate.repository);
+    if (!project) { project = { repository: candidate.repository, paths: [] }; projects.push(project); }
+    project.paths.push(candidate.path);
+  }
+  opts.onScope?.({ all: Boolean(opts.all), repository, projects });
+  if (opts.apply && projects.length > 1 && !opts.all) throw new Error("Removing worktrees from multiple repositories requires --all --yes.");
+  const out: CleanupEntry[] = [];
+  for (const candidate of candidates) {
+    // Verify identity again immediately before inspection/deletion in case the scope changed meanwhile.
+    const current = existsSync(join(candidate.path, ".git")) ? await repositoryCommonDir(candidate.path, opts.log).catch(() => null) : null;
+    if (!opts.all && current && repository && !samePath(current, repository)) {
+      out.push({ ...candidate, branch: null, action: "kept", reason: "repository changed after scope selection" });
+      continue;
+    }
+    const entry = await inspect(candidate.path, jobs, opts.apply, opts.log).catch((err): CleanupEntry => ({ path: candidate.path, branch: null, action: "kept", reason: `cannot read it: ${(err as Error).message.split("\n")[0]}` }));
+    out.push({ ...entry, repository: candidate.repository });
   }
   return out;
 }
