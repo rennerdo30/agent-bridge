@@ -10,6 +10,7 @@ import { resumeArgs, runDelegate, type JobSink, type RunContext } from "./delega
 import { CONTROL_CONVERSATION_PREFIX, JOB_PEER_PREFIX, RUNNER_HEARTBEAT_MS, writeRunnerState, type RunnerSpec } from "./job-host.js";
 import { jobReport, NOTE_CONVERSATION_SUFFIX, QUEUED_FOLLOW_UP_NOTE, sessionOfError, waitForApproval, type Job, type RunnerControl, type RunnerState } from "./jobs.js";
 import { changedJobArgs } from "./job-settings.js";
+import { notifyJobEvent } from "../core/notifications.js";
 
 /** Delivering a message to the session: tries for several minutes (the bridge may be changing hands, or no session hosts it). */
 const SEND_ATTEMPTS = 30;
@@ -117,8 +118,8 @@ export async function runJobRunner(specFile: string | undefined): Promise<number
   const post = (body: string, replyTo: string | null = null, note = false): Promise<boolean> => (chain = chain.then(() => deliver(body, replyTo, note)));
 
   const sink: JobSink = {
-    askParent: (j, question, timeoutMs) => {
-      const answer = waitForApproval(j, question, timeoutMs, (body) => void post(body), log);
+    askParent: (j, question, timeoutMs, request) => {
+      const answer = waitForApproval(j, question, timeoutMs, (body) => void post(body), log, home, request);
       save();
       return answer.finally(() => save());
     },
@@ -160,7 +161,7 @@ export async function runJobRunner(specFile: string | undefined): Promise<number
       if (job.pendingApproval) {
         const answer = job.pendingApproval;
         job.pendingApproval = null;
-        answer(c.body);
+        answer(c.body, `session ${owner}`);
       } else if (job.live) {
         job.awaitingAnswer = true;
         job.live.post(c.body);
@@ -222,6 +223,7 @@ export async function runJobRunner(specFile: string | undefined): Promise<number
     }
     const report = jobReport(job, status, Math.round((Date.now() - job.startedAt) / 1000), text, cause);
     log.info("job turn finished", { status, sessionId: job.sessionId, cause });
+    notifyJobEvent(home, status === "done" ? "finish" : "fail", log);
     // Follow-ups that arrived meanwhile go out right away, into the same session, from this runner.
     if (job.queue.length && job.sessionId && !job.controller.signal.aborted) {
       const queued = job.queue.splice(0).join("\n\n");

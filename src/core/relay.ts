@@ -1,8 +1,11 @@
-import { randomBytes } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
+import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { createServer, type IncomingMessage, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import type { Logger } from "./logger.js";
 import { tokensEqual } from "./token.js";
+import { pidAlive } from "./delegate.js";
 
 /**
  * Permission relay: a delegated subagent that needs a permission asks the process that started it
@@ -25,6 +28,7 @@ export interface PermissionRequest {
   /** What exactly: the command, file path or patch summary. */
   detail: string;
   cwd?: string;
+  reason?: string;
 }
 
 export type PermissionDecision = { allow: true } | { allow: false; message: string };
@@ -96,6 +100,7 @@ export class PermissionRelay {
       tool: String(body.tool ?? "unknown"),
       detail: String(body.detail ?? "").slice(0, 4_000),
       cwd: body.cwd ? String(body.cwd) : undefined,
+      ...(typeof body.reason === "string" ? { reason: body.reason.slice(0, MAX_APPROVAL_REASON_CHARS) } : {}),
     };
     this.log.info("permission requested by subagent", { agent: request.agent, tool: request.tool });
     const decision = await this.handler(request);
@@ -120,4 +125,117 @@ export async function askRelay(req: PermissionRequest, env: NodeJS.ProcessEnv = 
   } catch (err) {
     return { allow: false, message: `agent-bridge: permission relay unreachable (${(err as Error).message})` };
   }
+}
+
+const APPROVALS_DIR = "approvals";
+const APPROVAL_ID = /^[0-9a-f-]{36}$/;
+const ANSWER_PATH = "/answer";
+const ANSWER_TIMEOUT_MS = 5_000;
+const MAX_PORT = 65_535;
+export const MAX_APPROVAL_REASON_CHARS = 4_000;
+
+/** Public dashboard data. Times are milliseconds since the Unix epoch; text is untrusted plain text. */
+export interface PendingApproval {
+  id: string;
+  owner: string;
+  job: string;
+  agent: string;
+  tool: string;
+  command: string;
+  reason: string;
+  askedAt: number;
+  deadline: number;
+}
+
+interface ApprovalRecord extends PendingApproval {
+  pid: number;
+  port: number;
+  token: string;
+}
+
+export type ApprovalAnswer = { decision: "allow" | "deny"; reason?: string };
+export type ApprovalAnswerResult = "answered" | "expired" | "unavailable";
+
+/**
+ * Publish the waiting callback from its owning process (a session or its detached runner). The private
+ * capability stays in the home directory, never in dashboard JSON. Both callers settle the same callback.
+ */
+export async function publishApproval(home: string, approval: PendingApproval, answer: (body: string, by: string) => boolean): Promise<() => void> {
+  if (!APPROVAL_ID.test(approval.id)) throw new Error("invalid approval id");
+  const token = randomBytes(SECRET_BYTES).toString("hex");
+  const dir = join(home, APPROVALS_DIR);
+  const file = join(dir, `${approval.id}.json`);
+  const server = createServer((req, res) => {
+    const reply = (status: number, body: unknown) => {
+      res.writeHead(status, { "content-type": "application/json", "cache-control": "no-store" });
+      res.end(JSON.stringify(body));
+    };
+    void (async () => {
+      if (req.method !== "POST" || req.url !== ANSWER_PATH || !tokensEqual(String(req.headers.authorization ?? ""), `Bearer ${token}`)) return reply(403, { error: "forbidden" });
+      let raw = "";
+      for await (const chunk of req) {
+        raw += chunk;
+        if (raw.length > MAX_REQUEST_BYTES) return reply(400, { error: "request too large" });
+      }
+      const body = JSON.parse(raw) as ApprovalAnswer;
+      if (!body || (body.decision !== "allow" && body.decision !== "deny") || (body.reason !== undefined && (typeof body.reason !== "string" || body.reason.length > MAX_APPROVAL_REASON_CHARS))) return reply(400, { error: "invalid answer" });
+      const accepted = Date.now() < approval.deadline && answer(`${body.decision}${body.reason ? `: ${body.reason}` : ""}`, "dashboard");
+      reply(accepted ? 200 : 409, { outcome: accepted ? "answered" : "expired" });
+    })().catch(() => reply(400, { error: "invalid answer" }));
+  });
+  server.requestTimeout = ANSWER_TIMEOUT_MS;
+  server.headersTimeout = ANSWER_TIMEOUT_MS;
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, RELAY_HOST, resolve);
+  });
+  server.unref();
+  try {
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    writeFileSync(file, JSON.stringify({ ...approval, pid: process.pid, port: (server.address() as AddressInfo).port, token }), { mode: 0o600, flag: "wx" });
+  } catch (err) {
+    server.close();
+    throw err;
+  }
+  return () => {
+    try { rmSync(file, { force: true }); }
+    finally { server.close(); }
+  };
+}
+
+function readApproval(home: string, id: string): ApprovalRecord | null {
+  if (!APPROVAL_ID.test(id)) return null;
+  try {
+    const r = JSON.parse(readFileSync(join(home, APPROVALS_DIR, `${id}.json`), "utf8")) as ApprovalRecord;
+    if (r.id !== id || !Number.isInteger(r.pid) || r.pid < 1 || !pidAlive(r.pid) || !Number.isSafeInteger(r.deadline) || r.deadline <= Date.now() || !Number.isSafeInteger(r.askedAt) || r.deadline <= r.askedAt || !Number.isInteger(r.port) || r.port < 1 || r.port > MAX_PORT || typeof r.token !== "string" || !r.token) return null;
+    if (![r.owner, r.job, r.agent, r.tool, r.command, r.reason].every((value) => typeof value === "string")) return null;
+    return r;
+  } catch { return null; }
+}
+
+export function listPendingApprovals(home: string): PendingApproval[] {
+  let files: string[];
+  try { files = readdirSync(join(home, APPROVALS_DIR)); } catch { return []; }
+  return files.flatMap((file) => {
+    if (!file.endsWith(".json")) return [];
+    const r = readApproval(home, file.slice(0, -5));
+    return r ? [{ id: r.id, owner: r.owner, job: r.job, agent: r.agent, tool: r.tool, command: r.command, reason: r.reason, askedAt: r.askedAt, deadline: r.deadline }] : [];
+  }).sort((a, b) => a.askedAt - b.askedAt);
+}
+
+export function newApprovalId(): string { return randomUUID(); }
+
+/** A missing, timed-out or previously answered id never becomes a follow-up to the job. */
+export async function answerPendingApproval(home: string, id: string, body: ApprovalAnswer): Promise<ApprovalAnswerResult> {
+  const r = readApproval(home, id);
+  if (!r) return "expired";
+  try {
+    const res = await fetch(`http://${RELAY_HOST}:${r.port}${ANSWER_PATH}`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${r.token}` },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(ANSWER_TIMEOUT_MS),
+    });
+    return res.status === 200 ? "answered" : res.status === 409 ? "expired" : "unavailable";
+  } catch { return readApproval(home, id) ? "unavailable" : "expired"; }
 }

@@ -288,8 +288,8 @@ describe("lossless, readable archives", () => {
     manager.restore(() => () => async () => ({ text: "continued", isError: false, sessionId: "session1", details: {} }));
     expect(manager.list().some((j) => j.id === "0")).toBe(false);
     expect(manager.followUp("codex-job-0", "continue").outcome).toBe("started");
-    await vi.waitFor(() => expect(readStore(path).find((j) => j.id === "0")?.status).toBe("done"));
-    expect(readStore(path).find((j) => j.id === "0")).toMatchObject({ future: "keep", supervisor: "supervisor1" });
+    await vi.waitFor(() => expect(readStore(path, undefined, true).find((j) => j.id === "0")?.status).toBe("done"));
+    expect(readStore(path, undefined, true).find((j) => j.id === "0")).toMatchObject({ future: "keep", supervisor: "supervisor1" });
     manager.cancelAll();
   });
   it("snapshots and restores the durable read journal, preserving later consumption", () => {

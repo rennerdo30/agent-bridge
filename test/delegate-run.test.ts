@@ -8,6 +8,8 @@ import { ResourceSlots, SLOT_OWNER_ENV, SLOT_PID_ENV } from "../src/core/resourc
 import { runDelegate, type RunContext } from "../src/mcp/delegate-run.js";
 import type { Job } from "../src/mcp/jobs.js";
 import { DELEGATION_TARGETS } from "../src/mcp/targets.js";
+import { answerPendingApproval, listPendingApprovals, type PermissionDecision, type PermissionRequest } from "../src/core/relay.js";
+import { until } from "./helpers.js";
 
 let home: string;
 beforeEach(() => {
@@ -50,7 +52,7 @@ describe("delegation approval routing", () => {
       return { sessionId: "saved", text: "cleanup denied", isError: false, details: {} };
     });
     const result = await runDelegate(rc, "codex", { title: "cleanup", prompt: "task", access: "edit" }, j.controller.signal, undefined, true, j);
-    expect(rc.jobs!.askParent).toHaveBeenCalledWith(j, expect.stringContaining(command), expect.any(Number));
+    expect(rc.jobs!.askParent).toHaveBeenCalledWith(j, expect.stringContaining(command), expect.any(Number), expect.objectContaining({ tool: "command" }));
     expect(result.text).toContain("denied by parent: command");
   });
 
@@ -84,7 +86,9 @@ describe("delegation approval routing", () => {
       return { sessionId: "saved", text: "done", isError: false, details: {} };
     });
     const result = await runDelegate(rc, "codex", { title: "nested", prompt: "task", cwd, access: "read" }, new AbortController().signal, undefined, true);
-    expect(result.text).toContain(`${join(root, "Library")} -> ${outside}`);
+    // On a subst drive (E: for D:), Windows stores a junction's target under the real drive letter.
+    expect(result.text).toContain(`${join(root, "Library")} -> `);
+    expect(result.text).toMatch(/Library -> [A-Z]:\\.*owner-cache|Library -> \/.*owner-cache/);
   });
 
   it("does not auto-commit through a worktree root replaced by an external junction", async () => {
@@ -96,6 +100,26 @@ describe("delegation approval routing", () => {
     expect(result.text).toContain("Auto-commit skipped: the worktree root is an external link");
     expect(result.text).not.toContain("Could not commit");
   });
+  it("publishes native-dialog approvals without changing foreground routing", async () => {
+    const rc = context();
+    rc.askUser = vi.fn(() => new Promise<PermissionDecision>(() => {}));
+    const j = { ...job(), owner: "parent", foreground: true };
+    vi.spyOn(DELEGATION_TARGETS.codex, "run").mockImplementation(async (_cfg, req) => {
+      const permission: PermissionRequest = { agent: "codex", tool: "shell", detail: "npm test", reason: "Run checks" };
+      const decision = req.approve!(permission);
+      await until(() => listPendingApprovals(home).length === 1);
+      const [entry] = listPendingApprovals(home);
+      expect(entry).toMatchObject({ job: j.name, owner: "parent", command: "npm test", reason: "Run checks" });
+      expect(await answerPendingApproval(home, entry!.id, { decision: "deny", reason: "Revise it" })).toBe("answered");
+      expect(await decision).toEqual({ allow: false, message: "Revise it" });
+      return { sessionId: "saved", text: "done", isError: false, details: {} };
+    });
+    await runDelegate(rc, "codex", { title: "test", prompt: "task", access: "edit" }, j.controller.signal, undefined, false, j);
+    expect(rc.askUser).toHaveBeenCalledOnce();
+    expect(rc.jobs!.askParent).not.toHaveBeenCalled();
+    expect(listPendingApprovals(home)).toEqual([]);
+  });
+
   for (const target of ["codex", "claude", "opencode"] as const) it(`keeps supervisor denial reasons and worker access for ${target}`, async () => {
     const rc = context();
     const j = job();

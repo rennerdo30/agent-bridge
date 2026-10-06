@@ -26,7 +26,8 @@ manifest only after capture succeeds. Incomplete attempts remain under `backups/
 SQLite snapshots include committed WAL pages; JSON captures preserve complete file bytes.
 Each file is consistent, while separate stores may represent nearby instants during live activity.
 Active stores are captured before archives so archive moves cannot remove the only backup copy.
-Snapshots cover primary/archive databases and JSON stores/metadata, including archived jobs.
+Snapshots cover primary/archive databases and JSON stores/metadata, including archived jobs
+and the durable read journal.
 Run log text, credentials and the dashboard launch secret are not part of the rotating snapshot.
 Keep the entire data directory in normal filesystem backups if you need all logs and credentials.
 

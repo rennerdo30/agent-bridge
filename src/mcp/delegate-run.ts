@@ -21,7 +21,7 @@ import { scanWorktreeLinks, WORKTREE_LINK_HINT, worktreeLinkWarning } from "../c
 import { changedFiles, createWorktree, finishWorktree, gitChangeSnapshot, gitDirsOutside, handoffWarning, subagentCommitMessage, worktreeReport, type Worktree } from "../core/worktree.js";
 import { formatSiblingMessages, formatUsage } from "./format.js";
 import { SiblingLink } from "./siblings.js";
-import type { Job, RunResult } from "./jobs.js";
+import { denyPendingApprovals, waitForApproval, type Job, type RunResult } from "./jobs.js";
 import { DELEGATION_TARGETS, supportsAsk, type Access, type RelayWiring, type TargetArgs } from "./targets.js";
 import { JOB_SETTING_KEYS } from "./job-settings.js";
 
@@ -48,7 +48,7 @@ export type DelegateArgs = { prompt: string; model?: string; effort?: string; se
 
 /** Where a background job's approval questions, answers and facts go: this session's JobManager, or a job runner's link to it. */
 export interface JobSink {
-  askParent(job: Job, question: string, timeoutMs: number): Promise<{ allow: boolean; reason: string }>;
+  askParent(job: Job, question: string, timeoutMs: number, request?: PermissionRequest): Promise<{ allow: boolean; reason: string }>;
   /** isAnswer: its answer to a live message (wakes the session); else a note unless it replies to something. */
   fromSubagent(job: Job, body: string, replyTo: string | null, isAnswer?: boolean): void;
   note(job: Job, facts: { sessionId?: string | null; workdir?: string | null; worktree?: Worktree | null }): void;
@@ -141,9 +141,15 @@ export async function runDelegate(
   const asked: string[] = [];
   let relayCalls = 0;
   const codexHash = target === "codex" ? codexPermissionHookHash() : null;
+  // Native permission dialogs keep their existing eligibility; the dashboard can answer the same wait.
+  const askUser = rc.askUser ? async (r: PermissionRequest): Promise<PermissionDecision> => {
+    if (!job) return rc.askUser!(r);
+    const decision = await waitForApproval(job, `${r.tool}: ${r.detail}`, PARENT_APPROVAL_TIMEOUT_MS,
+      (body) => rc.jobs?.fromSubagent(job, body, null), dlog, rc.home, r, () => rc.askUser!(r));
+    return decision.allow ? { allow: true } : { allow: false, message: decision.reason.replace(/^deny:\s*/, "") };
+  } : undefined;
   try {
-    if (access === "ask" && rc.askUser) {
-      const askUser = rc.askUser;
+    if (access === "ask" && askUser) {
       const decide = async (r: PermissionRequest) => {
         relayCalls++;
         const d = await askUser(r);
@@ -183,12 +189,12 @@ export async function runDelegate(
       // the user away). A blocking ask_* caller cannot answer while it waits, so that one asks the user.
       // Name the allow_tools pattern that would cover this call, so the next spawn need not ask.
       const hint = approvalHint(r);
-      const a = await rc.jobs.askParent(job, `${r.tool.replace(/^mcp:/, "MCP server ")}: ${r.detail}${hint}`, PARENT_APPROVAL_TIMEOUT_MS);
+      const a = await rc.jobs.askParent(job, `${r.tool.replace(/^mcp:/, "MCP server ")}: ${r.detail}${hint}`, PARENT_APPROVAL_TIMEOUT_MS, r);
       d = a.allow ? { allow: true } : { allow: false, message: `Denied by supervisor ${me}: ${a.reason || "no reason supplied"}` };
       asked.push(`${d.allow ? "allowed" : "denied"} by ${me}: ${r.tool} ${r.detail.slice(0, 80)}`);
-    } else if (rc.askUser) {
+    } else if (askUser) {
       relayCalls++;
-      d = await rc.askUser(r);
+      d = await askUser(r);
       asked.push(`${d.allow ? "allowed" : "denied"}: ${r.tool} ${r.detail.slice(0, 80)}`);
     } else d = r.tool.startsWith("mcp:") && access === "edit" ? { allow: true } : { allow: false, message: "No one to ask in this session." };
     if (d.allow && r.tool.startsWith("mcp:")) allowedServers.add(r.tool);
@@ -355,6 +361,7 @@ export async function runDelegate(
     }
     throw err;
   } finally {
+    if (job) denyPendingApprovals(job);
     clearInterval(slotTimer);
     if (slots) {
       try { slots.release(slotOwner); }
