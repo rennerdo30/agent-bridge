@@ -1,9 +1,9 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync } from "node:fs";
-import { basename, isAbsolute, join, relative, resolve, toNamespacedPath } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, toNamespacedPath } from "node:path";
 import { DelegateError, runProcess } from "./delegate.js";
 import type { Logger } from "./logger.js";
-import { unlinkLinks } from "./worktree-links.js";
+import { resolveWorktreeRemovalPath, unlinkLinks } from "./worktree-links.js";
 
 /**
  * Git worktrees for editing subagents: each one works on its own branch in its own checkout, so
@@ -105,7 +105,7 @@ async function unlockWorktree(repoRoot: string, path: string, log: Logger): Prom
 async function removeWorktree(repoRoot: string, path: string, branch: string, log: Logger): Promise<void> {
   // Refuse removal if links cannot be detached; never let Git reach a shared cache.
   if (existsSync(toNamespacedPath(path))) {
-    try { unlinkLinks(path); }
+    try { path = resolveWorktreeRemovalPath(path, dirname(path)); unlinkLinks(path); }
     catch (err) { log.warn("worktree cleanup refused; preserving checkout and branch", { path, err: (err as Error).message }); return; }
   }
   await git([...trustArgs(path), "worktree", "remove", "--force", "--force", path], repoRoot, log).catch(() => {});
@@ -119,8 +119,9 @@ async function removeWorktree(repoRoot: string, path: string, branch: string, lo
 }
 
 /** Node's namespaced Windows paths also cover deep ignored folders that Git could not remove. */
-export function removeWorktreeDirectory(path: string): void {
+export function removeWorktreeDirectory(path: string, managedRoot = path): void {
   if (!existsSync(toNamespacedPath(path))) return;
+  path = resolveWorktreeRemovalPath(path, managedRoot);
   unlinkLinks(path);
   rmSync(toNamespacedPath(resolve(path)), { recursive: true, force: true, maxRetries: REMOVE_RETRIES });
 }

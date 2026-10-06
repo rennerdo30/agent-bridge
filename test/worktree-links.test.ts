@@ -3,10 +3,64 @@ import { existsSync, mkdirSync, mkdtempSync, realpathSync, readFileSync, rmSync,
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { scanWorktreeLinks, unlinkLinks, WORKTREE_LINK_HINT, worktreeLinkWarning } from "../src/core/worktree-links.js";
+import { resolveWorktreeRemovalPath, scanWorktreeLinks, unlinkLinks, WORKTREE_LINK_HINT, worktreeLinkWarning } from "../src/core/worktree-links.js";
 import { removeWorktreeDirectory } from "../src/core/worktree.js";
 
 describe("external worktree links", () => {
+  it("resolves aliases above the managed boundary while refusing links inside it", () => {
+    const fixtures = join(process.cwd(), ".agent-bridge-test");
+    mkdirSync(fixtures, { recursive: true });
+    const home = realpathSync.native(mkdtempSync(join(fixtures, "ab-alias-cleanup-")));
+    const actual = join(home, "actual"), alias = join(home, "alias"), owner = join(home, "owner");
+    const container = join(actual, "worktrees"), root = join(container, "job");
+    mkdirSync(root, { recursive: true }); mkdirSync(owner);
+    writeFileSync(join(owner, "keep.txt"), "owner bytes\n");
+    try {
+      symlinkSync(actual, alias, "junction");
+      const aliasedContainer = join(alias, "worktrees"), aliasedRoot = join(aliasedContainer, "job");
+      expect(resolveWorktreeRemovalPath(aliasedRoot, aliasedContainer)).toBe(root);
+      symlinkSync(owner, join(root, "linked"), "junction");
+      expect(() => removeWorktreeDirectory(join(aliasedRoot, "linked"), aliasedContainer)).toThrow("linked path");
+      expect(() => resolveWorktreeRemovalPath(owner, container)).toThrow("outside the managed");
+      // Removing a whole worktree detaches its leaf links; it does not recurse through them.
+      removeWorktreeDirectory(aliasedRoot, aliasedContainer);
+      expect(existsSync(root)).toBe(false);
+      expect(readFileSync(join(owner, "keep.txt"), "utf8")).toBe("owner bytes\n");
+      expect(existsSync(alias)).toBe(true);
+    } finally { rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); }
+  });
+
+  it("matches directory-only ignore rules, negations and nested overrides without reading caches", () => {
+    const fixtures = join(process.cwd(), ".agent-bridge-test");
+    mkdirSync(fixtures, { recursive: true });
+    const home = realpathSync.native(mkdtempSync(join(fixtures, "ab-ignore-policy-")));
+    const actual = join(home, "actual"), root = join(actual, "repo"), alias = join(home, "alias"), cache = join(home, "cache");
+    const aliasedRoot = join(alias, "repo");
+    mkdirSync(join(root, "client"), { recursive: true }); mkdirSync(cache);
+    const runGit = (...args: string[]) => execFileSync("git", args, { cwd: root, encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] });
+    try {
+      runGit("init", "-q");
+      symlinkSync(actual, alias, "junction");
+      symlinkSync(cache, join(root, "client", "node_modules"), "junction");
+      writeFileSync(join(cache, ".gitignore"), "!node_modules/\n"); // Must never load rules in the linked cache.
+      writeFileSync(join(root, ".gitignore"), "node_modules/\n!client/node_modules/\n");
+      expect(scanWorktreeLinks(aliasedRoot).readOnlyCacheLinks ?? []).toEqual([]);
+      writeFileSync(join(root, "client", ".gitignore"), "node_modules/\n");
+      expect(scanWorktreeLinks(aliasedRoot).readOnlyCacheLinks).toEqual([{ path: join(aliasedRoot, "client", "node_modules"), target: cache }]);
+      writeFileSync(join(root, "client", ".gitignore"), "!node_modules/\n");
+      expect(scanWorktreeLinks(aliasedRoot).readOnlyCacheLinks ?? []).toEqual([]);
+      writeFileSync(join(root, "client", ".gitignore"), "");
+      writeFileSync(join(root, ".gitignore"), "");
+      writeFileSync(join(root, ".git", "info", "exclude"), "/client/node_modules/\n");
+      expect(scanWorktreeLinks(aliasedRoot).readOnlyCacheLinks).toHaveLength(1);
+      writeFileSync(join(root, ".git", "info", "exclude"), "");
+      writeFileSync(join(root, "global-ignore"), "/client/node_modules/\n");
+      runGit("config", "core.excludesFile", "global-ignore");
+      expect(scanWorktreeLinks(aliasedRoot).readOnlyCacheLinks).toHaveLength(1);
+      expect(readFileSync(join(cache, ".gitignore"), "utf8")).toBe("!node_modules/\n");
+    } finally { rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); }
+  });
+
   it("permits reads from ignored Unity and dependency caches without allowing owner folders", () => {
     const home = realpathSync.native(mkdtempSync(join(tmpdir(), "ab-read-cache-")));
     const root = join(home, "worktree"), cache = join(home, "cache");
@@ -58,7 +112,7 @@ describe("external worktree links", () => {
     try {
       symlinkSync(owner, root, "junction");
       expect(() => unlinkLinks(root)).toThrow("linked path");
-      expect(() => removeWorktreeDirectory(join(root, "child"))).toThrow("linked path");
+      expect(() => removeWorktreeDirectory(join(root, "child"), root)).toThrow("linked path");
       expect(readFileSync(join(owner, "child", "keep.txt"), "utf8")).toBe("unique source bytes\n");
       expect(existsSync(root)).toBe(true);
     } finally { rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); }
