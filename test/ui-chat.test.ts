@@ -8,7 +8,7 @@ function page() {
     if (!elements.has(id)) elements.set(id, {
       value: "", innerHTML: "", textContent: "", dataset: {}, checked: true, attrs: {} as Record<string, string>,
       classes: new Set<string>(id === "jobSettings" ? ["hidden"] : []),
-      focus() {},
+      focus() {}, querySelectorAll: () => [], querySelector: () => null,
       get classList() {
         const c = this.classes as Set<string>;
         return { toggle: (n: string, on?: boolean) => ((on ?? !c.has(n)) ? c.add(n) : c.delete(n)), add: (n: string) => c.add(n), remove: (n: string) => c.delete(n), contains: (n: string) => c.has(n) };
@@ -23,7 +23,7 @@ function page() {
   const fetch = vi.fn(() => new Promise(() => {}));
   const document = { getElementById: element, documentElement: { dataset: {} }, addEventListener() {}, querySelectorAll: () => [] };
   const location = { hash: "" };
-  const api = new Function("document", "window", "location", "localStorage", "setInterval", "fetch", `${script}\nreturn { renderJobForm, renderSendForm, modelsCard, renderNetwork, renderSide, chatHtml, setModel: (m) => { model = m; state = { peers: [] }; }, setRoute: (r) => route = r, setNet: (n, i) => { net = n; invite = i || null; } };`)(document, { addEventListener() {} }, location, { setItem() {}, removeItem() {} }, () => 0, fetch);
+  const api = new Function("document", "window", "location", "localStorage", "setInterval", "fetch", `${script}\nreturn { renderJobForm, renderSendForm, modelsCard, renderNetwork, renderSide, chatHtml, renderApprovals, answerApproval, renderDecisions, setApprovals: (a) => { approvals = a; }, setDecisions: (d) => { decisions = d; decLoadedAt = Date.now(); }, setModel: (m) => { model = m; state = { peers: [] }; }, setRoute: (r) => route = r, setNet: (n, i) => { net = n; invite = i || null; } };`)(document, { addEventListener() {} }, location, { setItem() {}, removeItem() {} }, () => 0, fetch);
   return { ...api, element, fetch, location };
 }
 const group = (key: string) => ({ key, job: `codex-job-${key}`, owner: "claude-app", agent: "codex", status: "done", percent: null, turns: [{ name: `run-${key}`, startedAt: 0 }] });
@@ -262,5 +262,51 @@ describe("native chats", () => {
     const html = p.element("sideTree").innerHTML;
     expect(html.match(/tree-row tree-chat/g)?.length).toBe(1);
     expect(html).toContain('href="#/s/claude-app/~chat"');
+  });
+});
+
+describe("waiting for you and decisions", () => {
+  const request = { id: "11111111-2222-3333-4444-555555555555", owner: "claude-app", job: "codex-job-1", agent: "codex", tool: "shell", command: "rm -rf <build>", reason: "Clean the <output>", askedAt: Date.now(), deadline: Date.now() + 120_000 };
+
+  it("shows a request escaped, with its countdown, and flags it in the sidebar", () => {
+    const p = page();
+    p.setModel({ sessions: [], byName: new Map(), groups: new Map() });
+    p.setRoute({ session: null, page: "approvals" });
+    p.setApprovals([request]);
+    p.renderApprovals();
+    const html = p.element("apList").innerHTML;
+    expect(html).toContain("rm -rf &lt;build&gt;");
+    expect(html).toContain("Clean the &lt;output&gt;");
+    expect(html).toMatch(/auto-deny in [12]:\d\d/);
+    p.renderSide();
+    expect(p.element("tabApprovals").innerHTML).toContain('class="count attn">1');
+  });
+
+  it("answers with the typed reason through the approvals API", async () => {
+    const p = page();
+    p.setModel({ sessions: [], byName: new Map(), groups: new Map() });
+    p.setRoute({ session: null, page: "approvals" });
+    p.setApprovals([request]);
+    p.renderApprovals();
+    p.element("apList").listeners.get("input")({ target: { dataset: { apWhy: request.id }, value: "Only the build folder" } });
+    p.fetch.mockResolvedValueOnce({ ok: true, json: async () => ({ outcome: "answered" }) });
+    p.fetch.mockResolvedValueOnce({ ok: true, json: async () => ({ approvals: [] }) });
+    await p.answerApproval(request.id, "deny");
+    const post = p.fetch.mock.calls.find(([url]: any[]) => url === "/api/approvals/" + request.id);
+    expect(post[1].headers["x-agent-bridge"]).toBe("1");
+    expect(JSON.parse(post[1].body)).toEqual({ decision: "deny", reason: "Only the build folder" });
+    expect(p.element("apList").innerHTML).toContain("Denied: codex-job-1");
+  });
+
+  it("lists decisions with their scope and offers earlier versions", () => {
+    const p = page();
+    p.setRoute({ session: null, page: "decisions" });
+    p.setDecisions([{ id: "d2", topic: "friends", text: "One platform-wide <friend> list", scope: { project: "E:/Development/game" }, author: { name: "claude-Development" }, createdAt: Date.now(), supersedes: "d1", current: true }]);
+    p.renderDecisions();
+    const html = p.element("decList").innerHTML;
+    expect(html).toContain("friends");
+    expect(html).toContain("&lt;friend&gt;");
+    expect(html).toContain(">game<");
+    expect(html).toContain("Show earlier versions");
   });
 });
