@@ -48,6 +48,10 @@ export interface PeerInfo {
   sessionId: string | null;
   startedAt: number;
   autoWake: boolean;
+  wakeOnDirect?: boolean;
+  /** The receiving session has a live wake endpoint or channel. */
+  wakeAvailable?: boolean;
+  wakeMaxHops?: number;
   /** Whether the agent is working on a turn right now, when known (reported by hooks). */
   activity?: PeerActivity | null;
   /** agent-bridge version of this peer. */
@@ -108,7 +112,14 @@ export interface SendArgs {
    */
   dedupeKey?: string;
 }
+export interface MessageReceipt {
+  recipient: string;
+  readAt: number | null;
+}
+
 export interface SendResult {
+  /** Presence at routing time; delivery does not mean consumption. */
+  recipientStates?: Pick<PeerInfo, "name" | "activity" | "autoWake" | "wakeOnDirect" | "wakeAvailable" | "wakeMaxHops">[];
   messages: BridgeMessage[];
   /** Names of recipients that were online and received the message immediately. */
   deliveredTo: string[];
@@ -129,6 +140,9 @@ export interface UpdatePeerArgs {
   jobTitle?: string;
   sessionId?: string | null;
   autoWake?: boolean;
+  wakeOnDirect?: boolean;
+  wakeAvailable?: boolean;
+  wakeMaxHops?: number;
   cwd?: string;
   activity?: PeerActivity;
   /** Requested new name; the broker may add a suffix if it is taken. */
@@ -148,6 +162,7 @@ export interface RequestMap {
   siblings: [Record<string, never>, SiblingPeer[]];
   sendSibling: [SendArgs & { maxHops: number }, SendResult];
   ack: [AckArgs, { acked: number }];
+  messageReceipt: [{ id: string }, MessageReceipt[]];
   pending: [PendingArgs, BridgeMessage[]];
   updatePeer: [UpdatePeerArgs, PeerInfo];
   /** Take over the unread mail of "-N" stand-in names of this peer that no one holds (after a reload). */

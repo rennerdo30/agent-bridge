@@ -1,4 +1,5 @@
-import type { BridgeMessage, PeerInfo } from "../core/protocol.js";
+import { DEFAULT_MAX_HOPS } from "../core/constants.js";
+import { SIBLING_NOTE_SUFFIX, type BridgeMessage, type PeerInfo, type SendResult } from "../core/protocol.js";
 import type { LinkMessage } from "../core/parent-link.js";
 
 /**
@@ -94,7 +95,8 @@ export function formatPeer(p: PeerInfo, selfId?: string, now: number = Date.now(
   const flags = [
     p.agent,
     p.activity ?? null,
-    p.autoWake ? "auto-wake" : null,
+    p.wakeOnDirect && p.wakeAvailable ? "direct messages wake this session" : null,
+    p.autoWake ? "auto-wake" : p.activity === "idle" && !(p.wakeOnDirect && p.wakeAvailable) ? "auto-wake off: will be read on its next turn" : null,
     `up ${formatUptime(now - p.startedAt)}`,
     p.id === selfId ? "you" : null,
   ]
@@ -128,4 +130,20 @@ export function formatDuration(ms: number): string {
   const m = Math.floor(s / 60);
   if (m < 60) return `${m}m ${s % 60}s`;
   return `${Math.floor(m / 60)}h ${m % 60}m`;
+}
+
+/** Socket delivery is not a read receipt, locally or over a paired link. */
+export function formatDelivery(result: SendResult, maxHops = DEFAULT_MAX_HOPS): string[] {
+  return result.deliveredTo.map((name) => {
+    const peer = result.recipientStates?.find((p) => p.name === name);
+    const message = result.messages.find((m) => m.recipient === name);
+    const direct = message?.to === name || (name.includes("/") && message?.to.includes("/") && message.to.split("/").at(-1) === name.split("/").at(-1));
+    const canWake = message && message.hop < (peer?.wakeMaxHops ?? maxHops) && !message.conversationId.endsWith(SIBLING_NOTE_SUFFIX) &&
+      peer?.wakeAvailable && (peer.autoWake || (peer.wakeOnDirect && direct));
+    const hint = peer?.activity === "idle"
+      ? canWake ? "idle; wake requested on the receiving PC, awaiting consumption"
+        : "idle; will be read on its next turn (no wake for this delivery)"
+      : "waiting for the peer to consume it";
+    return `Delivered to inbox: ${name} (${hint}). Delivery does not mean read.`;
+  });
 }

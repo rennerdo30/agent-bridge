@@ -1,7 +1,8 @@
 import { HOOK_MAX_MESSAGES, STOP_WAIT_CAP_MS } from "../core/constants.js";
 import { isSiblingNote, type BridgeMessage } from "../core/protocol.js";
 import { formatMessages, formatParentMessages, formatPeer } from "./format.js";
-import { WAKE_HEADER } from "./rewake.js";
+import { MessageWaitStore, resumeWaitHint } from "./message-wait.js";
+import { shouldWakeClaudeMessage, WAKE_HEADER } from "./rewake.js";
 import type { ServerContext } from "./server.js";
 
 /** Hook events agent-bridge subscribes to in both Claude Code and Codex. */
@@ -34,12 +35,25 @@ function context(event: HookEvent, additionalContext: string): HookOutput {
   return { hookSpecificOutput: { hookEventName: event, additionalContext } };
 }
 
+export function discardFinishedNotes(ctx: ServerContext): void {
+  const node = ctx.node;
+  if (!node) return;
+  // A completed job's old status chatter is history, never a new instruction.
+  const obsolete = node.unread().filter((m) => {
+    if (!ctx.jobs?.isNote(m)) return false;
+    const job = ctx.jobs.find(m.from.name);
+    return job !== undefined && job.status !== "running";
+  });
+  node.markRead(obsolete.map((m) => m.id));
+}
+
 /** Messages eligible to be injected now. `wakeOnly` limits to those allowed to trigger work (below the hop limit). */
 function take(ctx: ServerContext, wakeOnly: boolean, notesOnly = false): BridgeMessage[] {
   const node = ctx.node!;
+  discardFinishedNotes(ctx);
   const msgs = node
     .unread()
-    .filter((m) => !notesOnly || isSiblingNote(m))
+    .filter((m) => !notesOnly || isSiblingNote(m) || ctx.jobs?.isNote(m) || !shouldWakeClaudeMessage(node, ctx.cfg, m))
     // Ending a turn: a running subagent's status note does not keep it going; it comes with the next prompt.
     .filter((m) => !wakeOnly || (m.hop < ctx.cfg.maxHops && !ctx.jobs?.isNote(m)))
     .slice(0, HOOK_MAX_MESSAGES);
@@ -101,6 +115,7 @@ export async function buildHookResponse(ctx: ServerContext, input: HookInput): P
         `[agent-bridge] You are connected to agent-bridge as "${node.name}".`,
         peers.length ? `Peers online:\n${peers.map((p) => formatPeer(p)).join("\n")}` : "No other agents are online right now.",
       ];
+      lines.push(...new MessageWaitStore(ctx.home).pending(node).map(resumeWaitHint));
       const unread = node.unread().length;
       if (unread > 0 && !channel) lines.push(`You have ${unread} unread peer message(s); call the "inbox" tool to read them.`);
       return context("SessionStart", lines.join("\n"));

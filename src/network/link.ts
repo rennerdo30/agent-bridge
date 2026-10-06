@@ -19,6 +19,7 @@ const peerSchema = z.object({
   id: textId, name: z.string().regex(NETWORK_NAME_PATTERN), agent: z.enum(AGENT_KINDS),
   cwd: z.string().max(MAX_METADATA_CHARS), pid: z.number().int().nonnegative(), agentPid: z.number().int().nonnegative().nullable(),
   sessionId: z.string().max(MAX_METADATA_CHARS).nullable(), startedAt: z.number().nonnegative(), autoWake: z.boolean(),
+  wakeOnDirect: z.boolean().optional(), wakeAvailable: z.boolean().optional(), wakeMaxHops: z.number().int().min(0).max(MAX_HOP_COUNT).optional(),
   activity: z.enum(["busy", "idle"]).nullable().optional(), version: z.string().max(MAX_ID_CHARS).optional(), jobAgent: z.enum(AGENT_KINDS).optional(),
 });
 const peersSchema = z.array(peerSchema).max(MAX_NETWORK_PEERS).refine((peers) => new Set(peers.map((p) => p.name)).size === peers.length && new Set(peers.map((p) => p.id)).size === peers.length);
@@ -29,17 +30,19 @@ const messageSchema = z.object({
   body: z.string().min(1).max(MAX_BODY_CHARS), createdAt: z.number().nonnegative(), readAt: z.null(),
 });
 const frameSchema = z.discriminatedUnion("type", [
-  publicIdentitySchema.extend({ type: z.literal("hello"), v: z.literal(NETWORK_VERSION), peers: peersSchema, echo: z.boolean().optional() }),
+  publicIdentitySchema.extend({ type: z.literal("hello"), v: z.literal(NETWORK_VERSION), peers: peersSchema, echo: z.boolean().optional(), receipts: z.boolean().optional() }),
   z.object({ type: z.literal("peers"), peers: peersSchema }),
   z.object({ type: z.literal("send"), rid: z.uuid(), message: messageSchema }),
   z.object({ type: z.literal("echo"), rid: z.uuid() }),
+  z.object({ type: z.literal("receipt"), rid: z.uuid(), id: z.uuid(), sender: textId }),
   z.object({ type: z.literal("files"), rid: z.uuid(), transfer: transferSchema }),
-  z.object({ type: z.literal("result"), rid: z.uuid(), delivered: z.boolean().optional(), transfer: transferResultSchema.optional(), error: z.string().max(MAX_METADATA_CHARS).optional() }),
+  z.object({ type: z.literal("result"), rid: z.uuid(), delivered: z.boolean().optional(), readAt: z.number().nonnegative().nullable().optional(), transfer: transferResultSchema.optional(), error: z.string().max(MAX_METADATA_CHARS).optional() }),
 ]);
 type NetworkFrame = z.infer<typeof frameSchema>;
 
 export interface NetworkBroker {
   peers(): PeerInfo[];
+  receipt?(id: string, sender: string): number | null;
   receive(message: BridgeMessage): { delivered: boolean };
 }
 export interface NetworkStatus {
@@ -51,10 +54,10 @@ export interface NetworkStatus {
   paired: (NetworkIdentity & { connected: boolean; health?: { lastVerifiedAt: number; roundTripMs: number } })[];
 }
 interface Pending {
-  resolve: (result: boolean | TransferResult) => void;
+  resolve: (result: boolean | TransferResult | number | null) => void;
   reject: (error: Error) => void;
   timer: NodeJS.Timeout;
-  kind: "send" | "files" | "echo";
+  kind: "send" | "files" | "echo" | "receipt";
 }
 
 /** Bounded JSON records, only after TLS has authenticated possession of a pairing key. */
@@ -62,6 +65,7 @@ class Link {
   remote: NetworkPair | null = null;
   peers: PeerInfo[] = [];
   private echoSupported = false;
+  private receiptsSupported = false;
   private buffer = Buffer.alloc(0);
   private readonly pending = new Map<string, Pending>();
   private readyResolve!: () => void;
@@ -88,6 +92,7 @@ class Link {
             this.remote = expected ?? service.keys.accept(key, frame);
             this.peers = frame.peers;
             this.echoSupported = frame.echo === true;
+            this.receiptsSupported = frame.receipts === true;
             service.attach(this);
             clearTimeout(this.deadline);
             this.readyResolve();
@@ -105,7 +110,7 @@ class Link {
       this.pending.clear();
       service.detach(this);
     });
-    this.write({ type: "hello", v: NETWORK_VERSION, ...service.keys.identity, peers: service.localPeers(), echo: true });
+    this.write({ type: "hello", v: NETWORK_VERSION, ...service.keys.identity, peers: service.localPeers(), echo: true, receipts: Boolean(service.supportsReceipts) });
   }
 
   write(frame: NetworkFrame): void {
@@ -123,6 +128,11 @@ class Link {
     return this.request({ type: "send", rid: randomUUID(), message: messageSchema.parse(message) }) as Promise<boolean>;
   }
 
+  receipt(id: string, sender: string): Promise<number | null> {
+    if (!this.receiptsSupported) return Promise.reject(new Error("Remote broker does not support read receipts. Update and reload its hosting sessions."));
+    return this.request({ type: "receipt", rid: randomUUID(), id, sender }) as Promise<number | null>;
+  }
+
   files(transfer: FileTransfer): Promise<TransferResult> {
     return this.request({ type: "files", rid: randomUUID(), transfer: transferSchema.parse(transfer) }) as Promise<TransferResult>;
   }
@@ -133,7 +143,7 @@ class Link {
     if (result !== true) throw new Error("network echo was not acknowledged");
   }
 
-  private request(frame: Extract<NetworkFrame, { type: "send" | "files" | "echo" }>): Promise<boolean | TransferResult> {
+  private request(frame: Extract<NetworkFrame, { type: "send" | "files" | "echo" | "receipt" }>): Promise<boolean | TransferResult | number | null> {
     if (this.pending.size >= MAX_NETWORK_REQUESTS) return Promise.reject(new Error("too many network requests"));
     return new Promise((resolve, reject) => {
       const rid = frame.rid;
@@ -159,12 +169,18 @@ class Link {
       this.pending.delete(frame.rid);
       if (frame.error) pending.reject(new Error(frame.error));
       else if ((pending.kind === "send" || pending.kind === "echo") && frame.delivered !== undefined) pending.resolve(frame.delivered);
+      else if (pending.kind === "receipt" && frame.readAt !== undefined) pending.resolve(frame.readAt);
       else if (pending.kind === "files" && frame.transfer) pending.resolve(frame.transfer);
       else pending.reject(new Error("invalid network result"));
       return;
     }
     if (frame.type === "echo") { this.write({ type: "result", rid: frame.rid, delivered: true }); return; }
     try {
+      if (frame.type === "receipt") {
+        const readAt = this.service.readReceipt(frame.id, `${this.remote!.id}/${frame.sender}`);
+        this.write({ type: "result", rid: frame.rid, readAt });
+        return;
+      }
       const from = frame.type === "send" ? frame.message.from : frame.transfer.from;
       const sender = this.peers.find((p) => p.id === from.id && p.name === from.name);
       if (!sender || (sender.jobAgent ?? sender.agent) !== from.agent) throw new Error("sender not advertised by paired instance");
@@ -176,6 +192,7 @@ class Link {
       }
       const message = { ...frame.message, from: { ...frame.message.from, id: `${remote.id}/${frame.message.from.id}`, name: `${remote.name}/${frame.message.from.name}` } };
       const result = this.service.receive(message);
+      this.refresh();
       this.write({ type: "result", rid: frame.rid, delivered: result.delivered });
     } catch (err) {
       this.write({ type: "result", rid: frame.rid, error: String((err as Error).message).slice(0, MAX_METADATA_CHARS) });
@@ -207,6 +224,15 @@ export class NetworkService {
   get port(): number {
     const address = this.server?.address();
     return address && typeof address !== "string" ? address.port : 0;
+  }
+
+  get supportsReceipts(): boolean { return Boolean(this.broker.receipt); }
+  readReceipt(id: string, sender: string): number | null {
+    if (!this.broker.receipt) throw new Error("read receipts unavailable");
+    return this.broker.receipt(id, sender);
+  }
+  async receipt(address: string, id: string, sender: string): Promise<number | null> {
+    return this.target(address).link.receipt(id, sender);
   }
 
   localPeers(): PeerInfo[] { return peersSchema.parse(this.broker.peers()); }
@@ -328,7 +354,7 @@ export class NetworkService {
     const { link, target } = this.target(message.recipient);
     const recipient = `${link.remote!.name}/${target}`;
     const delivered = await link.send({ ...message, recipient: target });
-    return { messages: [{ ...message, recipient }], deliveredTo: delivered ? [recipient] : [], queuedFor: delivered ? [] : [recipient] };
+    return { messages: [{ ...message, recipient }], deliveredTo: delivered ? [recipient] : [], queuedFor: delivered ? [] : [recipient], recipientStates: link.peers.filter((p) => p.name === target).map((p) => ({ name: recipient, activity: p.activity, autoWake: p.autoWake, wakeOnDirect: p.wakeOnDirect, wakeAvailable: p.wakeAvailable, wakeMaxHops: p.wakeMaxHops })) };
   }
 
   private target(address: string): { link: Link; target: string } {

@@ -289,9 +289,17 @@ agent-bridge detects this flag on its parent process and switches to channel del
 
 ### Waiting for results and replies
 
-**Claude Code:** a turn never waits. When a Claude session has background subagents running (`spawn_*`), or has asked a peer a question, its turn ends normally and you can keep working. A background hook (Claude Code's `asyncRewake`) waits instead. When a subagent result or the reply arrives, it wakes the session with it. Unrelated peer messages don't wake it, unless auto-wake is on; they are shown on your next prompt.
+**Claude Code:** a turn never waits. When a Claude session has background subagents running (`spawn_*`), or has asked a peer a question, its turn ends normally and you can keep working. A background hook (Claude Code's `asyncRewake`) waits instead. When a subagent result or the reply arrives, it wakes the session with it. Direct messages from another session wake idle Claude by default, including messages from a paired PC. Set `"wakeOnDirect": false` to queue them for its next turn. Broadcasts, agent-kind targets and status `:note` messages do not trigger this direct wake; broadcasts and agent-kind messages need auto-wake. The hop limit always applies.
 
 **Codex and opencode** use a listen window instead. After such a session sends a bridge message or spawns a subagent, its `Stop` hook keeps the turn open for up to `lingerSec` seconds (default 300) waiting for the reply. Press Esc to stop listening early, or set `lingerSec` to `0` to disable it.
+
+`send` reports inbox delivery separately from wake policy. A read receipt is available with
+`wait_for_message(read_receipt_of=<sent message id>)`, locally and across paired PCs. It confirms
+consumption by the bridge's hook, tool or channel, not that the agent completed the work.
+Single waits are capped at 110 seconds to stay below Claude Code's default 120-second automatic
+background threshold; repeat with the same filters for longer waits. Stdio calls cannot survive
+`/reload-plugins`. Pending filters are saved before waiting; after reconnect, `peers` and
+`SessionStart` show a `resume_id` for `wait_for_message`. Messages remain queued until consumed.
 
 ### Auto-wake and loop protection
 
@@ -306,6 +314,7 @@ Every reply increments a conversation's hop count. Messages at or above `maxHops
 ```json
 {
   "autoWake": false,
+  "wakeOnDirect": true,
   "maxHops": 6,
   "maxJobs": 8,
   "autoApproveTools": ["pair-desk.get_*", "pair-desk.list_*"],
@@ -322,6 +331,7 @@ Every reply increments a conversation's hop count. Messages at or above `maxHops
 | `AGENT_BRIDGE_HOME` | Data directory (default `~/.agent-bridge`) |
 | `AGENT_BRIDGE_NAME` | Peer name |
 | `AGENT_BRIDGE_AUTO_WAKE` | `on` / `off` |
+| `AGENT_BRIDGE_WAKE_ON_DIRECT` | Wake idle Claude for messages addressed to its session name (default `on`); `wakeOnDirect` in config |
 | `AGENT_BRIDGE_MAX_HOPS` | Loop limit |
 | `AGENT_BRIDGE_MAX_JOBS` | Background subagents running at once per session (default 8, max 50); `maxJobs` in the config file. Continuing a finished subagent while all slots are taken queues it; it starts when one frees up. Mid-session, ask the agent to change it ("allow 10 subagents"): the `max_subagents` tool applies it at once, with `save=true` also for new sessions |
 | `AGENT_BRIDGE_LINGER_SEC` | Listen window after sending (0 disables) |
