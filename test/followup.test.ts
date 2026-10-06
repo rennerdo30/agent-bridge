@@ -35,6 +35,23 @@ function fakeAgent() {
 const bodies = () => me.unread().map((m) => m.body);
 
 describe("messaging subagents", () => {
+  it("does not resume a finished job for a running-only coordination note", async () => {
+    const agent = fakeAgent();
+    const job = jobs.start("codex", null, "first task", async () => ok("first answer"), agent.resume);
+    await until(() => job.status === "done");
+    expect(jobs.followUp(job.name, "coordination note", true).outcome).toBe("finished");
+    expect(agent.calls).toEqual([]);
+    expect(bodies().some((b) => b.includes("first answer"))).toBe(true);
+  });
+
+  it("does not queue another turn for a running-only message without a live link", () => {
+    const agent = fakeAgent();
+    const job = jobs.start("codex", null, "held task", () => new Promise(() => {}), agent.resume);
+    expect(jobs.followUp(job.name, "coordination note", true).outcome).toBe("not-live");
+    expect(job.queue).toEqual([]);
+    expect(agent.calls).toEqual([]);
+  });
+
   it("continues a finished subagent in its own session and folder", async () => {
     const agent = fakeAgent();
     const job = jobs.start("codex", null, "first task", async () => ok("first answer"), agent.resume);

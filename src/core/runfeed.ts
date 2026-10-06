@@ -1,5 +1,6 @@
 import { appendFileSync, mkdirSync, readdirSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import type { Worktree } from "./worktree.js";
 
 /**
  * Live feed of one delegated run: every progress line goes to ~/.agent-bridge/runs/<name>.log (so the
@@ -43,6 +44,8 @@ export interface RunMeta {
   /** The subagent's own session, and the one this run continued (a follow-up). */
   session?: string | null;
   continues?: string | null;
+  args?: Record<string, unknown>;
+  worktree?: Worktree | null;
 }
 
 export function runMetaPath(logPath: string): string {

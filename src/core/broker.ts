@@ -36,6 +36,7 @@ const DEDUPE_KEEP_MS = 30 * 60 * 1000;
 const DEDUPE_MAX = 5_000;
 const PENDING_MAX_LIMIT = 500;
 const NAME_SUFFIX_LIMIT = 100;
+const REPORT_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 interface Conn {
   socket: Socket;
@@ -81,6 +82,7 @@ export class Broker {
         this.store.unread(this.requirePeer(c).name, Math.min(Math.max(1, a.limit ?? PENDING_DEFAULT_LIMIT), PENDING_MAX_LIMIT)),
       updatePeer: (c, a) => this.onUpdatePeer(c, a),
       claimMail: (c, a) => this.onClaimMail(c, a),
+      jobReport: (c, a) => this.onJobReport(c, a),
       ping: () => ({ brokerPid: process.pid, protocol: PROTOCOL_VERSION }),
     };
   }
@@ -301,6 +303,7 @@ export class Broker {
       const old = peer.name;
       peer.name = this.uniqueName(args.name);
       this.log.info("peer renamed", { from: old, to: peer.name });
+      this.store.claim(old, peer.name);
       this.expireStaleQueue(peer.name);
       // Mail that was waiting under the new name is now ours.
       setImmediate(() => {
@@ -385,6 +388,15 @@ export class Broker {
 
   private onSend(conn: Conn, args: RequestMap["send"][0]): RequestMap["send"][1] {
     const sender = this.requirePeer(conn);
+    if (args.reportId) {
+      if (!sender.jobAgent || !REPORT_ID_PATTERN.test(args.reportId)) throw new BridgeError("bad_request", "invalid job report id");
+      const report = this.store.byId(args.reportId);
+      if (report) {
+        if (report.from.id !== sender.id) throw new BridgeError("bad_request", "job report id belongs to another job");
+        const online = Boolean(this.connByName(report.recipient));
+        return { messages: [report], deliveredTo: online ? [report.recipient] : [], queuedFor: online ? [] : [report.recipient] };
+      }
+    }
     const key = typeof args.dedupeKey === "string" && args.dedupeKey ? `${sender.id}:${args.dedupeKey}` : null;
     const seen = key ? this.sentByKey.get(key) : undefined;
     if (seen) return seen.result;
@@ -422,7 +434,7 @@ export class Broker {
     conversationId ||= randomUUID();
 
     const { live, queued } = this.resolveTargets(to, sender);
-    const id = randomUUID();
+    const id = args.reportId ?? randomUUID();
     const createdAt = this.now();
     const base = {
       id,
@@ -451,5 +463,32 @@ export class Broker {
       queuedFor: queued,
     });
     return { messages, deliveredTo: live.map((c) => c.peer!.name), queuedFor: queued };
+  }
+
+  private onJobReport(conn: Conn, args: RequestMap["jobReport"][0]): BridgeMessage {
+    const peer = this.requirePeer(conn);
+    if (!REPORT_ID_PATTERN.test(args.id) || !args.job?.id.startsWith("job:") || !PEER_NAME_PATTERN.test(args.job.name) || !AGENT_KINDS.includes(args.job.agent) || !args.body?.trim()) {
+      throw new BridgeError("bad_request", "invalid job report");
+    }
+    let report = this.store.byId(args.id) ?? (args.legacy ? this.store.jobReport(args.job.id, args.body, args.createdAt) : null);
+    if (report && report.from.id !== args.job.id) throw new BridgeError("bad_request", "job report id belongs to another job");
+    if (report && report.recipient !== peer.name) report = this.store.retarget(report, peer.name);
+    if (!report) {
+      report = {
+        id: args.id,
+        from: args.job,
+        to: peer.name,
+        recipient: peer.name,
+        conversationId: `job-${args.job.id.slice("job:".length)}`,
+        replyTo: null,
+        hop: 0,
+        body: args.body,
+        createdAt: args.createdAt,
+        readAt: null,
+      };
+      this.store.insert(report);
+    }
+    if (report.readAt === null) this.emit(conn, "message", report);
+    return report;
   }
 }

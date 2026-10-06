@@ -70,7 +70,9 @@ export class MessageStore {
     unread: StatementSync;
     markRead: StatementSync;
     claim: StatementSync;
+    retarget: StatementSync;
     byId: StatementSync;
+    jobReport: StatementSync;
     purge: StatementSync;
     expireQueued: StatementSync;
   };
@@ -93,7 +95,9 @@ export class MessageStore {
       ),
       markRead: this.db.prepare(`UPDATE messages SET read_at = ? WHERE id = ? AND recipient = ? AND read_at IS NULL`),
       claim: this.db.prepare(`UPDATE messages SET recipient = ? WHERE recipient = ? AND read_at IS NULL`),
+      retarget: this.db.prepare(`UPDATE messages SET recipient = ?, to_target = ?, read_at = NULL WHERE id = ? AND recipient = ?`),
       byId: this.db.prepare(`SELECT * FROM messages WHERE id = ? ORDER BY created_at ASC LIMIT 1`),
+      jobReport: this.db.prepare(`SELECT * FROM messages WHERE from_id = ? AND body = ? AND conversation_id = ? AND created_at >= ? ORDER BY created_at ASC, id ASC LIMIT 1`),
       purge: this.db.prepare(`DELETE FROM messages WHERE created_at < ?`),
       expireQueued: this.db.prepare(`DELETE FROM messages WHERE recipient = ? AND read_at IS NULL AND created_at < ?`),
     };
@@ -141,6 +145,18 @@ export class MessageStore {
   byId(id: string): BridgeMessage | null {
     const row = this.stmt.byId.get(id) as unknown as Row | undefined;
     return row ? toMessage(row) : null;
+  }
+
+  /** Older runners saved no receipt id: their final report can still be found by job, text and turn end. */
+  jobReport(jobId: string, body: string, since: number): BridgeMessage | null {
+    const row = this.stmt.jobReport.get(jobId, body, `job-${jobId.slice("job:".length)}`, since) as unknown as Row | undefined;
+    return row ? toMessage(row) : null;
+  }
+
+  /** A completion queued under the job's former owner name now belongs to its current session. */
+  retarget(m: BridgeMessage, recipient: string): BridgeMessage {
+    this.stmt.retarget.run(recipient, recipient, m.id, m.recipient);
+    return { ...m, recipient, to: recipient, readAt: null };
   }
 
   purgeOlderThan(cutoff: number): number {

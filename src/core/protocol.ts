@@ -84,6 +84,8 @@ export interface SendArgs {
    * sender's side while the broker, merely slow, still has it queued.
    */
   dedupeKey?: string;
+  /** Stable id of a runner's completion report, shared with the server's recovery path. */
+  reportId?: string;
 }
 export interface SendResult {
   messages: BridgeMessage[];
@@ -125,6 +127,8 @@ export interface RequestMap {
   updatePeer: [UpdatePeerArgs, PeerInfo];
   /** Take over the unread mail of "-N" stand-in names of this peer that no one holds (after a reload). */
   claimMail: [{ names: string[] }, { moved: number }];
+  /** Ensure a runner's report is durably addressed to the session taking over its job. */
+  jobReport: [{ id: string; job: MessageAddress; body: string; createdAt: number; legacy?: boolean }, BridgeMessage];
   ping: [Record<string, never>, { brokerPid: number; protocol: number }];
 }
 export type Op = keyof RequestMap;

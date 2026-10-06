@@ -178,6 +178,8 @@ export async function runDelegate(
       permission: profile.permission(cfg, { ...a, access }),
         workdir,
         continues: a.session_id ?? null,
+        args: { ...a, prompt: "" },
+        worktree: wt,
       },
     });
   } catch (err) {

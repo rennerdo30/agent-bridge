@@ -42,8 +42,13 @@ export async function runJobRunner(specFile: string | undefined): Promise<number
   const seen: string[] = [];
   /** The final report is decided: messages arriving now are left to the session (it continues the job). */
   let closing = false;
+  const acknowledged = new Set<string>();
+  let completionAcknowledged = false;
+  let confirmCompletion!: () => void;
+  const completion = new Promise<boolean>((resolve) => { confirmCompletion = () => resolve(true); });
 
   let extra: Partial<RunnerState> = { status: "running" };
+  const reports: NonNullable<RunnerState["reports"]> = [];
   const save = (patch: Partial<RunnerState> = {}) => {
     extra = { ...extra, ...patch };
     try {
@@ -62,6 +67,7 @@ export async function runJobRunner(specFile: string | undefined): Promise<number
         asking: Boolean(job.pendingApproval),
         live: Boolean(job.live),
         seen: seen.slice(-SEEN_LIMIT),
+        reports,
       });
     } catch (err) {
       log.warn("could not write the job runner state", { err: (err as Error).message });
@@ -90,21 +96,23 @@ export async function runJobRunner(specFile: string | undefined): Promise<number
   // Messages to the session, in order. Each is tried until the bridge takes it (the session may be offline:
   // then it waits in the store for the session's next server).
   let chain: Promise<boolean> = Promise.resolve(true);
-  const deliver = async (body: string, replyTo: string | null, note = false): Promise<boolean> => {
+  const deliver = async (body: string, replyTo: string | null, note = false, reportId?: string): Promise<boolean> => {
     // One key for all attempts: a send that timed out here may still be queued at a slow broker.
     const dedupeKey = randomUUID();
     for (let attempt = 1; attempt <= SEND_ATTEMPTS; attempt++) {
+      if (completionAcknowledged || (reportId && acknowledged.has(reportId))) return true;
       try {
-        await node.send({ to: owner, body, conversationId: `job-${job.id}${note ? NOTE_CONVERSATION_SUFFIX : ""}`, ...(replyTo ? { replyTo } : {}), dedupeKey }, { quiet: true });
+        await node.send({ to: owner, body, conversationId: `job-${job.id}${note ? NOTE_CONVERSATION_SUFFIX : ""}`, ...(replyTo ? { replyTo } : {}), dedupeKey, ...(reportId ? { reportId } : {}) }, { quiet: true });
         return true;
       } catch (err) {
+        if (completionAcknowledged || (reportId && acknowledged.has(reportId))) return true;
         log.warn("could not deliver to the session; retrying", { owner, attempt, err: (err as Error).message });
         await new Promise((r) => setTimeout(r, Math.min(attempt * 1_000, SEND_RETRY_MAX_MS)));
       }
     }
     return false;
   };
-  const post = (body: string, replyTo: string | null = null, note = false): Promise<boolean> => (chain = chain.then(() => deliver(body, replyTo, note)));
+  const post = (body: string, replyTo: string | null = null, note = false, reportId?: string): Promise<boolean> => (chain = chain.then(() => deliver(body, replyTo, note, reportId)));
 
   const sink: JobSink = {
     askParent: (j, question, timeoutMs) => {
@@ -141,8 +149,17 @@ export async function runJobRunner(specFile: string | undefined): Promise<number
     // The session may be a new server now, maybe under another name: answer where it is.
     if (m.from.name !== owner) log.info("the job's session is now", { name: m.from.name, was: owner });
     owner = m.from.name;
+    if (c.type === "reports-delivered") {
+      for (const id of c.ids) acknowledged.add(id);
+      if (closing && extra.reportId && acknowledged.has(extra.reportId)) {
+        completionAcknowledged = true;
+        confirmCompletion();
+      }
+      return;
+    }
+    if (closing) return;
     if (c.type === "message") {
-      if (closing) return;
+      if (c.ifRunning && !job.pendingApproval && !job.live) return;
       seen.push(c.cid);
       if (job.pendingApproval) {
         const answer = job.pendingApproval;
@@ -205,11 +222,15 @@ export async function runJobRunner(specFile: string | undefined): Promise<number
       cause = failureCause({ error: err });
     }
     const report = jobReport(job, status, Math.round((Date.now() - job.startedAt) / 1000), text, cause);
+    const reportId = randomUUID();
     log.info("job turn finished", { status, sessionId: job.sessionId, cause });
     // Follow-ups that arrived meanwhile go out right away, into the same session, from this runner.
     if (job.queue.length && job.sessionId && !job.controller.signal.aborted) {
       const queued = job.queue.splice(0).join("\n\n");
-      void post(`${report}\n\n${QUEUED_FOLLOW_UP_NOTE}`);
+      const body = `${report}\n\n${QUEUED_FOLLOW_UP_NOTE}`;
+      reports.push({ id: reportId, body, createdAt: Date.now() });
+      save();
+      void post(body, null, false, reportId);
       const effort = typeof job.args?.effort === "string" ? { effort: job.args.effort } : {};
       args = resumeArgs({ ...spec.base, ...effort }, job.name, queued, job.sessionId, job.workdir, job.worktree);
       job.startedAt = Date.now();
@@ -220,8 +241,9 @@ export async function runJobRunner(specFile: string | undefined): Promise<number
     closing = true;
     if (saveTimer) clearTimeout(saveTimer);
     // The state first: once the report arrives, the session must find the job finished.
-    save({ status, report, delivered: false, finishedAt: Date.now() });
-    const delivered = await post(report);
+    reports.push({ id: reportId, body: report, createdAt: Date.now() });
+    save({ status, report, reportId, delivered: false, finishedAt: Date.now() });
+    const delivered = await Promise.race([post(report, null, false, reportId), completion]);
     save({ delivered });
     log.info("job runner done", { status, delivered });
     break;

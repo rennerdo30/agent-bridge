@@ -13,7 +13,7 @@ import {
   RECONNECT_BACKOFF_MIN_MS,
 } from "./constants.js";
 import type { Logger } from "./logger.js";
-import { BridgeError, type AgentKind, type BridgeMessage, type PeerActivity, type PeerInfo, type SendArgs, type SendResult } from "./protocol.js";
+import { BridgeError, type AgentKind, type BridgeMessage, type PeerActivity, type PeerInfo, type RequestMap, type SendArgs, type SendResult } from "./protocol.js";
 import { MessageStore } from "./store.js";
 
 export interface BridgeNodeOptions {
@@ -41,6 +41,7 @@ export interface BridgeNodeEvents {
   peer_left: [PeerInfo];
   connected: [{ name: string; isBroker: boolean }];
   disconnected: [];
+  renamed: [{ previous: string; name: string }];
 }
 
 /** Remember ids of messages we already consumed so a backlog redelivery after reconnect is ignored. */
@@ -372,6 +373,18 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
     this.onEvent("message", m);
   }
 
+  /** Recover a completion through the durable store, using the same id as the runner's send. */
+  publishJobReport(report: RequestMap["jobReport"][0]): Promise<BridgeMessage> {
+    return this.withClient(async (c) => {
+      const receipt = await c.request("jobReport", report);
+      if (receipt.readAt === null && this.readIds.has(receipt.id)) {
+        await c.request("ack", { ids: [receipt.id] });
+        return { ...receipt, readAt: Date.now() };
+      }
+      return receipt;
+    });
+  }
+
   /** Mark messages consumed locally and on the broker. */
   markRead(ids: string[]): void {
     const real = ids.filter((id) => this.inbox.delete(id));
@@ -413,9 +426,11 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
 
   async setSessionId(sessionId: string | null): Promise<void> {
     if (sessionId === this.sessionId) return;
+    const previous = this.currentName;
     this.sessionId = sessionId;
     // The broker may hand us the name of an older server of this session that we replace.
     if (this.isConnected) this.currentName = (await this.client!.request("updatePeer", { sessionId })).name;
+    if (previous !== this.currentName) this.emit("renamed", { previous, name: this.currentName });
   }
 
   /** Report busy/idle to the broker so peers can see who is free. Only changes are sent. */
@@ -446,6 +461,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
    */
   async relocate(cwd: string, name?: string): Promise<void> {
     if (cwd === this.currentCwd && (!name || name === this.currentName)) return;
+    const previous = this.currentName;
     this.currentCwd = cwd;
     if (name) this.currentName = name;
     this.log.info("peer relocated", { cwd, name: this.currentName });
@@ -453,5 +469,6 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
       const peer = await this.client!.request("updatePeer", { cwd, ...(name ? { name } : {}) });
       this.currentName = peer.name;
     }
+    if (previous !== this.currentName) this.emit("renamed", { previous, name: this.currentName });
   }
 }

@@ -873,10 +873,12 @@ ${res.text || t("delegate.empty")}`, res.isError);
         "While it is still running it gets the message live, at its next step (after its current tool call), and answers right away, like a native subagent: use that to ask how far it is or to redirect it. " +
         "The answer arrives as a message from the job. " +
         "Without a message it is told to continue where it stopped: use that to recover a failed or interrupted subagent. " +
-        "If all subagent slots are taken, a finished subagent's continuation is queued and starts by itself when one frees up (cancel_subagent drops it).",
+        "If all subagent slots are taken, a finished subagent's continuation is queued and starts by itself when one frees up (cancel_subagent drops it). " +
+        "Use if_running=true for coordination notes that must never restart a finished job.",
       inputSchema: {
         job: z.string().min(1).describe('Job name, e.g. "codex-job-1a2b3c4d" or "opencode-ask-9f8e7d6c" (see peers)'),
         message: z.string().optional().describe("The follow-up. Default: continue where you stopped and finish the task."),
+        if_running: z.boolean().optional().describe("Only deliver to a running subagent; never continue a finished job or queue another turn."),
         title: z.string().min(1).max(MAX_TITLE_CHARS).optional().describe("Give the job a (new) short title, 3-7 words; use it for jobs listed without a title."),
         effort: z
           .string()
@@ -885,18 +887,18 @@ ${res.text || t("delegate.empty")}`, res.isError);
           .describe("Thinking level for this continuation and the job's later turns (e.g. low, medium, high, xhigh). A turn already running keeps its level: to apply it now, cancel_subagent and continue it with message_subagent."),
       },
     },
-    guarded("message_subagent", async (a: { job: string; message?: string; title?: string; effort?: string }) => {
+    guarded("message_subagent", async (a: { job: string; message?: string; title?: string; effort?: string; if_running?: boolean }) => {
       const jobs = ctx.jobs;
       if (!jobs) throw new BridgeError("bad_request", t("err.delegatedSession"));
       if (a.title?.trim()) jobs.setTitle(a.job, a.title.trim());
       if (a.effort) jobs.setEffort(a.job, a.effort);
-      const { outcome, job } = jobs.followUp(a.job, a.message?.trim() || DEFAULT_FOLLOW_UP);
+      const { outcome, job } = jobs.followUp(a.job, a.message?.trim() || DEFAULT_FOLLOW_UP, a.if_running);
       const position = job ? jobs.waiting().indexOf(job) + 1 : 0;
       // A level cannot change inside a running turn: say so, so nobody assumes it already applies.
       const effortNote = a.effort && job?.status === "running" ? `\nThinking level ${a.effort} applies from its next turn; the turn running now keeps its level.` : a.effort ? `\nThinking level: ${a.effort}.` : "";
       return text(
         t(`followUp.${outcome}`, { name: job?.name ?? a.job, max: jobs.limit, running: jobs.runningCount(), ahead: position > 1 ? ` (${position - 1} queued before it)` : "" }) + effortNote,
-        outcome === "unknown" || outcome === "no-session",
+        outcome === "unknown" || outcome === "no-session" || outcome === "missing-workdir",
       );
     }),
   );

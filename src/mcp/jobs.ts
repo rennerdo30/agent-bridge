@@ -1,19 +1,20 @@
-import { randomUUID } from "node:crypto";
-import { closeSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { createHash, randomUUID } from "node:crypto";
+import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { DEFAULT_MAX_JOBS } from "../core/constants.js";
 import { DelegateError, failureCause, type DelegateResult } from "../core/delegate.js";
 import type { Logger } from "../core/logger.js";
 import type { BridgeNode } from "../core/node.js";
 import type { AgentKind, BridgeMessage } from "../core/protocol.js";
+import { RUNS_DIR_NAME, type RunMeta } from "../core/runfeed.js";
 import type { Worktree } from "../core/worktree.js";
 
 const JOB_ID_LENGTH = 8;
 const PROMPT_PREVIEW_CHARS = 120;
-/** Finished subagents stay addressable (message_subagent) for this many jobs. */
-const HISTORY_LIMIT = 50;
 /** Jobs kept on disk (all sessions together), and how much of each task: the file stays small. */
 const STORE_LIMIT = 200;
+const JOB_HISTORY_DIR = "job-history";
+const HASH_UUID_PATTERN = /^(.{8})(.{4})(.{4})(.{4})(.{12}).*$/;
 /** Status note ids remembered (they are read long before this many pile up). */
 const MAX_NOTES = 500;
 /** Interrupted jobs stay listed (to be recovered) this long. */
@@ -76,9 +77,10 @@ export interface Job {
   /** While it runs: delivers a message into the running subagent (see parent-link.ts). */
   live?: { post: (message: string) => void } | null;
   finishedAt?: number;
+  restoredFromRun?: boolean;
   /** Runs in a detached job runner, so it outlives a restart of this session's server (see job-host.ts). */
   host?: JobHostInfo | null;
-  /** Messages forwarded to its runner that it has not confirmed yet; they become a follow-up if it never saw them. */
+  /** Messages forwarded to its runner that it has not confirmed yet. */
   forwarded?: { cid: string; body: string }[];
 }
 
@@ -111,11 +113,14 @@ export interface RunnerState {
   /** The final report, and whether it reached the session (as a message on the bridge). */
   report?: string;
   delivered?: boolean;
+  reportId?: string;
+  /** Every turn's report is recoverable even when delivery is blocked by earlier status messages. */
+  reports?: { id: string; body: string; createdAt: number }[];
   finishedAt?: number;
 }
 
 /** A message from the session to the runner of one of its jobs. */
-export type RunnerControl = { type: "message"; body: string; cid: string } | { type: "title"; title: string } | { type: "effort"; effort: string } | { type: "cancel" } | { type: "attach" };
+export type RunnerControl = { type: "message"; body: string; cid: string; ifRunning?: boolean } | { type: "title"; title: string } | { type: "effort"; effort: string } | { type: "cancel" } | { type: "attach" } | { type: "reports-delivered"; ids: string[] };
 
 /** The session's side of job runners (implemented in job-host.ts). */
 export interface JobHost {
@@ -173,7 +178,7 @@ export function waitForApproval(job: Job, question: string, timeoutMs: number, p
 }
 
 /** "waiting": a finished job, but all slots are taken; it continues as soon as one frees up. */
-export type FollowUpOutcome = "started" | "delivered" | "queued" | "waiting" | "answered" | "unknown" | "no-session";
+export type FollowUpOutcome = "started" | "continuing" | "delivered" | "queued" | "waiting" | "answered" | "finished" | "not-live" | "unknown" | "no-session" | "missing-workdir";
 
 /**
  * Subagents: the other CLI running headlessly. Background jobs report their result as a message from the
@@ -194,6 +199,9 @@ export class JobManager {
   /** Background jobs run in detached job runners where it can (they survive a restart of this server); null: all here. */
   runners: JobHost | null = null;
   private hostTimer: NodeJS.Timeout | null = null;
+  private readonly reporting = new Set<string>();
+  private readonly publishedReports = new Set<string>();
+  private makeResume?: (agent: AgentKind, args: Record<string, unknown>) => Resume | undefined;
 
   constructor(
     private readonly node: BridgeNode,
@@ -212,6 +220,17 @@ export class JobManager {
     // Runners send to this session by name: tell them where it is now (a new server, maybe a new name).
     node.on("connected", () => {
       for (const job of this.running.values()) if (job.host) this.runners?.send(job, { type: "attach" });
+    });
+    node.on("renamed", ({ previous, name }) => {
+      this.adoptedOwners.add(previous);
+      this.publishedReports.clear();
+      for (const job of this.history.values()) {
+        if (!this.own.has(job.id) && job.owner !== previous) continue;
+        job.owner = name;
+        this.own.add(job.id);
+        if (job.host) this.runners?.send(job, { type: "attach" });
+      }
+      this.persist();
     });
   }
 
@@ -251,7 +270,17 @@ export class JobManager {
       const mine = [...this.history.values()].filter((j) => this.own.has(j.id)).map(toStored);
       const ids = new Set(mine.map((j) => j.id));
       const others = readStore(this.storePath).filter((j) => !ids.has(j.id));
-      const all = [...others, ...mine].sort((a, b) => a.startedAt - b.startedAt).slice(-STORE_LIMIT);
+      const sorted = [...others, ...mine].sort((a, b) => a.startedAt - b.startedAt);
+      const recent = new Set(sorted.slice(-STORE_LIMIT).map((j) => j.id));
+      const all = sorted.filter((j) => recent.has(j.id) || j.status === "running");
+      const archive = join(dirname(this.storePath), JOB_HISTORY_DIR);
+      for (const job of sorted.filter((j) => !recent.has(j.id) && j.status !== "running")) {
+        mkdirSync(archive, { recursive: true });
+        const path = join(archive, `${job.id}.json`);
+        const tmp = `${path}.${process.pid}.tmp`;
+        writeFileSync(tmp, JSON.stringify(job), { mode: 0o600 });
+        renameSync(tmp, path);
+      }
       mkdirSync(dirname(this.storePath), { recursive: true });
       const tmp = `${this.storePath}.${process.pid}.tmp`;
       writeFileSync(tmp, JSON.stringify(all), { mode: 0o600 });
@@ -270,12 +299,11 @@ export class JobManager {
    * manager takes it over. Another session's runner-hosted job keeps its status for that session to take over.
    */
   restore(makeResume: (agent: AgentKind, args: Record<string, unknown>) => Resume | undefined): void {
+    this.makeResume = makeResume;
     if (!this.storePath) return;
     const stored = readStore(this.storePath);
     const adopted: Job[] = [];
-    // The newest ones, plus every job still marked running however old (its runner may still be at work).
-    const recentIds = new Set(stored.slice(-HISTORY_LIMIT).map((s) => s.id));
-    for (const s of stored.filter((x) => recentIds.has(x.id) || x.status === "running")) {
+    for (const s of stored) {
       if (this.history.has(s.id)) continue;
       const hosted = s.status === "running" && Boolean(s.host);
       const mine = this.isMine(s.owner);
@@ -290,7 +318,7 @@ export class JobManager {
       this.history.set(s.id, job);
       if (hosted && mine && this.takeOver(job)) adopted.push(job);
     }
-    if (stored.length) this.log.info("restored subagent jobs", { count: Math.min(stored.length, HISTORY_LIMIT), runnerHosted: adopted.length });
+    if (stored.length) this.log.info("restored subagent jobs", { count: stored.length, runnerHosted: adopted.length });
     this.settleAdopted(adopted);
   }
 
@@ -313,6 +341,7 @@ export class JobManager {
       job.owner = this.node.name;
       this.running.set(job.id, job);
       this.own.add(job.id);
+      this.runners?.send(job, { type: "attach" });
       // A runner that finished while no server of this session was there is settled now.
       this.checkHosted(job);
     }
@@ -395,13 +424,73 @@ export class JobManager {
 
   find(ref: string): Job | undefined {
     const id = ref.replace(/^.*-(?:job|ask)-/, "");
-    return this.history.get(id) ?? [...this.history.values()].find((j) => j.name === ref);
+    const known = this.history.get(id) ?? [...this.history.values()].find((j) => j.name === ref);
+    if (known || !this.storePath || !/^[0-9a-f]+$/i.test(id)) return known;
+    const stored = readStore(this.storePath).find((j) => j.id === id || j.name === ref) ?? this.archivedJob(id, ref);
+    if (!stored) return undefined;
+    const job: Job = {
+      ...stored,
+      status: stored.status === "running" ? "interrupted" : stored.status,
+      controller: new AbortController(),
+      progress: null,
+      queue: [],
+      resume: this.makeResume?.(stored.agent, stored.args ?? {}),
+    };
+    this.history.set(job.id, job);
+    if (stored.status === "running" && stored.host && this.isMine(stored.owner) && this.takeOver(job)) this.settleAdopted([job]);
+    return job;
+  }
+
+  private archivedJob(id: string, ref: string): (StoredJob & { restoredFromRun?: boolean }) | undefined {
+    const home = dirname(this.storePath!);
+    try {
+      const stored = JSON.parse(readFileSync(join(home, JOB_HISTORY_DIR, `${id}.json`), "utf8")) as StoredJob;
+      if (stored.id === id) return stored;
+    } catch {
+      // Older versions kept only run metadata after evicting a job.
+    }
+    try {
+      const dir = join(home, RUNS_DIR_NAME);
+      const runs = readdirSync(dir)
+        .filter((f) => f.endsWith(".json"))
+        .map((f) => ({ path: join(dir, f), time: statSync(join(dir, f)).mtimeMs }))
+        .sort((a, b) => b.time - a.time);
+      for (const run of runs) {
+        let meta: RunMeta;
+        try {
+          meta = JSON.parse(readFileSync(run.path, "utf8")) as RunMeta;
+        } catch {
+          continue;
+        }
+        if (!meta.job || (meta.job !== ref && meta.job.replace(/^.*-(?:job|ask)-/, "") !== id)) continue;
+        const agent = /^(codex|claude|opencode)-(?:job|ask)-/.exec(meta.job)?.[1] as AgentKind | undefined;
+        if (!agent) continue;
+        return {
+          id,
+          name: meta.job,
+          agent,
+          model: meta.model ?? null,
+          prompt: "",
+          startedAt: run.time,
+          finishedAt: run.time,
+          status: "interrupted",
+          sessionId: meta.session ?? null,
+          workdir: meta.workdir ?? null,
+          worktree: meta.worktree ?? null,
+          owner: meta.by,
+          restoredFromRun: true,
+          args: meta.args ?? { model: meta.model ?? undefined, effort: meta.effort ?? undefined, access: meta.access === "default" ? undefined : meta.access, cwd: meta.workdir, title: meta.title ?? "Recovered job" },
+        };
+      }
+    } catch {
+      // No run files remain.
+    }
+    return undefined;
   }
 
   private remember(job: Job): void {
     this.history.set(job.id, job);
     this.own.add(job.id);
-    while (this.history.size > HISTORY_LIMIT) this.history.delete(this.history.keys().next().value!);
     this.persist();
   }
 
@@ -503,21 +592,27 @@ export class JobManager {
    * Send a follow-up to a subagent: queued while it runs, otherwise its session is resumed in the background,
    * as soon as a slot is free.
    */
-  followUp(ref: string, message: string): { outcome: FollowUpOutcome; job?: Job } {
+  followUp(ref: string, message: string, ifRunning = false): { outcome: FollowUpOutcome; job?: Job } {
     const job = this.find(ref);
     if (!job) return { outcome: "unknown" };
-    // Its runner may have finished just now: then this continues it instead.
     if (this.hostedRunning(job)) this.checkHosted(job);
+    const state = this.hostedRunning(job) ? this.runners!.state(job) : null;
+    if (ifRunning && (job.status !== "running" || (state && state.status !== "running"))) return { outcome: "finished", job };
+    if (state && state.status !== "running") {
+      if (!job.resume || !job.sessionId) return { outcome: "no-session", job };
+      job.queue.push(message);
+      return { outcome: "continuing", job };
+    }
     if (this.waitingJobs.has(job.id)) {
       job.queue.push(message);
       return { outcome: "waiting", job };
     }
     if (this.hostedRunning(job)) {
       // Its runner decides: an answer to its approval question, a live message, or queued for after this turn.
-      const state = this.runners!.state(job);
+      if (ifRunning && !state?.asking && !state?.live) return { outcome: "not-live", job };
       const cid = randomUUID();
       (job.forwarded ??= []).push({ cid, body: message });
-      this.runners!.send(job, { type: "message", body: message, cid });
+      this.runners!.send(job, { type: "message", body: message, cid, ifRunning });
       return { outcome: state?.asking ? "answered" : state?.live ? "delivered" : "queued", job };
     }
     if (job.status === "running" && job.pendingApproval) {
@@ -530,13 +625,15 @@ export class JobManager {
       // Like a native subagent: it sees the message while it works and can answer at once.
       if (job.live) {
         job.awaitingAnswer = true;
-      job.live.post(message);
+        job.live.post(message);
         return { outcome: "delivered", job };
       }
+      if (ifRunning) return { outcome: "not-live", job };
       job.queue.push(message);
       return { outcome: "queued", job };
     }
     if (!job.resume || !job.sessionId) return { outcome: "no-session", job };
+    if ((job.worktree && !existsSync(job.worktree.cwd)) || (job.restoredFromRun && job.workdir && !existsSync(job.workdir))) return { outcome: "missing-workdir", job };
     if (!this.canStart()) {
       job.queue.push(message);
       this.waitForSlot(job);
@@ -566,6 +663,7 @@ export class JobManager {
 
   private launch(job: Job, run: Run): void {
     job.status = "running";
+    job.owner = this.node.name;
     job.startedAt = Date.now();
     job.controller = new AbortController();
     job.progress = null;
@@ -636,6 +734,34 @@ export class JobManager {
       }
     }
     const alive = runners.alive(job, state);
+    const legacy = Boolean(state && state.status !== "running" && state.report && !state.reports?.length);
+    const reports = state?.reports?.length ? state.reports : legacy ? [{
+      id: state!.reportId ?? createHash("sha256").update(`${job.id}:${state!.finishedAt ?? state!.updatedAt}:${state!.report}`).digest("hex").replace(HASH_UUID_PATTERN, "$1-$2-$3-$4-$5"),
+      body: state!.report!,
+      createdAt: state!.finishedAt ?? state!.updatedAt,
+    }] : [];
+    if (state && reports.length) {
+      if (this.reporting.has(job.id)) return;
+      this.reporting.add(job.id);
+      void (async () => {
+        for (const report of reports) {
+          if (this.dormant) return;
+          if (this.publishedReports.has(report.id)) continue;
+          const receipt = await this.node.publishJobReport({ ...report, job: { id: `job:${job.id}`, name: job.name, agent: job.agent }, legacy });
+          if (receipt.recipient !== this.node.name) throw new Error("the session was renamed during report delivery");
+          this.publishedReports.add(report.id);
+        }
+        if (!this.dormant && this.hostedRunning(job)) {
+          runners.send(job, { type: "reports-delivered", ids: reports.map((r) => r.id) });
+          if (state.status !== "running") {
+            const current = runners.state(job);
+            // The old runner must stop writing this turn's state before a continuation reuses the file.
+            if (current?.delivered || !runners.alive(job, current)) this.settleHosted(job, { ...state, delivered: true });
+          } else if (!alive) this.settleHosted(job, null);
+        }
+      })().catch((err) => this.log.warn("could not verify job report delivery; will retry", { job: job.name, err: (err as Error).message })).finally(() => this.reporting.delete(job.id));
+      return;
+    }
     // A finished runner may still be delivering its report: wait for that (or for it to give up).
     if (state && state.status !== "running") {
       if (state.delivered || !alive) this.settleHosted(job, state);
@@ -644,12 +770,13 @@ export class JobManager {
 
   /** A runner-hosted job ended: with its runner's final state, or without (the runner is gone). */
   private settleHosted(job: Job, final: RunnerState | null): void {
-    // Messages forwarded to the runner that it never took become a follow-up.
+    // A message sent during a running turn must not restart a job whose runner already closed.
     const seen = new Set(final?.seen ?? this.runners?.state(job)?.seen ?? []);
-    job.queue.push(...(job.forwarded ?? []).filter((f) => !seen.has(f.cid)).map((f) => f.body));
+    const missed = (job.forwarded ?? []).filter((f) => !seen.has(f.cid));
     job.forwarded = [];
     const pid = job.host?.pid;
     job.host = null;
+    if (missed.length) this.post(job, `${job.name} finished before receiving ${missed.length} message(s) sent while it was running. Nothing was restarted.\n\n${missed.map((f) => f.body).join("\n\n")}\n\nTo continue it intentionally, call message_subagent(job="${job.name}", message=...).`);
     if (final) {
       this.finish(job, final.status === "done" ? "done" : "failed", "", final.sessionId ?? null, null, final.delivered ? null : final.report);
       return;
@@ -778,7 +905,7 @@ export function sessionOfError(err: unknown): string | null {
   return err instanceof DelegateError ? (err.sessionId ?? null) : null;
 }
 
-type StoredJob = Pick<Job, "id" | "name" | "agent" | "model" | "prompt" | "startedAt" | "status" | "sessionId" | "workdir" | "worktree" | "args" | "owner" | "finishedAt" | "host">;
+type StoredJob = Pick<Job, "id" | "name" | "agent" | "model" | "prompt" | "startedAt" | "status" | "sessionId" | "workdir" | "worktree" | "args" | "owner" | "finishedAt" | "host" | "restoredFromRun">;
 
 function toStored(j: Job): StoredJob {
   return {
@@ -796,6 +923,7 @@ function toStored(j: Job): StoredJob {
     owner: j.owner,
     finishedAt: j.finishedAt,
     host: j.host ?? null,
+    restoredFromRun: j.restoredFromRun,
   };
 }
 

@@ -170,6 +170,19 @@ describe.skipIf(!existsSync(SERVER))("background subagents in job runners", () =
     await waitFor(async () => (await call(b, "peers")).match(new RegExp(`${job} "Runner test": done`)) !== null);
   }, TEST_TIMEOUT_MS);
 
+  it("reports an intentional continuation clearly and leaves a finished job alone for if_running", async () => {
+    const a = await startSession();
+    const { job, id, release, pid } = await spawnHeld(a);
+    writeFileSync(release, "");
+    expect(await call(a, "wait_for_message", { from: job, timeout_sec: 60 })).toContain("fake answer: finished");
+    await waitFor(() => !pidAlive(pid));
+    await waitFor(async () => (await call(a, "peers")).includes(`${job} "Runner test": done`));
+    expect(await call(a, "message_subagent", { job, message: "coordination note", if_running: true })).toContain("Nothing was sent or restarted");
+    expect(readRunnerState(home, id)?.status).toBe("done");
+    expect(await call(a, "message_subagent", { job, message: "intentional next task" })).toContain("had already finished or stopped and is now being continued");
+    expect(await call(a, "wait_for_message", { from: job, timeout_sec: 60 })).toContain("fake answer: finished");
+  }, TEST_TIMEOUT_MS);
+
   it("cancel_subagent stops a runner-hosted subagent and its runner", async () => {
     const a = await startSession();
     const { job, pid } = await spawnHeld(a);
