@@ -3,6 +3,8 @@ import { createServer, type IncomingMessage, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import type { Logger } from "./logger.js";
 import { tokensEqual } from "./token.js";
+import type { BridgeMessage, SendResult, SiblingPeer } from "./protocol.js";
+import { MAX_BODY_CHARS } from "./constants.js";
 
 /**
  * Live link between a session and a subagent it runs, like a native subagent's: the session's messages
@@ -25,6 +27,12 @@ const CHILD_REQUEST_TIMEOUT_MS = 5_000;
 export interface LinkMessage {
   id: string;
   body: string;
+  sibling?: BridgeMessage;
+}
+
+export interface SiblingClient {
+  peers(): Promise<SiblingPeer[]>;
+  send(to: string, body: string, replyTo?: string): Promise<SendResult>;
 }
 
 export class ParentLink {
@@ -42,6 +50,7 @@ export class ParentLink {
     private readonly log: Logger,
     /** The subagent's own estimate of how far it is (report_progress). */
     private readonly onProgress: (percent: number, note: string) => void = () => {},
+    private readonly siblings?: SiblingClient,
   ) {}
 
   async start(): Promise<void> {
@@ -69,8 +78,8 @@ export class ParentLink {
   }
 
   /** Queue a message for the subagent; it gets it at its next step. */
-  post(body: string): LinkMessage {
-    const m = { id: randomUUID(), body };
+  post(body: string, sibling?: BridgeMessage): LinkMessage {
+    const m = { id: sibling?.id ?? randomUUID(), body, ...(sibling ? { sibling } : {}) };
     this.pending.push(m);
     return m;
   }
@@ -102,12 +111,27 @@ export class ParentLink {
       if (!Number.isFinite(percent) || percent < 0 || percent > 100) throw new Error("percent must be 0-100");
       this.onProgress(percent, String(body.note ?? "").trim().slice(0, MAX_NOTE_CHARS));
       return { ok: true };
-    }    if (req.method === "POST" && req.url === "/message") {
+    }
+    if (req.method === "POST" && req.url === "/siblings") {
+      return { peers: this.siblings ? await this.siblings.peers() : [] };
+    }
+    if (req.method === "POST" && req.url === "/sibling-message") {
+      if (!this.siblings) throw new Error("sibling messaging unavailable");
+      const body = JSON.parse(await readBody(req)) as { to?: unknown; body?: unknown; reply_to?: unknown };
+      if (typeof body.to !== "string" || typeof body.body !== "string" || !body.body.trim()) throw new Error("invalid sibling message");
+      if (body.body.length > MAX_BODY_CHARS) throw new Error("message too large");
+      const replyTo = typeof body.reply_to === "string" ? body.reply_to : undefined;
+      const result = await this.siblings.send(body.to, body.body, replyTo);
+      // Sibling replies acknowledge only their own conversation, never a pending parent request.
+      if (replyTo) this.unanswered = this.unanswered.filter((m) => m.sibling?.conversationId !== result.messages[0]?.conversationId);
+      return result;
+    }
+    if (req.method === "POST" && req.url === "/message") {
       const body = JSON.parse(await readBody(req)) as { body?: unknown; reply_to?: unknown };
       const text = String(body.body ?? "").trim();
       if (!text) throw new Error("empty message");
-      // Any answer counts: the subagent has taken up what it was sent.
-      this.unanswered = [];
+      // Any parent answer counts for its requests; sibling chat remains separate.
+      this.unanswered = this.unanswered.filter((m) => m.sibling);
       this.onMessage(text, typeof body.reply_to === "string" ? body.reply_to : null);
       return { ok: true };
     }
@@ -130,6 +154,7 @@ export interface ParentClient {
   inbox(): Promise<LinkMessage[]>;
   send(body: string, replyTo?: string): Promise<void>;
   progress(percent: number, note: string): Promise<void>;
+  siblings: SiblingClient;
 }
 
 export function parentFromEnv(env: NodeJS.ProcessEnv = process.env): ParentClient | null {
@@ -152,5 +177,9 @@ export function parentFromEnv(env: NodeJS.ProcessEnv = process.env): ParentClien
     inbox: async () => ((await call("/inbox", {})).messages as LinkMessage[]) ?? [],
     send: async (body, replyTo) => void (await call("/message", { body, reply_to: replyTo ?? null })),
     progress: async (percent, note) => void (await call("/progress", { percent, note })),
+    siblings: {
+      peers: async () => ((await call("/siblings", {})).peers as SiblingPeer[]) ?? [],
+      send: async (to, body, replyTo) => (await call("/sibling-message", { to, body, reply_to: replyTo })) as unknown as SendResult,
+    },
   };
 }

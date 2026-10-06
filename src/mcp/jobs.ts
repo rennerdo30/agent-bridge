@@ -55,6 +55,8 @@ export interface Job {
   args?: Record<string, unknown>;
   /** Peer name of the session that started it. */
   owner?: string;
+  /** Stable session identity used to restrict direct sibling chat, including after a server reload. */
+  supervisor?: string;
   /** The subagent's own session (Codex thread, Claude session, opencode session) once known. */
   sessionId: string | null;
   workdir: string | null;
@@ -74,7 +76,7 @@ export interface Job {
   /** An approval question the subagent is waiting on; the next message to the job answers it. */
   pendingApproval?: ((answer: string) => void) | null;
   /** While it runs: delivers a message into the running subagent (see parent-link.ts). */
-  live?: { post: (message: string) => void } | null;
+  live?: { post: (message: string, sibling?: BridgeMessage) => void } | null;
   finishedAt?: number;
   /** Runs in a detached job runner, so it outlives a restart of this session's server (see job-host.ts). */
   host?: JobHostInfo | null;
@@ -424,6 +426,8 @@ export class JobManager {
       queue: [],
       args,
       owner: this.node.name,
+      // Keep the first job's identity when hooks learn the session id later, or a server reload adopts it.
+      supervisor: [...this.running.values(), ...this.foreground.values()].find((j) => this.isMine(j.owner))?.supervisor ?? this.node.currentSessionId ?? this.node.id,
     };
   }
 
@@ -778,7 +782,7 @@ export function sessionOfError(err: unknown): string | null {
   return err instanceof DelegateError ? (err.sessionId ?? null) : null;
 }
 
-type StoredJob = Pick<Job, "id" | "name" | "agent" | "model" | "prompt" | "startedAt" | "status" | "sessionId" | "workdir" | "worktree" | "args" | "owner" | "finishedAt" | "host">;
+type StoredJob = Pick<Job, "id" | "name" | "agent" | "model" | "prompt" | "startedAt" | "status" | "sessionId" | "workdir" | "worktree" | "args" | "owner" | "supervisor" | "finishedAt" | "host">;
 
 function toStored(j: Job): StoredJob {
   return {
@@ -794,6 +798,7 @@ function toStored(j: Job): StoredJob {
     worktree: j.worktree,
     args: j.args,
     owner: j.owner,
+    supervisor: j.supervisor,
     finishedAt: j.finishedAt,
     host: j.host ?? null,
   };

@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { createServer, type Server, type Socket } from "node:net";
 import {
   MAX_BODY_CHARS,
@@ -15,6 +16,8 @@ import {
   BridgeError,
   encodeFrame,
   FrameDecoder,
+  SIBLING_CONVERSATION_PREFIX,
+  SIBLING_NOTE_SUFFIX,
   type AgentKind,
   type BridgeMessage,
   type EventFrame,
@@ -24,6 +27,7 @@ import {
   type PeerInfo,
   type RequestFrame,
   type RequestMap,
+  type SiblingPeer,
 } from "./protocol.js";
 import { agentQueueKey, MessageStore } from "./store.js";
 import { tokensEqual } from "./token.js";
@@ -36,6 +40,9 @@ const DEDUPE_KEEP_MS = 30 * 60 * 1000;
 const DEDUPE_MAX = 5_000;
 const PENDING_MAX_LIMIT = 500;
 const NAME_SUFFIX_LIMIT = 100;
+const SIBLING_STATUSES = new Set<SiblingPeer["status"]>(["running", "done", "failed", "interrupted"]);
+
+type StoredSibling = SiblingPeer & { id: string };
 
 interface Conn {
   socket: Socket;
@@ -66,6 +73,8 @@ export class Broker {
     private readonly log: Logger,
     private readonly token: string,
     private readonly now: () => number = Date.now,
+    /** The supervisor's job registry, for siblings whose peers are not connected between turns. */
+    private readonly jobsPath?: string,
   ) {
     this.handlers = {
       auth: (c, a) => {
@@ -76,6 +85,8 @@ export class Broker {
       hello: (c, a) => this.onHello(c, a),
       send: (c, a) => this.onSend(c, a),
       peers: () => this.livePeers(),
+      siblings: (c) => this.siblingPeers(c),
+      sendSibling: (c, a) => this.onSendSibling(c, a),
       ack: (c, a) => ({ acked: this.store.markRead(this.requirePeer(c).name, a.ids ?? [], this.now()) }),
       pending: (c, a) =>
         this.store.unread(this.requirePeer(c).name, Math.min(Math.max(1, a.limit ?? PENDING_DEFAULT_LIMIT), PENDING_MAX_LIMIT)),
@@ -203,6 +214,71 @@ export class Broker {
     return undefined;
   }
 
+  private siblingConns(conn: Conn): Conn[] {
+    const peer = this.requirePeer(conn);
+    if (!peer.jobAgent || !peer.jobOwner) throw new BridgeError("bad_request", "not a linked job");
+    return [...this.conns].filter((c) => c !== conn && c.peer?.jobAgent && c.peer.jobOwner === peer.jobOwner);
+  }
+
+  private storedSiblings(peer: PeerInfo): StoredSibling[] {
+    if (!this.jobsPath || !peer.jobOwner) return [];
+    try {
+      const records = JSON.parse(readFileSync(this.jobsPath, "utf8")) as unknown;
+      if (!Array.isArray(records)) return [];
+      return records.flatMap((j) => j && j.supervisor === peer.jobOwner && typeof j.id === "string" &&
+        typeof j.name === "string" && j.name !== peer.name && `job:${j.id}` !== peer.id && AGENT_KINDS.includes(j.agent) && SIBLING_STATUSES.has(j.status)
+        ? [{ id: `job:${j.id}`, name: j.name, title: typeof j.args?.title === "string" ? j.args.title : "", agent: j.agent, status: j.status }]
+        : []);
+    } catch {
+      return [];
+    }
+  }
+
+  private siblingPeers(conn: Conn): SiblingPeer[] {
+    const live = this.siblingConns(conn);
+    const stored = this.storedSiblings(this.requirePeer(conn));
+    const peers = new Map(stored.map(({ id, ...s }) => [s.name, s]));
+    for (const c of live) {
+      const p = c.peer!;
+      const previous = stored.find((s) => s.id === p.id);
+      if (previous) peers.delete(previous.name);
+      peers.set(p.name, { name: p.name, title: p.jobTitle ?? "", agent: p.jobAgent!, status: "running" });
+    }
+    return [...peers.values()];
+  }
+
+  private onSendSibling(conn: Conn, args: RequestMap["sendSibling"][0]): RequestMap["sendSibling"][1] {
+    const sender = this.requirePeer(conn);
+    const dedupeKey = args.dedupeKey ? `${SIBLING_CONVERSATION_PREFIX}${args.dedupeKey}` : undefined;
+    const key = dedupeKey ? `${sender.id}:${dedupeKey}` : null;
+    const seen = key ? this.sentByKey.get(key) : undefined;
+    if (seen) return seen.result;
+    const target = this.siblingConns(conn).find((c) => c.peer!.name === args.to);
+    const stored = this.storedSiblings(sender).find((s) => s.name === args.to);
+    if (!target && !stored) throw new BridgeError("unknown_target", "no sibling with that job name");
+    const targetId = target?.peer!.id ?? stored!.id;
+    const parent = args.replyTo ? this.store.byId(args.replyTo) : null;
+    if (args.replyTo && (!parent || !parent.conversationId.startsWith(SIBLING_CONVERSATION_PREFIX) ||
+        !((parent.from.id === targetId && parent.recipient === sender.name) ||
+          (parent.from.id === sender.id && parent.recipient === args.to)))) {
+      throw new BridgeError("bad_request", "reply_to must refer to a message exchanged with this sibling");
+    }
+    if (!Number.isInteger(args.maxHops) || args.maxHops < 1 || (parent ? parent.hop + 1 : 0) >= args.maxHops) {
+      throw new BridgeError("bad_request", "sibling conversation reached the hop limit");
+    }
+    const conversationId = parent?.conversationId ?? `${SIBLING_CONVERSATION_PREFIX}${randomUUID()}`;
+    const result = this.onSend(conn, { ...args, dedupeKey, conversationId });
+    const message = result.messages[0]!;
+    if (sender.jobParent) {
+      const note = { ...message, id: randomUUID(), recipient: sender.jobParent,
+        conversationId: `${conversationId}${SIBLING_NOTE_SUFFIX}`, body: `Sibling message to ${message.recipient}:\n\n${message.body}` };
+      this.store.insert(note);
+      const supervisor = this.connByName(sender.jobParent);
+      if (supervisor) this.emit(supervisor, "message", note);
+    }
+    return result;
+  }
+
   private uniqueName(requested: string): string {
     if (!this.connByName(requested)) return requested;
     for (let i = 2; i < NAME_SUFFIX_LIMIT; i++) {
@@ -246,6 +322,10 @@ export class Broker {
       activity: p.activity === "busy" || p.activity === "idle" ? p.activity : null,
       version: typeof p.version === "string" ? p.version.slice(0, 32) : undefined,
       ...(p.jobAgent && AGENT_KINDS.includes(p.jobAgent) ? { jobAgent: p.jobAgent } : {}),
+      ...(p.jobAgent && typeof p.jobOwner === "string" && p.jobOwner ? {
+        jobOwner: p.jobOwner, jobParent: typeof p.jobParent === "string" ? p.jobParent : undefined,
+        jobTitle: typeof p.jobTitle === "string" ? p.jobTitle : undefined,
+      } : {}),
     };
     conn.peer = peer;
     if (peer.sessionId) this.replaceStale(conn, peer);
@@ -289,6 +369,10 @@ export class Broker {
 
   private onUpdatePeer(conn: Conn, args: RequestMap["updatePeer"][0]): PeerInfo {
     const peer = this.requirePeer(conn);
+    if (peer.jobOwner) {
+      if (typeof args.jobParent === "string") peer.jobParent = args.jobParent;
+      if (typeof args.jobTitle === "string") peer.jobTitle = args.jobTitle;
+    }
     if (args.sessionId !== undefined) {
       peer.sessionId = args.sessionId;
       if (peer.sessionId) this.replaceStale(conn, peer);
@@ -422,6 +506,11 @@ export class Broker {
     conversationId ||= randomUUID();
 
     const { live, queued } = this.resolveTargets(to, sender);
+    if (conversationId.startsWith(SIBLING_CONVERSATION_PREFIX) &&
+        (queued.some((name) => !sender.jobAgent || !this.storedSiblings(sender).some((s) => s.name === name)) ||
+          live.some((c) => c.peer!.jobAgent && (!sender.jobAgent || !sender.jobOwner || c.peer!.jobOwner !== sender.jobOwner)))) {
+      throw new BridgeError("unauthorized", "sibling chat is restricted to jobs of the same supervisor");
+    }
     const id = randomUUID();
     const createdAt = this.now();
     const base = {

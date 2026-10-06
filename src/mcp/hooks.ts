@@ -1,5 +1,5 @@
 import { HOOK_MAX_MESSAGES, STOP_WAIT_CAP_MS } from "../core/constants.js";
-import type { BridgeMessage } from "../core/protocol.js";
+import { isSiblingNote, type BridgeMessage } from "../core/protocol.js";
 import { formatMessages, formatParentMessages, formatPeer } from "./format.js";
 import { WAKE_HEADER } from "./rewake.js";
 import type { ServerContext } from "./server.js";
@@ -35,10 +35,11 @@ function context(event: HookEvent, additionalContext: string): HookOutput {
 }
 
 /** Messages eligible to be injected now. `wakeOnly` limits to those allowed to trigger work (below the hop limit). */
-function take(ctx: ServerContext, wakeOnly: boolean): BridgeMessage[] {
+function take(ctx: ServerContext, wakeOnly: boolean, notesOnly = false): BridgeMessage[] {
   const node = ctx.node!;
   const msgs = node
     .unread()
+    .filter((m) => !notesOnly || isSiblingNote(m))
     // Ending a turn: a running subagent's status note does not keep it going; it comes with the next prompt.
     .filter((m) => !wakeOnly || (m.hop < ctx.cfg.maxHops && !ctx.jobs?.isNote(m)))
     .slice(0, HOOK_MAX_MESSAGES);
@@ -107,8 +108,8 @@ export async function buildHookResponse(ctx: ServerContext, input: HookInput): P
     case "UserPromptSubmit":
     case "PostToolUse": {
       ctx.activity?.("busy");
-      if (channel) return {};
-      const msgs = take(ctx, false);
+      // Quiet sibling copies use the next active hook even with a channel, which would wake an idle session.
+      const msgs = take(ctx, false, channel);
       return msgs.length ? context(input.event, formatMessages(msgs)) : {};
     }
     case "Stop": {

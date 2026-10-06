@@ -52,6 +52,17 @@ describe("CodexWaker", () => {
     rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   });
 
+  it("does not schedule a wake for a quiet sibling observer copy, including on an idle report", () => {
+    const node = fakeNode(dir);
+    const waker = new CodexWaker(node as unknown as BridgeNode, cfg(), nullLogger);
+    waker.setThreadId("thread-1");
+    node.inbox.push({ ...mail("m1"), conversationId: "siblings-conversation:note" });
+    node.emit("message", node.inbox[0]);
+    waker.setActivity("idle");
+    expect((waker as unknown as { timer: unknown }).timer).toBeNull();
+    expect(calls()).toBe(0);
+  });
+
   it("wakes again when the queued turn ended while `codex queue` was still running and mail is left", async () => {
     fakeCodex(dir, 0, 800);
     const node = fakeNode(dir);

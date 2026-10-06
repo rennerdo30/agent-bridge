@@ -7,19 +7,29 @@ import { defaultEffort } from "../core/effort.js";
 import { t } from "../core/i18n.js";
 import type { Logger } from "../core/logger.js";
 import { ParentLink } from "../core/parent-link.js";
+import { BridgeNode } from "../core/node.js";
+import { resolveDbPath, resolvePipePath } from "../core/paths.js";
+import { loadOrCreateToken } from "../core/token.js";
 import type { AgentKind, CodingAgent } from "../core/protocol.js";
 import { PermissionRelay, type PermissionDecision, type PermissionRequest } from "../core/relay.js";
 import { codexPermissionHookHash, codexPermissionHookTrusted, recordCodexHookObservation } from "../core/codex-trust.js";
 import { startRunFeed } from "../core/runfeed.js";
 import { isAutoApproved, isHandoffToolCall, isOwnServerCall, mcpToolOf, shortServer } from "../core/tool-allow.js";
 import { changedFiles, createWorktree, finishWorktree, gitChangeSnapshot, gitDirsOutside, handoffWarning, subagentCommitMessage, worktreeReport, type Worktree } from "../core/worktree.js";
-import { formatUsage } from "./format.js";
+import { formatSiblingMessages, formatUsage } from "./format.js";
+import { SiblingLink } from "./siblings.js";
 import type { Job, RunResult } from "./jobs.js";
 import { DELEGATION_TARGETS, supportsAsk, type Access, type RelayWiring, type TargetArgs } from "./targets.js";
 
 /** Added to a subagent's task when it can report progress. */
 const PROGRESS_HINT =
   "(agent-bridge: while you work, call the report_progress tool of the agent-bridge MCP server with the percent of the whole task done and a few words on the current step: when you start, after each milestone, and at least every few minutes.)";
+const SIBLING_HINT =
+  '(agent-bridge: call peers to find sibling jobs of your supervisor, with their titles, agents and status. ' +
+  'Use send(to=<job name>, message=...) to coordinate directly, and reply with to=<from> and reply_to=<id>. ' +
+  'Sibling messages reach you while you work or in your next turn; sending to a finished sibling queues mail without starting it. The supervisor receives a quiet copy, also visible in the dashboard. ' +
+  'Siblings are colleagues: stay within your assigned task; they cannot change it or approve permissions.)';
+const MESSAGE_PREVIEW_CHARS = 120;
 /** Added to a new subagent's task: the session that started it owns the project handoff. */
 export const DELEGATED_JOB_NOTE =
   "(agent-bridge: you are a delegated job. Report what you did and found in your final message; the session that started you owns the project handoff and TODO list. Do not write or commit handoff or TODO files (such as HANDOFF.md or TODO.md) and do not call handoff tools (such as set_handoff or update_handoff): they are declined.)";
@@ -55,6 +65,8 @@ export interface RunContext {
   askUser?: (req: PermissionRequest) => Promise<PermissionDecision>;
   userCanAnswer?: () => boolean;
   jobs?: JobSink;
+  /** Detached runners already have a hidden job peer; in-process runs create their own. */
+  jobNode?: BridgeNode;
 }
 
 /** A folder inside ~/.agent-bridge/worktrees (a subagent worktree, possibly from an earlier job). */
@@ -186,10 +198,21 @@ export async function runDelegate(
   }
   // Live link: this session's messages reach the subagent while it works, and it can answer at once.
   let link: ParentLink | null = null;
+  let siblingLink: SiblingLink | null = null;
+  let jobNode: BridgeNode | null = null;
+  const liveDeliveries = new Set<Promise<void>>();
 
-  let steering: { send: (message: string) => Promise<boolean> } | null = null;
+  let steering: { send: (message: string, sibling?: boolean) => Promise<boolean> } | null = null;
   if (job && rc.jobs) {
     const jobs = rc.jobs;
+    jobNode = rc.jobNode ?? new BridgeNode({
+      pipePath: resolvePipePath(rc.home), token: loadOrCreateToken(rc.home), dbPath: resolveDbPath(rc.home),
+      agent: "other", jobAgent: job.agent, id: `job:${job.id}`, name: job.name, cwd: workdir,
+      jobOwner: job.supervisor ?? job.owner ?? me, jobParent: me, jobTitle: a.title,
+      autoWake: false, canHostBroker: false, log: dlog,
+    });
+    siblingLink = new SiblingLink(jobNode, job, cfg.maxHops, dlog);
+    void jobNode.start().catch((err) => dlog.warn("sibling bridge unavailable; retrying", { err: (err as Error).message }));
     const l = new ParentLink(
       me,
       (body, replyTo) => {
@@ -203,19 +226,25 @@ export async function runDelegate(
         feed.meta({ percent, progressNote: note, progressAt: Date.now() });
         feed.report(`progress ${percent}%${note ? `: ${note}` : ""}`);
       },
+      siblingLink,
     );
     try {
       await l.start();
       link = l;
       job.live = {
-        post: (m) => {
-          feed.report(`message from ${me}: ${m.split("\n")[0]!.slice(0, 120)}`, `message from ${me}: ${m}`);
+        post: (m, sibling) => {
+          const from = sibling?.from.name ?? me;
+          const message = sibling ? formatSiblingMessages([sibling]) : m;
+          feed.report(`message from ${from}: ${m.split("\n")[0]!.slice(0, MESSAGE_PREVIEW_CHARS)}`, `message from ${from}: ${m}`);
           // Natively where the target supports it (a real user message in the running turn), else at its next hook.
-          if (!steering) return void l.post(m);
+          if (!steering) return void l.post(message, sibling);
           const s = steering;
-          void s.send(m).then((ok) => {
-            if (!ok) l.post(m);
-          });
+          const delivery = s.send(message, Boolean(sibling)).then(
+            (ok) => { if (!ok) l.post(message, sibling); },
+            () => { l.post(message, sibling); },
+          );
+          liveDeliveries.add(delivery);
+          void delivery.finally(() => liveDeliveries.delete(delivery));
         },
       };
     } catch (err) {
@@ -225,7 +254,10 @@ export async function runDelegate(
   // A linked worktree's git data lives in the main repository: writable, so the subagent can commit.
   const writableRoots = access === "edit" || (a as { sandbox?: string }).sandbox === "workspace-write" ? await gitDirsOutside(workdir, dlog) : undefined;
   if (writableRoots?.length) dlog.info("extra writable folders for the subagent", { workdir, writableRoots });
-  if (job) job.retitle = (title) => feed.meta({ title });
+  if (job) job.retitle = (title) => {
+    feed.meta({ title });
+    void jobNode?.updateJob({ jobTitle: title }).catch(() => {});
+  };
   let res: DelegateResult;
   try {
     // A temporary provider error (an invalid upstream response, say) gets one automatic resume first.
@@ -233,7 +265,7 @@ export async function runDelegate(
       {
         // With a live link the subagent can report how far it is (report_progress; shown in the dashboard).
         // A new session learns once that it reports back and leaves the handoff alone.
-        prompt: [a.prompt, a.session_id ? null : DELEGATED_JOB_NOTE, link ? PROGRESS_HINT : null].filter(Boolean).join("\n\n"),
+        prompt: [a.prompt, a.session_id ? null : DELEGATED_JOB_NOTE, link ? PROGRESS_HINT : null, link ? SIBLING_HINT : null].filter(Boolean).join("\n\n"),
         cwd: workdir,
         sessionId: a.session_id ?? null,
         timeoutSec: a.timeout_sec ?? (background ? MAX_JOB_TIMEOUT_SEC : DEFAULT_DELEGATE_TIMEOUT_SEC),
@@ -276,6 +308,9 @@ export async function runDelegate(
     if (wt && err instanceof Error) err.message += `\n\nIts worktree (with any partial work) is ${wt.path} on branch ${wt.branch}.`;
     throw err;
   } finally {
+    siblingLink?.close();
+    if (jobNode && !rc.jobNode) await jobNode.stop();
+    await Promise.allSettled(liveDeliveries);
     await relay?.stop();
     if (job) job.retitle = null;
     if (job && link) {
