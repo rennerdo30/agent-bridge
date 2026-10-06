@@ -38,14 +38,14 @@ export function mcpToolOf(r: { tool: string; detail: string }): { server: string
 
 const DESK_WORKER_PRESET = "pair-desk:worker";
 export const DESK_READ_PATTERNS = ["pair-desk.get_*", "pair-desk.list_*"];
-const DESK_WORKER_PATTERNS = ["pair-desk.get_*", "pair-desk.list_*", "pair-desk.comment", "pair-desk.progress", "pair-desk.set_plan", "pair-desk.update_step", "pair-desk.create_issue", "pair-desk.update_issue"];
+const DESK_WORKER_PATTERNS = ["pair-desk.get_*", "pair-desk.list_*", "pair-desk.comment", "pair-desk.progress", "pair-desk.set_plan", "pair-desk.update_step", "pair-desk.create_issue", "pair-desk.update_issue", "pair-desk.set_location"];
 
 /** Suggest explicit worker access without implying that read patterns cover desk writes. */
 export function approvalHint(r: { tool: string; detail: string }): string {
   const call = mcpToolOf(r);
   if (!call?.tool) return "";
   const server = shortServer(call.server);
-  const preset = isAutoApproved(r, [DESK_WORKER_PRESET]) ? ` or "${DESK_WORKER_PRESET}" (desk reads, comments, plans and issue edits; excludes status, builds and handoff writes)` : "";
+  const preset = isAutoApproved(r, [DESK_WORKER_PRESET]) ? ` or "${DESK_WORKER_PRESET}" (desk reads, comments, plans, issue edits and review locations; excludes status, builds and handoff writes)` : "";
   return ` (not covered by this job's allow_tools; add "${server}.${call.tool}"${preset} to allow it without asking; get_* and list_* only cover reads)`;
 }
 

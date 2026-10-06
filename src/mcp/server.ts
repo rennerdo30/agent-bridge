@@ -918,7 +918,7 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
         .max(50)
         .optional()
         .describe(
-          'MCP tools the subagent may call without asking you, as "server.tool" patterns with *, e.g. ["pair-desk.get_*", "pair-desk.list_*"] (reads only), "pair-desk:worker" (reads, comments, progress, plans and issue edits; excludes status, builds and handoff writes), or "server" for all of its tools.',
+          'MCP tools the subagent may call without asking you, as "server.tool" patterns with *, e.g. ["pair-desk.get_*", "pair-desk.list_*"] (reads only), "pair-desk:worker" (reads, comments, progress, plans, issue edits and review locations; excludes status, builds and handoff writes), or "server" for all of its tools. Add "pair-desk.set_build" separately to allow build publication.',
         ),
       send_to: z.array(z.string().refine(isJobSendTarget, "Use an exact local session name, not an agent kind, broadcast or job name"))
         .max(MAX_JOB_SEND_TARGETS).optional()

@@ -102,8 +102,9 @@ describe("delegation approval routing", () => {
     symlinkSync(outside, join(root, "Library"), "junction");
     const wt = { repoRoot: home, path: root, cwd: root, branch: "agent-bridge/test", base: "base" };
     vi.spyOn(DELEGATION_TARGETS.codex, "run").mockImplementation(async (_cfg, req) => {
-      expect(req.prompt).toContain("Never create symlinks, directory junctions");
-      expect(req.prompt).toContain("Copy caches");
+      expect(req.prompt).toContain("only for read-only access to Git-ignored caches");
+      expect(req.prompt).toContain("never substitute an incomplete cache copy");
+      expect(req.prompt).toContain("Never write, delete, truncate or change permissions in a linked source");
       if (fail) throw new DelegateError("failed task", "failed");
       return { sessionId: "saved", text: "done", isError: false, details: {} };
     });

@@ -47,7 +47,7 @@ describe("MCP tool allow-list", () => {
   });
 
   it("matches common desk writes in actual CLI request formats", () => {
-    for (const tool of ["set_plan", "update_issue", "create_issue"]) {
+    for (const tool of ["set_plan", "update_issue", "create_issue", "set_location"]) {
       const requests = [
         { tool: "mcp:pair-desk", detail: `Allow the pair-desk MCP server to run tool '${tool}'?` },
         hookRequest("codex", { tool_name: `mcp__pair-desk__${tool}`, tool_input: {} }),
@@ -78,6 +78,7 @@ describe("MCP tool allow-list", () => {
       expect(isAutoApproved(request, ["pair-desk:worker"])).toBe(false);
       expect(approvalHint(request)).not.toContain("pair-desk:worker");
     }
+    expect(isAutoApproved({ tool: "mcp:pair-desk", detail: "set_build: {}" }, ["pair-desk:worker", "pair-desk.set_build"])).toBe(true);
     expect(isAutoApproved({ tool: "mcp:another-desk", detail: "set_plan: {}" }, ["pair-desk:worker"])).toBe(false);
     expect(isHandoffToolCall({ tool: "mcp__pair_desk__update_handoff", detail: "{}" })).toBe(true);
   });

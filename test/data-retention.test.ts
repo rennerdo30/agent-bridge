@@ -24,7 +24,7 @@ const REVIEWED_REMOVALS: Record<string, string[]> = {
   "cli/smoke.ts": ["rmSync(dir, { recursive: true, force: true })"],
   "cli/reliability.ts": ["rmSync(r, { recursive: true, force: true, maxRetries: 3 })", "rmSync(home, { recursive: true, force: true, maxRetries: 3 })"],
   "cli/reliability-live.ts": ["rmSync(h, { recursive: true, force: true, maxRetries: 3 })"],
-  "core/worktree-cleanup.ts": ["unlinkSync(path)", "rmdirSync(path)"],
+  "core/worktree-links.ts": ["unlinkSync(path)", "rmdirSync(path)"],
   "core/worktree.ts": ["rmSync(toNamespacedPath(resolve(path)), { recursive: true, force: true, maxRetries: REMOVE_RETRIES })"],
   "core/resource-slots.ts": ['"DELETE FROM slots WHERE expiresAt <= ?"', '"DELETE FROM slots WHERE pid = ?"', '`DELETE FROM slots WHERE id = ? AND pid = ?${resource ? " AND resource = ?" : ""}`'],
   "core/sqlite-maintenance.ts": ["`DELETE FROM ${table} WHERE ${where}`"],

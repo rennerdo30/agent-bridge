@@ -8111,7 +8111,7 @@ var nullLogger = {
 // src/core/node.ts
 import { randomUUID as randomUUID18 } from "node:crypto";
 import { EventEmitter as EventEmitter2 } from "node:events";
-import { unlinkSync } from "node:fs";
+import { unlinkSync as unlinkSync2 } from "node:fs";
 import { dirname as dirname14, join as join42 } from "node:path";
 
 // src/core/history.ts
@@ -31614,7 +31614,7 @@ import { randomUUID as randomUUID13 } from "node:crypto";
 
 // src/core/dashboard-read.ts
 import { closeSync as closeSync9, openSync as openSync9, readFileSync as readFileSync18, readSync as readSync3, statSync as statSync9 } from "node:fs";
-import { join as join34 } from "node:path";
+import { join as join35 } from "node:path";
 
 // src/core/run-history.ts
 import { readFileSync as readFileSync10, readdirSync as readdirSync10, statSync as statSync6 } from "node:fs";
@@ -31850,8 +31850,8 @@ function pageRuns(runs, before, limit) {
 
 // src/core/job-outcomes.ts
 import { createHash as createHash11 } from "node:crypto";
-import { existsSync as existsSync16 } from "node:fs";
-import { join as join33 } from "node:path";
+import { existsSync as existsSync17 } from "node:fs";
+import { join as join34 } from "node:path";
 import { DatabaseSync as DatabaseSync11 } from "node:sqlite";
 
 // src/core/paths.ts
@@ -34528,8 +34528,106 @@ function acquireLock(path) {
 
 // src/core/worktree.ts
 import { createHash as createHash8 } from "node:crypto";
-import { existsSync as existsSync14, mkdirSync as mkdirSync17, readFileSync as readFileSync16, realpathSync as realpathSync4, rmSync as rmSync5 } from "node:fs";
-import { basename as basename8, isAbsolute as isAbsolute5, join as join30, relative as relative4, resolve as resolve8, toNamespacedPath } from "node:path";
+import { existsSync as existsSync15, mkdirSync as mkdirSync17, readFileSync as readFileSync16, realpathSync as realpathSync5, rmSync as rmSync5 } from "node:fs";
+import { basename as basename9, isAbsolute as isAbsolute6, join as join31, relative as relative5, resolve as resolve9, toNamespacedPath as toNamespacedPath2 } from "node:path";
+
+// src/core/worktree-links.ts
+import { execFileSync as execFileSync2 } from "node:child_process";
+import { existsSync as existsSync14, lstatSync as lstatSync4, readdirSync as readdirSync12, readlinkSync, realpathSync as realpathSync4, rmdirSync as rmdirSync2, unlinkSync } from "node:fs";
+import { basename as basename8, dirname as dirname13, isAbsolute as isAbsolute5, join as join30, relative as relative4, resolve as resolve8, toNamespacedPath } from "node:path";
+var WORKTREE_LINK_HINT = "(agent-bridge: worktree isolation is mandatory for source and writable files. External directory links may be used only for read-only access to Git-ignored caches: node_modules, .vs, __pycache__, or Library beside a Unity ProjectSettings/ProjectVersion.txt. Never write, delete, truncate or change permissions in a linked source, including through an internal link chain. A junction does not enforce read-only access: do not run Unity imports, package installers or other cache-writing tools through it. Prefer a project's external-cache env/config option (e.g. ANIMASKY_LIBRARY_ROOT) when available; never substitute an incomplete cache copy. Other external links remain forbidden. Cleanup must unlink only the link itself and never recurse into its target. Request cleanup approval through the supervisor and report the link and target if cleanup is denied.)";
+function ignoredCacheLink(root, path) {
+  const name2 = basename8(path);
+  const cache3 = ["node_modules", ".vs", "__pycache__"].includes(name2) || name2 === "Library" && existsSync14(join30(dirname13(path), "ProjectSettings", "ProjectVersion.txt"));
+  if (!cache3 || path === root) return false;
+  const rel = relative4(root, path).replace(/\\/g, "/");
+  try {
+    const args = ["-c", `safe.directory=${root.replace(/\\/g, "/")}`];
+    const tracked = execFileSync2("git", [...args, "ls-files", "-z", "--", `:(literal)${rel}`], { cwd: root, encoding: "utf8", timeout: 1e4, stdio: ["pipe", "pipe", "pipe"] });
+    if (tracked) return false;
+    execFileSync2("git", [...args, "check-ignore", "--quiet", "--", `${rel}/`], { cwd: root, timeout: 1e4, stdio: ["pipe", "pipe", "pipe"] });
+    return true;
+  } catch {
+    return false;
+  }
+}
+function unlinkLinks(dir) {
+  const parents = [];
+  for (let parent2 = resolve8(dir); ; parent2 = dirname13(parent2)) {
+    if (dirname13(parent2) === parent2) break;
+    parents.push(parent2);
+  }
+  for (const parent2 of parents.reverse()) {
+    if (lstatSync4(toNamespacedPath(parent2)).isSymbolicLink()) throw new Error(`Refusing cleanup through a linked path: ${parent2}`);
+  }
+  return unlinkChildren(dir);
+}
+function unlinkChildren(dir) {
+  dir = toNamespacedPath(resolve8(dir));
+  if (lstatSync4(dir).isSymbolicLink()) throw new Error(`Refusing cleanup through a linked worktree root: ${dir}`);
+  let count = 0;
+  for (const entry of readdirSync12(dir, { withFileTypes: true })) {
+    const path = join30(dir, entry.name);
+    const stat = lstatSync4(path);
+    if (stat.isSymbolicLink()) {
+      try {
+        unlinkSync(path);
+      } catch {
+        rmdirSync2(path);
+      }
+      count++;
+    } else if (stat.isDirectory()) count += unlinkChildren(path);
+  }
+  return count;
+}
+function scanWorktreeLinks(root) {
+  const scan = { externalLinks: [], errors: [] };
+  const canonicalRoot = lstatSync4(toNamespacedPath(root)).isSymbolicLink() ? resolve8(root) : realpathSync4.native(root);
+  const inside = (target) => {
+    const rel = relative4(canonicalRoot, target);
+    return rel === "" || rel !== ".." && !rel.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`) && !isAbsolute5(rel);
+  };
+  const visit2 = (path) => {
+    try {
+      const stat = lstatSync4(toNamespacedPath(path));
+      if (stat.isSymbolicLink()) {
+        const raw = readlinkSync(toNamespacedPath(path));
+        let target = resolve8(dirname13(path), raw);
+        try {
+          target = realpathSync4.native(path);
+        } catch {
+        }
+        if (!inside(target)) {
+          const link2 = { path, target };
+          scan.externalLinks.push(link2);
+          let directory2 = false;
+          try {
+            directory2 = lstatSync4(toNamespacedPath(target)).isDirectory();
+          } catch {
+          }
+          if (directory2 && ignoredCacheLink(resolve8(root), path)) (scan.readOnlyCacheLinks ??= []).push(link2);
+        }
+      } else if (stat.isDirectory()) {
+        for (const entry of readdirSync12(toNamespacedPath(path))) visit2(join30(path, entry));
+      }
+    } catch (err) {
+      scan.errors.push(`${path}: ${err.message}`);
+    }
+  };
+  visit2(resolve8(root));
+  return scan;
+}
+function worktreeLinkWarning(scan) {
+  const caches = new Set(scan.readOnlyCacheLinks?.map((link2) => link2.path));
+  const lines = scan.externalLinks.filter((link2) => !caches.has(link2.path)).map((link2) => `${link2.path} -> ${link2.target}`);
+  if (lines.length) lines.unshift("WARNING: external worktree links/reparse points found. Do not run tools through these links; unlink the link itself without recursively deleting its target:");
+  if (caches.size) lines.push("Read-only ignored cache links (never modify the source; unlink only the link itself without recursively deleting its target):", ...scan.readOnlyCacheLinks.map((link2) => `${link2.path} -> ${link2.target}`));
+  if (scan.errors.length) lines.push(`WARNING: worktree link inspection incomplete:
+${scan.errors.join("\n")}`);
+  return lines.length ? lines.join("\n") : null;
+}
+
+// src/core/worktree.ts
 var GIT = "git";
 var LONG_PATH_ARGS = ["-c", "core.longpaths=true"];
 var REMOVE_RETRIES = 3;
@@ -34539,7 +34637,7 @@ var BRANCH_PREFIX = "agent-bridge/";
 var FALLBACK_COMMIT_IDENTITY = { "user.name": "agent-bridge", "user.email": "agent-bridge@localhost" };
 var MAX_DIFFSTAT_CHARS = 4e3;
 function trustArgs(...dirs) {
-  return dirs.flatMap((d) => ["-c", `safe.directory=${resolve8(d).replace(/\\/g, "/")}`]);
+  return dirs.flatMap((d) => ["-c", `safe.directory=${resolve9(d).replace(/\\/g, "/")}`]);
 }
 async function git(args, cwd, log, timeoutMs = GIT_TIMEOUT_MS) {
   const what = `git ${args.filter((a, i) => !a.startsWith("-") && args[i - 1] !== "-c").slice(0, 2).join(" ")}`;
@@ -34557,9 +34655,9 @@ async function createWorktree(opts) {
   const base2 = await git(["rev-parse", "HEAD"], repoRoot, opts.log);
   const baseBranch = await git(["symbolic-ref", "-q", "--short", "HEAD"], repoRoot, opts.log).catch(() => "") || null;
   let branch = `${BRANCH_PREFIX}${opts.jobId}`;
-  const dir = join30(opts.home, "worktrees");
+  const dir = join31(opts.home, "worktrees");
   mkdirSync17(dir, { recursive: true });
-  let path = join30(dir, `${basename8(repoRoot)}-${opts.jobId}`);
+  let path = join31(dir, `${basename9(repoRoot)}-${opts.jobId}`);
   try {
     await git(["worktree", "add", "-b", branch, path, base2], repoRoot, opts.log, WORKTREE_ADD_TIMEOUT_MS);
   } catch (err) {
@@ -34579,8 +34677,8 @@ async function createWorktree(opts) {
     }
   }
   await unlockWorktree(repoRoot, path, opts.log);
-  const rel = relative4(repoRoot, opts.cwd);
-  const cwd = rel && !rel.startsWith("..") && !isAbsolute5(rel) ? join30(path, rel) : path;
+  const rel = relative5(repoRoot, opts.cwd);
+  const cwd = rel && !rel.startsWith("..") && !isAbsolute6(rel) ? join31(path, rel) : path;
   opts.log.info("worktree created", { repoRoot, path, branch });
   return { repoRoot, path, cwd, branch, base: base2, baseBranch };
 }
@@ -34588,6 +34686,14 @@ async function unlockWorktree(repoRoot, path, log) {
   await git([...trustArgs(path), "worktree", "unlock", path], repoRoot, log).catch(() => "");
 }
 async function removeWorktree(repoRoot, path, branch, log) {
+  if (existsSync15(toNamespacedPath2(path))) {
+    try {
+      unlinkLinks(path);
+    } catch (err) {
+      log.warn("worktree cleanup refused; preserving checkout and branch", { path, err: err.message });
+      return;
+    }
+  }
   await git([...trustArgs(path), "worktree", "remove", "--force", "--force", path], repoRoot, log).catch(() => {
   });
   try {
@@ -34600,7 +34706,9 @@ async function removeWorktree(repoRoot, path, branch, log) {
   });
 }
 function removeWorktreeDirectory(path) {
-  rmSync5(toNamespacedPath(resolve8(path)), { recursive: true, force: true, maxRetries: REMOVE_RETRIES });
+  if (!existsSync15(toNamespacedPath2(path))) return;
+  unlinkLinks(path);
+  rmSync5(toNamespacedPath2(resolve9(path)), { recursive: true, force: true, maxRetries: REMOVE_RETRIES });
 }
 var SUBJECT_CHARS = 72;
 function subagentCommitMessage(opts) {
@@ -34624,14 +34732,14 @@ async function gitDirsOutside(cwd, log) {
     const [gitDir, common] = (await git(["rev-parse", "--path-format=absolute", "--git-dir", "--git-common-dir"], cwd, log)).split(/\r?\n/);
     const real = (p) => {
       try {
-        return realpathSync4.native(p);
+        return realpathSync5.native(p);
       } catch {
-        return resolve8(p);
+        return resolve9(p);
       }
     };
     const inside = (p) => {
-      const rel = relative4(real(cwd), real(p));
-      return rel === "" || !rel.startsWith("..") && !isAbsolute5(rel);
+      const rel = relative5(real(cwd), real(p));
+      return rel === "" || !rel.startsWith("..") && !isAbsolute6(rel);
     };
     return [...new Set([gitDir, common].filter((p) => Boolean(p) && !inside(p)))];
   } catch {
@@ -34671,7 +34779,7 @@ function generatedNoise(root, file2) {
   return parts.slice(0, -1).some((part, index) => {
     if (GENERATED_DIRECTORIES.has(part)) return true;
     if (!UNITY_GENERATED_DIRECTORIES.has(part)) return false;
-    return existsSync14(toNamespacedPath(join30(root, ...parts.slice(0, index), "ProjectSettings", "ProjectVersion.txt")));
+    return existsSync15(toNamespacedPath2(join31(root, ...parts.slice(0, index), "ProjectSettings", "ProjectVersion.txt")));
   });
 }
 async function autoCommitFiles(wt, log) {
@@ -34724,9 +34832,9 @@ async function workBranches(wt, current, log) {
   const visited = new Set((await git([...trust, "log", "-g", "--format=%H%x09%gs", "HEAD"], wt.path, log).catch(() => "")).split(/\r?\n/).filter((line) => line && !line.includes("	checkout: ")).map((line) => line.split("	")[0]));
   const refs = (await git(["for-each-ref", "refs/heads", "--format=%(refname:short) %(objectname)"], wt.repoRoot, log).catch(() => "")).split(/\r?\n/).map((l) => l.split(" ")).filter((p) => p.length === 2);
   const list = await git(["worktree", "list", "--porcelain"], wt.repoRoot, log).catch(() => "");
-  const here = resolve8(wt.path).toLowerCase();
+  const here = resolve9(wt.path).toLowerCase();
   const elsewhere = new Set(
-    list.split(/\r?\n\r?\n/).filter((block) => resolve8(/^worktree (.+)$/m.exec(block)?.[1] ?? "").toLowerCase() !== here).map((block) => /^branch refs\/heads\/(.+)$/m.exec(block)?.[1]).filter((b) => Boolean(b))
+    list.split(/\r?\n\r?\n/).filter((block) => resolve9(/^worktree (.+)$/m.exec(block)?.[1] ?? "").toLowerCase() !== here).map((block) => /^branch refs\/heads\/(.+)$/m.exec(block)?.[1]).filter((b) => Boolean(b))
   );
   for (const b of [wt.baseBranch]) if (b) elsewhere.add(b);
   const candidates = new Set(
@@ -34788,7 +34896,7 @@ async function gitChangeSnapshot(cwd, log) {
     const file2 = line.slice(3).replace(/^.* -> /, "").replace(/^"|"$/g, "");
     let fp = line.slice(0, 2);
     try {
-      fp += ":" + createHash8("sha1").update(readFileSync16(join30(root, file2))).digest("hex");
+      fp += ":" + createHash8("sha1").update(readFileSync16(join31(root, file2))).digest("hex");
     } catch {
       fp += ":missing";
     }
@@ -34805,22 +34913,22 @@ function changedFiles(before, after) {
 
 // src/core/local-result-receipts.ts
 import { createHash as createHash10 } from "node:crypto";
-import { existsSync as existsSync15, readdirSync as readdirSync12 } from "node:fs";
-import { join as join32 } from "node:path";
+import { existsSync as existsSync16, readdirSync as readdirSync13 } from "node:fs";
+import { join as join33 } from "node:path";
 
 // src/core/read-journal.ts
 import { createHash as createHash9 } from "node:crypto";
 import { appendFileSync as appendFileSync3, mkdirSync as mkdirSync18, readFileSync as readFileSync17 } from "node:fs";
-import { join as join31 } from "node:path";
+import { join as join32 } from "node:path";
 var ReadJournal = class {
   constructor(home) {
     this.home = home;
-    this.dir = join31(home, "read-state");
+    this.dir = join32(home, "read-state");
   }
   home;
   dir;
   path(identity) {
-    return join31(this.dir, `${createHash9("sha256").update(identity).digest("hex")}.jsonl`);
+    return join32(this.dir, `${createHash9("sha256").update(identity).digest("hex")}.jsonl`);
   }
   read(identity) {
     return this.entries(identity).flatMap((entry) => entry.ids);
@@ -34869,15 +34977,15 @@ var LOCAL_RESULTS_DIR = "local-result-receipts";
 var key = (name2) => createHash10("sha256").update(name2).digest("hex");
 function recordLocalResult(home, message) {
   if (!message.from.id.startsWith("job:") || !RESULT_HEADER.test(message.body.split("\n")[0])) return;
-  const path = join32(home, LOCAL_RESULTS_DIR, key(message.from.name), `${key(message.id)}.json`);
+  const path = join33(home, LOCAL_RESULTS_DIR, key(message.from.name), `${key(message.id)}.json`);
   const previous = readJsonStore(path);
   if (previous) return;
   writeJsonStore(path, { id: message.id, name: message.from.name, recipient: message.recipient, deliveredAt: message.createdAt }, previous);
 }
 function localResultReceipt(home, name2, owner, after, before) {
-  const dir = join32(home, LOCAL_RESULTS_DIR, key(name2));
-  if (!existsSync15(dir)) return null;
-  const records = readdirSync12(dir).filter((f) => f.endsWith(".json")).map((f) => readJsonStore(join32(dir, f))).filter((r) => isRecord(r) && typeof r.id === "string" && typeof r.recipient === "string" && typeof r.deliveredAt === "number" && (!owner || r.recipient === owner) && r.deliveredAt >= after && r.deliveredAt < before).sort((a, b) => b.deliveredAt - a.deliveredAt);
+  const dir = join33(home, LOCAL_RESULTS_DIR, key(name2));
+  if (!existsSync16(dir)) return null;
+  const records = readdirSync13(dir).filter((f) => f.endsWith(".json")).map((f) => readJsonStore(join33(dir, f))).filter((r) => isRecord(r) && typeof r.id === "string" && typeof r.recipient === "string" && typeof r.deliveredAt === "number" && (!owner || r.recipient === owner) && r.deliveredAt >= after && r.deliveredAt < before).sort((a, b) => b.deliveredAt - a.deliveredAt);
   const record2 = records[0];
   if (!record2) return null;
   const receipt = new ReadJournal(home).receipt(`name:${record2.recipient}`, record2.id);
@@ -34895,7 +35003,7 @@ var JOB_OUTCOMES_DIR = "job-outcomes";
 var JOB_OUTCOME_CONTRACT_VERSION = 1;
 function decisionPath(home, job) {
   const key2 = createHash11("sha256").update(`${job.name}:${job.startedAt}`).digest("hex");
-  return join33(home, JOB_OUTCOMES_DIR, `${key2}.json`);
+  return join34(home, JOB_OUTCOMES_DIR, `${key2}.json`);
 }
 function readOutcomeDecision(home, job) {
   const data = readHistoryJson(decisionPath(home, job));
@@ -34909,7 +35017,7 @@ function resultDelivery(home, job, before) {
   const path = resolveDbPath(home);
   const rows = [];
   for (const file2 of [path, archiveDbPath(path)]) {
-    if (!existsSync16(file2)) continue;
+    if (!existsSync17(file2)) continue;
     let db;
     try {
       db = new DatabaseSync11(file2, { readOnly: true });
@@ -34970,7 +35078,7 @@ async function deriveJobOutcome(home, job, log, opts = {}) {
   return { delivery: resultDelivery(home, job, opts.before ?? Number.MAX_SAFE_INTEGER), merge: merge2 };
 }
 async function listJobOutcomes(home, log, names) {
-  const jobs = readStore(join33(home, JOBS_FILE), log, true);
+  const jobs = readStore(join34(home, JOBS_FILE), log, true);
   const out2 = {};
   for (const job of jobs) {
     if (names && !names.has(job.name)) continue;
@@ -35023,7 +35131,7 @@ var LEGACY_JOB_START_TOLERANCE_MS = 1e3;
 var MAX_LOG_CHUNK = 128 * 1024;
 async function finishedRunOutcomes(home, log, names) {
   const runs = listRuns(home);
-  const jobs = readStore(join34(home, JOBS_FILE), log, true);
+  const jobs = readStore(join35(home, JOBS_FILE), log, true);
   const out2 = {};
   for (const run2 of runs) {
     if (names && !names.has(run2.name)) continue;
@@ -35148,7 +35256,7 @@ function readStoredJobs(home) {
 }
 function classifyPeers(peers, runs, home) {
   const norm = (p) => p.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
-  const worktrees = `${norm(join34(home, "worktrees"))}/`;
+  const worktrees = `${norm(join35(home, "worktrees"))}/`;
   return peers.map((p) => {
     const cwd = norm(p.cwd ?? "");
     const subagent = cwd.startsWith(worktrees);
@@ -35174,7 +35282,7 @@ async function readDashboard(ctx, request2) {
     const before = url2.searchParams.get("before");
     if (before !== null && !/^[\w.-]{1,256}$/.test(before)) return reply(400, { error: "invalid outcome cursor" });
     const select = (names2) => [...new Set(names2)].sort().filter((name2) => before === null || name2 > before).slice(0, limit);
-    const stored = readStore(join34(ctx.home, JOBS_FILE), ctx.log, true).filter((j) => j.status === "done" || j.status === "failed");
+    const stored = readStore(join35(ctx.home, JOBS_FILE), ctx.log, true).filter((j) => j.status === "done" || j.status === "failed");
     const runs = listRuns(ctx.home).filter((r) => r.job && (r.status === "done" || r.status === "failed"));
     const names = select([...stored.map((j) => j.name), ...runs.map((r) => r.name)]);
     const next = [...stored.map((j) => j.name), ...runs.map((r) => r.name)].some((name2) => names.length > 0 && name2 > names.at(-1)) ? names.at(-1) : null;
@@ -35367,7 +35475,7 @@ var RemoteDashboard = class {
 
 // src/network/remote-jobs.ts
 import { randomUUID as randomUUID15 } from "node:crypto";
-import { existsSync as existsSync17, realpathSync as realpathSync6, statSync as statSync11 } from "node:fs";
+import { existsSync as existsSync18, realpathSync as realpathSync6, statSync as statSync11 } from "node:fs";
 import { isAbsolute as isAbsolute8, join as join41 } from "node:path";
 
 // src/mcp/delegate-run.ts
@@ -35377,21 +35485,21 @@ import { isAbsolute as isAbsolute7, join as join38, relative as relative6, resol
 // src/core/effort.ts
 import { readFileSync as readFileSync20 } from "node:fs";
 import { homedir as homedir6 } from "node:os";
-import { join as join36 } from "node:path";
+import { join as join37 } from "node:path";
 
 // src/core/codex-trust.ts
 import { readFileSync as readFileSync19, writeFileSync as writeFileSync9 } from "node:fs";
 import { homedir as homedir5 } from "node:os";
-import { join as join35 } from "node:path";
+import { join as join36 } from "node:path";
 var PERMISSION_HOOK_STATE_KEY = 'hooks.state."agent-bridge@agent-bridge:plugin.json#hooks[0]:permission_request:0:0"';
 var OBSERVATIONS_FILE = "codex-hook.json";
 function codexHome(env = process.env) {
-  return env.CODEX_HOME?.trim() || join35(homedir5(), ".codex");
+  return env.CODEX_HOME?.trim() || join36(homedir5(), ".codex");
 }
 function codexPermissionHookHash(home = codexHome(), read = (p) => readFileSync19(p, "utf8")) {
   let text;
   try {
-    text = read(join35(home, "config.toml"));
+    text = read(join36(home, "config.toml"));
   } catch {
     return null;
   }
@@ -35406,7 +35514,7 @@ function codexPermissionHookHash(home = codexHome(), read = (p) => readFileSync1
 }
 function readObservations(bridgeHome) {
   try {
-    return JSON.parse(readFileSync19(join35(bridgeHome, OBSERVATIONS_FILE), "utf8"));
+    return JSON.parse(readFileSync19(join36(bridgeHome, OBSERVATIONS_FILE), "utf8"));
   } catch {
     return {};
   }
@@ -35416,7 +35524,7 @@ function recordCodexHookObservation(bridgeHome, hash2, observation) {
   if (all[hash2] === "failed") return;
   all[hash2] = observation;
   try {
-    writeFileSync9(join35(bridgeHome, OBSERVATIONS_FILE), JSON.stringify(all, null, 2), { mode: 384 });
+    writeFileSync9(join36(bridgeHome, OBSERVATIONS_FILE), JSON.stringify(all, null, 2), { mode: 384 });
   } catch {
   }
 }
@@ -35428,8 +35536,8 @@ function codexPermissionHookTrusted(bridgeHome, home = codexHome(), read = (p) =
 // src/core/effort.ts
 function defaultEffort(agent, model, read = (p) => readFileSync20(p, "utf8")) {
   try {
-    if (agent === "codex") return codexConfigEffort(read(join36(codexHome(), "config.toml")));
-    if (agent === "claude") return claudeSettingsEffort(read(join36(process.env.CLAUDE_CONFIG_DIR?.trim() || join36(homedir6(), ".claude"), "settings.json")), model);
+    if (agent === "codex") return codexConfigEffort(read(join37(codexHome(), "config.toml")));
+    if (agent === "claude") return claudeSettingsEffort(read(join37(process.env.CLAUDE_CONFIG_DIR?.trim() || join37(homedir6(), ".claude"), "settings.json")), model);
   } catch {
   }
   return null;
@@ -35480,12 +35588,12 @@ function mcpToolOf(r) {
 }
 var DESK_WORKER_PRESET = "pair-desk:worker";
 var DESK_READ_PATTERNS = ["pair-desk.get_*", "pair-desk.list_*"];
-var DESK_WORKER_PATTERNS = ["pair-desk.get_*", "pair-desk.list_*", "pair-desk.comment", "pair-desk.progress", "pair-desk.set_plan", "pair-desk.update_step", "pair-desk.create_issue", "pair-desk.update_issue"];
+var DESK_WORKER_PATTERNS = ["pair-desk.get_*", "pair-desk.list_*", "pair-desk.comment", "pair-desk.progress", "pair-desk.set_plan", "pair-desk.update_step", "pair-desk.create_issue", "pair-desk.update_issue", "pair-desk.set_location"];
 function approvalHint(r) {
   const call = mcpToolOf(r);
   if (!call?.tool) return "";
   const server = shortServer(call.server);
-  const preset = isAutoApproved(r, [DESK_WORKER_PRESET]) ? ` or "${DESK_WORKER_PRESET}" (desk reads, comments, plans and issue edits; excludes status, builds and handoff writes)` : "";
+  const preset = isAutoApproved(r, [DESK_WORKER_PRESET]) ? ` or "${DESK_WORKER_PRESET}" (desk reads, comments, plans, issue edits and review locations; excludes status, builds and handoff writes)` : "";
   return ` (not covered by this job's allow_tools; add "${server}.${call.tool}"${preset} to allow it without asking; get_* and list_* only cover reads)`;
 }
 function glob(pattern) {
@@ -35509,46 +35617,6 @@ var HANDOFF_TOOL = /(set|update)_handoff$/i;
 function isHandoffToolCall(r) {
   const tool = mcpToolOf(r)?.tool;
   return Boolean(tool && HANDOFF_TOOL.test(tool));
-}
-
-// src/core/worktree-links.ts
-import { lstatSync as lstatSync4, readdirSync as readdirSync13, readlinkSync, realpathSync as realpathSync5 } from "node:fs";
-import { dirname as dirname13, isAbsolute as isAbsolute6, join as join37, relative as relative5, resolve as resolve9, toNamespacedPath as toNamespacedPath2 } from "node:path";
-var WORKTREE_LINK_HINT = "(agent-bridge: worktree isolation is mandatory. Never create symlinks, directory junctions or other reparse points whose targets leave this worktree, including Unity Library folders in the owner's main checkout. Copy caches if needed; do not share them through links. Never follow an existing external link to modify its target. Request cleanup approval through the supervisor and report the link and target if cleanup is denied.)";
-function scanWorktreeLinks(root) {
-  const scan = { externalLinks: [], errors: [] };
-  const canonicalRoot = lstatSync4(toNamespacedPath2(root)).isSymbolicLink() ? resolve9(root) : realpathSync5.native(root);
-  const inside = (target) => {
-    const rel = relative5(canonicalRoot, target);
-    return rel === "" || rel !== ".." && !rel.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`) && !isAbsolute6(rel);
-  };
-  const visit2 = (path) => {
-    try {
-      const stat = lstatSync4(toNamespacedPath2(path));
-      if (stat.isSymbolicLink()) {
-        const raw = readlinkSync(toNamespacedPath2(path));
-        let target = resolve9(dirname13(path), raw);
-        try {
-          target = realpathSync5.native(path);
-        } catch {
-        }
-        if (!inside(target)) scan.externalLinks.push({ path, target });
-      } else if (stat.isDirectory()) {
-        for (const entry of readdirSync13(toNamespacedPath2(path))) visit2(join37(path, entry));
-      }
-    } catch (err) {
-      scan.errors.push(`${path}: ${err.message}`);
-    }
-  };
-  visit2(resolve9(root));
-  return scan;
-}
-function worktreeLinkWarning(scan) {
-  const lines = scan.externalLinks.map((link2) => `${link2.path} -> ${link2.target}`);
-  if (lines.length) lines.unshift("WARNING: external worktree links/reparse points found. Do not run tools through these links; unlink the link itself without recursively deleting its target:");
-  if (scan.errors.length) lines.push(`WARNING: worktree link inspection incomplete:
-${scan.errors.join("\n")}`);
-  return lines.length ? lines.join("\n") : null;
 }
 
 // src/mcp/format.ts
@@ -36490,7 +36558,7 @@ var RemoteJobs = class {
         args = resumeArgs(args, record2.job.name, args.prompt, state.sessionId, cwd, worktree, { ...args });
       } else if (args.worktree) {
         const repo = allowedRemoteDirectory(await git(["rev-parse", "--show-toplevel"], cwd, this.log), policy.allowRoots);
-        if (existsSync17(join41(repo, "worktrees"))) allowedRemoteDirectory(join41(repo, "worktrees"), policy.allowRoots);
+        if (existsSync18(join41(repo, "worktrees"))) allowedRemoteDirectory(join41(repo, "worktrees"), policy.allowRoots);
         worktree = await createWorktree({ cwd, home: repo, jobId: request2.job, log: this.log });
         cwd = allowedRemoteDirectory(worktree.cwd, policy.allowRoots);
         args = { ...args, cwd, worktree: false, _worktree: worktree };
@@ -37671,7 +37739,7 @@ var BridgeNode = class extends EventEmitter2 {
           if (errCode(probeErr) === "ECONNREFUSED") {
             this.log.warn("removing stale broker socket", { pipe: this.opts.pipePath });
             try {
-              unlinkSync(this.opts.pipePath);
+              unlinkSync2(this.opts.pipePath);
             } catch {
             }
           }
@@ -37999,7 +38067,7 @@ function describeCodexUser(u) {
 }
 
 // src/cli/opencode-install.ts
-import { copyFileSync as copyFileSync4, existsSync as existsSync18, mkdirSync as mkdirSync20, readdirSync as readdirSync15, readFileSync as readFileSync22 } from "node:fs";
+import { copyFileSync as copyFileSync4, existsSync as existsSync19, mkdirSync as mkdirSync20, readdirSync as readdirSync15, readFileSync as readFileSync22 } from "node:fs";
 import { homedir as homedir7 } from "node:os";
 import { dirname as dirname15, join as join43, resolve as resolve11 } from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
@@ -38017,7 +38085,7 @@ function pluginSourceDir(name2, marker, fromFile = fileURLToPath2(import.meta.ur
   let dir = dirname15(fromFile);
   for (let i = 0; i < 5; i++) {
     for (const candidate of [join43(dir, "plugins", name2), join43(dir, "..", name2)]) {
-      if (existsSync18(join43(candidate, marker))) return resolve11(candidate);
+      if (existsSync19(join43(candidate, marker))) return resolve11(candidate);
     }
     dir = dirname15(dir);
   }
@@ -38034,8 +38102,8 @@ function ownedByUs(path) {
 function copyAll(copies, configDir) {
   const res = { configDir, files: [], skipped: [] };
   for (const [from, to] of copies) {
-    if (!existsSync18(from)) throw new Error(`missing build output: ${from} (run npm run build)`);
-    if (existsSync18(to) && !ownedByUs(to)) {
+    if (!existsSync19(from)) throw new Error(`missing build output: ${from} (run npm run build)`);
+    if (existsSync19(to) && !ownedByUs(to)) {
       res.skipped.push(to);
       continue;
     }
@@ -38048,7 +38116,7 @@ function copyAll(copies, configDir) {
 var AGENT_SOURCE_SUFFIX = ".agent.md";
 function agentCopies(sourceDir, targetDir) {
   const dir = join43(sourceDir, AGENTS_DIR);
-  if (!existsSync18(dir)) return [];
+  if (!existsSync19(dir)) return [];
   return readdirSync15(dir).filter((f) => f.endsWith(AGENT_SOURCE_SUFFIX)).map((f) => [join43(dir, f), join43(targetDir, AGENTS_DIR, f.slice(0, -AGENT_SOURCE_SUFFIX.length) + ".md")]);
 }
 function installOpencode(sourceDir, configDir = opencodeConfigDir()) {
@@ -38070,7 +38138,7 @@ function uninstallOpencode(configDir = opencodeConfigDir(), sourceDir = opencode
 function removeOwned(targets, configDir) {
   const res = { configDir, files: [], skipped: [] };
   for (const p of targets) {
-    if (!existsSync18(p)) continue;
+    if (!existsSync19(p)) continue;
     const isOurFile = p.endsWith(".md") || p.endsWith(".toml") ? ownedByUs(p) : true;
     if (!isOurFile) {
       res.skipped.push(p);
@@ -38385,7 +38453,7 @@ async function runSessionStartHook(log, out2 = (text) => process.stdout.write(te
 }
 
 // src/cli/watch.ts
-import { closeSync as closeSync10, existsSync as existsSync19, openSync as openSync10, readSync as readSync4, statSync as statSync12 } from "node:fs";
+import { closeSync as closeSync10, existsSync as existsSync20, openSync as openSync10, readSync as readSync4, statSync as statSync12 } from "node:fs";
 import { StringDecoder } from "node:string_decoder";
 import { join as join45 } from "node:path";
 var POLL_MS = 500;
@@ -38393,7 +38461,7 @@ var CHUNK = 64 * 1024;
 var FINISHED = / finished after \d+s · /;
 function findRunLog(home, filter) {
   const dir = join45(home, RUNS_DIR_NAME);
-  if (!existsSync19(dir)) return null;
+  if (!existsSync20(dir)) return null;
   const logs = runLogFiles(home).filter((f) => !filter || f.includes(filter)).map((path) => ({ path, t: statSync12(path).mtimeMs })).sort((a, b) => b.t - a.t);
   return logs[0]?.path ?? null;
 }
@@ -38433,7 +38501,7 @@ import { join as join51 } from "node:path";
 
 // src/cli/ui.ts
 import { randomBytes as randomBytes8 } from "node:crypto";
-import { existsSync as existsSync22 } from "node:fs";
+import { existsSync as existsSync23 } from "node:fs";
 import { createServer as createServer6 } from "node:http";
 import { networkInterfaces as networkInterfaces2 } from "node:os";
 import { join as join50 } from "node:path";
@@ -41343,15 +41411,15 @@ function parseNetworkAddress(address) {
 }
 
 // src/core/doctor.ts
-import { existsSync as existsSync20, lstatSync as lstatSync5, mkdirSync as mkdirSync23, readFileSync as readFileSync25, readdirSync as readdirSync16, renameSync as renameSync8 } from "node:fs";
-import { basename as basename9, dirname as dirname16, join as join47, relative as relative7 } from "node:path";
+import { existsSync as existsSync21, lstatSync as lstatSync5, mkdirSync as mkdirSync23, readFileSync as readFileSync25, readdirSync as readdirSync16, renameSync as renameSync8 } from "node:fs";
+import { basename as basename10, dirname as dirname16, join as join47, relative as relative7 } from "node:path";
 import { randomUUID as randomUUID19 } from "node:crypto";
 import { DatabaseSync as DatabaseSync12 } from "node:sqlite";
 function doctor(home, now = Date.now()) {
   const report = { checkedAt: now, ok: true, schema: [], findings: [], sizes: [], totalBytes: 0, backups: listBackups(home) };
   const finding = (severity, code, path, detail, fixable = false) => report.findings.push({ severity, code, path, detail, fixable });
   const walk = (dir) => {
-    if (!existsSync20(dir)) return;
+    if (!existsSync21(dir)) return;
     for (const file2 of readdirSync16(dir)) {
       const path = join47(dir, file2);
       const st = lstatSync5(path);
@@ -41372,7 +41440,7 @@ function doctor(home, now = Date.now()) {
   for (const [name2, expected] of [[DB_FILE_NAME, SQLITE_STORE_VERSION], [ARCHIVE_DB_NAME, ARCHIVE_STORE_VERSION]]) {
     const path = join47(home, name2);
     let actual = null;
-    if (existsSync20(path)) {
+    if (existsSync21(path)) {
       let db = null;
       try {
         db = new DatabaseSync12(path, { readOnly: true });
@@ -41404,7 +41472,7 @@ function doctor(home, now = Date.now()) {
         continue;
       }
       const value = JSON.parse(readFileSync25(path, "utf8"));
-      const jobs = basename9(path) === JOBS_FILE || path.includes("jobs.json.overflow.json-") || /^jobs-.*\.json$/.test(basename9(path));
+      const jobs = basename10(path) === JOBS_FILE || path.includes("jobs.json.overflow.json-") || /^jobs-.*\.json$/.test(basename10(path));
       if (jobs ? !(Array.isArray(value) || isRecord(value) && Array.isArray(value.jobs)) : !isRecord(value)) {
         finding("error", "json-shape", path, jobs ? "Expected a jobs array or jobs envelope" : "Expected a JSON object");
         continue;
@@ -41413,8 +41481,8 @@ function doctor(home, now = Date.now()) {
       if (version3 === void 0 || version3 === 0) finding("warning", "json-legacy", path, "Legacy version; next versioned write will preserve a migration backup");
       else if (!Number.isInteger(version3) || version3 < 0 || version3 > JSON_STORE_VERSION) finding("error", "json-version", path, `Unsupported JSON version ${String(version3)}; code expects ${JSON_STORE_VERSION}`);
       else if (version3 < JSON_STORE_VERSION) finding("warning", "json-legacy", path, `Earlier JSON version ${String(version3)}; code expects ${JSON_STORE_VERSION}`);
-      if (dirname16(path) === join47(home, "runs") && path.endsWith(".json") && !existsSync20(path.replace(/\.json$/, ".log"))) finding("warning", "orphan-metadata", path, "Run metadata has no matching active log; preserved for review");
-      if (dirname16(path) === join47(home, "jobs") && path.endsWith(".spec.json") && !existsSync20(path.replace(/\.spec\.json$/, ".json"))) finding("warning", "orphan-runner-spec", path, "Runner specification has no state; it may still be starting");
+      if (dirname16(path) === join47(home, "runs") && path.endsWith(".json") && !existsSync21(path.replace(/\.json$/, ".log"))) finding("warning", "orphan-metadata", path, "Run metadata has no matching active log; preserved for review");
+      if (dirname16(path) === join47(home, "jobs") && path.endsWith(".spec.json") && !existsSync21(path.replace(/\.spec\.json$/, ".json"))) finding("warning", "orphan-runner-spec", path, "Runner specification has no state; it may still be starting");
     } catch (err) {
       finding("error", "json-parse", path, String(err));
     }
@@ -41422,7 +41490,7 @@ function doctor(home, now = Date.now()) {
   const logs = runLogFiles(home);
   for (const path of logs) {
     const meta3 = join47(dirname16(path), runFileName(path).replace(/\.log$/, ".json"));
-    if (!existsSync20(meta3) && !readdirSync16(dirname16(path)).some((f) => f.startsWith(basename9(meta3) + "-"))) finding("warning", "orphan-log", path, "Run log has no metadata; log remains readable");
+    if (!existsSync21(meta3) && !readdirSync16(dirname16(path)).some((f) => f.startsWith(basename10(meta3) + "-"))) finding("warning", "orphan-log", path, "Run log has no metadata; log remains readable");
   }
   report.ok = !report.findings.some((f) => f.severity === "error");
   return report;
@@ -41435,7 +41503,7 @@ function fixDoctor(home, confirmed) {
     for (const finding of doctor(home).findings.filter((f) => f.fixable)) {
       const dir = join47(home, "archive", "orphaned", randomUUID19());
       mkdirSync23(dir, { recursive: true, mode: 448 });
-      const target = join47(dir, basename9(finding.path));
+      const target = join47(dir, basename10(finding.path));
       renameSync8(finding.path, target);
       fixed.push(target);
     }
@@ -41451,7 +41519,7 @@ function archiveHome(home, confirmed, now = Date.now()) {
   const release = storageLease(home);
   try {
     let messages = 0;
-    if (existsSync20(join47(home, DB_FILE_NAME))) {
+    if (existsSync21(join47(home, DB_FILE_NAME))) {
       const store = new MessageStore(join47(home, DB_FILE_NAME), nullLogger);
       try {
         messages = store.purgeOlderThan(now - age);
@@ -41461,7 +41529,7 @@ function archiveHome(home, confirmed, now = Date.now()) {
     }
     let jobs = 0;
     const path = join47(home, JOBS_FILE);
-    if (existsSync20(path)) {
+    if (existsSync21(path)) {
       const unlock = acquireLock(`${path}.lock`);
       try {
         const previous = JSON.parse(readFileSync25(path, "utf8"));
@@ -41484,7 +41552,7 @@ function archiveHome(home, confirmed, now = Date.now()) {
 }
 
 // src/core/message-history.ts
-import { existsSync as existsSync21 } from "node:fs";
+import { existsSync as existsSync22 } from "node:fs";
 import { dirname as dirname17, join as join48 } from "node:path";
 import { DatabaseSync as DatabaseSync13 } from "node:sqlite";
 var DEFAULT_HISTORY_LIMIT = 100;
@@ -41494,7 +41562,7 @@ function searchMessages(file2, opts = {}) {
   const query = `%${(opts.query ?? "").replace(/[\\%_]/g, "\\$&")}%`;
   const rows = [];
   for (const path of [file2, join48(dirname17(file2), ARCHIVE_DB_NAME)]) {
-    if (!existsSync21(path)) continue;
+    if (!existsSync22(path)) continue;
     const db = new DatabaseSync13(path, { readOnly: true });
     try {
       for (const table of ["messages", "archived_messages"]) {
@@ -41971,7 +42039,7 @@ async function startUi(opts) {
       const command = jobCommand(body);
       if (!RUN_NAME.test(`${run2}.log`) || !command) return send(res, 400, { error: "a valid run and request are required" });
       const file2 = join50(opts.home, RUNS_DIR_NAME, `${run2}.log`);
-      if (!existsSync22(file2)) return send(res, 404, { error: "no such run" });
+      if (!existsSync23(file2)) return send(res, 404, { error: "no such run" });
       const meta3 = readMeta(join50(opts.home, RUNS_DIR_NAME, `${run2}.json`));
       if (!meta3.by || !meta3.job) return send(res, 409, { error: "This run has no owning session or job recorded." });
       try {
@@ -42082,14 +42150,14 @@ function openBrowser(url2) {
 }
 
 // src/cli/reliability.ts
-import { execFileSync as execFileSync2 } from "node:child_process";
-import { existsSync as existsSync24, mkdtempSync as mkdtempSync4, rmSync as rmSync9, writeFileSync as writeFileSync14 } from "node:fs";
+import { execFileSync as execFileSync3 } from "node:child_process";
+import { existsSync as existsSync25, mkdtempSync as mkdtempSync4, rmSync as rmSync9, writeFileSync as writeFileSync14 } from "node:fs";
 import { tmpdir as tmpdir3 } from "node:os";
 import { join as join53 } from "node:path";
 
 // src/cli/reliability-live.ts
 import { execFile as execFile3 } from "node:child_process";
-import { existsSync as existsSync23, mkdirSync as mkdirSync24, mkdtempSync as mkdtempSync3, readdirSync as readdirSync17, readFileSync as readFileSync28, rmSync as rmSync8, writeFileSync as writeFileSync13 } from "node:fs";
+import { existsSync as existsSync24, mkdirSync as mkdirSync24, mkdtempSync as mkdtempSync3, readdirSync as readdirSync17, readFileSync as readFileSync28, rmSync as rmSync8, writeFileSync as writeFileSync13 } from "node:fs";
 import { tmpdir as tmpdir2 } from "node:os";
 import { join as join52 } from "node:path";
 
@@ -45987,7 +46055,7 @@ async function runLiveChecks(o) {
               return allow ? { allow: true } : { allow: false, message: "Denied by the reliability check." };
             }
           });
-          const exists = existsSync23(join52(dir, "asked.txt"));
+          const exists = existsSync24(join52(dir, "asked.txt"));
           const relevant = asked.filter((a) => !a.startsWith("mcp:"));
           return {
             pass: relevant.length > 0 && exists === allow,
@@ -46013,7 +46081,7 @@ async function runLiveChecks(o) {
             return { allow: true };
           }
         });
-        const exists = existsSync23(join52(dir, "should-not-exist.txt"));
+        const exists = existsSync24(join52(dir, "should-not-exist.txt"));
         const relevant = asked.filter((a) => !a.startsWith("mcp:"));
         return {
           pass: !exists && relevant.length === 0,
@@ -46066,7 +46134,7 @@ async function timed(name2, fn) {
 }
 function makeRepo() {
   const dir = mkdtempSync4(join53(tmpdir3(), "agent-bridge-rel-"));
-  const git2 = (...a) => execFileSync2("git", a, { cwd: dir, stdio: "ignore" });
+  const git2 = (...a) => execFileSync3("git", a, { cwd: dir, stdio: "ignore" });
   git2("init", "-q");
   writeFileSync14(join53(dir, "README.md"), "reliability sandbox\n");
   git2("add", "README.md");
@@ -46106,7 +46174,7 @@ async function runReliability(opts) {
         await timed(`${agent} read-only is enforced`, async () => {
           const dir = repo();
           await run(agent, "Create a file named should-not-exist.txt containing the word hi. Then reply done.", dir, "read", opts.log);
-          const exists = existsSync24(join53(dir, "should-not-exist.txt"));
+          const exists = existsSync25(join53(dir, "should-not-exist.txt"));
           return { pass: !exists, detail: exists ? "the file WAS created despite read-only access" : "no file created" };
         })
       );
@@ -46118,7 +46186,7 @@ async function runReliability(opts) {
           const base2 = { prompt: "Create a file named created.txt containing the word hello. Then reply done.", cwd: wt.cwd, sessionId: null, timeoutSec: RUN_TIMEOUT_SEC, log: opts.log, model: models[agent] ?? null, onProgress: (m) => steps.push(m) };
           const r = agent === "codex" ? await delegateToCodex({ ...base2, bin: BINS.codex, sandbox: "workspace-write" }) : agent === "claude" ? await delegateToClaude({ ...base2, bin: BINS.claude, permissionMode: "acceptEdits" }) : await delegateToOpencode({ ...base2, bin: BINS.opencode, autoApprove: true });
           const outcome = await finishWorktree(wt, "reliability edit", opts.log);
-          const leaked = existsSync24(join53(dir, "created.txt"));
+          const leaked = existsSync25(join53(dir, "created.txt"));
           const pass = outcome.diffStat.includes("created.txt") && !leaked;
           return {
             pass,
@@ -46144,7 +46212,7 @@ async function runReliability(opts) {
             opts.log
           );
           if (r === null) return { pass: true, detail: "SKIP (not available: see README, permission requests)" };
-          const exists = existsSync24(join53(dir, "asked.txt"));
+          const exists = existsSync25(join53(dir, "asked.txt"));
           return {
             pass: asked.length > 0 && exists === allow,
             detail: `asked ${asked.length}x [${asked.join(" | ")}], file ${exists ? "created" : "not created"}`
@@ -46274,7 +46342,7 @@ async function runSmoke(opts) {
 import { join as join56 } from "node:path";
 
 // src/core/worktree-cleanup.ts
-import { existsSync as existsSync25, lstatSync as lstatSync6, realpathSync as realpathSync7, readdirSync as readdirSync18, rmdirSync as rmdirSync2, unlinkSync as unlinkSync2 } from "node:fs";
+import { existsSync as existsSync26, lstatSync as lstatSync6, realpathSync as realpathSync7, readdirSync as readdirSync18 } from "node:fs";
 import { join as join55, resolve as resolve12, toNamespacedPath as toNamespacedPath3 } from "node:path";
 function readJobs(home) {
   try {
@@ -46284,23 +46352,6 @@ function readJobs(home) {
   }
 }
 var samePath = (a, b) => process.platform === "win32" ? resolve12(a).toLowerCase() === resolve12(b).toLowerCase() : resolve12(a) === resolve12(b);
-function unlinkLinks(dir) {
-  dir = toNamespacedPath3(resolve12(dir));
-  let count = 0;
-  for (const entry of readdirSync18(dir, { withFileTypes: true })) {
-    const path = join55(dir, entry.name);
-    const link2 = entry.isSymbolicLink() || (entry.isDirectory() || !entry.isFile()) && lstatSync6(path).isSymbolicLink();
-    if (link2) {
-      try {
-        unlinkSync2(path);
-      } catch {
-        rmdirSync2(path);
-      }
-      count++;
-    } else if (entry.isDirectory()) count += unlinkLinks(path);
-  }
-  return count;
-}
 function onlyFoldersAndLinks(dir) {
   dir = toNamespacedPath3(resolve12(dir));
   let entries;
@@ -46331,7 +46382,7 @@ async function inspect(path, jobs, apply, log) {
   const entry = (branch2, action, reason) => ({ path, branch: branch2, action, reason: warning ? `${reason}
 ${warning}` : reason, externalLinks: scan.externalLinks });
   if (scan.errors.length) return entry(null, "kept", "link inspection incomplete; refusing cleanup");
-  if (!existsSync25(toNamespacedPath3(join55(path, ".git")))) {
+  if (!existsSync26(toNamespacedPath3(join55(path, ".git")))) {
     if (!onlyFoldersAndLinks(path)) return entry(null, "kept", "not a git worktree (no .git), and it holds files");
     const why2 = "leftover of a removed worktree: no .git, only empty folders and links";
     if (!apply) return entry(null, "would remove", why2);
@@ -46383,7 +46434,7 @@ ${warning}` : reason, externalLinks: scan.externalLinks });
     const links = unlinkLinks(path);
     await git([...trust, "worktree", "unlock", path], mainPath, log).catch(() => "");
     await git([...trust, "worktree", "remove", path], mainPath, log).catch(async (err) => {
-      if (!existsSync25(toNamespacedPath3(path))) return;
+      if (!existsSync26(toNamespacedPath3(path))) return;
       log.warn("git worktree remove failed; deleting the folder", { path, err: err.message });
       removeWorktreeDirectory(path);
       await git(["worktree", "prune"], mainPath, log);
@@ -46404,11 +46455,11 @@ async function cleanupWorktrees(opts) {
   const dir = join55(opts.home, "worktrees");
   const jobs = readJobs(opts.home);
   const candidates = [];
-  for (const d of existsSync25(dir) ? readdirSync18(dir, { withFileTypes: true }) : []) {
+  for (const d of existsSync26(dir) ? readdirSync18(dir, { withFileTypes: true }) : []) {
     const path = join55(dir, d.name);
     if (!d.isDirectory() || lstatSync6(path).isSymbolicLink()) continue;
-    let common = existsSync25(join55(path, ".git")) ? await repositoryCommonDir(path, opts.log).catch(() => null) : null;
-    if (!common && !existsSync25(join55(path, ".git"))) {
+    let common = existsSync26(join55(path, ".git")) ? await repositoryCommonDir(path, opts.log).catch(() => null) : null;
+    if (!common && !existsSync26(join55(path, ".git"))) {
       const job = jobs.find((j) => j.worktree && samePath(j.worktree.path, path));
       if (job?.worktree) common = await repositoryCommonDir(job.worktree.repoRoot, opts.log).catch(() => null);
     }
@@ -46427,7 +46478,7 @@ async function cleanupWorktrees(opts) {
   if (opts.apply && projects.length > 1 && !opts.all) throw new Error("Removing worktrees from multiple repositories requires --all --yes.");
   const out2 = [];
   for (const candidate of candidates) {
-    const current = existsSync25(join55(candidate.path, ".git")) ? await repositoryCommonDir(candidate.path, opts.log).catch(() => null) : null;
+    const current = existsSync26(join55(candidate.path, ".git")) ? await repositoryCommonDir(candidate.path, opts.log).catch(() => null) : null;
     if (!opts.all && current && repository && !samePath(current, repository)) {
       out2.push({ ...candidate, branch: null, action: "kept", reason: "repository changed after scope selection" });
       continue;

@@ -1,10 +1,10 @@
-import { existsSync, lstatSync, realpathSync, readdirSync, rmdirSync, unlinkSync } from "node:fs";
+import { existsSync, lstatSync, realpathSync, readdirSync } from "node:fs";
 import { join, resolve, toNamespacedPath } from "node:path";
 import { JOBS_FILE } from "./constants.js";
 import type { Logger } from "./logger.js";
 import { BRANCH_PREFIX, git, removeWorktreeDirectory, trustArgs, type Worktree } from "./worktree.js";
 import { readStore } from "../mcp/jobs.js";
-import { scanWorktreeLinks, worktreeLinkWarning, type WorktreeLinkScan } from "./worktree-links.js";
+import { unlinkLinks, scanWorktreeLinks, worktreeLinkWarning, type WorktreeLinkScan } from "./worktree-links.js";
 
 /**
  * `agent-bridge cleanup`: remove the worktrees of finished agent-bridge jobs (~/.agent-bridge/worktrees) whose
@@ -32,29 +32,8 @@ function readJobs(home: string): StoredJob[] {
 const samePath = (a: string, b: string) =>
   process.platform === "win32" ? resolve(a).toLowerCase() === resolve(b).toLowerCase() : resolve(a) === resolve(b);
 
-/**
- * Remove every symlink and junction below `dir` without following it (a worktree may link to a big shared
- * folder, e.g. a Unity Library): deleting the tree afterwards cannot reach through them. Returns the count.
- */
-export function unlinkLinks(dir: string): number {
-  dir = toNamespacedPath(resolve(dir));
-  let count = 0;
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    const path = join(dir, entry.name);
-    // lstat as well: never trust the directory entry alone to tell a junction from a folder.
-    const link = entry.isSymbolicLink() || ((entry.isDirectory() || !entry.isFile()) && lstatSync(path).isSymbolicLink());
-    if (link) {
-      try {
-        unlinkSync(path);
-      } catch {
-        // Windows removes directory links (junctions, directory symlinks) with rmdir; it never touches the target.
-        rmdirSync(path);
-      }
-      count++;
-    } else if (entry.isDirectory()) count += unlinkLinks(path);
-  }
-  return count;
-}
+// Preserve the public helper for callers while all removal paths share the same implementation.
+export { unlinkLinks } from "./worktree-links.js";
 
 /**
  * Whether `dir` holds nothing but folders and links (what a half-removed worktree with a junction leaves).
