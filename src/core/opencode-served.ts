@@ -146,7 +146,7 @@ export async function delegateToOpencodeServed(
     permissions?: Record<string, string> | null;
   },
 ): Promise<DelegateResult> {
-  checkDepthPublic();
+  checkDepthPublic(req.maxDelegateDepth);
   const password = randomBytes(PASSWORD_BYTES).toString("hex");
   const permissions = req.permissions === undefined ? OPENCODE_ASK_PERMISSIONS : req.permissions;
   const env = childEnvPublic({

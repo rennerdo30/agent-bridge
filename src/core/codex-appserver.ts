@@ -81,7 +81,7 @@ function asExecEvent(kind: "item.started" | "item.completed", item: any): unknow
 export async function delegateToCodexAppServer(
   req: DelegateRequest & { bin: string; sandbox: CodexSandbox; askMode?: boolean; writableRoots?: string[]; networkAccess?: boolean; startupTimeoutMs?: number },
 ): Promise<DelegateResult> {
-  checkDepth();
+  checkDepth(req.maxDelegateDepth);
   const mappings = codexDriveMappings(`${req.cwd}\n${req.prompt}`);
   req = { ...req, prompt: codexPathPrompt(req.prompt, mappings) };
   // See delegateToCodex: the Windows sandbox user does not see drive mappings.

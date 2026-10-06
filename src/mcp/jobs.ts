@@ -1,16 +1,16 @@
 import { randomUUID } from "node:crypto";
 import { closeSync, mkdirSync, openSync, rmSync, statSync } from "node:fs";
 import { dirname } from "node:path";
-import { DEFAULT_MAX_JOBS } from "../core/constants.js";
+import { DEFAULT_MAX_JOBS, DELEGATION_METADATA_VERSION } from "../core/constants.js";
 import { DelegateError, failureCause, type DelegateResult } from "../core/delegate.js";
 import type { Logger } from "../core/logger.js";
-import type { BridgeNode } from "../core/node.js";
 import type { AgentKind, BridgeMessage } from "../core/protocol.js";
 import type { Worktree } from "../core/worktree.js";
 import { archiveFile, assertWritableStore, isRecord, mergeStoreFields, readJsonStore, retentionLimit, writeJsonStore } from "../core/json-store.js";
 import { changedJobArgs, type JobSettings } from "./job-settings.js";
 import { newApprovalId, publishApproval, type PermissionDecision, type PermissionRequest } from "../core/relay.js";
 import { notifyJobEvent } from "../core/notifications.js";
+import { RootConcurrency } from "../core/root-concurrency.js";
 
 const JOB_ID_LENGTH = 8;
 const PROMPT_PREVIEW_CHARS = 120;
@@ -22,6 +22,7 @@ const STORE_LIMIT = 200;
 const MAX_NOTES = 500;
 /** Interrupted jobs stay listed (to be recovered) this long. */
 const INTERRUPTED_LISTED_MS = 24 * 60 * 60 * 1000;
+const ROOT_WAIT_POLL_MS = 1_000;
 /** A job runner's status note travels as conversation "job-<id>" plus this. */
 export const NOTE_CONVERSATION_SUFFIX = ":note";
 /** Follow-up sent when a subagent is resumed without a message (e.g. after a failure). */
@@ -40,6 +41,10 @@ export type Run = ((signal: AbortSignal, onProgress: (message: string, full?: st
 export type Resume = (message: string, sessionId: string, workdir: string | null, worktree: Worktree | null) => Run;
 
 export interface Job {
+  metadataVersion?: number;
+  parentJob?: string;
+  rootSession?: string;
+  rootName?: string;
   id: string;
   /** Pseudo peer name the result arrives from, e.g. "codex-job-1a2b3c4d". */
   name: string;
@@ -164,13 +169,27 @@ export function denyPendingApprovals(job: Job, reason = "job finished"): void {
   for (const answer of [...(approvalAnswers.get(job) ?? [])]) answer(reason, "job completion");
 }
 
-export function waitForApproval(job: Job, question: string, timeoutMs: number, post: (body: string) => void, log: Logger, home?: string, request?: PermissionRequest, askUser?: () => Promise<PermissionDecision>): Promise<{ allow: boolean; reason: string }> {
+export function waitForApproval(job: Job, question: string, timeoutMs: number, post: (body: string) => void, log: Logger, home?: string, request?: PermissionRequest, askUser?: () => Promise<PermissionDecision>, escalate?: (body: string) => Promise<void>, forceEscalate = false): Promise<{ allow: boolean; reason: string }> {
   return new Promise((resolve) => {
     let settled = false;
     let cleanup: (() => void) | undefined;
     const askedAt = Date.now();
+    const approvalId = newApprovalId();
+    let escalated = false;
+    let published = !home;
+    let escalationRequested = forceEscalate;
+    const escalateOnce = () => {
+      if (!escalate || escalated || settled) return;
+      if (!published) { escalationRequested = true; return; }
+      escalated = true;
+      void escalate(`Nested subagent ${job.name} asks its top supervisor for approval: ${question}\n\nAnswer the pending dashboard approval ${approvalId}, or message_subagent(job="${job.name}", message="allow" or "deny").`).catch(() => {
+        escalated = false;
+        log.warn("could not escalate nested approval", { job: job.name });
+      });
+    };
     const settle = (answer: string, by = "session") => {
       if (settled) return false;
+      if (/^\s*escalate\b/i.test(answer) && escalate && Date.now() < askedAt + timeoutMs) { escalateOnce(); return true; }
       if (Date.now() >= askedAt + timeoutMs) { answer = "no answer in time"; by = "timeout"; }
       settled = true;
       clearTimeout(timer);
@@ -197,18 +216,20 @@ export function waitForApproval(job: Job, question: string, timeoutMs: number, p
     if (job.controller.signal.aborted) { aborted(); return; }
     if (home) {
       void publishApproval(home, {
-        id: newApprovalId(), owner: job.owner ?? "", job: job.name, agent: job.agent,
+        id: approvalId, owner: job.rootName ?? job.owner ?? "", job: job.name, agent: job.agent,
+        parentJob: job.parentJob, rootSession: job.rootSession,
         tool: request?.tool ?? "approval", command: request?.detail ?? question,
         reason: request?.reason ?? question, askedAt, deadline: askedAt + timeoutMs,
       }, settle).then((close) => {
         if (settled) close();
-        else { cleanup = close; notifyJobEvent(home, "approvals", log); }
+        else { cleanup = close; published = true; notifyJobEvent(home, "approvals", log); if (escalationRequested) escalateOnce(); }
       }).catch(() => log.warn("could not publish pending approval", { job: job.name }));
     }
     log.info("subagent asks for approval", { job: job.name });
     post(
       `Subagent ${job.name} asks for approval: ${question}\n\n` +
         `Decide as its supervisor: answer with message_subagent(job="${job.name}", message="allow") or message="deny" (a reason may follow). ` +
+        (escalate ? 'If the decision needs the owner, answer message="escalate" to forward the same pending request. ' : "") +
         `It waits for your answer; no answer within ${Math.round(timeoutMs / 60_000)} minutes counts as deny.`,
     );
     if (askUser) {
@@ -229,6 +250,21 @@ export type FollowUpOutcome = "started" | "delivered" | "queued" | "waiting" | "
  * (message_subagent), like a native subagent: follow-ups to a running job are queued. Continuing a finished
  * job while maxJobs are running waits for a free slot (first come, first served) instead of being refused.
  */
+export interface JobCoordinator {
+  name: string;
+  id: string;
+  currentSessionId: string | null;
+  on(event: string, listener: (...args: any[]) => void): unknown;
+  deliverLocal(message: BridgeMessage): void;
+}
+
+export interface JobLineage {
+  parentJob: string;
+  rootSession: string;
+  rootName: string;
+  escalate: (body: string) => Promise<void>;
+}
+
 export class JobManager {
   private readonly running = new Map<string, Job>();
   private readonly foreground = new Map<string, Job>();
@@ -242,14 +278,16 @@ export class JobManager {
   /** Background jobs run in detached job runners where it can (they survive a restart of this server); null: all here. */
   runners: JobHost | null = null;
   private hostTimer: NodeJS.Timeout | null = null;
+  private rootWaitTimer: NodeJS.Timeout | null = null;
 
   constructor(
-    private readonly node: BridgeNode,
+    private readonly node: JobCoordinator,
     private readonly log: Logger,
     /** Where jobs are kept across restarts of the session (~/.agent-bridge/jobs.json); none in tests. */
     private readonly storePath: string | null = null,
     /** Background subagents running at once (config maxJobs; max_subagents changes it while the session runs). */
     private maxJobs: number = DEFAULT_MAX_JOBS,
+    private readonly lineage?: JobLineage,
   ) {
     // A message from a runner-hosted job may be its result: look at its runner right away.
     node.on("message", (m) => {
@@ -269,7 +307,9 @@ export class JobManager {
 
   /** Change the limit now. A higher one starts waiting continuations; a lower one stops no running subagent. */
   setLimit(max: number): void {
+    if (this.lineage) throw new Error("Only the top session can change the root subagent limit.");
     this.maxJobs = max;
+    this.withRootBudget((budget) => budget.setLimit(max));
     this.log.info("subagent limit changed", { max });
     this.startWaiting();
   }
@@ -341,6 +381,8 @@ export class JobManager {
     // The newest ones, plus every job still marked running however old (its runner may still be at work).
     const recentIds = new Set(stored.slice(-HISTORY_LIMIT).map((s) => s.id));
     for (const s of stored.filter((x) => recentIds.has(x.id) || x.status === "running")) {
+      if (this.lineage && s.parentJob !== this.lineage.parentJob) continue;
+      if (!this.lineage && s.parentJob) continue;
       if (this.history.has(s.id)) continue;
       const hosted = s.status === "running" && Boolean(s.host);
       const mine = this.isMine(s.owner);
@@ -496,13 +538,20 @@ export class JobManager {
       owner: this.node.name,
       // Keep the first job's identity when hooks learn the session id later, or a server reload adopts it.
       supervisor: this.supervisorIdentity(),
+      metadataVersion: DELEGATION_METADATA_VERSION,
+      parentJob: this.lineage?.parentJob,
+      rootSession: this.lineage?.rootSession ?? this.supervisorIdentity(),
+      rootName: this.lineage?.rootName ?? this.node.name,
     };
   }
 
   private supervisorIdentity(): string {
+    if (this.lineage) return this.lineage.rootSession;
     return [...this.running.values(), ...this.foreground.values(), ...this.history.values()]
-      .find((j) => this.isMine(j.owner) && j.supervisor)?.supervisor ?? this.node.currentSessionId ?? this.node.id;
+      .find((j) => this.isMine(j.owner) && j.supervisor)?.supervisor ?? this.node.currentSessionId ?? this.node.id ?? this.node.name;
   }
+
+  rootIdentity(): string { return this.lineage?.rootSession ?? this.supervisorIdentity(); }
 
   private assignLegacySupervisors(): void {
     const supervisor = this.supervisorIdentity();
@@ -554,7 +603,16 @@ export class JobManager {
   }
 
   canStart(): boolean {
-    return this.running.size < this.maxJobs;
+    return this.running.size + this.foreground.size < this.maxJobs && this.withRootBudget((budget) => {
+      if (!this.lineage) budget.setLimit(this.maxJobs);
+      return budget.available();
+    });
+  }
+
+  private withRootBudget<T>(fn: (budget: RootConcurrency) => T): T | boolean {
+    if (!this.storePath) return true;
+    const budget = new RootConcurrency(dirname(this.storePath), this.lineage?.rootSession ?? this.supervisorIdentity());
+    try { return fn(budget); } finally { budget.close(); }
   }
 
   start(agent: AgentKind, model: string | null, prompt: string, run: Run, resume?: Resume, args?: Record<string, unknown>): Job {
@@ -623,8 +681,9 @@ export class JobManager {
     }
     if (job.status === "running" && job.pendingApproval) {
       const answer = job.pendingApproval;
-      job.pendingApproval = null;
       answer(message, `session ${this.node.name}`);
+      // Escalation keeps the original wait answerable by its direct parent and the owner.
+      if (job.pendingApproval === answer && !/^\s*escalate\b/i.test(message)) job.pendingApproval = null;
       return { outcome: "answered", job };
     }
     if (job.status === "running") {
@@ -651,6 +710,14 @@ export class JobManager {
   /** Continue this finished job (its queued messages) once a slot frees up. */
   private waitForSlot(job: Job): void {
     this.waitingJobs.set(job.id, job);
+    if (this.storePath && !this.rootWaitTimer) {
+      this.rootWaitTimer = setInterval(() => {
+        try { if (!this.dormant) this.startWaiting(); }
+        catch (err) { this.log.warn("could not check waiting root slots", { err: String(err) }); }
+        if (!this.waitingJobs.size && this.rootWaitTimer) { clearInterval(this.rootWaitTimer); this.rootWaitTimer = null; }
+      }, ROOT_WAIT_POLL_MS);
+      this.rootWaitTimer.unref();
+    }
     this.log.info("subagent continuation waits for a free slot", { job: job.name, running: this.running.size, position: this.waitingJobs.size });
   }
 
@@ -797,6 +864,7 @@ export class JobManager {
    * server of this session takes them over, and their results wait for it on the bridge.
    */
   cancelAll(): void {
+    if (this.rootWaitTimer) { clearInterval(this.rootWaitTimer); this.rootWaitTimer = null; }
     for (const j of this.waitingJobs.values()) j.queue = [];
     this.waitingJobs.clear();
     for (const j of this.running.values()) if (!j.host) j.controller.abort();
@@ -836,7 +904,12 @@ export class JobManager {
    * No answer within the time limit counts as "deny".
    */
   askParent(job: Job, question: string, timeoutMs: number, request?: PermissionRequest): Promise<{ allow: boolean; reason: string }> {
-    return waitForApproval(job, question, timeoutMs, (body) => this.post(job, body), this.log, this.storePath ? dirname(this.storePath) : undefined, request);
+    return waitForApproval(job, question, timeoutMs, (body) => this.post(job, body), this.log, this.storePath ? dirname(this.storePath) : undefined, request, undefined, this.lineage?.escalate, Boolean(job.foreground && this.lineage));
+  }
+
+  async escalateApproval(job: Job, body: string): Promise<void> {
+    if (this.lineage) await this.lineage.escalate(body);
+    else this.post(job, body);
   }
 
   /**
@@ -884,7 +957,7 @@ export function sessionOfError(err: unknown): string | null {
   return err instanceof DelegateError ? (err.sessionId ?? null) : null;
 }
 
-type StoredJob = Pick<Job, "id" | "name" | "agent" | "model" | "prompt" | "startedAt" | "status" | "sessionId" | "workdir" | "worktree" | "args" | "owner" | "supervisor" | "finishedAt" | "host">;
+type StoredJob = Pick<Job, "id" | "name" | "agent" | "model" | "prompt" | "startedAt" | "status" | "sessionId" | "workdir" | "worktree" | "args" | "owner" | "supervisor" | "finishedAt" | "host" | "metadataVersion" | "parentJob" | "rootSession" | "rootName">;
 
 function toStored(j: Job): StoredJob {
   return {
@@ -901,6 +974,10 @@ function toStored(j: Job): StoredJob {
     args: j.args,
     owner: j.owner,
     supervisor: j.supervisor,
+    metadataVersion: j.metadataVersion,
+    parentJob: j.parentJob,
+    rootSession: j.rootSession,
+    rootName: j.rootName,
     finishedAt: j.finishedAt,
     host: j.host ?? null,
   };

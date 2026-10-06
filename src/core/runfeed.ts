@@ -23,6 +23,11 @@ export interface RunFeed {
 
 /** Who started a run and how it relates to others; the dashboard groups runs with it. Kept next to the log. */
 export interface RunMeta {
+  /** Additive ancestry contract, independent of the JSON store envelope version. */
+  metadataVersion?: number;
+  bridgeVersion?: string;
+  parentJob?: string;
+  rootSession?: string;
   /** Peer name of the session that started it, its agent kind and project folder. */
   by?: string;
   byAgent?: string;

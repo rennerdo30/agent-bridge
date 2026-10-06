@@ -12,6 +12,6 @@ vi.mock("../src/core/notifications.js", async (original) => ({
  * Spelled out here on purpose: importing src/ from a setup file would load modules before tests mock them.
  * Keep in sync with PARENT_*_ENV (src/core/parent-link.ts) and DELEGATE_DEPTH_ENV (src/core/delegate.ts).
  */
-const INHERITED_LINK_ENV = ["AGENT_BRIDGE_PARENT_URL", "AGENT_BRIDGE_PARENT_TOKEN", "AGENT_BRIDGE_PARENT_NAME", "AGENT_BRIDGE_DELEGATE_DEPTH"];
+const INHERITED_LINK_ENV = ["AGENT_BRIDGE_PARENT_URL", "AGENT_BRIDGE_PARENT_TOKEN", "AGENT_BRIDGE_PARENT_NAME", "AGENT_BRIDGE_DELEGATE_DEPTH", "AGENT_BRIDGE_PARENT_JOB", "AGENT_BRIDGE_ROOT_SESSION", "AGENT_BRIDGE_ROOT_NAME", "AGENT_BRIDGE_MAX_DELEGATE_DEPTH"];
 
 for (const name of INHERITED_LINK_ENV) delete process.env[name];

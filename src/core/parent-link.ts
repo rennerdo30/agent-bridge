@@ -53,6 +53,7 @@ export class ParentLink {
     /** The subagent's own estimate of how far it is (report_progress). */
     private readonly onProgress: (percent: number, note: string) => void = () => {},
     private readonly siblings?: SiblingClient,
+    private readonly onEscalate?: (body: string) => Promise<void>,
   ) {}
 
   async start(): Promise<void> {
@@ -140,6 +141,13 @@ export class ParentLink {
       this.onMessage(text, typeof body.reply_to === "string" ? body.reply_to : null);
       return { ok: true };
     }
+    if (req.method === "POST" && req.url === "/escalate") {
+      if (!this.onEscalate) throw new Error("approval escalation unavailable");
+      const body = JSON.parse(await readBody(req)) as { body?: unknown };
+      if (typeof body.body !== "string" || !body.body.trim() || body.body.length > MAX_BODY_CHARS) throw new Error("invalid escalation");
+      await this.onEscalate(body.body);
+      return { ok: true };
+    }
     throw new Error("not found");
   }
 }
@@ -155,6 +163,7 @@ async function readBody(req: IncomingMessage): Promise<string> {
 
 /** Child side: the link to the session that runs this subagent, if there is one. */
 export interface ParentClient {
+  escalate?: (body: string) => Promise<void>;
   name: string;
   inbox(): Promise<LinkMessage[]>;
   send(body: string, replyTo?: string): Promise<void>;
@@ -181,6 +190,7 @@ export function parentFromEnv(env: NodeJS.ProcessEnv = process.env): ParentClien
     name: env[PARENT_NAME_ENV] || "parent",
     inbox: async () => ((await call("/inbox", {})).messages as LinkMessage[]) ?? [],
     send: async (body, replyTo) => void (await call("/message", { body, reply_to: replyTo ?? null })),
+    escalate: async (body) => void (await call("/escalate", { body })),
     progress: async (percent, note) => void (await call("/progress", { percent, note })),
     siblings: {
       peers: async () => ((await call("/siblings", {})).peers as SiblingPeer[]) ?? [],
