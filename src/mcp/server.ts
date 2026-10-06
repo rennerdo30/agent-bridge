@@ -609,7 +609,7 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
       if (jobs.length) {
         lines.push(t("peers.jobs", { count: jobs.length }));
         for (const j of jobs) {
-          lines.push(t("peers.job", { name: j.name + (j.args?.title ? ` "${j.args.title}"` : " (untitled: name it with message_subagent(job, title=...))"), model: (j.model ?? "default") + (typeof j.args?.effort === "string" ? `, effort ${j.args.effort}` : ""), duration: formatDuration(Date.now() - j.startedAt), progress: (j.percent !== undefined ? `${j.percent}% (${j.progressNote || "reported"}) · ` : "") + (j.progress ?? "starting") }));
+          lines.push(t("peers.job", { name: j.name + (j.args?.title ? ` "${j.args.title}"` : " (untitled: name it with message_subagent(job, title=...))"), model: (j.model ?? "default") + (typeof j.args?.effort === "string" ? `, effort ${j.args.effort}` : ""), duration: formatDuration(Date.now() - j.startedAt), progress: (j.percent !== undefined ? `${j.percent}% (${j.progressNote || "reported"}) · ` : "") + (j.etaAt !== undefined ? t("peers.eta", { minutes: Math.max(0, Math.ceil((j.etaAt - Date.now()) / 60_000)) }) + " · " : "") + (j.progress ?? "starting") }));
         }
       }
       const waiting = ctx.jobs?.waiting() ?? [];
@@ -1203,14 +1203,15 @@ ${res.text || t("delegate.empty")}`, res.isError);
         title: "Report progress",
         description:
           `Tell ${parent.name}, which gave you your current task, how far you are: the percent of the whole task done and a few words on the current step. ` +
-          "Call it when you start, after each milestone, and at least every few minutes. It does not interrupt your work.",
+          "Call it when you start, after each milestone, and at least every few minutes. Give eta_minutes when you can estimate minutes until completion and update it as you go. It does not interrupt your work.",
         inputSchema: {
           percent: z.number().min(0).max(100).describe("Percent of the whole task done, 0-100"),
+          eta_minutes: z.number().min(0).max(1440).optional().describe("Estimated minutes until done, 0-1440; update as your estimate changes"),
           note: z.string().max(200).optional().describe('The current step in a few words, e.g. "tests pass, updating docs"'),
         },
       },
-      guarded("report_progress", async (a: { percent: number; note?: string }) => {
-        await parent.progress(a.percent, a.note ?? "");
+      guarded("report_progress", async (a: { percent: number; note?: string; eta_minutes?: number }) => {
+        await parent.progress(a.percent, a.note ?? "", a.eta_minutes);
         return text(t("progress.reported", { percent: Math.round(a.percent) }));
       }),
     );

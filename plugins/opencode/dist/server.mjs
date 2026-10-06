@@ -7546,6 +7546,8 @@ function startRunFeed(opts) {
     },
     end: (summary, answer) => {
       clearInterval(timer);
+      meta3 = { ...meta3, etaAt: void 0, etaReportedAt: void 0 };
+      writeMeta();
       if (answer?.trim()) write(`answer: ${answer.trim()}`);
       write(`finished after ${Math.round((now() - started) / 1e3)}s \xB7 ${summary}`);
       release();
@@ -8007,7 +8009,13 @@ var ParentLink = class {
       const body = JSON.parse(await readBody(req));
       const percent = Math.round(Number(body.percent));
       if (!Number.isFinite(percent) || percent < 0 || percent > 100) throw new Error("percent must be 0-100");
-      this.onProgress(percent, String(body.note ?? "").trim().slice(0, MAX_NOTE_CHARS));
+      let eta;
+      if (body.eta_minutes !== void 0) {
+        if (typeof body.eta_minutes !== "number" || !Number.isFinite(body.eta_minutes) || body.eta_minutes < 0 || body.eta_minutes > 1440) throw new Error("eta_minutes must be 0-1440");
+        const etaReportedAt = Date.now();
+        eta = { etaAt: etaReportedAt + body.eta_minutes * 6e4, etaReportedAt };
+      }
+      this.onProgress(percent, String(body.note ?? "").trim().slice(0, MAX_NOTE_CHARS), eta);
       return { ok: true };
     }
     if (req.method === "POST" && req.url === "/siblings") {
@@ -8072,7 +8080,7 @@ function parentFromEnv(env = process.env) {
     inbox: async () => (await call("/inbox", {})).messages ?? [],
     send: async (body, replyTo) => void await call("/message", { body, reply_to: replyTo ?? null }),
     escalate: async (body) => void await call("/escalate", { body }),
-    progress: async (percent, note) => void await call("/progress", { percent, note }),
+    progress: async (percent, note, etaMinutes) => void await call("/progress", { percent, note, eta_minutes: etaMinutes }),
     siblings: {
       peers: async () => (await call("/siblings", {})).peers ?? [],
       send: async (to, body, replyTo) => await call("/sibling-message", { to, body, reply_to: replyTo }),
@@ -30627,6 +30635,8 @@ var JobManager = class {
         denyPendingApprovals(job);
         this.foreground.delete(job.id);
         job.foreground = false;
+        job.etaAt = void 0;
+        job.etaReportedAt = void 0;
         job.finishedAt = Date.now();
         job.status = outcome?.result && !outcome.result.isError ? "done" : "failed";
         if (this.storePath) notifyJobEvent(dirname6(this.storePath), job.status === "done" ? "finish" : "fail", this.log);
@@ -30777,6 +30787,8 @@ var JobManager = class {
     job.startedAt = Date.now();
     job.controller = new AbortController();
     job.progress = null;
+    job.etaAt = void 0;
+    job.etaReportedAt = void 0;
     job.foreground = false;
     this.running.set(job.id, job);
     this.own.add(job.id);
@@ -30833,8 +30845,14 @@ var JobManager = class {
       if (state.model !== void 0) job.model = state.model;
       job.progress = state.progress ?? job.progress;
       if (state.percent !== void 0) {
+        const etaAt = state.status === "running" ? state.etaAt : void 0;
+        const etaReportedAt = state.status === "running" ? state.etaReportedAt : void 0;
+        const changed = job.percent !== state.percent || job.progressNote !== state.progressNote || job.etaAt !== etaAt || job.etaReportedAt !== etaReportedAt;
         job.percent = state.percent;
         job.progressNote = state.progressNote;
+        job.etaAt = etaAt;
+        job.etaReportedAt = etaReportedAt;
+        if (changed) this.persist();
       }
       if (state.sessionId && state.sessionId !== job.sessionId || state.workdir && state.workdir !== job.workdir || state.worktree && !job.worktree) {
         this.note(job, { sessionId: state.sessionId, workdir: state.workdir, worktree: state.worktree });
@@ -30908,6 +30926,8 @@ var JobManager = class {
   finish(job, status, text2, sessionId, cause = null, report) {
     denyPendingApprovals(job);
     this.running.delete(job.id);
+    job.etaAt = void 0;
+    job.etaReportedAt = void 0;
     job.status = status;
     job.finishedAt = Date.now();
     job.sessionId = sessionId ?? job.sessionId;
@@ -30997,6 +31017,10 @@ function toStored(j) {
     parentJob: j.parentJob,
     rootSession: j.rootSession,
     rootName: j.rootName,
+    percent: j.percent,
+    progressNote: j.progressNote,
+    etaAt: j.etaAt,
+    etaReportedAt: j.etaReportedAt,
     finishedAt: j.finishedAt,
     host: j.host ?? null,
     remote: j.remote
@@ -41532,6 +41556,8 @@ var remoteJobSnapshotSchema = external_exports.object({
     progress: external_exports.string().nullable().optional(),
     percent: external_exports.number().min(0).max(100).optional(),
     progressNote: external_exports.string().optional(),
+    etaAt: external_exports.number().finite().nonnegative().optional(),
+    etaReportedAt: external_exports.number().finite().nonnegative().optional(),
     asking: external_exports.boolean().optional(),
     live: external_exports.boolean().optional(),
     seen: external_exports.array(external_exports.string()).optional(),
@@ -41793,6 +41819,7 @@ var en = {
   "peers.header": "{count} other peer(s) online:",
   "peers.none": "No other peers are online. Messages you send to an offline peer name wait until it connects.",
   "peers.jobs": "Your running subagents ({count}):",
+  "peers.eta": "~{minutes} min left",
   "peers.job": "- {name} (model: {model}, running {duration}): {progress}",
   "peers.waiting": "Queued continuations ({count}; each starts when one of the {max} subagent slots frees up, in this order):",
   "peers.waitingJob": "- {name}: {messages} message(s) waiting; cancel_subagent drops it",
@@ -45139,6 +45166,7 @@ function summarizeRun(file2, text2, mtimeMs, now, meta3 = {}) {
     workdir: / in (.+?), access /.exec(header)?.[1],
     continues: /, continues (\S+)/.exec(header)?.[1] ?? null,
     ...meta3,
+    ...status !== "running" ? { etaAt: void 0, etaReportedAt: void 0 } : {},
     name: file2.replace(/\.log$/, ""),
     agent: m?.[7] ?? "agent",
     header,
@@ -45937,10 +45965,12 @@ ${a.prompt}
         jobs.fromSubagent(job, body, replyTo);
       },
       dlog,
-      (percent, note) => {
+      (percent, note, eta) => {
         job.percent = percent;
         job.progressNote = note;
-        feed.meta({ percent, progressNote: note, progressAt: Date.now() });
+        if (eta) Object.assign(job, eta);
+        jobs.persist?.();
+        feed.meta({ percent, progressNote: note, progressAt: Date.now(), ...eta ?? {} });
         feed.report(`progress ${percent}%${note ? `: ${note}` : ""}`);
       },
       siblingLink,
@@ -46592,7 +46622,7 @@ ${request2.args.prompt}
     }
     const feed = this.feeds.get(key2);
     if (state) {
-      feed?.meta({ session: state.sessionId, workdir: state.workdir ?? void 0, model: state.model, percent: state.percent, progressNote: state.progressNote });
+      feed?.meta({ session: state.sessionId, workdir: state.workdir ?? void 0, model: state.model, percent: state.percent, progressNote: state.progressNote, etaAt: state.etaAt, etaReportedAt: state.etaReportedAt });
       if (state.progress) feed?.report(state.progress);
       if (state.status !== "running") {
         feed?.end(state.status, state.report);
@@ -52710,7 +52740,7 @@ function registerTools(mcp, ctx, targets) {
       if (jobs.length) {
         lines.push(t("peers.jobs", { count: jobs.length }));
         for (const j of jobs) {
-          lines.push(t("peers.job", { name: j.name + (j.args?.title ? ` "${j.args.title}"` : " (untitled: name it with message_subagent(job, title=...))"), model: (j.model ?? "default") + (typeof j.args?.effort === "string" ? `, effort ${j.args.effort}` : ""), duration: formatDuration(Date.now() - j.startedAt), progress: (j.percent !== void 0 ? `${j.percent}% (${j.progressNote || "reported"}) \xB7 ` : "") + (j.progress ?? "starting") }));
+          lines.push(t("peers.job", { name: j.name + (j.args?.title ? ` "${j.args.title}"` : " (untitled: name it with message_subagent(job, title=...))"), model: (j.model ?? "default") + (typeof j.args?.effort === "string" ? `, effort ${j.args.effort}` : ""), duration: formatDuration(Date.now() - j.startedAt), progress: (j.percent !== void 0 ? `${j.percent}% (${j.progressNote || "reported"}) \xB7 ` : "") + (j.etaAt !== void 0 ? t("peers.eta", { minutes: Math.max(0, Math.ceil((j.etaAt - Date.now()) / 6e4)) }) + " \xB7 " : "") + (j.progress ?? "starting") }));
         }
       }
       const waiting = ctx.jobs?.waiting() ?? [];
@@ -53195,14 +53225,15 @@ Saved settings: ${Object.entries(settings).map(([key2, value]) => `${key2}=${val
       "report_progress",
       {
         title: "Report progress",
-        description: `Tell ${parent2.name}, which gave you your current task, how far you are: the percent of the whole task done and a few words on the current step. Call it when you start, after each milestone, and at least every few minutes. It does not interrupt your work.`,
+        description: `Tell ${parent2.name}, which gave you your current task, how far you are: the percent of the whole task done and a few words on the current step. Call it when you start, after each milestone, and at least every few minutes. Give eta_minutes when you can estimate minutes until completion and update it as you go. It does not interrupt your work.`,
         inputSchema: {
           percent: external_exports.number().min(0).max(100).describe("Percent of the whole task done, 0-100"),
+          eta_minutes: external_exports.number().min(0).max(1440).optional().describe("Estimated minutes until done, 0-1440; update as your estimate changes"),
           note: external_exports.string().max(200).optional().describe('The current step in a few words, e.g. "tests pass, updating docs"')
         }
       },
       guarded("report_progress", async (a) => {
-        await parent2.progress(a.percent, a.note ?? "");
+        await parent2.progress(a.percent, a.note ?? "", a.eta_minutes);
         return text(t("progress.reported", { percent: Math.round(a.percent) }));
       })
     );

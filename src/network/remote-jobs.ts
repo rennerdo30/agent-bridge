@@ -214,7 +214,7 @@ export class RemoteJobs {
     }
     const feed = this.feeds.get(key);
     if (state) {
-      feed?.meta({ session: state.sessionId, workdir: state.workdir ?? undefined, model: state.model, percent: state.percent, progressNote: state.progressNote });
+      feed?.meta({ session: state.sessionId, workdir: state.workdir ?? undefined, model: state.model, percent: state.percent, progressNote: state.progressNote, etaAt: state.etaAt, etaReportedAt: state.etaReportedAt });
       if (state.progress) feed?.report(state.progress);
       if (state.status !== "running") { feed?.end(state.status, state.report); this.feeds.delete(key); }
     }
