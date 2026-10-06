@@ -23,7 +23,7 @@ import { planFirewall, detectFirewall, applyWindowsFirewall } from "../network/f
 import { parseNetworkAddress } from "../network/address.js";
 import type { Op, RequestMap } from "../core/protocol.js";
 import { doctor } from "../core/doctor.js";
-import { searchMessages } from "../core/message-history.js";
+import { MAX_HISTORY_LIMIT, searchMessages } from "../core/message-history.js";
 import { archivedRunMeta, runFileName, runLogFiles } from "../core/run-archive.js";
 import { readArchivedJobs } from "../core/job-archive.js";
 import { listNativeSubagents, readTranscript, TRANSCRIPT_ID, validTranscriptCursor, type TranscriptPaths } from "../core/transcripts/index.js";
@@ -339,7 +339,7 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
     if (req.method === "GET" && url.pathname === "/api/archive/messages") {
       const limit = url.searchParams.get("limit");
       const before = url.searchParams.get("before");
-      if (limit !== null && (!/^\d+$/.test(limit) || Number(limit) < 1 || Number(limit) > 1_000) || before !== null && (!/^\d+$/.test(before) || !Number.isSafeInteger(Number(before)))) return send(res, 400, { error: "invalid limit or before" });
+      if (limit !== null && (!/^\d+$/.test(limit) || Number(limit) < 1 || Number(limit) > MAX_HISTORY_LIMIT) || before !== null && (!/^\d+$/.test(before) || !Number.isSafeInteger(Number(before)))) return send(res, 400, { error: "invalid limit or before" });
       return send(res, 200, { messages: searchMessages(dbPath, { query: url.searchParams.get("query") ?? "", limit: limit === null ? undefined : Number(limit), before: before === null ? undefined : Number(before) }) });
     }
     if (req.method === "GET" && (url.pathname === "/api/decisions" || /^\/api\/decisions\/[^/]+\/history$/.test(url.pathname))) {

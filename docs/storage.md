@@ -28,8 +28,8 @@ Each file is consistent, while separate stores may represent nearby instants dur
 Active stores are captured before archives so archive moves cannot remove the only backup copy.
 Snapshots cover primary/archive databases and JSON stores/metadata, including archived jobs
 and the durable read journal.
-Run log text, credentials and the dashboard launch secret are not part of the rotating snapshot.
-Keep the entire data directory in normal filesystem backups if you need all logs and credentials.
+Run log text, the bridge authentication token and the dashboard launch secret are not part of the
+rotating snapshot. Keep the entire data directory in normal filesystem backups if you need them.
 
 | Environment variable | Default | Meaning |
 |---|---|---|
@@ -55,6 +55,8 @@ A savepoint restores the schema and the backup restores original table contents.
 fails, the transaction rolls back and the backup remains available. Message archival commits the
 cold copy before primary removal: an interruption can leave duplicates, never neither copy.
 Conflicting immutable message identities prevent archival instead of overwriting history.
+Completed approval question metadata also moves into `approvals/archive/`; its private expired
+capability stays out of the active approval list and rotating snapshots.
 
 Authenticated dashboard contracts (existing cookie and Host guards):
 

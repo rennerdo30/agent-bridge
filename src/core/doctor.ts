@@ -85,7 +85,8 @@ export function doctor(home: string, now = Date.now()): DoctorReport {
       }
       const version = isRecord(value) ? value.version : undefined;
       if (version === undefined || version === 0) finding("warning", "json-legacy", path, "Legacy version; next versioned write will preserve a migration backup");
-      else if (version !== JSON_STORE_VERSION) finding("error", "json-version", path, `Unsupported JSON version ${String(version)}; code expects ${JSON_STORE_VERSION}`);
+      else if (!Number.isInteger(version) || (version as number) < 0 || (version as number) > JSON_STORE_VERSION) finding("error", "json-version", path, `Unsupported JSON version ${String(version)}; code expects ${JSON_STORE_VERSION}`);
+      else if ((version as number) < JSON_STORE_VERSION) finding("warning", "json-legacy", path, `Earlier JSON version ${String(version)}; code expects ${JSON_STORE_VERSION}`);
       if (dirname(path) === join(home, "runs") && path.endsWith(".json") && !existsSync(path.replace(/\.json$/, ".log"))) finding("warning", "orphan-metadata", path, "Run metadata has no matching active log; preserved for review");
       if (dirname(path) === join(home, "jobs") && path.endsWith(".spec.json") && !existsSync(path.replace(/\.spec\.json$/, ".json"))) finding("warning", "orphan-runner-spec", path, "Runner specification has no state; it may still be starting");
     } catch (err) { finding("error", "json-parse", path, String(err)); }

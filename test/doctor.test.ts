@@ -20,6 +20,8 @@ import { JobManager, readStore } from "../src/mcp/jobs.js";
 import { BridgeNode } from "../src/core/node.js";
 import { loadOrCreateToken } from "../src/core/token.js";
 import { ReadJournal } from "../src/core/read-journal.js";
+import { listPendingApprovals, publishApproval } from "../src/core/relay.js";
+import { readArchivedJobs } from "../src/core/job-archive.js";
 import type { BridgeMessage } from "../src/core/protocol.js";
 
 let home: string;
@@ -194,6 +196,23 @@ describe("versioned migrations and backup recovery", () => {
     expect(() => openArchive(path)).toThrow("unsupported");
     expect(readFileSync(path)).toEqual(before);
   });
+  it("supports an appended full-text migration and preserves rowid cursors on future failure", () => {
+    const path = join(home, "future-migration.db");
+    const db = new DatabaseSync(path);
+    db.exec("CREATE TABLE payload(id TEXT PRIMARY KEY, body TEXT); INSERT INTO payload(rowid,id,body) VALUES(1,'one','original'),(4,'four','history'); PRAGMA user_version=3");
+    migrateSqlite(db, path, true, 4, [{ version: 4, sql: `
+      CREATE VIRTUAL TABLE search USING fts5(body);
+      INSERT INTO search(rowid,body) SELECT rowid,body FROM payload;
+      CREATE TRIGGER payload_delete AFTER DELETE ON payload BEGIN DELETE FROM search WHERE rowid=old.rowid; END;
+      CREATE TRIGGER payload_insert AFTER INSERT ON payload BEGIN INSERT INTO search(rowid,body) VALUES(new.rowid,new.body); END;
+      PRAGMA user_version=4;` }], nullLogger);
+    expect(db.prepare("SELECT rowid FROM search WHERE search MATCH 'history'").get()!.rowid).toBe(4);
+    expect(() => migrateSqlite(db, path, true, 5, [{ version: 5, sql: "DELETE FROM payload; ALTER TABLE payload ADD COLUMN extra TEXT; INVALID SQL;" }], nullLogger)).toThrow();
+    expect(db.prepare("SELECT rowid,id,body FROM payload ORDER BY rowid").all()).toEqual([{ rowid: 1, id: "one", body: "original" }, { rowid: 4, id: "four", body: "history" }]);
+    expect(db.prepare("SELECT rowid FROM search WHERE search MATCH 'history'").get()!.rowid).toBe(4);
+    expect(db.prepare("PRAGMA user_version").get()!.user_version).toBe(4);
+    db.close();
+  });
 });
 
 describe("lossless, readable archives", () => {
@@ -242,14 +261,15 @@ describe("lossless, readable archives", () => {
     const manager = new JobManager(node, nullLogger, path);
     manager.restore(() => () => async () => ({ text: "continued", isError: false, sessionId: "session1", details: {} }));
     expect(manager.followUp("codex-job-old", "continue").outcome).toBe("started");
-    await vi.waitFor(() => expect(readStore(path).find((j) => j.id === "old")?.status).toBe("done"));
-    expect(readStore(path).find((j) => j.id === "old")).toMatchObject({ future: "keep", supervisor: "supervisor1" });
+    await vi.waitFor(() => expect(readStore(path, undefined, true).find((j) => j.id === "old")?.status).toBe("done"));
+    expect(readStore(path, undefined, true).find((j) => j.id === "old")).toMatchObject({ future: "keep", supervisor: "supervisor1" });
     manager.cancelAll();
   });
   it("archives completed run pairs by age, keeps live runs, and reads current and legacy archives", () => {
-    vi.stubEnv("AGENT_BRIDGE_ARCHIVE_AGE_MS", "10");
+    vi.stubEnv("AGENT_BRIDGE_ARCHIVE_AGE_MS", "0");
     const finished = startRunFeed({ home, name: "old", header: "codex", meta: { title: "keep title" } }); finished.end("done");
     const active = startRunFeed({ home, name: "live", header: "codex" });
+    vi.stubEnv("AGENT_BRIDGE_ARCHIVE_AGE_MS", "10");
     utimesSync(finished.logPath, new Date(0), new Date(0));
     utimesSync(active.logPath, new Date(0), new Date(0));
     expect(archiveHome(home, true, 100).runs).toBe(1);
@@ -302,6 +322,27 @@ describe("lossless, readable archives", () => {
     expect(journal.read("session")).toEqual(["old"]);
     expect(new ReadJournal(recovery).read("session")).toEqual(["old", "new"]);
     expect(doctor(home).findings.some((f) => f.code.startsWith("journal-"))).toBe(false);
+  });
+  it("preserves completed approval metadata instead of unlinking user questions", async () => {
+    const id = "00000000-0000-4000-8000-000000000000";
+    const close = await publishApproval(home, { id, owner: "claude-main", job: "codex-job-old", agent: "codex", tool: "shell", command: "npm test", reason: "Check the requested fix", askedAt: Date.now(), deadline: Date.now() + 5_000 }, () => true);
+    const path = join(home, "approvals", `${id}.json`);
+    const raw = readFileSync(path);
+    close();
+    expect(listPendingApprovals(home)).toEqual([]);
+    expect(existsSync(path)).toBe(false);
+    const dir = join(home, "approvals", "archive");
+    expect(readFileSync(join(dir, readdirSync(dir)[0]!))).toEqual(raw);
+  });
+  it("reads earlier JSON archive versions and refuses unknown future versions without changing bytes", () => {
+    const dir = join(home, "archive"); mkdirSync(dir);
+    const path = join(dir, "jobs-old.json");
+    writeFileSync(path, JSON.stringify({ version: 0, jobs: [savedJob("old")] }));
+    expect(readArchivedJobs(join(home, "jobs.json"))[0]?.id).toBe("old");
+    writeFileSync(path, JSON.stringify({ version: 99, jobs: [savedJob("future")] }));
+    const raw = readFileSync(path);
+    expect(() => readArchivedJobs(join(home, "jobs.json"))).toThrow("invalid job archive");
+    expect(readFileSync(path)).toEqual(raw);
   });
 });
 

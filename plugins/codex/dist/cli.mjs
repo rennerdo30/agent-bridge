@@ -8404,15 +8404,24 @@ function migrateSqlite(db, file2, existed, target, migrations, log) {
     if (backup) {
       const original = new DatabaseSync2(backup, { readOnly: true });
       try {
-        const tables = original.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'").all();
+        const tables = original.prepare("PRAGMA table_list").all().filter((r) => r.schema === "main" && r.type === "table" && !String(r.name).startsWith("sqlite_"));
         for (const row of tables) {
           const name = String(row.name);
-          const quoted = `"${name.replaceAll('"', '""')}"`;
-          const rows = original.prepare(`SELECT * FROM ${quoted}`).all();
+          const quote = (s) => `"${s.replaceAll('"', '""')}"`;
+          const quoted = quote(name);
+          const columns = original.prepare(`PRAGMA table_xinfo(${quoted})`).all().filter((r) => r.hidden === 0).map((r) => String(r.name));
+          let rowidAlias = "__bridge_backup_rowid";
+          while (columns.includes(rowidAlias)) rowidAlias += "_";
+          const rowid = ["rowid", "_rowid_", "oid"].find((s) => !columns.includes(s));
+          const hasRowid = row.wr === 0 && rowid !== void 0;
+          const select = original.prepare(`SELECT ${hasRowid ? `${quote(rowid)} AS ${quote(rowidAlias)}, ` : ""}${columns.map(quote).join(", ")} FROM ${quoted}`);
+          select.setReadBigInts(true);
+          const rows = select.all();
           db.exec(`DELETE FROM ${quoted}`);
           for (const data of rows) {
-            const columns = Object.keys(data).map((s) => `"${s.replaceAll('"', '""')}"`).join(", ");
-            db.prepare(`INSERT INTO ${quoted} (${columns}) VALUES (${Object.keys(data).map(() => "?").join(", ")})`).run(...Object.values(data));
+            const insertColumns = hasRowid ? [rowid, ...columns] : columns;
+            const values = hasRowid ? [data[rowidAlias], ...columns.map((s) => data[s])] : columns.map((s) => data[s]);
+            db.prepare(`INSERT INTO ${quoted} (${insertColumns.map(quote).join(", ")}) VALUES (${values.map(() => "?").join(", ")})`).run(...values);
           }
         }
         db.exec(`PRAGMA user_version = ${Number(original.prepare("PRAGMA user_version").get().user_version)}`);
@@ -28669,7 +28678,7 @@ function readArchivedJobs(path) {
   for (const file2 of readdirSync4(dir).sort()) {
     if (!file2.startsWith(`${basename2(path)}.overflow.json-`) && !/^jobs-.*\.json$/.test(file2)) continue;
     const value = JSON.parse(readFileSync4(join8(dir, file2), "utf8"));
-    if (!isRecord(value) || value.version !== void 0 && value.version !== JSON_STORE_VERSION || !Array.isArray(value.jobs)) throw new Error(`invalid job archive: ${file2}`);
+    if (!isRecord(value) || value.version !== void 0 && (!Number.isInteger(value.version) || value.version < 0 || value.version > JSON_STORE_VERSION) || !Array.isArray(value.jobs)) throw new Error(`invalid job archive: ${file2}`);
     for (const job of value.jobs) if (isRecord(job) && typeof job.id === "string") jobs.set(job.id, job);
   }
   return [...jobs.values()];
@@ -31119,7 +31128,7 @@ function progressLineHandler(agent, onProgress) {
 
 // src/core/relay.ts
 import { randomBytes as randomBytes5, randomUUID as randomUUID13 } from "node:crypto";
-import { mkdirSync as mkdirSync11, readFileSync as readFileSync10, readdirSync as readdirSync6, rmSync as rmSync4, writeFileSync as writeFileSync6 } from "node:fs";
+import { mkdirSync as mkdirSync11, readFileSync as readFileSync10, readdirSync as readdirSync6, writeFileSync as writeFileSync6 } from "node:fs";
 import { join as join16 } from "node:path";
 import { createServer as createServer4 } from "node:http";
 var RELAY_URL_ENV = "AGENT_BRIDGE_RELAY_URL";
@@ -31255,7 +31264,7 @@ async function publishApproval(home, approval, answer) {
   }
   return () => {
     try {
-      rmSync4(file2, { force: true });
+      archiveFile(file2);
     } finally {
       server.close();
     }
@@ -32005,7 +32014,7 @@ function describeCodexUser(u) {
 }
 
 // src/cli/opencode-install.ts
-import { copyFileSync as copyFileSync3, existsSync as existsSync11, mkdirSync as mkdirSync12, readdirSync as readdirSync7, readFileSync as readFileSync12, rmSync as rmSync5 } from "node:fs";
+import { copyFileSync as copyFileSync3, existsSync as existsSync11, mkdirSync as mkdirSync12, readdirSync as readdirSync7, readFileSync as readFileSync12, rmSync as rmSync4 } from "node:fs";
 import { homedir as homedir3 } from "node:os";
 import { dirname as dirname10, join as join18, resolve as resolve6 } from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
@@ -32082,7 +32091,7 @@ function removeOwned(targets, configDir) {
       res.skipped.push(p);
       continue;
     }
-    rmSync5(p, { recursive: true, force: true });
+    rmSync4(p, { recursive: true, force: true });
     res.files.push(p);
   }
   return res;
@@ -32282,7 +32291,7 @@ import { readFileSync as readFileSync13 } from "node:fs";
 
 // src/mcp/rewake.ts
 import { randomBytes as randomBytes6 } from "node:crypto";
-import { mkdirSync as mkdirSync13, rmSync as rmSync6, writeFileSync as writeFileSync7 } from "node:fs";
+import { mkdirSync as mkdirSync13, rmSync as rmSync5, writeFileSync as writeFileSync7 } from "node:fs";
 import { createServer as createServer5 } from "node:http";
 import { join as join19 } from "node:path";
 var SESSIONS_DIR = "sessions";
@@ -35674,7 +35683,7 @@ import { DatabaseSync as DatabaseSync5 } from "node:sqlite";
 
 // src/mcp/jobs.ts
 import { randomUUID as randomUUID14 } from "node:crypto";
-import { closeSync as closeSync7, mkdirSync as mkdirSync18, openSync as openSync7, rmSync as rmSync7, statSync as statSync6 } from "node:fs";
+import { closeSync as closeSync7, mkdirSync as mkdirSync18, openSync as openSync7, rmSync as rmSync6, statSync as statSync6 } from "node:fs";
 import { dirname as dirname11 } from "node:path";
 
 // src/core/notifications.ts
@@ -35928,11 +35937,11 @@ function acquireLock(path) {
   for (; ; ) {
     try {
       closeSync7(openSync7(path, "wx"));
-      return () => rmSync7(path, { force: true });
+      return () => rmSync6(path, { force: true });
     } catch (err) {
       if (err.code !== "EEXIST") throw err;
       try {
-        if (Date.now() - statSync6(path).mtimeMs > LOCK_STALE_MS) rmSync7(path, { force: true });
+        if (Date.now() - statSync6(path).mtimeMs > LOCK_STALE_MS) rmSync6(path, { force: true });
       } catch {
       }
       if (Date.now() > deadline) throw new Error("timed out locking jobs store");
@@ -36004,7 +36013,8 @@ function doctor(home, now = Date.now()) {
       }
       const version3 = isRecord(value) ? value.version : void 0;
       if (version3 === void 0 || version3 === 0) finding("warning", "json-legacy", path, "Legacy version; next versioned write will preserve a migration backup");
-      else if (version3 !== JSON_STORE_VERSION) finding("error", "json-version", path, `Unsupported JSON version ${String(version3)}; code expects ${JSON_STORE_VERSION}`);
+      else if (!Number.isInteger(version3) || version3 < 0 || version3 > JSON_STORE_VERSION) finding("error", "json-version", path, `Unsupported JSON version ${String(version3)}; code expects ${JSON_STORE_VERSION}`);
+      else if (version3 < JSON_STORE_VERSION) finding("warning", "json-legacy", path, `Earlier JSON version ${String(version3)}; code expects ${JSON_STORE_VERSION}`);
       if (dirname12(path) === join29(home, "runs") && path.endsWith(".json") && !existsSync14(path.replace(/\.json$/, ".log"))) finding("warning", "orphan-metadata", path, "Run metadata has no matching active log; preserved for review");
       if (dirname12(path) === join29(home, "jobs") && path.endsWith(".spec.json") && !existsSync14(path.replace(/\.spec\.json$/, ".json"))) finding("warning", "orphan-runner-spec", path, "Runner specification has no state; it may still be starting");
     } catch (err) {
@@ -36730,7 +36740,7 @@ async function startUi(opts) {
     if (req.method === "GET" && url2.pathname === "/api/archive/messages") {
       const limit = url2.searchParams.get("limit");
       const before = url2.searchParams.get("before");
-      if (limit !== null && (!/^\d+$/.test(limit) || Number(limit) < 1 || Number(limit) > 1e3) || before !== null && (!/^\d+$/.test(before) || !Number.isSafeInteger(Number(before)))) return send(res, 400, { error: "invalid limit or before" });
+      if (limit !== null && (!/^\d+$/.test(limit) || Number(limit) < 1 || Number(limit) > MAX_HISTORY_LIMIT) || before !== null && (!/^\d+$/.test(before) || !Number.isSafeInteger(Number(before)))) return send(res, 400, { error: "invalid limit or before" });
       return send(res, 200, { messages: searchMessages(dbPath, { query: url2.searchParams.get("query") ?? "", limit: limit === null ? void 0 : Number(limit), before: before === null ? void 0 : Number(before) }) });
     }
     if (req.method === "GET" && (url2.pathname === "/api/decisions" || /^\/api\/decisions\/[^/]+\/history$/.test(url2.pathname))) {
@@ -37000,13 +37010,13 @@ function openBrowser(url2) {
 
 // src/cli/reliability.ts
 import { execFileSync as execFileSync2 } from "node:child_process";
-import { existsSync as existsSync19, mkdtempSync as mkdtempSync3, rmSync as rmSync10, writeFileSync as writeFileSync13 } from "node:fs";
+import { existsSync as existsSync19, mkdtempSync as mkdtempSync3, rmSync as rmSync9, writeFileSync as writeFileSync13 } from "node:fs";
 import { tmpdir as tmpdir2 } from "node:os";
 import { join as join39 } from "node:path";
 
 // src/core/worktree.ts
 import { createHash as createHash6 } from "node:crypto";
-import { existsSync as existsSync17, mkdirSync as mkdirSync20, readFileSync as readFileSync24, realpathSync as realpathSync4, rmSync as rmSync8 } from "node:fs";
+import { existsSync as existsSync17, mkdirSync as mkdirSync20, readFileSync as readFileSync24, realpathSync as realpathSync4, rmSync as rmSync7 } from "node:fs";
 import { basename as basename7, isAbsolute as isAbsolute3, join as join37, relative as relative4, resolve as resolve8, toNamespacedPath } from "node:path";
 var GIT = "git";
 var LONG_PATH_ARGS = ["-c", "core.longpaths=true"];
@@ -37078,7 +37088,7 @@ async function removeWorktree(repoRoot, path, branch, log) {
   });
 }
 function removeWorktreeDirectory(path) {
-  rmSync8(toNamespacedPath(resolve8(path)), { recursive: true, force: true, maxRetries: REMOVE_RETRIES });
+  rmSync7(toNamespacedPath(resolve8(path)), { recursive: true, force: true, maxRetries: REMOVE_RETRIES });
 }
 var SUBJECT_CHARS = 72;
 function subagentCommitMessage(opts) {
@@ -37283,7 +37293,7 @@ function changedFiles(before, after) {
 
 // src/cli/reliability-live.ts
 import { execFile as execFile3 } from "node:child_process";
-import { existsSync as existsSync18, mkdirSync as mkdirSync21, mkdtempSync as mkdtempSync2, readdirSync as readdirSync13, readFileSync as readFileSync25, rmSync as rmSync9, writeFileSync as writeFileSync12 } from "node:fs";
+import { existsSync as existsSync18, mkdirSync as mkdirSync21, mkdtempSync as mkdtempSync2, readdirSync as readdirSync13, readFileSync as readFileSync25, rmSync as rmSync8, writeFileSync as writeFileSync12 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join as join38 } from "node:path";
 
@@ -41214,7 +41224,7 @@ async function runLiveChecks(o) {
       });
     }
   } finally {
-    for (const h of homes) rmSync9(h, { recursive: true, force: true, maxRetries: 3 });
+    for (const h of homes) rmSync8(h, { recursive: true, force: true, maxRetries: 3 });
   }
 }
 
@@ -41384,8 +41394,8 @@ async function runReliability(opts) {
       });
     }
   } finally {
-    for (const r of repos) rmSync10(r, { recursive: true, force: true, maxRetries: 3 });
-    rmSync10(home, { recursive: true, force: true, maxRetries: 3 });
+    for (const r of repos) rmSync9(r, { recursive: true, force: true, maxRetries: 3 });
+    rmSync9(home, { recursive: true, force: true, maxRetries: 3 });
   }
   const passed = results.filter((r) => r.pass).length;
   opts.out(`
@@ -41394,7 +41404,7 @@ ${passed}/${results.length} passed`);
 }
 
 // src/cli/smoke.ts
-import { mkdtempSync as mkdtempSync4, rmSync as rmSync11 } from "node:fs";
+import { mkdtempSync as mkdtempSync4, rmSync as rmSync10 } from "node:fs";
 import { tmpdir as tmpdir3 } from "node:os";
 import { join as join40 } from "node:path";
 var TESTED_VERSIONS = {
@@ -41457,7 +41467,7 @@ async function runSmoke(opts) {
       }
     }
   } finally {
-    rmSync11(dir, { recursive: true, force: true });
+    rmSync10(dir, { recursive: true, force: true });
   }
   return failures ? 1 : 0;
 }

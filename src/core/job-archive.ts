@@ -11,7 +11,7 @@ export function readArchivedJobs(path: string): Record<string, unknown>[] {
     if (!file.startsWith(`${basename(path)}.overflow.json-`) && !/^jobs-.*\.json$/.test(file)) continue;
     // A damaged archive must be reported, never silently forgotten or renamed by a read.
     const value: unknown = JSON.parse(readFileSync(join(dir, file), "utf8"));
-    if (!isRecord(value) || (value.version !== undefined && value.version !== JSON_STORE_VERSION) || !Array.isArray(value.jobs)) throw new Error(`invalid job archive: ${file}`);
+    if (!isRecord(value) || (value.version !== undefined && (!Number.isInteger(value.version) || (value.version as number) < 0 || (value.version as number) > JSON_STORE_VERSION)) || !Array.isArray(value.jobs)) throw new Error(`invalid job archive: ${file}`);
     for (const job of value.jobs) if (isRecord(job) && typeof job.id === "string") jobs.set(job.id, job);
   }
   return [...jobs.values()];
