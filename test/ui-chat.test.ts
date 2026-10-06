@@ -7,7 +7,7 @@ function page() {
   const element = (id: string): any => {
     if (!elements.has(id)) elements.set(id, {
       value: "", innerHTML: "", textContent: "", dataset: {}, checked: true, attrs: {} as Record<string, string>,
-      classes: new Set<string>(id === "jobSettings" || id === "sessPop" ? ["hidden"] : []),
+      classes: new Set<string>(id === "jobSettings" ? ["hidden"] : []),
       focus() {},
       get classList() {
         const c = this.classes as Set<string>;
@@ -23,7 +23,7 @@ function page() {
   const fetch = vi.fn(() => new Promise(() => {}));
   const document = { getElementById: element, documentElement: { dataset: {} }, addEventListener() {}, querySelectorAll: () => [] };
   const location = { hash: "" };
-  const api = new Function("document", "window", "location", "localStorage", "setInterval", "fetch", `${script}\nreturn { renderJobForm, renderSendForm, modelsCard, renderNetwork, renderTabs, openSessions, setModel: (m) => { model = m; state = { peers: [] }; }, setRoute: (r) => route = r, setNet: (n, i) => { net = n; invite = i || null; } };`)(document, { addEventListener() {} }, location, { setItem() {}, removeItem() {} }, () => 0, fetch);
+  const api = new Function("document", "window", "location", "localStorage", "setInterval", "fetch", `${script}\nreturn { renderJobForm, renderSendForm, modelsCard, renderNetwork, renderSide, setModel: (m) => { model = m; state = { peers: [] }; }, setRoute: (r) => route = r, setNet: (n, i) => { net = n; invite = i || null; } };`)(document, { addEventListener() {} }, location, { setItem() {}, removeItem() {} }, () => 0, fetch);
   return { ...api, element, fetch, location };
 }
 const group = (key: string) => ({ key, job: `codex-job-${key}`, owner: "claude-app", agent: "codex", status: "done", percent: null, turns: [{ name: `run-${key}`, startedAt: 0 }] });
@@ -187,39 +187,47 @@ describe("dashboard network tab", () => {
   });
 });
 
-describe("session switcher", () => {
-  const live = (name: string, cwd: string, running = 0) => ({ name, live: true, running, groups: [], peer: { agent: "claude", activity: "idle", cwd, startedAt: Date.now() } });
+describe("sessions sidebar", () => {
+  const group = (key: string, status: string, title: string, updatedAt = Date.now()) => ({ key, job: key, owner: "", agent: "codex", status, percent: status === "running" ? 40 : null, title, task: "", updatedAt, turns: [] });
+  const live = (name: string, cwd: string, groups: any[] = []) => ({ name, live: true, running: groups.filter((g) => g.status === "running").length, groups, children: [], peer: { agent: "claude", activity: "busy", cwd, startedAt: Date.now() } });
   const sessions = [
     live("Dominics-MacBook-Pro.local/claude-Development", "/Users/d/Development"),
-    live("claude-strategy-game", "E:/Development/strategy-game", 5),
-    live("claude-project-mmorpg", "E:/Development/project-mmorpg", 2),
-    { name: "claude-old", live: false, running: 0, groups: [{}], peer: null },
+    live("claude-strategy-game", "E:/Development/strategy-game", [group("s1", "running", "Fix the path finder"), group("s2", "done", "Old balance pass", Date.now() - 86_400_000)]),
+    live("claude-project-mmorpg", "E:/Development/project-mmorpg", [group("m1", "done", "Server login")]),
+    { name: "claude-old", live: false, running: 0, groups: [group("o1", "done", "Archived")], children: [], peer: null },
   ];
-
-  it("groups sessions by PC with this PC first, busiest first, and ended ones last", () => {
+  const setup = (route: Record<string, unknown> = { session: null }) => {
     const p = page();
     p.setModel({ sessions, byName: new Map(sessions.map((x) => [x.name, x])) });
-    p.setRoute({ session: null });
-    p.renderTabs();
-    expect(p.element("sessBtn").innerHTML).toContain("Sessions");
-    p.openSessions(true);
-    const html = p.element("sessList").innerHTML;
-    const order = ["This PC", "claude-strategy-game", "claude-project-mmorpg", "Dominics-MacBook-Pro.local", "Ended", "claude-old"].map((s) => html.indexOf(s));
+    p.setRoute(route);
+    p.renderSide();
+    return p;
+  };
+
+  it("lists sessions by PC (this PC first, busiest first) with their recent subagents nested", () => {
+    const html = setup().element("sideTree").innerHTML;
+    const order = ["This PC", "strategy-game", "Fix the path finder", "project-mmorpg", "Server login", "Dominics-MacBook-Pro.local", "Ended", "claude-old"].map((s) => html.indexOf(s));
     expect(order.every((at) => at >= 0)).toBe(true);
     expect([...order].sort((a, b) => a - b)).toEqual(order);
+    // A day-old finished subagent hides behind "more" once there are recent ones; ended sessions start folded.
+    expect(html).not.toContain("Old balance pass");
+    expect(html).not.toContain("Archived");
+    expect(html).toContain('href="#/s/claude-strategy-game/s1"');
   });
 
-  it("filters by name or folder and opens the highlighted session with Enter", () => {
-    const p = page();
-    p.setModel({ sessions, byName: new Map(sessions.map((x) => [x.name, x])) });
-    p.setRoute({ session: null });
-    p.openSessions(true);
-    p.element("sessFilter").value = "mmorpg";
+  it("marks the open subagent and searches subagent titles too", () => {
+    const p = setup({ session: "claude-strategy-game", group: "s1" });
+    expect(p.element("sideTree").innerHTML).toContain('class="tree-row sel"');
+    p.element("sessFilter").value = "balance";
     p.element("sessFilter").listeners.get("input")();
-    const html = p.element("sessList").innerHTML;
-    expect(html).toContain("claude-project-mmorpg");
-    expect(html).not.toContain("claude-strategy-game");
-    p.element("sessFilter").listeners.get("keydown")({ key: "Enter", preventDefault() {} });
-    expect(p.location.hash).toBe("#/s/claude-project-mmorpg");
+    const html = p.element("sideTree").innerHTML;
+    expect(html).toContain("Old balance pass");
+    expect(html).not.toContain("project-mmorpg");
+  });
+
+  it("folds a session's subagents and remembers it", () => {
+    const p = setup();
+    p.element("sideTree").listeners.get("click")({ target: { closest: (sel: string) => (sel === "[data-fold]" ? { dataset: { fold: "claude-strategy-game" } } : null) } });
+    expect(p.element("sideTree").innerHTML).not.toContain("Fix the path finder");
   });
 });

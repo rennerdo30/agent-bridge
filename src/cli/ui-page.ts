@@ -54,36 +54,66 @@ a { color: inherit; text-decoration: none; }
 .wrap { max-width: 1320px; margin: 0 auto; padding: 0 24px; }
 @media (max-width: 700px) { .wrap { padding: 0 16px; } }
 
-header { position: sticky; top: 0; z-index: 5; background: var(--panel); border-bottom: 1px solid var(--line); }
-.top { display: flex; align-items: center; justify-content: space-between; gap: 12px; height: 56px; }
+/* App shell: sessions sidebar on the left (a drawer on narrow screens), content on the right. */
+.app { display: grid; grid-template-columns: var(--side-w, 288px) minmax(0, 1fr); min-height: 100vh; }
+.app.collapsed { --side-w: 0px; }
+.app.collapsed .side { visibility: hidden; }
+.side { position: sticky; top: 0; height: 100vh; display: flex; flex-direction: column; background: var(--panel); border-right: 1px solid var(--line); min-width: 0; overflow: hidden; z-index: 30; }
+.side-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 14px 12px 10px 16px; }
 .brand { display: flex; align-items: center; gap: 10px; font-weight: 650; font-size: 15px; }
 .logo { width: 28px; height: 28px; display: block; }
 .logo svg { width: 100%; height: 100%; display: block; }
-.right { display: flex; align-items: center; gap: 14px; }
+.icon-btn { background: transparent; color: var(--muted); border: 1px solid transparent; border-radius: 7px; padding: 3px 9px; font-size: 14px; font-weight: 500; line-height: 1.4; }
+.icon-btn:hover { color: var(--text); background: var(--panel-2); border-color: var(--line); }
+.side-search { padding: 0 12px 8px; }
+.side-search input { width: 100%; padding: 7px 10px; font-size: 13px; background: var(--panel-2); }
+.side-nav { display: flex; flex-direction: column; gap: 1px; padding: 0 8px 8px; border-bottom: 1px solid var(--line); }
+.side-nav a, .tree-row { display: flex; align-items: center; gap: 9px; padding: 6px 8px; border-radius: 7px; color: var(--muted); font-size: 13.5px; min-width: 0; }
+.side-nav a:hover, .tree-row:hover { background: var(--panel-2); color: var(--text); }
+.side-nav a.on { background: var(--accent-soft); color: var(--text); font-weight: 600; }
+.side-nav .ico { width: 16px; text-align: center; color: var(--faint); }
+.side-tree { flex: 1; overflow-y: auto; padding: 6px 8px 16px; scrollbar-width: thin; }
+.tree-pc { display: flex; justify-content: space-between; padding: 12px 8px 4px; font-size: 11px; font-weight: 650; letter-spacing: .05em; text-transform: uppercase; color: var(--faint); }
+.tree-sess { display: flex; align-items: center; gap: 2px; border-radius: 7px; }
+.tree-sess:hover { background: var(--panel-2); }
+.tree-sess.cur { background: var(--accent-soft); }
+.tree-sess.ended { opacity: .6; }
+.twist { flex: none; width: 22px; height: 26px; padding: 0; background: none; border: 0; color: var(--faint); font-size: 10px; cursor: pointer; transition: transform .12s; }
+.twist[aria-expanded="true"] { transform: rotate(90deg); }
+.twist:disabled { visibility: hidden; }
+.tree-sess > a { flex: 1; display: flex; align-items: center; gap: 8px; padding: 6px 8px 6px 2px; min-width: 0; color: var(--text); font-size: 13.5px; }
+.tree-sess.cur > a { font-weight: 600; }
+.tree-sess .lbl { flex: 1; min-width: 0; }
+.tree-sess .lbl small { display: block; font-size: 11.5px; color: var(--faint); font-weight: 400; }
+.tree-kids { margin: 1px 0 4px 21px; padding-left: 9px; border-left: 1px solid var(--line); display: flex; flex-direction: column; gap: 1px; }
+.tree-row { padding: 4px 8px; font-size: 12.5px; }
+.tree-row.sel { background: var(--accent-soft); color: var(--text); font-weight: 600; }
+.tree-row .lbl { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tree-row .meta { flex: none; font-size: 11px; color: var(--faint); font-variant-numeric: tabular-nums; }
+.tree-row.more { background: none; border: 0; font: inherit; font-size: 12px; color: var(--faint); cursor: pointer; text-align: left; }
+.sdot { width: 7px; height: 7px; border-radius: 50%; flex: none; background: var(--faint); }
+.sdot.running { background: var(--busy); animation: pulse 1.4s infinite; } .sdot.done { background: var(--ok); }
+.sdot.failed { background: var(--bad); } .sdot.interrupted { background: var(--warn); }
+.tree-empty { padding: 16px 8px; color: var(--faint); font-size: 12.5px; }
+.side-foot { border-top: 1px solid var(--line); padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; }
+.side-foot .theme { align-self: flex-start; }
+.mbar { display: none; position: sticky; top: 0; z-index: 20; align-items: center; gap: 10px; height: 48px; padding: 0 12px; background: var(--panel); border-bottom: 1px solid var(--line); }
+.app.collapsed .mbar { display: flex; }
+.mtitle { font-weight: 600; font-size: 14px; }
+.scrim { display: none; }
+@media (max-width: 860px) {
+  .app { grid-template-columns: minmax(0, 1fr); }
+  .side { position: fixed; left: 0; top: 0; bottom: 0; width: min(320px, 86vw); transform: translateX(-100%); transition: transform .18s ease; box-shadow: 0 0 40px rgba(0, 0, 0, .25); }
+  .app.open .side { transform: none; visibility: visible; }
+  .app.open .scrim { display: block; position: fixed; inset: 0; z-index: 25; background: rgba(0, 0, 0, .35); }
+  .mbar { display: flex; }
+  .app.collapsed .side { visibility: visible; }
+}
 .theme { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
 .theme button { background: transparent; color: var(--muted); border: 0; border-radius: 0; padding: 4px 10px; font-size: 12px; font-weight: 500; cursor: pointer; }
 .theme button + button { border-left: 1px solid var(--line); }
 .theme button.on { background: var(--accent-soft); color: var(--text); }
 .conn { display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px; color: var(--muted); }
-nav { display: flex; gap: 4px; align-items: stretch; }
-nav a, .switch-btn { display: inline-flex; align-items: center; gap: 7px; padding: 10px 12px; color: var(--muted); border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: none; white-space: nowrap; font-size: 13.5px; font-weight: 400; cursor: pointer; }
-nav a:hover, .switch-btn:hover { color: var(--text); }
-nav a.on, .switch-btn.on { color: var(--text); border-bottom-color: var(--accent); font-weight: 600; }
-/* Session switcher: one entry however many sessions run, a searchable list grouped by PC. */
-.switch { position: relative; min-width: 0; display: flex; }
-.switch-btn { max-width: min(420px, 52vw); }
-.switch-btn .lbl { overflow: hidden; text-overflow: ellipsis; }
-.switch-btn .caret { color: var(--faint); font-size: 10px; }
-.switch-pop { position: absolute; top: calc(100% + 6px); left: 0; z-index: 20; width: min(440px, calc(100vw - 32px)); max-height: min(70vh, 560px); display: flex; flex-direction: column; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 12px 32px rgba(16, 24, 40, .18); overflow: hidden; }
-.switch-pop input { margin: 10px; padding: 8px 11px; }
-#sessList { overflow-y: auto; padding: 0 6px 8px; }
-.sess-group { padding: 10px 10px 4px; font-size: 11px; font-weight: 650; letter-spacing: .05em; text-transform: uppercase; color: var(--faint); display: flex; justify-content: space-between; }
-.sess-item { display: grid; grid-template-columns: 26px minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 7px 10px; border-radius: 8px; color: var(--text); }
-.sess-item .sub { font-size: 12px; color: var(--muted); }
-.sess-item.cur { background: var(--accent-soft); }
-.sess-item.act, .sess-item:hover { background: var(--panel-2); outline: 1px solid var(--line); }
-.sess-item.ended { opacity: .65; }
-.sess-empty { padding: 16px; text-align: center; color: var(--muted); font-size: 13px; }
 .pc-head { grid-column: 1 / -1; display: flex; align-items: center; gap: 8px; font-size: 12.5px; font-weight: 650; color: var(--muted); margin-top: 6px; }
 .pc-head:first-child { margin-top: 0; }
 .pc-head::after { content: ""; flex: 1; height: 1px; background: var(--line); }
@@ -191,7 +221,6 @@ button:disabled { opacity: .6; cursor: default; }
 .model-list ul { padding-left: 18px; }
 
 /* Network */
-nav a.net { margin-left: auto; }
 .net-card { padding: 18px 20px; display: flex; flex-direction: column; gap: 14px; }
 .net-card h4 { margin: 0; font-size: 15px; font-weight: 650; }
 .net-card p { margin: 0; color: var(--muted); font-size: 13px; }
@@ -228,14 +257,15 @@ button.ghost.danger { background: transparent; color: var(--bad); border-color: 
 .disabled-hint { padding: 10px 12px; border-radius: 8px; background: var(--panel-2); color: var(--muted); font-size: 12.5px; }
 
 /* Session view */
-.split { display: grid; grid-template-columns: minmax(300px, 380px) minmax(0, 1fr); gap: 20px; align-items: start; }
-@media (max-width: 960px) { .split { grid-template-columns: 1fr; } }
+.split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, 340px); gap: 20px; align-items: start; }
+.split > .side-col { order: 2; }
+@media (max-width: 1180px) { .split { grid-template-columns: 1fr; } .conv { position: static; height: 72vh; } }
 .side-col { display: flex; flex-direction: column; gap: 20px; }
 .sess { padding: 16px; display: flex; flex-direction: column; gap: 10px; }
 .kv { display: grid; grid-template-columns: 72px 1fr; gap: 4px 10px; font-size: 12.5px; }
 .kv span:nth-child(odd) { color: var(--faint); }
 .kv span:nth-child(even) { overflow-wrap: anywhere; }
-.conv { display: flex; flex-direction: column; min-width: 0; height: calc(100vh - 150px); min-height: 480px; position: sticky; top: 124px; }
+.conv { display: flex; flex-direction: column; min-width: 0; height: calc(100vh - 56px); min-height: 480px; position: sticky; top: 28px; }
 .conv-head { padding: 14px 18px; border-bottom: 1px solid var(--line); display: flex; gap: 12px; align-items: center; }
 .conv-head .grow { flex: 1; min-width: 0; }
 .conv-head .title { font-weight: 650; font-size: 15px; display: flex; gap: 8px; align-items: center; }
@@ -295,28 +325,26 @@ details[open] > summary::before { content: "▾ "; }
 </style>
 </head>
 <body>
-<header>
-  <div class="wrap">
-    <div class="top">
-      <div class="brand"><span class="logo">${LOGO_SVG}</span>agent-bridge</div>
-      <div class="right">
-        <span class="conn" id="status">connecting…</span>
-        <div class="theme" id="theme" role="group" aria-label="Theme"><button data-theme="auto">Auto</button><button data-theme="light">Light</button><button data-theme="dark">Dark</button></div>
-      </div>
-    </div>
-    <nav id="tabs">
-      <a href="#/" id="tabOverview">Overview</a>
-      <div class="switch">
-        <button type="button" class="switch-btn" id="sessBtn" aria-haspopup="dialog" aria-expanded="false" aria-controls="sessPop"></button>
-        <div class="switch-pop hidden" id="sessPop" role="dialog" aria-label="Switch session">
-          <input id="sessFilter" placeholder="Find a session or folder" autocomplete="off" spellcheck="false" aria-label="Find a session">
-          <div id="sessList" role="listbox" aria-label="Sessions"></div>
-        </div>
-      </div>
-      <a href="#/network" id="tabNet" class="net">Network</a>
-    </nav>
+<div class="app" id="app">
+<aside class="side" id="side" aria-label="Sessions and subagents">
+  <div class="side-top">
+    <a class="brand" href="#/"><span class="logo">${LOGO_SVG}</span>agent-bridge</a>
+    <button type="button" class="icon-btn" id="sideHide" title="Hide the sidebar" aria-label="Hide the sidebar">«</button>
   </div>
-</header>
+  <div class="side-search"><input id="sessFilter" type="search" placeholder="Search sessions and subagents" autocomplete="off" spellcheck="false" aria-label="Search sessions and subagents"></div>
+  <nav class="side-nav">
+    <a href="#/" id="tabOverview"><span class="ico" aria-hidden="true">▦</span>Overview</a>
+    <a href="#/network" id="tabNet"><span class="ico" aria-hidden="true">⇄</span>Network</a>
+  </nav>
+  <div class="side-tree" id="sideTree"></div>
+  <div class="side-foot">
+    <span class="conn" id="status">connecting…</span>
+    <div class="theme" id="theme" role="group" aria-label="Theme"><button data-theme="auto">Auto</button><button data-theme="light">Light</button><button data-theme="dark">Dark</button></div>
+  </div>
+</aside>
+<div class="scrim" id="scrim"></div>
+<div class="main-col">
+<div class="mbar" id="mbar"><button type="button" class="icon-btn" id="sideShow" aria-label="Show sessions" aria-controls="side">☰</button><span class="mtitle ell" id="mTitle">agent-bridge</span></div>
 
 <main class="wrap">
   <div id="overview">
@@ -364,7 +392,7 @@ details[open] > summary::before { content: "▾ "; }
   <div id="session" class="split hidden">
     <div class="side-col">
       <div class="panel sess" id="sHead"></div>
-      <div><h3>Subagents <span class="counts" id="sCount"></span></h3><div class="panel rows" id="sGroups"></div></div>
+      <div class="small muted" id="sCount"></div>
       <div id="sMsgBox"><h3>Messages</h3><div class="panel"><div id="sMsgs" class="msgs"></div></div></div>
     </div>
     <div class="panel conv">
@@ -398,6 +426,8 @@ details[open] > summary::before { content: "▾ "; }
   <button type="submit" id="sendBtn">Send</button>
   <div id="sendInfo"></div>
 </form>
+</div>
+</div>
 
 <script>
 const POLL_MS = 1500;
@@ -558,7 +588,7 @@ function buildModel(s) {
 function render() {
   if (!state) return;
   model = buildModel(state);
-  renderTabs();
+  renderSide();
   const inSession = Boolean(route.session), inNetwork = Boolean(route.network);
   $("overview").classList.toggle("hidden", inSession || inNetwork);
   $("session").classList.toggle("hidden", !inSession);
@@ -573,63 +603,78 @@ function render() {
 const pcOf = (name) => { const i = String(name).indexOf("/"); return i > 0 ? name.slice(0, i) : ""; };
 const shortName = (name) => { const i = String(name).indexOf("/"); return i > 0 ? name.slice(i + 1) : name; };
 const LOCAL_PC = "This PC";
-let sessActive = 0, lastSessList = "";
+/** Subagents listed under a session before a "more" row. */
+const SIDE_RECENT = 6;
+const SIDE_TOGGLED_KEY = "ab-side-toggled", SIDE_COLLAPSED_KEY = "ab-side-collapsed";
+/** Sessions whose fold state the user flipped (live ones start open, ended ones folded); kept in this browser. */
+const sideToggled = new Set((() => { try { return JSON.parse(localStorage.getItem(SIDE_TOGGLED_KEY) || "[]"); } catch { return []; } })());
+const saveSideToggled = () => { try { localStorage.setItem(SIDE_TOGGLED_KEY, JSON.stringify([...sideToggled])); } catch {} };
+let lastTree = "";
 
-function renderTabs() {
-  const cur = route.session && model.byName.get(route.session);
-  $("tabOverview").className = route.session || route.network ? "" : "on";
-  $("tabNet").className = "net" + (route.network ? " on" : "");
-  setHtml("tabNet", networkTabDot() + "Network");
-  const running = model.sessions.reduce((n, x) => n + (x.running || 0), 0);
-  const live = model.sessions.filter((x) => x.live).length;
-  const btn = $("sessBtn");
-  btn.classList.toggle("on", Boolean(route.session));
-  setHtml("sessBtn", route.session
-    ? (cur && cur.live ? dot(cur.peer.activity) : "") + '<span class="lbl">' + esc(route.session) + "</span>" + (cur && cur.running ? '<span class="count" title="subagents working">' + cur.running + "</span>" : "") + '<span class="caret" aria-hidden="true">▼</span>'
-    : '<span class="lbl">Sessions</span><span class="chip">' + live + "</span>" + (running ? '<span class="count" title="subagents working">' + running + "</span>" : "") + '<span class="caret" aria-hidden="true">▼</span>');
-  btn.title = live + " session" + (live === 1 ? "" : "s") + " connected" + (running ? ", " + running + " subagent" + (running === 1 ? "" : "s") + " working" : "");
-  if (!$("sessPop").classList.contains("hidden")) renderSessList();
-}
+const groupLabel = (g) => g.title || g.agent + " · " + (g.task || g.last || "subagent");
+const groupMatches = (g, q) => [g.title, g.task, g.agent, g.model, g.job].some((s) => String(s || "").toLowerCase().includes(q));
+const sessionMatches = (x, q) => x.name.toLowerCase().includes(q) || String((x.peer && x.peer.cwd) || "").toLowerCase().includes(q);
+const sessionTitle = (x) => (x.peer ? folder(x.peer.cwd) : "") || shortName(x.name);
 
-/** Sessions matching the filter: live ones grouped by PC (this PC first), then ended ones with subagents. */
-function sessEntries() {
-  const q = $("sessFilter").value.trim().toLowerCase();
-  const match = (x) => !q || x.name.toLowerCase().includes(q) || String((x.peer && x.peer.cwd) || "").toLowerCase().includes(q);
-  const live = model.sessions.filter((x) => x.live && match(x));
+/** Live sessions grouped by PC (this PC first, busiest first), then ended sessions that have subagents. */
+function sideGroups(q) {
+  const keep = (x) => !q || sessionMatches(x, q) || x.groups.some((g) => groupMatches(g, q));
+  const live = model.sessions.filter((x) => x.live && keep(x));
   const pcs = [...new Set(live.map((x) => pcOf(x.name)))].sort((a, b) => (a === "") !== (b === "") ? (a === "" ? -1 : 1) : a.localeCompare(b));
-  const groups = pcs.map((pc) => ({ title: pc || LOCAL_PC, items: live.filter((x) => pcOf(x.name) === pc).sort((a, b) => b.running - a.running || a.name.localeCompare(b.name)) }));
-  const ended = model.sessions.filter((x) => !x.live && x.groups.length && match(x));
-  if (ended.length) groups.push({ title: "Ended", items: ended });
-  return groups;
+  const out = pcs.map((pc) => ({ title: pc || LOCAL_PC, items: live.filter((x) => pcOf(x.name) === pc).sort((a, b) => b.running - a.running || sessionTitle(a).localeCompare(sessionTitle(b))) }));
+  const ended = model.sessions.filter((x) => !x.live && x.groups.length && keep(x));
+  if (ended.length) out.push({ title: "Ended", items: ended });
+  return out;
 }
 
-function renderSessList() {
-  const groups = sessEntries(), flat = groups.flatMap((g) => g.items);
-  sessActive = Math.min(sessActive, Math.max(0, flat.length - 1));
-  let i = 0;
-  const html = flat.length
-    ? groups.map((g) => '<div class="sess-group"><span>' + esc(g.title) + "</span><span>" + g.items.length + "</span></div>" + g.items.map((x) => {
-        const p = x.peer, n = i++;
-        const sub = p ? [folder(p.cwd), p.activity || "", "up " + up(p.startedAt)].filter(Boolean).join(" · ") : x.groups.length + " subagents";
-        return '<a role="option" href="' + href(x.name) + '" data-i="' + n + '" class="sess-item' + (x.name === route.session ? " cur" : "") + (n === sessActive ? " act" : "") + (x.live ? "" : " ended") + '"' + (x.name === route.session ? ' aria-selected="true"' : "") + ">" +
-          av(p ? p.agent : "other", true) + '<div style="min-width:0"><div class="ell">' + (p ? dot(p.activity) + " " : "") + esc(shortName(x.name)) + '</div><div class="sub ell">' + esc(sub) + "</div></div>" +
-          (x.running ? '<span class="count" title="subagents working">' + x.running + "</span>" : "<span></span>") + "</a>";
-      }).join("")).join("")
-    : '<div class="sess-empty">No session matches.</div>';
-  if (html !== lastSessList) { lastSessList = html; $("sessList").innerHTML = html; }
+function sideSession(x, q) {
+  const p = x.peer, searching = Boolean(q);
+  const open = searching || (x.live !== sideToggled.has(x.name));
+  const cur = x.name === route.session;
+  const selKey = cur ? (route.group && x.groups.some((g) => g.key === route.group) ? route.group : x.groups[0] && x.groups[0].key) : null;
+  let kids = searching && !sessionMatches(x, q) ? x.groups.filter((g) => groupMatches(g, q)) : x.groups;
+  const all = searching || opened.has("side-all:" + x.name);
+  const recent = kids.filter((g) => g.status === "running" || Date.now() - g.updatedAt < ARCHIVE_AFTER_MS || g.key === selKey);
+  const shown = all ? kids : (recent.length ? recent : kids).slice(0, SIDE_RECENT);
+  const hidden = kids.length - shown.length;
+  const sub = shortName(x.name) + (p ? " · " + (p.activity || "connected") : " · ended");
+  const row = '<div class="tree-sess' + (cur ? " cur" : "") + (x.live ? "" : " ended") + '">' +
+    '<button type="button" class="twist" data-fold="' + esc(x.name) + '" aria-expanded="' + open + '" aria-label="Show or hide its subagents"' + (x.groups.length ? "" : " disabled") + ">▶</button>" +
+    '<a href="' + href(x.name) + '" title="' + esc(x.name + (p ? " · " + p.cwd : "")) + '"' + (cur ? ' aria-current="page"' : "") + ">" + (p ? dot(p.activity) : '<span class="dot off"></span>') +
+    '<span class="lbl ell">' + esc(sessionTitle(x)) + '<small class="ell">' + esc(sub) + "</small></span>" +
+    (x.running ? '<span class="count" title="subagents working">' + x.running + "</span>" : "") + "</a></div>";
+  if (!open || !x.groups.length) return row;
+  const kidRows = shown.map((g) => {
+    const meta = g.status === "running" ? (g.percent !== null ? g.percent + "%" : "working") : ago(g.updatedAt).replace(" ago", "");
+    return '<a class="tree-row' + (g.key === selKey ? " sel" : "") + '" href="' + href(x.name, g.key) + '" title="' + esc(groupLabel(g) + " · " + g.status) + '">' +
+      '<span class="sdot ' + esc(g.status) + '"></span><span class="lbl">' + esc(groupLabel(g)) + '</span><span class="meta">' + esc(meta) + "</span></a>";
+  }).join("");
+  const more = hidden > 0 || (all && !searching && kids.length > SIDE_RECENT)
+    ? '<button type="button" class="tree-row more" data-more="' + esc(x.name) + '">' + (hidden > 0 ? hidden + " more" : "show fewer") + "</button>"
+    : "";
+  return row + '<div class="tree-kids">' + kidRows + more + "</div>";
 }
 
-function openSessions(open) {
-  $("sessPop").classList.toggle("hidden", !open);
-  $("sessBtn").setAttribute("aria-expanded", String(open));
-  if (open) {
-    $("sessFilter").value = "";
-    const flat = sessEntries().flatMap((g) => g.items);
-    sessActive = Math.max(0, flat.findIndex((x) => x.name === route.session));
-    lastSessList = "";
-    renderSessList();
-    $("sessFilter").focus();
-  }
+function renderSide() {
+  $("tabOverview").className = route.session || route.network ? "" : "on";
+  $("tabNet").className = route.network ? "on" : "";
+  setHtml("tabNet", '<span class="ico" aria-hidden="true">⇄</span>Network' + networkTabDot());
+  const cur = route.session && model.byName.get(route.session);
+  $("mTitle").textContent = route.network ? "Network" : route.session ? (cur ? sessionTitle(cur) : route.session) : "Overview";
+  const q = $("sessFilter").value.trim().toLowerCase();
+  const groups = sideGroups(q);
+  const html = groups.length
+    ? groups.map((pc) => '<div class="tree-pc"><span>' + esc(pc.title) + "</span><span>" + pc.items.length + "</span></div>" + pc.items.map((x) => sideSession(x, q)).join("")).join("")
+    : '<div class="tree-empty">' + (q ? "Nothing matches." : "No sessions connected yet.") + "</div>";
+  if (html !== lastTree) { lastTree = html; $("sideTree").innerHTML = html; }
+}
+
+const narrow = () => typeof matchMedia === "function" && matchMedia("(max-width: 860px)").matches;
+function setSidebar(show) {
+  const app = $("app");
+  if (narrow()) { app.classList.toggle("open", show); return; }
+  app.classList.toggle("collapsed", !show);
+  try { show ? localStorage.removeItem(SIDE_COLLAPSED_KEY) : localStorage.setItem(SIDE_COLLAPSED_KEY, "1"); } catch {}
 }
 
 /** "0.12.0" vs "0.11.3": negative when a is older. */
@@ -687,7 +732,7 @@ function renderOverview() {
       ? '<div class="head">' + av(p.agent) + '<div style="min-width:0;flex:1"><div class="title ell">' + esc(folder(p.cwd)) + '</div><div class="small muted ell">' + esc(x.name) + "</div></div>" + dot(p.activity) + "</div>"
       : '<div class="head">' + av("other") + '<div style="min-width:0;flex:1"><div class="title ell">' + esc(x.name) + '</div><div class="small muted">not connected</div></div></div>';
     const stats = '<div class="stats"><span><b>' + x.groups.length + "</b>subagents</span>" + (x.running ? '<span style="color:var(--busy)"><b style="color:inherit">' + x.running + "</b>working</span>" : "") +
-      (p ? "<span><b>" + up(p.startedAt) + "</b>up</span>" : x.groups[0] ? "<span>last " + ago(x.groups[0].updatedAt) + "</span>" : "") + "</div>";
+      (p ? "<span><b>" + up(p.startedAt) + "</b>connected</span>" : x.groups[0] ? "<span>last " + ago(x.groups[0].updatedAt) + "</span>" : "") + "</div>";
     const kids = x.children.length ? '<div class="kids">' + x.children.map(childLine).join("") + "</div>" : "";
     return '<a class="card' + (x.live ? "" : " ended") + '" href="' + href(x.name) + '">' + head + (p ? versionChip(p) : "") + kids + stats + "</a>";
   };
@@ -709,21 +754,14 @@ function renderSession() {
   const p = x.peer;
   $("sHead").innerHTML = p
     ? '<div class="head" style="display:flex;gap:12px;align-items:center">' + av(p.agent) + '<div style="min-width:0;flex:1"><div class="title ell" style="font-weight:650;font-size:15px">' + esc(folder(p.cwd)) + '</div><div class="small muted ell">' + esc(p.name) + "</div></div>" + dot(p.activity) + "</div>" +
-      '<div class="kv"><span>status</span><span>' + esc(p.activity || "unknown") + "</span><span>folder</span><span>" + esc(p.cwd) + "</span><span>up</span><span>" + up(p.startedAt) + "</span>" +
+      '<div class="kv"><span>status</span><span>' + esc(p.activity || "unknown") + "</span><span>folder</span><span>" + esc(p.cwd) + "</span><span>connected</span><span>" + up(p.startedAt) + " ago</span>" +
       (p.sessionId ? "<span>session</span><span>" + esc(p.sessionId) + "</span>" : "") + "<span>version</span><span>" + esc(p.version || "?") + " " + versionChip(p) + "</span></div>" +
       (x.children.length ? '<div class="kids">' + x.children.map(childLine).join("") + "</div>" : "")
     : '<div class="head" style="display:flex;gap:12px;align-items:center">' + av("other") + '<div><div style="font-weight:650">' + esc(x.name) + '</div><div class="small muted">' +
       (x.name === "earlier runs" ? "Runs from before sessions were recorded, or from sessions in other folders." : "This session has ended. Its subagents are kept for reference.") + "</div></div></div>";
   $("sCount").innerHTML = x.groups.length ? countsLine(countGroups(x.groups)) : "";
+  // The subagents themselves are listed in the sidebar under the session.
   const sel = route.group && x.groups.find((g) => g.key === route.group) ? route.group : x.groups[0] && x.groups[0].key;
-  // Running and recently finished subagents on top; older ones in a folded archive (the selected one stays visible).
-  const fresh = (g) => g.status === "running" || Date.now() - g.updatedAt < ARCHIVE_AFTER_MS || g.key === sel;
-  const active = x.groups.filter(fresh), archived = x.groups.filter((g) => !fresh(g));
-  const archiveOpen = opened.has("archive:" + x.name);
-  $("sGroups").innerHTML = x.groups.length
-    ? (active.length ? active.map((g) => groupRow(g, g.key === sel, false)).join("") : '<div class="empty">Nothing running or recent.</div>') +
-      (archived.length ? '<details class="archive" data-open="archive:' + esc(x.name) + '"' + (archiveOpen ? " open" : "") + '><summary>Archive · ' + archived.length + " older subagent" + (archived.length === 1 ? "" : "s") + "</summary>" + archived.map((g) => groupRow(g, false, false)).join("") + "</details>" : "")
-    : '<div class="empty">No subagents started from this session yet.</div>';
   const mine = state.messages.filter((m) => m.from_name === x.name || m.to_target === x.name || String(m.recipients || "").split(", ").includes(x.name));
   $("sMsgs").innerHTML = messagesHtml(mine);
   const g = sel && model.groups.get(sel);
@@ -1149,7 +1187,7 @@ async function loadNetwork() {
     netLoading = false;
     netLoadedAt = Date.now();
   }
-  if (model) renderTabs();
+  if (model) renderSide();
   if (route.network) renderNetwork();
 }
 
@@ -1392,27 +1430,32 @@ setInterval(() => {
   if ((route.network || inviteActive()) && Date.now() - netLoadedAt >= due) void loadNetwork();
 }, 1000);
 
-$("sessBtn").addEventListener("click", () => openSessions($("sessPop").classList.contains("hidden")));
-$("sessFilter").addEventListener("input", () => { sessActive = 0; renderSessList(); });
+$("sessFilter").addEventListener("input", () => { if (model) renderSide(); });
 $("sessFilter").addEventListener("keydown", (e) => {
-  const flat = sessEntries().flatMap((g) => g.items);
-  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
-    e.preventDefault();
-    if (flat.length) sessActive = (sessActive + (e.key === "ArrowDown" ? 1 : flat.length - 1)) % flat.length;
-    renderSessList();
-  } else if (e.key === "Enter") {
-    e.preventDefault();
-    const x = flat[sessActive];
-    if (x) { location.hash = href(x.name); openSessions(false); }
-  } else if (e.key === "Escape") {
-    openSessions(false);
-    $("sessBtn").focus();
+  if (e.key === "Escape") { $("sessFilter").value = ""; if (model) renderSide(); }
+  // Enter opens the first match: the first session, or its first matching subagent.
+  if (e.key === "Enter") {
+    const first = $("sideTree").querySelector(".tree-row, .tree-sess > a");
+    if (first) location.hash = first.getAttribute("href");
   }
 });
-$("sessList").addEventListener("click", (e) => { if (e.target.closest(".sess-item")) openSessions(false); });
-document.addEventListener("click", (e) => {
-  if (!$("sessPop").classList.contains("hidden") && !e.target.closest(".switch")) openSessions(false);
+$("sideTree").addEventListener("click", (e) => {
+  const fold = e.target.closest("[data-fold]"), more = e.target.closest("[data-more]");
+  if (fold) {
+    const name = fold.dataset.fold;
+    sideToggled.has(name) ? sideToggled.delete(name) : sideToggled.add(name);
+    saveSideToggled();
+    renderSide();
+  } else if (more) {
+    const id = "side-all:" + more.dataset.more;
+    opened.has(id) ? opened.delete(id) : opened.add(id);
+    renderSide();
+  } else if (e.target.closest("a") && narrow()) setSidebar(false);
 });
+$("sideHide").addEventListener("click", () => setSidebar(false));
+$("sideShow").addEventListener("click", () => setSidebar(true));
+$("scrim").addEventListener("click", () => setSidebar(false));
+try { if (localStorage.getItem(SIDE_COLLAPSED_KEY) === "1" && !narrow()) $("app").classList.add("collapsed"); } catch {}
 
 /** Auto follows the system; Light and Dark override it. Remembered in this browser. */
 function applyTheme(theme) {
