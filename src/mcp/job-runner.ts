@@ -84,6 +84,7 @@ export async function runJobRunner(specFile: string | undefined): Promise<number
     jobOwner: job.supervisor ?? job.owner ?? owner,
     jobParent: owner,
     jobTitle: typeof job.args?.title === "string" ? job.args.title : spec.args.title,
+    jobSendTo: spec.args.send_to,
     id: `${JOB_PEER_PREFIX}${job.id}`,
     name: job.name,
     cwd: spec.cwd,

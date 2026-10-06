@@ -8,6 +8,7 @@ import {
   ELECTION_MAX_ATTEMPTS,
   ELECTION_RETRY_MAX_MS,
   APP_VERSION,
+  DEFAULT_MAX_HOPS,
   ELECTION_RETRY_MIN_MS,
   JOBS_FILE,
   PROTOCOL_VERSION,
@@ -16,11 +17,13 @@ import {
 } from "./constants.js";
 import type { Logger } from "./logger.js";
 import { BridgeError, type AgentKind, type BridgeMessage, type PeerActivity, type PeerInfo, type SendArgs, type SendResult, type SiblingPeer } from "./protocol.js";
+import { ReadJournal } from "./read-journal.js";
 import { MessageStore } from "./store.js";
 import { DASHBOARD_JOB_CONVERSATION } from "./job-control.js";
 import type { NetworkConfig } from "../network/config.js";
 import type { NetworkStatus } from "../network/link.js";
 import type { TransferResult } from "../network/files.js";
+import type { DecideArgs, DecisionsArgs, OwnerDecision } from "./decisions.js";
 
 export interface BridgeNodeOptions {
   pipePath: string;
@@ -40,6 +43,7 @@ export interface BridgeNodeOptions {
   jobOwner?: string;
   jobParent?: string;
   jobTitle?: string;
+  jobSendTo?: string[];
   /** false: only connect to a broker, never become one (a short-lived job runner would take the bridge down with it). */
   canHostBroker?: boolean;
   network?: { home: string; config: NetworkConfig };
@@ -54,8 +58,8 @@ export interface BridgeNodeEvents {
   disconnected: [];
 }
 
-/** Remember ids of messages we already consumed so a backlog redelivery after reconnect is ignored. */
-const READ_ID_MEMORY = 2_000;
+/** Bound the in-memory set of questions whose replies can wake this session. */
+const QUESTION_ID_MEMORY = 2_000;
 
 const jitter = () => ELECTION_RETRY_MIN_MS + Math.floor(Math.random() * (ELECTION_RETRY_MAX_MS - ELECTION_RETRY_MIN_MS));
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -81,9 +85,13 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
   private currentName: string;
   private readonly inbox = new Map<string, BridgeMessage>();
   private readonly readIds = new Set<string>();
+  private readonly readJournal: ReadJournal;
   private readonly unflushedAcks = new Set<string>();
   private sessionId: string | null = null;
   private autoWake: boolean;
+  private wakeOnDirect = false;
+  private wakeAvailable = false;
+  private wakeMaxHops = DEFAULT_MAX_HOPS;
   private currentCwd: string;
   private lastSent = 0;
   /** Ids of messages this peer sent as new questions (not replies); replies to them are awaited. */
@@ -98,6 +106,8 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
     this.currentCwd = opts.cwd;
     this.autoWake = opts.autoWake;
     this.log = opts.log.child("node");
+    this.readJournal = new ReadJournal(dirname(opts.dbPath));
+    this.restoreReadState(`name:${this.currentName}`);
   }
 
   get name(): string {
@@ -143,6 +153,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
 
   async stop(): Promise<void> {
     this.stopping = true;
+    this.emit("stopped");
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
     this.reconnectTimer = null;
     this.client?.close();
@@ -279,10 +290,13 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
         sessionId: this.sessionId,
         startedAt: Date.now(),
         autoWake: this.autoWake,
+        wakeOnDirect: this.wakeOnDirect,
+        wakeAvailable: this.wakeAvailable,
+        wakeMaxHops: this.wakeMaxHops,
         activity: this.activity,
         version: APP_VERSION,
         ...(this.opts.jobAgent ? { jobAgent: this.opts.jobAgent } : {}),
-        ...(this.opts.jobOwner ? { jobOwner: this.opts.jobOwner, jobParent: this.opts.jobParent, jobTitle: this.opts.jobTitle } : {}),
+        ...(this.opts.jobOwner ? { jobOwner: this.opts.jobOwner, jobParent: this.opts.jobParent, jobTitle: this.opts.jobTitle, jobSendTo: this.opts.jobSendTo } : {}),
       },
     };
   }
@@ -290,6 +304,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
   private afterHello(client: BridgeClient, hello: { name: string; brokerPid: number }): void {
     this.client = client;
     this.currentName = hello.name;
+    this.restoreReadState(`name:${this.currentName}`);
     this.reconnectDelay = RECONNECT_BACKOFF_MIN_MS;
     client.once("close", () => this.onClose(client));
     if (this.unflushedAcks.size > 0) {
@@ -316,7 +331,11 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
   private onEvent(ev: string, data: unknown): void {
     if (ev === "message") {
       const m = data as BridgeMessage;
-      if (this.readIds.has(m.id) || this.inbox.has(m.id)) return;
+      if (this.readIds.has(m.id)) {
+        this.acknowledge([m.id]);
+        return;
+      }
+      if (this.inbox.has(m.id)) return;
       this.inbox.set(m.id, m);
       if (m.conversationId === DASHBOARD_JOB_CONVERSATION) {
         this.markRead([m.id]);
@@ -348,7 +367,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
       if (opts.quiet) return res;
       this.lastSent = Date.now();
       if (!args.replyTo) for (const m of res.messages) this.asked.add(m.id);
-      if (this.asked.size > READ_ID_MEMORY) this.asked.delete(this.asked.values().next().value!);
+      if (this.asked.size > QUESTION_ID_MEMORY) this.asked.delete(this.asked.values().next().value!);
       return res;
     });
   }
@@ -363,8 +382,20 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
     return this.lastSent;
   }
 
+  messageReceipt(id: string) {
+    return this.withClient((c) => c.request("messageReceipt", { id }));
+  }
+
   peers(): Promise<PeerInfo[]> {
     return this.withClient((c) => c.request("peers", {}));
+  }
+
+  decide(args: DecideArgs): Promise<{ decision: OwnerDecision; deliveredTo: string[] }> {
+    return this.withClient((c) => c.request("decide", args));
+  }
+
+  decisions(args: DecisionsArgs = {}): Promise<OwnerDecision[]> {
+    return this.withClient((c) => c.request("decisions", args));
   }
 
   siblings(): Promise<SiblingPeer[]> {
@@ -412,30 +443,47 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
 
   /** Mark messages consumed locally and on the broker. */
   markRead(ids: string[]): void {
-    const real = ids.filter((id) => this.inbox.delete(id));
+    const real = ids.filter((id) => this.inbox.has(id));
+    if (!real.length) return;
+    this.readJournal.append(`name:${this.currentName}`, real);
+    if (this.sessionId) this.readJournal.append(`session:${this.sessionId}`, real);
     for (const id of real) {
+      this.inbox.delete(id);
       this.readIds.add(id);
-      if (this.readIds.size > READ_ID_MEMORY) this.readIds.delete(this.readIds.values().next().value!);
     }
-    if (real.length === 0) return;
+    this.acknowledge(real);
+  }
+
+  private restoreReadState(identity: string): void {
+    for (const id of this.readJournal.read(identity)) this.readIds.add(id);
+    const consumed = [...this.inbox.keys()].filter((id) => this.readIds.has(id));
+    consumed.forEach((id) => this.inbox.delete(id));
+    this.acknowledge(consumed);
+  }
+
+  private acknowledge(ids: string[]): void {
+    if (!ids.length) return;
     if (!this.isConnected) {
-      real.forEach((id) => this.unflushedAcks.add(id));
+      ids.forEach((id) => this.unflushedAcks.add(id));
       return;
     }
-    this.client!.request("ack", { ids: real }).catch((err) => {
+    this.client!.request("ack", { ids }).catch((err) => {
       this.log.warn("ack failed; will retry after reconnect", { err: (err as Error).message });
-      real.forEach((id) => this.unflushedAcks.add(id));
+      ids.forEach((id) => this.unflushedAcks.add(id));
     });
   }
 
   /** Resolves with the next unread message (possibly one already waiting), or null on timeout. */
   waitForMessage(timeoutMs: number, predicate: (m: BridgeMessage) => boolean = () => true, signal?: AbortSignal): Promise<BridgeMessage | null> {
+    if (signal?.aborted) return Promise.resolve(null);
     const existing = this.unread().find(predicate);
     if (existing) return Promise.resolve(existing);
     return new Promise((resolve) => {
       const done = (m: BridgeMessage | null) => {
         clearTimeout(timer);
         this.off("message", onMessage);
+        this.off("replaced", onAbort);
+        this.off("stopped", onAbort);
         signal?.removeEventListener("abort", onAbort);
         resolve(m);
       };
@@ -445,6 +493,8 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
       const onAbort = () => done(null);
       const timer = setTimeout(() => done(null), timeoutMs);
       this.on("message", onMessage);
+      this.once("replaced", onAbort);
+      this.once("stopped", onAbort);
       signal?.addEventListener("abort", onAbort, { once: true });
     });
   }
@@ -454,6 +504,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
     this.sessionId = sessionId;
     // The broker may hand us the name of an older server of this session that we replace.
     if (this.isConnected) this.currentName = (await this.client!.request("updatePeer", { sessionId })).name;
+    if (sessionId) this.restoreReadState(`session:${sessionId}`);
   }
 
   /** Report busy/idle to the broker so peers can see who is free. Only changes are sent. */
@@ -463,6 +514,13 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
     if (this.isConnected) {
       this.client!.request("updatePeer", { activity: state }).catch((err) => this.log.debug("activity update failed", { err: (err as Error).message }));
     }
+  }
+
+  async setWakePolicy(wakeOnDirect: boolean, wakeAvailable: boolean, wakeMaxHops = DEFAULT_MAX_HOPS): Promise<void> {
+    this.wakeOnDirect = wakeOnDirect;
+    this.wakeAvailable = wakeAvailable;
+    this.wakeMaxHops = wakeMaxHops;
+    if (this.isConnected) await this.client!.request("updatePeer", { wakeOnDirect, wakeAvailable, wakeMaxHops });
   }
 
   async setAutoWake(enabled: boolean): Promise<void> {

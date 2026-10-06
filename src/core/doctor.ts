@@ -67,6 +67,16 @@ export function doctor(home: string, now = Date.now()): DoctorReport {
   }
   for (const path of jsonStoreFiles(home)) {
     try {
+      if (path.endsWith(".jsonl")) {
+        const lines = readFileSync(path, "utf8").split("\n").filter((s) => s.trim());
+        for (const line of lines) {
+          try {
+            const ids: unknown = JSON.parse(line);
+            if (!Array.isArray(ids) || ids.some((id) => typeof id !== "string")) finding("error", "journal-shape", path, "Expected a read-id array");
+          } catch { finding("warning", "journal-partial", path, "Preserved incomplete read-journal append"); }
+        }
+        continue;
+      }
       const value: unknown = JSON.parse(readFileSync(path, "utf8"));
       const jobs = basename(path) === JOBS_FILE || path.includes("jobs.json.overflow.json-") || /^jobs-.*\.json$/.test(basename(path));
       if (jobs ? !(Array.isArray(value) || isRecord(value) && Array.isArray(value.jobs)) : !isRecord(value)) {

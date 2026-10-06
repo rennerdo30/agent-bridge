@@ -14,6 +14,15 @@ import type { CodingAgent } from "./protocol.js";
 const USAGE_TIMEOUT_MS = 45_000;
 const MINUTES_PER_HOUR = 60;
 const MINUTES_PER_DAY = 1440;
+const PLAN_LIMIT_REACHED = "rate_limit_reached";
+const BLOCKING_LIMIT_TYPES = new Set([
+  "workspace_owner_credits_depleted",
+  "workspace_member_credits_depleted",
+  "workspace_owner_usage_limit_reached",
+  "workspace_member_usage_limit_reached",
+]);
+const FULL_USAGE_PERCENT = 100;
+const CREDIT_SIGNIFICANT_DIGITS = 3;
 
 /** One account limit, for display as a bar (the dashboard). */
 export interface UsageLimit {
@@ -30,7 +39,7 @@ export interface UsageReport {
   limits: UsageLimit[];
   /** Prepaid credits (Codex): what runs once a limit is reached. */
   credits?: { balance: string; unlimited: boolean; inUse: boolean } | null;
-  /** Highest "% used" among the limits, when known: the one that blocks first. */
+  /** Highest plan "% used", when known; credits may still allow usage. */
   maxUsedPercent: number | null;
 }
 
@@ -86,7 +95,9 @@ function resetText(epoch: number | null | undefined): string {
 /** "62082.3000850000" -> "62,082". */
 function formatCredits(balance: string): string {
   const n = Number(balance);
-  return Number.isFinite(n) ? Math.floor(n).toLocaleString("en-US") : balance;
+  if (!Number.isFinite(n)) return balance;
+  if (n > 0 && n < 1) return n.toLocaleString("en-US", { maximumSignificantDigits: CREDIT_SIGNIFICANT_DIGITS });
+  return Math.floor(n).toLocaleString("en-US");
 }
 
 /** Format Codex's GetAccountRateLimitsResponse. */
@@ -95,7 +106,10 @@ export function formatCodexLimits(res: any): UsageReport {
   const limits: UsageLimit[] = [];
   let credits: UsageReport["credits"] = null;
   let max: number | null = null;
-  const snapshots: any[] = res?.rateLimitsByLimitId ? Object.values(res.rateLimitsByLimitId) : res?.rateLimits ? [res.rateLimits] : [];
+  const byId: any[] = res?.rateLimitsByLimitId ? Object.values(res.rateLimitsByLimitId) : [];
+  const snapshots: any[] = byId.length ? byId : res?.rateLimits ? [res.rateLimits] : [];
+  let creditFallback = false;
+  let blocked = false;
   for (const s of snapshots) {
     const parts: string[] = [];
     for (const w of [s?.primary, s?.secondary]) {
@@ -105,16 +119,29 @@ export function formatCodexLimits(res: any): UsageReport {
       const window = windowName(w.windowDurationMins);
       limits.push({ name: snapshots.length > 1 ? `${s?.limitName ?? s?.limitId ?? "codex"}: ${window}` : window, usedPercent: w.usedPercent, resets: resetTime(w.resetsAt) });
     }
-    if (s?.credits?.hasCredits && (s.credits.unlimited || s.credits.balance)) {
+    const blockingLimit = BLOCKING_LIMIT_TYPES.has(s?.rateLimitReachedType) || s?.spendControlReached === true;
+    const planReached = s?.rateLimitReachedType === PLAN_LIMIT_REACHED || [s?.primary, s?.secondary].some((w) => w?.usedPercent >= FULL_USAGE_PERCENT) || res?.ordinaryUsageAllowed === false;
+    const hasCredits = s?.credits?.hasCredits && (s.credits.unlimited || (Number.isFinite(Number(s.credits.balance)) && Number(s.credits.balance) > 0));
+    if (hasCredits) {
       const balance = s.credits.unlimited ? "unlimited" : formatCredits(s.credits.balance);
       // With a limit reached, work continues on credits.
-      credits = { balance, unlimited: Boolean(s.credits.unlimited), inUse: Boolean(s.rateLimitReachedType) };
-      parts.push(`credits ${balance}${credits.inUse ? " (in use: a limit is reached)" : ""}`);
+      const inUse = planReached && !blockingLimit;
+      const currentCredits = { balance, unlimited: Boolean(s.credits.unlimited), inUse };
+      // The dashboard has one credit card; do not let a later idle bucket hide active credit usage.
+      if (!credits?.inUse || inUse) credits = currentCredits;
+      creditFallback ||= inUse;
+      parts.push(inUse ? `usable, plan limit reached, running on credits (${balance} left)` : `credits ${balance} available`);
     }
-    if (s?.rateLimitReachedType) parts.push(`LIMIT REACHED (${s.rateLimitReachedType})`);
+    if (blockingLimit) {
+      blocked = true;
+      parts.push(`unusable: ${s?.rateLimitReachedType ?? "spend control limit reached"}`);
+    } else if (s?.rateLimitReachedType && !hasCredits) parts.push(`Plan limit reached (${s.rateLimitReachedType})`);
     if (parts.length) lines.push(`${s?.limitName ?? s?.limitId ?? "codex"}${s?.planType ? ` [${s.planType}]` : ""}: ${parts.join(", ")}`);
   }
-  if (res?.ordinaryUsageAllowed === false) lines.push("The account currently does not allow ordinary usage.");
+  if (res?.ordinaryUsageAllowed === false && !creditFallback && !blocked) {
+    const noCredits = snapshots.some((s) => s?.credits?.hasCredits === false || (s?.credits?.balance != null && Number.isFinite(Number(s.credits.balance)) && Number(s.credits.balance) <= 0));
+    lines.push(noCredits ? "Unusable: included usage is unavailable and credits are exhausted." : "Included usage is unavailable; credit-backed usage availability is unknown.");
+  }
   return { agent: "codex", lines: lines.length ? lines : ["No limits reported (API key or no plan limits)."], limits, credits, maxUsedPercent: max };
 }
 

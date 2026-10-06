@@ -8,10 +8,11 @@ import { archiveDbPath, archiveMessages, openArchive } from "./sqlite-maintenanc
 import { storageLease } from "./storage-lock.js";
 import { backupIfDue, BACKUP_INTERVAL_ENV, DEFAULT_BACKUP_INTERVAL_MS } from "./backups.js";
 import { retentionLimit } from "./json-store.js";
+import { DECISIONS_SCHEMA, DecisionStore } from "./decisions.js";
 
 const BACKUP_CHECK_INTERVAL_MS = 60 * 60 * 1_000;
 
-export const SQLITE_STORE_VERSION = 2;
+export const SQLITE_STORE_VERSION = 3;
 
 /** Recipient key used while a message waits for "any peer of this agent kind". */
 export function agentQueueKey(agent: AgentKind): string {
@@ -40,11 +41,12 @@ CREATE INDEX IF NOT EXISTS idx_messages_id ON messages (id);
 
 const MIGRATIONS = [
   { version: 1, sql: `${SCHEMA} PRAGMA user_version = 1;` },
-  { version: SQLITE_STORE_VERSION, sql: `
+  { version: 2, sql: `
     CREATE TABLE IF NOT EXISTS archived_messages AS
       SELECT *, '' AS archive_reason, 0 AS archived_at FROM messages WHERE 0;
     PRAGMA user_version = 2;
   ` },
+  { version: 3, sql: `${DECISIONS_SCHEMA} PRAGMA user_version = 3;` },
 ] as const;
 
 interface Row {
@@ -87,6 +89,7 @@ export class MessageStore {
   private readonly release: () => void;
   private readonly home: string | null;
   private backupTimer: ReturnType<typeof setInterval> | null = null;
+  readonly decisions: DecisionStore;
   private readonly stmt: {
     insert: StatementSync;
     unread: StatementSync;
@@ -117,6 +120,7 @@ export class MessageStore {
     catch (err) { this.db.close(); this.release(); throw err; }
     try { archiveMessages(this.db, this.archiveDb, "1", [], "legacy", "archived_messages"); }
     catch (err) { this.archiveDb.close(); this.db.close(); this.release(); throw err; }
+    this.decisions = new DecisionStore(this.db);
     this.stmt = {
       insert: this.db.prepare(
         `INSERT INTO messages (id, recipient, from_id, from_name, from_agent, to_target, conversation_id, reply_to, hop, body, created_at, read_at)
@@ -126,7 +130,7 @@ export class MessageStore {
         `SELECT * FROM messages WHERE recipient = ? AND read_at IS NULL ORDER BY created_at ASC, id ASC LIMIT ?`,
       ),
       markRead: this.db.prepare(`UPDATE messages SET read_at = ? WHERE id = ? AND recipient = ? AND read_at IS NULL`),
-      claim: this.db.prepare(`UPDATE messages SET recipient = ? WHERE recipient = ? AND read_at IS NULL`),
+      claim: this.db.prepare(`UPDATE OR IGNORE messages SET recipient = ? WHERE recipient = ? AND read_at IS NULL`),
       byId: this.db.prepare(`SELECT * FROM messages WHERE id = ? ORDER BY created_at ASC LIMIT 1`),
     };
     log.debug("message store opened", { file });
@@ -172,7 +176,21 @@ export class MessageStore {
 
   /** Move messages waiting for "any <agent>" to a concrete peer name. */
   claim(fromKey: string, toName: string): number {
-    return Number(this.stmt.claim.run(toName, fromKey).changes);
+    if (fromKey === toName) return 0;
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      const moved = Number(this.stmt.claim.run(toName, fromKey).changes);
+      // A broadcast can have reached both servers before their shared session id was learned.
+      // Keep the destination copy and retire the duplicate alias without replaying it later.
+      const duplicates = Number(this.db.prepare(`UPDATE messages SET read_at = ?
+        WHERE recipient = ? AND read_at IS NULL AND id IN (SELECT id FROM messages WHERE recipient = ?)`)
+        .run(Date.now(), fromKey, toName).changes);
+      this.db.exec("COMMIT");
+      return moved + duplicates;
+    } catch (err) {
+      this.db.exec("ROLLBACK");
+      throw err;
+    }
   }
 
   /** Archive unread mail waiting for a queue key or name that is older than the cutoff. */
@@ -180,6 +198,15 @@ export class MessageStore {
     const n = archiveMessages(this.db, this.archiveDb, "recipient = ? AND read_at IS NULL AND created_at < ?", [recipient, cutoff], "stale queue");
     if (n > 0) this.log.info("archived stale queued messages", { recipient, count: n });
     return n;
+  }
+
+  receipts(id: string): { recipient: string; readAt: number | null }[] {
+    const merged = new Map<string, { recipient: string; readAt: number | null }>();
+    for (const [db, table] of [[this.archiveDb, "messages"], [this.db, "archived_messages"], [this.db, "messages"]] as const) {
+      const rows = db.prepare(`SELECT recipient, read_at AS readAt FROM ${table} WHERE id = ?`).all(id) as unknown as { recipient: string; readAt: number | null }[];
+      for (const row of rows) merged.set(row.recipient, row);
+    }
+    return [...merged.values()];
   }
 
   byId(id: string): BridgeMessage | null {

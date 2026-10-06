@@ -1,0 +1,5 @@
+{"timestamp":"2026-10-06T09:00:00.000Z","type":"session_meta","payload":{"id":"00000000-0000-4000-8000-000000000000","timestamp":"2026-10-06T09:00:00.000Z","source":"vscode"}}
+{"timestamp":"2026-10-06T09:00:00.000Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Inspect the module."}]}}
+{"timestamp":"2026-10-06T09:00:00.000Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Checking the module."}],"channel":"commentary"}}
+{"timestamp":"2026-10-06T09:00:00.000Z","type":"response_item","payload":{"type":"custom_tool_call","id":"call_example","call_id":"call_example","name":"exec","input":"Read module.ts"}}
+{"timestamp":"2026-10-06T09:00:00.000Z","type":"response_item","payload":{"type":"custom_tool_call_output","call_id":"call_example","output":"The module contains one function."}}

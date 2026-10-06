@@ -201,6 +201,7 @@ export class JobManager {
   /** Background jobs run in detached job runners where it can (they survive a restart of this server); null: all here. */
   runners: JobHost | null = null;
   private hostTimer: NodeJS.Timeout | null = null;
+  private restoreResume: ((agent: AgentKind, args: Record<string, unknown>) => Resume | undefined) | null = null;
 
   constructor(
     private readonly node: BridgeNode,
@@ -299,6 +300,7 @@ export class JobManager {
    * manager takes it over. Another session's runner-hosted job keeps its status for that session to take over.
    */
   restore(makeResume: (agent: AgentKind, args: Record<string, unknown>) => Resume | undefined): void {
+    this.restoreResume = makeResume;
     if (!this.storePath) return;
     const stored = readStore(this.storePath, this.log, true);
     const adopted: Job[] = [];
@@ -320,7 +322,10 @@ export class JobManager {
       if (hosted && mine && this.takeOver(job)) adopted.push(job);
     }
     if (stored.length) this.log.info("restored subagent jobs", { count: Math.min(stored.length, HISTORY_LIMIT), runnerHosted: adopted.length });
+    // Jobs saved before sibling identities existed need the same group as later jobs of their supervisor.
+    this.assignLegacySupervisors();
     this.settleAdopted(adopted);
+    this.persist();
   }
 
   /** Whether a runner-hosted job can be taken over here (its runner lives, or finished and left its report). */
@@ -402,6 +407,7 @@ export class JobManager {
     const owners = new Set([...this.history.values()].map((j) => j.owner).filter((o): o is string => Boolean(o) && this.isStandIn(o!) && !online.has(o!)));
     if (!owners.size) return [];
     for (const o of owners) this.adoptedOwners.add(o);
+    this.assignLegacySupervisors();
     const taken: Job[] = [];
     for (const job of this.history.values()) {
       if (!job.owner || !owners.has(job.owner)) continue;
@@ -410,6 +416,7 @@ export class JobManager {
     }
     this.log.info("adopted jobs started under a stand-in name of this session", { owners: [...owners], runnerHosted: taken.length });
     this.settleAdopted(taken);
+    this.persist();
     return [...owners];
   }
 
@@ -424,7 +431,13 @@ export class JobManager {
 
   find(ref: string): Job | undefined {
     const id = ref.replace(/^.*-(?:job|ask)-/, "");
-    return this.history.get(id) ?? [...this.history.values()].find((j) => j.name === ref);
+    const current = this.history.get(id) ?? [...this.history.values()].find((j) => j.name === ref);
+    if (current || !this.storePath || !this.restoreResume) return current;
+    const saved = readStore(this.storePath, this.log, true).find((j) => j.id === id || j.name === ref);
+    if (!saved || saved.status === "running") return undefined;
+    const job: Job = { ...saved, controller: new AbortController(), progress: null, queue: [], resume: this.restoreResume(saved.agent, saved.args ?? {}) };
+    this.history.set(job.id, job);
+    return job;
   }
 
   private remember(job: Job): void {
@@ -454,8 +467,23 @@ export class JobManager {
       args,
       owner: this.node.name,
       // Keep the first job's identity when hooks learn the session id later, or a server reload adopts it.
-      supervisor: [...this.running.values(), ...this.foreground.values()].find((j) => this.isMine(j.owner))?.supervisor ?? this.node.currentSessionId ?? this.node.id,
+      supervisor: this.supervisorIdentity(),
     };
+  }
+
+  private supervisorIdentity(): string {
+    return [...this.running.values(), ...this.foreground.values(), ...this.history.values()]
+      .find((j) => this.isMine(j.owner) && j.supervisor)?.supervisor ?? this.node.currentSessionId ?? this.node.id;
+  }
+
+  private assignLegacySupervisors(): void {
+    const supervisor = this.supervisorIdentity();
+    for (const job of this.history.values()) {
+      if (!job.supervisor && this.isMine(job.owner)) {
+        job.supervisor = supervisor;
+        this.own.add(job.id);
+      }
+    }
   }
 
   /**

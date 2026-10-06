@@ -15,7 +15,9 @@ import { PermissionRelay, type PermissionDecision, type PermissionRequest } from
 import { codexPermissionHookHash, codexPermissionHookTrusted, recordCodexHookObservation } from "../core/codex-trust.js";
 import { startRunFeed } from "../core/runfeed.js";
 import { ResourceSlots, resourceSlotHint, SLOT_OWNER_ENV, SLOT_PID_ENV, SLOT_RENEW_MS } from "../core/resource-slots.js";
-import { approvalHint, isAutoApproved, isHandoffToolCall, isOwnServerCall } from "../core/tool-allow.js";
+import { approvalHint, DESK_READ_PATTERNS, isAutoApproved, isHandoffToolCall, isOwnServerCall } from "../core/tool-allow.js";
+import { codexDriveMappings, codexPathReport } from "../core/codex-paths.js";
+import { scanWorktreeLinks, WORKTREE_LINK_HINT, worktreeLinkWarning } from "../core/worktree-links.js";
 import { changedFiles, createWorktree, finishWorktree, gitChangeSnapshot, gitDirsOutside, handoffWarning, subagentCommitMessage, worktreeReport, type Worktree } from "../core/worktree.js";
 import { formatSiblingMessages, formatUsage } from "./format.js";
 import { SiblingLink } from "./siblings.js";
@@ -42,7 +44,7 @@ const HANDOFF_DECLINED =
 export const PARENT_APPROVAL_TIMEOUT_MS = 10 * 60_000;
 
 /** _worktree: internal, a follow-up continuing in an existing worktree. _job: the job's name. */
-export type DelegateArgs = { prompt: string; model?: string; effort?: string; session_id?: string; cwd?: string; timeout_sec?: number; worktree?: boolean; allow_tools?: string[]; title: string; _worktree?: Worktree; _job?: string } & TargetArgs;
+export type DelegateArgs = { prompt: string; model?: string; effort?: string; session_id?: string; cwd?: string; timeout_sec?: number; worktree?: boolean; allow_tools?: string[]; send_to?: string[]; title: string; _worktree?: Worktree; _job?: string } & TargetArgs;
 
 /** Where a background job's approval questions, answers and facts go: this session's JobManager, or a job runner's link to it. */
 export interface JobSink {
@@ -74,6 +76,12 @@ export interface RunContext {
 /** A folder inside ~/.agent-bridge/worktrees (a subagent worktree, possibly from an earlier job). */
 export function isBridgeWorktree(dir: string, home: string): boolean {
   return isInside(dir, join(home, "worktrees")) && resolve(dir) !== resolve(join(home, "worktrees"));
+}
+
+/** A caller may resume from a nested project directory; inspect the whole managed worktree. */
+function bridgeWorktreeRoot(dir: string, home: string): string | null {
+  if (!isBridgeWorktree(dir, home)) return null;
+  return join(home, "worktrees", relative(join(home, "worktrees"), resolve(dir)).split(/[\\/]/)[0]!);
 }
 
 export function isInside(child: string, parent: string): boolean {
@@ -122,6 +130,7 @@ export async function runDelegate(
   // A follow-up to a worktree job keeps working (and committing) in that worktree.
   const wt = a._worktree ?? (a.worktree ? await createWorktree({ cwd, home: rc.home, jobId: randomUUID().slice(0, 8), log: dlog }) : null);
   const workdir = wt?.cwd ?? cwd;
+  const linkRoot = wt?.path ?? bridgeWorktreeRoot(workdir, rc.home);
   // Codex in "ask" mode can only change files through an approval: watching the folder tells us whether
   // its permission hook really asked (see codex-trust.ts).
   const watchChanges = !wt && (access === "edit" || (access === "ask" && target === "codex"));
@@ -157,7 +166,7 @@ export async function runDelegate(
   // session's user. One "allow" per MCP server covers the rest of the run.
   // Remembered per job, so follow-ups and recoveries don't ask again.
   const allowedServers = job ? (job.allowedServers ??= new Set<string>()) : new Set<string>();
-  const autoApprove = [...cfg.autoApproveTools, ...(a.allow_tools ?? [])];
+  const autoApprove = [...cfg.autoApproveTools, ...(access === "read" ? DESK_READ_PATTERNS : []), ...(a.allow_tools ?? [])];
   const approve = async (r: PermissionRequest): Promise<PermissionDecision> => {
     // Handoff tools first: no allow pattern or earlier "allow" for their server covers them.
     if (isHandoffToolCall(r)) {
@@ -224,6 +233,7 @@ export async function runDelegate(
       pipePath: resolvePipePath(rc.home), token: loadOrCreateToken(rc.home), dbPath: resolveDbPath(rc.home),
       agent: "other", jobAgent: job.agent, id: `job:${job.id}`, name: job.name, cwd: workdir,
       jobOwner: job.supervisor ?? job.owner ?? me, jobParent: me, jobTitle: a.title,
+      jobSendTo: a.send_to,
       autoWake: false, canHostBroker: false, log: dlog,
     });
     siblingLink = new SiblingLink(jobNode, job, cfg.maxHops, dlog);
@@ -249,7 +259,7 @@ export async function runDelegate(
       job.live = {
         post: (m, sibling) => {
           const from = sibling?.from.name ?? me;
-          const message = sibling ? formatSiblingMessages([sibling]) : m;
+          const message = sibling ? formatSiblingMessages([sibling], siblingLink?.maxHops) : m;
           feed.report(`message from ${from}: ${m.split("\n")[0]!.slice(0, MESSAGE_PREVIEW_CHARS)}`, `message from ${from}: ${m}`);
           // Natively where the target supports it (a real user message in the running turn), else at its next hook.
           if (!steering) return void l.post(message, sibling);
@@ -292,7 +302,7 @@ export async function runDelegate(
       {
         // With a live link the subagent can report how far it is (report_progress; shown in the dashboard).
         // A new session learns once that it reports back and leaves the handoff alone.
-        prompt: [a.prompt, a.session_id ? null : DELEGATED_JOB_NOTE, link ? PROGRESS_HINT : null, link ? SIBLING_HINT : null, resourceSlotHint(cfg.resourceSlots, bundledCli())].filter(Boolean).join("\n\n"),
+        prompt: [a.prompt, a.session_id ? null : DELEGATED_JOB_NOTE, linkRoot ? WORKTREE_LINK_HINT : null, link ? PROGRESS_HINT : null, link ? SIBLING_HINT : null, resourceSlotHint(cfg.resourceSlots, bundledCli())].filter(Boolean).join("\n\n"),
         title: (typeof job?.args?.title === "string" && job.args.title) || a.title,
         cwd: workdir,
         sessionId: a.session_id ?? null,
@@ -339,6 +349,10 @@ export async function runDelegate(
     feed.end(`failed: ${(err as Error)?.message ?? err}`);
     // The worktree keeps whatever the subagent did before failing: say where it is.
     if (wt && err instanceof Error) err.message += `\n\nIts worktree (with any partial work) is ${wt.path} on branch ${wt.branch}.`;
+    if (linkRoot && err instanceof Error) {
+      try { const warning = worktreeLinkWarning(scanWorktreeLinks(linkRoot)); if (warning) err.message += `\n\n${warning}`; }
+      catch (scanError) { err.message += `\nWARNING: worktree link inspection failed: ${(scanError as Error).message}`; }
+    }
     throw err;
   } finally {
     clearInterval(slotTimer);
@@ -360,6 +374,20 @@ export async function runDelegate(
   }
 
   const notes: string[] = [`Step-by-step log: ${feed.logPath}`];
+  if (target === "codex") {
+    const mappingNote = codexPathReport(codexDriveMappings(`${cwd}\n${a.prompt}`));
+    if (mappingNote) notes.push(mappingNote);
+  }
+  let linkedWorktreeRoot = false;
+  if (linkRoot) {
+    try {
+      const scan = scanWorktreeLinks(linkRoot);
+      linkedWorktreeRoot = scan.externalLinks.some((link) => link.path === resolve(linkRoot));
+      const warning = worktreeLinkWarning(scan);
+      if (warning) notes.push(warning);
+    }
+    catch (err) { notes.push(`WARNING: worktree link inspection failed: ${(err as Error).message}`); }
+  }
   if (access !== "ask" && asked.length) notes.push(`Approval requests forwarded:\n${asked.join("\n")}`);
   if (access === "ask") {
     notes.push(
@@ -372,7 +400,9 @@ export async function runDelegate(
   }
   const usage = formatUsage(res.details);
   if (usage) notes.push(usage);
-  if (wt) {
+  if (wt && linkedWorktreeRoot) {
+    notes.push("Auto-commit skipped: the worktree root is an external link. Restore worktree isolation before running git or cleanup through it.");
+  } else if (wt) {
     try {
       const message = subagentCommitMessage({ answer: res.text, task: a.prompt, job: a._job, agent: target, model: a.model ?? defaultModel });
       notes.push(worktreeReport(wt, await finishWorktree(wt, message, dlog)));

@@ -17,7 +17,9 @@ import { listRuns, readStoredJobs, startUi } from "../src/cli/ui.js";
 import { runMetaPath, startRunFeed } from "../src/core/runfeed.js";
 import { resolvePipePath } from "../src/core/paths.js";
 import { JobManager, readStore } from "../src/mcp/jobs.js";
-import type { BridgeNode } from "../src/core/node.js";
+import { BridgeNode } from "../src/core/node.js";
+import { loadOrCreateToken } from "../src/core/token.js";
+import { ReadJournal } from "../src/core/read-journal.js";
 import type { BridgeMessage } from "../src/core/protocol.js";
 
 let home: string;
@@ -198,9 +200,11 @@ describe("lossless, readable archives", () => {
   it("moves expired messages out of primary and keeps replies and literal search readable", () => {
     const s = store(); s.insert(message("old")); s.insert({ ...message("reply", 2), body: "literal %_\\", replyTo: "old" });
     s.insert(message("new", 100));
+    s.markRead("claude-main", ["old"], 10);
     expect(s.purgeOlderThan(3)).toBe(2);
     expect(s.byId("old")?.body).toBe("preserve old");
     expect(s.byId("reply")?.replyTo).toBe("old");
+    expect(s.receipts("old")).toEqual([{ recipient: "claude-main", readAt: 10 }]);
     expect(searchMessages(join(home, "bridge.db"), { query: "%_\\" }).map((m) => m.id)).toEqual(["reply"]);
     expect(searchMessages(join(home, "bridge.db"), { before: 3, limit: 1 }).map((m) => m.id)).toEqual(["reply"]);
     const db = new DatabaseSync(join(home, "bridge.db"));
@@ -261,6 +265,43 @@ describe("lossless, readable archives", () => {
     expect(listRuns(home).find((r) => r.name === legacyName)?.title).toBe("legacy title");
     const backup = createBackup(home);
     expect(readBackup(backup).files.map((f) => f.path)).toContain(`runs/archive/${legacyName}.json-2-uuid`);
+  });
+  it("includes archived siblings in broker discovery", async () => {
+    vi.stubEnv("AGENT_BRIDGE_ARCHIVE_AGE_MS", "1");
+    writeFileSync(join(home, "jobs.json"), JSON.stringify({ version: 1, jobs: [savedJob("old")] }));
+    archiveHome(home, true, 100);
+    const opts = { pipePath: resolvePipePath(home, {}), token: loadOrCreateToken(home), dbPath: join(home, "bridge.db"), cwd: home, autoWake: false, log: nullLogger };
+    const owner = new BridgeNode({ ...opts, agent: "claude", name: "claude-main" });
+    const job = new BridgeNode({ ...opts, agent: "other", name: "codex-job-live", id: "job:live", jobAgent: "codex", jobOwner: "supervisor1", jobParent: "claude-main", canHostBroker: false });
+    try {
+      await owner.start(); await job.start();
+      expect(await job.siblings()).toEqual(expect.arrayContaining([expect.objectContaining({ name: "codex-job-old", status: "done" })]));
+    } finally { await job.stop(); await owner.stop(); }
+  });
+  it("can continue an archived job older than the in-memory history window", async () => {
+    vi.stubEnv("AGENT_BRIDGE_ARCHIVE_AGE_MS", "1");
+    const path = join(home, "jobs.json");
+    writeFileSync(path, JSON.stringify({ version: 1, jobs: Array.from({ length: 60 }, (_, i) => ({ ...savedJob(String(i)), startedAt: i })) }));
+    archiveHome(home, true, 100);
+    const node = Object.assign(new EventEmitter(), { name: "claude-main", deliverLocal: () => {} }) as unknown as BridgeNode;
+    const manager = new JobManager(node, nullLogger, path);
+    manager.restore(() => () => async () => ({ text: "continued", isError: false, sessionId: "session1", details: {} }));
+    expect(manager.list().some((j) => j.id === "0")).toBe(false);
+    expect(manager.followUp("codex-job-0", "continue").outcome).toBe("started");
+    await vi.waitFor(() => expect(readStore(path).find((j) => j.id === "0")?.status).toBe("done"));
+    expect(readStore(path).find((j) => j.id === "0")).toMatchObject({ future: "keep", supervisor: "supervisor1" });
+    manager.cancelAll();
+  });
+  it("snapshots and restores the durable read journal, preserving later consumption", () => {
+    const journal = new ReadJournal(home);
+    journal.append("session", ["old"]);
+    const backup = createBackup(home);
+    expect(readBackup(backup).files.some((f) => f.path.startsWith("read-state/"))).toBe(true);
+    journal.append("session", ["new"]);
+    const recovery = restoreBackup(home, backup, true);
+    expect(journal.read("session")).toEqual(["old"]);
+    expect(new ReadJournal(recovery).read("session")).toEqual(["old", "new"]);
+    expect(doctor(home).findings.some((f) => f.code.startsWith("journal-"))).toBe(false);
   });
 });
 

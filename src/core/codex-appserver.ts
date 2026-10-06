@@ -5,6 +5,8 @@ import { checkDepth, childEnv, DelegateError, exitDescription, killTree, realFol
 import { progressEventHandler } from "./progress.js";
 import { CODEX_ASK_HINT } from "./delegate.js";
 import type { PermissionDecision } from "./relay.js";
+import { FinalAnswers } from "./final-answers.js";
+import { codexDriveMappings, codexPathPrompt } from "./codex-paths.js";
 
 /**
  * Codex subagents through `codex app-server` (JSON-RPC over stdio) instead of `codex exec`. The same
@@ -31,6 +33,10 @@ const STDERR_TAIL_CHARS = 4_000;
  * Usually seconds, but with many Codex processes running it can take a minute or more.
  */
 export const STARTUP_TIMEOUT_MS = 180_000;
+/** Full access needs no sandbox/rule approvals; MCP calls still use the job's tool allowlist. */
+export const CODEX_FULL_ACCESS_APPROVAL_POLICY = {
+  granular: { sandbox_approval: false, rules: false, mcp_elicitations: true },
+};
 
 /** `"…\pwsh.exe" -Command '…'` and friends: just the command, for approval questions. */
 export function innerCommand(s: string): string {
@@ -76,6 +82,8 @@ export async function delegateToCodexAppServer(
   req: DelegateRequest & { bin: string; sandbox: CodexSandbox; askMode?: boolean; writableRoots?: string[]; networkAccess?: boolean; startupTimeoutMs?: number },
 ): Promise<DelegateResult> {
   checkDepth();
+  const mappings = codexDriveMappings(`${req.cwd}\n${req.prompt}`);
+  req = { ...req, prompt: codexPathPrompt(req.prompt, mappings) };
   // See delegateToCodex: the Windows sandbox user does not see drive mappings.
   const cwd = realFolder(req.cwd);
   const env = childEnv(req.extraEnv);
@@ -89,7 +97,7 @@ export async function delegateToCodexAppServer(
   let stderr = "";
   let threadId: string | null = req.sessionId ?? null;
   let turnId: string | null = null;
-  let lastMessage = "";
+  const finalAnswers = new FinalAnswers();
   let usage: unknown = null;
   let retryableError: string | null = null;
   let finished: (v: { status: string; error: string | null }) => void = () => {};
@@ -157,12 +165,12 @@ export async function delegateToCodexAppServer(
         return answer(decision, decision.allow ? { action: "accept", content } : { action: "decline", content: null }, tool);
       }
       case "item/commandExecution/requestApproval": {
-        const decision = req.askMode ? await decide("command", innerCommand(String(params.command ?? params.reason ?? "a command"))) : sandboxDenial;
+        const decision: PermissionDecision = req.sandbox === "danger-full-access" ? { allow: true } : req.askMode || req.sandbox === "workspace-write" ? await decide("command", innerCommand(String(params.command ?? params.reason ?? "a command"))) : sandboxDenial;
         return answer(decision, { decision: decision.allow ? "accept" : "decline" }, "command");
       }
       case "item/fileChange/requestApproval": {
         const paths = editPaths.get(params.itemId) ?? [];
-        const decision = req.askMode ? await decide("edit", paths.length ? paths.join(", ") : String(params.reason ?? "file changes")) : sandboxDenial;
+        const decision: PermissionDecision = req.sandbox === "danger-full-access" ? { allow: true } : req.askMode || req.sandbox === "workspace-write" ? await decide("edit", paths.length ? paths.join(", ") : String(params.reason ?? "file changes")) : sandboxDenial;
         return answer(decision, { decision: decision.allow ? "accept" : "decline" }, "edit");
       }
       default:
@@ -195,7 +203,7 @@ export async function delegateToCodexAppServer(
         const item = params.item ?? {};
         onEvent?.(asExecEvent("item.completed", item));
         if (item.type === "agentMessage" && typeof item.text === "string" && item.text.trim()) {
-          lastMessage = item.text;
+          finalAnswers.add(item);
           if (awaitingAnswer) {
             awaitingAnswer = false;
             answers.push(item.text);
@@ -280,12 +288,12 @@ export async function delegateToCodexAppServer(
   };
 
   try {
-    await boot(request("initialize", { clientInfo: { name: "agent-bridge", title: "agent-bridge", version: APP_VERSION }, capabilities: { experimentalApi: false, optOutNotificationMethods: OPT_OUT } }));
+    // Granular policy is experimental in the installed app-server schema; opt in only when we use it.
+    await boot(request("initialize", { clientInfo: { name: "agent-bridge", title: "agent-bridge", version: APP_VERSION }, capabilities: { experimentalApi: req.sandbox === "danger-full-access", optOutNotificationMethods: OPT_OUT } }));
     write({ method: "initialized", params: {} });
-    // approvalsReviewer "user" + approvalPolicy "never": the sandbox holds (see CODEX_STRICT_APPROVALS).
-    // Codex asks us (never a reviewer model): MCP tool approvals go to the parent session; sandbox escalations
-    // only in "ask" mode, and are refused here without asking otherwise, so the sandbox holds.
-    const approvalPolicy = "on-request";
+    // Keep MCP approvals independent of unrestricted command execution. Read-only escalations are refused;
+    // ask/edit questions go to the supervisor, including requests to clean up a job's own artifacts.
+    const approvalPolicy = req.sandbox === "danger-full-access" ? CODEX_FULL_ACCESS_APPROVAL_POLICY : "on-request";
     // Extra writable folders for workspace-write (a worktree's git admin dir lives in the main repo).
     const config: Record<string, unknown> = {};
     if (req.sandbox === "workspace-write" && (req.writableRoots?.length || req.networkAccess !== undefined)) {
@@ -314,7 +322,7 @@ export async function delegateToCodexAppServer(
         // The sandbox Codex really applies to this thread (its config can differ from what was asked).
         permission: typeof thread.sandbox?.type === "string" ? thread.sandbox.type : null,
       });
-    const prompt = req.askMode ? `${req.prompt}\n\n${CODEX_ASK_HINT}` : req.prompt;
+    const prompt = req.askMode && req.sandbox !== "danger-full-access" ? `${req.prompt}\n\n${CODEX_ASK_HINT}` : req.prompt;
     step = "turn/start";
     const sandboxPolicy = codexTurnSandbox(req.sandbox, cwd, req.writableRoots?.map(realFolder), thread?.sandbox, req.networkAccess);
     const turn = await boot(request("turn/start", {
@@ -322,6 +330,7 @@ export async function delegateToCodexAppServer(
       input: [{ type: "text", text: prompt, text_elements: [] }],
       ...(req.model ? { model: req.model } : {}),
       sandboxPolicy,
+      approvalPolicy,
       ...(req.effort ? { effort: req.effort } : {}),
     }));
     req.onInfo?.({ model: req.model ?? thread?.model ?? null, permission: req.sandbox, effort: req.effort ?? (typeof thread?.reasoningEffort === "string" ? thread.reasoningEffort : null) });
@@ -335,9 +344,9 @@ export async function delegateToCodexAppServer(
     const error = outcome.error ?? (outcome.status === "failed" ? (retryableError ?? "turn failed") : null);
     req.log.info("codex turn ended", { threadId, turnId, status: outcome.status, error: outcome.error, retryableError });
     if (outcome.status === "interrupted") throw new DelegateError(`codex interrupted the turn${outcome.error ? `: ${outcome.error}` : ""}`, "failed", stderr, "", threadId);
-    if (error && !lastMessage) throw new DelegateError(error, "failed", stderr, "", threadId);
+    if (error && !finalAnswers.text()) throw new DelegateError(error, "failed", stderr, "", threadId);
     req.log.info("codex delegate finished", { threadId, status: outcome.status });
-    return { sessionId: threadId, text: lastMessage, isError: Boolean(error), details: { usage, error, answers: answers.length } };
+    return { sessionId: threadId, text: finalAnswers.text(), isError: Boolean(error), details: { usage, error, answers: answers.length } };
   } catch (err) {
     req.live?.onSteering(null);
     // Stop the turn properly before the process goes, so the session file stays consistent for a resume.

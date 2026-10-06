@@ -7,6 +7,7 @@ import { nullLogger } from "../src/core/logger.js";
 import { createWorktree, finishWorktree, gitDirsOutside, gitStatusSnapshot, handoffWarning, removeWorktreeDirectory, subagentCommitMessage, worktreeReport } from "../src/core/worktree.js";
 import { cleanupWorktrees, type CleanupEntry } from "../src/core/worktree-cleanup.js";
 import { formatUsage } from "../src/mcp/format.js";
+import { scanWorktreeLinks } from "../src/core/worktree-links.js";
 
 let repo: string;
 let home: string;
@@ -445,6 +446,8 @@ describe("cleanup", () => {
     symlinkSync(shared, join(deep, "shared"), "junction");
     const dry = await cleanupWorktrees({ home, apply: false, log: nullLogger });
     expect(dry.find((e) => e.path === orphan)?.action).toBe("would remove");
+    expect(dry.find((e) => e.path === orphan)?.externalLinks?.map((l) => ({ ...l, path: toNamespacedPath(l.path) }))).toEqual([{ path: join(deep, "shared"), target: shared }]);
+    expect(dry.find((e) => e.path === orphan)?.reason).toContain("external worktree links");
     const entries = await cleanupWorktrees({ home, apply: true, log: nullLogger });
     expect(entries.find((e) => e.path === orphan)?.action).toBe("removed");
     expect(existsSync(orphan)).toBe(false);

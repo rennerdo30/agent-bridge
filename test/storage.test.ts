@@ -116,6 +116,8 @@ describe("SQLite migrations", () => {
     store.insert({ ...message, id: "queued" });
     store.insert({ ...message, id: "recent", createdAt: 100 });
     expect(store.expireQueued("agent:codex", 2)).toBe(2);
+    expect(store.byId("old")?.body).toBe("original");
+    expect(store.byId("queued")?.body).toBe("original");
     expect(store.expireQueued("agent:codex", 2)).toBe(0);
     const db = new DatabaseSync(join(home, "archive.db"));
     expect(db.prepare("SELECT body, archive_reason FROM messages").all()).toHaveLength(2);

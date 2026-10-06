@@ -41,11 +41,11 @@ export function jsonStoreFiles(home: string): string[] {
       const st = lstatSync(path);
       if (st.isSymbolicLink()) continue;
       if (st.isDirectory() && recurse) visit(path, true);
-      else if (st.isFile() && name !== "dashboard.json" && /\.json(?:-\d+-[\w-]+)?$/.test(name)) files.push(path);
+      else if (st.isFile() && name !== "dashboard.json" && /\.jsonl?(?:-\d+-[\w-]+)?$/.test(name)) files.push(path);
     }
   };
   visit(home, false);
-  for (const dir of ["jobs", "runs", "archive"]) visit(join(home, dir), true);
+  for (const dir of ["jobs", "runs", "archive", "read-state"]) visit(join(home, dir), true);
   return files;
 }
 
@@ -113,8 +113,8 @@ export function backupIfDue(home: string, now = Date.now()): string | null {
 function allowedPath(path: string): boolean {
   return path === DB_FILE_NAME || path === ARCHIVE_DB_NAME ||
     (/^[\w.-]+\.json$/.test(path) && !["dashboard.json"].includes(path)) ||
-    /^(jobs|runs|archive)\/[\w./-]+$/.test(path) && !path.split("/").some((s) => s === ".." || s === ".") &&
-      /\.json(?:-\d+-[\w-]+)?$/.test(path);
+    /^(jobs|runs|archive|read-state)\/[\w./-]+$/.test(path) && !path.split("/").some((s) => s === ".." || s === ".") &&
+      /\.jsonl?(?:-\d+-[\w-]+)?$/.test(path);
 }
 
 /** Preserve damaged databases as raw bytes and sidecars. Recovery sets are never rotated. */

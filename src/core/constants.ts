@@ -17,6 +17,7 @@ export const ENV = {
   logLevel: "AGENT_BRIDGE_LOG_LEVEL",
   logConsole: "AGENT_BRIDGE_LOG_CONSOLE",
   autoWake: "AGENT_BRIDGE_AUTO_WAKE",
+  wakeOnDirect: "AGENT_BRIDGE_WAKE_ON_DIRECT",
   maxHops: "AGENT_BRIDGE_MAX_HOPS",
   maxJobs: "AGENT_BRIDGE_MAX_JOBS",
   autoApproveTools: "AGENT_BRIDGE_AUTO_APPROVE_TOOLS",
@@ -97,7 +98,7 @@ export const DEFAULT_MAX_JOBS = 8;
 export const MAX_JOBS_LIMIT = 50;
 
 /** wait_for_message tool limits. */
-export const DEFAULT_WAIT_SEC = 120;
+export const DEFAULT_WAIT_SEC = 110;
 export const MAX_WAIT_SEC = 1_800;
 
 /** Hook helpers: how long a hook may wait for the broker before giving up silently. */

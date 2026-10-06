@@ -26,6 +26,8 @@ import { doctor } from "../core/doctor.js";
 import { searchMessages } from "../core/message-history.js";
 import { archivedRunMeta, runFileName, runLogFiles } from "../core/run-archive.js";
 import { readArchivedJobs } from "../core/job-archive.js";
+import { listNativeSubagents, readTranscript, TRANSCRIPT_ID, validTranscriptCursor, type TranscriptPaths } from "../core/transcripts/index.js";
+import { readDecisions, decisionScopeSchema, MAX_DECISION_TEXT_CHARS, MAX_DECISION_TOPIC_CHARS, type DecisionsArgs } from "../core/decisions.js";
 
 /**
  * `agent-bridge ui`: a local dashboard for sessions, delegated runs and messages.
@@ -258,6 +260,8 @@ export interface UiOptions {
   /** Reads the agents' usage limits (default: each CLI, see usage.ts); replaceable for tests. */
   usage?: () => Promise<UsageReport[]>;
   models?: () => Promise<ModelReport[]>;
+  /** CLI storage roots; default to the current user's CLI homes. Replaceable for tests. */
+  transcripts?: TranscriptPaths;
 }
 
 /** Usage is read by running each CLI briefly: keep it this long unless the page asks for a refresh. */
@@ -337,6 +341,23 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
       if (limit !== null && (!/^\d+$/.test(limit) || Number(limit) < 1 || Number(limit) > 1_000) || before !== null && (!/^\d+$/.test(before) || !Number.isSafeInteger(Number(before)))) return send(res, 400, { error: "invalid limit or before" });
       return send(res, 200, { messages: searchMessages(dbPath, { query: url.searchParams.get("query") ?? "", limit: limit === null ? undefined : Number(limit), before: before === null ? undefined : Number(before) }) });
     }
+    if (req.method === "GET" && (url.pathname === "/api/decisions" || /^\/api\/decisions\/[^/]+\/history$/.test(url.pathname))) {
+      let args: DecisionsArgs;
+      let topic: string | undefined;
+      try {
+        const scopeText = url.searchParams.get("scope");
+        const scope = scopeText ? decisionScopeSchema.parse(scopeText === "all" ? "all" : JSON.parse(scopeText)) : undefined;
+        const query = url.searchParams.get("q") ?? undefined;
+        if (query && query.length > MAX_DECISION_TEXT_CHARS) throw new Error("query too long");
+        if (url.pathname !== "/api/decisions") {
+          topic = decodeURIComponent(url.pathname.slice("/api/decisions/".length, -"/history".length)).trim().toLowerCase();
+          if (!topic || topic.length > MAX_DECISION_TOPIC_CHARS) throw new Error("invalid topic");
+        }
+        args = { query, scope, ...(topic ? { topic, history: true } : {}) };
+      } catch { return send(res, 400, { error: 'Invalid decisions query, topic or scope. Scope must be "all" or JSON {project: folder}/{sessions: [names or ids]}.' }); }
+      const decisions = readDecisions(dbPath, args);
+      return send(res, 200, topic ? { topic, decisions } : { decisions });
+    }
     if (req.method === "GET" && url.pathname === "/api/state") {
       const { brokerPid, peers } = await brokerPeers(opts.pipe, token, opts.log);
       const runs = listRuns(opts.home);
@@ -407,6 +428,23 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
       const cfg = loadConfig(opts.home, "other", opts.log);
       const reports = await (opts.models ?? (() => Promise.all(CODING_AGENTS.map((agent) => readModels(agent, cfg, opts.home, opts.log, opts.home)))))();
       return send(res, 200, { reports });
+    }
+    const sessionMatch = /^\/api\/sessions\/([^/]+)\/(chat|subagents)(?:\/([^/]+))?$/.exec(url.pathname);
+    if (req.method === "GET" && sessionMatch) {
+      let name: string, child: string | undefined;
+      try { name = decodeURIComponent(sessionMatch[1]!); child = sessionMatch[3] === undefined ? undefined : decodeURIComponent(sessionMatch[3]); }
+      catch { return send(res, 404, { error: "no such local session" }); }
+      if (name.includes("/") || name.includes("\\") || (child !== undefined && !TRANSCRIPT_ID.test(child)) || (sessionMatch[2] === "chat" && child !== undefined)) return send(res, 404, { error: "no such local session or subagent" });
+      const { peers } = await brokerPeers(opts.pipe, token, opts.log);
+      const peer = peers.find((p) => p.name === name && !p.name.includes("/"));
+      if (!peer) return send(res, 404, { error: "no such local session" });
+      if (!peer.sessionId) return send(res, 409, { error: "This session has no sessionId yet." });
+      if (!TRANSCRIPT_ID.test(peer.sessionId) || !CODING_AGENTS.includes(peer.agent as typeof CODING_AGENTS[number])) return send(res, 404, { error: "no transcript for this session" });
+      if (sessionMatch[2] === "subagents" && child === undefined) return send(res, 200, { subagents: listNativeSubagents(peer, opts.transcripts) });
+      const from = url.searchParams.get("from") ?? "0";
+      if (!validTranscriptCursor(from)) return send(res, 400, { error: "invalid transcript cursor" });
+      const page = readTranscript(peer, from, child, opts.transcripts);
+      return page ? send(res, 200, page) : send(res, 404, { error: "no transcript for this session or subagent" });
     }
     const runMatch = /^\/api\/runs\/([\w.-]+)$/.exec(url.pathname);
     if (req.method === "GET" && runMatch) {

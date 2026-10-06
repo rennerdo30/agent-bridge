@@ -4,6 +4,7 @@ import { JOBS_FILE } from "./constants.js";
 import type { Logger } from "./logger.js";
 import { BRANCH_PREFIX, git, removeWorktreeDirectory, trustArgs, type Worktree } from "./worktree.js";
 import { readStore } from "../mcp/jobs.js";
+import { scanWorktreeLinks, worktreeLinkWarning, type WorktreeLinkScan } from "./worktree-links.js";
 
 /**
  * `agent-bridge cleanup`: remove the worktrees of finished agent-bridge jobs (~/.agent-bridge/worktrees) whose
@@ -14,6 +15,7 @@ export interface CleanupEntry {
   branch: string | null;
   action: "removed" | "would remove" | "kept" | "failed";
   reason: string;
+  externalLinks?: WorktreeLinkScan["externalLinks"];
 }
 
 type StoredJob = { name?: string; status?: string; worktree?: Worktree | null };
@@ -86,7 +88,10 @@ async function mergedInto(branch: string, targets: string[], cwd: string, trust:
 }
 
 async function inspect(path: string, jobs: StoredJob[], apply: boolean, log: Logger): Promise<CleanupEntry> {
-  const entry = (branch: string | null, action: CleanupEntry["action"], reason: string): CleanupEntry => ({ path, branch, action, reason });
+  const scan = scanWorktreeLinks(path);
+  const warning = worktreeLinkWarning(scan);
+  const entry = (branch: string | null, action: CleanupEntry["action"], reason: string): CleanupEntry => ({ path, branch, action, reason: warning ? `${reason}\n${warning}` : reason, externalLinks: scan.externalLinks });
+  if (scan.errors.length) return entry(null, "kept", "link inspection incomplete; refusing cleanup");
   if (!existsSync(toNamespacedPath(join(path, ".git")))) {
     if (!onlyFoldersAndLinks(path)) return entry(null, "kept", "not a git worktree (no .git), and it holds files");
     const why = "leftover of a removed worktree: no .git, only empty folders and links";

@@ -7,8 +7,10 @@ import type { ClaudePermissionMode, CodexSandbox } from "./config.js";
 import type { Logger } from "./logger.js";
 import { claudeMcpDenyRules } from "./claude-mcp.js";
 import { PARENT_URL_ENV } from "./parent-link.js";
+import { FinalAnswers } from "./final-answers.js";
 import { progressLineHandler } from "./progress.js";
 import { PermissionRelay, type PermissionDecision } from "./relay.js";
+import { codexDriveMappings, codexPathPrompt } from "./codex-paths.js";
 
 /** Env var tracking nested delegation, so a delegated agent cannot delegate back forever. */
 export const DELEGATE_DEPTH_ENV = "AGENT_BRIDGE_DELEGATE_DEPTH";
@@ -362,6 +364,7 @@ export const CODEX_STRICT_APPROVALS = 'approvals_reviewer="user"';
 export const CODEX_RELAY_APPROVALS = 'approvals_reviewer="auto_review"';
 /** With it, Codex requests approval for anything beyond the sandbox instead of just failing. */
 export const CODEX_ASK_POLICY = 'approval_policy="on-request"';
+export const CODEX_NO_APPROVALS = 'approval_policy="never"';
 export const CODEX_ASK_HINT =
   "(The workspace is read-only on purpose: when you need to change files or run a command the sandbox blocks, request escalated permissions for it. The user is asked and decides; if denied, stop and report.)";
 /** Read-only for opencode: no file changes, no shell commands. Reading and searching stay allowed. */
@@ -414,7 +417,7 @@ function withSessionSniffer(agent: "codex" | "claude" | "opencode", next: ((line
 /** Parse `codex exec --json` JSONL output. */
 export function parseCodexJsonl(stdout: string): { threadId: string | null; text: string; error: string | null; usage: unknown } {
   let threadId: string | null = null;
-  const messages: string[] = [];
+  const messages = new FinalAnswers();
   let error: string | null = null;
   let usage: unknown = null;
   for (const line of stdout.split(/\r?\n/)) {
@@ -431,7 +434,7 @@ export function parseCodexJsonl(stdout: string): { threadId: string | null; text
         threadId = ev.thread_id ?? threadId;
         break;
       case "item.completed":
-        if (ev.item?.type === "agent_message" && typeof ev.item.text === "string") messages.push(ev.item.text);
+        if (ev.item?.type === "agent_message" && typeof ev.item.text === "string") messages.add(ev.item);
         break;
       case "turn.completed":
         usage = ev.usage ?? usage;
@@ -446,7 +449,7 @@ export function parseCodexJsonl(stdout: string): { threadId: string | null; text
         break;
     }
   }
-  return { threadId, text: messages.at(-1) ?? "", error, usage };
+  return { threadId, text: messages.text(), error, usage };
 }
 
 /** The canonical path of a folder (drive mappings and junctions resolved); the input on any error. */
@@ -464,10 +467,10 @@ export async function delegateToCodex(
   checkDepth();
   // Codex's Windows sandbox runs as a separate user that does not see per-user drive mappings (a mapped
   // or subst'ed E: drive): commands fail with "no E: drive". Hand it the real path instead.
-  req = { ...req, cwd: realFolder(req.cwd) };
+  req = { ...req, cwd: realFolder(req.cwd), prompt: codexPathPrompt(req.prompt, codexDriveMappings(`${req.cwd}\n${req.prompt}`)) };
   // In ask mode the sandbox is read-only and every change goes through an approval the user answers;
   // without this hint Codex gives up at the sandbox instead of requesting the approval.
-  if (req.relayApprovals) req = { ...req, prompt: `${req.prompt}\n\n${CODEX_ASK_HINT}` };
+  if (req.relayApprovals && req.sandbox !== "danger-full-access") req = { ...req, prompt: `${req.prompt}\n\n${CODEX_ASK_HINT}` };
   const common = ["--json", "--skip-git-repo-check", ...(req.model ? ["-m", req.model] : []), ...(req.effort ? ["-c", `model_reasoning_effort="${req.effort}"`] : [])];
   if (req.writableRoots?.length && req.sandbox === "workspace-write") {
     common.push("-c", `sandbox_workspace_write.writable_roots=${JSON.stringify(req.writableRoots.map(realFolder))}`);
@@ -478,7 +481,7 @@ export async function delegateToCodex(
   // escalates and the sandbox is enforced (verified: read-only then refuses to create files).
   // relayApprovals: exec then asks for approvals, and the (trusted) agent-bridge PermissionRequest hook
   // answers them with the user's decision. Only used when that hook's trust entry exists.
-  const strict = req.relayApprovals ? ["-c", CODEX_RELAY_APPROVALS, "-c", CODEX_ASK_POLICY] : ["-c", CODEX_STRICT_APPROVALS];
+  const strict = req.sandbox === "danger-full-access" ? ["-c", CODEX_STRICT_APPROVALS, "-c", CODEX_NO_APPROVALS] : req.relayApprovals ? ["-c", CODEX_RELAY_APPROVALS, "-c", CODEX_ASK_POLICY] : ["-c", CODEX_STRICT_APPROVALS];
   const args = req.sessionId
     ? ["exec", "resume", ...common, ...strict, "-c", `sandbox_mode="${req.sandbox}"`, req.sessionId, "-"]
     : ["exec", ...common, ...strict, "-s", req.sandbox, "-C", req.cwd, "-"];

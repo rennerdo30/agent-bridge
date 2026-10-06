@@ -26,6 +26,8 @@ export interface BridgeConfig {
   /** Peer name; defaults to "<agent>-<cwd basename>". */
   name: string | null;
   autoWake: boolean;
+  /** Claude: a message addressed to this session wakes it without general auto-wake. */
+  wakeOnDirect: boolean;
   maxHops: number;
   /** Background subagents running at once per session. */
   maxJobs: number;
@@ -66,6 +68,7 @@ export interface BridgeConfig {
 export const DEFAULT_CONFIG: BridgeConfig = {
   name: null,
   autoWake: false,
+  wakeOnDirect: true,
   maxHops: DEFAULT_MAX_HOPS,
   maxJobs: DEFAULT_MAX_JOBS,
   autoApproveTools: [],
@@ -202,6 +205,7 @@ export function loadConfig(home: string, agent: AgentKind, log: Logger, env: Nod
   const cfg: BridgeConfig = {
     name: pick("name", ENV.name, str) ?? d.name,
     autoWake: pick("autoWake", ENV.autoWake, parseBool) ?? d.autoWake,
+    wakeOnDirect: pick("wakeOnDirect", ENV.wakeOnDirect, parseBool) ?? d.wakeOnDirect,
     maxHops: pick("maxHops", ENV.maxHops, (v) => parseIntInRange(v, 0, MAX_HOPS_LIMIT)) ?? d.maxHops,
     maxJobs: pick("maxJobs", ENV.maxJobs, (v) => parseIntInRange(v, 1, MAX_JOBS_LIMIT)) ?? d.maxJobs,
     autoApproveTools: pick("autoApproveTools", ENV.autoApproveTools, toolPatterns) ?? d.autoApproveTools,
