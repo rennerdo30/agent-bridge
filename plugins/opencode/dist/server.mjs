@@ -30772,8 +30772,11 @@ var JobManager = class {
       }
       const mine = [...this.history.values()].filter((j) => this.own.has(j.id)).map((j) => {
         const old = byId.get(j.id) ?? archived.get(j.id);
-        if (isRecord(old) && Array.isArray(old.ownershipHistory) && old.ownershipHistory.length) {
+        if (isRecord(old)) {
           j.deliveryHistory = [...new Map([...Array.isArray(old.deliveryHistory) ? old.deliveryHistory : [], ...j.deliveryHistory ?? []].map((m) => [m.id, m])).values()];
+          if (typeof old.startedAt === "number" && j.startedAt < old.startedAt) return { ...old, deliveryHistory: j.deliveryHistory };
+        }
+        if (isRecord(old) && Array.isArray(old.ownershipHistory) && old.ownershipHistory.length) {
           Object.assign(j, {
             owner: old.owner,
             supervisor: old.supervisor,
