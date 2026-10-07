@@ -1,0 +1,7 @@
+{
+  "mode": "notify",
+  "from": "claude-source",
+  "conversationId": "retained-thread",
+  "future": "keep",
+  "version": 4
+}

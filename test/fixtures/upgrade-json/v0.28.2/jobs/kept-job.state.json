@@ -1,0 +1,7 @@
+{
+  "status": "failed",
+  "session": "native-thread",
+  "error": "interrupted",
+  "future": "keep",
+  "version": 1
+}

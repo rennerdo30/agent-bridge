@@ -1,0 +1,10 @@
+{
+  "models": [
+    {
+      "id": "retained-model",
+      "name": "Retained model"
+    }
+  ],
+  "future": "keep",
+  "version": 2
+}

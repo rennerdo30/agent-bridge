@@ -1,0 +1,13 @@
+{
+  "jobs": [
+    {
+      "id": "archived-job",
+      "name": "opencode-job-archived",
+      "agent": "opencode",
+      "session": "archive-thread",
+      "state": "done",
+      "future": "keep"
+    }
+  ],
+  "version": 2
+}
