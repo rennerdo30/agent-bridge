@@ -109,6 +109,25 @@ describe("background subagents", () => {
     expect(resumed).toHaveBeenCalledOnce();
   });
 
+  it.each(["claude", "codex", "opencode"] as const)("queues a %s continuation until cancellation finishes", async agent => {
+    let stop!: (error: Error) => void;
+    const resumed = vi.fn(async (signal: AbortSignal) => { expect(signal.aborted).toBe(false); return result("continued"); });
+    const resume = vi.fn(() => resumed);
+    const job = jobs.start(agent, null, "task", () => new Promise((_, reject) => { stop = reject; }), resume);
+    job.sessionId = "saved-session";
+    jobs.cancel(job.name);
+    expect(jobs.followUp(job.name, "Continue").outcome).toBe("waiting");
+    expect(jobs.followUp(job.name, "Keep the context").outcome).toBe("waiting");
+    // Free capacity does not allow two turns of this same job to overlap.
+    jobs.setLimit(3);
+    expect(resume).not.toHaveBeenCalled();
+    stop(new Error("cancelled"));
+    await until(() => job.status === "done");
+    expect(resume).toHaveBeenCalledWith("Continue\n\nKeep the context", "saved-session", null, null);
+    expect(resumed).toHaveBeenCalledOnce();
+    expect(jobs.waiting()).toEqual([]);
+  });
+
   it("never applies an old cancellation grace timer to the resumed runner", async () => {
     let state: RunnerState | null = null;
     const kill = vi.fn();
