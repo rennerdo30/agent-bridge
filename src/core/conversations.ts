@@ -249,6 +249,11 @@ export class ConversationIngestor {
             "UPDATE conversations SET project=? WHERE project='' AND id IN(SELECT conversation FROM conversation_records WHERE id=CAST(substr(?,9) AS INTEGER) AND ? LIKE 'durable:%')",
           )
           .run(project, doc.id!, doc.id!);
+        this.db
+          .prepare(
+            "INSERT OR IGNORE INTO conversation_memberships SELECT ?,conversation FROM conversation_records WHERE id=CAST(substr(?,9) AS INTEGER) AND ? LIKE 'durable:%'",
+          )
+          .run(project, doc.id!, doc.id!);
         if (binding.job)
           this.db
             .prepare("INSERT OR IGNORE INTO history_tags VALUES(?,?,?)")
@@ -510,6 +515,10 @@ export class ConversationIngestor {
         this.db
           .prepare("INSERT OR IGNORE INTO history_tags VALUES(?,?,?)")
           .run(id, type!, value!);
+    if (recordProject)
+      this.db
+        .prepare("INSERT OR IGNORE INTO conversation_memberships VALUES(?,?)")
+        .run(recordProject, conversation);
   }
   private events(
     input: DatabaseSync,

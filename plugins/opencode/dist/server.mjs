@@ -42725,6 +42725,9 @@ CREATE TABLE IF NOT EXISTS conversation_parts (
  PRIMARY KEY(source,part)
 );
 CREATE TABLE IF NOT EXISTS conversation_projects (project TEXT PRIMARY KEY, checked INTEGER NOT NULL DEFAULT 0);
+CREATE TABLE IF NOT EXISTS conversation_memberships (
+ project TEXT NOT NULL, conversation TEXT NOT NULL, PRIMARY KEY(project,conversation)
+);
 CREATE TABLE IF NOT EXISTS conversation_bindings (
  session TEXT NOT NULL, agent TEXT NOT NULL, cwd TEXT NOT NULL, job TEXT,
  pending INTEGER NOT NULL DEFAULT 1, PRIMARY KEY(session,agent)
