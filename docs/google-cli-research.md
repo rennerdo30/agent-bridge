@@ -13,6 +13,7 @@ The bridge agent name is `antigravity`; tools are `ask_antigravity` and
 **Gemini CLI is a different product**, distributed as `@google/gemini-cli`,
 command `gemini`. The npm stable registry returned 0.63.0. It is absent here,
 so this release documents it without claiming tested Gemini CLI support.
+Package evidence: [`@google/gemini-cli` stable metadata](https://registry.npmjs.org/@google%2Fgemini-cli/latest).
 
 ## Antigravity evidence and mapping
 
@@ -76,6 +77,12 @@ so this release documents it without claiming tested Gemini CLI support.
   prompts, hooks and subagents; `gemini extensions install` is its installer.
 - [MCP configuration](https://geminicli.com/docs/tools/mcp-server/): settings.json
   MCP configuration is separate from Antigravity's configuration above.
+- [Configuration reference](https://geminicli.com/docs/reference/configuration/):
+  user MCP settings are in `~/.gemini/settings.json`, with project overrides in
+  `.gemini/settings.json`. `--model` selects the model; `--approval-mode` accepts
+  default, auto_edit, yolo and experimental plan. `--sandbox` enables sandboxing;
+  `GEMINI_SANDBOX` can select Docker or Podman. These are separate from agy's
+  permission modes and effort flags; this integration does not infer compatibility.
 - [Sandboxing](https://geminicli.com/docs/cli/sandbox/) and
   [command reference](https://geminicli.com/docs/reference/commands/): model
   selection, approval/plan modes and sandbox options must be mapped separately.
