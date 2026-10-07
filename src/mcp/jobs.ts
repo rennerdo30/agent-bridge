@@ -293,6 +293,7 @@ export class JobManager {
   private hostTimer: NodeJS.Timeout | null = null;
   private restoreResume: ((agent: AgentKind, args: Record<string, unknown>) => Resume | undefined) | null = null;
   private rootWaitTimer: NodeJS.Timeout | null = null;
+  private persistTimer: NodeJS.Timeout | null = null;
 
   constructor(
     private readonly node: JobCoordinator,
@@ -338,6 +339,7 @@ export class JobManager {
   setDormant(dormant: boolean): void {
     if (this.dormant === dormant) return;
     this.dormant = dormant;
+    if (dormant && this.persistTimer) { clearTimeout(this.persistTimer); this.persistTimer = null; }
     this.log.info(dormant ? "another server of this session took over: jobs paused here" : "this server took its place back: jobs resumed");
     if (dormant && this.hostTimer) {
       clearInterval(this.hostTimer);
@@ -349,9 +351,12 @@ export class JobManager {
   /** Save this session's jobs, merged with those other sessions saved. Best effort: never breaks a run. */
   persist(): void {
     if (!this.storePath || this.dormant) return;
+    if (this.persistTimer) { clearTimeout(this.persistTimer); this.persistTimer = null; }
     let lock = () => {};
     try {
-      lock = acquireLock(`${this.storePath}.lock`);
+      // Never sleep on the broker's event loop while another session owns the shared store.
+      // Retry the latest in-memory state, coalescing progress updates instead of dropping them.
+      lock = acquireLock(`${this.storePath}.lock`, 0);
       const previous = readJobsDocument(this.storePath, this.log);
       assertWritableStore(previous);
       const entries = Array.isArray(previous) ? previous : isRecord(previous) ? previous.jobs as unknown[] : [];
@@ -382,10 +387,19 @@ export class JobManager {
       }
       writeJsonStore(this.storePath, { ...(isRecord(previous) ? previous : {}), jobs: all.filter((j) => !overflow.has(j as StoredJob)) }, previous);
     } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "EJOBLOCKED") {
+        this.schedulePersist();
+        return;
+      }
       this.log.warn("could not save subagent jobs", { err: (err as Error).message });
     } finally {
       lock();
     }
+  }
+
+  private schedulePersist(): void {
+    if (this.persistTimer || this.dormant || !this.storePath) return;
+    this.persistTimer = setTimeout(() => { this.persistTimer = null; this.persist(); }, 25 + Math.floor(Math.random() * 50));
   }
 
   /**
@@ -849,7 +863,7 @@ export class JobManager {
         job.progressNote = state.progressNote;
         job.etaAt = etaAt;
         job.etaReportedAt = etaReportedAt;
-        if (changed) this.persist();
+        if (changed) this.schedulePersist();
       }
       if ((state.sessionId && state.sessionId !== job.sessionId) || (state.workdir && state.workdir !== job.workdir) || (state.worktree && !job.worktree)) {
         this.note(job, { sessionId: state.sessionId, workdir: state.workdir, worktree: state.worktree });
@@ -1070,9 +1084,9 @@ const LOCK_RETRY_MS = 20;
  * Serialize read-merge-write of the job store across sessions (processes). Returns the release function.
  * Gives up waiting after a short time (saving is best effort) and breaks locks left by a crashed process.
  */
-export function acquireLock(path: string): () => void {
+export function acquireLock(path: string, waitMs = LOCK_WAIT_MS): () => void {
   mkdirSync(dirname(path), { recursive: true });
-  const deadline = Date.now() + LOCK_WAIT_MS;
+  const deadline = Date.now() + waitMs;
   const pause = new Int32Array(new SharedArrayBuffer(4));
   for (;;) {
     try {
@@ -1085,7 +1099,7 @@ export function acquireLock(path: string): () => void {
       } catch {
         // gone meanwhile
       }
-      if (Date.now() > deadline) throw new Error("timed out locking jobs store");
+      if (Date.now() >= deadline) throw Object.assign(new Error("timed out locking jobs store"), { code: "EJOBLOCKED" });
       Atomics.wait(pause, 0, 0, LOCK_RETRY_MS);
     }
   }

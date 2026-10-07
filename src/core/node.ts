@@ -164,15 +164,17 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
     this.emit("reclaimed");
   }
 
-  async stop(): Promise<void> {
+  async stop(closeBroker = true): Promise<void> {
     this.stopping = true;
     this.emit("stopped");
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
     this.reconnectTimer = null;
     this.client?.close();
     this.client = null;
-    if (this.broker) await this.broker.close();
-    this.broker = null;
+    if (closeBroker) {
+      if (this.broker) await this.broker.close();
+      this.broker = null;
+    }
     this.log.info("bridge node stopped");
   }
 
@@ -369,7 +371,9 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
       // A newer server of this same session took over (e.g. /reload-plugins): stay away instead of rejoining.
       this.log.info("replaced by a newer server of this session; leaving the bridge", { by: (data as { by?: string })?.by });
       this.replaced = true;
-      void this.stop();
+      // Retiring this session's connection must not evict every other session. The process still
+      // owns the elected listener until actual shutdown; reclaim can reconnect to that listener.
+      void this.stop(false).catch((err) => this.log.warn("could not retire replaced connection", { err: String(err) }));
       this.emit("replaced");
     }
   }

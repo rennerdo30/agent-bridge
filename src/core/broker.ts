@@ -58,6 +58,9 @@ const NAME_SUFFIX_LIMIT = 100;
 const MAX_FILE_ADDRESS_CHARS = 256;
 const MAX_FILE_PATH_CHARS = 1_024;
 const SIBLING_STATUSES = new Set<SiblingPeer["status"]>(["running", "done", "failed", "interrupted"]);
+const MAX_INFLIGHT_PER_CONNECTION = 128;
+const PAUSE_INFLIGHT_PER_CONNECTION = 32;
+const MAX_CONNECTION_BUFFER_BYTES = 4 * MAX_FRAME_BYTES;
 
 type StoredSibling = SiblingPeer & { id: string; report: string | null };
 
@@ -66,6 +69,7 @@ interface Conn {
   peer: PeerInfo | null;
   /** Presented the right token (via hello or auth). */
   authed: boolean;
+  inFlight: number;
 }
 
 /** Operations allowed before a connection has authenticated. */
@@ -300,7 +304,7 @@ export class Broker {
   }
 
   private accept(socket: Socket): void {
-    const conn: Conn = { socket, peer: null, authed: false };
+    const conn: Conn = { socket, peer: null, authed: false, inFlight: 0 };
     this.conns.add(conn);
     socket.setEncoding("utf8");
     const decoder = new FrameDecoder(MAX_FRAME_BYTES);
@@ -316,7 +320,21 @@ export class Broker {
         return;
       }
       for (const f of frames) {
-        if (f.t === "req") void this.dispatch(conn, f);
+        if (f.t === "req") {
+          if (++conn.inFlight > MAX_INFLIGHT_PER_CONNECTION) {
+            this.log.warn("closing overloaded client connection", { peer: conn.peer?.name });
+            socket.destroy();
+            break;
+          }
+          if (conn.inFlight >= PAUSE_INFLIGHT_PER_CONNECTION) socket.pause();
+          void this.dispatch(conn, f).catch((err) => {
+            this.log.warn("client request transport failed", { err: String(err) });
+            socket.destroy();
+          }).finally(() => {
+            conn.inFlight--;
+            if (conn.inFlight < PAUSE_INFLIGHT_PER_CONNECTION && !socket.destroyed) socket.resume();
+          });
+        }
         else this.log.debug("ignoring non-request frame from client", { t: f.t });
       }
     });
@@ -346,8 +364,46 @@ export class Broker {
     }
   }
 
-  private write(conn: Conn, frame: Parameters<typeof encodeFrame>[0]): void {
-    if (!conn.socket.destroyed) conn.socket.write(encodeFrame(frame));
+  private write(conn: Conn, frame: Parameters<typeof encodeFrame>[0]): boolean {
+    if (conn.socket.destroyed) return false;
+    try {
+      const data = encodeFrame(frame);
+      if (conn.socket.writableLength + Buffer.byteLength(data) > MAX_CONNECTION_BUFFER_BYTES) {
+        this.log.warn("closing slow client connection; unread mail remains stored", { peer: conn.peer?.name });
+        conn.socket.destroy();
+        return false;
+      }
+      return conn.socket.write(data);
+    } catch (err) {
+      this.log.warn("client write failed; unread mail remains stored", { err: String(err) });
+      conn.socket.destroy();
+      return false;
+    }
+  }
+
+  /** Deferred replay is outside dispatch: storage faults must not become uncaught exceptions.
+   * Honour stream backpressure so a large retained inbox is not repeatedly disconnected on replay.
+   */
+  private replayMail(conn: Conn, peer: PeerInfo, before?: () => void): void {
+    setImmediate(() => {
+      if (conn.socket.destroyed || conn.peer !== peer) return;
+      try {
+        before?.();
+        const mail = this.unreadMail(peer.name, PENDING_MAX_LIMIT);
+        let at = 0;
+        const pump = () => {
+          if (conn.socket.destroyed || conn.peer !== peer) return;
+          while (at < mail.length) {
+            const m = mail[at++]!;
+            if (!this.write(conn, { t: "evt", ev: "message", data: m })) {
+              if (!conn.socket.destroyed) conn.socket.once("drain", pump);
+              return;
+            }
+          }
+        };
+        pump();
+      } catch (err) { this.log.warn("mail replay deferred after storage failure", { peer: peer.name, err: String(err) }); }
+    });
   }
 
   private emit<E extends EventName>(conn: Conn, ev: E, data: EventMap[E]): void {
@@ -641,10 +697,7 @@ export class Broker {
     this.log.info("peer joined", { name, agent: peer.agent, jobAgent: peer.jobAgent, cwd: peer.cwd, claimed });
     if (!peer.jobAgent) this.broadcastEvent("peer_joined", peer, conn);
     // Deliver the backlog right after the hello response has been written.
-    setImmediate(() => {
-      this.queueCurrentDecisions(peer);
-      for (const m of this.unreadMail(peer.name, PENDING_MAX_LIMIT)) this.emit(conn, "message", m);
-    });
+    this.replayMail(conn, peer, () => { this.queueCurrentDecisions(peer); });
     return { brokerPid: process.pid, name: peer.name, sessionId: peer.sessionId, peers: this.livePeers().filter((x) => x.id !== peer.id) };
   }
 
@@ -663,9 +716,7 @@ export class Broker {
     }
     if (moved) {
       this.log.info("mail of a stand-in name moved to its session", { to: peer.name, moved });
-      setImmediate(() => {
-        for (const m of this.unreadMail(peer.name, PENDING_MAX_LIMIT)) this.emit(conn, "message", m);
-      });
+      this.replayMail(conn, peer);
     }
     return { moved };
   }
@@ -737,10 +788,7 @@ export class Broker {
         const oldName = old.name;
         if (peer.name.startsWith(`${oldName}-`) && /^\d+$/.test(peer.name.slice(oldName.length + 1))) peer.name = oldName;
         // Either way, mail that waited under the old name is the session's.
-        setImmediate(() => {
-          this.store.claim(oldName, peer.name);
-          for (const m of this.unreadMail(peer.name, PENDING_MAX_LIMIT)) this.emit(conn, "message", m);
-        });
+        this.replayMail(conn, peer, () => { this.store.claim(oldName, peer.name); });
       }
     }
   }
@@ -759,10 +807,7 @@ export class Broker {
       moved += this.store.claim(name, peer.name);
     }
     this.store.rememberName(peer, this.now());
-    if (options.replay && (moved || previous !== peer.name)) setImmediate(() => {
-      if (conn.peer !== peer) return;
-      for (const m of this.unreadMail(peer.name, PENDING_MAX_LIMIT)) this.emit(conn, "message", m);
-    });
+    if (options.replay && (moved || previous !== peer.name)) this.replayMail(conn, peer);
   }
 
   /** Exact registrations win; an unoccupied retained alias must identify one live session. */

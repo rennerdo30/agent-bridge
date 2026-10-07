@@ -34725,9 +34725,9 @@ function readStore(path, log, includeArchived = false) {
 var LOCK_WAIT_MS3 = 2e3;
 var LOCK_STALE_MS = 1e4;
 var LOCK_RETRY_MS = 20;
-function acquireLock(path) {
+function acquireLock(path, waitMs = LOCK_WAIT_MS3) {
   mkdirSync16(dirname12(path), { recursive: true });
-  const deadline = Date.now() + LOCK_WAIT_MS3;
+  const deadline = Date.now() + waitMs;
   const pause = new Int32Array(new SharedArrayBuffer(4));
   for (; ; ) {
     try {
@@ -34739,7 +34739,7 @@ function acquireLock(path) {
         if (Date.now() - statSync8(path).mtimeMs > LOCK_STALE_MS) rmSync4(path, { force: true });
       } catch {
       }
-      if (Date.now() > deadline) throw new Error("timed out locking jobs store");
+      if (Date.now() >= deadline) throw Object.assign(new Error("timed out locking jobs store"), { code: "EJOBLOCKED" });
       Atomics.wait(pause, 0, 0, LOCK_RETRY_MS);
     }
   }
@@ -36973,6 +36973,9 @@ var NAME_SUFFIX_LIMIT = 100;
 var MAX_FILE_ADDRESS_CHARS = 256;
 var MAX_FILE_PATH_CHARS = 1024;
 var SIBLING_STATUSES = /* @__PURE__ */ new Set(["running", "done", "failed", "interrupted"]);
+var MAX_INFLIGHT_PER_CONNECTION = 128;
+var PAUSE_INFLIGHT_PER_CONNECTION = 32;
+var MAX_CONNECTION_BUFFER_BYTES = 4 * MAX_FRAME_BYTES;
 var UNAUTHENTICATED_OPS = /* @__PURE__ */ new Set(["hello", "auth", "ping"]);
 var Broker = class {
   constructor(pipePath, store, log, token, now = Date.now, jobsPath, networking) {
@@ -37231,7 +37234,7 @@ var Broker = class {
     }
   }
   accept(socket) {
-    const conn = { socket, peer: null, authed: false };
+    const conn = { socket, peer: null, authed: false, inFlight: 0 };
     this.conns.add(conn);
     socket.setEncoding("utf8");
     const decoder = new FrameDecoder(MAX_FRAME_BYTES);
@@ -37246,8 +37249,21 @@ var Broker = class {
         return;
       }
       for (const f of frames) {
-        if (f.t === "req") void this.dispatch(conn, f);
-        else this.log.debug("ignoring non-request frame from client", { t: f.t });
+        if (f.t === "req") {
+          if (++conn.inFlight > MAX_INFLIGHT_PER_CONNECTION) {
+            this.log.warn("closing overloaded client connection", { peer: conn.peer?.name });
+            socket.destroy();
+            break;
+          }
+          if (conn.inFlight >= PAUSE_INFLIGHT_PER_CONNECTION) socket.pause();
+          void this.dispatch(conn, f).catch((err) => {
+            this.log.warn("client request transport failed", { err: String(err) });
+            socket.destroy();
+          }).finally(() => {
+            conn.inFlight--;
+            if (conn.inFlight < PAUSE_INFLIGHT_PER_CONNECTION && !socket.destroyed) socket.resume();
+          });
+        } else this.log.debug("ignoring non-request frame from client", { t: f.t });
       }
     });
     socket.on("error", (err) => this.log.debug("connection error", { err: err.message }));
@@ -37275,7 +37291,46 @@ var Broker = class {
     }
   }
   write(conn, frame) {
-    if (!conn.socket.destroyed) conn.socket.write(encodeFrame(frame));
+    if (conn.socket.destroyed) return false;
+    try {
+      const data = encodeFrame(frame);
+      if (conn.socket.writableLength + Buffer.byteLength(data) > MAX_CONNECTION_BUFFER_BYTES) {
+        this.log.warn("closing slow client connection; unread mail remains stored", { peer: conn.peer?.name });
+        conn.socket.destroy();
+        return false;
+      }
+      return conn.socket.write(data);
+    } catch (err) {
+      this.log.warn("client write failed; unread mail remains stored", { err: String(err) });
+      conn.socket.destroy();
+      return false;
+    }
+  }
+  /** Deferred replay is outside dispatch: storage faults must not become uncaught exceptions.
+   * Honour stream backpressure so a large retained inbox is not repeatedly disconnected on replay.
+   */
+  replayMail(conn, peer, before) {
+    setImmediate(() => {
+      if (conn.socket.destroyed || conn.peer !== peer) return;
+      try {
+        before?.();
+        const mail = this.unreadMail(peer.name, PENDING_MAX_LIMIT);
+        let at = 0;
+        const pump = () => {
+          if (conn.socket.destroyed || conn.peer !== peer) return;
+          while (at < mail.length) {
+            const m = mail[at++];
+            if (!this.write(conn, { t: "evt", ev: "message", data: m })) {
+              if (!conn.socket.destroyed) conn.socket.once("drain", pump);
+              return;
+            }
+          }
+        };
+        pump();
+      } catch (err) {
+        this.log.warn("mail replay deferred after storage failure", { peer: peer.name, err: String(err) });
+      }
+    });
   }
   emit(conn, ev, data) {
     const frame = { t: "evt", ev, data };
@@ -37586,9 +37641,8 @@ Call decisions to look up current decisions or their history.`,
     }
     this.log.info("peer joined", { name: name2, agent: peer.agent, jobAgent: peer.jobAgent, cwd: peer.cwd, claimed });
     if (!peer.jobAgent) this.broadcastEvent("peer_joined", peer, conn);
-    setImmediate(() => {
+    this.replayMail(conn, peer, () => {
       this.queueCurrentDecisions(peer);
-      for (const m of this.unreadMail(peer.name, PENDING_MAX_LIMIT)) this.emit(conn, "message", m);
     });
     return { brokerPid: process.pid, name: peer.name, sessionId: peer.sessionId, peers: this.livePeers().filter((x) => x.id !== peer.id) };
   }
@@ -37607,9 +37661,7 @@ Call decisions to look up current decisions or their history.`,
     }
     if (moved) {
       this.log.info("mail of a stand-in name moved to its session", { to: peer.name, moved });
-      setImmediate(() => {
-        for (const m of this.unreadMail(peer.name, PENDING_MAX_LIMIT)) this.emit(conn, "message", m);
-      });
+      this.replayMail(conn, peer);
     }
     return { moved };
   }
@@ -37673,9 +37725,8 @@ Call decisions to look up current decisions or their history.`,
       if (peer.name !== old.name && !this.connByName(old.name)) {
         const oldName = old.name;
         if (peer.name.startsWith(`${oldName}-`) && /^\d+$/.test(peer.name.slice(oldName.length + 1))) peer.name = oldName;
-        setImmediate(() => {
+        this.replayMail(conn, peer, () => {
           this.store.claim(oldName, peer.name);
-          for (const m of this.unreadMail(peer.name, PENDING_MAX_LIMIT)) this.emit(conn, "message", m);
         });
       }
     }
@@ -37694,10 +37745,7 @@ Call decisions to look up current decisions or their history.`,
       moved += this.store.claim(name2, peer.name);
     }
     this.store.rememberName(peer, this.now());
-    if (options.replay && (moved || previous !== peer.name)) setImmediate(() => {
-      if (conn.peer !== peer) return;
-      for (const m of this.unreadMail(peer.name, PENDING_MAX_LIMIT)) this.emit(conn, "message", m);
-    });
+    if (options.replay && (moved || previous !== peer.name)) this.replayMail(conn, peer);
   }
   /** Exact registrations win; an unoccupied retained alias must identify one live session. */
   recipientConn(name2) {
@@ -38056,15 +38104,17 @@ var BridgeNode = class extends EventEmitter2 {
     await this.ensureConnected();
     this.emit("reclaimed");
   }
-  async stop() {
+  async stop(closeBroker = true) {
     this.stopping = true;
     this.emit("stopped");
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
     this.reconnectTimer = null;
     this.client?.close();
     this.client = null;
-    if (this.broker) await this.broker.close();
-    this.broker = null;
+    if (closeBroker) {
+      if (this.broker) await this.broker.close();
+      this.broker = null;
+    }
     this.log.info("bridge node stopped");
   }
   /**
@@ -38244,7 +38294,7 @@ var BridgeNode = class extends EventEmitter2 {
     } else if (ev === "replaced") {
       this.log.info("replaced by a newer server of this session; leaving the bridge", { by: data?.by });
       this.replaced = true;
-      void this.stop();
+      void this.stop(false).catch((err) => this.log.warn("could not retire replaced connection", { err: String(err) }));
       this.emit("replaced");
     }
   }
