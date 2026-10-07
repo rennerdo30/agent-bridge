@@ -4,6 +4,7 @@ import { historySearchSchema } from "./history.js";
 import { ReadJournal } from "./read-journal.js";
 import { recordStorePeer, validStoreCapabilities } from "./store-compatibility.js";
 import { randomUUID } from "node:crypto";
+import { existsSync } from "node:fs";
 import { isPluginCacheCwd } from "./session-visibility.js";
 import { createServer, type Server, type Socket } from "node:net";
 import {
@@ -52,7 +53,7 @@ import { isJobSendTarget, MAX_JOB_SEND_TARGETS } from "./job-messaging.js";
 import { NetworkService, type NetworkStatus } from "../network/link.js";
 import { readNetworkConfig, writeNetworkConfig, type NetworkConfig } from "../network/config.js";
 import { z } from "zod";
-import { basename, dirname } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { ProjectGroups } from "./project-groups.js";
 import { recoverJobRecord } from "./job-recovery.js";
 import { collectTransfer, receiveTransfer, type TransferResult } from "../network/files.js";
@@ -62,6 +63,8 @@ import { RemoteDashboard, dashboardError } from "../network/remote-dashboard.js"
 import { RemoteJobs } from "../network/remote-jobs.js";
 import { CONTROL_CONVERSATION_PREFIX } from "../mcp/job-host.js";
 import { DECISION_MESSAGE_HOP, MAX_DECISION_TEXT_CHARS, MAX_DECISION_TOPIC_CHARS, decisionApplies, decisionScopeSchema, type OwnerDecision } from "./decisions.js";
+import { askOwnerSchema, questionAnswerSchema, QUESTIONS_FILE } from "./owner-questions.js";
+import { OwnerQuestionService, OWNER_ADDRESS } from "./owner-question-service.js";
 
 /** Peer names double as offline queue keys, so keep them simple and unambiguous. */
 export const PEER_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
@@ -99,6 +102,12 @@ type Handler<O extends Op> = (conn: Conn, args: RequestMap[O][0]) => RequestMap[
  * or a broker hand-over, lose nothing.
  */
 export class Broker {
+  private questions: OwnerQuestionService | null = null;
+  private ownerQuestions(): OwnerQuestionService {
+    return this.questions ??= new OwnerQuestionService(dirname(this.store.file), this.store, this.log, () => this.localPeers().map(p => this.projectPeer(p)), (peer, message) => { const c = this.connByName(peer.name); if (c) this.emit(c, "message", message); }, decision => {
+      for (const c of this.conns) if (c.peer && !c.peer.jobAgent && decisionApplies(decision,c.peer)) { const message=this.queueDecision(decision,c.peer); if (message) this.emit(c,"message",message); }
+    });
+  }
   private readonly groups: ProjectGroups;
   /** Live role selection, recomputed after broker restart; no durable ownership is rewritten. */
   private readonly projectMains = new Map<string, string>();
@@ -134,6 +143,35 @@ export class Broker {
   ) {
     this.groups = new ProjectGroups(jobsPath ? dirname(jobsPath) : undefined);
     this.handlers = {
+      askOwner: (c,a) => {
+        const peer = this.requirePeer(c);
+        if (peer.jobAgent || peer.subagent || peer.agent === "other") throw new BridgeError("unauthorized", "Delegated jobs ask their main; only project sessions file owner questions.");
+        const args = askOwnerSchema.parse(a), root = this.groups.root(peer.cwd);
+        if (!root || args.project && !this.groups.same(args.project, peer.cwd)) throw new BridgeError("unauthorized", "File questions only for your own project.");
+        if (args.job && !this.storedJobs().some(j => j.name === args.job && this.groups.canControl(peer,j,this.localPeers()))) throw new BridgeError("unauthorized", "Linked job must belong to this project session.");
+        const main = this.localPeers().find(p => this.groups.same(p.cwd, peer.cwd) && this.projectPeer(p).projectMain);
+        let deskProject: string | undefined=args.deskProject;
+        try { const linked=readJsonSnapshot(join(root,".pair-desk.json")).value; if (isRecord(linked) && typeof linked.project === "string") deskProject=linked.project; } catch { /* Desk linking is optional. */ }
+        return this.ownerQuestions().store.ask(args, root, { session: peer.name, sessionId: peer.sessionId, agent: peer.agent, main: main?.name ?? peer.name, ...(args.job ? {job:args.job} : {}) }, this.now(),deskProject);
+      },
+      ownerQuestions: () => this.ownerQuestions().list(),
+      answerOwner: (c,a) => {
+        // An authenticated dashboard connection has no agent peer. Models cannot answer for the owner.
+        if (c.peer) throw new BridgeError("unauthorized", "Only the local owner dashboard can answer questions.");
+        const args = z.object({ id: z.uuid(), answer: questionAnswerSchema }).strict().parse(a);
+        return this.ownerQuestions().complete(this.ownerQuestions().store.answer(args.id,args.answer,OWNER_ADDRESS,this.now()));
+      },
+      dismissOwner: (c,a) => {
+        const args = z.object({ id: z.uuid(), status: z.enum(["cancelled","superseded"]), reason: z.string().trim().min(1).max(1000), supersededBy: z.uuid().optional() }).strict().parse(a);
+        const q = this.ownerQuestions().store.get(args.id);
+        if (c.peer && (c.peer.jobAgent || c.peer.subagent || !q?.askers.some(asker => asker.session === c.peer!.name))) throw new BridgeError("unauthorized", "Only an asker or the owner may dismiss this question.");
+        return this.ownerQuestions().store.dismiss(args.id,args.status,args.reason,args.supersededBy);
+      },
+      dashboardHeartbeat: (c,a) => {
+        if (c.peer) throw new BridgeError("unauthorized", "Only the local dashboard reports presence.");
+        const args = z.object({ tab:z.string().regex(/^[\w-]{1,80}$/), visible:z.boolean() }).strict().parse(a);
+        return this.ownerQuestions().heartbeat(args.tab,args.visible);
+      },
       projectMain: (c, a) => {
         const args = z.object({ to: z.string().min(1) }).strict().parse(a);
         return this.switchProjectMain(c.peer, this.connByName(args.to)?.peer ?? undefined);
@@ -326,6 +364,7 @@ export class Broker {
         if (this.store.file !== ":memory:") this.historyBackground = new HistoryBackground(this.store.file, this.log);
         this.purge();
         this.log.info("broker listening", { pipe: this.pipePath });
+        if (this.store.file !== ":memory:" && existsSync(join(dirname(this.store.file),QUESTIONS_FILE))) this.ownerQuestions();
         // Another broker may have enabled or changed pairing since this session started.
         if (this.networking) this.networking.config = readNetworkConfig(this.networking.home, this.networking.config);
         if (this.networking?.config.enabled) {
@@ -359,6 +398,7 @@ export class Broker {
   async close(): Promise<void> {
     this.closing = true;
     this.store.stopWrites();
+    this.questions?.close(); this.questions = null;
     if (this.pendingJobMailRetry) clearTimeout(this.pendingJobMailRetry);
     this.pendingJobMailRetry = null;
     await this.historyBackground?.close();

@@ -15,6 +15,7 @@ const home = mkdtempSync(join(tmpdir(), "agent-bridge-e2e-"));
 async function spawnAgent(agent: "claude" | "codex" | "antigravity", name: string): Promise<Client> {
   const transport = new StdioClientTransport({
     command: process.execPath,
+    cwd: home,
     args: [SERVER, `--agent=${agent}`],
     cwd: home,
     env: { ...process.env, AGENT_BRIDGE_HOME: home, AGENT_BRIDGE_NAME: name, AGENT_BRIDGE_DELIVERY: "hooks", AGENT_BRIDGE_DASHBOARD: "off", AGENT_BRIDGE_LOG_LEVEL: "debug", CLAUDE_CONFIG_DIR: join(home, "claude"), CODEX_HOME: join(home, "codex"), XDG_DATA_HOME: home } as Record<string, string>,
@@ -59,8 +60,8 @@ describe.skipIf(!existsSync(SERVER))("bundled MCP server end-to-end", () => {
     const x = (await codex.listTools()).tools.map((t) => t.name).sort();
     const g = (await antigravity.listTools()).tools.map((t) => t.name).sort();
     expect(g).toEqual(c.filter((name) => !name.endsWith("_antigravity")).concat(["ask_claude", "spawn_claude"]).sort());
-    expect(c).toEqual(["ask_antigravity", "ask_codex", "ask_opencode", "auto_wake", "cancel_subagent", "cancel_transfer", "coordinator_availability", "dashboard", "decide", "decisions", "fetch_files", "get_conversation", "handoff_subagents", "hook_event", "inbox", "list_models", "max_subagents", "message_subagent", "network_status", "peers", "project_main", "search_history", "send", "send_files", "set_job_outcome", "spawn_antigravity", "spawn_codex", "spawn_opencode", "usage_limits", "wait_for_message"]);
-    expect(x).toEqual(["ask_antigravity", "ask_claude", "ask_opencode", "auto_wake", "cancel_subagent", "cancel_transfer", "coordinator_availability", "dashboard", "decide", "decisions", "fetch_files", "get_conversation", "handoff_subagents", "hook_event", "inbox", "list_models", "max_subagents", "message_subagent", "network_status", "peers", "project_main", "search_history", "send", "send_files", "set_job_outcome", "spawn_antigravity", "spawn_claude", "spawn_opencode", "usage_limits", "wait_for_message"]);
+    expect(c).toEqual(["ask_antigravity", "ask_codex", "ask_opencode", "ask_owner", "auto_wake", "cancel_subagent", "cancel_transfer", "coordinator_availability", "dashboard", "decide", "decisions", "fetch_files", "get_conversation", "handoff_subagents", "hook_event", "inbox", "list_models", "max_subagents", "message_subagent", "network_status", "peers", "project_main", "search_history", "send", "send_files", "set_job_outcome", "spawn_antigravity", "spawn_codex", "spawn_opencode", "usage_limits", "wait_for_message", "withdraw_owner_question"]);
+    expect(x).toEqual(["ask_antigravity", "ask_claude", "ask_opencode", "ask_owner", "auto_wake", "cancel_subagent", "cancel_transfer", "coordinator_availability", "dashboard", "decide", "decisions", "fetch_files", "get_conversation", "handoff_subagents", "hook_event", "inbox", "list_models", "max_subagents", "message_subagent", "network_status", "peers", "project_main", "search_history", "send", "send_files", "set_job_outcome", "spawn_antigravity", "spawn_claude", "spawn_opencode", "usage_limits", "wait_for_message", "withdraw_owner_question"]);
   });
 
   it("declares the Claude channel capability only for Claude", () => {

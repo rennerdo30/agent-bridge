@@ -574,6 +574,14 @@ button.ghost { min-height: 32px; }
 .xfer-bar i { display: block; height: 100%; background: var(--busy); }
 
 /* Pages: approvals and decisions */
+.question-card { border-color: color-mix(in srgb,var(--accent) 40%,var(--line)); }
+.question-card.focused { box-shadow: 0 0 0 2px var(--accent); }
+.q-kind { color:var(--accent); font-size:12px; font-weight:650; letter-spacing:.04em; }
+.q-options { display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:8px; margin:14px 0; }
+.q-options button { text-align:left; white-space:normal; padding:12px; }
+.q-options .recommended { border-color:var(--accent); background:color-mix(in srgb,var(--accent) 10%,var(--panel)); color:var(--text); }
+.q-options small { display:block; margin-top:5px; color:var(--muted); font-weight:400; }
+.q-context { white-space:pre-wrap; }
 .page-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 12px 24px; flex-wrap: wrap; margin-bottom: 20px; }
 .page-head h2 { margin: 0 0 4px; font-size: 22px; font-weight: 650; letter-spacing: -.015em; }
 .page-head p { margin: 0; max-width: 640px; font-size: 13.5px; }
@@ -697,8 +705,17 @@ form#send select#to {
 
   <div id="approvals" class="hidden">
     <div class="page-head">
-      <div><h2>Waiting for you</h2><p class="muted">Subagents asking before they run something. Unanswered requests count as "deny" when their time runs out.</p></div>
+      <div><h2>Waiting for you</h2><p class="muted">Owner questions and tool permissions. Questions stay open until answered or dismissed. Answers never grant tool permission or accept implementation.</p></div>
       <button type="button" class="ghost" id="notifyBtn">Notify me in this browser</button>
+    </div>
+    <div class="seg" id="apFilters" role="group" aria-label="Waiting items">
+      <button class="ghost" data-ap-filter="all" aria-pressed="true">All</button><button class="ghost" data-ap-filter="question" aria-pressed="false">Questions</button><button class="ghost" data-ap-filter="permission" aria-pressed="false">Permissions</button><button class="ghost" data-ap-filter="history" aria-pressed="false">Question history</button>
+    </div>
+    <div class="ap-actions" id="questionAlertSettings">
+      <label class="toggle"><input type="checkbox" id="questionSound" checked><span class="track" aria-hidden="true"></span>Question sound</label>
+      <label class="toggle"><input type="checkbox" id="questionToast" checked><span class="track" aria-hidden="true"></span>Desktop toast</label>
+      <button class="ghost" id="questionReminder">Blocking reminders: 15 min</button>
+      <span class="small muted" id="questionAudioHint">Click anywhere to enable sound in this browser.</span>
     </div>
     <div id="apList"></div>
   </div>
@@ -713,7 +730,7 @@ form#send select#to {
       </div>
       <div class="search-filters">
         <div class="seg" role="radiogroup" aria-label="What to search" data-seg="sKind">
-          <button type="button" role="radio" aria-checked="true" data-v="">Everything</button><button type="button" role="radio" aria-checked="false" data-v="message">Messages</button><button type="button" role="radio" aria-checked="false" data-v="run">Subagent runs</button><button type="button" role="radio" aria-checked="false" data-v="decision">Decisions</button><button type="button" role="radio" aria-checked="false" data-v="transcript">Chats</button>
+          <button type="button" role="radio" aria-checked="true" data-v="">Everything</button><button type="button" role="radio" aria-checked="false" data-v="message">Messages</button><button type="button" role="radio" aria-checked="false" data-v="run">Subagent runs</button><button type="button" role="radio" aria-checked="false" data-v="question">Questions</button><button type="button" role="radio" aria-checked="false" data-v="decision">Decisions</button><button type="button" role="radio" aria-checked="false" data-v="transcript">Chats</button>
         </div>
         <div class="seg" role="radiogroup" aria-label="Agent" data-seg="sAgent">
           <button type="button" role="radio" aria-checked="true" data-v="">All agents</button><button type="button" role="radio" aria-checked="false" data-v="claude">Claude</button><button type="button" role="radio" aria-checked="false" data-v="codex">Codex</button><button type="button" role="radio" aria-checked="false" data-v="opencode">opencode</button><button type="button" role="radio" aria-checked="false" data-v="antigravity">Antigravity</button>
@@ -910,7 +927,7 @@ let composerGroup = null;
 
 function parseRoute() {
   if (location.hash === NETWORK_HASH) return { session: null, group: null, network: true, page: "network" };
-  if (location.hash === APPROVALS_HASH) return { session: null, group: null, page: "approvals" };
+  if (location.hash.split("?")[0] === APPROVALS_HASH) return { session: null, group: null, page: "approvals" };
   if (location.hash === DECISIONS_HASH) return { session: null, group: null, page: "decisions" };
   if (location.hash === SEARCH_HASH) return { session: null, group: null, page: "search" };
   const m = /^#\\/s\\/([^/]+)(?:\\/(.+))?$/.exec(location.hash);
@@ -2431,12 +2448,89 @@ $("scrim").addEventListener("click", () => setSidebar(false));
 try { if (localStorage.getItem(SIDE_COLLAPSED_KEY) === "1" && !narrow()) $("app").classList.add("collapsed"); } catch {}
 
 /* ---- Waiting for you: subagent approval requests (GET/POST /api/approvals, docs/approval-api.md) ---- */
-let approvals = [], apLoadedAt = 0, apLoading = false, apFirstLoad = true, lastApKey = "";
+let approvals = [], questionHistory = [], apFilter = "all", apLoadedAt = 0, apLoading = false, apFirstLoad = true, lastApKey = "";
 /** Typed reasons survive refreshes; answers stay visible for a while after their request is gone. */
 const apDrafts = new Map(), apResults = new Map(), apBusy = new Set(), apSeen = new Set();
 const AP_RESULT_KEEP_MS = 5 * 60_000;
 
 const approvalJob = (a) => { const g = model && [...model.groups.values()].find((x) => x.job === a.job); return (g && g.title) || a.job; };
+
+let qSettings = { sound:true, toast:true, reminderMinutes:15 }, qAudio = null, qHeartbeatBusy = false, qFocused = "";
+const qTab = crypto.randomUUID(), qAlertSeen = new Set(), qHighlighted = new Set();
+document.addEventListener("pointerdown", () => {
+  const Audio = window.AudioContext || window.webkitAudioContext;
+  if (!Audio) return;
+  qAudio ||= new Audio(); void qAudio.resume().then(() => { $("questionAudioHint").textContent = "Sound ready"; });
+});
+function questionChime() {
+  if (!qSettings.sound || !qAudio || qAudio.state !== "running") return;
+  const at = qAudio.currentTime;
+  [660,880].forEach((frequency,i) => { const tone=qAudio.createOscillator(), gain=qAudio.createGain();
+    tone.type="sine"; tone.frequency.value=frequency; gain.gain.setValueAtTime(0,at+i*.12);
+    gain.gain.linearRampToValueAtTime(.08,at+i*.12+.025); gain.gain.exponentialRampToValueAtTime(.001,at+i*.12+.24);
+    tone.connect(gain); gain.connect(qAudio.destination); tone.start(at+i*.12); tone.stop(at+i*.12+.25); });
+}
+async function questionHeartbeat() {
+  if (qHeartbeatBusy) return; qHeartbeatBusy=true;
+  try {
+    const r=await fetch("/api/dashboard/heartbeat",{method:"POST",headers:{"content-type":"application/json","x-agent-bridge":"1"},body:JSON.stringify({tab:qTab,visible:!document.hidden})});
+    if (!r.ok) return; const data=await r.json(); qSettings=data.settings; showQuestionSettings();
+    for (const alert of data.alerts || []) {
+      const key=alert.id+":"+alert.at; if (qAlertSeen.has(key)) continue; qAlertSeen.add(key);
+      qHighlighted.add(alert.id);
+      questionChime();
+      const card=document.getElementById("question-"+alert.id); if (card) card.classList.add("focused");
+      if (document.hidden && typeof Notification !== "undefined" && Notification.permission === "granted") {
+        const n=new Notification("A question needs your answer",{body:"Open agent-bridge to answer.",tag:"ab-question-"+alert.id});
+        n.onclick=() => { window.focus(); location.hash=APPROVALS_HASH+"?question="+alert.id; n.close(); };
+      }
+    }
+    const count=approvals.filter(a => a.kind === "question").length;
+    document.title=(count ? "("+count+") " : "")+"agent-bridge";
+  } catch {} finally { qHeartbeatBusy=false; }
+}
+function showQuestionSettings() {
+  $("questionSound").checked=qSettings.sound; $("questionToast").checked=qSettings.toast;
+  $("questionReminder").textContent="Blocking reminders: "+(qSettings.reminderMinutes ? qSettings.reminderMinutes+" min" : "off");
+}
+async function saveQuestionSettings() {
+  const r=await fetch("/api/questions/settings",{method:"POST",headers:{"content-type":"application/json","x-agent-bridge":"1"},body:JSON.stringify(qSettings)});
+  if (r.ok) { qSettings=await r.json(); showQuestionSettings(); }
+}
+function questionCard(q) {
+  const busy=apBusy.has(q.id), open=q.status === "open", disabled=busy ? " disabled" : "";
+  return '<article class="ap-card question-card'+(qHighlighted.has(q.id) ? ' focused' : '')+'" id="question-'+esc(q.id)+'"><div class="q-kind">OWNER QUESTION · '+esc(q.status)+'</div>'+
+    '<h3>'+esc(q.title)+'</h3><div class="small muted">'+esc(folder(q.project))+" · "+q.askers.map(a => esc(a.session+(a.job ? " / "+a.job : ""))).join(", ")+'</div>'+
+    '<p class="q-context">'+esc(q.context)+'</p><p><b>'+ (q.blocking ? "Blocking: "+esc(q.blocks) : "Non-blocking")+'</b><br>Meanwhile: '+esc(q.meanwhile)+'</p>'+
+    '<div class="small muted">Affected projects: '+q.affectedProjects.map(p => esc(folder(p))).join(", ")+'</div>'+
+    q.links.map(l => '<div class="small"><b>'+esc(l.kind)+':</b> '+(l.kind === "issue" && q.deskProject ? '<a class="link" href="http://127.0.0.1:8765/#/'+encodeURIComponent(q.deskProject)+'/'+encodeURIComponent(l.value)+'" target="_blank" rel="noopener">'+esc(l.value)+'</a>' : '<code>'+esc(l.value)+'</code>')+'</div>').join("")+
+    (open ? '<p class="small muted">'+(q.default ? 'Declared default: '+esc(q.default.option)+' after '+esc(new Date(q.default.deadline).toLocaleString())+'. This grants no tool permission.' : 'No answer means no decision. This stays visible until answered or explicitly dismissed.')+'</p>' : '')+
+    (open ? '<div class="q-options">'+[...q.options].sort((a,b) => Number(b.recommended)-Number(a.recommended)).map(o => '<button type="button" class="ghost '+(o.recommended ? 'recommended' : '')+'" data-q-option="'+esc(o.id)+'" data-id="'+esc(q.id)+'"'+disabled+'>'+esc(o.label)+(o.recommended ? ' · Recommended' : '')+'<small>'+esc(o.consequence)+'</small></button>').join("")+'</div>'+
+      '<div class="ap-actions"><input class="ap-why" data-q-text="'+esc(q.id)+'" maxlength="8000" placeholder="Your answer, or a dismissal reason" aria-label="Free-text answer"><button class="ghost" data-q-send="'+esc(q.id)+'"'+disabled+'>Send answer</button></div>'+
+      '<div class="ap-actions"><label class="toggle"><input type="checkbox" data-q-pin="'+esc(q.id)+'"><span class="track" aria-hidden="true"></span>This is a lasting rule · pin as decision</label><button class="ghost" data-q-scope="'+esc(q.id)+'">'+(apDrafts.get("scope:"+q.id) === "all" ? "Scope: all projects" : "Scope: this project")+'</button><button class="ghost" data-q-cancel="'+esc(q.id)+'"'+disabled+'>Dismiss with reason</button></div>' :
+      q.answer ? '<p class="q-context"><b>Answer:</b> '+esc(q.answer.text)+'</p><p class="small muted">'+esc(q.answer.author.name)+' · '+esc(new Date(q.answer.at).toLocaleString())+' · '+esc(q.answer.source)+(q.answer.decisionId ? ' · Decision '+esc(q.answer.decisionId) : '')+'</p>'+q.deliveries.map(d => '<p class="small">'+esc(d.recipient)+': '+esc(d.readAt ? "read "+new Date(d.readAt).toLocaleString() : d.state)+'. '+esc(d.detail)+'</p>').join("")+(q.mirror ? '<p class="small muted">Pair Desk mirror: '+esc(q.mirror.state+(q.mirror.detail ? " · "+q.mirror.detail : ""))+'</p>' : '') : '<p>'+esc(q.dismissal && q.dismissal.reason || '')+'</p>')+
+    '<div class="small muted">'+esc(q.id)+' · An answer is not tool permission or implementation acceptance.</div></article>';
+}
+function focusQuestion() {
+  const id=new URLSearchParams(location.hash.split("?")[1] || "").get("question");
+  if (!id || id === qFocused) return;
+  const card=document.getElementById("question-"+id); if (!card) return;
+  card.classList.add("focused"); card.scrollIntoView({block:"center"}); const first=card.querySelector("button,input"); if (first) first.focus(); qFocused=id;
+}
+async function answerQuestion(id, option, dismiss) {
+  const q=approvals.find(a => a.id === id); if (!q || apBusy.has(id)) return;
+  const text=apDrafts.get("q:"+id) || "";
+  if (!option && !text.trim()) { apResults.set(id,{kind:"err",text:dismiss ? "Write a dismissal reason first." : "Write your answer first.",at:Date.now()}); renderApprovals(); return; }
+  const payload=dismiss ? {status:"cancelled",reason:text} : option ? {option} : {text};
+  if (!dismiss && apDrafts.get("pin:"+id)) payload.pin={topic:q.topic,scope:apDrafts.get("scope:"+id) === "all" ? "all" : {project:q.project}};
+  apBusy.add(id); renderApprovals();
+  try {
+    const r=await fetch("/api/questions/"+encodeURIComponent(id)+(dismiss ? "/dismiss" : ""),{method:"POST",headers:{"content-type":"application/json","x-agent-bridge":"1"},body:JSON.stringify(payload)});
+    const data=await r.json(); apResults.set(id,{kind:r.ok ? "ok" : "err",text:r.ok ? (dismiss ? "Dismissed: " : "Answer saved: ")+q.title : data.error || "Answer failed",at:Date.now()});
+    if (r.ok) apDrafts.delete("q:"+id);
+  } catch (error) { apResults.set(id,{kind:"err",text:"Answer unconfirmed. Refresh before retrying: "+error.message,at:Date.now()}); }
+  finally { apBusy.delete(id); await loadApprovals(); renderApprovals(); }
+}
 
 async function loadApprovals() {
   if (apLoading) return;
@@ -2444,7 +2538,9 @@ async function loadApprovals() {
   try {
     const r = await fetch("/api/approvals");
     if (r.ok) {
-      approvals = (await r.json()).approvals || [];
+      const data = await r.json(); approvals = data.approvals || []; questionHistory = data.questions || [];
+      const focusId=new URLSearchParams(location.hash.split("?")[1] || "").get("question");
+      if (focusId && questionHistory.some(q => q.id === focusId && q.status !== "open")) apFilter="history";
       notifyNewApprovals();
     }
   } catch {
@@ -2461,7 +2557,7 @@ async function loadApprovals() {
 
 /** A browser notification for requests that arrive while this tab is in the background (once allowed). */
 function notifyNewApprovals() {
-  const fresh = approvals.filter((a) => !apSeen.has(a.id));
+  const fresh = approvals.filter((a) => a.kind !== "question" && !apSeen.has(a.id));
   for (const a of approvals) apSeen.add(a.id);
   if (apFirstLoad) { apFirstLoad = false; return; }
   if (!fresh.length || typeof Notification === "undefined" || Notification.permission !== "granted" || !document.hidden) return;
@@ -2472,6 +2568,7 @@ function notifyNewApprovals() {
 }
 
 function approvalCard(a) {
+  if (a.kind === "question") return questionCard(a);
   const left = a.deadline - Date.now(), busy = apBusy.has(a.id);
   return '<div class="ap-card">' +
     '<div class="ap-head">' + av(a.agent) + '<div class="grow"><b class="ell">' + esc(approvalJob(a)) + '</b><div class="small muted ell">' + esc(a.agent + " subagent of " + a.owner) + "</div></div>" +
@@ -2488,21 +2585,27 @@ function renderApprovals() {
   for (const [id, r] of apResults) if (Date.now() - r.at > AP_RESULT_KEEP_MS) apResults.delete(id);
   const open = new Set(approvals.map((a) => a.id));
   const done = [...apResults].filter(([id]) => !open.has(id));
-  const key = JSON.stringify([approvals.map((a) => a.id + ":" + approvalJob(a)), [...apResults].map(([id, r]) => id + r.text), [...apBusy]]);
+  const items = apFilter === "history" ? questionHistory.filter(q => q.status !== "open") : approvals.filter(a => apFilter === "all" || (a.kind || "permission") === apFilter);
+  const shown=new Set(items.map(a => a.id));
+  for (const tab of $("apFilters").querySelectorAll("button")) tab.setAttribute("aria-pressed",String(tab.dataset.apFilter === apFilter));
+  const key = JSON.stringify([items,apFilter, [...apResults].map(([id, r]) => id + r.text), [...apBusy]]);
   updateNotifyButton();
   if (key === lastApKey) return;
   lastApKey = key;
-  $("apList").innerHTML = (approvals.length
-    ? approvals.map((a) => approvalCard(a) + (apResults.has(a.id) ? '<div class="note err ap-note">' + esc(apResults.get(a.id).text) + "</div>" : "")).join("")
+  $("apList").innerHTML = (items.length
+    ? items.map((a) => approvalCard(a) + (apResults.has(a.id) ? '<div class="note '+apResults.get(a.id).kind+' ap-note">' + esc(apResults.get(a.id).text) + "</div>" : "")).join("")
     : '<div class="panel empty">Nothing is waiting for you. Requests appear here the moment a subagent asks.</div>') +
-    (done.length ? '<div class="ap-done">' + done.map(([, r]) => '<div class="note ' + r.kind + '">' + esc(r.text) + "</div>").join("") + "</div>" : "");
+    (done.length ? '<div class="ap-done">' + done.filter(([id]) => !shown.has(id)).map(([, r]) => '<div class="note ' + r.kind + '">' + esc(r.text) + "</div>").join("") + "</div>" : "");
   // Re-rendering replaced the inputs: put back what was typed.
   for (const input of $("apList").querySelectorAll("[data-ap-why]")) input.value = apDrafts.get(input.dataset.apWhy) || "";
+  for (const input of $("apList").querySelectorAll("[data-q-text]")) input.value = apDrafts.get("q:" + input.dataset.qText) || "";
+  for (const input of $("apList").querySelectorAll("[data-q-pin]")) input.checked = apDrafts.get("pin:" + input.dataset.qPin) || false;
+  focusQuestion();
 }
 
 function renderApprovalBanner() {
   const n = approvals.length;
-  setHtml("ovAttn", n ? '<a class="attn-banner" href="' + APPROVALS_HASH + '"><span class="attn-mark" aria-hidden="true">!</span><span><b>' + n + " subagent" + (n === 1 ? " is" : "s are") + " waiting for your approval.</b> Unanswered requests count as deny when their time runs out.</span><span class=\\"attn-go\\">Review</span></a>" : "");
+  setHtml("ovAttn", n ? '<a class="attn-banner" href="' + APPROVALS_HASH + '"><span class="attn-mark" aria-hidden="true">!</span><span><b>' + n + ' item' + (n === 1 ? '' : 's') + ' waiting for you.</b> Questions need answers; permissions need allow or deny.</span><span class="attn-go">Review</span></a>' : "");
 }
 
 function updateNotifyButton() {
@@ -2575,8 +2678,21 @@ function renderDecisions() {
     : '<div class="empty">' + (q ? "No decision matches." : "No decisions yet. When you settle something, ask a session to record it with the decide tool, and every session will see it.") + "</div>");
 }
 
-$("apList").addEventListener("input", (e) => { const id = e.target.dataset && e.target.dataset.apWhy; if (id) apDrafts.set(id, e.target.value); });
-$("apList").addEventListener("click", (e) => { const b = e.target.closest("[data-ap-act]"); if (b) void answerApproval(b.dataset.id, b.dataset.apAct); });
+$("apList").addEventListener("input", (e) => { const d=e.target.dataset || {}; if (d.apWhy) apDrafts.set(d.apWhy,e.target.value); if (d.qText) apDrafts.set("q:"+d.qText,e.target.value); if (d.qPin) apDrafts.set("pin:"+d.qPin,e.target.checked); });
+$("apList").addEventListener("click", (e) => {
+  const b=e.target.closest("button"); if (!b) return; const d=b.dataset;
+  if (d.apAct) void answerApproval(d.id,d.apAct);
+  if (d.qOption) void answerQuestion(d.id,d.qOption,false);
+  if (d.qSend) void answerQuestion(d.qSend,null,false);
+  if (d.qCancel) void answerQuestion(d.qCancel,null,true);
+  if (d.qScope) { apDrafts.set("scope:"+d.qScope,apDrafts.get("scope:"+d.qScope) === "all" ? "project" : "all"); lastApKey=""; renderApprovals(); }
+});
+$("apFilters").addEventListener("click",e => { const b=e.target.closest("[data-ap-filter]"); if (!b) return; apFilter=b.dataset.apFilter; for (const tab of $("apFilters").querySelectorAll("button")) tab.setAttribute("aria-pressed",String(tab === b)); renderApprovals(); });
+$("questionSound").addEventListener("change",() => { qSettings.sound=$("questionSound").checked; void saveQuestionSettings(); });
+$("questionToast").addEventListener("change",() => { qSettings.toast=$("questionToast").checked; void saveQuestionSettings(); });
+$("questionReminder").addEventListener("click",() => { const values=[0,15,30,60]; qSettings.reminderMinutes=values[(values.indexOf(qSettings.reminderMinutes)+1)%values.length]; void saveQuestionSettings(); });
+document.addEventListener("visibilitychange",() => void questionHeartbeat());
+setInterval(() => void questionHeartbeat(),3000); void questionHeartbeat();
 $("notifyBtn").addEventListener("click", async () => { try { await Notification.requestPermission(); } catch {} updateNotifyButton(); });
 $("decFilter").addEventListener("input", () => { clearTimeout(decTimer); decTimer = setTimeout(() => { decHistory.clear(); void loadDecisions(); }, DECISION_SEARCH_DELAY_MS); });
 $("decList").addEventListener("click", async (e) => {
@@ -2714,7 +2830,7 @@ function renderTransfers() {
 /* ---- Search history (GET /api/search, /api/history/<id>, docs/history-search.md) ---- */
 let searchResult = null, searchBusy = false;
 const searchSources = new Map();
-const KIND_LABEL = { message: "message", run: "subagent run", decision: "decision", transcript: "chat" };
+const KIND_LABEL = { message: "message", run: "subagent run", question:"question", decision: "decision", transcript: "chat" };
 const SEARCH_EXAMPLES = ["friend list decision", "Library junction", "build failed", "pairing code"];
 function renderSearch() {
   if (searchBusy) return setHtml("sResults", '<div class="panel empty">Searching…</div>');
