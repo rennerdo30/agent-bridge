@@ -9,6 +9,8 @@ import { ENV, PROTOCOL_VERSION } from "../src/core/constants.js";
 import { commitHandoff } from "../src/core/job-handoff.js";
 import { nullLogger } from "../src/core/logger.js";
 import { isInternalBridgeProcess, isPluginCacheCwd } from "../src/core/session-visibility.js";
+import { canonicalProjectRoot } from "../src/core/project-identity.js";
+import { sessionStartContext } from "../src/cli/session-start-hook.js";
 import { MessageStore } from "../src/core/store.js";
 import { loadOrCreateToken } from "../src/core/token.js";
 import type { PeerInfo } from "../src/core/protocol.js";
@@ -22,6 +24,7 @@ const peer = (cwd: string, name = "background"): PeerInfo => ({ id: name, name, 
 
 it.each(caches)("recognizes cache folder %s across path separators and case", (cwd) => {
   expect(isPluginCacheCwd(cwd)).toBe(true);
+  expect(canonicalProjectRoot(cwd)).toBeNull();
   expect(isPluginCacheCwd(cwd.toUpperCase().replaceAll("/", "\\"))).toBe(true);
   expect(isPluginCacheCwd(`${cwd}/sub/../dist`)).toBe(true);
 });
@@ -71,7 +74,16 @@ it("hides old-broker ghosts on every refresh and excludes chat and handoff targe
   const real = peer(env.home, "real"), ghost = peer(caches[0]!);
   expect(classifyPeers([real, ghost], [], env.home).map((p) => p.name)).toEqual(["real"]);
   expect(classifyPeers([real], [], env.home).map((p) => p.name)).toEqual(["real"]);
+  expect(sessionStartContext("real", [real, ghost])).not.toContain("background");
   const response = await readDashboard({ home: env.home, log: nullLogger, peers: () => [ghost] }, { path: "/api/sessions/background/chat" });
   expect(response.status).toBe(404);
   expect(() => commitHandoff(join(env.home, "jobs.json"), real, ghost, { to: ghost.name })).toThrow("target must");
+});
+
+it("filters ghosts returned by an older broker from the peers tool", async () => {
+  const node = env.node("real");
+  await node.start();
+  const request = vi.spyOn(BridgeClient.prototype, "request").mockResolvedValue([peer(env.home, "real"), peer(caches[0]!)] as never);
+  try { expect((await node.peers()).map((p) => p.name)).toEqual(["real"]); }
+  finally { request.mockRestore(); }
 });

@@ -427,7 +427,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
   }
 
   peers(): Promise<PeerInfo[]> {
-    return this.withClient((c) => c.request("peers", {}));
+    return this.withClient((c) => c.request("peers", {})).then((peers) => peers.filter((p) => !isPluginCacheCwd(p.cwd)));
   }
 
   projectJobs(): Promise<Record<string, unknown>[]> { return this.withClient((c) => c.request("projectJobs", {})); }
