@@ -5,7 +5,7 @@ import { nullLogger } from "../src/core/logger.js";
 import { buildHookResponse } from "../src/mcp/hooks.js";
 import { JobManager } from "../src/mcp/jobs.js";
 import { MessageWaitStore } from "../src/mcp/message-wait.js";
-import type { ServerContext } from "../src/mcp/server.js";
+import { registerTools, type ServerContext } from "../src/mcp/server.js";
 import { makeEnv, until, type TestEnv } from "./helpers.js";
 let env: TestEnv;
 beforeEach(() => { env = makeEnv(); });
@@ -52,4 +52,15 @@ it("retains a late parent inbox response and delivers it on the next hook", asyn
   await new Promise(resolve => setTimeout(resolve, 20));
   expect(JSON.stringify(await buildHookResponse(ctx, input))).toContain("LATE_PARENT");
   expect(inbox).toHaveBeenCalledTimes(1);
+});
+
+it("bounds metadata at the registered MCP hook entry", async () => {
+  const callbacks = new Map<string, (...args: any[]) => Promise<any>>();
+  const server = { registerTool: (name: string, _config: unknown, callback: any) => callbacks.set(name, callback) };
+  const ctx = context(null, { observeMeta: () => new Promise<void>(() => {}) });
+  registerTools(server as any, ctx, []);
+  const started = Date.now();
+  const response = await callbacks.get("hook_event")!({ event: "Stop" }, { signal: new AbortController().signal, _meta: {} });
+  expect(Date.now() - started).toBeLessThan(HOOK_BUDGET_MS + 500);
+  expect(response.content[0].text).toBe("{}");
 });

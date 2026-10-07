@@ -55619,8 +55619,6 @@ Saved settings: ${Object.entries(settings).map(([key2, value]) => `${key2}=${val
       }
     },
     async (a, extra) => {
-      if (ctx.node?.wasReplaced) await ctx.node.reclaim().catch((err) => log.warn("could not take the bridge back", { err: err.message }));
-      await ctx.observeMeta?.(extra._meta);
       const given = (v) => v && !v.startsWith("${") ? v : null;
       try {
         const out = await buildHookResponse(ctx, {
