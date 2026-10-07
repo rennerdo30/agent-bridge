@@ -32,6 +32,7 @@ import { readUsage, codexAppServerCall } from "../core/usage.js";
 import { t } from "../core/i18n.js";
 import { createLogger, type Logger } from "../core/logger.js";
 import { BridgeNode } from "../core/node.js";
+import { isInternalBridgeProcess, isPluginCacheCwd } from "../core/session-visibility.js";
 import { MAX_TRANSFER_ENTRIES } from "../network/files.js";
 import { NETWORK_NAME_PATTERN } from "../network/constants.js";
 import { remoteSpawnArgsSchema } from "../network/remote-job-protocol.js";
@@ -74,8 +75,6 @@ const CHANNEL_NOTIFICATION = "notifications/claude/channel";
 export const OPENCODE_NOTIFICATION = "notifications/agent-bridge/message";
 /** Experimental Codex capability: Codex then adds the sandbox state (incl. session cwd) to each tools/call _meta. */
 const CODEX_SANDBOX_META = "codex/sandbox-state-meta";
-/** How long to wait for a hook or tool call to reveal the project dir before joining the bridge anyway. */
-const CWD_DISCOVERY_GRACE_MS = 15_000;
 /** Subagent titles (ask_* / spawn_* `title`), like a chat title. */
 const MAX_TITLE_CHARS = 80;
 /** The tools a delegated subagent's server offers (see registerTools). */
@@ -235,7 +234,7 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
   const log = createLogger({ home, component: `mcp-${agent}` });
   const cwd = process.env.CLAUDE_PROJECT_DIR || process.cwd();
   // Codex starts plugin MCP servers inside the plugin folder; the project dir arrives later via hooks/_meta.
-  const cwdKnown = Boolean(process.env.CLAUDE_PROJECT_DIR) || !isInside(cwd, PLUGIN_ROOT);
+  const cwdKnown = !isPluginCacheCwd(cwd) && (Boolean(process.env.CLAUDE_PROJECT_DIR) || !isInside(cwd, PLUGIN_ROOT));
   let configCwd: string | undefined, configRoot: string | undefined;
   const projectConfigRoot = (dir: string): string | undefined => {
     if (dir !== configCwd) { configCwd = dir; configRoot = canonicalProjectRoot(dir) ?? undefined; }
@@ -243,9 +242,10 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
   };
   const cfg = loadConfig(home, agent, log, process.env, cwdKnown ? projectConfigRoot(cwd) : undefined);
   const delegated = currentDelegateDepth() > 0;
-  log.info("starting MCP server", { agent, cwd, cwdKnown, delegated, version: APP_VERSION, node: process.version });
+  const internal = isInternalBridgeProcess();
+  log.info("starting MCP server", { agent, cwd, cwdKnown, delegated, internal, version: APP_VERSION, node: process.version });
 
-  const node = delegated
+  const node = delegated || internal
     ? null
     : new BridgeNode({
         pipePath: resolvePipePath(home),
@@ -297,7 +297,7 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
     // Learn the project folder once, when it was unknown at start (Codex starts us in the plugin folder).
     // Later hook cwds follow the agent's `cd`s; renaming then would strand replies sent to the old name.
     ctx.learnCwd = async (projectDir) => {
-      if (cwdSettled || projectDir === node.cwd) return;
+      if (cwdSettled || projectDir === node.cwd || isPluginCacheCwd(projectDir)) return;
       cwdSettled = true;
       Object.assign(cfg,loadConfig(home,agent,log,process.env,canonicalProjectRoot(projectDir) ?? undefined));
       const name = cfg.name ? undefined : defaultPeerName(agent, projectDir);
@@ -513,10 +513,8 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
     } else if (cwdKnown) {
       void join();
     } else {
-      // Join as soon as a hook or tool call tells us the project dir (they connect on demand);
-      // join anyway after a grace period so the peer is reachable even without hooks.
-      log.info("project directory unknown yet; deferring bridge join", { graceMs: CWD_DISCOVERY_GRACE_MS });
-      setTimeout(() => void join(), CWD_DISCOVERY_GRACE_MS).unref();
+      // Hooks and tool metadata supply the real project. Validation-only hosts never join.
+      log.info("project directory unknown yet; waiting for host metadata before bridge join");
     }
   }
 }

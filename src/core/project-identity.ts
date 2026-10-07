@@ -1,11 +1,14 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import { isPluginCacheCwd } from "./session-visibility.js";
 
 /** The common Git directory identifies linked worktrees; physical paths unify subst aliases. */
 export function canonicalProjectRoot(cwd: string): string | null {
+  if (isPluginCacheCwd(cwd)) return null;
   try {
     const physical = realpathSync.native(cwd);
+    if (isPluginCacheCwd(physical)) return null;
     if (!statSync(physical).isDirectory()) return null;
     const git = (args: string[]) => execFileSync("git", ["-C", physical, "rev-parse", ...args],
       { encoding: "utf8", timeout: 3_000, windowsHide: true, stdio: ["ignore", "pipe", "ignore"] }).trim();
