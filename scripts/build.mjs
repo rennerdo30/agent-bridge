@@ -37,6 +37,9 @@ for (const rel of MANIFESTS) {
 for (const dir of PLUGIN_DIRS) {
   for (const [name, entry] of Object.entries(ENTRIES)) {
     await build({
+      absWorkingDir: ROOT,
+      // Shared read-only dependencies must have the same logical paths as CI's local cache.
+      preserveSymlinks: true,
       entryPoints: [join(ROOT, entry)],
       outfile: join(ROOT, dir, "dist", `${name}.mjs`),
       bundle: true,
@@ -56,6 +59,8 @@ for (const dir of PLUGIN_DIRS) {
 
 // The opencode plugin runs inside opencode (Bun) and spawns dist/server.mjs with Node.
 await build({
+  absWorkingDir: ROOT,
+  preserveSymlinks: true,
   entryPoints: [join(ROOT, "src/opencode/plugin.ts")],
   outfile: join(ROOT, "plugins/opencode/dist/agent-bridge.js"),
   bundle: true,
