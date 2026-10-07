@@ -220,3 +220,12 @@ The upgrade fixture preserves the full 0.29.10 schema and synthetic messages,
 peer registrations, session identity, decisions and an unknown user table.
 Future schema integration must keep that data and its versioned backup readable.
 No schema bump or destructive data operation is introduced by this lane.
+
+## Durable conversation ingestion
+
+The conversation-storage lane moves history scanning and SQLite/FTS ingestion to
+one elected background worker. It adds bounded raw chunks, cached transcript
+headers, source offsets, watch prioritization and project replicas. The AB-121
+measurements above predate that lane and are not measurements of its throughput.
+See [conversation-storage.md](conversation-storage.md) for budgets and capture
+semantics. The retained corpus is append-only; no purge or VACUUM policy changed.

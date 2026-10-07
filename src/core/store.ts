@@ -9,13 +9,14 @@ import { storageLease } from "./storage-lock.js";
 import { backupIfDue, BACKUP_INTERVAL_ENV, DEFAULT_BACKUP_INTERVAL_MS } from "./backups.js";
 import { retentionLimit } from "./json-store.js";
 import { historySchema } from "./history-schema.js";
+import { CONVERSATION_MIGRATION } from "./conversation-schema.js";
 import { HistoryIndex } from "./history.js";
 import { DECISIONS_SCHEMA, DecisionStore } from "./decisions.js";
 import { configureSqlite, retrySqlite, SQLITE_BUSY_TIMEOUT_MS, SQLITE_REQUEST_BUSY_MS } from "./sqlite-policy.js";
 
 const BACKUP_CHECK_INTERVAL_MS = 60 * 60 * 1_000;
 
-export const SQLITE_STORE_VERSION = 7;
+export const SQLITE_STORE_VERSION = 8;
 
 /** Recipient key used while a message waits for "any peer of this agent kind". */
 export function agentQueueKey(agent: AgentKind): string {
@@ -89,6 +90,7 @@ const MIGRATIONS = [
     );
     PRAGMA user_version = 7;
   ` },
+  { version: 8, sql: CONVERSATION_MIGRATION },
 ] as const;
 
 export function registrationIdentity(peer: PeerInfo): string | null {
@@ -141,6 +143,7 @@ export class MessageStore {
   private backupTimer: ReturnType<typeof setInterval> | null = null;
   readonly decisions: DecisionStore;
   readonly history: HistoryIndex;
+  readonly file: string;
   private readonly stmt: {
     insert: StatementSync;
     unread: StatementSync;
@@ -153,6 +156,7 @@ export class MessageStore {
     file: string,
     private readonly log: Logger,
   ) {
+    this.file = file;
     const existed = file !== ":memory:" && existsSync(file);
     this.home = file === ":memory:" ? null : dirname(file);
     if (file !== ":memory:") mkdirSync(dirname(file), { recursive: true, mode: 0o700 }); // owner-only on Unix
