@@ -8,6 +8,8 @@ import { killPid, pidAlive } from "../src/core/delegate.js";
 import { nullLogger } from "../src/core/logger.js";
 import { BridgeNode } from "../src/core/node.js";
 import { resolveDbPath, resolvePipePath } from "../src/core/paths.js";
+import { listPendingApprovals } from "../src/core/relay.js";
+import { CONTROL_CONVERSATION_PREFIX } from "../src/mcp/job-host.js";
 import { loadOrCreateToken } from "../src/core/token.js";
 import { parentFromEnv } from "../src/core/parent-link.js";
 import { readRunnerState } from "../src/mcp/job-host.js";
@@ -381,6 +383,55 @@ describe.skipIf(!existsSync(SERVER))("background subagents in job runners", () =
     expect(await call(a, "wait_for_message", { from: job, timeout_sec: 30 })).toContain("failed");
     await waitFor(async () => (await call(a, "peers")).match(new RegExp(`${job} "Runner test": failed`)) !== null);
   }, TEST_TIMEOUT_MS);
+
+  it("continues a cancelled runner despite legacy cancellation mail", async () => {
+    const session = await startSession();
+    const first = await spawnHeld(session);
+    await call(session, "cancel_subagent", { job: first.job });
+    await waitFor(() => !pidAlive(first.pid));
+    await call(session, "wait_for_message", { from: first.job, timeout_sec: 10 });
+    await stopSession(session);
+    // An authorized legacy supervisor leaves cancellation mail for the stable job peer name.
+    const sender = new BridgeNode({ pipePath: resolvePipePath(home), token: loadOrCreateToken(home), dbPath: resolveDbPath(home), agent: "codex", name: SESSION, cwd: home, autoWake: false, log: nullLogger });
+    nodes.push(sender); await sender.start();
+    await sender.send({ to: first.job, body: JSON.stringify({ type: "cancel" }), conversationId: CONTROL_CONVERSATION_PREFIX + first.id });
+    await sender.stop();
+    const replacement = await startSession();
+    const release = join(home, "release-resumed"), link = release + ".link.json";
+    releases.push(release);
+    expect(await call(replacement, "message_subagent", { job: first.job, message: `release=${release} link=${link} Continue` })).toContain("Sent to");
+    await waitFor(() => existsSync(link));
+    const state = readRunnerState(home, first.id)!;
+    await new Promise(resolve => setTimeout(resolve, 5_100));
+    expect(pidAlive(state.pid)).toBe(true);
+    writeFileSync(release, "");
+    expect(await call(replacement, "wait_for_message", { from: first.job, timeout_sec: 10 })).toContain("fake answer: finished");
+    await waitFor(() => !pidAlive(state.pid));
+  });
+
+  it("delivers plain messages during a detached approval and requires an explicit decide", async () => {
+    const fake = FAKE_CLAUDE.replace('  const args = process.argv.slice(2);', `
+      if (/ask-approval/.test(prompt)) {
+        const response = await fetch(process.env.AGENT_BRIDGE_RELAY_URL, { method: "POST", headers: { authorization: "Bearer " + process.env.AGENT_BRIDGE_RELAY_TOKEN }, body: JSON.stringify({ agent: "claude", tool: "shell", detail: "test permission" }) });
+        const decision = await response.json();
+        if (!decision.allow) throw new Error("Unexpected denial");
+      }
+      const args = process.argv.slice(2);`);
+    writeFileSync(join(home, "bin", "fake-claude.mjs"), "#!/usr/bin/env node\n" + fake);
+    const session = await startSession();
+    const output = await call(session, "spawn_claude", { prompt: "ask-approval", title: "Approval test", access: "edit" });
+    const job = /claude-job-[a-f0-9]+/.exec(output)![0];
+    await waitFor(() => listPendingApprovals(home).length === 1);
+    const approval = listPendingApprovals(home)[0]!;
+    const response = await call(session, "message_subagent", { job, message: "Wind down now" });
+    expect(response).toContain("approval is still pending");
+    expect(listPendingApprovals(home)).toHaveLength(1);
+    expect(await call(session, "decide", { approval_id: approval.id, decision: "allow" })).toBe("Approval answered.");
+    await waitFor(() => listPendingApprovals(home).length === 0);
+    await waitFor(() => readRunnerState(home, job.split("-").at(-1)!)?.status === "done");
+    const calls = readFileSync(join(home, "bin", "calls.jsonl"), "utf8").trim().split("\n");
+    expect(calls).toHaveLength(2);
+  });
 
   it("marks a job interrupted when its runner died while the server was gone", async () => {
     const a = await startSession();

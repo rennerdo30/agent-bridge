@@ -23,13 +23,12 @@ and `wait_for_message` deliver its private child messages. A supervisor's Stop
 hook waits for children or asks it to cancel them before ending.
 
 Approvals first go to the direct parent. If the decision requires the owner, that
-parent sends `message_subagent(job=<child>, message="escalate")`. This forwards the
+parent calls `decide(approval_id=<request>, decision="escalate")`. This forwards the
 same AB-81 pending request up the parent links; it does not allow or deny it.
 Blocking nested `ask_*` calls escalate automatically because the direct parent
-cannot answer while blocked. The top supervisor can answer with `message_subagent`
-using the descendant's exact job name and `allow` or `deny`; the dashboard answers
+cannot answer while blocked. The top supervisor can answer with `decide(approval_id=<request>, decision="allow" or "deny")`; the dashboard answers
 the same callback. First answer wins. Timeouts, cancellation and completion deny
-and remove unresolved waits.
+and remove unresolved waits. Plain messages remain instructions, even during an approval wait.
 
 New run metadata and `/api/state.runs[]` add these fields:
 
