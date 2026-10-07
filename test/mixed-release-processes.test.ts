@@ -20,10 +20,10 @@ it("keeps real 14/16 MCP processes talking on SQLite7, then publishes SQLite8 af
   // Read the released artifact from Git, never from a live plugin cache or an install command.
   writeFileSync(oldServer, execFileSync("git", ["show", "v0.29.14:plugins/codex/dist/server.mjs"], { cwd: join(import.meta.dirname, ".."), maxBuffer: 20 * 1024 * 1024 }));
   const clients: Client[] = [];
-  const env = { ...process.env, AGENT_BRIDGE_HOME: home, AGENT_BRIDGE_DELIVERY: "hooks", AGENT_BRIDGE_DASHBOARD: "off", CLAUDE_CONFIG_DIR: join(home, "claude"), CODEX_HOME: join(home, "codex"), XDG_DATA_HOME: home } as Record<string, string>;
-  delete env.AGENT_BRIDGE_PLUGIN_RUNTIME_HOME;
-  delete env.AGENT_BRIDGE_LAUNCH_PLUGIN_ROOT;
-  delete env.AGENT_BRIDGE_PARENT_JOB;
+  const env = { ...process.env } as Record<string, string>;
+  // Test workers must never inherit a delegated job's live supervisor link or runtime selector.
+  for (const key of Object.keys(env)) if (key.startsWith("AGENT_BRIDGE_")) delete env[key];
+  Object.assign(env, { AGENT_BRIDGE_HOME: home, AGENT_BRIDGE_DELIVERY: "hooks", AGENT_BRIDGE_DASHBOARD: "off", CLAUDE_PROJECT_DIR: home, CLAUDE_CONFIG_DIR: join(home, "claude"), CODEX_HOME: join(home, "codex"), XDG_DATA_HOME: home });
   const start = async (file: string, name: string, agent: string) => {
     const client = new Client({ name: `test-${name}`, version: "1" });
     clients.push(client);
