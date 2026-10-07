@@ -100,7 +100,7 @@ describe("nested delegation", () => {
     const client = await connect(nestedContext());
     const names = (await client.listTools()).tools.map((tool) => tool.name);
     for (const name of ["spawn_claude", "ask_claude", "message_subagent", "cancel_subagent", "inbox", "wait_for_message"]) expect(names).toContain(name);
-    for (const name of ["auto_wake", "max_subagents", "decide", "send_files"]) expect(names).not.toContain(name);
+    for (const name of ["auto_wake", "max_subagents", "send_files"]) expect(names).not.toContain(name);
     vi.stubEnv("AGENT_BRIDGE_DELEGATE_DEPTH", "2");
     const leaf = await connect(nestedContext());
     expect((await leaf.listTools()).tools.map((tool) => tool.name)).not.toContain("spawn_claude");
@@ -144,7 +144,8 @@ describe("nested delegation", () => {
     await until(() => listPendingApprovals(home).length === 1);
     expect(ctx.childInbox!.unread()[0]!.body).toContain("asks for approval");
     expect(escalation).not.toHaveBeenCalled();
-    expect(ctx.jobs!.followUp(tracked.job.name, "escalate").outcome).toBe("answered");
+    const client = await connect(ctx);
+    expect(textOf(await client.callTool({ name: "decide", arguments: { approval_id: listPendingApprovals(home)[0]!.id, decision: "escalate" } }))).toContain("escalated");
     expect(escalation).toHaveBeenCalledOnce();
     const [entry] = listPendingApprovals(home);
     expect(entry).toMatchObject({ owner: ROOT_NAME, parentJob: PARENT_JOB, rootSession: ROOT });
@@ -159,7 +160,7 @@ describe("nested delegation", () => {
     const tracked = ctx.jobs!.track("claude", null, "review");
     const waiting = ctx.jobs!.askParent(tracked.job, "Need owner", 30_000);
     await until(() => escalation.mock.calls.length === 1);
-    ctx.jobs!.followUp(tracked.job.name, "deny: out of scope");
+    await answerPendingApproval(home, listPendingApprovals(home)[0]!.id, { decision: "deny", reason: "out of scope" });
     expect(await waiting).toEqual({ allow: false, reason: "deny: out of scope" });
     expect(listPendingApprovals(home)).toEqual([]); tracked.end();
   });
@@ -169,25 +170,43 @@ describe("nested delegation", () => {
     const tracked = ctx.jobs!.track("claude", null, "review"); tracked.job.foreground = false;
     const waiting = ctx.jobs!.askParent(tracked.job, "Need owner", 30_000);
     await until(() => listPendingApprovals(home).length === 1);
-    ctx.jobs!.followUp(tracked.job.name, "escalate");
+    tracked.job.pendingApproval!("escalate");
     expect(tracked.job.pendingApproval).toBeTypeOf("function");
-    ctx.jobs!.followUp(tracked.job.name, "deny: owner no longer needed");
+    await answerPendingApproval(home, listPendingApprovals(home)[0]!.id, { decision: "deny", reason: "owner no longer needed" });
     expect(await waiting).toEqual({ allow: false, reason: "deny: owner no longer needed" }); tracked.end();
   });
 
-  it("answers a descendant approval from the top supervisor's message_subagent tool", async () => {
+  it("answers a descendant approval from the top supervisor's explicit decide tool", async () => {
     const ctx = nestedContext(); const tracked = ctx.jobs!.track("claude", null, "review"); tracked.job.foreground = false;
     const waiting = ctx.jobs!.askParent(tracked.job, "Need owner", 30_000);
     await until(() => listPendingApprovals(home).length === 1);
-    ctx.jobs!.followUp(tracked.job.name, "escalate");
+    tracked.job.pendingApproval!("escalate");
     const top = new LocalCoordinator(ROOT_NAME, ROOT);
     // This control-only stand-in does not deliver independent-session notifications.
-    Object.assign(top, { setNotificationWaitHandlers: vi.fn() });
+    Object.assign(top, { setNotificationWaitHandlers: vi.fn(), jobAuthority: vi.fn(async () => tracked.job) });
     const topJobs = new JobManager(top, nullLogger, join(home, "jobs.json"), 2); managers.push(topJobs);
     const client = await connect({ ...ctx, agent: "claude", node: top as unknown as BridgeNode, jobs: topJobs, childInbox: undefined, parent: null });
     expect(topJobs.find(tracked.job.name)).toBeUndefined();
-    expect(textOf(await client.callTool({ name: "message_subagent", arguments: { job: tracked.job.name, message: "allow: owner approved" } }))).toBe("Nested approval answered.");
+    expect(textOf(await client.callTool({ name: "decide", arguments: { approval_id: listPendingApprovals(home)[0]!.id, decision: "allow", reason: "owner approved" } }))).toBe("Approval answered.");
     expect(await waiting).toEqual({ allow: true, reason: "allow: owner approved" }); tracked.end();
+  });
+
+  it("requires current broker authority even when pending metadata names the caller", async () => {
+    const ctx = nestedContext();
+    const tracked = ctx.jobs!.track("opencode", null, "review"); tracked.job.foreground = false;
+    const waiting = ctx.jobs!.askParent(tracked.job, "Need owner", 30_000);
+    await until(() => listPendingApprovals(home).length === 1);
+    const top = new LocalCoordinator(ROOT_NAME, ROOT);
+    Object.assign(top, { setNotificationWaitHandlers: vi.fn(), jobAuthority: vi.fn(async () => null) });
+    const topJobs = new JobManager(top, nullLogger, join(home, "jobs.json"), 2); managers.push(topJobs);
+    const client = await connect({ ...ctx, agent: "claude", node: top as unknown as BridgeNode, jobs: topJobs, childInbox: undefined, parent: null });
+    const approval = listPendingApprovals(home)[0]!;
+    const denied = await client.callTool({ name: "decide", arguments: { approval_id: approval.id, decision: "allow" } });
+    expect(denied.isError).toBe(true);
+    expect(textOf(denied)).toContain("another supervisor");
+    expect(tracked.job.pendingApproval).toBeTypeOf("function");
+    await answerPendingApproval(home, approval.id, { decision: "deny" });
+    expect((await waiting).allow).toBe(false); tracked.end();
   });
 
   it("starts a queued continuation when a different generation releases root capacity", async () => {
@@ -217,12 +236,12 @@ describe("nested delegation", () => {
     const spawned = textOf(await client.callTool({ name: "spawn_claude", arguments: { prompt: "Review", title: "Nested review" } }));
     const name = /claude-job-[a-f0-9]+/.exec(spawned)![0];
     await until(() => listPendingApprovals(home).length === 1);
-    await client.callTool({ name: "message_subagent", arguments: { job: name, message: "allow" } });
+    await client.callTool({ name: "decide", arguments: { approval_id: listPendingApprovals(home)[0]!.id, decision: "allow" } });
     await until(() => ctx.jobs!.find(name)!.status === "done");
     expect(textOf(await client.callTool({ name: "inbox", arguments: {} }))).toContain("approved child result");
     await client.callTool({ name: "message_subagent", arguments: { job: name, message: "Review again" } });
     await until(() => listPendingApprovals(home).length === 1);
-    await client.callTool({ name: "message_subagent", arguments: { job: name, message: "deny" } });
+    await client.callTool({ name: "decide", arguments: { approval_id: listPendingApprovals(home)[0]!.id, decision: "deny" } });
     await until(() => ctx.jobs!.find(name)!.status === "done");
     expect(textOf(await client.callTool({ name: "wait_for_message", arguments: { from: name, timeout_sec: 1 } }))).toContain("denied child result");
     cancelMode = true;
