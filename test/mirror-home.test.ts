@@ -41,6 +41,11 @@ it('marks previously mixed fixture snapshots without removing or modifying their
     const page = readConversation(db, { id: 'fixture' });
     expect(page.records[0]).toMatchObject({ foreignHome: true, text, raw: Buffer.from(text).toString('base64') });
     expect(db.prepare('SELECT raw FROM conversation_records').get()!.raw).toEqual(new Uint8Array(Buffer.from(text)));
+    for (const name of ['claude-e2e', 'codex-e2e', 'antigravity-e2e']) {
+      const raw = JSON.stringify({ from_name: name, body: 'fixture mail' });
+      expect(foreignMirrorRecord('messages:fixture:recipient', raw)).toBe(true);
+      expect(foreignMirrorRecord('owner-transcript', raw)).toBe(false);
+    }
     expect(foreignMirrorRecord('owner-transcript', text)).toBe(false);
     expect(foreignMirrorRecord(source, JSON.stringify({ workdir: root, prompt: text }))).toBe(false);
   } finally { store.close(); }
