@@ -32,7 +32,9 @@ process.stdin.on('end',async()=>{
 });
 afterEach(async () => {
   for (const file of releases.splice(0)) writeFileSync(file, "");
-  for (const id of ids.splice(0)) { const pid = readRunnerState(env.home, id)?.pid; if (pid && pidAlive(pid)) killPid(pid); }
+  const runnerPids = ids.splice(0).map((id) => readRunnerState(env.home, id)?.pid).filter((pid): pid is number => Boolean(pid));
+  for (const pid of runnerPids) if (pidAlive(pid)) killPid(pid);
+  await until(() => runnerPids.every((pid) => !pidAlive(pid)), 5_000);
   for (const client of clients.splice(0)) await client.close();
   await env.cleanup();
 });
