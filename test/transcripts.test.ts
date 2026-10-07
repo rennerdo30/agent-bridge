@@ -171,10 +171,12 @@ describe("OpenCode SQLite transcripts", () => {
   });
   it("bounds large SQLite pages, skips oversized parts and continues to later records", () => {
     const db = new DatabaseSync(fixture.sqlite);
+    db.exec("BEGIN");
     db.exec("DELETE FROM part");
     const insert = db.prepare("INSERT INTO part VALUES (?, 'msg_1', 'ses_child', ?, ?, ?)");
     insert.run("prt_huge", 1791277200000, 1791277200000, JSON.stringify({ type: "text", text: "x".repeat(MAX_TRANSCRIPT_CHUNK_BYTES + 1) }));
     for (let i = 1; i <= 220; i++) insert.run(`prt_${String(i).padStart(3, "0")}`, 1791277200000 + i, 1791277200000 + i, JSON.stringify({ type: "text", text: `Answer ${i}` }));
+    db.exec("COMMIT");
     db.close();
     const first = readOpencodeChat(opencode, fixture.paths)!;
     expect(first.items).toEqual([]);
