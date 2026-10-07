@@ -61,7 +61,7 @@ function migrateLocked(db: DatabaseSync, file: string, existed: boolean, target:
     // The savepoint restores schema first. Restore original table contents from the verified snapshot,
     // under the same writer lock, without replacing a database another reader has open.
     if (backup) {
-      const original = new DatabaseSync(backup, { readOnly: true });
+      const original = new DatabaseSync(backup, { readOnly: true, timeout: SQLITE_BUSY_TIMEOUT_MS });
       try {
         // Virtual tables and their shadows were restored by the savepoint. Never rewrite FTS internals.
         const tables = original.prepare("PRAGMA table_list").all().filter((r) => r.schema === "main" && r.type === "table" && !String(r.name).startsWith("sqlite_"));

@@ -247,9 +247,12 @@ var nullLogger = {
   child: () => nullLogger
 };
 
+// src/core/sqlite-policy.ts
+import { setTimeout as delay } from "node:timers/promises";
+var SQLITE_BUSY_TIMEOUT_MS = 3e3;
+
 // src/core/sqlite-maintenance.ts
 var ARCHIVE_DB_NAME = "archive.db";
-var SQLITE_BUSY_TIMEOUT_MS = 3e3;
 
 // src/core/migration-lock.ts
 import { randomUUID as randomUUID4 } from "node:crypto";
@@ -364,7 +367,7 @@ function migrateLocked(db2, file2, existed, target, migrations, log) {
   } catch (err) {
     db2.exec("ROLLBACK TO schema_migration");
     if (backup) {
-      const original = new DatabaseSync3(backup, { readOnly: true });
+      const original = new DatabaseSync3(backup, { readOnly: true, timeout: SQLITE_BUSY_TIMEOUT_MS });
       try {
         const tables = original.prepare("PRAGMA table_list").all().filter((r) => r.schema === "main" && r.type === "table" && !String(r.name).startsWith("sqlite_"));
         for (const row of tables) {
@@ -22104,7 +22107,7 @@ function tick(reset = false) {
   const work = result.work + ingest.tick();
   return { work, discovering: result.discovering || ingest.discovering };
 }
-function schedule(delay = HISTORY_TICK_MS) {
+function schedule(delay2 = HISTORY_TICK_MS) {
   timer = setTimeout(() => {
     try {
       const result = tick();
@@ -22113,7 +22116,7 @@ function schedule(delay = HISTORY_TICK_MS) {
       parentPort?.postMessage({ error: String(err) });
       schedule();
     }
-  }, delay);
+  }, delay2);
 }
 parentPort?.on("message", (message) => {
   if (message.stop) {

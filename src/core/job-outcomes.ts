@@ -95,7 +95,7 @@ function resultDelivery(home: string, job: OutcomeJob, before: number): JobOutco
     if (!existsSync(file)) continue;
     let db: DatabaseSync | undefined;
     try {
-      db = new DatabaseSync(file, { readOnly: true });
+      db = new DatabaseSync(file, { readOnly: true, timeout: 50 });
       for (const table of ["messages", "archived_messages"]) {
         if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(table)) continue;
         rows.push(...db.prepare(`SELECT id, recipient, body, created_at, read_at FROM ${table}

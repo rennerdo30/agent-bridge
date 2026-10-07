@@ -187,3 +187,70 @@ headers, source offsets, watch prioritization and project replicas. The AB-121
 measurements above predate that lane and are not measurements of its throughput.
 See [conversation-storage.md](conversation-storage.md) for budgets and capture
 semantics. The retained corpus is append-only; no purge or VACUUM policy changed.
+## 0.29.15 load and bounded hook follow-up
+
+The AB-121 harness now supports `AB_PERF_JOBS=50`. Run it from existing dependencies:
+
+```powershell
+$env:AB_PERF_JOBS='50'
+$env:AB_PERF_SECONDS='20'
+node scripts/performance-run.mjs
+```
+
+Both 20-second runs used 50 synthetic jobs, 56 peers, 680 logs and 8,000 retained
+messages in a fresh home. Owner storage was never opened. Host load varies;
+these are survival checks, not a general throughput claim.
+
+| Measurement | 0.29.10 | Narrow 0.29.15 candidate |
+| --- | ---: | ---: |
+| Failed probes | 0 | 0 |
+| Peers p95 | 896 ms | 899 ms |
+| Direct send p95 | 899 ms | 897 ms |
+| Hook transport probe p95 | 1,680 ms | 1,293 ms |
+| Dashboard maximum | 2,989 ms | 1,622 ms |
+| Heartbeat during a controlled SQLite writer lock | 600 ms | 22 ms |
+| Peers during that lock | 601 ms | 15 ms |
+
+The hook transport probe measures authentication plus dashboard peer lookup,
+not the MCP Stop handler. A separate real MCP scenario used the installed
+0.29.14 Codex bundle against synthetic peers. After a direct send, Stop was still
+blocked when cancelled at 2,100 ms. The installed handler deliberately long-polled
+for up to 290,000 ms; this matches the reported five-minute delay without needing
+broker overload or transcript ingestion. The identical scenario with the new
+bundle returned in 2.3 ms. No owner hooks or unread messages were consumed.
+
+Hooks now share a 1,500 ms deadline across metadata, connection, replay and summary
+reads. Slow work defers mail to a later hook. A deadline rejects the continuation
+before it marks context mail read; late parent inbox responses remain buffered.
+Stop processes queued results immediately and arms one notify-mode subscription
+for running jobs, rather than polling. Existing wake delivery handles later replies.
+Permission and approval relay waits remain separate from mail hook deadlines.
+
+SQLite writers use WAL and busy timeouts. Broker mutations use short native waits
+and asynchronous retries, rechecking job ownership before writing. A delayed send
+no longer prevents peers from answering. Pending routing yields in bounded batches,
+imports retained delivery envelopes, preserves consumption journals and retries
+busy drains. Hook consumers refill backlogs exceeding the initial 500-row replay.
+Send retries reuse their deduplication key. Broadcasts queue saved offline local
+registrations and report delivery per recipient, preserving job ACL restrictions.
+
+Project identity resolution checks durable roots before launch-spec recovery.
+Authority configuration is cached by canonical root and agent only until the next
+microtask, preserving immediate opt-outs and malformed-setting rejection. Hosted
+poll batches avoid reloading ownership for every job. Hooks use cached job metadata
+and perform no transcript filesystem scanning.
+
+AB-129's historical 159 unread rows were quiet sibling observer copies. All real
+results recorded before that report already had read receipts, which prove bridge
+consumption rather than comprehension. Independent regressions verify final-result
+Stop delivery with auto-wake disabled and draining 550 results past 159 quiet copies.
+Observer notes stay available on demand and never enter supervisor context.
+Real MCP-plus-hook reconnect scenarios cover sibling isolation. Claude, Codex and
+opencode receive the same shared hook and backlog support.
+
+This release retains SQLite schema 7 and introduces no migration. The upgrade test
+loads the complete 0.29.10 schema, preserves mail, registrations, session identity,
+decisions and an unknown user table, and checks the existing readable schema-6
+backup. The 400-job JSON upgrade verifies retained unknown fields, one backup and
+idempotence. No user data is deleted. Conversation schema 8 and other feature lanes
+are intentionally released separately.

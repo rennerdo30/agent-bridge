@@ -1,4 +1,4 @@
-import { HOOK_MAX_MESSAGES, STOP_WAIT_CAP_MS } from "../core/constants.js";
+import { HOOK_MAX_MESSAGES, HOOK_BUDGET_MS } from "../core/constants.js";
 import { AGENT_KINDS, BROADCAST, isQuietMessage, type BridgeMessage } from "../core/protocol.js";
 import { formatMessages, formatParentMessages, formatPeer } from "./format.js";
 import { MessageWaitStore, resumeWaitHint } from "./message-wait.js";
@@ -21,6 +21,8 @@ export interface HookInput {
   cwd?: string | null;
   /** Aborted when the host cancels the hook call (e.g. the user interrupts). */
   signal?: AbortSignal;
+  /** Metadata work shares the hook deadline. */
+  prepare?: () => Promise<void>;
 }
 
 /** Same JSON shape as command-hook stdout; both hosts parse MCP-tool hook text identically. */
@@ -40,10 +42,13 @@ export function discardFinishedNotes(ctx: ServerContext): void {
   const node = ctx.node;
   if (!node) return;
   // A completed job's old status chatter is history, never a new instruction.
-  const obsolete = node.unread().filter((m) => {
+  const notes = node.unread().filter((m) => !isQuietMessage(m) && ctx.jobs?.isNote(m));
+  if (!notes.length) return;
+  const jobs = new Map(ctx.jobs?.hookJobs().map((job) => [job.name, job]));
+  const obsolete = notes.filter((m) => {
     if (isQuietMessage(m)) return false;
     if (!ctx.jobs?.isNote(m)) return false;
-    const job = ctx.jobs.find(m.from.name);
+    const job = jobs.get(m.from.name);
     return job !== undefined && !job.projectRoot && !job.deliveryHistory?.length && !job.ownershipHistory?.length && job.status !== "running";
   });
   node.markRead(obsolete.map((m) => m.id));
@@ -67,17 +72,21 @@ function take(ctx: ServerContext, wakeOnly: boolean, notesOnly = false): BridgeM
 }
 
 /** A delegated subagent: its parent's messages arrive over the parent link, not the bridge. */
+const parentReads = new WeakMap<ServerContext, Promise<Awaited<ReturnType<NonNullable<ServerContext["parent"]>["inbox"]>>>>();
+
 async function subagentHook(ctx: ServerContext, input: HookInput): Promise<HookOutput> {
   const parent = ctx.parent;
   if (!parent || input.event === "SessionStart") return {};
-  const msgs = await parent.inbox().catch((err) => {
+  let pending = parentReads.get(ctx);
+  if (!pending) { pending = parent.inbox().catch((err) => {
     ctx.log.debug("parent inbox unavailable", { err: (err as Error).message });
     return [];
-  });
-  if (input.event === "Stop" && !msgs.length && ctx.jobs?.runningCount()) await ctx.childInbox?.wait(STOP_WAIT_CAP_MS, input.signal);
+  }); parentReads.set(ctx, pending); }
+  const hasChildren = Boolean(ctx.childInbox?.unread().length);
+  const msgs = hasChildren ? [] : await withinHook(pending, input.signal!);
+  if (!hasChildren) parentReads.delete(ctx);
   const children = ctx.childInbox?.take() ?? [];
   if (msgs.length === 0 && children.length === 0) {
-    if (input.event === "Stop" && ctx.jobs?.runningCount()) return { decision: "block", reason: "Your nested subagents are still running. Wait for their results or cancel them before ending your task." };
     return {};
   }
   ctx.log.info("delivering parent messages to the subagent", { count: msgs.length, event: input.event });
@@ -90,23 +99,44 @@ async function subagentHook(ctx: ServerContext, input: HookInput): Promise<HookO
   return context(input.event, text);
 }
 
+/** Deadline rejection stops the continuation before consuming any mail. */
+function withinHook<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const abort = () => { signal.removeEventListener("abort", abort); reject(new Error("hook deadline")); };
+    signal.addEventListener("abort", abort, { once: true });
+    work.then(value => { signal.removeEventListener("abort", abort); if (signal.aborted) abort(); else resolve(value); }, err => { signal.removeEventListener("abort", abort); reject(err); });
+    if (signal.aborted) abort();
+  });
+}
 export async function buildHookResponse(ctx: ServerContext, input: HookInput): Promise<HookOutput> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), HOOK_BUDGET_MS);
+  const abort = () => controller.abort();
+  input.signal?.addEventListener("abort", abort, { once: true });
+  if (input.signal?.aborted) abort();
+  try { return await runHook(ctx, { ...input, signal: controller.signal }); }
+  catch (err) { if (!controller.signal.aborted) throw err; ctx.log.debug("hook deferred slow work", { event: input.event }); return {}; }
+  finally { clearTimeout(timer); input.signal?.removeEventListener("abort", abort); }
+}
+async function runHook(ctx: ServerContext, input: HookInput): Promise<HookOutput> {
+  if (input.prepare) await withinHook(input.prepare(), input.signal!);
   const node = ctx.node;
   if (!node) return subagentHook(ctx, input);
   // A headless `claude -p` run is not a session: its hooks must not join the bridge or take mail.
-  await ctx.launchKnown;
+  await withinHook(ctx.launchKnown ?? Promise.resolve(), input.signal!);
   if (ctx.headless) return {};
   ctx.log.debug("hook event", { event: input.event, sessionId: input.sessionId, stopHookActive: input.stopHookActive });
   if (input.sessionId) {
-    await node.setSessionId(input.sessionId).catch(() => {});
+    await withinHook(node.setSessionId(input.sessionId).catch(() => {}), input.signal!);
     ctx.onSessionId?.(input.sessionId);
   }
   // The MCP server may have been started outside the project (e.g. in the plugin folder).
-  if (input.cwd) await ctx.learnCwd?.(input.cwd);
+  if (input.cwd && ctx.learnCwd) await withinHook(ctx.learnCwd(input.cwd), input.signal!);
   // Joining may have been deferred until the project dir was known.
-  await node.ensureConnected().catch((err) => ctx.log.warn("bridge not reachable from hook", { err: (err as Error).message }));
+  await withinHook(node.ensureConnected().catch((err) => ctx.log.warn("bridge not reachable from hook", { err: (err as Error).message })), input.signal!);
   // A native subagent's tool calls fire the same hooks: messages are for the main agent, so leave them.
   if (input.subagent) return {};
+  await withinHook(node.refreshPending().catch((err) => ctx.log.warn("pending mail refresh failed; retained for retry", { err: String(err) })), input.signal!);
   // A wake-up's messages reached the session if a turn is running (tool calls, turn end); if a prompt or a new
   // session comes first, the wake-up was lost and they are shown again below.
   // The wake-up's own turn starts with a prompt carrying its text: that is delivery, not a new user prompt.
@@ -120,14 +150,14 @@ export async function buildHookResponse(ctx: ServerContext, input: HookInput): P
   switch (input.event) {
     case "SessionStart": {
       ctx.activity?.("idle");
-      const peers = node.isConnected ? (await node.peers().catch(() => [])).filter((p) => p.id !== node.id) : [];
+      const peers = node.isConnected ? (await withinHook(node.peers().catch(() => []), input.signal!)).filter((p) => p.id !== node.id) : [];
       const lines = [
         `[agent-bridge] You are connected to agent-bridge as "${node.name}".`,
         peers.length ? `Peers online:\n${peers.map((p) => formatPeer(p)).join("\n")}` : "No other agents are online right now.",
       ];
       lines.push(...new MessageWaitStore(ctx.home).pending(node).map(resumeWaitHint));
-      const unread = node.unread().length;
-      const decisions = await node.decisions({ scope: { project: ctx.cwd() } }).catch(() => []);
+      const unread = node.unread().filter((m) => !isQuietMessage(m)).length;
+      const decisions = await withinHook(node.decisions({ scope: { project: ctx.cwd() } }).catch(() => []), input.signal!);
       const summary = formatDecisionSummary(decisions);
       if (summary) lines.push(summary);
       if (unread > 0 && !channel) lines.push(`You have ${unread} unread peer message(s); call the "inbox" tool to read them.`);
@@ -158,7 +188,9 @@ export async function buildHookResponse(ctx: ServerContext, input: HookInput): P
       const inConversation = lingerRemaining > 0 || jobsRunning > 0;
       if (!node.autoWakeEnabled && !inConversation) {
         // A notify wait is explicit permission to deliver its match, even after the listen window ends.
-        const awaited = node.unread().filter((m) => (node.isNotificationAwaited(m) || (m.from.id.startsWith("job:") && m.conversationId.endsWith(":fallback")) ||
+        // Finishing the last job ends runningCount before Stop. Its result still owns delivery.
+        const awaited = node.unread().filter((m) => (node.isNotificationAwaited(m) ||
+          (m.from.id.startsWith("job:") && shouldWakeClaudeMessage(node, ctx.cfg, m)) ||
           (ctx.agent === "opencode" && m.to !== BROADCAST && !(AGENT_KINDS as readonly string[]).includes(m.to) &&
             shouldWakeClaudeMessage(node, ctx.cfg, m))) && m.hop < ctx.cfg.maxHops &&
           !isQuietMessage(m) && !m.conversationId.endsWith(":note")).slice(0, HOOK_MAX_MESSAGES);
@@ -170,15 +202,12 @@ export async function buildHookResponse(ctx: ServerContext, input: HookInput): P
         ctx.activity?.("idle");
         return {};
       }
-      let msgs = take(ctx, true);
-      // With background wake-ups (Claude Code's asyncRewake hook) the turn never waits: it ends now and
-      // the session is woken when a result or reply arrives. Hosts without that keep the listen window.
-      const notifyPending = new MessageWaitStore(ctx.home).pending(node).some((r) => r.mode === "notify");
-      if (msgs.length === 0 && inConversation && !ctx.rewakeAvailable && !notifyPending) {
-        const waitMs = Math.min(STOP_WAIT_CAP_MS, jobsRunning > 0 ? STOP_WAIT_CAP_MS : lingerRemaining);
-        ctx.log.info("listening for replies before ending the turn", { waitMs, jobsRunning });
-        const arrived = await node.waitForMessage(waitMs, (m) => m.hop < ctx.cfg.maxHops, input.signal);
-        if (arrived) msgs = take(ctx, true);
+      const msgs = take(ctx, true);
+      // Stop never long-polls. Notify-mode subscriptions and the existing wake path deliver later.
+      if (!msgs.length && jobsRunning > 0) {
+        const waits = new MessageWaitStore(ctx.home);
+        waits.save(node, {}, "notify");
+        waits.attach(node);
       }
       if (msgs.length === 0) {
         ctx.activity?.("idle");

@@ -18,6 +18,10 @@ it("upgrades real 0.29.10 jobs additively with one backup and stable original pr
   old.jobs[0].ownershipHistory = [{ from: "old-master", to: "parent-folder-master", fromRootName: "old-master", rootName: "parent-folder-master" }];
   old.jobs[0].masters = ["old-master", "parent-folder-master"];
   old.jobs[0].deliveries = [{ id: "pending-result", body: "Keep this evidence", consumed: false }];
+  // A retained registry commonly has hundreds of jobs sharing one original checkout.
+  // Exercise the full upgrade and backup instead of just a single root-resolution call.
+  const template = old.jobs[0];
+  for (let i = 0; i < 400; i++) old.jobs.push({ ...template, id: `retained-${i}`, name: `opencode-job-retained-${i}`, extraOwnerData: `preserved-${i}` });
   const path = join(env.home, "jobs.json"), bytes = JSON.stringify(old);
   writeFileSync(path, bytes);
   const next = migrateJobOwnership(old);
