@@ -45,7 +45,7 @@ export function recoverJobRecord(home: string, ref: string): StoredJob | undefin
   const startedAt = typeof base.startedAt === "number" ? base.startedAt : run ? runStart(run) : 0;
   // Do not mistake a previous runner's final state for a newer continuation.
   const currentState = state && typeof state.updatedAt === "number" && state.updatedAt >= startedAt ? state : undefined;
-  const alive = currentState?.status === "running" && Date.now() - Number(currentState.updatedAt) < 90_000 && pidAlive(Number(currentState.pid));
+  const alive = currentState?.status === "running" && pidAlive(Number(currentState.pid));
   const owner = typeof base.owner === "string" ? base.owner : meta?.by ?? / by ([\w.-]+)/.exec(header)?.[1];
   if (!owner) return undefined;
   const sessionId = currentState?.sessionId ?? base.sessionId ?? base.threadId ?? meta?.session ?? meta?.continues ?? null;

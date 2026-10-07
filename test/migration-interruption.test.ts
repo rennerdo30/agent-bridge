@@ -30,7 +30,7 @@ afterEach(async () => {
 const routeMigration = { version: 7, sql: "CREATE TABLE job_delivery_routes(id TEXT PRIMARY KEY, recipient TEXT NOT NULL, consumed_at INTEGER); PRAGMA user_version=7;" };
 const migrations = [routeMigration, { version: 8, sql: CONVERSATION_MIGRATION }];
 const createFixture = () => {
-  expect(SQLITE_STORE_VERSION).toBe(8);
+  expect(SQLITE_STORE_VERSION).toBe(9);
   const path = join(home, "bridge.db"), db = new DatabaseSync(path);
   db.exec("PRAGMA journal_mode=WAL; CREATE TABLE messages(id TEXT, recipient TEXT, body TEXT); CREATE TABLE session_bindings(identity TEXT, session_id TEXT, learned_at INTEGER); CREATE TABLE owner_data(id INTEGER PRIMARY KEY, raw BLOB, body TEXT); PRAGMA user_version=6;");
   db.prepare("INSERT INTO owner_data VALUES(?,?,?)").run(9007199254740993n, Buffer.from([0, 255, 1]), "original");

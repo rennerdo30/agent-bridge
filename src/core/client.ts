@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events";
 import { connect, type Socket } from "node:net";
-import { CONNECT_TIMEOUT_MS, MAX_FRAME_BYTES, REQUEST_TIMEOUT_MS } from "./constants.js";
+import { APP_VERSION, CONNECT_TIMEOUT_MS, MAX_FRAME_BYTES, REQUEST_TIMEOUT_MS } from "./constants.js";
 import type { Logger } from "./logger.js";
 import {
   BridgeError,
@@ -29,6 +29,7 @@ export class BridgeClient extends EventEmitter<BridgeClientEvents> {
   private nextId = 1;
   private readonly pending = new Map<number, Pending>();
   private closed = false;
+  private brokerVersion: string | undefined;
 
   private constructor(
     private readonly socket: Socket,
@@ -95,7 +96,15 @@ export class BridgeClient extends EventEmitter<BridgeClientEvents> {
         this.pending.delete(id);
         reject(new Error(`broker request timed out: ${op}`));
       }, timeoutMs);
-      this.pending.set(id, { resolve: resolve as (v: unknown) => void, reject, timer });
+      this.pending.set(id, { resolve: (value) => {
+        const version = (value as { brokerVersion?: string })?.brokerVersion;
+        if (typeof version === "string") this.brokerVersion = version;
+        resolve(value as RequestMap[O][1]);
+      }, reject: (err) => {
+        if (/unknown op:/.test(err.message)) reject(new BridgeError("protocol_mismatch",
+          `Broker ${this.brokerVersion ? "v" + this.brokerVersion : "version unknown (older protocol)"} does not support ${op} required by server v${APP_VERSION}. Update the broker host and reload its session after current jobs finish; no operation was applied.`));
+        else reject(err);
+      }, timer });
       this.socket.write(encodeFrame({ t: "req", id, op, args }));
     });
   }

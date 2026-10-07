@@ -743,7 +743,7 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
       title: "Send message",
       description:
         `Send a message to another agent. "to" is a peer name from "peers", an agent kind ("claude", "codex") when exactly one is online, or "${BROADCAST}" for everyone. ` +
-        "Delivery means queued in the recipient inbox, not read. Broadcasts include registered offline local sessions and connected paired-PC sessions, with delivered, queued or failed results per recipient. Direct messages wake idle Claude, Codex and opencode sessions according to wakeOnDirect and available CLI transport; other recipients may read them on their next turn. " +
+        "Delivery means queued in the recipient inbox, not read. Broadcasts wake every live session according to its settings and include recently seen offline local sessions or known project masters and connected paired-PC sessions, with delivered, queued or failed results per recipient. Direct messages wake idle Claude, Codex and opencode sessions according to wakeOnDirect and available CLI transport; other recipients may read them on their next turn. " +
         "Auto-wake is handled on the recipient PC, including paired PCs; it is never enabled by send. Use wait_for_message(read_receipt_of=<sent id>) to wait for consumption. " +
         "If the recipient is offline the message waits for it. When answering with new information, pass its id as reply_to. Do not send pure acknowledgements or repeat a reply as a status note. " +
         "Delegated jobs can send to their parent, siblings, or exact local session/job names explicitly granted with send_to at spawn. Sibling messages arrive live or wait for the next turn, with a quiet supervisor copy. Sending to a finished sibling returns its saved final report immediately; it will not answer. Do not wait for finished siblings or for read receipts from them. Other sessions and broadcasts are unavailable. Peers shows grants and the sibling thread limit before composing.",
@@ -789,7 +789,8 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
       }
       if (a.reply_to) n.markRead([a.reply_to]);
       const res = await n.send({ to: a.to, body: a.message, replyTo: a.reply_to, conversationId: a.conversation_id });
-      const first = res.messages[0]!;
+      const first = res.messages[0];
+      if (!first) return text(["No recipients were eligible for this broadcast.", ...formatDelivery(res, cfg.maxHops)].join("\n"));
       const lines = [t("send.ok", { id: first.id, conversation: first.conversationId })];
       lines.push(...formatDelivery(res, cfg.maxHops));
       if (res.queuedFor.length) lines.push(t("send.queued", { names: res.queuedFor.join(", ") }));

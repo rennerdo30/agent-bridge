@@ -1,3 +1,5 @@
+import { BridgeNode } from "../src/core/node.js";
+import { loadOrCreateToken } from "../src/core/token.js";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -99,4 +101,53 @@ it("recognizes cancellation of an interrupted job without discarding its resume 
   expect(jobs.find(name)).toMatchObject({ status: "failed", sessionId: "original" });
   expect(jobs.followUp(name, "continue").outcome).toBe("started");
   await until(() => jobs.find(name)?.status === "done");
+});
+
+it.each(CODING_AGENTS)("recovers ordinary %s runner jobs created after restore", async (agent) => {
+  const owner = env.node("supervisor", agent); await owner.start();
+  const host: JobHost = { state: () => ({ pid: process.pid, peer: "runner", status: "running", updatedAt: Date.now(), live: true }), alive: () => true, send: vi.fn(), kill: vi.fn() };
+  const jobs = manager(owner, host); jobs.restore(() => () => async () => { throw new Error("duplicate native run"); });
+  const name = `${agent}-job-reloaded`;
+  writeFileSync(join(env.home, "jobs.json"), JSON.stringify({ jobs: [{ id: "reloaded", name, agent, owner: owner.name,
+    supervisor: "durable-supervisor", status: "running", host: { pid: process.pid, peer: name, startedAt: Date.now() }, startedAt: Date.now(), prompt: "task" }] }));
+  expect(jobs.list().map((job) => job.name)).toContain(name);
+  expect(jobs.followUp(name, "status").outcome).toBe("delivered");
+  expect(jobs.cancel(name)).toBe(true);
+  expect(vi.mocked(host.send).mock.calls.map((call) => call[1].type)).toEqual(["attach", "message", "cancel"]);
+  jobs.find(name)!.host = null;
+});
+
+it("discovers and controls a connected orphan runner retained only in a backup", async () => {
+  const owner = env.node("supervisor"); await owner.start();
+  const name = "codex-job-retained";
+  const record = { id: "retained", name, agent: "codex", owner: owner.name, rootName: owner.name, supervisor: "root",
+    status: "running", host: { pid: process.pid, peer: name, startedAt: 1 }, startedAt: 1, prompt: "task" };
+  writeFileSync(join(env.home, "jobs.json.backup-1"), JSON.stringify({ jobs: [record] }));
+  mkdirSync(join(env.home, "jobs"));
+  writeFileSync(join(env.home, "jobs", "retained.json"), JSON.stringify({ pid: process.pid, peer: name, status: "running", updatedAt: Date.now() - 120_000, live: true }));
+  const runner = new BridgeNode({ pipePath: env.pipe, dbPath: env.db, token: loadOrCreateToken(env.home), agent: "other", jobAgent: "codex", id: "job:retained", name, cwd: env.home, autoWake: false, canHostBroker: false, log: nullLogger });
+  try {
+    await runner.start();
+    expect((await owner.projectJobs()).map((job) => job.name)).toContain(name);
+    expect(await owner.jobAuthority(name)).toMatchObject({ name, owner: owner.name, status: "running" });
+    expect((await owner.send({ to: name, body: "status" })).deliveredTo).toEqual([name]);
+  } finally { await runner.stop(); }
+});
+
+it("reattaches a same-session runner when hello reclaims the original supervisor name", async () => {
+  const owner = env.node("supervisor", "codex"); await owner.start(); await owner.setSessionId("same-native-session");
+  const name = "codex-job-reload", startedAt = Date.now();
+  writeFileSync(join(env.home, "jobs.json"), JSON.stringify({ jobs: [{ id: "reload", name, agent: "codex", owner: owner.name,
+    supervisor: "same-native-session", status: "running", host: { pid: process.pid, peer: name, startedAt }, startedAt, prompt: "task" }] }));
+  const replacement = new BridgeNode({ pipePath: env.pipe, dbPath: env.db, token: loadOrCreateToken(env.home), agent: "codex", name: "supervisor-2", cwd: env.home, autoWake: false, canHostBroker: false, log: nullLogger });
+  const host: JobHost = { state: () => ({ pid: process.pid, peer: name, status: "running", updatedAt: Date.now(), live: true }), alive: () => true, send: vi.fn(), kill: vi.fn() };
+  const jobs = manager(replacement, host); jobs.restore(() => () => async () => { throw new Error("duplicate native run"); });
+  try {
+    await replacement.setSessionId("same-native-session"); await replacement.start();
+    expect(replacement.name).toBe("supervisor");
+    expect(jobs.list().map((job) => job.name)).toContain(name);
+    expect(jobs.followUp(name, "status").outcome).toBe("delivered");
+    expect(jobs.cancel(name)).toBe(true);
+    expect(vi.mocked(host.send).mock.calls.map((call) => call[1].type)).toEqual(["attach", "message", "cancel"]);
+  } finally { jobs.find(name)!.host = null; await replacement.stop(); }
 });

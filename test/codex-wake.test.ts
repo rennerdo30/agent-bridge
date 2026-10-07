@@ -74,7 +74,7 @@ describe("CodexWaker", () => {
     const node = fakeNode(dir); node.autoWakeEnabled = false;
     const waker = new CodexWaker(node as unknown as BridgeNode, { ...cfg(), wakeOnDirect: true }, nullLogger, { debounceMs: 20, queueTimeoutMs: 2_000 });
     waker.setThreadId("thread-1");
-    for (const m of [{ ...mail("broadcast"), to: "*" }, { ...mail("kind"), to: "codex" },
+    for (const m of [{ ...mail("kind"), to: "codex" },
       { ...mail("quiet"), conversationId: "siblings-id:note" }, { ...mail("hop"), hop: 6 }]) {
       node.inbox.push(m); node.emit("message", m);
     }
@@ -83,6 +83,21 @@ describe("CodexWaker", () => {
     await until(() => calls() === 1);
     await until(() => !(waker as unknown as { inFlight: boolean }).inFlight);
     expect(node.autoWakeEnabled).toBe(false);
+  });
+
+  it("wakes broadcasts on a secondary with direct wake enabled and global auto-wake off", async () => {
+    fakeCodex(dir, 0, 0);
+    const node = fakeNode(dir); node.autoWakeEnabled = false;
+    const settings = { ...cfg(), wakeOnDirect: false };
+    const waker = new CodexWaker(node as unknown as BridgeNode, settings, nullLogger, { debounceMs: 20, queueTimeoutMs: 2_000 });
+    waker.setThreadId("secondary-thread");
+    node.inbox.push({ ...mail("broadcast"), to: "*" }); node.emit("message", node.inbox[0]);
+    expect((waker as unknown as { timer: unknown }).timer).toBeNull();
+    settings.wakeOnDirect = true; waker.setActivity("idle");
+    await until(() => calls() === 1);
+    await until(() => !(waker as unknown as { inFlight: boolean }).inFlight);
+    expect(node.autoWakeEnabled).toBe(false);
+    expect(node.inbox).toHaveLength(1);
   });
 
   it("direct wake disabled stays idle and busy direct wake waits for idle", async () => {

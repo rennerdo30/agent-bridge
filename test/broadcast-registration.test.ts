@@ -1,14 +1,15 @@
+import { readdirSync } from "node:fs";
+import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, expect, it } from "vitest";
-import { MessageStore } from "../src/core/store.js";
+import { MessageStore, BROADCAST_RECENT_MS, SQLITE_STORE_VERSION, migrateMessageSchema } from "../src/core/store.js";
+import { recordStorePeer } from "../src/core/store-compatibility.js";
 import { nullLogger } from "../src/core/logger.js";
 import { makeEnv, type TestEnv } from "./helpers.js";
-
 let env: TestEnv;
 beforeEach(() => { env = makeEnv(); });
 afterEach(async () => { await env.cleanup(); });
-
-it("queues ordinary offline sessions while excluding retained plugin cache ghosts", async () => {
+it("queues ordinary recent offline sessions while excluding plugin cache ghosts and old unknown names", async () => {
   const store = new MessageStore(env.db, nullLogger);
   try {
     const db = (store as unknown as { db: DatabaseSync }).db;
@@ -20,17 +21,17 @@ it("queues ordinary offline sessions while excluding retained plugin cache ghost
     insert.run("cache-unidentified", "unidentified:old-peer");
     db.prepare("INSERT INTO history_sessions VALUES (?,?,NULL)").run("old-peer", "cache-native");
     db.prepare("INSERT INTO history_files VALUES (?,?,?,?,?,?,?)").run("fixture-native", "claude", "claude", "cache-native", "/fixture/.claude/plugins/cache/agent-bridge/version", null, 1);
+    db.prepare("INSERT INTO peer_last_seen VALUES (?,?)").run("real-offline", Date.now());
     const originals = db.prepare("SELECT * FROM peer_name_owners ORDER BY name").all();
     expect(store.broadcastNames()).toEqual(["real-offline", "unknown-offline"]);
     const sender = env.node("sender", "opencode"); await sender.start();
     const sent = await sender.send({ to: "*", body: "REGISTERED_OFFLINE" });
-    expect(sent.queuedFor.sort()).toEqual(["real-offline", "unknown-offline"]);
+    expect(sent.queuedFor).toEqual(["real-offline"]); expect(sent.skippedFor).toEqual(["unknown-offline"]);
     expect(sent.deliveredTo).toEqual([]);
     expect(db.prepare("SELECT * FROM peer_name_owners WHERE name<>'sender' ORDER BY name").all()).toEqual(originals);
     expect(db.prepare("SELECT cwd FROM history_files WHERE path='fixture-native'").get()!.cwd).toContain("plugins/cache");
   } finally { store.close(); }
 });
-
 it("keeps a session eligible when indexed paths include a real project", () => {
   const store = new MessageStore(env.db, nullLogger);
   try {
@@ -41,4 +42,59 @@ it("keeps a session eligible when indexed paths include a real project", () => {
     file.run("project", "opencode", "opencode", "moved", env.home, null, 2);
     expect(store.broadcastNames()).toEqual(["moved-session"]);
   } finally { store.close(); }
+});
+it("queues recent sessions and known masters without reviving stale aliases or changing retained rows", () => {
+  const store = new MessageStore(env.db, nullLogger);
+  try {
+    const db = (store as unknown as { db: DatabaseSync }).db, now = Date.now();
+    for (const [name, seen] of [["recent", now], ["stale", now - BROADCAST_RECENT_MS - 1], ["master", 1]] as const) {
+      db.prepare("INSERT INTO peer_name_owners VALUES (?,?)").run(name, `unidentified:${name}`);
+      db.prepare("INSERT INTO peer_last_seen VALUES (?,?)").run(name, seen);
+    }
+    const before = db.prepare("SELECT * FROM peer_name_owners ORDER BY name").all();
+    expect(store.broadcastRecipients(now, new Set(["master", "known-master"]))).toEqual({ queued: ["master", "recent", "known-master"], skipped: ["stale"] });
+    expect(db.prepare("SELECT * FROM peer_name_owners ORDER BY name").all()).toEqual(before);
+  } finally { store.close(); }
+});
+it("backs up v8 before adding last-seen registrations and preserves original registrations", () => {
+  const original = new MessageStore(env.db, nullLogger); original.close();
+  const old = new DatabaseSync(env.db);
+  old.exec("DROP TABLE peer_last_seen; PRAGMA user_version=8;");
+  old.prepare("INSERT INTO peer_names VALUES (?,?,?,?,?)").run("identity", "retained", "native", "codex", 42); old.close();
+  const upgraded = new MessageStore(env.db, nullLogger);
+  try {
+    const db = (upgraded as unknown as { db: DatabaseSync }).db;
+    expect(db.prepare("PRAGMA user_version").get()!.user_version).toBe(SQLITE_STORE_VERSION);
+    expect(db.prepare("SELECT * FROM peer_last_seen").all()).toEqual([{ name: "retained", seen_at: 42 }]);
+    const snapshots = readdirSync(env.home).filter((name) => name.startsWith("bridge.db.backup-"));
+    expect(snapshots.length).toBeGreaterThan(0);
+    const backup = new DatabaseSync(join(env.home, snapshots[0]!), { readOnly: true });
+    try {
+      expect(backup.prepare("PRAGMA user_version").get()!.user_version).toBe(8);
+      expect(backup.prepare("SELECT name FROM peer_names").get()!.name).toBe("retained");
+    } finally { backup.close(); }
+  } finally { upgraded.close(); }
+});
+it("returns skipped registrations even when no offline recipient is eligible", async () => {
+  const store = new MessageStore(env.db, nullLogger);
+  try {
+    const db = (store as unknown as { db: DatabaseSync }).db;
+    db.prepare("INSERT INTO peer_name_owners VALUES (?,?)").run("gone", "unidentified:gone");
+    const sender = env.node("sender"); await sender.start();
+    const result = await sender.send({ to: "*", body: "only stale registrations" });
+    expect(result.skippedFor).toEqual(["gone"]);
+    expect(result.messages).toEqual([]); expect(result.queuedFor).toEqual([]);
+  } finally { store.close(); }
+});
+it("defers last-seen migration while a retained v0.29.17 reader is alive", () => {
+  const path = env.db, db = new DatabaseSync(path);
+  db.exec("CREATE TABLE peer_names(identity TEXT, name TEXT, learned_at INTEGER); CREATE TABLE owner_data(body); INSERT INTO owner_data VALUES('keep'); PRAGMA user_version=8;");
+  recordStorePeer(env.home, { pid: process.pid, name: "retained", version: "0.29.17", storeCapabilities: { json: 4, sqlite: 8 } });
+  try {
+    expect(() => migrateMessageSchema(db, path, true, nullLogger)).toThrow("Waiting to upgrade sqlite store");
+    expect(db.prepare("PRAGMA user_version").get()!.user_version).toBe(8);
+    expect(db.prepare("SELECT body FROM owner_data").get()!.body).toBe("keep");
+    expect(db.prepare("SELECT name FROM sqlite_master WHERE name='peer_last_seen'").get()).toBeUndefined();
+    expect(readdirSync(env.home).some((name) => name.startsWith("bridge.db.backup-"))).toBe(false);
+  } finally { db.close(); }
 });

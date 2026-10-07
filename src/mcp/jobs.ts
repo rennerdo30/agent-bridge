@@ -366,7 +366,9 @@ export class JobManager {
     });
     // Runners send to this session by name: tell them where it is now (a new server, maybe a new name).
     node.on("connected", () => {
-      for (const job of this.running.values()) if (job.host) this.runners?.send(job, { type: "attach" });
+      const attached = [...this.running.values()];
+      this.refreshOwnership();
+      for (const job of attached) if (job.host && this.running.has(job.id)) this.runners?.send(job, { type: "attach" });
     });
   }
 
@@ -475,9 +477,10 @@ export class JobManager {
       if (parent?.rootSession && parent.rootName) { this.lineage.rootSession = parent.rootSession; this.lineage.rootName = parent.rootName; }
     }
     for (const s of stored) {
-      if (!s.ownershipHistory?.length) continue;
+      const directlyOwned = this.lineage ? s.parentJob === this.lineage.parentJob : this.isMine(s.owner) && !s.parentJob;
+      if (!s.ownershipHistory?.length && (!directlyOwned || this.running.has(s.id) || this.foreground.has(s.id))) continue;
       let job = this.history.get(s.id);
-      const mine = this.lineage ? s.parentJob === this.lineage.parentJob : s.owner === this.node.name && !s.parentJob;
+      const mine = directlyOwned;
       if (job && (s.executionOwner === this.node.name || mine)) {
         const executing = s.executionOwner === this.node.name && (this.running.has(s.id) || this.foreground.has(s.id));
         Object.assign(job, { owner: s.owner, supervisor: s.supervisor, parentJob: s.parentJob, rootSession: s.rootSession, rootName: s.rootName,
