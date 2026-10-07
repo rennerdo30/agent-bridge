@@ -7,7 +7,7 @@ import { conversationProject } from "../src/core/project-store.js";
 import { fixture } from "./conversation-test-fixture.js";
 
 it("retains OpenCode messages, huge parts, native grandchildren and observed revisions", () => {
-  const f = fixture(),
+  const f = fixture('opencode'),
     cli = new DatabaseSync(f.files.sqlite);
   const data = JSON.stringify({
     type: "text",

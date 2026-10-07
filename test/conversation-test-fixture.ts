@@ -22,7 +22,7 @@ afterEach(async () => {
   await env.cleanup();
   vi.unstubAllEnvs();
 });
-export function fixture(claudeOnly = false) {
+export function fixture(only: boolean | 'opencode' = false) {
   const s = new MessageStore(env.db, nullLogger);
   close.push(() => s.close());
   const files = installTranscriptFixtures(env.home),
@@ -46,12 +46,13 @@ export function fixture(claudeOnly = false) {
   cli.exec("ALTER TABLE session ADD COLUMN directory TEXT");
   cli.prepare("UPDATE session SET directory=?").run(project);
   cli.close();
-  // Byte retention and generation tests only exercise Claude. Keep unrelated
-  // Codex/OpenCode fixtures outside discovery for those focused cases.
-  const paths = claudeOnly ? {
+  // Each focused retention case discovers its asserted provider only. The
+  // complete multi-provider fixture remains available to the integration cases.
+  const paths = only ? {
     ...files.paths,
+    ...(only === 'opencode' ? {claude: join(env.home, "empty-claude")} : {}),
     codex: join(env.home, "empty-codex"),
-    opencode: join(env.home, "empty-opencode"),
+    ...(only === 'opencode' ? {} : {opencode: join(env.home, "empty-opencode")}),
   } : files.paths;
   const index = new HistoryIndex(db, env.home, paths);
   close.push(() => index.close());

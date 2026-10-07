@@ -7,7 +7,7 @@ import { CLAUDE_SESSION } from "./transcript-fixtures.js";
 import { fixture } from "./conversation-test-fixture.js";
 
 it("retains large Claude sidechains and connects nested native jobs through their parent sessions", () => {
-  const f = fixture();
+  const f = fixture(true);
   f.db
     .prepare(
       "INSERT INTO conversation_bindings(session,agent,cwd,job) VALUES(?,?,?,?)",

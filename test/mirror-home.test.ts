@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, existsSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, existsSync, readFileSync, readdirSync, symlinkSync, unlinkSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
@@ -49,4 +49,15 @@ it('marks previously mixed fixture snapshots without removing or modifying their
     expect(foreignMirrorRecord('owner-transcript', text)).toBe(false);
     expect(foreignMirrorRecord(source, JSON.stringify({ workdir: root, prompt: text }))).toBe(false);
   } finally { store.close(); }
+});
+it('rejects a linked foreign-home mirror directory before writing its target', () => {
+  const home = join(root, 'home'), target = join(root, 'target');
+  mkdirSync(home); mkdirSync(target);
+  const store = new MessageStore(join(home, 'bridge.db'), nullLogger);
+  const link = join(home, 'project-mirrors');
+  symlinkSync(target, link, process.platform === 'win32' ? 'junction' : 'dir');
+  try {
+    expect(() => syncProjectMirror(store.history.database, root, home)).toThrow('links');
+    expect(readdirSync(target)).toEqual([]);
+  } finally { unlinkSync(link); store.close(); }
 });
