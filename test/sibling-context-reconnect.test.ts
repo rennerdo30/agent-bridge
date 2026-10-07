@@ -48,6 +48,7 @@ async function runner(id: string, agent: "codex" | "opencode", supervisor: strin
   cleanups.push(() => chat.close(), () => parent.close());
   await parent.start();
   job.live = { post: (body, message) => parent.post(body, message) };
+  chat.flush();
   return { node, job, parent };
 }
 
