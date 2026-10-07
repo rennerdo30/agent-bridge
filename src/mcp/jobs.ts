@@ -11,7 +11,7 @@ import { isPureAcknowledgement } from "../core/job-messaging.js";
 import type { Worktree } from "../core/worktree.js";
 import { archiveFile, assertWritableStore, isRecord, mergeStoreFields, readJsonStore, retentionLimit, writeJsonStore } from "../core/json-store.js";
 import { changedJobArgs, type JobSettings } from "./job-settings.js";
-import { readArchivedJobs } from "../core/job-archive.js";
+import { archiveJobs, readArchivedJobs } from "../core/job-archive.js";
 import { ARCHIVE_AGE_ENV, DEFAULT_ARCHIVE_AGE_MS } from "../core/run-archive.js";
 import { newApprovalId, publishApproval, type PermissionDecision, type PermissionRequest } from "../core/relay.js";
 import { notifyJobEvent } from "../core/notifications.js";
@@ -426,7 +426,7 @@ export class JobManager {
       });
       const ids = new Set(mine.map((j) => j.id));
       const others = entries.filter((j) => !isRecord(j) || !ids.has(j.id as string));
-      const all = [...others, ...mine].sort((a, b) => {
+      const all = migrateProjectJobs([...others, ...mine]).sort((a, b) => {
         const started = (entry: unknown) => isRecord(entry) && typeof entry.startedAt === "number" ? entry.startedAt : 0;
         return started(a) - started(b);
       });
@@ -439,12 +439,10 @@ export class JobManager {
         ...finished.filter((j) => age > 0 && typeof j.finishedAt === "number" && j.finishedAt < Date.now() - age),
       ]);
       if (overflow.size) {
-        const archive = `${this.storePath}.overflow.json`;
-        writeJsonStore(archive, { jobs: [...overflow] }, null);
-        archiveFile(archive);
+        archiveJobs(this.storePath, [...overflow]);
         this.log.info("archived finished jobs", { count: overflow.size });
       }
-      writeJsonStore(this.storePath, { ...(isRecord(previous) ? previous : {}), jobs: migrateProjectJobs(all.filter((j) => !overflow.has(j as StoredJob))) }, previous);
+      writeJsonStore(this.storePath, { ...(isRecord(previous) ? previous : {}), jobs: all.filter((j) => !overflow.has(j as StoredJob)) }, previous);
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === "EJOBLOCKED") {
         this.schedulePersist();
@@ -704,7 +702,7 @@ export class JobManager {
       resume,
       queue: [],
       args,
-      projectRoot: canonicalProjectRoot(this.node.cwd ?? process.cwd()) ?? undefined,
+      projectRoot: canonicalProjectRoot(typeof args?.cwd === "string" ? args.cwd : this.node.cwd ?? process.cwd()) ?? undefined,
       owner: this.node.name,
       // Keep the first job's identity when hooks learn the session id later, or a server reload adopts it.
       supervisor: this.supervisorIdentity(),
@@ -1163,7 +1161,7 @@ export class JobManager {
       createdAt: Date.now(),
       readAt: null,
     };
-    if (job.ownershipHistory?.length && this.node.reportInlineJob) {
+    if ((job.ownershipHistory?.length || (this.storePath && !this.lineage)) && this.node.reportInlineJob) {
       job.deliveryHistory = [...(job.deliveryHistory ?? []), m];
       this.persist();
       void this.node.reportInlineJob(m).catch((err) => this.log.warn("inline report delivery failed", { err: String(err) }));

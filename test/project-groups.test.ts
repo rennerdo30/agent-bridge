@@ -33,6 +33,41 @@ function registry(project: string) {
 }
 
 describe("local project permission groups", () => {
+  it("keeps handoff grants outside the group and falls back to the previous primary first", async () => {
+    const path = repo(); const jobs = registry(path);
+    const source = await node("claude-master", path), secondary = await node("codex-master", path);
+    const parentFolder = await node("claude-Development", env.home), unrelated = await node("codex-Development", env.home);
+    const runner = await node(jobs[0]!.name, path, { id: "one", owner: "first", parent: source.name });
+    await source.handoffSubagents({ to: parentFolder.name, jobs: [runner.name] });
+    expect(await source.jobAuthority(runner.name)).toBeTruthy();
+    expect(await secondary.jobAuthority(runner.name)).toBeTruthy();
+    expect(await parentFolder.jobAuthority(runner.name)).toBeTruthy();
+    expect(await unrelated.jobAuthority(runner.name)).toBeNull();
+    await runner.send({ to: source.name, body: "Only to primary", conversationId: "job-one" });
+    expect(parentFolder.unread().some((m) => m.body === "Only to primary")).toBe(true);
+    expect(source.unread().some((m) => m.body === "Only to primary")).toBe(false);
+    parentFolder.markRead(parentFolder.unread().map((m) => m.id));
+    await parentFolder.setUnavailable(true);
+    await runner.send({ to: source.name, body: "Previous primary fallback", conversationId: "job-one" });
+    await expect.poll(() => source.unread().some((m) => m.body === "Previous primary fallback")).toBe(true);
+    expect(secondary.unread().some((m) => m.body === "Previous primary fallback")).toBe(false);
+    source.markRead(source.unread().map((m) => m.id));
+    await parentFolder.setUnavailable(false);
+    expect(parentFolder.unread().some((m) => /Only to primary|Previous primary fallback/.test(m.body))).toBe(false);
+  });
+
+  it("does not merge sibling authority across original projects after a shared handoff", async () => {
+    const path = repo(), records = registry(path), separate = join(env.home, "separate"); mkdirSync(separate);
+    records[1]!.workdir = separate;
+    for (const record of records) { record.supervisor = "same-handoff-root"; record.owner = "claude-Development"; record.rootName = "claude-Development"; }
+    writeFileSync(join(env.home, "jobs.json"), JSON.stringify({ version: 2, jobs: records }));
+    await node("claude-Development", env.home);
+    const a = await node(records[0]!.name, path, { id: "one", owner: "same-handoff-root", parent: "claude-Development" });
+    const b = await node(records[1]!.name, separate, { id: "two", owner: "same-handoff-root", parent: "claude-Development" });
+    expect((await a.siblings()).map((p) => p.name)).not.toContain(b.name);
+    await expect(a.sendSibling({ to: b.name, body: "Cross-project sibling attempt" }, 32)).rejects.toThrow();
+  });
+
   it("routes the project to main or secondary while exact addresses stay direct", async () => {
     const path = repo(), a = await node("claude-master", path), b = await node("codex-master", path);
     const outsider = await node("outside", env.home);

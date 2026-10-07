@@ -7,6 +7,7 @@ import { makeEnv, until, type TestEnv } from "./helpers.js";
 import { readRunnerState } from "../src/mcp/job-host.js";
 import { readStore } from "../src/mcp/jobs.js";
 import { parentFromEnv } from "../src/core/parent-link.js";
+import { listPendingApprovals } from "../src/core/relay.js";
 import { pidAlive, killPid } from "../src/core/delegate.js";
 
 const SERVER = join(import.meta.dirname, "..", "plugins", "claude", "dist", "server.mjs");
@@ -18,22 +19,40 @@ beforeEach(() => {
   const file = join(dir, "fake.mjs");
   writeFileSync(file, `#!/usr/bin/env node
 import {existsSync,writeFileSync,appendFileSync} from 'node:fs';
+import {createInterface} from 'node:readline';
 if(process.argv.includes('queue')){appendFileSync(${JSON.stringify(join(env.home, "wake-calls"))}, 'wake');process.exit(0);}
-let prompt='';process.stdin.setEncoding('utf8');process.stdin.on('data',d=>prompt+=d);
-process.stdin.on('end',async()=>{
- const release=/release=(\\S+)/.exec(prompt)?.[1],link=/link=(\\S+)/.exec(prompt)?.[1];
- const thread='fixture-'+process.pid;
- console.log(JSON.stringify({type:'thread.started',thread_id:thread}));
+let release,approved=false,asked=false,interval;
+const send=value=>console.log(JSON.stringify(value));
+createInterface({input:process.stdin}).on('line',line=>{
+ const m=JSON.parse(line);
+ if(m.id===999&&m.result){approved=true;writeFileSync(release+'.approved',String(m.result.decision==='accept'));return;}
+ if(!m.method||m.id===undefined)return;
+ let result={};
+ if(m.method==='thread/start'||m.method==='thread/resume')result={thread:{id:'fixture-'+process.pid}};
+ if(m.method==='turn/start')result={turn:{id:'turn-1'}};
+ if(m.method==='turn/steer')result={turnId:'turn-1'};
+ send({id:m.id,result});
+ if(m.method!=='turn/start')return;
+ const prompt=(m.params.input||[]).map(x=>x.text||'').join(' ');
+ release=/release=(\\S+)/.exec(prompt)?.[1];
+ const link=/link=(\\S+)/.exec(prompt)?.[1];
  if(link)writeFileSync(link,JSON.stringify(Object.fromEntries(Object.entries(process.env).filter(([k])=>k.startsWith('AGENT_BRIDGE_PARENT_')))));
- while(release&&!existsSync(release))await new Promise(r=>setTimeout(r,20));
- console.log(JSON.stringify({type:'item.completed',item:{id:'answer',type:'agent_message',text:'Takeover result '+release}}));
- console.log(JSON.stringify({type:'turn.completed',usage:{}}));
+ interval=setInterval(()=>{
+  if(prompt.includes('approve=yes')&&!approved){
+   if(!asked&&existsSync(release+'.approve')){asked=true;send({id:999,method:'item/commandExecution/requestApproval',params:{command:'Takeover approval request',reason:'Fixture approval'}});}
+   return;
+  }
+  if(release&&!existsSync(release))return;
+  clearInterval(interval);
+  send({method:'item/completed',params:{turnId:'turn-1',item:{type:'agentMessage',text:'Takeover result '+release}}});
+  send({method:'turn/completed',params:{turn:{id:'turn-1',status:'completed'}}});
+ },20);
 });`);
   if (process.platform === "win32") { bin = join(dir, "codex.cmd"); writeFileSync(bin, '@ECHO off\r\n"%dp0%\\fake.mjs" %*\r\n'); }
   else { chmodSync(file, 0o755); bin = file; }
 });
 afterEach(async () => {
-  for (const file of releases.splice(0)) writeFileSync(file, "");
+  for (const file of releases.splice(0)) { writeFileSync(file, ""); writeFileSync(file + ".approve", ""); }
   const runnerPids = ids.splice(0).map((id) => readRunnerState(env.home, id)?.pid).filter((pid): pid is number => Boolean(pid));
   for (const pid of runnerPids) if (pidAlive(pid)) killPid(pid);
   await until(() => runnerPids.every((pid) => !pidAlive(pid)), 5_000);
@@ -45,7 +64,7 @@ afterEach(async () => {
 async function session(name: string, agent: "codex" | "claude" | "opencode") {
   const client = new Client({ name: "group-takeover", version: "1" }); clients.push(client);
   const transport = new StdioClientTransport({ command: process.execPath, args: [SERVER, `--agent=${agent}`], cwd: env.home, env: {
-    ...process.env, AGENT_BRIDGE_HOME: env.home, AGENT_BRIDGE_NAME: name, AGENT_BRIDGE_CODEX_BIN: bin, AGENT_BRIDGE_CODEX_EXEC: "1",
+    ...process.env, AGENT_BRIDGE_HOME: env.home, AGENT_BRIDGE_NAME: name, AGENT_BRIDGE_CODEX_BIN: bin, AGENT_BRIDGE_CLAUDE_BIN: bin, AGENT_BRIDGE_CODEX_EXEC: "0",
     AGENT_BRIDGE_DASHBOARD: "off", AGENT_BRIDGE_MAX_JOBS: "16", AGENT_BRIDGE_JOB_RUNNER: "1",
   } as Record<string, string>, stderr: "ignore" });
   transports.push(transport); await client.connect(transport);
@@ -64,12 +83,12 @@ it.each(["closed", "unavailable", "opencode"])("ten jobs survive a %s primary an
   const source = await session(primaryName, primaryAgent), target = await session("codex-master", "codex");
   const jobs = await Promise.all(Array.from({ length: 10 }, async (_, index) => {
     const release = join(env.home, `release-${index}`), link = `${release}.link`; releases.push(release);
-    const started = await call(source, "spawn_codex", { prompt: `release=${release} link=${link} complete item ${index}`, title: `Takeover item ${index}` });
+    const started = await call(source, "spawn_codex", { prompt: `release=${release} link=${link} ${index === 2 ? "approve=yes" : ""} complete item ${index}`, title: `Takeover item ${index}` });
     expect(started.error, started.text).toBeFalsy();
-    const name = /codex-job-[a-f0-9]+/.exec(started.text)![0], id = name.split("-").at(-1)!; ids.push(id);
+    const name = /(?:codex|claude)-job-[a-f0-9]+/.exec(started.text)![0], id = name.split("-").at(-1)!; ids.push(id);
     return { name, id, release, link };
   }));
-  await until(() => jobs.every((j) => existsSync(j.link) && readRunnerState(env.home, j.id)?.sessionId), 18_000);
+  await until(() => jobs.every((j) => existsSync(j.link) && readRunnerState(env.home, j.id)?.sessionId && readRunnerState(env.home, j.id)?.live), 18_000);
   const children = jobs.map((j) => parentFromEnv(JSON.parse(readFileSync(j.link, "utf8")))!);
   // Leave one result and note pending in the starter's inbox before it becomes unavailable.
   await children[0]!.send("Pending before takeover");
@@ -79,20 +98,25 @@ it.each(["closed", "unavailable", "opencode"])("ten jobs survive a %s primary an
   expect((await call(target, "peers")).text).toContain(jobs[9]!.name);
   expect((await call(target, "message_subagent", { job: jobs[1]!.name, message: "Continue under the project master", title: "Inherited project work" })).error).toBeFalsy();
   await Promise.all(children.map((child, i) => child.send(`After takeover note ${i}`)));
-  await children[2]!.escalate?.("Takeover approval request");
+  writeFileSync(jobs[2]!.release + ".approve", "");
+  await until(() => listPendingApprovals(env.home).some((a) => a.job === jobs[2]!.name), 5_000);
+  expect((await call(target, "message_subagent", { job: jobs[2]!.name, message: "allow" })).error).toBeFalsy();
+  await until(() => existsSync(jobs[2]!.release + ".approved"), 5_000);
+  expect(readFileSync(jobs[2]!.release + ".approved", "utf8")).toBe("true");
   for (const job of jobs) writeFileSync(job.release, "");
   await until(() => jobs.every((j) => readRunnerState(env.home, j.id)?.status === "done"), 10_000);
   await until(() => existsSync(join(env.home, "wake-calls")), 5_000);
   let delivered = "";
   const deadline = Date.now() + 5_000;
-  while ((delivered.match(/Takeover result /g) ?? []).length < 11 && Date.now() < deadline) {
+  while ((delivered.match(/Subagent codex-job-[a-f0-9]+ \(codex\) done after/g) ?? []).length < 10 && Date.now() < deadline) {
     delivered += (await call(target, "inbox")).text;
-    if ((delivered.match(/Takeover result /g) ?? []).length < 11) await new Promise((r) => setTimeout(r, 20));
+    if ((delivered.match(/Subagent codex-job-[a-f0-9]+ \(codex\) done after/g) ?? []).length < 10) await new Promise((r) => setTimeout(r, 20));
   }
-  expect((delivered.match(/Takeover result /g) ?? []).length).toBe(11);
-  // The redirect queues one legitimate second turn for job 1; each original report still appears once.
-  for (const [index, job] of jobs.entries()) expect(delivered.split(`Takeover result ${job.release}`).length - 1).toBe(1);
-  expect(delivered.split("Takeover result undefined").length - 1).toBe(1);
+  expect((delivered.match(/Subagent codex-job-[a-f0-9]+ \(codex\) done after/g) ?? []).length, delivered).toBe(10);
+  // A live answer to steering is separate from the final report. Each stable final envelope arrives once.
+  const envelopes = [...delivered.matchAll(/<agent-bridge-message id="([^"]+)"[^>]*>([\s\S]*?)<\/agent-bridge-message>/g)];
+  expect(new Set(envelopes.map((m) => m[1])).size).toBe(envelopes.length);
+  for (const job of jobs) expect(envelopes.filter((m) => m[2]!.includes(`Subagent ${job.name} (codex) done after`))).toHaveLength(1);
   expect(delivered).toContain("Pending before takeover");
   expect(delivered).toContain("Takeover approval request");
   for (let i = 0; i < 10; i++) expect(delivered).toContain(`After takeover note ${i}`);
