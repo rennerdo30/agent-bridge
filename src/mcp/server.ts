@@ -827,8 +827,8 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
       const first = res.messages[0];
       if (!first) return text(["No session recipients were eligible for this broadcast.", ...formatDelivery(res, cfg.maxHops), ...jobLines].join("\n"));
       const lines = [res.storage?.recovered
-        ? `Message ${first.id} is stored in the broker (conversation ${first.conversationId}). Recovered by id; no additional message sent. Delivery and consumption are separate.`
-        : `Message ${first.id} is stored in the broker (conversation ${first.conversationId}).`];
+        ? `Message ${first.id} sent previously and stored in the broker (conversation ${first.conversationId}). Recovered by id; no additional message sent. Delivery and consumption are separate.`
+        : `Message ${first.id} sent and stored in the broker (conversation ${first.conversationId}).`];
       if (res.storage?.receipts.length) lines.push(`Stored recipient copies: ${res.storage.receipts.map(r => `${r.recipient} (${r.readAt === null ? "unread" : "read"})`).join(", ")}.`);
       lines.push(...formatDelivery(res, cfg.maxHops));
       if (jobLines.length) lines.push(`Running-job broadcast:\n${jobLines.join("\n")}`);

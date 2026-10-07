@@ -23,7 +23,7 @@ it.each(["claude", "codex", "opencode", "antigravity"] as const)("%s can confirm
     const id = randomUUID(), args = { to: recipient.name, message: "Durable tool send", message_id: id };
     const content = (r: any) => r.content.map((c: any) => c.text).join("\n");
     const sent = content(await client.callTool({ name: "send", arguments: args }));
-    expect(sent).toContain(`Message ${id} is stored in the broker`);
+    expect(sent).toContain(`Message ${id} sent and stored in the broker`);
     const status = JSON.parse(content(await client.callTool({ name: "send_status", arguments: { message_id: id } })));
     expect(status).toMatchObject({ id, state: "stored", receipts: [{ recipient: recipient.name, readAt: null }] });
     expect(content(await client.callTool({ name: "send", arguments: args }))).toContain("no additional message sent");
