@@ -914,7 +914,7 @@ export async function retryTransient(req: DelegateRequest, run: (req: DelegateRe
     if (Date.now() + waitMs >= deadline) throw new DelegateError("delegate timed out during provider retry backoff", "timeout", "", "", sessionId);
     retries++;
     req.log.warn("transient provider error; retrying on the selected model", { sessionId, model, cause, retries, waitMs });
-    req.onProgress?.(`temporary provider error: ${cause}; retry ${retries}/${limit} in ${waitMs / MS_PER_SECOND}s on the same model, ${sessionId ? "preserving session progress" : "before session start"}`);
+    req.onProgress?.(`temporary provider error: ${cause}; retry ${retries}${databaseLock ? "" : `/${limit}`} in ${waitMs / MS_PER_SECOND}s on the same model, ${sessionId ? "preserving session progress" : "before session start"}`);
     try {
       await delay(waitMs, undefined, { signal: req.signal });
     } catch {

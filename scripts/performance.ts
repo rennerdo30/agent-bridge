@@ -187,6 +187,7 @@ try {
   lag.disable();
   const stats = Object.fromEntries(Object.entries(samples).map(([key, values]) => { const sorted = [...values].sort((x, y) => x - y); return [key, { count: values.length, meanMs: values.reduce((x, y) => x + y, 0) / values.length, p95Ms: sorted[Math.floor((sorted.length - 1) * .95)], maxMs: sorted.at(-1) }]; }));
   console.log(JSON.stringify({ durationSeconds: duration, peers: peers.length, jobs: jobCount, logs: 680, retainedMessages: 8000, elapsedMs: elapsed, cpuMs: (usage.user + usage.system) / 1000, cpuPercent: (usage.user + usage.system) / (elapsed * 10), eventLoop: { p95Ms: lag.percentile(95) / 1e6, p99Ms: lag.percentile(99) / 1e6, maxMs: lag.max / 1e6 }, heartbeatMsUnderSqliteContention: sqlHeartbeat, heartbeatMsUnderStoreContention: heartbeat, failures, delivered, quietCopies, stats, io, hot }, null, 2));
+  if (failures) process.exitCode = 1;
 } finally {
   lag.disable(); inspector.disconnect();
   await ui?.close(); await a?.close(); await b?.close();

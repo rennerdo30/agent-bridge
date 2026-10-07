@@ -59,8 +59,8 @@ Watch notifications prioritize changed registered CLI files; bounded polling
 is the portable fallback. Discovery revisits roots every 30 seconds and streams
 32 filesystem entries and 32 OpenCode sessions at a time, without depth or total
 inventory truncation. Backlogs run batches at 100 ms; idle polling uses two
-seconds. SQLite contention defers and retries batches without advancing their
-transactional cursors. This bounds individual batches; a large existing corpus
+seconds. SQLite contention defers and retries batches; source cursors advance
+only after their corresponding records and derived indexing are written. This bounds individual batches; a large existing corpus
 takes multiple batches to finish. It does not establish zero contention or a
 measured throughput claim for every owner workload. See [performance.md](performance.md).
 

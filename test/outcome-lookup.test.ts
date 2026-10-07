@@ -22,15 +22,21 @@ it('derives only the selected job or run from a 700-run corpus in under one seco
     writeFileSync(join(root,`${name}.json`),JSON.stringify({job:jobs[i]!.name,jobStartedAt:1,by:'fixture',...(i===699?{repoRoot:repo,branch:'fixture',baseBranch:'main'}:{})}));
   }
   const ctx={home:env.home,log:nullLogger,peers:()=>[]};
-  for(const query of [{job:'codex-job-699'},{run:'2026-10-07-10-00-00-codex-699'}]){
-    const start=performance.now(),result=await readDashboard(ctx,{path:'/api/job-outcomes',query});
-    expect(performance.now()-start).toBeLessThan(1000);expect(result.status).toBe(200);
-    const body=result.body as any;
-    expect(body.contractVersion).toBe(1);expect(body.next).toBeNull();
-    expect(Object.keys(body.jobs).length+Object.keys(body.runs).length).toBe(1);
-    const outcome=body.jobs['codex-job-699']?.outcome??body.runs['2026-10-07-10-00-00-codex-699'];
-    expect(outcome).toMatchObject({delivery:{status:'unknown'},merge:{state:'merged'}});
+  for (const state of ['merged', 'unmerged']) {
+    if (state === 'unmerged') {
+      execFileSync('git', ['-C', repo, 'checkout', 'fixture'], {stdio:'ignore'});
+      execFileSync('git', ['-C', repo, '-c', 'user.name=rennerdo30', '-c', 'user.email=9086097+rennerdo30@users.noreply.github.com', 'commit', '--allow-empty', '-m', 'Fixture work'], {stdio:'ignore'});
+    }
+    for(const query of [{job:'codex-job-699'},{run:'2026-10-07-10-00-00-codex-699'}]){
+      const start=performance.now(),result=await readDashboard(ctx,{path:'/api/job-outcomes',query});
+      expect(performance.now()-start, `${state} ${JSON.stringify(query)}`).toBeLessThan(1000);expect(result.status).toBe(200);
+      const body=result.body as any;
+      expect(body.contractVersion).toBe(1);expect(body.next).toBeNull();
+      expect(Object.keys(body.jobs).length+Object.keys(body.runs).length).toBe(1);
+      const outcome=body.jobs['codex-job-699']?.outcome??body.runs['2026-10-07-10-00-00-codex-699'];
+      expect(outcome).toMatchObject({delivery:{status:'unknown'},merge:{state}});
+    }
   }
-  for(const query of [{job:'unknown'},{run:'unknown'}])expect((await readDashboard(ctx,{path:'/api/job-outcomes',query})).status).toBe(404);
+  for(const query of [{job:'unknown'},{run:'unknown'},{job:'constructor'},{run:'toString'}])expect((await readDashboard(ctx,{path:'/api/job-outcomes',query})).status).toBe(404);
   expect((await readDashboard(ctx,{path:'/api/job-outcomes',query:{job:'a',run:'b'}})).status).toBe(400);
 });
