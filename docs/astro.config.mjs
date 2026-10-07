@@ -69,6 +69,10 @@ export default defineConfig({
                 "slug": "message-waits"
             },
             {
+                "label": "Delivery and wake behavior",
+                "slug": "messaging-delivery"
+            },
+            {
                 "label": "Owner questions",
                 "slug": "concepts/owner-questions"
             },

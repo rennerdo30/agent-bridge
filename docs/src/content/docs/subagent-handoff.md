@@ -1,5 +1,6 @@
 ---
 title: "Local subagent handoff"
+slug: subagent-handoff
 ---
 
 `handoff_subagents` transfers supervision from the calling session to another connected local session, regardless of agent kind.

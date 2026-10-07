@@ -1,5 +1,6 @@
 ---
 title: "Message waits (AB-76)"
+slug: message-waits
 ---
 
 Use `wait_for_message(mode="notify", reply_to=<sent id>)` once, then keep working or

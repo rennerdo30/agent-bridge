@@ -1,5 +1,6 @@
 ---
 title: "Native subagents in delegated Codex jobs (AB-105)"
+slug: codex-subagents
 ---
 
 `spawn_codex` and `ask_codex` enable Codex's native collaboration tools by default.

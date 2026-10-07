@@ -1,5 +1,6 @@
 ---
 title: "Command lifetime and unexplained exits"
+slug: command-lifetime
 ---
 
 The bridge's `timeout_sec` limits an **agent turn**, not each command the agent runs.

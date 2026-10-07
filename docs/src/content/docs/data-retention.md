@@ -1,5 +1,6 @@
 ---
 title: "User data retention regression guard"
+slug: data-retention
 ---
 
 Owner rule: never lose user data. Durable bridge messages, job records, run logs,

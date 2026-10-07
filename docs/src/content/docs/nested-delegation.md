@@ -1,5 +1,6 @@
 ---
 title: "Nested delegation"
+slug: nested-delegation
 ---
 
 `maxDelegateDepth` defaults to 2. `AGENT_BRIDGE_MAX_DELEGATE_DEPTH` overrides the

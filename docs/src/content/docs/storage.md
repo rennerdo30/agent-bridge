@@ -1,5 +1,6 @@
 ---
 title: "Storage maintenance"
+slug: storage
 ---
 
 Run `agent-bridge doctor` for read-only integrity and foreign-key checks, primary/archive schema

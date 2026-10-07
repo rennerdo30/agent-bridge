@@ -1,5 +1,6 @@
 ---
 title: "History search"
+slug: history-search
 ---
 
 Complete raw conversation retention, project mirrors and paged MCP context access
@@ -8,7 +9,7 @@ combines bounded preview documents with durable raw records, which extend its
 coverage beyond preview limits.
 
 
-`search_history` searches local bridge messages, cold `archive.db` messages, all decision
+`search_history` searches local bridge messages, cold `archive.db` messages, owner questions and exact answers, all decision
 revisions, delegated run logs and metadata (including `runs/archive`), and the CLI transcript
 readers for Claude Code, Codex and opencode. Ordinary searches only query the local index:
 they do not start a CLI, read usage limits, or call a model. Returned text still occupies

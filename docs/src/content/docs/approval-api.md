@@ -1,5 +1,6 @@
 ---
 title: "Dashboard approvals"
+slug: approval-api
 ---
 
 Codex jobs use automatic approval review by default (`codexApprovalsReviewer: "auto_review"`).

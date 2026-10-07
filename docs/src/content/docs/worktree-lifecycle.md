@@ -1,5 +1,6 @@
 ---
 title: "Worktree checkpoints, permissions and opt-in close"
+slug: worktree-lifecycle
 ---
 
 Automatic checkpoints use the fixed message `Save worktree changes`, with no trailers,

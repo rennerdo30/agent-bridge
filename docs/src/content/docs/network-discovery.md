@@ -1,5 +1,6 @@
 ---
 title: "LAN discovery diagnostics"
+slug: network-discovery
 ---
 
 Discovery is an untrusted hint, never permission to pair. The UDP listener binds

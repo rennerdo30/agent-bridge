@@ -1,5 +1,6 @@
 ---
 title: "Broker performance with many agents"
+slug: performance
 ---
 
 Tracked in Pair Desk **AB-121**; duplicate completion delivery is **AB-117**.
@@ -36,7 +37,9 @@ reported process exit. A live process can appear dead while its event loop is bl
 
 `scripts/performance.ts` is an opt-in harness outside Vitest's test discovery. It
 creates a fresh synthetic home, short socket path (under 104 bytes on macOS), its
-own database and credentials, and empty CLI transcript roots. No links to source
+own Git root, database and credentials, and empty CLI transcript roots. The
+process changes into that root before creating fake jobs, and custom-home mirror
+writes stay beneath it. No links to source
 or owner caches are used. Its cleanup removes only its own freshly created fixture.
 Windows key ACL setup happens before profiling; established pairing is measured.
 

@@ -1,5 +1,6 @@
 ---
 title: "Delegated Codex access and worktree isolation"
+slug: delegated-access
 ---
 
 ## Full access and approvals (AB-60)

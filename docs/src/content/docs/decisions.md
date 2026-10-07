@@ -1,5 +1,6 @@
 ---
 title: "Pinned owner decisions"
+slug: decisions
 ---
 
 Research the owner's choice before recording it. `decide` stores the recording session as author; it does not infer a decision from ordinary messages.

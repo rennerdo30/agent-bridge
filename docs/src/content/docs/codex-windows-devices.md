@@ -1,5 +1,6 @@
 ---
 title: "Windows execution identity and device work (AB-107)"
+slug: codex-windows-devices
 ---
 
 ## Result

@@ -1,5 +1,6 @@
 ---
 title: "Paired dashboard reads (`dashboard-read-v1`)"
+slug: remote-dashboard
 ---
 
 AB-94 adds read-only inspection of a paired PC through the existing TLS PSK link.

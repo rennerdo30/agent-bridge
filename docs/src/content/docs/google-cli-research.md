@@ -1,5 +1,6 @@
 ---
 title: "Google agent CLIs"
+slug: google-cli-research
 ---
 
 Verified 2026-10-07 using official documentation and local command probes.

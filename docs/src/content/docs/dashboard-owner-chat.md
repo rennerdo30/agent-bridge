@@ -1,5 +1,6 @@
 ---
 title: "Owner input from session Chat (AB-140)"
+slug: dashboard-owner-chat
 ---
 
 Release scope: **0.29.16 supports Claude Code, Codex, opencode and Antigravity**.

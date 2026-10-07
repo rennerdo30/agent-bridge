@@ -1,5 +1,6 @@
 ---
 title: "Broker networking"
+slug: network
 ---
 
 Transport reference: [Node TLS pre-shared keys](https://nodejs.org/api/tls.html#pre-shared-keys).

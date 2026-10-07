@@ -1,5 +1,6 @@
 ---
 title: "Jobs on a paired PC"
+slug: remote-jobs
 ---
 
 Pair the two instances first. The PC that will run the jobs must enable remote

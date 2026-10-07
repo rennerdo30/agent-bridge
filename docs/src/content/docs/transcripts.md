@@ -1,5 +1,6 @@
 ---
 title: "Dashboard transcript API"
+slug: transcripts
 ---
 
 ## Durable run and job history

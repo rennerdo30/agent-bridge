@@ -1,6 +1,6 @@
 ---
-slug: upgrade-0.29.16
 title: "Retained-data upgrade to 0.29.16"
+slug: upgrade-0.29.16
 ---
 
 0.29.16 reads retained releases and adds conversation storage at SQLite schema 8.
