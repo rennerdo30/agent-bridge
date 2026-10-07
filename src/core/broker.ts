@@ -156,7 +156,7 @@ export class Broker {
         if (!job || (job.executionOwner !== peer.name && job.owner !== peer.name && job.rootName !== peer.name) || typeof job.owner !== "string" || typeof m.body !== "string" || m.body.length > MAX_BODY_CHARS) throw new BridgeError("unauthorized", "Invalid inline job delivery.");
         const recipient = chooseJobRecipient(job, [...this.conns].flatMap((c) => c.peer ? [c.peer] : []));
         const message = { ...m, to: recipient, recipient };
-        if (this.store.insertOnce(message)) {
+        if (this.store.insertJobDelivery(message)) {
           const target = this.connByName(recipient);
           if (target) this.emit(target, "message", message);
         }
@@ -535,6 +535,11 @@ export class Broker {
     for (const job of this.storedJobs()) {
       if (!Array.isArray(job.ownershipHistory) || !job.ownershipHistory.length) continue;
       const recipient = chooseJobRecipient(job, live), target = this.connByName(recipient);
+      if (Array.isArray(job.deliveryHistory)) for (const envelope of job.deliveryHistory) {
+        if (!isRecord(envelope) || !isRecord(envelope.from) || envelope.from.id !== `job:${job.id}` || typeof envelope.id !== "string" || typeof envelope.body !== "string") continue;
+        const message = { ...envelope, to: recipient, recipient } as unknown as BridgeMessage;
+        if (this.store.insertJobDelivery(message) && target) this.emit(target, "message", message);
+      }
       if (!target) continue;
       for (const from of mastersFor(job)) {
         const moved = this.store.handoffMail(from, recipient, String(job.id), this.now());

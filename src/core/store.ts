@@ -288,6 +288,19 @@ export class MessageStore {
     return true;
   }
 
+  /** A recovered inline envelope must never replay after a recipient consumed it or it was forwarded. */
+  insertJobDelivery(m: BridgeMessage): boolean {
+    if (this.db.prepare("SELECT 1 FROM job_delivery_routes WHERE id=?").get(m.id)) return false;
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      const inserted = this.insertOnce(m);
+      const row = this.db.prepare("SELECT read_at FROM messages WHERE id=? AND recipient=?").get(m.id, m.recipient);
+      this.db.prepare("INSERT INTO job_delivery_routes(id,recipient,consumed_at) VALUES (?,?,?)").run(m.id, m.recipient, row?.read_at ?? null);
+      this.db.exec("COMMIT");
+      return inserted;
+    } catch (err) { this.db.exec("ROLLBACK"); throw err; }
+  }
+
   markRead(recipient: string, ids: string[], at: number = Date.now()): number {
     let changed = 0;
     for (const id of ids) {

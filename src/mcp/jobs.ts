@@ -50,6 +50,8 @@ export interface Job {
   masters?: string[];
   executionOwner?: string;
   queuedMessages?: string[];
+  /** Append-only inline envelopes: the broker can recover delivery after executor/connection loss. */
+  deliveryHistory?: BridgeMessage[];
   /** Paired PC hosting this job; remote PIDs must never be signalled locally. */
   remote?: { host: string; name: string };
   /** Blocking remote asks forward next-turn settings through the same authenticated control path. */
@@ -404,6 +406,7 @@ export class JobManager {
       const mine = [...this.history.values()].filter((j) => this.own.has(j.id)).map((j) => {
         const old = byId.get(j.id) ?? archived.get(j.id);
         if (isRecord(old) && Array.isArray(old.ownershipHistory) && old.ownershipHistory.length) {
+          j.deliveryHistory = [...new Map([...(Array.isArray(old.deliveryHistory) ? old.deliveryHistory as BridgeMessage[] : []), ...(j.deliveryHistory ?? [])].map((m) => [m.id, m])).values()];
           // Durable authority wins over a stale manager's in-memory snapshot.
           Object.assign(j, { owner: old.owner, supervisor: old.supervisor, rootSession: old.rootSession, rootName: old.rootName,
             parentJob: old.parentJob, ownershipHistory: old.ownershipHistory, masters: old.masters });
@@ -639,9 +642,9 @@ export class JobManager {
     const active = [...this.running.values(), ...this.foreground.values(), ...this.waitingJobs.values()];
     const current = active.find((j) => j.id === id || j.name === ref)
       ?? this.history.get(id) ?? [...this.history.values()].find((j) => j.name === ref);
-    if (current || !this.storePath || !this.restoreResume) return current && (canControlJob(current as unknown as Record<string, unknown>, this.node.name) || this.isMine(current.owner) || (this.lineage && current.parentJob === this.lineage.parentJob)) ? current : undefined;
+    if (current || !this.storePath || !this.restoreResume) return current && (!current.ownershipHistory?.length || canControlJob(current as unknown as Record<string, unknown>, this.node.name) || this.isMine(current.owner) || (this.lineage && current.parentJob === this.lineage.parentJob)) ? current : undefined;
     const saved = readStore(this.storePath, this.log, true).find((j) => j.id === id || j.name === ref);
-    if (!saved || (!this.lineage && !this.isMine(saved.owner) && !canControlJob(saved as unknown as Record<string, unknown>, this.node.name))) return undefined;
+    if (!saved || (saved.ownershipHistory?.length && !this.lineage && !this.isMine(saved.owner) && !canControlJob(saved as unknown as Record<string, unknown>, this.node.name))) return undefined;
     // The same lineage rule as restore(): a nested coordinator sees only its own children, a session only top-level jobs.
     if (this.lineage ? saved.parentJob !== this.lineage.parentJob : saved.parentJob) return undefined;
     const job: Job = { ...saved, controller: new AbortController(), progress: null, queue: [], resume: this.restoreResume(saved.agent, saved.args ?? {}) };
@@ -776,7 +779,7 @@ export class JobManager {
     if (!job) return false;
     job.args = changedJobArgs(job.args, settings);
     if (settings.model !== undefined && job.status !== "running") job.model = settings.model;
-    if ((!this.sharedControl && job.owner !== this.node.name && !this.lineage) || (job.status === "running" && job.executionOwner && job.executionOwner !== this.node.name)) void this.node.controlInlineJob?.(job.name, { type: "settings", settings });
+    if ((!this.sharedControl && !this.isMine(job.owner) && !this.lineage) || (job.status === "running" && job.executionOwner && job.executionOwner !== this.node.name)) void this.node.controlInlineJob?.(job.name, { type: "settings", settings });
     else if (this.hostedRunning(job)) this.runners!.send(job, { type: "settings", settings });
     else job.remoteControl?.({ type: "settings", settings });
     this.own.add(job.id);
@@ -790,7 +793,7 @@ export class JobManager {
     if (!job) return false;
     job.args = { ...job.args, effort };
     // A runner continues queued follow-ups itself: it needs the new level too.
-    if ((!this.sharedControl && job.owner !== this.node.name && !this.lineage) || (job.status === "running" && job.executionOwner && job.executionOwner !== this.node.name)) void this.node.controlInlineJob?.(job.name, { type: "effort", effort });
+    if ((!this.sharedControl && !this.isMine(job.owner) && !this.lineage) || (job.status === "running" && job.executionOwner && job.executionOwner !== this.node.name)) void this.node.controlInlineJob?.(job.name, { type: "effort", effort });
     else if (this.hostedRunning(job)) this.runners!.send(job, { type: "effort", effort });
     else job.remoteControl?.({ type: "effort", effort });
     this.own.add(job.id);
@@ -804,7 +807,7 @@ export class JobManager {
     if (!job) return false;
     job.args = { ...job.args, title };
     job.retitle?.(title);
-    if ((!this.sharedControl && job.owner !== this.node.name && !this.lineage) || (job.status === "running" && job.executionOwner && job.executionOwner !== this.node.name)) void this.node.controlInlineJob?.(job.name, { type: "title", title });
+    if ((!this.sharedControl && !this.isMine(job.owner) && !this.lineage) || (job.status === "running" && job.executionOwner && job.executionOwner !== this.node.name)) void this.node.controlInlineJob?.(job.name, { type: "title", title });
     else if (this.hostedRunning(job)) this.runners!.send(job, { type: "title", title });
     else job.remoteControl?.({ type: "title", title });
     this.own.add(job.id);
@@ -823,7 +826,7 @@ export class JobManager {
       return { outcome: "delivered", job };
     }
     // Its runner may have finished just now: then this continues it instead.
-    if (!this.sharedControl && job.owner !== this.node.name && !this.lineage) {
+    if (!this.sharedControl && !this.isMine(job.owner) && !this.lineage) {
       void this.node.controlInlineJob?.(job.name, { type: "message", body: message, cid: randomUUID() }).catch((err) => this.log.warn("inline job control failed", { err: String(err) }));
       return { outcome: "delivered", job };
     }
@@ -896,7 +899,7 @@ export class JobManager {
   private launch(job: Job, run: Run): void {
     if (typeof job.args?.model === "string") job.model = job.args.model;
     job.status = "running";
-    job.executionOwner = job.owner !== this.node.name ? this.node.name : undefined;
+    job.executionOwner = !this.isMine(job.owner) ? this.node.name : undefined;
     job.startedAt = Date.now();
     job.controller = new AbortController();
     job.progress = null;
@@ -1014,7 +1017,7 @@ export class JobManager {
   cancel(ref: string): boolean {
     const owned = this.find(ref);
     if (!owned) return false;
-    if ((!this.sharedControl && owned.owner !== this.node.name && !this.lineage) || (owned.status === "running" && owned.executionOwner && owned.executionOwner !== this.node.name)) {
+    if ((!this.sharedControl && !this.isMine(owned.owner) && !this.lineage) || (owned.status === "running" && owned.executionOwner && owned.executionOwner !== this.node.name)) {
       void this.node.controlInlineJob?.(owned.name, { type: "cancel" }).catch((err) => this.log.warn("inline cancel failed", { err: String(err) }));
       return true;
     }
@@ -1137,7 +1140,9 @@ export class JobManager {
       createdAt: Date.now(),
       readAt: null,
     };
-    if (job.executionOwner === this.node.name && job.owner !== this.node.name && this.node.reportInlineJob) {
+    if (job.ownershipHistory?.length && this.node.reportInlineJob) {
+      job.deliveryHistory = [...(job.deliveryHistory ?? []), m];
+      this.persist();
       void this.node.reportInlineJob(m).catch((err) => this.log.warn("inline report delivery failed", { err: String(err) }));
     } else this.node.deliverLocal(m);
     return m.id;
@@ -1149,7 +1154,7 @@ export function sessionOfError(err: unknown): string | null {
   return err instanceof DelegateError ? (err.sessionId ?? null) : null;
 }
 
-type StoredJob = Pick<Job, "ownershipHistory" | "masters" | "executionOwner" | "queuedMessages" | "forwarded" | "id" | "name" | "agent" | "model" | "prompt" | "startedAt" | "status" | "sessionId" | "workdir" | "worktree" | "args" | "owner" | "supervisor" | "finishedAt" | "host" | "remote" | "metadataVersion" | "parentJob" | "rootSession" | "rootName" | "percent" | "progressNote" | "etaAt" | "etaReportedAt">;
+type StoredJob = Pick<Job, "deliveryHistory" | "ownershipHistory" | "masters" | "executionOwner" | "queuedMessages" | "forwarded" | "id" | "name" | "agent" | "model" | "prompt" | "startedAt" | "status" | "sessionId" | "workdir" | "worktree" | "args" | "owner" | "supervisor" | "finishedAt" | "host" | "remote" | "metadataVersion" | "parentJob" | "rootSession" | "rootName" | "percent" | "progressNote" | "etaAt" | "etaReportedAt">;
 
 function toStored(j: Job): StoredJob {
   return {
@@ -1169,6 +1174,7 @@ function toStored(j: Job): StoredJob {
     masters: j.masters,
     executionOwner: j.executionOwner,
     queuedMessages: [...j.queue],
+    deliveryHistory: j.deliveryHistory,
     forwarded: j.forwarded,
     supervisor: j.supervisor,
     metadataVersion: j.metadataVersion,

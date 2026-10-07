@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events";
+import { DatabaseSync } from "node:sqlite";
 import { join } from "node:path";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -118,6 +119,28 @@ describe("local subagent ownership handoff", () => {
       expect(store.handoffMail(source.name, target.name, "a", 5)).toEqual([]);
       expect(store.unread(target.name, 10)).toEqual([]);
     } finally { store.close(); }
+  });
+
+  it("recovers inline envelopes after a failed send and never replays consumed delivery history", async () => {
+    const old = manager(source); let finish!: (value: { text: string; sessionId: string; isError: boolean; details: {} }) => void;
+    const job = old.start("codex", null, "Work", async () => new Promise((resolve) => { finish = resolve; }));
+    await source.handoffSubagents({ to: target.name });
+    source.reportInlineJob = async () => { throw new Error("Connection lost before report"); };
+    finish({ text: "Crash-safe evidence", sessionId: "thread", isError: false, details: {} });
+    await until(() => Boolean(readStore(path())[0]?.deliveryHistory?.length));
+    expect(target.unread().some((m) => m.from.name === job.name)).toBe(false);
+    const recovery = env.node("recovery", "opencode"); extra.push(recovery); await recovery.start();
+    await until(() => target.unread().some((m) => m.body.includes("Crash-safe evidence")));
+    const report = target.unread().find((m) => m.from.name === job.name)!;
+    target.markRead([report.id]);
+    await expect.poll(() => {
+      const reader = new DatabaseSync(env.db, { readOnly: true });
+      try { return reader.prepare("SELECT read_at FROM messages WHERE id=? AND recipient=?").get(report.id, target.name)?.read_at !== null; } finally { reader.close(); }
+    }).toBe(true);
+    await recovery.stop(); const again = env.node("recovery-again", "opencode"); extra.push(again); await again.start();
+    await target.peers();
+    expect(target.unread().some((m) => m.id === report.id)).toBe(false);
+    expect(readStore(path())[0]!.deliveryHistory).toMatchObject([{ id: report.id, body: expect.stringContaining("Crash-safe evidence") }]);
   });
 
   it("moves archived jobs without changing their archived bytes", async () => {
