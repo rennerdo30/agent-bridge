@@ -85,6 +85,11 @@ it("recovers a killed writer between schema steps without publishing its partial
   children.push(child);
   let errors = ""; child.stderr!.on("data", (chunk) => errors += chunk);
   await until(() => existsSync(checkpoint), 2_000);
+  // The worker has executed step7, but the only publication boundary is COMMIT.
+  const observer = new DatabaseSync(path, { readOnly: true });
+  try { verifyOriginal(observer); } finally { observer.close(); }
+  const pausedSnapshot = new DatabaseSync(snapshotPaths()[0]!, { readOnly: true });
+  try { verifyOriginal(pausedSnapshot); } finally { pausedSnapshot.close(); }
   const exited = new Promise<void>((resolve) => child.once("exit", () => resolve()));
   child.kill("SIGKILL"); await exited;
   expect(errors).not.toContain("Error:");
@@ -104,6 +109,42 @@ it("recovers a killed writer between schema steps without publishing its partial
     migrateSqlite(recovered, path, true, 8, migrations, nullLogger);
     expect(snapshotPaths()).toEqual(files);
   } finally { recovered.close(); }
+});
+
+it("keeps JSON bytes and its completed backup when a writer dies before atomic replacement", async () => {
+  const path = join(home, "config.json"), previous = { version: 3, owner: { unknown: "keep" } };
+  writeFileSync(path, JSON.stringify(previous)); const bytes = readFileSync(path);
+  const bundle = join(home, "json-writer.mjs"), checkpoint = join(home, "json-checkpoint");
+  await build({ entryPoints: [join(import.meta.dirname, "../src/core/json-store.ts")], outfile: bundle, bundle: true, platform: "node", format: "esm", logLevel: "silent" });
+  const child = spawn(process.execPath, ["--input-type=module", "-e", `
+    import fs from 'node:fs'; import { syncBuiltinESMExports } from 'node:module';
+    const rename = fs.renameSync;
+    fs.renameSync = (from, to) => {
+      if (to === ${JSON.stringify(path)}) { fs.writeFileSync(${JSON.stringify(checkpoint)}, 'before atomic publication'); Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10000); }
+      return rename(from, to);
+    };
+    syncBuiltinESMExports();
+    const { writeJsonStore } = await import(${JSON.stringify(pathToFileURL(bundle).href)});
+    writeJsonStore(${JSON.stringify(path)}, ${JSON.stringify({ ...previous, enabled: true })}, ${JSON.stringify(previous)});
+  `], { stdio: ["ignore", "pipe", "pipe"] });
+  children.push(child);
+  await until(() => existsSync(checkpoint), 2_000);
+  expect(readFileSync(path)).toEqual(bytes);
+  const backups = readdirSync(home).filter((name) => name.startsWith("config.json.backup-"));
+  expect(backups).toHaveLength(1);
+  expect(readFileSync(join(home, backups[0]!))).toEqual(bytes);
+  const pending = readdirSync(home).find((name) => name.startsWith("config.json.") && name.endsWith(".tmp"))!;
+  expect(JSON.parse(readFileSync(join(home, pending), "utf8"))).toMatchObject({ version: 4, enabled: true });
+  const exited = new Promise<void>((resolve) => child.once("exit", () => resolve()));
+  child.kill("SIGKILL"); await exited;
+  expect(readFileSync(path)).toEqual(bytes);
+  writeJsonStore(path, { ...previous, enabled: true }, readJsonStore(path));
+  expect(readJsonStore(path)).toMatchObject({ version: 4, owner: { unknown: "keep" }, enabled: true });
+  expect(readFileSync(join(home, backups[0]!))).toEqual(bytes);
+  expect(existsSync(join(home, pending))).toBe(true);
+  const files = readdirSync(home);
+  writeJsonStore(path, { ...previous, enabled: true }, readJsonStore(path));
+  expect(readdirSync(home)).toEqual(files);
 });
 
 it("preserves the original and its backup if a JSON publication fails, then retries once", () => {
