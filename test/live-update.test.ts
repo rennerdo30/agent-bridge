@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { build } from "esbuild";
 import { codexLiveConfig, reportConnectedVersions, updateClaude, updateCodex } from "../src/cli/live-update.js";
 import { BridgeClient } from "../src/core/client.js";
 import { nullLogger } from "../src/core/logger.js";
@@ -26,6 +27,19 @@ beforeEach(() => {
 afterEach(() => rmSync(dir, { recursive: true, force: true, maxRetries: 3 }));
 
 describe("immutable live updates (mock Codex)", () => {
+  it("selects an isolated runtime while keeping session reports in the shared home", async () => {
+    const isolated = join(dir, "runtime"), shared = join(dir, "shared"), launcher = join(dir, "cached", "dist", "server.mjs");
+    writeFileSync(join(source, "dist", "worker.mjs"), "console.log('selected-new');\n");
+    selectRuntime(isolated, "codex", source, "0.1.1");
+    await build({ entryPoints: [join(import.meta.dirname, "../src/mcp/launcher.ts")], outfile: launcher, bundle: true, platform: "node", format: "esm", logLevel: "silent" });
+    writeFileSync(join(dir, "cached", "dist", "worker.mjs"), "console.log('cached-old');\n");
+    const child = spawn(process.execPath, [launcher, "--agent=codex"], { env: { ...process.env, AGENT_BRIDGE_HOME: shared, AGENT_BRIDGE_PLUGIN_RUNTIME_HOME: isolated }, stdio: ["ignore", "pipe", "pipe"] });
+    let output = ""; child.stdout.on("data", (chunk) => output += chunk); child.stderr.on("data", (chunk) => output += chunk);
+    const code = await new Promise<number | null>((resolve, reject) => { child.once("error", reject); child.once("exit", resolve); });
+    expect(code, output).toBe(0); expect(output).toContain("selected-new"); expect(output).not.toContain("cached-old");
+    expect(JSON.parse(readFileSync(join(shared, "plugin-sessions", `${child.pid}.json`), "utf8"))).toMatchObject({ version: "0.1.1", client: "codex" });
+    expect(existsSync(join(isolated, "plugin-sessions"))).toBe(false);
+  });
   it("publishes a new cache without touching an old server or config preferences", async () => {
     const home = join(dir, "codex"), old = join(home, "plugins", "cache", "agent-bridge", "agent-bridge", "0.1.0");
     mkdirSync(join(old, "dist"), { recursive: true });

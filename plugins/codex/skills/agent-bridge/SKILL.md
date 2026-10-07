@@ -43,3 +43,13 @@ All of them accept `model`, meaning any model id the target accepts (for example
 - Keep messages concise and specific. Include file paths, and the decision or result the peer should act on.
 - Do not start endless back-and-forth. Once the task is settled, stop replying. Conversations have a hop limit.
 - Only toggle `auto_wake` when your user asks for it.
+
+## Google Antigravity CLI
+
+The `antigravity` target runs installed `agy`, a separate CLI from `gemini`.
+Use `ask_antigravity` / `spawn_antigravity` (prefix `bridge_` in opencode),
+`model` from `list_models`, native `effort`, and `access` read/ask/edit.
+`terminal_sandbox` enables its separate terminal sandbox. The Antigravity bridge
+plugin must be installed first. Model-boundary hooks deliver active mail; an
+idle TUI receives queued messages on its next turn or through inbox. Quotas are
+unknown to the bridge; inspect native `/usage`.

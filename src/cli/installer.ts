@@ -4,6 +4,7 @@ import { resolveBinary, unwrapNpmShim } from "../core/delegate.js";
 import { t } from "../core/i18n.js";
 import { describeCodexUser, listCodexUsers } from "./codex-users.js";
 import { installOpencode, opencodeSourceDir, uninstallOpencode } from "./opencode-install.js";
+import { installAntigravity, antigravitySourceDir, uninstallAntigravity } from "./antigravity-install.js";
 import { pluginSourceDir } from "./opencode-install.js";
 import { activatePluginRuntime, reportConnectedVersions, reportPluginSessions, updateClaude, updateCodex } from "./live-update.js";
 import { APP_VERSION } from "../core/constants.js";
@@ -14,15 +15,16 @@ export const MARKETPLACE_REPO = "rennerdo30/agent-bridge";
 export const MARKETPLACE_NAME = "agent-bridge";
 export const PLUGIN_ID = `agent-bridge@${MARKETPLACE_NAME}`;
 
-export type Tool = "claude" | "codex" | "opencode";
-export const TOOLS: readonly Tool[] = ["claude", "codex", "opencode"];
+export type Tool = "claude" | "codex" | "opencode" | "antigravity";
+export const TOOLS: readonly Tool[] = ["claude", "codex", "opencode", "antigravity"];
 export type Action = "install" | "update" | "uninstall";
 
 /** One step: either an official CLI command, or the opencode file copy (opencode has no plugin CLI for this). */
-export type Step = { kind: "command"; bin: string; args: string[]; allowFailure?: boolean } | { kind: "opencode"; action: Action } | { kind: "live-update"; tool: "claude" | "codex" };
+export type Step = { kind: "command"; bin: string; args: string[]; allowFailure?: boolean } | { kind: "opencode"; action: Action } | { kind: "antigravity"; action: Action } | { kind: "live-update"; tool: "claude" | "codex" };
 
 /** The exact official commands for each tool and action. Nothing else is ever run. */
 export function planFor(tool: Tool, action: Action): Step[] {
+  if (tool === "antigravity") return [{ kind: "antigravity", action }];
   if (tool === "claude") {
     switch (action) {
       case "install":
@@ -57,6 +59,7 @@ export function planFor(tool: Tool, action: Action): Step[] {
 
 export function describeStep(step: Step): string {
   if (step.kind === "command") return `${step.bin} ${step.args.join(" ")}`;
+  if (step.kind === "antigravity") return `${step.action} immutable Antigravity plugin (keep all old versions)`;
   if (step.kind === "live-update") return `publish immutable ${step.tool} plugin version (keep all old versions)`;
   return step.action === "uninstall" ? t("installer.opencodeRemove") : t("installer.opencodeCopy");
 }
@@ -102,7 +105,7 @@ export async function runInstaller(opts: InstallerOptions): Promise<number> {
   let failures = 0;
   try {
     for (const tool of opts.tools) {
-      const bin = tool === "opencode" ? "opencode" : tool;
+      const bin = tool === "antigravity" ? "agy" : tool;
       if (!resolveBinary(bin)) {
         opts.out(t("installer.notFound", { tool }));
         continue;
@@ -131,6 +134,16 @@ export async function runInstaller(opts: InstallerOptions): Promise<number> {
         }
       }
       for (const step of steps) {
+        if (step.kind === "antigravity") {
+          try {
+            const source = antigravitySourceDir();
+            if (step.action !== "uninstall" && !source) throw new Error("Missing Antigravity plugin build");
+            const res = step.action === "uninstall" ? uninstallAntigravity() : installAntigravity(source!);
+            for (const file of res.files) opts.out(`  ${file}`);
+            if (step.action !== "uninstall") reportPluginSessions(resolveHome(), "antigravity", APP_VERSION, opts.out);
+          } catch (error) { opts.out(`  Native plugin change failed: ${String(error)}`); failures++; }
+          continue;
+        }
         if (step.kind === "live-update") {
           try {
             const source = pluginSourceDir(step.tool, `${step.tool === "codex" ? ".codex-plugin" : ".claude-plugin"}/plugin.json`);

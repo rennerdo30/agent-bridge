@@ -64,15 +64,16 @@ export function publishPlugin(source: string, base: string, version = APP_VERSIO
 }
 
 /** Preserve every previous metadata revision. Do not rename the old file away before replacement. */
-export function atomicPluginWrite(path: string, text: string): void {
+export function atomicPluginWrite(path: string, text: string | Uint8Array): void {
   assertUnlinked(path);
   mkdirSync(dirname(path), { recursive: true });
   const previous = existsSync(path) ? readFileSync(path) : null;
-  if (previous?.toString("utf8") === text) return;
+  const content = Buffer.from(text);
+  if (previous?.equals(content)) return;
   const tmp = `${path}.${randomUUID()}.tmp`, backup = `${path}.backup-${Date.now()}-${randomUUID()}`;
   assertUnlinked(tmp); assertUnlinked(backup);
   if (previous) copyFileSync(path, backup);
-  writeFileSync(tmp, text, { flag: "wx", mode: 0o600 });
+  writeFileSync(tmp, content, { flag: "wx", mode: 0o600 });
   const current = existsSync(path) ? readFileSync(path) : null;
   if ((previous === null) !== (current === null) || (previous && !previous.equals(current!))) throw new Error(`Plugin metadata changed concurrently; preserved both copies: ${path}`);
   renameSync(tmp, path);

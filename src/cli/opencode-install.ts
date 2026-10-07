@@ -23,7 +23,7 @@ export function opencodeConfigDir(env: NodeJS.ProcessEnv = process.env): string 
 }
 
 /** Locate plugins/<name> next to the running CLI (plugins/<x>/dist/cli.mjs) or in a repo checkout. */
-export function pluginSourceDir(name: "claude" | "codex" | "opencode", marker: string, fromFile: string = fileURLToPath(import.meta.url)): string | null {
+export function pluginSourceDir(name: "claude" | "codex" | "opencode" | "antigravity", marker: string, fromFile: string = fileURLToPath(import.meta.url)): string | null {
   let dir = dirname(fromFile);
   for (let i = 0; i < 5; i++) {
     for (const candidate of [join(dir, "plugins", name), join(dir, "..", name)]) {

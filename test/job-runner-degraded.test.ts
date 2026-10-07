@@ -22,7 +22,7 @@ vi.mock("../src/core/node.js", async () => {
 const homes: string[] = [];
 afterEach(() => { homes.splice(0).forEach(home => rmSync(home, { recursive: true, force: true })); vi.clearAllMocks(); });
 
-it.skipIf(process.platform !== "win32").each(["claude", "codex", "opencode"] as const)("starts a %s runner when ownership setup degrades", async target => {
+it.skipIf(process.platform !== "win32").each(["claude", "codex", "opencode", "antigravity"] as const)("starts a %s runner when ownership setup degrades", async target => {
   const home = mkdtempSync(join(tmpdir(), "ab-degraded-")); homes.push(home);
   const args = { prompt: "Continue", title: "Legacy continuation", session_id: "saved-session" };
   // Existing 0.29.10 runner specs need no conversion or destructive rewrite.

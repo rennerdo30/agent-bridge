@@ -5,6 +5,7 @@ import { readOutcomeDecision } from "../core/job-outcomes.js";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { AntigravityHooks } from "./antigravity-hooks.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import type { CallToolResult, ServerNotification } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
@@ -81,7 +82,7 @@ const SUBAGENT_TOOLS = new Set(["peers", "send", "report_progress", "hook_event"
 /** The options of a job worth keeping to continue it the same way later (no prompt, no internals). */
 /** When to look again for jobs under a stand-in name (a replaced server of the session may still be leaving). */
 const STAND_IN_RECHECK_MS = 30_000;
-const KEPT_ARGS = ["native_subagents", "host", "model", "effort", "cwd", "timeout_sec", "worktree", "access", "sandbox", "approvals_reviewer", "permission_mode", "auto_approve", "allow_tools", "send_to", "title"] as const;
+const KEPT_ARGS = ["native_subagents", "host", "model", "effort", "cwd", "timeout_sec", "worktree", "access", "sandbox", "terminal_sandbox", "bypass_permissions", "approvals_reviewer", "permission_mode", "auto_approve", "allow_tools", "send_to", "title"] as const;
 /** Plugin root: dist/server.mjs lives one level below it. */
 const PLUGIN_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -431,6 +432,7 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
   };
 
   const transport = new StdioServerTransport();
+  const antigravityHooks = agent === "antigravity" ? new AntigravityHooks(ctx) : null;
   let shuttingDown = false;
   let closeSweepBusy = false;
   const closeSweep = setInterval(() => {
@@ -461,6 +463,7 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
     await mcp.close().catch(() => {});
     await dashboard.close().catch(() => {});
     await rewake?.stop().catch(() => {});
+    await antigravityHooks?.stop().catch(() => {});
     await node?.stop().catch(() => {});
     process.exit(0);
   };
@@ -482,6 +485,7 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
   }
   if (agent === "claude" && node) await node.setWakePolicy(cfg.wakeOnDirect, Boolean(ctx.rewakeAvailable || channel), cfg.maxHops);
   launchInspected();
+  await antigravityHooks?.start().catch((err) => log.warn("Antigravity hooks unavailable", { err: String(err) }));
   if (node) {
     node.on("connected", ({ isBroker }) => {
       if (node.currentSessionId) ctx.onSessionId?.(node.currentSessionId);
@@ -654,7 +658,7 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
     {
       title: "List peers",
       description:
-        "List the open agent sessions on this machine (Claude Code, Codex, opencode): name, agent type, busy/idle, uptime, working directory and session id. " +
+        "List the open agent sessions on this machine (Claude Code, Codex, opencode, Antigravity): name, agent type, busy/idle, uptime, working directory and session id. " +
         "Also shows your own name and settings, your running subagents and the latest unread file-transfer progress on request. Delegated jobs see their parent and siblings (job name, title, agent and status). Use it to pick whom to message.",
       inputSchema: {},
       annotations: { readOnlyHint: true },
@@ -1213,7 +1217,7 @@ ${res.text || t("delegate.empty")}`, res.isError);
       annotations: { readOnlyHint: true },
     },
     guarded("usage_limits", async (a: { agent?: string }) => {
-      const bins: Record<CodingAgent, string> = { codex: cfg.codexBin, claude: cfg.claudeBin, opencode: cfg.opencodeBin };
+      const bins: Record<CodingAgent, string> = { codex: cfg.codexBin, claude: cfg.claudeBin, opencode: cfg.opencodeBin, antigravity: cfg.antigravityBin };
       const agents = (a.agent ? [a.agent as CodingAgent] : [...CODING_AGENTS]).filter((x) => resolveBinary(bins[x]));
       if (!agents.length) return text(t("usage.none"), true);
       const reports = await Promise.all(agents.map((x) => readUsage(x, bins[x], ctx.cwd(), log, x === "opencode" ? cfg.opencodeModel : null)));
@@ -1273,7 +1277,7 @@ ${res.text || t("delegate.empty")}`, res.isError);
     "handoff_subagents",
     {
       title: "Hand off subagents",
-      description: "Transfer your running and finished local jobs, including nested jobs, to an exact live local Claude Code, Codex or opencode session. The target becomes their supervisor and receives a waking inheritance message. Remote jobs and paired-PC targets are rejected without moving anything.",
+      description: "Transfer your running and finished local jobs, including nested jobs, to an exact live local Claude Code, Codex, opencode or Antigravity session. The target becomes their supervisor and receives a waking inheritance message. Remote jobs and paired-PC targets are rejected without moving anything.",
       inputSchema: {
         to: z.string().min(1).max(64).describe("Exact live local session name from peers"),
         jobs: z.union([z.literal("all"), z.array(z.string().min(1).max(80)).min(1).max(1000)]).optional().describe("Exact job names, or all (default)"),
@@ -1313,6 +1317,8 @@ ${res.text || t("delegate.empty")}`, res.isError);
         model: z.string().regex(MODEL_NAME_PATTERN).optional().describe("Model for this continuation and later turns. A running turn keeps its model."),
         access: z.enum(ACCESS_LEVELS as [Access, ...Access[]]).optional().describe("Access for the next turn: read, ask or edit. Replaces earlier exact permission overrides."),
         sandbox: z.enum(CODEX_SANDBOXES as [string, ...string[]]).optional().describe("Codex sandbox for the next turn. A running turn keeps its sandbox."),
+        terminal_sandbox: z.boolean().optional().describe("Antigravity terminal sandbox for the next turn."),
+        bypass_permissions: z.boolean().optional().describe("Antigravity exact native approval override for the next turn; true bypasses, false retains native policy."),
         native_subagents: nativeSubagentsSchema,
         approvals_reviewer: z.enum(CODEX_APPROVALS_REVIEWERS).optional().describe("Codex reviewer for the next turn: auto_review or user. A running turn keeps its reviewer."),
         permission_mode: z.enum(CLAUDE_PERMISSION_MODES as [string, ...string[]]).optional().describe("Claude permission mode for the next turn."),

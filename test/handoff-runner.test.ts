@@ -8,6 +8,7 @@ import { readRunnerState } from "../src/mcp/job-host.js";
 import { readStore } from "../src/mcp/jobs.js";
 import { parentFromEnv } from "../src/core/parent-link.js";
 import { pidAlive, killPid } from "../src/core/delegate.js";
+import type { CodingAgent } from "../src/core/protocol.js";
 
 const SERVER = join(import.meta.dirname, "..", "plugins", "claude", "dist", "server.mjs");
 let env: TestEnv, bin: string;
@@ -37,7 +38,7 @@ afterEach(async () => {
   for (const client of clients.splice(0)) await client.close();
   await env.cleanup();
 });
-async function session(name: string, agent: "codex" | "claude" | "opencode", inline = false) {
+async function session(name: string, agent: CodingAgent, inline = false) {
   const client = new Client({ name: "handoff-test", version: "1" }); clients.push(client);
   await client.connect(new StdioClientTransport({ command: process.execPath, args: [SERVER, `--agent=${agent}`], env: {
     ...Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith("AGENT_BRIDGE_"))), AGENT_BRIDGE_HOME: env.home, AGENT_BRIDGE_NAME: name, AGENT_BRIDGE_CLAUDE_BIN: bin, AGENT_BRIDGE_DASHBOARD: "off", AGENT_BRIDGE_JOB_RUNNER: inline ? "0" : "1",
@@ -74,6 +75,7 @@ it("hands off a blocking ask without returning results or notes to the old calle
 
 it.each([
   ["codex", "claude", false], ["codex", "claude", true], ["opencode", "codex", false], ["codex", "opencode", false],
+  ["antigravity", "opencode", false], ["codex", "antigravity", false],
 ] as const)("hands off %s to %s (inline=%s), delivers once and retains master controls", async (fromAgent, toAgent, inline) => {
   const source = await session("codex-source", fromAgent, inline), target = await session("claude-target", toAgent);
   const observer = env.node("observer", "opencode"); await observer.start();

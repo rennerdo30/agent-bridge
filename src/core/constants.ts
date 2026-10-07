@@ -104,6 +104,8 @@ export const DEFAULT_LINGER_SEC = 300;
 export const DEFAULT_MAX_JOBS = 8;
 /** Upper bound for that setting (a typo must not start hundreds of CLIs). */
 export const MAX_JOBS_LIMIT = 50;
+/** Measured local broker job-peer load, independent of per-session scheduling limits. */
+export const BROKER_TESTED_JOB_LOAD = 50;
 
 /** wait_for_message tool limits. */
 export const DEFAULT_WAIT_SEC = 110;
@@ -115,6 +117,5 @@ export const HOOK_BROKER_TIMEOUT_MS = 1_500;
 /** Maximum number of messages injected into a single hook response. */
 export const HOOK_MAX_MESSAGES = 10;
 
-/** Concurrent jobs covered by the load harness. */
-export const BROKER_TESTED_JOB_LOAD = 50;
+/** Shared deadline for mail hooks; approval relay waits use their own limits. */
 export const HOOK_BUDGET_MS = 1500;

@@ -250,6 +250,9 @@ var nullLogger = {
 // src/core/sqlite-policy.ts
 import { setTimeout as delay } from "node:timers/promises";
 var SQLITE_BUSY_TIMEOUT_MS = 3e3;
+function configureSqlite(db2, busyTimeoutMs = SQLITE_BUSY_TIMEOUT_MS) {
+  db2.exec(`PRAGMA busy_timeout = ${busyTimeoutMs}; PRAGMA journal_mode = WAL;`);
+}
 
 // src/core/sqlite-maintenance.ts
 var ARCHIVE_DB_NAME = "archive.db";
@@ -662,7 +665,7 @@ function syncProjectMirror(main, project) {
 // src/core/history.ts
 import { createHash as createHash3 } from "node:crypto";
 import { closeSync as closeSync5, existsSync as existsSync9, fstatSync as fstatSync2, openSync as openSync5, opendirSync, readSync as readSync2, statSync as statSync4 } from "node:fs";
-import { basename as basename3, dirname as dirname9, join as join15 } from "node:path";
+import { basename as basename3, dirname as dirname9, join as join16 } from "node:path";
 import { DatabaseSync as DatabaseSync7 } from "node:sqlite";
 
 // node_modules/zod/v4/classic/external.js
@@ -20354,7 +20357,8 @@ function transcriptPaths(env = process.env, home = homedir2()) {
   return {
     claude: resolve4(env.CLAUDE_CONFIG_DIR?.trim() || join11(home, ".claude")),
     codex: resolve4(env.CODEX_HOME?.trim() || join11(home, ".codex")),
-    opencode: resolve4(join11(env.XDG_DATA_HOME?.trim() || join11(home, ".local", "share"), "opencode"))
+    opencode: resolve4(join11(env.XDG_DATA_HOME?.trim() || join11(home, ".local", "share"), "opencode")),
+    antigravity: resolve4(env.ANTIGRAVITY_CLI_HOME?.trim() || join11(home, ".gemini", "antigravity-cli"))
   };
 }
 function object2(value) {
@@ -20548,8 +20552,49 @@ function listClaudeSubagents(session, paths2) {
   return [...out.values()];
 }
 
-// src/core/transcripts/codex.ts
+// src/core/transcripts/antigravity.ts
 import { join as join13 } from "node:path";
+function antigravitySessionFile(session, paths2) {
+  return paths2.antigravity && session.sessionId && TRANSCRIPT_ID.test(session.sessionId) ? safeFile(paths2.antigravity, join13(paths2.antigravity, "brain", session.sessionId, ".system_generated", "logs", "transcript.jsonl")) : null;
+}
+function antigravityItems(row) {
+  const at = time3(row.created_at), items = [];
+  const id = Number.isSafeInteger(row.step_index) ? String(row.step_index) : void 0;
+  const toolResult = row.type === "GENERIC" && typeof row.content === "string" && /^Created At: [^\n]*\nCompleted At: /.test(row.content);
+  if (toolResult) items.push({ kind: "tool", at, tool: "result", summary: preview(row.content), id });
+  else if (typeof row.content === "string" && row.content && (["USER_INPUT", "PLANNER_RESPONSE", "AGENT_RESPONSE"].includes(row.type) || row.type === "GENERIC" && row.source === "MODEL")) items.push({ kind: row.type === "USER_INPUT" ? "user" : "assistant", at, text: preview(row.content, MAX_TEXT_CHARS), id });
+  for (const call of (Array.isArray(row.tool_calls) ? row.tool_calls : []).map(object2)) {
+    items.push({ kind: "tool", at, tool: String(call.name ?? call.tool_name ?? "tool"), summary: preview(call.arguments ?? call.args ?? call.parameters), id: `${id ?? ""}:${items.length}` });
+  }
+  const subagents = object2(row.subagent_info).subagents ?? row.subagents;
+  for (const child of (Array.isArray(subagents) ? subagents : []).map(object2)) {
+    if (typeof child.conversation_id !== "string" || !TRANSCRIPT_ID.test(child.conversation_id)) continue;
+    items.push({ kind: "subagent", at, subagent: { id: child.conversation_id, title: preview(child.role ?? child.type_name ?? "Native subagent", MAX_TITLE_CHARS), agent: "antigravity" } });
+  }
+  return items;
+}
+function listAntigravitySubagents(session, paths2) {
+  const file2 = antigravitySessionFile(session, paths2);
+  if (!file2) return [];
+  const children = /* @__PURE__ */ new Map();
+  for (const { value } of scanJsonl(file2)) for (const item of antigravityItems(value)) {
+    const child = item.subagent;
+    if (!child || children.size >= MAX_NATIVE_SUBAGENTS) continue;
+    const nested = antigravitySessionFile({ ...session, sessionId: child.id }, paths2), stat = nested ? fileStat(nested) : null;
+    children.set(child.id, { id: child.id, title: child.title, status: "unknown", startedAt: item.at, updatedAt: stat?.mtimeMs ?? item.at });
+  }
+  return [...children.values()];
+}
+function readAntigravityChat(session, paths2, from = "0", child) {
+  if (child && (!TRANSCRIPT_ID.test(child) || !listAntigravitySubagents(session, paths2).some((entry) => entry.id === child))) return null;
+  const file2 = antigravitySessionFile(child ? { ...session, sessionId: child } : session, paths2);
+  if (!file2) return null;
+  const page = readJsonl(file2, from);
+  return { items: page.entries.flatMap(({ value }) => antigravityItems(value)), next: page.next };
+}
+
+// src/core/transcripts/codex.ts
+import { join as join14 } from "node:path";
 import { DatabaseSync as DatabaseSync5 } from "node:sqlite";
 var ROLLOUT_NAME = /^rollout-.*-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/i;
 var DISCOVERY_CACHE_MS = 1e4;
@@ -20563,7 +20608,7 @@ function rollout(file2, id, known) {
 function indexedRollouts(paths2, id, parentId) {
   const name = directory(paths2.codex).filter((s) => /^state_\d+\.sqlite$/.test(s)).sort((a, b) => Number(b.match(/\d+/)?.[0]) - Number(a.match(/\d+/)?.[0]))[0];
   if (!name) return null;
-  const file2 = safeFile(paths2.codex, join13(paths2.codex, name));
+  const file2 = safeFile(paths2.codex, join14(paths2.codex, name));
   if (!file2) return null;
   let db2;
   try {
@@ -20573,7 +20618,7 @@ function indexedRollouts(paths2, id, parentId) {
     const out = [];
     for (const row of rows) {
       if (typeof row.id !== "string" || !TRANSCRIPT_ID.test(row.id) || typeof row.path !== "string") continue;
-      const target = safeFile(join13(paths2.codex, "sessions"), row.path);
+      const target = safeFile(join14(paths2.codex, "sessions"), row.path);
       if (!target) continue;
       const entry = rollout(target, row.id);
       if (entry.meta.id === row.id && (!parentId || parent(entry.meta) === parentId)) out.push(entry);
@@ -20586,17 +20631,17 @@ function indexedRollouts(paths2, id, parentId) {
   }
 }
 function rollouts(paths2) {
-  const root = join13(paths2.codex, "sessions"), existing = cache.get(root);
+  const root = join14(paths2.codex, "sessions"), existing = cache.get(root);
   if (existing && Date.now() - existing.at < DISCOVERY_CACHE_MS) return existing.files;
   const files = [];
   const knownFiles = new Map(existing?.files.map((r) => [r.file, r]));
   for (const year of directory(root).filter((s) => /^\d{4}$/.test(s)).sort().reverse()) {
-    for (const month of directory(join13(root, year)).filter((s) => /^\d{2}$/.test(s)).sort().reverse()) {
-      for (const day of directory(join13(root, year, month)).filter((s) => /^\d{2}$/.test(s)).sort().reverse()) {
-        for (const name of directory(join13(root, year, month, day)).sort().reverse()) {
+    for (const month of directory(join14(root, year)).filter((s) => /^\d{2}$/.test(s)).sort().reverse()) {
+      for (const day of directory(join14(root, year, month)).filter((s) => /^\d{2}$/.test(s)).sort().reverse()) {
+        for (const name of directory(join14(root, year, month, day)).sort().reverse()) {
           const id = ROLLOUT_NAME.exec(name)?.[1];
           if (!id) continue;
-          const file2 = safeFile(root, join13(root, year, month, day, name));
+          const file2 = safeFile(root, join14(root, year, month, day, name));
           if (!file2) continue;
           const known = knownFiles.get(file2);
           files.push(rollout(file2, id, known?.meta));
@@ -20643,12 +20688,12 @@ function readCodexChat(session, paths2, from = "0", child) {
 }
 
 // src/core/transcripts/opencode.ts
-import { join as join14 } from "node:path";
+import { join as join15 } from "node:path";
 import { DatabaseSync as DatabaseSync6 } from "node:sqlite";
 var MAX_SQLITE_PARTS = 200;
 var SQLITE_CURSOR = /^o:(\d+):([A-Za-z0-9_-]*)$/;
 function openDatabase(paths2) {
-  const file2 = safeFile(paths2.opencode, join14(paths2.opencode, "opencode.db"));
+  const file2 = safeFile(paths2.opencode, join15(paths2.opencode, "opencode.db"));
   if (!file2) return null;
   try {
     return new DatabaseSync6(file2, { readOnly: true, timeout: SQLITE_READ_TIMEOUT_MS });
@@ -20706,6 +20751,8 @@ function readTranscript(session, from = "0", child, paths2 = transcriptPaths()) 
       return readCodexChat(session, paths2, from, child);
     case "opencode":
       return readOpencodeChat(session, paths2, from, child);
+    case "antigravity":
+      return readAntigravityChat(session, paths2, from, child);
     default:
       return null;
   }
@@ -20734,7 +20781,7 @@ var historyFiltersSchema = external_exports.object({
   project: external_exports.string().min(1).max(4096).transform(conversationProject).optional(),
   session: external_exports.string().min(1).max(HISTORY_FILTER_ID_CHARS).optional(),
   job: external_exports.string().min(1).max(HISTORY_FILTER_ID_CHARS).optional(),
-  agent: external_exports.enum(["claude", "codex", "opencode", "other"]).optional(),
+  agent: external_exports.enum(["claude", "codex", "opencode", "antigravity", "other"]).optional(),
   kind: external_exports.enum(["message", "run", "decision", "transcript", "approval", "progress", "report"]).optional(),
   since: dateFilter.optional(),
   until: dateFilter.optional()
@@ -20775,7 +20822,7 @@ var HistoryIndex = class {
   }
   rememberPeer(peer) {
     if (!peer.sessionId) return;
-    const job = /^(claude|codex|opencode)-job-/.test(peer.name) ? peer.name : null;
+    const job = /^(claude|codex|opencode|antigravity)-job-/.test(peer.name) ? peer.name : null;
     for (const alias of [peer.id, peer.name, peer.sessionId]) this.rememberSession(alias, peer.sessionId, job);
     if (peer.cwd && peer.agent && this.db.prepare("SELECT name FROM sqlite_master WHERE name='conversation_bindings'").get()) {
       this.db.prepare(`INSERT INTO conversation_bindings(session,agent,cwd,job) VALUES(?,?,?,?) ON CONFLICT(session,agent) DO UPDATE SET cwd=excluded.cwd,job=coalesce(excluded.job,conversation_bindings.job),pending=1`).run(peer.sessionId, peer.agent, peer.cwd, job);
@@ -20802,7 +20849,7 @@ var HistoryIndex = class {
   }
   message(row) {
     const sessions = [row.from_id, row.from_name, row.recipient, row.to_target].filter((s) => typeof s === "string");
-    const jobs = sessions.filter((s) => /^(claude|codex|opencode)-job-/.test(s));
+    const jobs = sessions.filter((s) => /^(claude|codex|opencode|antigravity)-job-/.test(s));
     this.put({
       id: `message:${row.id}`,
       kind: "message",
@@ -20864,7 +20911,7 @@ ${row.body}`,
         }, [row.author_id, row.author_name, ...sessions]);
       });
       if (this.home) {
-        const archivePath = join15(this.home, ARCHIVE_DB_NAME);
+        const archivePath = join16(this.home, ARCHIVE_DB_NAME);
         if (existsSync9(archivePath)) {
           const archive = new DatabaseSync7(archivePath, { readOnly: true, timeout: HISTORY_READ_TIMEOUT_MS });
           try {
@@ -20914,12 +20961,13 @@ ${row.body}`,
       this.lastDiscovery = Date.now();
       this.opencodeComplete = false;
       this.queue = [
-        { path: join15(this.home, "context-events"), root: this.home, kind: "context", agent: "other" },
-        { path: join15(this.home, "approvals"), root: this.home, kind: "approval", agent: "other" },
-        { path: join15(this.home, "archive"), root: this.home, kind: "approval", agent: "other" },
-        { path: join15(this.home, "runs"), root: join15(this.home, "runs"), kind: "run", agent: "other" },
-        { path: join15(this.paths.claude, "projects"), root: this.paths.claude, kind: "transcript", agent: "claude" },
-        ...["sessions", "archived_sessions"].map((dir) => ({ path: join15(this.paths.codex, dir), root: this.paths.codex, kind: "transcript", agent: "codex" }))
+        { path: join16(this.home, "context-events"), root: this.home, kind: "context", agent: "other" },
+        { path: join16(this.home, "approvals"), root: this.home, kind: "approval", agent: "other" },
+        { path: join16(this.home, "archive"), root: this.home, kind: "approval", agent: "other" },
+        { path: join16(this.home, "runs"), root: join16(this.home, "runs"), kind: "run", agent: "other" },
+        { path: join16(this.paths.claude, "projects"), root: this.paths.claude, kind: "transcript", agent: "claude" },
+        ...this.paths.antigravity ? [{ path: join16(this.paths.antigravity, "brain"), root: this.paths.antigravity, kind: "transcript", agent: "antigravity" }] : [],
+        ...["sessions", "archived_sessions"].map((dir) => ({ path: join16(this.paths.codex, dir), root: this.paths.codex, kind: "transcript", agent: "codex" }))
       ];
     }
     let work = 0;
@@ -20939,7 +20987,7 @@ ${row.body}`,
         this.walk = null;
         continue;
       }
-      const path2 = join15(entry.path, item.name);
+      const path2 = join16(entry.path, item.name);
       if (item.isDirectory()) {
         this.queue.push({ ...entry, path: path2 });
         continue;
@@ -20948,17 +20996,18 @@ ${row.body}`,
       if (entry.kind === "context" && item.name.endsWith(".jsonl") || entry.kind === "approval" && /^.*\.json(?:-.*)?$/.test(item.name) && (entry.path.includes("approvals") || /^.*approval/.test(item.name))) {
         this.register({ path: path2, kind: entry.kind, agent: "other", session: null, cwd: "", child: null });
       } else if (entry.kind === "run" && /\.(?:log|json)(?:-\d+-[\w-]+)?$/.test(item.name)) {
-        this.register({ path: path2, kind: "run", agent: /-(claude|codex|opencode)-/.exec(item.name)?.[1] ?? "other", session: null, cwd: "", child: null });
+        this.register({ path: path2, kind: "run", agent: /-(claude|codex|opencode|antigravity)-/.exec(item.name)?.[1] ?? "other", session: null, cwd: "", child: null });
       } else if (entry.kind === "transcript" && item.name.endsWith(".jsonl")) {
+        if (entry.agent === "antigravity" && item.name !== "transcript.jsonl") continue;
         const head = this.head(path2), meta3 = entry.agent === "codex" ? object2(head.payload) : head;
         const rolloutId = entry.agent === "codex" ? /^rollout-.*-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/i.exec(item.name)?.[1] : void 0;
-        const id = rolloutId ?? (typeof meta3.id === "string" ? meta3.id : typeof meta3.sessionId === "string" ? meta3.sessionId : basename3(path2, ".jsonl"));
+        const id = entry.agent === "antigravity" ? basename3(dirname9(dirname9(entry.path))) : rolloutId ?? (typeof meta3.id === "string" ? meta3.id : typeof meta3.sessionId === "string" ? meta3.sessionId : basename3(path2, ".jsonl"));
         if (!TRANSCRIPT_ID.test(id)) continue;
         const child = entry.agent === "claude" && basename3(entry.path) === "subagents" ? basename3(path2, ".jsonl").replace(/^agent-/, "") : null;
         this.register({ path: path2, kind: "transcript", agent: entry.agent, session: child ? basename3(dirname9(entry.path)) : id, cwd: typeof meta3.cwd === "string" ? meta3.cwd : "", child });
       }
     }
-    const path = safeFile(this.paths.opencode, join15(this.paths.opencode, "opencode.db"));
+    const path = safeFile(this.paths.opencode, join16(this.paths.opencode, "opencode.db"));
     if (path && !this.opencodeComplete) {
       const db2 = new DatabaseSync7(path, { readOnly: true, timeout: HISTORY_READ_TIMEOUT_MS });
       try {
@@ -20995,7 +21044,8 @@ ${row.body}`,
   indexFile(file2) {
     if (file2.kind === "context" || file2.kind === "approval" || file2.kind === "run" && /\.json(?:-.*)?$/.test(file2.path)) return 0;
     if (file2.agent !== "opencode") {
-      const root = file2.kind === "run" ? join15(this.home, "runs") : this.paths[file2.agent];
+      const root = file2.kind === "run" ? join16(this.home, "runs") : this.paths[file2.agent];
+      if (!root) return 0;
       if (!safeFile(root, file2.path)) return 0;
     }
     const from = this.cursor(file2.path);
@@ -21014,7 +21064,7 @@ ${row.body}`,
       for (const row of page.entries) {
         const target = file2.agent === "claude" && row.value.isSidechain === true && typeof row.value.agentId === "string" && TRANSCRIPT_ID.test(row.value.agentId) ? { ...file2, child: row.value.agentId } : file2;
         if (typeof start === "number" && typeof row.value.ordinal === "number" && row.value.ordinal < start) continue;
-        const items = file2.agent === "claude" ? claudeItems(row.value) : codexItems(row.value);
+        const items = file2.agent === "antigravity" ? antigravityItems(row.value) : file2.agent === "claude" ? claudeItems(row.value) : codexItems(row.value);
         items.forEach((item, i) => this.transcript(target, item, `j:${row.offset}:0`, i));
       }
       this.advance(file2.path, page.next);
@@ -21031,7 +21081,7 @@ ${row.body}`,
       let meta3 = {};
       let metaText = "";
       const metaPath = file2.path.replace(/\.log(?:-\d+-[\w-]+)?$/, ".json");
-      const safeMeta = safeFile(join15(this.home, "runs"), metaPath);
+      const safeMeta = safeFile(join16(this.home, "runs"), metaPath);
       if (safeMeta) {
         const metaFd = openSync5(safeMeta, "r");
         try {
@@ -21186,13 +21236,13 @@ import {
   readSync as readSync3,
   watch
 } from "node:fs";
-import { basename as basename5, join as join17 } from "node:path";
+import { basename as basename5, join as join18 } from "node:path";
 import { DatabaseSync as DatabaseSync8 } from "node:sqlite";
 
 // src/core/job-archive.ts
 import { randomUUID as randomUUID5 } from "node:crypto";
 import { closeSync as closeSync6, existsSync as existsSync10, fsyncSync as fsyncSync2, mkdirSync as mkdirSync7, openSync as openSync6, readdirSync as readdirSync6, writeFileSync as writeFileSync4 } from "node:fs";
-import { basename as basename4, dirname as dirname10, join as join16 } from "node:path";
+import { basename as basename4, dirname as dirname10, join as join17 } from "node:path";
 
 // src/core/file-cache.ts
 import { readFileSync as readFileSync7, statSync as statSync5 } from "node:fs";
@@ -21232,14 +21282,14 @@ function readJsonSnapshot(file2) {
 var snapshots = /* @__PURE__ */ new Map();
 var EMPTY_SNAPSHOT = { signature: "", jobs: [] };
 function readArchivedJobSnapshot(path) {
-  const dir = join16(dirname10(path), "archive");
+  const dir = join17(dirname10(path), "archive");
   if (!existsSync10(dir)) return EMPTY_SNAPSHOT;
   const sources = [];
   const signatures = [];
   let bytes2 = 0;
   for (const file2 of readdirSync6(dir).sort()) {
     if (!file2.startsWith(`${basename4(path)}.overflow.json-`) && !/^jobs-.*\.json$/.test(file2)) continue;
-    const snapshot = readJsonSnapshot(join16(dir, file2));
+    const snapshot = readJsonSnapshot(join17(dir, file2));
     const value = snapshot.value;
     if (!isRecord(value) || value.version !== void 0 && (!Number.isInteger(value.version) || value.version < 0 || value.version > JSON_STORE_VERSION) || !Array.isArray(value.jobs)) throw new Error(`invalid job archive: ${file2}`);
     signatures.push(`${file2}:${snapshot.signature}`);
@@ -21289,9 +21339,10 @@ var ConversationIngestor = class {
   idleSources = 0;
   watchRoots() {
     for (const root of [
-      join17(this.paths.claude, "projects"),
-      join17(this.paths.codex, "sessions"),
-      this.paths.opencode
+      join18(this.paths.claude, "projects"),
+      join18(this.paths.codex, "sessions"),
+      this.paths.opencode,
+      ...this.paths.antigravity ? [join18(this.paths.antigravity, "brain")] : []
     ]) {
       if (this.watched.has(root)) continue;
       try {
@@ -21300,7 +21351,7 @@ var ConversationIngestor = class {
           { recursive: true, persistent: false },
           (_, name) => {
             if (name && this.dirty.size < 2048)
-              this.dirty.add(join17(root, String(name)));
+              this.dirty.add(join18(root, String(name)));
           }
         );
         watcher.on("error", () => {
@@ -21427,7 +21478,7 @@ var ConversationIngestor = class {
   jobs() {
     if (Date.now() - this.jobsAt < 3e4) return;
     this.jobsAt = Date.now();
-    const path = join17(this.home, "jobs.json");
+    const path = join18(this.home, "jobs.json");
     let active = {};
     try {
       active = object2(readJsonSnapshot(path).value);
@@ -21567,7 +21618,7 @@ var ConversationIngestor = class {
           "INSERT OR IGNORE INTO conversation_projects(project) VALUES(?)"
         ).run(recordProject);
       }
-      recordJob = binding?.job ?? (/^(claude|codex|opencode)-job-/.test(String(metadata.from_name)) ? metadata.from_name : recordSession === c.session ? recordJob : null);
+      recordJob = binding?.job ?? (/^(claude|codex|opencode|antigravity)-job-/.test(String(metadata.from_name)) ? metadata.from_name : recordSession === c.session ? recordJob : null);
       const report = /"body"\s*:\s*"Subagent ([A-Za-z0-9][A-Za-z0-9_-]*) \(([a-z][a-z0-9_-]*)(?:, model [^"\r\n]*)?\) (?:done|failed) after \d+s\./.exec(first.slice(0, 8192));
       if (c.kind === "message" && report) {
         recordKind = "report";
@@ -21649,7 +21700,7 @@ var ConversationIngestor = class {
       "SELECT * FROM messages WHERE id=? ORDER BY recipient=? DESC LIMIT 1"
     ).get(envelope.message, envelope.recipient);
     if (!row) {
-      const path = join17(this.home, "archive.db");
+      const path = join18(this.home, "archive.db");
       if (existsSync11(path)) {
         const archive = new DatabaseSync8(path, { readOnly: true, timeout: 50 });
         try {
@@ -21704,7 +21755,7 @@ var ConversationIngestor = class {
   jsonl(source) {
     const agent = String(source.conversation).split(":")[0];
     const root = String(source.conversation).startsWith("bridge:") ? this.home : this.paths[agent];
-    if (!safeFile(root, source.path)) return 0;
+    if (!root || !safeFile(root, source.path)) return 0;
     let fd;
     try {
       fd = openSync7(source.path, "r");
@@ -21856,6 +21907,13 @@ var ConversationIngestor = class {
             if (typeof parent2 === "string")
               this.db.prepare("UPDATE conversations SET parent=? WHERE id=?").run(`codex:${parent2}`, source.conversation);
           }
+          if (agent === "antigravity") {
+            for (const item of antigravityItems(row)) {
+              if (!item.subagent || item.subagent.id === c.session) continue;
+              const child = this.conversation(agent, item.subagent.id, String(c.project), null);
+              this.db.prepare("UPDATE conversations SET parent=? WHERE id=?").run(source.conversation, child);
+            }
+          }
           if (agent === "claude" && row.isSidechain === true && typeof row.agentId === "string") {
             const child = this.conversation(
               agent,
@@ -21909,7 +21967,7 @@ var ConversationIngestor = class {
   sqlite(source) {
     const path = safeFile(
       this.paths.opencode,
-      join17(this.paths.opencode, "opencode.db")
+      join18(this.paths.opencode, "opencode.db")
     );
     if (!path) return 0;
     const input2 = new DatabaseSync8(path, { readOnly: true, timeout: 50 });
@@ -22012,7 +22070,7 @@ var ConversationIngestor = class {
       work += this.jobSnapshot();
       work += this.envelopes();
       work += this.events(this.db, "decisions", "durable-decisions");
-      const archive = join17(this.home, "archive.db");
+      const archive = join18(this.home, "archive.db");
       if (existsSync11(archive)) {
         const input2 = new DatabaseSync8(archive, {
           readOnly: true,
@@ -22097,6 +22155,7 @@ var ConversationIngestor = class {
 
 // src/core/history-worker.ts
 var db = new DatabaseSync9(workerData.file, { timeout: 50 });
+configureSqlite(db, 50);
 var paths = workerData.paths ?? transcriptPaths();
 var index = new HistoryIndex(db, workerData.home, paths);
 var ingest = new ConversationIngestor(db, workerData.home, paths);

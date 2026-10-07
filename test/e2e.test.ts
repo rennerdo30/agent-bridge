@@ -12,7 +12,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 const SERVER = join(import.meta.dirname, "..", "plugins", "claude", "dist", "server.mjs");
 const home = mkdtempSync(join(tmpdir(), "agent-bridge-e2e-"));
 
-async function spawnAgent(agent: "claude" | "codex", name: string): Promise<Client> {
+async function spawnAgent(agent: "claude" | "codex" | "antigravity", name: string): Promise<Client> {
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [SERVER, `--agent=${agent}`],
@@ -37,24 +37,29 @@ async function waitFor(fn: () => Promise<boolean>, ms = 8_000): Promise<void> {
 describe.skipIf(!existsSync(SERVER))("bundled MCP server end-to-end", () => {
   let claude: Client;
   let codex: Client;
+  let antigravity: Client;
 
   beforeAll(async () => {
     claude = await spawnAgent("claude", "claude-e2e");
     codex = await spawnAgent("codex", "codex-e2e");
+    antigravity = await spawnAgent("antigravity", "antigravity-e2e");
     await waitFor(async () => textOf(await claude.callTool({ name: "peers", arguments: {} })).includes("codex-e2e"));
   }, 30_000);
 
   afterAll(async () => {
     await claude?.close();
     await codex?.close();
+    await antigravity?.close();
     rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
   });
 
   it("exposes the expected tools per agent", async () => {
     const c = (await claude.listTools()).tools.map((t) => t.name).sort();
     const x = (await codex.listTools()).tools.map((t) => t.name).sort();
-    expect(c).toEqual(["ask_codex", "ask_opencode", "auto_wake", "cancel_subagent", "cancel_transfer", "coordinator_availability", "dashboard", "decide", "decisions", "fetch_files", "get_conversation", "handoff_subagents", "hook_event", "inbox", "list_models", "max_subagents", "message_subagent", "network_status", "peers", "project_main", "search_history", "send", "send_files", "set_job_outcome", "spawn_codex", "spawn_opencode", "usage_limits", "wait_for_message"]);
-    expect(x).toEqual(["ask_claude", "ask_opencode", "auto_wake", "cancel_subagent", "cancel_transfer", "coordinator_availability", "dashboard", "decide", "decisions", "fetch_files", "get_conversation", "handoff_subagents", "hook_event", "inbox", "list_models", "max_subagents", "message_subagent", "network_status", "peers", "project_main", "search_history", "send", "send_files", "set_job_outcome", "spawn_claude", "spawn_opencode", "usage_limits", "wait_for_message"]);
+    const g = (await antigravity.listTools()).tools.map((t) => t.name).sort();
+    expect(g).toEqual(c.filter((name) => !name.endsWith("_antigravity")).concat(["ask_claude", "spawn_claude"]).sort());
+    expect(c).toEqual(["ask_antigravity", "ask_codex", "ask_opencode", "auto_wake", "cancel_subagent", "cancel_transfer", "coordinator_availability", "dashboard", "decide", "decisions", "fetch_files", "get_conversation", "handoff_subagents", "hook_event", "inbox", "list_models", "max_subagents", "message_subagent", "network_status", "peers", "project_main", "search_history", "send", "send_files", "set_job_outcome", "spawn_antigravity", "spawn_codex", "spawn_opencode", "usage_limits", "wait_for_message"]);
+    expect(x).toEqual(["ask_antigravity", "ask_claude", "ask_opencode", "auto_wake", "cancel_subagent", "cancel_transfer", "coordinator_availability", "dashboard", "decide", "decisions", "fetch_files", "get_conversation", "handoff_subagents", "hook_event", "inbox", "list_models", "max_subagents", "message_subagent", "network_status", "peers", "project_main", "search_history", "send", "send_files", "set_job_outcome", "spawn_antigravity", "spawn_claude", "spawn_opencode", "usage_limits", "wait_for_message"]);
   });
 
   it("declares the Claude channel capability only for Claude", () => {

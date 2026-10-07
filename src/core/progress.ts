@@ -123,7 +123,20 @@ export function describeOpencodeEvent(ev: any): Step | null {
   return null;
 }
 
+/** Native agy envelopes; completed updates repeat the same stable step index. */
+export function describeAntigravityEvent(ev: any): Step | null {
+  const step = ev?.step_update;
+  if (!step || typeof step !== "object") return null;
+  if (typeof step.tool_name !== "string") return typeof step.text_delta === "string" ? say(step.text_delta) : null;
+  const name = step.tool_name, id = String(step.step_index);
+  const detail = firstString(step.tool_info?.parameters, ["CommandLine", "TargetFile", "AbsolutePath", "SearchPath", "Query", "ToolName"]) ?? "";
+  if (step.state === "ERROR") return { kind: "failure", id, ...txt(`${name} failed: ${step.tool_info?.error?.message ?? "native tool error"}`) };
+  const kind: StepKind = name === "run_command" ? "cmd" : /^(write_to_file|replace_file_content|multi_replace_file_content|notebook_edit)$/.test(name) ? "edit" : /^(view_file|grep_search|find_by_name|list_dir|read_url_content|read_resource)$/.test(name) ? "read" : "tool";
+  return { kind, id, ...txt(`${name}${detail ? `: ${detail}` : ""}`) };
+}
+
 const DESCRIBERS: Record<CodingAgent, (ev: any) => Step | null> = {
+  antigravity: describeAntigravityEvent,
   codex: describeCodexEvent,
   claude: describeClaudeEvent,
   opencode: describeOpencodeEvent,

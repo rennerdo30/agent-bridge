@@ -35,13 +35,14 @@ export interface NativeSubagent {
   updatedAt: number;
 }
 export type TranscriptSession = Pick<PeerInfo, "agent" | "cwd" | "sessionId">;
-export interface TranscriptPaths { claude: string; codex: string; opencode: string }
+export interface TranscriptPaths { claude: string; codex: string; opencode: string; antigravity?: string }
 
 export function transcriptPaths(env: NodeJS.ProcessEnv = process.env, home = homedir()): TranscriptPaths {
   return {
     claude: resolve(env.CLAUDE_CONFIG_DIR?.trim() || join(home, ".claude")),
     codex: resolve(env.CODEX_HOME?.trim() || join(home, ".codex")),
     opencode: resolve(join(env.XDG_DATA_HOME?.trim() || join(home, ".local", "share"), "opencode")),
+    antigravity: resolve(env.ANTIGRAVITY_CLI_HOME?.trim() || join(home, ".gemini", "antigravity-cli")),
   };
 }
 

@@ -30,7 +30,7 @@ export const UI_PAGE = `<!doctype html>
   --bg: #f4f5f7; --panel: #ffffff; --panel-2: #f8f9fb; --sunk: #eceef2; --text: #161b26; --muted: #5f6779; --faint: #949bab; --line: #e4e7ec;
   --accent: #4f46e5; --accent-soft: #eef0ff; --on-accent: #ffffff; --ok: #15803d; --ok-soft: #e8f6ed; --warn: #b45309; --warn-soft: #fdf3e2;
   --bad: #c2410c; --bad-soft: #fdeee6; --busy: #2563eb; --busy-soft: #e8efff;
-  --claude: #d97757; --codex: #0f9d76; --opencode: #3b82f6; --other: #8b93a5;
+  --claude: #d97757; --codex: #0f9d76; --opencode: #3b82f6; --antigravity: #a78bfa; --other: #8b93a5;
   --shadow: 0 1px 2px rgba(16, 24, 40, .05);
   --pop: 0 16px 40px rgba(16, 24, 40, .16);
   --sans: "Segoe UI Variable Text", "Segoe UI Variable", "SF Pro Text", system-ui, -apple-system, "Segoe UI", sans-serif;
@@ -126,7 +126,7 @@ h3 .n { color: var(--faint); font-weight: 500; }
 .dot.off { background: var(--faint); }
 .av { width: 34px; height: 34px; border-radius: 9px; flex: none; display: grid; place-items: center; color: #fff; font-weight: 700; font-size: 14px; background: var(--other); }
 .av.sm { width: 26px; height: 26px; border-radius: 7px; font-size: 12px; }
-.av.claude { background: var(--claude); } .av.codex { background: var(--codex); } .av.opencode { background: var(--opencode); }
+.av.claude { background: var(--claude); } .av.codex { background: var(--codex); } .av.opencode { background: var(--opencode); } .av.antigravity { background: var(--antigravity); }
 .pill { display: inline-flex; align-items: center; gap: 5px; padding: 2px 9px; border-radius: 999px; font-size: 12px; font-weight: 600; white-space: nowrap; }
 .pill.running { background: var(--busy-soft); color: var(--busy); }
 .pill.done { background: var(--ok-soft); color: var(--ok); }
@@ -665,7 +665,7 @@ button.ghost { min-height: 32px; }
           <button type="button" role="radio" aria-checked="true" data-v="">Everything</button><button type="button" role="radio" aria-checked="false" data-v="message">Messages</button><button type="button" role="radio" aria-checked="false" data-v="run">Subagent runs</button><button type="button" role="radio" aria-checked="false" data-v="decision">Decisions</button><button type="button" role="radio" aria-checked="false" data-v="transcript">Chats</button>
         </div>
         <div class="seg" role="radiogroup" aria-label="Agent" data-seg="sAgent">
-          <button type="button" role="radio" aria-checked="true" data-v="">All agents</button><button type="button" role="radio" aria-checked="false" data-v="claude">Claude</button><button type="button" role="radio" aria-checked="false" data-v="codex">Codex</button><button type="button" role="radio" aria-checked="false" data-v="opencode">opencode</button>
+          <button type="button" role="radio" aria-checked="true" data-v="">All agents</button><button type="button" role="radio" aria-checked="false" data-v="claude">Claude</button><button type="button" role="radio" aria-checked="false" data-v="codex">Codex</button><button type="button" role="radio" aria-checked="false" data-v="opencode">opencode</button><button type="button" role="radio" aria-checked="false" data-v="antigravity">Antigravity</button>
         </div>
         <label class="toggle" title="A low-cost model (Haiku, Luna or a free opencode model) reads the top results and answers with sources"><input type="checkbox" id="sAnswer"><span class="track" aria-hidden="true"></span>Summarize</label>
         <input type="hidden" id="sKind" value=""><input type="hidden" id="sAgent" value="">
@@ -827,12 +827,15 @@ const PERMISSIONS = {
   codex: { key: "sandbox", options: [["read-only", "read-only · looks only"], ["workspace-write", "workspace-write · edits its folder"], ["danger-full-access", "danger-full-access · no sandbox"]] },
   claude: { key: "permission_mode", options: [["manual", "manual · asks first"], ["plan", "plan · plans only"], ["acceptEdits", "acceptEdits · edits files"], ["auto", "auto · decides itself"], ["bypassPermissions", "bypassPermissions · anything"]] },
   opencode: { key: "auto_approve", options: [["false", "asks first"], ["true", "auto-approve · anything"]] },
+  antigravity: { key: "access", options: [["read", "read · looks only"], ["ask", "ask · forwards approvals"], ["edit", "edit · native permissions"]] },
 };
 /** The permission a job's saved settings give its next turn, named like the run's own permission. */
 function nextPermission(next) {
   if (next.sandbox) return next.sandbox;
   if (next.permission_mode) return next.permission_mode;
   if (typeof next.auto_approve === "boolean") return next.auto_approve ? "auto-approve" : "ask";
+  if (typeof next.bypass_permissions === "boolean") return next.bypass_permissions ? "bypass" : "native";
+  if (next.access) return next.access;
   return "";
 }
 const nextOf = (g) => (g && g.job && state && state.jobs && state.jobs[g.job] && state.jobs[g.job].next) || {};
@@ -1317,7 +1320,7 @@ function renderOverview() {
   const pcCount = new Set(live.map((x) => pcOf(x.name))).size, working = live.reduce((n, x) => n + (x.running || 0), 0);
   $("ovLead").textContent = live.length
     ? live.length + " session" + (live.length === 1 ? "" : "s") + (pcCount > 1 ? " on " + pcCount + " PCs" : "") + (working ? " · " + working + " subagent" + (working === 1 ? "" : "s") + " working" : " · nothing working right now")
-    : "No sessions connected. Start Claude Code, Codex or opencode with agent-bridge installed.";
+    : "No sessions connected. Start Claude Code, Codex, opencode or Antigravity with agent-bridge installed.";
   const c = countGroups(model.sorted);
   const stat = (n, label, cls) => '<div class="stat ' + (cls || "") + '"><b>' + n + "</b><span>" + label + "</span></div>";
   $("ovStats").innerHTML =
@@ -1343,7 +1346,7 @@ function renderOverview() {
     ? pcs.map((pc) => '<div class="pc-head">' + esc(pc || LOCAL_PC) + "</div>" + live.filter((x) => pcOf(x.name) === pc).map(card).join("")).join("")
     : live.map(card).join("");
   $("ovSessions").innerHTML =
-    (live.length ? byPc : '<div class="panel empty">No sessions connected. Start Claude Code, Codex or opencode with agent-bridge installed.</div>') +
+    (live.length ? byPc : '<div class="panel empty">No sessions connected. Start Claude Code, Codex, opencode or Antigravity with agent-bridge installed.</div>') +
     ended.map(card).join("") +
     (model.orphans.length ? '<div class="card ended"><div class="small muted">Subagent sessions in worktrees</div><div class="kids">' + model.orphans.map(childLine).join("") + "</div></div>" : "");
   $("ovRuns").innerHTML = model.sorted.length ? model.sorted.filter((g) => g.status === "running" || Date.now() - g.updatedAt < ARCHIVE_AFTER_MS).concat(model.sorted.filter((g) => !(g.status === "running" || Date.now() - g.updatedAt < ARCHIVE_AFTER_MS))).slice(0, 12).map((g) => groupRow(g, false, true)).join("") + loadOlderButton() : '<div class="empty">No subagents yet. They appear here when a session uses ask_* or spawn_*.</div>';
@@ -1913,7 +1916,7 @@ $("handoffToggle").addEventListener("click", () => {
   handoffSource = route.session; handoffTarget = null;
   $("handoffNote").value = ""; $("handoffSubmit").disabled = true;
   $("handoffInfo").textContent = "Choose the session that will supervise these jobs.";
-  const targets = state.peers.filter((p) => p.name !== handoffSource && !p.subagent && !p.host && !p.name.includes("/") && ["claude", "codex", "opencode"].includes(p.agent));
+  const targets = state.peers.filter((p) => p.name !== handoffSource && !p.subagent && !p.host && !p.name.includes("/") && ["claude", "codex", "opencode", "antigravity"].includes(p.agent));
   $("handoffTargets").innerHTML = targets.length ? targets.map((p) => '<button type="button" class="handoff-target" aria-pressed="false" data-handoff-target="' + esc(p.name) + '">' + av(p.agent) + '<span><b>' + esc(p.name) + '</b><span class="small muted"> · ' + esc(p.agent + " · " + (p.activity || "connected")) + '</span></span></button>').join("") : '<div class="empty">No other live local sessions.</div>';
   $("handoffForm").classList.remove("hidden");
   $("handoffToggle").setAttribute("aria-expanded", "true");
@@ -2084,7 +2087,7 @@ function renderNetwork() {
   if (!n) {
     $("netDot").className = "dot off";
     $("netState").textContent = netError ? "No bridge running" : "Reading the network status…";
-    $("netWhere").textContent = netError ? "Start a Claude Code, Codex or opencode session with agent-bridge, then reload." : "";
+    $("netWhere").textContent = netError ? "Start a Claude Code, Codex, opencode or Antigravity session with agent-bridge, then reload." : "";
   } else {
     $("netDot").className = "dot " + (n.enabled ? "idle" : "off");
     $("netState").textContent = n.enabled ? "Networking is on" + (n.identity ? " as " + n.identity.name : "") : "Networking is off";

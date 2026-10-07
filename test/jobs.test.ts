@@ -98,7 +98,7 @@ describe("background subagents", () => {
     await until(() => aborted && jobs.runningCount() === 0);
   });
 
-  it.each(["claude", "codex", "opencode"] as const)("resumes a cancelled %s job with a fresh signal", async (agent) => {
+  it.each(["claude", "codex", "opencode", "antigravity"] as const)("resumes a cancelled %s job with a fresh signal", async (agent) => {
     const resumed = vi.fn(async (signal: AbortSignal) => { expect(signal.aborted).toBe(false); return result("continued"); });
     const job = jobs.start(agent, null, "long", (signal) => new Promise((_, reject) => signal.addEventListener("abort", () => reject(new Error("aborted")))), () => resumed);
     job.sessionId = "saved-session";
@@ -109,7 +109,7 @@ describe("background subagents", () => {
     expect(resumed).toHaveBeenCalledOnce();
   });
 
-  it.each(["claude", "codex", "opencode"] as const)("queues a %s continuation until cancellation finishes", async agent => {
+  it.each(["claude", "codex", "opencode", "antigravity"] as const)("queues a %s continuation until cancellation finishes", async agent => {
     let stop!: (error: Error) => void;
     const resumed = vi.fn(async (signal: AbortSignal) => { expect(signal.aborted).toBe(false); return result("continued"); });
     const resume = vi.fn(() => resumed);

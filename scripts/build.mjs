@@ -6,11 +6,12 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
-const PLUGIN_DIRS = ["plugins/claude", "plugins/codex", "plugins/opencode"];
+const PLUGIN_DIRS = ["plugins/claude", "plugins/codex", "plugins/opencode", "plugins/antigravity"];
 const MANIFESTS = [
   "plugins/claude/.claude-plugin/plugin.json",
   "plugins/codex/.codex-plugin/plugin.json",
   "plugins/opencode/package.json",
+  "plugins/antigravity/package.json",
   ".claude-plugin/marketplace.json",
 ];
 const ENTRIES = { server: "src/mcp/launcher.ts", worker: "src/mcp/main.ts", cli: "src/cli/main.ts", "history-worker": "src/core/history-worker.ts" };

@@ -2,9 +2,9 @@
 
 # agent-bridge
 
-**Let Claude Code, OpenAI Codex and opencode talk to each other.**
+**Let Claude Code, OpenAI Codex, opencode and Google Antigravity CLI talk to each other.**
 
-agent-bridge is a set of plugins for Claude Code, Codex and opencode, built on a shared core. In **0.29.9**, agents on the same machine or explicitly paired PCs can:
+agent-bridge is a set of plugins for Claude Code, Codex, opencode and Antigravity CLI (`agy`), built on a shared core. Agents on the same machine or explicitly paired PCs can:
 
 - **Message each other live.** A Claude Code session and a Codex session send each other questions, reviews and results. Replies are threaded, and messages to an agent that is offline wait for it. Notify-mode waits register once and deliver replies later, surviving reloads and session exit.
 - **Delegate.** `ask_<agent>` runs another agent headlessly for a one-off task and returns its answer; for example `ask_codex` and `ask_opencode` from Claude, or `ask_claude` from Codex. You can continue that session later.
@@ -39,7 +39,7 @@ There is no daemon to install. Each agent starts its own MCP server. The first o
 npx -y github:rennerdo30/agent-bridge install        # or: install claude codex opencode
 ```
 
-The installer finds which of the three tools you have. For each one it shows the exact commands it will run and asks before running them (`--yes` skips the questions). It only runs the tools' official plugin commands, listed below; for opencode it copies the plugin files into opencode's plugin folder. Nothing is patched. `uninstall` works the same way; for updates see [Updating](#updating).
+The installer finds which tools you have. For each one it shows its plan and asks before running it (`--yes` skips the questions). Claude and Codex use official plugin commands; opencode and Antigravity use their documented global plugin folders. Existing user files are preserved. `uninstall` works the same way; for updates see [Updating](#updating).
 
 ### Claude Code
 
@@ -66,6 +66,47 @@ npx -y github:rennerdo30/agent-bridge install-opencode
 This copies the plugin into opencode's global config (`~/.config/opencode/plugins/`), plus a skill and the `codex` / `claude` subagents. Existing files you created yourself are never overwritten. Restart opencode afterwards. It needs Node.js 22.13+ on `PATH`. Remove it with `npx -y github:rennerdo30/agent-bridge uninstall-opencode`.
 
 In opencode the tools are called `bridge_peers`, `bridge_send`, `bridge_ask_claude`, `bridge_spawn_codex`, and so on. Because opencode plugins can start turns themselves, opencode receives peer messages live, even while idle, whenever its listen window or auto-wake applies.
+
+### Google Antigravity CLI (`agy`)
+
+```bash
+npx -y github:rennerdo30/agent-bridge install antigravity --yes
+# Later:
+npx -y github:rennerdo30/agent-bridge update antigravity --yes
+```
+
+Requires installed, authenticated `agy` (verified with 1.2.0 and 1.3.1). Start a new
+native session after initial installation. Updates keep running sessions on retained
+code and select new code for the next MCP server start. The plugin includes MCP configuration, lifecycle/permission hooks
+and a coordination skill. It exposes the same peer, delegation, history and job
+tools as the existing plugins. Other peers get `ask_antigravity` and
+`spawn_antigravity`, with `model`, `effort` (low/medium/high/xhigh/max), `session_id`,
+`access`, `terminal_sandbox`, `bypass_permissions` and `worktree`. Continue with `message_subagent` or
+cancel with `cancel_subagent`; these use the existing durable job lifecycle.
+
+`read` denies non-reading tools; `ask` forwards those tool approvals to the
+supervisor. Both use the installed bridge gate before every tool, with native
+headless prompting bypassed because 1.2.0 otherwise auto-denies approved calls.
+`edit` keeps native Antigravity permissions; native headless prompts can deny
+commands. Explicit `bypass_permissions: true` runs with native approvals bypassed;
+`false` selects native policy. Either exact override replaces read/ask access.
+The installer grants only the bridge MCP server and backs up native
+settings. Terminal sandboxing is
+separate and depends on the installed platform. Active mail arrives at the next
+model invocation or stopping boundary. **Idle TUI sessions receive mail on their
+next turn or through `inbox`; no public programmatic idle wake API is documented.**
+Native Remote Control provides separate desktop/web UI access through a tunnel.
+Account quotas are shown by native `/usage` or `/quota`; the bridge reports them
+as unknown because no machine-readable quota command is documented.
+
+Native chats and explicit child conversations are read from Antigravity JSONL
+logs without modifying them. Updates publish complete immutable runtimes and back up replaced metadata;
+uninstall archives the owned plugin, including user additions, and retains
+the native MCP allow rule. No bridge data
+format changes are required for this additive agent kind.
+
+**Gemini CLI (`gemini`) is separate and is not implemented in this release:** it
+was not installed on the verified PC. See [official evidence and CLI differences](docs/google-cli-research.md).
 
 ## Updating
 
@@ -105,8 +146,8 @@ Just ask in plain language, for example:
 | `send` | Message a peer: `to` = peer name, `claude`/`codex` (if exactly one is online) or `*`; `reply_to` threads answers |
 | `wait_for_message` | Register once for a matching reply and return immediately; short blocking waits remain available |
 | `inbox` | Read unread messages |
-| `ask_claude` / `ask_codex` / `ask_opencode` | Headless delegation to another agent (every agent gets the other two); waits and returns the answer and a `session_id` to continue |
-| `spawn_claude` / `spawn_codex` / `spawn_opencode` | Same, but as a background subagent: returns a job name at once; the result arrives as a message from `<agent>-job-<id>`; `peers` shows each job's current step |
+| `ask_claude` / `ask_codex` / `ask_opencode` / `ask_antigravity` | Headless delegation to another agent (every agent gets the other coding agents); waits and returns the answer and a `session_id` to continue |
+| `spawn_claude` / `spawn_codex` / `spawn_opencode` / `spawn_antigravity` | Same, but as a background subagent: returns a job name at once; the result arrives as a message from `<agent>-job-<id>`; `peers` shows each job's current step |
 | `message_subagent` | Talk to a subagent started with `ask_*` or `spawn_*`: a running one gets the message while it works and answers right away; a finished or failed one continues in its own session with its full context (see below) |
 | `usage_limits` | How much of each agent's account limits is used (Codex and Claude: 5-hour and weekly windows with reset times; opencode: today's spend and which models are free), so the driving agent can pick who gets large work |
 | `cancel_subagent` | Stop a running subagent (background job or blocking `ask_*` run) by its job name |

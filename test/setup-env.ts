@@ -22,3 +22,4 @@ const transcriptRoot=join(import.meta.dirname,"../.agent-bridge-test/empty-cli-s
 process.env.CLAUDE_CONFIG_DIR=join(transcriptRoot,"claude");
 process.env.CODEX_HOME=join(transcriptRoot,"codex");
 process.env.XDG_DATA_HOME=join(transcriptRoot,"data");
+process.env.ANTIGRAVITY_CLI_HOME=join(transcriptRoot,"antigravity");

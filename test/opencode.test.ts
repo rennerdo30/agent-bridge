@@ -97,13 +97,14 @@ describe("installers", () => {
     try {
       const res = installOpencode(src, cfg);
       expect(rel(cfg, res.files).filter((f) => !f.startsWith("/agent-bridge/plugin-versions/"))).toEqual([
+        "/agents/antigravity.md",
         "/agents/claude.md",
         "/agents/codex.md",
         "/plugins/agent-bridge.js",
         "/skills/agent-bridge/SKILL.md",
       ]);
       expect(res.files.some((file) => file.includes("plugin-versions"))).toBe(true);
-      expect(uninstallOpencode(cfg, src).files).toHaveLength(4);
+      expect(uninstallOpencode(cfg, src).files).toHaveLength(5);
       expect(uninstallOpencode(cfg, src).files).toHaveLength(0);
     } finally {
       rmSync(cfg, { recursive: true, force: true });

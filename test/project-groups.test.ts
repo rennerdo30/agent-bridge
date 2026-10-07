@@ -28,7 +28,7 @@ function repo() {
 }
 async function node(name: string, cwd: string, job?: { id: string; owner: string; parent: string }) {
   const n = new BridgeNode({ pipePath: env.pipe, dbPath: env.db, token: loadOrCreateToken(env.home), name, cwd,
-    agent: job ? "other" : name.startsWith("codex") ? "codex" : "claude", autoWake: true, log: nullLogger,
+    agent: job ? "other" : name.startsWith("codex") ? "codex" : name.startsWith("antigravity") ? "antigravity" : "claude", autoWake: true, log: nullLogger,
     ...(job ? { id: `job:${job.id}`, jobAgent: "codex" as const, jobOwner: job.owner, jobParent: job.parent, canHostBroker: false } : {}) });
   nodes.push(n); await n.start(); return n;
 }
@@ -113,8 +113,8 @@ describe("local project permission groups", () => {
     await expect(a.sendSibling({ to: b.name, body: "Cross-project sibling attempt" }, 32)).rejects.toThrow();
   });
 
-  it("routes the project to main or secondary while exact addresses stay direct", async () => {
-    const path = repo(), a = await node("claude-master", path), b = await node("codex-master", path);
+  it.each(["codex", "antigravity"])("routes the project to a %s main or secondary while exact addresses stay direct", async (agent) => {
+    const path = repo(), a = await node("claude-master", path), b = await node(`${agent}-master`, path);
     const outsider = await node("outside", env.home);
     expect((await a.peers()).find((p) => p.name === a.name)).toMatchObject({ projectMain: true, projectAddress: "project:project" });
     expect((await outsider.send({ to: "project:project", body: "Project request" })).deliveredTo).toEqual([a.name]);

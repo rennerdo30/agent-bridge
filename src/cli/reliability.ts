@@ -6,6 +6,7 @@ import { DEFAULT_CLAUDE_BIN, DEFAULT_CODEX_BIN, DEFAULT_OPENCODE_BIN } from "../
 import { delegateToClaude, delegateToCodex, delegateToOpencode, resolveBinary, type DelegateResult } from "../core/delegate.js";
 import type { Logger } from "../core/logger.js";
 import type { CodingAgent } from "../core/protocol.js";
+import { delegateToAntigravity } from "../core/antigravity.js";
 import { createWorktree, finishWorktree } from "../core/worktree.js";
 import { codexPermissionHookTrusted } from "../core/codex-trust.js";
 import { resolveHome } from "../core/paths.js";
@@ -23,7 +24,7 @@ const RUN_TIMEOUT_SEC = 300;
 const REPEATS = 3;
 const CANCEL_AFTER_MS = 8_000;
 const CANCEL_GRACE_MS = 10_000;
-const BINS: Record<CodingAgent, string> = { claude: DEFAULT_CLAUDE_BIN, codex: DEFAULT_CODEX_BIN, opencode: DEFAULT_OPENCODE_BIN };
+const BINS: Record<CodingAgent, string> = { claude: DEFAULT_CLAUDE_BIN, codex: DEFAULT_CODEX_BIN, opencode: DEFAULT_OPENCODE_BIN, antigravity: "agy" };
 
 type Access = "read" | "edit";
 export type ReliabilitySection = "core" | "live";
@@ -33,6 +34,7 @@ let models: Partial<Record<CodingAgent, string>> = {};
 
 function run(agent: CodingAgent, prompt: string, cwd: string, access: Access, log: Logger, signal?: AbortSignal): Promise<DelegateResult> {
   const base = { prompt, cwd, sessionId: null, timeoutSec: RUN_TIMEOUT_SEC, log, signal, model: models[agent] ?? null };
+  if (agent === "antigravity") return delegateToAntigravity({ ...base, bin: BINS.antigravity, access });
   if (agent === "codex") return delegateToCodex({ ...base, bin: BINS.codex, sandbox: access === "edit" ? "workspace-write" : "read-only" });
   if (agent === "claude") return delegateToClaude({ ...base, bin: BINS.claude, permissionMode: access === "edit" ? "acceptEdits" : "default" });
   return delegateToOpencode({ ...base, bin: BINS.opencode, autoApprove: access === "edit" });
@@ -47,6 +49,7 @@ async function runAsk(
   log: Logger,
 ): Promise<DelegateResult | null> {
   const base = { prompt, cwd, sessionId: null, timeoutSec: RUN_TIMEOUT_SEC, log, model: models[agent] ?? null };
+  if (agent === "antigravity") return delegateToAntigravity({ ...base, bin: BINS.antigravity, access: "ask", approve: decide });
   if (agent === "opencode") return delegateToOpencodeServed({ ...base, bin: BINS.opencode, onPermission: decide });
   if (agent === "codex") {
     if (!codexPermissionHookTrusted(resolveHome())) return null;
@@ -142,7 +145,9 @@ export async function runReliability(opts: {
           const steps: string[] = [];
           const base = { prompt: "Create a file named created.txt containing the word hello. Then reply done.", cwd: wt.cwd, sessionId: null, timeoutSec: RUN_TIMEOUT_SEC, log: opts.log, model: models[agent] ?? null, onProgress: (m: string) => steps.push(m) };
           const r =
-            agent === "codex"
+            agent === "antigravity"
+              ? await delegateToAntigravity({ ...base, bin: BINS.antigravity, access: "edit" })
+              : agent === "codex"
               ? await delegateToCodex({ ...base, bin: BINS.codex, sandbox: "workspace-write" })
               : agent === "claude"
                 ? await delegateToClaude({ ...base, bin: BINS.claude, permissionMode: "acceptEdits" })

@@ -33,7 +33,7 @@ export function commitHandoff(path: string, source: PeerInfo, target: PeerInfo, 
   const args = handoffSchema.parse(input);
   if (source.jobAgent) throw new BridgeError("unauthorized", "Only the current supervisor session can hand off its own jobs.");
   if (isPluginCacheCwd(source.cwd) || isPluginCacheCwd(target.cwd) || target.host || target.name.includes("/") || target.jobAgent || !CODING_AGENTS.includes(target.agent as typeof CODING_AGENTS[number])) {
-    throw new BridgeError("bad_request", "The target must be an exact live local Claude Code, Codex or opencode session. Paired-PC handoff is not supported.");
+    throw new BridgeError("bad_request", "The target must be an exact live local Claude Code, Codex, opencode or Antigravity session. Paired-PC handoff is not supported.");
   }
   if (target.name === source.name && options.reason !== "group-restored" && !options.canControl) throw new BridgeError("bad_request", "Choose another local supervisor session.");
   const unlock = acquireLock(`${path}.lock`, 0);

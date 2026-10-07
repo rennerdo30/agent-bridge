@@ -9,6 +9,7 @@ import { BridgeNode } from "../src/core/node.js";
 import { BridgeClient } from "../src/core/client.js";
 import { PROTOCOL_VERSION } from "../src/core/constants.js";
 import { nullLogger } from "../src/core/logger.js";
+import { pidAlive } from "../src/core/delegate.js";
 import { ParentLink } from "../src/core/parent-link.js";
 import { MessageStore } from "../src/core/store.js";
 import { loadOrCreateToken } from "../src/core/token.js";
@@ -28,11 +29,12 @@ const textOf = (r: any) => r.content.map((c: any) => c.text).join("\n");
 const call = async (c: Client, name: string, args = {}) => textOf(await c.callTool({ name, arguments: args }));
 async function connect(agent: string, name: string, extra = {}) {
   const c = new Client({ name: "context-scenario", version: "1" });
-  cleanups.push(() => c.close());
-  await c.connect(new StdioClientTransport({ command: process.execPath, args: [SERVER, `--agent=${agent}`],
+  const transport = new StdioClientTransport({ command: process.execPath, args: [SERVER, `--agent=${agent}`],
     env: { ...process.env, AGENT_BRIDGE_HOME: env.home, CLAUDE_PROJECT_DIR: env.home, AGENT_BRIDGE_NAME: name, AGENT_BRIDGE_DELIVERY: "hooks",
       AGENT_BRIDGE_WAKE_ON_DIRECT: "off", AGENT_BRIDGE_AUTO_WAKE: "off", AGENT_BRIDGE_DASHBOARD: "off",
-      AGENT_BRIDGE_LINGER_SEC: "0", AGENT_BRIDGE_DELEGATE_DEPTH: "0", ...extra } as Record<string, string>, stderr: "ignore" }));
+      AGENT_BRIDGE_LINGER_SEC: "0", AGENT_BRIDGE_DELEGATE_DEPTH: "0", ...extra } as Record<string, string>, stderr: "ignore" });
+  cleanups.push(async () => { const pid = transport.pid; await c.close(); if (pid) await until(() => !pidAlive(pid)); });
+  await c.connect(transport);
   await call(c, "peers");
   return c;
 }
@@ -52,7 +54,7 @@ async function runner(id: string, agent: "codex" | "opencode", supervisor: strin
   return { node, job, parent };
 }
 
-it.each(["claude", "codex", "opencode"])("delivers the last real result through the %s supervisor Stop hook", async (agent) => {
+it.each(["claude", "codex", "opencode", "antigravity"])("delivers the last real result through the %s supervisor Stop hook", async (agent) => {
   const sup = await connect(agent, "supervisor");
   const a = await runner("a", "opencode", "supervisor");
   await a.node.send({ to: "supervisor", conversationId: "job-a", body: "REAL_COMPLETION" });
@@ -61,7 +63,7 @@ it.each(["claude", "codex", "opencode"])("delivers the last real result through 
   expect(await call(sup, "inbox", { mark_read: false })).not.toContain("REAL_COMPLETION");
 });
 
-it("drains 550 queued results across the replay limit while retaining 159 quiet copies", async () => {
+it.each(["opencode", "antigravity"])("%s drains 550 queued results across the replay limit while retaining 159 quiet copies", async (agent) => {
   const store = new MessageStore(env.db, nullLogger);
   try {
     for (let i = 0; i < 709; i++) {
@@ -71,7 +73,7 @@ it("drains 550 queued results across the replay limit while retaining 159 quiet 
         replyTo: null, hop: 0, createdAt: Date.now() + i, readAt: null });
     }
   } finally { store.close(); }
-  const sup = await connect("opencode", "supervisor");
+  const sup = await connect(agent, "supervisor");
   const seen = new Set<string>();
   for (let i = 0; i < 60; i++) {
     const text = await call(sup, "hook_event", { event: "PostToolUse" });

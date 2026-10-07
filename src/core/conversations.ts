@@ -20,6 +20,7 @@ import {
 import { conversationProject, syncProjectMirror } from "./project-store.js";
 import { readArchivedJobSnapshot } from "./job-archive.js";
 import { readJsonSnapshot } from "./file-cache.js";
+import { antigravityItems } from "./transcripts/antigravity.js";
 
 export const CONVERSATION_BYTES = 64 * 1024;
 export const conversationPageSchema = z
@@ -88,6 +89,7 @@ export class ConversationIngestor {
       join(this.paths.claude, "projects"),
       join(this.paths.codex, "sessions"),
       this.paths.opencode,
+      ...(this.paths.antigravity ? [join(this.paths.antigravity, "brain")] : []),
     ]) {
       if (this.watched.has(root)) continue;
       try {
@@ -478,7 +480,7 @@ export class ConversationIngestor {
       }
       recordJob =
         binding?.job ??
-        (/^(claude|codex|opencode)-job-/.test(String(metadata.from_name))
+        (/^(claude|codex|opencode|antigravity)-job-/.test(String(metadata.from_name))
           ? metadata.from_name
           : recordSession === c.session
             ? recordJob
@@ -664,13 +666,11 @@ export class ConversationIngestor {
     return 1;
   }
   private jsonl(source: Record<string, any>): number {
-    const agent = String(source.conversation).split(":")[0] as
-      | "claude"
-      | "codex";
+    const agent = String(source.conversation).split(":")[0] as keyof TranscriptPaths;
     const root = String(source.conversation).startsWith("bridge:")
       ? this.home
       : this.paths[agent];
-    if (!safeFile(root, source.path)) return 0;
+    if (!root || !safeFile(root, source.path)) return 0;
     let fd: number | undefined;
     try {
       fd = openSync(source.path, "r");
@@ -878,6 +878,13 @@ export class ConversationIngestor {
               this.db
                 .prepare("UPDATE conversations SET parent=? WHERE id=?")
                 .run(`codex:${parent}`, source.conversation);
+          }
+          if (agent === "antigravity") {
+            for (const item of antigravityItems(row)) {
+              if (!item.subagent || item.subagent.id === c.session) continue;
+              const child = this.conversation(agent, item.subagent.id, String(c.project), null);
+              this.db.prepare("UPDATE conversations SET parent=? WHERE id=?").run(source.conversation, child);
+            }
           }
           if (
             agent === "claude" &&

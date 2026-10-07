@@ -1,8 +1,8 @@
 # Updates while sessions are running
 
 `npx -y github:rennerdo30/agent-bridge update claude codex opencode --yes`
-publishes a new release without stopping sessions. Native Antigravity support and
-its retention-safe update adapter follow in the separate native-client release.
+publishes a new release without stopping sessions. Where the native client is
+installed, `update antigravity --yes` applies the same retention policy.
 
 New MCP server starts select the published compatible runtime. Existing servers
 continue with their original code, stdio connection, session identity, broker,
@@ -55,6 +55,14 @@ plugin refresh behavior.
   Its legacy server directory remains untouched for already loaded legacy plugins.
   Skills and agent definitions are backed up before replacement; foreign files
   remain untouched.
+- Antigravity publishes complete runtimes beside its native plugin descriptor in
+  `.agent-bridge-runtime/plugin-versions/antigravity/<version>`. MCP and hook
+  metadata switch atomically with adjacent backups; legacy `dist` and every old
+  runtime stay intact. Unknown native settings and selectors are refused. Custom
+  MCP entries, environment fields and a deliberately disabled permission gate are
+  preserved. The exact PreToolUse gate follows the selected runtime and retains
+  encoded Windows command paths. Native uninstall archives the descriptor while
+  preserving all immutable runtimes for workers still using them.
 - The bundled `server.mjs` is a small startup selector; real code is `worker.mjs`.
   It imports exactly once. A cached launcher can select a newer runtime on its next
   start. The runtime selector has schema version 1 and includes the broker protocol

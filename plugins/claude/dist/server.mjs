@@ -60,12 +60,13 @@ function atomicPluginWrite(path, text) {
   assertUnlinked(path);
   mkdirSync(dirname(path), { recursive: true });
   const previous = existsSync(path) ? readFileSync(path) : null;
-  if (previous?.toString("utf8") === text) return;
+  const content = Buffer.from(text);
+  if (previous?.equals(content)) return;
   const tmp = `${path}.${randomUUID()}.tmp`, backup = `${path}.backup-${Date.now()}-${randomUUID()}`;
   assertUnlinked(tmp);
   assertUnlinked(backup);
   if (previous) copyFileSync(path, backup);
-  writeFileSync(tmp, text, { flag: "wx", mode: 384 });
+  writeFileSync(tmp, content, { flag: "wx", mode: 384 });
   const current = existsSync(path) ? readFileSync(path) : null;
   if (previous === null !== (current === null) || previous && !previous.equals(current)) throw new Error(`Plugin metadata changed concurrently; preserved both copies: ${path}`);
   renameSync(tmp, path);
@@ -93,7 +94,8 @@ function recordRuntimeSession(home2, session) {
 var clientArg = process.argv.find((arg) => arg.startsWith("--agent="))?.slice(8) ?? process.env[ENV.agent] ?? "codex";
 var client = ["claude", "codex", "opencode", "antigravity"].includes(clientArg) ? clientArg : "codex";
 var home = process.env[ENV.home]?.trim() || DEFAULT_HOME;
-var selected = selectedWorker(home, client, join3(dirname2(fileURLToPath(import.meta.url)), "worker.mjs"));
+var runtimeHome = process.env.AGENT_BRIDGE_PLUGIN_RUNTIME_HOME?.trim() || home;
+var selected = selectedWorker(runtimeHome, client, join3(dirname2(fileURLToPath(import.meta.url)), "worker.mjs"));
 process.env.AGENT_BRIDGE_LAUNCH_PLUGIN_ROOT = join3(dirname2(fileURLToPath(import.meta.url)), "..");
 try {
   recordRuntimeSession(home, { pid: process.pid, client, version: selected.version, worker: selected.worker, startedAt: (/* @__PURE__ */ new Date()).toISOString() });

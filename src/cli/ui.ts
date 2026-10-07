@@ -3,6 +3,7 @@ import { conversationPageSchema, readConversation } from "../core/conversations.
 import { formatReplyRestrictions } from "../mcp/format.js";
 import { chooseJobRecipient } from "../core/job-ownership.js";
 import { ProjectGroups } from "../core/project-groups.js";
+
 import { recoverJobRecord } from "../core/job-recovery.js";
 import { handoffSchema } from "../core/job-handoff.js";
 import { randomBytes } from "node:crypto";
@@ -182,6 +183,7 @@ function readAllUsage(home: string, log: Logger): Promise<UsageReport[]> {
     readUsage("claude", cfg.claudeBin, home, log),
     readUsage("codex", cfg.codexBin, home, log),
     readUsage("opencode", cfg.opencodeBin, home, log, cfg.opencodeModel ?? null),
+    readUsage("antigravity", cfg.antigravityBin, home, log, cfg.antigravityModel),
   ]);
 }
 

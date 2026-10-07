@@ -179,6 +179,72 @@ Synthetic survival and local tests do not establish deployed two-PC acceptance
 or diagnose every prior broker exit. The supervisor owns release, reload and
 live acceptance; handoff and TODO files are untouched.
 
+## Follow-up load and delivery checks (AB-122/123/124/126/129/120/97)
+
+The same harness now accepts `AB_PERF_JOBS=50` and adds ordinary `peers` and
+direct `send` probes. Both comparison runs used 50 synthetic jobs, 56 peers,
+50 progress sources, and the same 20-second offered workload. No owner data
+was modified. Concurrent sibling validation adds uncontrolled host load, so
+these results do not establish an overall throughput improvement:
+
+| Measurement | 0.29.10 | Integrated candidate (`90e9db0`) |
+| --- | ---: | ---: |
+| Failed probes | 0 | 0 |
+| Peers p95 | 896 ms | 1,593 ms |
+| Direct send p95 | 899 ms | 1,790 ms |
+| Hook p95 | 1,680 ms | 1,833 ms |
+| Dashboard maximum | 2,989 ms | 2,120 ms |
+| Heartbeat during a controlled SQLite writer lock | 600 ms | 21 ms |
+| Peers during that lock | 601 ms | 16 ms |
+
+The controlled lock comparison isolates synchronous SQLite waiting: broker
+writes now retry with short native waits and asynchronous backoff. Ordinary
+peers can answer while a send waits for the writer. Writable bridge databases
+use WAL and busy timeouts; external databases remain read-only. Native agent
+lock failures receive bounded retries using the same session and deadline.
+The initial integrated conversation/group candidate exposed a further regression:
+44 failed probes, 7,701 ms event-loop p95, and 44,757 ms elapsed profile time.
+Profiling identified repeated configuration and launch-spec reads, a pending-mail
+table scan for every retained job, archive traversal on every async routing step,
+and a full ownership refresh for every hosted job in an already refreshed poll.
+The final candidate has zero failed probes, 19 ms event-loop p95, and 23,623 ms
+elapsed profile time. Hook p95 is 1,833 ms; controlled writer-lock send completes
+in 841 ms while peers continue answering. CPU time includes the new ingestion
+worker, so comparison with the old broker alone is not a worker throughput claim.
+
+Authority settings and job-root fallback are shared only within a synchronous
+dispatch and expire at its next microtask. Agent-specific opt-outs, malformed
+settings and original project identities retain their guards. Routing yields
+every 16 retained jobs, batches pending-sender scans, and skips empty write steps.
+Pure authenticated dashboard connections do not change job recipients when they
+close. Every retained envelope is still imported before an empty-mail shortcut;
+actual writes and retries re-read durable ownership and preserve read journals.
+Hosted polls refresh ownership once before their synchronous job batch; individual
+control and delivery callbacks retain their own refresh.
+
+AB-129's exact historical 159 unread rows were quiet sibling observer notes.
+All recorded true results before that report already had read receipts. New
+real MCP-plus-hook scenarios nevertheless exposed independent delivery gaps:
+the final result could be omitted by Stop with auto-wake disabled, and the
+500-row initial replay could strand a larger backlog. Hook and channel consumers
+now refill durable pending mail, batch acknowledgements, and bound pending
+responses by bytes as well as rows. Quiet notes stay available through explicit
+inbox/history reads and never enter supervisor hooks automatically. These
+scenarios cover claude, codex and opencode. A real offline-sibling scenario also
+found that the new group backlog router could mistake sibling mail for a job
+report. Both pending-recipient discovery and handoff copying now exclude the
+`siblings-` conversation prefix. Three real MCP scenarios exercise supervisor
+hooks, receiver activation/replay, and explicit retained observer copies.
+Offline local broadcast recipients
+are queued from saved registrations; job sender restrictions still apply.
+
+The upgrade fixture preserves the full 0.29.10 schema and synthetic messages,
+peer registrations, session identity, decisions and an unknown user table through
+the integrated schema-8 upgrade and verifies the readable schema-6 backup. A
+400-job upgrade additionally verifies unknown fields, one JSON backup and repeat
+upgrade idempotence.
+No schema bump or destructive data operation is introduced by this lane.
+
 ## Durable conversation ingestion
 
 The conversation-storage lane moves history scanning and SQLite/FTS ingestion to
