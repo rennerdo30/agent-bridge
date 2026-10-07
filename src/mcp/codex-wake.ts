@@ -53,7 +53,8 @@ export class CodexWaker {
 
   private hasWakeableMail(): boolean {
     return this.node.unread().some((m) => m.hop < this.cfg.maxHops && !isQuietMessage(m) &&
-      (this.node.autoWakeEnabled || (!m.conversationId.endsWith(":note") && this.node.isNotificationAwaited(m))));
+      (this.node.autoWakeEnabled || (m.from.id.startsWith("job:") && m.conversationId.endsWith(":fallback")) ||
+        (!m.conversationId.endsWith(":note") && this.node.isNotificationAwaited(m))));
   }
 
   private idleWithMail(): boolean {

@@ -158,9 +158,9 @@ describe("local subagent ownership handoff", () => {
     expect(readStore(path(), undefined, true).find((j) => j.id === "a")!.owner).toBe(target.name);
   });
 
-  it("appends a second transfer and rejects the former owner", async () => {
+  it("appends a reversed transfer and rejects a redundant primary switch", async () => {
     save([record("a")]); await source.handoffSubagents({ to: target.name });
-    await expect(source.handoffSubagents({ to: target.name, jobs: ["codex-job-a"] })).rejects.toThrow("not owned");
+    await expect(source.handoffSubagents({ to: target.name, jobs: ["codex-job-a"] })).rejects.toThrow("already the primary");
     await target.handoffSubagents({ to: source.name });
     expect(readStore(path())[0]!.ownershipHistory).toHaveLength(2);
   });

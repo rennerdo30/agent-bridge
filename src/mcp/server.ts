@@ -5,7 +5,9 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import type { CallToolResult, ServerNotification } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
+import { isRecord } from "../core/json-store.js";
 import { CLAUDE_PERMISSION_MODES, CODEX_APPROVALS_REVIEWERS, CODEX_SANDBOXES, defaultPeerName, loadConfig, parseAgentKind, saveConfigValue, watchConfig, type BridgeConfig, MODEL_NAME_PATTERN } from "../core/config.js";
+import { canonicalProjectRoot } from "../core/project-identity.js";
 import {
   APP_NAME,
   APP_VERSION,
@@ -225,10 +227,15 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
   const targets = delegationTargets(agent);
   const home = resolveHome();
   const log = createLogger({ home, component: `mcp-${agent}` });
-  const cfg = loadConfig(home, agent, log);
   const cwd = process.env.CLAUDE_PROJECT_DIR || process.cwd();
   // Codex starts plugin MCP servers inside the plugin folder; the project dir arrives later via hooks/_meta.
   const cwdKnown = Boolean(process.env.CLAUDE_PROJECT_DIR) || !isInside(cwd, PLUGIN_ROOT);
+  let configCwd: string | undefined, configRoot: string | undefined;
+  const projectConfigRoot = (dir: string): string | undefined => {
+    if (dir !== configCwd) { configCwd = dir; configRoot = canonicalProjectRoot(dir) ?? undefined; }
+    return configRoot;
+  };
+  const cfg = loadConfig(home, agent, log, process.env, cwdKnown ? projectConfigRoot(cwd) : undefined);
   const delegated = currentDelegateDepth() > 0;
   log.info("starting MCP server", { agent, cwd, cwdKnown, delegated, version: APP_VERSION, node: process.version });
 
@@ -272,21 +279,23 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
     if (cli) ctx.jobs.runners = ctx.runners = new JobRunners(node, home, cli, log.child("runners"));
     // Edits to config.json apply right away. Settings read only at start (name, delivery, ports) wait for a restart.
     const jobs = ctx.jobs;
-    watchConfig(home, agent, log, (next) => {
+    let cwdSettled = cwdKnown;
+    const applyConfig = (next: BridgeConfig) => {
       const limitChanged = next.maxJobs !== cfg.maxJobs;
       Object.assign(cfg, next);
       if (limitChanged) jobs.setLimit(next.maxJobs);
       void node.setWakePolicy(agent === "claude" && next.wakeOnDirect, (agent === "claude" && Boolean(ctx.rewakeAvailable || ctx.channelActive())) || agent === "opencode" || (agent === "codex" && Boolean(node.currentSessionId)), next.maxHops).catch(() => {});
-    });
+    };
+    watchConfig(home, agent, log, applyConfig, () => cwdSettled ? projectConfigRoot(node.cwd) ?? "" : "");
     ctx.activity = (s) => node.setActivity(s);
     // Learn the project folder once, when it was unknown at start (Codex starts us in the plugin folder).
     // Later hook cwds follow the agent's `cd`s; renaming then would strand replies sent to the old name.
-    let cwdSettled = cwdKnown;
     ctx.learnCwd = async (projectDir) => {
       if (cwdSettled || projectDir === node.cwd) return;
       cwdSettled = true;
       const name = cfg.name ? undefined : defaultPeerName(agent, projectDir);
       await node.relocate(projectDir, name).catch((err) => log.warn("relocate failed", { err: (err as Error).message }));
+      applyConfig(loadConfig(home, agent, log, process.env, projectConfigRoot(node.cwd)));
     };
   }
   if (agent === "codex" && node) {
@@ -568,6 +577,32 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
     guarded("decisions", async (a: DecisionsArgs) => text(JSON.stringify(await requireNode().decisions(a)))),
   );
 
+  if (node) register(
+    "project_main",
+    {
+      title: "Set the project's main session",
+      description: "Choose a live local master of this project as its main contact. Project addresses route to this session with available-secondary fallback. Exact session addresses stay direct.",
+      inputSchema: { to: z.string().min(1).max(64) },
+    },
+    guarded("project_main", async (a: { to: string }) => {
+      const peer = await requireNode().setProjectMain(a.to);
+      return text(`${peer.name} is main for ${peer.projectAddress}.`);
+    }),
+  );
+
+  if (node) register(
+    "coordinator_availability",
+    {
+      title: "Set coordinator availability",
+      description: "Yield this session's project jobs to an available local master, for example before closing or at a usage limit. Set unavailable=false when ready again. The current primary keeps its jobs until explicitly handed back. Explicitly handed-off jobs are excluded.",
+      inputSchema: { unavailable: z.boolean() },
+    },
+    guarded("coordinator_availability", async (a: { unavailable: boolean }) => {
+      const peer = await requireNode().setUnavailable(a.unavailable);
+      return text(`${peer.name} is ${peer.unavailable ? "unavailable; project jobs may fail over" : "available"}.`);
+    }),
+  );
+
   register(
     "peers",
     {
@@ -599,6 +634,7 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
       const n = requireNode();
       const peers = await n.peers();
       await n.refreshPending();
+      const shared = await n.projectJobs();
       // Job runners are this or another session's subagents, not sessions (an older broker still lists them).
       const others = peers.filter((p) => p.id !== n.id && !p.id.startsWith("job:"));
       const lines = [
@@ -616,6 +652,9 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
       if (quietCount) lines.push(`${quietCount} retained quiet message(s), available in inbox/history on request; excluded from actionable unread mail.`);
       const load = await n.brokerLoad().catch(() => null); // Earlier brokers do not expose the additive load probe.
       if (load && load.connectedJobs > load.testedJobs) lines.push(`Broker load warning: ${load.connectedJobs} jobs are connected; the load check covered ${load.testedJobs}. Queue additional work to stay within the measured load.`);
+      const groupPeers = peers.filter((p) => p.projectGroup && !p.host);
+      if (groupPeers.length) lines.push("Local project groups:", ...groupPeers.map((p) => `- ${p.projectAddress}: ${p.name} (${p.projectMain ? "main" : "secondary"}${p.unavailable ? ", unavailable" : ""})`));
+      if (shared.length) lines.push("Project jobs (shared local authority):", ...shared.map((j) => `- ${j.name} (${j.agent}, ${j.status}; primary ${j.owner})${isRecord(j.args) && j.args.title ? ` \"${j.args.title}\"` : ""}`));
       const transferNotes = new Map<string, BridgeMessage>();
       for (const message of n.unread()) {
         if (message.conversationId.startsWith(TRANSFER_PROGRESS_PREFIX)) transferNotes.set(message.conversationId, message);
@@ -1034,9 +1073,18 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
         const report = progressReporter(extra, log);
         const onProgress = (m: string) => {
           tracked?.onProgress(m);
-          if (tracked?.job.ownershipHistory?.length && tracked.job.owner !== ctx.node?.name) ctx.jobs?.fromSubagent(tracked.job, m, null);
+          if (tracked && ctx.jobs && ctx.node) void ctx.jobs.recipient(tracked.job).then((recipient) => {
+            if (recipient !== ctx.node!.name) ctx.jobs?.fromSubagent(tracked.job, m, null);
+            else report?.(m);
+          }).catch((err) => log.warn("foreground progress routing deferred", { err: String(err) }));
           else report?.(m);
         };
+        const contact = async () => {
+          if (tracked && ctx.jobs && ctx.node) tracked.job.foregroundRecipient = await ctx.jobs.recipient(tracked.job);
+          return tracked?.job.foregroundRecipient;
+        };
+        const redirected = () => tracked && tracked.job.foregroundRecipient && tracked.job.foregroundRecipient !== ctx.node?.name;
+        const confirmation = () => text(`Job ${tracked!.job.name} is supervised by ${tracked!.job.foregroundRecipient}; its report was routed there.`);
         let res;
         try {
           // cancel_subagent can stop it too (e.g. from its coordinator), not only the caller.
@@ -1044,14 +1092,16 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
             ? await runRemoteAsk(requireNode(), target, a, tracked.job, extra.signal, onProgress)
             : await run({ ...a, _job: tracked?.job.name }, tracked ? AbortSignal.any([extra.signal, tracked.job.controller.signal]) : extra.signal, onProgress, false, tracked?.job);
         } catch (err) {
+          await contact();
           tracked?.end({ error: err });
           log.warn("ask failed", { job: tracked?.job.name, err: (err as Error).message });
-          if (tracked?.job.ownershipHistory?.length && tracked.job.owner !== ctx.node?.name) return text(`Job ${tracked.job.name} is supervised by ${tracked.job.owner}; its report was routed there.`);
+          if (redirected()) return confirmation();
           const identity = tracked ? `Job: ${tracked.job.name}\n${target} session_id: ${tracked.job.sessionId ?? "-"}\n\n` : "";
           return text(`${identity}${describeError(err)}`, true);
         }
+        await contact();
         tracked?.end({ result: res });
-        if (tracked?.job.ownershipHistory?.length && tracked.job.owner !== ctx.node?.name) return text(`Job ${tracked.job.name} is supervised by ${tracked.job.owner}; its report was routed there.`);
+        if (redirected()) return confirmation();
         const header =
           (tracked ? `Job: ${tracked.job.name}\n` : "") +
           t("delegate.done", { agent: target, session: res.sessionId ?? "-" }) +
@@ -1180,6 +1230,7 @@ ${res.text || t("delegate.empty")}`, res.isError);
         to: z.string().min(1).max(64).describe("Exact live local session name from peers"),
         jobs: z.union([z.literal("all"), z.array(z.string().min(1).max(80)).min(1).max(1000)]).optional().describe("Exact job names, or all (default)"),
         note: z.string().max(4000).optional().describe("Context for the new supervisor"),
+        switch_project_main: z.boolean().optional().describe("With all jobs, also make the same-project target the main session"),
       },
     },
     guarded("handoff_subagents", async (a: import("../core/job-handoff.js").HandoffArgs) => {
@@ -1223,7 +1274,7 @@ ${res.text || t("delegate.empty")}`, res.isError);
     guarded("message_subagent", async (a: { job: string; message?: string; title?: string } & JobSettings) => {
       const jobs = ctx.jobs;
       if (!jobs) throw new BridgeError("bad_request", t("err.delegatedSession"));
-      const existing = jobs.find(a.job);
+      const existing = await jobs.share(a.job);
       // A top supervisor can answer an escalated descendant wait without taking over that child job.
       if (node && a.message) {
         const approval = listPendingApprovals(ctx.home).find((entry) => entry.job === a.job && entry.parentJob);
@@ -1269,6 +1320,7 @@ ${res.text || t("delegate.empty")}`, res.isError);
       inputSchema: { job: z.string().min(1) },
     },
     guarded("cancel_subagent", async (a: { job: string }) => {
+      await ctx.jobs?.share(a.job);
       return ctx.jobs?.cancel(a.job) ? text(t("jobs.cancelled", { name: a.job })) : text(t("jobs.unknown", { name: a.job }), true);
     }),
   );

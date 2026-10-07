@@ -49,6 +49,7 @@ export type DelegateArgs = { prompt: string; host?: string; model?: string; effo
 
 /** Where a background job's approval questions, answers and facts go: this session's JobManager, or a job runner's link to it. */
 export interface JobSink {
+  recipient?(job: Job): Promise<string>;
   persist?: () => void;
   escalateApproval?: (job: Job, body: string) => Promise<void>;
   askParent(job: Job, question: string, timeoutMs: number, request?: PermissionRequest): Promise<{ allow: boolean; reason: string }>;
@@ -165,7 +166,7 @@ async function runDelegateInner(
   // Native permission dialogs keep their existing eligibility; the dashboard can answer the same wait.
   const askUser = rc.askUser ? async (r: PermissionRequest): Promise<PermissionDecision> => {
     if (!job) return rc.askUser!(r);
-    if (job.ownershipHistory?.length && job.owner !== rc.me() && rc.jobs) {
+    if (rc.jobs && ((job.ownershipHistory?.length && job.owner !== rc.me()) || (rc.jobs.recipient && await rc.jobs.recipient(job) !== rc.me()))) {
       const answer = await rc.jobs.askParent(job, `${r.tool}: ${r.detail}`, PARENT_APPROVAL_TIMEOUT_MS, r);
       return answer.allow ? { allow: true } : { allow: false, message: answer.reason };
     }
