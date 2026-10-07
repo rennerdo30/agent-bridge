@@ -41,7 +41,8 @@ describe("hook responses", () => {
     await until(() => me.unread().length === 1);
     const out = await buildHookResponse(c, input("Stop")) as any;
     expect(out.decision).toBe("block"); expect(out.reason).toContain("direct work");
-    expect(await peer.messageReceipt(direct.messages[0]!.id)).toEqual([expect.objectContaining({ readAt: expect.any(Number) })]);
+    // Hook delivery returns before the asynchronous receipt write completes.
+    await expect.poll(() => peer.messageReceipt(direct.messages[0]!.id)).toEqual([expect.objectContaining({ readAt: expect.any(Number) })]);
     await peer.send({ to: "*", body: "broadcast" });
     await peer.send({ to: "codex", body: "kind" });
     await peer.send({ to: me.name, body: "quiet", conversationId: "siblings-test:note" });
