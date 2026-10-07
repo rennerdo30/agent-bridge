@@ -82,7 +82,7 @@ afterEach(async () => {
   for (;;) {
     try { await env.cleanup(); break; }
     catch (error) {
-      if (process.platform !== "win32" || (error as NodeJS.ErrnoException).code !== "EPERM" || Date.now() >= deadline) throw error;
+      if (process.platform !== "win32" || !["EPERM", "EBUSY", "ENOTEMPTY"].includes((error as NodeJS.ErrnoException).code ?? "") || Date.now() >= deadline) throw error;
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
   }

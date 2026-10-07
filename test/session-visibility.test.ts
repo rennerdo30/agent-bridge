@@ -1,4 +1,6 @@
 import { join } from "node:path";
+import { execFileSync } from "node:child_process";
+import { mkdirSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { Broker } from "../src/core/broker.js";
@@ -90,4 +92,15 @@ it("filters ghosts returned by an older broker from the peers tool", async () =>
   const request = vi.spyOn(BridgeClient.prototype, "request").mockResolvedValue([peer(env.home, "real"), peer(caches[0]!)] as never);
   try { expect((await node.peers()).map((p) => p.name)).toEqual(["real"]); }
   finally { request.mockRestore(); }
+});
+
+it("never groups an external worktree whose main checkout is a plugin cache", () => {
+  const cache = join(env.home, ".codex", "plugins", "cache", "agent-bridge"), worktree = join(env.home, "outside-cache");
+  mkdirSync(cache, { recursive: true });
+  const git = (args: string[]) => execFileSync("git", args, { stdio: "ignore", windowsHide: true, timeout: 10_000 });
+  git(["init", cache]);
+  git(["-C", cache, "-c", "user.name=rennerdo30", "-c", "user.email=9086097+rennerdo30@users.noreply.github.com", "commit", "--allow-empty", "-m", "Fixture"]);
+  git(["-C", cache, "worktree", "add", "--detach", worktree]);
+  expect(isPluginCacheCwd(worktree)).toBe(false);
+  expect(canonicalProjectRoot(worktree)).toBeNull();
 });
