@@ -1,3 +1,5 @@
+import { DatabaseSync } from "node:sqlite";
+import { conversationPageSchema, readConversation } from "../core/conversations.js";
 import { chooseJobRecipient } from "../core/job-ownership.js";
 import { ProjectGroups } from "../core/project-groups.js";
 import { handoffSchema } from "../core/job-handoff.js";
@@ -299,6 +301,13 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
       if (limit !== null && (!/^\d+$/.test(limit) || Number(limit) < 1 || Number(limit) > MAX_HISTORY_LIMIT) || before !== null && (!/^\d+$/.test(before) || !Number.isSafeInteger(Number(before)))) return send(res, 400, { error: "invalid limit or before" });
       return send(res, 200, { messages: searchMessages(dbPath, { query: url.searchParams.get("query") ?? "", limit: limit === null ? undefined : Number(limit), before: before === null ? undefined : Number(before) }) });
     }
+    if (req.method === "GET" && url.pathname.startsWith("/api/conversations/")) {
+      let id: string; try { id=decodeURIComponent(url.pathname.slice("/api/conversations/".length)); } catch { return send(res,400,{error:"Invalid conversation id."}); }
+      const args=conversationPageSchema.safeParse({id,...(url.searchParams.has("after") ? {after:Number(url.searchParams.get("after"))} : {}),...(url.searchParams.has("limit") ? {limit:Number(url.searchParams.get("limit"))} : {})});
+      if (!args.success) return send(res,400,{error:"Invalid conversation page."});
+      const db=new DatabaseSync(dbPath,{readOnly:true,timeout:100});
+      try { const page=readConversation(db,args.data); return send(res,page.conversation ? 200 : 404,page); } finally { db.close(); }
+    }
     if (req.method === "GET" && url.pathname.startsWith("/api/history/")) {
       let id: string;
       try { id = decodeURIComponent(url.pathname.slice("/api/history/".length)); }
@@ -308,9 +317,9 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
       return source ? send(res, 200, source) : send(res, 404, { error: "No such indexed history source." });
     }
     if (req.method === "GET" && url.pathname === "/api/search") {
-      const allowed = new Set(["q", "session", "job", "agent", "kind", "since", "until", "limit", "answer"]);
+      const allowed = new Set(["q", "project", "session", "job", "agent", "kind", "since", "until", "limit", "answer"]);
       if ([...url.searchParams.keys()].some((key) => !allowed.has(key) || url.searchParams.getAll(key).length !== 1)) return send(res, 400, { error: "Unknown or duplicate search parameter." });
-      const filters = Object.fromEntries(["session", "job", "agent", "kind", "since", "until"].flatMap((key) => {
+      const filters = Object.fromEntries(["project", "session", "job", "agent", "kind", "since", "until"].flatMap((key) => {
         const value = url.searchParams.get(key);
         return value === null ? [] : [[key, (key === "since" || key === "until") && /^\d+$/.test(value) ? Number(value) : value]];
       }));

@@ -13,6 +13,7 @@ import type { NetworkIdentity } from "../network/pairing.js";
 import type { TransferResult } from "../network/files.js";
 import type { RemoteJobRequest } from "../network/remote-job-protocol.js";
 import type { RemoteJobSnapshot } from "../network/remote-jobs.js";
+import type { ConversationRequest, ConversationPage } from "./conversations.js";
 import type { HistorySearch, HistoryResult } from "./history.js";
 import type { TransferProgress, TransferStarted } from "../network/transfers.js";
 import type { DecideArgs, DecisionsArgs, OwnerDecision } from "./decisions.js";
@@ -209,6 +210,7 @@ export interface RequestMap {
   send: [SendArgs, SendResult];
   decide: [DecideArgs, { decision: OwnerDecision; deliveredTo: string[] }];
   decisions: [DecisionsArgs, OwnerDecision[]];
+  getConversation: [ConversationRequest, ConversationPage];
   searchHistory: [HistorySearch, HistoryResult];
   reindexHistory: [{ reset?: boolean }, { work: number; discovering: boolean }];
   peers: [Record<string, never>, PeerInfo[]];

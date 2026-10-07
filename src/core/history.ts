@@ -1,5 +1,6 @@
+import { conversationProject } from "./project-store.js";
 import { createHash } from "node:crypto";
-import { closeSync, existsSync, fstatSync, openSync, opendirSync, readSync, type Dir } from "node:fs";
+import { closeSync, existsSync, fstatSync, openSync, opendirSync, readSync, statSync, type Dir } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { z } from "zod";
@@ -28,12 +29,14 @@ const HISTORY_FILTER_ID_CHARS = 256;
 const HISTORY_SNIPPET_CONTEXT_CHARS = HISTORY_SNIPPET_CHARS / 4;
 const HISTORY_RESCAN_MS = 30_000;
 const HISTORY_READ_TIMEOUT_MS = 100;
+const HISTORY_BATCH_BODY_BYTES = 512 * 1024;
 
 const dateFilter = z.union([z.number().int().nonnegative(), z.iso.datetime({ offset: true })]).transform((v) => typeof v === "number" ? v : Date.parse(v));
 export const historyFiltersSchema = z.object({
+  project: z.string().min(1).max(4096).transform(conversationProject).optional(),
   session: z.string().min(1).max(HISTORY_FILTER_ID_CHARS).optional(), job: z.string().min(1).max(HISTORY_FILTER_ID_CHARS).optional(),
   agent: z.enum(["claude", "codex", "opencode", "other"]).optional(),
-  kind: z.enum(["message", "run", "decision", "transcript"]).optional(),
+  kind: z.enum(["message", "run", "decision", "transcript", "approval", "progress", "report"]).optional(),
   since: dateFilter.optional(), until: dateFilter.optional(),
 }).strict();
 export const historySearchSchema = z.object({
@@ -42,9 +45,9 @@ export const historySearchSchema = z.object({
 }).strict().refine((a) => a.filters?.since === undefined || a.filters.until === undefined || a.filters.since <= a.filters.until, "since must not be later than until");
 export type HistorySearch = z.input<typeof historySearchSchema>;
 export interface HistoryHit {
-  id: string; kind: "message" | "run" | "decision" | "transcript"; agent: string; at: number;
+  id: string; kind: "message" | "run" | "decision" | "transcript" | "approval" | "progress" | "report"; agent: string; at: number;
   snippet: string; link: string; sourceLink: string; message: string | null; job: string | null; run: string | null;
-  session: string | null; cursor: string | null;
+  session: string | null; cursor: string | null; conversation?: string | null; project?: string | null;
 }
 export interface HistoryResult { engine: "fts5" | "plain"; hits: HistoryHit[] }
 interface Document extends Omit<HistoryHit, "snippet" | "sourceLink"> { body: string }
@@ -64,6 +67,7 @@ export class HistoryIndex {
   private checked = 0;
   private idleFiles = 0;
   private opencodeComplete = false;
+  private heads = new Map<string,{identity:string;value:Record<string,any>}>();
   private readonly paths: TranscriptPaths;
 
   constructor(private readonly db: DatabaseSync, private readonly home: string | null, paths?: TranscriptPaths) {
@@ -72,10 +76,15 @@ export class HistoryIndex {
     this.checked = Number(db.prepare("SELECT coalesce(max(checked),0) AS n FROM history_files").get()!.n);
   }
 
-  rememberPeer(peer: Pick<PeerInfo, "id" | "name" | "sessionId">): void {
+  get database(): DatabaseSync { return this.db; }
+
+  rememberPeer(peer: Pick<PeerInfo, "id" | "name" | "sessionId"> & Partial<Pick<PeerInfo, "cwd" | "agent">>): void {
     if (!peer.sessionId) return;
     const job = /^(claude|codex|opencode)-job-/.test(peer.name) ? peer.name : null;
     for (const alias of [peer.id, peer.name, peer.sessionId]) this.rememberSession(alias, peer.sessionId, job);
+    if (peer.cwd && peer.agent && this.db.prepare("SELECT name FROM sqlite_master WHERE name='conversation_bindings'").get()) {
+      this.db.prepare(`INSERT INTO conversation_bindings(session,agent,cwd,job) VALUES(?,?,?,?) ON CONFLICT(session,agent) DO UPDATE SET cwd=excluded.cwd,job=coalesce(excluded.job,conversation_bindings.job),pending=1`).run(peer.sessionId,peer.agent,peer.cwd,job);
+    }
   }
   private rememberSession(alias: string, session: string, job: string | null): void {
     this.db.prepare(`INSERT INTO history_sessions VALUES (?,?,?) ON CONFLICT(alias) DO UPDATE SET
@@ -104,9 +113,12 @@ export class HistoryIndex {
   }
   private rows(source: string, db: DatabaseSync, table: string, consume: (row: Record<string, any>) => void): number {
     const after = Number(this.cursor(source));
-    const rows = db.prepare(`SELECT rowid AS history_rowid, * FROM ${table} WHERE rowid > ? ORDER BY rowid LIMIT ?`).all(after, HISTORY_ROWS_PER_SOURCE);
-    for (const row of rows) { consume(row); this.advance(source, String(row.history_rowid)); }
-    return rows.length;
+    let count=0,bytes=0;
+    for (const row of db.prepare(`SELECT rowid AS history_rowid, * FROM ${table} WHERE rowid > ? ORDER BY rowid LIMIT ?`).iterate(after,HISTORY_ROWS_PER_SOURCE)) {
+      consume(row);this.advance(source,String(row.history_rowid));count++;bytes+=Buffer.byteLength(typeof row.body === "string" ? row.body : "");
+      if(bytes>=HISTORY_BATCH_BODY_BYTES)break;
+    }
+    return count;
   }
 
   /** Fixed row, file, byte and discovery budgets; cursors commit atomically with their documents. */
@@ -117,12 +129,13 @@ export class HistoryIndex {
     let work = 0;
     try {
       work += this.rows("messages", this.db, "messages", (row) => this.message(row));
-      const pending = this.db.prepare("SELECT * FROM history_pending LIMIT ?").all(HISTORY_ROWS_PER_SOURCE);
-      for (const row of pending) {
+      let pendingCount=0,pendingBytes=0;
+      for (const row of this.db.prepare("SELECT * FROM history_pending LIMIT ?").iterate(HISTORY_ROWS_PER_SOURCE)) {
         this.message(row);
         this.db.prepare("DELETE FROM history_pending WHERE id=? AND recipient=?").run(String(row.id), String(row.recipient));
+        pendingCount++;pendingBytes+=Buffer.byteLength(String(row.body));if(pendingBytes>=HISTORY_BATCH_BODY_BYTES)break;
       }
-      work += pending.length;
+      work += pendingCount;
       work += this.rows("decisions", this.db, "decisions", (row) => {
         const scope = parse(row.scope), sessions = Array.isArray(scope.sessions) ? scope.sessions.filter((s: unknown) => typeof s === "string") : [];
         this.put({ id: `decision:${row.id}`, kind: "decision", agent: row.author_agent, at: Number(row.created_at), body: `${row.topic}\n${row.body}`,
@@ -150,6 +163,20 @@ export class HistoryIndex {
     return { work, discovering: this.walk !== null || this.queue.length > 0 || this.idleFiles < registered };
   }
 
+  private head(path: string, session?: string): Record<string,any> {
+    const stat=statSync(path), identity=`${stat.dev}:${stat.ino}:${stat.birthtimeMs}`;
+    const cached=this.heads.get(path);
+    if(cached?.identity===identity && (!session || cached.value.ownerChecked || object(cached.value.payload).id===session))return cached.value;
+    let raw=cached?.identity===identity ? cached.value : readHead(path);
+    if(session && object(raw.payload).id!==session) {
+      const own=readJsonl(path).entries.find(({value})=>value.type === "session_meta" && object(value.payload).id===session)?.value;
+      if(own)raw=own;
+    }
+    const fields=(v:Record<string,any>)=>Object.fromEntries(["id","sessionId","cwd","subagent_history_start_ordinal"].filter(k=>v[k]!==undefined).map(k=>[k,v[k]]));
+    const value={...fields(raw),payload:fields(object(raw.payload)),ownerChecked:Boolean(session)};
+    if(this.heads.size>=2048)this.heads.delete(this.heads.keys().next().value!);
+    this.heads.set(path,{identity,value});return value;
+  }
   private register(file: FileRow): void {
     this.db.prepare(`INSERT INTO history_files(path,kind,agent,session,cwd,child) VALUES (?,?,?,?,?,?)
       ON CONFLICT(path) DO UPDATE SET session=excluded.session,cwd=excluded.cwd,child=excluded.child`).run(file.path, file.kind, file.agent, file.session, file.cwd, file.child);
@@ -159,6 +186,9 @@ export class HistoryIndex {
       this.lastDiscovery = Date.now();
       this.opencodeComplete = false;
       this.queue = [
+        { path: join(this.home!, "context-events"), root:this.home!,kind:"context",agent:"other" },
+        { path: join(this.home!, "approvals"), root:this.home!,kind:"approval",agent:"other" },
+        { path: join(this.home!, "archive"), root:this.home!,kind:"approval",agent:"other" },
         { path: join(this.home!, "runs"), root: join(this.home!, "runs"), kind: "run", agent: "other" },
         { path: join(this.paths.claude, "projects"), root: this.paths.claude, kind: "transcript", agent: "claude" },
         ...["sessions", "archived_sessions"].map((dir) => ({ path: join(this.paths.codex, dir), root: this.paths.codex, kind: "transcript", agent: "codex" })),
@@ -176,10 +206,12 @@ export class HistoryIndex {
       const path = join(entry.path, item.name);
       if (item.isDirectory()) { this.queue.push({ ...entry, path }); continue; }
       if (!item.isFile() || !safeFile(entry.root, path)) continue;
-      if (entry.kind === "run" && /\.log(?:-\d+-[\w-]+)?$/.test(item.name)) {
+      if ((entry.kind === "context" && item.name.endsWith(".jsonl")) || (entry.kind === "approval" && /^.*\.json(?:-.*)?$/.test(item.name) && (entry.path.includes("approvals") || /^.*approval/.test(item.name)))) {
+        this.register({path,kind:entry.kind,agent:"other",session:null,cwd:"",child:null});
+      } else if (entry.kind === "run" && /\.(?:log|json)(?:-\d+-[\w-]+)?$/.test(item.name)) {
         this.register({ path, kind: "run", agent: /-(claude|codex|opencode)-/.exec(item.name)?.[1] ?? "other", session: null, cwd: "", child: null });
       } else if (entry.kind === "transcript" && item.name.endsWith(".jsonl")) {
-        const head = readHead(path), meta = entry.agent === "codex" ? object(head.payload) : head;
+        const head = this.head(path), meta = entry.agent === "codex" ? object(head.payload) : head;
         // Forked Codex files may begin with ancestor metadata; the filename owns this session.
         const rolloutId = entry.agent === "codex" ? /^rollout-.*-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/i.exec(item.name)?.[1] : undefined;
         const id = rolloutId ?? (typeof meta.id === "string" ? meta.id : typeof meta.sessionId === "string" ? meta.sessionId : basename(path, ".jsonl"));
@@ -194,7 +226,7 @@ export class HistoryIndex {
       const db = new DatabaseSync(path, { readOnly: true, timeout: HISTORY_READ_TIMEOUT_MS });
       try {
         const after = this.cursor("opencode-discovery");
-        const rows = db.prepare("SELECT id FROM session WHERE id > ? ORDER BY id LIMIT ?").all(after === "0" ? "" : after, HISTORY_DISCOVERY_PER_TICK);
+        const rows = db.prepare("SELECT * FROM session WHERE id > ? ORDER BY id LIMIT ?").all(after === "0" ? "" : after, HISTORY_DISCOVERY_PER_TICK);
         for (const row of rows) if (TRANSCRIPT_ID.test(String(row.id))) this.register({ path: `opencode:${row.id}`, kind: "transcript", agent: "opencode", session: String(row.id), cwd: String(row.directory ?? ""), child: null });
         this.advance("opencode-discovery", rows.length ? String(rows.at(-1)!.id) : "0");
         if (!rows.length) this.opencodeComplete = true;
@@ -212,6 +244,7 @@ export class HistoryIndex {
       session: doc.session, cursor, link: `/?session=${enc(doc.session!)}&agent=${doc.agent}&from=${enc(cursor)}${doc.child ? `&child=${enc(doc.child)}` : ""}` });
   }
   private indexFile(file: FileRow): number {
+    if (file.kind === "context" || file.kind === "approval" || (file.kind === "run" && /\.json(?:-.*)?$/.test(file.path))) return 0;
     if (file.agent !== "opencode") {
       const root = file.kind === "run" ? join(this.home!, "runs") : this.paths[file.agent as "claude" | "codex"];
       if (!safeFile(root, file.path)) return 0;
@@ -226,10 +259,8 @@ export class HistoryIndex {
     }
     if (file.kind === "transcript") {
       const page = readJsonl(file.path, from, HISTORY_CHUNK_BYTES);
-      const head = file.agent === "codex" ? object(readHead(file.path).payload) : {};
-      const metadata = file.agent === "codex" && head.id !== file.session
-        ? object(readJsonl(file.path).entries.find(({ value }) => value.type === "session_meta" && object(value.payload).id === file.session)?.value.payload)
-        : head;
+      const head = file.agent === "codex" ? object(this.head(file.path,file.session ?? undefined).payload) : {};
+      const metadata = head.id === file.session ? head : {};
       const start = metadata.subagent_history_start_ordinal;
       for (const row of page.entries) {
         const target = file.agent === "claude" && row.value.isSidechain === true && typeof row.value.agentId === "string" && TRANSCRIPT_ID.test(row.value.agentId) ? { ...file, child: row.value.agentId } : file;
@@ -296,25 +327,35 @@ export class HistoryIndex {
   search(input: HistorySearch): HistoryResult {
     const args = historySearchSchema.parse(input), tokens = terms(args.query);
     if (!tokens.length) return { engine: this.engine, hits: [] };
+    const durable = this.db.prepare("SELECT name FROM sqlite_master WHERE name='conversation_records'").get();
     const where: string[] = [], values: SQLInputValue[] = [];
     if (this.engine === "fts5") { where.push("history_fts MATCH ?"); values.push(tokens.map((t) => `"${t}"`).join(" AND ")); }
     else for (const token of tokens) { where.push("instr(d.folded,?)>0"); values.push(token); }
     for (const [key, value] of Object.entries(args.filters ?? {})) {
-      if (["session", "job"].includes(key)) { where.push(`EXISTS (SELECT 1 FROM history_tags t WHERE t.id=d.id AND
-          ((t.type=? AND t.value=?) OR (t.type='session' AND EXISTS (SELECT 1 FROM history_sessions s WHERE s.alias=t.value AND s.${key === "session" ? "session" : "job"}=?))))`); values.push(key, value, value); }
+      if (key === "project") { where.push(durable ? "(EXISTS (SELECT 1 FROM conversation_records r JOIN conversations c ON c.id=r.conversation WHERE r.id=CAST(substr(d.id,9) AS INTEGER) AND d.id LIKE 'durable:%' AND c.project=?) OR EXISTS(SELECT 1 FROM history_tags t WHERE t.id=d.id AND t.type='project' AND t.value=?))" : "EXISTS (SELECT 1 FROM history_tags t WHERE t.id=d.id AND t.type='project' AND t.value=?)"); values.push(value); if(durable) values.push(value); }
+      else if (["session", "job"].includes(key)) { where.push(`(EXISTS (SELECT 1 FROM history_tags t WHERE t.id=d.id AND
+          ((t.type=? AND t.value=?) OR (t.type='session' AND EXISTS (SELECT 1 FROM history_sessions s WHERE s.alias=t.value AND s.${key === "session" ? "session" : "job"}=?))))${durable ? ` OR EXISTS(SELECT 1 FROM conversation_records r JOIN conversations c ON c.id=r.conversation WHERE r.id=CAST(substr(d.id,9) AS INTEGER) AND d.id LIKE 'durable:%' AND c.${key}=?)` : ""})`); values.push(key,value,value); if (durable) values.push(value); }
       else if (key === "since" || key === "until") { where.push(`d.at ${key === "since" ? ">=" : "<="} ?`); values.push(value); }
       else { where.push(`d.${key}=?`); values.push(value); }
     }
     const joinFts = this.engine === "fts5" ? "JOIN history_fts ON history_fts.rowid=d.rowid" : "";
     const snippet = this.engine === "fts5" ? "snippet(history_fts,0,'','',' … ',40)" : "d.body";
     const order = this.engine === "fts5" ? "bm25(history_fts),d.at DESC,d.id" : "d.at DESC,d.id";
-    const rows = this.db.prepare(`SELECT d.id,d.kind,d.agent,d.at,d.link,d.message,coalesce(d.job,(SELECT job FROM history_sessions s WHERE (s.session=d.session OR s.alias=d.session) AND s.job IS NOT NULL LIMIT 1)) AS job,d.run,coalesce((SELECT session FROM history_sessions s WHERE s.alias=d.session),d.session) AS session,d.cursor,${snippet} AS snippet
-      FROM history_documents d ${joinFts} WHERE ${where.join(" AND ")} ORDER BY ${order} LIMIT ?`).all(...values, args.limit ?? HISTORY_DEFAULT_LIMIT);
-    return { engine: this.engine, hits: rows.map((r) => {
+    const retained = durable ? ", (SELECT r.conversation FROM conversation_records r WHERE r.id=CAST(substr(d.id,9) AS INTEGER) AND d.id LIKE 'durable:%') AS conversation, (SELECT c.project FROM conversation_records r JOIN conversations c ON c.id=r.conversation WHERE r.id=CAST(substr(d.id,9) AS INTEGER) AND d.id LIKE 'durable:%') AS project" : "";
+    const rows = this.db.prepare(`SELECT d.id,d.kind,d.agent,d.at,d.link,d.message,coalesce(d.job,${durable ? "(SELECT c.job FROM conversation_records r JOIN conversations c ON c.id=r.conversation WHERE r.id=CAST(substr(d.id,9) AS INTEGER) AND d.id LIKE 'durable:%')," : ""}(SELECT job FROM history_sessions s WHERE (s.session=d.session OR s.alias=d.session) AND s.job IS NOT NULL LIMIT 1)) AS job,d.run,coalesce((SELECT session FROM history_sessions s WHERE s.alias=d.session),d.session) AS session,d.cursor${retained},${snippet} AS snippet
+      FROM history_documents d ${joinFts} WHERE ${where.join(" AND ")} ORDER BY ${order} LIMIT ?`).all(...values, (args.limit ?? HISTORY_DEFAULT_LIMIT)*2+8);
+    const seen=new Set<string>();
+    return { engine: this.engine, hits: rows.flatMap((r) => {
+      if (durable && r.kind === "message") {
+        const record=String(r.id).startsWith("durable:") ? this.db.prepare("SELECT r.part,r.conversation,c.project FROM conversation_records r JOIN conversations c ON c.id=r.conversation WHERE r.id=?").get(Number(String(r.id).slice(8))) : this.db.prepare("SELECT r.part,r.conversation,c.project FROM conversation_records r JOIN conversations c ON c.id=r.conversation WHERE r.part=? LIMIT 1").get(`messages:${r.message}`);
+        if(record) { r.message=String(record.part).slice("messages:".length); r.conversation=record.conversation!; r.project=record.project!; }
+      }
+      const identity=r.message && r.kind === "message" ? `message:${r.message}` : String(r.id);
+      if(seen.has(identity))return [];seen.add(identity);
       let snippet = String(r.snippet).replace(/\s+/g, " ");
       if (this.engine === "plain") { const position = folded(snippet).indexOf(tokens[0]!); snippet = snippet.slice(Math.max(0, position - HISTORY_SNIPPET_CONTEXT_CHARS)); }
-      return { ...r, sourceLink: `/api/history/${enc(String(r.id))}`, snippet: snippet.slice(0, HISTORY_SNIPPET_CHARS) } as unknown as HistoryHit;
-    }) };
+      return [{ ...r, sourceLink: `/api/history/${enc(String(r.id))}`, snippet: snippet.slice(0, HISTORY_SNIPPET_CHARS) } as unknown as HistoryHit];
+    }).slice(0,args.limit ?? HISTORY_DEFAULT_LIMIT) };
   }
 
   reset(): void {

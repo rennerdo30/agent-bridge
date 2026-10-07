@@ -463,6 +463,10 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
     return this.withClient((c) => c.request("decide", args));
   }
 
+  getConversation(args: import("./conversations.js").ConversationRequest): Promise<import("./conversations.js").ConversationPage> {
+    return this.withClient((c) => c.request("getConversation", args));
+  }
+
   searchHistory(args: HistorySearch): Promise<HistoryResult> {
     return this.withClient((c) => c.request("searchHistory", args));
   }

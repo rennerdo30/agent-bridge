@@ -1,5 +1,7 @@
+import { HistoryBackground } from "./history-background.js";
+import { conversationPageSchema, readConversation } from "./conversations.js";
+import { historySearchSchema } from "./history.js";
 import { ReadJournal } from "./read-journal.js";
-import { HISTORY_TICK_MS, historySearchSchema } from "./history.js";
 import { randomUUID } from "node:crypto";
 import { createServer, type Server, type Socket } from "node:net";
 import {
@@ -95,7 +97,7 @@ export class Broker {
   private readonly projectMains = new Map<string, string>();
   private server: Server | null = null;
   private readonly conns = new Set<Conn>();
-  private historyTimer: NodeJS.Timeout | null = null;
+  private historyBackground: HistoryBackground | null = null;
   private purgeTimer: NodeJS.Timeout | null = null;
   private network: NetworkService | null = null;
   private remoteJobs: RemoteJobs | null = null;
@@ -204,8 +206,10 @@ export class Broker {
         if (!parsed.success) throw new BridgeError("bad_request", "Invalid history query or filters.");
         return this.store.history.search(parsed.data);
       },
+      getConversation: (_, a) => readConversation(this.store.history.database, conversationPageSchema.parse(a)),
       reindexHistory: (_, a) => {
         const args = z.object({ reset: z.boolean().optional() }).strict().parse(a);
+        if (this.historyBackground) return this.historyBackground.tick(args.reset);
         if (args.reset) this.store.history.reset();
         return this.store.history.tick();
       },
@@ -291,10 +295,7 @@ export class Broker {
         this.applyHandoffs();
         this.purgeTimer = setInterval(() => this.purge(), PURGE_INTERVAL_MS);
         this.purgeTimer.unref();
-        this.historyTimer = setInterval(() => {
-          try { this.store.history.tick(); } catch (err) { this.log.warn("history indexing failed", { err: String(err) }); }
-        }, HISTORY_TICK_MS);
-        this.historyTimer.unref();
+        if (this.store.file !== ":memory:") this.historyBackground = new HistoryBackground(this.store.file, this.log);
         this.purge();
         this.log.info("broker listening", { pipe: this.pipePath });
         // Another broker may have enabled or changed pairing since this session started.
@@ -328,7 +329,8 @@ export class Broker {
   }
 
   async close(): Promise<void> {
-    if (this.historyTimer) clearInterval(this.historyTimer);
+    await this.historyBackground?.close();
+    this.historyBackground = null;
     if (this.purgeTimer) clearInterval(this.purgeTimer);
     await this.networkChange;
     this.remoteDashboard?.close();
