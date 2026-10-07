@@ -6,13 +6,14 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type { AddressInfo, Socket } from "node:net";
-import { expect, it } from "vitest";
+import { expect } from "vitest";
 import { resolveBinary } from "../src/core/delegate.js";
 import { makeEnv, until } from "./helpers.js";
 
 // Optional installed-CLI acceptance probe. CI still runs the hermetic idle-host regression.
 const bin = resolveBinary(process.env.AB_NATIVE_CODEX_BIN ?? "codex");
-it.skipIf(!bin).each(["main", "secondary"])("real Codex queue wakes an attached idle %s TUI mock on the same app-server", async role => {
+export const nativeCodexBin = bin;
+export async function verifyNativeCodexIdleQueue(role: "main" | "secondary"): Promise<void> {
   const env = makeEnv(), sockets = new Set<Socket>();
   const server = createServer();
   let client: Client | undefined;
@@ -103,4 +104,4 @@ it.skipIf(!bin).each(["main", "secondary"])("real Codex queue wakes an attached 
     await client?.close(); for (const s of sockets) s.destroy();
     await new Promise<void>(resolve => server.close(() => resolve())); await env.cleanup();
   }
-});
+}

@@ -5,7 +5,7 @@ Antigravity. Native idle transports differ; inbox acceptance is never a read rec
 
 ## Quiet progress and questions
 
-All `:note` messages stay in dashboard history and explicit `inbox` reads. They
+All `:note` messages stay in dashboard history and explicit `inbox(include_quiet=true)` reads. They
 neither wake an idle host nor enter ordinary prompt/tool context. Ownership
 fallback preserves that classification. Acknowledgements and sibling observer
 copies remain quiet too.
@@ -77,7 +77,7 @@ app-server is launched to simulate a wake. The [official app-server documentatio
 describes `turn/start` and `turn/steer`; the queue contract above was verified against
 the installed CLI rather than inferred from those RPCs.
 
-`test/codex-native-queue.test.ts` optionally runs the installed CLI against an
+The `test/codex-native-queue-{main,secondary}.test.ts` files optionally run the installed CLI against an
 isolated app-server and attached idle TUI mock for main and secondary roles.
 It distinguishes detached acceptance, subsequent idle consumption and unsupported
 RPC failure. The hermetic idle-host regression runs without the installed CLI.
