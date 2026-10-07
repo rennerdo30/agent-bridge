@@ -19,11 +19,14 @@ it("hands off through the native bridge_ tool and wakes opencode when it inherit
     prompts.push({ id: input.path.id, text: input.body.parts[0].text }); return { data: undefined };
   } } } });
   const peer = env.node("claude-handoff"); await peer.start();
+  const ctx = { sessionID: "native-session", abort: new AbortController().signal };
+  // The handshake precedes broker registration. Seed owned jobs only after their owner is live,
+  // otherwise legitimate project failover can adopt the fixture before the explicit handoff.
+  expect(await plugin.tool.bridge_peers.execute({}, ctx)).toContain(peer.name);
   const path = join(env.home, "jobs.json");
   writeFileSync(path, JSON.stringify({ version: 2, jobs: [{ id: "native", name: "claude-job-native", agent: "claude", model: null,
     prompt: "Task", startedAt: Date.now(), status: "done", sessionId: "fixture", workdir: env.home, worktree: null,
     owner: "opencode-handoff", rootName: "opencode-handoff", rootSession: "original", supervisor: "original", args: { title: "Native plugin inheritance" } }] }));
-  const ctx = { sessionID: "native-session", abort: new AbortController().signal };
   expect(plugin.tool.bridge_handoff_subagents).toBeDefined();
   const handed = await plugin.tool.bridge_handoff_subagents.execute({ to: peer.name, note: "Review native tools" }, ctx);
   expect(handed).toContain("claude-handoff"); expect(readStore(path)[0]!.owner).toBe(peer.name);

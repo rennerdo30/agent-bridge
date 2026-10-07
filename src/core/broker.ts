@@ -111,6 +111,7 @@ export class Broker {
   private pendingJobMailRouteAgain = false;
   private pendingJobMailRetry: NodeJS.Timeout | null = null;
   private closing = false;
+  private requestTurn: Promise<void> = Promise.resolve();
   private network: NetworkService | null = null;
   private remoteJobs: RemoteJobs | null = null;
   private remoteDashboard: RemoteDashboard | null = null;
@@ -474,6 +475,12 @@ export class Broker {
     const handler = this.handlers[frame.op] as Handler<Op> | undefined;
     try {
       if (!handler) throw new BridgeError("bad_request", `unknown op: ${String(frame.op)}`);
+      // Start one handler per event-loop turn so bursts cannot starve fresh hook connections.
+      // Only its start is scheduled: a pending SQLite retry never holds up other requests.
+      const turn = this.requestTurn.then(() => new Promise<void>((resolve) => setImmediate(resolve)));
+      this.requestTurn = turn;
+      await turn;
+      if (this.closing) return;
       if (!conn.authed && !UNAUTHENTICATED_OPS.has(frame.op)) throw new BridgeError("unauthorized", "authenticate first");
       this.log.debug("request", { op: frame.op, peer: conn.peer?.name });
       const result = await handler(conn, (frame.args ?? {}) as never);
@@ -727,12 +734,12 @@ export class Broker {
     if (isRecord(job.args) && Array.isArray(job.args.send_to)) peer.jobSendTo = job.args.send_to as string[];
   }
 
-  private siblingConns(conn: Conn): Conn[] {
+  private siblingConns(conn: Conn, target?: string): Conn[] {
     const peer = this.requirePeer(conn);
     if (!peer.jobAgent || !peer.jobOwner) throw new BridgeError("bad_request", "not a linked job");
     const jobs = this.storedJobs();
     const supervisor = this.jobSupervisor(peer, jobs);
-    return [...this.conns].filter((c) => c !== conn && c.peer?.jobAgent && (this.sameJobFamily(peer, c.peer, jobs) || this.sharedJobs(peer, c.peer, jobs) || peer.jobSendTo?.includes(c.peer.name)));
+    return [...this.conns].filter((c) => c !== conn && c.peer?.jobAgent && (!target || c.peer.name === target) && (this.sameJobFamily(peer, c.peer, jobs) || this.sharedJobs(peer, c.peer, jobs) || peer.jobSendTo?.includes(c.peer.name)));
   }
 
   private jobForControl(peer: PeerInfo, ref: string): Record<string, unknown> | undefined {
@@ -782,12 +789,12 @@ export class Broker {
     return typeof job?.supervisor === "string" ? job.supervisor : peer.jobOwner;
   }
 
-  private storedSiblings(peer: PeerInfo): StoredSibling[] {
+  private storedSiblings(peer: PeerInfo, target?: string): StoredSibling[] {
     if (!this.jobsPath || !peer.jobOwner) return [];
     try {
       const records = this.storedJobs();
       const supervisor = this.jobSupervisor(peer, records);
-      return records.flatMap((j) => j && (this.sameJobFamily(peer, { id: `job:${j.id}`, jobOwner: String(j.supervisor) } as PeerInfo, records) || this.sharedJobs(peer, { id: `job:${j.id}` } as PeerInfo, records) || peer.jobSendTo?.includes(String(j.name))) && typeof j.id === "string" &&
+      return records.flatMap((j) => j && (!target || j.name === target) && (this.sameJobFamily(peer, { id: `job:${j.id}`, jobOwner: String(j.supervisor) } as PeerInfo, records) || this.sharedJobs(peer, { id: `job:${j.id}` } as PeerInfo, records) || peer.jobSendTo?.includes(String(j.name))) && typeof j.id === "string" &&
         typeof j.name === "string" && j.name !== peer.name && `job:${j.id}` !== peer.id &&
         AGENT_KINDS.includes(j.agent as AgentKind) && SIBLING_STATUSES.has(j.status as SiblingPeer["status"])
         ? [{ id: `job:${j.id}`, name: j.name, title: isRecord(j.args) && typeof j.args.title === "string" ? j.args.title : "", agent: j.agent as AgentKind, status: j.status as SiblingPeer["status"], ...(typeof j.finishedAt === "number" ? { finishedAt: j.finishedAt } : {}), report: typeof j.report === "string" ? j.report : null }]
@@ -817,8 +824,8 @@ export class Broker {
     const key = dedupeKey ? `${sender.id}:${dedupeKey}` : null;
     const seen = key ? this.sentByKey.get(key) : undefined;
     if (seen) return seen.result;
-    const target = this.siblingConns(conn).find((c) => c.peer!.name === args.to);
-    const stored = this.storedSiblings(sender).find((s) => s.name === args.to);
+    const target = this.siblingConns(conn, args.to).find((c) => c.peer!.name === args.to);
+    const stored = this.storedSiblings(sender, args.to).find((s) => s.name === args.to);
     if (!target && !stored) {
       if (!isJobSendTarget(args.to) || !sender.jobSendTo?.includes(args.to) || args.to.includes("-job-") || args.to.includes("-ask-") || this.connByName(args.to)?.peer?.jobAgent) {
         throw new BridgeError("unknown_target", "no sibling with that job name or explicit send_to grant");
@@ -1303,7 +1310,7 @@ export class Broker {
       }
     }
     if (conversationId.startsWith(SIBLING_CONVERSATION_PREFIX) &&
-        (queued.some((name) => !sender.jobAgent || !this.storedSiblings(sender).some((s) => s.name === name)) ||
+        (queued.some((name) => !sender.jobAgent || !this.storedSiblings(sender, name).some((s) => s.name === name)) ||
           live.some((c) => c.peer!.jobAgent && (!sender.jobAgent || !sender.jobOwner || (!this.sameJobFamily(sender, c.peer!) && !this.sharedJobs(sender, c.peer!) && !sender.jobSendTo?.includes(c.peer!.name)))))) {
       throw new BridgeError("unauthorized", "sibling chat requires the same supervisor or an explicit send_to job grant");
     }

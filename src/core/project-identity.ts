@@ -3,6 +3,9 @@ import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { isPluginCacheCwd } from "./session-visibility.js";
 
+const projectRoots = new Map<string, { root: string | null; expiresAt: number; marker: string }>();
+const PROJECT_ROOT_CACHE_MS = 30_000;
+
 /** The common Git directory identifies linked worktrees; physical paths unify subst aliases. */
 export function canonicalProjectRoot(cwd: string): string | null {
   if (isPluginCacheCwd(cwd)) return null;
@@ -11,6 +14,26 @@ export function canonicalProjectRoot(cwd: string): string | null {
     const physical = realpathSync.native(cwd);
     if (isPluginCacheCwd(physical)) return null;
     if (!statSync(physical).isDirectory()) return null;
+    const cached = projectRoots.get(physical), now = Date.now(), marker = gitMarker(physical);
+    if (cached && cached.expiresAt > now && cached.marker === marker) return cached.root;
+    const root = resolveProjectRoot(physical, visibleRoot);
+    if (projectRoots.size >= 256) projectRoots.delete(projectRoots.keys().next().value!);
+    projectRoots.set(physical, { root, expiresAt: now + PROJECT_ROOT_CACHE_MS, marker });
+    return root;
+  } catch { return null; }
+}
+
+/** Git initialization and replaced worktree pointers invalidate cached identities immediately. */
+function gitMarker(physical: string): string {
+  for (let dir = physical; ; dir = dirname(dir)) {
+    const path = join(dir, ".git");
+    try { const s = statSync(path); return `${path}:${s.ino}:${s.mtimeMs}:${s.size}`; } catch { /* Try the parent. */ }
+    if (dirname(dir) === dir) return "";
+  }
+}
+
+/** Bound repeated legacy-record migration without retaining missing paths or stale Git roots forever. */
+function resolveProjectRoot(physical: string, visibleRoot: (root: string) => string | null): string | null {
     const git = (args: string[]) => execFileSync("git", ["-C", physical, "rev-parse", ...args],
       { encoding: "utf8", timeout: 3_000, windowsHide: true, stdio: ["ignore", "pipe", "ignore"] }).trim();
     try {
@@ -32,7 +55,6 @@ export function canonicalProjectRoot(cwd: string): string | null {
       // Non-Git projects share only an identical existing directory, never guessed ancestors.
       return physical;
     }
-  } catch { return null; }
 }
 
 export function projectKey(root: string): string {
@@ -80,4 +102,17 @@ export function migrateProjectJobs(records: unknown[]): unknown[] {
     }
     return entry;
   });
+}
+
+const conversationRoots = new Map<string, string>();
+export function conversationProject(cwd: string): string {
+  if (!cwd || isPluginCacheCwd(cwd)) return "";
+  try { if (isPluginCacheCwd(realpathSync.native(cwd))) return ""; } catch {}
+  const known = conversationRoots.get(cwd);
+  if (known !== undefined) return known;
+  const canonical = canonicalProjectRoot(cwd);
+  const root = canonical ? projectKey(canonical) : existsSync(cwd) ? "" : projectKey(resolve(cwd));
+  if (conversationRoots.size >= 256) conversationRoots.delete(conversationRoots.keys().next().value!);
+  conversationRoots.set(cwd, root);
+  return root;
 }

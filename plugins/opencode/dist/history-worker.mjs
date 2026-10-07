@@ -419,6 +419,8 @@ function isPluginCacheCwd(cwd) {
 }
 
 // src/core/project-identity.ts
+var projectRoots = /* @__PURE__ */ new Map();
+var PROJECT_ROOT_CACHE_MS = 3e4;
 function canonicalProjectRoot(cwd) {
   if (isPluginCacheCwd(cwd)) return null;
   const visibleRoot = (root) => isPluginCacheCwd(root) ? null : root;
@@ -426,37 +428,56 @@ function canonicalProjectRoot(cwd) {
     const physical = realpathSync.native(cwd);
     if (isPluginCacheCwd(physical)) return null;
     if (!statSync2(physical).isDirectory()) return null;
-    const git = (args) => execFileSync(
-      "git",
-      ["-C", physical, "rev-parse", ...args],
-      { encoding: "utf8", timeout: 3e3, windowsHide: true, stdio: ["ignore", "pipe", "ignore"] }
-    ).trim();
-    try {
-      const top = realpathSync.native(git(["--show-toplevel"]));
-      const common = realpathSync.native(resolve2(physical, git(["--git-common-dir"])));
-      if (common.endsWith("/.git") || common.endsWith("\\.git")) return visibleRoot(realpathSync.native(dirname6(common)));
-      try {
-        const configured = execFileSync(
-          "git",
-          ["--git-dir", common, "config", "--get", "core.worktree"],
-          { encoding: "utf8", timeout: 3e3, windowsHide: true, stdio: ["ignore", "pipe", "ignore"] }
-        ).trim();
-        if (configured) return visibleRoot(realpathSync.native(resolve2(common, configured)));
-      } catch {
-      }
-      const worktrees = execFileSync(
-        "git",
-        ["-C", physical, "worktree", "list", "--porcelain"],
-        { encoding: "utf8", timeout: 3e3, windowsHide: true, stdio: ["ignore", "pipe", "ignore"] }
-      );
-      const main = worktrees.split(/\r?\n\r?\n/).find((entry) => !/^bare$/m.test(entry));
-      const root = main && /^worktree (.+)$/m.exec(main)?.[1];
-      return visibleRoot(root ? realpathSync.native(root) : top);
-    } catch {
-      return physical;
-    }
+    const cached2 = projectRoots.get(physical), now = Date.now(), marker = gitMarker(physical);
+    if (cached2 && cached2.expiresAt > now && cached2.marker === marker) return cached2.root;
+    const root = resolveProjectRoot(physical, visibleRoot);
+    if (projectRoots.size >= 256) projectRoots.delete(projectRoots.keys().next().value);
+    projectRoots.set(physical, { root, expiresAt: now + PROJECT_ROOT_CACHE_MS, marker });
+    return root;
   } catch {
     return null;
+  }
+}
+function gitMarker(physical) {
+  for (let dir = physical; ; dir = dirname6(dir)) {
+    const path = join9(dir, ".git");
+    try {
+      const s = statSync2(path);
+      return `${path}:${s.ino}:${s.mtimeMs}:${s.size}`;
+    } catch {
+    }
+    if (dirname6(dir) === dir) return "";
+  }
+}
+function resolveProjectRoot(physical, visibleRoot) {
+  const git = (args) => execFileSync(
+    "git",
+    ["-C", physical, "rev-parse", ...args],
+    { encoding: "utf8", timeout: 3e3, windowsHide: true, stdio: ["ignore", "pipe", "ignore"] }
+  ).trim();
+  try {
+    const top = realpathSync.native(git(["--show-toplevel"]));
+    const common = realpathSync.native(resolve2(physical, git(["--git-common-dir"])));
+    if (common.endsWith("/.git") || common.endsWith("\\.git")) return visibleRoot(realpathSync.native(dirname6(common)));
+    try {
+      const configured = execFileSync(
+        "git",
+        ["--git-dir", common, "config", "--get", "core.worktree"],
+        { encoding: "utf8", timeout: 3e3, windowsHide: true, stdio: ["ignore", "pipe", "ignore"] }
+      ).trim();
+      if (configured) return visibleRoot(realpathSync.native(resolve2(common, configured)));
+    } catch {
+    }
+    const worktrees = execFileSync(
+      "git",
+      ["-C", physical, "worktree", "list", "--porcelain"],
+      { encoding: "utf8", timeout: 3e3, windowsHide: true, stdio: ["ignore", "pipe", "ignore"] }
+    );
+    const main = worktrees.split(/\r?\n\r?\n/).find((entry) => !/^bare$/m.test(entry));
+    const root = main && /^worktree (.+)$/m.exec(main)?.[1];
+    return visibleRoot(root ? realpathSync.native(root) : top);
+  } catch {
+    return physical;
   }
 }
 function projectKey(root) {
@@ -498,8 +519,8 @@ function ensureProjectFolder(project) {
     return null;
   const fresh = !existsSync8(folder);
   mkdirSync6(folder, { recursive: true, mode: 448 });
-  const gitMarker = existsSync8(join10(project, ".git"));
-  if (!fresh && excluded.get(project) === gitMarker) return folder;
+  const gitMarker2 = existsSync8(join10(project, ".git"));
+  if (!fresh && excluded.get(project) === gitMarker2) return folder;
   try {
     const exclude = execFileSync2(
       "git",
@@ -532,7 +553,7 @@ function ensureProjectFolder(project) {
   } catch {
     if (existsSync8(join10(project, ".git"))) return null;
   }
-  excluded.set(project, gitMarker);
+  excluded.set(project, gitMarker2);
   return folder;
 }
 function projectDatabasePath(project) {

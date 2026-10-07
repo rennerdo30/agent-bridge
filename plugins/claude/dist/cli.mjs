@@ -28840,6 +28840,8 @@ function isPluginCacheCwd(cwd) {
 }
 
 // src/core/project-identity.ts
+var projectRoots = /* @__PURE__ */ new Map();
+var PROJECT_ROOT_CACHE_MS = 3e4;
 function canonicalProjectRoot(cwd) {
   if (isPluginCacheCwd(cwd)) return null;
   const visibleRoot = (root) => isPluginCacheCwd(root) ? null : root;
@@ -28847,37 +28849,56 @@ function canonicalProjectRoot(cwd) {
     const physical = realpathSync2.native(cwd);
     if (isPluginCacheCwd(physical)) return null;
     if (!statSync4(physical).isDirectory()) return null;
-    const git2 = (args) => execFileSync(
-      "git",
-      ["-C", physical, "rev-parse", ...args],
-      { encoding: "utf8", timeout: 3e3, windowsHide: true, stdio: ["ignore", "pipe", "ignore"] }
-    ).trim();
-    try {
-      const top = realpathSync2.native(git2(["--show-toplevel"]));
-      const common = realpathSync2.native(resolve3(physical, git2(["--git-common-dir"])));
-      if (common.endsWith("/.git") || common.endsWith("\\.git")) return visibleRoot(realpathSync2.native(dirname7(common)));
-      try {
-        const configured = execFileSync(
-          "git",
-          ["--git-dir", common, "config", "--get", "core.worktree"],
-          { encoding: "utf8", timeout: 3e3, windowsHide: true, stdio: ["ignore", "pipe", "ignore"] }
-        ).trim();
-        if (configured) return visibleRoot(realpathSync2.native(resolve3(common, configured)));
-      } catch {
-      }
-      const worktrees = execFileSync(
-        "git",
-        ["-C", physical, "worktree", "list", "--porcelain"],
-        { encoding: "utf8", timeout: 3e3, windowsHide: true, stdio: ["ignore", "pipe", "ignore"] }
-      );
-      const main2 = worktrees.split(/\r?\n\r?\n/).find((entry) => !/^bare$/m.test(entry));
-      const root = main2 && /^worktree (.+)$/m.exec(main2)?.[1];
-      return visibleRoot(root ? realpathSync2.native(root) : top);
-    } catch {
-      return physical;
-    }
+    const cached3 = projectRoots.get(physical), now = Date.now(), marker = gitMarker(physical);
+    if (cached3 && cached3.expiresAt > now && cached3.marker === marker) return cached3.root;
+    const root = resolveProjectRoot(physical, visibleRoot);
+    if (projectRoots.size >= 256) projectRoots.delete(projectRoots.keys().next().value);
+    projectRoots.set(physical, { root, expiresAt: now + PROJECT_ROOT_CACHE_MS, marker });
+    return root;
   } catch {
     return null;
+  }
+}
+function gitMarker(physical) {
+  for (let dir = physical; ; dir = dirname7(dir)) {
+    const path = join11(dir, ".git");
+    try {
+      const s = statSync4(path);
+      return `${path}:${s.ino}:${s.mtimeMs}:${s.size}`;
+    } catch {
+    }
+    if (dirname7(dir) === dir) return "";
+  }
+}
+function resolveProjectRoot(physical, visibleRoot) {
+  const git2 = (args) => execFileSync(
+    "git",
+    ["-C", physical, "rev-parse", ...args],
+    { encoding: "utf8", timeout: 3e3, windowsHide: true, stdio: ["ignore", "pipe", "ignore"] }
+  ).trim();
+  try {
+    const top = realpathSync2.native(git2(["--show-toplevel"]));
+    const common = realpathSync2.native(resolve3(physical, git2(["--git-common-dir"])));
+    if (common.endsWith("/.git") || common.endsWith("\\.git")) return visibleRoot(realpathSync2.native(dirname7(common)));
+    try {
+      const configured = execFileSync(
+        "git",
+        ["--git-dir", common, "config", "--get", "core.worktree"],
+        { encoding: "utf8", timeout: 3e3, windowsHide: true, stdio: ["ignore", "pipe", "ignore"] }
+      ).trim();
+      if (configured) return visibleRoot(realpathSync2.native(resolve3(common, configured)));
+    } catch {
+    }
+    const worktrees = execFileSync(
+      "git",
+      ["-C", physical, "worktree", "list", "--porcelain"],
+      { encoding: "utf8", timeout: 3e3, windowsHide: true, stdio: ["ignore", "pipe", "ignore"] }
+    );
+    const main2 = worktrees.split(/\r?\n\r?\n/).find((entry) => !/^bare$/m.test(entry));
+    const root = main2 && /^worktree (.+)$/m.exec(main2)?.[1];
+    return visibleRoot(root ? realpathSync2.native(root) : top);
+  } catch {
+    return physical;
   }
 }
 function projectKey(root) {
@@ -28967,8 +28988,8 @@ function ensureProjectFolder(project) {
     return null;
   const fresh = !existsSync9(folder);
   mkdirSync7(folder, { recursive: true, mode: 448 });
-  const gitMarker = existsSync9(join12(project, ".git"));
-  if (!fresh && excluded.get(project) === gitMarker) return folder;
+  const gitMarker2 = existsSync9(join12(project, ".git"));
+  if (!fresh && excluded.get(project) === gitMarker2) return folder;
   try {
     const exclude = execFileSync2(
       "git",
@@ -29001,7 +29022,7 @@ function ensureProjectFolder(project) {
   } catch {
     if (existsSync9(join12(project, ".git"))) return null;
   }
-  excluded.set(project, gitMarker);
+  excluded.set(project, gitMarker2);
   return folder;
 }
 function projectDatabasePath(project) {
@@ -40221,6 +40242,7 @@ var Broker = class {
   pendingJobMailRouteAgain = false;
   pendingJobMailRetry = null;
   closing = false;
+  requestTurn = Promise.resolve();
   network = null;
   remoteJobs = null;
   remoteDashboard = null;
@@ -40406,6 +40428,10 @@ var Broker = class {
     const handler = this.handlers[frame.op];
     try {
       if (!handler) throw new BridgeError("bad_request", `unknown op: ${String(frame.op)}`);
+      const turn = this.requestTurn.then(() => new Promise((resolve21) => setImmediate(resolve21)));
+      this.requestTurn = turn;
+      await turn;
+      if (this.closing) return;
       if (!conn.authed && !UNAUTHENTICATED_OPS.has(frame.op)) throw new BridgeError("unauthorized", "authenticate first");
       this.log.debug("request", { op: frame.op, peer: conn.peer?.name });
       const result = await handler(conn, frame.args ?? {});
@@ -40676,12 +40702,12 @@ Handoff note: ${receipt.note}` : "") + "\n\nYou are their supervisor. Use messag
     peer.parentJob = typeof job.parentJob === "string" ? job.parentJob : void 0;
     if (isRecord(job.args) && Array.isArray(job.args.send_to)) peer.jobSendTo = job.args.send_to;
   }
-  siblingConns(conn) {
+  siblingConns(conn, target) {
     const peer = this.requirePeer(conn);
     if (!peer.jobAgent || !peer.jobOwner) throw new BridgeError("bad_request", "not a linked job");
     const jobs = this.storedJobs();
     const supervisor = this.jobSupervisor(peer, jobs);
-    return [...this.conns].filter((c) => c !== conn && c.peer?.jobAgent && (this.sameJobFamily(peer, c.peer, jobs) || this.sharedJobs(peer, c.peer, jobs) || peer.jobSendTo?.includes(c.peer.name)));
+    return [...this.conns].filter((c) => c !== conn && c.peer?.jobAgent && (!target || c.peer.name === target) && (this.sameJobFamily(peer, c.peer, jobs) || this.sharedJobs(peer, c.peer, jobs) || peer.jobSendTo?.includes(c.peer.name)));
   }
   jobForControl(peer, ref) {
     const known = this.storedJobs().find((j) => j.name === ref || j.id === ref);
@@ -40732,12 +40758,12 @@ Handoff note: ${receipt.note}` : "") + "\n\nYou are their supervisor. Use messag
     const job = jobs.find((j) => `job:${j.id}` === peer.id);
     return typeof job?.supervisor === "string" ? job.supervisor : peer.jobOwner;
   }
-  storedSiblings(peer) {
+  storedSiblings(peer, target) {
     if (!this.jobsPath || !peer.jobOwner) return [];
     try {
       const records = this.storedJobs();
       const supervisor = this.jobSupervisor(peer, records);
-      return records.flatMap((j) => j && (this.sameJobFamily(peer, { id: `job:${j.id}`, jobOwner: String(j.supervisor) }, records) || this.sharedJobs(peer, { id: `job:${j.id}` }, records) || peer.jobSendTo?.includes(String(j.name))) && typeof j.id === "string" && typeof j.name === "string" && j.name !== peer.name && `job:${j.id}` !== peer.id && AGENT_KINDS.includes(j.agent) && SIBLING_STATUSES.has(j.status) ? [{ id: `job:${j.id}`, name: j.name, title: isRecord(j.args) && typeof j.args.title === "string" ? j.args.title : "", agent: j.agent, status: j.status, ...typeof j.finishedAt === "number" ? { finishedAt: j.finishedAt } : {}, report: typeof j.report === "string" ? j.report : null }] : []);
+      return records.flatMap((j) => j && (!target || j.name === target) && (this.sameJobFamily(peer, { id: `job:${j.id}`, jobOwner: String(j.supervisor) }, records) || this.sharedJobs(peer, { id: `job:${j.id}` }, records) || peer.jobSendTo?.includes(String(j.name))) && typeof j.id === "string" && typeof j.name === "string" && j.name !== peer.name && `job:${j.id}` !== peer.id && AGENT_KINDS.includes(j.agent) && SIBLING_STATUSES.has(j.status) ? [{ id: `job:${j.id}`, name: j.name, title: isRecord(j.args) && typeof j.args.title === "string" ? j.args.title : "", agent: j.agent, status: j.status, ...typeof j.finishedAt === "number" ? { finishedAt: j.finishedAt } : {}, report: typeof j.report === "string" ? j.report : null }] : []);
     } catch {
       return [];
     }
@@ -40766,8 +40792,8 @@ Handoff note: ${receipt.note}` : "") + "\n\nYou are their supervisor. Use messag
     const key3 = dedupeKey ? `${sender.id}:${dedupeKey}` : null;
     const seen = key3 ? this.sentByKey.get(key3) : void 0;
     if (seen) return seen.result;
-    const target = this.siblingConns(conn).find((c) => c.peer.name === args.to);
-    const stored = this.storedSiblings(sender).find((s) => s.name === args.to);
+    const target = this.siblingConns(conn, args.to).find((c) => c.peer.name === args.to);
+    const stored = this.storedSiblings(sender, args.to).find((s) => s.name === args.to);
     if (!target && !stored) {
       if (!isJobSendTarget(args.to) || !sender.jobSendTo?.includes(args.to) || args.to.includes("-job-") || args.to.includes("-ask-") || this.connByName(args.to)?.peer?.jobAgent) {
         throw new BridgeError("unknown_target", "no sibling with that job name or explicit send_to grant");
@@ -41261,7 +41287,7 @@ Call decisions to look up current decisions or their history.`,
         if (live[i].peer?.unavailable) queued.push(live.splice(i, 1)[0].peer.name);
       }
     }
-    if (conversationId.startsWith(SIBLING_CONVERSATION_PREFIX) && (queued.some((name2) => !sender.jobAgent || !this.storedSiblings(sender).some((s) => s.name === name2)) || live.some((c) => c.peer.jobAgent && (!sender.jobAgent || !sender.jobOwner || !this.sameJobFamily(sender, c.peer) && !this.sharedJobs(sender, c.peer) && !sender.jobSendTo?.includes(c.peer.name))))) {
+    if (conversationId.startsWith(SIBLING_CONVERSATION_PREFIX) && (queued.some((name2) => !sender.jobAgent || !this.storedSiblings(sender, name2).some((s) => s.name === name2)) || live.some((c) => c.peer.jobAgent && (!sender.jobAgent || !sender.jobOwner || !this.sameJobFamily(sender, c.peer) && !this.sharedJobs(sender, c.peer) && !sender.jobSendTo?.includes(c.peer.name))))) {
       throw new BridgeError("unauthorized", "sibling chat requires the same supervisor or an explicit send_to job grant");
     }
     let replyRestrictions = conversationId.startsWith(CONTROL_CONVERSATION_PREFIX) ? [] : [...live.map((c) => c.peer.name), ...queued].flatMap((name2) => {
