@@ -28864,7 +28864,7 @@ function migrateProjectJobs(records) {
 
 // src/core/project-store.ts
 var roots = /* @__PURE__ */ new Map();
-var excluded = /* @__PURE__ */ new Set();
+var excluded = /* @__PURE__ */ new Map();
 function linkedParent(file2) {
   let parent2 = dirname8(resolve4(file2));
   while (!existsSync9(parent2) && dirname8(parent2) !== parent2)
@@ -28897,7 +28897,8 @@ function ensureProjectFolder(project) {
     return null;
   const fresh = !existsSync9(folder);
   mkdirSync7(folder, { recursive: true, mode: 448 });
-  if (!fresh && excluded.has(project)) return folder;
+  const gitMarker = existsSync9(join12(project, ".git"));
+  if (!fresh && excluded.get(project) === gitMarker) return folder;
   try {
     const exclude = execFileSync2(
       "git",
@@ -28930,7 +28931,7 @@ function ensureProjectFolder(project) {
   } catch {
     if (existsSync9(join12(project, ".git"))) return null;
   }
-  excluded.add(project);
+  excluded.set(project, gitMarker);
   return folder;
 }
 function projectDatabasePath(project) {
