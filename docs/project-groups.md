@@ -19,7 +19,8 @@ first, then other group masters in connection order with session name as a tie b
 yielding a session leaves detached runners running. Pending job envelopes move with their stable
 IDs; the shared durable routing ledger distinguishes forwarded history from consumed deliveries.
 Consumed deliveries are never replayed. Fallback does not change the primary. When it returns,
-new mail goes to it again.
+new mail goes to it again. If every master is unavailable, reports stay queued until one returns.
+Undelivered project-job notes remain available after the job finishes.
 
 Use `coordinator_availability(unavailable=true)` before a usage limit or interruption when the
 session remains connected. Restore with `unavailable=false`. The dashboard's **Hand jobs to project**
@@ -45,7 +46,8 @@ its existing message notification and wake paths.
 ## Opt out
 
 Set `"projectGroups": false` in the shared main checkout's `.agent-bridge/config.json` or the local
-bridge's global `config.json`. Agent sections can also disable sharing for that agent. The files are
+bridge's global `config.json`. Project settings override global settings; each file's agent section
+overrides its general setting. Agent sections can disable sharing for that agent. The files are
 read without rewriting them. Invalid or unreadable sharing settings deny group authority.
 Explicit handoff grants remain usable when automatic project sharing is disabled.
 

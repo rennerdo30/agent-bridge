@@ -7209,7 +7209,7 @@ import { DatabaseSync as DatabaseSync5 } from "node:sqlite";
 import { homedir } from "node:os";
 import { join } from "node:path";
 var APP_NAME = "agent-bridge";
-var APP_VERSION = "0.29.12";
+var APP_VERSION = "0.29.13";
 var PROTOCOL_VERSION = 2;
 var ENV = {
   home: "AGENT_BRIDGE_HOME",
@@ -7935,19 +7935,28 @@ function projectKey(root) {
 function projectGroupsEnabled(root, home, agent) {
   if (!root) return false;
   try {
+    const records = [];
     for (const path of [home && join9(home, "config.json"), join9(root, ".agent-bridge", "config.json")]) {
-      if (!path || !existsSync4(path)) continue;
+      if (!path || !existsSync4(path)) {
+        records.push({});
+        continue;
+      }
       const value = JSON.parse(readFileSync5(path, "utf8"));
       if (!value || typeof value !== "object" || Array.isArray(value)) return false;
-      const enabled = value.projectGroups;
-      if (enabled !== void 0 && enabled !== true) return false;
-      const section = agent ? value[agent] : void 0;
-      if (section && typeof section === "object" && !Array.isArray(section)) {
-        const local = section.projectGroups;
-        if (local !== void 0 && local !== true) return false;
-      }
+      records.push(value);
     }
-    return true;
+    const section = (value) => {
+      const local = agent ? value[agent] : void 0;
+      return local && typeof local === "object" && !Array.isArray(local) ? local : {};
+    };
+    const [globalConfig2, projectConfig] = records;
+    const enabled = [
+      section(projectConfig).projectGroups,
+      projectConfig.projectGroups,
+      section(globalConfig2).projectGroups,
+      globalConfig2.projectGroups
+    ].find((v) => v !== void 0);
+    return enabled === void 0 || enabled === true;
   } catch {
     return false;
   }
@@ -29385,7 +29394,7 @@ function loadConfig(home, agent, log, env = process.env, projectDir) {
   const str = (v) => typeof v === "string" && v.trim() ? v.trim() : void 0;
   const d = DEFAULT_CONFIG;
   const cfg = {
-    projectGroups: [localSection.projectGroups, project.projectGroups, section.projectGroups, file2.projectGroups].find((v) => v !== void 0) === void 0 ? true : parseBool([localSection.projectGroups, project.projectGroups, section.projectGroups, file2.projectGroups].find((v) => v !== void 0)) === true,
+    projectGroups: [localSection.projectGroups, project.projectGroups, section.projectGroups, file2.projectGroups].find((v) => v !== void 0) === void 0 ? true : [localSection.projectGroups, project.projectGroups, section.projectGroups, file2.projectGroups].find((v) => v !== void 0) === true,
     name: pick2("name", ENV.name, str) ?? d.name,
     autoWake: pick2("autoWake", ENV.autoWake, parseBool) ?? d.autoWake,
     wakeOnDirect: pick2("wakeOnDirect", ENV.wakeOnDirect, parseBool) ?? d.wakeOnDirect,
@@ -43982,7 +43991,7 @@ function commitHandoff(path, source, target, input2, options = {}) {
   if (target.host || target.name.includes("/") || target.jobAgent || !CODING_AGENTS.includes(target.agent)) {
     throw new BridgeError("bad_request", "The target must be an exact live local Claude Code, Codex or opencode session. Paired-PC handoff is not supported.");
   }
-  if (target.name === source.name && options.reason !== "group-restored") throw new BridgeError("bad_request", "Choose another local supervisor session.");
+  if (target.name === source.name && options.reason !== "group-restored" && !options.canControl) throw new BridgeError("bad_request", "Choose another local supervisor session.");
   const unlock = acquireLock(`${path}.lock`, 0);
   try {
     let previous = null;
@@ -43998,12 +44007,13 @@ function commitHandoff(path, source, target, input2, options = {}) {
       if (isRecord(j) && typeof j.id === "string" && typeof j.name === "string") byId.set(j.id, j);
     }
     const records = [...byId.values()];
-    const own2 = records.filter((j) => j.owner === source.name && !j.parentJob);
+    const own2 = records.filter((j) => !j.parentJob && (j.owner === source.name || options.canControl?.(j)));
     const selected = args.jobs === "all" ? own2 : args.jobs.map((name2) => {
       const job = own2.find((j) => j.name === name2);
-      if (!job) throw new BridgeError("unauthorized", `Job ${name2} is not owned by the current supervisor (use an exact job name).`);
+      if (!job) throw new BridgeError("unauthorized", `Job ${name2} is not controlled by this master (use an exact job name).`);
       return job;
     });
+    if (selected.length && selected.every((job) => primaryFor(job) === target.name) && options.reason !== "group-restored") throw new BridgeError("bad_request", "The target is already the primary for these jobs.");
     const moved = new Set(selected.map((j) => j.name));
     for (let changed = true; changed; ) {
       changed = false;
@@ -47779,7 +47789,7 @@ var Broker = class {
         if (parsed.data.switch_project_main && (parsed.data.jobs !== "all" || !this.projectPeer(source).projectGroup || this.projectPeer(source).projectGroup !== this.projectPeer(target).projectGroup)) {
           throw new BridgeError("unauthorized", "Switching the project main requires all jobs and a target in the same project group.");
         }
-        const receipt = commitHandoff(this.jobsPath, source, target, parsed.data);
+        const receipt = commitHandoff(this.jobsPath, source, target, parsed.data, { canControl: (job) => this.groups.canControl(source, job, this.localPeers()) });
         if (parsed.data.switch_project_main) this.switchProjectMain(source, target);
         this.jobsSnapshot = null;
         this.jobsForDispatch = null;
@@ -47824,7 +47834,7 @@ var Broker = class {
         const message = { ...m, to: recipient, recipient, conversationId: this.jobConversation(job, recipient, m.conversationId) };
         if (this.store.insertJobDelivery(message)) {
           const target = this.connByName(recipient);
-          if (target) this.emit(target, "message", message);
+          if (target && !target.peer?.unavailable) this.emit(target, "message", message);
         }
         return { saved: true };
       },
@@ -48302,7 +48312,6 @@ Handoff note: ${receipt.note}` : "") + "\n\nYou are their supervisor. Use messag
     this.routePendingJobMail();
   }
   routePendingJobMail() {
-    const live = [...this.conns].flatMap((c) => c.peer ? [c.peer] : []);
     for (const job of this.storedJobs()) {
       if (job.remote || !primaryFor(job)) continue;
       const recipient = this.jobRecipient(job), target = this.connByName(recipient);
@@ -48313,10 +48322,10 @@ Handoff note: ${receipt.note}` : "") + "\n\nYou are their supervisor. Use messag
           const names = /* @__PURE__ */ new Set([recipient, envelope.to, envelope.recipient, ...mastersFor(job)]);
           const consumed = this.jobsPath && [...names].some((name2) => typeof name2 === "string" && new ReadJournal(dirname16(this.jobsPath)).read(`name:${name2}`).includes(message.id));
           if (consumed) this.store.markRead(recipient, [message.id], this.now());
-          else if (target) this.emit(target, "message", message);
+          else if (target && !target.peer?.unavailable) this.emit(target, "message", message);
         }
       }
-      if (!target) continue;
+      if (!target || target.peer?.unavailable) continue;
       for (const from of this.store.pendingJobRecipients(String(job.id))) {
         if (this.jobsPath) this.store.markRead(from, new ReadJournal(dirname16(this.jobsPath)).read(`name:${from}`), this.now());
         const moved = this.store.handoffMail(from, recipient, String(job.id), this.now(), recipient !== job.parentJob && recipient !== primaryFor(job));
@@ -48661,6 +48670,7 @@ Call decisions to look up current decisions or their history.`,
       if (peer.jobAgent || typeof args.unavailable !== "boolean") throw new BridgeError("bad_request", "Only masters can change availability.");
       peer.unavailable = args.unavailable;
       this.routePendingJobMail();
+      if (!peer.unavailable) this.replayMail(conn, peer);
     }
     if (peer.jobOwner) {
       if (typeof args.jobParent === "string") peer.jobParent = args.jobParent;
@@ -48875,6 +48885,11 @@ Call decisions to look up current decisions or their history.`,
     }
     const remoteTargets = to === BROADCAST ? this.network?.peers().filter((p) => !p.jobAgent).map((p) => p.name) ?? [] : [];
     const { live, queued } = to === BROADCAST && remoteTargets.length ? { live: [...this.conns].filter((c) => c.peer && c.peer.id !== sender.id && !c.peer.jobAgent), queued: [] } : this.resolveTargets(to, sender);
+    if (own2 && to === this.jobRecipient(own2)) {
+      for (let i = live.length - 1; i >= 0; i--) {
+        if (live[i].peer?.unavailable) queued.push(live.splice(i, 1)[0].peer.name);
+      }
+    }
     if (conversationId.startsWith(SIBLING_CONVERSATION_PREFIX) && (queued.some((name2) => !sender.jobAgent || !this.storedSiblings(sender).some((s) => s.name === name2)) || live.some((c) => c.peer.jobAgent && (!sender.jobAgent || !sender.jobOwner || !this.sameJobFamily(sender, c.peer) && !this.sharedJobs(sender, c.peer) && !sender.jobSendTo?.includes(c.peer.name))))) {
       throw new BridgeError("unauthorized", "sibling chat requires the same supervisor or an explicit send_to job grant");
     }
@@ -48913,7 +48928,7 @@ Call decisions to look up current decisions or their history.`,
   unreadMail(recipient, limit) {
     const messages = this.store.unread(recipient, limit);
     if (!this.jobsPath) return messages;
-    const finished = new Set(this.storedJobs().filter((j) => j.status && j.status !== "running").map((j) => `job:${j.id}`));
+    const finished = new Set(this.storedJobs().filter((j) => j.status && j.status !== "running" && (!primaryFor(j) || !j.projectRoot && !j.deliveryHistory && !j.ownershipHistory && !this.groups.jobRoot(j, this.localPeers()))).map((j) => `job:${j.id}`));
     const obsolete = messages.filter((m) => !isQuietMessage(m) && m.conversationId.endsWith(SIBLING_NOTE_SUFFIX) && finished.has(m.from.id));
     this.store.markRead(recipient, obsolete.map((m) => m.id), this.now());
     return messages.filter((m) => !obsolete.includes(m));
@@ -50222,7 +50237,7 @@ function discardFinishedNotes(ctx) {
     if (isQuietMessage(m)) return false;
     if (!ctx.jobs?.isNote(m)) return false;
     const job = ctx.jobs.find(m.from.name);
-    return job !== void 0 && !job.ownershipHistory?.length && job.status !== "running";
+    return job !== void 0 && !job.projectRoot && !job.deliveryHistory?.length && !job.ownershipHistory?.length && job.status !== "running";
   });
   node2.markRead(obsolete.map((m) => m.id));
 }
@@ -54312,7 +54327,15 @@ async function startServer(argv = process.argv.slice(2)) {
   const log = createLogger({ home, component: `mcp-${agent}` });
   const cwd = process.env.CLAUDE_PROJECT_DIR || process.cwd();
   const cwdKnown = Boolean(process.env.CLAUDE_PROJECT_DIR) || !isInside(cwd, PLUGIN_ROOT);
-  const cfg = loadConfig(home, agent, log, process.env, cwdKnown ? canonicalProjectRoot(cwd) ?? void 0 : void 0);
+  let configCwd, configRoot;
+  const projectConfigRoot = (dir) => {
+    if (dir !== configCwd) {
+      configCwd = dir;
+      configRoot = canonicalProjectRoot(dir) ?? void 0;
+    }
+    return configRoot;
+  };
+  const cfg = loadConfig(home, agent, log, process.env, cwdKnown ? projectConfigRoot(cwd) : void 0);
   const delegated = currentDelegateDepth() > 0;
   log.info("starting MCP server", { agent, cwd, cwdKnown, delegated, version: APP_VERSION, node: process.version });
   const node2 = delegated ? null : new BridgeNode({
@@ -54359,14 +54382,14 @@ async function startServer(argv = process.argv.slice(2)) {
       void node2.setWakePolicy(agent === "claude" && next.wakeOnDirect, agent === "claude" && Boolean(ctx.rewakeAvailable || ctx.channelActive()) || agent === "opencode" || agent === "codex" && Boolean(node2.currentSessionId), next.maxHops).catch(() => {
       });
     };
-    watchConfig(home, agent, log, applyConfig, () => cwdSettled ? canonicalProjectRoot(node2.cwd) ?? "" : "");
+    watchConfig(home, agent, log, applyConfig, () => cwdSettled ? projectConfigRoot(node2.cwd) ?? "" : "");
     ctx.activity = (s) => node2.setActivity(s);
     ctx.learnCwd = async (projectDir) => {
       if (cwdSettled || projectDir === node2.cwd) return;
       cwdSettled = true;
       const name2 = cfg.name ? void 0 : defaultPeerName(agent, projectDir);
       await node2.relocate(projectDir, name2).catch((err) => log.warn("relocate failed", { err: err.message }));
-      applyConfig(loadConfig(home, agent, log, process.env, canonicalProjectRoot(node2.cwd) ?? void 0));
+      applyConfig(loadConfig(home, agent, log, process.env, projectConfigRoot(node2.cwd)));
     };
   }
   if (agent === "codex" && node2) {
