@@ -7209,7 +7209,7 @@ import { DatabaseSync as DatabaseSync5 } from "node:sqlite";
 import { homedir } from "node:os";
 import { join } from "node:path";
 var APP_NAME = "agent-bridge";
-var APP_VERSION = "0.29.10";
+var APP_VERSION = "0.29.11";
 var PROTOCOL_VERSION = 2;
 var ENV = {
   home: "AGENT_BRIDGE_HOME",
@@ -42073,7 +42073,10 @@ function parseOpencodeModelCosts(text2) {
   const out = [];
   try {
     const models = JSON.parse(text2).data;
-    if (Array.isArray(models)) return models.flatMap((m) => typeof m.cost?.input === "number" && typeof m.cost?.output === "number" ? [{ id: `${m.providerID}/${m.id}`, input: m.cost.input, output: m.cost.output }] : []);
+    if (Array.isArray(models)) return models.flatMap((m) => {
+      if (!Array.isArray(m.cost) || !m.cost.length || m.cost.some((c) => typeof c.input !== "number" || typeof c.output !== "number")) return [];
+      return [{ id: `${m.providerID}/${m.id}`, input: Math.max(...m.cost.map((c) => c.input)), output: Math.max(...m.cost.map((c) => c.output)) }];
+    });
   } catch {
   }
   const parts = text2.split(/^([\w.-]+\/[\w.:@-]+)\r?\n(?=\{)/m);
