@@ -162,7 +162,7 @@ it.each(["closed", "unavailable", "opencode"])("ten jobs survive a %s primary an
   expect((await call(target, "message_subagent", { job: jobs[1]!.name, message: "Continue under the project master", title: "Inherited project work" })).error).toBeFalsy();
   await until(() => existsSync(jobs[1]!.release + ".instruction") && readFileSync(jobs[1]!.release + ".instruction", "utf8").includes("Continue under the project master"), 5_000);
   expect(readFileSync(jobs[1]!.release + ".instruction", "utf8")).toContain("Continue under the project master");
-  await Promise.all(children.map((child, i) => child.send(`After takeover note ${i}`)));
+  await Promise.all(children.map((child, i) => child.send(`After takeover note ${i}`, undefined, "note")));
   writeFileSync(jobs[2]!.release + ".approve", "");
   await until(() => listPendingApprovals(env.home).some((a) => a.job === jobs[2]!.name), 5_000);
   const approval = listPendingApprovals(env.home).find((a) => a.job === jobs[2]!.name)!;
