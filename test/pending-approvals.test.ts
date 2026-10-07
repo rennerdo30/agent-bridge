@@ -67,6 +67,10 @@ describe("pending approvals", () => {
       const post = vi.fn(); j.live = { post };
       expect(jobs.followUp(j.name, "allow")).toMatchObject({ outcome: "delivered", approvalPending: true });
       expect(post).toHaveBeenCalledWith("allow");
+      j.executionOwner = node.name; jobs.persist();
+      node.emit("inline_job_control", { job: j.name, control: { type: "message", body: "deny", cid: "inline-follow-up" } });
+      expect(post).toHaveBeenCalledWith("deny");
+      expect(listPendingApprovals(env.home)).toHaveLength(1);
       expect(j.pendingApproval).toBeTypeOf("function");
       expect(await answerPendingApproval(env.home, entry!.id, { decision: "allow" })).toBe("answered");
       expect(await answer).toEqual({ allow: true, reason: "allow" });

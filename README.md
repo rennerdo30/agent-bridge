@@ -528,3 +528,9 @@ npm run check   # typecheck + tests + build
 ## License
 
 MIT
+
+### Hand off subagents to another local session
+
+Use `handoff_subagents(to="codex-animal-catch-game", jobs="all", note="Review results and continue the unfinished work")` from the session that currently supervises the jobs. Omit `jobs` to move all running and finished jobs, or pass exact job names. Nested children move with their parent. The target must be an exact, live local Claude Code, Codex or opencode session name from `peers`.
+
+The recipient becomes the primary contact and receives a waking inventory with titles, statuses and your note. The former supervisor stays a master and the first fallback; only one live recipient gets each message. Either master can `message_subagent`, cancel and continue inherited jobs. Running work keeps going; results, approvals and notes go to the primary while it is live, otherwise to the next live master. The dashboard's session **⋯ → Hand off subagents…** opens a styled local-session picker. Ownership history and previous owner message history stay retained. Remote jobs and paired-PC targets are rejected without moving any jobs. See [the handoff contract](docs/subagent-handoff.md).

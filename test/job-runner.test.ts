@@ -384,25 +384,28 @@ describe.skipIf(!existsSync(SERVER))("background subagents in job runners", () =
     await waitFor(async () => (await call(a, "peers")).match(new RegExp(`${job} "Runner test": failed`)) !== null);
   }, TEST_TIMEOUT_MS);
 
-  it("continues a cancelled runner despite stale cancellation mail and the old grace timer", async () => {
+  it("continues a cancelled runner despite legacy cancellation mail", async () => {
     const session = await startSession();
     const first = await spawnHeld(session);
     await call(session, "cancel_subagent", { job: first.job });
     await waitFor(() => !pidAlive(first.pid));
     await call(session, "wait_for_message", { from: first.job, timeout_sec: 10 });
-    // Legacy 0.29.10 mail to the stable peer name waits until its next runner joins.
-    const sender = new BridgeNode({ pipePath: resolvePipePath(home), token: loadOrCreateToken(home), dbPath: resolveDbPath(home), agent: "claude", name: "legacy-control", cwd: home, autoWake: false, log: nullLogger });
+    await stopSession(session);
+    // An authorized legacy supervisor leaves cancellation mail for the stable job peer name.
+    const sender = new BridgeNode({ pipePath: resolvePipePath(home), token: loadOrCreateToken(home), dbPath: resolveDbPath(home), agent: "codex", name: SESSION, cwd: home, autoWake: false, log: nullLogger });
     nodes.push(sender); await sender.start();
     await sender.send({ to: first.job, body: JSON.stringify({ type: "cancel" }), conversationId: CONTROL_CONVERSATION_PREFIX + first.id });
+    await sender.stop();
+    const replacement = await startSession();
     const release = join(home, "release-resumed"), link = release + ".link.json";
     releases.push(release);
-    expect(await call(session, "message_subagent", { job: first.job, message: `release=${release} link=${link} Continue` })).toContain("Sent to");
+    expect(await call(replacement, "message_subagent", { job: first.job, message: `release=${release} link=${link} Continue` })).toContain("Sent to");
     await waitFor(() => existsSync(link));
     const state = readRunnerState(home, first.id)!;
     await new Promise(resolve => setTimeout(resolve, 5_100));
     expect(pidAlive(state.pid)).toBe(true);
     writeFileSync(release, "");
-    expect(await call(session, "wait_for_message", { from: first.job, timeout_sec: 10 })).toContain("fake answer: finished");
+    expect(await call(replacement, "wait_for_message", { from: first.job, timeout_sec: 10 })).toContain("fake answer: finished");
     await waitFor(() => !pidAlive(state.pid));
   });
 

@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { extname } from "node:path";
-import { checkDepthPublic, childEnvPublic, DelegateError, killTree, trackChild, resolveBinary, unwrapNpmShim, type DelegateRequest, type DelegateResult } from "./delegate.js";
+import { checkDepthPublic, childEnvPublic, DelegateError, killTree, trackChild, resolveBinary, unwrapNpmShim, opencodeV2, type DelegateRequest, type DelegateResult } from "./delegate.js";
 import { progressEventHandler } from "./progress.js";
 import type { PermissionDecision, PermissionRequest } from "./relay.js";
 
@@ -147,11 +147,13 @@ export async function delegateToOpencodeServed(
   },
 ): Promise<DelegateResult> {
   checkDepthPublic(req.maxDelegateDepth);
+  const v2 = await opencodeV2(req.bin, req.cwd, req.log);
   const password = randomBytes(PASSWORD_BYTES).toString("hex");
   const permissions = req.permissions === undefined ? OPENCODE_ASK_PERMISSIONS : req.permissions;
   const env = childEnvPublic({
     ...req.extraEnv,
     OPENCODE_SERVER_PASSWORD: password,
+    OPENCODE_PASSWORD: password,
     OPENCODE_SERVER_USERNAME: SERVER_USER,
     ...(permissions ? { OPENCODE_CONFIG_CONTENT: JSON.stringify({ permission: permissions }) } : {}),
   });
@@ -163,7 +165,7 @@ export async function delegateToOpencodeServed(
   req.signal?.addEventListener("abort", onAbort, { once: true });
   const timer = setTimeout(() => ac.abort(), req.timeoutSec * 1000);
   const api = async (method: string, path: string, body?: unknown): Promise<any> => {
-    const res = await fetch(`${url}${path}${path.includes("?") ? "&" : "?"}${q}`, {
+    const res = await fetch(v2 ? `${url}/api${path}` : `${url}${path}${path.includes("?") ? "&" : "?"}${q}`, {
       method,
       headers: { authorization: auth, "content-type": "application/json" },
       body: body === undefined ? undefined : JSON.stringify(body),
@@ -171,11 +173,58 @@ export async function delegateToOpencodeServed(
     });
     if (!res.ok) throw new DelegateError(`opencode API ${method} ${path} failed: HTTP ${res.status}`, "failed", await res.text().catch(() => ""));
     const text = await res.text();
-    return text ? JSON.parse(text) : null;
+    const parsed = text ? JSON.parse(text) : null;
+    return v2 ? parsed?.data ?? parsed : parsed;
   };
 
   let knownSession: string | null = req.sessionId ?? null;
   try {
+    if (v2) {
+      const [providerID, ...rest] = (req.model ?? "").split("/");
+      const [id, variant] = rest.join("/").split("#");
+      const model = req.model ? { providerID, id, ...(req.effort || variant ? { variant: req.effort ?? variant } : {}) } : undefined;
+      const sessionId: string = req.sessionId ?? (await api("POST", "/session", { location: { directory: req.cwd }, ...(model ? { model } : {}) })).id;
+      knownSession = sessionId;
+      req.onSession?.(sessionId);
+      if (req.sessionId && model) await api("POST", `/session/${sessionId}/model`, { model });
+      const servers = await api("GET", `/mcp?directory=${encodeURIComponent(req.cwd)}`).catch(() => []);
+      const mcpServers = Array.isArray(servers) ? servers.map((s: Json) => s.name ?? s.id).filter((name): name is string => typeof name === "string") : [];
+      const events = await fetch(`${url}/api/event`, { headers: { authorization: auth, accept: "text/event-stream" }, signal: ac.signal });
+      if (!events.ok || !events.body) throw new DelegateError(`opencode event stream failed: HTTP ${events.status}`, "failed");
+      await api("POST", `/session/${sessionId}/prompt`, { text: req.prompt });
+      const textByMessage = new Map<string, Map<number, string>>();
+      let lastMessage = "";
+      let failure: string | null = null;
+      let usage: unknown = null;
+      let costUsd: unknown = null;
+      const onEvent = progressEventHandler("opencode", req.onProgress);
+      for await (const ev of sse(events.body)) {
+        const p = ev.data ?? {};
+        if (p.sessionID !== sessionId) continue;
+        if (ev.type === "permission.asked") {
+          const decision = await req.onPermission(opencodePermissionRequest({ ...p, permission: p.action, patterns: p.resources }, mcpServers, req.cwd));
+          await api("POST", `/session/${sessionId}/permission/${p.id}/reply`, { decision: decision.allow ? "once" : "reject", ...(!decision.allow ? { message: decision.message } : {}) });
+        } else if (ev.type === "session.text.ended") {
+          lastMessage = p.assistantMessageID;
+          if (!textByMessage.has(lastMessage)) textByMessage.set(lastMessage, new Map());
+          textByMessage.get(lastMessage)!.set(p.ordinal, p.text);
+          onEvent?.({ part: { id: ev.id, type: "text", text: p.text } });
+        } else if (ev.type === "session.usage.updated" || ev.type === "session.step.ended") {
+          usage = p.tokens;
+          costUsd = p.cost;
+        } else if (ev.type === "session.execution.failed") {
+          failure = p.error?.message ?? "opencode session error";
+          break;
+        } else if (ev.type === "session.execution.succeeded" || ev.type === "session.execution.interrupted") {
+          if (ev.type.endsWith("interrupted")) failure = "opencode session interrupted";
+          break;
+        }
+      }
+      const text = [...(textByMessage.get(lastMessage) ?? [])].sort(([a], [b]) => a - b).map(([, value]) => value).join("");
+      if (failure && !text) throw new DelegateError(failure, "failed", "", "", sessionId);
+      if (!text && !failure) throw new DelegateError("opencode event stream ended without a response", "failed", "", "", sessionId);
+      return { sessionId, text, isError: failure !== null, details: { error: failure, usage, costUsd } };
+    }
     const sessionId: string = req.sessionId ?? (await api("POST", "/session", {})).id;
     req.onSession?.(sessionId);
     knownSession = sessionId;

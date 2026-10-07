@@ -556,7 +556,7 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
         const entry = listPendingApprovals(ctx.home).find((entry) => entry.id === a.approval_id);
         if (!entry) return text("Approval expired.", true);
         const job = ctx.jobs?.find(entry.job);
-        if (!job && entry.owner !== node?.name && !(entry.rootSession && entry.rootSession === ctx.jobs?.rootIdentity())) throw new BridgeError("bad_request", "This approval belongs to another supervisor.");
+        if (!(node ? await node.jobAuthority(entry.job) : job)) throw new BridgeError("bad_request", "This approval belongs to another supervisor.");
         if (a.decision === "escalate") {
           if (!entry.parentJob || !job?.pendingApproval) return text("Escalation is unavailable here; use the dashboard or ask the supervisor to decide.", true);
           job.pendingApproval("escalate");
@@ -930,7 +930,7 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
   };
   const keep = (a: DelegateArgs): Record<string, unknown> => Object.fromEntries(KEPT_ARGS.filter((k) => a[k] !== undefined).map((k) => [k, a[k]]));
   const resumers: Partial<Record<CodingAgent, (a: DelegateArgs) => Resume>> = {};
-  for (const target of targets) {
+  for (const target of CODING_AGENTS) {
     const profile = DELEGATION_TARGETS[target];
     const defaultModel = profile.defaultModel(cfg);
     const schema = {
@@ -1012,6 +1012,8 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
         // Saved settings win, including removal of an earlier exact permission override.
         background((job) => resumeArgs(a, job.name, message, sessionId, workdir, worktree, job.args), a);
     resumers[target] = resumeFor;
+    // An inherited job can use the same agent kind as its new supervisor.
+    if (!targets.includes(target)) continue;
 
     const askName = `ask_${target}`;
     register(
@@ -1044,7 +1046,8 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
         const report = progressReporter(extra, log);
         const onProgress = (m: string) => {
           tracked?.onProgress(m);
-          report?.(m);
+          if (tracked?.job.ownershipHistory?.length && tracked.job.owner !== ctx.node?.name) ctx.jobs?.fromSubagent(tracked.job, m, null);
+          else report?.(m);
         };
         let res;
         try {
@@ -1055,10 +1058,12 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
         } catch (err) {
           tracked?.end({ error: err });
           log.warn("ask failed", { job: tracked?.job.name, err: (err as Error).message });
+          if (tracked?.job.ownershipHistory?.length && tracked.job.owner !== ctx.node?.name) return text(`Job ${tracked.job.name} is supervised by ${tracked.job.owner}; its report was routed there.`);
           const identity = tracked ? `Job: ${tracked.job.name}\n${target} session_id: ${tracked.job.sessionId ?? "-"}\n\n` : "";
           return text(`${identity}${describeError(err)}`, true);
         }
         tracked?.end({ result: res });
+        if (tracked?.job.ownershipHistory?.length && tracked.job.owner !== ctx.node?.name) return text(`Job ${tracked.job.name} is supervised by ${tracked.job.owner}; its report was routed there.`);
         const header =
           (tracked ? `Job: ${tracked.job.name}\n` : "") +
           t("delegate.done", { agent: target, session: res.sessionId ?? "-" }) +
@@ -1175,6 +1180,26 @@ ${res.text || t("delegate.empty")}`, res.isError);
         setJobOutcome(ctx.home, job, n.name, a.state, a.reason);
         return text(JSON.stringify({ job: job.name, outcome: await deriveJobOutcome(ctx.home, job, log) }));
       } catch (err) { throw new BridgeError("bad_request", (err as Error).message); }
+    }),
+  );
+
+  register(
+    "handoff_subagents",
+    {
+      title: "Hand off subagents",
+      description: "Transfer your running and finished local jobs, including nested jobs, to an exact live local Claude Code, Codex or opencode session. The target becomes their supervisor and receives a waking inheritance message. Remote jobs and paired-PC targets are rejected without moving anything.",
+      inputSchema: {
+        to: z.string().min(1).max(64).describe("Exact live local session name from peers"),
+        jobs: z.union([z.literal("all"), z.array(z.string().min(1).max(80)).min(1).max(1000)]).optional().describe("Exact job names, or all (default)"),
+        note: z.string().max(4000).optional().describe("Context for the new supervisor"),
+      },
+    },
+    guarded("handoff_subagents", async (a: import("../core/job-handoff.js").HandoffArgs) => {
+      const n = requireNode();
+      ctx.jobs?.persist();
+      const result = await n.handoffSubagents(a);
+      ctx.jobs?.refreshOwnership();
+      return text(`Handed off ${result.jobs.length} subagent(s) to ${result.to}.`);
     }),
   );
 
