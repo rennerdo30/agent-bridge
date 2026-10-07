@@ -19,6 +19,7 @@ const ingest = new ConversationIngestor(db, workerData.home, paths, (path) => {
 const backoff = new IdleBackoff();
 const watchers = new Map<string, FSWatcher>();
 let timer: NodeJS.Timeout | null = null;
+let scheduledAt = 0;
 let stopped = false;
 function wake(): void { if (!stopped) schedule(backoff.wake()); }
 function watchHome(): void {
@@ -29,6 +30,7 @@ function watchHome(): void {
     try {
       const watcher = watch(root, { recursive: Boolean(dir), persistent: false }, (_, name) => {
         if (!dir && !/^(jobs\.json|runs|context-events|approvals|archive)$/.test(String(name))) return;
+        if (name) index.notify(join(root, String(name)));
         ingest.notifyJobs();
         wake();
       });
@@ -40,12 +42,16 @@ function watchHome(): void {
 function tick(reset = false, force = false): { work: number; discovering: boolean } {
   watchHome();
   if (reset) index.reset();
-  const result = index.tick();
+  const result = index.tick(!force);
   const work = result.work + ingest.tick(force);
   return { work, discovering: result.discovering || ingest.discovering };
 }
 function schedule(delay = HISTORY_TICK_MS): void {
+  const due = Date.now() + delay;
+  // Coalesce event bursts without postponing an already scheduled batch.
+  if (timer && scheduledAt <= due) return;
   if (timer) clearTimeout(timer);
+  scheduledAt = due;
   timer = setTimeout(() => {
     timer = null;
     try {

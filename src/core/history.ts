@@ -111,8 +111,10 @@ export class HistoryIndex {
   }
 
   /** Fixed row, file, byte and discovery budgets; cursors commit atomically with their documents. */
-  tick(): { work: number; discovering: boolean } {
+  tick(idleAware = false): { work: number; discovering: boolean } {
     const fileCount = Number(this.db.prepare("SELECT count(*) AS n FROM history_files").get()!.n);
+    // Explicit callers retain the complete-sweep contract; the background worker may stay idle.
+    if (!idleAware && this.idleFiles >= fileCount) this.idleFiles = 0;
     const dirty = [...this.dirty].slice(0, 32);
     const previousIdle = this.idleFiles;
     this.db.exec("BEGIN IMMEDIATE");

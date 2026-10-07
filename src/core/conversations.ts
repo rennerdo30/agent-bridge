@@ -94,7 +94,7 @@ export class ConversationIngestor {
   }
   notifyJobs(): void { this.jobsAt = 0; this.mirrorSweepAt = 0; }
   private queueMirrors(force: boolean): void {
-    if (force || (!this.mirrorDiscovering && Date.now() - this.mirrorSweepAt >= 30_000)) {
+    if (!this.mirrorSweepActive && (force || Date.now() - this.mirrorSweepAt >= 30_000)) {
       this.mirrorAfter = "";
       this.mirrorDiscovering = true;
       this.mirrorSweepActive = true;
