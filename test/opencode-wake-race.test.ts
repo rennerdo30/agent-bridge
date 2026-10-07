@@ -5,8 +5,11 @@ import { AgentBridgePlugin } from "../src/opencode/plugin.js";
 import { makeEnv, type TestEnv } from "./helpers.js";
 
 let env: TestEnv | undefined, plugin: any, ownedPid: number | null = null;
+let ownedClosed: Promise<void> | undefined;
 afterEach(async () => {
   await plugin?.dispose(); plugin = undefined;
+  // Wait for the actual ChildProcess close (including stdio handles), not just PID disappearance.
+  await ownedClosed; ownedClosed = undefined;
   // The SDK's bounded close can return immediately after SIGKILL. Windows still
   // holds the child's working directory until the actual process exit completes.
   if (ownedPid) await expect.poll(() => {
@@ -28,6 +31,8 @@ it("retains startup context and coalesces mail arriving during a Stop check", as
   vi.spyOn(Client.prototype, "connect").mockImplementation(async function (this: Client, transport: any, ...args: any[]) {
     await originalConnect.apply(this, [transport, ...args] as any);
     ownedPid = transport.pid;
+    const child = transport._process;
+    if (child) ownedClosed = new Promise<void>((resolve) => child.once("close", resolve));
   });
   let releaseStop!: () => void, stopEntered = false, checks = 0;
   const pendingStop = new Promise<void>((resolve) => { releaseStop = resolve; });

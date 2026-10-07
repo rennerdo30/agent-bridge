@@ -59,8 +59,11 @@ it.each(["claude", "codex", "opencode", "antigravity"])("delivers the last real 
   const a = await runner("a", "opencode", "supervisor");
   await a.node.send({ to: "supervisor", conversationId: "job-a", body: "REAL_COMPLETION" });
   // No jobs are owned by this MCP manager and global/direct wake are disabled.
-  expect(await call(sup, "hook_event", { event: "Stop" })).toContain("REAL_COMPLETION");
-  expect(await call(sup, "inbox", { mark_read: false })).not.toContain("REAL_COMPLETION");
+  // Send acknowledgement precedes delivery to the supervisor's local hook queue.
+  await expect.poll(() => call(sup, "hook_event", { event: "Stop" }),
+    { timeout: 5_000 }).toContain("REAL_COMPLETION");
+  await expect.poll(() => call(sup, "inbox", { mark_read: false }),
+    { timeout: 5_000 }).not.toContain("REAL_COMPLETION");
 });
 
 it.each(["opencode", "antigravity"])("%s drains 550 queued results across the replay limit while retaining 159 quiet copies", async (agent) => {
@@ -115,8 +118,10 @@ it("delivers a final result ahead of more than500 retained job status notes", as
       conversationId: i < 600 ? `job-${i}:note` : "job-600", body: i < 600 ? `STATUS_${i}` : "FINAL_AFTER_NOTES", createdAt: Date.now() + i, readAt: null });
   } finally { store.close(); }
   const sup = await connect("claude", "supervisor");
-  const stopped = await call(sup, "hook_event", { event: "Stop" });
-  expect(stopped).toContain("FINAL_AFTER_NOTES");
+  let stopped = "";
+  // Retained status notes are paged asynchronously before the real completion arrives.
+  await expect.poll(async () => stopped = await call(sup, "hook_event", { event: "Stop" }),
+    { timeout: 5_000 }).toContain("FINAL_AFTER_NOTES");
   expect(stopped).not.toContain("STATUS_");
   expect(await call(sup, "inbox", { limit: 100, mark_read: false })).toContain("STATUS_0");
 });
