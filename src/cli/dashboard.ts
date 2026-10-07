@@ -3,7 +3,6 @@ import { chmodSync, readFileSync, writeFileSync } from "node:fs";
 import { request } from "node:http";
 import { join } from "node:path";
 import type { Logger } from "../core/logger.js";
-import { startUi } from "./ui.js";
 
 /**
  * The dashboard runs inside whichever process hosts the bridge (or a manual `agent-bridge ui`).
@@ -116,6 +115,7 @@ export class DashboardController {
 
 /** Start the dashboard in this process and publish its link. Fails with EADDRINUSE if the port is taken. */
 export async function hostDashboard(opts: { home: string; pipe: string; port: number; log: Logger }): Promise<HostedDashboard> {
+  const { startUi } = await import("./ui.js");
   // A session taking over keeps the previous secret: open dashboard tabs (and saved links) keep working.
   const secret = previousSecret(opts.home) ?? randomBytes(SECRET_BYTES).toString("hex");
   const ui = await startUi({ ...opts, secret });

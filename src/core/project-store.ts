@@ -14,10 +14,9 @@ import { CONVERSATION_SCHEMA } from "./conversation-schema.js";
 import { historySchema } from "./history-schema.js";
 import { migrateSqlite } from "./sqlite-migrations.js";
 import { nullLogger } from "./logger.js";
-import { canonicalProjectRoot, projectKey } from "./project-identity.js";
+import { canonicalProjectRoot } from "./project-identity.js";
 import { isPluginCacheCwd } from "./session-visibility.js";
 
-const roots = new Map<string, string>();
 const excluded = new Map<string, boolean>();
 function linkedParent(file: string): boolean {
   let parent = dirname(resolve(file));
@@ -33,17 +32,7 @@ function linkedParent(file: string): boolean {
   }
 }
 /** Worker-only canonicalization. Worktrees share the original project's root. */
-export function conversationProject(cwd: string): string {
-  if (!cwd || isPluginCacheCwd(cwd)) return "";
-  try { if (isPluginCacheCwd(realpathSync.native(cwd))) return ""; } catch {}
-  const known = roots.get(cwd);
-  if (known !== undefined) return known;
-  const canonical = canonicalProjectRoot(cwd);
-  const root = canonical ? projectKey(canonical) : existsSync(cwd) ? "" : projectKey(resolve(cwd));
-  if (roots.size >= 256) roots.delete(roots.keys().next().value!);
-  roots.set(cwd, root);
-  return root;
-}
+export { conversationProject } from "./project-identity.js";
 
 /** Never follow a user-provided link for writable project storage. */
 export function ensureProjectFolder(project: string): string | null {
@@ -104,7 +93,7 @@ export function projectDatabasePath(project: string): string {
 }
 
 /** A bounded append-only replica. Open with readOnly:true in consumers. */
-export function syncProjectMirror(main: DatabaseSync, project: string): number {
+export function syncProjectMirror(main: DatabaseSync, project: string, onPending?: (pending: boolean) => void): number {
   const folder = ensureProjectFolder(project);
   if (!folder) return 0;
   const path = projectDatabasePath(project);
@@ -276,6 +265,8 @@ export function syncProjectMirror(main: DatabaseSync, project: string): number {
       mirror.exec("ROLLBACK");
       throw err;
     }
+    // A metadata-only page is still work to drain. Only the empty page wraps the cursor to zero.
+    onPending?.(candidates.length > 0);
     return copied;
   } finally {
     mirror.close();

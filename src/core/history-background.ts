@@ -99,6 +99,10 @@ export class HistoryBackground {
       this.worker.postMessage({ id, reset });
     });
   }
+  /** Broker mutations wake indexing; heartbeats and read-only dashboard requests do not. */
+  notify(): void {
+    if (!this.stopped && !this.exited) this.worker.postMessage({ wake: true });
+  }
   async close(): Promise<void> {
     this.stopped = true;
     if (this.restart) clearTimeout(this.restart);
