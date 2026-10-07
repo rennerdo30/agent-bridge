@@ -57,7 +57,7 @@ sessions from main-session tracking. The dashboard reuses that delivery instead
 of guessing a server URL or starting an independent resumed process. A future
 plugin capability could securely expose child input, but this release does not.
 
-For the planned 0.29.17 integration, Antigravity read-only probes reported **agy 1.3.1**. `agy --help` documents
+Antigravity support uses native hooks and the bridge inbox. Read-only probes reported **agy 1.3.1**. `agy --help` documents
 print-mode stream-json stdin, `--conversation` resume, and `--remote-control`.
 `agy remote-control --help` offers daemon start/status/stop, not a send command.
 The [official Remote Control documentation](https://antigravity.google/docs/remote-control?tab=cli)

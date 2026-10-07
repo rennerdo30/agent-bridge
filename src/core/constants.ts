@@ -117,5 +117,5 @@ export const HOOK_BROKER_TIMEOUT_MS = 1_500;
 /** Maximum number of messages injected into a single hook response. */
 export const HOOK_MAX_MESSAGES = 10;
 
-/** Concurrent jobs covered by the load harness. */
+/** Shared deadline for mail hooks; approval relay waits use their own limits. */
 export const HOOK_BUDGET_MS = 1500;
