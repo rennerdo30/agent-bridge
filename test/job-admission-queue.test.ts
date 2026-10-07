@@ -42,4 +42,3 @@ it("queues a mass spawn in order, cancels unstarted work and never exceeds its r
   expect(started).toEqual(all.filter((_, i) => i !== 4).map(j => j.prompt));
   expect(jobs.waiting()).toEqual([]);
 });
-

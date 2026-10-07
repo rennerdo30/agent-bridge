@@ -35,14 +35,13 @@ for (const rel of MANIFESTS) {
 }
 
 for (const dir of PLUGIN_DIRS) {
+  for (const [name, entry] of Object.entries(ENTRIES)) {
     await build({
       absWorkingDir: ROOT,
+      // Shared read-only dependencies must have the same logical paths as CI's local cache.
       preserveSymlinks: true,
-      entryPoints: Object.fromEntries(Object.entries(ENTRIES).map(([name, entry]) => [name, join(ROOT, entry)])),
-      outdir: join(ROOT, dir, "dist"),
-      outExtension: { ".js": ".mjs" },
-      chunkNames: "chunks/[name]-[hash]",
-      splitting: true,
+      entryPoints: [join(ROOT, entry)],
+      outfile: join(ROOT, dir, "dist", `${name}.mjs`),
       bundle: true,
       platform: "node",
       format: "esm",
@@ -52,10 +51,9 @@ for (const dir of PLUGIN_DIRS) {
       logLevel: "warning",
       // Some bundled CommonJS dependencies call require(); give them one in ESM output.
       // The CLI also gets a shebang so it works as the package's bin (npx github:...).
-      banner: { js: REQUIRE_SHIM },
+      banner: { js: (name === "cli" ? SHEBANG : "") + REQUIRE_SHIM },
     });
-    const cli = join(ROOT, dir, "dist", "cli.mjs");
-    writeFileSync(cli, SHEBANG + readFileSync(cli, "utf8"));
+  }
   console.log(`built ${dir}/dist (v${version})`);
 }
 

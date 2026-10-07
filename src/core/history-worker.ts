@@ -4,59 +4,24 @@ import { HistoryIndex, HISTORY_TICK_MS } from "./history.js";
 import { ConversationIngestor } from "./conversations.js";
 import { transcriptPaths } from "./transcripts/common.js";
 import { configureSqlite } from "./sqlite-policy.js";
-import { watch, type FSWatcher } from "node:fs";
-import { join } from "node:path";
-import { IdleBackoff } from "./idle-backoff.js";
 
 const db = new DatabaseSync(workerData.file, { timeout: 50 });
 configureSqlite(db, 50);
 const paths = workerData.paths ?? transcriptPaths();
 const index = new HistoryIndex(db, workerData.home, paths);
-const ingest = new ConversationIngestor(db, workerData.home, paths, (path) => {
-  index.notify(path);
-  wake();
-});
-const backoff = new IdleBackoff();
-const watchers = new Map<string, FSWatcher>();
+const ingest = new ConversationIngestor(db, workerData.home, paths);
 let timer: NodeJS.Timeout | null = null;
-let scheduledAt = 0;
-let stopped = false;
-function wake(): void { if (!stopped) schedule(backoff.wake()); }
-function watchHome(): void {
-  // Watch only input directories. Watching bridge.db/WAL or our mirrors would wake us on our own writes.
-  for (const dir of ["", "runs", "context-events", "approvals", "archive"]) {
-    const root = join(workerData.home, dir);
-    if (watchers.has(root)) continue;
-    try {
-      const watcher = watch(root, { recursive: Boolean(dir), persistent: false }, (_, name) => {
-        if (!dir && !/^(jobs\.json|runs|context-events|approvals|archive)$/.test(String(name))) return;
-        if (name) index.notify(join(root, String(name)));
-        ingest.notifyJobs();
-        wake();
-      });
-      watcher.on("error", () => { watcher.close(); watchers.delete(root); });
-      watchers.set(root, watcher);
-    } catch { /* The 30-second fallback also discovers roots created after startup. */ }
-  }
-}
-function tick(reset = false, force = false): { work: number; discovering: boolean } {
-  watchHome();
+function tick(reset = false): { work: number; discovering: boolean } {
   if (reset) index.reset();
-  const result = index.tick(!force);
-  const work = result.work + ingest.tick(force);
+  const result = index.tick();
+  const work = result.work + ingest.tick();
   return { work, discovering: result.discovering || ingest.discovering };
 }
 function schedule(delay = HISTORY_TICK_MS): void {
-  const due = Date.now() + delay;
-  // Coalesce event bursts without postponing an already scheduled batch.
-  if (timer && scheduledAt <= due) return;
-  if (timer) clearTimeout(timer);
-  scheduledAt = due;
   timer = setTimeout(() => {
-    timer = null;
     try {
       const result = tick();
-      schedule(backoff.next(Boolean(result.work || result.discovering)));
+      schedule(result.work || result.discovering ? 100 : HISTORY_TICK_MS);
     } catch (err) {
       parentPort?.postMessage({ error: String(err) });
       schedule();
@@ -65,20 +30,15 @@ function schedule(delay = HISTORY_TICK_MS): void {
 }
 parentPort?.on("message", (message) => {
   if (message.stop) {
-    stopped = true;
     if (timer) clearTimeout(timer);
     index.close();
     ingest.close();
-    for (const watcher of watchers.values()) watcher.close();
     db.close();
     parentPort?.close();
     return;
   }
-  if (message.wake) { wake(); return; }
   try {
-    const result = tick(message.reset, true);
-    parentPort?.postMessage({ id: message.id, result });
-    schedule(backoff.next(Boolean(result.work || result.discovering)));
+    parentPort?.postMessage({ id: message.id, result: tick(message.reset) });
   } catch (err) {
     parentPort?.postMessage({ id: message.id, error: String(err) });
   }

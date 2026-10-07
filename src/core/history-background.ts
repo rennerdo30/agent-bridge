@@ -5,7 +5,6 @@ import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import type { Logger } from "./logger.js";
 import { transcriptPaths } from "./transcripts/common.js";
-import { bundleDirectory } from "./bundle-directory.js";
 
 type Batch = { work: number; discovering: boolean };
 /** One elected worker; no source I/O or indexing writes on message dispatch. */
@@ -20,7 +19,7 @@ export class HistoryBackground {
     { resolve: (b: Batch) => void; reject: (e: Error) => void }
   >();
   constructor(file: string, log: Logger) {
-    let entry = pathToFileURL(join(bundleDirectory(import.meta.url), "history-worker.mjs"));
+    let entry = new URL("./history-worker.mjs", import.meta.url);
     if (import.meta.url.endsWith(".ts")) {
       // Source-mode tests/dev use their own checkout's dependency and ignored output.
       const root = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
@@ -99,10 +98,6 @@ export class HistoryBackground {
       this.pending.set(id, { resolve, reject });
       this.worker.postMessage({ id, reset });
     });
-  }
-  /** Broker mutations wake indexing; heartbeats and read-only dashboard requests do not. */
-  notify(): void {
-    if (!this.stopped && !this.exited) this.worker.postMessage({ wake: true });
   }
   async close(): Promise<void> {
     this.stopped = true;

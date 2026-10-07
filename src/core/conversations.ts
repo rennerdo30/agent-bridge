@@ -1,5 +1,3 @@
-import { CONVERSATION_BYTES, conversationPageSchema, type ConversationRequest, type ConversationPage } from "./conversation-query.js";
-export { CONVERSATION_BYTES, conversationPageSchema, type ConversationRequest, type ConversationPage } from "./conversation-query.js";
 import { createHash } from "node:crypto";
 import {
   closeSync,
@@ -12,6 +10,7 @@ import {
 } from "node:fs";
 import { basename, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { z } from "zod";
 import {
   object,
   parse,
@@ -23,6 +22,37 @@ import { readArchivedJobSnapshot } from "./job-archive.js";
 import { readJsonSnapshot } from "./file-cache.js";
 import { antigravityItems } from "./transcripts/antigravity.js";
 
+export const CONVERSATION_BYTES = 64 * 1024;
+export const conversationPageSchema = z
+  .object({
+    id: z.string().min(1).max(512),
+    after: z.number().int().nonnegative().optional(),
+    limit: z.number().int().min(1).max(100).optional(),
+  })
+  .strict();
+export type ConversationRequest = z.input<typeof conversationPageSchema>;
+export interface ConversationPage {
+  conversation: {
+    id: string;
+    agent: string;
+    session: string;
+    parent: string | null;
+    project: string;
+    job: string | null;
+    kind: string;
+  } | null;
+  records: {
+    id: number;
+    source: string;
+    generation: number;
+    offset: number;
+    at: number;
+    text: string;
+    raw: string;
+    part: string | null;
+  }[];
+  next: number | null;
+}
 const hash = (b: Uint8Array | string) =>
   createHash("sha256").update(b).digest("hex");
 const fold = (s: string) =>
@@ -42,16 +72,10 @@ export class ConversationIngestor {
   private watched = new Set<string>();
   private dirty = new Set<string>();
   private idleSources = 0;
-  private mirrorPending = new Set<string>();
-  private mirrorAfter = "";
-  private mirrorDiscovering = true;
-  private mirrorSweepAt = 0;
-  private mirrorSweepActive = true;
   constructor(
     private db: DatabaseSync,
     private home: string,
     private paths: TranscriptPaths,
-    private onDirty?: (path: string) => void,
   ) {
     this.checked = Number(
       db
@@ -73,11 +97,8 @@ export class ConversationIngestor {
           root,
           { recursive: true, persistent: false },
           (_, name) => {
-            if (name && this.dirty.size < 2048) {
-              const path = join(root, String(name));
-              this.dirty.add(path);
-              this.onDirty?.(path);
-            }
+            if (name && this.dirty.size < 2048)
+              this.dirty.add(join(root, String(name)));
           },
         );
         watcher.on("error", () => {});
@@ -92,24 +113,9 @@ export class ConversationIngestor {
     for (const watcher of this.watchers) watcher.close();
     this.watchers = [];
   }
-  notifyJobs(): void { this.jobsAt = 0; this.mirrorSweepAt = 0; }
-  private queueMirrors(force: boolean): void {
-    if (!this.mirrorSweepActive && (force || Date.now() - this.mirrorSweepAt >= 30_000)) {
-      this.mirrorAfter = "";
-      this.mirrorDiscovering = true;
-      this.mirrorSweepActive = true;
-    }
-    if (!this.mirrorDiscovering) return;
-    const rows = this.db.prepare("SELECT project FROM conversation_projects WHERE project>? ORDER BY project LIMIT 32").all(this.mirrorAfter);
-    for (const row of rows) this.mirrorPending.add(String(row.project));
-    if (rows.length) this.mirrorAfter = String(rows.at(-1)!.project);
-    if (rows.length < 32) this.mirrorDiscovering = false;
-  }
   get discovering(): boolean {
     return (
       this.jobQueue.length > 0 ||
-      this.mirrorDiscovering || this.mirrorPending.size > 0 ||
-      Boolean(this.db.prepare("SELECT 1 FROM conversation_bindings WHERE pending=1 LIMIT 1").get()) ||
       this.idleSources <
         Number(
           this.db.prepare("SELECT count(*) n FROM conversation_sources").get()!
@@ -151,8 +157,6 @@ export class ConversationIngestor {
         child ? `${agent}:${session}` : null,
         project,
       );
-    if (project)
-      this.mirrorPending.add(project);
     if (project)
       this.db
         .prepare(
@@ -520,12 +524,10 @@ export class ConversationIngestor {
         this.db
           .prepare("INSERT OR IGNORE INTO history_tags VALUES(?,?,?)")
           .run(id, type!, value!);
-    if (recordProject) {
-      this.mirrorPending.add(String(recordProject));
+    if (recordProject)
       this.db
         .prepare("INSERT OR IGNORE INTO conversation_memberships VALUES(?,?)")
         .run(recordProject, conversation);
-    }
   }
   private events(
     input: DatabaseSync,
@@ -1049,12 +1051,11 @@ export class ConversationIngestor {
       input.close();
     }
   }
-  tick(forceMirrors = true): number {
+  tick(): number {
     this.watchRoots();
     // Filesystem discovery/canonicalization and archive loading never hold SQLite's writer lock.
     this.register();
     this.jobs();
-    this.queueMirrors(forceMirrors);
     const nextJob = this.jobQueue[0]?.job;
     if (nextJob)
       conversationProject(String(nextJob.cwd ?? nextJob.workdir ?? ""));
@@ -1164,19 +1165,16 @@ export class ConversationIngestor {
       this.db.exec("ROLLBACK");
       throw err;
     }
-    const project = this.mirrorPending.values().next().value;
+    const project = this.db
+      .prepare(
+        "SELECT project FROM conversation_projects ORDER BY checked,project LIMIT 1",
+      )
+      .get();
     if (project) {
-      let pending = false;
-      work += syncProjectMirror(this.db, project, (more) => { pending = more; });
-      this.mirrorPending.delete(project);
-      if (pending) this.mirrorPending.add(project);
+      work += syncProjectMirror(this.db, String(project.project));
       this.db
         .prepare("UPDATE conversation_projects SET checked=? WHERE project=?")
-        .run(++this.checked, project);
-    }
-    if (!this.mirrorDiscovering && !this.mirrorPending.size && this.mirrorSweepActive) {
-      this.mirrorSweepAt = Date.now();
-      this.mirrorSweepActive = false;
+        .run(++this.checked, project.project!);
     }
     return work;
   }
