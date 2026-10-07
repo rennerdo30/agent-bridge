@@ -1,5 +1,5 @@
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync, lstatSync } from "node:fs";
-import { dirname, join, resolve, parse } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, parse, sep } from "node:path";
 import { archiveFile } from "../core/json-store.js";
 import { pluginSourceDir, type InstallResult } from "./opencode-install.js";
 import { antigravityHookCommand, antigravityPluginDir } from "../core/antigravity-plugin.js";
@@ -37,6 +37,11 @@ export function grantAntigravityBridgeMcp(settings = join(homedir(), ".gemini", 
 export function installAntigravity(source: string, target = antigravityPluginDir()): InstallResult {
   source = resolve(source); target = resolve(target);
   unlinked(source); unlinked(target);
+  const contains = (parent: string, child: string) => {
+    const path = relative(parent, child);
+    return !path || (path !== ".." && !path.startsWith(`..${sep}`) && !isAbsolute(path));
+  };
+  if (contains(source, target) || contains(target, source)) throw new Error("Plugin source and installation must be separate directories");
   unlinked(join(target, MARKER));
   if (existsSync(target) && (!existsSync(join(target, MARKER)) || readFileSync(join(target, MARKER), "utf8").trim() !== "agent-bridge")) throw new Error(`Refusing to replace an unowned Antigravity plugin: ${target}`);
   if (JSON.parse(readFileSync(join(source, "plugin.json"), "utf8")).name !== "agent-bridge") throw new Error("Invalid Antigravity plugin source");

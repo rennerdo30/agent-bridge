@@ -3881,49 +3881,49 @@ var require_fast_uri = __commonJS({
       schemelessOptions.skipEscape = true;
       return serialize2(resolved, schemelessOptions);
     }
-    function resolveComponent(base2, relative10, options, skipNormalization) {
+    function resolveComponent(base2, relative11, options, skipNormalization) {
       const target = {};
       if (!skipNormalization) {
         base2 = parse7(serialize2(base2, options), options);
-        relative10 = parse7(serialize2(relative10, options), options);
+        relative11 = parse7(serialize2(relative11, options), options);
       }
       options = options || {};
-      if (!options.tolerant && relative10.scheme) {
-        target.scheme = relative10.scheme;
-        target.userinfo = relative10.userinfo;
-        target.host = relative10.host;
-        target.port = relative10.port;
-        target.path = removeDotSegments(relative10.path || "");
-        target.query = relative10.query;
+      if (!options.tolerant && relative11.scheme) {
+        target.scheme = relative11.scheme;
+        target.userinfo = relative11.userinfo;
+        target.host = relative11.host;
+        target.port = relative11.port;
+        target.path = removeDotSegments(relative11.path || "");
+        target.query = relative11.query;
       } else {
-        if (relative10.userinfo !== void 0 || relative10.host !== void 0 || relative10.port !== void 0) {
-          target.userinfo = relative10.userinfo;
-          target.host = relative10.host;
-          target.port = relative10.port;
-          target.path = removeDotSegments(relative10.path || "");
-          target.query = relative10.query;
+        if (relative11.userinfo !== void 0 || relative11.host !== void 0 || relative11.port !== void 0) {
+          target.userinfo = relative11.userinfo;
+          target.host = relative11.host;
+          target.port = relative11.port;
+          target.path = removeDotSegments(relative11.path || "");
+          target.query = relative11.query;
         } else {
-          if (!relative10.path) {
+          if (!relative11.path) {
             target.path = base2.path;
-            if (relative10.query !== void 0) {
-              target.query = relative10.query;
+            if (relative11.query !== void 0) {
+              target.query = relative11.query;
             } else {
               target.query = base2.query;
             }
           } else {
-            if (relative10.path[0] === "/") {
-              target.path = removeDotSegments(relative10.path);
+            if (relative11.path[0] === "/") {
+              target.path = removeDotSegments(relative11.path);
             } else {
               if ((base2.userinfo !== void 0 || base2.host !== void 0 || base2.port !== void 0) && !base2.path) {
-                target.path = "/" + relative10.path;
+                target.path = "/" + relative11.path;
               } else if (!base2.path) {
-                target.path = relative10.path;
+                target.path = relative11.path;
               } else {
-                target.path = base2.path.slice(0, base2.path.lastIndexOf("/") + 1) + relative10.path;
+                target.path = base2.path.slice(0, base2.path.lastIndexOf("/") + 1) + relative11.path;
               }
               target.path = removeDotSegments(target.path);
             }
-            target.query = relative10.query;
+            target.query = relative11.query;
           }
           target.userinfo = base2.userinfo;
           target.host = base2.host;
@@ -3931,7 +3931,7 @@ var require_fast_uri = __commonJS({
         }
         target.scheme = base2.scheme;
       }
-      target.fragment = relative10.fragment;
+      target.fragment = relative11.fragment;
       return target;
     }
     function equal(uriA, uriB, options) {
@@ -41404,7 +41404,7 @@ function removeOwned(targets, configDir) {
 
 // src/cli/antigravity-install.ts
 import { copyFileSync as copyFileSync6, existsSync as existsSync26, mkdirSync as mkdirSync25, readdirSync as readdirSync17, readFileSync as readFileSync27, writeFileSync as writeFileSync10, lstatSync as lstatSync10 } from "node:fs";
-import { dirname as dirname23, join as join55, resolve as resolve18, parse as parse6 } from "node:path";
+import { dirname as dirname23, isAbsolute as isAbsolute11, join as join55, relative as relative9, resolve as resolve18, parse as parse6, sep as sep8 } from "node:path";
 import { homedir as homedir9 } from "node:os";
 var MARKER = ".agent-bridge-owned";
 function unlinked(path) {
@@ -41436,6 +41436,11 @@ function installAntigravity(source, target = antigravityPluginDir()) {
   target = resolve18(target);
   unlinked(source);
   unlinked(target);
+  const contains = (parent2, child) => {
+    const path = relative9(parent2, child);
+    return !path || path !== ".." && !path.startsWith(`..${sep8}`) && !isAbsolute11(path);
+  };
+  if (contains(source, target) || contains(target, source)) throw new Error("Plugin source and installation must be separate directories");
   unlinked(join55(target, MARKER));
   if (existsSync26(target) && (!existsSync26(join55(target, MARKER)) || readFileSync27(join55(target, MARKER), "utf8").trim() !== "agent-bridge")) throw new Error(`Refusing to replace an unowned Antigravity plugin: ${target}`);
   if (JSON.parse(readFileSync27(join55(source, "plugin.json"), "utf8")).name !== "agent-bridge") throw new Error("Invalid Antigravity plugin source");
@@ -41449,10 +41454,10 @@ function installAntigravity(source, target = antigravityPluginDir()) {
     copyFileSync6(from, to);
     result.files.push(to);
   };
-  const walk = (dir, relative10 = "") => {
+  const walk = (dir, relative11 = "") => {
     for (const entry of readdirSync17(dir, { withFileTypes: true })) {
       if (entry.isSymbolicLink()) throw new Error("Plugin source links are not supported");
-      const rel = join55(relative10, entry.name);
+      const rel = join55(relative11, entry.name);
       if (entry.isDirectory()) walk(join55(dir, entry.name), rel);
       else if (entry.isFile()) files2.push([join55(dir, entry.name), join55(target, rel)]);
     }
@@ -45129,7 +45134,7 @@ function parseNetworkAddress(address) {
 
 // src/core/doctor.ts
 import { existsSync as existsSync28, lstatSync as lstatSync11, mkdirSync as mkdirSync28, readFileSync as readFileSync31, readdirSync as readdirSync18, renameSync as renameSync8 } from "node:fs";
-import { basename as basename12, dirname as dirname24, join as join60, relative as relative9 } from "node:path";
+import { basename as basename12, dirname as dirname24, join as join60, relative as relative10 } from "node:path";
 import { randomUUID as randomUUID21 } from "node:crypto";
 import { DatabaseSync as DatabaseSync14 } from "node:sqlite";
 function doctor(home, now = Date.now()) {
@@ -45146,9 +45151,9 @@ function doctor(home, now = Date.now()) {
       }
       if (st.isDirectory()) walk(path);
       else {
-        report.sizes.push({ path: relative9(home, path), bytes: st.size });
+        report.sizes.push({ path: relative10(home, path), bytes: st.size });
         report.totalBytes += st.size;
-        if (file2.endsWith(".tmp") && !relative9(home, path).split(/[\\/]/).some((s) => ["archive", "backups"].includes(s))) finding("warning", "orphan-temp", path, "Temporary file; quarantine only with all writers stopped", true);
+        if (file2.endsWith(".tmp") && !relative10(home, path).split(/[\\/]/).some((s) => ["archive", "backups"].includes(s))) finding("warning", "orphan-temp", path, "Temporary file; quarantine only with all writers stopped", true);
         if (file2.includes(".corrupt-")) finding("error", "preserved-corrupt", path, "Preserved corrupt data needs manual recovery");
       }
     }
