@@ -157,14 +157,17 @@ export class Broker {
         return { sent: true };
       },
       inlineJobReport: async (c, m) => {
-        const peer = this.requirePeer(c), job = this.storedJobs().find((j) => `job:${j.id}` === m.from?.id);
-        if (!job || (job.executionOwner !== peer.name && job.owner !== peer.name && job.rootName !== peer.name) || typeof job.owner !== "string" || typeof m.body !== "string" || m.body.length > MAX_BODY_CHARS) throw new BridgeError("unauthorized", "Invalid inline job delivery.");
-        const recipient = chooseJobRecipient(job, [...this.conns].flatMap((c) => c.peer ? [c.peer] : []));
-        const message = { ...m, to: recipient, recipient };
-        if (await this.store.retryWrite(() => this.store.insertJobDelivery(message))) {
-          const target = this.connByName(recipient);
-          if (target) this.emit(target, "message", message);
-        }
+        const peer = this.requirePeer(c);
+        await this.store.retryWrite(() => {
+          const job = this.storedJobs().find((j) => `job:${j.id}` === m.from?.id);
+          if (!job || (job.executionOwner !== peer.name && job.owner !== peer.name && job.rootName !== peer.name) || typeof job.owner !== "string" || typeof m.body !== "string" || m.body.length > MAX_BODY_CHARS) throw new BridgeError("unauthorized", "Invalid inline job delivery.");
+          const recipient = chooseJobRecipient(job, [...this.conns].flatMap((c) => c.peer ? [c.peer] : []));
+          const message = { ...m, to: recipient, recipient };
+          if (this.store.insertJobDelivery(message)) {
+            const target = this.connByName(recipient);
+            if (target) this.emit(target, "message", message);
+          }
+        });
         return { saved: true };
       },
       auth: (c, a) => {
@@ -566,16 +569,18 @@ export class Broker {
         // retry: the primary may leave or return while another SQLite writer holds the lock.
         await this.store.retryWrite(() => {
           if (this.closing) return;
+          const currentJob = this.storedJobs().find((record) => record.id === job.id);
+          if (!currentJob) return;
           const live = [...this.conns].flatMap((c) => c.peer ? [c.peer] : []);
-          const recipient = chooseJobRecipient(job, live), target = this.connByName(recipient);
-          if (Array.isArray(job.deliveryHistory)) for (const envelope of job.deliveryHistory) {
-            if (!isRecord(envelope) || !isRecord(envelope.from) || envelope.from.id !== `job:${job.id}` || typeof envelope.id !== "string" || typeof envelope.body !== "string") continue;
+          const recipient = chooseJobRecipient(currentJob, live), target = this.connByName(recipient);
+          if (Array.isArray(currentJob.deliveryHistory)) for (const envelope of currentJob.deliveryHistory) {
+            if (!isRecord(envelope) || !isRecord(envelope.from) || envelope.from.id !== `job:${currentJob.id}` || typeof envelope.id !== "string" || typeof envelope.body !== "string") continue;
             const message = { ...envelope, to: recipient, recipient } as unknown as BridgeMessage;
             if (this.store.insertJobDelivery(message) && target) this.emit(target, "message", message);
           }
           if (!target) return;
-          for (const from of mastersFor(job)) {
-            const moved = this.store.handoffMail(from, recipient, String(job.id), this.now());
+          for (const from of mastersFor(currentJob)) {
+            const moved = this.store.handoffMail(from, recipient, String(currentJob.id), this.now());
             const previous = this.connByName(from);
             if (previous && moved.length) this.emit(previous, "mail_retracted", { ids: moved.map((m) => m.id) });
             for (const m of moved) this.emit(target, "message", m);
@@ -1065,6 +1070,8 @@ export class Broker {
 
     // Durable ownership wins over the old name cached in a still-running parent link.
     const own = sender.jobAgent ? this.storedJobs().find((j) => `job:${j.id}` === sender.id) : undefined;
+    const supervisorMail = Boolean(own && (!own.parentJob || (Array.isArray(own.ownershipHistory) && own.ownershipHistory.length)) &&
+      (to === sender.jobParent || mastersFor(own).includes(to)));
     if (own && Array.isArray(own.ownershipHistory)) {
       if (to === sender.jobParent || mastersFor(own).includes(to)) to = chooseJobRecipient(own, [...this.conns].flatMap((c) => c.peer ? [c.peer] : []));
       else if (own.ownershipHistory.some((h) => isRecord(h) && h.fromRootName === to)) to = String(own.rootName);
@@ -1110,17 +1117,31 @@ export class Broker {
       return result;
     }
     const remoteTargets = to === BROADCAST ? this.network?.peers().filter((p) => !p.jobAgent).map((p) => p.name) ?? [] : [];
-    const { live, queued } = this.resolveTargets(to, sender);
+    let { live, queued } = this.resolveTargets(to, sender);
     if (conversationId.startsWith(SIBLING_CONVERSATION_PREFIX) &&
         (queued.some((name) => !sender.jobAgent || !this.storedSiblings(sender).some((s) => s.name === name)) ||
           live.some((c) => c.peer!.jobAgent && (!sender.jobAgent || !sender.jobOwner || (this.jobSupervisor(c.peer!) !== this.jobSupervisor(sender) && !sender.jobSendTo?.includes(c.peer!.name)))))) {
       throw new BridgeError("unauthorized", "sibling chat requires the same supervisor or an explicit send_to job grant");
     }
     const messages: BridgeMessage[] = [];
-    for (const c of live) messages.push({ ...base, recipient: c.peer!.name });
-    for (const key of queued) messages.push({ ...base, recipient: key });
-    for (const m of messages) await this.store.retryWrite(() => this.store.insert(m));
-    live.forEach((c, i) => this.emit(c, "message", messages[i]!));
+    let inserted = true;
+    if (supervisorMail) {
+      await this.store.retryWrite(() => {
+        const current = this.storedJobs().find((job) => `job:${job.id}` === sender.id);
+        if (!current) throw new BridgeError("unauthorized", "Job ownership is unavailable.");
+        this.refreshJobPeer(current);
+        to = chooseJobRecipient(current, [...this.conns].flatMap((c) => c.peer ? [c.peer] : []));
+        ({ live, queued } = this.resolveTargets(to, sender));
+        const message = { ...base, to, recipient: live[0]?.peer!.name ?? queued[0]! };
+        inserted = this.store.insertJobDelivery(message);
+        messages.splice(0, messages.length, message);
+      });
+    } else {
+      for (const c of live) messages.push({ ...base, recipient: c.peer!.name });
+      for (const key of queued) messages.push({ ...base, recipient: key });
+      for (const m of messages) await this.store.retryWrite(() => this.store.insert(m));
+    }
+    if (inserted) live.forEach((c, i) => this.emit(c, "message", messages[i]!));
 
     this.log.info("message routed", {
       id,

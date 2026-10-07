@@ -5,6 +5,7 @@ import { Worker } from "node:worker_threads";
 import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Broker } from "../src/core/broker.js";
+import { BridgeNode } from "../src/core/node.js";
 import { BridgeClient } from "../src/core/client.js";
 import { JOBS_FILE, PROTOCOL_VERSION } from "../src/core/constants.js";
 import { nullLogger } from "../src/core/logger.js";
@@ -14,8 +15,9 @@ import { JobManager, readStore } from "../src/mcp/jobs.js";
 import { makeEnv, until, type TestEnv } from "./helpers.js";
 
 let env: TestEnv;
-beforeEach(() => { env = makeEnv(); });
-afterEach(async () => { vi.restoreAllMocks(); await env.cleanup(); });
+let extraNodes: BridgeNode[];
+beforeEach(() => { env = makeEnv(); extraNodes = []; });
+afterEach(async () => { vi.restoreAllMocks(); for (const node of extraNodes) await node.stop(); await env.cleanup(); });
 
 describe("broker overload survival", () => {
   it("retries a deferred durable result route without requiring another connection", async () => {
@@ -70,18 +72,27 @@ describe("broker overload survival", () => {
     await until(() => received.size === 550);
     expect(reader.unread()).toEqual([]);
   });
-  it.each(["send", "inline result", "pending result"])("answers peers while a real SQLite writer lock delays %s, then queues it exactly once", async (operation) => {
+  it.each(["send", "inline result", "pending result", "reassigned result", "reassigned inline result", "reassigned runner result"])("answers peers while a real SQLite writer lock delays %s, then queues it exactly once", async (operation) => {
     const sender = env.node("sender"), recipient = env.node("recipient", "opencode");
     await sender.start(); await recipient.start();
     const inline = { id: randomUUID(), from: { id: "job:inline", name: "opencode-job-inline", agent: "opencode" as const },
       to: "recipient", recipient: "recipient", conversationId: "job-inline", replyTo: null, hop: 0, body: "LOCKED_SEND", createdAt: Date.now(), readAt: null };
-    if (operation !== "send") writeFileSync(join(env.home, JOBS_FILE), JSON.stringify({ version: 3, jobs: [{
+    const savedJob = {
       id: "inline", name: "opencode-job-inline", agent: "opencode", status: "done", owner: recipient.name,
       rootName: recipient.name, executionOwner: sender.name, startedAt: Date.now(), prompt: "fixture",
-      ...(operation === "pending result" ? { ownershipHistory: [{ from: sender.name, to: recipient.name, fromRootName: sender.name, rootName: recipient.name }], deliveryHistory: [inline] } : {}),
-    }] }));
+      ...(operation.endsWith("result") && operation !== "inline result" ? { ownershipHistory: [{ from: sender.name, to: recipient.name, fromRootName: sender.name, rootName: recipient.name }], deliveryHistory: operation.includes("runner") ? [] : [inline] } : {}),
+    };
+    if (operation !== "send") writeFileSync(join(env.home, JOBS_FILE), JSON.stringify({ version: 3, jobs: [savedJob] }));
+    let runner: BridgeNode | undefined;
+    if (operation.includes("runner")) {
+      runner = new BridgeNode({ pipePath: env.pipe, dbPath: env.db, token: loadOrCreateToken(env.home), id: "job:inline", name: "opencode-job-inline",
+        agent: "other", jobAgent: "opencode", jobOwner: "fixture-root", jobParent: recipient.name, cwd: env.home, autoWake: false, canHostBroker: false, log: nullLogger });
+      extraNodes.push(runner);
+      await runner.start();
+    }
     const submit = () => operation === "send" ? sender.send({ to: "recipient", body: "LOCKED_SEND", dedupeKey: "busy-once" }) :
-      operation === "inline result" ? sender.reportInlineJob(inline) : (sender as unknown as { broker: Broker }).broker.routePendingJobMail().then(() => ({ saved: true }));
+      runner ? runner.send({ to: "recipient", body: "LOCKED_SEND", conversationId: "job-inline", dedupeKey: "busy-once" }) :
+      operation.includes("inline") ? sender.reportInlineJob(inline) : (sender as unknown as { broker: Broker }).broker.routePendingJobMail().then(() => ({ saved: true }));
     const worker = new Worker(`
       const { DatabaseSync } = require('node:sqlite');
       const { workerData, parentPort } = require('node:worker_threads');
@@ -99,13 +110,17 @@ describe("broker overload survival", () => {
       await new Promise((resolve) => setTimeout(resolve, 30));
       // A primary can disappear during the lock. Pending replay must recompute the live fallback.
       if (operation === "pending result") await recipient.stop();
+      if (operation.startsWith("reassigned")) writeFileSync(join(env.home, JOBS_FILE), JSON.stringify({ version: 3, jobs: [{
+        ...savedJob, owner: sender.name, rootName: sender.name,
+        ownershipHistory: [...savedJob.ownershipHistory!, { from: recipient.name, to: sender.name, fromRootName: recipient.name, rootName: sender.name }],
+      }] }));
       await expect.poll(async () => (await sender.peers()).some((p) => p.name === "recipient")).toBe(operation !== "pending result");
       expect(settled).toBe(false);
       worker.postMessage("release");
       await until(() => messages.includes("released"));
       const result = await sent;
-      expect(result).toMatchObject(operation === "send" ? { deliveredTo: ["recipient"], queuedFor: [] } : { saved: true });
-      const delivered = operation === "pending result" ? sender : recipient;
+      expect(result).toMatchObject(operation === "send" ? { deliveredTo: ["recipient"], queuedFor: [] } : runner ? { deliveredTo: [sender.name], queuedFor: [] } : { saved: true });
+      const delivered = operation === "pending result" || operation.startsWith("reassigned") ? sender : recipient;
       await until(() => delivered.unread().length === 1);
       expect(delivered.unread()[0]!.body).toBe("LOCKED_SEND");
       expect(await submit()).toEqual(result);
