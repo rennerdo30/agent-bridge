@@ -1,4 +1,5 @@
 import { conversationProject } from "./project-store.js";
+import { historyReadPath, historyReady, HISTORY_BATCH_MS } from "./history-store.js";
 import { createHash } from "node:crypto";
 import { closeSync, existsSync, fstatSync, openSync, opendirSync, readSync, statSync, type Dir } from "node:fs";
 import { basename, dirname, join } from "node:path";
@@ -72,15 +73,20 @@ export class HistoryIndex {
   private heads = new Map<string,{identity:string;value:Record<string,any>}>();
   private readonly paths: TranscriptPaths;
 
-  constructor(private readonly db: DatabaseSync, private readonly home: string | null, paths?: TranscriptPaths) {
+  private deadline = Infinity;
+  constructor(private readonly db: DatabaseSync, private readonly home: string | null, paths?: TranscriptPaths,
+    private readonly source: DatabaseSync = db, private readonly peerSink?: (peer: Pick<PeerInfo, "id" | "name" | "sessionId"> & Partial<Pick<PeerInfo, "cwd" | "agent">>) => void) {
     this.paths = paths ?? transcriptPaths();
     this.engine = db.prepare("SELECT name FROM sqlite_master WHERE name = 'history_fts'").get() ? "fts5" : "plain";
     this.checked = Number(db.prepare("SELECT coalesce(max(checked),0) AS n FROM history_files").get()!.n);
   }
 
-  get database(): DatabaseSync { return this.db; }
+  get database(): DatabaseSync { return this.source !== this.db && !historyReady(this.db) ? this.source : this.db; }
+  /** Writable isolated storage for explicit offline maintenance, regardless of read fallback. */
+  get storageDatabase(): DatabaseSync { return this.db; }
 
   rememberPeer(peer: Pick<PeerInfo, "id" | "name" | "sessionId"> & Partial<Pick<PeerInfo, "cwd" | "agent">>): void {
+    if (this.peerSink) { this.peerSink(peer); return; }
     if (!peer.sessionId) return;
     const job = /^(claude|codex|opencode|antigravity)-job-/.test(peer.name) ? peer.name : null;
     for (const alias of [peer.id, peer.name, peer.sessionId]) this.rememberSession(alias, peer.sessionId, job);
@@ -127,19 +133,21 @@ export class HistoryIndex {
     let count=0,bytes=0;
     for (const row of db.prepare(`SELECT rowid AS history_rowid, * FROM ${table} WHERE rowid > ? ORDER BY rowid LIMIT ?`).iterate(after,HISTORY_ROWS_PER_SOURCE)) {
       consume(row);this.advance(source,String(row.history_rowid));count++;bytes+=Buffer.byteLength(typeof row.body === "string" ? row.body : "");
-      if(bytes>=HISTORY_BATCH_BODY_BYTES)break;
+      if(bytes>=HISTORY_BATCH_BODY_BYTES || Date.now() >= this.deadline)break;
     }
     return count;
   }
 
   /** Fixed budgets; idempotent documents are written before advancing their cursors. */
   tick(): { work: number; discovering: boolean } {
+    this.deadline = Date.now() + HISTORY_BATCH_MS;
     const fileCount = Number(this.db.prepare("SELECT count(*) AS n FROM history_files").get()!.n);
     if (this.idleFiles >= fileCount) this.idleFiles = 0;
     // Do not hold a writer transaction over filesystem/provider reads or Git canonicalization.
     let work = 0;
     {
-      work += this.rows("messages", this.db, "messages", (row) => this.message(row));
+      work += this.rows("messages", this.source, "messages", (row) => this.message(row));
+      if (this.source !== this.db) work += this.rows("broker-pending", this.source, "history_pending", row => this.message(row));
       let pendingCount=0,pendingBytes=0;
       for (const row of this.db.prepare("SELECT * FROM history_pending LIMIT ?").iterate(HISTORY_ROWS_PER_SOURCE)) {
         this.message(row);
@@ -147,7 +155,7 @@ export class HistoryIndex {
         pendingCount++;pendingBytes+=Buffer.byteLength(String(row.body));if(pendingBytes>=HISTORY_BATCH_BODY_BYTES)break;
       }
       work += pendingCount;
-      work += this.rows("decisions", this.db, "decisions", (row) => {
+      work += this.rows("decisions", this.source, "decisions", (row) => {
         const scope = parse(row.scope), sessions = Array.isArray(scope.sessions) ? scope.sessions.filter((s: unknown) => typeof s === "string") : [];
         this.put({ id: `decision:${row.id}`, kind: "decision", agent: row.author_agent, at: Number(row.created_at), body: `${row.topic}\n${row.body}`,
           link: `/api/decisions/${enc(row.topic)}/history`, message: row.source_message_id, job: null, run: null, session: row.author_id, cursor: String(row.revision) }, [row.author_id, row.author_name, ...sessions]);
@@ -174,6 +182,7 @@ export class HistoryIndex {
         work += this.discover();
         const files = this.db.prepare("SELECT * FROM history_files ORDER BY checked,path LIMIT ?").all(HISTORY_FILES_PER_TICK) as unknown as FileRow[];
         for (const file of files) {
+          if (Date.now() >= this.deadline) break;
           const indexed = this.indexFile(file);
           work += indexed;
           this.idleFiles = indexed ? 0 : this.idleFiles + 1;
@@ -218,7 +227,7 @@ export class HistoryIndex {
       ];
     }
     let work = 0;
-    while (work < HISTORY_DISCOVERY_PER_TICK && (this.walk || this.queue.length)) {
+    while (work < HISTORY_DISCOVERY_PER_TICK && Date.now() < this.deadline && (this.walk || this.queue.length)) {
       work++;
       if (!this.walk) {
         const entry = this.queue.shift()!;
@@ -350,6 +359,7 @@ export class HistoryIndex {
   }
 
   search(input: HistorySearch): HistoryResult {
+    if (this.database !== this.db) return new HistoryIndex(this.database, null).search(input);
     const args = historySearchSchema.parse(input), tokens = terms(args.query);
     if (!tokens.length) return { engine: this.engine, hits: [] };
     const durable = this.db.prepare("SELECT name FROM sqlite_master WHERE name='conversation_records'").get();
@@ -385,7 +395,7 @@ export class HistoryIndex {
 
   reset(): void {
     this.db.exec("BEGIN IMMEDIATE");
-    try { this.db.exec("DELETE FROM history_documents; DELETE FROM history_tags; DELETE FROM history_cursors; DELETE FROM history_files;"); this.db.exec("COMMIT"); }
+    try { this.db.exec("DELETE FROM history_documents; DELETE FROM history_tags; DELETE FROM history_cursors WHERE source<>'legacy-record-tail'; DELETE FROM history_files;"); this.db.exec("COMMIT"); }
     catch (err) { this.db.exec("ROLLBACK"); throw err; }
     this.close(); this.queue = []; this.lastDiscovery = 0; this.opencodeComplete = false; this.idleFiles = 0;
   }
@@ -394,6 +404,7 @@ export class HistoryIndex {
 
 /** Dashboard reads never initialize, migrate, or change the derived index. */
 export function readHistory(file: string, input: HistorySearch): HistoryResult {
+  file = historyReadPath(file);
   historySearchSchema.parse(input);
   if (!existsSync(file)) return { engine: "plain", hits: [] };
   const db = new DatabaseSync(file, { readOnly: true, timeout: HISTORY_READ_TIMEOUT_MS });
@@ -405,6 +416,7 @@ export function readHistory(file: string, input: HistorySearch): HistoryResult {
 
 /** Read a bounded indexed source even when its original CLI session is no longer online. */
 export function readHistorySource(file: string, id: string): Omit<HistoryHit, "snippet" | "sourceLink"> & { body: string } | null {
+  file = historyReadPath(file);
   if (!existsSync(file)) return null;
   const db = new DatabaseSync(file, { readOnly: true, timeout: HISTORY_READ_TIMEOUT_MS });
   try {

@@ -10,6 +10,9 @@ import { randomUUID } from "node:crypto";
 import { performance, monitorEventLoopDelay } from "node:perf_hooks";
 import { Session } from "node:inspector";
 import { Worker } from "node:worker_threads";
+import { DatabaseSync } from "node:sqlite";
+import { historyReady, historyDbPath } from "../src/core/history-store.js";
+import { backfillBytes, primeLargeHistoryBackfill, seedLargeHistoryBackfill } from "./history-backfill-fixture.js";
 import { Broker } from "../src/core/broker.js";
 import { BridgeClient } from "../src/core/client.js";
 import { MessageStore } from "../src/core/store.js";
@@ -77,6 +80,7 @@ try {
   process.env.XDG_DATA_HOME = join(home, "xdg-fixture");
   process.env.ANTIGRAVITY_CLI_HOME = join(home, "antigravity-fixture");
   for (const name of ["codex-fixture", "claude-fixture", "xdg-fixture", "antigravity-fixture"]) fs.mkdirSync(join(home, name));
+  const backfillFixture = seedLargeHistoryBackfill(home);
   fs.mkdirSync(join(home, "runs", "archive"), { recursive: true });
   fs.mkdirSync(join(home, "archive"));
   fs.writeFileSync(join(home, "token"), token);
@@ -105,6 +109,21 @@ try {
   await a.link(invitation, "127.0.0.1", b.port);
   broker = new Broker(pipe, store, nullLogger, token, Date.now, join(home, "jobs.json"));
   await broker.listen();
+  const history = new DatabaseSync(historyDbPath(join(home,"bridge.db")),{timeout:3000});
+  try {
+    const deadline = Date.now() + 60_000;
+    while (!historyReady(history)) { if (Date.now()>deadline) throw new Error("history migration did not finish"); await pause(100); }
+    primeLargeHistoryBackfill(history,home,backfillFixture);
+  } finally { history.close(); }
+  const measureBackfill = () => {
+    const history = new DatabaseSync(historyDbPath(join(home,"bridge.db")),{readOnly:true,timeout:100});
+    try { return backfillBytes(history,backfillFixture); } finally { history.close(); }
+  };
+  const legacyCounts = () => {
+    const bridge = new DatabaseSync(join(home,"bridge.db"),{readOnly:true,timeout:100});
+    try { return ["history_documents","conversation_records","history_files"].map(table => Number(bridge.prepare(`SELECT count(*) n FROM ${table}`).get()!.n)); } finally { bridge.close(); }
+  };
+  const legacyBefore = legacyCounts(), backfillProgress: number[] = [];
   for (let i = 0; i < jobCount + 6; i++) {
     const job = i < jobCount ? jobs[i]! : undefined;
     const p: PeerInfo = { id: job ? `job:${job.id}` : randomUUID(), name: job?.name ?? (i === jobCount ? "load-owner" : `load-session-${i}`), agent: "codex", cwd: home, pid: process.pid, agentPid: null, sessionId: null, startedAt: Date.now(), autoWake: false, ...(job ? { jobAgent: "codex", jobOwner: "load-root", jobParent: "load-owner" } : {}) };
@@ -133,6 +152,7 @@ try {
   lag.enable();
   await post("Profiler.enable"); await post("Profiler.start");
   const cpu = process.cpuUsage(), started = performance.now();
+  backfillProgress.push(measureBackfill());
   for (let i = 0; i < 5; i++) await timed("listRuns", () => listRuns(home));
   const finishAt = performance.now() + duration * 1000;
   const loop = async (interval: number, fn: () => Promise<unknown>) => {
@@ -150,6 +170,7 @@ try {
   });
   let sendIteration = 0;
   await Promise.all([
+    loop(2000, async () => { backfillProgress.push(measureBackfill()); }),
     loop(2000, () => timed("state", async () => { const res = await fetch(`http://127.0.0.1:${ui!.port}/api/state`, { headers: { cookie: `ab_ui=${secret}` } }); if (res.status !== 200) throw new Error(`HTTP ${res.status}`); await res.json(); })),
     ...Array.from({ length: 6 }, () => loop(1000, hook)),
     ...Array.from({ length: jobCount }, (_, i) => loop(2000, () => timed("sibling", () => clients[i]!.request("sendSibling", { to: jobs[(i + 1) % jobCount]!.name, body: "synthetic coordination", maxHops: 32 })))),
@@ -200,7 +221,13 @@ try {
   await workerDone; release(); await pause(30); clearTimeout(beat); tracked.end();
   lag.disable();
   const stats = Object.fromEntries(Object.entries(samples).map(([key, values]) => { const sorted = [...values].sort((x, y) => x - y); return [key, { count: values.length, meanMs: values.reduce((x, y) => x + y, 0) / values.length, p95Ms: sorted[Math.floor((sorted.length - 1) * .95)], maxMs: sorted.at(-1) }]; }));
-  console.log(JSON.stringify({ durationSeconds: duration, peers: peers.length, jobs: jobCount, logs: 680, retainedMessages: 8000, elapsedMs: elapsed, cpuMs: (usage.user + usage.system) / 1000, cpuPercent: (usage.user + usage.system) / (elapsed * 10), eventLoop: { p95Ms: lag.percentile(95) / 1e6, p99Ms: lag.percentile(99) / 1e6, maxMs: lag.max / 1e6 }, heartbeatMsUnderSqliteContention: sqlHeartbeat, heartbeatMsUnderStoreContention: heartbeat, failures, failureDetails, delivered, quietCopies, stats, io, hot }, null, 2));
+  backfillProgress.push(measureBackfill());
+  const legacyAfter = legacyCounts();
+  const backfill = { inputBytes: backfillFixture.bytes, rawBytesBySample: backfillProgress, legacyBefore, legacyAfter };
+  if (backfillProgress.at(-1)! <= backfillProgress[0]! || backfillProgress.at(-1)! >= backfillFixture.bytes || JSON.stringify(legacyBefore)!==JSON.stringify(legacyAfter)) { failures++; failureDetails.push("backfill inactive/complete or worker wrote legacy history tables"); }
+  const sendP95 = (stats.send as {p95Ms:number}|undefined)?.p95Ms ?? Infinity;
+  if (sendP95 > 1000) { failures++; failureDetails.push(`send p95 ${sendP95}ms exceeds 1000ms gate`); }
+  console.log(JSON.stringify({ backfill, durationSeconds: duration, peers: peers.length, jobs: jobCount, logs: 680, retainedMessages: 8000, elapsedMs: elapsed, cpuMs: (usage.user + usage.system) / 1000, cpuPercent: (usage.user + usage.system) / (elapsed * 10), eventLoop: { p95Ms: lag.percentile(95) / 1e6, p99Ms: lag.percentile(99) / 1e6, maxMs: lag.max / 1e6 }, heartbeatMsUnderSqliteContention: sqlHeartbeat, heartbeatMsUnderStoreContention: heartbeat, failures, failureDetails, delivered, quietCopies, stats, io, hot }, null, 2));
   if (failures) process.exitCode = 1;
 } finally {
   lag.disable(); inspector.disconnect();

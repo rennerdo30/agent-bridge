@@ -21,6 +21,7 @@ import { conversationProject, syncProjectMirror } from "./project-store.js";
 import { readArchivedJobSnapshot } from "./job-archive.js";
 import { readJsonSnapshot } from "./file-cache.js";
 import { antigravityItems } from "./transcripts/antigravity.js";
+import { historyReadPath, HISTORY_BATCH_MS } from "./history-store.js";
 
 export const CONVERSATION_BYTES = 64 * 1024;
 export const conversationPageSchema = z
@@ -60,6 +61,29 @@ const hash = (b: Uint8Array | string) =>
 const fold = (s: string) =>
   s.normalize("NFKD").replace(/\p{M}/gu, "").toLowerCase();
 
+/** Searchable human/tool text, without another full copy of raw transcript JSON. */
+export function indexedConversationText(raw: Buffer): string {
+  const text = raw.toString("utf8");
+  let value: unknown;
+  try { value = JSON.parse(text); } catch {
+    const lines = text.trim().split("\n");
+    if (lines.length > 1 && lines.every(line => { try { JSON.parse(line); return true; } catch { return false; } })) return lines.map(line => indexedConversationText(Buffer.from(line))).join("\n");
+    // Oversized/incomplete records remain searchable in bounded 64 KiB fragments.
+    return text;
+  }
+  const found: string[] = [];
+  const visit = (item: unknown, depth = 0): void => {
+    if (depth > 8 || found.join("\n").length >= CONVERSATION_BYTES) return;
+    if (Array.isArray(item)) { for (const v of item.slice(0, 100)) visit(v, depth + 1); }
+    else if (item && typeof item === "object") for (const [key, v] of Object.entries(item)) {
+      if (["text", "body", "content", "summary", "prompt", "title", "topic", "description", "note", "reason", "detail", "question", "answer"].includes(key) && typeof v === "string") found.push(v);
+      else if (["message", "payload", "content", "parts", "output", "data"].includes(key)) visit(v, depth + 1);
+    }
+  };
+  visit(value);
+  return found.join("\n").slice(0, CONVERSATION_BYTES);
+}
+
 /** Preserves bytes independently of the deliberately lossy dashboard readers. Worker-only. */
 export class ConversationIngestor {
   private checked = 0;
@@ -78,6 +102,7 @@ export class ConversationIngestor {
     private db: DatabaseSync,
     private home: string,
     private paths: TranscriptPaths,
+    private source: DatabaseSync = db,
   ) {
     this.checked = Number(
       db
@@ -396,12 +421,13 @@ export class ConversationIngestor {
         );
       return;
     }
-    const body = raw.toString("utf8");
+    // Retain bytes exactly once. The derived text omits bulky JSON/tool metadata.
+    const body = indexedConversationText(raw);
     const result = this.db
       .prepare(
         "INSERT OR IGNORE INTO conversation_records(source,generation,offset,conversation,at,raw,body,part) VALUES(?,?,?,?,?,?,?,?)",
       )
-      .run(source, generation, offset, conversation, at, raw, body, part);
+      .run(source, generation, offset, conversation, at, raw, body === raw.toString("utf8") ? "" : body, part);
     // A lock can interrupt derived indexing after retaining the bytes. Replay repairs
     // documents/tags before the caller advances its source cursor.
     const record = Number(result.changes) ? Number(result.lastInsertRowid) : Number(this.db
@@ -437,13 +463,8 @@ export class ConversationIngestor {
       recordProject = c.project!,
       recordKind = c.kind!;
     if (c.kind === "message" || c.kind === "decision") {
-      const first = String(
-        this.db
-          .prepare(
-            "SELECT body FROM conversation_records WHERE source=? AND generation=? ORDER BY offset LIMIT 1",
-          )
-          .get(recordInfo.source!, recordInfo.generation!)!.body,
-      );
+      const first = Buffer.from(this.db.prepare("SELECT raw FROM conversation_records WHERE source=? AND generation=? ORDER BY offset LIMIT 1")
+        .get(recordInfo.source!, recordInfo.generation!)!.raw as Uint8Array).toString("utf8");
       const metadata = parse(first);
       for (const key of [
         "from_agent",
@@ -595,13 +616,13 @@ export class ConversationIngestor {
     const key = "durable-envelope-keys",
       saved = parse(this.cursor(key)),
       after = Number(saved.after ?? 0);
-    const envelope = this.db
+    const envelope = this.source
       .prepare(
         "SELECT * FROM conversation_envelopes WHERE id>? ORDER BY id LIMIT 1",
       )
       .get(after);
     if (!envelope) return 0;
-    let row = this.db
+    let row = this.source
       .prepare(
         "SELECT * FROM messages WHERE id=? ORDER BY recipient=? DESC LIMIT 1",
       )
@@ -1058,6 +1079,7 @@ export class ConversationIngestor {
     }
   }
   tick(): number {
+    const deadline = Date.now() + HISTORY_BATCH_MS;
     this.watchRoots();
     // Filesystem discovery/canonicalization and archive loading never hold SQLite's writer lock.
     this.register();
@@ -1071,7 +1093,7 @@ export class ConversationIngestor {
     {
       work += this.jobSnapshot();
       work += this.envelopes();
-      work += this.events(this.db, "decisions", "durable-decisions");
+      work += this.events(this.source, "decisions", "durable-decisions");
       const archive = join(this.home, "archive.db");
       if (existsSync(archive)) {
         const input = new DatabaseSync(archive, {
@@ -1131,21 +1153,26 @@ export class ConversationIngestor {
           "SELECT * FROM conversation_records WHERE id>? ORDER BY id LIMIT 8",
         )
         .all(indexed)) {
+        if (Date.now() >= deadline) break;
         this.indexRecord(
           Number(row.id),
           String(row.conversation),
-          String(row.body),
+          String(row.body) || indexedConversationText(Buffer.from(row.raw as Uint8Array)),
           Number(row.at),
           Number(row.offset),
         );
         this.advance("durable-index-rows", String(row.id));
         work++;
       }
+      // A separate bounded source slice prevents metadata/reindex backlogs from
+      // consuming the entire raw-capture budget forever.
+      const sourceDeadline = Date.now() + HISTORY_BATCH_MS;
       for (const source of this.db
         .prepare(
           "SELECT * FROM conversation_sources ORDER BY checked,id LIMIT 2",
         )
         .all()) {
+        if (Date.now() >= sourceDeadline) break;
         try {
           const amount =
             source.format === "jsonl"
@@ -1247,6 +1274,7 @@ export function readConversationFile(
   file: string,
   input: ConversationRequest,
 ): ConversationPage {
+  file = historyReadPath(file);
   if (!existsSync(file)) return { conversation: null, records: [], next: null };
   const db = new DatabaseSync(file, { readOnly: true, timeout: 100 });
   try {

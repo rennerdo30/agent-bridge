@@ -36,6 +36,7 @@ export interface HistoryAnswerConfig {
 const DEFAULT_HISTORY_ANSWER: HistoryAnswerConfig = { preference: ["codex", "claude", "opencode"], claudeModel: "haiku", codexModel: "gpt-6-luna", opencodeModel: null };
 
 export interface BridgeConfig {
+  history: { ingest: boolean };
   questionAlerts: QuestionAlertSettings;
   projectGroups: boolean;
   historyAnswer: HistoryAnswerConfig;
@@ -100,6 +101,7 @@ export interface BridgeConfig {
 }
 
 export const DEFAULT_CONFIG: BridgeConfig = {
+  history: { ingest: true },
   questionAlerts: DEFAULT_QUESTION_ALERTS,
   projectGroups: true,
   historyAnswer: DEFAULT_HISTORY_ANSWER,
@@ -296,6 +298,7 @@ export function loadConfig(home: string, agent: AgentKind, log: Logger, env: Nod
 
   const d = DEFAULT_CONFIG;
   const cfg: BridgeConfig = {
+    history: { ingest: env.AGENT_BRIDGE_HISTORY_INGEST === "false" || env.AGENT_BRIDGE_HISTORY_INGEST === "0" ? false : !(isRecord(file.history) && file.history.ingest === false) },
     projectGroups: [localSection.projectGroups, project.projectGroups, section.projectGroups, file.projectGroups].find((v) => v !== undefined) === undefined ? true : [localSection.projectGroups, project.projectGroups, section.projectGroups, file.projectGroups].find((v) => v !== undefined) === true,
     name: pick("name", ENV.name, str) ?? d.name,
     autoWake: pick("autoWake", ENV.autoWake, parseBool) ?? d.autoWake,

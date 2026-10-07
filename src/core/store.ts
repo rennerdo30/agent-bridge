@@ -11,6 +11,7 @@ import { retentionLimit } from "./json-store.js";
 import { historySchema } from "./history-schema.js";
 import { CONVERSATION_MIGRATION } from "./conversation-schema.js";
 import { HistoryIndex } from "./history.js";
+import { historyDbPath, openHistoryStore } from "./history-store.js";
 import { isPluginCacheCwd } from "./session-visibility.js";
 import { DECISIONS_SCHEMA, DecisionStore } from "./decisions.js";
 import { configureSqlite, retrySqlite, SQLITE_BUSY_TIMEOUT_MS, SQLITE_REQUEST_BUSY_MS } from "./sqlite-policy.js";
@@ -154,12 +155,16 @@ function toMessage(r: Row): BridgeMessage {
 export class MessageStore {
   private readonly db: DatabaseSync;
   private readonly archiveDb: DatabaseSync;
+  private readonly historyDb: DatabaseSync;
   private readonly release: () => void;
   private readonly home: string | null;
   private readonly writeAbort = new AbortController();
   private backupTimer: ReturnType<typeof setInterval> | null = null;
+  private closed = false;
   readonly decisions: DecisionStore;
   readonly history: HistoryIndex;
+  readonly historyFile: string;
+  historyPeerSink: ((peer: PeerInfo) => void) | undefined;
   readonly file: string;
   private readonly stmt: {
     insert: StatementSync;
@@ -194,7 +199,16 @@ export class MessageStore {
     try { archiveMessages(this.db, this.archiveDb, "1", [], "legacy", "archived_messages"); }
     catch (err) { this.archiveDb.close(); this.db.close(); this.release(); throw err; }
     this.decisions = new DecisionStore(this.db);
-    this.history = new HistoryIndex(this.db, this.home);
+    this.historyFile = historyDbPath(file);
+    let historyDb: DatabaseSync | undefined;
+    try {
+      this.historyDb = historyDb = file === ":memory:" ? this.db : openHistoryStore(this.historyFile);
+      this.history = new HistoryIndex(this.historyDb, this.home, undefined, this.db,
+        file === ":memory:" ? undefined : (peer) => this.historyPeerSink?.(peer as PeerInfo));
+    } catch (err) {
+      if (historyDb && historyDb !== this.db) historyDb.close();
+      this.archiveDb.close(); this.db.close(); this.release(); throw err;
+    }
     this.stmt = {
       insert: this.db.prepare(
         `INSERT INTO messages (id, recipient, from_id, from_name, from_agent, to_target, conversation_id, reply_to, hop, body, created_at, read_at)
@@ -276,8 +290,8 @@ export class MessageStore {
 
   /** Retained registrations include offline sessions, but never worker runners or agent queue keys. */
   broadcastNames(): string[] {
-    const sessions = this.db.prepare("SELECT session FROM history_sessions WHERE alias=?");
-    const files = this.db.prepare("SELECT DISTINCT cwd FROM history_files WHERE session=? AND cwd<>''");
+    const sessions = this.history.database.prepare("SELECT session FROM history_sessions WHERE alias=?");
+    const files = this.history.database.prepare("SELECT DISTINCT cwd FROM history_files WHERE session=? AND cwd<>''");
     return this.db.prepare(`SELECT name,identity FROM peer_name_owners
       WHERE identity NOT LIKE 'unidentified:job:%' ORDER BY name`).all().filter((row) => {
         const identity = String(row.identity);
@@ -486,8 +500,11 @@ export class MessageStore {
   stopWrites(): void { this.writeAbort.abort(); }
 
   close(): void {
+    if (this.closed) return;
+    this.closed = true;
     this.stopWrites();
     this.history.close();
+    if (this.historyDb !== this.db) this.historyDb.close();
     if (this.backupTimer) clearInterval(this.backupTimer);
     try {
       this.db.close();

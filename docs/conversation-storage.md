@@ -1,10 +1,48 @@
 # Local conversation storage
 
-The authoritative store remains `~/.agent-bridge/bridge.db`. The backed-up,
-transactional SQLite migration adds durable conversation metadata, source
-checkpoints and append-only raw records. `archive.db` and existing JSON files
-keep their own versions and layouts. An older binary refuses an unsupported
-SQLite version before writing. Failed migrations roll back and retain backups.
+Messages and receipts remain authoritative in `~/.agent-bridge/bridge.db` and
+`archive.db`. History, conversations, source checkpoints, raw records and FTS
+live in **`~/.agent-bridge/history.db`**, with independent schema version **1**.
+Ingestion opens the broker database read-only with `query_only=ON`; it cannot
+take the broker database's write lock. Both databases set a busy timeout.
+
+### Lossless split migration (AB-167)
+
+The elected worker creates a WAL-inclusive, integrity-checked backup in
+`.migration-snapshots/bridge-history-v1-<uuid>.db` **before copying**. It copies
+all legacy history/conversation tables, retaining rowids and every raw byte,
+in batches bounded by 32 rows, 512 KiB or a 50 ms elapsed budget (a single row
+can exceed the byte/time limit). Every copied table is checked against the
+snapshot by row count and SHA-256 over typed, length-delimited row contents.
+FTS is rebuilt by document insert triggers and checked against its content.
+The manifest and snapshot path are stored in `history.db.history_migration`.
+
+Interrupted copies resume against the same backup. Conflicts fail closed and
+preserve both databases and the backup. Until verification completes, broker,
+MCP and dashboard readers use the legacy tables; after it completes, they use
+`history.db`. Snapshot creation and copying run in the worker, so broker startup
+does not wait for a multi-GB history migration.
+
+**Legacy tables and triggers are deliberately left in place. No history table
+is dropped, no raw row is deleted, no bridge vacuum runs, and the protected
+backup is never automatically rotated.** This split adds no bridge schema
+version bump. It therefore needs space for the old database, the retained backup
+and the new history copy; it does not reclaim the original database's disk space.
+Pinned processes may still append legacy raw records after the backup. Bounded
+tail replay checks bytes by source/generation/offset and remaps numeric ids to
+avoid collisions with new ingestion. Broker message capture keys stay in the
+legacy tables for compatibility and are read without deleting them. A still
+elected old broker must hand over to the new broker for its old ingestion worker
+to stop using `bridge.db`; this patch does not alter running pinned binaries.
+
+### Disable ingestion
+
+Set `"history": { "ingest": false }` in the bridge home's `config.json`, or set
+**`AGENT_BRIDGE_HISTORY_INGEST=false`** (also accepts `0`) before starting the
+broker. No background worker starts when disabled. A running worker observes
+config changes and pauses ingestion/migration at the next yield; stored search
+and conversation reads remain available. Explicit reindex also honors the
+switch. Re-enable the config and restart a broker that started disabled.
 
 ## What is retained
 
@@ -25,9 +63,13 @@ SQLite version before writing. Failed migrations roll back and retain backups.
 
 Raw JSONL chunks include system/developer/reasoning records, unknown records,
 tool payloads and large lines omitted by dashboard previews. The source bytes
-are stored as SQLite blobs; text is indexed by the existing FTS5 index, with
+are stored once as SQLite blobs; extracted human/tool text is indexed by FTS5, with
 the existing literal-search fallback where FTS5 is unavailable. Full raw content
-is distinct from the deliberately bounded dashboard preview readers.
+is distinct from the deliberately bounded dashboard preview readers. New records
+omit full JSON metadata from their derived text and leave the derived body empty
+when it would merely repeat the raw chunk; reindex reconstructs searchable text
+from those bytes. Existing migrated raw/body values remain unchanged. Oversized
+record fragments remain fully searchable rather than truncating their tails.
 
 No source is deleted, truncated, resumed or modified by ingestion. A replaced
 or shortened JSONL file creates a new retained generation. Stable source ids,
@@ -47,6 +89,9 @@ generation to reconstruct the exact captured bytes.
 
 The elected broker starts one `history-worker.mjs`. Source discovery, parsing,
 FTS writes, backfill and mirrors run in that worker, away from message dispatch.
+Backfill runs on a two-second cadence, with real timer yields between migration,
+index and conversation batches. Broker request pressure pauses ingestion; lock
+errors cause a five-second cooldown. No automatic 100 ms backfill loop remains.
 Each source chunk is at most 64 KiB; two file sources run per batch. Bridge
 envelopes, decisions, archive messages and job snapshots each copy one chunk per
 batch. Derived message batches also stop at a 512 KiB body budget, allowing one
