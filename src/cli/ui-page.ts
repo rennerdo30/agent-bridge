@@ -1444,6 +1444,7 @@ function renderJobForm(g) {
   const controllable = Boolean(g && g.job && g.owner !== "earlier runs");
   $("jobSend").classList.toggle("hidden", !controllable);
   $("jobSendBtn").disabled = jobSending.has(key);
+  $("jobSendBtn").textContent = g && g.status === "interrupted" ? "Continue" : "Send";
   $("jobSendInfo").textContent = (jobResults.get(key) || []).at(-1) || "";
   renderSettings(controllable ? g : null);
 }
@@ -1774,7 +1775,8 @@ $("send").addEventListener("submit", async (e) => {
 
 $("jobSend").addEventListener("submit", async (e) => {
   e.preventDefault();
-  const key = composerGroup, g = model.groups.get(key), body = $("jobBody").value.trim();
+  const key = composerGroup, g = model.groups.get(key), body = $("jobBody").value.trim() ||
+    (g && g.status === "interrupted" ? "Continue where you stopped and finish the task. Then give your final answer." : "");
   if (!body || !g || !g.job || jobSending.has(key)) return;
   const run = g.turns[g.turns.length - 1].name;
   jobSending.add(key);

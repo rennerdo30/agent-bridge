@@ -1,6 +1,7 @@
 import { formatReplyRestrictions } from "../mcp/format.js";
 import { chooseJobRecipient } from "../core/job-ownership.js";
 import { ProjectGroups } from "../core/project-groups.js";
+import { recoverJobRecord } from "../core/job-recovery.js";
 import { handoffSchema } from "../core/job-handoff.js";
 import { randomBytes } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
@@ -57,7 +58,7 @@ const RUN_NAME = /^[\w.-]+\.log$/;
 
 /** A server may have adopted a job from an earlier stand-in name since its log was written. */
 async function jobOwner(home: string, job: string, original: string, node: BridgeNode): Promise<string> {
-  const record = readStoredJobs(home).get(job);
+  const record = recoverJobRecord(home, job);
   if (!record) return original;
   const peers = await node.peers();
   return chooseJobRecipient(record as unknown as Record<string, unknown>, peers, new ProjectGroups(home).members(record as unknown as Record<string, unknown>, peers));
@@ -499,9 +500,8 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
       const run = typeof body.run === "string" ? body.run : "";
       const command = jobCommand(body);
       if (!RUN_NAME.test(`${run}.log`) || !command) return send(res, 400, { error: "a valid run and request are required" });
-      const file = join(opts.home, RUNS_DIR_NAME, `${run}.log`);
-      if (!existsSync(file)) return send(res, 404, { error: "no such run" });
-      const meta = readMeta(join(opts.home, RUNS_DIR_NAME, `${run}.json`));
+      const meta = listRuns(opts.home).find((r) => r.name === run);
+      if (!meta) return send(res, 404, { error: "no such run" });
       if (!meta.by || !meta.job) return send(res, 409, { error: "This run has no owning session or job recorded." });
       try {
         const result = await controlDashboardJob(await getSender(), await jobOwner(opts.home, meta.job, meta.by, await getSender()), meta.job, command);
