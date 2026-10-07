@@ -44,7 +44,7 @@ export function discardFinishedNotes(ctx: ServerContext): void {
     if (isQuietMessage(m)) return false;
     if (!ctx.jobs?.isNote(m)) return false;
     const job = ctx.jobs.find(m.from.name);
-    return job !== undefined && job.status !== "running";
+    return job !== undefined && !job.ownershipHistory?.length && job.status !== "running";
   });
   node.markRead(obsolete.map((m) => m.id));
 }

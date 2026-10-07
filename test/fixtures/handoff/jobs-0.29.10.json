@@ -1,0 +1,49 @@
+{
+  "jobs": [
+    {
+      "id": "08cc61cc",
+      "name": "claude-job-08cc61cc",
+      "agent": "claude",
+      "model": null,
+      "prompt": "Original fixture task 1",
+      "startedAt": 1791360451827,
+      "status": "done",
+      "sessionId": "fixture-session",
+      "workdir": "/fixture/project",
+      "worktree": null,
+      "args": {
+        "title": "Original saved task 1"
+      },
+      "owner": "codex-fixture-source",
+      "supervisor": "76c4db14-bae0-40cd-83a5-c62e5e931aab",
+      "metadataVersion": 2,
+      "rootSession": "76c4db14-bae0-40cd-83a5-c62e5e931aab",
+      "rootName": "codex-fixture-source",
+      "host": null,
+      "finishedAt": 1791360452631
+    },
+    {
+      "id": "ed3b8f5f",
+      "name": "claude-job-ed3b8f5f",
+      "agent": "claude",
+      "model": null,
+      "prompt": "Original fixture task 2",
+      "startedAt": 1791360452678,
+      "status": "done",
+      "sessionId": "fixture-session",
+      "workdir": "/fixture/project",
+      "worktree": null,
+      "args": {
+        "title": "Original saved task 2"
+      },
+      "owner": "codex-fixture-source",
+      "supervisor": "76c4db14-bae0-40cd-83a5-c62e5e931aab",
+      "metadataVersion": 2,
+      "rootSession": "76c4db14-bae0-40cd-83a5-c62e5e931aab",
+      "rootName": "codex-fixture-source",
+      "host": null,
+      "finishedAt": 1791360453432
+    }
+  ],
+  "version": 2
+}

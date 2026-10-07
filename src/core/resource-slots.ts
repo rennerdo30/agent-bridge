@@ -102,6 +102,17 @@ export class ResourceSlots {
   }
 
   close(): void { this.db.close(); }
+
+  /** Move live root leases without enforcing capacity: inherited work must keep running. */
+  moveJobs(resource: string, names: string[]): void {
+    this.transaction(() => {
+      for (const row of this.db.prepare("SELECT ticket, id, resource FROM slots WHERE resource LIKE 'root-%'").all()) {
+        if (row.resource !== resource && names.some((name) => String(row.id).startsWith(`${name}-`))) {
+          this.db.prepare("UPDATE slots SET resource=? WHERE ticket=?").run(resource, row.ticket!);
+        }
+      }
+    });
+  }
 }
 
 export function slotOwner(env: NodeJS.ProcessEnv = process.env): SlotOwner {

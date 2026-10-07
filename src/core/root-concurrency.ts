@@ -46,7 +46,9 @@ export class RootConcurrency {
     return false;
   }
 
-  release(owner: SlotOwner): void { this.slots.release(owner, this.resource); }
-  renew(owner: SlotOwner): void { this.slots.renew(owner, this.resource); }
+  moveJobs(names: string[]): void { this.slots.moveJobs(this.resource, names); }
+  // Lease ids are unique per turn. A handoff may have moved their resource since acquisition.
+  release(owner: SlotOwner): void { this.slots.release(owner); }
+  renew(owner: SlotOwner): void { this.slots.renew(owner); }
   close(): void { this.slots.close(); this.db.close(); }
 }

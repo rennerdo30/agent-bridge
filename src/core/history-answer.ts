@@ -2,12 +2,12 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { MODEL_NAME_PATTERN, type BridgeConfig } from "./config.js";
-import { childEnv, parseClaudeJson, parseCodexJsonl, parseOpencodeJsonl, resolveBinary, runProcess } from "./delegate.js";
+import { childEnv, opencodeV2, parseClaudeJson, parseCodexJsonl, parseOpencodeJsonl, resolveBinary, runProcess } from "./delegate.js";
 import type { HistoryResult } from "./history.js";
 import type { Logger } from "./logger.js";
 import { readModels, type ModelReport } from "./models.js";
 import type { CodingAgent } from "./protocol.js";
-import { captureOutput, parseOpencodeModelCosts, readUsage, type ModelCost, type UsageReport } from "./usage.js";
+import { readOpencodeModelCosts, readUsage, type ModelCost, type UsageReport } from "./usage.js";
 
 export const HISTORY_ANSWER_TIMEOUT_MS = 60_000;
 export const HISTORY_ANSWER_MAX_HITS = 8;
@@ -41,7 +41,7 @@ export async function answerHistory(query: string, result: HistoryResult, cfg: B
       if (agent !== "claude") {
         const report = await (deps.models?.(agent) ?? readModels(agent, cfg, home, log, home));
         if (agent === "opencode") {
-          const costs = await (deps.costs?.() ?? captureOutput(cfg.opencodeBin, ["models", "--verbose"], home, log).then(parseOpencodeModelCosts));
+          const costs = await (deps.costs?.() ?? readOpencodeModelCosts(cfg.opencodeBin, home, log));
           const free = costs.filter((cost) => cost.input === 0 && cost.output === 0 && report.models.includes(cost.id));
           model ??= free[0]?.id ?? null;
           if (!free.some((cost) => cost.id === model)) continue;
@@ -76,8 +76,9 @@ async function runAnswer(agent: CodingAgent, model: string, prompt: string, cfg:
     if (agent === "claude") args = ["-p", "--model", model, "--output-format", "json", "--tools", "", "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}', "--no-session-persistence", "--settings", '{"disableAllHooks":true}'];
     else if (agent === "codex") args = ["exec", "--ignore-user-config", "--json", "--skip-git-repo-check", "--sandbox", "read-only", "-m", model, "-c", 'approval_policy="never"', "-c", "mcp_servers={}", "-"];
     else {
-      args = ["run", "--pure", "--format", "json", "--dir", cwd, "-m", model];
-      env.OPENCODE_CONFIG_CONTENT = JSON.stringify({ tools: { "*": false }, permission: { "*": "deny" } });
+      const v2 = await opencodeV2(cfg.opencodeBin, cwd, log);
+      args = ["run", ...(v2 ? ["--standalone"] : ["--pure"]), "--format", "json", "-m", model];
+      env.OPENCODE_CONFIG_CONTENT = JSON.stringify({ plugin: [], tools: { "*": false }, permission: { "*": "deny" } });
     }
     const result = await runProcess({ bin: cfg[`${agent}Bin`], args, stdin: prompt, cwd, timeoutMs: HISTORY_ANSWER_TIMEOUT_MS, env, log, what: "history answer" });
     if (result.code !== 0) throw new Error(`model runner exited with code ${result.code}`);
