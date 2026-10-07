@@ -14,7 +14,16 @@ export function canonicalProjectRoot(cwd: string): string | null {
       const common = realpathSync.native(resolve(physical, git(["--git-common-dir"])));
       // Ordinary repositories and linked worktrees share the main checkout's .git directory.
       if (common.endsWith("/.git") || common.endsWith("\\.git")) return realpathSync.native(dirname(common));
-      return top; // Separate Git dirs still use the verified working tree root.
+      try {
+        const configured = execFileSync("git", ["--git-dir", common, "config", "--get", "core.worktree"],
+          { encoding: "utf8", timeout: 3_000, windowsHide: true, stdio: ["ignore", "pipe", "ignore"] }).trim();
+        if (configured) return realpathSync.native(resolve(common, configured));
+      } catch { /* A separate Git directory can instead identify its main through worktree metadata. */ }
+      const worktrees = execFileSync("git", ["-C", physical, "worktree", "list", "--porcelain"],
+        { encoding: "utf8", timeout: 3_000, windowsHide: true, stdio: ["ignore", "pipe", "ignore"] });
+      const main = worktrees.split(/\r?\n\r?\n/).find((entry) => !/^bare$/m.test(entry));
+      const root = main && /^worktree (.+)$/m.exec(main)?.[1];
+      return root ? realpathSync.native(root) : top;
     } catch {
       // Non-Git projects share only an identical existing directory, never guessed ancestors.
       return physical;

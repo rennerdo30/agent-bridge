@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -8,6 +9,7 @@ import { BridgeNode } from "../src/core/node.js";
 import { nullLogger } from "../src/core/logger.js";
 import { loadOrCreateToken } from "../src/core/token.js";
 import { makeEnv, type TestEnv } from "./helpers.js";
+import { ReadJournal } from "../src/core/read-journal.js";
 
 let env: TestEnv;
 const nodes: BridgeNode[] = [];
@@ -33,6 +35,28 @@ function registry(project: string) {
 }
 
 describe("local project permission groups", () => {
+  it("does not replay a recovered inline envelope consumed before its broker acknowledgement", async () => {
+    const path = repo(), records = registry(path), source = await node("claude-master", path);
+    const secondary = await node("codex-master", path);
+    const envelope = { id: randomUUID(), from: { id: "job:one", name: "codex-job-one", agent: "codex" }, to: source.name,
+      recipient: source.name, body: "Already consumed", conversationId: "job-one", hop: 0, replyTo: null, createdAt: Date.now(), readAt: null };
+    new ReadJournal(env.home).append(`name:${source.name}`, [envelope.id]);
+    writeFileSync(join(env.home, "jobs.json"), JSON.stringify({ version: 2, jobs: [{ ...records[0], deliveryHistory: [envelope] }, records[1]] }));
+    await source.setUnavailable(true);
+    expect(secondary.unread().some((m) => m.id === envelope.id)).toBe(false);
+    const runner = await node("codex-job-one", path, { id: "one", owner: "first", parent: source.name });
+    expect((await runner.messageReceipt(envelope.id))[0]!.readAt).toBeTypeOf("number");
+  });
+  it("switches the main with an all-jobs handoff and rejects a cross-group switch atomically", async () => {
+    const path = repo(); registry(path);
+    const source = await node("claude-master", path), target = await node("codex-master", path), outside = await node("claude-Development", env.home);
+    const registryPath = join(env.home, "jobs.json"), original = readFileSync(registryPath, "utf8");
+    await expect(source.handoffSubagents({ to: outside.name, jobs: "all", switch_project_main: true })).rejects.toThrow("same project group");
+    expect(readFileSync(registryPath, "utf8")).toBe(original);
+    await source.handoffSubagents({ to: target.name, jobs: "all", switch_project_main: true });
+    expect((await source.peers()).find((p) => p.name === target.name)?.projectMain).toBe(true);
+    expect(await source.jobAuthority("codex-job-one")).toBeTruthy();
+  });
   it("keeps handoff grants outside the group and falls back to the previous primary first", async () => {
     const path = repo(); const jobs = registry(path);
     const source = await node("claude-master", path), secondary = await node("codex-master", path);
@@ -88,6 +112,14 @@ describe("local project permission groups", () => {
     expect(canonicalProjectRoot(nested)).toBe(realpathSync.native(path));
     expect(canonicalProjectRoot(worktree)).toBe(realpathSync.native(path));
     expect(canonicalProjectRoot(join(env.home, "missing"))).toBeNull();
+  });
+  it("unifies linked worktrees when the repository uses a separate Git directory", () => {
+    const path = join(env.home, "separate-git-project"); mkdirSync(path);
+    git(path, "init", "--separate-git-dir", join(env.home, "metadata"));
+    git(path, "config", "core.worktree", path);
+    git(path, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "--allow-empty", "-m", "Initial");
+    const worktree = join(env.home, "separate-git-worktree"); git(path, "worktree", "add", "--detach", worktree);
+    expect(canonicalProjectRoot(worktree)).toBe(realpathSync.native(path));
   });
 
   it("reads the project opt-out without rewriting old settings and denies malformed values", () => {

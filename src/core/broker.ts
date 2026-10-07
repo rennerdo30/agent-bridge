@@ -34,7 +34,7 @@ import {
 import { agentQueueKey, MessageStore, registrationIdentity } from "./store.js";
 import { tokensEqual } from "./token.js";
 import { commitHandoff, handoffJournal, handoffSchema, } from "./job-handoff.js";
-import { canControlJob, mastersFor, chooseJobRecipient } from "./job-ownership.js";
+import { canControlJob, mastersFor, chooseJobRecipient, primaryFor } from "./job-ownership.js";
 import { RootConcurrency } from "./root-concurrency.js";
 import { isRecord, retentionLimit } from "./json-store.js";
 import { readArchivedJobSnapshot } from "./job-archive.js";
@@ -585,17 +585,23 @@ export class Broker {
   routePendingJobMail(): void {
     const live = [...this.conns].flatMap((c) => c.peer ? [c.peer] : []);
     for (const job of this.storedJobs()) {
-      if (job.remote) continue;
+      if (job.remote || !primaryFor(job)) continue;
       const recipient = this.jobRecipient(job), target = this.connByName(recipient);
       if (Array.isArray(job.deliveryHistory)) for (const envelope of job.deliveryHistory) {
         if (!isRecord(envelope) || !isRecord(envelope.from) || envelope.from.id !== `job:${job.id}` || typeof envelope.id !== "string" || typeof envelope.body !== "string") continue;
         const message = { ...envelope, to: recipient, recipient, conversationId: this.jobConversation(job, recipient, String(envelope.conversationId)) } as unknown as BridgeMessage;
-        if (this.store.insertJobDelivery(message) && target) this.emit(target, "message", message);
+        if (this.store.insertJobDelivery(message)) {
+          const names = new Set([recipient, envelope.to, envelope.recipient, ...mastersFor(job)]);
+          const consumed = this.jobsPath && [...names].some((name) => typeof name === "string" &&
+            new ReadJournal(dirname(this.jobsPath!)).read(`name:${name}`).includes(message.id));
+          if (consumed) this.store.markRead(recipient, [message.id], this.now());
+          else if (target) this.emit(target, "message", message);
+        }
       }
       if (!target) continue;
       for (const from of this.store.pendingJobRecipients(String(job.id))) {
         if (this.jobsPath) this.store.markRead(from, new ReadJournal(dirname(this.jobsPath)).read(`name:${from}`), this.now());
-        const moved = this.store.handoffMail(from, recipient, String(job.id), this.now(), recipient !== job.parentJob && recipient !== (job.rootName ?? job.owner));
+        const moved = this.store.handoffMail(from, recipient, String(job.id), this.now(), recipient !== job.parentJob && recipient !== primaryFor(job));
         const previous = this.connByName(from);
         if (previous && moved.length) this.emit(previous, "mail_retracted", { ids: moved.map((m) => m.id) });
         for (const m of moved) this.emit(target, "message", m);
@@ -609,7 +615,7 @@ export class Broker {
   }
 
   private jobConversation(job: Record<string, unknown>, recipient: string, conversationId: string): string {
-    if (recipient === job.parentJob || recipient === (job.rootName ?? job.owner) || isQuietMessage({ conversationId })) return conversationId;
+    if (recipient === job.parentJob || recipient === primaryFor(job) || isQuietMessage({ conversationId })) return conversationId;
     return conversationId.replace(/:note$/, "") + (conversationId.endsWith(":fallback") ? "" : ":fallback");
   }
 

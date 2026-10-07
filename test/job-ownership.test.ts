@@ -22,3 +22,8 @@ it("keeps paired PCs and nested workers outside fallback even with matching name
   expect(chooseJobRecipient(job, [peer("first", { host: "remote" }), peer("second", { subagent: true })])).toBe("primary");
   expect(canControlJob(job, "pc/first")).toBe(false);
 });
+it("never routes a changed legacy direct owner to its stale rootName", () => {
+  const legacy = { owner: "new", rootName: "old" };
+  expect(chooseJobRecipient(legacy, [peer("new"), peer("old")])).toBe("new");
+  expect(mastersFor(legacy)).toEqual(["new"]);
+});

@@ -1220,11 +1220,15 @@ function projectSidebar(items) {
   for (const x of items) {
     const key = x.peer && !pcOf(x.name) && x.peer.projectGroup;
     if (!key) { projects.set(x.name, { title: null, items: [x] }); continue; }
-    if (!projects.has(key)) projects.set(key, { title: folder(x.peer.projectRoot), items: [] });
+    if (!projects.has(key)) projects.set(key, { title: folder(x.peer.projectRoot), root: x.peer.projectRoot, items: [] });
     projects.get(key).items.push(x);
   }
   return [...projects.values()].map((p) => {
-    const jobs = p.title ? [...new Map(p.items.flatMap((x) => x.groups.map((g) => [g.key, { g, owner: x.name }]))).values()] : [];
+    const sameRoot = (a, b) => String(a || '').split(String.fromCharCode(92)).join('/').toLowerCase() === String(b || '').split(String.fromCharCode(92)).join('/').toLowerCase();
+    const jobs = p.title ? [...new Map(items.flatMap((x) => x.groups.filter((g) => {
+      const root = state.jobs[g.job]?.projectRoot;
+      return root ? sameRoot(root, p.root) : p.items.includes(x);
+    }).map((g) => [g.key, { g, owner: x.name }]))).values()] : [];
     const rows = jobs.filter((x) => x.g.status === 'running').map((x) => '<div class="tree-sess"><a href="' + href(x.owner, x.g.key) + '">' + dot('busy') + '<span class="lbl ell">' + esc(x.g.title || x.g.job || 'Subagent') + '<small class="ell">' + esc(x.g.agent) + ' · project job</small></span></a></div>').join('');
     return (p.title ? '<div class="tree-pc"><span>' + esc(p.title) + '</span><span>project</span></div>' : '') + p.items.map(sideSession).join('') + rows;
   }).join('');

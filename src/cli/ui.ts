@@ -367,7 +367,7 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
         remoteErrors,
         messages: recentMessages(dbPath),
         // Saved next-turn settings per job (message_subagent or the dashboard may have changed them).
-        jobs: { ...Object.fromEntries([...readStoredJobs(opts.home)].map(([name, j]) => [name, { next: j.next, ...(j.remote ? { remote: j.remote } : {}) }])), ...Object.assign({}, ...remoteStates.map((r) => r.jobs)) },
+        jobs: { ...Object.fromEntries([...readStoredJobs(opts.home)].map(([name, j]) => [name, { next: j.next, projectRoot: j.projectRoot, ...(j.remote ? { remote: j.remote } : {}) }])), ...Object.assign({}, ...remoteStates.map((r) => r.jobs)) },
       });
     }
     if (req.method === "GET" && url.pathname === "/api/network") {
@@ -481,7 +481,7 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
     if (req.method === "POST" && url.pathname === "/api/subagents/handoff") {
       if (req.headers["x-agent-bridge"] !== "1") return send(res, 403, { error: "missing header" });
       const body = await readJson(req);
-      const parsed = handoffSchema.safeParse({ to: body.to, jobs: body.jobs, note: body.note });
+      const parsed = handoffSchema.safeParse({ to: body.to, jobs: body.jobs, note: body.note, switch_project_main: body.switch_project_main });
       if (!parsed.success || typeof body.from !== "string" || body.from.includes("/")) return send(res, 400, { error: "An exact local source and valid handoff arguments are required." });
       try {
         const result = await controlDashboardJob(await getSender(), body.from, "", { type: "handoff", ...parsed.data });

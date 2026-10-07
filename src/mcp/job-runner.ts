@@ -202,7 +202,7 @@ async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: WindowsJo
       return;
     }
     refreshOwner();
-    if (!canControlJob(job as unknown as Record<string, unknown>, m.from.name)) {
+    if (!owner.includes("/") && !canControlJob(job as unknown as Record<string, unknown>, m.from.name)) {
       const peers = await node.peers();
       const master = peers.find((p) => p.name === m.from.name);
       if (!master || !new ProjectGroups(home).canControl(master, job as unknown as Record<string, unknown>, peers)) return;

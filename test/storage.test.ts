@@ -262,7 +262,7 @@ describe("retention archives", () => {
     const manager = new JobManager(stubNode(), nullLogger, path);
     manager.persist();
     expect(readStore(path).map((j) => j.id)).toEqual(["running", "interrupted", "new"]);
-    const archive = readdirSync(join(home, "archive")).find((f) => f.startsWith("jobs.json.overflow.json-"))!;
+    const archive = readdirSync(join(home, "archive")).find((f) => /^jobs-.*\.json$/.test(f))!;
     expect(json(join(home, "archive", archive)).jobs).toEqual([storedJob("old", 1)]);
     vi.stubEnv("AGENT_BRIDGE_JOB_STORE_LIMIT", "0");
     writeFileSync(path, JSON.stringify([storedJob("old", 1), storedJob("new", 2)]));

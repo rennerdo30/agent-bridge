@@ -61,7 +61,7 @@ describe("pending approvals", () => {
       expect(jobs.followUp(j.name, "deny: reviewed in session").outcome).toBe("answered");
       expect(await answer).toEqual({ allow: false, reason: "deny: reviewed in session" });
       expect(await answerPendingApproval(env.home, entry!.id, { decision: "allow" })).toBe("expired");
-      expect(node.unread().some((m) => m.body.includes("denied by session"))).toBe(true);
+      await expect.poll(() => node.unread().some((m) => m.body.includes("denied by session"))).toBe(true);
     } finally { jobs.cancelAll(); }
   });
 

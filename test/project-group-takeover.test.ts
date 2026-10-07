@@ -20,6 +20,7 @@ beforeEach(() => {
   writeFileSync(file, `#!/usr/bin/env node
 import {existsSync,writeFileSync,appendFileSync} from 'node:fs';
 import {createInterface} from 'node:readline';
+appendFileSync(${JSON.stringify(join(env.home, "fixture-pids"))}, String(process.pid)+'\\n');
 if(process.argv.includes('queue')){appendFileSync(${JSON.stringify(join(env.home, "wake-calls"))}, 'wake');process.exit(0);}
 let release,approved=false,asked=false,interval;
 const send=value=>console.log(JSON.stringify(value));
@@ -59,7 +60,18 @@ afterEach(async () => {
   const servers = transports.splice(0).map((t) => t.pid).filter((pid): pid is number => Boolean(pid));
   for (const client of clients.splice(0)) await client.close();
   await until(() => servers.every((pid) => !pidAlive(pid)), 5_000);
-  await env.cleanup();
+  const fixturePids = existsSync(join(env.home, "fixture-pids")) ? readFileSync(join(env.home, "fixture-pids"), "utf8").trim().split(/\s+/).map(Number) : [];
+  for (const pid of fixturePids) if (pidAlive(pid)) killPid(pid);
+  await until(() => fixturePids.every((pid) => !pidAlive(pid)), 5_000);
+  // Windows can retain a detached process's directory handle briefly after its PID disappears.
+  const deadline = Date.now() + 3_000;
+  for (;;) {
+    try { await env.cleanup(); break; }
+    catch (error) {
+      if (process.platform !== "win32" || (error as NodeJS.ErrnoException).code !== "EPERM" || Date.now() >= deadline) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+  }
 });
 async function session(name: string, agent: "codex" | "claude" | "opencode") {
   const client = new Client({ name: "group-takeover", version: "1" }); clients.push(client);
@@ -81,13 +93,16 @@ it.each(["closed", "unavailable", "opencode"])("ten jobs survive a %s primary an
   const primaryAgent = mode === "opencode" ? "opencode" : "claude";
   const primaryName = `${primaryAgent}-master`;
   const source = await session(primaryName, primaryAgent), target = await session("codex-master", "codex");
-  const jobs = await Promise.all(Array.from({ length: 10 }, async (_, index) => {
+  const starts = await Promise.allSettled(Array.from({ length: 10 }, async (_, index) => {
     const release = join(env.home, `release-${index}`), link = `${release}.link`; releases.push(release);
     const started = await call(source, "spawn_codex", { prompt: `release=${release} link=${link} ${index === 2 ? "approve=yes" : ""} complete item ${index}`, title: `Takeover item ${index}` });
     expect(started.error, started.text).toBeFalsy();
     const name = /(?:codex|claude)-job-[a-f0-9]+/.exec(started.text)![0], id = name.split("-").at(-1)!; ids.push(id);
     return { name, id, release, link };
   }));
+  const failed = starts.find((result) => result.status === "rejected");
+  if (failed?.status === "rejected") throw failed.reason;
+  const jobs = starts.map((result) => (result as PromiseFulfilledResult<{ name: string; id: string; release: string; link: string }>).value);
   await until(() => jobs.every((j) => existsSync(j.link) && readRunnerState(env.home, j.id)?.sessionId && readRunnerState(env.home, j.id)?.live), 18_000);
   const children = jobs.map((j) => parentFromEnv(JSON.parse(readFileSync(j.link, "utf8")))!);
   // Leave one result and note pending in the starter's inbox before it becomes unavailable.

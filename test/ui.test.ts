@@ -94,7 +94,9 @@ describe("web dashboard", () => {
 
   it("serves the page and the state: sessions, runs and messages", async () => {
     const page = await fetch(`${base()}/`, { headers: { cookie } });
-    expect(await page.text()).toContain("<title>agent-bridge</title>");
+    const html = await page.text();
+    expect(html).toContain("<title>agent-bridge</title>");
+    for (const script of html.matchAll(/<script>([\s\S]*?)<\/script>/g)) expect(() => new Function(script[1]!)).not.toThrow();
 
     const peer = env.node("codex-app", "codex");
     await peer.start();

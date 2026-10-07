@@ -7,6 +7,7 @@ import type { CallToolResult, ServerNotification } from "@modelcontextprotocol/s
 import { z } from "zod";
 import { isRecord } from "../core/json-store.js";
 import { CLAUDE_PERMISSION_MODES, CODEX_APPROVALS_REVIEWERS, CODEX_SANDBOXES, defaultPeerName, loadConfig, parseAgentKind, saveConfigValue, watchConfig, type BridgeConfig, MODEL_NAME_PATTERN } from "../core/config.js";
+import { canonicalProjectRoot } from "../core/project-identity.js";
 import {
   APP_NAME,
   APP_VERSION,
@@ -226,10 +227,10 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
   const targets = delegationTargets(agent);
   const home = resolveHome();
   const log = createLogger({ home, component: `mcp-${agent}` });
-  const cfg = loadConfig(home, agent, log);
   const cwd = process.env.CLAUDE_PROJECT_DIR || process.cwd();
   // Codex starts plugin MCP servers inside the plugin folder; the project dir arrives later via hooks/_meta.
   const cwdKnown = Boolean(process.env.CLAUDE_PROJECT_DIR) || !isInside(cwd, PLUGIN_ROOT);
+  const cfg = loadConfig(home, agent, log, process.env, cwdKnown ? canonicalProjectRoot(cwd) ?? undefined : undefined);
   const delegated = currentDelegateDepth() > 0;
   log.info("starting MCP server", { agent, cwd, cwdKnown, delegated, version: APP_VERSION, node: process.version });
 
@@ -273,21 +274,23 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
     if (cli) ctx.jobs.runners = ctx.runners = new JobRunners(node, home, cli, log.child("runners"));
     // Edits to config.json apply right away. Settings read only at start (name, delivery, ports) wait for a restart.
     const jobs = ctx.jobs;
-    watchConfig(home, agent, log, (next) => {
+    let cwdSettled = cwdKnown;
+    const applyConfig = (next: BridgeConfig) => {
       const limitChanged = next.maxJobs !== cfg.maxJobs;
       Object.assign(cfg, next);
       if (limitChanged) jobs.setLimit(next.maxJobs);
       void node.setWakePolicy(agent === "claude" && next.wakeOnDirect, (agent === "claude" && Boolean(ctx.rewakeAvailable || ctx.channelActive())) || agent === "opencode" || (agent === "codex" && Boolean(node.currentSessionId)), next.maxHops).catch(() => {});
-    });
+    };
+    watchConfig(home, agent, log, applyConfig, () => cwdSettled ? canonicalProjectRoot(node.cwd) ?? "" : "");
     ctx.activity = (s) => node.setActivity(s);
     // Learn the project folder once, when it was unknown at start (Codex starts us in the plugin folder).
     // Later hook cwds follow the agent's `cd`s; renaming then would strand replies sent to the old name.
-    let cwdSettled = cwdKnown;
     ctx.learnCwd = async (projectDir) => {
       if (cwdSettled || projectDir === node.cwd) return;
       cwdSettled = true;
       const name = cfg.name ? undefined : defaultPeerName(agent, projectDir);
       await node.relocate(projectDir, name).catch((err) => log.warn("relocate failed", { err: (err as Error).message }));
+      applyConfig(loadConfig(home, agent, log, process.env, canonicalProjectRoot(node.cwd) ?? undefined));
     };
   }
   if (agent === "codex" && node) {
