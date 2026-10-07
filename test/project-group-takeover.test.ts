@@ -141,7 +141,7 @@ it.each(["closed", "unavailable", "opencode"])("ten jobs survive a %s primary an
   writeFileSync(jobs[2]!.release + ".approve", "");
   await until(() => listPendingApprovals(env.home).some((a) => a.job === jobs[2]!.name), 5_000);
   expect((await call(target, "message_subagent", { job: jobs[2]!.name, message: "allow" })).error).toBeFalsy();
-  await until(() => existsSync(jobs[2]!.release + ".approved"), 5_000);
+  await until(() => existsSync(jobs[2]!.release + ".approved") && readFileSync(jobs[2]!.release + ".approved", "utf8") === "true", 5_000);
   expect(readFileSync(jobs[2]!.release + ".approved", "utf8")).toBe("true");
   for (const job of jobs) writeFileSync(job.release, "");
   await until(() => jobs.every((j) => readRunnerState(env.home, j.id)?.status === "done"), 10_000);
