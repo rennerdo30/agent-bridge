@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { appendContextEvent } from "../core/context-journal.js";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import type { BridgeConfig } from "../core/config.js";
 import { APP_VERSION, DEFAULT_DELEGATE_TIMEOUT_SEC, DELEGATION_METADATA_VERSION, ENV, MAX_JOB_TIMEOUT_SEC } from "../core/constants.js";
@@ -163,6 +164,14 @@ async function runDelegateInner(
   const asked: string[] = [];
   let relayCalls = 0;
   const codexHash = target === "codex" ? codexPermissionHookHash() : null;
+  const journalPermission = async (request: PermissionRequest, decide: () => Promise<PermissionDecision>) => {
+    const id = randomUUID();
+    const context = { kind: "approval" as const, agent: target, project: workdir, job: job?.name ?? a._job, session: job?.sessionId ?? undefined };
+    await appendContextEvent(rc.home, { ...context, payload: { id, stage: "request", request } });
+    const decision = await decide();
+    await appendContextEvent(rc.home, { ...context, payload: { id, stage: "decision", decision } });
+    return decision;
+  };
   // Native permission dialogs keep their existing eligibility; the dashboard can answer the same wait.
   const askUser = rc.askUser ? async (r: PermissionRequest): Promise<PermissionDecision> => {
     if (!job) return rc.askUser!(r);
@@ -176,12 +185,12 @@ async function runDelegateInner(
   } : undefined;
   try {
     if (access === "ask" && askUser) {
-      const decide = async (r: PermissionRequest) => {
+      const decide = async (r: PermissionRequest) => journalPermission(r, async () => {
         relayCalls++;
         const d = await askUser(r);
         asked.push(`${d.allow ? "allowed" : "denied"}: ${r.tool} ${r.detail.slice(0, 80)}`);
         return d;
-      };
+      });
       relay = new PermissionRelay(decide, dlog);
       await relay.start();
       wiring = { onPermission: decide, env: relay.childEnv(), codexHookTrusted: codexPermissionHookTrusted(rc.home) };
@@ -199,7 +208,7 @@ async function runDelegateInner(
   // Remembered per job, so follow-ups and recoveries don't ask again.
   const allowedServers = job ? (job.allowedServers ??= new Set<string>()) : new Set<string>();
   const autoApprove = [...cfg.autoApproveTools, ...(access === "read" ? DESK_READ_PATTERNS : []), ...(a.allow_tools ?? [])];
-  const approve = async (r: PermissionRequest): Promise<PermissionDecision> => {
+  const approve = async (r: PermissionRequest): Promise<PermissionDecision> => journalPermission(r, async () => {
     // Handoff tools first: no allow pattern or earlier "allow" for their server covers them.
     if (isHandoffToolCall(r)) {
       asked.push(`declined (handoff tool): ${r.tool} ${r.detail.slice(0, 80)}`);
@@ -225,7 +234,7 @@ async function runDelegateInner(
     } else d = r.tool.startsWith("mcp:") && access === "edit" ? { allow: true } : { allow: false, message: "No one to ask in this session." };
     if (d.allow && !r.automaticReview && r.tool.startsWith("mcp:")) allowedServers.add(r.tool);
     return d;
-  };
+  });
   let feed: ReturnType<typeof startRunFeed>;
   try {
     feed = startRunFeed({

@@ -1,5 +1,7 @@
+import { HistoryBackground } from "./history-background.js";
+import { conversationPageSchema, readConversation } from "./conversations.js";
+import { historySearchSchema } from "./history.js";
 import { ReadJournal } from "./read-journal.js";
-import { HISTORY_TICK_MS, historySearchSchema } from "./history.js";
 import { randomUUID } from "node:crypto";
 import { isPluginCacheCwd } from "./session-visibility.js";
 import { createServer, type Server, type Socket } from "node:net";
@@ -96,7 +98,7 @@ export class Broker {
   private readonly projectMains = new Map<string, string>();
   private server: Server | null = null;
   private readonly conns = new Set<Conn>();
-  private historyTimer: NodeJS.Timeout | null = null;
+  private historyBackground: HistoryBackground | null = null;
   private purgeTimer: NodeJS.Timeout | null = null;
   private network: NetworkService | null = null;
   private remoteJobs: RemoteJobs | null = null;
@@ -205,8 +207,10 @@ export class Broker {
         if (!parsed.success) throw new BridgeError("bad_request", "Invalid history query or filters.");
         return this.store.history.search(parsed.data);
       },
+      getConversation: (_, a) => readConversation(this.store.history.database, conversationPageSchema.parse(a)),
       reindexHistory: (_, a) => {
         const args = z.object({ reset: z.boolean().optional() }).strict().parse(a);
+        if (this.historyBackground) return this.historyBackground.tick(args.reset);
         if (args.reset) this.store.history.reset();
         return this.store.history.tick();
       },
@@ -292,10 +296,7 @@ export class Broker {
         this.applyHandoffs();
         this.purgeTimer = setInterval(() => this.purge(), PURGE_INTERVAL_MS);
         this.purgeTimer.unref();
-        this.historyTimer = setInterval(() => {
-          try { this.store.history.tick(); } catch (err) { this.log.warn("history indexing failed", { err: String(err) }); }
-        }, HISTORY_TICK_MS);
-        this.historyTimer.unref();
+        if (this.store.file !== ":memory:") this.historyBackground = new HistoryBackground(this.store.file, this.log);
         this.purge();
         this.log.info("broker listening", { pipe: this.pipePath });
         // Another broker may have enabled or changed pairing since this session started.
@@ -329,7 +330,8 @@ export class Broker {
   }
 
   async close(): Promise<void> {
-    if (this.historyTimer) clearInterval(this.historyTimer);
+    await this.historyBackground?.close();
+    this.historyBackground = null;
     if (this.purgeTimer) clearInterval(this.purgeTimer);
     await this.networkChange;
     this.remoteDashboard?.close();
@@ -1107,6 +1109,21 @@ export class Broker {
     return result;
   }
 
+  /** Reverse permissions use the current durable record, not stale runner registration. */
+  private replyRestriction(sender: PeerInfo, name: string): { name: string; supervisor: string } | null {
+    const jobs = this.storedJobs(), peer = this.connByName(name)?.peer;
+    const stored = jobs.find((j) => j.name === name);
+    if (!stored && !peer?.jobAgent) return null;
+    const job = stored ?? { id: peer!.id.replace(/^job:/, ""), name, owner: peer!.jobParent,
+      supervisor: peer!.jobOwner, rootName: peer!.rootName, parentJob: peer!.parentJob,
+      workdir: peer!.cwd, args: { send_to: peer!.jobSendTo } };
+    const recipient = { ...peer, id: `job:${job.id}`, name, jobOwner: typeof job.supervisor === "string" ? job.supervisor : peer?.jobOwner } as PeerInfo;
+    const grants = isRecord(job.args) && Array.isArray(job.args.send_to) ? job.args.send_to : [];
+    if (sender.name === name || grants.includes(sender.name) || this.groups.canControl(sender, job, this.localPeers()) ||
+        sender.jobAgent && (this.sameJobFamily(recipient, sender, jobs) || this.sharedJobs(recipient, sender, jobs))) return null;
+    return { name, supervisor: this.jobRecipient(job) || peer?.jobParent || "the project's main session" };
+  }
+
   private async routeSend(conn: Conn, sender: PeerInfo, args: RequestMap["send"][0]): Promise<RequestMap["send"][1]> {
     const body = typeof args.body === "string" ? args.body : "";
     if (!body.trim()) throw new BridgeError("bad_request", "message body is empty");
@@ -1176,9 +1193,19 @@ export class Broker {
           live.some((c) => c.peer!.jobAgent && (!sender.jobAgent || !sender.jobOwner || (!this.sameJobFamily(sender, c.peer!) && !this.sharedJobs(sender, c.peer!) && !sender.jobSendTo?.includes(c.peer!.name)))))) {
       throw new BridgeError("unauthorized", "sibling chat requires the same supervisor or an explicit send_to job grant");
     }
+    const replyRestrictions = conversationId.startsWith(CONTROL_CONVERSATION_PREFIX) ? [] :
+      [...live.map((c) => c.peer!.name), ...queued].flatMap((name) => {
+        const restriction = this.replyRestriction(sender, name);
+        return restriction ? [restriction] : [];
+      });
+    const envelope = (recipient: string): BridgeMessage => {
+      const restriction = replyRestrictions.find((r) => r.name === recipient);
+      return { ...base, recipient, body: restriction ? base.body +
+        `\n\n[agent-bridge routing hint: this sender can't receive your direct reply; answer via your supervisor ${restriction.supervisor} if needed.]` : base.body };
+    };
     const messages: BridgeMessage[] = [];
-    for (const c of live) messages.push({ ...base, recipient: c.peer!.name });
-    for (const key of queued) messages.push({ ...base, recipient: key });
+    for (const c of live) messages.push(envelope(c.peer!.name));
+    for (const key of queued) messages.push(envelope(key));
     for (const m of messages) this.store.insert(m);
     live.forEach((c, i) => this.emit(c, "message", messages[i]!));
 
@@ -1191,6 +1218,7 @@ export class Broker {
       queuedFor: queued,
     });
     const result: RequestMap["send"][1] = { messages, deliveredTo: live.map((c) => c.peer!.name), queuedFor: queued, recipientStates: live.map((c) => ({ name: c.peer!.name, activity: c.peer!.activity, autoWake: c.peer!.autoWake, wakeOnDirect: c.peer!.wakeOnDirect, wakeAvailable: c.peer!.wakeAvailable, wakeMaxHops: c.peer!.wakeMaxHops })) };
+    if (replyRestrictions.length) result.replyRestrictions = replyRestrictions;
     for (const recipient of remoteTargets) {
       // Fan out only at the originating broker. Receiving brokers deliver one local envelope.
       try {
