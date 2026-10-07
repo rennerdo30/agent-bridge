@@ -11,6 +11,7 @@ import { retentionLimit } from "./json-store.js";
 import { historySchema } from "./history-schema.js";
 import { CONVERSATION_MIGRATION } from "./conversation-schema.js";
 import { HistoryIndex } from "./history.js";
+import { isPluginCacheCwd } from "./session-visibility.js";
 import { DECISIONS_SCHEMA, DecisionStore } from "./decisions.js";
 import { configureSqlite, retrySqlite, SQLITE_BUSY_TIMEOUT_MS, SQLITE_REQUEST_BUSY_MS } from "./sqlite-policy.js";
 
@@ -246,8 +247,24 @@ export class MessageStore {
 
   /** Retained registrations include offline sessions, but never worker runners or agent queue keys. */
   broadcastNames(): string[] {
-    return this.db.prepare(`SELECT name FROM peer_name_owners
-      WHERE identity NOT LIKE 'unidentified:job:%' ORDER BY name`).all().map((r) => String(r.name));
+    const sessions = this.db.prepare("SELECT session FROM history_sessions WHERE alias=?");
+    const files = this.db.prepare("SELECT DISTINCT cwd FROM history_files WHERE session=? AND cwd<>''");
+    return this.db.prepare(`SELECT name,identity FROM peer_name_owners
+      WHERE identity NOT LIKE 'unidentified:job:%' ORDER BY name`).all().filter((row) => {
+        const identity = String(row.identity);
+        let session: string | undefined;
+        try {
+          const parts: unknown = JSON.parse(identity);
+          if (Array.isArray(parts)) {
+            if (parts[0] === "session" && typeof parts[2] === "string") session = parts[2];
+            else if (typeof parts[1] === "number" && typeof parts[3] === "string") return !isPluginCacheCwd(parts[3]);
+          }
+        } catch { /* Older unidentified registrations may still have indexed session metadata. */ }
+        session ??= String(sessions.get(identity.startsWith("unidentified:") ? identity.slice(13) : String(row.name))?.session ?? "") || undefined;
+        const cwds = session ? files.all(session).map((file) => String(file.cwd)) : [];
+        // Historical rows remain untouched. Unknown paths and any real project path stay eligible.
+        return !cwds.length || cwds.some((cwd) => !isPluginCacheCwd(cwd));
+      }).map((row) => String(row.name));
   }
 
   /** Keep lock waits out of the broker event loop. Callbacks must be synchronous atomic steps. */
