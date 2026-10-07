@@ -7717,6 +7717,7 @@ var APP_NAME = "agent-bridge";
 var APP_VERSION = "0.29.13";
 var PROTOCOL_VERSION = 2;
 var ENV = {
+  internal: "AGENT_BRIDGE_INTERNAL",
   home: "AGENT_BRIDGE_HOME",
   pipe: "AGENT_BRIDGE_PIPE",
   name: "AGENT_BRIDGE_NAME",
@@ -28508,9 +28509,21 @@ function migrateSqlite(db, file2, existed, target, migrations, log) {
 import { execFileSync } from "node:child_process";
 import { existsSync as existsSync5, readFileSync as readFileSync2, realpathSync as realpathSync2, statSync as statSync4 } from "node:fs";
 import { dirname as dirname5, join as join8, resolve as resolve2 } from "node:path";
+
+// src/core/session-visibility.ts
+import { posix } from "node:path";
+function isPluginCacheCwd(cwd) {
+  const path = posix.normalize(cwd.replace(/\\/g, "/")).toLowerCase().replace(/\/+$/, "");
+  return /(?:^|\/)\.(?:codex|claude)\/plugins\/cache(?:\/|$)/.test(path) || /(?:^|\/)(?:\.config\/opencode|\.opencode|opencode)\/plugins?(?:\/|$)/.test(path) || /(?:^|\/)(?:\.gemini\/(?:config|antigravity-cli)|\.agents)\/plugins(?:\/|$)/.test(path);
+}
+
+// src/core/project-identity.ts
 function canonicalProjectRoot(cwd) {
+  if (isPluginCacheCwd(cwd)) return null;
+  const visibleRoot = (root) => isPluginCacheCwd(root) ? null : root;
   try {
     const physical = realpathSync2.native(cwd);
+    if (isPluginCacheCwd(physical)) return null;
     if (!statSync4(physical).isDirectory()) return null;
     const git2 = (args) => execFileSync(
       "git",
@@ -28520,14 +28533,14 @@ function canonicalProjectRoot(cwd) {
     try {
       const top = realpathSync2.native(git2(["--show-toplevel"]));
       const common = realpathSync2.native(resolve2(physical, git2(["--git-common-dir"])));
-      if (common.endsWith("/.git") || common.endsWith("\\.git")) return realpathSync2.native(dirname5(common));
+      if (common.endsWith("/.git") || common.endsWith("\\.git")) return visibleRoot(realpathSync2.native(dirname5(common)));
       try {
         const configured = execFileSync(
           "git",
           ["--git-dir", common, "config", "--get", "core.worktree"],
           { encoding: "utf8", timeout: 3e3, windowsHide: true, stdio: ["ignore", "pipe", "ignore"] }
         ).trim();
-        if (configured) return realpathSync2.native(resolve2(common, configured));
+        if (configured) return visibleRoot(realpathSync2.native(resolve2(common, configured)));
       } catch {
       }
       const worktrees = execFileSync(
@@ -28537,7 +28550,7 @@ function canonicalProjectRoot(cwd) {
       );
       const main2 = worktrees.split(/\r?\n\r?\n/).find((entry) => !/^bare$/m.test(entry));
       const root = main2 && /^worktree (.+)$/m.exec(main2)?.[1];
-      return root ? realpathSync2.native(root) : top;
+      return visibleRoot(root ? realpathSync2.native(root) : top);
     } catch {
       return physical;
     }
@@ -32242,7 +32255,7 @@ var OPENCODE_READ_ONLY_TOOLS = {
 };
 function childEnv(extra = {}) {
   const { CLAUDE_PROJECT_DIR: _parentProject, ...env } = process.env;
-  return { ...env, ...extra, [DELEGATE_DEPTH_ENV]: String(currentDelegateDepth() + 1) };
+  return { ...env, ...extra, [ENV.internal]: "1", [DELEGATE_DEPTH_ENV]: String(currentDelegateDepth() + 1) };
 }
 function checkDepth(max = Number(process.env[ENV.maxDelegateDepth] ?? DEFAULT_MAX_DELEGATE_DEPTH), env = process.env) {
   const limit = Number.isInteger(max) && max >= 1 ? Math.min(max, MAX_DELEGATE_DEPTH_LIMIT) : DEFAULT_MAX_DELEGATE_DEPTH;
@@ -34349,7 +34362,7 @@ var handoffSchema = external_exports.object({
 function commitHandoff(path, source, target, input2, options = {}) {
   const args = handoffSchema.parse(input2);
   if (source.jobAgent) throw new BridgeError("unauthorized", "Only the current supervisor session can hand off its own jobs.");
-  if (target.host || target.name.includes("/") || target.jobAgent || !CODING_AGENTS.includes(target.agent)) {
+  if (isPluginCacheCwd(source.cwd) || isPluginCacheCwd(target.cwd) || target.host || target.name.includes("/") || target.jobAgent || !CODING_AGENTS.includes(target.agent)) {
     throw new BridgeError("bad_request", "The target must be an exact live local Claude Code, Codex or opencode session. Paired-PC handoff is not supported.");
   }
   if (target.name === source.name && options.reason !== "group-restored" && !options.canControl) throw new BridgeError("bad_request", "Choose another local supervisor session.");
@@ -36714,7 +36727,7 @@ import { DatabaseSync as DatabaseSync13 } from "node:sqlite";
 
 // src/core/paths.ts
 import { createHash as createHash11 } from "node:crypto";
-import { join as join36, posix, resolve as resolve10 } from "node:path";
+import { join as join36, posix as posix2, resolve as resolve10 } from "node:path";
 var PIPE_HASH_LENGTH = 12;
 function resolveHome(env = process.env) {
   return resolve10(env[ENV.home]?.trim() || DEFAULT_HOME);
@@ -36726,7 +36739,7 @@ function resolvePipePath(home, env = process.env, platform = process.platform) {
     const hash3 = createHash11("sha256").update(home.toLowerCase()).digest("hex").slice(0, PIPE_HASH_LENGTH);
     return `${WINDOWS_PIPE_PREFIX}${APP_NAME}-${hash3}-p${PROTOCOL_VERSION}`;
   }
-  return posix.join(home, SOCKET_FILE_NAME.replace(/\.sock$/, `-p${PROTOCOL_VERSION}.sock`));
+  return posix2.join(home, SOCKET_FILE_NAME.replace(/\.sock$/, `-p${PROTOCOL_VERSION}.sock`));
 }
 function resolveDbPath(home) {
   return join36(home, DB_FILE_NAME);
@@ -37447,7 +37460,7 @@ function classifyPeers(peers, runs, home) {
   const worktrees = `${norm(join41(home, "worktrees"))}/`;
   const byWorkdir = /* @__PURE__ */ new Map();
   for (const run2 of runs) if (run2.workdir && !byWorkdir.has(norm(run2.workdir))) byWorkdir.set(norm(run2.workdir), run2);
-  return peers.map((p) => {
+  return peers.filter((p) => !isPluginCacheCwd(p.cwd)).map((p) => {
     const cwd = norm(p.cwd ?? "");
     const subagent = cwd.startsWith(worktrees);
     const run2 = subagent ? byWorkdir.get(cwd) : void 0;
@@ -37495,7 +37508,7 @@ async function readDashboard(ctx, request2) {
     }
     if (name2.includes("/") || name2.includes("\\") || child !== void 0 && !TRANSCRIPT_ID.test(child) || sessionMatch[2] === "chat" && child !== void 0) return reply(404, { error: "no such local session or subagent" });
     const peers = await ctx.peers();
-    const peer = peers.find((p) => p.name === name2 && !p.name.includes("/"));
+    const peer = peers.find((p) => p.name === name2 && !p.name.includes("/") && !isPluginCacheCwd(p.cwd));
     if (!peer) return reply(404, { error: "no such local session" });
     if (!peer.sessionId) return reply(409, { error: "This session has no sessionId yet." });
     if (!TRANSCRIPT_ID.test(peer.sessionId) || !CODING_AGENTS.includes(peer.agent)) return reply(404, { error: "no transcript for this session" });
@@ -37874,6 +37887,9 @@ function formatUsage(details) {
   const cost = details.costUsd;
   if (typeof cost === "number") parts.push(`$${cost.toFixed(4)}`);
   return parts.length ? `Usage: ${parts.join(", ")}` : null;
+}
+function formatReplyRestrictions(result) {
+  return (result.replyRestrictions ?? []).map(({ name: name2, supervisor }) => `${name2} can't reply to you directly. Its replies go to its supervisor ${supervisor}. To get an answer, ask ${supervisor}, ask ${supervisor} to grant you with send_to, or use the project's main session.`);
 }
 
 // src/mcp/siblings.ts
@@ -39623,7 +39639,7 @@ var Broker = class {
   }
   /** Local sessions and paired remote peers; local job runners stay hidden (see job-host.ts). */
   livePeers() {
-    return this.localPeers().filter((p) => !p.jobAgent).map((p) => this.projectPeer(p)).concat(this.network?.peers() ?? []);
+    return this.localPeers().filter((p) => !p.jobAgent).map((p) => this.projectPeer(p)).concat(this.network?.peers() ?? []).filter((p) => !isPluginCacheCwd(p.cwd));
   }
   localPeers() {
     return [...this.conns].flatMap((c) => c.peer ? [c.peer] : []);
@@ -40009,6 +40025,7 @@ Call decisions to look up current decisions or their history.`,
       throw new BridgeError("bad_request", "invalid peer info");
     }
     if (conn.peer) throw new BridgeError("bad_request", "already registered");
+    if (isPluginCacheCwd(String(p.cwd ?? ""))) throw new BridgeError("bad_request", "Plugin-cache processes cannot register as sessions.");
     const name2 = this.uniqueName(p.name);
     const peer = {
       id: String(p.id),
@@ -40076,6 +40093,7 @@ Call decisions to look up current decisions or their history.`,
     return { moved };
   }
   onUpdatePeer(conn, args) {
+    if (typeof args.cwd === "string" && isPluginCacheCwd(args.cwd)) throw new BridgeError("bad_request", "Plugin-cache processes cannot register as sessions.");
     const peer = this.requirePeer(conn);
     if (args.unavailable !== void 0) {
       if (peer.jobAgent || typeof args.unavailable !== "boolean") throw new BridgeError("bad_request", "Only masters can change availability.");
@@ -40245,6 +40263,26 @@ Call decisions to look up current decisions or their history.`,
     }
     return result;
   }
+  /** Reverse permissions use the current durable record, not stale runner registration. */
+  replyRestriction(sender, name2) {
+    const jobs = this.storedJobs(), peer = this.connByName(name2)?.peer;
+    const stored = jobs.find((j) => j.name === name2);
+    if (!stored && !peer?.jobAgent) return null;
+    const job = stored ?? {
+      id: peer.id.replace(/^job:/, ""),
+      name: name2,
+      owner: peer.jobParent,
+      supervisor: peer.jobOwner,
+      rootName: peer.rootName,
+      parentJob: peer.parentJob,
+      workdir: peer.cwd,
+      args: { send_to: peer.jobSendTo }
+    };
+    const recipient = { ...peer, id: `job:${job.id}`, name: name2, jobOwner: typeof job.supervisor === "string" ? job.supervisor : peer?.jobOwner };
+    const grants = isRecord(job.args) && Array.isArray(job.args.send_to) ? job.args.send_to : [];
+    if (sender.name === name2 || grants.includes(sender.name) || this.groups.canControl(sender, job, this.localPeers()) || sender.jobAgent && (this.sameJobFamily(recipient, sender, jobs) || this.sharedJobs(recipient, sender, jobs))) return null;
+    return { name: name2, supervisor: this.jobRecipient(job) || peer?.jobParent || "the project's main session" };
+  }
   async routeSend(conn, sender, args) {
     const body = typeof args.body === "string" ? args.body : "";
     if (!body.trim()) throw new BridgeError("bad_request", "message body is empty");
@@ -40304,9 +40342,19 @@ Call decisions to look up current decisions or their history.`,
     if (conversationId.startsWith(SIBLING_CONVERSATION_PREFIX) && (queued.some((name2) => !sender.jobAgent || !this.storedSiblings(sender).some((s) => s.name === name2)) || live.some((c) => c.peer.jobAgent && (!sender.jobAgent || !sender.jobOwner || !this.sameJobFamily(sender, c.peer) && !this.sharedJobs(sender, c.peer) && !sender.jobSendTo?.includes(c.peer.name))))) {
       throw new BridgeError("unauthorized", "sibling chat requires the same supervisor or an explicit send_to job grant");
     }
+    const replyRestrictions = conversationId.startsWith(CONTROL_CONVERSATION_PREFIX) ? [] : [...live.map((c) => c.peer.name), ...queued].flatMap((name2) => {
+      const restriction = this.replyRestriction(sender, name2);
+      return restriction ? [restriction] : [];
+    });
+    const envelope = (recipient) => {
+      const restriction = replyRestrictions.find((r) => r.name === recipient);
+      return { ...base2, recipient, body: restriction ? base2.body + `
+
+[agent-bridge routing hint: this sender can't receive your direct reply; answer via your supervisor ${restriction.supervisor} if needed.]` : base2.body };
+    };
     const messages = [];
-    for (const c of live) messages.push({ ...base2, recipient: c.peer.name });
-    for (const key3 of queued) messages.push({ ...base2, recipient: key3 });
+    for (const c of live) messages.push(envelope(c.peer.name));
+    for (const key3 of queued) messages.push(envelope(key3));
     for (const m of messages) this.store.insert(m);
     live.forEach((c, i) => this.emit(c, "message", messages[i]));
     this.log.info("message routed", {
@@ -40318,6 +40366,7 @@ Call decisions to look up current decisions or their history.`,
       queuedFor: queued
     });
     const result = { messages, deliveredTo: live.map((c) => c.peer.name), queuedFor: queued, recipientStates: live.map((c) => ({ name: c.peer.name, activity: c.peer.activity, autoWake: c.peer.autoWake, wakeOnDirect: c.peer.wakeOnDirect, wakeAvailable: c.peer.wakeAvailable, wakeMaxHops: c.peer.wakeMaxHops })) };
+    if (replyRestrictions.length) result.replyRestrictions = replyRestrictions;
     for (const recipient of remoteTargets) {
       try {
         const remote = await this.requireNetwork().send({ ...base2, recipient });
@@ -40563,6 +40612,7 @@ var BridgeNode = class extends EventEmitter2 {
    * node keeps retrying in the background (see scheduleReconnect) instead of staying disconnected.
    */
   ensureConnected() {
+    if (isPluginCacheCwd(this.currentCwd)) return Promise.reject(new BridgeError("bad_request", "Project directory is still a plugin cache; waiting for the host's project directory."));
     if (this.isConnected) return Promise.resolve();
     this.electing ??= this.elect().catch((err) => {
       this.scheduleReconnect(this.nextBackoff());
@@ -40777,7 +40827,7 @@ var BridgeNode = class extends EventEmitter2 {
     return this.withClient((c) => c.request("messageReceipt", { id }));
   }
   peers() {
-    return this.withClient((c) => c.request("peers", {}));
+    return this.withClient((c) => c.request("peers", {})).then((peers) => peers.filter((p) => !isPluginCacheCwd(p.cwd)));
   }
   projectJobs() {
     return this.withClient((c) => c.request("projectJobs", {}));
@@ -41399,7 +41449,7 @@ async function startupState(home, cwd, name2, log) {
   }
 }
 function sessionStartContext(name2, peers, decisions = []) {
-  const others = (peers ?? []).filter((p) => p.name !== name2);
+  const others = (peers ?? []).filter((p) => p.name !== name2 && !isPluginCacheCwd(p.cwd));
   return [
     `[agent-bridge] You are connected to agent-bridge as "${name2}".`,
     others.length ? `Peers online:
@@ -43619,6 +43669,7 @@ $("send").addEventListener("submit", async (e) => {
     const d = await r.json();
     if (!r.ok) throw new Error(d.error || "HTTP " + r.status);
     $("sendInfo").textContent = d.deliveredTo?.length ? "Delivered to " + d.deliveredTo.join(", ") : "Queued for " + (d.queuedFor || []).join(", ");
+    if (d.replyGuidance?.length) $("sendInfo").textContent += " " + d.replyGuidance.join(" ");
     $("body").value = "";
     poll();
   } catch (err) {
@@ -45302,7 +45353,7 @@ async function startUi(opts) {
       const text2 = String(body.body ?? "").trim();
       if (!to || !text2) return send(res, 400, { error: "to and body are required" });
       const r = await (await getSender()).send({ to, body: text2 });
-      return send(res, 200, { id: r.messages[0]?.id, deliveredTo: r.deliveredTo, queuedFor: r.queuedFor });
+      return send(res, 200, { id: r.messages[0]?.id, deliveredTo: r.deliveredTo, queuedFor: r.queuedFor, replyRestrictions: r.replyRestrictions, replyGuidance: formatReplyRestrictions(r) });
     }
     if (req.method === "POST" && url2.pathname === "/api/subagents/handoff") {
       if (req.headers["x-agent-bridge"] !== "1") return send(res, 403, { error: "missing header" });
@@ -50789,6 +50840,7 @@ async function main(argv) {
         await node2.start();
         const res = await node2.send({ to, body: words.join(" ") });
         out(t("cli.sent", { id: res.messages[0].id }));
+        for (const hint of formatReplyRestrictions(res)) out(hint);
       } finally {
         await node2.stop();
       }

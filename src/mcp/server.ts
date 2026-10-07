@@ -31,6 +31,7 @@ import { readUsage, codexAppServerCall } from "../core/usage.js";
 import { t } from "../core/i18n.js";
 import { createLogger, type Logger } from "../core/logger.js";
 import { BridgeNode } from "../core/node.js";
+import { isInternalBridgeProcess, isPluginCacheCwd } from "../core/session-visibility.js";
 import { MAX_TRANSFER_ENTRIES } from "../network/files.js";
 import { NETWORK_NAME_PATTERN } from "../network/constants.js";
 import { remoteSpawnArgsSchema } from "../network/remote-job-protocol.js";
@@ -39,7 +40,7 @@ import { resolveDbPath, resolveHome, resolvePipePath } from "../core/paths.js";
 import { inspectClaudeLaunch } from "../core/procinfo.js";
 import { loadOrCreateToken } from "../core/token.js";
 import { BridgeError, BROADCAST, CODING_AGENTS, isQuietMessage, SIBLING_CONVERSATION_PREFIX, TRANSFER_PROGRESS_PREFIX, type AgentKind, type BridgeMessage, type CodingAgent } from "../core/protocol.js";
-import { formatDelivery, formatDuration, formatMessage, formatMessages, formatPeer } from "./format.js";
+import { formatReplyRestrictions, formatDelivery, formatDuration, formatMessage, formatMessages, formatPeer } from "./format.js";
 import { CodexWaker, type Activity } from "./codex-wake.js";
 import { buildHookResponse, discardFinishedNotes, type HookEvent } from "./hooks.js";
 import { ACCESS_LEVELS, DELEGATION_TARGETS, nativeSubagentsSchema, type Access } from "./targets.js";
@@ -73,8 +74,6 @@ const CHANNEL_NOTIFICATION = "notifications/claude/channel";
 export const OPENCODE_NOTIFICATION = "notifications/agent-bridge/message";
 /** Experimental Codex capability: Codex then adds the sandbox state (incl. session cwd) to each tools/call _meta. */
 const CODEX_SANDBOX_META = "codex/sandbox-state-meta";
-/** How long to wait for a hook or tool call to reveal the project dir before joining the bridge anyway. */
-const CWD_DISCOVERY_GRACE_MS = 15_000;
 /** Subagent titles (ask_* / spawn_* `title`), like a chat title. */
 const MAX_TITLE_CHARS = 80;
 /** The tools a delegated subagent's server offers (see registerTools). */
@@ -234,7 +233,7 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
   const log = createLogger({ home, component: `mcp-${agent}` });
   const cwd = process.env.CLAUDE_PROJECT_DIR || process.cwd();
   // Codex starts plugin MCP servers inside the plugin folder; the project dir arrives later via hooks/_meta.
-  const cwdKnown = Boolean(process.env.CLAUDE_PROJECT_DIR) || !isInside(cwd, PLUGIN_ROOT);
+  const cwdKnown = !isPluginCacheCwd(cwd) && (Boolean(process.env.CLAUDE_PROJECT_DIR) || !isInside(cwd, PLUGIN_ROOT));
   let configCwd: string | undefined, configRoot: string | undefined;
   const projectConfigRoot = (dir: string): string | undefined => {
     if (dir !== configCwd) { configCwd = dir; configRoot = canonicalProjectRoot(dir) ?? undefined; }
@@ -242,9 +241,10 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
   };
   const cfg = loadConfig(home, agent, log, process.env, cwdKnown ? projectConfigRoot(cwd) : undefined);
   const delegated = currentDelegateDepth() > 0;
-  log.info("starting MCP server", { agent, cwd, cwdKnown, delegated, version: APP_VERSION, node: process.version });
+  const internal = isInternalBridgeProcess();
+  log.info("starting MCP server", { agent, cwd, cwdKnown, delegated, internal, version: APP_VERSION, node: process.version });
 
-  const node = delegated
+  const node = delegated || internal
     ? null
     : new BridgeNode({
         pipePath: resolvePipePath(home),
@@ -296,7 +296,7 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
     // Learn the project folder once, when it was unknown at start (Codex starts us in the plugin folder).
     // Later hook cwds follow the agent's `cd`s; renaming then would strand replies sent to the old name.
     ctx.learnCwd = async (projectDir) => {
-      if (cwdSettled || projectDir === node.cwd) return;
+      if (cwdSettled || projectDir === node.cwd || isPluginCacheCwd(projectDir)) return;
       cwdSettled = true;
       Object.assign(cfg,loadConfig(home,agent,log,process.env,projectConfigRoot(projectDir)));
       const name = cfg.name ? undefined : defaultPeerName(agent, projectDir);
@@ -509,10 +509,8 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
     } else if (cwdKnown) {
       void join();
     } else {
-      // Join as soon as a hook or tool call tells us the project dir (they connect on demand);
-      // join anyway after a grace period so the peer is reachable even without hooks.
-      log.info("project directory unknown yet; deferring bridge join", { graceMs: CWD_DISCOVERY_GRACE_MS });
-      setTimeout(() => void join(), CWD_DISCOVERY_GRACE_MS).unref();
+      // Hooks and tool metadata supply the real project. Validation-only hosts never join.
+      log.info("project directory unknown yet; waiting for host metadata before bridge join");
     }
   }
 }
@@ -761,7 +759,7 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
           const m = result.messages[0]!;
           const sibling = m.conversationId.startsWith(SIBLING_CONVERSATION_PREFIX);
           const delivery = result.queuedFor.length ? sibling ? "queued for the sibling's next turn" : "queued for the granted session" : sibling ? "sent to sibling" : "sent to granted session";
-          return text(`Message ${m.id} ${delivery} ${a.to} (conversation ${m.conversationId}, hop ${m.hop}).${sibling ? " The supervisor received a quiet copy." : ""}`);
+          return text(`Message ${m.id} ${delivery} ${a.to} (conversation ${m.conversationId}, hop ${m.hop}).${sibling ? " The supervisor received a quiet copy." : ""}\n${formatReplyRestrictions(result).join("\n")}`);
         }
         await ctx.parent.send(a.message, a.reply_to);
         return text(t("send.toParent", { name: ctx.parent.name }));
@@ -784,7 +782,7 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
       const lines = [t("send.ok", { id: first.id, conversation: first.conversationId })];
       lines.push(...formatDelivery(res, cfg.maxHops));
       if (res.queuedFor.length) lines.push(t("send.queued", { names: res.queuedFor.join(", ") }));
-      lines.push(t("send.waitHint"));
+      if (!res.replyRestrictions?.length) lines.push(t("send.waitHint"));
       lines.push(`For a consumption receipt, call wait_for_message(read_receipt_of="${first.id}").`);
       return text(lines.join("\n"));
     }),

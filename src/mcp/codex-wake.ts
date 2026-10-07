@@ -1,5 +1,6 @@
 import type { BridgeConfig } from "../core/config.js";
 import { runProcess } from "../core/delegate.js";
+import { ENV } from "../core/constants.js";
 import type { Logger } from "../core/logger.js";
 import type { BridgeNode } from "../core/node.js";
 import { isQuietMessage, type BridgeMessage } from "../core/protocol.js";
@@ -100,7 +101,7 @@ export class CodexWaker {
         stdin: "",
         cwd: this.node.cwd,
         timeoutMs: this.timings.queueTimeoutMs,
-        env: process.env,
+        env: { ...process.env, [ENV.internal]: "1" },
         log: this.log,
       });
       if (res.code === 0) this.log.info("queued wake-up turn for codex", { threadId: this.threadId });

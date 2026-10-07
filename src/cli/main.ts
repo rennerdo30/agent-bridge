@@ -7,7 +7,7 @@ import { BridgeNode } from "../core/node.js";
 import { resolveDbPath, resolveHome, resolvePipePath } from "../core/paths.js";
 import { APP_VERSION, PROTOCOL_VERSION } from "../core/constants.js";
 import { loadOrCreateToken } from "../core/token.js";
-import { formatMessage } from "../mcp/format.js";
+import { formatMessage, formatReplyRestrictions } from "../mcp/format.js";
 import { CODING_AGENTS, type CodingAgent } from "../core/protocol.js";
 import { parseInstallerArgs, runInstaller } from "./installer.js";
 import { runPermissionHook } from "./permission-hook.js";
@@ -103,6 +103,7 @@ async function main(argv: string[]): Promise<number> {
         await node.start();
         const res = await node.send({ to, body: words.join(" ") });
         out(t("cli.sent", { id: res.messages[0]!.id }));
+        for (const hint of formatReplyRestrictions(res)) out(hint);
       } finally {
         await node.stop();
       }

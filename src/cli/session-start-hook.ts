@@ -1,4 +1,5 @@
 import { BridgeClient } from "../core/client.js";
+import { isPluginCacheCwd } from "../core/session-visibility.js";
 import { defaultPeerName, loadConfig } from "../core/config.js";
 import { PROTOCOL_VERSION } from "../core/constants.js";
 import type { Logger } from "../core/logger.js";
@@ -46,7 +47,7 @@ async function startupState(home: string, cwd: string, name: string, log: Logger
 
 /** The startup note for the session: its bridge name and who else is online. */
 export function sessionStartContext(name: string, peers: PeerInfo[] | null, decisions: OwnerDecision[] = []): string {
-  const others = (peers ?? []).filter((p) => p.name !== name);
+  const others = (peers ?? []).filter((p) => p.name !== name && !isPluginCacheCwd(p.cwd));
   return [
     `[agent-bridge] You are connected to agent-bridge as "${name}".`,
     others.length ? `Peers online:\n${others.map((p) => formatPeer(p)).join("\n")}` : "No other agents are online right now.",
