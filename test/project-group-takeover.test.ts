@@ -116,7 +116,7 @@ it("routes a blocking ask to an available group master without returning its res
   expect(reply.text).not.toContain("Takeover result");
   let inbox = "";
   await expect.poll(async () => { inbox += (await call(target, "inbox")).text; return /Subagent codex-ask-[a-f0-9]+ \(codex\) done after/.test(inbox); }).toBe(true);
-  expect(inbox).toContain("Blocking fallback note");
+  expect((await call(target, "inbox", { include_quiet: true })).text).toContain("Blocking fallback note");
   expect((inbox.match(/Subagent codex-ask-[a-f0-9]+ \(codex\) done after/g) ?? [])).toHaveLength(1);
   expect((await call(source, "inbox")).text).not.toMatch(/Blocking fallback note|Takeover result/);
   expect(readStore(join(env.home, "jobs.json")).find((job) => job.name.startsWith("codex-ask-"))?.owner).toBe("claude-master");
@@ -174,9 +174,11 @@ it.each(["closed", "unavailable", "opencode"])("ten jobs survive a %s primary an
   const envelopes = [...delivered.matchAll(/<agent-bridge-message id="([^"]+)"[^>]*>([\s\S]*?)<\/agent-bridge-message>/g)];
   expect(new Set(envelopes.map((m) => m[1])).size).toBe(envelopes.length);
   for (const job of jobs) expect(envelopes.filter((m) => m[2]!.includes(`Subagent ${job.name} (codex) done after`))).toHaveLength(1);
-  expect(delivered).toContain("Pending before takeover");
   expect(delivered).toContain("Takeover approval request");
-  for (let i = 0; i < 10; i++) expect(delivered).toContain(`After takeover note ${i}`);
+  // Quiet supervision copies remain retained and explicitly discoverable after failover.
+  const retainedNotes = (await call(target, "inbox", { include_quiet: true })).text;
+  expect(retainedNotes).toContain("Pending before takeover");
+  for (let i = 0; i < 10; i++) expect(retainedNotes).toContain(`After takeover note ${i}`);
   expect((await call(target, "inbox")).text).not.toContain("Takeover result ");
   const returning = mode === "closed" ? await session(primaryName, primaryAgent) : source;
   if (mode !== "closed") await call(source, "coordinator_availability", { unavailable: false });
