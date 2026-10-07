@@ -25,9 +25,9 @@ describe("Antigravity conversation search", () => {
       expect(hits.every((hit) => hit.agent === "antigravity" && hit.session === "native-session")).toBe(true);
       expect(db.prepare("SELECT path FROM history_files WHERE agent='antigravity'").all()).toEqual([{ path: file }]);
       for (let n = 0; n < 30; n++) ingestor.tick();
-      const conversation = readConversation(env.db, { id: "antigravity:native-session" });
-      expect(conversation.records.map((record) => record.raw).join("")).toBe(raw);
-      expect(readConversation(env.db, { id: "antigravity:native-child" }).conversation?.parent).toBe("antigravity:native-session");
+      const conversation = readConversation(db, { id: "antigravity:native-session" });
+      expect(conversation.records.map((record) => Buffer.from(record.raw, "base64").toString("utf8")).join("")).toBe(raw);
+      expect(readConversation(db, { id: "antigravity:native-child" }).conversation?.parent).toBe("antigravity:native-session");
       expect(readFileSync(file, "utf8")).toBe(raw);
     } finally { ingestor.close(); index.close(); db.close(); store.close(); await env.cleanup(); }
   });

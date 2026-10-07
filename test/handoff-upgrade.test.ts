@@ -108,7 +108,7 @@ it("upgrades the released 0.29.10 SQLite layout without changing any old table r
   const store = new MessageStore(file, nullLogger); store.close();
   const next = new DatabaseSync(file);
   try {
-    expect(next.prepare("PRAGMA user_version").get()!.user_version).toBe(7);
+    expect(next.prepare("PRAGMA user_version").get()!.user_version).toBe(8);
     for (const [table, records] of Object.entries(original)) {
       if (table === "archived_messages") {
         const archive = new DatabaseSync(archiveDbPath(file), { readOnly: true });
