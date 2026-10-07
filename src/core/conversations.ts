@@ -78,7 +78,7 @@ export class ConversationIngestor {
   ) {
     this.checked = Number(
       db
-        .prepare("SELECT coalesce(max(checked),0) n FROM conversation_sources")
+        .prepare("SELECT coalesce(max(checked),0) n FROM (SELECT checked FROM conversation_sources UNION ALL SELECT checked FROM conversation_projects)")
         .get()!.n,
     );
   }
@@ -1167,7 +1167,7 @@ export class ConversationIngestor {
       work += syncProjectMirror(this.db, String(project.project));
       this.db
         .prepare("UPDATE conversation_projects SET checked=? WHERE project=?")
-        .run(this.checked, project.project!);
+        .run(++this.checked, project.project!);
     }
     return work;
   }
