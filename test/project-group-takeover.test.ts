@@ -11,6 +11,10 @@ import { listPendingApprovals } from "../src/core/relay.js";
 import { pidAlive, killPid } from "../src/core/delegate.js";
 
 const SERVER = join(import.meta.dirname, "..", "plugins", "claude", "dist", "server.mjs");
+function linkReady(path: string): boolean {
+  try { return Boolean(JSON.parse(readFileSync(path, "utf8")).AGENT_BRIDGE_PARENT_URL); }
+  catch { return false; }
+}
 let env: TestEnv, bin: string;
 const transports: StdioClientTransport[] = [];
 const clients: Client[] = [], ids: string[] = [], releases: string[] = [];
@@ -102,7 +106,7 @@ it("routes a blocking ask to an available group master without returning its res
   const source = await session("claude-master", "claude"), target = await session("codex-master", "codex");
   const release = join(env.home, "blocking-release"), link = release + ".link"; releases.push(release);
   const pending = call(source, "ask_codex", { prompt: `release=${release} link=${link} blocking work`, title: "Limited caller work" });
-  await until(() => existsSync(link), 10_000);
+  await until(() => linkReady(link), 10_000);
   expect((await call(source, "coordinator_availability", { unavailable: true })).error).toBeFalsy();
   const child = parentFromEnv(JSON.parse(readFileSync(link, "utf8")))!;
   await child.send("Blocking fallback note");
@@ -134,7 +138,7 @@ it.each(["closed", "unavailable", "opencode"])("ten jobs survive a %s primary an
   const failed = starts.find((result) => result.status === "rejected");
   if (failed?.status === "rejected") throw failed.reason;
   const jobs = starts.map((result) => (result as PromiseFulfilledResult<{ name: string; id: string; release: string; link: string }>).value);
-  await until(() => jobs.every((j) => existsSync(j.link) && readRunnerState(env.home, j.id)?.sessionId && readRunnerState(env.home, j.id)?.live), 18_000);
+  await until(() => jobs.every((j) => linkReady(j.link) && readRunnerState(env.home, j.id)?.sessionId && readRunnerState(env.home, j.id)?.live), 18_000);
   const children = jobs.map((j) => parentFromEnv(JSON.parse(readFileSync(j.link, "utf8")))!);
   // Leave one result and note pending in the starter's inbox before it becomes unavailable.
   await children[0]!.send("Pending before takeover");
