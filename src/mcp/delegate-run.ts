@@ -25,6 +25,8 @@ import { SiblingLink } from "./siblings.js";
 import { denyPendingApprovals, waitForApproval, type Job, type RunResult } from "./jobs.js";
 import { DELEGATION_TARGETS, supportsAsk, type Access, type RelayWiring, type TargetArgs } from "./targets.js";
 import { JOB_SETTING_KEYS } from "./job-settings.js";
+import { prepareWorktreeContinuation, recordWorktreeOrigin } from "../core/job-close.js";
+import { worktreeLease } from "../core/worktree-state.js";
 
 /** Added to a subagent's task when it can report progress. */
 const PROGRESS_HINT =
@@ -119,7 +121,7 @@ export async function runDelegate(
   onProgress: ((message: string) => void) | undefined, background: boolean, job?: Job,
 ): Promise<RunResult> {
   checkDepth(rc.cfg.maxDelegateDepth);
-  if (!job?.rootSession) return runDelegateInner(rc, target, a, signal, onProgress, background, job);
+  if (!job?.rootSession) return runWithWorktreeLease(rc, target, a, signal, onProgress, background, job);
   const budget = new RootConcurrency(rc.home, job.rootSession);
   const owner = { id: `${job.name}-${randomUUID()}`, pid: process.pid };
   let timer: NodeJS.Timeout | undefined;
@@ -128,8 +130,19 @@ export async function runDelegate(
     if (!budget.acquire(owner)) throw new Error("The top session's subagent concurrency limit is reached.");
     timer = setInterval(() => { try { budget.renew(owner); } catch (err) { rc.log.warn("could not renew root concurrency lease", { err: String(err) }); } }, SLOT_RENEW_MS);
     timer.unref();
-    return await runDelegateInner(rc, target, a, signal, onProgress, background, job);
+    return await runWithWorktreeLease(rc, target, a, signal, onProgress, background, job);
   } finally { clearInterval(timer); budget.release(owner); budget.close(); }
+}
+
+async function runWithWorktreeLease(rc: RunContext, target: CodingAgent, a: DelegateArgs, signal: AbortSignal, onProgress: ((message: string) => void) | undefined, background: boolean, job?: Job): Promise<RunResult> {
+  const wt = a._worktree ?? (a.worktree ? await createWorktree({ cwd: a.cwd || rc.cwd(), home: rc.home, jobId: randomUUID().slice(0, 8), log: rc.log }) : null);
+  if (!wt) return runDelegateInner(rc, target, a, signal, onProgress, background, job);
+  const release = worktreeLease(rc.home, wt);
+  try {
+    if (!a._worktree) await recordWorktreeOrigin(rc.home, wt, rc.log);
+    else await prepareWorktreeContinuation(rc.home, wt, rc.log);
+    return await runDelegateInner(rc, target, { ...a, _worktree: wt }, signal, onProgress, background, job);
+  } finally { release(); }
 }
 
 async function runDelegateInner(

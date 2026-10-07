@@ -84,7 +84,7 @@ function asExecEvent(kind: "item.started" | "item.completed", item: any): unknow
 }
 
 export async function delegateToCodexAppServer(
-  req: DelegateRequest & { bin: string; sandbox: CodexSandbox; approvalsReviewer?: CodexApprovalsReviewer; askMode?: boolean; writableRoots?: string[]; networkAccess?: boolean; startupTimeoutMs?: number },
+  req: DelegateRequest & { bin: string; sandbox: CodexSandbox; windowsSandbox?: "unelevated" | "elevated"; approvalsReviewer?: CodexApprovalsReviewer; askMode?: boolean; writableRoots?: string[]; networkAccess?: boolean; startupTimeoutMs?: number },
 ): Promise<DelegateResult> {
   checkDepth(req.maxDelegateDepth);
   const mappings = codexDriveMappings(`${req.cwd}\n${req.prompt}`);
@@ -93,8 +93,8 @@ export async function delegateToCodexAppServer(
   const cwd = realFolder(req.cwd);
   const env = childEnv(req.extraEnv);
   // Full access also applies to server-level commands that do not supply a thread/turn policy.
-  // Do not change windows.sandbox: unrestricted execution already bypasses that backend.
   const startupArgs = req.sandbox === "danger-full-access" ? ["-c", 'sandbox_mode="danger-full-access"'] : [];
+  if (process.platform === "win32" && req.sandbox !== "danger-full-access") startupArgs.push("-c", `windows.sandbox="${req.windowsSandbox ?? "unelevated"}"`);
   const { resolved, args, needsShell } = resolveCommand(req.bin, ["app-server", ...startupArgs], env, req.log);
   req.log.debug("starting codex app-server", { bin: resolved, cwd });
   const child = spawn(resolved, args, { cwd, env: { ...env, PWD: cwd }, shell: needsShell, windowsHide: true, stdio: ["pipe", "pipe", "pipe"], detached: process.platform !== "win32" });
@@ -344,6 +344,7 @@ export async function delegateToCodexAppServer(
     const approvalPolicy = req.sandbox === "danger-full-access" ? CODEX_FULL_ACCESS_APPROVAL_POLICY : "on-request";
     // Extra writable folders for workspace-write (a worktree's git admin dir lives in the main repo).
     const config: Record<string, unknown> = codexSubagentConfig(req.nativeSubagents);
+    if (process.platform === "win32" && req.sandbox !== "danger-full-access") config["windows.sandbox"] = req.windowsSandbox ?? "unelevated";
     if (req.sandbox === "workspace-write" && (req.writableRoots?.length || req.networkAccess !== undefined)) {
       config.sandbox_workspace_write = {
         ...(req.writableRoots?.length ? { writable_roots: req.writableRoots.map(realFolder) } : {}),
