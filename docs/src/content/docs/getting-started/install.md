@@ -2,6 +2,11 @@
 title: "Installation"
 ---
 
+## Requirements
+
+- Node.js **22.13+** (the bridge uses built-in `node:sqlite`).
+- At least one installed, authenticated CLI: Claude Code or Codex with plugin support, opencode, or Antigravity. Earlier bridge testing used Codex 0.156; current native queue delivery is verified with 0.160.1. See [delivery requirements](../../messaging-delivery/) when using idle wake.
+
 ### All at once
 
 ```bash
