@@ -74,7 +74,9 @@ this policy to the broker. Quiet observer copies, status notes and hop limits
 still exclude automatic delivery. Global wake preferences are not changed.
 Antigravity does not advertise an unsupported idle wake: its delivery wording
 continues to say next turn/inbox. Older CLIs or a stale daemon can reject queue;
-the mail remains unread, and diagnostics describe the failure.
+the mail remains unread, and diagnostics describe the failure. Existing MCP
+servers must load the upgraded bridge before the new direct-wake policy applies;
+a plugin file update alone does not hot-replace an already running server.
 
 AB-68's external job reply grants remain separate. This feature does not create
 an implicit send_to grant or authorize a job to answer another master.
