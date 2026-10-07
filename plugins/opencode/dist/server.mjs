@@ -7209,7 +7209,7 @@ import { DatabaseSync as DatabaseSync5 } from "node:sqlite";
 import { homedir } from "node:os";
 import { join } from "node:path";
 var APP_NAME = "agent-bridge";
-var APP_VERSION = "0.29.13";
+var APP_VERSION = "0.29.14";
 var PROTOCOL_VERSION = 2;
 var ENV = {
   internal: "AGENT_BRIDGE_INTERNAL",
@@ -7908,6 +7908,7 @@ function isInternalBridgeProcess(env = process.env) {
 // src/core/project-identity.ts
 function canonicalProjectRoot(cwd) {
   if (isPluginCacheCwd(cwd)) return null;
+  const visibleRoot = (root) => isPluginCacheCwd(root) ? null : root;
   try {
     const physical = realpathSync3.native(cwd);
     if (isPluginCacheCwd(physical)) return null;
@@ -7920,14 +7921,14 @@ function canonicalProjectRoot(cwd) {
     try {
       const top = realpathSync3.native(git2(["--show-toplevel"]));
       const common = realpathSync3.native(resolve3(physical, git2(["--git-common-dir"])));
-      if (common.endsWith("/.git") || common.endsWith("\\.git")) return realpathSync3.native(dirname3(common));
+      if (common.endsWith("/.git") || common.endsWith("\\.git")) return visibleRoot(realpathSync3.native(dirname3(common)));
       try {
         const configured = execFileSync(
           "git",
           ["--git-dir", common, "config", "--get", "core.worktree"],
           { encoding: "utf8", timeout: 3e3, windowsHide: true, stdio: ["ignore", "pipe", "ignore"] }
         ).trim();
-        if (configured) return realpathSync3.native(resolve3(common, configured));
+        if (configured) return visibleRoot(realpathSync3.native(resolve3(common, configured)));
       } catch {
       }
       const worktrees = execFileSync(
@@ -7937,7 +7938,7 @@ function canonicalProjectRoot(cwd) {
       );
       const main = worktrees.split(/\r?\n\r?\n/).find((entry) => !/^bare$/m.test(entry));
       const root = main && /^worktree (.+)$/m.exec(main)?.[1];
-      return root ? realpathSync3.native(root) : top;
+      return visibleRoot(root ? realpathSync3.native(root) : top);
     } catch {
       return physical;
     }
@@ -45504,7 +45505,7 @@ var MessageStore = class {
     if (from === to) return [];
     this.db.exec("BEGIN IMMEDIATE");
     try {
-      const rows = this.db.prepare("SELECT * FROM messages WHERE recipient=? AND from_id=? AND read_at IS NULL").all(from, `job:${job}`);
+      const rows = this.db.prepare("SELECT * FROM messages WHERE recipient=? AND from_id=? AND read_at IS NULL AND conversation_id NOT LIKE ?").all(from, `job:${job}`, `${SIBLING_CONVERSATION_PREFIX}%`);
       const copied = [];
       for (const row of rows) {
         const route = this.db.prepare("SELECT recipient, consumed_at FROM job_delivery_routes WHERE id=?").get(row.id);
@@ -45526,7 +45527,7 @@ var MessageStore = class {
     }
   }
   pendingJobRecipients(job) {
-    return this.db.prepare("SELECT DISTINCT recipient FROM messages WHERE from_id=? AND read_at IS NULL").all(`job:${job}`).map((row) => String(row.recipient));
+    return this.db.prepare("SELECT DISTINCT recipient FROM messages WHERE from_id=? AND read_at IS NULL AND conversation_id NOT LIKE ?").all(`job:${job}`, `${SIBLING_CONVERSATION_PREFIX}%`).map((row) => String(row.recipient));
   }
   insertOnce(m) {
     if (this.db.prepare("SELECT 1 FROM messages WHERE id=? AND recipient=?").get(m.id, m.recipient)) return false;
@@ -51954,6 +51955,8 @@ main.wrap { padding-top: 32px; max-width: 1240px; }
 .side-nav a .dot { margin-left: auto; }
 .tree-pc { text-transform: none; letter-spacing: 0; font-size: 12px; font-weight: 600; color: var(--muted); padding: 16px 8px 6px; }
 .tree-pc span:last-child { color: var(--faint); font-weight: 400; }
+/* A project shared by several sessions: a quiet sub-heading inside its PC. */
+.tree-proj { padding: 8px 10px 2px; font-size: 11.5px; color: var(--faint); min-width: 0; }
 .tree-sess { position: relative; border-radius: 8px; }
 .tree-sess:hover { background: color-mix(in srgb, var(--panel) 60%, transparent); }
 .tree-sess.cur { background: var(--panel); box-shadow: var(--shadow); }
@@ -52849,15 +52852,11 @@ function projectSidebar(items) {
     if (!projects.has(key)) projects.set(key, { title: folder(x.peer.projectRoot), root: x.peer.projectRoot, items: [] });
     projects.get(key).items.push(x);
   }
-  return [...projects.values()].map((p) => {
-    const sameRoot = (a, b) => String(a || '').split(String.fromCharCode(92)).join('/').toLowerCase() === String(b || '').split(String.fromCharCode(92)).join('/').toLowerCase();
-    const jobs = p.title ? [...new Map(items.flatMap((x) => x.groups.filter((g) => {
-      const root = state.jobs[g.job]?.projectRoot;
-      return root ? sameRoot(root, p.root) : p.items.includes(x);
-    }).map((g) => [g.key, { g, owner: x.name }]))).values()] : [];
-    const rows = jobs.filter((x) => x.g.status === 'running').map((x) => '<div class="tree-sess"><a href="' + href(x.owner, x.g.key) + '">' + dot('busy') + '<span class="lbl ell">' + esc(x.g.title || x.g.job || 'Subagent') + '<small class="ell">' + esc(x.g.agent) + ' \xB7 project job</small></span></a></div>').join('');
-    return (p.title ? '<div class="tree-pc"><span>' + esc(p.title) + '</span><span>project</span></div>' : '') + p.items.map(sideSession).join('') + rows;
-  }).join('');
+  // The sidebar lists sessions only (subagents live in each session's own column). A project heading
+  // only appears when two or more sessions share the project.
+  return [...projects.values()].map((p) =>
+    (p.title && p.items.length > 1 ? '<div class="tree-proj"><span class="ell">' + esc(p.title) + "</span></div>" : "") + p.items.map(sideSession).join("")
+  ).join("");
 }
 
 const narrow = () => typeof matchMedia === "function" && matchMedia("(max-width: 860px)").matches;
@@ -53435,6 +53434,7 @@ $("send").addEventListener("submit", async (e) => {
     const d = await r.json();
     if (!r.ok) throw new Error(d.error || "HTTP " + r.status);
     $("sendInfo").textContent = d.deliveredTo?.length ? "Delivered to " + d.deliveredTo.join(", ") : "Queued for " + (d.queuedFor || []).join(", ");
+    if (d.replyGuidance?.length) $("sendInfo").textContent += " " + d.replyGuidance.join(" ");
     $("body").value = "";
     poll();
   } catch (err) {
@@ -55181,7 +55181,7 @@ async function startUi(opts) {
       const text3 = String(body.body ?? "").trim();
       if (!to || !text3) return send(res, 400, { error: "to and body are required" });
       const r = await (await getSender()).send({ to, body: text3 });
-      return send(res, 200, { id: r.messages[0]?.id, deliveredTo: r.deliveredTo, queuedFor: r.queuedFor });
+      return send(res, 200, { id: r.messages[0]?.id, deliveredTo: r.deliveredTo, queuedFor: r.queuedFor, replyRestrictions: r.replyRestrictions, replyGuidance: formatReplyRestrictions(r) });
     }
     if (req.method === "POST" && url2.pathname === "/api/subagents/handoff") {
       if (req.headers["x-agent-bridge"] !== "1") return send(res, 403, { error: "missing header" });
