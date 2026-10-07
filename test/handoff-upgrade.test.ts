@@ -10,6 +10,7 @@ import { MessageStore } from "../src/core/store.js";
 import { migrateSqlite } from "../src/core/sqlite-migrations.js";
 import { nullLogger } from "../src/core/logger.js";
 import { archiveDbPath } from "../src/core/sqlite-maintenance.js";
+import { JobManager, readStore } from "../src/mcp/jobs.js";
 
 vi.mock("../src/core/json-store.js", async (original) => {
   const actual = await original<typeof import("../src/core/json-store.js")>();
@@ -18,7 +19,7 @@ vi.mock("../src/core/json-store.js", async (original) => {
 let env: TestEnv;
 const fixture = readFileSync(join(import.meta.dirname, "fixtures", "handoff", "jobs-0.29.10.json"), "utf8");
 beforeEach(() => { env = makeEnv(); });
-afterEach(async () => { vi.mocked(writeJsonStore).mockClear(); await env.cleanup(); });
+afterEach(async () => { vi.mocked(writeJsonStore).mockClear(); vi.unstubAllEnvs(); await env.cleanup(); });
 const peer = (name: string): PeerInfo => ({ id: name, name, agent: "codex", cwd: env.home, pid: process.pid, agentPid: null, sessionId: null, startedAt: 1, autoWake: false });
 
 it("upgrades the real 0.29.10 job records with a byte-exact backup and preserves every old field", () => {
@@ -54,6 +55,17 @@ it("leaves original records untouched if backup/publication fails", () => {
   expect(() => commitHandoff(path, peer("codex-fixture-source"), peer("codex-target"), { to: "codex-target" })).toThrow("Backup failed");
   expect(readFileSync(path, "utf8")).toBe(fixture);
   expect(readdirSync(env.home)).toEqual(["jobs.json"]);
+});
+
+it("publishes a unique archive without overwriting an interrupted legacy overflow file", () => {
+  const path = join(env.home, "jobs.json"), leftover = `${path}.overflow.json`;
+  writeFileSync(path, fixture); writeFileSync(leftover, '{"original":"untouched"}');
+  vi.stubEnv("AGENT_BRIDGE_JOB_STORE_LIMIT", "1");
+  const manager = new JobManager(env.node("codex-fixture-source", "codex"), nullLogger, path);
+  manager.restore(() => undefined); manager.persist();
+  expect(readFileSync(leftover, "utf8")).toBe('{"original":"untouched"}');
+  expect(readStore(path, nullLogger, true).map((j) => j.id).sort()).toEqual(JSON.parse(fixture).jobs.map((j: { id: string }) => j.id).sort());
+  expect(readdirSync(join(env.home, "archive")).some((name) => /^jobs-.*\.json$/.test(name))).toBe(true);
 });
 
 it.each(['{"version":2,"jobs":"bad"}', '{broken'])("does not rename or modify invalid old data on failed migration", (bytes) => {

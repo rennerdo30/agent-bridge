@@ -73,7 +73,10 @@ describe("owner data retention rule", () => {
     expect(sql.indexOf('archive.exec("COMMIT")')).toBeLessThan(sql.indexOf("DELETE FROM ${table}"));
     expect(sql).toContain("archive identity conflict; original message preserved");
     const jobs = readFileSync(join(SOURCE_ROOT, "mcp/jobs.ts"), "utf8");
-    expect(jobs.indexOf("archiveJobs(this.storePath")).toBeLessThan(jobs.indexOf("jobs: all.filter"));
+    const archiveAt = jobs.indexOf("archiveJobs(this.storePath"), pruneAt = jobs.indexOf("jobs: all.filter");
+    expect(archiveAt).toBeGreaterThanOrEqual(0);
+    expect(pruneAt).toBeGreaterThanOrEqual(0);
+    expect(archiveAt).toBeLessThan(pruneAt);
     const runfeed = readFileSync(join(SOURCE_ROOT, "core/runfeed.ts"), "utf8");
     expect(runfeed).toContain("archiveRun(path)");
     const archiveRun = readFileSync(join(SOURCE_ROOT, "core/run-archive.ts"), "utf8");

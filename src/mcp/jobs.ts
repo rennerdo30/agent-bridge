@@ -8,9 +8,9 @@ import type { Logger } from "../core/logger.js";
 import { ACK_CONVERSATION_SUFFIX, isQuietMessage, type AgentKind, type BridgeMessage } from "../core/protocol.js";
 import { isPureAcknowledgement } from "../core/job-messaging.js";
 import type { Worktree } from "../core/worktree.js";
-import { archiveFile, assertWritableStore, isRecord, mergeStoreFields, readJsonStore, retentionLimit, writeJsonStore } from "../core/json-store.js";
+import { assertWritableStore, isRecord, mergeStoreFields, readJsonStore, retentionLimit, writeJsonStore } from "../core/json-store.js";
 import { changedJobArgs, type JobSettings } from "./job-settings.js";
-import { readArchivedJobs } from "../core/job-archive.js";
+import { archiveJobs, readArchivedJobs } from "../core/job-archive.js";
 import { ARCHIVE_AGE_ENV, DEFAULT_ARCHIVE_AGE_MS } from "../core/run-archive.js";
 import { newApprovalId, publishApproval, type PermissionDecision, type PermissionRequest } from "../core/relay.js";
 import { notifyJobEvent } from "../core/notifications.js";
@@ -432,9 +432,7 @@ export class JobManager {
         ...finished.filter((j) => age > 0 && typeof j.finishedAt === "number" && j.finishedAt < Date.now() - age),
       ]);
       if (overflow.size) {
-        const archive = `${this.storePath}.overflow.json`;
-        writeJsonStore(archive, { jobs: [...overflow] }, null);
-        archiveFile(archive);
+        archiveJobs(this.storePath, [...overflow]);
         this.log.info("archived finished jobs", { count: overflow.size });
       }
       writeJsonStore(this.storePath, { ...(isRecord(previous) ? previous : {}), jobs: all.filter((j) => !overflow.has(j as StoredJob)) }, previous);
