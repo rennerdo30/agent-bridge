@@ -988,6 +988,7 @@ export class Broker {
       unavailable: p.unavailable === true,
       version: typeof p.version === "string" ? p.version.slice(0, 32) : undefined,
       ...(validStoreCapabilities(p.storeCapabilities) ? { storeCapabilities: p.storeCapabilities } : {}),
+      ...(p.subagent === true ? { subagent: true } : {}),
       ...(p.jobAgent && AGENT_KINDS.includes(p.jobAgent) ? { jobAgent: p.jobAgent } : {}),
       ...(p.jobAgent && typeof p.jobOwner === "string" && p.jobOwner ? {
         parentJob: typeof p.parentJob === "string" ? p.parentJob : undefined,

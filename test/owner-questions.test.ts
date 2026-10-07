@@ -140,6 +140,16 @@ describe("presence alerts and waking delivery",() => {
 });
 
 describe("owner dashboard API",() => {
+  it("rejects delegated filers and questions for another project",async () => {
+    const node=env.node("codex-main","codex"); await node.start();
+    await expect(node.askOwner({...question(),project:join(env.home,"foreign-project")})).rejects.toThrow("own project");
+    for (const delegated of [{jobAgent:"codex" as const},{subagent:true}]) {
+      const client=await BridgeClient.connect(env.pipe,nullLogger); closers.push(() => client.close());
+      await client.request("hello",{protocol:PROTOCOL_VERSION,token:loadOrCreateToken(env.home),peer:{id:JSON.stringify(delegated),name:delegated.subagent ? "native-child" : "job-child",agent:"codex",cwd:env.home,pid:process.pid,agentPid:null,sessionId:null,startedAt:Date.now(),autoWake:false,...delegated}});
+      await expect(client.request("askOwner",question())).rejects.toThrow("Delegated jobs ask their main");
+    }
+    expect(readOwnerQuestions(env.home)).toEqual([]);
+  });
   it("answers from the authenticated dashboard, rejects permission-shaped answers and model answers",async () => {
     const node=env.node("codex-app","codex"); await node.start();
     const q=(await node.askOwner(question())).question;
