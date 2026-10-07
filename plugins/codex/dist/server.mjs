@@ -7908,6 +7908,7 @@ function isInternalBridgeProcess(env = process.env) {
 // src/core/project-identity.ts
 function canonicalProjectRoot(cwd) {
   if (isPluginCacheCwd(cwd)) return null;
+  const visibleRoot = (root) => isPluginCacheCwd(root) ? null : root;
   try {
     const physical = realpathSync3.native(cwd);
     if (isPluginCacheCwd(physical)) return null;
@@ -7920,14 +7921,14 @@ function canonicalProjectRoot(cwd) {
     try {
       const top = realpathSync3.native(git2(["--show-toplevel"]));
       const common = realpathSync3.native(resolve3(physical, git2(["--git-common-dir"])));
-      if (common.endsWith("/.git") || common.endsWith("\\.git")) return realpathSync3.native(dirname3(common));
+      if (common.endsWith("/.git") || common.endsWith("\\.git")) return visibleRoot(realpathSync3.native(dirname3(common)));
       try {
         const configured = execFileSync(
           "git",
           ["--git-dir", common, "config", "--get", "core.worktree"],
           { encoding: "utf8", timeout: 3e3, windowsHide: true, stdio: ["ignore", "pipe", "ignore"] }
         ).trim();
-        if (configured) return realpathSync3.native(resolve3(common, configured));
+        if (configured) return visibleRoot(realpathSync3.native(resolve3(common, configured)));
       } catch {
       }
       const worktrees = execFileSync(
@@ -7937,7 +7938,7 @@ function canonicalProjectRoot(cwd) {
       );
       const main = worktrees.split(/\r?\n\r?\n/).find((entry) => !/^bare$/m.test(entry));
       const root = main && /^worktree (.+)$/m.exec(main)?.[1];
-      return root ? realpathSync3.native(root) : top;
+      return visibleRoot(root ? realpathSync3.native(root) : top);
     } catch {
       return physical;
     }
@@ -53374,6 +53375,7 @@ $("send").addEventListener("submit", async (e) => {
     const d = await r.json();
     if (!r.ok) throw new Error(d.error || "HTTP " + r.status);
     $("sendInfo").textContent = d.deliveredTo?.length ? "Delivered to " + d.deliveredTo.join(", ") : "Queued for " + (d.queuedFor || []).join(", ");
+    if (d.replyGuidance?.length) $("sendInfo").textContent += " " + d.replyGuidance.join(" ");
     $("body").value = "";
     poll();
   } catch (err) {
@@ -54978,7 +54980,7 @@ async function startUi(opts) {
       const text3 = String(body.body ?? "").trim();
       if (!to || !text3) return send(res, 400, { error: "to and body are required" });
       const r = await (await getSender()).send({ to, body: text3 });
-      return send(res, 200, { id: r.messages[0]?.id, deliveredTo: r.deliveredTo, queuedFor: r.queuedFor });
+      return send(res, 200, { id: r.messages[0]?.id, deliveredTo: r.deliveredTo, queuedFor: r.queuedFor, replyRestrictions: r.replyRestrictions, replyGuidance: formatReplyRestrictions(r) });
     }
     if (req.method === "POST" && url2.pathname === "/api/subagents/handoff") {
       if (req.headers["x-agent-bridge"] !== "1") return send(res, 403, { error: "missing header" });
