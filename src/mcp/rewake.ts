@@ -20,7 +20,7 @@ import { formatMessages } from "./format.js";
  */
 export const SESSIONS_DIR = "sessions";
 /** How a wake-up's text starts; the prompt hook recognizes its own wake-up turn by it. */
-export const WAKE_HEADER = "[agent-bridge] Something you were waiting for arrived:";
+export const WAKE_HEADER = "[agent-bridge] New actionable message(s) arrived:";
 const HOST = "127.0.0.1";
 const SECRET_BYTES = 24;
 /** One long poll; the hook polls again until its own timeout. */

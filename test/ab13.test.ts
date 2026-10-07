@@ -208,7 +208,7 @@ describe("status notes from running subagents", () => {
     await env.cleanup();
   });
 
-  it("a note waits for the next prompt; an answer to a live message counts as an answer", async () => {
+  it("a note stays in history; an answer to a live message counts as an answer", async () => {
     const me = env.node("claude-n", "claude");
     await me.start();
     const jobs = new JobManager(me, nullLogger);
@@ -222,14 +222,15 @@ describe("status notes from running subagents", () => {
     expect(jobs.isNote(me.unread()[0]!)).toBe(true);
     // Ending the turn: the note does not keep it going.
     expect(await buildHookResponse(ctx, { event: "Stop", sessionId: null, stopHookActive: false })).toEqual({});
-    // The next prompt brings it.
+    // Ordinary prompts also exclude retained notes; only explicit inbox/history reads bring them.
     const next = (await buildHookResponse(ctx, { event: "UserPromptSubmit", sessionId: null, stopHookActive: false, prompt: "go on" })) as { hookSpecificOutput?: { additionalContext: string } };
-    expect(next.hookSpecificOutput?.additionalContext).toContain("merging next");
+    expect(next.hookSpecificOutput?.additionalContext).toBeUndefined();
+    expect(me.unread()[0]!.body).toContain("merging next");
 
     expect(jobs.followUp(job.name, "how far are you?").outcome).not.toBe("unknown");
     jobs.fromSubagent(job, "about half way", null);
-    await until(() => me.unread().length === 1);
-    expect(jobs.isNote(me.unread()[0]!)).toBe(false);
+    await until(() => me.unread().length === 2);
+    expect(jobs.isNote(me.unread()[1]!)).toBe(false);
     // A job runner's note reaches the session over the bridge, marked in its conversation id.
     expect(jobs.isNote({ id: "x", conversationId: `job-abc${NOTE_CONVERSATION_SUFFIX}` })).toBe(true);
     expect(jobs.isNote({ id: "y", conversationId: "job-abc" })).toBe(false);

@@ -231,7 +231,9 @@ export function waitForApproval(job: Job, question: string, timeoutMs: number, p
       if (!answers?.size) approvalAnswers.delete(job);
       try { cleanup?.(); } catch { log.warn("could not remove pending approval", { job: job.name }); }
       const allow = /^\s*(allow|yes|y|approve|approved|ok|okay|go ahead|accept)\b/i.test(answer);
-      try { post(`Approval for ${job.name} ${allow ? "allowed" : "denied"} by ${by}.`); }
+      try { post(by === "timeout"
+        ? `Approval for ${job.name} expired without a decision; permission remains ungranted. Check bridge availability and request approval again before retrying. No owner denial was received.`
+        : `Approval for ${job.name} ${allow ? "allowed" : "denied"} by ${by}.`); }
       catch { log.warn("could not report approval answer", { job: job.name }); }
       resolve({ allow, reason: answer.trim() });
       return true;
@@ -597,6 +599,29 @@ export class JobManager {
     // Runner-hosted jobs report their progress through their runner.
     for (const job of [...this.running.values()]) if (job.host) this.checkHosted(job);
     return [...this.running.values(), ...this.foreground.values()].filter((j) => this.isMine(j.owner));
+  }
+
+  /** Supervisor fallback that uses the saved runner links, never a broker authority RPC. */
+  broadcastRunning(message: string): { name: string; outcome: string }[] {
+    return this.list().filter((job) => job.status === "running").map((job) => {
+      try {
+        if (this.hostedRunning(job)) {
+          const cid = randomUUID();
+          (job.forwarded ??= []).push({ cid, body: message });
+          this.runners!.send(job, { type: "message", body: message, cid });
+        } else if (job.live) {
+          job.awaitingAnswer = true;
+          job.live.post(message);
+        } else if (job.remoteControl) {
+          job.remoteControl({ type: "message", body: message, cid: randomUUID() });
+        } else {
+          job.queue.push(message);
+          this.persist();
+          return { name: job.name, outcome: "queued for follow-up; no live link" };
+        }
+        return { name: job.name, outcome: "queued on existing runner link; consumption unconfirmed" };
+      } catch (err) { return { name: job.name, outcome: `failed: ${(err as Error).message}` }; }
+    });
   }
 
   /** Continuations waiting for a free slot, first in line first. */
@@ -1177,9 +1202,9 @@ export class JobManager {
    * wakes the session; a note it sends on its own ("tests pass, merging next") does not: it waits for the
    * session's next prompt or tool call, so status chatter costs no extra turn.
    */
-  fromSubagent(job: Job, body: string, replyTo: string | null, isAnswer = false): void {
-    const answer = isAnswer || replyTo !== null || job.awaitingAnswer === true;
-    job.awaitingAnswer = false;
+  fromSubagent(job: Job, body: string, replyTo: string | null, isAnswer = false, forceNote = false): void {
+    const answer = !forceNote && (isAnswer || replyTo !== null || job.awaitingAnswer === true);
+    if (!forceNote && !isPureAcknowledgement(body)) job.awaitingAnswer = false;
     this.log.info("message from subagent", { job: job.name, note: !answer });
     const id = this.post(job, body, replyTo, isPureAcknowledgement(body) ? ACK_CONVERSATION_SUFFIX : answer ? "" : NOTE_CONVERSATION_SUFFIX);
     if (!answer) {

@@ -359,7 +359,7 @@ opencode subagents keep opencode's full tool set on purpose, because opencode's 
 | While the agent is working | injected after each tool call (`PostToolUse` hook) | same |
 | On your next prompt | injected (`UserPromptSubmit` hook) | same |
 | When the agent finishes a turn (auto-wake on) | `Stop` hook keeps it going | same |
-| While the session is idle | **live push via channel** (see below) | auto-wake runs `codex queue`, which starts a turn |
+| While the session is idle | **live push via channel** (see below) | wake runs `codex queue`; an attached TUI consumes the accepted submission |
 
 opencode receives messages through its plugin: after each model step while it works, and by starting a turn itself when it is idle.
 

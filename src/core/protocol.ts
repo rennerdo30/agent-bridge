@@ -39,7 +39,7 @@ export function isSiblingNote(m: Pick<BridgeMessage, "conversationId">): boolean
 }
 
 export function isQuietMessage(m: Pick<BridgeMessage, "conversationId">): boolean {
-  return isSiblingNote(m) || m.conversationId.endsWith(ACK_CONVERSATION_SUFFIX) || m.conversationId.startsWith(TRANSFER_PROGRESS_PREFIX);
+  return m.conversationId.endsWith(SIBLING_NOTE_SUFFIX) || m.conversationId.endsWith(ACK_CONVERSATION_SUFFIX) || m.conversationId.startsWith(TRANSFER_PROGRESS_PREFIX);
 }
 
 export interface SiblingPeer {
@@ -145,6 +145,8 @@ export interface SendArgs {
   body: string;
   conversationId?: string;
   replyTo?: string;
+  /** Refuse a stale reply when newer inbound mail exists in the conversation. */
+  ifNoNewerThan?: string;
   /**
    * Same key on a retry of the same message: the broker sends it once. A request can time out on the
    * sender's side while the broker, merely slow, still has it queued.
@@ -157,6 +159,8 @@ export interface MessageReceipt {
 }
 
 export interface SendResult {
+  /** Relevant unread mail at routing time. Delivery does not resolve crossed replies. */
+  unreadBeforeSend?: { id: string; from: string; conversationId: string }[];
   /** Recipient jobs without a reverse reply grant need their current supervisor to relay. */
   replyRestrictions?: { name: string; supervisor: string }[];
   /** Terminal job mail is retained, but will not be answered without an explicit continuation. */
@@ -201,6 +205,8 @@ export interface AuthArgs {
 }
 
 export interface RequestMap {
+  /** Separate opcode so an older broker refuses rather than silently ignoring the guard. */
+  guardedSend: [SendArgs, SendResult];
   projectJobs: [Record<string, never>, Record<string, unknown>[]];
   coordinatorAvailability: [{ name?: string; unavailable: boolean }, PeerInfo];
   projectMain: [{ to: string }, PeerInfo];

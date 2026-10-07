@@ -232,6 +232,10 @@ export class Broker {
       dashboardRead: (_, a) => this.remoteDashboard?.request(a.host, a.request) ?? dashboardError("remote_offline", "Networking is unavailable."),
       siblings: (c) => this.siblingPeers(c),
       sendSibling: (c, a) => this.onSendSibling(c, a),
+      guardedSend: (c, a) => {
+        if (!a.ifNoNewerThan) throw new BridgeError("bad_request", "guardedSend requires if_no_newer_than");
+        return this.onSend(c, a);
+      },
       messageReceipt: (c, a) => this.messageReceipt(c, a.id),
       ack: async (c, a) => ({ acked: await this.store.retryWrite(() => this.store.markRead(this.requirePeer(c).name, a.ids ?? [], this.now())) }),
       pending: (c, a) =>
@@ -1128,7 +1132,13 @@ export class Broker {
       if (keys.size !== 1) throw new BridgeError(keys.size > 1 ? "ambiguous_target" : "unknown_target", "Use a unique live local project address from peers.");
       const target = members.filter((p) => !p.unavailable).sort((a, b) => Number(Boolean(b.projectMain)) - Number(Boolean(a.projectMain)) || a.startedAt - b.startedAt || a.name.localeCompare(b.name))[0];
       if (!target) throw new BridgeError("unknown_target", "No project master is available; use an exact session name to queue mail.");
-      return { live: [this.connByName(target.name)!], queued: [] };
+      // Project conversations belong to the whole live team. A secondary coordinating a topic
+      // must see incoming proposals without spending a supervisor turn on a manual relay.
+      const recipients = members.filter((p) => !p.unavailable && p.id !== sender.id);
+      if (!recipients.length) throw new BridgeError("unknown_target", "No other available project session; use an exact name to queue mail.");
+      return { live: recipients
+        .sort((a, b) => Number(Boolean(b.projectMain)) - Number(Boolean(a.projectMain)))
+        .map((p) => this.connByName(p.name)!), queued: [] };
     }
     if (to === BROADCAST) {
       if (sender.jobAgent) throw new BridgeError("unauthorized", "job runners cannot broadcast to independent sessions");
@@ -1232,6 +1242,10 @@ export class Broker {
       }
     }
     conversationId ||= randomUUID();
+    const anchor = args.ifNoNewerThan ? this.store.byId(args.ifNoNewerThan) : null;
+    if (args.ifNoNewerThan && (!anchor || (anchor.from.id !== sender.id && !this.store.receipts(anchor.id).some(r => r.recipient === sender.name)))) {
+      throw new BridgeError("bad_request", "if_no_newer_than must identify a message exchanged by this session.");
+    }
     if (own && (to === own.rootName || to === own.owner || this.groups.members(own, this.localPeers()).some((p) => p.name === to) || mastersFor(own).includes(to))) conversationId = this.jobConversation(own, to, conversationId);
 
     const id = sender.jobAgent && args.dedupeKey?.startsWith(COMPLETION_DEDUPE_PREFIX)
@@ -1250,12 +1264,23 @@ export class Broker {
       readAt: null,
     };
     if (to.includes("/")) {
+      if (anchor && this.store.replyConflicts(sender.name, [to], conversationId, anchor).length) {
+        throw new BridgeError("bad_request", "Stale reply refused: newer unread mail exists. Read inbox before replying.");
+      }
       const result = await this.requireNetwork().send({ ...base, recipient: to });
       for (const message of result.messages) await this.store.retryWrite(() => this.store.insert(message));
       return result;
     }
     const remoteTargets = to === BROADCAST ? this.network?.peers().filter((p) => !p.jobAgent).map((p) => p.name) ?? [] : [];
     let { live, queued } = this.resolveTargets(to, sender);
+    const unreadBeforeSend = conversationId.startsWith(CONTROL_CONVERSATION_PREFIX) || isQuietMessage({ conversationId }) ? [] :
+      this.store.replyConflicts(sender.name, [...live.map((c) => c.peer!.name), ...queued], conversationId);
+    const checkReply = () => {
+      if (!anchor) return;
+      const newer = this.store.replyConflicts(sender.name, [...live.map((c) => c.peer!.name), ...queued], conversationId, anchor);
+      if (newer.length) throw new BridgeError("bad_request", `Stale reply refused: ${newer.length} newer unread message(s). Read inbox before replying.`, { messageIds: newer.map((m) => m.id) });
+    };
+    checkReply();
     // With no available master, retain job reports under the primary without waking it.
     if (own && to === this.jobRecipient(own)) {
       for (let i = live.length - 1; i >= 0; i--) {
@@ -1281,6 +1306,7 @@ export class Broker {
     let inserted = true;
     if (supervisorMail) {
       await this.store.retryWrite(() => {
+        checkReply();
         const current = this.storedJobs().find((job) => `job:${job.id}` === sender.id);
         if (!current) throw new BridgeError("unauthorized", "Job ownership is unavailable.");
         this.refreshJobPeer(current);
@@ -1299,7 +1325,7 @@ export class Broker {
     } else {
       for (const c of live) messages.push(envelope(c.peer!.name));
       for (const key of queued) messages.push(envelope(key));
-      for (const m of messages) await this.store.retryWrite(() => this.store.insert(m));
+      await this.store.retryWrite(() => this.store.insertBatch(messages, checkReply));
     }
     if (inserted) live.forEach((c, i) => this.emit(c, "message", messages[i]!));
 
@@ -1313,6 +1339,7 @@ export class Broker {
     });
     const result: RequestMap["send"][1] = { messages, deliveredTo: live.map((c) => c.peer!.name), queuedFor: queued, recipientStates: live.map((c) => ({ name: c.peer!.name, activity: c.peer!.activity, autoWake: c.peer!.autoWake, wakeOnDirect: c.peer!.wakeOnDirect, wakeAvailable: c.peer!.wakeAvailable, wakeMaxHops: c.peer!.wakeMaxHops })) };
     if (replyRestrictions.length) result.replyRestrictions = replyRestrictions;
+    if (unreadBeforeSend.length) result.unreadBeforeSend = unreadBeforeSend.map((m) => ({ id: m.id, from: m.from.name, conversationId: m.conversationId }));
     for (const recipient of remoteTargets) {
       // Fan out only at the originating broker. Receiving brokers deliver one local envelope.
       try {

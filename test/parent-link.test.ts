@@ -8,6 +8,34 @@ import type { ServerContext } from "../src/mcp/server.js";
 import { makeEnv, until, type TestEnv } from "./helpers.js";
 
 describe("parent link", () => {
+  it("reports uncertain delivery when a sibling response expires after the message was stored", async () => {
+    let delivered = 0;
+    const link = new ParentLink("parent", () => {}, nullLogger, undefined, {
+      peers: async () => [],
+      send: async () => { delivered++; await new Promise(r => setTimeout(r, 100)); return { messages: [], deliveredTo: ["sibling"], queuedFor: [] }; },
+    });
+    await link.start();
+    try {
+      await expect(parentFromEnv(link.childEnv(), 30)!.siblings.send("sibling", "Do this once")).rejects.toThrow("Delivery is unconfirmed");
+      expect(delivered).toBe(1);
+      await new Promise(r => setTimeout(r, 120));
+      expect(delivered).toBe(1);
+    } finally { await link.close(); }
+  });
+  it("carries explicit notes and questions to the same supervisor link", async () => {
+    const kinds: unknown[] = [];
+    const link = new ParentLink("parent", (_body, _reply, kind) => { kinds.push(kind); }, nullLogger);
+    await link.start();
+    try {
+      const child = parentFromEnv(link.childEnv())!;
+      link.post("Waiting for a substantive answer");
+      await child.inbox();
+      await child.send("Routine FYI", undefined, "note");
+      await child.send("Acknowledged.");
+      await child.send("Which candidate?", undefined, "question");
+      expect(kinds).toEqual(["note", undefined, "question"]);
+    } finally { await link.close(); }
+  });
   it("uses the task report to answer consumed instructions while retaining unseen instructions", async () => {
     const link = new ParentLink("parent", () => {}, nullLogger);
     await link.start();
