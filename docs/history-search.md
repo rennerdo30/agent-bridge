@@ -1,9 +1,9 @@
 # History search
 
 Complete raw conversation retention, project mirrors and paged MCP context access
-are documented in [conversation-storage.md](conversation-storage.md). The sections
-below describe the original bounded preview index; durable raw records now extend
-its coverage beyond those preview limits.
+are documented in [conversation-storage.md](conversation-storage.md). The index
+combines bounded preview documents with durable raw records, which extend its
+coverage beyond preview limits.
 
 
 `search_history` searches local bridge messages, cold `archive.db` messages, all decision
@@ -12,8 +12,9 @@ readers for Claude Code, Codex and opencode. Ordinary searches only query the lo
 they do not start a CLI, read usage limits, or call a model. Returned text still occupies
 the calling agent's context, like every MCP result.
 
-The broker owns indexing. Bridge database migration **v4**, after v3 decisions, creates only
-derived tables and triggers. The shared migration executor takes a SQLite backup before
+The elected broker owns a background worker for indexing. Bridge migration **v4**
+introduced derived search tables; **v8** adds append-only conversations and source checkpoints.
+The shared migration executor takes a SQLite backup before
 changing an existing database. The archive database remains **v1**. Source files and cold
 databases are opened read-only; malformed metadata is skipped without renaming or repairing it.
 Indexing does not acknowledge messages, alter decisions, or rewrite CLI transcripts/run logs.
@@ -31,7 +32,7 @@ and [SQLite FTS5 documentation](https://www.sqlite.org/fts5.html).
 
 ## Incremental work and rebuilds
 
-Each two-second broker tick reads at most 100 primary message rows, 100 live message queue rows,
+Each bounded background index batch reads at most 100 primary message rows, 100 live message queue rows,
 100 decision revisions and 100 cold archive rows. A derived insert queue captures new messages
 even if SQLite later reuses primary rowids or the broker archives them before the next tick.
 Broadcast copies share one message hit; sender and recipient identities remain filterable.
@@ -41,7 +42,10 @@ Discovery streams at most 32 filesystem entries plus 32 opencode session rows pe
 Two registered files are polled fairly per tick. JSONL/run reads are capped at 64 KiB; the
 existing opencode reader caps each page at 200 parts / 512 KiB. Existing transcript header
 and preview bounds also apply. Incomplete final lines are retried. Oversized JSONL lines
-follow the existing reader's bounded discard behavior; tool previews are limited by that reader.
+follow the existing preview reader's bounded discard behavior; tool previews are limited by that reader.
+The durable ingestor separately retains exact raw chunks, including oversized and unknown
+records discarded by previews. Indexing, backfill and project mirrors run off the broker's
+message-dispatch path; idle batches use two seconds and backlogs use 100 ms.
 Run metadata has its own searchable snapshot, refreshed by a stored content hash even when the log has no new bytes. Unknown metadata fields remain searchable as quoted JSON.
 Message text is bounded by the bridge's accepted message size. Run hits are bounded chunks.
 New file discovery repeats after 30 seconds; large homes take multiple ticks to discover/index.
@@ -52,8 +56,8 @@ authenticates directly to a running broker for bounded batches until discovery a
 When no broker is running it opens the store through the same backed-up migration executor and runs bounded batches locally. It never joins a chat peer or creates decision notification mail.
 It retains learned session aliases and pending live-message captures. The broker keeps serving
 peers between batches. Continuously growing history can extend completion time. Rebuilds reread
-preserved source files/databases; indexing never deletes originals. The index cannot recover
-content that was already missing from the source corpus.
+preserved source files/databases and retained conversation records; indexing never deletes
+originals. It cannot recover content erased before its first durable capture.
 
 ## Exact MCP contract
 
@@ -61,10 +65,11 @@ content that was already missing from the source corpus.
 search_history({
   query: string,                       // trimmed, 1..1000 characters
   filters?: {
+    project?: string,                  // canonical project path
     session?: string,                  // exact CLI session id or known peer identity
     job?: string,                      // exact job name
     agent?: "claude" | "codex" | "opencode" | "other",
-    kind?: "message" | "run" | "decision" | "transcript",
+    kind?: "message" | "run" | "decision" | "transcript" | "approval" | "progress" | "report",
     since?: number | string,           // epoch milliseconds or ISO8601 with timezone
     until?: number | string            // inclusive bounds; since <= until
   },
@@ -84,7 +89,7 @@ Messages, decisions and transcripts use their source timestamps.
   engine: "fts5" | "plain",
   hits: [{
     id: string,                        // message:/decision:/run:/transcript: source id
-    kind: "message" | "run" | "decision" | "transcript",
+    kind: "message" | "run" | "decision" | "transcript" | "approval" | "progress" | "report",
     agent: string,
     at: number,                        // epoch milliseconds
     snippet: string,                   // at most 320 characters, plain text
@@ -94,7 +99,9 @@ Messages, decisions and transcripts use their source timestamps.
     job: string | null,
     run: string | null,                 // .log basename
     session: string | null,
-    cursor: string | null              // JSONL byte/opencode cursor or run byte offset
+    cursor: string | null,             // JSONL byte/opencode cursor or run byte offset
+    conversation?: string | null,     // retained context id for get_conversation
+    project?: string | null           // canonical project path
   }],
   answer?: {
     text: string,                      // at most 4000 characters; empty on error
@@ -115,7 +122,7 @@ navigation query keys; this change deliberately does not edit `src/cli/ui-page.t
 
 ## Dashboard HTTP contract
 
-Authenticated `GET /api/search?q=<query>&session=...&job=...&agent=...&kind=...&since=...&until=...&limit=...&answer=true`
+Authenticated `GET /api/search?q=<query>&project=...&session=...&job=...&agent=...&kind=...&since=...&until=...&limit=...&answer=true`
 uses the same response as MCP. Omitted filters/limit/answer have the same defaults. Query parameters
 must occur once; unknown or invalid parameters return **400** `{error:string}`. `answer` accepts
 only `true` or `false`. Time filters accept decimal epoch milliseconds or timezone-qualified ISO8601.
@@ -127,7 +134,10 @@ Authenticated `GET /api/history/<URL-encoded hit.id>` returns an indexed, bounde
 return **400**. This endpoint reads the derived excerpt; it does not fetch arbitrary paths or repair
 the original source. Render bodies/snippets as text, and treat links as local URLs.
 
-The HTTP routes only read the index. Broker startup/ticks and `agent-bridge reindex` initialize it.
+The HTTP routes only read the index. The broker's worker and `agent-bridge reindex` initialize it.
+Use `get_conversation({id: hit.conversation, limit: 20})` for complete retained context,
+then pass each returned `next` as `after`. OpenCode uses `bridge_get_conversation`.
+The authenticated HTTP equivalent is `/api/conversations/<encoded id>?after=...&limit=...`.
 
 ## Optional answers
 
