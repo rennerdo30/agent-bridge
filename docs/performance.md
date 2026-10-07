@@ -41,13 +41,14 @@ Windows key ACL setup happens before profiling; established pairing is measured.
 From the isolated checkout:
 
 ```powershell
-New-Item -ItemType Directory -Force .agent-bridge-test | Out-Null
-npx esbuild scripts/performance.ts --bundle --platform=node --format=esm --outfile=.agent-bridge-test/performance.mjs
-node .agent-bridge-test/performance.mjs
+$env:AB_PERF_JOBS = '50'
+node scripts/performance-run.mjs
 ```
 
-The default load window is 20 seconds; `AB_PERF_SECONDS` changes it. The harness
-has 36 persistent peers (30 sibling runners and six sessions), 30 additional fake
+The runner bundles the harness and its sibling history worker from this checkout's
+existing dependencies. It does not install anything. The default load window is
+20 seconds; `AB_PERF_SECONDS` changes it. The default harness has
+36 persistent peers (30 sibling runners and six sessions), 30 additional fake
 runner progress sources owned by six job managers, sibling sends every two
 seconds per runner, six fresh authenticated hook pollers every second, dashboard
 `/api/state` polling every two seconds, and an authenticated TLS paired link with
@@ -221,6 +222,14 @@ close. Every retained envelope is still imported before an empty-mail shortcut;
 actual writes and retries re-read durable ownership and preserve read journals.
 Hosted polls refresh ownership once before their synchronous job batch; individual
 control and delivery callbacks retain their own refresh.
+
+After rebasing the integrated candidate onto current 0.29.14 main (`5fe8595`),
+the same 50-job run again completed with zero failed probes: event-loop p95
+31 ms, peers/send/hooks p95 1,851/2,219/2,265 ms, and dashboard maximum
+2,330 ms. During the controlled SQLite lock, peers answered in 16 ms and the
+heartbeat fired in 21 ms; the delayed send completed in 839 ms. The checked-in
+runner builds both harness and worker from existing dependencies so this
+measurement can be repeated without installing or updating any agent.
 
 AB-129's exact historical 159 unread rows were quiet sibling observer notes.
 All recorded true results before that report already had read receipts. New
