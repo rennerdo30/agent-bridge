@@ -5,6 +5,7 @@ import type { Logger } from "./logger.js";
 import { AGENT_KINDS, type AgentKind } from "./protocol.js";
 import { isRecord, readJsonStore, writeJsonStore } from "./json-store.js";
 import { DEFAULT_NETWORK_CONFIG, parseNetworkConfig, type NetworkConfig } from "../network/config.js";
+import { DEFAULT_QUESTION_ALERTS, questionAlertSettingsSchema, type QuestionAlertSettings } from "./owner-questions.js";
 
 /**
  * How incoming messages reach a Claude Code session.
@@ -35,6 +36,7 @@ export interface HistoryAnswerConfig {
 const DEFAULT_HISTORY_ANSWER: HistoryAnswerConfig = { preference: ["codex", "claude", "opencode"], claudeModel: "haiku", codexModel: "gpt-6-luna", opencodeModel: null };
 
 export interface BridgeConfig {
+  questionAlerts: QuestionAlertSettings;
   projectGroups: boolean;
   historyAnswer: HistoryAnswerConfig;
   /** Peer name; defaults to "<agent>-<cwd basename>". */
@@ -95,6 +97,7 @@ export interface BridgeConfig {
 }
 
 export const DEFAULT_CONFIG: BridgeConfig = {
+  questionAlerts: DEFAULT_QUESTION_ALERTS,
   projectGroups: true,
   historyAnswer: DEFAULT_HISTORY_ANSWER,
   name: null,
@@ -327,6 +330,7 @@ export function loadConfig(home: string, agent: AgentKind, log: Logger, env: Nod
     dashboardPort: pick("dashboardPort", null, (v) => parseIntInRange(v, 1, 65_535)) ?? d.dashboardPort,
     historyAnswer: pick("historyAnswer", null, historyAnswer) ?? d.historyAnswer,
     notifications: pick("notifications", null, notifications) ?? d.notifications,
+    questionAlerts: pick("questionAlerts", null, v => questionAlertSettingsSchema.safeParse(v).data) ?? d.questionAlerts,
     network: pick("network", null, parseNetworkConfig) ?? d.network,
   };
   log.debug("effective config", { ...cfg });

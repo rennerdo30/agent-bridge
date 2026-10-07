@@ -67,6 +67,7 @@ import { readConversationFile, conversationPageSchema, type ConversationRequest 
 import { readHistory, historyFiltersSchema, HISTORY_MAX_QUERY_CHARS, HISTORY_MAX_LIMIT, type HistorySearch } from "../core/history.js";
 import { answerHistory } from "../core/history-answer.js";
 import { decisionScopeSchema, MAX_DECISION_TOPIC_CHARS, MAX_DECISION_TEXT_CHARS, type DecideArgs, type DecisionsArgs } from "../core/decisions.js";
+import { askOwnerSchema, type AskOwnerArgs } from "../core/owner-questions.js";
 
 export { DELEGATED_JOB_NOTE } from "./delegate-run.js";
 
@@ -549,6 +550,17 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
         return text(describeError(err), true);
       }
     };
+
+  register("ask_owner", {
+    title: "Ask the owner a decision question",
+    description: "File an owner-only decision for your own project in Waiting for you. Check decisions first. Returns immediately; the exact answer arrives later as a waking direct message with reply_to=question id, also sent to the project main. Jobs must ask their main. Use 2–4 options, one recommendation, and concise context; link a concrete artifact for authorization. Never secrets, status, peer questions, playable checks or routine tool approvals. Answers never bypass native approvals or accept implementation. Same project + issue + topic merges; at most five open per session. Unanswered stays visible; destructive blocking or authorization questions cannot default.",
+    inputSchema: askOwnerSchema,
+  }, guarded("ask_owner", async (args: AskOwnerArgs) => text(JSON.stringify(await requireNode().askOwner(args)))));
+  register("withdraw_owner_question", {
+    title: "Withdraw or supersede an owner question",
+    description: "Explicitly dismiss your own open question with a reason. Superseded requires a replacement question id. This never answers or allows a tool.",
+    inputSchema: { id:z.uuid(), status:z.enum(["cancelled","superseded"]), reason:z.string().trim().min(1).max(1000), supersededBy:z.uuid().optional() },
+  }, guarded("withdraw_owner_question", async (args: import("../core/protocol.js").RequestMap["dismissOwner"][0]) => text(JSON.stringify(await requireNode().dismissOwner(args)))));
 
   register(
     "search_history",

@@ -113,6 +113,38 @@ function launch(commands: NotificationCommand[], log: Logger): void {
   } catch { log.debug("desktop notification unavailable"); }
 }
 
+/** Question toasts use the same native helpers as approvals. Only a validated local link is exposed. */
+export function questionNotificationCommands(platform: NodeJS.Platform, dashboardUrl: string): NotificationCommand[] {
+  const url = new URL(dashboardUrl);
+  if (url.protocol !== "http:" || url.hostname !== "127.0.0.1" || url.username || url.password || url.pathname !== "/" || [...url.searchParams.keys()].join(",") !== "t" || !/^#\/approvals\?question=[0-9a-f-]{36}$/.test(url.hash) || !/^[0-9a-f]{48}$/.test(url.searchParams.get("t") ?? "")) throw new Error("Invalid question dashboard link");
+  const body = "A question needs your answer. Click to answer in agent-bridge.";
+  if (platform === "win32") {
+    const xmlUrl = dashboardUrl.replaceAll("&", "&amp;");
+    const command = notificationCommands(platform, "approvals")[0]!;
+    const script = Buffer.from(command.args.at(-1)!, "base64").toString("utf16le")
+      .replace("<toast>", `<toast activationType="protocol" launch="${xmlUrl}">`)
+      .replace(TEXT.approvals, body);
+    return [{ ...command, args: [...command.args.slice(0,-1), Buffer.from(script,"utf16le").toString("base64")] }];
+  }
+  if (platform === "darwin") return [
+    { bin: "terminal-notifier", args: ["-title", TITLE, "-message", body, "-open", dashboardUrl] },
+    { bin: "osascript", args: ["-e", `display notification "${body}" with title "${TITLE}"`] },
+  ];
+  if (platform === "linux") return [{ bin: "notify-send", args: ["--app-name", TITLE, "--expire-time=15000", "--action=answer=Answer", "--wait", "--", TITLE, body] }];
+  return [];
+}
+
+export function notifyOwnerQuestion(url: string, log: Logger): void {
+  // The registry claims one channel per question; do not apply the job-event limiter to questions.
+  if (process.platform !== "linux") { launch(questionNotificationCommands(process.platform, url), log); return; }
+  const command = questionNotificationCommands("linux", url)[0]!;
+  const child = spawn(command.bin, command.args, { stdio: ["ignore", "pipe", "ignore"], windowsHide: true });
+  const timer=setTimeout(() => child.kill(),20000); timer.unref();
+  let action = ""; child.stdout.on("data", data => { action = (action + String(data)).slice(0,100); });
+  child.once("exit", () => { clearTimeout(timer); if (action.trim() === "answer") { const opener = spawn("xdg-open", [url], { stdio: "ignore", detached: true }); opener.on("error", () => log.debug("question link opener unavailable")); opener.unref(); } });
+  child.once("error", () => { clearTimeout(timer); log.debug("desktop notification unavailable"); }); child.unref();
+}
+
 export function notifyJobEvent(home: string, event: NotificationEvent, log: Logger): void {
   // Schedule all work outside the permission/result path. Configuration errors cannot block a job.
   const task = setImmediate(() => {

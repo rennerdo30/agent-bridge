@@ -12,6 +12,7 @@ import { object, parse, readHead, readJsonl, safeFile, TRANSCRIPT_ID } from "./t
 import type { PeerInfo } from "./protocol.js";
 import { ARCHIVE_DB_NAME } from "./sqlite-maintenance.js";
 import { MAX_BODY_CHARS } from "./constants.js";
+import { QUESTIONS_FILE, type OwnerQuestion } from "./owner-questions.js";
 
 export const HISTORY_TICK_MS = 2_000;
 export const HISTORY_ROWS_PER_SOURCE = 100;
@@ -37,7 +38,7 @@ export const historyFiltersSchema = z.object({
   project: z.string().min(1).max(4096).transform(conversationProject).optional(),
   session: z.string().min(1).max(HISTORY_FILTER_ID_CHARS).optional(), job: z.string().min(1).max(HISTORY_FILTER_ID_CHARS).optional(),
   agent: z.enum(["claude", "codex", "opencode", "antigravity", "other"]).optional(),
-  kind: z.enum(["message", "run", "decision", "transcript", "approval", "progress", "report"]).optional(),
+  kind: z.enum(["message", "run", "decision", "transcript", "approval", "progress", "report", "question"]).optional(),
   since: dateFilter.optional(), until: dateFilter.optional(),
 }).strict();
 export const historySearchSchema = z.object({
@@ -46,7 +47,7 @@ export const historySearchSchema = z.object({
 }).strict().refine((a) => a.filters?.since === undefined || a.filters.until === undefined || a.filters.since <= a.filters.until, "since must not be later than until");
 export type HistorySearch = z.input<typeof historySearchSchema>;
 export interface HistoryHit {
-  id: string; kind: "message" | "run" | "decision" | "transcript" | "approval" | "progress" | "report"; agent: string; at: number;
+  id: string; kind: "message" | "run" | "decision" | "transcript" | "approval" | "progress" | "report" | "question"; agent: string; at: number;
   snippet: string; link: string; sourceLink: string; message: string | null; job: string | null; run: string | null;
   session: string | null; cursor: string | null; conversation?: string | null; project?: string | null;
 }
@@ -143,6 +144,18 @@ export class HistoryIndex {
           link: `/api/decisions/${enc(row.topic)}/history`, message: row.source_message_id, job: null, run: null, session: row.author_id, cursor: String(row.revision) }, [row.author_id, row.author_name, ...sessions]);
       });
       if (this.home) {
+        const questionFile = join(this.home, QUESTIONS_FILE);
+        if (existsSync(questionFile)) {
+          const questions = new DatabaseSync(questionFile,{readOnly:true,timeout:HISTORY_READ_TIMEOUT_MS});
+          try { work += this.rows("questions",questions,"question_events",row => {
+            const q = JSON.parse(String(row.record)) as OwnerQuestion;
+            this.put({ id:`question:${q.id}`,kind:"question",agent:q.askers[0]?.agent ?? "other",at:q.answer?.at ?? q.askedAt,
+              body:[q.title,q.context,q.topic,...q.options.map(o => `${o.label}: ${o.consequence}`),q.answer?.text,q.dismissal?.reason].filter(Boolean).join("\n"),
+              link:`/#/approvals?question=${q.id}`,message:null,job:q.job ?? null,run:null,session:q.askers[0]?.session ?? null,cursor:String(row.history_rowid) },
+              q.askers.map(a => a.session),q.askers.flatMap(a => a.job ? [a.job] : []));
+            for (const project of q.affectedProjects) this.db.prepare("INSERT OR IGNORE INTO history_tags VALUES (?, 'project', ?)").run(`question:${q.id}`,conversationProject(project));
+          }); } finally { questions.close(); }
+        }
         const archivePath = join(this.home, ARCHIVE_DB_NAME);
         if (existsSync(archivePath)) {
           const archive = new DatabaseSync(archivePath, { readOnly: true, timeout: HISTORY_READ_TIMEOUT_MS });

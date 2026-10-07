@@ -53,3 +53,7 @@ Use `ask_antigravity` / `spawn_antigravity` (prefix `bridge_` in opencode),
 plugin must be installed first. Model-boundary hooks deliver active mail; an
 idle TUI receives queued messages on its next turn or through inbox. Quotas are
 unknown to the bridge; inspect native `/usage`.
+
+## Questions to the owner
+
+Use `ask_owner` (`bridge_ask_owner` in opencode) for a missing owner-only decision in your own project. Check `decisions` first. It returns immediately; the exact answer arrives later as a waking message with the question id, also delivered to the responsible project main. Delegated jobs ask their main. Give a one-line title, concise context, topic, 2–4 options with consequences and exactly one recommendation, blocking action and what you do meanwhile. Link the issue and concrete artifact/diff for authorization. Free text is always available. Never secrets, status, peer questions, routine checks or playable owner verification. Answers never bypass native approvals, widen authorization or accept implementation. At most five open per session; same project + issue + topic merges. No silent expiry. Blocking destructive or authorization questions cannot default. Use `withdraw_owner_question` with a reason to cancel or supersede an obsolete question.
