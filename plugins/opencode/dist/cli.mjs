@@ -29220,6 +29220,8 @@ var ConversationIngestor = class {
         Math.min(CONVERSATION_BYTES, Math.max(0, stat.size - offset))
       );
       let bytes2 = readSync2(fd, data, 0, data.length, offset);
+      if (source.format === "approval" && bytes2 && offset + bytes2 < stat.size && stat.size - offset - bytes2 < 1024)
+        bytes2 = Math.max(1, bytes2 - 1024);
       if (bytes2 && offset + bytes2 < stat.size) {
         let start = bytes2 - 1;
         while (start > 0 && (data[start] & 192) === 128) start--;
@@ -29227,6 +29229,19 @@ var ConversationIngestor = class {
         if (bytes2 - start < need) bytes2 = start;
       }
       if (bytes2) {
+        if (source.format === "approval" && offset + bytes2 === stat.size) {
+          const text = data.subarray(0, bytes2).toString("utf8");
+          const capability = /,\s*"pid"\s*:\s*\d+,\s*"port"\s*:\s*\d+,\s*"token"\s*:\s*"(?:\\.|[^"\\])*"\s*}\s*$/.exec(
+            text
+          );
+          if (capability) {
+            const start = Buffer.byteLength(text.slice(0, capability.index));
+            const replacement = Buffer.from(
+              " ".repeat(Buffer.byteLength(capability[0]) - 1) + "}"
+            );
+            replacement.copy(data, start);
+          }
+        }
         if (offset === 0 && /\.json(?:-.*)?$/.test(source.path)) {
           const metadata = parse(data.subarray(0, bytes2).toString("utf8"));
           if (typeof metadata.job === "string") {
@@ -29267,7 +29282,10 @@ var ConversationIngestor = class {
               "session",
               "project",
               "agentId",
-              "cwd"
+              "cwd",
+              "id",
+              "rootSession",
+              "owner"
             ]) {
               const match = new RegExp(
                 `"${key2}"\\s*:\\s*("(?:\\\\.|[^"\\\\])*")`
@@ -29301,7 +29319,7 @@ var ConversationIngestor = class {
                 "INSERT OR IGNORE INTO conversation_projects(project) VALUES(?)"
               ).run(project);
           }
-          if (source.format === "journal" && ["progress", "report", "approval"].includes(row.kind)) {
+          if (source.format === "journal" && ["progress", "report", "approval"].includes(row.kind) || source.format === "approval" && typeof row.id === "string") {
             const id = row.job ? `bridge:job:${row.job}` : source.conversation;
             const project = conversationProject(
               typeof row.project === "string" ? row.project : ""
@@ -29311,16 +29329,16 @@ var ConversationIngestor = class {
             ).run(
               id,
               String(row.agent ?? "other"),
-              String(row.session ?? ""),
+              String(row.session ?? row.rootSession ?? row.owner ?? ""),
               project,
               row.job ?? null,
-              row.kind
+              row.kind ?? "approval"
             );
             if (project)
               this.db.prepare(
                 "INSERT OR IGNORE INTO conversation_projects(project) VALUES(?)"
               ).run(project);
-            fragment = { id, kind: row.kind };
+            fragment = { id, kind: row.kind ?? "approval" };
           }
           if ((agent !== "codex" || row.type === "session_meta" && meta3.id === c.session) && typeof meta3.cwd === "string") {
             const project = conversationProject(meta3.cwd);
@@ -29384,41 +29402,6 @@ var ConversationIngestor = class {
     }
   }
   journal(source) {
-    if (!safeFile(this.home, source.path)) return 0;
-    if (source.format === "approval") {
-      if (Number(source.offset)) return 0;
-      let fd;
-      try {
-        fd = openSync5(source.path, "r");
-        const raw = Buffer.alloc(CONVERSATION_BYTES);
-        const length = readSync2(fd, raw, 0, raw.length, 0);
-        const value = parse(raw.subarray(0, length).toString("utf8"));
-        if (!value.id) return 0;
-        const { token, port, pid, ...approval } = value;
-        const id = `bridge:approval:${value.id}`, job = typeof value.job === "string" ? value.job : null;
-        this.db.prepare(
-          "INSERT OR IGNORE INTO conversations(id,agent,session,job,kind) VALUES(?,?,?,?,?)"
-        ).run(
-          id,
-          String(value.agent ?? "other"),
-          String(value.rootSession ?? value.owner ?? ""),
-          job,
-          "approval"
-        );
-        this.put(
-          source.id,
-          0,
-          0,
-          id,
-          Buffer.from(JSON.stringify(approval)),
-          Number(value.askedAt ?? 0)
-        );
-        return Number(source.offset) ? 0 : 1;
-      } finally {
-        if (fd !== void 0) closeSync5(fd);
-        this.db.prepare("UPDATE conversation_sources SET offset=1 WHERE id=?").run(source.id);
-      }
-    }
     return this.jsonl(source);
   }
   sqlite(source) {
