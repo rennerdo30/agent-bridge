@@ -1,2 +1,6 @@
 :root { --sl-color-accent-low: #10294e; --sl-color-accent: #3b82f6; --sl-color-accent-high: #c3ddff; }
 :root[data-theme="light"] { --sl-color-accent-low: #e0edff; --sl-color-accent: #2563eb; --sl-color-accent-high: #153d78; }
+.dashboard-hero img { width: 100%; height: auto; border: 1px solid var(--sl-color-gray-5); border-radius: 0.65rem; }
+.dashboard-hero-light { display: none; }
+:root[data-theme="light"] .dashboard-hero-dark { display: none; }
+:root[data-theme="light"] .dashboard-hero-light { display: block; }

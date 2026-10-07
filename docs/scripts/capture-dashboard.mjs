@@ -53,6 +53,7 @@ const question = {id:'demo-owner-question',kind:'question',title:'Choose a setti
 const fixture = {version,brokerPid:4242,peers,runs,runsNext:null,runsTotal:runs.length,jobs:Object.fromEntries(runs.map(r=>[r.job,{next:{},projectRoot:workspace}])),messages};
 await writeFile(join(bridgeHome,'synthetic-fixture.json'),JSON.stringify({fixture,network,question,chat},null,2));
 const seen = new Set();
+let usageTimestamp = now;
 const server = createServer(async (req,res) => {
   const url = new URL(req.url,'http://127.0.0.1');
   seen.add(url.pathname);
@@ -74,7 +75,11 @@ const server = createServer(async (req,res) => {
   else if(url.pathname === '/api/dashboard/heartbeat') body = {settings:{sound:false,toast:false,reminderMinutes:15},alerts:[]};
   else if(url.pathname === '/api/questions/settings') body = {sound:false,toast:false,reminderMinutes:15};
   else if(url.pathname === '/api/questions' || url.pathname === '/api/owner-questions') body = {questions:[question]};
-  else if(url.pathname === '/api/usage') body = {reports:[]};
+  else if(url.pathname === '/api/usage') body = {at:usageTimestamp,reports:[
+    {agent:'claude',limits:[{name:'5 hours',usedPercent:28,resets:'in 3 hours'},{name:'weekly',usedPercent:14,resets:'in 5 days'}],lines:[]},
+    {agent:'codex',limits:[{name:'5 hours',usedPercent:36,resets:'in 2 hours'},{name:'weekly',usedPercent:21,resets:'in 4 days'}],lines:[]},
+    {agent:'opencode',limits:[{name:'demo provider daily',usedPercent:12,resets:'tomorrow'},{name:'demo provider monthly',usedPercent:7,resets:'in 3 weeks'}],lines:[]}
+  ]};
   else if(url.pathname === '/api/models') body = {reports:[]};
   else if(url.pathname === '/api/transfers') body = {transfers:[]};
   else if(url.pathname === '/api/decisions') body = {decisions:[]};
@@ -105,6 +110,20 @@ try {
   await call('Page.navigate',{url});
   for(let n=0;n<100;n++){if(await evaluate('document.querySelector("#status")?.textContent.includes("bridge running")'))break;await new Promise(r=>setTimeout(r,100));}
   if (!await evaluate('document.querySelector("#status")?.textContent.includes("bridge running")')) throw new Error('Synthetic dashboard did not become ready.');
+  const refreshUsage = async () => {
+    for(let n=0;n<100;n++){if(await evaluate('!document.querySelector("#usageRefresh").disabled'))break;await new Promise(r=>setTimeout(r,100));}
+    await evaluate('document.querySelector("#usageRefresh").click()');
+    for(let n=0;n<100;n++){if(await evaluate('!document.querySelector("#usageRefresh").disabled'))return;await new Promise(r=>setTimeout(r,100));}
+    throw new Error('Usage refresh did not finish.');
+  };
+  for (const missingOrInvalid of [undefined, null, 'invalid']) {
+    usageTimestamp = missingOrInvalid;
+    await refreshUsage();
+    if (await evaluate('document.querySelector("#usageAt").textContent') !== '') throw new Error('Unavailable usage timestamp was displayed.');
+  }
+  usageTimestamp = now;
+  await refreshUsage();
+  if (!await evaluate('document.querySelector("#usageAt").textContent.startsWith("as of ") && document.querySelectorAll("#ovUsage .card").length === 3')) throw new Error('Synthetic usage limits did not render.');
   const shots = [['dashboard-overview-dark.png','#/','dark'],['dashboard-overview-light.png','#/','light'],['dashboard-session-dark.png','#/s/claude-showcase/~chat','dark'],['dashboard-session-light.png','#/s/claude-showcase/~chat','light'],['dashboard-waiting.png','#/approvals','dark'],['dashboard-network.png','#/network','light'],['dashboard-search.png','#/search','dark']];
   for(const [name,hash,theme] of shots){
     await evaluate(`document.querySelector('#theme button[data-theme="${theme}"]').click(); location.hash=${JSON.stringify(hash)}`);
@@ -112,6 +131,7 @@ try {
     await new Promise(r=>setTimeout(r,1000));
     const visible = await evaluate('document.body.innerText');
     if(/Users[\\/]|Development[\\/]/i.test(visible)) throw new Error('A non-demo path appeared in '+name);
+    if(visible.includes('Invalid Date')) throw new Error('Invalid timestamp appeared in '+name);
     if(name==='dashboard-waiting.png' && !visible.includes(question.context)) throw new Error('Owner question did not render; update the synthetic API shape for this release.');
     const shot = await call('Page.captureScreenshot',{format:'png',captureBeyondViewport:false});
     await writeFile(join(demo,name),Buffer.from(shot.data,'base64'));
@@ -128,7 +148,7 @@ try {
     await writeFile(join(demo,name),Buffer.from(shot.data,'base64'));
   }
   if(errors.length) throw new Error(errors.join('\n'));
-  await writeFile(join(demo,'capture-evidence.json'),JSON.stringify({release,version,synthetic:true,requests:[...seen],shots:shots.map(s=>s[0])},null,2));
+  await writeFile(join(demo,'capture-evidence.json'),JSON.stringify({release,version,synthetic:true,usageTimestampGuard:true,requests:[...seen],shots:shots.map(s=>s[0])},null,2));
   await mkdir(output, {recursive:true});
   for(const [name] of shots) await copyFile(join(demo,name), join(output,name));
   await copyFile(join(demo,'capture-evidence.json'),join(output,'capture-evidence.json'));

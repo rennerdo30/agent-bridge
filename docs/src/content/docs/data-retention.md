@@ -61,8 +61,11 @@ History is **archived, never automatically deleted**: messages, jobs, run logs, 
 approvals and wait records remain available after maintenance. `agent-bridge doctor` checks
 storage; `doctor --backup` creates a verified snapshot. See [storage and recovery](../storage/).
 
-`bridge.db` uses SQLite `PRAGMA user_version` (currently schema 6), with ordered migrations
-for messages, decisions, history search and session identity. Unversioned databases upgrade through version 1. Pending
+`bridge.db` uses SQLite `PRAGMA user_version` (currently schema 9), with ordered migrations
+for messages, decisions, legacy history tables, session identity and durable delivery. In 0.30.0,
+history and conversations move into independently versioned `history.db` v1 through a protected,
+verified copy; legacy tables remain intact. See [conversation storage](../conversation-storage/).
+Unversioned databases upgrade through version 1. Pending
 migrations run in order in one transaction, after a consistent SQLite backup (including committed
 WAL data). Opening a newer schema fails without changing it. Three recent `.backup-*` copies
 stay beside the store; older backups move into `archive/` and are never deleted automatically.

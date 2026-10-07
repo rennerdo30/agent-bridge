@@ -33,6 +33,10 @@ Snapshots cover primary/archive databases and JSON stores/metadata, including ar
 and the durable read journal.
 Run log text, the bridge authentication token and the dashboard launch secret are not part of the
 rotating snapshot. Keep the entire data directory in normal filesystem backups if you need them.
+The 0.30.0 split adds independently versioned `history.db` and protected
+`.migration-snapshots/`; owner questions use `owner-questions.db`. The rotating
+`doctor --backup` database set covers `bridge.db` and `archive.db`, so retain these
+additional stores with the full data directory too. See [conversation storage](../conversation-storage/).
 
 | Environment variable | Default | Meaning |
 |---|---|---|
@@ -42,7 +46,7 @@ rotating snapshot. Keep the entire data directory in normal filesystem backups i
 
 Values are nonnegative integer milliseconds/counts. Zero disables age/interval processing, or
 keeps unlimited recent backups. Invalid values use named defaults. Existing message TTL, queue
-age and count limits remain supported; see the README retention table. Jobs without a reliable
+age and count limits remain supported; see the [retention table](../data-retention/#retention-configuration-and-upgrade-behavior). Jobs without a reliable
 `finishedAt`, and running/interrupted jobs, are not aged out. Unfinished logs are never moved.
 
 Restore accepts a published snapshot directory, including cold snapshots. It validates hashes and

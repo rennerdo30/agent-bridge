@@ -30,13 +30,15 @@ These screenshots use synthetic demo data only.
 
 | Session · dark | Session · light |
 |---|---|
-| <img src="../images/dashboard-session-dark.png" alt="Session conversation, nested jobs, native subagents and ETA in dark theme" loading="lazy"> | <img src="../images/dashboard-session-light.png" alt="Session conversation, nested jobs, native subagents and ETA in light theme" loading="lazy"> |
+| <img src="../images/dashboard-session-dark.png" alt="Demo session chat, nested bridge jobs, project main and composers in dark theme" loading="lazy"> | <img src="../images/dashboard-session-light.png" alt="Demo session chat, nested bridge jobs, project main and composers in light theme" loading="lazy"> |
 
 | Network | Search history |
 |---|---|
-| <img src="../images/dashboard-network.png" alt="Network page with a connected demo PC" loading="lazy"> | <img src="../images/dashboard-search.png" alt="Search history with synthetic checkout results" loading="lazy"> |
+| <img src="../images/dashboard-network.png" alt="Network page with a connected demo PC" loading="lazy"> | <img src="../images/dashboard-search.png" alt="Search history with synthetic settings results" loading="lazy"> |
 
-It only listens on 127.0.0.1. Its link contains a secret (stored in `~/.agent-bridge/dashboard.json`, readable only by you on Unix); without it the dashboard refuses every request, also from other local programs and web pages. `ui` options: `--port=N`, `--no-open`.
+<img src="../images/dashboard-waiting.png" alt="A demo owner question in Waiting for you with recommended options and an answer composer" loading="lazy">
+
+It only listens on 127.0.0.1. Its link contains an owner-only launch key stored in `~/.agent-bridge/dashboard-key`; opening that link establishes the dashboard's HttpOnly cookie. The key survives updates and restarts. Requests need authentication and local Host checks; writes also require the dashboard header. See [security](../reference/security/). `ui` options: `--port=N`, `--no-open`.
 
 Local sessions also have read-only transcript APIs for their normal chat and their CLI's native subagents: Claude Code JSONL, Codex rollout JSONL, and OpenCode SQLite. They use the peer's session id, the same dashboard cookie, and bounded incremental reads. CLI files are never edited. `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, and OpenCode's `XDG_DATA_HOME` storage override are respected. Paired-PC reads use the existing TLS link; update and restart hosting sessions on both PCs. See [the transcript API](../transcripts/) and [paired dashboard reads](../remote-dashboard/).
 

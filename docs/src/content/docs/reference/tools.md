@@ -8,19 +8,22 @@ The `ask_*` and `spawn_*` tools are expanded for each supported CLI; a session m
 
 | Tool | Parameters | Behavior |
 | --- | --- | --- |
+| `ask_owner` | `askOwnerSchema` (source schema) | File an owner-only decision for your own project in Waiting for you. Check decisions first. Returns immediately; the exact answer arrives later as a waking direct message with reply_to=question id, also sent to the project main. Jobs must ask their main. Use 2–4 options, one recommendation, and concise context; link a concrete artifact for authorization. Never secrets, status, peer questions, playable checks or routine tool approvals. Answers never bypass native approvals or accept implementation. Same project + issue + topic merges; at most five open per session. Unanswered stays visible; destructive blocking or authorization questions cannot default. |
+| `withdraw_owner_question` | `id`, `status`, `reason`, `supersededBy?` | Explicitly dismiss your own open question with a reason. Superseded requires a replacement question id. This never answers or allows a tool. |
 | `search_history` | `query`, `filters?`, `limit?`, `answer?` | Search local bridge messages (including archives), decisions, delegated run logs and CLI transcripts. Returns bounded snippets with stable source ids and links. Ordinary search makes no model calls. answer=true explicitly spends model tokens on a configured cheap model chosen by availability and usage_limits. Indexing is incremental; use agent-bridge reindex to rebuild. |
 | `get_conversation` | `id`, `after?`, `limit?` | Fetch a complete locally retained conversation by the conversation id returned in search_history. Pages contain exact raw bytes (base64) and text chunks with source offsets. Pass next as after; concatenate chunks per source/generation to reconstruct JSONL or SQLite snapshots. No model calls or network export. |
 | `decide` | `approval_id?`, `decision?`, `reason?`, `topic?`, `text?`, `scope?`, `source_message_id?` | Answer a pending approval with approval_id and decision (allow, deny or escalate), or record an owner's decision after researching it. A newer decision on the same topic supersedes the previous revision across scopes; history is always retained. Notifications reach sessions in scope once without waking idle sessions. Scope defaults to this project folder. |
 | `decisions` | `query?`, `scope?`, `history?` | List current owner decisions or search topic and text (case-insensitive substring). Scope defaults to this project, including decisions for all sessions and this session. history=true also includes superseded revisions, newest first. |
-| `project_main` | `to` | Choose a live local master of this project as its main contact. Project addresses route to this session with available-secondary fallback. Exact session addresses stay direct. |
+| `project_main` | `to` | Choose a live local master of this project as its main contact. Project addresses reach all available live project sessions, including secondaries. Exact session addresses stay direct. |
 | `coordinator_availability` | `unavailable` | Yield this session's project jobs to an available local master, for example before closing or at a usage limit. Set unavailable=false when ready again. The current primary keeps its jobs until explicitly handed back. Explicitly handed-off jobs are excluded. |
 | `peers` | None | List the open agent sessions on this machine (Claude Code, Codex, opencode, Antigravity): name, agent type, busy/idle, uptime, working directory and session id. Also shows your own name and settings, your running subagents and the latest unread file-transfer progress on request. Delegated jobs see their parent and siblings (job name, title, agent and status). Use it to pick whom to message. |
-| `send` | `to`, `message`, `reply_to?`, `conversation_id?` | Send a message to another agent. "to" is a peer name from "peers", an agent kind ("claude", "codex") when exactly one is online, or "*" for everyone. Delivery means queued in the recipient inbox, not read. Broadcasts include registered offline local sessions and connected paired-PC sessions, with delivered, queued or failed results per recipient. Direct messages wake idle Claude, Codex and opencode sessions according to wakeOnDirect and available CLI transport; other recipients may read them on their next turn. Auto-wake is handled on the recipient PC, including paired PCs; it is never enabled by send. Use wait_for_message(read_receipt_of=<sent id>) to wait for consumption. If the recipient is offline the message waits for it. When answering with new information, pass its id as reply_to. Do not send pure acknowledgements or repeat a reply as a status note. Delegated jobs can send to their parent, siblings, or exact local session/job names explicitly granted with send_to at spawn. Sibling messages arrive live or wait for the next turn, with a quiet supervisor copy. Sending to a finished sibling returns its saved final report immediately; it will not answer. Do not wait for finished siblings or for read receipts from them. Other sessions and broadcasts are unavailable. Peers shows grants and the sibling thread limit before composing. |
+| `send` | `to`, `message`, `reply_to?`, `conversation_id?`, `if_no_newer_than?`, `message_kind?`, `message_id?` | Send a message to another agent. "to" is a peer name from "peers", an agent kind ("claude", "codex") when exactly one is online, or "*" for everyone. Delivery means queued in the recipient inbox, not read. Project addresses include available live secondaries. Broadcasts wake every live session according to its settings and include recently seen offline local sessions or known project masters, connected paired-PC sessions and your running jobs; jobs:* targets only your running jobs through existing links, even when authority RPCs are unavailable. Per-recipient results report queueing, not consumption. Direct messages wake idle Claude, Codex and opencode sessions according to wakeOnDirect and available CLI transport; other recipients may read them on their next turn. Auto-wake is handled on the recipient PC, including paired PCs; it is never enabled by send. Use wait_for_message(read_receipt_of=<sent id>) to wait for consumption. If the recipient is offline the message waits for it. When answering with new information, pass its id as reply_to. Do not send pure acknowledgements or repeat a reply as a status note. Delegated jobs can send to their parent, siblings, or exact local session/job names explicitly granted with send_to at spawn. Sibling messages arrive live or wait for the next turn, with a quiet supervisor copy. Sending to a finished sibling returns its saved final report immediately; it will not answer. Do not wait for finished siblings or for read receipts from them. Other sessions and broadcasts are unavailable. Peers shows grants and the sibling thread limit before composing. |
+| `send_status` | `message_id` | Look up your message by its durable UUID directly in broker storage and retained archives, without waiting for history indexing. Stored confirms persistence, not delivery or consumption. Pending/not_stored describe the instant checked; an outstanding send may still store it. Retry send with the same message_id to avoid duplicates. |
 | `network_status` | None | List discovered LAN instances and explicitly paired broker links. Discovery is untrusted and never connects automatically. Pair using the local CLI. |
 | `send_files` | `to`, `paths` | Deliver files or folders into an online peer's inbox. Paired PCs stream bounded chunks with SHA-256 and restart resume, returning a transfer id immediately; progress stays available in the dashboard and inbox on request; only completed, failed or cancelled results are delivered automatically. Limits come from network.maxTransferBytes (default 8 GiB). Older brokers and local delivery keep the one MiB / 128 entry path. Symlinks and junctions are rejected; received files are never executed. |
 | `fetch_files` | `from`, `paths` | Pull files into this PC's inbox over a paired encrypted link. The other PC must explicitly configure network.fetchRoots (off by default). Paths are absolute or relative to the source session's working directory and must stay under an allowed root. Returns a transfer id immediately; progress stays available in the dashboard and inbox on request; only completed, failed or cancelled results are delivered automatically. |
 | `cancel_transfer` | `id` | Cancel a paired-PC file transfer by its id. Partial files stay unpublished; cancellation is delivered when the peer reconnects. A completed transfer cannot be cancelled. |
-| `inbox` | `mark_read?`, `limit?` | Read unread messages from other agents, including quiet transfer progress, sibling copies and acknowledgements on demand. Messages are marked read unless mark_read is false. Peeking with mark_read=false does not produce a read receipt. |
+| `inbox` | `include_quiet?`, `mark_read?`, `limit?` | Read unread messages from other agents, with quiet transfer progress, sibling copies and acknowledgements excluded by default. Use include_quiet=true (or a read-only mark_read=false peek) to inspect retained copies. Messages are marked read unless mark_read is false. Peeking with mark_read=false does not produce a read receipt. |
 | `wait_for_message` | `mode?`, `timeout_sec?`, `from?`, `reply_to?`, `conversation_id?`, `read_receipt_of?`, `resume_id?` | Default mode="notify": register a durable one-shot wait and return immediately. Call once after sending a question, then keep working or end the turn; do not poll or repeat waits. A matching unread message can be returned now; an active channel owns its delivery. Otherwise it arrives through existing direct/auto-wake paths when supported, or on the next hook/inbox call. Global auto-wake settings stay unchanged. Notification waits survive /reload-plugins and session exit, have no timeout, and complete only when matching mail is consumed. Mail stays queued if wake delivery fails or the session is offline. mode="block" waits and returns a message marked read. For compatibility, timeout_sec without mode selects block; read_receipt_of also defaults to block. Single blocking waits are capped at SINGLE_WAIT_SEC seconds; a message timeout arms notify automatically instead of requiring another turn. Claude Code may background calls after 120 seconds; background calls do not survive session exit. A stdio call cannot survive /reload-plugins: peers and SessionStart show a saved resume_id and filters after reconnect. resume_id preserves saved filters and mode; use mode="notify" to convert an interrupted blocking wait. mode="cancel" with resume_id archives a wait without consuming mail. read_receipt_of supports block only and confirms bridge consumption, not a reply or completed work. Nested child waits support block only. |
 | `max_subagents` | `count`, `save?` | Change how many background subagents may run at once in this session, effective immediately (a higher limit starts queued continuations; a lower one stops none). save=true also writes it to ~/.agent-bridge/config.json as the default for new sessions. Only change this when your user asks. |
 | `auto_wake` | `enabled` | Turn auto-wake on or off for this session. When on, a peer message that arrives while you finish a turn makes you continue and handle it (up to the configured hop limit agent-to-agent hops per conversation). Only change this when your user asks. |
@@ -108,6 +111,7 @@ schema = {
       send_to: z.array(z.string().refine(isJobSendTarget, "Use an exact local session or job name, not an agent kind, broadcast, wildcard or remote address"))
         .max(MAX_JOB_SEND_TARGETS).optional()
         .describe("Explicitly allow this job to send to these exact local session or job names, including replies to messages received by its supervisor. Default is closed. Cross-session jobs require a separate reciprocal grant to answer; they retain hop limits and quiet copies for both owners. No other external recipients are allowed. Kept across continuations."),
+      notes: z.enum(["none", "milestones", "blockers"]).optional().describe("Reporting cadence, default none/final report only. Routine notes always remain dashboard/history-only. Explicit questions, final results and approvals can still request attention."),
       ...profile.schema,
     }
 ```
@@ -138,6 +142,15 @@ schema: { auto_approve: z.boolean().optional().describe("Overrides access: auto-
 ## Parameter schemas
 
 The following source excerpts preserve bounds and defaults. A question mark in the table means the schema uses `.optional()`. Named shared schemas are defined in the product source.
+
+### withdraw_owner_question
+
+```ts
+id: z.uuid()
+status: z.enum(["cancelled","superseded"])
+reason: z.string().trim().min(1).max(1000)
+supersededBy: z.uuid().optional()
+```
 
 ### search_history
 
@@ -191,10 +204,19 @@ unavailable: z.boolean()
 ### send
 
 ```ts
-to: z.string().min(1).describe('Peer name, agent kind ("claude" / "codex") or "*"')
+to: z.string().min(1).describe('Peer name, project address, agent kind, "*" (sessions and your running jobs), or "jobs:*" (only your running jobs)')
 message: z.string().min(1).max(MAX_BODY_CHARS).describe("Message text (Markdown is fine)")
 reply_to: z.string().optional().describe("Id of the message you are answering")
 conversation_id: z.string().optional().describe("Continue an existing conversation")
+if_no_newer_than: z.string().optional().describe("Refuse this reply if newer unread conversation or recipient mail exists after this message id")
+message_kind: z.enum(["note", "question"]).optional().describe("note retains FYI/status in history without waking or injecting context; question requests supervisor attention")
+message_id: z.uuid().optional().describe("Stable UUID for an idempotent send or recovery retry. Reuse this id only with the same content; requires an updated broker.")
+```
+
+### send_status
+
+```ts
+message_id: z.uuid()
 ```
 
 ### send_files
@@ -220,7 +242,8 @@ id: z.uuid()
 ### inbox
 
 ```ts
-mark_read: z.boolean().optional().describe("Mark returned messages as read (default true)")
+include_quiet: z.boolean().optional().describe("Include historical quiet coordination copies (default false)")
+mark_read: z.boolean().optional().describe("Mark returned messages as read (default true); false also permits inspecting retained quiet copies")
 limit: z.number().int().min(1).max(100).optional()
 ```
 
