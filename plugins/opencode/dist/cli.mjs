@@ -29807,6 +29807,7 @@ import { existsSync as existsSync8, readFileSync as readFileSync5, realpathSync 
 import { dirname as dirname9, join as join14, resolve as resolve5 } from "node:path";
 function canonicalProjectRoot(cwd) {
   if (isPluginCacheCwd(cwd)) return null;
+  const visibleRoot = (root) => isPluginCacheCwd(root) ? null : root;
   try {
     const physical = realpathSync3.native(cwd);
     if (isPluginCacheCwd(physical)) return null;
@@ -29819,14 +29820,14 @@ function canonicalProjectRoot(cwd) {
     try {
       const top = realpathSync3.native(git2(["--show-toplevel"]));
       const common = realpathSync3.native(resolve5(physical, git2(["--git-common-dir"])));
-      if (common.endsWith("/.git") || common.endsWith("\\.git")) return realpathSync3.native(dirname9(common));
+      if (common.endsWith("/.git") || common.endsWith("\\.git")) return visibleRoot(realpathSync3.native(dirname9(common)));
       try {
         const configured = execFileSync(
           "git",
           ["--git-dir", common, "config", "--get", "core.worktree"],
           { encoding: "utf8", timeout: 3e3, windowsHide: true, stdio: ["ignore", "pipe", "ignore"] }
         ).trim();
-        if (configured) return realpathSync3.native(resolve5(common, configured));
+        if (configured) return visibleRoot(realpathSync3.native(resolve5(common, configured)));
       } catch {
       }
       const worktrees = execFileSync(
@@ -29836,7 +29837,7 @@ function canonicalProjectRoot(cwd) {
       );
       const main2 = worktrees.split(/\r?\n\r?\n/).find((entry) => !/^bare$/m.test(entry));
       const root = main2 && /^worktree (.+)$/m.exec(main2)?.[1];
-      return root ? realpathSync3.native(root) : top;
+      return visibleRoot(root ? realpathSync3.native(root) : top);
     } catch {
       return physical;
     }
