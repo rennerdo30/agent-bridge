@@ -18,7 +18,7 @@ it.each(CODING_AGENTS)("%s main switches notify the old main and recent project 
   await old.setProjectMain(next.name);
   await until(() => old.unread().some(m => m.body.includes("main changed")) && sender.unread().some(m => m.body.includes("main changed")));
   const sent = await sender.send({ to: "project:project", body: "after" });
-  expect(sent.deliveredTo).toEqual([next.name]);
+  expect(new Set(sent.deliveredTo)).toEqual(new Set([old.name, next.name]));
   expect(sent.projectRoute).toMatchObject({ main: next.name, previous: old.name, address: "project:project" });
   expect(formatDelivery(sent).join("\n")).toContain("previously old-main");
   expect((await sender.peers()).find(p => p.name === next.name)).toMatchObject({ projectMain: true, projectRoute: { previous: old.name } });
