@@ -1,6 +1,7 @@
 import { ReadJournal } from "./read-journal.js";
 import { HISTORY_TICK_MS, historySearchSchema } from "./history.js";
 import { randomUUID } from "node:crypto";
+import { isPluginCacheCwd } from "./session-visibility.js";
 import { createServer, type Server, type Socket } from "node:net";
 import {
   MAX_BODY_CHARS,
@@ -509,7 +510,7 @@ export class Broker {
 
   /** Local sessions and paired remote peers; local job runners stay hidden (see job-host.ts). */
   private livePeers(): PeerInfo[] {
-    return this.localPeers().filter((p) => !p.jobAgent).map((p) => this.projectPeer(p)).concat(this.network?.peers() ?? []);
+    return this.localPeers().filter((p) => !p.jobAgent).map((p) => this.projectPeer(p)).concat(this.network?.peers() ?? []).filter((p) => !isPluginCacheCwd(p.cwd));
   }
 
   private localPeers(): PeerInfo[] { return [...this.conns].flatMap((c) => c.peer ? [c.peer] : []); }
@@ -857,6 +858,7 @@ export class Broker {
       throw new BridgeError("bad_request", "invalid peer info");
     }
     if (conn.peer) throw new BridgeError("bad_request", "already registered");
+    if (isPluginCacheCwd(String(p.cwd ?? ""))) throw new BridgeError("bad_request", "Plugin-cache processes cannot register as sessions.");
     const name = this.uniqueName(p.name);
     const peer: PeerInfo = {
       id: String(p.id),
@@ -925,6 +927,7 @@ export class Broker {
   }
 
   private onUpdatePeer(conn: Conn, args: RequestMap["updatePeer"][0]): PeerInfo {
+    if (typeof args.cwd === "string" && isPluginCacheCwd(args.cwd)) throw new BridgeError("bad_request", "Plugin-cache processes cannot register as sessions.");
     const peer = this.requirePeer(conn);
     if (args.unavailable !== undefined) {
       if (peer.jobAgent || typeof args.unavailable !== "boolean") throw new BridgeError("bad_request", "Only masters can change availability.");

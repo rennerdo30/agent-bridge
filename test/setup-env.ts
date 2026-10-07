@@ -14,4 +14,4 @@ vi.mock("../src/core/notifications.js", async (original) => ({
  */
 const INHERITED_LINK_ENV = ["AGENT_BRIDGE_PARENT_URL", "AGENT_BRIDGE_PARENT_TOKEN", "AGENT_BRIDGE_PARENT_NAME", "AGENT_BRIDGE_DELEGATE_DEPTH", "AGENT_BRIDGE_PARENT_JOB", "AGENT_BRIDGE_ROOT_SESSION", "AGENT_BRIDGE_ROOT_NAME", "AGENT_BRIDGE_MAX_DELEGATE_DEPTH"];
 
-for (const name of INHERITED_LINK_ENV) delete process.env[name];
+for (const name of [...INHERITED_LINK_ENV, "AGENT_BRIDGE_INTERNAL"]) delete process.env[name];

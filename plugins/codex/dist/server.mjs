@@ -7212,6 +7212,7 @@ var APP_NAME = "agent-bridge";
 var APP_VERSION = "0.29.13";
 var PROTOCOL_VERSION = 2;
 var ENV = {
+  internal: "AGENT_BRIDGE_INTERNAL",
   home: "AGENT_BRIDGE_HOME",
   pipe: "AGENT_BRIDGE_PIPE",
   name: "AGENT_BRIDGE_NAME",
@@ -7892,9 +7893,23 @@ function resolveDbPath(home) {
 import { execFileSync } from "node:child_process";
 import { existsSync as existsSync4, readFileSync as readFileSync5, realpathSync as realpathSync3, statSync as statSync6 } from "node:fs";
 import { dirname as dirname3, join as join9, resolve as resolve3 } from "node:path";
+
+// src/core/session-visibility.ts
+import { posix as posix2 } from "node:path";
+function isPluginCacheCwd(cwd) {
+  const path = posix2.normalize(cwd.replace(/\\/g, "/")).toLowerCase().replace(/\/+$/, "");
+  return /(?:^|\/)\.(?:codex|claude)\/plugins\/cache(?:\/|$)/.test(path) || /(?:^|\/)(?:\.config\/opencode|\.opencode|opencode)\/plugins?(?:\/|$)/.test(path) || /(?:^|\/)(?:\.gemini\/(?:config|antigravity-cli)|\.agents)\/plugins(?:\/|$)/.test(path);
+}
+function isInternalBridgeProcess(env = process.env) {
+  return env[ENV.internal] === "1";
+}
+
+// src/core/project-identity.ts
 function canonicalProjectRoot(cwd) {
+  if (isPluginCacheCwd(cwd)) return null;
   try {
     const physical = realpathSync3.native(cwd);
+    if (isPluginCacheCwd(physical)) return null;
     if (!statSync6(physical).isDirectory()) return null;
     const git2 = (args) => execFileSync(
       "git",
@@ -8958,7 +8973,7 @@ var OPENCODE_READ_ONLY_TOOLS = {
 };
 function childEnv(extra = {}) {
   const { CLAUDE_PROJECT_DIR: _parentProject, ...env } = process.env;
-  return { ...env, ...extra, [DELEGATE_DEPTH_ENV]: String(currentDelegateDepth() + 1) };
+  return { ...env, ...extra, [ENV.internal]: "1", [DELEGATE_DEPTH_ENV]: String(currentDelegateDepth() + 1) };
 }
 function checkDepth(max = Number(process.env[ENV.maxDelegateDepth] ?? DEFAULT_MAX_DELEGATE_DEPTH), env = process.env) {
   const limit = Number.isInteger(max) && max >= 1 ? Math.min(max, MAX_DELEGATE_DEPTH_LIMIT) : DEFAULT_MAX_DELEGATE_DEPTH;
@@ -43993,7 +44008,7 @@ var handoffSchema = external_exports.object({
 function commitHandoff(path, source, target, input2, options = {}) {
   const args = handoffSchema.parse(input2);
   if (source.jobAgent) throw new BridgeError("unauthorized", "Only the current supervisor session can hand off its own jobs.");
-  if (target.host || target.name.includes("/") || target.jobAgent || !CODING_AGENTS.includes(target.agent)) {
+  if (isPluginCacheCwd(source.cwd) || isPluginCacheCwd(target.cwd) || target.host || target.name.includes("/") || target.jobAgent || !CODING_AGENTS.includes(target.agent)) {
     throw new BridgeError("bad_request", "The target must be an exact live local Claude Code, Codex or opencode session. Paired-PC handoff is not supported.");
   }
   if (target.name === source.name && options.reason !== "group-restored" && !options.canControl) throw new BridgeError("bad_request", "Choose another local supervisor session.");
@@ -46322,7 +46337,7 @@ function classifyPeers(peers, runs, home) {
   const worktrees = `${norm(join37(home, "worktrees"))}/`;
   const byWorkdir = /* @__PURE__ */ new Map();
   for (const run of runs) if (run.workdir && !byWorkdir.has(norm(run.workdir))) byWorkdir.set(norm(run.workdir), run);
-  return peers.map((p) => {
+  return peers.filter((p) => !isPluginCacheCwd(p.cwd)).map((p) => {
     const cwd = norm(p.cwd ?? "");
     const subagent = cwd.startsWith(worktrees);
     const run = subagent ? byWorkdir.get(cwd) : void 0;
@@ -46370,7 +46385,7 @@ async function readDashboard(ctx, request2) {
     }
     if (name2.includes("/") || name2.includes("\\") || child !== void 0 && !TRANSCRIPT_ID.test(child) || sessionMatch[2] === "chat" && child !== void 0) return reply(404, { error: "no such local session or subagent" });
     const peers = await ctx.peers();
-    const peer = peers.find((p) => p.name === name2 && !p.name.includes("/"));
+    const peer = peers.find((p) => p.name === name2 && !p.name.includes("/") && !isPluginCacheCwd(p.cwd));
     if (!peer) return reply(404, { error: "no such local session" });
     if (!peer.sessionId) return reply(409, { error: "This session has no sessionId yet." });
     if (!TRANSCRIPT_ID.test(peer.sessionId) || !CODING_AGENTS.includes(peer.agent)) return reply(404, { error: "no transcript for this session" });
@@ -48220,7 +48235,7 @@ var Broker = class {
   }
   /** Local sessions and paired remote peers; local job runners stay hidden (see job-host.ts). */
   livePeers() {
-    return this.localPeers().filter((p) => !p.jobAgent).map((p) => this.projectPeer(p)).concat(this.network?.peers() ?? []);
+    return this.localPeers().filter((p) => !p.jobAgent).map((p) => this.projectPeer(p)).concat(this.network?.peers() ?? []).filter((p) => !isPluginCacheCwd(p.cwd));
   }
   localPeers() {
     return [...this.conns].flatMap((c) => c.peer ? [c.peer] : []);
@@ -48606,6 +48621,7 @@ Call decisions to look up current decisions or their history.`,
       throw new BridgeError("bad_request", "invalid peer info");
     }
     if (conn.peer) throw new BridgeError("bad_request", "already registered");
+    if (isPluginCacheCwd(String(p.cwd ?? ""))) throw new BridgeError("bad_request", "Plugin-cache processes cannot register as sessions.");
     const name2 = this.uniqueName(p.name);
     const peer = {
       id: String(p.id),
@@ -48673,6 +48689,7 @@ Call decisions to look up current decisions or their history.`,
     return { moved };
   }
   onUpdatePeer(conn, args) {
+    if (typeof args.cwd === "string" && isPluginCacheCwd(args.cwd)) throw new BridgeError("bad_request", "Plugin-cache processes cannot register as sessions.");
     const peer = this.requirePeer(conn);
     if (args.unavailable !== void 0) {
       if (peer.jobAgent || typeof args.unavailable !== "boolean") throw new BridgeError("bad_request", "Only masters can change availability.");
@@ -49279,6 +49296,7 @@ var BridgeNode = class extends EventEmitter2 {
    * node keeps retrying in the background (see scheduleReconnect) instead of staying disconnected.
    */
   ensureConnected() {
+    if (isPluginCacheCwd(this.currentCwd)) return Promise.reject(new BridgeError("bad_request", "Project directory is still a plugin cache; waiting for the host's project directory."));
     if (this.isConnected) return Promise.resolve();
     this.electing ??= this.elect().catch((err) => {
       this.scheduleReconnect(this.nextBackoff());
@@ -49493,7 +49511,7 @@ var BridgeNode = class extends EventEmitter2 {
     return this.withClient((c) => c.request("messageReceipt", { id }));
   }
   peers() {
-    return this.withClient((c) => c.request("peers", {}));
+    return this.withClient((c) => c.request("peers", {})).then((peers) => peers.filter((p) => !isPluginCacheCwd(p.cwd)));
   }
   projectJobs() {
     return this.withClient((c) => c.request("projectJobs", {}));
@@ -49860,7 +49878,7 @@ var CodexWaker = class {
         stdin: "",
         cwd: this.node.cwd,
         timeoutMs: this.timings.queueTimeoutMs,
-        env: process.env,
+        env: { ...process.env, [ENV.internal]: "1" },
         log: this.log
       });
       if (res.code === 0) this.log.info("queued wake-up turn for codex", { threadId: this.threadId });
@@ -54290,7 +54308,6 @@ function deriveJobTitle(prompt, maxChars = 80) {
 var CHANNEL_NOTIFICATION = "notifications/claude/channel";
 var OPENCODE_NOTIFICATION = "notifications/agent-bridge/message";
 var CODEX_SANDBOX_META = "codex/sandbox-state-meta";
-var CWD_DISCOVERY_GRACE_MS = 15e3;
 var MAX_TITLE_CHARS3 = 80;
 var SUBAGENT_TOOLS = /* @__PURE__ */ new Set(["peers", "send", "report_progress", "hook_event"]);
 var STAND_IN_RECHECK_MS = 3e4;
@@ -54366,7 +54383,7 @@ async function startServer(argv = process.argv.slice(2)) {
   const home = resolveHome();
   const log = createLogger({ home, component: `mcp-${agent}` });
   const cwd = process.env.CLAUDE_PROJECT_DIR || process.cwd();
-  const cwdKnown = Boolean(process.env.CLAUDE_PROJECT_DIR) || !isInside(cwd, PLUGIN_ROOT);
+  const cwdKnown = !isPluginCacheCwd(cwd) && (Boolean(process.env.CLAUDE_PROJECT_DIR) || !isInside(cwd, PLUGIN_ROOT));
   let configCwd, configRoot;
   const projectConfigRoot = (dir) => {
     if (dir !== configCwd) {
@@ -54377,8 +54394,9 @@ async function startServer(argv = process.argv.slice(2)) {
   };
   const cfg = loadConfig(home, agent, log, process.env, cwdKnown ? projectConfigRoot(cwd) : void 0);
   const delegated = currentDelegateDepth() > 0;
-  log.info("starting MCP server", { agent, cwd, cwdKnown, delegated, version: APP_VERSION, node: process.version });
-  const node2 = delegated ? null : new BridgeNode({
+  const internal = isInternalBridgeProcess();
+  log.info("starting MCP server", { agent, cwd, cwdKnown, delegated, internal, version: APP_VERSION, node: process.version });
+  const node2 = delegated || internal ? null : new BridgeNode({
     pipePath: resolvePipePath(home),
     token: loadOrCreateToken(home),
     dbPath: resolveDbPath(home),
@@ -54425,7 +54443,7 @@ async function startServer(argv = process.argv.slice(2)) {
     watchConfig(home, agent, log, applyConfig, () => cwdSettled ? projectConfigRoot(node2.cwd) ?? "" : "");
     ctx.activity = (s) => node2.setActivity(s);
     ctx.learnCwd = async (projectDir) => {
-      if (cwdSettled || projectDir === node2.cwd) return;
+      if (cwdSettled || projectDir === node2.cwd || isPluginCacheCwd(projectDir)) return;
       cwdSettled = true;
       const name2 = cfg.name ? void 0 : defaultPeerName(agent, projectDir);
       await node2.relocate(projectDir, name2).catch((err) => log.warn("relocate failed", { err: err.message }));
@@ -54592,8 +54610,7 @@ async function startServer(argv = process.argv.slice(2)) {
     } else if (cwdKnown) {
       void join55();
     } else {
-      log.info("project directory unknown yet; deferring bridge join", { graceMs: CWD_DISCOVERY_GRACE_MS });
-      setTimeout(() => void join55(), CWD_DISCOVERY_GRACE_MS).unref();
+      log.info("project directory unknown yet; waiting for host metadata before bridge join");
     }
   }
 }

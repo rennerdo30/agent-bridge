@@ -7717,6 +7717,7 @@ var APP_NAME = "agent-bridge";
 var APP_VERSION = "0.29.13";
 var PROTOCOL_VERSION = 2;
 var ENV = {
+  internal: "AGENT_BRIDGE_INTERNAL",
   home: "AGENT_BRIDGE_HOME",
   pipe: "AGENT_BRIDGE_PIPE",
   name: "AGENT_BRIDGE_NAME",
@@ -29034,6 +29035,15 @@ function readHistorySource(file2, id) {
 
 // src/core/broker.ts
 import { randomUUID as randomUUID17 } from "node:crypto";
+
+// src/core/session-visibility.ts
+import { posix } from "node:path";
+function isPluginCacheCwd(cwd) {
+  const path = posix.normalize(cwd.replace(/\\/g, "/")).toLowerCase().replace(/\/+$/, "");
+  return /(?:^|\/)\.(?:codex|claude)\/plugins\/cache(?:\/|$)/.test(path) || /(?:^|\/)(?:\.config\/opencode|\.opencode|opencode)\/plugins?(?:\/|$)/.test(path) || /(?:^|\/)(?:\.gemini\/(?:config|antigravity-cli)|\.agents)\/plugins(?:\/|$)/.test(path);
+}
+
+// src/core/broker.ts
 import { createServer as createServer4 } from "node:net";
 
 // src/core/store.ts
@@ -29796,8 +29806,10 @@ import { execFileSync } from "node:child_process";
 import { existsSync as existsSync8, readFileSync as readFileSync5, realpathSync as realpathSync3, statSync as statSync3 } from "node:fs";
 import { dirname as dirname9, join as join14, resolve as resolve5 } from "node:path";
 function canonicalProjectRoot(cwd) {
+  if (isPluginCacheCwd(cwd)) return null;
   try {
     const physical = realpathSync3.native(cwd);
+    if (isPluginCacheCwd(physical)) return null;
     if (!statSync3(physical).isDirectory()) return null;
     const git2 = (args) => execFileSync(
       "git",
@@ -30809,7 +30821,7 @@ var OPENCODE_READ_ONLY_TOOLS = {
 };
 function childEnv(extra = {}) {
   const { CLAUDE_PROJECT_DIR: _parentProject, ...env } = process.env;
-  return { ...env, ...extra, [DELEGATE_DEPTH_ENV]: String(currentDelegateDepth() + 1) };
+  return { ...env, ...extra, [ENV.internal]: "1", [DELEGATE_DEPTH_ENV]: String(currentDelegateDepth() + 1) };
 }
 function checkDepth(max = Number(process.env[ENV.maxDelegateDepth] ?? DEFAULT_MAX_DELEGATE_DEPTH), env = process.env) {
   const limit = Number.isInteger(max) && max >= 1 ? Math.min(max, MAX_DELEGATE_DEPTH_LIMIT) : DEFAULT_MAX_DELEGATE_DEPTH;
@@ -32993,7 +33005,7 @@ var handoffSchema = external_exports.object({
 function commitHandoff(path, source, target, input2, options = {}) {
   const args = handoffSchema.parse(input2);
   if (source.jobAgent) throw new BridgeError("unauthorized", "Only the current supervisor session can hand off its own jobs.");
-  if (target.host || target.name.includes("/") || target.jobAgent || !CODING_AGENTS.includes(target.agent)) {
+  if (isPluginCacheCwd(source.cwd) || isPluginCacheCwd(target.cwd) || target.host || target.name.includes("/") || target.jobAgent || !CODING_AGENTS.includes(target.agent)) {
     throw new BridgeError("bad_request", "The target must be an exact live local Claude Code, Codex or opencode session. Paired-PC handoff is not supported.");
   }
   if (target.name === source.name && options.reason !== "group-restored" && !options.canControl) throw new BridgeError("bad_request", "Choose another local supervisor session.");
@@ -35358,7 +35370,7 @@ import { DatabaseSync as DatabaseSync11 } from "node:sqlite";
 
 // src/core/paths.ts
 import { createHash as createHash9 } from "node:crypto";
-import { join as join32, posix, resolve as resolve9 } from "node:path";
+import { join as join32, posix as posix2, resolve as resolve9 } from "node:path";
 var PIPE_HASH_LENGTH = 12;
 function resolveHome(env = process.env) {
   return resolve9(env[ENV.home]?.trim() || DEFAULT_HOME);
@@ -35370,7 +35382,7 @@ function resolvePipePath(home, env = process.env, platform = process.platform) {
     const hash2 = createHash9("sha256").update(home.toLowerCase()).digest("hex").slice(0, PIPE_HASH_LENGTH);
     return `${WINDOWS_PIPE_PREFIX}${APP_NAME}-${hash2}-p${PROTOCOL_VERSION}`;
   }
-  return posix.join(home, SOCKET_FILE_NAME.replace(/\.sock$/, `-p${PROTOCOL_VERSION}.sock`));
+  return posix2.join(home, SOCKET_FILE_NAME.replace(/\.sock$/, `-p${PROTOCOL_VERSION}.sock`));
 }
 function resolveDbPath(home) {
   return join32(home, DB_FILE_NAME);
@@ -36106,7 +36118,7 @@ function classifyPeers(peers, runs, home) {
   const worktrees = `${norm(join37(home, "worktrees"))}/`;
   const byWorkdir = /* @__PURE__ */ new Map();
   for (const run2 of runs) if (run2.workdir && !byWorkdir.has(norm(run2.workdir))) byWorkdir.set(norm(run2.workdir), run2);
-  return peers.map((p) => {
+  return peers.filter((p) => !isPluginCacheCwd(p.cwd)).map((p) => {
     const cwd = norm(p.cwd ?? "");
     const subagent = cwd.startsWith(worktrees);
     const run2 = subagent ? byWorkdir.get(cwd) : void 0;
@@ -36154,7 +36166,7 @@ async function readDashboard(ctx, request2) {
     }
     if (name2.includes("/") || name2.includes("\\") || child !== void 0 && !TRANSCRIPT_ID.test(child) || sessionMatch[2] === "chat" && child !== void 0) return reply(404, { error: "no such local session or subagent" });
     const peers = await ctx.peers();
-    const peer = peers.find((p) => p.name === name2 && !p.name.includes("/"));
+    const peer = peers.find((p) => p.name === name2 && !p.name.includes("/") && !isPluginCacheCwd(p.cwd));
     if (!peer) return reply(404, { error: "no such local session" });
     if (!peer.sessionId) return reply(409, { error: "This session has no sessionId yet." });
     if (!TRANSCRIPT_ID.test(peer.sessionId) || !CODING_AGENTS.includes(peer.agent)) return reply(404, { error: "no transcript for this session" });
@@ -38042,7 +38054,7 @@ var Broker = class {
   }
   /** Local sessions and paired remote peers; local job runners stay hidden (see job-host.ts). */
   livePeers() {
-    return this.localPeers().filter((p) => !p.jobAgent).map((p) => this.projectPeer(p)).concat(this.network?.peers() ?? []);
+    return this.localPeers().filter((p) => !p.jobAgent).map((p) => this.projectPeer(p)).concat(this.network?.peers() ?? []).filter((p) => !isPluginCacheCwd(p.cwd));
   }
   localPeers() {
     return [...this.conns].flatMap((c) => c.peer ? [c.peer] : []);
@@ -38428,6 +38440,7 @@ Call decisions to look up current decisions or their history.`,
       throw new BridgeError("bad_request", "invalid peer info");
     }
     if (conn.peer) throw new BridgeError("bad_request", "already registered");
+    if (isPluginCacheCwd(String(p.cwd ?? ""))) throw new BridgeError("bad_request", "Plugin-cache processes cannot register as sessions.");
     const name2 = this.uniqueName(p.name);
     const peer = {
       id: String(p.id),
@@ -38495,6 +38508,7 @@ Call decisions to look up current decisions or their history.`,
     return { moved };
   }
   onUpdatePeer(conn, args) {
+    if (typeof args.cwd === "string" && isPluginCacheCwd(args.cwd)) throw new BridgeError("bad_request", "Plugin-cache processes cannot register as sessions.");
     const peer = this.requirePeer(conn);
     if (args.unavailable !== void 0) {
       if (peer.jobAgent || typeof args.unavailable !== "boolean") throw new BridgeError("bad_request", "Only masters can change availability.");
@@ -39013,6 +39027,7 @@ var BridgeNode = class extends EventEmitter2 {
    * node keeps retrying in the background (see scheduleReconnect) instead of staying disconnected.
    */
   ensureConnected() {
+    if (isPluginCacheCwd(this.currentCwd)) return Promise.reject(new BridgeError("bad_request", "Project directory is still a plugin cache; waiting for the host's project directory."));
     if (this.isConnected) return Promise.resolve();
     this.electing ??= this.elect().catch((err) => {
       this.scheduleReconnect(this.nextBackoff());
@@ -39227,7 +39242,7 @@ var BridgeNode = class extends EventEmitter2 {
     return this.withClient((c) => c.request("messageReceipt", { id }));
   }
   peers() {
-    return this.withClient((c) => c.request("peers", {}));
+    return this.withClient((c) => c.request("peers", {})).then((peers) => peers.filter((p) => !isPluginCacheCwd(p.cwd)));
   }
   projectJobs() {
     return this.withClient((c) => c.request("projectJobs", {}));
@@ -39846,7 +39861,7 @@ async function startupState(home, cwd, name2, log) {
   }
 }
 function sessionStartContext(name2, peers, decisions = []) {
-  const others = (peers ?? []).filter((p) => p.name !== name2);
+  const others = (peers ?? []).filter((p) => p.name !== name2 && !isPluginCacheCwd(p.cwd));
   return [
     `[agent-bridge] You are connected to agent-bridge as "${name2}".`,
     others.length ? `Peers online:
