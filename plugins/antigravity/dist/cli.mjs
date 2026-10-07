@@ -42943,7 +42943,6 @@ import { StringDecoder } from "node:string_decoder";
 import { join as join64 } from "node:path";
 var POLL_MS = 500;
 var CHUNK = 64 * 1024;
-var FINISHED = / finished after \d+s · /;
 function findRunLog(home, filter) {
   const dir = join64(home, RUNS_DIR_NAME);
   if (!existsSync32(dir)) return null;
@@ -42970,8 +42969,8 @@ async function watchRunLog(path, out2) {
       pending = lines.pop() ?? "";
       for (const line of lines) {
         out2(line);
-        if (FINISHED.test(line)) return;
       }
+      if (offset >= size && !pending.trim() && finishedRunLine(lines.join("\n"))) return;
       continue;
     }
     await new Promise((r) => setTimeout(r, POLL_MS));
