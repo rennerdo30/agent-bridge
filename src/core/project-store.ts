@@ -22,14 +22,11 @@ import { isPluginCacheCwd } from "./session-visibility.js";
 const roots = new Map<string, string>();
 const excluded = new Map<string, boolean>();
 function linkedParent(file: string): boolean {
-  let parent = dirname(resolve(file));
-  while (!existsSync(parent) && dirname(parent) !== parent)
-    parent = dirname(parent);
   try {
-    const physical = realpathSync.native(parent);
-    return process.platform === "win32"
-      ? physical.toLowerCase() !== parent.toLowerCase()
-      : physical !== parent;
+    // Physical spelling can expand an ordinary Windows 8.3 path. Check actual
+    // ancestor links so aliases stay usable and junctions still fail closed.
+    assertUnlinked(dirname(resolve(file)));
+    return false;
   } catch {
     return true;
   }
