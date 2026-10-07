@@ -15,6 +15,8 @@ import { historySchema } from "./history-schema.js";
 import { migrateSqlite } from "./sqlite-migrations.js";
 import { nullLogger } from "./logger.js";
 import { canonicalProjectRoot, projectKey } from "./project-identity.js";
+import { DEFAULT_HOME } from "./constants.js";
+import { assertUnlinked } from "./plugin-runtime.js";
 import { isPluginCacheCwd } from "./session-visibility.js";
 
 const roots = new Map<string, string>();
@@ -98,16 +100,29 @@ export function ensureProjectFolder(project: string): string | null {
 }
 
 /** A moved folder gets a new filename; old replicas remain untouched. */
-export function projectDatabasePath(project: string): string {
+export function projectDatabasePath(project: string, home?: string): string {
   const id = createHash("sha256").update(project).digest("hex").slice(0, 16);
-  return join(project, ".agent-bridge", `conversations-${id}.db`);
+  return join(home && !ownsProjectMirrors(home) ? join(home, "project-mirrors") : join(project, ".agent-bridge"), `conversations-${id}.db`);
+}
+
+/** Only the default user home owns repository mirrors. Custom/test homes remain fully contained.
+ * Compare physical paths so a drive alias cannot accidentally grant or remove ownership. */
+export function ownsProjectMirrors(home: string): boolean {
+  const physical = (path: string) => { try { return realpathSync.native(path); } catch { return resolve(path); } };
+  return projectKey(physical(home)) === projectKey(physical(DEFAULT_HOME));
 }
 
 /** A bounded append-only replica. Open with readOnly:true in consumers. */
-export function syncProjectMirror(main: DatabaseSync, project: string): number {
-  const folder = ensureProjectFolder(project);
+export function syncProjectMirror(main: DatabaseSync, project: string, home: string): number {
+  const path = projectDatabasePath(project, home);
+  let folder: string | null;
+  if (ownsProjectMirrors(home)) folder = ensureProjectFolder(project);
+  else {
+    assertUnlinked(home); assertUnlinked(dirname(path));
+    mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+    folder = dirname(path);
+  }
   if (!folder) return 0;
-  const path = projectDatabasePath(project);
   const archive = join(folder, "archive");
   if (
     linkedParent(path) ||

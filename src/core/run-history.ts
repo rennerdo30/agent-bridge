@@ -24,7 +24,7 @@ function files(dir: string): string[] {
 export interface RunLogRecord { name: string; file: string; updatedAt: number; size: number; signature: string; archived: boolean; meta: RunMeta }
 
 /** Match independently archived metadata by original name, not by its archive timestamp/UUID. */
-export function readRunLogs(home: string): RunLogRecord[] {
+export function readRunLogs(home: string, namesFilter?: Set<string>): RunLogRecord[] {
   const root = join(home, RUNS_DIR_NAME);
   let canonicalRoot: string;
   try { canonicalRoot = realpathSync.native(root); } catch { return []; }
@@ -51,14 +51,14 @@ export function readRunLogs(home: string): RunLogRecord[] {
     const metadata = new Map<string, RunMeta>();
     for (const name of names) {
       const original = archived ? name.replace(ARCHIVE_SUFFIX, "$1") : name;
-      if (!original.endsWith(".json")) continue;
+      if (!original.endsWith(".json") || namesFilter && !namesFilter.has(original.slice(0, -5))) continue;
       const record = localFile(name);
       const value = record ? readHistoryJson(record.file) : null;
       if (isRecord(value)) metadata.set(original, value as RunMeta);
     }
     for (const name of names) {
       const original = archived ? name.replace(ARCHIVE_SUFFIX, "$1") : name;
-      if (!RUN_LOG_NAME.test(original)) continue;
+      if (!RUN_LOG_NAME.test(original) || namesFilter && !namesFilter.has(original.slice(0, -4))) continue;
       const local = localFile(name);
       if (!local) continue;
       const { file, st } = local;

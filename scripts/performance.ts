@@ -2,6 +2,7 @@
  * All writes are confined to a fresh synthetic home. Owner storage is never opened.
  */
 import fs from "node:fs";
+import { execFileSync } from "node:child_process";
 import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -27,7 +28,11 @@ import type { PeerInfo, BridgeMessage } from "../src/core/protocol.js";
 const duration = Number(process.env.AB_PERF_SECONDS ?? 20);
 const jobCount = Number(process.env.AB_PERF_JOBS ?? 30);
 if (!Number.isInteger(jobCount) || jobCount < 1 || jobCount > 50) throw new Error("AB_PERF_JOBS must be 1..50");
+const launchCwd = process.cwd();
 const home = fs.realpathSync.native(fs.mkdtempSync(join(tmpdir(), "abp-")));
+execFileSync("git", ["init", home], { stdio: "ignore", windowsHide: true });
+process.chdir(home);
+process.env.AGENT_BRIDGE_HOME = home;
 const pipe = resolvePipePath(home, {}), token = "synthetic-load-token";
 if (process.platform !== "win32" && Buffer.byteLength(pipe) >= 104) throw new Error("socket path too long");
 const pause = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -190,5 +195,6 @@ try {
   await broker?.close(); store?.close();
   // Only the fresh synthetic root is removed. No owner data or source links are used.
   if (!home.startsWith(fs.realpathSync.native(tmpdir()))) throw new Error("unexpected synthetic root");
+  process.chdir(launchCwd);
   fs.rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 }

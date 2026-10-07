@@ -13,7 +13,7 @@ vi.mock("node:timers/promises", () => ({ setTimeout: vi.fn(async (_ms, _value, o
 afterEach(() => { vi.clearAllMocks(); vi.restoreAllMocks(); });
 
 describe("transient provider errors", () => {
-  it.each(["codex", "claude", "opencode"])("backs off %s database locks and resumes the same session/model", async (agent) => {
+  it.each(["codex", "claude", "opencode", "antigravity"])("backs off %s database locks and resumes the same session/model", async (agent) => {
     const calls: DelegateRequest[] = [];
     const res = await retryTransient(req({ model: `${agent}-model`, sessionId: "saved" }), async (r) => {
       calls.push(r);
@@ -27,15 +27,17 @@ describe("transient provider errors", () => {
     expect(res.details.retries).toBe(3);
   });
 
-  it("retries startup lock failures with the original task and stops at its retry budget", async () => {
+  it("keeps waiting beyond three startup lock attempts with the original task", async () => {
     const calls: DelegateRequest[] = [];
-    const err = await retryTransient(req(), async (r) => {
+    const res = await retryTransient(req(), async (r) => {
       calls.push(r);
-      throw new DelegateError("SQLITE_BUSY: database is locked", "failed");
-    }).catch((e) => e);
-    expect(calls).toHaveLength(4);
+      if (calls.length <= 6) throw new DelegateError("SQLITE_BUSY: database is locked", "failed");
+      return result();
+    });
+    expect(calls).toHaveLength(7);
     expect(calls.every((r) => r.sessionId === null && r.prompt === "do the task")).toBe(true);
-    expect(err.message).toContain("3 automatic retries");
+    expect(vi.mocked(delay).mock.calls.map((c) => c[0])).toEqual([1000, 2000, 4000, 4000, 4000, 4000]);
+    expect(res.details.retries).toBe(6);
   });
 
   it("respects cancellation and deadline during database lock backoff", async () => {

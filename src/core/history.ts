@@ -122,13 +122,13 @@ export class HistoryIndex {
     return count;
   }
 
-  /** Fixed row, file, byte and discovery budgets; cursors commit atomically with their documents. */
+  /** Fixed budgets; idempotent documents are written before advancing their cursors. */
   tick(): { work: number; discovering: boolean } {
     const fileCount = Number(this.db.prepare("SELECT count(*) AS n FROM history_files").get()!.n);
     if (this.idleFiles >= fileCount) this.idleFiles = 0;
-    this.db.exec("BEGIN IMMEDIATE");
+    // Do not hold a writer transaction over filesystem/provider reads or Git canonicalization.
     let work = 0;
-    try {
+    {
       work += this.rows("messages", this.db, "messages", (row) => this.message(row));
       let pendingCount=0,pendingBytes=0;
       for (const row of this.db.prepare("SELECT * FROM history_pending LIMIT ?").iterate(HISTORY_ROWS_PER_SOURCE)) {
@@ -158,8 +158,7 @@ export class HistoryIndex {
           this.db.prepare("UPDATE history_files SET checked=? WHERE path=?").run(++this.checked, file.path);
         }
       }
-      this.db.exec("COMMIT");
-    } catch (err) { this.db.exec("ROLLBACK"); throw err; }
+    }
     const registered = Number(this.db.prepare("SELECT count(*) AS n FROM history_files").get()!.n);
     return { work, discovering: this.walk !== null || this.queue.length > 0 || this.idleFiles < registered };
   }

@@ -146,6 +146,7 @@ export class MessageStore {
   private readonly archiveDb: DatabaseSync;
   private readonly release: () => void;
   private readonly home: string | null;
+  private readonly writeAbort = new AbortController();
   private backupTimer: ReturnType<typeof setInterval> | null = null;
   readonly decisions: DecisionStore;
   readonly history: HistoryIndex;
@@ -278,7 +279,7 @@ export class MessageStore {
       this.db.exec(`PRAGMA busy_timeout = ${SQLITE_REQUEST_BUSY_MS}`);
       try { return operation(); }
       finally { this.db.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`); }
-    });
+    }, Infinity, this.writeAbort.signal);
   }
 
   insert(m: BridgeMessage): void {
@@ -413,7 +414,10 @@ export class MessageStore {
     return n;
   }
 
+  stopWrites(): void { this.writeAbort.abort(); }
+
   close(): void {
+    this.stopWrites();
     this.history.close();
     if (this.backupTimer) clearInterval(this.backupTimer);
     try {
