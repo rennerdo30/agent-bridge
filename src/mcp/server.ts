@@ -298,7 +298,7 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
     ctx.learnCwd = async (projectDir) => {
       if (cwdSettled || projectDir === node.cwd) return;
       cwdSettled = true;
-      Object.assign(cfg,loadConfig(home,agent,log,process.env,projectDir));
+      Object.assign(cfg,loadConfig(home,agent,log,process.env,projectConfigRoot(projectDir)));
       const name = cfg.name ? undefined : defaultPeerName(agent, projectDir);
       await node.relocate(projectDir, name).catch((err) => log.warn("relocate failed", { err: (err as Error).message }));
       applyConfig(loadConfig(home, agent, log, process.env, projectConfigRoot(node.cwd)));
