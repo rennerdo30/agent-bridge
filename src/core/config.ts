@@ -1,4 +1,4 @@
-import { unwatchFile, watchFile } from "node:fs";
+import { readFileSync, unwatchFile, watchFile } from "node:fs";
 import { basename, join } from "node:path";
 import { DEFAULT_CODEX_SUBAGENTS, MAX_CODEX_SUBAGENTS, CONFIG_FILE_NAME, DEFAULT_CLAUDE_BIN, DEFAULT_CODEX_BIN, DEFAULT_LINGER_SEC, DEFAULT_MAX_HOPS, DEFAULT_MAX_JOBS, DEFAULT_MAX_DELEGATE_DEPTH, DEFAULT_OPENCODE_BIN, DEFAULT_DASHBOARD_PORT, ENV, MAX_DELEGATE_DEPTH_LIMIT, MAX_JOBS_LIMIT } from "./constants.js";
 import type { Logger } from "./logger.js";
@@ -35,6 +35,7 @@ export interface HistoryAnswerConfig {
 const DEFAULT_HISTORY_ANSWER: HistoryAnswerConfig = { preference: ["codex", "claude", "opencode"], claudeModel: "haiku", codexModel: "gpt-6-luna", opencodeModel: null };
 
 export interface BridgeConfig {
+  projectGroups: boolean;
   historyAnswer: HistoryAnswerConfig;
   /** Peer name; defaults to "<agent>-<cwd basename>". */
   name: string | null;
@@ -87,6 +88,7 @@ export interface BridgeConfig {
 }
 
 export const DEFAULT_CONFIG: BridgeConfig = {
+  projectGroups: true,
   historyAnswer: DEFAULT_HISTORY_ANSWER,
   name: null,
   autoWake: false,
@@ -213,15 +215,27 @@ const CONFIG_POLL_MS = 2_000;
  * Re-read config.json whenever it changes (polling: editors often replace the file, which breaks fs.watch).
  * Returns a function that stops watching.
  */
-export function watchConfig(home: string, agent: AgentKind, log: Logger, onChange: (cfg: BridgeConfig) => void): () => void {
+export function watchConfig(home: string, agent: AgentKind, log: Logger, onChange: (cfg: BridgeConfig) => void, projectDir?: string | (() => string)): () => void {
   const path = join(home, CONFIG_FILE_NAME);
+  let local = typeof projectDir === "function" ? projectDir() : projectDir;
+  let localPath = local ? join(local, ".agent-bridge", CONFIG_FILE_NAME) : null;
   const listener = (cur: { mtimeMs: number }, prev: { mtimeMs: number }) => {
     if (cur.mtimeMs === prev.mtimeMs) return;
     log.info("config file changed; applying it", { path });
-    onChange(loadConfig(home, agent, log));
+    onChange(loadConfig(home, agent, log, process.env, local));
   };
   watchFile(path, { interval: CONFIG_POLL_MS, persistent: false }, listener);
-  return () => unwatchFile(path, listener);
+  if (localPath) watchFile(localPath, { interval: CONFIG_POLL_MS, persistent: false }, listener);
+  const timer = typeof projectDir === "function" ? setInterval(() => {
+    const next = projectDir();
+    if (next === local) return;
+    if (localPath) unwatchFile(localPath, listener);
+    local = next; localPath = join(next, ".agent-bridge", CONFIG_FILE_NAME);
+    watchFile(localPath, { interval: CONFIG_POLL_MS, persistent: false }, listener);
+    onChange(loadConfig(home, agent, log, process.env, local));
+  }, CONFIG_POLL_MS) : null;
+  timer?.unref();
+  return () => { unwatchFile(path, listener); if (localPath) unwatchFile(localPath, listener); if (timer) clearInterval(timer); };
 }
 
 /** Set one top-level value in config.json, keeping the rest of the file. */
@@ -233,7 +247,7 @@ export function saveConfigValue(home: string, key: string, value: unknown): void
 }
 
 /** Config file (~/.agent-bridge/config.json) with optional per-agent sections, overridden by env vars. */
-export function loadConfig(home: string, agent: AgentKind, log: Logger, env: NodeJS.ProcessEnv = process.env): BridgeConfig {
+export function loadConfig(home: string, agent: AgentKind, log: Logger, env: NodeJS.ProcessEnv = process.env, projectDir?: string): BridgeConfig {
   let file: Record<string, unknown> = {};
   const path = join(home, CONFIG_FILE_NAME);
   try {
@@ -242,10 +256,17 @@ export function loadConfig(home: string, agent: AgentKind, log: Logger, env: Nod
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code !== "ENOENT") log.warn("ignoring unreadable config file", { path, err: (err as Error).message });
   }
+  let project: Record<string, unknown> = {};
+  if (projectDir) {
+    const localPath = join(projectDir, ".agent-bridge", CONFIG_FILE_NAME);
+    try { const value: unknown = JSON.parse(readFileSync(localPath, "utf8")); if (isRecord(value)) project = value; }
+    catch (err) { if ((err as NodeJS.ErrnoException).code !== "ENOENT") log.warn("ignoring unreadable project config", { path: localPath, err: String(err) }); }
+  }
   const section = isRecord(file[agent]) ? file[agent] : {};
+  const localSection = isRecord(project[agent]) ? project[agent] : {};
   /** First valid value wins: env var, then the agent section, then the top level of the file. */
   const pick = <T>(key: keyof BridgeConfig, envKey: string | null, parse: (v: unknown) => T | undefined): T | undefined => {
-    for (const v of [envKey ? env[envKey] : undefined, section[key], file[key]]) {
+    for (const v of [envKey ? env[envKey] : undefined, localSection[key], project[key], section[key], file[key]]) {
       if (v === undefined) continue;
       const parsed = parse(v);
       if (parsed !== undefined) return parsed;
@@ -257,6 +278,7 @@ export function loadConfig(home: string, agent: AgentKind, log: Logger, env: Nod
 
   const d = DEFAULT_CONFIG;
   const cfg: BridgeConfig = {
+    projectGroups: [localSection.projectGroups, project.projectGroups, section.projectGroups, file.projectGroups].find((v) => v !== undefined) === undefined ? true : parseBool([localSection.projectGroups, project.projectGroups, section.projectGroups, file.projectGroups].find((v) => v !== undefined)) === true,
     name: pick("name", ENV.name, str) ?? d.name,
     autoWake: pick("autoWake", ENV.autoWake, parseBool) ?? d.autoWake,
     wakeOnDirect: pick("wakeOnDirect", ENV.wakeOnDirect, parseBool) ?? d.wakeOnDirect,
