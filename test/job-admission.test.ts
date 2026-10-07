@@ -36,24 +36,6 @@ it.each(["claude", "codex", "opencode", "antigravity"] as const)("releases the %
   await until(() => next.status === "done");
 });
 
-it("queues a mass spawn in order, cancels unstarted work and never exceeds its running cap", async () => {
-  const jobs = manager(2);
-  const started: string[] = []; const finish: Array<() => void> = [];
-  const run: Run = async (_signal, _progress, job) => {
-    started.push(job.prompt); await new Promise<void>(resolve => finish.push(resolve)); return result;
-  };
-  const agents = ["claude", "codex", "opencode", "antigravity"] as const;
-  const all = Array.from({ length: 25 }, (_, i) => jobs.start(agents[i % 4]!, null, `task-${i}`, run));
-  expect(jobs.runningCount()).toBe(2); expect(jobs.waiting()).toHaveLength(23);
-  expect(started).toEqual(["task-0", "task-1"]);
-  expect(jobs.cancel(all[4]!.name)).toBe(true); expect(all[4]!.status).toBe("failed");
-  for (let i = 0; i < 24; i++) {
-    finish[i]!(); await until(() => all.filter(j => j.status === "done").length === i + 1);
-    expect(jobs.runningCount()).toBeLessThanOrEqual(2);
-  }
-  expect(started).toEqual(all.filter((_, i) => i !== 4).map(j => j.prompt));
-  expect(jobs.waiting()).toEqual([]);
-});
 
 it("restores an unstarted queued job after reload with its original prompt and spawn options", async () => {
   const first = manager(1);

@@ -169,7 +169,7 @@ export function formatDelivery(result: SendResult, maxHops = DEFAULT_MAX_HOPS): 
     const hint = state === "idle"
       ? canWake ? "idle; wake requested on the receiving PC; a new turn is expected, consumption unconfirmed"
         : "idle; will be read on its next turn (no wake for this delivery)"
-      : `${state}; ${canWake ? "wake policy enabled; idle wake waits until the current turn ends" : "no wake for this delivery"}; queued for its next hook, tool call or turn`;
+      : `${state}; ${canWake ? state === "busy" ? "wake policy enabled; idle wake waits until the current turn ends" : "wake policy enabled; native wake depends on receiving session activity" : "no wake for this delivery"}; queued for its next hook, tool call or turn`;
     return `Delivered to inbox: ${name} (${hint}). Delivery does not mean read.`;
   }).concat(result.projectRoute ? [formatProjectRoute(result.projectRoute, result.deliveredTo[0])] : []).concat((result.failedFor ?? []).map((failed) => `Delivery not confirmed: ${failed.name} (${failed.reason}). The attempt is retained in history; retry explicitly when the paired link is available.`)).concat(result.wakeRequestedFor?.length ? [`Wake requested on the receiving PC: ${result.wakeRequestedFor.join(", ")}. Native turn start is not yet confirmed.`] : []).concat((result.skippedFor ?? []).map((name) => `Skipped offline registration: ${name} (not seen recently and not a known project master).`)).concat(result.queuedFor.map((name) => `Queued for offline session: ${name}.`)).concat(formatReplyRestrictions(result));
 }

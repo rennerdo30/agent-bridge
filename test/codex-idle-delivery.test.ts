@@ -22,6 +22,7 @@ it.each(["main", "secondary"])("idle Codex %s consumes broadcast and subsequent 
   await client.connect(new StdioClientTransport({command:process.execPath,args:[join(import.meta.dirname,"..","plugins","codex","dist","server.mjs"),"--agent=codex"],env:{...process.env,AGENT_BRIDGE_HOME:env.home,AGENT_BRIDGE_NAME:"idle-codex",CLAUDE_PROJECT_DIR:project,AGENT_BRIDGE_CODEX_BIN:process.execPath,AGENT_BRIDGE_AUTO_WAKE:"off",AGENT_BRIDGE_WAKE_ON_DIRECT:"on",AGENT_BRIDGE_DASHBOARD:"off",AGENT_BRIDGE_LINGER_SEC:"0"} as Record<string,string>,stderr:"ignore"}));
   const call = (name:string,args={}) => client!.callTool({name,arguments:args,_meta:{threadId:"native-thread","codex/sandbox-state-meta":{sandboxCwd:project}}});
   await call("peers");
+  await sender.send({to:"idle-codex",body:"RETAINED_QUIET_COPY",conversationId:"siblings-finished:note"});
   const consumed: string[] = [], errors: unknown[] = [];
   let idleReports = 0;
   native.on("message", async (event:any) => {
@@ -32,9 +33,14 @@ it.each(["main", "secondary"])("idle Codex %s consumes broadcast and subsequent 
   await sender.send({to:"*",body:"BROADCAST_NATIVE_PROOF"});
   await until(()=>idleReports===1 || errors.length>0);
   expect(errors).toEqual([]); expect(consumed[0]).toContain("BROADCAST_NATIVE_PROOF");
+  expect(consumed[0]).not.toContain("RETAINED_QUIET_COPY");
   // This host completed its queued native turn without bridge activity hooks, as in the live incident.
   await sender.send({to:"idle-codex",body:"DIRECT_NATIVE_PROOF"});
   await until(()=>idleReports===2 || errors.length>0);
   expect(errors).toEqual([]); expect(consumed[1]).toContain("DIRECT_NATIVE_PROOF");
   expect(consumed[1]).not.toContain("BROADCAST_NATIVE_PROOF");
+  const retained:any = await call("inbox", {include_quiet:true,mark_read:false});
+  expect(retained.content[0].text).toContain("0 actionable message(s), 1 retained quiet");
+  expect(retained.content[0].text).toContain("RETAINED_QUIET_COPY");
+  expect(retained.content[0].text).not.toContain("new message(s)");
 });

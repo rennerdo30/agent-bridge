@@ -1,0 +1,335 @@
+import { createRequire as __abCreateRequire } from 'node:module'; const require = __abCreateRequire(import.meta.url);
+import {
+  DEFAULT_NETWORK_PORT,
+  MAX_NETWORK_HOST_CHARS,
+  MAX_NETWORK_NAME_CHARS,
+  MAX_PORT,
+  NETWORK_NAME_PATTERN
+} from "./chunk-65JBLLER.mjs";
+import {
+  AGENT_KINDS,
+  CODING_AGENTS
+} from "./chunk-SOPZATYP.mjs";
+import {
+  isRecord,
+  mergeStoreFields,
+  readJsonStore,
+  writeJsonStore
+} from "./chunk-TPCM6ZR4.mjs";
+import {
+  external_exports
+} from "./chunk-FDMEMG4Z.mjs";
+import {
+  CONFIG_FILE_NAME,
+  DEFAULT_CLAUDE_BIN,
+  DEFAULT_CODEX_BIN,
+  DEFAULT_CODEX_SUBAGENTS,
+  DEFAULT_DASHBOARD_PORT,
+  DEFAULT_LINGER_SEC,
+  DEFAULT_MAX_DELEGATE_DEPTH,
+  DEFAULT_MAX_HOPS,
+  DEFAULT_MAX_JOBS,
+  DEFAULT_OPENCODE_BIN,
+  ENV,
+  MAX_CODEX_SUBAGENTS,
+  MAX_DELEGATE_DEPTH_LIMIT,
+  MAX_JOBS_LIMIT
+} from "./chunk-6PRX5EOQ.mjs";
+
+// src/network/config.ts
+import { hostname } from "node:os";
+import { readFileSync } from "node:fs";
+import { isAbsolute, join } from "node:path";
+var MAX_FETCH_ROOT_CHARS = 1024;
+var MAX_FETCH_ROOTS = 128;
+var networkConfigSchema = external_exports.object({
+  enabled: external_exports.boolean().default(false),
+  name: external_exports.string().regex(NETWORK_NAME_PATTERN).default(hostname().replace(/[^A-Za-z0-9._-]/g, "-").replace(/^[^A-Za-z0-9]+/, "").slice(0, MAX_NETWORK_NAME_CHARS) || "host"),
+  bind: external_exports.string().min(1).max(MAX_NETWORK_HOST_CHARS).default("127.0.0.1"),
+  port: external_exports.number().int().min(0).max(MAX_PORT).default(DEFAULT_NETWORK_PORT),
+  discovery: external_exports.boolean().default(false),
+  remoteJobs: external_exports.object({
+    enabled: external_exports.boolean().default(false),
+    allowRoots: external_exports.array(external_exports.string().min(1).max(4096)).max(50).default([]),
+    agents: external_exports.array(external_exports.enum(CODING_AGENTS)).max(3).default([]),
+    /** Pair names explicitly permitted to request jobs; no pair is trusted implicitly. */
+    allowPeers: external_exports.array(external_exports.string().regex(NETWORK_NAME_PATTERN)).max(50).default([])
+  }).default({ enabled: false, allowRoots: [], agents: [], allowPeers: [] }),
+  maxTransferBytes: external_exports.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
+  fetchRoots: external_exports.array(external_exports.string().min(1).max(MAX_FETCH_ROOT_CHARS).refine(isAbsolute, "fetch roots must be absolute paths")).max(MAX_FETCH_ROOTS).optional()
+});
+var DEFAULT_NETWORK_CONFIG = networkConfigSchema.parse({});
+function parseNetworkConfig(value) {
+  const result = networkConfigSchema.safeParse(value);
+  return result.success ? result.data : void 0;
+}
+function readNetworkConfig(home, fallback) {
+  try {
+    const value = JSON.parse(readFileSync(join(home, CONFIG_FILE_NAME), "utf8"));
+    return isRecord(value) ? parseNetworkConfig(value.network) ?? fallback : fallback;
+  } catch {
+    return fallback;
+  }
+}
+function writeNetworkConfig(home, value) {
+  const config = networkConfigSchema.parse(value);
+  const path = join(home, CONFIG_FILE_NAME);
+  const previous = readJsonStore(path);
+  writeJsonStore(path, mergeStoreFields(isRecord(previous) ? previous : {}, { network: config }), previous);
+  return config;
+}
+
+// src/core/config.ts
+import { readFileSync as readFileSync2, unwatchFile, watchFile } from "node:fs";
+import { basename, join as join2 } from "node:path";
+var DELIVERY_MODES = ["auto", "channel", "hooks"];
+var CODEX_SANDBOXES = ["read-only", "workspace-write", "danger-full-access"];
+var CODEX_APPROVALS_REVIEWERS = ["user", "auto_review"];
+var DEFAULT_CODEX_APPROVALS_REVIEWER = "auto_review";
+var CLAUDE_PERMISSION_MODES = ["default", "manual", "acceptEdits", "plan", "auto", "dontAsk", "bypassPermissions"];
+var DEFAULT_NOTIFICATIONS = { approvals: true, finish: true, fail: true };
+var DEFAULT_HISTORY_ANSWER = { preference: ["codex", "claude", "opencode"], claudeModel: "haiku", codexModel: "gpt-6-luna", opencodeModel: null };
+var DEFAULT_CONFIG = {
+  projectGroups: true,
+  historyAnswer: DEFAULT_HISTORY_ANSWER,
+  name: null,
+  autoWake: false,
+  wakeOnDirect: true,
+  maxHops: DEFAULT_MAX_HOPS,
+  maxJobs: DEFAULT_MAX_JOBS,
+  maxDelegateDepth: DEFAULT_MAX_DELEGATE_DEPTH,
+  autoApproveTools: [],
+  resourceSlots: {},
+  delivery: "auto",
+  claudeBin: DEFAULT_CLAUDE_BIN,
+  codexBin: DEFAULT_CODEX_BIN,
+  codexSubagents: DEFAULT_CODEX_SUBAGENTS,
+  codexSandbox: "read-only",
+  codexWindowsSandbox: "unelevated",
+  jobCloseCleanup: false,
+  codexApprovalsReviewer: DEFAULT_CODEX_APPROVALS_REVIEWER,
+  codexWorktreeSandbox: null,
+  codexWorkspaceWriteNetworkAccess: null,
+  claudePermissionMode: "default",
+  lingerSec: DEFAULT_LINGER_SEC,
+  codexModel: null,
+  claudeModel: null,
+  opencodeBin: DEFAULT_OPENCODE_BIN,
+  antigravityBin: "agy",
+  antigravityModel: null,
+  opencodeModel: null,
+  effort: {},
+  opencodeAutoApprove: false,
+  dashboard: true,
+  dashboardPort: DEFAULT_DASHBOARD_PORT,
+  notifications: DEFAULT_NOTIFICATIONS,
+  network: DEFAULT_NETWORK_CONFIG
+};
+var TRUE_VALUES = /* @__PURE__ */ new Set(["1", "true", "yes", "on"]);
+var FALSE_VALUES = /* @__PURE__ */ new Set(["0", "false", "no", "off"]);
+function parseBool(v) {
+  if (typeof v === "boolean") return v;
+  if (typeof v !== "string") return void 0;
+  const s = v.trim().toLowerCase();
+  if (TRUE_VALUES.has(s)) return true;
+  if (FALSE_VALUES.has(s)) return false;
+  return void 0;
+}
+function historyAnswer(v) {
+  if (!isRecord(v)) return void 0;
+  const agents = ["claude", "codex", "opencode"];
+  if (v.preference !== void 0 && (!Array.isArray(v.preference) || !v.preference.length || !v.preference.every((a) => agents.includes(String(a))))) return void 0;
+  const out = { ...DEFAULT_HISTORY_ANSWER, preference: [...DEFAULT_HISTORY_ANSWER.preference] };
+  if (Array.isArray(v.preference)) out.preference = [...new Set(v.preference)];
+  for (const key of ["claudeModel", "codexModel", "opencodeModel"]) {
+    if (v[key] === void 0) continue;
+    if (key === "opencodeModel" && v[key] === null) {
+      out.opencodeModel = null;
+      continue;
+    }
+    const model = modelName(v[key]);
+    if (!model) return void 0;
+    out[key] = model;
+  }
+  return out;
+}
+function notifications(v) {
+  if (!isRecord(v)) return void 0;
+  const out = { ...DEFAULT_NOTIFICATIONS };
+  for (const key of Object.keys(out)) {
+    if (v[key] === void 0) continue;
+    const value = parseBool(v[key]);
+    if (value === void 0) return void 0;
+    out[key] = value;
+  }
+  return out;
+}
+function parseIntInRange(v, min, max) {
+  const n = typeof v === "number" ? v : typeof v === "string" ? Number.parseInt(v, 10) : Number.NaN;
+  return Number.isInteger(n) && n >= min && n <= max ? n : void 0;
+}
+function oneOf(v, allowed) {
+  return typeof v === "string" && allowed.includes(v) ? v : void 0;
+}
+var MAX_HOPS_LIMIT = 100;
+var MAX_LINGER_SEC = 3600;
+var RESOURCE_NAME_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/;
+var MAX_RESOURCE_SLOTS = 100;
+function resourceSlots(v) {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return void 0;
+  const entries = Object.entries(v);
+  if (!entries.every(([name, count]) => RESOURCE_NAME_PATTERN.test(name) && typeof count === "number" && Number.isInteger(count) && count >= 1 && count <= MAX_RESOURCE_SLOTS)) return void 0;
+  return Object.fromEntries(entries);
+}
+var MODEL_NAME_PATTERN = /^[^\s"'`&|<>^%$;()]{1,200}$/;
+function modelName(v) {
+  return typeof v === "string" && MODEL_NAME_PATTERN.test(v.trim()) ? v.trim() : void 0;
+}
+var EFFORT_NAME = /^[A-Za-z0-9_-]{1,20}$/;
+function effortLevels(v) {
+  if (typeof v === "string" && EFFORT_NAME.test(v)) return Object.fromEntries(AGENT_KINDS.map((k) => [k, v]));
+  if (!v || typeof v !== "object" || Array.isArray(v)) return void 0;
+  const out = {};
+  for (const [k, x] of Object.entries(v)) if (AGENT_KINDS.includes(k) && typeof x === "string" && EFFORT_NAME.test(x)) out[k] = x;
+  return out;
+}
+function toolPatterns(v) {
+  const list = Array.isArray(v) ? v : typeof v === "string" ? v.split(",") : null;
+  if (!list || !list.every((x) => typeof x === "string")) return void 0;
+  return list.map((x) => x.trim()).filter(Boolean);
+}
+var CONFIG_POLL_MS = 2e3;
+function watchConfig(home, agent, log, onChange, projectDir) {
+  const path = join2(home, CONFIG_FILE_NAME);
+  let local = typeof projectDir === "function" ? projectDir() : projectDir;
+  let localPath = local ? join2(local, ".agent-bridge", CONFIG_FILE_NAME) : null;
+  const listener = (cur, prev) => {
+    if (cur.mtimeMs === prev.mtimeMs) return;
+    log.info("config file changed; applying it", { path });
+    onChange(loadConfig(home, agent, log, process.env, local));
+  };
+  watchFile(path, { interval: CONFIG_POLL_MS, persistent: false }, listener);
+  if (localPath) watchFile(localPath, { interval: CONFIG_POLL_MS, persistent: false }, listener);
+  const timer = typeof projectDir === "function" ? setInterval(() => {
+    const next = projectDir();
+    if (next === local) return;
+    if (localPath) unwatchFile(localPath, listener);
+    local = next;
+    localPath = join2(next, ".agent-bridge", CONFIG_FILE_NAME);
+    watchFile(localPath, { interval: CONFIG_POLL_MS, persistent: false }, listener);
+    onChange(loadConfig(home, agent, log, process.env, local));
+  }, CONFIG_POLL_MS) : null;
+  timer?.unref();
+  return () => {
+    unwatchFile(path, listener);
+    if (localPath) unwatchFile(localPath, listener);
+    if (timer) clearInterval(timer);
+  };
+}
+function saveConfigValue(home, key, value) {
+  const path = join2(home, CONFIG_FILE_NAME);
+  const previous = readJsonStore(path);
+  const file = isRecord(previous) ? previous : {};
+  writeJsonStore(path, { ...file, [key]: value }, previous);
+}
+function loadConfig(home, agent, log, env = process.env, projectDir) {
+  let file = {};
+  const path = join2(home, CONFIG_FILE_NAME);
+  try {
+    file = readJsonStore(path, log) ?? {};
+    log.debug("config file loaded", { path });
+  } catch (err) {
+    if (err.code !== "ENOENT") log.warn("ignoring unreadable config file", { path, err: err.message });
+  }
+  let project = {};
+  if (projectDir) {
+    const localPath = join2(projectDir, ".agent-bridge", CONFIG_FILE_NAME);
+    try {
+      const value = JSON.parse(readFileSync2(localPath, "utf8"));
+      if (isRecord(value)) project = value;
+    } catch (err) {
+      if (err.code !== "ENOENT") log.warn("ignoring unreadable project config", { path: localPath, err: String(err) });
+    }
+  }
+  const section = isRecord(file[agent]) ? file[agent] : {};
+  const localSection = isRecord(project[agent]) ? project[agent] : {};
+  for (const values of [localSection, project]) if (values.codexSubagents === void 0 && values.native_subagents !== void 0) values.codexSubagents = typeof values.native_subagents === "boolean" ? values.native_subagents ? DEFAULT_CODEX_SUBAGENTS : 0 : values.native_subagents;
+  const pick = (key, envKey, parse) => {
+    for (const v of [envKey ? env[envKey] : void 0, localSection[key], project[key], section[key], file[key]]) {
+      if (v === void 0) continue;
+      const parsed = parse(v);
+      if (parsed !== void 0) return parsed;
+      log.warn("ignoring invalid config value", { key, value: String(v) });
+    }
+    return void 0;
+  };
+  const str = (v) => typeof v === "string" && v.trim() ? v.trim() : void 0;
+  const d = DEFAULT_CONFIG;
+  const cfg = {
+    projectGroups: [localSection.projectGroups, project.projectGroups, section.projectGroups, file.projectGroups].find((v) => v !== void 0) === void 0 ? true : [localSection.projectGroups, project.projectGroups, section.projectGroups, file.projectGroups].find((v) => v !== void 0) === true,
+    name: pick("name", ENV.name, str) ?? d.name,
+    autoWake: pick("autoWake", ENV.autoWake, parseBool) ?? d.autoWake,
+    wakeOnDirect: pick("wakeOnDirect", ENV.wakeOnDirect, parseBool) ?? d.wakeOnDirect,
+    maxHops: pick("maxHops", ENV.maxHops, (v) => parseIntInRange(v, 0, MAX_HOPS_LIMIT)) ?? d.maxHops,
+    maxJobs: pick("maxJobs", ENV.maxJobs, (v) => parseIntInRange(v, 1, MAX_JOBS_LIMIT)) ?? d.maxJobs,
+    maxDelegateDepth: pick("maxDelegateDepth", ENV.maxDelegateDepth, (v) => parseIntInRange(v, 1, MAX_DELEGATE_DEPTH_LIMIT)) ?? d.maxDelegateDepth,
+    autoApproveTools: pick("autoApproveTools", ENV.autoApproveTools, toolPatterns) ?? d.autoApproveTools,
+    // Capacities must agree across agents; per-agent sections cannot override shared resources.
+    resourceSlots: resourceSlots(file.resourceSlots) ?? d.resourceSlots,
+    delivery: pick("delivery", ENV.delivery, (v) => oneOf(v, DELIVERY_MODES)) ?? d.delivery,
+    claudeBin: pick("claudeBin", ENV.claudeBin, str) ?? d.claudeBin,
+    codexBin: pick("codexBin", ENV.codexBin, str) ?? d.codexBin,
+    codexSubagents: pick("codexSubagents", null, (v) => {
+      const n = typeof v === "string" && /^\d+$/.test(v) ? Number(v) : v;
+      return typeof n === "number" && Number.isInteger(n) && n >= 0 && n <= MAX_CODEX_SUBAGENTS ? n : void 0;
+    }) ?? d.codexSubagents,
+    codexSandbox: pick("codexSandbox", null, (v) => oneOf(v, CODEX_SANDBOXES)) ?? d.codexSandbox,
+    codexWindowsSandbox: pick("codexWindowsSandbox", null, (v) => oneOf(v, ["unelevated", "elevated"])) ?? d.codexWindowsSandbox,
+    jobCloseCleanup: pick("jobCloseCleanup", null, parseBool) ?? d.jobCloseCleanup,
+    codexApprovalsReviewer: pick("codexApprovalsReviewer", null, (v) => oneOf(v, CODEX_APPROVALS_REVIEWERS)) ?? d.codexApprovalsReviewer,
+    codexWorktreeSandbox: pick("codexWorktreeSandbox", null, (v) => oneOf(v, CODEX_SANDBOXES)) ?? d.codexWorktreeSandbox,
+    codexWorkspaceWriteNetworkAccess: pick("codexWorkspaceWriteNetworkAccess", null, parseBool) ?? d.codexWorkspaceWriteNetworkAccess,
+    claudePermissionMode: pick("claudePermissionMode", null, (v) => oneOf(v, CLAUDE_PERMISSION_MODES)) ?? d.claudePermissionMode,
+    lingerSec: pick("lingerSec", ENV.lingerSec, (v) => parseIntInRange(v, 0, MAX_LINGER_SEC)) ?? d.lingerSec,
+    codexModel: pick("codexModel", null, modelName) ?? d.codexModel,
+    claudeModel: pick("claudeModel", null, modelName) ?? d.claudeModel,
+    opencodeBin: pick("opencodeBin", ENV.opencodeBin, str) ?? d.opencodeBin,
+    antigravityBin: pick("antigravityBin", "AGENT_BRIDGE_ANTIGRAVITY_BIN", str) ?? d.antigravityBin,
+    antigravityModel: pick("antigravityModel", null, modelName) ?? d.antigravityModel,
+    opencodeModel: pick("opencodeModel", null, modelName) ?? d.opencodeModel,
+    effort: Object.assign({}, d.effort, ...[file, section, project, localSection].map((values) => effortLevels(values.effort) ?? {})),
+    opencodeAutoApprove: pick("opencodeAutoApprove", null, parseBool) ?? d.opencodeAutoApprove,
+    dashboard: pick("dashboard", ENV.dashboard, parseBool) ?? d.dashboard,
+    dashboardPort: pick("dashboardPort", null, (v) => parseIntInRange(v, 1, 65535)) ?? d.dashboardPort,
+    historyAnswer: pick("historyAnswer", null, historyAnswer) ?? d.historyAnswer,
+    notifications: pick("notifications", null, notifications) ?? d.notifications,
+    network: pick("network", null, parseNetworkConfig) ?? d.network
+  };
+  log.debug("effective config", { ...cfg });
+  return cfg;
+}
+function parseAgentKind(v) {
+  return oneOf(v?.trim().toLowerCase(), AGENT_KINDS) ?? "other";
+}
+function defaultPeerName(agent, cwd) {
+  const folder = basename(cwd).replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^[-._]+/, "").slice(0, 40);
+  return `${agent}-${folder || "session"}`;
+}
+
+export {
+  networkConfigSchema,
+  readNetworkConfig,
+  writeNetworkConfig,
+  CODEX_SANDBOXES,
+  CODEX_APPROVALS_REVIEWERS,
+  DEFAULT_CODEX_APPROVALS_REVIEWER,
+  CLAUDE_PERMISSION_MODES,
+  DEFAULT_CONFIG,
+  RESOURCE_NAME_PATTERN,
+  MODEL_NAME_PATTERN,
+  watchConfig,
+  saveConfigValue,
+  loadConfig,
+  parseAgentKind,
+  defaultPeerName
+};

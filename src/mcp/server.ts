@@ -860,12 +860,12 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
     },
     guarded("inbox", async (a: { mark_read?: boolean; limit?: number; include_quiet?: boolean }) => {
       if (ctx.childInbox) {
-        const msgs = ctx.childInbox.unread().filter((m) => a.include_quiet === true || a.mark_read === false || !isQuietMessage(m)).slice(0, a.limit ?? HOOK_MAX_MESSAGES);
+        const msgs = ctx.childInbox.unread().filter((m) => (a.include_quiet ?? a.mark_read === false) || !isQuietMessage(m)).slice(0, a.limit ?? HOOK_MAX_MESSAGES);
         if (a.mark_read !== false) ctx.childInbox.markRead(msgs.map((m) => m.id));
         return text(msgs.length ? formatInboxMessages(msgs) : t("inbox.empty"));
       }
       const n = requireNode();
-      const msgs = n.unread().filter((m) => a.include_quiet === true || a.mark_read === false || !isQuietMessage(m)).slice(0, a.limit ?? HOOK_MAX_MESSAGES);
+      const msgs = n.unread().filter((m) => (a.include_quiet ?? a.mark_read === false) || !isQuietMessage(m)).slice(0, a.limit ?? HOOK_MAX_MESSAGES);
       if (msgs.length === 0) return text(t("inbox.empty"));
       if (a.mark_read !== false) n.markRead(msgs.map((m) => m.id));
       return text(formatInboxMessages(msgs));

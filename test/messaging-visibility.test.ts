@@ -20,6 +20,8 @@ it.each(CODING_AGENTS)("%s default inbox hides historical quiet copies without c
   expect(response.content[0].text).toContain("ACTIONABLE_MAIL");
   expect(response.content[0].text).not.toContain("OLD_QUIET_COPY");
   expect(node.unread()).toHaveLength(1);
+  const filteredPeek = await callbacks.get("inbox")({ mark_read: false, include_quiet: false }, {});
+  expect(filteredPeek.content[0].text).not.toContain("OLD_QUIET_COPY");
   const peek = await callbacks.get("inbox")({ mark_read: false, include_quiet: true }, {});
   expect(peek.content[0].text).toContain("0 actionable message(s), 1 retained quiet");
   expect(peek.content[0].text).toContain("7h 0m old");
