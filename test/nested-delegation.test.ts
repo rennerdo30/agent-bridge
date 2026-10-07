@@ -183,12 +183,30 @@ describe("nested delegation", () => {
     tracked.job.pendingApproval!("escalate");
     const top = new LocalCoordinator(ROOT_NAME, ROOT);
     // This control-only stand-in does not deliver independent-session notifications.
-    Object.assign(top, { setNotificationWaitHandlers: vi.fn() });
+    Object.assign(top, { setNotificationWaitHandlers: vi.fn(), jobAuthority: vi.fn(async () => tracked.job) });
     const topJobs = new JobManager(top, nullLogger, join(home, "jobs.json"), 2); managers.push(topJobs);
     const client = await connect({ ...ctx, agent: "claude", node: top as unknown as BridgeNode, jobs: topJobs, childInbox: undefined, parent: null });
     expect(topJobs.find(tracked.job.name)).toBeUndefined();
     expect(textOf(await client.callTool({ name: "decide", arguments: { approval_id: listPendingApprovals(home)[0]!.id, decision: "allow", reason: "owner approved" } }))).toBe("Approval answered.");
     expect(await waiting).toEqual({ allow: true, reason: "allow: owner approved" }); tracked.end();
+  });
+
+  it("requires current broker authority even when pending metadata names the caller", async () => {
+    const ctx = nestedContext();
+    const tracked = ctx.jobs!.track("opencode", null, "review"); tracked.job.foreground = false;
+    const waiting = ctx.jobs!.askParent(tracked.job, "Need owner", 30_000);
+    await until(() => listPendingApprovals(home).length === 1);
+    const top = new LocalCoordinator(ROOT_NAME, ROOT);
+    Object.assign(top, { setNotificationWaitHandlers: vi.fn(), jobAuthority: vi.fn(async () => null) });
+    const topJobs = new JobManager(top, nullLogger, join(home, "jobs.json"), 2); managers.push(topJobs);
+    const client = await connect({ ...ctx, agent: "claude", node: top as unknown as BridgeNode, jobs: topJobs, childInbox: undefined, parent: null });
+    const approval = listPendingApprovals(home)[0]!;
+    const denied = await client.callTool({ name: "decide", arguments: { approval_id: approval.id, decision: "allow" } });
+    expect(denied.isError).toBe(true);
+    expect(textOf(denied)).toContain("another supervisor");
+    expect(tracked.job.pendingApproval).toBeTypeOf("function");
+    await answerPendingApproval(home, approval.id, { decision: "deny" });
+    expect((await waiting).allow).toBe(false); tracked.end();
   });
 
   it("starts a queued continuation when a different generation releases root capacity", async () => {

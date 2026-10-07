@@ -344,8 +344,10 @@ export class JobManager {
       if (!job) return;
       if (control.type === "cancel") { job.queue = []; job.controller.abort(); }
       else if (control.type === "message") {
-        if (job.pendingApproval) job.pendingApproval(control.body, `session ${job.owner}`);
-        else if (job.live) { job.awaitingAnswer = true; job.live.post(control.body); }
+        if (job.controller.signal.aborted && job.resume && job.sessionId) {
+          job.queue.push(control.body);
+          this.waitForSlot(job);
+        } else if (job.live) { job.awaitingAnswer = true; job.live.post(control.body); }
         else job.queue.push(control.body);
       } else if (control.type === "settings") job.args = changedJobArgs(job.args, control.settings);
       else if (control.type === "title") { job.args = { ...job.args, title: control.title }; job.retitle?.(control.title); }
