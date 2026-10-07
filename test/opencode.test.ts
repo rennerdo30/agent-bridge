@@ -1,7 +1,8 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { z } from "zod";
 import { installOpencode, uninstallOpencode } from "../src/cli/opencode-install.js";
 import { nullLogger } from "../src/core/logger.js";
@@ -135,8 +136,18 @@ describe("opencode plugin", () => {
   const prompts: { id: string; text: string; noReply: boolean }[] = [];
   let hooks: any;
   let peer: BridgeNode;
+  let activeStopCalls = 0;
+  let restoreCallTool: (() => void) | undefined;
 
   beforeAll(async () => {
+    const originalCallTool = Client.prototype.callTool;
+    const callToolSpy = vi.spyOn(Client.prototype, "callTool").mockImplementation(async function (this: Client, request: any, ...args: any[]) {
+      const isStop = request.name === "hook_event" && request.arguments?.event === "Stop";
+      if (isStop) activeStopCalls++;
+      try { return await originalCallTool.apply(this, [request, ...args] as any); }
+      finally { if (isStop) activeStopCalls--; }
+    });
+    restoreCallTool = () => callToolSpy.mockRestore();
     process.env.AGENT_BRIDGE_HOME = home;
     process.env.AGENT_BRIDGE_OPENCODE_SERVER = SERVER;
     process.env.AGENT_BRIDGE_NAME = "opencode-test";
@@ -158,6 +169,7 @@ describe("opencode plugin", () => {
 
   afterAll(async () => {
     await hooks?.dispose?.();
+    restoreCallTool?.();
     await peer?.stop();
     for (const k of ["AGENT_BRIDGE_HOME", "AGENT_BRIDGE_OPENCODE_SERVER", "AGENT_BRIDGE_NAME", "AGENT_BRIDGE_LINGER_SEC"]) delete process.env[k];
     rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
@@ -189,6 +201,9 @@ describe("opencode plugin", () => {
 
   it("feeds mail to a busy session through the system prompt", async () => {
     await hooks.event({ event: { type: "session.status", properties: { sessionID: "ses_A", status: { type: "busy" } } } });
+    // The previous idle test can still have a Stop RPC in flight. It may validly
+    // store busy mail itself; drain it before exercising the model-step path.
+    await expect.poll(() => activeStopCalls, { timeout: 8_000 }).toBe(0);
     await peer.send({ to: "opencode-test", body: "while you work" });
     const output = { system: [] as string[] };
     const before = prompts.length;
