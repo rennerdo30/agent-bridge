@@ -190,11 +190,13 @@ describe("opencode plugin", () => {
   it("feeds mail to a busy session through the system prompt", async () => {
     await hooks.event({ event: { type: "session.status", properties: { sessionID: "ses_A", status: { type: "busy" } } } });
     await peer.send({ to: "opencode-test", body: "while you work" });
-    await new Promise((r) => setTimeout(r, 300));
     const output = { system: [] as string[] };
     const before = prompts.length;
-    await hooks["experimental.chat.system.transform"]({ sessionID: "ses_A" }, output);
-    expect(output.system.join("\n")).toContain("while you work");
+    await expect.poll(async () => {
+      output.system = [];
+      await hooks["experimental.chat.system.transform"]({ sessionID: "ses_A" }, output);
+      return output.system.join("\n");
+    }, { timeout: 8_000 }).toContain("while you work");
     // Also stored in the session, so a failed step does not lose mail that is already marked read.
     const stored = prompts.slice(before);
     expect(stored).toHaveLength(1);

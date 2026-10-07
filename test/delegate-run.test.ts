@@ -61,6 +61,8 @@ describe("delegation approval routing", () => {
     mkdirSync(repo);
     const git = (cwd: string, ...args: string[]) => execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
     git(repo, "init", "-q");
+    git(repo, "config", "--local", "user.name", "Test");
+    git(repo, "config", "--local", "user.email", "test@example.test");
     git(repo, "-c", "user.name=Test", "-c", "user.email=test@example.test", "commit", "--allow-empty", "-qm", "base");
     const rc = { ...context(), cwd: () => repo };
     const j = job();

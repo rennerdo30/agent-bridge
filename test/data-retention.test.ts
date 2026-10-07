@@ -14,6 +14,8 @@ import { normalizeSource, removalOperations } from "./retention-guard.js";
 const SOURCE_ROOT = join(import.meta.dirname, "..", "src");
 // Every exception is an exact call, counted below. Reasons and limits live in docs/data-retention.md.
 const REVIEWED_REMOVALS: Record<string, string[]> = {
+  // Exclusively created unpublished key staging file; the active key is never removed.
+  "cli/dashboard-key.ts": ["unlinkSync(temp)"],
   "core/json-store.ts": ["rmSync(tmp, { force: true })"],
   "mcp/jobs.ts": ["rmSync(path, { force: true })", "rmSync(path, { force: true })"],
   "core/node.ts": ["unlinkSync(this.opts.pipePath)"],

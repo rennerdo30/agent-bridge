@@ -87,9 +87,9 @@ describe("authenticated local owner chat", () => {
     expect(await (await receipt()).json()).toMatchObject({ state: "queued" });
     p.markRead([result.id]);
     await until(() => p.unread().length === 0);
-    // ACK is asynchronous; give the local broker one event turn before reading.
-    await new Promise((resolve) => setTimeout(resolve, 30));
-    expect(await (await receipt()).json()).toMatchObject({ state: "delivered" });
+    // Local consumption precedes the broker ACK; wait for the actual receipt.
+    await expect.poll(async () => (await (await receipt()).json()).state,
+      { timeout: 5_000 }).toBe("delivered");
     expect((await fetch(`${base()}/api/chat-delivery/${result.receipt}`)).status).toBe(403);
     expect((await fetch(`${base()}/api/chat-delivery/00000000-0000-0000-0000-000000000000`, { headers: { cookie } })).status).toBe(404);
   });

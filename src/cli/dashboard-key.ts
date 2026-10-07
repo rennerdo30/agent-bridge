@@ -12,8 +12,10 @@ export function loadDashboardKey(home: string, legacy?: string, reset = false): 
   const file = join(home, DASHBOARD_KEY_FILE);
   if (reset || !existsSync(file)) {
     const temp = join(home, `.dashboard-key-${randomUUID()}`);
+    let created = false;
     try {
       writeFileSync(temp, "", { flag: "wx", mode: 0o600 });
+      created = true;
       protect(temp, 0o600);
       writeFileSync(temp, !reset && legacy && KEY_PATTERN.test(legacy) ? legacy : randomBytes(24).toString("hex"));
       if (reset) renameSync(temp, file);
@@ -21,7 +23,7 @@ export function loadDashboardKey(home: string, legacy?: string, reset = false): 
         try { linkSync(temp, file); }
         catch (err) { if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err; }
       }
-    } finally { if (existsSync(temp)) unlinkSync(temp); }
+    } finally { if (created && existsSync(temp)) unlinkSync(temp); }
   }
   protect(file, 0o600);
   const key = readFileSync(file, "utf8").trim();
