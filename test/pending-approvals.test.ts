@@ -74,7 +74,6 @@ describe("pending approvals", () => {
       expect(j.pendingApproval).toBeTypeOf("function");
       expect(await answerPendingApproval(env.home, entry!.id, { decision: "allow" })).toBe("answered");
       expect(await answer).toEqual({ allow: true, reason: "allow" });
-
     } finally { jobs.cancelAll(); }
   });
 
