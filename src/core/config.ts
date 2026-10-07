@@ -330,7 +330,7 @@ export function loadConfig(home: string, agent: AgentKind, log: Logger, env: Nod
     dashboardPort: pick("dashboardPort", null, (v) => parseIntInRange(v, 1, 65_535)) ?? d.dashboardPort,
     historyAnswer: pick("historyAnswer", null, historyAnswer) ?? d.historyAnswer,
     notifications: pick("notifications", null, notifications) ?? d.notifications,
-    questionAlerts: pick("questionAlerts", null, v => questionAlertSettingsSchema.safeParse(v).data) ?? d.questionAlerts,
+    questionAlerts: pick("questionAlerts", null, v => questionAlertSettingsSchema.safeParse(isRecord(v) ? {...DEFAULT_QUESTION_ALERTS,...v} : v).data) ?? d.questionAlerts,
     network: pick("network", null, parseNetworkConfig) ?? d.network,
   };
   log.debug("effective config", { ...cfg });

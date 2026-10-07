@@ -40,7 +40,7 @@ export const questionAnswerSchema = z.object({
   pin: z.object({ scope: decisionScopeSchema, topic: z.string().trim().min(1).max(160) }).strict().optional(),
 }).strict().refine(a => Boolean(a.option) !== Boolean(a.text), "Choose an option or write an answer");
 export type QuestionAnswerArgs = z.infer<typeof questionAnswerSchema>;
-export interface QuestionAsker { session: string; sessionId: string | null; agent: MessageAddress["agent"]; main: string; mainSessionId?: string | null; job?: string; }
+export interface QuestionAsker { session: string; sessionId: string | null; peerId?: string; agent: MessageAddress["agent"]; main: string; mainSessionId?: string | null; mainPeerId?: string; job?: string; }
 export interface QuestionDelivery { recipient: string; messageId?: string; state: "pending" | "wake-requested" | "busy" | "wake-unavailable" | "offline" | "failed" | "unconfirmed"; detail: string; readAt: number | null; }
 export interface OwnerQuestion extends z.output<typeof askOwnerSchema> {
   id: string; kind: "question"; project: string; dedupeKey: string;
@@ -84,7 +84,7 @@ export class OwnerQuestionStore {
     if (args.default && args.default.deadline <= at) throw new Error("Default deadline must be in the future");
     return this.transaction(() => {
       const open = this.list().filter(q => q.status === "open");
-      const sameAsker=(a:QuestionAsker) => a.sessionId && asker.sessionId ? a.agent === asker.agent && a.sessionId === asker.sessionId : a.session === asker.session;
+      const sameAsker=(a:QuestionAsker) => a.sessionId && asker.sessionId ? a.agent === asker.agent && a.sessionId === asker.sessionId : a.peerId && asker.peerId ? a.peerId === asker.peerId : a.session === asker.session;
       const issue = args.links.filter(l => l.kind === "issue").map(l => l.value.toUpperCase()).sort().join(",");
       const key = JSON.stringify([project, issue, args.topic.toLowerCase()]);
       const same = open.find(q => q.dedupeKey === key);

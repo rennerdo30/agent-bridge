@@ -46,17 +46,18 @@ export class OwnerQuestionService {
     const peers = this.peers();
     const mains = peers.filter(p => !p.jobAgent && !p.subagent && !p.unavailable && normalizeProject(p.projectRoot ?? p.cwd) === normalizeProject(q.project));
     const main = mains.find(p => p.projectMain) ?? mains[0];
-    const destinations=q.askers.flatMap(a => [{ name:a.session,sessionId:a.sessionId },{name:a.main,sessionId:a.mainSessionId},...(a.job ? [{name:a.job,sessionId:null}] : [])]);
+    const destinations=q.askers.flatMap(a => [{ name:a.session,sessionId:a.sessionId,peerId:a.peerId },{name:a.main,sessionId:a.mainSessionId,peerId:a.mainPeerId},...(a.job ? [{name:a.job,sessionId:null,peerId:undefined}] : [])]);
     const resolveDestination=(name:string) => {
-      const identity=destinations.find(d => d.name === name && d.sessionId)?.sessionId;
-      return peers.find(p => !p.unavailable && normalizeProject(p.projectRoot ?? p.cwd) === normalizeProject(q.project) && (identity ? p.sessionId === identity : p.name === name));
+      const identities=destinations.filter(d => d.name === name && (d.sessionId || d.peerId));
+      return peers.find(p => !p.unavailable && normalizeProject(p.projectRoot ?? p.cwd) === normalizeProject(q.project) && (identities.length ? identities.some(d => d.sessionId ? p.sessionId === d.sessionId : p.id === d.peerId) : p.name === name));
     };
     const askerNames=new Set(q.askers.flatMap(a => [resolveDestination(a.session)?.name ?? a.session,...(a.job ? [a.job] : [])]));
     const mainRead=q.deliveries.some(d => (q.askers.some(a => (resolveDestination(a.main)?.name ?? a.main) === d.recipient) || !askerNames.has(d.recipient)) && d.messageId && this.messages.receipts(d.messageId).some(r => r.readAt !== null));
     const recipients = new Set(destinations.map(d => resolveDestination(d.name)?.name ?? d.name)); if (main && !mainRead) recipients.add(main.name);
     let changed = false;
     for (const recipient of recipients) {
-      const live = resolveDestination(recipient);
+      const original = resolveDestination(recipient), fallback = !original && main && !mainRead && main.name === recipient ? main : undefined;
+      const live = original ?? fallback;
       const before = q.deliveries.find(d => d.recipient === recipient);
       if (before?.messageId) {
         const readAt=this.messages.receipts(before.messageId).find(r => r.recipient === recipient)?.readAt;
@@ -65,7 +66,7 @@ export class OwnerQuestionService {
         }
         continue;
       }
-      if (!live && (destinations.some(d => d.name === recipient && d.sessionId) || peers.some(p => p.name === recipient))) {
+      if (!live && (destinations.some(d => d.name === recipient && (d.sessionId || d.peerId)) || peers.some(p => p.name === recipient))) {
         // Do not send a prior session's answer to a replacement which inherited its display name.
         const offline = {recipient,state:"offline" as const,detail:"Original session is absent or replaced. Answer retained on the question; current project-main fallback receives it.",readAt:null};
         if (JSON.stringify(before) !== JSON.stringify(offline)) {q.deliveries=[...q.deliveries.filter(d => d.recipient !== recipient),offline];changed=true;}
@@ -84,6 +85,7 @@ export class OwnerQuestionService {
       const delivery = { recipient, messageId, state: failed ? "failed" as const : !live ? "offline" as const : live.activity === "busy" ? "busy" as const : wake ? "wake-requested" as const : "wake-unavailable" as const,
         detail: failed ? "Direct delivery failed. Durable inbox retained; project-main fallback receives the same answer." : !live ? `Asker offline; retained for reconnection. ${main ? "Also sent to project main " + main.name : "No available project main; fallback pending."}` : live.activity === "busy" ? "Queued for next hook or idle turn; awaiting consumption." : wake ? "Direct wake requested; awaiting consumption." : `Wake unavailable or disabled; durable inbox retained. ${main && main.name !== recipient ? "Also sent to project main " + main.name : "No alternate project main available."}`,
         readAt: null };
+      if (fallback) delivery.detail = "Original session is absent; this answer goes to the current project main as fallback. " + delivery.detail;
       q.deliveries = [...q.deliveries.filter(d => d.recipient !== recipient), delivery]; changed = true;
     }
     if (changed) this.store.save(q);

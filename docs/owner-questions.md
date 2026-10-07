@@ -8,6 +8,8 @@ Required fields: `title` (one line), `context` (at most ten lines), `topic`, `op
 
 The registry computes the dedupe key from canonical project + linked issue ids + topic. Matching terms merge into one stable id with every asker and affected project. Conflicting options/defaults are rejected rather than silently replacing a decision. Related topics on other issues return a `similar` warning. A session can have at most five open questions.
 
+Routing, caps and dismissal rights follow native session identity, with broker peer identity as the fallback before it is learned. Renaming does not evade the cap. A replacement display name does not receive the original asker's answer; a new responsible project main can receive an explicit fallback even when it reuses the old main's name.
+
 Questions remain `open` until `answered`, `cancelled` or `superseded`. `withdraw_owner_question` explicitly closes an asker's question with a reason; supersession also requires an existing replacement id. Closed records stay in Question history and search. There is no silent expiry. A declared safe default is recorded explicitly as **declared-default, not the owner**. Authorization questions and blocking destructive questions cannot have a default.
 
 The owner clicks an option once, or enters free text and clicks **Send answer**. The registry stores the exact answer, identity and time before delivering a direct waking message (`reply_to = question id`) to both asker and responsible main, plus a linked job when present. Offline inboxes remain durable; a newly available project main receives fallback. The UI distinguishes busy, offline, wake unavailable, wake requested, failed/unconfirmed and read receipts. A requested wake without consumption after twenty seconds is explicitly unconfirmed; inbox delivery alone is never reported as a read.
@@ -27,6 +29,7 @@ Each question claims one alert channel durably, preventing double alerts across 
 ```
 
 Set `reminderMinutes` to `0` to disable reminders. Questions and exact answers are indexed by `search_history`, including `kind: "question"`.
+Individual config overrides are accepted; omitted alert fields keep their defaults. Sound-off also silences native alerts and browser notifications.
 
 ## Storage and mixed versions
 
