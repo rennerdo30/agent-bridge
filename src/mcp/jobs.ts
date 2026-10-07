@@ -17,6 +17,7 @@ import { newApprovalId, publishApproval, type PermissionDecision, type Permissio
 import { notifyJobEvent } from "../core/notifications.js";
 import { RootConcurrency } from "../core/root-concurrency.js";
 import { completionMessageId } from "../core/completion.js";
+import { recoverJobRecord } from "../core/job-recovery.js";
 
 const JOB_ID_LENGTH = 8;
 const PROMPT_PREVIEW_CHARS = 120;
@@ -47,6 +48,8 @@ export type Run = ((signal: AbortSignal, onProgress: (message: string, full?: st
 export type Resume = (message: string, sessionId: string, workdir: string | null, worktree: Worktree | null) => Run;
 
 export interface Job {
+  /** Original recovery snapshot, retained only until ordinary durable storage takes precedence. */
+  recoveredRecord?: Record<string, unknown>;
   /** Current blocking caller's delivery destination; runtime only, never ownership metadata. */
   foregroundRecipient?: string;
   ownershipHistory?: import("../core/job-handoff.js").OwnershipChange[];
@@ -416,7 +419,7 @@ export class JobManager {
         if (isRecord(entry) && !byId.has(entry.id)) byId.set(entry.id, entry);
       }
       const mine = [...this.history.values()].filter((j) => this.own.has(j.id)).map((j) => {
-        const old = byId.get(j.id) ?? archived.get(j.id);
+        const old = byId.get(j.id) ?? archived.get(j.id) ?? j.recoveredRecord;
         if (isRecord(old)) {
           j.deliveryHistory = [...new Map([...(Array.isArray(old.deliveryHistory) ? old.deliveryHistory as BridgeMessage[] : []), ...(j.deliveryHistory ?? [])].map((m) => [m.id, m])).values()];
           // A late report from an earlier turn may add delivery evidence, but cannot roll back a continuation.
@@ -581,6 +584,9 @@ export class JobManager {
     this.persist();
   }
 
+  /** Hook-only snapshot: never performs storage recovery or runner polling. */
+  hookJobs(): Job[] { return [...this.history.values(), ...this.running.values(), ...this.foreground.values()]; }
+
   runningCount(): number {
     return [...this.running.values()].filter((j) => this.isMine(j.owner)).length;
   }
@@ -658,9 +664,23 @@ export class JobManager {
     }
     this.sharedGrants.add(saved.id);
     const existing = this.history.get(saved.id);
-    if (existing) Object.assign(existing, saved);
-    else this.history.set(saved.id, { ...saved, controller: new AbortController(), progress: null, queue: [], resume: this.restoreResume?.(saved.agent, saved.args ?? {}) });
+    if (existing && (this.running.has(saved.id) || this.foreground.has(saved.id))) {
+      // Durable authority may change during a live turn; recovered snapshots cannot replace its controller/facts.
+      Object.assign(existing, { owner: saved.owner, supervisor: saved.supervisor, parentJob: saved.parentJob, rootSession: saved.rootSession,
+        rootName: saved.rootName, ownershipHistory: saved.ownershipHistory, masters: saved.masters });
+    } else if (existing) Object.assign(existing, saved, { sessionId: saved.sessionId ?? existing.sessionId, workdir: saved.workdir ?? existing.workdir, worktree: saved.worktree ?? existing.worktree });
+    else this.history.set(saved.id, { ...saved, recoveredRecord: saved as unknown as Record<string, unknown>, controller: new AbortController(), progress: null, queue: [], resume: this.restoreResume?.(saved.agent, saved.args ?? {}) });
+    this.adoptRecoveredRunner(this.history.get(saved.id)!);
     return this.find(saved.name);
+  }
+  /** Lazy lookup must attach a surviving runner, rather than queue into an unpolled history entry. */
+  private adoptRecoveredRunner(job: Job): void {
+    if (job.status !== "running" || this.running.has(job.id) || this.foreground.has(job.id)) return;
+    if (job.host && this.takeOver(job)) {
+      this.running.set(job.id, job);
+      if (this.isMine(job.owner)) this.own.add(job.id);
+      this.watchHosted();
+    } else if (!job.executionOwner || job.executionOwner === this.node.name) job.status = "interrupted";
   }
   recipient(job: Job): Promise<string> {
     return this.node.jobRecipient?.(job.name) ?? Promise.resolve(job.rootName ?? job.owner ?? this.node.name);
@@ -675,12 +695,14 @@ export class JobManager {
     const current = active.find((j) => j.id === id || j.name === ref)
       ?? this.history.get(id) ?? [...this.history.values()].find((j) => j.name === ref);
     if (current || !this.storePath || !this.restoreResume) return current && (this.sharedGrants.has(current.id) || canControlJob(current as unknown as Record<string, unknown>, this.node.name) || this.isMine(current.owner) || (this.lineage && current.parentJob === this.lineage.parentJob)) ? current : undefined;
-    const saved = readStore(this.storePath, this.log, true).find((j) => j.id === id || j.name === ref);
+    const saved = readStore(this.storePath, this.log, true).find((j) => j.id === id || j.name === ref)
+      ?? recoverJobRecord(dirname(this.storePath), ref);
     if (!saved || (!this.lineage && !this.isMine(saved.owner) && !canControlJob(saved as unknown as Record<string, unknown>, this.node.name) && !this.sharedGrants.has(saved.id))) return undefined;
     // The same lineage rule as restore(): a nested coordinator sees only its own children, a session only top-level jobs.
-    if (this.lineage ? saved.parentJob !== this.lineage.parentJob : saved.parentJob) return undefined;
-    const job: Job = { ...saved, controller: new AbortController(), progress: null, queue: [], resume: this.restoreResume(saved.agent, saved.args ?? {}) };
+    if (!this.sharedGrants.has(saved.id) && (this.lineage ? saved.parentJob !== this.lineage.parentJob : saved.parentJob)) return undefined;
+    const job: Job = { ...saved, recoveredRecord: saved as unknown as Record<string, unknown>, controller: new AbortController(), progress: null, queue: [], resume: this.restoreResume(saved.agent, saved.args ?? {}) };
     this.history.set(job.id, job);
+    this.adoptRecoveredRunner(job);
     return job;
   }
 
@@ -1068,7 +1090,13 @@ export class JobManager {
       return true;
     }
     const job = [...this.running.values(), ...this.foreground.values()].find((j) => j.id === id || j.name === ref);
-    if (!job) return false;
+    if (!job) {
+      if (owned.status !== "interrupted") return false;
+      owned.queue = []; owned.queuedMessages = []; owned.controller.abort();
+      this.own.add(owned.id);
+      this.finish(owned, "failed", "", owned.sessionId, "cancelled");
+      return true;
+    }
     job.queue = [];
     job.controller.abort();
     if (this.hostedRunning(job)) {

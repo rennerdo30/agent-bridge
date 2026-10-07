@@ -75,11 +75,8 @@ async function main(argv: string[]): Promise<number> {
         client = await BridgeClient.connect(pipe, log);
       } catch (err) {
         const code = (err as NodeJS.ErrnoException).code;
-        if (code === "ENOENT" || code === "ECONNREFUSED") {
-          out(t("cli.status.noBroker", { pipe }));
-          return 0;
-        }
-        out(`Broker connection could not be confirmed (${code ?? (err as Error).message}). It may be busy or unavailable; this does not establish that it stopped.`);
+        if (code === "ENOENT" || code === "ECONNREFUSED") { out(t("cli.status.noBroker", { pipe })); return 0; }
+        out(`Broker connection could not be confirmed (${code ?? (err as Error).message}); it may be busy or unavailable.`);
         return 1;
       }
       try {

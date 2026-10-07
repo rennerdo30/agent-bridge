@@ -96,12 +96,10 @@ export const DEFAULT_OPENCODE_BIN = "opencode";
 export const DEFAULT_DASHBOARD_PORT = 4777;
 
 /**
- * Listen window: after a session sent a bridge message (or spawned a subagent), its Stop hook keeps the
- * turn open this long waiting for replies, so conversations continue without the user nudging.
+ * Listen window for deciding whether already queued replies should continue a turn.
+ * Hooks never wait for replies; notify subscriptions and wake delivery handle later arrivals.
  */
 export const DEFAULT_LINGER_SEC = 300;
-/** Longest a single Stop hook invocation waits; must stay below the hosts' hook timeouts (600s). */
-export const STOP_WAIT_CAP_MS = 290_000;
 /** Background subagents running at once per session, unless maxJobs / AGENT_BRIDGE_MAX_JOBS says otherwise. */
 export const DEFAULT_MAX_JOBS = 8;
 /** Upper bound for that setting (a typo must not start hundreds of CLIs). */
@@ -118,3 +116,6 @@ export const HOOK_BROKER_TIMEOUT_MS = 1_500;
 
 /** Maximum number of messages injected into a single hook response. */
 export const HOOK_MAX_MESSAGES = 10;
+
+/** Concurrent jobs covered by the load harness. */
+export const HOOK_BUDGET_MS = 1500;

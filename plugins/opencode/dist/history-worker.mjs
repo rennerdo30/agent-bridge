@@ -465,7 +465,7 @@ function projectKey(root) {
 
 // src/core/project-store.ts
 var roots = /* @__PURE__ */ new Map();
-var excluded = /* @__PURE__ */ new Set();
+var excluded = /* @__PURE__ */ new Map();
 function linkedParent(file2) {
   let parent2 = dirname7(resolve3(file2));
   while (!existsSync8(parent2) && dirname7(parent2) !== parent2)
@@ -498,7 +498,8 @@ function ensureProjectFolder(project) {
     return null;
   const fresh = !existsSync8(folder);
   mkdirSync6(folder, { recursive: true, mode: 448 });
-  if (!fresh && excluded.has(project)) return folder;
+  const gitMarker = existsSync8(join10(project, ".git"));
+  if (!fresh && excluded.get(project) === gitMarker) return folder;
   try {
     const exclude = execFileSync2(
       "git",
@@ -531,7 +532,7 @@ function ensureProjectFolder(project) {
   } catch {
     if (existsSync8(join10(project, ".git"))) return null;
   }
-  excluded.add(project);
+  excluded.set(project, gitMarker);
   return folder;
 }
 function projectDatabasePath(project) {

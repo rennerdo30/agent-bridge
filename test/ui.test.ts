@@ -41,6 +41,25 @@ function recordJob(owner: string, job: Job): void {
 }
 
 describe("web dashboard", () => {
+  it("offers Continue for an interrupted retained record and resumes it through the available project master", async () => {
+    const master = env.node("codex-master", "codex"); await master.start();
+    const name = "codex-job-1234abcd";
+    const backup = JSON.stringify({ version: 2, jobs: [{ id: "1234abcd", name, agent: "codex", owner: "claude-offline", projectRoot: env.home, workdir: env.home, startedAt: 1, status: "running", sessionId: "original-native-thread", prompt: "original task" }] });
+    writeFileSync(join(env.home, "jobs.json.backup-1"), backup);
+    const jobs = new JobManager(master, nullLogger, join(env.home, JOBS_FILE)); managers.push(jobs);
+    const sessions: string[] = [];
+    jobs.restore(() => (_body, session) => async () => { sessions.push(session); return { sessionId: session, text: "continued", isError: false, details: {} }; });
+    attachDashboardJobControl(master, jobs, nullLogger);
+    const page = await (await fetch(base(), { headers: { cookie } })).text();
+    expect(page).toContain('g.status === "interrupted" ? "Continue" : "Send"');
+    const r = await fetch(`${base()}/api/subagents/message`, { method: "POST", headers: POST_HEADERS(), body: JSON.stringify({ run: name, body: "Continue where you stopped and finish the task." }) });
+    expect(r.status).toBe(200);
+    expect(await r.json()).toMatchObject({ outcome: "delivered", isError: false });
+    await until(() => sessions.length === 1);
+    expect(sessions).toEqual(["original-native-thread"]);
+    expect(readFileSync(join(env.home, "jobs.json.backup-1"), "utf8")).toBe(backup);
+  });
+
   it("authenticates project main and availability actions using the existing custom controls", async () => {
     const a = env.node("claude-group"), b = env.node("codex-group", "codex"); await a.start(); await b.start();
     const body = JSON.stringify({ name: a.name, unavailable: true });

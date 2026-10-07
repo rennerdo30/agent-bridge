@@ -52,6 +52,7 @@ import { readNetworkConfig, writeNetworkConfig, type NetworkConfig } from "../ne
 import { z } from "zod";
 import { basename, dirname } from "node:path";
 import { ProjectGroups } from "./project-groups.js";
+import { recoverJobRecord } from "./job-recovery.js";
 import { collectTransfer, receiveTransfer, type TransferResult } from "../network/files.js";
 import { cancelStoredTransfer, MAX_STREAM_ENTRIES, readTransferHistory, type TransferStarted } from "../network/transfers.js";
 import { MAX_NETWORK_HOST_CHARS, MAX_PAIRING_CODE_CHARS, MAX_PORT } from "../network/constants.js";
@@ -115,6 +116,7 @@ export class Broker {
   private readonly handlers: { [O in Op]: Handler<O> };
   private jobsSnapshot: { active: JsonSnapshot; archive: string; records: Record<string, unknown>[] } | null = null;
   private jobsForDispatch: Record<string, unknown>[] | null = null;
+  private readonly recoveredJobs = new Map<string, Record<string, unknown>>();
 
   constructor(
     private readonly pipePath: string,
@@ -160,17 +162,17 @@ export class Broker {
         return receipt;
       },
       jobAuthority: (c, a) => {
-        const peer = this.requirePeer(c), job = this.storedJobs().find((j) => j.name === a.job);
+        const peer = this.requirePeer(c), job = this.jobForControl(peer, a.job);
         if (!job || !this.groups.canControl(peer, job, this.localPeers())) return null;
         return job as unknown as import("../mcp/jobs.js").Job;
       },
       jobRecipient: (c, a) => {
-        const peer = this.requirePeer(c), job = this.storedJobs().find((j) => j.name === a.job);
+        const peer = this.requirePeer(c), job = this.jobForControl(peer, a.job);
         if (!job || !this.groups.canControl(peer, job, this.localPeers())) throw new BridgeError("unauthorized", "Only a master can inspect the job recipient.");
         return this.jobRecipient(job);
       },
       inlineJobControl: async (c, a) => {
-        const peer = this.requirePeer(c), job = this.storedJobs().find((j) => j.name === a.job);
+        const peer = this.requirePeer(c), job = this.jobForControl(peer, a.job);
         if (!job || !this.groups.canControl(peer, job, this.localPeers())) throw new BridgeError("unauthorized", "Only the current supervisor can control this job.");
         if (!a.control || !["message", "title", "settings", "effort", "cancel"].includes(a.control.type)) throw new BridgeError("bad_request", "Invalid inline control.");
         if (job.host && job.status === "running") {
@@ -693,6 +695,18 @@ export class Broker {
     return [...this.conns].filter((c) => c !== conn && c.peer?.jobAgent && (this.sameJobFamily(peer, c.peer, jobs) || this.sharedJobs(peer, c.peer, jobs) || peer.jobSendTo?.includes(c.peer.name)));
   }
 
+  private jobForControl(peer: PeerInfo, ref: string): Record<string, unknown> | undefined {
+    const known = this.storedJobs().find((j) => j.name === ref || j.id === ref);
+    if (known?.remote || (isRecord(known?.host) && Date.now() - Number(known.host.startedAt) < 30_000)) return known;
+    // A connected inline executor is the only source of its runtime controller.
+    if (known?.status === "running" && !known.host && this.connByName(String(known.executionOwner ?? known.owner))) return known;
+    const recovered = this.jobsPath ? recoverJobRecord(dirname(this.jobsPath), ref) : undefined;
+    if (!recovered || !this.groups.canControl(peer, recovered as unknown as Record<string, unknown>, this.localPeers())) return known;
+    this.recoveredJobs.set(recovered.id, recovered as unknown as Record<string, unknown>);
+    this.jobsSnapshot = null; this.jobsForDispatch = null;
+    return recovered as unknown as Record<string, unknown>;
+  }
+
   private storedJobs(): Record<string, unknown>[] {
     if (!this.jobsPath) return [];
     // Sibling routing consults the registry several times in one synchronous dispatch batch.
@@ -708,8 +722,9 @@ export class Broker {
       const data = active.value;
       const jobs = Array.isArray(data) ? data : isRecord(data) && Array.isArray(data.jobs) ? data.jobs : [];
       const merged = new Map<string, Record<string, unknown>>();
+      for (const [id, job] of this.recoveredJobs) merged.set(id, job);
       for (const job of [...archive.jobs, ...jobs.filter(isRecord)]) {
-        if (typeof job.id === "string") merged.set(job.id, job);
+        if (typeof job.id === "string") { merged.set(job.id, job); this.recoveredJobs.delete(job.id); }
       }
       const records = [...merged.values()];
       this.jobsSnapshot = { active, archive: archive.signature, records };
@@ -1249,7 +1264,7 @@ export class Broker {
           live.some((c) => c.peer!.jobAgent && (!sender.jobAgent || !sender.jobOwner || (!this.sameJobFamily(sender, c.peer!) && !this.sharedJobs(sender, c.peer!) && !sender.jobSendTo?.includes(c.peer!.name)))))) {
       throw new BridgeError("unauthorized", "sibling chat requires the same supervisor or an explicit send_to job grant");
     }
-    const replyRestrictions = conversationId.startsWith(CONTROL_CONVERSATION_PREFIX) ? [] :
+    let replyRestrictions = conversationId.startsWith(CONTROL_CONVERSATION_PREFIX) ? [] :
       [...live.map((c) => c.peer!.name), ...queued].flatMap((name) => {
         const restriction = this.replyRestriction(sender, name);
         return restriction ? [restriction] : [];
@@ -1271,7 +1286,10 @@ export class Broker {
         for (let i = live.length - 1; i >= 0; i--) {
           if (live[i]!.peer?.unavailable) queued.push(live.splice(i, 1)[0]!.peer!.name);
         }
-        const message = { ...base, to, recipient: live[0]?.peer!.name ?? queued[0]!, conversationId: this.jobConversation(current, to, base.conversationId) };
+        const recipient = live[0]?.peer!.name ?? queued[0]!;
+        const restriction = this.replyRestriction(sender, recipient);
+        replyRestrictions = restriction ? [restriction] : [];
+        const message = { ...envelope(recipient), to, conversationId: this.jobConversation(current, to, base.conversationId) };
         inserted = this.store.insertJobDelivery(message);
         messages.splice(0, messages.length, message);
       });

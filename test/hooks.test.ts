@@ -35,6 +35,22 @@ afterEach(async () => {
 const input = (event: "SessionStart" | "UserPromptSubmit" | "PostToolUse" | "Stop") => ({ event, sessionId: "s1", stopHookActive: false });
 
 describe("hook responses", () => {
+  it("opencode direct mail wakes with auto-wake off, keeping broadcast/kind/note/hop guards", async () => {
+    const c = ctx({ agent: "opencode" });
+    const direct = await peer.send({ to: me.name, body: "direct work" });
+    await until(() => me.unread().length === 1);
+    const out = await buildHookResponse(c, input("Stop")) as any;
+    expect(out.decision).toBe("block"); expect(out.reason).toContain("direct work");
+    // Hook delivery returns before the asynchronous receipt write completes.
+    await expect.poll(() => peer.messageReceipt(direct.messages[0]!.id)).toEqual([expect.objectContaining({ readAt: expect.any(Number) })]);
+    await peer.send({ to: "*", body: "broadcast" });
+    await peer.send({ to: "codex", body: "kind" });
+    await peer.send({ to: me.name, body: "quiet", conversationId: "siblings-test:note" });
+    await until(() => me.unread().length === 3);
+    // Direct wake excludes agent-kind mail, even though its recipient is the named peer.
+    expect(await buildHookResponse(c, input("Stop"))).toEqual({});
+    expect(me.unread()).toHaveLength(3);
+  });
   it("SessionStart reports identity and peers", async () => {
     const out = (await buildHookResponse(ctx(), input("SessionStart"))) as any;
     expect(out.hookSpecificOutput.hookEventName).toBe("SessionStart");
@@ -69,22 +85,14 @@ describe("hook responses", () => {
     expect(out.reason).toContain("work");
   });
 
-  it("Stop keeps listening after this session sent a message and continues when the reply arrives", async () => {
+  it("Stop defers a later reply to the next hook without consuming it", async () => {
     const sent = await me.send({ to: "claude-h", body: "question?" });
-    const c = ctx({ cfg: { ...DEFAULT_CONFIG, maxHops: 6, lingerSec: 10 } });
-    const stop = buildHookResponse(c, input("Stop"));
-    const reply = new Promise((r) => setTimeout(r, 300)).then(() => peer.send({ to: "codex-h", body: "answer!", replyTo: sent.messages[0]!.id }));
-    const out = (await stop) as any;
-    await reply;
-    expect(out.decision).toBe("block");
-    expect(out.reason).toContain("answer!");
-  });
-
-  it("Stop ends the turn when the listen window passes quietly", async () => {
-    await me.send({ to: "claude-h", body: "anyone?" });
     const started = Date.now();
     expect(await buildHookResponse(ctx(), input("Stop"))).toEqual({});
-    expect(Date.now() - started).toBeGreaterThanOrEqual(800);
+    expect(Date.now() - started).toBeLessThan(500);
+    await peer.send({ to: "codex-h", body: "answer!", replyTo: sent.messages[0]!.id });
+    await until(() => me.unread().length === 1);
+    expect(JSON.stringify(await buildHookResponse(ctx(), input("PostToolUse")))).toContain("answer!");
   });
 
   it("Stop returns immediately when the session is not in a conversation", async () => {
