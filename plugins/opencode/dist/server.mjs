@@ -43451,6 +43451,7 @@ var AntigravityHooks = class {
   retired = false;
   conversationId = null;
   async start() {
+    if (!this.ctx.node && !this.ctx.parent) return;
     const pid = await antigravityAncestor();
     if (!pid) return;
     const secret = randomBytes6(24).toString("hex");

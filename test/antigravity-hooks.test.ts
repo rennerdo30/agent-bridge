@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AntigravityHooks } from "../src/mcp/antigravity-hooks.js";
+import { antigravityAncestor } from "../src/core/procinfo.js";
 import { buildHookResponse } from "../src/mcp/hooks.js";
 import { antigravityHookCommand, requireAntigravityPlugin } from "../src/core/antigravity-plugin.js";
 import { grantAntigravityBridgeMcp, installAntigravity } from "../src/cli/antigravity-install.js";
@@ -16,6 +17,12 @@ vi.mock("../src/mcp/hooks.js", () => ({ buildHookResponse: vi.fn() }));
 afterEach(() => vi.clearAllMocks());
 
 describe("Antigravity native hook routing", () => {
+  it("skips native process inspection for an internal server without an inbox", async () => {
+    const hooks = new AntigravityHooks({ node: null, parent: null } as unknown as ServerContext);
+    await hooks.start();
+    expect(antigravityAncestor).not.toHaveBeenCalled();
+    await hooks.stop();
+  });
   it.each(["read", "ask", "edit"])("fails closed for malformed delegated %s tool input", async (access) => {
     const env = makeEnv();
     try {

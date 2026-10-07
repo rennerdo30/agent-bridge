@@ -17,6 +17,9 @@ export class AntigravityHooks {
   private conversationId: string | null = null;
   constructor(private readonly ctx: ServerContext) {}
   async start(): Promise<void> {
+    // Infrastructure probes have neither a peer nor a parent inbox to deliver.
+    // Do not launch process inspection children that can outlive the short-lived probe.
+    if (!this.ctx.node && !this.ctx.parent) return;
     const pid = await antigravityAncestor();
     if (!pid) return;
     const secret = randomBytes(24).toString("hex");
