@@ -289,7 +289,7 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
       const limitChanged = next.maxJobs !== cfg.maxJobs;
       Object.assign(cfg, next);
       if (limitChanged) jobs.setLimit(next.maxJobs);
-      void node.setWakePolicy(agent === "claude" && next.wakeOnDirect, (agent === "claude" && Boolean(ctx.rewakeAvailable || ctx.channelActive())) || agent === "opencode" || (agent === "codex" && Boolean(node.currentSessionId)), next.maxHops).catch(() => {});
+      void node.setWakePolicy(["claude", "codex", "opencode"].includes(agent) && next.wakeOnDirect, (agent === "claude" && Boolean(ctx.rewakeAvailable || ctx.channelActive())) || agent === "opencode" || (agent === "codex" && Boolean(node.currentSessionId)), next.maxHops).catch(() => {});
     };
     watchConfig(home, agent, log, applyConfig, () => cwdSettled ? projectConfigRoot(node.cwd) ?? "" : "");
     ctx.activity = (s) => node.setActivity(s);
@@ -316,7 +316,7 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
       if (typeof id === "string" && id) {
         waker.setThreadId(id);
         await node.setSessionId(id).catch(() => {});
-        await node.setWakePolicy(false, true, cfg.maxHops).catch(() => {});
+        await node.setWakePolicy(cfg.wakeOnDirect, true, cfg.maxHops).catch(() => {});
       }
       // ... and, because we declare codex/sandbox-state-meta, the session's working directory.
       const sandbox = meta?.[CODEX_SANDBOX_META] as { sandboxCwd?: unknown } | undefined;
@@ -376,7 +376,7 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
   node?.on("message", (m) => void pushChannel(m));
   node?.on("notification_waits_changed", () => { for (const m of node.unread()) void pushChannel(m); });
   if (agent === "opencode" && node) {
-    await node.setWakePolicy(false, true, cfg.maxHops);
+    await node.setWakePolicy(cfg.wakeOnDirect, true, cfg.maxHops);
     // The opencode plugin is our MCP client; tell it about new mail so it can wake or feed the session.
     node.on("message", (m) => {
       if (isQuietMessage(m)) return;
@@ -732,7 +732,7 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
       title: "Send message",
       description:
         `Send a message to another agent. "to" is a peer name from "peers", an agent kind ("claude", "codex") when exactly one is online, or "${BROADCAST}" for everyone. ` +
-        "Delivery means queued in the recipient inbox, not read. Broadcasts include connected paired-PC sessions. Direct messages and broadcasts wake an idle Claude session according to wakeOnDirect; other recipients may read them on their next turn. " +
+        "Delivery means queued in the recipient inbox, not read. Broadcasts include connected paired-PC sessions. Direct messages wake idle Claude, Codex and opencode sessions according to wakeOnDirect and available CLI transport; other recipients may read them on their next turn. " +
         "Auto-wake is handled on the recipient PC, including paired PCs; it is never enabled by send. Use wait_for_message(read_receipt_of=<sent id>) to wait for consumption. " +
         "If the recipient is offline the message waits for it. When answering with new information, pass its id as reply_to. Do not send pure acknowledgements or repeat a reply as a status note. " +
         "Delegated jobs can send to their parent, siblings, or exact local session/job names explicitly granted with send_to at spawn. Sibling messages arrive live or wait for the next turn, with a quiet supervisor copy. Sending to a finished sibling returns its saved final report immediately; it will not answer. Do not wait for finished siblings or for read receipts from them. Other sessions and broadcasts are unavailable. Peers shows grants and the sibling thread limit before composing.",

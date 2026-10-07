@@ -35,6 +35,21 @@ afterEach(async () => {
 const input = (event: "SessionStart" | "UserPromptSubmit" | "PostToolUse" | "Stop") => ({ event, sessionId: "s1", stopHookActive: false });
 
 describe("hook responses", () => {
+  it("opencode direct mail wakes with auto-wake off, keeping broadcast/kind/note/hop guards", async () => {
+    const c = ctx({ agent: "opencode" });
+    const direct = await peer.send({ to: me.name, body: "direct work" });
+    await until(() => me.unread().length === 1);
+    const out = await buildHookResponse(c, input("Stop")) as any;
+    expect(out.decision).toBe("block"); expect(out.reason).toContain("direct work");
+    expect(await peer.messageReceipt(direct.messages[0]!.id)).toEqual([expect.objectContaining({ readAt: expect.any(Number) })]);
+    await peer.send({ to: "*", body: "broadcast" });
+    await peer.send({ to: "codex", body: "kind" });
+    await peer.send({ to: me.name, body: "quiet", conversationId: "siblings-test:note" });
+    await until(() => me.unread().length === 3);
+    // Direct wake excludes agent-kind mail, even though its recipient is the named peer.
+    expect(await buildHookResponse(c, input("Stop"))).toEqual({});
+    expect(me.unread()).toHaveLength(3);
+  });
   it("SessionStart reports identity and peers", async () => {
     const out = (await buildHookResponse(ctx(), input("SessionStart"))) as any;
     expect(out.hookSpecificOutput.hookEventName).toBe("SessionStart");

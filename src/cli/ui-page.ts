@@ -213,8 +213,8 @@ input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px
 textarea { flex: 1 1 220px; min-height: 40px; resize: vertical; }
 button { background: var(--accent); color: #fff; border-color: var(--accent); font-weight: 600; cursor: pointer; padding: 8px 16px; }
 button:disabled { opacity: .6; cursor: default; }
-#sendInfo, #jobSendInfo { width: 100%; color: var(--muted); font-size: 12px; }
-#sendInfo:empty, #jobSendInfo:empty { display: none; }
+#sendInfo, #jobSendInfo, #chatSendInfo { width: 100%; color: var(--muted); font-size: 12px; }
+#sendInfo:empty, #jobSendInfo:empty, #chatSendInfo:empty { display: none; }
 .model-list { max-height: 260px; overflow: auto; font-size: 12.5px; }
 .model-list ul { padding-left: 18px; }
 
@@ -405,8 +405,11 @@ main.wrap { padding-top: 32px; max-width: 1240px; }
 .chat .sys { align-self: flex-start; margin-left: 36px; color: var(--faint); font-size: 12px; }
 .chat .turn { color: var(--faint); margin: 18px 0 4px; }
 .hint { background: var(--warn-soft); color: var(--text); border-bottom: 0; }
-form#jobSend { background: var(--panel); border-top-color: var(--panel-2); padding: 12px 16px; }
-form#jobSend textarea { background: var(--panel-2); border-color: transparent; border-radius: 10px; }
+form#jobSend, form#chatSend { background: var(--panel); border-top-color: var(--panel-2); padding: 12px 16px; }
+form#jobSend textarea, form#chatSend textarea { background: var(--panel-2); border-color: transparent; border-radius: 10px; }
+#chatSendNote { width: 100%; font-size: 12px; color: var(--muted); }
+form#chatSend { --accent: #3b82f6; }
+#chatParentBtn { background: var(--panel-2); border-color: var(--accent); color: var(--accent); }
 
 /* Messages and the composer */
 .msg { border-bottom-color: var(--panel-2); }
@@ -757,6 +760,13 @@ button.ghost { min-height: 32px; }
         <button type="submit" id="jobSendBtn">Send</button>
         <div id="jobSendInfo" role="status" aria-live="polite"></div>
       </form>
+      <form id="chatSend" class="hidden" aria-label="Owner message">
+        <div id="chatSendNote"></div>
+        <textarea id="chatBody" placeholder="Message this session as owner" aria-label="Owner message"></textarea>
+        <button type="submit" id="chatSendBtn">Send</button>
+        <button type="button" id="chatParentBtn" class="hidden">Send to parent</button>
+        <div id="chatSendInfo" role="status" aria-live="polite"></div>
+      </form>
     </div>
   </div>
 </main>
@@ -991,6 +1001,8 @@ const NATIVE_LIST_MS = 10_000;
 const MAX_CHAT_ITEMS = 3000;
 /** Session name -> { at, list } of its native subagents. */
 const nativeLists = new Map();
+const chatDrafts = new Map(), chatResults = new Map(), chatSending = new Set();
+let chatComposer = null;
 /** "<session>|<key>" -> { items, byId, next, loading, error }. */
 const chats = new Map();
 
@@ -1167,9 +1179,11 @@ async function showNative(x, key) {
     : jc ? ((jobChildren.get(jc[0]) || {}).list || []).find((s) => s.id === jc[1]) : null;
   $("cAvatar").innerHTML = av(p.agent || "other");
   $("cTitle").innerHTML = '<span class="ttl">' + (key === CHAT_KEY ? "Chat" : esc((native && native.title) || "Subagent")) + "</span>";
-  $("cMeta").innerHTML = '<span class="chip">' + esc(p.agent || "") + "</span>" + (key === CHAT_KEY ? "" : '<span class="chip own">own subagent</span>') + '<span class="chip">read-only</span>';
+  $("cMeta").innerHTML = '<span class="chip">' + esc(p.agent || "") + "</span>" + (key === CHAT_KEY ? "" : '<span class="chip own">own subagent</span>') +
+    '<span class="chip">' + (pcOf(x.name) || p.host ? "view-only" : key === CHAT_KEY || (p.agent === "codex" && !jc) ? "owner input" : "message parent") + "</span>";
   $("cNote").textContent = "";
-  $("cSub").textContent = (key === CHAT_KEY ? "the session's own conversation" : jc ? "its own subagent of " + jc[0] : "a subagent of " + p.agent + " itself") + " · read-only" + (p.cwd ? " · " + p.cwd : "");
+  $("cSub").textContent = (key === CHAT_KEY ? "the session's own conversation" : jc ? "its own subagent of " + jc[0] : "a subagent of " + p.agent + " itself") + (p.cwd ? " · " + p.cwd : "");
+  renderChatForm(x, key);
   $("cHint").classList.add("hidden");
   // Switching: never leave the previous conversation on screen while this one loads.
   if ($("chat").dataset.key !== x.name + key && !chats.has(x.name + "|" + key)) {
@@ -1178,7 +1192,7 @@ async function showNative(x, key) {
     $("chat").dataset.key = x.name + key;
   }
   const c = await pullChat(x, key);
-  if (route.session !== x.name || route.group !== key) return;
+  if (route.session !== x.name || selectedKey(x) !== key) return;
   const body = c.error ? '<div class="empty">' + esc(c.error) + "</div>" : c.items.length ? chatHtml(c.items, p.agent || "other", x.name) : '<div class="empty">' + (c.loading ? "Loading…" : "Nothing in this conversation yet.") + "</div>";
   if (body === lastChat) return;
   lastChat = body;
@@ -1354,6 +1368,7 @@ function renderSession() {
     renderJobForm(null);
     return void showNative(x, key);
   }
+  renderChatForm(null, null);
   const g = sel && model.groups.get(sel);
   renderJobForm(g);
   if (g) void showGroup(g);
@@ -1376,11 +1391,11 @@ function renderSessionList(x, selKey) {
   const p = x.peer || {};
   const chatRow = chat
     ? '<a href="' + href(x.name, CHAT_KEY) + '" class="chat-row' + (selKey === CHAT_KEY ? " sel" : "") + '">' + av(p.agent || "other") +
-      '<div style="min-width:0"><div class="line1"><b>Chat</b><span class="chip">' + esc(p.agent || "") + '</span></div><div class="task">The session\\'s own conversation, read-only</div></div><div class="side"></div></a>'
+      '<div style="min-width:0"><div class="line1"><b>Chat</b><span class="chip">' + esc(p.agent || "") + '</span></div><div class="task">The session\\'s own conversation</div></div><div class="side"></div></a>'
     : "";
   const nativeRow = (s) =>
     '<a href="' + href(x.name, NATIVE_PREFIX + s.id) + '" class="' + (NATIVE_PREFIX + s.id === selKey ? "sel" : "") + '">' + av(p.agent || "other") +
-    '<div style="min-width:0"><div class="line1"><b class="ell">' + esc(s.title || "subagent") + '</b><span class="chip own">own</span></div><div class="task">' + esc(p.agent + " subagent · read-only") + "</div></div>" +
+    '<div style="min-width:0"><div class="line1"><b class="ell">' + esc(s.title || "subagent") + '</b><span class="chip own">own</span></div><div class="task">' + esc(p.agent + (p.agent === "codex" ? " subagent · native input" : " subagent · message parent")) + "</div></div>" +
     '<div class="side"><span>' + ago(s.updatedAt) + "</span></div></a>";
   // Like the bridge subagents: recent ones (and the open one) stay visible, older ones fold away.
   const nativeFresh = (s) => Date.now() - s.updatedAt < ARCHIVE_AFTER_MS || NATIVE_PREFIX + s.id === selKey;
@@ -1445,6 +1460,52 @@ function renderJobForm(g) {
   $("jobSendBtn").textContent = g && g.status === "interrupted" ? "Continue" : "Send";
   $("jobSendInfo").textContent = (jobResults.get(key) || []).at(-1) || "";
   renderSettings(controllable ? g : null);
+}
+
+/** Own chats share the job composer styling; native children keep an explicit parent route. */
+function renderChatForm(x, key) {
+  const next = x && key ? x.name + "|" + key : null;
+  if (chatComposer !== next) {
+    if (chatComposer) chatDrafts.set(chatComposer, $("chatBody").value);
+    $("chatBody").value = chatDrafts.get(next) || "";
+    chatComposer = next;
+  }
+  $("chatSend").classList.toggle("hidden", !next);
+  if (!next) return;
+  const peer = x.peer || {}, remote = Boolean(pcOf(x.name) || peer.host), child = key !== CHAT_KEY;
+  const jobChild = key.startsWith(JOB_CHILD_PREFIX);
+  const supported = Boolean(x.live && !remote && ["claude", "codex", "opencode", "antigravity"].includes(peer.agent));
+  const direct = supported && (!child || (peer.agent === "codex" && !jobChild));
+  $("chatBody").disabled = !supported;
+  $("chatSendBtn").classList.toggle("hidden", child && !direct);
+  $("chatSendBtn").disabled = !direct || chatSending.has(next);
+  $("chatParentBtn").classList.toggle("hidden", !child || remote || !supported);
+  $("chatParentBtn").disabled = chatSending.has(next);
+  $("chatBody").placeholder = child && !direct ? "Message its parent about this subagent" : child ? "Message this native subagent as owner" : "Message this session as owner";
+  $("chatSendNote").textContent = remote ? "Not supported: paired-PC chats are view-only."
+    : !supported ? "Not supported: reopen the local session to send."
+      : child ? direct ? "Native input when the CLI supports its live child thread. Parent delivery is also available."
+        : "Not supported: direct input to this native subagent. Send to its parent with a note about it."
+        : peer.agent === "codex" ? "Native user prompt, queued until idle. A labeled bridge message is the fallback."
+          : peer.agent === "antigravity" ? "Sent as you (owner) through the bridge. Idle mail waits for the next turn or inbox read."
+            : "Sent as you (owner) through the CLI's existing channel or prompt delivery. Wake preferences apply.";
+  $("chatSendInfo").textContent = (chatResults.get(next) || {}).text || "";
+  void refreshChatReceipt(next);
+}
+
+async function refreshChatReceipt(key) {
+  const result = chatResults.get(key);
+  if (!result || !result.receipt || result.state === "delivered" || result.checking) return;
+  result.checking = true;
+  try {
+    const r = await fetch("/api/chat-delivery/" + encodeURIComponent(result.receipt));
+    if (!r.ok) return;
+    const d = await r.json();
+    if (chatResults.get(key) !== result) return;
+    if (d.state === "delivered") { result.state = d.state; result.text = d.text; }
+    if (chatComposer === key) $("chatSendInfo").textContent = result.text;
+  } catch { /* Keep the accepted state when a receipt poll fails. */ }
+  finally { result.checking = false; }
 }
 
 /** The settings row: emptied when another subagent is selected; empty fields keep what it has. */
@@ -1799,6 +1860,34 @@ $("jobSend").addEventListener("submit", async (e) => {
     }
   }
 });
+
+async function sendChat(parent = false) {
+  const key = chatComposer, x = model.byName.get(route.session), selected = x && selectedKey(x);
+  const body = $("chatBody").value.trim();
+  if (!key || !body || !x || !x.live || pcOf(x.name) || x.peer.host || chatSending.has(key)) return;
+  const child = selected && selected !== CHAT_KEY;
+  const jobChild = selected && selected.startsWith(JOB_CHILD_PREFIX);
+  const parts = jobChild ? selected.slice(JOB_CHILD_PREFIX.length).split("|") : [];
+  const childId = child ? jobChild ? parts[1] : selected.slice(NATIVE_PREFIX.length) : undefined;
+  const endpoint = jobChild ? "/api/jobs/" + encodeURIComponent(parts[0]) + "/message" : sessionApi(x.name) + "/message";
+  chatSending.add(key); renderChatForm(x, selected);
+  try {
+    const r = await fetch(endpoint, { method: "POST", headers: { "content-type": "application/json", "x-agent-bridge": "1" },
+      body: JSON.stringify({ body, ...(childId ? { child: childId } : {}), ...(parent ? { target: "parent" } : {}) }) });
+    const d = await r.json();
+    if (!r.ok) { chatResults.set(key, { ...d, text: d.text || d.error || "Message error: HTTP " + r.status }); return; }
+    chatResults.set(key, d);
+    // The user may have switched chats while sending. Clear only the sent draft.
+    if ((chatDrafts.get(key) || "").trim() === body) chatDrafts.delete(key);
+    if (chatComposer === key && $("chatBody").value.trim() === body) { $("chatBody").value = ""; chatDrafts.delete(key); }
+  } catch (err) { chatResults.set(key, { text: "Message error: " + err.message }); }
+  finally {
+    chatSending.delete(key);
+    if (chatComposer === key) renderChatForm(x, selected);
+  }
+}
+$("chatSend").addEventListener("submit", (e) => { e.preventDefault(); return sendChat(); });
+$("chatParentBtn").addEventListener("click", () => sendChat(true));
 
 /** The conversation's "⋯" menu: settings for the next turn and following new output. */
 function setConvMenu(open) {

@@ -22,6 +22,7 @@ function fakeNode(cwd: string) {
   const node = new EventEmitter() as EventEmitter & { autoWakeEnabled: boolean; cwd: string; inbox: BridgeMessage[]; unread: () => BridgeMessage[]; isNotificationAwaited: (m: BridgeMessage) => boolean };
   node.autoWakeEnabled = true;
   node.cwd = cwd;
+  Object.assign(node, { name: "codex-app", id: "codex-id" });
   node.inbox = [];
   node.unread = () => node.inbox;
   node.isNotificationAwaited = () => false;
@@ -66,6 +67,35 @@ describe("CodexWaker", () => {
     await until(() => calls() === 1);
     await until(() => !(waker as unknown as { inFlight: boolean }).inFlight);
     expect(node.inbox).toHaveLength(2);
+  });
+
+  it("wakes direct named mail with global auto-wake off, and leaves other targets and quiet mail alone", async () => {
+    fakeCodex(dir, 0, 0);
+    const node = fakeNode(dir); node.autoWakeEnabled = false;
+    const waker = new CodexWaker(node as unknown as BridgeNode, { ...cfg(), wakeOnDirect: true }, nullLogger, { debounceMs: 20, queueTimeoutMs: 2_000 });
+    waker.setThreadId("thread-1");
+    for (const m of [{ ...mail("broadcast"), to: "*" }, { ...mail("kind"), to: "codex" },
+      { ...mail("quiet"), conversationId: "siblings-id:note" }, { ...mail("hop"), hop: 6 }]) {
+      node.inbox.push(m); node.emit("message", m);
+    }
+    expect((waker as unknown as { timer: unknown }).timer).toBeNull();
+    node.inbox.push(mail("direct")); node.emit("message", node.inbox.at(-1));
+    await until(() => calls() === 1);
+    await until(() => !(waker as unknown as { inFlight: boolean }).inFlight);
+    expect(node.autoWakeEnabled).toBe(false);
+  });
+
+  it("direct wake disabled stays idle and busy direct wake waits for idle", async () => {
+    fakeCodex(dir, 0, 0);
+    const node = fakeNode(dir); node.autoWakeEnabled = false;
+    const settings = { ...cfg(), wakeOnDirect: false };
+    const waker = new CodexWaker(node as unknown as BridgeNode, settings, nullLogger, { debounceMs: 20, queueTimeoutMs: 2_000 });
+    waker.setThreadId("thread-1"); node.inbox.push(mail("direct")); node.emit("message", node.inbox[0]);
+    expect((waker as unknown as { timer: unknown }).timer).toBeNull();
+    settings.wakeOnDirect = true; waker.setActivity("busy"); node.emit("message", node.inbox[0]);
+    expect((waker as unknown as { timer: unknown }).timer).toBeNull();
+    waker.setActivity("idle"); await until(() => calls() === 1);
+    await until(() => !(waker as unknown as { inFlight: boolean }).inFlight);
   });
 
   it("does not schedule a wake for a quiet sibling observer copy, including on an idle report", () => {

@@ -24,6 +24,7 @@ import { loadConfig, saveConfigValue } from "../core/config.js";
 import { readUsage, type UsageReport } from "../core/usage.js";
 import { controlDashboardJob, JobControlError, type DashboardJobCommand } from "../core/job-control.js";
 import { UI_PAGE } from "./ui-page.js";
+import { codexQueue, deliverDashboardChat, childNote, type QueuePrompt } from "../core/dashboard-chat.js";
 import { networkConfigSchema } from "../network/config.js";
 import { planFirewall, detectFirewall, applyWindowsFirewall } from "../network/firewall.js";
 import { networkProfileStatus } from "../network/profiles.js";
@@ -162,6 +163,8 @@ export interface UiOptions {
   /** CLI storage roots; default to the current user's CLI homes. Replaceable for tests. */
   transcripts?: TranscriptPaths;
   historyAnswer?: HistoryAnswerDependencies;
+  /** Replace only the native queue transport in tests; never supplied by an HTTP request. */
+  chatQueue?: QueuePrompt;
 }
 
 /** The paired PCs' runs in /api/state are re-fetched in the background at most this often. */
@@ -186,6 +189,8 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
   const secret = opts.secret ?? randomBytes(SECRET_BYTES).toString("hex");
   const token = loadOrCreateToken(opts.home);
   const dbPath = resolveDbPath(opts.home);
+  const chatReceipts = new Set<string>();
+  const queueChat = opts.chatQueue ?? codexQueue(loadConfig(opts.home, "other", opts.log).codexBin, opts.log);
   /** The lazily started "you" peer; one shared start, so concurrent sends never start two. */
   let sender: Promise<BridgeNode> | null = null;
   const getSender = (): Promise<BridgeNode> => {
@@ -478,6 +483,58 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
       if (!read.success) return send(res, 400, { error: "invalid dashboard read request" });
       const result = await readDashboard({ home: opts.home, log: opts.log, transcripts: opts.transcripts, peers: async () => (await brokerPeers(opts.pipe, token, opts.log)).peers }, read.data);
       return send(res, result.status, result.body);
+    }
+    const chatSend = /^\/api\/(sessions|jobs)\/([^/]+)\/message$/.exec(url.pathname);
+    if (req.method === "POST" && chatSend) {
+      if (req.headers["x-agent-bridge"] !== "1" || !/^application\/json(?:\s*;|$)/i.test(String(req.headers["content-type"] ?? ""))) return send(res, 403, { error: "JSON and dashboard header required" });
+      if (req.headers["sec-fetch-site"] === "cross-site" || (req.headers.origin && req.headers.origin !== `http://${req.headers.host}`)) return send(res, 403, { error: "local dashboard origin required" });
+      let body: Record<string, unknown>, name: string;
+      try { body = await readJson(req); name = decodeURIComponent(chatSend[2]!); }
+      catch { return send(res, 400, { error: "invalid JSON or session" }); }
+      if (!isRecord(body) || Object.keys(body).some((k) => !["body", "child", "target"].includes(k)) ||
+          typeof body.body !== "string" || !body.body.trim() || body.body.length > MAX_BODY_CHARS - 600 ||
+          (body.child !== undefined && (typeof body.child !== "string" || !/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(body.child))) ||
+          (body.target !== undefined && body.target !== "parent") || (body.target === "parent" && !body.child)) return send(res, 400, { error: "a message, optional child and parent target are required" });
+      if (!/^[\w.-]+$/.test(name)) return send(res, 404, { error: "paired-PC sessions are view-only" });
+      const job = chatSend[1] === "jobs";
+      const peers = (await brokerPeers(opts.pipe, token, opts.log)).peers;
+      const local = peers.find((p) => p.name === name && !p.host && !p.name.includes("/") && !p.jobAgent && !p.unavailable);
+      let child: { id: string; title: string } | undefined;
+      if (body.child) {
+        const result = await readDashboard({ home: opts.home, log: opts.log, transcripts: opts.transcripts, peers: async () => peers }, { path: `/api/${job ? "jobs" : "sessions"}/${encodeURIComponent(name)}/subagents` });
+        child = (result.body as { subagents?: { id: string; title: string }[] }).subagents?.find((s) => s.id === body.child);
+        if (!child) return send(res, 404, { error: "no such native child of this session" });
+      }
+      if (job) {
+        // A native child of a delegated job belongs to that job, not the dashboard session.
+        if (!child || body.target !== "parent") return send(res, 409, { state: "not-supported", transport: "parent", text: "Direct input to this job's native subagent is not supported. Send to its parent with a note." });
+        const run = listRuns(opts.home).find((r) => r.job === name && !r.remote);
+        if (!run?.by) return send(res, 409, { error: "parent job has no local owning session" });
+        try {
+          const result = await controlDashboardJob(await getSender(), jobOwner(opts.home, name, run.by), name, { type: "message", body: childNote(child.id, child.title, body.body.trim()) });
+          return send(res, result.isError ? 409 : 200, { state: result.isError ? "not-supported" : "queued", transport: "parent", text: result.text });
+        } catch (err) {
+          if (err instanceof JobControlError) return send(res, 409, { error: err.message });
+          throw err;
+        }
+      }
+      if (!local) return send(res, 409, { error: "This local session is not connected. Reopen it before sending." });
+      if (!["claude", "codex", "opencode", "antigravity"].includes(local.agent)) return send(res, 409, { state: "not-supported", transport: "bridge", text: "Owner chat is not supported for this CLI." });
+      const result = await deliverDashboardChat(local, body.body.trim(), { child, parent: body.target === "parent", queue: queueChat,
+        send: async (text) => (await getSender()).send({ to: local.name, body: text }) });
+      if (result.receipt) {
+        chatReceipts.add(result.receipt);
+        if (chatReceipts.size > 2_000) chatReceipts.delete(chatReceipts.values().next().value!);
+      }
+      return send(res, result.state === "not-supported" ? 409 : result.state === "unconfirmed" ? 502 : 200, result);
+    }
+    const chatReceipt = /^\/api\/chat-delivery\/([0-9a-f-]{36})$/.exec(url.pathname);
+    if (req.method === "GET" && chatReceipt) {
+      const id = chatReceipt[1]!;
+      if (!chatReceipts.has(id)) return send(res, 404, { error: "no dashboard delivery" });
+      const receipts = await (await getSender()).messageReceipt(id);
+      const delivered = receipts.some((r) => r.readAt !== null);
+      return send(res, 200, { state: delivered ? "delivered" : "queued", text: delivered ? "Delivered: consumed by the CLI delivery hook. This does not confirm a reply or completion." : "Queued: awaiting CLI consumption." });
     }
     if (req.method === "POST" && url.pathname === "/api/send") {
       // Also guards against cross-site form posts: they cannot set this header.
