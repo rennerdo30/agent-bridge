@@ -2,11 +2,10 @@ import { closeSync, existsSync, openSync, readSync, statSync } from "node:fs";
 import { StringDecoder } from "node:string_decoder";
 import { join } from "node:path";
 import { RUNS_DIR_NAME } from "../core/runfeed.js";
-import { runLogFiles } from "../core/run-archive.js";
+import { finishedRunLine, runLogFiles } from "../core/run-archive.js";
 
 const POLL_MS = 500;
 const CHUNK = 64 * 1024;
-const FINISHED = / finished after \d+s · /;
 
 /** Newest run log, or the newest whose name contains `filter`. */
 export function findRunLog(home: string, filter?: string): string | null {
@@ -41,8 +40,9 @@ export async function watchRunLog(path: string, out: (s: string) => void): Promi
       pending = lines.pop() ?? "";
       for (const line of lines) {
         out(line);
-        if (FINISHED.test(line)) return;
       }
+      // Only the terminal complete line can end a run, including when reads span chunks.
+      if (offset >= size && !pending.trim() && finishedRunLine(lines.join("\n"))) return;
       continue;
     }
     await new Promise((r) => setTimeout(r, POLL_MS));
