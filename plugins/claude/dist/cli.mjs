@@ -33249,11 +33249,24 @@ function parseOpencodeJsonl(stdout) {
   const text = (textByMessage.get(lastMessage) ?? []).join("");
   return sawUsage ? { sessionId, text, error: error62, usage: { input: input2, output: output2 }, cost } : { sessionId, text, error: error62 };
 }
+var opencodeVersions = /* @__PURE__ */ new Map();
+function opencodeV2(bin, cwd, log) {
+  const key2 = resolveBinary(bin) ?? bin;
+  let cached3 = opencodeVersions.get(key2);
+  if (!cached3) {
+    cached3 = runProcess({ bin, args: ["--version"], stdin: "", cwd, timeoutMs: 1e4, env: childEnv(), log }).then((res) => /(?:^|\s)(?:opencode\s+)?v?2\.\d+\.\d+/.test(res.stdout.trim())).catch(() => false);
+    opencodeVersions.set(key2, cached3);
+  }
+  return cached3;
+}
 async function delegateToOpencode(req) {
   checkDepth(req.maxDelegateDepth);
-  const args = ["run", "--format", "json", "--dir", req.cwd];
-  if (req.model) args.push("-m", req.model);
-  if (req.effort) args.push("--variant", req.effort);
+  const v2 = await opencodeV2(req.bin, req.cwd, req.log);
+  const args = ["run", "--format", "json"];
+  if (v2) args.push("--standalone");
+  if (req.model) args.push("-m", v2 && req.effort ? `${req.model.split("#")[0]}#${req.effort}` : req.model);
+  if (req.effort && !v2) args.push("--variant", req.effort);
+  if (req.effort && v2 && !req.model) throw new DelegateError("OpenCode 2 requires an explicit model when selecting effort", "failed");
   if (req.sessionId) args.push("-s", req.sessionId);
   if (req.autoApprove) args.push("--auto");
   const env = childEnv(req.extraEnv);
@@ -33606,12 +33619,15 @@ var LIST_TIMEOUT_MS = 6e4;
 var CACHE_TTL_MS = 10 * 60 * 1e3;
 var MODEL_LINE = /^[A-Za-z0-9._-]+\/\S+$/;
 var MAX_SUGGESTIONS = 8;
-var cache3 = null;
+var cache3 = /* @__PURE__ */ new Map();
 async function listOpencodeModels(bin, cwd, log) {
-  if (cache3 && Date.now() - cache3.at < CACHE_TTL_MS) return cache3.models;
-  const res = await runProcess({ bin, args: ["models"], stdin: "", cwd, timeoutMs: LIST_TIMEOUT_MS, env: childEnv(), log });
+  const key2 = JSON.stringify([resolveBinary(bin) ?? bin, cwd]);
+  const cached3 = cache3.get(key2);
+  if (cached3 && Date.now() - cached3.at < CACHE_TTL_MS) return cached3.models;
+  const v2 = await opencodeV2(bin, cwd, log);
+  const res = await runProcess({ bin, args: ["models", ...v2 ? ["--standalone"] : []], stdin: "", cwd, timeoutMs: LIST_TIMEOUT_MS, env: childEnv(), log });
   const models2 = res.stdout.split(/\r?\n/).map((l) => l.trim()).filter((l) => MODEL_LINE.test(l));
-  if (models2.length) cache3 = { at: Date.now(), models: models2 };
+  if (models2.length) cache3.set(key2, { at: Date.now(), models: models2 });
   return models2;
 }
 function resolveOpencodeModel(input2, models2) {
@@ -33744,11 +33760,13 @@ function permissionDetail(p) {
 }
 async function delegateToOpencodeServed(req) {
   checkDepthPublic(req.maxDelegateDepth);
+  const v2 = await opencodeV2(req.bin, req.cwd, req.log);
   const password = randomBytes6(PASSWORD_BYTES).toString("hex");
   const permissions = req.permissions === void 0 ? OPENCODE_ASK_PERMISSIONS : req.permissions;
   const env = childEnvPublic({
     ...req.extraEnv,
     OPENCODE_SERVER_PASSWORD: password,
+    OPENCODE_PASSWORD: password,
     OPENCODE_SERVER_USERNAME: SERVER_USER,
     ...permissions ? { OPENCODE_CONFIG_CONTENT: JSON.stringify({ permission: permissions }) } : {}
   });
@@ -33760,7 +33778,7 @@ async function delegateToOpencodeServed(req) {
   req.signal?.addEventListener("abort", onAbort, { once: true });
   const timer = setTimeout(() => ac.abort(), req.timeoutSec * 1e3);
   const api = async (method, path, body) => {
-    const res = await fetch(`${url2}${path}${path.includes("?") ? "&" : "?"}${q}`, {
+    const res = await fetch(v2 ? `${url2}/api${path}` : `${url2}${path}${path.includes("?") ? "&" : "?"}${q}`, {
       method,
       headers: { authorization: auth, "content-type": "application/json" },
       body: body === void 0 ? void 0 : JSON.stringify(body),
@@ -33768,10 +33786,57 @@ async function delegateToOpencodeServed(req) {
     });
     if (!res.ok) throw new DelegateError(`opencode API ${method} ${path} failed: HTTP ${res.status}`, "failed", await res.text().catch(() => ""));
     const text = await res.text();
-    return text ? JSON.parse(text) : null;
+    const parsed = text ? JSON.parse(text) : null;
+    return v2 ? parsed?.data ?? parsed : parsed;
   };
   let knownSession = req.sessionId ?? null;
   try {
+    if (v2) {
+      const [providerID2, ...rest2] = (req.model ?? "").split("/");
+      const [id, variant] = rest2.join("/").split("#");
+      const model = req.model ? { providerID: providerID2, id, ...req.effort || variant ? { variant: req.effort ?? variant } : {} } : void 0;
+      const sessionId2 = req.sessionId ?? (await api("POST", "/session", { location: { directory: req.cwd }, ...model ? { model } : {} })).id;
+      knownSession = sessionId2;
+      req.onSession?.(sessionId2);
+      if (req.sessionId && model) await api("POST", `/session/${sessionId2}/model`, { model });
+      const servers = await api("GET", `/mcp?directory=${encodeURIComponent(req.cwd)}`).catch(() => []);
+      const mcpServers2 = Array.isArray(servers) ? servers.map((s) => s.name ?? s.id).filter((name2) => typeof name2 === "string") : [];
+      const events2 = await fetch(`${url2}/api/event`, { headers: { authorization: auth, accept: "text/event-stream" }, signal: ac.signal });
+      if (!events2.ok || !events2.body) throw new DelegateError(`opencode event stream failed: HTTP ${events2.status}`, "failed");
+      await api("POST", `/session/${sessionId2}/prompt`, { text: req.prompt });
+      const textByMessage = /* @__PURE__ */ new Map();
+      let lastMessage = "";
+      let failure3 = null;
+      let usage = null;
+      let costUsd = null;
+      const onEvent2 = progressEventHandler("opencode", req.onProgress);
+      for await (const ev of sse(events2.body)) {
+        const p = ev.data ?? {};
+        if (p.sessionID !== sessionId2) continue;
+        if (ev.type === "permission.asked") {
+          const decision = await req.onPermission(opencodePermissionRequest({ ...p, permission: p.action, patterns: p.resources }, mcpServers2, req.cwd));
+          await api("POST", `/session/${sessionId2}/permission/${p.id}/reply`, { decision: decision.allow ? "once" : "reject", ...!decision.allow ? { message: decision.message } : {} });
+        } else if (ev.type === "session.text.ended") {
+          lastMessage = p.assistantMessageID;
+          if (!textByMessage.has(lastMessage)) textByMessage.set(lastMessage, /* @__PURE__ */ new Map());
+          textByMessage.get(lastMessage).set(p.ordinal, p.text);
+          onEvent2?.({ part: { id: ev.id, type: "text", text: p.text } });
+        } else if (ev.type === "session.usage.updated" || ev.type === "session.step.ended") {
+          usage = p.tokens;
+          costUsd = p.cost;
+        } else if (ev.type === "session.execution.failed") {
+          failure3 = p.error?.message ?? "opencode session error";
+          break;
+        } else if (ev.type === "session.execution.succeeded" || ev.type === "session.execution.interrupted") {
+          if (ev.type.endsWith("interrupted")) failure3 = "opencode session interrupted";
+          break;
+        }
+      }
+      const text2 = [...textByMessage.get(lastMessage) ?? []].sort(([a], [b]) => a - b).map(([, value]) => value).join("");
+      if (failure3 && !text2) throw new DelegateError(failure3, "failed", "", "", sessionId2);
+      if (!text2 && !failure3) throw new DelegateError("opencode event stream ended without a response", "failed", "", "", sessionId2);
+      return { sessionId: sessionId2, text: text2, isError: failure3 !== null, details: { error: failure3, usage, costUsd } };
+    }
     const sessionId = req.sessionId ?? (await api("POST", "/session", {})).id;
     req.onSession?.(sessionId);
     knownSession = sessionId;
@@ -39257,6 +39322,11 @@ function parseOpencodeStats(text) {
 }
 function parseOpencodeModelCosts(text) {
   const out2 = [];
+  try {
+    const models2 = JSON.parse(text).data;
+    if (Array.isArray(models2)) return models2.flatMap((m) => typeof m.cost?.input === "number" && typeof m.cost?.output === "number" ? [{ id: `${m.providerID}/${m.id}`, input: m.cost.input, output: m.cost.output }] : []);
+  } catch {
+  }
   const parts = text.split(/^([\w.-]+\/[\w.:@-]+)\r?\n(?=\{)/m);
   for (let i = 1; i + 1 < parts.length; i += 2) {
     try {
@@ -39266,6 +39336,10 @@ function parseOpencodeModelCosts(text) {
     }
   }
   return out2;
+}
+async function readOpencodeModelCosts(bin, cwd, log) {
+  const v2 = await opencodeV2(bin, cwd, log);
+  return parseOpencodeModelCosts(await capture(bin, v2 ? ["api", "--standalone", "GET", "/api/model"] : ["models", "--verbose"], cwd, log));
 }
 var MAX_FREE_LISTED = 12;
 function describeOpencodeCosts(costs, model) {
@@ -39310,10 +39384,10 @@ async function readUsage(agent, bin, cwd, log, model = null) {
     if (agent === "claude") return parseClaudeUsage(await capture(bin, ["-p", "/usage"], cwd, log));
     const [stats, models2] = await Promise.all([
       capture(bin, ["stats", "--days", "1"], cwd, log).catch(() => ""),
-      capture(bin, ["models", "--verbose"], cwd, log).catch(() => "")
+      readOpencodeModelCosts(bin, cwd, log).catch(() => [])
     ]);
     const report = parseOpencodeStats(stats);
-    report.lines.push(...describeOpencodeCosts(parseOpencodeModelCosts(models2), model));
+    report.lines.push(...describeOpencodeCosts(models2, model));
     return report;
   } catch (err) {
     return { agent, lines: [`Could not read usage: ${err.message}`], limits: [], maxUsedPercent: null };
@@ -42340,7 +42414,7 @@ async function answerHistory(query, result, cfg, home, log, deps = {}) {
       if (agent !== "claude") {
         const report = await (deps.models?.(agent) ?? readModels(agent, cfg, home, log, home));
         if (agent === "opencode") {
-          const costs = await (deps.costs?.() ?? captureOutput(cfg.opencodeBin, ["models", "--verbose"], home, log).then(parseOpencodeModelCosts));
+          const costs = await (deps.costs?.() ?? readOpencodeModelCosts(cfg.opencodeBin, home, log));
           const free = costs.filter((cost) => cost.input === 0 && cost.output === 0 && report.models.includes(cost.id));
           model ??= free[0]?.id ?? null;
           if (!free.some((cost) => cost.id === model)) continue;
@@ -42380,8 +42454,9 @@ async function runAnswer(agent, model, prompt, cfg, log) {
     if (agent === "claude") args = ["-p", "--model", model, "--output-format", "json", "--tools", "", "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}', "--no-session-persistence", "--settings", '{"disableAllHooks":true}'];
     else if (agent === "codex") args = ["exec", "--ignore-user-config", "--json", "--skip-git-repo-check", "--sandbox", "read-only", "-m", model, "-c", 'approval_policy="never"', "-c", "mcp_servers={}", "-"];
     else {
-      args = ["run", "--pure", "--format", "json", "--dir", cwd, "-m", model];
-      env.OPENCODE_CONFIG_CONTENT = JSON.stringify({ tools: { "*": false }, permission: { "*": "deny" } });
+      const v2 = await opencodeV2(cfg.opencodeBin, cwd, log);
+      args = ["run", ...v2 ? ["--standalone"] : ["--pure"], "--format", "json", "-m", model];
+      env.OPENCODE_CONFIG_CONTENT = JSON.stringify({ plugin: [], tools: { "*": false }, permission: { "*": "deny" } });
     }
     const result = await runProcess({ bin: cfg[`${agent}Bin`], args, stdin: prompt, cwd, timeoutMs: HISTORY_ANSWER_TIMEOUT_MS, env, log, what: "history answer" });
     if (result.code !== 0) throw new Error(`model runner exited with code ${result.code}`);

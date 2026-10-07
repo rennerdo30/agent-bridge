@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { APP_VERSION } from "./constants.js";
-import { childEnv, killTree, resolveCommand } from "./delegate.js";
+import { childEnv, killTree, resolveCommand, opencodeV2 } from "./delegate.js";
 import type { Logger } from "./logger.js";
 import type { CodingAgent } from "./protocol.js";
 
@@ -182,6 +182,11 @@ export interface ModelCost {
 /** Prices from `opencode models --verbose` ("provider/model" lines, each followed by its JSON). */
 export function parseOpencodeModelCosts(text: string): ModelCost[] {
   const out: ModelCost[] = [];
+  try {
+    const models = JSON.parse(text).data;
+    if (Array.isArray(models)) return models.flatMap((m) => typeof m.cost?.input === "number" && typeof m.cost?.output === "number"
+      ? [{ id: `${m.providerID}/${m.id}`, input: m.cost.input, output: m.cost.output }] : []);
+  } catch { /* v1 prints a model id followed by a JSON block. */ }
   const parts = text.split(/^([\w.-]+\/[\w.:@-]+)\r?\n(?=\{)/m);
   for (let i = 1; i + 1 < parts.length; i += 2) {
     try {
@@ -192,6 +197,11 @@ export function parseOpencodeModelCosts(text: string): ModelCost[] {
     }
   }
   return out;
+}
+
+export async function readOpencodeModelCosts(bin: string, cwd: string, log: Logger): Promise<ModelCost[]> {
+  const v2 = await opencodeV2(bin, cwd, log);
+  return parseOpencodeModelCosts(await capture(bin, v2 ? ["api", "--standalone", "GET", "/api/model"] : ["models", "--verbose"], cwd, log));
 }
 
 const MAX_FREE_LISTED = 12;
@@ -242,10 +252,10 @@ export async function readUsage(agent: CodingAgent, bin: string, cwd: string, lo
     if (agent === "claude") return parseClaudeUsage(await capture(bin, ["-p", "/usage"], cwd, log));
     const [stats, models] = await Promise.all([
       capture(bin, ["stats", "--days", "1"], cwd, log).catch(() => ""),
-      capture(bin, ["models", "--verbose"], cwd, log).catch(() => ""),
+      readOpencodeModelCosts(bin, cwd, log).catch(() => []),
     ]);
     const report = parseOpencodeStats(stats);
-    report.lines.push(...describeOpencodeCosts(parseOpencodeModelCosts(models), model));
+    report.lines.push(...describeOpencodeCosts(models, model));
     return report;
   } catch (err) {
     return { agent, lines: [`Could not read usage: ${(err as Error).message}`], limits: [], maxUsedPercent: null };
