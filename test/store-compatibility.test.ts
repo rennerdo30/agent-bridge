@@ -59,6 +59,8 @@ it("lets readers finish naturally, but never expires a living reader by age", ()
 
 it("treats unrecognized legacy formats conservatively", () => {
   expect(releasedStoreCapabilities("0.29.14")).toEqual({ json: 4, sqlite: 7 });
+  expect(releasedStoreCapabilities("0.29.15")).toEqual({ json: 4, sqlite: 7 });
+  expect(releasedStoreCapabilities("0.29.16")).toEqual({ json: 4, sqlite: 8 });
   expect(releasedStoreCapabilities("0.29.12")).toEqual({ json: 3, sqlite: 7 });
   expect(releasedStoreCapabilities("future")).toEqual({ json: 0, sqlite: 0 });
   recordStorePeer(home, { pid: process.pid, name: "unknown", version: "future" });

@@ -11,7 +11,8 @@ export function releasedStoreCapabilities(version?: string): StoreCapabilities {
   const match = /^0\.29\.(\d+)$/.exec(version ?? "");
   if (!match) return { json: 0, sqlite: 0 };
   const patch = Number(match[1]);
-  if (patch >= 13 && patch <= 14) return { json: 4, sqlite: 7 };
+  if (patch >= 13 && patch <= 15) return { json: 4, sqlite: 7 };
+  if (patch === 16) return { json: 4, sqlite: 8 };
   if (patch === 12) return { json: 3, sqlite: 7 };
   // Earlier releases vary within this range; these are the lowest safe ceilings.
   if (patch <= 11) return { json: 2, sqlite: 4 };

@@ -7344,7 +7344,8 @@ function releasedStoreCapabilities(version2) {
   const match = /^0\.29\.(\d+)$/.exec(version2 ?? "");
   if (!match) return { json: 0, sqlite: 0 };
   const patch = Number(match[1]);
-  if (patch >= 13 && patch <= 14) return { json: 4, sqlite: 7 };
+  if (patch >= 13 && patch <= 15) return { json: 4, sqlite: 7 };
+  if (patch === 16) return { json: 4, sqlite: 8 };
   if (patch === 12) return { json: 3, sqlite: 7 };
   if (patch <= 11) return { json: 2, sqlite: 4 };
   return { json: 0, sqlite: 0 };

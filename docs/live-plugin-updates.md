@@ -1,8 +1,8 @@
 # Updates while sessions are running
 
 `npx -y github:rennerdo30/agent-bridge update claude codex opencode --yes`
-publishes a new release without stopping sessions. Use `update antigravity --yes`
-where that client is installed.
+publishes a new release without stopping sessions. Native Antigravity support and
+its retention-safe update adapter follow in the separate native-client release.
 
 New MCP server starts select the published compatible runtime. Existing servers
 continue with their original code, stdio connection, session identity, broker,
