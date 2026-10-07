@@ -36426,24 +36426,50 @@ var ProjectGroups = class {
   home;
   roots = /* @__PURE__ */ new Map();
   jobRoots = /* @__PURE__ */ new Map();
+  settings = /* @__PURE__ */ new Map();
+  dispatchRoots = /* @__PURE__ */ new Map();
+  enabled(root, agent) {
+    const key2 = JSON.stringify([root, agent]);
+    if (!this.settings.has(key2)) {
+      if (!this.settings.size) queueMicrotask(() => this.settings.clear());
+      this.settings.set(key2, projectGroupsEnabled(root, this.home, agent));
+    }
+    return this.settings.get(key2);
+  }
   root(cwd) {
     if (!this.roots.has(cwd)) this.roots.set(cwd, canonicalProjectRoot(cwd));
     return this.roots.get(cwd) ?? null;
   }
   same(a, b) {
     const left = this.root(a), right = this.root(b);
-    return Boolean(left && right && projectKey(left) === projectKey(right) && projectGroupsEnabled(left, this.home));
+    return Boolean(left && right && projectKey(left) === projectKey(right) && this.enabled(left));
   }
   decorate(peer) {
     const root = this.root(peer.cwd);
-    return { ...peer, projectRoot: root ?? void 0, projectGroup: root && peer.agent !== "other" && !peer.jobAgent && !peer.subagent && projectGroupsEnabled(root, this.home, peer.agent) ? projectKey(root) : void 0 };
+    return { ...peer, projectRoot: root ?? void 0, projectGroup: root && peer.agent !== "other" && !peer.jobAgent && !peer.subagent && this.enabled(root, peer.agent) ? projectKey(root) : void 0 };
   }
   /** Paired-PC jobs remain outside local group authority. */
   shareable(job) {
     return !job.remote;
   }
   jobRoot(job, peers) {
+    if (!this.dispatchRoots.has(job)) {
+      if (!this.dispatchRoots.size) queueMicrotask(() => this.dispatchRoots.clear());
+      this.dispatchRoots.set(job, this.resolveJobRoot(job, peers));
+    }
+    return this.dispatchRoots.get(job) ?? null;
+  }
+  resolveJobRoot(job, peers) {
     const worktree = job.worktree;
+    for (const value of [job.projectRoot, worktree?.repoRoot]) {
+      if (typeof value === "string") {
+        const root = this.root(value);
+        if (root) {
+          this.jobRoots.set(String(job.id), root);
+          return root;
+        }
+      }
+    }
     const runner = peers.find((p) => p.jobAgent && p.id === `job:${job.id}`);
     let spec;
     if (this.home && typeof job.id === "string" && /^[a-zA-Z0-9_-]+$/.test(job.id)) {
@@ -36452,7 +36478,7 @@ var ProjectGroups = class {
       } catch {
       }
     }
-    for (const value of [job.projectRoot, worktree?.repoRoot, isRecord(spec) ? spec.cwd : void 0, job.workdir, runner?.cwd]) {
+    for (const value of [isRecord(spec) ? spec.cwd : void 0, job.workdir, runner?.cwd]) {
       if (typeof value === "string") {
         const root = this.root(value);
         if (root) {
@@ -36483,7 +36509,11 @@ var ProjectGroups = class {
     if (!this.shareable(job)) return [];
     const root = this.jobRoot(job, local);
     if (!root) return [];
-    return local.filter((p) => p.agent !== "other" && !p.jobAgent && !p.subagent && !p.host && this.same(p.cwd, root) && projectGroupsEnabled(root, this.home, p.agent));
+    return local.filter((p) => {
+      if (p.agent === "other" || p.jobAgent || p.subagent || p.host) return false;
+      const candidate = this.root(p.cwd);
+      return Boolean(candidate && projectKey(candidate) === projectKey(root) && this.enabled(root, p.agent));
+    });
   }
   candidate(job, local) {
     if (!this.shareable(job)) return void 0;
