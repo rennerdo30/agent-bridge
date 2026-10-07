@@ -207,7 +207,7 @@ export class Broker {
         c.authed = true;
         return { brokerPid: process.pid };
       },
-      hello: async (c, a) => { const result = this.onHello(c, a); const job = this.storedJobs().find((j) => `job:${j.id}` === c.peer?.id); if (job?.ownershipHistory) this.refreshJobPeer(job); await this.routePendingJobMail(); this.store.history.rememberPeer(c.peer!); return result; },
+      hello: async (c, a) => { const result = this.onHello(c, a); const job = this.storedJobs().find((j) => `job:${j.id}` === c.peer?.id); if (job?.ownershipHistory) this.refreshJobPeer(job); void this.routePendingJobMail().catch((err) => this.log.warn("pending job reroute deferred", { err: String(err) })); this.store.history.rememberPeer(c.peer!); return result; },
       send: (c, a) => this.onSend(c, a),
       decide: (c, a) => this.onDecide(c, a),
       decisions: (c, a) => this.onDecisions(c, a),
@@ -625,12 +625,15 @@ export class Broker {
   private async reroutePendingJobMail(): Promise<void> {
     do {
       this.pendingJobMailRouteAgain = false;
+      let processed = 0;
       for (const snapshot of this.storedJobs()) {
+        if (++processed % 16 === 0) await new Promise<void>((resolve) => setImmediate(resolve));
         if (snapshot.remote || !primaryFor(snapshot)) continue;
         await this.store.retryWrite(() => {
           if (this.closing) return;
           const job = this.storedJobs().find((record) => record.id === snapshot.id);
           if (!job || job.remote || !primaryFor(job)) return;
+          if ((!Array.isArray(job.deliveryHistory) || !job.deliveryHistory.length) && !this.store.pendingJobRecipients(String(job.id)).length) return;
           const recipient = this.jobRecipient(job), target = this.connByName(recipient);
           if (Array.isArray(job.deliveryHistory)) for (const envelope of job.deliveryHistory) {
             if (!isRecord(envelope) || !isRecord(envelope.from) || envelope.from.id !== `job:${job.id}` || typeof envelope.id !== "string" || typeof envelope.body !== "string") continue;
@@ -1315,7 +1318,9 @@ export class Broker {
   private unreadMail(recipient: string, limit: number): BridgeMessage[] {
     const messages = this.store.unread(recipient, limit);
     if (!this.jobsPath) return messages;
-    const finished = new Set(this.storedJobs().filter((j) => j.status && j.status !== "running" &&
+    const noteSenders = new Set(messages.filter((m) => !isQuietMessage(m) && m.conversationId.endsWith(SIBLING_NOTE_SUFFIX)).map((m) => m.from.id));
+    if (!noteSenders.size) return messages;
+    const finished = new Set(this.storedJobs().filter((j) => noteSenders.has(`job:${j.id}`) && j.status && j.status !== "running" &&
       (!primaryFor(j) || (!j.projectRoot && !j.deliveryHistory && !j.ownershipHistory && !this.groups.jobRoot(j, this.localPeers())))).map((j) => `job:${j.id}`));
     // Preserve the established retirement of old job status notes. Observer copies and quiet
     // acknowledgements remain available on demand even after the originating job finishes.

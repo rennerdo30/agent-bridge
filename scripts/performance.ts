@@ -103,7 +103,7 @@ try {
     const p: PeerInfo = { id: job ? `job:${job.id}` : randomUUID(), name: job?.name ?? (i === jobCount ? "load-owner" : `load-session-${i}`), agent: "codex", cwd: home, pid: process.pid, agentPid: null, sessionId: null, startedAt: Date.now(), autoWake: false, ...(job ? { jobAgent: "codex", jobOwner: "load-root", jobParent: "load-owner" } : {}) };
     const client = await BridgeClient.connect(pipe, nullLogger);
     client.on("event", (_ev, data) => { if (_ev === "message") { delivered++; if ((data as BridgeMessage).conversationId.endsWith(":note")) quietCopies++; } });
-    await client.request("hello", { protocol: PROTOCOL_VERSION, token, peer: p });
+    await client.request("hello", { protocol: PROTOCOL_VERSION, token, peer: p }).catch((err) => { client.close(); throw new Error(`hello ${p.name}: ${(err as Error).message}`, { cause: err }); });
     clients.push(client); peers.push(p);
   }
   ui = await startUi({ home, pipe, port: 0, log: nullLogger });
@@ -152,7 +152,7 @@ try {
   const hot = profile.nodes.map((n: any) => ({ fn: n.callFrame.functionName, file: n.callFrame.url.split("/").at(-1), samples: hits.get(n.id) ?? 0 })).filter((n: any) => n.samples).sort((x: any, y: any) => y.samples - x.samples).slice(0, 12);
   // Another SQLite writer holds the real primary database while send and peers share the broker.
   const sqlWorker = new Worker(`const { DatabaseSync } = require('node:sqlite'); const { workerData, parentPort } = require('node:worker_threads');
-    const db = new DatabaseSync(workerData); db.exec('BEGIN IMMEDIATE'); parentPort.postMessage('locked');
+    const db = new DatabaseSync(workerData, { timeout: 3000 }); db.exec('BEGIN IMMEDIATE'); parentPort.postMessage('locked');
     setTimeout(() => { db.exec('COMMIT'); db.close(); parentPort.postMessage('released'); }, 500);`,
     { eval: true, workerData: join(home, "bridge.db") });
   await new Promise<void>((resolve, reject) => { sqlWorker.once("message", () => resolve()); sqlWorker.once("error", reject); });

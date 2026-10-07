@@ -5,8 +5,8 @@ export const SQLITE_BUSY_TIMEOUT_MS = 3_000;
 export const SQLITE_REQUEST_BUSY_MS = 10;
 
 /** Only bridge-owned writable databases change journal mode; external transcripts stay read-only. */
-export function configureSqlite(db: DatabaseSync): void {
-  db.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}; PRAGMA journal_mode = WAL;`);
+export function configureSqlite(db: DatabaseSync, busyTimeoutMs = SQLITE_BUSY_TIMEOUT_MS): void {
+  db.exec(`PRAGMA busy_timeout = ${busyTimeoutMs}; PRAGMA journal_mode = WAL;`);
 }
 
 export function isSqliteBusy(err: unknown): boolean {

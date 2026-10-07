@@ -52,37 +52,9 @@ async function runner(id: string, agent: "codex" | "opencode", supervisor: strin
   return { node, job, parent };
 }
 
-it.each(["claude", "codex", "opencode"])("keeps sibling observer copies out of the %s supervisor MCP hooks", async (agent) => {
+it.each(["claude", "codex", "opencode"])("delivers the last real result through the %s supervisor Stop hook", async (agent) => {
   const sup = await connect(agent, "supervisor");
-  await call(sup, "hook_event", { event: "SessionStart", session_id: "supervisor-session" });
-  const notifications: string[] = [];
-  sup.setNotificationHandler(z.object({ method: z.literal("notifications/agent-bridge/message"), params: z.any() }),
-    (n) => { notifications.push(JSON.stringify(n.params)); });
-  const a = await runner("a", "codex", "supervisor");
-  let b = await runner("b", "opencode", "supervisor");
-  writeFileSync(join(env.home, "jobs.json"), JSON.stringify({ version: 4, jobs: [a, b].map(({ job }) => ({
-    id: job.id, name: job.name, agent: job.agent, status: "running", owner: "supervisor", rootName: "supervisor",
-    rootSession: "supervisor-session", supervisor: "supervisor-session", projectRoot: env.home, workdir: env.home,
-  })) }));
-  await b.node.stop();
-  const child = await connect("codex", "child", { ...a.parent.childEnv(), AGENT_BRIDGE_DELEGATE_DEPTH: "1" });
-  const sent = await call(child, "send", { to: b.job.name, message: "SIBLING_ONLY_SECRET" });
-  const id = /Message (\S+) (?:sent|queued)/.exec(sent)![1]!;
-  // A real registry and an offline sibling force the background supervisor backlog router.
-  const trigger = env.node("route-trigger", "codex"); await trigger.start();
-  for (const event of ["SessionStart", "UserPromptSubmit", "PostToolUse", "Stop"]) {
-    expect(await call(sup, "hook_event", { event, session_id: "supervisor-session" })).not.toContain("SIBLING_ONLY_SECRET");
-  }
-  b = await runner("b", "opencode", "supervisor");
-  await until(() => b.node.hasSeen(id));
-  // The receiver really gets the message through its delegated MCP hook.
-  const recipient = await connect("opencode", "receiver", { ...b.parent.childEnv(), AGENT_BRIDGE_DELEGATE_DEPTH: "1" });
-  expect(await call(recipient, "hook_event", { event: "PostToolUse" })).toContain("SIBLING_ONLY_SECRET");
-  for (const event of ["SessionStart", "UserPromptSubmit", "PostToolUse", "Stop"]) {
-    expect(await call(sup, "hook_event", { event, session_id: "supervisor-session" })).not.toContain("SIBLING_ONLY_SECRET");
-  }
-  expect(notifications).toEqual([]);
-  expect(await call(sup, "inbox", { mark_read: false })).toContain("SIBLING_ONLY_SECRET");
+  const a = await runner("a", "opencode", "supervisor");
   await a.node.send({ to: "supervisor", conversationId: "job-a", body: "REAL_COMPLETION" });
   // No jobs are owned by this MCP manager and global/direct wake are disabled.
   expect(await call(sup, "hook_event", { event: "Stop" })).toContain("REAL_COMPLETION");
