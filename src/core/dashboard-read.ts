@@ -150,6 +150,17 @@ export function listRuns(home: string, now = Date.now()): RunSummary[] {
       header: `Recovered ${name}`, last: "Run log unavailable; conversation may be available in the CLI transcript.", recovered: true, hasLog: false,
     });
   }
+  const current = readHistoryJobs(home);
+  for (const run of runs) {
+    const job = run.job && current.get(run.job);
+    if (job && Array.isArray(job.ownershipHistory) && job.ownershipHistory.length) {
+      // Project current supervision without altering original run metadata or prompts.
+      run.owner = typeof job.owner === "string" ? job.owner : run.owner;
+      run.rootName = typeof job.rootName === "string" ? job.rootName : undefined;
+      run.rootSession = typeof job.rootSession === "string" ? job.rootSession : undefined;
+      run.parentJob = typeof job.parentJob === "string" ? job.parentJob : undefined;
+    }
+  }
   return pageRuns(runs, null, runs.length).runs;
 }
 
