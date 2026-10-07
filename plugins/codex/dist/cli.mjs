@@ -29744,12 +29744,9 @@ function migrateProjectJobs(records) {
 var roots = /* @__PURE__ */ new Map();
 var excluded = /* @__PURE__ */ new Map();
 function linkedParent(file2) {
-  let parent2 = dirname9(resolve5(file2));
-  while (!existsSync12(parent2) && dirname9(parent2) !== parent2)
-    parent2 = dirname9(parent2);
   try {
-    const physical = realpathSync3.native(parent2);
-    return process.platform === "win32" ? physical.toLowerCase() !== parent2.toLowerCase() : physical !== parent2;
+    assertUnlinked(dirname9(resolve5(file2)));
+    return false;
   } catch {
     return true;
   }
@@ -31410,15 +31407,21 @@ var HistoryIndex = class _HistoryIndex {
   rows(source, db, table, consume) {
     const after = Number(this.cursor(source));
     let count = 0, bytes2 = 0, cursor = after;
-    for (const row of db.prepare(`SELECT rowid AS history_rowid, * FROM ${table} WHERE rowid > ? ORDER BY rowid LIMIT ?`).iterate(after, HISTORY_ROWS_PER_SOURCE)) {
-      consume(row);
-      cursor = Number(row.history_rowid);
-      count++;
-      bytes2 += Buffer.byteLength(typeof row.body === "string" ? row.body : "");
-      if (bytes2 >= HISTORY_BATCH_BODY_BYTES || Date.now() >= this.deadline) break;
+    const batch = ["messages", "history_pending", "decisions"].includes(table);
+    if (batch) this.db.exec("SAVEPOINT history_rows");
+    try {
+      for (const row of db.prepare(`SELECT rowid AS history_rowid, * FROM ${table} WHERE rowid > ? ORDER BY rowid LIMIT ?`).iterate(after, HISTORY_ROWS_PER_SOURCE)) {
+        consume(row);
+        cursor = Number(row.history_rowid);
+        count++;
+        bytes2 += Buffer.byteLength(typeof row.body === "string" ? row.body : "");
+        if (bytes2 >= HISTORY_BATCH_BODY_BYTES || Date.now() >= this.deadline) break;
+      }
+      if (count) this.advance(source, String(cursor));
+      return count;
+    } finally {
+      if (batch) this.db.exec("RELEASE history_rows");
     }
-    if (count) this.advance(source, String(cursor));
-    return count;
   }
   /** Fixed budgets; idempotent documents are written before advancing their cursors. */
   tick() {
@@ -31430,12 +31433,17 @@ var HistoryIndex = class _HistoryIndex {
       work += this.rows("messages", this.source, "messages", (row) => this.message(row));
       if (this.source !== this.db) work += this.rows("broker-pending", this.source, "history_pending", (row) => this.message(row));
       let pendingCount = 0, pendingBytes = 0;
-      for (const row of this.db.prepare("SELECT * FROM history_pending LIMIT ?").iterate(HISTORY_ROWS_PER_SOURCE)) {
-        this.message(row);
-        this.db.prepare("DELETE FROM history_pending WHERE id=? AND recipient=?").run(String(row.id), String(row.recipient));
-        pendingCount++;
-        pendingBytes += Buffer.byteLength(String(row.body));
-        if (pendingBytes >= HISTORY_BATCH_BODY_BYTES) break;
+      this.db.exec("SAVEPOINT history_pending_batch");
+      try {
+        for (const row of this.db.prepare("SELECT * FROM history_pending LIMIT ?").iterate(HISTORY_ROWS_PER_SOURCE)) {
+          this.message(row);
+          this.db.prepare("DELETE FROM history_pending WHERE id=? AND recipient=?").run(String(row.id), String(row.recipient));
+          pendingCount++;
+          pendingBytes += Buffer.byteLength(String(row.body));
+          if (pendingBytes >= HISTORY_BATCH_BODY_BYTES || Date.now() >= this.deadline) break;
+        }
+      } finally {
+        this.db.exec("RELEASE history_pending_batch");
       }
       work += pendingCount;
       work += this.rows("decisions", this.source, "decisions", (row) => {
@@ -32460,9 +32468,19 @@ var MessageStore = class {
   }
   markRead(recipient, ids, at = Date.now()) {
     let changed = 0;
-    for (const id of ids) {
-      changed += Number(this.stmt.markRead.run(at, id, recipient).changes);
-      this.db.prepare("UPDATE job_delivery_routes SET consumed_at=? WHERE id=? AND recipient=? AND consumed_at IS NULL").run(at, id, recipient);
+    const route = this.db.prepare("UPDATE job_delivery_routes SET consumed_at=? WHERE id=? AND recipient=? AND consumed_at IS NULL");
+    for (let offset = 0; offset < ids.length; offset += 100) {
+      this.db.exec("SAVEPOINT message_ack");
+      try {
+        for (const id of ids.slice(offset, offset + 100)) {
+          changed += Number(this.stmt.markRead.run(at, id, recipient).changes);
+          route.run(at, id, recipient);
+        }
+        this.db.exec("RELEASE message_ack");
+      } catch (err) {
+        this.db.exec("ROLLBACK TO message_ack; RELEASE message_ack");
+        throw err;
+      }
     }
     return changed;
   }
@@ -45295,8 +45313,8 @@ var DashboardController = class {
       this.hosted = await hostDashboard(this.opts);
       return this.hosted.info;
     } catch (err) {
-      if (err.code !== "EADDRINUSE") throw err;
-      for (let attempt = 0; attempt < 10; attempt++) {
+      if (!["EADDRINUSE", "EACCES"].includes(err.code ?? "")) throw err;
+      for (let attempt = 0; err.code === "EADDRINUSE" && attempt < 10; attempt++) {
         const winner = await findRunningDashboard(this.opts.home);
         if (winner) return winner;
         await new Promise((resolve21) => setTimeout(resolve21, 50));
@@ -45309,7 +45327,8 @@ var DashboardController = class {
           this.hosted = await hostDashboard({ ...this.opts, port, preferSavedPort: false });
           return this.hosted.info;
         } catch (fallbackError) {
-          if (fallbackError.code !== "EADDRINUSE") throw fallbackError;
+          if (!["EADDRINUSE", "EACCES"].includes(fallbackError.code ?? "")) throw fallbackError;
+          if (fallbackError.code === "EACCES") continue;
           for (let attempt = 0; attempt < 10; attempt++) {
             const winner2 = await findRunningDashboard(this.opts.home);
             if (winner2) return winner2;

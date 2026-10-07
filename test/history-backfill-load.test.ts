@@ -24,6 +24,10 @@ it("keeps sends and ack below 1s p95 with zero lock failures during large CLI ba
     history = new DatabaseSync(historyDbPath(env.db),{timeout:3000});
     await until(() => historyReady(history!),20_000);
     primeLargeHistoryBackfill(history,env.home,fixture);
+    // Schema readiness precedes discovery and the first durable transcript batch.
+    // Start the traffic window once ingestion is observable, then require further
+    // progress during that same window rather than counting startup as progress.
+    await until(() => backfillBytes(history!,fixture)>0,5000);
     for (const name of ["sender","receiver"]) {
       const client = await BridgeClient.connect(env.pipe,log); clients.push(client);
       await client.request("hello",{protocol:PROTOCOL_VERSION,token:"fixture-token",peer:{id:name,name,agent:"codex",cwd:env.home,pid:process.pid,agentPid:null,sessionId:name,startedAt:Date.now(),autoWake:false}});

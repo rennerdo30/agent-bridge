@@ -98,9 +98,9 @@ export class DashboardController {
       this.hosted = await hostDashboard(this.opts);
       return this.hosted.info;
     } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== "EADDRINUSE") throw err;
+      if (!["EADDRINUSE", "EACCES"].includes((err as NodeJS.ErrnoException).code ?? "")) throw err;
       // The successful host may still be publishing dashboard.json after binding its listener.
-      for (let attempt = 0; attempt < 10; attempt++) {
+      for (let attempt = 0; (err as NodeJS.ErrnoException).code === "EADDRINUSE" && attempt < 10; attempt++) {
         const winner = await findRunningDashboard(this.opts.home);
         if (winner) return winner;
         await new Promise((resolve) => setTimeout(resolve, 50));
@@ -115,7 +115,9 @@ export class DashboardController {
           this.hosted = await hostDashboard({ ...this.opts, port, preferSavedPort: false });
           return this.hosted.info;
         } catch (fallbackError) {
-          if ((fallbackError as NodeJS.ErrnoException).code !== "EADDRINUSE") throw fallbackError;
+          if (!["EADDRINUSE", "EACCES"].includes((fallbackError as NodeJS.ErrnoException).code ?? "")) throw fallbackError;
+          // A reserved Windows port has no competing host to await.
+          if ((fallbackError as NodeJS.ErrnoException).code === "EACCES") continue;
           for (let attempt = 0; attempt < 10; attempt++) {
             const winner = await findRunningDashboard(this.opts.home);
             if (winner) return winner;

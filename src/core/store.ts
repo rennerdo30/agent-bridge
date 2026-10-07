@@ -428,9 +428,21 @@ export class MessageStore {
 
   markRead(recipient: string, ids: string[], at: number = Date.now()): number {
     let changed = 0;
-    for (const id of ids) {
-      changed += Number(this.stmt.markRead.run(at, id, recipient).changes);
-      this.db.prepare("UPDATE job_delivery_routes SET consumed_at=? WHERE id=? AND recipient=? AND consumed_at IS NULL").run(at, id, recipient);
+    const route = this.db.prepare("UPDATE job_delivery_routes SET consumed_at=? WHERE id=? AND recipient=? AND consumed_at IS NULL");
+    // Replay acknowledgements are DB-only. Bound each durable group instead of
+    // syncing every message separately; failed groups remain safe to retry.
+    for (let offset = 0; offset < ids.length; offset += 100) {
+      this.db.exec("SAVEPOINT message_ack");
+      try {
+        for (const id of ids.slice(offset, offset + 100)) {
+          changed += Number(this.stmt.markRead.run(at, id, recipient).changes);
+          route.run(at, id, recipient);
+        }
+        this.db.exec("RELEASE message_ack");
+      } catch (err) {
+        this.db.exec("ROLLBACK TO message_ack; RELEASE message_ack");
+        throw err;
+      }
     }
     return changed;
   }
