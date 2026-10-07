@@ -14,6 +14,10 @@ the calling agent's context, like every MCP result.
 
 The elected broker owns a background worker for indexing. Bridge migration **v4**
 introduced derived search tables; **v8** adds append-only conversations and source checkpoints.
+AB-167 moves these tables and conversations into independently versioned
+`history.db` v1 using a protected backup, bounded copy, row counts and SHA-256
+verification. Legacy tables remain intact; readers fall back until verification
+finishes. See [migration and kill switches](conversation-storage.md).
 The shared migration executor takes a SQLite backup before
 changing an existing database. The archive database remains **v1**. Source files and cold
 databases are opened read-only; malformed metadata is skipped without renaming or repairing it.
@@ -24,7 +28,8 @@ an external-content FTS5 index with `unicode61` tokenization and ranks hits with
 When unavailable, v4 creates ordinary tables only and uses a documented **plain** fallback:
 case/diacritic-folded literal substring AND matching, newest first. It is slower and has
 substring semantics rather than FTS word semantics. The `engine` response identifies the mode.
-An existing v4 schema retains its chosen engine; reindex changes data, never schema.
+An existing v4 schema retains its chosen engine until the split; `history.db` v1
+probes the current runtime when it creates its independent index. Reindex changes data, never schema.
 Changing the engine/schema requires a future backed-up migration.
 
 The runtime probe and design follow the primary [Node SQLite API](https://nodejs.org/api/sqlite.html)

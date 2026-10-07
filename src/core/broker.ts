@@ -1,4 +1,5 @@
 import { HistoryBackground } from "./history-background.js";
+import { loadConfig } from "./config.js";
 import { conversationPageSchema, readConversation } from "./conversations.js";
 import { historySearchSchema } from "./history.js";
 import { ReadJournal } from "./read-journal.js";
@@ -115,6 +116,7 @@ export class Broker {
   private server: Server | null = null;
   private readonly conns = new Set<Conn>();
   private historyBackground: HistoryBackground | null = null;
+  private historyPendingRequests = 0;
   private purgeTimer: NodeJS.Timeout | null = null;
   private pendingJobMailRoute: Promise<void> | null = null;
   private pendingJobMailRouteAgain = false;
@@ -273,6 +275,7 @@ export class Broker {
       reindexHistory: (_, a) => {
         const args = z.object({ reset: z.boolean().optional() }).strict().parse(a);
         if (this.historyBackground) return this.historyBackground.tick(args.reset);
+        if (this.store.file !== ":memory:") return { work: 0, discovering: false };
         if (args.reset) this.store.history.reset();
         return this.store.history.tick();
       },
@@ -363,7 +366,10 @@ export class Broker {
         this.applyHandoffs();
         this.purgeTimer = setInterval(() => this.purge(), PURGE_INTERVAL_MS);
         this.purgeTimer.unref();
-        if (this.store.file !== ":memory:") this.historyBackground = new HistoryBackground(this.store.file, this.log);
+        if (this.store.file !== ":memory:" && loadConfig(dirname(this.store.file), "other", this.log).history.ingest) {
+          this.historyBackground = new HistoryBackground(this.store.file, this.log);
+          this.store.historyPeerSink = (peer) => this.historyBackground?.rememberPeer(peer);
+        }
         this.purge();
         this.log.info("broker listening", { pipe: this.pipePath });
         if (this.store.file !== ":memory:" && existsSync(join(dirname(this.store.file),QUESTIONS_FILE))) this.ownerQuestions();
@@ -519,6 +525,9 @@ export class Broker {
   }
 
   private async dispatch(conn: Conn, frame: RequestFrame): Promise<void> {
+    const countsPressure = frame.op !== "reindexHistory";
+    if (countsPressure) this.historyPendingRequests++;
+    this.historyBackground?.pressure(this.historyPendingRequests > 0);
     const handler = this.handlers[frame.op] as Handler<Op> | undefined;
     try {
       if (!handler) throw new BridgeError("bad_request", `unknown op: ${String(frame.op)}`);
@@ -533,10 +542,14 @@ export class Broker {
       const result = await handler(conn, (frame.args ?? {}) as never);
       this.write(conn, { t: "res", id: frame.id, ok: true, result });
     } catch (err) {
+      if (isSqliteBusy(err)) this.historyBackground?.pressure(true, true);
       const be = err instanceof BridgeError ? err : new BridgeError("internal", String((err as Error)?.message ?? err));
       if (be.code === "internal") this.log.error("request failed", { op: frame.op, err });
       else this.log.debug("request rejected", { op: frame.op, code: be.code, message: be.message });
       this.write(conn, { t: "res", id: frame.id, ok: false, error: be.toPayload() });
+    } finally {
+      if (countsPressure) this.historyPendingRequests--;
+      this.historyBackground?.pressure(this.historyPendingRequests > 0);
     }
   }
 

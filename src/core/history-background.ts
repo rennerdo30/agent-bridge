@@ -5,6 +5,8 @@ import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import type { Logger } from "./logger.js";
 import { transcriptPaths } from "./transcripts/common.js";
+import type { PeerInfo } from "./protocol.js";
+import { historyDbPath, releaseExitedHistoryLease } from "./history-store.js";
 
 type Batch = { work: number; discovering: boolean };
 /** One elected worker; no source I/O or indexing writes on message dispatch. */
@@ -14,6 +16,7 @@ export class HistoryBackground {
   private exited = false;
   private restart: NodeJS.Timeout | null = null;
   private id = 0;
+  private migrationLease: string | null = null;
   private pending = new Map<
     number,
     { resolve: (b: Batch) => void; reject: (e: Error) => void }
@@ -25,6 +28,10 @@ export class HistoryBackground {
       const root = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
       const path = join(root, ".agent-bridge-test", "history-worker.mjs");
       const inputs = [
+        "config.ts",
+        "history-store.ts",
+        "history-schema.ts",
+        "conversation-schema.ts",
         "history-worker.ts",
         "history.ts",
         "conversations.ts",
@@ -55,10 +62,11 @@ export class HistoryBackground {
     const start = () => {
       this.exited = false;
       this.worker = new Worker(entry, {
-        workerData: { file, home: dirname(file), paths: transcriptPaths() },
+        workerData: { file: historyDbPath(file), bridge: file, home: dirname(file), paths: transcriptPaths() },
         execArgv: [],
       });
       this.worker.on("message", (message) => {
+        if ("migrationLease" in message) { this.migrationLease = message.migrationLease; return; }
         if (message.id) {
           const pending = this.pending.get(message.id);
           this.pending.delete(message.id);
@@ -75,6 +83,11 @@ export class HistoryBackground {
       });
       this.worker.on("exit", (code) => {
         this.exited = true;
+        if (this.migrationLease) {
+          try { releaseExitedHistoryLease(file,this.migrationLease); }
+          catch (err) { log.warn("history worker lease cleanup deferred",{err:String(err)}); }
+          this.migrationLease = null;
+        }
         for (const p of this.pending.values())
           p.reject(new Error(`History worker exited (${code})`));
         this.pending.clear();
@@ -87,6 +100,12 @@ export class HistoryBackground {
       this.worker.unref();
     };
     start();
+  }
+  pressure(pending: boolean, lockError = false): void {
+    if (!this.stopped && !this.exited) this.worker.postMessage({ pressure: true, pending, lockError });
+  }
+  rememberPeer(peer: PeerInfo): void {
+    if (!this.stopped && !this.exited) this.worker.postMessage({ peer });
   }
   tick(reset = false): Promise<Batch> {
     if (this.stopped || this.exited)
