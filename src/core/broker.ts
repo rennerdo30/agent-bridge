@@ -462,6 +462,7 @@ export class Broker {
       if (!conn.authed && !UNAUTHENTICATED_OPS.has(frame.op)) throw new BridgeError("unauthorized", "authenticate first");
       this.log.debug("request", { op: frame.op, peer: conn.peer?.name });
       const result = await handler(conn, (frame.args ?? {}) as never);
+      if (["send", "hello", "updatePeer", "decide"].includes(frame.op)) this.historyBackground?.notify();
       this.write(conn, { t: "res", id: frame.id, ok: true, result });
     } catch (err) {
       const be = err instanceof BridgeError ? err : new BridgeError("internal", String((err as Error)?.message ?? err));

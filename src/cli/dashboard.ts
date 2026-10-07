@@ -2,7 +2,6 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { request } from "node:http";
 import { join } from "node:path";
 import type { Logger } from "../core/logger.js";
-import { startUi } from "./ui.js";
 import { loadDashboardKey } from "./dashboard-key.js";
 import { protect } from "../network/pairing.js";
 
@@ -136,6 +135,7 @@ export class DashboardController {
 
 /** Start the dashboard in this process and publish its link. Fails with EADDRINUSE if the port is taken. */
 export async function hostDashboard(opts: { home: string; pipe: string; port: number; log: Logger; preferSavedPort?: boolean }): Promise<HostedDashboard> {
+  const { startUi } = await import("./ui.js");
   // A session taking over keeps the previous secret: open dashboard tabs (and saved links) keep working.
   dashboardKey(opts.home);
   const saved = readDashboardInfo(opts.home)?.port;

@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { unlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { Broker } from "./broker.js";
+import type { Broker } from "./broker.js";
 import { isPluginCacheCwd } from "./session-visibility.js";
 import { BridgeClient } from "./client.js";
 import {
@@ -20,7 +20,8 @@ import type { Logger } from "./logger.js";
 import { BridgeError, isQuietMessage, type AgentKind, type BridgeMessage, type PeerActivity, type PeerInfo, type RequestMap, type SendArgs, type SendResult, type SiblingPeer } from "./protocol.js";
 import { ReadJournal } from "./read-journal.js";
 import { recordLocalResult } from "./local-result-receipts.js";
-import { MessageStore, SQLITE_STORE_VERSION } from "./store.js";
+import type { MessageStore } from "./store.js";
+import { SQLITE_STORE_VERSION } from "./store-version.js";
 import { JSON_STORE_VERSION } from "./json-store.js";
 import { recordStorePeer } from "./store-compatibility.js";
 import { parentProcessIdentity } from "./process-identity.js";
@@ -259,6 +260,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
 
   private async tryBecomeBroker(): Promise<boolean> {
     if (this.broker) return true;
+    const [{ Broker }, { MessageStore }] = await Promise.all([import("./broker.js"), import("./store.js")]);
     let store: MessageStore;
     try {
       store = new MessageStore(this.opts.dbPath, this.log.child("store"));

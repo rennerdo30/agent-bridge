@@ -1,9 +1,9 @@
-import { conversationProject } from "./project-store.js";
+import { historySearchSchema, type HistorySearch, type HistoryHit, type HistoryResult } from "./history-query.js";
+export { HISTORY_MAX_QUERY_CHARS, HISTORY_MAX_LIMIT, historyFiltersSchema, historySearchSchema, type HistorySearch, type HistoryHit, type HistoryResult } from "./history-query.js";
 import { createHash } from "node:crypto";
 import { closeSync, existsSync, fstatSync, openSync, opendirSync, readSync, statSync, type Dir } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
-import { z } from "zod";
 import { claudeItems } from "./transcripts/claude.js";
 import { antigravityItems } from "./transcripts/antigravity.js";
 import { codexItems } from "./transcripts/codex.js";
@@ -19,38 +19,16 @@ export const HISTORY_FILES_PER_TICK = 2;
 export const HISTORY_DISCOVERY_PER_TICK = 32;
 export const HISTORY_CHUNK_BYTES = 64 * 1024;
 export const HISTORY_SNIPPET_CHARS = 320;
-export const HISTORY_MAX_QUERY_CHARS = 1_000;
-export const HISTORY_MAX_LIMIT = 50;
 export const HISTORY_DEFAULT_LIMIT = 10;
 const HISTORY_MAX_BODY_CHARS = MAX_BODY_CHARS;
 const HISTORY_MAX_METADATA_BYTES = 64 * 1024;
 const HISTORY_MAX_TERMS = 32;
 const HISTORY_FTS_SNIPPET_TOKENS = 40;
-const HISTORY_FILTER_ID_CHARS = 256;
 const HISTORY_SNIPPET_CONTEXT_CHARS = HISTORY_SNIPPET_CHARS / 4;
 const HISTORY_RESCAN_MS = 30_000;
 const HISTORY_READ_TIMEOUT_MS = 100;
 const HISTORY_BATCH_BODY_BYTES = 512 * 1024;
 
-const dateFilter = z.union([z.number().int().nonnegative(), z.iso.datetime({ offset: true })]).transform((v) => typeof v === "number" ? v : Date.parse(v));
-export const historyFiltersSchema = z.object({
-  project: z.string().min(1).max(4096).transform(conversationProject).optional(),
-  session: z.string().min(1).max(HISTORY_FILTER_ID_CHARS).optional(), job: z.string().min(1).max(HISTORY_FILTER_ID_CHARS).optional(),
-  agent: z.enum(["claude", "codex", "opencode", "antigravity", "other"]).optional(),
-  kind: z.enum(["message", "run", "decision", "transcript", "approval", "progress", "report"]).optional(),
-  since: dateFilter.optional(), until: dateFilter.optional(),
-}).strict();
-export const historySearchSchema = z.object({
-  query: z.string().trim().min(1).max(HISTORY_MAX_QUERY_CHARS),
-  filters: historyFiltersSchema.optional(), limit: z.number().int().min(1).max(HISTORY_MAX_LIMIT).optional(),
-}).strict().refine((a) => a.filters?.since === undefined || a.filters.until === undefined || a.filters.since <= a.filters.until, "since must not be later than until");
-export type HistorySearch = z.input<typeof historySearchSchema>;
-export interface HistoryHit {
-  id: string; kind: "message" | "run" | "decision" | "transcript" | "approval" | "progress" | "report"; agent: string; at: number;
-  snippet: string; link: string; sourceLink: string; message: string | null; job: string | null; run: string | null;
-  session: string | null; cursor: string | null; conversation?: string | null; project?: string | null;
-}
-export interface HistoryResult { engine: "fts5" | "plain"; hits: HistoryHit[] }
 interface Document extends Omit<HistoryHit, "snippet" | "sourceLink"> { body: string }
 interface FileRow { path: string; kind: string; agent: string; session: string | null; cwd: string; child: string | null }
 interface WalkRoot { path: string; root: string; kind: string; agent: string }
@@ -68,6 +46,8 @@ export class HistoryIndex {
   private checked = 0;
   private idleFiles = 0;
   private opencodeComplete = false;
+  private dirty = new Set<string>();
+  private idleSweepComplete = false;
   private heads = new Map<string,{identity:string;value:Record<string,any>}>();
   private readonly paths: TranscriptPaths;
 
@@ -78,6 +58,14 @@ export class HistoryIndex {
   }
 
   get database(): DatabaseSync { return this.db; }
+
+  /** Watch notifications prioritize existing sources without touching SQLite on the callback. */
+  notify(path: string): void {
+    if (this.dirty.size < 2048) this.dirty.add(path);
+    this.idleFiles = 0;
+    this.idleSweepComplete = false;
+    this.lastDiscovery = 0;
+  }
 
   rememberPeer(peer: Pick<PeerInfo, "id" | "name" | "sessionId"> & Partial<Pick<PeerInfo, "cwd" | "agent">>): void {
     if (!peer.sessionId) return;
@@ -125,7 +113,8 @@ export class HistoryIndex {
   /** Fixed row, file, byte and discovery budgets; cursors commit atomically with their documents. */
   tick(): { work: number; discovering: boolean } {
     const fileCount = Number(this.db.prepare("SELECT count(*) AS n FROM history_files").get()!.n);
-    if (this.idleFiles >= fileCount) this.idleFiles = 0;
+    const dirty = [...this.dirty].slice(0, 32);
+    const previousIdle = this.idleFiles;
     this.db.exec("BEGIN IMMEDIATE");
     let work = 0;
     try {
@@ -143,13 +132,17 @@ export class HistoryIndex {
           link: `/api/decisions/${enc(row.topic)}/history`, message: row.source_message_id, job: null, run: null, session: row.author_id, cursor: String(row.revision) }, [row.author_id, row.author_name, ...sessions]);
       });
       if (this.home) {
+        for (const path of dirty) {
+          if (path.startsWith(this.paths.opencode)) this.db.prepare("UPDATE history_files SET checked=-1 WHERE agent='opencode'").run();
+          else this.db.prepare("UPDATE history_files SET checked=-1 WHERE path=?").run(path);
+        }
         const archivePath = join(this.home, ARCHIVE_DB_NAME);
         if (existsSync(archivePath)) {
           const archive = new DatabaseSync(archivePath, { readOnly: true, timeout: HISTORY_READ_TIMEOUT_MS });
           try { work += this.rows("archive", archive, "messages", (row) => this.message(row)); }
           finally { archive.close(); }
         }
-        work += this.discover();
+        work += this.discover(fileCount);
         const files = this.db.prepare("SELECT * FROM history_files ORDER BY checked,path LIMIT ?").all(HISTORY_FILES_PER_TICK) as unknown as FileRow[];
         for (const file of files) {
           const indexed = this.indexFile(file);
@@ -159,9 +152,16 @@ export class HistoryIndex {
         }
       }
       this.db.exec("COMMIT");
-    } catch (err) { this.db.exec("ROLLBACK"); throw err; }
+      for (const path of dirty) this.dirty.delete(path);
+    } catch (err) { this.idleFiles = previousIdle; this.db.exec("ROLLBACK"); throw err; }
     const registered = Number(this.db.prepare("SELECT count(*) AS n FROM history_files").get()!.n);
-    return { work, discovering: this.walk !== null || this.queue.length > 0 || this.idleFiles < registered };
+    const discovering = this.walk !== null || this.queue.length > 0 || this.idleFiles < registered;
+    // Start the fallback interval after a complete idle sweep, not while a large sweep is still running.
+    if (!discovering && !this.idleSweepComplete) {
+      this.lastDiscovery = Date.now();
+      this.idleSweepComplete = true;
+    }
+    return { work, discovering };
   }
 
   private head(path: string, session?: string): Record<string,any> {
@@ -182,9 +182,11 @@ export class HistoryIndex {
     this.db.prepare(`INSERT INTO history_files(path,kind,agent,session,cwd,child) VALUES (?,?,?,?,?,?)
       ON CONFLICT(path) DO UPDATE SET session=excluded.session,cwd=excluded.cwd,child=excluded.child`).run(file.path, file.kind, file.agent, file.session, file.cwd, file.child);
   }
-  private discover(): number {
-    if (!this.walk && !this.queue.length && Date.now() - this.lastDiscovery >= HISTORY_RESCAN_MS) {
+  private discover(fileCount: number): number {
+    if (!this.walk && !this.queue.length && (this.lastDiscovery === 0 || this.idleFiles >= fileCount) && Date.now() - this.lastDiscovery >= HISTORY_RESCAN_MS) {
       this.lastDiscovery = Date.now();
+      this.idleFiles = 0;
+      this.idleSweepComplete = false;
       this.opencodeComplete = false;
       this.queue = [
         { path: join(this.home!, "context-events"), root:this.home!,kind:"context",agent:"other" },
@@ -366,7 +368,7 @@ export class HistoryIndex {
     this.db.exec("BEGIN IMMEDIATE");
     try { this.db.exec("DELETE FROM history_documents; DELETE FROM history_tags; DELETE FROM history_cursors; DELETE FROM history_files;"); this.db.exec("COMMIT"); }
     catch (err) { this.db.exec("ROLLBACK"); throw err; }
-    this.close(); this.queue = []; this.lastDiscovery = 0; this.opencodeComplete = false; this.idleFiles = 0;
+    this.close(); this.queue = []; this.lastDiscovery = 0; this.opencodeComplete = false; this.idleFiles = 0; this.dirty.clear(); this.idleSweepComplete = false;
   }
   close(): void { this.walk?.dir.closeSync(); this.walk = null; }
 }
