@@ -29,7 +29,8 @@ export const UI_PAGE = `<!doctype html>
 :root {
   --bg: #f4f5f7; --panel: #ffffff; --panel-2: #f8f9fb; --sunk: #eceef2; --text: #161b26; --muted: #5f6779; --faint: #949bab; --line: #e4e7ec;
   --accent: #4f46e5; --accent-soft: #eef0ff; --on-accent: #ffffff; --ok: #15803d; --ok-soft: #e8f6ed; --warn: #b45309; --warn-soft: #fdf3e2;
-  --bad: #c2410c; --bad-soft: #fdeee6; --busy: #2563eb; --busy-soft: #e8efff;
+  /* One blue: "working" uses the accent, so selection, chips, badges and bubbles share a single hue. */
+  --bad: #c2410c; --bad-soft: #fdeee6; --busy: var(--accent); --busy-soft: var(--accent-soft);
   --claude: #d97757; --codex: #0f9d76; --opencode: #3b82f6; --other: #8b93a5;
   --shadow: 0 1px 2px rgba(16, 24, 40, .05);
   --pop: 0 16px 40px rgba(16, 24, 40, .16);
@@ -39,18 +40,19 @@ export const UI_PAGE = `<!doctype html>
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --bg: #14181f; --panel: #1b2029; --panel-2: #212733; --sunk: #10141a; --text: #eceef3; --muted: #aab2c2; --faint: #7d8699; --line: #2d3442;
-    --accent: #8b87ff; --accent-soft: #2a2a55; --on-accent: #ffffff; --ok: #4ade80; --ok-soft: #173524; --warn: #fbbf24; --warn-soft: #3a2e12;
-    --bad: #fb923c; --bad-soft: #40241a; --busy: #60a5fa; --busy-soft: #1b2e4a;
+    /* Dark: every surface is the same navy hue, from the darker sidebar (sunk) up to the raised panels. */
+    --bg: #121722; --panel: #181e2b; --panel-2: #1e2533; --sunk: #0e121b; --text: #eceef3; --muted: #aab2c2; --faint: #7d8699; --line: #2a3243;
+    --accent: #7c8cff; --accent-soft: #252d4c; --on-accent: #ffffff; --ok: #4ade80; --ok-soft: #173524; --warn: #fbbf24; --warn-soft: #3a2e12;
+    --bad: #fb923c; --bad-soft: #40241a; --busy: var(--accent); --busy-soft: var(--accent-soft);
     --shadow: none; --pop: 0 18px 48px rgba(0, 0, 0, .5);
     color-scheme: dark;
   }
 }
 /* Chosen in the sidebar: dark regardless of the system. */
 :root[data-theme="dark"] {
-  --bg: #14181f; --panel: #1b2029; --panel-2: #212733; --sunk: #10141a; --text: #eceef3; --muted: #aab2c2; --faint: #7d8699; --line: #2d3442;
-  --accent: #8b87ff; --accent-soft: #2a2a55; --on-accent: #ffffff; --ok: #4ade80; --ok-soft: #173524; --warn: #fbbf24; --warn-soft: #3a2e12;
-  --bad: #fb923c; --bad-soft: #40241a; --busy: #60a5fa; --busy-soft: #1b2e4a;
+  --bg: #121722; --panel: #181e2b; --panel-2: #1e2533; --sunk: #0e121b; --text: #eceef3; --muted: #aab2c2; --faint: #7d8699; --line: #2a3243;
+  --accent: #7c8cff; --accent-soft: #252d4c; --on-accent: #ffffff; --ok: #4ade80; --ok-soft: #173524; --warn: #fbbf24; --warn-soft: #3a2e12;
+  --bad: #fb923c; --bad-soft: #40241a; --busy: var(--accent); --busy-soft: var(--accent-soft);
   --shadow: none; --pop: 0 18px 48px rgba(0, 0, 0, .5);
   color-scheme: dark;
 }
@@ -346,6 +348,10 @@ main.wrap { padding-top: 32px; max-width: 1240px; }
 .tree-pc { text-transform: none; letter-spacing: 0; font-size: 12px; font-weight: 600; color: var(--muted); padding: 16px 8px 6px; }
 .tree-pc span:last-child { color: var(--faint); font-weight: 400; }
 /* A project shared by several sessions: a quiet sub-heading inside its PC. */
+/* A session's secondary actions: small ghost buttons in one row; "Project main" is a state chip. */
+.sess-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
+.sess-actions button.ghost { min-height: 30px; padding: 4px 12px; border-radius: 7px; }
+.chip.main-chip { color: var(--accent); background: var(--accent-soft); border-color: transparent; font-weight: 600; }
 .tree-proj { padding: 8px 10px 2px; font-size: 11.5px; color: var(--faint); min-width: 0; }
 .tree-sess { position: relative; border-radius: 8px; }
 .tree-sess:hover { background: color-mix(in srgb, var(--panel) 60%, transparent); }
@@ -590,6 +596,42 @@ button.ghost { min-height: 32px; }
 .dec .linkbtn { margin: 8px 0 0; font-size: 12.5px; }
 .dec-hist { margin-top: 10px; padding-left: 14px; border-left: 2px solid var(--line); display: flex; flex-direction: column; gap: 10px; color: var(--muted); }
 .dec-hist p { margin: 2px 0 0; }
+
+/* ---- Thin, theme-colored scrollbars everywhere (no native grey arrows) ---- */
+* { scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--faint) 45%, transparent) transparent; }
+*::-webkit-scrollbar { width: 8px; height: 8px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--faint) 40%, transparent); border-radius: 8px; border: 2px solid transparent; background-clip: padding-box; }
+*::-webkit-scrollbar-thumb:hover { background-color: color-mix(in srgb, var(--faint) 70%, transparent); }
+*::-webkit-scrollbar-button { display: none; }
+
+/* ---- Composers: one rounded field with the send button inside (session messages and subagent chat) ---- */
+form#send, form#jobSend {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 6px 8px;
+  margin: 12px 16px 16px; padding: 8px 8px 8px 14px; border: 1px solid var(--line); border-radius: 12px;
+  background: var(--panel-2); transition: border-color .15s, box-shadow .15s;
+}
+form#send { margin: 12px 0 0; }
+form#send:focus-within, form#jobSend:focus-within { border-color: color-mix(in srgb, var(--accent) 60%, var(--line)); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent); }
+form#send textarea, form#jobSend textarea {
+  grid-column: 1; border: 0; background: transparent; border-radius: 0; padding: 6px 0; min-height: 22px; height: 44px; max-height: 220px;
+  resize: none; outline: none; box-shadow: none; line-height: 1.5; font-size: 13.5px;
+}
+form#send button[type="submit"], form#jobSend button[type="submit"] { grid-column: 2; min-height: 32px; padding: 5px 14px; border-radius: 8px; font-size: 13px; }
+form#send select#to {
+  grid-column: 1 / -1; justify-self: start; width: auto; max-width: 100%; min-height: 0; padding: 2px 24px 2px 8px; border: 0; border-radius: 6px;
+  font-size: 12px; font-weight: 600; color: var(--muted); background-color: var(--panel);
+  background-position: right 12px center, right 7px center, 0 0;
+}
+#sendInfo, #jobSendInfo { grid-column: 1 / -1; }
+
+/* ---- Message list: compact, name and time on one line ---- */
+.msg { padding: 10px 14px; }
+.msg .meta { flex-wrap: nowrap; min-width: 0; }
+.msg .meta > *:not(.msg-time) { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.msg .meta b { flex: none; }
+.msg-time { flex: none; }
+.msg .body { font-size: 13.5px; }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
@@ -1341,7 +1383,11 @@ function renderSession() {
     ? '<div class="head" style="display:flex;gap:12px;align-items:center">' + av(p.agent) + '<div style="min-width:0;flex:1"><div class="title ell" style="font-weight:650;font-size:15px">' + esc(folder(p.cwd)) + '</div><div class="small muted ell">' + esc(p.name) + "</div></div>" + dot(p.activity) + "</div>" +
       '<div class="kv"><span>status</span><span>' + esc(p.activity || "unknown") + "</span><span>folder</span><span>" + esc(p.cwd) + "</span><span>connected</span><span>" + up(p.startedAt) + " ago</span>" +
       (p.sessionId ? "<span>session</span><span>" + esc(p.sessionId) + "</span>" : "") + "<span>version</span><span>" + esc(p.version || "?") + " " + versionChip(p) + "</span></div>" +
-      kidsBlock(x, true) + (!pcOf(x.name) ? '<div class="actions"><button type="button" class="btn" data-coordinator="' + esc(x.name) + '" data-unavailable="' + (p.unavailable ? 'false' : 'true') + '">' + (p.unavailable ? 'Make available' : 'Hand jobs to project') + '</button>' + (p.projectGroup ? '<button type="button" class="btn" data-project-main="' + esc(x.name) + '"' + (p.projectMain ? ' disabled' : '') + '>' + (p.projectMain ? 'Project main' : 'Make project main') + '</button>' : '') + '</div>' : '')
+      // Quiet secondary actions; being the project main is a state (a chip), not a disabled button.
+      kidsBlock(x, true) + (!pcOf(x.name) ? '<div class="sess-actions">' +
+        (p.projectGroup && p.projectMain ? '<span class="chip main-chip" title="Messages to the project reach this session first">Project main</span>' : "") +
+        '<button type="button" class="ghost sm" data-coordinator="' + esc(x.name) + '" data-unavailable="' + (p.unavailable ? "false" : "true") + '">' + (p.unavailable ? "Make available" : "Hand jobs to project") + "</button>" +
+        (p.projectGroup && !p.projectMain ? '<button type="button" class="ghost sm" data-project-main="' + esc(x.name) + '">Make project main</button>' : "") + "</div>" : "")
     : '<div class="head" style="display:flex;gap:12px;align-items:center">' + av("other") + '<div><div style="font-weight:650">' + esc(x.name) + '</div><div class="small muted">' +
       (x.name === "earlier runs" ? "Runs from before sessions were recorded, or from sessions in other folders." : "This session has ended. Its subagents are kept for reference.") + "</div></div></div>";
   $("sCount").innerHTML = x.groups.length ? countsLine(countGroups(x.groups)) : "";
