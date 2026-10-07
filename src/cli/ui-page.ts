@@ -1859,7 +1859,8 @@ async function loadUsage(refresh) {
     if (!r.ok) throw new Error("HTTP " + r.status);
     const u = await r.json();
     $("ovUsage").innerHTML = u.reports.map(usageCard).join("");
-    $("usageAt").textContent = "as of " + new Date(u.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    const at = u.at == null ? NaN : new Date(u.at).getTime();
+    $("usageAt").textContent = Number.isFinite(at) ? "as of " + new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "";
   } catch (err) {
     $("ovUsage").innerHTML = '<div class="panel empty small muted">Could not read usage: ' + esc(err.message) + "</div>";
   } finally {
