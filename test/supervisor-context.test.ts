@@ -120,3 +120,17 @@ it("warns the supervisor when aggregate jobs exceed the measured broker load", a
   expect(warning).toContain("Broker load warning: 51 jobs are connected");
   expect(warning).toContain("load check covered 50");
 });
+
+it("delivers a final result ahead of more than500 retained job status notes", async () => {
+  const store = new MessageStore(env.db, nullLogger);
+  try {
+    for (let i = 0; i <= 600; i++) store.insert({ id: randomUUID(), recipient: "supervisor", to: "supervisor",
+      from: { id: `job:${i}`, name: `opencode-job-${i}`, agent: "opencode" }, replyTo: null, hop: 0,
+      conversationId: i < 600 ? `job-${i}:note` : "job-600", body: i < 600 ? `STATUS_${i}` : "FINAL_AFTER_NOTES", createdAt: Date.now() + i, readAt: null });
+  } finally { store.close(); }
+  const sup = await connect("claude", "supervisor");
+  const stopped = await call(sup, "hook_event", { event: "Stop" });
+  expect(stopped).toContain("FINAL_AFTER_NOTES");
+  expect(stopped).not.toContain("STATUS_");
+  expect(await call(sup, "inbox", { limit: 100, mark_read: false })).toContain("STATUS_0");
+});
