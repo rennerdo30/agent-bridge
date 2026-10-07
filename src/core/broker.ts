@@ -188,7 +188,7 @@ export class Broker {
         const message = { ...m, to: recipient, recipient, conversationId: this.jobConversation(job, recipient, m.conversationId) };
         if (this.store.insertJobDelivery(message)) {
           const target = this.connByName(recipient);
-          if (target) this.emit(target, "message", message);
+          if (target && !target.peer?.unavailable) this.emit(target, "message", message);
         }
         return { saved: true };
       },
@@ -590,7 +590,6 @@ export class Broker {
   }
 
   routePendingJobMail(): void {
-    const live = [...this.conns].flatMap((c) => c.peer ? [c.peer] : []);
     for (const job of this.storedJobs()) {
       if (job.remote || !primaryFor(job)) continue;
       const recipient = this.jobRecipient(job), target = this.connByName(recipient);
@@ -602,10 +601,10 @@ export class Broker {
           const consumed = this.jobsPath && [...names].some((name) => typeof name === "string" &&
             new ReadJournal(dirname(this.jobsPath!)).read(`name:${name}`).includes(message.id));
           if (consumed) this.store.markRead(recipient, [message.id], this.now());
-          else if (target) this.emit(target, "message", message);
+            else if (target && !target.peer?.unavailable) this.emit(target, "message", message);
         }
       }
-      if (!target) continue;
+      if (!target || target.peer?.unavailable) continue;
       for (const from of this.store.pendingJobRecipients(String(job.id))) {
         if (this.jobsPath) this.store.markRead(from, new ReadJournal(dirname(this.jobsPath)).read(`name:${from}`), this.now());
         const moved = this.store.handoffMail(from, recipient, String(job.id), this.now(), recipient !== job.parentJob && recipient !== primaryFor(job));
@@ -933,6 +932,7 @@ export class Broker {
       if (peer.jobAgent || typeof args.unavailable !== "boolean") throw new BridgeError("bad_request", "Only masters can change availability.");
       peer.unavailable = args.unavailable;
       this.routePendingJobMail();
+      if (!peer.unavailable) this.replayMail(conn, peer);
     }
     if (peer.jobOwner) {
       if (typeof args.jobParent === "string") peer.jobParent = args.jobParent;
@@ -1164,6 +1164,12 @@ export class Broker {
     const { live, queued } = to === BROADCAST && remoteTargets.length
       ? { live: [...this.conns].filter((c) => c.peer && c.peer.id !== sender.id && !c.peer.jobAgent), queued: [] }
       : this.resolveTargets(to, sender);
+    // With no available master, retain job reports under the primary without waking it.
+    if (own && to === this.jobRecipient(own)) {
+      for (let i = live.length - 1; i >= 0; i--) {
+        if (live[i]!.peer?.unavailable) queued.push(live.splice(i, 1)[0]!.peer!.name);
+      }
+    }
     if (conversationId.startsWith(SIBLING_CONVERSATION_PREFIX) &&
         (queued.some((name) => !sender.jobAgent || !this.storedSiblings(sender).some((s) => s.name === name)) ||
           live.some((c) => c.peer!.jobAgent && (!sender.jobAgent || !sender.jobOwner || (!this.sameJobFamily(sender, c.peer!) && !this.sharedJobs(sender, c.peer!) && !sender.jobSendTo?.includes(c.peer!.name)))))) {
@@ -1207,7 +1213,8 @@ export class Broker {
   private unreadMail(recipient: string, limit: number): BridgeMessage[] {
     const messages = this.store.unread(recipient, limit);
     if (!this.jobsPath) return messages;
-    const finished = new Set(this.storedJobs().filter((j) => j.status && j.status !== "running").map((j) => `job:${j.id}`));
+    const finished = new Set(this.storedJobs().filter((j) => j.status && j.status !== "running" &&
+      (!primaryFor(j) || (!j.projectRoot && !j.deliveryHistory && !j.ownershipHistory && !this.groups.jobRoot(j, this.localPeers())))).map((j) => `job:${j.id}`));
     // Preserve the established retirement of old job status notes. Observer copies and quiet
     // acknowledgements remain available on demand even after the originating job finishes.
     const obsolete = messages.filter((m) => !isQuietMessage(m) && m.conversationId.endsWith(SIBLING_NOTE_SUFFIX) && finished.has(m.from.id));

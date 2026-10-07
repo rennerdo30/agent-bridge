@@ -235,7 +235,12 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
   const cwd = process.env.CLAUDE_PROJECT_DIR || process.cwd();
   // Codex starts plugin MCP servers inside the plugin folder; the project dir arrives later via hooks/_meta.
   const cwdKnown = Boolean(process.env.CLAUDE_PROJECT_DIR) || !isInside(cwd, PLUGIN_ROOT);
-  const cfg = loadConfig(home, agent, log, process.env, cwdKnown ? canonicalProjectRoot(cwd) ?? undefined : undefined);
+  let configCwd: string | undefined, configRoot: string | undefined;
+  const projectConfigRoot = (dir: string): string | undefined => {
+    if (dir !== configCwd) { configCwd = dir; configRoot = canonicalProjectRoot(dir) ?? undefined; }
+    return configRoot;
+  };
+  const cfg = loadConfig(home, agent, log, process.env, cwdKnown ? projectConfigRoot(cwd) : undefined);
   const delegated = currentDelegateDepth() > 0;
   log.info("starting MCP server", { agent, cwd, cwdKnown, delegated, version: APP_VERSION, node: process.version });
 
@@ -286,27 +291,17 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
       if (limitChanged) jobs.setLimit(next.maxJobs);
       void node.setWakePolicy(agent === "claude" && next.wakeOnDirect, (agent === "claude" && Boolean(ctx.rewakeAvailable || ctx.channelActive())) || agent === "opencode" || (agent === "codex" && Boolean(node.currentSessionId)), next.maxHops).catch(() => {});
     };
-    let configCwd = cwdSettled ? node.cwd : "";
-    let configRoot = configCwd ? canonicalProjectRoot(configCwd) ?? "" : "";
-    const watchedProject = () => {
-      const current = cwdSettled ? node.cwd : "";
-      if (current !== configCwd) {
-        configCwd = current;
-        configRoot = current ? canonicalProjectRoot(current) ?? "" : "";
-      }
-      return configRoot;
-    };
-    watchConfig(home, agent, log, applyConfig, watchedProject);
+    watchConfig(home, agent, log, applyConfig, () => cwdSettled ? projectConfigRoot(node.cwd) ?? "" : "");
     ctx.activity = (s) => node.setActivity(s);
     // Learn the project folder once, when it was unknown at start (Codex starts us in the plugin folder).
     // Later hook cwds follow the agent's `cd`s; renaming then would strand replies sent to the old name.
     ctx.learnCwd = async (projectDir) => {
       if (cwdSettled || projectDir === node.cwd) return;
       cwdSettled = true;
-      Object.assign(cfg,loadConfig(home,agent,log,process.env,canonicalProjectRoot(projectDir) ?? undefined));
+      Object.assign(cfg,loadConfig(home,agent,log,process.env,projectConfigRoot(projectDir)));
       const name = cfg.name ? undefined : defaultPeerName(agent, projectDir);
       await node.relocate(projectDir, name).catch((err) => log.warn("relocate failed", { err: (err as Error).message }));
-      applyConfig(loadConfig(home, agent, log, process.env, canonicalProjectRoot(node.cwd) ?? undefined));
+      applyConfig(loadConfig(home, agent, log, process.env, projectConfigRoot(node.cwd)));
     };
   }
   if (agent === "codex" && node) {

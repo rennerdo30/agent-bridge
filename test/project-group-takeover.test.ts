@@ -11,6 +11,10 @@ import { listPendingApprovals } from "../src/core/relay.js";
 import { pidAlive, killPid } from "../src/core/delegate.js";
 
 const SERVER = join(import.meta.dirname, "..", "plugins", "claude", "dist", "server.mjs");
+function linkReady(path: string): boolean {
+  try { return Boolean(JSON.parse(readFileSync(path, "utf8")).AGENT_BRIDGE_PARENT_URL); }
+  catch { return false; }
+}
 let env: TestEnv, bin: string;
 const transports: StdioClientTransport[] = [];
 const clients: Client[] = [], ids: string[] = [], releases: string[] = [];
@@ -22,7 +26,7 @@ import {existsSync,writeFileSync,appendFileSync} from 'node:fs';
 import {createInterface} from 'node:readline';
 appendFileSync(${JSON.stringify(join(env.home, "fixture-pids"))}, String(process.pid)+'\\n');
 if(process.argv.includes('queue')){appendFileSync(${JSON.stringify(join(env.home, "wake-calls"))}, 'wake');process.exit(0);}
-let release,approved=false,asked=false,interval;
+let release,approved=false,asked=false,interval,reading=false,finished=false;
 const send=value=>console.log(JSON.stringify(value));
 createInterface({input:process.stdin}).on('line',line=>{
  const m=JSON.parse(line);
@@ -31,20 +35,30 @@ createInterface({input:process.stdin}).on('line',line=>{
  let result={};
  if(m.method==='thread/start'||m.method==='thread/resume')result={thread:{id:'fixture-'+process.pid}};
  if(m.method==='turn/start')result={turn:{id:'turn-1'}};
- if(m.method==='turn/steer')result={turnId:'turn-1'};
+ if(m.method==='turn/steer'){result={turnId:'turn-1'};if(release)writeFileSync(release+'.instruction',(m.params.input||[]).map(x=>x.text||'').join(' '));}
  send({id:m.id,result});
  if(m.method!=='turn/start')return;
  const prompt=(m.params.input||[]).map(x=>x.text||'').join(' ');
  release=/release=(\\S+)/.exec(prompt)?.[1];
  const link=/link=(\\S+)/.exec(prompt)?.[1];
  if(link)writeFileSync(link,JSON.stringify(Object.fromEntries(Object.entries(process.env).filter(([k])=>k.startsWith('AGENT_BRIDGE_PARENT_')))));
- interval=setInterval(()=>{
+ interval=setInterval(async()=>{
+  if(finished)return;
+  if(prompt.includes('instruction=yes')&&!reading){
+   reading=true;
+   try{
+    const response=await fetch(process.env.AGENT_BRIDGE_PARENT_URL+'/inbox',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+process.env.AGENT_BRIDGE_PARENT_TOKEN},body:'{}'});
+    const inbox=await response.json();
+    if(inbox.messages?.length)writeFileSync(release+'.instruction',inbox.messages.map(x=>x.body).join(' '));
+   }finally{reading=false;}
+  }
+  if(finished)return;
   if(prompt.includes('approve=yes')&&!approved){
    if(!asked&&existsSync(release+'.approve')){asked=true;send({id:999,method:'item/commandExecution/requestApproval',params:{command:'Takeover approval request',reason:'Fixture approval'}});}
    return;
   }
   if(release&&!existsSync(release))return;
-  clearInterval(interval);
+  finished=true;clearInterval(interval);
   send({method:'item/completed',params:{turnId:'turn-1',item:{type:'agentMessage',text:'Takeover result '+release}}});
   send({method:'turn/completed',params:{turn:{id:'turn-1',status:'completed'}}});
  },20);
@@ -92,7 +106,7 @@ it("routes a blocking ask to an available group master without returning its res
   const source = await session("claude-master", "claude"), target = await session("codex-master", "codex");
   const release = join(env.home, "blocking-release"), link = release + ".link"; releases.push(release);
   const pending = call(source, "ask_codex", { prompt: `release=${release} link=${link} blocking work`, title: "Limited caller work" });
-  await until(() => existsSync(link), 10_000);
+  await until(() => linkReady(link), 10_000);
   expect((await call(source, "coordinator_availability", { unavailable: true })).error).toBeFalsy();
   const child = parentFromEnv(JSON.parse(readFileSync(link, "utf8")))!;
   await child.send("Blocking fallback note");
@@ -116,7 +130,7 @@ it.each(["closed", "unavailable", "opencode"])("ten jobs survive a %s primary an
   const source = await session(primaryName, primaryAgent), target = await session("codex-master", "codex");
   const starts = await Promise.allSettled(Array.from({ length: 10 }, async (_, index) => {
     const release = join(env.home, `release-${index}`), link = `${release}.link`; releases.push(release);
-    const started = await call(source, "spawn_codex", { prompt: `release=${release} link=${link} ${index === 2 ? "approve=yes" : ""} complete item ${index}`, title: `Takeover item ${index}` });
+    const started = await call(source, "spawn_codex", { prompt: `release=${release} link=${link} ${index === 2 ? "approve=yes" : ""} ${index === 1 ? "instruction=yes" : ""} complete item ${index}`, title: `Takeover item ${index}` });
     expect(started.error, started.text).toBeFalsy();
     const name = /(?:codex|claude)-job-[a-f0-9]+/.exec(started.text)![0], id = name.split("-").at(-1)!; ids.push(id);
     return { name, id, release, link };
@@ -124,7 +138,7 @@ it.each(["closed", "unavailable", "opencode"])("ten jobs survive a %s primary an
   const failed = starts.find((result) => result.status === "rejected");
   if (failed?.status === "rejected") throw failed.reason;
   const jobs = starts.map((result) => (result as PromiseFulfilledResult<{ name: string; id: string; release: string; link: string }>).value);
-  await until(() => jobs.every((j) => existsSync(j.link) && readRunnerState(env.home, j.id)?.sessionId && readRunnerState(env.home, j.id)?.live), 18_000);
+  await until(() => jobs.every((j) => linkReady(j.link) && readRunnerState(env.home, j.id)?.sessionId && readRunnerState(env.home, j.id)?.live), 18_000);
   const children = jobs.map((j) => parentFromEnv(JSON.parse(readFileSync(j.link, "utf8")))!);
   // Leave one result and note pending in the starter's inbox before it becomes unavailable.
   await children[0]!.send("Pending before takeover");
@@ -137,11 +151,14 @@ it.each(["closed", "unavailable", "opencode"])("ten jobs survive a %s primary an
   expect(jobs.every((j) => pidAlive(readRunnerState(env.home, j.id)!.pid))).toBe(true);
   expect((await call(target, "peers")).text).toContain(jobs[9]!.name);
   expect((await call(target, "message_subagent", { job: jobs[1]!.name, message: "Continue under the project master", title: "Inherited project work" })).error).toBeFalsy();
+  await until(() => existsSync(jobs[1]!.release + ".instruction") && readFileSync(jobs[1]!.release + ".instruction", "utf8").includes("Continue under the project master"), 5_000);
+  expect(readFileSync(jobs[1]!.release + ".instruction", "utf8")).toContain("Continue under the project master");
   await Promise.all(children.map((child, i) => child.send(`After takeover note ${i}`)));
   writeFileSync(jobs[2]!.release + ".approve", "");
   await until(() => listPendingApprovals(env.home).some((a) => a.job === jobs[2]!.name), 5_000);
-  expect((await call(target, "message_subagent", { job: jobs[2]!.name, message: "allow" })).error).toBeFalsy();
-  await until(() => existsSync(jobs[2]!.release + ".approved"), 5_000);
+  const approval = listPendingApprovals(env.home).find((a) => a.job === jobs[2]!.name)!;
+  expect((await call(target, "decide", { approval_id: approval.id, decision: "allow" })).error).toBeFalsy();
+  await until(() => existsSync(jobs[2]!.release + ".approved") && readFileSync(jobs[2]!.release + ".approved", "utf8") === "true", 5_000);
   expect(readFileSync(jobs[2]!.release + ".approved", "utf8")).toBe("true");
   for (const job of jobs) writeFileSync(job.release, "");
   await until(() => jobs.every((j) => readRunnerState(env.home, j.id)?.status === "done"), 10_000);

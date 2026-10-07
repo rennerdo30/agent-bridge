@@ -39,19 +39,21 @@ export function projectKey(root: string): string {
 export function projectGroupsEnabled(root: string | null, home?: string, agent?: string): boolean {
   if (!root) return false;
   try {
+    const records: Record<string, unknown>[] = [];
     for (const path of [home && join(home, "config.json"), join(root, ".agent-bridge", "config.json")]) {
-      if (!path || !existsSync(path)) continue;
+      if (!path || !existsSync(path)) { records.push({}); continue; }
       const value: unknown = JSON.parse(readFileSync(path, "utf8"));
       if (!value || typeof value !== "object" || Array.isArray(value)) return false;
-      const enabled = (value as Record<string, unknown>).projectGroups;
-      if (enabled !== undefined && enabled !== true) return false;
-      const section = agent ? (value as Record<string, unknown>)[agent] : undefined;
-      if (section && typeof section === "object" && !Array.isArray(section)) {
-        const local = (section as Record<string, unknown>).projectGroups;
-        if (local !== undefined && local !== true) return false;
-      }
+      records.push(value as Record<string, unknown>);
     }
-    return true;
+    const section = (value: Record<string, unknown>): Record<string, unknown> => {
+      const local = agent ? value[agent] : undefined;
+      return local && typeof local === "object" && !Array.isArray(local) ? local as Record<string, unknown> : {};
+    };
+    const [globalConfig, projectConfig] = records as [Record<string, unknown>, Record<string, unknown>];
+    const enabled = [section(projectConfig).projectGroups, projectConfig.projectGroups,
+      section(globalConfig).projectGroups, globalConfig.projectGroups].find((v) => v !== undefined);
+    return enabled === undefined || enabled === true;
   } catch { return false; }
 }
 
