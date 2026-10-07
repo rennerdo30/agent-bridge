@@ -142,7 +142,7 @@ export class Broker {
         if (parsed.data.switch_project_main && ((parsed.data.jobs !== "all") || !this.projectPeer(source).projectGroup || this.projectPeer(source).projectGroup !== this.projectPeer(target).projectGroup)) {
           throw new BridgeError("unauthorized", "Switching the project main requires all jobs and a target in the same project group.");
         }
-        const receipt = commitHandoff(this.jobsPath, source, target, parsed.data);
+        const receipt = commitHandoff(this.jobsPath, source, target, parsed.data, { canControl: (job) => this.groups.canControl(source, job as unknown as Record<string, unknown>, this.localPeers()) });
         if (parsed.data.switch_project_main) this.switchProjectMain(source, target);
         this.jobsSnapshot = null; this.jobsForDispatch = null;
         this.applyHandoffs();

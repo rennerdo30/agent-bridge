@@ -36,6 +36,16 @@ function registry(project: string) {
 }
 
 describe("local project permission groups", () => {
+  it("lets a secondary become primary after the starter has closed", async () => {
+    await env.node("broker", "other").start();
+    const path = repo(); registry(path);
+    const source = await node("claude-master", path), secondary = await node("codex-master", path);
+    await source.stop();
+    await secondary.handoffSubagents({ to: secondary.name, jobs: ["codex-job-one"] });
+    expect(await secondary.jobAuthority("codex-job-one")).toMatchObject({ owner: secondary.name, projectRoot: canonicalProjectRoot(path) });
+    const outside = await node("claude-outside", env.home);
+    await expect(outside.handoffSubagents({ to: outside.name, jobs: ["codex-job-one"] })).rejects.toThrow("not controlled");
+  });
   it("lets another master message, change and cancel an inline job whose primary is unavailable", async () => {
     const path = repo(), source = await node("claude-master", path), secondary = await node("codex-master", path);
     const original = new JobManager(source, nullLogger, join(env.home, "jobs.json"));

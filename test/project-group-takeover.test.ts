@@ -109,8 +109,8 @@ it("routes a blocking ask to an available group master without returning its res
 });
 
 it.each(["closed", "unavailable", "opencode"])("ten jobs survive a %s primary and the project master receives their work once", async (mode) => {
-  // Keep a broker independent of the closing MCP process so the test isolates coordinator failover.
-  const broker = env.node("broker", "other"); await broker.start();
+  // Closing tests also close the original broker; the surviving MCP master elects a replacement.
+  if (mode !== "closed") await env.node("broker", "other").start();
   const primaryAgent = mode === "opencode" ? "opencode" : "claude";
   const primaryName = `${primaryAgent}-master`;
   const source = await session(primaryName, primaryAgent), target = await session("codex-master", "codex");
@@ -130,6 +130,10 @@ it.each(["closed", "unavailable", "opencode"])("ten jobs survive a %s primary an
   await children[0]!.send("Pending before takeover");
   if (mode === "closed") await source.close();
   else expect((await call(source, "coordinator_availability", { unavailable: true })).error).toBeFalsy();
+  await expect.poll(async () => {
+    try { return (await call(target, "peers")).text.includes(jobs[9]!.name); }
+    catch { return false; } // A pipe request can straddle broker election.
+  }, { timeout: 5000 }).toBe(true);
   expect(jobs.every((j) => pidAlive(readRunnerState(env.home, j.id)!.pid))).toBe(true);
   expect((await call(target, "peers")).text).toContain(jobs[9]!.name);
   expect((await call(target, "message_subagent", { job: jobs[1]!.name, message: "Continue under the project master", title: "Inherited project work" })).error).toBeFalsy();

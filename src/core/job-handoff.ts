@@ -1,4 +1,5 @@
 import { migrateProjectJobs } from "./project-identity.js";
+import { primaryFor } from "./job-ownership.js";
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { z } from "zod";
@@ -27,13 +28,13 @@ export interface HandoffReceipt {
 }
 
 /** One atomic registry write is the commit point. All other effects can be replayed from this journal. */
-export function commitHandoff(path: string, source: PeerInfo, target: PeerInfo, input: HandoffArgs, options: { reason?: "group-failover" | "group-restored" } = {}): HandoffReceipt {
+export function commitHandoff(path: string, source: PeerInfo, target: PeerInfo, input: HandoffArgs, options: { reason?: "group-failover" | "group-restored"; canControl?: (job: Job) => boolean } = {}): HandoffReceipt {
   const args = handoffSchema.parse(input);
   if (source.jobAgent) throw new BridgeError("unauthorized", "Only the current supervisor session can hand off its own jobs.");
   if (target.host || target.name.includes("/") || target.jobAgent || !CODING_AGENTS.includes(target.agent as typeof CODING_AGENTS[number])) {
     throw new BridgeError("bad_request", "The target must be an exact live local Claude Code, Codex or opencode session. Paired-PC handoff is not supported.");
   }
-  if (target.name === source.name && options.reason !== "group-restored") throw new BridgeError("bad_request", "Choose another local supervisor session.");
+  if (target.name === source.name && options.reason !== "group-restored" && !options.canControl) throw new BridgeError("bad_request", "Choose another local supervisor session.");
   const unlock = acquireLock(`${path}.lock`, 0);
   try {
     let previous: unknown = null;
@@ -46,12 +47,13 @@ export function commitHandoff(path: string, source: PeerInfo, target: PeerInfo, 
       if (isRecord(j) && typeof j.id === "string" && typeof j.name === "string") byId.set(j.id, j as unknown as Job & Record<string, unknown>);
     }
     const records = [...byId.values()];
-    const own = records.filter((j) => j.owner === source.name && !j.parentJob);
+    const own = records.filter((j) => !j.parentJob && (j.owner === source.name || options.canControl?.(j)));
     const selected = args.jobs === "all" ? own : args.jobs.map((name) => {
       const job = own.find((j) => j.name === name);
-      if (!job) throw new BridgeError("unauthorized", `Job ${name} is not owned by the current supervisor (use an exact job name).`);
+      if (!job) throw new BridgeError("unauthorized", `Job ${name} is not controlled by this master (use an exact job name).`);
       return job;
     });
+    if (selected.length && selected.every((job) => primaryFor(job) === target.name) && options.reason !== "group-restored") throw new BridgeError("bad_request", "The target is already the primary for these jobs.");
     const moved = new Set(selected.map((j) => j.name));
     for (let changed = true; changed;) {
       changed = false;
