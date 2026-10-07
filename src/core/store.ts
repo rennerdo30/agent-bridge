@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, realpathSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { DatabaseSync, type StatementSync } from "node:sqlite";
 import type { Logger } from "./logger.js";
-import { isQuietMessage, type AgentKind, type BridgeMessage, type PeerInfo } from "./protocol.js";
+import { isQuietMessage, SIBLING_CONVERSATION_PREFIX, type AgentKind, type BridgeMessage, type PeerInfo } from "./protocol.js";
 import { migrateSqlite } from "./sqlite-migrations.js";
 import { archiveDbPath, archiveMessages, openArchive } from "./sqlite-maintenance.js";
 import { storageLease } from "./storage-lock.js";
@@ -301,7 +301,7 @@ export class MessageStore {
     if (from === to) return [];
     this.db.exec("BEGIN IMMEDIATE");
     try {
-      const rows = this.db.prepare("SELECT * FROM messages WHERE recipient=? AND from_id=? AND read_at IS NULL").all(from, `job:${job}`) as unknown as Row[];
+      const rows = this.db.prepare("SELECT * FROM messages WHERE recipient=? AND from_id=? AND read_at IS NULL AND conversation_id NOT LIKE ?").all(from, `job:${job}`, `${SIBLING_CONVERSATION_PREFIX}%`) as unknown as Row[];
       const copied: BridgeMessage[] = [];
       for (const row of rows) {
         const route = this.db.prepare("SELECT recipient, consumed_at FROM job_delivery_routes WHERE id=?").get(row.id);
@@ -321,7 +321,7 @@ export class MessageStore {
   }
 
   pendingJobRecipients(job: string): string[] {
-    return this.db.prepare("SELECT DISTINCT recipient FROM messages WHERE from_id=? AND read_at IS NULL").all(`job:${job}`).map((row) => String(row.recipient));
+    return this.db.prepare("SELECT DISTINCT recipient FROM messages WHERE from_id=? AND read_at IS NULL AND conversation_id NOT LIKE ?").all(`job:${job}`, `${SIBLING_CONVERSATION_PREFIX}%`).map((row) => String(row.recipient));
   }
 
   insertOnce(m: BridgeMessage): boolean {

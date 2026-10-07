@@ -1,6 +1,7 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { randomUUID } from "node:crypto";
+import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { z } from "zod";
@@ -29,7 +30,7 @@ async function connect(agent: string, name: string, extra = {}) {
   const c = new Client({ name: "context-scenario", version: "1" });
   cleanups.push(() => c.close());
   await c.connect(new StdioClientTransport({ command: process.execPath, args: [SERVER, `--agent=${agent}`],
-    env: { ...process.env, AGENT_BRIDGE_HOME: env.home, AGENT_BRIDGE_NAME: name, AGENT_BRIDGE_DELIVERY: "hooks",
+    env: { ...process.env, AGENT_BRIDGE_HOME: env.home, CLAUDE_PROJECT_DIR: env.home, AGENT_BRIDGE_NAME: name, AGENT_BRIDGE_DELIVERY: "hooks",
       AGENT_BRIDGE_WAKE_ON_DIRECT: "off", AGENT_BRIDGE_AUTO_WAKE: "off", AGENT_BRIDGE_DASHBOARD: "off",
       AGENT_BRIDGE_LINGER_SEC: "0", AGENT_BRIDGE_DELEGATE_DEPTH: "0", ...extra } as Record<string, string>, stderr: "ignore" }));
   await call(c, "peers");
@@ -58,10 +59,21 @@ it.each(["claude", "codex", "opencode"])("keeps sibling observer copies out of t
   sup.setNotificationHandler(z.object({ method: z.literal("notifications/agent-bridge/message"), params: z.any() }),
     (n) => { notifications.push(JSON.stringify(n.params)); });
   const a = await runner("a", "codex", "supervisor");
-  const b = await runner("b", "opencode", "supervisor");
+  let b = await runner("b", "opencode", "supervisor");
+  writeFileSync(join(env.home, "jobs.json"), JSON.stringify({ version: 4, jobs: [a, b].map(({ job }) => ({
+    id: job.id, name: job.name, agent: job.agent, status: "running", owner: "supervisor", rootName: "supervisor",
+    rootSession: "supervisor-session", supervisor: "supervisor-session", projectRoot: env.home, workdir: env.home,
+  })) }));
+  await b.node.stop();
   const child = await connect("codex", "child", { ...a.parent.childEnv(), AGENT_BRIDGE_DELEGATE_DEPTH: "1" });
   const sent = await call(child, "send", { to: b.job.name, message: "SIBLING_ONLY_SECRET" });
-  const id = /Message (\S+) sent/.exec(sent)![1]!;
+  const id = /Message (\S+) (?:sent|queued)/.exec(sent)![1]!;
+  // A real registry and an offline sibling force the background supervisor backlog router.
+  const trigger = env.node("route-trigger", "codex"); await trigger.start();
+  for (const event of ["SessionStart", "UserPromptSubmit", "PostToolUse", "Stop"]) {
+    expect(await call(sup, "hook_event", { event, session_id: "supervisor-session" })).not.toContain("SIBLING_ONLY_SECRET");
+  }
+  b = await runner("b", "opencode", "supervisor");
   await until(() => b.node.hasSeen(id));
   // The receiver really gets the message through its delegated MCP hook.
   const recipient = await connect("opencode", "receiver", { ...b.parent.childEnv(), AGENT_BRIDGE_DELEGATE_DEPTH: "1" });
