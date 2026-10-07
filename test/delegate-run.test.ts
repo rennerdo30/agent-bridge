@@ -202,6 +202,8 @@ describe("delegated resource slot ownership", () => {
     rc.cfg.resourceSlots = { unity: 1 };
     const slots = new ResourceSlots(home);
     vi.spyOn(DELEGATION_TARGETS.codex, "run").mockImplementation(async (_cfg, req) => {
+      // Native tools run after the CLI reports its session and releases startup admission.
+      req.onSession?.("saved");
       expect(req.prompt).toContain("shared resource slots are enabled");
       expect(req.extraEnv?.AGENT_BRIDGE_HOME).toBe(home);
       const owner = { id: req.extraEnv![SLOT_OWNER_ENV]!, pid: Number(req.extraEnv![SLOT_PID_ENV]) };

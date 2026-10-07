@@ -1091,7 +1091,9 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
       (a: DelegateArgs): Resume =>
       (message, sessionId, workdir, worktree) =>
         // Saved settings win, including removal of an earlier exact permission override.
-        background((job) => resumeArgs(a, job.name, message, sessionId, workdir, worktree, job.args), a);
+        background((job) => !sessionId
+          ? { ...a, ...job.args, prompt: message, _job: job.name } as DelegateArgs
+          : resumeArgs(a, job.name, message, sessionId, workdir, worktree, job.args), a);
     resumers[target] = resumeFor;
     // An inherited job can use the same agent kind as its new supervisor.
     if (!targets.includes(target)) continue;
@@ -1188,14 +1190,13 @@ ${res.text || t("delegate.empty")}`, res.isError);
         if (a.host && !ctx.runners) throw new BridgeError("bad_request", "Remote jobs require the bundled runner. Update and reload this session.");
         const jobs = ctx.jobs;
         if (!jobs) throw new BridgeError("bad_request", t("err.delegatedSession"));
-        if (!jobs.canStart()) return text(t("jobs.limit", { max: jobs.limit }), true);
         const job = jobs.start(target, a.model ?? defaultModel, a.prompt, background((job) => ({ ...a, _job: job.name }), a), resumeFor(a), keep(a));
         const cwd = a.cwd || ctx.cwd();
         const access = a.access ?? (a.worktree || isBridgeWorktree(cwd, ctx.home) ? "edit" : null);
         // Exact target options (sandbox, permission_mode, auto_approve) say it themselves.
         const exact = a.sandbox !== undefined || a.permission_mode !== undefined || a.auto_approve !== undefined;
         const note = exact ? "" : `\n${access === "edit" ? t("jobs.accessEdit") : access === "ask" ? t("jobs.accessAsk") : t("jobs.accessRead")}`;
-        return text(`${t("jobs.started", { name: job.name })}${note}${derivedTitle ? `\nTitle derived from prompt: "${a.title}".` : ""}`);
+        return text(`${job.waitingForStart ? `Subagent ${job.name} queued for a free slot (maximum ${jobs.limit}).` : t("jobs.started", { name: job.name })}${note}${derivedTitle ? `\nTitle derived from prompt: "${a.title}".` : ""}`);
       }),
     );
   }
