@@ -104,7 +104,7 @@ export interface Job {
   awaitingAnswer?: boolean;
   /** MCP servers the parent allowed for this job (kept across its follow-ups). */
   allowedServers?: Set<string>;
-  /** An approval question the subagent is waiting on; the next message to the job answers it. */
+  /** An approval question the subagent is waiting on; only an explicit decision answers it. */
   pendingApproval?: ((answer: string, by?: string) => boolean | void) | null;
   /** While it runs: delivers a message into the running subagent (see parent-link.ts). */
   live?: { post: (message: string, sibling?: BridgeMessage) => void } | null;
@@ -188,7 +188,7 @@ export function jobReport(job: Pick<Job, "name" | "agent" | "model" | "sessionId
 
 /**
  * Ask the session's agent to approve something a running subagent wants to do; `post` delivers the question
- * as a message from the job. The next message to the job (job.pendingApproval) answers it; none in time is "deny".
+ * as a message from the job. An explicit decision answers it; none in time is "deny".
  */
 const approvalAnswers = new WeakMap<Job, Set<(answer: string, by?: string) => boolean>>();
 
@@ -210,7 +210,7 @@ export function waitForApproval(job: Job, question: string, timeoutMs: number, p
       if (!escalate || escalated || settled) return;
       if (!published) { escalationRequested = true; return; }
       escalated = true;
-      void escalate(`Nested subagent ${job.name} asks its top supervisor for approval: ${question}\n\nAnswer the pending dashboard approval ${approvalId}, or message_subagent(job="${job.name}", message="allow" or "deny").`).catch(() => {
+      void escalate(`Nested subagent ${job.name} asks its top supervisor for approval: ${question}\n\nAnswer the pending dashboard approval ${approvalId}, or decide(approval_id="${approvalId}", decision="allow" or "deny").`).catch(() => {
         escalated = false;
         log.warn("could not escalate nested approval", { job: job.name });
       });
@@ -256,8 +256,8 @@ export function waitForApproval(job: Job, question: string, timeoutMs: number, p
     log.info("subagent asks for approval", { job: job.name });
     post(
       `Subagent ${job.name} asks for approval: ${question}\n\n` +
-        `Decide as its supervisor: answer with message_subagent(job="${job.name}", message="allow") or message="deny" (a reason may follow). ` +
-        (escalate ? 'If the decision needs the owner, answer message="escalate" to forward the same pending request. ' : "") +
+        `Decide as its supervisor: use decide(approval_id="${approvalId}", decision="allow" or "deny", reason=...). ` +
+        (escalate ? `If the decision needs the owner, use decide(approval_id="${approvalId}", decision="escalate") to forward the same pending request. ` : "") +
         `It waits for your answer; no answer within ${Math.round(timeoutMs / 60_000)} minutes counts as deny.`,
     );
     if (askUser) {
@@ -852,7 +852,7 @@ export class JobManager {
    * Send a follow-up to a subagent: queued while it runs, otherwise its session is resumed in the background,
    * as soon as a slot is free.
    */
-  followUp(ref: string, message: string): { outcome: FollowUpOutcome; job?: Job } {
+  followUp(ref: string, message: string): { outcome: FollowUpOutcome; job?: Job; approvalPending?: boolean } {
     const job = this.find(ref);
     if (!job) return { outcome: "unknown" };
     if (job.status === "running" && job.executionOwner && job.executionOwner !== this.node.name && job.owner === this.node.name) {
@@ -870,29 +870,22 @@ export class JobManager {
       return { outcome: "waiting", job };
     }
     if (this.hostedRunning(job)) {
-      // Its runner decides: an answer to its approval question, a live message, or queued for after this turn.
+      // Plain text always remains a live message or a queued follow-up, even during approval.
       const state = this.runners!.state(job);
       const cid = randomUUID();
       (job.forwarded ??= []).push({ cid, body: message });
       this.runners!.send(job, { type: "message", body: message, cid });
-      return { outcome: state?.asking ? "answered" : state?.live ? "delivered" : "queued", job };
-    }
-    if (job.status === "running" && job.pendingApproval) {
-      const answer = job.pendingApproval;
-      answer(message, `session ${this.node.name}`);
-      // Escalation keeps the original wait answerable by its direct parent and the owner.
-      if (job.pendingApproval === answer && !/^\s*escalate\b/i.test(message)) job.pendingApproval = null;
-      return { outcome: "answered", job };
+      return { outcome: state?.live ? "delivered" : "queued", job, approvalPending: Boolean(state?.asking) };
     }
     if (job.status === "running") {
       // Like a native subagent: it sees the message while it works and can answer at once.
       if (job.live) {
         job.awaitingAnswer = true;
-      job.live.post(message);
-        return { outcome: "delivered", job };
+        job.live.post(message);
+        return { outcome: "delivered", job, approvalPending: Boolean(job.pendingApproval) };
       }
       job.queue.push(message);
-      return { outcome: "queued", job };
+      return { outcome: "queued", job, approvalPending: Boolean(job.pendingApproval) };
     }
     if (!job.resume || !job.sessionId) return { outcome: "no-session", job };
     if (!this.canStart()) {
@@ -1071,9 +1064,10 @@ export class JobManager {
       // Its runner stops the subagent and reports; one that does not react in time is killed with everything it started.
       job.forwarded = [];
       const runners = this.runners!;
+      const cancelledHost = job.host, cancelledController = job.controller;
       runners.send(job, { type: "cancel" });
       setTimeout(() => {
-        if (!this.hostedRunning(job)) return;
+        if (!this.hostedRunning(job) || job.host !== cancelledHost || job.controller !== cancelledController) return;
         if (runners.alive(job, runners.state(job))) {
           this.log.warn("job runner did not stop in time; killing it", { job: job.name, pid: job.host?.pid });
           runners.kill(job);
