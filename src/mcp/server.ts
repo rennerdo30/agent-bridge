@@ -536,6 +536,8 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
     async (args: A, extra: ToolExtra): Promise<CallToolResult> => {
       log.debug("tool call", { tool: name, args: args as Record<string, unknown> });
       // Replaced by another server of this session, yet called: this is the one the session uses (see reclaim).
+      if (ctx.node?.wasReplaced) await ctx.node.reclaim().catch((err) => log.warn("could not take the bridge back", { err: (err as Error).message }));
+      await ctx.observeMeta?.(extra._meta);
       try {
         return await fn(args, extra);
       } catch (err) {

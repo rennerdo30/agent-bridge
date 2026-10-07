@@ -103,7 +103,7 @@ describe("delivery and reload recovery", () => {
     expect(recipient.unread()[0]!.id).toBe(final.messages[0]!.id);
     expect((await job.messageReceipt(note.messages[0]!.id))[0]!.readAt).toBeTypeOf("number");
     const ctx: ServerContext = { agent: "claude", cfg: { ...DEFAULT_CONFIG, wakeOnDirect: false }, node: recipient, log: nullLogger, home: env.home, cwd: () => env.home, channelActive: () => false,
-      jobs: { isNote: (m: BridgeMessage) => m.conversationId.endsWith(":note"), find: () => ({ status: "done" }) } as any };
+      jobs: { isNote: (m: BridgeMessage) => m.conversationId.endsWith(":note"), hookJobs: () => [{ name: note.messages[0]!.from.name, status: "done" }] } as any };
     // Also discard a note that was buffered while the job was running, then finished.
     recipient.deliverLocal(note.messages[0]!);
     const out = await buildHookResponse(ctx, { event: "UserPromptSubmit", sessionId: null, stopHookActive: false });

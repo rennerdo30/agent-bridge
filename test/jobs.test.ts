@@ -158,7 +158,7 @@ describe("background subagents", () => {
     expect(me.unread()).toHaveLength(0); // no result message for foreground runs
   });
 
-  it("Stop waits for a running subagent and continues with its result", async () => {
+  it("Stop returns before the job finishes and delivers its later result once", async () => {
     const ctx: ServerContext = {
       agent: "claude",
       cfg: { ...DEFAULT_CONFIG, lingerSec: 0 },
@@ -169,7 +169,14 @@ describe("background subagents", () => {
       channelActive: () => false,
       jobs,
     };
-    jobs.start("codex", null, "slow", () => new Promise((r) => setTimeout(() => r(result("slow result")), 300)));
+    let complete!: (value: ReturnType<typeof result>) => void;
+    jobs.start("codex", null, "slow", () => new Promise((resolve) => { complete = resolve; }));
+    const started = Date.now();
+    expect(await buildHookResponse(ctx, { event: "Stop", sessionId: null, stopHookActive: false })).toEqual({});
+    expect(Date.now() - started).toBeLessThan(1500);
+    expect(jobs.runningCount()).toBe(1);
+    complete(result("slow result"));
+    await until(() => me.unread().some(m => m.body.includes("slow result")));
     const out = (await buildHookResponse(ctx, { event: "Stop", sessionId: null, stopHookActive: false })) as any;
     expect(out.decision).toBe("block");
     expect(out.reason).toContain("slow result");
