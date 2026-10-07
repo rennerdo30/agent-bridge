@@ -7,7 +7,7 @@ var __export = (target, all) => {
 
 // src/core/history-worker.ts
 import { parentPort, workerData } from "node:worker_threads";
-import { DatabaseSync as DatabaseSync11 } from "node:sqlite";
+import { DatabaseSync as DatabaseSync12 } from "node:sqlite";
 
 // src/core/project-store.ts
 import { createHash as createHash2 } from "node:crypto";
@@ -142,6 +142,28 @@ import { basename, dirname as dirname3, join as join5 } from "node:path";
 import { randomUUID } from "node:crypto";
 import { closeSync, existsSync, mkdirSync, openSync, readdirSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
+var LOCK_FILE = ".maintenance-lock";
+var USERS_DIR = ".storage-users";
+var SCOPED_STORE_DIRS = /* @__PURE__ */ new Set(["runs", "jobs", "job-outcomes", "worktree-state", "permission-repairs"]);
+var NESTED_STORE_DIRS = /* @__PURE__ */ new Set(["local-result-receipts"]);
+function storageLease(home) {
+  const lock = join(home, LOCK_FILE);
+  if (existsSync(lock)) throw new Error("storage maintenance is in progress");
+  const dir = join(home, USERS_DIR);
+  mkdirSync(dir, { recursive: true, mode: 448 });
+  const path = join(dir, `${process.pid}-${randomUUID()}`);
+  closeSync(openSync(path, "wx", 384));
+  if (existsSync(lock)) {
+    rmSync(path);
+    throw new Error("storage maintenance is in progress");
+  }
+  return () => rmSync(path, { force: true });
+}
+function storeHome(path) {
+  const dir = dirname(path);
+  if (NESTED_STORE_DIRS.has(dirname(dir).split(/[\\/]/).at(-1) ?? "")) return dirname(dirname(dir));
+  return SCOPED_STORE_DIRS.has(dir.split(/[\\/]/).at(-1) ?? "") ? dirname(dir) : dir;
+}
 
 // src/core/store-compatibility.ts
 import { existsSync as existsSync3, readdirSync as readdirSync3, readFileSync as readFileSync2 } from "node:fs";
@@ -156,14 +178,50 @@ import { dirname as dirname2, join as join3, resolve } from "node:path";
 import { homedir } from "node:os";
 import { join as join2 } from "node:path";
 var APP_NAME = "agent-bridge";
+var ENV = {
+  internal: "AGENT_BRIDGE_INTERNAL",
+  home: "AGENT_BRIDGE_HOME",
+  pipe: "AGENT_BRIDGE_PIPE",
+  name: "AGENT_BRIDGE_NAME",
+  agent: "AGENT_BRIDGE_AGENT",
+  logLevel: "AGENT_BRIDGE_LOG_LEVEL",
+  logConsole: "AGENT_BRIDGE_LOG_CONSOLE",
+  autoWake: "AGENT_BRIDGE_AUTO_WAKE",
+  wakeOnDirect: "AGENT_BRIDGE_WAKE_ON_DIRECT",
+  maxHops: "AGENT_BRIDGE_MAX_HOPS",
+  maxJobs: "AGENT_BRIDGE_MAX_JOBS",
+  maxDelegateDepth: "AGENT_BRIDGE_MAX_DELEGATE_DEPTH",
+  autoApproveTools: "AGENT_BRIDGE_AUTO_APPROVE_TOOLS",
+  lingerSec: "AGENT_BRIDGE_LINGER_SEC",
+  delivery: "AGENT_BRIDGE_DELIVERY",
+  claudeBin: "AGENT_BRIDGE_CLAUDE_BIN",
+  codexBin: "AGENT_BRIDGE_CODEX_BIN",
+  opencodeBin: "AGENT_BRIDGE_OPENCODE_BIN",
+  dashboard: "AGENT_BRIDGE_DASHBOARD",
+  /** "0": background subagents run inside the session's MCP server instead of detached job runners (they then end with it). */
+  jobRunner: "AGENT_BRIDGE_JOB_RUNNER"
+};
+var DEFAULT_MAX_DELEGATE_DEPTH = 2;
+var DEFAULT_CODEX_SUBAGENTS = 6;
+var MAX_CODEX_SUBAGENTS = 32;
+var MAX_DELEGATE_DEPTH_LIMIT = 3;
 var DEFAULT_HOME = join2(homedir(), `.${APP_NAME}`);
+var CONFIG_FILE_NAME = "config.json";
 var LOG_FILE_NAME = `${APP_NAME}.log`;
 var MAX_FRAME_BYTES = 4 * 1024 * 1024;
 var MAX_BODY_CHARS = 2e5;
 var MESSAGE_TTL_MS = 7 * 24 * 60 * 60 * 1e3;
 var PURGE_INTERVAL_MS = 60 * 60 * 1e3;
 var QUEUED_MAIL_MAX_AGE_MS = 24 * 60 * 60 * 1e3;
+var DEFAULT_MAX_HOPS = 6;
 var MAX_JOB_TIMEOUT_SEC = 24 * 60 * 60;
+var DEFAULT_CLAUDE_BIN = "claude";
+var DEFAULT_CODEX_BIN = "codex";
+var DEFAULT_OPENCODE_BIN = "opencode";
+var DEFAULT_DASHBOARD_PORT = 4777;
+var DEFAULT_LINGER_SEC = 300;
+var DEFAULT_MAX_JOBS = 8;
+var MAX_JOBS_LIMIT = 50;
 
 // src/core/plugin-runtime.ts
 function assertUnlinked(path) {
@@ -206,6 +264,11 @@ function assertStoreUpgrade(home, format, current, target) {
 // src/core/json-store.ts
 var JSON_STORE_VERSION = 4;
 var KEEP_STORE_BACKUPS = 3;
+function warn(log, message, data) {
+  if (log) log.warn(message, data);
+  else process.stderr.write(`${message}: ${JSON.stringify(data)}
+`);
+}
 function isRecord(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
@@ -231,6 +294,31 @@ function retainBackups(path) {
       if (["EBUSY", "EPERM", "EACCES", "ENOENT"].includes(code ?? "")) continue;
       throw error62;
     }
+  }
+}
+function readJsonStore(path, log, valid = isRecord) {
+  let raw;
+  try {
+    raw = readFileSync3(path, "utf8");
+  } catch (err) {
+    if (err.code === "ENOENT") return null;
+    throw err;
+  }
+  try {
+    const value = JSON.parse(raw);
+    if (isRecord(value) && typeof value.version === "number" && value.version > JSON_STORE_VERSION) return value;
+    if (!valid(value)) throw new Error("invalid store structure");
+    return value;
+  } catch (err) {
+    const preserved = `${path}.corrupt-${Date.now()}-${randomUUID3()}`;
+    const release = storageLease(storeHome(path));
+    try {
+      renameSync2(path, preserved);
+    } finally {
+      release();
+    }
+    warn(log, "preserved corrupt JSON store", { path, preserved, err: err.message });
+    return null;
   }
 }
 
@@ -264,6 +352,27 @@ function configureSqlite(db2, busyTimeoutMs = SQLITE_BUSY_TIMEOUT_MS) {
 
 // src/core/sqlite-maintenance.ts
 var ARCHIVE_DB_NAME = "archive.db";
+function checkDatabase(db2) {
+  const integrity = db2.prepare("PRAGMA integrity_check").all().map((r) => String(r.integrity_check));
+  const foreign = db2.prepare("PRAGMA foreign_key_check").all();
+  return [...integrity.filter((s) => s !== "ok"), ...foreign.map((r) => `foreign key: ${JSON.stringify(r)}`)];
+}
+function snapshotDatabase(source2, target) {
+  const db2 = new DatabaseSync2(source2, { readOnly: true });
+  try {
+    db2.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
+    db2.prepare("VACUUM INTO ?").run(target);
+  } finally {
+    db2.close();
+  }
+  const copy = new DatabaseSync2(target, { readOnly: true, timeout: SQLITE_BUSY_TIMEOUT_MS });
+  try {
+    const findings = checkDatabase(copy);
+    if (findings.length) throw new Error(`invalid database backup: ${findings.join(", ")}`);
+  } finally {
+    copy.close();
+  }
+}
 
 // src/core/migration-lock.ts
 import { randomUUID as randomUUID4 } from "node:crypto";
@@ -383,21 +492,21 @@ function migrateLocked(db2, file2, existed, target, migrations, log) {
         const tables = original.prepare("PRAGMA table_list").all().filter((r) => r.schema === "main" && r.type === "table" && !String(r.name).startsWith("sqlite_"));
         for (const row of tables) {
           const name = String(row.name);
-          const quote = (s) => `"${s.replaceAll('"', '""')}"`;
-          const quoted = quote(name);
+          const quote2 = (s) => `"${s.replaceAll('"', '""')}"`;
+          const quoted = quote2(name);
           const columns = original.prepare(`PRAGMA table_xinfo(${quoted})`).all().filter((r) => r.hidden === 0).map((r) => String(r.name));
           let rowidAlias = "__bridge_backup_rowid";
           while (columns.includes(rowidAlias)) rowidAlias += "_";
           const rowid = ["rowid", "_rowid_", "oid"].find((s) => !columns.includes(s));
           const hasRowid = row.wr === 0 && rowid !== void 0;
-          const select = original.prepare(`SELECT ${hasRowid ? `${quote(rowid)} AS ${quote(rowidAlias)}, ` : ""}${columns.map(quote).join(", ")} FROM ${quoted}`);
+          const select = original.prepare(`SELECT ${hasRowid ? `${quote2(rowid)} AS ${quote2(rowidAlias)}, ` : ""}${columns.map(quote2).join(", ")} FROM ${quoted}`);
           select.setReadBigInts(true);
           const rows = select.all();
           db2.exec(`DELETE FROM ${quoted}`);
           for (const data of rows) {
             const insertColumns = hasRowid ? [rowid, ...columns] : columns;
             const values = hasRowid ? [data[rowidAlias], ...columns.map((s) => data[s])] : columns.map((s) => data[s]);
-            db2.prepare(`INSERT INTO ${quoted} (${insertColumns.map(quote).join(", ")}) VALUES (${values.map(() => "?").join(", ")})`).run(...values);
+            db2.prepare(`INSERT INTO ${quoted} (${insertColumns.map(quote2).join(", ")}) VALUES (${values.map(() => "?").join(", ")})`).run(...values);
           }
         }
         db2.exec(`PRAGMA user_version = ${Number(original.prepare("PRAGMA user_version").get().user_version)}`);
@@ -708,11 +817,178 @@ function syncProjectMirror(main, project, home) {
   }
 }
 
+// src/core/history-store.ts
+import { createHash as createHash3, randomUUID as randomUUID5 } from "node:crypto";
+import { existsSync as existsSync9, mkdirSync as mkdirSync7, readFileSync as readFileSync7, rmSync as rmSync4 } from "node:fs";
+import { basename as basename3, dirname as dirname8, join as join11 } from "node:path";
+import { DatabaseSync as DatabaseSync5 } from "node:sqlite";
+import { setTimeout as yieldBatch } from "node:timers/promises";
+var HISTORY_DB_NAME = "history.db";
+var HISTORY_STORE_VERSION = 1;
+var HISTORY_COPY_ROWS = 32;
+var HISTORY_BATCH_MS = 50;
+var HISTORY_COPY_BYTES = 512 * 1024;
+var HISTORY_TABLES = ["history_documents", "history_cursors", "history_files", "history_tags", "history_sessions", "history_pending", "conversations", "conversation_sources", "conversation_records", "conversation_parts", "conversation_projects", "conversation_memberships", "conversation_bindings", "conversation_envelopes"];
+var quote = (s) => `"${s.replaceAll('"', '""')}"`;
+function historyDbPath(bridge) {
+  return bridge === ":memory:" ? bridge : join11(dirname8(bridge), HISTORY_DB_NAME);
+}
+function historyReady(db2) {
+  if (Number(db2.prepare("PRAGMA user_version").get().user_version) !== HISTORY_STORE_VERSION) return false;
+  return !!db2.prepare("SELECT name FROM sqlite_master WHERE name='history_migration'").get() && db2.prepare("SELECT status FROM history_migration WHERE version=?").get(HISTORY_STORE_VERSION)?.status === "verified";
+}
+function openHistoryStore(file2) {
+  const db2 = new DatabaseSync5(file2, { timeout: 3e3 });
+  try {
+    db2.exec("PRAGMA busy_timeout=3000");
+    const version2 = Number(db2.prepare("PRAGMA user_version").get().user_version);
+    if (version2 > HISTORY_STORE_VERSION) throw new Error(`unsupported history store version: ${version2}`);
+    configureSqlite(db2);
+    if (version2 === HISTORY_STORE_VERSION) return db2;
+    const release = migrationLock(file2);
+    try {
+      if (Number(db2.prepare("PRAGMA user_version").get().user_version) === HISTORY_STORE_VERSION) return db2;
+      db2.exec("BEGIN IMMEDIATE");
+      try {
+        db2.exec(historySchema().replace(/CREATE TRIGGER history_message_(?:insert|claim)[\s\S]*?END;/g, "").replace(/PRAGMA user_version = 4;/, ""));
+        db2.exec(CONVERSATION_SCHEMA.slice(0, CONVERSATION_SCHEMA.indexOf("INSERT OR IGNORE INTO conversation_envelopes")));
+        db2.exec(`CREATE TABLE history_migration(version INTEGER PRIMARY KEY, snapshot TEXT NOT NULL, status TEXT NOT NULL, manifest TEXT);
+          CREATE TABLE history_legacy_tail(source_id INTEGER PRIMARY KEY, target_id INTEGER NOT NULL);
+          PRAGMA user_version=${HISTORY_STORE_VERSION}; COMMIT`);
+      } catch (err) {
+        db2.exec("ROLLBACK");
+        throw err;
+      }
+    } finally {
+      release();
+    }
+    return db2;
+  } catch (err) {
+    db2.close();
+    throw err;
+  }
+}
+function digestRow(hash3, row) {
+  for (const [key, value] of Object.entries(row)) {
+    const bytes2 = value instanceof Uint8Array ? Buffer.from(value) : Buffer.from(String(value));
+    hash3.update(`${key.length}:${key}:${value === null ? "null" : value instanceof Uint8Array ? "blob" : typeof value}:${bytes2.length}:`);
+    hash3.update(bytes2);
+  }
+}
+async function migrateHistoryStore(bridge, target, shouldPause = () => false, stopped2 = () => false, onLease) {
+  if (historyReady(target)) return;
+  const release = migrationLock(historyDbPath(bridge));
+  let source2;
+  try {
+    onLease?.(readFileSync7(`${historyDbPath(bridge)}.migration-lock`, "utf8"));
+    if (historyReady(target)) return;
+    let state = target.prepare("SELECT * FROM history_migration WHERE version=?").get(HISTORY_STORE_VERSION);
+    if (!state) {
+      const folder = join11(dirname8(bridge), ".migration-snapshots");
+      mkdirSync7(folder, { recursive: true, mode: 448 });
+      const snapshot = join11(folder, `bridge-history-v1-${randomUUID5()}.db`);
+      snapshotDatabase(bridge, snapshot);
+      target.prepare("INSERT INTO history_migration VALUES(?,?,'copying',NULL)").run(HISTORY_STORE_VERSION, snapshot);
+      state = target.prepare("SELECT * FROM history_migration WHERE version=?").get(HISTORY_STORE_VERSION);
+    }
+    source2 = new DatabaseSync5(String(state.snapshot), { readOnly: true, timeout: 3e3 });
+    const manifest = {};
+    const yieldTurn2 = async () => {
+      await yieldBatch(10);
+      while (shouldPause() && !stopped2()) await yieldBatch(250);
+      if (stopped2()) throw new Error("History migration stopped; snapshot and partial copy preserved");
+    };
+    for (const table of HISTORY_TABLES) {
+      if (!source2.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(table)) continue;
+      const columns = source2.prepare(`PRAGMA table_info(${quote(table)})`).all().map((r) => String(r.name));
+      const names = ["rowid", ...columns].map(quote).join(",");
+      const insert = target.prepare(`INSERT OR IGNORE INTO ${quote(table)}(${names}) VALUES(${["rowid", ...columns].map(() => "?").join(",")})`);
+      const expected = createHash3("sha256"), actual = createHash3("sha256");
+      let after = 0, count = 0;
+      for (; ; ) {
+        await yieldTurn2();
+        const input2 = source2.prepare(`SELECT rowid AS __copy_rowid,* FROM ${quote(table)} WHERE rowid>? ORDER BY rowid LIMIT ?`).iterate(after, HISTORY_COPY_ROWS);
+        let batchRows = 0, bytes2 = 0;
+        const started = Date.now();
+        target.exec("BEGIN IMMEDIATE");
+        try {
+          for (const item of input2) {
+            const row = item;
+            insert.run(row.__copy_rowid, ...columns.map((c) => row[c]));
+            const copied = target.prepare(`SELECT rowid AS __copy_rowid,* FROM ${quote(table)} WHERE rowid=?`).get(row.__copy_rowid);
+            digestRow(expected, row);
+            digestRow(actual, copied);
+            after = Number(row.__copy_rowid);
+            count++;
+            batchRows++;
+            bytes2 += Object.values(row).reduce((n, v) => n + (v instanceof Uint8Array ? v.byteLength : typeof v === "string" ? Buffer.byteLength(v) : 8), 0);
+            if (bytes2 >= HISTORY_COPY_BYTES || Date.now() - started >= HISTORY_BATCH_MS) break;
+          }
+          target.exec("COMMIT");
+        } catch (err) {
+          target.exec("ROLLBACK");
+          throw err;
+        }
+        if (!batchRows) break;
+      }
+      const sha256 = expected.digest("hex");
+      const sourceCount = Number(source2.prepare(`SELECT count(*) n FROM ${quote(table)}`).get().n);
+      const targetCount = Number(target.prepare(`SELECT count(*) n FROM ${quote(table)}`).get().n);
+      if (count !== sourceCount || targetCount !== sourceCount || sha256 !== actual.digest("hex")) throw new Error(`History migration verification failed: ${table}; legacy database and backup preserved`);
+      manifest[table] = { rows: count, sha256 };
+    }
+    if (target.prepare("SELECT name FROM sqlite_master WHERE name='history_fts'").get()) target.exec("INSERT INTO history_fts(history_fts,rank) VALUES('integrity-check',1)");
+    target.exec("BEGIN IMMEDIATE");
+    try {
+      const max = Number(source2.prepare("SELECT coalesce(max(id),0) n FROM conversation_records").get().n);
+      target.prepare("INSERT INTO history_cursors VALUES('legacy-record-tail',?) ON CONFLICT(source) DO UPDATE SET cursor=excluded.cursor").run(String(max));
+      target.prepare("UPDATE history_migration SET status='verified',manifest=? WHERE version=?").run(JSON.stringify(manifest), HISTORY_STORE_VERSION);
+      target.exec("COMMIT");
+    } catch (err) {
+      target.exec("ROLLBACK");
+      throw err;
+    }
+  } finally {
+    source2?.close();
+    release();
+    onLease?.(null);
+  }
+}
+function copyLegacyConversationTail(source2, target) {
+  const after = Number(target.prepare("SELECT cursor FROM history_cursors WHERE source='legacy-record-tail'").get()?.cursor ?? 0);
+  const deadline = Date.now() + HISTORY_BATCH_MS;
+  let work = 0;
+  for (const row of source2.prepare("SELECT * FROM conversation_records WHERE id>? ORDER BY id LIMIT ?").iterate(after, HISTORY_COPY_ROWS)) {
+    const conversation = source2.prepare("SELECT * FROM conversations WHERE id=?").get(row.conversation);
+    if (!conversation) throw new Error("Legacy record has no conversation; original retained");
+    target.exec("BEGIN IMMEDIATE");
+    try {
+      const columns = Object.keys(conversation);
+      target.prepare(`INSERT OR IGNORE INTO conversations(${columns.map(quote).join(",")}) VALUES(${columns.map(() => "?").join(",")})`).run(...Object.values(conversation));
+      let copied = target.prepare("SELECT * FROM conversation_records WHERE source=? AND generation=? AND offset=?").get(row.source, row.generation, row.offset);
+      if (!copied) {
+        target.prepare("INSERT INTO conversation_records(source,generation,offset,conversation,at,raw,body,part) VALUES(?,?,?,?,?,?,?,?)").run(row.source, row.generation, row.offset, row.conversation, row.at, row.raw, row.body, row.part);
+        copied = target.prepare("SELECT * FROM conversation_records WHERE source=? AND generation=? AND offset=?").get(row.source, row.generation, row.offset);
+      }
+      if (copied.conversation !== row.conversation || !Buffer.from(copied.raw).equals(Buffer.from(row.raw))) throw new Error("Legacy transcript conflict; both originals retained, tail deferred");
+      target.prepare("INSERT OR IGNORE INTO history_legacy_tail VALUES(?,?)").run(row.id, copied.id);
+      target.prepare("INSERT INTO history_cursors VALUES('legacy-record-tail',?) ON CONFLICT(source) DO UPDATE SET cursor=excluded.cursor").run(String(row.id));
+      target.exec("COMMIT");
+    } catch (err) {
+      target.exec("ROLLBACK");
+      throw err;
+    }
+    work++;
+    if (Date.now() >= deadline) break;
+  }
+  return work;
+}
+
 // src/core/history.ts
-import { createHash as createHash3 } from "node:crypto";
-import { closeSync as closeSync5, existsSync as existsSync11, fstatSync as fstatSync2, openSync as openSync5, opendirSync, readSync as readSync2, statSync as statSync4 } from "node:fs";
-import { basename as basename3, dirname as dirname9, join as join17 } from "node:path";
-import { DatabaseSync as DatabaseSync9 } from "node:sqlite";
+import { createHash as createHash4 } from "node:crypto";
+import { closeSync as closeSync5, existsSync as existsSync12, fstatSync as fstatSync2, openSync as openSync5, opendirSync, readSync as readSync2, statSync as statSync4 } from "node:fs";
+import { basename as basename4, dirname as dirname10, join as join18 } from "node:path";
+import { DatabaseSync as DatabaseSync10 } from "node:sqlite";
 
 // node_modules/zod/v4/classic/external.js
 var external_exports = {};
@@ -1422,10 +1698,10 @@ function cached(getter) {
 function nullish(input2) {
   return input2 === null || input2 === void 0;
 }
-function cleanRegex(source) {
-  const start = source.startsWith("^") ? 1 : 0;
-  const end = source.endsWith("$") ? source.length - 1 : source.length;
-  return source.slice(start, end);
+function cleanRegex(source2) {
+  const start = source2.startsWith("^") ? 1 : 0;
+  const end = source2.endsWith("$") ? source2.length - 1 : source2.length;
+  return source2.slice(start, end);
 }
 function floatSafeRemainder(val, step) {
   const ratio = val / step;
@@ -1493,28 +1769,28 @@ function putProp(target, key, value) {
   else
     target[key] = value;
 }
-function mirrorShape(target, source, keys, wrap) {
-  const raw = sourceShape(source);
+function mirrorShape(target, source2, keys, wrap) {
+  const raw = sourceShape(source2);
   for (const key of keys) {
     const desc = Object.getOwnPropertyDescriptor(raw, key);
     if (!desc.enumerable)
       continue;
     if (desc.get) {
       deferProp(target, key, () => {
-        const value = source._zod.def.shape[key];
+        const value = source2._zod.def.shape[key];
         return wrap ? wrap(value, key) : value;
       });
     } else
       putProp(target, key, wrap ? wrap(desc.value, key) : desc.value);
   }
 }
-function mirrorProps(target, source) {
-  for (const key of Reflect.ownKeys(source)) {
-    const desc = Object.getOwnPropertyDescriptor(source, key);
+function mirrorProps(target, source2) {
+  for (const key of Reflect.ownKeys(source2)) {
+    const desc = Object.getOwnPropertyDescriptor(source2, key);
     if (!desc.enumerable)
       continue;
     if (desc.get)
-      deferProp(target, key, () => source[key]);
+      deferProp(target, key, () => source2[key]);
     else
       putProp(target, key, desc.value);
   }
@@ -2727,8 +3003,8 @@ var creditCard = /^\d(?:[ -]?\d){11,18}$/;
 var currencyCode = /^(?:AED|AFN|ALL|AMD|AOA|ARS|AUD|AWG|AZN|BAM|BBD|BDT|BHD|BIF|BMD|BND|BOB|BOV|BRL|BSD|BTN|BWP|BYN|BZD|CAD|CDF|CHE|CHF|CHW|CLF|CLP|CNY|COP|COU|CRC|CUP|CVE|CZK|DJF|DKK|DOP|DZD|EGP|ERN|ETB|EUR|FJD|FKP|GBP|GEL|GHS|GIP|GMD|GNF|GTQ|GYD|HKD|HNL|HTG|HUF|IDR|ILS|INR|IQD|IRR|ISK|JMD|JOD|JPY|KES|KGS|KHR|KMF|KPW|KRW|KWD|KYD|KZT|LAK|LBP|LKR|LRD|LSL|LYD|MAD|MDL|MGA|MKD|MMK|MNT|MOP|MRU|MUR|MVR|MWK|MXN|MXV|MYR|MZN|NAD|NGN|NIO|NOK|NPR|NZD|OMR|PAB|PEN|PGK|PHP|PKR|PLN|PYG|QAR|RON|RSD|RUB|RWF|SAR|SBD|SCR|SDG|SEK|SGD|SHP|SLE|SOS|SRD|SSP|STN|SVC|SYP|SZL|THB|TJS|TMT|TND|TOP|TRY|TTD|TWD|TZS|UAH|UGX|USD|USN|UYI|UYU|UYW|UZS|VED|VES|VND|VUV|WST|XAD|XAF|XAG|XAU|XBA|XBB|XBC|XBD|XCD|XCG|XDR|XOF|XPD|XPF|XPT|XSU|XTS|XUA|XXX|YER|ZAR|ZMW|ZWG)$/;
 var iban = /^[A-Z]{2}(?!00|01|99)\d{2}[A-Z0-9]{11,30}$/;
 var dateSource = `(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))`;
-function anchor(source) {
-  return new RegExp(`^${source}$`);
+function anchor(source2) {
+  return new RegExp(`^${source2}$`);
 }
 var date = /* @__PURE__ */ anchor(dateSource);
 function timeSource(args) {
@@ -3527,9 +3803,9 @@ var asciiTabOrNewline = /[\t\n\r]/g;
 function stripTabAndNewline(value) {
   return value.replace(asciiTabOrNewline, "");
 }
-function urlHostnameOk(url2, hostname3) {
-  hostname3.lastIndex = 0;
-  return hostname3.test(url2.hostname);
+function urlHostnameOk(url2, hostname4) {
+  hostname4.lastIndex = 0;
+  return hostname4.test(url2.hostname);
 }
 function urlProtocolOk(url2, protocol) {
   protocol.lastIndex = 0;
@@ -5551,11 +5827,11 @@ var $ZodTemplateLiteral = /* @__PURE__ */ $constructor("$ZodTemplateLiteral", (i
   const regexParts = [];
   for (const part of def.parts) {
     if (typeof part === "object" && part !== null) {
-      const source = partPattern(part);
-      if (!source) {
+      const source2 = partPattern(part);
+      if (!source2) {
         throw new Error(`Invalid template literal part, no pattern found: ${[...part._zod.traits].shift()}`);
       }
-      regexParts.push(cleanRegex(source));
+      regexParts.push(cleanRegex(source2));
     } else if (part === null || primitiveTypes.has(typeof part)) {
       regexParts.push(escapeRegex(`${part}`));
     } else {
@@ -13681,9 +13957,9 @@ function withParser(schema, parser) {
     installCompiledUserMethods(clone2, schema, parser);
   return clone2;
 }
-function installCompiledUserMethods(target, source, parser) {
+function installCompiledUserMethods(target, source2, parser) {
   const targetAny = target;
-  const sourceAny = source;
+  const sourceAny = source2;
   if (typeof sourceAny.safeParse === "function") {
     const originalSafeParse = sourceAny.safeParse;
     targetAny.safeParse = (data, params) => {
@@ -16278,10 +16554,10 @@ function _stringFormat(Class2, format, fnOrRegex, _params = {}) {
 
 // node_modules/zod/v4/core/to-json-schema.js
 function assignProps(target, ...sources) {
-  for (const source of sources) {
-    for (const key of Reflect.ownKeys(source)) {
-      if (Object.prototype.propertyIsEnumerable.call(source, key)) {
-        assignProp(target, key, source[key]);
+  for (const source2 of sources) {
+    for (const key of Reflect.ownKeys(source2)) {
+      if (Object.prototype.propertyIsEnumerable.call(source2, key)) {
+        assignProp(target, key, source2[key]);
       }
     }
   }
@@ -17358,13 +17634,13 @@ var recordProcessor = (schema, ctx, _json, params) => {
         ...params,
         path: [...params.path, "propertyNames"]
       });
-      let pending = pendingRecords.get(ctx);
-      if (!pending) {
-        pending = [];
-        pendingRecords.set(ctx, pending);
+      let pending2 = pendingRecords.get(ctx);
+      if (!pending2) {
+        pending2 = [];
+        pendingRecords.set(ctx, pending2);
         ctx.deferred.push(() => rewriteKeyNames(ctx));
       }
-      pending.push(schema);
+      pending2.push(schema);
     }
     json2.additionalProperties = processSchema(def.valueType, ctx, {
       ...params,
@@ -20383,12 +20659,12 @@ function date4(params) {
 }
 
 // src/core/transcripts/claude.ts
-import { dirname as dirname8, join as join12 } from "node:path";
+import { dirname as dirname9, join as join13 } from "node:path";
 
 // src/core/transcripts/common.ts
 import { closeSync as closeSync4, fstatSync, openSync as openSync4, readSync, readdirSync as readdirSync5, realpathSync as realpathSync3, statSync as statSync3 } from "node:fs";
 import { homedir as homedir2 } from "node:os";
-import { isAbsolute, join as join11, relative, resolve as resolve4, sep } from "node:path";
+import { isAbsolute, join as join12, relative, resolve as resolve4, sep } from "node:path";
 var MAX_TRANSCRIPT_CHUNK_BYTES = 512 * 1024;
 var MAX_TOOL_PREVIEW_CHARS = 1200;
 var MAX_TEXT_CHARS = 16e3;
@@ -20401,10 +20677,10 @@ var INITIAL_HEADER_BYTES = 8 * 1024;
 var TRANSCRIPT_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 function transcriptPaths(env = process.env, home = homedir2()) {
   return {
-    claude: resolve4(env.CLAUDE_CONFIG_DIR?.trim() || join11(home, ".claude")),
-    codex: resolve4(env.CODEX_HOME?.trim() || join11(home, ".codex")),
-    opencode: resolve4(join11(env.XDG_DATA_HOME?.trim() || join11(home, ".local", "share"), "opencode")),
-    antigravity: resolve4(env.ANTIGRAVITY_CLI_HOME?.trim() || join11(home, ".gemini", "antigravity-cli"))
+    claude: resolve4(env.CLAUDE_CONFIG_DIR?.trim() || join12(home, ".claude")),
+    codex: resolve4(env.CODEX_HOME?.trim() || join12(home, ".codex")),
+    opencode: resolve4(join12(env.XDG_DATA_HOME?.trim() || join12(home, ".local", "share"), "opencode")),
+    antigravity: resolve4(env.ANTIGRAVITY_CLI_HOME?.trim() || join12(home, ".gemini", "antigravity-cli"))
   };
 }
 function object2(value) {
@@ -20536,12 +20812,12 @@ function scanJsonl(file2) {
 // src/core/transcripts/claude.ts
 function claudeSessionFile(session, paths2) {
   if (!session.sessionId || !TRANSCRIPT_ID.test(session.sessionId)) return null;
-  const projects = join12(paths2.claude, "projects");
+  const projects = join13(paths2.claude, "projects");
   const encoded = session.cwd.replace(/[^A-Za-z0-9]/g, "-");
-  const direct = safeFile(projects, join12(projects, encoded, `${session.sessionId}.jsonl`));
+  const direct = safeFile(projects, join13(projects, encoded, `${session.sessionId}.jsonl`));
   if (direct) return direct;
   for (const dir of directory(projects)) {
-    const file2 = safeFile(projects, join12(projects, dir, `${session.sessionId}.jsonl`));
+    const file2 = safeFile(projects, join13(projects, dir, `${session.sessionId}.jsonl`));
     if (file2) return file2;
   }
   return null;
@@ -20567,7 +20843,7 @@ function claudeItems(row) {
 function readClaudeChat(session, paths2, from = "0", child) {
   const main = claudeSessionFile(session, paths2);
   if (!main || child !== void 0 && !TRANSCRIPT_ID.test(child)) return null;
-  const nested = child ? safeFile(paths2.claude, join12(dirname8(main), session.sessionId, "subagents", `agent-${child}.jsonl`)) : null;
+  const nested = child ? safeFile(paths2.claude, join13(dirname9(main), session.sessionId, "subagents", `agent-${child}.jsonl`)) : null;
   const legacy = child && !nested ? listClaudeSubagents(session, paths2).some((s) => s.id === child) : false;
   if (child && !nested && !legacy) return null;
   const page = readJsonl(nested ?? main, from);
@@ -20577,11 +20853,11 @@ function listClaudeSubagents(session, paths2) {
   const main = claudeSessionFile(session, paths2);
   if (!main) return [];
   const out = /* @__PURE__ */ new Map();
-  const dir = join12(dirname8(main), session.sessionId, "subagents");
+  const dir = join13(dirname9(main), session.sessionId, "subagents");
   for (const name of directory(dir).slice(0, MAX_NATIVE_SUBAGENTS)) {
     const id = /^agent-([A-Za-z0-9_-]+)\.jsonl$/.exec(name)?.[1];
     if (!id || !TRANSCRIPT_ID.test(id)) continue;
-    const file2 = safeFile(paths2.claude, join12(dir, name));
+    const file2 = safeFile(paths2.claude, join13(dir, name));
     if (!file2) continue;
     const st = fileStat(file2), head = readHead(file2), tail = readTail(file2);
     const last = [...tail].reverse().find((r) => r.type === "assistant");
@@ -20599,9 +20875,9 @@ function listClaudeSubagents(session, paths2) {
 }
 
 // src/core/transcripts/antigravity.ts
-import { join as join13 } from "node:path";
+import { join as join14 } from "node:path";
 function antigravitySessionFile(session, paths2) {
-  return paths2.antigravity && session.sessionId && TRANSCRIPT_ID.test(session.sessionId) ? safeFile(paths2.antigravity, join13(paths2.antigravity, "brain", session.sessionId, ".system_generated", "logs", "transcript.jsonl")) : null;
+  return paths2.antigravity && session.sessionId && TRANSCRIPT_ID.test(session.sessionId) ? safeFile(paths2.antigravity, join14(paths2.antigravity, "brain", session.sessionId, ".system_generated", "logs", "transcript.jsonl")) : null;
 }
 function antigravityItems(row) {
   const at = time3(row.created_at), items = [];
@@ -20640,8 +20916,8 @@ function readAntigravityChat(session, paths2, from = "0", child) {
 }
 
 // src/core/transcripts/codex.ts
-import { join as join14 } from "node:path";
-import { DatabaseSync as DatabaseSync5 } from "node:sqlite";
+import { join as join15 } from "node:path";
+import { DatabaseSync as DatabaseSync6 } from "node:sqlite";
 var ROLLOUT_NAME = /^rollout-.*-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/i;
 var DISCOVERY_CACHE_MS = 1e4;
 var MAX_INDEX_PATH_CHARS = 4096;
@@ -20654,17 +20930,17 @@ function rollout(file2, id, known) {
 function indexedRollouts(paths2, id, parentId) {
   const name = directory(paths2.codex).filter((s) => /^state_\d+\.sqlite$/.test(s)).sort((a, b) => Number(b.match(/\d+/)?.[0]) - Number(a.match(/\d+/)?.[0]))[0];
   if (!name) return null;
-  const file2 = safeFile(paths2.codex, join14(paths2.codex, name));
+  const file2 = safeFile(paths2.codex, join15(paths2.codex, name));
   if (!file2) return null;
   let db2;
   try {
-    db2 = new DatabaseSync5(file2, { readOnly: true, timeout: SQLITE_READ_TIMEOUT_MS });
+    db2 = new DatabaseSync6(file2, { readOnly: true, timeout: SQLITE_READ_TIMEOUT_MS });
     const rows = id ? db2.prepare("SELECT id, substr(rollout_path, 1, ?) AS path FROM threads WHERE id = ? LIMIT 1").all(MAX_INDEX_PATH_CHARS, id) : db2.prepare(`SELECT id, substr(rollout_path, 1, ?) AS path FROM threads
           WHERE CASE WHEN json_valid(source) THEN json_extract(source, '$.subagent.thread_spawn.parent_thread_id') END = ? LIMIT ?`).all(MAX_INDEX_PATH_CHARS, parentId, MAX_NATIVE_SUBAGENTS);
     const out = [];
     for (const row of rows) {
       if (typeof row.id !== "string" || !TRANSCRIPT_ID.test(row.id) || typeof row.path !== "string") continue;
-      const target = safeFile(join14(paths2.codex, "sessions"), row.path);
+      const target = safeFile(join15(paths2.codex, "sessions"), row.path);
       if (!target) continue;
       const entry = rollout(target, row.id);
       if (entry.meta.id === row.id && (!parentId || parent(entry.meta) === parentId)) out.push(entry);
@@ -20677,17 +20953,17 @@ function indexedRollouts(paths2, id, parentId) {
   }
 }
 function rollouts(paths2) {
-  const root = join14(paths2.codex, "sessions"), existing = cache.get(root);
+  const root = join15(paths2.codex, "sessions"), existing = cache.get(root);
   if (existing && Date.now() - existing.at < DISCOVERY_CACHE_MS) return existing.files;
   const files = [];
   const knownFiles = new Map(existing?.files.map((r) => [r.file, r]));
   for (const year of directory(root).filter((s) => /^\d{4}$/.test(s)).sort().reverse()) {
-    for (const month of directory(join14(root, year)).filter((s) => /^\d{2}$/.test(s)).sort().reverse()) {
-      for (const day of directory(join14(root, year, month)).filter((s) => /^\d{2}$/.test(s)).sort().reverse()) {
-        for (const name of directory(join14(root, year, month, day)).sort().reverse()) {
+    for (const month of directory(join15(root, year)).filter((s) => /^\d{2}$/.test(s)).sort().reverse()) {
+      for (const day of directory(join15(root, year, month)).filter((s) => /^\d{2}$/.test(s)).sort().reverse()) {
+        for (const name of directory(join15(root, year, month, day)).sort().reverse()) {
           const id = ROLLOUT_NAME.exec(name)?.[1];
           if (!id) continue;
-          const file2 = safeFile(root, join14(root, year, month, day, name));
+          const file2 = safeFile(root, join15(root, year, month, day, name));
           if (!file2) continue;
           const known = knownFiles.get(file2);
           files.push(rollout(file2, id, known?.meta));
@@ -20734,15 +21010,15 @@ function readCodexChat(session, paths2, from = "0", child) {
 }
 
 // src/core/transcripts/opencode.ts
-import { join as join15 } from "node:path";
-import { DatabaseSync as DatabaseSync6 } from "node:sqlite";
+import { join as join16 } from "node:path";
+import { DatabaseSync as DatabaseSync7 } from "node:sqlite";
 var MAX_SQLITE_PARTS = 200;
 var SQLITE_CURSOR = /^o:(\d+):([A-Za-z0-9_-]*)$/;
 function openDatabase(paths2) {
-  const file2 = safeFile(paths2.opencode, join15(paths2.opencode, "opencode.db"));
+  const file2 = safeFile(paths2.opencode, join16(paths2.opencode, "opencode.db"));
   if (!file2) return null;
   try {
-    return new DatabaseSync6(file2, { readOnly: true, timeout: SQLITE_READ_TIMEOUT_MS });
+    return new DatabaseSync7(file2, { readOnly: true, timeout: SQLITE_READ_TIMEOUT_MS });
   } catch {
     return null;
   }
@@ -20805,16 +21081,16 @@ function readTranscript(session, from = "0", child, paths2 = transcriptPaths()) 
 }
 
 // src/core/owner-questions.ts
-import { randomUUID as randomUUID6 } from "node:crypto";
-import { existsSync as existsSync10, mkdirSync as mkdirSync7 } from "node:fs";
-import { join as join16 } from "node:path";
-import { DatabaseSync as DatabaseSync8 } from "node:sqlite";
+import { randomUUID as randomUUID7 } from "node:crypto";
+import { existsSync as existsSync11, mkdirSync as mkdirSync8 } from "node:fs";
+import { join as join17 } from "node:path";
+import { DatabaseSync as DatabaseSync9 } from "node:sqlite";
 
 // src/core/decisions.ts
-import { randomUUID as randomUUID5 } from "node:crypto";
-import { existsSync as existsSync9 } from "node:fs";
+import { randomUUID as randomUUID6 } from "node:crypto";
+import { existsSync as existsSync10 } from "node:fs";
 import { resolve as resolve5 } from "node:path";
-import { DatabaseSync as DatabaseSync7 } from "node:sqlite";
+import { DatabaseSync as DatabaseSync8 } from "node:sqlite";
 var MAX_DECISION_TEXT_CHARS = MAX_BODY_CHARS - 1024;
 var MAX_SCOPE_SESSIONS = 100;
 var MAX_SCOPE_PATH_CHARS = 4096;
@@ -20863,6 +21139,7 @@ var questionAnswerSchema = external_exports.object({
   pin: external_exports.object({ scope: decisionScopeSchema, topic: external_exports.string().trim().min(1).max(160) }).strict().optional()
 }).strict().refine((a) => Boolean(a.option) !== Boolean(a.text), "Choose an option or write an answer");
 var questionAlertSettingsSchema = external_exports.object({ sound: external_exports.boolean(), toast: external_exports.boolean(), reminderMinutes: external_exports.number().int().min(0).max(1440) }).strict();
+var DEFAULT_QUESTION_ALERTS = { sound: true, toast: true, reminderMinutes: 15 };
 
 // src/core/history.ts
 var HISTORY_TICK_MS = 2e3;
@@ -20904,16 +21181,20 @@ function terms(query) {
   return folded(query).match(/[\p{L}\p{N}_]+/gu)?.slice(0, HISTORY_MAX_TERMS) ?? [];
 }
 var enc = encodeURIComponent;
-var HistoryIndex = class {
-  constructor(db2, home, paths2) {
+var HistoryIndex = class _HistoryIndex {
+  constructor(db2, home, paths2, source2 = db2, peerSink) {
     this.db = db2;
     this.home = home;
+    this.source = source2;
+    this.peerSink = peerSink;
     this.paths = paths2 ?? transcriptPaths();
     this.engine = db2.prepare("SELECT name FROM sqlite_master WHERE name = 'history_fts'").get() ? "fts5" : "plain";
     this.checked = Number(db2.prepare("SELECT coalesce(max(checked),0) AS n FROM history_files").get().n);
   }
   db;
   home;
+  source;
+  peerSink;
   engine;
   queue = [];
   walk = null;
@@ -20923,10 +21204,19 @@ var HistoryIndex = class {
   opencodeComplete = false;
   heads = /* @__PURE__ */ new Map();
   paths;
+  deadline = Infinity;
   get database() {
+    return this.source !== this.db && !historyReady(this.db) ? this.source : this.db;
+  }
+  /** Writable isolated storage for explicit offline maintenance, regardless of read fallback. */
+  get storageDatabase() {
     return this.db;
   }
   rememberPeer(peer) {
+    if (this.peerSink) {
+      this.peerSink(peer);
+      return;
+    }
     if (!peer.sessionId) return;
     const job = /^(claude|codex|opencode|antigravity)-job-/.test(peer.name) ? peer.name : null;
     for (const alias of [peer.id, peer.name, peer.sessionId]) this.rememberSession(alias, peer.sessionId, job);
@@ -20938,11 +21228,11 @@ var HistoryIndex = class {
     this.db.prepare(`INSERT INTO history_sessions VALUES (?,?,?) ON CONFLICT(alias) DO UPDATE SET
       session=excluded.session,job=coalesce(excluded.job,history_sessions.job)`).run(alias, session, job);
   }
-  cursor(source) {
-    return String(this.db.prepare("SELECT cursor FROM history_cursors WHERE source = ?").get(source)?.cursor ?? "0");
+  cursor(source2) {
+    return String(this.db.prepare("SELECT cursor FROM history_cursors WHERE source = ?").get(source2)?.cursor ?? "0");
   }
-  advance(source, cursor) {
-    this.db.prepare("INSERT INTO history_cursors VALUES (?, ?) ON CONFLICT(source) DO UPDATE SET cursor=excluded.cursor").run(source, cursor);
+  advance(source2, cursor) {
+    this.db.prepare("INSERT INTO history_cursors VALUES (?, ?) ON CONFLICT(source) DO UPDATE SET cursor=excluded.cursor").run(source2, cursor);
   }
   put(doc, sessions = [], jobs = []) {
     const body = doc.body.slice(0, HISTORY_MAX_BODY_CHARS), searchable = folded(body);
@@ -20977,25 +21267,28 @@ var HistoryIndex = class {
       cursor: null
     }, sessions, jobs);
   }
-  rows(source, db2, table, consume) {
-    const after = Number(this.cursor(source));
-    let count = 0, bytes2 = 0;
+  rows(source2, db2, table, consume) {
+    const after = Number(this.cursor(source2));
+    let count = 0, bytes2 = 0, cursor = after;
     for (const row of db2.prepare(`SELECT rowid AS history_rowid, * FROM ${table} WHERE rowid > ? ORDER BY rowid LIMIT ?`).iterate(after, HISTORY_ROWS_PER_SOURCE)) {
       consume(row);
-      this.advance(source, String(row.history_rowid));
+      cursor = Number(row.history_rowid);
       count++;
       bytes2 += Buffer.byteLength(typeof row.body === "string" ? row.body : "");
-      if (bytes2 >= HISTORY_BATCH_BODY_BYTES) break;
+      if (bytes2 >= HISTORY_BATCH_BODY_BYTES || Date.now() >= this.deadline) break;
     }
+    if (count) this.advance(source2, String(cursor));
     return count;
   }
   /** Fixed budgets; idempotent documents are written before advancing their cursors. */
   tick() {
+    this.deadline = Date.now() + HISTORY_BATCH_MS;
     const fileCount = Number(this.db.prepare("SELECT count(*) AS n FROM history_files").get().n);
     if (this.idleFiles >= fileCount) this.idleFiles = 0;
     let work = 0;
     {
-      work += this.rows("messages", this.db, "messages", (row) => this.message(row));
+      work += this.rows("messages", this.source, "messages", (row) => this.message(row));
+      if (this.source !== this.db) work += this.rows("broker-pending", this.source, "history_pending", (row) => this.message(row));
       let pendingCount = 0, pendingBytes = 0;
       for (const row of this.db.prepare("SELECT * FROM history_pending LIMIT ?").iterate(HISTORY_ROWS_PER_SOURCE)) {
         this.message(row);
@@ -21005,7 +21298,7 @@ var HistoryIndex = class {
         if (pendingBytes >= HISTORY_BATCH_BODY_BYTES) break;
       }
       work += pendingCount;
-      work += this.rows("decisions", this.db, "decisions", (row) => {
+      work += this.rows("decisions", this.source, "decisions", (row) => {
         const scope = parse3(row.scope), sessions = Array.isArray(scope.sessions) ? scope.sessions.filter((s) => typeof s === "string") : [];
         this.put({
           id: `decision:${row.id}`,
@@ -21023,9 +21316,9 @@ ${row.body}`,
         }, [row.author_id, row.author_name, ...sessions]);
       });
       if (this.home) {
-        const questionFile = join17(this.home, QUESTIONS_FILE);
-        if (existsSync11(questionFile)) {
-          const questions = new DatabaseSync9(questionFile, { readOnly: true, timeout: HISTORY_READ_TIMEOUT_MS });
+        const questionFile = join18(this.home, QUESTIONS_FILE);
+        if (existsSync12(questionFile)) {
+          const questions = new DatabaseSync10(questionFile, { readOnly: true, timeout: HISTORY_READ_TIMEOUT_MS });
           try {
             work += this.rows("questions", questions, "question_events", (row) => {
               const q = JSON.parse(String(row.record));
@@ -21052,9 +21345,9 @@ ${row.body}`,
             questions.close();
           }
         }
-        const archivePath = join17(this.home, ARCHIVE_DB_NAME);
-        if (existsSync11(archivePath)) {
-          const archive = new DatabaseSync9(archivePath, { readOnly: true, timeout: HISTORY_READ_TIMEOUT_MS });
+        const archivePath = join18(this.home, ARCHIVE_DB_NAME);
+        if (existsSync12(archivePath)) {
+          const archive = new DatabaseSync10(archivePath, { readOnly: true, timeout: HISTORY_READ_TIMEOUT_MS });
           try {
             work += this.rows("archive", archive, "messages", (row) => this.message(row));
           } finally {
@@ -21064,6 +21357,7 @@ ${row.body}`,
         work += this.discover();
         const files = this.db.prepare("SELECT * FROM history_files ORDER BY checked,path LIMIT ?").all(HISTORY_FILES_PER_TICK);
         for (const file2 of files) {
+          if (Date.now() >= this.deadline) break;
           const indexed = this.indexFile(file2);
           work += indexed;
           this.idleFiles = indexed ? 0 : this.idleFiles + 1;
@@ -21098,17 +21392,17 @@ ${row.body}`,
       this.lastDiscovery = Date.now();
       this.opencodeComplete = false;
       this.queue = [
-        { path: join17(this.home, "context-events"), root: this.home, kind: "context", agent: "other" },
-        { path: join17(this.home, "approvals"), root: this.home, kind: "approval", agent: "other" },
-        { path: join17(this.home, "archive"), root: this.home, kind: "approval", agent: "other" },
-        { path: join17(this.home, "runs"), root: join17(this.home, "runs"), kind: "run", agent: "other" },
-        { path: join17(this.paths.claude, "projects"), root: this.paths.claude, kind: "transcript", agent: "claude" },
-        ...this.paths.antigravity ? [{ path: join17(this.paths.antigravity, "brain"), root: this.paths.antigravity, kind: "transcript", agent: "antigravity" }] : [],
-        ...["sessions", "archived_sessions"].map((dir) => ({ path: join17(this.paths.codex, dir), root: this.paths.codex, kind: "transcript", agent: "codex" }))
+        { path: join18(this.home, "context-events"), root: this.home, kind: "context", agent: "other" },
+        { path: join18(this.home, "approvals"), root: this.home, kind: "approval", agent: "other" },
+        { path: join18(this.home, "archive"), root: this.home, kind: "approval", agent: "other" },
+        { path: join18(this.home, "runs"), root: join18(this.home, "runs"), kind: "run", agent: "other" },
+        { path: join18(this.paths.claude, "projects"), root: this.paths.claude, kind: "transcript", agent: "claude" },
+        ...this.paths.antigravity ? [{ path: join18(this.paths.antigravity, "brain"), root: this.paths.antigravity, kind: "transcript", agent: "antigravity" }] : [],
+        ...["sessions", "archived_sessions"].map((dir) => ({ path: join18(this.paths.codex, dir), root: this.paths.codex, kind: "transcript", agent: "codex" }))
       ];
     }
     let work = 0;
-    while (work < HISTORY_DISCOVERY_PER_TICK && (this.walk || this.queue.length)) {
+    while (work < HISTORY_DISCOVERY_PER_TICK && Date.now() < this.deadline && (this.walk || this.queue.length)) {
       work++;
       if (!this.walk) {
         const entry2 = this.queue.shift();
@@ -21124,7 +21418,7 @@ ${row.body}`,
         this.walk = null;
         continue;
       }
-      const path2 = join17(entry.path, item.name);
+      const path2 = join18(entry.path, item.name);
       if (item.isDirectory()) {
         this.queue.push({ ...entry, path: path2 });
         continue;
@@ -21138,15 +21432,15 @@ ${row.body}`,
         if (entry.agent === "antigravity" && item.name !== "transcript.jsonl") continue;
         const head = this.head(path2), meta3 = entry.agent === "codex" ? object2(head.payload) : head;
         const rolloutId = entry.agent === "codex" ? /^rollout-.*-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/i.exec(item.name)?.[1] : void 0;
-        const id = entry.agent === "antigravity" ? basename3(dirname9(dirname9(entry.path))) : rolloutId ?? (typeof meta3.id === "string" ? meta3.id : typeof meta3.sessionId === "string" ? meta3.sessionId : basename3(path2, ".jsonl"));
+        const id = entry.agent === "antigravity" ? basename4(dirname10(dirname10(entry.path))) : rolloutId ?? (typeof meta3.id === "string" ? meta3.id : typeof meta3.sessionId === "string" ? meta3.sessionId : basename4(path2, ".jsonl"));
         if (!TRANSCRIPT_ID.test(id)) continue;
-        const child = entry.agent === "claude" && basename3(entry.path) === "subagents" ? basename3(path2, ".jsonl").replace(/^agent-/, "") : null;
-        this.register({ path: path2, kind: "transcript", agent: entry.agent, session: child ? basename3(dirname9(entry.path)) : id, cwd: typeof meta3.cwd === "string" ? meta3.cwd : "", child });
+        const child = entry.agent === "claude" && basename4(entry.path) === "subagents" ? basename4(path2, ".jsonl").replace(/^agent-/, "") : null;
+        this.register({ path: path2, kind: "transcript", agent: entry.agent, session: child ? basename4(dirname10(entry.path)) : id, cwd: typeof meta3.cwd === "string" ? meta3.cwd : "", child });
       }
     }
-    const path = safeFile(this.paths.opencode, join17(this.paths.opencode, "opencode.db"));
+    const path = safeFile(this.paths.opencode, join18(this.paths.opencode, "opencode.db"));
     if (path && !this.opencodeComplete) {
-      const db2 = new DatabaseSync9(path, { readOnly: true, timeout: HISTORY_READ_TIMEOUT_MS });
+      const db2 = new DatabaseSync10(path, { readOnly: true, timeout: HISTORY_READ_TIMEOUT_MS });
       try {
         const after = this.cursor("opencode-discovery");
         const rows = db2.prepare("SELECT * FROM session WHERE id > ? ORDER BY id LIMIT ?").all(after === "0" ? "" : after, HISTORY_DISCOVERY_PER_TICK);
@@ -21181,7 +21475,7 @@ ${row.body}`,
   indexFile(file2) {
     if (file2.kind === "context" || file2.kind === "approval" || file2.kind === "run" && /\.json(?:-.*)?$/.test(file2.path)) return 0;
     if (file2.agent !== "opencode") {
-      const root = file2.kind === "run" ? join17(this.home, "runs") : this.paths[file2.agent];
+      const root = file2.kind === "run" ? join18(this.home, "runs") : this.paths[file2.agent];
       if (!root) return 0;
       if (!safeFile(root, file2.path)) return 0;
     }
@@ -21218,7 +21512,7 @@ ${row.body}`,
       let meta3 = {};
       let metaText = "";
       const metaPath = file2.path.replace(/\.log(?:-\d+-[\w-]+)?$/, ".json");
-      const safeMeta = safeFile(join17(this.home, "runs"), metaPath);
+      const safeMeta = safeFile(join18(this.home, "runs"), metaPath);
       if (safeMeta) {
         const metaFd = openSync5(safeMeta, "r");
         try {
@@ -21232,29 +21526,29 @@ ${row.body}`,
           closeSync5(metaFd);
         }
       }
-      const run = basename3(file2.path).replace(/(\.log)-\d+-[\w-]+$/, "$1");
+      const run = basename4(file2.path).replace(/(\.log)-\d+-[\w-]+$/, "$1");
       const start = /^(\d{4})-(\d\d)-(\d\d)-(\d\d)-(\d\d)-(\d\d)-/.exec(run);
       const at = Number(meta3.jobStartedAt) || (start ? Date.UTC(+start[1], +start[2] - 1, +start[3], +start[4], +start[5], +start[6]) : stat.birthtimeMs);
       const job = typeof meta3.job === "string" ? meta3.job : null, session = typeof meta3.session === "string" ? meta3.session : null;
       if (session) this.rememberSession(session, session, job);
       let metadataChanged = 0;
       if (Object.keys(meta3).length) {
-        const hash3 = createHash3("sha256").update(metaText).digest("hex"), source = `metadata:${metaPath}`;
-        if (hash3 !== this.cursor(source)) {
+        const hash3 = createHash4("sha256").update(metaText).digest("hex"), source2 = `metadata:${metaPath}`;
+        if (hash3 !== this.cursor(source2)) {
           this.put({
             id: `run:${run}:metadata`,
             kind: "run",
             agent: file2.agent,
             at,
             body: metaText,
-            link: `/api/runs/${enc(basename3(run, ".log"))}?from=0`,
+            link: `/api/runs/${enc(basename4(run, ".log"))}?from=0`,
             message: null,
             job,
             run,
             session,
             cursor: "0"
           }, [meta3.by].filter((s) => typeof s === "string"));
-          this.advance(source, hash3);
+          this.advance(source2, hash3);
           metadataChanged = 1;
         }
       }
@@ -21269,7 +21563,7 @@ ${row.body}`,
         at,
         body: `${typeof meta3.title === "string" ? meta3.title : ""}
 ${buffer.subarray(0, length).toString("utf8")}`,
-        link: `/api/runs/${enc(basename3(run, ".log"))}?from=${offset}`,
+        link: `/api/runs/${enc(basename4(run, ".log"))}?from=${offset}`,
         message: null,
         job,
         run,
@@ -21286,6 +21580,7 @@ ${buffer.subarray(0, length).toString("utf8")}`,
     }
   }
   search(input2) {
+    if (this.database !== this.db) return new _HistoryIndex(this.database, null).search(input2);
     const args = historySearchSchema.parse(input2), tokens = terms(args.query);
     if (!tokens.length) return { engine: this.engine, hits: [] };
     const durable = this.db.prepare("SELECT name FROM sqlite_master WHERE name='conversation_records'").get();
@@ -21345,7 +21640,7 @@ ${buffer.subarray(0, length).toString("utf8")}`,
   reset() {
     this.db.exec("BEGIN IMMEDIATE");
     try {
-      this.db.exec("DELETE FROM history_documents; DELETE FROM history_tags; DELETE FROM history_cursors; DELETE FROM history_files;");
+      this.db.exec("DELETE FROM history_documents; DELETE FROM history_tags; DELETE FROM history_cursors WHERE source<>'legacy-record-tail'; DELETE FROM history_files;");
       this.db.exec("COMMIT");
     } catch (err) {
       this.db.exec("ROLLBACK");
@@ -21364,25 +21659,25 @@ ${buffer.subarray(0, length).toString("utf8")}`,
 };
 
 // src/core/conversations.ts
-import { createHash as createHash4 } from "node:crypto";
+import { createHash as createHash5 } from "node:crypto";
 import {
   closeSync as closeSync7,
-  existsSync as existsSync13,
+  existsSync as existsSync14,
   fstatSync as fstatSync3,
   openSync as openSync7,
   readSync as readSync3,
   watch
 } from "node:fs";
-import { basename as basename5, join as join19 } from "node:path";
-import { DatabaseSync as DatabaseSync10 } from "node:sqlite";
+import { basename as basename6, join as join20 } from "node:path";
+import { DatabaseSync as DatabaseSync11 } from "node:sqlite";
 
 // src/core/job-archive.ts
-import { randomUUID as randomUUID7 } from "node:crypto";
-import { closeSync as closeSync6, existsSync as existsSync12, fsyncSync as fsyncSync2, mkdirSync as mkdirSync8, openSync as openSync6, readdirSync as readdirSync6, writeFileSync as writeFileSync4 } from "node:fs";
-import { basename as basename4, dirname as dirname10, join as join18 } from "node:path";
+import { randomUUID as randomUUID8 } from "node:crypto";
+import { closeSync as closeSync6, existsSync as existsSync13, fsyncSync as fsyncSync2, mkdirSync as mkdirSync9, openSync as openSync6, readdirSync as readdirSync6, writeFileSync as writeFileSync4 } from "node:fs";
+import { basename as basename5, dirname as dirname11, join as join19 } from "node:path";
 
 // src/core/file-cache.ts
-import { readFileSync as readFileSync7, statSync as statSync5 } from "node:fs";
+import { readFileSync as readFileSync8, statSync as statSync5 } from "node:fs";
 var MAX_BYTES = 8 * 1024 * 1024;
 var MAX_ENTRIES = 2048;
 var cache2 = /* @__PURE__ */ new Map();
@@ -21402,7 +21697,7 @@ function readJsonSnapshot(file2) {
     cache2.delete(file2);
     bytes -= saved.bytes;
   }
-  const next = { signature, value: JSON.parse(readFileSync7(file2, "utf8")), bytes: st.size };
+  const next = { signature, value: JSON.parse(readFileSync8(file2, "utf8")), bytes: st.size };
   if (st.size <= MAX_BYTES) {
     cache2.set(file2, next);
     bytes += st.size;
@@ -21419,14 +21714,14 @@ function readJsonSnapshot(file2) {
 var snapshots = /* @__PURE__ */ new Map();
 var EMPTY_SNAPSHOT = { signature: "", jobs: [] };
 function readArchivedJobSnapshot(path) {
-  const dir = join18(dirname10(path), "archive");
-  if (!existsSync12(dir)) return EMPTY_SNAPSHOT;
+  const dir = join19(dirname11(path), "archive");
+  if (!existsSync13(dir)) return EMPTY_SNAPSHOT;
   const sources = [];
   const signatures = [];
   let bytes2 = 0;
   for (const file2 of readdirSync6(dir).sort()) {
-    if (!file2.startsWith(`${basename4(path)}.overflow.json-`) && !/^jobs-.*\.json$/.test(file2)) continue;
-    const snapshot = readJsonSnapshot(join18(dir, file2));
+    if (!file2.startsWith(`${basename5(path)}.overflow.json-`) && !/^jobs-.*\.json$/.test(file2)) continue;
+    const snapshot = readJsonSnapshot(join19(dir, file2));
     const value = snapshot.value;
     if (!isRecord(value) || value.version !== void 0 && (!Number.isInteger(value.version) || value.version < 0 || value.version > JSON_STORE_VERSION) || !Array.isArray(value.jobs)) throw new Error(`invalid job archive: ${file2}`);
     signatures.push(`${file2}:${snapshot.signature}`);
@@ -21436,7 +21731,7 @@ function readArchivedJobSnapshot(path) {
   const signature = signatures.join("\n"), saved = snapshots.get(path);
   if (saved?.signature === signature) return saved;
   const jobs = /* @__PURE__ */ new Map();
-  for (const source of sources) for (const job of source.value.jobs) {
+  for (const source2 of sources) for (const job of source2.value.jobs) {
     if (isRecord(job) && typeof job.id === "string") jobs.set(job.id, job);
   }
   const next = { signature, jobs: [...jobs.values()] };
@@ -21453,13 +21748,44 @@ var conversationPageSchema = external_exports.object({
   after: external_exports.number().int().nonnegative().optional(),
   limit: external_exports.number().int().min(1).max(100).optional()
 }).strict();
-var hash2 = (b) => createHash4("sha256").update(b).digest("hex");
+var hash2 = (b) => createHash5("sha256").update(b).digest("hex");
 var fold = (s) => s.normalize("NFKD").replace(new RegExp("\\p{M}", "gu"), "").toLowerCase();
+function indexedConversationText(raw) {
+  const text = raw.toString("utf8");
+  let value;
+  try {
+    value = JSON.parse(text);
+  } catch {
+    const lines = text.trim().split("\n");
+    if (lines.length > 1 && lines.every((line) => {
+      try {
+        JSON.parse(line);
+        return true;
+      } catch {
+        return false;
+      }
+    })) return lines.map((line) => indexedConversationText(Buffer.from(line))).join("\n");
+    return text;
+  }
+  const found = [];
+  const visit2 = (item, depth = 0) => {
+    if (depth > 8 || found.join("\n").length >= CONVERSATION_BYTES) return;
+    if (Array.isArray(item)) {
+      for (const v of item.slice(0, 100)) visit2(v, depth + 1);
+    } else if (item && typeof item === "object") for (const [key, v] of Object.entries(item)) {
+      if (["text", "body", "content", "summary", "prompt", "title", "topic", "description", "note", "reason", "detail", "question", "answer"].includes(key) && typeof v === "string") found.push(v);
+      else if (["message", "payload", "content", "parts", "output", "data"].includes(key)) visit2(v, depth + 1);
+    }
+  };
+  visit2(value);
+  return found.join("\n").slice(0, CONVERSATION_BYTES);
+}
 var ConversationIngestor = class {
-  constructor(db2, home, paths2) {
+  constructor(db2, home, paths2, source2 = db2) {
     this.db = db2;
     this.home = home;
     this.paths = paths2;
+    this.source = source2;
     this.checked = Number(
       db2.prepare("SELECT coalesce(max(checked),0) n FROM (SELECT checked FROM conversation_sources UNION ALL SELECT checked FROM conversation_projects)").get().n
     );
@@ -21467,6 +21793,7 @@ var ConversationIngestor = class {
   db;
   home;
   paths;
+  source;
   checked = 0;
   jobsAt = 0;
   jobQueue = [];
@@ -21476,10 +21803,10 @@ var ConversationIngestor = class {
   idleSources = 0;
   watchRoots() {
     for (const root of [
-      join19(this.paths.claude, "projects"),
-      join19(this.paths.codex, "sessions"),
+      join20(this.paths.claude, "projects"),
+      join20(this.paths.codex, "sessions"),
       this.paths.opencode,
-      ...this.paths.antigravity ? [join19(this.paths.antigravity, "brain")] : []
+      ...this.paths.antigravity ? [join20(this.paths.antigravity, "brain")] : []
     ]) {
       if (this.watched.has(root)) continue;
       try {
@@ -21488,7 +21815,7 @@ var ConversationIngestor = class {
           { recursive: true, persistent: false },
           (_, name) => {
             if (name && this.dirty.size < 2048)
-              this.dirty.add(join19(root, String(name)));
+              this.dirty.add(join20(root, String(name)));
           }
         );
         watcher.on("error", () => {
@@ -21544,7 +21871,7 @@ var ConversationIngestor = class {
     for (const file2 of files) {
       const session = String(file2.session), agent = String(file2.agent), child = file2.child ? String(file2.child) : null;
       const kind = String(file2.kind);
-      const id = kind === "transcript" ? this.conversation(agent, session, String(file2.cwd), child) : `bridge:${kind}:${kind === "run" ? basename5(String(file2.path)).replace(/\.(?:log|json)(?:-\d+-[\w-]+)?$/, "") : basename5(String(file2.path))}`;
+      const id = kind === "transcript" ? this.conversation(agent, session, String(file2.cwd), child) : `bridge:${kind}:${kind === "run" ? basename6(String(file2.path)).replace(/\.(?:log|json)(?:-\d+-[\w-]+)?$/, "") : basename6(String(file2.path))}`;
       if (kind !== "transcript")
         this.db.prepare(
           "INSERT OR IGNORE INTO conversations(id,agent,session,kind) VALUES(?,?,?,?)"
@@ -21615,7 +21942,7 @@ var ConversationIngestor = class {
   jobs() {
     if (Date.now() - this.jobsAt < 3e4) return;
     this.jobsAt = Date.now();
-    const path = join19(this.home, "jobs.json");
+    const path = join20(this.home, "jobs.json");
     let active = {};
     try {
       active = object2(readJsonSnapshot(path).value);
@@ -21683,11 +22010,11 @@ var ConversationIngestor = class {
     }
     return 1;
   }
-  put(source, generation, offset, conversation, raw, at, part = null) {
+  put(source2, generation, offset, conversation, raw, at, part = null) {
     if (raw.length > CONVERSATION_BYTES) {
       for (let start = 0; start < raw.length; start += CONVERSATION_BYTES)
         this.put(
-          source,
+          source2,
           generation,
           offset + start,
           conversation,
@@ -21697,11 +22024,11 @@ var ConversationIngestor = class {
         );
       return;
     }
-    const body = raw.toString("utf8");
+    const body = indexedConversationText(raw);
     const result = this.db.prepare(
       "INSERT OR IGNORE INTO conversation_records(source,generation,offset,conversation,at,raw,body,part) VALUES(?,?,?,?,?,?,?,?)"
-    ).run(source, generation, offset, conversation, at, raw, body, part);
-    const record2 = Number(result.changes) ? Number(result.lastInsertRowid) : Number(this.db.prepare("SELECT id FROM conversation_records WHERE source=? AND generation=? AND offset=?").get(source, generation, offset).id);
+    ).run(source2, generation, offset, conversation, at, raw, body === raw.toString("utf8") ? "" : body, part);
+    const record2 = Number(result.changes) ? Number(result.lastInsertRowid) : Number(this.db.prepare("SELECT id FROM conversation_records WHERE source=? AND generation=? AND offset=?").get(source2, generation, offset).id);
     this.indexRecord(
       record2,
       conversation,
@@ -21717,11 +22044,7 @@ var ConversationIngestor = class {
     ).get(record2);
     let recordAgent = c.agent, recordSession = c.session, recordJob = c.job, recordProject = c.project, recordKind = c.kind;
     if (c.kind === "message" || c.kind === "decision") {
-      const first = String(
-        this.db.prepare(
-          "SELECT body FROM conversation_records WHERE source=? AND generation=? ORDER BY offset LIMIT 1"
-        ).get(recordInfo.source, recordInfo.generation).body
-      );
+      const first = Buffer.from(this.db.prepare("SELECT raw FROM conversation_records WHERE source=? AND generation=? ORDER BY offset LIMIT 1").get(recordInfo.source, recordInfo.generation).raw).toString("utf8");
       const metadata = parse3(first);
       for (const key of [
         "from_agent",
@@ -21829,17 +22152,17 @@ var ConversationIngestor = class {
   }
   envelopes() {
     const key = "durable-envelope-keys", saved = parse3(this.cursor(key)), after = Number(saved.after ?? 0);
-    const envelope = this.db.prepare(
+    const envelope = this.source.prepare(
       "SELECT * FROM conversation_envelopes WHERE id>? ORDER BY id LIMIT 1"
     ).get(after);
     if (!envelope) return 0;
-    let row = this.db.prepare(
+    let row = this.source.prepare(
       "SELECT * FROM messages WHERE id=? ORDER BY recipient=? DESC LIMIT 1"
     ).get(envelope.message, envelope.recipient);
     if (!row) {
-      const path = join19(this.home, "archive.db");
-      if (existsSync13(path)) {
-        const archive = new DatabaseSync10(path, { readOnly: true, timeout: 50 });
+      const path = join20(this.home, "archive.db");
+      if (existsSync14(path)) {
+        const archive = new DatabaseSync11(path, { readOnly: true, timeout: 50 });
         try {
           row = archive.prepare(
             "SELECT * FROM messages WHERE id=? ORDER BY recipient=? DESC LIMIT 1"
@@ -21889,20 +22212,20 @@ var ConversationIngestor = class {
     );
     return 1;
   }
-  jsonl(source) {
-    const agent = String(source.conversation).split(":")[0];
-    const root = String(source.conversation).startsWith("bridge:") ? this.home : this.paths[agent];
-    if (!root || !safeFile(root, source.path)) return 0;
+  jsonl(source2) {
+    const agent = String(source2.conversation).split(":")[0];
+    const root = String(source2.conversation).startsWith("bridge:") ? this.home : this.paths[agent];
+    if (!root || !safeFile(root, source2.path)) return 0;
     let fd;
     try {
-      fd = openSync7(source.path, "r");
+      fd = openSync7(source2.path, "r");
       const stat = fstatSync3(fd);
       const identity = `${stat.dev}:${stat.ino}:${stat.birthtimeMs}`;
-      let offset = Number(source.offset), generation = Number(source.generation);
+      let offset = Number(source2.offset), generation = Number(source2.generation);
       const anchor2 = Buffer.alloc(Math.min(64, offset));
       if (offset && offset <= stat.size)
         readSync3(fd, anchor2, 0, anchor2.length, offset - anchor2.length);
-      if (offset > stat.size || source.identity && source.identity !== identity || offset && source.anchor && source.anchor !== hash2(anchor2)) {
+      if (offset > stat.size || source2.identity && source2.identity !== identity || offset && source2.anchor && source2.anchor !== hash2(anchor2)) {
         offset = 0;
         generation++;
       }
@@ -21910,7 +22233,7 @@ var ConversationIngestor = class {
         Math.min(CONVERSATION_BYTES, Math.max(0, stat.size - offset))
       );
       let bytes2 = readSync3(fd, data, 0, data.length, offset);
-      if (source.format === "approval" && bytes2 && offset + bytes2 < stat.size && stat.size - offset - bytes2 < 1024)
+      if (source2.format === "approval" && bytes2 && offset + bytes2 < stat.size && stat.size - offset - bytes2 < 1024)
         bytes2 = Math.max(1, bytes2 - 1024);
       if (bytes2 && offset + bytes2 < stat.size) {
         let start = bytes2 - 1;
@@ -21919,7 +22242,7 @@ var ConversationIngestor = class {
         if (bytes2 - start < need) bytes2 = start;
       }
       if (bytes2) {
-        if (source.format === "approval" && offset + bytes2 === stat.size) {
+        if (source2.format === "approval" && offset + bytes2 === stat.size) {
           const text = data.subarray(0, bytes2).toString("utf8");
           const capability = /,\s*"pid"\s*:\s*\d+,\s*"port"\s*:\s*\d+,\s*"token"\s*:\s*"(?:\\.|[^"\\])*"\s*}\s*$/.exec(
             text
@@ -21932,7 +22255,7 @@ var ConversationIngestor = class {
             replacement.copy(data, start);
           }
         }
-        if (offset === 0 && /\.json(?:-.*)?$/.test(source.path)) {
+        if (offset === 0 && /\.json(?:-.*)?$/.test(source2.path)) {
           const metadata = parse3(data.subarray(0, bytes2).toString("utf8"));
           if (typeof metadata.job === "string") {
             const project = conversationProject(
@@ -21944,7 +22267,7 @@ var ConversationIngestor = class {
               metadata.job,
               String(metadata.session ?? ""),
               project,
-              source.conversation
+              source2.conversation
             );
             if (project)
               this.db.prepare(
@@ -21955,7 +22278,7 @@ var ConversationIngestor = class {
         const newline = data.subarray(0, bytes2).lastIndexOf(10);
         if (newline >= 0) bytes2 = newline + 1;
         let lineOffset = offset;
-        const fragmentKey = `durable-fragment:${source.id}:${generation}`;
+        const fragmentKey = `durable-fragment:${source2.id}:${generation}`;
         let fragment = parse3(this.cursor(fragmentKey));
         if (Number(fragment.offset) !== offset) fragment = {};
         const lines = data.subarray(0, bytes2).toString("utf8").split("\n");
@@ -21991,7 +22314,7 @@ var ConversationIngestor = class {
               row.isSidechain = true;
           }
           const meta3 = agent === "codex" ? object2(row.payload) : row;
-          const c = this.db.prepare("SELECT * FROM conversations WHERE id=?").get(source.conversation);
+          const c = this.db.prepare("SELECT * FROM conversations WHERE id=?").get(source2.conversation);
           if (c.kind === "run" && typeof row.job === "string") {
             const project = conversationProject(
               typeof row.workdir === "string" ? row.workdir : typeof row.cwd === "string" ? row.cwd : ""
@@ -22002,15 +22325,15 @@ var ConversationIngestor = class {
               row.job,
               String(row.session ?? row.sessionId ?? ""),
               project,
-              source.conversation
+              source2.conversation
             );
             if (project)
               this.db.prepare(
                 "INSERT OR IGNORE INTO conversation_projects(project) VALUES(?)"
               ).run(project);
           }
-          if (source.format === "journal" && ["progress", "report", "approval"].includes(row.kind) || source.format === "approval" && typeof row.id === "string") {
-            const id = row.job ? `bridge:job:${row.job}` : source.conversation;
+          if (source2.format === "journal" && ["progress", "report", "approval"].includes(row.kind) || source2.format === "approval" && typeof row.id === "string") {
+            const id = row.job ? `bridge:job:${row.job}` : source2.conversation;
             const project = conversationProject(
               typeof row.project === "string" ? row.project : ""
             );
@@ -22032,7 +22355,7 @@ var ConversationIngestor = class {
           }
           if ((agent !== "codex" || row.type === "session_meta" && meta3.id === c.session) && typeof meta3.cwd === "string") {
             const project = conversationProject(meta3.cwd);
-            this.db.prepare("UPDATE conversations SET project=? WHERE id=?").run(project, source.conversation);
+            this.db.prepare("UPDATE conversations SET project=? WHERE id=?").run(project, source2.conversation);
             if (project)
               this.db.prepare(
                 "INSERT OR IGNORE INTO conversation_projects(project) VALUES(?)"
@@ -22042,13 +22365,13 @@ var ConversationIngestor = class {
             const spawn = object2(object2(meta3.source).subagent).thread_spawn;
             const parent2 = object2(spawn).parent_thread_id ?? (meta3.thread_source === "subagent" ? meta3.parent_thread_id : null);
             if (typeof parent2 === "string")
-              this.db.prepare("UPDATE conversations SET parent=? WHERE id=?").run(`codex:${parent2}`, source.conversation);
+              this.db.prepare("UPDATE conversations SET parent=? WHERE id=?").run(`codex:${parent2}`, source2.conversation);
           }
           if (agent === "antigravity") {
             for (const item of antigravityItems(row)) {
               if (!item.subagent || item.subagent.id === c.session) continue;
               const child = this.conversation(agent, item.subagent.id, String(c.project), null);
-              this.db.prepare("UPDATE conversations SET parent=? WHERE id=?").run(source.conversation, child);
+              this.db.prepare("UPDATE conversations SET parent=? WHERE id=?").run(source2.conversation, child);
             }
           }
           if (agent === "claude" && row.isSidechain === true && typeof row.agentId === "string") {
@@ -22062,7 +22385,7 @@ var ConversationIngestor = class {
           }
           if (fragment.id) {
             this.put(
-              `${source.id}:${source.format === "journal" ? "event" : "inline"}:${fragment.id}`,
+              `${source2.id}:${source2.format === "journal" ? "event" : "inline"}:${fragment.id}`,
               generation,
               lineOffset,
               fragment.id,
@@ -22079,10 +22402,10 @@ var ConversationIngestor = class {
           JSON.stringify({ ...fragment, offset: offset + bytes2 })
         );
         this.put(
-          source.id,
+          source2.id,
           generation,
           offset,
-          source.conversation,
+          source2.conversation,
           data.subarray(0, bytes2),
           stat.mtimeMs
         );
@@ -22092,26 +22415,26 @@ var ConversationIngestor = class {
       if (offset) readSync3(fd, tail, 0, tail.length, offset - tail.length);
       this.db.prepare(
         "UPDATE conversation_sources SET offset=?,generation=?,identity=?,anchor=? WHERE id=?"
-      ).run(offset, generation, identity, hash2(tail), source.id);
+      ).run(offset, generation, identity, hash2(tail), source2.id);
       return bytes2 ? 1 : 0;
     } finally {
       if (fd !== void 0) closeSync7(fd);
     }
   }
-  journal(source) {
-    return this.jsonl(source);
+  journal(source2) {
+    return this.jsonl(source2);
   }
-  sqlite(source) {
+  sqlite(source2) {
     const path = safeFile(
       this.paths.opencode,
-      join19(this.paths.opencode, "opencode.db")
+      join20(this.paths.opencode, "opencode.db")
     );
     if (!path) return 0;
-    const input2 = new DatabaseSync10(path, { readOnly: true, timeout: 50 });
+    const input2 = new DatabaseSync11(path, { readOnly: true, timeout: 50 });
     try {
-      const table = Number(source.offset) % 2 ? "message" : "part";
-      this.db.prepare("UPDATE conversation_sources SET offset=offset+1 WHERE id=?").run(source.id);
-      const session = String(source.path).slice("opencode:".length), key = `durable-${table}:${session}`, saved = parse3(this.cursor(key));
+      const table = Number(source2.offset) % 2 ? "message" : "part";
+      this.db.prepare("UPDATE conversation_sources SET offset=offset+1 WHERE id=?").run(source2.id);
+      const session = String(source2.path).slice("opencode:".length), key = `durable-${table}:${session}`, saved = parse3(this.cursor(key));
       const meta3 = input2.prepare("SELECT * FROM session WHERE id=?").get(session);
       if (meta3) {
         const project = conversationProject(
@@ -22123,23 +22446,23 @@ var ConversationIngestor = class {
           meta3.parent_id ? `opencode:${meta3.parent_id}` : null,
           project,
           project,
-          source.conversation
+          source2.conversation
         );
         if (project)
           this.db.prepare(
             "INSERT OR IGNORE INTO conversation_projects(project) VALUES(?)"
           ).run(project);
         this.put(
-          `${source.id}:session:${meta3.time_updated}`,
+          `${source2.id}:session:${meta3.time_updated}`,
           0,
           0,
-          source.conversation,
+          source2.conversation,
           Buffer.from(JSON.stringify(meta3)),
           Number(meta3.time_created)
         );
       }
-      let pending = object2(saved.pending);
-      if (!pending.id) {
+      let pending2 = object2(saved.pending);
+      if (!pending2.id) {
         const row2 = input2.prepare(
           `SELECT p.id,p.time_updated,p.time_created FROM ${table} p WHERE p.session_id=? AND (p.time_updated>? OR (p.time_updated=? AND p.id>?)) ORDER BY p.time_updated,p.id LIMIT 1`
         ).get(
@@ -22149,44 +22472,44 @@ var ConversationIngestor = class {
           String(saved.id ?? "")
         );
         if (!row2) return 0;
-        pending = { ...row2, offset: 0 };
+        pending2 = { ...row2, offset: 0 };
       }
       const row = input2.prepare(
         `SELECT time_updated,substr(CAST(data AS BLOB),?,?) raw FROM ${table} WHERE id=? AND session_id=?`
       ).get(
-        Number(pending.offset) + 1,
+        Number(pending2.offset) + 1,
         CONVERSATION_BYTES,
-        pending.id,
+        pending2.id,
         session
       );
       if (!row) {
         this.advance(
           key,
-          JSON.stringify({ at: pending.time_updated, id: pending.id })
+          JSON.stringify({ at: pending2.time_updated, id: pending2.id })
         );
         return 1;
       }
-      if (Number(row.time_updated) !== Number(pending.time_updated)) {
-        pending.offset = 0;
-        pending.time_updated = row.time_updated;
-        this.advance(key, JSON.stringify({ ...saved, pending }));
+      if (Number(row.time_updated) !== Number(pending2.time_updated)) {
+        pending2.offset = 0;
+        pending2.time_updated = row.time_updated;
+        this.advance(key, JSON.stringify({ ...saved, pending: pending2 }));
         return 1;
       }
       const raw = Buffer.from(row.raw);
       this.put(
-        `${source.id}:${table}:${pending.id}:${pending.time_updated}`,
+        `${source2.id}:${table}:${pending2.id}:${pending2.time_updated}`,
         0,
-        Number(pending.offset),
-        source.conversation,
+        Number(pending2.offset),
+        source2.conversation,
         raw,
-        Number(pending.time_created),
-        String(pending.id)
+        Number(pending2.time_created),
+        String(pending2.id)
       );
-      pending.offset += raw.length;
+      pending2.offset += raw.length;
       this.advance(
         key,
         JSON.stringify(
-          raw.length < CONVERSATION_BYTES ? { at: pending.time_updated, id: pending.id } : { ...saved, pending }
+          raw.length < CONVERSATION_BYTES ? { at: pending2.time_updated, id: pending2.id } : { ...saved, pending: pending2 }
         )
       );
       return 1;
@@ -22195,6 +22518,7 @@ var ConversationIngestor = class {
     }
   }
   tick() {
+    const deadline = Date.now() + HISTORY_BATCH_MS;
     this.watchRoots();
     this.register();
     this.jobs();
@@ -22205,10 +22529,10 @@ var ConversationIngestor = class {
     {
       work += this.jobSnapshot();
       work += this.envelopes();
-      work += this.events(this.db, "decisions", "durable-decisions");
-      const archive = join19(this.home, "archive.db");
-      if (existsSync13(archive)) {
-        const input2 = new DatabaseSync10(archive, {
+      work += this.events(this.source, "decisions", "durable-decisions");
+      const archive = join20(this.home, "archive.db");
+      if (existsSync14(archive)) {
+        const input2 = new DatabaseSync11(archive, {
           readOnly: true,
           timeout: 50
         });
@@ -22248,21 +22572,24 @@ var ConversationIngestor = class {
       for (const row of this.db.prepare(
         "SELECT * FROM conversation_records WHERE id>? ORDER BY id LIMIT 8"
       ).all(indexed)) {
+        if (Date.now() >= deadline) break;
         this.indexRecord(
           Number(row.id),
           String(row.conversation),
-          String(row.body),
+          String(row.body) || indexedConversationText(Buffer.from(row.raw)),
           Number(row.at),
           Number(row.offset)
         );
         this.advance("durable-index-rows", String(row.id));
         work++;
       }
-      for (const source of this.db.prepare(
+      const sourceDeadline = Date.now() + HISTORY_BATCH_MS;
+      for (const source2 of this.db.prepare(
         "SELECT * FROM conversation_sources ORDER BY checked,id LIMIT 2"
       ).all()) {
+        if (Date.now() >= sourceDeadline) break;
         try {
-          const amount = source.format === "jsonl" ? this.jsonl(source) : source.format === "sqlite" ? this.sqlite(source) : this.journal(source);
+          const amount = source2.format === "jsonl" ? this.jsonl(source2) : source2.format === "sqlite" ? this.sqlite(source2) : this.journal(source2);
           work += amount;
           this.idleSources = amount ? 0 : this.idleSources + 1;
         } catch (err) {
@@ -22271,7 +22598,7 @@ var ConversationIngestor = class {
           ))
             throw err;
         }
-        this.db.prepare("UPDATE conversation_sources SET checked=? WHERE id=?").run(++this.checked, source.id);
+        this.db.prepare("UPDATE conversation_sources SET checked=? WHERE id=?").run(++this.checked, source2.id);
       }
     }
     const project = this.db.prepare(
@@ -22285,43 +22612,338 @@ var ConversationIngestor = class {
   }
 };
 
+// src/core/config.ts
+import { readFileSync as readFileSync10, unwatchFile, watchFile } from "node:fs";
+import { basename as basename7, join as join22 } from "node:path";
+
+// src/core/protocol.ts
+var AGENT_KINDS = ["claude", "codex", "opencode", "antigravity", "other"];
+var CODING_AGENTS = ["claude", "codex", "opencode", "antigravity"];
+
+// src/network/config.ts
+import { hostname as hostname3 } from "node:os";
+import { readFileSync as readFileSync9 } from "node:fs";
+import { isAbsolute as isAbsolute2, join as join21 } from "node:path";
+
+// src/network/constants.ts
+var DEFAULT_NETWORK_PORT = 48148;
+var MAX_NETWORK_FRAME_BYTES = 2 * 1024 * 1024;
+var PAIRING_TTL_MS = 10 * 60 * 1e3;
+var NETWORK_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+var MAX_NETWORK_NAME_CHARS = 64;
+var MAX_NETWORK_HOST_CHARS = 255;
+var MAX_PORT = 65535;
+
+// src/network/config.ts
+var MAX_FETCH_ROOT_CHARS = 1024;
+var MAX_FETCH_ROOTS = 128;
+var networkConfigSchema = external_exports.object({
+  enabled: external_exports.boolean().default(false),
+  name: external_exports.string().regex(NETWORK_NAME_PATTERN).default(hostname3().replace(/[^A-Za-z0-9._-]/g, "-").replace(/^[^A-Za-z0-9]+/, "").slice(0, MAX_NETWORK_NAME_CHARS) || "host"),
+  bind: external_exports.string().min(1).max(MAX_NETWORK_HOST_CHARS).default("127.0.0.1"),
+  port: external_exports.number().int().min(0).max(MAX_PORT).default(DEFAULT_NETWORK_PORT),
+  discovery: external_exports.boolean().default(false),
+  remoteJobs: external_exports.object({
+    enabled: external_exports.boolean().default(false),
+    allowRoots: external_exports.array(external_exports.string().min(1).max(4096)).max(50).default([]),
+    agents: external_exports.array(external_exports.enum(CODING_AGENTS)).max(3).default([]),
+    /** Pair names explicitly permitted to request jobs; no pair is trusted implicitly. */
+    allowPeers: external_exports.array(external_exports.string().regex(NETWORK_NAME_PATTERN)).max(50).default([])
+  }).default({ enabled: false, allowRoots: [], agents: [], allowPeers: [] }),
+  maxTransferBytes: external_exports.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
+  fetchRoots: external_exports.array(external_exports.string().min(1).max(MAX_FETCH_ROOT_CHARS).refine(isAbsolute2, "fetch roots must be absolute paths")).max(MAX_FETCH_ROOTS).optional()
+});
+var DEFAULT_NETWORK_CONFIG = networkConfigSchema.parse({});
+function parseNetworkConfig(value) {
+  const result = networkConfigSchema.safeParse(value);
+  return result.success ? result.data : void 0;
+}
+
+// src/core/config.ts
+var DELIVERY_MODES = ["auto", "channel", "hooks"];
+var CODEX_SANDBOXES = ["read-only", "workspace-write", "danger-full-access"];
+var CODEX_APPROVALS_REVIEWERS = ["user", "auto_review"];
+var DEFAULT_CODEX_APPROVALS_REVIEWER = "auto_review";
+var CLAUDE_PERMISSION_MODES = ["default", "manual", "acceptEdits", "plan", "auto", "dontAsk", "bypassPermissions"];
+var DEFAULT_NOTIFICATIONS = { approvals: true, finish: true, fail: true };
+var DEFAULT_HISTORY_ANSWER = { preference: ["codex", "claude", "opencode"], claudeModel: "haiku", codexModel: "gpt-6-luna", opencodeModel: null };
+var DEFAULT_CONFIG = {
+  history: { ingest: true },
+  questionAlerts: DEFAULT_QUESTION_ALERTS,
+  projectGroups: true,
+  historyAnswer: DEFAULT_HISTORY_ANSWER,
+  name: null,
+  autoWake: false,
+  wakeOnDirect: true,
+  maxHops: DEFAULT_MAX_HOPS,
+  maxJobs: DEFAULT_MAX_JOBS,
+  maxDelegateDepth: DEFAULT_MAX_DELEGATE_DEPTH,
+  autoApproveTools: [],
+  resourceSlots: {},
+  delivery: "auto",
+  claudeBin: DEFAULT_CLAUDE_BIN,
+  codexBin: DEFAULT_CODEX_BIN,
+  codexSubagents: DEFAULT_CODEX_SUBAGENTS,
+  codexSandbox: "read-only",
+  codexWindowsSandbox: "unelevated",
+  jobCloseCleanup: false,
+  codexApprovalsReviewer: DEFAULT_CODEX_APPROVALS_REVIEWER,
+  codexWorktreeSandbox: null,
+  codexWorkspaceWriteNetworkAccess: null,
+  claudePermissionMode: "default",
+  lingerSec: DEFAULT_LINGER_SEC,
+  codexModel: null,
+  claudeModel: null,
+  opencodeBin: DEFAULT_OPENCODE_BIN,
+  antigravityBin: "agy",
+  antigravityModel: null,
+  opencodeModel: null,
+  effort: {},
+  opencodeAutoApprove: false,
+  dashboard: true,
+  dashboardPort: DEFAULT_DASHBOARD_PORT,
+  notifications: DEFAULT_NOTIFICATIONS,
+  network: DEFAULT_NETWORK_CONFIG
+};
+var TRUE_VALUES = /* @__PURE__ */ new Set(["1", "true", "yes", "on"]);
+var FALSE_VALUES = /* @__PURE__ */ new Set(["0", "false", "no", "off"]);
+function parseBool(v) {
+  if (typeof v === "boolean") return v;
+  if (typeof v !== "string") return void 0;
+  const s = v.trim().toLowerCase();
+  if (TRUE_VALUES.has(s)) return true;
+  if (FALSE_VALUES.has(s)) return false;
+  return void 0;
+}
+function historyAnswer(v) {
+  if (!isRecord(v)) return void 0;
+  const agents = ["claude", "codex", "opencode"];
+  if (v.preference !== void 0 && (!Array.isArray(v.preference) || !v.preference.length || !v.preference.every((a) => agents.includes(String(a))))) return void 0;
+  const out = { ...DEFAULT_HISTORY_ANSWER, preference: [...DEFAULT_HISTORY_ANSWER.preference] };
+  if (Array.isArray(v.preference)) out.preference = [...new Set(v.preference)];
+  for (const key of ["claudeModel", "codexModel", "opencodeModel"]) {
+    if (v[key] === void 0) continue;
+    if (key === "opencodeModel" && v[key] === null) {
+      out.opencodeModel = null;
+      continue;
+    }
+    const model = modelName(v[key]);
+    if (!model) return void 0;
+    out[key] = model;
+  }
+  return out;
+}
+function notifications(v) {
+  if (!isRecord(v)) return void 0;
+  const out = { ...DEFAULT_NOTIFICATIONS };
+  for (const key of Object.keys(out)) {
+    if (v[key] === void 0) continue;
+    const value = parseBool(v[key]);
+    if (value === void 0) return void 0;
+    out[key] = value;
+  }
+  return out;
+}
+function parseIntInRange(v, min, max) {
+  const n = typeof v === "number" ? v : typeof v === "string" ? Number.parseInt(v, 10) : Number.NaN;
+  return Number.isInteger(n) && n >= min && n <= max ? n : void 0;
+}
+function oneOf(v, allowed) {
+  return typeof v === "string" && allowed.includes(v) ? v : void 0;
+}
+var MAX_HOPS_LIMIT = 100;
+var MAX_LINGER_SEC = 3600;
+var RESOURCE_NAME_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/;
+var MAX_RESOURCE_SLOTS = 100;
+function resourceSlots(v) {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return void 0;
+  const entries = Object.entries(v);
+  if (!entries.every(([name, count]) => RESOURCE_NAME_PATTERN.test(name) && typeof count === "number" && Number.isInteger(count) && count >= 1 && count <= MAX_RESOURCE_SLOTS)) return void 0;
+  return Object.fromEntries(entries);
+}
+var MODEL_NAME_PATTERN = /^[^\s"'`&|<>^%$;()]{1,200}$/;
+function modelName(v) {
+  return typeof v === "string" && MODEL_NAME_PATTERN.test(v.trim()) ? v.trim() : void 0;
+}
+var EFFORT_NAME = /^[A-Za-z0-9_-]{1,20}$/;
+function effortLevels(v) {
+  if (typeof v === "string" && EFFORT_NAME.test(v)) return Object.fromEntries(AGENT_KINDS.map((k) => [k, v]));
+  if (!v || typeof v !== "object" || Array.isArray(v)) return void 0;
+  const out = {};
+  for (const [k, x] of Object.entries(v)) if (AGENT_KINDS.includes(k) && typeof x === "string" && EFFORT_NAME.test(x)) out[k] = x;
+  return out;
+}
+function toolPatterns(v) {
+  const list = Array.isArray(v) ? v : typeof v === "string" ? v.split(",") : null;
+  if (!list || !list.every((x) => typeof x === "string")) return void 0;
+  return list.map((x) => x.trim()).filter(Boolean);
+}
+function loadConfig(home, agent, log, env = process.env, projectDir) {
+  let file2 = {};
+  const path = join22(home, CONFIG_FILE_NAME);
+  try {
+    file2 = readJsonStore(path, log) ?? {};
+    log.debug("config file loaded", { path });
+  } catch (err) {
+    if (err.code !== "ENOENT") log.warn("ignoring unreadable config file", { path, err: err.message });
+  }
+  let project = {};
+  if (projectDir) {
+    const localPath = join22(projectDir, ".agent-bridge", CONFIG_FILE_NAME);
+    try {
+      const value = JSON.parse(readFileSync10(localPath, "utf8"));
+      if (isRecord(value)) project = value;
+    } catch (err) {
+      if (err.code !== "ENOENT") log.warn("ignoring unreadable project config", { path: localPath, err: String(err) });
+    }
+  }
+  const section = isRecord(file2[agent]) ? file2[agent] : {};
+  const localSection = isRecord(project[agent]) ? project[agent] : {};
+  for (const values of [localSection, project]) if (values.codexSubagents === void 0 && values.native_subagents !== void 0) values.codexSubagents = typeof values.native_subagents === "boolean" ? values.native_subagents ? DEFAULT_CODEX_SUBAGENTS : 0 : values.native_subagents;
+  const pick2 = (key, envKey, parse4) => {
+    for (const v of [envKey ? env[envKey] : void 0, localSection[key], project[key], section[key], file2[key]]) {
+      if (v === void 0) continue;
+      const parsed = parse4(v);
+      if (parsed !== void 0) return parsed;
+      log.warn("ignoring invalid config value", { key, value: String(v) });
+    }
+    return void 0;
+  };
+  const str = (v) => typeof v === "string" && v.trim() ? v.trim() : void 0;
+  const d = DEFAULT_CONFIG;
+  const cfg = {
+    history: { ingest: env.AGENT_BRIDGE_HISTORY_INGEST === "false" || env.AGENT_BRIDGE_HISTORY_INGEST === "0" ? false : !(isRecord(file2.history) && file2.history.ingest === false) },
+    projectGroups: [localSection.projectGroups, project.projectGroups, section.projectGroups, file2.projectGroups].find((v) => v !== void 0) === void 0 ? true : [localSection.projectGroups, project.projectGroups, section.projectGroups, file2.projectGroups].find((v) => v !== void 0) === true,
+    name: pick2("name", ENV.name, str) ?? d.name,
+    autoWake: pick2("autoWake", ENV.autoWake, parseBool) ?? d.autoWake,
+    wakeOnDirect: pick2("wakeOnDirect", ENV.wakeOnDirect, parseBool) ?? d.wakeOnDirect,
+    maxHops: pick2("maxHops", ENV.maxHops, (v) => parseIntInRange(v, 0, MAX_HOPS_LIMIT)) ?? d.maxHops,
+    maxJobs: pick2("maxJobs", ENV.maxJobs, (v) => parseIntInRange(v, 1, MAX_JOBS_LIMIT)) ?? d.maxJobs,
+    maxDelegateDepth: pick2("maxDelegateDepth", ENV.maxDelegateDepth, (v) => parseIntInRange(v, 1, MAX_DELEGATE_DEPTH_LIMIT)) ?? d.maxDelegateDepth,
+    autoApproveTools: pick2("autoApproveTools", ENV.autoApproveTools, toolPatterns) ?? d.autoApproveTools,
+    // Capacities must agree across agents; per-agent sections cannot override shared resources.
+    resourceSlots: resourceSlots(file2.resourceSlots) ?? d.resourceSlots,
+    delivery: pick2("delivery", ENV.delivery, (v) => oneOf(v, DELIVERY_MODES)) ?? d.delivery,
+    claudeBin: pick2("claudeBin", ENV.claudeBin, str) ?? d.claudeBin,
+    codexBin: pick2("codexBin", ENV.codexBin, str) ?? d.codexBin,
+    codexWakeRemote: pick2("codexWakeRemote", "AGENT_BRIDGE_CODEX_WAKE_REMOTE", str) ?? null,
+    codexWakeRemoteAuthTokenEnv: pick2("codexWakeRemoteAuthTokenEnv", "AGENT_BRIDGE_CODEX_WAKE_REMOTE_AUTH_TOKEN_ENV", str) ?? null,
+    codexSubagents: pick2("codexSubagents", null, (v) => {
+      const n = typeof v === "string" && /^\d+$/.test(v) ? Number(v) : v;
+      return typeof n === "number" && Number.isInteger(n) && n >= 0 && n <= MAX_CODEX_SUBAGENTS ? n : void 0;
+    }) ?? d.codexSubagents,
+    codexSandbox: pick2("codexSandbox", null, (v) => oneOf(v, CODEX_SANDBOXES)) ?? d.codexSandbox,
+    codexWindowsSandbox: pick2("codexWindowsSandbox", null, (v) => oneOf(v, ["unelevated", "elevated"])) ?? d.codexWindowsSandbox,
+    jobCloseCleanup: pick2("jobCloseCleanup", null, parseBool) ?? d.jobCloseCleanup,
+    codexApprovalsReviewer: pick2("codexApprovalsReviewer", null, (v) => oneOf(v, CODEX_APPROVALS_REVIEWERS)) ?? d.codexApprovalsReviewer,
+    codexWorktreeSandbox: pick2("codexWorktreeSandbox", null, (v) => oneOf(v, CODEX_SANDBOXES)) ?? d.codexWorktreeSandbox,
+    codexWorkspaceWriteNetworkAccess: pick2("codexWorkspaceWriteNetworkAccess", null, parseBool) ?? d.codexWorkspaceWriteNetworkAccess,
+    claudePermissionMode: pick2("claudePermissionMode", null, (v) => oneOf(v, CLAUDE_PERMISSION_MODES)) ?? d.claudePermissionMode,
+    lingerSec: pick2("lingerSec", ENV.lingerSec, (v) => parseIntInRange(v, 0, MAX_LINGER_SEC)) ?? d.lingerSec,
+    codexModel: pick2("codexModel", null, modelName) ?? d.codexModel,
+    claudeModel: pick2("claudeModel", null, modelName) ?? d.claudeModel,
+    opencodeBin: pick2("opencodeBin", ENV.opencodeBin, str) ?? d.opencodeBin,
+    antigravityBin: pick2("antigravityBin", "AGENT_BRIDGE_ANTIGRAVITY_BIN", str) ?? d.antigravityBin,
+    antigravityModel: pick2("antigravityModel", null, modelName) ?? d.antigravityModel,
+    opencodeModel: pick2("opencodeModel", null, modelName) ?? d.opencodeModel,
+    effort: Object.assign({}, d.effort, ...[file2, section, project, localSection].map((values) => effortLevels(values.effort) ?? {})),
+    opencodeAutoApprove: pick2("opencodeAutoApprove", null, parseBool) ?? d.opencodeAutoApprove,
+    dashboard: pick2("dashboard", ENV.dashboard, parseBool) ?? d.dashboard,
+    dashboardPort: pick2("dashboardPort", null, (v) => parseIntInRange(v, 1, 65535)) ?? d.dashboardPort,
+    historyAnswer: pick2("historyAnswer", null, historyAnswer) ?? d.historyAnswer,
+    notifications: pick2("notifications", null, notifications) ?? d.notifications,
+    questionAlerts: pick2("questionAlerts", null, (v) => questionAlertSettingsSchema.safeParse(isRecord(v) ? { ...DEFAULT_QUESTION_ALERTS, ...v } : v).data) ?? d.questionAlerts,
+    network: pick2("network", null, parseNetworkConfig) ?? d.network
+  };
+  log.debug("effective config", { ...cfg });
+  return cfg;
+}
+
 // src/core/history-worker.ts
-var db = new DatabaseSync11(workerData.file, { timeout: 50 });
-configureSqlite(db, 50);
+import { setTimeout as yieldTurn } from "node:timers/promises";
+var db = openHistoryStore(workerData.file);
+var source = new DatabaseSync12(workerData.bridge, { readOnly: true, timeout: 100 });
+source.exec("PRAGMA busy_timeout=100; PRAGMA query_only=ON");
 var paths = workerData.paths ?? transcriptPaths();
-var index = new HistoryIndex(db, workerData.home, paths);
-var ingest = new ConversationIngestor(db, workerData.home, paths);
+var index = new HistoryIndex(db, workerData.home, paths, source);
+var ingest = new ConversationIngestor(db, workerData.home, paths, source);
 var timer = null;
-function tick(reset = false) {
-  if (reset) index.reset();
-  const result = index.tick();
-  const work = result.work + ingest.tick();
-  return { work, discovering: result.discovering || ingest.discovering };
+var stopped = false;
+var pending = false;
+var ready = false;
+var running = false;
+var pauseUntil = 0;
+var peers = /* @__PURE__ */ new Map();
+function enabled() {
+  return loadConfig(workerData.home, "other", nullLogger).history.ingest;
+}
+var paused = () => pending || Date.now() < pauseUntil || !enabled();
+async function tick(reset = false) {
+  if (running || stopped || paused()) return { work: 0, discovering: !ready };
+  running = true;
+  try {
+    if (!ready) {
+      await migrateHistoryStore(workerData.bridge, db, paused, () => stopped, (owner) => parentPort?.postMessage({ migrationLease: owner }));
+      ready = true;
+    }
+    if (stopped || paused()) return { work: 0, discovering: true };
+    const legacyWork = copyLegacyConversationTail(source, db);
+    await yieldTurn(10);
+    for (const [id, peer] of [...peers].slice(0, 32)) {
+      index.rememberPeer(peer);
+      peers.delete(id);
+    }
+    if (reset) index.reset();
+    const result = index.tick();
+    await yieldTurn(10);
+    const work = legacyWork + result.work + (stopped || paused() ? 0 : ingest.tick());
+    return { work, discovering: result.discovering || ingest.discovering };
+  } finally {
+    running = false;
+  }
 }
 function schedule(delay2 = HISTORY_TICK_MS) {
-  timer = setTimeout(() => {
+  if (stopped) return;
+  timer = setTimeout(async () => {
     try {
-      const result = tick();
-      schedule(result.work || result.discovering ? 100 : HISTORY_TICK_MS);
+      while (pending && !stopped) await yieldTurn(100);
+      await tick();
     } catch (err) {
       parentPort?.postMessage({ error: String(err) });
-      schedule();
+      pauseUntil = Date.now() + 5e3;
     }
+    schedule();
   }, delay2);
 }
-parentPort?.on("message", (message) => {
+function close() {
+  index.close();
+  ingest.close();
+  source.close();
+  db.close();
+  parentPort?.close();
+}
+parentPort?.on("message", async (message) => {
+  if (message.pressure) {
+    pending = !!message.pending;
+    if (message.lockError) pauseUntil = Date.now() + 5e3;
+    return;
+  }
+  if (message.peer) {
+    peers.set(message.peer.id, message.peer);
+    return;
+  }
   if (message.stop) {
+    stopped = true;
     if (timer) clearTimeout(timer);
-    index.close();
-    ingest.close();
-    db.close();
-    parentPort?.close();
+    while (running) await yieldTurn(10);
+    close();
     return;
   }
   try {
-    parentPort?.postMessage({ id: message.id, result: tick(message.reset) });
+    while (running && !stopped) await yieldTurn(10);
+    parentPort?.postMessage({ id: message.id, result: await tick(message.reset) });
   } catch (err) {
     parentPort?.postMessage({ id: message.id, error: String(err) });
   }
 });
-schedule(100);
+schedule();

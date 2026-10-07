@@ -7201,15 +7201,16 @@ var require_dist = __commonJS({
 
 // src/core/job-outcomes.ts
 import { createHash as createHash8 } from "node:crypto";
-import { existsSync as existsSync17 } from "node:fs";
+import { closeSync as closeSync8, existsSync as existsSync17, fstatSync as fstatSync2, lstatSync as lstatSync4, openSync as openSync8, readFileSync as readFileSync21, readSync as readSync2 } from "node:fs";
 import { join as join34 } from "node:path";
 import { DatabaseSync as DatabaseSync7 } from "node:sqlite";
+import { inflateSync } from "node:zlib";
 
 // src/core/constants.ts
 import { homedir } from "node:os";
 import { join } from "node:path";
 var APP_NAME = "agent-bridge";
-var APP_VERSION = "0.29.21";
+var APP_VERSION = "0.30.0";
 var PROTOCOL_VERSION = 2;
 var ENV = {
   internal: "AGENT_BRIDGE_INTERNAL",
@@ -7276,6 +7277,7 @@ var HOOK_MAX_MESSAGES = 10;
 var HOOK_BUDGET_MS = 1500;
 
 // src/core/run-history.ts
+import { readFile } from "node:fs/promises";
 import { lstatSync as lstatSync2, readdirSync as readdirSync8, realpathSync as realpathSync2, statSync as statSync5 } from "node:fs";
 import { isAbsolute as isAbsolute2, join as join9, relative as relative2, sep as sep2 } from "node:path";
 
@@ -7939,6 +7941,70 @@ function readRunLogs(home, namesFilter) {
   }
   return [...records.values()];
 }
+async function readRunStarts(home) {
+  const root = join9(home, RUNS_DIR_NAME);
+  let canonicalRoot;
+  try {
+    canonicalRoot = realpathSync2.native(root);
+  } catch {
+    return [];
+  }
+  const starts = /* @__PURE__ */ new Map();
+  for (const archived of [true, false]) {
+    let dir;
+    try {
+      dir = realpathSync2.native(archived ? join9(root, "archive") : root);
+    } catch {
+      continue;
+    }
+    const rel = relative2(canonicalRoot, dir);
+    if (rel === ".." || rel.startsWith(`..${sep2}`) || isAbsolute2(rel)) continue;
+    let entries;
+    try {
+      entries = readdirSync8(dir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    const paths = /* @__PURE__ */ new Map();
+    entries.sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
+    for (const entry of entries) {
+      const original = archived ? entry.name.replace(ARCHIVE_SUFFIX, "$1") : entry.name;
+      const file2 = join9(dir, entry.name);
+      const contained = entry.isFile() ? file2 : entry.isSymbolicLink() ? safeFile(root, file2, canonicalRoot) : null;
+      if (contained) {
+        const previous = paths.get(original);
+        if (previous && original.endsWith(".log")) {
+          try {
+            if (statSync5(previous).mtimeMs > statSync5(contained).mtimeMs) continue;
+          } catch {
+            continue;
+          }
+        }
+        paths.set(original, contained);
+      }
+    }
+    const metadata = [];
+    for (const [name2, log] of paths) {
+      if (!RUN_LOG_NAME.test(name2)) continue;
+      const runName = name2.slice(0, -4), file2 = paths.get(`${runName}.json`);
+      if (!archived) starts.delete(runName);
+      if (file2) metadata.push({ name: name2, runName, file: file2, log });
+    }
+    for (let offset = 0; offset < metadata.length; offset += 32) {
+      await Promise.all(metadata.slice(offset, offset + 32).map(async ({ name: name2, runName, file: file2, log }) => {
+        try {
+          const meta3 = JSON.parse(await readFile(file2, "utf8"));
+          if (!isRecord(meta3) || typeof meta3.job !== "string") return;
+          const m = /^(\d{4})-(\d\d)-(\d\d)-(\d\d)-(\d\d)-(\d\d)-/.exec(name2);
+          const startedAt = m ? Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]) : statSync5(log).mtimeMs;
+          starts.set(runName, { job: meta3.job, startedAt, ...typeof meta3.jobStartedAt === "number" ? { jobStartedAt: meta3.jobStartedAt } : {} });
+        } catch {
+        }
+      }));
+    }
+  }
+  return [...starts.values()];
+}
 function readHistoryJobs(home) {
   const out = /* @__PURE__ */ new Map();
   let canonicalHome;
@@ -8359,6 +8425,9 @@ var FrameDecoder = class {
 };
 function encodeFrame(frame) {
   return JSON.stringify(frame) + "\n";
+}
+function isUnsupportedOperation(error62, op) {
+  return error62 instanceof Error && (error62.message.includes(`unknown op: ${op}`) || error62 instanceof BridgeError && error62.code === "protocol_mismatch" && (error62.details?.operation === op || error62.message.includes(`does not support ${op} required`)));
 }
 
 // src/core/job-messaging.ts
@@ -9035,10 +9104,10 @@ function resolveBinary(bin, env = process.env, platform = process.platform) {
   }
   return null;
 }
-function unwrapNpmShim(shimPath, readFile3 = (p) => readFileSync12(p, "utf8")) {
+function unwrapNpmShim(shimPath, readFile4 = (p) => readFileSync12(p, "utf8")) {
   let text3;
   try {
-    text3 = readFile3(shimPath);
+    text3 = readFile4(shimPath);
   } catch {
     return null;
   }
@@ -30038,16 +30107,16 @@ var OwnerQuestionStore = class {
     if (args.default && args.default.deadline <= at) throw new Error("Default deadline must be in the future");
     return this.transaction(() => {
       const open4 = this.list().filter((q2) => q2.status === "open");
-      const sameAsker = (a) => a.sessionId && asker.sessionId ? a.agent === asker.agent && a.sessionId === asker.sessionId : a.session === asker.session;
+      const sameAsker = (a) => a.sessionId && asker.sessionId ? a.agent === asker.agent && a.sessionId === asker.sessionId : a.peerId && asker.peerId ? a.peerId === asker.peerId : a.session === asker.session;
       const issue2 = args.links.filter((l) => l.kind === "issue").map((l) => l.value.toUpperCase()).sort().join(",");
       const key3 = JSON.stringify([project, issue2, args.topic.toLowerCase()]);
       const same = open4.find((q2) => q2.dedupeKey === key3);
       if (!same?.askers.some(sameAsker) && open4.filter((q2) => q2.askers.some(sameAsker)).length >= MAX_OPEN_QUESTIONS) throw new Error(`At most ${MAX_OPEN_QUESTIONS} open questions per session; consolidate or cancel existing ones`);
       if (same) {
         if (JSON.stringify([same.options, same.default, same.authorization, same.destructive, same.blocking]) !== JSON.stringify([args.options, args.default, args.authorization, args.destructive, args.blocking])) throw new Error(`Question ${same.id} already covers this topic with different terms; cancel or supersede it explicitly`);
-        const priorAsker = same.askers.findIndex(sameAsker);
+        const priorAsker = same.askers.findIndex((a) => sameAsker(a) && a.job === asker.job);
         if (priorAsker < 0) same.askers.push(asker);
-        else same.askers[priorAsker] = asker;
+        else same.askers[priorAsker] = { ...same.askers[priorAsker], ...asker };
         same.affectedProjects = [.../* @__PURE__ */ new Set([...same.affectedProjects, ...args.affectedProjects, project])];
         same.links = [...new Map([...same.links, ...args.links].map((l) => [JSON.stringify(l), l])).values()];
         this.save(same);
@@ -30128,6 +30197,7 @@ var CLAUDE_PERMISSION_MODES = ["default", "manual", "acceptEdits", "plan", "auto
 var DEFAULT_NOTIFICATIONS = { approvals: true, finish: true, fail: true };
 var DEFAULT_HISTORY_ANSWER = { preference: ["codex", "claude", "opencode"], claudeModel: "haiku", codexModel: "gpt-6-luna", opencodeModel: null };
 var DEFAULT_CONFIG = {
+  history: { ingest: true },
   questionAlerts: DEFAULT_QUESTION_ALERTS,
   projectGroups: true,
   historyAnswer: DEFAULT_HISTORY_ANSWER,
@@ -30305,6 +30375,7 @@ function loadConfig(home, agent, log, env = process.env, projectDir) {
   const str = (v) => typeof v === "string" && v.trim() ? v.trim() : void 0;
   const d = DEFAULT_CONFIG;
   const cfg = {
+    history: { ingest: env.AGENT_BRIDGE_HISTORY_INGEST === "false" || env.AGENT_BRIDGE_HISTORY_INGEST === "0" ? false : !(isRecord(file2.history) && file2.history.ingest === false) },
     projectGroups: [localSection.projectGroups, project.projectGroups, section.projectGroups, file2.projectGroups].find((v) => v !== void 0) === void 0 ? true : [localSection.projectGroups, project.projectGroups, section.projectGroups, file2.projectGroups].find((v) => v !== void 0) === true,
     name: pick2("name", ENV.name, str) ?? d.name,
     autoWake: pick2("autoWake", ENV.autoWake, parseBool) ?? d.autoWake,
@@ -30344,7 +30415,7 @@ function loadConfig(home, agent, log, env = process.env, projectDir) {
     dashboardPort: pick2("dashboardPort", null, (v) => parseIntInRange(v, 1, 65535)) ?? d.dashboardPort,
     historyAnswer: pick2("historyAnswer", null, historyAnswer) ?? d.historyAnswer,
     notifications: pick2("notifications", null, notifications) ?? d.notifications,
-    questionAlerts: pick2("questionAlerts", null, (v) => questionAlertSettingsSchema.safeParse(v).data) ?? d.questionAlerts,
+    questionAlerts: pick2("questionAlerts", null, (v) => questionAlertSettingsSchema.safeParse(isRecord(v) ? { ...DEFAULT_QUESTION_ALERTS, ...v } : v).data) ?? d.questionAlerts,
     network: pick2("network", null, parseNetworkConfig) ?? d.network
   };
   log.debug("effective config", { ...cfg });
@@ -32303,7 +32374,7 @@ var JobManager = class {
           this.persist();
           return { name: job.name, outcome: "queued for follow-up; no live link" };
         }
-        return { name: job.name, outcome: "queued on existing runner link; consumption unconfirmed" };
+        return { name: job.name, outcome: "delivery attempted on existing runner link; queueing and consumption unconfirmed" };
       } catch (err) {
         return { name: job.name, outcome: `failed: ${err.message}` };
       }
@@ -33513,6 +33584,105 @@ function localResultReceipt(home, name2, owner, after, before) {
 }
 
 // src/core/job-outcomes.ts
+function localHeads(repo, branches) {
+  if (["GIT_DIR", "GIT_COMMON_DIR", "GIT_WORK_TREE", "GIT_NAMESPACE", "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_SHALLOW_FILE", "GIT_REPLACE_REF_BASE"].some((key3) => process.env[key3])) return null;
+  if (branches.some((branch) => !/^[A-Za-z0-9._/-]+$/.test(branch) || branch.split("/").some((part) => !part || part.startsWith(".") || part.endsWith(".") || part.endsWith(".lock") || part.includes("..")))) return null;
+  try {
+    const dir = join34(repo, ".git");
+    if (!lstatSync4(dir).isDirectory() || /\brefStorage\s*=|\[\s*include/i.test(readFileSync21(join34(dir, "config"), "utf8"))) return null;
+    const packed = /* @__PURE__ */ new Map();
+    try {
+      for (const line of readFileSync21(join34(dir, "packed-refs"), "utf8").split("\n")) {
+        const match = /^((?:[a-f0-9]{40}|[a-f0-9]{64})) (refs\/heads\/.+)$/i.exec(line.trim());
+        if (match) packed.set(match[2], match[1]);
+      }
+    } catch (err) {
+      if (err.code !== "ENOENT") return null;
+    }
+    const heads = /* @__PURE__ */ new Map();
+    for (const branch of branches) {
+      const ref = `refs/heads/${branch}`;
+      let head = packed.get(ref);
+      try {
+        head = readFileSync21(join34(dir, "refs", "heads", branch), "utf8").trim();
+      } catch (err) {
+        if (err.code !== "ENOENT") return null;
+      }
+      if (head === void 0) continue;
+      if (!/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/i.test(head)) return null;
+      heads.set(ref, head);
+    }
+    return heads;
+  } catch {
+    return null;
+  }
+}
+function localAncestor(repo, ancestor, descendant) {
+  const dir = join34(repo, ".git"), limit = 64 * 1024;
+  try {
+    if (["shallow", "info/grafts", "refs/replace", "objects/info/alternates"].some((file2) => existsSync17(join34(dir, file2)))) return null;
+    try {
+      if (/ refs\/replace\//m.test(readFileSync21(join34(dir, "packed-refs"), "utf8"))) return null;
+    } catch (err) {
+      if (err.code !== "ENOENT") return null;
+    }
+    let reads = 0;
+    const parents = (head) => {
+      if (reads++ >= 16 || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/i.test(head)) return null;
+      const file2 = join34(dir, "objects", head.slice(0, 2), head.slice(2));
+      if (!lstatSync4(file2).isFile()) return null;
+      const fd = openSync8(file2, "r");
+      let compressed;
+      try {
+        const stat = fstatSync2(fd), size = stat.size;
+        if (!stat.isFile() || size > limit) return null;
+        compressed = Buffer.alloc(size);
+        let at = 0;
+        while (at < size) {
+          const n = readSync2(fd, compressed, at, size - at, at);
+          if (!n) return null;
+          at += n;
+        }
+      } finally {
+        closeSync8(fd);
+      }
+      const object4 = inflateSync(compressed, { maxOutputLength: limit });
+      if (createHash8(head.length === 40 ? "sha1" : "sha256").update(object4).digest("hex") !== head.toLowerCase()) return null;
+      const zero = object4.indexOf(0), header = /^commit (\d+)$/.exec(object4.subarray(0, zero).toString("utf8"));
+      if (zero < 0 || !header || Number(header[1]) !== object4.length - zero - 1) return null;
+      const body = object4.subarray(zero + 1).toString("utf8"), end = body.indexOf("\n\n");
+      if (end < 0 || !new RegExp(`^tree [a-f0-9]{${head.length}}\\n`, "i").test(body)) return null;
+      const result = [];
+      let parentBlock = true;
+      for (const line of body.slice(0, end).split("\n").slice(1)) {
+        if (!line.startsWith("parent ")) {
+          parentBlock = false;
+          continue;
+        }
+        if (!parentBlock) return null;
+        const parent2 = line.slice(7);
+        if (parent2.length !== head.length || !/^[a-f0-9]+$/i.test(parent2) || result.length >= 16) return null;
+        result.push(parent2);
+      }
+      return result;
+    };
+    if (parents(ancestor) === null) return null;
+    const pending = [descendant], seen = /* @__PURE__ */ new Set();
+    while (pending.length) {
+      const head = pending.pop();
+      if (head === ancestor) return true;
+      if (seen.has(head)) continue;
+      if (seen.size >= 16) return null;
+      seen.add(head);
+      const next = parents(head);
+      if (next === null || pending.length + next.length > 16) return null;
+      pending.push(...next);
+    }
+    return false;
+  } catch {
+    return null;
+  }
+}
 var MAX_HOLD_REASON_CHARS = 2e3;
 var JOB_OUTCOMES_DIR = "job-outcomes";
 var JOB_OUTCOME_CONTRACT_VERSION = 1;
@@ -33541,7 +33711,7 @@ function setJobOutcome(home, job, supervisor, state, reason, now = Date.now()) {
   writeJsonStore(path, mergeStoreFields(isRecord(previous) ? previous : {}, { job: job.name, startedAt: job.startedAt, decision, history: [...history, ...prior] }), previous);
   return decision;
 }
-function resultDelivery(home, job, before) {
+function readResultDelivery(home, job, before = Number.MAX_SAFE_INTEGER) {
   const unknown2 = { status: "unknown", messageId: null, recipient: null, deliveredAt: null, readAt: null };
   const local = localResultReceipt(home, job.name, job.owner, job.startedAt, before);
   const path = resolveDbPath(home);
@@ -33591,13 +33761,17 @@ async function deriveJobOutcome(home, job, log, opts = {}) {
     if (!branch || !repoRoot || !baseBranch) merge2.reason = "Branch, repository, or base branch is unknown.";
     else {
       const run = (args) => git([...trustArgs(repoRoot), ...args], repoRoot, log);
-      const refs = await run([
-        "for-each-ref",
-        "--format=%(refname)%09%(objectname)",
-        `refs/heads/${branch}`,
-        `refs/heads/${baseBranch}`
-      ]).catch(() => "");
-      const heads = new Map(refs.split("\n").map((line) => line.trim().split("	")));
+      let heads = localHeads(repoRoot, [branch, baseBranch]);
+      const ordinaryFiles = heads !== null;
+      if (!heads) {
+        const refs = await run([
+          "for-each-ref",
+          "--format=%(refname)%09%(objectname)",
+          `refs/heads/${branch}`,
+          `refs/heads/${baseBranch}`
+        ]).catch(() => "");
+        heads = new Map(refs.split("\n").map((line) => line.trim().split("	")));
+      }
       branchHead ??= heads.get(`refs/heads/${branch}`) ?? null;
       merge2.branchHead = branchHead;
       if (!branchHead) merge2.reason = "Branch is missing and no saved tip is available.";
@@ -33605,14 +33779,15 @@ async function deriveJobOutcome(home, job, log, opts = {}) {
         const base2 = heads.get(`refs/heads/${baseBranch}`);
         if (!base2) merge2.reason = "Base branch is unavailable.";
         else {
-          const merged = branchHead === base2 || await run(["merge-base", "--is-ancestor", branchHead, base2]).then(() => true, () => false);
+          const local = branchHead === base2 ? true : ordinaryFiles ? localAncestor(repoRoot, branchHead, base2) : null;
+          const merged = branchHead === base2 || (local ?? await run(["merge-base", "--is-ancestor", branchHead, base2]).then(() => true, () => false));
           merge2.state = merged ? "merged" : "unmerged";
           merge2.reason = merged ? null : `Has commits not merged into ${baseBranch}.`;
         }
       }
     }
   }
-  return { delivery: resultDelivery(home, job, opts.before ?? Number.MAX_SAFE_INTEGER), merge: merge2 };
+  return { delivery: opts.delivery ?? readResultDelivery(home, job, opts.before ?? Number.MAX_SAFE_INTEGER), merge: merge2 };
 }
 async function listJobOutcomes(home, log, names) {
   const jobs = readStore(join34(home, JOBS_FILE), log, true);
@@ -33626,26 +33801,26 @@ async function listJobOutcomes(home, log, names) {
 }
 
 // src/core/job-close.ts
-import { existsSync as existsSync18, lstatSync as lstatSync6 } from "node:fs";
+import { existsSync as existsSync18, lstatSync as lstatSync7 } from "node:fs";
 import { dirname as dirname15, isAbsolute as isAbsolute7, join as join37, relative as relative5, resolve as resolve11, sep as sep4 } from "node:path";
 
 // src/core/permission-repair.ts
 import { randomUUID as randomUUID11 } from "node:crypto";
-import { lstatSync as lstatSync4, readdirSync as readdirSync13 } from "node:fs";
+import { lstatSync as lstatSync5, readdirSync as readdirSync13 } from "node:fs";
 import { dirname as dirname14, join as join35, parse as parse4, resolve as resolve9, toNamespacedPath as toNamespacedPath3 } from "node:path";
 function assertPhysicalPath(path) {
   const target = resolve9(path);
   const parts = [];
   for (let p = target; dirname14(p) !== p; p = dirname14(p)) parts.unshift(p);
-  for (const p of parts) if (lstatSync4(toNamespacedPath3(p)).isSymbolicLink()) throw new Error(`Refusing permission changes through a link: ${p}`);
+  for (const p of parts) if (lstatSync5(toNamespacedPath3(p)).isSymbolicLink()) throw new Error(`Refusing permission changes through a link: ${p}`);
   return target;
 }
 function permissionRepairPlan(path) {
   const root = assertPhysicalPath(path);
-  if (root === parse4(root).root || !lstatSync4(root).isDirectory()) throw new Error("Select one physical folder, not a filesystem root.");
+  if (root === parse4(root).root || !lstatSync5(root).isDirectory()) throw new Error("Select one physical folder, not a filesystem root.");
   const paths = [], skipped = [];
   const visit2 = (p) => {
-    const stat = lstatSync4(toNamespacedPath3(p));
+    const stat = lstatSync5(toNamespacedPath3(p));
     if (stat.isSymbolicLink()) {
       skipped.push(p);
       return;
@@ -33685,13 +33860,13 @@ ConvertTo-Json -Depth 5 -Compress -InputObject @{ sid = $sid.Value; entries = $r
 
 // src/core/worktree-state.ts
 import { createHash as createHash9 } from "node:crypto";
-import { lstatSync as lstatSync5, mkdirSync as mkdirSync18 } from "node:fs";
+import { lstatSync as lstatSync6, mkdirSync as mkdirSync18 } from "node:fs";
 import { join as join36, resolve as resolve10 } from "node:path";
 var WORKTREE_STATE_CONTRACT = 1;
 var key2 = (wt) => createHash9("sha256").update(resolve10(wt.path).toLowerCase()).digest("hex");
 var statePath = (home, wt) => join36(home, "worktree-state", `${key2(wt)}.json`);
 var rootId = (path) => {
-  const stat = lstatSync5(path);
+  const stat = lstatSync6(path);
   return `${stat.dev}:${stat.ino}:${stat.birthtimeMs}`;
 };
 function readWorktreeState(home, wt) {
@@ -33730,7 +33905,7 @@ async function recordWorktreeOrigin(home, wt, log) {
   const files2 = (await git([...trustArgs(wt.path), "ls-files", "-z"], wt.path, log)).split("\0").filter(Boolean);
   const libraries = files2.filter((file2) => /(^|\/)ProjectSettings\/ProjectVersion\.txt$/.test(file2)).map((file2) => join37(dirname15(dirname15(file2)), "Library")).filter((path) => {
     try {
-      lstatSync6(join37(wt.path, path));
+      lstatSync7(join37(wt.path, path));
       return false;
     } catch (err) {
       if (err.code !== "ENOENT") throw err;
@@ -33754,7 +33929,7 @@ async function inspect(wt, state, log) {
     const path = resolve11(wt.path, file2);
     if (!inside(path, wt.path) || path === resolve11(wt.path) || !/(^|[\\/])Library$/.test(file2)) throw new Error("Invalid cache provenance; kept.");
     if (!existsSync18(path)) continue;
-    if (!lstatSync6(path).isDirectory() || !existsSync18(join37(dirname15(path), "ProjectSettings", "ProjectVersion.txt"))) throw new Error("Cache is no longer a Unity Library.");
+    if (!lstatSync7(path).isDirectory() || !existsSync18(join37(dirname15(path), "ProjectSettings", "ProjectVersion.txt"))) throw new Error("Cache is no longer a Unity Library.");
     if (await run(["ls-files", "-z", "--", `:(literal)${file2.replace(/\\/g, "/")}`])) throw new Error("Tracked Library contents are kept.");
     libraries.push(path);
   }
@@ -33827,7 +34002,7 @@ async function prepareWorktreeContinuation(home, wt, log) {
 }
 
 // src/mcp/server.ts
-import { dirname as dirname27, isAbsolute as isAbsolute11, join as join71, resolve as resolve18 } from "node:path";
+import { dirname as dirname28, isAbsolute as isAbsolute11, join as join72, resolve as resolve18 } from "node:path";
 import { fileURLToPath as fileURLToPath3 } from "node:url";
 
 // node_modules/zod/v3/helpers/util.js
@@ -43341,7 +43516,7 @@ import { join as join41 } from "node:path";
 
 // src/core/procinfo.ts
 import { execFile } from "node:child_process";
-import { readFile } from "node:fs/promises";
+import { readFile as readFile2 } from "node:fs/promises";
 var LOOKUP_TIMEOUT_MS = 5e3;
 var MAX_ANCESTORS = 4;
 function exec(file2, args) {
@@ -43357,7 +43532,7 @@ function exec(file2, args) {
 async function lookup(pid) {
   try {
     if (process.platform === "linux") {
-      const [cmd, stat] = await Promise.all([readFile(`/proc/${pid}/cmdline`, "utf8"), readFile(`/proc/${pid}/stat`, "utf8")]);
+      const [cmd, stat] = await Promise.all([readFile2(`/proc/${pid}/cmdline`, "utf8"), readFile2(`/proc/${pid}/stat`, "utf8")]);
       const ppid = Number(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[1]);
       return { pid, ppid, cmdline: cmd.split("\0").join(" ") };
     }
@@ -43420,7 +43595,7 @@ async function inspectClaudeLaunch(pluginName, log) {
 }
 
 // src/cli/antigravity-hook.ts
-import { readFileSync as readFileSync21 } from "node:fs";
+import { readFileSync as readFileSync22 } from "node:fs";
 import { join as join38 } from "node:path";
 
 // src/core/tool-allow.ts
@@ -43618,7 +43793,7 @@ function formatDelivery(result, maxHops = DEFAULT_MAX_HOPS) {
 
 // src/mcp/message-wait.ts
 import { randomUUID as randomUUID12 } from "node:crypto";
-import { mkdirSync as mkdirSync19, readdirSync as readdirSync14, readFileSync as readFileSync22 } from "node:fs";
+import { mkdirSync as mkdirSync19, readdirSync as readdirSync14, readFileSync as readFileSync23 } from "node:fs";
 import { join as join39 } from "node:path";
 var SINGLE_WAIT_SEC = DEFAULT_WAIT_SEC;
 var RECEIPT_POLL_MS = 1e3;
@@ -43662,7 +43837,7 @@ var MessageWaitStore = class {
     return record2;
   }
   get(node2, id) {
-    const record2 = waitSchema.parse(JSON.parse(readFileSync22(this.path(id), "utf8")));
+    const record2 = waitSchema.parse(JSON.parse(readFileSync23(this.path(id), "utf8")));
     if (!this.owns(node2, record2)) throw new Error("This wait belongs to another session.");
     return record2;
   }
@@ -43670,7 +43845,7 @@ var MessageWaitStore = class {
     mkdirSync19(this.dir, { recursive: true, mode: 448 });
     return readdirSync14(this.dir).filter((f) => f.endsWith(".json")).flatMap((f) => {
       try {
-        const record2 = waitSchema.parse(JSON.parse(readFileSync22(join39(this.dir, f), "utf8")));
+        const record2 = waitSchema.parse(JSON.parse(readFileSync23(join39(this.dir, f), "utf8")));
         return this.owns(node2, record2) ? [record2] : [];
       } catch {
         return [];
@@ -43682,7 +43857,7 @@ var MessageWaitStore = class {
   }
   setMode(node2, id, mode) {
     const record2 = this.get(node2, id);
-    const previous = JSON.parse(readFileSync22(this.path(id), "utf8"));
+    const previous = JSON.parse(readFileSync23(this.path(id), "utf8"));
     writeJsonStore(this.path(id), { ...previous, mode }, previous);
     return { ...record2, mode };
   }
@@ -44103,7 +44278,10 @@ async function runHook(ctx, input2) {
   if (input2.cwd && ctx.learnCwd) await withinHook(ctx.learnCwd(input2.cwd), input2.signal);
   await withinHook(node2.ensureConnected().catch((err) => ctx.log.warn("bridge not reachable from hook", { err: err.message })), input2.signal);
   if (input2.subagent) return {};
-  await withinHook(node2.refreshPending().catch((err) => ctx.log.warn("pending mail refresh failed; retained for retry", { err: String(err) })), input2.signal);
+  const stopJobsRunning = input2.event === "Stop" ? ctx.jobs?.runningCount() ?? 0 : 0;
+  const replay = node2.refreshPending().catch((err) => ctx.log.warn("pending mail refresh failed; retained for retry", { err: String(err) }));
+  const stopReady = input2.event === "Stop" && (stopJobsRunning > 0 || node2.unread().some((m) => !isQuietMessage(m)));
+  if (!stopReady) await withinHook(replay, input2.signal);
   const wakeTurn = input2.event === "UserPromptSubmit" && Boolean(input2.prompt?.includes(WAKE_HEADER));
   if (input2.event === "PostToolUse" || input2.event === "Stop" || wakeTurn) ctx.wakeDelivery?.confirm();
   else ctx.wakeDelivery?.release();
@@ -44144,7 +44322,7 @@ ${peers.map((p) => formatPeer(p)).join("\n")}` : "No other agents are online rig
       }
       const now = Date.now();
       const lingerRemaining = node2.lastSentAt > 0 ? node2.lastSentAt + ctx.cfg.lingerSec * 1e3 - now : 0;
-      const jobsRunning = ctx.jobs?.runningCount() ?? 0;
+      const jobsRunning = stopJobsRunning;
       const inConversation = lingerRemaining > 0 || jobsRunning > 0;
       if (!node2.autoWakeEnabled && !inConversation) {
         const awaited = node2.unread().filter((m) => (node2.isNotificationAwaited(m) || m.from.id.startsWith("job:") && shouldWakeClaudeMessage(node2, ctx.cfg, m) || ctx.agent === "opencode" && m.to !== BROADCAST && !AGENT_KINDS.includes(m.to) && shouldWakeClaudeMessage(node2, ctx.cfg, m)) && m.hop < ctx.cfg.maxHops && !isQuietMessage(m) && !m.conversationId.endsWith(":note")).slice(0, HOOK_MAX_MESSAGES);
@@ -44799,145 +44977,75 @@ function t(key3, params = {}) {
 }
 
 // src/core/node.ts
-import { randomUUID as randomUUID28 } from "node:crypto";
+import { randomUUID as randomUUID29 } from "node:crypto";
 import { EventEmitter as EventEmitter2 } from "node:events";
 import { unlinkSync as unlinkSync3 } from "node:fs";
-import { dirname as dirname26, join as join69 } from "node:path";
+import { dirname as dirname27, join as join70 } from "node:path";
 
 // src/core/history-background.ts
 import { Worker } from "node:worker_threads";
-import { existsSync as existsSync19, mkdirSync as mkdirSync22, statSync as statSync10 } from "node:fs";
+import { existsSync as existsSync20, mkdirSync as mkdirSync23, statSync as statSync10 } from "node:fs";
 import { createRequire } from "node:module";
-import { dirname as dirname16, join as join42 } from "node:path";
+import { dirname as dirname17, join as join43 } from "node:path";
 import { fileURLToPath as fileURLToPath2, pathToFileURL } from "node:url";
-var HistoryBackground = class {
-  worker;
-  stopped = false;
-  exited = false;
-  restart = null;
-  id = 0;
-  pending = /* @__PURE__ */ new Map();
-  constructor(file2, log) {
-    let entry = new URL("./history-worker.mjs", import.meta.url);
-    if (import.meta.url.endsWith(".ts")) {
-      const root = dirname16(dirname16(dirname16(fileURLToPath2(import.meta.url))));
-      const path = join42(root, ".agent-bridge-test", "history-worker.mjs");
-      const inputs = [
-        "history-worker.ts",
-        "history.ts",
-        "conversations.ts",
-        "project-store.ts"
-      ];
-      if (!existsSync19(path) || inputs.some(
-        (name2) => statSync10(join42(root, "src/core", name2)).mtimeMs > statSync10(path).mtimeMs
-      )) {
-        mkdirSync22(dirname16(path), { recursive: true });
-        createRequire(import.meta.url)("esbuild").buildSync({
-          entryPoints: [join42(root, "src/core/history-worker.ts")],
-          outfile: path,
-          bundle: true,
-          platform: "node",
-          format: "esm",
-          target: "node22",
-          external: ["node:*"],
-          logLevel: "silent"
-        });
-      }
-      entry = pathToFileURL(path);
-    }
-    const start = () => {
-      this.exited = false;
-      this.worker = new Worker(entry, {
-        workerData: { file: file2, home: dirname16(file2), paths: transcriptPaths() },
-        execArgv: []
-      });
-      this.worker.on("message", (message) => {
-        if (message.id) {
-          const pending = this.pending.get(message.id);
-          this.pending.delete(message.id);
-          if (message.error) pending?.reject(new Error(message.error));
-          else pending?.resolve(message.result);
-        } else if (message.error)
-          log.warn("history background batch deferred", { err: message.error });
-      });
-      this.worker.on("error", (err) => {
-        log.warn("history worker failed", { err: String(err) });
-        for (const p of this.pending.values())
-          p.reject(err instanceof Error ? err : new Error(String(err)));
-        this.pending.clear();
-      });
-      this.worker.on("exit", (code) => {
-        this.exited = true;
-        for (const p of this.pending.values())
-          p.reject(new Error(`History worker exited (${code})`));
-        this.pending.clear();
-        if (!this.stopped) {
-          log.warn("history worker restarting", { code });
-          this.restart = setTimeout(start, 2e3);
-          this.restart.unref();
-        }
-      });
-      this.worker.unref();
-    };
-    start();
-  }
-  tick(reset = false) {
-    if (this.stopped || this.exited)
-      return Promise.reject(
-        new Error("History worker unavailable; backfill will resume")
-      );
-    return new Promise((resolve19, reject) => {
-      const id = ++this.id;
-      this.pending.set(id, { resolve: resolve19, reject });
-      this.worker.postMessage({ id, reset });
-    });
-  }
-  async close() {
-    this.stopped = true;
-    if (this.restart) clearTimeout(this.restart);
-    for (const p of this.pending.values())
-      p.reject(new Error("History worker closed"));
-    this.pending.clear();
-    if (this.exited) return;
-    await new Promise((resolve19) => {
-      const timer = setTimeout(() => {
-        void this.worker.terminate().then(() => resolve19());
-      }, 2e3);
-      this.worker.once("exit", () => {
-        clearTimeout(timer);
-        resolve19();
-      });
-      this.worker.postMessage({ stop: true });
-    });
-  }
-};
 
-// src/core/conversations.ts
-import { createHash as createHash11 } from "node:crypto";
-import {
-  closeSync as closeSync8,
-  existsSync as existsSync21,
-  fstatSync as fstatSync2,
-  openSync as openSync8,
-  readSync as readSync2,
-  watch
-} from "node:fs";
-import { basename as basename8, join as join45 } from "node:path";
-import { DatabaseSync as DatabaseSync10 } from "node:sqlite";
-
-// src/core/project-store.ts
-import { createHash as createHash10 } from "node:crypto";
-import {
-  appendFileSync as appendFileSync4,
-  existsSync as existsSync20,
-  lstatSync as lstatSync7,
-  mkdirSync as mkdirSync23,
-  readFileSync as readFileSync23,
-  realpathSync as realpathSync8
-} from "node:fs";
-import { execFileSync as execFileSync3 } from "node:child_process";
-import { dirname as dirname17, join as join43, resolve as resolve12 } from "node:path";
+// src/core/history-store.ts
+import { createHash as createHash10, randomUUID as randomUUID14 } from "node:crypto";
+import { existsSync as existsSync19, mkdirSync as mkdirSync22, readFileSync as readFileSync24, rmSync as rmSync8 } from "node:fs";
+import { basename as basename8, dirname as dirname16, join as join42 } from "node:path";
 import { DatabaseSync as DatabaseSync9 } from "node:sqlite";
+import { setTimeout as yieldBatch } from "node:timers/promises";
+
+// src/core/history-schema.ts
+import { DatabaseSync as DatabaseSync8 } from "node:sqlite";
+function supportsHistoryFts() {
+  const probe = new DatabaseSync8(":memory:");
+  try {
+    probe.exec("CREATE VIRTUAL TABLE probe USING fts5(body)");
+    return true;
+  } catch {
+    return false;
+  } finally {
+    probe.close();
+  }
+}
+function historySchema(fts = supportsHistoryFts()) {
+  return `
+CREATE TABLE history_documents (
+  id TEXT PRIMARY KEY, kind TEXT NOT NULL, agent TEXT NOT NULL, at INTEGER NOT NULL,
+  body TEXT NOT NULL, folded TEXT NOT NULL, link TEXT NOT NULL,
+  message TEXT, job TEXT, run TEXT, session TEXT, cursor TEXT
+);
+CREATE INDEX idx_history_time ON history_documents(at);
+CREATE INDEX idx_history_session ON history_documents(session);
+CREATE INDEX idx_history_job ON history_documents(job);
+CREATE TABLE history_cursors (source TEXT PRIMARY KEY, cursor TEXT NOT NULL);
+CREATE TABLE history_files (path TEXT PRIMARY KEY, kind TEXT NOT NULL, agent TEXT NOT NULL, session TEXT, cwd TEXT NOT NULL, child TEXT, checked INTEGER NOT NULL DEFAULT 0);
+CREATE TABLE history_tags (id TEXT NOT NULL, type TEXT NOT NULL, value TEXT NOT NULL, PRIMARY KEY(id,type,value));
+CREATE INDEX idx_history_tags ON history_tags(type,value,id);
+CREATE TABLE history_sessions (alias TEXT PRIMARY KEY, session TEXT NOT NULL, job TEXT);
+CREATE INDEX idx_history_sessions ON history_sessions(session,job);
+CREATE TABLE history_pending (id TEXT NOT NULL, body TEXT NOT NULL, from_agent TEXT NOT NULL, from_name TEXT NOT NULL, from_id TEXT NOT NULL, recipient TEXT NOT NULL, to_target TEXT NOT NULL, created_at INTEGER NOT NULL, PRIMARY KEY(id,recipient));
+CREATE TRIGGER history_message_insert AFTER INSERT ON messages BEGIN
+  INSERT OR REPLACE INTO history_pending VALUES (new.id, new.body, new.from_agent, new.from_name, new.from_id, new.recipient, new.to_target, new.created_at);
+END;
+CREATE TRIGGER history_message_claim AFTER UPDATE OF recipient ON messages BEGIN
+  INSERT OR REPLACE INTO history_pending VALUES (new.id, new.body, new.from_agent, new.from_name, new.from_id, new.recipient, new.to_target, new.created_at);
+END;
+${fts ? `CREATE VIRTUAL TABLE history_fts USING fts5(body, content='history_documents', content_rowid='rowid', tokenize='unicode61');
+CREATE TRIGGER history_insert AFTER INSERT ON history_documents BEGIN
+  INSERT INTO history_fts(rowid, body) VALUES (new.rowid, new.body);
+END;
+CREATE TRIGGER history_delete AFTER DELETE ON history_documents BEGIN
+  INSERT INTO history_fts(history_fts, rowid, body) VALUES ('delete', old.rowid, old.body);
+END;
+CREATE TRIGGER history_update AFTER UPDATE ON history_documents BEGIN
+  INSERT INTO history_fts(history_fts, rowid, body) VALUES ('delete', old.rowid, old.body);
+  INSERT INTO history_fts(rowid, body) VALUES (new.rowid, new.body);
+END;` : ""}
+PRAGMA user_version = 4;
+`;
+}
 
 // src/core/conversation-schema.ts
 var CONVERSATION_SCHEMA = `
@@ -44993,58 +45101,218 @@ INSERT OR IGNORE INTO conversation_bindings(session,agent,cwd)
  AND json_type(identity,'$[3]')='text';
 PRAGMA user_version=8;`;
 
-// src/core/history-schema.ts
-import { DatabaseSync as DatabaseSync8 } from "node:sqlite";
-function supportsHistoryFts() {
-  const probe = new DatabaseSync8(":memory:");
+// src/core/history-store.ts
+var HISTORY_DB_NAME = "history.db";
+var HISTORY_STORE_VERSION = 1;
+var HISTORY_BATCH_MS = 50;
+var HISTORY_COPY_BYTES = 512 * 1024;
+function historyDbPath(bridge) {
+  return bridge === ":memory:" ? bridge : join42(dirname16(bridge), HISTORY_DB_NAME);
+}
+function historyReady(db) {
+  if (Number(db.prepare("PRAGMA user_version").get().user_version) !== HISTORY_STORE_VERSION) return false;
+  return !!db.prepare("SELECT name FROM sqlite_master WHERE name='history_migration'").get() && db.prepare("SELECT status FROM history_migration WHERE version=?").get(HISTORY_STORE_VERSION)?.status === "verified";
+}
+function historyReadPath(file2) {
+  if (basename8(file2) !== "bridge.db") return file2;
+  const path = historyDbPath(file2);
+  if (!existsSync19(path)) return file2;
+  const db = new DatabaseSync9(path, { readOnly: true, timeout: 100 });
   try {
-    probe.exec("CREATE VIRTUAL TABLE probe USING fts5(body)");
-    return true;
-  } catch {
-    return false;
+    return historyReady(db) ? path : file2;
   } finally {
-    probe.close();
+    db.close();
   }
 }
-function historySchema(fts = supportsHistoryFts()) {
-  return `
-CREATE TABLE history_documents (
-  id TEXT PRIMARY KEY, kind TEXT NOT NULL, agent TEXT NOT NULL, at INTEGER NOT NULL,
-  body TEXT NOT NULL, folded TEXT NOT NULL, link TEXT NOT NULL,
-  message TEXT, job TEXT, run TEXT, session TEXT, cursor TEXT
-);
-CREATE INDEX idx_history_time ON history_documents(at);
-CREATE INDEX idx_history_session ON history_documents(session);
-CREATE INDEX idx_history_job ON history_documents(job);
-CREATE TABLE history_cursors (source TEXT PRIMARY KEY, cursor TEXT NOT NULL);
-CREATE TABLE history_files (path TEXT PRIMARY KEY, kind TEXT NOT NULL, agent TEXT NOT NULL, session TEXT, cwd TEXT NOT NULL, child TEXT, checked INTEGER NOT NULL DEFAULT 0);
-CREATE TABLE history_tags (id TEXT NOT NULL, type TEXT NOT NULL, value TEXT NOT NULL, PRIMARY KEY(id,type,value));
-CREATE INDEX idx_history_tags ON history_tags(type,value,id);
-CREATE TABLE history_sessions (alias TEXT PRIMARY KEY, session TEXT NOT NULL, job TEXT);
-CREATE INDEX idx_history_sessions ON history_sessions(session,job);
-CREATE TABLE history_pending (id TEXT NOT NULL, body TEXT NOT NULL, from_agent TEXT NOT NULL, from_name TEXT NOT NULL, from_id TEXT NOT NULL, recipient TEXT NOT NULL, to_target TEXT NOT NULL, created_at INTEGER NOT NULL, PRIMARY KEY(id,recipient));
-CREATE TRIGGER history_message_insert AFTER INSERT ON messages BEGIN
-  INSERT OR REPLACE INTO history_pending VALUES (new.id, new.body, new.from_agent, new.from_name, new.from_id, new.recipient, new.to_target, new.created_at);
-END;
-CREATE TRIGGER history_message_claim AFTER UPDATE OF recipient ON messages BEGIN
-  INSERT OR REPLACE INTO history_pending VALUES (new.id, new.body, new.from_agent, new.from_name, new.from_id, new.recipient, new.to_target, new.created_at);
-END;
-${fts ? `CREATE VIRTUAL TABLE history_fts USING fts5(body, content='history_documents', content_rowid='rowid', tokenize='unicode61');
-CREATE TRIGGER history_insert AFTER INSERT ON history_documents BEGIN
-  INSERT INTO history_fts(rowid, body) VALUES (new.rowid, new.body);
-END;
-CREATE TRIGGER history_delete AFTER DELETE ON history_documents BEGIN
-  INSERT INTO history_fts(history_fts, rowid, body) VALUES ('delete', old.rowid, old.body);
-END;
-CREATE TRIGGER history_update AFTER UPDATE ON history_documents BEGIN
-  INSERT INTO history_fts(history_fts, rowid, body) VALUES ('delete', old.rowid, old.body);
-  INSERT INTO history_fts(rowid, body) VALUES (new.rowid, new.body);
-END;` : ""}
-PRAGMA user_version = 4;
-`;
+function openHistoryStore(file2) {
+  const db = new DatabaseSync9(file2, { timeout: 3e3 });
+  try {
+    db.exec("PRAGMA busy_timeout=3000");
+    const version2 = Number(db.prepare("PRAGMA user_version").get().user_version);
+    if (version2 > HISTORY_STORE_VERSION) throw new Error(`unsupported history store version: ${version2}`);
+    configureSqlite(db);
+    if (version2 === HISTORY_STORE_VERSION) return db;
+    const release = migrationLock(file2);
+    try {
+      if (Number(db.prepare("PRAGMA user_version").get().user_version) === HISTORY_STORE_VERSION) return db;
+      db.exec("BEGIN IMMEDIATE");
+      try {
+        db.exec(historySchema().replace(/CREATE TRIGGER history_message_(?:insert|claim)[\s\S]*?END;/g, "").replace(/PRAGMA user_version = 4;/, ""));
+        db.exec(CONVERSATION_SCHEMA.slice(0, CONVERSATION_SCHEMA.indexOf("INSERT OR IGNORE INTO conversation_envelopes")));
+        db.exec(`CREATE TABLE history_migration(version INTEGER PRIMARY KEY, snapshot TEXT NOT NULL, status TEXT NOT NULL, manifest TEXT);
+          CREATE TABLE history_legacy_tail(source_id INTEGER PRIMARY KEY, target_id INTEGER NOT NULL);
+          PRAGMA user_version=${HISTORY_STORE_VERSION}; COMMIT`);
+      } catch (err) {
+        db.exec("ROLLBACK");
+        throw err;
+      }
+    } finally {
+      release();
+    }
+    return db;
+  } catch (err) {
+    db.close();
+    throw err;
+  }
+}
+function releaseExitedHistoryLease(bridge, owner) {
+  const path = `${historyDbPath(bridge)}.migration-lock`;
+  if (JSON.parse(owner).pid !== process.pid) return;
+  if (existsSync19(path) && readFileSync24(path, "utf8") === owner) rmSync8(path);
 }
 
+// src/core/history-background.ts
+var HistoryBackground = class {
+  worker;
+  stopped = false;
+  exited = false;
+  restart = null;
+  id = 0;
+  migrationLease = null;
+  pending = /* @__PURE__ */ new Map();
+  constructor(file2, log) {
+    let entry = new URL("./history-worker.mjs", import.meta.url);
+    if (import.meta.url.endsWith(".ts")) {
+      const root = dirname17(dirname17(dirname17(fileURLToPath2(import.meta.url))));
+      const path = join43(root, ".agent-bridge-test", "history-worker.mjs");
+      const inputs = [
+        "config.ts",
+        "history-store.ts",
+        "history-schema.ts",
+        "conversation-schema.ts",
+        "history-worker.ts",
+        "history.ts",
+        "conversations.ts",
+        "project-store.ts"
+      ];
+      if (!existsSync20(path) || inputs.some(
+        (name2) => statSync10(join43(root, "src/core", name2)).mtimeMs > statSync10(path).mtimeMs
+      )) {
+        mkdirSync23(dirname17(path), { recursive: true });
+        createRequire(import.meta.url)("esbuild").buildSync({
+          entryPoints: [join43(root, "src/core/history-worker.ts")],
+          outfile: path,
+          bundle: true,
+          platform: "node",
+          format: "esm",
+          target: "node22",
+          external: ["node:*"],
+          logLevel: "silent"
+        });
+      }
+      entry = pathToFileURL(path);
+    }
+    const start = () => {
+      this.exited = false;
+      this.worker = new Worker(entry, {
+        workerData: { file: historyDbPath(file2), bridge: file2, home: dirname17(file2), paths: transcriptPaths() },
+        execArgv: []
+      });
+      this.worker.on("message", (message) => {
+        if ("migrationLease" in message) {
+          this.migrationLease = message.migrationLease;
+          return;
+        }
+        if (message.id) {
+          const pending = this.pending.get(message.id);
+          this.pending.delete(message.id);
+          if (message.error) pending?.reject(new Error(message.error));
+          else pending?.resolve(message.result);
+        } else if (message.error)
+          log.warn("history background batch deferred", { err: message.error });
+      });
+      this.worker.on("error", (err) => {
+        log.warn("history worker failed", { err: String(err) });
+        for (const p of this.pending.values())
+          p.reject(err instanceof Error ? err : new Error(String(err)));
+        this.pending.clear();
+      });
+      this.worker.on("exit", (code) => {
+        this.exited = true;
+        if (this.migrationLease) {
+          try {
+            releaseExitedHistoryLease(file2, this.migrationLease);
+          } catch (err) {
+            log.warn("history worker lease cleanup deferred", { err: String(err) });
+          }
+          this.migrationLease = null;
+        }
+        for (const p of this.pending.values())
+          p.reject(new Error(`History worker exited (${code})`));
+        this.pending.clear();
+        if (!this.stopped) {
+          log.warn("history worker restarting", { code });
+          this.restart = setTimeout(start, 2e3);
+          this.restart.unref();
+        }
+      });
+      this.worker.unref();
+    };
+    start();
+  }
+  pressure(pending, lockError = false) {
+    if (!this.stopped && !this.exited) this.worker.postMessage({ pressure: true, pending, lockError });
+  }
+  rememberPeer(peer) {
+    if (!this.stopped && !this.exited) this.worker.postMessage({ peer });
+  }
+  tick(reset = false) {
+    if (this.stopped || this.exited)
+      return Promise.reject(
+        new Error("History worker unavailable; backfill will resume")
+      );
+    return new Promise((resolve19, reject) => {
+      const id = ++this.id;
+      this.pending.set(id, { resolve: resolve19, reject });
+      this.worker.postMessage({ id, reset });
+    });
+  }
+  async close() {
+    this.stopped = true;
+    if (this.restart) clearTimeout(this.restart);
+    for (const p of this.pending.values())
+      p.reject(new Error("History worker closed"));
+    this.pending.clear();
+    if (this.exited) return;
+    await new Promise((resolve19) => {
+      const timer = setTimeout(() => {
+        void this.worker.terminate().then(() => resolve19());
+      }, 2e3);
+      this.worker.once("exit", () => {
+        clearTimeout(timer);
+        resolve19();
+      });
+      this.worker.postMessage({ stop: true });
+    });
+  }
+};
+
+// src/core/conversations.ts
+import { createHash as createHash12 } from "node:crypto";
+import {
+  closeSync as closeSync9,
+  existsSync as existsSync22,
+  fstatSync as fstatSync3,
+  openSync as openSync9,
+  readSync as readSync3,
+  watch
+} from "node:fs";
+import { basename as basename9, join as join46 } from "node:path";
+import { DatabaseSync as DatabaseSync11 } from "node:sqlite";
+
 // src/core/project-store.ts
+import { createHash as createHash11 } from "node:crypto";
+import {
+  appendFileSync as appendFileSync4,
+  existsSync as existsSync21,
+  lstatSync as lstatSync8,
+  mkdirSync as mkdirSync24,
+  readFileSync as readFileSync25,
+  realpathSync as realpathSync8
+} from "node:fs";
+import { execFileSync as execFileSync3 } from "node:child_process";
+import { dirname as dirname18, join as join44, resolve as resolve12 } from "node:path";
+import { DatabaseSync as DatabaseSync10 } from "node:sqlite";
 var roots = /* @__PURE__ */ new Map();
 function conversationProject(cwd) {
   if (!cwd || isPluginCacheCwd(cwd)) return "";
@@ -45055,16 +45323,16 @@ function conversationProject(cwd) {
   const known = roots.get(cwd);
   if (known !== void 0) return known;
   const canonical = canonicalProjectRoot(cwd);
-  const root = canonical ? projectKey(canonical) : existsSync20(cwd) ? "" : projectKey(resolve12(cwd));
+  const root = canonical ? projectKey(canonical) : existsSync21(cwd) ? "" : projectKey(resolve12(cwd));
   if (roots.size >= 256) roots.delete(roots.keys().next().value);
   roots.set(cwd, root);
   return root;
 }
 
 // src/core/transcripts/antigravity.ts
-import { join as join44 } from "node:path";
+import { join as join45 } from "node:path";
 function antigravitySessionFile(session, paths) {
-  return paths.antigravity && session.sessionId && TRANSCRIPT_ID.test(session.sessionId) ? safeFile(paths.antigravity, join44(paths.antigravity, "brain", session.sessionId, ".system_generated", "logs", "transcript.jsonl")) : null;
+  return paths.antigravity && session.sessionId && TRANSCRIPT_ID.test(session.sessionId) ? safeFile(paths.antigravity, join45(paths.antigravity, "brain", session.sessionId, ".system_generated", "logs", "transcript.jsonl")) : null;
 }
 function antigravityItems(row) {
   const at = time(row.created_at), items = [];
@@ -45114,6 +45382,7 @@ function foreignMirrorRecord(source, text3) {
   if (sandboxHome(source)) return true;
   const job = parse(text3);
   if (job.from_name === "owner-smoke-main") return true;
+  if (source.startsWith("messages:") && ["claude-e2e", "codex-e2e", "antigravity-e2e"].includes(String(job.from_name))) return true;
   if (!source.startsWith("job-snapshot:")) return false;
   return typeof job.workdir === "string" && sandboxHome(job.workdir);
 }
@@ -45152,8 +45421,9 @@ function readConversation(db, input2) {
   };
 }
 function readConversationFile(file2, input2) {
-  if (!existsSync21(file2)) return { conversation: null, records: [], next: null };
-  const db = new DatabaseSync10(file2, { readOnly: true, timeout: 100 });
+  file2 = historyReadPath(file2);
+  if (!existsSync22(file2)) return { conversation: null, records: [], next: null };
+  const db = new DatabaseSync11(file2, { readOnly: true, timeout: 100 });
   try {
     return readConversation(db, input2);
   } finally {
@@ -45162,21 +45432,21 @@ function readConversationFile(file2, input2) {
 }
 
 // src/core/history.ts
-import { createHash as createHash12 } from "node:crypto";
-import { closeSync as closeSync9, existsSync as existsSync22, fstatSync as fstatSync3, openSync as openSync9, opendirSync, readSync as readSync3, statSync as statSync11 } from "node:fs";
-import { basename as basename9, dirname as dirname19, join as join49 } from "node:path";
-import { DatabaseSync as DatabaseSync13 } from "node:sqlite";
+import { createHash as createHash13 } from "node:crypto";
+import { closeSync as closeSync10, existsSync as existsSync23, fstatSync as fstatSync4, openSync as openSync10, opendirSync, readSync as readSync4, statSync as statSync11 } from "node:fs";
+import { basename as basename10, dirname as dirname20, join as join50 } from "node:path";
+import { DatabaseSync as DatabaseSync14 } from "node:sqlite";
 
 // src/core/transcripts/claude.ts
-import { dirname as dirname18, join as join46 } from "node:path";
+import { dirname as dirname19, join as join47 } from "node:path";
 function claudeSessionFile(session, paths) {
   if (!session.sessionId || !TRANSCRIPT_ID.test(session.sessionId)) return null;
-  const projects = join46(paths.claude, "projects");
+  const projects = join47(paths.claude, "projects");
   const encoded = session.cwd.replace(/[^A-Za-z0-9]/g, "-");
-  const direct = safeFile(projects, join46(projects, encoded, `${session.sessionId}.jsonl`));
+  const direct = safeFile(projects, join47(projects, encoded, `${session.sessionId}.jsonl`));
   if (direct) return direct;
   for (const dir of directory(projects)) {
-    const file2 = safeFile(projects, join46(projects, dir, `${session.sessionId}.jsonl`));
+    const file2 = safeFile(projects, join47(projects, dir, `${session.sessionId}.jsonl`));
     if (file2) return file2;
   }
   return null;
@@ -45202,7 +45472,7 @@ function claudeItems(row) {
 function readClaudeChat(session, paths, from = "0", child) {
   const main = claudeSessionFile(session, paths);
   if (!main || child !== void 0 && !TRANSCRIPT_ID.test(child)) return null;
-  const nested = child ? safeFile(paths.claude, join46(dirname18(main), session.sessionId, "subagents", `agent-${child}.jsonl`)) : null;
+  const nested = child ? safeFile(paths.claude, join47(dirname19(main), session.sessionId, "subagents", `agent-${child}.jsonl`)) : null;
   const legacy = child && !nested ? listClaudeSubagents(session, paths).some((s) => s.id === child) : false;
   if (child && !nested && !legacy) return null;
   const page = readJsonl(nested ?? main, from);
@@ -45212,11 +45482,11 @@ function listClaudeSubagents(session, paths) {
   const main = claudeSessionFile(session, paths);
   if (!main) return [];
   const out = /* @__PURE__ */ new Map();
-  const dir = join46(dirname18(main), session.sessionId, "subagents");
+  const dir = join47(dirname19(main), session.sessionId, "subagents");
   for (const name2 of directory(dir).slice(0, MAX_NATIVE_SUBAGENTS)) {
     const id = /^agent-([A-Za-z0-9_-]+)\.jsonl$/.exec(name2)?.[1];
     if (!id || !TRANSCRIPT_ID.test(id)) continue;
-    const file2 = safeFile(paths.claude, join46(dir, name2));
+    const file2 = safeFile(paths.claude, join47(dir, name2));
     if (!file2) continue;
     const st = fileStat(file2), head = readHead(file2), tail = readTail(file2);
     const last = [...tail].reverse().find((r) => r.type === "assistant");
@@ -45234,8 +45504,8 @@ function listClaudeSubagents(session, paths) {
 }
 
 // src/core/transcripts/codex.ts
-import { join as join47 } from "node:path";
-import { DatabaseSync as DatabaseSync11 } from "node:sqlite";
+import { join as join48 } from "node:path";
+import { DatabaseSync as DatabaseSync12 } from "node:sqlite";
 var ROLLOUT_NAME = /^rollout-.*-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/i;
 var DISCOVERY_CACHE_MS = 1e4;
 var MAX_INDEX_PATH_CHARS = 4096;
@@ -45248,17 +45518,17 @@ function rollout(file2, id, known) {
 function indexedRollouts(paths, id, parentId) {
   const name2 = directory(paths.codex).filter((s) => /^state_\d+\.sqlite$/.test(s)).sort((a, b) => Number(b.match(/\d+/)?.[0]) - Number(a.match(/\d+/)?.[0]))[0];
   if (!name2) return null;
-  const file2 = safeFile(paths.codex, join47(paths.codex, name2));
+  const file2 = safeFile(paths.codex, join48(paths.codex, name2));
   if (!file2) return null;
   let db;
   try {
-    db = new DatabaseSync11(file2, { readOnly: true, timeout: SQLITE_READ_TIMEOUT_MS });
+    db = new DatabaseSync12(file2, { readOnly: true, timeout: SQLITE_READ_TIMEOUT_MS });
     const rows = id ? db.prepare("SELECT id, substr(rollout_path, 1, ?) AS path FROM threads WHERE id = ? LIMIT 1").all(MAX_INDEX_PATH_CHARS, id) : db.prepare(`SELECT id, substr(rollout_path, 1, ?) AS path FROM threads
           WHERE CASE WHEN json_valid(source) THEN json_extract(source, '$.subagent.thread_spawn.parent_thread_id') END = ? LIMIT ?`).all(MAX_INDEX_PATH_CHARS, parentId, MAX_NATIVE_SUBAGENTS);
     const out = [];
     for (const row of rows) {
       if (typeof row.id !== "string" || !TRANSCRIPT_ID.test(row.id) || typeof row.path !== "string") continue;
-      const target = safeFile(join47(paths.codex, "sessions"), row.path);
+      const target = safeFile(join48(paths.codex, "sessions"), row.path);
       if (!target) continue;
       const entry = rollout(target, row.id);
       if (entry.meta.id === row.id && (!parentId || parent(entry.meta) === parentId)) out.push(entry);
@@ -45271,17 +45541,17 @@ function indexedRollouts(paths, id, parentId) {
   }
 }
 function rollouts(paths) {
-  const root = join47(paths.codex, "sessions"), existing = cache3.get(root);
+  const root = join48(paths.codex, "sessions"), existing = cache3.get(root);
   if (existing && Date.now() - existing.at < DISCOVERY_CACHE_MS) return existing.files;
   const files2 = [];
   const knownFiles = new Map(existing?.files.map((r) => [r.file, r]));
   for (const year of directory(root).filter((s) => /^\d{4}$/.test(s)).sort().reverse()) {
-    for (const month of directory(join47(root, year)).filter((s) => /^\d{2}$/.test(s)).sort().reverse()) {
-      for (const day of directory(join47(root, year, month)).filter((s) => /^\d{2}$/.test(s)).sort().reverse()) {
-        for (const name2 of directory(join47(root, year, month, day)).sort().reverse()) {
+    for (const month of directory(join48(root, year)).filter((s) => /^\d{2}$/.test(s)).sort().reverse()) {
+      for (const day of directory(join48(root, year, month)).filter((s) => /^\d{2}$/.test(s)).sort().reverse()) {
+        for (const name2 of directory(join48(root, year, month, day)).sort().reverse()) {
           const id = ROLLOUT_NAME.exec(name2)?.[1];
           if (!id) continue;
-          const file2 = safeFile(root, join47(root, year, month, day, name2));
+          const file2 = safeFile(root, join48(root, year, month, day, name2));
           if (!file2) continue;
           const known = knownFiles.get(file2);
           files2.push(rollout(file2, id, known?.meta));
@@ -45338,15 +45608,15 @@ function listCodexSubagents(session, paths) {
 }
 
 // src/core/transcripts/opencode.ts
-import { join as join48 } from "node:path";
-import { DatabaseSync as DatabaseSync12 } from "node:sqlite";
+import { join as join49 } from "node:path";
+import { DatabaseSync as DatabaseSync13 } from "node:sqlite";
 var MAX_SQLITE_PARTS = 200;
 var SQLITE_CURSOR = /^o:(\d+):([A-Za-z0-9_-]*)$/;
 function openDatabase(paths) {
-  const file2 = safeFile(paths.opencode, join48(paths.opencode, "opencode.db"));
+  const file2 = safeFile(paths.opencode, join49(paths.opencode, "opencode.db"));
   if (!file2) return null;
   try {
-    return new DatabaseSync12(file2, { readOnly: true, timeout: SQLITE_READ_TIMEOUT_MS });
+    return new DatabaseSync13(file2, { readOnly: true, timeout: SQLITE_READ_TIMEOUT_MS });
   } catch {
     return null;
   }
@@ -45484,16 +45754,20 @@ function terms(query) {
   return folded(query).match(/[\p{L}\p{N}_]+/gu)?.slice(0, HISTORY_MAX_TERMS) ?? [];
 }
 var enc = encodeURIComponent;
-var HistoryIndex = class {
-  constructor(db, home, paths) {
+var HistoryIndex = class _HistoryIndex {
+  constructor(db, home, paths, source = db, peerSink) {
     this.db = db;
     this.home = home;
+    this.source = source;
+    this.peerSink = peerSink;
     this.paths = paths ?? transcriptPaths();
     this.engine = db.prepare("SELECT name FROM sqlite_master WHERE name = 'history_fts'").get() ? "fts5" : "plain";
     this.checked = Number(db.prepare("SELECT coalesce(max(checked),0) AS n FROM history_files").get().n);
   }
   db;
   home;
+  source;
+  peerSink;
   engine;
   queue = [];
   walk = null;
@@ -45503,10 +45777,19 @@ var HistoryIndex = class {
   opencodeComplete = false;
   heads = /* @__PURE__ */ new Map();
   paths;
+  deadline = Infinity;
   get database() {
+    return this.source !== this.db && !historyReady(this.db) ? this.source : this.db;
+  }
+  /** Writable isolated storage for explicit offline maintenance, regardless of read fallback. */
+  get storageDatabase() {
     return this.db;
   }
   rememberPeer(peer) {
+    if (this.peerSink) {
+      this.peerSink(peer);
+      return;
+    }
     if (!peer.sessionId) return;
     const job = /^(claude|codex|opencode|antigravity)-job-/.test(peer.name) ? peer.name : null;
     for (const alias of [peer.id, peer.name, peer.sessionId]) this.rememberSession(alias, peer.sessionId, job);
@@ -45559,23 +45842,26 @@ var HistoryIndex = class {
   }
   rows(source, db, table, consume) {
     const after = Number(this.cursor(source));
-    let count = 0, bytes2 = 0;
+    let count = 0, bytes2 = 0, cursor = after;
     for (const row of db.prepare(`SELECT rowid AS history_rowid, * FROM ${table} WHERE rowid > ? ORDER BY rowid LIMIT ?`).iterate(after, HISTORY_ROWS_PER_SOURCE)) {
       consume(row);
-      this.advance(source, String(row.history_rowid));
+      cursor = Number(row.history_rowid);
       count++;
       bytes2 += Buffer.byteLength(typeof row.body === "string" ? row.body : "");
-      if (bytes2 >= HISTORY_BATCH_BODY_BYTES) break;
+      if (bytes2 >= HISTORY_BATCH_BODY_BYTES || Date.now() >= this.deadline) break;
     }
+    if (count) this.advance(source, String(cursor));
     return count;
   }
   /** Fixed budgets; idempotent documents are written before advancing their cursors. */
   tick() {
+    this.deadline = Date.now() + HISTORY_BATCH_MS;
     const fileCount = Number(this.db.prepare("SELECT count(*) AS n FROM history_files").get().n);
     if (this.idleFiles >= fileCount) this.idleFiles = 0;
     let work = 0;
     {
-      work += this.rows("messages", this.db, "messages", (row) => this.message(row));
+      work += this.rows("messages", this.source, "messages", (row) => this.message(row));
+      if (this.source !== this.db) work += this.rows("broker-pending", this.source, "history_pending", (row) => this.message(row));
       let pendingCount = 0, pendingBytes = 0;
       for (const row of this.db.prepare("SELECT * FROM history_pending LIMIT ?").iterate(HISTORY_ROWS_PER_SOURCE)) {
         this.message(row);
@@ -45585,7 +45871,7 @@ var HistoryIndex = class {
         if (pendingBytes >= HISTORY_BATCH_BODY_BYTES) break;
       }
       work += pendingCount;
-      work += this.rows("decisions", this.db, "decisions", (row) => {
+      work += this.rows("decisions", this.source, "decisions", (row) => {
         const scope = parse(row.scope), sessions = Array.isArray(scope.sessions) ? scope.sessions.filter((s) => typeof s === "string") : [];
         this.put({
           id: `decision:${row.id}`,
@@ -45603,9 +45889,9 @@ ${row.body}`,
         }, [row.author_id, row.author_name, ...sessions]);
       });
       if (this.home) {
-        const questionFile = join49(this.home, QUESTIONS_FILE);
-        if (existsSync22(questionFile)) {
-          const questions = new DatabaseSync13(questionFile, { readOnly: true, timeout: HISTORY_READ_TIMEOUT_MS });
+        const questionFile = join50(this.home, QUESTIONS_FILE);
+        if (existsSync23(questionFile)) {
+          const questions = new DatabaseSync14(questionFile, { readOnly: true, timeout: HISTORY_READ_TIMEOUT_MS });
           try {
             work += this.rows("questions", questions, "question_events", (row) => {
               const q = JSON.parse(String(row.record));
@@ -45632,9 +45918,9 @@ ${row.body}`,
             questions.close();
           }
         }
-        const archivePath = join49(this.home, ARCHIVE_DB_NAME);
-        if (existsSync22(archivePath)) {
-          const archive = new DatabaseSync13(archivePath, { readOnly: true, timeout: HISTORY_READ_TIMEOUT_MS });
+        const archivePath = join50(this.home, ARCHIVE_DB_NAME);
+        if (existsSync23(archivePath)) {
+          const archive = new DatabaseSync14(archivePath, { readOnly: true, timeout: HISTORY_READ_TIMEOUT_MS });
           try {
             work += this.rows("archive", archive, "messages", (row) => this.message(row));
           } finally {
@@ -45644,6 +45930,7 @@ ${row.body}`,
         work += this.discover();
         const files2 = this.db.prepare("SELECT * FROM history_files ORDER BY checked,path LIMIT ?").all(HISTORY_FILES_PER_TICK);
         for (const file2 of files2) {
+          if (Date.now() >= this.deadline) break;
           const indexed = this.indexFile(file2);
           work += indexed;
           this.idleFiles = indexed ? 0 : this.idleFiles + 1;
@@ -45678,17 +45965,17 @@ ${row.body}`,
       this.lastDiscovery = Date.now();
       this.opencodeComplete = false;
       this.queue = [
-        { path: join49(this.home, "context-events"), root: this.home, kind: "context", agent: "other" },
-        { path: join49(this.home, "approvals"), root: this.home, kind: "approval", agent: "other" },
-        { path: join49(this.home, "archive"), root: this.home, kind: "approval", agent: "other" },
-        { path: join49(this.home, "runs"), root: join49(this.home, "runs"), kind: "run", agent: "other" },
-        { path: join49(this.paths.claude, "projects"), root: this.paths.claude, kind: "transcript", agent: "claude" },
-        ...this.paths.antigravity ? [{ path: join49(this.paths.antigravity, "brain"), root: this.paths.antigravity, kind: "transcript", agent: "antigravity" }] : [],
-        ...["sessions", "archived_sessions"].map((dir) => ({ path: join49(this.paths.codex, dir), root: this.paths.codex, kind: "transcript", agent: "codex" }))
+        { path: join50(this.home, "context-events"), root: this.home, kind: "context", agent: "other" },
+        { path: join50(this.home, "approvals"), root: this.home, kind: "approval", agent: "other" },
+        { path: join50(this.home, "archive"), root: this.home, kind: "approval", agent: "other" },
+        { path: join50(this.home, "runs"), root: join50(this.home, "runs"), kind: "run", agent: "other" },
+        { path: join50(this.paths.claude, "projects"), root: this.paths.claude, kind: "transcript", agent: "claude" },
+        ...this.paths.antigravity ? [{ path: join50(this.paths.antigravity, "brain"), root: this.paths.antigravity, kind: "transcript", agent: "antigravity" }] : [],
+        ...["sessions", "archived_sessions"].map((dir) => ({ path: join50(this.paths.codex, dir), root: this.paths.codex, kind: "transcript", agent: "codex" }))
       ];
     }
     let work = 0;
-    while (work < HISTORY_DISCOVERY_PER_TICK && (this.walk || this.queue.length)) {
+    while (work < HISTORY_DISCOVERY_PER_TICK && Date.now() < this.deadline && (this.walk || this.queue.length)) {
       work++;
       if (!this.walk) {
         const entry2 = this.queue.shift();
@@ -45704,7 +45991,7 @@ ${row.body}`,
         this.walk = null;
         continue;
       }
-      const path2 = join49(entry.path, item.name);
+      const path2 = join50(entry.path, item.name);
       if (item.isDirectory()) {
         this.queue.push({ ...entry, path: path2 });
         continue;
@@ -45718,15 +46005,15 @@ ${row.body}`,
         if (entry.agent === "antigravity" && item.name !== "transcript.jsonl") continue;
         const head = this.head(path2), meta3 = entry.agent === "codex" ? object(head.payload) : head;
         const rolloutId = entry.agent === "codex" ? /^rollout-.*-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/i.exec(item.name)?.[1] : void 0;
-        const id = entry.agent === "antigravity" ? basename9(dirname19(dirname19(entry.path))) : rolloutId ?? (typeof meta3.id === "string" ? meta3.id : typeof meta3.sessionId === "string" ? meta3.sessionId : basename9(path2, ".jsonl"));
+        const id = entry.agent === "antigravity" ? basename10(dirname20(dirname20(entry.path))) : rolloutId ?? (typeof meta3.id === "string" ? meta3.id : typeof meta3.sessionId === "string" ? meta3.sessionId : basename10(path2, ".jsonl"));
         if (!TRANSCRIPT_ID.test(id)) continue;
-        const child = entry.agent === "claude" && basename9(entry.path) === "subagents" ? basename9(path2, ".jsonl").replace(/^agent-/, "") : null;
-        this.register({ path: path2, kind: "transcript", agent: entry.agent, session: child ? basename9(dirname19(entry.path)) : id, cwd: typeof meta3.cwd === "string" ? meta3.cwd : "", child });
+        const child = entry.agent === "claude" && basename10(entry.path) === "subagents" ? basename10(path2, ".jsonl").replace(/^agent-/, "") : null;
+        this.register({ path: path2, kind: "transcript", agent: entry.agent, session: child ? basename10(dirname20(entry.path)) : id, cwd: typeof meta3.cwd === "string" ? meta3.cwd : "", child });
       }
     }
-    const path = safeFile(this.paths.opencode, join49(this.paths.opencode, "opencode.db"));
+    const path = safeFile(this.paths.opencode, join50(this.paths.opencode, "opencode.db"));
     if (path && !this.opencodeComplete) {
-      const db = new DatabaseSync13(path, { readOnly: true, timeout: HISTORY_READ_TIMEOUT_MS });
+      const db = new DatabaseSync14(path, { readOnly: true, timeout: HISTORY_READ_TIMEOUT_MS });
       try {
         const after = this.cursor("opencode-discovery");
         const rows = db.prepare("SELECT * FROM session WHERE id > ? ORDER BY id LIMIT ?").all(after === "0" ? "" : after, HISTORY_DISCOVERY_PER_TICK);
@@ -45761,7 +46048,7 @@ ${row.body}`,
   indexFile(file2) {
     if (file2.kind === "context" || file2.kind === "approval" || file2.kind === "run" && /\.json(?:-.*)?$/.test(file2.path)) return 0;
     if (file2.agent !== "opencode") {
-      const root = file2.kind === "run" ? join49(this.home, "runs") : this.paths[file2.agent];
+      const root = file2.kind === "run" ? join50(this.home, "runs") : this.paths[file2.agent];
       if (!root) return 0;
       if (!safeFile(root, file2.path)) return 0;
     }
@@ -45789,37 +46076,37 @@ ${row.body}`,
     }
     let fd;
     try {
-      fd = openSync9(file2.path, "r");
-      const stat = fstatSync3(fd), offset = Number(from) > stat.size ? 0 : Number(from);
+      fd = openSync10(file2.path, "r");
+      const stat = fstatSync4(fd), offset = Number(from) > stat.size ? 0 : Number(from);
       const buffer = Buffer.alloc(HISTORY_CHUNK_BYTES);
-      const bytes2 = readSync3(fd, buffer, 0, buffer.length, offset);
+      const bytes2 = readSync4(fd, buffer, 0, buffer.length, offset);
       const end = buffer.subarray(0, bytes2).lastIndexOf(10);
       const length = end >= 0 ? end + 1 : bytes2 === HISTORY_CHUNK_BYTES ? bytes2 : 0;
       let meta3 = {};
       let metaText = "";
       const metaPath = file2.path.replace(/\.log(?:-\d+-[\w-]+)?$/, ".json");
-      const safeMeta = safeFile(join49(this.home, "runs"), metaPath);
+      const safeMeta = safeFile(join50(this.home, "runs"), metaPath);
       if (safeMeta) {
-        const metaFd = openSync9(safeMeta, "r");
+        const metaFd = openSync10(safeMeta, "r");
         try {
-          const size = fstatSync3(metaFd).size;
+          const size = fstatSync4(metaFd).size;
           if (size <= HISTORY_MAX_METADATA_BYTES) {
-            const buffer2 = Buffer.alloc(size), length2 = readSync3(metaFd, buffer2, 0, size, 0);
+            const buffer2 = Buffer.alloc(size), length2 = readSync4(metaFd, buffer2, 0, size, 0);
             metaText = buffer2.subarray(0, length2).toString("utf8");
             meta3 = parse(metaText);
           }
         } finally {
-          closeSync9(metaFd);
+          closeSync10(metaFd);
         }
       }
-      const run = basename9(file2.path).replace(/(\.log)-\d+-[\w-]+$/, "$1");
+      const run = basename10(file2.path).replace(/(\.log)-\d+-[\w-]+$/, "$1");
       const start = /^(\d{4})-(\d\d)-(\d\d)-(\d\d)-(\d\d)-(\d\d)-/.exec(run);
       const at = Number(meta3.jobStartedAt) || (start ? Date.UTC(+start[1], +start[2] - 1, +start[3], +start[4], +start[5], +start[6]) : stat.birthtimeMs);
       const job = typeof meta3.job === "string" ? meta3.job : null, session = typeof meta3.session === "string" ? meta3.session : null;
       if (session) this.rememberSession(session, session, job);
       let metadataChanged = 0;
       if (Object.keys(meta3).length) {
-        const hash2 = createHash12("sha256").update(metaText).digest("hex"), source = `metadata:${metaPath}`;
+        const hash2 = createHash13("sha256").update(metaText).digest("hex"), source = `metadata:${metaPath}`;
         if (hash2 !== this.cursor(source)) {
           this.put({
             id: `run:${run}:metadata`,
@@ -45827,7 +46114,7 @@ ${row.body}`,
             agent: file2.agent,
             at,
             body: metaText,
-            link: `/api/runs/${enc(basename9(run, ".log"))}?from=0`,
+            link: `/api/runs/${enc(basename10(run, ".log"))}?from=0`,
             message: null,
             job,
             run,
@@ -45849,7 +46136,7 @@ ${row.body}`,
         at,
         body: `${typeof meta3.title === "string" ? meta3.title : ""}
 ${buffer.subarray(0, length).toString("utf8")}`,
-        link: `/api/runs/${enc(basename9(run, ".log"))}?from=${offset}`,
+        link: `/api/runs/${enc(basename10(run, ".log"))}?from=${offset}`,
         message: null,
         job,
         run,
@@ -45862,10 +46149,11 @@ ${buffer.subarray(0, length).toString("utf8")}`,
       if (["ENOENT", "EACCES", "EPERM"].includes(err.code ?? "")) return 0;
       throw err;
     } finally {
-      if (fd !== void 0) closeSync9(fd);
+      if (fd !== void 0) closeSync10(fd);
     }
   }
   search(input2) {
+    if (this.database !== this.db) return new _HistoryIndex(this.database, null).search(input2);
     const args = historySearchSchema.parse(input2), tokens = terms(args.query);
     if (!tokens.length) return { engine: this.engine, hits: [] };
     const durable = this.db.prepare("SELECT name FROM sqlite_master WHERE name='conversation_records'").get();
@@ -45925,7 +46213,7 @@ ${buffer.subarray(0, length).toString("utf8")}`,
   reset() {
     this.db.exec("BEGIN IMMEDIATE");
     try {
-      this.db.exec("DELETE FROM history_documents; DELETE FROM history_tags; DELETE FROM history_cursors; DELETE FROM history_files;");
+      this.db.exec("DELETE FROM history_documents; DELETE FROM history_tags; DELETE FROM history_cursors WHERE source<>'legacy-record-tail'; DELETE FROM history_files;");
       this.db.exec("COMMIT");
     } catch (err) {
       this.db.exec("ROLLBACK");
@@ -45943,9 +46231,10 @@ ${buffer.subarray(0, length).toString("utf8")}`,
   }
 };
 function readHistory(file2, input2) {
+  file2 = historyReadPath(file2);
   historySearchSchema.parse(input2);
-  if (!existsSync22(file2)) return { engine: "plain", hits: [] };
-  const db = new DatabaseSync13(file2, { readOnly: true, timeout: HISTORY_READ_TIMEOUT_MS });
+  if (!existsSync23(file2)) return { engine: "plain", hits: [] };
+  const db = new DatabaseSync14(file2, { readOnly: true, timeout: HISTORY_READ_TIMEOUT_MS });
   try {
     if (!db.prepare("SELECT name FROM sqlite_master WHERE name='history_documents'").get()) return { engine: "plain", hits: [] };
     return new HistoryIndex(db, null).search(input2);
@@ -45954,8 +46243,9 @@ function readHistory(file2, input2) {
   }
 }
 function readHistorySource(file2, id) {
-  if (!existsSync22(file2)) return null;
-  const db = new DatabaseSync13(file2, { readOnly: true, timeout: HISTORY_READ_TIMEOUT_MS });
+  file2 = historyReadPath(file2);
+  if (!existsSync23(file2)) return null;
+  const db = new DatabaseSync14(file2, { readOnly: true, timeout: HISTORY_READ_TIMEOUT_MS });
   try {
     if (!db.prepare("SELECT name FROM sqlite_master WHERE name='history_documents'").get()) return null;
     return db.prepare("SELECT id,kind,agent,at,body,link,message,job,run,session,cursor FROM history_documents WHERE id=?").get(id) ?? null;
@@ -45965,19 +46255,19 @@ function readHistorySource(file2, id) {
 }
 
 // src/core/broker.ts
-import { randomUUID as randomUUID27 } from "node:crypto";
-import { existsSync as existsSync32 } from "node:fs";
+import { randomUUID as randomUUID28 } from "node:crypto";
+import { existsSync as existsSync33 } from "node:fs";
 import { createServer as createServer7 } from "node:net";
 
 // src/core/store.ts
-import { existsSync as existsSync24, mkdirSync as mkdirSync25, realpathSync as realpathSync9 } from "node:fs";
-import { dirname as dirname21, resolve as resolve14 } from "node:path";
-import { DatabaseSync as DatabaseSync14 } from "node:sqlite";
+import { existsSync as existsSync25, mkdirSync as mkdirSync26, realpathSync as realpathSync9 } from "node:fs";
+import { dirname as dirname22, resolve as resolve14 } from "node:path";
+import { DatabaseSync as DatabaseSync15 } from "node:sqlite";
 
 // src/core/backups.ts
-import { createHash as createHash13, randomUUID as randomUUID14 } from "node:crypto";
-import { closeSync as closeSync10, copyFileSync as copyFileSync6, existsSync as existsSync23, fsyncSync as fsyncSync3, lstatSync as lstatSync8, mkdirSync as mkdirSync24, openSync as openSync10, readFileSync as readFileSync24, readdirSync as readdirSync15, renameSync as renameSync5, writeFileSync as writeFileSync9 } from "node:fs";
-import { dirname as dirname20, join as join50, relative as relative6, resolve as resolve13, sep as sep5 } from "node:path";
+import { createHash as createHash14, randomUUID as randomUUID15 } from "node:crypto";
+import { closeSync as closeSync11, copyFileSync as copyFileSync6, existsSync as existsSync24, fsyncSync as fsyncSync3, lstatSync as lstatSync9, mkdirSync as mkdirSync25, openSync as openSync11, readFileSync as readFileSync26, readdirSync as readdirSync15, renameSync as renameSync5, writeFileSync as writeFileSync9 } from "node:fs";
+import { dirname as dirname21, join as join51, relative as relative6, resolve as resolve13, sep as sep5 } from "node:path";
 var BACKUPS_DIR_NAME = "backups";
 var BACKUP_MANIFEST_VERSION = 1;
 var DEFAULT_BACKUP_RETENTION = 7;
@@ -45987,39 +46277,39 @@ var BACKUP_INTERVAL_ENV = "AGENT_BRIDGE_BACKUP_INTERVAL_MS";
 var MANIFEST_NAME = "manifest.json";
 var BACKUP_PREFIX = "snapshot-";
 function syncFile(path) {
-  const fd = openSync10(path, "r+");
+  const fd = openSync11(path, "r+");
   try {
     fsyncSync3(fd);
   } finally {
-    closeSync10(fd);
+    closeSync11(fd);
   }
 }
 function jsonStoreFiles(home) {
-  if (!existsSync23(home)) return [];
+  if (!existsSync24(home)) return [];
   const files2 = [];
   const visit2 = (dir, recurse) => {
-    if (!existsSync23(dir)) return;
-    const root = lstatSync8(dir);
+    if (!existsSync24(dir)) return;
+    const root = lstatSync9(dir);
     if (root.isSymbolicLink() || !root.isDirectory()) return;
     for (const name2 of readdirSync15(dir).sort()) {
-      const path = join50(dir, name2);
-      const st = lstatSync8(path);
+      const path = join51(dir, name2);
+      const st = lstatSync9(path);
       if (st.isSymbolicLink()) continue;
       if (st.isDirectory() && recurse) visit2(path, true);
       else if (st.isFile() && name2 !== "dashboard.json" && /\.jsonl?(?:-\d+-[\w-]+)?$/.test(name2)) files2.push(path);
     }
   };
   visit2(home, false);
-  for (const dir of ["jobs", "runs", "archive", "read-state", "job-outcomes", "local-result-receipts"]) visit2(join50(home, dir), true);
+  for (const dir of ["jobs", "runs", "archive", "read-state", "job-outcomes", "local-result-receipts"]) visit2(join51(home, dir), true);
   return files2;
 }
 function listBackups(home) {
-  const dir = join50(home, BACKUPS_DIR_NAME);
-  if (!existsSync23(dir)) return [];
+  const dir = join51(home, BACKUPS_DIR_NAME);
+  if (!existsSync24(dir)) return [];
   return readdirSync15(dir).filter((f) => f.startsWith(BACKUP_PREFIX)).flatMap((f) => {
-    const path = join50(dir, f);
+    const path = join51(dir, f);
     try {
-      const manifest = JSON.parse(readFileSync24(join50(path, MANIFEST_NAME), "utf8"));
+      const manifest = JSON.parse(readFileSync26(join51(path, MANIFEST_NAME), "utf8"));
       return [{ path, createdAt: manifest.createdAt }];
     } catch {
       return [];
@@ -46035,34 +46325,34 @@ function createBackup(home, now = Date.now(), rotate = true) {
   }
 }
 function createBackupUnlocked(home, now, rotate) {
-  const root = join50(home, BACKUPS_DIR_NAME);
-  mkdirSync24(root, { recursive: true, mode: 448 });
-  const name2 = `${BACKUP_PREFIX}${String(now).padStart(13, "0")}-${randomUUID14()}`;
-  const staging = join50(root, `.pending-${name2}`);
-  mkdirSync24(staging, { mode: 448 });
+  const root = join51(home, BACKUPS_DIR_NAME);
+  mkdirSync25(root, { recursive: true, mode: 448 });
+  const name2 = `${BACKUP_PREFIX}${String(now).padStart(13, "0")}-${randomUUID15()}`;
+  const staging = join51(root, `.pending-${name2}`);
+  mkdirSync25(staging, { mode: 448 });
   const manifest = { version: BACKUP_MANIFEST_VERSION, createdAt: now, files: [] };
   const capture2 = (source, sqlite) => {
     const path = relative6(home, source).split(sep5).join("/");
-    const target = join50(staging, path);
-    mkdirSync24(dirname20(target), { recursive: true, mode: 448 });
+    const target = join51(staging, path);
+    mkdirSync25(dirname21(target), { recursive: true, mode: 448 });
     if (sqlite) snapshotDatabase(source, target);
     else copyFileSync6(source, target);
     syncFile(target);
-    const raw = readFileSync24(target);
-    manifest.files.push({ path, sha256: createHash13("sha256").update(raw).digest("hex"), bytes: raw.length });
+    const raw = readFileSync26(target);
+    manifest.files.push({ path, sha256: createHash14("sha256").update(raw).digest("hex"), bytes: raw.length });
   };
-  for (const name3 of [DB_FILE_NAME, ARCHIVE_DB_NAME]) if (existsSync23(join50(home, name3))) capture2(join50(home, name3), true);
+  for (const name3 of [DB_FILE_NAME, ARCHIVE_DB_NAME]) if (existsSync24(join51(home, name3))) capture2(join51(home, name3), true);
   for (const file2 of jsonStoreFiles(home)) capture2(file2, false);
-  writeFileSync9(join50(staging, MANIFEST_NAME), JSON.stringify(manifest, null, 2) + "\n", { mode: 384 });
-  syncFile(join50(staging, MANIFEST_NAME));
-  const published = join50(root, name2);
+  writeFileSync9(join51(staging, MANIFEST_NAME), JSON.stringify(manifest, null, 2) + "\n", { mode: 384 });
+  syncFile(join51(staging, MANIFEST_NAME));
+  const published = join51(root, name2);
   renameSync5(staging, published);
   if (rotate) {
     const retention = retentionLimit(BACKUP_RETENTION_ENV, DEFAULT_BACKUP_RETENTION);
     if (retention) for (const backup of listBackups(home).slice(retention)) {
-      const cold = join50(root, "archive");
-      mkdirSync24(cold, { recursive: true, mode: 448 });
-      renameSync5(backup.path, join50(cold, backup.path.split(/[\\/]/).at(-1)));
+      const cold = join51(root, "archive");
+      mkdirSync25(cold, { recursive: true, mode: 448 });
+      renameSync5(backup.path, join51(cold, backup.path.split(/[\\/]/).at(-1)));
     }
   }
   return published;
@@ -46186,13 +46476,13 @@ var MessageStore = class {
   constructor(file2, log) {
     this.log = log;
     this.file = file2;
-    const existed = file2 !== ":memory:" && existsSync24(file2);
-    this.home = file2 === ":memory:" ? null : dirname21(file2);
-    if (file2 !== ":memory:") mkdirSync25(dirname21(file2), { recursive: true, mode: 448 });
+    const existed = file2 !== ":memory:" && existsSync25(file2);
+    this.home = file2 === ":memory:" ? null : dirname22(file2);
+    if (file2 !== ":memory:") mkdirSync26(dirname22(file2), { recursive: true, mode: 448 });
     this.release = file2 === ":memory:" ? () => {
-    } : storageLease(dirname21(file2));
+    } : storageLease(dirname22(file2));
     try {
-      this.db = new DatabaseSync14(file2);
+      this.db = new DatabaseSync15(file2);
     } catch (err) {
       this.release();
       throw err;
@@ -46221,7 +46511,24 @@ var MessageStore = class {
       throw err;
     }
     this.decisions = new DecisionStore(this.db);
-    this.history = new HistoryIndex(this.db, this.home);
+    this.historyFile = historyDbPath(file2);
+    let historyDb;
+    try {
+      this.historyDb = historyDb = file2 === ":memory:" ? this.db : openHistoryStore(this.historyFile);
+      this.history = new HistoryIndex(
+        this.historyDb,
+        this.home,
+        void 0,
+        this.db,
+        file2 === ":memory:" ? void 0 : (peer) => this.historyPeerSink?.(peer)
+      );
+    } catch (err) {
+      if (historyDb && historyDb !== this.db) historyDb.close();
+      this.archiveDb.close();
+      this.db.close();
+      this.release();
+      throw err;
+    }
     this.stmt = {
       insert: this.db.prepare(
         `INSERT INTO messages (id, recipient, from_id, from_name, from_agent, to_target, conversation_id, reply_to, hop, body, created_at, read_at)
@@ -46244,7 +46551,7 @@ var MessageStore = class {
     log.debug("message store opened", { file: file2 });
     if (file2 !== ":memory:") {
       try {
-        backupIfDue(dirname21(file2));
+        backupIfDue(dirname22(file2));
       } catch (err) {
         log.warn("automatic backup failed", { err: String(err) });
       }
@@ -46252,7 +46559,7 @@ var MessageStore = class {
       if (interval) {
         this.backupTimer = setInterval(() => {
           try {
-            backupIfDue(dirname21(file2));
+            backupIfDue(dirname22(file2));
           } catch (err) {
             log.warn("automatic backup failed", { err: String(err) });
           }
@@ -46264,12 +46571,16 @@ var MessageStore = class {
   log;
   db;
   archiveDb;
+  historyDb;
   release;
   home;
   writeAbort = new AbortController();
   backupTimer = null;
+  closed = false;
   decisions;
   history;
+  historyFile;
+  historyPeerSink;
   file;
   stmt;
   /** Append identities learned from hooks; previous session bindings remain retained. */
@@ -46314,8 +46625,8 @@ var MessageStore = class {
   }
   /** Retained registrations include offline sessions, but never worker runners or agent queue keys. */
   broadcastNames() {
-    const sessions = this.db.prepare("SELECT session FROM history_sessions WHERE alias=?");
-    const files2 = this.db.prepare("SELECT DISTINCT cwd FROM history_files WHERE session=? AND cwd<>''");
+    const sessions = this.history.database.prepare("SELECT session FROM history_sessions WHERE alias=?");
+    const files2 = this.history.database.prepare("SELECT DISTINCT cwd FROM history_files WHERE session=? AND cwd<>''");
     return this.db.prepare(`SELECT name,identity FROM peer_name_owners
       WHERE identity NOT LIKE 'unidentified:job:%' ORDER BY name`).all().filter((row) => {
       const identity = String(row.identity);
@@ -46488,6 +46799,17 @@ var MessageStore = class {
     const row = this.stmt.byId.get(id) ?? this.archiveDb.prepare("SELECT * FROM messages WHERE id = ? LIMIT 1").get(id) ?? this.db.prepare("SELECT * FROM archived_messages WHERE id = ? LIMIT 1").get(id);
     return row ? toMessage(row) : null;
   }
+  /** Retained recipient copies for a durable retry; active rows take precedence. */
+  messagesById(id) {
+    const merged = /* @__PURE__ */ new Map();
+    for (const [db, table] of [[this.archiveDb, "messages"], [this.db, "archived_messages"], [this.db, "messages"]]) {
+      for (const row of db.prepare(`SELECT * FROM ${table} WHERE id = ? ORDER BY rowid`).all(id)) {
+        const message = toMessage(row);
+        merged.set(message.recipient, message);
+      }
+    }
+    return [...merged.values()];
+  }
   purgeOlderThan(cutoff) {
     const n = archiveMessages(this.db, this.archiveDb, "created_at < ?", [cutoff], "expired");
     if (n > 0) this.log.info("archived expired messages", { count: n });
@@ -46504,8 +46826,11 @@ var MessageStore = class {
     this.writeAbort.abort();
   }
   close() {
+    if (this.closed) return;
+    this.closed = true;
     this.stopWrites();
     this.history.close();
+    if (this.historyDb !== this.db) this.historyDb.close();
     if (this.backupTimer) clearInterval(this.backupTimer);
     try {
       this.db.close();
@@ -46519,8 +46844,8 @@ var MessageStore = class {
 };
 
 // src/core/job-handoff.ts
-import { randomUUID as randomUUID15 } from "node:crypto";
-import { readFileSync as readFileSync25 } from "node:fs";
+import { randomUUID as randomUUID16 } from "node:crypto";
+import { readFileSync as readFileSync27 } from "node:fs";
 var handoffSchema = external_exports.object({
   to: external_exports.string().min(1).max(64),
   jobs: external_exports.union([external_exports.literal("all"), external_exports.array(external_exports.string().min(1).max(80)).min(1).max(1e3)]).default("all"),
@@ -46538,7 +46863,7 @@ function commitHandoff(path, source, target, input2, options = {}) {
   try {
     let previous = null;
     try {
-      previous = JSON.parse(readFileSync25(path, "utf8"));
+      previous = JSON.parse(readFileSync27(path, "utf8"));
     } catch (err) {
       if (err.code !== "ENOENT") throw err;
     }
@@ -46570,7 +46895,7 @@ function commitHandoff(path, source, target, input2, options = {}) {
     const existing = records.find((j) => j.owner === target.name && !j.parentJob && j.supervisor);
     const rootSession = existing?.supervisor ?? target.sessionId ?? target.id;
     const receipt = {
-      id: randomUUID15(),
+      id: randomUUID16(),
       at: Date.now(),
       from: source.name,
       to: target.name,
@@ -46638,7 +46963,7 @@ function migrateJobOwnership(previous) {
 }
 
 // src/network/link.ts
-import { randomBytes as randomBytes8, randomUUID as randomUUID19 } from "node:crypto";
+import { randomBytes as randomBytes8, randomUUID as randomUUID20 } from "node:crypto";
 import { connect, createServer as createServer5 } from "node:tls";
 
 // src/network/discovery.ts
@@ -46648,13 +46973,13 @@ import { networkInterfaces } from "node:os";
 
 // src/network/pairing.ts
 import { execFileSync as execFileSync4 } from "node:child_process";
-import { createHash as createHash14, randomBytes as randomBytes7, randomUUID as randomUUID16 } from "node:crypto";
-import { chmodSync as chmodSync2, existsSync as existsSync25, mkdirSync as mkdirSync26, readFileSync as readFileSync26, renameSync as renameSync6, writeFileSync as writeFileSync10 } from "node:fs";
-import { join as join51 } from "node:path";
+import { createHash as createHash15, randomBytes as randomBytes7, randomUUID as randomUUID17 } from "node:crypto";
+import { chmodSync as chmodSync2, existsSync as existsSync26, mkdirSync as mkdirSync27, readFileSync as readFileSync28, renameSync as renameSync6, writeFileSync as writeFileSync10 } from "node:fs";
+import { join as join52 } from "node:path";
 var DEFAULT_SYSTEM_ROOT = "C:\\Windows";
-var SYSTEM32 = join51(process.env.SystemRoot || DEFAULT_SYSTEM_ROOT, "System32");
-var WHOAMI = join51(SYSTEM32, "whoami.exe");
-var ICACLS = join51(SYSTEM32, "icacls.exe");
+var SYSTEM32 = join52(process.env.SystemRoot || DEFAULT_SYSTEM_ROOT, "System32");
+var WHOAMI = join52(SYSTEM32, "whoami.exe");
+var ICACLS = join52(SYSTEM32, "icacls.exe");
 var keySchema = external_exports.string().regex(/^[0-9a-f]{64}$/);
 var identitySchema = external_exports.object({ id: external_exports.uuid(), key: keySchema });
 var publicIdentitySchema = external_exports.object({ id: external_exports.uuid(), name: external_exports.string().regex(NETWORK_NAME_PATTERN), fingerprint: keySchema });
@@ -46663,7 +46988,7 @@ var pairSchema = publicIdentitySchema.extend({ key: keySchema, host: external_ex
 var stateSchema = external_exports.object({ identity: identitySchema, invitations: external_exports.array(invitationSchema).max(MAX_NETWORK_LINKS), pairs: external_exports.array(pairSchema).max(MAX_NETWORK_LINKS) });
 var codeSchema = publicIdentitySchema.extend({ v: external_exports.literal(NETWORK_VERSION), key: keySchema });
 function keyFingerprint(key3) {
-  return createHash14("sha256").update(Buffer.from(key3, "hex")).digest("hex");
+  return createHash15("sha256").update(Buffer.from(key3, "hex")).digest("hex");
 }
 var ACL_PRINCIPAL = /([^\s:][^:]*?):\(/;
 function protect(path, mode) {
@@ -46686,15 +47011,15 @@ var PairingStore = class {
     this.name = name2;
     this.now = now;
     if (!NETWORK_NAME_PATTERN.test(name2)) throw new Error("invalid network instance name");
-    this.dir = join51(home, "network");
-    this.file = join51(this.dir, "keys.json");
-    mkdirSync26(this.dir, { recursive: true, mode: OWNER_DIR_MODE });
+    this.dir = join52(home, "network");
+    this.file = join52(this.dir, "keys.json");
+    mkdirSync27(this.dir, { recursive: true, mode: OWNER_DIR_MODE });
     protect(this.dir, OWNER_DIR_MODE);
-    if (existsSync25(this.file)) {
+    if (existsSync26(this.file)) {
       protect(this.file, OWNER_FILE_MODE);
-      this.state = stateSchema.parse(JSON.parse(readFileSync26(this.file, "utf8")));
+      this.state = stateSchema.parse(JSON.parse(readFileSync28(this.file, "utf8")));
     } else {
-      this.state = { identity: { id: randomUUID16(), key: randomBytes7(PAIRING_KEY_BYTES).toString("hex") }, invitations: [], pairs: [] };
+      this.state = { identity: { id: randomUUID17(), key: randomBytes7(PAIRING_KEY_BYTES).toString("hex") }, invitations: [], pairs: [] };
       this.save();
     }
   }
@@ -46764,7 +47089,7 @@ var PairingStore = class {
     this.save();
   }
   save() {
-    const temp = join51(this.dir, `${randomUUID16()}.tmp`);
+    const temp = join52(this.dir, `${randomUUID17()}.tmp`);
     writeFileSync10(temp, JSON.stringify(this.state, null, 2) + "\n", { mode: OWNER_FILE_MODE, flag: "wx" });
     protect(temp, OWNER_FILE_MODE);
     renameSync6(temp, this.file);
@@ -46977,9 +47302,9 @@ var NetworkDiscovery = class {
 };
 
 // src/network/files.ts
-import { createHash as createHash15, randomUUID as randomUUID17 } from "node:crypto";
-import { existsSync as existsSync26, lstatSync as lstatSync9, mkdirSync as mkdirSync27, mkdtempSync as mkdtempSync2, readFileSync as readFileSync27, readdirSync as readdirSync16, renameSync as renameSync7, rmSync as rmSync8, statfsSync, writeFileSync as writeFileSync11 } from "node:fs";
-import { basename as basename10, join as join52, parse as parse5, resolve as resolve15, sep as sep6 } from "node:path";
+import { createHash as createHash16, randomUUID as randomUUID18 } from "node:crypto";
+import { existsSync as existsSync27, lstatSync as lstatSync10, mkdirSync as mkdirSync28, mkdtempSync as mkdtempSync2, readFileSync as readFileSync29, readdirSync as readdirSync16, renameSync as renameSync7, rmSync as rmSync9, statfsSync, writeFileSync as writeFileSync11 } from "node:fs";
+import { basename as basename11, join as join53, parse as parse5, resolve as resolve15, sep as sep6 } from "node:path";
 var MAX_TRANSFER_BYTES = 1024 * 1024;
 var MAX_TRANSFER_ENTRIES = 128;
 var MAX_TRANSFER_DEPTH = 16;
@@ -47000,24 +47325,24 @@ var transferSchema = external_exports.object({
 });
 var transferResultSchema = external_exports.object({ id: external_exports.uuid(), inbox: external_exports.string().max(MAX_PATH_CHARS2), files: external_exports.number().int().nonnegative().max(MAX_TRANSFER_ENTRIES), bytes: external_exports.number().int().nonnegative().max(MAX_TRANSFER_BYTES) });
 function checksum(data) {
-  return createHash15("sha256").update(data).digest("hex");
+  return createHash16("sha256").update(data).digest("hex");
 }
 function assertTransferPath(path) {
   const absolute = resolve15(path);
   let current = parse5(absolute).root;
   for (const component of absolute.slice(current.length).split(sep6).filter(Boolean)) {
-    current = join52(current, component);
-    if (lstatSync9(current).isSymbolicLink()) throw new Error("file transfer does not follow symlinks or junctions");
+    current = join53(current, component);
+    if (lstatSync10(current).isSymbolicLink()) throw new Error("file transfer does not follow symlinks or junctions");
   }
 }
 function ensureTransferDirectory(path) {
-  if (!existsSync26(path)) {
+  if (!existsSync27(path)) {
     const parent2 = resolve15(path, "..");
     ensureTransferDirectory(parent2);
-    mkdirSync27(path, { mode: OWNER_DIR_MODE });
+    mkdirSync28(path, { mode: OWNER_DIR_MODE });
   }
   assertTransferPath(path);
-  if (!lstatSync9(path).isDirectory()) throw new Error("transfer directory is not a directory");
+  if (!lstatSync10(path).isDirectory()) throw new Error("transfer directory is not a directory");
 }
 function safeTransferPath(path) {
   const components = path.split("/");
@@ -47031,14 +47356,14 @@ function collectTransfer(paths, cwd, to, from) {
     if (!safeTransferPath(path)) throw new Error("unsafe or too deep transfer path");
     if (entries.length >= MAX_TRANSFER_ENTRIES) throw new Error("too many transfer entries");
     assertTransferPath(source);
-    const stat = lstatSync9(source);
+    const stat = lstatSync10(source);
     if (stat.isSymbolicLink()) throw new Error("file transfer does not follow symlinks or junctions");
     if (stat.isDirectory()) {
       entries.push({ kind: "directory", path });
-      for (const name2 of readdirSync16(source).sort()) walk(join52(source, name2), `${path}/${name2}`);
+      for (const name2 of readdirSync16(source).sort()) walk(join53(source, name2), `${path}/${name2}`);
     } else if (stat.isFile()) {
       if (stat.size > MAX_TRANSFER_BYTES - bytes2) throw new Error("transfer exceeds size limit");
-      const data = readFileSync27(source);
+      const data = readFileSync29(source);
       bytes2 += data.length;
       if (bytes2 > MAX_TRANSFER_BYTES) throw new Error("transfer exceeds size limit");
       entries.push({ kind: "file", path, data: data.toString("base64"), sha256: checksum(data) });
@@ -47046,9 +47371,9 @@ function collectTransfer(paths, cwd, to, from) {
   };
   for (const path of paths) {
     const source = resolve15(cwd, path);
-    walk(source, basename10(source));
+    walk(source, basename11(source));
   }
-  const transfer = transferSchema.parse({ id: randomUUID17(), to, from, entries });
+  const transfer = transferSchema.parse({ id: randomUUID18(), to, from, entries });
   validateEntries(transfer);
   return transfer;
 }
@@ -47081,29 +47406,29 @@ function receiveTransfer(home, input2) {
   assertTransferPath(home);
   const disk = statfsSync(home, { bigint: true });
   if (disk.bavail * disk.bsize < BigInt(bytes2)) throw new Error("insufficient free disk space for transfer");
-  const inbox = join52(home, "inbox");
+  const inbox = join53(home, "inbox");
   ensureTransferDirectory(inbox);
-  if (lstatSync9(inbox).isSymbolicLink()) throw new Error("inbox cannot be a symlink");
+  if (lstatSync10(inbox).isSymbolicLink()) throw new Error("inbox cannot be a symlink");
   assertTransferPath(inbox);
-  const final = join52(inbox, transfer.id);
-  if (existsSync26(final)) throw new Error("transfer already received");
-  const staging = mkdtempSync2(join52(inbox, ".partial-"));
+  const final = join53(inbox, transfer.id);
+  if (existsSync27(final)) throw new Error("transfer already received");
+  const staging = mkdtempSync2(join53(inbox, ".partial-"));
   try {
-    for (const entry of entries.filter((e) => e.data === null).sort((a, b) => a.path.length - b.path.length)) mkdirSync27(join52(staging, ...entry.path.split("/")), { mode: OWNER_DIR_MODE });
-    for (const entry of entries) if (entry.data !== null) writeFileSync11(join52(staging, ...entry.path.split("/")), entry.data, { flag: "wx", mode: OWNER_FILE_MODE });
+    for (const entry of entries.filter((e) => e.data === null).sort((a, b) => a.path.length - b.path.length)) mkdirSync28(join53(staging, ...entry.path.split("/")), { mode: OWNER_DIR_MODE });
+    for (const entry of entries) if (entry.data !== null) writeFileSync11(join53(staging, ...entry.path.split("/")), entry.data, { flag: "wx", mode: OWNER_FILE_MODE });
     renameSync7(staging, final);
     return { id: transfer.id, inbox: final, files: files2, bytes: bytes2 };
   } catch (err) {
-    rmSync8(staging, { recursive: true, force: true });
+    rmSync9(staging, { recursive: true, force: true });
     throw err;
   }
 }
 
 // src/network/transfers.ts
-import { createHash as createHash16, randomUUID as randomUUID18 } from "node:crypto";
-import { constants, existsSync as existsSync27, lstatSync as lstatSync10, mkdirSync as mkdirSync28, readdirSync as readdirSync17, readFileSync as readFileSync28, renameSync as renameSync8, statSync as statSync12, writeFileSync as writeFileSync12 } from "node:fs";
+import { createHash as createHash17, randomUUID as randomUUID19 } from "node:crypto";
+import { constants, existsSync as existsSync28, lstatSync as lstatSync11, mkdirSync as mkdirSync29, readdirSync as readdirSync17, readFileSync as readFileSync30, renameSync as renameSync8, statSync as statSync12, writeFileSync as writeFileSync12 } from "node:fs";
 import { open as open3, link, unlink, statfs, lstat, opendir } from "node:fs/promises";
-import { basename as basename11, dirname as dirname22, isAbsolute as isAbsolute8, join as join53, relative as relative7, resolve as resolve16, sep as sep7 } from "node:path";
+import { basename as basename12, dirname as dirname23, isAbsolute as isAbsolute8, join as join54, relative as relative7, resolve as resolve16, sep as sep7 } from "node:path";
 var FILE_STREAM_CAPABILITY = "file-stream-v1";
 var TRANSFER_CHUNK_BYTES = 256 * 1024;
 var DEFAULT_MAX_STREAM_BYTES = 8 * 1024 * 1024 * 1024;
@@ -47138,7 +47463,7 @@ var responseSchema = external_exports.object({ kind: external_exports.literal("r
 var RemoteTransferError = class extends Error {
 };
 function digest(data) {
-  return createHash16("sha256").update(data).digest("hex");
+  return createHash17("sha256").update(data).digest("hex");
 }
 function transferSummary(home, state) {
   const bytes2 = state.entries.reduce((sum, entry) => sum + entry.offset, 0);
@@ -47154,26 +47479,26 @@ function transferSummary(home, state) {
     percent: state.status === "completed" ? 100 : state.totalBytes ? Math.floor(bytes2 / state.totalBytes * 100) : 0,
     createdAt: state.createdAt,
     updatedAt: state.updatedAt,
-    ...state.direction === "receive" ? { inbox: join53(home, "inbox", state.id) } : {},
+    ...state.direction === "receive" ? { inbox: join54(home, "inbox", state.id) } : {},
     ...state.error ? { error: state.error } : {}
   };
 }
 function persistTransfer(root, state) {
   assertTransferPath(root);
   state.updatedAt = Date.now();
-  const file2 = join53(root, `${state.id}.json`);
-  if (existsSync27(file2)) assertTransferPath(file2);
-  const temp = `${file2}.${randomUUID18()}.tmp`;
+  const file2 = join54(root, `${state.id}.json`);
+  if (existsSync28(file2)) assertTransferPath(file2);
+  const temp = `${file2}.${randomUUID19()}.tmp`;
   writeFileSync12(temp, JSON.stringify(state), { flag: "wx", mode: OWNER_FILE_MODE, flush: true });
   renameSync8(temp, file2);
 }
 function cancelStoredTransfer(home, id) {
   external_exports.uuid().parse(id);
-  const root = join53(home, "network", "transfers");
-  const path = join53(root, `${id}.json`);
-  if (!existsSync27(path)) throw new Error("unknown transfer");
+  const root = join54(home, "network", "transfers");
+  const path = join54(root, `${id}.json`);
+  if (!existsSync28(path)) throw new Error("unknown transfer");
   assertTransferPath(path);
-  const state = JSON.parse(readFileSync28(path, "utf8"));
+  const state = JSON.parse(readFileSync30(path, "utf8"));
   if (state.version !== 1 || state.id !== id) throw new Error("invalid persisted transfer");
   if (state.status === "completed" || state.status === "failed" || state.legacySent) return { id, cancelled: false };
   state.status = "cancelled";
@@ -47182,15 +47507,15 @@ function cancelStoredTransfer(home, id) {
   return { id, cancelled: true };
 }
 function readTransferHistory(home) {
-  const root = join53(home, "network", "transfers");
-  if (!existsSync27(root)) return [];
+  const root = join54(home, "network", "transfers");
+  if (!existsSync28(root)) return [];
   assertTransferPath(root);
   return readdirSync17(root).filter((file2) => /^[0-9a-f-]{36}\.json$/.test(file2)).map((file2) => {
-    const path = join53(root, file2);
+    const path = join54(root, file2);
     assertTransferPath(path);
     return { path, mtime: statSync12(path).mtimeMs };
   }).sort((a, b) => b.mtime - a.mtime).slice(0, MAX_TRANSFER_HISTORY).map(({ path }) => {
-    const state = JSON.parse(readFileSync28(path, "utf8"));
+    const state = JSON.parse(readFileSync30(path, "utf8"));
     if (state.version !== 1 || !Array.isArray(state.entries) || state.entries.length > MAX_STREAM_ENTRIES) throw new Error("invalid persisted transfer");
     return transferSummary(home, state);
   }).sort((a, b) => b.updatedAt - a.updatedAt);
@@ -47221,7 +47546,7 @@ var TransferManager = class {
     this.log = log;
     this.options = options;
     assertTransferPath(home);
-    this.root = join53(home, "network", "transfers");
+    this.root = join54(home, "network", "transfers");
     ensureTransferDirectory(this.root);
     assertTransferPath(this.root);
     for (const file2 of readdirSync17(this.root).filter((file3) => /^[0-9a-f-]{36}\.json$/.test(file3))) {
@@ -47251,10 +47576,10 @@ var TransferManager = class {
   closed = false;
   root;
   read(id) {
-    const file2 = join53(this.root, `${id}.json`);
-    if (!existsSync27(file2)) return void 0;
+    const file2 = join54(this.root, `${id}.json`);
+    if (!existsSync28(file2)) return void 0;
     assertTransferPath(file2);
-    const state = JSON.parse(readFileSync28(file2, "utf8"));
+    const state = JSON.parse(readFileSync30(file2, "utf8"));
     if (state.version !== 1 || state.id !== id || !Array.isArray(state.entries) || state.entries.length > MAX_STREAM_ENTRIES) throw new Error("invalid persisted transfer");
     return state;
   }
@@ -47310,7 +47635,7 @@ var TransferManager = class {
     const recipient = state.direction === "send" ? state.from.name : state.to;
     const from = state.direction === "receive" ? { ...state.from, id: `${state.remote}/${state.from.id}`, name: `${state.peer.split("/")[0]}/${state.from.name}` } : { id: `files-${state.id}`, name: "files", agent: "other" };
     this.transport.notify({
-      id: state.direction === "receive" && state.status === "completed" ? state.id : randomUUID18(),
+      id: state.direction === "receive" && state.status === "completed" ? state.id : randomUUID19(),
       from,
       to: recipient,
       recipient,
@@ -47326,7 +47651,7 @@ var TransferManager = class {
   ensureCapacity() {
     if (this.states.size >= MAX_ACTIVE_TRANSFERS) throw new Error("too many active file transfers");
   }
-  start(remote, peer, to, paths, cwd, from, pull = false, id = randomUUID18(), legacy = false) {
+  start(remote, peer, to, paths, cwd, from, pull = false, id = randomUUID19(), legacy = false) {
     this.ensureCapacity();
     const state = {
       version: 1,
@@ -47383,7 +47708,7 @@ var TransferManager = class {
   }
   rpc(remote, id, fields) {
     if (this.closed) return Promise.reject(new Error("transfer manager closed"));
-    const rid = randomUUID18();
+    const rid = randomUUID19();
     return new Promise((resolve19, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(rid);
@@ -47484,7 +47809,7 @@ var TransferManager = class {
           if (names.length + entries.length >= MAX_STREAM_ENTRIES) throw new Error("too many transfer entries");
           names.push(child.name);
         }
-        for (const name2 of names.sort()) await walk(join53(source, name2), `${path}/${name2}`);
+        for (const name2 of names.sort()) await walk(join54(source, name2), `${path}/${name2}`);
       } else if (st.isFile()) {
         total += st.size;
         if (total > (this.options.maxBytes ?? DEFAULT_MAX_STREAM_BYTES)) throw new Error("transfer exceeds size limit");
@@ -47493,7 +47818,7 @@ var TransferManager = class {
     };
     for (const path of state.paths) {
       const source = resolve16(state.cwd, path);
-      await walk(source, basename11(source));
+      await walk(source, basename12(source));
     }
     this.validateEntries(entries);
     return entries;
@@ -47583,7 +47908,7 @@ var TransferManager = class {
         if (offset > entry.size || offset !== entry.size && offset % TRANSFER_CHUNK_BYTES !== 0) throw new RemoteTransferError("invalid resume offset");
         entry.offset = offset;
         const file2 = await this.source(state, entry);
-        const hash2 = createHash16("sha256");
+        const hash2 = createHash17("sha256");
         const buffer = Buffer.alloc(TRANSFER_CHUNK_BYTES);
         try {
           for (let position = 0; position < entry.size; ) {
@@ -47629,13 +47954,13 @@ var TransferManager = class {
     }
   }
   part(state, index) {
-    return join53(this.root, state.id, `${index}.part`);
+    return join54(this.root, state.id, `${index}.part`);
   }
   verified(state, index) {
-    return join53(this.root, state.id, `${index}.verified`);
+    return join54(this.root, state.id, `${index}.verified`);
   }
   target(state, entry) {
-    return join53(this.home, "inbox", state.id, ...entry.path.split("/"));
+    return join54(this.home, "inbox", state.id, ...entry.path.split("/"));
   }
   async freeDisk(bytes2) {
     const disk = await statfs(this.home, { bigint: true });
@@ -47645,7 +47970,7 @@ var TransferManager = class {
   async hashFile(path, state) {
     assertTransferPath(path);
     const file2 = await open3(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
-    const hash2 = createHash16("sha256");
+    const hash2 = createHash17("sha256");
     const buffer = Buffer.alloc(TRANSFER_CHUNK_BYTES);
     try {
       for (; ; ) {
@@ -47662,26 +47987,26 @@ var TransferManager = class {
   async recover(state, entry, index) {
     if (entry.kind !== "file") return;
     const target = this.target(state, entry);
-    if (entry.complete || entry.sha256 && existsSync27(target)) {
+    if (entry.complete || entry.sha256 && existsSync28(target)) {
       if (await this.hashFile(target, state) !== entry.sha256) throw new Error("completed file checksum mismatch");
       entry.complete = true;
       entry.offset = entry.size;
       const part = this.part(state, index);
-      if (existsSync27(part)) {
+      if (existsSync28(part)) {
         assertTransferPath(part);
         await unlink(part);
       }
       const verified2 = this.verified(state, index);
-      if (existsSync27(verified2)) {
+      if (existsSync28(verified2)) {
         assertTransferPath(verified2);
         await unlink(verified2);
       }
       return;
     }
     const verifiedPath = this.verified(state, index);
-    if (entry.sha256 && existsSync27(verifiedPath)) {
+    if (entry.sha256 && existsSync28(verifiedPath)) {
       if (await this.hashFile(verifiedPath, state) !== entry.sha256) throw new Error("verified file checksum mismatch");
-      assertTransferPath(dirname22(target));
+      assertTransferPath(dirname23(target));
       await link(verifiedPath, target);
       await unlink(verifiedPath);
       entry.complete = true;
@@ -47723,28 +48048,28 @@ var TransferManager = class {
     }
   }
   initialize(state) {
-    const inbox = join53(this.home, "inbox");
+    const inbox = join54(this.home, "inbox");
     ensureTransferDirectory(inbox);
-    const final = join53(inbox, state.id);
-    const parts = join53(this.root, state.id);
+    const final = join54(inbox, state.id);
+    const parts = join54(this.root, state.id);
     for (const dir of [final, parts]) {
-      if (!existsSync27(dir)) mkdirSync28(dir, { mode: OWNER_DIR_MODE });
+      if (!existsSync28(dir)) mkdirSync29(dir, { mode: OWNER_DIR_MODE });
       assertTransferPath(dir);
-      if (!lstatSync10(dir).isDirectory()) throw new Error("transfer directory is not a directory");
+      if (!lstatSync11(dir).isDirectory()) throw new Error("transfer directory is not a directory");
     }
     for (const entry of state.entries.filter((entry2) => entry2.kind === "directory").sort((a, b) => a.path.length - b.path.length)) {
       const dir = this.target(state, entry);
-      assertTransferPath(dirname22(dir));
-      if (!existsSync27(dir)) mkdirSync28(dir, { mode: OWNER_DIR_MODE });
+      assertTransferPath(dirname23(dir));
+      if (!existsSync28(dir)) mkdirSync29(dir, { mode: OWNER_DIR_MODE });
       assertTransferPath(dir);
-      if (!lstatSync10(dir).isDirectory()) throw new Error("transfer directory is not a directory");
+      if (!lstatSync11(dir).isDirectory()) throw new Error("transfer directory is not a directory");
     }
     for (let i = 0; i < state.entries.length; i++) if (state.entries[i].kind === "file") {
       for (const file2 of [this.part(state, i), `${this.part(state, i)}.sha256`]) {
-        assertTransferPath(dirname22(file2));
-        if (!existsSync27(file2)) writeFileSync12(file2, "", { flag: "wx", mode: OWNER_FILE_MODE, flush: true });
+        assertTransferPath(dirname23(file2));
+        if (!existsSync28(file2)) writeFileSync12(file2, "", { flag: "wx", mode: OWNER_FILE_MODE, flush: true });
         assertTransferPath(file2);
-        if (!lstatSync10(file2).isFile() || lstatSync10(file2).size !== 0) throw new Error("invalid initial partial file");
+        if (!lstatSync11(file2).isFile() || lstatSync11(file2).size !== 0) throw new Error("invalid initial partial file");
       }
     }
     state.initialized = true;
@@ -47844,9 +48169,9 @@ var TransferManager = class {
       try {
         if (!state || !state.entries.length) {
           if (!state) this.ensureCapacity();
-          const inbox = join53(this.home, "inbox");
+          const inbox = join54(this.home, "inbox");
           ensureTransferDirectory(inbox);
-          if (existsSync27(join53(inbox, request2.id)) || existsSync27(join53(this.root, request2.id))) throw new Error("transfer destination already exists");
+          if (existsSync28(join54(inbox, request2.id)) || existsSync28(join54(this.root, request2.id))) throw new Error("transfer destination already exists");
           const receiving = {
             version: 1,
             id: request2.id,
@@ -47912,10 +48237,10 @@ var TransferManager = class {
         entry.sha256 = request2.sha256;
         this.save(state);
         const target = this.target(state, entry);
-        assertTransferPath(dirname22(target));
+        assertTransferPath(dirname23(target));
         assertTransferPath(part);
         const verified = this.verified(state, request2.index);
-        if (existsSync27(verified)) throw new Error("verified file already exists");
+        if (existsSync28(verified)) throw new Error("verified file already exists");
         renameSync8(part, verified);
         await link(verified, target);
         await unlink(verified);
@@ -48168,7 +48493,7 @@ var Link = class {
     this.advertisedPeers = signature;
   }
   send(message) {
-    return this.request({ type: "send", rid: randomUUID19(), message: messageSchema.parse(message) });
+    return this.request({ type: "send", rid: randomUUID20(), message: messageSchema.parse(message) });
   }
   /** Detect a half-open link even when nobody sends work; activity never expires a peer. */
   heartbeat() {
@@ -48181,14 +48506,14 @@ var Link = class {
   receipt(id, sender, recipient, requireRecipient = false) {
     if (!this.receiptsSupported) return Promise.reject(new Error("Remote broker does not support read receipts. Update and reload its hosting sessions."));
     if (requireRecipient && !this.supports("recipient-receipts-v1")) return Promise.reject(new Error("Remote broker does not support per-recipient broadcast receipts. Update and reload its hosting sessions."));
-    return this.request({ type: "receipt", rid: randomUUID19(), id, sender, recipient });
+    return this.request({ type: "receipt", rid: randomUUID20(), id, sender, recipient });
   }
   files(transfer) {
-    return this.request({ type: "files", rid: randomUUID19(), transfer: transferSchema.parse(transfer) });
+    return this.request({ type: "files", rid: randomUUID20(), transfer: transferSchema.parse(transfer) });
   }
   async echo(timeoutMs = NETWORK_TIMEOUT_MS) {
     if (!this.echoSupported) throw new Error("Remote broker does not support verification. Update and restart its hosting sessions.");
-    const result = await this.request({ type: "echo", rid: randomUUID19() }, timeoutMs);
+    const result = await this.request({ type: "echo", rid: randomUUID20() }, timeoutMs);
     if (result !== true) throw new Error("network echo was not acknowledged");
   }
   request(frame, timeoutMs = NETWORK_TIMEOUT_MS) {
@@ -48590,10 +48915,10 @@ var NetworkService = class {
 };
 
 // src/core/broker.ts
-import { basename as basename13, dirname as dirname25, join as join68 } from "node:path";
+import { basename as basename14, dirname as dirname26, join as join69 } from "node:path";
 
 // src/core/project-groups.ts
-import { join as join54 } from "node:path";
+import { join as join55 } from "node:path";
 var ProjectGroups = class {
   constructor(home) {
     this.home = home;
@@ -48649,7 +48974,7 @@ var ProjectGroups = class {
     let spec;
     if (this.home && typeof job.id === "string" && /^[a-zA-Z0-9_-]+$/.test(job.id)) {
       try {
-        spec = readJsonSnapshot(join54(this.home, "jobs", `${job.id}.spec.json`)).value;
+        spec = readJsonSnapshot(join55(this.home, "jobs", `${job.id}.spec.json`)).value;
       } catch {
       }
     }
@@ -48697,11 +49022,11 @@ var ProjectGroups = class {
 };
 
 // src/network/remote-dashboard.ts
-import { randomUUID as randomUUID20 } from "node:crypto";
+import { randomUUID as randomUUID21 } from "node:crypto";
 
 // src/core/dashboard-read.ts
-import { closeSync as closeSync11, openSync as openSync11, readFileSync as readFileSync29, readSync as readSync4, statSync as statSync13 } from "node:fs";
-import { join as join55 } from "node:path";
+import { closeSync as closeSync12, openSync as openSync12, readFileSync as readFileSync31, readSync as readSync5, statSync as statSync13 } from "node:fs";
+import { join as join56 } from "node:path";
 
 // src/network/dashboard-protocol.ts
 var DASHBOARD_CAPABILITY = "dashboard-read-v1";
@@ -48746,7 +49071,7 @@ var LEGACY_JOB_START_TOLERANCE_MS = 1e3;
 var MAX_LOG_CHUNK = 128 * 1024;
 async function finishedRunOutcomes(home, log, names) {
   const runs = listRuns(home, Date.now(), names);
-  const jobs = readStore(join55(home, JOBS_FILE), log, true);
+  const jobs = readStore(join56(home, JOBS_FILE), log, true);
   const out = {};
   for (const run of runs) {
     if (names && !names.has(run.name)) continue;
@@ -48763,14 +49088,16 @@ async function finishedRunOutcomes(home, log, names) {
       worktree: stored?.worktree,
       remote: run.remote ?? stored?.remote
     };
-    const receiptRuns = names ? readRunLogs(home).map((r) => ({ job: r.meta.job, jobStartedAt: r.meta.jobStartedAt, startedAt: runNameStart(r.name, r.updatedAt) })) : runs;
+    const delivery = names ? readResultDelivery(home, job) : void 0;
+    const receiptRuns = names && delivery?.status !== "unknown" ? await readRunStarts(home) : runs;
     const next = receiptRuns.filter((r) => r.job === run.job && (r.jobStartedAt ?? r.startedAt) > startedAt).sort((a, b) => (a.jobStartedAt ?? a.startedAt) - (b.jobStartedAt ?? b.startedAt))[0];
     out[run.name] = await deriveJobOutcome(home, job, log, {
       branch: run.branch,
       baseBranch: run.baseBranch,
       repoRoot: run.repoRoot,
       branchHead: run.branchHead,
-      before: next?.jobStartedAt ?? next?.startedAt
+      before: next?.jobStartedAt ?? next?.startedAt,
+      ...delivery?.status === "unknown" ? { delivery } : {}
     });
   }
   return out;
@@ -48808,7 +49135,7 @@ function listRuns(home, now = Date.now(), names) {
       const signature = `${log.signature}:${JSON.stringify(log.meta)}`;
       let cached3 = runSummaries.get(log.file);
       if (cached3?.signature !== signature) {
-        cached3 = { signature, summary: summarizeRun(`${log.name}.log`, readFileSync29(log.file, "utf8"), log.updatedAt, log.updatedAt, log.meta) };
+        cached3 = { signature, summary: summarizeRun(`${log.name}.log`, readFileSync31(log.file, "utf8"), log.updatedAt, log.updatedAt, log.meta) };
         runSummaries.delete(log.file);
         runSummaries.set(log.file, cached3);
         if (runSummaries.size > 2048) runSummaries.delete(runSummaries.keys().next().value);
@@ -48874,10 +49201,6 @@ function listRuns(home, now = Date.now(), names) {
   }
   return pageRuns(runs, null, runs.length).runs;
 }
-function runNameStart(name2, fallback) {
-  const m = /^(\d{4})-(\d\d)-(\d\d)-(\d\d)-(\d\d)-(\d\d)-/.exec(name2);
-  return m ? Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]) : fallback;
-}
 var runSummaries = /* @__PURE__ */ new Map();
 function readStoredJobs(home) {
   const out = /* @__PURE__ */ new Map();
@@ -48897,7 +49220,7 @@ function readStoredJobs(home) {
 }
 function classifyPeers(peers, runs, home) {
   const norm = (p) => p.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
-  const worktrees = `${norm(join55(home, "worktrees"))}/`;
+  const worktrees = `${norm(join56(home, "worktrees"))}/`;
   const byWorkdir = /* @__PURE__ */ new Map();
   for (const run of runs) if (run.workdir && !byWorkdir.has(norm(run.workdir))) byWorkdir.set(norm(run.workdir), run);
   return peers.filter((p) => !isPluginCacheCwd(p.cwd)).map((p) => {
@@ -48941,7 +49264,7 @@ async function readDashboard(ctx, request2) {
     const before = url2.searchParams.get("before");
     if (before !== null && !/^[\w.-]{1,256}$/.test(before)) return reply(400, { error: "invalid outcome cursor" });
     const select = (names2) => [...new Set(names2)].sort().filter((name2) => before === null || name2 > before).slice(0, limit);
-    const stored = readStore(join55(ctx.home, JOBS_FILE), ctx.log, true).filter((j) => j.status === "done" || j.status === "failed");
+    const stored = readStore(join56(ctx.home, JOBS_FILE), ctx.log, true).filter((j) => j.status === "done" || j.status === "failed");
     const runs = listRuns(ctx.home).filter((r) => r.job && (r.status === "done" || r.status === "failed"));
     const names = select([...stored.map((j) => j.name), ...runs.map((r) => r.name)]);
     const next = [...stored.map((j) => j.name), ...runs.map((r) => r.name)].some((name2) => names.length > 0 && name2 > names.at(-1)) ? names.at(-1) : null;
@@ -49032,12 +49355,12 @@ async function readDashboard(ctx, request2) {
     if (!/^\d+$/.test(rawFrom) || !Number.isSafeInteger(Number(rawFrom))) return reply(400, { error: "invalid log cursor" });
     const from = Number(rawFrom);
     const size = statSync13(log.file).size;
-    const fd = openSync11(log.file, "r");
+    const fd = openSync12(log.file, "r");
     const buf = Buffer.alloc(Math.min(MAX_LOG_CHUNK + 1, Math.max(0, size - from)));
     try {
-      readSync4(fd, buf, 0, buf.length, from);
+      readSync5(fd, buf, 0, buf.length, from);
     } finally {
-      closeSync11(fd);
+      closeSync12(fd);
     }
     let end = Math.min(buf.length, MAX_LOG_CHUNK);
     while (end < buf.length && end > 0 && (buf[end] & 192) === 128) end--;
@@ -49066,7 +49389,7 @@ var RemoteDashboard = class {
     if (this.closed || !pair?.connected) return dashboardError("remote_offline", "The paired PC is not connected.");
     if (!this.network.peerSupports(host, DASHBOARD_CAPABILITY)) return dashboardError("remote_update_needed", "Update and restart the paired PC's hosting sessions to read its dashboard.", 409);
     if (this.pending.size >= DASHBOARD_MAX_PENDING) return dashboardError("remote_busy", "Too many pending dashboard reads.", 429);
-    const rid = randomUUID20();
+    const rid = randomUUID21();
     const response = new Promise((resolve19) => {
       const timer = setTimeout(() => {
         this.pending.delete(rid);
@@ -49133,21 +49456,21 @@ var RemoteDashboard = class {
 };
 
 // src/network/remote-jobs.ts
-import { randomUUID as randomUUID23 } from "node:crypto";
-import { existsSync as existsSync28, realpathSync as realpathSync10, statSync as statSync15 } from "node:fs";
-import { isAbsolute as isAbsolute10, join as join61 } from "node:path";
+import { randomUUID as randomUUID24 } from "node:crypto";
+import { existsSync as existsSync29, realpathSync as realpathSync10, statSync as statSync15 } from "node:fs";
+import { isAbsolute as isAbsolute10, join as join62 } from "node:path";
 
 // src/mcp/delegate-run.ts
-import { randomUUID as randomUUID22 } from "node:crypto";
-import { isAbsolute as isAbsolute9, join as join58, relative as relative8, resolve as resolve17 } from "node:path";
+import { randomUUID as randomUUID23 } from "node:crypto";
+import { isAbsolute as isAbsolute9, join as join59, relative as relative8, resolve as resolve17 } from "node:path";
 
 // src/core/startup-admission.ts
-import { randomUUID as randomUUID21 } from "node:crypto";
+import { randomUUID as randomUUID22 } from "node:crypto";
 var STARTUP_CAPACITY = 2;
 var STARTUP_RESOURCE = "delegate-startup";
 async function acquireStartup(home, signal) {
   const slots = new ResourceSlots(home);
-  const owner = { id: `startup-${randomUUID21()}`, pid: process.pid };
+  const owner = { id: `startup-${randomUUID22()}`, pid: process.pid };
   try {
     await slots.acquire(STARTUP_RESOURCE, STARTUP_CAPACITY, owner, signal);
   } catch (err) {
@@ -49167,23 +49490,23 @@ async function acquireStartup(home, signal) {
 }
 
 // src/core/effort.ts
-import { readFileSync as readFileSync31 } from "node:fs";
+import { readFileSync as readFileSync33 } from "node:fs";
 import { homedir as homedir7 } from "node:os";
-import { join as join57 } from "node:path";
+import { join as join58 } from "node:path";
 
 // src/core/codex-trust.ts
-import { readFileSync as readFileSync30, writeFileSync as writeFileSync13 } from "node:fs";
+import { readFileSync as readFileSync32, writeFileSync as writeFileSync13 } from "node:fs";
 import { homedir as homedir6 } from "node:os";
-import { join as join56 } from "node:path";
+import { join as join57 } from "node:path";
 var PERMISSION_HOOK_STATE_KEY = 'hooks.state."agent-bridge@agent-bridge:plugin.json#hooks[0]:permission_request:0:0"';
 var OBSERVATIONS_FILE = "codex-hook.json";
 function codexHome(env = process.env) {
-  return env.CODEX_HOME?.trim() || join56(homedir6(), ".codex");
+  return env.CODEX_HOME?.trim() || join57(homedir6(), ".codex");
 }
-function codexPermissionHookHash(home = codexHome(), read2 = (p) => readFileSync30(p, "utf8")) {
+function codexPermissionHookHash(home = codexHome(), read2 = (p) => readFileSync32(p, "utf8")) {
   let text3;
   try {
-    text3 = read2(join56(home, "config.toml"));
+    text3 = read2(join57(home, "config.toml"));
   } catch {
     return null;
   }
@@ -49198,7 +49521,7 @@ function codexPermissionHookHash(home = codexHome(), read2 = (p) => readFileSync
 }
 function readObservations(bridgeHome) {
   try {
-    return JSON.parse(readFileSync30(join56(bridgeHome, OBSERVATIONS_FILE), "utf8"));
+    return JSON.parse(readFileSync32(join57(bridgeHome, OBSERVATIONS_FILE), "utf8"));
   } catch {
     return {};
   }
@@ -49208,20 +49531,20 @@ function recordCodexHookObservation(bridgeHome, hash2, observation) {
   if (all[hash2] === "failed") return;
   all[hash2] = observation;
   try {
-    writeFileSync13(join56(bridgeHome, OBSERVATIONS_FILE), JSON.stringify(all, null, 2), { mode: 384 });
+    writeFileSync13(join57(bridgeHome, OBSERVATIONS_FILE), JSON.stringify(all, null, 2), { mode: 384 });
   } catch {
   }
 }
-function codexPermissionHookTrusted(bridgeHome, home = codexHome(), read2 = (p) => readFileSync30(p, "utf8")) {
+function codexPermissionHookTrusted(bridgeHome, home = codexHome(), read2 = (p) => readFileSync32(p, "utf8")) {
   const hash2 = codexPermissionHookHash(home, read2);
   return hash2 !== null && readObservations(bridgeHome)[hash2] !== "failed";
 }
 
 // src/core/effort.ts
-function defaultEffort(agent, model, read2 = (p) => readFileSync31(p, "utf8")) {
+function defaultEffort(agent, model, read2 = (p) => readFileSync33(p, "utf8")) {
   try {
-    if (agent === "codex") return codexConfigEffort(read2(join57(codexHome(), "config.toml")));
-    if (agent === "claude") return claudeSettingsEffort(read2(join57(process.env.CLAUDE_CONFIG_DIR?.trim() || join57(homedir7(), ".claude"), "settings.json")), model);
+    if (agent === "codex") return codexConfigEffort(read2(join58(codexHome(), "config.toml")));
+    if (agent === "claude") return claudeSettingsEffort(read2(join58(process.env.CLAUDE_CONFIG_DIR?.trim() || join58(homedir7(), ".claude"), "settings.json")), model);
   } catch {
   }
   return null;
@@ -49298,11 +49621,11 @@ var DELEGATED_JOB_NOTE = "(agent-bridge: you are a delegated job. Report what yo
 var HANDOFF_DECLINED = "Declined by agent-bridge: delegated jobs do not write the project handoff. Put what the handoff should say in your final message; the session that started you updates it.";
 var PARENT_APPROVAL_TIMEOUT_MS = 10 * 6e4;
 function isBridgeWorktree(dir, home) {
-  return isInside(dir, join58(home, "worktrees")) && resolve17(dir) !== resolve17(join58(home, "worktrees"));
+  return isInside(dir, join59(home, "worktrees")) && resolve17(dir) !== resolve17(join59(home, "worktrees"));
 }
 function bridgeWorktreeRoot(dir, home) {
   if (!isBridgeWorktree(dir, home)) return null;
-  return join58(home, "worktrees", relative8(join58(home, "worktrees"), resolve17(dir)).split(/[\\/]/)[0]);
+  return join59(home, "worktrees", relative8(join59(home, "worktrees"), resolve17(dir)).split(/[\\/]/)[0]);
 }
 function isInside(child, parent2) {
   const rel = relative8(resolve17(parent2), resolve17(child));
@@ -49326,7 +49649,7 @@ async function runDelegate(rc, target, a, signal, onProgress, background, job) {
   checkDepth(rc.cfg.maxDelegateDepth);
   if (!job?.rootSession) return runWithStartup(rc, target, a, signal, onProgress, background, job);
   const budget = new RootConcurrency(rc.home, job.rootSession);
-  const owner = { id: `${job.name}-${randomUUID22()}`, pid: process.pid };
+  const owner = { id: `${job.name}-${randomUUID23()}`, pid: process.pid };
   let timer;
   try {
     if (!job.parentJob) budget.ensureLimit(rc.cfg.maxJobs);
@@ -49362,7 +49685,7 @@ async function runWithStartup(rc, target, a, signal, onProgress, background, job
   }
 }
 async function runWithWorktreeLease(rc, target, a, signal, onProgress, background, job) {
-  const wt = a._worktree ?? (a.worktree ? await createWorktree({ cwd: a.cwd || rc.cwd(), home: rc.home, jobId: randomUUID22().slice(0, 8), log: rc.log }) : null);
+  const wt = a._worktree ?? (a.worktree ? await createWorktree({ cwd: a.cwd || rc.cwd(), home: rc.home, jobId: randomUUID23().slice(0, 8), log: rc.log }) : null);
   const root = wt?.path ?? bridgeWorktreeRoot(a.cwd || rc.cwd(), rc.home);
   if (!root) return runDelegateInner(rc, target, a, signal, onProgress, background, job);
   const release = worktreeLease(rc.home, { path: root });
@@ -49387,7 +49710,7 @@ async function runDelegateInner(rc, target, a, signal, onProgress, background, j
   const cwd = a.cwd || rc.cwd();
   a = worktreeArgs(target, a, cfg, cwd, rc.home);
   const access = a.access;
-  const wt = a._worktree ?? (a.worktree ? await createWorktree({ cwd, home: rc.home, jobId: randomUUID22().slice(0, 8), log: dlog }) : null);
+  const wt = a._worktree ?? (a.worktree ? await createWorktree({ cwd, home: rc.home, jobId: randomUUID23().slice(0, 8), log: dlog }) : null);
   const workdir = wt?.cwd ?? cwd;
   const linkRoot = wt?.path ?? bridgeWorktreeRoot(workdir, rc.home);
   const watchChanges = !wt && (access === "edit" || access === "ask" && target === "codex");
@@ -49398,7 +49721,7 @@ async function runDelegateInner(rc, target, a, signal, onProgress, background, j
   let relayCalls = 0;
   const codexHash = target === "codex" ? codexPermissionHookHash() : null;
   const journalPermission = async (request2, decide) => {
-    const id = randomUUID22();
+    const id = randomUUID23();
     const context2 = { kind: "approval", agent: target, project: workdir, job: job?.name ?? a._job, session: job?.sessionId ?? void 0 };
     await appendContextEvent(rc.home, { ...context2, payload: { id, stage: "request", request: request2 } });
     const decision = await decide();
@@ -49469,7 +49792,7 @@ async function runDelegateInner(rc, target, a, signal, onProgress, background, j
   try {
     feed = startRunFeed({
       home: rc.home,
-      name: `${target}-${randomUUID22().slice(0, 8)}`,
+      name: `${target}-${randomUUID23().slice(0, 8)}`,
       header: `${target}${a.model ? ` (${a.model}${a.effort ? `, effort ${a.effort}` : ""})` : a.effort ? ` (effort ${a.effort})` : ""} in ${workdir}, access ${access ?? "default"}, by ${me}${a.session_id ? `, continues ${a.session_id}` : ""}
 ${a.prompt}
 ---`,
@@ -49579,7 +49902,7 @@ ${a.prompt}
     });
     void steering?.rename?.(title).catch((err) => dlog.warn("could not rename the Codex thread", { err: err.message }));
   };
-  const slotOwner = { id: `${a._job ?? target}-${randomUUID22()}`, pid: process.pid };
+  const slotOwner = { id: `${a._job ?? target}-${randomUUID23()}`, pid: process.pid };
   let slots = null;
   let slotTimer;
   let res;
@@ -49767,11 +50090,11 @@ ${notes.join("\n\n")}` : res.text };
 
 // src/mcp/job-host.ts
 import { spawn as spawn6 } from "node:child_process";
-import { mkdirSync as mkdirSync29, readdirSync as readdirSync18, statSync as statSync14 } from "node:fs";
-import { join as join60 } from "node:path";
+import { mkdirSync as mkdirSync30, readdirSync as readdirSync18, statSync as statSync14 } from "node:fs";
+import { join as join61 } from "node:path";
 
 // src/mcp/remote-job-host.ts
-import { join as join59 } from "node:path";
+import { join as join60 } from "node:path";
 var REMOTE_STATE_GRACE_MS = 9e4;
 var RemoteJobHost = class {
   constructor(node2, home, log) {
@@ -49785,7 +50108,7 @@ var RemoteJobHost = class {
   busy = /* @__PURE__ */ new Set();
   cache = /* @__PURE__ */ new Map();
   path(job) {
-    return join59(this.home, "remote-job-states", `${job.id}.json`);
+    return join60(this.home, "remote-job-states", `${job.id}.json`);
   }
   read(job) {
     return this.cache.get(job.id) ?? readJsonStore(this.path(job));
@@ -49841,10 +50164,10 @@ var START_GRACE_MS = 3e4;
 var KEEP_FILES_MS = 7 * 24 * 60 * 60 * 1e3;
 var DETACH_LAUNCHER = "const c=require('node:child_process').spawn(process.execPath,process.argv.slice(1),{detached:true,stdio:'ignore',windowsHide:true});c.on('error',()=>process.exit(1));if(c.pid)process.stdout.write(String(c.pid));c.unref()";
 function runnerStatePath(home, id) {
-  return join60(home, RUNNERS_DIR_NAME, `${id}.json`);
+  return join61(home, RUNNERS_DIR_NAME, `${id}.json`);
 }
 function specPath(home, id) {
-  return join60(home, RUNNERS_DIR_NAME, `${id}.spec.json`);
+  return join61(home, RUNNERS_DIR_NAME, `${id}.spec.json`);
 }
 function readRunnerState(home, id) {
   try {
@@ -49862,11 +50185,11 @@ var JobRunners = class {
     this.log = log;
     this.remote = new RemoteJobHost(node2, home, log);
     try {
-      const dir = join60(home, RUNNERS_DIR_NAME);
+      const dir = join61(home, RUNNERS_DIR_NAME);
       const keepMs = retentionLimit("AGENT_BRIDGE_RUNNER_KEEP_MS", KEEP_FILES_MS);
       if (!keepMs) return;
       for (const f of readdirSync18(dir)) {
-        const path = join60(dir, f);
+        const path = join61(dir, f);
         if (!f.endsWith(".json") || f.endsWith(".spec.json") || Date.now() - statSync14(path).mtimeMs <= keepMs) continue;
         const id = f.replace(/\.json$/, "");
         const state = readRunnerState(home, id);
@@ -49888,7 +50211,7 @@ var JobRunners = class {
   start(job, spec) {
     if (spec.args.host) return this.remote.start(job, spec.args.host, spec.target, spec.args);
     try {
-      mkdirSync29(join60(this.home, RUNNERS_DIR_NAME), { recursive: true });
+      mkdirSync30(join61(this.home, RUNNERS_DIR_NAME), { recursive: true });
       const statePath2 = runnerStatePath(this.home, job.id);
       const file2 = specPath(this.home, job.id);
       assertWritableStore(readJsonStore(statePath2, this.log));
@@ -49989,7 +50312,7 @@ var RemoteJobs = class {
     this.control = control;
     const cli = bundledCli();
     this.runners = cli ? new JobRunners({}, home, cli, log) : null;
-    const stored = readJsonStore(join61(home, REMOTE_JOBS_FILE));
+    const stored = readJsonStore(join62(home, REMOTE_JOBS_FILE));
     if (isRecord(stored) && Array.isArray(stored.jobs)) for (const r of stored.jobs) {
       if (typeof r.pair !== "string" || typeof r.peer !== "string" || !r.job?.id || !r.args) continue;
       this.records.set(r.job.id, { ...r, job: { ...r.job, controller: new AbortController(), queue: [] } });
@@ -50013,7 +50336,7 @@ var RemoteJobs = class {
     const request2 = remoteJobRequestSchema.parse(raw);
     if (!this.network.peerSupports(host, REMOTE_JOB_CAPABILITY)) throw new Error("Remote broker update needed or paired PC disconnected: install remote-jobs-v1 support and restart its hosting sessions.");
     if (this.pending.size >= REMOTE_JOB_RATE_LIMIT) throw new Error("Too many pending remote job requests.");
-    const rid = randomUUID23();
+    const rid = randomUUID24();
     const response = new Promise((resolve19, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(rid);
@@ -50113,7 +50436,7 @@ var RemoteJobs = class {
         args = resumeArgs(args, record2.job.name, args.prompt, state.sessionId, cwd, worktree, { ...args });
       } else if (args.worktree) {
         const repo = allowedRemoteDirectory(await git(["rev-parse", "--show-toplevel"], cwd, this.log), policy.allowRoots);
-        if (existsSync28(join61(repo, "worktrees"))) allowedRemoteDirectory(join61(repo, "worktrees"), policy.allowRoots);
+        if (existsSync29(join62(repo, "worktrees"))) allowedRemoteDirectory(join62(repo, "worktrees"), policy.allowRoots);
         worktree = await createWorktree({ cwd, home: repo, jobId: request2.job, log: this.log });
         cwd = allowedRemoteDirectory(worktree.cwd, policy.allowRoots);
         args = { ...args, cwd, worktree: false, _worktree: worktree };
@@ -50175,10 +50498,10 @@ var RemoteJobs = class {
     return { state, alive: alive2, approvals: listPendingApprovals(this.home).filter((a) => a.job === record2.job.name && a.owner === record2.owner) };
   }
   persist() {
-    writeJsonStore(join61(this.home, REMOTE_JOBS_FILE), { jobs: [...this.records.values()].map((r) => {
+    writeJsonStore(join62(this.home, REMOTE_JOBS_FILE), { jobs: [...this.records.values()].map((r) => {
       const { controller, queue, ...job } = r.job;
       return { ...r, job };
-    }) }, readJsonStore(join61(this.home, REMOTE_JOBS_FILE)));
+    }) }, readJsonStore(join62(this.home, REMOTE_JOBS_FILE)));
   }
   async mirror(host, peer, request2, snapshot, supervisor, localJobName) {
     const owner = peer.name;
@@ -50254,19 +50577,19 @@ ${request2.args.prompt}
 };
 
 // src/core/owner-question-service.ts
-import { createHash as createHash17 } from "node:crypto";
+import { createHash as createHash18 } from "node:crypto";
 
 // src/cli/dashboard-key.ts
-import { randomBytes as randomBytes9, randomUUID as randomUUID24 } from "node:crypto";
-import { existsSync as existsSync29, linkSync, mkdirSync as mkdirSync30, readFileSync as readFileSync32, renameSync as renameSync9, unlinkSync as unlinkSync2, writeFileSync as writeFileSync14 } from "node:fs";
-import { join as join62 } from "node:path";
+import { randomBytes as randomBytes9, randomUUID as randomUUID25 } from "node:crypto";
+import { existsSync as existsSync30, linkSync, mkdirSync as mkdirSync31, readFileSync as readFileSync34, renameSync as renameSync9, unlinkSync as unlinkSync2, writeFileSync as writeFileSync14 } from "node:fs";
+import { join as join63 } from "node:path";
 var DASHBOARD_KEY_FILE = "dashboard-key";
 var KEY_PATTERN = /^[0-9a-f]{48}$/;
 function loadDashboardKey(home, legacy, reset = false) {
-  mkdirSync30(home, { recursive: true, mode: 448 });
-  const file2 = join62(home, DASHBOARD_KEY_FILE);
-  if (reset || !existsSync29(file2)) {
-    const temp = join62(home, `.dashboard-key-${randomUUID24()}`);
+  mkdirSync31(home, { recursive: true, mode: 448 });
+  const file2 = join63(home, DASHBOARD_KEY_FILE);
+  if (reset || !existsSync30(file2)) {
+    const temp = join63(home, `.dashboard-key-${randomUUID25()}`);
     let created = false;
     try {
       writeFileSync14(temp, "", { flag: "wx", mode: 384 });
@@ -50282,27 +50605,27 @@ function loadDashboardKey(home, legacy, reset = false) {
         }
       }
     } finally {
-      if (created && existsSync29(temp)) unlinkSync2(temp);
+      if (created && existsSync30(temp)) unlinkSync2(temp);
     }
   }
   protect(file2, 384);
-  const key3 = readFileSync32(file2, "utf8").trim();
+  const key3 = readFileSync34(file2, "utf8").trim();
   if (!KEY_PATTERN.test(key3)) throw new Error("Invalid dashboard key file; run agent-bridge ui --reset-key to recover.");
   return key3;
 }
 function currentDashboardKey(home) {
-  const key3 = readFileSync32(join62(home, DASHBOARD_KEY_FILE), "utf8").trim();
+  const key3 = readFileSync34(join63(home, DASHBOARD_KEY_FILE), "utf8").trim();
   if (!KEY_PATTERN.test(key3)) throw new Error("Invalid dashboard key file");
   return key3;
 }
 
 // src/cli/dashboard.ts
-import { readFileSync as readFileSync35, writeFileSync as writeFileSync16 } from "node:fs";
+import { readFileSync as readFileSync37, writeFileSync as writeFileSync16 } from "node:fs";
 import { request } from "node:http";
-import { join as join67 } from "node:path";
+import { join as join68 } from "node:path";
 
 // src/cli/ui.ts
-import { DatabaseSync as DatabaseSync17 } from "node:sqlite";
+import { DatabaseSync as DatabaseSync18 } from "node:sqlite";
 
 // src/cli/logo.ts
 var LOGO_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="agent-bridge"><defs><linearGradient id="ab-bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#1e1b4b"/><stop offset="1" stop-color="#4338ca"/></linearGradient><linearGradient id="ab-l" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffb088"/><stop offset="1" stop-color="#e2603b"/></linearGradient><linearGradient id="ab-r" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#7cf0c0"/><stop offset="1" stop-color="#0e9f6e"/></linearGradient><radialGradient id="ab-glow"><stop offset="0" stop-color="#fff" stop-opacity=".55"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></radialGradient></defs><rect width="64" height="64" rx="16" fill="url(#ab-bg)"/><path d="M9 52V32A20 20 0 0 1 27 12.1v10.2A10 10 0 0 0 19 32v20z" fill="url(#ab-l)"/><path d="M55 52V32A20 20 0 0 0 37 12.1v10.2A10 10 0 0 1 45 32v20z" fill="url(#ab-r)"/><circle cx="32" cy="17" r="11" fill="url(#ab-glow)"/><path d="M32 9.5c.9 4.6 2.9 6.6 7.5 7.5-4.6.9-6.6 2.9-7.5 7.5-.9-4.6-2.9-6.6-7.5-7.5 4.6-.9 6.6-2.9 7.5-7.5z" fill="#fff"/></svg>';
@@ -50405,7 +50728,8 @@ var BridgeClient = class _BridgeClient extends EventEmitter {
       }, reject: (err) => {
         if (/unknown op:/.test(err.message)) reject(new BridgeError(
           "protocol_mismatch",
-          `Broker ${this.brokerVersion ? "v" + this.brokerVersion : "version unknown (older protocol)"} does not support ${op} required by server v${APP_VERSION}. Update the broker host and reload its session after current jobs finish; no operation was applied.`
+          `Broker ${this.brokerVersion ? "v" + this.brokerVersion : "version unknown (older protocol)"} does not support ${op} required by server v${APP_VERSION}. Update the broker host and reload its session after current jobs finish; no operation was applied.`,
+          { operation: op }
         ));
         else reject(err);
       }, timer });
@@ -50427,18 +50751,18 @@ var BridgeClient = class _BridgeClient extends EventEmitter {
 };
 
 // src/core/models.ts
-import { mkdirSync as mkdirSync31, readFileSync as readFileSync33, writeFileSync as writeFileSync15 } from "node:fs";
-import { join as join63 } from "node:path";
+import { mkdirSync as mkdirSync32, readFileSync as readFileSync35, writeFileSync as writeFileSync15 } from "node:fs";
+import { join as join64 } from "node:path";
 var MAX_LISTED = 80;
 var MODEL_CACHE_MS = 10 * 60 * 1e3;
 var SHORT_MODEL_LIST = 6;
 var modelReads = /* @__PURE__ */ new Map();
 var modelBin = (agent, cfg) => cfg[`${agent}Bin`];
 var modelDefault = (agent, cfg) => cfg[`${agent}Model`];
-var modelCachePath = (home, agent) => join63(home, `models-${agent}.json`);
+var modelCachePath = (home, agent) => join64(home, `models-${agent}.json`);
 function cachedModels(home, agent, cfg) {
   try {
-    const cache4 = JSON.parse(readFileSync33(modelCachePath(home, agent), "utf8"));
+    const cache4 = JSON.parse(readFileSync35(modelCachePath(home, agent), "utf8"));
     const validStrings = (v) => Array.isArray(v) && v.every((s) => typeof s === "string");
     if (cache4.bin !== modelBin(agent, cfg) || cache4.effort !== (cfg.effort[agent] ?? null) || typeof cache4.at !== "number" || Date.now() - cache4.at >= MODEL_CACHE_MS) return null;
     if (cache4.report?.agent !== agent || !validStrings(cache4.report.models) || !validStrings(cache4.report.lines)) return null;
@@ -50468,7 +50792,7 @@ async function readModels(agent, cfg, cwd, log, home) {
       const report = { agent, defaultModel, models, lines };
       if (!lines[0]?.startsWith("Could not list")) {
         try {
-          mkdirSync31(home, { recursive: true });
+          mkdirSync32(home, { recursive: true });
           writeFileSync15(modelCachePath(home, agent), JSON.stringify({ at: Date.now(), bin: modelBin(agent, cfg), effort: cfg.effort[agent] ?? null, report }), { mode: 384 });
         } catch (err) {
           log.debug("could not cache models", { err: err.message });
@@ -50523,7 +50847,7 @@ async function describeModels(agent, cfg, cwd, log, query = "") {
 }
 
 // src/core/job-control.ts
-import { randomUUID as randomUUID25 } from "node:crypto";
+import { randomUUID as randomUUID26 } from "node:crypto";
 var DASHBOARD_JOB_CONVERSATION = "jobctl-dashboard";
 var CONTROL_TIMEOUT_MS = 1e4;
 var JobControlError = class extends Error {
@@ -50535,7 +50859,7 @@ var JobControlError = class extends Error {
 };
 async function controlDashboardJob(node2, owner, job, command) {
   if (!(await node2.peers()).some((p) => p.name === owner)) throw new JobControlError("The owning session is not connected. Reopen it to continue this subagent.", "offline");
-  const requestId = randomUUID25();
+  const requestId = randomUUID26();
   let receive;
   let timer;
   const reply2 = new Promise((resolve19, reject) => {
@@ -53712,18 +54036,18 @@ function parseNetworkAddress(address) {
 }
 
 // src/core/doctor.ts
-import { existsSync as existsSync30, lstatSync as lstatSync11, mkdirSync as mkdirSync32, readFileSync as readFileSync34, readdirSync as readdirSync19, renameSync as renameSync10 } from "node:fs";
-import { basename as basename12, dirname as dirname23, join as join64, relative as relative9 } from "node:path";
-import { randomUUID as randomUUID26 } from "node:crypto";
-import { DatabaseSync as DatabaseSync15 } from "node:sqlite";
+import { existsSync as existsSync31, lstatSync as lstatSync12, mkdirSync as mkdirSync33, readFileSync as readFileSync36, readdirSync as readdirSync19, renameSync as renameSync10 } from "node:fs";
+import { basename as basename13, dirname as dirname24, join as join65, relative as relative9 } from "node:path";
+import { randomUUID as randomUUID27 } from "node:crypto";
+import { DatabaseSync as DatabaseSync16 } from "node:sqlite";
 function doctor(home, now = Date.now()) {
   const report = { checkedAt: now, ok: true, schema: [], findings: [], sizes: [], totalBytes: 0, backups: listBackups(home) };
   const finding = (severity, code, path, detail, fixable = false) => report.findings.push({ severity, code, path, detail, fixable });
   const walk = (dir) => {
-    if (!existsSync30(dir)) return;
+    if (!existsSync31(dir)) return;
     for (const file2 of readdirSync19(dir)) {
-      const path = join64(dir, file2);
-      const st = lstatSync11(path);
+      const path = join65(dir, file2);
+      const st = lstatSync12(path);
       if (st.isSymbolicLink()) {
         finding("warning", "symlink", path, "Skipped symbolic link");
         continue;
@@ -53739,12 +54063,12 @@ function doctor(home, now = Date.now()) {
   };
   walk(home);
   for (const [name2, expected] of [[DB_FILE_NAME, SQLITE_STORE_VERSION], [ARCHIVE_DB_NAME, ARCHIVE_STORE_VERSION]]) {
-    const path = join64(home, name2);
+    const path = join65(home, name2);
     let actual = null;
-    if (existsSync30(path)) {
+    if (existsSync31(path)) {
       let db = null;
       try {
-        db = new DatabaseSync15(path, { readOnly: true, timeout: 50 });
+        db = new DatabaseSync16(path, { readOnly: true, timeout: 50 });
         actual = Number(db.prepare("PRAGMA user_version").get().user_version);
         for (const detail of checkDatabase(db)) finding("error", "sqlite-integrity", path, detail);
         if (actual !== expected) finding(actual > expected ? "error" : "warning", "schema-version", path, `Schema ${actual}; code expects ${expected}`);
@@ -53759,7 +54083,7 @@ function doctor(home, now = Date.now()) {
   for (const path of jsonStoreFiles(home)) {
     try {
       if (path.endsWith(".jsonl")) {
-        const lines = readFileSync34(path, "utf8").split("\n").filter((s) => s.trim());
+        const lines = readFileSync36(path, "utf8").split("\n").filter((s) => s.trim());
         for (const line of lines) {
           try {
             const value2 = JSON.parse(line);
@@ -53772,8 +54096,8 @@ function doctor(home, now = Date.now()) {
         }
         continue;
       }
-      const value = JSON.parse(readFileSync34(path, "utf8"));
-      const jobs = basename12(path) === JOBS_FILE || path.includes("jobs.json.overflow.json-") || /^jobs-.*\.json$/.test(basename12(path));
+      const value = JSON.parse(readFileSync36(path, "utf8"));
+      const jobs = basename13(path) === JOBS_FILE || path.includes("jobs.json.overflow.json-") || /^jobs-.*\.json$/.test(basename13(path));
       if (jobs ? !(Array.isArray(value) || isRecord(value) && Array.isArray(value.jobs)) : !isRecord(value)) {
         finding("error", "json-shape", path, jobs ? "Expected a jobs array or jobs envelope" : "Expected a JSON object");
         continue;
@@ -53782,34 +54106,34 @@ function doctor(home, now = Date.now()) {
       if (version2 === void 0 || version2 === 0) finding("warning", "json-legacy", path, "Legacy version; next versioned write will preserve a migration backup");
       else if (!Number.isInteger(version2) || version2 < 0 || version2 > JSON_STORE_VERSION) finding("error", "json-version", path, `Unsupported JSON version ${String(version2)}; code expects ${JSON_STORE_VERSION}`);
       else if (version2 < JSON_STORE_VERSION) finding("warning", "json-legacy", path, `Earlier JSON version ${String(version2)}; code expects ${JSON_STORE_VERSION}`);
-      if (dirname23(path) === join64(home, "runs") && path.endsWith(".json") && !existsSync30(path.replace(/\.json$/, ".log"))) finding("warning", "orphan-metadata", path, "Run metadata has no matching active log; preserved for review");
-      if (dirname23(path) === join64(home, "jobs") && path.endsWith(".spec.json") && !existsSync30(path.replace(/\.spec\.json$/, ".json"))) finding("warning", "orphan-runner-spec", path, "Runner specification has no state; it may still be starting");
+      if (dirname24(path) === join65(home, "runs") && path.endsWith(".json") && !existsSync31(path.replace(/\.json$/, ".log"))) finding("warning", "orphan-metadata", path, "Run metadata has no matching active log; preserved for review");
+      if (dirname24(path) === join65(home, "jobs") && path.endsWith(".spec.json") && !existsSync31(path.replace(/\.spec\.json$/, ".json"))) finding("warning", "orphan-runner-spec", path, "Runner specification has no state; it may still be starting");
     } catch (err) {
       finding("error", "json-parse", path, String(err));
     }
   }
   const logs = runLogFiles(home);
   for (const path of logs) {
-    const meta3 = join64(dirname23(path), runFileName(path).replace(/\.log$/, ".json"));
-    if (!existsSync30(meta3) && !readdirSync19(dirname23(path)).some((f) => f.startsWith(basename12(meta3) + "-"))) finding("warning", "orphan-log", path, "Run log has no metadata; log remains readable");
+    const meta3 = join65(dirname24(path), runFileName(path).replace(/\.log$/, ".json"));
+    if (!existsSync31(meta3) && !readdirSync19(dirname24(path)).some((f) => f.startsWith(basename13(meta3) + "-"))) finding("warning", "orphan-log", path, "Run log has no metadata; log remains readable");
   }
   report.ok = !report.findings.some((f) => f.severity === "error");
   return report;
 }
 
 // src/core/message-history.ts
-import { existsSync as existsSync31 } from "node:fs";
-import { dirname as dirname24, join as join65 } from "node:path";
-import { DatabaseSync as DatabaseSync16 } from "node:sqlite";
+import { existsSync as existsSync32 } from "node:fs";
+import { dirname as dirname25, join as join66 } from "node:path";
+import { DatabaseSync as DatabaseSync17 } from "node:sqlite";
 var DEFAULT_HISTORY_LIMIT = 100;
 var MAX_HISTORY_LIMIT = 1e3;
 function searchMessages(file2, opts = {}) {
   const limit = Math.min(MAX_HISTORY_LIMIT, Math.max(1, Math.floor(opts.limit ?? DEFAULT_HISTORY_LIMIT)));
   const query = `%${(opts.query ?? "").replace(/[\\%_]/g, "\\$&")}%`;
   const rows = [];
-  for (const path of [file2, join65(dirname24(file2), ARCHIVE_DB_NAME)]) {
-    if (!existsSync31(path)) continue;
-    const db = new DatabaseSync16(path, { readOnly: true, timeout: 50 });
+  for (const path of [file2, join66(dirname25(file2), ARCHIVE_DB_NAME)]) {
+    if (!existsSync32(path)) continue;
+    const db = new DatabaseSync17(path, { readOnly: true, timeout: 50 });
     try {
       for (const table of ["messages", "archived_messages"]) {
         if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table)) continue;
@@ -53831,9 +54155,9 @@ function searchMessages(file2, opts = {}) {
 }
 
 // src/core/history-answer.ts
-import { mkdtempSync as mkdtempSync3, rmSync as rmSync9 } from "node:fs";
+import { mkdtempSync as mkdtempSync3, rmSync as rmSync10 } from "node:fs";
 import { tmpdir as tmpdir2 } from "node:os";
-import { join as join66 } from "node:path";
+import { join as join67 } from "node:path";
 var HISTORY_ANSWER_TIMEOUT_MS = 6e4;
 var HISTORY_ANSWER_MAX_HITS = 8;
 var HISTORY_ANSWER_MAX_CHARS = 4e3;
@@ -53885,7 +54209,7 @@ async function answerHistory(query, result, cfg, home, log, deps = {}) {
   }
 }
 async function runAnswer(agent, model, prompt, cfg, log) {
-  const cwd = mkdtempSync3(join66(tmpdir2(), "agent-bridge-answer-"));
+  const cwd = mkdtempSync3(join67(tmpdir2(), "agent-bridge-answer-"));
   const env = childEnv();
   try {
     let args;
@@ -53907,7 +54231,7 @@ async function runAnswer(agent, model, prompt, cfg, log) {
     if (parsed.error) throw new Error(parsed.error);
     return parsed.text;
   } finally {
-    rmSync9(cwd, { recursive: true, force: true });
+    rmSync10(cwd, { recursive: true, force: true });
   }
 }
 
@@ -54147,7 +54471,7 @@ async function startUi(opts) {
       }
       const args = conversationPageSchema.safeParse({ id, ...url2.searchParams.has("after") ? { after: Number(url2.searchParams.get("after")) } : {}, ...url2.searchParams.has("limit") ? { limit: Number(url2.searchParams.get("limit")) } : {} });
       if (!args.success) return send(res, 400, { error: "Invalid conversation page." });
-      const db = new DatabaseSync17(dbPath, { readOnly: true, timeout: 100 });
+      const db = new DatabaseSync18(historyReadPath(dbPath), { readOnly: true, timeout: 100 });
       try {
         const page = readConversation(db, args.data);
         return send(res, page.conversation ? 200 : 404, page);
@@ -54511,11 +54835,11 @@ var DASHBOARD_FILE = "dashboard.json";
 var PROBE_TIMEOUT_MS = 1500;
 var OWNER_ONLY2 = 384;
 function dashboardFile(home) {
-  return join67(home, DASHBOARD_FILE);
+  return join68(home, DASHBOARD_FILE);
 }
 function readDashboardInfo(home) {
   try {
-    const d = JSON.parse(readFileSync35(dashboardFile(home), "utf8"));
+    const d = JSON.parse(readFileSync37(dashboardFile(home), "utf8"));
     return typeof d.url === "string" && typeof d.port === "number" && typeof d.pid === "number" ? d : null;
   } catch {
     return null;
@@ -54691,10 +55015,10 @@ var OwnerQuestionService = class {
     const peers = this.peers();
     const mains = peers.filter((p) => !p.jobAgent && !p.subagent && !p.unavailable && normalizeProject(p.projectRoot ?? p.cwd) === normalizeProject(q.project));
     const main = mains.find((p) => p.projectMain) ?? mains[0];
-    const destinations = q.askers.flatMap((a) => [{ name: a.session, sessionId: a.sessionId }, { name: a.main, sessionId: a.mainSessionId }, ...a.job ? [{ name: a.job, sessionId: null }] : []]);
+    const destinations = q.askers.flatMap((a) => [{ name: a.session, sessionId: a.sessionId, peerId: a.peerId }, { name: a.main, sessionId: a.mainSessionId, peerId: a.mainPeerId }, ...a.job ? [{ name: a.job, sessionId: null, peerId: void 0 }] : []]);
     const resolveDestination = (name2) => {
-      const identity = destinations.find((d) => d.name === name2 && d.sessionId)?.sessionId;
-      return peers.find((p) => !p.unavailable && normalizeProject(p.projectRoot ?? p.cwd) === normalizeProject(q.project) && (identity ? p.sessionId === identity : p.name === name2));
+      const identities = destinations.filter((d) => d.name === name2 && (d.sessionId || d.peerId));
+      return peers.find((p) => !p.unavailable && normalizeProject(p.projectRoot ?? p.cwd) === normalizeProject(q.project) && (identities.length ? identities.some((d) => d.sessionId ? p.sessionId === d.sessionId : p.id === d.peerId) : p.name === name2));
     };
     const askerNames = new Set(q.askers.flatMap((a) => [resolveDestination(a.session)?.name ?? a.session, ...a.job ? [a.job] : []]));
     const mainRead = q.deliveries.some((d) => (q.askers.some((a) => (resolveDestination(a.main)?.name ?? a.main) === d.recipient) || !askerNames.has(d.recipient)) && d.messageId && this.messages.receipts(d.messageId).some((r) => r.readAt !== null));
@@ -54702,7 +55026,8 @@ var OwnerQuestionService = class {
     if (main && !mainRead) recipients.add(main.name);
     let changed = false;
     for (const recipient of recipients) {
-      const live = resolveDestination(recipient);
+      const original = resolveDestination(recipient), fallback = !original && main && !mainRead && main.name === recipient ? main : void 0;
+      const live = original ?? fallback;
       const before = q.deliveries.find((d) => d.recipient === recipient);
       if (before?.messageId) {
         const readAt = this.messages.receipts(before.messageId).find((r) => r.recipient === recipient)?.readAt;
@@ -54713,7 +55038,7 @@ var OwnerQuestionService = class {
         }
         continue;
       }
-      if (!live && (destinations.some((d) => d.name === recipient && d.sessionId) || peers.some((p) => p.name === recipient))) {
+      if (!live && (destinations.some((d) => d.name === recipient && (d.sessionId || d.peerId)) || peers.some((p) => p.name === recipient))) {
         const offline = { recipient, state: "offline", detail: "Original session is absent or replaced. Answer retained on the question; current project-main fallback receives it.", readAt: null };
         if (JSON.stringify(before) !== JSON.stringify(offline)) {
           q.deliveries = [...q.deliveries.filter((d) => d.recipient !== recipient), offline];
@@ -54721,7 +55046,7 @@ var OwnerQuestionService = class {
         }
         continue;
       }
-      const hash2 = createHash17("sha256").update(`owner-question:${q.id}:${recipient}`).digest("hex");
+      const hash2 = createHash18("sha256").update(`owner-question:${q.id}:${recipient}`).digest("hex");
       const messageId = `${hash2.slice(0, 8)}-${hash2.slice(8, 12)}-4${hash2.slice(13, 16)}-a${hash2.slice(17, 20)}-${hash2.slice(20, 32)}`;
       const message = {
         id: messageId,
@@ -54757,6 +55082,7 @@ An answer does not bypass native approvals, expand authorization or accept imple
         detail: failed ? "Direct delivery failed. Durable inbox retained; project-main fallback receives the same answer." : !live ? `Asker offline; retained for reconnection. ${main ? "Also sent to project main " + main.name : "No available project main; fallback pending."}` : live.activity === "busy" ? "Queued for next hook or idle turn; awaiting consumption." : wake ? "Direct wake requested; awaiting consumption." : `Wake unavailable or disabled; durable inbox retained. ${main && main.name !== recipient ? "Also sent to project main " + main.name : "No alternate project main available."}`,
         readAt: null
       };
+      if (fallback) delivery.detail = "Original session is absent; this answer goes to the current project main as fallback. " + delivery.detail;
       q.deliveries = [...q.deliveries.filter((d) => d.recipient !== recipient), delivery];
       changed = true;
     }
@@ -54870,7 +55196,7 @@ var Broker = class {
     this.now = now;
     this.jobsPath = jobsPath;
     this.networking = networking;
-    this.groups = new ProjectGroups(jobsPath ? dirname25(jobsPath) : void 0);
+    this.groups = new ProjectGroups(jobsPath ? dirname26(jobsPath) : void 0);
     this.handlers = {
       askOwner: (c, a) => {
         const peer = this.requirePeer(c);
@@ -54881,11 +55207,11 @@ var Broker = class {
         const main = this.localPeers().find((p) => this.groups.same(p.cwd, peer.cwd) && this.projectPeer(p).projectMain);
         let deskProject = args.deskProject;
         try {
-          const linked = readJsonSnapshot(join68(root, ".pair-desk.json")).value;
+          const linked = readJsonSnapshot(join69(root, ".pair-desk.json")).value;
           if (isRecord(linked) && typeof linked.project === "string") deskProject = linked.project;
         } catch {
         }
-        return this.ownerQuestions().store.ask(args, root, { session: peer.name, sessionId: peer.sessionId, agent: peer.agent, main: main?.name ?? peer.name, mainSessionId: main ? main.sessionId : peer.sessionId, ...args.job ? { job: args.job } : {} }, this.now(), deskProject);
+        return this.ownerQuestions().store.ask(args, root, { session: peer.name, sessionId: peer.sessionId, peerId: peer.id, agent: peer.agent, main: main?.name ?? peer.name, mainSessionId: main ? main.sessionId : peer.sessionId, mainPeerId: main?.id ?? peer.id, ...args.job ? { job: args.job } : {} }, this.now(), deskProject);
       },
       ownerQuestions: () => this.ownerQuestions().list(),
       answerOwner: (c, a) => {
@@ -54896,7 +55222,7 @@ var Broker = class {
       dismissOwner: (c, a) => {
         const args = external_exports.object({ id: external_exports.uuid(), status: external_exports.enum(["cancelled", "superseded"]), reason: external_exports.string().trim().min(1).max(1e3), supersededBy: external_exports.uuid().optional() }).strict().parse(a);
         const q = this.ownerQuestions().store.get(args.id);
-        if (c.peer && (c.peer.jobAgent || c.peer.subagent || !q?.askers.some((asker) => asker.sessionId && c.peer.sessionId ? asker.agent === c.peer.agent && asker.sessionId === c.peer.sessionId : asker.session === c.peer.name))) throw new BridgeError("unauthorized", "Only an asker or the owner may dismiss this question.");
+        if (c.peer && (c.peer.jobAgent || c.peer.subagent || !q?.askers.some((asker) => asker.sessionId && c.peer.sessionId ? asker.agent === c.peer.agent && asker.sessionId === c.peer.sessionId : asker.peerId ? asker.peerId === c.peer.id : asker.session === c.peer.name))) throw new BridgeError("unauthorized", "Only an asker or the owner may dismiss this question.");
         return this.ownerQuestions().store.dismiss(args.id, args.status, args.reason, args.supersededBy);
       },
       dashboardHeartbeat: (c, a) => {
@@ -54998,7 +55324,9 @@ var Broker = class {
         this.store.history.rememberPeer(c.peer);
         return result;
       },
-      send: (c, a) => this.onSend(c, a),
+      send: (c, a) => this.onSend(c, { ...a, messageId: void 0 }),
+      trackedSend: (c, a) => this.onTrackedSend(c, a),
+      sendState: (c, a) => this.sendState(c, external_exports.uuid().parse(a.id).toLowerCase()),
       decide: (c, a) => this.onDecide(c, a),
       decisions: (c, a) => this.onDecisions(c, a),
       searchHistory: (_, a) => {
@@ -55010,6 +55338,7 @@ var Broker = class {
       reindexHistory: (_, a) => {
         const args = external_exports.object({ reset: external_exports.boolean().optional() }).strict().parse(a);
         if (this.historyBackground) return this.historyBackground.tick(args.reset);
+        if (this.store.file !== ":memory:") return { work: 0, discovering: false };
         if (args.reset) this.store.history.reset();
         return this.store.history.tick();
       },
@@ -55050,7 +55379,7 @@ var Broker = class {
           const pair = this.requireNetwork().status().paired.find((p) => p.id === a.host || p.name === a.host);
           const name2 = snapshot.state.peer;
           this.receiveRemote({
-            id: randomUUID27(),
+            id: randomUUID28(),
             from: { id: `${pair?.id ?? a.host}/job:${a.request.job}`, name: `${pair?.name ?? a.host}/${name2}`, agent: "other" },
             to: peer.name,
             recipient: peer.name,
@@ -55111,7 +55440,7 @@ var Broker = class {
   networking;
   questions = null;
   ownerQuestions() {
-    return this.questions ??= new OwnerQuestionService(dirname25(this.store.file), this.store, this.log, () => this.localPeers().map((p) => this.projectPeer(p)), (peer, message) => {
+    return this.questions ??= new OwnerQuestionService(dirname26(this.store.file), this.store, this.log, () => this.localPeers().map((p) => this.projectPeer(p)), (peer, message) => {
       const c = this.connByName(peer.name);
       if (c) this.emit(c, "message", message);
     }, (decision) => {
@@ -55128,6 +55457,7 @@ var Broker = class {
   server = null;
   conns = /* @__PURE__ */ new Set();
   historyBackground = null;
+  historyPendingRequests = 0;
   purgeTimer = null;
   pendingJobMailRoute = null;
   pendingJobMailRouteAgain = false;
@@ -55158,10 +55488,13 @@ var Broker = class {
         this.applyHandoffs();
         this.purgeTimer = setInterval(() => this.purge(), PURGE_INTERVAL_MS);
         this.purgeTimer.unref();
-        if (this.store.file !== ":memory:") this.historyBackground = new HistoryBackground(this.store.file, this.log);
+        if (this.store.file !== ":memory:" && loadConfig(dirname26(this.store.file), "other", this.log).history.ingest) {
+          this.historyBackground = new HistoryBackground(this.store.file, this.log);
+          this.store.historyPeerSink = (peer) => this.historyBackground?.rememberPeer(peer);
+        }
         this.purge();
         this.log.info("broker listening", { pipe: this.pipePath });
-        if (this.store.file !== ":memory:" && existsSync32(join68(dirname25(this.store.file), QUESTIONS_FILE))) this.ownerQuestions();
+        if (this.store.file !== ":memory:" && existsSync33(join69(dirname26(this.store.file), QUESTIONS_FILE))) this.ownerQuestions();
         if (this.networking) this.networking.config = readNetworkConfig(this.networking.home, this.networking.config);
         if (this.networking?.config.enabled) {
           try {
@@ -55192,9 +55525,9 @@ var Broker = class {
   }
   async close() {
     this.closing = true;
-    this.store.stopWrites();
     this.questions?.close();
     this.questions = null;
+    this.store.stopWrites();
     if (this.pendingJobMailRetry) clearTimeout(this.pendingJobMailRetry);
     this.pendingJobMailRetry = null;
     await this.historyBackground?.close();
@@ -55249,7 +55582,7 @@ var Broker = class {
     this.remoteDashboard = new RemoteDashboard(service, { home: this.networking.home, log: this.log, peers: () => this.dashboardPeers() });
     this.remoteJobs = new RemoteJobs(service, this.networking.home, this.log, async (record2, control) => {
       this.receiveRemote({
-        id: randomUUID27(),
+        id: randomUUID28(),
         from: { id: record2.owner, name: record2.owner, agent: "other" },
         to: record2.name,
         recipient: record2.name,
@@ -55320,6 +55653,9 @@ var Broker = class {
     });
   }
   async dispatch(conn, frame) {
+    const countsPressure = frame.op !== "reindexHistory";
+    if (countsPressure) this.historyPendingRequests++;
+    this.historyBackground?.pressure(this.historyPendingRequests > 0);
     const handler = this.handlers[frame.op];
     try {
       if (!handler) throw new BridgeError("bad_request", `unknown op: ${String(frame.op)}`);
@@ -55332,10 +55668,14 @@ var Broker = class {
       const result = await handler(conn, frame.args ?? {});
       this.write(conn, { t: "res", id: frame.id, ok: true, result });
     } catch (err) {
+      if (isSqliteBusy(err)) this.historyBackground?.pressure(true, true);
       const be = err instanceof BridgeError ? err : new BridgeError("internal", String(err?.message ?? err));
       if (be.code === "internal") this.log.error("request failed", { op: frame.op, err });
       else this.log.debug("request rejected", { op: frame.op, code: be.code, message: be.message });
       this.write(conn, { t: "res", id: frame.id, ok: false, error: be.toPayload() });
+    } finally {
+      if (countsPressure) this.historyPendingRequests--;
+      this.historyBackground?.pressure(this.historyPendingRequests > 0);
     }
   }
   write(conn, frame) {
@@ -55406,9 +55746,9 @@ var Broker = class {
     let main = this.projectMains.get(key3);
     if (!members2.some((p) => p.name === main)) {
       main = members2[0]?.name;
-      if (main) this.recordProjectMain(key3, `project:${basename13(decorated.projectRoot)}`, main);
+      if (main) this.recordProjectMain(key3, `project:${basename14(decorated.projectRoot)}`, main);
     }
-    return { ...decorated, projectMain: main === peer.name, projectAddress: `project:${basename13(decorated.projectRoot)}`, projectRoute: this.projectRoutes.get(key3) };
+    return { ...decorated, projectMain: main === peer.name, projectAddress: `project:${basename14(decorated.projectRoot)}`, projectRoute: this.projectRoutes.get(key3) };
   }
   switchProjectMain(source, target) {
     if (!target || target.jobAgent || target.subagent || target.host) throw new BridgeError("bad_request", "Choose a live local project master.");
@@ -55431,11 +55771,11 @@ var Broker = class {
       if (this.closing) return;
       if (!PEER_NAME_PATTERN.test(recipient) || this.connByName(recipient)?.peer?.jobAgent) continue;
       const message = {
-        id: randomUUID27(),
+        id: randomUUID28(),
         from: { id: "bridge-project-routing", name: "agent-bridge", agent: "other" },
         to: recipient,
         recipient,
-        conversationId: `project-main-${randomUUID27()}`,
+        conversationId: `project-main-${randomUUID28()}`,
         replyTo: null,
         hop: 0,
         body: `${route.address} main changed from ${route.previous} to ${route.main} at ${new Date(route.since).toISOString().slice(11, 16)} UTC. Future project-address mail routes to ${route.main}; exact session names keep direct routing.`,
@@ -55490,7 +55830,7 @@ var Broker = class {
       const current = receipt.jobs.map((j) => records.find((r) => r.id === j.id)).filter(isRecord);
       for (const job of current) {
         const old = receipt.jobs.find((j) => j.id === job.id);
-        const budget = new RootConcurrency(dirname25(this.jobsPath), String(job.rootSession));
+        const budget = new RootConcurrency(dirname26(this.jobsPath), String(job.rootSession));
         try {
           budget.moveJobs([old.name]);
         } finally {
@@ -55563,13 +55903,13 @@ Handoff note: ${receipt.note}` : "") + "\n\nYou are their supervisor. Use messag
             const message = { ...envelope, to: recipient, recipient, conversationId: this.jobConversation(job, recipient, String(envelope.conversationId)) };
             const inserted = this.store.insertJobDelivery(message);
             const names = /* @__PURE__ */ new Set([recipient, envelope.to, envelope.recipient, ...mastersFor(job)]);
-            const consumed = this.jobsPath && [...names].some((name2) => typeof name2 === "string" && new ReadJournal(dirname25(this.jobsPath)).read(`name:${name2}`).includes(message.id));
+            const consumed = this.jobsPath && [...names].some((name2) => typeof name2 === "string" && new ReadJournal(dirname26(this.jobsPath)).read(`name:${name2}`).includes(message.id));
             if (consumed) this.store.markRead(recipient, [message.id], this.now());
             else if (inserted && target && !target.peer?.unavailable) this.emit(target, "message", message);
           }
           if (!target || target.peer?.unavailable) return;
           for (const from of this.store.pendingJobRecipients(String(job.id))) {
-            if (this.jobsPath) this.store.markRead(from, new ReadJournal(dirname25(this.jobsPath)).read(`name:${from}`), this.now());
+            if (this.jobsPath) this.store.markRead(from, new ReadJournal(dirname26(this.jobsPath)).read(`name:${from}`), this.now());
             const moved = this.store.handoffMail(from, recipient, String(job.id), this.now(), recipient !== job.parentJob && recipient !== primaryFor(job));
             const previous = this.connByName(from);
             if (previous && moved.length) this.emit(previous, "mail_retracted", { ids: moved.map((m) => m.id) });
@@ -55608,7 +55948,7 @@ Handoff note: ${receipt.note}` : "") + "\n\nYou are their supervisor. Use messag
     const known = this.storedJobs().find((j) => j.name === ref || j.id === ref);
     if (known?.remote || isRecord(known?.host) && Date.now() - Number(known.host.startedAt) < 3e4) return known;
     if (known?.status === "running" && !known.host && this.connByName(String(known.executionOwner ?? known.owner))) return known;
-    const recovered = this.jobsPath ? recoverJobRecord(dirname25(this.jobsPath), ref) : void 0;
+    const recovered = this.jobsPath ? recoverJobRecord(dirname26(this.jobsPath), ref) : void 0;
     if (!recovered || !this.groups.canControl(peer, recovered, this.localPeers())) return known;
     this.recoveredJobs.set(recovered.id, recovered);
     this.jobsSnapshot = null;
@@ -55712,7 +56052,7 @@ Handoff note: ${receipt.note}` : "") + "\n\nYou are their supervisor. Use messag
       if (typeof args.body !== "string" || !args.body.trim() || args.body.length > MAX_BODY_CHARS) {
         throw new BridgeError("bad_request", "invalid sibling message body");
       }
-      const id = randomUUID27();
+      const id = randomUUID28();
       const notice = {
         id,
         from: { id: sender.id, name: sender.name, agent: sender.jobAgent ?? sender.agent },
@@ -55738,7 +56078,7 @@ ${args.body}`,
       }
       throw new BridgeError("bad_request", `sibling conversation reached its ${args.maxHops}-message hop limit; message was not delivered. Durable notice ${id} saved for sender and supervisor, including the undelivered text`);
     }
-    const conversationId = parent2?.conversationId ?? `${SIBLING_CONVERSATION_PREFIX}${randomUUID27()}`;
+    const conversationId = parent2?.conversationId ?? `${SIBLING_CONVERSATION_PREFIX}${randomUUID28()}`;
     const result = await this.onSend(conn, { ...args, dedupeKey, conversationId });
     const message = result.messages[0];
     const recipientOwner = target?.peer?.jobParent ?? this.storedJobs().find((j) => j.name === args.to)?.owner;
@@ -55746,7 +56086,7 @@ ${args.body}`,
     for (const owner of observers) {
       const note = {
         ...message,
-        id: randomUUID27(),
+        id: randomUUID28(),
         recipient: owner,
         conversationId: `${conversationId}${SIBLING_NOTE_SUFFIX}`,
         body: `Sibling message to ${message.recipient}:
@@ -55773,7 +56113,7 @@ ${message.body}`
       const candidate = `${requested}-${i}`;
       if (!this.connByName(candidate)) return candidate;
     }
-    return `${requested}-${randomUUID27().slice(0, 8)}`;
+    return `${requested}-${randomUUID28().slice(0, 8)}`;
   }
   onDecide(conn, value) {
     const peer = this.requirePeer(conn);
@@ -55814,7 +56154,7 @@ ${message.body}`
   }
   queueDecision(decision, peer) {
     const message = {
-      id: randomUUID27(),
+      id: randomUUID28(),
       from: decision.author,
       to: peer.name,
       recipient: peer.name,
@@ -55892,7 +56232,7 @@ Call decisions to look up current decisions or their history.`,
     if (!peer.sessionId) peer.sessionId = this.store.recoverSession(peer);
     this.store.rememberSession(peer, this.now());
     conn.peer = peer;
-    if (this.jobsPath) recordStorePeer(dirname25(this.jobsPath), peer);
+    if (this.jobsPath) recordStorePeer(dirname26(this.jobsPath), peer);
     this.replaceStale(conn, peer);
     this.restoreNames(conn, peer, { reclaim: true, replay: false });
     this.expireStaleQueue(peer.name);
@@ -56083,6 +56423,55 @@ Call decisions to look up current decisions or their history.`,
   /** Results of recent sends by dedupe key (see SendArgs.dedupeKey), so a retry is not sent twice. */
   sentByKey = /* @__PURE__ */ new Map();
   sendingByKey = /* @__PURE__ */ new Map();
+  trackedSending = /* @__PURE__ */ new Map();
+  sendState(conn, id) {
+    const sender = this.requirePeer(conn), message = this.store.byId(id), pending = this.trackedSending.get(id);
+    if (message && message.from.name !== sender.name || pending && pending.sender !== sender.name) {
+      throw new BridgeError("unauthorized", "Only the original sender can inspect or retry this message id.");
+    }
+    return {
+      id,
+      state: message ? "stored" : pending ? "pending" : "not_stored",
+      checkedAt: this.now(),
+      message,
+      receipts: message ? this.store.receipts(id) : []
+    };
+  }
+  async onTrackedSend(conn, args) {
+    const id = external_exports.uuid().parse(args.messageId).toLowerCase(), sender = this.requirePeer(conn);
+    const state = this.sendState(conn, id);
+    if (state.message) {
+      const message = state.message;
+      const bodyMatches = message.body === args.body || message.body.startsWith(args.body + "\n\n[agent-bridge routing hint:");
+      if (!bodyMatches || !sender.jobAgent && message.to !== args.to.trim() || message.replyTo !== (args.replyTo?.trim() || null) || args.conversationId && message.conversationId !== args.conversationId.trim() && !(sender.jobAgent && message.conversationId === args.conversationId.trim() + ":fallback")) {
+        throw new BridgeError("bad_request", "Message id already stored with different content; use a new id for a new message.");
+      }
+      return { messages: this.store.messagesById(id), deliveredTo: [], queuedFor: [], storage: { id, state: "stored", recovered: true, receipts: state.receipts } };
+    }
+    const fingerprint = JSON.stringify([args.to, args.body, args.replyTo, args.conversationId, args.ifNoNewerThan]);
+    const pending = this.trackedSending.get(id);
+    if (pending) {
+      if (pending.fingerprint !== fingerprint) throw new BridgeError("bad_request", "Message id already pending with different content.");
+      return pending.result;
+    }
+    const result = this.routeSend(conn, sender, { ...args, messageId: id }).then((sent) => ({
+      ...sent,
+      storage: { id, state: this.store.byId(id) ? "stored" : "not_stored", receipts: this.store.receipts(id) }
+    }));
+    this.trackedSending.set(id, { sender: sender.name, fingerprint, result });
+    try {
+      return await result;
+    } catch (error62) {
+      const state2 = this.store.byId(id) ? "stored" : "not_stored";
+      throw new BridgeError(
+        error62 instanceof BridgeError ? error62.code : "internal",
+        `Message ${id} is ${state2} in this broker; routing failed: ${error62.message}`,
+        { ...error62 instanceof BridgeError ? error62.details : {}, messageId: id, state: state2 }
+      );
+    } finally {
+      this.trackedSending.delete(id);
+    }
+  }
   async onSend(conn, args) {
     const sender = this.requirePeer(conn);
     const key3 = typeof args.dedupeKey === "string" && args.dedupeKey ? `${sender.id}:${args.dedupeKey}` : null;
@@ -56161,9 +56550,9 @@ Call decisions to look up current decisions or their history.`,
     if (args.ifNoNewerThan && (!anchor2 || anchor2.from.id !== sender.id && !this.store.receipts(anchor2.id).some((r) => r.recipient === sender.name))) {
       throw new BridgeError("bad_request", "if_no_newer_than must identify a message exchanged by this session.");
     }
-    conversationId ||= anchor2?.conversationId || randomUUID27();
+    conversationId ||= anchor2?.conversationId || args.messageId || randomUUID28();
     if (own2 && (to === own2.rootName || to === own2.owner || this.groups.members(own2, this.localPeers()).some((p) => p.name === to) || mastersFor(own2).includes(to))) conversationId = this.jobConversation(own2, to, conversationId);
-    const id = sender.jobAgent && args.dedupeKey?.startsWith(COMPLETION_DEDUPE_PREFIX) ? completionMessageId(sender.id, args.dedupeKey.slice(COMPLETION_DEDUPE_PREFIX.length)) : randomUUID27();
+    const id = args.messageId ?? (sender.jobAgent && args.dedupeKey?.startsWith(COMPLETION_DEDUPE_PREFIX) ? completionMessageId(sender.id, args.dedupeKey.slice(COMPLETION_DEDUPE_PREFIX.length)) : randomUUID28());
     const createdAt = this.now();
     const base2 = {
       id,
@@ -56351,7 +56740,7 @@ Call decisions to look up current decisions or their history.`,
 
 // src/core/process-identity.ts
 import { execFile as execFile3 } from "node:child_process";
-import { readFile as readFile2 } from "node:fs/promises";
+import { readFile as readFile3 } from "node:fs/promises";
 import { promisify as promisify2 } from "node:util";
 var exec3 = promisify2(execFile3);
 var parentIdentity;
@@ -56362,7 +56751,7 @@ async function processIdentity(pid) {
   if (!Number.isSafeInteger(pid) || pid <= 0) return null;
   try {
     if (process.platform === "linux") {
-      const [stat, boot] = await Promise.all([readFile2(`/proc/${pid}/stat`, "utf8"), readFile2("/proc/sys/kernel/random/boot_id", "utf8")]);
+      const [stat, boot] = await Promise.all([readFile3(`/proc/${pid}/stat`, "utf8"), readFile3("/proc/sys/kernel/random/boot_id", "utf8")]);
       const start = stat.slice(stat.lastIndexOf(")") + 2).split(" ")[19];
       return start ? `${boot.trim()}:${start}` : null;
     }
@@ -56384,13 +56773,13 @@ var BridgeNode = class extends EventEmitter2 {
   constructor(opts) {
     super();
     this.opts = opts;
-    this.id = opts.id ?? randomUUID28();
+    this.id = opts.id ?? randomUUID29();
     this.currentName = opts.name;
     this.currentCwd = opts.cwd;
     this.autoWake = opts.autoWake;
     this.log = opts.log.child("node");
-    if (opts.dbPath !== ":memory:") recordStorePeer(dirname26(opts.dbPath), { pid: process.pid, name: opts.name, version: APP_VERSION, storeCapabilities: { json: JSON_STORE_VERSION, sqlite: SQLITE_STORE_VERSION } });
-    this.readJournal = new ReadJournal(dirname26(opts.dbPath));
+    if (opts.dbPath !== ":memory:") recordStorePeer(dirname27(opts.dbPath), { pid: process.pid, name: opts.name, version: APP_VERSION, storeCapabilities: { json: JSON_STORE_VERSION, sqlite: SQLITE_STORE_VERSION } });
+    this.readJournal = new ReadJournal(dirname27(opts.dbPath));
     this.restoreReadState(`name:${this.currentName}`);
   }
   opts;
@@ -56548,7 +56937,7 @@ var BridgeNode = class extends EventEmitter2 {
       this.log.error("cannot open message store", { err, db: this.opts.dbPath });
       throw err;
     }
-    const broker = new Broker(this.opts.pipePath, store, this.log.child("broker"), this.opts.token, Date.now, join69(dirname26(this.opts.dbPath), JOBS_FILE), this.opts.network);
+    const broker = new Broker(this.opts.pipePath, store, this.log.child("broker"), this.opts.token, Date.now, join70(dirname27(this.opts.dbPath), JOBS_FILE), this.opts.network);
     try {
       await broker.listen();
       this.broker = broker;
@@ -56580,7 +56969,7 @@ var BridgeNode = class extends EventEmitter2 {
     client.on("event", (ev, data) => this.onEvent(ev, data));
     try {
       await client.request("auth", { protocol: PROTOCOL_VERSION, token: this.opts.token });
-      if (this.opts.dbPath !== ":memory:") for (const peer of await client.request("peers", {})) recordStorePeer(dirname26(this.opts.dbPath), peer);
+      if (this.opts.dbPath !== ":memory:") for (const peer of await client.request("peers", {})) recordStorePeer(dirname27(this.opts.dbPath), peer);
     } catch (error62) {
       client.close();
       throw error62;
@@ -56671,7 +57060,7 @@ var BridgeNode = class extends EventEmitter2 {
       this.log.debug("message received", { id: m.id, from: m.from.name, hop: m.hop });
       this.emit("message", m);
     } else if (ev === "peer_joined" || ev === "peer_left") {
-      if (ev === "peer_joined" && this.opts.dbPath !== ":memory:") recordStorePeer(dirname26(this.opts.dbPath), data);
+      if (ev === "peer_joined" && this.opts.dbPath !== ":memory:") recordStorePeer(dirname27(this.opts.dbPath), data);
       this.emit(ev, data);
     } else if (ev === "replaced") {
       this.log.info("replaced by a newer server of this session; leaving the bridge", { by: data?.by });
@@ -56695,13 +57084,56 @@ var BridgeNode = class extends EventEmitter2 {
           ids.forEach((id) => this.unflushedAcks.delete(id));
         }
       }
-      const res = await this.sendRequest(c, args.ifNoNewerThan ? "guardedSend" : "send", { ...args, dedupeKey: args.dedupeKey || randomUUID28() });
+      const request2 = { ...args, dedupeKey: args.dedupeKey || randomUUID29() };
+      const res = args.dedupeKey?.startsWith(COMPLETION_DEDUPE_PREFIX) && !args.messageId ? await this.sendRequest(c, "send", request2) : await this.trackedSend(c, { ...request2, messageId: args.messageId ?? (args.dedupeKey ? completionMessageId(`send:${this.name}`, args.dedupeKey) : randomUUID29()) }, Boolean(args.messageId));
       if (opts.quiet) return res;
       this.lastSent = Date.now();
       if (!args.replyTo) for (const m of res.messages) this.asked.add(m.id);
       if (this.asked.size > QUESTION_ID_MEMORY) this.asked.delete(this.asked.values().next().value);
       return res;
     });
+  }
+  sendState(id) {
+    return this.withClient((c) => c.request("sendState", { id }));
+  }
+  async trackedSend(client, args, explicitId) {
+    try {
+      return await client.request("trackedSend", args);
+    } catch (error62) {
+      if (isUnsupportedOperation(error62, "trackedSend")) {
+        if (explicitId || args.ifNoNewerThan) throw error62;
+        const { messageId: _unused, ...legacy } = args;
+        return this.sendRequest(client, "send", legacy);
+      }
+      if (!(error62 instanceof Error) || error62.message !== "broker request timed out: trackedSend") {
+        if (error62 instanceof BridgeError) throw error62;
+        throw new BridgeError("internal", `Storage cannot be confirmed for message ${args.messageId}: ${error62.message}. Query send_status(message_id="${args.messageId}") or retry send with the same message_id.`, { messageId: args.messageId, state: "unconfirmed" });
+      }
+      try {
+        return await client.request("trackedSend", args);
+      } catch (retryError) {
+        if (retryError instanceof BridgeError && retryError.code !== "internal" && retryError.code !== "timeout") throw retryError;
+        try {
+          const state = await client.request("sendState", { id: args.messageId });
+          if (state.message) {
+            const message = state.message;
+            if (!(message.body === args.body || message.body.startsWith(args.body + "\n\n[agent-bridge routing hint:")) || !this.opts.jobAgent && message.to !== args.to.trim() || message.replyTo !== (args.replyTo?.trim() || null) || args.conversationId && message.conversationId !== args.conversationId.trim() && !(this.opts.jobAgent && message.conversationId === args.conversationId.trim() + ":fallback")) {
+              throw new BridgeError("bad_request", "Message id already stored with different content.", { messageId: state.id, state: "stored" });
+            }
+            return {
+              messages: [message],
+              deliveredTo: [],
+              queuedFor: [],
+              storage: { id: state.id, state: "stored", recovered: true, receipts: state.receipts }
+            };
+          }
+          throw new BridgeError("timeout", `Message ${state.id} is ${state.state} as of ${new Date(state.checkedAt).toISOString()}; an outstanding request can still store it. Query send_status(message_id="${state.id}") or retry send with the same message_id.`, { messageId: state.id, state: state.state });
+        } catch (lookupError) {
+          if (lookupError instanceof BridgeError && lookupError.details?.messageId) throw lookupError;
+          throw new BridgeError("timeout", `Storage cannot be confirmed for message ${args.messageId}: broker lookup unavailable. Query send_status(message_id="${args.messageId}") or retry send with the same message_id; use a new id only for a new message.`, { messageId: args.messageId, state: "unconfirmed", cause: String(retryError) });
+        }
+      }
+    }
   }
   /** A late send response can be recovered from the same broker without sending twice. */
   async sendRequest(client, op, args) {
@@ -56790,7 +57222,7 @@ var BridgeNode = class extends EventEmitter2 {
     return this.withClient((c) => c.request("siblings", {}));
   }
   sendSibling(args, maxHops) {
-    return this.withClient((c) => this.sendRequest(c, "sendSibling", { ...args, maxHops, dedupeKey: args.dedupeKey || randomUUID28() }));
+    return this.withClient((c) => this.sendRequest(c, "sendSibling", { ...args, maxHops, dedupeKey: args.dedupeKey || randomUUID29() }));
   }
   async updateJob(patch) {
     Object.assign(this.opts, patch);
@@ -56862,7 +57294,7 @@ var BridgeNode = class extends EventEmitter2 {
    */
   deliverLocal(m) {
     try {
-      recordLocalResult(dirname26(this.opts.dbPath), m);
+      recordLocalResult(dirname27(this.opts.dbPath), m);
     } catch (err) {
       this.log.warn("could not retain local result receipt", { id: m.id, err: String(err) });
     }
@@ -57198,11 +57630,11 @@ var LocalCoordinator = class extends EventEmitter3 {
 };
 
 // src/core/auto-wake-pref.ts
-import { join as join70 } from "node:path";
+import { join as join71 } from "node:path";
 var FILE = "auto-wake.json";
 function read(home) {
   try {
-    return readJsonStore(join70(home, FILE)) ?? {};
+    return readJsonStore(join71(home, FILE)) ?? {};
   } catch {
     return {};
   }
@@ -57214,7 +57646,7 @@ function savedAutoWake(home, name2) {
 }
 function saveAutoWake(home, name2, enabled) {
   try {
-    const file2 = join70(home, FILE);
+    const file2 = join71(home, FILE);
     const previous = readJsonStore(file2);
     const data = isRecord(previous) ? previous : {};
     const peers = isRecord(data.peers) ? data.peers : data;
@@ -57311,7 +57743,7 @@ var MAX_TITLE_CHARS3 = 80;
 var SUBAGENT_TOOLS = /* @__PURE__ */ new Set(["peers", "send", "report_progress", "hook_event", "search_history", "get_conversation"]);
 var STAND_IN_RECHECK_MS = 3e4;
 var KEPT_ARGS = ["native_subagents", "host", "model", "effort", "cwd", "timeout_sec", "worktree", "access", "sandbox", "terminal_sandbox", "bypass_permissions", "approvals_reviewer", "permission_mode", "auto_approve", "allow_tools", "send_to", "title", "notes"];
-var PLUGIN_ROOT = resolve18(dirname27(fileURLToPath3(import.meta.url)), "..");
+var PLUGIN_ROOT = resolve18(dirname28(fileURLToPath3(import.meta.url)), "..");
 function pathFromUriOrPath(v) {
   if (typeof v !== "string" || !v) return null;
   if (v.startsWith("file:")) {
@@ -57418,7 +57850,7 @@ async function startServer(argv = process.argv.slice(2)) {
     const parentJob = process.env[PARENT_JOB_ENV];
     const rootSession = process.env[ROOT_SESSION_ENV];
     const coordinator = ctx.childInbox = new LocalCoordinator(parentJob, rootSession);
-    ctx.jobs = new JobManager(coordinator, log.child("jobs"), join71(home, JOBS_FILE), cfg.maxJobs, {
+    ctx.jobs = new JobManager(coordinator, log.child("jobs"), join72(home, JOBS_FILE), cfg.maxJobs, {
       parentJob,
       rootSession,
       rootName: process.env[ROOT_NAME_ENV] || ctx.parent.name,
@@ -57426,7 +57858,7 @@ async function startServer(argv = process.argv.slice(2)) {
     });
   }
   if (node2) {
-    ctx.jobs = new JobManager(node2, log.child("jobs"), join71(home, JOBS_FILE), cfg.maxJobs);
+    ctx.jobs = new JobManager(node2, log.child("jobs"), join72(home, JOBS_FILE), cfg.maxJobs);
     node2.on("replaced", () => ctx.jobs?.setDormant(true));
     node2.on("reclaimed", () => ctx.jobs?.setDormant(false));
     const cli = process.env[ENV.jobRunner] === "0" ? null : bundledCli();
@@ -57628,11 +58060,11 @@ async function startServer(argv = process.argv.slice(2)) {
       adopt();
       setTimeout(adopt, STAND_IN_RECHECK_MS).unref();
     });
-    const join72 = () => node2.start().catch((err) => log.error("could not join the bridge", { err: err.message }));
+    const join73 = () => node2.start().catch((err) => log.error("could not join the bridge", { err: err.message }));
     if (ctx.headless) {
       log.info("headless claude -p run: not joining the bridge unless a bridge tool is used");
     } else if (cwdKnown) {
-      void join72();
+      void join73();
     } else {
       log.info("project directory unknown yet; waiting for host metadata before bridge join");
     }
@@ -57716,7 +58148,7 @@ function registerTools(mcp, ctx, targets) {
         if (!entry) return text2("Approval expired.", true);
         const job = ctx.jobs?.find(entry.job);
         const authority = node2 ? await node2.jobAuthority(entry.job).catch((err) => {
-          if (!String(err.message).includes("unknown op: jobAuthority")) throw err;
+          if (!isUnsupportedOperation(err, "jobAuthority")) throw err;
           return ctx.jobs?.list().find((j) => j.name === entry.job && j.owner === node2.name) ?? null;
         }) : job;
         if (!authority) throw new BridgeError("bad_request", "This approval belongs to another supervisor.");
@@ -57863,11 +58295,13 @@ function registerTools(mcp, ctx, targets) {
         reply_to: external_exports.string().optional().describe("Id of the message you are answering"),
         conversation_id: external_exports.string().optional().describe("Continue an existing conversation"),
         if_no_newer_than: external_exports.string().optional().describe("Refuse this reply if newer unread conversation or recipient mail exists after this message id"),
-        message_kind: external_exports.enum(["note", "question"]).optional().describe("note retains FYI/status in history without waking or injecting context; question requests supervisor attention")
+        message_kind: external_exports.enum(["note", "question"]).optional().describe("note retains FYI/status in history without waking or injecting context; question requests supervisor attention"),
+        message_id: external_exports.uuid().optional().describe("Stable UUID for an idempotent send or recovery retry. Reuse this id only with the same content; requires an updated broker.")
       }
     },
     guarded("send", async (a) => {
       if (!node2 && ctx.parent) {
+        if (a.message_id) throw new BridgeError("bad_request", "Durable message IDs require a session broker connection; parent links do not support idempotent retries.");
         if (a.if_no_newer_than) throw new BridgeError("bad_request", "Guarded sends require a session broker connection; read the parent/sibling inbox before replying.");
         if (ctx.jobs?.find(a.to)) {
           const result = ctx.jobs.followUp(a.to, a.message);
@@ -57894,6 +58328,7 @@ ${formatReplyRestrictions(result).join("\n")}`);
         return text2(t("send.toParent", { name: ctx.parent.name }));
       }
       const n = requireNode();
+      if (a.message_id && (a.to === "*" || a.to === "jobs:*" || ctx.jobs?.find(a.to))) throw new BridgeError("bad_request", "Durable message IDs require an exact session or project broker recipient; running-job links cannot use this id.");
       if (a.if_no_newer_than && (a.to === "*" || a.to === "jobs:*")) throw new BridgeError("bad_request", "Use an exact recipient or project for guarded replies; running-job broadcasts cannot be guarded.");
       const jobBroadcast = a.to === "*" || a.to === "jobs:*" ? ctx.jobs?.broadcastRunning(a.message) ?? [] : [];
       const jobLines = jobBroadcast.map((r) => `- ${r.name}: ${r.outcome}`);
@@ -57915,17 +58350,19 @@ Pending approvals require an explicit decide; this message does not approve or c
         to: a.to,
         body: a.message,
         replyTo: a.reply_to,
-        conversationId: a.message_kind === "note" ? `${a.conversation_id ?? `note-${Date.now()}`}:note` : a.conversation_id,
-        ifNoNewerThan: a.if_no_newer_than
+        conversationId: a.message_kind === "note" ? `${a.conversation_id ?? `note-${a.message_id ?? Date.now()}`}:note` : a.conversation_id,
+        ifNoNewerThan: a.if_no_newer_than,
+        messageId: a.message_id
       }).catch((err) => {
         if (!jobLines.length) throw err;
         throw new Error(`Session broadcast failed: ${err.message}
-Running-job broadcast already queued:
+Running-job broadcast already attempted:
 ${jobLines.join("\n")}. Do not resend to these jobs without checking consumption.`);
       });
       const first = res.messages[0];
       if (!first) return text2(["No session recipients were eligible for this broadcast.", ...formatDelivery(res, cfg.maxHops), ...jobLines].join("\n"));
-      const lines = [t("send.ok", { id: first.id, conversation: first.conversationId })];
+      const lines = [res.storage?.recovered ? `Message ${first.id} sent previously and stored in the broker (conversation ${first.conversationId}). Recovered by id; no additional message sent. Delivery and consumption are separate.` : `Message ${first.id} sent and stored in the broker (conversation ${first.conversationId}).`];
+      if (res.storage?.receipts.length) lines.push(`Stored recipient copies: ${res.storage.receipts.map((r) => `${r.recipient} (${r.readAt === null ? "unread" : "read"})`).join(", ")}.`);
       lines.push(...formatDelivery(res, cfg.maxHops));
       if (jobLines.length) lines.push(`Running-job broadcast:
 ${jobLines.join("\n")}`);
@@ -57935,6 +58372,16 @@ ${jobLines.join("\n")}`);
       lines.push(`For a consumption receipt, call wait_for_message(read_receipt_of="${first.id}").`);
       return text2(lines.join("\n"));
     })
+  );
+  register(
+    "send_status",
+    {
+      title: "Look up sent message",
+      description: "Look up your message by its durable UUID directly in broker storage and retained archives, without waiting for history indexing. Stored confirms persistence, not delivery or consumption. Pending/not_stored describe the instant checked; an outstanding send may still store it. Retry send with the same message_id to avoid duplicates.",
+      inputSchema: { message_id: external_exports.uuid() },
+      annotations: { readOnlyHint: true }
+    },
+    guarded("send_status", async (a) => text2(JSON.stringify(await requireNode().sendState(a.message_id), null, 2)))
   );
   register(
     "network_status",
