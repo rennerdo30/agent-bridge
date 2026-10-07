@@ -1,6 +1,7 @@
 node_modules/
 *.log
 .agent-bridge-test/
+.vitest/
 test/.storage-*/
 coverage/
 .opencode/
