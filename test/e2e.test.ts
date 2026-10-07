@@ -16,6 +16,7 @@ async function spawnAgent(agent: "claude" | "codex" | "antigravity", name: strin
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [SERVER, `--agent=${agent}`],
+    cwd: home,
     env: { ...process.env, AGENT_BRIDGE_HOME: home, AGENT_BRIDGE_NAME: name, AGENT_BRIDGE_DELIVERY: "hooks", AGENT_BRIDGE_DASHBOARD: "off", AGENT_BRIDGE_LOG_LEVEL: "debug", CLAUDE_CONFIG_DIR: join(home, "claude"), CODEX_HOME: join(home, "codex"), XDG_DATA_HOME: home } as Record<string, string>,
     stderr: "ignore",
   });
@@ -104,7 +105,7 @@ describe.skipIf(!existsSync(SERVER))("bundled MCP server end-to-end", () => {
     await claude.callTool({ name: "decide", arguments: { topic: "Maintenance", text: "Keep source data", scope: "all" } });
     const source = new DatabaseSync(join(home, "bridge.db"), { readOnly: true });
     const before = source.prepare("SELECT id,recipient,body,read_at FROM messages ORDER BY id,recipient").all();
-    const result = await promisify(execFile)(process.execPath, [cli, "reindex"], { env: { ...process.env, AGENT_BRIDGE_HOME: home, AGENT_BRIDGE_DASHBOARD: "off", CLAUDE_CONFIG_DIR: join(home, "claude"), CODEX_HOME: join(home, "codex"), XDG_DATA_HOME: home }, timeout: 30_000 });
+    const result = await promisify(execFile)(process.execPath, [cli, "reindex"], { cwd: home, env: { ...process.env, AGENT_BRIDGE_HOME: home, AGENT_BRIDGE_DASHBOARD: "off", CLAUDE_CONFIG_DIR: join(home, "claude"), CODEX_HOME: join(home, "codex"), XDG_DATA_HOME: home }, timeout: 30_000 });
     expect(result.stdout).toContain("History index rebuilt");
     expect(source.prepare("SELECT id,recipient,body,read_at FROM messages ORDER BY id,recipient").all()).toEqual(before); source.close();
     const found = JSON.parse(textOf(await codex.callTool({ name: "search_history", arguments: { query: "walnut bundled", filters: { kind: "message", agent: "claude" }, limit: 1 } })));

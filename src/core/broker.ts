@@ -457,9 +457,11 @@ export class Broker {
     socket.on("close", () => {
       this.conns.delete(conn);
       if (conn.peer) {
-        if (!this.closing && !conn.peer.jobAgent) {
-          try { this.store.rememberName(conn.peer, this.now()); }
-          catch (err) { this.log.warn("offline last-seen update deferred", { err: String(err) }); }
+        if (!this.closing && !conn.peer.jobAgent && !conn.peer.subagent) {
+          const name = conn.peer.name, at = this.now();
+          void this.store.retryWrite(() => {
+            if (!this.closing) this.store.markPeerSeen(name, at);
+          }).catch((err) => this.log.warn("offline last-seen update deferred", { err: String(err) }));
         }
         void this.routePendingJobMail().catch((err) => this.log.warn("pending job reroute deferred", { err: String(err) }));
         this.log.info("peer left", { name: conn.peer.name, agent: conn.peer.agent });

@@ -264,7 +264,8 @@ describe.skipIf(!existsSync(SERVER))("background subagents in job runners", () =
     expect(readRunnerState(home, a.id)?.seen).toEqual([]);
     expect(readRunnerState(home, b.id)?.seen).toEqual([]);
     await waitFor(async () => (await call(replacement, "inbox", { mark_read: false })).includes("Capture folder saved"));
-    const copies = await call(replacement, "inbox");
+    expect(await call(replacement, "inbox")).not.toContain("Sibling message to");
+    const copies = await call(replacement, "inbox", { include_quiet: true });
     expect(copies).toContain(":note");
     expect(copies).toContain("Sibling message to");
     writeFileSync(a.release, "");

@@ -248,10 +248,15 @@ export class MessageStore {
       // Even an older or unidentified server supersedes historical ownership of its exact name.
       this.db.prepare(`INSERT INTO peer_name_owners VALUES (?,?) ON CONFLICT(name)
         DO UPDATE SET identity=excluded.identity`).run(peer.name, identity ?? `unidentified:${peer.id}`);
-      if (!peer.jobAgent && !peer.subagent) this.db.prepare(`INSERT INTO peer_last_seen VALUES (?,?)
-        ON CONFLICT(name) DO UPDATE SET seen_at=MAX(peer_last_seen.seen_at,excluded.seen_at)`).run(peer.name, at);
+      if (!peer.jobAgent && !peer.subagent) this.markPeerSeen(peer.name, at);
       this.db.exec("COMMIT");
     } catch (err) { this.db.exec("ROLLBACK"); throw err; }
+  }
+
+  /** Presence updates never change the identity that currently owns a name. */
+  markPeerSeen(name: string, at: number): void {
+    this.db.prepare(`INSERT INTO peer_last_seen VALUES (?,?)
+      ON CONFLICT(name) DO UPDATE SET seen_at=MAX(peer_last_seen.seen_at,excluded.seen_at)`).run(name, at);
   }
 
   namesFor(peer: PeerInfo): string[] {

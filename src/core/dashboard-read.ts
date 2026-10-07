@@ -6,6 +6,7 @@ import type { Logger } from "./logger.js";
 import { CODING_AGENTS, type PeerInfo } from "./protocol.js";
 import { isRecord } from "./json-store.js";
 import { type RunMeta } from "./runfeed.js";
+import { finishedRunLine } from "./run-archive.js";
 import { DEFAULT_RUN_PAGE_SIZE, MAX_RUN_PAGE_SIZE, pageRuns, readHistoryJobs, readHistoryJson, readRunLogs } from "./run-history.js";
 import type { Worktree } from "./worktree.js";
 import { listNativeSubagents, readTranscript, TRANSCRIPT_ID, validTranscriptCursor, type TranscriptPaths } from "./transcripts/index.js";
@@ -73,7 +74,7 @@ export async function finishedRunOutcomes(home: string, log: Logger, names?: Set
 /** Parse the head and tail of a run log written by runfeed.ts, plus its metadata (older runs: from the header). */
 export function summarizeRun(file: string, text: string, mtimeMs: number, now: number, meta: RunMeta = {}): RunSummary {
   const lines = text.split("\n").filter(Boolean);
-  const finished = [...lines].reverse().find((l) => / finished after \d+s · /.test(l));
+  const finished = finishedRunLine(text);
   const last = (finished ?? lines.at(-1) ?? "").replace(/^\d\d:\d\d:\d\d /, "");
   const status: RunSummary["status"] = finished
     ? / · done$/.test(finished)

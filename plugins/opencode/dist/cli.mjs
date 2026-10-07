@@ -31502,13 +31502,17 @@ var MessageStore = class {
         DO UPDATE SET session_id=COALESCE(excluded.session_id,peer_names.session_id), learned_at=MIN(peer_names.learned_at,excluded.learned_at)`).run(identity, peer.name, peer.sessionId, peer.agent, at);
       this.db.prepare(`INSERT INTO peer_name_owners VALUES (?,?) ON CONFLICT(name)
         DO UPDATE SET identity=excluded.identity`).run(peer.name, identity ?? `unidentified:${peer.id}`);
-      if (!peer.jobAgent && !peer.subagent) this.db.prepare(`INSERT INTO peer_last_seen VALUES (?,?)
-        ON CONFLICT(name) DO UPDATE SET seen_at=MAX(peer_last_seen.seen_at,excluded.seen_at)`).run(peer.name, at);
+      if (!peer.jobAgent && !peer.subagent) this.markPeerSeen(peer.name, at);
       this.db.exec("COMMIT");
     } catch (err) {
       this.db.exec("ROLLBACK");
       throw err;
     }
+  }
+  /** Presence updates never change the identity that currently owns a name. */
+  markPeerSeen(name2, at) {
+    this.db.prepare(`INSERT INTO peer_last_seen VALUES (?,?)
+      ON CONFLICT(name) DO UPDATE SET seen_at=MAX(peer_last_seen.seen_at,excluded.seen_at)`).run(name2, at);
   }
   namesFor(peer) {
     const identity = registrationIdentity(peer);
@@ -34470,9 +34474,13 @@ import { copyFileSync as copyFileSync5, existsSync as existsSync18, mkdirSync as
 import { basename as basename7, join as join31 } from "node:path";
 var DEFAULT_ARCHIVE_AGE_MS = 30 * 24 * 60 * 60 * 1e3;
 var ARCHIVE_AGE_ENV = "AGENT_BRIDGE_ARCHIVE_AGE_MS";
-var FINISHED_RUN = /^\d\d:\d\d:\d\d finished after \d+s · /m;
+var FINISHED_RUN = /^\d\d:\d\d:\d\d finished after \d+s · [^\r\n]+$/;
+function finishedRunLine(text2) {
+  const last = text2.trimEnd().split("\n").at(-1) ?? "";
+  return FINISHED_RUN.test(last) ? last : null;
+}
 function archiveRun(log) {
-  if (!FINISHED_RUN.test(readFileSync18(log, "utf8"))) return;
+  if (!finishedRunLine(readFileSync18(log, "utf8"))) return;
   const dir = join31(log, "..", "archive");
   mkdirSync14(dir, { recursive: true, mode: 448 });
   const target = join31(dir, basename7(log));
@@ -34498,7 +34506,7 @@ function archiveOldRuns(home, now = Date.now()) {
   if (!age) return 0;
   let count = 0;
   for (const file2 of runLogFiles(home).filter((p) => !p.includes(`${join31("runs", "archive")}`))) {
-    if (statSync7(file2).mtimeMs < now - age && FINISHED_RUN.test(readFileSync18(file2, "utf8"))) {
+    if (statSync7(file2).mtimeMs < now - age && finishedRunLine(readFileSync18(file2, "utf8"))) {
       archiveRun(file2);
       count++;
     }
@@ -34866,7 +34874,7 @@ function pruneOldLogs(dir) {
     const files2 = readdirSync10(dir).filter((f) => f.endsWith(".log")).map((f) => ({ f, t: statSync9(join35(dir, f)).mtimeMs })).sort((a, b) => b.t - a.t);
     for (const { f } of files2.slice(limit)) {
       const path = join35(dir, f);
-      if (Date.now() - statSync9(path).mtimeMs <= STALE_RUN_MS && !/^\d\d:\d\d:\d\d finished after \d+s · /m.test(readFileSync20(path, "utf8"))) continue;
+      if (Date.now() - statSync9(path).mtimeMs <= STALE_RUN_MS && !finishedRunLine(readFileSync20(path, "utf8"))) continue;
       archiveRun(path);
     }
   } catch (err) {
@@ -38098,7 +38106,7 @@ async function finishedRunOutcomes(home, log, names) {
 }
 function summarizeRun(file2, text2, mtimeMs, now, meta3 = {}) {
   const lines = text2.split("\n").filter(Boolean);
-  const finished = [...lines].reverse().find((l) => / finished after \d+s · /.test(l));
+  const finished = finishedRunLine(text2);
   const last = (finished ?? lines.at(-1) ?? "").replace(/^\d\d:\d\d:\d\d /, "");
   const status = finished ? / · done$/.test(finished) ? "done" : "failed" : now - mtimeMs > STALE_RUN_MS2 ? "interrupted" : "running";
   const m = /^(\d{4})-(\d\d)-(\d\d)-(\d\d)-(\d\d)-(\d\d)-([a-z]+)-/.exec(file2);
@@ -40382,12 +40390,11 @@ var Broker = class {
     socket.on("close", () => {
       this.conns.delete(conn);
       if (conn.peer) {
-        if (!this.closing && !conn.peer.jobAgent) {
-          try {
-            this.store.rememberName(conn.peer, this.now());
-          } catch (err) {
-            this.log.warn("offline last-seen update deferred", { err: String(err) });
-          }
+        if (!this.closing && !conn.peer.jobAgent && !conn.peer.subagent) {
+          const name2 = conn.peer.name, at = this.now();
+          void this.store.retryWrite(() => {
+            if (!this.closing) this.store.markPeerSeen(name2, at);
+          }).catch((err) => this.log.warn("offline last-seen update deferred", { err: String(err) }));
         }
         void this.routePendingJobMail().catch((err) => this.log.warn("pending job reroute deferred", { err: String(err) }));
         this.log.info("peer left", { name: conn.peer.name, agent: conn.peer.agent });

@@ -374,6 +374,19 @@ describe("web dashboard", () => {
 });
 
 describe("summarizeRun", () => {
+  it("keeps quoted finish markers from changing live status, ETA, header or last step", () => {
+    const file = "2026-09-29-06-32-18-codex-x.log";
+    const header = "06:32:18 codex in /w, access read, by codex-owner";
+    const quoted = '06:33:00 source: "06:32:40 finished after 22s · done\\n"';
+    const last = "06:34:00 still working";
+    const meta = { percent: 82, progressNote: "running tests", etaAt: 9000, etaReportedAt: 1000 };
+    for (const output of [quoted, "06:32:40 finished after 22s · done"]) {
+      expect(summarizeRun(file, `${header}\n${output}\n${last}\n`, 1000, 2000, meta))
+        .toMatchObject({ status: "running", header: header.slice(9), last: "still working", ...meta });
+    }
+    expect(summarizeRun(file, `${header}\n${quoted}\n`, 1000, 2000, meta).status).toBe("running");
+  });
+
   it("detects running, failed and interrupted runs", () => {
     const f = "2026-09-29-06-32-18-codex-x.log";
     expect(summarizeRun(f, "06:32:18 h\n06:33:00 1m · step 3 · bash: x\n", 1_000, 2_000).status).toBe("running");
