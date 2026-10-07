@@ -52851,6 +52851,7 @@ $("send").addEventListener("submit", async (e) => {
     const d = await r.json();
     if (!r.ok) throw new Error(d.error || "HTTP " + r.status);
     $("sendInfo").textContent = d.deliveredTo?.length ? "Delivered to " + d.deliveredTo.join(", ") : "Queued for " + (d.queuedFor || []).join(", ");
+    if (d.replyGuidance?.length) $("sendInfo").textContent += " " + d.replyGuidance.join(" ");
     $("body").value = "";
     poll();
   } catch (err) {
@@ -54454,7 +54455,7 @@ async function startUi(opts) {
       const text3 = String(body.body ?? "").trim();
       if (!to || !text3) return send(res, 400, { error: "to and body are required" });
       const r = await (await getSender()).send({ to, body: text3 });
-      return send(res, 200, { id: r.messages[0]?.id, deliveredTo: r.deliveredTo, queuedFor: r.queuedFor });
+      return send(res, 200, { id: r.messages[0]?.id, deliveredTo: r.deliveredTo, queuedFor: r.queuedFor, replyRestrictions: r.replyRestrictions, replyGuidance: formatReplyRestrictions(r) });
     }
     if (req.method === "POST" && url2.pathname === "/api/subagents/handoff") {
       if (req.headers["x-agent-bridge"] !== "1") return send(res, 403, { error: "missing header" });

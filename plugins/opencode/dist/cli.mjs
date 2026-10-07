@@ -37906,6 +37906,9 @@ function formatUsage(details) {
   if (typeof cost === "number") parts.push(`$${cost.toFixed(4)}`);
   return parts.length ? `Usage: ${parts.join(", ")}` : null;
 }
+function formatReplyRestrictions(result) {
+  return (result.replyRestrictions ?? []).map(({ name: name2, supervisor }) => `${name2} can't reply to you directly. Its replies go to its supervisor ${supervisor}. To get an answer, ask ${supervisor}, ask ${supervisor} to grant you with send_to, or use the project's main session.`);
+}
 
 // src/mcp/siblings.ts
 var SiblingLink = class {
@@ -43445,6 +43448,7 @@ $("send").addEventListener("submit", async (e) => {
     const d = await r.json();
     if (!r.ok) throw new Error(d.error || "HTTP " + r.status);
     $("sendInfo").textContent = d.deliveredTo?.length ? "Delivered to " + d.deliveredTo.join(", ") : "Queued for " + (d.queuedFor || []).join(", ");
+    if (d.replyGuidance?.length) $("sendInfo").textContent += " " + d.replyGuidance.join(" ");
     $("body").value = "";
     poll();
   } catch (err) {
@@ -45128,7 +45132,7 @@ async function startUi(opts) {
       const text2 = String(body.body ?? "").trim();
       if (!to || !text2) return send(res, 400, { error: "to and body are required" });
       const r = await (await getSender()).send({ to, body: text2 });
-      return send(res, 200, { id: r.messages[0]?.id, deliveredTo: r.deliveredTo, queuedFor: r.queuedFor });
+      return send(res, 200, { id: r.messages[0]?.id, deliveredTo: r.deliveredTo, queuedFor: r.queuedFor, replyRestrictions: r.replyRestrictions, replyGuidance: formatReplyRestrictions(r) });
     }
     if (req.method === "POST" && url2.pathname === "/api/subagents/handoff") {
       if (req.headers["x-agent-bridge"] !== "1") return send(res, 403, { error: "missing header" });
@@ -50534,6 +50538,7 @@ async function main(argv) {
         await node2.start();
         const res = await node2.send({ to, body: words.join(" ") });
         out(t("cli.sent", { id: res.messages[0].id }));
+        for (const hint of formatReplyRestrictions(res)) out(hint);
       } finally {
         await node2.stop();
       }
