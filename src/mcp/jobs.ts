@@ -415,8 +415,12 @@ export class JobManager {
       }
       const mine = [...this.history.values()].filter((j) => this.own.has(j.id)).map((j) => {
         const old = byId.get(j.id) ?? archived.get(j.id);
-        if (isRecord(old) && Array.isArray(old.ownershipHistory) && old.ownershipHistory.length) {
+        if (isRecord(old)) {
           j.deliveryHistory = [...new Map([...(Array.isArray(old.deliveryHistory) ? old.deliveryHistory as BridgeMessage[] : []), ...(j.deliveryHistory ?? [])].map((m) => [m.id, m])).values()];
+          // A late report from an earlier turn may add delivery evidence, but cannot roll back a continuation.
+          if (typeof old.startedAt === "number" && j.startedAt < old.startedAt) return { ...old, deliveryHistory: j.deliveryHistory } as unknown as StoredJob;
+        }
+        if (isRecord(old) && Array.isArray(old.ownershipHistory) && old.ownershipHistory.length) {
           // Durable authority wins over a stale manager's in-memory snapshot.
           Object.assign(j, { owner: old.owner, supervisor: old.supervisor, rootSession: old.rootSession, rootName: old.rootName,
             parentJob: old.parentJob, ownershipHistory: old.ownershipHistory, masters: old.masters });

@@ -230,6 +230,19 @@ describe("local subagent ownership handoff", () => {
     await until(() => next.find("codex-job-a")?.status === "done");
   });
 
+  it.each([true, false])("does not let a delayed original executor overwrite a newer continuation (handoff=%s)", async (handoff) => {
+    const old = manager(source);
+    const tracked = old.track("codex", null, "Initial blocking work");
+    if (handoff) await source.handoffSubagents({ to: target.name });
+    const document = JSON.parse(readFileSync(path(), "utf8"));
+    const current = document.jobs.find((j: Job) => j.id === tracked.job.id);
+    Object.assign(current, { startedAt: tracked.job.startedAt + 100, status: "running", executionOwner: target.name, sessionId: "newer-continuation" });
+    writeFileSync(path(), JSON.stringify(document));
+    tracked.job.status = "done";
+    old.persist();
+    expect(readStore(path()).find((j) => j.id === tracked.job.id)).toMatchObject({ startedAt: current.startedAt, status: "running", executionOwner: target.name, sessionId: "newer-continuation" });
+  });
+
   it("lets the new owner message and cancel an inline run while preserving execution", async () => {
     const old = manager(source), next = manager(target);
     const run: Run = async (signal) => new Promise((resolve) => signal.addEventListener("abort", () => resolve({ text: "stopped", sessionId: "thread", isError: true, details: {} }), { once: true }));
