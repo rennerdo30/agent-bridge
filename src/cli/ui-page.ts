@@ -2480,8 +2480,8 @@ async function questionHeartbeat() {
       qHighlighted.add(alert.id);
       questionChime();
       const card=document.getElementById("question-"+alert.id); if (card) card.classList.add("focused");
-      if (document.hidden && typeof Notification !== "undefined" && Notification.permission === "granted") {
-        const n=new Notification("A question needs your answer",{body:"Open agent-bridge to answer.",tag:"ab-question-"+alert.id});
+      if (document.hidden && qSettings.toast && typeof Notification !== "undefined" && Notification.permission === "granted") {
+        const n=new Notification("A question needs your answer",{body:"Open agent-bridge to answer.",tag:"ab-question-"+alert.id,silent:!qSettings.sound || qAudio?.state === "running"});
         n.onclick=() => { window.focus(); location.hash=APPROVALS_HASH+"?question="+alert.id; n.close(); };
       }
     }

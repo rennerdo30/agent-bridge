@@ -40,8 +40,8 @@ export const questionAnswerSchema = z.object({
   pin: z.object({ scope: decisionScopeSchema, topic: z.string().trim().min(1).max(160) }).strict().optional(),
 }).strict().refine(a => Boolean(a.option) !== Boolean(a.text), "Choose an option or write an answer");
 export type QuestionAnswerArgs = z.infer<typeof questionAnswerSchema>;
-export interface QuestionAsker { session: string; sessionId: string | null; agent: MessageAddress["agent"]; main: string; job?: string; }
-export interface QuestionDelivery { recipient: string; messageId?: string; state: "pending" | "wake-requested" | "busy" | "wake-unavailable" | "offline" | "failed"; detail: string; readAt: number | null; }
+export interface QuestionAsker { session: string; sessionId: string | null; agent: MessageAddress["agent"]; main: string; mainSessionId?: string | null; job?: string; }
+export interface QuestionDelivery { recipient: string; messageId?: string; state: "pending" | "wake-requested" | "busy" | "wake-unavailable" | "offline" | "failed" | "unconfirmed"; detail: string; readAt: number | null; }
 export interface OwnerQuestion extends z.output<typeof askOwnerSchema> {
   id: string; kind: "question"; project: string; dedupeKey: string;
   status: "open" | "answered" | "cancelled" | "superseded"; askedAt: number;
@@ -84,14 +84,16 @@ export class OwnerQuestionStore {
     if (args.default && args.default.deadline <= at) throw new Error("Default deadline must be in the future");
     return this.transaction(() => {
       const open = this.list().filter(q => q.status === "open");
+      const sameAsker=(a:QuestionAsker) => a.sessionId && asker.sessionId ? a.agent === asker.agent && a.sessionId === asker.sessionId : a.session === asker.session;
       const issue = args.links.filter(l => l.kind === "issue").map(l => l.value.toUpperCase()).sort().join(",");
       const key = JSON.stringify([project, issue, args.topic.toLowerCase()]);
       const same = open.find(q => q.dedupeKey === key);
-      if (!same?.askers.some(a => a.session === asker.session) && open.filter(q => q.askers.some(a => a.session === asker.session)).length >= MAX_OPEN_QUESTIONS) throw new Error(`At most ${MAX_OPEN_QUESTIONS} open questions per session; consolidate or cancel existing ones`);
+      if (!same?.askers.some(sameAsker) && open.filter(q => q.askers.some(sameAsker)).length >= MAX_OPEN_QUESTIONS) throw new Error(`At most ${MAX_OPEN_QUESTIONS} open questions per session; consolidate or cancel existing ones`);
       if (same) {
         // Never merge different options/defaults into a question whose answer would mean different things.
         if (JSON.stringify([same.options,same.default,same.authorization,same.destructive,same.blocking]) !== JSON.stringify([args.options,args.default,args.authorization,args.destructive,args.blocking])) throw new Error(`Question ${same.id} already covers this topic with different terms; cancel or supersede it explicitly`);
-        if (!same.askers.some(a => a.session === asker.session)) same.askers.push(asker);
+        const priorAsker=same.askers.findIndex(sameAsker);
+        if (priorAsker < 0) same.askers.push(asker); else same.askers[priorAsker]=asker;
         same.affectedProjects = [...new Set([...same.affectedProjects, ...args.affectedProjects, project])];
         same.links = [...new Map([...same.links, ...args.links].map(l => [JSON.stringify(l), l])).values()];
         this.save(same); return { question: same, merged: true, similar: [] };

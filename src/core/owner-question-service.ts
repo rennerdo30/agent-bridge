@@ -27,7 +27,7 @@ export class OwnerQuestionService {
   settings(): QuestionAlertSettings { return loadConfig(this.home, "other", this.log).questionAlerts; }
   heartbeat(tab: string, visible: boolean): { alerts: { id: string; at: number }[]; settings: QuestionAlertSettings } {
     this.tabs.set(tab, { tab, visible, at: Date.now() });
-    const alerts = this.alerts.get(tab) ?? []; this.alerts.delete(tab);
+    const alerts = (this.alerts.get(tab) ?? []).filter(a => this.store.get(a.id)?.status === "open"); this.alerts.delete(tab);
     return { alerts, settings: this.settings() };
   }
   list(): OwnerQuestion[] {
@@ -46,18 +46,29 @@ export class OwnerQuestionService {
     const peers = this.peers();
     const mains = peers.filter(p => !p.jobAgent && !p.subagent && !p.unavailable && normalizeProject(p.projectRoot ?? p.cwd) === normalizeProject(q.project));
     const main = mains.find(p => p.projectMain) ?? mains[0];
-    const askerNames=new Set(q.askers.flatMap(a => [a.session,...(a.job ? [a.job] : [])]));
-    const mainRead=q.deliveries.some(d => (q.askers.some(a => a.main === d.recipient) || !askerNames.has(d.recipient)) && d.messageId && this.messages.receipts(d.messageId).some(r => r.readAt !== null));
-    const recipients = new Set(q.askers.flatMap(a => [a.session, a.main, ...(a.job ? [a.job] : [])])); if (main && !mainRead) recipients.add(main.name);
+    const destinations=q.askers.flatMap(a => [{ name:a.session,sessionId:a.sessionId },{name:a.main,sessionId:a.mainSessionId},...(a.job ? [{name:a.job,sessionId:null}] : [])]);
+    const resolveDestination=(name:string) => {
+      const identity=destinations.find(d => d.name === name && d.sessionId)?.sessionId;
+      return peers.find(p => !p.unavailable && normalizeProject(p.projectRoot ?? p.cwd) === normalizeProject(q.project) && (identity ? p.sessionId === identity : p.name === name));
+    };
+    const askerNames=new Set(q.askers.flatMap(a => [resolveDestination(a.session)?.name ?? a.session,...(a.job ? [a.job] : [])]));
+    const mainRead=q.deliveries.some(d => (q.askers.some(a => (resolveDestination(a.main)?.name ?? a.main) === d.recipient) || !askerNames.has(d.recipient)) && d.messageId && this.messages.receipts(d.messageId).some(r => r.readAt !== null));
+    const recipients = new Set(destinations.map(d => resolveDestination(d.name)?.name ?? d.name)); if (main && !mainRead) recipients.add(main.name);
     let changed = false;
     for (const recipient of recipients) {
-      const live = peers.find(p => p.name === recipient && !p.unavailable);
+      const live = resolveDestination(recipient);
       const before = q.deliveries.find(d => d.recipient === recipient);
       if (before?.messageId) {
         const readAt=this.messages.receipts(before.messageId).find(r => r.recipient === recipient)?.readAt;
         if (!readAt && before.state === "wake-requested" && Date.now()-q.answer.at >= 20000) {
-          before.state="failed"; before.detail="Wake consumption unconfirmed after 20 s. Durable inbox retained; project-main fallback receives the same recorded answer."; changed=true;
+          before.state="unconfirmed"; before.detail="Wake consumption unconfirmed after 20 s. Durable inbox retained; project-main fallback receives the same recorded answer."; changed=true;
         }
+        continue;
+      }
+      if (!live && (destinations.some(d => d.name === recipient && d.sessionId) || peers.some(p => p.name === recipient))) {
+        // Do not send a prior session's answer to a replacement which inherited its display name.
+        const offline = {recipient,state:"offline" as const,detail:"Original session is absent or replaced. Answer retained on the question; current project-main fallback receives it.",readAt:null};
+        if (JSON.stringify(before) !== JSON.stringify(offline)) {q.deliveries=[...q.deliveries.filter(d => d.recipient !== recipient),offline];changed=true;}
         continue;
       }
       const hash = createHash("sha256").update(`owner-question:${q.id}:${recipient}`).digest("hex");
@@ -108,7 +119,7 @@ export class OwnerQuestionService {
   private tick(): void {
     try {
       const at = Date.now(), settings = this.settings();
-      for (const [id,t] of this.tabs) if (at-t.at > 10_000) this.tabs.delete(id);
+      for (const [id,t] of this.tabs) if (at-t.at > 10_000) { this.tabs.delete(id); this.alerts.delete(id); }
       for (const q of this.store.work()) {
         if (q.status === "answered") { this.complete(q); continue; }
         if (q.status !== "open") continue;
@@ -123,7 +134,7 @@ export class OwnerQuestionService {
         } else {
           const port = readDashboardInfo(this.home)?.port ?? loadConfig(this.home,"other",this.log).dashboardPort;
           const url = `http://127.0.0.1:${port}/?t=${loadDashboardKey(this.home)}#/approvals?question=${q.id}`;
-          notifyOwnerQuestion(url, this.log);
+          notifyOwnerQuestion(url, this.log, settings.sound);
         }
       }
     } catch (error) { this.log.warn("owner question maintenance failed", { error: String(error) }); }

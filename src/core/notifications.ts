@@ -114,7 +114,7 @@ function launch(commands: NotificationCommand[], log: Logger): void {
 }
 
 /** Question toasts use the same native helpers as approvals. Only a validated local link is exposed. */
-export function questionNotificationCommands(platform: NodeJS.Platform, dashboardUrl: string): NotificationCommand[] {
+export function questionNotificationCommands(platform: NodeJS.Platform, dashboardUrl: string, sound = true): NotificationCommand[] {
   const url = new URL(dashboardUrl);
   if (url.protocol !== "http:" || url.hostname !== "127.0.0.1" || url.username || url.password || url.pathname !== "/" || [...url.searchParams.keys()].join(",") !== "t" || !/^#\/approvals\?question=[0-9a-f-]{36}$/.test(url.hash) || !/^[0-9a-f]{48}$/.test(url.searchParams.get("t") ?? "")) throw new Error("Invalid question dashboard link");
   const body = "A question needs your answer. Click to answer in agent-bridge.";
@@ -123,21 +123,22 @@ export function questionNotificationCommands(platform: NodeJS.Platform, dashboar
     const command = notificationCommands(platform, "approvals")[0]!;
     const script = Buffer.from(command.args.at(-1)!, "base64").toString("utf16le")
       .replace("<toast>", `<toast activationType="protocol" launch="${xmlUrl}">`)
-      .replace(TEXT.approvals, body);
+      .replace(TEXT.approvals, body)
+      .replace("</toast>", `${sound ? '<audio src="ms-winsoundevent:Notification.Default"/>' : '<audio silent="true"/>'}</toast>`);
     return [{ ...command, args: [...command.args.slice(0,-1), Buffer.from(script,"utf16le").toString("base64")] }];
   }
   if (platform === "darwin") return [
-    { bin: "terminal-notifier", args: ["-title", TITLE, "-message", body, "-open", dashboardUrl] },
-    { bin: "osascript", args: ["-e", `display notification "${body}" with title "${TITLE}"`] },
+    { bin: "terminal-notifier", args: ["-title", TITLE, "-message", body, "-open", dashboardUrl, ...(sound ? ["-sound", "default"] : [])] },
+    { bin: "osascript", args: ["-e", `display notification "${body}" with title "${TITLE}"${sound ? ' sound name "Glass"' : ''}`] },
   ];
-  if (platform === "linux") return [{ bin: "notify-send", args: ["--app-name", TITLE, "--expire-time=15000", "--action=answer=Answer", "--wait", "--", TITLE, body] }];
+  if (platform === "linux") return [{ bin: "notify-send", args: ["--app-name", TITLE, "--expire-time=15000", "--action=answer=Answer", "--wait", "--hint", sound ? "string:sound-name:message-new-instant" : "boolean:suppress-sound:true", "--", TITLE, body] }];
   return [];
 }
 
-export function notifyOwnerQuestion(url: string, log: Logger): void {
+export function notifyOwnerQuestion(url: string, log: Logger, sound = true): void {
   // The registry claims one channel per question; do not apply the job-event limiter to questions.
-  if (process.platform !== "linux") { launch(questionNotificationCommands(process.platform, url), log); return; }
-  const command = questionNotificationCommands("linux", url)[0]!;
+  if (process.platform !== "linux") { launch(questionNotificationCommands(process.platform, url, sound), log); return; }
+  const command = questionNotificationCommands("linux", url, sound)[0]!;
   const child = spawn(command.bin, command.args, { stdio: ["ignore", "pipe", "ignore"], windowsHide: true });
   const timer=setTimeout(() => child.kill(),20000); timer.unref();
   let action = ""; child.stdout.on("data", data => { action = (action + String(data)).slice(0,100); });

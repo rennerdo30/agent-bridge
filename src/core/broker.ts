@@ -152,7 +152,7 @@ export class Broker {
         const main = this.localPeers().find(p => this.groups.same(p.cwd, peer.cwd) && this.projectPeer(p).projectMain);
         let deskProject: string | undefined=args.deskProject;
         try { const linked=readJsonSnapshot(join(root,".pair-desk.json")).value; if (isRecord(linked) && typeof linked.project === "string") deskProject=linked.project; } catch { /* Desk linking is optional. */ }
-        return this.ownerQuestions().store.ask(args, root, { session: peer.name, sessionId: peer.sessionId, agent: peer.agent, main: main?.name ?? peer.name, ...(args.job ? {job:args.job} : {}) }, this.now(),deskProject);
+        return this.ownerQuestions().store.ask(args, root, { session: peer.name, sessionId: peer.sessionId, agent: peer.agent, main: main?.name ?? peer.name, mainSessionId:main ? main.sessionId : peer.sessionId, ...(args.job ? {job:args.job} : {}) }, this.now(),deskProject);
       },
       ownerQuestions: () => this.ownerQuestions().list(),
       answerOwner: (c,a) => {
@@ -164,7 +164,7 @@ export class Broker {
       dismissOwner: (c,a) => {
         const args = z.object({ id: z.uuid(), status: z.enum(["cancelled","superseded"]), reason: z.string().trim().min(1).max(1000), supersededBy: z.uuid().optional() }).strict().parse(a);
         const q = this.ownerQuestions().store.get(args.id);
-        if (c.peer && (c.peer.jobAgent || c.peer.subagent || !q?.askers.some(asker => asker.session === c.peer!.name))) throw new BridgeError("unauthorized", "Only an asker or the owner may dismiss this question.");
+        if (c.peer && (c.peer.jobAgent || c.peer.subagent || !q?.askers.some(asker => asker.sessionId && c.peer!.sessionId ? asker.agent === c.peer!.agent && asker.sessionId === c.peer!.sessionId : asker.session === c.peer!.name))) throw new BridgeError("unauthorized", "Only an asker or the owner may dismiss this question.");
         return this.ownerQuestions().store.dismiss(args.id,args.status,args.reason,args.supersededBy);
       },
       dashboardHeartbeat: (c,a) => {
@@ -1037,6 +1037,7 @@ export class Broker {
       unavailable: p.unavailable === true,
       version: typeof p.version === "string" ? p.version.slice(0, 32) : undefined,
       ...(validStoreCapabilities(p.storeCapabilities) ? { storeCapabilities: p.storeCapabilities } : {}),
+      ...(p.subagent === true ? { subagent: true } : {}),
       ...(p.jobAgent && AGENT_KINDS.includes(p.jobAgent) ? { jobAgent: p.jobAgent } : {}),
       ...(p.jobAgent && typeof p.jobOwner === "string" && p.jobOwner ? {
         parentJob: typeof p.parentJob === "string" ? p.parentJob : undefined,
