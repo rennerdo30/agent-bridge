@@ -1,4 +1,7 @@
 import { MAX_HOLD_REASON_CHARS, setJobOutcome, deriveJobOutcome } from "../core/job-outcomes.js";
+import { closeJobWorktree } from "../core/job-close.js";
+import { readWorktreeState } from "../core/worktree-state.js";
+import { readOutcomeDecision } from "../core/job-outcomes.js";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -37,7 +40,7 @@ import { resolveDbPath, resolveHome, resolvePipePath } from "../core/paths.js";
 import { inspectClaudeLaunch } from "../core/procinfo.js";
 import { loadOrCreateToken } from "../core/token.js";
 import { BridgeError, BROADCAST, CODING_AGENTS, isQuietMessage, SIBLING_CONVERSATION_PREFIX, TRANSFER_PROGRESS_PREFIX, type AgentKind, type BridgeMessage, type CodingAgent } from "../core/protocol.js";
-import { formatDelivery, formatDuration, formatMessage, formatMessages, formatPeer } from "./format.js";
+import { formatReplyRestrictions, formatDelivery, formatDuration, formatMessage, formatMessages, formatPeer } from "./format.js";
 import { CodexWaker, type Activity } from "./codex-wake.js";
 import { buildHookResponse, discardFinishedNotes, type HookEvent } from "./hooks.js";
 import { ACCESS_LEVELS, DELEGATION_TARGETS, nativeSubagentsSchema, type Access } from "./targets.js";
@@ -58,7 +61,9 @@ import { JOB_SETTING_KEYS, PERMISSION_KEY_AGENT, type JobSettings } from "./job-
 import { attachDashboardJobControl } from "./dashboard-control.js";
 import { deriveJobTitle } from "./job-title.js";
 import { isJobSendTarget, MAX_JOB_SEND_TARGETS } from "../core/job-messaging.js";
-import { historyFiltersSchema, HISTORY_MAX_QUERY_CHARS, HISTORY_MAX_LIMIT, type HistorySearch } from "../core/history.js";
+import { appendContextEvent } from "../core/context-journal.js";
+import { readConversationFile, conversationPageSchema, type ConversationRequest } from "../core/conversations.js";
+import { readHistory, historyFiltersSchema, HISTORY_MAX_QUERY_CHARS, HISTORY_MAX_LIMIT, type HistorySearch } from "../core/history.js";
 import { answerHistory } from "../core/history-answer.js";
 import { decisionScopeSchema, MAX_DECISION_TOPIC_CHARS, MAX_DECISION_TEXT_CHARS, type DecideArgs, type DecisionsArgs } from "../core/decisions.js";
 
@@ -72,7 +77,7 @@ const CODEX_SANDBOX_META = "codex/sandbox-state-meta";
 /** Subagent titles (ask_* / spawn_* `title`), like a chat title. */
 const MAX_TITLE_CHARS = 80;
 /** The tools a delegated subagent's server offers (see registerTools). */
-const SUBAGENT_TOOLS = new Set(["peers", "send", "report_progress", "hook_event"]);
+const SUBAGENT_TOOLS = new Set(["peers", "send", "report_progress", "hook_event", "search_history", "get_conversation"]);
 /** The options of a job worth keeping to continue it the same way later (no prompt, no internals). */
 /** When to look again for jobs under a stand-in name (a replaced server of the session may still be leaving). */
 const STAND_IN_RECHECK_MS = 30_000;
@@ -293,6 +298,7 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
     ctx.learnCwd = async (projectDir) => {
       if (cwdSettled || projectDir === node.cwd || isPluginCacheCwd(projectDir)) return;
       cwdSettled = true;
+      Object.assign(cfg,loadConfig(home,agent,log,process.env,projectConfigRoot(projectDir)));
       const name = cfg.name ? undefined : defaultPeerName(agent, projectDir);
       await node.relocate(projectDir, name).catch((err) => log.warn("relocate failed", { err: (err as Error).message }));
       applyConfig(loadConfig(home, agent, log, process.env, projectConfigRoot(node.cwd)));
@@ -425,10 +431,27 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
 
   const transport = new StdioServerTransport();
   let shuttingDown = false;
+  let closeSweepBusy = false;
+  const closeSweep = setInterval(() => {
+    if (shuttingDown || closeSweepBusy || !cfg.jobCloseCleanup || !node) return;
+    closeSweepBusy = true;
+    void (async () => {
+      const waiting = new Set(ctx.jobs?.waiting().map((job) => job.name));
+      for (const job of ctx.jobs?.recent(Number.MAX_SAFE_INTEGER) ?? []) {
+        if (job.owner !== node.name || !job.worktree || job.queue.length || waiting.has(job.name) || !["done", "failed"].includes(job.status)) continue;
+        const state = readWorktreeState(home, job.worktree);
+        if (!state || state.reapedAt || readOutcomeDecision(home, job)?.state === "held" || Math.max(state.lastContinuation, job.finishedAt ?? Date.now()) > Date.now() - 24 * 60 * 60_000) continue;
+        const result = await closeJobWorktree({ home, job, enabled: cfg.jobCloseCleanup, log });
+        log.info("idle worktree close", { job: job.name, ...result });
+      }
+    })().catch((err) => log.warn("idle close sweep kept worktrees", { err: String(err) })).finally(() => { closeSweepBusy = false; });
+  }, 15 * 60_000);
+  closeSweep.unref();
   const shutdown = async (reason: string) => {
     // stdin end, transport close and signals can all fire; shut down once.
     if (shuttingDown) return;
     shuttingDown = true;
+    clearInterval(closeSweep);
     log.info("shutting down", { reason });
     // Runner-hosted subagents keep going for the next server of this session (see job-host.ts).
     ctx.jobs?.cancelAll();
@@ -499,7 +522,7 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
   // Nested supervisors keep private child tools without independent-session bridge privileges.
   const register = ((name: string, ...rest: unknown[]) =>
     node || SUBAGENT_TOOLS.has(name) || (ctx.jobs && (
-      name === "message_subagent" || name === "cancel_subagent" || name === "inbox" || name === "wait_for_message" ||
+      name === "decide" || name === "message_subagent" || name === "cancel_subagent" || name === "inbox" || name === "wait_for_message" ||
       (currentDelegateDepth() < cfg.maxDelegateDepth && (name.startsWith("spawn_") || name.startsWith("ask_") || name === "list_models"))
     )) ? (mcp.registerTool as (...a: unknown[]) => unknown)(name, ...rest) : undefined) as typeof mcp.registerTool;
   const requireNode = (): BridgeNode => {
@@ -537,26 +560,50 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
     },
     guarded("search_history", async (a: HistorySearch & { answer?: boolean }) => {
       const { answer, ...args } = a;
-      const result = await requireNode().searchHistory(args);
+      const result = ctx.node ? await ctx.node.searchHistory(args) : readHistory(resolveDbPath(ctx.home),args);
       return text(JSON.stringify(answer ? { ...result, answer: await answerHistory(a.query, result, cfg, ctx.home, log) } : result));
     }),
   );
 
+  register("get_conversation", {
+    title: "Read a retained conversation",
+    description: "Fetch a complete locally retained conversation by the conversation id returned in search_history. Pages contain exact raw bytes (base64) and text chunks with source offsets. Pass next as after; concatenate chunks per source/generation to reconstruct JSONL or SQLite snapshots. No model calls or network export.",
+    inputSchema: conversationPageSchema.shape,
+    annotations: { readOnlyHint: true },
+  }, guarded("get_conversation", async (args: ConversationRequest) => text(JSON.stringify(ctx.node ? await ctx.node.getConversation(args) : readConversationFile(resolveDbPath(ctx.home),args)))));
+
   register(
     "decide",
     {
-      title: "Pin owner decision",
-      description: "Record an owner's decision after researching it. A newer decision on the same topic supersedes the previous revision across scopes; history is always retained. Notifications reach sessions in scope once without waking idle sessions. Scope defaults to this project folder.",
+      title: "Make an explicit decision",
+      description: "Answer a pending approval with approval_id and decision (allow, deny or escalate), or record an owner's decision after researching it. A newer decision on the same topic supersedes the previous revision across scopes; history is always retained. Notifications reach sessions in scope once without waking idle sessions. Scope defaults to this project folder.",
       inputSchema: {
-        topic: z.string().trim().min(1).max(MAX_DECISION_TOPIC_CHARS).describe("Stable topic; trimmed and case-insensitive"),
-        text: z.string().trim().min(1).max(MAX_DECISION_TEXT_CHARS).describe("The owner's decision text"),
+        approval_id: z.uuid().optional().describe("Pending approval id from the job question or dashboard"),
+        decision: z.enum(["allow", "deny", "escalate"]).optional(),
+        reason: z.string().max(4000).optional(),
+        topic: z.string().trim().min(1).max(MAX_DECISION_TOPIC_CHARS).optional().describe("Stable topic; trimmed and case-insensitive"),
+        text: z.string().trim().min(1).max(MAX_DECISION_TEXT_CHARS).optional().describe("The owner's decision text"),
         scope: decisionScopeSchema.optional().describe('"all", {project: folder}, or {sessions: [peer names, ids or session ids]}'),
         source_message_id: z.string().optional().describe("Optional existing bridge message id recording the owner's choice"),
       },
     },
-    guarded("decide", async (a: DecideArgs & { source_message_id?: string }) => {
-      const { source_message_id, ...args } = a;
-      return text(JSON.stringify(await requireNode().decide({ ...args, sourceMessageId: source_message_id })));
+    guarded("decide", async (a: Partial<DecideArgs> & { source_message_id?: string; approval_id?: string; decision?: "allow" | "deny" | "escalate"; reason?: string }) => {
+      if (a.approval_id || a.decision) {
+        if (!a.approval_id || !a.decision || a.topic || a.text || a.scope || a.source_message_id) throw new BridgeError("bad_request", "Supply approval_id and decision only, with an optional reason.");
+        const entry = listPendingApprovals(ctx.home).find((entry) => entry.id === a.approval_id);
+        if (!entry) return text("Approval expired.", true);
+        const job = ctx.jobs?.find(entry.job);
+        if (!(node ? await node.jobAuthority(entry.job) : job)) throw new BridgeError("bad_request", "This approval belongs to another supervisor.");
+        if (a.decision === "escalate") {
+          if (!entry.parentJob || !job?.pendingApproval) return text("Escalation is unavailable here; use the dashboard or ask the supervisor to decide.", true);
+          job.pendingApproval("escalate");
+          return text("Approval escalated; it remains pending.");
+        }
+        const outcome = await answerPendingApproval(ctx.home, entry.id, { decision: a.decision, reason: a.reason });
+        return text(`Approval ${outcome}.`, outcome !== "answered");
+      }
+      if (!a.topic || !a.text || a.reason) throw new BridgeError("bad_request", "Supply topic and text to record an owner decision.");
+      return text(JSON.stringify(await requireNode().decide({ topic: a.topic, text: a.text, scope: a.scope, sourceMessageId: a.source_message_id })));
     }),
   );
 
@@ -631,6 +678,7 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
       }
       const n = requireNode();
       const peers = await n.peers();
+      await n.refreshPending();
       const shared = await n.projectJobs();
       // Job runners are this or another session's subagents, not sessions (an older broker still lists them).
       const others = peers.filter((p) => p.id !== n.id && !p.id.startsWith("job:"));
@@ -640,11 +688,15 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
           broker: n.isBroker ? t("common.yes") : t("common.no"),
           autoWake: n.autoWakeEnabled ? t("common.on") : t("common.off"),
           delivery: ctx.agent === "claude" ? (ctx.channelActive() ? "channel" : "hooks") : "hooks",
-          unread: n.unread().length,
+          unread: n.unread().filter((m) => !isQuietMessage(m)).length,
         }),
         others.length ? t("peers.header", { count: others.length }) : t("peers.none"),
         ...others.map((p) => formatPeer(p)),
       ];
+      const quietCount = n.unread().filter(isQuietMessage).length;
+      if (quietCount) lines.push(`${quietCount} retained quiet message(s), available in inbox/history on request; excluded from actionable unread mail.`);
+      const load = await n.brokerLoad().catch(() => null); // Earlier brokers do not expose the additive load probe.
+      if (load && load.connectedJobs > load.testedJobs) lines.push(`Broker load warning: ${load.connectedJobs} jobs are connected; the load check covered ${load.testedJobs}. Queue additional work to stay within the measured load.`);
       const groupPeers = peers.filter((p) => p.projectGroup && !p.host);
       if (groupPeers.length) lines.push("Local project groups:", ...groupPeers.map((p) => `- ${p.projectAddress}: ${p.name} (${p.projectMain ? "main" : "secondary"}${p.unavailable ? ", unavailable" : ""})`));
       if (shared.length) lines.push("Project jobs (shared local authority):", ...shared.map((j) => `- ${j.name} (${j.agent}, ${j.status}; primary ${j.owner})${isRecord(j.args) && j.args.title ? ` \"${j.args.title}\"` : ""}`));
@@ -685,7 +737,7 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
       title: "Send message",
       description:
         `Send a message to another agent. "to" is a peer name from "peers", an agent kind ("claude", "codex") when exactly one is online, or "${BROADCAST}" for everyone. ` +
-        "Delivery means queued in the recipient inbox, not read. Broadcasts include connected paired-PC sessions. Direct messages and broadcasts wake an idle Claude session according to wakeOnDirect; other recipients may read them on their next turn. " +
+        "Delivery means queued in the recipient inbox, not read. Broadcasts include registered offline local sessions and connected paired-PC sessions, with delivered, queued or failed results per recipient. Direct messages and broadcasts wake an idle Claude session according to wakeOnDirect; other recipients may read them on their next turn. " +
         "Auto-wake is handled on the recipient PC, including paired PCs; it is never enabled by send. Use wait_for_message(read_receipt_of=<sent id>) to wait for consumption. " +
         "If the recipient is offline the message waits for it. When answering with new information, pass its id as reply_to. Do not send pure acknowledgements or repeat a reply as a status note. " +
         "Delegated jobs can send to their parent, siblings, or exact local session/job names explicitly granted with send_to at spawn. Sibling messages arrive live or wait for the next turn, with a quiet supervisor copy. Sending to a finished sibling returns its saved final report immediately; it will not answer. Do not wait for finished siblings or for read receipts from them. Other sessions and broadcasts are unavailable. Peers shows grants and the sibling thread limit before composing.",
@@ -712,7 +764,7 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
           const m = result.messages[0]!;
           const sibling = m.conversationId.startsWith(SIBLING_CONVERSATION_PREFIX);
           const delivery = result.queuedFor.length ? sibling ? "queued for the sibling's next turn" : "queued for the granted session" : sibling ? "sent to sibling" : "sent to granted session";
-          return text(`Message ${m.id} ${delivery} ${a.to} (conversation ${m.conversationId}, hop ${m.hop}).${sibling ? " The supervisor received a quiet copy." : ""}`);
+          return text(`Message ${m.id} ${delivery} ${a.to} (conversation ${m.conversationId}, hop ${m.hop}).${sibling ? " The supervisor received a quiet copy." : ""}\n${formatReplyRestrictions(result).join("\n")}`);
         }
         await ctx.parent.send(a.message, a.reply_to);
         return text(t("send.toParent", { name: ctx.parent.name }));
@@ -735,7 +787,7 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
       const lines = [t("send.ok", { id: first.id, conversation: first.conversationId })];
       lines.push(...formatDelivery(res, cfg.maxHops));
       if (res.queuedFor.length) lines.push(t("send.queued", { names: res.queuedFor.join(", ") }));
-      lines.push(t("send.waitHint"));
+      if (!res.replyRestrictions?.length) lines.push(t("send.waitHint"));
       lines.push(`For a consumption receipt, call wait_for_message(read_receipt_of="${first.id}").`);
       return text(lines.join("\n"));
     }),
@@ -1200,7 +1252,7 @@ ${res.text || t("delegate.empty")}`, res.isError);
     "set_job_outcome",
     {
       title: "Set a finished job's outcome",
-      description: "Record that your finished job is held with a reason or discarded. This records a decision; it does not merge or delete its branch. Only its owning supervisor can set it.",
+      description: "Record that your finished job is held with a reason or discarded. With jobCloseCleanup enabled, discarded local worktree jobs push their commits and reap only a proven clean checkout. Held jobs and local branches are retained. Only its owning supervisor can set it.",
       inputSchema: { job: z.string().min(1), state: z.enum(["held", "discarded"]), reason: z.string().max(MAX_HOLD_REASON_CHARS).optional() },
     },
     guarded("set_job_outcome", async (a: { job: string; state: "held" | "discarded"; reason?: string }) => {
@@ -1209,7 +1261,8 @@ ${res.text || t("delegate.empty")}`, res.isError);
       if (!job) throw new BridgeError("bad_request", "Unknown job.");
       try {
         setJobOutcome(ctx.home, job, n.name, a.state, a.reason);
-        return text(JSON.stringify({ job: job.name, outcome: await deriveJobOutcome(ctx.home, job, log) }));
+        const cleanup = a.state === "discarded" ? await closeJobWorktree({ home: ctx.home, job, enabled: cfg.jobCloseCleanup, log }) : undefined;
+        return text(JSON.stringify({ job: job.name, outcome: await deriveJobOutcome(ctx.home, job, log), cleanup }));
       } catch (err) { throw new BridgeError("bad_request", (err as Error).message); }
     }),
   );
@@ -1243,7 +1296,7 @@ ${res.text || t("delegate.empty")}`, res.isError);
         "Send a follow-up to a subagent started with ask_* or spawn_* (running or finished), like messaging a native subagent. " +
         "It continues in its own session with its full context, in the same folder or worktree. " +
         "While it is still running it gets the message live, at its next step (after its current tool call), and answers right away, like a native subagent: use that to ask how far it is or to redirect it. " +
-        "The answer arrives as a message from the job. " +
+        "The answer arrives as a message from the job. Plain messages never answer pending approvals; use decide or the dashboard. " +
         "Without a message it is told to continue where it stopped: use that to recover a failed or interrupted subagent. " +
         "If all subagent slots are taken, a finished subagent's continuation is queued and starts by itself when one frees up (cancel_subagent drops it).",
       inputSchema: {
@@ -1268,15 +1321,6 @@ ${res.text || t("delegate.empty")}`, res.isError);
       const jobs = ctx.jobs;
       if (!jobs) throw new BridgeError("bad_request", t("err.delegatedSession"));
       const existing = await jobs.share(a.job);
-      // A top supervisor can answer an escalated descendant wait without taking over that child job.
-      if (node && a.message) {
-        const approval = listPendingApprovals(ctx.home).find((entry) => entry.job === a.job && entry.parentJob);
-        if (approval && /^(allow|deny)\b/i.test(a.message.trim()) && (approval.owner === node.name || approval.rootSession === jobs.rootIdentity() || await node.jobAuthority(a.job))) {
-          const decision = /^allow\b/i.test(a.message.trim()) ? "allow" : "deny";
-          const result = await answerPendingApproval(ctx.home, approval.id, { decision, reason: a.message.trim().replace(/^(allow|deny)\b\s*:?\s*/i, "") });
-          return text(`Nested approval ${result}.`, result !== "answered");
-        }
-      }
       if (existing) {
         for (const [key, agent] of Object.entries(PERMISSION_KEY_AGENT) as [keyof typeof PERMISSION_KEY_AGENT, string][]) {
           if (a[key] !== undefined && existing.agent !== agent) throw new BridgeError("bad_request", `${key} applies only to ${agent} jobs.`);
@@ -1292,13 +1336,17 @@ ${res.text || t("delegate.empty")}`, res.isError);
         }
       }
       if (Object.keys(settings).length) jobs.setSettings(a.job, settings);
-      const { outcome, job } = jobs.followUp(a.job, a.message?.trim() || DEFAULT_FOLLOW_UP);
+      const { outcome, job, approvalPending } = jobs.followUp(a.job, a.message?.trim() || DEFAULT_FOLLOW_UP);
       const position = job ? jobs.waiting().indexOf(job) + 1 : 0;
+      const pending = listPendingApprovals(ctx.home).filter(entry => entry.job === (job?.name ?? a.job));
+      const approvalNote = pending.length
+        ? "\nAn approval is still pending. This message did not answer it; use " + pending.map(entry => `decide(approval_id="${entry.id}", decision="allow" or "deny")`).join(" or ") + " or the dashboard."
+        : approvalPending ? "\nAn approval is still pending. This message did not answer it; use decide with the approval id from its question or the dashboard." : "";
       const settingsNote = job && Object.keys(settings).length
         ? `\nSaved settings: ${Object.entries(settings).map(([key, value]) => `${key}=${value}`).join(", ")}.${wasRunning ? " Applies from its next turn; the turn running now keeps its settings." : " Applies to this continuation and later turns."}`
         : "";
       return text(
-        t(`followUp.${outcome}`, { name: job?.name ?? a.job, max: jobs.limit, running: jobs.runningCount(), ahead: position > 1 ? ` (${position - 1} queued before it)` : "" }) + settingsNote,
+        t(`followUp.${outcome}`, { name: job?.name ?? a.job, max: jobs.limit, running: jobs.runningCount(), ahead: position > 1 ? ` (${position - 1} queued before it)` : "" }) + settingsNote + approvalNote,
         outcome === "unknown" || outcome === "no-session",
       );
     }),
@@ -1335,6 +1383,7 @@ ${res.text || t("delegate.empty")}`, res.isError);
         },
       },
       guarded("report_progress", async (a: { percent: number; note?: string; eta_minutes?: number }) => {
+        await appendContextEvent(ctx.home,{kind:"progress",agent:ctx.agent,job:process.env[PARENT_JOB_ENV],project:ctx.cwd(),payload:a});
         await parent.progress(a.percent, a.note ?? "", a.eta_minutes);
         return text(t("progress.reported", { percent: Math.round(a.percent) }));
       }),

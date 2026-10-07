@@ -9,12 +9,15 @@ import { storageLease } from "./storage-lock.js";
 import { backupIfDue, BACKUP_INTERVAL_ENV, DEFAULT_BACKUP_INTERVAL_MS } from "./backups.js";
 import { retentionLimit } from "./json-store.js";
 import { historySchema } from "./history-schema.js";
+import { CONVERSATION_MIGRATION } from "./conversation-schema.js";
 import { HistoryIndex } from "./history.js";
+import { isPluginCacheCwd } from "./session-visibility.js";
 import { DECISIONS_SCHEMA, DecisionStore } from "./decisions.js";
+import { configureSqlite, retrySqlite, SQLITE_BUSY_TIMEOUT_MS, SQLITE_REQUEST_BUSY_MS } from "./sqlite-policy.js";
 
 const BACKUP_CHECK_INTERVAL_MS = 60 * 60 * 1_000;
 
-export const SQLITE_STORE_VERSION = 7;
+export const SQLITE_STORE_VERSION = 8;
 
 /** Recipient key used while a message waits for "any peer of this agent kind". */
 export function agentQueueKey(agent: AgentKind): string {
@@ -88,6 +91,7 @@ const MIGRATIONS = [
     );
     PRAGMA user_version = 7;
   ` },
+  { version: 8, sql: CONVERSATION_MIGRATION },
 ] as const;
 
 export function registrationIdentity(peer: PeerInfo): string | null {
@@ -140,6 +144,7 @@ export class MessageStore {
   private backupTimer: ReturnType<typeof setInterval> | null = null;
   readonly decisions: DecisionStore;
   readonly history: HistoryIndex;
+  readonly file: string;
   private readonly stmt: {
     insert: StatementSync;
     unread: StatementSync;
@@ -152,6 +157,7 @@ export class MessageStore {
     file: string,
     private readonly log: Logger,
   ) {
+    this.file = file;
     const existed = file !== ":memory:" && existsSync(file);
     this.home = file === ":memory:" ? null : dirname(file);
     if (file !== ":memory:") mkdirSync(dirname(file), { recursive: true, mode: 0o700 }); // owner-only on Unix
@@ -160,7 +166,7 @@ export class MessageStore {
     catch (err) { this.release(); throw err; }
     try {
       migrateSqlite(this.db, file, existed, SQLITE_STORE_VERSION, MIGRATIONS, log);
-      this.db.exec("PRAGMA journal_mode = WAL;");
+      configureSqlite(this.db);
     } catch (err) {
       this.db.close();
       this.release();
@@ -179,7 +185,7 @@ export class MessageStore {
       ),
       unread: this.db.prepare(
         `SELECT * FROM messages WHERE recipient = ? AND read_at IS NULL
-         ORDER BY CASE WHEN (conversation_id LIKE 'siblings-%:note' OR conversation_id LIKE '%:ack' OR conversation_id LIKE 'files-progress-%') THEN 1 ELSE 0 END,
+         ORDER BY CASE WHEN (conversation_id LIKE '%:note' OR conversation_id LIKE '%:ack' OR conversation_id LIKE 'files-progress-%') THEN 1 ELSE 0 END,
                   created_at ASC, id ASC LIMIT ?`,
       ),
       markRead: this.db.prepare(`UPDATE messages SET read_at = ? WHERE id = ? AND recipient = ? AND read_at IS NULL`),
@@ -239,6 +245,37 @@ export class MessageStore {
       .all(identity, peer.sessionId, peer.agent).map((r) => String(r.name));
   }
 
+  /** Retained registrations include offline sessions, but never worker runners or agent queue keys. */
+  broadcastNames(): string[] {
+    const sessions = this.db.prepare("SELECT session FROM history_sessions WHERE alias=?");
+    const files = this.db.prepare("SELECT DISTINCT cwd FROM history_files WHERE session=? AND cwd<>''");
+    return this.db.prepare(`SELECT name,identity FROM peer_name_owners
+      WHERE identity NOT LIKE 'unidentified:job:%' ORDER BY name`).all().filter((row) => {
+        const identity = String(row.identity);
+        let session: string | undefined;
+        try {
+          const parts: unknown = JSON.parse(identity);
+          if (Array.isArray(parts)) {
+            if (parts[0] === "session" && typeof parts[2] === "string") session = parts[2];
+            else if (typeof parts[1] === "number" && typeof parts[3] === "string") return !isPluginCacheCwd(parts[3]);
+          }
+        } catch { /* Older unidentified registrations may still have indexed session metadata. */ }
+        session ??= String(sessions.get(identity.startsWith("unidentified:") ? identity.slice(13) : String(row.name))?.session ?? "") || undefined;
+        const cwds = session ? files.all(session).map((file) => String(file.cwd)) : [];
+        // Historical rows remain untouched. Unknown paths and any real project path stay eligible.
+        return !cwds.length || cwds.some((cwd) => !isPluginCacheCwd(cwd));
+      }).map((row) => String(row.name));
+  }
+
+  /** Keep lock waits out of the broker event loop. Callbacks must be synchronous atomic steps. */
+  retryWrite<T>(operation: () => T): Promise<T> {
+    return retrySqlite(() => {
+      this.db.exec(`PRAGMA busy_timeout = ${SQLITE_REQUEST_BUSY_MS}`);
+      try { return operation(); }
+      finally { this.db.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`); }
+    });
+  }
+
   insert(m: BridgeMessage): void {
     this.stmt.insert.run(
       m.id,
@@ -285,6 +322,11 @@ export class MessageStore {
 
   pendingJobRecipients(job: string): string[] {
     return this.db.prepare("SELECT DISTINCT recipient FROM messages WHERE from_id=? AND read_at IS NULL AND conversation_id NOT LIKE ?").all(`job:${job}`, `${SIBLING_CONVERSATION_PREFIX}%`).map((row) => String(row.recipient));
+  }
+
+  pendingJobSenders(): Set<string> {
+    return new Set(this.db.prepare("SELECT DISTINCT from_id FROM messages WHERE read_at IS NULL AND from_id LIKE 'job:%' AND conversation_id NOT LIKE ?")
+      .all(`${SIBLING_CONVERSATION_PREFIX}%`).map((row) => String(row.from_id)));
   }
 
   insertOnce(m: BridgeMessage): boolean {

@@ -2,12 +2,12 @@ import { join } from "node:path";
 import { BridgeClient } from "../core/client.js";
 import { LOG_DIR_NAME } from "../core/constants.js";
 import { formatDateTime, t } from "../core/i18n.js";
-import { createLogger } from "../core/logger.js";
+import { createLogger, nullLogger } from "../core/logger.js";
 import { BridgeNode } from "../core/node.js";
 import { resolveDbPath, resolveHome, resolvePipePath } from "../core/paths.js";
 import { APP_VERSION, PROTOCOL_VERSION } from "../core/constants.js";
 import { loadOrCreateToken } from "../core/token.js";
-import { formatMessage } from "../mcp/format.js";
+import { formatMessage, formatReplyRestrictions } from "../mcp/format.js";
 import { CODING_AGENTS, type CodingAgent } from "../core/protocol.js";
 import { parseInstallerArgs, runInstaller } from "./installer.js";
 import { runPermissionHook } from "./permission-hook.js";
@@ -15,11 +15,13 @@ import { runRewakeHook } from "./rewake-hook.js";
 import { runSessionStartHook } from "./session-start-hook.js";
 import { findRunLog, watchRunLog } from "./watch.js";
 import { findRunningDashboard, hostDashboard } from "./dashboard.js";
-import { loadConfig } from "../core/config.js";
+import { DEFAULT_CONFIG, loadConfig } from "../core/config.js";
 import { openBrowser } from "./open.js";
 import { RELIABILITY_SECTIONS, runReliability } from "./reliability.js";
 import { runSmoke } from "./smoke.js";
 import { runCleanup } from "./cleanup.js";
+import { runPermissionRepair } from "./permission-repair.js";
+import { runJobClose } from "./job-close.js";
 import { installOpencode, opencodeSourceDir, uninstallOpencode, type InstallResult } from "./opencode-install.js";
 import { runJobRunner } from "../mcp/job-runner.js";
 import { runReindex } from "./reindex.js";
@@ -38,12 +40,20 @@ function printResult(res: InstallResult): void {
 async function main(argv: string[]): Promise<number> {
   const [command = "help", ...rest] = argv;
   const home = resolveHome();
+  // State inspection must not create logs or repair malformed configuration/stores.
+  if (command === "job-state") return runJobClose(command, rest, home, DEFAULT_CONFIG, nullLogger, out);
   const pipe = resolvePipePath(home);
   const log = createLogger({ home, component: "cli" });
   const makeNode = () =>
     new BridgeNode({ pipePath: pipe, token: loadOrCreateToken(home), dbPath: resolveDbPath(home), agent: "other", name: CLI_PEER_NAME, cwd: process.cwd(), autoWake: false, log });
 
   switch (command) {
+    case "job-state":
+    case "job-close":
+    case "close-idle-jobs":
+      return runJobClose(command, rest, home, loadConfig(home, "other", log), log, out);
+    case "repair-permissions":
+      return runPermissionRepair(rest, home, log, out);
     case "doctor":
       return runDoctor(rest, home, out);
     case "reindex":
@@ -61,9 +71,14 @@ async function main(argv: string[]): Promise<number> {
       let client: BridgeClient;
       try {
         client = await BridgeClient.connect(pipe, log);
-      } catch {
-        out(t("cli.status.noBroker", { pipe }));
-        return 0;
+      } catch (err) {
+        const code = (err as NodeJS.ErrnoException).code;
+        if (code === "ENOENT" || code === "ECONNREFUSED") {
+          out(t("cli.status.noBroker", { pipe }));
+          return 0;
+        }
+        out(`Broker connection could not be confirmed (${code ?? (err as Error).message}). It may be busy or unavailable; this does not establish that it stopped.`);
+        return 1;
       }
       try {
         const ping = await client.request("ping", {});
@@ -93,6 +108,7 @@ async function main(argv: string[]): Promise<number> {
         await node.start();
         const res = await node.send({ to, body: words.join(" ") });
         out(t("cli.sent", { id: res.messages[0]!.id }));
+        for (const hint of formatReplyRestrictions(res)) out(hint);
       } finally {
         await node.stop();
       }

@@ -56,7 +56,7 @@ export function doctor(home: string, now = Date.now()): DoctorReport {
     if (existsSync(path)) {
       let db: DatabaseSync | null = null;
       try {
-        db = new DatabaseSync(path, { readOnly: true });
+        db = new DatabaseSync(path, { readOnly: true, timeout: 50 });
         actual = Number(db.prepare("PRAGMA user_version").get()!.user_version);
         for (const detail of checkDatabase(db)) finding("error", "sqlite-integrity", path, detail);
         if (actual !== expected) finding(actual > expected ? "error" : "warning", "schema-version", path, `Schema ${actual}; code expects ${expected}`);

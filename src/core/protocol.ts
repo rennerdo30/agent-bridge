@@ -13,6 +13,7 @@ import type { NetworkIdentity } from "../network/pairing.js";
 import type { TransferResult } from "../network/files.js";
 import type { RemoteJobRequest } from "../network/remote-job-protocol.js";
 import type { RemoteJobSnapshot } from "../network/remote-jobs.js";
+import type { ConversationRequest, ConversationPage } from "./conversations.js";
 import type { HistorySearch, HistoryResult } from "./history.js";
 import type { TransferProgress, TransferStarted } from "../network/transfers.js";
 import type { DecideArgs, DecisionsArgs, OwnerDecision } from "./decisions.js";
@@ -154,6 +155,8 @@ export interface MessageReceipt {
 }
 
 export interface SendResult {
+  /** Recipient jobs without a reverse reply grant need their current supervisor to relay. */
+  replyRestrictions?: { name: string; supervisor: string }[];
   /** Terminal job mail is retained, but will not be answered without an explicit continuation. */
   finishedRecipient?: { name: string; status: SiblingPeer["status"]; finishedAt?: number; report: string | null };
   /** Failed fan-out attempts are explicit; they are not queued for automatic retry. */
@@ -209,9 +212,11 @@ export interface RequestMap {
   send: [SendArgs, SendResult];
   decide: [DecideArgs, { decision: OwnerDecision; deliveredTo: string[] }];
   decisions: [DecisionsArgs, OwnerDecision[]];
+  getConversation: [ConversationRequest, ConversationPage];
   searchHistory: [HistorySearch, HistoryResult];
   reindexHistory: [{ reset?: boolean }, { work: number; discovering: boolean }];
   peers: [Record<string, never>, PeerInfo[]];
+  brokerLoad: [Record<string, never>, { connectedJobs: number; testedJobs: number }];
   siblings: [Record<string, never>, SiblingPeer[]];
   sendSibling: [SendArgs & { maxHops: number }, SendResult];
   ack: [AckArgs, { acked: number }];

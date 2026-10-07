@@ -1760,6 +1760,7 @@ $("send").addEventListener("submit", async (e) => {
     const d = await r.json();
     if (!r.ok) throw new Error(d.error || "HTTP " + r.status);
     $("sendInfo").textContent = d.deliveredTo?.length ? "Delivered to " + d.deliveredTo.join(", ") : "Queued for " + (d.queuedFor || []).join(", ");
+    if (d.replyGuidance?.length) $("sendInfo").textContent += " " + d.replyGuidance.join(" ");
     $("body").value = "";
     poll();
   } catch (err) {

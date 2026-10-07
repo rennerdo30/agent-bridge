@@ -58,6 +58,10 @@ export interface BridgeConfig {
   codexSubagents: number;
   /** Default sandbox for delegated Codex runs. */
   codexSandbox: CodexSandbox;
+  /** Restricted-token runs keep files owned by the bridge user. Elevated is an explicit opt-in. */
+  codexWindowsSandbox: "unelevated" | "elevated";
+  /** Push and safely reap explicitly closed worktree jobs. Never enabled implicitly. */
+  jobCloseCleanup: boolean;
   /** Reviewer for eligible delegated Codex approvals; does not change the sandbox. */
   codexApprovalsReviewer: CodexApprovalsReviewer;
   /** Worktree edit runs: null inherits codexSandbox, with workspace-write for a read-only default. */
@@ -103,6 +107,8 @@ export const DEFAULT_CONFIG: BridgeConfig = {
   codexBin: DEFAULT_CODEX_BIN,
   codexSubagents: DEFAULT_CODEX_SUBAGENTS,
   codexSandbox: "read-only",
+  codexWindowsSandbox: "unelevated",
+  jobCloseCleanup: false,
   codexApprovalsReviewer: DEFAULT_CODEX_APPROVALS_REVIEWER,
   codexWorktreeSandbox: null,
   codexWorkspaceWriteNetworkAccess: null,
@@ -264,6 +270,7 @@ export function loadConfig(home: string, agent: AgentKind, log: Logger, env: Nod
   }
   const section = isRecord(file[agent]) ? file[agent] : {};
   const localSection = isRecord(project[agent]) ? project[agent] : {};
+  for (const values of [localSection,project]) if (values.codexSubagents===undefined && values.native_subagents!==undefined) values.codexSubagents=typeof values.native_subagents === "boolean" ? (values.native_subagents ? DEFAULT_CODEX_SUBAGENTS : 0) : values.native_subagents;
   /** First valid value wins: env var, then the agent section, then the top level of the file. */
   const pick = <T>(key: keyof BridgeConfig, envKey: string | null, parse: (v: unknown) => T | undefined): T | undefined => {
     for (const v of [envKey ? env[envKey] : undefined, localSection[key], project[key], section[key], file[key]]) {
@@ -296,6 +303,8 @@ export function loadConfig(home: string, agent: AgentKind, log: Logger, env: Nod
       return typeof n === "number" && Number.isInteger(n) && n >= 0 && n <= MAX_CODEX_SUBAGENTS ? n : undefined;
     }) ?? d.codexSubagents,
     codexSandbox: pick("codexSandbox", null, (v) => oneOf(v, CODEX_SANDBOXES)) ?? d.codexSandbox,
+    codexWindowsSandbox: pick("codexWindowsSandbox", null, (v) => oneOf(v, ["unelevated", "elevated"] as const)) ?? d.codexWindowsSandbox,
+    jobCloseCleanup: pick("jobCloseCleanup", null, parseBool) ?? d.jobCloseCleanup,
     codexApprovalsReviewer: pick("codexApprovalsReviewer", null, (v) => oneOf(v, CODEX_APPROVALS_REVIEWERS)) ?? d.codexApprovalsReviewer,
     codexWorktreeSandbox: pick("codexWorktreeSandbox", null, (v) => oneOf(v, CODEX_SANDBOXES)) ?? d.codexWorktreeSandbox,
     codexWorkspaceWriteNetworkAccess: pick("codexWorkspaceWriteNetworkAccess", null, parseBool) ?? d.codexWorkspaceWriteNetworkAccess,
@@ -305,7 +314,7 @@ export function loadConfig(home: string, agent: AgentKind, log: Logger, env: Nod
     claudeModel: pick("claudeModel", null, modelName) ?? d.claudeModel,
     opencodeBin: pick("opencodeBin", ENV.opencodeBin, str) ?? d.opencodeBin,
     opencodeModel: pick("opencodeModel", null, modelName) ?? d.opencodeModel,
-    effort: pick("effort", null, effortLevels) ?? d.effort,
+    effort: Object.assign({}, d.effort, ...[file, section, project, localSection].map((values) => effortLevels(values.effort) ?? {})),
     opencodeAutoApprove: pick("opencodeAutoApprove", null, parseBool) ?? d.opencodeAutoApprove,
     dashboard: pick("dashboard", ENV.dashboard, parseBool) ?? d.dashboard,
     dashboardPort: pick("dashboardPort", null, (v) => parseIntInRange(v, 1, 65_535)) ?? d.dashboardPort,

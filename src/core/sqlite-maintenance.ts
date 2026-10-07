@@ -3,10 +3,12 @@ import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { migrateSqlite } from "./sqlite-migrations.js";
 import { nullLogger } from "./logger.js";
+import { configureSqlite } from "./sqlite-policy.js";
+export { SQLITE_BUSY_TIMEOUT_MS } from "./sqlite-policy.js";
+import { SQLITE_BUSY_TIMEOUT_MS } from "./sqlite-policy.js";
 
 export const ARCHIVE_DB_NAME = "archive.db";
 export const ARCHIVE_STORE_VERSION = 1;
-export const SQLITE_BUSY_TIMEOUT_MS = 3_000;
 
 export function checkDatabase(db: DatabaseSync): string[] {
   const integrity = db.prepare("PRAGMA integrity_check").all().map((r) => String(r.integrity_check));
@@ -21,7 +23,7 @@ export function snapshotDatabase(source: string, target: string): void {
     db.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
     db.prepare("VACUUM INTO ?").run(target);
   } finally { db.close(); }
-  const copy = new DatabaseSync(target, { readOnly: true });
+  const copy = new DatabaseSync(target, { readOnly: true, timeout: SQLITE_BUSY_TIMEOUT_MS });
   try {
     const findings = checkDatabase(copy);
     if (findings.length) throw new Error(`invalid database backup: ${findings.join(", ")}`);
@@ -47,6 +49,7 @@ export function openArchive(path: string): DatabaseSync {
   try {
     db.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
     migrateSqlite(db, path, existed, ARCHIVE_STORE_VERSION, [{ version: 1, sql: ARCHIVE_SCHEMA }], nullLogger);
+    configureSqlite(db);
     return db;
   } catch (err) { db.close(); throw err; }
 }

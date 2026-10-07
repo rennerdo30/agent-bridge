@@ -1,10 +1,13 @@
 import { ReadJournal } from "./read-journal.js";
-import { HISTORY_TICK_MS, historySearchSchema } from "./history.js";
+import { HistoryBackground } from "./history-background.js";
+import { conversationPageSchema, readConversation } from "./conversations.js";
+import { historySearchSchema } from "./history.js";
 import { randomUUID } from "node:crypto";
 import { isPluginCacheCwd } from "./session-visibility.js";
 import { createServer, type Server, type Socket } from "node:net";
 import {
   MAX_BODY_CHARS,
+  BROKER_TESTED_JOB_LOAD,
   MAX_FRAME_BYTES,
   MESSAGE_TTL_MS,
   PROTOCOL_VERSION,
@@ -12,6 +15,7 @@ import {
   QUEUED_MAIL_MAX_AGE_MS,
 } from "./constants.js";
 import type { Logger } from "./logger.js";
+import { isSqliteBusy } from "./sqlite-policy.js";
 import {
   AGENT_KINDS,
   BROADCAST,
@@ -96,8 +100,12 @@ export class Broker {
   private readonly projectMains = new Map<string, string>();
   private server: Server | null = null;
   private readonly conns = new Set<Conn>();
-  private historyTimer: NodeJS.Timeout | null = null;
+  private historyBackground: HistoryBackground | null = null;
   private purgeTimer: NodeJS.Timeout | null = null;
+  private pendingJobMailRoute: Promise<void> | null = null;
+  private pendingJobMailRouteAgain = false;
+  private pendingJobMailRetry: NodeJS.Timeout | null = null;
+  private closing = false;
   private network: NetworkService | null = null;
   private remoteJobs: RemoteJobs | null = null;
   private remoteDashboard: RemoteDashboard | null = null;
@@ -180,15 +188,18 @@ export class Broker {
         this.emit(executor, "inline_job_control", a);
         return { sent: true };
       },
-      inlineJobReport: (c, m) => {
-        const peer = this.requirePeer(c), job = this.storedJobs().find((j) => `job:${j.id}` === m.from?.id);
-        if (!job || (job.executionOwner !== peer.name && job.owner !== peer.name && job.rootName !== peer.name) || typeof job.owner !== "string" || typeof m.body !== "string" || m.body.length > MAX_BODY_CHARS) throw new BridgeError("unauthorized", "Invalid inline job delivery.");
-        const recipient = this.jobRecipient(job);
-        const message = { ...m, to: recipient, recipient, conversationId: this.jobConversation(job, recipient, m.conversationId) };
-        if (this.store.insertJobDelivery(message)) {
-          const target = this.connByName(recipient);
-          if (target && !target.peer?.unavailable) this.emit(target, "message", message);
-        }
+      inlineJobReport: async (c, m) => {
+        const peer = this.requirePeer(c);
+        await this.store.retryWrite(() => {
+          const job = this.storedJobs().find((j) => `job:${j.id}` === m.from?.id);
+          if (!job || (job.executionOwner !== peer.name && job.owner !== peer.name && job.rootName !== peer.name) || typeof job.owner !== "string" || typeof m.body !== "string" || m.body.length > MAX_BODY_CHARS) throw new BridgeError("unauthorized", "Invalid inline job delivery.");
+          const recipient = this.jobRecipient(job);
+          const message = { ...m, to: recipient, recipient, conversationId: this.jobConversation(job, recipient, m.conversationId) };
+          if (this.store.insertJobDelivery(message)) {
+            const target = this.connByName(recipient);
+            if (target && !target.peer?.unavailable) this.emit(target, "message", message);
+          }
+        });
         return { saved: true };
       },
       auth: (c, a) => {
@@ -196,7 +207,7 @@ export class Broker {
         c.authed = true;
         return { brokerPid: process.pid };
       },
-      hello: (c, a) => { const result = this.onHello(c, a); const job = this.storedJobs().find((j) => `job:${j.id}` === c.peer?.id); if (job?.ownershipHistory) this.refreshJobPeer(job); this.routePendingJobMail(); this.store.history.rememberPeer(c.peer!); return result; },
+      hello: async (c, a) => { const result = this.onHello(c, a); const job = this.storedJobs().find((j) => `job:${j.id}` === c.peer?.id); if (job?.ownershipHistory) this.refreshJobPeer(job); void this.routePendingJobMail().catch((err) => this.log.warn("pending job reroute deferred", { err: String(err) })); this.store.history.rememberPeer(c.peer!); return result; },
       send: (c, a) => this.onSend(c, a),
       decide: (c, a) => this.onDecide(c, a),
       decisions: (c, a) => this.onDecisions(c, a),
@@ -205,20 +216,23 @@ export class Broker {
         if (!parsed.success) throw new BridgeError("bad_request", "Invalid history query or filters.");
         return this.store.history.search(parsed.data);
       },
+      getConversation: (_, a) => readConversation(this.store.history.database, conversationPageSchema.parse(a)),
       reindexHistory: (_, a) => {
         const args = z.object({ reset: z.boolean().optional() }).strict().parse(a);
+        if (this.historyBackground) return this.historyBackground.tick(args.reset);
         if (args.reset) this.store.history.reset();
         return this.store.history.tick();
       },
       peers: () => this.livePeers(),
+      brokerLoad: () => ({ connectedJobs: [...this.conns].filter((conn) => conn.peer?.jobAgent).length, testedJobs: BROKER_TESTED_JOB_LOAD }),
       dashboardPeers: () => this.dashboardPeers().concat(this.network?.peers() ?? []),
       dashboardRead: (_, a) => this.remoteDashboard?.request(a.host, a.request) ?? dashboardError("remote_offline", "Networking is unavailable."),
       siblings: (c) => this.siblingPeers(c),
       sendSibling: (c, a) => this.onSendSibling(c, a),
       messageReceipt: (c, a) => this.messageReceipt(c, a.id),
-      ack: (c, a) => ({ acked: this.store.markRead(this.requirePeer(c).name, a.ids ?? [], this.now()) }),
+      ack: async (c, a) => ({ acked: await this.store.retryWrite(() => this.store.markRead(this.requirePeer(c).name, a.ids ?? [], this.now())) }),
       pending: (c, a) =>
-        this.unreadMail(this.requirePeer(c).name, Math.min(Math.max(1, a.limit ?? PENDING_DEFAULT_LIMIT), PENDING_MAX_LIMIT)),
+        this.pendingMail(this.requirePeer(c).name, Math.min(Math.max(1, a.limit ?? PENDING_DEFAULT_LIMIT), PENDING_MAX_LIMIT)),
       updatePeer: (c, a) => { const peer = this.onUpdatePeer(c, a); const job = this.storedJobs().find((j) => `job:${j.id}` === peer.id); if (job?.ownershipHistory) this.refreshJobPeer(job); this.store.history.rememberPeer(peer); return peer; },
       claimMail: (c, a) => this.onClaimMail(c, a),
       ping: () => ({ brokerPid: process.pid, protocol: PROTOCOL_VERSION }),
@@ -292,10 +306,7 @@ export class Broker {
         this.applyHandoffs();
         this.purgeTimer = setInterval(() => this.purge(), PURGE_INTERVAL_MS);
         this.purgeTimer.unref();
-        this.historyTimer = setInterval(() => {
-          try { this.store.history.tick(); } catch (err) { this.log.warn("history indexing failed", { err: String(err) }); }
-        }, HISTORY_TICK_MS);
-        this.historyTimer.unref();
+        if (this.store.file !== ":memory:") this.historyBackground = new HistoryBackground(this.store.file, this.log);
         this.purge();
         this.log.info("broker listening", { pipe: this.pipePath });
         // Another broker may have enabled or changed pairing since this session started.
@@ -329,7 +340,11 @@ export class Broker {
   }
 
   async close(): Promise<void> {
-    if (this.historyTimer) clearInterval(this.historyTimer);
+    this.closing = true;
+    if (this.pendingJobMailRetry) clearTimeout(this.pendingJobMailRetry);
+    this.pendingJobMailRetry = null;
+    await this.historyBackground?.close();
+    this.historyBackground = null;
     if (this.purgeTimer) clearInterval(this.purgeTimer);
     await this.networkChange;
     this.remoteDashboard?.close();
@@ -343,6 +358,7 @@ export class Broker {
     const server = this.server;
     this.server = null;
     if (server) await new Promise<void>((r) => server.close(() => r()));
+    await this.pendingJobMailRoute?.catch((err) => this.log.warn("pending mail route stopped", { err: String(err) }));
     this.store.close();
     this.log.info("broker closed");
   }
@@ -428,8 +444,8 @@ export class Broker {
     socket.on("error", (err) => this.log.debug("connection error", { err: err.message }));
     socket.on("close", () => {
       this.conns.delete(conn);
-      try { this.routePendingJobMail(); } catch (err) { this.log.warn("pending job reroute deferred", { err: String(err) }); }
       if (conn.peer) {
+        void this.routePendingJobMail().catch((err) => this.log.warn("pending job reroute deferred", { err: String(err) }));
         this.log.info("peer left", { name: conn.peer.name, agent: conn.peer.agent });
         if (!conn.peer.jobAgent) this.broadcastEvent("peer_left", conn.peer, conn);
       }
@@ -585,33 +601,68 @@ export class Broker {
         if (this.store.insertOnce(m)) { const conn = this.connByName(recipient!); if (conn) this.emit(conn, "message", m); }
       }
     }
-    this.routePendingJobMail();
+    void this.routePendingJobMail().catch((err) => this.log.warn("pending job reroute deferred", { err: String(err) }));
   }
 
-  routePendingJobMail(): void {
-    for (const job of this.storedJobs()) {
-      if (job.remote || !primaryFor(job)) continue;
-      const recipient = this.jobRecipient(job), target = this.connByName(recipient);
-      if (Array.isArray(job.deliveryHistory)) for (const envelope of job.deliveryHistory) {
-        if (!isRecord(envelope) || !isRecord(envelope.from) || envelope.from.id !== `job:${job.id}` || typeof envelope.id !== "string" || typeof envelope.body !== "string") continue;
-        const message = { ...envelope, to: recipient, recipient, conversationId: this.jobConversation(job, recipient, String(envelope.conversationId)) } as unknown as BridgeMessage;
-        if (this.store.insertJobDelivery(message)) {
-          const names = new Set([recipient, envelope.to, envelope.recipient, ...mastersFor(job)]);
-          const consumed = this.jobsPath && [...names].some((name) => typeof name === "string" &&
-            new ReadJournal(dirname(this.jobsPath!)).read(`name:${name}`).includes(message.id));
-          if (consumed) this.store.markRead(recipient, [message.id], this.now());
-            else if (target && !target.peer?.unavailable) this.emit(target, "message", message);
+  routePendingJobMail(): Promise<void> {
+    if (this.closing) return Promise.resolve();
+    this.pendingJobMailRouteAgain = true;
+    this.pendingJobMailRoute ??= this.reroutePendingJobMail().catch((err) => {
+      // A busy interval can outlast one RPC deadline. Durable envelopes still need a drain
+      // even if no new connection arrives to trigger another routing pass.
+      if (isSqliteBusy(err) && !this.closing && !this.pendingJobMailRetry) {
+        this.pendingJobMailRetry = setTimeout(() => {
+          this.pendingJobMailRetry = null;
+          void this.routePendingJobMail().catch((error) => this.log.warn("pending job mail retry deferred", { err: String(error) }));
+        }, 1_000);
+        this.pendingJobMailRetry.unref();
+      }
+      throw err;
+    }).finally(() => { this.pendingJobMailRoute = null; });
+    return this.pendingJobMailRoute;
+  }
+
+  private async reroutePendingJobMail(): Promise<void> {
+    do {
+      this.pendingJobMailRouteAgain = false;
+      let processed = 0;
+      let pending = this.store.pendingJobSenders();
+      for (const snapshot of this.storedJobs()) {
+        if (++processed % 16 === 0) {
+          await new Promise<void>((resolve) => setImmediate(resolve));
+          pending = this.store.pendingJobSenders();
         }
+        if (snapshot.remote || !primaryFor(snapshot)) continue;
+        // Empty jobs need no write attempt or refreshed archive traversal. Every retained
+        // envelope still enters the retry callback, which rereads ownership before writing.
+        if ((!Array.isArray(snapshot.deliveryHistory) || !snapshot.deliveryHistory.length) && !pending.has(`job:${snapshot.id}`)) continue;
+        await this.store.retryWrite(() => {
+          if (this.closing) return;
+          const job = this.storedJobs().find((record) => record.id === snapshot.id);
+          if (!job || job.remote || !primaryFor(job)) return;
+          if ((!Array.isArray(job.deliveryHistory) || !job.deliveryHistory.length) && !this.store.pendingJobRecipients(String(job.id)).length) return;
+          const recipient = this.jobRecipient(job), target = this.connByName(recipient);
+          if (Array.isArray(job.deliveryHistory)) for (const envelope of job.deliveryHistory) {
+            if (!isRecord(envelope) || !isRecord(envelope.from) || envelope.from.id !== `job:${job.id}` || typeof envelope.id !== "string" || typeof envelope.body !== "string") continue;
+            const message = { ...envelope, to: recipient, recipient, conversationId: this.jobConversation(job, recipient, String(envelope.conversationId)) } as unknown as BridgeMessage;
+            const inserted = this.store.insertJobDelivery(message);
+            const names = new Set([recipient, envelope.to, envelope.recipient, ...mastersFor(job)]);
+            const consumed = this.jobsPath && [...names].some((name) => typeof name === "string" &&
+              new ReadJournal(dirname(this.jobsPath!)).read(`name:${name}`).includes(message.id));
+            if (consumed) this.store.markRead(recipient, [message.id], this.now());
+            else if (inserted && target && !target.peer?.unavailable) this.emit(target, "message", message);
+          }
+          if (!target || target.peer?.unavailable) return;
+          for (const from of this.store.pendingJobRecipients(String(job.id))) {
+            if (this.jobsPath) this.store.markRead(from, new ReadJournal(dirname(this.jobsPath)).read(`name:${from}`), this.now());
+            const moved = this.store.handoffMail(from, recipient, String(job.id), this.now(), recipient !== job.parentJob && recipient !== primaryFor(job));
+            const previous = this.connByName(from);
+            if (previous && moved.length) this.emit(previous, "mail_retracted", { ids: moved.map((m) => m.id) });
+            for (const m of moved) this.emit(target, "message", m);
+          }
+        });
       }
-      if (!target || target.peer?.unavailable) continue;
-      for (const from of this.store.pendingJobRecipients(String(job.id))) {
-        if (this.jobsPath) this.store.markRead(from, new ReadJournal(dirname(this.jobsPath)).read(`name:${from}`), this.now());
-        const moved = this.store.handoffMail(from, recipient, String(job.id), this.now(), recipient !== job.parentJob && recipient !== primaryFor(job));
-        const previous = this.connByName(from);
-        if (previous && moved.length) this.emit(previous, "mail_retracted", { ids: moved.map((m) => m.id) });
-        for (const m of moved) this.emit(target, "message", m);
-      }
-    }
+    } while (this.pendingJobMailRouteAgain && !this.closing);
   }
 
   private jobRecipient(job: Record<string, unknown>): string {
@@ -747,11 +798,11 @@ export class Broker {
         createdAt: this.now(), readAt: null,
       };
       // Persist both notices before surfacing the error. The original text remains inspectable.
-      this.store.insert(notice);
+      await this.store.retryWrite(() => this.store.insert(notice));
       this.emit(conn, "message", notice);
       if (sender.jobParent && sender.jobParent !== sender.name) {
         const copy = { ...notice, recipient: sender.jobParent };
-        this.store.insert(copy);
+        await this.store.retryWrite(() => this.store.insert(copy));
         const supervisor = this.connByName(sender.jobParent);
         if (supervisor) this.emit(supervisor, "message", copy);
       }
@@ -765,7 +816,7 @@ export class Broker {
     for (const owner of observers) {
       const note = { ...message, id: randomUUID(), recipient: owner,
         conversationId: `${conversationId}${SIBLING_NOTE_SUFFIX}`, body: `Sibling message to ${message.recipient}:\n\n${message.body}` };
-      this.store.insert(note);
+      await this.store.retryWrite(() => this.store.insert(note));
       const supervisor = this.connByName(owner);
       if (supervisor) this.emit(supervisor, "message", note);
     }
@@ -932,7 +983,7 @@ export class Broker {
     if (args.unavailable !== undefined) {
       if (peer.jobAgent || typeof args.unavailable !== "boolean") throw new BridgeError("bad_request", "Only masters can change availability.");
       peer.unavailable = args.unavailable;
-      this.routePendingJobMail();
+      void this.routePendingJobMail().catch((err) => this.log.warn("pending job reroute deferred", { err: String(err) }));
       if (!peer.unavailable) this.replayMail(conn, peer);
     }
     if (peer.jobOwner) {
@@ -1059,8 +1110,13 @@ export class Broker {
       return { live: [this.connByName(target.name)!], queued: [] };
     }
     if (to === BROADCAST) {
-      if (others.length === 0) throw new BridgeError("unknown_target", "no other peers are online");
-      return { live: others, queued: [] };
+      if (sender.jobAgent) throw new BridgeError("unauthorized", "job runners cannot broadcast to independent sessions");
+      const ownNames = new Set([sender.name, ...this.store.namesFor(sender)]);
+      const queued = this.store.broadcastNames().filter((name) => !ownNames.has(name) && !this.recipientConn(name));
+      if (others.length === 0 && queued.length === 0 && !this.network?.peers().some((p) => !p.jobAgent)) {
+        throw new BridgeError("unknown_target", "no other known sessions; send to an exact name to create an offline queue");
+      }
+      return { live: others, queued };
     }
     const recipient = this.recipientConn(to);
     const exact = all.find((c) => c.peer!.id === to || c === recipient);
@@ -1107,6 +1163,21 @@ export class Broker {
     return result;
   }
 
+  /** Reverse permissions use the current durable record, not stale runner registration. */
+  private replyRestriction(sender: PeerInfo, name: string): { name: string; supervisor: string } | null {
+    const jobs = this.storedJobs(), peer = this.connByName(name)?.peer;
+    const stored = jobs.find((j) => j.name === name);
+    if (!stored && !peer?.jobAgent) return null;
+    const job = stored ?? { id: peer!.id.replace(/^job:/, ""), name, owner: peer!.jobParent,
+      supervisor: peer!.jobOwner, rootName: peer!.rootName, parentJob: peer!.parentJob,
+      workdir: peer!.cwd, args: { send_to: peer!.jobSendTo } };
+    const recipient = { ...peer, id: `job:${job.id}`, name, jobOwner: typeof job.supervisor === "string" ? job.supervisor : peer?.jobOwner } as PeerInfo;
+    const grants = isRecord(job.args) && Array.isArray(job.args.send_to) ? job.args.send_to : [];
+    if (sender.name === name || grants.includes(sender.name) || this.groups.canControl(sender, job, this.localPeers()) ||
+        sender.jobAgent && (this.sameJobFamily(recipient, sender, jobs) || this.sharedJobs(recipient, sender, jobs))) return null;
+    return { name, supervisor: this.jobRecipient(job) || peer?.jobParent || "the project's main session" };
+  }
+
   private async routeSend(conn: Conn, sender: PeerInfo, args: RequestMap["send"][0]): Promise<RequestMap["send"][1]> {
     const body = typeof args.body === "string" ? args.body : "";
     if (!body.trim()) throw new BridgeError("bad_request", "message body is empty");
@@ -1116,6 +1187,7 @@ export class Broker {
 
     // Durable ownership wins over the old name cached in a still-running parent link.
     const own = sender.jobAgent ? this.storedJobs().find((j) => `job:${j.id}` === sender.id) : undefined;
+    const supervisorMail = Boolean(own && (to === sender.jobParent || mastersFor(own).includes(to)));
     if (own) {
       if (to === sender.jobParent || mastersFor(own).includes(to)) to = this.jobRecipient(own);
       else if (Array.isArray(own.ownershipHistory) && own.ownershipHistory.some((h) => isRecord(h) && h.fromRootName === to)) to = String(own.rootName);
@@ -1158,13 +1230,11 @@ export class Broker {
     };
     if (to.includes("/")) {
       const result = await this.requireNetwork().send({ ...base, recipient: to });
-      for (const message of result.messages) this.store.insert(message);
+      for (const message of result.messages) await this.store.retryWrite(() => this.store.insert(message));
       return result;
     }
     const remoteTargets = to === BROADCAST ? this.network?.peers().filter((p) => !p.jobAgent).map((p) => p.name) ?? [] : [];
-    const { live, queued } = to === BROADCAST && remoteTargets.length
-      ? { live: [...this.conns].filter((c) => c.peer && c.peer.id !== sender.id && !c.peer.jobAgent), queued: [] }
-      : this.resolveTargets(to, sender);
+    let { live, queued } = this.resolveTargets(to, sender);
     // With no available master, retain job reports under the primary without waking it.
     if (own && to === this.jobRecipient(own)) {
       for (let i = live.length - 1; i >= 0; i--) {
@@ -1176,11 +1246,38 @@ export class Broker {
           live.some((c) => c.peer!.jobAgent && (!sender.jobAgent || !sender.jobOwner || (!this.sameJobFamily(sender, c.peer!) && !this.sharedJobs(sender, c.peer!) && !sender.jobSendTo?.includes(c.peer!.name)))))) {
       throw new BridgeError("unauthorized", "sibling chat requires the same supervisor or an explicit send_to job grant");
     }
+    const replyRestrictions = conversationId.startsWith(CONTROL_CONVERSATION_PREFIX) ? [] :
+      [...live.map((c) => c.peer!.name), ...queued].flatMap((name) => {
+        const restriction = this.replyRestriction(sender, name);
+        return restriction ? [restriction] : [];
+      });
+    const envelope = (recipient: string): BridgeMessage => {
+      const restriction = replyRestrictions.find((r) => r.name === recipient);
+      return { ...base, recipient, body: restriction ? base.body +
+        `\n\n[agent-bridge routing hint: this sender can't receive your direct reply; answer via your supervisor ${restriction.supervisor} if needed.]` : base.body };
+    };
     const messages: BridgeMessage[] = [];
-    for (const c of live) messages.push({ ...base, recipient: c.peer!.name });
-    for (const key of queued) messages.push({ ...base, recipient: key });
-    for (const m of messages) this.store.insert(m);
-    live.forEach((c, i) => this.emit(c, "message", messages[i]!));
+    let inserted = true;
+    if (supervisorMail) {
+      await this.store.retryWrite(() => {
+        const current = this.storedJobs().find((job) => `job:${job.id}` === sender.id);
+        if (!current) throw new BridgeError("unauthorized", "Job ownership is unavailable.");
+        this.refreshJobPeer(current);
+        to = this.jobRecipient(current);
+        ({ live, queued } = this.resolveTargets(to, sender));
+        for (let i = live.length - 1; i >= 0; i--) {
+          if (live[i]!.peer?.unavailable) queued.push(live.splice(i, 1)[0]!.peer!.name);
+        }
+        const message = { ...base, to, recipient: live[0]?.peer!.name ?? queued[0]!, conversationId: this.jobConversation(current, to, base.conversationId) };
+        inserted = this.store.insertJobDelivery(message);
+        messages.splice(0, messages.length, message);
+      });
+    } else {
+      for (const c of live) messages.push(envelope(c.peer!.name));
+      for (const key of queued) messages.push(envelope(key));
+      for (const m of messages) await this.store.retryWrite(() => this.store.insert(m));
+    }
+    if (inserted) live.forEach((c, i) => this.emit(c, "message", messages[i]!));
 
     this.log.info("message routed", {
       id,
@@ -1191,18 +1288,19 @@ export class Broker {
       queuedFor: queued,
     });
     const result: RequestMap["send"][1] = { messages, deliveredTo: live.map((c) => c.peer!.name), queuedFor: queued, recipientStates: live.map((c) => ({ name: c.peer!.name, activity: c.peer!.activity, autoWake: c.peer!.autoWake, wakeOnDirect: c.peer!.wakeOnDirect, wakeAvailable: c.peer!.wakeAvailable, wakeMaxHops: c.peer!.wakeMaxHops })) };
+    if (replyRestrictions.length) result.replyRestrictions = replyRestrictions;
     for (const recipient of remoteTargets) {
       // Fan out only at the originating broker. Receiving brokers deliver one local envelope.
       try {
         const remote = await this.requireNetwork().send({ ...base, recipient });
-        for (const message of remote.messages) this.store.insert(message);
+        for (const message of remote.messages) await this.store.retryWrite(() => this.store.insert(message));
         result.messages.push(...remote.messages);
         result.deliveredTo.push(...remote.deliveredTo);
         result.queuedFor.push(...remote.queuedFor);
         result.recipientStates!.push(...remote.recipientStates ?? []);
       } catch (err) {
         const message = { ...base, recipient };
-        this.store.insert(message);
+        await this.store.retryWrite(() => this.store.insert(message));
         result.messages.push(message);
         (result.failedFor ??= []).push({ name: recipient, reason: (err as Error).message });
         this.log.warn("broadcast recipient delivery failed", { id, recipient, err: String(err) });
@@ -1211,10 +1309,25 @@ export class Broker {
     return result;
   }
 
+  /** A pending response is one frame, unlike streamed replay events. Bound it by bytes as well as rows. */
+  private pendingMail(recipient: string, limit: number): BridgeMessage[] {
+    const result: BridgeMessage[] = [];
+    let bytes = 1_024; // response envelope and separators
+    for (const message of this.unreadMail(recipient, limit)) {
+      const size = Buffer.byteLength(JSON.stringify(message)) + 1;
+      if (bytes + size > MAX_FRAME_BYTES) break;
+      result.push(message);
+      bytes += size;
+    }
+    return result;
+  }
+
   private unreadMail(recipient: string, limit: number): BridgeMessage[] {
     const messages = this.store.unread(recipient, limit);
     if (!this.jobsPath) return messages;
-    const finished = new Set(this.storedJobs().filter((j) => j.status && j.status !== "running" &&
+    const noteSenders = new Set(messages.filter((m) => !isQuietMessage(m) && m.conversationId.endsWith(SIBLING_NOTE_SUFFIX)).map((m) => m.from.id));
+    if (!noteSenders.size) return messages;
+    const finished = new Set(this.storedJobs().filter((j) => noteSenders.has(`job:${j.id}`) && j.status && j.status !== "running" &&
       (!primaryFor(j) || (!j.projectRoot && !j.deliveryHistory && !j.ownershipHistory && !this.groups.jobRoot(j, this.localPeers())))).map((j) => `job:${j.id}`));
     // Preserve the established retirement of old job status notes. Observer copies and quiet
     // acknowledgements remain available on demand even after the originating job finishes.

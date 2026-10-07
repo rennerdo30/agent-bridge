@@ -20,6 +20,8 @@ beforeEach(() => {
   vi.stubEnv("GIT_CONFIG_GLOBAL", join(home, "global.gitconfig"));
   vi.stubEnv("GIT_CONFIG_NOSYSTEM", "1");
   git("init", "-q");
+  git("config", "user.name", "Repository Owner");
+  git("config", "user.email", "owner@example.test");
   // Like the real repo, pin line endings with .gitattributes so a global core.autocrlf=true
   // (set on the CI Windows runners) cannot rewrite them on merge.
   writeFileSync(join(repo, ".gitattributes"), "* text=auto eol=lf\n");
@@ -52,6 +54,8 @@ describe("worktree isolation", () => {
   });
 
   it("inherits global identity when the repository has no local identity", async () => {
+    git("config", "--unset", "user.name");
+    git("config", "--unset", "user.email");
     writeFileSync(join(home, "global.gitconfig"), "[user]\nname = Global Owner\nemail = global@example.test\n");
     const wt = await createWorktree({ cwd: repo, home, jobId: "global-identity", log: nullLogger });
     writeFileSync(join(wt.path, "a.txt"), "changed\n");
@@ -59,12 +63,13 @@ describe("worktree isolation", () => {
     expect(git("log", "-1", "--format=%an <%ae>", wt.branch)).toBe("Global Owner <global@example.test>");
   });
 
-  it.each([false, true])("falls back only for missing identity fields (configured name: %s)", async (nameSet) => {
-    if (nameSet) git("config", "user.name", "Repository Owner");
+  it.each(["user.name", "user.email"])("preserves work when %s is missing", async (key) => {
+    git("config", "--unset", key);
     const wt = await createWorktree({ cwd: repo, home, jobId: "fallback", log: nullLogger });
     writeFileSync(join(wt.path, "a.txt"), "changed\n");
-    await finishWorktree(wt, "fallback identity", nullLogger);
-    expect(git("log", "-1", "--format=%an <%ae>", wt.branch)).toBe(`${nameSet ? "Repository Owner" : "agent-bridge"} <agent-bridge@localhost>`);
+    await expect(finishWorktree(wt, "checkpoint", nullLogger)).rejects.toThrow(`Configure ${key}`);
+    expect(readFileSync(join(wt.path, "a.txt"), "utf8")).toBe("changed\n");
+    expect(git("rev-parse", wt.branch)).toBe(wt.base);
   });
 
   it("keeps the working copy untouched and commits the subagent's changes on a branch", async () => {
@@ -148,12 +153,19 @@ describe("worktree isolation", () => {
     expect(await gitDirsOutside(repo, nullLogger)).toEqual([]);
   });
 
-  it("builds commit messages from the answer, not the task", () => {
-    const m = subagentCommitMessage({ answer: "**Fixed** the castle gate alignment.\n\nDetails …", task: "AnimaSky (Unity 6 URP, C#). Own git worktree. First: …", job: "codex-job-1", agent: "codex", model: "gpt-6.1-sol" });
-    const [subject, , body] = m.split("\n");
-    expect(subject).toBe("Fixed the castle gate alignment.");
-    expect(body).toContain("codex-job-1");
-    expect(m).toContain("Co-Authored-By: gpt-6.1-sol via codex <noreply@openai.com>");
+  it.each(["codex", "claude", "opencode"])("never includes attribution or task text in %s checkpoints", async (agent) => {
+    const m = subagentCommitMessage({ answer: "**Fixed** the castle gate alignment.\n\nDetails …", task: "AnimaSky (Unity 6 URP, C#). Own git worktree. First: …", job: `${agent}-job-1`, agent, model: "gpt-6.1-sol" });
+    expect(m).toBe("Save worktree changes");
+    vi.stubEnv("GIT_AUTHOR_NAME", "Unwanted Author");
+    vi.stubEnv("GIT_AUTHOR_EMAIL", "unwanted@example.test");
+    const hook = join(repo, ".git", "hooks", "prepare-commit-msg");
+    writeFileSync(hook, '#!/bin/sh\nprintf "\\nCo-Authored-By: unwanted\\n" >> "$1"\n');
+    chmodSync(hook, 0o755);
+    const wt = await createWorktree({ cwd: repo, home, jobId: agent, log: nullLogger });
+    writeFileSync(join(wt.path, "a.txt"), "changed\n");
+    await finishWorktree(wt, `AI ${agent} checkpoint\n\nCo-Authored-By: unwanted`, nullLogger);
+    expect(git("log", "-1", "--format=%B", wt.branch)).toBe("Save worktree changes");
+    expect(git("log", "-1", "--format=%an <%ae>", wt.branch)).toBe("Repository Owner <owner@example.test>");
   });
 
   it("refuses outside a git repository", async () => {

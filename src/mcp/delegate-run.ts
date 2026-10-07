@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { appendContextEvent } from "../core/context-journal.js";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import type { BridgeConfig } from "../core/config.js";
 import { APP_VERSION, DEFAULT_DELEGATE_TIMEOUT_SEC, DELEGATION_METADATA_VERSION, ENV, MAX_JOB_TIMEOUT_SEC } from "../core/constants.js";
@@ -25,6 +26,9 @@ import { SiblingLink } from "./siblings.js";
 import { denyPendingApprovals, waitForApproval, type Job, type RunResult } from "./jobs.js";
 import { DELEGATION_TARGETS, supportsAsk, type Access, type RelayWiring, type TargetArgs } from "./targets.js";
 import { JOB_SETTING_KEYS } from "./job-settings.js";
+import { prepareWorktreeContinuation, recordWorktreeOrigin } from "../core/job-close.js";
+import { invalidateWorktreePathProof, worktreeLease } from "../core/worktree-state.js";
+import { assertPhysicalPath } from "../core/permission-repair.js";
 
 /** Added to a subagent's task when it can report progress. */
 const PROGRESS_HINT =
@@ -119,7 +123,7 @@ export async function runDelegate(
   onProgress: ((message: string) => void) | undefined, background: boolean, job?: Job,
 ): Promise<RunResult> {
   checkDepth(rc.cfg.maxDelegateDepth);
-  if (!job?.rootSession) return runDelegateInner(rc, target, a, signal, onProgress, background, job);
+  if (!job?.rootSession) return runWithWorktreeLease(rc, target, a, signal, onProgress, background, job);
   const budget = new RootConcurrency(rc.home, job.rootSession);
   const owner = { id: `${job.name}-${randomUUID()}`, pid: process.pid };
   let timer: NodeJS.Timeout | undefined;
@@ -128,8 +132,25 @@ export async function runDelegate(
     if (!budget.acquire(owner)) throw new Error("The top session's subagent concurrency limit is reached.");
     timer = setInterval(() => { try { budget.renew(owner); } catch (err) { rc.log.warn("could not renew root concurrency lease", { err: String(err) }); } }, SLOT_RENEW_MS);
     timer.unref();
-    return await runDelegateInner(rc, target, a, signal, onProgress, background, job);
+    return await runWithWorktreeLease(rc, target, a, signal, onProgress, background, job);
   } finally { clearInterval(timer); budget.release(owner); budget.close(); }
+}
+
+async function runWithWorktreeLease(rc: RunContext, target: CodingAgent, a: DelegateArgs, signal: AbortSignal, onProgress: ((message: string) => void) | undefined, background: boolean, job?: Job): Promise<RunResult> {
+  const wt = a._worktree ?? (a.worktree ? await createWorktree({ cwd: a.cwd || rc.cwd(), home: rc.home, jobId: randomUUID().slice(0, 8), log: rc.log }) : null);
+  const root = wt?.path ?? bridgeWorktreeRoot(a.cwd || rc.cwd(), rc.home);
+  if (!root) return runDelegateInner(rc, target, a, signal, onProgress, background, job);
+  const release = worktreeLease(rc.home, { path: root });
+  try {
+    if (wt) {
+      if (!a._worktree) await recordWorktreeOrigin(rc.home, wt, rc.log);
+      else await prepareWorktreeContinuation(rc.home, wt, rc.log);
+    } else {
+      assertPhysicalPath(root);
+      invalidateWorktreePathProof(rc.home, root);
+    }
+    return await runDelegateInner(rc, target, wt ? { ...a, _worktree: wt } : a, signal, onProgress, background, job);
+  } finally { release(); }
 }
 
 async function runDelegateInner(
@@ -163,6 +184,14 @@ async function runDelegateInner(
   const asked: string[] = [];
   let relayCalls = 0;
   const codexHash = target === "codex" ? codexPermissionHookHash() : null;
+  const journalPermission = async (request: PermissionRequest, decide: () => Promise<PermissionDecision>) => {
+    const id = randomUUID();
+    const context = { kind: "approval" as const, agent: target, project: workdir, job: job?.name ?? a._job, session: job?.sessionId ?? undefined };
+    await appendContextEvent(rc.home, { ...context, payload: { id, stage: "request", request } });
+    const decision = await decide();
+    await appendContextEvent(rc.home, { ...context, payload: { id, stage: "decision", decision } });
+    return decision;
+  };
   // Native permission dialogs keep their existing eligibility; the dashboard can answer the same wait.
   const askUser = rc.askUser ? async (r: PermissionRequest): Promise<PermissionDecision> => {
     if (!job) return rc.askUser!(r);
@@ -176,12 +205,12 @@ async function runDelegateInner(
   } : undefined;
   try {
     if (access === "ask" && askUser) {
-      const decide = async (r: PermissionRequest) => {
+      const decide = async (r: PermissionRequest) => journalPermission(r, async () => {
         relayCalls++;
         const d = await askUser(r);
         asked.push(`${d.allow ? "allowed" : "denied"}: ${r.tool} ${r.detail.slice(0, 80)}`);
         return d;
-      };
+      });
       relay = new PermissionRelay(decide, dlog);
       await relay.start();
       wiring = { onPermission: decide, env: relay.childEnv(), codexHookTrusted: codexPermissionHookTrusted(rc.home) };
@@ -199,7 +228,7 @@ async function runDelegateInner(
   // Remembered per job, so follow-ups and recoveries don't ask again.
   const allowedServers = job ? (job.allowedServers ??= new Set<string>()) : new Set<string>();
   const autoApprove = [...cfg.autoApproveTools, ...(access === "read" ? DESK_READ_PATTERNS : []), ...(a.allow_tools ?? [])];
-  const approve = async (r: PermissionRequest): Promise<PermissionDecision> => {
+  const approve = async (r: PermissionRequest): Promise<PermissionDecision> => journalPermission(r, async () => {
     // Handoff tools first: no allow pattern or earlier "allow" for their server covers them.
     if (isHandoffToolCall(r)) {
       asked.push(`declined (handoff tool): ${r.tool} ${r.detail.slice(0, 80)}`);
@@ -225,7 +254,7 @@ async function runDelegateInner(
     } else d = r.tool.startsWith("mcp:") && access === "edit" ? { allow: true } : { allow: false, message: "No one to ask in this session." };
     if (d.allow && !r.automaticReview && r.tool.startsWith("mcp:")) allowedServers.add(r.tool);
     return d;
-  };
+  });
   let feed: ReturnType<typeof startRunFeed>;
   try {
     feed = startRunFeed({

@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { setTimeout as delay } from "node:timers/promises";
 import { delegateToCodexAppServer } from "../src/core/codex-appserver.js";
-import { CAPACITY_RETRY_DELAYS_MS, DelegateError, failureCause, isTransientProviderError, retryTransient, runProcess, TRANSIENT_RETRY_MESSAGE, type DelegateRequest, type DelegateResult } from "../src/core/delegate.js";
+import { CAPACITY_RETRY_DELAYS_MS, DATABASE_RETRY_DELAYS_MS, DelegateError, failureCause, isTransientProviderError, retryTransient, runProcess, TRANSIENT_RETRY_MESSAGE, type DelegateRequest, type DelegateResult } from "../src/core/delegate.js";
 import { nullLogger } from "../src/core/logger.js";
 
 const req = (over: Partial<DelegateRequest> = {}): DelegateRequest => ({ prompt: "do the task", cwd: ".", sessionId: null, timeoutSec: 600, log: nullLogger, ...over });
@@ -13,6 +13,42 @@ vi.mock("node:timers/promises", () => ({ setTimeout: vi.fn(async (_ms, _value, o
 afterEach(() => { vi.clearAllMocks(); vi.restoreAllMocks(); });
 
 describe("transient provider errors", () => {
+  it.each(["codex", "claude", "opencode"])("backs off %s database locks and resumes the same session/model", async (agent) => {
+    const calls: DelegateRequest[] = [];
+    const res = await retryTransient(req({ model: `${agent}-model`, sessionId: "saved" }), async (r) => {
+      calls.push(r);
+      if (calls.length <= DATABASE_RETRY_DELAYS_MS.length) throw new DelegateError("database is locked", "failed", "", "", "saved");
+      return result({ sessionId: "saved", text: "finished" });
+    });
+    expect(calls).toHaveLength(4);
+    expect(calls.every((r) => r.model === `${agent}-model` && r.sessionId === "saved")).toBe(true);
+    expect(calls.slice(1).every((r) => r.prompt === TRANSIENT_RETRY_MESSAGE)).toBe(true);
+    expect(vi.mocked(delay).mock.calls.map((c) => c[0])).toEqual([...DATABASE_RETRY_DELAYS_MS]);
+    expect(res.details.retries).toBe(3);
+  });
+
+  it("retries startup lock failures with the original task and stops at its retry budget", async () => {
+    const calls: DelegateRequest[] = [];
+    const err = await retryTransient(req(), async (r) => {
+      calls.push(r);
+      throw new DelegateError("SQLITE_BUSY: database is locked", "failed");
+    }).catch((e) => e);
+    expect(calls).toHaveLength(4);
+    expect(calls.every((r) => r.sessionId === null && r.prompt === "do the task")).toBe(true);
+    expect(err.message).toContain("3 automatic retries");
+  });
+
+  it("respects cancellation and deadline during database lock backoff", async () => {
+    const controller = new AbortController();
+    const aborted = await retryTransient(req({ signal: controller.signal, onProgress: () => controller.abort() }), async () => {
+      throw new DelegateError("database is locked", "failed", "", "", "saved");
+    }).catch((e) => e);
+    expect(aborted).toMatchObject({ kind: "aborted", sessionId: "saved" });
+    const timedOut = await retryTransient(req({ timeoutSec: .5 }), async () => {
+      throw new DelegateError("database is locked", "failed", "", "", "saved");
+    }).catch((e) => e);
+    expect(timedOut).toMatchObject({ kind: "timeout", sessionId: "saved" });
+  });
   it("tells provider hiccups from limits and real failures", () => {
     expect(isTransientProviderError("Error from provider (Console): Upstream response was not valid JSON")).toBe(true);
     expect(isTransientProviderError("stream disconnected before completion")).toBe(true);

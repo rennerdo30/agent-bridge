@@ -9,7 +9,18 @@ import { isRecord } from "./json-store.js";
 export class ProjectGroups {
   private readonly roots = new Map<string, string | null>();
   private readonly jobRoots = new Map<string, string>();
+  private readonly settings = new Map<string, boolean>();
+  private readonly dispatchRoots = new Map<Record<string, unknown>, string | null>();
   constructor(private readonly home?: string) {}
+
+  private enabled(root: string, agent?: string): boolean {
+    const key = JSON.stringify([root, agent]);
+    if (!this.settings.has(key)) {
+      if (!this.settings.size) queueMicrotask(() => this.settings.clear());
+      this.settings.set(key, projectGroupsEnabled(root, this.home, agent));
+    }
+    return this.settings.get(key)!;
+  }
 
   root(cwd: string): string | null {
     if (!this.roots.has(cwd)) this.roots.set(cwd, canonicalProjectRoot(cwd));
@@ -18,12 +29,12 @@ export class ProjectGroups {
 
   same(a: string, b: string): boolean {
     const left = this.root(a), right = this.root(b);
-    return Boolean(left && right && projectKey(left) === projectKey(right) && projectGroupsEnabled(left, this.home));
+    return Boolean(left && right && projectKey(left) === projectKey(right) && this.enabled(left));
   }
 
   decorate(peer: PeerInfo): PeerInfo {
     const root = this.root(peer.cwd);
-    return { ...peer, projectRoot: root ?? undefined, projectGroup: root && peer.agent !== "other" && !peer.jobAgent && !peer.subagent && projectGroupsEnabled(root, this.home, peer.agent) ? projectKey(root) : undefined };
+    return { ...peer, projectRoot: root ?? undefined, projectGroup: root && peer.agent !== "other" && !peer.jobAgent && !peer.subagent && this.enabled(root, peer.agent) ? projectKey(root) : undefined };
   }
 
   /** Paired-PC jobs remain outside local group authority. */
@@ -32,15 +43,26 @@ export class ProjectGroups {
   }
 
   jobRoot(job: Record<string, unknown>, peers: PeerInfo[]): string | null {
+    if (!this.dispatchRoots.has(job)) {
+      if (!this.dispatchRoots.size) queueMicrotask(() => this.dispatchRoots.clear());
+      this.dispatchRoots.set(job, this.resolveJobRoot(job, peers));
+    }
+    return this.dispatchRoots.get(job) ?? null;
+  }
+
+  private resolveJobRoot(job: Record<string, unknown>, peers: PeerInfo[]): string | null {
     // Prefer the original checkout to a linked worktree. Existing 0.29.10 records need no rewrite.
     const worktree = job.worktree as Record<string, unknown> | null;
+    for (const value of [job.projectRoot, worktree?.repoRoot]) {
+      if (typeof value === "string") { const root = this.root(value); if (root) { this.jobRoots.set(String(job.id), root); return root; } }
+    }
     const runner = peers.find((p) => p.jobAgent && p.id === `job:${job.id}`);
     let spec: unknown;
     if (this.home && typeof job.id === "string" && /^[a-zA-Z0-9_-]+$/.test(job.id)) {
       try { spec = readJsonSnapshot(join(this.home, "jobs", `${job.id}.spec.json`)).value; }
       catch { /* A running job has already archived its one-use launch spec. */ }
     }
-    for (const value of [job.projectRoot, worktree?.repoRoot, isRecord(spec) ? spec.cwd : undefined, job.workdir, runner?.cwd]) {
+    for (const value of [isRecord(spec) ? spec.cwd : undefined, job.workdir, runner?.cwd]) {
       if (typeof value === "string") { const root = this.root(value); if (root) { this.jobRoots.set(String(job.id), root); return root; } }
     }
     // Legacy records lacking workdir can still share while their original owner is connected.
@@ -64,7 +86,11 @@ export class ProjectGroups {
     if (!this.shareable(job)) return [];
     const root = this.jobRoot(job, local);
     if (!root) return [];
-    return local.filter((p) => p.agent !== "other" && !p.jobAgent && !p.subagent && !p.host && this.same(p.cwd, root) && projectGroupsEnabled(root, this.home, p.agent));
+    return local.filter((p) => {
+      if (p.agent === "other" || p.jobAgent || p.subagent || p.host) return false;
+      const candidate = this.root(p.cwd);
+      return Boolean(candidate && projectKey(candidate) === projectKey(root) && this.enabled(root, p.agent));
+    });
   }
 
   candidate(job: Record<string, unknown>, local: PeerInfo[]): PeerInfo | undefined {

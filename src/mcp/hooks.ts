@@ -107,6 +107,7 @@ export async function buildHookResponse(ctx: ServerContext, input: HookInput): P
   await node.ensureConnected().catch((err) => ctx.log.warn("bridge not reachable from hook", { err: (err as Error).message }));
   // A native subagent's tool calls fire the same hooks: messages are for the main agent, so leave them.
   if (input.subagent) return {};
+  await node.refreshPending().catch((err) => ctx.log.warn("pending mail refresh failed; retained for retry", { err: String(err) }));
   // A wake-up's messages reached the session if a turn is running (tool calls, turn end); if a prompt or a new
   // session comes first, the wake-up was lost and they are shown again below.
   // The wake-up's own turn starts with a prompt carrying its text: that is delivery, not a new user prompt.
@@ -126,7 +127,7 @@ export async function buildHookResponse(ctx: ServerContext, input: HookInput): P
         peers.length ? `Peers online:\n${peers.map((p) => formatPeer(p)).join("\n")}` : "No other agents are online right now.",
       ];
       lines.push(...new MessageWaitStore(ctx.home).pending(node).map(resumeWaitHint));
-      const unread = node.unread().length;
+      const unread = node.unread().filter((m) => !isQuietMessage(m)).length;
       const decisions = await node.decisions({ scope: { project: ctx.cwd() } }).catch(() => []);
       const summary = formatDecisionSummary(decisions);
       if (summary) lines.push(summary);
@@ -158,7 +159,9 @@ export async function buildHookResponse(ctx: ServerContext, input: HookInput): P
       const inConversation = lingerRemaining > 0 || jobsRunning > 0;
       if (!node.autoWakeEnabled && !inConversation) {
         // A notify wait is explicit permission to deliver its match, even after the listen window ends.
-        const awaited = node.unread().filter((m) => (node.isNotificationAwaited(m) || (m.from.id.startsWith("job:") && m.conversationId.endsWith(":fallback"))) && m.hop < ctx.cfg.maxHops &&
+        // Finishing the last job ends runningCount before Stop. Its result still owns delivery.
+        const awaited = node.unread().filter((m) => (node.isNotificationAwaited(m) ||
+          (m.from.id.startsWith("job:") && shouldWakeClaudeMessage(node, ctx.cfg, m))) && m.hop < ctx.cfg.maxHops &&
           !isQuietMessage(m) && !m.conversationId.endsWith(":note")).slice(0, HOOK_MAX_MESSAGES);
         if (awaited.length) {
           node.markRead(awaited.map((m) => m.id));

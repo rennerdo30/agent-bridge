@@ -181,7 +181,7 @@ export function formatDecisionSummary(decisions: OwnerDecision[]): string {
 /** Startup and dashboard snapshots never migrate or write the broker's database. */
 export function readDecisions(dbPath: string, args: DecisionsArgs = {}): OwnerDecision[] {
   if (!existsSync(dbPath)) return [];
-  const db = new DatabaseSync(dbPath, { readOnly: true });
+  const db = new DatabaseSync(dbPath, { readOnly: true, timeout: 50 });
   try {
     if (!db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'decisions'").get()) return [];
     return new DecisionStore(db).list(args);
