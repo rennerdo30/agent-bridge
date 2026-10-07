@@ -42711,6 +42711,9 @@ function formatDuration(ms) {
   if (m < 60) return `${m}m ${s % 60}s`;
   return `${Math.floor(m / 60)}h ${m % 60}m`;
 }
+function formatReplyRestrictions(result) {
+  return (result.replyRestrictions ?? []).map(({ name: name2, supervisor }) => `${name2} can't reply to you directly. Its replies go to its supervisor ${supervisor}. To get an answer, ask ${supervisor}, ask ${supervisor} to grant you with send_to, or use the project's main session.`);
+}
 function formatDelivery(result, maxHops = DEFAULT_MAX_HOPS) {
   return result.deliveredTo.map((name2) => {
     const peer = result.recipientStates?.find((p) => p.name === name2);
@@ -42719,7 +42722,7 @@ function formatDelivery(result, maxHops = DEFAULT_MAX_HOPS) {
     const canWake = message && message.hop < (peer?.wakeMaxHops ?? maxHops) && !isQuietMessage(message) && !message.conversationId.endsWith(":note") && peer?.wakeAvailable && (peer.autoWake || peer.wakeOnDirect && (direct || message.to === BROADCAST));
     const hint = peer?.activity === "idle" ? canWake ? "idle; wake requested on the receiving PC, awaiting consumption" : "idle; will be read on its next turn (no wake for this delivery)" : "waiting for the peer to consume it";
     return `Delivered to inbox: ${name2} (${hint}). Delivery does not mean read.`;
-  }).concat((result.failedFor ?? []).map((failed) => `Delivery not confirmed: ${failed.name} (${failed.reason}). The attempt is retained in history; retry explicitly when the paired link is available.`));
+  }).concat((result.failedFor ?? []).map((failed) => `Delivery not confirmed: ${failed.name} (${failed.reason}). The attempt is retained in history; retry explicitly when the paired link is available.`)).concat(formatReplyRestrictions(result));
 }
 
 // src/mcp/message-wait.ts
@@ -50306,6 +50309,26 @@ Call decisions to look up current decisions or their history.`,
     }
     return result;
   }
+  /** Reverse permissions use the current durable record, not stale runner registration. */
+  replyRestriction(sender, name2) {
+    const jobs = this.storedJobs(), peer = this.connByName(name2)?.peer;
+    const stored = jobs.find((j) => j.name === name2);
+    if (!stored && !peer?.jobAgent) return null;
+    const job = stored ?? {
+      id: peer.id.replace(/^job:/, ""),
+      name: name2,
+      owner: peer.jobParent,
+      supervisor: peer.jobOwner,
+      rootName: peer.rootName,
+      parentJob: peer.parentJob,
+      workdir: peer.cwd,
+      args: { send_to: peer.jobSendTo }
+    };
+    const recipient = { ...peer, id: `job:${job.id}`, name: name2, jobOwner: typeof job.supervisor === "string" ? job.supervisor : peer?.jobOwner };
+    const grants = isRecord(job.args) && Array.isArray(job.args.send_to) ? job.args.send_to : [];
+    if (sender.name === name2 || grants.includes(sender.name) || this.groups.canControl(sender, job, this.localPeers()) || sender.jobAgent && (this.sameJobFamily(recipient, sender, jobs) || this.sharedJobs(recipient, sender, jobs))) return null;
+    return { name: name2, supervisor: this.jobRecipient(job) || peer?.jobParent || "the project's main session" };
+  }
   async routeSend(conn, sender, args) {
     const body = typeof args.body === "string" ? args.body : "";
     if (!body.trim()) throw new BridgeError("bad_request", "message body is empty");
@@ -50365,9 +50388,19 @@ Call decisions to look up current decisions or their history.`,
     if (conversationId.startsWith(SIBLING_CONVERSATION_PREFIX) && (queued.some((name2) => !sender.jobAgent || !this.storedSiblings(sender).some((s) => s.name === name2)) || live.some((c) => c.peer.jobAgent && (!sender.jobAgent || !sender.jobOwner || !this.sameJobFamily(sender, c.peer) && !this.sharedJobs(sender, c.peer) && !sender.jobSendTo?.includes(c.peer.name))))) {
       throw new BridgeError("unauthorized", "sibling chat requires the same supervisor or an explicit send_to job grant");
     }
+    const replyRestrictions = conversationId.startsWith(CONTROL_CONVERSATION_PREFIX) ? [] : [...live.map((c) => c.peer.name), ...queued].flatMap((name2) => {
+      const restriction = this.replyRestriction(sender, name2);
+      return restriction ? [restriction] : [];
+    });
+    const envelope = (recipient) => {
+      const restriction = replyRestrictions.find((r) => r.name === recipient);
+      return { ...base2, recipient, body: restriction ? base2.body + `
+
+[agent-bridge routing hint: this sender can't receive your direct reply; answer via your supervisor ${restriction.supervisor} if needed.]` : base2.body };
+    };
     const messages = [];
-    for (const c of live) messages.push({ ...base2, recipient: c.peer.name });
-    for (const key3 of queued) messages.push({ ...base2, recipient: key3 });
+    for (const c of live) messages.push(envelope(c.peer.name));
+    for (const key3 of queued) messages.push(envelope(key3));
     for (const m of messages) this.store.insert(m);
     live.forEach((c, i) => this.emit(c, "message", messages[i]));
     this.log.info("message routed", {
@@ -50379,6 +50412,7 @@ Call decisions to look up current decisions or their history.`,
       queuedFor: queued
     });
     const result = { messages, deliveredTo: live.map((c) => c.peer.name), queuedFor: queued, recipientStates: live.map((c) => ({ name: c.peer.name, activity: c.peer.activity, autoWake: c.peer.autoWake, wakeOnDirect: c.peer.wakeOnDirect, wakeAvailable: c.peer.wakeAvailable, wakeMaxHops: c.peer.wakeMaxHops })) };
+    if (replyRestrictions.length) result.replyRestrictions = replyRestrictions;
     for (const recipient of remoteTargets) {
       try {
         const remote = await this.requireNetwork().send({ ...base2, recipient });
@@ -55719,7 +55753,8 @@ ${f.report ?? "No final report is saved. Ask your parent for its result."}`);
           const m = result.messages[0];
           const sibling = m.conversationId.startsWith(SIBLING_CONVERSATION_PREFIX);
           const delivery = result.queuedFor.length ? sibling ? "queued for the sibling's next turn" : "queued for the granted session" : sibling ? "sent to sibling" : "sent to granted session";
-          return text2(`Message ${m.id} ${delivery} ${a.to} (conversation ${m.conversationId}, hop ${m.hop}).${sibling ? " The supervisor received a quiet copy." : ""}`);
+          return text2(`Message ${m.id} ${delivery} ${a.to} (conversation ${m.conversationId}, hop ${m.hop}).${sibling ? " The supervisor received a quiet copy." : ""}
+${formatReplyRestrictions(result).join("\n")}`);
         }
         await ctx.parent.send(a.message, a.reply_to);
         return text2(t("send.toParent", { name: ctx.parent.name }));
@@ -55740,7 +55775,7 @@ ${f.report ?? "No final report is saved. Ask your parent for its result."}`);
       const lines = [t("send.ok", { id: first.id, conversation: first.conversationId })];
       lines.push(...formatDelivery(res, cfg.maxHops));
       if (res.queuedFor.length) lines.push(t("send.queued", { names: res.queuedFor.join(", ") }));
-      lines.push(t("send.waitHint"));
+      if (!res.replyRestrictions?.length) lines.push(t("send.waitHint"));
       lines.push(`For a consumption receipt, call wait_for_message(read_receipt_of="${first.id}").`);
       return text2(lines.join("\n"));
     })

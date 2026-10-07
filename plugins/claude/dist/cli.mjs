@@ -40469,6 +40469,26 @@ Call decisions to look up current decisions or their history.`,
     }
     return result;
   }
+  /** Reverse permissions use the current durable record, not stale runner registration. */
+  replyRestriction(sender, name2) {
+    const jobs = this.storedJobs(), peer = this.connByName(name2)?.peer;
+    const stored = jobs.find((j) => j.name === name2);
+    if (!stored && !peer?.jobAgent) return null;
+    const job = stored ?? {
+      id: peer.id.replace(/^job:/, ""),
+      name: name2,
+      owner: peer.jobParent,
+      supervisor: peer.jobOwner,
+      rootName: peer.rootName,
+      parentJob: peer.parentJob,
+      workdir: peer.cwd,
+      args: { send_to: peer.jobSendTo }
+    };
+    const recipient = { ...peer, id: `job:${job.id}`, name: name2, jobOwner: typeof job.supervisor === "string" ? job.supervisor : peer?.jobOwner };
+    const grants = isRecord(job.args) && Array.isArray(job.args.send_to) ? job.args.send_to : [];
+    if (sender.name === name2 || grants.includes(sender.name) || this.groups.canControl(sender, job, this.localPeers()) || sender.jobAgent && (this.sameJobFamily(recipient, sender, jobs) || this.sharedJobs(recipient, sender, jobs))) return null;
+    return { name: name2, supervisor: this.jobRecipient(job) || peer?.jobParent || "the project's main session" };
+  }
   async routeSend(conn, sender, args) {
     const body = typeof args.body === "string" ? args.body : "";
     if (!body.trim()) throw new BridgeError("bad_request", "message body is empty");
@@ -40528,9 +40548,19 @@ Call decisions to look up current decisions or their history.`,
     if (conversationId.startsWith(SIBLING_CONVERSATION_PREFIX) && (queued.some((name2) => !sender.jobAgent || !this.storedSiblings(sender).some((s) => s.name === name2)) || live.some((c) => c.peer.jobAgent && (!sender.jobAgent || !sender.jobOwner || !this.sameJobFamily(sender, c.peer) && !this.sharedJobs(sender, c.peer) && !sender.jobSendTo?.includes(c.peer.name))))) {
       throw new BridgeError("unauthorized", "sibling chat requires the same supervisor or an explicit send_to job grant");
     }
+    const replyRestrictions = conversationId.startsWith(CONTROL_CONVERSATION_PREFIX) ? [] : [...live.map((c) => c.peer.name), ...queued].flatMap((name2) => {
+      const restriction = this.replyRestriction(sender, name2);
+      return restriction ? [restriction] : [];
+    });
+    const envelope = (recipient) => {
+      const restriction = replyRestrictions.find((r) => r.name === recipient);
+      return { ...base2, recipient, body: restriction ? base2.body + `
+
+[agent-bridge routing hint: this sender can't receive your direct reply; answer via your supervisor ${restriction.supervisor} if needed.]` : base2.body };
+    };
     const messages = [];
-    for (const c of live) messages.push({ ...base2, recipient: c.peer.name });
-    for (const key3 of queued) messages.push({ ...base2, recipient: key3 });
+    for (const c of live) messages.push(envelope(c.peer.name));
+    for (const key3 of queued) messages.push(envelope(key3));
     for (const m of messages) this.store.insert(m);
     live.forEach((c, i) => this.emit(c, "message", messages[i]));
     this.log.info("message routed", {
@@ -40542,6 +40572,7 @@ Call decisions to look up current decisions or their history.`,
       queuedFor: queued
     });
     const result = { messages, deliveredTo: live.map((c) => c.peer.name), queuedFor: queued, recipientStates: live.map((c) => ({ name: c.peer.name, activity: c.peer.activity, autoWake: c.peer.autoWake, wakeOnDirect: c.peer.wakeOnDirect, wakeAvailable: c.peer.wakeAvailable, wakeMaxHops: c.peer.wakeMaxHops })) };
+    if (replyRestrictions.length) result.replyRestrictions = replyRestrictions;
     for (const recipient of remoteTargets) {
       try {
         const remote = await this.requireNetwork().send({ ...base2, recipient });
