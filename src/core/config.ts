@@ -264,6 +264,7 @@ export function loadConfig(home: string, agent: AgentKind, log: Logger, env: Nod
   }
   const section = isRecord(file[agent]) ? file[agent] : {};
   const localSection = isRecord(project[agent]) ? project[agent] : {};
+  for (const values of [localSection,project]) if (values.codexSubagents===undefined && values.native_subagents!==undefined) values.codexSubagents=typeof values.native_subagents === "boolean" ? (values.native_subagents ? DEFAULT_CODEX_SUBAGENTS : 0) : values.native_subagents;
   /** First valid value wins: env var, then the agent section, then the top level of the file. */
   const pick = <T>(key: keyof BridgeConfig, envKey: string | null, parse: (v: unknown) => T | undefined): T | undefined => {
     for (const v of [envKey ? env[envKey] : undefined, localSection[key], project[key], section[key], file[key]]) {
@@ -305,7 +306,7 @@ export function loadConfig(home: string, agent: AgentKind, log: Logger, env: Nod
     claudeModel: pick("claudeModel", null, modelName) ?? d.claudeModel,
     opencodeBin: pick("opencodeBin", ENV.opencodeBin, str) ?? d.opencodeBin,
     opencodeModel: pick("opencodeModel", null, modelName) ?? d.opencodeModel,
-    effort: pick("effort", null, effortLevels) ?? d.effort,
+    effort: Object.assign({}, d.effort, ...[file, section, project, localSection].map((values) => effortLevels(values.effort) ?? {})),
     opencodeAutoApprove: pick("opencodeAutoApprove", null, parseBool) ?? d.opencodeAutoApprove,
     dashboard: pick("dashboard", ENV.dashboard, parseBool) ?? d.dashboard,
     dashboardPort: pick("dashboardPort", null, (v) => parseIntInRange(v, 1, 65_535)) ?? d.dashboardPort,

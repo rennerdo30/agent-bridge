@@ -1,3 +1,4 @@
+import { appendContextEvent } from "./context-journal.js";
 import { randomBytes, randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -166,6 +167,7 @@ export type ApprovalAnswerResult = "answered" | "expired" | "unavailable";
  * capability stays in the home directory, never in dashboard JSON. Both callers settle the same callback.
  */
 export async function publishApproval(home: string, approval: PendingApproval, answer: (body: string, by: string) => boolean | Promise<boolean>): Promise<() => void> {
+  await appendContextEvent(home,{kind:"approval",agent:approval.agent,job:approval.job,payload:{event:"requested",...approval}});
   if (!APPROVAL_ID.test(approval.id)) throw new Error("invalid approval id");
   const token = randomBytes(SECRET_BYTES).toString("hex");
   const dir = join(home, APPROVALS_DIR);
@@ -185,6 +187,7 @@ export async function publishApproval(home: string, approval: PendingApproval, a
       const body = JSON.parse(raw) as ApprovalAnswer;
       if (!body || (body.decision !== "allow" && body.decision !== "deny") || (body.reason !== undefined && (typeof body.reason !== "string" || body.reason.length > MAX_APPROVAL_REASON_CHARS))) return reply(400, { error: "invalid answer" });
       const accepted = Date.now() < approval.deadline && await answer(`${body.decision}${body.reason ? `: ${body.reason}` : ""}`, "dashboard");
+      await appendContextEvent(home,{kind:"approval",agent:approval.agent,job:approval.job,payload:{event:"answered",approval:approval.id,...body,accepted}});
       reply(accepted ? 200 : 409, { outcome: accepted ? "answered" : "expired" });
     })().catch(() => reply(400, { error: "invalid answer" }));
   });
