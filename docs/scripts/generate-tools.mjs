@@ -15,6 +15,23 @@ function walk(node, visit) {
 }
 const rows = [];
 const agents = ['claude', 'codex', 'opencode', 'antigravity'];
+const namedShapes = new Map();
+for (const path of ['../src/core/conversations.ts', '../src/core/owner-questions.ts']) {
+  let imported;
+  try { imported = await readFile(path, 'utf8'); } catch { continue; }
+  const ast = parse(imported, {sourceType:'module', plugins:['typescript']});
+  walk(ast, node => {
+    if (node.type !== 'VariableDeclarator' || node.id.type !== 'Identifier' || !node.init) return;
+    let shape;
+    walk(node.init, child => {
+      if (!shape && child.type === 'CallExpression' && child.callee.type === 'MemberExpression' && child.callee.property.name === 'object' && child.arguments[0]?.type === 'ObjectExpression') shape = child.arguments[0];
+    });
+    if (shape) namedShapes.set(node.id.name + '.shape', shape.properties.filter(p => p.type === 'ObjectProperty').map(p => {
+      const raw = imported.slice(p.value.start, p.value.end).replace(/\s+/g,' ');
+      return {name:imported.slice(p.key.start,p.key.end), optional:raw.includes('.optional(') || raw.includes('.default('), shape:raw};
+    }));
+  });
+}
 
 function value(node, agent = '') {
   if (!node) return '';
@@ -48,7 +65,7 @@ function visit(node) {
         ? schema.properties.filter(p => p.type === 'ObjectProperty').map(p => {
           const shape = text(p.value).replace(/\s+/g, ' ');
           return { name:text(p.key), optional:shape.includes('.optional(') || shape === 'nativeSubagentsSchema', shape };
-        }) : [];
+        }) : namedShapes.get(schema && text(schema)) || [];
       let description = value(properties.description, agent);
       if (agent) description += ' Access defaults to read. Supported access, sandbox and model options depend on the target CLI; see the delegated access guide.';
       rows.push({tool, description, fields, sharedSchema: schema && schema.type !== 'ObjectExpression' ? text(schema) : ''});
@@ -59,7 +76,7 @@ function visit(node) {
 walk(file, visit);
 const escape = s => s.replaceAll('|', '\\|').replaceAll('\n', ' ').replaceAll('BROADCAST', '*').replaceAll('cfg.maxJobs', 'the shared job limit').replaceAll('cfg.maxHops', 'the configured hop limit');
 let page = `---\ntitle: MCP tools reference\n---\n\nGenerated from [src/mcp/server.ts](https://github.com/rennerdo30/agent-bridge/blob/main/src/mcp/server.ts). Each registered tool has one row below. Availability depends on the calling agent, enabled targets and whether the caller is a delegated job. opencode prefixes tool names with \`bridge_\`.\n\nThe \`ask_*\` and \`spawn_*\` tools are expanded for each supported CLI; a session may offer only the other enabled targets. Delegated jobs receive a restricted tool set and explicit messaging grants. \`report_progress\` is for delegated jobs; \`hook_event\` is internal and must never be called by an agent.\n\n| Tool | Parameters | Behavior |\n| --- | --- | --- |\n`;
-for (const r of rows) page += `| \`${r.tool}\` | ${r.tool === 'get_conversation' ? '`id`, `after?`, `limit?`' : /^(ask|spawn)_/.test(r.tool) ? '[Delegation options](#delegation-options)' : r.fields.map(f => '\`' + f.name + (f.optional ? '?' : '') + '\`').join(', ') || 'None'} | ${escape(r.description)} |\n`;
+for (const r of rows) page += `| \`${r.tool}\` | ${/^(ask|spawn)_(claude|codex|opencode|antigravity)$/.test(r.tool) ? '[Delegation options](#delegation-options)' : r.fields.map(f => '\`' + f.name + (f.optional ? '?' : '') + '\`').join(', ') || (r.sharedSchema ? '\`' + r.sharedSchema + '\` (source schema)' : 'None')} | ${escape(r.description)} |\n`;
 page += '\n## Delegation options\n\n';
 page += 'Peer names default to `<agent>-<project folder>` (for example `codex-showcase`), or `<agent>-session` until the folder is known. An agent-kind address such as `codex` selects that local peer when unambiguous. Set `AGENT_BRIDGE_NAME` or `name` in the configuration to choose a peer name.\n\n';
 page += '- `session_id` continues an earlier run; `cwd` selects its working folder.\n- `host` runs on a paired PC with separate remote-job permission.\n- `native_subagents` sets the Codex child-thread budget (default 6, range 0–32; 0 disables). This differs from bridge delegation depth and concurrency.\n- `send_to` grants messaging to exact local sessions or jobs outside the default sibling scope.\n- `timeout_sec` defaults to 60 minutes for `ask_*`; background jobs default to the 24-hour ceiling. A timeout reports the session ID so a caller can continue retained context.\n- Target options include Codex `sandbox` and `approvals_reviewer`, Claude `permission_mode`, opencode `auto_approve`, and Antigravity `terminal_sandbox` and `bypass_permissions`. Codex defaults to `auto_review`; `user` forwards eligible requests.\n\n';
@@ -84,7 +101,6 @@ walk(targetFile, node => {
     page += '```ts\n' + targetSource.slice(node.start, node.end) + '\n```\n\n';
 });
 page += '## Parameter schemas\n\nThe following source excerpts preserve bounds and defaults. A question mark in the table means the schema uses `.optional()`. Named shared schemas are defined in the product source.\n\n';
-page += '### get_conversation\n\n`id` is a retained source ID from `search_history` (1–512 characters). `after` is an optional nonnegative integer cursor. `limit` is an optional integer from 1 to 100. Follow `next` until exhausted, grouping exact-byte chunks by source and generation. No model is called and no conversation is exported.\n\n';
 for (const r of rows.filter(r => r.fields.length)) {
   page += `### ${r.tool}\n\n\`\`\`ts\n${r.fields.map(f => `${f.name}: ${f.shape}`).join('\n')}\n\`\`\`\n\n`;
 }

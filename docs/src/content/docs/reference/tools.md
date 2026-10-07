@@ -139,10 +139,6 @@ schema: { auto_approve: z.boolean().optional().describe("Overrides access: auto-
 
 The following source excerpts preserve bounds and defaults. A question mark in the table means the schema uses `.optional()`. Named shared schemas are defined in the product source.
 
-### get_conversation
-
-`id` is a retained source ID from `search_history` (1–512 characters). `after` is an optional nonnegative integer cursor. `limit` is an optional integer from 1 to 100. Follow `next` until exhausted, grouping exact-byte chunks by source and generation. No model is called and no conversation is exported.
-
 ### search_history
 
 ```ts
@@ -150,6 +146,14 @@ query: z.string().trim().min(1).max(HISTORY_MAX_QUERY_CHARS)
 filters: historyFiltersSchema.optional()
 limit: z.number().int().min(1).max(HISTORY_MAX_LIMIT).optional()
 answer: z.boolean().optional()
+```
+
+### get_conversation
+
+```ts
+id: z.string().min(1).max(512)
+after: z.number().int().nonnegative().optional()
+limit: z.number().int().min(1).max(100).optional()
 ```
 
 ### decide

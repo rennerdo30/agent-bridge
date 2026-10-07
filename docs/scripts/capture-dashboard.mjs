@@ -1,8 +1,8 @@
 // Run only after the 0.30.0 tag and release CI are green:
-// node docs/scripts/capture-dashboard.mjs <installed-chrome-or-edge-executable>
+// node docs/scripts/capture-dashboard.mjs --out docs/images
 // Uses the release's actual dashboard HTML with synthetic API responses.
 // No broker, agent CLI, installer, real store, or real project is started.
-import { mkdtemp, mkdir, writeFile, readFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, readFile, access, copyFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { execFileSync, spawn } from 'node:child_process';
@@ -11,8 +11,19 @@ import { pathToFileURL } from 'node:url';
 import { build } from '../../node_modules/esbuild/lib/main.js';
 
 const repository = resolve(import.meta.dirname, '../..');
-const browser = process.argv[2];
-if (!browser) throw new Error('Pass an already installed headless browser executable.');
+const args = process.argv.slice(2);
+const outIndex = args.indexOf('--out');
+if (outIndex < 0 || !args[outIndex + 1] || args.length !== 2) throw new Error('Usage: node docs/scripts/capture-dashboard.mjs --out docs/images');
+const output = resolve(repository, args[outIndex + 1]);
+const candidates = [
+  join(process.env.ProgramFiles || 'C:/Program Files', 'Google/Chrome/Application/chrome.exe'),
+  join(process.env['ProgramFiles(x86)'] || 'C:/Program Files (x86)', 'Google/Chrome/Application/chrome.exe'),
+  ...(process.env.LOCALAPPDATA ? [join(process.env.LOCALAPPDATA, 'Google/Chrome/Application/chrome.exe')] : []),
+  join(process.env['ProgramFiles(x86)'] || 'C:/Program Files (x86)', 'Microsoft/Edge/Application/msedge.exe'),
+];
+let browser;
+for (const candidate of candidates) {try {await access(candidate);browser=candidate;break;}catch {}}
+if (!browser) throw new Error('No installed Chrome or Edge found. This script never installs a browser.');
 const release = execFileSync('git', ['rev-parse', 'v0.30.0^{commit}'], {cwd:repository, encoding:'utf8'}).trim();
 execFileSync('git', ['merge-base', '--is-ancestor', release, 'HEAD'], {cwd:repository});
 const version = JSON.parse(await readFile(join(repository, 'package.json'), 'utf8')).version;
@@ -35,7 +46,7 @@ const runs = [run('codex-job-demo-settings','Polish settings and accessibility')
 const messages = [{id:'demo-message-1',from_name:'codex-showcase',from_agent:'codex',to_target:'claude-showcase',recipients:'claude-showcase',body:'The settings review is ready. Keyboard navigation is covered and the docs are updated.',created_at:now-180000},{id:'demo-message-2',from_name:'claude-showcase',from_agent:'claude',to_target:'codex-showcase',recipients:'codex-showcase',body:'Thanks. Please check the final focus order while I finish the release notes.',created_at:now-90000}];
 const chat = {items:[{id:'prompt',kind:'user',at:now-660000,text:'Polish the settings page, keep the existing layout, and verify keyboard navigation. Ask before changing the default shortcuts.'},{id:'answer',kind:'assistant',at:now-640000,text:'I have checked the current settings and split out a focused keyboard review. The new controls follow the existing blue palette and preserve the current defaults.'},{id:'tool',kind:'tool',at:now-530000,tool:'shell',summary:'npm run typecheck — passed'},{id:'progress',kind:'assistant',at:now-60000,text:'The settings changes are ready. Focus order and accessible labels are checked; I am reviewing the last interaction before reporting the result.'}],next:null};
 const network = {enabled:true,identity:{id:'demo-desktop',name:'demo-desktop'},config:{enabled:true,name:'demo-desktop',bind:'0.0.0.0',port:48148,discovery:true},port:48148,addresses:['192.0.2.10'],paired:[{id:'demo-laptop',name:'demo-laptop',connected:true,fingerprint:'abcdef0123456789',health:{lastVerifiedAt:now-30000,roundTripMs:12}}],discovered:[{id:'demo-studio',name:'demo-studio',host:'192.0.2.30',port:48148,seenAt:now-15000}]};
-const question = {id:'demo-owner-question',from:'claude-showcase',owner:'claude-showcase',agent:'claude',question:'Which shortcut should open the quick settings panel?',text:'Which shortcut should open the quick settings panel?',title:'Choose a settings shortcut',choices:['Keep the current shortcut','Use Ctrl+Shift+P'],options:['Keep the current shortcut','Use Ctrl+Shift+P'],askedAt:now-120000,createdAt:now-120000,status:'pending',project:workspace};
+const question = {id:'demo-owner-question',kind:'question',title:'Choose a settings shortcut',context:'Which shortcut should open the quick settings panel?',topic:'settings-shortcut',options:[{id:'keep',label:'Keep the current shortcut',consequence:'Preserves the shortcuts people already use.',recommended:true},{id:'change',label:'Use Ctrl+Shift+P',consequence:'Adds a familiar quick-panel shortcut.',recommended:false}],askedAt:now-120000,status:'open',project:workspace,affectedProjects:[workspace],blocking:false,blocks:'',meanwhile:'Finish accessible labels and the keyboard navigation review.',links:[],askers:[{session:'claude-showcase',sessionId:'demo-session-claude',agent:'claude',main:'claude-showcase'}],deliveries:[]};
 const fixture = {version,brokerPid:4242,peers,runs,runsNext:null,runsTotal:runs.length,jobs:Object.fromEntries(runs.map(r=>[r.job,{next:{},projectRoot:workspace}])),messages};
 await writeFile(join(bridgeHome,'synthetic-fixture.json'),JSON.stringify({fixture,network,question,chat},null,2));
 const seen = new Set();
@@ -47,7 +58,9 @@ const server = createServer(async (req,res) => {
   if(url.pathname === '/api/state') body = fixture;
   else if(url.pathname === '/api/network') body = network;
   else if(url.pathname === '/api/network/firewall') body = {status:{state:'allowed',detail:'Demo private network'},plan:{platform:'win32',commands:[],explanation:''}};
-  else if(url.pathname === '/api/approvals') body = {approvals:[]};
+  else if(url.pathname === '/api/approvals') body = {approvals:[question],questionHistory:[]};
+  else if(url.pathname === '/api/dashboard/heartbeat') body = {settings:{sound:false,toast:false,reminderMinutes:15},alerts:[]};
+  else if(url.pathname === '/api/questions/settings') body = {sound:false,toast:false,reminderMinutes:15};
   else if(url.pathname === '/api/questions' || url.pathname === '/api/owner-questions') body = {questions:[question]};
   else if(url.pathname === '/api/usage') body = {reports:[]};
   else if(url.pathname === '/api/models') body = {reports:[]};
@@ -86,12 +99,16 @@ try {
     await new Promise(r=>setTimeout(r,1000));
     const visible = await evaluate('document.body.innerText');
     if(/Users[\\/]|Development[\\/]/i.test(visible)) throw new Error('A non-demo path appeared in '+name);
-    if(name==='dashboard-waiting.png' && !visible.includes(question.question)) throw new Error('Owner question did not render; update the synthetic API shape for this release.');
+    if(name==='dashboard-waiting.png' && !visible.includes(question.context)) throw new Error('Owner question did not render; update the synthetic API shape for this release.');
     const shot = await call('Page.captureScreenshot',{format:'png',captureBeyondViewport:false});
     await writeFile(join(demo,name),Buffer.from(shot.data,'base64'));
   }
   if(errors.length) throw new Error(errors.join('\n'));
   await writeFile(join(demo,'capture-evidence.json'),JSON.stringify({release,version,synthetic:true,requests:[...seen],shots:shots.map(s=>s[0])},null,2));
-  console.log('Synthetic captures and evidence: '+demo);
-  // Review and optimize images in the temporary root before copying them into docs/images.
+  await mkdir(output, {recursive:true});
+  for(const [name] of shots) await copyFile(join(demo,name), join(output,name));
+  await copyFile(join(demo,'capture-evidence.json'),join(output,'capture-evidence.json'));
+  console.log('Synthetic runtime and private browser profile: '+demo);
+  console.log('Review these captures before committing:\n'+shots.map(([name])=>join(output,name)).join('\n'));
+  console.log('Capture evidence: '+join(output,'capture-evidence.json'));
 } finally {socket?.close();chrome.kill();await new Promise(r=>server.close(r));}
