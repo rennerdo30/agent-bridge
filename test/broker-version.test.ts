@@ -6,7 +6,8 @@ import { APP_VERSION, MAX_FRAME_BYTES } from "../src/core/constants.js";
 import { nullLogger } from "../src/core/logger.js";
 const cleanup: (() => Promise<void> | void)[] = [];
 afterEach(async () => { for (const fn of cleanup.splice(0).reverse()) await fn(); });
-it.each([undefined, "0.29.10"])("reports a clear version message for an old broker (%s) without applying handoff", async (brokerVersion) => {
+it.each([undefined, "0.29.10", "peer-version"])("reports a clear version message for an old broker (%s) without applying handoff", async (reportedVersion) => {
+  const brokerVersion = reportedVersion === "peer-version" ? "0.29.13" : reportedVersion;
   const sockets = new Set<Socket>(), operations: string[] = [];
   const server = createServer((socket) => {
     sockets.add(socket); socket.setEncoding("utf8");
@@ -14,7 +15,7 @@ it.each([undefined, "0.29.10"])("reports a clear version message for an old brok
     socket.on("data", (data: string) => {
       for (const frame of decoder.push(data)) if (frame.t === "req") {
         operations.push(frame.op);
-        socket.write(encodeFrame(frame.op === "hello" ? { t: "res", id: frame.id, ok: true, result: { name: "supervisor", brokerPid: 1, brokerVersion, peers: [] } } :
+        socket.write(encodeFrame(frame.op === "hello" ? { t: "res", id: frame.id, ok: true, result: { name: "supervisor", brokerPid: 1, brokerVersion: reportedVersion === "peer-version" ? undefined : brokerVersion, peers: reportedVersion === "peer-version" ? [{ pid: 1, version: brokerVersion }] : [] } } :
           { t: "res", id: frame.id, ok: false, error: { code: "bad_request", message: `unknown op: ${frame.op}` } }));
       }
     });

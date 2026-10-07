@@ -478,7 +478,7 @@ export class JobManager {
     }
     for (const s of stored) {
       const directlyOwned = this.lineage ? s.parentJob === this.lineage.parentJob : this.isMine(s.owner) && !s.parentJob;
-      if (!s.ownershipHistory?.length && (!directlyOwned || this.running.has(s.id) || this.foreground.has(s.id))) continue;
+      if (!s.ownershipHistory?.length && (!directlyOwned || this.running.has(s.id) || this.foreground.has(s.id) || s.status === "running" && !s.host)) continue;
       let job = this.history.get(s.id);
       const mine = directlyOwned;
       if (job && (s.executionOwner === this.node.name || mine)) {

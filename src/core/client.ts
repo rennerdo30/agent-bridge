@@ -97,7 +97,8 @@ export class BridgeClient extends EventEmitter<BridgeClientEvents> {
         reject(new Error(`broker request timed out: ${op}`));
       }, timeoutMs);
       this.pending.set(id, { resolve: (value) => {
-        const version = (value as { brokerVersion?: string })?.brokerVersion;
+        const hello = value as Partial<RequestMap["hello"][1]>;
+        const version = hello?.brokerVersion ?? (Array.isArray(hello?.peers) ? hello.peers.find((peer) => peer.pid === hello.brokerPid)?.version : undefined);
         if (typeof version === "string") this.brokerVersion = version;
         resolve(value as RequestMap[O][1]);
       }, reject: (err) => {
