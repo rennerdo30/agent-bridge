@@ -25,6 +25,12 @@ jobs:
       - run: npm run typecheck
       - run: npm run build
       - run: npm test
+        if: runner.os != 'Windows'
+      # Each file creates native processes and durable SQLite fixtures. Avoid
+      # competing filesystem backfills on the shared Windows runner; retain
+      # the same assertions and default deadlines for every test.
+      - run: npm test -- --maxWorkers=1
+        if: runner.os == 'Windows'
       - name: Bundles are committed and up to date
         if: matrix.os == 'ubuntu-latest' && matrix.node == 24
         run: git diff --exit-code -- plugins
