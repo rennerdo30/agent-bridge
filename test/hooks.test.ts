@@ -69,22 +69,14 @@ describe("hook responses", () => {
     expect(out.reason).toContain("work");
   });
 
-  it("Stop keeps listening after this session sent a message and continues when the reply arrives", async () => {
+  it("Stop defers a later reply to the next hook without consuming it", async () => {
     const sent = await me.send({ to: "claude-h", body: "question?" });
-    const c = ctx({ cfg: { ...DEFAULT_CONFIG, maxHops: 6, lingerSec: 10 } });
-    const stop = buildHookResponse(c, input("Stop"));
-    const reply = new Promise((r) => setTimeout(r, 300)).then(() => peer.send({ to: "codex-h", body: "answer!", replyTo: sent.messages[0]!.id }));
-    const out = (await stop) as any;
-    await reply;
-    expect(out.decision).toBe("block");
-    expect(out.reason).toContain("answer!");
-  });
-
-  it("Stop ends the turn when the listen window passes quietly", async () => {
-    await me.send({ to: "claude-h", body: "anyone?" });
     const started = Date.now();
     expect(await buildHookResponse(ctx(), input("Stop"))).toEqual({});
-    expect(Date.now() - started).toBeGreaterThanOrEqual(800);
+    expect(Date.now() - started).toBeLessThan(500);
+    await peer.send({ to: "codex-h", body: "answer!", replyTo: sent.messages[0]!.id });
+    await until(() => me.unread().length === 1);
+    expect(JSON.stringify(await buildHookResponse(ctx(), input("PostToolUse")))).toContain("answer!");
   });
 
   it("Stop returns immediately when the session is not in a conversation", async () => {

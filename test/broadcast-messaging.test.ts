@@ -10,6 +10,7 @@ import { nullLogger } from "../src/core/logger.js";
 import { BridgeNode } from "../src/core/node.js";
 import { resolvePipePath } from "../src/core/paths.js";
 import { MessageStore } from "../src/core/store.js";
+import { loadOrCreateToken } from "../src/core/token.js";
 import { DEFAULT_NETWORK_CONFIG } from "../src/network/config.js";
 import { NetworkService } from "../src/network/link.js";
 import { formatDelivery } from "../src/mcp/format.js";
@@ -103,4 +104,29 @@ it("broadcasts when the only recipients are on a paired PC", async () => {
     host: "127.0.0.1", port: (await b.admin.request("networkStatus", {})).port! });
   expect((await sender.send({ to: "*", body: "Remote-only broadcast" })).deliveredTo).toEqual(["mac/remote"]);
   expect(await remote.waitForMessage(2_000)).toMatchObject({ body: "Remote-only broadcast", to: "*" });
+});
+
+it("queues broadcasts for known offline sessions of every agent, survives restart and excludes jobs", async () => {
+  const sender = env.node("sender");
+  const recipients = [env.node("offline-code", "codex"), env.node("offline-open", "opencode"), env.node("offline-chat", "claude")];
+  await sender.start();
+  for (const n of recipients) { await n.start(); await n.stop(); }
+  const worker = new BridgeNode({ pipePath: env.pipe, dbPath: env.db, token: loadOrCreateToken(env.home),
+    name: "codex-job-offline", id: "job:offline", agent: "other", jobAgent: "codex", cwd: env.home,
+    autoWake: false, canHostBroker: false, log: nullLogger });
+  await worker.start();
+  await expect(worker.send({ to: "*", body: "Unauthorized broadcast" })).rejects.toMatchObject({ code: "unauthorized" });
+  await worker.stop();
+  const sent = await sender.send({ to: "*", body: "Offline broadcast", dedupeKey: "offline-once" });
+  expect(sent.deliveredTo).toEqual([]);
+  expect(sent.queuedFor.sort()).toEqual(recipients.map((n) => n.name).sort());
+  expect(new Set(sent.messages.map((m) => m.id)).size).toBe(1);
+  await sender.stop();
+  const replacement = env.node("sender");
+  await replacement.start();
+  for (const n of recipients) {
+    const live = env.node(n.name, n.name === "offline-open" ? "opencode" : n.name === "offline-code" ? "codex" : "claude");
+    await live.start();
+    expect(await live.waitForMessage(2_000)).toMatchObject({ id: sent.messages[0]!.id, body: "Offline broadcast", to: "*" });
+  }
 });

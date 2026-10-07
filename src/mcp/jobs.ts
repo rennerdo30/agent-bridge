@@ -579,6 +579,9 @@ export class JobManager {
     this.persist();
   }
 
+  /** Hook-only snapshot: never performs storage recovery or runner polling. */
+  hookJobs(): Job[] { return [...this.history.values(), ...this.running.values(), ...this.foreground.values()]; }
+
   runningCount(): number {
     return [...this.running.values()].filter((j) => this.isMine(j.owner)).length;
   }
@@ -981,7 +984,7 @@ export class JobManager {
         clearInterval(this.hostTimer);
         this.hostTimer = null;
       }
-      for (const job of hosted) this.checkHostedSafely(job);
+      for (const job of hosted) this.checkHostedSafely(job, true);
     }, HOST_POLL_MS);
     this.hostTimer.unref();
   }
@@ -989,8 +992,8 @@ export class JobManager {
   /** Poll and message callbacks run outside a tool request's error boundary. A temporary storage
    * or runner fault must not terminate the hosting broker or prevent other jobs being checked.
    */
-  private checkHostedSafely(job: Job): void {
-    try { this.checkHosted(job); }
+  private checkHostedSafely(job: Job, ownershipRefreshed = false): void {
+    try { this.checkHosted(job, ownershipRefreshed); }
     catch (err) { this.log.warn("job runner check deferred after failure", { job: job.name, err: String(err) }); }
   }
 
@@ -999,8 +1002,8 @@ export class JobManager {
    * itself (a message on the bridge, so it waits for the session even while no server of it runs); this
    * session only posts it when the runner could not, or says why a runner ended without one.
    */
-  private checkHosted(job: Job): void {
-    this.refreshOwnership();
+  private checkHosted(job: Job, ownershipRefreshed = false): void {
+    if (!ownershipRefreshed) this.refreshOwnership();
     if (!this.running.has(job.id) || (job.executionOwner && job.executionOwner !== this.node.name)) return;
     if (!this.hostedRunning(job)) return;
     const runners = this.runners!;

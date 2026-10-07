@@ -7267,12 +7267,13 @@ var DEFAULT_CODEX_BIN = "codex";
 var DEFAULT_OPENCODE_BIN = "opencode";
 var DEFAULT_DASHBOARD_PORT = 4777;
 var DEFAULT_LINGER_SEC = 300;
-var STOP_WAIT_CAP_MS = 29e4;
 var DEFAULT_MAX_JOBS = 8;
 var MAX_JOBS_LIMIT = 50;
 var DEFAULT_WAIT_SEC = 110;
 var MAX_WAIT_SEC = 1800;
 var HOOK_MAX_MESSAGES = 10;
+var BROKER_TESTED_JOB_LOAD = 50;
+var HOOK_BUDGET_MS = 1500;
 
 // src/core/run-history.ts
 import { lstatSync, readdirSync as readdirSync6, realpathSync as realpathSync2, statSync as statSync5 } from "node:fs";
@@ -7978,6 +7979,11 @@ function projectGroupsEnabled(root, home, agent) {
   }
 }
 function migrateProjectJobs(records) {
+  const roots = /* @__PURE__ */ new Map();
+  const rootFor = (cwd) => {
+    if (!roots.has(cwd)) roots.set(cwd, canonicalProjectRoot(cwd));
+    return roots.get(cwd) ?? null;
+  };
   return records.map((entry) => {
     if (!entry || typeof entry !== "object" || Array.isArray(entry)) return entry;
     const job = entry;
@@ -7985,7 +7991,7 @@ function migrateProjectJobs(records) {
     const worktree = job.worktree;
     for (const value of [worktree?.repoRoot, job.workdir]) {
       if (typeof value !== "string") continue;
-      const root = canonicalProjectRoot(value);
+      const root = rootFor(value);
       if (root) return { ...job, projectRoot: root };
     }
     return entry;
@@ -9056,6 +9062,7 @@ ${req.prompt}`)), req.sandbox) };
 
 ${CODEX_ASK_HINT}` };
   const common = ["--json", "--skip-git-repo-check", ...req.model ? ["-m", req.model] : [], ...req.effort ? ["-c", `model_reasoning_effort="${req.effort}"`] : []];
+  if (process.platform === "win32" && req.sandbox !== "danger-full-access") common.push("-c", `windows.sandbox="${req.windowsSandbox ?? "unelevated"}"`);
   for (const [key2, value] of Object.entries(codexSubagentConfig(req.nativeSubagents))) common.push("-c", `${key2}=${value}`);
   if (req.writableRoots?.length && req.sandbox === "workspace-write") {
     common.push("-c", `sandbox_workspace_write.writable_roots=${JSON.stringify(req.writableRoots.map(realFolder))}`);
@@ -9303,7 +9310,9 @@ async function withResumeHint(agent, sessionOf, run) {
 }
 var TRANSIENT_ERROR_RE = /(?:model|selected model) is at capacity|not valid JSON|upstream|overloaded|bad gateway|service unavailable|gateway time-?out|internal server error|\b50[0-4]\b|ECONNRESET|ETIMEDOUT|EPIPE|socket hang up|connection (?:reset|closed|error|refused)|stream (?:error|closed|disconnected|ended)|network error|fetch failed|temporarily unavailable|routing discovery timed out/i;
 var CAPACITY_ERROR_RE = /model is at capacity/i;
+var DATABASE_LOCK_ERROR_RE = /\bdatabase (?:is |table is |schema is )?locked\b|\bSQLITE_(?:BUSY|LOCKED)\b/i;
 var CAPACITY_RETRY_DELAYS_MS = [15e3, 3e4, 6e4];
+var DATABASE_RETRY_DELAYS_MS = [1e3, 2e3, 4e3];
 var TRANSIENT_RETRY_LIMIT = 1;
 var MS_PER_SECOND = 1e3;
 var LIMIT_ERROR_RE = /usage limit|rate.?limit|quota|too many requests|\b429\b|insufficient (?:credits|balance)|billing/i;
@@ -9352,8 +9361,9 @@ async function retryTransient(req, run) {
       }
     }
     const capacity = CAPACITY_ERROR_RE.test(cause);
-    const limit = capacity ? CAPACITY_RETRY_DELAYS_MS.length : TRANSIENT_RETRY_LIMIT;
-    if (!isTransientProviderError(cause) || !sessionId && !capacity || retries >= limit) {
+    const databaseLock = DATABASE_LOCK_ERROR_RE.test(cause);
+    const limit = databaseLock ? DATABASE_RETRY_DELAYS_MS.length : capacity ? CAPACITY_RETRY_DELAYS_MS.length : TRANSIENT_RETRY_LIMIT;
+    if (!databaseLock && !isTransientProviderError(cause) || !sessionId && !capacity && !databaseLock || retries >= limit) {
       if (failed) {
         if (failure2 instanceof DelegateError && firstCause) {
           failure2.message += ` (after ${retries === 1 ? "one automatic retry" : `${retries} automatic retries`}: the first attempt had failed with "${firstCause}")`;
@@ -9369,7 +9379,7 @@ async function retryTransient(req, run) {
 ${res.text}`, details: { ...res.details, retriedAfter: firstCause, retries } };
     }
     firstCause ??= cause;
-    const waitMs = capacity ? CAPACITY_RETRY_DELAYS_MS[retries] : 0;
+    const waitMs = databaseLock ? DATABASE_RETRY_DELAYS_MS[retries] : capacity ? CAPACITY_RETRY_DELAYS_MS[retries] : 0;
     if (Date.now() + waitMs >= deadline) throw new DelegateError("delegate timed out during provider retry backoff", "timeout", "", "", sessionId);
     retries++;
     req.log.warn("transient provider error; retrying on the selected model", { sessionId, model, cause, retries, waitMs });
@@ -30488,7 +30498,34 @@ import { DatabaseSync as DatabaseSync2 } from "node:sqlite";
 import { mkdirSync as mkdirSync9 } from "node:fs";
 import { join as join19 } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { setTimeout as delay3 } from "node:timers/promises";
+
+// src/core/sqlite-policy.ts
 import { setTimeout as delay2 } from "node:timers/promises";
+var SQLITE_BUSY_TIMEOUT_MS = 3e3;
+var SQLITE_REQUEST_BUSY_MS = 10;
+function configureSqlite(db, busyTimeoutMs = SQLITE_BUSY_TIMEOUT_MS) {
+  db.exec(`PRAGMA busy_timeout = ${busyTimeoutMs}; PRAGMA journal_mode = WAL;`);
+}
+function isSqliteBusy(err) {
+  const value = err;
+  return value?.errcode === 5 || value?.errcode === 6 || /^(SQLITE_BUSY|SQLITE_LOCKED)(_|$)/.test(String(value?.code)) || /\bdatabase (?:is |table is |schema is )?locked\b|\bSQLITE_BUSY\b|\bSQLITE_LOCKED\b/i.test(String(value?.message));
+}
+async function retrySqlite(operation, timeoutMs = 8e3, signal) {
+  const deadline = Date.now() + timeoutMs;
+  let attempt = 0;
+  for (; ; ) {
+    signal?.throwIfAborted();
+    try {
+      return operation();
+    } catch (err) {
+      if (!isSqliteBusy(err) || Date.now() >= deadline) throw err;
+      await delay2(Math.min(25 * 2 ** Math.min(attempt++, 4), Math.max(1, deadline - Date.now())), void 0, { signal });
+    }
+  }
+}
+
+// src/core/resource-slots.ts
 var SLOT_OWNER_ENV = "AGENT_BRIDGE_SLOT_OWNER";
 var SLOT_PID_ENV = "AGENT_BRIDGE_SLOT_PID";
 var SLOT_LEASE_MS = 6 * 60 * 6e4;
@@ -30510,6 +30547,7 @@ var ResourceSlots = class {
     this.now = now;
     mkdirSync9(home, { recursive: true });
     this.db = new DatabaseSync(join19(home, SLOT_DB_NAME));
+    configureSqlite(this.db);
     this.db.exec(`PRAGMA busy_timeout = ${LOCK_WAIT_MS};
       CREATE TABLE IF NOT EXISTS slots (
         ticket INTEGER PRIMARY KEY AUTOINCREMENT, resource TEXT NOT NULL, id TEXT NOT NULL,
@@ -30556,8 +30594,12 @@ var ResourceSlots = class {
     try {
       for (; ; ) {
         signal?.throwIfAborted();
-        if (this.tryAcquire(resource, count, owner)) return;
-        await delay2(SLOT_POLL_MS, void 0, { signal });
+        try {
+          if (this.tryAcquire(resource, count, owner)) return;
+        } catch (err) {
+          if (!isSqliteBusy(err)) throw err;
+        }
+        await delay3(SLOT_POLL_MS, void 0, { signal });
       }
     } catch (err) {
       this.release(owner, resource);
@@ -30606,6 +30648,7 @@ var RootConcurrency = class {
     this.resource = `root-${createHash2("sha256").update(rootSession).digest("hex").slice(0, 40)}`;
     this.slots = new ResourceSlots(home);
     this.db = new DatabaseSync2(join20(home, ROOT_LIMIT_DB));
+    configureSqlite(this.db);
     this.db.exec(`PRAGMA busy_timeout = ${LOCK_WAIT_MS2}; CREATE TABLE IF NOT EXISTS root_limits (root TEXT PRIMARY KEY, capacity INTEGER NOT NULL);`);
   }
   rootSession;
@@ -31084,6 +31127,10 @@ var JobManager = class {
     if (facts.worktree) job.worktree = facts.worktree;
     this.persist();
   }
+  /** Hook-only snapshot: never performs storage recovery or runner polling. */
+  hookJobs() {
+    return [...this.history.values(), ...this.running.values(), ...this.foreground.values()];
+  }
   runningCount() {
     return [...this.running.values()].filter((j) => this.isMine(j.owner)).length;
   }
@@ -31452,16 +31499,16 @@ var JobManager = class {
         clearInterval(this.hostTimer);
         this.hostTimer = null;
       }
-      for (const job of hosted) this.checkHostedSafely(job);
+      for (const job of hosted) this.checkHostedSafely(job, true);
     }, HOST_POLL_MS);
     this.hostTimer.unref();
   }
   /** Poll and message callbacks run outside a tool request's error boundary. A temporary storage
    * or runner fault must not terminate the hosting broker or prevent other jobs being checked.
    */
-  checkHostedSafely(job) {
+  checkHostedSafely(job, ownershipRefreshed = false) {
     try {
-      this.checkHosted(job);
+      this.checkHosted(job, ownershipRefreshed);
     } catch (err) {
       this.log.warn("job runner check deferred after failure", { job: job.name, err: String(err) });
     }
@@ -31471,8 +31518,8 @@ var JobManager = class {
    * itself (a message on the bridge, so it waits for the session even while no server of it runs); this
    * session only posts it when the runner could not, or says why a runner ended without one.
    */
-  checkHosted(job) {
-    this.refreshOwnership();
+  checkHosted(job, ownershipRefreshed = false) {
+    if (!ownershipRefreshed) this.refreshOwnership();
     if (!this.running.has(job.id) || job.executionOwner && job.executionOwner !== this.node.name) return;
     if (!this.hostedRunning(job)) return;
     const runners = this.runners;
@@ -32181,7 +32228,7 @@ function migrateSqlite(db, file2, existed, target, migrations, log) {
   } catch (err) {
     db.exec("ROLLBACK TO schema_migration");
     if (backup) {
-      const original = new DatabaseSync3(backup, { readOnly: true });
+      const original = new DatabaseSync3(backup, { readOnly: true, timeout: SQLITE_BUSY_TIMEOUT_MS });
       try {
         const tables = original.prepare("PRAGMA table_list").all().filter((r) => r.schema === "main" && r.type === "table" && !String(r.name).startsWith("sqlite_"));
         for (const row of tables) {
@@ -32303,7 +32350,6 @@ var nullLogger = {
 // src/core/sqlite-maintenance.ts
 var ARCHIVE_DB_NAME = "archive.db";
 var ARCHIVE_STORE_VERSION = 1;
-var SQLITE_BUSY_TIMEOUT_MS = 3e3;
 function checkDatabase(db) {
   const integrity = db.prepare("PRAGMA integrity_check").all().map((r) => String(r.integrity_check));
   const foreign = db.prepare("PRAGMA foreign_key_check").all();
@@ -32317,7 +32363,7 @@ function snapshotDatabase(source, target) {
   } finally {
     db.close();
   }
-  const copy = new DatabaseSync4(target, { readOnly: true });
+  const copy = new DatabaseSync4(target, { readOnly: true, timeout: SQLITE_BUSY_TIMEOUT_MS });
   try {
     const findings = checkDatabase(copy);
     if (findings.length) throw new Error(`invalid database backup: ${findings.join(", ")}`);
@@ -32342,6 +32388,7 @@ function openArchive(path) {
   try {
     db.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
     migrateSqlite(db, path, existed, ARCHIVE_STORE_VERSION, [{ version: 1, sql: ARCHIVE_SCHEMA }], nullLogger);
+    configureSqlite(db);
     return db;
   } catch (err) {
     db.close();
@@ -32503,7 +32550,7 @@ function resultDelivery(home, job, before) {
     if (!existsSync11(file2)) continue;
     let db;
     try {
-      db = new DatabaseSync5(file2, { readOnly: true });
+      db = new DatabaseSync5(file2, { readOnly: true, timeout: 50 });
       for (const table of ["messages", "archived_messages"]) {
         if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(table)) continue;
         rows.push(...db.prepare(`SELECT id, recipient, body, created_at, read_at FROM ${table}
@@ -42186,7 +42233,7 @@ var StdioServerTransport = class {
 };
 
 // src/mcp/remote-ask.ts
-import { setTimeout as delay3 } from "node:timers/promises";
+import { setTimeout as delay4 } from "node:timers/promises";
 import { randomUUID as randomUUID7 } from "node:crypto";
 
 // src/network/remote-job-protocol.ts
@@ -42302,7 +42349,7 @@ async function runRemoteAsk(node2, target, args, job, signal, onProgress) {
       }
       if (state && state.status !== "running" && !snapshot.alive) return { text: state.report ?? "Remote job ended without a report.", sessionId: state.sessionId ?? null, isError: state.status === "failed", details: {}, workdir: state.workdir ?? void 0, worktree: state.worktree ?? void 0 };
       if (!snapshot.alive) throw new Error("Remote job runner ended without a result.");
-      await delay3(REMOTE_JOB_POLL_MS, void 0, { signal: combined });
+      await delay4(REMOTE_JOB_POLL_MS, void 0, { signal: combined });
       snapshot = await node2.remoteJob(host, { op: "state", job: job.id });
     }
   } finally {
@@ -43636,7 +43683,7 @@ function formatDecisionSummary(decisions) {
 }
 function readDecisions(dbPath, args = {}) {
   if (!existsSync14(dbPath)) return [];
-  const db = new DatabaseSync10(dbPath, { readOnly: true });
+  const db = new DatabaseSync10(dbPath, { readOnly: true, timeout: 50 });
   try {
     if (!db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'decisions'").get()) return [];
     return new DecisionStore(db).list(args);
@@ -43758,7 +43805,7 @@ var MessageStore = class {
     }
     try {
       migrateSqlite(this.db, file2, existed, SQLITE_STORE_VERSION, MIGRATIONS, log);
-      this.db.exec("PRAGMA journal_mode = WAL;");
+      configureSqlite(this.db);
     } catch (err) {
       this.db.close();
       this.release();
@@ -43788,7 +43835,7 @@ var MessageStore = class {
       ),
       unread: this.db.prepare(
         `SELECT * FROM messages WHERE recipient = ? AND read_at IS NULL
-         ORDER BY CASE WHEN (conversation_id LIKE 'siblings-%:note' OR conversation_id LIKE '%:ack' OR conversation_id LIKE 'files-progress-%') THEN 1 ELSE 0 END,
+         ORDER BY CASE WHEN (conversation_id LIKE '%:note' OR conversation_id LIKE '%:ack' OR conversation_id LIKE 'files-progress-%') THEN 1 ELSE 0 END,
                   created_at ASC, id ASC LIMIT ?`
       ),
       markRead: this.db.prepare(`UPDATE messages SET read_at = ? WHERE id = ? AND recipient = ? AND read_at IS NULL`),
@@ -43858,6 +43905,38 @@ var MessageStore = class {
     return this.db.prepare(`SELECT name FROM peer_names JOIN peer_name_owners USING(name,identity)
       WHERE identity=? OR (session_id=? AND agent=?) GROUP BY name ORDER BY MIN(learned_at) ASC, MIN(peer_names.rowid) ASC`).all(identity, peer.sessionId, peer.agent).map((r) => String(r.name));
   }
+  /** Retained registrations include offline sessions, but never worker runners or agent queue keys. */
+  broadcastNames() {
+    const sessions = this.db.prepare("SELECT session FROM history_sessions WHERE alias=?");
+    const files2 = this.db.prepare("SELECT DISTINCT cwd FROM history_files WHERE session=? AND cwd<>''");
+    return this.db.prepare(`SELECT name,identity FROM peer_name_owners
+      WHERE identity NOT LIKE 'unidentified:job:%' ORDER BY name`).all().filter((row) => {
+      const identity = String(row.identity);
+      let session;
+      try {
+        const parts = JSON.parse(identity);
+        if (Array.isArray(parts)) {
+          if (parts[0] === "session" && typeof parts[2] === "string") session = parts[2];
+          else if (typeof parts[1] === "number" && typeof parts[3] === "string") return !isPluginCacheCwd(parts[3]);
+        }
+      } catch {
+      }
+      session ??= String(sessions.get(identity.startsWith("unidentified:") ? identity.slice(13) : String(row.name))?.session ?? "") || void 0;
+      const cwds = session ? files2.all(session).map((file2) => String(file2.cwd)) : [];
+      return !cwds.length || cwds.some((cwd) => !isPluginCacheCwd(cwd));
+    }).map((row) => String(row.name));
+  }
+  /** Keep lock waits out of the broker event loop. Callbacks must be synchronous atomic steps. */
+  retryWrite(operation) {
+    return retrySqlite(() => {
+      this.db.exec(`PRAGMA busy_timeout = ${SQLITE_REQUEST_BUSY_MS}`);
+      try {
+        return operation();
+      } finally {
+        this.db.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
+      }
+    });
+  }
   insert(m) {
     this.stmt.insert.run(
       m.id,
@@ -43904,6 +43983,9 @@ var MessageStore = class {
   }
   pendingJobRecipients(job) {
     return this.db.prepare("SELECT DISTINCT recipient FROM messages WHERE from_id=? AND read_at IS NULL AND conversation_id NOT LIKE ?").all(`job:${job}`, `${SIBLING_CONVERSATION_PREFIX}%`).map((row) => String(row.recipient));
+  }
+  pendingJobSenders() {
+    return new Set(this.db.prepare("SELECT DISTINCT from_id FROM messages WHERE read_at IS NULL AND from_id LIKE 'job:%' AND conversation_id NOT LIKE ?").all(`${SIBLING_CONVERSATION_PREFIX}%`).map((row) => String(row.from_id)));
   }
   insertOnce(m) {
     if (this.db.prepare("SELECT 1 FROM messages WHERE id=? AND recipient=?").get(m.id, m.recipient)) return false;
@@ -44976,12 +45058,14 @@ var TransferManager = class {
     if (state.fetched) allowedFetchPath(entry.source, state.cwd, this.options.fetchRoots ?? []);
     assertTransferPath(entry.source);
     const file2 = await open2(entry.source, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
-    const st = await file2.stat();
-    if (!st.isFile() || st.size !== entry.size || st.mtimeMs !== entry.mtimeMs || st.ino !== entry.ino || st.dev !== entry.dev) {
+    try {
+      const st = await file2.stat();
+      if (!st.isFile() || st.size !== entry.size || st.mtimeMs !== entry.mtimeMs || st.ino !== entry.ino || st.dev !== entry.dev) throw new RemoteTransferError("source file changed since transfer started");
+      return file2;
+    } catch (error62) {
       await file2.close();
-      throw new RemoteTransferError("source file changed since transfer started");
+      throw error62;
     }
-    return file2;
   }
   stopped(state) {
     return state.status === "cancelled" || state.status === "failed" || this.closed;
@@ -45164,12 +45248,13 @@ var TransferManager = class {
     assertTransferPath(path);
     assertTransferPath(`${path}.sha256`);
     const file2 = await open2(path, constants.O_RDWR | (constants.O_NOFOLLOW ?? 0));
-    const journal = await open2(`${path}.sha256`, constants.O_RDWR | (constants.O_NOFOLLOW ?? 0));
+    let journal;
     const buffer = Buffer.alloc(TRANSFER_CHUNK_BYTES);
     const record2 = Buffer.alloc(SHA_RECORD_BYTES);
     let verified = 0;
     let chunks = 0;
     try {
+      journal = await open2(`${path}.sha256`, constants.O_RDWR | (constants.O_NOFOLLOW ?? 0));
       while (verified < entry.offset) {
         if (this.stopped(state)) throw new Error("transfer cancelled or manager closed");
         const length = Math.min(TRANSFER_CHUNK_BYTES, entry.size - verified);
@@ -45186,8 +45271,11 @@ var TransferManager = class {
       await journal.sync();
       entry.offset = verified;
     } finally {
-      await file2.close();
-      await journal.close();
+      try {
+        await file2.close();
+      } finally {
+        await journal?.close();
+      }
     }
   }
   initialize(state) {
@@ -45400,8 +45488,9 @@ var TransferManager = class {
       assertTransferPath(path);
       assertTransferPath(`${path}.sha256`);
       const file2 = await open2(path, constants.O_RDWR | (constants.O_NOFOLLOW ?? 0));
-      const journal = await open2(`${path}.sha256`, constants.O_RDWR | (constants.O_NOFOLLOW ?? 0));
+      let journal;
       try {
+        journal = await open2(`${path}.sha256`, constants.O_RDWR | (constants.O_NOFOLLOW ?? 0));
         await writeAll(file2, data, entry.offset);
         await file2.sync();
         const record2 = Buffer.from(`${request2.sha256}
@@ -45409,8 +45498,11 @@ var TransferManager = class {
         await writeAll(journal, record2, Math.floor(entry.offset / TRANSFER_CHUNK_BYTES) * SHA_RECORD_BYTES);
         await journal.sync();
       } finally {
-        await file2.close();
-        await journal.close();
+        try {
+          await file2.close();
+        } finally {
+          await journal?.close();
+        }
       }
       entry.offset += data.length;
       if (!this.stopped(state)) state.status = "running";
@@ -46065,24 +46157,50 @@ var ProjectGroups = class {
   home;
   roots = /* @__PURE__ */ new Map();
   jobRoots = /* @__PURE__ */ new Map();
+  settings = /* @__PURE__ */ new Map();
+  dispatchRoots = /* @__PURE__ */ new Map();
+  enabled(root, agent) {
+    const key2 = JSON.stringify([root, agent]);
+    if (!this.settings.has(key2)) {
+      if (!this.settings.size) queueMicrotask(() => this.settings.clear());
+      this.settings.set(key2, projectGroupsEnabled(root, this.home, agent));
+    }
+    return this.settings.get(key2);
+  }
   root(cwd) {
     if (!this.roots.has(cwd)) this.roots.set(cwd, canonicalProjectRoot(cwd));
     return this.roots.get(cwd) ?? null;
   }
   same(a, b) {
     const left = this.root(a), right = this.root(b);
-    return Boolean(left && right && projectKey(left) === projectKey(right) && projectGroupsEnabled(left, this.home));
+    return Boolean(left && right && projectKey(left) === projectKey(right) && this.enabled(left));
   }
   decorate(peer) {
     const root = this.root(peer.cwd);
-    return { ...peer, projectRoot: root ?? void 0, projectGroup: root && peer.agent !== "other" && !peer.jobAgent && !peer.subagent && projectGroupsEnabled(root, this.home, peer.agent) ? projectKey(root) : void 0 };
+    return { ...peer, projectRoot: root ?? void 0, projectGroup: root && peer.agent !== "other" && !peer.jobAgent && !peer.subagent && this.enabled(root, peer.agent) ? projectKey(root) : void 0 };
   }
   /** Paired-PC jobs remain outside local group authority. */
   shareable(job) {
     return !job.remote;
   }
   jobRoot(job, peers) {
+    if (!this.dispatchRoots.has(job)) {
+      if (!this.dispatchRoots.size) queueMicrotask(() => this.dispatchRoots.clear());
+      this.dispatchRoots.set(job, this.resolveJobRoot(job, peers));
+    }
+    return this.dispatchRoots.get(job) ?? null;
+  }
+  resolveJobRoot(job, peers) {
     const worktree = job.worktree;
+    for (const value of [job.projectRoot, worktree?.repoRoot]) {
+      if (typeof value === "string") {
+        const root = this.root(value);
+        if (root) {
+          this.jobRoots.set(String(job.id), root);
+          return root;
+        }
+      }
+    }
     const runner = peers.find((p) => p.jobAgent && p.id === `job:${job.id}`);
     let spec;
     if (this.home && typeof job.id === "string" && /^[a-zA-Z0-9_-]+$/.test(job.id)) {
@@ -46091,7 +46209,7 @@ var ProjectGroups = class {
       } catch {
       }
     }
-    for (const value of [job.projectRoot, worktree?.repoRoot, isRecord(spec) ? spec.cwd : void 0, job.workdir, runner?.cwd]) {
+    for (const value of [isRecord(spec) ? spec.cwd : void 0, job.workdir, runner?.cwd]) {
       if (typeof value === "string") {
         const root = this.root(value);
         if (root) {
@@ -46122,7 +46240,11 @@ var ProjectGroups = class {
     if (!this.shareable(job)) return [];
     const root = this.jobRoot(job, local);
     if (!root) return [];
-    return local.filter((p) => p.agent !== "other" && !p.jobAgent && !p.subagent && !p.host && this.same(p.cwd, root) && projectGroupsEnabled(root, this.home, p.agent));
+    return local.filter((p) => {
+      if (p.agent === "other" || p.jobAgent || p.subagent || p.host) return false;
+      const candidate = this.root(p.cwd);
+      return Boolean(candidate && projectKey(candidate) === projectKey(root) && this.enabled(root, p.agent));
+    });
   }
   candidate(job, local) {
     if (!this.shareable(job)) return void 0;
@@ -47843,15 +47965,18 @@ var Broker = class {
         this.emit(executor, "inline_job_control", a);
         return { sent: true };
       },
-      inlineJobReport: (c, m) => {
-        const peer = this.requirePeer(c), job = this.storedJobs().find((j) => `job:${j.id}` === m.from?.id);
-        if (!job || job.executionOwner !== peer.name && job.owner !== peer.name && job.rootName !== peer.name || typeof job.owner !== "string" || typeof m.body !== "string" || m.body.length > MAX_BODY_CHARS) throw new BridgeError("unauthorized", "Invalid inline job delivery.");
-        const recipient = this.jobRecipient(job);
-        const message = { ...m, to: recipient, recipient, conversationId: this.jobConversation(job, recipient, m.conversationId) };
-        if (this.store.insertJobDelivery(message)) {
-          const target = this.connByName(recipient);
-          if (target && !target.peer?.unavailable) this.emit(target, "message", message);
-        }
+      inlineJobReport: async (c, m) => {
+        const peer = this.requirePeer(c);
+        await this.store.retryWrite(() => {
+          const job = this.storedJobs().find((j) => `job:${j.id}` === m.from?.id);
+          if (!job || job.executionOwner !== peer.name && job.owner !== peer.name && job.rootName !== peer.name || typeof job.owner !== "string" || typeof m.body !== "string" || m.body.length > MAX_BODY_CHARS) throw new BridgeError("unauthorized", "Invalid inline job delivery.");
+          const recipient = this.jobRecipient(job);
+          const message = { ...m, to: recipient, recipient, conversationId: this.jobConversation(job, recipient, m.conversationId) };
+          if (this.store.insertJobDelivery(message)) {
+            const target = this.connByName(recipient);
+            if (target && !target.peer?.unavailable) this.emit(target, "message", message);
+          }
+        });
         return { saved: true };
       },
       auth: (c, a) => {
@@ -47859,11 +47984,11 @@ var Broker = class {
         c.authed = true;
         return { brokerPid: process.pid };
       },
-      hello: (c, a) => {
+      hello: async (c, a) => {
         const result = this.onHello(c, a);
         const job = this.storedJobs().find((j) => `job:${j.id}` === c.peer?.id);
         if (job?.ownershipHistory) this.refreshJobPeer(job);
-        this.routePendingJobMail();
+        void this.routePendingJobMail().catch((err) => this.log.warn("pending job reroute deferred", { err: String(err) }));
         this.store.history.rememberPeer(c.peer);
         return result;
       },
@@ -47881,13 +48006,14 @@ var Broker = class {
         return this.store.history.tick();
       },
       peers: () => this.livePeers(),
+      brokerLoad: () => ({ connectedJobs: [...this.conns].filter((conn) => conn.peer?.jobAgent).length, testedJobs: BROKER_TESTED_JOB_LOAD }),
       dashboardPeers: () => this.dashboardPeers().concat(this.network?.peers() ?? []),
       dashboardRead: (_, a) => this.remoteDashboard?.request(a.host, a.request) ?? dashboardError("remote_offline", "Networking is unavailable."),
       siblings: (c) => this.siblingPeers(c),
       sendSibling: (c, a) => this.onSendSibling(c, a),
       messageReceipt: (c, a) => this.messageReceipt(c, a.id),
-      ack: (c, a) => ({ acked: this.store.markRead(this.requirePeer(c).name, a.ids ?? [], this.now()) }),
-      pending: (c, a) => this.unreadMail(this.requirePeer(c).name, Math.min(Math.max(1, a.limit ?? PENDING_DEFAULT_LIMIT), PENDING_MAX_LIMIT)),
+      ack: async (c, a) => ({ acked: await this.store.retryWrite(() => this.store.markRead(this.requirePeer(c).name, a.ids ?? [], this.now())) }),
+      pending: (c, a) => this.pendingMail(this.requirePeer(c).name, Math.min(Math.max(1, a.limit ?? PENDING_DEFAULT_LIMIT), PENDING_MAX_LIMIT)),
       updatePeer: (c, a) => {
         const peer = this.onUpdatePeer(c, a);
         const job = this.storedJobs().find((j) => `job:${j.id}` === peer.id);
@@ -47978,6 +48104,10 @@ var Broker = class {
   conns = /* @__PURE__ */ new Set();
   historyTimer = null;
   purgeTimer = null;
+  pendingJobMailRoute = null;
+  pendingJobMailRouteAgain = false;
+  pendingJobMailRetry = null;
+  closing = false;
   network = null;
   remoteJobs = null;
   remoteDashboard = null;
@@ -48040,6 +48170,9 @@ var Broker = class {
     });
   }
   async close() {
+    this.closing = true;
+    if (this.pendingJobMailRetry) clearTimeout(this.pendingJobMailRetry);
+    this.pendingJobMailRetry = null;
     if (this.historyTimer) clearInterval(this.historyTimer);
     if (this.purgeTimer) clearInterval(this.purgeTimer);
     await this.networkChange;
@@ -48054,6 +48187,7 @@ var Broker = class {
     const server = this.server;
     this.server = null;
     if (server) await new Promise((r) => server.close(() => r()));
+    await this.pendingJobMailRoute?.catch((err) => this.log.warn("pending mail route stopped", { err: String(err) }));
     this.store.close();
     this.log.info("broker closed");
   }
@@ -48147,12 +48281,8 @@ var Broker = class {
     socket.on("error", (err) => this.log.debug("connection error", { err: err.message }));
     socket.on("close", () => {
       this.conns.delete(conn);
-      try {
-        this.routePendingJobMail();
-      } catch (err) {
-        this.log.warn("pending job reroute deferred", { err: String(err) });
-      }
       if (conn.peer) {
+        void this.routePendingJobMail().catch((err) => this.log.warn("pending job reroute deferred", { err: String(err) }));
         this.log.info("peer left", { name: conn.peer.name, agent: conn.peer.agent });
         if (!conn.peer.jobAgent) this.broadcastEvent("peer_left", conn.peer, conn);
       }
@@ -48325,31 +48455,63 @@ Handoff note: ${receipt.note}` : "") + "\n\nYou are their supervisor. Use messag
         }
       }
     }
-    this.routePendingJobMail();
+    void this.routePendingJobMail().catch((err) => this.log.warn("pending job reroute deferred", { err: String(err) }));
   }
   routePendingJobMail() {
-    for (const job of this.storedJobs()) {
-      if (job.remote || !primaryFor(job)) continue;
-      const recipient = this.jobRecipient(job), target = this.connByName(recipient);
-      if (Array.isArray(job.deliveryHistory)) for (const envelope of job.deliveryHistory) {
-        if (!isRecord(envelope) || !isRecord(envelope.from) || envelope.from.id !== `job:${job.id}` || typeof envelope.id !== "string" || typeof envelope.body !== "string") continue;
-        const message = { ...envelope, to: recipient, recipient, conversationId: this.jobConversation(job, recipient, String(envelope.conversationId)) };
-        if (this.store.insertJobDelivery(message)) {
-          const names = /* @__PURE__ */ new Set([recipient, envelope.to, envelope.recipient, ...mastersFor(job)]);
-          const consumed = this.jobsPath && [...names].some((name2) => typeof name2 === "string" && new ReadJournal(dirname16(this.jobsPath)).read(`name:${name2}`).includes(message.id));
-          if (consumed) this.store.markRead(recipient, [message.id], this.now());
-          else if (target && !target.peer?.unavailable) this.emit(target, "message", message);
+    if (this.closing) return Promise.resolve();
+    this.pendingJobMailRouteAgain = true;
+    this.pendingJobMailRoute ??= this.reroutePendingJobMail().catch((err) => {
+      if (isSqliteBusy(err) && !this.closing && !this.pendingJobMailRetry) {
+        this.pendingJobMailRetry = setTimeout(() => {
+          this.pendingJobMailRetry = null;
+          void this.routePendingJobMail().catch((error62) => this.log.warn("pending job mail retry deferred", { err: String(error62) }));
+        }, 1e3);
+        this.pendingJobMailRetry.unref();
+      }
+      throw err;
+    }).finally(() => {
+      this.pendingJobMailRoute = null;
+    });
+    return this.pendingJobMailRoute;
+  }
+  async reroutePendingJobMail() {
+    do {
+      this.pendingJobMailRouteAgain = false;
+      let processed = 0;
+      let pending = this.store.pendingJobSenders();
+      for (const snapshot of this.storedJobs()) {
+        if (++processed % 16 === 0) {
+          await new Promise((resolve14) => setImmediate(resolve14));
+          pending = this.store.pendingJobSenders();
         }
+        if (snapshot.remote || !primaryFor(snapshot)) continue;
+        if ((!Array.isArray(snapshot.deliveryHistory) || !snapshot.deliveryHistory.length) && !pending.has(`job:${snapshot.id}`)) continue;
+        await this.store.retryWrite(() => {
+          if (this.closing) return;
+          const job = this.storedJobs().find((record2) => record2.id === snapshot.id);
+          if (!job || job.remote || !primaryFor(job)) return;
+          if ((!Array.isArray(job.deliveryHistory) || !job.deliveryHistory.length) && !this.store.pendingJobRecipients(String(job.id)).length) return;
+          const recipient = this.jobRecipient(job), target = this.connByName(recipient);
+          if (Array.isArray(job.deliveryHistory)) for (const envelope of job.deliveryHistory) {
+            if (!isRecord(envelope) || !isRecord(envelope.from) || envelope.from.id !== `job:${job.id}` || typeof envelope.id !== "string" || typeof envelope.body !== "string") continue;
+            const message = { ...envelope, to: recipient, recipient, conversationId: this.jobConversation(job, recipient, String(envelope.conversationId)) };
+            const inserted = this.store.insertJobDelivery(message);
+            const names = /* @__PURE__ */ new Set([recipient, envelope.to, envelope.recipient, ...mastersFor(job)]);
+            const consumed = this.jobsPath && [...names].some((name2) => typeof name2 === "string" && new ReadJournal(dirname16(this.jobsPath)).read(`name:${name2}`).includes(message.id));
+            if (consumed) this.store.markRead(recipient, [message.id], this.now());
+            else if (inserted && target && !target.peer?.unavailable) this.emit(target, "message", message);
+          }
+          if (!target || target.peer?.unavailable) return;
+          for (const from of this.store.pendingJobRecipients(String(job.id))) {
+            if (this.jobsPath) this.store.markRead(from, new ReadJournal(dirname16(this.jobsPath)).read(`name:${from}`), this.now());
+            const moved = this.store.handoffMail(from, recipient, String(job.id), this.now(), recipient !== job.parentJob && recipient !== primaryFor(job));
+            const previous = this.connByName(from);
+            if (previous && moved.length) this.emit(previous, "mail_retracted", { ids: moved.map((m) => m.id) });
+            for (const m of moved) this.emit(target, "message", m);
+          }
+        });
       }
-      if (!target || target.peer?.unavailable) continue;
-      for (const from of this.store.pendingJobRecipients(String(job.id))) {
-        if (this.jobsPath) this.store.markRead(from, new ReadJournal(dirname16(this.jobsPath)).read(`name:${from}`), this.now());
-        const moved = this.store.handoffMail(from, recipient, String(job.id), this.now(), recipient !== job.parentJob && recipient !== primaryFor(job));
-        const previous = this.connByName(from);
-        if (previous && moved.length) this.emit(previous, "mail_retracted", { ids: moved.map((m) => m.id) });
-        for (const m of moved) this.emit(target, "message", m);
-      }
-    }
+    } while (this.pendingJobMailRouteAgain && !this.closing);
   }
   jobRecipient(job) {
     if (typeof job.parentJob === "string" && this.connByName(job.parentJob)?.peer?.jobAgent) return job.parentJob;
@@ -48485,11 +48647,11 @@ ${args.body}`,
         createdAt: this.now(),
         readAt: null
       };
-      this.store.insert(notice);
+      await this.store.retryWrite(() => this.store.insert(notice));
       this.emit(conn, "message", notice);
       if (sender.jobParent && sender.jobParent !== sender.name) {
         const copy = { ...notice, recipient: sender.jobParent };
-        this.store.insert(copy);
+        await this.store.retryWrite(() => this.store.insert(copy));
         const supervisor = this.connByName(sender.jobParent);
         if (supervisor) this.emit(supervisor, "message", copy);
       }
@@ -48510,7 +48672,7 @@ ${args.body}`,
 
 ${message.body}`
       };
-      this.store.insert(note);
+      await this.store.retryWrite(() => this.store.insert(note));
       const supervisor = this.connByName(owner);
       if (supervisor) this.emit(supervisor, "message", note);
     }
@@ -48687,7 +48849,7 @@ Call decisions to look up current decisions or their history.`,
     if (args.unavailable !== void 0) {
       if (peer.jobAgent || typeof args.unavailable !== "boolean") throw new BridgeError("bad_request", "Only masters can change availability.");
       peer.unavailable = args.unavailable;
-      this.routePendingJobMail();
+      void this.routePendingJobMail().catch((err) => this.log.warn("pending job reroute deferred", { err: String(err) }));
       if (!peer.unavailable) this.replayMail(conn, peer);
     }
     if (peer.jobOwner) {
@@ -48804,8 +48966,13 @@ Call decisions to look up current decisions or their history.`,
       return { live: [this.connByName(target.name)], queued: [] };
     }
     if (to === BROADCAST) {
-      if (others.length === 0) throw new BridgeError("unknown_target", "no other peers are online");
-      return { live: others, queued: [] };
+      if (sender.jobAgent) throw new BridgeError("unauthorized", "job runners cannot broadcast to independent sessions");
+      const ownNames = /* @__PURE__ */ new Set([sender.name, ...this.store.namesFor(sender)]);
+      const queued = this.store.broadcastNames().filter((name2) => !ownNames.has(name2) && !this.recipientConn(name2));
+      if (others.length === 0 && queued.length === 0 && !this.network?.peers().some((p) => !p.jobAgent)) {
+        throw new BridgeError("unknown_target", "no other known sessions; send to an exact name to create an offline queue");
+      }
+      return { live: others, queued };
     }
     const recipient = this.recipientConn(to);
     const exact = all.find((c) => c.peer.id === to || c === recipient);
@@ -48859,6 +49026,7 @@ Call decisions to look up current decisions or their history.`,
     let to = String(args.to ?? "").trim();
     if (!to) throw new BridgeError("bad_request", "missing target");
     const own2 = sender.jobAgent ? this.storedJobs().find((j) => `job:${j.id}` === sender.id) : void 0;
+    const supervisorMail = Boolean(own2 && (to === sender.jobParent || mastersFor(own2).includes(to)));
     if (own2) {
       if (to === sender.jobParent || mastersFor(own2).includes(to)) to = this.jobRecipient(own2);
       else if (Array.isArray(own2.ownershipHistory) && own2.ownershipHistory.some((h) => isRecord(h) && h.fromRootName === to)) to = String(own2.rootName);
@@ -48898,11 +49066,11 @@ Call decisions to look up current decisions or their history.`,
     };
     if (to.includes("/")) {
       const result2 = await this.requireNetwork().send({ ...base2, recipient: to });
-      for (const message of result2.messages) this.store.insert(message);
+      for (const message of result2.messages) await this.store.retryWrite(() => this.store.insert(message));
       return result2;
     }
     const remoteTargets = to === BROADCAST ? this.network?.peers().filter((p) => !p.jobAgent).map((p) => p.name) ?? [] : [];
-    const { live, queued } = to === BROADCAST && remoteTargets.length ? { live: [...this.conns].filter((c) => c.peer && c.peer.id !== sender.id && !c.peer.jobAgent), queued: [] } : this.resolveTargets(to, sender);
+    let { live, queued } = this.resolveTargets(to, sender);
     if (own2 && to === this.jobRecipient(own2)) {
       for (let i = live.length - 1; i >= 0; i--) {
         if (live[i].peer?.unavailable) queued.push(live.splice(i, 1)[0].peer.name);
@@ -48912,10 +49080,27 @@ Call decisions to look up current decisions or their history.`,
       throw new BridgeError("unauthorized", "sibling chat requires the same supervisor or an explicit send_to job grant");
     }
     const messages = [];
-    for (const c of live) messages.push({ ...base2, recipient: c.peer.name });
-    for (const key2 of queued) messages.push({ ...base2, recipient: key2 });
-    for (const m of messages) this.store.insert(m);
-    live.forEach((c, i) => this.emit(c, "message", messages[i]));
+    let inserted = true;
+    if (supervisorMail) {
+      await this.store.retryWrite(() => {
+        const current = this.storedJobs().find((job) => `job:${job.id}` === sender.id);
+        if (!current) throw new BridgeError("unauthorized", "Job ownership is unavailable.");
+        this.refreshJobPeer(current);
+        to = this.jobRecipient(current);
+        ({ live, queued } = this.resolveTargets(to, sender));
+        for (let i = live.length - 1; i >= 0; i--) {
+          if (live[i].peer?.unavailable) queued.push(live.splice(i, 1)[0].peer.name);
+        }
+        const message = { ...base2, to, recipient: live[0]?.peer.name ?? queued[0], conversationId: this.jobConversation(current, to, base2.conversationId) };
+        inserted = this.store.insertJobDelivery(message);
+        messages.splice(0, messages.length, message);
+      });
+    } else {
+      for (const c of live) messages.push({ ...base2, recipient: c.peer.name });
+      for (const key2 of queued) messages.push({ ...base2, recipient: key2 });
+      for (const m of messages) await this.store.retryWrite(() => this.store.insert(m));
+    }
+    if (inserted) live.forEach((c, i) => this.emit(c, "message", messages[i]));
     this.log.info("message routed", {
       id,
       from: sender.name,
@@ -48928,14 +49113,14 @@ Call decisions to look up current decisions or their history.`,
     for (const recipient of remoteTargets) {
       try {
         const remote = await this.requireNetwork().send({ ...base2, recipient });
-        for (const message of remote.messages) this.store.insert(message);
+        for (const message of remote.messages) await this.store.retryWrite(() => this.store.insert(message));
         result.messages.push(...remote.messages);
         result.deliveredTo.push(...remote.deliveredTo);
         result.queuedFor.push(...remote.queuedFor);
         result.recipientStates.push(...remote.recipientStates ?? []);
       } catch (err) {
         const message = { ...base2, recipient };
-        this.store.insert(message);
+        await this.store.retryWrite(() => this.store.insert(message));
         result.messages.push(message);
         (result.failedFor ??= []).push({ name: recipient, reason: err.message });
         this.log.warn("broadcast recipient delivery failed", { id, recipient, err: String(err) });
@@ -48943,10 +49128,24 @@ Call decisions to look up current decisions or their history.`,
     }
     return result;
   }
+  /** A pending response is one frame, unlike streamed replay events. Bound it by bytes as well as rows. */
+  pendingMail(recipient, limit) {
+    const result = [];
+    let bytes2 = 1024;
+    for (const message of this.unreadMail(recipient, limit)) {
+      const size = Buffer.byteLength(JSON.stringify(message)) + 1;
+      if (bytes2 + size > MAX_FRAME_BYTES) break;
+      result.push(message);
+      bytes2 += size;
+    }
+    return result;
+  }
   unreadMail(recipient, limit) {
     const messages = this.store.unread(recipient, limit);
     if (!this.jobsPath) return messages;
-    const finished = new Set(this.storedJobs().filter((j) => j.status && j.status !== "running" && (!primaryFor(j) || !j.projectRoot && !j.deliveryHistory && !j.ownershipHistory && !this.groups.jobRoot(j, this.localPeers()))).map((j) => `job:${j.id}`));
+    const noteSenders = new Set(messages.filter((m) => !isQuietMessage(m) && m.conversationId.endsWith(SIBLING_NOTE_SUFFIX)).map((m) => m.from.id));
+    if (!noteSenders.size) return messages;
+    const finished = new Set(this.storedJobs().filter((j) => noteSenders.has(`job:${j.id}`) && j.status && j.status !== "running" && (!primaryFor(j) || !j.projectRoot && !j.deliveryHistory && !j.ownershipHistory && !this.groups.jobRoot(j, this.localPeers()))).map((j) => `job:${j.id}`));
     const obsolete = messages.filter((m) => !isQuietMessage(m) && m.conversationId.endsWith(SIBLING_NOTE_SUFFIX) && finished.has(m.from.id));
     this.store.markRead(recipient, obsolete.map((m) => m.id), this.now());
     return messages.filter((m) => !obsolete.includes(m));
@@ -49189,6 +49388,10 @@ var BridgeNode = class extends EventEmitter2 {
   readIds = /* @__PURE__ */ new Set();
   readJournal;
   unflushedAcks = /* @__PURE__ */ new Set();
+  pendingAcks = /* @__PURE__ */ new Set();
+  pendingRefreshTimer = null;
+  refreshingPending = null;
+  ackFlushScheduled = false;
   sessionId = null;
   autoWake;
   wakeOnDirect = false;
@@ -49245,6 +49448,8 @@ var BridgeNode = class extends EventEmitter2 {
     this.emit("stopped");
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
     this.reconnectTimer = null;
+    if (this.pendingRefreshTimer) clearTimeout(this.pendingRefreshTimer);
+    this.pendingRefreshTimer = null;
     this.client?.close();
     this.client = null;
     if (closeBroker) {
@@ -49270,9 +49475,9 @@ var BridgeNode = class extends EventEmitter2 {
   }
   /** Doubling delay for background retries, capped; reset once connected. */
   nextBackoff() {
-    const delay4 = this.reconnectDelay;
-    this.reconnectDelay = Math.min(delay4 * 2, RECONNECT_BACKOFF_MAX_MS);
-    return delay4;
+    const delay5 = this.reconnectDelay;
+    this.reconnectDelay = Math.min(delay5 * 2, RECONNECT_BACKOFF_MAX_MS);
+    return delay5;
   }
   /**
    * Retry the election later until connected or stopped. Also after "unauthorized" / "protocol_mismatch":
@@ -49393,15 +49598,11 @@ var BridgeNode = class extends EventEmitter2 {
     this.reconnectDelay = RECONNECT_BACKOFF_MIN_MS;
     client.once("close", () => this.onClose(client));
     if (this.unflushedAcks.size > 0) {
-      const ids = [...this.unflushedAcks];
-      this.unflushedAcks.clear();
-      client.request("ack", { ids }).catch((err) => {
-        this.log.warn("flushing acks failed", { err: err.message });
-        ids.forEach((id) => this.unflushedAcks.add(id));
-      });
+      this.acknowledge([...this.unflushedAcks]);
     }
     this.log.info("connected to broker", { name: hello.name, brokerPid: hello.brokerPid, isBroker: this.isBroker });
     this.emit("connected", { name: hello.name, isBroker: this.isBroker });
+    this.schedulePendingRefresh();
   }
   onClose(client) {
     if (this.client !== client) return;
@@ -49453,13 +49654,26 @@ var BridgeNode = class extends EventEmitter2 {
   /** quiet: not part of a conversation of this agent (no listen window, replies are not awaited), e.g. control messages to a job runner. */
   send(args, opts = {}) {
     return this.withClient(async (c) => {
-      const res = await c.request("send", args);
+      const res = await this.sendRequest(c, "send", { ...args, dedupeKey: args.dedupeKey || randomUUID20() });
       if (opts.quiet) return res;
       this.lastSent = Date.now();
       if (!args.replyTo) for (const m of res.messages) this.asked.add(m.id);
       if (this.asked.size > QUESTION_ID_MEMORY) this.asked.delete(this.asked.values().next().value);
       return res;
     });
+  }
+  /** A late send response can be recovered from the same broker without sending twice. */
+  async sendRequest(client, op, args) {
+    try {
+      return await client.request(op, args);
+    } catch (err) {
+      if (err.message !== `broker request timed out: ${op}`) throw err;
+      try {
+        return await client.request(op, args);
+      } catch (retryError) {
+        throw new Error(`Delivery is unconfirmed after a timed-out ${op}. Check inbox/history before resending. ${retryError.message}`, { cause: retryError });
+      }
+    }
   }
   /** A reply to a question this peer asked (so the answer should reach the agent even when it is idle). */
   isAwaitedReply(m) {
@@ -49474,6 +49688,9 @@ var BridgeNode = class extends EventEmitter2 {
   }
   peers() {
     return this.withClient((c) => c.request("peers", {})).then((peers) => peers.filter((p) => !isPluginCacheCwd(p.cwd)));
+  }
+  brokerLoad() {
+    return this.withClient((c) => c.request("brokerLoad", {}));
   }
   projectJobs() {
     return this.withClient((c) => c.request("projectJobs", {}));
@@ -49523,7 +49740,7 @@ var BridgeNode = class extends EventEmitter2 {
     return this.withClient((c) => c.request("siblings", {}));
   }
   sendSibling(args, maxHops) {
-    return this.withClient((c) => c.request("sendSibling", { ...args, maxHops }));
+    return this.withClient((c) => this.sendRequest(c, "sendSibling", { ...args, maxHops, dedupeKey: args.dedupeKey || randomUUID20() }));
   }
   async updateJob(patch) {
     Object.assign(this.opts, patch);
@@ -49550,6 +49767,37 @@ var BridgeNode = class extends EventEmitter2 {
   /** Locally buffered unread messages, oldest first. */
   unread() {
     return [...this.inbox.values()].sort((a, b) => a.createdAt - b.createdAt);
+  }
+  /** A replay is bounded to 500 rows. Active hooks refill after receipts so the tail cannot strand. */
+  refreshPending() {
+    this.refreshingPending ??= this.readPending().finally(() => {
+      this.refreshingPending = null;
+    });
+    return this.refreshingPending;
+  }
+  async readPending() {
+    if (!this.isConnected) return;
+    await Promise.all(this.pendingAcks);
+    if (this.unflushedAcks.size) {
+      const ids = [...this.unflushedAcks];
+      await this.client.request("ack", { ids });
+      ids.forEach((id) => this.unflushedAcks.delete(id));
+    }
+    const messages = await this.client.request("pending", { limit: 500 });
+    for (const m of messages) this.onEvent("message", m);
+  }
+  /** Refill channel/wake consumers too; active hooks are not required to drain a large inbox. */
+  schedulePendingRefresh(delayMs = 100) {
+    if (this.stopping || this.pendingRefreshTimer) return;
+    this.pendingRefreshTimer = setTimeout(() => {
+      this.pendingRefreshTimer = null;
+      if (!this.isConnected || this.stopping) return;
+      void this.refreshPending().catch((err) => {
+        this.log.warn("pending recovery deferred", { err: String(err) });
+        this.schedulePendingRefresh(1e3);
+      });
+    }, delayMs);
+    this.pendingRefreshTimer.unref();
   }
   /** Look up a message by id: one we still hold, or remembered as read. */
   hasSeen(id) {
@@ -49606,13 +49854,24 @@ var BridgeNode = class extends EventEmitter2 {
   }
   acknowledge(ids) {
     if (!ids.length) return;
-    if (!this.isConnected) {
-      ids.forEach((id) => this.unflushedAcks.add(id));
-      return;
-    }
-    this.client.request("ack", { ids }).catch((err) => {
-      this.log.warn("ack failed; will retry after reconnect", { err: err.message });
-      ids.forEach((id) => this.unflushedAcks.add(id));
+    ids.forEach((id) => this.unflushedAcks.add(id));
+    if (!this.isConnected || this.ackFlushScheduled) return;
+    this.ackFlushScheduled = true;
+    setImmediate(() => {
+      this.ackFlushScheduled = false;
+      if (!this.isConnected || !this.unflushedAcks.size) return;
+      const batch = [...this.unflushedAcks].slice(0, 500);
+      batch.forEach((id) => this.unflushedAcks.delete(id));
+      const pending = this.client.request("ack", { ids: batch }).catch((err) => {
+        this.log.warn("ack failed; retained for pending recovery", { err: err.message });
+        batch.forEach((id) => this.unflushedAcks.add(id));
+      });
+      this.pendingAcks.add(pending);
+      void pending.finally(() => {
+        this.pendingAcks.delete(pending);
+        this.schedulePendingRefresh();
+      });
+      if (this.unflushedAcks.size) this.acknowledge([...this.unflushedAcks]);
     });
   }
   /** Resolves with the next unread message (possibly one already waiting), or null on timeout. */
@@ -50252,10 +50511,13 @@ function context(event, additionalContext) {
 function discardFinishedNotes(ctx) {
   const node2 = ctx.node;
   if (!node2) return;
-  const obsolete = node2.unread().filter((m) => {
+  const notes = node2.unread().filter((m) => !isQuietMessage(m) && ctx.jobs?.isNote(m));
+  if (!notes.length) return;
+  const jobs = new Map(ctx.jobs?.hookJobs().map((job) => [job.name, job]));
+  const obsolete = notes.filter((m) => {
     if (isQuietMessage(m)) return false;
     if (!ctx.jobs?.isNote(m)) return false;
-    const job = ctx.jobs.find(m.from.name);
+    const job = jobs.get(m.from.name);
     return job !== void 0 && !job.projectRoot && !job.deliveryHistory?.length && !job.ownershipHistory?.length && job.status !== "running";
   });
   node2.markRead(obsolete.map((m) => m.id));
@@ -50267,17 +50529,23 @@ function take(ctx, wakeOnly, notesOnly = false) {
   node2.markRead(msgs.map((m) => m.id));
   return msgs;
 }
+var parentReads = /* @__PURE__ */ new WeakMap();
 async function subagentHook(ctx, input2) {
   const parent2 = ctx.parent;
   if (!parent2 || input2.event === "SessionStart") return {};
-  const msgs = await parent2.inbox().catch((err) => {
-    ctx.log.debug("parent inbox unavailable", { err: err.message });
-    return [];
-  });
-  if (input2.event === "Stop" && !msgs.length && ctx.jobs?.runningCount()) await ctx.childInbox?.wait(STOP_WAIT_CAP_MS, input2.signal);
+  let pending = parentReads.get(ctx);
+  if (!pending) {
+    pending = parent2.inbox().catch((err) => {
+      ctx.log.debug("parent inbox unavailable", { err: err.message });
+      return [];
+    });
+    parentReads.set(ctx, pending);
+  }
+  const hasChildren = Boolean(ctx.childInbox?.unread().length);
+  const msgs = hasChildren ? [] : await withinHook(pending, input2.signal);
+  if (!hasChildren) parentReads.delete(ctx);
   const children = ctx.childInbox?.take() ?? [];
   if (msgs.length === 0 && children.length === 0) {
-    if (input2.event === "Stop" && ctx.jobs?.runningCount()) return { decision: "block", reason: "Your nested subagents are still running. Wait for their results or cancel them before ending your task." };
     return {};
   }
   ctx.log.info("delivering parent messages to the subagent", { count: msgs.length, event: input2.event });
@@ -50286,20 +50554,57 @@ async function subagentHook(ctx, input2) {
   if (input2.event === "PostToolUse") return { decision: "block", reason: text3, hookSpecificOutput: { hookEventName: input2.event, additionalContext: text3 } };
   return context(input2.event, text3);
 }
+function withinHook(work, signal) {
+  return new Promise((resolve14, reject) => {
+    const abort = () => {
+      signal.removeEventListener("abort", abort);
+      reject(new Error("hook deadline"));
+    };
+    signal.addEventListener("abort", abort, { once: true });
+    work.then((value) => {
+      signal.removeEventListener("abort", abort);
+      if (signal.aborted) abort();
+      else resolve14(value);
+    }, (err) => {
+      signal.removeEventListener("abort", abort);
+      reject(err);
+    });
+    if (signal.aborted) abort();
+  });
+}
 async function buildHookResponse(ctx, input2) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), HOOK_BUDGET_MS);
+  const abort = () => controller.abort();
+  input2.signal?.addEventListener("abort", abort, { once: true });
+  if (input2.signal?.aborted) abort();
+  try {
+    return await runHook(ctx, { ...input2, signal: controller.signal });
+  } catch (err) {
+    if (!controller.signal.aborted) throw err;
+    ctx.log.debug("hook deferred slow work", { event: input2.event });
+    return {};
+  } finally {
+    clearTimeout(timer);
+    input2.signal?.removeEventListener("abort", abort);
+  }
+}
+async function runHook(ctx, input2) {
+  if (input2.prepare) await withinHook(input2.prepare(), input2.signal);
   const node2 = ctx.node;
   if (!node2) return subagentHook(ctx, input2);
-  await ctx.launchKnown;
+  await withinHook(ctx.launchKnown ?? Promise.resolve(), input2.signal);
   if (ctx.headless) return {};
   ctx.log.debug("hook event", { event: input2.event, sessionId: input2.sessionId, stopHookActive: input2.stopHookActive });
   if (input2.sessionId) {
-    await node2.setSessionId(input2.sessionId).catch(() => {
-    });
+    await withinHook(node2.setSessionId(input2.sessionId).catch(() => {
+    }), input2.signal);
     ctx.onSessionId?.(input2.sessionId);
   }
-  if (input2.cwd) await ctx.learnCwd?.(input2.cwd);
-  await node2.ensureConnected().catch((err) => ctx.log.warn("bridge not reachable from hook", { err: err.message }));
+  if (input2.cwd && ctx.learnCwd) await withinHook(ctx.learnCwd(input2.cwd), input2.signal);
+  await withinHook(node2.ensureConnected().catch((err) => ctx.log.warn("bridge not reachable from hook", { err: err.message })), input2.signal);
   if (input2.subagent) return {};
+  await withinHook(node2.refreshPending().catch((err) => ctx.log.warn("pending mail refresh failed; retained for retry", { err: String(err) })), input2.signal);
   const wakeTurn = input2.event === "UserPromptSubmit" && Boolean(input2.prompt?.includes(WAKE_HEADER));
   if (input2.event === "PostToolUse" || input2.event === "Stop" || wakeTurn) ctx.wakeDelivery?.confirm();
   else ctx.wakeDelivery?.release();
@@ -50308,15 +50613,15 @@ async function buildHookResponse(ctx, input2) {
   switch (input2.event) {
     case "SessionStart": {
       ctx.activity?.("idle");
-      const peers = node2.isConnected ? (await node2.peers().catch(() => [])).filter((p) => p.id !== node2.id) : [];
+      const peers = node2.isConnected ? (await withinHook(node2.peers().catch(() => []), input2.signal)).filter((p) => p.id !== node2.id) : [];
       const lines = [
         `[agent-bridge] You are connected to agent-bridge as "${node2.name}".`,
         peers.length ? `Peers online:
 ${peers.map((p) => formatPeer(p)).join("\n")}` : "No other agents are online right now."
       ];
       lines.push(...new MessageWaitStore(ctx.home).pending(node2).map(resumeWaitHint));
-      const unread = node2.unread().length;
-      const decisions = await node2.decisions({ scope: { project: ctx.cwd() } }).catch(() => []);
+      const unread = node2.unread().filter((m) => !isQuietMessage(m)).length;
+      const decisions = await withinHook(node2.decisions({ scope: { project: ctx.cwd() } }).catch(() => []), input2.signal);
       const summary = formatDecisionSummary(decisions);
       if (summary) lines.push(summary);
       if (unread > 0 && !channel) lines.push(`You have ${unread} unread peer message(s); call the "inbox" tool to read them.`);
@@ -50343,7 +50648,7 @@ ${peers.map((p) => formatPeer(p)).join("\n")}` : "No other agents are online rig
       const jobsRunning = ctx.jobs?.runningCount() ?? 0;
       const inConversation = lingerRemaining > 0 || jobsRunning > 0;
       if (!node2.autoWakeEnabled && !inConversation) {
-        const awaited = node2.unread().filter((m) => (node2.isNotificationAwaited(m) || m.from.id.startsWith("job:") && m.conversationId.endsWith(":fallback")) && m.hop < ctx.cfg.maxHops && !isQuietMessage(m) && !m.conversationId.endsWith(":note")).slice(0, HOOK_MAX_MESSAGES);
+        const awaited = node2.unread().filter((m) => (node2.isNotificationAwaited(m) || m.from.id.startsWith("job:") && shouldWakeClaudeMessage(node2, ctx.cfg, m)) && m.hop < ctx.cfg.maxHops && !isQuietMessage(m) && !m.conversationId.endsWith(":note")).slice(0, HOOK_MAX_MESSAGES);
         if (awaited.length) {
           node2.markRead(awaited.map((m) => m.id));
           ctx.activity?.("busy");
@@ -50352,13 +50657,11 @@ ${peers.map((p) => formatPeer(p)).join("\n")}` : "No other agents are online rig
         ctx.activity?.("idle");
         return {};
       }
-      let msgs = take(ctx, true);
-      const notifyPending = new MessageWaitStore(ctx.home).pending(node2).some((r) => r.mode === "notify");
-      if (msgs.length === 0 && inConversation && !ctx.rewakeAvailable && !notifyPending) {
-        const waitMs = Math.min(STOP_WAIT_CAP_MS, jobsRunning > 0 ? STOP_WAIT_CAP_MS : lingerRemaining);
-        ctx.log.info("listening for replies before ending the turn", { waitMs, jobsRunning });
-        const arrived = await node2.waitForMessage(waitMs, (m) => m.hop < ctx.cfg.maxHops, input2.signal);
-        if (arrived) msgs = take(ctx, true);
+      const msgs = take(ctx, true);
+      if (!msgs.length && jobsRunning > 0) {
+        const waits = new MessageWaitStore(ctx.home);
+        waits.save(node2, {}, "notify");
+        waits.attach(node2);
       }
       if (msgs.length === 0) {
         ctx.activity?.("idle");
@@ -53441,7 +53744,7 @@ function doctor(home, now = Date.now()) {
     if (existsSync20(path)) {
       let db = null;
       try {
-        db = new DatabaseSync12(path, { readOnly: true });
+        db = new DatabaseSync12(path, { readOnly: true, timeout: 50 });
         actual = Number(db.prepare("PRAGMA user_version").get().user_version);
         for (const detail of checkDatabase(db)) finding("error", "sqlite-integrity", path, detail);
         if (actual !== expected) finding(actual > expected ? "error" : "warning", "schema-version", path, `Schema ${actual}; code expects ${expected}`);
@@ -53506,7 +53809,7 @@ function searchMessages(file2, opts = {}) {
   const rows = [];
   for (const path of [file2, join50(dirname19(file2), ARCHIVE_DB_NAME)]) {
     if (!existsSync21(path)) continue;
-    const db = new DatabaseSync13(path, { readOnly: true });
+    const db = new DatabaseSync13(path, { readOnly: true, timeout: 50 });
     try {
       for (const table of ["messages", "archived_messages"]) {
         if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table)) continue;
@@ -54585,8 +54888,6 @@ function registerTools(mcp, ctx, targets) {
   };
   const guarded = (name2, fn) => async (args, extra) => {
     log.debug("tool call", { tool: name2, args });
-    if (ctx.node?.wasReplaced) await ctx.node.reclaim().catch((err) => log.warn("could not take the bridge back", { err: err.message }));
-    await ctx.observeMeta?.(extra._meta);
     try {
       return await fn(args, extra);
     } catch (err) {
@@ -54697,6 +54998,7 @@ function registerTools(mcp, ctx, targets) {
       }
       const n = requireNode();
       const peers = await n.peers();
+      await n.refreshPending();
       const shared = await n.projectJobs();
       const others = peers.filter((p) => p.id !== n.id && !p.id.startsWith("job:"));
       const lines = [
@@ -54705,11 +55007,15 @@ function registerTools(mcp, ctx, targets) {
           broker: n.isBroker ? t("common.yes") : t("common.no"),
           autoWake: n.autoWakeEnabled ? t("common.on") : t("common.off"),
           delivery: ctx.agent === "claude" ? ctx.channelActive() ? "channel" : "hooks" : "hooks",
-          unread: n.unread().length
+          unread: n.unread().filter((m) => !isQuietMessage(m)).length
         }),
         others.length ? t("peers.header", { count: others.length }) : t("peers.none"),
         ...others.map((p) => formatPeer(p))
       ];
+      const quietCount = n.unread().filter(isQuietMessage).length;
+      if (quietCount) lines.push(`${quietCount} retained quiet message(s), available in inbox/history on request; excluded from actionable unread mail.`);
+      const load = await n.brokerLoad().catch(() => null);
+      if (load && load.connectedJobs > load.testedJobs) lines.push(`Broker load warning: ${load.connectedJobs} jobs are connected; the load check covered ${load.testedJobs}. Queue additional work to stay within the measured load.`);
       const groupPeers = peers.filter((p) => p.projectGroup && !p.host);
       if (groupPeers.length) lines.push("Local project groups:", ...groupPeers.map((p) => `- ${p.projectAddress}: ${p.name} (${p.projectMain ? "main" : "secondary"}${p.unavailable ? ", unavailable" : ""})`));
       if (shared.length) lines.push("Project jobs (shared local authority):", ...shared.map((j) => `- ${j.name} (${j.agent}, ${j.status}; primary ${j.owner})${isRecord(j.args) && j.args.title ? ` "${j.args.title}"` : ""}`));
@@ -54747,7 +55053,7 @@ function registerTools(mcp, ctx, targets) {
     "send",
     {
       title: "Send message",
-      description: `Send a message to another agent. "to" is a peer name from "peers", an agent kind ("claude", "codex") when exactly one is online, or "${BROADCAST}" for everyone. Delivery means queued in the recipient inbox, not read. Broadcasts include connected paired-PC sessions. Direct messages and broadcasts wake an idle Claude session according to wakeOnDirect; other recipients may read them on their next turn. Auto-wake is handled on the recipient PC, including paired PCs; it is never enabled by send. Use wait_for_message(read_receipt_of=<sent id>) to wait for consumption. If the recipient is offline the message waits for it. When answering with new information, pass its id as reply_to. Do not send pure acknowledgements or repeat a reply as a status note. Delegated jobs can send to their parent, siblings, or exact local session/job names explicitly granted with send_to at spawn. Sibling messages arrive live or wait for the next turn, with a quiet supervisor copy. Sending to a finished sibling returns its saved final report immediately; it will not answer. Do not wait for finished siblings or for read receipts from them. Other sessions and broadcasts are unavailable. Peers shows grants and the sibling thread limit before composing.`,
+      description: `Send a message to another agent. "to" is a peer name from "peers", an agent kind ("claude", "codex") when exactly one is online, or "${BROADCAST}" for everyone. Delivery means queued in the recipient inbox, not read. Broadcasts include registered offline local sessions and connected paired-PC sessions, with delivered, queued or failed results per recipient. Direct messages and broadcasts wake an idle Claude session according to wakeOnDirect; other recipients may read them on their next turn. Auto-wake is handled on the recipient PC, including paired PCs; it is never enabled by send. Use wait_for_message(read_receipt_of=<sent id>) to wait for consumption. If the recipient is offline the message waits for it. When answering with new information, pass its id as reply_to. Do not send pure acknowledgements or repeat a reply as a status note. Delegated jobs can send to their parent, siblings, or exact local session/job names explicitly granted with send_to at spawn. Sibling messages arrive live or wait for the next turn, with a quiet supervisor copy. Sending to a finished sibling returns its saved final report immediately; it will not answer. Do not wait for finished siblings or for read receipts from them. Other sessions and broadcasts are unavailable. Peers shows grants and the sibling thread limit before composing.`,
       inputSchema: {
         to: external_exports.string().min(1).describe('Peer name, agent kind ("claude" / "codex") or "*"'),
         message: external_exports.string().min(1).max(MAX_BODY_CHARS).describe("Message text (Markdown is fine)"),
@@ -55323,7 +55629,11 @@ Saved settings: ${Object.entries(settings).map(([key2, value]) => `${key2}=${val
           cwd: given(a.cwd),
           subagent: Boolean(given(a.agent_id)),
           prompt: given(a.prompt),
-          signal: extra.signal
+          signal: extra.signal,
+          prepare: async () => {
+            if (ctx.node?.wasReplaced) await ctx.node.reclaim();
+            await ctx.observeMeta?.(extra._meta);
+          }
         });
         return text2(JSON.stringify(out));
       } catch (err) {

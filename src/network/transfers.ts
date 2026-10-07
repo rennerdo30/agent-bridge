@@ -325,9 +325,11 @@ export class TransferManager {
     if (state.fetched) allowedFetchPath(entry.source!, state.cwd, this.options.fetchRoots ?? []);
     assertTransferPath(entry.source!);
     const file = await open(entry.source!, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
-    const st = await file.stat();
-    if (!st.isFile() || st.size !== entry.size || st.mtimeMs !== entry.mtimeMs || st.ino !== entry.ino || st.dev !== entry.dev) { await file.close(); throw new RemoteTransferError("source file changed since transfer started"); }
-    return file;
+    try {
+      const st = await file.stat();
+      if (!st.isFile() || st.size !== entry.size || st.mtimeMs !== entry.mtimeMs || st.ino !== entry.ino || st.dev !== entry.dev) throw new RemoteTransferError("source file changed since transfer started");
+      return file;
+    } catch (error) { await file.close(); throw error; }
   }
   private stopped(state: State): boolean { return state.status === "cancelled" || state.status === "failed" || this.closed; }
   private async run(state: State): Promise<void> {
@@ -437,10 +439,12 @@ export class TransferManager {
       entry.complete = true; entry.offset = entry.size; return;
     }
     const path = this.part(state, index); assertTransferPath(path); assertTransferPath(`${path}.sha256`);
-    const file = await open(path, constants.O_RDWR | (constants.O_NOFOLLOW ?? 0)); const journal = await open(`${path}.sha256`, constants.O_RDWR | (constants.O_NOFOLLOW ?? 0));
+    const file = await open(path, constants.O_RDWR | (constants.O_NOFOLLOW ?? 0));
+    let journal: FileHandle | undefined;
     const buffer = Buffer.alloc(TRANSFER_CHUNK_BYTES); const record = Buffer.alloc(SHA_RECORD_BYTES);
     let verified = 0; let chunks = 0;
     try {
+      journal = await open(`${path}.sha256`, constants.O_RDWR | (constants.O_NOFOLLOW ?? 0));
       while (verified < entry.offset) {
         if (this.stopped(state)) throw new Error("transfer cancelled or manager closed");
         const length = Math.min(TRANSFER_CHUNK_BYTES, entry.size - verified);
@@ -450,7 +454,7 @@ export class TransferManager {
       }
       await file.truncate(verified); await journal.truncate(chunks * SHA_RECORD_BYTES); await file.sync(); await journal.sync();
       entry.offset = verified;
-    } finally { await file.close(); await journal.close(); }
+    } finally { try { await file.close(); } finally { await journal?.close(); } }
   }
   private initialize(state: State): void {
     const inbox = join(this.home, "inbox"); ensureTransferDirectory(inbox);
@@ -579,11 +583,13 @@ export class TransferManager {
       await this.freeDisk(0);
       if (this.stopped(state)) throw new Error("transfer cancelled or manager closed");
       const path = this.part(state, request.index); assertTransferPath(path); assertTransferPath(`${path}.sha256`);
-      const file = await open(path, constants.O_RDWR | (constants.O_NOFOLLOW ?? 0)); const journal = await open(`${path}.sha256`, constants.O_RDWR | (constants.O_NOFOLLOW ?? 0));
+      const file = await open(path, constants.O_RDWR | (constants.O_NOFOLLOW ?? 0));
+      let journal: FileHandle | undefined;
       try {
+        journal = await open(`${path}.sha256`, constants.O_RDWR | (constants.O_NOFOLLOW ?? 0));
         await writeAll(file, data, entry.offset); await file.sync();
         const record = Buffer.from(`${request.sha256}\n`); await writeAll(journal, record, Math.floor(entry.offset / TRANSFER_CHUNK_BYTES) * SHA_RECORD_BYTES); await journal.sync();
-      } finally { await file.close(); await journal.close(); }
+      } finally { try { await file.close(); } finally { await journal?.close(); } }
       entry.offset += data.length;
       if (!this.stopped(state)) state.status = "running";
       this.save(state); this.report(state); return {};

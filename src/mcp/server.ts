@@ -512,8 +512,6 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
     async (args: A, extra: ToolExtra): Promise<CallToolResult> => {
       log.debug("tool call", { tool: name, args: args as Record<string, unknown> });
       // Replaced by another server of this session, yet called: this is the one the session uses (see reclaim).
-      if (ctx.node?.wasReplaced) await ctx.node.reclaim().catch((err) => log.warn("could not take the bridge back", { err: (err as Error).message }));
-      await ctx.observeMeta?.(extra._meta);
       try {
         return await fn(args, extra);
       } catch (err) {
@@ -631,6 +629,7 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
       }
       const n = requireNode();
       const peers = await n.peers();
+      await n.refreshPending();
       const shared = await n.projectJobs();
       // Job runners are this or another session's subagents, not sessions (an older broker still lists them).
       const others = peers.filter((p) => p.id !== n.id && !p.id.startsWith("job:"));
@@ -640,11 +639,15 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
           broker: n.isBroker ? t("common.yes") : t("common.no"),
           autoWake: n.autoWakeEnabled ? t("common.on") : t("common.off"),
           delivery: ctx.agent === "claude" ? (ctx.channelActive() ? "channel" : "hooks") : "hooks",
-          unread: n.unread().length,
+          unread: n.unread().filter((m) => !isQuietMessage(m)).length,
         }),
         others.length ? t("peers.header", { count: others.length }) : t("peers.none"),
         ...others.map((p) => formatPeer(p)),
       ];
+      const quietCount = n.unread().filter(isQuietMessage).length;
+      if (quietCount) lines.push(`${quietCount} retained quiet message(s), available in inbox/history on request; excluded from actionable unread mail.`);
+      const load = await n.brokerLoad().catch(() => null); // Earlier brokers do not expose the additive load probe.
+      if (load && load.connectedJobs > load.testedJobs) lines.push(`Broker load warning: ${load.connectedJobs} jobs are connected; the load check covered ${load.testedJobs}. Queue additional work to stay within the measured load.`);
       const groupPeers = peers.filter((p) => p.projectGroup && !p.host);
       if (groupPeers.length) lines.push("Local project groups:", ...groupPeers.map((p) => `- ${p.projectAddress}: ${p.name} (${p.projectMain ? "main" : "secondary"}${p.unavailable ? ", unavailable" : ""})`));
       if (shared.length) lines.push("Project jobs (shared local authority):", ...shared.map((j) => `- ${j.name} (${j.agent}, ${j.status}; primary ${j.owner})${isRecord(j.args) && j.args.title ? ` \"${j.args.title}\"` : ""}`));
@@ -685,7 +688,7 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
       title: "Send message",
       description:
         `Send a message to another agent. "to" is a peer name from "peers", an agent kind ("claude", "codex") when exactly one is online, or "${BROADCAST}" for everyone. ` +
-        "Delivery means queued in the recipient inbox, not read. Broadcasts include connected paired-PC sessions. Direct messages and broadcasts wake an idle Claude session according to wakeOnDirect; other recipients may read them on their next turn. " +
+        "Delivery means queued in the recipient inbox, not read. Broadcasts include registered offline local sessions and connected paired-PC sessions, with delivered, queued or failed results per recipient. Direct messages and broadcasts wake an idle Claude session according to wakeOnDirect; other recipients may read them on their next turn. " +
         "Auto-wake is handled on the recipient PC, including paired PCs; it is never enabled by send. Use wait_for_message(read_receipt_of=<sent id>) to wait for consumption. " +
         "If the recipient is offline the message waits for it. When answering with new information, pass its id as reply_to. Do not send pure acknowledgements or repeat a reply as a status note. " +
         "Delegated jobs can send to their parent, siblings, or exact local session/job names explicitly granted with send_to at spawn. Sibling messages arrive live or wait for the next turn, with a quiet supervisor copy. Sending to a finished sibling returns its saved final report immediately; it will not answer. Do not wait for finished siblings or for read receipts from them. Other sessions and broadcasts are unavailable. Peers shows grants and the sibling thread limit before composing.",
@@ -1369,6 +1372,10 @@ ${res.text || t("delegate.empty")}`, res.isError);
           subagent: Boolean(given(a.agent_id)),
           prompt: given(a.prompt),
           signal: extra.signal,
+          prepare: async () => {
+            if (ctx.node?.wasReplaced) await ctx.node.reclaim();
+            await ctx.observeMeta?.(extra._meta);
+          },
         });
         return text(JSON.stringify(out));
       } catch (err) {
