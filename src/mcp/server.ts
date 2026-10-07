@@ -63,9 +63,8 @@ import { attachDashboardJobControl } from "./dashboard-control.js";
 import { deriveJobTitle } from "./job-title.js";
 import { isJobSendTarget, MAX_JOB_SEND_TARGETS } from "../core/job-messaging.js";
 import { appendContextEvent } from "../core/context-journal.js";
-import { readConversationFile, conversationPageSchema, type ConversationRequest } from "../core/conversations.js";
-import { readHistory, historyFiltersSchema, HISTORY_MAX_QUERY_CHARS, HISTORY_MAX_LIMIT, type HistorySearch } from "../core/history.js";
-import { answerHistory } from "../core/history-answer.js";
+import { conversationPageSchema, type ConversationRequest } from "../core/conversation-query.js";
+import { historyFiltersSchema, HISTORY_MAX_QUERY_CHARS, HISTORY_MAX_LIMIT, type HistorySearch } from "../core/history-query.js";
 import { decisionScopeSchema, MAX_DECISION_TOPIC_CHARS, MAX_DECISION_TEXT_CHARS, type DecideArgs, type DecisionsArgs } from "../core/decisions.js";
 
 export { DELEGATED_JOB_NOTE } from "./delegate-run.js";
@@ -565,8 +564,8 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
     },
     guarded("search_history", async (a: HistorySearch & { answer?: boolean }) => {
       const { answer, ...args } = a;
-      const result = ctx.node ? await ctx.node.searchHistory(args) : readHistory(resolveDbPath(ctx.home),args);
-      return text(JSON.stringify(answer ? { ...result, answer: await answerHistory(a.query, result, cfg, ctx.home, log) } : result));
+      const result = ctx.node ? await ctx.node.searchHistory(args) : (await import("../core/history.js")).readHistory(resolveDbPath(ctx.home),args);
+      return text(JSON.stringify(answer ? { ...result, answer: await (await import("../core/history-answer.js")).answerHistory(a.query, result, cfg, ctx.home, log) } : result));
     }),
   );
 
@@ -575,7 +574,7 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
     description: "Fetch a complete locally retained conversation by the conversation id returned in search_history. Pages contain exact raw bytes (base64) and text chunks with source offsets. Pass next as after; concatenate chunks per source/generation to reconstruct JSONL or SQLite snapshots. No model calls or network export.",
     inputSchema: conversationPageSchema.shape,
     annotations: { readOnlyHint: true },
-  }, guarded("get_conversation", async (args: ConversationRequest) => text(JSON.stringify(ctx.node ? await ctx.node.getConversation(args) : readConversationFile(resolveDbPath(ctx.home),args)))));
+  }, guarded("get_conversation", async (args: ConversationRequest) => text(JSON.stringify(ctx.node ? await ctx.node.getConversation(args) : (await import("../core/conversations.js")).readConversationFile(resolveDbPath(ctx.home),args)))));
 
   register(
     "decide",

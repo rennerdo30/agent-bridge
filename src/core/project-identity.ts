@@ -81,3 +81,16 @@ export function migrateProjectJobs(records: unknown[]): unknown[] {
     return entry;
   });
 }
+
+const conversationRoots = new Map<string, string>();
+export function conversationProject(cwd: string): string {
+  if (!cwd || isPluginCacheCwd(cwd)) return "";
+  try { if (isPluginCacheCwd(realpathSync.native(cwd))) return ""; } catch {}
+  const known = conversationRoots.get(cwd);
+  if (known !== undefined) return known;
+  const canonical = canonicalProjectRoot(cwd);
+  const root = canonical ? projectKey(canonical) : existsSync(cwd) ? "" : projectKey(resolve(cwd));
+  if (conversationRoots.size >= 256) conversationRoots.delete(conversationRoots.keys().next().value!);
+  conversationRoots.set(cwd, root);
+  return root;
+}

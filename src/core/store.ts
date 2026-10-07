@@ -17,10 +17,11 @@ import { configureSqlite, retrySqlite, SQLITE_BUSY_TIMEOUT_MS, SQLITE_REQUEST_BU
 
 const BACKUP_CHECK_INTERVAL_MS = 60 * 60 * 1_000;
 
-export const SQLITE_STORE_VERSION = 9;
-
+import { SQLITE_STORE_VERSION } from "./store-version.js";
+export { SQLITE_STORE_VERSION } from "./store-version.js";
 /** Offline broadcasts retain recently observed sessions for one day. */
 export const BROADCAST_RECENT_MS = 24 * 60 * 60 * 1_000;
+
 
 /** Recipient key used while a message waits for "any peer of this agent kind". */
 export function agentQueueKey(agent: AgentKind): string {
