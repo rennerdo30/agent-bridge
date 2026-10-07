@@ -520,6 +520,7 @@ The plugins bundle a small CLI for debugging:
 
 ```bash
 node <plugin>/dist/cli.mjs ui              # web dashboard (sessions, runs, messages)
+node <plugin>/dist/cli.mjs ui --reset-key  # explicitly replace the dashboard access key
 node <plugin>/dist/cli.mjs status          # broker, connected sessions, their versions (OUTDATED marks)
 node <plugin>/dist/cli.mjs send codex "hi" # send as peer "cli"
 node <plugin>/dist/cli.mjs tail            # print messages addressed to "cli"
@@ -528,6 +529,13 @@ node <plugin>/dist/cli.mjs cleanup         # list worktrees of finished jobs tha
 node <plugin>/dist/cli.mjs smoke           # check the installed CLIs still work with agent-bridge (a few tokens)
 node <plugin>/dist/cli.mjs reliability     # measured run: answers, read-only, worktree edits, parallel, cancel, subagent features
 ```
+
+Dashboard links use one long-lived key per agent-bridge home, stored in the owner-only
+`dashboard-key` file. Restarts, broker handovers and updates preserve it, and browser cookies
+last one year. The dashboard prefers its saved port; if another program takes that port,
+it selects a fallback that later sessions discover and reuse. Run `/agent-bridge:dashboard`
+or `agent-bridge ui` to open the current dashboard and restore the cookie automatically.
+`ui --reset-key` deliberately invalidates old links and cookies; reopen the dashboard afterwards.
 
 `reliability` takes agent names (`claude codex opencode`, default all installed), `--only=core` (plain delegations) or `--only=live` (subagent features through the bundled MCP server: live messages to a running subagent, follow-ups with context, recovery after a restart, clean exit, Codex app-server approvals), and `--model=<agent>:<model>` per agent, e.g. `--model=claude:haiku`. It costs real tokens.
 

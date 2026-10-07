@@ -1,17 +1,17 @@
-import { randomBytes } from "node:crypto";
-import { chmodSync, readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { request } from "node:http";
 import { join } from "node:path";
 import type { Logger } from "../core/logger.js";
 import { startUi } from "./ui.js";
+import { loadDashboardKey } from "./dashboard-key.js";
+import { protect } from "../network/pairing.js";
 
 /**
  * The dashboard runs inside whichever process hosts the bridge (or a manual `agent-bridge ui`).
- * Its address and secret live in ~/.agent-bridge/dashboard.json (owner-only on Unix), so any session or
+ * Its address lives in dashboard.json and its long-lived key in dashboard-key (owner-only), so any session or
  * terminal of this user can open it without starting a second one.
  */
 export const DASHBOARD_FILE = "dashboard.json";
-const SECRET_BYTES = 24;
 const PROBE_TIMEOUT_MS = 1_500;
 const OWNER_ONLY = 0o600;
 
@@ -34,15 +34,6 @@ export function readDashboardInfo(home: string): DashboardInfo | null {
   }
 }
 
-function processAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (err) {
-    return (err as NodeJS.ErrnoException).code === "EPERM";
-  }
-}
-
 /** Is an agent-bridge dashboard answering on this port? (It returns 403 without the secret.) */
 export function probeDashboard(port: number, secret?: string): Promise<boolean> {
   return new Promise((resolve) => {
@@ -58,19 +49,27 @@ export function probeDashboard(port: number, secret?: string): Promise<boolean> 
   });
 }
 
-/** The secret of the last dashboard (the file stays after it stops; its dead pid marks it as not running). */
-function previousSecret(home: string): string | null {
+/** Adopt the last link on upgrade so existing bookmarks and cookies survive. */
+function previousSecret(home: string): string | undefined {
   const t = readDashboardInfo(home)?.url.match(/[?&]t=([0-9a-f]{16,})/)?.[1];
-  return t ?? null;
+  return t;
 }
 
-/** The running dashboard, if its owner is alive and it answers. */
+export function dashboardKey(home: string, reset = false): string {
+  return loadDashboardKey(home, previousSecret(home), reset);
+}
+
+function dashboardUrl(port: number, secret: string): string {
+  return `http://127.0.0.1:${port}/?t=${secret}`;
+}
+
+/** Authenticate the actual listener; a saved PID can be stale after a handover. */
 export async function findRunningDashboard(home: string): Promise<DashboardInfo | null> {
   const info = readDashboardInfo(home);
-  if (!info || !processAlive(info.pid)) return null;
-  const secret = info.url.match(/[?&]t=([0-9a-f]{16,})/)?.[1];
-  if (!secret) return null;
-  return (await probeDashboard(info.port, secret)) ? info : null;
+  if (!info || !Number.isInteger(info.port) || info.port < 1 || info.port > 65535) return null;
+  const secret = dashboardKey(home);
+  if (await probeDashboard(info.port, secret)) return { ...info, url: dashboardUrl(info.port, secret) };
+  return null;
 }
 
 export interface HostedDashboard {
@@ -88,10 +87,13 @@ export class DashboardController {
     return this.starting ??= this.open().finally(() => { this.starting = null; });
   }
 
+  get isHosting(): boolean { return this.hosted !== null; }
+
   private async open(): Promise<DashboardInfo> {
-    if (this.hosted) return this.hosted.info;
+    if (this.hosted) return { ...this.hosted.info, url: dashboardUrl(this.hosted.info.port, dashboardKey(this.opts.home)) };
     const running = await findRunningDashboard(this.opts.home);
     if (running) return running;
+    const preferred = readDashboardInfo(this.opts.home)?.port || this.opts.port;
     try {
       this.hosted = await hostDashboard(this.opts);
       return this.hosted.info;
@@ -102,6 +104,24 @@ export class DashboardController {
         const winner = await findRunningDashboard(this.opts.home);
         if (winner) return winner;
         await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      // Deterministic fallback ports let concurrent sessions race for the same listener,
+      // rather than each opening a different ephemeral port.
+      for (let offset = 1; offset <= 32; offset++) {
+        const winner = await findRunningDashboard(this.opts.home);
+        if (winner) return winner;
+        const port = (preferred + offset - 1) % 65535 + 1;
+        try {
+          this.hosted = await hostDashboard({ ...this.opts, port, preferSavedPort: false });
+          return this.hosted.info;
+        } catch (fallbackError) {
+          if ((fallbackError as NodeJS.ErrnoException).code !== "EADDRINUSE") throw fallbackError;
+          for (let attempt = 0; attempt < 10; attempt++) {
+            const winner = await findRunningDashboard(this.opts.home);
+            if (winner) return winner;
+            await new Promise((resolve) => setTimeout(resolve, 50));
+          }
+        }
       }
       throw err;
     }
@@ -115,18 +135,21 @@ export class DashboardController {
 }
 
 /** Start the dashboard in this process and publish its link. Fails with EADDRINUSE if the port is taken. */
-export async function hostDashboard(opts: { home: string; pipe: string; port: number; log: Logger }): Promise<HostedDashboard> {
+export async function hostDashboard(opts: { home: string; pipe: string; port: number; log: Logger; preferSavedPort?: boolean }): Promise<HostedDashboard> {
   // A session taking over keeps the previous secret: open dashboard tabs (and saved links) keep working.
-  const secret = previousSecret(opts.home) ?? randomBytes(SECRET_BYTES).toString("hex");
-  const ui = await startUi({ ...opts, secret });
+  dashboardKey(opts.home);
+  const saved = readDashboardInfo(opts.home)?.port;
+  const port = opts.preferSavedPort !== false && saved && Number.isInteger(saved) && saved > 0 && saved <= 65535 ? saved : opts.port;
+  const ui = await startUi({ ...opts, port });
   const info: DashboardInfo = { url: ui.url, port: ui.port, pid: process.pid };
   const file = dashboardFile(opts.home);
-  writeFileSync(file, JSON.stringify(info, null, 2), { mode: OWNER_ONLY });
   try {
-    chmodSync(file, OWNER_ONLY);
-  } catch {
-    // Windows ignores POSIX modes; the file lives in the user's profile.
+    try { writeFileSync(file, "", { flag: "wx", mode: OWNER_ONLY }); }
+    catch (err) { if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err; }
+    protect(file, OWNER_ONLY);
+    writeFileSync(file, JSON.stringify(info, null, 2));
   }
+  catch (err) { await ui.close(); throw err; }
   opts.log.info("dashboard started", { port: ui.port });
   return {
     info,

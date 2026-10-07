@@ -6,7 +6,8 @@ import { ProjectGroups } from "../core/project-groups.js";
 
 import { recoverJobRecord } from "../core/job-recovery.js";
 import { handoffSchema } from "../core/job-handoff.js";
-import { randomBytes } from "node:crypto";
+import { currentDashboardKey, loadDashboardKey } from "./dashboard-key.js";
+import { UI_RECOVERY_PAGE } from "./ui-recovery.js";
 import { existsSync, readFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -49,11 +50,10 @@ import { dashboardRequestSchema, isDashboardReadPath, DASHBOARD_TIMEOUT_MS, type
 
 /**
  * `agent-bridge ui`: a local dashboard for sessions, delegated runs and messages.
- * Bound to 127.0.0.1; every request needs a per-launch secret (given once in the URL, then a cookie).
+ * Bound to 127.0.0.1; every request needs the home key (given once in the URL, then a cookie).
  */
 const UI_HOST = "127.0.0.1";
 const COOKIE = "ab_ui";
-const SECRET_BYTES = 24;
 const MAX_MESSAGES = 200;
 const MAX_POST_BYTES = 256 * 1024;
 const UI_PEER_NAME = "you";
@@ -153,7 +153,7 @@ const JOB_COMMANDS: Record<string, (body: Record<string, unknown>) => DashboardJ
 
 export interface UiOptions {
   home: string;
-  /** Per-launch secret; generated when omitted. */
+  /** Explicit override for isolated tests; normal hosts use the persistent home key. */
   secret?: string;
   pipe: string;
   port: number;
@@ -188,7 +188,7 @@ function readAllUsage(home: string, log: Logger): Promise<UsageReport[]> {
 }
 
 export async function startUi(opts: UiOptions): Promise<{ url: string; port: number; close: () => Promise<void> }> {
-  const secret = opts.secret ?? randomBytes(SECRET_BYTES).toString("hex");
+  const secret = opts.secret ?? loadDashboardKey(opts.home);
   const token = loadOrCreateToken(opts.home);
   const dbPath = resolveDbPath(opts.home);
   const chatReceipts = new Set<string>();
@@ -268,15 +268,16 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
     const host = String(req.headers.host ?? "").replace(/:\d+$/, "");
     if (!ALLOWED_HOSTS.has(host)) return send(res, 403, { error: "forbidden host" });
     const url = new URL(req.url ?? "/", `http://${UI_HOST}`);
+    const activeSecret = opts.secret ?? currentDashboardKey(opts.home);
 
     // First visit: the secret comes in the URL once, then lives in an HttpOnly cookie.
     const fromUrl = url.searchParams.get("t");
     if (url.pathname === "/" && fromUrl) {
-      if (!tokensEqual(fromUrl, secret)) return send(res, 403, "Invalid or expired link. Restart `agent-bridge ui`.", "text/plain; charset=utf-8");
-      res.writeHead(302, { location: "/", "set-cookie": `${COOKIE}=${secret}; HttpOnly; SameSite=Strict; Path=/` });
+      if (!tokensEqual(fromUrl, activeSecret)) return send(res, 403, UI_RECOVERY_PAGE, "text/html; charset=utf-8");
+      res.writeHead(302, { location: "/", "cache-control": "no-store", "referrer-policy": "no-referrer", "set-cookie": `${COOKIE}=${activeSecret}; Max-Age=31536000; HttpOnly; SameSite=Strict; Path=/` });
       return res.end();
     }
-    if (!tokensEqual(cookieSecret(req), secret)) return send(res, 403, "Open the link printed by `agent-bridge ui`.", "text/plain; charset=utf-8");
+    if (!tokensEqual(cookieSecret(req), activeSecret)) return send(res, 403, UI_RECOVERY_PAGE, "text/html; charset=utf-8");
 
     if (req.method === "GET" && url.pathname === "/") return send(res, 200, UI_PAGE, "text/html; charset=utf-8");
     if (req.method === "POST" && url.pathname === "/api/coordinator/availability") {

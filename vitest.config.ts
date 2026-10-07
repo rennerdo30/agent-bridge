@@ -4,6 +4,8 @@ import { defineConfig } from "vitest/config";
 const TEST_TIMEOUT_MS = 30_000;
 
 export default defineConfig({
+  // Keep writable test caches in this checkout when dependencies are shared read-only.
+  cacheDir: ".agent-bridge-test/vite",
   test: {
     testTimeout: TEST_TIMEOUT_MS,
     hookTimeout: TEST_TIMEOUT_MS,

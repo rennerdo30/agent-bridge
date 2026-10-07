@@ -33,7 +33,7 @@ const ACL_PRINCIPAL = /([^\s:][^:]*?):\(/;
  * Windows modes do not restrict ACLs: remove inherited grants, grant the current SID, and remove every other
  * explicit grant the folder already had (CI runners' temp folders carry some).
  */
-function protect(path: string, mode: number): void {
+export function protect(path: string, mode: number): void {
   if (process.platform !== "win32") return chmodSync(path, mode);
   const [account, sid] = (execFileSync(WHOAMI, ["/user", "/fo", "csv", "/nh"], { encoding: "utf8", windowsHide: true }).match(/"([^"]+)","(S-\d+(?:-\d+)+)"/) ?? []).slice(1);
   if (!sid || !account) throw new Error("cannot identify the account for network key permissions");

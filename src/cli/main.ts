@@ -15,7 +15,7 @@ import { runAntigravityHook } from "./antigravity-hook.js";
 import { runRewakeHook } from "./rewake-hook.js";
 import { runSessionStartHook } from "./session-start-hook.js";
 import { findRunLog, watchRunLog } from "./watch.js";
-import { findRunningDashboard, hostDashboard } from "./dashboard.js";
+import { dashboardKey, findRunningDashboard, DashboardController } from "./dashboard.js";
 import { DEFAULT_CONFIG, loadConfig } from "../core/config.js";
 import { openBrowser } from "./open.js";
 import { RELIABILITY_SECTIONS, runReliability } from "./reliability.js";
@@ -131,6 +131,7 @@ async function main(argv: string[]): Promise<number> {
       return runInstaller({ action: command, tools: parseInstallerArgs(command, rest), yes: rest.includes("--yes") || rest.includes("-y"), out });
     case "ui": {
       const noOpen = rest.includes("--no-open");
+      if (rest.includes("--reset-key")) dashboardKey(home, true);
       // Usually an agent session already hosts it: just open that one.
       const running = await findRunningDashboard(home);
       if (running) {
@@ -140,11 +141,13 @@ async function main(argv: string[]): Promise<number> {
       }
       const portArg = rest.find((a) => a.startsWith("--port="))?.slice("--port=".length);
       const port = portArg ? Number(portArg) : loadConfig(home, "other", log).dashboardPort;
-      const hosted = await hostDashboard({ home, pipe, port, log });
-      out(t("cli.ui.running", { url: hosted.info.url }));
-      if (!noOpen) openBrowser(hosted.info.url);
+      const controller = new DashboardController({ home, pipe, port, log });
+      const info = await controller.ensure();
+      out(t("cli.ui.running", { url: info.url }));
+      if (!noOpen) openBrowser(info.url);
+      if (!controller.isHosting) return 0;
       await new Promise<void>((resolve) => process.once("SIGINT", resolve));
-      await hosted.close();
+      await controller.close();
       return 0;
     }
     case "watch": {

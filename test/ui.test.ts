@@ -60,6 +60,21 @@ describe("web dashboard", () => {
     expect(readFileSync(join(env.home, "jobs.json.backup-1"), "utf8")).toBe(backup);
   });
 
+  it("sets a year-long protected cookie and shows safe recovery for missing or invalid credentials", async () => {
+    const first = await fetch(ui.url, { redirect: "manual" });
+    expect(first.headers.get("set-cookie")).toContain("Max-Age=31536000; HttpOnly; SameSite=Strict; Path=/");
+    for (const path of ["/", "/?t=wrong", "/api/state"]) {
+      const response = await fetch(`${base()}${path}`);
+      expect(response.status).toBe(403);
+      expect(response.headers.get("content-type")).toContain("text/html");
+      const html = await response.text();
+      expect(html).toContain("/agent-bridge:dashboard");
+      expect(html).toContain("agent-bridge ui");
+      expect(html).toContain("<style>");
+      expect(html).not.toContain(new URL(ui.url).searchParams.get("t"));
+      expect(html).not.toContain("wrong");
+    }
+  });
   it("authenticates project main and availability actions using the existing custom controls", async () => {
     const a = env.node("claude-group"), b = env.node("codex-group", "codex"); await a.start(); await b.start();
     const body = JSON.stringify({ name: a.name, unavailable: true });
