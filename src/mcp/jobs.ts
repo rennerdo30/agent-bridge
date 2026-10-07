@@ -734,6 +734,14 @@ export class JobManager {
       job.queue.push(message);
       return { outcome: "waiting", job };
     }
+    if (job.status === "running" && job.controller.signal.aborted) {
+      if (!job.resume || !job.sessionId) return { outcome: "no-session", job };
+      // A continuation sent during cancellation belongs to a fresh turn, after this one stops.
+      job.queue.push(message);
+      this.waitForSlot(job);
+      this.persist();
+      return { outcome: "waiting", job };
+    }
     if (this.hostedRunning(job)) {
       // Plain text always remains a live message or a queued follow-up, even during approval.
       const state = this.runners!.state(job);
@@ -780,6 +788,7 @@ export class JobManager {
   /** Start waiting continuations while there are free slots, oldest first. */
   private startWaiting(): void {
     for (const job of this.waitingJobs.values()) {
+      if (job.status === "running") continue;
       if (!this.canStart()) return;
       this.waitingJobs.delete(job.id);
       if (!job.queue.length || !job.resume || !job.sessionId) continue;
