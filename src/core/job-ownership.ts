@@ -6,7 +6,7 @@ function text(value: unknown): string | undefined { return typeof value === "str
 /** Persisted grants and historical primaries remain masters; nested parent jobs are not sessions. */
 export function mastersFor(job: OwnedJob): string[] {
   const history = Array.isArray(job.ownershipHistory) ? job.ownershipHistory : [];
-  const names = [text(job.rootName), !job.parentJob ? text(job.owner) : undefined,
+  const names = [job.parentJob || !text(job.owner) || history.length ? text(job.rootName) : undefined, !job.parentJob ? text(job.owner) : undefined,
     ...(Array.isArray(job.masters) ? job.masters.filter((v): v is string => typeof v === "string") : []),
     ...history.flatMap((h) => h && typeof h === "object" ? [text(h.fromRootName), text(h.rootName), !job.parentJob ? text(h.from) : undefined, !job.parentJob ? text(h.to) : undefined] : [])];
   return [...new Set(names.filter((v): v is string => Boolean(v) && !v!.includes("/")))];

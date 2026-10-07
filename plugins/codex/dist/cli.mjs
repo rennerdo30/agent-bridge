@@ -29613,6 +29613,21 @@ var MessageStore = class {
     this.insert(m);
     return true;
   }
+  /** A recovered inline envelope must never replay after a recipient consumed it or it was forwarded. */
+  insertJobDelivery(m) {
+    if (this.db.prepare("SELECT 1 FROM job_delivery_routes WHERE id=?").get(m.id)) return false;
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      const inserted = this.insertOnce(m);
+      const row = this.db.prepare("SELECT read_at FROM messages WHERE id=? AND recipient=?").get(m.id, m.recipient);
+      this.db.prepare("INSERT INTO job_delivery_routes(id,recipient,consumed_at) VALUES (?,?,?)").run(m.id, m.recipient, row?.read_at ?? null);
+      this.db.exec("COMMIT");
+      return inserted;
+    } catch (err) {
+      this.db.exec("ROLLBACK");
+      throw err;
+    }
+  }
   markRead(recipient, ids, at = Date.now()) {
     let changed = 0;
     for (const id of ids) {
@@ -29731,7 +29746,7 @@ function text(value) {
 function mastersFor(job) {
   const history = Array.isArray(job.ownershipHistory) ? job.ownershipHistory : [];
   const names = [
-    text(job.rootName),
+    job.parentJob || !text(job.owner) || history.length ? text(job.rootName) : void 0,
     !job.parentJob ? text(job.owner) : void 0,
     ...Array.isArray(job.masters) ? job.masters.filter((v) => typeof v === "string") : [],
     ...history.flatMap((h) => h && typeof h === "object" ? [text(h.fromRootName), text(h.rootName), !job.parentJob ? text(h.from) : void 0, !job.parentJob ? text(h.to) : void 0] : [])
@@ -37369,7 +37384,7 @@ var Broker = class {
         if (!job || job.executionOwner !== peer.name && job.owner !== peer.name && job.rootName !== peer.name || typeof job.owner !== "string" || typeof m.body !== "string" || m.body.length > MAX_BODY_CHARS) throw new BridgeError("unauthorized", "Invalid inline job delivery.");
         const recipient = chooseJobRecipient(job, [...this.conns].flatMap((c2) => c2.peer ? [c2.peer] : []));
         const message = { ...m, to: recipient, recipient };
-        if (this.store.insertOnce(message)) {
+        if (this.store.insertJobDelivery(message)) {
           const target = this.connByName(recipient);
           if (target) this.emit(target, "message", message);
         }
@@ -37822,6 +37837,11 @@ Handoff note: ${receipt.note}` : "") + "\n\nYou are their supervisor. Use messag
     for (const job of this.storedJobs()) {
       if (!Array.isArray(job.ownershipHistory) || !job.ownershipHistory.length) continue;
       const recipient = chooseJobRecipient(job, live), target = this.connByName(recipient);
+      if (Array.isArray(job.deliveryHistory)) for (const envelope of job.deliveryHistory) {
+        if (!isRecord(envelope) || !isRecord(envelope.from) || envelope.from.id !== `job:${job.id}` || typeof envelope.id !== "string" || typeof envelope.body !== "string") continue;
+        const message = { ...envelope, to: recipient, recipient };
+        if (this.store.insertJobDelivery(message) && target) this.emit(target, "message", message);
+      }
       if (!target) continue;
       for (const from of mastersFor(job)) {
         const moved = this.store.handoffMail(from, recipient, String(job.id), this.now());

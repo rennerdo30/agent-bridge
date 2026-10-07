@@ -7895,7 +7895,7 @@ function text(value) {
 function mastersFor(job) {
   const history = Array.isArray(job.ownershipHistory) ? job.ownershipHistory : [];
   const names = [
-    text(job.rootName),
+    job.parentJob || !text(job.owner) || history.length ? text(job.rootName) : void 0,
     !job.parentJob ? text(job.owner) : void 0,
     ...Array.isArray(job.masters) ? job.masters.filter((v) => typeof v === "string") : [],
     ...history.flatMap((h) => h && typeof h === "object" ? [text(h.fromRootName), text(h.rootName), !job.parentJob ? text(h.from) : void 0, !job.parentJob ? text(h.to) : void 0] : [])
@@ -30692,6 +30692,7 @@ var JobManager = class {
       const mine = [...this.history.values()].filter((j) => this.own.has(j.id)).map((j) => {
         const old = byId.get(j.id) ?? archived.get(j.id);
         if (isRecord(old) && Array.isArray(old.ownershipHistory) && old.ownershipHistory.length) {
+          j.deliveryHistory = [...new Map([...Array.isArray(old.deliveryHistory) ? old.deliveryHistory : [], ...j.deliveryHistory ?? []].map((m) => [m.id, m])).values()];
           Object.assign(j, {
             owner: old.owner,
             supervisor: old.supervisor,
@@ -30926,9 +30927,9 @@ var JobManager = class {
     const id = ref.replace(/^.*-(?:job|ask)-/, "");
     const active = [...this.running.values(), ...this.foreground.values(), ...this.waitingJobs.values()];
     const current = active.find((j) => j.id === id || j.name === ref) ?? this.history.get(id) ?? [...this.history.values()].find((j) => j.name === ref);
-    if (current || !this.storePath || !this.restoreResume) return current && (canControlJob(current, this.node.name) || this.isMine(current.owner) || this.lineage && current.parentJob === this.lineage.parentJob) ? current : void 0;
+    if (current || !this.storePath || !this.restoreResume) return current && (!current.ownershipHistory?.length || canControlJob(current, this.node.name) || this.isMine(current.owner) || this.lineage && current.parentJob === this.lineage.parentJob) ? current : void 0;
     const saved = readStore(this.storePath, this.log, true).find((j) => j.id === id || j.name === ref);
-    if (!saved || !this.lineage && !this.isMine(saved.owner) && !canControlJob(saved, this.node.name)) return void 0;
+    if (!saved || saved.ownershipHistory?.length && !this.lineage && !this.isMine(saved.owner) && !canControlJob(saved, this.node.name)) return void 0;
     if (this.lineage ? saved.parentJob !== this.lineage.parentJob : saved.parentJob) return void 0;
     const job = { ...saved, controller: new AbortController(), progress: null, queue: [], resume: this.restoreResume(saved.agent, saved.args ?? {}) };
     this.history.set(job.id, job);
@@ -31051,7 +31052,7 @@ var JobManager = class {
     if (!job) return false;
     job.args = changedJobArgs(job.args, settings);
     if (settings.model !== void 0 && job.status !== "running") job.model = settings.model;
-    if (!this.sharedControl && job.owner !== this.node.name && !this.lineage || job.status === "running" && job.executionOwner && job.executionOwner !== this.node.name) void this.node.controlInlineJob?.(job.name, { type: "settings", settings });
+    if (!this.sharedControl && !this.isMine(job.owner) && !this.lineage || job.status === "running" && job.executionOwner && job.executionOwner !== this.node.name) void this.node.controlInlineJob?.(job.name, { type: "settings", settings });
     else if (this.hostedRunning(job)) this.runners.send(job, { type: "settings", settings });
     else job.remoteControl?.({ type: "settings", settings });
     this.own.add(job.id);
@@ -31063,7 +31064,7 @@ var JobManager = class {
     const job = this.find(ref);
     if (!job) return false;
     job.args = { ...job.args, effort };
-    if (!this.sharedControl && job.owner !== this.node.name && !this.lineage || job.status === "running" && job.executionOwner && job.executionOwner !== this.node.name) void this.node.controlInlineJob?.(job.name, { type: "effort", effort });
+    if (!this.sharedControl && !this.isMine(job.owner) && !this.lineage || job.status === "running" && job.executionOwner && job.executionOwner !== this.node.name) void this.node.controlInlineJob?.(job.name, { type: "effort", effort });
     else if (this.hostedRunning(job)) this.runners.send(job, { type: "effort", effort });
     else job.remoteControl?.({ type: "effort", effort });
     this.own.add(job.id);
@@ -31076,7 +31077,7 @@ var JobManager = class {
     if (!job) return false;
     job.args = { ...job.args, title };
     job.retitle?.(title);
-    if (!this.sharedControl && job.owner !== this.node.name && !this.lineage || job.status === "running" && job.executionOwner && job.executionOwner !== this.node.name) void this.node.controlInlineJob?.(job.name, { type: "title", title });
+    if (!this.sharedControl && !this.isMine(job.owner) && !this.lineage || job.status === "running" && job.executionOwner && job.executionOwner !== this.node.name) void this.node.controlInlineJob?.(job.name, { type: "title", title });
     else if (this.hostedRunning(job)) this.runners.send(job, { type: "title", title });
     else job.remoteControl?.({ type: "title", title });
     this.own.add(job.id);
@@ -31094,7 +31095,7 @@ var JobManager = class {
       void this.node.controlInlineJob?.(job.name, { type: "message", body: message, cid: randomUUID6() });
       return { outcome: "delivered", job };
     }
-    if (!this.sharedControl && job.owner !== this.node.name && !this.lineage) {
+    if (!this.sharedControl && !this.isMine(job.owner) && !this.lineage) {
       void this.node.controlInlineJob?.(job.name, { type: "message", body: message, cid: randomUUID6() }).catch((err) => this.log.warn("inline job control failed", { err: String(err) }));
       return { outcome: "delivered", job };
     }
@@ -31167,7 +31168,7 @@ var JobManager = class {
   launch(job, run) {
     if (typeof job.args?.model === "string") job.model = job.args.model;
     job.status = "running";
-    job.executionOwner = job.owner !== this.node.name ? this.node.name : void 0;
+    job.executionOwner = !this.isMine(job.owner) ? this.node.name : void 0;
     job.startedAt = Date.now();
     job.controller = new AbortController();
     job.progress = null;
@@ -31286,7 +31287,7 @@ var JobManager = class {
   cancel(ref) {
     const owned = this.find(ref);
     if (!owned) return false;
-    if (!this.sharedControl && owned.owner !== this.node.name && !this.lineage || owned.status === "running" && owned.executionOwner && owned.executionOwner !== this.node.name) {
+    if (!this.sharedControl && !this.isMine(owned.owner) && !this.lineage || owned.status === "running" && owned.executionOwner && owned.executionOwner !== this.node.name) {
       void this.node.controlInlineJob?.(owned.name, { type: "cancel" }).catch((err) => this.log.warn("inline cancel failed", { err: String(err) }));
       return true;
     }
@@ -31402,7 +31403,9 @@ ${QUEUED_FOLLOW_UP_NOTE}`, null, "", messageId);
       createdAt: Date.now(),
       readAt: null
     };
-    if (job.executionOwner === this.node.name && job.owner !== this.node.name && this.node.reportInlineJob) {
+    if (job.ownershipHistory?.length && this.node.reportInlineJob) {
+      job.deliveryHistory = [...job.deliveryHistory ?? [], m];
+      this.persist();
       void this.node.reportInlineJob(m).catch((err) => this.log.warn("inline report delivery failed", { err: String(err) }));
     } else this.node.deliverLocal(m);
     return m.id;
@@ -31429,6 +31432,7 @@ function toStored(j) {
     masters: j.masters,
     executionOwner: j.executionOwner,
     queuedMessages: [...j.queue],
+    deliveryHistory: j.deliveryHistory,
     forwarded: j.forwarded,
     supervisor: j.supervisor,
     metadataVersion: j.metadataVersion,
@@ -43650,6 +43654,21 @@ var MessageStore = class {
     this.insert(m);
     return true;
   }
+  /** A recovered inline envelope must never replay after a recipient consumed it or it was forwarded. */
+  insertJobDelivery(m) {
+    if (this.db.prepare("SELECT 1 FROM job_delivery_routes WHERE id=?").get(m.id)) return false;
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      const inserted = this.insertOnce(m);
+      const row = this.db.prepare("SELECT read_at FROM messages WHERE id=? AND recipient=?").get(m.id, m.recipient);
+      this.db.prepare("INSERT INTO job_delivery_routes(id,recipient,consumed_at) VALUES (?,?,?)").run(m.id, m.recipient, row?.read_at ?? null);
+      this.db.exec("COMMIT");
+      return inserted;
+    } catch (err) {
+      this.db.exec("ROLLBACK");
+      throw err;
+    }
+  }
   markRead(recipient, ids, at = Date.now()) {
     let changed = 0;
     for (const id of ids) {
@@ -47469,7 +47488,7 @@ var Broker = class {
         if (!job || job.executionOwner !== peer.name && job.owner !== peer.name && job.rootName !== peer.name || typeof job.owner !== "string" || typeof m.body !== "string" || m.body.length > MAX_BODY_CHARS) throw new BridgeError("unauthorized", "Invalid inline job delivery.");
         const recipient = chooseJobRecipient(job, [...this.conns].flatMap((c2) => c2.peer ? [c2.peer] : []));
         const message = { ...m, to: recipient, recipient };
-        if (this.store.insertOnce(message)) {
+        if (this.store.insertJobDelivery(message)) {
           const target = this.connByName(recipient);
           if (target) this.emit(target, "message", message);
         }
@@ -47922,6 +47941,11 @@ Handoff note: ${receipt.note}` : "") + "\n\nYou are their supervisor. Use messag
     for (const job of this.storedJobs()) {
       if (!Array.isArray(job.ownershipHistory) || !job.ownershipHistory.length) continue;
       const recipient = chooseJobRecipient(job, live), target = this.connByName(recipient);
+      if (Array.isArray(job.deliveryHistory)) for (const envelope of job.deliveryHistory) {
+        if (!isRecord(envelope) || !isRecord(envelope.from) || envelope.from.id !== `job:${job.id}` || typeof envelope.id !== "string" || typeof envelope.body !== "string") continue;
+        const message = { ...envelope, to: recipient, recipient };
+        if (this.store.insertJobDelivery(message) && target) this.emit(target, "message", message);
+      }
       if (!target) continue;
       for (const from of mastersFor(job)) {
         const moved = this.store.handoffMail(from, recipient, String(job.id), this.now());

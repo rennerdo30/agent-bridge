@@ -18,13 +18,13 @@ beforeEach(() => {
   env = makeEnv(); const dir = join(env.home, "bin"); mkdirSync(dir);
   const file = join(dir, "fake.mjs");
   writeFileSync(file, `#!/usr/bin/env node
-import { existsSync, writeFileSync } from 'node:fs';
+import { existsSync, writeFileSync, renameSync } from 'node:fs';
 let prompt=''; process.stdin.setEncoding('utf8'); process.stdin.on('data',d=>prompt+=d);
 process.stdin.on('end',async()=>{
  const args=process.argv.slice(2), session=args.includes('--resume')?args[args.indexOf('--resume')+1]:'fixture-'+process.pid;
  console.log(JSON.stringify({type:'system',subtype:'init',session_id:session,model:'fixture'}));
  const release=/release=(\\S+)/.exec(prompt)?.[1], link=/link=(\\S+)/.exec(prompt)?.[1];
- if(link)writeFileSync(link,JSON.stringify(Object.fromEntries(Object.entries(process.env).filter(([k])=>k.startsWith('AGENT_BRIDGE_PARENT_')))));
+ if(link){writeFileSync(link+'.tmp',JSON.stringify(Object.fromEntries(Object.entries(process.env).filter(([k])=>k.startsWith('AGENT_BRIDGE_PARENT_')))));renameSync(link+'.tmp',link);}
  while(release&&!existsSync(release))await new Promise(r=>setTimeout(r,30));
  console.log(JSON.stringify({type:'result',subtype:'success',is_error:false,result:'Inherited runner finished',session_id:session}));
 });`);
