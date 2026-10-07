@@ -43127,10 +43127,15 @@ PRAGMA user_version = 4;
 // src/core/project-store.ts
 var roots = /* @__PURE__ */ new Map();
 function conversationProject(cwd) {
-  if (!cwd) return "";
+  if (!cwd || isPluginCacheCwd(cwd)) return "";
+  try {
+    if (isPluginCacheCwd(realpathSync8.native(cwd))) return "";
+  } catch {
+  }
   const known = roots.get(cwd);
-  if (known) return known;
-  const root = projectKey(canonicalProjectRoot(cwd) ?? resolve10(cwd));
+  if (known !== void 0) return known;
+  const canonical = canonicalProjectRoot(cwd);
+  const root = canonical ? projectKey(canonical) : existsSync14(cwd) ? "" : projectKey(resolve10(cwd));
   if (roots.size >= 256) roots.delete(roots.keys().next().value);
   roots.set(cwd, root);
   return root;

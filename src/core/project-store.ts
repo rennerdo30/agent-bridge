@@ -15,6 +15,7 @@ import { historySchema } from "./history-schema.js";
 import { migrateSqlite } from "./sqlite-migrations.js";
 import { nullLogger } from "./logger.js";
 import { canonicalProjectRoot, projectKey } from "./project-identity.js";
+import { isPluginCacheCwd } from "./session-visibility.js";
 
 const roots = new Map<string, string>();
 const excluded = new Set<string>();
@@ -33,10 +34,12 @@ function linkedParent(file: string): boolean {
 }
 /** Worker-only canonicalization. Worktrees share the original project's root. */
 export function conversationProject(cwd: string): string {
-  if (!cwd) return "";
+  if (!cwd || isPluginCacheCwd(cwd)) return "";
+  try { if (isPluginCacheCwd(realpathSync.native(cwd))) return ""; } catch {}
   const known = roots.get(cwd);
-  if (known) return known;
-  const root = projectKey(canonicalProjectRoot(cwd) ?? resolve(cwd));
+  if (known !== undefined) return known;
+  const canonical = canonicalProjectRoot(cwd);
+  const root = canonical ? projectKey(canonical) : existsSync(cwd) ? "" : projectKey(resolve(cwd));
   if (roots.size >= 256) roots.delete(roots.keys().next().value!);
   roots.set(cwd, root);
   return root;

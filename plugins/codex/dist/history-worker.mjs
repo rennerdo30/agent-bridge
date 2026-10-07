@@ -343,10 +343,15 @@ function linkedParent(file2) {
   }
 }
 function conversationProject(cwd) {
-  if (!cwd) return "";
+  if (!cwd || isPluginCacheCwd(cwd)) return "";
+  try {
+    if (isPluginCacheCwd(realpathSync2.native(cwd))) return "";
+  } catch {
+  }
   const known = roots.get(cwd);
-  if (known) return known;
-  const root = projectKey(canonicalProjectRoot(cwd) ?? resolve2(cwd));
+  if (known !== void 0) return known;
+  const canonical = canonicalProjectRoot(cwd);
+  const root = canonical ? projectKey(canonical) : existsSync5(cwd) ? "" : projectKey(resolve2(cwd));
   if (roots.size >= 256) roots.delete(roots.keys().next().value);
   roots.set(cwd, root);
   return root;
@@ -21389,7 +21394,7 @@ var ConversationIngestor = class {
     const recordInfo = this.db.prepare(
       "SELECT source,generation,part FROM conversation_records WHERE id=?"
     ).get(record2);
-    let recordAgent = c.agent, recordSession = c.session, recordJob = c.job, recordProject = c.project;
+    let recordAgent = c.agent, recordSession = c.session, recordJob = c.job, recordProject = c.project, recordKind = c.kind;
     if (c.kind === "message" || c.kind === "decision") {
       const first = String(
         this.db.prepare(
@@ -21430,13 +21435,19 @@ var ConversationIngestor = class {
         ).run(recordProject);
       }
       recordJob = binding?.job ?? (/^(claude|codex|opencode)-job-/.test(String(metadata.from_name)) ? metadata.from_name : recordSession === c.session ? recordJob : null);
+      const report = /"body"\s*:\s*"Subagent ([A-Za-z0-9][A-Za-z0-9_-]*) \(([a-z][a-z0-9_-]*)(?:, model [^"\r\n]*)?\) (?:done|failed) after \d+s\./.exec(first.slice(0, 8192));
+      if (c.kind === "message" && report) {
+        recordKind = "report";
+        recordJob = report[1];
+        recordAgent = report[2];
+      }
     }
     const eventKind = String(recordInfo.part ?? "").replace(/^event:/, "");
     this.db.prepare(
       "INSERT OR IGNORE INTO history_documents(id,kind,agent,at,body,folded,link,message,job,run,session,cursor) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)"
     ).run(
       id,
-      ["approval", "progress", "report"].includes(eventKind) ? eventKind : ["approval", "progress", "report"].includes(parse3(body).kind) ? parse3(body).kind : c.kind,
+      ["approval", "progress", "report"].includes(eventKind) ? eventKind : ["approval", "progress", "report"].includes(parse3(body).kind) ? parse3(body).kind : recordKind,
       recordAgent,
       at,
       body,

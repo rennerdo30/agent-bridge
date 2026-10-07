@@ -59,22 +59,28 @@ function setup() {
 }
 it("retains every recipient envelope, quiet copies, decisions, reports and progress/approval events", async () => {
   const f = setup();
+  const cache = join(env.home,".codex","plugins","cache","fixture","1");
+  mkdirSync(cache,{recursive:true});
+  f.index.rememberPeer({id:"cache-peer",name:"codex-session-cache",agent:"codex",sessionId:"cache-session",cwd:cache});
   for (const [id, conversationId, recipient] of [
     ["direct", "direct", "owner"],
     ["quiet", "siblings-thread:note", "observer"],
     ["broadcast", "broadcast", "one"],
     ["broadcast", "broadcast", "two"],
     ["report", "job-report", "owner"],
+    ["cache", "cache", "owner"],
   ] as const) {
     f.store.insert({
       id,
       recipient,
       conversationId,
-      body: `context_${id}_needle`,
+      body: id === "report"
+        ? `Subagent opencode-job-example (opencode) done after 1s.\n\n${"x".repeat(160_000)} context_report_needle`
+        : `context_${id}_needle`,
       from: {
-        id: "ses_child",
-        name: "opencode-job-example",
-        agent: "opencode",
+        id: id === "cache" ? "cache-peer" : "ses_child",
+        name: id === "cache" ? "codex-session-cache" : id === "report" ? "claude-coordinator" : "opencode-job-example",
+        agent: id === "cache" ? "codex" : id === "report" ? "claude" : "opencode",
       },
       to: recipient,
       replyTo: null,
@@ -158,11 +164,15 @@ it("retains every recipient envelope, quiet copies, decisions, reports and progr
     "approval",
     "rowid_reuse",
     "large_approval",
+    "cache",
   ])
     expect(
       f.index.search({ query: `context_${word}_needle` }).hits.length,
     ).toBeGreaterThan(0);
   const broadcast = readConversation(f.db, { id: "bridge:broadcast" });
+  expect(readConversation(f.db,{id:"bridge:cache"}).records.length).toBeGreaterThan(0);
+  expect(existsSync(join(cache,".agent-bridge"))).toBe(false);
+  expect(f.index.search({query:"context_report_needle",filters:{kind:"report",job:"opencode-job-example",agent:"opencode"}}).hits.length).toBeGreaterThan(0);
   expect(broadcast.records).toHaveLength(2);
   expect(broadcast.records.map((r) => JSON.parse(r.text).recipient)).toEqual([
     "one",

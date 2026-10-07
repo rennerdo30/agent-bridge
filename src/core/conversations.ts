@@ -426,7 +426,8 @@ export class ConversationIngestor {
     let recordAgent = c.agent!,
       recordSession = c.session!,
       recordJob = c.job!,
-      recordProject = c.project!;
+      recordProject = c.project!,
+      recordKind = c.kind!;
     if (c.kind === "message" || c.kind === "decision") {
       const first = String(
         this.db
@@ -482,6 +483,12 @@ export class ConversationIngestor {
           : recordSession === c.session
             ? recordJob
             : null);
+      const report = /"body"\s*:\s*"Subagent ([A-Za-z0-9][A-Za-z0-9_-]*) \(([a-z][a-z0-9_-]*)(?:, model [^"\r\n]*)?\) (?:done|failed) after \d+s\./.exec(first.slice(0, 8192));
+      if (c.kind === "message" && report) {
+        recordKind = "report";
+        recordJob = report[1]!;
+        recordAgent = report[2]!;
+      }
     }
     const eventKind = String(recordInfo.part ?? "").replace(/^event:/, "");
     this.db
@@ -494,7 +501,7 @@ export class ConversationIngestor {
           ? eventKind
           : ["approval", "progress", "report"].includes(parse(body).kind)
             ? parse(body).kind
-            : c.kind!,
+            : recordKind,
         recordAgent,
         at,
         body,
