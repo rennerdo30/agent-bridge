@@ -680,7 +680,7 @@ export class JobManager {
       this.running.set(job.id, job);
       if (this.isMine(job.owner)) this.own.add(job.id);
       this.watchHosted();
-    } else if (!job.executionOwner || job.executionOwner === this.node.name) job.status = "interrupted";
+    } else if ((!job.executionOwner && this.isMine(job.owner)) || job.executionOwner === this.node.name) job.status = "interrupted";
   }
   recipient(job: Job): Promise<string> {
     return this.node.jobRecipient?.(job.name) ?? Promise.resolve(job.rootName ?? job.owner ?? this.node.name);
