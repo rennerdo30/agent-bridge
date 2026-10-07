@@ -598,6 +598,7 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
       }
       const n = requireNode();
       const peers = await n.peers();
+      await n.refreshPending();
       // Job runners are this or another session's subagents, not sessions (an older broker still lists them).
       const others = peers.filter((p) => p.id !== n.id && !p.id.startsWith("job:"));
       const lines = [
@@ -606,11 +607,13 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
           broker: n.isBroker ? t("common.yes") : t("common.no"),
           autoWake: n.autoWakeEnabled ? t("common.on") : t("common.off"),
           delivery: ctx.agent === "claude" ? (ctx.channelActive() ? "channel" : "hooks") : "hooks",
-          unread: n.unread().length,
+          unread: n.unread().filter((m) => !isQuietMessage(m)).length,
         }),
         others.length ? t("peers.header", { count: others.length }) : t("peers.none"),
         ...others.map((p) => formatPeer(p)),
       ];
+      const quietCount = n.unread().filter(isQuietMessage).length;
+      if (quietCount) lines.push(`${quietCount} retained quiet message(s), available in inbox/history on request; excluded from actionable unread mail.`);
       const transferNotes = new Map<string, BridgeMessage>();
       for (const message of n.unread()) {
         if (message.conversationId.startsWith(TRANSFER_PROGRESS_PREFIX)) transferNotes.set(message.conversationId, message);
@@ -648,7 +651,7 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
       title: "Send message",
       description:
         `Send a message to another agent. "to" is a peer name from "peers", an agent kind ("claude", "codex") when exactly one is online, or "${BROADCAST}" for everyone. ` +
-        "Delivery means queued in the recipient inbox, not read. Broadcasts include connected paired-PC sessions. Direct messages and broadcasts wake an idle Claude session according to wakeOnDirect; other recipients may read them on their next turn. " +
+        "Delivery means queued in the recipient inbox, not read. Broadcasts include registered offline local sessions and connected paired-PC sessions, with delivered, queued or failed results per recipient. Direct messages and broadcasts wake an idle Claude session according to wakeOnDirect; other recipients may read them on their next turn. " +
         "Auto-wake is handled on the recipient PC, including paired PCs; it is never enabled by send. Use wait_for_message(read_receipt_of=<sent id>) to wait for consumption. " +
         "If the recipient is offline the message waits for it. When answering with new information, pass its id as reply_to. Do not send pure acknowledgements or repeat a reply as a status note. " +
         "Delegated jobs can send to their parent, siblings, or exact local session/job names explicitly granted with send_to at spawn. Sibling messages arrive live or wait for the next turn, with a quiet supervisor copy. Sending to a finished sibling returns its saved final report immediately; it will not answer. Do not wait for finished siblings or for read receipts from them. Other sessions and broadcasts are unavailable. Peers shows grants and the sibling thread limit before composing.",

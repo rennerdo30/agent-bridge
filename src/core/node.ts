@@ -98,6 +98,10 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
   private readonly readIds = new Set<string>();
   private readonly readJournal: ReadJournal;
   private readonly unflushedAcks = new Set<string>();
+  private readonly pendingAcks = new Set<Promise<unknown>>();
+  private pendingRefreshTimer: NodeJS.Timeout | null = null;
+  private refreshingPending: Promise<void> | null = null;
+  private ackFlushScheduled = false;
   private sessionId: string | null = null;
   private autoWake: boolean;
   private wakeOnDirect = false;
@@ -169,6 +173,8 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
     this.emit("stopped");
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
     this.reconnectTimer = null;
+    if (this.pendingRefreshTimer) clearTimeout(this.pendingRefreshTimer);
+    this.pendingRefreshTimer = null;
     this.client?.close();
     this.client = null;
     if (closeBroker) {
@@ -329,15 +335,11 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
     this.reconnectDelay = RECONNECT_BACKOFF_MIN_MS;
     client.once("close", () => this.onClose(client));
     if (this.unflushedAcks.size > 0) {
-      const ids = [...this.unflushedAcks];
-      this.unflushedAcks.clear();
-      client.request("ack", { ids }).catch((err) => {
-        this.log.warn("flushing acks failed", { err: (err as Error).message });
-        ids.forEach((id) => this.unflushedAcks.add(id));
-      });
+      this.acknowledge([...this.unflushedAcks]);
     }
     this.log.info("connected to broker", { name: hello.name, brokerPid: hello.brokerPid, isBroker: this.isBroker });
     this.emit("connected", { name: hello.name, isBroker: this.isBroker });
+    this.schedulePendingRefresh();
   }
 
   private onClose(client: BridgeClient): void {
@@ -470,6 +472,38 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
     return [...this.inbox.values()].sort((a, b) => a.createdAt - b.createdAt);
   }
 
+  /** A replay is bounded to 500 rows. Active hooks refill after receipts so the tail cannot strand. */
+  refreshPending(): Promise<void> {
+    this.refreshingPending ??= this.readPending().finally(() => { this.refreshingPending = null; });
+    return this.refreshingPending;
+  }
+
+  private async readPending(): Promise<void> {
+    if (!this.isConnected) return;
+    await Promise.all(this.pendingAcks);
+    if (this.unflushedAcks.size) {
+      const ids = [...this.unflushedAcks];
+      await this.client!.request("ack", { ids });
+      ids.forEach((id) => this.unflushedAcks.delete(id));
+    }
+    const messages = await this.client!.request("pending", { limit: 500 });
+    for (const m of messages) this.onEvent("message", m);
+  }
+
+  /** Refill channel/wake consumers too; active hooks are not required to drain a large inbox. */
+  private schedulePendingRefresh(delayMs = 100): void {
+    if (this.stopping || this.pendingRefreshTimer) return;
+    this.pendingRefreshTimer = setTimeout(() => {
+      this.pendingRefreshTimer = null;
+      if (!this.isConnected || this.stopping) return;
+      void this.refreshPending().catch((err) => {
+        this.log.warn("pending recovery deferred", { err: String(err) });
+        this.schedulePendingRefresh(1_000);
+      });
+    }, delayMs);
+    this.pendingRefreshTimer.unref();
+  }
+
   /** Look up a message by id: one we still hold, or remembered as read. */
   hasSeen(id: string): boolean {
     return this.inbox.has(id) || this.readIds.has(id);
@@ -523,13 +557,23 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
 
   private acknowledge(ids: string[]): void {
     if (!ids.length) return;
-    if (!this.isConnected) {
-      ids.forEach((id) => this.unflushedAcks.add(id));
-      return;
-    }
-    this.client!.request("ack", { ids }).catch((err) => {
-      this.log.warn("ack failed; will retry after reconnect", { err: (err as Error).message });
-      ids.forEach((id) => this.unflushedAcks.add(id));
+    ids.forEach((id) => this.unflushedAcks.add(id));
+    if (!this.isConnected || this.ackFlushScheduled) return;
+    // A channel can consume hundreds of replayed messages in one stream chunk. One ack per
+    // message would exceed the broker's per-connection request cap and interrupt its own drain.
+    this.ackFlushScheduled = true;
+    setImmediate(() => {
+      this.ackFlushScheduled = false;
+      if (!this.isConnected || !this.unflushedAcks.size) return;
+      const batch = [...this.unflushedAcks].slice(0, 500);
+      batch.forEach((id) => this.unflushedAcks.delete(id));
+      const pending = this.client!.request("ack", { ids: batch }).catch((err) => {
+        this.log.warn("ack failed; retained for pending recovery", { err: (err as Error).message });
+        batch.forEach((id) => this.unflushedAcks.add(id));
+      });
+      this.pendingAcks.add(pending);
+      void pending.finally(() => { this.pendingAcks.delete(pending); this.schedulePendingRefresh(); });
+      if (this.unflushedAcks.size) this.acknowledge([...this.unflushedAcks]);
     });
   }
 

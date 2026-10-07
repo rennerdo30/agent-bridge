@@ -11,6 +11,7 @@ import { retentionLimit } from "./json-store.js";
 import { historySchema } from "./history-schema.js";
 import { HistoryIndex } from "./history.js";
 import { DECISIONS_SCHEMA, DecisionStore } from "./decisions.js";
+import { configureSqlite, retrySqlite, SQLITE_BUSY_TIMEOUT_MS, SQLITE_REQUEST_BUSY_MS } from "./sqlite-policy.js";
 
 const BACKUP_CHECK_INTERVAL_MS = 60 * 60 * 1_000;
 
@@ -154,7 +155,7 @@ export class MessageStore {
     catch (err) { this.release(); throw err; }
     try {
       migrateSqlite(this.db, file, existed, SQLITE_STORE_VERSION, MIGRATIONS, log);
-      this.db.exec("PRAGMA journal_mode = WAL;");
+      configureSqlite(this.db);
     } catch (err) {
       this.db.close();
       this.release();
@@ -231,6 +232,21 @@ export class MessageStore {
     return this.db.prepare(`SELECT name FROM peer_names JOIN peer_name_owners USING(name,identity)
       WHERE identity=? OR (session_id=? AND agent=?) GROUP BY name ORDER BY MIN(learned_at) ASC, MIN(peer_names.rowid) ASC`)
       .all(identity, peer.sessionId, peer.agent).map((r) => String(r.name));
+  }
+
+  /** Retained registrations include offline sessions, but never worker runners or agent queue keys. */
+  broadcastNames(): string[] {
+    return this.db.prepare(`SELECT name FROM peer_name_owners
+      WHERE identity NOT LIKE 'unidentified:job:%' ORDER BY name`).all().map((r) => String(r.name));
+  }
+
+  /** Keep lock waits out of the broker event loop. Callbacks must be synchronous atomic steps. */
+  retryWrite<T>(operation: () => T): Promise<T> {
+    return retrySqlite(() => {
+      this.db.exec(`PRAGMA busy_timeout = ${SQLITE_REQUEST_BUSY_MS}`);
+      try { return operation(); }
+      finally { this.db.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`); }
+    });
   }
 
   insert(m: BridgeMessage): void {

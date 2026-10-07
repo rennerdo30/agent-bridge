@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { ResourceSlots, type SlotOwner } from "./resource-slots.js";
+import { configureSqlite } from "./sqlite-policy.js";
 
 const ROOT_LIMIT_DB = "root-limits.sqlite";
 const LOCK_WAIT_MS = 3_000;
@@ -16,6 +17,7 @@ export class RootConcurrency {
     this.resource = `root-${createHash("sha256").update(rootSession).digest("hex").slice(0, 40)}`;
     this.slots = new ResourceSlots(home);
     this.db = new DatabaseSync(join(home, ROOT_LIMIT_DB));
+    configureSqlite(this.db);
     this.db.exec(`PRAGMA busy_timeout = ${LOCK_WAIT_MS}; CREATE TABLE IF NOT EXISTS root_limits (root TEXT PRIMARY KEY, capacity INTEGER NOT NULL);`);
   }
 

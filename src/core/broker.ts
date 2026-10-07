@@ -133,9 +133,9 @@ export class Broker {
       siblings: (c) => this.siblingPeers(c),
       sendSibling: (c, a) => this.onSendSibling(c, a),
       messageReceipt: (c, a) => this.messageReceipt(c, a.id),
-      ack: (c, a) => ({ acked: this.store.markRead(this.requirePeer(c).name, a.ids ?? [], this.now()) }),
+      ack: async (c, a) => ({ acked: await this.store.retryWrite(() => this.store.markRead(this.requirePeer(c).name, a.ids ?? [], this.now())) }),
       pending: (c, a) =>
-        this.unreadMail(this.requirePeer(c).name, Math.min(Math.max(1, a.limit ?? PENDING_DEFAULT_LIMIT), PENDING_MAX_LIMIT)),
+        this.pendingMail(this.requirePeer(c).name, Math.min(Math.max(1, a.limit ?? PENDING_DEFAULT_LIMIT), PENDING_MAX_LIMIT)),
       updatePeer: (c, a) => { const peer = this.onUpdatePeer(c, a); this.store.history.rememberPeer(peer); return peer; },
       claimMail: (c, a) => this.onClaimMail(c, a),
       ping: () => ({ brokerPid: process.pid, protocol: PROTOCOL_VERSION }),
@@ -560,11 +560,11 @@ export class Broker {
         createdAt: this.now(), readAt: null,
       };
       // Persist both notices before surfacing the error. The original text remains inspectable.
-      this.store.insert(notice);
+      await this.store.retryWrite(() => this.store.insert(notice));
       this.emit(conn, "message", notice);
       if (sender.jobParent && sender.jobParent !== sender.name) {
         const copy = { ...notice, recipient: sender.jobParent };
-        this.store.insert(copy);
+        await this.store.retryWrite(() => this.store.insert(copy));
         const supervisor = this.connByName(sender.jobParent);
         if (supervisor) this.emit(supervisor, "message", copy);
       }
@@ -578,7 +578,7 @@ export class Broker {
     for (const owner of observers) {
       const note = { ...message, id: randomUUID(), recipient: owner,
         conversationId: `${conversationId}${SIBLING_NOTE_SUFFIX}`, body: `Sibling message to ${message.recipient}:\n\n${message.body}` };
-      this.store.insert(note);
+      await this.store.retryWrite(() => this.store.insert(note));
       const supervisor = this.connByName(owner);
       if (supervisor) this.emit(supervisor, "message", note);
     }
@@ -855,8 +855,13 @@ export class Broker {
     // Broadcasts and agent kinds address sessions; job runners only get mail sent to them by name.
     const others = all.filter((c) => !c.peer!.jobAgent);
     if (to === BROADCAST) {
-      if (others.length === 0) throw new BridgeError("unknown_target", "no other peers are online");
-      return { live: others, queued: [] };
+      if (sender.jobAgent) throw new BridgeError("unauthorized", "job runners cannot broadcast to independent sessions");
+      const ownNames = new Set([sender.name, ...this.store.namesFor(sender)]);
+      const queued = this.store.broadcastNames().filter((name) => !ownNames.has(name) && !this.recipientConn(name));
+      if (others.length === 0 && queued.length === 0 && !this.network?.peers().some((p) => !p.jobAgent)) {
+        throw new BridgeError("unknown_target", "no other known sessions; send to an exact name to create an offline queue");
+      }
+      return { live: others, queued };
     }
     const recipient = this.recipientConn(to);
     const exact = all.find((c) => c.peer!.id === to || c === recipient);
@@ -941,13 +946,11 @@ export class Broker {
     };
     if (to.includes("/")) {
       const result = await this.requireNetwork().send({ ...base, recipient: to });
-      for (const message of result.messages) this.store.insert(message);
+      for (const message of result.messages) await this.store.retryWrite(() => this.store.insert(message));
       return result;
     }
     const remoteTargets = to === BROADCAST ? this.network?.peers().filter((p) => !p.jobAgent).map((p) => p.name) ?? [] : [];
-    const { live, queued } = to === BROADCAST && remoteTargets.length
-      ? { live: [...this.conns].filter((c) => c.peer && c.peer.id !== sender.id && !c.peer.jobAgent), queued: [] }
-      : this.resolveTargets(to, sender);
+    const { live, queued } = this.resolveTargets(to, sender);
     if (conversationId.startsWith(SIBLING_CONVERSATION_PREFIX) &&
         (queued.some((name) => !sender.jobAgent || !this.storedSiblings(sender).some((s) => s.name === name)) ||
           live.some((c) => c.peer!.jobAgent && (!sender.jobAgent || !sender.jobOwner || (this.jobSupervisor(c.peer!) !== this.jobSupervisor(sender) && !sender.jobSendTo?.includes(c.peer!.name)))))) {
@@ -956,7 +959,7 @@ export class Broker {
     const messages: BridgeMessage[] = [];
     for (const c of live) messages.push({ ...base, recipient: c.peer!.name });
     for (const key of queued) messages.push({ ...base, recipient: key });
-    for (const m of messages) this.store.insert(m);
+    for (const m of messages) await this.store.retryWrite(() => this.store.insert(m));
     live.forEach((c, i) => this.emit(c, "message", messages[i]!));
 
     this.log.info("message routed", {
@@ -972,18 +975,31 @@ export class Broker {
       // Fan out only at the originating broker. Receiving brokers deliver one local envelope.
       try {
         const remote = await this.requireNetwork().send({ ...base, recipient });
-        for (const message of remote.messages) this.store.insert(message);
+        for (const message of remote.messages) await this.store.retryWrite(() => this.store.insert(message));
         result.messages.push(...remote.messages);
         result.deliveredTo.push(...remote.deliveredTo);
         result.queuedFor.push(...remote.queuedFor);
         result.recipientStates!.push(...remote.recipientStates ?? []);
       } catch (err) {
         const message = { ...base, recipient };
-        this.store.insert(message);
+        await this.store.retryWrite(() => this.store.insert(message));
         result.messages.push(message);
         (result.failedFor ??= []).push({ name: recipient, reason: (err as Error).message });
         this.log.warn("broadcast recipient delivery failed", { id, recipient, err: String(err) });
       }
+    }
+    return result;
+  }
+
+  /** A pending response is one frame, unlike streamed replay events. Bound it by bytes as well as rows. */
+  private pendingMail(recipient: string, limit: number): BridgeMessage[] {
+    const result: BridgeMessage[] = [];
+    let bytes = 1_024; // response envelope and separators
+    for (const message of this.unreadMail(recipient, limit)) {
+      const size = Buffer.byteLength(JSON.stringify(message)) + 1;
+      if (bytes + size > MAX_FRAME_BYTES) break;
+      result.push(message);
+      bytes += size;
     }
     return result;
   }

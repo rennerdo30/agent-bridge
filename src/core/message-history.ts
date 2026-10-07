@@ -17,7 +17,7 @@ export function searchMessages(file: string, opts: { query?: string; before?: nu
   const rows: MessageHistoryRow[] = [];
   for (const path of [file, join(dirname(file), ARCHIVE_DB_NAME)]) {
     if (!existsSync(path)) continue;
-    const db = new DatabaseSync(path, { readOnly: true });
+    const db = new DatabaseSync(path, { readOnly: true, timeout: 50 });
     try {
       for (const table of ["messages", "archived_messages"]) {
         if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table)) continue;
