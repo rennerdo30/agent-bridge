@@ -69,7 +69,8 @@ async function startSession(inProcess = false): Promise<{ client: Client; transp
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [SERVER, "--agent=codex"],
-    env: { ...process.env, AGENT_BRIDGE_HOME: home, AGENT_BRIDGE_NAME: SESSION, AGENT_BRIDGE_CLAUDE_BIN: claudeBin, AGENT_BRIDGE_DASHBOARD: "off", AGENT_BRIDGE_LOG_LEVEL: "debug", AGENT_BRIDGE_JOB_RUNNER: inProcess ? "0" : "1" } as Record<string, string>,
+    cwd: home,
+    env: { ...process.env, AGENT_BRIDGE_HOME: home, CLAUDE_PROJECT_DIR: home, AGENT_BRIDGE_NAME: SESSION, AGENT_BRIDGE_CLAUDE_BIN: claudeBin, AGENT_BRIDGE_DASHBOARD: "off", AGENT_BRIDGE_LOG_LEVEL: "debug", AGENT_BRIDGE_JOB_RUNNER: inProcess ? "0" : "1" } as Record<string, string>,
     stderr: "ignore",
   });
   const client = new Client({ name: "test-codex", version: "0.0.0" });
