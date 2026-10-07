@@ -75,7 +75,7 @@ npx -y github:rennerdo30/agent-bridge install antigravity --yes
 npx -y github:rennerdo30/agent-bridge update antigravity --yes
 ```
 
-Requires installed, authenticated `agy` (verified with 1.2.0). Restart it after
+Requires installed, authenticated `agy` (verified with 1.2.0 and 1.3.1). Restart it after
 installation, and reload existing bridge sessions after updating them. The plugin includes MCP configuration, lifecycle/permission hooks
 and a coordination skill. It exposes the same peer, delegation, history and job
 tools as the existing plugins. Other peers get `ask_antigravity` and
@@ -93,9 +93,10 @@ The installer grants only the bridge MCP server and backs up native
 settings. Terminal sandboxing is
 separate and depends on the installed platform. Active mail arrives at the next
 model invocation or stopping boundary. **Idle TUI sessions receive mail on their
-next turn or through `inbox`; external idle wake is unavailable in 1.2.0.**
+next turn or through `inbox`; no public programmatic idle wake API is documented.**
+Native Remote Control provides separate desktop/web UI access through a tunnel.
 Account quotas are shown by native `/usage` or `/quota`; the bridge reports them
-as unknown because this version has no machine-readable quota command.
+as unknown because no machine-readable quota command is documented.
 
 Native chats and explicit child conversations are read from Antigravity JSONL
 logs without modifying them. Installer updates back up replaced files;
