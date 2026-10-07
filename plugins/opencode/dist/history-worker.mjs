@@ -22881,11 +22881,21 @@ var pending = false;
 var ready = false;
 var running = false;
 var pauseUntil = 0;
+var pressureWaiters = /* @__PURE__ */ new Set();
 var peers = /* @__PURE__ */ new Map();
 function enabled() {
   return loadConfig(workerData.home, "other", nullLogger).history.ingest;
 }
 var paused = () => pending || Date.now() < pauseUntil || !enabled();
+async function waitForPressureGap() {
+  while (pending && !stopped) await new Promise((resolve6) => {
+    pressureWaiters.add(resolve6);
+  });
+}
+function releasePressure() {
+  for (const resolve6 of pressureWaiters) resolve6();
+  pressureWaiters.clear();
+}
 async function tick(reset = false) {
   if (running || stopped || paused()) return { work: 0, discovering: !ready };
   running = true;
@@ -22897,15 +22907,19 @@ async function tick(reset = false) {
     if (stopped || paused()) return { work: 0, discovering: true };
     const legacyWork = copyLegacyConversationTail(source, db);
     await yieldTurn(10);
+    await waitForPressureGap();
+    if (stopped || paused()) return { work: legacyWork, discovering: true };
     for (const [id, peer] of [...peers].slice(0, 32)) {
       index.rememberPeer(peer);
       peers.delete(id);
     }
     if (reset) index.reset();
-    const result = index.tick();
+    const rawWork = ingest.tick();
     await yieldTurn(10);
-    const work = legacyWork + result.work + (stopped || paused() ? 0 : ingest.tick());
-    return { work, discovering: result.discovering || ingest.discovering };
+    await waitForPressureGap();
+    if (stopped || paused()) return { work: legacyWork + rawWork, discovering: true };
+    const result = index.tick();
+    return { work: legacyWork + rawWork + result.work, discovering: result.discovering || ingest.discovering };
   } finally {
     running = false;
   }
@@ -22914,7 +22928,7 @@ function schedule(delay2 = HISTORY_TICK_MS) {
   if (stopped) return;
   timer = setTimeout(async () => {
     try {
-      while (pending && !stopped) await yieldTurn(100);
+      await waitForPressureGap();
       await tick();
     } catch (err) {
       parentPort?.postMessage({ error: String(err) });
@@ -22934,6 +22948,7 @@ parentPort?.on("message", async (message) => {
   if (message.pressure) {
     pending = !!message.pending;
     if (message.lockError) pauseUntil = Date.now() + 5e3;
+    if (!pending) releasePressure();
     return;
   }
   if (message.peer) {
@@ -22942,6 +22957,7 @@ parentPort?.on("message", async (message) => {
   }
   if (message.stop) {
     stopped = true;
+    releasePressure();
     if (timer) clearTimeout(timer);
     while (running) await yieldTurn(10);
     close();

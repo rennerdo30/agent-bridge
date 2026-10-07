@@ -19,9 +19,17 @@ const ingest = new ConversationIngestor(db, workerData.home, paths, source);
 let timer: NodeJS.Timeout | null = null;
 let stopped = false, pending = false, ready = false, running = false;
 let pauseUntil = 0;
+const pressureWaiters = new Set<() => void>();
 const peers = new Map<string, PeerInfo>();
 function enabled(): boolean { return loadConfig(workerData.home, "other", nullLogger).history.ingest; }
 const paused = () => pending || Date.now() < pauseUntil || !enabled();
+async function waitForPressureGap(): Promise<void> {
+  while (pending && !stopped) await new Promise<void>(resolve => { pressureWaiters.add(resolve); });
+}
+function releasePressure(): void {
+  for (const resolve of pressureWaiters) resolve();
+  pressureWaiters.clear();
+}
 async function tick(reset = false): Promise<{ work: number; discovering: boolean }> {
   if (running || stopped || paused()) return { work: 0, discovering: !ready };
   running = true;
@@ -33,21 +41,26 @@ async function tick(reset = false): Promise<{ work: number; discovering: boolean
     if (stopped || paused()) return { work: 0, discovering: true };
     const legacyWork = copyLegacyConversationTail(source, db);
     await yieldTurn(10);
+    await waitForPressureGap();
+    if (stopped || paused()) return { work: legacyWork, discovering: true };
     for (const [id, peer] of [...peers].slice(0, 32)) { index.rememberPeer(peer); peers.delete(id); }
     if (reset) index.reset();
-    const result = index.tick();
-    // A real event-loop turn between bounded batches lets pressure/stop arrive.
+    // Preserve raw bytes before spending the next idle gap on derived indexing.
+    // Otherwise a full index batch can consume every gap in sustained traffic.
+    const rawWork = ingest.tick();
     await yieldTurn(10);
-    const work = legacyWork + result.work + (stopped || paused() ? 0 : ingest.tick());
-    return { work, discovering: result.discovering || ingest.discovering };
+    await waitForPressureGap();
+    if (stopped || paused()) return { work: legacyWork + rawWork, discovering: true };
+    const result = index.tick();
+    return { work: legacyWork + rawWork + result.work, discovering: result.discovering || ingest.discovering };
   } finally { running = false; }
 }
 function schedule(delay = HISTORY_TICK_MS): void {
   if (stopped) return;
   timer = setTimeout(async () => {
     try {
-      // Wait for a gap in broker work instead of repeatedly missing the same burst phase.
-      while (pending && !stopped) await yieldTurn(100);
+      // Resume on the pressure-clear event; polling can miss short idle gaps.
+      await waitForPressureGap();
       await tick();
     }
     catch (err) { parentPort?.postMessage({ error: String(err) }); pauseUntil = Date.now() + 5000; }
@@ -60,11 +73,13 @@ parentPort?.on("message", async (message) => {
   if (message.pressure) {
     pending = !!message.pending;
     if (message.lockError) pauseUntil = Date.now() + 5000;
+    if (!pending) releasePressure();
     return;
   }
   if (message.peer) { peers.set(message.peer.id, message.peer); return; }
   if (message.stop) {
     stopped = true;
+    releasePressure();
     if (timer) clearTimeout(timer);
     while (running) await yieldTurn(10);
     close(); return;

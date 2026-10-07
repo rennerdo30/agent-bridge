@@ -12,7 +12,7 @@ import { migrateSqlite } from "../src/core/sqlite-migrations.js";
 import { BridgeClient } from "../src/core/client.js";
 import { MessageStore } from "../src/core/store.js";
 import type { BridgeMessage } from "../src/core/protocol.js";
-import { makeEnv, type TestEnv } from "./helpers.js";
+import { makeEnv, seedInbox, type TestEnv } from "./helpers.js";
 import { installTranscriptFixtures } from "./transcript-fixtures.js";
 import { historyDbPath, migrateHistoryStore } from "../src/core/history-store.js";
 import { runReindex } from "../src/cli/reindex.js";
@@ -97,7 +97,7 @@ describe("incremental source indexing", () => {
   });
   it("indexes bounded message batches, duplicate recipients, live inserts and archived rows", async () => {
     const s = await store();
-    for (let n = 0; n < HISTORY_ROWS_PER_SOURCE * 3; n++) s.insert(message(`m${n}`));
+    seedInbox(s, Array.from({ length: HISTORY_ROWS_PER_SOURCE * 3 }, (_, n) => message(`m${n}`)));
     s.history.tick();
     const db = new DatabaseSync(historyDbPath(env.db)); cleanups.push(() => db.close());
     expect(Number(db.prepare("SELECT count(*) AS n FROM history_documents").get()!.n)).toBeLessThanOrEqual(HISTORY_ROWS_PER_SOURCE * 2);
