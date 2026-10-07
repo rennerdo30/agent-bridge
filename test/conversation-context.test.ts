@@ -70,7 +70,9 @@ it("retains every recipient envelope, quiet copies, decisions, reports and progr
       id,
       recipient,
       conversationId,
-      body: `context_${id}_needle`,
+      body: id === "report"
+        ? `Subagent opencode-job-example (opencode) done after 1s.\n\n${"x".repeat(160_000)} context_report_needle`
+        : `context_${id}_needle`,
       from: {
         id: "ses_child",
         name: "opencode-job-example",
@@ -163,6 +165,7 @@ it("retains every recipient envelope, quiet copies, decisions, reports and progr
       f.index.search({ query: `context_${word}_needle` }).hits.length,
     ).toBeGreaterThan(0);
   const broadcast = readConversation(f.db, { id: "bridge:broadcast" });
+  expect(f.index.search({query:"context_report_needle",filters:{kind:"report",job:"opencode-job-example",agent:"opencode"}}).hits.length).toBeGreaterThan(0);
   expect(broadcast.records).toHaveLength(2);
   expect(broadcast.records.map((r) => JSON.parse(r.text).recipient)).toEqual([
     "one",
