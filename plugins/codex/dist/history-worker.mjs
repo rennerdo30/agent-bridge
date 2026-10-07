@@ -275,9 +275,20 @@ function migrateSqlite(db2, file2, existed, target, migrations, log) {
 import { execFileSync } from "node:child_process";
 import { existsSync as existsSync4, readFileSync as readFileSync2, realpathSync, statSync as statSync2 } from "node:fs";
 import { dirname as dirname4, join as join6, resolve } from "node:path";
+
+// src/core/session-visibility.ts
+import { posix } from "node:path";
+function isPluginCacheCwd(cwd) {
+  const path = posix.normalize(cwd.replace(/\\/g, "/")).toLowerCase().replace(/\/+$/, "");
+  return /(?:^|\/)\.(?:codex|claude)\/plugins\/cache(?:\/|$)/.test(path) || /(?:^|\/)(?:\.config\/opencode|\.opencode|opencode)\/plugins?(?:\/|$)/.test(path) || /(?:^|\/)(?:\.gemini\/(?:config|antigravity-cli)|\.agents)\/plugins(?:\/|$)/.test(path);
+}
+
+// src/core/project-identity.ts
 function canonicalProjectRoot(cwd) {
+  if (isPluginCacheCwd(cwd)) return null;
   try {
     const physical = realpathSync.native(cwd);
+    if (isPluginCacheCwd(physical)) return null;
     if (!statSync2(physical).isDirectory()) return null;
     const git = (args) => execFileSync(
       "git",
@@ -331,7 +342,11 @@ function linkedParent(file2) {
   }
 }
 function conversationProject(cwd) {
-  if (!cwd) return "";
+  if (!cwd || isPluginCacheCwd(cwd)) return "";
+  try {
+    if (isPluginCacheCwd(realpathSync2.native(cwd))) return "";
+  } catch {
+  }
   const known = roots.get(cwd);
   if (known) return known;
   const root = projectKey(canonicalProjectRoot(cwd) ?? resolve2(cwd));
