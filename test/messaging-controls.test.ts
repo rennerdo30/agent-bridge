@@ -6,7 +6,7 @@ import { DEFAULT_CONFIG } from "../src/core/config.js";
 import { nullLogger } from "../src/core/logger.js";
 import { isQuietMessage } from "../src/core/protocol.js";
 import { listPendingApprovals } from "../src/core/relay.js";
-import { JobManager, waitForApproval } from "../src/mcp/jobs.js";
+import { JobManager, waitForApproval, type Run } from "../src/mcp/jobs.js";
 import { registerTools, type ServerContext } from "../src/mcp/server.js";
 import { buildHookResponse } from "../src/mcp/hooks.js";
 import { shouldWakeClaudeMessage } from "../src/mcp/rewake.js";
@@ -62,5 +62,29 @@ it.each(["claude", "codex", "opencode", "antigravity"] as const)("%s retains not
     jobs.fromSubagent(job, "Which owner should review this?", null, true);
     const question = node.unread().find(m => m.body.includes("Which owner"))!;
     expect(isQuietMessage(question)).toBe(false); expect(shouldWakeClaudeMessage(node, DEFAULT_CONFIG, question)).toBe(true);
+  } finally { jobs.cancelAll(); }
+});
+
+it("uses detached runner links, retains undeliverable mail and reports each failure independently", async () => {
+  const node = env.node("supervisor"); await node.start();
+  const jobs = new JobManager(node, nullLogger);
+  const send = vi.fn((_job, _control) => {});
+  jobs.runners = { state: () => null, alive: () => true, send, kill: vi.fn() };
+  const run: Run = Object.assign(async () => ({ text: "unused", sessionId: null, isError: false, details: {} }),
+    { hosted: () => ({ pid: 123, peer: "runner", startedAt: Date.now() }) });
+  const hosted = jobs.start("codex", null, "Hosted", run);
+  const queued = jobs.start("opencode", null, "No live link", () => new Promise(() => {}));
+  const failed = jobs.start("claude", null, "Broken link", () => new Promise(() => {}));
+  failed.live = { post: () => { throw new Error("fixture transport unavailable"); } };
+  try {
+    const results = jobs.broadcastRunning("Hold at next checkpoint");
+    expect(send).toHaveBeenCalledWith(hosted, expect.objectContaining({ type: "message", body: "Hold at next checkpoint", cid: expect.any(String) }));
+    expect(hosted.forwarded).toHaveLength(1);
+    expect(queued.queue).toEqual(["Hold at next checkpoint"]);
+    expect(results).toEqual([
+      { name: hosted.name, outcome: "queued on existing runner link; consumption unconfirmed" },
+      { name: queued.name, outcome: "queued for follow-up; no live link" },
+      { name: failed.name, outcome: "failed: fixture transport unavailable" },
+    ]);
   } finally { jobs.cancelAll(); }
 });

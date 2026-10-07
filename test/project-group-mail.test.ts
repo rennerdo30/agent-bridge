@@ -80,7 +80,7 @@ describe("durable project job mail", () => {
     await source.setUnavailable(true); await secondary.setUnavailable(false);
     expect(secondary.unread()).toHaveLength(0);
   });
-  it("retains an undelivered finished job note through reconnect and the prompt hook", async () => {
+  it("retains an undelivered finished job note through reconnect without prompt injection", async () => {
     await env.node("broker", "other").start();
     const path = repo(), records = registry(path), source = await node("claude-master", path);
     const runner = await node("codex-job-one", path, { id: "one", owner: "first", parent: source.name });
@@ -92,8 +92,9 @@ describe("durable project job mail", () => {
     const jobs = new JobManager(returned, nullLogger, join(env.home, "jobs.json"));
     const ctx = { agent: "claude", cfg: { ...DEFAULT_CONFIG }, node: returned, jobs, log: nullLogger, home: env.home, cwd: () => path, channelActive: () => false } as ServerContext;
     const result = await buildHookResponse(ctx, { event: "UserPromptSubmit", sessionId: null, stopHookActive: false });
-    expect(JSON.stringify(result)).toContain("Final pending note");
-    await expect.poll(async () => (await runner.messageReceipt(sent.messages[0]!.id))[0]!.readAt).toBeTypeOf("number");
+    expect(JSON.stringify(result)).not.toContain("Final pending note");
+    expect(returned.unread().some(m => m.id === sent.messages[0]!.id)).toBe(true);
+    expect((await runner.messageReceipt(sent.messages[0]!.id))[0]!.readAt).toBeNull();
   });
   it("does not replay a recovered inline envelope consumed before its broker acknowledgement", async () => {
     const path = repo(), records = registry(path), source = await node("claude-master", path);

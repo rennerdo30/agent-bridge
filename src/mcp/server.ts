@@ -395,7 +395,7 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
     const shouldWake = (m: BridgeMessage) =>
       !ctx.channelActive() &&
       m.hop < cfg.maxHops &&
-      // A running subagent's status note waits for the next prompt or tool call (see JobManager.fromSubagent).
+      // Running-job notes remain in explicit inbox reads and history (see JobManager.fromSubagent).
       !ctx.jobs?.isNote(m) &&
       shouldWakeClaudeMessage(node, cfg, m);
     rewake = new RewakeEndpoint(home, node, shouldWake, log.child("rewake"));

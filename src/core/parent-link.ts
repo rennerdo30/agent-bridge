@@ -148,7 +148,7 @@ export class ParentLink {
       if (replyTo) this.unanswered = this.unanswered.filter((m) => m.sibling?.conversationId !== result.messages[0]?.conversationId);
       return result;
     }
-    if (req.method === "POST" && req.url === "/message") {
+    if (req.method === "POST" && (req.url === "/message" || req.url === "/message-kind")) {
       const body = JSON.parse(await readBody(req)) as { body?: unknown; reply_to?: unknown; kind?: unknown };
       const text = String(body.body ?? "").trim();
       if (!text) throw new Error("empty message");
@@ -193,25 +193,29 @@ export function parentFromEnv(env: NodeJS.ProcessEnv = process.env, timeoutMs = 
   const token = env[PARENT_TOKEN_ENV];
   if (!url || !token) return null;
   const call = async (path: string, payload: unknown) => {
-    const res = await fetch(`${url}${path}`, {
-      method: "POST",
-      headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
-      body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(timeoutMs),
-    }).catch(err => {
-      if ((path === "/message" || path === "/sibling-message") && (err as Error).name === "TimeoutError") {
+    const signal = AbortSignal.timeout(timeoutMs);
+    try {
+      const res = await fetch(`${url}${path}`, {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+        body: JSON.stringify(payload), signal,
+      });
+      const out = (await res.json()) as Record<string, unknown>;
+      if (!res.ok) throw new Error(String(out.error ?? `HTTP ${res.status}`));
+      return out;
+    } catch (err) {
+      // The deadline can expire while reading the body after successful response headers too.
+      if ((path === "/message" || path === "/message-kind" || path === "/sibling-message") && signal.aborted) {
         throw new Error("Delivery is unconfirmed after the parent-link response timed out. The message may already be queued; check inbox/history before resending.", { cause: err });
       }
       throw err;
-    });
-    const out = (await res.json()) as Record<string, unknown>;
-    if (!res.ok) throw new Error(String(out.error ?? `HTTP ${res.status}`));
-    return out;
+    }
   };
   return {
     name: env[PARENT_NAME_ENV] || "parent",
     inbox: async () => ((await call("/inbox", {})).messages as LinkMessage[]) ?? [],
-    send: async (body, replyTo, kind) => void (await call("/message", { body, reply_to: replyTo ?? null, kind })),
+    // A distinct endpoint makes legacy parents refuse rather than silently discard note/question intent.
+    send: async (body, replyTo, kind) => void (await call(kind ? "/message-kind" : "/message", { body, reply_to: replyTo ?? null, kind })),
     escalate: async (body) => void (await call("/escalate", { body })),
     progress: async (percent, note, etaMinutes) => void (await call("/progress", { percent, note, eta_minutes: etaMinutes })),
     siblings: {

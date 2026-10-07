@@ -89,8 +89,11 @@ it.skipIf(!bin).each(["main", "secondary"])("real Codex queue wakes an attached 
     const second = await sender.send({ to: "idle-codex", body: "SECOND_IDLE_WAKE" });
     await until(() => consumed.length === 2);
     expect(consumed[1]).toContain("SECOND_IDLE_WAKE");
-    await until(() => sender.unread().length === 0);
-    expect((await sender.messageReceipt(second.messages[0]!.id))[0]!.readAt).not.toBeNull();
+    const receiptDeadline = Date.now() + 5_000;
+    while ((await sender.messageReceipt(second.messages[0]!.id))[0]!.readAt === null) {
+      if (Date.now() >= receiptDeadline) throw new Error("Attached TUI did not acknowledge its consumed bridge mail");
+      await new Promise(resolve => setTimeout(resolve, 20));
+    }
     accept = false;
     const rejected = await sender.send({ to: "idle-codex", body: "UNSUPPORTED_QUEUE" });
     await until(() => calls.filter(m => m === "thread/queue/add").length === 3);

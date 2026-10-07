@@ -37,6 +37,7 @@ it.each(["claude", "codex", "opencode", "antigravity"] as const)("%s refuses sta
   await c.send({ to: a.name, body: "Tie break: beta", conversationId: "round-3" });
   await until(() => a.unread().length === 3);
   await expect(a.send({ to: b.name, body: "Stale settlement", replyTo: anchor, ifNoNewerThan: anchor })).rejects.toThrow("Stale reply refused");
+  await expect(a.send({ to: "offline-settler", body: "Guard without reply_to", ifNoNewerThan: anchor })).rejects.toThrow("Stale reply refused");
   expect(b.unread()).toEqual([]);
   const ordinary = await a.send({ to: b.name, body: "Unprotected reply", replyTo: anchor });
   expect(ordinary.unreadBeforeSend).toHaveLength(3);

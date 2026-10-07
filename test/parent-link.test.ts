@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { nullLogger } from "../src/core/logger.js";
 import type { BridgeNode } from "../src/core/node.js";
 import { ParentLink, parentFromEnv } from "../src/core/parent-link.js";
@@ -8,6 +10,39 @@ import type { ServerContext } from "../src/mcp/server.js";
 import { makeEnv, until, type TestEnv } from "./helpers.js";
 
 describe("parent link", () => {
+  it("does not silently downgrade explicit kinds when the parent is an older version", async () => {
+    let delivered = 0;
+    const server = createServer(async (req, res) => {
+      for await (const _chunk of req) { /* complete the request */ }
+      const supported = req.url === "/message";
+      if (supported) delivered++;
+      res.writeHead(supported ? 200 : 404, { "content-type": "application/json" });
+      res.end(JSON.stringify(supported ? { ok: true } : { error: "unknown path: message-kind" }));
+    });
+    await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+    try {
+      const child = parentFromEnv({ AGENT_BRIDGE_PARENT_URL: `http://127.0.0.1:${(server.address() as AddressInfo).port}`, AGENT_BRIDGE_PARENT_TOKEN: "fixture" })!;
+      await expect(child.send("FYI", undefined, "note")).rejects.toThrow("unknown path: message-kind");
+      expect(delivered).toBe(0);
+      await child.send("Substantive final report");
+      expect(delivered).toBe(1);
+    } finally { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); }
+  });
+  it("reports uncertain delivery when response-body reading expires after successful headers", async () => {
+    let delivered = 0;
+    const server = createServer(async (req, res) => {
+      for await (const _chunk of req) { /* read the accepted message */ }
+      delivered++;
+      res.writeHead(200, { "content-type": "application/json" }); res.flushHeaders();
+      setTimeout(() => res.end("{}"), 300);
+    });
+    await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+    try {
+      const child = parentFromEnv({ AGENT_BRIDGE_PARENT_URL: `http://127.0.0.1:${(server.address() as AddressInfo).port}`, AGENT_BRIDGE_PARENT_TOKEN: "fixture" }, 150)!;
+      await expect(child.send("Once only")).rejects.toThrow("Delivery is unconfirmed");
+      expect(delivered).toBe(1);
+    } finally { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); }
+  });
   it("reports uncertain delivery when a sibling response expires after the message was stored", async () => {
     let delivered = 0;
     const link = new ParentLink("parent", () => {}, nullLogger, undefined, {

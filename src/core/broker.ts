@@ -1242,11 +1242,11 @@ export class Broker {
         this.log.debug("replyTo refers to an unknown message", { replyTo });
       }
     }
-    conversationId ||= randomUUID();
     const anchor = args.ifNoNewerThan ? this.store.byId(args.ifNoNewerThan) : null;
     if (args.ifNoNewerThan && (!anchor || (anchor.from.id !== sender.id && !this.store.receipts(anchor.id).some(r => r.recipient === sender.name)))) {
       throw new BridgeError("bad_request", "if_no_newer_than must identify a message exchanged by this session.");
     }
+    conversationId ||= anchor?.conversationId || randomUUID();
     if (own && (to === own.rootName || to === own.owner || this.groups.members(own, this.localPeers()).some((p) => p.name === to) || mastersFor(own).includes(to))) conversationId = this.jobConversation(own, to, conversationId);
 
     const id = sender.jobAgent && args.dedupeKey?.startsWith(COMPLETION_DEDUPE_PREFIX)

@@ -17,6 +17,9 @@ Milestones use `send(message_kind="note")`. Blockers needing a decision use
 Quiet protection applies even if a job ignores the reporting cadence.
 Questions, substantive answers to live requests, final results and approval
 requests retain their attention paths. A note cannot consume an awaited answer.
+Explicit parent-link kinds use a separate endpoint, so older parents reject them
+instead of silently losing that classification. Existing host processes keep their
+loaded code until the owner loads the new version.
 
 ## Reach the project team or running jobs
 

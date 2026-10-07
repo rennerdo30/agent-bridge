@@ -1199,8 +1199,8 @@ export class JobManager {
 
   /**
    * A message the running subagent sent to this session. An answer (to a live message, or marked as a reply)
-   * wakes the session; a note it sends on its own ("tests pass, merging next") does not: it waits for the
-   * session's next prompt or tool call, so status chatter costs no extra turn.
+   * wakes the session; a note it sends on its own ("tests pass, merging next") stays in explicit
+   * inbox reads and dashboard history, so status chatter costs no extra turn.
    */
   fromSubagent(job: Job, body: string, replyTo: string | null, isAnswer = false, forceNote = false): void {
     const answer = !forceNote && (isAnswer || replyTo !== null || job.awaitingAnswer === true);
