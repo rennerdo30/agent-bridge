@@ -4,8 +4,17 @@ import { afterEach, expect, it, vi } from "vitest";
 import { AgentBridgePlugin } from "../src/opencode/plugin.js";
 import { makeEnv, type TestEnv } from "./helpers.js";
 
-let env: TestEnv | undefined, plugin: any;
-afterEach(async () => { await plugin?.dispose(); plugin = undefined; await env?.cleanup(); env = undefined; vi.restoreAllMocks(); vi.unstubAllEnvs(); });
+let env: TestEnv | undefined, plugin: any, ownedPid: number | null = null;
+afterEach(async () => {
+  await plugin?.dispose(); plugin = undefined;
+  // The SDK's bounded close can return immediately after SIGKILL. Windows still
+  // holds the child's working directory until the actual process exit completes.
+  if (ownedPid) await expect.poll(() => {
+    try { process.kill(ownedPid!, 0); return true; } catch { return false; }
+  }, { timeout: 5_000 }).toBe(false);
+  ownedPid = null;
+  await env?.cleanup(); env = undefined; vi.restoreAllMocks(); vi.unstubAllEnvs();
+});
 
 it("retains startup context and coalesces mail arriving during a Stop check", async () => {
   env = makeEnv();
@@ -15,6 +24,11 @@ it("retains startup context and coalesces mail arriving during a Stop check", as
   vi.stubEnv("AGENT_BRIDGE_DASHBOARD", "off");
   const prompts: { text: string; noReply: boolean }[] = [];
   const originalCall = Client.prototype.callTool;
+  const originalConnect = Client.prototype.connect;
+  vi.spyOn(Client.prototype, "connect").mockImplementation(async function (this: Client, transport: any, ...args: any[]) {
+    await originalConnect.apply(this, [transport, ...args] as any);
+    ownedPid = transport.pid;
+  });
   let releaseStop!: () => void, stopEntered = false, checks = 0;
   const pendingStop = new Promise<void>((resolve) => { releaseStop = resolve; });
   vi.spyOn(Client.prototype, "callTool").mockImplementation(async function (this: Client, request: any, ...args: any[]) {
