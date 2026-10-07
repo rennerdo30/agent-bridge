@@ -31268,6 +31268,9 @@ var MIGRATIONS = [
   ` },
   { version: 8, sql: CONVERSATION_MIGRATION }
 ];
+function migrateMessageSchema(db, file2, existed, log) {
+  migrateSqlite(db, file2, existed, SQLITE_STORE_VERSION, MIGRATIONS, log);
+}
 function registrationIdentity(peer) {
   if (peer.jobAgent || !Number.isSafeInteger(peer.agentPid) || !peer.agentPid || peer.agentPid <= 0 || !peer.agentStartedAt) return null;
   let cwd = resolve7(peer.cwd);
@@ -31308,7 +31311,7 @@ var MessageStore = class {
       throw err;
     }
     try {
-      migrateSqlite(this.db, file2, existed, SQLITE_STORE_VERSION, MIGRATIONS, log);
+      migrateMessageSchema(this.db, file2, existed, log);
       configureSqlite(this.db);
     } catch (err) {
       this.db.close();

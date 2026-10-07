@@ -44599,6 +44599,9 @@ var MIGRATIONS = [
   ` },
   { version: 8, sql: CONVERSATION_MIGRATION }
 ];
+function migrateMessageSchema(db, file2, existed, log) {
+  migrateSqlite(db, file2, existed, SQLITE_STORE_VERSION, MIGRATIONS, log);
+}
 function registrationIdentity(peer) {
   if (peer.jobAgent || !Number.isSafeInteger(peer.agentPid) || !peer.agentPid || peer.agentPid <= 0 || !peer.agentStartedAt) return null;
   let cwd = resolve14(peer.cwd);
@@ -44639,7 +44642,7 @@ var MessageStore = class {
       throw err;
     }
     try {
-      migrateSqlite(this.db, file2, existed, SQLITE_STORE_VERSION, MIGRATIONS, log);
+      migrateMessageSchema(this.db, file2, existed, log);
       configureSqlite(this.db);
     } catch (err) {
       this.db.close();
@@ -56061,6 +56064,8 @@ function registerTools(mcp, ctx, targets) {
   };
   const guarded = (name2, fn) => async (args, extra) => {
     log.debug("tool call", { tool: name2, args });
+    if (ctx.node?.wasReplaced) await ctx.node.reclaim().catch((err) => log.warn("could not take the bridge back", { err: err.message }));
+    await ctx.observeMeta?.(extra._meta);
     try {
       return await fn(args, extra);
     } catch (err) {
@@ -56812,8 +56817,6 @@ Saved settings: ${Object.entries(settings).map(([key3, value]) => `${key3}=${val
       }
     },
     async (a, extra) => {
-      if (ctx.node?.wasReplaced) await ctx.node.reclaim().catch((err) => log.warn("could not take the bridge back", { err: err.message }));
-      await ctx.observeMeta?.(extra._meta);
       const given = (v) => v && !v.startsWith("${") ? v : null;
       try {
         const out = await buildHookResponse(ctx, {
