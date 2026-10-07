@@ -118,6 +118,9 @@ it("delivers a final result ahead of more than500 retained job status notes", as
       conversationId: i < 600 ? `job-${i}:note` : "job-600", body: i < 600 ? `STATUS_${i}` : "FINAL_AFTER_NOTES", createdAt: Date.now() + i, readAt: null });
   } finally { store.close(); }
   const sup = await connect("claude", "supervisor");
+  // Wait for cross-process replay without consuming the completion or quiet copies.
+  await expect.poll(() => call(sup, "inbox", { mark_read: false, include_quiet: false }),
+    { timeout: 5_000 }).toContain("FINAL_AFTER_NOTES");
   let stopped = "";
   // Retained status notes are paged asynchronously before the real completion arrives.
   await expect.poll(async () => stopped = await call(sup, "hook_event", { event: "Stop" }),

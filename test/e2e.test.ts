@@ -62,8 +62,8 @@ describe.skipIf(!existsSync(SERVER))("bundled MCP server end-to-end", () => {
     const x = (await codex.listTools()).tools.map((t) => t.name).sort();
     const g = (await antigravity.listTools()).tools.map((t) => t.name).sort();
     expect(g).toEqual(c.filter((name) => !name.endsWith("_antigravity")).concat(["ask_claude", "spawn_claude"]).sort());
-    expect(c).toEqual(["ask_antigravity", "ask_codex", "ask_opencode", "ask_owner", "auto_wake", "cancel_subagent", "cancel_transfer", "coordinator_availability", "dashboard", "decide", "decisions", "fetch_files", "get_conversation", "handoff_subagents", "hook_event", "inbox", "list_models", "max_subagents", "message_subagent", "network_status", "peers", "project_main", "search_history", "send", "send_files", "set_job_outcome", "spawn_antigravity", "spawn_codex", "spawn_opencode", "usage_limits", "wait_for_message", "withdraw_owner_question"]);
-    expect(x).toEqual(["ask_antigravity", "ask_claude", "ask_opencode", "ask_owner", "auto_wake", "cancel_subagent", "cancel_transfer", "coordinator_availability", "dashboard", "decide", "decisions", "fetch_files", "get_conversation", "handoff_subagents", "hook_event", "inbox", "list_models", "max_subagents", "message_subagent", "network_status", "peers", "project_main", "search_history", "send", "send_files", "set_job_outcome", "spawn_antigravity", "spawn_claude", "spawn_opencode", "usage_limits", "wait_for_message", "withdraw_owner_question"]);
+    expect(c).toEqual(["ask_antigravity", "ask_codex", "ask_opencode", "ask_owner", "auto_wake", "cancel_subagent", "cancel_transfer", "coordinator_availability", "dashboard", "decide", "decisions", "fetch_files", "get_conversation", "handoff_subagents", "hook_event", "inbox", "list_models", "max_subagents", "message_subagent", "network_status", "peers", "project_main", "search_history", "send", "send_files", "send_status", "set_job_outcome", "spawn_antigravity", "spawn_codex", "spawn_opencode", "usage_limits", "wait_for_message", "withdraw_owner_question"]);
+    expect(x).toEqual(["ask_antigravity", "ask_claude", "ask_opencode", "ask_owner", "auto_wake", "cancel_subagent", "cancel_transfer", "coordinator_availability", "dashboard", "decide", "decisions", "fetch_files", "get_conversation", "handoff_subagents", "hook_event", "inbox", "list_models", "max_subagents", "message_subagent", "network_status", "peers", "project_main", "search_history", "send", "send_files", "send_status", "set_job_outcome", "spawn_antigravity", "spawn_claude", "spawn_opencode", "usage_limits", "wait_for_message", "withdraw_owner_question"]);
   });
 
   it("declares the Claude channel capability only for Claude", () => {
@@ -122,7 +122,9 @@ describe.skipIf(!existsSync(SERVER))("bundled MCP server end-to-end", () => {
     expect(result.stdout).toContain("History index rebuilt");
     expect(source.prepare("SELECT id,recipient,body,read_at FROM messages ORDER BY id,recipient").all()).toEqual(before); source.close();
     const found = JSON.parse(textOf(await codex.callTool({ name: "search_history", arguments: { query: "walnut bundled", filters: { kind: "message", agent: "claude" }, limit: 1 } })));
-    expect(found.hits).toMatchObject([{ message: id, snippet: "walnut bundled history", sourceLink: `/api/history/message%3A${id}` }]);
+    expect(found.hits).toMatchObject([{ message: id, snippet: "walnut bundled history" }]);
+    expect(found.hits[0].sourceLink).toBe(`/api/history/${encodeURIComponent(found.hits[0].id)}`);
+    expect(found.hits[0].id).toMatch(new RegExp(`^(message:${id}|durable:\\d+)$`));
     expect(found.answer).toBeUndefined();
     const empty = JSON.parse(textOf(await codex.callTool({ name: "search_history", arguments: { query: "unfindable-query-xyz", answer: true } })));
     expect(empty.answer).toMatchObject({ agent: null, model: null, sources: [] });

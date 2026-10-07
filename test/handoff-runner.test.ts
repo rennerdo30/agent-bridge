@@ -68,7 +68,7 @@ it("hands off a blocking ask without returning results or notes to the old calle
   expect(originalReply.text).not.toContain("Inherited runner finished");
   let inherited = "";
   await expect.poll(async () => { inherited += (await call(target, "inbox")).text; return inherited.includes("Inherited runner finished"); }, { timeout: 5000 }).toBe(true);
-  expect(inherited).toContain("Foreground post-handoff note");
+  expect((await call(target, "inbox", { include_quiet: true })).text).toContain("Foreground post-handoff note");
   expect((await call(source, "inbox")).text).not.toMatch(/Foreground post-handoff|Inherited runner finished/);
   expect(readStore(join(env.home, "jobs.json")).find((j) => j.id === job.id)!.deliveryHistory).toBeDefined();
 });

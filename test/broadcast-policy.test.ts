@@ -9,7 +9,7 @@ import { DEFAULT_CONFIG } from "../src/core/config.js";
 let env: TestEnv;
 beforeEach(() => { env = makeEnv(); });
 afterEach(async () => { await env.cleanup(); });
-it("broadcasts to every live project secondary while project addresses use only the main", async () => {
+it("broadcasts to every live secondary and fans project addresses out to eligible project sessions", async () => {
   const project = join(env.home, "project"); mkdirSync(project);
   execFileSync("git", ["init", project], { windowsHide: true, stdio: "ignore" });
   const sender = env.node("sender", "other"); await sender.start();
@@ -19,8 +19,7 @@ it("broadcasts to every live project secondary while project addresses use only 
     await node.relocate(project); await node.start(); await node.setWakePolicy(true, true); node.setActivity("idle");
     sessions.push(node);
   }
-  const main = sessions[0]!;
-  expect((await sender.send({ to: `project:${basename(project)}`, body: "project instruction" })).deliveredTo).toEqual([main.name]);
+  expect((await sender.send({ to: `project:${basename(project)}`, body: "project instruction" })).deliveredTo.sort()).toEqual(sessions.map((n) => n.name).sort());
   const sent = await sender.send({ to: "*", body: "all sessions" });
   expect(sent.deliveredTo.sort()).toEqual(sessions.map((n) => n.name).sort());
   expect(sent.wakeRequestedFor!.sort()).toEqual(sessions.map((n) => n.name).sort());

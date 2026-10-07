@@ -14,6 +14,7 @@ import { startUi } from "../src/cli/ui.js";
 import { makeEnv, until, type TestEnv } from "./helpers.js";
 import { notifyOwnerQuestion } from "../src/core/notifications.js";
 import { loadConfig } from "../src/core/config.js";
+import { migrateHistoryStore } from "../src/core/history-store.js";
 
 let env: TestEnv;
 const closers: (() => void | Promise<void>)[]=[];
@@ -134,7 +135,11 @@ describe("presence alerts and waking delivery",() => {
     const closedBeforeHeartbeat=service.store.ask(question("stale-alert"),env.home,asker).question;
     (service as any).tick(); service.store.dismiss(closedBeforeHeartbeat.id,"cancelled","No longer needed");
     expect(service.heartbeat("tab",true).alerts).toEqual([]);
-    messages.history.tick(); expect(messages.history.search({query:"compact shipping",filters:{kind:"question"}}).hits[0]?.link).toContain(q.id);
+    await migrateHistoryStore(env.db, messages.history.storageDatabase);
+    await expect.poll(() => {
+      messages.history.tick();
+      return messages.history.search({query:"compact shipping",filters:{kind:"question"}}).hits[0]?.link;
+    }, { timeout: 5_000 }).toContain(q.id);
   });
   it("mirrors exact answers once and recovers an unconfirmed prior comment without duplicates",async () => {
     const messages=new MessageStore(env.db,nullLogger); closers.push(() => messages.close());

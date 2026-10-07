@@ -21,6 +21,8 @@ const REVIEWED_REMOVALS: Record<string, string[]> = {
   "core/node.ts": ["unlinkSync(this.opts.pipePath)"],
   "core/storage-lock.ts": ["rmSync(path)", "rmSync(path, { force: true })", "rmSync(join(dir, file))", "rmSync(path, { force: true })", "rmSync(path, { force: true })"],
   "core/migration-lock.ts": ["rmSync(path)", "rmSync(path)", "rmSync(path)", "rmSync(recovery)"],
+  // Exited worker's migration lock only: current PID and exact recorded nonce must match.
+  "core/history-store.ts": ["rmSync(path)"],
   "core/notifications.ts": ["rmdirSync(lock)", "rmdirSync(lock)"],
   "mcp/rewake.ts": ["rmSync(sessionFile(this.home, this.registered), { force: true })", "rmSync(sessionFile(this.home, this.registered), { force: true })"],
   "network/files.ts": ["rmSync(staging, { recursive: true, force: true })"],
@@ -35,7 +37,7 @@ const REVIEWED_REMOVALS: Record<string, string[]> = {
   // Temporary working folder (mkdtempSync) of the low-cost model that answers search questions.
   "core/history-answer.ts": ["rmSync(cwd, { recursive: true, force: true })"],
   // Derived search index only (pending queue, full rebuild by reindex); source messages, logs and transcripts are read-only.
-  "core/history.ts": ['"DELETE FROM history_pending WHERE id=? AND recipient=?"', '"DELETE FROM history_documents; DELETE FROM history_tags; DELETE FROM history_cursors; DELETE FROM history_files;"'],
+  "core/history.ts": ['"DELETE FROM history_pending WHERE id=? AND recipient=?"', '"DELETE FROM history_documents; DELETE FROM history_tags; DELETE FROM history_cursors WHERE source<>\'legacy-record-tail\'; DELETE FROM history_files;"'],
   // Temporary duplicates after whole-file SHA-256 verification and exclusive publication of the final file; truncation trims
   // only unverified tails of private .part files and their checksum journal on resume. Received files are never removed.
   "network/transfers.ts": ["unlink(part)", "unlink(verified)", "unlink(verifiedPath)", "unlink(verified)", "file.truncate(verified)", "journal.truncate(chunks * SHA_RECORD_BYTES)"],

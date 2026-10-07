@@ -34,7 +34,7 @@ it("wakes an idle native opencode group fallback once with auto-wake off", async
   await runner.start();
   await primary.setUnavailable(true);
   await runner.send({ to: primary.name, body: "Quiet group fallback note", conversationId: "job-native:note" });
-  expect(await plugin.tool.bridge_inbox.execute({ include_quiet: true }, ctx)).toContain("Quiet group fallback note");
+  await expect.poll(() => plugin.tool.bridge_inbox.execute({ include_quiet: true }, ctx)).toContain("Quiet group fallback note");
   expect(prompts.some(p => p.text.includes("Quiet group fallback note"))).toBe(false);
   await runner.send({ to: primary.name, body: "Native group fallback report", conversationId: "job-native" });
   await expect.poll(() => prompts.filter((p) => p.text.includes("Native group fallback report")).length, { timeout: 8000 }).toBe(1);

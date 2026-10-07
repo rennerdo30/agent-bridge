@@ -82,6 +82,19 @@ describe("history migration", () => {
 });
 
 describe("incremental source indexing", () => {
+  it("replays a durable partial batch when consumption fails before its cursor commit", async () => {
+    const s = await store(), db = s.history.storageDatabase;
+    s.insert(message("one")); s.insert(message("two"));
+    db.exec("CREATE TRIGGER refuse_second BEFORE INSERT ON history_documents WHEN new.id='message:two' BEGIN SELECT RAISE(ABORT, 'copy refused'); END;");
+    expect(() => s.history.tick()).toThrow("copy refused");
+    expect(db.prepare("SELECT id FROM history_documents WHERE id='message:one'").get()?.id).toBe("message:one");
+    expect(db.prepare("SELECT cursor FROM history_cursors WHERE source='messages'").get()).toBeUndefined();
+    db.exec("DROP TRIGGER refuse_second");
+    drain(s.history);
+    expect(s.history.search({ query: "walnut" }).hits.map((hit) => hit.message).sort()).toEqual(["one", "two"]);
+    expect(s.byId("one")?.body).toBe("walnut history needle");
+    expect(s.byId("two")?.body).toBe("walnut history needle");
+  });
   it("indexes bounded message batches, duplicate recipients, live inserts and archived rows", async () => {
     const s = await store();
     for (let n = 0; n < HISTORY_ROWS_PER_SOURCE * 3; n++) s.insert(message(`m${n}`));

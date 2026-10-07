@@ -1,6 +1,7 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -133,7 +134,7 @@ afterEach(async () => {
   await waitFor(() => pids.every((pid) => !pidAlive(pid)));
   for (const s of sessions.splice(0)) await stopSession(s).catch(() => {});
   for (const n of nodes.splice(0)) await n.stop().catch(() => {});
-  rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 });
+  await rm(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 });
 });
 
 describe.skipIf(!existsSync(SERVER))("background subagents in job runners", () => {
@@ -194,7 +195,7 @@ describe.skipIf(!existsSync(SERVER))("background subagents in job runners", () =
     const a = await spawnHeld(session, true, [external.name]);
     const first = parentFromEnv(JSON.parse(readFileSync(a.link, "utf8")))!;
     const reply = (await first.siblings.send(external.name, "Contract deliverable", request.id)).messages[0]!;
-    expect(reply).toMatchObject({ conversationId: request.conversationId, replyTo: request.id });
+    expect(reply).toMatchObject({ conversationId: `${request.conversationId}:fallback`, replyTo: request.id });
     expect((await first.siblings.policy!()).sendTo).toEqual([external.name]);
     writeFileSync(a.release, "");
     await waitFor(() => readRunnerState(home, a.id)?.status === "done" && !pidAlive(a.pid));

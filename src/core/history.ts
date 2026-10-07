@@ -130,11 +130,14 @@ export class HistoryIndex {
   }
   private rows(source: string, db: DatabaseSync, table: string, consume: (row: Record<string, any>) => void): number {
     const after = Number(this.cursor(source));
-    let count=0,bytes=0;
+    let count=0,bytes=0,cursor=after;
     for (const row of db.prepare(`SELECT rowid AS history_rowid, * FROM ${table} WHERE rowid > ? ORDER BY rowid LIMIT ?`).iterate(after,HISTORY_ROWS_PER_SOURCE)) {
-      consume(row);this.advance(source,String(row.history_rowid));count++;bytes+=Buffer.byteLength(typeof row.body === "string" ? row.body : "");
+      consume(row);cursor=Number(row.history_rowid);count++;bytes+=Buffer.byteLength(typeof row.body === "string" ? row.body : "");
       if(bytes>=HISTORY_BATCH_BODY_BYTES || Date.now() >= this.deadline)break;
     }
+    // Documents are already durable and idempotent. One cursor commit per bounded
+    // batch avoids a second disk sync per row; interruption safely replays the batch.
+    if(count)this.advance(source,String(cursor));
     return count;
   }
 
