@@ -49,6 +49,8 @@ Package evidence: [`@google/gemini-cli` stable metadata](https://registry.npmjs.
   denies non-reading tools; `ask` relays them to the existing bridge approval
   channel. `edit` retains native policy. Explicit auto approval is opt-in.
   The terminal sandbox is separate from tool permissions and platform dependent.
+  `bypass_permissions: true|false` is the exact bridge override for native
+  bypass/native approval policy; either value replaces generic read/ask access.
 - [Quotas](https://antigravity.google/docs/cli/commands/usage): `/usage` or
   `/quota` is interactive. 1.2.0 offers no documented machine-readable quota
   subcommand. The bridge reports unknown account limits, with the native command

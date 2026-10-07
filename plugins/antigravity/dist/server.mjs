@@ -29576,7 +29576,7 @@ async function delegateToAntigravity(req) {
           sessionId = id;
           req.onSession?.(id);
         }
-        if (ev.event === "init") req.onInfo?.({ model: ev.init?.model ?? req.model, effort: req.effort, permission: req.access });
+        if (ev.event === "init") req.onInfo?.({ model: ev.init?.model ?? req.model, effort: req.effort, permission: req.access === "edit" && req.autoApprove !== void 0 ? req.autoApprove ? "bypass" : "native" : req.access });
         progress?.(ev);
       }
     });
@@ -30299,11 +30299,14 @@ var DELEGATION_TARGETS = {
     modelExample: 'a slug from agy models, e.g. "gemini-3.8-flash-low"',
     effortExample: '"low", "medium", "high", "xhigh" or "max" (model-dependent)',
     defaultModel: (cfg) => cfg.antigravityModel,
-    schema: { terminal_sandbox: external_exports.boolean().optional().describe("Enable agy's terminal sandbox (separate from read/ask tool permissions)") },
+    schema: {
+      terminal_sandbox: external_exports.boolean().optional().describe("Enable agy's terminal sandbox (separate from read/ask tool permissions)"),
+      bypass_permissions: external_exports.boolean().optional().describe("Exact Antigravity permission override: true bypasses native approvals, false retains native policy. Overrides read/ask access; handoff restrictions remain.")
+    },
     permissionNote: () => "Requires the installed agent-bridge Antigravity plugin. Read denies non-reading tools; ask relays them; edit retains native policy. Idle TUI mail waits for the next turn.",
-    permission: (_cfg, a) => a.access ?? "read",
+    permission: (_cfg, a) => a.bypass_permissions === void 0 ? a.access ?? "read" : a.bypass_permissions ? "bypass" : "native",
     run: async (cfg, base2, a) => {
-      return delegateToAntigravity({ ...base2, bin: cfg.antigravityBin, access: a.access ?? "read", sandbox: a.terminal_sandbox, extraEnv: { ...base2.extraEnv, ...a.relay?.env ?? {} } });
+      return delegateToAntigravity({ ...base2, bin: cfg.antigravityBin, access: a.bypass_permissions === void 0 ? a.access ?? "read" : "edit", autoApprove: a.bypass_permissions, sandbox: a.terminal_sandbox, extraEnv: { ...base2.extraEnv, ...a.relay?.env ?? {} } });
     }
   },
   codex: {
@@ -30398,9 +30401,9 @@ ${res.text}` } : res;
 };
 
 // src/mcp/job-settings.ts
-var JOB_SETTING_KEYS = ["native_subagents", "model", "effort", "access", "sandbox", "terminal_sandbox", "approvals_reviewer", "permission_mode", "auto_approve"];
-var EXACT_PERMISSION_KEYS = ["sandbox", "permission_mode", "auto_approve"];
-var PERMISSION_KEY_AGENT = { native_subagents: "codex", sandbox: "codex", terminal_sandbox: "antigravity", approvals_reviewer: "codex", permission_mode: "claude", auto_approve: "opencode" };
+var JOB_SETTING_KEYS = ["native_subagents", "model", "effort", "access", "sandbox", "terminal_sandbox", "bypass_permissions", "approvals_reviewer", "permission_mode", "auto_approve"];
+var EXACT_PERMISSION_KEYS = ["sandbox", "permission_mode", "auto_approve", "bypass_permissions"];
+var PERMISSION_KEY_AGENT = { native_subagents: "codex", sandbox: "codex", terminal_sandbox: "antigravity", bypass_permissions: "antigravity", approvals_reviewer: "codex", permission_mode: "claude", auto_approve: "opencode" };
 var EFFORT_PATTERN = /^[A-Za-z0-9_-]{1,20}$/;
 function changedJobArgs(args, settings) {
   const next = { ...args };
@@ -30451,6 +30454,10 @@ function parseJobSettings(input2, agent) {
   if (raw.terminal_sandbox !== void 0) {
     if (typeof raw.terminal_sandbox !== "boolean") return "invalid terminal_sandbox";
     settings.terminal_sandbox = raw.terminal_sandbox;
+  }
+  if (raw.bypass_permissions !== void 0) {
+    if (typeof raw.bypass_permissions !== "boolean") return "invalid bypass_permissions";
+    settings.bypass_permissions = raw.bypass_permissions;
   }
   for (const [key3, owner] of Object.entries(PERMISSION_KEY_AGENT)) {
     if (settings[key3] !== void 0 && agent !== owner) return `${key3} applies only to ${owner} jobs.`;
@@ -52333,6 +52340,7 @@ function nextPermission(next) {
   if (next.sandbox) return next.sandbox;
   if (next.permission_mode) return next.permission_mode;
   if (typeof next.auto_approve === "boolean") return next.auto_approve ? "auto-approve" : "ask";
+  if (typeof next.bypass_permissions === "boolean") return next.bypass_permissions ? "bypass" : "native";
   if (next.access) return next.access;
   return "";
 }
@@ -55124,7 +55132,7 @@ var CWD_DISCOVERY_GRACE_MS = 15e3;
 var MAX_TITLE_CHARS3 = 80;
 var SUBAGENT_TOOLS = /* @__PURE__ */ new Set(["peers", "send", "report_progress", "hook_event", "search_history", "get_conversation"]);
 var STAND_IN_RECHECK_MS = 3e4;
-var KEPT_ARGS = ["native_subagents", "host", "model", "effort", "cwd", "timeout_sec", "worktree", "access", "sandbox", "terminal_sandbox", "approvals_reviewer", "permission_mode", "auto_approve", "allow_tools", "send_to", "title"];
+var KEPT_ARGS = ["native_subagents", "host", "model", "effort", "cwd", "timeout_sec", "worktree", "access", "sandbox", "terminal_sandbox", "bypass_permissions", "approvals_reviewer", "permission_mode", "auto_approve", "allow_tools", "send_to", "title"];
 var PLUGIN_ROOT = resolve17(dirname24(fileURLToPath3(import.meta.url)), "..");
 function pathFromUriOrPath(v) {
   if (typeof v !== "string" || !v) return null;
@@ -56102,6 +56110,7 @@ ${r.lines.map((l) => `  ${l}`).join("\n")}`).join("\n\n"));
         access: external_exports.enum(ACCESS_LEVELS).optional().describe("Access for the next turn: read, ask or edit. Replaces earlier exact permission overrides."),
         sandbox: external_exports.enum(CODEX_SANDBOXES).optional().describe("Codex sandbox for the next turn. A running turn keeps its sandbox."),
         terminal_sandbox: external_exports.boolean().optional().describe("Antigravity terminal sandbox for the next turn."),
+        bypass_permissions: external_exports.boolean().optional().describe("Antigravity exact native approval override for the next turn; true bypasses, false retains native policy."),
         native_subagents: nativeSubagentsSchema,
         approvals_reviewer: external_exports.enum(CODEX_APPROVALS_REVIEWERS).optional().describe("Codex reviewer for the next turn: auto_review or user. A running turn keeps its reviewer."),
         permission_mode: external_exports.enum(CLAUDE_PERMISSION_MODES).optional().describe("Claude permission mode for the next turn."),

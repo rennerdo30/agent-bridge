@@ -5,11 +5,11 @@ import { ANTIGRAVITY_EFFORTS } from "../core/antigravity.js";
 import { ACCESS_LEVELS, type TargetArgs } from "./targets.js";
 
 /** Settings that can change between turns without replacing a job's session or worktree. */
-export type JobSettings = Pick<TargetArgs, "access" | "sandbox" | "terminal_sandbox" | "native_subagents" | "approvals_reviewer" | "permission_mode" | "auto_approve"> & { model?: string; effort?: string };
-export const JOB_SETTING_KEYS = ["native_subagents", "model", "effort", "access", "sandbox", "terminal_sandbox", "approvals_reviewer", "permission_mode", "auto_approve"] as const;
-const EXACT_PERMISSION_KEYS = ["sandbox", "permission_mode", "auto_approve"] as const;
+export type JobSettings = Pick<TargetArgs, "access" | "sandbox" | "terminal_sandbox" | "bypass_permissions" | "native_subagents" | "approvals_reviewer" | "permission_mode" | "auto_approve"> & { model?: string; effort?: string };
+export const JOB_SETTING_KEYS = ["native_subagents", "model", "effort", "access", "sandbox", "terminal_sandbox", "bypass_permissions", "approvals_reviewer", "permission_mode", "auto_approve"] as const;
+const EXACT_PERMISSION_KEYS = ["sandbox", "permission_mode", "auto_approve", "bypass_permissions"] as const;
 /** Each exact permission key belongs to one agent's CLI. */
-export const PERMISSION_KEY_AGENT = { native_subagents: "codex", sandbox: "codex", terminal_sandbox: "antigravity", approvals_reviewer: "codex", permission_mode: "claude", auto_approve: "opencode" } as const;
+export const PERMISSION_KEY_AGENT = { native_subagents: "codex", sandbox: "codex", terminal_sandbox: "antigravity", bypass_permissions: "antigravity", approvals_reviewer: "codex", permission_mode: "claude", auto_approve: "opencode" } as const;
 export const EFFORT_PATTERN = /^[A-Za-z0-9_-]{1,20}$/;
 
 /** An access change replaces an earlier exact override; an exact override replaces earlier access. */
@@ -67,6 +67,10 @@ export function parseJobSettings(input: unknown, agent: AgentKind): JobSettings 
   if (raw.terminal_sandbox !== undefined) {
     if (typeof raw.terminal_sandbox !== "boolean") return "invalid terminal_sandbox";
     settings.terminal_sandbox = raw.terminal_sandbox;
+  }
+  if (raw.bypass_permissions !== undefined) {
+    if (typeof raw.bypass_permissions !== "boolean") return "invalid bypass_permissions";
+    settings.bypass_permissions = raw.bypass_permissions;
   }
   for (const [key, owner] of Object.entries(PERMISSION_KEY_AGENT)) {
     if (settings[key as keyof typeof PERMISSION_KEY_AGENT] !== undefined && agent !== owner) return `${key} applies only to ${owner} jobs.`;

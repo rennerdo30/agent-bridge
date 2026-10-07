@@ -76,18 +76,20 @@ npx -y github:rennerdo30/agent-bridge update antigravity --yes
 ```
 
 Requires installed, authenticated `agy` (verified with 1.2.0). Restart it after
-installation. The plugin includes MCP configuration, lifecycle/permission hooks
+installation, and reload existing bridge sessions after updating them. The plugin includes MCP configuration, lifecycle/permission hooks
 and a coordination skill. It exposes the same peer, delegation, history and job
 tools as the existing plugins. Other peers get `ask_antigravity` and
 `spawn_antigravity`, with `model`, `effort` (low/medium/high/xhigh/max), `session_id`,
-`access`, `terminal_sandbox` and `worktree`. Continue with `message_subagent` or
+`access`, `terminal_sandbox`, `bypass_permissions` and `worktree`. Continue with `message_subagent` or
 cancel with `cancel_subagent`; these use the existing durable job lifecycle.
 
 `read` denies non-reading tools; `ask` forwards those tool approvals to the
 supervisor. Both use the installed bridge gate before every tool, with native
 headless prompting bypassed because 1.2.0 otherwise auto-denies approved calls.
 `edit` keeps native Antigravity permissions; native headless prompts can deny
-commands. The installer grants only the bridge MCP server and backs up native
+commands. Explicit `bypass_permissions: true` runs with native approvals bypassed;
+`false` selects native policy. Either exact override replaces read/ask access.
+The installer grants only the bridge MCP server and backs up native
 settings. Terminal sandboxing is
 separate and depends on the installed platform. Active mail arrives at the next
 model invocation or stopping boundary. **Idle TUI sessions receive mail on their

@@ -46,7 +46,7 @@ export async function delegateToAntigravity(req: DelegateRequest & { bin: string
       onLine: (line) => {
         const ev = parse(line), id = ev.conversation_id ?? ev.step_update?.conversation_id ?? ev.result?.conversation_id;
         if (!sessionId && typeof id === "string" && id) { sessionId = id; req.onSession?.(id); }
-        if (ev.event === "init") req.onInfo?.({ model: ev.init?.model ?? req.model, effort: req.effort, permission: req.access });
+        if (ev.event === "init") req.onInfo?.({ model: ev.init?.model ?? req.model, effort: req.effort, permission: req.access === "edit" && req.autoApprove !== undefined ? req.autoApprove ? "bypass" : "native" : req.access });
         progress?.(ev);
       } });
     const parsed = parseAntigravityJsonl(res.stdout);

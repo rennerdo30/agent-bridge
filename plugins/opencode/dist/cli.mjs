@@ -33136,7 +33136,7 @@ async function delegateToAntigravity(req) {
           sessionId = id;
           req.onSession?.(id);
         }
-        if (ev.event === "init") req.onInfo?.({ model: ev.init?.model ?? req.model, effort: req.effort, permission: req.access });
+        if (ev.event === "init") req.onInfo?.({ model: ev.init?.model ?? req.model, effort: req.effort, permission: req.access === "edit" && req.autoApprove !== void 0 ? req.autoApprove ? "bypass" : "native" : req.access });
         progress?.(ev);
       }
     });
@@ -33859,11 +33859,14 @@ var DELEGATION_TARGETS = {
     modelExample: 'a slug from agy models, e.g. "gemini-3.8-flash-low"',
     effortExample: '"low", "medium", "high", "xhigh" or "max" (model-dependent)',
     defaultModel: (cfg) => cfg.antigravityModel,
-    schema: { terminal_sandbox: external_exports.boolean().optional().describe("Enable agy's terminal sandbox (separate from read/ask tool permissions)") },
+    schema: {
+      terminal_sandbox: external_exports.boolean().optional().describe("Enable agy's terminal sandbox (separate from read/ask tool permissions)"),
+      bypass_permissions: external_exports.boolean().optional().describe("Exact Antigravity permission override: true bypasses native approvals, false retains native policy. Overrides read/ask access; handoff restrictions remain.")
+    },
     permissionNote: () => "Requires the installed agent-bridge Antigravity plugin. Read denies non-reading tools; ask relays them; edit retains native policy. Idle TUI mail waits for the next turn.",
-    permission: (_cfg, a) => a.access ?? "read",
+    permission: (_cfg, a) => a.bypass_permissions === void 0 ? a.access ?? "read" : a.bypass_permissions ? "bypass" : "native",
     run: async (cfg, base2, a) => {
-      return delegateToAntigravity({ ...base2, bin: cfg.antigravityBin, access: a.access ?? "read", sandbox: a.terminal_sandbox, extraEnv: { ...base2.extraEnv, ...a.relay?.env ?? {} } });
+      return delegateToAntigravity({ ...base2, bin: cfg.antigravityBin, access: a.bypass_permissions === void 0 ? a.access ?? "read" : "edit", autoApprove: a.bypass_permissions, sandbox: a.terminal_sandbox, extraEnv: { ...base2.extraEnv, ...a.relay?.env ?? {} } });
     }
   },
   codex: {
@@ -33958,9 +33961,9 @@ ${res.text}` } : res;
 };
 
 // src/mcp/job-settings.ts
-var JOB_SETTING_KEYS = ["native_subagents", "model", "effort", "access", "sandbox", "terminal_sandbox", "approvals_reviewer", "permission_mode", "auto_approve"];
-var EXACT_PERMISSION_KEYS = ["sandbox", "permission_mode", "auto_approve"];
-var PERMISSION_KEY_AGENT = { native_subagents: "codex", sandbox: "codex", terminal_sandbox: "antigravity", approvals_reviewer: "codex", permission_mode: "claude", auto_approve: "opencode" };
+var JOB_SETTING_KEYS = ["native_subagents", "model", "effort", "access", "sandbox", "terminal_sandbox", "bypass_permissions", "approvals_reviewer", "permission_mode", "auto_approve"];
+var EXACT_PERMISSION_KEYS = ["sandbox", "permission_mode", "auto_approve", "bypass_permissions"];
+var PERMISSION_KEY_AGENT = { native_subagents: "codex", sandbox: "codex", terminal_sandbox: "antigravity", bypass_permissions: "antigravity", approvals_reviewer: "codex", permission_mode: "claude", auto_approve: "opencode" };
 var EFFORT_PATTERN = /^[A-Za-z0-9_-]{1,20}$/;
 function changedJobArgs(args, settings) {
   const next = { ...args };
@@ -34011,6 +34014,10 @@ function parseJobSettings(input2, agent) {
   if (raw.terminal_sandbox !== void 0) {
     if (typeof raw.terminal_sandbox !== "boolean") return "invalid terminal_sandbox";
     settings.terminal_sandbox = raw.terminal_sandbox;
+  }
+  if (raw.bypass_permissions !== void 0) {
+    if (typeof raw.bypass_permissions !== "boolean") return "invalid bypass_permissions";
+    settings.bypass_permissions = raw.bypass_permissions;
   }
   for (const [key3, owner] of Object.entries(PERMISSION_KEY_AGENT)) {
     if (settings[key3] !== void 0 && agent !== owner) return `${key3} applies only to ${owner} jobs.`;
@@ -41709,7 +41716,10 @@ async function runAntigravityHook(event) {
     const input2 = object(JSON.parse(raw || "{}"));
     if (event === "PreToolUse") {
       const decision = await antigravityPermission(input2), call = object(input2.toolCall), args = object(call.args);
-      createLogger({ home: resolveHome(), component: "antigravity-hook", consoleLevel: "silent" }).debug("native tool gate", { tool: call.name, server: args.ServerName, mcpTool: args.ToolName, inputKeys: Object.keys(input2), access: process.env[ANTIGRAVITY_ACCESS_ENV], decision: decision.decision, overrides: decision.permissionOverrides });
+      try {
+        createLogger({ home: resolveHome(), component: "antigravity-hook", consoleLevel: "silent" }).debug("native tool gate", { tool: call.name, server: args.ServerName, mcpTool: args.ToolName, inputKeys: Object.keys(input2), access: process.env[ANTIGRAVITY_ACCESS_ENV], decision: decision.decision, overrides: decision.permissionOverrides });
+      } catch {
+      }
       process.stdout.write(JSON.stringify(decision));
       return 0;
     }
@@ -43097,6 +43107,7 @@ function nextPermission(next) {
   if (next.sandbox) return next.sandbox;
   if (next.permission_mode) return next.permission_mode;
   if (typeof next.auto_approve === "boolean") return next.auto_approve ? "auto-approve" : "ask";
+  if (typeof next.bypass_permissions === "boolean") return next.bypass_permissions ? "bypass" : "native";
   if (next.access) return next.access;
   return "";
 }

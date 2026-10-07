@@ -9,7 +9,7 @@ import { antigravityPermission, antigravityHookOutput } from "../src/cli/antigra
 import { installAntigravity, uninstallAntigravity } from "../src/cli/antigravity-install.js";
 import { readTranscript, listNativeSubagents } from "../src/core/transcripts/index.js";
 import { antigravityItems } from "../src/core/transcripts/antigravity.js";
-import { parseJobSettings } from "../src/mcp/job-settings.js";
+import { changedJobArgs, parseJobSettings } from "../src/mcp/job-settings.js";
 import { DEFAULT_CONFIG } from "../src/core/config.js";
 import { DELEGATION_TARGETS, supportsAsk } from "../src/mcp/targets.js";
 import { isAutoApproved, isHandoffToolCall } from "../src/core/tool-allow.js";
@@ -75,6 +75,18 @@ describe("Antigravity delegation", () => {
     expect(parseJobSettings({ terminal_sandbox: true, access: "ask" }, "antigravity")).toEqual({ terminal_sandbox: true, access: "ask" });
     expect(parseJobSettings({ terminal_sandbox: true }, "codex")).toContain("only to antigravity");
     expect(parseJobSettings({ effort: "ultra" }, "antigravity")).toContain("low, medium, high, xhigh or max");
+    expect(parseJobSettings({ bypass_permissions: true }, "antigravity")).toEqual({ bypass_permissions: true });
+    expect(parseJobSettings({ bypass_permissions: true }, "codex")).toContain("only to antigravity");
+    expect(changedJobArgs({ access: "read", terminal_sandbox: true }, { bypass_permissions: true })).toEqual({ terminal_sandbox: true, bypass_permissions: true });
+    expect(changedJobArgs({ bypass_permissions: true, terminal_sandbox: true }, { access: "read" })).toEqual({ terminal_sandbox: true, access: "read" });
+  });
+  it.each([false, true])("honors explicit native approval override=%s and keeps the terminal sandbox", async (bypass) => {
+    mocks.run.mockResolvedValue({ code: 0, stdout: stream(), stderr: "" });
+    await DELEGATION_TARGETS.antigravity.run(DEFAULT_CONFIG, { prompt: "task", cwd: temp(), timeoutSec: 20, log: nullLogger }, { access: "read", bypass_permissions: bypass, terminal_sandbox: true });
+    const opts = mocks.run.mock.calls[0]![0];
+    expect(opts.env.AGENT_BRIDGE_ANTIGRAVITY_ACCESS).toBe("edit");
+    expect(opts.args.includes("--dangerously-skip-permissions")).toBe(bypass);
+    expect(opts.args).toContain("--sandbox");
   });
 });
 

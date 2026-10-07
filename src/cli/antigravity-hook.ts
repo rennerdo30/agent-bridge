@@ -63,7 +63,9 @@ export async function runAntigravityHook(event: string): Promise<number> {
     const input = object(JSON.parse(raw || "{}"));
     if (event === "PreToolUse") {
       const decision = await antigravityPermission(input), call = object(input.toolCall), args = object(call.args);
-      createLogger({ home: resolveHome(), component: "antigravity-hook", consoleLevel: "silent" }).debug("native tool gate", { tool: call.name, server: args.ServerName, mcpTool: args.ToolName, inputKeys: Object.keys(input), access: process.env[ANTIGRAVITY_ACCESS_ENV], decision: decision.decision, overrides: decision.permissionOverrides });
+      try {
+        createLogger({ home: resolveHome(), component: "antigravity-hook", consoleLevel: "silent" }).debug("native tool gate", { tool: call.name, server: args.ServerName, mcpTool: args.ToolName, inputKeys: Object.keys(input), access: process.env[ANTIGRAVITY_ACCESS_ENV], decision: decision.decision, overrides: decision.permissionOverrides });
+      } catch { /* Diagnostic logging must never replace an explicit tool decision. */ }
       process.stdout.write(JSON.stringify(decision)); return 0;
     }
     const pid = await antigravityAncestor();

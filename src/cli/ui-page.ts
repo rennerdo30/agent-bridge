@@ -821,6 +821,7 @@ function nextPermission(next) {
   if (next.sandbox) return next.sandbox;
   if (next.permission_mode) return next.permission_mode;
   if (typeof next.auto_approve === "boolean") return next.auto_approve ? "auto-approve" : "ask";
+  if (typeof next.bypass_permissions === "boolean") return next.bypass_permissions ? "bypass" : "native";
   if (next.access) return next.access;
   return "";
 }
