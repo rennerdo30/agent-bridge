@@ -7,7 +7,7 @@ import { CODING_AGENTS, type PeerInfo } from "./protocol.js";
 import { isRecord } from "./json-store.js";
 import { type RunMeta } from "./runfeed.js";
 import { finishedRunLine } from "./run-archive.js";
-import { DEFAULT_RUN_PAGE_SIZE, MAX_RUN_PAGE_SIZE, pageRuns, readHistoryJobs, readHistoryJson, readRunLogs } from "./run-history.js";
+import { DEFAULT_RUN_PAGE_SIZE, MAX_RUN_PAGE_SIZE, pageRuns, readHistoryJobs, readHistoryJson, readRunLogs, readRunStarts } from "./run-history.js";
 import type { Worktree } from "./worktree.js";
 import { listNativeSubagents, readTranscript, TRANSCRIPT_ID, validTranscriptCursor, type TranscriptPaths } from "./transcripts/index.js";
 import { deriveJobOutcome, listJobOutcomes, JOB_OUTCOME_CONTRACT_VERSION, type JobOutcome, type OutcomeJob } from "./job-outcomes.js";
@@ -45,7 +45,7 @@ export interface RunSummary extends RunMeta {
 
 /** Read-only projection: legacy metadata stays byte-for-byte intact. */
 export async function finishedRunOutcomes(home: string, log: Logger, names?: Set<string>): Promise<Record<string, JobOutcome>> {
-  const runs = listRuns(home);
+  const runs = listRuns(home, Date.now(), names);
   const jobs = readStore(join(home, JOBS_FILE), log, true);
   const out: Record<string, JobOutcome> = {};
   for (const run of runs) {
@@ -61,7 +61,8 @@ export async function finishedRunOutcomes(home: string, log: Logger, names?: Set
       status: run.status, worktree: stored?.worktree,
       remote: (run as RunSummary & { remote?: OutcomeJob["remote"] }).remote ?? (stored as OutcomeJob | undefined)?.remote,
     };
-    const next = runs.filter((r) => r.job === run.job && (r.jobStartedAt ?? r.startedAt) > startedAt)
+    const receiptRuns = names ? readRunStarts(home) : runs;
+    const next = receiptRuns.filter((r) => r.job === run.job && (r.jobStartedAt ?? r.startedAt) > startedAt)
       .sort((a, b) => (a.jobStartedAt ?? a.startedAt) - (b.jobStartedAt ?? b.startedAt))[0];
     out[run.name] = await deriveJobOutcome(home, job, log, {
       branch: run.branch, baseBranch: run.baseBranch, repoRoot: run.repoRoot,
@@ -109,9 +110,9 @@ export function summarizeRun(file: string, text: string, mtimeMs: number, now: n
   };
 }
 
-export function listRuns(home: string, now = Date.now()): RunSummary[] {
+export function listRuns(home: string, now = Date.now(), names?: Set<string>): RunSummary[] {
   const runs: RunSummary[] = [];
-  for (const log of readRunLogs(home)) {
+  for (const log of readRunLogs(home, names)) {
     try {
       const signature = `${log.signature}:${JSON.stringify(log.meta)}`;
       let cached = runSummaries.get(log.file);
@@ -126,10 +127,18 @@ export function listRuns(home: string, now = Date.now()): RunSummary[] {
     }
     catch { /* A concurrent archive operation is retried on the next refresh. */ }
   }
+  // An exact retained run needs no job-snapshot recovery or unrelated archive reads.
+  if (names && [...names].every((name) => runs.some((run) => run.name === name)))
+    return pageRuns(runs, null, runs.length).runs;
   const representedJobs = new Set(runs.map((run) => run.job));
   const representedSuffixes = new Set<string>();
   for (const run of runs) for (let at = run.name.indexOf("-"); at >= 0; at = run.name.indexOf("-", at + 1)) representedSuffixes.add(run.name.slice(at));
   for (const [name, job] of readHistoryJobs(home)) {
+    if (names && !names.has(name)) continue;
+    // Filtering log bodies must not invent a recovered run for a job whose real
+    // retained run simply belongs to a different outcome page.
+    if (names && readRunLogs(home).some((r) => r.meta.job === name ||
+      (typeof job.id === "string" && r.name.endsWith(`-${job.agent}-${job.id}`)))) continue;
     // Older logs lack job metadata; their filename still includes the original agent/job id.
     if (representedJobs.has(name) || (typeof job.id === "string" && representedSuffixes.has(`-${job.agent}-${job.id}`))) continue;
     const args = isRecord(job.args) ? job.args : {};
@@ -237,6 +246,22 @@ export async function readDashboard(ctx: DashboardReadContext, request: Dashboar
       return reply(200, { runs: page.runs, runsNext: page.next, runsTotal: page.total, jobs });
     }
     if (url.pathname === "/api/job-outcomes") {
+      const jobName = url.searchParams.get("job"), runName = url.searchParams.get("run");
+      if (jobName !== null || runName !== null) {
+        if (jobName !== null && runName !== null) return reply(400, { error: "choose job or run" });
+        const name = jobName ?? runName!;
+        if (!/^[\w.-]{1,256}$/.test(name) || name === "." || name === "..") return reply(400, { error: "invalid outcome name" });
+        const names = new Set([name]);
+        const jobs = jobName !== null ? await listJobOutcomes(ctx.home, ctx.log, names) : {};
+        const runs = runName !== null ? await finishedRunOutcomes(ctx.home, ctx.log, names) : {};
+        if (!Object.hasOwn(jobs, name) && !Object.hasOwn(runs, name)) return reply(404, { error: "no such finished job or run" });
+        const groups: Record<string, string[]> = { needsReview: [], held: [], merged: [], discarded: [] };
+        for (const [key, job] of Object.entries(jobs)) {
+          const state = job.outcome.merge.state;
+          groups[state === "unmerged" ? "needsReview" : state]!.push(key);
+        }
+        return reply(200, { contractVersion: JOB_OUTCOME_CONTRACT_VERSION, jobs, runs, groups, next: null });
+      }
       const rawLimit = url.searchParams.get("limit") ?? String(DEFAULT_RUN_PAGE_SIZE);
       const limit = /^\d+$/.test(rawLimit) ? Number(rawLimit) : NaN;
       if (!Number.isSafeInteger(limit) || limit < 1 || limit > MAX_RUN_PAGE_SIZE) return reply(400, { error: "invalid outcome page limit" });

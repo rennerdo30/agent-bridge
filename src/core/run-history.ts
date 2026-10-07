@@ -1,4 +1,4 @@
-import { lstatSync, readdirSync, realpathSync, statSync } from "node:fs";
+import { lstatSync, readFileSync, readdirSync, realpathSync, statSync } from "node:fs";
 import { isAbsolute, join, relative, sep } from "node:path";
 import { JOBS_FILE } from "./constants.js";
 import { isRecord } from "./json-store.js";
@@ -24,7 +24,7 @@ function files(dir: string): string[] {
 export interface RunLogRecord { name: string; file: string; updatedAt: number; size: number; signature: string; archived: boolean; meta: RunMeta }
 
 /** Match independently archived metadata by original name, not by its archive timestamp/UUID. */
-export function readRunLogs(home: string): RunLogRecord[] {
+export function readRunLogs(home: string, namesFilter?: Set<string>): RunLogRecord[] {
   const root = join(home, RUNS_DIR_NAME);
   let canonicalRoot: string;
   try { canonicalRoot = realpathSync.native(root); } catch { return []; }
@@ -51,14 +51,14 @@ export function readRunLogs(home: string): RunLogRecord[] {
     const metadata = new Map<string, RunMeta>();
     for (const name of names) {
       const original = archived ? name.replace(ARCHIVE_SUFFIX, "$1") : name;
-      if (!original.endsWith(".json")) continue;
+      if (!original.endsWith(".json") || namesFilter && !namesFilter.has(original.slice(0, -5))) continue;
       const record = localFile(name);
       const value = record ? readHistoryJson(record.file) : null;
       if (isRecord(value)) metadata.set(original, value as RunMeta);
     }
     for (const name of names) {
       const original = archived ? name.replace(ARCHIVE_SUFFIX, "$1") : name;
-      if (!RUN_LOG_NAME.test(original)) continue;
+      if (!RUN_LOG_NAME.test(original) || namesFilter && !namesFilter.has(original.slice(0, -4))) continue;
       const local = localFile(name);
       if (!local) continue;
       const { file, st } = local;
@@ -72,6 +72,53 @@ export function readRunLogs(home: string): RunLogRecord[] {
     }
   }
   return [...records.values()];
+}
+
+/** Receipt boundaries need metadata only, not a stat/read of every unrelated log.
+ * Directory entries validate direct files; links retain the same contained read policy. */
+export function readRunStarts(home: string): { job: string; jobStartedAt?: number; startedAt: number }[] {
+  const root = join(home, RUNS_DIR_NAME);
+  let canonicalRoot: string;
+  try { canonicalRoot = realpathSync.native(root); } catch { return []; }
+  const starts = new Map<string, { job: string; jobStartedAt?: number; startedAt: number }>();
+  for (const archived of [true, false]) {
+    let dir: string;
+    try { dir = realpathSync.native(archived ? join(root, "archive") : root); } catch { continue; }
+    const rel = relative(canonicalRoot, dir);
+    if (rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) continue;
+    let entries: import("node:fs").Dirent[];
+    try { entries = readdirSync(dir, { withFileTypes: true }); } catch { continue; }
+    const paths = new Map<string, string>();
+    entries.sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
+    for (const entry of entries) {
+      const original = archived ? entry.name.replace(ARCHIVE_SUFFIX, "$1") : entry.name;
+      const file = join(dir, entry.name);
+      const contained = entry.isFile() ? file : entry.isSymbolicLink() ? safeFile(root, file, canonicalRoot) : null;
+      if (contained) {
+        const previous = paths.get(original);
+        if (previous && original.endsWith(".log")) {
+          try { if (statSync(previous).mtimeMs > statSync(contained).mtimeMs) continue; } catch { continue; }
+        }
+        paths.set(original, contained);
+      }
+    }
+    for (const [name, log] of paths) {
+      if (!RUN_LOG_NAME.test(name)) continue;
+      const runName = name.slice(0, -4), file = paths.get(`${runName}.json`);
+      // Active logs override archived copies even when their metadata is missing/corrupt.
+      if (!archived) starts.delete(runName);
+      if (!file) continue;
+      try {
+        // Read once: a cold 700-run corpus must not perform duplicate metadata/log stats.
+        const meta: unknown = JSON.parse(readFileSync(file, "utf8"));
+        if (!isRecord(meta) || typeof meta.job !== "string") continue;
+        const m = /^(\d{4})-(\d\d)-(\d\d)-(\d\d)-(\d\d)-(\d\d)-/.exec(name);
+        const startedAt = m ? Date.UTC(+m[1]!, +m[2]! - 1, +m[3]!, +m[4]!, +m[5]!, +m[6]!) : statSync(log).mtimeMs;
+        starts.set(runName, { job: meta.job, startedAt, ...(typeof meta.jobStartedAt === "number" ? { jobStartedAt: meta.jobStartedAt } : {}) });
+      } catch { /* Concurrent archival or malformed metadata contributes no evidence. */ }
+    }
+  }
+  return [...starts.values()];
 }
 
 /** All durable job snapshots, oldest first; active records take precedence over archives. */

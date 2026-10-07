@@ -895,7 +895,7 @@ export async function retryTransient(req: DelegateRequest, run: (req: DelegateRe
     }
     const capacity = CAPACITY_ERROR_RE.test(cause);
     const databaseLock = DATABASE_LOCK_ERROR_RE.test(cause);
-    const limit = databaseLock ? DATABASE_RETRY_DELAYS_MS.length : capacity ? CAPACITY_RETRY_DELAYS_MS.length : TRANSIENT_RETRY_LIMIT;
+    const limit = databaseLock ? Infinity : capacity ? CAPACITY_RETRY_DELAYS_MS.length : TRANSIENT_RETRY_LIMIT;
     if ((!databaseLock && !isTransientProviderError(cause)) || (!sessionId && !capacity && !databaseLock) || retries >= limit) {
       if (failed) {
         if (failure instanceof DelegateError && firstCause) {
@@ -910,11 +910,11 @@ export async function retryTransient(req: DelegateRequest, run: (req: DelegateRe
       return { ...res!, text: `${note}\n\n${res!.text}`, details: { ...res!.details, retriedAfter: firstCause, retries } };
     }
     firstCause ??= cause;
-    const waitMs = databaseLock ? DATABASE_RETRY_DELAYS_MS[retries]! : capacity ? CAPACITY_RETRY_DELAYS_MS[retries]! : 0;
+    const waitMs = databaseLock ? DATABASE_RETRY_DELAYS_MS[Math.min(retries, DATABASE_RETRY_DELAYS_MS.length - 1)]! : capacity ? CAPACITY_RETRY_DELAYS_MS[retries]! : 0;
     if (Date.now() + waitMs >= deadline) throw new DelegateError("delegate timed out during provider retry backoff", "timeout", "", "", sessionId);
     retries++;
     req.log.warn("transient provider error; retrying on the selected model", { sessionId, model, cause, retries, waitMs });
-    req.onProgress?.(`temporary provider error: ${cause}; retry ${retries}/${limit} in ${waitMs / MS_PER_SECOND}s on the same model, ${sessionId ? "preserving session progress" : "before session start"}`);
+    req.onProgress?.(`temporary provider error: ${cause}; retry ${retries}${databaseLock ? "" : `/${limit}`} in ${waitMs / MS_PER_SECOND}s on the same model, ${sessionId ? "preserving session progress" : "before session start"}`);
     try {
       await delay(waitMs, undefined, { signal: req.signal });
     } catch {

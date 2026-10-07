@@ -98,13 +98,22 @@ export class HistoryIndex {
     this.db.prepare("INSERT INTO history_cursors VALUES (?, ?) ON CONFLICT(source) DO UPDATE SET cursor=excluded.cursor").run(source, cursor);
   }
   private put(doc: Document, sessions: string[] = [], jobs: string[] = []): void {
-    const body = doc.body.slice(0, HISTORY_MAX_BODY_CHARS);
-    this.db.prepare(`INSERT INTO history_documents (id,kind,agent,at,body,folded,link,message,job,run,session,cursor)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET body=excluded.body,folded=excluded.folded,
-      agent=excluded.agent,at=excluded.at,job=excluded.job,session=excluded.session,link=excluded.link,cursor=excluded.cursor`)
-      .run(doc.id, doc.kind, doc.agent, doc.at, body, folded(body), doc.link, doc.message, doc.job, doc.run, doc.session, doc.cursor);
-    for (const [type, values] of [["session", [...sessions, doc.session]], ["job", [...jobs, doc.job]]] as const) {
-      for (const value of values) if (value) this.db.prepare("INSERT OR IGNORE INTO history_tags VALUES (?,?,?)").run(doc.id, type, value);
+    const body = doc.body.slice(0, HISTORY_MAX_BODY_CHARS), searchable = folded(body);
+    // One document and its tags form a short DB-only step; all source reads
+    // and project resolution happen before this writer transaction.
+    this.db.exec("SAVEPOINT history_document");
+    try {
+      this.db.prepare(`INSERT INTO history_documents (id,kind,agent,at,body,folded,link,message,job,run,session,cursor)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET body=excluded.body,folded=excluded.folded,
+        agent=excluded.agent,at=excluded.at,job=excluded.job,session=excluded.session,link=excluded.link,cursor=excluded.cursor`)
+        .run(doc.id, doc.kind, doc.agent, doc.at, body, searchable, doc.link, doc.message, doc.job, doc.run, doc.session, doc.cursor);
+      for (const [type, values] of [["session", [...sessions, doc.session]], ["job", [...jobs, doc.job]]] as const) {
+        for (const value of values) if (value) this.db.prepare("INSERT OR IGNORE INTO history_tags VALUES (?,?,?)").run(doc.id, type, value);
+      }
+      this.db.exec("RELEASE history_document");
+    } catch (err) {
+      this.db.exec("ROLLBACK TO history_document; RELEASE history_document");
+      throw err;
     }
   }
   private message(row: Record<string, any>): void {
@@ -123,13 +132,13 @@ export class HistoryIndex {
     return count;
   }
 
-  /** Fixed row, file, byte and discovery budgets; cursors commit atomically with their documents. */
+  /** Fixed budgets; idempotent documents are written before advancing their cursors. */
   tick(): { work: number; discovering: boolean } {
     const fileCount = Number(this.db.prepare("SELECT count(*) AS n FROM history_files").get()!.n);
     if (this.idleFiles >= fileCount) this.idleFiles = 0;
-    this.db.exec("BEGIN IMMEDIATE");
+    // Do not hold a writer transaction over filesystem/provider reads or Git canonicalization.
     let work = 0;
-    try {
+    {
       work += this.rows("messages", this.db, "messages", (row) => this.message(row));
       let pendingCount=0,pendingBytes=0;
       for (const row of this.db.prepare("SELECT * FROM history_pending LIMIT ?").iterate(HISTORY_ROWS_PER_SOURCE)) {
@@ -171,8 +180,7 @@ export class HistoryIndex {
           this.db.prepare("UPDATE history_files SET checked=? WHERE path=?").run(++this.checked, file.path);
         }
       }
-      this.db.exec("COMMIT");
-    } catch (err) { this.db.exec("ROLLBACK"); throw err; }
+    }
     const registered = Number(this.db.prepare("SELECT count(*) AS n FROM history_files").get()!.n);
     return { work, discovering: this.walk !== null || this.queue.length > 0 || this.idleFiles < registered };
   }

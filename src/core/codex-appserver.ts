@@ -293,7 +293,7 @@ export async function delegateToCodexAppServer(
   });
   const exited = new Promise<never>((_, reject) => {
     child.on("error", (err) => reject(new DelegateError(`failed to start ${req.bin}: ${err.message}`, "failed", "", "", threadId)));
-    child.on("exit", (code, signal) => reject(new DelegateError(`codex app-server ${exitDescription({ code, signal })}`, "failed", stderr, "", threadId)));
+    child.on("exit", (code, signal) => reject(new DelegateError(`codex app-server ${signal ? "was terminated externally" : turnId && !completions.has(turnId) ? "was terminated externally or exited unexpectedly" : "ended"} (${exitDescription({ code, signal })})`, "failed", stderr, "", threadId)));
   });
   exited.catch(() => {});
 

@@ -143,3 +143,15 @@ selection also considers higher versions, so restoring only `config.toml` is not
 a reliable rollback. Never remove a version until all users of that version have
 finished and cleanup has been explicitly authorized. No opt-in cleanup is added
 by this change.
+
+## External termination during an update
+
+The AB-155 incident was a manual process-tree termination following the legacy
+updater's refusal, not a kill performed by the updater. All ten runner PIDs
+survived the broker restart; their app-servers were manually terminated later.
+Do not stop active job processes to update. Current publication retains every
+old runtime and changes only the selector for future starts. A regression keeps
+ten mock app-servers active through publication and verifies their pinned code
+and normal completion. An unexpected active-turn exit now names external
+termination as a possible cause and preserves the resumable session; an exit
+code alone cannot distinguish a manual kill from a native crash.

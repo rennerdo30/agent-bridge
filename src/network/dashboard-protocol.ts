@@ -27,7 +27,7 @@ export function isDashboardReadPath(path: string): boolean {
 
 export const dashboardRequestSchema = z.object({
   path: z.string().max(600).refine(isDashboardReadPath),
-  query: z.object({ from: z.string().max(256).optional(), before: z.string().max(512).optional(), limit: z.string().max(3).optional() }).strict().optional(),
+  query: z.object({ job: z.string().max(256).optional(), run: z.string().max(256).optional(), from: z.string().max(256).optional(), before: z.string().max(512).optional(), limit: z.string().max(3).optional() }).strict().optional(),
 }).strict();
 export type DashboardReadRequest = z.infer<typeof dashboardRequestSchema>;
 export interface DashboardReadResult { status: number; body: unknown }
