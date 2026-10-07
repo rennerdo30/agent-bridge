@@ -179,6 +179,7 @@ export function readMeta(file: string): RunMeta {
 export interface StoredJobView {
   owner: string | null;
   next: Record<string, unknown>;
+  projectRoot?: string;
   remote?: { host: string; name: string };
 }
 
@@ -192,6 +193,7 @@ export function readStoredJobs(home: string): Map<string, StoredJobView> {
     const saved = args && typeof args === "object" ? (args as Record<string, unknown>) : {};
     out.set(name, {
       owner: typeof owner === "string" && owner ? owner : null,
+      ...(typeof j.projectRoot === "string" ? { projectRoot: j.projectRoot } : {}),
       next: Object.fromEntries(JOB_SETTING_KEYS.filter((key) => saved[key] !== undefined).map((key) => [key, saved[key]])),
       ...(remote && typeof remote.host === "string" && typeof remote.name === "string" ? { remote } : {}),
     });

@@ -1,3 +1,5 @@
+import { chooseJobRecipient } from "../core/job-ownership.js";
+import { ProjectGroups } from "../core/project-groups.js";
 import { handoffSchema } from "../core/job-handoff.js";
 import { DatabaseSync } from "node:sqlite";
 import { conversationPageSchema, readConversation } from "../core/conversations.js";
@@ -55,8 +57,11 @@ const ALLOWED_HOSTS = new Set([UI_HOST, "localhost"]);
 const RUN_NAME = /^[\w.-]+\.log$/;
 
 /** A server may have adopted a job from an earlier stand-in name since its log was written. */
-function jobOwner(home: string, job: string, original: string): string {
-  return readStoredJobs(home).get(job)?.owner ?? original;
+async function jobOwner(home: string, job: string, original: string, node: BridgeNode): Promise<string> {
+  const record = readStoredJobs(home).get(job);
+  if (!record) return original;
+  const peers = await node.peers();
+  return chooseJobRecipient(record as unknown as Record<string, unknown>, peers, new ProjectGroups(home).members(record as unknown as Record<string, unknown>, peers));
 }
 
 interface MessageRow {
@@ -266,6 +271,20 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
     if (!tokensEqual(cookieSecret(req), secret)) return send(res, 403, "Open the link printed by `agent-bridge ui`.", "text/plain; charset=utf-8");
 
     if (req.method === "GET" && url.pathname === "/") return send(res, 200, UI_PAGE, "text/html; charset=utf-8");
+    if (req.method === "POST" && url.pathname === "/api/coordinator/availability") {
+      if (req.headers["x-agent-bridge"] !== "1") return send(res, 403, { error: "missing header" });
+      const body = await readJson(req);
+      if (typeof body.name !== "string" || body.name.includes("/") || typeof body.unavailable !== "boolean") return send(res, 400, { error: "Choose a local coordinator and availability." });
+      try { return send(res, 200, await networkRequest("coordinatorAvailability", { name: body.name, unavailable: body.unavailable })); }
+      catch (err) { return send(res, 409, { error: err instanceof BridgeError ? err.message : "Coordinator unavailable." }); }
+    }
+    if (req.method === "POST" && url.pathname === "/api/project/main") {
+      if (req.headers["x-agent-bridge"] !== "1") return send(res, 403, { error: "missing header" });
+      const body = await readJson(req);
+      if (typeof body.to !== "string" || body.to.includes("/")) return send(res, 400, { error: "Choose a local project master." });
+      try { return send(res, 200, await networkRequest("projectMain", { to: body.to })); }
+      catch (err) { return send(res, 409, { error: err instanceof BridgeError ? err.message : "Project master unavailable." }); }
+    }
     const nativeDefaults = () => ({ codexSubagents: loadConfig(opts.home, "other", opts.log).codexSubagents, defaultCodexSubagents: DEFAULT_CODEX_SUBAGENTS, maxCodexSubagents: MAX_CODEX_SUBAGENTS });
     if (req.method === "GET" && url.pathname === "/api/config/codex-subagents") return send(res, 200, nativeDefaults());
     if (req.method === "POST" && url.pathname === "/api/config/codex-subagents") {
@@ -358,7 +377,7 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
         remoteErrors,
         messages: recentMessages(dbPath),
         // Saved next-turn settings per job (message_subagent or the dashboard may have changed them).
-        jobs: { ...Object.fromEntries([...readStoredJobs(opts.home)].map(([name, j]) => [name, { next: j.next, ...(j.remote ? { remote: j.remote } : {}) }])), ...Object.assign({}, ...remoteStates.map((r) => r.jobs)) },
+        jobs: { ...Object.fromEntries([...readStoredJobs(opts.home)].map(([name, j]) => [name, { next: j.next, projectRoot: j.projectRoot, ...(j.remote ? { remote: j.remote } : {}) }])), ...Object.assign({}, ...remoteStates.map((r) => r.jobs)) },
       });
     }
     if (req.method === "GET" && url.pathname === "/api/network") {
@@ -472,7 +491,7 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
     if (req.method === "POST" && url.pathname === "/api/subagents/handoff") {
       if (req.headers["x-agent-bridge"] !== "1") return send(res, 403, { error: "missing header" });
       const body = await readJson(req);
-      const parsed = handoffSchema.safeParse({ to: body.to, jobs: body.jobs, note: body.note });
+      const parsed = handoffSchema.safeParse({ to: body.to, jobs: body.jobs, note: body.note, switch_project_main: body.switch_project_main });
       if (!parsed.success || typeof body.from !== "string" || body.from.includes("/")) return send(res, 400, { error: "An exact local source and valid handoff arguments are required." });
       try {
         const result = await controlDashboardJob(await getSender(), body.from, "", { type: "handoff", ...parsed.data });
@@ -494,7 +513,7 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
       const meta = readMeta(join(opts.home, RUNS_DIR_NAME, `${run}.json`));
       if (!meta.by || !meta.job) return send(res, 409, { error: "This run has no owning session or job recorded." });
       try {
-        const result = await controlDashboardJob(await getSender(), jobOwner(opts.home, meta.job, meta.by), meta.job, command);
+        const result = await controlDashboardJob(await getSender(), await jobOwner(opts.home, meta.job, meta.by, await getSender()), meta.job, command);
         return send(res, result.isError ? 409 : 200, result);
       } catch (err) {
         if (err instanceof JobControlError) return send(res, err.reason === "offline" ? 409 : 504, { error: err.message });

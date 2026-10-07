@@ -139,7 +139,7 @@ import { closeSync, existsSync, mkdirSync, openSync, readdirSync, rmSync } from 
 import { dirname, join } from "node:path";
 
 // src/core/json-store.ts
-var JSON_STORE_VERSION = 3;
+var JSON_STORE_VERSION = 4;
 var KEEP_STORE_BACKUPS = 3;
 function isRecord(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
