@@ -1,6 +1,6 @@
 # Project groups
 
-Local sessions in one project share its jobs. Claude Code, Codex and opencode can all be masters,
+Local sessions in one project share its jobs. Claude Code, Codex, opencode and Antigravity can all be masters,
 primaries, handoff targets and fallback recipients. Paired PCs stay outside local groups.
 
 The project identity uses the Git common directory and physical main checkout path, so nested
