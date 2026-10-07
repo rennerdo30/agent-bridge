@@ -275,9 +275,21 @@ function migrateSqlite(db2, file2, existed, target, migrations, log) {
 import { execFileSync } from "node:child_process";
 import { existsSync as existsSync4, readFileSync as readFileSync2, realpathSync, statSync as statSync2 } from "node:fs";
 import { dirname as dirname4, join as join6, resolve } from "node:path";
+
+// src/core/session-visibility.ts
+import { posix } from "node:path";
+function isPluginCacheCwd(cwd) {
+  const path = posix.normalize(cwd.replace(/\\/g, "/")).toLowerCase().replace(/\/+$/, "");
+  return /(?:^|\/)\.(?:codex|claude)\/plugins\/cache(?:\/|$)/.test(path) || /(?:^|\/)(?:\.config\/opencode|\.opencode|opencode)\/plugins?(?:\/|$)/.test(path) || /(?:^|\/)(?:\.gemini\/(?:config|antigravity-cli)|\.agents)\/plugins(?:\/|$)/.test(path);
+}
+
+// src/core/project-identity.ts
 function canonicalProjectRoot(cwd) {
+  if (isPluginCacheCwd(cwd)) return null;
+  const visibleRoot = (root) => isPluginCacheCwd(root) ? null : root;
   try {
     const physical = realpathSync.native(cwd);
+    if (isPluginCacheCwd(physical)) return null;
     if (!statSync2(physical).isDirectory()) return null;
     const git = (args) => execFileSync(
       "git",
@@ -287,14 +299,14 @@ function canonicalProjectRoot(cwd) {
     try {
       const top = realpathSync.native(git(["--show-toplevel"]));
       const common = realpathSync.native(resolve(physical, git(["--git-common-dir"])));
-      if (common.endsWith("/.git") || common.endsWith("\\.git")) return realpathSync.native(dirname4(common));
+      if (common.endsWith("/.git") || common.endsWith("\\.git")) return visibleRoot(realpathSync.native(dirname4(common)));
       try {
         const configured = execFileSync(
           "git",
           ["--git-dir", common, "config", "--get", "core.worktree"],
           { encoding: "utf8", timeout: 3e3, windowsHide: true, stdio: ["ignore", "pipe", "ignore"] }
         ).trim();
-        if (configured) return realpathSync.native(resolve(common, configured));
+        if (configured) return visibleRoot(realpathSync.native(resolve(common, configured)));
       } catch {
       }
       const worktrees = execFileSync(
@@ -304,7 +316,7 @@ function canonicalProjectRoot(cwd) {
       );
       const main = worktrees.split(/\r?\n\r?\n/).find((entry) => !/^bare$/m.test(entry));
       const root = main && /^worktree (.+)$/m.exec(main)?.[1];
-      return root ? realpathSync.native(root) : top;
+      return visibleRoot(root ? realpathSync.native(root) : top);
     } catch {
       return physical;
     }
@@ -331,10 +343,15 @@ function linkedParent(file2) {
   }
 }
 function conversationProject(cwd) {
-  if (!cwd) return "";
+  if (!cwd || isPluginCacheCwd(cwd)) return "";
+  try {
+    if (isPluginCacheCwd(realpathSync2.native(cwd))) return "";
+  } catch {
+  }
   const known = roots.get(cwd);
-  if (known) return known;
-  const root = projectKey(canonicalProjectRoot(cwd) ?? resolve2(cwd));
+  if (known !== void 0) return known;
+  const canonical = canonicalProjectRoot(cwd);
+  const root = canonical ? projectKey(canonical) : existsSync5(cwd) ? "" : projectKey(resolve2(cwd));
   if (roots.size >= 256) roots.delete(roots.keys().next().value);
   roots.set(cwd, root);
   return root;
@@ -21418,10 +21435,11 @@ var ConversationIngestor = class {
         ).run(recordProject);
       }
       recordJob = binding?.job ?? (/^(claude|codex|opencode)-job-/.test(String(metadata.from_name)) ? metadata.from_name : recordSession === c.session ? recordJob : null);
-      const report = /"body"\s*:\s*"Subagent ([A-Za-z0-9][A-Za-z0-9_-]*) \([^"\r\n]*\) (?:done|failed) after \d+s\./.exec(first.slice(0, 8192));
+      const report = /"body"\s*:\s*"Subagent ([A-Za-z0-9][A-Za-z0-9_-]*) \(([a-z][a-z0-9_-]*)(?:, model [^"\r\n]*)?\) (?:done|failed) after \d+s\./.exec(first.slice(0, 8192));
       if (c.kind === "message" && report) {
         recordKind = "report";
         recordJob = report[1];
+        recordAgent = report[2];
       }
     }
     const eventKind = String(recordInfo.part ?? "").replace(/^event:/, "");
