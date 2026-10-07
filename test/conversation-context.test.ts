@@ -12,7 +12,11 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { MessageStore } from "../src/core/store.js";
-import { HistoryIndex } from "../src/core/history.js";
+import { HistoryIndex, readHistory } from "../src/core/history.js";
+import {
+  conversationProject,
+  projectDatabasePath,
+} from "../src/core/project-store.js";
 import {
   ConversationIngestor,
   readConversation,
@@ -187,6 +191,15 @@ it("filters mixed-sender raw chunks correctly after a late job/project binding a
   const f = setup(),
     project = join(env.home, "late-project");
   mkdirSync(project);
+  const firstProject = join(env.home, "first-project");
+  mkdirSync(firstProject);
+  f.index.rememberPeer({
+    id: "peer-first",
+    name: "claude-job-first",
+    agent: "claude",
+    sessionId: "native-first",
+    cwd: firstProject,
+  });
   for (const [id, agent, body] of [
     ["first", "claude", "first_sender_context"],
     ["second", "codex", "x".repeat(160_000) + " mixed_sender_tail"],
@@ -229,6 +242,26 @@ it("filters mixed-sender raw chunks correctly after a late job/project binding a
         project,
         session: "native-second",
         job: "codex-job-second",
+      },
+    }).hits.length,
+  ).toBeGreaterThan(0);
+  const mirrorPath = projectDatabasePath(conversationProject(project));
+  const mirror = new DatabaseSync(mirrorPath, { readOnly: true });
+  try {
+    expect(readConversation(mirror, { id: "bridge:mixed" }).records).toEqual(
+      readConversation(f.db, { id: "bridge:mixed" }).records,
+    );
+  } finally {
+    mirror.close();
+  }
+  expect(
+    readHistory(mirrorPath, {
+      query: "mixed_sender_tail",
+      filters: {
+        agent: "codex",
+        project,
+        job: "codex-job-second",
+        session: "native-second",
       },
     }).hits.length,
   ).toBeGreaterThan(0);
