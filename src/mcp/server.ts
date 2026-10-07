@@ -1063,9 +1063,18 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
         const report = progressReporter(extra, log);
         const onProgress = (m: string) => {
           tracked?.onProgress(m);
-          if (tracked?.job.ownershipHistory?.length && tracked.job.owner !== ctx.node?.name) ctx.jobs?.fromSubagent(tracked.job, m, null);
+          if (tracked && ctx.jobs && ctx.node) void ctx.jobs.recipient(tracked.job).then((recipient) => {
+            if (recipient !== ctx.node!.name) ctx.jobs?.fromSubagent(tracked.job, m, null);
+            else report?.(m);
+          }).catch((err) => log.warn("foreground progress routing deferred", { err: String(err) }));
           else report?.(m);
         };
+        const contact = async () => {
+          if (tracked && ctx.jobs && ctx.node) tracked.job.foregroundRecipient = await ctx.jobs.recipient(tracked.job);
+          return tracked?.job.foregroundRecipient;
+        };
+        const redirected = () => tracked && tracked.job.foregroundRecipient && tracked.job.foregroundRecipient !== ctx.node?.name;
+        const confirmation = () => text(`Job ${tracked!.job.name} is supervised by ${tracked!.job.foregroundRecipient}; its report was routed there.`);
         let res;
         try {
           // cancel_subagent can stop it too (e.g. from its coordinator), not only the caller.
@@ -1073,14 +1082,16 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
             ? await runRemoteAsk(requireNode(), target, a, tracked.job, extra.signal, onProgress)
             : await run({ ...a, _job: tracked?.job.name }, tracked ? AbortSignal.any([extra.signal, tracked.job.controller.signal]) : extra.signal, onProgress, false, tracked?.job);
         } catch (err) {
+          await contact();
           tracked?.end({ error: err });
           log.warn("ask failed", { job: tracked?.job.name, err: (err as Error).message });
-          if (tracked?.job.ownershipHistory?.length && tracked.job.owner !== ctx.node?.name) return text(`Job ${tracked.job.name} is supervised by ${tracked.job.owner}; its report was routed there.`);
+          if (redirected()) return confirmation();
           const identity = tracked ? `Job: ${tracked.job.name}\n${target} session_id: ${tracked.job.sessionId ?? "-"}\n\n` : "";
           return text(`${identity}${describeError(err)}`, true);
         }
+        await contact();
         tracked?.end({ result: res });
-        if (tracked?.job.ownershipHistory?.length && tracked.job.owner !== ctx.node?.name) return text(`Job ${tracked.job.name} is supervised by ${tracked.job.owner}; its report was routed there.`);
+        if (redirected()) return confirmation();
         const header =
           (tracked ? `Job: ${tracked.job.name}\n` : "") +
           t("delegate.done", { agent: target, session: res.sessionId ?? "-" }) +

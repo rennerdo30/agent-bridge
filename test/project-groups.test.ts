@@ -10,6 +10,7 @@ import { nullLogger } from "../src/core/logger.js";
 import { loadOrCreateToken } from "../src/core/token.js";
 import { makeEnv, type TestEnv } from "./helpers.js";
 import { ReadJournal } from "../src/core/read-journal.js";
+import { JobManager } from "../src/mcp/jobs.js";
 
 let env: TestEnv;
 const nodes: BridgeNode[] = [];
@@ -35,6 +36,25 @@ function registry(project: string) {
 }
 
 describe("local project permission groups", () => {
+  it("lets another master message, change and cancel an inline job whose primary is unavailable", async () => {
+    const path = repo(), source = await node("claude-master", path), secondary = await node("codex-master", path);
+    const original = new JobManager(source, nullLogger, join(env.home, "jobs.json"));
+    const shared = new JobManager(secondary, nullLogger, join(env.home, "jobs.json"));
+    const job = original.start("codex", null, "Inline work", (signal) => new Promise((resolve) => {
+      signal.addEventListener("abort", () => resolve({ text: "cancelled", sessionId: null, isError: true, details: {} }));
+    }));
+    try {
+      await source.setUnavailable(true);
+      expect(await shared.share(job.name)).toBeTruthy();
+      expect(shared.followUp(job.name, "Redirect inline work").outcome).toBe("delivered");
+      await expect.poll(() => job.queue).toContain("Redirect inline work");
+      shared.setTitle(job.name, "Shared inline title");
+      shared.setSettings(job.name, { effort: "high" });
+      await expect.poll(() => job.args).toMatchObject({ title: "Shared inline title", effort: "high" });
+      expect(shared.cancel(job.name)).toBe(true);
+      await expect.poll(() => job.controller.signal.aborted).toBe(true);
+    } finally { original.cancelAll(); }
+  });
   it("does not replay a recovered inline envelope consumed before its broker acknowledgement", async () => {
     const path = repo(), records = registry(path), source = await node("claude-master", path);
     const secondary = await node("codex-master", path);

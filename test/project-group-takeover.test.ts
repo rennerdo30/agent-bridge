@@ -87,6 +87,27 @@ async function call(client: Client, name: string, args: Record<string, unknown> 
   return { text: (result.content as { text: string }[]).map((c) => c.text ?? "").join("\n"), error: result.isError };
 }
 
+it("routes a blocking ask to an available group master without returning its result to the limited caller", async () => {
+  await env.node("broker", "other").start();
+  const source = await session("claude-master", "claude"), target = await session("codex-master", "codex");
+  const release = join(env.home, "blocking-release"), link = release + ".link"; releases.push(release);
+  const pending = call(source, "ask_codex", { prompt: `release=${release} link=${link} blocking work`, title: "Limited caller work" });
+  await until(() => existsSync(link), 10_000);
+  expect((await call(source, "coordinator_availability", { unavailable: true })).error).toBeFalsy();
+  const child = parentFromEnv(JSON.parse(readFileSync(link, "utf8")))!;
+  await child.send("Blocking fallback note");
+  writeFileSync(release, "");
+  const reply = await pending;
+  expect(reply.text).toContain("supervised by codex-master");
+  expect(reply.text).not.toContain("Takeover result");
+  let inbox = "";
+  await expect.poll(async () => { inbox += (await call(target, "inbox")).text; return /Subagent codex-ask-[a-f0-9]+ \(codex\) done after/.test(inbox); }).toBe(true);
+  expect(inbox).toContain("Blocking fallback note");
+  expect((inbox.match(/Subagent codex-ask-[a-f0-9]+ \(codex\) done after/g) ?? [])).toHaveLength(1);
+  expect((await call(source, "inbox")).text).not.toMatch(/Blocking fallback note|Takeover result/);
+  expect(readStore(join(env.home, "jobs.json")).find((job) => job.name.startsWith("codex-ask-"))?.owner).toBe("claude-master");
+});
+
 it.each(["closed", "unavailable", "opencode"])("ten jobs survive a %s primary and the project master receives their work once", async (mode) => {
   // Keep a broker independent of the closing MCP process so the test isolates coordinator failover.
   const broker = env.node("broker", "other"); await broker.start();

@@ -76,7 +76,7 @@ export function commitHandoff(path: string, source: PeerInfo, target: PeerInfo, 
         args: { ...j.args, ...(Array.isArray(sendTo) ? { send_to: [...new Set(sendTo.map((name) => name === source.name ? target.name : name))] } : {}) },
         ownershipHistory: [...(Array.isArray(history) ? history : []), change] }];
     }));
-    const active = Array.isArray(previous) ? previous : isRecord(previous) && Array.isArray(previous.jobs) ? previous.jobs : [];
+    const active = activeRecords;
     const ids = new Set(active.filter(isRecord).map((j) => j.id));
     const all = active.map((j) => isRecord(j) ? updates.get(String(j.id)) ?? j : j);
     for (const [id, job] of updates) if (!ids.has(id)) all.push(job); // An active override preserves the immutable archive.

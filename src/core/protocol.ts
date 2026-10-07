@@ -201,6 +201,7 @@ export interface RequestMap {
   projectMain: [{ to: string }, PeerInfo];
   handoffSubagents: [import("./job-handoff.js").HandoffArgs, import("./job-handoff.js").HandoffReceipt];
   jobAuthority: [{ job: string }, import("../mcp/jobs.js").Job | null];
+  jobRecipient: [{ job: string }, string];
   inlineJobControl: [{ job: string; control: import("../mcp/jobs.js").RunnerControl }, { sent: boolean }];
   inlineJobReport: [BridgeMessage, { saved: boolean }];
   auth: [AuthArgs, { brokerPid: number }];

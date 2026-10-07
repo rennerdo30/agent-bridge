@@ -154,6 +154,11 @@ export class Broker {
         if (!job || !this.groups.canControl(peer, job, this.localPeers())) return null;
         return job as unknown as import("../mcp/jobs.js").Job;
       },
+      jobRecipient: (c, a) => {
+        const peer = this.requirePeer(c), job = this.storedJobs().find((j) => j.name === a.job);
+        if (!job || !this.groups.canControl(peer, job, this.localPeers())) throw new BridgeError("unauthorized", "Only a master can inspect the job recipient.");
+        return this.jobRecipient(job);
+      },
       inlineJobControl: async (c, a) => {
         const peer = this.requirePeer(c), job = this.storedJobs().find((j) => j.name === a.job);
         if (!job || !this.groups.canControl(peer, job, this.localPeers())) throw new BridgeError("unauthorized", "Only the current supervisor can control this job.");
@@ -162,7 +167,7 @@ export class Broker {
           await this.onSend(c, { to: String(job.name), body: JSON.stringify(a.control), conversationId: `${CONTROL_CONVERSATION_PREFIX}${job.id}` });
           return { sent: true };
         }
-        const executor = typeof job.executionOwner === "string" ? this.connByName(job.executionOwner) : undefined;
+        const executor = typeof (job.executionOwner ?? job.owner) === "string" ? this.connByName(String(job.executionOwner ?? job.owner)) : undefined;
         if (job.status !== "running") {
           const recipient = this.jobRecipient(job);
           const primary = this.connByName(recipient);

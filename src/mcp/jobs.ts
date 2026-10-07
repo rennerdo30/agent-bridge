@@ -47,6 +47,8 @@ export type Run = ((signal: AbortSignal, onProgress: (message: string, full?: st
 export type Resume = (message: string, sessionId: string, workdir: string | null, worktree: Worktree | null) => Run;
 
 export interface Job {
+  /** Current blocking caller's delivery destination; runtime only, never ownership metadata. */
+  foregroundRecipient?: string;
   ownershipHistory?: import("../core/job-handoff.js").OwnershipChange[];
   masters?: string[];
   /** Immutable original project identity, unaffected by primary handoff. */
@@ -281,6 +283,7 @@ export interface JobCoordinator {
   cwd?: string;
   controlInlineJob?(job: string, control: RunnerControl): Promise<unknown>;
   reportInlineJob?(message: BridgeMessage): Promise<unknown>;
+  jobRecipient?(job: string): Promise<string>;
   name: string;
   id: string;
   currentSessionId: string | null;
@@ -337,7 +340,7 @@ export class JobManager {
     node.on("jobs_changed", () => this.refreshOwnership());
     node.on("inline_job_control", ({ job: name, control }: { job: string; control: RunnerControl }) => {
       this.refreshOwnership();
-      const job = [...this.running.values(), ...this.foreground.values()].find((j) => j.name === name && j.executionOwner === this.node.name);
+      const job = [...this.running.values(), ...this.foreground.values()].find((j) => j.name === name && (j.executionOwner ?? j.owner) === this.node.name);
       if (!job) return;
       if (control.type === "cancel") { job.queue = []; job.controller.abort(); }
       else if (control.type === "message") {
@@ -653,6 +656,9 @@ export class JobManager {
     else this.history.set(saved.id, { ...saved, controller: new AbortController(), progress: null, queue: [], resume: this.restoreResume?.(saved.agent, saved.args ?? {}) });
     return this.find(saved.name);
   }
+  recipient(job: Job): Promise<string> {
+    return this.node.jobRecipient?.(job.name) ?? Promise.resolve(job.rootName ?? job.owner ?? this.node.name);
+  }
 
   find(ref: string): Job | undefined {
     this.refreshOwnership();
@@ -763,7 +769,7 @@ export class JobManager {
         job.workdir = outcome?.result?.workdir ?? job.workdir;
         job.worktree = outcome?.result?.worktree ?? job.worktree;
         this.persist();
-        if (job.ownershipHistory?.length && !this.isMine(job.owner)) {
+        if ((job.foregroundRecipient && job.foregroundRecipient !== this.node.name) || (job.ownershipHistory?.length && !this.isMine(job.owner))) {
           this.post(job, jobReport(job, job.status, Math.round((Date.now() - job.startedAt) / 1000), outcome?.result?.text ?? "", job.status === "failed" ? failureCause(outcome ?? {}) : null));
         }
         // Follow-ups sent while the caller waited continue the session in the background (or wait for a slot).
