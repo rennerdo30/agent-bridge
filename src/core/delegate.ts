@@ -417,7 +417,7 @@ export const OPENCODE_READ_ONLY_TOOLS = {
 export function childEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
   // The parent's project dir would point a delegated Claude (it may work in a worktree) at the wrong folder.
   const { CLAUDE_PROJECT_DIR: _parentProject, ...env } = process.env;
-  return { ...env, ...extra, [DELEGATE_DEPTH_ENV]: String(currentDelegateDepth() + 1) };
+  return { ...env, ...extra, [ENV.internal]: "1", [DELEGATE_DEPTH_ENV]: String(currentDelegateDepth() + 1) };
 }
 
 export function checkDepth(max = Number(process.env[ENV.maxDelegateDepth] ?? DEFAULT_MAX_DELEGATE_DEPTH), env: NodeJS.ProcessEnv = process.env): void {

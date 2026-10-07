@@ -54,8 +54,11 @@ describe("Antigravity delegation", () => {
     await expect(delegateToAntigravity({ bin: "agy", prompt: "task", cwd: temp(), access: "read", effort: "ultra", timeoutSec: 20, log: nullLogger })).rejects.toThrow("low, medium, high, xhigh or max");
     expect(mocks.run).not.toHaveBeenCalled();
   });
-  it("resumes transient provider failures on the same native session and model", async () => {
-    mocks.run.mockResolvedValueOnce({ code: 0, stdout: JSON.stringify({ event: "result", result: { conversation_id: "saved", status: "ERROR", error: "stream disconnected before completion" } }), stderr: "" }).mockResolvedValueOnce({ code: 0, stdout: stream(), stderr: "" });
+  it.each(["result", "stderr"])("resumes transient provider failures from %s on the same native session and model", async (source) => {
+    const failure = source === "result"
+      ? { code: 0, stdout: JSON.stringify({ event: "result", result: { conversation_id: "saved", status: "ERROR", error: "stream disconnected before completion" } }), stderr: "" }
+      : { code: 3, stdout: JSON.stringify({ event: "init", conversation_id: "saved" }), stderr: "stream disconnected before completion" };
+    mocks.run.mockResolvedValueOnce(failure).mockResolvedValueOnce({ code: 0, stdout: stream(), stderr: "" });
     const request = { prompt: "task", cwd: temp(), model: "example", timeoutSec: 20, log: nullLogger };
     const result = await retryTransient(request, (req) => delegateToAntigravity({ ...req, bin: "agy", access: "read" }));
     expect(result).toMatchObject({ sessionId: "saved", isError: false, details: { retries: 1 } });

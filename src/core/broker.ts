@@ -3,6 +3,7 @@ import { conversationPageSchema, readConversation } from "./conversations.js";
 import { historySearchSchema } from "./history.js";
 import { ReadJournal } from "./read-journal.js";
 import { randomUUID } from "node:crypto";
+import { isPluginCacheCwd } from "./session-visibility.js";
 import { createServer, type Server, type Socket } from "node:net";
 import {
   MAX_BODY_CHARS,
@@ -511,7 +512,7 @@ export class Broker {
 
   /** Local sessions and paired remote peers; local job runners stay hidden (see job-host.ts). */
   private livePeers(): PeerInfo[] {
-    return this.localPeers().filter((p) => !p.jobAgent).map((p) => this.projectPeer(p)).concat(this.network?.peers() ?? []);
+    return this.localPeers().filter((p) => !p.jobAgent).map((p) => this.projectPeer(p)).concat(this.network?.peers() ?? []).filter((p) => !isPluginCacheCwd(p.cwd));
   }
 
   private localPeers(): PeerInfo[] { return [...this.conns].flatMap((c) => c.peer ? [c.peer] : []); }
@@ -859,6 +860,7 @@ export class Broker {
       throw new BridgeError("bad_request", "invalid peer info");
     }
     if (conn.peer) throw new BridgeError("bad_request", "already registered");
+    if (isPluginCacheCwd(String(p.cwd ?? ""))) throw new BridgeError("bad_request", "Plugin-cache processes cannot register as sessions.");
     const name = this.uniqueName(p.name);
     const peer: PeerInfo = {
       id: String(p.id),
@@ -927,6 +929,7 @@ export class Broker {
   }
 
   private onUpdatePeer(conn: Conn, args: RequestMap["updatePeer"][0]): PeerInfo {
+    if (typeof args.cwd === "string" && isPluginCacheCwd(args.cwd)) throw new BridgeError("bad_request", "Plugin-cache processes cannot register as sessions.");
     const peer = this.requirePeer(conn);
     if (args.unavailable !== undefined) {
       if (peer.jobAgent || typeof args.unavailable !== "boolean") throw new BridgeError("bad_request", "Only masters can change availability.");
@@ -1106,6 +1109,21 @@ export class Broker {
     return result;
   }
 
+  /** Reverse permissions use the current durable record, not stale runner registration. */
+  private replyRestriction(sender: PeerInfo, name: string): { name: string; supervisor: string } | null {
+    const jobs = this.storedJobs(), peer = this.connByName(name)?.peer;
+    const stored = jobs.find((j) => j.name === name);
+    if (!stored && !peer?.jobAgent) return null;
+    const job = stored ?? { id: peer!.id.replace(/^job:/, ""), name, owner: peer!.jobParent,
+      supervisor: peer!.jobOwner, rootName: peer!.rootName, parentJob: peer!.parentJob,
+      workdir: peer!.cwd, args: { send_to: peer!.jobSendTo } };
+    const recipient = { ...peer, id: `job:${job.id}`, name, jobOwner: typeof job.supervisor === "string" ? job.supervisor : peer?.jobOwner } as PeerInfo;
+    const grants = isRecord(job.args) && Array.isArray(job.args.send_to) ? job.args.send_to : [];
+    if (sender.name === name || grants.includes(sender.name) || this.groups.canControl(sender, job, this.localPeers()) ||
+        sender.jobAgent && (this.sameJobFamily(recipient, sender, jobs) || this.sharedJobs(recipient, sender, jobs))) return null;
+    return { name, supervisor: this.jobRecipient(job) || peer?.jobParent || "the project's main session" };
+  }
+
   private async routeSend(conn: Conn, sender: PeerInfo, args: RequestMap["send"][0]): Promise<RequestMap["send"][1]> {
     const body = typeof args.body === "string" ? args.body : "";
     if (!body.trim()) throw new BridgeError("bad_request", "message body is empty");
@@ -1175,9 +1193,19 @@ export class Broker {
           live.some((c) => c.peer!.jobAgent && (!sender.jobAgent || !sender.jobOwner || (!this.sameJobFamily(sender, c.peer!) && !this.sharedJobs(sender, c.peer!) && !sender.jobSendTo?.includes(c.peer!.name)))))) {
       throw new BridgeError("unauthorized", "sibling chat requires the same supervisor or an explicit send_to job grant");
     }
+    const replyRestrictions = conversationId.startsWith(CONTROL_CONVERSATION_PREFIX) ? [] :
+      [...live.map((c) => c.peer!.name), ...queued].flatMap((name) => {
+        const restriction = this.replyRestriction(sender, name);
+        return restriction ? [restriction] : [];
+      });
+    const envelope = (recipient: string): BridgeMessage => {
+      const restriction = replyRestrictions.find((r) => r.name === recipient);
+      return { ...base, recipient, body: restriction ? base.body +
+        `\n\n[agent-bridge routing hint: this sender can't receive your direct reply; answer via your supervisor ${restriction.supervisor} if needed.]` : base.body };
+    };
     const messages: BridgeMessage[] = [];
-    for (const c of live) messages.push({ ...base, recipient: c.peer!.name });
-    for (const key of queued) messages.push({ ...base, recipient: key });
+    for (const c of live) messages.push(envelope(c.peer!.name));
+    for (const key of queued) messages.push(envelope(key));
     for (const m of messages) this.store.insert(m);
     live.forEach((c, i) => this.emit(c, "message", messages[i]!));
 
@@ -1190,6 +1218,7 @@ export class Broker {
       queuedFor: queued,
     });
     const result: RequestMap["send"][1] = { messages, deliveredTo: live.map((c) => c.peer!.name), queuedFor: queued, recipientStates: live.map((c) => ({ name: c.peer!.name, activity: c.peer!.activity, autoWake: c.peer!.autoWake, wakeOnDirect: c.peer!.wakeOnDirect, wakeAvailable: c.peer!.wakeAvailable, wakeMaxHops: c.peer!.wakeMaxHops })) };
+    if (replyRestrictions.length) result.replyRestrictions = replyRestrictions;
     for (const recipient of remoteTargets) {
       // Fan out only at the originating broker. Receiving brokers deliver one local envelope.
       try {

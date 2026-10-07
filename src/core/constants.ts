@@ -3,13 +3,14 @@ import { join } from "node:path";
 
 /** Product identity. */
 export const APP_NAME = "agent-bridge";
-export const APP_VERSION = "0.29.13";
+export const APP_VERSION = "0.29.14";
 
 /** Wire protocol version; bump on incompatible changes to the broker protocol. */
 export const PROTOCOL_VERSION = 2;
 
 /** Environment variables understood by agent-bridge. */
 export const ENV = {
+  internal: "AGENT_BRIDGE_INTERNAL",
   home: "AGENT_BRIDGE_HOME",
   pipe: "AGENT_BRIDGE_PIPE",
   name: "AGENT_BRIDGE_NAME",

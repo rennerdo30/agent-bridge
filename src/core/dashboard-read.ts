@@ -1,6 +1,7 @@
 import { closeSync, openSync, readFileSync, readSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { JOBS_FILE } from "./constants.js";
+import { isPluginCacheCwd } from "./session-visibility.js";
 import type { Logger } from "./logger.js";
 import { CODING_AGENTS, type PeerInfo } from "./protocol.js";
 import { isRecord } from "./json-store.js";
@@ -212,7 +213,7 @@ export function classifyPeers(peers: PeerInfo[], runs: RunSummary[], home: strin
   const worktrees = `${norm(join(home, "worktrees"))}/`;
   const byWorkdir = new Map<string, RunSummary>();
   for (const run of runs) if (run.workdir && !byWorkdir.has(norm(run.workdir))) byWorkdir.set(norm(run.workdir), run);
-  return peers.map((p) => {
+  return peers.filter((p) => !isPluginCacheCwd(p.cwd)).map((p) => {
     const cwd = norm(p.cwd ?? "");
     const subagent = cwd.startsWith(worktrees);
     const run = subagent ? byWorkdir.get(cwd) : undefined;
@@ -260,7 +261,7 @@ export async function readDashboard(ctx: DashboardReadContext, request: Dashboar
       catch { return reply(404, { error: "no such local session" }); }
       if (name.includes("/") || name.includes("\\") || (child !== undefined && !TRANSCRIPT_ID.test(child)) || (sessionMatch[2] === "chat" && child !== undefined)) return reply(404, { error: "no such local session or subagent" });
       const peers = await ctx.peers();
-      const peer = peers.find((p) => p.name === name && !p.name.includes("/"));
+      const peer = peers.find((p) => p.name === name && !p.name.includes("/") && !isPluginCacheCwd(p.cwd));
       if (!peer) return reply(404, { error: "no such local session" });
       if (!peer.sessionId) return reply(409, { error: "This session has no sessionId yet." });
       if (!TRANSCRIPT_ID.test(peer.sessionId) || !CODING_AGENTS.includes(peer.agent as typeof CODING_AGENTS[number])) return reply(404, { error: "no transcript for this session" });

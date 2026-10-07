@@ -135,6 +135,11 @@ export function formatDuration(ms: number): string {
   return `${Math.floor(m / 60)}h ${m % 60}m`;
 }
 
+export function formatReplyRestrictions(result: SendResult): string[] {
+  return (result.replyRestrictions ?? []).map(({ name, supervisor }) =>
+    `${name} can't reply to you directly. Its replies go to its supervisor ${supervisor}. To get an answer, ask ${supervisor}, ask ${supervisor} to grant you with send_to, or use the project's main session.`);
+}
+
 /** Socket delivery is not a read receipt, locally or over a paired link. */
 export function formatDelivery(result: SendResult, maxHops = DEFAULT_MAX_HOPS): string[] {
   return result.deliveredTo.map((name) => {
@@ -148,5 +153,5 @@ export function formatDelivery(result: SendResult, maxHops = DEFAULT_MAX_HOPS): 
         : "idle; will be read on its next turn (no wake for this delivery)"
       : "waiting for the peer to consume it";
     return `Delivered to inbox: ${name} (${hint}). Delivery does not mean read.`;
-  }).concat((result.failedFor ?? []).map((failed) => `Delivery not confirmed: ${failed.name} (${failed.reason}). The attempt is retained in history; retry explicitly when the paired link is available.`));
+  }).concat((result.failedFor ?? []).map((failed) => `Delivery not confirmed: ${failed.name} (${failed.reason}). The attempt is retained in history; retry explicitly when the paired link is available.`)).concat(formatReplyRestrictions(result));
 }
