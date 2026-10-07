@@ -265,7 +265,7 @@ it("filters mixed-sender raw chunks correctly after a late job/project binding a
       },
     }).hits.length,
   ).toBeGreaterThan(0);
-  const mirrorPath = projectDatabasePath(conversationProject(project));
+  const mirrorPath = projectDatabasePath(conversationProject(project), env.home);
   const mirror = new DatabaseSync(mirrorPath, { readOnly: true });
   try {
     expect(readConversation(mirror, { id: "bridge:mixed" }).records).toEqual(

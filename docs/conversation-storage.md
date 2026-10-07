@@ -149,9 +149,32 @@ explicit paired read operations retain their authentication and permissions.
 
 ## Validation
 
-`test/conversations.test.ts` verifies exact oversized-byte retention, cursor
+`test/conversations.test.ts` and `test/conversations-retention.test.ts` verify exact oversized-byte retention, cursor
 restart/deduplication, replacement generations, OpenCode messages/parts/native
 grandchildren, old revisions, paging, mirrors and settings. The context tests
 cover envelope copies, decisions/events, OpenCode delegated MCP access and a
 complete sanitized 0.29.10 disk-layout upgrade. Retention tests still reject
 unreviewed production deletion or truncation.
+
+## Custom bridge homes and old fixture rows
+
+Only the physical default user bridge home writes repository mirrors or their
+Git exclude entries. A custom `AGENT_BRIDGE_HOME` writes its replicas inside
+`<home>/project-mirrors/`, even if Git canonicalizes its worktree to a real
+main checkout. This is identical for all clients and does not change the
+SQLite/JSON stored format or require migration. Old binaries retain their
+existing behavior, so test homes must never launch an older writer against a
+real project.
+
+Conversation reads add `foreignHome: true` to conclusively identified existing
+fixture records: source paths within a nested test home, job snapshots whose
+workdir is such a home, and the recorded `owner-smoke-main` bridge sender.
+The original records, raw bytes, numeric cursors and metadata remain intact.
+Imported real native transcripts are not classified by proximity to a fixture.
+Unknown provenance remains unmarked. Consumers can exclude flagged records
+without deleting evidence.
+
+History and conversation ingestion publish idempotent records before advancing
+source cursors. Source reads, provider database reads and Git canonicalization
+never run inside a shared writer transaction. A retry can reconstruct derived
+indexing from retained bytes after interruption.

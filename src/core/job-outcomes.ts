@@ -131,14 +131,18 @@ export async function deriveJobOutcome(home: string, job: OutcomeJob, log: Logge
     else {
       const run = (args: string[]) => git([...trustArgs(repoRoot), ...args], repoRoot, log);
       // A saved tip still proves ancestry after the branch/worktree was removed.
-      branchHead ??= await run(["rev-parse", "--verify", `refs/heads/${branch}^{commit}`]).catch(() => null);
+      // Resolve both exact refs in one process; a saved tip remains authoritative.
+      const refs = await run(["for-each-ref", "--format=%(refname)%09%(objectname)",
+        `refs/heads/${branch}`, `refs/heads/${baseBranch}`]).catch(() => "");
+      const heads = new Map(refs.split("\n").map((line) => line.trim().split("\t") as [string, string]));
+      branchHead ??= heads.get(`refs/heads/${branch}`) ?? null;
       merge.branchHead = branchHead;
       if (!branchHead) merge.reason = "Branch is missing and no saved tip is available.";
       else {
-        const base = await run(["rev-parse", "--verify", `refs/heads/${baseBranch}^{commit}`]).catch(() => null);
+        const base = heads.get(`refs/heads/${baseBranch}`);
         if (!base) merge.reason = "Base branch is unavailable.";
         else {
-          const merged = await run(["merge-base", "--is-ancestor", branchHead, base]).then(() => true, () => false);
+          const merged = branchHead === base || await run(["merge-base", "--is-ancestor", branchHead, base]).then(() => true, () => false);
           merge.state = merged ? "merged" : "unmerged";
           merge.reason = merged ? null : `Has commits not merged into ${baseBranch}.`;
         }

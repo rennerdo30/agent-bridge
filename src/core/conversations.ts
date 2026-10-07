@@ -50,6 +50,8 @@ export interface ConversationPage {
     text: string;
     raw: string;
     part: string | null;
+    /** Conclusive fixture provenance, retained for inspection rather than deleted. */
+    foreignHome?: true;
   }[];
   next: number | null;
 }
@@ -400,9 +402,13 @@ export class ConversationIngestor {
         "INSERT OR IGNORE INTO conversation_records(source,generation,offset,conversation,at,raw,body,part) VALUES(?,?,?,?,?,?,?,?)",
       )
       .run(source, generation, offset, conversation, at, raw, body, part);
-    if (!Number(result.changes)) return;
+    // A lock can interrupt derived indexing after retaining the bytes. Replay repairs
+    // documents/tags before the caller advances its source cursor.
+    const record = Number(result.changes) ? Number(result.lastInsertRowid) : Number(this.db
+      .prepare("SELECT id FROM conversation_records WHERE source=? AND generation=? AND offset=?")
+      .get(source, generation, offset)!.id);
     this.indexRecord(
-      Number(result.lastInsertRowid),
+      record,
       conversation,
       body,
       at,
@@ -1059,9 +1065,10 @@ export class ConversationIngestor {
     const nextJob = this.jobQueue[0]?.job;
     if (nextJob)
       conversationProject(String(nextJob.cwd ?? nextJob.workdir ?? ""));
-    this.db.exec("BEGIN IMMEDIATE");
+    // Every durable insert is idempotent; publish cursors only after its records.
+    // Filesystem reads and Git discovery must never hold the shared writer lock.
     let work = 0;
-    try {
+    {
       work += this.jobSnapshot();
       work += this.envelopes();
       work += this.events(this.db, "decisions", "durable-decisions");
@@ -1160,10 +1167,6 @@ export class ConversationIngestor {
           .prepare("UPDATE conversation_sources SET checked=? WHERE id=?")
           .run(++this.checked, source.id!);
       }
-      this.db.exec("COMMIT");
-    } catch (err) {
-      this.db.exec("ROLLBACK");
-      throw err;
     }
     const project = this.db
       .prepare(
@@ -1171,13 +1174,25 @@ export class ConversationIngestor {
       )
       .get();
     if (project) {
-      work += syncProjectMirror(this.db, String(project.project));
+      work += syncProjectMirror(this.db, String(project.project), this.home);
       this.db
         .prepare("UPDATE conversation_projects SET checked=? WHERE project=?")
         .run(++this.checked, project.project!);
     }
     return work;
   }
+}
+
+/** Mark only records with direct sandbox-home provenance, never a mention in ordinary prose. */
+export function foreignMirrorRecord(source: string, text: string): boolean {
+  const sandboxHome = (path: string) => /(?:^|[\\/])\.agent-bridge-test[\\/][^\\/]+[\\/]home(?:[\\/]|$)/i.test(path);
+  if (sandboxHome(source)) return true;
+  const job = parse(text);
+  // The recorded AB-159 smoke sender is synthetic. Real native transcripts imported by
+  // that fixture remain real evidence and are deliberately not classified by proximity.
+  if (job.from_name === "owner-smoke-main") return true;
+  if (!source.startsWith("job-snapshot:")) return false;
+  return typeof job.workdir === "string" && sandboxHome(job.workdir);
 }
 
 /** Stable numeric keyset paging, with a total response byte budget independent of limit. */
@@ -1214,6 +1229,7 @@ export function readConversation(
       text: raw.toString("utf8"),
       raw: raw.toString("base64"),
       part: row.part ? String(row.part) : null,
+      ...(foreignMirrorRecord(String(row.source), raw.toString("utf8")) ? { foreignHome: true as const } : {}),
     });
     bytes += raw.length;
   }

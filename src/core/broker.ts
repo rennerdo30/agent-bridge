@@ -348,6 +348,7 @@ export class Broker {
 
   async close(): Promise<void> {
     this.closing = true;
+    this.store.stopWrites();
     if (this.pendingJobMailRetry) clearTimeout(this.pendingJobMailRetry);
     this.pendingJobMailRetry = null;
     await this.historyBackground?.close();

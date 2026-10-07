@@ -67,6 +67,12 @@ describe("paired dashboard read protocol", () => {
       const normalize = (value: unknown) => JSON.parse(JSON.stringify(value), (key, field) => key === "checkedAt" ? 0 : field);
       expect(normalize(result), path).toEqual(normalize(local));
     }
+    for (const query of [{ job: JOB }, { run: RUN }]) {
+      const selected: any = (await remote.request("beta", { path: "/api/job-outcomes", query })).body;
+      expect(selected.contractVersion).toBe(1);
+      expect(Object.keys(selected.jobs).length + Object.keys(selected.runs).length).toBe(1);
+    }
+    expect((await remote.request("beta", { path: "/api/job-outcomes", query: { job: "unknown" } })).status).toBe(404);
     const page: any = (await remote.request("beta", { path: "/api/sessions/session/chat" })).body;
     expect((await remote.request("beta", { path: "/api/sessions/session/chat", query: { from: page.next } })).body).toMatchObject({ items: [] });
     expect((await remote.request("beta", { path: `/api/sessions/session/subagents/${CODEX_SESSION}` })).status).toBe(404);
