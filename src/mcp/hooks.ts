@@ -136,7 +136,13 @@ async function runHook(ctx: ServerContext, input: HookInput): Promise<HookOutput
   await withinHook(node.ensureConnected().catch((err) => ctx.log.warn("bridge not reachable from hook", { err: (err as Error).message })), input.signal!);
   // A native subagent's tool calls fire the same hooks: messages are for the main agent, so leave them.
   if (input.subagent) return {};
-  await withinHook(node.refreshPending().catch((err) => ctx.log.warn("pending mail refresh failed; retained for retry", { err: String(err) })), input.signal!);
+  const stopJobsRunning = input.event === "Stop" ? ctx.jobs?.runningCount() ?? 0 : 0;
+  const replay = node.refreshPending().catch((err) => ctx.log.warn("pending mail refresh failed; retained for retry", { err: String(err) }));
+  // Stop can deliver buffered mail or arm a child-result notification immediately. A slow
+  // broker replay must not hide that mail behind the hook deadline; later arrivals still
+  // use the existing delivery path, and ordinary hooks continue to await their refill.
+  const stopReady = input.event === "Stop" && (stopJobsRunning > 0 || node.unread().some((m) => !isQuietMessage(m)));
+  if (!stopReady) await withinHook(replay, input.signal!);
   // A wake-up's messages reached the session if a turn is running (tool calls, turn end); if a prompt or a new
   // session comes first, the wake-up was lost and they are shown again below.
   // The wake-up's own turn starts with a prompt carrying its text: that is delivery, not a new user prompt.
@@ -184,7 +190,7 @@ async function runHook(ctx: ServerContext, input: HookInput): Promise<HookOutput
       // Listen window: this session is in a conversation if it sent something recently or has subagents running.
       const now = Date.now();
       const lingerRemaining = node.lastSentAt > 0 ? node.lastSentAt + ctx.cfg.lingerSec * 1000 - now : 0;
-      const jobsRunning = ctx.jobs?.runningCount() ?? 0;
+      const jobsRunning = stopJobsRunning;
       const inConversation = lingerRemaining > 0 || jobsRunning > 0;
       if (!node.autoWakeEnabled && !inConversation) {
         // A notify wait is explicit permission to deliver its match, even after the listen window ends.

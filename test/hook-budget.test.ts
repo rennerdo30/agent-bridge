@@ -54,6 +54,33 @@ it("retains a late parent inbox response and delivers it on the next hook", asyn
   expect(inbox).toHaveBeenCalledTimes(1);
 });
 
+it.each(["running child", "buffered final"])("Stop does not wait for a stalled replay with a %s", async mode => {
+  const node = env.node("owner", "codex"); await node.start();
+  const jobs = new JobManager(node, nullLogger);
+  vi.spyOn(jobs, "runningCount").mockReturnValue(mode === "running child" ? 1 : 0);
+  if (mode === "buffered final") node.deliverLocal({ id: "buffered-final", recipient: node.name, to: node.name,
+    from: { id: "job:complete", name: "codex-job-complete", agent: "codex" }, body: "BUFFERED_FINAL",
+    conversationId: "job-complete", replyTo: null, hop: 0, createdAt: Date.now(), readAt: null });
+  let release!: () => void;
+  const replay = new Promise<void>(resolve => { release = resolve; });
+  vi.spyOn(node, "refreshPending").mockReturnValueOnce(replay);
+  const wait = vi.spyOn(node, "waitForMessage");
+  try {
+    const started = Date.now();
+    const result = await buildHookResponse(context(node, { jobs }), { ...input, event: "Stop" });
+    expect(Date.now() - started).toBeLessThan(500);
+    expect(wait).not.toHaveBeenCalled();
+    if (mode === "running child") {
+      expect(result).toEqual({});
+      expect(new MessageWaitStore(env.home).pending(node)).toMatchObject([{ mode: "notify" }]);
+    } else {
+      expect(result).toMatchObject({ decision: "block" });
+      expect(JSON.stringify(result)).toContain("BUFFERED_FINAL");
+      expect(node.unread()).toHaveLength(0);
+    }
+  } finally { release(); }
+});
+
 it("bounds metadata at the registered MCP hook entry", async () => {
   const callbacks = new Map<string, (...args: any[]) => Promise<any>>();
   const server = { registerTool: (name: string, _config: unknown, callback: any) => callbacks.set(name, callback) };
