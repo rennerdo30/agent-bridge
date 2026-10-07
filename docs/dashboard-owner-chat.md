@@ -11,7 +11,7 @@ mock the CLIs. No CLI transcript, session database or user configuration is edit
 | Claude Code | Existing bridge channel; otherwise existing mod submits a real user prompt, or asyncRewake/hooks deliver labeled bridge input | No dashboard transport to Task/Agent children; parent can use native SendMessage | Channel input is processed by Claude; mod waits idle, hooks deliver at a safe step. No interrupt |
 | Codex | `codex queue --thread UUID --message TEXT`, using the shared app-server queue; definitive failure falls back to bridge/waker | Attempt the same queue with the verified child UUID. If that server cannot address it, show unsupported and offer parent delivery | Native queue waits until idle. Bridge waker also waits idle; no turn/interrupt or turn/steer |
 | opencode | Existing plugin persists bridge input with `client.session.promptAsync` | Served API can address child sessions, but this dashboard has no verified live plugin client for a child; parent route only | Busy plugin steps use noReply input; idle plugin starts a prompt after Stop. No abort |
-| Antigravity (`agy`) | Existing native plugin hooks/MCP inbox | No established external child input; parent route only | During a step, PreInvocation delivers input; Stop can continue if input is pending. Mail arriving after idle waits next turn/inbox |
+| Antigravity (`agy`) | Planned for the separate 0.29.17 release; excluded from 0.29.16 | Not available in this release | Native registration and hooks are deferred |
 
 Claude's [channels documentation](https://code.claude.com/docs/en/channels)
 describes MCP events arriving in the currently open session. They are channel
@@ -53,7 +53,7 @@ sessions from main-session tracking. The dashboard reuses that delivery instead
 of guessing a server URL or starting an independent resumed process. A future
 plugin capability could securely expose child input, but this release does not.
 
-Antigravity read-only probes here reported **agy 1.3.1**. `agy --help` documents
+For the planned 0.29.17 integration, Antigravity read-only probes reported **agy 1.3.1**. `agy --help` documents
 print-mode stream-json stdin, `--conversation` resume, and `--remote-control`.
 `agy remote-control --help` offers daemon start/status/stop, not a send command.
 The [official Remote Control documentation](https://antigravity.google/docs/remote-control?tab=cli)
