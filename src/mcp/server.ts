@@ -83,7 +83,7 @@ const SUBAGENT_TOOLS = new Set(["peers", "send", "report_progress", "hook_event"
 /** The options of a job worth keeping to continue it the same way later (no prompt, no internals). */
 /** When to look again for jobs under a stand-in name (a replaced server of the session may still be leaving). */
 const STAND_IN_RECHECK_MS = 30_000;
-const KEPT_ARGS = ["native_subagents", "host", "model", "effort", "cwd", "timeout_sec", "worktree", "access", "sandbox", "terminal_sandbox", "bypass_permissions", "approvals_reviewer", "permission_mode", "auto_approve", "allow_tools", "send_to", "title"] as const;
+const KEPT_ARGS = ["native_subagents", "host", "model", "effort", "cwd", "timeout_sec", "worktree", "access", "sandbox", "terminal_sandbox", "bypass_permissions", "approvals_reviewer", "permission_mode", "auto_approve", "allow_tools", "send_to", "title", "notes"] as const;
 /** Plugin root: dist/server.mjs lives one level below it. */
 const PLUGIN_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -396,7 +396,7 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
     const shouldWake = (m: BridgeMessage) =>
       !ctx.channelActive() &&
       m.hop < cfg.maxHops &&
-      // A running subagent's status note waits for the next prompt or tool call (see JobManager.fromSubagent).
+      // Running-job notes remain in explicit inbox reads and history (see JobManager.fromSubagent).
       !ctx.jobs?.isNote(m) &&
       shouldWakeClaudeMessage(node, cfg, m);
     rewake = new RewakeEndpoint(home, node, shouldWake, log.child("rewake"));
@@ -610,13 +610,18 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
         const entry = listPendingApprovals(ctx.home).find((entry) => entry.id === a.approval_id);
         if (!entry) return text("Approval expired.", true);
         const job = ctx.jobs?.find(entry.job);
-        if (!(node ? await node.jobAuthority(entry.job) : job)) throw new BridgeError("bad_request", "This approval belongs to another supervisor.");
+        const authority = node ? await node.jobAuthority(entry.job).catch(err => {
+          // A legacy broker can lack authority RPCs. Only fresh local ownership can replace that check.
+          if (!String((err as Error).message).includes("unknown op: jobAuthority")) throw err;
+          return ctx.jobs?.list().find(j => j.name === entry.job && j.owner === node.name) ?? null;
+        }) : job;
+        if (!authority) throw new BridgeError("bad_request", "This approval belongs to another supervisor.");
         if (a.decision === "escalate") {
           if (!entry.parentJob || !job?.pendingApproval) return text("Escalation is unavailable here; use the dashboard or ask the supervisor to decide.", true);
           job.pendingApproval("escalate");
           return text("Approval escalated; it remains pending.");
         }
-        const outcome = await answerPendingApproval(ctx.home, entry.id, { decision: a.decision, reason: a.reason });
+        const outcome = await answerPendingApproval(ctx.home, entry.id, { decision: a.decision, reason: a.reason, source: "MCP decide" });
         return text(`Approval ${outcome}.`, outcome !== "answered");
       }
       if (!a.topic || !a.text || a.reason) throw new BridgeError("bad_request", "Supply topic and text to record an owner decision.");
@@ -643,7 +648,7 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
     "project_main",
     {
       title: "Set the project's main session",
-      description: "Choose a live local master of this project as its main contact. Project addresses route to this session with available-secondary fallback. Exact session addresses stay direct.",
+      description: "Choose a live local master of this project as its main contact. Project addresses reach all available live project sessions, including secondaries. Exact session addresses stay direct.",
       inputSchema: { to: z.string().min(1).max(64) },
     },
     guarded("project_main", async (a: { to: string }) => {
@@ -756,24 +761,28 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
       title: "Send message",
       description:
         `Send a message to another agent. "to" is a peer name from "peers", an agent kind ("claude", "codex") when exactly one is online, or "${BROADCAST}" for everyone. ` +
-        "Delivery means queued in the recipient inbox, not read. Broadcasts wake every live session according to its settings and include recently seen offline local sessions or known project masters and connected paired-PC sessions, with delivered, queued or failed results per recipient. Direct messages wake idle Claude, Codex and opencode sessions according to wakeOnDirect and available CLI transport; other recipients may read them on their next turn. " +
+        "Delivery means queued in the recipient inbox, not read. Project addresses include available live secondaries. Broadcasts wake every live session according to its settings and include recently seen offline local sessions or known project masters, connected paired-PC sessions and your running jobs; jobs:* targets only your running jobs through existing links, even when authority RPCs are unavailable. Per-recipient results report queueing, not consumption. Direct messages wake idle Claude, Codex and opencode sessions according to wakeOnDirect and available CLI transport; other recipients may read them on their next turn. " +
         "Auto-wake is handled on the recipient PC, including paired PCs; it is never enabled by send. Use wait_for_message(read_receipt_of=<sent id>) to wait for consumption. " +
         "If the recipient is offline the message waits for it. When answering with new information, pass its id as reply_to. Do not send pure acknowledgements or repeat a reply as a status note. " +
         "Delegated jobs can send to their parent, siblings, or exact local session/job names explicitly granted with send_to at spawn. Sibling messages arrive live or wait for the next turn, with a quiet supervisor copy. Sending to a finished sibling returns its saved final report immediately; it will not answer. Do not wait for finished siblings or for read receipts from them. Other sessions and broadcasts are unavailable. Peers shows grants and the sibling thread limit before composing.",
       inputSchema: {
-        to: z.string().min(1).describe('Peer name, agent kind ("claude" / "codex") or "*"'),
+        to: z.string().min(1).describe('Peer name, project address, agent kind, "*" (sessions and your running jobs), or "jobs:*" (only your running jobs)'),
         message: z.string().min(1).max(MAX_BODY_CHARS).describe("Message text (Markdown is fine)"),
         reply_to: z.string().optional().describe("Id of the message you are answering"),
         conversation_id: z.string().optional().describe("Continue an existing conversation"),
+        if_no_newer_than: z.string().optional().describe("Refuse this reply if newer unread conversation or recipient mail exists after this message id"),
+        message_kind: z.enum(["note", "question"]).optional().describe("note retains FYI/status in history without waking or injecting context; question requests supervisor attention"),
       },
     },
-    guarded("send", async (a: { to: string; message: string; reply_to?: string; conversation_id?: string }) => {
+    guarded("send", async (a: { to: string; message: string; reply_to?: string; conversation_id?: string; if_no_newer_than?: string; message_kind?: "note" | "question" }) => {
       if (!node && ctx.parent) {
+        if (a.if_no_newer_than) throw new BridgeError("bad_request", "Guarded sends require a session broker connection; read the parent/sibling inbox before replying.");
         if (ctx.jobs?.find(a.to)) {
           const result = ctx.jobs.followUp(a.to, a.message);
           return text(`Child message ${result.outcome}.`);
         }
         if (a.to !== ctx.parent.name && a.to !== "parent") {
+          if (a.message_kind) throw new BridgeError("bad_request", "message_kind applies to supervisor or session mail; sibling chat has its own quiet observer copies.");
           const result = await ctx.parent.siblings.send(a.to, a.message, a.reply_to);
           if (result.finishedRecipient) {
             const f = result.finishedRecipient;
@@ -785,14 +794,19 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
           const delivery = result.queuedFor.length ? sibling ? "queued for the sibling's next turn" : "queued for the granted session" : sibling ? "sent to sibling" : "sent to granted session";
           return text(`Message ${m.id} ${delivery} ${a.to} (conversation ${m.conversationId}, hop ${m.hop}).${sibling ? " The supervisor received a quiet copy." : ""}\n${formatReplyRestrictions(result).join("\n")}`);
         }
-        await ctx.parent.send(a.message, a.reply_to);
+        await ctx.parent.send(a.message, a.reply_to, a.message_kind);
         return text(t("send.toParent", { name: ctx.parent.name }));
       }
       const n = requireNode();
+      if (a.if_no_newer_than && (a.to === "*" || a.to === "jobs:*")) throw new BridgeError("bad_request", "Use an exact recipient or project for guarded replies; running-job broadcasts cannot be guarded.");
+      const jobBroadcast = a.to === "*" || a.to === "jobs:*" ? ctx.jobs?.broadcastRunning(a.message) ?? [] : [];
+      const jobLines = jobBroadcast.map((r) => `- ${r.name}: ${r.outcome}`);
+      if (a.to === "jobs:*") return text(jobLines.length ? `Running-job broadcast:\n${jobLines.join("\n")}\nPending approvals require an explicit decide; this message does not approve or cancel work.` : "No running jobs owned by this supervisor. Nothing sent.");
       // One of this session's subagents: it is talked to with message_subagent (a finished one would never
       // read a queued message; a running one gets message_subagent live).
       const job = ctx.jobs?.find(a.to);
       if (job && a.to === job.name) {
+        if (a.if_no_newer_than || a.message_kind) throw new BridgeError("bad_request", "Running-job messages use their live control link; reply guards and message_kind require an exact session or project broker recipient.");
         if (a.reply_to) n.markRead([a.reply_to]);
         if (job.status !== "running") {
           return text(`${a.to} has finished, so nothing was sent (it needs no reply). To continue it with more work, call message_subagent(job="${a.to}", message=...).`);
@@ -801,11 +815,18 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
         return text(`${a.to} is a running subagent: delivered as message_subagent (${outcome}). Use message_subagent for subagents.`);
       }
       if (a.reply_to) n.markRead([a.reply_to]);
-      const res = await n.send({ to: a.to, body: a.message, replyTo: a.reply_to, conversationId: a.conversation_id });
+      const res = await n.send({ to: a.to, body: a.message, replyTo: a.reply_to,
+        conversationId: a.message_kind === "note" ? `${a.conversation_id ?? `note-${Date.now()}`}:note` : a.conversation_id,
+        ifNoNewerThan: a.if_no_newer_than }).catch(err => {
+          if (!jobLines.length) throw err;
+          throw new Error(`Session broadcast failed: ${(err as Error).message}\nRunning-job broadcast already queued:\n${jobLines.join("\n")}. Do not resend to these jobs without checking consumption.`);
+        });
       const first = res.messages[0];
-      if (!first) return text(["No recipients were eligible for this broadcast.", ...formatDelivery(res, cfg.maxHops)].join("\n"));
+      if (!first) return text(["No session recipients were eligible for this broadcast.", ...formatDelivery(res, cfg.maxHops), ...jobLines].join("\n"));
       const lines = [t("send.ok", { id: first.id, conversation: first.conversationId })];
       lines.push(...formatDelivery(res, cfg.maxHops));
+      if (jobLines.length) lines.push(`Running-job broadcast:\n${jobLines.join("\n")}`);
+      if (res.unreadBeforeSend?.length) lines.push(`Warning: ${res.unreadBeforeSend.length} unread conversation/recipient message(s) were waiting before this send: ${res.unreadBeforeSend.map((m) => m.id).join(", ")}. Read inbox before settling a proposal; use if_no_newer_than for guarded replies.`);
       if (res.queuedFor.length) lines.push(t("send.queued", { names: res.queuedFor.join(", ") }));
       if (!res.replyRestrictions?.length) lines.push(t("send.waitHint"));
       lines.push(`For a consumption receipt, call wait_for_message(read_receipt_of="${first.id}").`);
@@ -1078,6 +1099,7 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
       send_to: z.array(z.string().refine(isJobSendTarget, "Use an exact local session or job name, not an agent kind, broadcast, wildcard or remote address"))
         .max(MAX_JOB_SEND_TARGETS).optional()
         .describe("Explicitly allow this job to send to these exact local session or job names, including replies to messages received by its supervisor. Default is closed. Cross-session jobs require a separate reciprocal grant to answer; they retain hop limits and quiet copies for both owners. No other external recipients are allowed. Kept across continuations."),
+      notes: z.enum(["none", "milestones", "blockers"]).optional().describe("Reporting cadence, default none/final report only. Routine notes always remain dashboard/history-only. Explicit questions, final results and approvals can still request attention."),
       ...profile.schema,
     };
     /** Run the delegate in this process. */

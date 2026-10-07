@@ -161,7 +161,7 @@ interface ApprovalRecord extends PendingApproval {
   token: string;
 }
 
-export type ApprovalAnswer = { decision: "allow" | "deny"; reason?: string };
+export type ApprovalAnswer = { decision: "allow" | "deny"; reason?: string; source?: "dashboard" | "MCP decide" };
 export type ApprovalAnswerResult = "answered" | "expired" | "unavailable";
 
 /**
@@ -188,7 +188,8 @@ export async function publishApproval(home: string, approval: PendingApproval, a
       }
       const body = JSON.parse(raw) as ApprovalAnswer;
       if (!body || (body.decision !== "allow" && body.decision !== "deny") || (body.reason !== undefined && (typeof body.reason !== "string" || body.reason.length > MAX_APPROVAL_REASON_CHARS))) return reply(400, { error: "invalid answer" });
-      const accepted = Date.now() < approval.deadline && await answer(`${body.decision}${body.reason ? `: ${body.reason}` : ""}`, "dashboard");
+      if (body.source !== undefined && body.source !== "dashboard" && body.source !== "MCP decide") return reply(400, { error: "invalid source" });
+      const accepted = Date.now() < approval.deadline && await answer(`${body.decision}${body.reason ? `: ${body.reason}` : ""}`, body.source ?? "dashboard");
       await appendContextEvent(home,{kind:"approval",agent:approval.agent,job:approval.job,payload:{event:"answered",approval:approval.id,...body,accepted}});
       reply(accepted ? 200 : 409, { outcome: accepted ? "answered" : "expired" });
     })().catch(() => reply(400, { error: "invalid answer" }));

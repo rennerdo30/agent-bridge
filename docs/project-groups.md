@@ -1,6 +1,6 @@
 # Project groups
 
-Local sessions in one project share its jobs. Claude Code, Codex and opencode can all be masters,
+Local sessions in one project share its jobs. Claude Code, Codex, opencode and Antigravity can all be masters,
 primaries, handoff targets and fallback recipients. Paired PCs stay outside local groups.
 
 The project identity uses the Git common directory and physical main checkout path, so nested
@@ -36,8 +36,9 @@ in the dashboard to change the role. `handoff_subagents(to=..., jobs="all",
 switch_project_main=true)` also switches it; the target must belong to that local project.
 
 `peers` shows main and secondary roles and the project's address, for example
-`project:animal-catch-game`. A message to that address goes to the available main, then an available
-secondary. Duplicate project names are rejected as ambiguous. Exact session names always keep
+`project:animal-catch-game`. A message to that address reaches the available main and all available
+live secondaries, so a secondary coordinating a topic sees it without a relay. Coordinate which
+session answers. Duplicate project names are rejected as ambiguous. Exact session names always keep
 direct routing. When all masters are unavailable, use an exact session name to queue mail.
 
 Main switches send a one-line notice to the previous main and local sessions that mailed that project

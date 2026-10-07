@@ -419,7 +419,17 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
   /** quiet: not part of a conversation of this agent (no listen window, replies are not awaited), e.g. control messages to a job runner. */
   send(args: SendArgs, opts: { quiet?: boolean } = {}): Promise<SendResult> {
     return this.withClient(async (c) => {
-      const res = await this.sendRequest(c, "send", { ...args, dedupeKey: args.dedupeKey || randomUUID() });
+      if (args.ifNoNewerThan) {
+        // inbox marks consumed locally before its batched ack. A guarded reply must observe
+        // those acknowledgements, otherwise it can reject the mail the caller just reviewed.
+        await Promise.all([...this.pendingAcks]);
+        while (this.unflushedAcks.size) {
+          const ids = [...this.unflushedAcks].slice(0, 500);
+          await c.request("ack", { ids });
+          ids.forEach(id => this.unflushedAcks.delete(id));
+        }
+      }
+      const res = await this.sendRequest(c, args.ifNoNewerThan ? "guardedSend" : "send", { ...args, dedupeKey: args.dedupeKey || randomUUID() });
       if (opts.quiet) return res;
       this.lastSent = Date.now();
       if (!args.replyTo) for (const m of res.messages) this.asked.add(m.id);
@@ -429,7 +439,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
   }
 
   /** A late send response can be recovered from the same broker without sending twice. */
-  private async sendRequest<O extends "send" | "sendSibling">(client: BridgeClient, op: O, args: RequestMap[O][0]): Promise<SendResult> {
+  private async sendRequest<O extends "send" | "sendSibling" | "guardedSend">(client: BridgeClient, op: O, args: RequestMap[O][0]): Promise<SendResult> {
     try { return await client.request(op, args); }
     catch (err) {
       if ((err as Error).message !== `broker request timed out: ${op}`) throw err;

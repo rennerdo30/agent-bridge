@@ -167,6 +167,7 @@ export class MessageStore {
     markRead: StatementSync;
     claim: StatementSync;
     byId: StatementSync;
+    replyConflicts: StatementSync;
   };
 
   constructor(
@@ -207,6 +208,11 @@ export class MessageStore {
       markRead: this.db.prepare(`UPDATE messages SET read_at = ? WHERE id = ? AND recipient = ? AND read_at IS NULL`),
       claim: this.db.prepare(`UPDATE OR IGNORE messages SET recipient = ? WHERE recipient = ? AND read_at IS NULL`),
       byId: this.db.prepare(`SELECT * FROM messages WHERE id = ? ORDER BY created_at ASC LIMIT 1`),
+      replyConflicts: this.db.prepare(`SELECT id, from_name, conversation_id FROM messages WHERE recipient = ? AND read_at IS NULL
+        AND (conversation_id = ? OR from_name IN (SELECT value FROM json_each(?)))
+        AND (? IS NULL OR created_at >= ?) AND id != ?
+        AND conversation_id NOT LIKE '%:note' AND conversation_id NOT LIKE '%:ack'
+        AND conversation_id NOT LIKE 'files-progress-%' ORDER BY created_at, id LIMIT 50`),
     };
     log.debug("message store opened", { file });
     if (file !== ":memory:") {
@@ -335,6 +341,23 @@ export class MessageStore {
 
   unread(recipient: string, limit: number): BridgeMessage[] {
     return (this.stmt.unread.all(recipient, limit) as unknown as Row[]).map(toMessage);
+  }
+
+  /** A guarded fan-out is one transaction; lock retries cannot leave half a send persisted. */
+  insertBatch(messages: BridgeMessage[], before: () => void = () => {}): void {
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      before();
+      for (const message of messages) this.insert(message);
+      this.db.exec("COMMIT");
+    } catch (err) { this.db.exec("ROLLBACK"); throw err; }
+  }
+
+  /** Query the whole inbox before a reply, independent of the hook batch limit. */
+  replyConflicts(recipient: string, from: string[], conversationId: string, anchor?: BridgeMessage): { id: string; from: { name: string }; conversationId: string }[] {
+    const rows = this.stmt.replyConflicts
+      .all(recipient, conversationId, JSON.stringify(from), anchor?.id ?? null, anchor?.createdAt ?? 0, anchor?.id ?? "");
+    return rows.map(row => ({ id: String(row.id), from: { name: String(row.from_name) }, conversationId: String(row.conversation_id) }));
   }
 
   /** Copy pending job mail to its new supervisor, retaining the old row as history. Replay is idempotent. */

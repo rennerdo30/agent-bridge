@@ -117,9 +117,9 @@ describe("local project permission groups", () => {
     const path = repo(), a = await node("claude-master", path), b = await node(`${agent}-master`, path);
     const outsider = await node("outside", env.home);
     expect((await a.peers()).find((p) => p.name === a.name)).toMatchObject({ projectMain: true, projectAddress: "project:project" });
-    expect((await outsider.send({ to: "project:project", body: "Project request" })).deliveredTo).toEqual([a.name]);
+    expect((await outsider.send({ to: "project:project", body: "Project request" })).deliveredTo).toEqual([a.name, b.name]);
     await a.setProjectMain(b.name);
-    expect((await outsider.send({ to: "project:project", body: "New main request" })).deliveredTo).toEqual([b.name]);
+    expect((await outsider.send({ to: "project:project", body: "New main request" })).deliveredTo).toEqual([b.name, a.name]);
     await b.setUnavailable(true);
     expect((await outsider.send({ to: "project:project", body: "Fallback request" })).deliveredTo).toEqual([a.name]);
     expect((await outsider.send({ to: b.name, body: "Exact session" })).deliveredTo).toEqual([b.name]);

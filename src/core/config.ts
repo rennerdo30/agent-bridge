@@ -56,6 +56,9 @@ export interface BridgeConfig {
   delivery: DeliveryMode;
   claudeBin: string;
   codexBin: string;
+  /** Match a TUI attached to a non-default app-server; never start another daemon to wake it. */
+  codexWakeRemote?: string | null;
+  codexWakeRemoteAuthTokenEnv?: string | null;
   /** Open native Codex child threads per job (0 disables); separate from bridge maxJobs. */
   codexSubagents: number;
   /** Default sandbox for delegated Codex runs. */
@@ -306,6 +309,8 @@ export function loadConfig(home: string, agent: AgentKind, log: Logger, env: Nod
     delivery: pick("delivery", ENV.delivery, (v) => oneOf(v, DELIVERY_MODES)) ?? d.delivery,
     claudeBin: pick("claudeBin", ENV.claudeBin, str) ?? d.claudeBin,
     codexBin: pick("codexBin", ENV.codexBin, str) ?? d.codexBin,
+    codexWakeRemote: pick("codexWakeRemote", "AGENT_BRIDGE_CODEX_WAKE_REMOTE", str) ?? null,
+    codexWakeRemoteAuthTokenEnv: pick("codexWakeRemoteAuthTokenEnv", "AGENT_BRIDGE_CODEX_WAKE_REMOTE_AUTH_TOKEN_ENV", str) ?? null,
     codexSubagents: pick("codexSubagents", null, (v) => {
       const n = typeof v === "string" && /^\d+$/.test(v) ? Number(v) : v;
       return typeof n === "number" && Number.isInteger(n) && n >= 0 && n <= MAX_CODEX_SUBAGENTS ? n : undefined;

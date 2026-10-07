@@ -26,6 +26,23 @@ async function pending(count = 1) {
 }
 
 describe("pending approvals", () => {
+  it("labels an infrastructure/no-answer expiry without claiming an owner denial", async () => {
+    const messages: string[] = [];
+    const answer = waitForApproval(job(), "Approval?", 30, m => messages.push(m), nullLogger);
+    await new Promise(r => setTimeout(r, 50));
+    expect((await answer).allow).toBe(false);
+    expect(messages.at(-1)).toContain("expired without a decision");
+    expect(messages.at(-1)).not.toContain("denied by timeout");
+  });
+  it("identifies MCP decide rather than the dashboard in the job's decision report", async () => {
+    const messages: string[] = [];
+    const answer = waitForApproval(job(), "Run checks?", 5_000, m => messages.push(m), nullLogger, env.home, request);
+    const [entry] = await pending();
+    expect(await answerPendingApproval(env.home, entry!.id, { decision: "allow", source: "MCP decide" })).toBe("answered");
+    expect((await answer).allow).toBe(true);
+    expect(messages.at(-1)).toContain("allowed by MCP decide");
+    expect(messages.at(-1)).not.toContain("allowed by dashboard");
+  });
   it("publishes metadata and lets the dashboard answer the waiting job once", async () => {
     const j = job(), messages: string[] = [];
     const answer = waitForApproval(j, "Run tests?", 5_000, (m) => messages.push(m), nullLogger, env.home, request);

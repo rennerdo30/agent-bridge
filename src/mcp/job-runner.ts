@@ -176,9 +176,9 @@ async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: WindowsJo
       return answer.finally(() => save());
     },
     // Its own status notes do not wake the session (see JobManager.fromSubagent); answers and replies do.
-    fromSubagent: (j, body, replyTo, isAnswer) => {
-      const answer = Boolean(isAnswer) || replyTo !== null || j.awaitingAnswer === true;
-      j.awaitingAnswer = false;
+    fromSubagent: (j, body, replyTo, isAnswer, forceNote) => {
+      const answer = !forceNote && (Boolean(isAnswer) || replyTo !== null || j.awaitingAnswer === true);
+      if (!forceNote && !isPureAcknowledgement(body)) j.awaitingAnswer = false;
       void post(body, replyTo, !answer);
     },
     note: (j, facts) => {

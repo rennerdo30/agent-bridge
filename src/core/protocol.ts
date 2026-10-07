@@ -39,7 +39,7 @@ export function isSiblingNote(m: Pick<BridgeMessage, "conversationId">): boolean
 }
 
 export function isQuietMessage(m: Pick<BridgeMessage, "conversationId">): boolean {
-  return isSiblingNote(m) || m.conversationId.endsWith(ACK_CONVERSATION_SUFFIX) || m.conversationId.startsWith(TRANSFER_PROGRESS_PREFIX);
+  return m.conversationId.endsWith(SIBLING_NOTE_SUFFIX) || m.conversationId.endsWith(ACK_CONVERSATION_SUFFIX) || m.conversationId.startsWith(TRANSFER_PROGRESS_PREFIX);
 }
 
 export interface SiblingPeer {
@@ -149,6 +149,8 @@ export interface SendArgs {
   body: string;
   conversationId?: string;
   replyTo?: string;
+  /** Refuse a stale reply when newer inbound mail exists in the conversation. */
+  ifNoNewerThan?: string;
   /**
    * Same key on a retry of the same message: the broker sends it once. A request can time out on the
    * sender's side while the broker, merely slow, still has it queued.
@@ -161,6 +163,8 @@ export interface MessageReceipt {
 }
 
 export interface SendResult {
+  /** Relevant unread mail at routing time. Delivery does not resolve crossed replies. */
+  unreadBeforeSend?: { id: string; from: string; conversationId: string }[];
   projectRoute?: ProjectRoute;
   /** Wake requested according to advertised policy, not proof a native turn started. */
   wakeRequestedFor?: string[];
@@ -210,6 +214,8 @@ export interface AuthArgs {
 }
 
 export interface RequestMap {
+  /** Separate opcode so an older broker refuses rather than silently ignoring the guard. */
+  guardedSend: [SendArgs, SendResult];
   askOwner: [import("./owner-questions.js").AskOwnerArgs, { question: import("./owner-questions.js").OwnerQuestion; merged: boolean; similar: string[] }];
   ownerQuestions: [Record<string, never>, import("./owner-questions.js").OwnerQuestion[]];
   answerOwner: [{ id: string; answer: import("./owner-questions.js").QuestionAnswerArgs }, import("./owner-questions.js").OwnerQuestion];

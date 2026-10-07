@@ -18,8 +18,8 @@ export const WAKE_PROMPT =
 export type Activity = "busy" | "idle";
 
 /**
- * Codex has no MCP push, but `codex queue` starts a turn on an idle thread. When auto-wake is on and
- * this Codex session is idle, a new peer message triggers one queued turn.
+ * `codex queue` submits thread/queue/add to the existing app-server. An attached TUI consumes
+ * that queue; success alone proves acceptance, never a started turn or inbox consumption.
  */
 export class CodexWaker {
   private state: Activity = "idle";
@@ -102,14 +102,16 @@ export class CodexWaker {
     try {
       const res = await runProcess({
         bin: this.cfg.codexBin,
-        args: ["queue", "--thread", this.threadId, "--message", WAKE_PROMPT],
+        args: ["queue", "--thread", this.threadId, "--message", WAKE_PROMPT,
+          ...(this.cfg.codexWakeRemote ? ["--remote", this.cfg.codexWakeRemote] : []),
+          ...(this.cfg.codexWakeRemoteAuthTokenEnv ? ["--remote-auth-token-env", this.cfg.codexWakeRemoteAuthTokenEnv] : [])],
         stdin: "",
         cwd: this.node.cwd,
         timeoutMs: this.timings.queueTimeoutMs,
         env: { ...process.env, [ENV.internal]: "1" },
         log: this.log,
       });
-      if (res.code === 0) this.log.info("queued wake-up turn for codex", { threadId: this.threadId });
+      if (res.code === 0) this.log.info("codex accepted queued wake message; turn and consumption unconfirmed", { threadId: this.threadId });
       else {
         failed();
         this.log.warn("codex queue failed", { code: res.code, stderr: res.stderr.slice(-1000) });

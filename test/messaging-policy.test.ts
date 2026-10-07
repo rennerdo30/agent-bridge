@@ -47,14 +47,15 @@ describe("messaging context policy", () => {
     await node.start();
     const notes = Array.from({ length: 169 }, (_, i) => mail(`siblings-${i}:note`, `Old handover ${i}`, i));
     notes.forEach((m) => node.deliverLocal(m));
-    const result = mail("job-worker:note", "Tests passed; capture is ready", 170);
+    const result = mail("job-worker", "Tests passed; capture is ready", 170);
     node.deliverLocal(result);
     const ctx = { node, home: env.home, log: nullLogger, cfg: DEFAULT_CONFIG, channelActive: () => channel } as unknown as ServerContext;
     const output = await buildHookResponse(ctx, { event: "PostToolUse", sessionId: null, stopHookActive: false });
-    expect(JSON.stringify(output)).toContain(result.body);
+    if (channel) expect(output).toEqual({}); // Actionable results are pushed by the active channel.
+    else expect(JSON.stringify(output)).toContain(result.body);
     expect(JSON.stringify(output)).not.toContain("Old handover");
-    expect(node.unread()).toHaveLength(notes.length);
-    expect(node.unread().every(isQuietMessage)).toBe(true);
+    expect(node.unread()).toHaveLength(notes.length + Number(channel));
+    expect(node.unread().filter(isQuietMessage)).toHaveLength(notes.length);
   });
 
   it("prioritizes active mail over more than a pending page of quiet copies without removing data", () => {

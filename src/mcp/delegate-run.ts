@@ -50,7 +50,7 @@ const HANDOFF_DECLINED =
 export const PARENT_APPROVAL_TIMEOUT_MS = 10 * 60_000;
 
 /** _worktree: internal, a follow-up continuing in an existing worktree. _job: the job's name. */
-export type DelegateArgs = { prompt: string; host?: string; model?: string; effort?: string; session_id?: string; cwd?: string; timeout_sec?: number; worktree?: boolean; allow_tools?: string[]; send_to?: string[]; title: string; _worktree?: Worktree; _job?: string } & TargetArgs;
+export type DelegateArgs = { prompt: string; host?: string; model?: string; effort?: string; session_id?: string; cwd?: string; timeout_sec?: number; worktree?: boolean; allow_tools?: string[]; send_to?: string[]; notes?: "none" | "milestones" | "blockers"; title: string; _worktree?: Worktree; _job?: string } & TargetArgs;
 
 /** Where a background job's approval questions, answers and facts go: this session's JobManager, or a job runner's link to it. */
 export interface JobSink {
@@ -59,7 +59,7 @@ export interface JobSink {
   escalateApproval?: (job: Job, body: string) => Promise<void>;
   askParent(job: Job, question: string, timeoutMs: number, request?: PermissionRequest): Promise<{ allow: boolean; reason: string }>;
   /** isAnswer: its answer to a live message (wakes the session); else a note unless it replies to something. */
-  fromSubagent(job: Job, body: string, replyTo: string | null, isAnswer?: boolean): void;
+  fromSubagent(job: Job, body: string, replyTo: string | null, isAnswer?: boolean, forceNote?: boolean): void;
   note(job: Job, facts: { sessionId?: string | null; workdir?: string | null; worktree?: Worktree | null }): void;
 }
 
@@ -214,7 +214,7 @@ async function runDelegateInner(
       return answer.allow ? { allow: true } : { allow: false, message: answer.reason };
     }
     const decision = await waitForApproval(job, `${r.tool}: ${r.detail}`, PARENT_APPROVAL_TIMEOUT_MS,
-      (body) => rc.jobs?.fromSubagent(job, body, null), dlog, rc.home, r, () => rc.askUser!(r));
+      (body) => rc.jobs?.fromSubagent(job, body, null, true), dlog, rc.home, r, () => rc.askUser!(r));
     return decision.allow ? { allow: true } : { allow: false, message: decision.reason.replace(/^deny:\s*/, "") };
   } : undefined;
   try {
@@ -321,9 +321,9 @@ async function runDelegateInner(
     void jobNode.start().catch((err) => dlog.warn("sibling bridge unavailable; retrying", { err: (err as Error).message }));
     const l = new ParentLink(
       me,
-      (body, replyTo) => {
+      (body, replyTo, kind) => {
         feed.report(`answer to ${me}: ${body.split("\n")[0]!.slice(0, 120)}`, `answer to ${me}: ${body}`);
-        jobs.fromSubagent(job, body, replyTo);
+        jobs.fromSubagent(job, body, replyTo, kind === "question", kind === "note");
       },
       dlog,
       (percent, note, eta) => {
@@ -387,7 +387,9 @@ async function runDelegateInner(
       {
         // With a live link the subagent can report how far it is (report_progress; shown in the dashboard).
         // A new session learns once that it reports back and leaves the handoff alone.
-        prompt: [a.prompt, a.session_id ? null : DELEGATED_JOB_NOTE, linkRoot ? WORKTREE_LINK_HINT : null, link ? PROGRESS_HINT : null, link ? SIBLING_HINT : null, resourceSlotHint(cfg.resourceSlots, bundledCli())].filter(Boolean).join("\n\n"),
+        prompt: [a.prompt, a.session_id ? null : DELEGATED_JOB_NOTE,
+          `(agent-bridge reporting: ${a.notes === "milestones" ? 'Send only milestone notes, using send(message_kind="note").' : a.notes === "blockers" ? 'Send only blockers requiring attention, using send(message_kind="question").' : 'No unsolicited progress notes. Final report only.'} Use report_progress for dashboard progress. Questions requiring a supervisor decision use send(message_kind="question"); replies to a live request and final reports still reach the supervisor.)`,
+          linkRoot ? WORKTREE_LINK_HINT : null, link ? PROGRESS_HINT : null, link ? SIBLING_HINT : null, resourceSlotHint(cfg.resourceSlots, bundledCli())].filter(Boolean).join("\n\n"),
         title: (typeof job?.args?.title === "string" && job.args.title) || a.title,
         cwd: workdir,
         sessionId: a.session_id ?? null,

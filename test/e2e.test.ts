@@ -19,7 +19,6 @@ async function spawnAgent(agent: "claude" | "codex" | "antigravity", name: strin
     command: process.execPath,
     cwd: home,
     args: [SERVER, `--agent=${agent}`],
-    cwd: home,
     env: { ...process.env, AGENT_BRIDGE_HOME: home, AGENT_BRIDGE_NAME: name, AGENT_BRIDGE_DELIVERY: "hooks", AGENT_BRIDGE_DASHBOARD: "off", AGENT_BRIDGE_LOG_LEVEL: "debug", CLAUDE_CONFIG_DIR: join(home, "claude"), CODEX_HOME: join(home, "codex"), XDG_DATA_HOME: home } as Record<string, string>,
     stderr: "ignore",
   });

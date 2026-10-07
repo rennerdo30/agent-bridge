@@ -33,10 +33,13 @@ it("wakes an idle native opencode group fallback once with auto-wake off", async
     agent: "other", jobAgent: "codex", jobOwner: primary.id, jobParent: primary.name, cwd: env.home, autoWake: false, log: nullLogger, canHostBroker: false });
   await runner.start();
   await primary.setUnavailable(true);
-  await runner.send({ to: primary.name, body: "Native group fallback note", conversationId: "job-native:note" });
-  await expect.poll(() => prompts.filter((p) => p.text.includes("Native group fallback note")).length, { timeout: 8000 }).toBe(1);
-  expect(prompts.find((p) => p.text.includes("Native group fallback note"))!.noReply).toBe(false);
-  expect(await plugin.tool.bridge_inbox.execute({}, ctx)).not.toContain("Native group fallback note");
+  await runner.send({ to: primary.name, body: "Quiet group fallback note", conversationId: "job-native:note" });
+  expect(await plugin.tool.bridge_inbox.execute({ include_quiet: true }, ctx)).toContain("Quiet group fallback note");
+  expect(prompts.some(p => p.text.includes("Quiet group fallback note"))).toBe(false);
+  await runner.send({ to: primary.name, body: "Native group fallback report", conversationId: "job-native" });
+  await expect.poll(() => prompts.filter((p) => p.text.includes("Native group fallback report")).length, { timeout: 8000 }).toBe(1);
+  expect(prompts.find((p) => p.text.includes("Native group fallback report"))!.noReply).toBe(false);
+  expect(await plugin.tool.bridge_inbox.execute({}, ctx)).not.toContain("Native group fallback report");
   await primary.setUnavailable(false);
   await runner.send({ to: primary.name, body: "Returned primary note", conversationId: "job-native:note" });
   await expect.poll(() => primary.unread().some((m) => m.body === "Returned primary note")).toBe(true);
