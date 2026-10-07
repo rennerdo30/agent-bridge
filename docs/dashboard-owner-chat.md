@@ -1,5 +1,9 @@
 # Owner input from session Chat (AB-140)
 
+Release scope: **0.29.16 supports Claude Code, Codex and opencode**. Antigravity
+registration and its owner-chat hook transport follow in **0.29.17**; the
+Antigravity sections below describe that companion integration and its limits.
+
 Research date: 2026-10-07. Read-only CLI probes and version-matched source are
 evidence of an available transport, not a successful model turn. Automated tests
 mock the CLIs. No CLI transcript, session database or user configuration is edited.

@@ -276,7 +276,7 @@ Turn the automatic start off with `"dashboard": false` in `~/.agent-bridge/confi
 The dashboard has a **sessions sidebar**, grouped by PC, with search and folding:
 
 - **Overview:** connected sessions, usage left, working and finished jobs, and message history with a box to send a message yourself (as "you"). Finished jobs show merge/review outcomes.
-- **Session page:** its own read-only chat and a subagent tree with nested bridge jobs and the CLIs' own subagents. Conversations use chat bubbles; commands fold into rows, and follow-ups stay in the same job. Progress and ETA appear in the job row and conversation header. Older finished runs fold into an archive and remain readable.
+- **Session page:** its own chat with an owner-message composer for local sessions, and a subagent tree with nested bridge jobs and the CLIs' own subagents. Native children offer supported direct input or a note to their parent. Conversations use chat bubbles; commands fold into rows, and follow-ups stay in the same job. Progress and ETA appear in the job row and conversation header. Older finished runs fold into an archive and remain readable.
 - **Search history:** search messages, subagent runs, Decisions and CLI chats, including archived history; filter by kind or agent, inspect sources, or opt into a model-generated summary.
 - **Decisions:** pinned owner choices with scope and revision history.
 - **Waiting for you:** pending approvals with countdowns and allow/deny controls, plus optional browser notifications.
