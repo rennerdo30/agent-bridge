@@ -1,3 +1,4 @@
+import { ProjectGroups } from "../core/project-groups.js";
 import { canControlJob } from "../core/job-ownership.js";
 import { join } from "node:path";
 import { JOBS_FILE } from "../core/constants.js";
@@ -67,7 +68,7 @@ async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: WindowsJo
   let owner = spec.owner;
   const refreshOwner = () => {
     const saved = readStore(join(home, JOBS_FILE)).find((j) => j.id === job.id);
-    if (!saved?.ownershipHistory?.length) return;
+    if (!saved) return;
     owner = saved.owner ?? owner;
     Object.assign(job, { owner, supervisor: saved.supervisor, parentJob: saved.parentJob, rootSession: saved.rootSession, rootName: saved.rootName,
       ownershipHistory: saved.ownershipHistory, masters: saved.masters, args: { ...job.args, send_to: saved.args?.send_to } });
@@ -174,7 +175,7 @@ async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: WindowsJo
     },
   };
 
-  node.on("message", (m) => {
+  node.on("message", async (m) => {
     // Direct sibling chat is handled by the current turn's SiblingLink, never as supervisor control.
     if (m.conversationId.startsWith(SIBLING_CONVERSATION_PREFIX)) return;
     node.markRead([m.id]);
@@ -198,10 +199,13 @@ async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: WindowsJo
       return;
     }
     refreshOwner();
-    if (job.ownershipHistory?.length && !canControlJob(job as unknown as Record<string, unknown>, m.from.name)) return;
+    if (!owner.includes("/") && !canControlJob(job as unknown as Record<string, unknown>, m.from.name)) {
+      const peers = await node.peers();
+      const master = peers.find((p) => p.name === m.from.name);
+      if (!master || !new ProjectGroups(home).canControl(master, job as unknown as Record<string, unknown>, peers)) return;
+    }
     // The session may be a new server now, maybe under another name: answer where it is.
     if (m.from.name !== owner) log.info("the job's session is now", { name: m.from.name, was: owner });
-    if (!job.ownershipHistory?.length) owner = m.from.name;
     void node.updateJob({ jobParent: owner }).catch(() => {});
     if (c.type === "message") {
       if (closing) return;

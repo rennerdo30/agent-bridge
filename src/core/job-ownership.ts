@@ -3,8 +3,10 @@ import type { PeerInfo } from "./protocol.js";
 export type OwnedJob = Record<string, unknown>;
 function text(value: unknown): string | undefined { return typeof value === "string" && value ? value : undefined; }
 
+/** Legacy direct records may retain a stale rootName after their owner changed. */
 export function primaryFor(job: OwnedJob): string {
-  return (!job.parentJob && (!Array.isArray(job.ownershipHistory) || !job.ownershipHistory.length) ? text(job.owner) : undefined) ?? text(job.rootName) ?? text(job.owner) ?? "";
+  return (!job.parentJob && (!Array.isArray(job.ownershipHistory) || !job.ownershipHistory.length) ? text(job.owner) : undefined)
+    ?? text(job.rootName) ?? text(job.owner) ?? "";
 }
 
 /** Persisted grants and historical primaries remain masters; nested parent jobs are not sessions. */
