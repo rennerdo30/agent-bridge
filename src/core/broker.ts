@@ -1336,8 +1336,12 @@ export class Broker {
   /** A pending response is one frame, unlike streamed replay events. Bound it by bytes as well as rows. */
   private pendingMail(recipient: string, limit: number): BridgeMessage[] {
     const result: BridgeMessage[] = [];
+    const unavailable = this.connByName(recipient)?.peer?.unavailable;
     let bytes = 1_024; // response envelope and separators
     for (const message of this.unreadMail(recipient, limit)) {
+      // Explicit refills must not bypass the live/replay availability fence.
+      // Ordinary peer and sibling mail still flow; job reports stay durable.
+      if (unavailable && message.from.id.startsWith("job:") && !message.conversationId.startsWith("siblings-")) continue;
       const size = Buffer.byteLength(JSON.stringify(message)) + 1;
       if (bytes + size > MAX_FRAME_BYTES) break;
       result.push(message);

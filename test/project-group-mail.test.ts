@@ -66,11 +66,17 @@ describe("durable project job mail", () => {
     const inline = { ...sent.messages[0]!, id: randomUUID(), body: "Retained inline report" };
     await source.reportInlineJob(inline);
     expect(sent.deliveredTo).toEqual([]); expect(sent.queuedFor).toEqual([source.name]);
+    // Refill RPCs must obey the same availability fence as live and replay events.
+    await source.refreshPending(); await secondary.refreshPending();
     expect(source.unread()).toHaveLength(0); expect(secondary.unread()).toHaveLength(0);
     await source.setUnavailable(false);
     await expect.poll(() => source.unread().filter((m) => m.id === sent.messages[0]!.id).length).toBe(1);
     expect(source.unread().filter((m) => m.id === inline.id)).toHaveLength(1);
     source.markRead([sent.messages[0]!.id, inline.id]);
+    // A local read precedes the broker ACK; reassign only after consumption is durable.
+    for (const id of [sent.messages[0]!.id, inline.id]) {
+      await expect.poll(async () => (await runner.messageReceipt(id))[0]?.readAt).toBeTypeOf("number");
+    }
     await source.setUnavailable(true); await secondary.setUnavailable(false);
     expect(secondary.unread()).toHaveLength(0);
   });
