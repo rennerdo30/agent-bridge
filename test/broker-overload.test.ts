@@ -24,11 +24,13 @@ describe("broker overload survival", () => {
     const message = { id: randomUUID(), from: { id: "job:deferred", name: "opencode-job-deferred", agent: "opencode" as const },
       to: "reader", recipient: "reader", conversationId: "job-deferred", replyTo: null, hop: 0, body: "DEFERRED_RESULT", createdAt: Date.now(), readAt: null };
     const jobs = join(env.home, JOBS_FILE);
-    writeFileSync(jobs, JSON.stringify({ version: 3, jobs: [{ id: "deferred", name: "opencode-job-deferred", agent: "opencode", status: "done", owner: "reader", rootName: "reader",
-      ownershipHistory: [{ from: "old", to: "reader" }], deliveryHistory: [message] }] }));
     const store = new MessageStore(env.db, nullLogger);
     const broker = new Broker(env.pipe, store, nullLogger, loadOrCreateToken(env.home), Date.now, jobs);
     await broker.listen();
+    await broker.routePendingJobMail();
+    writeFileSync(jobs, JSON.stringify({ version: 4, jobs: [{ id: "deferred", name: "opencode-job-deferred", agent: "opencode", status: "done", owner: "reader", rootName: "reader",
+      workdir: env.home, projectRoot: env.home, rootSession: "fixture-root", supervisor: "fixture-root",
+      ownershipHistory: [{ from: "old", to: "reader" }], deliveryHistory: [message] }] }));
     try {
       vi.spyOn(store, "retryWrite").mockRejectedValueOnce(new Error("database is locked"));
       await expect(broker.routePendingJobMail()).rejects.toThrow("database is locked");
@@ -79,7 +81,7 @@ describe("broker overload survival", () => {
       to: "recipient", recipient: "recipient", conversationId: "job-inline", replyTo: null, hop: 0, body: "LOCKED_SEND", createdAt: Date.now(), readAt: null };
     const savedJob = {
       id: "inline", name: "opencode-job-inline", agent: "opencode", status: "done", owner: recipient.name,
-      rootName: recipient.name, executionOwner: sender.name, startedAt: Date.now(), prompt: "fixture",
+      rootName: recipient.name, rootSession: "fixture-root", supervisor: "fixture-root", workdir: env.home, projectRoot: env.home, executionOwner: sender.name, startedAt: Date.now(), prompt: "fixture",
       ...(operation.endsWith("result") && operation !== "inline result" ? { ownershipHistory: [{ from: sender.name, to: recipient.name, fromRootName: sender.name, rootName: recipient.name }], deliveryHistory: operation.includes("runner") ? [] : [inline] } : {}),
     };
     if (operation !== "send") writeFileSync(join(env.home, JOBS_FILE), JSON.stringify({ version: 3, jobs: [savedJob] }));

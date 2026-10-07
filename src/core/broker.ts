@@ -598,7 +598,7 @@ export class Broker {
         if (this.store.insertOnce(m)) { const conn = this.connByName(recipient!); if (conn) this.emit(conn, "message", m); }
       }
     }
-    this.routePendingJobMail();
+    void this.routePendingJobMail().catch((err) => this.log.warn("pending job reroute deferred", { err: String(err) }));
   }
 
   routePendingJobMail(): Promise<void> {
@@ -628,26 +628,25 @@ export class Broker {
           if (this.closing) return;
           const job = this.storedJobs().find((record) => record.id === snapshot.id);
           if (!job || job.remote || !primaryFor(job)) return;
-      const recipient = this.jobRecipient(job), target = this.connByName(recipient);
-      if (Array.isArray(job.deliveryHistory)) for (const envelope of job.deliveryHistory) {
-        if (!isRecord(envelope) || !isRecord(envelope.from) || envelope.from.id !== `job:${job.id}` || typeof envelope.id !== "string" || typeof envelope.body !== "string") continue;
-        const message = { ...envelope, to: recipient, recipient, conversationId: this.jobConversation(job, recipient, String(envelope.conversationId)) } as unknown as BridgeMessage;
-        if (this.store.insertJobDelivery(message)) {
-          const names = new Set([recipient, envelope.to, envelope.recipient, ...mastersFor(job)]);
-          const consumed = this.jobsPath && [...names].some((name) => typeof name === "string" &&
-            new ReadJournal(dirname(this.jobsPath!)).read(`name:${name}`).includes(message.id));
-          if (consumed) this.store.markRead(recipient, [message.id], this.now());
-            else if (target && !target.peer?.unavailable) this.emit(target, "message", message);
-        }
-      }
-      if (!target || target.peer?.unavailable) return;
-      for (const from of this.store.pendingJobRecipients(String(job.id))) {
-        if (this.jobsPath) this.store.markRead(from, new ReadJournal(dirname(this.jobsPath)).read(`name:${from}`), this.now());
-        const moved = this.store.handoffMail(from, recipient, String(job.id), this.now(), recipient !== job.parentJob && recipient !== primaryFor(job));
-        const previous = this.connByName(from);
-        if (previous && moved.length) this.emit(previous, "mail_retracted", { ids: moved.map((m) => m.id) });
-        for (const m of moved) this.emit(target, "message", m);
-      }
+          const recipient = this.jobRecipient(job), target = this.connByName(recipient);
+          if (Array.isArray(job.deliveryHistory)) for (const envelope of job.deliveryHistory) {
+            if (!isRecord(envelope) || !isRecord(envelope.from) || envelope.from.id !== `job:${job.id}` || typeof envelope.id !== "string" || typeof envelope.body !== "string") continue;
+            const message = { ...envelope, to: recipient, recipient, conversationId: this.jobConversation(job, recipient, String(envelope.conversationId)) } as unknown as BridgeMessage;
+            const inserted = this.store.insertJobDelivery(message);
+            const names = new Set([recipient, envelope.to, envelope.recipient, ...mastersFor(job)]);
+            const consumed = this.jobsPath && [...names].some((name) => typeof name === "string" &&
+              new ReadJournal(dirname(this.jobsPath!)).read(`name:${name}`).includes(message.id));
+            if (consumed) this.store.markRead(recipient, [message.id], this.now());
+            else if (inserted && target && !target.peer?.unavailable) this.emit(target, "message", message);
+          }
+          if (!target || target.peer?.unavailable) return;
+          for (const from of this.store.pendingJobRecipients(String(job.id))) {
+            if (this.jobsPath) this.store.markRead(from, new ReadJournal(dirname(this.jobsPath)).read(`name:${from}`), this.now());
+            const moved = this.store.handoffMail(from, recipient, String(job.id), this.now(), recipient !== job.parentJob && recipient !== primaryFor(job));
+            const previous = this.connByName(from);
+            if (previous && moved.length) this.emit(previous, "mail_retracted", { ids: moved.map((m) => m.id) });
+            for (const m of moved) this.emit(target, "message", m);
+          }
         });
       }
     } while (this.pendingJobMailRouteAgain && !this.closing);
@@ -969,7 +968,7 @@ export class Broker {
     if (args.unavailable !== undefined) {
       if (peer.jobAgent || typeof args.unavailable !== "boolean") throw new BridgeError("bad_request", "Only masters can change availability.");
       peer.unavailable = args.unavailable;
-      this.routePendingJobMail();
+      void this.routePendingJobMail().catch((err) => this.log.warn("pending job reroute deferred", { err: String(err) }));
       if (!peer.unavailable) this.replayMail(conn, peer);
     }
     if (peer.jobOwner) {
