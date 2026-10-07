@@ -92,6 +92,11 @@ const MIGRATIONS = [
   { version: 8, sql: CONVERSATION_MIGRATION },
 ] as const;
 
+/** Upgrade only the schema, without broker startup, archive movement or retention. */
+export function migrateMessageSchema(db: DatabaseSync, file: string, existed: boolean, log: Logger): void {
+  migrateSqlite(db, file, existed, SQLITE_STORE_VERSION, MIGRATIONS, log);
+}
+
 export function registrationIdentity(peer: PeerInfo): string | null {
   if (peer.jobAgent || !Number.isSafeInteger(peer.agentPid) || !peer.agentPid || peer.agentPid <= 0 || !peer.agentStartedAt) return null;
   let cwd = resolve(peer.cwd);
@@ -163,7 +168,7 @@ export class MessageStore {
     try { this.db = new DatabaseSync(file); }
     catch (err) { this.release(); throw err; }
     try {
-      migrateSqlite(this.db, file, existed, SQLITE_STORE_VERSION, MIGRATIONS, log);
+      migrateMessageSchema(this.db, file, existed, log);
       this.db.exec("PRAGMA journal_mode = WAL;");
     } catch (err) {
       this.db.close();
