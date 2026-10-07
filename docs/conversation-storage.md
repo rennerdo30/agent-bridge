@@ -169,7 +169,8 @@ real project.
 
 Conversation reads add `foreignHome: true` to conclusively identified existing
 fixture records: source paths within a nested test home, job snapshots whose
-workdir is such a home, and the recorded `owner-smoke-main` bridge sender.
+workdir is such a home, the recorded `owner-smoke-main` sender, and bridge message
+rows from the bundled `claude-e2e`, `codex-e2e` and `antigravity-e2e` senders.
 The original records, raw bytes, numeric cursors and metadata remain intact.
 Imported real native transcripts are not classified by proximity to a fixture.
 Unknown provenance remains unmarked. Consumers can exclude flagged records

@@ -10,7 +10,7 @@ import { finishedRunLine } from "./run-archive.js";
 import { DEFAULT_RUN_PAGE_SIZE, MAX_RUN_PAGE_SIZE, pageRuns, readHistoryJobs, readHistoryJson, readRunLogs, readRunStarts } from "./run-history.js";
 import type { Worktree } from "./worktree.js";
 import { listNativeSubagents, readTranscript, TRANSCRIPT_ID, validTranscriptCursor, type TranscriptPaths } from "./transcripts/index.js";
-import { deriveJobOutcome, listJobOutcomes, JOB_OUTCOME_CONTRACT_VERSION, type JobOutcome, type OutcomeJob } from "./job-outcomes.js";
+import { deriveJobOutcome, listJobOutcomes, readResultDelivery, JOB_OUTCOME_CONTRACT_VERSION, type JobOutcome, type OutcomeJob } from "./job-outcomes.js";
 import { JOB_SETTING_KEYS } from "../mcp/job-settings.js";
 import { readStore } from "../mcp/jobs.js";
 import { dashboardRequestSchema, type DashboardReadRequest, type DashboardReadResult } from "../network/dashboard-protocol.js";
@@ -61,12 +61,16 @@ export async function finishedRunOutcomes(home: string, log: Logger, names?: Set
       status: run.status, worktree: stored?.worktree,
       remote: (run as RunSummary & { remote?: OutcomeJob["remote"] }).remote ?? (stored as OutcomeJob | undefined)?.remote,
     };
-    const receiptRuns = names ? readRunStarts(home) : runs;
+    // With no receipt evidence, bounding an empty result needs no unrelated metadata.
+    // Freeze that read so a concurrently arriving later-turn result cannot leak in.
+    const delivery = names ? readResultDelivery(home, job) : undefined;
+    const receiptRuns = names && delivery?.status !== "unknown" ? await readRunStarts(home) : runs;
     const next = receiptRuns.filter((r) => r.job === run.job && (r.jobStartedAt ?? r.startedAt) > startedAt)
       .sort((a, b) => (a.jobStartedAt ?? a.startedAt) - (b.jobStartedAt ?? b.startedAt))[0];
     out[run.name] = await deriveJobOutcome(home, job, log, {
       branch: run.branch, baseBranch: run.baseBranch, repoRoot: run.repoRoot,
       branchHead: run.branchHead, before: next?.jobStartedAt ?? next?.startedAt,
+      ...(delivery?.status === "unknown" ? { delivery } : {}),
     });
   }
   return out;

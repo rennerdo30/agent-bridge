@@ -1,5 +1,6 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { writeFile } from 'node:fs/promises';
 import { execFileSync } from 'node:child_process';
 import { beforeEach, afterEach, expect, it } from 'vitest';
 import { readDashboard } from '../src/core/dashboard-read.js';
@@ -17,16 +18,21 @@ it('derives only the selected job or run from a 700-run corpus in under one seco
   execFileSync('git',['-C',repo,'branch','fixture'],{stdio:'ignore'});
   (jobs[699] as any).worktree={repoRoot:repo,cwd:repo,branch:'fixture',baseBranch:'main'};
   writeFileSync(join(env.home,JOBS_FILE),JSON.stringify({jobs}));
-  for(let i=0;i<700;i++){
-    const name=`2026-10-07-10-00-00-codex-${i}`;
-    writeFileSync(join(root,`${name}.log`),`10:00:00 codex\n${'fixture line\n'.repeat(5000)}10:00:01 finished after 1s · done\n`);
-    writeFileSync(join(root,`${name}.json`),JSON.stringify({job:jobs[i]!.name,jobStartedAt:1,by:'fixture',...(i===699?{repoRoot:repo,branch:'fixture',baseBranch:'main'}:{})}));
+  for (let offset = 0; offset < 700; offset += 32) {
+    await Promise.all(Array.from({length: Math.min(32, 700 - offset)}, async (_, n) => {
+      const i = offset + n, name = `2026-10-07-10-00-00-codex-${i}`;
+      await Promise.all([
+        writeFile(join(root, `${name}.log`), `10:00:00 codex\n${'fixture line\n'.repeat(5000)}10:00:01 finished after 1s · done\n`),
+        writeFile(join(root, `${name}.json`), JSON.stringify({job:jobs[i]!.name,jobStartedAt:1,by:'fixture',...(i===699?{repoRoot:repo,branch:'fixture',baseBranch:'main'}:{})})),
+      ]);
+    }));
   }
   const ctx={home:env.home,log:nullLogger,peers:()=>[]};
   for (const state of ['merged', 'unmerged']) {
     if (state === 'unmerged') {
       execFileSync('git', ['-C', repo, 'checkout', 'fixture'], {stdio:'ignore'});
       execFileSync('git', ['-C', repo, '-c', 'user.name=rennerdo30', '-c', 'user.email=9086097+rennerdo30@users.noreply.github.com', 'commit', '--allow-empty', '-m', 'Fixture work'], {stdio:'ignore'});
+      execFileSync('git', ['-C', repo, 'pack-refs', '--all'], {stdio:'ignore'});
     }
     for(const query of [{job:'codex-job-699'},{run:'2026-10-07-10-00-00-codex-699'}]){
       const start=performance.now(),result=await readDashboard(ctx,{path:'/api/job-outcomes',query});

@@ -1,4 +1,5 @@
-import { lstatSync, readFileSync, readdirSync, realpathSync, statSync } from "node:fs";
+import { readFile } from "node:fs/promises";
+import { lstatSync, readdirSync, realpathSync, statSync } from "node:fs";
 import { isAbsolute, join, relative, sep } from "node:path";
 import { JOBS_FILE } from "./constants.js";
 import { isRecord } from "./json-store.js";
@@ -76,7 +77,7 @@ export function readRunLogs(home: string, namesFilter?: Set<string>): RunLogReco
 
 /** Receipt boundaries need metadata only, not a stat/read of every unrelated log.
  * Directory entries validate direct files; links retain the same contained read policy. */
-export function readRunStarts(home: string): { job: string; jobStartedAt?: number; startedAt: number }[] {
+export async function readRunStarts(home: string): Promise<{ job: string; jobStartedAt?: number; startedAt: number }[]> {
   const root = join(home, RUNS_DIR_NAME);
   let canonicalRoot: string;
   try { canonicalRoot = realpathSync.native(root); } catch { return []; }
@@ -102,20 +103,26 @@ export function readRunStarts(home: string): { job: string; jobStartedAt?: numbe
         paths.set(original, contained);
       }
     }
+    const metadata: { name: string; runName: string; file: string; log: string }[] = [];
     for (const [name, log] of paths) {
       if (!RUN_LOG_NAME.test(name)) continue;
       const runName = name.slice(0, -4), file = paths.get(`${runName}.json`);
       // Active logs override archived copies even when their metadata is missing/corrupt.
       if (!archived) starts.delete(runName);
-      if (!file) continue;
-      try {
-        // Read once: a cold 700-run corpus must not perform duplicate metadata/log stats.
-        const meta: unknown = JSON.parse(readFileSync(file, "utf8"));
-        if (!isRecord(meta) || typeof meta.job !== "string") continue;
-        const m = /^(\d{4})-(\d\d)-(\d\d)-(\d\d)-(\d\d)-(\d\d)-/.exec(name);
-        const startedAt = m ? Date.UTC(+m[1]!, +m[2]! - 1, +m[3]!, +m[4]!, +m[5]!, +m[6]!) : statSync(log).mtimeMs;
-        starts.set(runName, { job: meta.job, startedAt, ...(typeof meta.jobStartedAt === "number" ? { jobStartedAt: meta.jobStartedAt } : {}) });
-      } catch { /* Concurrent archival or malformed metadata contributes no evidence. */ }
+      if (file) metadata.push({ name, runName, file, log });
+    }
+    // Bound open files and yield while cold metadata is read. Peers remain responsive.
+    for (let offset = 0; offset < metadata.length; offset += 32) {
+      await Promise.all(metadata.slice(offset, offset + 32).map(async ({ name, runName, file, log }) => {
+        try {
+          // Read once: a cold 700-run corpus must not perform duplicate metadata/log stats.
+          const meta: unknown = JSON.parse(await readFile(file, "utf8"));
+          if (!isRecord(meta) || typeof meta.job !== "string") return;
+          const m = /^(\d{4})-(\d\d)-(\d\d)-(\d\d)-(\d\d)-(\d\d)-/.exec(name);
+          const startedAt = m ? Date.UTC(+m[1]!, +m[2]! - 1, +m[3]!, +m[4]!, +m[5]!, +m[6]!) : statSync(log).mtimeMs;
+          starts.set(runName, { job: meta.job, startedAt, ...(typeof meta.jobStartedAt === "number" ? { jobStartedAt: meta.jobStartedAt } : {}) });
+        } catch { /* Concurrent archival or malformed metadata contributes no evidence. */ }
+      }));
     }
   }
   return [...starts.values()];
