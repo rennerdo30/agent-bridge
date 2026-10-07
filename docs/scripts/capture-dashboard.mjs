@@ -33,6 +33,7 @@ if (version !== '0.30.0') throw new Error('Capture requires the 0.30.0 product r
 const demo = await mkdtemp(join(tmpdir(), 'agent-bridge-docs-demo-'));
 // AB-160: all writable runtime/browser files are under this independent temporary Git root.
 execFileSync('git', ['init', '--quiet', demo]);
+process.chdir(demo);
 const bridgeHome = join(demo, 'bridge-home');
 await mkdir(bridgeHome);
 process.env.AGENT_BRIDGE_HOME = bridgeHome;
