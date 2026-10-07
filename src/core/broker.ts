@@ -1,4 +1,5 @@
 import { ReadJournal } from "./read-journal.js";
+import { recordStorePeer, validStoreCapabilities } from "./store-compatibility.js";
 import { HISTORY_TICK_MS, historySearchSchema } from "./history.js";
 import { randomUUID } from "node:crypto";
 import { isPluginCacheCwd } from "./session-visibility.js";
@@ -877,6 +878,7 @@ export class Broker {
       activity: p.activity === "busy" || p.activity === "idle" ? p.activity : null,
       unavailable: p.unavailable === true,
       version: typeof p.version === "string" ? p.version.slice(0, 32) : undefined,
+      ...(validStoreCapabilities(p.storeCapabilities) ? { storeCapabilities: p.storeCapabilities } : {}),
       ...(p.jobAgent && AGENT_KINDS.includes(p.jobAgent) ? { jobAgent: p.jobAgent } : {}),
       ...(p.jobAgent && typeof p.jobOwner === "string" && p.jobOwner ? {
         parentJob: typeof p.parentJob === "string" ? p.parentJob : undefined,
@@ -890,6 +892,7 @@ export class Broker {
     if (!peer.sessionId) peer.sessionId = this.store.recoverSession(peer);
     this.store.rememberSession(peer, this.now());
     conn.peer = peer;
+    if (this.jobsPath) recordStorePeer(dirname(this.jobsPath), peer);
     this.replaceStale(conn, peer);
     this.restoreNames(conn, peer, { reclaim: true, replay: false });
     this.expireStaleQueue(peer.name);

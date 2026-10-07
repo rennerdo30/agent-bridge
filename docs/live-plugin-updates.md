@@ -82,9 +82,29 @@ plugin metadata. After a launcher-equipped server is installed, its next startup
 reads the runtime selector independently of the host's cached launcher path.
 
 Mixed releases continue speaking broker protocol 2, with existing feature capability
-negotiation; this change introduces no wire or shared-data format changes. An
+negotiation and optional readable-store ceilings on hello; older brokers ignore
+that additive field. Peers and dashboard name the actual retained versions. An
 incompatible future protocol cannot automatically join an old broker merely because
 the updater publishes its files. Coordinate incompatible major migrations separately.
+
+Shared JSON and the primary SQLite database do not advance to an unreadable
+version while recorded live peers still need an older format. New peers record
+their maximum readable versions; legacy ceilings are taken conservatively from
+released formats. Presence is retained after broker loss and checked by PID,
+so the next elected broker waits too. Unknown live readers block advancement.
+Existing readable data stays available; an operation needing a format upgrade
+reports the named blockers and can retry after they finish naturally. No process
+is stopped. This cannot undo a format upgrade made by a pre-guard release, and
+unobserved legacy launches are not claimed to be protected retroactively.
+
+Migrations take a process writer lock before snapshotting or inspecting versions.
+They recheck the schema after acquiring it, then create and integrity-check a
+protected snapshot in `.migration-snapshots` before DDL. Protected originals are
+never rotated; a public copy supports existing backup discovery. Recovery keeps
+the SQLite writer transaction through restoration. A live migration lock never
+expires by age; other candidates retry and broker election tolerates contention.
+An exited writer's lock can be recovered without deleting data. Optional public
+snapshot rotation tolerates Windows handles and concurrent legacy rotation.
 
 Codex caches using `local`, non-release directory names or a newer release are
 preserved and refused, since highest-version selection would not activate the

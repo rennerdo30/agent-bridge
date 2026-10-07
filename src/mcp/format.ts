@@ -1,4 +1,4 @@
-import { DEFAULT_MAX_HOPS } from "../core/constants.js";
+import { APP_VERSION, DEFAULT_MAX_HOPS } from "../core/constants.js";
 import { AGENT_KINDS, BROADCAST, isQuietMessage, type BridgeMessage, type PeerInfo, type SendResult } from "../core/protocol.js";
 import type { LinkMessage } from "../core/parent-link.js";
 import { DEFAULT_SIBLING_MAX_HOPS } from "../core/job-messaging.js";
@@ -97,6 +97,7 @@ function formatUptime(ms: number): string {
 export function formatPeer(p: PeerInfo, selfId?: string, now: number = Date.now()): string {
   const flags = [
     p.agent,
+    `v${p.version ?? "unknown"}${p.version !== APP_VERSION ? " · version skew (retained code)" : ""}`,
     p.activity ?? null,
     p.wakeOnDirect && p.wakeAvailable ? "direct messages wake this session" : null,
     p.autoWake ? "auto-wake" : p.activity === "idle" && !(p.wakeOnDirect && p.wakeAvailable) ? "auto-wake off: will be read on its next turn" : null,
@@ -107,6 +108,11 @@ export function formatPeer(p: PeerInfo, selfId?: string, now: number = Date.now(
     .join(", ");
   const session = p.sessionId ? ` session=${p.sessionId}` : "";
   return `- ${p.name} (${flags}) cwd=${p.cwd}${session}`;
+}
+
+export function formatVersionSkew(peers: Pick<PeerInfo, "name" | "version">[], version = APP_VERSION): string[] {
+  const skew = peers.filter((peer) => peer.version !== version);
+  return skew.length ? [`Version skew: this server runs v${version}; ${skew.map((p) => `${p.name} runs v${p.version ?? "unknown"}`).join(", ")}. Sessions keep running on retained code. Shared format upgrades wait for readers that cannot read them.`] : [];
 }
 
 /** One-line token/cost summary from a delegate's details, when the CLI reported any. */
