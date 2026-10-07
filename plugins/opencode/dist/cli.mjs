@@ -42239,8 +42239,8 @@ input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px
 textarea { flex: 1 1 220px; min-height: 40px; resize: vertical; }
 button { background: var(--accent); color: #fff; border-color: var(--accent); font-weight: 600; cursor: pointer; padding: 8px 16px; }
 button:disabled { opacity: .6; cursor: default; }
-#sendInfo, #jobSendInfo { width: 100%; color: var(--muted); font-size: 12px; }
-#sendInfo:empty, #jobSendInfo:empty { display: none; }
+#sendInfo, #jobSendInfo, #chatSendInfo { width: 100%; color: var(--muted); font-size: 12px; }
+#sendInfo:empty, #jobSendInfo:empty, #chatSendInfo:empty { display: none; }
 .model-list { max-height: 260px; overflow: auto; font-size: 12.5px; }
 .model-list ul { padding-left: 18px; }
 
@@ -42431,8 +42431,11 @@ main.wrap { padding-top: 32px; max-width: 1240px; }
 .chat .sys { align-self: flex-start; margin-left: 36px; color: var(--faint); font-size: 12px; }
 .chat .turn { color: var(--faint); margin: 18px 0 4px; }
 .hint { background: var(--warn-soft); color: var(--text); border-bottom: 0; }
-form#jobSend { background: var(--panel); border-top-color: var(--panel-2); padding: 12px 16px; }
-form#jobSend textarea { background: var(--panel-2); border-color: transparent; border-radius: 10px; }
+form#jobSend, form#chatSend { background: var(--panel); border-top-color: var(--panel-2); padding: 12px 16px; }
+form#jobSend textarea, form#chatSend textarea { background: var(--panel-2); border-color: transparent; border-radius: 10px; }
+#chatSendNote { width: 100%; font-size: 12px; color: var(--muted); }
+form#chatSend { --accent: #3b82f6; }
+#chatParentBtn { background: var(--panel-2); border-color: var(--accent); color: var(--accent); }
 
 /* Messages and the composer */
 .msg { border-bottom-color: var(--panel-2); }
@@ -42783,6 +42786,13 @@ button.ghost { min-height: 32px; }
         <button type="submit" id="jobSendBtn">Send</button>
         <div id="jobSendInfo" role="status" aria-live="polite"></div>
       </form>
+      <form id="chatSend" class="hidden" aria-label="Owner message">
+        <div id="chatSendNote"></div>
+        <textarea id="chatBody" placeholder="Message this session as owner" aria-label="Owner message"></textarea>
+        <button type="submit" id="chatSendBtn">Send</button>
+        <button type="button" id="chatParentBtn" class="hidden">Send to parent</button>
+        <div id="chatSendInfo" role="status" aria-live="polite"></div>
+      </form>
     </div>
   </div>
 </main>
@@ -43017,6 +43027,8 @@ const NATIVE_LIST_MS = 10_000;
 const MAX_CHAT_ITEMS = 3000;
 /** Session name -> { at, list } of its native subagents. */
 const nativeLists = new Map();
+const chatDrafts = new Map(), chatResults = new Map(), chatSending = new Set();
+let chatComposer = null;
 /** "<session>|<key>" -> { items, byId, next, loading, error }. */
 const chats = new Map();
 
@@ -43193,9 +43205,11 @@ async function showNative(x, key) {
     : jc ? ((jobChildren.get(jc[0]) || {}).list || []).find((s) => s.id === jc[1]) : null;
   $("cAvatar").innerHTML = av(p.agent || "other");
   $("cTitle").innerHTML = '<span class="ttl">' + (key === CHAT_KEY ? "Chat" : esc((native && native.title) || "Subagent")) + "</span>";
-  $("cMeta").innerHTML = '<span class="chip">' + esc(p.agent || "") + "</span>" + (key === CHAT_KEY ? "" : '<span class="chip own">own subagent</span>') + '<span class="chip">read-only</span>';
+  $("cMeta").innerHTML = '<span class="chip">' + esc(p.agent || "") + "</span>" + (key === CHAT_KEY ? "" : '<span class="chip own">own subagent</span>') +
+    '<span class="chip">' + (pcOf(x.name) || p.host ? "view-only" : key === CHAT_KEY || (p.agent === "codex" && !jc) ? "owner input" : "message parent") + "</span>";
   $("cNote").textContent = "";
-  $("cSub").textContent = (key === CHAT_KEY ? "the session's own conversation" : jc ? "its own subagent of " + jc[0] : "a subagent of " + p.agent + " itself") + " \xB7 read-only" + (p.cwd ? " \xB7 " + p.cwd : "");
+  $("cSub").textContent = (key === CHAT_KEY ? "the session's own conversation" : jc ? "its own subagent of " + jc[0] : "a subagent of " + p.agent + " itself") + (p.cwd ? " \xB7 " + p.cwd : "");
+  renderChatForm(x, key);
   $("cHint").classList.add("hidden");
   // Switching: never leave the previous conversation on screen while this one loads.
   if ($("chat").dataset.key !== x.name + key && !chats.has(x.name + "|" + key)) {
@@ -43204,7 +43218,7 @@ async function showNative(x, key) {
     $("chat").dataset.key = x.name + key;
   }
   const c = await pullChat(x, key);
-  if (route.session !== x.name || route.group !== key) return;
+  if (route.session !== x.name || selectedKey(x) !== key) return;
   const body = c.error ? '<div class="empty">' + esc(c.error) + "</div>" : c.items.length ? chatHtml(c.items, p.agent || "other", x.name) : '<div class="empty">' + (c.loading ? "Loading\u2026" : "Nothing in this conversation yet.") + "</div>";
   if (body === lastChat) return;
   lastChat = body;
@@ -43380,6 +43394,7 @@ function renderSession() {
     renderJobForm(null);
     return void showNative(x, key);
   }
+  renderChatForm(null, null);
   const g = sel && model.groups.get(sel);
   renderJobForm(g);
   if (g) void showGroup(g);
@@ -43402,11 +43417,11 @@ function renderSessionList(x, selKey) {
   const p = x.peer || {};
   const chatRow = chat
     ? '<a href="' + href(x.name, CHAT_KEY) + '" class="chat-row' + (selKey === CHAT_KEY ? " sel" : "") + '">' + av(p.agent || "other") +
-      '<div style="min-width:0"><div class="line1"><b>Chat</b><span class="chip">' + esc(p.agent || "") + '</span></div><div class="task">The session\\'s own conversation, read-only</div></div><div class="side"></div></a>'
+      '<div style="min-width:0"><div class="line1"><b>Chat</b><span class="chip">' + esc(p.agent || "") + '</span></div><div class="task">The session\\'s own conversation</div></div><div class="side"></div></a>'
     : "";
   const nativeRow = (s) =>
     '<a href="' + href(x.name, NATIVE_PREFIX + s.id) + '" class="' + (NATIVE_PREFIX + s.id === selKey ? "sel" : "") + '">' + av(p.agent || "other") +
-    '<div style="min-width:0"><div class="line1"><b class="ell">' + esc(s.title || "subagent") + '</b><span class="chip own">own</span></div><div class="task">' + esc(p.agent + " subagent \xB7 read-only") + "</div></div>" +
+    '<div style="min-width:0"><div class="line1"><b class="ell">' + esc(s.title || "subagent") + '</b><span class="chip own">own</span></div><div class="task">' + esc(p.agent + (p.agent === "codex" ? " subagent \xB7 native input" : " subagent \xB7 message parent")) + "</div></div>" +
     '<div class="side"><span>' + ago(s.updatedAt) + "</span></div></a>";
   // Like the bridge subagents: recent ones (and the open one) stay visible, older ones fold away.
   const nativeFresh = (s) => Date.now() - s.updatedAt < ARCHIVE_AFTER_MS || NATIVE_PREFIX + s.id === selKey;
@@ -43471,6 +43486,52 @@ function renderJobForm(g) {
   $("jobSendBtn").textContent = g && g.status === "interrupted" ? "Continue" : "Send";
   $("jobSendInfo").textContent = (jobResults.get(key) || []).at(-1) || "";
   renderSettings(controllable ? g : null);
+}
+
+/** Own chats share the job composer styling; native children keep an explicit parent route. */
+function renderChatForm(x, key) {
+  const next = x && key ? x.name + "|" + key : null;
+  if (chatComposer !== next) {
+    if (chatComposer) chatDrafts.set(chatComposer, $("chatBody").value);
+    $("chatBody").value = chatDrafts.get(next) || "";
+    chatComposer = next;
+  }
+  $("chatSend").classList.toggle("hidden", !next);
+  if (!next) return;
+  const peer = x.peer || {}, remote = Boolean(pcOf(x.name) || peer.host), child = key !== CHAT_KEY;
+  const jobChild = key.startsWith(JOB_CHILD_PREFIX);
+  const supported = Boolean(x.live && !remote && ["claude", "codex", "opencode", "antigravity"].includes(peer.agent));
+  const direct = supported && (!child || (peer.agent === "codex" && !jobChild));
+  $("chatBody").disabled = !supported;
+  $("chatSendBtn").classList.toggle("hidden", child && !direct);
+  $("chatSendBtn").disabled = !direct || chatSending.has(next);
+  $("chatParentBtn").classList.toggle("hidden", !child || remote || !supported);
+  $("chatParentBtn").disabled = chatSending.has(next);
+  $("chatBody").placeholder = child && !direct ? "Message its parent about this subagent" : child ? "Message this native subagent as owner" : "Message this session as owner";
+  $("chatSendNote").textContent = remote ? "Not supported: paired-PC chats are view-only."
+    : !supported ? "Not supported: reopen the local session to send."
+      : child ? direct ? "Native input when the CLI supports its live child thread. Parent delivery is also available."
+        : "Not supported: direct input to this native subagent. Send to its parent with a note about it."
+        : peer.agent === "codex" ? "Native user prompt, queued until idle. A labeled bridge message is the fallback."
+          : peer.agent === "antigravity" ? "Sent as you (owner) through the bridge. Idle mail waits for the next turn or inbox read."
+            : "Sent as you (owner) through the CLI's existing channel or prompt delivery. Wake preferences apply.";
+  $("chatSendInfo").textContent = (chatResults.get(next) || {}).text || "";
+  void refreshChatReceipt(next);
+}
+
+async function refreshChatReceipt(key) {
+  const result = chatResults.get(key);
+  if (!result || !result.receipt || result.state === "delivered" || result.checking) return;
+  result.checking = true;
+  try {
+    const r = await fetch("/api/chat-delivery/" + encodeURIComponent(result.receipt));
+    if (!r.ok) return;
+    const d = await r.json();
+    if (chatResults.get(key) !== result) return;
+    if (d.state === "delivered") { result.state = d.state; result.text = d.text; }
+    if (chatComposer === key) $("chatSendInfo").textContent = result.text;
+  } catch { /* Keep the accepted state when a receipt poll fails. */ }
+  finally { result.checking = false; }
 }
 
 /** The settings row: emptied when another subagent is selected; empty fields keep what it has. */
@@ -43825,6 +43886,34 @@ $("jobSend").addEventListener("submit", async (e) => {
     }
   }
 });
+
+async function sendChat(parent = false) {
+  const key = chatComposer, x = model.byName.get(route.session), selected = x && selectedKey(x);
+  const body = $("chatBody").value.trim();
+  if (!key || !body || !x || !x.live || pcOf(x.name) || x.peer.host || chatSending.has(key)) return;
+  const child = selected && selected !== CHAT_KEY;
+  const jobChild = selected && selected.startsWith(JOB_CHILD_PREFIX);
+  const parts = jobChild ? selected.slice(JOB_CHILD_PREFIX.length).split("|") : [];
+  const childId = child ? jobChild ? parts[1] : selected.slice(NATIVE_PREFIX.length) : undefined;
+  const endpoint = jobChild ? "/api/jobs/" + encodeURIComponent(parts[0]) + "/message" : sessionApi(x.name) + "/message";
+  chatSending.add(key); renderChatForm(x, selected);
+  try {
+    const r = await fetch(endpoint, { method: "POST", headers: { "content-type": "application/json", "x-agent-bridge": "1" },
+      body: JSON.stringify({ body, ...(childId ? { child: childId } : {}), ...(parent ? { target: "parent" } : {}) }) });
+    const d = await r.json();
+    if (!r.ok) { chatResults.set(key, { ...d, text: d.text || d.error || "Message error: HTTP " + r.status }); return; }
+    chatResults.set(key, d);
+    // The user may have switched chats while sending. Clear only the sent draft.
+    if ((chatDrafts.get(key) || "").trim() === body) chatDrafts.delete(key);
+    if (chatComposer === key && $("chatBody").value.trim() === body) { $("chatBody").value = ""; chatDrafts.delete(key); }
+  } catch (err) { chatResults.set(key, { text: "Message error: " + err.message }); }
+  finally {
+    chatSending.delete(key);
+    if (chatComposer === key) renderChatForm(x, selected);
+  }
+}
+$("chatSend").addEventListener("submit", (e) => { e.preventDefault(); return sendChat(); });
+$("chatParentBtn").addEventListener("click", () => sendChat(true));
 
 /** The conversation's "\u22EF" menu: settings for the next turn and following new output. */
 function setConvMenu(open) {
@@ -44679,6 +44768,61 @@ setInterval(poll, POLL_MS);
 </html>
 `;
 
+// src/core/dashboard-chat.ts
+function codexQueue(bin, log) {
+  return async (thread, text2, cwd) => {
+    try {
+      const result = await runProcess({
+        bin,
+        args: ["queue", "--thread", thread, "--message", text2],
+        stdin: "",
+        cwd,
+        timeoutMs: 1e4,
+        env: process.env,
+        log,
+        what: "Queue dashboard message"
+      });
+      return result.code === 0 ? "accepted" : "unsupported";
+    } catch (error62) {
+      if (error62 instanceof DelegateError && error62.kind === "not_found") return "unsupported";
+      log.warn("dashboard queue delivery unconfirmed", { err: String(error62) });
+      return "unconfirmed";
+    }
+  };
+}
+function childNote(id, title, body) {
+  return `Owner message about your native subagent ${id} (${title.slice(0, 160)}).
+Please relay this to that subagent using your native messaging tools if available; otherwise handle it yourself.
+
+${body}`;
+}
+async function deliverDashboardChat(peer, body, options) {
+  const nativeChild = options.child && !options.parent;
+  const ownerText = `Owner message from the local dashboard:
+
+${body}`;
+  if (peer.agent === "codex" && peer.sessionId && !options.parent) {
+    const queued = await options.queue(options.child?.id ?? peer.sessionId, ownerText, peer.cwd);
+    if (queued === "accepted") return { state: "queued", transport: "native-prompt", text: "Queued until idle as a native user prompt. The CLI accepted it; this is not a read receipt." };
+    if (queued === "unconfirmed") return { state: "unconfirmed", transport: "native-prompt", text: "Delivery unconfirmed. Check the CLI chat before retrying; no second copy was sent." };
+  }
+  if (nativeChild) return { state: "not-supported", transport: "parent", text: "Direct input to this native subagent is not supported by its live transport. Send to its parent with a note about this subagent." };
+  const text2 = options.child ? childNote(options.child.id, options.child.title, body) : ownerText;
+  const sent = await options.send(text2);
+  const id = sent.messages[0]?.id;
+  const live = sent.deliveredTo.includes(peer.name);
+  const receiver = sent.recipientStates?.find((p) => p.name === peer.name) ?? peer;
+  const wake = receiver.wakeAvailable && (receiver.autoWake || receiver.wakeOnDirect);
+  const hint = !live ? "Session disconnected; retained for reconnection." : receiver.activity === "busy" ? "Queued for the next hook or idle turn; the current turn is not interrupted." : wake ? "Wake requested; awaiting CLI consumption." : "Idle wake is unavailable or disabled; waiting for the session's next turn or inbox read.";
+  return {
+    state: "queued",
+    transport: options.child ? "parent" : "bridge",
+    id,
+    receipt: id,
+    text: `Queued in ${options.child ? "parent's" : "session's"} bridge inbox as you (owner). ${hint} Inbox delivery is not a read receipt.`
+  };
+}
+
 // src/network/firewall.ts
 import { execFile as execFile3, spawn as spawn8 } from "node:child_process";
 import { promisify as promisify2 } from "node:util";
@@ -45139,6 +45283,8 @@ async function startUi(opts) {
   const secret = opts.secret ?? randomBytes8(SECRET_BYTES3).toString("hex");
   const token = loadOrCreateToken(opts.home);
   const dbPath = resolveDbPath(opts.home);
+  const chatReceipts = /* @__PURE__ */ new Set();
+  const queueChat = opts.chatQueue ?? codexQueue(loadConfig(opts.home, "other", opts.log).codexBin, opts.log);
   let sender = null;
   const getSender = () => {
     sender ??= (async () => {
@@ -45464,6 +45610,63 @@ async function startUi(opts) {
       if (!read.success) return send(res, 400, { error: "invalid dashboard read request" });
       const result = await readDashboard({ home: opts.home, log: opts.log, transcripts: opts.transcripts, peers: async () => (await brokerPeers(opts.pipe, token, opts.log)).peers }, read.data);
       return send(res, result.status, result.body);
+    }
+    const chatSend = /^\/api\/(sessions|jobs)\/([^/]+)\/message$/.exec(url2.pathname);
+    if (req.method === "POST" && chatSend) {
+      if (req.headers["x-agent-bridge"] !== "1" || !/^application\/json(?:\s*;|$)/i.test(String(req.headers["content-type"] ?? ""))) return send(res, 403, { error: "JSON and dashboard header required" });
+      if (req.headers["sec-fetch-site"] === "cross-site" || req.headers.origin && req.headers.origin !== `http://${req.headers.host}`) return send(res, 403, { error: "local dashboard origin required" });
+      let body, name2;
+      try {
+        body = await readJson2(req);
+        name2 = decodeURIComponent(chatSend[2]);
+      } catch {
+        return send(res, 400, { error: "invalid JSON or session" });
+      }
+      if (!isRecord(body) || Object.keys(body).some((k) => !["body", "child", "target"].includes(k)) || typeof body.body !== "string" || !body.body.trim() || body.body.length > MAX_BODY_CHARS - 600 || body.child !== void 0 && (typeof body.child !== "string" || !/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(body.child)) || body.target !== void 0 && body.target !== "parent" || body.target === "parent" && !body.child) return send(res, 400, { error: "a message, optional child and parent target are required" });
+      if (!/^[\w.-]+$/.test(name2)) return send(res, 404, { error: "paired-PC sessions are view-only" });
+      const job = chatSend[1] === "jobs";
+      const peers = (await brokerPeers(opts.pipe, token, opts.log)).peers;
+      const local = peers.find((p) => p.name === name2 && !p.host && !p.name.includes("/") && !p.jobAgent && !p.unavailable);
+      let child;
+      if (body.child) {
+        const result2 = await readDashboard({ home: opts.home, log: opts.log, transcripts: opts.transcripts, peers: async () => peers }, { path: `/api/${job ? "jobs" : "sessions"}/${encodeURIComponent(name2)}/subagents` });
+        child = result2.body.subagents?.find((s) => s.id === body.child);
+        if (!child) return send(res, 404, { error: "no such native child of this session" });
+      }
+      if (job) {
+        if (!child || body.target !== "parent") return send(res, 409, { state: "not-supported", transport: "parent", text: "Direct input to this job's native subagent is not supported. Send to its parent with a note." });
+        const run2 = listRuns(opts.home).find((r) => r.job === name2 && !r.remote);
+        if (!run2?.by) return send(res, 409, { error: "parent job has no local owning session" });
+        try {
+          const sender2 = await getSender();
+          const result2 = await controlDashboardJob(sender2, await jobOwner(opts.home, name2, run2.by, sender2), name2, { type: "message", body: childNote(child.id, child.title, body.body.trim()) });
+          return send(res, result2.isError ? 409 : 200, { state: result2.isError ? "not-supported" : "queued", transport: "parent", text: result2.text });
+        } catch (err) {
+          if (err instanceof JobControlError) return send(res, 409, { error: err.message });
+          throw err;
+        }
+      }
+      if (!local) return send(res, 409, { error: "This local session is not connected. Reopen it before sending." });
+      if (!["claude", "codex", "opencode", "antigravity"].includes(local.agent)) return send(res, 409, { state: "not-supported", transport: "bridge", text: "Owner chat is not supported for this CLI." });
+      const result = await deliverDashboardChat(local, body.body.trim(), {
+        child,
+        parent: body.target === "parent",
+        queue: queueChat,
+        send: async (text2) => (await getSender()).send({ to: local.name, body: text2 })
+      });
+      if (result.receipt) {
+        chatReceipts.add(result.receipt);
+        if (chatReceipts.size > 2e3) chatReceipts.delete(chatReceipts.values().next().value);
+      }
+      return send(res, result.state === "not-supported" ? 409 : result.state === "unconfirmed" ? 502 : 200, result);
+    }
+    const chatReceipt = /^\/api\/chat-delivery\/([0-9a-f-]{36})$/.exec(url2.pathname);
+    if (req.method === "GET" && chatReceipt) {
+      const id = chatReceipt[1];
+      if (!chatReceipts.has(id)) return send(res, 404, { error: "no dashboard delivery" });
+      const receipts = await (await getSender()).messageReceipt(id);
+      const delivered = receipts.some((r) => r.readAt !== null);
+      return send(res, 200, { state: delivered ? "delivered" : "queued", text: delivered ? "Delivered: consumed by the CLI delivery hook. This does not confirm a reply or completion." : "Queued: awaiting CLI consumption." });
     }
     if (req.method === "POST" && url2.pathname === "/api/send") {
       if (req.headers["x-agent-bridge"] !== "1") return send(res, 403, { error: "missing header" });

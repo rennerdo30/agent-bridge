@@ -56,8 +56,11 @@ plugin capability could securely expose child input, but this release does not.
 Antigravity read-only probes here reported **agy 1.3.1**. `agy --help` documents
 print-mode stream-json stdin, `--conversation` resume, and `--remote-control`.
 `agy remote-control --help` offers daemon start/status/stop, not a send command.
-Stdin can only feed a process whose stdin the caller owns; resume does not prove
-live interactive steering. The sibling's `docs/google-cli-research.md` records
+The [official Remote Control documentation](https://antigravity.google/docs/remote-control?tab=cli)
+describes authenticated browser/desktop prompt synchronization over a reverse
+tunnel, but does not document a local programmatic send API. Stdin can only feed
+a process whose stdin the caller owns; resume does not prove live interactive
+steering. The sibling's `docs/google-cli-research.md` records
 native plugin hook evidence and a live MCP smoke test. No documented external
 idle-input method was established, so no terminal keystrokes, private remote
 protocol, competing resume or transcript-file writes are attempted.

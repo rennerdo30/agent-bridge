@@ -511,7 +511,8 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
         const run = listRuns(opts.home).find((r) => r.job === name && !r.remote);
         if (!run?.by) return send(res, 409, { error: "parent job has no local owning session" });
         try {
-          const result = await controlDashboardJob(await getSender(), jobOwner(opts.home, name, run.by), name, { type: "message", body: childNote(child.id, child.title, body.body.trim()) });
+          const sender = await getSender();
+          const result = await controlDashboardJob(sender, await jobOwner(opts.home, name, run.by, sender), name, { type: "message", body: childNote(child.id, child.title, body.body.trim()) });
           return send(res, result.isError ? 409 : 200, { state: result.isError ? "not-supported" : "queued", transport: "parent", text: result.text });
         } catch (err) {
           if (err instanceof JobControlError) return send(res, 409, { error: err.message });
