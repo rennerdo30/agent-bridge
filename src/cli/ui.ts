@@ -263,12 +263,14 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
 
     if (req.method === "GET" && url.pathname === "/") return send(res, 200, UI_PAGE, "text/html; charset=utf-8");
     if (req.method === "POST" && url.pathname === "/api/coordinator/availability") {
+      if (req.headers["x-agent-bridge"] !== "1") return send(res, 403, { error: "missing header" });
       const body = await readJson(req);
       if (typeof body.name !== "string" || body.name.includes("/") || typeof body.unavailable !== "boolean") return send(res, 400, { error: "Choose a local coordinator and availability." });
       try { return send(res, 200, await networkRequest("coordinatorAvailability", { name: body.name, unavailable: body.unavailable })); }
       catch (err) { return send(res, 409, { error: err instanceof BridgeError ? err.message : "Coordinator unavailable." }); }
     }
     if (req.method === "POST" && url.pathname === "/api/project/main") {
+      if (req.headers["x-agent-bridge"] !== "1") return send(res, 403, { error: "missing header" });
       const body = await readJson(req);
       if (typeof body.to !== "string" || body.to.includes("/")) return send(res, 400, { error: "Choose a local project master." });
       try { return send(res, 200, await networkRequest("projectMain", { to: body.to })); }
