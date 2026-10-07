@@ -15,7 +15,7 @@ import { MessageStore } from "../src/core/store.js";
 import { loadOrCreateToken } from "../src/core/token.js";
 import { SiblingLink } from "../src/mcp/siblings.js";
 import type { Job } from "../src/mcp/jobs.js";
-import { makeEnv, until, type TestEnv } from "./helpers.js";
+import { makeEnv, seedInbox, until, type TestEnv } from "./helpers.js";
 
 const SERVER = join(import.meta.dirname, "..", "plugins", "claude", "dist", "server.mjs");
 let env: TestEnv;
@@ -66,12 +66,12 @@ it.each(["claude", "codex", "opencode", "antigravity"])("delivers the last real 
 it.each(["opencode", "antigravity"])("%s drains 550 queued results across the replay limit while retaining 159 quiet copies", async (agent) => {
   const store = new MessageStore(env.db, nullLogger);
   try {
-    for (let i = 0; i < 709; i++) {
+    seedInbox(store, Array.from({ length: 709 }, (_, i) => {
       const quiet = i < 159;
-      store.insert({ id: randomUUID(), recipient: "supervisor", to: "supervisor", from: { id: `job:${i}`, name: `codex-job-${i}`, agent: "codex" },
+      return { id: randomUUID(), recipient: "supervisor", to: "supervisor", from: { id: `job:${i}`, name: `codex-job-${i}`, agent: "codex" as const },
         body: quiet ? `OBSERVER_${i}` : `RESULT_${i - 159}_END`, conversationId: quiet ? `siblings-${i}:note` : `job-${i}`,
-        replyTo: null, hop: 0, createdAt: Date.now() + i, readAt: null });
-    }
+        replyTo: null, hop: 0, createdAt: Date.now() + i, readAt: null };
+    }));
   } finally { store.close(); }
   const sup = await connect(agent, "supervisor");
   const seen = new Set<string>();

@@ -6,6 +6,8 @@ import { BridgeNode } from "../src/core/node.js";
 import { resolveDbPath, resolvePipePath } from "../src/core/paths.js";
 import { loadOrCreateToken } from "../src/core/token.js";
 import type { AgentKind } from "../src/core/protocol.js";
+import type { BridgeMessage } from "../src/core/protocol.js";
+import type { MessageStore } from "../src/core/store.js";
 
 export interface TestEnv {
   home: string;
@@ -44,4 +46,14 @@ export async function until(pred: () => boolean, timeoutMs = 5_000, stepMs = 20)
     if (Date.now() > end) throw new Error("condition not met in time");
     await new Promise((r) => setTimeout(r, stepMs));
   }
+}
+
+/** Seed an existing inbox atomically; measure delivery rather than disk sync per fixture row. */
+export function seedInbox(store: MessageStore, messages: BridgeMessage[]): void {
+  const db = (store as unknown as { db: { exec(sql: string): void } }).db;
+  db.exec("BEGIN");
+  try {
+    for (const message of messages) store.insert(message);
+    db.exec("COMMIT");
+  } catch (error) { db.exec("ROLLBACK"); throw error; }
 }

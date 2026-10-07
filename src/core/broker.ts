@@ -502,6 +502,9 @@ export class Broker {
           if (conn.socket.destroyed || conn.peer !== peer) return;
           while (at < mail.length) {
             const m = mail[at++]!;
+            // Availability may change after hello scheduled this replay, or while a
+            // backpressured stream is paused. Keep job reports durable for the router.
+            if (peer.unavailable && m.from.id.startsWith("job:") && !m.conversationId.startsWith(SIBLING_CONVERSATION_PREFIX)) continue;
             if (!this.write(conn, { t: "evt", ev: "message", data: m })) {
               if (!conn.socket.destroyed) conn.socket.once("drain", pump);
               return;

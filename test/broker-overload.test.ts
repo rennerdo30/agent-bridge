@@ -12,7 +12,7 @@ import { nullLogger } from "../src/core/logger.js";
 import { MessageStore } from "../src/core/store.js";
 import { loadOrCreateToken } from "../src/core/token.js";
 import { JobManager, readStore } from "../src/mcp/jobs.js";
-import { makeEnv, until, type TestEnv } from "./helpers.js";
+import { makeEnv, seedInbox, until, type TestEnv } from "./helpers.js";
 
 let env: TestEnv;
 let extraNodes: BridgeNode[];
@@ -20,6 +20,29 @@ beforeEach(() => { env = makeEnv(); extraNodes = []; });
 afterEach(async () => { vi.restoreAllMocks(); for (const node of extraNodes) await node.stop(); await env.cleanup(); });
 
 describe("broker overload survival", () => {
+  it("defers job replay if the master becomes unavailable before the scheduled callback", async () => {
+    const store = new MessageStore(env.db, nullLogger);
+    const broker = new Broker(env.pipe, store, nullLogger, loadOrCreateToken(env.home));
+    const job = { id: randomUUID(), from: { id: "job:worker", name: "codex-job-worker", agent: "codex" as const }, recipient: "reader", to: "reader",
+      conversationId: "job-worker", body: "Retained report", replyTo: null, hop: 0, createdAt: Date.now(), readAt: null };
+    const direct = { ...job, id: randomUUID(), from: { id: "master", name: "master", agent: "codex" as const }, conversationId: "ordinary", body: "Direct peer note" };
+    seedInbox(store, [job, direct]);
+    const peer = { name: "reader", unavailable: false };
+    const write = vi.fn((_frame: unknown) => true);
+    const conn = { peer, socket: { destroyed: false, write } };
+    const replay = () => (broker as unknown as { replayMail(conn: unknown, peer: unknown): void }).replayMail(conn, peer);
+    try {
+      replay(); peer.unavailable = true;
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(write).toHaveBeenCalledTimes(1);
+      expect(String(write.mock.calls[0]?.[0])).toContain("Direct peer note");
+      expect(store.byId(job.id)?.readAt).toBeNull();
+      write.mockClear(); peer.unavailable = false; replay();
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(write).toHaveBeenCalledTimes(2);
+      expect(write.mock.calls.some(([frame]) => String(frame).includes("Retained report"))).toBe(true);
+    } finally { await broker.close(); }
+  });
   it("retries a deferred durable result route without requiring another connection", async () => {
     const message = { id: randomUUID(), from: { id: "job:deferred", name: "opencode-job-deferred", agent: "opencode" as const },
       to: "reader", recipient: "reader", conversationId: "job-deferred", replyTo: null, hop: 0, body: "DEFERRED_RESULT", createdAt: Date.now(), readAt: null };
@@ -44,8 +67,8 @@ describe("broker overload survival", () => {
   it("bounds pending frames by bytes without losing the large-message tail", async () => {
     const token = loadOrCreateToken(env.home), store = new MessageStore(env.db, nullLogger);
     const body = "large result ".repeat(10_000);
-    for (let i = 0; i < 50; i++) store.insert({ id: randomUUID(), from: { id: "job:large", name: "opencode-job-large", agent: "opencode" },
-      recipient: "reader", to: "reader", conversationId: "job-large", replyTo: null, hop: 0, body, createdAt: Date.now() + i, readAt: null });
+    seedInbox(store, Array.from({ length: 50 }, (_, i) => ({ id: randomUUID(), from: { id: "job:large", name: "opencode-job-large", agent: "opencode" as const },
+      recipient: "reader", to: "reader", conversationId: "job-large", replyTo: null, hop: 0, body, createdAt: Date.now() + i, readAt: null })));
     const broker = new Broker(env.pipe, store, nullLogger, token);
     await broker.listen();
     const client = await BridgeClient.connect(env.pipe, nullLogger);
@@ -64,12 +87,16 @@ describe("broker overload survival", () => {
   it("refills a consuming node past 500 queued messages without any hook or inbox calls", async () => {
     const store = new MessageStore(env.db, nullLogger);
     try {
-      for (let i = 0; i < 550; i++) store.insert({ id: randomUUID(), from: { id: "job:worker", name: "opencode-job-worker", agent: "opencode" },
-        recipient: "reader", to: "reader", conversationId: "job-worker", replyTo: null, hop: 0, body: `result-${i}`, createdAt: Date.now() + i, readAt: null });
+      seedInbox(store, Array.from({ length: 550 }, (_, i) => ({ id: randomUUID(), from: { id: "job:worker", name: "opencode-job-worker", agent: "opencode" as const },
+        recipient: "reader", to: "reader", conversationId: "job-worker", replyTo: null, hop: 0, body: `result-${i}`, createdAt: Date.now() + i, readAt: null })));
     } finally { store.close(); }
     const reader = env.node("reader", "opencode");
     const received = new Set<string>();
-    reader.on("message", (m) => { received.add(m.id); reader.markRead([m.id]); });
+    const consumed: string[] = [];
+    reader.on("message", (m) => {
+      received.add(m.id); consumed.push(m.id);
+      if (consumed.length === 10) reader.markRead(consumed.splice(0));
+    });
     await reader.start();
     await until(() => received.size === 550);
     expect(reader.unread()).toEqual([]);
