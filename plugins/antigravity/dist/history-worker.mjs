@@ -7,7 +7,7 @@ var __export = (target, all) => {
 
 // src/core/history-worker.ts
 import { parentPort, workerData } from "node:worker_threads";
-import { DatabaseSync as DatabaseSync9 } from "node:sqlite";
+import { DatabaseSync as DatabaseSync11 } from "node:sqlite";
 
 // src/core/project-store.ts
 import { createHash as createHash2 } from "node:crypto";
@@ -664,9 +664,9 @@ function syncProjectMirror(main, project) {
 
 // src/core/history.ts
 import { createHash as createHash3 } from "node:crypto";
-import { closeSync as closeSync5, existsSync as existsSync9, fstatSync as fstatSync2, openSync as openSync5, opendirSync, readSync as readSync2, statSync as statSync4 } from "node:fs";
-import { basename as basename3, dirname as dirname9, join as join16 } from "node:path";
-import { DatabaseSync as DatabaseSync7 } from "node:sqlite";
+import { closeSync as closeSync5, existsSync as existsSync11, fstatSync as fstatSync2, openSync as openSync5, opendirSync, readSync as readSync2, statSync as statSync4 } from "node:fs";
+import { basename as basename3, dirname as dirname9, join as join17 } from "node:path";
+import { DatabaseSync as DatabaseSync9 } from "node:sqlite";
 
 // node_modules/zod/v4/classic/external.js
 var external_exports = {};
@@ -5694,7 +5694,7 @@ var recursive = /* @__PURE__ */ new WeakMap();
 var NONE = 0;
 var ASSUMED = 1;
 var PROVEN = 2;
-function isRecursive(inst, stack, resolve5) {
+function isRecursive(inst, stack, resolve6) {
   const cached2 = recursive.get(inst);
   if (cached2 !== void 0)
     return cached2 ? PROVEN : NONE;
@@ -5704,7 +5704,7 @@ function isRecursive(inst, stack, resolve5) {
   let result = NONE;
   const check2 = (child) => {
     if (result !== PROVEN && child?._zod) {
-      const answer = isRecursive(child, stack, resolve5);
+      const answer = isRecursive(child, stack, resolve6);
       if (answer > result)
         result = answer;
     }
@@ -5715,7 +5715,7 @@ function isRecursive(inst, stack, resolve5) {
       const desc = Object.getOwnPropertyDescriptor(sh, key);
       if (spread && !desc.enumerable)
         continue;
-      const child = desc.get ? ASSUMED : desc.value?._zod ? isRecursive(desc.value, stack, resolve5) : NONE;
+      const child = desc.get ? ASSUMED : desc.value?._zod ? isRecursive(desc.value, stack, resolve6) : NONE;
       if (child > answer)
         answer = child;
     }
@@ -5779,7 +5779,7 @@ function isRecursive(inst, stack, resolve5) {
       break;
     // `$ZodLazy` caches its inner on the def, so a resolved edge is followed exactly
     case "lazy": {
-      const inner = def._cachedInner ?? (resolve5 ? inst._zod.innerType : void 0);
+      const inner = def._cachedInner ?? (resolve6 ? inst._zod.innerType : void 0);
       merge2(inner ? isRecursive(inner, stack, false) : ASSUMED);
       break;
     }
@@ -20758,6 +20758,66 @@ function readTranscript(session, from = "0", child, paths2 = transcriptPaths()) 
   }
 }
 
+// src/core/owner-questions.ts
+import { randomUUID as randomUUID6 } from "node:crypto";
+import { existsSync as existsSync10, mkdirSync as mkdirSync7 } from "node:fs";
+import { join as join16 } from "node:path";
+import { DatabaseSync as DatabaseSync8 } from "node:sqlite";
+
+// src/core/decisions.ts
+import { randomUUID as randomUUID5 } from "node:crypto";
+import { existsSync as existsSync9 } from "node:fs";
+import { resolve as resolve5 } from "node:path";
+import { DatabaseSync as DatabaseSync7 } from "node:sqlite";
+var MAX_DECISION_TEXT_CHARS = MAX_BODY_CHARS - 1024;
+var MAX_SCOPE_SESSIONS = 100;
+var MAX_SCOPE_PATH_CHARS = 4096;
+var decisionScopeSchema = external_exports.union([
+  external_exports.literal("all"),
+  external_exports.object({ project: external_exports.string().trim().min(1).max(MAX_SCOPE_PATH_CHARS) }).strict(),
+  external_exports.object({ sessions: external_exports.array(external_exports.string().trim().min(1).max(MAX_SCOPE_PATH_CHARS)).min(1).max(MAX_SCOPE_SESSIONS) }).strict()
+]);
+
+// src/core/owner-questions.ts
+var QUESTIONS_FILE = "owner-questions.db";
+var short = external_exports.string().trim().min(1).max(500);
+var askOwnerSchema = external_exports.object({
+  project: external_exports.string().min(1).max(4096).optional().describe("Own project directory; defaults to the asking session's canonical project"),
+  deskProject: external_exports.string().trim().min(1).max(100).optional().describe("Pair Desk project slug for linked issue navigation; otherwise read from .pair-desk.json"),
+  title: short.refine((s) => !/[\r\n]/.test(s), "Use a one-line title"),
+  context: external_exports.string().max(4e3).refine((s) => s.split(/\r?\n/).length <= 10),
+  topic: external_exports.string().trim().min(1).max(160),
+  options: external_exports.array(external_exports.object({
+    id: external_exports.string().regex(/^[\w-]{1,40}$/),
+    label: short,
+    consequence: short,
+    recommended: external_exports.boolean()
+  }).strict()).min(2).max(4),
+  links: external_exports.array(external_exports.object({ kind: external_exports.enum(["issue", "file", "commit", "artifact", "diff"]), value: external_exports.string().min(1).max(4096) }).strict()).max(10).default([]),
+  affectedProjects: external_exports.array(external_exports.string().min(1).max(4096)).max(20).default([]),
+  job: external_exports.string().min(1).max(100).optional(),
+  blocking: external_exports.boolean(),
+  blocks: external_exports.string().max(1e3),
+  meanwhile: short,
+  destructive: external_exports.boolean().default(false),
+  authorization: external_exports.boolean().default(false),
+  urgency: external_exports.enum(["normal", "urgent"]).default("normal"),
+  default: external_exports.object({ option: external_exports.string().max(40), deadline: external_exports.number().int().positive() }).strict().optional()
+}).strict().superRefine((a, ctx) => {
+  if (a.options.filter((o) => o.recommended).length !== 1 || new Set(a.options.map((o) => o.id)).size !== a.options.length)
+    ctx.addIssue({ code: "custom", message: "Use distinct options with exactly one recommendation" });
+  if (a.default && !a.options.some((o) => o.id === a.default.option)) ctx.addIssue({ code: "custom", message: "Default must reference an option" });
+  if (a.default && (a.authorization || a.blocking && a.destructive)) ctx.addIssue({ code: "custom", message: "Authorization and blocking destructive questions cannot use a default" });
+  if (a.authorization && !a.links.some((l) => ["artifact", "diff", "commit"].includes(l.kind))) ctx.addIssue({ code: "custom", message: "Include the concrete artifact or diff" });
+  if (a.blocking && !a.blocks.trim()) ctx.addIssue({ code: "custom", message: "State the action that is blocked" });
+});
+var questionAnswerSchema = external_exports.object({
+  option: external_exports.string().max(40).optional(),
+  text: external_exports.string().min(1).max(8e3).optional(),
+  pin: external_exports.object({ scope: decisionScopeSchema, topic: external_exports.string().trim().min(1).max(160) }).strict().optional()
+}).strict().refine((a) => Boolean(a.option) !== Boolean(a.text), "Choose an option or write an answer");
+var questionAlertSettingsSchema = external_exports.object({ sound: external_exports.boolean(), toast: external_exports.boolean(), reminderMinutes: external_exports.number().int().min(0).max(1440) }).strict();
+
 // src/core/history.ts
 var HISTORY_TICK_MS = 2e3;
 var HISTORY_ROWS_PER_SOURCE = 100;
@@ -20782,7 +20842,7 @@ var historyFiltersSchema = external_exports.object({
   session: external_exports.string().min(1).max(HISTORY_FILTER_ID_CHARS).optional(),
   job: external_exports.string().min(1).max(HISTORY_FILTER_ID_CHARS).optional(),
   agent: external_exports.enum(["claude", "codex", "opencode", "antigravity", "other"]).optional(),
-  kind: external_exports.enum(["message", "run", "decision", "transcript", "approval", "progress", "report"]).optional(),
+  kind: external_exports.enum(["message", "run", "decision", "transcript", "approval", "progress", "report", "question"]).optional(),
   since: dateFilter.optional(),
   until: dateFilter.optional()
 }).strict();
@@ -20911,9 +20971,38 @@ ${row.body}`,
         }, [row.author_id, row.author_name, ...sessions]);
       });
       if (this.home) {
-        const archivePath = join16(this.home, ARCHIVE_DB_NAME);
-        if (existsSync9(archivePath)) {
-          const archive = new DatabaseSync7(archivePath, { readOnly: true, timeout: HISTORY_READ_TIMEOUT_MS });
+        const questionFile = join17(this.home, QUESTIONS_FILE);
+        if (existsSync11(questionFile)) {
+          const questions = new DatabaseSync9(questionFile, { readOnly: true, timeout: HISTORY_READ_TIMEOUT_MS });
+          try {
+            work += this.rows("questions", questions, "question_events", (row) => {
+              const q = JSON.parse(String(row.record));
+              this.put(
+                {
+                  id: `question:${q.id}`,
+                  kind: "question",
+                  agent: q.askers[0]?.agent ?? "other",
+                  at: q.answer?.at ?? q.askedAt,
+                  body: [q.title, q.context, q.topic, ...q.options.map((o) => `${o.label}: ${o.consequence}`), q.answer?.text, q.dismissal?.reason].filter(Boolean).join("\n"),
+                  link: `/#/approvals?question=${q.id}`,
+                  message: null,
+                  job: q.job ?? null,
+                  run: null,
+                  session: q.askers[0]?.session ?? null,
+                  cursor: String(row.history_rowid)
+                },
+                q.askers.map((a) => a.session),
+                q.askers.flatMap((a) => a.job ? [a.job] : [])
+              );
+              for (const project of q.affectedProjects) this.db.prepare("INSERT OR IGNORE INTO history_tags VALUES (?, 'project', ?)").run(`question:${q.id}`, conversationProject(project));
+            });
+          } finally {
+            questions.close();
+          }
+        }
+        const archivePath = join17(this.home, ARCHIVE_DB_NAME);
+        if (existsSync11(archivePath)) {
+          const archive = new DatabaseSync9(archivePath, { readOnly: true, timeout: HISTORY_READ_TIMEOUT_MS });
           try {
             work += this.rows("archive", archive, "messages", (row) => this.message(row));
           } finally {
@@ -20961,13 +21050,13 @@ ${row.body}`,
       this.lastDiscovery = Date.now();
       this.opencodeComplete = false;
       this.queue = [
-        { path: join16(this.home, "context-events"), root: this.home, kind: "context", agent: "other" },
-        { path: join16(this.home, "approvals"), root: this.home, kind: "approval", agent: "other" },
-        { path: join16(this.home, "archive"), root: this.home, kind: "approval", agent: "other" },
-        { path: join16(this.home, "runs"), root: join16(this.home, "runs"), kind: "run", agent: "other" },
-        { path: join16(this.paths.claude, "projects"), root: this.paths.claude, kind: "transcript", agent: "claude" },
-        ...this.paths.antigravity ? [{ path: join16(this.paths.antigravity, "brain"), root: this.paths.antigravity, kind: "transcript", agent: "antigravity" }] : [],
-        ...["sessions", "archived_sessions"].map((dir) => ({ path: join16(this.paths.codex, dir), root: this.paths.codex, kind: "transcript", agent: "codex" }))
+        { path: join17(this.home, "context-events"), root: this.home, kind: "context", agent: "other" },
+        { path: join17(this.home, "approvals"), root: this.home, kind: "approval", agent: "other" },
+        { path: join17(this.home, "archive"), root: this.home, kind: "approval", agent: "other" },
+        { path: join17(this.home, "runs"), root: join17(this.home, "runs"), kind: "run", agent: "other" },
+        { path: join17(this.paths.claude, "projects"), root: this.paths.claude, kind: "transcript", agent: "claude" },
+        ...this.paths.antigravity ? [{ path: join17(this.paths.antigravity, "brain"), root: this.paths.antigravity, kind: "transcript", agent: "antigravity" }] : [],
+        ...["sessions", "archived_sessions"].map((dir) => ({ path: join17(this.paths.codex, dir), root: this.paths.codex, kind: "transcript", agent: "codex" }))
       ];
     }
     let work = 0;
@@ -20987,7 +21076,7 @@ ${row.body}`,
         this.walk = null;
         continue;
       }
-      const path2 = join16(entry.path, item.name);
+      const path2 = join17(entry.path, item.name);
       if (item.isDirectory()) {
         this.queue.push({ ...entry, path: path2 });
         continue;
@@ -21007,9 +21096,9 @@ ${row.body}`,
         this.register({ path: path2, kind: "transcript", agent: entry.agent, session: child ? basename3(dirname9(entry.path)) : id, cwd: typeof meta3.cwd === "string" ? meta3.cwd : "", child });
       }
     }
-    const path = safeFile(this.paths.opencode, join16(this.paths.opencode, "opencode.db"));
+    const path = safeFile(this.paths.opencode, join17(this.paths.opencode, "opencode.db"));
     if (path && !this.opencodeComplete) {
-      const db2 = new DatabaseSync7(path, { readOnly: true, timeout: HISTORY_READ_TIMEOUT_MS });
+      const db2 = new DatabaseSync9(path, { readOnly: true, timeout: HISTORY_READ_TIMEOUT_MS });
       try {
         const after = this.cursor("opencode-discovery");
         const rows = db2.prepare("SELECT * FROM session WHERE id > ? ORDER BY id LIMIT ?").all(after === "0" ? "" : after, HISTORY_DISCOVERY_PER_TICK);
@@ -21044,7 +21133,7 @@ ${row.body}`,
   indexFile(file2) {
     if (file2.kind === "context" || file2.kind === "approval" || file2.kind === "run" && /\.json(?:-.*)?$/.test(file2.path)) return 0;
     if (file2.agent !== "opencode") {
-      const root = file2.kind === "run" ? join16(this.home, "runs") : this.paths[file2.agent];
+      const root = file2.kind === "run" ? join17(this.home, "runs") : this.paths[file2.agent];
       if (!root) return 0;
       if (!safeFile(root, file2.path)) return 0;
     }
@@ -21081,7 +21170,7 @@ ${row.body}`,
       let meta3 = {};
       let metaText = "";
       const metaPath = file2.path.replace(/\.log(?:-\d+-[\w-]+)?$/, ".json");
-      const safeMeta = safeFile(join16(this.home, "runs"), metaPath);
+      const safeMeta = safeFile(join17(this.home, "runs"), metaPath);
       if (safeMeta) {
         const metaFd = openSync5(safeMeta, "r");
         try {
@@ -21230,19 +21319,19 @@ ${buffer.subarray(0, length).toString("utf8")}`,
 import { createHash as createHash4 } from "node:crypto";
 import {
   closeSync as closeSync7,
-  existsSync as existsSync11,
+  existsSync as existsSync13,
   fstatSync as fstatSync3,
   openSync as openSync7,
   readSync as readSync3,
   watch
 } from "node:fs";
-import { basename as basename5, join as join18 } from "node:path";
-import { DatabaseSync as DatabaseSync8 } from "node:sqlite";
+import { basename as basename5, join as join19 } from "node:path";
+import { DatabaseSync as DatabaseSync10 } from "node:sqlite";
 
 // src/core/job-archive.ts
-import { randomUUID as randomUUID5 } from "node:crypto";
-import { closeSync as closeSync6, existsSync as existsSync10, fsyncSync as fsyncSync2, mkdirSync as mkdirSync7, openSync as openSync6, readdirSync as readdirSync6, writeFileSync as writeFileSync4 } from "node:fs";
-import { basename as basename4, dirname as dirname10, join as join17 } from "node:path";
+import { randomUUID as randomUUID7 } from "node:crypto";
+import { closeSync as closeSync6, existsSync as existsSync12, fsyncSync as fsyncSync2, mkdirSync as mkdirSync8, openSync as openSync6, readdirSync as readdirSync6, writeFileSync as writeFileSync4 } from "node:fs";
+import { basename as basename4, dirname as dirname10, join as join18 } from "node:path";
 
 // src/core/file-cache.ts
 import { readFileSync as readFileSync7, statSync as statSync5 } from "node:fs";
@@ -21282,14 +21371,14 @@ function readJsonSnapshot(file2) {
 var snapshots = /* @__PURE__ */ new Map();
 var EMPTY_SNAPSHOT = { signature: "", jobs: [] };
 function readArchivedJobSnapshot(path) {
-  const dir = join17(dirname10(path), "archive");
-  if (!existsSync10(dir)) return EMPTY_SNAPSHOT;
+  const dir = join18(dirname10(path), "archive");
+  if (!existsSync12(dir)) return EMPTY_SNAPSHOT;
   const sources = [];
   const signatures = [];
   let bytes2 = 0;
   for (const file2 of readdirSync6(dir).sort()) {
     if (!file2.startsWith(`${basename4(path)}.overflow.json-`) && !/^jobs-.*\.json$/.test(file2)) continue;
-    const snapshot = readJsonSnapshot(join17(dir, file2));
+    const snapshot = readJsonSnapshot(join18(dir, file2));
     const value = snapshot.value;
     if (!isRecord(value) || value.version !== void 0 && (!Number.isInteger(value.version) || value.version < 0 || value.version > JSON_STORE_VERSION) || !Array.isArray(value.jobs)) throw new Error(`invalid job archive: ${file2}`);
     signatures.push(`${file2}:${snapshot.signature}`);
@@ -21339,10 +21428,10 @@ var ConversationIngestor = class {
   idleSources = 0;
   watchRoots() {
     for (const root of [
-      join18(this.paths.claude, "projects"),
-      join18(this.paths.codex, "sessions"),
+      join19(this.paths.claude, "projects"),
+      join19(this.paths.codex, "sessions"),
       this.paths.opencode,
-      ...this.paths.antigravity ? [join18(this.paths.antigravity, "brain")] : []
+      ...this.paths.antigravity ? [join19(this.paths.antigravity, "brain")] : []
     ]) {
       if (this.watched.has(root)) continue;
       try {
@@ -21351,7 +21440,7 @@ var ConversationIngestor = class {
           { recursive: true, persistent: false },
           (_, name) => {
             if (name && this.dirty.size < 2048)
-              this.dirty.add(join18(root, String(name)));
+              this.dirty.add(join19(root, String(name)));
           }
         );
         watcher.on("error", () => {
@@ -21478,7 +21567,7 @@ var ConversationIngestor = class {
   jobs() {
     if (Date.now() - this.jobsAt < 3e4) return;
     this.jobsAt = Date.now();
-    const path = join18(this.home, "jobs.json");
+    const path = join19(this.home, "jobs.json");
     let active = {};
     try {
       active = object2(readJsonSnapshot(path).value);
@@ -21700,9 +21789,9 @@ var ConversationIngestor = class {
       "SELECT * FROM messages WHERE id=? ORDER BY recipient=? DESC LIMIT 1"
     ).get(envelope.message, envelope.recipient);
     if (!row) {
-      const path = join18(this.home, "archive.db");
-      if (existsSync11(path)) {
-        const archive = new DatabaseSync8(path, { readOnly: true, timeout: 50 });
+      const path = join19(this.home, "archive.db");
+      if (existsSync13(path)) {
+        const archive = new DatabaseSync10(path, { readOnly: true, timeout: 50 });
         try {
           row = archive.prepare(
             "SELECT * FROM messages WHERE id=? ORDER BY recipient=? DESC LIMIT 1"
@@ -21967,10 +22056,10 @@ var ConversationIngestor = class {
   sqlite(source) {
     const path = safeFile(
       this.paths.opencode,
-      join18(this.paths.opencode, "opencode.db")
+      join19(this.paths.opencode, "opencode.db")
     );
     if (!path) return 0;
-    const input2 = new DatabaseSync8(path, { readOnly: true, timeout: 50 });
+    const input2 = new DatabaseSync10(path, { readOnly: true, timeout: 50 });
     try {
       const table = Number(source.offset) % 2 ? "message" : "part";
       this.db.prepare("UPDATE conversation_sources SET offset=offset+1 WHERE id=?").run(source.id);
@@ -22070,9 +22159,9 @@ var ConversationIngestor = class {
       work += this.jobSnapshot();
       work += this.envelopes();
       work += this.events(this.db, "decisions", "durable-decisions");
-      const archive = join18(this.home, "archive.db");
-      if (existsSync11(archive)) {
-        const input2 = new DatabaseSync8(archive, {
+      const archive = join19(this.home, "archive.db");
+      if (existsSync13(archive)) {
+        const input2 = new DatabaseSync10(archive, {
           readOnly: true,
           timeout: 50
         });
@@ -22154,7 +22243,7 @@ var ConversationIngestor = class {
 };
 
 // src/core/history-worker.ts
-var db = new DatabaseSync9(workerData.file, { timeout: 50 });
+var db = new DatabaseSync11(workerData.file, { timeout: 50 });
 configureSqlite(db, 50);
 var paths = workerData.paths ?? transcriptPaths();
 var index = new HistoryIndex(db, workerData.home, paths);
