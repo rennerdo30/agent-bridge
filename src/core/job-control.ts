@@ -19,7 +19,7 @@ export class JobControlError extends Error {
 }
 
 /** A command for the session that owns the job: a follow-up message, or its next-turn settings. */
-export type DashboardJobCommand = { type: "message"; body: string } | { type: "settings"; settings: Record<string, unknown> };
+export type DashboardJobCommand = { type: "handoff"; to: string; jobs?: string[] | "all"; note?: string } | { type: "message"; body: string } | { type: "settings"; settings: Record<string, unknown> };
 
 export function messageDashboardJob(node: BridgeNode, owner: string, job: string, body: string): Promise<JobMessageResult> {
   return controlDashboardJob(node, owner, job, { type: "message", body });

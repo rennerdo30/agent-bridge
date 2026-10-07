@@ -458,6 +458,12 @@ code.addr { font-family: var(--mono); font-size: 12px; padding: 2px 8px; border-
 .disc-table th, .disc-table td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--panel-2); }
 .disc-table th { color: var(--muted); font-weight: 600; }
 
+.handoff { padding: 16px; border-bottom: 1px solid var(--line); background: var(--panel-2); display: grid; gap: 12px; }
+.handoff-targets { display: grid; gap: 6px; max-height: 220px; overflow: auto; }
+.handoff-target { display: flex; align-items: center; gap: 10px; text-align: left; background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 9px; padding: 10px 12px; }
+.handoff-target[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); }
+.handoff label { display: grid; gap: 6px; font-size: 12px; color: var(--muted); }
+.handoff-actions { display: flex; gap: 8px; }
 /* The conversation's "⋯" menu, top right */
 .conv-menu { position: relative; flex: none; }
 .menu-btn { font-size: 18px; line-height: 1; padding: 4px 10px; letter-spacing: .05em; }
@@ -722,10 +728,18 @@ button.ghost { min-height: 32px; }
           <button type="button" class="icon-btn menu-btn" id="convMenuBtn" aria-haspopup="menu" aria-expanded="false" aria-controls="convMenu" title="Options for this conversation">⋯</button>
           <div class="menu-pop hidden" id="convMenu" role="menu">
             <button type="button" role="menuitem" class="menu-item hidden" id="setToggle" aria-expanded="false" aria-controls="jobSettings">Settings for its next turn…</button>
+            <button type="button" role="menuitem" class="menu-item hidden" id="handoffToggle" aria-controls="handoffForm" aria-expanded="false">Hand off subagents…</button>
             <label class="menu-item" role="menuitemcheckbox"><input type="checkbox" id="follow" checked> Follow new output</label>
           </div>
         </div>
       </div>
+      <form id="handoffForm" class="handoff hidden" aria-label="Hand off all subagents">
+        <div><b>Hand off all subagents</b><div class="small muted">Running jobs keep working. Nested and finished jobs move too.</div></div>
+        <div id="handoffTargets" class="handoff-targets" role="group" aria-label="New supervisor"></div>
+        <label>Note for the new supervisor<textarea id="handoffNote" rows="2" maxlength="4000" placeholder="Context or next steps"></textarea></label>
+        <div class="handoff-actions"><button type="submit" id="handoffSubmit" disabled>Hand off</button><button type="button" class="secondary" id="handoffCancel">Cancel</button></div>
+        <div id="handoffInfo" class="note" role="status" aria-live="polite"></div>
+      </form>
       <form id="jobSettings" class="settings hidden" aria-label="Settings for the next turn">
         <label class="wide">Model<input id="setModel" list="setModels" autocomplete="off" spellcheck="false"><datalist id="setModels"></datalist></label>
         <label>Effort<select id="setEffort"></select></label>
@@ -849,6 +863,7 @@ window.addEventListener("hashchange", () => {
 
 /** Which session started a run: its peer name, or (renamed since) the live session of that agent in that folder. */
 function ownerOf(r, live) {
+  if (r.rootName || r.owner) return r.rootName || r.owner;
   if (r.by && live.some((p) => p.name === r.by)) return r.by;
   const same = r.byCwd && live.find((p) => (!r.byAgent || p.agent === r.byAgent) && norm(p.cwd) === norm(r.byCwd));
   return same ? same.name : r.by || ownerOfFolder(r.workdir, live) || "earlier runs";
@@ -1300,6 +1315,8 @@ function renderOverview() {
 }
 
 function renderSession() {
+  $("handoffToggle").classList.toggle("hidden", !state.peers.some((p) => p.name === route.session && !p.subagent && !p.host && !p.name.includes("/")));
+  if (handoffSource && handoffSource !== route.session) closeHandoff();
   const x = model.byName.get(route.session) || { name: route.session, peer: null, live: false, groups: [], children: [] };
   const p = x.peer;
   $("sHead").innerHTML = p
@@ -1749,6 +1766,47 @@ function setConvMenu(open) {
 $("convMenuBtn").addEventListener("click", () => setConvMenu($("convMenu").classList.contains("hidden")));
 document.addEventListener("click", (e) => { if (!e.target.closest(".conv-menu")) setConvMenu(false); });
 document.addEventListener("keydown", (e) => { if (e.key === "Escape") setConvMenu(false); });
+
+let handoffSource = null, handoffTarget = null;
+function closeHandoff() {
+  $("handoffForm").classList.add("hidden");
+  $("handoffToggle").setAttribute("aria-expanded", "false");
+  handoffSource = null; handoffTarget = null;
+}
+$("handoffToggle").addEventListener("click", () => {
+  setConvMenu(false);
+  handoffSource = route.session; handoffTarget = null;
+  $("handoffNote").value = ""; $("handoffSubmit").disabled = true;
+  $("handoffInfo").textContent = "Choose the session that will supervise these jobs.";
+  const targets = state.peers.filter((p) => p.name !== handoffSource && !p.subagent && !p.host && !p.name.includes("/") && ["claude", "codex", "opencode"].includes(p.agent));
+  $("handoffTargets").innerHTML = targets.length ? targets.map((p) => '<button type="button" class="handoff-target" aria-pressed="false" data-handoff-target="' + esc(p.name) + '">' + av(p.agent) + '<span><b>' + esc(p.name) + '</b><span class="small muted"> · ' + esc(p.agent + " · " + (p.activity || "connected")) + '</span></span></button>').join("") : '<div class="empty">No other live local sessions.</div>';
+  $("handoffForm").classList.remove("hidden");
+  $("handoffToggle").setAttribute("aria-expanded", "true");
+  $("handoffTargets").querySelector("button")?.focus();
+});
+$("handoffTargets").addEventListener("click", (e) => {
+  const button = e.target.closest("[data-handoff-target]");
+  if (!button) return;
+  handoffTarget = button.dataset.handoffTarget;
+  for (const b of $("handoffTargets").querySelectorAll("button")) b.setAttribute("aria-pressed", String(b === button));
+  $("handoffSubmit").disabled = false;
+});
+$("handoffCancel").addEventListener("click", closeHandoff);
+$("handoffForm").addEventListener("keydown", (e) => { if (e.key === "Escape") closeHandoff(); });
+$("handoffForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  if (!handoffSource || !handoffTarget) return;
+  const from = handoffSource, to = handoffTarget;
+  $("handoffSubmit").disabled = true;
+  try {
+    const r = await fetch("/api/subagents/handoff", { method: "POST", headers: { "content-type": "application/json", "x-agent-bridge": "1" }, body: JSON.stringify({ from, to, jobs: "all", note: $("handoffNote").value.trim() || undefined }) });
+    const result = await r.json();
+    if (!r.ok) throw new Error(result.error || result.text || "HTTP " + r.status);
+    closeHandoff();
+    await poll();
+    location.hash = href(to).slice(1);
+  } catch (err) { $("handoffInfo").textContent = err.message; $("handoffSubmit").disabled = false; }
+});
 
 $("setToggle").addEventListener("click", () => {
   setConvMenu(false);

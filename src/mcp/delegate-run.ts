@@ -178,6 +178,10 @@ async function runDelegateInner(
   // Native permission dialogs keep their existing eligibility; the dashboard can answer the same wait.
   const askUser = rc.askUser ? async (r: PermissionRequest): Promise<PermissionDecision> => {
     if (!job) return rc.askUser!(r);
+    if (job.ownershipHistory?.length && job.owner !== rc.me() && rc.jobs) {
+      const answer = await rc.jobs.askParent(job, `${r.tool}: ${r.detail}`, PARENT_APPROVAL_TIMEOUT_MS, r);
+      return answer.allow ? { allow: true } : { allow: false, message: answer.reason };
+    }
     const decision = await waitForApproval(job, `${r.tool}: ${r.detail}`, PARENT_APPROVAL_TIMEOUT_MS,
       (body) => rc.jobs?.fromSubagent(job, body, null), dlog, rc.home, r, () => rc.askUser!(r));
     return decision.allow ? { allow: true } : { allow: false, message: decision.reason.replace(/^deny:\s*/, "") };
@@ -218,7 +222,7 @@ async function runDelegateInner(
     if (!r.automaticReview && (isOwnServerCall(r) || isAutoApproved(r, autoApprove))) return { allow: true };
     let d: PermissionDecision;
     if (wiring) d = await wiring.onPermission(r);
-    else if (job && (!job.foreground || job.parentJob) && rc.jobs) {
+    else if (job && (!job.foreground || job.parentJob || job.ownershipHistory?.length) && rc.jobs) {
       // A background subagent asks the agent that started it (it can decide, also in auto mode or with
       // the user away). A blocking ask_* caller cannot answer while it waits, so that one asks the user.
       // Name the allow_tools pattern that would cover this call, so the next spawn need not ask.
