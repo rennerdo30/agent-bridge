@@ -185,7 +185,7 @@ it.each(["closed", "unavailable", "opencode"])("ten jobs survive a %s primary an
   for (const job of jobs) expect(envelopes.filter((m) => m[2]!.includes(`Subagent ${job.name} (codex) done after`))).toHaveLength(1);
   expect(delivered).toContain("Takeover approval request");
   // Quiet supervision copies remain retained and explicitly discoverable after failover.
-  const retainedNotes = (await call(target, "inbox", { include_quiet: true })).text;
+  const retainedNotes = (await call(target, "inbox", { include_quiet: true, limit: 100 })).text;
   expect(retainedNotes).toContain("Pending before takeover");
   for (let i = 0; i < 10; i++) expect(retainedNotes).toContain(`After takeover note ${i}`);
   expect((await call(target, "inbox")).text).not.toContain("Takeover result ");
