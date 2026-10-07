@@ -1,6 +1,7 @@
 import { MAX_CODEX_SUBAGENTS } from "../core/constants.js";
 import { CLAUDE_PERMISSION_MODES, CODEX_APPROVALS_REVIEWERS, CODEX_SANDBOXES, MODEL_NAME_PATTERN } from "../core/config.js";
 import type { AgentKind } from "../core/protocol.js";
+import { ANTIGRAVITY_EFFORTS } from "../core/antigravity.js";
 import { ACCESS_LEVELS, type TargetArgs } from "./targets.js";
 
 /** Settings that can change between turns without replacing a job's session or worktree. */
@@ -40,6 +41,7 @@ export function parseJobSettings(input: unknown, agent: AgentKind): JobSettings 
   }
   if (raw.effort !== undefined) {
     if (typeof raw.effort !== "string" || !EFFORT_PATTERN.test(raw.effort)) return "invalid effort";
+    if (agent === "antigravity" && !(ANTIGRAVITY_EFFORTS as readonly string[]).includes(raw.effort)) return "Antigravity effort must be low, medium, high, xhigh or max";
     settings.effort = raw.effort;
   }
   if (raw.access !== undefined) {

@@ -128,7 +128,7 @@ export const DELEGATION_TARGETS: Record<CodingAgent, DelegationTarget> = {
         let sessionId = base.sessionId ?? null;
         for (let attempt = 1; ; attempt++) {
           try {
-            return await delegateToCodexAppServer({ ...base, sessionId, bin: cfg.codexBin, sandbox, approvalsReviewer: a.approvals_reviewer ?? cfg.codexApprovalsReviewer, networkAccess: cfg.codexWorkspaceWriteNetworkAccess ?? undefined, writableRoots: base.writableRoots, askMode: a.access === "ask", approve: a.access === "ask" && a.relay ? a.relay.onPermission : base.approve });
+            return await delegateToCodexAppServer({ ...base, sessionId, bin: cfg.codexBin, sandbox, windowsSandbox: cfg.codexWindowsSandbox, approvalsReviewer: a.approvals_reviewer ?? cfg.codexApprovalsReviewer, networkAccess: cfg.codexWorkspaceWriteNetworkAccess ?? undefined, writableRoots: base.writableRoots, askMode: a.access === "ask", approve: a.access === "ask" && a.relay ? a.relay.onPermission : base.approve });
           } catch (err) {
             // A slow start (many Codex processes running): try once more, in the thread it may already have.
             if (err instanceof DelegateError && err.startupFailed && attempt === 1 && !base.signal?.aborted) {
@@ -148,6 +148,7 @@ export const DELEGATION_TARGETS: Record<CodingAgent, DelegationTarget> = {
         ...base,
         bin: cfg.codexBin,
         sandbox,
+        windowsSandbox: cfg.codexWindowsSandbox,
         networkAccess: cfg.codexWorkspaceWriteNetworkAccess ?? undefined,
         ...(relay ? { relayApprovals: true, extraEnv: { ...base.extraEnv, ...a.relay!.env } } : {}),
       });

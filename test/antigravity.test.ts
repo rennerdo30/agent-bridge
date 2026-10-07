@@ -74,6 +74,7 @@ describe("Antigravity delegation", () => {
     expect(isHandoffToolCall({ tool: "mcp:pair-desk_pair-desk", detail: "update_handoff: {}" })).toBe(true);
     expect(parseJobSettings({ terminal_sandbox: true, access: "ask" }, "antigravity")).toEqual({ terminal_sandbox: true, access: "ask" });
     expect(parseJobSettings({ terminal_sandbox: true }, "codex")).toContain("only to antigravity");
+    expect(parseJobSettings({ effort: "ultra" }, "antigravity")).toContain("low, medium, high, xhigh or max");
   });
 });
 

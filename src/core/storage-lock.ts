@@ -4,7 +4,7 @@ import { dirname, join } from "node:path";
 
 const LOCK_FILE = ".maintenance-lock";
 const USERS_DIR = ".storage-users";
-const SCOPED_STORE_DIRS = new Set(["runs", "jobs", "job-outcomes"]);
+const SCOPED_STORE_DIRS = new Set(["runs", "jobs", "job-outcomes", "worktree-state", "permission-repairs"]);
 const NESTED_STORE_DIRS = new Set(["local-result-receipts"]);
 
 /** Writers register before opening data. The second check closes the restore/open race. */

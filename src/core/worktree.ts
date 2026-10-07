@@ -17,8 +17,6 @@ const GIT_TIMEOUT_MS = 180_000;
 /** `git worktree add` checks out the whole tree: on a large repository under load that takes minutes. */
 const WORKTREE_ADD_TIMEOUT_MS = 600_000;
 export const BRANCH_PREFIX = "agent-bridge/";
-/** Used only for identity fields missing from the repository's effective config. */
-const FALLBACK_COMMIT_IDENTITY = { "user.name": "agent-bridge", "user.email": "agent-bridge@localhost" };
 const MAX_DIFFSTAT_CHARS = 4_000;
 
 export interface Worktree {
@@ -43,10 +41,10 @@ export function trustArgs(...dirs: string[]): string[] {
   return dirs.flatMap((d) => ["-c", `safe.directory=${resolve(d).replace(/\\/g, "/")}`]);
 }
 
-export async function git(args: string[], cwd: string, log: Logger, timeoutMs = GIT_TIMEOUT_MS): Promise<string> {
+export async function git(args: string[], cwd: string, log: Logger, timeoutMs = GIT_TIMEOUT_MS, env = process.env): Promise<string> {
   // Name the command in errors ("git worktree add timed out after 600s"), not the -c options before it.
   const what = `git ${args.filter((a, i) => !a.startsWith("-") && args[i - 1] !== "-c").slice(0, 2).join(" ")}`;
-  const res = await runProcess({ bin: GIT, args: [...LONG_PATH_ARGS, ...args], stdin: "", cwd, timeoutMs, env: process.env, log, what });
+  const res = await runProcess({ bin: GIT, args: [...LONG_PATH_ARGS, ...args], stdin: "", cwd, timeoutMs, env, log, what });
   if (res.code !== 0) throw new Error(`${what} failed: ${(res.stderr || res.stdout).trim().slice(0, 500)}`);
   // Only trailing whitespace: leading spaces are meaningful in `git status --porcelain`.
   return res.stdout.trimEnd();
@@ -143,27 +141,12 @@ export interface WorktreeOutcome {
   skippedFiles?: SkippedFile[];
 }
 
-const SUBJECT_CHARS = 72;
-
 /**
- * Commit message for work a subagent left uncommitted: the subject from its answer (what it did), not from
- * the task; the task and the job in the body; the agent as co-author.
+ * Automatic checkpoints use a fixed plain message. Task/answer text may contain attribution,
+ * model names or instructions and must never become commit metadata.
  */
 export function subagentCommitMessage(opts: { answer: string; task: string; job?: string | null; agent: string; model?: string | null }): string {
-  const plain = (s: string) => s.replace(/[*_`#>]+/g, "").replace(/\s+/g, " ").trim();
-  const firstLine = (s: string) => s.split(/\r?\n/).map(plain).find((l) => l.length > 0) ?? "";
-  const clip = (s: string) => (s.length > SUBJECT_CHARS ? `${s.slice(0, SUBJECT_CHARS - 1).trimEnd()}…` : s);
-  const subject = clip(firstLine(opts.answer) || firstLine(opts.task) || "subagent changes");
-  const email = { codex: "noreply@openai.com", claude: "noreply@anthropic.com", opencode: "noreply@opencode.ai" }[opts.agent] ?? "noreply@localhost";
-  const who = opts.model ? `${opts.model} via ${opts.agent}` : opts.agent;
-  return [
-    subject,
-    "",
-    `Committed by agent-bridge for ${opts.job ?? "a subagent"} (${who}).`,
-    `Task: ${clip(firstLine(opts.task))}`,
-    "",
-    `Co-Authored-By: ${who} <${email}>`,
-  ].join("\n");
+  return "Save worktree changes";
 }
 
 /**
@@ -272,13 +255,15 @@ export async function finishWorktree(wt: Worktree, message: string, log: Logger)
   const skippedFiles = await autoCommitFiles(wt, log);
   const status = await git([...trust, "diff", "--cached", "--name-only", "-z"], wt.path, log);
   if (status) {
-    // The repository's own commit identity, else a neutral one (AB-44).
-    const identity: string[] = [];
-    for (const [key, fallback] of Object.entries(FALLBACK_COMMIT_IDENTITY)) {
-      const configured = (await git([...trustArgs(wt.repoRoot), "config", "--get", key], wt.repoRoot, log).catch(() => "")).trim();
-      identity.push("-c", `${key}=${configured || fallback}`);
+    // Never invent an identity. Keep the checkout and report missing repository configuration.
+    for (const key of ["user.name", "user.email"]) {
+      if (!(await git([...trust, "config", "--get", key], wt.path, log).catch(() => "")).trim()) throw new Error(`Configure ${key} before saving worktree changes.`);
     }
-    await git([...trust, ...identity, "commit", "-q", "--no-verify", "-m", message], wt.path, log);
+    const env = { ...process.env };
+    for (const key of Object.keys(env)) if (/^GIT_(AUTHOR|COMMITTER)_(NAME|EMAIL)$/i.test(key)) delete env[key];
+    // --no-verify alone still runs prepare-commit-msg, which can append forbidden attribution.
+    // A linked checkout's .git is a file, so this hooks directory cannot contain executable hooks.
+    await git([...trust, "-c", `core.hooksPath=${resolve(wt.path).replace(/\\/g, "/")}/.git/checkpoint-hooks-disabled`, "commit", "-q", "--no-verify", "-m", "Save worktree changes"], wt.path, log, GIT_TIMEOUT_MS, env);
   }
   await unlockWorktree(wt.repoRoot, wt.path, log);
   // The job may have switched to (or created) a branch of its own: its work is wherever it committed.
