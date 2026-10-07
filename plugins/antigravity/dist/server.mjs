@@ -29621,7 +29621,9 @@ async function delegateToAntigravity(req) {
     });
     const parsed = parseAntigravityJsonl(res.stdout);
     const isError = res.code !== 0 || parsed.isError;
-    return { ...parsed, sessionId: parsed.sessionId ?? sessionId, isError, details: { ...parsed.details, exitCode: res.code, ...isError ? { error: parsed.isError ? parsed.text : res.stderr.slice(-4e3) || `Antigravity exited with code ${res.code}` } : {}, ...res.code !== 0 ? { stderr: res.stderr.slice(-4e3) } : {} } };
+    const stderr = res.stderr.slice(-4e3);
+    const error62 = [parsed.isError ? parsed.text : "", stderr].filter(Boolean).join("\n") || `Antigravity exited with code ${res.code}`;
+    return { ...parsed, sessionId: parsed.sessionId ?? sessionId, isError, details: { ...parsed.details, exitCode: res.code, ...isError ? { error: error62 } : {}, ...res.code !== 0 ? { stderr } : {} } };
   } catch (err) {
     if (err instanceof DelegateError) err.sessionId = sessionId ?? parseAntigravityJsonl(err.partialStdout).sessionId;
     throw err;
