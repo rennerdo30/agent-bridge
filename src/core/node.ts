@@ -16,7 +16,7 @@ import {
   RECONNECT_BACKOFF_MIN_MS,
 } from "./constants.js";
 import type { Logger } from "./logger.js";
-import { BridgeError, isQuietMessage, type AgentKind, type BridgeMessage, type PeerActivity, type PeerInfo, type SendArgs, type SendResult, type SiblingPeer } from "./protocol.js";
+import { BridgeError, isQuietMessage, type AgentKind, type BridgeMessage, type PeerActivity, type PeerInfo, type RequestMap, type SendArgs, type SendResult, type SiblingPeer } from "./protocol.js";
 import { ReadJournal } from "./read-journal.js";
 import { recordLocalResult } from "./local-result-receipts.js";
 import { MessageStore } from "./store.js";
@@ -403,13 +403,25 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
   /** quiet: not part of a conversation of this agent (no listen window, replies are not awaited), e.g. control messages to a job runner. */
   send(args: SendArgs, opts: { quiet?: boolean } = {}): Promise<SendResult> {
     return this.withClient(async (c) => {
-      const res = await c.request("send", args);
+      const res = await this.sendRequest(c, "send", { ...args, dedupeKey: args.dedupeKey || randomUUID() });
       if (opts.quiet) return res;
       this.lastSent = Date.now();
       if (!args.replyTo) for (const m of res.messages) this.asked.add(m.id);
       if (this.asked.size > QUESTION_ID_MEMORY) this.asked.delete(this.asked.values().next().value!);
       return res;
     });
+  }
+
+  /** A late send response can be recovered from the same broker without sending twice. */
+  private async sendRequest<O extends "send" | "sendSibling">(client: BridgeClient, op: O, args: RequestMap[O][0]): Promise<SendResult> {
+    try { return await client.request(op, args); }
+    catch (err) {
+      if ((err as Error).message !== `broker request timed out: ${op}`) throw err;
+      try { return await client.request(op, args); }
+      catch (retryError) {
+        throw new Error(`Delivery is unconfirmed after a timed-out ${op}. Check inbox/history before resending. ${(retryError as Error).message}`, { cause: retryError });
+      }
+    }
   }
 
   /** A reply to a question this peer asked (so the answer should reach the agent even when it is idle). */
@@ -486,7 +498,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
   }
 
   sendSibling(args: SendArgs, maxHops: number): Promise<SendResult> {
-    return this.withClient((c) => c.request("sendSibling", { ...args, maxHops }));
+    return this.withClient((c) => this.sendRequest(c, "sendSibling", { ...args, maxHops, dedupeKey: args.dedupeKey || randomUUID() }));
   }
 
   async updateJob(patch: { jobParent?: string; jobTitle?: string }): Promise<void> {
