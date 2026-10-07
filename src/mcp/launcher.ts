@@ -6,7 +6,8 @@ import { recordRuntimeSession, selectedWorker, type PluginClient } from "../core
 const clientArg = process.argv.find((arg) => arg.startsWith("--agent="))?.slice(8) ?? process.env[ENV.agent] ?? "codex";
 const client: PluginClient = ["claude", "codex", "opencode", "antigravity"].includes(clientArg) ? clientArg as PluginClient : "codex";
 const home = process.env[ENV.home]?.trim() || DEFAULT_HOME;
-const selected = selectedWorker(home, client, join(dirname(fileURLToPath(import.meta.url)), "worker.mjs"));
+const runtimeHome = process.env.AGENT_BRIDGE_PLUGIN_RUNTIME_HOME?.trim() || home;
+const selected = selectedWorker(runtimeHome, client, join(dirname(fileURLToPath(import.meta.url)), "worker.mjs"));
 // CWD discovery must still recognize the host's original plugin root after selecting another snapshot.
 process.env.AGENT_BRIDGE_LAUNCH_PLUGIN_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 try { recordRuntimeSession(home, { pid: process.pid, client, version: selected.version, worker: selected.worker, startedAt: new Date().toISOString() }); }
