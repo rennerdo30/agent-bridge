@@ -11,6 +11,8 @@ import type { Job } from "../src/mcp/jobs.js";
 import { DELEGATION_TARGETS } from "../src/mcp/targets.js";
 import { answerPendingApproval, listPendingApprovals, type PermissionDecision, type PermissionRequest } from "../src/core/relay.js";
 import { until } from "./helpers.js";
+import { readWorktreeState, rootId, saveWorktreeState } from "../src/core/worktree-state.js";
+import { closeJobWorktree } from "../src/core/job-close.js";
 
 let home: string;
 beforeEach(() => {
@@ -26,6 +28,21 @@ const context = (): RunContext => ({ agent: "claude", cfg: { ...DEFAULT_CONFIG }
 const job = (): Job => ({ id: "test", name: "codex-job-test", agent: "codex", model: null, prompt: "task", startedAt: Date.now(), controller: new AbortController(), progress: null, status: "running", sessionId: null, workdir: null, worktree: null, queue: [] });
 
 describe("delegation approval routing", () => {
+  it.each(["codex", "claude", "opencode"] as const)("fences implicit managed cwd jobs and invalidates prior shutdown proof for %s", async (target) => {
+    const root = join(home, "worktrees", "existing"); const cwd = join(root, "client");
+    mkdirSync(cwd, { recursive: true });
+    const wt = { path: root, cwd: root, repoRoot: home, branch: "saved", base: "base" };
+    saveWorktreeState(home, wt, { contractVersion: 1, path: root, repoRoot: home, base: "base", rootId: rootId(root), libraries: [], lastContinuation: 1, processesStopped: true });
+    const close = () => closeJobWorktree({ home, job: { name: "saved-job", status: "done", worktree: wt }, enabled: true, log: nullLogger });
+    vi.spyOn(DELEGATION_TARGETS[target], "run").mockImplementation(async () => {
+      expect(await close()).toMatchObject({ action: "kept", reason: expect.stringContaining("lease") });
+      return { sessionId: "saved", text: "done", isError: false, details: {} };
+    });
+    await runDelegate(context(), target, { title: "nested", prompt: "task", cwd, access: "read" }, new AbortController().signal, undefined, true);
+    expect(readWorktreeState(home, wt)?.processesStopped).toBe(false);
+    expect(readWorktreeState(home, wt)?.lastContinuation).toBeGreaterThan(1);
+    expect(await close()).toMatchObject({ action: "kept", reason: expect.stringContaining("shutdown is unproven") });
+  });
   it("requires a supervisor decision for reviewer refusals despite tool allowlists or cached allows", async () => {
     const rc = context();
     rc.cfg.autoApproveTools = ["pair-desk.get_*"];
@@ -129,14 +146,13 @@ describe("delegation approval routing", () => {
     expect(result.text).toMatch(/Library -> [A-Z]:\\.*owner-cache|Library -> \/.*owner-cache/);
   });
 
-  it("does not auto-commit through a worktree root replaced by an external junction", async () => {
+  it("refuses a continued worktree root replaced by an external junction before launching tools", async () => {
     const rc = context(); const root = join(home, "worktrees", "linked-root"); const outside = join(home, "owner");
     mkdirSync(join(home, "worktrees")); mkdirSync(outside);
     symlinkSync(outside, root, "junction");
     vi.spyOn(DELEGATION_TARGETS.codex, "run").mockResolvedValue({ sessionId: "saved", text: "done", isError: false, details: {} });
-    const result = await runDelegate(rc, "codex", { title: "root", prompt: "task", access: "read", _worktree: { repoRoot: home, path: root, cwd: root, branch: "agent-bridge/test", base: "base" } }, new AbortController().signal, undefined, true);
-    expect(result.text).toContain("Auto-commit skipped: the worktree root is an external link");
-    expect(result.text).not.toContain("Could not commit");
+    await expect(runDelegate(rc, "codex", { title: "root", prompt: "task", access: "read", _worktree: { repoRoot: home, path: root, cwd: root, branch: "agent-bridge/test", base: "base" } }, new AbortController().signal, undefined, true)).rejects.toThrow("through a link");
+    expect(DELEGATION_TARGETS.codex.run).not.toHaveBeenCalled();
   });
   it("publishes native-dialog approvals without changing foreground routing", async () => {
     const rc = context();
