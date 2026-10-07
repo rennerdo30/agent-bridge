@@ -4,6 +4,10 @@ import { resolveBinary, unwrapNpmShim } from "../core/delegate.js";
 import { t } from "../core/i18n.js";
 import { describeCodexUser, listCodexUsers } from "./codex-users.js";
 import { installOpencode, opencodeSourceDir, uninstallOpencode } from "./opencode-install.js";
+import { pluginSourceDir } from "./opencode-install.js";
+import { activatePluginRuntime, reportConnectedVersions, reportPluginSessions, updateClaude, updateCodex } from "./live-update.js";
+import { APP_VERSION } from "../core/constants.js";
+import { resolveHome } from "../core/paths.js";
 
 /** Where the agent-bridge marketplaces live (Claude Code and Codex read the same repo). */
 export const MARKETPLACE_REPO = "rennerdo30/agent-bridge";
@@ -15,7 +19,7 @@ export const TOOLS: readonly Tool[] = ["claude", "codex", "opencode"];
 export type Action = "install" | "update" | "uninstall";
 
 /** One step: either an official CLI command, or the opencode file copy (opencode has no plugin CLI for this). */
-export type Step = { kind: "command"; bin: string; args: string[]; allowFailure?: boolean } | { kind: "opencode"; action: Action };
+export type Step = { kind: "command"; bin: string; args: string[]; allowFailure?: boolean } | { kind: "opencode"; action: Action } | { kind: "live-update"; tool: "claude" | "codex" };
 
 /** The exact official commands for each tool and action. Nothing else is ever run. */
 export function planFor(tool: Tool, action: Action): Step[] {
@@ -29,10 +33,7 @@ export function planFor(tool: Tool, action: Action): Step[] {
           { kind: "command", bin: "claude", args: ["plugin", "install", PLUGIN_ID] },
         ];
       case "update":
-        return [
-          { kind: "command", bin: "claude", args: ["plugin", "marketplace", "update", MARKETPLACE_NAME] },
-          { kind: "command", bin: "claude", args: ["plugin", "update", PLUGIN_ID] },
-        ];
+        return [{ kind: "live-update", tool }];
       case "uninstall":
         return [{ kind: "command", bin: "claude", args: ["plugin", "uninstall", PLUGIN_ID] }];
     }
@@ -46,10 +47,7 @@ export function planFor(tool: Tool, action: Action): Step[] {
           { kind: "command", bin: "codex", args: ["plugin", "add", PLUGIN_ID] },
         ];
       case "update":
-        return [
-          { kind: "command", bin: "codex", args: ["plugin", "marketplace", "upgrade", MARKETPLACE_NAME] },
-          { kind: "command", bin: "codex", args: ["plugin", "add", PLUGIN_ID] },
-        ];
+        return [{ kind: "live-update", tool }];
       case "uninstall":
         return [{ kind: "command", bin: "codex", args: ["plugin", "remove", PLUGIN_ID] }];
     }
@@ -59,6 +57,7 @@ export function planFor(tool: Tool, action: Action): Step[] {
 
 export function describeStep(step: Step): string {
   if (step.kind === "command") return `${step.bin} ${step.args.join(" ")}`;
+  if (step.kind === "live-update") return `publish immutable ${step.tool} plugin version (keep all old versions)`;
   return step.action === "uninstall" ? t("installer.opencodeRemove") : t("installer.opencodeCopy");
 }
 
@@ -111,7 +110,7 @@ export async function runInstaller(opts: InstallerOptions): Promise<number> {
       const steps = planFor(tool, opts.action);
       opts.out(t("installer.plan", { tool }));
       for (const s of steps) opts.out(`  ${describeStep(s)}`);
-      if (tool === "codex") {
+      if (tool === "codex" && opts.action !== "update") {
         opts.out(t("installer.codexNote"));
         const users = await listCodexUsers();
         if (users.length) {
@@ -132,6 +131,17 @@ export async function runInstaller(opts: InstallerOptions): Promise<number> {
         }
       }
       for (const step of steps) {
+        if (step.kind === "live-update") {
+          try {
+            const source = pluginSourceDir(step.tool, `${step.tool === "codex" ? ".codex-plugin" : ".claude-plugin"}/plugin.json`);
+            if (!source) throw new Error("Missing packaged plugin source");
+            const root = step.tool === "codex" ? updateCodex(source) : updateClaude(source);
+            activatePluginRuntime(source, step.tool, resolveHome());
+            opts.out(`  + ${root}`);
+            reportPluginSessions(resolveHome(), step.tool, APP_VERSION, opts.out);
+          } catch (error) { opts.out(`  Update failed: ${String(error)}`); failures++; }
+          continue;
+        }
         if (step.kind === "opencode") {
           const source = opencodeSourceDir();
           if (step.action === "uninstall") {
@@ -144,6 +154,7 @@ export async function runInstaller(opts: InstallerOptions): Promise<number> {
             const res = installOpencode(source);
             for (const f of res.files) opts.out(`  + ${f}`);
             for (const f of res.skipped) opts.out(t("cli.install.skipped", { path: f }));
+            reportPluginSessions(resolveHome(), tool, APP_VERSION, opts.out);
           }
           continue;
         }
@@ -165,6 +176,7 @@ export async function runInstaller(opts: InstallerOptions): Promise<number> {
   } finally {
     rl?.close();
   }
+  if (opts.action === "update") await reportConnectedVersions(resolveHome(), opts.tools, APP_VERSION, opts.out);
   opts.out(failures ? t("installer.doneWithErrors", { count: failures }) : t("installer.done"));
   return failures ? 1 : 0;
 }

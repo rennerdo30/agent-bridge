@@ -16,6 +16,8 @@ describe("installer plans", () => {
     expect(planFor("claude", "uninstall").map(describeStep)).toEqual(["claude plugin uninstall agent-bridge@agent-bridge"]);
     expect(planFor("codex", "uninstall").map(describeStep)).toEqual(["codex plugin remove agent-bridge@agent-bridge"]);
     expect(planFor("opencode", "update")).toEqual([{ kind: "opencode", action: "update" }]);
+    expect(planFor("codex", "update")).toEqual([{ kind: "live-update", tool: "codex" }]);
+    expect(planFor("claude", "update")).toEqual([{ kind: "live-update", tool: "claude" }]);
   });
 
   it("selects tools from the arguments, or all of them", () => {

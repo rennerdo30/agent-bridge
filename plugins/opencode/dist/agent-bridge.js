@@ -7702,7 +7702,7 @@ var require_cross_spawn = __commonJS({
 });
 
 // src/opencode/plugin.ts
-import { appendFileSync, mkdirSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync } from "node:fs";
 import { homedir as homedir2 } from "node:os";
 import { dirname, join as join2 } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -31073,7 +31073,7 @@ var AgentBridgePlugin = async (input2) => {
 async function createBridge({ client, directory }) {
   const log = makeLog();
   const here = dirname(fileURLToPath(import.meta.url));
-  const serverPath = process.env.AGENT_BRIDGE_OPENCODE_SERVER || join2(here, SERVER_DIR, SERVER_FILE);
+  const serverPath = process.env.AGENT_BRIDGE_OPENCODE_SERVER || (existsSync(join2(here, SERVER_FILE)) ? join2(here, SERVER_FILE) : join2(here, SERVER_DIR, SERVER_FILE));
   const nodeBin = process.env.AGENT_BRIDGE_NODE || "node";
   log("info", "starting", { version: APP_VERSION, directory, serverPath });
   const transport = new StdioClientTransport({
