@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
-import { existsSync, lstatSync, readFileSync } from "node:fs";
+import { closeSync, existsSync, fstatSync, lstatSync, openSync, readFileSync, readSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { inflateSync } from "node:zlib";
 import { JOBS_FILE } from "./constants.js";
 import { readHistoryJson } from "./run-history.js";
 import { isRecord, mergeStoreFields, readJsonStore, writeJsonStore } from "./json-store.js";
@@ -15,7 +16,7 @@ import { localResultReceipt, RESULT_HEADER } from "./local-result-receipts.js";
 /** Resolve the ordinary files ref store without starting Git twice for one receipt.
  * Symbolic refs, linked Git directories and alternate ref stores retain Git's resolver. */
 function localHeads(repo: string, branches: string[]): Map<string, string> | null {
-  if (["GIT_DIR", "GIT_COMMON_DIR", "GIT_WORK_TREE", "GIT_NAMESPACE"].some((key) => process.env[key])) return null;
+  if (["GIT_DIR", "GIT_COMMON_DIR", "GIT_WORK_TREE", "GIT_NAMESPACE", "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_SHALLOW_FILE", "GIT_REPLACE_REF_BASE"].some((key) => process.env[key])) return null;
   if (branches.some((branch) => !/^[A-Za-z0-9._/-]+$/.test(branch) || branch.split("/").some((part) => !part || part.startsWith(".") || part.endsWith(".") || part.endsWith(".lock") || part.includes("..")))) return null;
   try {
     const dir = join(repo, ".git");
@@ -38,6 +39,65 @@ function localHeads(repo: string, branches: string[]): Map<string, string> | nul
       heads.set(ref, head);
     }
     return heads;
+  } catch { return null; }
+}
+
+/** A small complete loose-object walk avoids cold Git startup. Unsupported or
+ * incomplete evidence always uses Git, including packed objects and altered ancestry. */
+function localAncestor(repo: string, ancestor: string, descendant: string): boolean | null {
+  const dir = join(repo, ".git"), limit = 64 * 1024;
+  try {
+    if (["shallow", "info/grafts", "refs/replace", "objects/info/alternates"].some((file) => existsSync(join(dir, file)))) return null;
+    try {
+      if (/ refs\/replace\//m.test(readFileSync(join(dir, "packed-refs"), "utf8"))) return null;
+    } catch (err) { if ((err as NodeJS.ErrnoException).code !== "ENOENT") return null; }
+    let reads = 0;
+    const parents = (head: string): string[] | null => {
+      if (reads++ >= 16 || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/i.test(head)) return null;
+      const file = join(dir, "objects", head.slice(0, 2), head.slice(2));
+      if (!lstatSync(file).isFile()) return null;
+      const fd = openSync(file, "r");
+      let compressed: Buffer;
+      try {
+        const stat = fstatSync(fd), size = stat.size;
+        if (!stat.isFile() || size > limit) return null;
+        compressed = Buffer.alloc(size);
+        let at = 0;
+        while (at < size) {
+          const n = readSync(fd, compressed, at, size - at, at);
+          if (!n) return null;
+          at += n;
+        }
+      } finally { closeSync(fd); }
+      const object = inflateSync(compressed, { maxOutputLength: limit });
+      if (createHash(head.length === 40 ? "sha1" : "sha256").update(object).digest("hex") !== head.toLowerCase()) return null;
+      const zero = object.indexOf(0), header = /^commit (\d+)$/.exec(object.subarray(0, zero).toString("utf8"));
+      if (zero < 0 || !header || Number(header[1]) !== object.length - zero - 1) return null;
+      const body = object.subarray(zero + 1).toString("utf8"), end = body.indexOf("\n\n");
+      if (end < 0 || !new RegExp(`^tree [a-f0-9]{${head.length}}\\n`, "i").test(body)) return null;
+      const result: string[] = [];
+      for (const line of body.slice(0, end).split("\n")) {
+        if (!line.startsWith("parent ")) continue;
+        const parent = line.slice(7);
+        if (parent.length !== head.length || !/^[a-f0-9]+$/i.test(parent) || result.length >= 16) return null;
+        result.push(parent);
+      }
+      return result;
+    };
+    // A missing or malformed selected commit is not sufficient ancestry evidence.
+    if (parents(ancestor) === null) return null;
+    const pending = [descendant], seen = new Set<string>();
+    while (pending.length) {
+      const head = pending.pop()!;
+      if (head === ancestor) return true;
+      if (seen.has(head)) continue;
+      if (seen.size >= 16) return null;
+      seen.add(head);
+      const next = parents(head);
+      if (next === null || pending.length + next.length > 16) return null;
+      pending.push(...next);
+    }
+    return false;
   } catch { return null; }
 }
 
@@ -164,6 +224,7 @@ export async function deriveJobOutcome(home: string, job: OutcomeJob, log: Logge
       // A saved tip still proves ancestry after the branch/worktree was removed.
       // Resolve both exact refs in one process; a saved tip remains authoritative.
       let heads = localHeads(repoRoot, [branch, baseBranch]);
+      const ordinaryFiles = heads !== null;
       if (!heads) {
         const refs = await run(["for-each-ref", "--format=%(refname)%09%(objectname)",
           `refs/heads/${branch}`, `refs/heads/${baseBranch}`]).catch(() => "");
@@ -176,7 +237,8 @@ export async function deriveJobOutcome(home: string, job: OutcomeJob, log: Logge
         const base = heads.get(`refs/heads/${baseBranch}`);
         if (!base) merge.reason = "Base branch is unavailable.";
         else {
-          const merged = branchHead === base || await run(["merge-base", "--is-ancestor", branchHead, base]).then(() => true, () => false);
+          const local = branchHead === base ? true : ordinaryFiles ? localAncestor(repoRoot, branchHead, base) : null;
+          const merged = branchHead === base || (local ?? await run(["merge-base", "--is-ancestor", branchHead, base]).then(() => true, () => false));
           merge.state = merged ? "merged" : "unmerged";
           merge.reason = merged ? null : `Has commits not merged into ${baseBranch}.`;
         }
