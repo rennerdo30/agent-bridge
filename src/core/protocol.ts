@@ -72,6 +72,7 @@ export interface PeerInfo {
   wakeMaxHops?: number;
   /** Whether the agent is working on a turn right now, when known (reported by hooks). */
   activity?: PeerActivity | null;
+  unavailable?: boolean;
   /** agent-bridge version of this peer. */
   version?: string;
   /** Set for a job runner (it hosts a background subagent of a session): that subagent's agent. Hidden from peer lists. */
@@ -189,6 +190,10 @@ export interface AuthArgs {
 }
 
 export interface RequestMap {
+  handoffSubagents: [import("./job-handoff.js").HandoffArgs, import("./job-handoff.js").HandoffReceipt];
+  jobAuthority: [{ job: string }, import("../mcp/jobs.js").Job | null];
+  inlineJobControl: [{ job: string; control: import("../mcp/jobs.js").RunnerControl }, { sent: boolean }];
+  inlineJobReport: [BridgeMessage, { saved: boolean }];
   auth: [AuthArgs, { brokerPid: number }];
   hello: [HelloArgs, HelloResult];
   send: [SendArgs, SendResult];
@@ -251,6 +256,10 @@ export type ResponseFrame =
   | { t: "res"; id: number; ok: false; error: ErrorPayload };
 
 export interface EventMap {
+  shared_job_control: { job: string; control: import("../mcp/jobs.js").RunnerControl };
+  mail_retracted: { ids: string[] };
+  jobs_changed: { withdrawn: string[] };
+  inline_job_control: { job: string; control: import("../mcp/jobs.js").RunnerControl };
   message: BridgeMessage;
   peer_joined: PeerInfo;
   peer_left: PeerInfo;

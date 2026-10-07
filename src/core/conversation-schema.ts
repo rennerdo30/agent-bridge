@@ -48,4 +48,4 @@ INSERT OR IGNORE INTO conversation_bindings(session,agent,cwd)
  SELECT session_id,json_extract(identity,'$[0]'),json_extract(identity,'$[3]')
  FROM session_bindings WHERE json_valid(identity) AND json_type(identity,'$[0]')='text'
  AND json_type(identity,'$[3]')='text';
-PRAGMA user_version=7;`;
+PRAGMA user_version=8;`;

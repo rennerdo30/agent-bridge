@@ -4625,7 +4625,7 @@ var require_core = __commonJS({
       errorsText(errors = this.errors, { separator = ", ", dataVar = "data" } = {}) {
         if (!errors || errors.length === 0)
           return "No errors";
-        return errors.map((e) => `${dataVar}${e.instancePath} ${e.message}`).reduce((text2, msg) => text2 + separator + msg);
+        return errors.map((e) => `${dataVar}${e.instancePath} ${e.message}`).reduce((text3, msg) => text3 + separator + msg);
       }
       $dataMetaSchema(metaSchema, keywordsJsonPointers) {
         const rules = this.RULES.all;
@@ -7209,7 +7209,7 @@ import { DatabaseSync as DatabaseSync5 } from "node:sqlite";
 import { homedir } from "node:os";
 import { join } from "node:path";
 var APP_NAME = "agent-bridge";
-var APP_VERSION = "0.29.11";
+var APP_VERSION = "0.29.12";
 var PROTOCOL_VERSION = 2;
 var ENV = {
   home: "AGENT_BRIDGE_HOME",
@@ -7310,7 +7310,7 @@ function storeHome(path) {
 }
 
 // src/core/json-store.ts
-var JSON_STORE_VERSION = 2;
+var JSON_STORE_VERSION = 3;
 var KEEP_STORE_BACKUPS = 3;
 var RENAME_ATTEMPTS = 50;
 var RENAME_RETRY_MS = 20;
@@ -7598,16 +7598,16 @@ function time(value) {
   return Number.isFinite(at) ? at : 0;
 }
 function preview(value, limit = MAX_TOOL_PREVIEW_CHARS) {
-  let text2 = "";
-  if (typeof value === "string") text2 = value;
+  let text3 = "";
+  if (typeof value === "string") text3 = value;
   else if (value !== void 0 && value !== null) {
     try {
-      text2 = JSON.stringify(value);
+      text3 = JSON.stringify(value);
     } catch {
       return "";
     }
   }
-  return text2.length > limit ? `${text2.slice(0, limit)}\u2026` : text2;
+  return text3.length > limit ? `${text3.slice(0, limit)}\u2026` : text3;
 }
 function contentText(value) {
   if (typeof value === "string") return value;
@@ -7888,6 +7888,37 @@ function resolveDbPath(home) {
   return join8(home, DB_FILE_NAME);
 }
 
+// src/core/job-ownership.ts
+function text(value) {
+  return typeof value === "string" && value ? value : void 0;
+}
+function primaryFor(job) {
+  return (!job.parentJob && (!Array.isArray(job.ownershipHistory) || !job.ownershipHistory.length) ? text(job.owner) : void 0) ?? text(job.rootName) ?? text(job.owner) ?? "";
+}
+function mastersFor(job) {
+  const history = Array.isArray(job.ownershipHistory) ? job.ownershipHistory : [];
+  const names = [
+    job.parentJob || !text(job.owner) || history.length ? text(job.rootName) : void 0,
+    !job.parentJob ? text(job.owner) : void 0,
+    ...Array.isArray(job.masters) ? job.masters.filter((v) => typeof v === "string") : [],
+    ...history.flatMap((h) => h && typeof h === "object" ? [text(h.fromRootName), text(h.rootName), !job.parentJob ? text(h.from) : void 0, !job.parentJob ? text(h.to) : void 0] : [])
+  ];
+  return [...new Set(names.filter((v) => Boolean(v) && !v.includes("/")))];
+}
+function canControlJob(job, name2, groupMasters = []) {
+  return !name2.includes("/") && (mastersFor(job).includes(name2) || groupMasters.some((p) => p.name === name2 && !p.host && !p.jobAgent && !p.subagent));
+}
+function chooseJobRecipient(job, livePeers, groupMasters = []) {
+  const primary = primaryFor(job);
+  const live = new Set(livePeers.filter((p) => !p.host && !p.jobAgent && !p.subagent && !p.unavailable && !p.name.includes("/")).map((p) => p.name));
+  if (live.has(primary)) return primary;
+  const history = Array.isArray(job.ownershipHistory) ? job.ownershipHistory : [];
+  const previous = history.slice().reverse().flatMap((h) => h && typeof h === "object" ? [text(h.fromRootName), !job.parentJob ? text(h.from) : void 0] : []);
+  const grants = mastersFor(job).slice().reverse();
+  const group = [...groupMasters].sort((a, b) => a.startedAt - b.startedAt || a.name.localeCompare(b.name));
+  return [...previous, ...grants, ...group.map((p) => p.name)].find((name2) => name2 && live.has(name2)) ?? primary;
+}
+
 // src/mcp/jobs.ts
 import { randomUUID as randomUUID6 } from "node:crypto";
 import { closeSync as closeSync6, mkdirSync as mkdirSync10, openSync as openSync6, rmSync as rmSync3, statSync as statSync7 } from "node:fs";
@@ -8146,10 +8177,10 @@ var ParentLink = class {
     }
     if (req.method === "POST" && req.url === "/message") {
       const body = JSON.parse(await readBody(req));
-      const text2 = String(body.body ?? "").trim();
-      if (!text2) throw new Error("empty message");
+      const text3 = String(body.body ?? "").trim();
+      if (!text3) throw new Error("empty message");
       this.unanswered = this.unanswered.filter((m) => m.sibling);
-      this.onMessage(text2, typeof body.reply_to === "string" ? body.reply_to : null);
+      this.onMessage(text3, typeof body.reply_to === "string" ? body.reply_to : null);
       return { ok: true };
     }
     if (req.method === "POST" && req.url === "/escalate") {
@@ -8240,8 +8271,8 @@ function kindOfTool(name2) {
   if (READ_TOOLS.test(name2)) return "read";
   return "tool";
 }
-function say(text2) {
-  return text2.trim() ? { kind: "say", text: `says: ${clip(text2, MAX_SAY_CHARS)}`, full: `says: ${text2.trim()}` } : null;
+function say(text3) {
+  return text3.trim() ? { kind: "say", text: `says: ${clip(text3, MAX_SAY_CHARS)}`, full: `says: ${text3.trim()}` } : null;
 }
 function codexCommandFailure(item) {
   const code = item.exitCode ?? item.exit_code;
@@ -8293,8 +8324,8 @@ function describeClaudeEvent(ev) {
     const detail = firstString(tool.input, INPUT_KEYS);
     return { kind: kindOfTool(String(tool.name)), ...txt(`${tool.name}${detail ? `: ${detail}` : ""}`), id: tool.id };
   }
-  const text2 = blocks.filter((b) => b?.type === "text").map((b) => b.text).join(" ");
-  if (text2) return say(text2);
+  const text3 = blocks.filter((b) => b?.type === "text").map((b) => b.text).join(" ");
+  if (text3) return say(text3);
   if (blocks.some((b) => b?.type === "thinking")) return { kind: "think", text: "thinking" };
   return null;
 }
@@ -8546,9 +8577,16 @@ function listPendingApprovals(home) {
   } catch {
     return [];
   }
+  const jobs = readStore(join13(home, JOBS_FILE));
   return files2.flatMap((file2) => {
     if (!file2.endsWith(".json")) return [];
     const r = readApproval(home, file2.slice(0, -5));
+    const job = r && jobs.find((j) => j.name === r.job && j.ownershipHistory?.length);
+    if (r && job) {
+      r.owner = job.rootName ?? job.owner ?? r.owner;
+      r.rootSession = job.rootSession;
+      r.parentJob = job.parentJob;
+    }
     return r ? [{
       id: r.id,
       owner: r.owner,
@@ -8585,9 +8623,9 @@ async function answerPendingApproval(home, id, body) {
 
 // src/core/codex-paths.ts
 import { realpathSync as realpathSync3 } from "node:fs";
-function codexDriveMappings(text2, platform = process.platform, canonical = realpathSync3.native) {
+function codexDriveMappings(text3, platform = process.platform, canonical = realpathSync3.native) {
   if (platform !== "win32") return [];
-  const drives = new Set([...text2.matchAll(/\b([a-z]):[\\/]/gi)].map((m) => `${m[1].toUpperCase()}:\\`));
+  const drives = new Set([...text3.matchAll(/\b([a-z]):[\\/]/gi)].map((m) => `${m[1].toUpperCase()}:\\`));
   const mappings = [];
   for (const alias of drives) {
     try {
@@ -8599,13 +8637,13 @@ function codexDriveMappings(text2, platform = process.platform, canonical = real
   return mappings;
 }
 function codexPathPrompt(prompt, mappings) {
-  let text2 = prompt;
+  let text3 = prompt;
   for (const { alias, real } of mappings) {
     const drive = alias[0];
-    text2 = text2.replace(new RegExp(`\\b${drive}:[\\\\/]`, "gi"), () => real);
+    text3 = text3.replace(new RegExp(`\\b${drive}:[\\\\/]`, "gi"), () => real);
   }
-  if (!mappings.length) return text2;
-  return `${text2}
+  if (!mappings.length) return text3;
+  return `${text3}
 
 (agent-bridge: Windows drive aliases resolved by the supervisor: ${mappings.map((m) => `${m.alias} = ${m.real}`).join(", ")}. These are the same folders. Use the real paths supplied above, including for new output files, without requesting path confirmation. In your report name both the requested alias and the real path.)`;
 }
@@ -8662,16 +8700,16 @@ function resolveBinary(bin, env = process.env, platform = process.platform) {
   return null;
 }
 function unwrapNpmShim(shimPath, readFile3 = (p) => readFileSync9(p, "utf8")) {
-  let text2;
+  let text3;
   try {
-    text2 = readFile3(shimPath);
+    text3 = readFile3(shimPath);
   } catch {
     return null;
   }
   const dir = win32.dirname(shimPath);
-  const exe = /"%~?dp0%?\\([^"]+?\.exe)"\s+%\*/i.exec(text2);
+  const exe = /"%~?dp0%?\\([^"]+?\.exe)"\s+%\*/i.exec(text3);
   if (exe) return { command: win32.join(dir, exe[1]), prefix: [] };
-  const js = /"%~?dp0%?\\([^"]+?\.(?:c|m)?js)"\s+%\*/i.exec(text2);
+  const js = /"%~?dp0%?\\([^"]+?\.(?:c|m)?js)"\s+%\*/i.exec(text3);
   if (js) return { command: process.execPath, prefix: [win32.join(dir, js[1])] };
   return null;
 }
@@ -9136,8 +9174,8 @@ function parseOpencodeJsonl(stdout) {
       error62 = ev.error?.data?.message ?? ev.error?.message ?? ev.message ?? "opencode reported an error";
     }
   }
-  const text2 = (textByMessage.get(lastMessage) ?? []).join("");
-  return sawUsage ? { sessionId, text: text2, error: error62, usage: { input: input2, output: output2 }, cost } : { sessionId, text: text2, error: error62 };
+  const text3 = (textByMessage.get(lastMessage) ?? []).join("");
+  return sawUsage ? { sessionId, text: text3, error: error62, usage: { input: input2, output: output2 }, cost } : { sessionId, text: text3, error: error62 };
 }
 var opencodeVersions = /* @__PURE__ */ new Map();
 function opencodeV2(bin, cwd, log) {
@@ -9378,8 +9416,8 @@ function encodeFrame(frame) {
 var DEFAULT_SIBLING_MAX_HOPS = 32;
 var MAX_JOB_SEND_TARGETS = 20;
 function isPureAcknowledgement(body) {
-  const text2 = body.trim();
-  return /^(?:ack(?:nowledged)?|received|thanks|thank you|understood|got it|noted|ok(?:ay)?|will do)[.!]?$/i.test(text2) || /^(?:understood|got it|noted|acknowledged)[,.!]?\s+(?:I['’]ll|I will|will)\s+[^\n.!?]{1,180}[.!]?$/i.test(text2) && !/\b(?:blocked|failed|error|cannot|can't|unless|but|commit|passed|ready)\b|https?:|\d/i.test(text2);
+  const text3 = body.trim();
+  return /^(?:ack(?:nowledged)?|received|thanks|thank you|understood|got it|noted|ok(?:ay)?|will do)[.!]?$/i.test(text3) || /^(?:understood|got it|noted|acknowledged)[,.!]?\s+(?:I['’]ll|I will|will)\s+[^\n.!?]{1,180}[.!]?$/i.test(text3) && !/\b(?:blocked|failed|error|cannot|can't|unless|but|commit|passed|ready)\b|https?:|\d/i.test(text3);
 }
 var EXACT_PEER_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 function isJobSendTarget(value) {
@@ -18707,8 +18745,8 @@ function ko_default() {
 }
 
 // node_modules/zod/v4/locales/lt.js
-var capitalizeFirstCharacter = (text2) => {
-  return text2.charAt(0).toUpperCase() + text2.slice(1);
+var capitalizeFirstCharacter = (text3) => {
+  return text3.charAt(0).toUpperCase() + text3.slice(1);
 };
 function getUnitTypeFromNumber(number4) {
   const abs = Math.abs(number4);
@@ -29533,8 +29571,8 @@ async function delegateToOpencodeServed(req) {
       signal: ac.signal
     });
     if (!res.ok) throw new DelegateError(`opencode API ${method} ${path} failed: HTTP ${res.status}`, "failed", await res.text().catch(() => ""));
-    const text2 = await res.text();
-    const parsed = text2 ? JSON.parse(text2) : null;
+    const text3 = await res.text();
+    const parsed = text3 ? JSON.parse(text3) : null;
     return v2 ? parsed?.data ?? parsed : parsed;
   };
   let knownSession = req.sessionId ?? null;
@@ -29580,10 +29618,10 @@ async function delegateToOpencodeServed(req) {
           break;
         }
       }
-      const text3 = [...textByMessage.get(lastMessage) ?? []].sort(([a], [b]) => a - b).map(([, value]) => value).join("");
-      if (failure3 && !text3) throw new DelegateError(failure3, "failed", "", "", sessionId2);
-      if (!text3 && !failure3) throw new DelegateError("opencode event stream ended without a response", "failed", "", "", sessionId2);
-      return { sessionId: sessionId2, text: text3, isError: failure3 !== null, details: { error: failure3, usage, costUsd } };
+      const text4 = [...textByMessage.get(lastMessage) ?? []].sort(([a], [b]) => a - b).map(([, value]) => value).join("");
+      if (failure3 && !text4) throw new DelegateError(failure3, "failed", "", "", sessionId2);
+      if (!text4 && !failure3) throw new DelegateError("opencode event stream ended without a response", "failed", "", "", sessionId2);
+      return { sessionId: sessionId2, text: text4, isError: failure3 !== null, details: { error: failure3, usage, costUsd } };
     }
     const sessionId = req.sessionId ?? (await api("POST", "/session", {})).id;
     req.onSession?.(sessionId);
@@ -29636,12 +29674,12 @@ async function delegateToOpencodeServed(req) {
     if (failure2 && !alive2) throw new DelegateError(failure2, "failed", "", "", sessionId);
     const messages = await api("GET", `/session/${sessionId}/message`) ?? [];
     const last = [...messages].reverse().find((m) => m.info?.role === "assistant");
-    const text2 = (last?.parts ?? []).filter((part) => part.type === "text" && typeof part.text === "string").map((part) => part.text).join("");
-    if (failure2 && !text2) throw new DelegateError(failure2, "failed", "", "", sessionId);
+    const text3 = (last?.parts ?? []).filter((part) => part.type === "text" && typeof part.text === "string").map((part) => part.text).join("");
+    if (failure2 && !text3) throw new DelegateError(failure2, "failed", "", "", sessionId);
     const tokens = last?.info?.tokens;
     return {
       sessionId,
-      text: text2,
+      text: text3,
       isError: failure2 !== null,
       details: {
         error: failure2,
@@ -29984,9 +30022,9 @@ ${message}`, text_elements: [] }] });
 ${approvalsReviewer === "auto_review" ? AUTO_REVIEW_ASK_HINT : CODEX_ASK_HINT}` : req.prompt;
     step = "turn/start";
     const sandboxPolicy = codexTurnSandbox(req.sandbox, cwd, req.writableRoots?.map(realFolder), thread?.sandbox, req.networkAccess);
-    const startTurn = (text2) => request2("turn/start", {
+    const startTurn = (text3) => request2("turn/start", {
       threadId,
-      input: [{ type: "text", text: text2, text_elements: [] }],
+      input: [{ type: "text", text: text3, text_elements: [] }],
       ...req.model ? { model: req.model } : {},
       sandboxPolicy,
       approvalPolicy,
@@ -30246,6 +30284,19 @@ function readArchivedJobSnapshot(path) {
   if (snapshots.size > 4) snapshots.delete(snapshots.keys().next().value);
   return next;
 }
+function archiveJobs(path, jobs) {
+  const dir = join17(dirname5(path), "archive");
+  mkdirSync7(dir, { recursive: true, mode: 448 });
+  const target = join17(dir, `jobs-${Date.now()}-${randomUUID5()}.json`);
+  writeFileSync3(target, JSON.stringify({ version: JSON_STORE_VERSION, jobs }, null, 2) + "\n", { mode: 384, flag: "wx" });
+  const fd = openSync5(target, "r+");
+  try {
+    fsyncSync2(fd);
+  } finally {
+    closeSync5(fd);
+  }
+  return target;
+}
 
 // src/core/notifications.ts
 import { spawn as spawn4 } from "node:child_process";
@@ -30473,6 +30524,16 @@ var ResourceSlots = class {
   close() {
     this.db.close();
   }
+  /** Move live root leases without enforcing capacity: inherited work must keep running. */
+  moveJobs(resource, names) {
+    this.transaction(() => {
+      for (const row of this.db.prepare("SELECT ticket, id, resource FROM slots WHERE resource LIKE 'root-%'").all()) {
+        if (row.resource !== resource && names.some((name2) => String(row.id).startsWith(`${name2}-`))) {
+          this.db.prepare("UPDATE slots SET resource=? WHERE ticket=?").run(resource, row.ticket);
+        }
+      }
+    });
+  }
 };
 function resourceSlotHint(counts, cli) {
   if (!Object.keys(counts).length) return null;
@@ -30514,11 +30575,15 @@ var RootConcurrency = class {
     this.slots.release(owner, this.resource);
     return false;
   }
+  moveJobs(names) {
+    this.slots.moveJobs(this.resource, names);
+  }
+  // Lease ids are unique per turn. A handoff may have moved their resource since acquisition.
   release(owner) {
-    this.slots.release(owner, this.resource);
+    this.slots.release(owner);
   }
   renew(owner) {
-    this.slots.renew(owner, this.resource);
+    this.slots.renew(owner);
   }
   close() {
     this.slots.close();
@@ -30547,11 +30612,11 @@ var DEFAULT_FOLLOW_UP = "Continue where you stopped and finish the task. Then gi
 var HOST_POLL_MS = 2e3;
 var CANCEL_GRACE_MS = 5e3;
 var QUEUED_FOLLOW_UP_NOTE = "(Your queued follow-up was sent to it; its answer will arrive as another message.)";
-function jobReport(job, status, seconds, text2, cause) {
+function jobReport(job, status, seconds, text3, cause) {
   const how = job.sessionId ? status === "failed" ? ` To recover it with its context, call message_subagent(job="${job.name}") (optionally with a message).` : ` Continue it with its context: message_subagent(job="${job.name}", message=...).` : "";
   const header = `Subagent ${job.name} (${job.agent}${job.model ? `, model ${job.model}` : ""}) ${status} after ${seconds}s.${how}`;
-  return [header, cause ? `Cause: ${cause}` : "", text2 && cause ? `Its last message:
-${text2}` : text2].filter(Boolean).join("\n\n");
+  return [header, cause ? `Cause: ${cause}` : "", text3 && cause ? `Its last message:
+${text3}` : text3].filter(Boolean).join("\n\n");
 }
 var approvalAnswers = /* @__PURE__ */ new WeakMap();
 function denyPendingApprovals(job, reason = "job finished") {
@@ -30670,6 +30735,39 @@ var JobManager = class {
     this.storePath = storePath;
     this.maxJobs = maxJobs;
     this.lineage = lineage;
+    node2.on("shared_job_control", ({ job: name2, control }) => {
+      this.sharedControl = true;
+      try {
+        if (control.type === "message") this.followUp(name2, control.body);
+        else if (control.type === "cancel") this.cancel(name2);
+        else if (control.type === "settings") this.setSettings(name2, control.settings);
+        else if (control.type === "title") this.setTitle(name2, control.title);
+        else if (control.type === "effort") this.setEffort(name2, control.effort);
+      } finally {
+        this.sharedControl = false;
+      }
+    });
+    node2.on("jobs_changed", () => this.refreshOwnership());
+    node2.on("inline_job_control", ({ job: name2, control }) => {
+      this.refreshOwnership();
+      const job = [...this.running.values(), ...this.foreground.values()].find((j) => j.name === name2 && j.executionOwner === this.node.name);
+      if (!job) return;
+      if (control.type === "cancel") {
+        job.queue = [];
+        job.controller.abort();
+      } else if (control.type === "message") {
+        if (job.pendingApproval) job.pendingApproval(control.body, `session ${job.owner}`);
+        else if (job.live) {
+          job.awaitingAnswer = true;
+          job.live.post(control.body);
+        } else job.queue.push(control.body);
+      } else if (control.type === "settings") job.args = changedJobArgs(job.args, control.settings);
+      else if (control.type === "title") {
+        job.args = { ...job.args, title: control.title };
+        job.retitle?.(control.title);
+      } else if (control.type === "effort") job.args = { ...job.args, effort: control.effort };
+      this.persist();
+    });
     node2.on("message", (m) => {
       const jobId = /(?:^|\/)job:([0-9a-f]+)$/.exec(m.from.id)?.[1];
       if (!jobId) return;
@@ -30700,6 +30798,7 @@ var JobManager = class {
   restoreResume = null;
   rootWaitTimer = null;
   persistTimer = null;
+  sharedControl = false;
   get limit() {
     return this.maxJobs;
   }
@@ -30751,6 +30850,24 @@ var JobManager = class {
       }
       const mine = [...this.history.values()].filter((j) => this.own.has(j.id)).map((j) => {
         const old = byId.get(j.id) ?? archived.get(j.id);
+        if (isRecord(old)) {
+          j.deliveryHistory = [...new Map([...Array.isArray(old.deliveryHistory) ? old.deliveryHistory : [], ...j.deliveryHistory ?? []].map((m) => [m.id, m])).values()];
+          if (typeof old.startedAt === "number" && j.startedAt < old.startedAt) return { ...old, deliveryHistory: j.deliveryHistory };
+        }
+        if (isRecord(old) && Array.isArray(old.ownershipHistory) && old.ownershipHistory.length) {
+          Object.assign(j, {
+            owner: old.owner,
+            supervisor: old.supervisor,
+            rootSession: old.rootSession,
+            rootName: old.rootName,
+            parentJob: old.parentJob,
+            ownershipHistory: old.ownershipHistory,
+            masters: old.masters
+          });
+          if (j.startedAt === old.startedAt) j.executionOwner = old.executionOwner;
+          j.args = { ...j.args, ...isRecord(old.args) ? { send_to: old.args.send_to } : {} };
+          if (old.owner !== this.node.name && old.executionOwner !== this.node.name && !(j.executionOwner === this.node.name && canControlJob(old, this.node.name)) && !this.lineage || old.executionOwner && old.executionOwner !== this.node.name && old.status === "running" && j.startedAt === old.startedAt) return old;
+        }
         return mergeStoreFields(isRecord(old) ? old : {}, toStored(j));
       });
       const ids = new Set(mine.map((j) => j.id));
@@ -30767,9 +30884,7 @@ var JobManager = class {
         ...finished.filter((j) => age > 0 && typeof j.finishedAt === "number" && j.finishedAt < Date.now() - age)
       ]);
       if (overflow.size) {
-        const archive = `${this.storePath}.overflow.json`;
-        writeJsonStore(archive, { jobs: [...overflow] }, null);
-        archiveFile(archive);
+        archiveJobs(this.storePath, [...overflow]);
         this.log.info("archived finished jobs", { count: overflow.size });
       }
       writeJsonStore(this.storePath, { ...isRecord(previous) ? previous : {}, jobs: all.filter((j) => !overflow.has(j)) }, previous);
@@ -30781,6 +30896,63 @@ var JobManager = class {
       this.log.warn("could not save subagent jobs", { err: err.message });
     } finally {
       lock();
+    }
+  }
+  /** Refresh durable authority without resetting controllers or interrupting inline runs. */
+  refreshOwnership() {
+    if (!this.storePath || this.dormant) return;
+    const stored = readStore(this.storePath, this.log, true);
+    if (this.lineage) {
+      const parent2 = stored.find((j) => j.name === this.lineage.parentJob);
+      if (parent2?.rootSession && parent2.rootName) {
+        this.lineage.rootSession = parent2.rootSession;
+        this.lineage.rootName = parent2.rootName;
+      }
+    }
+    for (const s of stored) {
+      if (!s.ownershipHistory?.length) continue;
+      let job = this.history.get(s.id);
+      const mine = this.lineage ? s.parentJob === this.lineage.parentJob : s.owner === this.node.name && !s.parentJob;
+      if (job && (s.executionOwner === this.node.name || mine)) {
+        const executing = s.executionOwner === this.node.name && (this.running.has(s.id) || this.foreground.has(s.id));
+        Object.assign(job, {
+          owner: s.owner,
+          supervisor: s.supervisor,
+          parentJob: s.parentJob,
+          rootSession: s.rootSession,
+          rootName: s.rootName,
+          ownershipHistory: s.ownershipHistory,
+          executionOwner: s.executionOwner,
+          masters: s.masters
+        });
+        if (!executing && !job.host) {
+          Object.assign(job, s);
+          if (s.status !== "running" && !job.queue.length) job.queue = [...s.queuedMessages ?? []];
+        }
+      } else if (job && !mine) {
+        this.running.delete(s.id);
+        this.waitingJobs.delete(s.id);
+        this.foreground.delete(s.id);
+        this.own.delete(s.id);
+        this.history.delete(s.id);
+        continue;
+      }
+      if (!mine) continue;
+      if (!job) {
+        job = { ...s, controller: new AbortController(), progress: null, queue: [...s.queuedMessages ?? []], resume: this.restoreResume?.(s.agent, s.args ?? {}) };
+        this.history.set(s.id, job);
+      }
+      this.own.add(s.id);
+      if (s.status !== "running" && job.queue.length && !this.waitingJobs.has(s.id)) this.waitForSlot(job);
+      if (s.status === "running" && s.host && !this.running.has(s.id) && this.takeOver(job)) {
+        this.running.set(s.id, job);
+        job.status = "running";
+        this.runners?.send(job, { type: "attach" });
+        this.watchHosted();
+      } else if (s.status === "running" && s.executionOwner && s.executionOwner !== this.node.name) {
+        this.running.set(s.id, job);
+        this.watchHosted();
+      } else if (s.status !== "running") this.running.delete(s.id);
     }
   }
   schedulePersist() {
@@ -30813,7 +30985,7 @@ var JobManager = class {
         status: s.status === "running" && !(hosted && !mine) ? "interrupted" : s.status,
         controller: new AbortController(),
         progress: null,
-        queue: [],
+        queue: [...s.queuedMessages ?? []],
         resume: makeResume(s.agent, s.args ?? {})
       };
       this.history.set(s.id, job);
@@ -30855,12 +31027,13 @@ var JobManager = class {
     this.persist();
   }
   runningCount() {
-    return this.running.size;
+    return [...this.running.values()].filter((j) => this.isMine(j.owner)).length;
   }
   /** Background jobs plus blocking ask_* runs, so the session (and its coordinator) can see all of them. */
   list() {
+    this.refreshOwnership();
     for (const job of [...this.running.values()]) if (job.host) this.checkHosted(job);
-    return [...this.running.values(), ...this.foreground.values()];
+    return [...this.running.values(), ...this.foreground.values()].filter((j) => this.isMine(j.owner));
   }
   /** Continuations waiting for a free slot, first in line first. */
   waiting() {
@@ -30904,17 +31077,19 @@ var JobManager = class {
   }
   /** Finished jobs of this session: every interrupted one (they need recovering), then the newest others. */
   recent(limit = 5) {
+    this.refreshOwnership();
     const mine = [...this.history.values()].filter((j) => j.status !== "running" && !this.waitingJobs.has(j.id) && this.isMine(j.owner)).sort((a, b) => (b.finishedAt ?? b.startedAt) - (a.finishedAt ?? a.startedAt));
     const interrupted = mine.filter((j) => j.status === "interrupted" && Date.now() - (j.finishedAt ?? j.startedAt) < INTERRUPTED_LISTED_MS);
     return [...interrupted, ...mine.filter((j) => !interrupted.includes(j)).slice(0, limit)];
   }
   find(ref) {
+    this.refreshOwnership();
     const id = ref.replace(/^.*-(?:job|ask)-/, "");
     const active = [...this.running.values(), ...this.foreground.values(), ...this.waitingJobs.values()];
     const current = active.find((j) => j.id === id || j.name === ref) ?? this.history.get(id) ?? [...this.history.values()].find((j) => j.name === ref);
-    if (current || !this.storePath || !this.restoreResume) return current;
+    if (current || !this.storePath || !this.restoreResume) return current && (!current.ownershipHistory?.length || canControlJob(current, this.node.name) || this.isMine(current.owner) || this.lineage && current.parentJob === this.lineage.parentJob) ? current : void 0;
     const saved = readStore(this.storePath, this.log, true).find((j) => j.id === id || j.name === ref);
-    if (!saved || saved.status === "running") return void 0;
+    if (!saved || saved.ownershipHistory?.length && !this.lineage && !this.isMine(saved.owner) && !canControlJob(saved, this.node.name)) return void 0;
     if (this.lineage ? saved.parentJob !== this.lineage.parentJob : saved.parentJob) return void 0;
     const job = { ...saved, controller: new AbortController(), progress: null, queue: [], resume: this.restoreResume(saved.agent, saved.args ?? {}) };
     this.history.set(job.id, job);
@@ -30931,6 +31106,7 @@ var JobManager = class {
     this.persist();
   }
   newJob(agent, model, prompt, kind, resume, args) {
+    this.refreshOwnership();
     const id = randomUUID6().replace(/-/g, "").slice(0, JOB_ID_LENGTH);
     return {
       id,
@@ -30962,6 +31138,7 @@ var JobManager = class {
     return [...this.running.values(), ...this.foreground.values(), ...this.history.values()].find((j) => this.isMine(j.owner) && j.supervisor)?.supervisor ?? this.node.currentSessionId ?? this.node.id ?? this.node.name;
   }
   rootIdentity() {
+    this.refreshOwnership();
     return this.lineage?.rootSession ?? this.supervisorIdentity();
   }
   assignLegacySupervisors() {
@@ -30999,7 +31176,10 @@ var JobManager = class {
         job.workdir = outcome?.result?.workdir ?? job.workdir;
         job.worktree = outcome?.result?.worktree ?? job.worktree;
         this.persist();
-        if (job.queue.length && job.resume && job.sessionId && !job.controller.signal.aborted) {
+        if (job.ownershipHistory?.length && !this.isMine(job.owner)) {
+          this.post(job, jobReport(job, job.status, Math.round((Date.now() - job.startedAt) / 1e3), outcome?.result?.text ?? "", job.status === "failed" ? failureCause(outcome ?? {}) : null));
+        }
+        if (job.queue.length && job.resume && job.sessionId && !job.controller.signal.aborted && this.isMine(job.owner)) {
           if (this.canStart()) this.launch(job, job.resume(job.queue.splice(0).join("\n\n"), job.sessionId, job.workdir, job.worktree));
           else this.waitForSlot(job);
         }
@@ -31007,7 +31187,8 @@ var JobManager = class {
     };
   }
   canStart() {
-    return this.running.size + this.foreground.size < this.maxJobs && this.withRootBudget((budget) => {
+    this.refreshOwnership();
+    return this.runningCount() + [...this.foreground.values()].filter((j) => this.isMine(j.owner)).length < this.maxJobs && this.withRootBudget((budget) => {
       if (!this.lineage) budget.setLimit(this.maxJobs);
       return budget.available();
     });
@@ -31034,7 +31215,8 @@ var JobManager = class {
     if (!job) return false;
     job.args = changedJobArgs(job.args, settings);
     if (settings.model !== void 0 && job.status !== "running") job.model = settings.model;
-    if (this.hostedRunning(job)) this.runners.send(job, { type: "settings", settings });
+    if (!this.sharedControl && !this.isMine(job.owner) && !this.lineage || job.status === "running" && job.executionOwner && job.executionOwner !== this.node.name) void this.node.controlInlineJob?.(job.name, { type: "settings", settings });
+    else if (this.hostedRunning(job)) this.runners.send(job, { type: "settings", settings });
     else job.remoteControl?.({ type: "settings", settings });
     this.own.add(job.id);
     this.persist();
@@ -31045,7 +31227,8 @@ var JobManager = class {
     const job = this.find(ref);
     if (!job) return false;
     job.args = { ...job.args, effort };
-    if (this.hostedRunning(job)) this.runners.send(job, { type: "effort", effort });
+    if (!this.sharedControl && !this.isMine(job.owner) && !this.lineage || job.status === "running" && job.executionOwner && job.executionOwner !== this.node.name) void this.node.controlInlineJob?.(job.name, { type: "effort", effort });
+    else if (this.hostedRunning(job)) this.runners.send(job, { type: "effort", effort });
     else job.remoteControl?.({ type: "effort", effort });
     this.own.add(job.id);
     this.persist();
@@ -31057,7 +31240,8 @@ var JobManager = class {
     if (!job) return false;
     job.args = { ...job.args, title };
     job.retitle?.(title);
-    if (this.hostedRunning(job)) this.runners.send(job, { type: "title", title });
+    if (!this.sharedControl && !this.isMine(job.owner) && !this.lineage || job.status === "running" && job.executionOwner && job.executionOwner !== this.node.name) void this.node.controlInlineJob?.(job.name, { type: "title", title });
+    else if (this.hostedRunning(job)) this.runners.send(job, { type: "title", title });
     else job.remoteControl?.({ type: "title", title });
     this.own.add(job.id);
     this.persist();
@@ -31070,6 +31254,14 @@ var JobManager = class {
   followUp(ref, message) {
     const job = this.find(ref);
     if (!job) return { outcome: "unknown" };
+    if (job.status === "running" && job.executionOwner && job.executionOwner !== this.node.name && job.owner === this.node.name) {
+      void this.node.controlInlineJob?.(job.name, { type: "message", body: message, cid: randomUUID6() });
+      return { outcome: "delivered", job };
+    }
+    if (!this.sharedControl && !this.isMine(job.owner) && !this.lineage) {
+      void this.node.controlInlineJob?.(job.name, { type: "message", body: message, cid: randomUUID6() }).catch((err) => this.log.warn("inline job control failed", { err: String(err) }));
+      return { outcome: "delivered", job };
+    }
     if (this.hostedRunning(job)) this.checkHosted(job);
     if (this.waitingJobs.has(job.id)) {
       job.queue.push(message);
@@ -31139,6 +31331,7 @@ var JobManager = class {
   launch(job, run) {
     if (typeof job.args?.model === "string") job.model = job.args.model;
     job.status = "running";
+    job.executionOwner = !this.isMine(job.owner) ? this.node.name : void 0;
     job.startedAt = Date.now();
     job.controller = new AbortController();
     job.progress = null;
@@ -31177,8 +31370,9 @@ var JobManager = class {
   watchHosted() {
     if (this.hostTimer || this.dormant) return;
     this.hostTimer = setInterval(() => {
+      this.refreshOwnership();
       const hosted = [...this.running.values()].filter((j) => j.host);
-      if (!hosted.length && this.hostTimer) {
+      if (!hosted.length && ![...this.running.values()].some((j) => j.executionOwner) && this.hostTimer) {
         clearInterval(this.hostTimer);
         this.hostTimer = null;
       }
@@ -31202,6 +31396,8 @@ var JobManager = class {
    * session only posts it when the runner could not, or says why a runner ended without one.
    */
   checkHosted(job) {
+    this.refreshOwnership();
+    if (!this.running.has(job.id) || job.executionOwner && job.executionOwner !== this.node.name) return;
     if (!this.hostedRunning(job)) return;
     const runners = this.runners;
     const state = runners.state(job);
@@ -31252,6 +31448,12 @@ var JobManager = class {
   }
   /** Cancel a background job, a blocking ask_* run or a continuation waiting for a slot, by name or id. */
   cancel(ref) {
+    const owned = this.find(ref);
+    if (!owned) return false;
+    if (!this.sharedControl && !this.isMine(owned.owner) && !this.lineage || owned.status === "running" && owned.executionOwner && owned.executionOwner !== this.node.name) {
+      void this.node.controlInlineJob?.(owned.name, { type: "cancel" }).catch((err) => this.log.warn("inline cancel failed", { err: String(err) }));
+      return true;
+    }
     const id = ref.replace(/^.*-(?:job|ask)-/, "");
     const waiting = [...this.waitingJobs.values()].find((j) => j.id === id || j.name === ref);
     if (waiting) {
@@ -31290,13 +31492,13 @@ var JobManager = class {
     }
     for (const j of this.waitingJobs.values()) j.queue = [];
     this.waitingJobs.clear();
-    for (const j of this.running.values()) if (!j.host) j.controller.abort();
+    for (const j of this.running.values()) if (!j.host && (!j.executionOwner || j.executionOwner === this.node.name)) j.controller.abort();
     for (const j of this.foreground.values()) denyPendingApprovals(j, "session closed");
     if (this.hostTimer) clearInterval(this.hostTimer);
     this.hostTimer = null;
   }
   /** `report`: null when the runner already delivered it, a text to post as it is, or undefined to compose it here. */
-  finish(job, status, text2, sessionId, cause = null, report, messageId) {
+  finish(job, status, text3, sessionId, cause = null, report, messageId) {
     denyPendingApprovals(job);
     this.running.delete(job.id);
     job.etaAt = void 0;
@@ -31308,8 +31510,8 @@ var JobManager = class {
     const seconds = Math.round((Date.now() - job.startedAt) / 1e3);
     this.log.info("subagent finished", { job: job.name, status, seconds, sessionId: job.sessionId, cause });
     if (this.storePath && !job.host) notifyJobEvent(dirname6(this.storePath), status === "done" ? "finish" : "fail", this.log);
-    const message = report === void 0 ? jobReport(job, status, seconds, text2, cause) : report;
-    if (job.queue.length && job.resume && job.sessionId && !job.controller.signal.aborted) {
+    const message = report === void 0 ? jobReport(job, status, seconds, text3, cause) : report;
+    if (job.queue.length && job.resume && job.sessionId && !job.controller.signal.aborted && this.isMine(job.owner)) {
       const queued = job.queue.splice(0).join("\n\n");
       if (message !== null) this.post(job, `${message}
 
@@ -31355,8 +31557,8 @@ ${QUEUED_FOLLOW_UP_NOTE}`, null, "", messageId);
     const m = {
       id,
       from: { id: `job:${job.id}`, name: job.name, agent: job.agent },
-      to: this.node.name,
-      recipient: this.node.name,
+      to: job.owner ?? this.node.name,
+      recipient: job.owner ?? this.node.name,
       conversationId: `job-${job.id}${suffix}`,
       replyTo,
       hop: 0,
@@ -31364,7 +31566,11 @@ ${QUEUED_FOLLOW_UP_NOTE}`, null, "", messageId);
       createdAt: Date.now(),
       readAt: null
     };
-    this.node.deliverLocal(m);
+    if (job.ownershipHistory?.length && this.node.reportInlineJob) {
+      job.deliveryHistory = [...job.deliveryHistory ?? [], m];
+      this.persist();
+      void this.node.reportInlineJob(m).catch((err) => this.log.warn("inline report delivery failed", { err: String(err) }));
+    } else this.node.deliverLocal(m);
     return m.id;
   }
 };
@@ -31385,6 +31591,12 @@ function toStored(j) {
     worktree: j.worktree,
     args: j.args,
     owner: j.owner,
+    ownershipHistory: j.ownershipHistory,
+    masters: j.masters,
+    executionOwner: j.executionOwner,
+    queuedMessages: [...j.queue],
+    deliveryHistory: j.deliveryHistory,
+    forwarded: j.forwarded,
     supervisor: j.supervisor,
     metadataVersion: j.metadataVersion,
     parentJob: j.parentJob,
@@ -32283,7 +32495,7 @@ async function listJobOutcomes(home, log, names) {
 }
 
 // src/mcp/server.ts
-import { dirname as dirname20, isAbsolute as isAbsolute10, join as join56, resolve as resolve13 } from "node:path";
+import { dirname as dirname21, isAbsolute as isAbsolute10, join as join56, resolve as resolve13 } from "node:path";
 import { fileURLToPath as fileURLToPath3 } from "node:url";
 
 // node_modules/zod/v3/helpers/util.js
@@ -42128,8 +42340,8 @@ function formatCodexLimits(res) {
   }
   return { agent: "codex", lines: lines.length ? lines : ["No limits reported (API key or no plan limits)."], limits, credits, maxUsedPercent: max };
 }
-function parseClaudeUsage(text2) {
-  const lines = text2.split(/\r?\n/).map((l) => l.trim()).filter((l) => /\d+%\s*used/i.test(l) || /api key/i.test(l));
+function parseClaudeUsage(text3) {
+  const lines = text3.split(/\r?\n/).map((l) => l.trim()).filter((l) => /\d+%\s*used/i.test(l) || /api key/i.test(l));
   const percents = lines.map((l) => Number(/(\d+)%\s*used/i.exec(l)?.[1])).filter((n) => Number.isFinite(n));
   const limits = [];
   for (const l of lines) {
@@ -42138,8 +42350,8 @@ function parseClaudeUsage(text2) {
   }
   return { agent: "claude", lines: lines.length ? lines : ["No limits reported."], limits, maxUsedPercent: percents.length ? Math.max(...percents) : null };
 }
-function parseOpencodeStats(text2) {
-  const pick2 = (label) => new RegExp(`${label}\\s+([^\\s\u2502|]+)`, "i").exec(text2)?.[1];
+function parseOpencodeStats(text3) {
+  const pick2 = (label) => new RegExp(`${label}\\s+([^\\s\u2502|]+)`, "i").exec(text3)?.[1];
   const cost = pick2("Total Cost");
   const input2 = pick2("Input");
   const output2 = pick2("Output");
@@ -42147,17 +42359,17 @@ function parseOpencodeStats(text2) {
   if (cost || input2) lines.push(`Last 24 hours: ${[cost && `cost ${cost}`, input2 && `${input2} input tokens`, output2 && `${output2} output tokens`].filter(Boolean).join(", ")}`);
   return { agent: "opencode", lines, limits: [], maxUsedPercent: null };
 }
-function parseOpencodeModelCosts(text2) {
+function parseOpencodeModelCosts(text3) {
   const out = [];
   try {
-    const models = JSON.parse(text2).data;
+    const models = JSON.parse(text3).data;
     if (Array.isArray(models)) return models.flatMap((m) => {
       if (!Array.isArray(m.cost) || !m.cost.length || m.cost.some((c) => typeof c.input !== "number" || typeof c.output !== "number")) return [];
       return [{ id: `${m.providerID}/${m.id}`, input: Math.max(...m.cost.map((c) => c.input)), output: Math.max(...m.cost.map((c) => c.output)) }];
     });
   } catch {
   }
-  const parts = text2.split(/^([\w.-]+\/[\w.:@-]+)\r?\n(?=\{)/m);
+  const parts = text3.split(/^([\w.-]+\/[\w.:@-]+)\r?\n(?=\{)/m);
   for (let i = 1; i + 1 < parts.length; i += 2) {
     try {
       const cost = JSON.parse(parts[i + 1].trim()).cost;
@@ -42343,10 +42555,10 @@ function t(key2, params = {}) {
 }
 
 // src/core/node.ts
-import { randomUUID as randomUUID19 } from "node:crypto";
+import { randomUUID as randomUUID20 } from "node:crypto";
 import { EventEmitter as EventEmitter2 } from "node:events";
 import { unlinkSync as unlinkSync2 } from "node:fs";
-import { dirname as dirname17, join as join46 } from "node:path";
+import { dirname as dirname18, join as join46 } from "node:path";
 
 // src/core/history-background.ts
 import { Worker } from "node:worker_threads";
@@ -42532,7 +42744,7 @@ INSERT OR IGNORE INTO conversation_bindings(session,agent,cwd)
  SELECT session_id,json_extract(identity,'$[0]'),json_extract(identity,'$[3]')
  FROM session_bindings WHERE json_valid(identity) AND json_type(identity,'$[0]')='text'
  AND json_type(identity,'$[3]')='text';
-PRAGMA user_version=7;`;
+PRAGMA user_version=8;`;
 
 // src/core/history-schema.ts
 import { DatabaseSync as DatabaseSync6 } from "node:sqlite";
@@ -42811,8 +43023,8 @@ function codexItems(row) {
   if (row.type !== "response_item") return [];
   const p = object(row.payload), at = time(row.timestamp);
   if (p.type === "message" && ["user", "assistant"].includes(p.role) && p.channel !== "analysis") {
-    const text2 = contentText(p.content);
-    return text2 ? [{ kind: p.role, at, text: preview(text2, MAX_TEXT_CHARS) }] : [];
+    const text3 = contentText(p.content);
+    return text3 ? [{ kind: p.role, at, text: preview(text3, MAX_TEXT_CHARS) }] : [];
   }
   if (["function_call", "custom_tool_call"].includes(p.type) && typeof p.name === "string") return [{ kind: "tool", at, tool: p.name, summary: preview(p.arguments ?? p.input) }];
   if (["function_call_output", "custom_tool_call_output"].includes(p.type)) {
@@ -42979,8 +43191,8 @@ var historySearchSchema = external_exports.object({
   filters: historyFiltersSchema.optional(),
   limit: external_exports.number().int().min(1).max(HISTORY_MAX_LIMIT).optional()
 }).strict().refine((a) => a.filters?.since === void 0 || a.filters.until === void 0 || a.filters.since <= a.filters.until, "since must not be later than until");
-function folded(text2) {
-  return text2.normalize("NFKD").replace(new RegExp("\\p{M}", "gu"), "").toLowerCase();
+function folded(text3) {
+  return text3.normalize("NFKD").replace(new RegExp("\\p{M}", "gu"), "").toLowerCase();
 }
 function terms(query) {
   return folded(query).match(/[\p{L}\p{N}_]+/gu)?.slice(0, HISTORY_MAX_TERMS) ?? [];
@@ -43433,7 +43645,7 @@ function readHistorySource(file2, id) {
 }
 
 // src/core/broker.ts
-import { randomUUID as randomUUID17 } from "node:crypto";
+import { randomUUID as randomUUID18 } from "node:crypto";
 import { createServer as createServer4 } from "node:net";
 
 // src/core/store.ts
@@ -43680,7 +43892,7 @@ function readDecisions(dbPath, args = {}) {
 
 // src/core/store.ts
 var BACKUP_CHECK_INTERVAL_MS = 60 * 60 * 1e3;
-var SQLITE_STORE_VERSION = 7;
+var SQLITE_STORE_VERSION = 8;
 function agentQueueKey(agent) {
   return `agent:${agent}`;
 }
@@ -43744,7 +43956,13 @@ var MIGRATIONS = [
       ON CONFLICT(name) DO UPDATE SET identity=excluded.identity;
     PRAGMA user_version = 6;
   ` },
-  { version: 7, sql: CONVERSATION_MIGRATION }
+  { version: 7, sql: `
+    CREATE TABLE IF NOT EXISTS job_delivery_routes (
+      id TEXT PRIMARY KEY, recipient TEXT NOT NULL, consumed_at INTEGER
+    );
+    PRAGMA user_version = 7;
+  ` },
+  { version: 8, sql: CONVERSATION_MIGRATION }
 ];
 function registrationIdentity(peer) {
   if (peer.jobAgent || !Number.isSafeInteger(peer.agentPid) || !peer.agentPid || peer.agentPid <= 0 || !peer.agentStartedAt) return null;
@@ -43906,9 +44124,57 @@ var MessageStore = class {
   unread(recipient, limit) {
     return this.stmt.unread.all(recipient, limit).map(toMessage);
   }
+  /** Copy pending job mail to its new supervisor, retaining the old row as history. Replay is idempotent. */
+  handoffMail(from, to, job, at) {
+    if (from === to) return [];
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      const rows = this.db.prepare("SELECT * FROM messages WHERE recipient=? AND from_id=? AND read_at IS NULL").all(from, `job:${job}`);
+      const copied = [];
+      for (const row of rows) {
+        const route = this.db.prepare("SELECT recipient, consumed_at FROM job_delivery_routes WHERE id=?").get(row.id);
+        if (route && (route.consumed_at !== null || route.recipient !== from)) continue;
+        const m = { ...toMessage(row), recipient: to, to, readAt: null };
+        const existing = this.db.prepare("SELECT read_at FROM messages WHERE id=? AND recipient=?").get(m.id, to);
+        if (!existing) this.insert(m);
+        else this.db.prepare("UPDATE messages SET read_at=NULL, to_target=? WHERE id=? AND recipient=?").run(to, m.id, to);
+        copied.push(m);
+        this.db.prepare("INSERT INTO job_delivery_routes(id,recipient,consumed_at) VALUES (?,?,NULL) ON CONFLICT(id) DO UPDATE SET recipient=excluded.recipient").run(m.id, to);
+        this.stmt.markRead.run(at, m.id, from);
+      }
+      this.db.exec("COMMIT");
+      return copied;
+    } catch (err) {
+      this.db.exec("ROLLBACK");
+      throw err;
+    }
+  }
+  insertOnce(m) {
+    if (this.db.prepare("SELECT 1 FROM messages WHERE id=? AND recipient=?").get(m.id, m.recipient)) return false;
+    this.insert(m);
+    return true;
+  }
+  /** A recovered inline envelope must never replay after a recipient consumed it or it was forwarded. */
+  insertJobDelivery(m) {
+    if (this.db.prepare("SELECT 1 FROM job_delivery_routes WHERE id=?").get(m.id)) return false;
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      const inserted = this.insertOnce(m);
+      const row = this.db.prepare("SELECT read_at FROM messages WHERE id=? AND recipient=?").get(m.id, m.recipient);
+      this.db.prepare("INSERT INTO job_delivery_routes(id,recipient,consumed_at) VALUES (?,?,?)").run(m.id, m.recipient, row?.read_at ?? null);
+      this.db.exec("COMMIT");
+      return inserted;
+    } catch (err) {
+      this.db.exec("ROLLBACK");
+      throw err;
+    }
+  }
   markRead(recipient, ids, at = Date.now()) {
     let changed = 0;
-    for (const id of ids) changed += Number(this.stmt.markRead.run(at, id, recipient).changes);
+    for (const id of ids) {
+      changed += Number(this.stmt.markRead.run(at, id, recipient).changes);
+      this.db.prepare("UPDATE job_delivery_routes SET consumed_at=? WHERE id=? AND recipient=? AND consumed_at IS NULL").run(at, id, recipient);
+    }
     return changed;
   }
   /** Move messages waiting for "any <agent>" to a concrete peer name. */
@@ -43970,8 +44236,128 @@ var MessageStore = class {
   }
 };
 
+// src/core/broker.ts
+import { dirname as dirname17 } from "node:path";
+
+// src/core/job-handoff.ts
+import { randomUUID as randomUUID10 } from "node:crypto";
+import { readFileSync as readFileSync17 } from "node:fs";
+var handoffSchema = external_exports.object({
+  to: external_exports.string().min(1).max(64),
+  jobs: external_exports.union([external_exports.literal("all"), external_exports.array(external_exports.string().min(1).max(80)).min(1).max(1e3)]).default("all"),
+  note: external_exports.string().max(4e3).optional()
+}).strict();
+function commitHandoff(path, source, target, input2, options = {}) {
+  const args = handoffSchema.parse(input2);
+  if (source.jobAgent) throw new BridgeError("unauthorized", "Only the current supervisor session can hand off its own jobs.");
+  if (target.host || target.name.includes("/") || target.jobAgent || !CODING_AGENTS.includes(target.agent)) {
+    throw new BridgeError("bad_request", "The target must be an exact live local Claude Code, Codex or opencode session. Paired-PC handoff is not supported.");
+  }
+  if (target.name === source.name && options.reason !== "group-restored") throw new BridgeError("bad_request", "Choose another local supervisor session.");
+  const unlock = acquireLock(`${path}.lock`, 0);
+  try {
+    let previous = null;
+    try {
+      previous = JSON.parse(readFileSync17(path, "utf8"));
+    } catch (err) {
+      if (err.code !== "ENOENT") throw err;
+    }
+    const migrated = migrateJobOwnership(previous);
+    const activeRecords = migrated.jobs;
+    const byId = /* @__PURE__ */ new Map();
+    for (const j of [...readArchivedJobSnapshot(path).jobs, ...activeRecords]) {
+      if (isRecord(j) && typeof j.id === "string" && typeof j.name === "string") byId.set(j.id, j);
+    }
+    const records = [...byId.values()];
+    const own2 = records.filter((j) => j.owner === source.name && !j.parentJob);
+    const selected = args.jobs === "all" ? own2 : args.jobs.map((name2) => {
+      const job = own2.find((j) => j.name === name2);
+      if (!job) throw new BridgeError("unauthorized", `Job ${name2} is not owned by the current supervisor (use an exact job name).`);
+      return job;
+    });
+    const moved = new Set(selected.map((j) => j.name));
+    for (let changed = true; changed; ) {
+      changed = false;
+      for (const j of records) if (j.parentJob && moved.has(j.parentJob) && !moved.has(j.name)) {
+        moved.add(j.name);
+        changed = true;
+      }
+    }
+    const jobs = records.filter((j) => moved.has(j.name));
+    if (!jobs.length) throw new BridgeError("bad_request", "This supervisor has no jobs to hand off.");
+    if (jobs.some((j) => j.remote || j.args?.host)) throw new BridgeError("bad_request", "Remote jobs (remote-jobs-v1) cannot be handed off yet. Select only local jobs; no jobs were moved.");
+    const existing = records.find((j) => j.owner === target.name && !j.parentJob && j.supervisor);
+    const rootSession = existing?.supervisor ?? target.sessionId ?? target.id;
+    const receipt = {
+      id: randomUUID10(),
+      at: Date.now(),
+      from: source.name,
+      to: target.name,
+      rootSession,
+      note: args.note,
+      reason: options.reason ?? "explicit-handoff",
+      jobs: jobs.map((j) => ({
+        id: j.id,
+        name: j.name,
+        title: String(j.args?.title ?? "Untitled job"),
+        status: j.status,
+        from: j.owner ?? source.name,
+        to: j.parentJob ?? target.name,
+        oldRoot: j.rootName
+      }))
+    };
+    const updates = new Map(jobs.map((j) => {
+      const history = j.ownershipHistory;
+      const change = {
+        id: receipt.id,
+        at: receipt.at,
+        from: j.owner ?? source.name,
+        to: j.parentJob ?? target.name,
+        fromRoot: j.rootSession,
+        fromRootName: j.rootName,
+        rootSession,
+        rootName: target.name,
+        note: args.note,
+        reason: receipt.reason
+      };
+      const sendTo = j.args?.send_to;
+      return [j.id, {
+        ...j,
+        owner: change.to,
+        supervisor: rootSession,
+        rootSession,
+        rootName: target.name,
+        masters: [.../* @__PURE__ */ new Set([target.name, source.name, ...Array.isArray(j.masters) ? j.masters : []])],
+        ...j.status === "running" && !j.host ? { executionOwner: j.executionOwner ?? j.owner } : {},
+        args: { ...j.args, ...Array.isArray(sendTo) ? { send_to: [...new Set(sendTo.map((name2) => name2 === source.name ? target.name : name2))] } : {} },
+        ownershipHistory: [...Array.isArray(history) ? history : [], change]
+      }];
+    }));
+    const active = Array.isArray(previous) ? previous : isRecord(previous) && Array.isArray(previous.jobs) ? previous.jobs : [];
+    const ids = new Set(active.filter(isRecord).map((j) => j.id));
+    const all = active.map((j) => isRecord(j) ? updates.get(String(j.id)) ?? j : j);
+    for (const [id, job] of updates) if (!ids.has(id)) all.push(job);
+    const journal = isRecord(previous) && Array.isArray(previous.handoffs) ? previous.handoffs : [];
+    writeJsonStore(path, { ...migrated, jobs: all, handoffs: [...journal, receipt] }, previous);
+    return receipt;
+  } finally {
+    unlock();
+  }
+}
+function handoffJournal(path) {
+  const value = readJobsDocument(path);
+  return isRecord(value) && Array.isArray(value.handoffs) ? value.handoffs : [];
+}
+function migrateJobOwnership(previous) {
+  assertWritableStore(previous);
+  if (previous !== null && !Array.isArray(previous) && (!isRecord(previous) || !Array.isArray(previous.jobs))) throw new Error("Invalid job registry; migration left it untouched.");
+  const jobs = Array.isArray(previous) ? previous : isRecord(previous) ? previous.jobs : [];
+  if (isRecord(previous) && previous.handoffs !== void 0 && !Array.isArray(previous.handoffs)) throw new Error("Invalid handoff history; migration left it untouched.");
+  return { ...isRecord(previous) ? previous : {}, version: JSON_STORE_VERSION, jobs, handoffs: isRecord(previous) ? previous.handoffs ?? [] : [] };
+}
+
 // src/network/link.ts
-import { randomBytes as randomBytes6, randomUUID as randomUUID13 } from "node:crypto";
+import { randomBytes as randomBytes6, randomUUID as randomUUID14 } from "node:crypto";
 import { connect, createServer as createServer3 } from "node:tls";
 
 // src/network/discovery.ts
@@ -43981,8 +44367,8 @@ import { networkInterfaces } from "node:os";
 
 // src/network/pairing.ts
 import { execFileSync as execFileSync3 } from "node:child_process";
-import { createHash as createHash12, randomBytes as randomBytes5, randomUUID as randomUUID10 } from "node:crypto";
-import { chmodSync as chmodSync2, existsSync as existsSync18, mkdirSync as mkdirSync19, readFileSync as readFileSync17, renameSync as renameSync5, writeFileSync as writeFileSync6 } from "node:fs";
+import { createHash as createHash12, randomBytes as randomBytes5, randomUUID as randomUUID11 } from "node:crypto";
+import { chmodSync as chmodSync2, existsSync as existsSync18, mkdirSync as mkdirSync19, readFileSync as readFileSync18, renameSync as renameSync5, writeFileSync as writeFileSync6 } from "node:fs";
 import { join as join36 } from "node:path";
 var DEFAULT_SYSTEM_ROOT = "C:\\Windows";
 var SYSTEM32 = join36(process.env.SystemRoot || DEFAULT_SYSTEM_ROOT, "System32");
@@ -44025,9 +44411,9 @@ var PairingStore = class {
     protect(this.dir, OWNER_DIR_MODE);
     if (existsSync18(this.file)) {
       protect(this.file, OWNER_FILE_MODE);
-      this.state = stateSchema.parse(JSON.parse(readFileSync17(this.file, "utf8")));
+      this.state = stateSchema.parse(JSON.parse(readFileSync18(this.file, "utf8")));
     } else {
-      this.state = { identity: { id: randomUUID10(), key: randomBytes5(PAIRING_KEY_BYTES).toString("hex") }, invitations: [], pairs: [] };
+      this.state = { identity: { id: randomUUID11(), key: randomBytes5(PAIRING_KEY_BYTES).toString("hex") }, invitations: [], pairs: [] };
       this.save();
     }
   }
@@ -44097,7 +44483,7 @@ var PairingStore = class {
     this.save();
   }
   save() {
-    const temp = join36(this.dir, `${randomUUID10()}.tmp`);
+    const temp = join36(this.dir, `${randomUUID11()}.tmp`);
     writeFileSync6(temp, JSON.stringify(this.state, null, 2) + "\n", { mode: OWNER_FILE_MODE, flag: "wx" });
     protect(temp, OWNER_FILE_MODE);
     renameSync5(temp, this.file);
@@ -44310,8 +44696,8 @@ var NetworkDiscovery = class {
 };
 
 // src/network/files.ts
-import { createHash as createHash13, randomUUID as randomUUID11 } from "node:crypto";
-import { existsSync as existsSync19, lstatSync as lstatSync5, mkdirSync as mkdirSync20, mkdtempSync as mkdtempSync2, readFileSync as readFileSync18, readdirSync as readdirSync12, renameSync as renameSync6, rmSync as rmSync6, statfsSync, writeFileSync as writeFileSync7 } from "node:fs";
+import { createHash as createHash13, randomUUID as randomUUID12 } from "node:crypto";
+import { existsSync as existsSync19, lstatSync as lstatSync5, mkdirSync as mkdirSync20, mkdtempSync as mkdtempSync2, readFileSync as readFileSync19, readdirSync as readdirSync12, renameSync as renameSync6, rmSync as rmSync6, statfsSync, writeFileSync as writeFileSync7 } from "node:fs";
 import { basename as basename9, join as join37, parse as parse4, resolve as resolve10, sep as sep5 } from "node:path";
 var MAX_TRANSFER_BYTES = 1024 * 1024;
 var MAX_TRANSFER_ENTRIES = 128;
@@ -44371,7 +44757,7 @@ function collectTransfer(paths, cwd, to, from) {
       for (const name2 of readdirSync12(source).sort()) walk(join37(source, name2), `${path}/${name2}`);
     } else if (stat.isFile()) {
       if (stat.size > MAX_TRANSFER_BYTES - bytes2) throw new Error("transfer exceeds size limit");
-      const data = readFileSync18(source);
+      const data = readFileSync19(source);
       bytes2 += data.length;
       if (bytes2 > MAX_TRANSFER_BYTES) throw new Error("transfer exceeds size limit");
       entries.push({ kind: "file", path, data: data.toString("base64"), sha256: checksum(data) });
@@ -44381,7 +44767,7 @@ function collectTransfer(paths, cwd, to, from) {
     const source = resolve10(cwd, path);
     walk(source, basename9(source));
   }
-  const transfer = transferSchema.parse({ id: randomUUID11(), to, from, entries });
+  const transfer = transferSchema.parse({ id: randomUUID12(), to, from, entries });
   validateEntries(transfer);
   return transfer;
 }
@@ -44433,8 +44819,8 @@ function receiveTransfer(home, input2) {
 }
 
 // src/network/transfers.ts
-import { createHash as createHash14, randomUUID as randomUUID12 } from "node:crypto";
-import { constants, existsSync as existsSync20, lstatSync as lstatSync6, mkdirSync as mkdirSync21, readdirSync as readdirSync13, readFileSync as readFileSync19, renameSync as renameSync7, statSync as statSync11, writeFileSync as writeFileSync8 } from "node:fs";
+import { createHash as createHash14, randomUUID as randomUUID13 } from "node:crypto";
+import { constants, existsSync as existsSync20, lstatSync as lstatSync6, mkdirSync as mkdirSync21, readdirSync as readdirSync13, readFileSync as readFileSync20, renameSync as renameSync7, statSync as statSync11, writeFileSync as writeFileSync8 } from "node:fs";
 import { open as open3, link, unlink, statfs, lstat, opendir } from "node:fs/promises";
 import { basename as basename10, dirname as dirname16, isAbsolute as isAbsolute7, join as join38, relative as relative6, resolve as resolve11, sep as sep6 } from "node:path";
 var FILE_STREAM_CAPABILITY = "file-stream-v1";
@@ -44496,7 +44882,7 @@ function persistTransfer(root, state) {
   state.updatedAt = Date.now();
   const file2 = join38(root, `${state.id}.json`);
   if (existsSync20(file2)) assertTransferPath(file2);
-  const temp = `${file2}.${randomUUID12()}.tmp`;
+  const temp = `${file2}.${randomUUID13()}.tmp`;
   writeFileSync8(temp, JSON.stringify(state), { flag: "wx", mode: OWNER_FILE_MODE, flush: true });
   renameSync7(temp, file2);
 }
@@ -44506,7 +44892,7 @@ function cancelStoredTransfer(home, id) {
   const path = join38(root, `${id}.json`);
   if (!existsSync20(path)) throw new Error("unknown transfer");
   assertTransferPath(path);
-  const state = JSON.parse(readFileSync19(path, "utf8"));
+  const state = JSON.parse(readFileSync20(path, "utf8"));
   if (state.version !== 1 || state.id !== id) throw new Error("invalid persisted transfer");
   if (state.status === "completed" || state.status === "failed" || state.legacySent) return { id, cancelled: false };
   state.status = "cancelled";
@@ -44523,7 +44909,7 @@ function readTransferHistory(home) {
     assertTransferPath(path);
     return { path, mtime: statSync11(path).mtimeMs };
   }).sort((a, b) => b.mtime - a.mtime).slice(0, MAX_TRANSFER_HISTORY).map(({ path }) => {
-    const state = JSON.parse(readFileSync19(path, "utf8"));
+    const state = JSON.parse(readFileSync20(path, "utf8"));
     if (state.version !== 1 || !Array.isArray(state.entries) || state.entries.length > MAX_STREAM_ENTRIES) throw new Error("invalid persisted transfer");
     return transferSummary(home, state);
   }).sort((a, b) => b.updatedAt - a.updatedAt);
@@ -44587,7 +44973,7 @@ var TransferManager = class {
     const file2 = join38(this.root, `${id}.json`);
     if (!existsSync20(file2)) return void 0;
     assertTransferPath(file2);
-    const state = JSON.parse(readFileSync19(file2, "utf8"));
+    const state = JSON.parse(readFileSync20(file2, "utf8"));
     if (state.version !== 1 || state.id !== id || !Array.isArray(state.entries) || state.entries.length > MAX_STREAM_ENTRIES) throw new Error("invalid persisted transfer");
     return state;
   }
@@ -44643,7 +45029,7 @@ var TransferManager = class {
     const recipient = state.direction === "send" ? state.from.name : state.to;
     const from = state.direction === "receive" ? { ...state.from, id: `${state.remote}/${state.from.id}`, name: `${state.peer.split("/")[0]}/${state.from.name}` } : { id: `files-${state.id}`, name: "files", agent: "other" };
     this.transport.notify({
-      id: state.direction === "receive" && state.status === "completed" ? state.id : randomUUID12(),
+      id: state.direction === "receive" && state.status === "completed" ? state.id : randomUUID13(),
       from,
       to: recipient,
       recipient,
@@ -44659,7 +45045,7 @@ var TransferManager = class {
   ensureCapacity() {
     if (this.states.size >= MAX_ACTIVE_TRANSFERS) throw new Error("too many active file transfers");
   }
-  start(remote, peer, to, paths, cwd, from, pull = false, id = randomUUID12(), legacy = false) {
+  start(remote, peer, to, paths, cwd, from, pull = false, id = randomUUID13(), legacy = false) {
     this.ensureCapacity();
     const state = {
       version: 1,
@@ -44716,7 +45102,7 @@ var TransferManager = class {
   }
   rpc(remote, id, fields) {
     if (this.closed) return Promise.reject(new Error("transfer manager closed"));
-    const rid = randomUUID12();
+    const rid = randomUUID13();
     return new Promise((resolve14, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(rid);
@@ -45491,7 +45877,7 @@ var Link = class {
     this.advertisedPeers = signature;
   }
   send(message) {
-    return this.request({ type: "send", rid: randomUUID13(), message: messageSchema.parse(message) });
+    return this.request({ type: "send", rid: randomUUID14(), message: messageSchema.parse(message) });
   }
   /** Detect a half-open link even when nobody sends work; activity never expires a peer. */
   heartbeat() {
@@ -45504,14 +45890,14 @@ var Link = class {
   receipt(id, sender, recipient, requireRecipient = false) {
     if (!this.receiptsSupported) return Promise.reject(new Error("Remote broker does not support read receipts. Update and reload its hosting sessions."));
     if (requireRecipient && !this.supports("recipient-receipts-v1")) return Promise.reject(new Error("Remote broker does not support per-recipient broadcast receipts. Update and reload its hosting sessions."));
-    return this.request({ type: "receipt", rid: randomUUID13(), id, sender, recipient });
+    return this.request({ type: "receipt", rid: randomUUID14(), id, sender, recipient });
   }
   files(transfer) {
-    return this.request({ type: "files", rid: randomUUID13(), transfer: transferSchema.parse(transfer) });
+    return this.request({ type: "files", rid: randomUUID14(), transfer: transferSchema.parse(transfer) });
   }
   async echo(timeoutMs = NETWORK_TIMEOUT_MS) {
     if (!this.echoSupported) throw new Error("Remote broker does not support verification. Update and restart its hosting sessions.");
-    const result = await this.request({ type: "echo", rid: randomUUID13() }, timeoutMs);
+    const result = await this.request({ type: "echo", rid: randomUUID14() }, timeoutMs);
     if (result !== true) throw new Error("network echo was not acknowledged");
   }
   request(frame, timeoutMs = NETWORK_TIMEOUT_MS) {
@@ -45913,10 +46299,10 @@ var NetworkService = class {
 };
 
 // src/network/remote-dashboard.ts
-import { randomUUID as randomUUID14 } from "node:crypto";
+import { randomUUID as randomUUID15 } from "node:crypto";
 
 // src/core/dashboard-read.ts
-import { closeSync as closeSync10, openSync as openSync10, readFileSync as readFileSync20, readSync as readSync4, statSync as statSync12 } from "node:fs";
+import { closeSync as closeSync10, openSync as openSync10, readFileSync as readFileSync21, readSync as readSync4, statSync as statSync12 } from "node:fs";
 import { join as join39 } from "node:path";
 
 // src/network/dashboard-protocol.ts
@@ -45990,8 +46376,8 @@ async function finishedRunOutcomes(home, log, names) {
   }
   return out;
 }
-function summarizeRun(file2, text2, mtimeMs, now, meta3 = {}) {
-  const lines = text2.split("\n").filter(Boolean);
+function summarizeRun(file2, text3, mtimeMs, now, meta3 = {}) {
+  const lines = text3.split("\n").filter(Boolean);
   const finished = [...lines].reverse().find((l) => / finished after \d+s · /.test(l));
   const last = (finished ?? lines.at(-1) ?? "").replace(/^\d\d:\d\d:\d\d /, "");
   const status = finished ? / · done$/.test(finished) ? "done" : "failed" : now - mtimeMs > STALE_RUN_MS2 ? "interrupted" : "running";
@@ -46023,7 +46409,7 @@ function listRuns(home, now = Date.now()) {
       const signature = `${log.signature}:${JSON.stringify(log.meta)}`;
       let cached3 = runSummaries.get(log.file);
       if (cached3?.signature !== signature) {
-        cached3 = { signature, summary: summarizeRun(`${log.name}.log`, readFileSync20(log.file, "utf8"), log.updatedAt, log.updatedAt, log.meta) };
+        cached3 = { signature, summary: summarizeRun(`${log.name}.log`, readFileSync21(log.file, "utf8"), log.updatedAt, log.updatedAt, log.meta) };
         runSummaries.delete(log.file);
         runSummaries.set(log.file, cached3);
         if (runSummaries.size > 2048) runSummaries.delete(runSummaries.keys().next().value);
@@ -46072,6 +46458,16 @@ function listRuns(home, now = Date.now()) {
       recovered: true,
       hasLog: false
     });
+  }
+  const current = readHistoryJobs(home);
+  for (const run of runs) {
+    const job = run.job && current.get(run.job);
+    if (job && Array.isArray(job.ownershipHistory) && job.ownershipHistory.length) {
+      run.owner = typeof job.owner === "string" ? job.owner : run.owner;
+      run.rootName = typeof job.rootName === "string" ? job.rootName : void 0;
+      run.rootSession = typeof job.rootSession === "string" ? job.rootSession : void 0;
+      run.parentJob = typeof job.parentJob === "string" ? job.parentJob : void 0;
+    }
   }
   return pageRuns(runs, null, runs.length).runs;
 }
@@ -46254,7 +46650,7 @@ var RemoteDashboard = class {
     if (this.closed || !pair?.connected) return dashboardError("remote_offline", "The paired PC is not connected.");
     if (!this.network.peerSupports(host, DASHBOARD_CAPABILITY)) return dashboardError("remote_update_needed", "Update and restart the paired PC's hosting sessions to read its dashboard.", 409);
     if (this.pending.size >= DASHBOARD_MAX_PENDING) return dashboardError("remote_busy", "Too many pending dashboard reads.", 429);
-    const rid = randomUUID14();
+    const rid = randomUUID15();
     const response = new Promise((resolve14) => {
       const timer = setTimeout(() => {
         this.pending.delete(rid);
@@ -46321,21 +46717,21 @@ var RemoteDashboard = class {
 };
 
 // src/network/remote-jobs.ts
-import { randomUUID as randomUUID16 } from "node:crypto";
+import { randomUUID as randomUUID17 } from "node:crypto";
 import { existsSync as existsSync21, realpathSync as realpathSync9, statSync as statSync14 } from "node:fs";
 import { isAbsolute as isAbsolute9, join as join45 } from "node:path";
 
 // src/mcp/delegate-run.ts
-import { randomUUID as randomUUID15 } from "node:crypto";
+import { randomUUID as randomUUID16 } from "node:crypto";
 import { isAbsolute as isAbsolute8, join as join42, relative as relative7, resolve as resolve12 } from "node:path";
 
 // src/core/effort.ts
-import { readFileSync as readFileSync22 } from "node:fs";
+import { readFileSync as readFileSync23 } from "node:fs";
 import { homedir as homedir6 } from "node:os";
 import { join as join41 } from "node:path";
 
 // src/core/codex-trust.ts
-import { readFileSync as readFileSync21, writeFileSync as writeFileSync9 } from "node:fs";
+import { readFileSync as readFileSync22, writeFileSync as writeFileSync9 } from "node:fs";
 import { homedir as homedir5 } from "node:os";
 import { join as join40 } from "node:path";
 var PERMISSION_HOOK_STATE_KEY = 'hooks.state."agent-bridge@agent-bridge:plugin.json#hooks[0]:permission_request:0:0"';
@@ -46343,16 +46739,16 @@ var OBSERVATIONS_FILE = "codex-hook.json";
 function codexHome(env = process.env) {
   return env.CODEX_HOME?.trim() || join40(homedir5(), ".codex");
 }
-function codexPermissionHookHash(home = codexHome(), read2 = (p) => readFileSync21(p, "utf8")) {
-  let text2;
+function codexPermissionHookHash(home = codexHome(), read2 = (p) => readFileSync22(p, "utf8")) {
+  let text3;
   try {
-    text2 = read2(join40(home, "config.toml"));
+    text3 = read2(join40(home, "config.toml"));
   } catch {
     return null;
   }
-  const at = text2.indexOf(`[${PERMISSION_HOOK_STATE_KEY}]`);
+  const at = text3.indexOf(`[${PERMISSION_HOOK_STATE_KEY}]`);
   if (at < 0) return null;
-  for (const line of text2.slice(at).split(/\r?\n/).slice(1)) {
+  for (const line of text3.slice(at).split(/\r?\n/).slice(1)) {
     if (line.trim().startsWith("[")) break;
     const m = /^\s*trusted_hash\s*=\s*"(sha256:[0-9a-f]+)"/.exec(line);
     if (m) return m[1];
@@ -46361,7 +46757,7 @@ function codexPermissionHookHash(home = codexHome(), read2 = (p) => readFileSync
 }
 function readObservations(bridgeHome) {
   try {
-    return JSON.parse(readFileSync21(join40(bridgeHome, OBSERVATIONS_FILE), "utf8"));
+    return JSON.parse(readFileSync22(join40(bridgeHome, OBSERVATIONS_FILE), "utf8"));
   } catch {
     return {};
   }
@@ -46375,13 +46771,13 @@ function recordCodexHookObservation(bridgeHome, hash2, observation) {
   } catch {
   }
 }
-function codexPermissionHookTrusted(bridgeHome, home = codexHome(), read2 = (p) => readFileSync21(p, "utf8")) {
+function codexPermissionHookTrusted(bridgeHome, home = codexHome(), read2 = (p) => readFileSync22(p, "utf8")) {
   const hash2 = codexPermissionHookHash(home, read2);
   return hash2 !== null && readObservations(bridgeHome)[hash2] !== "failed";
 }
 
 // src/core/effort.ts
-function defaultEffort(agent, model, read2 = (p) => readFileSync22(p, "utf8")) {
+function defaultEffort(agent, model, read2 = (p) => readFileSync23(p, "utf8")) {
   try {
     if (agent === "codex") return codexConfigEffort(read2(join41(codexHome(), "config.toml")));
     if (agent === "claude") return claudeSettingsEffort(read2(join41(process.env.CLAUDE_CONFIG_DIR?.trim() || join41(homedir6(), ".claude"), "settings.json")), model);
@@ -46658,7 +47054,7 @@ async function runDelegate(rc, target, a, signal, onProgress, background, job) {
   checkDepth(rc.cfg.maxDelegateDepth);
   if (!job?.rootSession) return runDelegateInner(rc, target, a, signal, onProgress, background, job);
   const budget = new RootConcurrency(rc.home, job.rootSession);
-  const owner = { id: `${job.name}-${randomUUID15()}`, pid: process.pid };
+  const owner = { id: `${job.name}-${randomUUID16()}`, pid: process.pid };
   let timer;
   try {
     if (!job.parentJob) budget.ensureLimit(rc.cfg.maxJobs);
@@ -46686,7 +47082,7 @@ async function runDelegateInner(rc, target, a, signal, onProgress, background, j
   const cwd = a.cwd || rc.cwd();
   a = worktreeArgs(target, a, cfg, cwd, rc.home);
   const access = a.access;
-  const wt = a._worktree ?? (a.worktree ? await createWorktree({ cwd, home: rc.home, jobId: randomUUID15().slice(0, 8), log: dlog }) : null);
+  const wt = a._worktree ?? (a.worktree ? await createWorktree({ cwd, home: rc.home, jobId: randomUUID16().slice(0, 8), log: dlog }) : null);
   const workdir = wt?.cwd ?? cwd;
   const linkRoot = wt?.path ?? bridgeWorktreeRoot(workdir, rc.home);
   const watchChanges = !wt && (access === "edit" || access === "ask" && target === "codex");
@@ -46697,7 +47093,7 @@ async function runDelegateInner(rc, target, a, signal, onProgress, background, j
   let relayCalls = 0;
   const codexHash = target === "codex" ? codexPermissionHookHash() : null;
   const journalPermission = async (request2, decide) => {
-    const id = randomUUID15();
+    const id = randomUUID16();
     const context2 = { kind: "approval", agent: target, project: workdir, job: job?.name ?? a._job, session: job?.sessionId ?? void 0 };
     await appendContextEvent(rc.home, { ...context2, payload: { id, stage: "request", request: request2 } });
     const decision = await decide();
@@ -46706,6 +47102,10 @@ async function runDelegateInner(rc, target, a, signal, onProgress, background, j
   };
   const askUser = rc.askUser ? async (r) => {
     if (!job) return rc.askUser(r);
+    if (job.ownershipHistory?.length && job.owner !== rc.me() && rc.jobs) {
+      const answer = await rc.jobs.askParent(job, `${r.tool}: ${r.detail}`, PARENT_APPROVAL_TIMEOUT_MS, r);
+      return answer.allow ? { allow: true } : { allow: false, message: answer.reason };
+    }
     const decision = await waitForApproval(
       job,
       `${r.tool}: ${r.detail}`,
@@ -46747,7 +47147,7 @@ async function runDelegateInner(rc, target, a, signal, onProgress, background, j
     if (!r.automaticReview && (isOwnServerCall(r) || isAutoApproved(r, autoApprove))) return { allow: true };
     let d;
     if (wiring) d = await wiring.onPermission(r);
-    else if (job && (!job.foreground || job.parentJob) && rc.jobs) {
+    else if (job && (!job.foreground || job.parentJob || job.ownershipHistory?.length) && rc.jobs) {
       const hint = approvalHint(r);
       const a2 = await rc.jobs.askParent(job, `${r.tool.replace(/^mcp:/, "MCP server ")}: ${r.detail}${hint}`, PARENT_APPROVAL_TIMEOUT_MS, r);
       d = a2.allow ? { allow: true } : { allow: false, message: `Denied by supervisor ${me}: ${a2.reason || "no reason supplied"}` };
@@ -46764,7 +47164,7 @@ async function runDelegateInner(rc, target, a, signal, onProgress, background, j
   try {
     feed = startRunFeed({
       home: rc.home,
-      name: `${target}-${randomUUID15().slice(0, 8)}`,
+      name: `${target}-${randomUUID16().slice(0, 8)}`,
       header: `${target}${a.model ? ` (${a.model}${a.effort ? `, effort ${a.effort}` : ""})` : a.effort ? ` (effort ${a.effort})` : ""} in ${workdir}, access ${access ?? "default"}, by ${me}${a.session_id ? `, continues ${a.session_id}` : ""}
 ${a.prompt}
 ---`,
@@ -46874,7 +47274,7 @@ ${a.prompt}
     });
     void steering?.rename?.(title).catch((err) => dlog.warn("could not rename the Codex thread", { err: err.message }));
   };
-  const slotOwner = { id: `${a._job ?? target}-${randomUUID15()}`, pid: process.pid };
+  const slotOwner = { id: `${a._job ?? target}-${randomUUID16()}`, pid: process.pid };
   let slots = null;
   let slotTimer;
   let res;
@@ -47291,7 +47691,7 @@ var RemoteJobs = class {
     const request2 = remoteJobRequestSchema.parse(raw);
     if (!this.network.peerSupports(host, REMOTE_JOB_CAPABILITY)) throw new Error("Remote broker update needed or paired PC disconnected: install remote-jobs-v1 support and restart its hosting sessions.");
     if (this.pending.size >= REMOTE_JOB_RATE_LIMIT) throw new Error("Too many pending remote job requests.");
-    const rid = randomUUID16();
+    const rid = randomUUID17();
     const response = new Promise((resolve14, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(rid);
@@ -47555,6 +47955,57 @@ var Broker = class {
     this.jobsPath = jobsPath;
     this.networking = networking;
     this.handlers = {
+      handoffSubagents: (c, a) => {
+        const parsed = handoffSchema.safeParse(a);
+        if (!parsed.success) throw new BridgeError("bad_request", "Invalid handoff arguments.");
+        const source = this.requirePeer(c);
+        if (parsed.data.to.includes("/")) throw new BridgeError("bad_request", "Paired-PC handoff is not supported; choose an exact live local session name.");
+        const target = this.connByName(parsed.data.to)?.peer;
+        if (!target) throw new BridgeError("unknown_target", "The target must be an exact live local session name.");
+        if (!this.jobsPath) throw new BridgeError("bad_request", "The job registry is unavailable.");
+        const receipt = commitHandoff(this.jobsPath, source, target, parsed.data);
+        this.jobsSnapshot = null;
+        this.jobsForDispatch = null;
+        this.applyHandoffs();
+        for (const conn of this.conns) if (conn.peer) this.emit(conn, "jobs_changed", { withdrawn: conn.peer.name === source.name ? receipt.jobs.map((j) => j.id) : [] });
+        return receipt;
+      },
+      jobAuthority: (c, a) => {
+        const peer = this.requirePeer(c), job = this.storedJobs().find((j) => j.name === a.job);
+        if (!job || !canControlJob(job, peer.name)) return null;
+        return job;
+      },
+      inlineJobControl: async (c, a) => {
+        const peer = this.requirePeer(c), job = this.storedJobs().find((j) => j.name === a.job);
+        if (!job || !canControlJob(job, peer.name)) throw new BridgeError("unauthorized", "Only the current supervisor can control this job.");
+        if (!a.control || !["message", "title", "settings", "effort", "cancel"].includes(a.control.type)) throw new BridgeError("bad_request", "Invalid inline control.");
+        if (job.host && job.status === "running") {
+          await this.onSend(c, { to: String(job.name), body: JSON.stringify(a.control), conversationId: `${CONTROL_CONVERSATION_PREFIX}${job.id}` });
+          return { sent: true };
+        }
+        const executor = typeof job.executionOwner === "string" ? this.connByName(job.executionOwner) : void 0;
+        if (job.status !== "running") {
+          const recipient = chooseJobRecipient(job, [...this.conns].flatMap((c2) => c2.peer ? [c2.peer] : []));
+          const primary = this.connByName(recipient);
+          if (!primary) throw new BridgeError("unknown_target", "No job master is currently connected.");
+          this.emit(primary, "shared_job_control", a);
+          return { sent: true };
+        }
+        if (!executor) throw new BridgeError("unknown_target", "The inline job's executor is offline.");
+        this.emit(executor, "inline_job_control", a);
+        return { sent: true };
+      },
+      inlineJobReport: (c, m) => {
+        const peer = this.requirePeer(c), job = this.storedJobs().find((j) => `job:${j.id}` === m.from?.id);
+        if (!job || job.executionOwner !== peer.name && job.owner !== peer.name && job.rootName !== peer.name || typeof job.owner !== "string" || typeof m.body !== "string" || m.body.length > MAX_BODY_CHARS) throw new BridgeError("unauthorized", "Invalid inline job delivery.");
+        const recipient = chooseJobRecipient(job, [...this.conns].flatMap((c2) => c2.peer ? [c2.peer] : []));
+        const message = { ...m, to: recipient, recipient };
+        if (this.store.insertJobDelivery(message)) {
+          const target = this.connByName(recipient);
+          if (target) this.emit(target, "message", message);
+        }
+        return { saved: true };
+      },
       auth: (c, a) => {
         this.checkAuth(a.protocol, a.token);
         c.authed = true;
@@ -47562,6 +48013,9 @@ var Broker = class {
       },
       hello: (c, a) => {
         const result = this.onHello(c, a);
+        const job = this.storedJobs().find((j) => `job:${j.id}` === c.peer?.id);
+        if (job?.ownershipHistory) this.refreshJobPeer(job);
+        this.routePendingJobMail();
         this.store.history.rememberPeer(c.peer);
         return result;
       },
@@ -47590,6 +48044,8 @@ var Broker = class {
       pending: (c, a) => this.unreadMail(this.requirePeer(c).name, Math.min(Math.max(1, a.limit ?? PENDING_DEFAULT_LIMIT), PENDING_MAX_LIMIT)),
       updatePeer: (c, a) => {
         const peer = this.onUpdatePeer(c, a);
+        const job = this.storedJobs().find((j) => `job:${j.id}` === peer.id);
+        if (job?.ownershipHistory) this.refreshJobPeer(job);
         this.store.history.rememberPeer(peer);
         return peer;
       },
@@ -47610,7 +48066,7 @@ var Broker = class {
           const pair = this.requireNetwork().status().paired.find((p) => p.id === a.host || p.name === a.host);
           const name2 = snapshot.state.peer;
           this.receiveRemote({
-            id: randomUUID17(),
+            id: randomUUID18(),
             from: { id: `${pair?.id ?? a.host}/job:${a.request.job}`, name: `${pair?.name ?? a.host}/${name2}`, agent: "other" },
             to: peer.name,
             recipient: peer.name,
@@ -47693,6 +48149,7 @@ var Broker = class {
         server.removeListener("error", onError);
         server.on("error", (err) => this.log.error("broker server error", { err }));
         this.server = server;
+        this.applyHandoffs();
         this.purgeTimer = setInterval(() => this.purge(), PURGE_INTERVAL_MS);
         this.purgeTimer.unref();
         if (this.store.file !== ":memory:") this.historyBackground = new HistoryBackground(this.store.file, this.log);
@@ -47778,7 +48235,7 @@ var Broker = class {
     this.remoteDashboard = new RemoteDashboard(service, { home: this.networking.home, log: this.log, peers: () => this.dashboardPeers() });
     this.remoteJobs = new RemoteJobs(service, this.networking.home, this.log, async (record2, control) => {
       this.receiveRemote({
-        id: randomUUID17(),
+        id: randomUUID18(),
         from: { id: record2.owner, name: record2.owner, agent: "other" },
         to: record2.name,
         recipient: record2.name,
@@ -47835,6 +48292,11 @@ var Broker = class {
     socket.on("error", (err) => this.log.debug("connection error", { err: err.message }));
     socket.on("close", () => {
       this.conns.delete(conn);
+      try {
+        this.routePendingJobMail();
+      } catch (err) {
+        this.log.warn("pending job reroute deferred", { err: String(err) });
+      }
       if (conn.peer) {
         this.log.info("peer left", { name: conn.peer.name, agent: conn.peer.agent });
         if (!conn.peer.jobAgent) this.broadcastEvent("peer_left", conn.peer, conn);
@@ -47936,6 +48398,81 @@ var Broker = class {
     for (const c of this.conns) if (c.peer?.name === name2) return c;
     return void 0;
   }
+  /** Replay every effect after the registry commit, including a crash between stores. */
+  applyHandoffs() {
+    if (!this.jobsPath) return;
+    const records = this.storedJobs();
+    for (const receipt of handoffJournal(this.jobsPath)) {
+      const current = receipt.jobs.map((j) => records.find((r) => r.id === j.id)).filter(isRecord);
+      for (const job of current) {
+        const old = receipt.jobs.find((j) => j.id === job.id);
+        const destinations = [[old.from, String(job.owner)], [receipt.from, String(job.rootName)], [old.oldRoot ?? receipt.from, String(job.rootName)]];
+        for (const [from, to] of destinations) {
+          const copied = this.store.handoffMail(from, to, old.id, receipt.at);
+          const target = this.connByName(to);
+          if (target) for (const message of copied) this.emit(target, "message", message);
+        }
+        const budget = new RootConcurrency(dirname17(this.jobsPath), String(job.rootSession));
+        try {
+          budget.moveJobs([old.name]);
+        } finally {
+          budget.close();
+        }
+        this.refreshJobPeer(job);
+      }
+      const body = `Inherited subagents from ${receipt.from}:
+` + receipt.jobs.map((j) => `- ${j.name}: ${j.title} (${j.status})`).join("\n") + (receipt.note ? `
+
+Handoff note: ${receipt.note}` : "") + "\n\nYou are their supervisor. Use message_subagent or cancel_subagent to control them.";
+      for (const [recipient, text3, suffix] of [[receipt.to, body, "inherited"], [receipt.from, `Handed off ${receipt.jobs.length} subagent(s) to ${receipt.to}.`, "confirmed"]]) {
+        const m = {
+          id: `${receipt.id}-${suffix}`,
+          from: { id: "handoff", name: "agent-bridge", agent: "other" },
+          to: recipient,
+          recipient,
+          body: text3,
+          conversationId: `handoff-${receipt.id}`,
+          hop: 0,
+          replyTo: null,
+          createdAt: receipt.at,
+          readAt: null
+        };
+        if (this.store.insertOnce(m)) {
+          const conn = this.connByName(recipient);
+          if (conn) this.emit(conn, "message", m);
+        }
+      }
+    }
+  }
+  routePendingJobMail() {
+    const live = [...this.conns].flatMap((c) => c.peer ? [c.peer] : []);
+    for (const job of this.storedJobs()) {
+      if (!Array.isArray(job.ownershipHistory) || !job.ownershipHistory.length) continue;
+      const recipient = chooseJobRecipient(job, live), target = this.connByName(recipient);
+      if (Array.isArray(job.deliveryHistory)) for (const envelope of job.deliveryHistory) {
+        if (!isRecord(envelope) || !isRecord(envelope.from) || envelope.from.id !== `job:${job.id}` || typeof envelope.id !== "string" || typeof envelope.body !== "string") continue;
+        const message = { ...envelope, to: recipient, recipient };
+        if (this.store.insertJobDelivery(message) && target) this.emit(target, "message", message);
+      }
+      if (!target) continue;
+      for (const from of mastersFor(job)) {
+        const moved = this.store.handoffMail(from, recipient, String(job.id), this.now());
+        const previous = this.connByName(from);
+        if (previous && moved.length) this.emit(previous, "mail_retracted", { ids: moved.map((m) => m.id) });
+        for (const m of moved) this.emit(target, "message", m);
+      }
+    }
+  }
+  refreshJobPeer(job) {
+    const peer = this.connByName(String(job.name))?.peer;
+    if (!peer?.jobAgent) return;
+    peer.jobParent = String(job.owner);
+    peer.jobOwner = String(job.supervisor);
+    peer.rootSession = String(job.rootSession);
+    peer.rootName = String(job.rootName);
+    peer.parentJob = typeof job.parentJob === "string" ? job.parentJob : void 0;
+    if (isRecord(job.args) && Array.isArray(job.args.send_to)) peer.jobSendTo = job.args.send_to;
+  }
   siblingConns(conn) {
     const peer = this.requirePeer(conn);
     if (!peer.jobAgent || !peer.jobOwner) throw new BridgeError("bad_request", "not a linked job");
@@ -48036,7 +48573,7 @@ var Broker = class {
       if (typeof args.body !== "string" || !args.body.trim() || args.body.length > MAX_BODY_CHARS) {
         throw new BridgeError("bad_request", "invalid sibling message body");
       }
-      const id = randomUUID17();
+      const id = randomUUID18();
       const notice = {
         id,
         from: { id: sender.id, name: sender.name, agent: sender.jobAgent ?? sender.agent },
@@ -48062,7 +48599,7 @@ ${args.body}`,
       }
       throw new BridgeError("bad_request", `sibling conversation reached its ${args.maxHops}-message hop limit; message was not delivered. Durable notice ${id} saved for sender and supervisor, including the undelivered text`);
     }
-    const conversationId = parent2?.conversationId ?? `${SIBLING_CONVERSATION_PREFIX}${randomUUID17()}`;
+    const conversationId = parent2?.conversationId ?? `${SIBLING_CONVERSATION_PREFIX}${randomUUID18()}`;
     const result = await this.onSend(conn, { ...args, dedupeKey, conversationId });
     const message = result.messages[0];
     const recipientOwner = target?.peer?.jobParent ?? this.storedJobs().find((j) => j.name === args.to)?.owner;
@@ -48070,7 +48607,7 @@ ${args.body}`,
     for (const owner of observers) {
       const note = {
         ...message,
-        id: randomUUID17(),
+        id: randomUUID18(),
         recipient: owner,
         conversationId: `${conversationId}${SIBLING_NOTE_SUFFIX}`,
         body: `Sibling message to ${message.recipient}:
@@ -48097,7 +48634,7 @@ ${message.body}`
       const candidate = `${requested}-${i}`;
       if (!this.connByName(candidate)) return candidate;
     }
-    return `${requested}-${randomUUID17().slice(0, 8)}`;
+    return `${requested}-${randomUUID18().slice(0, 8)}`;
   }
   onDecide(conn, value) {
     const peer = this.requirePeer(conn);
@@ -48138,7 +48675,7 @@ ${message.body}`
   }
   queueDecision(decision, peer) {
     const message = {
-      id: randomUUID17(),
+      id: randomUUID18(),
       from: decision.author,
       to: peer.name,
       recipient: peer.name,
@@ -48406,8 +48943,18 @@ Call decisions to look up current decisions or their history.`,
     const body = typeof args.body === "string" ? args.body : "";
     if (!body.trim()) throw new BridgeError("bad_request", "message body is empty");
     if (body.length > MAX_BODY_CHARS) throw new BridgeError("too_large", `message body exceeds ${MAX_BODY_CHARS} characters`);
-    const to = String(args.to ?? "").trim();
+    let to = String(args.to ?? "").trim();
     if (!to) throw new BridgeError("bad_request", "missing target");
+    const own2 = sender.jobAgent ? this.storedJobs().find((j) => `job:${j.id}` === sender.id) : void 0;
+    if (own2 && Array.isArray(own2.ownershipHistory)) {
+      if (to === sender.jobParent || mastersFor(own2).includes(to)) to = chooseJobRecipient(own2, [...this.conns].flatMap((c) => c.peer ? [c.peer] : []));
+      else if (own2.ownershipHistory.some((h) => isRecord(h) && h.fromRootName === to)) to = String(own2.rootName);
+      this.refreshJobPeer(own2);
+    }
+    const controlled = this.storedJobs().find((j) => j.name === to);
+    if (args.conversationId?.startsWith(CONTROL_CONVERSATION_PREFIX) && controlled && !canControlJob(controlled, sender.name)) {
+      throw new BridgeError("unauthorized", "Only the current supervisor can control this job runner.");
+    }
     let conversationId = args.conversationId?.trim() || "";
     let hop = 0;
     const replyTo = args.replyTo?.trim() || null;
@@ -48420,8 +48967,8 @@ Call decisions to look up current decisions or their history.`,
         this.log.debug("replyTo refers to an unknown message", { replyTo });
       }
     }
-    conversationId ||= randomUUID17();
-    const id = sender.jobAgent && args.dedupeKey?.startsWith(COMPLETION_DEDUPE_PREFIX) ? completionMessageId(sender.id, args.dedupeKey.slice(COMPLETION_DEDUPE_PREFIX.length)) : randomUUID17();
+    conversationId ||= randomUUID18();
+    const id = sender.jobAgent && args.dedupeKey?.startsWith(COMPLETION_DEDUPE_PREFIX) ? completionMessageId(sender.id, args.dedupeKey.slice(COMPLETION_DEDUPE_PREFIX.length)) : randomUUID18();
     const createdAt = this.now();
     const base2 = {
       id,
@@ -48651,7 +49198,7 @@ async function processIdentity(pid) {
 }
 
 // src/core/job-control.ts
-import { randomUUID as randomUUID18 } from "node:crypto";
+import { randomUUID as randomUUID19 } from "node:crypto";
 var DASHBOARD_JOB_CONVERSATION = "jobctl-dashboard";
 var CONTROL_TIMEOUT_MS = 1e4;
 var JobControlError = class extends Error {
@@ -48663,7 +49210,7 @@ var JobControlError = class extends Error {
 };
 async function controlDashboardJob(node2, owner, job, command) {
   if (!(await node2.peers()).some((p) => p.name === owner)) throw new JobControlError("The owning session is not connected. Reopen it to continue this subagent.", "offline");
-  const requestId = randomUUID18();
+  const requestId = randomUUID19();
   let receive;
   let timer;
   const reply2 = new Promise((resolve14, reject) => {
@@ -48700,12 +49247,12 @@ var BridgeNode = class extends EventEmitter2 {
   constructor(opts) {
     super();
     this.opts = opts;
-    this.id = opts.id ?? randomUUID19();
+    this.id = opts.id ?? randomUUID20();
     this.currentName = opts.name;
     this.currentCwd = opts.cwd;
     this.autoWake = opts.autoWake;
     this.log = opts.log.child("node");
-    this.readJournal = new ReadJournal(dirname17(opts.dbPath));
+    this.readJournal = new ReadJournal(dirname18(opts.dbPath));
     this.restoreReadState(`name:${this.currentName}`);
   }
   opts;
@@ -48851,7 +49398,7 @@ var BridgeNode = class extends EventEmitter2 {
       this.log.error("cannot open message store", { err, db: this.opts.dbPath });
       throw err;
     }
-    const broker = new Broker(this.opts.pipePath, store, this.log.child("broker"), this.opts.token, Date.now, join46(dirname17(this.opts.dbPath), JOBS_FILE), this.opts.network);
+    const broker = new Broker(this.opts.pipePath, store, this.log.child("broker"), this.opts.token, Date.now, join46(dirname18(this.opts.dbPath), JOBS_FILE), this.opts.network);
     try {
       await broker.listen();
       this.broker = broker;
@@ -48943,7 +49490,17 @@ var BridgeNode = class extends EventEmitter2 {
     this.scheduleReconnect(jitter());
   }
   onEvent(ev, data) {
-    if (ev === "message") {
+    if (ev === "mail_retracted") {
+      for (const id of data.ids) this.inbox.delete(id);
+    } else if (ev === "shared_job_control") {
+      this.emit("shared_job_control", data);
+    } else if (ev === "jobs_changed") {
+      const ids = new Set(data.withdrawn.map((id) => `job:${id}`));
+      for (const [id, m] of this.inbox) if (ids.has(m.from.id)) this.inbox.delete(id);
+      this.emit("jobs_changed");
+    } else if (ev === "inline_job_control") {
+      this.emit("inline_job_control", data);
+    } else if (ev === "message") {
       const m = data;
       if (this.readIds.has(m.id)) {
         this.acknowledge([m.id]);
@@ -48995,6 +49552,24 @@ var BridgeNode = class extends EventEmitter2 {
   }
   peers() {
     return this.withClient((c) => c.request("peers", {}));
+  }
+  async handoffSubagents(args) {
+    return this.withClient(async (c) => {
+      for (const m of this.unread()) if (m.from.id.startsWith("job:")) {
+        const job = await c.request("jobAuthority", { job: m.from.name });
+        if (job && (job.owner === this.name || job.rootName === this.name)) await c.request("inlineJobReport", m);
+      }
+      return c.request("handoffSubagents", args);
+    });
+  }
+  jobAuthority(job) {
+    return this.withClient((c) => c.request("jobAuthority", { job }));
+  }
+  controlInlineJob(job, control) {
+    return this.withClient((c) => c.request("inlineJobControl", { job, control }));
+  }
+  reportInlineJob(message) {
+    return this.withClient((c) => c.request("inlineJobReport", message));
   }
   decide(args) {
     return this.withClient((c) => c.request("decide", args));
@@ -49056,7 +49631,7 @@ var BridgeNode = class extends EventEmitter2 {
    */
   deliverLocal(m) {
     try {
-      recordLocalResult(dirname17(this.opts.dbPath), m);
+      recordLocalResult(dirname18(this.opts.dbPath), m);
     } catch (err) {
       this.log.warn("could not retain local result receipt", { id: m.id, err: String(err) });
     }
@@ -49351,8 +49926,8 @@ var CodexWaker = class {
 };
 
 // src/mcp/message-wait.ts
-import { randomUUID as randomUUID20 } from "node:crypto";
-import { mkdirSync as mkdirSync23, readdirSync as readdirSync15, readFileSync as readFileSync23 } from "node:fs";
+import { randomUUID as randomUUID21 } from "node:crypto";
+import { mkdirSync as mkdirSync23, readdirSync as readdirSync15, readFileSync as readFileSync24 } from "node:fs";
 import { join as join47 } from "node:path";
 var SINGLE_WAIT_SEC = DEFAULT_WAIT_SEC;
 var RECEIPT_POLL_MS = 1e3;
@@ -49391,12 +49966,12 @@ var MessageWaitStore = class {
   save(node2, filters, mode = "block") {
     const existing = mode === "notify" ? this.pending(node2).find((r) => r.mode === mode && ["from", "reply_to", "conversation_id", "read_receipt_of"].every((k) => r.filters[k] === filters[k])) : void 0;
     if (existing) return existing;
-    const record2 = { id: randomUUID20(), owner: node2.name, sessionId: node2.currentSessionId, filters, mode };
+    const record2 = { id: randomUUID21(), owner: node2.name, sessionId: node2.currentSessionId, filters, mode };
     writeJsonStore(this.path(record2.id), record2, null);
     return record2;
   }
   get(node2, id) {
-    const record2 = waitSchema.parse(JSON.parse(readFileSync23(this.path(id), "utf8")));
+    const record2 = waitSchema.parse(JSON.parse(readFileSync24(this.path(id), "utf8")));
     if (!this.owns(node2, record2)) throw new Error("This wait belongs to another session.");
     return record2;
   }
@@ -49404,7 +49979,7 @@ var MessageWaitStore = class {
     mkdirSync23(this.dir, { recursive: true, mode: 448 });
     return readdirSync15(this.dir).filter((f) => f.endsWith(".json")).flatMap((f) => {
       try {
-        const record2 = waitSchema.parse(JSON.parse(readFileSync23(join47(this.dir, f), "utf8")));
+        const record2 = waitSchema.parse(JSON.parse(readFileSync24(join47(this.dir, f), "utf8")));
         return this.owns(node2, record2) ? [record2] : [];
       } catch {
         return [];
@@ -49416,7 +49991,7 @@ var MessageWaitStore = class {
   }
   setMode(node2, id, mode) {
     const record2 = this.get(node2, id);
-    const previous = JSON.parse(readFileSync23(this.path(id), "utf8"));
+    const previous = JSON.parse(readFileSync24(this.path(id), "utf8"));
     writeJsonStore(this.path(id), { ...previous, mode }, previous);
     return { ...record2, mode };
   }
@@ -49559,10 +50134,10 @@ var RewakeEndpoint = class {
     });
     this.port = this.server.address().port;
   }
-  reply(res, text2, superseded) {
+  reply(res, text3, superseded) {
     if (res.destroyed) return;
     res.writeHead(200, { "content-type": "application/json" });
-    res.end(JSON.stringify({ text: text2, superseded }));
+    res.end(JSON.stringify({ text: text3, superseded }));
   }
   /** Hand the waiting messages to a wake-up; they stay unread until the session shows activity. */
   handOut() {
@@ -49579,15 +50154,15 @@ var RewakeEndpoint = class {
     res.on("close", () => ac.abort("closed"));
     void this.node.waitForMessage(REWAKE_POLL_MS, this.shouldWake, ac.signal).then((first) => {
       if (this.waiter === ac) this.waiter = null;
-      let text2 = "";
+      let text3 = "";
       if (first && !res.destroyed) {
-        text2 = this.handOut();
+        text3 = this.handOut();
         this.log.info("waking the session", { count: this.handedOut.size });
         clearTimeout(this.confirmTimer);
         this.confirmTimer = setTimeout(() => this.retryWake(), WAKE_CONFIRM_MS);
         this.confirmTimer.unref();
       }
-      this.reply(res, text2, ac.signal.reason === "superseded");
+      this.reply(res, text3, ac.signal.reason === "superseded");
     });
   }
   /**
@@ -49599,12 +50174,12 @@ var RewakeEndpoint = class {
     this.standby?.release("superseded");
     const ac = new AbortController();
     let done = false;
-    const finish = (text2, superseded) => {
+    const finish = (text3, superseded) => {
       if (done) return;
       done = true;
       ac.abort("done");
       if (this.standby?.ac === ac) this.standby = null;
-      this.reply(res, text2, superseded);
+      this.reply(res, text3, superseded);
     };
     this.standby = { ac, release: () => finish("", true), wake: () => finish(this.handOut(), false) };
     res.on("close", () => finish("", false));
@@ -49641,9 +50216,9 @@ var RewakeEndpoint = class {
       }
       if (this.modWaiter === ac) this.modWaiter = null;
       if (ac.signal.aborted || Date.now() >= deadline) return this.reply(res, "", ac.signal.reason === "superseded");
-      const text2 = this.handOut();
+      const text3 = this.handOut();
       this.log.info("waking the session (mod)", { count: this.handedOut.size });
-      this.reply(res, text2, false);
+      this.reply(res, text3, false);
     })();
   }
   setBusy(busy) {
@@ -49748,7 +50323,7 @@ function discardFinishedNotes(ctx) {
     if (isQuietMessage(m)) return false;
     if (!ctx.jobs?.isNote(m)) return false;
     const job = ctx.jobs.find(m.from.name);
-    return job !== void 0 && job.status !== "running";
+    return job !== void 0 && !job.ownershipHistory?.length && job.status !== "running";
   });
   node2.markRead(obsolete.map((m) => m.id));
 }
@@ -49773,10 +50348,10 @@ async function subagentHook(ctx, input2) {
     return {};
   }
   ctx.log.info("delivering parent messages to the subagent", { count: msgs.length, event: input2.event });
-  const text2 = [msgs.length ? formatParentMessages(parent2.name, msgs) : "", children.length ? formatMessages(children) : ""].filter(Boolean).join("\n\n");
-  if (input2.event === "Stop") return { decision: "block", reason: text2 };
-  if (input2.event === "PostToolUse") return { decision: "block", reason: text2, hookSpecificOutput: { hookEventName: input2.event, additionalContext: text2 } };
-  return context(input2.event, text2);
+  const text3 = [msgs.length ? formatParentMessages(parent2.name, msgs) : "", children.length ? formatMessages(children) : ""].filter(Boolean).join("\n\n");
+  if (input2.event === "Stop") return { decision: "block", reason: text3 };
+  if (input2.event === "PostToolUse") return { decision: "block", reason: text3, hookSpecificOutput: { hookEventName: input2.event, additionalContext: text3 } };
+  return context(input2.event, text3);
 }
 async function buildHookResponse(ctx, input2) {
   const node2 = ctx.node;
@@ -49984,7 +50559,7 @@ function saveAutoWake(home, name2, enabled) {
 }
 
 // src/core/models.ts
-import { mkdirSync as mkdirSync25, readFileSync as readFileSync24, writeFileSync as writeFileSync11 } from "node:fs";
+import { mkdirSync as mkdirSync25, readFileSync as readFileSync25, writeFileSync as writeFileSync11 } from "node:fs";
 import { join as join50 } from "node:path";
 var MAX_LISTED = 80;
 var MODEL_CACHE_MS = 10 * 60 * 1e3;
@@ -49995,7 +50570,7 @@ var modelDefault = (agent, cfg) => cfg[`${agent}Model`];
 var modelCachePath = (home, agent) => join50(home, `models-${agent}.json`);
 function cachedModels(home, agent, cfg) {
   try {
-    const cache4 = JSON.parse(readFileSync24(modelCachePath(home, agent), "utf8"));
+    const cache4 = JSON.parse(readFileSync25(modelCachePath(home, agent), "utf8"));
     const validStrings = (v) => Array.isArray(v) && v.every((s) => typeof s === "string");
     if (cache4.bin !== modelBin(agent, cfg) || cache4.effort !== (cfg.effort[agent] ?? null) || typeof cache4.at !== "number" || Date.now() - cache4.at >= MODEL_CACHE_MS) return null;
     if (cache4.report?.agent !== agent || !validStrings(cache4.report.models) || !validStrings(cache4.report.lines)) return null;
@@ -50077,7 +50652,7 @@ async function describeModels(agent, cfg, cwd, log, query = "") {
 
 // src/cli/dashboard.ts
 import { randomBytes as randomBytes9 } from "node:crypto";
-import { chmodSync as chmodSync3, readFileSync as readFileSync27, writeFileSync as writeFileSync12 } from "node:fs";
+import { chmodSync as chmodSync3, readFileSync as readFileSync28, writeFileSync as writeFileSync12 } from "node:fs";
 import { request } from "node:http";
 import { join as join55 } from "node:path";
 
@@ -50097,9 +50672,9 @@ var FAVICON_HREF = `data:image/svg+xml,${encodeURIComponent(LOGO_SVG)}`;
 function renderMarkdown(src) {
   const esc2 = (s) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
   const safeUrl = (u) => /^(https?:\/\/|mailto:)/i.test(u) ? u : null;
-  const inline = (text2) => {
+  const inline = (text3) => {
     const codes = [];
-    let s = text2.replace(/`([^`\n]+)`/g, (_, c) => `\0${codes.push(`<code>${esc2(c)}</code>`) - 1}\0`);
+    let s = text3.replace(/`([^`\n]+)`/g, (_, c) => `\0${codes.push(`<code>${esc2(c)}</code>`) - 1}\0`);
     s = esc2(s);
     s = s.replace(/\[([^\]\n]+)\]\(([^)\s]+)\)/g, (m, label, url2) => {
       const href = safeUrl(url2.replace(/&amp;/g, "&"));
@@ -50632,6 +51207,12 @@ code.addr { font-family: var(--mono); font-size: 12px; padding: 2px 8px; border-
 .disc-table th, .disc-table td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--panel-2); }
 .disc-table th { color: var(--muted); font-weight: 600; }
 
+.handoff { padding: 16px; border-bottom: 1px solid var(--line); background: var(--panel-2); display: grid; gap: 12px; }
+.handoff-targets { display: grid; gap: 6px; max-height: 220px; overflow: auto; }
+.handoff-target { display: flex; align-items: center; gap: 10px; text-align: left; background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 9px; padding: 10px 12px; }
+.handoff-target[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); }
+.handoff label { display: grid; gap: 6px; font-size: 12px; color: var(--muted); }
+.handoff-actions { display: flex; gap: 8px; }
 /* The conversation's "\u22EF" menu, top right */
 .conv-menu { position: relative; flex: none; }
 .menu-btn { font-size: 18px; line-height: 1; padding: 4px 10px; letter-spacing: .05em; }
@@ -50896,10 +51477,18 @@ button.ghost { min-height: 32px; }
           <button type="button" class="icon-btn menu-btn" id="convMenuBtn" aria-haspopup="menu" aria-expanded="false" aria-controls="convMenu" title="Options for this conversation">\u22EF</button>
           <div class="menu-pop hidden" id="convMenu" role="menu">
             <button type="button" role="menuitem" class="menu-item hidden" id="setToggle" aria-expanded="false" aria-controls="jobSettings">Settings for its next turn\u2026</button>
+            <button type="button" role="menuitem" class="menu-item hidden" id="handoffToggle" aria-controls="handoffForm" aria-expanded="false">Hand off subagents\u2026</button>
             <label class="menu-item" role="menuitemcheckbox"><input type="checkbox" id="follow" checked> Follow new output</label>
           </div>
         </div>
       </div>
+      <form id="handoffForm" class="handoff hidden" aria-label="Hand off all subagents">
+        <div><b>Hand off all subagents</b><div class="small muted">Running jobs keep working. Nested and finished jobs move too.</div></div>
+        <div id="handoffTargets" class="handoff-targets" role="group" aria-label="New supervisor"></div>
+        <label>Note for the new supervisor<textarea id="handoffNote" rows="2" maxlength="4000" placeholder="Context or next steps"></textarea></label>
+        <div class="handoff-actions"><button type="submit" id="handoffSubmit" disabled>Hand off</button><button type="button" class="secondary" id="handoffCancel">Cancel</button></div>
+        <div id="handoffInfo" class="note" role="status" aria-live="polite"></div>
+      </form>
       <form id="jobSettings" class="settings hidden" aria-label="Settings for the next turn">
         <label class="wide">Model<input id="setModel" list="setModels" autocomplete="off" spellcheck="false"><datalist id="setModels"></datalist></label>
         <label>Effort<select id="setEffort"></select></label>
@@ -51023,6 +51612,7 @@ window.addEventListener("hashchange", () => {
 
 /** Which session started a run: its peer name, or (renamed since) the live session of that agent in that folder. */
 function ownerOf(r, live) {
+  if (r.rootName || r.owner) return r.rootName || r.owner;
   if (r.by && live.some((p) => p.name === r.by)) return r.by;
   const same = r.byCwd && live.find((p) => (!r.byAgent || p.agent === r.byAgent) && norm(p.cwd) === norm(r.byCwd));
   return same ? same.name : r.by || ownerOfFolder(r.workdir, live) || "earlier runs";
@@ -51474,6 +52064,8 @@ function renderOverview() {
 }
 
 function renderSession() {
+  $("handoffToggle").classList.toggle("hidden", !state.peers.some((p) => p.name === route.session && !p.subagent && !p.host && !p.name.includes("/")));
+  if (handoffSource && handoffSource !== route.session) closeHandoff();
   const x = model.byName.get(route.session) || { name: route.session, peer: null, live: false, groups: [], children: [] };
   const p = x.peer;
   $("sHead").innerHTML = p
@@ -51923,6 +52515,47 @@ function setConvMenu(open) {
 $("convMenuBtn").addEventListener("click", () => setConvMenu($("convMenu").classList.contains("hidden")));
 document.addEventListener("click", (e) => { if (!e.target.closest(".conv-menu")) setConvMenu(false); });
 document.addEventListener("keydown", (e) => { if (e.key === "Escape") setConvMenu(false); });
+
+let handoffSource = null, handoffTarget = null;
+function closeHandoff() {
+  $("handoffForm").classList.add("hidden");
+  $("handoffToggle").setAttribute("aria-expanded", "false");
+  handoffSource = null; handoffTarget = null;
+}
+$("handoffToggle").addEventListener("click", () => {
+  setConvMenu(false);
+  handoffSource = route.session; handoffTarget = null;
+  $("handoffNote").value = ""; $("handoffSubmit").disabled = true;
+  $("handoffInfo").textContent = "Choose the session that will supervise these jobs.";
+  const targets = state.peers.filter((p) => p.name !== handoffSource && !p.subagent && !p.host && !p.name.includes("/") && ["claude", "codex", "opencode"].includes(p.agent));
+  $("handoffTargets").innerHTML = targets.length ? targets.map((p) => '<button type="button" class="handoff-target" aria-pressed="false" data-handoff-target="' + esc(p.name) + '">' + av(p.agent) + '<span><b>' + esc(p.name) + '</b><span class="small muted"> \xB7 ' + esc(p.agent + " \xB7 " + (p.activity || "connected")) + '</span></span></button>').join("") : '<div class="empty">No other live local sessions.</div>';
+  $("handoffForm").classList.remove("hidden");
+  $("handoffToggle").setAttribute("aria-expanded", "true");
+  $("handoffTargets").querySelector("button")?.focus();
+});
+$("handoffTargets").addEventListener("click", (e) => {
+  const button = e.target.closest("[data-handoff-target]");
+  if (!button) return;
+  handoffTarget = button.dataset.handoffTarget;
+  for (const b of $("handoffTargets").querySelectorAll("button")) b.setAttribute("aria-pressed", String(b === button));
+  $("handoffSubmit").disabled = false;
+});
+$("handoffCancel").addEventListener("click", closeHandoff);
+$("handoffForm").addEventListener("keydown", (e) => { if (e.key === "Escape") closeHandoff(); });
+$("handoffForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  if (!handoffSource || !handoffTarget) return;
+  const from = handoffSource, to = handoffTarget;
+  $("handoffSubmit").disabled = true;
+  try {
+    const r = await fetch("/api/subagents/handoff", { method: "POST", headers: { "content-type": "application/json", "x-agent-bridge": "1" }, body: JSON.stringify({ from, to, jobs: "all", note: $("handoffNote").value.trim() || undefined }) });
+    const result = await r.json();
+    if (!r.ok) throw new Error(result.error || result.text || "HTTP " + r.status);
+    closeHandoff();
+    await poll();
+    location.hash = href(to).slice(1);
+  } catch (err) { $("handoffInfo").textContent = err.message; $("handoffSubmit").disabled = false; }
+});
 
 $("setToggle").addEventListener("click", () => {
   setConvMenu(false);
@@ -52805,9 +53438,9 @@ function parseNetworkAddress(address) {
 }
 
 // src/core/doctor.ts
-import { existsSync as existsSync22, lstatSync as lstatSync7, mkdirSync as mkdirSync26, readFileSync as readFileSync25, readdirSync as readdirSync16, renameSync as renameSync8 } from "node:fs";
-import { basename as basename11, dirname as dirname18, join as join51, relative as relative8 } from "node:path";
-import { randomUUID as randomUUID21 } from "node:crypto";
+import { existsSync as existsSync22, lstatSync as lstatSync7, mkdirSync as mkdirSync26, readFileSync as readFileSync26, readdirSync as readdirSync16, renameSync as renameSync8 } from "node:fs";
+import { basename as basename11, dirname as dirname19, join as join51, relative as relative8 } from "node:path";
+import { randomUUID as randomUUID22 } from "node:crypto";
 import { DatabaseSync as DatabaseSync14 } from "node:sqlite";
 function doctor(home, now = Date.now()) {
   const report = { checkedAt: now, ok: true, schema: [], findings: [], sizes: [], totalBytes: 0, backups: listBackups(home) };
@@ -52852,7 +53485,7 @@ function doctor(home, now = Date.now()) {
   for (const path of jsonStoreFiles(home)) {
     try {
       if (path.endsWith(".jsonl")) {
-        const lines = readFileSync25(path, "utf8").split("\n").filter((s) => s.trim());
+        const lines = readFileSync26(path, "utf8").split("\n").filter((s) => s.trim());
         for (const line of lines) {
           try {
             const value2 = JSON.parse(line);
@@ -52865,7 +53498,7 @@ function doctor(home, now = Date.now()) {
         }
         continue;
       }
-      const value = JSON.parse(readFileSync25(path, "utf8"));
+      const value = JSON.parse(readFileSync26(path, "utf8"));
       const jobs = basename11(path) === JOBS_FILE || path.includes("jobs.json.overflow.json-") || /^jobs-.*\.json$/.test(basename11(path));
       if (jobs ? !(Array.isArray(value) || isRecord(value) && Array.isArray(value.jobs)) : !isRecord(value)) {
         finding("error", "json-shape", path, jobs ? "Expected a jobs array or jobs envelope" : "Expected a JSON object");
@@ -52875,16 +53508,16 @@ function doctor(home, now = Date.now()) {
       if (version2 === void 0 || version2 === 0) finding("warning", "json-legacy", path, "Legacy version; next versioned write will preserve a migration backup");
       else if (!Number.isInteger(version2) || version2 < 0 || version2 > JSON_STORE_VERSION) finding("error", "json-version", path, `Unsupported JSON version ${String(version2)}; code expects ${JSON_STORE_VERSION}`);
       else if (version2 < JSON_STORE_VERSION) finding("warning", "json-legacy", path, `Earlier JSON version ${String(version2)}; code expects ${JSON_STORE_VERSION}`);
-      if (dirname18(path) === join51(home, "runs") && path.endsWith(".json") && !existsSync22(path.replace(/\.json$/, ".log"))) finding("warning", "orphan-metadata", path, "Run metadata has no matching active log; preserved for review");
-      if (dirname18(path) === join51(home, "jobs") && path.endsWith(".spec.json") && !existsSync22(path.replace(/\.spec\.json$/, ".json"))) finding("warning", "orphan-runner-spec", path, "Runner specification has no state; it may still be starting");
+      if (dirname19(path) === join51(home, "runs") && path.endsWith(".json") && !existsSync22(path.replace(/\.json$/, ".log"))) finding("warning", "orphan-metadata", path, "Run metadata has no matching active log; preserved for review");
+      if (dirname19(path) === join51(home, "jobs") && path.endsWith(".spec.json") && !existsSync22(path.replace(/\.spec\.json$/, ".json"))) finding("warning", "orphan-runner-spec", path, "Runner specification has no state; it may still be starting");
     } catch (err) {
       finding("error", "json-parse", path, String(err));
     }
   }
   const logs = runLogFiles(home);
   for (const path of logs) {
-    const meta3 = join51(dirname18(path), runFileName(path).replace(/\.log$/, ".json"));
-    if (!existsSync22(meta3) && !readdirSync16(dirname18(path)).some((f) => f.startsWith(basename11(meta3) + "-"))) finding("warning", "orphan-log", path, "Run log has no metadata; log remains readable");
+    const meta3 = join51(dirname19(path), runFileName(path).replace(/\.log$/, ".json"));
+    if (!existsSync22(meta3) && !readdirSync16(dirname19(path)).some((f) => f.startsWith(basename11(meta3) + "-"))) finding("warning", "orphan-log", path, "Run log has no metadata; log remains readable");
   }
   report.ok = !report.findings.some((f) => f.severity === "error");
   return report;
@@ -52892,7 +53525,7 @@ function doctor(home, now = Date.now()) {
 
 // src/core/message-history.ts
 import { existsSync as existsSync23 } from "node:fs";
-import { dirname as dirname19, join as join52 } from "node:path";
+import { dirname as dirname20, join as join52 } from "node:path";
 import { DatabaseSync as DatabaseSync15 } from "node:sqlite";
 var DEFAULT_HISTORY_LIMIT = 100;
 var MAX_HISTORY_LIMIT = 1e3;
@@ -52900,7 +53533,7 @@ function searchMessages(file2, opts = {}) {
   const limit = Math.min(MAX_HISTORY_LIMIT, Math.max(1, Math.floor(opts.limit ?? DEFAULT_HISTORY_LIMIT)));
   const query = `%${(opts.query ?? "").replace(/[\\%_]/g, "\\$&")}%`;
   const rows = [];
-  for (const path of [file2, join52(dirname19(file2), ARCHIVE_DB_NAME)]) {
+  for (const path of [file2, join52(dirname20(file2), ARCHIVE_DB_NAME)]) {
     if (!existsSync23(path)) continue;
     const db = new DatabaseSync15(path, { readOnly: true });
     try {
@@ -52968,8 +53601,8 @@ async function answerHistory(query, result, cfg, home, log, deps = {}) {
     `Sources: ${JSON.stringify(hits.map(({ id, snippet, at }) => ({ id, text: snippet, at })))}`
   ].join("\n");
   try {
-    const text2 = await (deps.run?.(selected.agent, selected.model, prompt) ?? runAnswer(selected.agent, selected.model, prompt, cfg, log));
-    const capped = text2.trim().slice(0, HISTORY_ANSWER_MAX_CHARS);
+    const text3 = await (deps.run?.(selected.agent, selected.model, prompt) ?? runAnswer(selected.agent, selected.model, prompt, cfg, log));
+    const capped = text3.trim().slice(0, HISTORY_ANSWER_MAX_CHARS);
     const citations = [...capped.matchAll(/\[((?:message|run|decision|transcript):[^\]]+)\]/g)].map((match) => match[1]);
     if (!capped || !citations.length || citations.some((id) => !sources.some((s) => s.id === id))) throw new Error("Model answer did not cite a supplied source.");
     return { ...selected, text: capped, sources };
@@ -53082,8 +53715,8 @@ function safeNetworkError(err) {
 }
 var JOB_COMMANDS = {
   "/api/subagents/message": (body) => {
-    const text2 = typeof body.body === "string" ? body.body.trim() : "";
-    return text2 && text2.length <= MAX_BODY_CHARS ? { type: "message", body: text2 } : null;
+    const text3 = typeof body.body === "string" ? body.body.trim() : "";
+    return text3 && text3.length <= MAX_BODY_CHARS ? { type: "message", body: text3 } : null;
   },
   // The owning session checks the values against the job's agent (job-settings.ts).
   "/api/subagents/settings": (body) => body.settings && typeof body.settings === "object" && !Array.isArray(body.settings) && Object.keys(body.settings).length ? { type: "settings", settings: body.settings } : null
@@ -53414,10 +54047,23 @@ async function startUi(opts) {
       if (req.headers["x-agent-bridge"] !== "1") return send(res, 403, { error: "missing header" });
       const body = await readJson2(req);
       const to = String(body.to ?? "").trim();
-      const text2 = String(body.body ?? "").trim();
-      if (!to || !text2) return send(res, 400, { error: "to and body are required" });
-      const r = await (await getSender()).send({ to, body: text2 });
+      const text3 = String(body.body ?? "").trim();
+      if (!to || !text3) return send(res, 400, { error: "to and body are required" });
+      const r = await (await getSender()).send({ to, body: text3 });
       return send(res, 200, { id: r.messages[0]?.id, deliveredTo: r.deliveredTo, queuedFor: r.queuedFor });
+    }
+    if (req.method === "POST" && url2.pathname === "/api/subagents/handoff") {
+      if (req.headers["x-agent-bridge"] !== "1") return send(res, 403, { error: "missing header" });
+      const body = await readJson2(req);
+      const parsed = handoffSchema.safeParse({ to: body.to, jobs: body.jobs, note: body.note });
+      if (!parsed.success || typeof body.from !== "string" || body.from.includes("/")) return send(res, 400, { error: "An exact local source and valid handoff arguments are required." });
+      try {
+        const result = await controlDashboardJob(await getSender(), body.from, "", { type: "handoff", ...parsed.data });
+        return send(res, result.isError ? 409 : 200, result);
+      } catch (err) {
+        if (err instanceof JobControlError) return send(res, err.reason === "offline" ? 409 : 504, { error: err.message });
+        throw err;
+      }
     }
     const jobCommand = req.method === "POST" && Object.hasOwn(JOB_COMMANDS, url2.pathname) ? JOB_COMMANDS[url2.pathname] : void 0;
     if (jobCommand) {
@@ -53471,7 +54117,7 @@ function dashboardFile(home) {
 }
 function readDashboardInfo(home) {
   try {
-    const d = JSON.parse(readFileSync27(dashboardFile(home), "utf8"));
+    const d = JSON.parse(readFileSync28(dashboardFile(home), "utf8"));
     return typeof d.url === "string" && typeof d.port === "number" && typeof d.pid === "number" ? d : null;
   } catch {
     return null;
@@ -53578,6 +54224,9 @@ function openBrowser(url2) {
 // src/mcp/dashboard-control.ts
 function attachDashboardJobControl(node2, jobs, log) {
   node2.on("job_control", (m) => {
+    void handle(m).catch((err) => log.warn("dashboard command failed", { err: String(err) }));
+  });
+  async function handle(m) {
     let command;
     try {
       command = JSON.parse(m.body);
@@ -53586,7 +54235,16 @@ function attachDashboardJobControl(node2, jobs, log) {
     }
     if (!command || typeof command.requestId !== "string" || typeof command.job !== "string") return;
     let result;
-    if (command.type === "message") {
+    if (command.type === "handoff") {
+      try {
+        jobs.persist();
+        const receipt = await node2.handoffSubagents({ to: command.to, jobs: command.jobs, note: command.note });
+        jobs.refreshOwnership();
+        result = { outcome: "transferred", text: `Handed off ${receipt.jobs.length} subagent(s) to ${receipt.to}.`, isError: false };
+      } catch (err) {
+        result = { outcome: "rejected", text: err.message, isError: true };
+      }
+    } else if (command.type === "message") {
       if (typeof command.body !== "string" || !command.body.trim() || command.body.length > MAX_BODY_CHARS) return;
       result = followUp(node2, jobs, command.job, command.body);
     } else if (command.type === "settings") {
@@ -53595,11 +54253,11 @@ function attachDashboardJobControl(node2, jobs, log) {
       return;
     }
     void node2.send({ to: m.from.name, replyTo: m.id, body: JSON.stringify({ type: "result", requestId: command.requestId, ...result }), conversationId: DASHBOARD_JOB_CONVERSATION }, { quiet: true }).catch((err) => log.warn("dashboard job reply failed", { err: err.message }));
-  });
+  }
 }
 function followUp(node2, jobs, ref, body) {
   const owned = jobs.find(ref);
-  const { outcome, job } = owned?.owner === node2.name ? jobs.followUp(ref, body) : { outcome: "unknown", job: void 0 };
+  const { outcome, job } = owned && canControlJob(owned, node2.name) ? jobs.followUp(ref, body) : { outcome: "unknown", job: void 0 };
   const position = job ? jobs.waiting().indexOf(job) + 1 : 0;
   return {
     outcome,
@@ -53609,7 +54267,7 @@ function followUp(node2, jobs, ref, body) {
 }
 function changeSettings(node2, jobs, ref, input2, log) {
   const job = jobs.find(ref);
-  if (!job || job.owner !== node2.name) return { outcome: "unknown", text: t("followUp.unknown", { name: ref }), isError: true };
+  if (!job || !canControlJob(job, node2.name)) return { outcome: "unknown", text: t("followUp.unknown", { name: ref }), isError: true };
   const settings = parseJobSettings(input2, job.agent);
   if (typeof settings === "string") return { outcome: "invalid", text: settings, isError: true };
   jobs.setSettings(job.name, settings);
@@ -53635,7 +54293,7 @@ var MAX_TITLE_CHARS3 = 80;
 var SUBAGENT_TOOLS = /* @__PURE__ */ new Set(["peers", "send", "report_progress", "hook_event", "search_history", "get_conversation"]);
 var STAND_IN_RECHECK_MS = 3e4;
 var KEPT_ARGS = ["native_subagents", "host", "model", "effort", "cwd", "timeout_sec", "worktree", "access", "sandbox", "approvals_reviewer", "permission_mode", "auto_approve", "allow_tools", "send_to", "title"];
-var PLUGIN_ROOT = resolve13(dirname20(fileURLToPath3(import.meta.url)), "..");
+var PLUGIN_ROOT = resolve13(dirname21(fileURLToPath3(import.meta.url)), "..");
 function pathFromUriOrPath(v) {
   if (typeof v !== "string" || !v) return null;
   if (v.startsWith("file:")) {
@@ -53647,7 +54305,7 @@ function pathFromUriOrPath(v) {
   }
   return isAbsolute10(v) ? v : null;
 }
-function text(s, isError = false) {
+function text2(s, isError = false) {
   return { content: [{ type: "text", text: s }], ...isError ? { isError: true } : {} };
 }
 function describeError(err) {
@@ -53946,7 +54604,7 @@ function registerTools(mcp, ctx, targets) {
       return await fn(args, extra);
     } catch (err) {
       log.warn("tool failed", { tool: name2, err: err.message });
-      return text(describeError(err), true);
+      return text2(describeError(err), true);
     }
   };
   register(
@@ -53965,7 +54623,7 @@ function registerTools(mcp, ctx, targets) {
     guarded("search_history", async (a) => {
       const { answer, ...args } = a;
       const result = ctx.node ? await ctx.node.searchHistory(args) : readHistory(resolveDbPath(ctx.home), args);
-      return text(JSON.stringify(answer ? { ...result, answer: await answerHistory(a.query, result, cfg, ctx.home, log) } : result));
+      return text2(JSON.stringify(answer ? { ...result, answer: await answerHistory(a.query, result, cfg, ctx.home, log) } : result));
     })
   );
   register("get_conversation", {
@@ -53973,7 +54631,7 @@ function registerTools(mcp, ctx, targets) {
     description: "Fetch a complete locally retained conversation by the conversation id returned in search_history. Pages contain exact raw bytes (base64) and text chunks with source offsets. Pass next as after; concatenate chunks per source/generation to reconstruct JSONL or SQLite snapshots. No model calls or network export.",
     inputSchema: conversationPageSchema.shape,
     annotations: { readOnlyHint: true }
-  }, guarded("get_conversation", async (args) => text(JSON.stringify(ctx.node ? await ctx.node.getConversation(args) : readConversationFile(resolveDbPath(ctx.home), args)))));
+  }, guarded("get_conversation", async (args) => text2(JSON.stringify(ctx.node ? await ctx.node.getConversation(args) : readConversationFile(resolveDbPath(ctx.home), args)))));
   register(
     "decide",
     {
@@ -53988,7 +54646,7 @@ function registerTools(mcp, ctx, targets) {
     },
     guarded("decide", async (a) => {
       const { source_message_id, ...args } = a;
-      return text(JSON.stringify(await requireNode().decide({ ...args, sourceMessageId: source_message_id })));
+      return text2(JSON.stringify(await requireNode().decide({ ...args, sourceMessageId: source_message_id })));
     })
   );
   register(
@@ -54003,7 +54661,7 @@ function registerTools(mcp, ctx, targets) {
       },
       annotations: { readOnlyHint: true }
     },
-    guarded("decisions", async (a) => text(JSON.stringify(await requireNode().decisions(a))))
+    guarded("decisions", async (a) => text2(JSON.stringify(await requireNode().decisions(a))))
   );
   register(
     "peers",
@@ -54020,7 +54678,7 @@ function registerTools(mcp, ctx, targets) {
           if (String(err).includes("not found")) return void 0;
           throw err;
         });
-        return text([
+        return text2([
           `You are a delegated job of ${ctx.parent.name}. Use send(to="${ctx.parent.name}", message=...) to message your parent.`,
           siblings.length ? "Sibling and explicitly granted jobs:" : "No sibling jobs are available right now.",
           ...siblings.map((s) => `- ${s.name}${s.title ? ` "${s.title}"` : ""} (${s.agent}, ${s.status}${s.status !== "running" ? "; finished; will not answer" : ""})`),
@@ -54073,7 +54731,7 @@ function registerTools(mcp, ctx, targets) {
       }
       lines.push(...waits.pending(n).map(resumeWaitHint));
       for (const j of [...jobs, ...waiting, ...recent]) if (j.remote) lines.push(`Remote job ${j.name}: ${j.remote.host}/${j.remote.name}`);
-      return text(lines.join("\n"));
+      return text2(lines.join("\n"));
     })
   );
   register(
@@ -54092,14 +54750,14 @@ function registerTools(mcp, ctx, targets) {
       if (!node2 && ctx.parent) {
         if (ctx.jobs?.find(a.to)) {
           const result = ctx.jobs.followUp(a.to, a.message);
-          return text(`Child message ${result.outcome}.`);
+          return text2(`Child message ${result.outcome}.`);
         }
         if (a.to !== ctx.parent.name && a.to !== "parent") {
           const result = await ctx.parent.siblings.send(a.to, a.message, a.reply_to);
           if (result.finishedRecipient) {
             const f = result.finishedRecipient;
             const at = f.finishedAt !== void 0 ? ` at ${new Date(f.finishedAt).toISOString()}` : " (finish time unavailable)";
-            return text(`Recipient ${f.name} finished${at} (${f.status}); it will not answer. Do not wait for a reply or read receipt. Your message is retained for an explicit future continuation.
+            return text2(`Recipient ${f.name} finished${at} (${f.status}); it will not answer. Do not wait for a reply or read receipt. Your message is retained for an explicit future continuation.
 
 Its final report is:
 ${f.report ?? "No final report is saved. Ask your parent for its result."}`);
@@ -54107,20 +54765,20 @@ ${f.report ?? "No final report is saved. Ask your parent for its result."}`);
           const m = result.messages[0];
           const sibling = m.conversationId.startsWith(SIBLING_CONVERSATION_PREFIX);
           const delivery = result.queuedFor.length ? sibling ? "queued for the sibling's next turn" : "queued for the granted session" : sibling ? "sent to sibling" : "sent to granted session";
-          return text(`Message ${m.id} ${delivery} ${a.to} (conversation ${m.conversationId}, hop ${m.hop}).${sibling ? " The supervisor received a quiet copy." : ""}`);
+          return text2(`Message ${m.id} ${delivery} ${a.to} (conversation ${m.conversationId}, hop ${m.hop}).${sibling ? " The supervisor received a quiet copy." : ""}`);
         }
         await ctx.parent.send(a.message, a.reply_to);
-        return text(t("send.toParent", { name: ctx.parent.name }));
+        return text2(t("send.toParent", { name: ctx.parent.name }));
       }
       const n = requireNode();
       const job = ctx.jobs?.find(a.to);
       if (job && a.to === job.name) {
         if (a.reply_to) n.markRead([a.reply_to]);
         if (job.status !== "running") {
-          return text(`${a.to} has finished, so nothing was sent (it needs no reply). To continue it with more work, call message_subagent(job="${a.to}", message=...).`);
+          return text2(`${a.to} has finished, so nothing was sent (it needs no reply). To continue it with more work, call message_subagent(job="${a.to}", message=...).`);
         }
         const { outcome } = ctx.jobs.followUp(job.name, a.message);
-        return text(`${a.to} is a running subagent: delivered as message_subagent (${outcome}). Use message_subagent for subagents.`);
+        return text2(`${a.to} is a running subagent: delivered as message_subagent (${outcome}). Use message_subagent for subagents.`);
       }
       if (a.reply_to) n.markRead([a.reply_to]);
       const res = await n.send({ to: a.to, body: a.message, replyTo: a.reply_to, conversationId: a.conversation_id });
@@ -54130,7 +54788,7 @@ ${f.report ?? "No final report is saved. Ask your parent for its result."}`);
       if (res.queuedFor.length) lines.push(t("send.queued", { names: res.queuedFor.join(", ") }));
       lines.push(t("send.waitHint"));
       lines.push(`For a consumption receipt, call wait_for_message(read_receipt_of="${first.id}").`);
-      return text(lines.join("\n"));
+      return text2(lines.join("\n"));
     })
   );
   register(
@@ -54141,7 +54799,7 @@ ${f.report ?? "No final report is saved. Ask your parent for its result."}`);
       inputSchema: {},
       annotations: { readOnlyHint: true }
     },
-    guarded("network_status", async () => text(JSON.stringify(await requireNode().networkStatus(), null, 2)))
+    guarded("network_status", async () => text2(JSON.stringify(await requireNode().networkStatus(), null, 2)))
   );
   register(
     "send_files",
@@ -54153,7 +54811,7 @@ ${f.report ?? "No final report is saved. Ask your parent for its result."}`);
         paths: external_exports.array(external_exports.string().min(1)).min(1).max(MAX_STREAM_ENTRIES).describe("Files or folders relative to this session's working directory, or absolute paths")
       }
     },
-    guarded("send_files", async (args) => text(JSON.stringify(await requireNode().sendFiles(args.to, args.paths), null, 2)))
+    guarded("send_files", async (args) => text2(JSON.stringify(await requireNode().sendFiles(args.to, args.paths), null, 2)))
   );
   register(
     "fetch_files",
@@ -54165,7 +54823,7 @@ ${f.report ?? "No final report is saved. Ask your parent for its result."}`);
         paths: external_exports.array(external_exports.string().min(1)).min(1).max(MAX_STREAM_ENTRIES)
       }
     },
-    guarded("fetch_files", async (args) => text(JSON.stringify(await requireNode().fetchFiles(args.from, args.paths), null, 2)))
+    guarded("fetch_files", async (args) => text2(JSON.stringify(await requireNode().fetchFiles(args.from, args.paths), null, 2)))
   );
   register(
     "cancel_transfer",
@@ -54174,7 +54832,7 @@ ${f.report ?? "No final report is saved. Ask your parent for its result."}`);
       description: "Cancel a paired-PC file transfer by its id. Partial files stay unpublished; cancellation is delivered when the peer reconnects. A completed transfer cannot be cancelled.",
       inputSchema: { id: external_exports.uuid() }
     },
-    guarded("cancel_transfer", async (args) => text(JSON.stringify(await requireNode().cancelTransfer(args.id), null, 2)))
+    guarded("cancel_transfer", async (args) => text2(JSON.stringify(await requireNode().cancelTransfer(args.id), null, 2)))
   );
   register(
     "inbox",
@@ -54190,13 +54848,13 @@ ${f.report ?? "No final report is saved. Ask your parent for its result."}`);
       if (ctx.childInbox) {
         const msgs2 = ctx.childInbox.unread().slice(0, a.limit ?? HOOK_MAX_MESSAGES);
         if (a.mark_read !== false) ctx.childInbox.markRead(msgs2.map((m) => m.id));
-        return text(msgs2.length ? formatMessages(msgs2) : t("inbox.empty"));
+        return text2(msgs2.length ? formatMessages(msgs2) : t("inbox.empty"));
       }
       const n = requireNode();
       const msgs = n.unread().slice(0, a.limit ?? HOOK_MAX_MESSAGES);
-      if (msgs.length === 0) return text(t("inbox.empty"));
+      if (msgs.length === 0) return text2(t("inbox.empty"));
       if (a.mark_read !== false) n.markRead(msgs.map((m) => m.id));
-      return text(formatMessages(msgs));
+      return text2(formatMessages(msgs));
     })
   );
   register(
@@ -54216,24 +54874,24 @@ ${f.report ?? "No final report is saved. Ask your parent for its result."}`);
     },
     guarded("wait_for_message", async (a, extra) => {
       if (ctx.childInbox) {
-        if (a.read_receipt_of || a.resume_id || a.mode && a.mode !== "block") return text("Nested waits support block with child-message filters only; child replies also arrive through hooks.", true);
+        if (a.read_receipt_of || a.resume_id || a.mode && a.mode !== "block") return text2("Nested waits support block with child-message filters only; child replies also arrive through hooks.", true);
         const matches = (m) => (!a.from || m.from.name === a.from || m.from.agent === a.from) && (!a.reply_to || m.replyTo === a.reply_to) && (!a.conversation_id || m.conversationId === a.conversation_id);
         if (!ctx.childInbox.unread().some(matches)) await ctx.childInbox.wait(singleWaitTimeoutMs(a.timeout_sec ?? DEFAULT_WAIT_SEC), extra.signal, matches);
         const msgs = ctx.childInbox.unread().filter(matches).slice(0, HOOK_MAX_MESSAGES);
         ctx.childInbox.markRead(msgs.map((m) => m.id));
-        return text(msgs.length ? formatMessages(msgs) : t("inbox.empty"));
+        return text2(msgs.length ? formatMessages(msgs) : t("inbox.empty"));
       }
       const n = requireNode();
-      if (extra.signal.aborted) return text("Wait cancelled before registration; mail remains queued.");
-      if (a.read_receipt_of && (a.from || a.reply_to || a.conversation_id)) return text("Use read_receipt_of alone; reply filters are for incoming messages.", true);
+      if (extra.signal.aborted) return text2("Wait cancelled before registration; mail remains queued.");
+      if (a.read_receipt_of && (a.from || a.reply_to || a.conversation_id)) return text2("Use read_receipt_of alone; reply filters are for incoming messages.", true);
       const saved = a.resume_id ? waits.get(n, a.resume_id) : void 0;
       if (a.mode === "cancel") {
-        if (!saved) return text('mode="cancel" requires resume_id.', true);
+        if (!saved) return text2('mode="cancel" requires resume_id.', true);
         waits.remove(saved.id);
-        return text(`Wait ${saved.id} cancelled and archived; mail remains queued.`);
+        return text2(`Wait ${saved.id} cancelled and archived; mail remains queued.`);
       }
       const mode = a.mode ?? saved?.mode ?? (a.timeout_sec !== void 0 || a.read_receipt_of ? "block" : "notify");
-      if (mode === "notify" && (saved?.filters.read_receipt_of || a.read_receipt_of)) return text('read_receipt_of supports mode="block" only; notification waits are for incoming messages.', true);
+      if (mode === "notify" && (saved?.filters.read_receipt_of || a.read_receipt_of)) return text2('read_receipt_of supports mode="block" only; notification waits are for incoming messages.', true);
       const record2 = saved ? saved.mode === mode ? saved : waits.setMode(n, saved.id, mode) : waits.save(n, {
         from: a.from,
         reply_to: a.reply_to,
@@ -54245,10 +54903,10 @@ ${f.report ?? "No final report is saved. Ask your parent for its result."}`);
         const existing = n.unread().find((m) => matchesNotificationWait(filters, m));
         if (existing && !ctx.channelActive()) {
           n.markRead([existing.id]);
-          return text(formatMessages([existing], { header: "[agent-bridge] Message received." }));
+          return text2(formatMessages([existing], { header: "[agent-bridge] Message received." }));
         }
         n.notificationWaitsChanged();
-        return text(`${resumeWaitHint(record2)} Keep working or end the turn; no further wait calls are needed. Wake delivery respects quiet-message and hop guards and requires a supported live host; otherwise use inbox on the next turn.`);
+        return text2(`${resumeWaitHint(record2)} Keep working or end the turn; no further wait calls are needed. Wake delivery respects quiet-message and hop guards and requires a supported live host; otherwise use inbox on the next turn.`);
       }
       const timeout = singleWaitTimeoutMs(a.timeout_sec ?? DEFAULT_WAIT_SEC);
       progressReporter(extra, log)?.(resumeWaitHint(record2));
@@ -54257,26 +54915,26 @@ ${f.report ?? "No final report is saved. Ask your parent for its result."}`);
           const receipts = await waitForReadReceipt(n, filters.read_receipt_of, timeout, extra.signal);
           if (receipts) {
             waits.remove(record2.id);
-            return text(`Read receipt for ${filters.read_receipt_of}: ` + receipts.map((r) => `${r.recipient} consumed at ${new Date(r.readAt).toISOString()}`).join(", ") + ". This confirms bridge consumption, not completed work.");
+            return text2(`Read receipt for ${filters.read_receipt_of}: ` + receipts.map((r) => `${r.recipient} consumed at ${new Date(r.readAt).toISOString()}`).join(", ") + ". This confirms bridge consumption, not completed work.");
           }
         } else {
           const m = await n.waitForMessage(timeout, (x) => matchesWait(filters, x), extra.signal);
           if (m) {
             n.markRead([m.id]);
             waits.remove(record2.id);
-            return text(formatMessages([m], { header: "[agent-bridge] Message received." }));
+            return text2(formatMessages([m], { header: "[agent-bridge] Message received." }));
           }
         }
-        if (extra.signal.aborted || n.wasReplaced || !n.isConnected) return text(`Wait interrupted. ${resumeWaitHint(record2)}`);
+        if (extra.signal.aborted || n.wasReplaced || !n.isConnected) return text2(`Wait interrupted. ${resumeWaitHint(record2)}`);
         if (!filters.read_receipt_of) {
           const notification = waits.setMode(n, record2.id, "notify");
           n.notificationWaitsChanged();
-          return text(`${t("wait.timeout", { seconds: Math.round(timeout / 1e3) })} ${resumeWaitHint(notification)} Keep working or end the turn; no repeat calls are needed.`);
+          return text2(`${t("wait.timeout", { seconds: Math.round(timeout / 1e3) })} ${resumeWaitHint(notification)} Keep working or end the turn; no repeat calls are needed.`);
         }
         waits.remove(record2.id);
-        return text(`${t("wait.timeout", { seconds: Math.round(timeout / 1e3) })} Consumption is not yet confirmed; this receipt check has ended. Incoming replies remain queued independently.`);
+        return text2(`${t("wait.timeout", { seconds: Math.round(timeout / 1e3) })} Consumption is not yet confirmed; this receipt check has ended. Incoming replies remain queued independently.`);
       } catch (err) {
-        return text(`Wait stopped: ${err.message}. ${resumeWaitHint(record2)}`, true);
+        return text2(`Wait stopped: ${err.message}. ${resumeWaitHint(record2)}`, true);
       }
     })
   );
@@ -54288,12 +54946,12 @@ ${f.report ?? "No final report is saved. Ask your parent for its result."}`);
       inputSchema: { count: external_exports.number().int().min(1).max(MAX_JOBS_LIMIT), save: external_exports.boolean().optional() }
     },
     guarded("max_subagents", async (a) => {
-      if (!ctx.jobs) return text("No subagents in this session.");
+      if (!ctx.jobs) return text2("No subagents in this session.");
       const before = ctx.jobs.limit;
       ctx.jobs.setLimit(a.count);
       cfg.maxJobs = a.count;
       if (a.save) saveConfigValue(ctx.home, "maxJobs", a.count);
-      return text(`Subagent limit ${before} -> ${a.count} (running: ${ctx.jobs.runningCount()}).${a.save ? " Saved to config.json for new sessions too." : " For this session only; save=true makes it the default."}`);
+      return text2(`Subagent limit ${before} -> ${a.count} (running: ${ctx.jobs.runningCount()}).${a.save ? " Saved to config.json for new sessions too." : " For this session only; save=true makes it the default."}`);
     })
   );
   register(
@@ -54307,7 +54965,7 @@ ${f.report ?? "No final report is saved. Ask your parent for its result."}`);
       const n = requireNode();
       await n.setAutoWake(a.enabled);
       saveAutoWake(ctx.home, n.name, a.enabled);
-      return text(a.enabled ? t("autoWake.on", { maxHops: cfg.maxHops }) : t("autoWake.off"));
+      return text2(a.enabled ? t("autoWake.on", { maxHops: cfg.maxHops }) : t("autoWake.off"));
     })
   );
   const rc = {
@@ -54323,7 +54981,7 @@ ${f.report ?? "No final report is saved. Ask your parent for its result."}`);
   };
   const keep = (a) => Object.fromEntries(KEPT_ARGS.filter((k) => a[k] !== void 0).map((k) => [k, a[k]]));
   const resumers = {};
-  for (const target of targets) {
+  for (const target of CODING_AGENTS) {
     const profile = DELEGATION_TARGETS[target];
     const defaultModel = profile.defaultModel(cfg);
     const schema = {
@@ -54363,6 +55021,7 @@ ${f.report ?? "No final report is saved. Ask your parent for its result."}`);
       background((job) => resumeArgs(a, job.name, message, sessionId, workdir, worktree, job.args), a)
     );
     resumers[target] = resumeFor;
+    if (!targets.includes(target)) continue;
     const askName = `ask_${target}`;
     register(
       askName,
@@ -54379,7 +55038,7 @@ ${f.report ?? "No final report is saved. Ask your parent for its result."}`);
           remoteSpawnArgsSchema.parse(args);
           if (!ctx.jobs) throw new BridgeError("bad_request", "Remote asks require a supervisor session.");
         }
-        if (ctx.jobs && !ctx.jobs.canStart()) return text(t("jobs.limit", { max: ctx.jobs.limit }), true);
+        if (ctx.jobs && !ctx.jobs.canStart()) return text2(t("jobs.limit", { max: ctx.jobs.limit }), true);
         const tracked = ctx.jobs?.track(target, a.model ?? defaultModel, a.prompt, resumeFor(a), keep(a));
         if (a.host && tracked) {
           tracked.job.remote = { host: a.host, name: `${target}-job-${tracked.job.id}` };
@@ -54388,7 +55047,8 @@ ${f.report ?? "No final report is saved. Ask your parent for its result."}`);
         const report = progressReporter(extra, log);
         const onProgress = (m) => {
           tracked?.onProgress(m);
-          report?.(m);
+          if (tracked?.job.ownershipHistory?.length && tracked.job.owner !== ctx.node?.name) ctx.jobs?.fromSubagent(tracked.job, m, null);
+          else report?.(m);
         };
         let res;
         try {
@@ -54396,16 +55056,18 @@ ${f.report ?? "No final report is saved. Ask your parent for its result."}`);
         } catch (err) {
           tracked?.end({ error: err });
           log.warn("ask failed", { job: tracked?.job.name, err: err.message });
+          if (tracked?.job.ownershipHistory?.length && tracked.job.owner !== ctx.node?.name) return text2(`Job ${tracked.job.name} is supervised by ${tracked.job.owner}; its report was routed there.`);
           const identity = tracked ? `Job: ${tracked.job.name}
 ${target} session_id: ${tracked.job.sessionId ?? "-"}
 
 ` : "";
-          return text(`${identity}${describeError(err)}`, true);
+          return text2(`${identity}${describeError(err)}`, true);
         }
         tracked?.end({ result: res });
+        if (tracked?.job.ownershipHistory?.length && tracked.job.owner !== ctx.node?.name) return text2(`Job ${tracked.job.name} is supervised by ${tracked.job.owner}; its report was routed there.`);
         const header = (tracked ? `Job: ${tracked.job.name}
 ` : "") + t("delegate.done", { agent: target, session: res.sessionId ?? "-" }) + (res.isError ? "\n" + t("delegate.cause", { cause: failureCause({ result: res }) }) : "") + (tracked && res.sessionId ? "\n" + t("delegate.followUp", { job: tracked.job.name }) : "");
-        return text(`${header}
+        return text2(`${header}
 
 ${res.text || t("delegate.empty")}`, res.isError);
       })
@@ -54430,14 +55092,14 @@ ${res.text || t("delegate.empty")}`, res.isError);
         if (a.host && !ctx.runners) throw new BridgeError("bad_request", "Remote jobs require the bundled runner. Update and reload this session.");
         const jobs = ctx.jobs;
         if (!jobs) throw new BridgeError("bad_request", t("err.delegatedSession"));
-        if (!jobs.canStart()) return text(t("jobs.limit", { max: jobs.limit }), true);
+        if (!jobs.canStart()) return text2(t("jobs.limit", { max: jobs.limit }), true);
         const job = jobs.start(target, a.model ?? defaultModel, a.prompt, background((job2) => ({ ...a, _job: job2.name }), a), resumeFor(a), keep(a));
         const cwd = a.cwd || ctx.cwd();
         const access = a.access ?? (a.worktree || isBridgeWorktree(cwd, ctx.home) ? "edit" : null);
         const exact = a.sandbox !== void 0 || a.permission_mode !== void 0 || a.auto_approve !== void 0;
         const note = exact ? "" : `
 ${access === "edit" ? t("jobs.accessEdit") : access === "ask" ? t("jobs.accessAsk") : t("jobs.accessRead")}`;
-        return text(`${t("jobs.started", { name: job.name })}${note}${derivedTitle ? `
+        return text2(`${t("jobs.started", { name: job.name })}${note}${derivedTitle ? `
 Title derived from prompt: "${a.title}".` : ""}`);
       })
     );
@@ -54459,9 +55121,9 @@ Title derived from prompt: "${a.title}".` : ""}`);
     guarded("usage_limits", async (a) => {
       const bins = { codex: cfg.codexBin, claude: cfg.claudeBin, opencode: cfg.opencodeBin };
       const agents = (a.agent ? [a.agent] : [...CODING_AGENTS]).filter((x) => resolveBinary(bins[x]));
-      if (!agents.length) return text(t("usage.none"), true);
+      if (!agents.length) return text2(t("usage.none"), true);
       const reports = await Promise.all(agents.map((x) => readUsage(x, bins[x], ctx.cwd(), log, x === "opencode" ? cfg.opencodeModel : null)));
-      return text(reports.map((r) => `${r.agent}${r.maxUsedPercent !== null ? ` (highest: ${r.maxUsedPercent}% used)` : ""}:
+      return text2(reports.map((r) => `${r.agent}${r.maxUsedPercent !== null ? ` (highest: ${r.maxUsedPercent}% used)` : ""}:
 ${r.lines.map((l) => `  ${l}`).join("\n")}`).join("\n\n"));
     })
   );
@@ -54476,7 +55138,7 @@ ${r.lines.map((l) => `  ${l}`).join("\n")}`).join("\n\n"));
       },
       annotations: { readOnlyHint: true }
     },
-    guarded("list_models", async (a) => text((a.query ? await describeModels(a.agent, cfg, ctx.cwd(), log, a.query) : (await readModels(a.agent, cfg, ctx.cwd(), log, ctx.home)).lines).join("\n")))
+    guarded("list_models", async (a) => text2((a.query ? await describeModels(a.agent, cfg, ctx.cwd(), log, a.query) : (await readModels(a.agent, cfg, ctx.cwd(), log, ctx.home)).lines).join("\n")))
   );
   register(
     "dashboard",
@@ -54487,7 +55149,7 @@ ${r.lines.map((l) => `  ${l}`).join("\n")}`).join("\n\n"));
     },
     guarded("dashboard", async () => {
       const url2 = await ctx.openDashboard?.();
-      return url2 ? text(t("dashboard.opened", { url: url2 })) : text(t("dashboard.failed"), true);
+      return url2 ? text2(t("dashboard.opened", { url: url2 })) : text2(t("dashboard.failed"), true);
     })
   );
   register(
@@ -54503,10 +55165,29 @@ ${r.lines.map((l) => `  ${l}`).join("\n")}`).join("\n\n"));
       if (!job) throw new BridgeError("bad_request", "Unknown job.");
       try {
         setJobOutcome(ctx.home, job, n.name, a.state, a.reason);
-        return text(JSON.stringify({ job: job.name, outcome: await deriveJobOutcome(ctx.home, job, log) }));
+        return text2(JSON.stringify({ job: job.name, outcome: await deriveJobOutcome(ctx.home, job, log) }));
       } catch (err) {
         throw new BridgeError("bad_request", err.message);
       }
+    })
+  );
+  register(
+    "handoff_subagents",
+    {
+      title: "Hand off subagents",
+      description: "Transfer your running and finished local jobs, including nested jobs, to an exact live local Claude Code, Codex or opencode session. The target becomes their supervisor and receives a waking inheritance message. Remote jobs and paired-PC targets are rejected without moving anything.",
+      inputSchema: {
+        to: external_exports.string().min(1).max(64).describe("Exact live local session name from peers"),
+        jobs: external_exports.union([external_exports.literal("all"), external_exports.array(external_exports.string().min(1).max(80)).min(1).max(1e3)]).optional().describe("Exact job names, or all (default)"),
+        note: external_exports.string().max(4e3).optional().describe("Context for the new supervisor")
+      }
+    },
+    guarded("handoff_subagents", async (a) => {
+      const n = requireNode();
+      ctx.jobs?.persist();
+      const result = await n.handoffSubagents(a);
+      ctx.jobs?.refreshOwnership();
+      return text2(`Handed off ${result.jobs.length} subagent(s) to ${result.to}.`);
     })
   );
   register(
@@ -54533,11 +55214,11 @@ ${r.lines.map((l) => `  ${l}`).join("\n")}`).join("\n\n"));
       if (!jobs) throw new BridgeError("bad_request", t("err.delegatedSession"));
       const existing = jobs.find(a.job);
       if (node2 && a.message) {
-        const approval = listPendingApprovals(ctx.home).find((entry) => entry.job === a.job && entry.parentJob && (entry.owner === node2.name || entry.rootSession === jobs.rootIdentity()));
-        if (approval && /^(allow|deny)\b/i.test(a.message.trim())) {
+        const approval = listPendingApprovals(ctx.home).find((entry) => entry.job === a.job && entry.parentJob);
+        if (approval && /^(allow|deny)\b/i.test(a.message.trim()) && (approval.owner === node2.name || approval.rootSession === jobs.rootIdentity() || await node2.jobAuthority(a.job))) {
           const decision = /^allow\b/i.test(a.message.trim()) ? "allow" : "deny";
           const result = await answerPendingApproval(ctx.home, approval.id, { decision, reason: a.message.trim().replace(/^(allow|deny)\b\s*:?\s*/i, "") });
-          return text(`Nested approval ${result}.`, result !== "answered");
+          return text2(`Nested approval ${result}.`, result !== "answered");
         }
       }
       if (existing) {
@@ -54558,7 +55239,7 @@ ${r.lines.map((l) => `  ${l}`).join("\n")}`).join("\n\n"));
       const position = job ? jobs.waiting().indexOf(job) + 1 : 0;
       const settingsNote = job && Object.keys(settings).length ? `
 Saved settings: ${Object.entries(settings).map(([key2, value]) => `${key2}=${value}`).join(", ")}.${wasRunning ? " Applies from its next turn; the turn running now keeps its settings." : " Applies to this continuation and later turns."}` : "";
-      return text(
+      return text2(
         t(`followUp.${outcome}`, { name: job?.name ?? a.job, max: jobs.limit, running: jobs.runningCount(), ahead: position > 1 ? ` (${position - 1} queued before it)` : "" }) + settingsNote,
         outcome === "unknown" || outcome === "no-session"
       );
@@ -54572,7 +55253,7 @@ Saved settings: ${Object.entries(settings).map(([key2, value]) => `${key2}=${val
       inputSchema: { job: external_exports.string().min(1) }
     },
     guarded("cancel_subagent", async (a) => {
-      return ctx.jobs?.cancel(a.job) ? text(t("jobs.cancelled", { name: a.job })) : text(t("jobs.unknown", { name: a.job }), true);
+      return ctx.jobs?.cancel(a.job) ? text2(t("jobs.cancelled", { name: a.job })) : text2(t("jobs.unknown", { name: a.job }), true);
     })
   );
   if (!node2 && ctx.parent) {
@@ -54591,7 +55272,7 @@ Saved settings: ${Object.entries(settings).map(([key2, value]) => `${key2}=${val
       guarded("report_progress", async (a) => {
         await appendContextEvent(ctx.home, { kind: "progress", agent: ctx.agent, job: process.env[PARENT_JOB_ENV], project: ctx.cwd(), payload: a });
         await parent2.progress(a.percent, a.note ?? "", a.eta_minutes);
-        return text(t("progress.reported", { percent: Math.round(a.percent) }));
+        return text2(t("progress.reported", { percent: Math.round(a.percent) }));
       })
     );
   }
@@ -54623,10 +55304,10 @@ Saved settings: ${Object.entries(settings).map(([key2, value]) => `${key2}=${val
           prompt: given(a.prompt),
           signal: extra.signal
         });
-        return text(JSON.stringify(out));
+        return text2(JSON.stringify(out));
       } catch (err) {
         log.error("hook handler failed", { event: a.event, err });
-        return text("{}");
+        return text2("{}");
       }
     }
   );

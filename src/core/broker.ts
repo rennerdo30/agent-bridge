@@ -34,6 +34,10 @@ import {
 } from "./protocol.js";
 import { agentQueueKey, MessageStore, registrationIdentity } from "./store.js";
 import { tokensEqual } from "./token.js";
+import { dirname } from "node:path";
+import { commitHandoff, handoffJournal, handoffSchema, } from "./job-handoff.js";
+import { canControlJob, mastersFor, chooseJobRecipient } from "./job-ownership.js";
+import { RootConcurrency } from "./root-concurrency.js";
 import { isRecord, retentionLimit } from "./json-store.js";
 import { readArchivedJobSnapshot } from "./job-archive.js";
 import { readJsonSnapshot, type JsonSnapshot } from "./file-cache.js";
@@ -110,12 +114,62 @@ export class Broker {
     private readonly networking?: { home: string; config: NetworkConfig },
   ) {
     this.handlers = {
+      handoffSubagents: (c, a) => {
+        const parsed = handoffSchema.safeParse(a);
+        if (!parsed.success) throw new BridgeError("bad_request", "Invalid handoff arguments.");
+        const source = this.requirePeer(c);
+        if (parsed.data.to.includes("/")) throw new BridgeError("bad_request", "Paired-PC handoff is not supported; choose an exact live local session name.");
+        const target = this.connByName(parsed.data.to)?.peer;
+        if (!target) throw new BridgeError("unknown_target", "The target must be an exact live local session name.");
+        if (!this.jobsPath) throw new BridgeError("bad_request", "The job registry is unavailable.");
+        const receipt = commitHandoff(this.jobsPath, source, target, parsed.data);
+        this.jobsSnapshot = null; this.jobsForDispatch = null;
+        this.applyHandoffs();
+        for (const conn of this.conns) if (conn.peer) this.emit(conn, "jobs_changed", { withdrawn: conn.peer.name === source.name ? receipt.jobs.map((j) => j.id) : [] });
+        return receipt;
+      },
+      jobAuthority: (c, a) => {
+        const peer = this.requirePeer(c), job = this.storedJobs().find((j) => j.name === a.job);
+        if (!job || !canControlJob(job, peer.name)) return null;
+        return job as unknown as import("../mcp/jobs.js").Job;
+      },
+      inlineJobControl: async (c, a) => {
+        const peer = this.requirePeer(c), job = this.storedJobs().find((j) => j.name === a.job);
+        if (!job || !canControlJob(job, peer.name)) throw new BridgeError("unauthorized", "Only the current supervisor can control this job.");
+        if (!a.control || !["message", "title", "settings", "effort", "cancel"].includes(a.control.type)) throw new BridgeError("bad_request", "Invalid inline control.");
+        if (job.host && job.status === "running") {
+          await this.onSend(c, { to: String(job.name), body: JSON.stringify(a.control), conversationId: `${CONTROL_CONVERSATION_PREFIX}${job.id}` });
+          return { sent: true };
+        }
+        const executor = typeof job.executionOwner === "string" ? this.connByName(job.executionOwner) : undefined;
+        if (job.status !== "running") {
+          const recipient = chooseJobRecipient(job, [...this.conns].flatMap((c) => c.peer ? [c.peer] : []));
+          const primary = this.connByName(recipient);
+          if (!primary) throw new BridgeError("unknown_target", "No job master is currently connected.");
+          this.emit(primary, "shared_job_control", a);
+          return { sent: true };
+        }
+        if (!executor) throw new BridgeError("unknown_target", "The inline job's executor is offline.");
+        this.emit(executor, "inline_job_control", a);
+        return { sent: true };
+      },
+      inlineJobReport: (c, m) => {
+        const peer = this.requirePeer(c), job = this.storedJobs().find((j) => `job:${j.id}` === m.from?.id);
+        if (!job || (job.executionOwner !== peer.name && job.owner !== peer.name && job.rootName !== peer.name) || typeof job.owner !== "string" || typeof m.body !== "string" || m.body.length > MAX_BODY_CHARS) throw new BridgeError("unauthorized", "Invalid inline job delivery.");
+        const recipient = chooseJobRecipient(job, [...this.conns].flatMap((c) => c.peer ? [c.peer] : []));
+        const message = { ...m, to: recipient, recipient };
+        if (this.store.insertJobDelivery(message)) {
+          const target = this.connByName(recipient);
+          if (target) this.emit(target, "message", message);
+        }
+        return { saved: true };
+      },
       auth: (c, a) => {
         this.checkAuth(a.protocol, a.token);
         c.authed = true;
         return { brokerPid: process.pid };
       },
-      hello: (c, a) => { const result = this.onHello(c, a); this.store.history.rememberPeer(c.peer!); return result; },
+      hello: (c, a) => { const result = this.onHello(c, a); const job = this.storedJobs().find((j) => `job:${j.id}` === c.peer?.id); if (job?.ownershipHistory) this.refreshJobPeer(job); this.routePendingJobMail(); this.store.history.rememberPeer(c.peer!); return result; },
       send: (c, a) => this.onSend(c, a),
       decide: (c, a) => this.onDecide(c, a),
       decisions: (c, a) => this.onDecisions(c, a),
@@ -140,7 +194,7 @@ export class Broker {
       ack: (c, a) => ({ acked: this.store.markRead(this.requirePeer(c).name, a.ids ?? [], this.now()) }),
       pending: (c, a) =>
         this.unreadMail(this.requirePeer(c).name, Math.min(Math.max(1, a.limit ?? PENDING_DEFAULT_LIMIT), PENDING_MAX_LIMIT)),
-      updatePeer: (c, a) => { const peer = this.onUpdatePeer(c, a); this.store.history.rememberPeer(peer); return peer; },
+      updatePeer: (c, a) => { const peer = this.onUpdatePeer(c, a); const job = this.storedJobs().find((j) => `job:${j.id}` === peer.id); if (job?.ownershipHistory) this.refreshJobPeer(job); this.store.history.rememberPeer(peer); return peer; },
       claimMail: (c, a) => this.onClaimMail(c, a),
       ping: () => ({ brokerPid: process.pid, protocol: PROTOCOL_VERSION }),
       networkStatus: () => this.network?.status() ?? { enabled: false, config: this.networking?.config, discovered: [], paired: [] },
@@ -210,6 +264,7 @@ export class Broker {
         server.removeListener("error", onError);
         server.on("error", (err) => this.log.error("broker server error", { err }));
         this.server = server;
+        this.applyHandoffs();
         this.purgeTimer = setInterval(() => this.purge(), PURGE_INTERVAL_MS);
         this.purgeTimer.unref();
         if (this.store.file !== ":memory:") this.historyBackground = new HistoryBackground(this.store.file, this.log);
@@ -346,6 +401,7 @@ export class Broker {
     socket.on("error", (err) => this.log.debug("connection error", { err: err.message }));
     socket.on("close", () => {
       this.conns.delete(conn);
+      try { this.routePendingJobMail(); } catch (err) { this.log.warn("pending job reroute deferred", { err: String(err) }); }
       if (conn.peer) {
         this.log.info("peer left", { name: conn.peer.name, agent: conn.peer.agent });
         if (!conn.peer.jobAgent) this.broadcastEvent("peer_left", conn.peer, conn);
@@ -446,6 +502,63 @@ export class Broker {
   private connByName(name: string): Conn | undefined {
     for (const c of this.conns) if (c.peer?.name === name) return c;
     return undefined;
+  }
+
+  /** Replay every effect after the registry commit, including a crash between stores. */
+  private applyHandoffs(): void {
+    if (!this.jobsPath) return;
+    const records = this.storedJobs();
+    for (const receipt of handoffJournal(this.jobsPath)) {
+      const current = receipt.jobs.map((j) => records.find((r) => r.id === j.id)).filter(isRecord);
+      for (const job of current) {
+        const old = receipt.jobs.find((j) => j.id === job.id)!;
+        const destinations = [[old.from, String(job.owner)], [receipt.from, String(job.rootName)], [old.oldRoot ?? receipt.from, String(job.rootName)]];
+        for (const [from, to] of destinations) {
+          const copied = this.store.handoffMail(from!, to!, old.id, receipt.at);
+          const target = this.connByName(to!);
+          if (target) for (const message of copied) this.emit(target, "message", message);
+        }
+        const budget = new RootConcurrency(dirname(this.jobsPath), String(job.rootSession));
+        try { budget.moveJobs([old.name]); } finally { budget.close(); }
+        this.refreshJobPeer(job);
+      }
+      const body = `Inherited subagents from ${receipt.from}:\n` + receipt.jobs.map((j) => `- ${j.name}: ${j.title} (${j.status})`).join("\n") +
+        (receipt.note ? `\n\nHandoff note: ${receipt.note}` : "") + "\n\nYou are their supervisor. Use message_subagent or cancel_subagent to control them.";
+      for (const [recipient, text, suffix] of [[receipt.to, body, "inherited"], [receipt.from, `Handed off ${receipt.jobs.length} subagent(s) to ${receipt.to}.`, "confirmed"]]) {
+        const m: BridgeMessage = { id: `${receipt.id}-${suffix}`, from: { id: "handoff", name: "agent-bridge", agent: "other" },
+          to: recipient!, recipient: recipient!, body: text!, conversationId: `handoff-${receipt.id}`, hop: 0, replyTo: null, createdAt: receipt.at, readAt: null };
+        if (this.store.insertOnce(m)) { const conn = this.connByName(recipient!); if (conn) this.emit(conn, "message", m); }
+      }
+    }
+  }
+
+  routePendingJobMail(): void {
+    const live = [...this.conns].flatMap((c) => c.peer ? [c.peer] : []);
+    for (const job of this.storedJobs()) {
+      if (!Array.isArray(job.ownershipHistory) || !job.ownershipHistory.length) continue;
+      const recipient = chooseJobRecipient(job, live), target = this.connByName(recipient);
+      if (Array.isArray(job.deliveryHistory)) for (const envelope of job.deliveryHistory) {
+        if (!isRecord(envelope) || !isRecord(envelope.from) || envelope.from.id !== `job:${job.id}` || typeof envelope.id !== "string" || typeof envelope.body !== "string") continue;
+        const message = { ...envelope, to: recipient, recipient } as unknown as BridgeMessage;
+        if (this.store.insertJobDelivery(message) && target) this.emit(target, "message", message);
+      }
+      if (!target) continue;
+      for (const from of mastersFor(job)) {
+        const moved = this.store.handoffMail(from, recipient, String(job.id), this.now());
+        const previous = this.connByName(from);
+        if (previous && moved.length) this.emit(previous, "mail_retracted", { ids: moved.map((m) => m.id) });
+        for (const m of moved) this.emit(target, "message", m);
+      }
+    }
+  }
+
+  private refreshJobPeer(job: Record<string, unknown>): void {
+    const peer = this.connByName(String(job.name))?.peer;
+    if (!peer?.jobAgent) return;
+    peer.jobParent = String(job.owner); peer.jobOwner = String(job.supervisor);
+    peer.rootSession = String(job.rootSession); peer.rootName = String(job.rootName);
+    peer.parentJob = typeof job.parentJob === "string" ? job.parentJob : undefined;
+    if (isRecord(job.args) && Array.isArray(job.args.send_to)) peer.jobSendTo = job.args.send_to as string[];
   }
 
   private siblingConns(conn: Conn): Conn[] {
@@ -909,8 +1022,20 @@ export class Broker {
     const body = typeof args.body === "string" ? args.body : "";
     if (!body.trim()) throw new BridgeError("bad_request", "message body is empty");
     if (body.length > MAX_BODY_CHARS) throw new BridgeError("too_large", `message body exceeds ${MAX_BODY_CHARS} characters`);
-    const to = String(args.to ?? "").trim();
+    let to = String(args.to ?? "").trim();
     if (!to) throw new BridgeError("bad_request", "missing target");
+
+    // Durable ownership wins over the old name cached in a still-running parent link.
+    const own = sender.jobAgent ? this.storedJobs().find((j) => `job:${j.id}` === sender.id) : undefined;
+    if (own && Array.isArray(own.ownershipHistory)) {
+      if (to === sender.jobParent || mastersFor(own).includes(to)) to = chooseJobRecipient(own, [...this.conns].flatMap((c) => c.peer ? [c.peer] : []));
+      else if (own.ownershipHistory.some((h) => isRecord(h) && h.fromRootName === to)) to = String(own.rootName);
+      this.refreshJobPeer(own);
+    }
+    const controlled = this.storedJobs().find((j) => j.name === to);
+    if (args.conversationId?.startsWith(CONTROL_CONVERSATION_PREFIX) && controlled && !canControlJob(controlled, sender.name)) {
+      throw new BridgeError("unauthorized", "Only the current supervisor can control this job runner.");
+    }
 
     let conversationId = args.conversationId?.trim() || "";
     let hop = 0;

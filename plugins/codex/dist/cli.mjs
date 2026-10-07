@@ -4632,7 +4632,7 @@ var require_core = __commonJS({
       errorsText(errors = this.errors, { separator = ", ", dataVar = "data" } = {}) {
         if (!errors || errors.length === 0)
           return "No errors";
-        return errors.map((e) => `${dataVar}${e.instancePath} ${e.message}`).reduce((text, msg) => text + separator + msg);
+        return errors.map((e) => `${dataVar}${e.instancePath} ${e.message}`).reduce((text2, msg) => text2 + separator + msg);
       }
       $dataMetaSchema(metaSchema, keywordsJsonPointers) {
         const rules = this.RULES.all;
@@ -7704,7 +7704,7 @@ var require_cross_spawn = __commonJS({
 });
 
 // src/cli/main.ts
-import { join as join62 } from "node:path";
+import { join as join63 } from "node:path";
 
 // src/core/client.ts
 import { EventEmitter } from "node:events";
@@ -7714,7 +7714,7 @@ import { connect } from "node:net";
 import { homedir } from "node:os";
 import { join } from "node:path";
 var APP_NAME = "agent-bridge";
-var APP_VERSION = "0.29.11";
+var APP_VERSION = "0.29.12";
 var PROTOCOL_VERSION = 2;
 var ENV = {
   home: "AGENT_BRIDGE_HOME",
@@ -8120,10 +8120,10 @@ var nullLogger = {
 };
 
 // src/core/node.ts
-import { randomUUID as randomUUID18 } from "node:crypto";
+import { randomUUID as randomUUID19 } from "node:crypto";
 import { EventEmitter as EventEmitter2 } from "node:events";
 import { unlinkSync as unlinkSync2 } from "node:fs";
-import { dirname as dirname17, join as join46 } from "node:path";
+import { dirname as dirname18, join as join46 } from "node:path";
 
 // src/core/history-background.ts
 import { Worker } from "node:worker_threads";
@@ -8169,16 +8169,16 @@ function time(value) {
   return Number.isFinite(at) ? at : 0;
 }
 function preview(value, limit = MAX_TOOL_PREVIEW_CHARS) {
-  let text = "";
-  if (typeof value === "string") text = value;
+  let text2 = "";
+  if (typeof value === "string") text2 = value;
   else if (value !== void 0 && value !== null) {
     try {
-      text = JSON.stringify(value);
+      text2 = JSON.stringify(value);
     } catch {
       return "";
     }
   }
-  return text.length > limit ? `${text.slice(0, limit)}\u2026` : text;
+  return text2.length > limit ? `${text2.slice(0, limit)}\u2026` : text2;
 }
 function contentText(value) {
   if (typeof value === "string") return value;
@@ -17705,8 +17705,8 @@ function ko_default() {
 }
 
 // node_modules/zod/v4/locales/lt.js
-var capitalizeFirstCharacter = (text) => {
-  return text.charAt(0).toUpperCase() + text.slice(1);
+var capitalizeFirstCharacter = (text2) => {
+  return text2.charAt(0).toUpperCase() + text2.slice(1);
 };
 function getUnitTypeFromNumber(number4) {
   const abs = Math.abs(number4);
@@ -28127,7 +28127,7 @@ INSERT OR IGNORE INTO conversation_bindings(session,agent,cwd)
  SELECT session_id,json_extract(identity,'$[0]'),json_extract(identity,'$[3]')
  FROM session_bindings WHERE json_valid(identity) AND json_type(identity,'$[0]')='text'
  AND json_type(identity,'$[3]')='text';
-PRAGMA user_version=7;`;
+PRAGMA user_version=8;`;
 
 // src/core/history-schema.ts
 import { DatabaseSync } from "node:sqlite";
@@ -28240,7 +28240,7 @@ function maintenanceLock(home) {
 }
 
 // src/core/json-store.ts
-var JSON_STORE_VERSION = 2;
+var JSON_STORE_VERSION = 3;
 var KEEP_STORE_BACKUPS = 3;
 var RENAME_ATTEMPTS = 50;
 var RENAME_RETRY_MS = 20;
@@ -28561,12 +28561,12 @@ function ensureProjectFolder(project) {
     ).trim();
     if (existsSync5(exclude) && lstatSync(exclude).isSymbolicLink())
       return folder;
-    const text = existsSync5(exclude) ? readFileSync2(exclude, "utf8") : "";
-    if (!text.split(/\r?\n/).includes("/.agent-bridge/")) {
+    const text2 = existsSync5(exclude) ? readFileSync2(exclude, "utf8") : "";
+    if (!text2.split(/\r?\n/).includes("/.agent-bridge/")) {
       mkdirSync5(dirname5(exclude), { recursive: true });
       appendFileSync2(
         exclude,
-        `${text && !text.endsWith("\n") ? "\n" : ""}/.agent-bridge/
+        `${text2 && !text2.endsWith("\n") ? "\n" : ""}/.agent-bridge/
 `
       );
     }
@@ -29230,12 +29230,12 @@ var ConversationIngestor = class {
       }
       if (bytes2) {
         if (source.format === "approval" && offset + bytes2 === stat.size) {
-          const text = data.subarray(0, bytes2).toString("utf8");
+          const text2 = data.subarray(0, bytes2).toString("utf8");
           const capability = /,\s*"pid"\s*:\s*\d+,\s*"port"\s*:\s*\d+,\s*"token"\s*:\s*"(?:\\.|[^"\\])*"\s*}\s*$/.exec(
-            text
+            text2
           );
           if (capability) {
-            const start = Buffer.byteLength(text.slice(0, capability.index));
+            const start = Buffer.byteLength(text2.slice(0, capability.index));
             const replacement = Buffer.from(
               " ".repeat(Buffer.byteLength(capability[0]) - 1) + "}"
             );
@@ -29770,8 +29770,8 @@ function codexItems(row) {
   if (row.type !== "response_item") return [];
   const p = object(row.payload), at = time(row.timestamp);
   if (p.type === "message" && ["user", "assistant"].includes(p.role) && p.channel !== "analysis") {
-    const text = contentText(p.content);
-    return text ? [{ kind: p.role, at, text: preview(text, MAX_TEXT_CHARS) }] : [];
+    const text2 = contentText(p.content);
+    return text2 ? [{ kind: p.role, at, text: preview(text2, MAX_TEXT_CHARS) }] : [];
   }
   if (["function_call", "custom_tool_call"].includes(p.type) && typeof p.name === "string") return [{ kind: "tool", at, tool: p.name, summary: preview(p.arguments ?? p.input) }];
   if (["function_call_output", "custom_tool_call_output"].includes(p.type)) {
@@ -29938,8 +29938,8 @@ var historySearchSchema = external_exports.object({
   filters: historyFiltersSchema.optional(),
   limit: external_exports.number().int().min(1).max(HISTORY_MAX_LIMIT).optional()
 }).strict().refine((a) => a.filters?.since === void 0 || a.filters.until === void 0 || a.filters.since <= a.filters.until, "since must not be later than until");
-function folded(text) {
-  return text.normalize("NFKD").replace(new RegExp("\\p{M}", "gu"), "").toLowerCase();
+function folded(text2) {
+  return text2.normalize("NFKD").replace(new RegExp("\\p{M}", "gu"), "").toLowerCase();
 }
 function terms(query) {
   return folded(query).match(/[\p{L}\p{N}_]+/gu)?.slice(0, HISTORY_MAX_TERMS) ?? [];
@@ -30392,7 +30392,7 @@ function readHistorySource(file2, id) {
 }
 
 // src/core/broker.ts
-import { randomUUID as randomUUID16 } from "node:crypto";
+import { randomUUID as randomUUID17 } from "node:crypto";
 import { createServer as createServer4 } from "node:net";
 
 // src/core/store.ts
@@ -30717,7 +30717,7 @@ function readDecisions(dbPath, args = {}) {
 
 // src/core/store.ts
 var BACKUP_CHECK_INTERVAL_MS = 60 * 60 * 1e3;
-var SQLITE_STORE_VERSION = 7;
+var SQLITE_STORE_VERSION = 8;
 function agentQueueKey(agent) {
   return `agent:${agent}`;
 }
@@ -30781,7 +30781,13 @@ var MIGRATIONS = [
       ON CONFLICT(name) DO UPDATE SET identity=excluded.identity;
     PRAGMA user_version = 6;
   ` },
-  { version: 7, sql: CONVERSATION_MIGRATION }
+  { version: 7, sql: `
+    CREATE TABLE IF NOT EXISTS job_delivery_routes (
+      id TEXT PRIMARY KEY, recipient TEXT NOT NULL, consumed_at INTEGER
+    );
+    PRAGMA user_version = 7;
+  ` },
+  { version: 8, sql: CONVERSATION_MIGRATION }
 ];
 function registrationIdentity(peer) {
   if (peer.jobAgent || !Number.isSafeInteger(peer.agentPid) || !peer.agentPid || peer.agentPid <= 0 || !peer.agentStartedAt) return null;
@@ -30943,9 +30949,57 @@ var MessageStore = class {
   unread(recipient, limit) {
     return this.stmt.unread.all(recipient, limit).map(toMessage);
   }
+  /** Copy pending job mail to its new supervisor, retaining the old row as history. Replay is idempotent. */
+  handoffMail(from, to, job, at) {
+    if (from === to) return [];
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      const rows = this.db.prepare("SELECT * FROM messages WHERE recipient=? AND from_id=? AND read_at IS NULL").all(from, `job:${job}`);
+      const copied = [];
+      for (const row of rows) {
+        const route = this.db.prepare("SELECT recipient, consumed_at FROM job_delivery_routes WHERE id=?").get(row.id);
+        if (route && (route.consumed_at !== null || route.recipient !== from)) continue;
+        const m = { ...toMessage(row), recipient: to, to, readAt: null };
+        const existing = this.db.prepare("SELECT read_at FROM messages WHERE id=? AND recipient=?").get(m.id, to);
+        if (!existing) this.insert(m);
+        else this.db.prepare("UPDATE messages SET read_at=NULL, to_target=? WHERE id=? AND recipient=?").run(to, m.id, to);
+        copied.push(m);
+        this.db.prepare("INSERT INTO job_delivery_routes(id,recipient,consumed_at) VALUES (?,?,NULL) ON CONFLICT(id) DO UPDATE SET recipient=excluded.recipient").run(m.id, to);
+        this.stmt.markRead.run(at, m.id, from);
+      }
+      this.db.exec("COMMIT");
+      return copied;
+    } catch (err) {
+      this.db.exec("ROLLBACK");
+      throw err;
+    }
+  }
+  insertOnce(m) {
+    if (this.db.prepare("SELECT 1 FROM messages WHERE id=? AND recipient=?").get(m.id, m.recipient)) return false;
+    this.insert(m);
+    return true;
+  }
+  /** A recovered inline envelope must never replay after a recipient consumed it or it was forwarded. */
+  insertJobDelivery(m) {
+    if (this.db.prepare("SELECT 1 FROM job_delivery_routes WHERE id=?").get(m.id)) return false;
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      const inserted = this.insertOnce(m);
+      const row = this.db.prepare("SELECT read_at FROM messages WHERE id=? AND recipient=?").get(m.id, m.recipient);
+      this.db.prepare("INSERT INTO job_delivery_routes(id,recipient,consumed_at) VALUES (?,?,?)").run(m.id, m.recipient, row?.read_at ?? null);
+      this.db.exec("COMMIT");
+      return inserted;
+    } catch (err) {
+      this.db.exec("ROLLBACK");
+      throw err;
+    }
+  }
   markRead(recipient, ids, at = Date.now()) {
     let changed = 0;
-    for (const id of ids) changed += Number(this.stmt.markRead.run(at, id, recipient).changes);
+    for (const id of ids) {
+      changed += Number(this.stmt.markRead.run(at, id, recipient).changes);
+      this.db.prepare("UPDATE job_delivery_routes SET consumed_at=? WHERE id=? AND recipient=? AND consumed_at IS NULL").run(at, id, recipient);
+    }
     return changed;
   }
   /** Move messages waiting for "any <agent>" to a concrete peer name. */
@@ -31044,2347 +31098,48 @@ function tokensEqual(a, b) {
   return x.length === y.length && timingSafeEqual(x, y);
 }
 
-// src/core/completion.ts
-import { createHash as createHash5 } from "node:crypto";
-function completionMessageId(sender, reportId) {
-  const hex3 = createHash5("sha256").update(JSON.stringify(["job-completion", sender, reportId])).digest("hex");
-  return `${hex3.slice(0, 8)}-${hex3.slice(8, 12)}-5${hex3.slice(13, 16)}-8${hex3.slice(17, 20)}-${hex3.slice(20, 32)}`;
-}
-var COMPLETION_DEDUPE_PREFIX = "job-completion:";
+// src/core/broker.ts
+import { dirname as dirname17 } from "node:path";
 
-// src/core/job-messaging.ts
-var DEFAULT_SIBLING_MAX_HOPS = 32;
-var MAX_JOB_SEND_TARGETS = 20;
-function isPureAcknowledgement(body) {
-  const text = body.trim();
-  return /^(?:ack(?:nowledged)?|received|thanks|thank you|understood|got it|noted|ok(?:ay)?|will do)[.!]?$/i.test(text) || /^(?:understood|got it|noted|acknowledged)[,.!]?\s+(?:I['’]ll|I will|will)\s+[^\n.!?]{1,180}[.!]?$/i.test(text) && !/\b(?:blocked|failed|error|cannot|can't|unless|but|commit|passed|ready)\b|https?:|\d/i.test(text);
-}
-var EXACT_PEER_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
-function isJobSendTarget(value) {
-  return typeof value === "string" && EXACT_PEER_NAME_PATTERN.test(value) && !AGENT_KINDS.includes(value);
-}
-function siblingMaxHops(maxHops) {
-  return maxHops > 0 ? Math.max(maxHops, DEFAULT_SIBLING_MAX_HOPS) : 0;
-}
+// src/core/job-handoff.ts
+import { randomUUID as randomUUID9 } from "node:crypto";
+import { readFileSync as readFileSync14 } from "node:fs";
 
-// src/network/link.ts
-import { randomBytes as randomBytes3, randomUUID as randomUUID9 } from "node:crypto";
-import { connect as connect2, createServer } from "node:tls";
-
-// src/network/constants.ts
-var NETWORK_VERSION = 1;
-var DEFAULT_NETWORK_PORT = 48148;
-var DISCOVERY_PORT = 48149;
-var DISCOVERY_GROUP = "239.255.48.49";
-var DISCOVERY_BIND = "0.0.0.0";
-var DISCOVERY_MULTICAST_TTL = 1;
-var DISCOVERY_INTERVAL_MS = 5e3;
-var DISCOVERY_TTL_MS = 2e4;
-var MAX_DISCOVERY_BYTES2 = 1024;
-var MAX_DISCOVERED_INSTANCES = 128;
-var MAX_NETWORK_PEERS = 256;
-var MAX_NETWORK_LINKS = 16;
-var MAX_NETWORK_FRAME_BYTES = 2 * 1024 * 1024;
-var MAX_NETWORK_REQUESTS = 64;
-var NETWORK_TIMEOUT_MS = 5e3;
-var NETWORK_REFRESH_MS = 2e3;
-var NETWORK_HEARTBEAT_TIMEOUT_MS = 3e4;
-var PAIRING_TTL_MS = 10 * 60 * 1e3;
-var PAIRING_KEY_BYTES = 32;
-var MAX_PAIRING_CODE_CHARS = 1024;
-var NETWORK_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
-var MAX_NETWORK_NAME_CHARS = 64;
-var MAX_NETWORK_HOST_CHARS = 255;
-var MAX_PORT = 65535;
-var TLS_CIPHER = "TLS_AES_128_GCM_SHA256";
-var OWNER_FILE_MODE = 384;
-var OWNER_DIR_MODE = 448;
-
-// src/network/discovery.ts
-import { createSocket } from "node:dgram";
-import { isIPv4 } from "node:net";
-import { networkInterfaces } from "node:os";
-
-// src/network/pairing.ts
-import { execFileSync as execFileSync2 } from "node:child_process";
-import { createHash as createHash6, randomBytes as randomBytes2, randomUUID as randomUUID6 } from "node:crypto";
-import { chmodSync as chmodSync2, existsSync as existsSync12, mkdirSync as mkdirSync10, readFileSync as readFileSync6, renameSync as renameSync4, writeFileSync as writeFileSync4 } from "node:fs";
-import { join as join17 } from "node:path";
-var DEFAULT_SYSTEM_ROOT = "C:\\Windows";
-var SYSTEM32 = join17(process.env.SystemRoot || DEFAULT_SYSTEM_ROOT, "System32");
-var WHOAMI = join17(SYSTEM32, "whoami.exe");
-var ICACLS = join17(SYSTEM32, "icacls.exe");
-var keySchema = external_exports.string().regex(/^[0-9a-f]{64}$/);
-var identitySchema = external_exports.object({ id: external_exports.uuid(), key: keySchema });
-var publicIdentitySchema = external_exports.object({ id: external_exports.uuid(), name: external_exports.string().regex(NETWORK_NAME_PATTERN), fingerprint: keySchema });
-var invitationSchema = external_exports.object({ key: keySchema, expiresAt: external_exports.number().int() });
-var pairSchema = publicIdentitySchema.extend({ key: keySchema, host: external_exports.string().min(1).max(MAX_NETWORK_HOST_CHARS).optional(), port: external_exports.number().int().min(1).max(MAX_PORT).optional() });
-var stateSchema = external_exports.object({ identity: identitySchema, invitations: external_exports.array(invitationSchema).max(MAX_NETWORK_LINKS), pairs: external_exports.array(pairSchema).max(MAX_NETWORK_LINKS) });
-var codeSchema = publicIdentitySchema.extend({ v: external_exports.literal(NETWORK_VERSION), key: keySchema });
-function keyFingerprint(key2) {
-  return createHash6("sha256").update(Buffer.from(key2, "hex")).digest("hex");
+// src/core/job-ownership.ts
+function text(value) {
+  return typeof value === "string" && value ? value : void 0;
 }
-var ACL_PRINCIPAL = /([^\s:][^:]*?):\(/;
-function protect(path, mode) {
-  if (process.platform !== "win32") return chmodSync2(path, mode);
-  const [account, sid] = (execFileSync2(WHOAMI, ["/user", "/fo", "csv", "/nh"], { encoding: "utf8", windowsHide: true }).match(/"([^"]+)","(S-\d+(?:-\d+)+)"/) ?? []).slice(1);
-  if (!sid || !account) throw new Error("cannot identify the account for network key permissions");
-  const grant = mode === OWNER_DIR_MODE ? `*${sid}:(OI)(CI)F` : `*${sid}:F`;
-  execFileSync2(ICACLS, [path, "/inheritance:r", "/grant:r", grant, "/Q"], { windowsHide: true, stdio: "pipe" });
-  const others = execFileSync2(ICACLS, [path], { encoding: "utf8", windowsHide: true }).split(/\r?\n/).map((line) => (line.startsWith(path) ? line.slice(path.length) : line).trim()).map((line) => ACL_PRINCIPAL.exec(line)?.[1]).filter((p) => Boolean(p) && p.toLowerCase() !== account.toLowerCase());
-  for (const principal of new Set(others)) execFileSync2(ICACLS, [path, "/remove:g", principal, "/Q"], { windowsHide: true, stdio: "pipe" });
-  const acl = execFileSync2(ICACLS, [path], { encoding: "utf8", windowsHide: true });
-  if ((acl.match(/:\(/g) ?? []).length !== 1 || acl.includes("(I)")) throw new Error("network key location has additional ACL grants; restrict it to the current account");
+function primaryFor(job) {
+  return (!job.parentJob && (!Array.isArray(job.ownershipHistory) || !job.ownershipHistory.length) ? text(job.owner) : void 0) ?? text(job.rootName) ?? text(job.owner) ?? "";
 }
-function decodePairingCode(code) {
-  if (code.length > MAX_PAIRING_CODE_CHARS || !/^[A-Za-z0-9_-]+$/.test(code)) throw new Error("invalid pairing code");
-  return codeSchema.parse(JSON.parse(Buffer.from(code, "base64url").toString("utf8")));
+function mastersFor(job) {
+  const history = Array.isArray(job.ownershipHistory) ? job.ownershipHistory : [];
+  const names = [
+    job.parentJob || !text(job.owner) || history.length ? text(job.rootName) : void 0,
+    !job.parentJob ? text(job.owner) : void 0,
+    ...Array.isArray(job.masters) ? job.masters.filter((v) => typeof v === "string") : [],
+    ...history.flatMap((h) => h && typeof h === "object" ? [text(h.fromRootName), text(h.rootName), !job.parentJob ? text(h.from) : void 0, !job.parentJob ? text(h.to) : void 0] : [])
+  ];
+  return [...new Set(names.filter((v) => Boolean(v) && !v.includes("/")))];
 }
-var PairingStore = class {
-  constructor(home, name2, now = Date.now) {
-    this.name = name2;
-    this.now = now;
-    if (!NETWORK_NAME_PATTERN.test(name2)) throw new Error("invalid network instance name");
-    this.dir = join17(home, "network");
-    this.file = join17(this.dir, "keys.json");
-    mkdirSync10(this.dir, { recursive: true, mode: OWNER_DIR_MODE });
-    protect(this.dir, OWNER_DIR_MODE);
-    if (existsSync12(this.file)) {
-      protect(this.file, OWNER_FILE_MODE);
-      this.state = stateSchema.parse(JSON.parse(readFileSync6(this.file, "utf8")));
-    } else {
-      this.state = { identity: { id: randomUUID6(), key: randomBytes2(PAIRING_KEY_BYTES).toString("hex") }, invitations: [], pairs: [] };
-      this.save();
-    }
-  }
-  name;
-  now;
-  dir;
-  file;
-  state;
-  get identity() {
-    return { id: this.state.identity.id, name: this.name, fingerprint: keyFingerprint(this.state.identity.key) };
-  }
-  pairs() {
-    return this.state.pairs.map((p) => ({ ...p }));
-  }
-  invite() {
-    return this.inviteWithExpiry().code;
-  }
-  inviteWithExpiry() {
-    this.state.invitations = this.state.invitations.filter((p) => p.expiresAt > this.now());
-    if (this.state.invitations.length + this.state.pairs.length >= MAX_NETWORK_LINKS) throw new Error("network pairing limit reached");
-    const key2 = randomBytes2(PAIRING_KEY_BYTES).toString("hex");
-    const expiresAt = this.now() + PAIRING_TTL_MS;
-    this.state.invitations.push({ key: key2, expiresAt });
-    this.save();
-    return { code: Buffer.from(JSON.stringify({ v: NETWORK_VERSION, ...this.identity, key: key2 })).toString("base64url"), expiresAt };
-  }
-  keyFor(identity) {
-    return this.state.pairs.find((p) => keyFingerprint(p.key) === identity)?.key ?? this.state.invitations.find((p) => p.expiresAt > this.now() && keyFingerprint(p.key) === identity)?.key;
-  }
-  accept(key2, remote) {
-    if (remote.id === this.identity.id || remote.name === this.name) throw new Error("network instance ids and names must differ");
-    const known = this.state.pairs.find((p) => p.key === key2);
-    if (known) {
-      if (known.id !== remote.id || known.name !== remote.name || known.fingerprint !== remote.fingerprint) throw new Error("paired identity changed");
-      return known;
-    }
-    const invitation = this.state.invitations.find((p) => p.key === key2 && p.expiresAt > this.now());
-    if (!invitation) throw new Error("pairing code expired or revoked");
-    this.checkNew(remote);
-    const pair = { ...remote, key: key2 };
-    this.state.pairs.push(pair);
-    this.state.invitations = this.state.invitations.filter((p) => p !== invitation);
-    this.save();
-    return pair;
-  }
-  remember(code, host, port) {
-    const parsed = this.validatePair(code, host, port);
-    this.state.pairs = this.state.pairs.filter((p) => p.id !== parsed.id);
-    this.state.pairs.push(parsed);
-    this.save();
-    return parsed;
-  }
-  validatePair(code, host, port) {
-    const parsed = pairSchema.parse({ id: code.id, name: code.name, fingerprint: code.fingerprint, key: code.key, host, port });
-    const old = this.state.pairs.find((p) => p.id === code.id);
-    if (old && (old.key !== code.key || old.fingerprint !== code.fingerprint || old.name !== code.name)) throw new Error("unlink the existing peer before pairing again");
-    if (!old) this.checkNew(parsed);
-    return parsed;
-  }
-  checkNew(remote) {
-    if (remote.id === this.identity.id || remote.name === this.name) throw new Error("cannot pair with this instance");
-    if (this.state.pairs.length >= MAX_NETWORK_LINKS) throw new Error("network pairing limit reached");
-    if (this.state.pairs.some((p) => p.id === remote.id || p.name === remote.name)) throw new Error("instance already paired; unlink it first");
-  }
-  remove(id) {
-    this.state.pairs = this.state.pairs.filter((p) => p.id !== id);
-    this.save();
-  }
-  save() {
-    const temp = join17(this.dir, `${randomUUID6()}.tmp`);
-    writeFileSync4(temp, JSON.stringify(this.state, null, 2) + "\n", { mode: OWNER_FILE_MODE, flag: "wx" });
-    protect(temp, OWNER_FILE_MODE);
-    renameSync4(temp, this.file);
-  }
-};
-
-// src/network/discovery.ts
-var announcementSchema = publicIdentitySchema.extend({ service: external_exports.literal("agent-bridge"), v: external_exports.literal(NETWORK_VERSION), port: external_exports.number().int().min(1).max(MAX_PORT) });
-var VIRTUAL_INTERFACE = /vethernet|hyper-v|wsl|docker|vbox|vmware|virtualbox|^virbr|^br-|^utun|^tun\d|^tap\d|^tailscale|^wg\d/i;
-var IPV4_BITS = 32;
-var IPV4_OCTET_BITS = 8;
-var IPV4_OCTET_MASK = 255;
-var MIN_BROADCAST_HOST_MASK = 3;
-var ipv4Number = (address) => address.split(".").reduce((value, octet) => value << IPV4_OCTET_BITS | Number(octet), 0) >>> 0;
-var ipv4Address = (value) => Array.from({ length: IPV4_BITS / IPV4_OCTET_BITS }, (_, i) => value >>> IPV4_BITS - IPV4_OCTET_BITS * (i + 1) & IPV4_OCTET_MASK).join(".");
-function discoveryInterfaces(all) {
-  const interfaces = [], skippedInterfaces = [];
-  for (const [name2, addresses] of Object.entries(all)) for (const entry of addresses ?? []) {
-    if (entry.family !== "IPv4") continue;
-    let reason = "";
-    if (entry.internal || entry.address.startsWith("127.")) reason = "loopback";
-    else if (VIRTUAL_INTERFACE.test(name2)) reason = "virtual or tunnel adapter";
-    else if (entry.address.startsWith("169.254.") || entry.address === "0.0.0.0") reason = "no LAN address";
-    else if (!isIPv4(entry.address) || !isIPv4(entry.netmask)) reason = "invalid IPv4 subnet";
-    else {
-      const mask = ipv4Number(entry.netmask), hostMask = ~mask >>> 0;
-      if (mask === 0 || hostMask < MIN_BROADCAST_HOST_MASK || (hostMask & hostMask + 1) !== 0) reason = "no broadcast subnet";
-    }
-    if (reason) skippedInterfaces.push({ name: name2, address: entry.address, reason });
-    else if (!interfaces.some((item) => item.address === entry.address)) interfaces.push({
-      name: name2,
-      address: entry.address,
-      netmask: entry.netmask,
-      broadcast: ipv4Address(ipv4Number(entry.address) | ~ipv4Number(entry.netmask))
-    });
-  }
-  return { interfaces, skippedInterfaces };
+function canControlJob(job, name2, groupMasters = []) {
+  return !name2.includes("/") && (mastersFor(job).includes(name2) || groupMasters.some((p) => p.name === name2 && !p.host && !p.jobAgent && !p.subagent));
 }
-var NetworkDiscovery = class {
-  constructor(opts) {
-    this.opts = opts;
-    this.now = opts.now ?? Date.now;
-  }
-  opts;
-  socket = null;
-  timer = null;
-  found = /* @__PURE__ */ new Map();
-  now;
-  senders = /* @__PURE__ */ new Map();
-  refreshing = null;
-  skippedInterfaces = [];
-  lastSentAt = null;
-  lastReceivedAt = null;
-  lastError = null;
-  get port() {
-    return this.socket?.address().port ?? 0;
-  }
-  diagnostics() {
-    return {
-      bind: this.opts.bind ?? DISCOVERY_BIND,
-      port: this.port,
-      multicastGroup: DISCOVERY_GROUP,
-      multicastTTL: DISCOVERY_MULTICAST_TTL,
-      interfaces: [...this.senders.values()].map(({ info }) => ({ ...info })),
-      skippedInterfaces: this.skippedInterfaces.map((entry) => ({ ...entry })),
-      lastSentAt: this.lastSentAt,
-      lastReceivedAt: this.lastReceivedAt,
-      lastError: this.lastError && { ...this.lastError }
-    };
-  }
-  error(error62) {
-    this.lastError = { at: this.now(), message: error62.message };
-    this.opts.onError?.(error62);
-  }
-  makeSocket() {
-    const socket = this.opts.createSocket?.() ?? createSocket({ type: "udp4", reuseAddr: true });
-    socket.on("error", (err) => this.error(err));
-    return socket;
-  }
-  bind(socket, port, address) {
-    return new Promise((resolve15, reject) => {
-      socket.once("error", reject);
-      socket.bind(port, address, () => {
-        socket.off("error", reject);
-        resolve15();
-      });
-    });
-  }
-  async refreshInterfaces() {
-    const listener = this.socket;
-    if (!listener) return;
-    const selection = discoveryInterfaces((this.opts.interfaces ?? networkInterfaces)());
-    this.skippedInterfaces = selection.skippedInterfaces;
-    for (const [address, sender] of this.senders) if (!selection.interfaces.some((entry) => entry.address === address && entry.netmask === sender.info.netmask)) {
-      if (sender.info.multicast) {
-        try {
-          listener.dropMembership(DISCOVERY_GROUP, address);
-        } catch {
-        }
-      }
-      await this.closeSocket(sender.socket);
-      this.senders.delete(address);
-    }
-    for (const entry of selection.interfaces) {
-      if (this.senders.has(entry.address)) continue;
-      const socket = this.makeSocket();
-      try {
-        await this.bind(socket, 0, entry.address);
-        socket.setBroadcast(true);
-        const info = { ...entry, announcing: true, multicast: false, lastSentAt: null };
-        this.senders.set(entry.address, { socket, info });
-        try {
-          socket.setMulticastTTL(DISCOVERY_MULTICAST_TTL);
-          socket.setMulticastInterface(entry.address);
-          listener.addMembership(DISCOVERY_GROUP, entry.address);
-          info.multicast = true;
-        } catch (err) {
-          this.error(new Error(`Discovery multicast on ${entry.name} (${entry.address}): ${err.message}`));
-        }
-      } catch (err) {
-        this.error(new Error(`Discovery interface ${entry.name} (${entry.address}): ${err.message}`));
-        await this.closeSocket(socket);
-      }
-    }
-  }
-  async start() {
-    if (this.socket) throw new Error("network discovery already started");
-    const socket = this.makeSocket();
-    this.socket = socket;
-    socket.on("message", (data, source) => this.observe(data, source.address));
-    try {
-      await this.bind(socket, this.opts.udpPort ?? DISCOVERY_PORT, this.opts.bind ?? DISCOVERY_BIND);
-    } catch (err) {
-      await this.close();
-      throw err;
-    }
-    this.timer = setInterval(() => {
-      void this.announce();
-    }, DISCOVERY_INTERVAL_MS);
-    this.timer.unref();
-    await this.announce();
-  }
-  async announce(port = this.opts.udpPort === 0 ? this.port : this.opts.udpPort ?? DISCOVERY_PORT) {
-    if (!this.socket) return;
-    const data = Buffer.from(JSON.stringify({ service: "agent-bridge", v: NETWORK_VERSION, ...this.opts.identity, port: this.opts.port }));
-    if (this.opts.destination && this.opts.destination !== DISCOVERY_GROUP) {
-      this.send(this.socket, data, port, this.opts.destination);
-      return;
-    }
-    if (!this.refreshing) this.refreshing = this.refreshInterfaces().catch((err) => this.error(err)).finally(() => {
-      this.refreshing = null;
-    });
-    await this.refreshing;
-    if (!this.socket) return;
-    for (const { socket, info } of this.senders.values()) {
-      this.send(socket, data, port, info.broadcast, info);
-      if (info.multicast) this.send(socket, data, port, DISCOVERY_GROUP, info);
-    }
-  }
-  send(socket, data, port, destination, info) {
-    try {
-      socket.send(data, port, destination, (err) => {
-        if (err) this.error(new Error(`Discovery send to ${destination}: ${err.message}`));
-        else {
-          this.lastSentAt = this.now();
-          if (info) info.lastSentAt = this.lastSentAt;
-        }
-      });
-    } catch (err) {
-      this.error(err);
-    }
-  }
-  observe(data, host) {
-    if (data.length > MAX_DISCOVERY_BYTES2 || !isIPv4(host)) return;
-    try {
-      const parsed = announcementSchema.safeParse(JSON.parse(data.toString("utf8")));
-      if (!parsed.success || parsed.data.id === this.opts.identity.id) return;
-      this.lastReceivedAt = this.now();
-      const { id, name: name2, fingerprint, port } = parsed.data;
-      this.instances();
-      if (!this.found.has(id) && this.found.size >= MAX_DISCOVERED_INSTANCES) return;
-      this.found.set(id, { id, name: name2, fingerprint, port, host, seenAt: this.now() });
-    } catch {
-    }
-  }
-  instances() {
-    for (const [id, entry] of this.found) if (this.now() - entry.seenAt >= DISCOVERY_TTL_MS) this.found.delete(id);
-    return [...this.found.values()].map((x) => ({ ...x }));
-  }
-  async close() {
-    if (this.timer) clearInterval(this.timer);
-    this.timer = null;
-    const socket = this.socket;
-    this.socket = null;
-    await this.refreshing;
-    await Promise.all([...this.senders.values()].map((sender) => this.closeSocket(sender.socket)));
-    this.senders.clear();
-    if (socket) await this.closeSocket(socket);
-    this.found.clear();
-  }
-  closeSocket(socket) {
-    return new Promise((resolve15) => {
-      try {
-        socket.close(() => resolve15());
-      } catch {
-        resolve15();
-      }
-    });
-  }
-};
-
-// src/network/files.ts
-import { createHash as createHash7, randomUUID as randomUUID7 } from "node:crypto";
-import { existsSync as existsSync13, lstatSync as lstatSync3, mkdirSync as mkdirSync11, mkdtempSync, readFileSync as readFileSync7, readdirSync as readdirSync6, renameSync as renameSync5, rmSync as rmSync3, statfsSync, writeFileSync as writeFileSync5 } from "node:fs";
-import { basename as basename5, join as join18, parse as parse4, resolve as resolve6, sep as sep3 } from "node:path";
-var MAX_TRANSFER_BYTES = 1024 * 1024;
-var MAX_TRANSFER_ENTRIES = 128;
-var MAX_TRANSFER_DEPTH = 16;
-var MAX_PATH_CHARS = 1024;
-var MAX_COMPONENT_CHARS = 255;
-var MAX_ID_CHARS = 128;
-var MAX_BASE64_CHARS = Math.ceil(MAX_TRANSFER_BYTES / 3) * 4;
-var pathSchema = external_exports.string().min(1).max(MAX_PATH_CHARS);
-var entrySchema = external_exports.discriminatedUnion("kind", [
-  external_exports.object({ kind: external_exports.literal("directory"), path: pathSchema }),
-  external_exports.object({ kind: external_exports.literal("file"), path: pathSchema, data: external_exports.string().max(MAX_BASE64_CHARS), sha256: external_exports.string().regex(/^[0-9a-f]{64}$/) })
-]);
-var transferSchema = external_exports.object({
-  id: external_exports.uuid(),
-  to: external_exports.string().regex(NETWORK_NAME_PATTERN),
-  from: external_exports.object({ id: external_exports.string().min(1).max(MAX_ID_CHARS), name: external_exports.string().regex(NETWORK_NAME_PATTERN), agent: external_exports.enum(AGENT_KINDS) }),
-  entries: external_exports.array(entrySchema).min(1).max(MAX_TRANSFER_ENTRIES)
-});
-var transferResultSchema = external_exports.object({ id: external_exports.uuid(), inbox: external_exports.string().max(MAX_PATH_CHARS), files: external_exports.number().int().nonnegative().max(MAX_TRANSFER_ENTRIES), bytes: external_exports.number().int().nonnegative().max(MAX_TRANSFER_BYTES) });
-function checksum(data) {
-  return createHash7("sha256").update(data).digest("hex");
-}
-function assertTransferPath(path) {
-  const absolute = resolve6(path);
-  let current = parse4(absolute).root;
-  for (const component of absolute.slice(current.length).split(sep3).filter(Boolean)) {
-    current = join18(current, component);
-    if (lstatSync3(current).isSymbolicLink()) throw new Error("file transfer does not follow symlinks or junctions");
-  }
-}
-function ensureTransferDirectory(path) {
-  if (!existsSync13(path)) {
-    const parent2 = resolve6(path, "..");
-    ensureTransferDirectory(parent2);
-    mkdirSync11(path, { mode: OWNER_DIR_MODE });
-  }
-  assertTransferPath(path);
-  if (!lstatSync3(path).isDirectory()) throw new Error("transfer directory is not a directory");
-}
-function safeTransferPath(path) {
-  const components = path.split("/");
-  return path.length <= MAX_PATH_CHARS && components.length <= MAX_TRANSFER_DEPTH && components.every((part) => part.length > 0 && part.length <= MAX_COMPONENT_CHARS && part !== "." && part !== ".." && !/[<>:"\\|?*\x00-\x1f]/.test(part) && !/[. ]$/.test(part) && !/^(CON|PRN|AUX|NUL|CONIN\$|CONOUT\$|COM[1-9¹²³]|LPT[1-9¹²³])(?:\.|$)/i.test(part));
-}
-function collectTransfer(paths, cwd, to, from) {
-  if (!paths.length || paths.length > MAX_TRANSFER_ENTRIES) throw new Error("invalid number of transfer paths");
-  const entries = [];
-  let bytes2 = 0;
-  const walk = (source, path) => {
-    if (!safeTransferPath(path)) throw new Error("unsafe or too deep transfer path");
-    if (entries.length >= MAX_TRANSFER_ENTRIES) throw new Error("too many transfer entries");
-    assertTransferPath(source);
-    const stat = lstatSync3(source);
-    if (stat.isSymbolicLink()) throw new Error("file transfer does not follow symlinks or junctions");
-    if (stat.isDirectory()) {
-      entries.push({ kind: "directory", path });
-      for (const name2 of readdirSync6(source).sort()) walk(join18(source, name2), `${path}/${name2}`);
-    } else if (stat.isFile()) {
-      if (stat.size > MAX_TRANSFER_BYTES - bytes2) throw new Error("transfer exceeds size limit");
-      const data = readFileSync7(source);
-      bytes2 += data.length;
-      if (bytes2 > MAX_TRANSFER_BYTES) throw new Error("transfer exceeds size limit");
-      entries.push({ kind: "file", path, data: data.toString("base64"), sha256: checksum(data) });
-    } else throw new Error("only regular files and directories can be transferred");
-  };
-  for (const path of paths) {
-    const source = resolve6(cwd, path);
-    walk(source, basename5(source));
-  }
-  const transfer = transferSchema.parse({ id: randomUUID7(), to, from, entries });
-  validateEntries(transfer);
-  return transfer;
-}
-function validateEntries(transfer) {
-  const kinds = /* @__PURE__ */ new Map();
-  let bytes2 = 0;
-  let files2 = 0;
-  const entries = transfer.entries.map((entry) => {
-    const path = entry.path;
-    const key2 = path.toLowerCase();
-    if (!safeTransferPath(path) || kinds.has(key2)) throw new Error("unsafe or duplicate transfer path");
-    kinds.set(key2, entry.kind);
-    if (entry.kind === "directory") return { path, data: null };
-    const data = Buffer.from(entry.data, "base64");
-    if (data.toString("base64") !== entry.data || checksum(data) !== entry.sha256) throw new Error("file checksum or encoding mismatch");
-    bytes2 += data.length;
-    files2++;
-    if (bytes2 > MAX_TRANSFER_BYTES) throw new Error("transfer exceeds size limit");
-    return { path, data };
-  });
-  for (const entry of entries) {
-    const parts = entry.path.toLowerCase().split("/");
-    for (let i = 1; i < parts.length; i++) if (kinds.get(parts.slice(0, i).join("/")) !== "directory") throw new Error("missing directory or file used as parent");
-  }
-  return { entries, bytes: bytes2, files: files2 };
-}
-function receiveTransfer(home, input2) {
-  const transfer = transferSchema.parse(input2);
-  const { entries, bytes: bytes2, files: files2 } = validateEntries(transfer);
-  assertTransferPath(home);
-  const disk = statfsSync(home, { bigint: true });
-  if (disk.bavail * disk.bsize < BigInt(bytes2)) throw new Error("insufficient free disk space for transfer");
-  const inbox = join18(home, "inbox");
-  ensureTransferDirectory(inbox);
-  if (lstatSync3(inbox).isSymbolicLink()) throw new Error("inbox cannot be a symlink");
-  assertTransferPath(inbox);
-  const final = join18(inbox, transfer.id);
-  if (existsSync13(final)) throw new Error("transfer already received");
-  const staging = mkdtempSync(join18(inbox, ".partial-"));
-  try {
-    for (const entry of entries.filter((e) => e.data === null).sort((a, b) => a.path.length - b.path.length)) mkdirSync11(join18(staging, ...entry.path.split("/")), { mode: OWNER_DIR_MODE });
-    for (const entry of entries) if (entry.data !== null) writeFileSync5(join18(staging, ...entry.path.split("/")), entry.data, { flag: "wx", mode: OWNER_FILE_MODE });
-    renameSync5(staging, final);
-    return { id: transfer.id, inbox: final, files: files2, bytes: bytes2 };
-  } catch (err) {
-    rmSync3(staging, { recursive: true, force: true });
-    throw err;
-  }
-}
-
-// src/network/transfers.ts
-import { createHash as createHash8, randomUUID as randomUUID8 } from "node:crypto";
-import { constants, existsSync as existsSync14, lstatSync as lstatSync4, mkdirSync as mkdirSync12, readdirSync as readdirSync7, readFileSync as readFileSync8, renameSync as renameSync6, statSync as statSync6, writeFileSync as writeFileSync6 } from "node:fs";
-import { open as open2, link, unlink, statfs, lstat, opendir } from "node:fs/promises";
-import { basename as basename6, dirname as dirname12, isAbsolute as isAbsolute2, join as join19, relative as relative3, resolve as resolve7, sep as sep4 } from "node:path";
-var FILE_STREAM_CAPABILITY = "file-stream-v1";
-var TRANSFER_CHUNK_BYTES = 256 * 1024;
-var DEFAULT_MAX_STREAM_BYTES = 8 * 1024 * 1024 * 1024;
-var MAX_STREAM_ENTRIES = 4096;
-var MAX_ACTIVE_TRANSFERS = 4;
-var MAX_TRANSFER_HISTORY = 200;
-var TRANSFER_REQUEST_TIMEOUT_MS = 3e4;
-var TRANSFER_HEARTBEAT_MS = 5e3;
-var TRANSFER_RETRY_MS = 2e3;
-var TRANSFER_PROGRESS_MS = 1e3;
-var SHA_RECORD_BYTES = 65;
-var MAX_PATH_CHARS2 = 1024;
-var MAX_SENDER_ID_CHARS = 128;
-var MAX_ERROR_CHARS = 512;
-var MIN_TRANSFER_FREE_BYTES = 16 * 1024 * 1024;
-var SHA_PATTERN = /^[0-9a-f]{64}$/;
-var RETRYABLE_TRANSFER_ERROR = /^(network link closed|network write limit reached|paired instance is not connected|file transfer request timed out|sender not advertised by paired instance|file (source peer|recipient|sender) is not online|transfer operation already in progress|too many active file transfers)$/;
-var TERMINAL = /* @__PURE__ */ new Set(["completed", "cancelled", "failed"]);
-var senderSchema = external_exports.object({ id: external_exports.string().min(1).max(MAX_SENDER_ID_CHARS), name: external_exports.string().regex(NETWORK_NAME_PATTERN), agent: external_exports.enum(AGENT_KINDS) });
-var entrySchema2 = external_exports.object({ path: external_exports.string().min(1).max(MAX_PATH_CHARS2), kind: external_exports.enum(["file", "directory"]), size: external_exports.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER) });
-var base = { id: external_exports.uuid(), rid: external_exports.uuid(), kind: external_exports.literal("request") };
-var fileStreamRequestSchema = external_exports.discriminatedUnion("op", [
-  external_exports.object({ ...base, op: external_exports.literal("offer"), from: senderSchema, to: external_exports.string().regex(NETWORK_NAME_PATTERN), entries: external_exports.array(entrySchema2).min(1).max(MAX_STREAM_ENTRIES) }),
-  external_exports.object({ ...base, op: external_exports.literal("chunk"), index: external_exports.number().int().nonnegative().max(MAX_STREAM_ENTRIES - 1), offset: external_exports.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER), data: external_exports.string().max(Math.ceil(TRANSFER_CHUNK_BYTES / 3) * 4), sha256: external_exports.string().regex(SHA_PATTERN) }),
-  external_exports.object({ ...base, op: external_exports.literal("finish-file"), index: external_exports.number().int().nonnegative().max(MAX_STREAM_ENTRIES - 1), sha256: external_exports.string().regex(SHA_PATTERN) }),
-  external_exports.object({ ...base, op: external_exports.literal("finish") }),
-  external_exports.object({ ...base, op: external_exports.literal("cancel") }),
-  external_exports.object({ ...base, op: external_exports.literal("abort"), error: external_exports.string().min(1).max(MAX_ERROR_CHARS) }),
-  external_exports.object({ ...base, op: external_exports.literal("fetch"), from: senderSchema, source: external_exports.string().regex(NETWORK_NAME_PATTERN), paths: external_exports.array(external_exports.string().min(1).max(MAX_PATH_CHARS2)).min(1).max(MAX_STREAM_ENTRIES) })
-]);
-var responseSchema = external_exports.object({ kind: external_exports.literal("response"), rid: external_exports.uuid(), id: external_exports.uuid(), error: external_exports.string().max(MAX_ERROR_CHARS).optional(), data: external_exports.object({ offsets: external_exports.array(external_exports.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER)).max(MAX_STREAM_ENTRIES).optional(), status: external_exports.enum(["queued", "preparing", "running", "paused", "completed", "cancelled", "failed"]).optional() }).default({}) });
-var RemoteTransferError = class extends Error {
-};
-function digest2(data) {
-  return createHash8("sha256").update(data).digest("hex");
-}
-function transferSummary(home, state) {
-  const bytes2 = state.entries.reduce((sum, entry) => sum + entry.offset, 0);
-  return {
-    id: state.id,
-    direction: state.direction,
-    peer: state.peer,
-    status: state.status,
-    bytes: bytes2,
-    totalBytes: state.totalBytes,
-    files: state.entries.filter((entry) => entry.kind === "file" && entry.complete).length,
-    totalFiles: state.entries.filter((entry) => entry.kind === "file").length,
-    percent: state.status === "completed" ? 100 : state.totalBytes ? Math.floor(bytes2 / state.totalBytes * 100) : 0,
-    createdAt: state.createdAt,
-    updatedAt: state.updatedAt,
-    ...state.direction === "receive" ? { inbox: join19(home, "inbox", state.id) } : {},
-    ...state.error ? { error: state.error } : {}
-  };
-}
-function persistTransfer(root, state) {
-  assertTransferPath(root);
-  state.updatedAt = Date.now();
-  const file2 = join19(root, `${state.id}.json`);
-  if (existsSync14(file2)) assertTransferPath(file2);
-  const temp = `${file2}.${randomUUID8()}.tmp`;
-  writeFileSync6(temp, JSON.stringify(state), { flag: "wx", mode: OWNER_FILE_MODE, flush: true });
-  renameSync6(temp, file2);
-}
-function cancelStoredTransfer(home, id) {
-  external_exports.uuid().parse(id);
-  const root = join19(home, "network", "transfers");
-  const path = join19(root, `${id}.json`);
-  if (!existsSync14(path)) throw new Error("unknown transfer");
-  assertTransferPath(path);
-  const state = JSON.parse(readFileSync8(path, "utf8"));
-  if (state.version !== 1 || state.id !== id) throw new Error("invalid persisted transfer");
-  if (state.status === "completed" || state.status === "failed" || state.legacySent) return { id, cancelled: false };
-  state.status = "cancelled";
-  state.cancelPending = !state.legacy;
-  persistTransfer(root, state);
-  return { id, cancelled: true };
-}
-function readTransferHistory(home) {
-  const root = join19(home, "network", "transfers");
-  if (!existsSync14(root)) return [];
-  assertTransferPath(root);
-  return readdirSync7(root).filter((file2) => /^[0-9a-f-]{36}\.json$/.test(file2)).map((file2) => {
-    const path = join19(root, file2);
-    assertTransferPath(path);
-    return { path, mtime: statSync6(path).mtimeMs };
-  }).sort((a, b) => b.mtime - a.mtime).slice(0, MAX_TRANSFER_HISTORY).map(({ path }) => {
-    const state = JSON.parse(readFileSync8(path, "utf8"));
-    if (state.version !== 1 || !Array.isArray(state.entries) || state.entries.length > MAX_STREAM_ENTRIES) throw new Error("invalid persisted transfer");
-    return transferSummary(home, state);
-  }).sort((a, b) => b.updatedAt - a.updatedAt);
-}
-function allowedFetchPath(path, cwd, roots2) {
-  const source = resolve7(cwd, path);
-  assertTransferPath(source);
-  if (!roots2.some((root) => {
-    if (!isAbsolute2(root)) return false;
-    assertTransferPath(root);
-    const rel = relative3(resolve7(root), source);
-    return rel === "" || !isAbsolute2(rel) && rel !== ".." && !rel.startsWith(`..${sep4}`);
-  })) throw new Error("fetch is disabled or path is outside allowed fetch roots");
-  return source;
-}
-async function writeAll(file2, data, position) {
-  let written = 0;
-  while (written < data.length) {
-    const result = await file2.write(data, written, data.length - written, position + written);
-    if (!result.bytesWritten) throw new Error("file write made no progress");
-    written += result.bytesWritten;
-  }
-}
-var TransferManager = class {
-  constructor(home, transport, log, options = {}) {
-    this.home = home;
-    this.transport = transport;
-    this.log = log;
-    this.options = options;
-    assertTransferPath(home);
-    this.root = join19(home, "network", "transfers");
-    ensureTransferDirectory(this.root);
-    assertTransferPath(this.root);
-    for (const file2 of readdirSync7(this.root).filter((file3) => /^[0-9a-f-]{36}\.json$/.test(file3))) {
-      const state = this.read(file2.slice(0, -5));
-      if (state && (!TERMINAL.has(state.status) || state.cancelPending || state.abortPending)) {
-        if (this.states.size >= MAX_ACTIVE_TRANSFERS) {
-          this.log.warn("transfer recovery limit reached", { id: state.id });
-          continue;
-        }
-        state.status = TERMINAL.has(state.status) ? state.status : "paused";
-        this.save(state);
-      }
-    }
-    this.timer = setInterval(() => this.resume(), TRANSFER_RETRY_MS);
-    this.timer.unref();
-  }
-  home;
-  transport;
-  log;
-  options;
-  states = /* @__PURE__ */ new Map();
-  active = /* @__PURE__ */ new Set();
-  receiving = /* @__PURE__ */ new Set();
-  pending = /* @__PURE__ */ new Map();
-  notified = /* @__PURE__ */ new Map();
-  timer;
-  closed = false;
-  root;
-  read(id) {
-    const file2 = join19(this.root, `${id}.json`);
-    if (!existsSync14(file2)) return void 0;
-    assertTransferPath(file2);
-    const state = JSON.parse(readFileSync8(file2, "utf8"));
-    if (state.version !== 1 || state.id !== id || !Array.isArray(state.entries) || state.entries.length > MAX_STREAM_ENTRIES) throw new Error("invalid persisted transfer");
-    return state;
-  }
-  get(id) {
-    return this.states.get(id) ?? this.read(id);
-  }
-  save(state) {
-    persistTransfer(this.root, state);
-    if (!TERMINAL.has(state.status) || state.cancelPending || state.abortPending) this.states.set(state.id, state);
-    else this.states.delete(state.id);
-  }
-  summary(state) {
-    return transferSummary(this.home, state);
-  }
-  list() {
-    return readTransferHistory(this.home);
-  }
-  recordLegacy(transfer, remote, peer) {
-    const entries = transfer.entries.map((entry) => ({
-      kind: entry.kind,
-      path: entry.path,
-      size: entry.kind === "file" ? Buffer.byteLength(entry.data, "base64") : 0,
-      offset: entry.kind === "file" ? Buffer.byteLength(entry.data, "base64") : 0,
-      complete: true,
-      ...entry.kind === "file" ? { sha256: entry.sha256 } : {}
-    }));
-    this.save({
-      version: 1,
-      id: transfer.id,
-      direction: "receive",
-      remote,
-      peer,
-      from: transfer.from,
-      to: transfer.to,
-      paths: [],
-      cwd: "",
-      entries,
-      totalBytes: entries.reduce((sum, entry) => sum + entry.size, 0),
-      status: "completed",
-      legacy: true,
-      initialized: true,
-      createdAt: Date.now(),
-      updatedAt: Date.now()
-    });
-  }
-  report(state, force = false) {
-    if (this.closed) return;
-    const now = Date.now();
-    if (!force && now - (this.notified.get(state.id) ?? 0) < TRANSFER_PROGRESS_MS) return;
-    this.notified.set(state.id, now);
-    const progress = this.summary(state);
-    this.log.info("file transfer progress", { ...progress });
-    const recipient = state.direction === "send" ? state.from.name : state.to;
-    const from = state.direction === "receive" ? { ...state.from, id: `${state.remote}/${state.from.id}`, name: `${state.peer.split("/")[0]}/${state.from.name}` } : { id: `files-${state.id}`, name: "files", agent: "other" };
-    this.transport.notify({
-      id: state.direction === "receive" && state.status === "completed" ? state.id : randomUUID8(),
-      from,
-      to: recipient,
-      recipient,
-      conversationId: TERMINAL.has(state.status) ? state.id : `${TRANSFER_PROGRESS_PREFIX}${state.id}`,
-      replyTo: null,
-      hop: 0,
-      createdAt: now,
-      readAt: null,
-      body: `files: ${progress.percent}% \xB7 ${progress.bytes} / ${progress.totalBytes} bytes \xB7 ${state.status} \xB7 ${state.id}${progress.inbox ? ` \xB7 ${progress.inbox}` : ""}${state.error ? ` \xB7 ${state.error}` : ""}`
-    });
-    if (TERMINAL.has(state.status)) this.notified.delete(state.id);
-  }
-  ensureCapacity() {
-    if (this.states.size >= MAX_ACTIVE_TRANSFERS) throw new Error("too many active file transfers");
-  }
-  start(remote, peer, to, paths, cwd, from, pull = false, id = randomUUID8(), legacy = false) {
-    this.ensureCapacity();
-    const state = {
-      version: 1,
-      id,
-      direction: pull ? "receive" : "send",
-      remote,
-      peer,
-      to,
-      paths,
-      cwd,
-      from,
-      status: "queued",
-      entries: [],
-      totalBytes: 0,
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-      ...pull ? { pull: true } : {},
-      ...legacy ? { legacy: true } : {}
-    };
-    this.save(state);
-    this.report(state, true);
-    setImmediate(() => this.resume());
-    return { id, status: "queued" };
-  }
-  resume() {
-    if (this.closed) return;
-    for (const state of this.states.values()) {
-      if (this.active.has(state.id) || !state.legacy && !this.transport.supports(state.remote)) continue;
-      if (state.cancelPending || state.abortPending) {
-        this.active.add(state.id);
-        void this.rpc(state.remote, state.id, state.cancelPending ? { op: "cancel" } : { op: "abort", error: state.error ?? "transfer failed" }).then(() => {
-          state.cancelPending = false;
-          state.abortPending = false;
-          this.save(state);
-        }).catch(() => {
-        }).finally(() => this.active.delete(state.id));
-      } else if (!TERMINAL.has(state.status) && (state.direction === "send" || state.pull && !state.entries.length)) {
-        this.active.add(state.id);
-        void this.run(state).finally(() => this.active.delete(state.id));
-      }
-    }
-  }
-  disconnected(remote) {
-    for (const [rid, pending] of this.pending) if (pending.remote === remote) {
-      clearTimeout(pending.timer);
-      this.pending.delete(rid);
-      pending.reject(new Error("network link closed"));
-    }
-    for (const state of this.states.values()) if (state.remote === remote && !TERMINAL.has(state.status)) {
-      state.status = "paused";
-      this.save(state);
-      this.report(state, true);
-    }
-  }
-  rpc(remote, id, fields) {
-    if (this.closed) return Promise.reject(new Error("transfer manager closed"));
-    const rid = randomUUID8();
-    return new Promise((resolve15, reject) => {
-      const timer = setTimeout(() => {
-        this.pending.delete(rid);
-        reject(new Error("file transfer request timed out"));
-      }, TRANSFER_REQUEST_TIMEOUT_MS);
-      this.pending.set(rid, { remote, id, resolve: resolve15, reject, timer });
-      void Promise.resolve().then(() => this.transport.send(remote, { kind: "request", rid, id, ...fields })).catch((error62) => {
-        clearTimeout(timer);
-        this.pending.delete(rid);
-        reject(error62);
-      });
-    });
-  }
-  async handle(payload, remote, remoteName) {
-    if (payload.kind === "heartbeat") {
-      const heartbeat2 = external_exports.object({ id: external_exports.uuid(), rid: external_exports.uuid() }).parse(payload);
-      const pending = this.pending.get(heartbeat2.rid);
-      if (pending?.remote === remote && pending.id === heartbeat2.id) {
-        clearTimeout(pending.timer);
-        pending.timer = setTimeout(() => {
-          this.pending.delete(heartbeat2.rid);
-          pending.reject(new Error("file transfer request timed out"));
-        }, TRANSFER_REQUEST_TIMEOUT_MS);
-      }
-      return;
-    }
-    if (payload.kind === "response") {
-      const response = responseSchema.parse(payload);
-      const pending = this.pending.get(response.rid);
-      if (!pending || pending.remote !== remote || pending.id !== response.id) return;
-      clearTimeout(pending.timer);
-      this.pending.delete(response.rid);
-      if (response.error) pending.reject(new RemoteTransferError(response.error));
-      else pending.resolve(response.data);
-      return;
-    }
-    const request2 = fileStreamRequestSchema.parse(payload);
-    let data = {};
-    let error62;
-    let heartbeatSending = false;
-    const heartbeat = setInterval(() => {
-      if (this.closed || heartbeatSending) return;
-      heartbeatSending = true;
-      void Promise.resolve().then(() => this.transport.send(remote, { kind: "heartbeat", rid: request2.rid, id: request2.id })).catch(() => {
-      }).finally(() => {
-        heartbeatSending = false;
-      });
-    }, TRANSFER_HEARTBEAT_MS);
-    heartbeat.unref();
-    try {
-      data = await this.receive(request2, remote, remoteName);
-    } catch (err) {
-      error62 = err.message.slice(0, MAX_ERROR_CHARS);
-      this.log.warn("file transfer rejected", { id: request2.id, remote, error: error62 });
-      const state = this.get(request2.id);
-      if (state?.remote === remote && state.direction === "receive" && !TERMINAL.has(state.status) && /checksum|encoding mismatch|insufficient free disk|invalid initial|EACCES|ENOSPC|EEXIST|ENOENT|symlinks or junctions/.test(error62)) {
-        state.status = "failed";
-        state.error = error62;
-        this.save(state);
-        this.report(state, true);
-      }
-    } finally {
-      clearInterval(heartbeat);
-    }
-    await this.transport.send(remote, { kind: "response", rid: request2.rid, id: request2.id, data, ...error62 ? { error: error62 } : {} });
-  }
-  validateEntries(entries) {
-    const kinds = /* @__PURE__ */ new Map();
-    let total = 0;
-    for (const entry of entries) {
-      const key2 = entry.path.toLowerCase();
-      if (!safeTransferPath(entry.path) || kinds.has(key2)) throw new Error("unsafe or duplicate transfer path");
-      kinds.set(key2, entry.kind);
-      if (entry.kind === "directory" && entry.size !== 0) throw new Error("invalid directory size");
-      total += entry.size;
-      if (!Number.isSafeInteger(total) || total > (this.options.maxBytes ?? DEFAULT_MAX_STREAM_BYTES)) throw new Error("transfer exceeds size limit");
-    }
-    for (const key2 of kinds.keys()) {
-      const parts = key2.split("/");
-      for (let i = 1; i < parts.length; i++) if (kinds.get(parts.slice(0, i).join("/")) !== "directory") throw new Error("missing directory or file used as parent");
-    }
-    if (Buffer.byteLength(JSON.stringify(entries.map(({ path, kind, size }) => ({ path, kind, size })))) > MAX_NETWORK_FRAME_BYTES / 2) throw new Error("transfer manifest exceeds network frame limit");
-    return total;
-  }
-  async collect(state) {
-    const entries = [];
-    let total = 0;
-    const walk = async (source, path) => {
-      if (this.closed || state.status === "cancelled") throw new Error("transfer cancelled");
-      if (!safeTransferPath(path) || path.split("/").length > MAX_TRANSFER_DEPTH || entries.length >= MAX_STREAM_ENTRIES) throw new Error("unsafe or too many transfer entries");
-      assertTransferPath(source);
-      const st = await lstat(source);
-      if (st.isDirectory()) {
-        entries.push({ kind: "directory", path, size: 0, offset: 0 });
-        const dir = await opendir(source);
-        const names = [];
-        for await (const child of dir) {
-          if (names.length + entries.length >= MAX_STREAM_ENTRIES) throw new Error("too many transfer entries");
-          names.push(child.name);
-        }
-        for (const name2 of names.sort()) await walk(join19(source, name2), `${path}/${name2}`);
-      } else if (st.isFile()) {
-        total += st.size;
-        if (total > (this.options.maxBytes ?? DEFAULT_MAX_STREAM_BYTES)) throw new Error("transfer exceeds size limit");
-        entries.push({ kind: "file", path, size: st.size, offset: 0, source, mtimeMs: st.mtimeMs, ino: st.ino, dev: st.dev });
-      } else throw new Error("only regular files and directories can be transferred");
-    };
-    for (const path of state.paths) {
-      const source = resolve7(state.cwd, path);
-      await walk(source, basename6(source));
-    }
-    this.validateEntries(entries);
-    return entries;
-  }
-  async source(state, entry) {
-    if (state.fetched) allowedFetchPath(entry.source, state.cwd, this.options.fetchRoots ?? []);
-    assertTransferPath(entry.source);
-    const file2 = await open2(entry.source, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
-    const st = await file2.stat();
-    if (!st.isFile() || st.size !== entry.size || st.mtimeMs !== entry.mtimeMs || st.ino !== entry.ino || st.dev !== entry.dev) {
-      await file2.close();
-      throw new RemoteTransferError("source file changed since transfer started");
-    }
-    return file2;
-  }
-  stopped(state) {
-    return state.status === "cancelled" || state.status === "failed" || this.closed;
-  }
-  async run(state) {
-    try {
-      if (state.direction === "send" || state.pull) {
-        const sender = this.transport.localPeer(state.from.name);
-        if (!sender) throw new Error("file sender is not online");
-        if (sender.agent !== state.from.agent) throw new RemoteTransferError("file sender agent changed");
-        state.from = { id: sender.id, name: sender.name, agent: sender.agent };
-      }
-      if (state.fetched) for (const path of state.paths) allowedFetchPath(path, state.cwd, this.options.fetchRoots ?? []);
-      if (state.legacy) {
-        if (state.legacySent) throw new RemoteTransferError("legacy transfer interrupted; delivery may have occurred");
-        state.status = "running";
-        const transfer = { ...collectTransfer(state.paths, state.cwd, state.to, state.from), id: state.id };
-        state.entries = transfer.entries.map((entry) => ({ kind: entry.kind, path: entry.path, size: entry.kind === "file" ? Buffer.byteLength(entry.data, "base64") : 0, offset: 0 }));
-        state.totalBytes = this.validateEntries(state.entries);
-        state.legacySent = true;
-        this.save(state);
-        const result = await this.transport.legacy(state.remote, transfer);
-        if (this.stopped(state)) return;
-        state.status = "completed";
-        for (const entry of state.entries) {
-          entry.offset = entry.size;
-          entry.complete = true;
-        }
-        this.save(state);
-        this.report(state, true);
-        this.log.info("legacy file transfer complete", result);
-        return;
-      }
-      if (state.pull && !state.entries.length) {
-        await this.rpc(state.remote, state.id, { op: "fetch", from: state.from, source: state.to, paths: state.paths });
-        if (!TERMINAL.has(state.status) && !state.entries.length) {
-          state.status = "paused";
-          this.save(state);
-        }
-        return;
-      }
-      if (!state.entries.length) {
-        state.status = "preparing";
-        this.save(state);
-        state.entries = await this.collect(state);
-        state.totalBytes = this.validateEntries(state.entries);
-        this.save(state);
-      }
-      if (this.stopped(state)) return;
-      const reply2 = await this.rpc(state.remote, state.id, { op: "offer", from: state.from, to: state.to, entries: state.entries.map(({ path, kind, size }) => ({ path, kind, size })) });
-      if (this.stopped(state)) return;
-      if (reply2.status === "completed") {
-        state.status = "completed";
-        for (const entry of state.entries) {
-          entry.offset = entry.size;
-          entry.complete = true;
-        }
-        this.save(state);
-        this.report(state, true);
-        return;
-      }
-      if (!reply2.offsets || reply2.offsets.length !== state.entries.length) throw new RemoteTransferError("invalid resume offsets");
-      state.status = "running";
-      delete state.error;
-      this.save(state);
-      this.report(state, true);
-      for (let index = 0; index < state.entries.length; index++) {
-        const entry = state.entries[index];
-        if (entry.kind !== "file") continue;
-        const offset = reply2.offsets[index];
-        if (offset > entry.size || offset !== entry.size && offset % TRANSFER_CHUNK_BYTES !== 0) throw new RemoteTransferError("invalid resume offset");
-        entry.offset = offset;
-        const file2 = await this.source(state, entry);
-        const hash3 = createHash8("sha256");
-        const buffer = Buffer.alloc(TRANSFER_CHUNK_BYTES);
-        try {
-          for (let position = 0; position < entry.size; ) {
-            if (this.stopped(state)) return;
-            const length = Math.min(TRANSFER_CHUNK_BYTES, entry.size - position);
-            const { bytesRead } = await file2.read(buffer, 0, length, position);
-            if (bytesRead !== length) throw new RemoteTransferError("source file changed while reading");
-            const chunk = buffer.subarray(0, length);
-            hash3.update(chunk);
-            if (position >= offset) {
-              await this.rpc(state.remote, state.id, { op: "chunk", index, offset: position, data: chunk.toString("base64"), sha256: digest2(chunk) });
-              if (this.stopped(state)) return;
-              entry.offset = position + length;
-              this.save(state);
-              this.report(state);
-            }
-            position += length;
-          }
-          const st = await file2.stat();
-          if (st.size !== entry.size || st.mtimeMs !== entry.mtimeMs) throw new RemoteTransferError("source file changed while reading");
-        } finally {
-          await file2.close();
-        }
-        entry.sha256 = hash3.digest("hex");
-        await this.rpc(state.remote, state.id, { op: "finish-file", index, sha256: entry.sha256 });
-        if (this.stopped(state)) return;
-        entry.complete = true;
-        this.save(state);
-      }
-      await this.rpc(state.remote, state.id, { op: "finish" });
-      if (!this.stopped(state)) {
-        state.status = "completed";
-        this.save(state);
-        this.report(state, true);
-      }
-    } catch (error62) {
-      if (this.stopped(state)) return;
-      state.status = state.legacy || !RETRYABLE_TRANSFER_ERROR.test(error62.message) ? "failed" : "paused";
-      state.error = error62.message.slice(0, MAX_ERROR_CHARS);
-      state.abortPending = state.status === "failed" && !state.legacy;
-      this.save(state);
-      this.report(state, true);
-    }
-  }
-  part(state, index) {
-    return join19(this.root, state.id, `${index}.part`);
-  }
-  verified(state, index) {
-    return join19(this.root, state.id, `${index}.verified`);
-  }
-  target(state, entry) {
-    return join19(this.home, "inbox", state.id, ...entry.path.split("/"));
-  }
-  async freeDisk(bytes2) {
-    const disk = await statfs(this.home, { bigint: true });
-    const reserved = [...this.states.values()].filter((state) => state.direction === "receive" && !TERMINAL.has(state.status)).reduce((sum, state) => sum + BigInt(state.totalBytes) - BigInt(this.summary(state).bytes) + BigInt(Math.ceil(state.totalBytes / TRANSFER_CHUNK_BYTES)) * BigInt(SHA_RECORD_BYTES) + BigInt(MAX_NETWORK_FRAME_BYTES), 0n);
-    if (disk.bavail * disk.bsize < BigInt(bytes2 + MIN_TRANSFER_FREE_BYTES) + reserved) throw new Error("insufficient free disk space for transfer");
-  }
-  async hashFile(path, state) {
-    assertTransferPath(path);
-    const file2 = await open2(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
-    const hash3 = createHash8("sha256");
-    const buffer = Buffer.alloc(TRANSFER_CHUNK_BYTES);
-    try {
-      for (; ; ) {
-        if (this.closed || state && this.stopped(state)) throw new Error("transfer cancelled or manager closed");
-        const { bytesRead } = await file2.read(buffer);
-        if (!bytesRead) break;
-        hash3.update(buffer.subarray(0, bytesRead));
-      }
-    } finally {
-      await file2.close();
-    }
-    return hash3.digest("hex");
-  }
-  async recover(state, entry, index) {
-    if (entry.kind !== "file") return;
-    const target = this.target(state, entry);
-    if (entry.complete || entry.sha256 && existsSync14(target)) {
-      if (await this.hashFile(target, state) !== entry.sha256) throw new Error("completed file checksum mismatch");
-      entry.complete = true;
-      entry.offset = entry.size;
-      const part = this.part(state, index);
-      if (existsSync14(part)) {
-        assertTransferPath(part);
-        await unlink(part);
-      }
-      const verified2 = this.verified(state, index);
-      if (existsSync14(verified2)) {
-        assertTransferPath(verified2);
-        await unlink(verified2);
-      }
-      return;
-    }
-    const verifiedPath = this.verified(state, index);
-    if (entry.sha256 && existsSync14(verifiedPath)) {
-      if (await this.hashFile(verifiedPath, state) !== entry.sha256) throw new Error("verified file checksum mismatch");
-      assertTransferPath(dirname12(target));
-      await link(verifiedPath, target);
-      await unlink(verifiedPath);
-      entry.complete = true;
-      entry.offset = entry.size;
-      return;
-    }
-    const path = this.part(state, index);
-    assertTransferPath(path);
-    assertTransferPath(`${path}.sha256`);
-    const file2 = await open2(path, constants.O_RDWR | (constants.O_NOFOLLOW ?? 0));
-    const journal = await open2(`${path}.sha256`, constants.O_RDWR | (constants.O_NOFOLLOW ?? 0));
-    const buffer = Buffer.alloc(TRANSFER_CHUNK_BYTES);
-    const record2 = Buffer.alloc(SHA_RECORD_BYTES);
-    let verified = 0;
-    let chunks = 0;
-    try {
-      while (verified < entry.offset) {
-        if (this.stopped(state)) throw new Error("transfer cancelled or manager closed");
-        const length = Math.min(TRANSFER_CHUNK_BYTES, entry.size - verified);
-        const a = await file2.read(buffer, 0, length, verified);
-        const b = await journal.read(record2, 0, SHA_RECORD_BYTES, chunks * SHA_RECORD_BYTES);
-        if (a.bytesRead !== length || b.bytesRead !== SHA_RECORD_BYTES || record2.toString() !== `${digest2(buffer.subarray(0, length))}
-`) break;
-        verified += length;
-        chunks++;
-      }
-      await file2.truncate(verified);
-      await journal.truncate(chunks * SHA_RECORD_BYTES);
-      await file2.sync();
-      await journal.sync();
-      entry.offset = verified;
-    } finally {
-      await file2.close();
-      await journal.close();
-    }
-  }
-  initialize(state) {
-    const inbox = join19(this.home, "inbox");
-    ensureTransferDirectory(inbox);
-    const final = join19(inbox, state.id);
-    const parts = join19(this.root, state.id);
-    for (const dir of [final, parts]) {
-      if (!existsSync14(dir)) mkdirSync12(dir, { mode: OWNER_DIR_MODE });
-      assertTransferPath(dir);
-      if (!lstatSync4(dir).isDirectory()) throw new Error("transfer directory is not a directory");
-    }
-    for (const entry of state.entries.filter((entry2) => entry2.kind === "directory").sort((a, b) => a.path.length - b.path.length)) {
-      const dir = this.target(state, entry);
-      assertTransferPath(dirname12(dir));
-      if (!existsSync14(dir)) mkdirSync12(dir, { mode: OWNER_DIR_MODE });
-      assertTransferPath(dir);
-      if (!lstatSync4(dir).isDirectory()) throw new Error("transfer directory is not a directory");
-    }
-    for (let i = 0; i < state.entries.length; i++) if (state.entries[i].kind === "file") {
-      for (const file2 of [this.part(state, i), `${this.part(state, i)}.sha256`]) {
-        assertTransferPath(dirname12(file2));
-        if (!existsSync14(file2)) writeFileSync6(file2, "", { flag: "wx", mode: OWNER_FILE_MODE, flush: true });
-        assertTransferPath(file2);
-        if (!lstatSync4(file2).isFile() || lstatSync4(file2).size !== 0) throw new Error("invalid initial partial file");
-      }
-    }
-    state.initialized = true;
-    this.save(state);
-  }
-  async receive(request2, remote, remoteName) {
-    let state = this.get(request2.id);
-    if (state && state.remote !== remote) throw new Error("transfer belongs to another paired instance");
-    if (request2.op === "abort") {
-      if (!state) {
-        state = {
-          version: 1,
-          id: request2.id,
-          direction: "receive",
-          remote,
-          peer: remoteName,
-          from: { id: "files", name: "files", agent: "other" },
-          to: "files",
-          status: "failed",
-          error: request2.error,
-          paths: [],
-          cwd: "",
-          entries: [],
-          totalBytes: 0,
-          createdAt: Date.now(),
-          updatedAt: Date.now()
-        };
-        this.save(state);
-        this.log.warn("remote file transfer failed", { id: state.id, remote, error: request2.error });
-      } else if (!TERMINAL.has(state.status)) {
-        state.status = "failed";
-        state.error = request2.error;
-        state.abortPending = false;
-        this.save(state);
-        this.report(state, true);
-        for (const [rid, pending] of this.pending) if (pending.id === state.id) {
-          clearTimeout(pending.timer);
-          this.pending.delete(rid);
-          pending.reject(new RemoteTransferError(request2.error));
-        }
-      }
-      return { status: state.status };
-    }
-    if (request2.op === "cancel") {
-      if (!state) {
-        this.save({
-          version: 1,
-          id: request2.id,
-          direction: "receive",
-          remote,
-          peer: remoteName,
-          from: { id: "files", name: "files", agent: "other" },
-          to: "files",
-          status: "cancelled",
-          paths: [],
-          cwd: "",
-          entries: [],
-          totalBytes: 0,
-          createdAt: Date.now(),
-          updatedAt: Date.now()
-        });
-        return { status: "cancelled" };
-      }
-      await this.cancel(request2.id, false);
-      return { status: state.status };
-    }
-    if (state?.status === "cancelled" || state?.status === "failed") throw new Error(`transfer ${state.status}`);
-    if (request2.op === "fetch") {
-      if (!this.transport.validSender(remote, request2.from)) throw new Error("sender not advertised by paired instance");
-      const source = this.transport.localPeer(request2.source);
-      if (!source) throw new Error("file source peer is not online");
-      if (!this.options.fetchRoots?.length) throw new Error("fetch is disabled or path is outside allowed fetch roots");
-      const paths = request2.paths.map((path) => allowedFetchPath(path, source.cwd, this.options.fetchRoots));
-      if (state && (state.direction !== "send" || state.to !== request2.from.name || state.from.name !== request2.source || JSON.stringify(state.paths) !== JSON.stringify(paths))) throw new Error("fetch request changed");
-      if (!state) {
-        this.start(remote, `${remoteName}/${request2.from.name}`, request2.from.name, paths, source.cwd, source, false, request2.id);
-        const fetched = this.get(request2.id);
-        fetched.fetched = true;
-        this.save(fetched);
-      }
-      return { status: state?.status ?? "queued" };
-    }
-    if (request2.op === "offer") {
-      if (!this.transport.validSender(remote, request2.from)) throw new Error("sender not advertised by paired instance");
-      if (!this.transport.localPeer(request2.to)) throw new Error("file recipient is not online");
-      const entries = request2.entries.map((entry) => ({ ...entry, offset: 0 }));
-      const totalBytes = this.validateEntries(entries);
-      if (state?.pull && !state.entries.length) {
-        if (state.to !== request2.from.name || state.from.name !== request2.to) throw new Error("pull offer does not match request");
-        state.from = request2.from;
-        state.to = request2.to;
-        state.pull = false;
-      } else if (state && (state.direction !== "receive" || JSON.stringify(state.entries.map(({ path, kind, size }) => ({ path, kind, size }))) !== JSON.stringify(request2.entries) || state.from.name !== request2.from.name || state.from.agent !== request2.from.agent || state.to !== request2.to)) throw new Error("transfer manifest changed");
-      if (state) state.from = request2.from;
-      if (this.receiving.has(request2.id)) throw new Error("transfer operation already in progress");
-      this.receiving.add(request2.id);
-      try {
-        if (!state || !state.entries.length) {
-          if (!state) this.ensureCapacity();
-          const inbox = join19(this.home, "inbox");
-          ensureTransferDirectory(inbox);
-          if (existsSync14(join19(inbox, request2.id)) || existsSync14(join19(this.root, request2.id))) throw new Error("transfer destination already exists");
-          const receiving = {
-            version: 1,
-            id: request2.id,
-            direction: "receive",
-            remote,
-            peer: `${remoteName}/${request2.from.name}`,
-            from: request2.from,
-            to: request2.to,
-            paths: [],
-            cwd: "",
-            status: "preparing",
-            entries,
-            totalBytes,
-            createdAt: state?.createdAt ?? Date.now(),
-            updatedAt: Date.now()
-          };
-          state = state ? Object.assign(state, receiving, { pull: false }) : receiving;
-          this.save(state);
-          await this.freeDisk(0);
-          if (this.stopped(state)) throw new Error("transfer cancelled");
-        }
-        if (!state.initialized) this.initialize(state);
-        else {
-          for (let i = 0; i < state.entries.length; i++) await this.recover(state, state.entries[i], i);
-          await this.freeDisk(0);
-        }
-        if (this.stopped(state)) throw new Error("transfer cancelled");
-        if (state.status !== "completed") {
-          state.status = "running";
-          delete state.error;
-        }
-        this.save(state);
-        this.report(state, true);
-        return { offsets: state.entries.map((entry) => entry.offset), status: state.status };
-      } finally {
-        this.receiving.delete(request2.id);
-      }
-    }
-    if (!state || state.direction !== "receive") throw new Error("unknown receiving transfer");
-    if (this.receiving.has(state.id)) throw new Error("transfer operation already in progress");
-    this.receiving.add(state.id);
-    try {
-      if (request2.op === "finish") {
-        if (state.entries.some((entry2) => entry2.kind === "file" && !entry2.complete)) throw new Error("transfer has incomplete files");
-        if (state.status !== "completed") {
-          state.status = "completed";
-          this.save(state);
-          this.report(state, true);
-        }
-        return { status: state.status };
-      }
-      const entry = state.entries[request2.index];
-      if (!entry || entry.kind !== "file") throw new Error("invalid file index");
-      if (request2.op === "finish-file") {
-        if (entry.offset !== entry.size) throw new Error("file is incomplete");
-        if (entry.complete) {
-          if (entry.sha256 !== request2.sha256) throw new Error("file checksum mismatch");
-          return {};
-        }
-        const part = this.part(state, request2.index);
-        if (await this.hashFile(part, state) !== request2.sha256) throw new Error("file checksum mismatch");
-        if (this.stopped(state)) throw new Error("transfer cancelled");
-        entry.sha256 = request2.sha256;
-        this.save(state);
-        const target = this.target(state, entry);
-        assertTransferPath(dirname12(target));
-        assertTransferPath(part);
-        const verified = this.verified(state, request2.index);
-        if (existsSync14(verified)) throw new Error("verified file already exists");
-        renameSync6(part, verified);
-        await link(verified, target);
-        await unlink(verified);
-        entry.complete = true;
-        this.save(state);
-        return {};
-      }
-      if (entry.complete || request2.offset !== entry.offset) throw new Error("chunk offset mismatch");
-      const data = Buffer.from(request2.data, "base64");
-      if (!data.length || data.length !== Math.min(TRANSFER_CHUNK_BYTES, entry.size - entry.offset) || data.toString("base64") !== request2.data || digest2(data) !== request2.sha256) throw new Error("chunk checksum or encoding mismatch");
-      await this.freeDisk(0);
-      if (this.stopped(state)) throw new Error("transfer cancelled or manager closed");
-      const path = this.part(state, request2.index);
-      assertTransferPath(path);
-      assertTransferPath(`${path}.sha256`);
-      const file2 = await open2(path, constants.O_RDWR | (constants.O_NOFOLLOW ?? 0));
-      const journal = await open2(`${path}.sha256`, constants.O_RDWR | (constants.O_NOFOLLOW ?? 0));
-      try {
-        await writeAll(file2, data, entry.offset);
-        await file2.sync();
-        const record2 = Buffer.from(`${request2.sha256}
-`);
-        await writeAll(journal, record2, Math.floor(entry.offset / TRANSFER_CHUNK_BYTES) * SHA_RECORD_BYTES);
-        await journal.sync();
-      } finally {
-        await file2.close();
-        await journal.close();
-      }
-      entry.offset += data.length;
-      if (!this.stopped(state)) state.status = "running";
-      this.save(state);
-      this.report(state);
-      return {};
-    } finally {
-      this.receiving.delete(state.id);
-    }
-  }
-  async cancel(id, notifyRemote = true) {
-    const state = this.get(external_exports.uuid().parse(id));
-    if (!state) throw new Error("unknown transfer");
-    if (state.status === "completed" || state.status === "failed") return { id, cancelled: false };
-    if (state.legacySent) return { id, cancelled: false };
-    state.status = "cancelled";
-    state.cancelPending = notifyRemote && !state.legacy;
-    this.save(state);
-    this.report(state, true);
-    for (const [rid, pending] of this.pending) if (pending.id === id) {
-      clearTimeout(pending.timer);
-      this.pending.delete(rid);
-      pending.reject(new Error("transfer cancelled"));
-    }
-    if (notifyRemote) this.resume();
-    return { id, cancelled: true };
-  }
-  close() {
-    this.closed = true;
-    clearInterval(this.timer);
-    for (const state of this.states.values()) if (!TERMINAL.has(state.status)) {
-      state.status = "paused";
-      this.save(state);
-    }
-    for (const pending of this.pending.values()) {
-      clearTimeout(pending.timer);
-      pending.reject(new Error("transfer manager closed"));
-    }
-    this.pending.clear();
-  }
-};
-
-// src/network/link.ts
-var MAX_METADATA_CHARS = 4096;
-var MAX_ID_CHARS2 = 128;
-var MAX_HOP_COUNT = 100;
-var MAX_EXTENSION_HANDLERS = 8;
-var textId = external_exports.string().min(1).max(MAX_ID_CHARS2);
-var peerSchema = external_exports.object({
-  id: textId,
-  name: external_exports.string().regex(NETWORK_NAME_PATTERN),
-  agent: external_exports.enum(AGENT_KINDS),
-  cwd: external_exports.string().max(MAX_METADATA_CHARS),
-  pid: external_exports.number().int().nonnegative(),
-  agentPid: external_exports.number().int().nonnegative().nullable(),
-  sessionId: external_exports.string().max(MAX_METADATA_CHARS).nullable(),
-  startedAt: external_exports.number().nonnegative(),
-  autoWake: external_exports.boolean(),
-  wakeOnDirect: external_exports.boolean().optional(),
-  wakeAvailable: external_exports.boolean().optional(),
-  wakeMaxHops: external_exports.number().int().min(0).max(MAX_HOP_COUNT).optional(),
-  activity: external_exports.enum(["busy", "idle"]).nullable().optional(),
-  version: external_exports.string().max(MAX_ID_CHARS2).optional(),
-  jobAgent: external_exports.enum(AGENT_KINDS).optional(),
-  jobParent: external_exports.string().max(MAX_METADATA_CHARS).optional(),
-  jobTitle: external_exports.string().max(MAX_METADATA_CHARS).optional(),
-  parentJob: external_exports.string().max(MAX_METADATA_CHARS).optional(),
-  rootSession: external_exports.string().max(MAX_METADATA_CHARS).optional(),
-  rootName: external_exports.string().max(MAX_METADATA_CHARS).optional(),
-  subagent: external_exports.boolean().optional(),
-  title: external_exports.string().max(MAX_METADATA_CHARS).optional()
-});
-var peersSchema = external_exports.array(peerSchema).max(MAX_NETWORK_PEERS).refine((peers) => new Set(peers.map((p) => p.name)).size === peers.length && new Set(peers.map((p) => p.id)).size === peers.length);
-var messageSchema = external_exports.object({
-  id: external_exports.uuid(),
-  from: external_exports.object({ id: textId, name: external_exports.string().regex(NETWORK_NAME_PATTERN), agent: external_exports.enum(AGENT_KINDS) }),
-  to: external_exports.string().min(1).max(MAX_METADATA_CHARS),
-  recipient: external_exports.string().regex(NETWORK_NAME_PATTERN),
-  conversationId: textId,
-  replyTo: textId.nullable(),
-  hop: external_exports.number().int().min(0).max(MAX_HOP_COUNT),
-  body: external_exports.string().min(1).max(MAX_BODY_CHARS),
-  createdAt: external_exports.number().nonnegative(),
-  readAt: external_exports.null()
-});
-var frameSchema = external_exports.discriminatedUnion("type", [
-  publicIdentitySchema.extend({ type: external_exports.literal("hello"), v: external_exports.literal(NETWORK_VERSION), peers: peersSchema, echo: external_exports.boolean().optional(), receipts: external_exports.boolean().optional(), capabilities: external_exports.array(external_exports.string().min(1).max(MAX_ID_CHARS2)).max(MAX_EXTENSION_HANDLERS).optional() }),
-  external_exports.object({ type: external_exports.literal("file-stream"), payload: external_exports.record(external_exports.string(), external_exports.unknown()) }),
-  external_exports.object({ type: external_exports.literal("remote-job"), payload: external_exports.record(external_exports.string(), external_exports.unknown()) }),
-  external_exports.object({ type: external_exports.literal("dashboard-read"), payload: external_exports.record(external_exports.string(), external_exports.unknown()) }),
-  external_exports.object({ type: external_exports.literal("peers"), peers: peersSchema }),
-  external_exports.object({ type: external_exports.literal("send"), rid: external_exports.uuid(), message: messageSchema }),
-  external_exports.object({ type: external_exports.literal("echo"), rid: external_exports.uuid() }),
-  external_exports.object({ type: external_exports.literal("receipt"), rid: external_exports.uuid(), id: external_exports.uuid(), sender: textId, recipient: external_exports.string().regex(NETWORK_NAME_PATTERN).optional() }),
-  external_exports.object({ type: external_exports.literal("files"), rid: external_exports.uuid(), transfer: transferSchema }),
-  external_exports.object({ type: external_exports.literal("result"), rid: external_exports.uuid(), delivered: external_exports.boolean().optional(), recipient: external_exports.string().regex(NETWORK_NAME_PATTERN).optional(), readAt: external_exports.number().nonnegative().nullable().optional(), transfer: transferResultSchema.optional(), error: external_exports.string().max(MAX_METADATA_CHARS).optional() })
-]);
-var Link = class {
-  constructor(socket, service, key2, expected) {
-    this.socket = socket;
-    this.service = service;
-    this.key = key2;
-    this.expected = expected;
-    socket.setKeepAlive(true, NETWORK_REFRESH_MS);
-    this.deadline = setTimeout(() => this.fail(new Error("network hello timed out")), NETWORK_TIMEOUT_MS);
-    void this.ready.catch(() => {
-    });
-    socket.on("data", (chunk) => {
-      this.buffer = Buffer.concat([this.buffer, chunk]);
-      this.processBuffer();
-    });
-    socket.on("error", (err) => this.fail(err));
-    socket.on("close", () => {
-      clearTimeout(this.deadline);
-      this.readyReject(new Error("network link closed"));
-      for (const p of this.pending.values()) {
-        clearTimeout(p.timer);
-        p.reject(new Error("network link closed"));
-      }
-      this.pending.clear();
-      for (const reject of this.extensionWrites) reject(new Error("network link closed"));
-      this.extensionWrites.clear();
-      service.detach(this);
-    });
-    this.write({ type: "hello", v: NETWORK_VERSION, ...service.keys.identity, peers: service.localPeers(), echo: true, receipts: Boolean(service.supportsReceipts), capabilities: service.extensionCapabilities() });
-  }
-  socket;
-  service;
-  key;
-  expected;
-  remote = null;
-  peers = [];
-  echoSupported = false;
-  heartbeatPending = false;
-  receiptsSupported = false;
-  capabilities = [];
-  advertisedPeers = null;
-  extensionHandlers = 0;
-  buffer = Buffer.alloc(0);
-  pending = /* @__PURE__ */ new Map();
-  extensionWrites = /* @__PURE__ */ new Set();
-  readyResolve;
-  readyReject;
-  ready = new Promise((resolve15, reject) => {
-    this.readyResolve = resolve15;
-    this.readyReject = reject;
-  });
-  deadline;
-  processBuffer() {
-    if (this.socket.destroyed) return;
-    try {
-      let nl;
-      while (this.extensionHandlers < MAX_EXTENSION_HANDLERS && (nl = this.buffer.indexOf("\n")) >= 0) {
-        if (nl > MAX_NETWORK_FRAME_BYTES) throw new Error("network frame too large");
-        const line = this.buffer.subarray(0, nl);
-        this.buffer = this.buffer.subarray(nl + 1);
-        const frame = frameSchema.parse(JSON.parse(line.toString("utf8")));
-        if (!this.remote) {
-          if (frame.type !== "hello") throw new Error("network hello required");
-          const expected = this.expected;
-          if (expected && (frame.id !== expected.id || frame.name !== expected.name || frame.fingerprint !== expected.fingerprint)) throw new Error("paired identity changed");
-          this.remote = expected ?? this.service.keys.accept(this.key, frame);
-          this.peers = frame.peers;
-          this.echoSupported = frame.echo === true;
-          this.receiptsSupported = frame.receipts === true;
-          this.capabilities = frame.capabilities ?? [];
-          this.service.attach(this);
-          clearTimeout(this.deadline);
-          this.readyResolve();
-        } else if (frame.type === "hello") throw new Error("duplicate network hello");
-        else this.onFrame(frame);
-      }
-      if (this.buffer.length > MAX_NETWORK_FRAME_BYTES) throw new Error("network frame too large");
-      if (this.extensionHandlers >= MAX_EXTENSION_HANDLERS) this.socket.pause();
-      else this.socket.resume();
-    } catch (error62) {
-      this.fail(error62);
-    }
-  }
-  write(frame) {
-    const data = JSON.stringify(frame) + "\n";
-    if (Buffer.byteLength(data) > MAX_NETWORK_FRAME_BYTES || this.socket.writableLength > MAX_NETWORK_FRAME_BYTES) throw new Error("network write limit reached");
-    if (this.socket.destroyed) throw new Error("network link closed");
-    this.socket.write(data);
-  }
-  supports(capability) {
-    return this.capabilities.includes(capability);
-  }
-  /** Complete only after the stream has consumed this bounded record; callers await each write. */
-  writeExtension(type, payload) {
-    const data = JSON.stringify({ type, payload }) + "\n";
-    if (Buffer.byteLength(data) > MAX_NETWORK_FRAME_BYTES || this.socket.writableLength > MAX_NETWORK_FRAME_BYTES || this.extensionWrites.size >= MAX_NETWORK_REQUESTS) return Promise.reject(new Error("network write limit reached"));
-    if (this.socket.destroyed) return Promise.reject(new Error("network link closed"));
-    return new Promise((resolve15, reject) => {
-      const failed = (error62) => {
-        if (!this.extensionWrites.delete(failed)) return;
-        this.fail(error62);
-        reject(new Error("network link closed", { cause: error62 }));
-      };
-      this.extensionWrites.add(failed);
-      try {
-        this.socket.write(data, (error62) => {
-          if (error62) failed(error62);
-          else {
-            this.extensionWrites.delete(failed);
-            resolve15();
-          }
-        });
-      } catch (error62) {
-        failed(error62);
-      }
-    });
-  }
-  refresh() {
-    if (!this.remote) return;
-    const peers = this.service.localPeers(), signature = JSON.stringify(peers);
-    if (this.echoSupported && signature === this.advertisedPeers) return;
-    this.write({ type: "peers", peers });
-    this.advertisedPeers = signature;
-  }
-  send(message) {
-    return this.request({ type: "send", rid: randomUUID9(), message: messageSchema.parse(message) });
-  }
-  /** Detect a half-open link even when nobody sends work; activity never expires a peer. */
-  heartbeat() {
-    if (!this.remote || !this.echoSupported || this.heartbeatPending) return;
-    this.heartbeatPending = true;
-    void this.echo(this.service.timings.heartbeatTimeoutMs).catch((error62) => this.fail(error62)).finally(() => {
-      this.heartbeatPending = false;
-    });
-  }
-  receipt(id, sender, recipient, requireRecipient = false) {
-    if (!this.receiptsSupported) return Promise.reject(new Error("Remote broker does not support read receipts. Update and reload its hosting sessions."));
-    if (requireRecipient && !this.supports("recipient-receipts-v1")) return Promise.reject(new Error("Remote broker does not support per-recipient broadcast receipts. Update and reload its hosting sessions."));
-    return this.request({ type: "receipt", rid: randomUUID9(), id, sender, recipient });
-  }
-  files(transfer) {
-    return this.request({ type: "files", rid: randomUUID9(), transfer: transferSchema.parse(transfer) });
-  }
-  async echo(timeoutMs = NETWORK_TIMEOUT_MS) {
-    if (!this.echoSupported) throw new Error("Remote broker does not support verification. Update and restart its hosting sessions.");
-    const result = await this.request({ type: "echo", rid: randomUUID9() }, timeoutMs);
-    if (result !== true) throw new Error("network echo was not acknowledged");
-  }
-  request(frame, timeoutMs = NETWORK_TIMEOUT_MS) {
-    if (this.pending.size >= MAX_NETWORK_REQUESTS) return Promise.reject(new Error("too many network requests"));
-    return new Promise((resolve15, reject) => {
-      const rid = frame.rid;
-      const timer = setTimeout(() => {
-        this.pending.delete(rid);
-        reject(new Error("network send timed out; delivery may have occurred"));
-      }, timeoutMs);
-      this.pending.set(rid, { resolve: resolve15, reject, timer, kind: frame.type });
-      try {
-        if (frame.type === "send" || frame.type === "files") this.refresh();
-        this.write(frame);
-      } catch (err) {
-        clearTimeout(timer);
-        this.pending.delete(rid);
-        reject(err);
-      }
-    });
-  }
-  onFrame(frame) {
-    if (frame.type === "file-stream" || frame.type === "remote-job" || frame.type === "dashboard-read") {
-      if (++this.extensionHandlers > MAX_EXTENSION_HANDLERS) throw new Error("too many extension handlers");
-      void Promise.resolve().then(() => this.service.receiveExtension(frame.type, frame.payload, this.remote)).catch((error62) => this.fail(error62)).finally(() => {
-        this.extensionHandlers--;
-        this.processBuffer();
-      });
-      return;
-    }
-    if (frame.type === "peers") {
-      this.peers = frame.peers;
-      return;
-    }
-    if (frame.type === "result") {
-      const pending = this.pending.get(frame.rid);
-      if (!pending) return;
-      clearTimeout(pending.timer);
-      this.pending.delete(frame.rid);
-      if (frame.error) pending.reject(new Error(frame.error));
-      else if (pending.kind === "send" && frame.delivered !== void 0) pending.resolve({ delivered: frame.delivered, recipient: frame.recipient });
-      else if (pending.kind === "echo" && frame.delivered !== void 0) pending.resolve(frame.delivered);
-      else if (pending.kind === "receipt" && frame.readAt !== void 0) pending.resolve(frame.readAt);
-      else if (pending.kind === "files" && frame.transfer) pending.resolve(frame.transfer);
-      else pending.reject(new Error("invalid network result"));
-      return;
-    }
-    if (frame.type === "echo") {
-      this.write({ type: "result", rid: frame.rid, delivered: true });
-      return;
-    }
-    try {
-      if (frame.type === "receipt") {
-        const readAt = this.service.readReceipt(frame.id, `${this.remote.id}/${frame.sender}`, frame.recipient);
-        this.write({ type: "result", rid: frame.rid, readAt });
-        return;
-      }
-      const from = frame.type === "send" ? frame.message.from : frame.transfer.from;
-      const sender = this.peers.find((p) => p.id === from.id && p.name === from.name);
-      if (!sender || (sender.jobAgent ?? sender.agent) !== from.agent) throw new Error("sender not advertised by paired instance");
-      const remote = this.remote;
-      if (frame.type === "files") {
-        const result2 = this.service.receiveFiles(frame.transfer, `${remote.name}/${from.name}`, `${remote.id}/${from.id}`);
-        this.write({ type: "result", rid: frame.rid, transfer: result2 });
-        return;
-      }
-      const message = { ...frame.message, from: { ...frame.message.from, id: `${remote.id}/${frame.message.from.id}`, name: `${remote.name}/${frame.message.from.name}` } };
-      const result = this.service.receive(message);
-      this.refresh();
-      this.write({ type: "result", rid: frame.rid, delivered: result.delivered, recipient: result.recipient });
-    } catch (err) {
-      this.write({ type: "result", rid: frame.rid, error: String(err.message).slice(0, MAX_METADATA_CHARS) });
-    }
-  }
-  fail(error62) {
-    this.readyReject(error62);
-    this.socket.destroy();
-  }
-};
-var NetworkService = class {
-  constructor(home, cfg, broker, log, timings = {}) {
-    this.home = home;
-    this.cfg = cfg;
-    this.broker = broker;
-    this.log = log;
-    this.timings = { refreshMs: timings.refreshMs ?? NETWORK_REFRESH_MS, heartbeatTimeoutMs: timings.heartbeatTimeoutMs ?? NETWORK_HEARTBEAT_TIMEOUT_MS };
-    for (const value of Object.values(this.timings)) if (!Number.isSafeInteger(value) || value <= 0) throw new Error("network timings must be positive milliseconds");
-    this.keys = new PairingStore(home, cfg.name);
-    this.transfers = new TransferManager(home, {
-      supports: (remote) => this.peerSupports(remote, FILE_STREAM_CAPABILITY),
-      send: (remote, payload) => {
-        if (payload.op === "offer" || payload.op === "fetch") this.instanceLink(remote).refresh();
-        return this.sendExtension(remote, "file-stream", payload);
-      },
-      validSender: (remote, sender) => this.links.get(remote)?.peers.some((peer) => peer.id === sender.id && peer.name === sender.name && (peer.jobAgent ?? peer.agent) === sender.agent) ?? false,
-      localPeer: (name2) => {
-        const peer = this.broker.peers().find((peer2) => peer2.name === name2);
-        return peer ? { id: peer.id, name: peer.name, agent: peer.jobAgent ?? peer.agent, cwd: peer.cwd } : void 0;
-      },
-      notify: (message) => {
-        this.broker.receive(message);
-      },
-      legacy: (remote, transfer) => this.instanceLink(remote).files(transfer)
-    }, log, { maxBytes: cfg.maxTransferBytes, fetchRoots: cfg.fetchRoots });
-    this.registerExtension("file-stream", FILE_STREAM_CAPABILITY, (payload, remote) => this.transfers.handle(payload, remote.id, remote.name));
-  }
-  home;
-  cfg;
-  broker;
-  log;
-  timings;
-  keys;
-  transfers;
-  server = null;
-  sockets = /* @__PURE__ */ new Set();
-  links = /* @__PURE__ */ new Map();
-  connecting = /* @__PURE__ */ new Set();
-  health = /* @__PURE__ */ new Map();
-  discovery = null;
-  timer = null;
-  closed = false;
-  extensions = /* @__PURE__ */ new Map();
-  get port() {
-    const address = this.server?.address();
-    return address && typeof address !== "string" ? address.port : 0;
-  }
-  registerExtension(type, capability, handler) {
-    if (this.server || this.extensions.has(type)) throw new Error("register extensions once before starting networking");
-    this.extensions.set(type, { capability, handler });
-  }
-  extensionCapabilities() {
-    return [...this.extensions.values()].map((extension) => extension.capability).concat(this.broker.recipientReceipts ? ["recipient-receipts-v1"] : []);
-  }
-  receiveExtension(type, payload, remote) {
-    const extension = this.extensions.get(type);
-    if (!extension) throw new Error("unsupported network extension");
-    return extension.handler(payload, remote);
-  }
-  instanceLink(instance) {
-    const link2 = [...this.links.values()].find((candidate) => candidate.remote.id === instance || candidate.remote.name === instance);
-    if (!link2) throw new Error("paired instance is not connected");
-    return link2;
-  }
-  peerSupports(instance, capability) {
-    try {
-      return this.instanceLink(instance).supports(capability);
-    } catch {
-      return false;
-    }
-  }
-  async sendExtension(instance, type, payload) {
-    const extension = this.extensions.get(type);
-    const link2 = this.instanceLink(instance);
-    if (!extension || !link2.supports(extension.capability)) return Promise.reject(new Error("remote broker does not support this extension"));
-    if (type === "remote-job" && payload.kind === "request") link2.refresh();
-    return link2.writeExtension(type, payload);
-  }
-  get supportsReceipts() {
-    return Boolean(this.broker.receipt);
-  }
-  readReceipt(id, sender, recipient) {
-    if (!this.broker.receipt) throw new Error("read receipts unavailable");
-    return this.broker.receipt(id, sender, recipient);
-  }
-  async receipt(address, id, sender, requireRecipient = false) {
-    const { link: link2, target } = this.target(address);
-    return link2.receipt(id, sender, target, requireRecipient);
-  }
-  localPeers() {
-    return peersSchema.parse(this.broker.peers());
-  }
-  receive(message) {
-    return this.broker.receive(message);
-  }
-  async start() {
-    if (!this.cfg.enabled) throw new Error("networking is disabled");
-    if (this.server || this.closed) throw new Error("network service already started or closed");
-    const acceptedKeys = /* @__PURE__ */ new WeakMap();
-    const server = createServer({
-      minVersion: "TLSv1.3",
-      maxVersion: "TLSv1.3",
-      ciphers: TLS_CIPHER,
-      handshakeTimeout: NETWORK_TIMEOUT_MS,
-      pskCallback: (socket, identity) => {
-        const key2 = this.keys.keyFor(identity);
-        if (key2) acceptedKeys.set(socket, key2);
-        return key2 ? Buffer.from(key2, "hex") : randomBytes3(PAIRING_KEY_BYTES);
-      }
-    }, (socket) => {
-      const key2 = acceptedKeys.get(socket);
-      if (!key2 || socket.getProtocol() !== "TLSv1.3") return socket.destroy();
-      try {
-        new Link(socket, this, key2);
-      } catch (err) {
-        socket.destroy();
-        this.log.warn("network hello could not be sent", { message: err.message });
-      }
-    });
-    this.server = server;
-    server.maxConnections = MAX_NETWORK_LINKS;
-    server.on("connection", (socket) => {
-      this.sockets.add(socket);
-      socket.once("close", () => this.sockets.delete(socket));
-    });
-    server.on("tlsClientError", () => this.log.debug("network TLS authentication failed"));
-    server.on("error", (err) => this.log.warn("network listener error", { message: err.message }));
-    try {
-      await new Promise((resolve15, reject) => {
-        server.once("error", reject);
-        server.listen(this.cfg.port, this.cfg.bind, () => {
-          server.off("error", reject);
-          resolve15();
-        });
-      });
-      if (this.cfg.discovery) {
-        this.discovery = new NetworkDiscovery({ identity: this.keys.identity, port: this.port, onError: (err) => this.log.warn("network discovery error", { message: err.message }) });
-        await this.discovery.start();
-      }
-      this.timer = setInterval(() => {
-        for (const link2 of this.links.values()) {
-          try {
-            link2.refresh();
-            link2.heartbeat();
-          } catch (err) {
-            link2.fail(err);
-          }
-        }
-        for (const pair of this.keys.pairs()) if (pair.host && pair.port && !this.links.has(pair.id) && !this.connecting.has(pair.id)) void this.connectPair(pair).catch(() => {
-        });
-      }, this.timings.refreshMs);
-      this.timer.unref();
-      for (const pair of this.keys.pairs()) if (pair.host && pair.port) void this.connectPair(pair).catch(() => {
-      });
-    } catch (err) {
-      await this.close();
-      throw err;
-    }
-  }
-  attach(link2) {
-    const remote = link2.remote;
-    if (this.closed) throw new Error("network service closed");
-    const existing = this.links.get(remote.id);
-    if (existing && existing !== link2) throw new Error("instance already connected");
-    this.links.set(remote.id, link2);
-    setImmediate(() => this.transfers.resume());
-  }
-  detach(link2) {
-    if (link2.remote && this.links.get(link2.remote.id) === link2) {
-      this.links.delete(link2.remote.id);
-      this.transfers.disconnected(link2.remote.id);
-    }
-  }
-  peers() {
-    return [...this.links.values()].flatMap((link2) => link2.peers.map((p) => {
-      const host = link2.remote.name;
-      const qualify = (value, prefix = host) => value && !value.includes("/") ? `${prefix}/${value}` : value;
-      return {
-        ...p,
-        agent: p.jobAgent ?? p.agent,
-        host,
-        id: `${link2.remote.id}/${p.id}`,
-        name: `${host}/${p.name}`,
-        jobParent: qualify(p.jobParent),
-        parentJob: qualify(p.parentJob),
-        rootName: qualify(p.rootName),
-        rootSession: qualify(p.rootSession, link2.remote.id)
-      };
-    }));
-  }
-  status() {
-    return { enabled: true, config: this.cfg, identity: this.keys.identity, port: this.port, discovered: this.discovery?.instances() ?? [], ...this.discovery ? { discoveryDiagnostics: this.discovery.diagnostics() } : {}, paired: this.keys.pairs().map(({ id, name: name2, fingerprint }) => ({ id, name: name2, fingerprint, connected: this.links.has(id), ...this.health.has(id) ? { health: this.health.get(id) } : {} })) };
-  }
-  async verify(id) {
-    const link2 = this.links.get(id);
-    if (!link2) throw new Error("paired instance is not connected");
-    const start = performance.now();
-    await link2.echo();
-    const roundTripMs = Math.round(performance.now() - start);
-    this.health.set(id, { lastVerifiedAt: Date.now(), roundTripMs });
-    return { peers: this.peers().filter((p) => p.id.startsWith(`${id}/`)), roundTripMs };
-  }
-  async link(code, host, port) {
-    const decoded = decodePairingCode(code);
-    const pair = this.keys.validatePair(decoded, host, port);
-    await this.connectPair(pair);
-    try {
-      this.keys.remember(decoded, host, port);
-    } catch (err) {
-      this.links.get(pair.id)?.socket.destroy();
-      throw err;
-    }
-    return { id: decoded.id, name: decoded.name, fingerprint: decoded.fingerprint };
-  }
-  async connectPair(pair) {
-    if (this.closed || this.links.has(pair.id) || this.connecting.has(pair.id)) throw new Error("instance already connected or connecting");
-    this.connecting.add(pair.id);
-    let socket = null;
-    try {
-      socket = connect2({
-        host: pair.host,
-        port: pair.port,
-        minVersion: "TLSv1.3",
-        maxVersion: "TLSv1.3",
-        ciphers: TLS_CIPHER,
-        // TLS-PSK has no certificate. The PSK is mandatory; certificate-based fallbacks are rejected below.
-        rejectUnauthorized: false,
-        checkServerIdentity: () => void 0,
-        pskCallback: () => ({ identity: keyFingerprint(pair.key), psk: Buffer.from(pair.key, "hex") })
-      });
-      this.sockets.add(socket);
-      socket.once("close", () => this.sockets.delete(socket));
-      const secured = socket;
-      await new Promise((resolve15, reject) => {
-        const timer = setTimeout(() => {
-          secured.destroy();
-          reject(new Error("network TLS handshake timed out"));
-        }, NETWORK_TIMEOUT_MS);
-        const onError = (err) => {
-          clearTimeout(timer);
-          reject(err);
-        };
-        secured.once("error", onError);
-        secured.once("secureConnect", () => {
-          clearTimeout(timer);
-          secured.off("error", onError);
-          resolve15();
-        });
-      });
-      if (secured.getProtocol() !== "TLSv1.3" || Object.keys(secured.getPeerCertificate()).length) throw new Error("TLS-PSK required");
-      await new Link(secured, this, pair.key, pair).ready;
-    } catch (err) {
-      socket?.destroy();
-      throw err;
-    } finally {
-      this.connecting.delete(pair.id);
-    }
-  }
-  unlink(id) {
-    try {
-      this.keys.remove(id);
-      this.health.delete(id);
-    } finally {
-      this.links.get(id)?.socket.destroy();
-    }
-  }
-  async send(message) {
-    const { link: link2, target } = this.target(message.recipient);
-    const result = await link2.send({ ...message, recipient: target });
-    const actual = result.recipient ?? target;
-    const recipient = `${link2.remote.name}/${actual}`;
-    return { messages: [{ ...message, recipient }], deliveredTo: result.delivered ? [recipient] : [], queuedFor: result.delivered ? [] : [recipient], recipientStates: link2.peers.filter((p) => p.name === actual).map((p) => ({ name: recipient, activity: p.activity, autoWake: p.autoWake, wakeOnDirect: p.wakeOnDirect, wakeAvailable: p.wakeAvailable, wakeMaxHops: p.wakeMaxHops })) };
-  }
-  target(address) {
-    const slash = address.indexOf("/");
-    const host = address.slice(0, slash);
-    const raw = address.slice(slash + 1);
-    const link2 = [...this.links.values()].find((l) => l.remote.name === host || l.remote.id === host);
-    const target = link2?.peers.find((p) => p.name === raw || p.id === raw)?.name ?? raw;
-    if (!link2 || !NETWORK_NAME_PATTERN.test(target)) throw new BridgeError("unknown_target", "paired instance is not connected or target is invalid");
-    return { link: link2, target };
-  }
-  async sendFiles(address, transfer) {
-    const { link: link2, target } = this.target(address);
-    return link2.files({ ...transfer, to: target });
-  }
-  startFiles(address, paths, cwd, from, pull = false) {
-    const { link: link2, target } = this.target(address);
-    if (!link2.peers.some((peer) => peer.name === target)) throw new Error("file recipient is not online");
-    const streaming = link2.supports(FILE_STREAM_CAPABILITY);
-    if (pull && !streaming) throw new Error("remote broker does not support fetch_files; update its hosting sessions");
-    return this.transfers.start(link2.remote.id, `${link2.remote.name}/${target}`, target, paths, cwd, from, pull, void 0, !streaming);
-  }
-  fileTarget(address) {
-    return this.target(address).target;
-  }
-  receiveFiles(transfer, name2, id) {
-    if (!this.broker.peers().some((p) => p.name === transfer.to)) throw new Error("file recipient is not online");
-    const bytes2 = transfer.entries.reduce((sum, entry) => sum + (entry.kind === "file" ? Buffer.byteLength(entry.data, "base64") : 0), 0);
-    if (this.cfg.maxTransferBytes !== void 0 && bytes2 > this.cfg.maxTransferBytes) throw new Error("transfer exceeds size limit");
-    const result = receiveTransfer(this.home, transfer);
-    this.transfers.recordLegacy(transfer, id.split("/")[0], name2);
-    this.log.info("legacy files received", { ...result, sender: name2 });
-    this.broker.receive({ id: transfer.id, from: { ...transfer.from, name: name2, id }, to: transfer.to, recipient: transfer.to, conversationId: transfer.id, replyTo: null, hop: 0, body: `Received ${result.files} files (${result.bytes} bytes) in ${result.inbox}`, createdAt: Date.now(), readAt: null });
-    return result;
-  }
-  async close() {
-    this.closed = true;
-    this.transfers.close();
-    if (this.timer) clearInterval(this.timer);
-    this.timer = null;
-    await this.discovery?.close();
-    this.discovery = null;
-    for (const socket of this.sockets) socket.destroy();
-    this.links.clear();
-    const server = this.server;
-    this.server = null;
-    if (server) await new Promise((resolve15) => server.close(() => resolve15()));
-  }
-};
-
-// src/network/config.ts
-import { hostname as hostname3 } from "node:os";
-import { readFileSync as readFileSync9 } from "node:fs";
-import { isAbsolute as isAbsolute3, join as join20 } from "node:path";
-var MAX_FETCH_ROOT_CHARS = 1024;
-var MAX_FETCH_ROOTS = 128;
-var networkConfigSchema = external_exports.object({
-  enabled: external_exports.boolean().default(false),
-  name: external_exports.string().regex(NETWORK_NAME_PATTERN).default(hostname3().replace(/[^A-Za-z0-9._-]/g, "-").replace(/^[^A-Za-z0-9]+/, "").slice(0, MAX_NETWORK_NAME_CHARS) || "host"),
-  bind: external_exports.string().min(1).max(MAX_NETWORK_HOST_CHARS).default("127.0.0.1"),
-  port: external_exports.number().int().min(0).max(MAX_PORT).default(DEFAULT_NETWORK_PORT),
-  discovery: external_exports.boolean().default(false),
-  remoteJobs: external_exports.object({
-    enabled: external_exports.boolean().default(false),
-    allowRoots: external_exports.array(external_exports.string().min(1).max(4096)).max(50).default([]),
-    agents: external_exports.array(external_exports.enum(CODING_AGENTS)).max(3).default([]),
-    /** Pair names explicitly permitted to request jobs; no pair is trusted implicitly. */
-    allowPeers: external_exports.array(external_exports.string().regex(NETWORK_NAME_PATTERN)).max(50).default([])
-  }).default({ enabled: false, allowRoots: [], agents: [], allowPeers: [] }),
-  maxTransferBytes: external_exports.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
-  fetchRoots: external_exports.array(external_exports.string().min(1).max(MAX_FETCH_ROOT_CHARS).refine(isAbsolute3, "fetch roots must be absolute paths")).max(MAX_FETCH_ROOTS).optional()
-});
-var DEFAULT_NETWORK_CONFIG = networkConfigSchema.parse({});
-function parseNetworkConfig(value) {
-  const result = networkConfigSchema.safeParse(value);
-  return result.success ? result.data : void 0;
-}
-function readNetworkConfig(home, fallback) {
-  try {
-    const value = JSON.parse(readFileSync9(join20(home, CONFIG_FILE_NAME), "utf8"));
-    return isRecord(value) ? parseNetworkConfig(value.network) ?? fallback : fallback;
-  } catch {
-    return fallback;
-  }
-}
-function writeNetworkConfig(home, value) {
-  const config2 = networkConfigSchema.parse(value);
-  const path = join20(home, CONFIG_FILE_NAME);
-  const previous = readJsonStore(path);
-  writeJsonStore(path, mergeStoreFields(isRecord(previous) ? previous : {}, { network: config2 }), previous);
-  return config2;
-}
-
-// src/network/remote-dashboard.ts
-import { randomUUID as randomUUID13 } from "node:crypto";
-
-// src/core/dashboard-read.ts
-import { closeSync as closeSync10, openSync as openSync10, readFileSync as readFileSync20, readSync as readSync4, statSync as statSync12 } from "node:fs";
-import { join as join39 } from "node:path";
-
-// src/core/run-history.ts
-import { lstatSync as lstatSync5, readdirSync as readdirSync10, realpathSync as realpathSync4, statSync as statSync9 } from "node:fs";
-import { isAbsolute as isAbsolute4, join as join23, relative as relative4, sep as sep5 } from "node:path";
-
-// src/core/runfeed.ts
-import { appendFileSync as appendFileSync3, mkdirSync as mkdirSync14, readFileSync as readFileSync11, readdirSync as readdirSync9, statSync as statSync8 } from "node:fs";
-import { join as join22 } from "node:path";
-
-// src/core/run-archive.ts
-import { copyFileSync as copyFileSync3, existsSync as existsSync15, mkdirSync as mkdirSync13, readFileSync as readFileSync10, readdirSync as readdirSync8, renameSync as renameSync7, statSync as statSync7 } from "node:fs";
-import { basename as basename7, join as join21 } from "node:path";
-var DEFAULT_ARCHIVE_AGE_MS = 30 * 24 * 60 * 60 * 1e3;
-var ARCHIVE_AGE_ENV = "AGENT_BRIDGE_ARCHIVE_AGE_MS";
-var FINISHED_RUN = /^\d\d:\d\d:\d\d finished after \d+s · /m;
-function archiveRun(log) {
-  if (!FINISHED_RUN.test(readFileSync10(log, "utf8"))) return;
-  const dir = join21(log, "..", "archive");
-  mkdirSync13(dir, { recursive: true, mode: 448 });
-  const target = join21(dir, basename7(log));
-  if (existsSync15(target)) throw new Error(`run archive already exists: ${target}`);
-  const meta3 = log.replace(/\.log$/, ".json");
-  const archivedMeta = target.replace(/\.log$/, ".json");
-  if (existsSync15(meta3)) {
-    if (existsSync15(archivedMeta)) throw new Error(`run metadata archive already exists: ${archivedMeta}`);
-    copyFileSync3(meta3, archivedMeta);
-  }
-  renameSync7(log, target);
-  if (existsSync15(meta3)) renameSync7(meta3, archivedMeta);
-}
-function runLogFiles(home) {
-  const dir = join21(home, "runs");
-  return [dir, join21(dir, "archive")].flatMap((root) => existsSync15(root) ? readdirSync8(root).filter((f) => /\.log(?:-\d+-[\w-]+)?$/.test(f)).map((f) => join21(root, f)) : []);
-}
-function runFileName(path) {
-  return basename7(path).replace(/(\.log)-\d+-[\w-]+$/, "$1");
-}
-function archiveOldRuns(home, now = Date.now()) {
-  const age = retentionLimit(ARCHIVE_AGE_ENV, DEFAULT_ARCHIVE_AGE_MS);
-  if (!age) return 0;
-  let count = 0;
-  for (const file2 of runLogFiles(home).filter((p) => !p.includes(`${join21("runs", "archive")}`))) {
-    if (statSync7(file2).mtimeMs < now - age && FINISHED_RUN.test(readFileSync10(file2, "utf8"))) {
-      archiveRun(file2);
-      count++;
-    }
-  }
-  return count;
-}
-
-// src/core/runfeed.ts
-var RUNS_DIR_NAME = "runs";
-var HEARTBEAT_MS = 6e4;
-var KEEP_RUN_LOGS = 50;
-var STALE_RUN_MS = 15e4;
-function runMetaPath(logPath) {
-  return logPath.replace(/\.log$/, ".json");
-}
-var CONTINUATION = "         ";
-function stamp(t2) {
-  return new Date(t2).toTimeString().slice(0, 8);
-}
-function pruneOldLogs(dir) {
-  try {
-    archiveOldRuns(join22(dir, ".."));
-    const limit = retentionLimit("AGENT_BRIDGE_RUN_LOG_LIMIT", KEEP_RUN_LOGS);
-    if (!limit) return;
-    const files2 = readdirSync9(dir).filter((f) => f.endsWith(".log")).map((f) => ({ f, t: statSync8(join22(dir, f)).mtimeMs })).sort((a, b) => b.t - a.t);
-    for (const { f } of files2.slice(limit)) {
-      const path = join22(dir, f);
-      if (Date.now() - statSync8(path).mtimeMs <= STALE_RUN_MS && !/^\d\d:\d\d:\d\d finished after \d+s · /m.test(readFileSync11(path, "utf8"))) continue;
-      archiveRun(path);
-    }
-  } catch (err) {
-    process.stderr.write(`could not archive run logs: ${String(err)}
-`);
-  }
-}
-function startRunFeed(opts) {
-  const now = opts.now ?? Date.now;
-  const release = storageLease(opts.home);
-  const dir = join22(opts.home, RUNS_DIR_NAME);
-  mkdirSync14(dir, { recursive: true });
-  const logPath = join22(dir, `${new Date(now()).toISOString().slice(0, 19).replace(/[:T]/g, "-")}-${opts.name}.log`);
-  const write = (line) => {
-    const [first, ...rest] = line.replace(/\r/g, "").split("\n");
-    const body = [first, ...rest.map((l) => `${CONTINUATION}${l}`)].join("\n");
-    try {
-      appendFileSync3(logPath, `${stamp(now())} ${body}
-`);
-    } catch {
-    }
-  };
-  let meta3 = { ...opts.meta };
-  const writeMeta = () => {
-    try {
-      const path = runMetaPath(logPath);
-      const previous = readJsonStore(path);
-      writeJsonStore(path, mergeStoreFields(isRecord(previous) ? previous : {}, { ...meta3 }), previous);
-    } catch (err) {
-      process.stderr.write(`could not save run metadata: ${String(err)}
-`);
-    }
-  };
-  writeMeta();
-  write(opts.header);
-  pruneOldLogs(dir);
-  const started = now();
-  let lastStep = "starting";
-  let lastAt = started;
-  const emit = (m) => {
-    write(m);
-    opts.forward?.(m);
-  };
-  emit(`started \xB7 follow live: agent-bridge watch ${opts.name}`);
-  const timer = setInterval(() => {
-    const quietMin = Math.floor((now() - lastAt) / 6e4);
-    if (quietMin >= 1) emit(`still working, no new step for ${quietMin}m (last: ${lastStep})`);
-  }, opts.heartbeatMs ?? HEARTBEAT_MS);
-  timer.unref();
-  return {
-    logPath,
-    report: (m, full) => {
-      lastStep = m.split(" \xB7 ").pop() ?? m;
-      lastAt = now();
-      write(full ?? m);
-      opts.forward?.(m);
-    },
-    end: (summary, answer) => {
-      clearInterval(timer);
-      meta3 = { ...meta3, etaAt: void 0, etaReportedAt: void 0 };
-      writeMeta();
-      if (answer?.trim()) write(`answer: ${answer.trim()}`);
-      write(`finished after ${Math.round((now() - started) / 1e3)}s \xB7 ${summary}`);
-      release();
-    },
-    meta: (patch) => {
-      meta3 = { ...meta3, ...patch };
-      writeMeta();
-    }
-  };
-}
-
-// src/core/run-history.ts
-var DEFAULT_RUN_PAGE_SIZE = 50;
-var MAX_RUN_PAGE_SIZE = 500;
-var RUN_LOG_NAME = /^[\w.-]+\.log$/;
-var ARCHIVE_SUFFIX = /(\.(?:log|json))-\d+-[\w-]+$/;
-function readHistoryJson(file2) {
-  try {
-    return structuredClone(readJsonSnapshot(file2).value);
-  } catch {
-    return null;
-  }
-}
-function files(dir) {
-  try {
-    return readdirSync10(dir);
-  } catch {
-    return [];
-  }
-}
-function readRunLogs(home) {
-  const root = join23(home, RUNS_DIR_NAME);
-  let canonicalRoot;
-  try {
-    canonicalRoot = realpathSync4.native(root);
-  } catch {
-    return [];
-  }
-  const records = /* @__PURE__ */ new Map();
-  for (const archived of [true, false]) {
-    const dir = archived ? join23(root, "archive") : root;
-    let canonicalDir;
-    try {
-      canonicalDir = realpathSync4.native(dir);
-    } catch {
-      continue;
-    }
-    const rel = relative4(canonicalRoot, canonicalDir);
-    if (rel === ".." || rel.startsWith(`..${sep5}`) || isAbsolute4(rel)) continue;
-    const names = files(canonicalDir).sort();
-    const localFile = (name2) => {
-      const file2 = join23(canonicalDir, name2);
-      try {
-        const st = lstatSync5(file2);
-        return st.isFile() ? { file: file2, st } : st.isSymbolicLink() ? (() => {
-          const actual = safeFile(root, file2, canonicalRoot);
-          return actual ? { file: actual, st: statSync9(actual) } : null;
-        })() : null;
-      } catch {
-        return null;
-      }
-    };
-    const metadata = /* @__PURE__ */ new Map();
-    for (const name2 of names) {
-      const original = archived ? name2.replace(ARCHIVE_SUFFIX, "$1") : name2;
-      if (!original.endsWith(".json")) continue;
-      const record2 = localFile(name2);
-      const value = record2 ? readHistoryJson(record2.file) : null;
-      if (isRecord(value)) metadata.set(original, value);
-    }
-    for (const name2 of names) {
-      const original = archived ? name2.replace(ARCHIVE_SUFFIX, "$1") : name2;
-      if (!RUN_LOG_NAME.test(original)) continue;
-      const local = localFile(name2);
-      if (!local) continue;
-      const { file: file2, st } = local;
-      try {
-        if (!st.isFile()) continue;
-        const key2 = original.slice(0, -".log".length);
-        const record2 = { name: key2, file: file2, updatedAt: st.mtimeMs, size: st.size, signature: fileSignature(st), archived, meta: metadata.get(`${key2}.json`) ?? {} };
-        const previous = records.get(key2);
-        if (!previous || !archived || record2.updatedAt >= previous.updatedAt) records.set(key2, record2);
-      } catch {
-      }
-    }
-  }
-  return [...records.values()];
-}
-function readHistoryJobs(home) {
-  const out2 = /* @__PURE__ */ new Map();
-  let canonicalHome;
-  try {
-    canonicalHome = realpathSync4.native(home);
-  } catch {
-    return out2;
-  }
-  const archive = join23(home, "archive");
-  const archived = files(archive).filter((name2) => name2.startsWith(`${JOBS_FILE}.`) || name2.startsWith(`${JOBS_FILE}-`) || /^jobs-.*\.json$/.test(name2)).sort();
-  const backups = files(home).filter((name2) => name2.startsWith(`${JOBS_FILE}.backup-`) || name2 === `${JOBS_FILE}.overflow.json`).sort();
-  const snapshots2 = [...archived.map((name2) => join23(archive, name2)), ...backups.map((name2) => join23(home, name2))];
-  const snapshotTime = (file2) => {
-    const stamp2 = /(?:jobs-|\.backup-|\.overflow\.json-|jobs\.json-)(\d+)/.exec(file2)?.[1];
-    if (stamp2) return Number(stamp2);
-    try {
-      return statSync9(file2).mtimeMs;
-    } catch {
-      return 0;
-    }
-  };
-  snapshots2.sort((a, b) => snapshotTime(a) - snapshotTime(b) || (a < b ? -1 : a > b ? 1 : 0));
-  for (const candidate of [...snapshots2, join23(home, JOBS_FILE)]) {
-    const file2 = safeFile(home, candidate, canonicalHome);
-    const value = file2 ? readHistoryJson(file2) : null;
-    const jobs = Array.isArray(value) ? value : isRecord(value) && Array.isArray(value.jobs) ? value.jobs : [];
-    for (const job of jobs) {
-      if (!isRecord(job) || typeof job.name !== "string" || !RUN_LOG_NAME.test(`${job.name}.log`)) continue;
-      out2.set(job.name, { ...out2.get(job.name), ...job });
-    }
-  }
-  return out2;
-}
-function pageRuns(runs, before, limit) {
-  let at, name2;
-  if (before !== null) {
-    const match = /^(\d+)(?::([\w.-]+))?$/.exec(before);
-    if (!match || !Number.isSafeInteger(Number(match[1]))) throw new Error("invalid run cursor");
-    at = Number(match[1]);
-    name2 = match[2];
-  }
-  const sorted = [...runs].sort((a, b) => b.startedAt - a.startedAt || (a.name < b.name ? 1 : a.name > b.name ? -1 : 0));
-  const older = sorted.filter((run2) => at === void 0 || run2.startedAt < at || name2 !== void 0 && run2.startedAt === at && run2.name < name2);
-  const page = older.slice(0, limit), last = page.at(-1);
-  const running = before === null ? older.slice(limit).filter((run2) => run2.status === "running") : [];
-  return { runs: [...page, ...running], next: older.length > page.length && last ? `${last.startedAt}:${last.name}` : null, total: runs.length };
-}
-
-// src/core/job-outcomes.ts
-import { createHash as createHash14 } from "node:crypto";
-import { existsSync as existsSync20 } from "node:fs";
-import { join as join38 } from "node:path";
-import { DatabaseSync as DatabaseSync13 } from "node:sqlite";
-
-// src/core/paths.ts
-import { createHash as createHash9 } from "node:crypto";
-import { join as join24, posix, resolve as resolve8 } from "node:path";
-var PIPE_HASH_LENGTH = 12;
-function resolveHome(env = process.env) {
-  return resolve8(env[ENV.home]?.trim() || DEFAULT_HOME);
-}
-function resolvePipePath(home, env = process.env, platform = process.platform) {
-  const override = env[ENV.pipe]?.trim();
-  if (override) return override;
-  if (platform === "win32") {
-    const hash3 = createHash9("sha256").update(home.toLowerCase()).digest("hex").slice(0, PIPE_HASH_LENGTH);
-    return `${WINDOWS_PIPE_PREFIX}${APP_NAME}-${hash3}-p${PROTOCOL_VERSION}`;
-  }
-  return posix.join(home, SOCKET_FILE_NAME.replace(/\.sock$/, `-p${PROTOCOL_VERSION}.sock`));
-}
-function resolveDbPath(home) {
-  return join24(home, DB_FILE_NAME);
+function chooseJobRecipient(job, livePeers, groupMasters = []) {
+  const primary = primaryFor(job);
+  const live = new Set(livePeers.filter((p) => !p.host && !p.jobAgent && !p.subagent && !p.unavailable && !p.name.includes("/")).map((p) => p.name));
+  if (live.has(primary)) return primary;
+  const history = Array.isArray(job.ownershipHistory) ? job.ownershipHistory : [];
+  const previous = history.slice().reverse().flatMap((h) => h && typeof h === "object" ? [text(h.fromRootName), !job.parentJob ? text(h.from) : void 0] : []);
+  const grants = mastersFor(job).slice().reverse();
+  const group = [...groupMasters].sort((a, b) => a.startedAt - b.startedAt || a.name.localeCompare(b.name));
+  return [...previous, ...grants, ...group.map((p) => p.name)].find((name2) => name2 && live.has(name2)) ?? primary;
 }
 
 // src/mcp/jobs.ts
-import { randomUUID as randomUUID12 } from "node:crypto";
-import { closeSync as closeSync9, mkdirSync as mkdirSync18, openSync as openSync9, rmSync as rmSync4, statSync as statSync11 } from "node:fs";
-import { dirname as dirname14 } from "node:path";
+import { randomUUID as randomUUID8 } from "node:crypto";
+import { closeSync as closeSync9, mkdirSync as mkdirSync14, openSync as openSync9, rmSync as rmSync3, statSync as statSync8 } from "node:fs";
+import { dirname as dirname13 } from "node:path";
 
 // src/core/codex-subagents.ts
 function codexSubagentConfig(count = DEFAULT_CODEX_SUBAGENTS) {
@@ -33401,14 +31156,14 @@ function codexSubagentConfig(count = DEFAULT_CODEX_SUBAGENTS) {
 }
 
 // src/core/codex-env.ts
-import { readFileSync as readFileSync12 } from "node:fs";
+import { readFileSync as readFileSync6 } from "node:fs";
 import { homedir as homedir3 } from "node:os";
-import { join as join25 } from "node:path";
+import { join as join17 } from "node:path";
 function codexWindowsSandbox(home = homedir3(), platform = process.platform) {
   if (platform !== "win32") return null;
   let toml;
   try {
-    toml = readFileSync12(join25(home, ".codex", "config.toml"), "utf8");
+    toml = readFileSync6(join17(home, ".codex", "config.toml"), "utf8");
   } catch {
     return null;
   }
@@ -33429,21 +31184,21 @@ function codexExecutionPrompt(prompt, sandbox, platform = process.platform) {
 
 // src/core/delegate.ts
 import { spawn } from "node:child_process";
-import { existsSync as existsSync16, readFileSync as readFileSync15, realpathSync as realpathSync6 } from "node:fs";
-import { delimiter, dirname as dirname13, extname, isAbsolute as isAbsolute5, join as join29, win32 } from "node:path";
+import { existsSync as existsSync12, readFileSync as readFileSync9, realpathSync as realpathSync5 } from "node:fs";
+import { delimiter, dirname as dirname12, extname, isAbsolute as isAbsolute2, join as join21, win32 } from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 
 // src/core/claude-mcp.ts
-import { readFileSync as readFileSync13 } from "node:fs";
+import { readFileSync as readFileSync7 } from "node:fs";
 import { homedir as homedir4 } from "node:os";
-import { join as join26, resolve as resolve9 } from "node:path";
+import { join as join18, resolve as resolve6 } from "node:path";
 var OWN_SERVER_RULE = "mcp__plugin_agent-bridge_bridge";
 var ACCOUNT_CONNECTORS_RULE = "mcp__claude_ai_*";
 var BUILT_IN_RULES = ["mcp__claude-in-chrome"];
 function readJson(path) {
   try {
-    return JSON.parse(readFileSync13(path, "utf8"));
+    return JSON.parse(readFileSync7(path, "utf8"));
   } catch {
     return null;
   }
@@ -33452,31 +31207,31 @@ function serverNames(mcp) {
   return mcp && typeof mcp === "object" ? Object.keys(mcp) : [];
 }
 function pluginServers(home) {
-  const installed = readJson(join26(home, ".claude", "plugins", "installed_plugins.json"));
+  const installed = readJson(join18(home, ".claude", "plugins", "installed_plugins.json"));
   const out2 = [];
   for (const [key2, entries] of Object.entries(installed?.plugins ?? {})) {
     const plugin = key2.split("@")[0];
     for (const e of Array.isArray(entries) ? entries : [entries]) {
       const root = e?.installPath;
       if (typeof root !== "string") continue;
-      const manifest = readJson(join26(root, ".claude-plugin", "plugin.json"));
+      const manifest = readJson(join18(root, ".claude-plugin", "plugin.json"));
       const declared = manifest?.mcpServers;
-      const servers = typeof declared === "string" ? readJson(resolve9(root, declared))?.mcpServers ?? readJson(resolve9(root, declared)) : declared;
-      const names = /* @__PURE__ */ new Set([...serverNames(servers), ...serverNames(readJson(join26(root, ".mcp.json"))?.mcpServers)]);
+      const servers = typeof declared === "string" ? readJson(resolve6(root, declared))?.mcpServers ?? readJson(resolve6(root, declared)) : declared;
+      const names = /* @__PURE__ */ new Set([...serverNames(servers), ...serverNames(readJson(join18(root, ".mcp.json"))?.mcpServers)]);
       for (const s of names) out2.push(`mcp__plugin_${plugin}_${s}`);
     }
   }
   return out2;
 }
 function claudeMcpDenyRules(cwd, home = homedir4()) {
-  const config2 = readJson(join26(home, ".claude.json"));
-  const norm = (p) => resolve9(p).replace(/\\/g, "/").toLowerCase();
+  const config2 = readJson(join18(home, ".claude.json"));
+  const norm = (p) => resolve6(p).replace(/\\/g, "/").toLowerCase();
   const project = Object.entries(config2?.projects ?? {}).find(([p]) => norm(p) === norm(cwd))?.[1];
   const names = [
     ...pluginServers(home),
     ...serverNames(config2?.mcpServers).map((s) => `mcp__${s}`),
     ...serverNames(project?.mcpServers).map((s) => `mcp__${s}`),
-    ...serverNames(readJson(join26(cwd, ".mcp.json"))?.mcpServers).map((s) => `mcp__${s}`),
+    ...serverNames(readJson(join18(cwd, ".mcp.json"))?.mcpServers).map((s) => `mcp__${s}`),
     ACCOUNT_CONNECTORS_RULE,
     ...BUILT_IN_RULES
   ];
@@ -33484,8 +31239,8 @@ function claudeMcpDenyRules(cwd, home = homedir4()) {
 }
 
 // src/core/parent-link.ts
-import { randomBytes as randomBytes4, randomUUID as randomUUID10 } from "node:crypto";
-import { createServer as createServer2 } from "node:http";
+import { randomBytes as randomBytes2, randomUUID as randomUUID6 } from "node:crypto";
+import { createServer } from "node:http";
 var PARENT_URL_ENV = "AGENT_BRIDGE_PARENT_URL";
 var PARENT_TOKEN_ENV = "AGENT_BRIDGE_PARENT_TOKEN";
 var PARENT_NAME_ENV = "AGENT_BRIDGE_PARENT_NAME";
@@ -33510,13 +31265,13 @@ var ParentLink = class {
   siblings;
   onEscalate;
   server = null;
-  secret = randomBytes4(SECRET_BYTES).toString("hex");
+  secret = randomBytes2(SECRET_BYTES).toString("hex");
   url = "";
   pending = [];
   /** Picked up by the subagent but not answered yet (it may have seen them only as it finished). */
   unanswered = [];
   async start() {
-    this.server = createServer2((req, res) => {
+    this.server = createServer((req, res) => {
       void this.handle(req).then(
         (body) => {
           res.writeHead(200, { "content-type": "application/json" });
@@ -33539,7 +31294,7 @@ var ParentLink = class {
   }
   /** Queue a message for the subagent; it gets it at its next step. */
   post(body, sibling) {
-    const m = { id: sibling?.id ?? randomUUID10(), body, ...sibling ? { sibling } : {} };
+    const m = { id: sibling?.id ?? randomUUID6(), body, ...sibling ? { sibling } : {} };
     this.pending.push(m);
     return m;
   }
@@ -33599,10 +31354,10 @@ var ParentLink = class {
     }
     if (req.method === "POST" && req.url === "/message") {
       const body = JSON.parse(await readBody(req));
-      const text = String(body.body ?? "").trim();
-      if (!text) throw new Error("empty message");
+      const text2 = String(body.body ?? "").trim();
+      if (!text2) throw new Error("empty message");
       this.unanswered = this.unanswered.filter((m) => m.sibling);
-      this.onMessage(text, typeof body.reply_to === "string" ? body.reply_to : null);
+      this.onMessage(text2, typeof body.reply_to === "string" ? body.reply_to : null);
       return { ok: true };
     }
     if (req.method === "POST" && req.url === "/escalate") {
@@ -33665,8 +31420,8 @@ function kindOfTool(name2) {
   if (READ_TOOLS.test(name2)) return "read";
   return "tool";
 }
-function say(text) {
-  return text.trim() ? { kind: "say", text: `says: ${clip(text, MAX_SAY_CHARS)}`, full: `says: ${text.trim()}` } : null;
+function say(text2) {
+  return text2.trim() ? { kind: "say", text: `says: ${clip(text2, MAX_SAY_CHARS)}`, full: `says: ${text2.trim()}` } : null;
 }
 function codexCommandFailure(item) {
   const code = item.exitCode ?? item.exit_code;
@@ -33718,8 +31473,8 @@ function describeClaudeEvent(ev) {
     const detail = firstString(tool.input, INPUT_KEYS);
     return { kind: kindOfTool(String(tool.name)), ...txt(`${tool.name}${detail ? `: ${detail}` : ""}`), id: tool.id };
   }
-  const text = blocks.filter((b) => b?.type === "text").map((b) => b.text).join(" ");
-  if (text) return say(text);
+  const text2 = blocks.filter((b) => b?.type === "text").map((b) => b.text).join(" ");
+  if (text2) return say(text2);
   if (blocks.some((b) => b?.type === "thinking")) return { kind: "think", text: "thinking" };
   return null;
 }
@@ -33781,12 +31536,12 @@ function progressLineHandler(agent, onProgress) {
 }
 
 // src/core/context-journal.ts
-import { appendFile, mkdir, open as open3 } from "node:fs/promises";
-import { join as join27 } from "node:path";
+import { appendFile, mkdir, open as open2 } from "node:fs/promises";
+import { join as join19 } from "node:path";
 var writes = /* @__PURE__ */ new Map();
 async function appendContextEvent(home, event) {
-  const dir = join27(home, "context-events");
-  const file2 = join27(
+  const dir = join19(home, "context-events");
+  const file2 = join19(
     dir,
     `${(/* @__PURE__ */ new Date()).toISOString().slice(0, 10)}-${process.pid}.jsonl`
   );
@@ -33794,7 +31549,7 @@ async function appendContextEvent(home, event) {
   }).then(async () => {
     await mkdir(dir, { recursive: true, mode: 448 });
     try {
-      const fd2 = await open3(file2, "wx", 384);
+      const fd2 = await open2(file2, "wx", 384);
       try {
         await fd2.writeFile('{"version":1,"format":"context-events"}\n');
         await fd2.sync();
@@ -33808,7 +31563,7 @@ async function appendContextEvent(home, event) {
       file2,
       JSON.stringify({ ...event, at: event.at ?? Date.now() }) + "\n"
     );
-    const fd = await open3(file2, "a");
+    const fd = await open2(file2, "a");
     try {
       await fd.sync();
     } finally {
@@ -33824,10 +31579,10 @@ async function appendContextEvent(home, event) {
 }
 
 // src/core/relay.ts
-import { randomBytes as randomBytes5, randomUUID as randomUUID11 } from "node:crypto";
-import { mkdirSync as mkdirSync15, readFileSync as readFileSync14, readdirSync as readdirSync11, writeFileSync as writeFileSync7 } from "node:fs";
-import { join as join28 } from "node:path";
-import { createServer as createServer3 } from "node:http";
+import { randomBytes as randomBytes3, randomUUID as randomUUID7 } from "node:crypto";
+import { mkdirSync as mkdirSync10, readFileSync as readFileSync8, readdirSync as readdirSync6, writeFileSync as writeFileSync4 } from "node:fs";
+import { join as join20 } from "node:path";
+import { createServer as createServer2 } from "node:http";
 var RELAY_URL_ENV = "AGENT_BRIDGE_RELAY_URL";
 var RELAY_TOKEN_ENV = "AGENT_BRIDGE_RELAY_TOKEN";
 var RELAY_HOST = "127.0.0.1";
@@ -33843,10 +31598,10 @@ var PermissionRelay = class {
   handler;
   log;
   server = null;
-  secret = randomBytes5(SECRET_BYTES2).toString("hex");
+  secret = randomBytes3(SECRET_BYTES2).toString("hex");
   url = "";
   async start() {
-    this.server = createServer3((req, res) => {
+    this.server = createServer2((req, res) => {
       res.writeHead(200, { "content-type": "application/json" });
       res.flushHeaders();
       const keepAlive = setInterval(() => res.write(" "), KEEP_ALIVE_MS);
@@ -33920,15 +31675,15 @@ var APPROVALS_DIR = "approvals";
 var APPROVAL_ID = /^[0-9a-f-]{36}$/;
 var ANSWER_PATH = "/answer";
 var ANSWER_TIMEOUT_MS = 5e3;
-var MAX_PORT2 = 65535;
+var MAX_PORT = 65535;
 var MAX_APPROVAL_REASON_CHARS = 4e3;
 async function publishApproval(home, approval, answer) {
   await appendContextEvent(home, { kind: "approval", agent: approval.agent, job: approval.job, payload: { event: "requested", ...approval } });
   if (!APPROVAL_ID.test(approval.id)) throw new Error("invalid approval id");
-  const token = randomBytes5(SECRET_BYTES2).toString("hex");
-  const dir = join28(home, APPROVALS_DIR);
-  const file2 = join28(dir, `${approval.id}.json`);
-  const server = createServer3((req, res) => {
+  const token = randomBytes3(SECRET_BYTES2).toString("hex");
+  const dir = join20(home, APPROVALS_DIR);
+  const file2 = join20(dir, `${approval.id}.json`);
+  const server = createServer2((req, res) => {
     const reply2 = (status, body) => {
       res.writeHead(status, { "content-type": "application/json", "cache-control": "no-store" });
       res.end(JSON.stringify(body));
@@ -33955,8 +31710,8 @@ async function publishApproval(home, approval, answer) {
   });
   server.unref();
   try {
-    mkdirSync15(dir, { recursive: true, mode: 448 });
-    writeFileSync7(file2, JSON.stringify({ ...approval, pid: process.pid, port: server.address().port, token }), { mode: 384, flag: "wx" });
+    mkdirSync10(dir, { recursive: true, mode: 448 });
+    writeFileSync4(file2, JSON.stringify({ ...approval, pid: process.pid, port: server.address().port, token }), { mode: 384, flag: "wx" });
   } catch (err) {
     server.close();
     throw err;
@@ -33972,8 +31727,8 @@ async function publishApproval(home, approval, answer) {
 function readApproval(home, id) {
   if (!APPROVAL_ID.test(id)) return null;
   try {
-    const r = JSON.parse(readFileSync14(join28(home, APPROVALS_DIR, `${id}.json`), "utf8"));
-    if (r.id !== id || !Number.isInteger(r.pid) || r.pid < 1 || !pidAlive(r.pid) || !Number.isSafeInteger(r.deadline) || r.deadline <= Date.now() || !Number.isSafeInteger(r.askedAt) || r.deadline <= r.askedAt || !Number.isInteger(r.port) || r.port < 1 || r.port > MAX_PORT2 || typeof r.token !== "string" || !r.token) return null;
+    const r = JSON.parse(readFileSync8(join20(home, APPROVALS_DIR, `${id}.json`), "utf8"));
+    if (r.id !== id || !Number.isInteger(r.pid) || r.pid < 1 || !pidAlive(r.pid) || !Number.isSafeInteger(r.deadline) || r.deadline <= Date.now() || !Number.isSafeInteger(r.askedAt) || r.deadline <= r.askedAt || !Number.isInteger(r.port) || r.port < 1 || r.port > MAX_PORT || typeof r.token !== "string" || !r.token) return null;
     if (![r.owner, r.job, r.agent, r.tool, r.command, r.reason].every((value) => typeof value === "string")) return null;
     return r;
   } catch {
@@ -33983,13 +31738,20 @@ function readApproval(home, id) {
 function listPendingApprovals(home) {
   let files2;
   try {
-    files2 = readdirSync11(join28(home, APPROVALS_DIR));
+    files2 = readdirSync6(join20(home, APPROVALS_DIR));
   } catch {
     return [];
   }
+  const jobs = readStore(join20(home, JOBS_FILE));
   return files2.flatMap((file2) => {
     if (!file2.endsWith(".json")) return [];
     const r = readApproval(home, file2.slice(0, -5));
+    const job = r && jobs.find((j) => j.name === r.job && j.ownershipHistory?.length);
+    if (r && job) {
+      r.owner = job.rootName ?? job.owner ?? r.owner;
+      r.rootSession = job.rootSession;
+      r.parentJob = job.parentJob;
+    }
     return r ? [{
       id: r.id,
       owner: r.owner,
@@ -34006,7 +31768,7 @@ function listPendingApprovals(home) {
   }).sort((a, b) => a.askedAt - b.askedAt);
 }
 function newApprovalId() {
-  return randomUUID11();
+  return randomUUID7();
 }
 async function answerPendingApproval(home, id, body) {
   const r = readApproval(home, id);
@@ -34025,10 +31787,10 @@ async function answerPendingApproval(home, id, body) {
 }
 
 // src/core/codex-paths.ts
-import { realpathSync as realpathSync5 } from "node:fs";
-function codexDriveMappings(text, platform = process.platform, canonical = realpathSync5.native) {
+import { realpathSync as realpathSync4 } from "node:fs";
+function codexDriveMappings(text2, platform = process.platform, canonical = realpathSync4.native) {
   if (platform !== "win32") return [];
-  const drives = new Set([...text.matchAll(/\b([a-z]):[\\/]/gi)].map((m) => `${m[1].toUpperCase()}:\\`));
+  const drives = new Set([...text2.matchAll(/\b([a-z]):[\\/]/gi)].map((m) => `${m[1].toUpperCase()}:\\`));
   const mappings = [];
   for (const alias of drives) {
     try {
@@ -34040,13 +31802,13 @@ function codexDriveMappings(text, platform = process.platform, canonical = realp
   return mappings;
 }
 function codexPathPrompt(prompt, mappings) {
-  let text = prompt;
+  let text2 = prompt;
   for (const { alias, real } of mappings) {
     const drive = alias[0];
-    text = text.replace(new RegExp(`\\b${drive}:[\\\\/]`, "gi"), () => real);
+    text2 = text2.replace(new RegExp(`\\b${drive}:[\\\\/]`, "gi"), () => real);
   }
-  if (!mappings.length) return text;
-  return `${text}
+  if (!mappings.length) return text2;
+  return `${text2}
 
 (agent-bridge: Windows drive aliases resolved by the supervisor: ${mappings.map((m) => `${m.alias} = ${m.real}`).join(", ")}. These are the same folders. Use the real paths supplied above, including for new output files, without requesting path confirmation. In your report name both the requested alias and the real path.)`;
 }
@@ -34093,26 +31855,26 @@ function resolveBinary(bin, env = process.env, platform = process.platform) {
   const isWin = platform === "win32";
   const exts = isWin ? (env.PATHEXT ?? DEFAULT_PATHEXT).split(";").filter(Boolean) : [""];
   const candidates = (base2) => isWin && !extname(base2) ? exts.map((e) => base2 + e.toLowerCase()) : [base2];
-  if (isAbsolute5(bin) || bin.includes("/") || bin.includes("\\")) {
-    return candidates(bin).find((c) => existsSync16(c)) ?? null;
+  if (isAbsolute2(bin) || bin.includes("/") || bin.includes("\\")) {
+    return candidates(bin).find((c) => existsSync12(c)) ?? null;
   }
   for (const dir of (env.PATH ?? env.Path ?? "").split(delimiter)) {
     if (!dir) continue;
-    for (const c of candidates(join29(dir, bin))) if (existsSync16(c)) return c;
+    for (const c of candidates(join21(dir, bin))) if (existsSync12(c)) return c;
   }
   return null;
 }
-function unwrapNpmShim(shimPath, readFile2 = (p) => readFileSync15(p, "utf8")) {
-  let text;
+function unwrapNpmShim(shimPath, readFile2 = (p) => readFileSync9(p, "utf8")) {
+  let text2;
   try {
-    text = readFile2(shimPath);
+    text2 = readFile2(shimPath);
   } catch {
     return null;
   }
   const dir = win32.dirname(shimPath);
-  const exe = /"%~?dp0%?\\([^"]+?\.exe)"\s+%\*/i.exec(text);
+  const exe = /"%~?dp0%?\\([^"]+?\.exe)"\s+%\*/i.exec(text2);
   if (exe) return { command: win32.join(dir, exe[1]), prefix: [] };
-  const js = /"%~?dp0%?\\([^"]+?\.(?:c|m)?js)"\s+%\*/i.exec(text);
+  const js = /"%~?dp0%?\\([^"]+?\.(?:c|m)?js)"\s+%\*/i.exec(text2);
   if (js) return { command: process.execPath, prefix: [win32.join(dir, js[1])] };
   return null;
 }
@@ -34200,7 +31962,7 @@ function resolveCommand(bin, argsIn, env, log) {
   let needsShell = process.platform === "win32" && WINDOWS_SHIM_EXTS.has(extname(resolved).toLowerCase());
   if (needsShell) {
     const target = unwrapNpmShim(resolved);
-    if (target && existsSync16(target.command) && target.prefix.every((p) => existsSync16(p))) {
+    if (target && existsSync12(target.command) && target.prefix.every((p) => existsSync12(p))) {
       log.debug("unwrapped npm shim", { shim: resolved, command: target.command, prefix: target.prefix });
       resolved = target.command;
       args = [...target.prefix, ...args];
@@ -34385,7 +32147,7 @@ function parseCodexJsonl(stdout) {
 }
 function realFolder(dir) {
   try {
-    return realpathSync6.native(dir);
+    return realpathSync5.native(dir);
   } catch {
     return dir;
   }
@@ -34454,8 +32216,8 @@ function isClaudeReadOnly(mode) {
 }
 var CLAUDE_READ_ONLY_MODES = /* @__PURE__ */ new Set(["default", "manual", "plan"]);
 function bundledCli() {
-  const cli = join29(dirname13(fileURLToPath2(import.meta.url)), "cli.mjs");
-  return existsSync16(cli) ? cli : null;
+  const cli = join21(dirname12(fileURLToPath2(import.meta.url)), "cli.mjs");
+  return existsSync12(cli) ? cli : null;
 }
 function spawnsWithoutShell(bin, log) {
   try {
@@ -34573,8 +32335,8 @@ function parseOpencodeJsonl(stdout) {
       error62 = ev.error?.data?.message ?? ev.error?.message ?? ev.message ?? "opencode reported an error";
     }
   }
-  const text = (textByMessage.get(lastMessage) ?? []).join("");
-  return sawUsage ? { sessionId, text, error: error62, usage: { input: input2, output: output2 }, cost } : { sessionId, text, error: error62 };
+  const text2 = (textByMessage.get(lastMessage) ?? []).join("");
+  return sawUsage ? { sessionId, text: text2, error: error62, usage: { input: input2, output: output2 }, cost } : { sessionId, text: text2, error: error62 };
 }
 var opencodeVersions = /* @__PURE__ */ new Map();
 function opencodeV2(bin, cwd, log) {
@@ -34757,9 +32519,100 @@ ${tail}` : ""}`;
   }
 }
 
+// src/core/job-messaging.ts
+var DEFAULT_SIBLING_MAX_HOPS = 32;
+var MAX_JOB_SEND_TARGETS = 20;
+function isPureAcknowledgement(body) {
+  const text2 = body.trim();
+  return /^(?:ack(?:nowledged)?|received|thanks|thank you|understood|got it|noted|ok(?:ay)?|will do)[.!]?$/i.test(text2) || /^(?:understood|got it|noted|acknowledged)[,.!]?\s+(?:I['’]ll|I will|will)\s+[^\n.!?]{1,180}[.!]?$/i.test(text2) && !/\b(?:blocked|failed|error|cannot|can't|unless|but|commit|passed|ready)\b|https?:|\d/i.test(text2);
+}
+var EXACT_PEER_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+function isJobSendTarget(value) {
+  return typeof value === "string" && EXACT_PEER_NAME_PATTERN.test(value) && !AGENT_KINDS.includes(value);
+}
+function siblingMaxHops(maxHops) {
+  return maxHops > 0 ? Math.max(maxHops, DEFAULT_SIBLING_MAX_HOPS) : 0;
+}
+
 // src/core/config.ts
-import { readFileSync as readFileSync16, unwatchFile, watchFile } from "node:fs";
-import { basename as basename8, join as join30 } from "node:path";
+import { readFileSync as readFileSync11, unwatchFile, watchFile } from "node:fs";
+import { basename as basename5, join as join23 } from "node:path";
+
+// src/network/config.ts
+import { hostname as hostname3 } from "node:os";
+import { readFileSync as readFileSync10 } from "node:fs";
+import { isAbsolute as isAbsolute3, join as join22 } from "node:path";
+
+// src/network/constants.ts
+var NETWORK_VERSION = 1;
+var DEFAULT_NETWORK_PORT = 48148;
+var DISCOVERY_PORT = 48149;
+var DISCOVERY_GROUP = "239.255.48.49";
+var DISCOVERY_BIND = "0.0.0.0";
+var DISCOVERY_MULTICAST_TTL = 1;
+var DISCOVERY_INTERVAL_MS = 5e3;
+var DISCOVERY_TTL_MS = 2e4;
+var MAX_DISCOVERY_BYTES2 = 1024;
+var MAX_DISCOVERED_INSTANCES = 128;
+var MAX_NETWORK_PEERS = 256;
+var MAX_NETWORK_LINKS = 16;
+var MAX_NETWORK_FRAME_BYTES = 2 * 1024 * 1024;
+var MAX_NETWORK_REQUESTS = 64;
+var NETWORK_TIMEOUT_MS = 5e3;
+var NETWORK_REFRESH_MS = 2e3;
+var NETWORK_HEARTBEAT_TIMEOUT_MS = 3e4;
+var PAIRING_TTL_MS = 10 * 60 * 1e3;
+var PAIRING_KEY_BYTES = 32;
+var MAX_PAIRING_CODE_CHARS = 1024;
+var NETWORK_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+var MAX_NETWORK_NAME_CHARS = 64;
+var MAX_NETWORK_HOST_CHARS = 255;
+var MAX_PORT2 = 65535;
+var TLS_CIPHER = "TLS_AES_128_GCM_SHA256";
+var OWNER_FILE_MODE = 384;
+var OWNER_DIR_MODE = 448;
+
+// src/network/config.ts
+var MAX_FETCH_ROOT_CHARS = 1024;
+var MAX_FETCH_ROOTS = 128;
+var networkConfigSchema = external_exports.object({
+  enabled: external_exports.boolean().default(false),
+  name: external_exports.string().regex(NETWORK_NAME_PATTERN).default(hostname3().replace(/[^A-Za-z0-9._-]/g, "-").replace(/^[^A-Za-z0-9]+/, "").slice(0, MAX_NETWORK_NAME_CHARS) || "host"),
+  bind: external_exports.string().min(1).max(MAX_NETWORK_HOST_CHARS).default("127.0.0.1"),
+  port: external_exports.number().int().min(0).max(MAX_PORT2).default(DEFAULT_NETWORK_PORT),
+  discovery: external_exports.boolean().default(false),
+  remoteJobs: external_exports.object({
+    enabled: external_exports.boolean().default(false),
+    allowRoots: external_exports.array(external_exports.string().min(1).max(4096)).max(50).default([]),
+    agents: external_exports.array(external_exports.enum(CODING_AGENTS)).max(3).default([]),
+    /** Pair names explicitly permitted to request jobs; no pair is trusted implicitly. */
+    allowPeers: external_exports.array(external_exports.string().regex(NETWORK_NAME_PATTERN)).max(50).default([])
+  }).default({ enabled: false, allowRoots: [], agents: [], allowPeers: [] }),
+  maxTransferBytes: external_exports.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
+  fetchRoots: external_exports.array(external_exports.string().min(1).max(MAX_FETCH_ROOT_CHARS).refine(isAbsolute3, "fetch roots must be absolute paths")).max(MAX_FETCH_ROOTS).optional()
+});
+var DEFAULT_NETWORK_CONFIG = networkConfigSchema.parse({});
+function parseNetworkConfig(value) {
+  const result = networkConfigSchema.safeParse(value);
+  return result.success ? result.data : void 0;
+}
+function readNetworkConfig(home, fallback) {
+  try {
+    const value = JSON.parse(readFileSync10(join22(home, CONFIG_FILE_NAME), "utf8"));
+    return isRecord(value) ? parseNetworkConfig(value.network) ?? fallback : fallback;
+  } catch {
+    return fallback;
+  }
+}
+function writeNetworkConfig(home, value) {
+  const config2 = networkConfigSchema.parse(value);
+  const path = join22(home, CONFIG_FILE_NAME);
+  const previous = readJsonStore(path);
+  writeJsonStore(path, mergeStoreFields(isRecord(previous) ? previous : {}, { network: config2 }), previous);
+  return config2;
+}
+
+// src/core/config.ts
 var DELIVERY_MODES = ["auto", "channel", "hooks"];
 var CODEX_SANDBOXES = ["read-only", "workspace-write", "danger-full-access"];
 var CODEX_APPROVALS_REVIEWERS = ["user", "auto_review"];
@@ -34873,14 +32726,14 @@ function toolPatterns(v) {
   return list.map((x) => x.trim()).filter(Boolean);
 }
 function saveConfigValue(home, key2, value) {
-  const path = join30(home, CONFIG_FILE_NAME);
+  const path = join23(home, CONFIG_FILE_NAME);
   const previous = readJsonStore(path);
   const file2 = isRecord(previous) ? previous : {};
   writeJsonStore(path, { ...file2, [key2]: value }, previous);
 }
 function loadConfig(home, agent, log, env = process.env, projectDir) {
   let file2 = {};
-  const path = join30(home, CONFIG_FILE_NAME);
+  const path = join23(home, CONFIG_FILE_NAME);
   try {
     file2 = readJsonStore(path, log) ?? {};
     log.debug("config file loaded", { path });
@@ -34889,9 +32742,9 @@ function loadConfig(home, agent, log, env = process.env, projectDir) {
   }
   let project = {};
   if (projectDir) {
-    const localPath = join30(projectDir, ".agent-bridge", CONFIG_FILE_NAME);
+    const localPath = join23(projectDir, ".agent-bridge", CONFIG_FILE_NAME);
     try {
-      const value = JSON.parse(readFileSync16(localPath, "utf8"));
+      const value = JSON.parse(readFileSync11(localPath, "utf8"));
       if (isRecord(value)) project = value;
     } catch (err) {
       if (err.code !== "ENOENT") log.warn("ignoring unreadable project config", { path: localPath, err: String(err) });
@@ -34951,7 +32804,7 @@ function loadConfig(home, agent, log, env = process.env, projectDir) {
   return cfg;
 }
 function defaultPeerName(agent, cwd) {
-  const folder = basename8(cwd).replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^[-._]+/, "").slice(0, 40);
+  const folder = basename5(cwd).replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^[-._]+/, "").slice(0, 40);
   return `${agent}-${folder || "session"}`;
 }
 
@@ -34999,7 +32852,7 @@ function resolveOpencodeModel(input2, models2) {
 
 // src/core/opencode-served.ts
 import { spawn as spawn2 } from "node:child_process";
-import { randomBytes as randomBytes6 } from "node:crypto";
+import { randomBytes as randomBytes4 } from "node:crypto";
 import { extname as extname2 } from "node:path";
 var SERVE_START_TIMEOUT_MS = 3e4;
 var LISTEN_RE = /listening on (https?:\/\/[^\s]+)/i;
@@ -35102,7 +32955,7 @@ function permissionDetail(p) {
 async function delegateToOpencodeServed(req) {
   checkDepthPublic(req.maxDelegateDepth);
   const v2 = await opencodeV2(req.bin, req.cwd, req.log);
-  const password = randomBytes6(PASSWORD_BYTES).toString("hex");
+  const password = randomBytes4(PASSWORD_BYTES).toString("hex");
   const permissions = req.permissions === void 0 ? OPENCODE_ASK_PERMISSIONS : req.permissions;
   const env = childEnvPublic({
     ...req.extraEnv,
@@ -35126,8 +32979,8 @@ async function delegateToOpencodeServed(req) {
       signal: ac.signal
     });
     if (!res.ok) throw new DelegateError(`opencode API ${method} ${path} failed: HTTP ${res.status}`, "failed", await res.text().catch(() => ""));
-    const text = await res.text();
-    const parsed = text ? JSON.parse(text) : null;
+    const text2 = await res.text();
+    const parsed = text2 ? JSON.parse(text2) : null;
     return v2 ? parsed?.data ?? parsed : parsed;
   };
   let knownSession = req.sessionId ?? null;
@@ -35173,10 +33026,10 @@ async function delegateToOpencodeServed(req) {
           break;
         }
       }
-      const text2 = [...textByMessage.get(lastMessage) ?? []].sort(([a], [b]) => a - b).map(([, value]) => value).join("");
-      if (failure3 && !text2) throw new DelegateError(failure3, "failed", "", "", sessionId2);
-      if (!text2 && !failure3) throw new DelegateError("opencode event stream ended without a response", "failed", "", "", sessionId2);
-      return { sessionId: sessionId2, text: text2, isError: failure3 !== null, details: { error: failure3, usage, costUsd } };
+      const text3 = [...textByMessage.get(lastMessage) ?? []].sort(([a], [b]) => a - b).map(([, value]) => value).join("");
+      if (failure3 && !text3) throw new DelegateError(failure3, "failed", "", "", sessionId2);
+      if (!text3 && !failure3) throw new DelegateError("opencode event stream ended without a response", "failed", "", "", sessionId2);
+      return { sessionId: sessionId2, text: text3, isError: failure3 !== null, details: { error: failure3, usage, costUsd } };
     }
     const sessionId = req.sessionId ?? (await api("POST", "/session", {})).id;
     req.onSession?.(sessionId);
@@ -35229,12 +33082,12 @@ async function delegateToOpencodeServed(req) {
     if (failure2 && !alive3) throw new DelegateError(failure2, "failed", "", "", sessionId);
     const messages = await api("GET", `/session/${sessionId}/message`) ?? [];
     const last = [...messages].reverse().find((m) => m.info?.role === "assistant");
-    const text = (last?.parts ?? []).filter((part) => part.type === "text" && typeof part.text === "string").map((part) => part.text).join("");
-    if (failure2 && !text) throw new DelegateError(failure2, "failed", "", "", sessionId);
+    const text2 = (last?.parts ?? []).filter((part) => part.type === "text" && typeof part.text === "string").map((part) => part.text).join("");
+    if (failure2 && !text2) throw new DelegateError(failure2, "failed", "", "", sessionId);
     const tokens = last?.info?.tokens;
     return {
       sessionId,
-      text,
+      text: text2,
       isError: failure2 !== null,
       details: {
         error: failure2,
@@ -35577,9 +33430,9 @@ ${message}`, text_elements: [] }] });
 ${approvalsReviewer === "auto_review" ? AUTO_REVIEW_ASK_HINT : CODEX_ASK_HINT}` : req.prompt;
     step = "turn/start";
     const sandboxPolicy = codexTurnSandbox(req.sandbox, cwd, req.writableRoots?.map(realFolder), thread?.sandbox, req.networkAccess);
-    const startTurn = (text) => request2("turn/start", {
+    const startTurn = (text2) => request2("turn/start", {
       threadId,
-      input: [{ type: "text", text, text_elements: [] }],
+      input: [{ type: "text", text: text2, text_elements: [] }],
       ...req.model ? { model: req.model } : {},
       sandboxPolicy,
       approvalPolicy,
@@ -35803,10 +33656,51 @@ function parseJobSettings(input2, agent) {
   return settings;
 }
 
+// src/core/run-archive.ts
+import { copyFileSync as copyFileSync3, existsSync as existsSync13, mkdirSync as mkdirSync11, readFileSync as readFileSync12, readdirSync as readdirSync7, renameSync as renameSync4, statSync as statSync6 } from "node:fs";
+import { basename as basename6, join as join24 } from "node:path";
+var DEFAULT_ARCHIVE_AGE_MS = 30 * 24 * 60 * 60 * 1e3;
+var ARCHIVE_AGE_ENV = "AGENT_BRIDGE_ARCHIVE_AGE_MS";
+var FINISHED_RUN = /^\d\d:\d\d:\d\d finished after \d+s · /m;
+function archiveRun(log) {
+  if (!FINISHED_RUN.test(readFileSync12(log, "utf8"))) return;
+  const dir = join24(log, "..", "archive");
+  mkdirSync11(dir, { recursive: true, mode: 448 });
+  const target = join24(dir, basename6(log));
+  if (existsSync13(target)) throw new Error(`run archive already exists: ${target}`);
+  const meta3 = log.replace(/\.log$/, ".json");
+  const archivedMeta = target.replace(/\.log$/, ".json");
+  if (existsSync13(meta3)) {
+    if (existsSync13(archivedMeta)) throw new Error(`run metadata archive already exists: ${archivedMeta}`);
+    copyFileSync3(meta3, archivedMeta);
+  }
+  renameSync4(log, target);
+  if (existsSync13(meta3)) renameSync4(meta3, archivedMeta);
+}
+function runLogFiles(home) {
+  const dir = join24(home, "runs");
+  return [dir, join24(dir, "archive")].flatMap((root) => existsSync13(root) ? readdirSync7(root).filter((f) => /\.log(?:-\d+-[\w-]+)?$/.test(f)).map((f) => join24(root, f)) : []);
+}
+function runFileName(path) {
+  return basename6(path).replace(/(\.log)-\d+-[\w-]+$/, "$1");
+}
+function archiveOldRuns(home, now = Date.now()) {
+  const age = retentionLimit(ARCHIVE_AGE_ENV, DEFAULT_ARCHIVE_AGE_MS);
+  if (!age) return 0;
+  let count = 0;
+  for (const file2 of runLogFiles(home).filter((p) => !p.includes(`${join24("runs", "archive")}`))) {
+    if (statSync6(file2).mtimeMs < now - age && FINISHED_RUN.test(readFileSync12(file2, "utf8"))) {
+      archiveRun(file2);
+      count++;
+    }
+  }
+  return count;
+}
+
 // src/core/notifications.ts
 import { spawn as spawn4 } from "node:child_process";
-import { mkdirSync as mkdirSync16, readFileSync as readFileSync17, rmdirSync, statSync as statSync10, writeFileSync as writeFileSync8 } from "node:fs";
-import { join as join31 } from "node:path";
+import { mkdirSync as mkdirSync12, readFileSync as readFileSync13, rmdirSync, statSync as statSync7, writeFileSync as writeFileSync5 } from "node:fs";
+import { join as join25 } from "node:path";
 var TITLE = "agent-bridge";
 var TEXT = {
   approvals: "A subagent needs approval. Open the agent-bridge dashboard.",
@@ -35862,23 +33756,23 @@ var NotificationLimiter = class {
 };
 var limiter = new NotificationLimiter();
 function takeNotificationSlot(home, event, now = Date.now()) {
-  const lock = join31(home, RATE_LOCK_DIR);
+  const lock = join25(home, RATE_LOCK_DIR);
   try {
     try {
-      mkdirSync16(lock);
+      mkdirSync12(lock);
     } catch {
-      if (now - statSync10(lock).mtimeMs < NOTIFICATION_TIMEOUT_MS) return false;
+      if (now - statSync7(lock).mtimeMs < NOTIFICATION_TIMEOUT_MS) return false;
       rmdirSync(lock);
-      mkdirSync16(lock);
+      mkdirSync12(lock);
     }
   } catch {
     return false;
   }
   try {
-    const file2 = join31(home, RATE_STATE_FILE);
+    const file2 = join25(home, RATE_STATE_FILE);
     let state = { times: [], events: {} };
     try {
-      const stored = JSON.parse(readFileSync17(file2, "utf8"));
+      const stored = JSON.parse(readFileSync13(file2, "utf8"));
       if (Array.isArray(stored.times) && stored.times.every((at) => typeof at === "number") && stored.events && typeof stored.events === "object") state = stored;
     } catch {
     }
@@ -35887,7 +33781,7 @@ function takeNotificationSlot(home, event, now = Date.now()) {
     if (typeof last === "number" && now - last < EVENT_INTERVAL_MS || state.times.length >= MAX_NOTIFICATIONS_PER_WINDOW) return false;
     state.times.push(now);
     state.events[event] = now;
-    writeFileSync8(file2, JSON.stringify(state), { mode: 384 });
+    writeFileSync5(file2, JSON.stringify(state), { mode: 384 });
     return true;
   } catch {
     return false;
@@ -35929,13 +33823,13 @@ function notifyJobEvent(home, event, log) {
 }
 
 // src/core/root-concurrency.ts
-import { createHash as createHash10 } from "node:crypto";
-import { join as join33 } from "node:path";
+import { createHash as createHash5 } from "node:crypto";
+import { join as join27 } from "node:path";
 import { DatabaseSync as DatabaseSync12 } from "node:sqlite";
 
 // src/core/resource-slots.ts
-import { mkdirSync as mkdirSync17 } from "node:fs";
-import { join as join32 } from "node:path";
+import { mkdirSync as mkdirSync13 } from "node:fs";
+import { join as join26 } from "node:path";
 import { DatabaseSync as DatabaseSync11 } from "node:sqlite";
 import { setTimeout as delay2 } from "node:timers/promises";
 var SLOT_OWNER_ENV = "AGENT_BRIDGE_SLOT_OWNER";
@@ -35957,8 +33851,8 @@ var ResourceSlots = class {
   constructor(home, isAlive = alive, now = Date.now) {
     this.isAlive = isAlive;
     this.now = now;
-    mkdirSync17(home, { recursive: true });
-    this.db = new DatabaseSync11(join32(home, SLOT_DB_NAME));
+    mkdirSync13(home, { recursive: true });
+    this.db = new DatabaseSync11(join26(home, SLOT_DB_NAME));
     this.db.exec(`PRAGMA busy_timeout = ${LOCK_WAIT_MS};
       CREATE TABLE IF NOT EXISTS slots (
         ticket INTEGER PRIMARY KEY AUTOINCREMENT, resource TEXT NOT NULL, id TEXT NOT NULL,
@@ -36029,6 +33923,16 @@ var ResourceSlots = class {
   close() {
     this.db.close();
   }
+  /** Move live root leases without enforcing capacity: inherited work must keep running. */
+  moveJobs(resource, names) {
+    this.transaction(() => {
+      for (const row of this.db.prepare("SELECT ticket, id, resource FROM slots WHERE resource LIKE 'root-%'").all()) {
+        if (row.resource !== resource && names.some((name2) => String(row.id).startsWith(`${name2}-`))) {
+          this.db.prepare("UPDATE slots SET resource=? WHERE ticket=?").run(resource, row.ticket);
+        }
+      }
+    });
+  }
 };
 function slotOwner(env = process.env) {
   const pid = Number(env[SLOT_PID_ENV] || process.ppid);
@@ -36046,9 +33950,9 @@ var LOCK_WAIT_MS2 = 3e3;
 var RootConcurrency = class {
   constructor(home, rootSession) {
     this.rootSession = rootSession;
-    this.resource = `root-${createHash10("sha256").update(rootSession).digest("hex").slice(0, 40)}`;
+    this.resource = `root-${createHash5("sha256").update(rootSession).digest("hex").slice(0, 40)}`;
     this.slots = new ResourceSlots(home);
-    this.db = new DatabaseSync12(join33(home, ROOT_LIMIT_DB));
+    this.db = new DatabaseSync12(join27(home, ROOT_LIMIT_DB));
     this.db.exec(`PRAGMA busy_timeout = ${LOCK_WAIT_MS2}; CREATE TABLE IF NOT EXISTS root_limits (root TEXT PRIMARY KEY, capacity INTEGER NOT NULL);`);
   }
   rootSession;
@@ -36074,11 +33978,15 @@ var RootConcurrency = class {
     this.slots.release(owner, this.resource);
     return false;
   }
+  moveJobs(names) {
+    this.slots.moveJobs(this.resource, names);
+  }
+  // Lease ids are unique per turn. A handoff may have moved their resource since acquisition.
   release(owner) {
-    this.slots.release(owner, this.resource);
+    this.slots.release(owner);
   }
   renew(owner) {
-    this.slots.renew(owner, this.resource);
+    this.slots.renew(owner);
   }
   close() {
     this.slots.close();
@@ -36086,15 +33994,23 @@ var RootConcurrency = class {
   }
 };
 
+// src/core/completion.ts
+import { createHash as createHash6 } from "node:crypto";
+function completionMessageId(sender, reportId) {
+  const hex3 = createHash6("sha256").update(JSON.stringify(["job-completion", sender, reportId])).digest("hex");
+  return `${hex3.slice(0, 8)}-${hex3.slice(8, 12)}-5${hex3.slice(13, 16)}-8${hex3.slice(17, 20)}-${hex3.slice(20, 32)}`;
+}
+var COMPLETION_DEDUPE_PREFIX = "job-completion:";
+
 // src/mcp/jobs.ts
 var INTERRUPTED_LISTED_MS = 24 * 60 * 60 * 1e3;
 var NOTE_CONVERSATION_SUFFIX = ":note";
 var QUEUED_FOLLOW_UP_NOTE = "(Your queued follow-up was sent to it; its answer will arrive as another message.)";
-function jobReport(job, status, seconds, text, cause) {
+function jobReport(job, status, seconds, text2, cause) {
   const how = job.sessionId ? status === "failed" ? ` To recover it with its context, call message_subagent(job="${job.name}") (optionally with a message).` : ` Continue it with its context: message_subagent(job="${job.name}", message=...).` : "";
   const header = `Subagent ${job.name} (${job.agent}${job.model ? `, model ${job.model}` : ""}) ${status} after ${seconds}s.${how}`;
-  return [header, cause ? `Cause: ${cause}` : "", text && cause ? `Its last message:
-${text}` : text].filter(Boolean).join("\n\n");
+  return [header, cause ? `Cause: ${cause}` : "", text2 && cause ? `Its last message:
+${text2}` : text2].filter(Boolean).join("\n\n");
 }
 var approvalAnswers = /* @__PURE__ */ new WeakMap();
 function denyPendingApprovals(job, reason = "job finished") {
@@ -36232,17 +34148,17 @@ var LOCK_WAIT_MS3 = 2e3;
 var LOCK_STALE_MS = 1e4;
 var LOCK_RETRY_MS = 20;
 function acquireLock(path, waitMs = LOCK_WAIT_MS3) {
-  mkdirSync18(dirname14(path), { recursive: true });
+  mkdirSync14(dirname13(path), { recursive: true });
   const deadline = Date.now() + waitMs;
   const pause = new Int32Array(new SharedArrayBuffer(4));
   for (; ; ) {
     try {
       closeSync9(openSync9(path, "wx"));
-      return () => rmSync4(path, { force: true });
+      return () => rmSync3(path, { force: true });
     } catch (err) {
       if (err.code !== "EEXIST") throw err;
       try {
-        if (Date.now() - statSync11(path).mtimeMs > LOCK_STALE_MS) rmSync4(path, { force: true });
+        if (Date.now() - statSync8(path).mtimeMs > LOCK_STALE_MS) rmSync3(path, { force: true });
       } catch {
       }
       if (Date.now() >= deadline) throw Object.assign(new Error("timed out locking jobs store"), { code: "EJOBLOCKED" });
@@ -36251,9 +34167,2323 @@ function acquireLock(path, waitMs = LOCK_WAIT_MS3) {
   }
 }
 
+// src/core/job-handoff.ts
+var handoffSchema = external_exports.object({
+  to: external_exports.string().min(1).max(64),
+  jobs: external_exports.union([external_exports.literal("all"), external_exports.array(external_exports.string().min(1).max(80)).min(1).max(1e3)]).default("all"),
+  note: external_exports.string().max(4e3).optional()
+}).strict();
+function commitHandoff(path, source, target, input2, options = {}) {
+  const args = handoffSchema.parse(input2);
+  if (source.jobAgent) throw new BridgeError("unauthorized", "Only the current supervisor session can hand off its own jobs.");
+  if (target.host || target.name.includes("/") || target.jobAgent || !CODING_AGENTS.includes(target.agent)) {
+    throw new BridgeError("bad_request", "The target must be an exact live local Claude Code, Codex or opencode session. Paired-PC handoff is not supported.");
+  }
+  if (target.name === source.name && options.reason !== "group-restored") throw new BridgeError("bad_request", "Choose another local supervisor session.");
+  const unlock = acquireLock(`${path}.lock`, 0);
+  try {
+    let previous = null;
+    try {
+      previous = JSON.parse(readFileSync14(path, "utf8"));
+    } catch (err) {
+      if (err.code !== "ENOENT") throw err;
+    }
+    const migrated = migrateJobOwnership(previous);
+    const activeRecords = migrated.jobs;
+    const byId = /* @__PURE__ */ new Map();
+    for (const j of [...readArchivedJobSnapshot(path).jobs, ...activeRecords]) {
+      if (isRecord(j) && typeof j.id === "string" && typeof j.name === "string") byId.set(j.id, j);
+    }
+    const records = [...byId.values()];
+    const own2 = records.filter((j) => j.owner === source.name && !j.parentJob);
+    const selected = args.jobs === "all" ? own2 : args.jobs.map((name2) => {
+      const job = own2.find((j) => j.name === name2);
+      if (!job) throw new BridgeError("unauthorized", `Job ${name2} is not owned by the current supervisor (use an exact job name).`);
+      return job;
+    });
+    const moved = new Set(selected.map((j) => j.name));
+    for (let changed = true; changed; ) {
+      changed = false;
+      for (const j of records) if (j.parentJob && moved.has(j.parentJob) && !moved.has(j.name)) {
+        moved.add(j.name);
+        changed = true;
+      }
+    }
+    const jobs = records.filter((j) => moved.has(j.name));
+    if (!jobs.length) throw new BridgeError("bad_request", "This supervisor has no jobs to hand off.");
+    if (jobs.some((j) => j.remote || j.args?.host)) throw new BridgeError("bad_request", "Remote jobs (remote-jobs-v1) cannot be handed off yet. Select only local jobs; no jobs were moved.");
+    const existing = records.find((j) => j.owner === target.name && !j.parentJob && j.supervisor);
+    const rootSession = existing?.supervisor ?? target.sessionId ?? target.id;
+    const receipt = {
+      id: randomUUID9(),
+      at: Date.now(),
+      from: source.name,
+      to: target.name,
+      rootSession,
+      note: args.note,
+      reason: options.reason ?? "explicit-handoff",
+      jobs: jobs.map((j) => ({
+        id: j.id,
+        name: j.name,
+        title: String(j.args?.title ?? "Untitled job"),
+        status: j.status,
+        from: j.owner ?? source.name,
+        to: j.parentJob ?? target.name,
+        oldRoot: j.rootName
+      }))
+    };
+    const updates = new Map(jobs.map((j) => {
+      const history = j.ownershipHistory;
+      const change = {
+        id: receipt.id,
+        at: receipt.at,
+        from: j.owner ?? source.name,
+        to: j.parentJob ?? target.name,
+        fromRoot: j.rootSession,
+        fromRootName: j.rootName,
+        rootSession,
+        rootName: target.name,
+        note: args.note,
+        reason: receipt.reason
+      };
+      const sendTo = j.args?.send_to;
+      return [j.id, {
+        ...j,
+        owner: change.to,
+        supervisor: rootSession,
+        rootSession,
+        rootName: target.name,
+        masters: [.../* @__PURE__ */ new Set([target.name, source.name, ...Array.isArray(j.masters) ? j.masters : []])],
+        ...j.status === "running" && !j.host ? { executionOwner: j.executionOwner ?? j.owner } : {},
+        args: { ...j.args, ...Array.isArray(sendTo) ? { send_to: [...new Set(sendTo.map((name2) => name2 === source.name ? target.name : name2))] } : {} },
+        ownershipHistory: [...Array.isArray(history) ? history : [], change]
+      }];
+    }));
+    const active = Array.isArray(previous) ? previous : isRecord(previous) && Array.isArray(previous.jobs) ? previous.jobs : [];
+    const ids = new Set(active.filter(isRecord).map((j) => j.id));
+    const all = active.map((j) => isRecord(j) ? updates.get(String(j.id)) ?? j : j);
+    for (const [id, job] of updates) if (!ids.has(id)) all.push(job);
+    const journal = isRecord(previous) && Array.isArray(previous.handoffs) ? previous.handoffs : [];
+    writeJsonStore(path, { ...migrated, jobs: all, handoffs: [...journal, receipt] }, previous);
+    return receipt;
+  } finally {
+    unlock();
+  }
+}
+function handoffJournal(path) {
+  const value = readJobsDocument(path);
+  return isRecord(value) && Array.isArray(value.handoffs) ? value.handoffs : [];
+}
+function migrateJobOwnership(previous) {
+  assertWritableStore(previous);
+  if (previous !== null && !Array.isArray(previous) && (!isRecord(previous) || !Array.isArray(previous.jobs))) throw new Error("Invalid job registry; migration left it untouched.");
+  const jobs = Array.isArray(previous) ? previous : isRecord(previous) ? previous.jobs : [];
+  if (isRecord(previous) && previous.handoffs !== void 0 && !Array.isArray(previous.handoffs)) throw new Error("Invalid handoff history; migration left it untouched.");
+  return { ...isRecord(previous) ? previous : {}, version: JSON_STORE_VERSION, jobs, handoffs: isRecord(previous) ? previous.handoffs ?? [] : [] };
+}
+
+// src/network/link.ts
+import { randomBytes as randomBytes6, randomUUID as randomUUID13 } from "node:crypto";
+import { connect as connect2, createServer as createServer3 } from "node:tls";
+
+// src/network/discovery.ts
+import { createSocket } from "node:dgram";
+import { isIPv4 } from "node:net";
+import { networkInterfaces } from "node:os";
+
+// src/network/pairing.ts
+import { execFileSync as execFileSync2 } from "node:child_process";
+import { createHash as createHash7, randomBytes as randomBytes5, randomUUID as randomUUID10 } from "node:crypto";
+import { chmodSync as chmodSync2, existsSync as existsSync14, mkdirSync as mkdirSync15, readFileSync as readFileSync15, renameSync as renameSync5, writeFileSync as writeFileSync6 } from "node:fs";
+import { join as join28 } from "node:path";
+var DEFAULT_SYSTEM_ROOT = "C:\\Windows";
+var SYSTEM32 = join28(process.env.SystemRoot || DEFAULT_SYSTEM_ROOT, "System32");
+var WHOAMI = join28(SYSTEM32, "whoami.exe");
+var ICACLS = join28(SYSTEM32, "icacls.exe");
+var keySchema = external_exports.string().regex(/^[0-9a-f]{64}$/);
+var identitySchema = external_exports.object({ id: external_exports.uuid(), key: keySchema });
+var publicIdentitySchema = external_exports.object({ id: external_exports.uuid(), name: external_exports.string().regex(NETWORK_NAME_PATTERN), fingerprint: keySchema });
+var invitationSchema = external_exports.object({ key: keySchema, expiresAt: external_exports.number().int() });
+var pairSchema = publicIdentitySchema.extend({ key: keySchema, host: external_exports.string().min(1).max(MAX_NETWORK_HOST_CHARS).optional(), port: external_exports.number().int().min(1).max(MAX_PORT2).optional() });
+var stateSchema = external_exports.object({ identity: identitySchema, invitations: external_exports.array(invitationSchema).max(MAX_NETWORK_LINKS), pairs: external_exports.array(pairSchema).max(MAX_NETWORK_LINKS) });
+var codeSchema = publicIdentitySchema.extend({ v: external_exports.literal(NETWORK_VERSION), key: keySchema });
+function keyFingerprint(key2) {
+  return createHash7("sha256").update(Buffer.from(key2, "hex")).digest("hex");
+}
+var ACL_PRINCIPAL = /([^\s:][^:]*?):\(/;
+function protect(path, mode) {
+  if (process.platform !== "win32") return chmodSync2(path, mode);
+  const [account, sid] = (execFileSync2(WHOAMI, ["/user", "/fo", "csv", "/nh"], { encoding: "utf8", windowsHide: true }).match(/"([^"]+)","(S-\d+(?:-\d+)+)"/) ?? []).slice(1);
+  if (!sid || !account) throw new Error("cannot identify the account for network key permissions");
+  const grant = mode === OWNER_DIR_MODE ? `*${sid}:(OI)(CI)F` : `*${sid}:F`;
+  execFileSync2(ICACLS, [path, "/inheritance:r", "/grant:r", grant, "/Q"], { windowsHide: true, stdio: "pipe" });
+  const others = execFileSync2(ICACLS, [path], { encoding: "utf8", windowsHide: true }).split(/\r?\n/).map((line) => (line.startsWith(path) ? line.slice(path.length) : line).trim()).map((line) => ACL_PRINCIPAL.exec(line)?.[1]).filter((p) => Boolean(p) && p.toLowerCase() !== account.toLowerCase());
+  for (const principal of new Set(others)) execFileSync2(ICACLS, [path, "/remove:g", principal, "/Q"], { windowsHide: true, stdio: "pipe" });
+  const acl = execFileSync2(ICACLS, [path], { encoding: "utf8", windowsHide: true });
+  if ((acl.match(/:\(/g) ?? []).length !== 1 || acl.includes("(I)")) throw new Error("network key location has additional ACL grants; restrict it to the current account");
+}
+function decodePairingCode(code) {
+  if (code.length > MAX_PAIRING_CODE_CHARS || !/^[A-Za-z0-9_-]+$/.test(code)) throw new Error("invalid pairing code");
+  return codeSchema.parse(JSON.parse(Buffer.from(code, "base64url").toString("utf8")));
+}
+var PairingStore = class {
+  constructor(home, name2, now = Date.now) {
+    this.name = name2;
+    this.now = now;
+    if (!NETWORK_NAME_PATTERN.test(name2)) throw new Error("invalid network instance name");
+    this.dir = join28(home, "network");
+    this.file = join28(this.dir, "keys.json");
+    mkdirSync15(this.dir, { recursive: true, mode: OWNER_DIR_MODE });
+    protect(this.dir, OWNER_DIR_MODE);
+    if (existsSync14(this.file)) {
+      protect(this.file, OWNER_FILE_MODE);
+      this.state = stateSchema.parse(JSON.parse(readFileSync15(this.file, "utf8")));
+    } else {
+      this.state = { identity: { id: randomUUID10(), key: randomBytes5(PAIRING_KEY_BYTES).toString("hex") }, invitations: [], pairs: [] };
+      this.save();
+    }
+  }
+  name;
+  now;
+  dir;
+  file;
+  state;
+  get identity() {
+    return { id: this.state.identity.id, name: this.name, fingerprint: keyFingerprint(this.state.identity.key) };
+  }
+  pairs() {
+    return this.state.pairs.map((p) => ({ ...p }));
+  }
+  invite() {
+    return this.inviteWithExpiry().code;
+  }
+  inviteWithExpiry() {
+    this.state.invitations = this.state.invitations.filter((p) => p.expiresAt > this.now());
+    if (this.state.invitations.length + this.state.pairs.length >= MAX_NETWORK_LINKS) throw new Error("network pairing limit reached");
+    const key2 = randomBytes5(PAIRING_KEY_BYTES).toString("hex");
+    const expiresAt = this.now() + PAIRING_TTL_MS;
+    this.state.invitations.push({ key: key2, expiresAt });
+    this.save();
+    return { code: Buffer.from(JSON.stringify({ v: NETWORK_VERSION, ...this.identity, key: key2 })).toString("base64url"), expiresAt };
+  }
+  keyFor(identity) {
+    return this.state.pairs.find((p) => keyFingerprint(p.key) === identity)?.key ?? this.state.invitations.find((p) => p.expiresAt > this.now() && keyFingerprint(p.key) === identity)?.key;
+  }
+  accept(key2, remote) {
+    if (remote.id === this.identity.id || remote.name === this.name) throw new Error("network instance ids and names must differ");
+    const known = this.state.pairs.find((p) => p.key === key2);
+    if (known) {
+      if (known.id !== remote.id || known.name !== remote.name || known.fingerprint !== remote.fingerprint) throw new Error("paired identity changed");
+      return known;
+    }
+    const invitation = this.state.invitations.find((p) => p.key === key2 && p.expiresAt > this.now());
+    if (!invitation) throw new Error("pairing code expired or revoked");
+    this.checkNew(remote);
+    const pair = { ...remote, key: key2 };
+    this.state.pairs.push(pair);
+    this.state.invitations = this.state.invitations.filter((p) => p !== invitation);
+    this.save();
+    return pair;
+  }
+  remember(code, host, port) {
+    const parsed = this.validatePair(code, host, port);
+    this.state.pairs = this.state.pairs.filter((p) => p.id !== parsed.id);
+    this.state.pairs.push(parsed);
+    this.save();
+    return parsed;
+  }
+  validatePair(code, host, port) {
+    const parsed = pairSchema.parse({ id: code.id, name: code.name, fingerprint: code.fingerprint, key: code.key, host, port });
+    const old = this.state.pairs.find((p) => p.id === code.id);
+    if (old && (old.key !== code.key || old.fingerprint !== code.fingerprint || old.name !== code.name)) throw new Error("unlink the existing peer before pairing again");
+    if (!old) this.checkNew(parsed);
+    return parsed;
+  }
+  checkNew(remote) {
+    if (remote.id === this.identity.id || remote.name === this.name) throw new Error("cannot pair with this instance");
+    if (this.state.pairs.length >= MAX_NETWORK_LINKS) throw new Error("network pairing limit reached");
+    if (this.state.pairs.some((p) => p.id === remote.id || p.name === remote.name)) throw new Error("instance already paired; unlink it first");
+  }
+  remove(id) {
+    this.state.pairs = this.state.pairs.filter((p) => p.id !== id);
+    this.save();
+  }
+  save() {
+    const temp = join28(this.dir, `${randomUUID10()}.tmp`);
+    writeFileSync6(temp, JSON.stringify(this.state, null, 2) + "\n", { mode: OWNER_FILE_MODE, flag: "wx" });
+    protect(temp, OWNER_FILE_MODE);
+    renameSync5(temp, this.file);
+  }
+};
+
+// src/network/discovery.ts
+var announcementSchema = publicIdentitySchema.extend({ service: external_exports.literal("agent-bridge"), v: external_exports.literal(NETWORK_VERSION), port: external_exports.number().int().min(1).max(MAX_PORT2) });
+var VIRTUAL_INTERFACE = /vethernet|hyper-v|wsl|docker|vbox|vmware|virtualbox|^virbr|^br-|^utun|^tun\d|^tap\d|^tailscale|^wg\d/i;
+var IPV4_BITS = 32;
+var IPV4_OCTET_BITS = 8;
+var IPV4_OCTET_MASK = 255;
+var MIN_BROADCAST_HOST_MASK = 3;
+var ipv4Number = (address) => address.split(".").reduce((value, octet) => value << IPV4_OCTET_BITS | Number(octet), 0) >>> 0;
+var ipv4Address = (value) => Array.from({ length: IPV4_BITS / IPV4_OCTET_BITS }, (_, i) => value >>> IPV4_BITS - IPV4_OCTET_BITS * (i + 1) & IPV4_OCTET_MASK).join(".");
+function discoveryInterfaces(all) {
+  const interfaces = [], skippedInterfaces = [];
+  for (const [name2, addresses] of Object.entries(all)) for (const entry of addresses ?? []) {
+    if (entry.family !== "IPv4") continue;
+    let reason = "";
+    if (entry.internal || entry.address.startsWith("127.")) reason = "loopback";
+    else if (VIRTUAL_INTERFACE.test(name2)) reason = "virtual or tunnel adapter";
+    else if (entry.address.startsWith("169.254.") || entry.address === "0.0.0.0") reason = "no LAN address";
+    else if (!isIPv4(entry.address) || !isIPv4(entry.netmask)) reason = "invalid IPv4 subnet";
+    else {
+      const mask = ipv4Number(entry.netmask), hostMask = ~mask >>> 0;
+      if (mask === 0 || hostMask < MIN_BROADCAST_HOST_MASK || (hostMask & hostMask + 1) !== 0) reason = "no broadcast subnet";
+    }
+    if (reason) skippedInterfaces.push({ name: name2, address: entry.address, reason });
+    else if (!interfaces.some((item) => item.address === entry.address)) interfaces.push({
+      name: name2,
+      address: entry.address,
+      netmask: entry.netmask,
+      broadcast: ipv4Address(ipv4Number(entry.address) | ~ipv4Number(entry.netmask))
+    });
+  }
+  return { interfaces, skippedInterfaces };
+}
+var NetworkDiscovery = class {
+  constructor(opts) {
+    this.opts = opts;
+    this.now = opts.now ?? Date.now;
+  }
+  opts;
+  socket = null;
+  timer = null;
+  found = /* @__PURE__ */ new Map();
+  now;
+  senders = /* @__PURE__ */ new Map();
+  refreshing = null;
+  skippedInterfaces = [];
+  lastSentAt = null;
+  lastReceivedAt = null;
+  lastError = null;
+  get port() {
+    return this.socket?.address().port ?? 0;
+  }
+  diagnostics() {
+    return {
+      bind: this.opts.bind ?? DISCOVERY_BIND,
+      port: this.port,
+      multicastGroup: DISCOVERY_GROUP,
+      multicastTTL: DISCOVERY_MULTICAST_TTL,
+      interfaces: [...this.senders.values()].map(({ info }) => ({ ...info })),
+      skippedInterfaces: this.skippedInterfaces.map((entry) => ({ ...entry })),
+      lastSentAt: this.lastSentAt,
+      lastReceivedAt: this.lastReceivedAt,
+      lastError: this.lastError && { ...this.lastError }
+    };
+  }
+  error(error62) {
+    this.lastError = { at: this.now(), message: error62.message };
+    this.opts.onError?.(error62);
+  }
+  makeSocket() {
+    const socket = this.opts.createSocket?.() ?? createSocket({ type: "udp4", reuseAddr: true });
+    socket.on("error", (err) => this.error(err));
+    return socket;
+  }
+  bind(socket, port, address) {
+    return new Promise((resolve15, reject) => {
+      socket.once("error", reject);
+      socket.bind(port, address, () => {
+        socket.off("error", reject);
+        resolve15();
+      });
+    });
+  }
+  async refreshInterfaces() {
+    const listener = this.socket;
+    if (!listener) return;
+    const selection = discoveryInterfaces((this.opts.interfaces ?? networkInterfaces)());
+    this.skippedInterfaces = selection.skippedInterfaces;
+    for (const [address, sender] of this.senders) if (!selection.interfaces.some((entry) => entry.address === address && entry.netmask === sender.info.netmask)) {
+      if (sender.info.multicast) {
+        try {
+          listener.dropMembership(DISCOVERY_GROUP, address);
+        } catch {
+        }
+      }
+      await this.closeSocket(sender.socket);
+      this.senders.delete(address);
+    }
+    for (const entry of selection.interfaces) {
+      if (this.senders.has(entry.address)) continue;
+      const socket = this.makeSocket();
+      try {
+        await this.bind(socket, 0, entry.address);
+        socket.setBroadcast(true);
+        const info = { ...entry, announcing: true, multicast: false, lastSentAt: null };
+        this.senders.set(entry.address, { socket, info });
+        try {
+          socket.setMulticastTTL(DISCOVERY_MULTICAST_TTL);
+          socket.setMulticastInterface(entry.address);
+          listener.addMembership(DISCOVERY_GROUP, entry.address);
+          info.multicast = true;
+        } catch (err) {
+          this.error(new Error(`Discovery multicast on ${entry.name} (${entry.address}): ${err.message}`));
+        }
+      } catch (err) {
+        this.error(new Error(`Discovery interface ${entry.name} (${entry.address}): ${err.message}`));
+        await this.closeSocket(socket);
+      }
+    }
+  }
+  async start() {
+    if (this.socket) throw new Error("network discovery already started");
+    const socket = this.makeSocket();
+    this.socket = socket;
+    socket.on("message", (data, source) => this.observe(data, source.address));
+    try {
+      await this.bind(socket, this.opts.udpPort ?? DISCOVERY_PORT, this.opts.bind ?? DISCOVERY_BIND);
+    } catch (err) {
+      await this.close();
+      throw err;
+    }
+    this.timer = setInterval(() => {
+      void this.announce();
+    }, DISCOVERY_INTERVAL_MS);
+    this.timer.unref();
+    await this.announce();
+  }
+  async announce(port = this.opts.udpPort === 0 ? this.port : this.opts.udpPort ?? DISCOVERY_PORT) {
+    if (!this.socket) return;
+    const data = Buffer.from(JSON.stringify({ service: "agent-bridge", v: NETWORK_VERSION, ...this.opts.identity, port: this.opts.port }));
+    if (this.opts.destination && this.opts.destination !== DISCOVERY_GROUP) {
+      this.send(this.socket, data, port, this.opts.destination);
+      return;
+    }
+    if (!this.refreshing) this.refreshing = this.refreshInterfaces().catch((err) => this.error(err)).finally(() => {
+      this.refreshing = null;
+    });
+    await this.refreshing;
+    if (!this.socket) return;
+    for (const { socket, info } of this.senders.values()) {
+      this.send(socket, data, port, info.broadcast, info);
+      if (info.multicast) this.send(socket, data, port, DISCOVERY_GROUP, info);
+    }
+  }
+  send(socket, data, port, destination, info) {
+    try {
+      socket.send(data, port, destination, (err) => {
+        if (err) this.error(new Error(`Discovery send to ${destination}: ${err.message}`));
+        else {
+          this.lastSentAt = this.now();
+          if (info) info.lastSentAt = this.lastSentAt;
+        }
+      });
+    } catch (err) {
+      this.error(err);
+    }
+  }
+  observe(data, host) {
+    if (data.length > MAX_DISCOVERY_BYTES2 || !isIPv4(host)) return;
+    try {
+      const parsed = announcementSchema.safeParse(JSON.parse(data.toString("utf8")));
+      if (!parsed.success || parsed.data.id === this.opts.identity.id) return;
+      this.lastReceivedAt = this.now();
+      const { id, name: name2, fingerprint, port } = parsed.data;
+      this.instances();
+      if (!this.found.has(id) && this.found.size >= MAX_DISCOVERED_INSTANCES) return;
+      this.found.set(id, { id, name: name2, fingerprint, port, host, seenAt: this.now() });
+    } catch {
+    }
+  }
+  instances() {
+    for (const [id, entry] of this.found) if (this.now() - entry.seenAt >= DISCOVERY_TTL_MS) this.found.delete(id);
+    return [...this.found.values()].map((x) => ({ ...x }));
+  }
+  async close() {
+    if (this.timer) clearInterval(this.timer);
+    this.timer = null;
+    const socket = this.socket;
+    this.socket = null;
+    await this.refreshing;
+    await Promise.all([...this.senders.values()].map((sender) => this.closeSocket(sender.socket)));
+    this.senders.clear();
+    if (socket) await this.closeSocket(socket);
+    this.found.clear();
+  }
+  closeSocket(socket) {
+    return new Promise((resolve15) => {
+      try {
+        socket.close(() => resolve15());
+      } catch {
+        resolve15();
+      }
+    });
+  }
+};
+
+// src/network/files.ts
+import { createHash as createHash8, randomUUID as randomUUID11 } from "node:crypto";
+import { existsSync as existsSync15, lstatSync as lstatSync3, mkdirSync as mkdirSync16, mkdtempSync, readFileSync as readFileSync16, readdirSync as readdirSync8, renameSync as renameSync6, rmSync as rmSync4, statfsSync, writeFileSync as writeFileSync7 } from "node:fs";
+import { basename as basename7, join as join29, parse as parse4, resolve as resolve7, sep as sep3 } from "node:path";
+var MAX_TRANSFER_BYTES = 1024 * 1024;
+var MAX_TRANSFER_ENTRIES = 128;
+var MAX_TRANSFER_DEPTH = 16;
+var MAX_PATH_CHARS = 1024;
+var MAX_COMPONENT_CHARS = 255;
+var MAX_ID_CHARS = 128;
+var MAX_BASE64_CHARS = Math.ceil(MAX_TRANSFER_BYTES / 3) * 4;
+var pathSchema = external_exports.string().min(1).max(MAX_PATH_CHARS);
+var entrySchema = external_exports.discriminatedUnion("kind", [
+  external_exports.object({ kind: external_exports.literal("directory"), path: pathSchema }),
+  external_exports.object({ kind: external_exports.literal("file"), path: pathSchema, data: external_exports.string().max(MAX_BASE64_CHARS), sha256: external_exports.string().regex(/^[0-9a-f]{64}$/) })
+]);
+var transferSchema = external_exports.object({
+  id: external_exports.uuid(),
+  to: external_exports.string().regex(NETWORK_NAME_PATTERN),
+  from: external_exports.object({ id: external_exports.string().min(1).max(MAX_ID_CHARS), name: external_exports.string().regex(NETWORK_NAME_PATTERN), agent: external_exports.enum(AGENT_KINDS) }),
+  entries: external_exports.array(entrySchema).min(1).max(MAX_TRANSFER_ENTRIES)
+});
+var transferResultSchema = external_exports.object({ id: external_exports.uuid(), inbox: external_exports.string().max(MAX_PATH_CHARS), files: external_exports.number().int().nonnegative().max(MAX_TRANSFER_ENTRIES), bytes: external_exports.number().int().nonnegative().max(MAX_TRANSFER_BYTES) });
+function checksum(data) {
+  return createHash8("sha256").update(data).digest("hex");
+}
+function assertTransferPath(path) {
+  const absolute = resolve7(path);
+  let current = parse4(absolute).root;
+  for (const component of absolute.slice(current.length).split(sep3).filter(Boolean)) {
+    current = join29(current, component);
+    if (lstatSync3(current).isSymbolicLink()) throw new Error("file transfer does not follow symlinks or junctions");
+  }
+}
+function ensureTransferDirectory(path) {
+  if (!existsSync15(path)) {
+    const parent2 = resolve7(path, "..");
+    ensureTransferDirectory(parent2);
+    mkdirSync16(path, { mode: OWNER_DIR_MODE });
+  }
+  assertTransferPath(path);
+  if (!lstatSync3(path).isDirectory()) throw new Error("transfer directory is not a directory");
+}
+function safeTransferPath(path) {
+  const components = path.split("/");
+  return path.length <= MAX_PATH_CHARS && components.length <= MAX_TRANSFER_DEPTH && components.every((part) => part.length > 0 && part.length <= MAX_COMPONENT_CHARS && part !== "." && part !== ".." && !/[<>:"\\|?*\x00-\x1f]/.test(part) && !/[. ]$/.test(part) && !/^(CON|PRN|AUX|NUL|CONIN\$|CONOUT\$|COM[1-9¹²³]|LPT[1-9¹²³])(?:\.|$)/i.test(part));
+}
+function collectTransfer(paths, cwd, to, from) {
+  if (!paths.length || paths.length > MAX_TRANSFER_ENTRIES) throw new Error("invalid number of transfer paths");
+  const entries = [];
+  let bytes2 = 0;
+  const walk = (source, path) => {
+    if (!safeTransferPath(path)) throw new Error("unsafe or too deep transfer path");
+    if (entries.length >= MAX_TRANSFER_ENTRIES) throw new Error("too many transfer entries");
+    assertTransferPath(source);
+    const stat = lstatSync3(source);
+    if (stat.isSymbolicLink()) throw new Error("file transfer does not follow symlinks or junctions");
+    if (stat.isDirectory()) {
+      entries.push({ kind: "directory", path });
+      for (const name2 of readdirSync8(source).sort()) walk(join29(source, name2), `${path}/${name2}`);
+    } else if (stat.isFile()) {
+      if (stat.size > MAX_TRANSFER_BYTES - bytes2) throw new Error("transfer exceeds size limit");
+      const data = readFileSync16(source);
+      bytes2 += data.length;
+      if (bytes2 > MAX_TRANSFER_BYTES) throw new Error("transfer exceeds size limit");
+      entries.push({ kind: "file", path, data: data.toString("base64"), sha256: checksum(data) });
+    } else throw new Error("only regular files and directories can be transferred");
+  };
+  for (const path of paths) {
+    const source = resolve7(cwd, path);
+    walk(source, basename7(source));
+  }
+  const transfer = transferSchema.parse({ id: randomUUID11(), to, from, entries });
+  validateEntries(transfer);
+  return transfer;
+}
+function validateEntries(transfer) {
+  const kinds = /* @__PURE__ */ new Map();
+  let bytes2 = 0;
+  let files2 = 0;
+  const entries = transfer.entries.map((entry) => {
+    const path = entry.path;
+    const key2 = path.toLowerCase();
+    if (!safeTransferPath(path) || kinds.has(key2)) throw new Error("unsafe or duplicate transfer path");
+    kinds.set(key2, entry.kind);
+    if (entry.kind === "directory") return { path, data: null };
+    const data = Buffer.from(entry.data, "base64");
+    if (data.toString("base64") !== entry.data || checksum(data) !== entry.sha256) throw new Error("file checksum or encoding mismatch");
+    bytes2 += data.length;
+    files2++;
+    if (bytes2 > MAX_TRANSFER_BYTES) throw new Error("transfer exceeds size limit");
+    return { path, data };
+  });
+  for (const entry of entries) {
+    const parts = entry.path.toLowerCase().split("/");
+    for (let i = 1; i < parts.length; i++) if (kinds.get(parts.slice(0, i).join("/")) !== "directory") throw new Error("missing directory or file used as parent");
+  }
+  return { entries, bytes: bytes2, files: files2 };
+}
+function receiveTransfer(home, input2) {
+  const transfer = transferSchema.parse(input2);
+  const { entries, bytes: bytes2, files: files2 } = validateEntries(transfer);
+  assertTransferPath(home);
+  const disk = statfsSync(home, { bigint: true });
+  if (disk.bavail * disk.bsize < BigInt(bytes2)) throw new Error("insufficient free disk space for transfer");
+  const inbox = join29(home, "inbox");
+  ensureTransferDirectory(inbox);
+  if (lstatSync3(inbox).isSymbolicLink()) throw new Error("inbox cannot be a symlink");
+  assertTransferPath(inbox);
+  const final = join29(inbox, transfer.id);
+  if (existsSync15(final)) throw new Error("transfer already received");
+  const staging = mkdtempSync(join29(inbox, ".partial-"));
+  try {
+    for (const entry of entries.filter((e) => e.data === null).sort((a, b) => a.path.length - b.path.length)) mkdirSync16(join29(staging, ...entry.path.split("/")), { mode: OWNER_DIR_MODE });
+    for (const entry of entries) if (entry.data !== null) writeFileSync7(join29(staging, ...entry.path.split("/")), entry.data, { flag: "wx", mode: OWNER_FILE_MODE });
+    renameSync6(staging, final);
+    return { id: transfer.id, inbox: final, files: files2, bytes: bytes2 };
+  } catch (err) {
+    rmSync4(staging, { recursive: true, force: true });
+    throw err;
+  }
+}
+
+// src/network/transfers.ts
+import { createHash as createHash9, randomUUID as randomUUID12 } from "node:crypto";
+import { constants, existsSync as existsSync16, lstatSync as lstatSync4, mkdirSync as mkdirSync17, readdirSync as readdirSync9, readFileSync as readFileSync17, renameSync as renameSync7, statSync as statSync9, writeFileSync as writeFileSync8 } from "node:fs";
+import { open as open3, link, unlink, statfs, lstat, opendir } from "node:fs/promises";
+import { basename as basename8, dirname as dirname14, isAbsolute as isAbsolute4, join as join30, relative as relative3, resolve as resolve8, sep as sep4 } from "node:path";
+var FILE_STREAM_CAPABILITY = "file-stream-v1";
+var TRANSFER_CHUNK_BYTES = 256 * 1024;
+var DEFAULT_MAX_STREAM_BYTES = 8 * 1024 * 1024 * 1024;
+var MAX_STREAM_ENTRIES = 4096;
+var MAX_ACTIVE_TRANSFERS = 4;
+var MAX_TRANSFER_HISTORY = 200;
+var TRANSFER_REQUEST_TIMEOUT_MS = 3e4;
+var TRANSFER_HEARTBEAT_MS = 5e3;
+var TRANSFER_RETRY_MS = 2e3;
+var TRANSFER_PROGRESS_MS = 1e3;
+var SHA_RECORD_BYTES = 65;
+var MAX_PATH_CHARS2 = 1024;
+var MAX_SENDER_ID_CHARS = 128;
+var MAX_ERROR_CHARS = 512;
+var MIN_TRANSFER_FREE_BYTES = 16 * 1024 * 1024;
+var SHA_PATTERN = /^[0-9a-f]{64}$/;
+var RETRYABLE_TRANSFER_ERROR = /^(network link closed|network write limit reached|paired instance is not connected|file transfer request timed out|sender not advertised by paired instance|file (source peer|recipient|sender) is not online|transfer operation already in progress|too many active file transfers)$/;
+var TERMINAL = /* @__PURE__ */ new Set(["completed", "cancelled", "failed"]);
+var senderSchema = external_exports.object({ id: external_exports.string().min(1).max(MAX_SENDER_ID_CHARS), name: external_exports.string().regex(NETWORK_NAME_PATTERN), agent: external_exports.enum(AGENT_KINDS) });
+var entrySchema2 = external_exports.object({ path: external_exports.string().min(1).max(MAX_PATH_CHARS2), kind: external_exports.enum(["file", "directory"]), size: external_exports.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER) });
+var base = { id: external_exports.uuid(), rid: external_exports.uuid(), kind: external_exports.literal("request") };
+var fileStreamRequestSchema = external_exports.discriminatedUnion("op", [
+  external_exports.object({ ...base, op: external_exports.literal("offer"), from: senderSchema, to: external_exports.string().regex(NETWORK_NAME_PATTERN), entries: external_exports.array(entrySchema2).min(1).max(MAX_STREAM_ENTRIES) }),
+  external_exports.object({ ...base, op: external_exports.literal("chunk"), index: external_exports.number().int().nonnegative().max(MAX_STREAM_ENTRIES - 1), offset: external_exports.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER), data: external_exports.string().max(Math.ceil(TRANSFER_CHUNK_BYTES / 3) * 4), sha256: external_exports.string().regex(SHA_PATTERN) }),
+  external_exports.object({ ...base, op: external_exports.literal("finish-file"), index: external_exports.number().int().nonnegative().max(MAX_STREAM_ENTRIES - 1), sha256: external_exports.string().regex(SHA_PATTERN) }),
+  external_exports.object({ ...base, op: external_exports.literal("finish") }),
+  external_exports.object({ ...base, op: external_exports.literal("cancel") }),
+  external_exports.object({ ...base, op: external_exports.literal("abort"), error: external_exports.string().min(1).max(MAX_ERROR_CHARS) }),
+  external_exports.object({ ...base, op: external_exports.literal("fetch"), from: senderSchema, source: external_exports.string().regex(NETWORK_NAME_PATTERN), paths: external_exports.array(external_exports.string().min(1).max(MAX_PATH_CHARS2)).min(1).max(MAX_STREAM_ENTRIES) })
+]);
+var responseSchema = external_exports.object({ kind: external_exports.literal("response"), rid: external_exports.uuid(), id: external_exports.uuid(), error: external_exports.string().max(MAX_ERROR_CHARS).optional(), data: external_exports.object({ offsets: external_exports.array(external_exports.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER)).max(MAX_STREAM_ENTRIES).optional(), status: external_exports.enum(["queued", "preparing", "running", "paused", "completed", "cancelled", "failed"]).optional() }).default({}) });
+var RemoteTransferError = class extends Error {
+};
+function digest2(data) {
+  return createHash9("sha256").update(data).digest("hex");
+}
+function transferSummary(home, state) {
+  const bytes2 = state.entries.reduce((sum, entry) => sum + entry.offset, 0);
+  return {
+    id: state.id,
+    direction: state.direction,
+    peer: state.peer,
+    status: state.status,
+    bytes: bytes2,
+    totalBytes: state.totalBytes,
+    files: state.entries.filter((entry) => entry.kind === "file" && entry.complete).length,
+    totalFiles: state.entries.filter((entry) => entry.kind === "file").length,
+    percent: state.status === "completed" ? 100 : state.totalBytes ? Math.floor(bytes2 / state.totalBytes * 100) : 0,
+    createdAt: state.createdAt,
+    updatedAt: state.updatedAt,
+    ...state.direction === "receive" ? { inbox: join30(home, "inbox", state.id) } : {},
+    ...state.error ? { error: state.error } : {}
+  };
+}
+function persistTransfer(root, state) {
+  assertTransferPath(root);
+  state.updatedAt = Date.now();
+  const file2 = join30(root, `${state.id}.json`);
+  if (existsSync16(file2)) assertTransferPath(file2);
+  const temp = `${file2}.${randomUUID12()}.tmp`;
+  writeFileSync8(temp, JSON.stringify(state), { flag: "wx", mode: OWNER_FILE_MODE, flush: true });
+  renameSync7(temp, file2);
+}
+function cancelStoredTransfer(home, id) {
+  external_exports.uuid().parse(id);
+  const root = join30(home, "network", "transfers");
+  const path = join30(root, `${id}.json`);
+  if (!existsSync16(path)) throw new Error("unknown transfer");
+  assertTransferPath(path);
+  const state = JSON.parse(readFileSync17(path, "utf8"));
+  if (state.version !== 1 || state.id !== id) throw new Error("invalid persisted transfer");
+  if (state.status === "completed" || state.status === "failed" || state.legacySent) return { id, cancelled: false };
+  state.status = "cancelled";
+  state.cancelPending = !state.legacy;
+  persistTransfer(root, state);
+  return { id, cancelled: true };
+}
+function readTransferHistory(home) {
+  const root = join30(home, "network", "transfers");
+  if (!existsSync16(root)) return [];
+  assertTransferPath(root);
+  return readdirSync9(root).filter((file2) => /^[0-9a-f-]{36}\.json$/.test(file2)).map((file2) => {
+    const path = join30(root, file2);
+    assertTransferPath(path);
+    return { path, mtime: statSync9(path).mtimeMs };
+  }).sort((a, b) => b.mtime - a.mtime).slice(0, MAX_TRANSFER_HISTORY).map(({ path }) => {
+    const state = JSON.parse(readFileSync17(path, "utf8"));
+    if (state.version !== 1 || !Array.isArray(state.entries) || state.entries.length > MAX_STREAM_ENTRIES) throw new Error("invalid persisted transfer");
+    return transferSummary(home, state);
+  }).sort((a, b) => b.updatedAt - a.updatedAt);
+}
+function allowedFetchPath(path, cwd, roots2) {
+  const source = resolve8(cwd, path);
+  assertTransferPath(source);
+  if (!roots2.some((root) => {
+    if (!isAbsolute4(root)) return false;
+    assertTransferPath(root);
+    const rel = relative3(resolve8(root), source);
+    return rel === "" || !isAbsolute4(rel) && rel !== ".." && !rel.startsWith(`..${sep4}`);
+  })) throw new Error("fetch is disabled or path is outside allowed fetch roots");
+  return source;
+}
+async function writeAll(file2, data, position) {
+  let written = 0;
+  while (written < data.length) {
+    const result = await file2.write(data, written, data.length - written, position + written);
+    if (!result.bytesWritten) throw new Error("file write made no progress");
+    written += result.bytesWritten;
+  }
+}
+var TransferManager = class {
+  constructor(home, transport, log, options = {}) {
+    this.home = home;
+    this.transport = transport;
+    this.log = log;
+    this.options = options;
+    assertTransferPath(home);
+    this.root = join30(home, "network", "transfers");
+    ensureTransferDirectory(this.root);
+    assertTransferPath(this.root);
+    for (const file2 of readdirSync9(this.root).filter((file3) => /^[0-9a-f-]{36}\.json$/.test(file3))) {
+      const state = this.read(file2.slice(0, -5));
+      if (state && (!TERMINAL.has(state.status) || state.cancelPending || state.abortPending)) {
+        if (this.states.size >= MAX_ACTIVE_TRANSFERS) {
+          this.log.warn("transfer recovery limit reached", { id: state.id });
+          continue;
+        }
+        state.status = TERMINAL.has(state.status) ? state.status : "paused";
+        this.save(state);
+      }
+    }
+    this.timer = setInterval(() => this.resume(), TRANSFER_RETRY_MS);
+    this.timer.unref();
+  }
+  home;
+  transport;
+  log;
+  options;
+  states = /* @__PURE__ */ new Map();
+  active = /* @__PURE__ */ new Set();
+  receiving = /* @__PURE__ */ new Set();
+  pending = /* @__PURE__ */ new Map();
+  notified = /* @__PURE__ */ new Map();
+  timer;
+  closed = false;
+  root;
+  read(id) {
+    const file2 = join30(this.root, `${id}.json`);
+    if (!existsSync16(file2)) return void 0;
+    assertTransferPath(file2);
+    const state = JSON.parse(readFileSync17(file2, "utf8"));
+    if (state.version !== 1 || state.id !== id || !Array.isArray(state.entries) || state.entries.length > MAX_STREAM_ENTRIES) throw new Error("invalid persisted transfer");
+    return state;
+  }
+  get(id) {
+    return this.states.get(id) ?? this.read(id);
+  }
+  save(state) {
+    persistTransfer(this.root, state);
+    if (!TERMINAL.has(state.status) || state.cancelPending || state.abortPending) this.states.set(state.id, state);
+    else this.states.delete(state.id);
+  }
+  summary(state) {
+    return transferSummary(this.home, state);
+  }
+  list() {
+    return readTransferHistory(this.home);
+  }
+  recordLegacy(transfer, remote, peer) {
+    const entries = transfer.entries.map((entry) => ({
+      kind: entry.kind,
+      path: entry.path,
+      size: entry.kind === "file" ? Buffer.byteLength(entry.data, "base64") : 0,
+      offset: entry.kind === "file" ? Buffer.byteLength(entry.data, "base64") : 0,
+      complete: true,
+      ...entry.kind === "file" ? { sha256: entry.sha256 } : {}
+    }));
+    this.save({
+      version: 1,
+      id: transfer.id,
+      direction: "receive",
+      remote,
+      peer,
+      from: transfer.from,
+      to: transfer.to,
+      paths: [],
+      cwd: "",
+      entries,
+      totalBytes: entries.reduce((sum, entry) => sum + entry.size, 0),
+      status: "completed",
+      legacy: true,
+      initialized: true,
+      createdAt: Date.now(),
+      updatedAt: Date.now()
+    });
+  }
+  report(state, force = false) {
+    if (this.closed) return;
+    const now = Date.now();
+    if (!force && now - (this.notified.get(state.id) ?? 0) < TRANSFER_PROGRESS_MS) return;
+    this.notified.set(state.id, now);
+    const progress = this.summary(state);
+    this.log.info("file transfer progress", { ...progress });
+    const recipient = state.direction === "send" ? state.from.name : state.to;
+    const from = state.direction === "receive" ? { ...state.from, id: `${state.remote}/${state.from.id}`, name: `${state.peer.split("/")[0]}/${state.from.name}` } : { id: `files-${state.id}`, name: "files", agent: "other" };
+    this.transport.notify({
+      id: state.direction === "receive" && state.status === "completed" ? state.id : randomUUID12(),
+      from,
+      to: recipient,
+      recipient,
+      conversationId: TERMINAL.has(state.status) ? state.id : `${TRANSFER_PROGRESS_PREFIX}${state.id}`,
+      replyTo: null,
+      hop: 0,
+      createdAt: now,
+      readAt: null,
+      body: `files: ${progress.percent}% \xB7 ${progress.bytes} / ${progress.totalBytes} bytes \xB7 ${state.status} \xB7 ${state.id}${progress.inbox ? ` \xB7 ${progress.inbox}` : ""}${state.error ? ` \xB7 ${state.error}` : ""}`
+    });
+    if (TERMINAL.has(state.status)) this.notified.delete(state.id);
+  }
+  ensureCapacity() {
+    if (this.states.size >= MAX_ACTIVE_TRANSFERS) throw new Error("too many active file transfers");
+  }
+  start(remote, peer, to, paths, cwd, from, pull = false, id = randomUUID12(), legacy = false) {
+    this.ensureCapacity();
+    const state = {
+      version: 1,
+      id,
+      direction: pull ? "receive" : "send",
+      remote,
+      peer,
+      to,
+      paths,
+      cwd,
+      from,
+      status: "queued",
+      entries: [],
+      totalBytes: 0,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      ...pull ? { pull: true } : {},
+      ...legacy ? { legacy: true } : {}
+    };
+    this.save(state);
+    this.report(state, true);
+    setImmediate(() => this.resume());
+    return { id, status: "queued" };
+  }
+  resume() {
+    if (this.closed) return;
+    for (const state of this.states.values()) {
+      if (this.active.has(state.id) || !state.legacy && !this.transport.supports(state.remote)) continue;
+      if (state.cancelPending || state.abortPending) {
+        this.active.add(state.id);
+        void this.rpc(state.remote, state.id, state.cancelPending ? { op: "cancel" } : { op: "abort", error: state.error ?? "transfer failed" }).then(() => {
+          state.cancelPending = false;
+          state.abortPending = false;
+          this.save(state);
+        }).catch(() => {
+        }).finally(() => this.active.delete(state.id));
+      } else if (!TERMINAL.has(state.status) && (state.direction === "send" || state.pull && !state.entries.length)) {
+        this.active.add(state.id);
+        void this.run(state).finally(() => this.active.delete(state.id));
+      }
+    }
+  }
+  disconnected(remote) {
+    for (const [rid, pending] of this.pending) if (pending.remote === remote) {
+      clearTimeout(pending.timer);
+      this.pending.delete(rid);
+      pending.reject(new Error("network link closed"));
+    }
+    for (const state of this.states.values()) if (state.remote === remote && !TERMINAL.has(state.status)) {
+      state.status = "paused";
+      this.save(state);
+      this.report(state, true);
+    }
+  }
+  rpc(remote, id, fields) {
+    if (this.closed) return Promise.reject(new Error("transfer manager closed"));
+    const rid = randomUUID12();
+    return new Promise((resolve15, reject) => {
+      const timer = setTimeout(() => {
+        this.pending.delete(rid);
+        reject(new Error("file transfer request timed out"));
+      }, TRANSFER_REQUEST_TIMEOUT_MS);
+      this.pending.set(rid, { remote, id, resolve: resolve15, reject, timer });
+      void Promise.resolve().then(() => this.transport.send(remote, { kind: "request", rid, id, ...fields })).catch((error62) => {
+        clearTimeout(timer);
+        this.pending.delete(rid);
+        reject(error62);
+      });
+    });
+  }
+  async handle(payload, remote, remoteName) {
+    if (payload.kind === "heartbeat") {
+      const heartbeat2 = external_exports.object({ id: external_exports.uuid(), rid: external_exports.uuid() }).parse(payload);
+      const pending = this.pending.get(heartbeat2.rid);
+      if (pending?.remote === remote && pending.id === heartbeat2.id) {
+        clearTimeout(pending.timer);
+        pending.timer = setTimeout(() => {
+          this.pending.delete(heartbeat2.rid);
+          pending.reject(new Error("file transfer request timed out"));
+        }, TRANSFER_REQUEST_TIMEOUT_MS);
+      }
+      return;
+    }
+    if (payload.kind === "response") {
+      const response = responseSchema.parse(payload);
+      const pending = this.pending.get(response.rid);
+      if (!pending || pending.remote !== remote || pending.id !== response.id) return;
+      clearTimeout(pending.timer);
+      this.pending.delete(response.rid);
+      if (response.error) pending.reject(new RemoteTransferError(response.error));
+      else pending.resolve(response.data);
+      return;
+    }
+    const request2 = fileStreamRequestSchema.parse(payload);
+    let data = {};
+    let error62;
+    let heartbeatSending = false;
+    const heartbeat = setInterval(() => {
+      if (this.closed || heartbeatSending) return;
+      heartbeatSending = true;
+      void Promise.resolve().then(() => this.transport.send(remote, { kind: "heartbeat", rid: request2.rid, id: request2.id })).catch(() => {
+      }).finally(() => {
+        heartbeatSending = false;
+      });
+    }, TRANSFER_HEARTBEAT_MS);
+    heartbeat.unref();
+    try {
+      data = await this.receive(request2, remote, remoteName);
+    } catch (err) {
+      error62 = err.message.slice(0, MAX_ERROR_CHARS);
+      this.log.warn("file transfer rejected", { id: request2.id, remote, error: error62 });
+      const state = this.get(request2.id);
+      if (state?.remote === remote && state.direction === "receive" && !TERMINAL.has(state.status) && /checksum|encoding mismatch|insufficient free disk|invalid initial|EACCES|ENOSPC|EEXIST|ENOENT|symlinks or junctions/.test(error62)) {
+        state.status = "failed";
+        state.error = error62;
+        this.save(state);
+        this.report(state, true);
+      }
+    } finally {
+      clearInterval(heartbeat);
+    }
+    await this.transport.send(remote, { kind: "response", rid: request2.rid, id: request2.id, data, ...error62 ? { error: error62 } : {} });
+  }
+  validateEntries(entries) {
+    const kinds = /* @__PURE__ */ new Map();
+    let total = 0;
+    for (const entry of entries) {
+      const key2 = entry.path.toLowerCase();
+      if (!safeTransferPath(entry.path) || kinds.has(key2)) throw new Error("unsafe or duplicate transfer path");
+      kinds.set(key2, entry.kind);
+      if (entry.kind === "directory" && entry.size !== 0) throw new Error("invalid directory size");
+      total += entry.size;
+      if (!Number.isSafeInteger(total) || total > (this.options.maxBytes ?? DEFAULT_MAX_STREAM_BYTES)) throw new Error("transfer exceeds size limit");
+    }
+    for (const key2 of kinds.keys()) {
+      const parts = key2.split("/");
+      for (let i = 1; i < parts.length; i++) if (kinds.get(parts.slice(0, i).join("/")) !== "directory") throw new Error("missing directory or file used as parent");
+    }
+    if (Buffer.byteLength(JSON.stringify(entries.map(({ path, kind, size }) => ({ path, kind, size })))) > MAX_NETWORK_FRAME_BYTES / 2) throw new Error("transfer manifest exceeds network frame limit");
+    return total;
+  }
+  async collect(state) {
+    const entries = [];
+    let total = 0;
+    const walk = async (source, path) => {
+      if (this.closed || state.status === "cancelled") throw new Error("transfer cancelled");
+      if (!safeTransferPath(path) || path.split("/").length > MAX_TRANSFER_DEPTH || entries.length >= MAX_STREAM_ENTRIES) throw new Error("unsafe or too many transfer entries");
+      assertTransferPath(source);
+      const st = await lstat(source);
+      if (st.isDirectory()) {
+        entries.push({ kind: "directory", path, size: 0, offset: 0 });
+        const dir = await opendir(source);
+        const names = [];
+        for await (const child of dir) {
+          if (names.length + entries.length >= MAX_STREAM_ENTRIES) throw new Error("too many transfer entries");
+          names.push(child.name);
+        }
+        for (const name2 of names.sort()) await walk(join30(source, name2), `${path}/${name2}`);
+      } else if (st.isFile()) {
+        total += st.size;
+        if (total > (this.options.maxBytes ?? DEFAULT_MAX_STREAM_BYTES)) throw new Error("transfer exceeds size limit");
+        entries.push({ kind: "file", path, size: st.size, offset: 0, source, mtimeMs: st.mtimeMs, ino: st.ino, dev: st.dev });
+      } else throw new Error("only regular files and directories can be transferred");
+    };
+    for (const path of state.paths) {
+      const source = resolve8(state.cwd, path);
+      await walk(source, basename8(source));
+    }
+    this.validateEntries(entries);
+    return entries;
+  }
+  async source(state, entry) {
+    if (state.fetched) allowedFetchPath(entry.source, state.cwd, this.options.fetchRoots ?? []);
+    assertTransferPath(entry.source);
+    const file2 = await open3(entry.source, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+    const st = await file2.stat();
+    if (!st.isFile() || st.size !== entry.size || st.mtimeMs !== entry.mtimeMs || st.ino !== entry.ino || st.dev !== entry.dev) {
+      await file2.close();
+      throw new RemoteTransferError("source file changed since transfer started");
+    }
+    return file2;
+  }
+  stopped(state) {
+    return state.status === "cancelled" || state.status === "failed" || this.closed;
+  }
+  async run(state) {
+    try {
+      if (state.direction === "send" || state.pull) {
+        const sender = this.transport.localPeer(state.from.name);
+        if (!sender) throw new Error("file sender is not online");
+        if (sender.agent !== state.from.agent) throw new RemoteTransferError("file sender agent changed");
+        state.from = { id: sender.id, name: sender.name, agent: sender.agent };
+      }
+      if (state.fetched) for (const path of state.paths) allowedFetchPath(path, state.cwd, this.options.fetchRoots ?? []);
+      if (state.legacy) {
+        if (state.legacySent) throw new RemoteTransferError("legacy transfer interrupted; delivery may have occurred");
+        state.status = "running";
+        const transfer = { ...collectTransfer(state.paths, state.cwd, state.to, state.from), id: state.id };
+        state.entries = transfer.entries.map((entry) => ({ kind: entry.kind, path: entry.path, size: entry.kind === "file" ? Buffer.byteLength(entry.data, "base64") : 0, offset: 0 }));
+        state.totalBytes = this.validateEntries(state.entries);
+        state.legacySent = true;
+        this.save(state);
+        const result = await this.transport.legacy(state.remote, transfer);
+        if (this.stopped(state)) return;
+        state.status = "completed";
+        for (const entry of state.entries) {
+          entry.offset = entry.size;
+          entry.complete = true;
+        }
+        this.save(state);
+        this.report(state, true);
+        this.log.info("legacy file transfer complete", result);
+        return;
+      }
+      if (state.pull && !state.entries.length) {
+        await this.rpc(state.remote, state.id, { op: "fetch", from: state.from, source: state.to, paths: state.paths });
+        if (!TERMINAL.has(state.status) && !state.entries.length) {
+          state.status = "paused";
+          this.save(state);
+        }
+        return;
+      }
+      if (!state.entries.length) {
+        state.status = "preparing";
+        this.save(state);
+        state.entries = await this.collect(state);
+        state.totalBytes = this.validateEntries(state.entries);
+        this.save(state);
+      }
+      if (this.stopped(state)) return;
+      const reply2 = await this.rpc(state.remote, state.id, { op: "offer", from: state.from, to: state.to, entries: state.entries.map(({ path, kind, size }) => ({ path, kind, size })) });
+      if (this.stopped(state)) return;
+      if (reply2.status === "completed") {
+        state.status = "completed";
+        for (const entry of state.entries) {
+          entry.offset = entry.size;
+          entry.complete = true;
+        }
+        this.save(state);
+        this.report(state, true);
+        return;
+      }
+      if (!reply2.offsets || reply2.offsets.length !== state.entries.length) throw new RemoteTransferError("invalid resume offsets");
+      state.status = "running";
+      delete state.error;
+      this.save(state);
+      this.report(state, true);
+      for (let index = 0; index < state.entries.length; index++) {
+        const entry = state.entries[index];
+        if (entry.kind !== "file") continue;
+        const offset = reply2.offsets[index];
+        if (offset > entry.size || offset !== entry.size && offset % TRANSFER_CHUNK_BYTES !== 0) throw new RemoteTransferError("invalid resume offset");
+        entry.offset = offset;
+        const file2 = await this.source(state, entry);
+        const hash3 = createHash9("sha256");
+        const buffer = Buffer.alloc(TRANSFER_CHUNK_BYTES);
+        try {
+          for (let position = 0; position < entry.size; ) {
+            if (this.stopped(state)) return;
+            const length = Math.min(TRANSFER_CHUNK_BYTES, entry.size - position);
+            const { bytesRead } = await file2.read(buffer, 0, length, position);
+            if (bytesRead !== length) throw new RemoteTransferError("source file changed while reading");
+            const chunk = buffer.subarray(0, length);
+            hash3.update(chunk);
+            if (position >= offset) {
+              await this.rpc(state.remote, state.id, { op: "chunk", index, offset: position, data: chunk.toString("base64"), sha256: digest2(chunk) });
+              if (this.stopped(state)) return;
+              entry.offset = position + length;
+              this.save(state);
+              this.report(state);
+            }
+            position += length;
+          }
+          const st = await file2.stat();
+          if (st.size !== entry.size || st.mtimeMs !== entry.mtimeMs) throw new RemoteTransferError("source file changed while reading");
+        } finally {
+          await file2.close();
+        }
+        entry.sha256 = hash3.digest("hex");
+        await this.rpc(state.remote, state.id, { op: "finish-file", index, sha256: entry.sha256 });
+        if (this.stopped(state)) return;
+        entry.complete = true;
+        this.save(state);
+      }
+      await this.rpc(state.remote, state.id, { op: "finish" });
+      if (!this.stopped(state)) {
+        state.status = "completed";
+        this.save(state);
+        this.report(state, true);
+      }
+    } catch (error62) {
+      if (this.stopped(state)) return;
+      state.status = state.legacy || !RETRYABLE_TRANSFER_ERROR.test(error62.message) ? "failed" : "paused";
+      state.error = error62.message.slice(0, MAX_ERROR_CHARS);
+      state.abortPending = state.status === "failed" && !state.legacy;
+      this.save(state);
+      this.report(state, true);
+    }
+  }
+  part(state, index) {
+    return join30(this.root, state.id, `${index}.part`);
+  }
+  verified(state, index) {
+    return join30(this.root, state.id, `${index}.verified`);
+  }
+  target(state, entry) {
+    return join30(this.home, "inbox", state.id, ...entry.path.split("/"));
+  }
+  async freeDisk(bytes2) {
+    const disk = await statfs(this.home, { bigint: true });
+    const reserved = [...this.states.values()].filter((state) => state.direction === "receive" && !TERMINAL.has(state.status)).reduce((sum, state) => sum + BigInt(state.totalBytes) - BigInt(this.summary(state).bytes) + BigInt(Math.ceil(state.totalBytes / TRANSFER_CHUNK_BYTES)) * BigInt(SHA_RECORD_BYTES) + BigInt(MAX_NETWORK_FRAME_BYTES), 0n);
+    if (disk.bavail * disk.bsize < BigInt(bytes2 + MIN_TRANSFER_FREE_BYTES) + reserved) throw new Error("insufficient free disk space for transfer");
+  }
+  async hashFile(path, state) {
+    assertTransferPath(path);
+    const file2 = await open3(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+    const hash3 = createHash9("sha256");
+    const buffer = Buffer.alloc(TRANSFER_CHUNK_BYTES);
+    try {
+      for (; ; ) {
+        if (this.closed || state && this.stopped(state)) throw new Error("transfer cancelled or manager closed");
+        const { bytesRead } = await file2.read(buffer);
+        if (!bytesRead) break;
+        hash3.update(buffer.subarray(0, bytesRead));
+      }
+    } finally {
+      await file2.close();
+    }
+    return hash3.digest("hex");
+  }
+  async recover(state, entry, index) {
+    if (entry.kind !== "file") return;
+    const target = this.target(state, entry);
+    if (entry.complete || entry.sha256 && existsSync16(target)) {
+      if (await this.hashFile(target, state) !== entry.sha256) throw new Error("completed file checksum mismatch");
+      entry.complete = true;
+      entry.offset = entry.size;
+      const part = this.part(state, index);
+      if (existsSync16(part)) {
+        assertTransferPath(part);
+        await unlink(part);
+      }
+      const verified2 = this.verified(state, index);
+      if (existsSync16(verified2)) {
+        assertTransferPath(verified2);
+        await unlink(verified2);
+      }
+      return;
+    }
+    const verifiedPath = this.verified(state, index);
+    if (entry.sha256 && existsSync16(verifiedPath)) {
+      if (await this.hashFile(verifiedPath, state) !== entry.sha256) throw new Error("verified file checksum mismatch");
+      assertTransferPath(dirname14(target));
+      await link(verifiedPath, target);
+      await unlink(verifiedPath);
+      entry.complete = true;
+      entry.offset = entry.size;
+      return;
+    }
+    const path = this.part(state, index);
+    assertTransferPath(path);
+    assertTransferPath(`${path}.sha256`);
+    const file2 = await open3(path, constants.O_RDWR | (constants.O_NOFOLLOW ?? 0));
+    const journal = await open3(`${path}.sha256`, constants.O_RDWR | (constants.O_NOFOLLOW ?? 0));
+    const buffer = Buffer.alloc(TRANSFER_CHUNK_BYTES);
+    const record2 = Buffer.alloc(SHA_RECORD_BYTES);
+    let verified = 0;
+    let chunks = 0;
+    try {
+      while (verified < entry.offset) {
+        if (this.stopped(state)) throw new Error("transfer cancelled or manager closed");
+        const length = Math.min(TRANSFER_CHUNK_BYTES, entry.size - verified);
+        const a = await file2.read(buffer, 0, length, verified);
+        const b = await journal.read(record2, 0, SHA_RECORD_BYTES, chunks * SHA_RECORD_BYTES);
+        if (a.bytesRead !== length || b.bytesRead !== SHA_RECORD_BYTES || record2.toString() !== `${digest2(buffer.subarray(0, length))}
+`) break;
+        verified += length;
+        chunks++;
+      }
+      await file2.truncate(verified);
+      await journal.truncate(chunks * SHA_RECORD_BYTES);
+      await file2.sync();
+      await journal.sync();
+      entry.offset = verified;
+    } finally {
+      await file2.close();
+      await journal.close();
+    }
+  }
+  initialize(state) {
+    const inbox = join30(this.home, "inbox");
+    ensureTransferDirectory(inbox);
+    const final = join30(inbox, state.id);
+    const parts = join30(this.root, state.id);
+    for (const dir of [final, parts]) {
+      if (!existsSync16(dir)) mkdirSync17(dir, { mode: OWNER_DIR_MODE });
+      assertTransferPath(dir);
+      if (!lstatSync4(dir).isDirectory()) throw new Error("transfer directory is not a directory");
+    }
+    for (const entry of state.entries.filter((entry2) => entry2.kind === "directory").sort((a, b) => a.path.length - b.path.length)) {
+      const dir = this.target(state, entry);
+      assertTransferPath(dirname14(dir));
+      if (!existsSync16(dir)) mkdirSync17(dir, { mode: OWNER_DIR_MODE });
+      assertTransferPath(dir);
+      if (!lstatSync4(dir).isDirectory()) throw new Error("transfer directory is not a directory");
+    }
+    for (let i = 0; i < state.entries.length; i++) if (state.entries[i].kind === "file") {
+      for (const file2 of [this.part(state, i), `${this.part(state, i)}.sha256`]) {
+        assertTransferPath(dirname14(file2));
+        if (!existsSync16(file2)) writeFileSync8(file2, "", { flag: "wx", mode: OWNER_FILE_MODE, flush: true });
+        assertTransferPath(file2);
+        if (!lstatSync4(file2).isFile() || lstatSync4(file2).size !== 0) throw new Error("invalid initial partial file");
+      }
+    }
+    state.initialized = true;
+    this.save(state);
+  }
+  async receive(request2, remote, remoteName) {
+    let state = this.get(request2.id);
+    if (state && state.remote !== remote) throw new Error("transfer belongs to another paired instance");
+    if (request2.op === "abort") {
+      if (!state) {
+        state = {
+          version: 1,
+          id: request2.id,
+          direction: "receive",
+          remote,
+          peer: remoteName,
+          from: { id: "files", name: "files", agent: "other" },
+          to: "files",
+          status: "failed",
+          error: request2.error,
+          paths: [],
+          cwd: "",
+          entries: [],
+          totalBytes: 0,
+          createdAt: Date.now(),
+          updatedAt: Date.now()
+        };
+        this.save(state);
+        this.log.warn("remote file transfer failed", { id: state.id, remote, error: request2.error });
+      } else if (!TERMINAL.has(state.status)) {
+        state.status = "failed";
+        state.error = request2.error;
+        state.abortPending = false;
+        this.save(state);
+        this.report(state, true);
+        for (const [rid, pending] of this.pending) if (pending.id === state.id) {
+          clearTimeout(pending.timer);
+          this.pending.delete(rid);
+          pending.reject(new RemoteTransferError(request2.error));
+        }
+      }
+      return { status: state.status };
+    }
+    if (request2.op === "cancel") {
+      if (!state) {
+        this.save({
+          version: 1,
+          id: request2.id,
+          direction: "receive",
+          remote,
+          peer: remoteName,
+          from: { id: "files", name: "files", agent: "other" },
+          to: "files",
+          status: "cancelled",
+          paths: [],
+          cwd: "",
+          entries: [],
+          totalBytes: 0,
+          createdAt: Date.now(),
+          updatedAt: Date.now()
+        });
+        return { status: "cancelled" };
+      }
+      await this.cancel(request2.id, false);
+      return { status: state.status };
+    }
+    if (state?.status === "cancelled" || state?.status === "failed") throw new Error(`transfer ${state.status}`);
+    if (request2.op === "fetch") {
+      if (!this.transport.validSender(remote, request2.from)) throw new Error("sender not advertised by paired instance");
+      const source = this.transport.localPeer(request2.source);
+      if (!source) throw new Error("file source peer is not online");
+      if (!this.options.fetchRoots?.length) throw new Error("fetch is disabled or path is outside allowed fetch roots");
+      const paths = request2.paths.map((path) => allowedFetchPath(path, source.cwd, this.options.fetchRoots));
+      if (state && (state.direction !== "send" || state.to !== request2.from.name || state.from.name !== request2.source || JSON.stringify(state.paths) !== JSON.stringify(paths))) throw new Error("fetch request changed");
+      if (!state) {
+        this.start(remote, `${remoteName}/${request2.from.name}`, request2.from.name, paths, source.cwd, source, false, request2.id);
+        const fetched = this.get(request2.id);
+        fetched.fetched = true;
+        this.save(fetched);
+      }
+      return { status: state?.status ?? "queued" };
+    }
+    if (request2.op === "offer") {
+      if (!this.transport.validSender(remote, request2.from)) throw new Error("sender not advertised by paired instance");
+      if (!this.transport.localPeer(request2.to)) throw new Error("file recipient is not online");
+      const entries = request2.entries.map((entry) => ({ ...entry, offset: 0 }));
+      const totalBytes = this.validateEntries(entries);
+      if (state?.pull && !state.entries.length) {
+        if (state.to !== request2.from.name || state.from.name !== request2.to) throw new Error("pull offer does not match request");
+        state.from = request2.from;
+        state.to = request2.to;
+        state.pull = false;
+      } else if (state && (state.direction !== "receive" || JSON.stringify(state.entries.map(({ path, kind, size }) => ({ path, kind, size }))) !== JSON.stringify(request2.entries) || state.from.name !== request2.from.name || state.from.agent !== request2.from.agent || state.to !== request2.to)) throw new Error("transfer manifest changed");
+      if (state) state.from = request2.from;
+      if (this.receiving.has(request2.id)) throw new Error("transfer operation already in progress");
+      this.receiving.add(request2.id);
+      try {
+        if (!state || !state.entries.length) {
+          if (!state) this.ensureCapacity();
+          const inbox = join30(this.home, "inbox");
+          ensureTransferDirectory(inbox);
+          if (existsSync16(join30(inbox, request2.id)) || existsSync16(join30(this.root, request2.id))) throw new Error("transfer destination already exists");
+          const receiving = {
+            version: 1,
+            id: request2.id,
+            direction: "receive",
+            remote,
+            peer: `${remoteName}/${request2.from.name}`,
+            from: request2.from,
+            to: request2.to,
+            paths: [],
+            cwd: "",
+            status: "preparing",
+            entries,
+            totalBytes,
+            createdAt: state?.createdAt ?? Date.now(),
+            updatedAt: Date.now()
+          };
+          state = state ? Object.assign(state, receiving, { pull: false }) : receiving;
+          this.save(state);
+          await this.freeDisk(0);
+          if (this.stopped(state)) throw new Error("transfer cancelled");
+        }
+        if (!state.initialized) this.initialize(state);
+        else {
+          for (let i = 0; i < state.entries.length; i++) await this.recover(state, state.entries[i], i);
+          await this.freeDisk(0);
+        }
+        if (this.stopped(state)) throw new Error("transfer cancelled");
+        if (state.status !== "completed") {
+          state.status = "running";
+          delete state.error;
+        }
+        this.save(state);
+        this.report(state, true);
+        return { offsets: state.entries.map((entry) => entry.offset), status: state.status };
+      } finally {
+        this.receiving.delete(request2.id);
+      }
+    }
+    if (!state || state.direction !== "receive") throw new Error("unknown receiving transfer");
+    if (this.receiving.has(state.id)) throw new Error("transfer operation already in progress");
+    this.receiving.add(state.id);
+    try {
+      if (request2.op === "finish") {
+        if (state.entries.some((entry2) => entry2.kind === "file" && !entry2.complete)) throw new Error("transfer has incomplete files");
+        if (state.status !== "completed") {
+          state.status = "completed";
+          this.save(state);
+          this.report(state, true);
+        }
+        return { status: state.status };
+      }
+      const entry = state.entries[request2.index];
+      if (!entry || entry.kind !== "file") throw new Error("invalid file index");
+      if (request2.op === "finish-file") {
+        if (entry.offset !== entry.size) throw new Error("file is incomplete");
+        if (entry.complete) {
+          if (entry.sha256 !== request2.sha256) throw new Error("file checksum mismatch");
+          return {};
+        }
+        const part = this.part(state, request2.index);
+        if (await this.hashFile(part, state) !== request2.sha256) throw new Error("file checksum mismatch");
+        if (this.stopped(state)) throw new Error("transfer cancelled");
+        entry.sha256 = request2.sha256;
+        this.save(state);
+        const target = this.target(state, entry);
+        assertTransferPath(dirname14(target));
+        assertTransferPath(part);
+        const verified = this.verified(state, request2.index);
+        if (existsSync16(verified)) throw new Error("verified file already exists");
+        renameSync7(part, verified);
+        await link(verified, target);
+        await unlink(verified);
+        entry.complete = true;
+        this.save(state);
+        return {};
+      }
+      if (entry.complete || request2.offset !== entry.offset) throw new Error("chunk offset mismatch");
+      const data = Buffer.from(request2.data, "base64");
+      if (!data.length || data.length !== Math.min(TRANSFER_CHUNK_BYTES, entry.size - entry.offset) || data.toString("base64") !== request2.data || digest2(data) !== request2.sha256) throw new Error("chunk checksum or encoding mismatch");
+      await this.freeDisk(0);
+      if (this.stopped(state)) throw new Error("transfer cancelled or manager closed");
+      const path = this.part(state, request2.index);
+      assertTransferPath(path);
+      assertTransferPath(`${path}.sha256`);
+      const file2 = await open3(path, constants.O_RDWR | (constants.O_NOFOLLOW ?? 0));
+      const journal = await open3(`${path}.sha256`, constants.O_RDWR | (constants.O_NOFOLLOW ?? 0));
+      try {
+        await writeAll(file2, data, entry.offset);
+        await file2.sync();
+        const record2 = Buffer.from(`${request2.sha256}
+`);
+        await writeAll(journal, record2, Math.floor(entry.offset / TRANSFER_CHUNK_BYTES) * SHA_RECORD_BYTES);
+        await journal.sync();
+      } finally {
+        await file2.close();
+        await journal.close();
+      }
+      entry.offset += data.length;
+      if (!this.stopped(state)) state.status = "running";
+      this.save(state);
+      this.report(state);
+      return {};
+    } finally {
+      this.receiving.delete(state.id);
+    }
+  }
+  async cancel(id, notifyRemote = true) {
+    const state = this.get(external_exports.uuid().parse(id));
+    if (!state) throw new Error("unknown transfer");
+    if (state.status === "completed" || state.status === "failed") return { id, cancelled: false };
+    if (state.legacySent) return { id, cancelled: false };
+    state.status = "cancelled";
+    state.cancelPending = notifyRemote && !state.legacy;
+    this.save(state);
+    this.report(state, true);
+    for (const [rid, pending] of this.pending) if (pending.id === id) {
+      clearTimeout(pending.timer);
+      this.pending.delete(rid);
+      pending.reject(new Error("transfer cancelled"));
+    }
+    if (notifyRemote) this.resume();
+    return { id, cancelled: true };
+  }
+  close() {
+    this.closed = true;
+    clearInterval(this.timer);
+    for (const state of this.states.values()) if (!TERMINAL.has(state.status)) {
+      state.status = "paused";
+      this.save(state);
+    }
+    for (const pending of this.pending.values()) {
+      clearTimeout(pending.timer);
+      pending.reject(new Error("transfer manager closed"));
+    }
+    this.pending.clear();
+  }
+};
+
+// src/network/link.ts
+var MAX_METADATA_CHARS = 4096;
+var MAX_ID_CHARS2 = 128;
+var MAX_HOP_COUNT = 100;
+var MAX_EXTENSION_HANDLERS = 8;
+var textId = external_exports.string().min(1).max(MAX_ID_CHARS2);
+var peerSchema = external_exports.object({
+  id: textId,
+  name: external_exports.string().regex(NETWORK_NAME_PATTERN),
+  agent: external_exports.enum(AGENT_KINDS),
+  cwd: external_exports.string().max(MAX_METADATA_CHARS),
+  pid: external_exports.number().int().nonnegative(),
+  agentPid: external_exports.number().int().nonnegative().nullable(),
+  sessionId: external_exports.string().max(MAX_METADATA_CHARS).nullable(),
+  startedAt: external_exports.number().nonnegative(),
+  autoWake: external_exports.boolean(),
+  wakeOnDirect: external_exports.boolean().optional(),
+  wakeAvailable: external_exports.boolean().optional(),
+  wakeMaxHops: external_exports.number().int().min(0).max(MAX_HOP_COUNT).optional(),
+  activity: external_exports.enum(["busy", "idle"]).nullable().optional(),
+  version: external_exports.string().max(MAX_ID_CHARS2).optional(),
+  jobAgent: external_exports.enum(AGENT_KINDS).optional(),
+  jobParent: external_exports.string().max(MAX_METADATA_CHARS).optional(),
+  jobTitle: external_exports.string().max(MAX_METADATA_CHARS).optional(),
+  parentJob: external_exports.string().max(MAX_METADATA_CHARS).optional(),
+  rootSession: external_exports.string().max(MAX_METADATA_CHARS).optional(),
+  rootName: external_exports.string().max(MAX_METADATA_CHARS).optional(),
+  subagent: external_exports.boolean().optional(),
+  title: external_exports.string().max(MAX_METADATA_CHARS).optional()
+});
+var peersSchema = external_exports.array(peerSchema).max(MAX_NETWORK_PEERS).refine((peers) => new Set(peers.map((p) => p.name)).size === peers.length && new Set(peers.map((p) => p.id)).size === peers.length);
+var messageSchema = external_exports.object({
+  id: external_exports.uuid(),
+  from: external_exports.object({ id: textId, name: external_exports.string().regex(NETWORK_NAME_PATTERN), agent: external_exports.enum(AGENT_KINDS) }),
+  to: external_exports.string().min(1).max(MAX_METADATA_CHARS),
+  recipient: external_exports.string().regex(NETWORK_NAME_PATTERN),
+  conversationId: textId,
+  replyTo: textId.nullable(),
+  hop: external_exports.number().int().min(0).max(MAX_HOP_COUNT),
+  body: external_exports.string().min(1).max(MAX_BODY_CHARS),
+  createdAt: external_exports.number().nonnegative(),
+  readAt: external_exports.null()
+});
+var frameSchema = external_exports.discriminatedUnion("type", [
+  publicIdentitySchema.extend({ type: external_exports.literal("hello"), v: external_exports.literal(NETWORK_VERSION), peers: peersSchema, echo: external_exports.boolean().optional(), receipts: external_exports.boolean().optional(), capabilities: external_exports.array(external_exports.string().min(1).max(MAX_ID_CHARS2)).max(MAX_EXTENSION_HANDLERS).optional() }),
+  external_exports.object({ type: external_exports.literal("file-stream"), payload: external_exports.record(external_exports.string(), external_exports.unknown()) }),
+  external_exports.object({ type: external_exports.literal("remote-job"), payload: external_exports.record(external_exports.string(), external_exports.unknown()) }),
+  external_exports.object({ type: external_exports.literal("dashboard-read"), payload: external_exports.record(external_exports.string(), external_exports.unknown()) }),
+  external_exports.object({ type: external_exports.literal("peers"), peers: peersSchema }),
+  external_exports.object({ type: external_exports.literal("send"), rid: external_exports.uuid(), message: messageSchema }),
+  external_exports.object({ type: external_exports.literal("echo"), rid: external_exports.uuid() }),
+  external_exports.object({ type: external_exports.literal("receipt"), rid: external_exports.uuid(), id: external_exports.uuid(), sender: textId, recipient: external_exports.string().regex(NETWORK_NAME_PATTERN).optional() }),
+  external_exports.object({ type: external_exports.literal("files"), rid: external_exports.uuid(), transfer: transferSchema }),
+  external_exports.object({ type: external_exports.literal("result"), rid: external_exports.uuid(), delivered: external_exports.boolean().optional(), recipient: external_exports.string().regex(NETWORK_NAME_PATTERN).optional(), readAt: external_exports.number().nonnegative().nullable().optional(), transfer: transferResultSchema.optional(), error: external_exports.string().max(MAX_METADATA_CHARS).optional() })
+]);
+var Link = class {
+  constructor(socket, service, key2, expected) {
+    this.socket = socket;
+    this.service = service;
+    this.key = key2;
+    this.expected = expected;
+    socket.setKeepAlive(true, NETWORK_REFRESH_MS);
+    this.deadline = setTimeout(() => this.fail(new Error("network hello timed out")), NETWORK_TIMEOUT_MS);
+    void this.ready.catch(() => {
+    });
+    socket.on("data", (chunk) => {
+      this.buffer = Buffer.concat([this.buffer, chunk]);
+      this.processBuffer();
+    });
+    socket.on("error", (err) => this.fail(err));
+    socket.on("close", () => {
+      clearTimeout(this.deadline);
+      this.readyReject(new Error("network link closed"));
+      for (const p of this.pending.values()) {
+        clearTimeout(p.timer);
+        p.reject(new Error("network link closed"));
+      }
+      this.pending.clear();
+      for (const reject of this.extensionWrites) reject(new Error("network link closed"));
+      this.extensionWrites.clear();
+      service.detach(this);
+    });
+    this.write({ type: "hello", v: NETWORK_VERSION, ...service.keys.identity, peers: service.localPeers(), echo: true, receipts: Boolean(service.supportsReceipts), capabilities: service.extensionCapabilities() });
+  }
+  socket;
+  service;
+  key;
+  expected;
+  remote = null;
+  peers = [];
+  echoSupported = false;
+  heartbeatPending = false;
+  receiptsSupported = false;
+  capabilities = [];
+  advertisedPeers = null;
+  extensionHandlers = 0;
+  buffer = Buffer.alloc(0);
+  pending = /* @__PURE__ */ new Map();
+  extensionWrites = /* @__PURE__ */ new Set();
+  readyResolve;
+  readyReject;
+  ready = new Promise((resolve15, reject) => {
+    this.readyResolve = resolve15;
+    this.readyReject = reject;
+  });
+  deadline;
+  processBuffer() {
+    if (this.socket.destroyed) return;
+    try {
+      let nl;
+      while (this.extensionHandlers < MAX_EXTENSION_HANDLERS && (nl = this.buffer.indexOf("\n")) >= 0) {
+        if (nl > MAX_NETWORK_FRAME_BYTES) throw new Error("network frame too large");
+        const line = this.buffer.subarray(0, nl);
+        this.buffer = this.buffer.subarray(nl + 1);
+        const frame = frameSchema.parse(JSON.parse(line.toString("utf8")));
+        if (!this.remote) {
+          if (frame.type !== "hello") throw new Error("network hello required");
+          const expected = this.expected;
+          if (expected && (frame.id !== expected.id || frame.name !== expected.name || frame.fingerprint !== expected.fingerprint)) throw new Error("paired identity changed");
+          this.remote = expected ?? this.service.keys.accept(this.key, frame);
+          this.peers = frame.peers;
+          this.echoSupported = frame.echo === true;
+          this.receiptsSupported = frame.receipts === true;
+          this.capabilities = frame.capabilities ?? [];
+          this.service.attach(this);
+          clearTimeout(this.deadline);
+          this.readyResolve();
+        } else if (frame.type === "hello") throw new Error("duplicate network hello");
+        else this.onFrame(frame);
+      }
+      if (this.buffer.length > MAX_NETWORK_FRAME_BYTES) throw new Error("network frame too large");
+      if (this.extensionHandlers >= MAX_EXTENSION_HANDLERS) this.socket.pause();
+      else this.socket.resume();
+    } catch (error62) {
+      this.fail(error62);
+    }
+  }
+  write(frame) {
+    const data = JSON.stringify(frame) + "\n";
+    if (Buffer.byteLength(data) > MAX_NETWORK_FRAME_BYTES || this.socket.writableLength > MAX_NETWORK_FRAME_BYTES) throw new Error("network write limit reached");
+    if (this.socket.destroyed) throw new Error("network link closed");
+    this.socket.write(data);
+  }
+  supports(capability) {
+    return this.capabilities.includes(capability);
+  }
+  /** Complete only after the stream has consumed this bounded record; callers await each write. */
+  writeExtension(type, payload) {
+    const data = JSON.stringify({ type, payload }) + "\n";
+    if (Buffer.byteLength(data) > MAX_NETWORK_FRAME_BYTES || this.socket.writableLength > MAX_NETWORK_FRAME_BYTES || this.extensionWrites.size >= MAX_NETWORK_REQUESTS) return Promise.reject(new Error("network write limit reached"));
+    if (this.socket.destroyed) return Promise.reject(new Error("network link closed"));
+    return new Promise((resolve15, reject) => {
+      const failed = (error62) => {
+        if (!this.extensionWrites.delete(failed)) return;
+        this.fail(error62);
+        reject(new Error("network link closed", { cause: error62 }));
+      };
+      this.extensionWrites.add(failed);
+      try {
+        this.socket.write(data, (error62) => {
+          if (error62) failed(error62);
+          else {
+            this.extensionWrites.delete(failed);
+            resolve15();
+          }
+        });
+      } catch (error62) {
+        failed(error62);
+      }
+    });
+  }
+  refresh() {
+    if (!this.remote) return;
+    const peers = this.service.localPeers(), signature = JSON.stringify(peers);
+    if (this.echoSupported && signature === this.advertisedPeers) return;
+    this.write({ type: "peers", peers });
+    this.advertisedPeers = signature;
+  }
+  send(message) {
+    return this.request({ type: "send", rid: randomUUID13(), message: messageSchema.parse(message) });
+  }
+  /** Detect a half-open link even when nobody sends work; activity never expires a peer. */
+  heartbeat() {
+    if (!this.remote || !this.echoSupported || this.heartbeatPending) return;
+    this.heartbeatPending = true;
+    void this.echo(this.service.timings.heartbeatTimeoutMs).catch((error62) => this.fail(error62)).finally(() => {
+      this.heartbeatPending = false;
+    });
+  }
+  receipt(id, sender, recipient, requireRecipient = false) {
+    if (!this.receiptsSupported) return Promise.reject(new Error("Remote broker does not support read receipts. Update and reload its hosting sessions."));
+    if (requireRecipient && !this.supports("recipient-receipts-v1")) return Promise.reject(new Error("Remote broker does not support per-recipient broadcast receipts. Update and reload its hosting sessions."));
+    return this.request({ type: "receipt", rid: randomUUID13(), id, sender, recipient });
+  }
+  files(transfer) {
+    return this.request({ type: "files", rid: randomUUID13(), transfer: transferSchema.parse(transfer) });
+  }
+  async echo(timeoutMs = NETWORK_TIMEOUT_MS) {
+    if (!this.echoSupported) throw new Error("Remote broker does not support verification. Update and restart its hosting sessions.");
+    const result = await this.request({ type: "echo", rid: randomUUID13() }, timeoutMs);
+    if (result !== true) throw new Error("network echo was not acknowledged");
+  }
+  request(frame, timeoutMs = NETWORK_TIMEOUT_MS) {
+    if (this.pending.size >= MAX_NETWORK_REQUESTS) return Promise.reject(new Error("too many network requests"));
+    return new Promise((resolve15, reject) => {
+      const rid = frame.rid;
+      const timer = setTimeout(() => {
+        this.pending.delete(rid);
+        reject(new Error("network send timed out; delivery may have occurred"));
+      }, timeoutMs);
+      this.pending.set(rid, { resolve: resolve15, reject, timer, kind: frame.type });
+      try {
+        if (frame.type === "send" || frame.type === "files") this.refresh();
+        this.write(frame);
+      } catch (err) {
+        clearTimeout(timer);
+        this.pending.delete(rid);
+        reject(err);
+      }
+    });
+  }
+  onFrame(frame) {
+    if (frame.type === "file-stream" || frame.type === "remote-job" || frame.type === "dashboard-read") {
+      if (++this.extensionHandlers > MAX_EXTENSION_HANDLERS) throw new Error("too many extension handlers");
+      void Promise.resolve().then(() => this.service.receiveExtension(frame.type, frame.payload, this.remote)).catch((error62) => this.fail(error62)).finally(() => {
+        this.extensionHandlers--;
+        this.processBuffer();
+      });
+      return;
+    }
+    if (frame.type === "peers") {
+      this.peers = frame.peers;
+      return;
+    }
+    if (frame.type === "result") {
+      const pending = this.pending.get(frame.rid);
+      if (!pending) return;
+      clearTimeout(pending.timer);
+      this.pending.delete(frame.rid);
+      if (frame.error) pending.reject(new Error(frame.error));
+      else if (pending.kind === "send" && frame.delivered !== void 0) pending.resolve({ delivered: frame.delivered, recipient: frame.recipient });
+      else if (pending.kind === "echo" && frame.delivered !== void 0) pending.resolve(frame.delivered);
+      else if (pending.kind === "receipt" && frame.readAt !== void 0) pending.resolve(frame.readAt);
+      else if (pending.kind === "files" && frame.transfer) pending.resolve(frame.transfer);
+      else pending.reject(new Error("invalid network result"));
+      return;
+    }
+    if (frame.type === "echo") {
+      this.write({ type: "result", rid: frame.rid, delivered: true });
+      return;
+    }
+    try {
+      if (frame.type === "receipt") {
+        const readAt = this.service.readReceipt(frame.id, `${this.remote.id}/${frame.sender}`, frame.recipient);
+        this.write({ type: "result", rid: frame.rid, readAt });
+        return;
+      }
+      const from = frame.type === "send" ? frame.message.from : frame.transfer.from;
+      const sender = this.peers.find((p) => p.id === from.id && p.name === from.name);
+      if (!sender || (sender.jobAgent ?? sender.agent) !== from.agent) throw new Error("sender not advertised by paired instance");
+      const remote = this.remote;
+      if (frame.type === "files") {
+        const result2 = this.service.receiveFiles(frame.transfer, `${remote.name}/${from.name}`, `${remote.id}/${from.id}`);
+        this.write({ type: "result", rid: frame.rid, transfer: result2 });
+        return;
+      }
+      const message = { ...frame.message, from: { ...frame.message.from, id: `${remote.id}/${frame.message.from.id}`, name: `${remote.name}/${frame.message.from.name}` } };
+      const result = this.service.receive(message);
+      this.refresh();
+      this.write({ type: "result", rid: frame.rid, delivered: result.delivered, recipient: result.recipient });
+    } catch (err) {
+      this.write({ type: "result", rid: frame.rid, error: String(err.message).slice(0, MAX_METADATA_CHARS) });
+    }
+  }
+  fail(error62) {
+    this.readyReject(error62);
+    this.socket.destroy();
+  }
+};
+var NetworkService = class {
+  constructor(home, cfg, broker, log, timings = {}) {
+    this.home = home;
+    this.cfg = cfg;
+    this.broker = broker;
+    this.log = log;
+    this.timings = { refreshMs: timings.refreshMs ?? NETWORK_REFRESH_MS, heartbeatTimeoutMs: timings.heartbeatTimeoutMs ?? NETWORK_HEARTBEAT_TIMEOUT_MS };
+    for (const value of Object.values(this.timings)) if (!Number.isSafeInteger(value) || value <= 0) throw new Error("network timings must be positive milliseconds");
+    this.keys = new PairingStore(home, cfg.name);
+    this.transfers = new TransferManager(home, {
+      supports: (remote) => this.peerSupports(remote, FILE_STREAM_CAPABILITY),
+      send: (remote, payload) => {
+        if (payload.op === "offer" || payload.op === "fetch") this.instanceLink(remote).refresh();
+        return this.sendExtension(remote, "file-stream", payload);
+      },
+      validSender: (remote, sender) => this.links.get(remote)?.peers.some((peer) => peer.id === sender.id && peer.name === sender.name && (peer.jobAgent ?? peer.agent) === sender.agent) ?? false,
+      localPeer: (name2) => {
+        const peer = this.broker.peers().find((peer2) => peer2.name === name2);
+        return peer ? { id: peer.id, name: peer.name, agent: peer.jobAgent ?? peer.agent, cwd: peer.cwd } : void 0;
+      },
+      notify: (message) => {
+        this.broker.receive(message);
+      },
+      legacy: (remote, transfer) => this.instanceLink(remote).files(transfer)
+    }, log, { maxBytes: cfg.maxTransferBytes, fetchRoots: cfg.fetchRoots });
+    this.registerExtension("file-stream", FILE_STREAM_CAPABILITY, (payload, remote) => this.transfers.handle(payload, remote.id, remote.name));
+  }
+  home;
+  cfg;
+  broker;
+  log;
+  timings;
+  keys;
+  transfers;
+  server = null;
+  sockets = /* @__PURE__ */ new Set();
+  links = /* @__PURE__ */ new Map();
+  connecting = /* @__PURE__ */ new Set();
+  health = /* @__PURE__ */ new Map();
+  discovery = null;
+  timer = null;
+  closed = false;
+  extensions = /* @__PURE__ */ new Map();
+  get port() {
+    const address = this.server?.address();
+    return address && typeof address !== "string" ? address.port : 0;
+  }
+  registerExtension(type, capability, handler) {
+    if (this.server || this.extensions.has(type)) throw new Error("register extensions once before starting networking");
+    this.extensions.set(type, { capability, handler });
+  }
+  extensionCapabilities() {
+    return [...this.extensions.values()].map((extension) => extension.capability).concat(this.broker.recipientReceipts ? ["recipient-receipts-v1"] : []);
+  }
+  receiveExtension(type, payload, remote) {
+    const extension = this.extensions.get(type);
+    if (!extension) throw new Error("unsupported network extension");
+    return extension.handler(payload, remote);
+  }
+  instanceLink(instance) {
+    const link2 = [...this.links.values()].find((candidate) => candidate.remote.id === instance || candidate.remote.name === instance);
+    if (!link2) throw new Error("paired instance is not connected");
+    return link2;
+  }
+  peerSupports(instance, capability) {
+    try {
+      return this.instanceLink(instance).supports(capability);
+    } catch {
+      return false;
+    }
+  }
+  async sendExtension(instance, type, payload) {
+    const extension = this.extensions.get(type);
+    const link2 = this.instanceLink(instance);
+    if (!extension || !link2.supports(extension.capability)) return Promise.reject(new Error("remote broker does not support this extension"));
+    if (type === "remote-job" && payload.kind === "request") link2.refresh();
+    return link2.writeExtension(type, payload);
+  }
+  get supportsReceipts() {
+    return Boolean(this.broker.receipt);
+  }
+  readReceipt(id, sender, recipient) {
+    if (!this.broker.receipt) throw new Error("read receipts unavailable");
+    return this.broker.receipt(id, sender, recipient);
+  }
+  async receipt(address, id, sender, requireRecipient = false) {
+    const { link: link2, target } = this.target(address);
+    return link2.receipt(id, sender, target, requireRecipient);
+  }
+  localPeers() {
+    return peersSchema.parse(this.broker.peers());
+  }
+  receive(message) {
+    return this.broker.receive(message);
+  }
+  async start() {
+    if (!this.cfg.enabled) throw new Error("networking is disabled");
+    if (this.server || this.closed) throw new Error("network service already started or closed");
+    const acceptedKeys = /* @__PURE__ */ new WeakMap();
+    const server = createServer3({
+      minVersion: "TLSv1.3",
+      maxVersion: "TLSv1.3",
+      ciphers: TLS_CIPHER,
+      handshakeTimeout: NETWORK_TIMEOUT_MS,
+      pskCallback: (socket, identity) => {
+        const key2 = this.keys.keyFor(identity);
+        if (key2) acceptedKeys.set(socket, key2);
+        return key2 ? Buffer.from(key2, "hex") : randomBytes6(PAIRING_KEY_BYTES);
+      }
+    }, (socket) => {
+      const key2 = acceptedKeys.get(socket);
+      if (!key2 || socket.getProtocol() !== "TLSv1.3") return socket.destroy();
+      try {
+        new Link(socket, this, key2);
+      } catch (err) {
+        socket.destroy();
+        this.log.warn("network hello could not be sent", { message: err.message });
+      }
+    });
+    this.server = server;
+    server.maxConnections = MAX_NETWORK_LINKS;
+    server.on("connection", (socket) => {
+      this.sockets.add(socket);
+      socket.once("close", () => this.sockets.delete(socket));
+    });
+    server.on("tlsClientError", () => this.log.debug("network TLS authentication failed"));
+    server.on("error", (err) => this.log.warn("network listener error", { message: err.message }));
+    try {
+      await new Promise((resolve15, reject) => {
+        server.once("error", reject);
+        server.listen(this.cfg.port, this.cfg.bind, () => {
+          server.off("error", reject);
+          resolve15();
+        });
+      });
+      if (this.cfg.discovery) {
+        this.discovery = new NetworkDiscovery({ identity: this.keys.identity, port: this.port, onError: (err) => this.log.warn("network discovery error", { message: err.message }) });
+        await this.discovery.start();
+      }
+      this.timer = setInterval(() => {
+        for (const link2 of this.links.values()) {
+          try {
+            link2.refresh();
+            link2.heartbeat();
+          } catch (err) {
+            link2.fail(err);
+          }
+        }
+        for (const pair of this.keys.pairs()) if (pair.host && pair.port && !this.links.has(pair.id) && !this.connecting.has(pair.id)) void this.connectPair(pair).catch(() => {
+        });
+      }, this.timings.refreshMs);
+      this.timer.unref();
+      for (const pair of this.keys.pairs()) if (pair.host && pair.port) void this.connectPair(pair).catch(() => {
+      });
+    } catch (err) {
+      await this.close();
+      throw err;
+    }
+  }
+  attach(link2) {
+    const remote = link2.remote;
+    if (this.closed) throw new Error("network service closed");
+    const existing = this.links.get(remote.id);
+    if (existing && existing !== link2) throw new Error("instance already connected");
+    this.links.set(remote.id, link2);
+    setImmediate(() => this.transfers.resume());
+  }
+  detach(link2) {
+    if (link2.remote && this.links.get(link2.remote.id) === link2) {
+      this.links.delete(link2.remote.id);
+      this.transfers.disconnected(link2.remote.id);
+    }
+  }
+  peers() {
+    return [...this.links.values()].flatMap((link2) => link2.peers.map((p) => {
+      const host = link2.remote.name;
+      const qualify = (value, prefix = host) => value && !value.includes("/") ? `${prefix}/${value}` : value;
+      return {
+        ...p,
+        agent: p.jobAgent ?? p.agent,
+        host,
+        id: `${link2.remote.id}/${p.id}`,
+        name: `${host}/${p.name}`,
+        jobParent: qualify(p.jobParent),
+        parentJob: qualify(p.parentJob),
+        rootName: qualify(p.rootName),
+        rootSession: qualify(p.rootSession, link2.remote.id)
+      };
+    }));
+  }
+  status() {
+    return { enabled: true, config: this.cfg, identity: this.keys.identity, port: this.port, discovered: this.discovery?.instances() ?? [], ...this.discovery ? { discoveryDiagnostics: this.discovery.diagnostics() } : {}, paired: this.keys.pairs().map(({ id, name: name2, fingerprint }) => ({ id, name: name2, fingerprint, connected: this.links.has(id), ...this.health.has(id) ? { health: this.health.get(id) } : {} })) };
+  }
+  async verify(id) {
+    const link2 = this.links.get(id);
+    if (!link2) throw new Error("paired instance is not connected");
+    const start = performance.now();
+    await link2.echo();
+    const roundTripMs = Math.round(performance.now() - start);
+    this.health.set(id, { lastVerifiedAt: Date.now(), roundTripMs });
+    return { peers: this.peers().filter((p) => p.id.startsWith(`${id}/`)), roundTripMs };
+  }
+  async link(code, host, port) {
+    const decoded = decodePairingCode(code);
+    const pair = this.keys.validatePair(decoded, host, port);
+    await this.connectPair(pair);
+    try {
+      this.keys.remember(decoded, host, port);
+    } catch (err) {
+      this.links.get(pair.id)?.socket.destroy();
+      throw err;
+    }
+    return { id: decoded.id, name: decoded.name, fingerprint: decoded.fingerprint };
+  }
+  async connectPair(pair) {
+    if (this.closed || this.links.has(pair.id) || this.connecting.has(pair.id)) throw new Error("instance already connected or connecting");
+    this.connecting.add(pair.id);
+    let socket = null;
+    try {
+      socket = connect2({
+        host: pair.host,
+        port: pair.port,
+        minVersion: "TLSv1.3",
+        maxVersion: "TLSv1.3",
+        ciphers: TLS_CIPHER,
+        // TLS-PSK has no certificate. The PSK is mandatory; certificate-based fallbacks are rejected below.
+        rejectUnauthorized: false,
+        checkServerIdentity: () => void 0,
+        pskCallback: () => ({ identity: keyFingerprint(pair.key), psk: Buffer.from(pair.key, "hex") })
+      });
+      this.sockets.add(socket);
+      socket.once("close", () => this.sockets.delete(socket));
+      const secured = socket;
+      await new Promise((resolve15, reject) => {
+        const timer = setTimeout(() => {
+          secured.destroy();
+          reject(new Error("network TLS handshake timed out"));
+        }, NETWORK_TIMEOUT_MS);
+        const onError = (err) => {
+          clearTimeout(timer);
+          reject(err);
+        };
+        secured.once("error", onError);
+        secured.once("secureConnect", () => {
+          clearTimeout(timer);
+          secured.off("error", onError);
+          resolve15();
+        });
+      });
+      if (secured.getProtocol() !== "TLSv1.3" || Object.keys(secured.getPeerCertificate()).length) throw new Error("TLS-PSK required");
+      await new Link(secured, this, pair.key, pair).ready;
+    } catch (err) {
+      socket?.destroy();
+      throw err;
+    } finally {
+      this.connecting.delete(pair.id);
+    }
+  }
+  unlink(id) {
+    try {
+      this.keys.remove(id);
+      this.health.delete(id);
+    } finally {
+      this.links.get(id)?.socket.destroy();
+    }
+  }
+  async send(message) {
+    const { link: link2, target } = this.target(message.recipient);
+    const result = await link2.send({ ...message, recipient: target });
+    const actual = result.recipient ?? target;
+    const recipient = `${link2.remote.name}/${actual}`;
+    return { messages: [{ ...message, recipient }], deliveredTo: result.delivered ? [recipient] : [], queuedFor: result.delivered ? [] : [recipient], recipientStates: link2.peers.filter((p) => p.name === actual).map((p) => ({ name: recipient, activity: p.activity, autoWake: p.autoWake, wakeOnDirect: p.wakeOnDirect, wakeAvailable: p.wakeAvailable, wakeMaxHops: p.wakeMaxHops })) };
+  }
+  target(address) {
+    const slash = address.indexOf("/");
+    const host = address.slice(0, slash);
+    const raw = address.slice(slash + 1);
+    const link2 = [...this.links.values()].find((l) => l.remote.name === host || l.remote.id === host);
+    const target = link2?.peers.find((p) => p.name === raw || p.id === raw)?.name ?? raw;
+    if (!link2 || !NETWORK_NAME_PATTERN.test(target)) throw new BridgeError("unknown_target", "paired instance is not connected or target is invalid");
+    return { link: link2, target };
+  }
+  async sendFiles(address, transfer) {
+    const { link: link2, target } = this.target(address);
+    return link2.files({ ...transfer, to: target });
+  }
+  startFiles(address, paths, cwd, from, pull = false) {
+    const { link: link2, target } = this.target(address);
+    if (!link2.peers.some((peer) => peer.name === target)) throw new Error("file recipient is not online");
+    const streaming = link2.supports(FILE_STREAM_CAPABILITY);
+    if (pull && !streaming) throw new Error("remote broker does not support fetch_files; update its hosting sessions");
+    return this.transfers.start(link2.remote.id, `${link2.remote.name}/${target}`, target, paths, cwd, from, pull, void 0, !streaming);
+  }
+  fileTarget(address) {
+    return this.target(address).target;
+  }
+  receiveFiles(transfer, name2, id) {
+    if (!this.broker.peers().some((p) => p.name === transfer.to)) throw new Error("file recipient is not online");
+    const bytes2 = transfer.entries.reduce((sum, entry) => sum + (entry.kind === "file" ? Buffer.byteLength(entry.data, "base64") : 0), 0);
+    if (this.cfg.maxTransferBytes !== void 0 && bytes2 > this.cfg.maxTransferBytes) throw new Error("transfer exceeds size limit");
+    const result = receiveTransfer(this.home, transfer);
+    this.transfers.recordLegacy(transfer, id.split("/")[0], name2);
+    this.log.info("legacy files received", { ...result, sender: name2 });
+    this.broker.receive({ id: transfer.id, from: { ...transfer.from, name: name2, id }, to: transfer.to, recipient: transfer.to, conversationId: transfer.id, replyTo: null, hop: 0, body: `Received ${result.files} files (${result.bytes} bytes) in ${result.inbox}`, createdAt: Date.now(), readAt: null });
+    return result;
+  }
+  async close() {
+    this.closed = true;
+    this.transfers.close();
+    if (this.timer) clearInterval(this.timer);
+    this.timer = null;
+    await this.discovery?.close();
+    this.discovery = null;
+    for (const socket of this.sockets) socket.destroy();
+    this.links.clear();
+    const server = this.server;
+    this.server = null;
+    if (server) await new Promise((resolve15) => server.close(() => resolve15()));
+  }
+};
+
+// src/network/remote-dashboard.ts
+import { randomUUID as randomUUID14 } from "node:crypto";
+
+// src/core/dashboard-read.ts
+import { closeSync as closeSync10, openSync as openSync10, readFileSync as readFileSync21, readSync as readSync4, statSync as statSync12 } from "node:fs";
+import { join as join39 } from "node:path";
+
+// src/core/run-history.ts
+import { lstatSync as lstatSync5, readdirSync as readdirSync11, realpathSync as realpathSync6, statSync as statSync11 } from "node:fs";
+import { isAbsolute as isAbsolute5, join as join32, relative as relative4, sep as sep5 } from "node:path";
+
+// src/core/runfeed.ts
+import { appendFileSync as appendFileSync3, mkdirSync as mkdirSync18, readFileSync as readFileSync18, readdirSync as readdirSync10, statSync as statSync10 } from "node:fs";
+import { join as join31 } from "node:path";
+var RUNS_DIR_NAME = "runs";
+var HEARTBEAT_MS = 6e4;
+var KEEP_RUN_LOGS = 50;
+var STALE_RUN_MS = 15e4;
+function runMetaPath(logPath) {
+  return logPath.replace(/\.log$/, ".json");
+}
+var CONTINUATION = "         ";
+function stamp(t2) {
+  return new Date(t2).toTimeString().slice(0, 8);
+}
+function pruneOldLogs(dir) {
+  try {
+    archiveOldRuns(join31(dir, ".."));
+    const limit = retentionLimit("AGENT_BRIDGE_RUN_LOG_LIMIT", KEEP_RUN_LOGS);
+    if (!limit) return;
+    const files2 = readdirSync10(dir).filter((f) => f.endsWith(".log")).map((f) => ({ f, t: statSync10(join31(dir, f)).mtimeMs })).sort((a, b) => b.t - a.t);
+    for (const { f } of files2.slice(limit)) {
+      const path = join31(dir, f);
+      if (Date.now() - statSync10(path).mtimeMs <= STALE_RUN_MS && !/^\d\d:\d\d:\d\d finished after \d+s · /m.test(readFileSync18(path, "utf8"))) continue;
+      archiveRun(path);
+    }
+  } catch (err) {
+    process.stderr.write(`could not archive run logs: ${String(err)}
+`);
+  }
+}
+function startRunFeed(opts) {
+  const now = opts.now ?? Date.now;
+  const release = storageLease(opts.home);
+  const dir = join31(opts.home, RUNS_DIR_NAME);
+  mkdirSync18(dir, { recursive: true });
+  const logPath = join31(dir, `${new Date(now()).toISOString().slice(0, 19).replace(/[:T]/g, "-")}-${opts.name}.log`);
+  const write = (line) => {
+    const [first, ...rest] = line.replace(/\r/g, "").split("\n");
+    const body = [first, ...rest.map((l) => `${CONTINUATION}${l}`)].join("\n");
+    try {
+      appendFileSync3(logPath, `${stamp(now())} ${body}
+`);
+    } catch {
+    }
+  };
+  let meta3 = { ...opts.meta };
+  const writeMeta = () => {
+    try {
+      const path = runMetaPath(logPath);
+      const previous = readJsonStore(path);
+      writeJsonStore(path, mergeStoreFields(isRecord(previous) ? previous : {}, { ...meta3 }), previous);
+    } catch (err) {
+      process.stderr.write(`could not save run metadata: ${String(err)}
+`);
+    }
+  };
+  writeMeta();
+  write(opts.header);
+  pruneOldLogs(dir);
+  const started = now();
+  let lastStep = "starting";
+  let lastAt = started;
+  const emit = (m) => {
+    write(m);
+    opts.forward?.(m);
+  };
+  emit(`started \xB7 follow live: agent-bridge watch ${opts.name}`);
+  const timer = setInterval(() => {
+    const quietMin = Math.floor((now() - lastAt) / 6e4);
+    if (quietMin >= 1) emit(`still working, no new step for ${quietMin}m (last: ${lastStep})`);
+  }, opts.heartbeatMs ?? HEARTBEAT_MS);
+  timer.unref();
+  return {
+    logPath,
+    report: (m, full) => {
+      lastStep = m.split(" \xB7 ").pop() ?? m;
+      lastAt = now();
+      write(full ?? m);
+      opts.forward?.(m);
+    },
+    end: (summary, answer) => {
+      clearInterval(timer);
+      meta3 = { ...meta3, etaAt: void 0, etaReportedAt: void 0 };
+      writeMeta();
+      if (answer?.trim()) write(`answer: ${answer.trim()}`);
+      write(`finished after ${Math.round((now() - started) / 1e3)}s \xB7 ${summary}`);
+      release();
+    },
+    meta: (patch) => {
+      meta3 = { ...meta3, ...patch };
+      writeMeta();
+    }
+  };
+}
+
+// src/core/run-history.ts
+var DEFAULT_RUN_PAGE_SIZE = 50;
+var MAX_RUN_PAGE_SIZE = 500;
+var RUN_LOG_NAME = /^[\w.-]+\.log$/;
+var ARCHIVE_SUFFIX = /(\.(?:log|json))-\d+-[\w-]+$/;
+function readHistoryJson(file2) {
+  try {
+    return structuredClone(readJsonSnapshot(file2).value);
+  } catch {
+    return null;
+  }
+}
+function files(dir) {
+  try {
+    return readdirSync11(dir);
+  } catch {
+    return [];
+  }
+}
+function readRunLogs(home) {
+  const root = join32(home, RUNS_DIR_NAME);
+  let canonicalRoot;
+  try {
+    canonicalRoot = realpathSync6.native(root);
+  } catch {
+    return [];
+  }
+  const records = /* @__PURE__ */ new Map();
+  for (const archived of [true, false]) {
+    const dir = archived ? join32(root, "archive") : root;
+    let canonicalDir;
+    try {
+      canonicalDir = realpathSync6.native(dir);
+    } catch {
+      continue;
+    }
+    const rel = relative4(canonicalRoot, canonicalDir);
+    if (rel === ".." || rel.startsWith(`..${sep5}`) || isAbsolute5(rel)) continue;
+    const names = files(canonicalDir).sort();
+    const localFile = (name2) => {
+      const file2 = join32(canonicalDir, name2);
+      try {
+        const st = lstatSync5(file2);
+        return st.isFile() ? { file: file2, st } : st.isSymbolicLink() ? (() => {
+          const actual = safeFile(root, file2, canonicalRoot);
+          return actual ? { file: actual, st: statSync11(actual) } : null;
+        })() : null;
+      } catch {
+        return null;
+      }
+    };
+    const metadata = /* @__PURE__ */ new Map();
+    for (const name2 of names) {
+      const original = archived ? name2.replace(ARCHIVE_SUFFIX, "$1") : name2;
+      if (!original.endsWith(".json")) continue;
+      const record2 = localFile(name2);
+      const value = record2 ? readHistoryJson(record2.file) : null;
+      if (isRecord(value)) metadata.set(original, value);
+    }
+    for (const name2 of names) {
+      const original = archived ? name2.replace(ARCHIVE_SUFFIX, "$1") : name2;
+      if (!RUN_LOG_NAME.test(original)) continue;
+      const local = localFile(name2);
+      if (!local) continue;
+      const { file: file2, st } = local;
+      try {
+        if (!st.isFile()) continue;
+        const key2 = original.slice(0, -".log".length);
+        const record2 = { name: key2, file: file2, updatedAt: st.mtimeMs, size: st.size, signature: fileSignature(st), archived, meta: metadata.get(`${key2}.json`) ?? {} };
+        const previous = records.get(key2);
+        if (!previous || !archived || record2.updatedAt >= previous.updatedAt) records.set(key2, record2);
+      } catch {
+      }
+    }
+  }
+  return [...records.values()];
+}
+function readHistoryJobs(home) {
+  const out2 = /* @__PURE__ */ new Map();
+  let canonicalHome;
+  try {
+    canonicalHome = realpathSync6.native(home);
+  } catch {
+    return out2;
+  }
+  const archive = join32(home, "archive");
+  const archived = files(archive).filter((name2) => name2.startsWith(`${JOBS_FILE}.`) || name2.startsWith(`${JOBS_FILE}-`) || /^jobs-.*\.json$/.test(name2)).sort();
+  const backups = files(home).filter((name2) => name2.startsWith(`${JOBS_FILE}.backup-`) || name2 === `${JOBS_FILE}.overflow.json`).sort();
+  const snapshots2 = [...archived.map((name2) => join32(archive, name2)), ...backups.map((name2) => join32(home, name2))];
+  const snapshotTime = (file2) => {
+    const stamp2 = /(?:jobs-|\.backup-|\.overflow\.json-|jobs\.json-)(\d+)/.exec(file2)?.[1];
+    if (stamp2) return Number(stamp2);
+    try {
+      return statSync11(file2).mtimeMs;
+    } catch {
+      return 0;
+    }
+  };
+  snapshots2.sort((a, b) => snapshotTime(a) - snapshotTime(b) || (a < b ? -1 : a > b ? 1 : 0));
+  for (const candidate of [...snapshots2, join32(home, JOBS_FILE)]) {
+    const file2 = safeFile(home, candidate, canonicalHome);
+    const value = file2 ? readHistoryJson(file2) : null;
+    const jobs = Array.isArray(value) ? value : isRecord(value) && Array.isArray(value.jobs) ? value.jobs : [];
+    for (const job of jobs) {
+      if (!isRecord(job) || typeof job.name !== "string" || !RUN_LOG_NAME.test(`${job.name}.log`)) continue;
+      out2.set(job.name, { ...out2.get(job.name), ...job });
+    }
+  }
+  return out2;
+}
+function pageRuns(runs, before, limit) {
+  let at, name2;
+  if (before !== null) {
+    const match = /^(\d+)(?::([\w.-]+))?$/.exec(before);
+    if (!match || !Number.isSafeInteger(Number(match[1]))) throw new Error("invalid run cursor");
+    at = Number(match[1]);
+    name2 = match[2];
+  }
+  const sorted = [...runs].sort((a, b) => b.startedAt - a.startedAt || (a.name < b.name ? 1 : a.name > b.name ? -1 : 0));
+  const older = sorted.filter((run2) => at === void 0 || run2.startedAt < at || name2 !== void 0 && run2.startedAt === at && run2.name < name2);
+  const page = older.slice(0, limit), last = page.at(-1);
+  const running = before === null ? older.slice(limit).filter((run2) => run2.status === "running") : [];
+  return { runs: [...page, ...running], next: older.length > page.length && last ? `${last.startedAt}:${last.name}` : null, total: runs.length };
+}
+
+// src/core/job-outcomes.ts
+import { createHash as createHash14 } from "node:crypto";
+import { existsSync as existsSync20 } from "node:fs";
+import { join as join38 } from "node:path";
+import { DatabaseSync as DatabaseSync13 } from "node:sqlite";
+
+// src/core/paths.ts
+import { createHash as createHash10 } from "node:crypto";
+import { join as join33, posix, resolve as resolve9 } from "node:path";
+var PIPE_HASH_LENGTH = 12;
+function resolveHome(env = process.env) {
+  return resolve9(env[ENV.home]?.trim() || DEFAULT_HOME);
+}
+function resolvePipePath(home, env = process.env, platform = process.platform) {
+  const override = env[ENV.pipe]?.trim();
+  if (override) return override;
+  if (platform === "win32") {
+    const hash3 = createHash10("sha256").update(home.toLowerCase()).digest("hex").slice(0, PIPE_HASH_LENGTH);
+    return `${WINDOWS_PIPE_PREFIX}${APP_NAME}-${hash3}-p${PROTOCOL_VERSION}`;
+  }
+  return posix.join(home, SOCKET_FILE_NAME.replace(/\.sock$/, `-p${PROTOCOL_VERSION}.sock`));
+}
+function resolveDbPath(home) {
+  return join33(home, DB_FILE_NAME);
+}
+
 // src/core/worktree.ts
 import { createHash as createHash11 } from "node:crypto";
-import { existsSync as existsSync18, mkdirSync as mkdirSync20, readFileSync as readFileSync18, realpathSync as realpathSync8, rmSync as rmSync6 } from "node:fs";
+import { existsSync as existsSync18, mkdirSync as mkdirSync20, readFileSync as readFileSync19, realpathSync as realpathSync8, rmSync as rmSync6 } from "node:fs";
 import { basename as basename10, dirname as dirname16, isAbsolute as isAbsolute7, join as join35, relative as relative6, resolve as resolve11, toNamespacedPath as toNamespacedPath2 } from "node:path";
 
 // src/core/worktree-links.ts
@@ -36650,7 +36880,7 @@ async function gitChangeSnapshot(cwd, log) {
     const file2 = line.slice(3).replace(/^.* -> /, "").replace(/^"|"$/g, "");
     let fp = line.slice(0, 2);
     try {
-      fp += ":" + createHash11("sha1").update(readFileSync18(join35(root, file2))).digest("hex");
+      fp += ":" + createHash11("sha1").update(readFileSync19(join35(root, file2))).digest("hex");
     } catch {
       fp += ":missing";
     }
@@ -36672,7 +36902,7 @@ import { join as join37 } from "node:path";
 
 // src/core/read-journal.ts
 import { createHash as createHash12 } from "node:crypto";
-import { appendFileSync as appendFileSync4, mkdirSync as mkdirSync21, readFileSync as readFileSync19 } from "node:fs";
+import { appendFileSync as appendFileSync4, mkdirSync as mkdirSync21, readFileSync as readFileSync20 } from "node:fs";
 import { join as join36 } from "node:path";
 var ReadJournal = class {
   constructor(home) {
@@ -36695,7 +36925,7 @@ var ReadJournal = class {
   entries(identity) {
     let raw;
     try {
-      raw = readFileSync19(this.path(identity), "utf8");
+      raw = readFileSync20(this.path(identity), "utf8");
     } catch (err) {
       if (err.code === "ENOENT") return [];
       throw err;
@@ -36913,8 +37143,8 @@ async function finishedRunOutcomes(home, log, names) {
   }
   return out2;
 }
-function summarizeRun(file2, text, mtimeMs, now, meta3 = {}) {
-  const lines = text.split("\n").filter(Boolean);
+function summarizeRun(file2, text2, mtimeMs, now, meta3 = {}) {
+  const lines = text2.split("\n").filter(Boolean);
   const finished = [...lines].reverse().find((l) => / finished after \d+s · /.test(l));
   const last = (finished ?? lines.at(-1) ?? "").replace(/^\d\d:\d\d:\d\d /, "");
   const status = finished ? / · done$/.test(finished) ? "done" : "failed" : now - mtimeMs > STALE_RUN_MS2 ? "interrupted" : "running";
@@ -36946,7 +37176,7 @@ function listRuns(home, now = Date.now()) {
       const signature = `${log.signature}:${JSON.stringify(log.meta)}`;
       let cached3 = runSummaries.get(log.file);
       if (cached3?.signature !== signature) {
-        cached3 = { signature, summary: summarizeRun(`${log.name}.log`, readFileSync20(log.file, "utf8"), log.updatedAt, log.updatedAt, log.meta) };
+        cached3 = { signature, summary: summarizeRun(`${log.name}.log`, readFileSync21(log.file, "utf8"), log.updatedAt, log.updatedAt, log.meta) };
         runSummaries.delete(log.file);
         runSummaries.set(log.file, cached3);
         if (runSummaries.size > 2048) runSummaries.delete(runSummaries.keys().next().value);
@@ -36995,6 +37225,16 @@ function listRuns(home, now = Date.now()) {
       recovered: true,
       hasLog: false
     });
+  }
+  const current = readHistoryJobs(home);
+  for (const run2 of runs) {
+    const job = run2.job && current.get(run2.job);
+    if (job && Array.isArray(job.ownershipHistory) && job.ownershipHistory.length) {
+      run2.owner = typeof job.owner === "string" ? job.owner : run2.owner;
+      run2.rootName = typeof job.rootName === "string" ? job.rootName : void 0;
+      run2.rootSession = typeof job.rootSession === "string" ? job.rootSession : void 0;
+      run2.parentJob = typeof job.parentJob === "string" ? job.parentJob : void 0;
+    }
   }
   return pageRuns(runs, null, runs.length).runs;
 }
@@ -37177,7 +37417,7 @@ var RemoteDashboard = class {
     if (this.closed || !pair?.connected) return dashboardError("remote_offline", "The paired PC is not connected.");
     if (!this.network.peerSupports(host, DASHBOARD_CAPABILITY)) return dashboardError("remote_update_needed", "Update and restart the paired PC's hosting sessions to read its dashboard.", 409);
     if (this.pending.size >= DASHBOARD_MAX_PENDING) return dashboardError("remote_busy", "Too many pending dashboard reads.", 429);
-    const rid = randomUUID13();
+    const rid = randomUUID14();
     const response = new Promise((resolve15) => {
       const timer = setTimeout(() => {
         this.pending.delete(rid);
@@ -37244,21 +37484,21 @@ var RemoteDashboard = class {
 };
 
 // src/network/remote-jobs.ts
-import { randomUUID as randomUUID15 } from "node:crypto";
+import { randomUUID as randomUUID16 } from "node:crypto";
 import { existsSync as existsSync21, realpathSync as realpathSync9, statSync as statSync14 } from "node:fs";
 import { isAbsolute as isAbsolute9, join as join45 } from "node:path";
 
 // src/mcp/delegate-run.ts
-import { randomUUID as randomUUID14 } from "node:crypto";
+import { randomUUID as randomUUID15 } from "node:crypto";
 import { isAbsolute as isAbsolute8, join as join42, relative as relative7, resolve as resolve12 } from "node:path";
 
 // src/core/effort.ts
-import { readFileSync as readFileSync22 } from "node:fs";
+import { readFileSync as readFileSync23 } from "node:fs";
 import { homedir as homedir6 } from "node:os";
 import { join as join41 } from "node:path";
 
 // src/core/codex-trust.ts
-import { readFileSync as readFileSync21, writeFileSync as writeFileSync9 } from "node:fs";
+import { readFileSync as readFileSync22, writeFileSync as writeFileSync9 } from "node:fs";
 import { homedir as homedir5 } from "node:os";
 import { join as join40 } from "node:path";
 var PERMISSION_HOOK_STATE_KEY = 'hooks.state."agent-bridge@agent-bridge:plugin.json#hooks[0]:permission_request:0:0"';
@@ -37266,16 +37506,16 @@ var OBSERVATIONS_FILE = "codex-hook.json";
 function codexHome(env = process.env) {
   return env.CODEX_HOME?.trim() || join40(homedir5(), ".codex");
 }
-function codexPermissionHookHash(home = codexHome(), read = (p) => readFileSync21(p, "utf8")) {
-  let text;
+function codexPermissionHookHash(home = codexHome(), read = (p) => readFileSync22(p, "utf8")) {
+  let text2;
   try {
-    text = read(join40(home, "config.toml"));
+    text2 = read(join40(home, "config.toml"));
   } catch {
     return null;
   }
-  const at = text.indexOf(`[${PERMISSION_HOOK_STATE_KEY}]`);
+  const at = text2.indexOf(`[${PERMISSION_HOOK_STATE_KEY}]`);
   if (at < 0) return null;
-  for (const line of text.slice(at).split(/\r?\n/).slice(1)) {
+  for (const line of text2.slice(at).split(/\r?\n/).slice(1)) {
     if (line.trim().startsWith("[")) break;
     const m = /^\s*trusted_hash\s*=\s*"(sha256:[0-9a-f]+)"/.exec(line);
     if (m) return m[1];
@@ -37284,7 +37524,7 @@ function codexPermissionHookHash(home = codexHome(), read = (p) => readFileSync2
 }
 function readObservations(bridgeHome) {
   try {
-    return JSON.parse(readFileSync21(join40(bridgeHome, OBSERVATIONS_FILE), "utf8"));
+    return JSON.parse(readFileSync22(join40(bridgeHome, OBSERVATIONS_FILE), "utf8"));
   } catch {
     return {};
   }
@@ -37298,13 +37538,13 @@ function recordCodexHookObservation(bridgeHome, hash3, observation) {
   } catch {
   }
 }
-function codexPermissionHookTrusted(bridgeHome, home = codexHome(), read = (p) => readFileSync21(p, "utf8")) {
+function codexPermissionHookTrusted(bridgeHome, home = codexHome(), read = (p) => readFileSync22(p, "utf8")) {
   const hash3 = codexPermissionHookHash(home, read);
   return hash3 !== null && readObservations(bridgeHome)[hash3] !== "failed";
 }
 
 // src/core/effort.ts
-function defaultEffort(agent, model, read = (p) => readFileSync22(p, "utf8")) {
+function defaultEffort(agent, model, read = (p) => readFileSync23(p, "utf8")) {
   try {
     if (agent === "codex") return codexConfigEffort(read(join41(codexHome(), "config.toml")));
     if (agent === "claude") return claudeSettingsEffort(read(join41(process.env.CLAUDE_CONFIG_DIR?.trim() || join41(homedir6(), ".claude"), "settings.json")), model);
@@ -37536,7 +37776,7 @@ async function runDelegate(rc, target, a, signal, onProgress, background, job) {
   checkDepth(rc.cfg.maxDelegateDepth);
   if (!job?.rootSession) return runDelegateInner(rc, target, a, signal, onProgress, background, job);
   const budget = new RootConcurrency(rc.home, job.rootSession);
-  const owner = { id: `${job.name}-${randomUUID14()}`, pid: process.pid };
+  const owner = { id: `${job.name}-${randomUUID15()}`, pid: process.pid };
   let timer;
   try {
     if (!job.parentJob) budget.ensureLimit(rc.cfg.maxJobs);
@@ -37564,7 +37804,7 @@ async function runDelegateInner(rc, target, a, signal, onProgress, background, j
   const cwd = a.cwd || rc.cwd();
   a = worktreeArgs(target, a, cfg, cwd, rc.home);
   const access = a.access;
-  const wt = a._worktree ?? (a.worktree ? await createWorktree({ cwd, home: rc.home, jobId: randomUUID14().slice(0, 8), log: dlog }) : null);
+  const wt = a._worktree ?? (a.worktree ? await createWorktree({ cwd, home: rc.home, jobId: randomUUID15().slice(0, 8), log: dlog }) : null);
   const workdir = wt?.cwd ?? cwd;
   const linkRoot = wt?.path ?? bridgeWorktreeRoot(workdir, rc.home);
   const watchChanges = !wt && (access === "edit" || access === "ask" && target === "codex");
@@ -37575,7 +37815,7 @@ async function runDelegateInner(rc, target, a, signal, onProgress, background, j
   let relayCalls = 0;
   const codexHash = target === "codex" ? codexPermissionHookHash() : null;
   const journalPermission = async (request2, decide) => {
-    const id = randomUUID14();
+    const id = randomUUID15();
     const context = { kind: "approval", agent: target, project: workdir, job: job?.name ?? a._job, session: job?.sessionId ?? void 0 };
     await appendContextEvent(rc.home, { ...context, payload: { id, stage: "request", request: request2 } });
     const decision = await decide();
@@ -37584,6 +37824,10 @@ async function runDelegateInner(rc, target, a, signal, onProgress, background, j
   };
   const askUser = rc.askUser ? async (r) => {
     if (!job) return rc.askUser(r);
+    if (job.ownershipHistory?.length && job.owner !== rc.me() && rc.jobs) {
+      const answer = await rc.jobs.askParent(job, `${r.tool}: ${r.detail}`, PARENT_APPROVAL_TIMEOUT_MS, r);
+      return answer.allow ? { allow: true } : { allow: false, message: answer.reason };
+    }
     const decision = await waitForApproval(
       job,
       `${r.tool}: ${r.detail}`,
@@ -37625,7 +37869,7 @@ async function runDelegateInner(rc, target, a, signal, onProgress, background, j
     if (!r.automaticReview && (isOwnServerCall(r) || isAutoApproved(r, autoApprove))) return { allow: true };
     let d;
     if (wiring) d = await wiring.onPermission(r);
-    else if (job && (!job.foreground || job.parentJob) && rc.jobs) {
+    else if (job && (!job.foreground || job.parentJob || job.ownershipHistory?.length) && rc.jobs) {
       const hint = approvalHint(r);
       const a2 = await rc.jobs.askParent(job, `${r.tool.replace(/^mcp:/, "MCP server ")}: ${r.detail}${hint}`, PARENT_APPROVAL_TIMEOUT_MS, r);
       d = a2.allow ? { allow: true } : { allow: false, message: `Denied by supervisor ${me}: ${a2.reason || "no reason supplied"}` };
@@ -37642,7 +37886,7 @@ async function runDelegateInner(rc, target, a, signal, onProgress, background, j
   try {
     feed = startRunFeed({
       home: rc.home,
-      name: `${target}-${randomUUID14().slice(0, 8)}`,
+      name: `${target}-${randomUUID15().slice(0, 8)}`,
       header: `${target}${a.model ? ` (${a.model}${a.effort ? `, effort ${a.effort}` : ""})` : a.effort ? ` (effort ${a.effort})` : ""} in ${workdir}, access ${access ?? "default"}, by ${me}${a.session_id ? `, continues ${a.session_id}` : ""}
 ${a.prompt}
 ---`,
@@ -37752,7 +37996,7 @@ ${a.prompt}
     });
     void steering?.rename?.(title).catch((err) => dlog.warn("could not rename the Codex thread", { err: err.message }));
   };
-  const slotOwner2 = { id: `${a._job ?? target}-${randomUUID14()}`, pid: process.pid };
+  const slotOwner2 = { id: `${a._job ?? target}-${randomUUID15()}`, pid: process.pid };
   let slots = null;
   let slotTimer;
   let res;
@@ -38252,7 +38496,7 @@ var RemoteJobs = class {
     const request2 = remoteJobRequestSchema.parse(raw);
     if (!this.network.peerSupports(host, REMOTE_JOB_CAPABILITY)) throw new Error("Remote broker update needed or paired PC disconnected: install remote-jobs-v1 support and restart its hosting sessions.");
     if (this.pending.size >= REMOTE_JOB_RATE_LIMIT) throw new Error("Too many pending remote job requests.");
-    const rid = randomUUID15();
+    const rid = randomUUID16();
     const response = new Promise((resolve15, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(rid);
@@ -38516,6 +38760,57 @@ var Broker = class {
     this.jobsPath = jobsPath;
     this.networking = networking;
     this.handlers = {
+      handoffSubagents: (c, a) => {
+        const parsed = handoffSchema.safeParse(a);
+        if (!parsed.success) throw new BridgeError("bad_request", "Invalid handoff arguments.");
+        const source = this.requirePeer(c);
+        if (parsed.data.to.includes("/")) throw new BridgeError("bad_request", "Paired-PC handoff is not supported; choose an exact live local session name.");
+        const target = this.connByName(parsed.data.to)?.peer;
+        if (!target) throw new BridgeError("unknown_target", "The target must be an exact live local session name.");
+        if (!this.jobsPath) throw new BridgeError("bad_request", "The job registry is unavailable.");
+        const receipt = commitHandoff(this.jobsPath, source, target, parsed.data);
+        this.jobsSnapshot = null;
+        this.jobsForDispatch = null;
+        this.applyHandoffs();
+        for (const conn of this.conns) if (conn.peer) this.emit(conn, "jobs_changed", { withdrawn: conn.peer.name === source.name ? receipt.jobs.map((j) => j.id) : [] });
+        return receipt;
+      },
+      jobAuthority: (c, a) => {
+        const peer = this.requirePeer(c), job = this.storedJobs().find((j) => j.name === a.job);
+        if (!job || !canControlJob(job, peer.name)) return null;
+        return job;
+      },
+      inlineJobControl: async (c, a) => {
+        const peer = this.requirePeer(c), job = this.storedJobs().find((j) => j.name === a.job);
+        if (!job || !canControlJob(job, peer.name)) throw new BridgeError("unauthorized", "Only the current supervisor can control this job.");
+        if (!a.control || !["message", "title", "settings", "effort", "cancel"].includes(a.control.type)) throw new BridgeError("bad_request", "Invalid inline control.");
+        if (job.host && job.status === "running") {
+          await this.onSend(c, { to: String(job.name), body: JSON.stringify(a.control), conversationId: `${CONTROL_CONVERSATION_PREFIX}${job.id}` });
+          return { sent: true };
+        }
+        const executor = typeof job.executionOwner === "string" ? this.connByName(job.executionOwner) : void 0;
+        if (job.status !== "running") {
+          const recipient = chooseJobRecipient(job, [...this.conns].flatMap((c2) => c2.peer ? [c2.peer] : []));
+          const primary = this.connByName(recipient);
+          if (!primary) throw new BridgeError("unknown_target", "No job master is currently connected.");
+          this.emit(primary, "shared_job_control", a);
+          return { sent: true };
+        }
+        if (!executor) throw new BridgeError("unknown_target", "The inline job's executor is offline.");
+        this.emit(executor, "inline_job_control", a);
+        return { sent: true };
+      },
+      inlineJobReport: (c, m) => {
+        const peer = this.requirePeer(c), job = this.storedJobs().find((j) => `job:${j.id}` === m.from?.id);
+        if (!job || job.executionOwner !== peer.name && job.owner !== peer.name && job.rootName !== peer.name || typeof job.owner !== "string" || typeof m.body !== "string" || m.body.length > MAX_BODY_CHARS) throw new BridgeError("unauthorized", "Invalid inline job delivery.");
+        const recipient = chooseJobRecipient(job, [...this.conns].flatMap((c2) => c2.peer ? [c2.peer] : []));
+        const message = { ...m, to: recipient, recipient };
+        if (this.store.insertJobDelivery(message)) {
+          const target = this.connByName(recipient);
+          if (target) this.emit(target, "message", message);
+        }
+        return { saved: true };
+      },
       auth: (c, a) => {
         this.checkAuth(a.protocol, a.token);
         c.authed = true;
@@ -38523,6 +38818,9 @@ var Broker = class {
       },
       hello: (c, a) => {
         const result = this.onHello(c, a);
+        const job = this.storedJobs().find((j) => `job:${j.id}` === c.peer?.id);
+        if (job?.ownershipHistory) this.refreshJobPeer(job);
+        this.routePendingJobMail();
         this.store.history.rememberPeer(c.peer);
         return result;
       },
@@ -38551,6 +38849,8 @@ var Broker = class {
       pending: (c, a) => this.unreadMail(this.requirePeer(c).name, Math.min(Math.max(1, a.limit ?? PENDING_DEFAULT_LIMIT), PENDING_MAX_LIMIT)),
       updatePeer: (c, a) => {
         const peer = this.onUpdatePeer(c, a);
+        const job = this.storedJobs().find((j) => `job:${j.id}` === peer.id);
+        if (job?.ownershipHistory) this.refreshJobPeer(job);
         this.store.history.rememberPeer(peer);
         return peer;
       },
@@ -38571,7 +38871,7 @@ var Broker = class {
           const pair = this.requireNetwork().status().paired.find((p) => p.id === a.host || p.name === a.host);
           const name2 = snapshot.state.peer;
           this.receiveRemote({
-            id: randomUUID16(),
+            id: randomUUID17(),
             from: { id: `${pair?.id ?? a.host}/job:${a.request.job}`, name: `${pair?.name ?? a.host}/${name2}`, agent: "other" },
             to: peer.name,
             recipient: peer.name,
@@ -38595,7 +38895,7 @@ var Broker = class {
       networkPair: () => this.requireNetwork().keys.inviteWithExpiry(),
       networkLink: async (_, a) => {
         try {
-          const args = external_exports.object({ code: external_exports.string().min(1).max(MAX_PAIRING_CODE_CHARS), host: external_exports.string().min(1).max(MAX_NETWORK_HOST_CHARS), port: external_exports.number().int().min(1).max(MAX_PORT) }).parse(a);
+          const args = external_exports.object({ code: external_exports.string().min(1).max(MAX_PAIRING_CODE_CHARS), host: external_exports.string().min(1).max(MAX_NETWORK_HOST_CHARS), port: external_exports.number().int().min(1).max(MAX_PORT2) }).parse(a);
           return await this.requireNetwork().link(args.code, args.host, args.port);
         } catch {
           throw new BridgeError("bad_request", "Pairing failed. Check the address, code expiry, unique names and existing pairings.");
@@ -38654,6 +38954,7 @@ var Broker = class {
         server.removeListener("error", onError);
         server.on("error", (err) => this.log.error("broker server error", { err }));
         this.server = server;
+        this.applyHandoffs();
         this.purgeTimer = setInterval(() => this.purge(), PURGE_INTERVAL_MS);
         this.purgeTimer.unref();
         if (this.store.file !== ":memory:") this.historyBackground = new HistoryBackground(this.store.file, this.log);
@@ -38739,7 +39040,7 @@ var Broker = class {
     this.remoteDashboard = new RemoteDashboard(service, { home: this.networking.home, log: this.log, peers: () => this.dashboardPeers() });
     this.remoteJobs = new RemoteJobs(service, this.networking.home, this.log, async (record2, control) => {
       this.receiveRemote({
-        id: randomUUID16(),
+        id: randomUUID17(),
         from: { id: record2.owner, name: record2.owner, agent: "other" },
         to: record2.name,
         recipient: record2.name,
@@ -38796,6 +39097,11 @@ var Broker = class {
     socket.on("error", (err) => this.log.debug("connection error", { err: err.message }));
     socket.on("close", () => {
       this.conns.delete(conn);
+      try {
+        this.routePendingJobMail();
+      } catch (err) {
+        this.log.warn("pending job reroute deferred", { err: String(err) });
+      }
       if (conn.peer) {
         this.log.info("peer left", { name: conn.peer.name, agent: conn.peer.agent });
         if (!conn.peer.jobAgent) this.broadcastEvent("peer_left", conn.peer, conn);
@@ -38897,6 +39203,81 @@ var Broker = class {
     for (const c of this.conns) if (c.peer?.name === name2) return c;
     return void 0;
   }
+  /** Replay every effect after the registry commit, including a crash between stores. */
+  applyHandoffs() {
+    if (!this.jobsPath) return;
+    const records = this.storedJobs();
+    for (const receipt of handoffJournal(this.jobsPath)) {
+      const current = receipt.jobs.map((j) => records.find((r) => r.id === j.id)).filter(isRecord);
+      for (const job of current) {
+        const old = receipt.jobs.find((j) => j.id === job.id);
+        const destinations = [[old.from, String(job.owner)], [receipt.from, String(job.rootName)], [old.oldRoot ?? receipt.from, String(job.rootName)]];
+        for (const [from, to] of destinations) {
+          const copied = this.store.handoffMail(from, to, old.id, receipt.at);
+          const target = this.connByName(to);
+          if (target) for (const message of copied) this.emit(target, "message", message);
+        }
+        const budget = new RootConcurrency(dirname17(this.jobsPath), String(job.rootSession));
+        try {
+          budget.moveJobs([old.name]);
+        } finally {
+          budget.close();
+        }
+        this.refreshJobPeer(job);
+      }
+      const body = `Inherited subagents from ${receipt.from}:
+` + receipt.jobs.map((j) => `- ${j.name}: ${j.title} (${j.status})`).join("\n") + (receipt.note ? `
+
+Handoff note: ${receipt.note}` : "") + "\n\nYou are their supervisor. Use message_subagent or cancel_subagent to control them.";
+      for (const [recipient, text2, suffix] of [[receipt.to, body, "inherited"], [receipt.from, `Handed off ${receipt.jobs.length} subagent(s) to ${receipt.to}.`, "confirmed"]]) {
+        const m = {
+          id: `${receipt.id}-${suffix}`,
+          from: { id: "handoff", name: "agent-bridge", agent: "other" },
+          to: recipient,
+          recipient,
+          body: text2,
+          conversationId: `handoff-${receipt.id}`,
+          hop: 0,
+          replyTo: null,
+          createdAt: receipt.at,
+          readAt: null
+        };
+        if (this.store.insertOnce(m)) {
+          const conn = this.connByName(recipient);
+          if (conn) this.emit(conn, "message", m);
+        }
+      }
+    }
+  }
+  routePendingJobMail() {
+    const live = [...this.conns].flatMap((c) => c.peer ? [c.peer] : []);
+    for (const job of this.storedJobs()) {
+      if (!Array.isArray(job.ownershipHistory) || !job.ownershipHistory.length) continue;
+      const recipient = chooseJobRecipient(job, live), target = this.connByName(recipient);
+      if (Array.isArray(job.deliveryHistory)) for (const envelope of job.deliveryHistory) {
+        if (!isRecord(envelope) || !isRecord(envelope.from) || envelope.from.id !== `job:${job.id}` || typeof envelope.id !== "string" || typeof envelope.body !== "string") continue;
+        const message = { ...envelope, to: recipient, recipient };
+        if (this.store.insertJobDelivery(message) && target) this.emit(target, "message", message);
+      }
+      if (!target) continue;
+      for (const from of mastersFor(job)) {
+        const moved = this.store.handoffMail(from, recipient, String(job.id), this.now());
+        const previous = this.connByName(from);
+        if (previous && moved.length) this.emit(previous, "mail_retracted", { ids: moved.map((m) => m.id) });
+        for (const m of moved) this.emit(target, "message", m);
+      }
+    }
+  }
+  refreshJobPeer(job) {
+    const peer = this.connByName(String(job.name))?.peer;
+    if (!peer?.jobAgent) return;
+    peer.jobParent = String(job.owner);
+    peer.jobOwner = String(job.supervisor);
+    peer.rootSession = String(job.rootSession);
+    peer.rootName = String(job.rootName);
+    peer.parentJob = typeof job.parentJob === "string" ? job.parentJob : void 0;
+    if (isRecord(job.args) && Array.isArray(job.args.send_to)) peer.jobSendTo = job.args.send_to;
+  }
   siblingConns(conn) {
     const peer = this.requirePeer(conn);
     if (!peer.jobAgent || !peer.jobOwner) throw new BridgeError("bad_request", "not a linked job");
@@ -38997,7 +39378,7 @@ var Broker = class {
       if (typeof args.body !== "string" || !args.body.trim() || args.body.length > MAX_BODY_CHARS) {
         throw new BridgeError("bad_request", "invalid sibling message body");
       }
-      const id = randomUUID16();
+      const id = randomUUID17();
       const notice = {
         id,
         from: { id: sender.id, name: sender.name, agent: sender.jobAgent ?? sender.agent },
@@ -39023,7 +39404,7 @@ ${args.body}`,
       }
       throw new BridgeError("bad_request", `sibling conversation reached its ${args.maxHops}-message hop limit; message was not delivered. Durable notice ${id} saved for sender and supervisor, including the undelivered text`);
     }
-    const conversationId = parent2?.conversationId ?? `${SIBLING_CONVERSATION_PREFIX}${randomUUID16()}`;
+    const conversationId = parent2?.conversationId ?? `${SIBLING_CONVERSATION_PREFIX}${randomUUID17()}`;
     const result = await this.onSend(conn, { ...args, dedupeKey, conversationId });
     const message = result.messages[0];
     const recipientOwner = target?.peer?.jobParent ?? this.storedJobs().find((j) => j.name === args.to)?.owner;
@@ -39031,7 +39412,7 @@ ${args.body}`,
     for (const owner of observers) {
       const note = {
         ...message,
-        id: randomUUID16(),
+        id: randomUUID17(),
         recipient: owner,
         conversationId: `${conversationId}${SIBLING_NOTE_SUFFIX}`,
         body: `Sibling message to ${message.recipient}:
@@ -39058,7 +39439,7 @@ ${message.body}`
       const candidate = `${requested}-${i}`;
       if (!this.connByName(candidate)) return candidate;
     }
-    return `${requested}-${randomUUID16().slice(0, 8)}`;
+    return `${requested}-${randomUUID17().slice(0, 8)}`;
   }
   onDecide(conn, value) {
     const peer = this.requirePeer(conn);
@@ -39099,7 +39480,7 @@ ${message.body}`
   }
   queueDecision(decision, peer) {
     const message = {
-      id: randomUUID16(),
+      id: randomUUID17(),
       from: decision.author,
       to: peer.name,
       recipient: peer.name,
@@ -39367,8 +39748,18 @@ Call decisions to look up current decisions or their history.`,
     const body = typeof args.body === "string" ? args.body : "";
     if (!body.trim()) throw new BridgeError("bad_request", "message body is empty");
     if (body.length > MAX_BODY_CHARS) throw new BridgeError("too_large", `message body exceeds ${MAX_BODY_CHARS} characters`);
-    const to = String(args.to ?? "").trim();
+    let to = String(args.to ?? "").trim();
     if (!to) throw new BridgeError("bad_request", "missing target");
+    const own2 = sender.jobAgent ? this.storedJobs().find((j) => `job:${j.id}` === sender.id) : void 0;
+    if (own2 && Array.isArray(own2.ownershipHistory)) {
+      if (to === sender.jobParent || mastersFor(own2).includes(to)) to = chooseJobRecipient(own2, [...this.conns].flatMap((c) => c.peer ? [c.peer] : []));
+      else if (own2.ownershipHistory.some((h) => isRecord(h) && h.fromRootName === to)) to = String(own2.rootName);
+      this.refreshJobPeer(own2);
+    }
+    const controlled = this.storedJobs().find((j) => j.name === to);
+    if (args.conversationId?.startsWith(CONTROL_CONVERSATION_PREFIX) && controlled && !canControlJob(controlled, sender.name)) {
+      throw new BridgeError("unauthorized", "Only the current supervisor can control this job runner.");
+    }
     let conversationId = args.conversationId?.trim() || "";
     let hop = 0;
     const replyTo = args.replyTo?.trim() || null;
@@ -39381,8 +39772,8 @@ Call decisions to look up current decisions or their history.`,
         this.log.debug("replyTo refers to an unknown message", { replyTo });
       }
     }
-    conversationId ||= randomUUID16();
-    const id = sender.jobAgent && args.dedupeKey?.startsWith(COMPLETION_DEDUPE_PREFIX) ? completionMessageId(sender.id, args.dedupeKey.slice(COMPLETION_DEDUPE_PREFIX.length)) : randomUUID16();
+    conversationId ||= randomUUID17();
+    const id = sender.jobAgent && args.dedupeKey?.startsWith(COMPLETION_DEDUPE_PREFIX) ? completionMessageId(sender.id, args.dedupeKey.slice(COMPLETION_DEDUPE_PREFIX.length)) : randomUUID17();
     const createdAt = this.now();
     const base2 = {
       id,
@@ -39524,7 +39915,7 @@ async function processIdentity(pid) {
 }
 
 // src/core/job-control.ts
-import { randomUUID as randomUUID17 } from "node:crypto";
+import { randomUUID as randomUUID18 } from "node:crypto";
 var DASHBOARD_JOB_CONVERSATION = "jobctl-dashboard";
 var CONTROL_TIMEOUT_MS = 1e4;
 var JobControlError = class extends Error {
@@ -39536,7 +39927,7 @@ var JobControlError = class extends Error {
 };
 async function controlDashboardJob(node2, owner, job, command) {
   if (!(await node2.peers()).some((p) => p.name === owner)) throw new JobControlError("The owning session is not connected. Reopen it to continue this subagent.", "offline");
-  const requestId = randomUUID17();
+  const requestId = randomUUID18();
   let receive;
   let timer;
   const reply2 = new Promise((resolve15, reject) => {
@@ -39573,12 +39964,12 @@ var BridgeNode = class extends EventEmitter2 {
   constructor(opts) {
     super();
     this.opts = opts;
-    this.id = opts.id ?? randomUUID18();
+    this.id = opts.id ?? randomUUID19();
     this.currentName = opts.name;
     this.currentCwd = opts.cwd;
     this.autoWake = opts.autoWake;
     this.log = opts.log.child("node");
-    this.readJournal = new ReadJournal(dirname17(opts.dbPath));
+    this.readJournal = new ReadJournal(dirname18(opts.dbPath));
     this.restoreReadState(`name:${this.currentName}`);
   }
   opts;
@@ -39724,7 +40115,7 @@ var BridgeNode = class extends EventEmitter2 {
       this.log.error("cannot open message store", { err, db: this.opts.dbPath });
       throw err;
     }
-    const broker = new Broker(this.opts.pipePath, store, this.log.child("broker"), this.opts.token, Date.now, join46(dirname17(this.opts.dbPath), JOBS_FILE), this.opts.network);
+    const broker = new Broker(this.opts.pipePath, store, this.log.child("broker"), this.opts.token, Date.now, join46(dirname18(this.opts.dbPath), JOBS_FILE), this.opts.network);
     try {
       await broker.listen();
       this.broker = broker;
@@ -39816,7 +40207,17 @@ var BridgeNode = class extends EventEmitter2 {
     this.scheduleReconnect(jitter());
   }
   onEvent(ev, data) {
-    if (ev === "message") {
+    if (ev === "mail_retracted") {
+      for (const id of data.ids) this.inbox.delete(id);
+    } else if (ev === "shared_job_control") {
+      this.emit("shared_job_control", data);
+    } else if (ev === "jobs_changed") {
+      const ids = new Set(data.withdrawn.map((id) => `job:${id}`));
+      for (const [id, m] of this.inbox) if (ids.has(m.from.id)) this.inbox.delete(id);
+      this.emit("jobs_changed");
+    } else if (ev === "inline_job_control") {
+      this.emit("inline_job_control", data);
+    } else if (ev === "message") {
       const m = data;
       if (this.readIds.has(m.id)) {
         this.acknowledge([m.id]);
@@ -39868,6 +40269,24 @@ var BridgeNode = class extends EventEmitter2 {
   }
   peers() {
     return this.withClient((c) => c.request("peers", {}));
+  }
+  async handoffSubagents(args) {
+    return this.withClient(async (c) => {
+      for (const m of this.unread()) if (m.from.id.startsWith("job:")) {
+        const job = await c.request("jobAuthority", { job: m.from.name });
+        if (job && (job.owner === this.name || job.rootName === this.name)) await c.request("inlineJobReport", m);
+      }
+      return c.request("handoffSubagents", args);
+    });
+  }
+  jobAuthority(job) {
+    return this.withClient((c) => c.request("jobAuthority", { job }));
+  }
+  controlInlineJob(job, control) {
+    return this.withClient((c) => c.request("inlineJobControl", { job, control }));
+  }
+  reportInlineJob(message) {
+    return this.withClient((c) => c.request("inlineJobReport", message));
   }
   decide(args) {
     return this.withClient((c) => c.request("decide", args));
@@ -39929,7 +40348,7 @@ var BridgeNode = class extends EventEmitter2 {
    */
   deliverLocal(m) {
     try {
-      recordLocalResult(dirname17(this.opts.dbPath), m);
+      recordLocalResult(dirname18(this.opts.dbPath), m);
     } catch (err) {
       this.log.warn("could not retain local result receipt", { id: m.id, err: String(err) });
     }
@@ -40101,9 +40520,9 @@ function describeCodexUser(u) {
 }
 
 // src/cli/opencode-install.ts
-import { copyFileSync as copyFileSync5, existsSync as existsSync22, mkdirSync as mkdirSync23, readdirSync as readdirSync15, readFileSync as readFileSync23 } from "node:fs";
+import { copyFileSync as copyFileSync5, existsSync as existsSync22, mkdirSync as mkdirSync23, readdirSync as readdirSync15, readFileSync as readFileSync24 } from "node:fs";
 import { homedir as homedir7 } from "node:os";
-import { dirname as dirname18, join as join47, resolve as resolve13 } from "node:path";
+import { dirname as dirname19, join as join47, resolve as resolve13 } from "node:path";
 import { fileURLToPath as fileURLToPath3 } from "node:url";
 var INSTALL_MARKER = "agent-bridge";
 var PLUGIN_FILE = "agent-bridge.js";
@@ -40116,19 +40535,19 @@ function opencodeConfigDir(env = process.env) {
   return join47(xdg || join47(homedir7(), ".config"), "opencode");
 }
 function pluginSourceDir(name2, marker, fromFile = fileURLToPath3(import.meta.url)) {
-  let dir = dirname18(fromFile);
+  let dir = dirname19(fromFile);
   for (let i = 0; i < 5; i++) {
     for (const candidate of [join47(dir, "plugins", name2), join47(dir, "..", name2)]) {
       if (existsSync22(join47(candidate, marker))) return resolve13(candidate);
     }
-    dir = dirname18(dir);
+    dir = dirname19(dir);
   }
   return null;
 }
 var opencodeSourceDir = (from) => pluginSourceDir("opencode", join47("dist", PLUGIN_FILE), from);
 function ownedByUs(path) {
   try {
-    return readFileSync23(path, "utf8").includes(INSTALL_MARKER);
+    return readFileSync24(path, "utf8").includes(INSTALL_MARKER);
   } catch {
     return false;
   }
@@ -40141,7 +40560,7 @@ function copyAll(copies, configDir) {
       res.skipped.push(to);
       continue;
     }
-    mkdirSync23(dirname18(to), { recursive: true });
+    mkdirSync23(dirname19(to), { recursive: true });
     copyFileSync5(from, to);
     res.files.push(to);
   }
@@ -40374,7 +40793,7 @@ async function runPermissionHook(agent = "codex") {
 }
 
 // src/cli/rewake-hook.ts
-import { readFileSync as readFileSync24 } from "node:fs";
+import { readFileSync as readFileSync25 } from "node:fs";
 
 // src/mcp/rewake.ts
 import { randomBytes as randomBytes7 } from "node:crypto";
@@ -40405,7 +40824,7 @@ async function runRewakeHook(standby = false) {
   if (!sessionId) return 0;
   let reg;
   try {
-    reg = JSON.parse(readFileSync24(sessionFile(resolveHome(), sessionId), "utf8"));
+    reg = JSON.parse(readFileSync25(sessionFile(resolveHome(), sessionId), "utf8"));
   } catch {
     return 0;
   }
@@ -40418,9 +40837,9 @@ async function runRewakeHook(standby = false) {
       return 0;
     }
     if (!res.ok) return 0;
-    const { text, superseded } = await res.json();
-    if (text) {
-      process.stderr.write(text);
+    const { text: text2, superseded } = await res.json();
+    if (text2) {
+      process.stderr.write(text2);
       return EXIT_WAKE;
     }
     if (superseded) return 0;
@@ -40465,7 +40884,7 @@ ${others.map((p) => formatPeer(p)).join("\n")}` : "No other agents are online ri
     formatDecisionSummary(decisions)
   ].filter(Boolean).join("\n");
 }
-async function runSessionStartHook(log, out2 = (text) => process.stdout.write(text), read = readStdin3) {
+async function runSessionStartHook(log, out2 = (text2) => process.stdout.write(text2), read = readStdin3) {
   let cwd = process.cwd();
   try {
     const input2 = JSON.parse(await read() || "{}");
@@ -40529,7 +40948,7 @@ async function watchRunLog(path, out2) {
 
 // src/cli/dashboard.ts
 import { randomBytes as randomBytes9 } from "node:crypto";
-import { chmodSync as chmodSync3, readFileSync as readFileSync28, writeFileSync as writeFileSync12 } from "node:fs";
+import { chmodSync as chmodSync3, readFileSync as readFileSync29, writeFileSync as writeFileSync12 } from "node:fs";
 import { request } from "node:http";
 import { join as join55 } from "node:path";
 
@@ -40542,7 +40961,7 @@ import { networkInterfaces as networkInterfaces2 } from "node:os";
 import { join as join54 } from "node:path";
 
 // src/core/models.ts
-import { mkdirSync as mkdirSync25, readFileSync as readFileSync25, writeFileSync as writeFileSync11 } from "node:fs";
+import { mkdirSync as mkdirSync25, readFileSync as readFileSync26, writeFileSync as writeFileSync11 } from "node:fs";
 import { join as join50 } from "node:path";
 
 // src/core/usage.ts
@@ -40650,8 +41069,8 @@ function formatCodexLimits(res) {
   }
   return { agent: "codex", lines: lines.length ? lines : ["No limits reported (API key or no plan limits)."], limits, credits, maxUsedPercent: max };
 }
-function parseClaudeUsage(text) {
-  const lines = text.split(/\r?\n/).map((l) => l.trim()).filter((l) => /\d+%\s*used/i.test(l) || /api key/i.test(l));
+function parseClaudeUsage(text2) {
+  const lines = text2.split(/\r?\n/).map((l) => l.trim()).filter((l) => /\d+%\s*used/i.test(l) || /api key/i.test(l));
   const percents = lines.map((l) => Number(/(\d+)%\s*used/i.exec(l)?.[1])).filter((n) => Number.isFinite(n));
   const limits = [];
   for (const l of lines) {
@@ -40660,8 +41079,8 @@ function parseClaudeUsage(text) {
   }
   return { agent: "claude", lines: lines.length ? lines : ["No limits reported."], limits, maxUsedPercent: percents.length ? Math.max(...percents) : null };
 }
-function parseOpencodeStats(text) {
-  const pick2 = (label) => new RegExp(`${label}\\s+([^\\s\u2502|]+)`, "i").exec(text)?.[1];
+function parseOpencodeStats(text2) {
+  const pick2 = (label) => new RegExp(`${label}\\s+([^\\s\u2502|]+)`, "i").exec(text2)?.[1];
   const cost = pick2("Total Cost");
   const input2 = pick2("Input");
   const output2 = pick2("Output");
@@ -40669,17 +41088,17 @@ function parseOpencodeStats(text) {
   if (cost || input2) lines.push(`Last 24 hours: ${[cost && `cost ${cost}`, input2 && `${input2} input tokens`, output2 && `${output2} output tokens`].filter(Boolean).join(", ")}`);
   return { agent: "opencode", lines, limits: [], maxUsedPercent: null };
 }
-function parseOpencodeModelCosts(text) {
+function parseOpencodeModelCosts(text2) {
   const out2 = [];
   try {
-    const models2 = JSON.parse(text).data;
+    const models2 = JSON.parse(text2).data;
     if (Array.isArray(models2)) return models2.flatMap((m) => {
       if (!Array.isArray(m.cost) || !m.cost.length || m.cost.some((c) => typeof c.input !== "number" || typeof c.output !== "number")) return [];
       return [{ id: `${m.providerID}/${m.id}`, input: Math.max(...m.cost.map((c) => c.input)), output: Math.max(...m.cost.map((c) => c.output)) }];
     });
   } catch {
   }
-  const parts = text.split(/^([\w.-]+\/[\w.:@-]+)\r?\n(?=\{)/m);
+  const parts = text2.split(/^([\w.-]+\/[\w.:@-]+)\r?\n(?=\{)/m);
   for (let i = 1; i + 1 < parts.length; i += 2) {
     try {
       const cost = JSON.parse(parts[i + 1].trim()).cost;
@@ -40755,7 +41174,7 @@ var modelDefault = (agent, cfg) => cfg[`${agent}Model`];
 var modelCachePath = (home, agent) => join50(home, `models-${agent}.json`);
 function cachedModels(home, agent, cfg) {
   try {
-    const cache4 = JSON.parse(readFileSync25(modelCachePath(home, agent), "utf8"));
+    const cache4 = JSON.parse(readFileSync26(modelCachePath(home, agent), "utf8"));
     const validStrings = (v) => Array.isArray(v) && v.every((s) => typeof s === "string");
     if (cache4.bin !== modelBin(agent, cfg) || cache4.effort !== (cfg.effort[agent] ?? null) || typeof cache4.at !== "number" || Date.now() - cache4.at >= MODEL_CACHE_MS) return null;
     if (cache4.report?.agent !== agent || !validStrings(cache4.report.models) || !validStrings(cache4.report.lines)) return null;
@@ -40838,9 +41257,9 @@ var FAVICON_HREF = `data:image/svg+xml,${encodeURIComponent(LOGO_SVG)}`;
 function renderMarkdown(src) {
   const esc2 = (s) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
   const safeUrl = (u) => /^(https?:\/\/|mailto:)/i.test(u) ? u : null;
-  const inline = (text) => {
+  const inline = (text2) => {
     const codes = [];
-    let s = text.replace(/`([^`\n]+)`/g, (_, c) => `\0${codes.push(`<code>${esc2(c)}</code>`) - 1}\0`);
+    let s = text2.replace(/`([^`\n]+)`/g, (_, c) => `\0${codes.push(`<code>${esc2(c)}</code>`) - 1}\0`);
     s = esc2(s);
     s = s.replace(/\[([^\]\n]+)\]\(([^)\s]+)\)/g, (m, label, url2) => {
       const href = safeUrl(url2.replace(/&amp;/g, "&"));
@@ -41373,6 +41792,12 @@ code.addr { font-family: var(--mono); font-size: 12px; padding: 2px 8px; border-
 .disc-table th, .disc-table td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--panel-2); }
 .disc-table th { color: var(--muted); font-weight: 600; }
 
+.handoff { padding: 16px; border-bottom: 1px solid var(--line); background: var(--panel-2); display: grid; gap: 12px; }
+.handoff-targets { display: grid; gap: 6px; max-height: 220px; overflow: auto; }
+.handoff-target { display: flex; align-items: center; gap: 10px; text-align: left; background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 9px; padding: 10px 12px; }
+.handoff-target[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); }
+.handoff label { display: grid; gap: 6px; font-size: 12px; color: var(--muted); }
+.handoff-actions { display: flex; gap: 8px; }
 /* The conversation's "\u22EF" menu, top right */
 .conv-menu { position: relative; flex: none; }
 .menu-btn { font-size: 18px; line-height: 1; padding: 4px 10px; letter-spacing: .05em; }
@@ -41637,10 +42062,18 @@ button.ghost { min-height: 32px; }
           <button type="button" class="icon-btn menu-btn" id="convMenuBtn" aria-haspopup="menu" aria-expanded="false" aria-controls="convMenu" title="Options for this conversation">\u22EF</button>
           <div class="menu-pop hidden" id="convMenu" role="menu">
             <button type="button" role="menuitem" class="menu-item hidden" id="setToggle" aria-expanded="false" aria-controls="jobSettings">Settings for its next turn\u2026</button>
+            <button type="button" role="menuitem" class="menu-item hidden" id="handoffToggle" aria-controls="handoffForm" aria-expanded="false">Hand off subagents\u2026</button>
             <label class="menu-item" role="menuitemcheckbox"><input type="checkbox" id="follow" checked> Follow new output</label>
           </div>
         </div>
       </div>
+      <form id="handoffForm" class="handoff hidden" aria-label="Hand off all subagents">
+        <div><b>Hand off all subagents</b><div class="small muted">Running jobs keep working. Nested and finished jobs move too.</div></div>
+        <div id="handoffTargets" class="handoff-targets" role="group" aria-label="New supervisor"></div>
+        <label>Note for the new supervisor<textarea id="handoffNote" rows="2" maxlength="4000" placeholder="Context or next steps"></textarea></label>
+        <div class="handoff-actions"><button type="submit" id="handoffSubmit" disabled>Hand off</button><button type="button" class="secondary" id="handoffCancel">Cancel</button></div>
+        <div id="handoffInfo" class="note" role="status" aria-live="polite"></div>
+      </form>
       <form id="jobSettings" class="settings hidden" aria-label="Settings for the next turn">
         <label class="wide">Model<input id="setModel" list="setModels" autocomplete="off" spellcheck="false"><datalist id="setModels"></datalist></label>
         <label>Effort<select id="setEffort"></select></label>
@@ -41764,6 +42197,7 @@ window.addEventListener("hashchange", () => {
 
 /** Which session started a run: its peer name, or (renamed since) the live session of that agent in that folder. */
 function ownerOf(r, live) {
+  if (r.rootName || r.owner) return r.rootName || r.owner;
   if (r.by && live.some((p) => p.name === r.by)) return r.by;
   const same = r.byCwd && live.find((p) => (!r.byAgent || p.agent === r.byAgent) && norm(p.cwd) === norm(r.byCwd));
   return same ? same.name : r.by || ownerOfFolder(r.workdir, live) || "earlier runs";
@@ -42215,6 +42649,8 @@ function renderOverview() {
 }
 
 function renderSession() {
+  $("handoffToggle").classList.toggle("hidden", !state.peers.some((p) => p.name === route.session && !p.subagent && !p.host && !p.name.includes("/")));
+  if (handoffSource && handoffSource !== route.session) closeHandoff();
   const x = model.byName.get(route.session) || { name: route.session, peer: null, live: false, groups: [], children: [] };
   const p = x.peer;
   $("sHead").innerHTML = p
@@ -42664,6 +43100,47 @@ function setConvMenu(open) {
 $("convMenuBtn").addEventListener("click", () => setConvMenu($("convMenu").classList.contains("hidden")));
 document.addEventListener("click", (e) => { if (!e.target.closest(".conv-menu")) setConvMenu(false); });
 document.addEventListener("keydown", (e) => { if (e.key === "Escape") setConvMenu(false); });
+
+let handoffSource = null, handoffTarget = null;
+function closeHandoff() {
+  $("handoffForm").classList.add("hidden");
+  $("handoffToggle").setAttribute("aria-expanded", "false");
+  handoffSource = null; handoffTarget = null;
+}
+$("handoffToggle").addEventListener("click", () => {
+  setConvMenu(false);
+  handoffSource = route.session; handoffTarget = null;
+  $("handoffNote").value = ""; $("handoffSubmit").disabled = true;
+  $("handoffInfo").textContent = "Choose the session that will supervise these jobs.";
+  const targets = state.peers.filter((p) => p.name !== handoffSource && !p.subagent && !p.host && !p.name.includes("/") && ["claude", "codex", "opencode"].includes(p.agent));
+  $("handoffTargets").innerHTML = targets.length ? targets.map((p) => '<button type="button" class="handoff-target" aria-pressed="false" data-handoff-target="' + esc(p.name) + '">' + av(p.agent) + '<span><b>' + esc(p.name) + '</b><span class="small muted"> \xB7 ' + esc(p.agent + " \xB7 " + (p.activity || "connected")) + '</span></span></button>').join("") : '<div class="empty">No other live local sessions.</div>';
+  $("handoffForm").classList.remove("hidden");
+  $("handoffToggle").setAttribute("aria-expanded", "true");
+  $("handoffTargets").querySelector("button")?.focus();
+});
+$("handoffTargets").addEventListener("click", (e) => {
+  const button = e.target.closest("[data-handoff-target]");
+  if (!button) return;
+  handoffTarget = button.dataset.handoffTarget;
+  for (const b of $("handoffTargets").querySelectorAll("button")) b.setAttribute("aria-pressed", String(b === button));
+  $("handoffSubmit").disabled = false;
+});
+$("handoffCancel").addEventListener("click", closeHandoff);
+$("handoffForm").addEventListener("keydown", (e) => { if (e.key === "Escape") closeHandoff(); });
+$("handoffForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  if (!handoffSource || !handoffTarget) return;
+  const from = handoffSource, to = handoffTarget;
+  $("handoffSubmit").disabled = true;
+  try {
+    const r = await fetch("/api/subagents/handoff", { method: "POST", headers: { "content-type": "application/json", "x-agent-bridge": "1" }, body: JSON.stringify({ from, to, jobs: "all", note: $("handoffNote").value.trim() || undefined }) });
+    const result = await r.json();
+    if (!r.ok) throw new Error(result.error || result.text || "HTTP " + r.status);
+    closeHandoff();
+    await poll();
+    location.hash = href(to).slice(1);
+  } catch (err) { $("handoffInfo").textContent = err.message; $("handoffSubmit").disabled = false; }
+});
 
 $("setToggle").addEventListener("click", () => {
   setConvMenu(false);
@@ -43476,7 +43953,7 @@ var COMMAND_TIMEOUT_MS = 1e4;
 var ELEVATION_TIMEOUT_MS = 12e4;
 var runCommand = async (file2, args) => (await exec2(file2, args, { windowsHide: true, timeout: COMMAND_TIMEOUT_MS })).stdout;
 function planFirewall(platform, port, discovery) {
-  if (!Number.isInteger(port) || port < 1 || port > MAX_PORT) throw new Error("expected a TCP port between 1 and 65535");
+  if (!Number.isInteger(port) || port < 1 || port > MAX_PORT2) throw new Error("expected a TCP port between 1 and 65535");
   const ports = [{ protocol: "TCP", port }, ...discovery ? [{ protocol: "UDP", port: DISCOVERY_PORT }] : []];
   if (platform === "win32") return {
     platform,
@@ -43566,14 +44043,14 @@ function networkProfileStatus(platform = process.platform) {
 function parseNetworkAddress(address) {
   const url2 = new URL(`tls://${address}`);
   const port = Number(url2.port);
-  if (!url2.hostname || !Number.isInteger(port) || port < 1 || port > MAX_PORT || url2.username || url2.password || url2.pathname || url2.search || url2.hash) throw new Error("expected host:port");
+  if (!url2.hostname || !Number.isInteger(port) || port < 1 || port > MAX_PORT2 || url2.username || url2.password || url2.pathname || url2.search || url2.hash) throw new Error("expected host:port");
   return { host: url2.hostname.replace(/^\[|\]$/g, ""), port };
 }
 
 // src/core/doctor.ts
-import { existsSync as existsSync24, lstatSync as lstatSync7, mkdirSync as mkdirSync26, readFileSync as readFileSync26, readdirSync as readdirSync16, renameSync as renameSync8 } from "node:fs";
-import { basename as basename11, dirname as dirname19, join as join51, relative as relative8 } from "node:path";
-import { randomUUID as randomUUID19 } from "node:crypto";
+import { existsSync as existsSync24, lstatSync as lstatSync7, mkdirSync as mkdirSync26, readFileSync as readFileSync27, readdirSync as readdirSync16, renameSync as renameSync8 } from "node:fs";
+import { basename as basename11, dirname as dirname20, join as join51, relative as relative8 } from "node:path";
+import { randomUUID as randomUUID20 } from "node:crypto";
 import { DatabaseSync as DatabaseSync14 } from "node:sqlite";
 function doctor(home, now = Date.now()) {
   const report = { checkedAt: now, ok: true, schema: [], findings: [], sizes: [], totalBytes: 0, backups: listBackups(home) };
@@ -43618,7 +44095,7 @@ function doctor(home, now = Date.now()) {
   for (const path of jsonStoreFiles(home)) {
     try {
       if (path.endsWith(".jsonl")) {
-        const lines = readFileSync26(path, "utf8").split("\n").filter((s) => s.trim());
+        const lines = readFileSync27(path, "utf8").split("\n").filter((s) => s.trim());
         for (const line of lines) {
           try {
             const value2 = JSON.parse(line);
@@ -43631,7 +44108,7 @@ function doctor(home, now = Date.now()) {
         }
         continue;
       }
-      const value = JSON.parse(readFileSync26(path, "utf8"));
+      const value = JSON.parse(readFileSync27(path, "utf8"));
       const jobs = basename11(path) === JOBS_FILE || path.includes("jobs.json.overflow.json-") || /^jobs-.*\.json$/.test(basename11(path));
       if (jobs ? !(Array.isArray(value) || isRecord(value) && Array.isArray(value.jobs)) : !isRecord(value)) {
         finding("error", "json-shape", path, jobs ? "Expected a jobs array or jobs envelope" : "Expected a JSON object");
@@ -43641,16 +44118,16 @@ function doctor(home, now = Date.now()) {
       if (version3 === void 0 || version3 === 0) finding("warning", "json-legacy", path, "Legacy version; next versioned write will preserve a migration backup");
       else if (!Number.isInteger(version3) || version3 < 0 || version3 > JSON_STORE_VERSION) finding("error", "json-version", path, `Unsupported JSON version ${String(version3)}; code expects ${JSON_STORE_VERSION}`);
       else if (version3 < JSON_STORE_VERSION) finding("warning", "json-legacy", path, `Earlier JSON version ${String(version3)}; code expects ${JSON_STORE_VERSION}`);
-      if (dirname19(path) === join51(home, "runs") && path.endsWith(".json") && !existsSync24(path.replace(/\.json$/, ".log"))) finding("warning", "orphan-metadata", path, "Run metadata has no matching active log; preserved for review");
-      if (dirname19(path) === join51(home, "jobs") && path.endsWith(".spec.json") && !existsSync24(path.replace(/\.spec\.json$/, ".json"))) finding("warning", "orphan-runner-spec", path, "Runner specification has no state; it may still be starting");
+      if (dirname20(path) === join51(home, "runs") && path.endsWith(".json") && !existsSync24(path.replace(/\.json$/, ".log"))) finding("warning", "orphan-metadata", path, "Run metadata has no matching active log; preserved for review");
+      if (dirname20(path) === join51(home, "jobs") && path.endsWith(".spec.json") && !existsSync24(path.replace(/\.spec\.json$/, ".json"))) finding("warning", "orphan-runner-spec", path, "Runner specification has no state; it may still be starting");
     } catch (err) {
       finding("error", "json-parse", path, String(err));
     }
   }
   const logs = runLogFiles(home);
   for (const path of logs) {
-    const meta3 = join51(dirname19(path), runFileName(path).replace(/\.log$/, ".json"));
-    if (!existsSync24(meta3) && !readdirSync16(dirname19(path)).some((f) => f.startsWith(basename11(meta3) + "-"))) finding("warning", "orphan-log", path, "Run log has no metadata; log remains readable");
+    const meta3 = join51(dirname20(path), runFileName(path).replace(/\.log$/, ".json"));
+    if (!existsSync24(meta3) && !readdirSync16(dirname20(path)).some((f) => f.startsWith(basename11(meta3) + "-"))) finding("warning", "orphan-log", path, "Run log has no metadata; log remains readable");
   }
   report.ok = !report.findings.some((f) => f.severity === "error");
   return report;
@@ -43661,7 +44138,7 @@ function fixDoctor(home, confirmed) {
   try {
     const fixed = [];
     for (const finding of doctor(home).findings.filter((f) => f.fixable)) {
-      const dir = join51(home, "archive", "orphaned", randomUUID19());
+      const dir = join51(home, "archive", "orphaned", randomUUID20());
       mkdirSync26(dir, { recursive: true, mode: 448 });
       const target = join51(dir, basename11(finding.path));
       renameSync8(finding.path, target);
@@ -43692,7 +44169,7 @@ function archiveHome(home, confirmed, now = Date.now()) {
     if (existsSync24(path)) {
       const unlock = acquireLock(`${path}.lock`);
       try {
-        const previous = JSON.parse(readFileSync26(path, "utf8"));
+        const previous = JSON.parse(readFileSync27(path, "utf8"));
         if (!Array.isArray(previous) && !(isRecord(previous) && Array.isArray(previous.jobs))) throw new Error("invalid jobs store");
         const entries = Array.isArray(previous) ? previous : previous.jobs;
         const old = entries.filter((j) => isRecord(j) && (j.status === "done" || j.status === "failed") && typeof j.finishedAt === "number" && j.finishedAt < now - age);
@@ -43713,7 +44190,7 @@ function archiveHome(home, confirmed, now = Date.now()) {
 
 // src/core/message-history.ts
 import { existsSync as existsSync25 } from "node:fs";
-import { dirname as dirname20, join as join52 } from "node:path";
+import { dirname as dirname21, join as join52 } from "node:path";
 import { DatabaseSync as DatabaseSync15 } from "node:sqlite";
 var DEFAULT_HISTORY_LIMIT = 100;
 var MAX_HISTORY_LIMIT = 1e3;
@@ -43721,7 +44198,7 @@ function searchMessages(file2, opts = {}) {
   const limit = Math.min(MAX_HISTORY_LIMIT, Math.max(1, Math.floor(opts.limit ?? DEFAULT_HISTORY_LIMIT)));
   const query = `%${(opts.query ?? "").replace(/[\\%_]/g, "\\$&")}%`;
   const rows = [];
-  for (const path of [file2, join52(dirname20(file2), ARCHIVE_DB_NAME)]) {
+  for (const path of [file2, join52(dirname21(file2), ARCHIVE_DB_NAME)]) {
     if (!existsSync25(path)) continue;
     const db = new DatabaseSync15(path, { readOnly: true });
     try {
@@ -43789,8 +44266,8 @@ async function answerHistory(query, result, cfg, home, log, deps = {}) {
     `Sources: ${JSON.stringify(hits.map(({ id, snippet, at }) => ({ id, text: snippet, at })))}`
   ].join("\n");
   try {
-    const text = await (deps.run?.(selected.agent, selected.model, prompt) ?? runAnswer(selected.agent, selected.model, prompt, cfg, log));
-    const capped = text.trim().slice(0, HISTORY_ANSWER_MAX_CHARS);
+    const text2 = await (deps.run?.(selected.agent, selected.model, prompt) ?? runAnswer(selected.agent, selected.model, prompt, cfg, log));
+    const capped = text2.trim().slice(0, HISTORY_ANSWER_MAX_CHARS);
     const citations = [...capped.matchAll(/\[((?:message|run|decision|transcript):[^\]]+)\]/g)].map((match) => match[1]);
     if (!capped || !citations.length || citations.some((id) => !sources.some((s) => s.id === id))) throw new Error("Model answer did not cite a supplied source.");
     return { ...selected, text: capped, sources };
@@ -43903,8 +44380,8 @@ function safeNetworkError(err) {
 }
 var JOB_COMMANDS = {
   "/api/subagents/message": (body) => {
-    const text = typeof body.body === "string" ? body.body.trim() : "";
-    return text && text.length <= MAX_BODY_CHARS ? { type: "message", body: text } : null;
+    const text2 = typeof body.body === "string" ? body.body.trim() : "";
+    return text2 && text2.length <= MAX_BODY_CHARS ? { type: "message", body: text2 } : null;
   },
   // The owning session checks the values against the job's agent (job-settings.ts).
   "/api/subagents/settings": (body) => body.settings && typeof body.settings === "object" && !Array.isArray(body.settings) && Object.keys(body.settings).length ? { type: "settings", settings: body.settings } : null
@@ -44235,10 +44712,23 @@ async function startUi(opts) {
       if (req.headers["x-agent-bridge"] !== "1") return send(res, 403, { error: "missing header" });
       const body = await readJson2(req);
       const to = String(body.to ?? "").trim();
-      const text = String(body.body ?? "").trim();
-      if (!to || !text) return send(res, 400, { error: "to and body are required" });
-      const r = await (await getSender()).send({ to, body: text });
+      const text2 = String(body.body ?? "").trim();
+      if (!to || !text2) return send(res, 400, { error: "to and body are required" });
+      const r = await (await getSender()).send({ to, body: text2 });
       return send(res, 200, { id: r.messages[0]?.id, deliveredTo: r.deliveredTo, queuedFor: r.queuedFor });
+    }
+    if (req.method === "POST" && url2.pathname === "/api/subagents/handoff") {
+      if (req.headers["x-agent-bridge"] !== "1") return send(res, 403, { error: "missing header" });
+      const body = await readJson2(req);
+      const parsed = handoffSchema.safeParse({ to: body.to, jobs: body.jobs, note: body.note });
+      if (!parsed.success || typeof body.from !== "string" || body.from.includes("/")) return send(res, 400, { error: "An exact local source and valid handoff arguments are required." });
+      try {
+        const result = await controlDashboardJob(await getSender(), body.from, "", { type: "handoff", ...parsed.data });
+        return send(res, result.isError ? 409 : 200, result);
+      } catch (err) {
+        if (err instanceof JobControlError) return send(res, err.reason === "offline" ? 409 : 504, { error: err.message });
+        throw err;
+      }
     }
     const jobCommand = req.method === "POST" && Object.hasOwn(JOB_COMMANDS, url2.pathname) ? JOB_COMMANDS[url2.pathname] : void 0;
     if (jobCommand) {
@@ -44292,7 +44782,7 @@ function dashboardFile(home) {
 }
 function readDashboardInfo(home) {
   try {
-    const d = JSON.parse(readFileSync28(dashboardFile(home), "utf8"));
+    const d = JSON.parse(readFileSync29(dashboardFile(home), "utf8"));
     return typeof d.url === "string" && typeof d.port === "number" && typeof d.pid === "number" ? d : null;
   } catch {
     return null;
@@ -44368,7 +44858,7 @@ import { join as join57 } from "node:path";
 
 // src/cli/reliability-live.ts
 import { execFile as execFile4 } from "node:child_process";
-import { existsSync as existsSync27, mkdirSync as mkdirSync27, mkdtempSync as mkdtempSync4, readdirSync as readdirSync17, readFileSync as readFileSync29, rmSync as rmSync9, writeFileSync as writeFileSync13 } from "node:fs";
+import { existsSync as existsSync27, mkdirSync as mkdirSync27, mkdtempSync as mkdtempSync4, readdirSync as readdirSync17, readFileSync as readFileSync30, rmSync as rmSync9, writeFileSync as writeFileSync13 } from "node:fs";
 import { tmpdir as tmpdir3 } from "node:os";
 import { join as join56 } from "node:path";
 
@@ -47950,15 +48440,15 @@ function serverBundle(host, fromFile) {
   const dir = pluginSourceDir(host, SERVER_BUNDLE, fromFile);
   return dir ? join56(dir, SERVER_BUNDLE) : null;
 }
-function jobNameIn(text) {
-  return /Subagent (\S+-job-[0-9a-f]+) started/.exec(text)?.[1] ?? /message_subagent\(job="([^"]+)"/.exec(text)?.[1] ?? null;
+function jobNameIn(text2) {
+  return /Subagent (\S+-job-[0-9a-f]+) started/.exec(text2)?.[1] ?? /message_subagent\(job="([^"]+)"/.exec(text2)?.[1] ?? null;
 }
 function finalStatusOf(job, body) {
   const m = new RegExp(`^Subagent ${job.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} \\([^)]*\\) (done|failed) after \\d+s\\.`).exec(body.trim());
   return m?.[1] ?? null;
 }
-function messageBody(text) {
-  return /<agent-bridge-message [^>]*>\n([\s\S]*)\n<\/agent-bridge-message>/.exec(text)?.[1] ?? text;
+function messageBody(text2) {
+  return /<agent-bridge-message [^>]*>\n([\s\S]*)\n<\/agent-bridge-message>/.exec(text2)?.[1] ?? text2;
 }
 var isApprovalQuestion = (job, body) => body.trim().startsWith(`Subagent ${job} asks for approval`);
 function listProcesses() {
@@ -48015,10 +48505,10 @@ function storedJob(home, job) {
   }
 }
 var PICKED_UP_LOG = "subagent picked up messages";
-function logsMention(home, text) {
+function logsMention(home, text2) {
   try {
     const dir = join56(home, LOG_DIR_NAME);
-    return readdirSync17(dir).some((f) => readFileSync29(join56(dir, f), "utf8").includes(text));
+    return readdirSync17(dir).some((f) => readFileSync30(join56(dir, f), "utf8").includes(text2));
   } catch {
     return false;
   }
@@ -48554,7 +49044,7 @@ import { join as join60 } from "node:path";
 
 // src/core/worktree-cleanup.ts
 import { existsSync as existsSync29, lstatSync as lstatSync8, realpathSync as realpathSync10, readdirSync as readdirSync18 } from "node:fs";
-import { dirname as dirname21, join as join59, resolve as resolve14, toNamespacedPath as toNamespacedPath3 } from "node:path";
+import { dirname as dirname22, join as join59, resolve as resolve14, toNamespacedPath as toNamespacedPath3 } from "node:path";
 function readJobs(home) {
   try {
     return readStore(join59(home, JOBS_FILE), void 0, true);
@@ -48588,7 +49078,7 @@ async function mergedInto(branch, targets, cwd, trust, log) {
   return null;
 }
 async function inspect(path, jobs, apply, log) {
-  const removalPath = resolveWorktreeRemovalPath(path, dirname21(path));
+  const removalPath = resolveWorktreeRemovalPath(path, dirname22(path));
   const scan = scanWorktreeLinks(path);
   const warning = worktreeLinkWarning(scan);
   const entry = (branch2, action, reason) => ({ path, branch: branch2, action, reason: warning ? `${reason}
@@ -48729,7 +49219,8 @@ async function runCleanup(args, opts) {
 }
 
 // src/mcp/job-runner.ts
-import { randomUUID as randomUUID20 } from "node:crypto";
+import { join as join62 } from "node:path";
+import { randomUUID as randomUUID21 } from "node:crypto";
 
 // src/core/windows-job-scope.ts
 import { spawn as spawn11 } from "node:child_process";
@@ -48949,10 +49440,26 @@ async function runOwnedJobRunner(spec, log, scope) {
     allowedServers: new Set(spec.job.allowedServers)
   };
   let owner = spec.owner;
+  const refreshOwner = () => {
+    const saved = readStore(join62(home, JOBS_FILE)).find((j) => j.id === job.id);
+    if (!saved?.ownershipHistory?.length) return;
+    owner = saved.owner ?? owner;
+    Object.assign(job, {
+      owner,
+      supervisor: saved.supervisor,
+      parentJob: saved.parentJob,
+      rootSession: saved.rootSession,
+      rootName: saved.rootName,
+      ownershipHistory: saved.ownershipHistory,
+      masters: saved.masters,
+      args: { ...job.args, send_to: saved.args?.send_to }
+    });
+  };
   const seen = [];
   let closing = false;
   let extra = { status: "running" };
   const save = (patch = {}) => {
+    refreshOwner();
     extra = { ...extra, ...patch };
     try {
       writeRunnerState(home, job.id, {
@@ -49005,7 +49512,8 @@ async function runOwnedJobRunner(spec, log, scope) {
   log.info("job runner started", { pid: process.pid, target, owner });
   let chain = Promise.resolve(true);
   const deliver = async (body, replyTo, note = false, key2) => {
-    const dedupeKey = key2 ?? randomUUID20();
+    refreshOwner();
+    const dedupeKey = key2 ?? randomUUID21();
     for (let attempt = 1; attempt <= SEND_ATTEMPTS; attempt++) {
       try {
         const suffix = isPureAcknowledgement(body) ? ACK_CONVERSATION_SUFFIX : note ? NOTE_CONVERSATION_SUFFIX : "";
@@ -49059,8 +49567,10 @@ async function runOwnedJobRunner(spec, log, scope) {
     } catch {
       return;
     }
+    refreshOwner();
+    if (job.ownershipHistory?.length && !canControlJob(job, m.from.name)) return;
     if (m.from.name !== owner) log.info("the job's session is now", { name: m.from.name, was: owner });
-    owner = m.from.name;
+    if (!job.ownershipHistory?.length) owner = m.from.name;
     void node2.updateJob({ jobParent: owner }).catch(() => {
     });
     if (c.type === "message") {
@@ -49069,7 +49579,7 @@ async function runOwnedJobRunner(spec, log, scope) {
       if (job.pendingApproval) {
         const answer = job.pendingApproval;
         job.pendingApproval = null;
-        answer(c.body, `session ${owner}`);
+        answer(c.body, `session ${m.from.name}`);
       } else if (job.live) {
         job.awaitingAnswer = true;
         job.live.post(c.body);
@@ -49110,7 +49620,7 @@ async function runOwnedJobRunner(spec, log, scope) {
   let args = spec.args;
   for (; ; ) {
     let status;
-    let text = "";
+    let text2 = "";
     let cause = null;
     try {
       const res = await runDelegate(rc, target, args, job.controller.signal, onProgress, true, job);
@@ -49118,7 +49628,7 @@ async function runOwnedJobRunner(spec, log, scope) {
       job.worktree = res.worktree ?? job.worktree;
       job.sessionId = res.sessionId ?? job.sessionId;
       status = res.isError ? "failed" : "done";
-      text = res.text || "(no answer text returned)";
+      text2 = res.text || "(no answer text returned)";
       cause = res.isError ? failureCause({ result: res }) : null;
     } catch (err) {
       job.sessionId = sessionOfError(err) ?? job.sessionId;
@@ -49128,7 +49638,7 @@ async function runOwnedJobRunner(spec, log, scope) {
     if (scope) {
       try {
         const cleanup = await scope.cleanup();
-        text += "\n\n" + processCleanupReport(cleanup);
+        text2 += "\n\n" + processCleanupReport(cleanup);
         if (cleanup.remaining.length) {
           status = "failed";
           cause = "job-owned background processes did not stop: " + cleanup.remaining.join(", ");
@@ -49137,12 +49647,12 @@ async function runOwnedJobRunner(spec, log, scope) {
         status = "failed";
         cause = "job process cleanup failed: " + err.message;
         log.error("job process cleanup failed", { cause });
-        text += "\n\n" + cause + ". Ownership containment remains active until the runner exits.";
+        text2 += "\n\n" + cause + ". Ownership containment remains active until the runner exits.";
       }
     }
     job.etaAt = void 0;
     job.etaReportedAt = void 0;
-    const report = jobReport(job, status, Math.round((Date.now() - job.startedAt) / 1e3), text, cause);
+    const report = jobReport(job, status, Math.round((Date.now() - job.startedAt) / 1e3), text2, cause);
     log.info("job turn finished", { status, sessionId: job.sessionId, cause });
     if (job.queue.length && job.sessionId && !job.controller.signal.aborted) {
       const queued = job.queue.splice(0).join("\n\n");
@@ -49158,7 +49668,7 @@ ${QUEUED_FOLLOW_UP_NOTE}`);
     }
     closing = true;
     if (saveTimer) clearTimeout(saveTimer);
-    const reportId = randomUUID20();
+    const reportId = randomUUID21();
     save({ status, report, reportId, delivered: false, finishedAt: Date.now() });
     const delivered = await post(report, null, false, `${COMPLETION_DEDUPE_PREFIX}${reportId}`);
     save({ delivered });
@@ -49676,7 +50186,7 @@ async function main(argv) {
     case "cleanup":
       return runCleanup(rest, { home, cwd: process.cwd(), log, out });
     case "paths":
-      out(t("cli.paths", { home, logs: join62(home, LOG_DIR_NAME), db: resolveDbPath(home), pipe: pipe2 }));
+      out(t("cli.paths", { home, logs: join63(home, LOG_DIR_NAME), db: resolveDbPath(home), pipe: pipe2 }));
       return 0;
     case "help":
     case "--help":

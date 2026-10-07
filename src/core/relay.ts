@@ -1,4 +1,6 @@
 import { appendContextEvent } from "./context-journal.js";
+import { JOBS_FILE } from "./constants.js";
+import { readStore } from "../mcp/jobs.js";
 import { randomBytes, randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -224,9 +226,12 @@ function readApproval(home: string, id: string): ApprovalRecord | null {
 export function listPendingApprovals(home: string): PendingApproval[] {
   let files: string[];
   try { files = readdirSync(join(home, APPROVALS_DIR)); } catch { return []; }
+  const jobs = readStore(join(home, JOBS_FILE));
   return files.flatMap((file) => {
     if (!file.endsWith(".json")) return [];
     const r = readApproval(home, file.slice(0, -5));
+    const job = r && jobs.find((j) => j.name === r.job && j.ownershipHistory?.length);
+    if (r && job) { r.owner = job.rootName ?? job.owner ?? r.owner; r.rootSession = job.rootSession; r.parentJob = job.parentJob; }
     return r ? [{ id: r.id, owner: r.owner, job: r.job, agent: r.agent, tool: r.tool, command: r.command, reason: r.reason, askedAt: r.askedAt, deadline: r.deadline,
       ...(typeof r.parentJob === "string" ? { parentJob: r.parentJob } : {}), ...(typeof r.rootSession === "string" ? { rootSession: r.rootSession } : {}) }] : [];
   }).sort((a, b) => a.askedAt - b.askedAt);

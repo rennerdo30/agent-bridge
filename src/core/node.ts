@@ -16,7 +16,7 @@ import {
   RECONNECT_BACKOFF_MIN_MS,
 } from "./constants.js";
 import type { Logger } from "./logger.js";
-import { BridgeError, type AgentKind, type BridgeMessage, type PeerActivity, type PeerInfo, type SendArgs, type SendResult, type SiblingPeer } from "./protocol.js";
+import { BridgeError, isQuietMessage, type AgentKind, type BridgeMessage, type PeerActivity, type PeerInfo, type SendArgs, type SendResult, type SiblingPeer } from "./protocol.js";
 import { ReadJournal } from "./read-journal.js";
 import { recordLocalResult } from "./local-result-receipts.js";
 import { MessageStore } from "./store.js";
@@ -60,6 +60,9 @@ export interface BridgeNodeOptions {
 }
 
 export interface BridgeNodeEvents {
+  jobs_changed: [];
+  shared_job_control: [{ job: string; control: import("../mcp/jobs.js").RunnerControl }];
+  inline_job_control: [{ job: string; control: import("../mcp/jobs.js").RunnerControl }];
   message: [BridgeMessage];
   notification_waits_changed: [];
   job_control: [BridgeMessage];
@@ -350,7 +353,17 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
   }
 
   private onEvent(ev: string, data: unknown): void {
-    if (ev === "message") {
+    if (ev === "mail_retracted") {
+      for (const id of (data as { ids: string[] }).ids) this.inbox.delete(id);
+    } else if (ev === "shared_job_control") {
+      this.emit("shared_job_control", data as BridgeNodeEvents["shared_job_control"][0]);
+    } else if (ev === "jobs_changed") {
+      const ids = new Set((data as { withdrawn: string[] }).withdrawn.map((id) => `job:${id}`));
+      for (const [id, m] of this.inbox) if (ids.has(m.from.id)) this.inbox.delete(id);
+      this.emit("jobs_changed");
+    } else if (ev === "inline_job_control") {
+      this.emit("inline_job_control", data as BridgeNodeEvents["inline_job_control"][0]);
+    } else if (ev === "message") {
       const m = data as BridgeMessage;
       if (this.readIds.has(m.id)) {
         this.acknowledge([m.id]);
@@ -411,6 +424,29 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
 
   peers(): Promise<PeerInfo[]> {
     return this.withClient((c) => c.request("peers", {}));
+  }
+
+  async handoffSubagents(args: import("./job-handoff.js").HandoffArgs): Promise<import("./job-handoff.js").HandoffReceipt> {
+    // Inline results used to bypass the broker. Retain their unread envelopes before transferring.
+    return this.withClient(async (c) => {
+      for (const m of this.unread()) if (m.from.id.startsWith("job:")) {
+        const job = await c.request("jobAuthority", { job: m.from.name });
+        if (job && (job.owner === this.name || job.rootName === this.name)) await c.request("inlineJobReport", m);
+      }
+      return c.request("handoffSubagents", args);
+    });
+  }
+
+  jobAuthority(job: string): Promise<import("../mcp/jobs.js").Job | null> {
+    return this.withClient((c) => c.request("jobAuthority", { job }));
+  }
+
+  controlInlineJob(job: string, control: import("../mcp/jobs.js").RunnerControl): Promise<unknown> {
+    return this.withClient((c) => c.request("inlineJobControl", { job, control }));
+  }
+
+  reportInlineJob(message: BridgeMessage): Promise<unknown> {
+    return this.withClient((c) => c.request("inlineJobReport", message));
   }
 
   decide(args: DecideArgs): Promise<{ decision: OwnerDecision; deliveredTo: string[] }> {

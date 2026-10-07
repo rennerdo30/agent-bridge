@@ -923,7 +923,7 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
   };
   const keep = (a: DelegateArgs): Record<string, unknown> => Object.fromEntries(KEPT_ARGS.filter((k) => a[k] !== undefined).map((k) => [k, a[k]]));
   const resumers: Partial<Record<CodingAgent, (a: DelegateArgs) => Resume>> = {};
-  for (const target of targets) {
+  for (const target of CODING_AGENTS) {
     const profile = DELEGATION_TARGETS[target];
     const defaultModel = profile.defaultModel(cfg);
     const schema = {
@@ -1005,6 +1005,8 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
         // Saved settings win, including removal of an earlier exact permission override.
         background((job) => resumeArgs(a, job.name, message, sessionId, workdir, worktree, job.args), a);
     resumers[target] = resumeFor;
+    // An inherited job can use the same agent kind as its new supervisor.
+    if (!targets.includes(target)) continue;
 
     const askName = `ask_${target}`;
     register(
@@ -1037,7 +1039,8 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
         const report = progressReporter(extra, log);
         const onProgress = (m: string) => {
           tracked?.onProgress(m);
-          report?.(m);
+          if (tracked?.job.ownershipHistory?.length && tracked.job.owner !== ctx.node?.name) ctx.jobs?.fromSubagent(tracked.job, m, null);
+          else report?.(m);
         };
         let res;
         try {
@@ -1048,10 +1051,12 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
         } catch (err) {
           tracked?.end({ error: err });
           log.warn("ask failed", { job: tracked?.job.name, err: (err as Error).message });
+          if (tracked?.job.ownershipHistory?.length && tracked.job.owner !== ctx.node?.name) return text(`Job ${tracked.job.name} is supervised by ${tracked.job.owner}; its report was routed there.`);
           const identity = tracked ? `Job: ${tracked.job.name}\n${target} session_id: ${tracked.job.sessionId ?? "-"}\n\n` : "";
           return text(`${identity}${describeError(err)}`, true);
         }
         tracked?.end({ result: res });
+        if (tracked?.job.ownershipHistory?.length && tracked.job.owner !== ctx.node?.name) return text(`Job ${tracked.job.name} is supervised by ${tracked.job.owner}; its report was routed there.`);
         const header =
           (tracked ? `Job: ${tracked.job.name}\n` : "") +
           t("delegate.done", { agent: target, session: res.sessionId ?? "-" }) +
@@ -1172,6 +1177,26 @@ ${res.text || t("delegate.empty")}`, res.isError);
   );
 
   register(
+    "handoff_subagents",
+    {
+      title: "Hand off subagents",
+      description: "Transfer your running and finished local jobs, including nested jobs, to an exact live local Claude Code, Codex or opencode session. The target becomes their supervisor and receives a waking inheritance message. Remote jobs and paired-PC targets are rejected without moving anything.",
+      inputSchema: {
+        to: z.string().min(1).max(64).describe("Exact live local session name from peers"),
+        jobs: z.union([z.literal("all"), z.array(z.string().min(1).max(80)).min(1).max(1000)]).optional().describe("Exact job names, or all (default)"),
+        note: z.string().max(4000).optional().describe("Context for the new supervisor"),
+      },
+    },
+    guarded("handoff_subagents", async (a: import("../core/job-handoff.js").HandoffArgs) => {
+      const n = requireNode();
+      ctx.jobs?.persist();
+      const result = await n.handoffSubagents(a);
+      ctx.jobs?.refreshOwnership();
+      return text(`Handed off ${result.jobs.length} subagent(s) to ${result.to}.`);
+    }),
+  );
+
+  register(
     "message_subagent",
     {
       title: "Message a subagent",
@@ -1206,8 +1231,8 @@ ${res.text || t("delegate.empty")}`, res.isError);
       const existing = jobs.find(a.job);
       // A top supervisor can answer an escalated descendant wait without taking over that child job.
       if (node && a.message) {
-        const approval = listPendingApprovals(ctx.home).find((entry) => entry.job === a.job && entry.parentJob && (entry.owner === node.name || entry.rootSession === jobs.rootIdentity()));
-        if (approval && /^(allow|deny)\b/i.test(a.message.trim())) {
+        const approval = listPendingApprovals(ctx.home).find((entry) => entry.job === a.job && entry.parentJob);
+        if (approval && /^(allow|deny)\b/i.test(a.message.trim()) && (approval.owner === node.name || approval.rootSession === jobs.rootIdentity() || await node.jobAuthority(a.job))) {
           const decision = /^allow\b/i.test(a.message.trim()) ? "allow" : "deny";
           const result = await answerPendingApproval(ctx.home, approval.id, { decision, reason: a.message.trim().replace(/^(allow|deny)\b\s*:?\s*/i, "") });
           return text(`Nested approval ${result}.`, result !== "answered");
