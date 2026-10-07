@@ -29605,7 +29605,8 @@ async function delegateToAntigravity(req) {
       }
     });
     const parsed = parseAntigravityJsonl(res.stdout);
-    return { ...parsed, sessionId: parsed.sessionId ?? sessionId, isError: res.code !== 0 || parsed.isError, details: { ...parsed.details, exitCode: res.code, ...res.code !== 0 ? { stderr: res.stderr.slice(-4e3) } : {} } };
+    const isError = res.code !== 0 || parsed.isError;
+    return { ...parsed, sessionId: parsed.sessionId ?? sessionId, isError, details: { ...parsed.details, exitCode: res.code, ...isError ? { error: parsed.isError ? parsed.text : res.stderr.slice(-4e3) || `Antigravity exited with code ${res.code}` } : {}, ...res.code !== 0 ? { stderr: res.stderr.slice(-4e3) } : {} } };
   } catch (err) {
     if (err instanceof DelegateError) err.sessionId = sessionId ?? parseAntigravityJsonl(err.partialStdout).sessionId;
     throw err;
@@ -43862,7 +43863,7 @@ async function codexUsage(bin, cwd, log) {
 }
 async function readUsage(agent, bin, cwd, log, model = null) {
   try {
-    if (agent === "antigravity") return { agent, lines: ["Account limit availability is unknown: agy 1.2.0 exposes quotas in interactive /usage (or /quota), without a machine-readable quota command. Delegated results include token usage."], limits: [], maxUsedPercent: null };
+    if (agent === "antigravity") return { agent, lines: ["Account limit availability is unknown: agy exposes quotas in interactive /usage (or /quota), without a documented machine-readable quota command. Delegated results include token usage."], limits: [], maxUsedPercent: null };
     if (agent === "codex") return await codexUsage(bin, cwd, log);
     if (agent === "claude") return parseClaudeUsage(await capture(bin, ["-p", "/usage"], cwd, log));
     const [stats, models] = await Promise.all([

@@ -50,7 +50,7 @@ describe("pending approvals", () => {
     expect((await answer).allow).toBe(results[0] === "answered");
   });
 
-  it.each(["claude", "codex", "opencode"] as const)("keeps every plain message separate from %s approval decisions", async (agent) => {
+  it.each(["claude", "codex", "opencode", "antigravity"] as const)("keeps every plain message separate from %s approval decisions", async (agent) => {
     const node = env.node("parent");
     await node.start();
     const jobs = new JobManager(node, nullLogger, join(env.home, JOBS_FILE));

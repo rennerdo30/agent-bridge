@@ -115,6 +115,11 @@ Authenticated installed `agy 1.2.0` completed a trivial no-tools prompt using
 This proves native headless authentication/output, not every bridge integration.
 All automated tests mock the CLI and make no paid API calls.
 
+After the installed CLI changed, `agy 1.3.1` also completed the no-tools
+`BRIDGE_SMOKE_131_OK` prompt with SUCCESS using the same model and stream flags;
+conversation `2add015b-fc6c-46c0-8e5f-3809bef43dbc`. Its bridge home was isolated
+from other sessions. The earlier permission-gate smoke remains versioned below.
+
 ## Installed-plugin verification
 
 The native CLI validates the generated manifest, skill, MCP server and hook group.

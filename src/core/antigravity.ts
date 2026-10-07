@@ -60,7 +60,8 @@ export async function delegateToAntigravity(req: DelegateRequest & { bin: string
         progress?.(ev);
       } });
     const parsed = parseAntigravityJsonl(res.stdout);
-    return { ...parsed, sessionId: parsed.sessionId ?? sessionId, isError: res.code !== 0 || parsed.isError, details: { ...parsed.details, exitCode: res.code, ...(res.code !== 0 ? { stderr: res.stderr.slice(-4000) } : {}) } };
+    const isError = res.code !== 0 || parsed.isError;
+    return { ...parsed, sessionId: parsed.sessionId ?? sessionId, isError, details: { ...parsed.details, exitCode: res.code, ...(isError ? { error: parsed.isError ? parsed.text : res.stderr.slice(-4000) || `Antigravity exited with code ${res.code}` } : {}), ...(res.code !== 0 ? { stderr: res.stderr.slice(-4000) } : {}) } };
   } catch (err) {
     if (err instanceof DelegateError) err.sessionId = sessionId ?? parseAntigravityJsonl(err.partialStdout).sessionId;
     throw err;

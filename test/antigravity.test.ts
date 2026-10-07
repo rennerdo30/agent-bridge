@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { delegateToAntigravity, parseAntigravityJsonl } from "../src/core/antigravity.js";
-import { DelegateError } from "../src/core/delegate.js";
+import { DelegateError, retryTransient } from "../src/core/delegate.js";
 import { nullLogger } from "../src/core/logger.js";
 import { antigravityPermission, antigravityHookOutput } from "../src/cli/antigravity-hook.js";
 import { installAntigravity, uninstallAntigravity } from "../src/cli/antigravity-install.js";
@@ -53,6 +53,13 @@ describe("Antigravity delegation", () => {
   it("rejects unsupported effort before starting a process", async () => {
     await expect(delegateToAntigravity({ bin: "agy", prompt: "task", cwd: temp(), access: "read", effort: "ultra", timeoutSec: 20, log: nullLogger })).rejects.toThrow("low, medium, high, xhigh or max");
     expect(mocks.run).not.toHaveBeenCalled();
+  });
+  it("resumes transient provider failures on the same native session and model", async () => {
+    mocks.run.mockResolvedValueOnce({ code: 0, stdout: JSON.stringify({ event: "result", result: { conversation_id: "saved", status: "ERROR", error: "stream disconnected before completion" } }), stderr: "" }).mockResolvedValueOnce({ code: 0, stdout: stream(), stderr: "" });
+    const request = { prompt: "task", cwd: temp(), model: "example", timeoutSec: 20, log: nullLogger };
+    const result = await retryTransient(request, (req) => delegateToAntigravity({ ...req, bin: "agy", access: "read" }));
+    expect(result).toMatchObject({ sessionId: "saved", isError: false, details: { retries: 1 } });
+    expect(mocks.run.mock.calls[1]![0].args).toEqual(expect.arrayContaining(["--conversation", "saved", "--model", "example"]));
   });
   it("routes ask mode through the common approval handler instead of an inherited relay", async () => {
     const approve = vi.fn().mockResolvedValue({ allow: true });
