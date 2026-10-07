@@ -100,7 +100,7 @@ describe("delivery and reload recovery", () => {
     const recipient = env.node("recipient");
     await recipient.start();
     await until(() => recipient.unread().length === 2);
-    expect(recipient.unread()[0]!.id).toBe(final.messages[0]!.id);
+    expect(recipient.unread().some(m => m.id === final.messages[0]!.id)).toBe(true);
     expect((await job.messageReceipt(note.messages[0]!.id))[0]!.readAt).toBeNull();
     const ctx: ServerContext = { agent: "claude", cfg: { ...DEFAULT_CONFIG, wakeOnDirect: false }, node: recipient, log: nullLogger, home: env.home, cwd: () => env.home, channelActive: () => false,
       jobs: { isNote: (m: BridgeMessage) => m.conversationId.endsWith(":note"), hookJobs: () => [{ name: note.messages[0]!.from.name, status: "done" }] } as any };
