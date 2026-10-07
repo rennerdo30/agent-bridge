@@ -82,7 +82,7 @@ it("makes old version-2 writers fail closed and preserves unknown fields", () =>
     const v = (value as { version: number }).version;
     if (!Number.isInteger(v) || v < 0 || v > 2) throw new Error(`unsupported JSON store version: ${v}`);
   };
-  expect(() => oldWriterGuard(next)).toThrow("unsupported JSON store version: 3");
+  expect(() => oldWriterGuard(next)).toThrow(`unsupported JSON store version: ${JSON_STORE_VERSION}`);
   expect(next.extension).toEqual({ retained: true });
 });
 

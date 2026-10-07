@@ -13,14 +13,14 @@ import { DatabaseSync as DatabaseSync9 } from "node:sqlite";
 import { createHash } from "node:crypto";
 import {
   appendFileSync as appendFileSync2,
-  existsSync as existsSync4,
+  existsSync as existsSync5,
   lstatSync,
   mkdirSync as mkdirSync4,
-  readFileSync as readFileSync2,
-  realpathSync
+  readFileSync as readFileSync3,
+  realpathSync as realpathSync2
 } from "node:fs";
-import { execFileSync } from "node:child_process";
-import { dirname as dirname4, join as join6, resolve } from "node:path";
+import { execFileSync as execFileSync2 } from "node:child_process";
+import { dirname as dirname5, join as join7, resolve as resolve2 } from "node:path";
 import { DatabaseSync as DatabaseSync4 } from "node:sqlite";
 
 // src/core/conversation-schema.ts
@@ -142,7 +142,7 @@ import { closeSync, existsSync, mkdirSync, openSync, readdirSync, rmSync } from 
 import { dirname, join } from "node:path";
 
 // src/core/json-store.ts
-var JSON_STORE_VERSION = 3;
+var JSON_STORE_VERSION = 4;
 var KEEP_STORE_BACKUPS = 3;
 function isRecord(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -271,15 +271,60 @@ function migrateSqlite(db2, file2, existed, target, migrations, log) {
   }
 }
 
+// src/core/project-identity.ts
+import { execFileSync } from "node:child_process";
+import { existsSync as existsSync4, readFileSync as readFileSync2, realpathSync, statSync as statSync2 } from "node:fs";
+import { dirname as dirname4, join as join6, resolve } from "node:path";
+function canonicalProjectRoot(cwd) {
+  try {
+    const physical = realpathSync.native(cwd);
+    if (!statSync2(physical).isDirectory()) return null;
+    const git = (args) => execFileSync(
+      "git",
+      ["-C", physical, "rev-parse", ...args],
+      { encoding: "utf8", timeout: 3e3, windowsHide: true, stdio: ["ignore", "pipe", "ignore"] }
+    ).trim();
+    try {
+      const top = realpathSync.native(git(["--show-toplevel"]));
+      const common = realpathSync.native(resolve(physical, git(["--git-common-dir"])));
+      if (common.endsWith("/.git") || common.endsWith("\\.git")) return realpathSync.native(dirname4(common));
+      try {
+        const configured = execFileSync(
+          "git",
+          ["--git-dir", common, "config", "--get", "core.worktree"],
+          { encoding: "utf8", timeout: 3e3, windowsHide: true, stdio: ["ignore", "pipe", "ignore"] }
+        ).trim();
+        if (configured) return realpathSync.native(resolve(common, configured));
+      } catch {
+      }
+      const worktrees = execFileSync(
+        "git",
+        ["-C", physical, "worktree", "list", "--porcelain"],
+        { encoding: "utf8", timeout: 3e3, windowsHide: true, stdio: ["ignore", "pipe", "ignore"] }
+      );
+      const main = worktrees.split(/\r?\n\r?\n/).find((entry) => !/^bare$/m.test(entry));
+      const root = main && /^worktree (.+)$/m.exec(main)?.[1];
+      return root ? realpathSync.native(root) : top;
+    } catch {
+      return physical;
+    }
+  } catch {
+    return null;
+  }
+}
+function projectKey(root) {
+  return process.platform === "win32" ? root.toLowerCase() : root;
+}
+
 // src/core/project-store.ts
 var roots = /* @__PURE__ */ new Map();
 var excluded = /* @__PURE__ */ new Set();
 function linkedParent(file2) {
-  let parent2 = dirname4(resolve(file2));
-  while (!existsSync4(parent2) && dirname4(parent2) !== parent2)
-    parent2 = dirname4(parent2);
+  let parent2 = dirname5(resolve2(file2));
+  while (!existsSync5(parent2) && dirname5(parent2) !== parent2)
+    parent2 = dirname5(parent2);
   try {
-    const physical = realpathSync.native(parent2);
+    const physical = realpathSync2.native(parent2);
     return process.platform === "win32" ? physical.toLowerCase() !== parent2.toLowerCase() : physical !== parent2;
   } catch {
     return true;
@@ -289,41 +334,21 @@ function conversationProject(cwd) {
   if (!cwd) return "";
   const known = roots.get(cwd);
   if (known) return known;
-  let root;
-  try {
-    root = realpathSync.native(cwd);
-    try {
-      const common = execFileSync(
-        "git",
-        ["-C", root, "rev-parse", "--path-format=absolute", "--git-common-dir"],
-        {
-          encoding: "utf8",
-          windowsHide: true,
-          stdio: ["ignore", "pipe", "ignore"],
-          timeout: 2e3
-        }
-      ).trim();
-      root = realpathSync.native(dirname4(common));
-    } catch {
-    }
-  } catch {
-    root = resolve(cwd);
-  }
-  if (process.platform === "win32") root = root.toLowerCase();
+  const root = projectKey(canonicalProjectRoot(cwd) ?? resolve2(cwd));
   if (roots.size >= 256) roots.delete(roots.keys().next().value);
   roots.set(cwd, root);
   return root;
 }
 function ensureProjectFolder(project) {
-  if (!project || !existsSync4(project)) return null;
-  const folder = join6(project, ".agent-bridge");
-  if (existsSync4(folder) && (!lstatSync(folder).isDirectory() || lstatSync(folder).isSymbolicLink()))
+  if (!project || !existsSync5(project)) return null;
+  const folder = join7(project, ".agent-bridge");
+  if (existsSync5(folder) && (!lstatSync(folder).isDirectory() || lstatSync(folder).isSymbolicLink()))
     return null;
-  const fresh = !existsSync4(folder);
+  const fresh = !existsSync5(folder);
   mkdirSync4(folder, { recursive: true, mode: 448 });
   if (!fresh && excluded.has(project)) return folder;
   try {
-    const exclude = execFileSync(
+    const exclude = execFileSync2(
       "git",
       [
         "-C",
@@ -340,11 +365,11 @@ function ensureProjectFolder(project) {
         timeout: 2e3
       }
     ).trim();
-    if (linkedParent(exclude) || existsSync4(exclude) && lstatSync(exclude).isSymbolicLink())
+    if (linkedParent(exclude) || existsSync5(exclude) && lstatSync(exclude).isSymbolicLink())
       return null;
-    const text = existsSync4(exclude) ? readFileSync2(exclude, "utf8") : "";
+    const text = existsSync5(exclude) ? readFileSync3(exclude, "utf8") : "";
     if (!text.split(/\r?\n/).includes("/.agent-bridge/")) {
-      mkdirSync4(dirname4(exclude), { recursive: true });
+      mkdirSync4(dirname5(exclude), { recursive: true });
       appendFileSync2(
         exclude,
         `${text && !text.endsWith("\n") ? "\n" : ""}/.agent-bridge/
@@ -352,25 +377,25 @@ function ensureProjectFolder(project) {
       );
     }
   } catch {
-    if (existsSync4(join6(project, ".git"))) return null;
+    if (existsSync5(join7(project, ".git"))) return null;
   }
   excluded.add(project);
   return folder;
 }
 function projectDatabasePath(project) {
   const id = createHash("sha256").update(project).digest("hex").slice(0, 16);
-  return join6(project, ".agent-bridge", `conversations-${id}.db`);
+  return join7(project, ".agent-bridge", `conversations-${id}.db`);
 }
 function syncProjectMirror(main, project) {
   const folder = ensureProjectFolder(project);
   if (!folder) return 0;
   const path = projectDatabasePath(project);
-  const archive = join6(folder, "archive");
-  if (linkedParent(path) || existsSync4(archive) && lstatSync(archive).isSymbolicLink() || linkedParent(join6(archive, "backup")))
+  const archive = join7(folder, "archive");
+  if (linkedParent(path) || existsSync5(archive) && lstatSync(archive).isSymbolicLink() || linkedParent(join7(archive, "backup")))
     return 0;
   for (const file2 of [path, `${path}-wal`, `${path}-shm`])
-    if (existsSync4(file2) && lstatSync(file2).isSymbolicLink()) return 0;
-  const existed = existsSync4(path), mirror = new DatabaseSync4(path, { timeout: 50 });
+    if (existsSync5(file2) && lstatSync(file2).isSymbolicLink()) return 0;
+  const existed = existsSync5(path), mirror = new DatabaseSync4(path, { timeout: 50 });
   try {
     migrateSqlite(
       mirror,
@@ -486,8 +511,8 @@ function syncProjectMirror(main, project) {
 
 // src/core/history.ts
 import { createHash as createHash2 } from "node:crypto";
-import { closeSync as closeSync4, existsSync as existsSync5, fstatSync as fstatSync2, openSync as openSync4, opendirSync, readSync as readSync2, statSync as statSync3 } from "node:fs";
-import { basename as basename2, dirname as dirname6, join as join11 } from "node:path";
+import { closeSync as closeSync4, existsSync as existsSync6, fstatSync as fstatSync2, openSync as openSync4, opendirSync, readSync as readSync2, statSync as statSync4 } from "node:fs";
+import { basename as basename2, dirname as dirname7, join as join12 } from "node:path";
 import { DatabaseSync as DatabaseSync7 } from "node:sqlite";
 
 // node_modules/zod/v4/classic/external.js
@@ -5516,7 +5541,7 @@ var recursive = /* @__PURE__ */ new WeakMap();
 var NONE = 0;
 var ASSUMED = 1;
 var PROVEN = 2;
-function isRecursive(inst, stack, resolve3) {
+function isRecursive(inst, stack, resolve4) {
   const cached2 = recursive.get(inst);
   if (cached2 !== void 0)
     return cached2 ? PROVEN : NONE;
@@ -5526,7 +5551,7 @@ function isRecursive(inst, stack, resolve3) {
   let result = NONE;
   const check2 = (child) => {
     if (result !== PROVEN && child?._zod) {
-      const answer = isRecursive(child, stack, resolve3);
+      const answer = isRecursive(child, stack, resolve4);
       if (answer > result)
         result = answer;
     }
@@ -5537,7 +5562,7 @@ function isRecursive(inst, stack, resolve3) {
       const desc = Object.getOwnPropertyDescriptor(sh, key);
       if (spread && !desc.enumerable)
         continue;
-      const child = desc.get ? ASSUMED : desc.value?._zod ? isRecursive(desc.value, stack, resolve3) : NONE;
+      const child = desc.get ? ASSUMED : desc.value?._zod ? isRecursive(desc.value, stack, resolve4) : NONE;
       if (child > answer)
         answer = child;
     }
@@ -5601,7 +5626,7 @@ function isRecursive(inst, stack, resolve3) {
       break;
     // `$ZodLazy` caches its inner on the def, so a resolved edge is followed exactly
     case "lazy": {
-      const inner = def._cachedInner ?? (resolve3 ? inst._zod.innerType : void 0);
+      const inner = def._cachedInner ?? (resolve4 ? inst._zod.innerType : void 0);
       merge2(inner ? isRecursive(inner, stack, false) : ASSUMED);
       break;
     }
@@ -20159,12 +20184,12 @@ function date4(params) {
 }
 
 // src/core/transcripts/claude.ts
-import { dirname as dirname5, join as join8 } from "node:path";
+import { dirname as dirname6, join as join9 } from "node:path";
 
 // src/core/transcripts/common.ts
-import { closeSync as closeSync3, fstatSync, openSync as openSync3, readSync, readdirSync as readdirSync3, realpathSync as realpathSync2, statSync as statSync2 } from "node:fs";
+import { closeSync as closeSync3, fstatSync, openSync as openSync3, readSync, readdirSync as readdirSync3, realpathSync as realpathSync3, statSync as statSync3 } from "node:fs";
 import { homedir as homedir2 } from "node:os";
-import { isAbsolute, join as join7, relative, resolve as resolve2, sep } from "node:path";
+import { isAbsolute, join as join8, relative, resolve as resolve3, sep } from "node:path";
 var MAX_TRANSCRIPT_CHUNK_BYTES = 512 * 1024;
 var MAX_TOOL_PREVIEW_CHARS = 1200;
 var MAX_TEXT_CHARS = 16e3;
@@ -20177,9 +20202,9 @@ var INITIAL_HEADER_BYTES = 8 * 1024;
 var TRANSCRIPT_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 function transcriptPaths(env = process.env, home = homedir2()) {
   return {
-    claude: resolve2(env.CLAUDE_CONFIG_DIR?.trim() || join7(home, ".claude")),
-    codex: resolve2(env.CODEX_HOME?.trim() || join7(home, ".codex")),
-    opencode: resolve2(join7(env.XDG_DATA_HOME?.trim() || join7(home, ".local", "share"), "opencode"))
+    claude: resolve3(env.CLAUDE_CONFIG_DIR?.trim() || join8(home, ".claude")),
+    codex: resolve3(env.CODEX_HOME?.trim() || join8(home, ".codex")),
+    opencode: resolve3(join8(env.XDG_DATA_HOME?.trim() || join8(home, ".local", "share"), "opencode"))
   };
 }
 function object2(value) {
@@ -20222,14 +20247,14 @@ function directory(dir) {
 }
 function fileStat(file2) {
   try {
-    return statSync2(file2);
+    return statSync3(file2);
   } catch {
     return null;
   }
 }
 function safeFile(root, file2, canonicalRoot) {
   try {
-    const actual = realpathSync2.native(file2), rel = relative(canonicalRoot ?? realpathSync2.native(root), actual);
+    const actual = realpathSync3.native(file2), rel = relative(canonicalRoot ?? realpathSync3.native(root), actual);
     return rel && rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel) ? actual : null;
   } catch {
     return null;
@@ -20311,12 +20336,12 @@ function scanJsonl(file2) {
 // src/core/transcripts/claude.ts
 function claudeSessionFile(session, paths2) {
   if (!session.sessionId || !TRANSCRIPT_ID.test(session.sessionId)) return null;
-  const projects = join8(paths2.claude, "projects");
+  const projects = join9(paths2.claude, "projects");
   const encoded = session.cwd.replace(/[^A-Za-z0-9]/g, "-");
-  const direct = safeFile(projects, join8(projects, encoded, `${session.sessionId}.jsonl`));
+  const direct = safeFile(projects, join9(projects, encoded, `${session.sessionId}.jsonl`));
   if (direct) return direct;
   for (const dir of directory(projects)) {
-    const file2 = safeFile(projects, join8(projects, dir, `${session.sessionId}.jsonl`));
+    const file2 = safeFile(projects, join9(projects, dir, `${session.sessionId}.jsonl`));
     if (file2) return file2;
   }
   return null;
@@ -20342,7 +20367,7 @@ function claudeItems(row) {
 function readClaudeChat(session, paths2, from = "0", child) {
   const main = claudeSessionFile(session, paths2);
   if (!main || child !== void 0 && !TRANSCRIPT_ID.test(child)) return null;
-  const nested = child ? safeFile(paths2.claude, join8(dirname5(main), session.sessionId, "subagents", `agent-${child}.jsonl`)) : null;
+  const nested = child ? safeFile(paths2.claude, join9(dirname6(main), session.sessionId, "subagents", `agent-${child}.jsonl`)) : null;
   const legacy = child && !nested ? listClaudeSubagents(session, paths2).some((s) => s.id === child) : false;
   if (child && !nested && !legacy) return null;
   const page = readJsonl(nested ?? main, from);
@@ -20352,11 +20377,11 @@ function listClaudeSubagents(session, paths2) {
   const main = claudeSessionFile(session, paths2);
   if (!main) return [];
   const out = /* @__PURE__ */ new Map();
-  const dir = join8(dirname5(main), session.sessionId, "subagents");
+  const dir = join9(dirname6(main), session.sessionId, "subagents");
   for (const name of directory(dir).slice(0, MAX_NATIVE_SUBAGENTS)) {
     const id = /^agent-([A-Za-z0-9_-]+)\.jsonl$/.exec(name)?.[1];
     if (!id || !TRANSCRIPT_ID.test(id)) continue;
-    const file2 = safeFile(paths2.claude, join8(dir, name));
+    const file2 = safeFile(paths2.claude, join9(dir, name));
     if (!file2) continue;
     const st = fileStat(file2), head = readHead(file2), tail = readTail(file2);
     const last = [...tail].reverse().find((r) => r.type === "assistant");
@@ -20374,7 +20399,7 @@ function listClaudeSubagents(session, paths2) {
 }
 
 // src/core/transcripts/codex.ts
-import { join as join9 } from "node:path";
+import { join as join10 } from "node:path";
 import { DatabaseSync as DatabaseSync5 } from "node:sqlite";
 var ROLLOUT_NAME = /^rollout-.*-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/i;
 var DISCOVERY_CACHE_MS = 1e4;
@@ -20388,7 +20413,7 @@ function rollout(file2, id, known) {
 function indexedRollouts(paths2, id, parentId) {
   const name = directory(paths2.codex).filter((s) => /^state_\d+\.sqlite$/.test(s)).sort((a, b) => Number(b.match(/\d+/)?.[0]) - Number(a.match(/\d+/)?.[0]))[0];
   if (!name) return null;
-  const file2 = safeFile(paths2.codex, join9(paths2.codex, name));
+  const file2 = safeFile(paths2.codex, join10(paths2.codex, name));
   if (!file2) return null;
   let db2;
   try {
@@ -20398,7 +20423,7 @@ function indexedRollouts(paths2, id, parentId) {
     const out = [];
     for (const row of rows) {
       if (typeof row.id !== "string" || !TRANSCRIPT_ID.test(row.id) || typeof row.path !== "string") continue;
-      const target = safeFile(join9(paths2.codex, "sessions"), row.path);
+      const target = safeFile(join10(paths2.codex, "sessions"), row.path);
       if (!target) continue;
       const entry = rollout(target, row.id);
       if (entry.meta.id === row.id && (!parentId || parent(entry.meta) === parentId)) out.push(entry);
@@ -20411,17 +20436,17 @@ function indexedRollouts(paths2, id, parentId) {
   }
 }
 function rollouts(paths2) {
-  const root = join9(paths2.codex, "sessions"), existing = cache.get(root);
+  const root = join10(paths2.codex, "sessions"), existing = cache.get(root);
   if (existing && Date.now() - existing.at < DISCOVERY_CACHE_MS) return existing.files;
   const files = [];
   const knownFiles = new Map(existing?.files.map((r) => [r.file, r]));
   for (const year of directory(root).filter((s) => /^\d{4}$/.test(s)).sort().reverse()) {
-    for (const month of directory(join9(root, year)).filter((s) => /^\d{2}$/.test(s)).sort().reverse()) {
-      for (const day of directory(join9(root, year, month)).filter((s) => /^\d{2}$/.test(s)).sort().reverse()) {
-        for (const name of directory(join9(root, year, month, day)).sort().reverse()) {
+    for (const month of directory(join10(root, year)).filter((s) => /^\d{2}$/.test(s)).sort().reverse()) {
+      for (const day of directory(join10(root, year, month)).filter((s) => /^\d{2}$/.test(s)).sort().reverse()) {
+        for (const name of directory(join10(root, year, month, day)).sort().reverse()) {
           const id = ROLLOUT_NAME.exec(name)?.[1];
           if (!id) continue;
-          const file2 = safeFile(root, join9(root, year, month, day, name));
+          const file2 = safeFile(root, join10(root, year, month, day, name));
           if (!file2) continue;
           const known = knownFiles.get(file2);
           files.push(rollout(file2, id, known?.meta));
@@ -20468,12 +20493,12 @@ function readCodexChat(session, paths2, from = "0", child) {
 }
 
 // src/core/transcripts/opencode.ts
-import { join as join10 } from "node:path";
+import { join as join11 } from "node:path";
 import { DatabaseSync as DatabaseSync6 } from "node:sqlite";
 var MAX_SQLITE_PARTS = 200;
 var SQLITE_CURSOR = /^o:(\d+):([A-Za-z0-9_-]*)$/;
 function openDatabase(paths2) {
-  const file2 = safeFile(paths2.opencode, join10(paths2.opencode, "opencode.db"));
+  const file2 = safeFile(paths2.opencode, join11(paths2.opencode, "opencode.db"));
   if (!file2) return null;
   try {
     return new DatabaseSync6(file2, { readOnly: true, timeout: SQLITE_READ_TIMEOUT_MS });
@@ -20689,8 +20714,8 @@ ${row.body}`,
         }, [row.author_id, row.author_name, ...sessions]);
       });
       if (this.home) {
-        const archivePath = join11(this.home, ARCHIVE_DB_NAME);
-        if (existsSync5(archivePath)) {
+        const archivePath = join12(this.home, ARCHIVE_DB_NAME);
+        if (existsSync6(archivePath)) {
           const archive = new DatabaseSync7(archivePath, { readOnly: true, timeout: HISTORY_READ_TIMEOUT_MS });
           try {
             work += this.rows("archive", archive, "messages", (row) => this.message(row));
@@ -20716,7 +20741,7 @@ ${row.body}`,
     return { work, discovering: this.walk !== null || this.queue.length > 0 || this.idleFiles < registered };
   }
   head(path, session) {
-    const stat = statSync3(path), identity = `${stat.dev}:${stat.ino}:${stat.birthtimeMs}`;
+    const stat = statSync4(path), identity = `${stat.dev}:${stat.ino}:${stat.birthtimeMs}`;
     const cached2 = this.heads.get(path);
     if (cached2?.identity === identity && (!session || cached2.value.ownerChecked || object2(cached2.value.payload).id === session)) return cached2.value;
     let raw = cached2?.identity === identity ? cached2.value : readHead(path);
@@ -20739,12 +20764,12 @@ ${row.body}`,
       this.lastDiscovery = Date.now();
       this.opencodeComplete = false;
       this.queue = [
-        { path: join11(this.home, "context-events"), root: this.home, kind: "context", agent: "other" },
-        { path: join11(this.home, "approvals"), root: this.home, kind: "approval", agent: "other" },
-        { path: join11(this.home, "archive"), root: this.home, kind: "approval", agent: "other" },
-        { path: join11(this.home, "runs"), root: join11(this.home, "runs"), kind: "run", agent: "other" },
-        { path: join11(this.paths.claude, "projects"), root: this.paths.claude, kind: "transcript", agent: "claude" },
-        ...["sessions", "archived_sessions"].map((dir) => ({ path: join11(this.paths.codex, dir), root: this.paths.codex, kind: "transcript", agent: "codex" }))
+        { path: join12(this.home, "context-events"), root: this.home, kind: "context", agent: "other" },
+        { path: join12(this.home, "approvals"), root: this.home, kind: "approval", agent: "other" },
+        { path: join12(this.home, "archive"), root: this.home, kind: "approval", agent: "other" },
+        { path: join12(this.home, "runs"), root: join12(this.home, "runs"), kind: "run", agent: "other" },
+        { path: join12(this.paths.claude, "projects"), root: this.paths.claude, kind: "transcript", agent: "claude" },
+        ...["sessions", "archived_sessions"].map((dir) => ({ path: join12(this.paths.codex, dir), root: this.paths.codex, kind: "transcript", agent: "codex" }))
       ];
     }
     let work = 0;
@@ -20764,7 +20789,7 @@ ${row.body}`,
         this.walk = null;
         continue;
       }
-      const path2 = join11(entry.path, item.name);
+      const path2 = join12(entry.path, item.name);
       if (item.isDirectory()) {
         this.queue.push({ ...entry, path: path2 });
         continue;
@@ -20780,10 +20805,10 @@ ${row.body}`,
         const id = rolloutId ?? (typeof meta3.id === "string" ? meta3.id : typeof meta3.sessionId === "string" ? meta3.sessionId : basename2(path2, ".jsonl"));
         if (!TRANSCRIPT_ID.test(id)) continue;
         const child = entry.agent === "claude" && basename2(entry.path) === "subagents" ? basename2(path2, ".jsonl").replace(/^agent-/, "") : null;
-        this.register({ path: path2, kind: "transcript", agent: entry.agent, session: child ? basename2(dirname6(entry.path)) : id, cwd: typeof meta3.cwd === "string" ? meta3.cwd : "", child });
+        this.register({ path: path2, kind: "transcript", agent: entry.agent, session: child ? basename2(dirname7(entry.path)) : id, cwd: typeof meta3.cwd === "string" ? meta3.cwd : "", child });
       }
     }
-    const path = safeFile(this.paths.opencode, join11(this.paths.opencode, "opencode.db"));
+    const path = safeFile(this.paths.opencode, join12(this.paths.opencode, "opencode.db"));
     if (path && !this.opencodeComplete) {
       const db2 = new DatabaseSync7(path, { readOnly: true, timeout: HISTORY_READ_TIMEOUT_MS });
       try {
@@ -20820,7 +20845,7 @@ ${row.body}`,
   indexFile(file2) {
     if (file2.kind === "context" || file2.kind === "approval" || file2.kind === "run" && /\.json(?:-.*)?$/.test(file2.path)) return 0;
     if (file2.agent !== "opencode") {
-      const root = file2.kind === "run" ? join11(this.home, "runs") : this.paths[file2.agent];
+      const root = file2.kind === "run" ? join12(this.home, "runs") : this.paths[file2.agent];
       if (!safeFile(root, file2.path)) return 0;
     }
     const from = this.cursor(file2.path);
@@ -20856,7 +20881,7 @@ ${row.body}`,
       let meta3 = {};
       let metaText = "";
       const metaPath = file2.path.replace(/\.log(?:-\d+-[\w-]+)?$/, ".json");
-      const safeMeta = safeFile(join11(this.home, "runs"), metaPath);
+      const safeMeta = safeFile(join12(this.home, "runs"), metaPath);
       if (safeMeta) {
         const metaFd = openSync4(safeMeta, "r");
         try {
@@ -21005,22 +21030,22 @@ ${buffer.subarray(0, length).toString("utf8")}`,
 import { createHash as createHash3 } from "node:crypto";
 import {
   closeSync as closeSync6,
-  existsSync as existsSync7,
+  existsSync as existsSync8,
   fstatSync as fstatSync3,
   openSync as openSync6,
   readSync as readSync3,
   watch
 } from "node:fs";
-import { basename as basename4, join as join13 } from "node:path";
+import { basename as basename4, join as join14 } from "node:path";
 import { DatabaseSync as DatabaseSync8 } from "node:sqlite";
 
 // src/core/job-archive.ts
 import { randomUUID as randomUUID3 } from "node:crypto";
-import { closeSync as closeSync5, existsSync as existsSync6, fsyncSync as fsyncSync2, mkdirSync as mkdirSync5, openSync as openSync5, readdirSync as readdirSync4, writeFileSync as writeFileSync2 } from "node:fs";
-import { basename as basename3, dirname as dirname7, join as join12 } from "node:path";
+import { closeSync as closeSync5, existsSync as existsSync7, fsyncSync as fsyncSync2, mkdirSync as mkdirSync5, openSync as openSync5, readdirSync as readdirSync4, writeFileSync as writeFileSync2 } from "node:fs";
+import { basename as basename3, dirname as dirname8, join as join13 } from "node:path";
 
 // src/core/file-cache.ts
-import { readFileSync as readFileSync3, statSync as statSync4 } from "node:fs";
+import { readFileSync as readFileSync4, statSync as statSync5 } from "node:fs";
 var MAX_BYTES = 8 * 1024 * 1024;
 var MAX_ENTRIES = 2048;
 var cache2 = /* @__PURE__ */ new Map();
@@ -21029,7 +21054,7 @@ function fileSignature(st) {
   return `${st.dev}:${st.ino}:${st.birthtimeMs}:${st.ctimeMs}:${st.mtimeMs}:${st.size}`;
 }
 function readJsonSnapshot(file2) {
-  const st = statSync4(file2), signature = fileSignature(st);
+  const st = statSync5(file2), signature = fileSignature(st);
   const saved = cache2.get(file2);
   if (saved?.signature === signature) {
     cache2.delete(file2);
@@ -21040,7 +21065,7 @@ function readJsonSnapshot(file2) {
     cache2.delete(file2);
     bytes -= saved.bytes;
   }
-  const next = { signature, value: JSON.parse(readFileSync3(file2, "utf8")), bytes: st.size };
+  const next = { signature, value: JSON.parse(readFileSync4(file2, "utf8")), bytes: st.size };
   if (st.size <= MAX_BYTES) {
     cache2.set(file2, next);
     bytes += st.size;
@@ -21057,14 +21082,14 @@ function readJsonSnapshot(file2) {
 var snapshots = /* @__PURE__ */ new Map();
 var EMPTY_SNAPSHOT = { signature: "", jobs: [] };
 function readArchivedJobSnapshot(path) {
-  const dir = join12(dirname7(path), "archive");
-  if (!existsSync6(dir)) return EMPTY_SNAPSHOT;
+  const dir = join13(dirname8(path), "archive");
+  if (!existsSync7(dir)) return EMPTY_SNAPSHOT;
   const sources = [];
   const signatures = [];
   let bytes2 = 0;
   for (const file2 of readdirSync4(dir).sort()) {
     if (!file2.startsWith(`${basename3(path)}.overflow.json-`) && !/^jobs-.*\.json$/.test(file2)) continue;
-    const snapshot = readJsonSnapshot(join12(dir, file2));
+    const snapshot = readJsonSnapshot(join13(dir, file2));
     const value = snapshot.value;
     if (!isRecord(value) || value.version !== void 0 && (!Number.isInteger(value.version) || value.version < 0 || value.version > JSON_STORE_VERSION) || !Array.isArray(value.jobs)) throw new Error(`invalid job archive: ${file2}`);
     signatures.push(`${file2}:${snapshot.signature}`);
@@ -21114,8 +21139,8 @@ var ConversationIngestor = class {
   idleSources = 0;
   watchRoots() {
     for (const root of [
-      join13(this.paths.claude, "projects"),
-      join13(this.paths.codex, "sessions"),
+      join14(this.paths.claude, "projects"),
+      join14(this.paths.codex, "sessions"),
       this.paths.opencode
     ]) {
       if (this.watched.has(root)) continue;
@@ -21125,7 +21150,7 @@ var ConversationIngestor = class {
           { recursive: true, persistent: false },
           (_, name) => {
             if (name && this.dirty.size < 2048)
-              this.dirty.add(join13(root, String(name)));
+              this.dirty.add(join14(root, String(name)));
           }
         );
         watcher.on("error", () => {
@@ -21252,7 +21277,7 @@ var ConversationIngestor = class {
   jobs() {
     if (Date.now() - this.jobsAt < 3e4) return;
     this.jobsAt = Date.now();
-    const path = join13(this.home, "jobs.json");
+    const path = join14(this.home, "jobs.json");
     let active = {};
     try {
       active = object2(readJsonSnapshot(path).value);
@@ -21468,8 +21493,8 @@ var ConversationIngestor = class {
       "SELECT * FROM messages WHERE id=? ORDER BY recipient=? DESC LIMIT 1"
     ).get(envelope.message, envelope.recipient);
     if (!row) {
-      const path = join13(this.home, "archive.db");
-      if (existsSync7(path)) {
+      const path = join14(this.home, "archive.db");
+      if (existsSync8(path)) {
         const archive = new DatabaseSync8(path, { readOnly: true, timeout: 50 });
         try {
           row = archive.prepare(
@@ -21728,7 +21753,7 @@ var ConversationIngestor = class {
   sqlite(source) {
     const path = safeFile(
       this.paths.opencode,
-      join13(this.paths.opencode, "opencode.db")
+      join14(this.paths.opencode, "opencode.db")
     );
     if (!path) return 0;
     const input2 = new DatabaseSync8(path, { readOnly: true, timeout: 50 });
@@ -21831,8 +21856,8 @@ var ConversationIngestor = class {
       work += this.jobSnapshot();
       work += this.envelopes();
       work += this.events(this.db, "decisions", "durable-decisions");
-      const archive = join13(this.home, "archive.db");
-      if (existsSync7(archive)) {
+      const archive = join14(this.home, "archive.db");
+      if (existsSync8(archive)) {
         const input2 = new DatabaseSync8(archive, {
           readOnly: true,
           timeout: 50

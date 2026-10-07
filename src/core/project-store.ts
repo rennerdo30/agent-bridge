@@ -14,6 +14,7 @@ import { CONVERSATION_SCHEMA } from "./conversation-schema.js";
 import { historySchema } from "./history-schema.js";
 import { migrateSqlite } from "./sqlite-migrations.js";
 import { nullLogger } from "./logger.js";
+import { canonicalProjectRoot, projectKey } from "./project-identity.js";
 
 const roots = new Map<string, string>();
 const excluded = new Set<string>();
@@ -35,28 +36,7 @@ export function conversationProject(cwd: string): string {
   if (!cwd) return "";
   const known = roots.get(cwd);
   if (known) return known;
-  let root: string;
-  try {
-    root = realpathSync.native(cwd);
-    try {
-      const common = execFileSync(
-        "git",
-        ["-C", root, "rev-parse", "--path-format=absolute", "--git-common-dir"],
-        {
-          encoding: "utf8",
-          windowsHide: true,
-          stdio: ["ignore", "pipe", "ignore"],
-          timeout: 2_000,
-        },
-      ).trim();
-      root = realpathSync.native(dirname(common));
-    } catch {
-      /* Existing non-Git folders are valid projects too. */
-    }
-  } catch {
-    root = resolve(cwd);
-  }
-  if (process.platform === "win32") root = root.toLowerCase();
+  const root = projectKey(canonicalProjectRoot(cwd) ?? resolve(cwd));
   if (roots.size >= 256) roots.delete(roots.keys().next().value!);
   roots.set(cwd, root);
   return root;

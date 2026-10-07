@@ -113,6 +113,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
   private notificationMatch: (m: BridgeMessage) => boolean = () => false;
   private notificationConsumed: (messages: BridgeMessage[]) => void = () => {};
   private activity: PeerActivity | null = null;
+  private unavailable = false;
   private readonly log: Logger;
 
   constructor(private readonly opts: BridgeNodeOptions) {
@@ -314,6 +315,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
         wakeAvailable: this.wakeAvailable,
         wakeMaxHops: this.wakeMaxHops,
         activity: this.activity,
+        unavailable: this.unavailable,
         version: APP_VERSION,
         ...(this.opts.jobAgent ? { jobAgent: this.opts.jobAgent } : {}),
         ...(this.opts.jobOwner ? { jobOwner: this.opts.jobOwner, jobParent: this.opts.jobParent, parentJob: this.opts.parentJob, rootSession: this.opts.rootSession, rootName: this.opts.rootName, jobTitle: this.opts.jobTitle, jobSendTo: this.opts.jobSendTo } : {}),
@@ -426,6 +428,14 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
     return this.withClient((c) => c.request("peers", {}));
   }
 
+  projectJobs(): Promise<Record<string, unknown>[]> { return this.withClient((c) => c.request("projectJobs", {})); }
+  jobRecipient(job: string): Promise<string> { return this.withClient((c) => c.request("jobRecipient", { job })); }
+  async setUnavailable(unavailable: boolean): Promise<PeerInfo> {
+    const peer = await this.withClient((c) => c.request("coordinatorAvailability", { unavailable }));
+    this.unavailable = unavailable;
+    return peer;
+  }
+  setProjectMain(to: string): Promise<PeerInfo> { return this.withClient((c) => c.request("projectMain", { to })); }
   async handoffSubagents(args: import("./job-handoff.js").HandoffArgs): Promise<import("./job-handoff.js").HandoffReceipt> {
     // Inline results used to bypass the broker. Retain their unread envelopes before transferring.
     return this.withClient(async (c) => {
