@@ -50,6 +50,13 @@ export interface SiblingPeer {
 }
 
 export interface PeerInfo {
+  /** Derived local project identity; paired-PC projections never confer group authority. */
+  projectRoot?: string;
+  projectGroup?: string;
+  projectMain?: boolean;
+  projectAddress?: string;
+  /** A connected coordinator deliberately yielded its jobs (for example at a usage limit). */
+  unavailable?: boolean;
   /** Unique per process. */
   id: string;
   /** Stable, human-friendly address such as "codex-myrepo". Unique among live peers. */
@@ -169,6 +176,7 @@ export interface PendingArgs {
 }
 
 export interface UpdatePeerArgs {
+  unavailable?: boolean;
   jobParent?: string;
   jobTitle?: string;
   sessionId?: string | null;
@@ -188,6 +196,10 @@ export interface AuthArgs {
 }
 
 export interface RequestMap {
+  projectJobs: [Record<string, never>, Record<string, unknown>[]];
+  jobAuthority: [{ job: string }, Record<string, unknown> | null];
+  coordinatorAvailability: [{ name?: string; unavailable: boolean }, PeerInfo];
+  projectMain: [{ to: string }, PeerInfo];
   auth: [AuthArgs, { brokerPid: number }];
   hello: [HelloArgs, HelloResult];
   send: [SendArgs, SendResult];

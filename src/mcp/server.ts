@@ -5,6 +5,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import type { CallToolResult, ServerNotification } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
+import { isRecord } from "../core/json-store.js";
 import { CLAUDE_PERMISSION_MODES, CODEX_APPROVALS_REVIEWERS, CODEX_SANDBOXES, defaultPeerName, loadConfig, parseAgentKind, saveConfigValue, watchConfig, type BridgeConfig, MODEL_NAME_PATTERN } from "../core/config.js";
 import {
   APP_NAME,
@@ -568,6 +569,32 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
     guarded("decisions", async (a: DecisionsArgs) => text(JSON.stringify(await requireNode().decisions(a)))),
   );
 
+  if (node) register(
+    "project_main",
+    {
+      title: "Set the project's main session",
+      description: "Choose a live local master of this project as its main contact. Project addresses route to this session with available-secondary fallback. Exact session addresses stay direct.",
+      inputSchema: { to: z.string().min(1).max(64) },
+    },
+    guarded("project_main", async (a: { to: string }) => {
+      const peer = await requireNode().setProjectMain(a.to);
+      return text(`${peer.name} is main for ${peer.projectAddress}.`);
+    }),
+  );
+
+  if (node) register(
+    "coordinator_availability",
+    {
+      title: "Set coordinator availability",
+      description: "Yield this session's project jobs to an available local master, for example before closing or at a usage limit. Set unavailable=false when ready again. The current primary keeps its jobs until explicitly handed back. Explicitly handed-off jobs are excluded.",
+      inputSchema: { unavailable: z.boolean() },
+    },
+    guarded("coordinator_availability", async (a: { unavailable: boolean }) => {
+      const peer = await requireNode().setUnavailable(a.unavailable);
+      return text(`${peer.name} is ${peer.unavailable ? "unavailable; project jobs may fail over" : "available"}.`);
+    }),
+  );
+
   register(
     "peers",
     {
@@ -598,6 +625,7 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
       }
       const n = requireNode();
       const peers = await n.peers();
+      const shared = await n.projectJobs();
       // Job runners are this or another session's subagents, not sessions (an older broker still lists them).
       const others = peers.filter((p) => p.id !== n.id && !p.id.startsWith("job:"));
       const lines = [
@@ -611,6 +639,9 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
         others.length ? t("peers.header", { count: others.length }) : t("peers.none"),
         ...others.map((p) => formatPeer(p)),
       ];
+      const groupPeers = peers.filter((p) => p.projectGroup && !p.host);
+      if (groupPeers.length) lines.push("Local project groups:", ...groupPeers.map((p) => `- ${p.projectAddress}: ${p.name} (${p.projectMain ? "main" : "secondary"}${p.unavailable ? ", unavailable" : ""})`));
+      if (shared.length) lines.push("Project jobs (shared local authority):", ...shared.map((j) => `- ${j.name} (${j.agent}, ${j.status}; primary ${j.owner})${isRecord(j.args) && j.args.title ? ` \"${j.args.title}\"` : ""}`));
       const transferNotes = new Map<string, BridgeMessage>();
       for (const message of n.unread()) {
         if (message.conversationId.startsWith(TRANSFER_PROGRESS_PREFIX)) transferNotes.set(message.conversationId, message);

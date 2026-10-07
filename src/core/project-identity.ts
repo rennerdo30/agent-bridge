@@ -1,0 +1,47 @@
+import { execFileSync } from "node:child_process";
+import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+
+/** The common Git directory identifies linked worktrees; physical paths unify subst aliases. */
+export function canonicalProjectRoot(cwd: string): string | null {
+  try {
+    const physical = realpathSync.native(cwd);
+    if (!statSync(physical).isDirectory()) return null;
+    const git = (args: string[]) => execFileSync("git", ["-C", physical, "rev-parse", ...args],
+      { encoding: "utf8", timeout: 3_000, windowsHide: true, stdio: ["ignore", "pipe", "ignore"] }).trim();
+    try {
+      const top = realpathSync.native(git(["--show-toplevel"]));
+      const common = realpathSync.native(resolve(physical, git(["--git-common-dir"])));
+      // Ordinary repositories and linked worktrees share the main checkout's .git directory.
+      if (common.endsWith("/.git") || common.endsWith("\\.git")) return realpathSync.native(dirname(common));
+      return top; // Separate Git dirs still use the verified working tree root.
+    } catch {
+      // Non-Git projects share only an identical existing directory, never guessed ancestors.
+      return physical;
+    }
+  } catch { return null; }
+}
+
+export function projectKey(root: string): string {
+  return process.platform === "win32" ? root.toLowerCase() : root;
+}
+
+/** Read-only settings: a malformed opt-out cannot accidentally grant authority. */
+export function projectGroupsEnabled(root: string | null, home?: string, agent?: string): boolean {
+  if (!root) return false;
+  try {
+    for (const path of [home && join(home, "config.json"), join(root, ".agent-bridge", "config.json")]) {
+      if (!path || !existsSync(path)) continue;
+      const value: unknown = JSON.parse(readFileSync(path, "utf8"));
+      if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+      const enabled = (value as Record<string, unknown>).projectGroups;
+      if (enabled !== undefined && enabled !== true) return false;
+      const section = agent ? (value as Record<string, unknown>)[agent] : undefined;
+      if (section && typeof section === "object" && !Array.isArray(section)) {
+        const local = (section as Record<string, unknown>).projectGroups;
+        if (local !== undefined && local !== true) return false;
+      }
+    }
+    return true;
+  } catch { return false; }
+}

@@ -262,6 +262,18 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
     if (!tokensEqual(cookieSecret(req), secret)) return send(res, 403, "Open the link printed by `agent-bridge ui`.", "text/plain; charset=utf-8");
 
     if (req.method === "GET" && url.pathname === "/") return send(res, 200, UI_PAGE, "text/html; charset=utf-8");
+    if (req.method === "POST" && url.pathname === "/api/coordinator/availability") {
+      const body = await readJson(req);
+      if (typeof body.name !== "string" || body.name.includes("/") || typeof body.unavailable !== "boolean") return send(res, 400, { error: "Choose a local coordinator and availability." });
+      try { return send(res, 200, await networkRequest("coordinatorAvailability", { name: body.name, unavailable: body.unavailable })); }
+      catch (err) { return send(res, 409, { error: err instanceof BridgeError ? err.message : "Coordinator unavailable." }); }
+    }
+    if (req.method === "POST" && url.pathname === "/api/project/main") {
+      const body = await readJson(req);
+      if (typeof body.to !== "string" || body.to.includes("/")) return send(res, 400, { error: "Choose a local project master." });
+      try { return send(res, 200, await networkRequest("projectMain", { to: body.to })); }
+      catch (err) { return send(res, 409, { error: err instanceof BridgeError ? err.message : "Project master unavailable." }); }
+    }
     const nativeDefaults = () => ({ codexSubagents: loadConfig(opts.home, "other", opts.log).codexSubagents, defaultCodexSubagents: DEFAULT_CODEX_SUBAGENTS, maxCodexSubagents: MAX_CODEX_SUBAGENTS });
     if (req.method === "GET" && url.pathname === "/api/config/codex-subagents") return send(res, 200, nativeDefaults());
     if (req.method === "POST" && url.pathname === "/api/config/codex-subagents") {

@@ -1174,7 +1174,7 @@ async function showNative(x, key) {
 /** One session in the sidebar: folder, name and state, with how many subagents work. Subagents are listed on its page. */
 function sideSession(x) {
   const p = x.peer, cur = x.name === route.session;
-  const sub = shortName(x.name) + (p ? " · " + (p.activity || "connected") : " · ended");
+  const sub = shortName(x.name) + (p ? " · " + (p.projectGroup ? (p.projectMain ? "main · " : "secondary · ") : "") + (p.unavailable ? "unavailable" : p.activity || "connected") : " · ended");
   return '<div class="tree-sess' + (cur ? " cur" : "") + (x.live ? "" : " ended") + '">' +
     '<a href="' + href(x.name) + '" title="' + esc(x.name + (p ? " · " + p.cwd : "")) + '"' + (cur ? ' aria-current="page"' : "") + ">" + (p ? dot(p.activity) : '<span class="dot off"></span>') +
     '<span class="lbl ell">' + esc(sessionTitle(x)) + '<small class="ell">' + esc(sub) + "</small></span>" +
@@ -1194,9 +1194,21 @@ function renderSide() {
   const q = $("sessFilter").value.trim().toLowerCase();
   const groups = sideGroups(q);
   const html = groups.length
-    ? groups.map((pc) => '<div class="tree-pc"><span>' + esc(pc.title) + "</span><span>" + pc.items.length + "</span></div>" + pc.items.map((x) => sideSession(x)).join("")).join("")
+    ? groups.map((pc) => '<div class="tree-pc"><span>' + esc(pc.title) + "</span><span>" + pc.items.length + "</span></div>" + projectSidebar(pc.items)).join("")
     : '<div class="tree-empty">' + (q ? "Nothing matches." : "No sessions connected yet.") + "</div>";
   if (html !== lastTree) { lastTree = html; $("sideTree").innerHTML = html; }
+}
+
+/** The project owns shared jobs; each session still keeps its own subagent column. */
+function projectSidebar(items) {
+  const projects = new Map();
+  for (const x of items) {
+    const key = x.peer && !pcOf(x.name) && x.peer.projectGroup;
+    if (!key) { projects.set(x.name, { title: null, items: [x] }); continue; }
+    if (!projects.has(key)) projects.set(key, { title: folder(x.peer.projectRoot), items: [] });
+    projects.get(key).items.push(x);
+  }
+  return [...projects.values()].map((p) => (p.title ? '<div class="tree-pc"><span>' + esc(p.title) + '</span><span>project</span></div>' : '') + p.items.map(sideSession).join('')).join('');
 }
 
 const narrow = () => typeof matchMedia === "function" && matchMedia("(max-width: 860px)").matches;
@@ -1306,7 +1318,7 @@ function renderSession() {
     ? '<div class="head" style="display:flex;gap:12px;align-items:center">' + av(p.agent) + '<div style="min-width:0;flex:1"><div class="title ell" style="font-weight:650;font-size:15px">' + esc(folder(p.cwd)) + '</div><div class="small muted ell">' + esc(p.name) + "</div></div>" + dot(p.activity) + "</div>" +
       '<div class="kv"><span>status</span><span>' + esc(p.activity || "unknown") + "</span><span>folder</span><span>" + esc(p.cwd) + "</span><span>connected</span><span>" + up(p.startedAt) + " ago</span>" +
       (p.sessionId ? "<span>session</span><span>" + esc(p.sessionId) + "</span>" : "") + "<span>version</span><span>" + esc(p.version || "?") + " " + versionChip(p) + "</span></div>" +
-      kidsBlock(x, true)
+      kidsBlock(x, true) + (!pcOf(x.name) ? '<div class="actions"><button type="button" class="btn" data-coordinator="' + esc(x.name) + '" data-unavailable="' + (p.unavailable ? 'false' : 'true') + '">' + (p.unavailable ? 'Make available' : 'Hand jobs to project') + '</button>' + (p.projectGroup ? '<button type="button" class="btn" data-project-main="' + esc(x.name) + '"' + (p.projectMain ? ' disabled' : '') + '>' + (p.projectMain ? 'Project main' : 'Make project main') + '</button>' : '') + '</div>' : '')
     : '<div class="head" style="display:flex;gap:12px;align-items:center">' + av("other") + '<div><div style="font-weight:650">' + esc(x.name) + '</div><div class="small muted">' +
       (x.name === "earlier runs" ? "Runs from before sessions were recorded, or from sessions in other folders." : "This session has ended. Its subagents are kept for reference.") + "</div></div></div>";
   $("sCount").innerHTML = x.groups.length ? countsLine(countGroups(x.groups)) : "";
@@ -1633,6 +1645,27 @@ document.addEventListener("toggle", (e) => {
 document.addEventListener("click", (e) => {
   const b = e.target.closest(".bubble.clamp");
   if (b) { opened.add(b.dataset.open); b.classList.remove("clamp"); }
+});
+
+document.addEventListener("click", async (e) => {
+  const main = e.target.closest("[data-project-main]");
+  if (main && !main.disabled) {
+    main.disabled = true;
+    try {
+      const r = await fetch("/api/project/main", { method: "POST", headers: { "content-type": "application/json", "x-agent-bridge": "1" }, body: JSON.stringify({ to: main.dataset.projectMain }) });
+      const d = await r.json(); if (!r.ok) throw new Error(d.error || "Main change failed"); await poll();
+    } catch (err) { main.textContent = err.message; main.disabled = false; }
+    return;
+  }
+  const b = e.target.closest("[data-coordinator]");
+  if (!b || b.disabled) return;
+  b.disabled = true;
+  try {
+    const r = await fetch("/api/coordinator/availability", { method: "POST", headers: { "content-type": "application/json", "x-agent-bridge": "1" }, body: JSON.stringify({ name: b.dataset.coordinator, unavailable: b.dataset.unavailable === "true" }) });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || "Availability change failed");
+    await poll();
+  } catch (err) { b.textContent = err.message; b.disabled = false; }
 });
 
 /** Each agent's account limits as bars of what is left (read by the server from the CLIs, cached a few minutes). */
