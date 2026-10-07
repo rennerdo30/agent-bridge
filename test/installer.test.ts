@@ -13,11 +13,13 @@ describe("installer plans", () => {
       "claude plugin marketplace add rennerdo30/agent-bridge",
       "claude plugin marketplace update agent-bridge",
       "claude plugin install agent-bridge@agent-bridge",
+      "publish immutable claude plugin version (keep all old versions)",
     ]);
     expect(planFor("codex", "install").map(describeStep)).toEqual([
       "codex plugin marketplace add rennerdo30/agent-bridge",
       "codex plugin marketplace upgrade agent-bridge",
       "codex plugin add agent-bridge@agent-bridge",
+      "publish immutable codex plugin version (keep all old versions)",
     ]);
     expect(planFor("claude", "uninstall").map(describeStep)).toEqual(["claude plugin uninstall agent-bridge@agent-bridge"]);
     expect(planFor("codex", "uninstall").map(describeStep)).toEqual(["codex plugin remove agent-bridge@agent-bridge"]);

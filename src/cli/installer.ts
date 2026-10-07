@@ -33,6 +33,7 @@ export function planFor(tool: Tool, action: Action): Step[] {
           { kind: "command", bin: "claude", args: ["plugin", "marketplace", "add", MARKETPLACE_REPO], allowFailure: true },
           { kind: "command", bin: "claude", args: ["plugin", "marketplace", "update", MARKETPLACE_NAME] },
           { kind: "command", bin: "claude", args: ["plugin", "install", PLUGIN_ID] },
+          { kind: "live-update", tool },
         ];
       case "update":
         return [{ kind: "live-update", tool }];
@@ -47,6 +48,7 @@ export function planFor(tool: Tool, action: Action): Step[] {
           { kind: "command", bin: "codex", args: ["plugin", "marketplace", "add", MARKETPLACE_REPO], allowFailure: true },
           { kind: "command", bin: "codex", args: ["plugin", "marketplace", "upgrade", MARKETPLACE_NAME] },
           { kind: "command", bin: "codex", args: ["plugin", "add", PLUGIN_ID] },
+          { kind: "live-update", tool },
         ];
       case "update":
         return [{ kind: "live-update", tool }];

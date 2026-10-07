@@ -118,7 +118,21 @@ Codex caches using `local`, non-release directory names or a newer release are
 preserved and refused, since highest-version selection would not activate the
 requested numbered version. Claude registry formats other than v2 are also refused.
 Initial plugin registration still uses the native install command; `update` uses
-the retention-safe path. Native uninstall/force reinstall and independent native
+the retention-safe path. Both install and update finish by synchronizing the native
+selectors. Claude's marketplace clone is fetched and fast-forwarded only after the
+incoming manifests match the packaged release. Dirty or divergent clones are refused;
+no reset, clean or pruning is used. Existing Codex Git marketplaces are refreshed too,
+while its configured local marketplace points at the same immutable cache release.
+opencode's loader and Antigravity's MCP config select their retained runtime versions.
+
+`agent-bridge doctor` (or `agent-bridge doctor --json`) reads marketplace manifests,
+installed records, selected cache/runtime versions, native loaders and live server
+processes. Mismatches include the client and exact update command. Retained running
+versions are identified separately, with reload/restart instructions to use after
+active work finishes. An unavailable process lookup is reported as unverified.
+Doctor never invokes plugin managers or repairs these paths automatically.
+
+Native uninstall/force reinstall and independent native
 marketplace updates are outside this updater's retention guarantee. Do not run
 those commands concurrently with this updater. Concurrent metadata changes detected
 before replacement cause a refusal with both revisions preserved.

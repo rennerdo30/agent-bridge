@@ -1,6 +1,7 @@
 import { createInterface } from "node:readline/promises";
 import { doctor, archiveHome, fixDoctor } from "../core/doctor.js";
 import { createBackup, readBackup, restoreBackup } from "../core/backups.js";
+import { inspectPluginVersions, listServerProcesses, pluginDoctorPaths } from "./plugin-doctor.js";
 
 export type ConfirmDoctor = (question: string) => Promise<boolean>;
 
@@ -34,6 +35,9 @@ export async function runDoctor(args: string[], home: string, out: (text: string
     out(archive ? `Archived: ${JSON.stringify(archiveHome(home, true))}` : `Preserved files: ${JSON.stringify(fixDoctor(home, true))}`);
   }
   const report = doctor(home);
+  const processes = await listServerProcesses();
+  report.findings.push(...inspectPluginVersions(pluginDoctorPaths(home), processes ?? []));
+  if (processes === null) report.findings.push({ severity: "warning", code: "plugin-process-unavailable", path: home, detail: "Running server process lookup unavailable; rerun agent-bridge doctor from the host account.", fixable: false });
   if (args.includes("--json")) out(JSON.stringify(report));
   else {
     for (const item of report.schema) out(`${item.path}: schema ${item.actual ?? "absent"}, code ${item.expected}`);
