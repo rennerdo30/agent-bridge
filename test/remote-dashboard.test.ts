@@ -18,44 +18,7 @@ import { RemoteDashboard } from "../src/network/remote-dashboard.js";
 import { DASHBOARD_CAPABILITY, DASHBOARD_FRAME, DASHBOARD_RATE_LIMIT, DASHBOARD_TIMEOUT_MS, dashboardRequestSchema } from "../src/network/dashboard-protocol.js";
 import { CODEX_SESSION, CODEX_CHILD, installTranscriptFixtures } from "./transcript-fixtures.js";
 
-let root: string, aHome: string, bHome: string;
-let cleanup: (() => Promise<unknown> | void)[];
-const cfg = (name: string) => ({ ...DEFAULT_NETWORK_CONFIG, enabled: true, name, bind: "127.0.0.1", port: 0, discovery: false });
-const peer = (name = "session"): PeerInfo => ({ id: name, name, agent: "codex", cwd: "/project/example", pid: process.pid, agentPid: null, sessionId: CODEX_SESSION, startedAt: 1, autoWake: false });
-const RUN = "2026-10-06-09-00-00-codex-abcd";
-const JOB = "codex-job-abcd";
-beforeEach(() => {
-  // Short native temp paths: macOS sockets cap paths at 104 bytes; Windows may use aliases.
-  root = realpathSync.native(mkdtempSync(join(tmpdir(), "abd-")));
-  aHome = join(root, "a"); bHome = join(root, "b");
-  mkdirSync(aHome); mkdirSync(bHome); cleanup = [];
-});
-afterEach(async () => {
-  for (const close of cleanup.reverse()) await close();
-  vi.useRealTimers(); vi.unstubAllEnvs();
-  rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
-});
-function seed() {
-  const fixtures = installTranscriptFixtures(bHome);
-  mkdirSync(join(bHome, "runs"));
-  writeFileSync(join(bHome, "runs", `${RUN}.log`), "09:00:00 codex\n09:00:01 finished after 1s · done\n");
-  writeFileSync(join(bHome, "runs", `${RUN}.json`), JSON.stringify({ by: "session", job: JOB, session: CODEX_SESSION, workdir: "/project/example" }));
-  writeFileSync(join(bHome, JOBS_FILE), JSON.stringify({ jobs: [{ id: "abcd", name: JOB, owner: "session", agent: "codex", status: "done", startedAt: 1, sessionId: CODEX_SESSION, rootName: "session", rootSession: CODEX_SESSION, args: { model: "sample" } }] }));
-  return fixtures;
-}
-async function links(mode: "current" | "legacy" | "silent" = "current") {
-  const fixtures = seed();
-  const peers = [peer(), { ...peer(JOB), id: "job:abcd", jobAgent: "codex" as const, jobParent: "session", rootName: "session", rootSession: CODEX_SESSION, parentJob: "codex-job-parent", subagent: true, title: "Nested worker" }];
-  const a = new NetworkService(aHome, cfg("alpha"), { peers: () => [], receive: () => ({ delivered: true }) }, nullLogger);
-  const b = new NetworkService(bHome, cfg("beta"), { peers: () => peers, receive: () => ({ delivered: true }) }, nullLogger);
-  const context = { home: bHome, log: nullLogger, peers: () => peers, transcripts: fixtures.paths };
-  const remote = new RemoteDashboard(a, { home: aHome, log: nullLogger, peers: () => [] });
-  if (mode === "current") { const service = new RemoteDashboard(b, context); cleanup.push(() => service.close()); }
-  if (mode === "silent") b.registerExtension(DASHBOARD_FRAME, DASHBOARD_CAPABILITY, () => {});
-  cleanup.push(() => remote.close(), () => a.close(), () => b.close());
-  await a.start(); await b.start(); await a.link(b.keys.invite(), "127.0.0.1", b.port);
-  return { a, b, remote, context };
-}
+import { aHome, bHome, cleanup, cfg, RUN, JOB, seed, links, node, admin, peer } from "./remote-dashboard-fixture.js";
 
 describe("paired dashboard read protocol", () => {
   it("serves identical local run, log, transcript, native child and outcome shapes", async () => {
@@ -125,71 +88,7 @@ describe("paired dashboard read protocol", () => {
   });
 });
 
-async function node(home: string, name: string, runner = false, config = cfg(home === aHome ? "alpha" : "beta"), identify = true) {
-  const bridge = new BridgeNode({ pipePath: resolvePipePath(home, {}), token: loadOrCreateToken(home), dbPath: resolveDbPath(home), agent: runner ? "other" : "codex", name, cwd: "/project/example", autoWake: false, log: nullLogger,
-    ...(runner ? { jobAgent: "codex", jobOwner: CODEX_SESSION, jobParent: "session", rootName: "session", rootSession: CODEX_SESSION, jobTitle: "Worker" } : {}),
-    network: { home, config } });
-  await bridge.start(); cleanup.push(() => bridge.stop()); if (identify) await bridge.setSessionId(CODEX_SESSION); return bridge;
-}
-async function admin(home: string) {
-  const client = await BridgeClient.connect(resolvePipePath(home, {}), nullLogger);
-  cleanup.push(() => client.close()); await client.request("auth", { protocol: PROTOCOL_VERSION, token: loadOrCreateToken(home) }); return client;
-}
 describe("paired dashboard HTTP", () => {
-  it("restores paired links and remote peers when a session with stale disabled config takes over", async () => {
-    const disabled = { ...cfg("alpha"), enabled: false };
-    const first = await node(aHome, "first", false, disabled, false);
-    await first.setSessionId("first-session");
-    const successor = await node(aHome, "successor", false, { ...disabled }, false);
-    await successor.setSessionId("successor-session");
-    await node(bHome, "session");
-    const a = await admin(aHome), b = await admin(bHome);
-    await a.request("networkConfigure", cfg("alpha"));
-    const status = await b.request("networkStatus", {});
-    const invitation = await b.request("networkPair", {});
-    await a.request("networkLink", { code: invitation.code, host: "127.0.0.1", port: status.port! });
-    expect((await successor.peers()).some((peer) => peer.name === "beta/session")).toBe(true);
-    a.close();
-    await first.stop();
-    await until(() => successor.isBroker && successor.isConnected, 15_000);
-    let restored = false;
-    for (let attempt = 0; attempt < 100; attempt++) {
-      if ((await successor.peers()).some((peer) => peer.name === "beta/session")) { restored = true; break; }
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
-    expect(restored).toBe(true);
-    expect(await successor.networkStatus()).toMatchObject({ enabled: true, paired: [{ connected: true, name: "beta" }] });
-    const message = await successor.send({ to: "beta/session", body: "after takeover" });
-    expect(message.deliveredTo).toContain("beta/session");
-  });
-
-  it("reads a reloaded session immediately through both the local reader and paired proxy", async () => {
-    const fixture = seed(); vi.stubEnv("CODEX_HOME", fixture.paths.codex);
-    await node(aHome, "local");
-    const original = await node(bHome, "session");
-    const a = await admin(aHome), b = await admin(bHome);
-    const status = await b.request("networkStatus", {});
-    const invitation = await b.request("networkPair", {});
-    await a.request("networkLink", { code: invitation.code, host: "127.0.0.1", port: status.port! });
-    b.close(); await original.stop();
-    const reloaded = await node(bHome, "session", false, { ...cfg("beta"), port: status.port! }, false);
-    expect(reloaded.currentSessionId).toBe(CODEX_SESSION);
-    const peers = await reloaded.peers();
-    const local = await readDashboard({ home: bHome, log: nullLogger, peers: () => peers, transcripts: fixture.paths }, { path: "/api/sessions/session/chat" });
-    expect(local.status).toBe(200);
-    const ui = await startUi({ home: aHome, pipe: resolvePipePath(aHome, {}), port: 0, log: nullLogger }); cleanup.push(() => ui.close());
-    const base = ui.url.replace(/\/\?t=.*$/, "");
-    const cookie = String((await fetch(ui.url, { redirect: "manual" })).headers.get("set-cookie")).split(";")[0]!;
-    let response: Response | undefined;
-    for (let attempt = 0; attempt < 100; attempt++) {
-      response = await fetch(`${base}/api/sessions/beta%2Fsession/chat`, { headers: { cookie } });
-      if (response.status === 200) break;
-      await response.arrayBuffer();
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
-    expect(response!.status).toBe(200);
-    expect(await response!.json()).toMatchObject({ ...local.body as object, host: "beta" });
-  });
   it("keeps token auth, accepts encoded host/name and marks runs, jobs and children with host", async () => {
     const fixture = seed(); vi.stubEnv("CODEX_HOME", fixture.paths.codex);
     await node(aHome, "local"); await node(bHome, "session"); await node(bHome, JOB, true);
