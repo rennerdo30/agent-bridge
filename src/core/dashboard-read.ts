@@ -7,7 +7,7 @@ import { CODING_AGENTS, type PeerInfo } from "./protocol.js";
 import { isRecord } from "./json-store.js";
 import { type RunMeta } from "./runfeed.js";
 import { finishedRunLine } from "./run-archive.js";
-import { DEFAULT_RUN_PAGE_SIZE, MAX_RUN_PAGE_SIZE, pageRuns, readHistoryJobs, readHistoryJson, readRunLogs } from "./run-history.js";
+import { DEFAULT_RUN_PAGE_SIZE, MAX_RUN_PAGE_SIZE, pageRuns, readHistoryJobs, readHistoryJson, readRunLogs, readRunStarts } from "./run-history.js";
 import type { Worktree } from "./worktree.js";
 import { listNativeSubagents, readTranscript, TRANSCRIPT_ID, validTranscriptCursor, type TranscriptPaths } from "./transcripts/index.js";
 import { deriveJobOutcome, listJobOutcomes, JOB_OUTCOME_CONTRACT_VERSION, type JobOutcome, type OutcomeJob } from "./job-outcomes.js";
@@ -61,7 +61,7 @@ export async function finishedRunOutcomes(home: string, log: Logger, names?: Set
       status: run.status, worktree: stored?.worktree,
       remote: (run as RunSummary & { remote?: OutcomeJob["remote"] }).remote ?? (stored as OutcomeJob | undefined)?.remote,
     };
-    const receiptRuns = names ? readRunLogs(home).map((r) => ({ job: r.meta.job, jobStartedAt: r.meta.jobStartedAt, startedAt: runNameStart(r.name, r.updatedAt) })) : runs;
+    const receiptRuns = names ? readRunStarts(home) : runs;
     const next = receiptRuns.filter((r) => r.job === run.job && (r.jobStartedAt ?? r.startedAt) > startedAt)
       .sort((a, b) => (a.jobStartedAt ?? a.startedAt) - (b.jobStartedAt ?? b.startedAt))[0];
     out[run.name] = await deriveJobOutcome(home, job, log, {
@@ -173,11 +173,6 @@ export function listRuns(home: string, now = Date.now(), names?: Set<string>): R
     }
   }
   return pageRuns(runs, null, runs.length).runs;
-}
-
-function runNameStart(name: string, fallback: number): number {
-  const m = /^(\d{4})-(\d\d)-(\d\d)-(\d\d)-(\d\d)-(\d\d)-/.exec(name);
-  return m ? Date.UTC(+m[1]!, +m[2]! - 1, +m[3]!, +m[4]!, +m[5]!, +m[6]!) : fallback;
 }
 
 const runSummaries = new Map<string, { signature: string; summary: RunSummary }>();
