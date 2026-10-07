@@ -25,12 +25,13 @@ function store() { const s=new OwnerQuestionStore(env.home,nullLogger); closers.
 describe("owner question registry",() => {
   it("merges project + issue + topic with several askers and enforces the per-session cap",() => {
     const s=store(),first=s.ask(question(),env.home,asker,100);
-    const merged=s.ask({...question(),affectedProjects:["second project"]},env.home,{...asker,session:"claude-other"},101);
+    const merged=s.ask({...question(),affectedProjects:["second project"]},env.home,{...asker,session:"claude-other",sessionId:"thread-other"},101);
     expect(merged.merged).toBe(true); expect(merged.question.id).toBe(first.question.id); expect(merged.question.askers).toHaveLength(2);
     expect(merged.question.affectedProjects).toContain("second project");
     expect(s.ask({...question(),links:[{kind:"issue",value:"AB-159"}]},env.home,asker,102).similar).toContain(first.question.id);
     for (const topic of ["a","b","c"]) s.ask(question(topic),env.home,asker,100);
     expect(() => s.ask(question("d"),env.home,asker,100)).toThrow("At most 5");
+    expect(() => s.ask(question("renamed"),env.home,{...asker,session:"renamed-session"},100)).toThrow("At most 5");
     expect(() => s.ask({...question(),options:[{id:"x",label:"X",consequence:"X",recommended:true},{id:"y",label:"Y",consequence:"Y",recommended:false}]},env.home,asker)).toThrow("different terms");
   });
   it("never expires a question and stores exact owner text durably with one answer",() => {
@@ -125,6 +126,16 @@ describe("presence alerts and waking delivery",() => {
     const recovered=service.store.get(q.id)!; recovered.mirror={state:"pending"}; service.store.save(recovered);
     fetch.mockResolvedValueOnce({ok:true,json:async () => ({comments:[{text:`**Owner answer recorded (${q.id}).**`}]})});
     service.complete(recovered); await until(() => service.store.get(q.id)?.mirror?.state === "saved"); expect(fetch).toHaveBeenCalledTimes(3);
+  });
+  it("does not wake a replacement which inherited the asker name, and routes renamed sessions by identity",() => {
+    const messages=new MessageStore(env.db,nullLogger); closers.push(() => messages.close());
+    const peers:any[]=[{name:asker.session,sessionId:"replacement",cwd:env.home,agent:"codex"},{name:asker.main,cwd:env.home,agent:"claude",projectMain:true,wakeAvailable:true,wakeOnDirect:true}];
+    const emit=vi.fn(),service=new OwnerQuestionService(env.home,messages,nullLogger,() => peers,emit); closers.push(() => service.close());
+    const q=service.store.ask(question(),env.home,asker).question;
+    service.complete(service.store.answer(q.id,{text:"Keep the original scope"},OWNER_ADDRESS));
+    expect(emit).toHaveBeenCalledTimes(1); expect(emit.mock.calls[0]?.[0].name).toBe(asker.main); expect(messages.unread(asker.session,50)).toEqual([]);
+    peers.push({...peers[0],name:"renamed-asker",sessionId:"thread"});
+    service.complete(service.store.get(q.id)!); expect(emit).toHaveBeenCalledTimes(2); expect(emit.mock.calls[1]?.[0].name).toBe("renamed-asker");
   });
 });
 
