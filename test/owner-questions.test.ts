@@ -48,6 +48,13 @@ describe("owner question registry",() => {
     for (let i=0;i<5;i++) s.ask(question("unknown-"+i),env.home,identity);
     expect(() => s.ask(question("overflow"),env.home,{...identity,session:"renamed-main"})).toThrow("At most 5");
   });
+  it("retains every linked job when the same main merges a question",() => {
+    const s=store();
+    const first=s.ask({...question(),job:"codex-job-first"},env.home,{...asker,job:"codex-job-first"});
+    const merged=s.ask({...question(),job:"codex-job-second"},env.home,{...asker,job:"codex-job-second"});
+    expect(merged.question.id).toBe(first.question.id);
+    expect(merged.question.askers.map(a => a.job)).toEqual(["codex-job-first","codex-job-second"]);
+  });
   it("requires concrete evidence and forbids destructive blocking and authorization defaults",() => {
     expect(askOwnerSchema.safeParse({...question(),destructive:true,default:{option:"small",deadline:100}}).success).toBe(false);
     expect(askOwnerSchema.safeParse({...question(),authorization:true}).success).toBe(false);

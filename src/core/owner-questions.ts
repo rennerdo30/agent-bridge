@@ -92,8 +92,8 @@ export class OwnerQuestionStore {
       if (same) {
         // Never merge different options/defaults into a question whose answer would mean different things.
         if (JSON.stringify([same.options,same.default,same.authorization,same.destructive,same.blocking]) !== JSON.stringify([args.options,args.default,args.authorization,args.destructive,args.blocking])) throw new Error(`Question ${same.id} already covers this topic with different terms; cancel or supersede it explicitly`);
-        const priorAsker=same.askers.findIndex(sameAsker);
-        if (priorAsker < 0) same.askers.push(asker); else same.askers[priorAsker]=asker;
+        const priorAsker=same.askers.findIndex(a => sameAsker(a) && a.job === asker.job);
+        if (priorAsker < 0) same.askers.push(asker); else same.askers[priorAsker]={...same.askers[priorAsker],...asker};
         same.affectedProjects = [...new Set([...same.affectedProjects, ...args.affectedProjects, project])];
         same.links = [...new Map([...same.links, ...args.links].map(l => [JSON.stringify(l), l])).values()];
         this.save(same); return { question: same, merged: true, similar: [] };
