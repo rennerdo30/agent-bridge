@@ -20,6 +20,6 @@ describe("installer plans", () => {
 
   it("selects tools from the arguments, or all of them", () => {
     expect(parseInstallerArgs("install", ["codex", "--yes"])).toEqual(["codex"]);
-    expect(parseInstallerArgs("install", [])).toEqual(["claude", "codex", "opencode"]);
+    expect(parseInstallerArgs("install", [])).toEqual(["claude", "codex", "opencode", "antigravity"]);
   });
 });

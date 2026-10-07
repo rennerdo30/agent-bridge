@@ -52,7 +52,7 @@ describe("bounded JSONL reading", () => {
     expect(readJsonl(file, page.next).entries[0]?.value.type).toBe("new");
   });
   it("keeps storage overrides and rejects unsafe cursor numbers and symlink escapes", () => {
-    expect(transcriptPaths({ CLAUDE_CONFIG_DIR: join(home, "c"), CODEX_HOME: join(home, "x"), XDG_DATA_HOME: join(home, "data") }, home)).toEqual({ claude: join(home, "c"), codex: join(home, "x"), opencode: join(home, "data", "opencode") });
+    expect(transcriptPaths({ CLAUDE_CONFIG_DIR: join(home, "c"), CODEX_HOME: join(home, "x"), XDG_DATA_HOME: join(home, "data") }, home)).toEqual({ claude: join(home, "c"), codex: join(home, "x"), opencode: join(home, "data", "opencode"), antigravity: join(home, ".gemini", "antigravity-cli") });
     expect(transcriptPaths({}, home).opencode).toBe(join(home, ".local", "share", "opencode"));
     for (const cursor of ["-1", "NaN", "1e6", "j:9007199254740992:0", "o:2:../secret"]) expect(validTranscriptCursor(cursor)).toBe(false);
     for (const cursor of ["0", "123", "j:12:1", "o:1791277200000:prt_1"]) expect(validTranscriptCursor(cursor)).toBe(true);

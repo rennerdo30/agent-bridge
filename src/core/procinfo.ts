@@ -20,7 +20,7 @@ function exec(file: string, args: string[]): Promise<string> {
   });
 }
 
-async function lookup(pid: number): Promise<ProcInfo | null> {
+export async function lookup(pid: number): Promise<ProcInfo | null> {
   try {
     if (process.platform === "linux") {
       const [cmd, stat] = await Promise.all([readFile(`/proc/${pid}/cmdline`, "utf8"), readFile(`/proc/${pid}/stat`, "utf8")]);
@@ -43,6 +43,18 @@ async function lookup(pid: number): Promise<ProcInfo | null> {
 }
 
 const CHANNEL_FLAGS = ["--channels", "--dangerously-load-development-channels"];
+
+/** The native executable, never a hook argument merely mentioning agy. */
+export async function antigravityAncestor(start = process.ppid): Promise<number | null> {
+  let pid = start;
+  for (let i = 0; i < 6 && pid > 1; i++) {
+    const info = await lookup(pid);
+    if (!info) return null;
+    if (/^(?:"[^"\r\n]*[\\/]|[^\s"\r\n]*[\\/])?agy(?:\.exe)?(?:"|\s|$)/i.test(info.cmdline)) return pid;
+    pid = info.ppid;
+  }
+  return null;
+}
 
 /** True if the command line enables a channel that names agent-bridge. */
 export function cmdlineEnablesChannel(cmdline: string, pluginName: string): boolean {

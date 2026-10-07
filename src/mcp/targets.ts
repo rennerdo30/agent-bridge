@@ -1,5 +1,6 @@
 import { DEFAULT_CODEX_SUBAGENTS, MAX_CODEX_SUBAGENTS } from "../core/constants.js";
 import { z } from "zod";
+import { delegateToAntigravity } from "../core/antigravity.js";
 import { CLAUDE_PERMISSION_MODES, CODEX_APPROVALS_REVIEWERS, CODEX_SANDBOXES, type BridgeConfig, type ClaudePermissionMode, type CodexApprovalsReviewer, type CodexSandbox } from "../core/config.js";
 import { DelegateError, delegateToClaude, delegateToCodex, delegateToOpencode, type DelegateRequest, type DelegateResult } from "../core/delegate.js";
 import { listOpencodeModels, resolveOpencodeModel } from "../core/opencode-models.js";
@@ -39,6 +40,7 @@ export interface TargetArgs {
   native_subagents?: number;
   permission_mode?: string;
   auto_approve?: boolean;
+  terminal_sandbox?: boolean;
 }
 
 export interface DelegationTarget {
@@ -74,6 +76,7 @@ export function claudeModeFor(cfg: BridgeConfig, a: TargetArgs): ClaudePermissio
 export function supportsAsk(target: CodingAgent, relay: RelayWiring | undefined): boolean {
   if (!relay) return false;
   if (target === "opencode") return true;
+  if (target === "antigravity") return true;
   // Codex: through app-server always; the exec fallback needs the trusted PermissionRequest hook.
   if (target === "codex") return process.env[CODEX_EXEC_ENV] !== "1" || relay.codexHookTrusted;
   return false;
@@ -90,6 +93,18 @@ export function opencodeEditAsks(base: Pick<DelegateRequest, "approve" | "canApp
 
 /** How to run each coding agent headlessly. Adding an agent means adding one entry here. */
 export const DELEGATION_TARGETS: Record<CodingAgent, DelegationTarget> = {
+  antigravity: {
+    title: "Google Antigravity CLI (agy)",
+    modelExample: 'a slug from agy models, e.g. "gemini-3.8-flash-low"',
+    effortExample: '"low", "medium", "high", "xhigh" or "max" (model-dependent)',
+    defaultModel: (cfg) => cfg.antigravityModel,
+    schema: { terminal_sandbox: z.boolean().optional().describe("Enable agy's terminal sandbox (separate from read/ask tool permissions)") },
+    permissionNote: () => "Requires the installed agent-bridge Antigravity plugin. Read denies non-reading tools; ask relays them; edit retains native policy. Idle TUI mail waits for the next turn.",
+    permission: (_cfg, a) => a.access ?? "read",
+    run: async (cfg, base, a) => {
+      return delegateToAntigravity({ ...base, bin: cfg.antigravityBin, access: a.access ?? "read", sandbox: a.terminal_sandbox, extraEnv: { ...base.extraEnv, ...(a.relay?.env ?? {}) } });
+    },
+  },
   codex: {
     title: "OpenAI Codex",
     modelExample: '"gpt-6-sol"',

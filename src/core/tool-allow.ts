@@ -58,7 +58,7 @@ function glob(pattern: string): RegExp {
  * talks to the session that runs the subagent. Its name per CLI: Codex "agent-bridge", Claude
  * "plugin_agent-bridge_bridge", opencode "bridge".
  */
-const OWN_SERVERS = new Set(["agent-bridge", "plugin_agent-bridge_bridge", "bridge"]);
+const OWN_SERVERS = new Set(["agent-bridge", "agent-bridge_agent-bridge", "plugin_agent-bridge_bridge", "bridge"]);
 
 export function isOwnServerCall(r: { tool: string; detail: string }): boolean {
   const call = mcpToolOf(r);

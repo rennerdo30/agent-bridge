@@ -124,6 +124,7 @@ export function describeOpencodeEvent(ev: any): Step | null {
 }
 
 const DESCRIBERS: Record<CodingAgent, (ev: any) => Step | null> = {
+  antigravity: (ev) => ev?.step_update?.tool_name ? { kind: "tool", text: `tool ${ev.step_update.tool_name}`, id: String(ev.step_update.step_index) } : typeof ev?.step_update?.text_delta === "string" ? say(ev.step_update.text_delta) : null,
   codex: describeCodexEvent,
   claude: describeClaudeEvent,
   opencode: describeOpencodeEvent,

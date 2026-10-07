@@ -288,16 +288,20 @@ export function runProcess(opts: {
       opts.signal?.removeEventListener("abort", onAbort);
       fn();
     };
-    const kill = (reason: string) => void killTree(child, reason);
+    const kill = (reason: string) => killTree(child, reason);
     const timer = setTimeout(() => {
-      kill("delegate time limit");
       const seconds = Math.round(opts.timeoutMs / 1000);
       const message = opts.what ? `${opts.what} timed out after ${seconds}s` : `delegate timed out after ${seconds}s (its time limit, timeout_sec)`;
-      finish(() => reject(new DelegateError(message, "timeout", stderr.slice(-STDERR_TAIL_CHARS), captured())));
+      finish(() => {
+        const failed = () => reject(new DelegateError(message, "timeout", stderr.slice(-STDERR_TAIL_CHARS), captured()));
+        void kill("delegate time limit").then(failed, failed);
+      });
     }, opts.timeoutMs);
     const onAbort = () => {
-      kill("delegate aborted");
-      finish(() => reject(new DelegateError("delegate aborted", "aborted", "", captured())));
+      finish(() => {
+        const failed = () => reject(new DelegateError("delegate aborted", "aborted", "", captured()));
+        void kill("delegate aborted").then(failed, failed);
+      });
     };
     opts.signal?.addEventListener("abort", onAbort, { once: true });
 
@@ -406,6 +410,7 @@ export const OPENCODE_READ_ONLY_PERMISSIONS = { edit: "ask", bash: "ask" } as co
 export const OPENCODE_READ_ONLY_TOOLS = {
   "*_*": false, bridge_send: true, bridge_report_progress: true, bridge_peers: true,
   bridge_spawn_codex: true, bridge_spawn_claude: true, bridge_ask_codex: true, bridge_ask_claude: true,
+  bridge_spawn_antigravity: true, bridge_ask_antigravity: true,
   bridge_message_subagent: true, bridge_cancel_subagent: true, bridge_inbox: true, bridge_wait_for_message: true,
 } as const;
 

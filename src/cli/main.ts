@@ -11,6 +11,7 @@ import { formatMessage } from "../mcp/format.js";
 import { CODING_AGENTS, type CodingAgent } from "../core/protocol.js";
 import { parseInstallerArgs, runInstaller } from "./installer.js";
 import { runPermissionHook } from "./permission-hook.js";
+import { runAntigravityHook } from "./antigravity-hook.js";
 import { runRewakeHook } from "./rewake-hook.js";
 import { runSessionStartHook } from "./session-start-hook.js";
 import { findRunLog, watchRunLog } from "./watch.js";
@@ -44,6 +45,7 @@ async function main(argv: string[]): Promise<number> {
     new BridgeNode({ pipePath: pipe, token: loadOrCreateToken(home), dbPath: resolveDbPath(home), agent: "other", name: CLI_PEER_NAME, cwd: process.cwd(), autoWake: false, log });
 
   switch (command) {
+    case "antigravity-hook": return runAntigravityHook(rest[0] ?? "PreInvocation");
     case "doctor":
       return runDoctor(rest, home, out);
     case "reindex":

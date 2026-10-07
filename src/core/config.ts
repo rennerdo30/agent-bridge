@@ -71,6 +71,9 @@ export interface BridgeConfig {
   codexModel: string | null;
   claudeModel: string | null;
   opencodeBin: string;
+  /** Google's Antigravity CLI is named agy. */
+  antigravityBin: string;
+  antigravityModel: string | null;
   /** opencode model as provider/model, e.g. "anthropic/claude-sonnet-5". */
   opencodeModel: string | null;
   /** Default reasoning effort for subagents: one level for all, or per target agent ({ "codex": "high" }). */
@@ -109,6 +112,8 @@ export const DEFAULT_CONFIG: BridgeConfig = {
   codexModel: null,
   claudeModel: null,
   opencodeBin: DEFAULT_OPENCODE_BIN,
+  antigravityBin: "agy",
+  antigravityModel: null,
   opencodeModel: null,
   effort: {},
   opencodeAutoApprove: false,
@@ -282,6 +287,8 @@ export function loadConfig(home: string, agent: AgentKind, log: Logger, env: Nod
     codexModel: pick("codexModel", null, modelName) ?? d.codexModel,
     claudeModel: pick("claudeModel", null, modelName) ?? d.claudeModel,
     opencodeBin: pick("opencodeBin", ENV.opencodeBin, str) ?? d.opencodeBin,
+    antigravityBin: pick("antigravityBin", "AGENT_BRIDGE_ANTIGRAVITY_BIN", str) ?? d.antigravityBin,
+    antigravityModel: pick("antigravityModel", null, modelName) ?? d.antigravityModel,
     opencodeModel: pick("opencodeModel", null, modelName) ?? d.opencodeModel,
     effort: pick("effort", null, effortLevels) ?? d.effort,
     opencodeAutoApprove: pick("opencodeAutoApprove", null, parseBool) ?? d.opencodeAutoApprove,

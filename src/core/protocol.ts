@@ -17,11 +17,11 @@ import type { HistorySearch, HistoryResult } from "./history.js";
 import type { TransferProgress, TransferStarted } from "../network/transfers.js";
 import type { DecideArgs, DecisionsArgs, OwnerDecision } from "./decisions.js";
 
-export type AgentKind = "claude" | "codex" | "opencode" | "other";
-export const AGENT_KINDS: readonly AgentKind[] = ["claude", "codex", "opencode", "other"];
+export type AgentKind = "claude" | "codex" | "opencode" | "antigravity" | "other";
+export const AGENT_KINDS: readonly AgentKind[] = ["claude", "codex", "opencode", "antigravity", "other"];
 /** Agents that agent-bridge can run headlessly (delegation / subagents). */
 export type CodingAgent = Exclude<AgentKind, "other">;
-export const CODING_AGENTS: readonly CodingAgent[] = ["claude", "codex", "opencode"];
+export const CODING_AGENTS: readonly CodingAgent[] = ["claude", "codex", "opencode", "antigravity"];
 
 /** Broadcast target. */
 export const BROADCAST = "*";

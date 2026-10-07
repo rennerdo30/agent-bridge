@@ -4,6 +4,7 @@ import { basename, dirname, join } from "node:path";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { z } from "zod";
 import { claudeItems } from "./transcripts/claude.js";
+import { antigravityItems } from "./transcripts/antigravity.js";
 import { codexItems } from "./transcripts/codex.js";
 import { readTranscript, transcriptPaths, type TranscriptPaths, type TranscriptItem } from "./transcripts/index.js";
 import { object, parse, readHead, readJsonl, safeFile, TRANSCRIPT_ID } from "./transcripts/common.js";
@@ -32,7 +33,7 @@ const HISTORY_READ_TIMEOUT_MS = 100;
 const dateFilter = z.union([z.number().int().nonnegative(), z.iso.datetime({ offset: true })]).transform((v) => typeof v === "number" ? v : Date.parse(v));
 export const historyFiltersSchema = z.object({
   session: z.string().min(1).max(HISTORY_FILTER_ID_CHARS).optional(), job: z.string().min(1).max(HISTORY_FILTER_ID_CHARS).optional(),
-  agent: z.enum(["claude", "codex", "opencode", "other"]).optional(),
+  agent: z.enum(["claude", "codex", "opencode", "antigravity", "other"]).optional(),
   kind: z.enum(["message", "run", "decision", "transcript"]).optional(),
   since: dateFilter.optional(), until: dateFilter.optional(),
 }).strict();
@@ -74,7 +75,7 @@ export class HistoryIndex {
 
   rememberPeer(peer: Pick<PeerInfo, "id" | "name" | "sessionId">): void {
     if (!peer.sessionId) return;
-    const job = /^(claude|codex|opencode)-job-/.test(peer.name) ? peer.name : null;
+    const job = /^(claude|codex|opencode|antigravity)-job-/.test(peer.name) ? peer.name : null;
     for (const alias of [peer.id, peer.name, peer.sessionId]) this.rememberSession(alias, peer.sessionId, job);
   }
   private rememberSession(alias: string, session: string, job: string | null): void {
@@ -98,7 +99,7 @@ export class HistoryIndex {
   }
   private message(row: Record<string, any>): void {
     const sessions = [row.from_id, row.from_name, row.recipient, row.to_target].filter((s): s is string => typeof s === "string");
-    const jobs = sessions.filter((s) => /^(claude|codex|opencode)-job-/.test(s));
+    const jobs = sessions.filter((s) => /^(claude|codex|opencode|antigravity)-job-/.test(s));
     this.put({ id: `message:${row.id}`, kind: "message", agent: row.from_agent, at: Number(row.created_at), body: row.body,
       link: `/?message=${enc(row.id)}`, message: row.id, job: jobs[0] ?? null, run: null, session: row.from_id, cursor: null }, sessions, jobs);
   }
@@ -161,6 +162,7 @@ export class HistoryIndex {
       this.queue = [
         { path: join(this.home!, "runs"), root: join(this.home!, "runs"), kind: "run", agent: "other" },
         { path: join(this.paths.claude, "projects"), root: this.paths.claude, kind: "transcript", agent: "claude" },
+        ...(this.paths.antigravity ? [{ path: join(this.paths.antigravity, "brain"), root: this.paths.antigravity, kind: "transcript", agent: "antigravity" }] : []),
         ...["sessions", "archived_sessions"].map((dir) => ({ path: join(this.paths.codex, dir), root: this.paths.codex, kind: "transcript", agent: "codex" })),
       ];
     }
@@ -177,12 +179,13 @@ export class HistoryIndex {
       if (item.isDirectory()) { this.queue.push({ ...entry, path }); continue; }
       if (!item.isFile() || !safeFile(entry.root, path)) continue;
       if (entry.kind === "run" && /\.log(?:-\d+-[\w-]+)?$/.test(item.name)) {
-        this.register({ path, kind: "run", agent: /-(claude|codex|opencode)-/.exec(item.name)?.[1] ?? "other", session: null, cwd: "", child: null });
+        this.register({ path, kind: "run", agent: /-(claude|codex|opencode|antigravity)-/.exec(item.name)?.[1] ?? "other", session: null, cwd: "", child: null });
       } else if (entry.kind === "transcript" && item.name.endsWith(".jsonl")) {
+        if (entry.agent === "antigravity" && item.name !== "transcript.jsonl") continue;
         const head = readHead(path), meta = entry.agent === "codex" ? object(head.payload) : head;
         // Forked Codex files may begin with ancestor metadata; the filename owns this session.
         const rolloutId = entry.agent === "codex" ? /^rollout-.*-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/i.exec(item.name)?.[1] : undefined;
-        const id = rolloutId ?? (typeof meta.id === "string" ? meta.id : typeof meta.sessionId === "string" ? meta.sessionId : basename(path, ".jsonl"));
+        const id = entry.agent === "antigravity" ? basename(dirname(dirname(entry.path))) : rolloutId ?? (typeof meta.id === "string" ? meta.id : typeof meta.sessionId === "string" ? meta.sessionId : basename(path, ".jsonl"));
         if (!TRANSCRIPT_ID.test(id)) continue;
         const child = entry.agent === "claude" && basename(entry.path) === "subagents" ? basename(path, ".jsonl").replace(/^agent-/, "") : null;
         this.register({ path, kind: "transcript", agent: entry.agent, session: child ? basename(dirname(entry.path)) : id, cwd: typeof meta.cwd === "string" ? meta.cwd : "", child });
@@ -213,7 +216,8 @@ export class HistoryIndex {
   }
   private indexFile(file: FileRow): number {
     if (file.agent !== "opencode") {
-      const root = file.kind === "run" ? join(this.home!, "runs") : this.paths[file.agent as "claude" | "codex"];
+      const root = file.kind === "run" ? join(this.home!, "runs") : this.paths[file.agent as "claude" | "codex" | "antigravity"];
+      if (!root) return 0;
       if (!safeFile(root, file.path)) return 0;
     }
     const from = this.cursor(file.path);
@@ -234,7 +238,7 @@ export class HistoryIndex {
       for (const row of page.entries) {
         const target = file.agent === "claude" && row.value.isSidechain === true && typeof row.value.agentId === "string" && TRANSCRIPT_ID.test(row.value.agentId) ? { ...file, child: row.value.agentId } : file;
         if (typeof start === "number" && typeof row.value.ordinal === "number" && row.value.ordinal < start) continue;
-        const items = file.agent === "claude" ? claudeItems(row.value) : codexItems(row.value);
+        const items = file.agent === "antigravity" ? antigravityItems(row.value) : file.agent === "claude" ? claudeItems(row.value) : codexItems(row.value);
         items.forEach((item, i) => this.transcript(target, item, `j:${row.offset}:0`, i));
       }
       this.advance(file.path, page.next);

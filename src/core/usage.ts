@@ -238,6 +238,7 @@ async function codexUsage(bin: string, cwd: string, log: Logger): Promise<UsageR
 /** `model`: the model the caller would use (opencode: shows whether it is free). */
 export async function readUsage(agent: CodingAgent, bin: string, cwd: string, log: Logger, model: string | null = null): Promise<UsageReport> {
   try {
+    if (agent === "antigravity") return { agent, lines: ["Account limit availability is unknown: agy 1.2.0 exposes quotas in interactive /usage (or /quota), without a machine-readable quota command. Delegated results include token usage."], limits: [], maxUsedPercent: null };
     if (agent === "codex") return await codexUsage(bin, cwd, log);
     if (agent === "claude") return parseClaudeUsage(await capture(bin, ["-p", "/usage"], cwd, log));
     const [stats, models] = await Promise.all([
