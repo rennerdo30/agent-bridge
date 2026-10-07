@@ -4,7 +4,7 @@
 // No broker, agent CLI, installer, real store, or real project is started.
 import { mkdtemp, mkdir, writeFile, readFile, access, copyFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { join, resolve, sep, extname } from 'node:path';
 import { execFileSync, spawn } from 'node:child_process';
 import { createServer } from 'node:http';
 import { pathToFileURL } from 'node:url';
@@ -15,6 +15,8 @@ const args = process.argv.slice(2);
 const outIndex = args.indexOf('--out');
 if (outIndex < 0 || !args[outIndex + 1] || args.length !== 2) throw new Error('Usage: node docs/scripts/capture-dashboard.mjs --out docs/images');
 const output = resolve(repository, args[outIndex + 1]);
+const siteDirectory = join(repository, 'docs/dist');
+await access(join(siteDirectory, 'index.html'));
 const candidates = [
   join(process.env.ProgramFiles || 'C:/Program Files', 'Google/Chrome/Application/chrome.exe'),
   join(process.env['ProgramFiles(x86)'] || 'C:/Program Files (x86)', 'Google/Chrome/Application/chrome.exe'),
@@ -53,6 +55,15 @@ const seen = new Set();
 const server = createServer(async (req,res) => {
   const url = new URL(req.url,'http://127.0.0.1');
   seen.add(url.pathname);
+  if (url.pathname.startsWith('/agent-bridge/')) {
+    const relative = decodeURIComponent(url.pathname.slice('/agent-bridge/'.length));
+    const file = resolve(siteDirectory, relative + (url.pathname.endsWith('/') ? 'index.html' : ''));
+    if (!file.startsWith(siteDirectory + sep)) {res.writeHead(403);res.end();return;}
+    const types = {'.html':'text/html','.css':'text/css','.js':'application/javascript','.svg':'image/svg+xml','.png':'image/png','.webp':'image/webp','.json':'application/json','.wasm':'application/wasm'};
+    try {res.setHeader('Content-Type',types[extname(file)] || 'application/octet-stream');res.end(await readFile(file));}
+    catch {res.writeHead(404);res.end();}
+    return;
+  }
   if (url.pathname === '/') {res.setHeader('Content-Type','text/html');res.end(UI_PAGE);return;}
   let body = {};
   if(url.pathname === '/api/state') body = fixture;
@@ -92,6 +103,7 @@ try {
   await call('Emulation.setDeviceMetricsOverride',{width:1440,height:1000,deviceScaleFactor:1,mobile:false});
   await call('Page.navigate',{url});
   for(let n=0;n<100;n++){if(await evaluate('document.querySelector("#status")?.textContent.includes("bridge running")'))break;await new Promise(r=>setTimeout(r,100));}
+  if (!await evaluate('document.querySelector("#status")?.textContent.includes("bridge running")')) throw new Error('Synthetic dashboard did not become ready.');
   const shots = [['dashboard-overview-dark.png','#/','dark'],['dashboard-overview-light.png','#/','light'],['dashboard-session-dark.png','#/s/claude-showcase/~chat','dark'],['dashboard-session-light.png','#/s/claude-showcase/~chat','light'],['dashboard-waiting.png','#/approvals','dark'],['dashboard-network.png','#/network','light'],['dashboard-search.png','#/search','dark']];
   for(const [name,hash,theme] of shots){
     await evaluate(`document.querySelector('#theme button[data-theme="${theme}"]').click(); location.hash=${JSON.stringify(hash)}`);
@@ -103,6 +115,17 @@ try {
     const shot = await call('Page.captureScreenshot',{format:'png',captureBeyondViewport:false});
     await writeFile(join(demo,name),Buffer.from(shot.data,'base64'));
   }
+  // Render the built documentation using the same isolated browser. Review files stay
+  // in the temporary Git root, separate from the dashboard images published by the site.
+  const reviews = [['docs-site-dark.png','/agent-bridge/','dark'],['docs-site-light.png','/agent-bridge/','light'],['docs-concepts.png','/agent-bridge/concepts/sessions/','dark']];
+  for (const [name,path,theme] of reviews) {
+    await call('Page.navigate',{url:url+path});
+    for(let n=0;n<100;n++){if(await evaluate('document.querySelector("h1") && document.readyState === "complete"'))break;await new Promise(r=>setTimeout(r,100));}
+    await evaluate(`localStorage.setItem('starlight-theme',${JSON.stringify(theme)});document.documentElement.dataset.theme=${JSON.stringify(theme)}`);
+    await new Promise(r=>setTimeout(r,1000));
+    const shot = await call('Page.captureScreenshot',{format:'png',captureBeyondViewport:false});
+    await writeFile(join(demo,name),Buffer.from(shot.data,'base64'));
+  }
   if(errors.length) throw new Error(errors.join('\n'));
   await writeFile(join(demo,'capture-evidence.json'),JSON.stringify({release,version,synthetic:true,requests:[...seen],shots:shots.map(s=>s[0])},null,2));
   await mkdir(output, {recursive:true});
@@ -111,4 +134,5 @@ try {
   console.log('Synthetic runtime and private browser profile: '+demo);
   console.log('Review these captures before committing:\n'+shots.map(([name])=>join(output,name)).join('\n'));
   console.log('Capture evidence: '+join(output,'capture-evidence.json'));
+  console.log('Rendered documentation review files:\n'+reviews.map(([name])=>join(demo,name)).join('\n'));
 } finally {socket?.close();chrome.kill();await new Promise(r=>server.close(r));}
