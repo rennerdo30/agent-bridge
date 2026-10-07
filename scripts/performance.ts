@@ -66,6 +66,7 @@ let a: NetworkService | undefined, b: NetworkService | undefined;
 const managers: JobManager[] = [];
 const lag = monitorEventLoopDelay({ resolution: 10 });
 let failures = 0, delivered = 0, quietCopies = 0;
+const failureDetails: string[] = [];
 try {
   // Jobs with no explicit cwd must also resolve to the fixture, never the source checkout.
   execFileSync("git", ["init", "--quiet", home], { windowsHide: true });
@@ -137,7 +138,7 @@ try {
   for (let i = 0; i < 5; i++) await timed("listRuns", () => listRuns(home));
   const finishAt = performance.now() + duration * 1000;
   const loop = async (interval: number, fn: () => Promise<unknown>) => {
-    while (performance.now() < finishAt) { try { await fn(); } catch { failures++; } await pause(interval); }
+    while (performance.now() < finishAt) { try { await fn(); } catch (error) { failures++; failureDetails.push(error instanceof Error ? error.message : String(error)); } await pause(interval); }
   };
   // Six sessions each poll hooks. A hook uses a fresh authenticated pipe.
   const hook = () => timed("hook", async () => {
@@ -189,7 +190,8 @@ try {
   await workerDone; release(); await pause(30); clearTimeout(beat); tracked.end();
   lag.disable();
   const stats = Object.fromEntries(Object.entries(samples).map(([key, values]) => { const sorted = [...values].sort((x, y) => x - y); return [key, { count: values.length, meanMs: values.reduce((x, y) => x + y, 0) / values.length, p95Ms: sorted[Math.floor((sorted.length - 1) * .95)], maxMs: sorted.at(-1) }]; }));
-  console.log(JSON.stringify({ durationSeconds: duration, peers: peers.length, jobs: jobCount, logs: 680, retainedMessages: 8000, elapsedMs: elapsed, cpuMs: (usage.user + usage.system) / 1000, cpuPercent: (usage.user + usage.system) / (elapsed * 10), eventLoop: { p95Ms: lag.percentile(95) / 1e6, p99Ms: lag.percentile(99) / 1e6, maxMs: lag.max / 1e6 }, heartbeatMsUnderSqliteContention: sqlHeartbeat, heartbeatMsUnderStoreContention: heartbeat, failures, delivered, quietCopies, stats, io, hot }, null, 2));
+  console.log(JSON.stringify({ durationSeconds: duration, peers: peers.length, jobs: jobCount, logs: 680, retainedMessages: 8000, elapsedMs: elapsed, cpuMs: (usage.user + usage.system) / 1000, cpuPercent: (usage.user + usage.system) / (elapsed * 10), eventLoop: { p95Ms: lag.percentile(95) / 1e6, p99Ms: lag.percentile(99) / 1e6, maxMs: lag.max / 1e6 }, heartbeatMsUnderSqliteContention: sqlHeartbeat, heartbeatMsUnderStoreContention: heartbeat, failures, failureDetails, delivered, quietCopies, stats, io, hot }, null, 2));
+  if (failures) process.exitCode = 1;
 } finally {
   lag.disable(); inspector.disconnect();
   await ui?.close(); await a?.close(); await b?.close();
