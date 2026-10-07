@@ -57,6 +57,11 @@ reader exits. CI fetches release tags so this check runs on every platform.
 
 ## Owner-data copy audit, 2026-10-07
 
+The final version-16 source also repeated the copy audit after integration.
+All counts and original-content hashes remained unchanged. This second capture
+included 4,662 retained files, including the first migration's protected JSON
+backups; it published no additional SQLite snapshot and remained byte-idempotent.
+
 Only a temporary copy was migrated. The original home and its live processes were
 not modified. The full home copy retained all bridge application stores; unrelated
 Unity compiler caches had access-denied errors and were left untouched. Physical

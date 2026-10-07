@@ -30925,7 +30925,7 @@ var StdioClientTransport = class {
 import { homedir } from "node:os";
 import { join } from "node:path";
 var APP_NAME = "agent-bridge";
-var APP_VERSION = "0.29.15";
+var APP_VERSION = "0.29.16";
 var ENV = {
   internal: "AGENT_BRIDGE_INTERNAL",
   home: "AGENT_BRIDGE_HOME",
@@ -31088,7 +31088,10 @@ async function createBridge({ client, directory }) {
   const childSessions = /* @__PURE__ */ new Set();
   const busy = /* @__PURE__ */ new Map();
   let stopCheckRunning = false;
+  let pendingStopSession = null;
+  let disposed = false;
   let sessionStartSent = false;
+  let sessionStart = null;
   const hook = async (event, sessionID, signal) => {
     try {
       const res = await mcp.callTool(
@@ -31108,11 +31111,19 @@ async function createBridge({ client, directory }) {
     activeSession = sessionID;
     if (!sessionStartSent) {
       sessionStartSent = true;
-      void hook("SessionStart", sessionID);
+      sessionStart = hook("SessionStart", sessionID).then(async (out) => {
+        const context = out?.reason ?? out?.hookSpecificOutput?.additionalContext;
+        if (!disposed && typeof context === "string" && context) await promptAsync(client, sessionID, context, true);
+      }).catch((err) => log("warn", "could not store initial peer context", { err: String(err) }));
     }
+    return sessionStart;
   };
   const stopCheck = async (sessionID) => {
-    if (stopCheckRunning) return;
+    if (disposed) return;
+    if (stopCheckRunning) {
+      pendingStopSession = sessionID;
+      return;
+    }
     stopCheckRunning = true;
     try {
       const out = await hook("Stop", sessionID);
@@ -31125,6 +31136,9 @@ async function createBridge({ client, directory }) {
       log("warn", "stop check failed", { err: String(err?.message ?? err) });
     } finally {
       stopCheckRunning = false;
+      const pending = pendingStopSession;
+      pendingStopSession = null;
+      if (pending && pending === activeSession && !disposed && !busy.get(pending)) void stopCheck(pending);
     }
   };
   mcp.setNotificationHandler(
@@ -31145,7 +31159,7 @@ async function createBridge({ client, directory }) {
       args: jsonSchemaToZodShape(z2, t.inputSchema),
       execute: async (args, ctx) => {
         log("debug", "tool", { name, sessionID: ctx?.sessionID });
-        noteSession(ctx?.sessionID);
+        await noteSession(ctx?.sessionID);
         const res = await mcp.callTool({ name, arguments: args }, void 0, { timeout: MCP_REQUEST_TIMEOUT_MS, signal: ctx?.abort });
         const out = textOf(res);
         if (res?.isError) throw new Error(out || `agent-bridge ${name} failed`);
@@ -31158,13 +31172,13 @@ async function createBridge({ client, directory }) {
     tool,
     "chat.message": async (input2) => {
       log("debug", "chat.message", { sessionID: input2?.sessionID });
-      noteSession(input2?.sessionID);
+      await noteSession(input2?.sessionID);
     },
     /** After each tool call: mail that arrived meanwhile goes into that tool's result, where the model reads it. */
     "tool.execute.after": async (input2, output2) => {
       const sessionID = input2?.sessionID;
       if (!sessionID || childSessions.has(sessionID) || typeof output2?.output !== "string") return;
-      noteSession(sessionID);
+      await noteSession(sessionID);
       const out = await hook("PostToolUse", sessionID);
       const context = out?.reason ?? out?.hookSpecificOutput?.additionalContext;
       if (typeof context !== "string" || !context) return;
@@ -31186,7 +31200,7 @@ ${context}`;
     "experimental.chat.system.transform": async (input2, output2) => {
       const sessionID = input2?.sessionID;
       if (!sessionID || childSessions.has(sessionID)) return;
-      noteSession(sessionID);
+      await noteSession(sessionID);
       const out = await hook("PostToolUse", sessionID);
       const context = out?.hookSpecificOutput?.additionalContext;
       if (typeof context !== "string" || !context) return;
@@ -31221,6 +31235,8 @@ ${context}`;
       }
     },
     dispose: async () => {
+      disposed = true;
+      pendingStopSession = null;
       log("info", "disposing");
       await mcp.close().catch(() => {
       });
