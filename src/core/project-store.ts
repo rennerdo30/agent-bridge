@@ -17,6 +17,19 @@ import { nullLogger } from "./logger.js";
 
 const roots = new Map<string, string>();
 const excluded = new Set<string>();
+function linkedParent(file: string): boolean {
+  let parent = dirname(resolve(file));
+  while (!existsSync(parent) && dirname(parent) !== parent)
+    parent = dirname(parent);
+  try {
+    const physical = realpathSync.native(parent);
+    return process.platform === "win32"
+      ? physical.toLowerCase() !== parent.toLowerCase()
+      : physical !== parent;
+  } catch {
+    return true;
+  }
+}
 /** Worker-only canonicalization. Worktrees share the original project's root. */
 export function conversationProject(cwd: string): string {
   if (!cwd) return "";
@@ -79,8 +92,11 @@ export function ensureProjectFolder(project: string): string | null {
         timeout: 2_000,
       },
     ).trim();
-    if (existsSync(exclude) && lstatSync(exclude).isSymbolicLink())
-      return folder;
+    if (
+      linkedParent(exclude) ||
+      (existsSync(exclude) && lstatSync(exclude).isSymbolicLink())
+    )
+      return null;
     const text = existsSync(exclude) ? readFileSync(exclude, "utf8") : "";
     if (!text.split(/\r?\n/).includes("/.agent-bridge/")) {
       mkdirSync(dirname(exclude), { recursive: true });
@@ -90,6 +106,7 @@ export function ensureProjectFolder(project: string): string | null {
       );
     }
   } catch {
+    if (existsSync(join(project, ".git"))) return null;
     /* Non-Git projects have no exclude file. */
   }
   excluded.add(project);
@@ -107,6 +124,13 @@ export function syncProjectMirror(main: DatabaseSync, project: string): number {
   const folder = ensureProjectFolder(project);
   if (!folder) return 0;
   const path = projectDatabasePath(project);
+  const archive = join(folder, "archive");
+  if (
+    linkedParent(path) ||
+    (existsSync(archive) && lstatSync(archive).isSymbolicLink()) ||
+    linkedParent(join(archive, "backup"))
+  )
+    return 0;
   for (const file of [path, `${path}-wal`, `${path}-shm`])
     if (existsSync(file) && lstatSync(file).isSymbolicLink()) return 0;
   const existed = existsSync(path),
@@ -129,11 +153,23 @@ export function syncProjectMirror(main: DatabaseSync, project: string): number {
     const after = Number(
       mirror.prepare("SELECT value FROM mirror_cursor WHERE id=1").get()!.value,
     );
-    const candidates = main
+    const primary = main
       .prepare(
         `SELECT r.id,r.conversation FROM conversation_records r JOIN conversations c ON c.id=r.conversation WHERE c.project=? AND r.id>? ORDER BY r.id LIMIT 32`,
       )
       .all(project, after);
+    const associated = main
+      .prepare(
+        "SELECT r.id,r.conversation FROM conversation_memberships m JOIN conversation_records r ON r.conversation=m.conversation WHERE m.project=? AND r.id>? ORDER BY r.id LIMIT 32",
+      )
+      .all(project, after);
+    const candidates = [
+      ...new Map(
+        [...primary, ...associated].map((row) => [Number(row.id), row]),
+      ).values(),
+    ]
+      .sort((a, b) => Number(a.id) - Number(b.id))
+      .slice(0, 32);
     let copied = 0,
       last = after;
     mirror.exec("BEGIN IMMEDIATE");
@@ -168,6 +204,32 @@ export function syncProjectMirror(main: DatabaseSync, project: string): number {
               conversation.kind!,
             );
         }
+        const documentId = `durable:${candidate.id}`;
+        mirror
+          .prepare("INSERT OR IGNORE INTO history_tags VALUES(?,?,?)")
+          .run(documentId, "project", project);
+        for (const tag of main
+          .prepare(
+            "SELECT type,value FROM history_tags WHERE id=? AND type IN ('session','job')",
+          )
+          .all(documentId))
+          mirror
+            .prepare("INSERT OR IGNORE INTO history_tags VALUES(?,?,?)")
+            .run(documentId, tag.type!, tag.value!);
+        const docMeta = main
+          .prepare("SELECT session FROM history_documents WHERE id=?")
+          .get(documentId);
+        const alias = docMeta?.session
+          ? main
+              .prepare("SELECT * FROM history_sessions WHERE alias=?")
+              .get(docMeta.session)
+          : null;
+        if (alias)
+          mirror
+            .prepare(
+              "INSERT INTO history_sessions VALUES(?,?,?) ON CONFLICT(alias) DO UPDATE SET session=excluded.session,job=excluded.job WHERE history_sessions.session IS NOT excluded.session OR history_sessions.job IS NOT excluded.job",
+            )
+            .run(alias.alias!, alias.session!, alias.job!);
         if (
           mirror
             .prepare("SELECT id FROM conversation_records WHERE id=?")
@@ -217,11 +279,6 @@ export function syncProjectMirror(main: DatabaseSync, project: string): number {
               doc.session!,
               doc.cursor!,
             );
-          for (const type of ["project", "session", "job"])
-            if (conversation[type])
-              mirror
-                .prepare("INSERT OR IGNORE INTO history_tags VALUES(?,?,?)")
-                .run(doc.id!, type, conversation[type]!);
         }
         copied++;
         last = Number(row.id);

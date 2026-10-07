@@ -53,6 +53,9 @@ CREATE TABLE IF NOT EXISTS conversation_parts (
  PRIMARY KEY(source,part)
 );
 CREATE TABLE IF NOT EXISTS conversation_projects (project TEXT PRIMARY KEY, checked INTEGER NOT NULL DEFAULT 0);
+CREATE TABLE IF NOT EXISTS conversation_memberships (
+ project TEXT NOT NULL, conversation TEXT NOT NULL, PRIMARY KEY(project,conversation)
+);
 CREATE TABLE IF NOT EXISTS conversation_bindings (
  session TEXT NOT NULL, agent TEXT NOT NULL, cwd TEXT NOT NULL, job TEXT,
  pending INTEGER NOT NULL DEFAULT 1, PRIMARY KEY(session,agent)
@@ -271,6 +274,17 @@ function migrateSqlite(db2, file2, existed, target, migrations, log) {
 // src/core/project-store.ts
 var roots = /* @__PURE__ */ new Map();
 var excluded = /* @__PURE__ */ new Set();
+function linkedParent(file2) {
+  let parent2 = dirname4(resolve(file2));
+  while (!existsSync4(parent2) && dirname4(parent2) !== parent2)
+    parent2 = dirname4(parent2);
+  try {
+    const physical = realpathSync.native(parent2);
+    return process.platform === "win32" ? physical.toLowerCase() !== parent2.toLowerCase() : physical !== parent2;
+  } catch {
+    return true;
+  }
+}
 function conversationProject(cwd) {
   if (!cwd) return "";
   const known = roots.get(cwd);
@@ -326,8 +340,8 @@ function ensureProjectFolder(project) {
         timeout: 2e3
       }
     ).trim();
-    if (existsSync4(exclude) && lstatSync(exclude).isSymbolicLink())
-      return folder;
+    if (linkedParent(exclude) || existsSync4(exclude) && lstatSync(exclude).isSymbolicLink())
+      return null;
     const text = existsSync4(exclude) ? readFileSync2(exclude, "utf8") : "";
     if (!text.split(/\r?\n/).includes("/.agent-bridge/")) {
       mkdirSync4(dirname4(exclude), { recursive: true });
@@ -338,6 +352,7 @@ function ensureProjectFolder(project) {
       );
     }
   } catch {
+    if (existsSync4(join6(project, ".git"))) return null;
   }
   excluded.add(project);
   return folder;
@@ -350,6 +365,9 @@ function syncProjectMirror(main, project) {
   const folder = ensureProjectFolder(project);
   if (!folder) return 0;
   const path = projectDatabasePath(project);
+  const archive = join6(folder, "archive");
+  if (linkedParent(path) || existsSync4(archive) && lstatSync(archive).isSymbolicLink() || linkedParent(join6(archive, "backup")))
+    return 0;
   for (const file2 of [path, `${path}-wal`, `${path}-shm`])
     if (existsSync4(file2) && lstatSync(file2).isSymbolicLink()) return 0;
   const existed = existsSync4(path), mirror = new DatabaseSync4(path, { timeout: 50 });
@@ -371,9 +389,17 @@ function syncProjectMirror(main, project) {
     const after = Number(
       mirror.prepare("SELECT value FROM mirror_cursor WHERE id=1").get().value
     );
-    const candidates = main.prepare(
+    const primary = main.prepare(
       `SELECT r.id,r.conversation FROM conversation_records r JOIN conversations c ON c.id=r.conversation WHERE c.project=? AND r.id>? ORDER BY r.id LIMIT 32`
     ).all(project, after);
+    const associated = main.prepare(
+      "SELECT r.id,r.conversation FROM conversation_memberships m JOIN conversation_records r ON r.conversation=m.conversation WHERE m.project=? AND r.id>? ORDER BY r.id LIMIT 32"
+    ).all(project, after);
+    const candidates = [
+      ...new Map(
+        [...primary, ...associated].map((row) => [Number(row.id), row])
+      ).values()
+    ].sort((a, b) => Number(a.id) - Number(b.id)).slice(0, 32);
     let copied = 0, last = after;
     mirror.exec("BEGIN IMMEDIATE");
     try {
@@ -393,6 +419,18 @@ function syncProjectMirror(main, project) {
             conversation.kind
           );
         }
+        const documentId = `durable:${candidate.id}`;
+        mirror.prepare("INSERT OR IGNORE INTO history_tags VALUES(?,?,?)").run(documentId, "project", project);
+        for (const tag of main.prepare(
+          "SELECT type,value FROM history_tags WHERE id=? AND type IN ('session','job')"
+        ).all(documentId))
+          mirror.prepare("INSERT OR IGNORE INTO history_tags VALUES(?,?,?)").run(documentId, tag.type, tag.value);
+        const docMeta = main.prepare("SELECT session FROM history_documents WHERE id=?").get(documentId);
+        const alias = docMeta?.session ? main.prepare("SELECT * FROM history_sessions WHERE alias=?").get(docMeta.session) : null;
+        if (alias)
+          mirror.prepare(
+            "INSERT INTO history_sessions VALUES(?,?,?) ON CONFLICT(alias) DO UPDATE SET session=excluded.session,job=excluded.job WHERE history_sessions.session IS NOT excluded.session OR history_sessions.job IS NOT excluded.job"
+          ).run(alias.alias, alias.session, alias.job);
         if (mirror.prepare("SELECT id FROM conversation_records WHERE id=?").get(candidate.id)) {
           last = Number(candidate.id);
           continue;
@@ -430,9 +468,6 @@ function syncProjectMirror(main, project) {
             doc.session,
             doc.cursor
           );
-          for (const type of ["project", "session", "job"])
-            if (conversation[type])
-              mirror.prepare("INSERT OR IGNORE INTO history_tags VALUES(?,?,?)").run(doc.id, type, conversation[type]);
         }
         copied++;
         last = Number(row.id);
@@ -21193,6 +21228,9 @@ var ConversationIngestor = class {
         this.db.prepare(
           "UPDATE conversations SET project=? WHERE project='' AND id IN(SELECT conversation FROM conversation_records WHERE id=CAST(substr(?,9) AS INTEGER) AND ? LIKE 'durable:%')"
         ).run(project, doc.id, doc.id);
+        this.db.prepare(
+          "INSERT OR IGNORE INTO conversation_memberships SELECT ?,conversation FROM conversation_records WHERE id=CAST(substr(?,9) AS INTEGER) AND ? LIKE 'durable:%'"
+        ).run(project, doc.id, doc.id);
         if (binding.job)
           this.db.prepare("INSERT OR IGNORE INTO history_tags VALUES(?,?,?)").run(doc.id, "job", binding.job);
       }
@@ -21380,6 +21418,8 @@ var ConversationIngestor = class {
     ])
       if (value)
         this.db.prepare("INSERT OR IGNORE INTO history_tags VALUES(?,?,?)").run(id, type, value);
+    if (recordProject)
+      this.db.prepare("INSERT OR IGNORE INTO conversation_memberships VALUES(?,?)").run(recordProject, conversation);
   }
   events(input2, table, key) {
     const saved = parse3(this.cursor(key)), after = Number(saved.after ?? 0);

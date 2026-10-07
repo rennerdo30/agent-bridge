@@ -52,6 +52,8 @@ envelopes, decisions, archive messages and job snapshots each copy one chunk per
 batch. Derived message batches also stop at a 512 KiB body budget, allowing one
 record to cross the budget. Headers are cached by file identity rather than
 rereading the beginning of every rollout on every poll.
+Queued job snapshots stop at 100 entries or 8 MiB, allowing the final snapshot
+to cross that byte budget. Uncaptured jobs are reconsidered on the next sweep.
 
 Watch notifications prioritize changed registered CLI files; bounded polling
 is the portable fallback. Discovery revisits roots every 30 seconds and streams
@@ -100,13 +102,17 @@ aliases share the main project's identity. Non-Git projects use the physical
 directory. That project's `.agent-bridge/` holds a SQLite replica named
 `conversations-<project hash>.db` and optional `config.json`. Only conversations
 belonging to that project are copied. Replica consumers open SQLite read-only.
+Shared bridge threads associated with a project are copied in full. Session
+aliases and job tags follow late bindings without rereading unchanged bodies.
 Synchronization copies at most eight raw records and checks 32 metadata ids per
 batch; unchanged bodies are not reread. Late ownership associations are copied
 on subsequent bounded sweeps.
 
 The folder is excluded through Git's local `.git/info/exclude`, including the
 common Git directory for linked worktrees. Agent-bridge never changes the user's
-`.gitignore`. Writable replicas and exclude files refuse direct symlinks.
+`.gitignore`. Writable replicas, backup folders and exclude files refuse links
+in their paths. A Git project whose local exclusion cannot be ensured defers
+mirroring until that exclusion is available.
 
 Settings precedence is environment, project agent section, project top level,
 global agent section, global top level, defaults. Shared machine resource-slot
