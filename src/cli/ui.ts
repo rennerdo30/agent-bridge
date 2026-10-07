@@ -1,3 +1,4 @@
+import { handoffSchema } from "../core/job-handoff.js";
 import { randomBytes } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
@@ -458,6 +459,19 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
       if (!to || !text) return send(res, 400, { error: "to and body are required" });
       const r = await (await getSender()).send({ to, body: text });
       return send(res, 200, { id: r.messages[0]?.id, deliveredTo: r.deliveredTo, queuedFor: r.queuedFor });
+    }
+    if (req.method === "POST" && url.pathname === "/api/subagents/handoff") {
+      if (req.headers["x-agent-bridge"] !== "1") return send(res, 403, { error: "missing header" });
+      const body = await readJson(req);
+      const parsed = handoffSchema.safeParse({ to: body.to, jobs: body.jobs, note: body.note });
+      if (!parsed.success || typeof body.from !== "string" || body.from.includes("/")) return send(res, 400, { error: "An exact local source and valid handoff arguments are required." });
+      try {
+        const result = await controlDashboardJob(await getSender(), body.from, "", { type: "handoff", ...parsed.data });
+        return send(res, result.isError ? 409 : 200, result);
+      } catch (err) {
+        if (err instanceof JobControlError) return send(res, err.reason === "offline" ? 409 : 504, { error: err.message });
+        throw err;
+      }
     }
     const jobCommand = req.method === "POST" && Object.hasOwn(JOB_COMMANDS, url.pathname) ? JOB_COMMANDS[url.pathname] : undefined;
     if (jobCommand) {

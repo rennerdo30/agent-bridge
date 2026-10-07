@@ -14,7 +14,7 @@ import { DECISIONS_SCHEMA, DecisionStore } from "./decisions.js";
 
 const BACKUP_CHECK_INTERVAL_MS = 60 * 60 * 1_000;
 
-export const SQLITE_STORE_VERSION = 6;
+export const SQLITE_STORE_VERSION = 7;
 
 /** Recipient key used while a message waits for "any peer of this agent kind". */
 export function agentQueueKey(agent: AgentKind): string {
@@ -81,6 +81,12 @@ const MIGRATIONS = [
     INSERT INTO peer_name_owners SELECT name, identity FROM peer_names WHERE 1 ORDER BY learned_at ASC
       ON CONFLICT(name) DO UPDATE SET identity=excluded.identity;
     PRAGMA user_version = 6;
+  ` },
+  { version: 7, sql: `
+    CREATE TABLE IF NOT EXISTS job_delivery_routes (
+      id TEXT PRIMARY KEY, recipient TEXT NOT NULL, consumed_at INTEGER
+    );
+    PRAGMA user_version = 7;
   ` },
 ] as const;
 
@@ -253,9 +259,54 @@ export class MessageStore {
     return (this.stmt.unread.all(recipient, limit) as unknown as Row[]).map(toMessage);
   }
 
+  /** Copy pending job mail to its new supervisor, retaining the old row as history. Replay is idempotent. */
+  handoffMail(from: string, to: string, job: string, at: number): BridgeMessage[] {
+    if (from === to) return [];
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      const rows = this.db.prepare("SELECT * FROM messages WHERE recipient=? AND from_id=? AND read_at IS NULL").all(from, `job:${job}`) as unknown as Row[];
+      const copied: BridgeMessage[] = [];
+      for (const row of rows) {
+        const route = this.db.prepare("SELECT recipient, consumed_at FROM job_delivery_routes WHERE id=?").get(row.id);
+        if (route && (route.consumed_at !== null || route.recipient !== from)) continue;
+        const m = { ...toMessage(row), recipient: to, to, readAt: null };
+        const existing = this.db.prepare("SELECT read_at FROM messages WHERE id=? AND recipient=?").get(m.id, to);
+        if (!existing) this.insert(m);
+        else this.db.prepare("UPDATE messages SET read_at=NULL, to_target=? WHERE id=? AND recipient=?").run(to, m.id, to);
+        copied.push(m);
+        this.db.prepare("INSERT INTO job_delivery_routes(id,recipient,consumed_at) VALUES (?,?,NULL) ON CONFLICT(id) DO UPDATE SET recipient=excluded.recipient").run(m.id, to);
+        this.stmt.markRead.run(at, m.id, from);
+      }
+      this.db.exec("COMMIT");
+      return copied;
+    } catch (err) { this.db.exec("ROLLBACK"); throw err; }
+  }
+
+  insertOnce(m: BridgeMessage): boolean {
+    if (this.db.prepare("SELECT 1 FROM messages WHERE id=? AND recipient=?").get(m.id, m.recipient)) return false;
+    this.insert(m);
+    return true;
+  }
+
+  /** A recovered inline envelope must never replay after a recipient consumed it or it was forwarded. */
+  insertJobDelivery(m: BridgeMessage): boolean {
+    if (this.db.prepare("SELECT 1 FROM job_delivery_routes WHERE id=?").get(m.id)) return false;
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      const inserted = this.insertOnce(m);
+      const row = this.db.prepare("SELECT read_at FROM messages WHERE id=? AND recipient=?").get(m.id, m.recipient);
+      this.db.prepare("INSERT INTO job_delivery_routes(id,recipient,consumed_at) VALUES (?,?,?)").run(m.id, m.recipient, row?.read_at ?? null);
+      this.db.exec("COMMIT");
+      return inserted;
+    } catch (err) { this.db.exec("ROLLBACK"); throw err; }
+  }
+
   markRead(recipient: string, ids: string[], at: number = Date.now()): number {
     let changed = 0;
-    for (const id of ids) changed += Number(this.stmt.markRead.run(at, id, recipient).changes);
+    for (const id of ids) {
+      changed += Number(this.stmt.markRead.run(at, id, recipient).changes);
+      this.db.prepare("UPDATE job_delivery_routes SET consumed_at=? WHERE id=? AND recipient=? AND consumed_at IS NULL").run(at, id, recipient);
+    }
     return changed;
   }
 
