@@ -79,8 +79,8 @@ it("retains every recipient envelope, quiet copies, decisions, reports and progr
         : `context_${id}_needle`,
       from: {
         id: id === "cache" ? "cache-peer" : "ses_child",
-        name: id === "cache" ? "codex-session-cache" : "opencode-job-example",
-        agent: id === "cache" ? "codex" : "opencode",
+        name: id === "cache" ? "codex-session-cache" : id === "report" ? "claude-coordinator" : "opencode-job-example",
+        agent: id === "cache" ? "codex" : id === "report" ? "claude" : "opencode",
       },
       to: recipient,
       replyTo: null,

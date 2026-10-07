@@ -21433,10 +21433,11 @@ var ConversationIngestor = class {
         ).run(recordProject);
       }
       recordJob = binding?.job ?? (/^(claude|codex|opencode)-job-/.test(String(metadata.from_name)) ? metadata.from_name : recordSession === c.session ? recordJob : null);
-      const report = /"body"\s*:\s*"Subagent ([A-Za-z0-9][A-Za-z0-9_-]*) \([^"\r\n]*\) (?:done|failed) after \d+s\./.exec(first.slice(0, 8192));
+      const report = /"body"\s*:\s*"Subagent ([A-Za-z0-9][A-Za-z0-9_-]*) \(([a-z][a-z0-9_-]*)(?:, model [^"\r\n]*)?\) (?:done|failed) after \d+s\./.exec(first.slice(0, 8192));
       if (c.kind === "message" && report) {
         recordKind = "report";
         recordJob = report[1];
+        recordAgent = report[2];
       }
     }
     const eventKind = String(recordInfo.part ?? "").replace(/^event:/, "");
