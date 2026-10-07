@@ -141,6 +141,15 @@ describe("Antigravity hooks", () => {
 });
 
 describe("Antigravity retained transcripts and installation", () => {
+  it("rejects overlapping plugin installs before changing source files", () => {
+    const source = temp();
+    writeFileSync(join(source, "plugin.json"), JSON.stringify({ name: "agent-bridge" }));
+    writeFileSync(join(source, ".agent-bridge-owned"), "agent-bridge\n");
+    const before = readdirSync(source);
+    for (const target of [source, join(source, "nested")]) expect(() => installAntigravity(source, target)).toThrow("separate directories");
+    expect(readdirSync(source)).toEqual(before);
+    expect(readFileSync(join(source, "plugin.json"), "utf8")).toBe(JSON.stringify({ name: "agent-bridge" }));
+  });
   it("reads native logs and explicit child links without changing source data", () => {
     const home = temp(), paths = { claude: home, codex: home, opencode: home, antigravity: home };
     const file = (id: string) => join(home, "brain", id, ".system_generated", "logs", "transcript.jsonl");
