@@ -97,7 +97,7 @@ a { color: inherit; text-decoration: none; }
 .app.collapsed .mbar { display: flex; }
 .mtitle { font-weight: 600; font-size: 14px; }
 .scrim { display: none; }
-@media (max-width: 860px) {
+@media (max-width: 640px) {
   .app { grid-template-columns: minmax(0, 1fr); }
   .sidebar { position: fixed; left: 0; top: 0; bottom: 0; width: min(320px, 86vw); transform: translateX(-100%); transition: transform .18s ease; box-shadow: 0 0 40px rgba(0, 0, 0, .25); }
   .app.open .sidebar { transform: none; visibility: visible; }
@@ -1274,7 +1274,7 @@ function projectSidebar(items) {
   ).join("");
 }
 
-const narrow = () => typeof matchMedia === "function" && matchMedia("(max-width: 860px)").matches;
+const narrow = () => typeof matchMedia === "function" && matchMedia("(max-width: 640px)").matches;
 function setSidebar(show) {
   const app = $("app");
   if (narrow()) { app.classList.toggle("open", show); return; }
