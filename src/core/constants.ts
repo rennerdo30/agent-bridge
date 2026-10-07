@@ -10,6 +10,7 @@ export const PROTOCOL_VERSION = 2;
 
 /** Environment variables understood by agent-bridge. */
 export const ENV = {
+  internal: "AGENT_BRIDGE_INTERNAL",
   home: "AGENT_BRIDGE_HOME",
   pipe: "AGENT_BRIDGE_PIPE",
   name: "AGENT_BRIDGE_NAME",

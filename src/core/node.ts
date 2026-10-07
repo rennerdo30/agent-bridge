@@ -3,6 +3,7 @@ import { EventEmitter } from "node:events";
 import { unlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { Broker } from "./broker.js";
+import { isPluginCacheCwd } from "./session-visibility.js";
 import { BridgeClient } from "./client.js";
 import {
   ELECTION_MAX_ATTEMPTS,
@@ -186,6 +187,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
    * node keeps retrying in the background (see scheduleReconnect) instead of staying disconnected.
    */
   ensureConnected(): Promise<void> {
+    if (isPluginCacheCwd(this.currentCwd)) return Promise.reject(new BridgeError("bad_request", "Project directory is still a plugin cache; waiting for the host's project directory."));
     if (this.isConnected) return Promise.resolve();
     this.electing ??= this.elect()
       .catch((err) => {

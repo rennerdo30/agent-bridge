@@ -1,5 +1,6 @@
 import { HISTORY_TICK_MS, historySearchSchema } from "./history.js";
 import { randomUUID } from "node:crypto";
+import { isPluginCacheCwd } from "./session-visibility.js";
 import { createServer, type Server, type Socket } from "node:net";
 import {
   MAX_BODY_CHARS,
@@ -481,7 +482,7 @@ export class Broker {
 
   /** Local sessions and paired remote peers; local job runners stay hidden (see job-host.ts). */
   private livePeers(): PeerInfo[] {
-    return [...this.conns].flatMap((c) => (c.peer && !c.peer.jobAgent ? [c.peer] : [])).concat(this.network?.peers() ?? []);
+    return [...this.conns].flatMap((c) => (c.peer && !c.peer.jobAgent ? [c.peer] : [])).concat(this.network?.peers() ?? []).filter((p) => !isPluginCacheCwd(p.cwd));
   }
 
   /** Project local runner lineage from durable jobs; do not alter broker routing identities. */
@@ -784,6 +785,7 @@ export class Broker {
       throw new BridgeError("bad_request", "invalid peer info");
     }
     if (conn.peer) throw new BridgeError("bad_request", "already registered");
+    if (isPluginCacheCwd(String(p.cwd ?? ""))) throw new BridgeError("bad_request", "Plugin-cache processes cannot register as sessions.");
     const name = this.uniqueName(p.name);
     const peer: PeerInfo = {
       id: String(p.id),
@@ -851,6 +853,7 @@ export class Broker {
   }
 
   private onUpdatePeer(conn: Conn, args: RequestMap["updatePeer"][0]): PeerInfo {
+    if (typeof args.cwd === "string" && isPluginCacheCwd(args.cwd)) throw new BridgeError("bad_request", "Plugin-cache processes cannot register as sessions.");
     const peer = this.requirePeer(conn);
     if (peer.jobOwner) {
       if (typeof args.jobParent === "string") peer.jobParent = args.jobParent;
