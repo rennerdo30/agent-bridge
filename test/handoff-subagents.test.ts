@@ -230,10 +230,10 @@ describe("local subagent ownership handoff", () => {
     await until(() => next.find("codex-job-a")?.status === "done");
   });
 
-  it("does not let a delayed original executor overwrite a newer continuation", async () => {
+  it.each([true, false])("does not let a delayed original executor overwrite a newer continuation (handoff=%s)", async (handoff) => {
     const old = manager(source);
     const tracked = old.track("codex", null, "Initial blocking work");
-    await source.handoffSubagents({ to: target.name });
+    if (handoff) await source.handoffSubagents({ to: target.name });
     const document = JSON.parse(readFileSync(path(), "utf8"));
     const current = document.jobs.find((j: Job) => j.id === tracked.job.id);
     Object.assign(current, { startedAt: tracked.job.startedAt + 100, status: "running", executionOwner: target.name, sessionId: "newer-continuation" });

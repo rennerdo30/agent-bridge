@@ -30772,8 +30772,11 @@ var JobManager = class {
       }
       const mine = [...this.history.values()].filter((j) => this.own.has(j.id)).map((j) => {
         const old = byId.get(j.id) ?? archived.get(j.id);
-        if (isRecord(old) && Array.isArray(old.ownershipHistory) && old.ownershipHistory.length) {
+        if (isRecord(old)) {
           j.deliveryHistory = [...new Map([...Array.isArray(old.deliveryHistory) ? old.deliveryHistory : [], ...j.deliveryHistory ?? []].map((m) => [m.id, m])).values()];
+          if (typeof old.startedAt === "number" && j.startedAt < old.startedAt) return { ...old, deliveryHistory: j.deliveryHistory };
+        }
+        if (isRecord(old) && Array.isArray(old.ownershipHistory) && old.ownershipHistory.length) {
           Object.assign(j, {
             owner: old.owner,
             supervisor: old.supervisor,
@@ -30785,7 +30788,6 @@ var JobManager = class {
           });
           if (j.startedAt === old.startedAt) j.executionOwner = old.executionOwner;
           j.args = { ...j.args, ...isRecord(old.args) ? { send_to: old.args.send_to } : {} };
-          if (typeof old.startedAt === "number" && j.startedAt < old.startedAt) return { ...old, deliveryHistory: j.deliveryHistory };
           if (old.owner !== this.node.name && old.executionOwner !== this.node.name && !(j.executionOwner === this.node.name && canControlJob(old, this.node.name)) && !this.lineage || old.executionOwner && old.executionOwner !== this.node.name && old.status === "running" && j.startedAt === old.startedAt) return old;
         }
         return mergeStoreFields(isRecord(old) ? old : {}, toStored(j));
