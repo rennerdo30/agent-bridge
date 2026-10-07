@@ -12,7 +12,7 @@ import { resumeArgs, runDelegate, type JobSink, type RunContext } from "./delega
 import { CONTROL_CONVERSATION_PREFIX, JOB_PEER_PREFIX, RUNNER_HEARTBEAT_MS, writeRunnerState, type RunnerSpec } from "./job-host.js";
 import { jobReport, NOTE_CONVERSATION_SUFFIX, QUEUED_FOLLOW_UP_NOTE, sessionOfError, waitForApproval, type Job, type RunnerControl, type RunnerState } from "./jobs.js";
 import { changedJobArgs } from "./job-settings.js";
-import { processCleanupReport, startWindowsJobScope, type WindowsJobScope } from "../core/windows-job-scope.js";
+import { processCleanupReport, establishWindowsJobScope, type WindowsJobScope } from "../core/windows-job-scope.js";
 import type { Logger } from "../core/logger.js";
 
 /** Delivering a message to the session: tries for several minutes (the bridge may be changing hands, or no session hosts it). */
@@ -42,14 +42,7 @@ export async function runJobRunner(specFile: string | undefined): Promise<number
   // This is a dedicated runner, never the shared broker/MCP server. Establish ownership
   // before any delegate can create tools, including tools whose intermediate parents exit.
   let scope: WindowsJobScope | null = null;
-  try {
-    if (process.platform === "win32") scope = await startWindowsJobScope(log);
-  } catch (err) {
-    const cause = "job process ownership could not be established: " + (err as Error).message;
-    log.error(cause);
-    writeRunnerState(home, spec.job.id, { pid: process.pid, peer: spec.job.name, status: "failed", updatedAt: Date.now(), finishedAt: Date.now(), report: "Subagent " + spec.job.name + " failed before starting. " + cause, delivered: false });
-    return 1;
-  }
+  if (process.platform === "win32") scope = await establishWindowsJobScope(log);
   try {
     return await runOwnedJobRunner(spec, log, scope);
   } finally {
@@ -187,6 +180,10 @@ async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: WindowsJo
     } catch {
       return;
     }
+    if (c.type === "cancel" && !isCurrentRunnerCancel(m.createdAt, spec.job.startedAt)) {
+      log.info("ignoring cancellation from an earlier job turn", { createdAt: m.createdAt, startedAt: spec.job.startedAt });
+      return;
+    }
     // The session may be a new server now, maybe under another name: answer where it is.
     if (m.from.name !== owner) log.info("the job's session is now", { name: m.from.name, was: owner });
     owner = m.from.name;
@@ -194,11 +191,7 @@ async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: WindowsJo
     if (c.type === "message") {
       if (closing) return;
       seen.push(c.cid);
-      if (job.pendingApproval) {
-        const answer = job.pendingApproval;
-        job.pendingApproval = null;
-        answer(c.body, `session ${owner}`);
-      } else if (job.live) {
+      if (job.live) {
         job.awaitingAnswer = true;
         job.live.post(c.body);
       }
@@ -302,4 +295,9 @@ async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: WindowsJo
   clearInterval(heartbeat);
   await node.stop();
   return 0;
+}
+
+/** Legacy 0.29.10 control mail also carries its original broker timestamp. */
+export function isCurrentRunnerCancel(createdAt: number, startedAt: number): boolean {
+  return createdAt >= startedAt;
 }

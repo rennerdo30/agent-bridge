@@ -1,10 +1,10 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_CONFIG, MODEL_NAME_PATTERN } from "../src/core/config.js";
 import type { DelegateResult } from "../src/core/delegate.js";
 import { nullLogger } from "../src/core/logger.js";
 import type { BridgeNode } from "../src/core/node.js";
 import { buildHookResponse } from "../src/mcp/hooks.js";
-import { JobManager } from "../src/mcp/jobs.js";
+import { JobManager, type Run, type RunnerState } from "../src/mcp/jobs.js";
 import type { ServerContext } from "../src/mcp/server.js";
 import { makeEnv, until, type TestEnv } from "./helpers.js";
 
@@ -96,6 +96,35 @@ describe("background subagents", () => {
     );
     expect(jobs.cancel(job.id)).toBe(true);
     await until(() => aborted && jobs.runningCount() === 0);
+  });
+
+  it.each(["claude", "codex", "opencode"] as const)("resumes a cancelled %s job with a fresh signal", async (agent) => {
+    const resumed = vi.fn(async (signal: AbortSignal) => { expect(signal.aborted).toBe(false); return result("continued"); });
+    const job = jobs.start(agent, null, "long", (signal) => new Promise((_, reject) => signal.addEventListener("abort", () => reject(new Error("aborted")))), () => resumed);
+    job.sessionId = "saved-session";
+    jobs.cancel(job.name);
+    await until(() => job.status === "failed");
+    expect(jobs.followUp(job.name, "Continue").outcome).toBe("started");
+    await until(() => job.status === "done");
+    expect(resumed).toHaveBeenCalledOnce();
+  });
+
+  it("never applies an old cancellation grace timer to the resumed runner", async () => {
+    let state: RunnerState | null = null;
+    const kill = vi.fn();
+    jobs.runners = { state: () => state, alive: () => true, send: vi.fn(), kill };
+    const run: Run = Object.assign(async () => result("unused"), { hosted: () => ({ pid: 123, peer: "runner", startedAt: Date.now() }) });
+    const job = jobs.start("opencode", null, "task", run, () => run);
+    job.sessionId = "saved";
+    jobs.cancel(job.name);
+    state = { pid: 123, peer: "runner", status: "failed", updatedAt: Date.now(), delivered: true, sessionId: "saved" };
+    expect(jobs.followUp(job.name, "Continue").outcome).toBe("started");
+    state = null;
+    // Use real timers for broker teardown; only the cancellation deadline is awaited.
+    await new Promise(resolve => setTimeout(resolve, 5_100));
+    expect(kill).not.toHaveBeenCalled();
+    expect(job.status).toBe("running");
+    jobs.cancelAll();
   });
 
   it("lists blocking ask runs with their current step, without counting them as background jobs", () => {

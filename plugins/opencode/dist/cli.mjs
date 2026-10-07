@@ -34712,7 +34712,7 @@ function waitForApproval(job, question, timeoutMs, post, log, home, request2, as
       escalated = true;
       void escalate(`Nested subagent ${job.name} asks its top supervisor for approval: ${question}
 
-Answer the pending dashboard approval ${approvalId}, or message_subagent(job="${job.name}", message="allow" or "deny").`).catch(() => {
+Answer the pending dashboard approval ${approvalId}, or decide(approval_id="${approvalId}", decision="allow" or "deny").`).catch(() => {
         escalated = false;
         log.warn("could not escalate nested approval", { job: job.name });
       });
@@ -34790,7 +34790,7 @@ Answer the pending dashboard approval ${approvalId}, or message_subagent(job="${
     post(
       `Subagent ${job.name} asks for approval: ${question}
 
-Decide as its supervisor: answer with message_subagent(job="${job.name}", message="allow") or message="deny" (a reason may follow). ` + (escalate ? 'If the decision needs the owner, answer message="escalate" to forward the same pending request. ' : "") + `It waits for your answer; no answer within ${Math.round(timeoutMs / 6e4)} minutes counts as deny.`
+Decide as its supervisor: use decide(approval_id="${approvalId}", decision="allow" or "deny", reason=...). ` + (escalate ? `If the decision needs the owner, use decide(approval_id="${approvalId}", decision="escalate") to forward the same pending request. ` : "") + `It waits for your answer; no answer within ${Math.round(timeoutMs / 6e4)} minutes counts as deny.`
     );
     if (askUser) {
       void Promise.resolve().then(askUser).then(
@@ -46630,7 +46630,7 @@ var LiveHost = class _LiveHost {
       if (r.isError || /^No message arrived/.test(r.text)) continue;
       const body = messageBody(r.text);
       if (isApprovalQuestion(job, body)) {
-        await this.call("message_subagent", { job, message: "deny: the reliability suite allows nothing here" });
+        await this.call("decide", { approval_id: /approval_id="([0-9a-f-]{36})"/.exec(body)?.[1], decision: "deny", reason: "the reliability suite allows nothing here" });
         continue;
       }
       return body;
@@ -47364,13 +47364,22 @@ public static class BridgeJobScope {
     Check(job!=IntPtr.Zero);
     IntPtr owner=IntPtr.Zero;
     try {
-      var limits=new Limits(); limits.basic.flags=0x2000; // KILL_ON_JOB_CLOSE; no breakaway permission.
+      // Setup is provisional until Node accepts readiness. Killing a timed-out guardian
+      // must never kill the runner it may have just assigned.
+      var limits=new Limits();
       int size=Marshal.SizeOf(limits); IntPtr data=Marshal.AllocHGlobal(size);
       try { Marshal.StructureToPtr(limits, data, false); Check(SetInformationJobObject(job, 9, data, (uint)size)); }
       finally { Marshal.FreeHGlobal(data); }
       owner=OpenProcess(0x00101101, false, runner); Check(owner!=IntPtr.Zero);
       Check(AssignProcessToJobObject(job, owner));
       Console.WriteLine("{\"type\":\"ready\"}"); Console.Out.Flush();
+      // Only an accepted scope enables KILL_ON_JOB_CLOSE; no breakaway permission.
+      if (Console.ReadLine()!="retain") return;
+      limits.basic.flags=0x2000;
+      data=Marshal.AllocHGlobal(size);
+      try { Marshal.StructureToPtr(limits, data, false); Check(SetInformationJobObject(job, 9, data, (uint)size)); }
+      finally { Marshal.FreeHGlobal(data); }
+      Console.WriteLine("{\"type\":\"retained\"}"); Console.Out.Flush();
       string command;
       while ((command=Console.ReadLine())!=null) {
         if (command=="cleanup") Cleanup(job, runner);
@@ -47391,11 +47400,14 @@ function startWindowsJobScope(log, runnerPid = process.pid) {
   const bin = join57(process.env.SystemRoot ?? "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
   const guardian = spawn11(bin, ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")], { windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
   return new Promise((resolve14, reject) => {
-    let stderr = "", buffer = "", ready = false;
+    let stderr = "", buffer = "", ready = false, failed = false, retaining = false;
     let pending = null;
     const fail = (err) => {
       clearTimeout(startup);
-      if (!ready) reject(err);
+      if (!ready && !failed) {
+        failed = true;
+        reject(err);
+      }
       if (pending) {
         clearTimeout(pending.timer);
         pending.reject(err);
@@ -47404,8 +47416,14 @@ function startWindowsJobScope(log, runnerPid = process.pid) {
     };
     const startup = setTimeout(() => {
       fail(new Error("Windows job ownership setup timed out"));
-      guardian.kill();
-    }, 25e3);
+      if (!retaining) guardian.kill();
+      else {
+        guardian.stdin.end();
+        guardian.stdout?.unref?.();
+        guardian.stderr?.unref?.();
+        guardian.unref();
+      }
+    }, 8e3);
     guardian.on("error", fail);
     guardian.on("exit", (code) => fail(new Error("Windows job guardian exited (" + code + "): " + stderr.slice(-2e3))));
     guardian.stdin.on("error", fail);
@@ -47424,7 +47442,10 @@ function startWindowsJobScope(log, runnerPid = process.pid) {
         } catch {
           continue;
         }
-        if (message.type === "ready" && !ready) {
+        if (message.type === "ready" && !ready && !failed && !retaining) {
+          retaining = true;
+          guardian.stdin.write("retain\n");
+        } else if (message.type === "retained" && !ready && !failed) {
           ready = true;
           clearTimeout(startup);
           log.info("job process ownership established", { runnerPid, guardianPid: guardian.pid, method: "private Windows job object" });
@@ -47463,6 +47484,17 @@ function processCleanupReport(result) {
   const ids = (pids) => pids.length ? " (PIDs " + pids.join(", ") + ")" : "";
   return "Background process cleanup: stopped " + result.stopped.length + " surviving job-owned processes" + ids(result.stopped) + "; " + result.remaining.length + " still running" + ids(result.remaining) + ".";
 }
+async function establishWindowsJobScope(log, start = () => startWindowsJobScope(log)) {
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      return await start();
+    } catch (err) {
+      log.warn("Windows job ownership setup failed", { attempt, attempts: 2, error: err.message });
+    }
+  }
+  log.warn("job running in degraded process ownership mode", { cleanup: "private Windows job object unavailable; delegate process cleanup remains active" });
+  return null;
+}
 
 // src/mcp/job-runner.ts
 var SEND_ATTEMPTS = 30;
@@ -47480,14 +47512,7 @@ async function runJobRunner(specFile) {
   const { home } = spec;
   const log = createLogger({ home, component: "job-runner" }).child(spec.job.name);
   let scope = null;
-  try {
-    if (process.platform === "win32") scope = await startWindowsJobScope(log);
-  } catch (err) {
-    const cause = "job process ownership could not be established: " + err.message;
-    log.error(cause);
-    writeRunnerState(home, spec.job.id, { pid: process.pid, peer: spec.job.name, status: "failed", updatedAt: Date.now(), finishedAt: Date.now(), report: "Subagent " + spec.job.name + " failed before starting. " + cause, delivered: false });
-    return 1;
-  }
+  if (process.platform === "win32") scope = await establishWindowsJobScope(log);
   try {
     return await runOwnedJobRunner(spec, log, scope);
   } finally {
@@ -47615,6 +47640,10 @@ async function runOwnedJobRunner(spec, log, scope) {
     } catch {
       return;
     }
+    if (c.type === "cancel" && !isCurrentRunnerCancel(m.createdAt, spec.job.startedAt)) {
+      log.info("ignoring cancellation from an earlier job turn", { createdAt: m.createdAt, startedAt: spec.job.startedAt });
+      return;
+    }
     if (m.from.name !== owner) log.info("the job's session is now", { name: m.from.name, was: owner });
     owner = m.from.name;
     void node2.updateJob({ jobParent: owner }).catch(() => {
@@ -47622,11 +47651,7 @@ async function runOwnedJobRunner(spec, log, scope) {
     if (c.type === "message") {
       if (closing) return;
       seen.push(c.cid);
-      if (job.pendingApproval) {
-        const answer = job.pendingApproval;
-        job.pendingApproval = null;
-        answer(c.body, `session ${owner}`);
-      } else if (job.live) {
+      if (job.live) {
         job.awaitingAnswer = true;
         job.live.post(c.body);
       } else job.queue.push(c.body);
@@ -47724,6 +47749,9 @@ ${QUEUED_FOLLOW_UP_NOTE}`);
   clearInterval(heartbeat);
   await node2.stop();
   return 0;
+}
+function isCurrentRunnerCancel(createdAt, startedAt) {
+  return createdAt >= startedAt;
 }
 
 // src/cli/reindex.ts
