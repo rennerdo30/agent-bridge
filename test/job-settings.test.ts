@@ -92,6 +92,7 @@ describe("opencode resumed settings", () => {
     writeFileSync(script, `#!/usr/bin/env node
 import { appendFileSync } from "node:fs";
 const args = process.argv.slice(2);
+if (args[0] === "--version") { console.log("1.18.34"); process.exit(0); }
 appendFileSync(new URL("calls.jsonl", import.meta.url), JSON.stringify({ args, config: process.env.OPENCODE_CONFIG_CONTENT }) + "\\n");
 process.stdin.resume();
 process.stdin.on("end", () => console.log(JSON.stringify({ type: "text", sessionID: "same-session", part: { messageID: "m", text: "done" } })));

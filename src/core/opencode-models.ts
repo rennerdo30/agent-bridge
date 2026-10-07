@@ -1,4 +1,4 @@
-import { childEnv, runProcess } from "./delegate.js";
+import { childEnv, opencodeV2, resolveBinary, runProcess } from "./delegate.js";
 import type { Logger } from "./logger.js";
 
 /**
@@ -11,16 +11,19 @@ const CACHE_TTL_MS = 10 * 60 * 1000;
 const MODEL_LINE = /^[A-Za-z0-9._-]+\/\S+$/;
 const MAX_SUGGESTIONS = 8;
 
-let cache: { at: number; models: string[] } | null = null;
+const cache = new Map<string, { at: number; models: string[] }>();
 
 export async function listOpencodeModels(bin: string, cwd: string, log: Logger): Promise<string[]> {
-  if (cache && Date.now() - cache.at < CACHE_TTL_MS) return cache.models;
-  const res = await runProcess({ bin, args: ["models"], stdin: "", cwd, timeoutMs: LIST_TIMEOUT_MS, env: childEnv(), log }); // childEnv: its agent-bridge plugin must not join the bridge as a session
+  const key = JSON.stringify([resolveBinary(bin) ?? bin, cwd]);
+  const cached = cache.get(key);
+  if (cached && Date.now() - cached.at < CACHE_TTL_MS) return cached.models;
+  const v2 = await opencodeV2(bin, cwd, log);
+  const res = await runProcess({ bin, args: ["models", ...(v2 ? ["--standalone"] : [])], stdin: "", cwd, timeoutMs: LIST_TIMEOUT_MS, env: childEnv(), log }); // childEnv: its agent-bridge plugin must not join the bridge as a session
   const models = res.stdout
     .split(/\r?\n/)
     .map((l) => l.trim())
     .filter((l) => MODEL_LINE.test(l));
-  if (models.length) cache = { at: Date.now(), models };
+  if (models.length) cache.set(key, { at: Date.now(), models });
   return models;
 }
 
