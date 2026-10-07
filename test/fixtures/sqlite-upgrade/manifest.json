@@ -1,0 +1,724 @@
+{
+  "provenance": "Created by executing actual tagged MessageStore and, where present, openArchive source; seeded with synthetic local records.",
+  "runtime": "v26.4.0",
+  "captures": [
+    {
+      "tag": "v0.27.0",
+      "commit": "1dd75d76a9c7ca58e83414b68c2c68bc3fc79717",
+      "storeSourceSha256": "7e8497bce67d955d8084398e4035ac3a84341cac54701565561e4921b64fadbb",
+      "archiveSourceSha256": null,
+      "files": [
+        {
+          "name": "bridge.db",
+          "version": 2,
+          "sha256": "fcd9c589093260d4823cd87bdf2992876b496bf10ed907b5126b8942fd049462",
+          "tables": [
+            {
+              "name": "archived_messages",
+              "count": 3,
+              "sha256": "8268d19c3322345b18921d870bf70f8738b55b003339169817cfbf27aed927b3"
+            },
+            {
+              "name": "messages",
+              "count": 3,
+              "sha256": "623b612833620d21a608ae630e9a202bffe5ce98a4296121a9ffae5d95b846b2"
+            },
+            {
+              "name": "witness_user_extensions",
+              "count": 1,
+              "sha256": "f901237ed4d73cd0b89a1dcf654e8ce821c70417717eb40551c584ea5dbb07e7"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "tag": "v0.27.1",
+      "commit": "c1f7f476a4e1562d93fb1ea80b568c49de2653b0",
+      "storeSourceSha256": "7e8497bce67d955d8084398e4035ac3a84341cac54701565561e4921b64fadbb",
+      "archiveSourceSha256": null,
+      "files": [
+        {
+          "name": "bridge.db",
+          "version": 2,
+          "sha256": "538af4f773cb3d9f04fcc2a9748392df25d9a0777347145d1f1480d4f22cd386",
+          "tables": [
+            {
+              "name": "archived_messages",
+              "count": 3,
+              "sha256": "c5b4ae490663109e04bbb4b627fd4def1b07eaec6bdeb8bf241cd58391c9e02b"
+            },
+            {
+              "name": "messages",
+              "count": 3,
+              "sha256": "c332215eaf3662da6d052b64cd236bda2cf2cc8ccc3753ea4c76c28227f102f7"
+            },
+            {
+              "name": "witness_user_extensions",
+              "count": 1,
+              "sha256": "19336c4c04743f2e22115559f377a0a8a7e3a639cef661e3509893b5eb108ecc"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "tag": "v0.28.0",
+      "commit": "e00bad53f8dffe1e4470c5ca8427f0dd1979cc81",
+      "storeSourceSha256": "969cf2ecc464949899c98a660b114d4bb464dfaf8291a07d42c2a4fc297645de",
+      "archiveSourceSha256": null,
+      "files": [
+        {
+          "name": "bridge.db",
+          "version": 3,
+          "sha256": "549bf2c91da119f339916973b6002481be31125e47838164e86e5802b3e6d3ab",
+          "tables": [
+            {
+              "name": "archived_messages",
+              "count": 3,
+              "sha256": "af713291a1e4041c88b93bf0ed8ac1c82d8ab5f67c2e2e4521e4d74250601ce7"
+            },
+            {
+              "name": "decision_deliveries",
+              "count": 1,
+              "sha256": "b8bb2143076aefb12857cfb6ebdca09ab6e670c079d0ad5e8c861e4dbedf1b74"
+            },
+            {
+              "name": "decisions",
+              "count": 2,
+              "sha256": "85cc978bad3e7804e8185522d86637c820b7cbd55f42657cae6e411ea8e541db"
+            },
+            {
+              "name": "messages",
+              "count": 3,
+              "sha256": "a74bb6d9955ebc9581e85b3dcc56dcc323db0aefca25fbbb25818b06b65ab342"
+            },
+            {
+              "name": "sqlite_sequence",
+              "count": 1,
+              "sha256": "fd5537d3d22063e55c91f94033fca11a88aa9808d0d9534ab0f3ed78b04341ca"
+            },
+            {
+              "name": "witness_user_extensions",
+              "count": 1,
+              "sha256": "75c0a499b7a21cb76f3c3db548ea0da863e3af1bab1a4c9cd69d0f0fc16b2920"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "tag": "v0.28.1",
+      "commit": "b57d545b7d3c74e6f563c5c797936f10ed4d1de0",
+      "storeSourceSha256": "969cf2ecc464949899c98a660b114d4bb464dfaf8291a07d42c2a4fc297645de",
+      "archiveSourceSha256": null,
+      "files": [
+        {
+          "name": "bridge.db",
+          "version": 3,
+          "sha256": "269004416ab03a2f061476b9cdc97a0751aa8aa2b5df55479cddbb40f2dafe49",
+          "tables": [
+            {
+              "name": "archived_messages",
+              "count": 3,
+              "sha256": "313c4ccb116f357c813d379941ec90d3c1cefb988bb26b22aa235d17ed878d19"
+            },
+            {
+              "name": "decision_deliveries",
+              "count": 1,
+              "sha256": "d63e27794f6a8f2a5b2f57ec8b550f99f58207aadcc539d5a9ff4ff737b57e52"
+            },
+            {
+              "name": "decisions",
+              "count": 2,
+              "sha256": "f5b88a99db1c18bbdd296297fff5e3b67c08c3054062602d539090c951679c05"
+            },
+            {
+              "name": "messages",
+              "count": 3,
+              "sha256": "e07fc629aee54881f4a6ee2d781d73c996d824fb08bd7674815627266fc80d9f"
+            },
+            {
+              "name": "sqlite_sequence",
+              "count": 1,
+              "sha256": "fd5537d3d22063e55c91f94033fca11a88aa9808d0d9534ab0f3ed78b04341ca"
+            },
+            {
+              "name": "witness_user_extensions",
+              "count": 1,
+              "sha256": "505d14379ddc0d80640cb1ec1fe14aafbbe1a8bc52497f513f60565a7ecb002b"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "tag": "v0.28.2",
+      "commit": "fadb8454f51c16c56509b0d2145a968f8bdc44d6",
+      "storeSourceSha256": "969cf2ecc464949899c98a660b114d4bb464dfaf8291a07d42c2a4fc297645de",
+      "archiveSourceSha256": null,
+      "files": [
+        {
+          "name": "bridge.db",
+          "version": 3,
+          "sha256": "36dc26fec05dcf6afc4ea6e1899db3421c984b7803312b35a7914a1bb32b5b95",
+          "tables": [
+            {
+              "name": "archived_messages",
+              "count": 3,
+              "sha256": "7e06c1df13c8185f349c55e9de0767e9ab1dc8b1ae5df8be69cc0bf4b75f22b4"
+            },
+            {
+              "name": "decision_deliveries",
+              "count": 1,
+              "sha256": "dc94b6856471f459864003865430e2564cf09ec66246ed03ce4de3302902f3b4"
+            },
+            {
+              "name": "decisions",
+              "count": 2,
+              "sha256": "585c6775a79360d70fdae4610f6538f755a557c0c7cff8ba4c4ed9473f5b2e82"
+            },
+            {
+              "name": "messages",
+              "count": 3,
+              "sha256": "eef115224c99371c2a39cc43d7d03d503e4cabde57b2213854ed3580bff44ae1"
+            },
+            {
+              "name": "sqlite_sequence",
+              "count": 1,
+              "sha256": "fd5537d3d22063e55c91f94033fca11a88aa9808d0d9534ab0f3ed78b04341ca"
+            },
+            {
+              "name": "witness_user_extensions",
+              "count": 1,
+              "sha256": "6c378fa8611c1eda989c28372eb847a1c7fda94a06c8a960cae957b9d2eb10a5"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "tag": "v0.29.0",
+      "commit": "13dda58986fed444f76371fa2b8813a8554a1d28",
+      "storeSourceSha256": "e29f6364109456b583ca0bb6c6c9bb0faac9448a8368554faa989c7a5098ec4c",
+      "archiveSourceSha256": "55bfdcbc5d1da568962018cf2248a102d09efa2a58bda9fb5db63e00fd67e6cf",
+      "files": [
+        {
+          "name": "bridge.db",
+          "version": 4,
+          "sha256": "b50760916ae837906305c5fdcb182cee2b9b4105fb1f9afcdd78c098b7fbc8ff",
+          "tables": [
+            {
+              "name": "archived_messages",
+              "count": 3,
+              "sha256": "2008d5b5846333128cf8117db7361f8f926352926aa6dcb354d62385730dd0d2"
+            },
+            {
+              "name": "decision_deliveries",
+              "count": 1,
+              "sha256": "ea18cd6cc9e74826eb6c662a1afbdb6a56da57442b0e33773b0378291bc96947"
+            },
+            {
+              "name": "decisions",
+              "count": 2,
+              "sha256": "0f1f15ac37d928acb8627900fe8ff9a8f30978c29bd9da3f4f27b45619fc05b1"
+            },
+            {
+              "name": "history_cursors",
+              "count": 1,
+              "sha256": "c30a50b47175690ac4744d298cb5751a3e8b9ccd4f434f7b5570ebe6e1ff2d0b"
+            },
+            {
+              "name": "history_documents",
+              "count": 1,
+              "sha256": "58a9885f0071c2aa7a245c8712d2a76ce981f995ed0cebae6fae35c4a769bea0"
+            },
+            {
+              "name": "history_files",
+              "count": 1,
+              "sha256": "7fa3e54d623c70782202f981cedf5db885099cc67292159dd9f46dc0b0215a49"
+            },
+            {
+              "name": "history_fts",
+              "count": 1,
+              "sha256": "f43ae22e4ad1bf61c10e16f425be00aa0178622060a66a6d95e61c5ec29a8fde"
+            },
+            {
+              "name": "history_fts_config",
+              "count": 1,
+              "sha256": "6c188207c1643c51060a5ec50fd4a8e3dabea41f56e6ffe9131b864c8f54ad07"
+            },
+            {
+              "name": "history_fts_data",
+              "count": 3,
+              "sha256": "2be0daa53592fd03e35c5880dfee8d829762f73da22d8446b5c75d28cc65b93b"
+            },
+            {
+              "name": "history_fts_docsize",
+              "count": 1,
+              "sha256": "15b7e22990a89885bf5eed94258d79166f4258c134c23b0f2c3e56a8780294ef"
+            },
+            {
+              "name": "history_fts_idx",
+              "count": 1,
+              "sha256": "a1e92068f24ee21f6562dce8a0d233831e8e395a416fac0fb6ea99c4e07e186c"
+            },
+            {
+              "name": "history_pending",
+              "count": 3,
+              "sha256": "752b09619fe0bbdc7f1a2b00f5e08ade190f346cbffc36085b7109a230fd409f"
+            },
+            {
+              "name": "history_sessions",
+              "count": 1,
+              "sha256": "b544e6bba9803a8549d3d1b7a3785b9d3e8c5bc82b96db114d31770359495fcc"
+            },
+            {
+              "name": "history_tags",
+              "count": 1,
+              "sha256": "d4261a5c36d78e2802a78615a2ea364554fe555fa4a68e738a71c353cb6cef4d"
+            },
+            {
+              "name": "messages",
+              "count": 3,
+              "sha256": "e43450d3ecff93cc04e4b00be6dd29d98c22e9de6f04a81ef41445ce52aeaae6"
+            },
+            {
+              "name": "sqlite_sequence",
+              "count": 1,
+              "sha256": "fd5537d3d22063e55c91f94033fca11a88aa9808d0d9534ab0f3ed78b04341ca"
+            },
+            {
+              "name": "witness_user_extensions",
+              "count": 1,
+              "sha256": "cde0ccb5c5ca3b207b6ff1234b2a8da253bc5adf792cabf3f2ec17a76cc81846"
+            }
+          ]
+        },
+        {
+          "name": "archive.db",
+          "version": 1,
+          "sha256": "4141f500a1be5880e79129bba1001880715401d3ea4397785f316c1c61826575",
+          "tables": [
+            {
+              "name": "messages",
+              "count": 3,
+              "sha256": "4bbabaacebfedf42a922e8bb7c8ec0cf80b027f6c8d51093a15e686f15eb1116"
+            },
+            {
+              "name": "witness_user_extensions",
+              "count": 1,
+              "sha256": "cde0ccb5c5ca3b207b6ff1234b2a8da253bc5adf792cabf3f2ec17a76cc81846"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "tag": "v0.29.10",
+      "commit": "0649ef030da1692081c0f298c9dd127631a175e5",
+      "storeSourceSha256": "ad69e441b44bdf2b43cc7be5eee6347a916ab7d668715a3c757a94aa347983b9",
+      "archiveSourceSha256": "55bfdcbc5d1da568962018cf2248a102d09efa2a58bda9fb5db63e00fd67e6cf",
+      "files": [
+        {
+          "name": "bridge.db",
+          "version": 6,
+          "sha256": "1b726949861c42eddf5398ea161ef79f595db9b157e8818f4e8a184f433ceb26",
+          "tables": [
+            {
+              "name": "archived_messages",
+              "count": 3,
+              "sha256": "9a5036cd9ca848f40477ded6abab0ab694e5740a0f3194a4bf4d369fbc639389"
+            },
+            {
+              "name": "decision_deliveries",
+              "count": 1,
+              "sha256": "0a153055451f51b9f000279342a1f89c44e9072de89d7a3668ba6d0427d7f573"
+            },
+            {
+              "name": "decisions",
+              "count": 2,
+              "sha256": "eff88cee3cfc2d9baa2d23677d96732bdd84d3eccc54ccc9c0edda4cc312424b"
+            },
+            {
+              "name": "history_cursors",
+              "count": 1,
+              "sha256": "c30a50b47175690ac4744d298cb5751a3e8b9ccd4f434f7b5570ebe6e1ff2d0b"
+            },
+            {
+              "name": "history_documents",
+              "count": 1,
+              "sha256": "6eab46e574ea74c7c77674eda77e94e2730ee5da034a0f12b2558b6f1cf9a83b"
+            },
+            {
+              "name": "history_files",
+              "count": 1,
+              "sha256": "7fa3e54d623c70782202f981cedf5db885099cc67292159dd9f46dc0b0215a49"
+            },
+            {
+              "name": "history_fts",
+              "count": 1,
+              "sha256": "20f150f700e4cd54af30b888d6f09933bae03087f2b942344e5b16b7189cfffd"
+            },
+            {
+              "name": "history_fts_config",
+              "count": 1,
+              "sha256": "6c188207c1643c51060a5ec50fd4a8e3dabea41f56e6ffe9131b864c8f54ad07"
+            },
+            {
+              "name": "history_fts_data",
+              "count": 3,
+              "sha256": "5f38ed1a1aacee386e8f34c6c53360c50eabb74422446a193a9432dcb87e94c3"
+            },
+            {
+              "name": "history_fts_docsize",
+              "count": 1,
+              "sha256": "15b7e22990a89885bf5eed94258d79166f4258c134c23b0f2c3e56a8780294ef"
+            },
+            {
+              "name": "history_fts_idx",
+              "count": 1,
+              "sha256": "a1e92068f24ee21f6562dce8a0d233831e8e395a416fac0fb6ea99c4e07e186c"
+            },
+            {
+              "name": "history_pending",
+              "count": 3,
+              "sha256": "da4be736d6e5899dd74837b0e5ce12ebbe6fbca2414611792c1cbc6aa72d27d1"
+            },
+            {
+              "name": "history_sessions",
+              "count": 1,
+              "sha256": "b544e6bba9803a8549d3d1b7a3785b9d3e8c5bc82b96db114d31770359495fcc"
+            },
+            {
+              "name": "history_tags",
+              "count": 1,
+              "sha256": "16164a7ae0229812344d5039912efc319fb1c2b987a8ab6d0e539b4be8854b04"
+            },
+            {
+              "name": "messages",
+              "count": 3,
+              "sha256": "a98035eff021d346c0e8829c2a2864086bc49b26dc05d35714e2747799ea7a76"
+            },
+            {
+              "name": "peer_name_owners",
+              "count": 1,
+              "sha256": "82e69ae221b33c57f36988a00261e9539f0d1b55a6c53e3446ce8168aa58f128"
+            },
+            {
+              "name": "peer_names",
+              "count": 1,
+              "sha256": "022ee8e3d2fe858d8b3b8da7a9164b9e91da773406738c234502f008e190be3e"
+            },
+            {
+              "name": "session_bindings",
+              "count": 1,
+              "sha256": "8cd847636bf4eac62e3d46d94d386cb58dd0581a3aaf32611371f640e7aa33ad"
+            },
+            {
+              "name": "sqlite_sequence",
+              "count": 1,
+              "sha256": "fd5537d3d22063e55c91f94033fca11a88aa9808d0d9534ab0f3ed78b04341ca"
+            },
+            {
+              "name": "witness_user_extensions",
+              "count": 1,
+              "sha256": "0f21252d25a00ee1f7eb663dec742e879ef083477ee8df8c80809ecc29f4a78a"
+            }
+          ]
+        },
+        {
+          "name": "archive.db",
+          "version": 1,
+          "sha256": "71cbbc5c11eb3061fd839c7b8d8d8385263feb2a7fc2410fcdb025867649bb15",
+          "tables": [
+            {
+              "name": "messages",
+              "count": 3,
+              "sha256": "906ef7d33f451e21fd16461d61800923c14c2e7abc2f75d98eecd0ab379cb54a"
+            },
+            {
+              "name": "witness_user_extensions",
+              "count": 1,
+              "sha256": "0f21252d25a00ee1f7eb663dec742e879ef083477ee8df8c80809ecc29f4a78a"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "tag": "v0.29.13",
+      "commit": "4285f052949cef041ab0766632cfb352a2f65320",
+      "storeSourceSha256": "dff5edb521b86f3ef9e13df3a5b0a416494b4911038197e57a79ddf2010a8588",
+      "archiveSourceSha256": "55bfdcbc5d1da568962018cf2248a102d09efa2a58bda9fb5db63e00fd67e6cf",
+      "files": [
+        {
+          "name": "bridge.db",
+          "version": 7,
+          "sha256": "8813dab250061ec9e0cb199a84dfbf0a5bee37ec2abbaf04439a9c3d324a603b",
+          "tables": [
+            {
+              "name": "archived_messages",
+              "count": 3,
+              "sha256": "4e0482875941bd3fa023d7478c3f7ef6bef0ead76238493f5170f41372149387"
+            },
+            {
+              "name": "decision_deliveries",
+              "count": 1,
+              "sha256": "3e2f4003695f5e7f1d858627e5ec63e71032bc8cc2712e0923dffbc3016a4f00"
+            },
+            {
+              "name": "decisions",
+              "count": 2,
+              "sha256": "dd952a23a6fa96414afe418814f24579a1a9504e1a2713cdfbb3111bb46096d4"
+            },
+            {
+              "name": "history_cursors",
+              "count": 1,
+              "sha256": "c30a50b47175690ac4744d298cb5751a3e8b9ccd4f434f7b5570ebe6e1ff2d0b"
+            },
+            {
+              "name": "history_documents",
+              "count": 1,
+              "sha256": "ec728e62bda42f94deda433734312eb86ba4c348bb81ee402b8f43fc10671525"
+            },
+            {
+              "name": "history_files",
+              "count": 1,
+              "sha256": "7fa3e54d623c70782202f981cedf5db885099cc67292159dd9f46dc0b0215a49"
+            },
+            {
+              "name": "history_fts",
+              "count": 1,
+              "sha256": "a28cec12dfa161f65eaa4aa62efc519581b60157edc6bafa9b52b55b9b72af34"
+            },
+            {
+              "name": "history_fts_config",
+              "count": 1,
+              "sha256": "6c188207c1643c51060a5ec50fd4a8e3dabea41f56e6ffe9131b864c8f54ad07"
+            },
+            {
+              "name": "history_fts_data",
+              "count": 3,
+              "sha256": "d928741990e968337780fe64112ca2dab71f1db981dd86646f4ed8daeb0a49a4"
+            },
+            {
+              "name": "history_fts_docsize",
+              "count": 1,
+              "sha256": "15b7e22990a89885bf5eed94258d79166f4258c134c23b0f2c3e56a8780294ef"
+            },
+            {
+              "name": "history_fts_idx",
+              "count": 1,
+              "sha256": "a1e92068f24ee21f6562dce8a0d233831e8e395a416fac0fb6ea99c4e07e186c"
+            },
+            {
+              "name": "history_pending",
+              "count": 3,
+              "sha256": "956c460c2abe6f54d3016f397d3e88a3572d8259790b1e4b36d6e6f5fdad2d17"
+            },
+            {
+              "name": "history_sessions",
+              "count": 1,
+              "sha256": "b544e6bba9803a8549d3d1b7a3785b9d3e8c5bc82b96db114d31770359495fcc"
+            },
+            {
+              "name": "history_tags",
+              "count": 1,
+              "sha256": "1853e0faef818d71d0cc845273f6154c7b5e4af9b8a132230517ce5aa6dac7e7"
+            },
+            {
+              "name": "job_delivery_routes",
+              "count": 1,
+              "sha256": "d7b9498e40dfb00b16be7ad2cab7c242775f003e4b8f12c9b533c003e044db27"
+            },
+            {
+              "name": "messages",
+              "count": 3,
+              "sha256": "2826acbac268aea8c85c030f6038b2c2c0c2fc2257dce17ed9d1c5d1db6a8e92"
+            },
+            {
+              "name": "peer_name_owners",
+              "count": 1,
+              "sha256": "82e69ae221b33c57f36988a00261e9539f0d1b55a6c53e3446ce8168aa58f128"
+            },
+            {
+              "name": "peer_names",
+              "count": 1,
+              "sha256": "022ee8e3d2fe858d8b3b8da7a9164b9e91da773406738c234502f008e190be3e"
+            },
+            {
+              "name": "session_bindings",
+              "count": 1,
+              "sha256": "8cd847636bf4eac62e3d46d94d386cb58dd0581a3aaf32611371f640e7aa33ad"
+            },
+            {
+              "name": "sqlite_sequence",
+              "count": 1,
+              "sha256": "fd5537d3d22063e55c91f94033fca11a88aa9808d0d9534ab0f3ed78b04341ca"
+            },
+            {
+              "name": "witness_user_extensions",
+              "count": 1,
+              "sha256": "1f289b23890203ded4d097e2eca683c9a3c72eb14b4a2aaef96289ae76d94a16"
+            }
+          ]
+        },
+        {
+          "name": "archive.db",
+          "version": 1,
+          "sha256": "3b998d86d8acedad32a01b103f0d3e6192aac8aa31edd17c68f5998cca3d49d2",
+          "tables": [
+            {
+              "name": "messages",
+              "count": 3,
+              "sha256": "fbb973d586c5e9752f8b9f6f61e30c286e6a9218bfe0fed566f07991abff96ee"
+            },
+            {
+              "name": "witness_user_extensions",
+              "count": 1,
+              "sha256": "1f289b23890203ded4d097e2eca683c9a3c72eb14b4a2aaef96289ae76d94a16"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "tag": "v0.29.14",
+      "commit": "a0429371f4855f45c66c553120ad783e4ff9f530",
+      "storeSourceSha256": "96d2d6d2c0780b9cda68f0c7c1d454964c13677b058e207c3b6a6ddc8410a342",
+      "archiveSourceSha256": "55bfdcbc5d1da568962018cf2248a102d09efa2a58bda9fb5db63e00fd67e6cf",
+      "files": [
+        {
+          "name": "bridge.db",
+          "version": 7,
+          "sha256": "e94c6864eca5396dca9e00ca4ce2ebe159d84ae17017f7369f57772be81b7bf6",
+          "tables": [
+            {
+              "name": "archived_messages",
+              "count": 3,
+              "sha256": "522d03821eeefeff5fd21283449d924b2af8b4b94df21513c28821c5fad9b14e"
+            },
+            {
+              "name": "decision_deliveries",
+              "count": 1,
+              "sha256": "a1a36072ffdb9f15f257911fc7a97e4aba532a0d1da48b1b7ea96a3debae59ca"
+            },
+            {
+              "name": "decisions",
+              "count": 2,
+              "sha256": "6c7c7e479933dad69a978fe2d7011796b1e34409ed5d8cf99ae73f1700dfa1d9"
+            },
+            {
+              "name": "history_cursors",
+              "count": 1,
+              "sha256": "c30a50b47175690ac4744d298cb5751a3e8b9ccd4f434f7b5570ebe6e1ff2d0b"
+            },
+            {
+              "name": "history_documents",
+              "count": 1,
+              "sha256": "53f564f67fc101d854f28d9120c8f451cefa883424aa9148dcceb12b339e81d7"
+            },
+            {
+              "name": "history_files",
+              "count": 1,
+              "sha256": "7fa3e54d623c70782202f981cedf5db885099cc67292159dd9f46dc0b0215a49"
+            },
+            {
+              "name": "history_fts",
+              "count": 1,
+              "sha256": "0a7163cdf26ee4b39acf0de86cd4f81ffab9881f6b14c059b6c78b9cb23cade3"
+            },
+            {
+              "name": "history_fts_config",
+              "count": 1,
+              "sha256": "6c188207c1643c51060a5ec50fd4a8e3dabea41f56e6ffe9131b864c8f54ad07"
+            },
+            {
+              "name": "history_fts_data",
+              "count": 3,
+              "sha256": "c11eb0d9c7c797e4f7b93c025d8e451c089156207e230b67f4fdfebcb8d4534a"
+            },
+            {
+              "name": "history_fts_docsize",
+              "count": 1,
+              "sha256": "15b7e22990a89885bf5eed94258d79166f4258c134c23b0f2c3e56a8780294ef"
+            },
+            {
+              "name": "history_fts_idx",
+              "count": 1,
+              "sha256": "a1e92068f24ee21f6562dce8a0d233831e8e395a416fac0fb6ea99c4e07e186c"
+            },
+            {
+              "name": "history_pending",
+              "count": 3,
+              "sha256": "dd0c508e1436c0f8b0cfa21f1ffb89aac80598e84a2c4d8b7fb72fe0c2db37df"
+            },
+            {
+              "name": "history_sessions",
+              "count": 1,
+              "sha256": "b544e6bba9803a8549d3d1b7a3785b9d3e8c5bc82b96db114d31770359495fcc"
+            },
+            {
+              "name": "history_tags",
+              "count": 1,
+              "sha256": "a6d058522275988e841864b3cf54242e61297235eb3183d79ed05ddc7f620fb9"
+            },
+            {
+              "name": "job_delivery_routes",
+              "count": 1,
+              "sha256": "52e587a3b7f8662da29f35da5f2279e4f8b5679d870cae24870823862402a6c6"
+            },
+            {
+              "name": "messages",
+              "count": 3,
+              "sha256": "8f0c2366a934cd4cb75b0e86ee50c861f2086458ea800731d0499e2944c883d7"
+            },
+            {
+              "name": "peer_name_owners",
+              "count": 1,
+              "sha256": "82e69ae221b33c57f36988a00261e9539f0d1b55a6c53e3446ce8168aa58f128"
+            },
+            {
+              "name": "peer_names",
+              "count": 1,
+              "sha256": "022ee8e3d2fe858d8b3b8da7a9164b9e91da773406738c234502f008e190be3e"
+            },
+            {
+              "name": "session_bindings",
+              "count": 1,
+              "sha256": "8cd847636bf4eac62e3d46d94d386cb58dd0581a3aaf32611371f640e7aa33ad"
+            },
+            {
+              "name": "sqlite_sequence",
+              "count": 1,
+              "sha256": "fd5537d3d22063e55c91f94033fca11a88aa9808d0d9534ab0f3ed78b04341ca"
+            },
+            {
+              "name": "witness_user_extensions",
+              "count": 1,
+              "sha256": "e9f52f0addc0fcdc69b65b9d36868063230b94e64e574cf6b8322c859e4d4c94"
+            }
+          ]
+        },
+        {
+          "name": "archive.db",
+          "version": 1,
+          "sha256": "e80914a1c530e497671ac4a80796cf938947dcfa76407d134a6295a537a0babe",
+          "tables": [
+            {
+              "name": "messages",
+              "count": 3,
+              "sha256": "a7e95b95d1d037a289d7b56b4cd5dd907e32f2702a222c43ef5dc022f0487b34"
+            },
+            {
+              "name": "witness_user_extensions",
+              "count": 1,
+              "sha256": "e9f52f0addc0fcdc69b65b9d36868063230b94e64e574cf6b8322c859e4d4c94"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
