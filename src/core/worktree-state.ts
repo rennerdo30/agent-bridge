@@ -21,8 +21,8 @@ export interface WorktreeState {
   pushed?: { ref: string; sha: string }[];
   resumeBranch?: string;
 }
-const key = (wt: Worktree) => createHash("sha256").update(resolve(wt.path).toLowerCase()).digest("hex");
-const statePath = (home: string, wt: Worktree) => join(home, "worktree-state", `${key(wt)}.json`);
+const key = (wt: Pick<Worktree, "path">) => createHash("sha256").update(resolve(wt.path).toLowerCase()).digest("hex");
+const statePath = (home: string, wt: Pick<Worktree, "path">) => join(home, "worktree-state", `${key(wt)}.json`);
 export const rootId = (path: string) => { const stat = lstatSync(path); return `${stat.dev}:${stat.ino}:${stat.birthtimeMs}`; };
 
 export function readWorktreeState(home: string, wt: Worktree): WorktreeState | null {
@@ -39,8 +39,17 @@ export function recordWorktreeProcessProof(home: string, wt: Worktree, stopped: 
   if (state) saveWorktreeState(home, wt, { ...state, processesStopped: stopped });
 }
 
+/** A job using a managed cwd without saved worktree metadata cannot inherit an older shutdown proof. */
+export function invalidateWorktreePathProof(home: string, path: string): void {
+  const value = readHistoryJson(statePath(home, { path }));
+  if (!isRecord(value) || typeof value.repoRoot !== "string" || typeof value.base !== "string") return;
+  const wt = { path, cwd: path, repoRoot: value.repoRoot, base: value.base, branch: "" };
+  const state = readWorktreeState(home, wt);
+  if (state) saveWorktreeState(home, wt, { ...state, processesStopped: false, lastContinuation: Date.now() });
+}
+
 /** Run and close share an exclusive physical-folder lease. Busy/unknown leases always retain data. */
-export function worktreeLease(home: string, wt: Worktree): () => void {
+export function worktreeLease(home: string, wt: Pick<Worktree, "path">): () => void {
   const dir = join(home, "worktree-leases");
   mkdirSync(dir, { recursive: true });
   const path = join(dir, key(wt));

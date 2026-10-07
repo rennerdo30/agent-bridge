@@ -36490,6 +36490,13 @@ function recordWorktreeProcessProof(home, wt, stopped) {
   const state = readWorktreeState(home, wt);
   if (state) saveWorktreeState(home, wt, { ...state, processesStopped: stopped });
 }
+function invalidateWorktreePathProof(home, path) {
+  const value = readHistoryJson(statePath(home, { path }));
+  if (!isRecord(value) || typeof value.repoRoot !== "string" || typeof value.base !== "string") return;
+  const wt = { path, cwd: path, repoRoot: value.repoRoot, base: value.base, branch: "" };
+  const state = readWorktreeState(home, wt);
+  if (state) saveWorktreeState(home, wt, { ...state, processesStopped: false, lastContinuation: Date.now() });
+}
 function worktreeLease(home, wt) {
   const dir = join39(home, "worktree-leases");
   mkdirSync20(dir, { recursive: true });
@@ -36664,12 +36671,18 @@ async function runDelegate(rc, target, a, signal, onProgress, background, job) {
 }
 async function runWithWorktreeLease(rc, target, a, signal, onProgress, background, job) {
   const wt = a._worktree ?? (a.worktree ? await createWorktree({ cwd: a.cwd || rc.cwd(), home: rc.home, jobId: randomUUID16().slice(0, 8), log: rc.log }) : null);
-  if (!wt) return runDelegateInner(rc, target, a, signal, onProgress, background, job);
-  const release = worktreeLease(rc.home, wt);
+  const root = wt?.path ?? bridgeWorktreeRoot(a.cwd || rc.cwd(), rc.home);
+  if (!root) return runDelegateInner(rc, target, a, signal, onProgress, background, job);
+  const release = worktreeLease(rc.home, { path: root });
   try {
-    if (!a._worktree) await recordWorktreeOrigin(rc.home, wt, rc.log);
-    else await prepareWorktreeContinuation(rc.home, wt, rc.log);
-    return await runDelegateInner(rc, target, { ...a, _worktree: wt }, signal, onProgress, background, job);
+    if (wt) {
+      if (!a._worktree) await recordWorktreeOrigin(rc.home, wt, rc.log);
+      else await prepareWorktreeContinuation(rc.home, wt, rc.log);
+    } else {
+      assertPhysicalPath(root);
+      invalidateWorktreePathProof(rc.home, root);
+    }
+    return await runDelegateInner(rc, target, wt ? { ...a, _worktree: wt } : a, signal, onProgress, background, job);
   } finally {
     release();
   }
