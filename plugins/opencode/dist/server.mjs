@@ -45505,7 +45505,7 @@ var MessageStore = class {
     if (from === to) return [];
     this.db.exec("BEGIN IMMEDIATE");
     try {
-      const rows = this.db.prepare("SELECT * FROM messages WHERE recipient=? AND from_id=? AND read_at IS NULL").all(from, `job:${job}`);
+      const rows = this.db.prepare("SELECT * FROM messages WHERE recipient=? AND from_id=? AND read_at IS NULL AND conversation_id NOT LIKE ?").all(from, `job:${job}`, `${SIBLING_CONVERSATION_PREFIX}%`);
       const copied = [];
       for (const row of rows) {
         const route = this.db.prepare("SELECT recipient, consumed_at FROM job_delivery_routes WHERE id=?").get(row.id);
@@ -45527,7 +45527,7 @@ var MessageStore = class {
     }
   }
   pendingJobRecipients(job) {
-    return this.db.prepare("SELECT DISTINCT recipient FROM messages WHERE from_id=? AND read_at IS NULL").all(`job:${job}`).map((row) => String(row.recipient));
+    return this.db.prepare("SELECT DISTINCT recipient FROM messages WHERE from_id=? AND read_at IS NULL AND conversation_id NOT LIKE ?").all(`job:${job}`, `${SIBLING_CONVERSATION_PREFIX}%`).map((row) => String(row.recipient));
   }
   insertOnce(m) {
     if (this.db.prepare("SELECT 1 FROM messages WHERE id=? AND recipient=?").get(m.id, m.recipient)) return false;

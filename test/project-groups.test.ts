@@ -39,6 +39,24 @@ function registry(project: string) {
 }
 
 describe("local project permission groups", () => {
+  it("keeps pending sibling mail and quiet observer notes at their intended recipients on group changes", async () => {
+    const path = repo(); registry(path);
+    const source = await node("claude-master", path), secondary = await node("codex-master", path);
+    const a = await node("codex-job-one", path, { id: "one", owner: "first", parent: source.name });
+    const b = await node("codex-job-two", path, { id: "two", owner: "second", parent: secondary.name });
+    const sent = await a.sendSibling({ to: b.name, body: "Private sibling context" }, 32);
+    const id = sent.messages[0]!.id;
+    expect(b.unread().some((m) => m.id === id)).toBe(true);
+    const third = await node("claude-third", path);
+    await source.setUnavailable(true);
+    expect(b.unread().some((m) => m.id === id)).toBe(true);
+    for (const master of [source, secondary, third]) {
+      expect(master.unread().some((m) => m.id === id)).toBe(false);
+      expect(master.unread().filter((m) => m.conversationId.startsWith("siblings-")).every((m) => m.conversationId.endsWith(":note"))).toBe(true);
+    }
+    b.markRead([id]);
+    await expect.poll(async () => (await a.messageReceipt(id))[0]?.readAt).toBeTypeOf("number");
+  });
   it("queues reports while every master is unavailable and delivers once on return", async () => {
     const path = repo(); registry(path);
     const source = await node("claude-master", path), secondary = await node("codex-master", path);
