@@ -32,6 +32,13 @@ function digest(root: string): string {
   return hash.digest("hex");
 }
 
+/** Preflight immutable destinations before advancing any independent native selector. */
+export function validatePluginPublication(source: string, base: string, version: string): void {
+  releaseVersion(version); assertUnlinked(source); assertUnlinked(base);
+  const target = join(base, version); assertUnlinked(target);
+  if (existsSync(target) && digest(source) !== digest(target)) throw new Error(`Immutable plugin version differs: ${target}. Release a new patch; existing files were preserved.`);
+}
+
 export function releaseVersion(version: string): void {
   if (!/^\d+\.\d+\.\d+$/.test(version)) throw new Error(`Expected a patch release version, got ${version}`);
 }

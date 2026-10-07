@@ -7209,7 +7209,7 @@ import { DatabaseSync as DatabaseSync5 } from "node:sqlite";
 import { homedir } from "node:os";
 import { join } from "node:path";
 var APP_NAME = "agent-bridge";
-var APP_VERSION = "0.29.17";
+var APP_VERSION = "0.29.18";
 var PROTOCOL_VERSION = 2;
 var ENV = {
   internal: "AGENT_BRIDGE_INTERNAL",
@@ -7546,9 +7546,13 @@ import { copyFileSync as copyFileSync3, existsSync as existsSync5, mkdirSync as 
 import { basename as basename2, join as join6 } from "node:path";
 var DEFAULT_ARCHIVE_AGE_MS = 30 * 24 * 60 * 60 * 1e3;
 var ARCHIVE_AGE_ENV = "AGENT_BRIDGE_ARCHIVE_AGE_MS";
-var FINISHED_RUN = /^\d\d:\d\d:\d\d finished after \d+s · /m;
+var FINISHED_RUN = /^\d\d:\d\d:\d\d finished after \d+s · [^\r\n]+$/;
+function finishedRunLine(text3) {
+  const last = text3.trimEnd().split("\n").at(-1) ?? "";
+  return FINISHED_RUN.test(last) ? last : null;
+}
 function archiveRun(log) {
-  if (!FINISHED_RUN.test(readFileSync4(log, "utf8"))) return;
+  if (!finishedRunLine(readFileSync4(log, "utf8"))) return;
   const dir = join6(log, "..", "archive");
   mkdirSync4(dir, { recursive: true, mode: 448 });
   const target = join6(dir, basename2(log));
@@ -7574,7 +7578,7 @@ function archiveOldRuns(home, now = Date.now()) {
   if (!age) return 0;
   let count = 0;
   for (const file2 of runLogFiles(home).filter((p) => !p.includes(`${join6("runs", "archive")}`))) {
-    if (statSync(file2).mtimeMs < now - age && FINISHED_RUN.test(readFileSync4(file2, "utf8"))) {
+    if (statSync(file2).mtimeMs < now - age && finishedRunLine(readFileSync4(file2, "utf8"))) {
       archiveRun(file2);
       count++;
     }
@@ -7602,7 +7606,7 @@ function pruneOldLogs(dir) {
     const files2 = readdirSync6(dir).filter((f) => f.endsWith(".log")).map((f) => ({ f, t: statSync2(join7(dir, f)).mtimeMs })).sort((a, b) => b.t - a.t);
     for (const { f } of files2.slice(limit)) {
       const path = join7(dir, f);
-      if (Date.now() - statSync2(path).mtimeMs <= STALE_RUN_MS && !/^\d\d:\d\d:\d\d finished after \d+s · /m.test(readFileSync5(path, "utf8"))) continue;
+      if (Date.now() - statSync2(path).mtimeMs <= STALE_RUN_MS && !finishedRunLine(readFileSync5(path, "utf8"))) continue;
       archiveRun(path);
     }
   } catch (err) {
@@ -8019,6 +8023,8 @@ function isInternalBridgeProcess(env = process.env) {
 }
 
 // src/core/project-identity.ts
+var projectRoots = /* @__PURE__ */ new Map();
+var PROJECT_ROOT_CACHE_MS = 3e4;
 function canonicalProjectRoot(cwd) {
   if (isPluginCacheCwd(cwd)) return null;
   const visibleRoot = (root) => isPluginCacheCwd(root) ? null : root;
@@ -8026,37 +8032,56 @@ function canonicalProjectRoot(cwd) {
     const physical = realpathSync3.native(cwd);
     if (isPluginCacheCwd(physical)) return null;
     if (!statSync6(physical).isDirectory()) return null;
-    const git2 = (args) => execFileSync(
-      "git",
-      ["-C", physical, "rev-parse", ...args],
-      { encoding: "utf8", timeout: 3e3, windowsHide: true, stdio: ["ignore", "pipe", "ignore"] }
-    ).trim();
-    try {
-      const top = realpathSync3.native(git2(["--show-toplevel"]));
-      const common = realpathSync3.native(resolve4(physical, git2(["--git-common-dir"])));
-      if (common.endsWith("/.git") || common.endsWith("\\.git")) return visibleRoot(realpathSync3.native(dirname4(common)));
-      try {
-        const configured = execFileSync(
-          "git",
-          ["--git-dir", common, "config", "--get", "core.worktree"],
-          { encoding: "utf8", timeout: 3e3, windowsHide: true, stdio: ["ignore", "pipe", "ignore"] }
-        ).trim();
-        if (configured) return visibleRoot(realpathSync3.native(resolve4(common, configured)));
-      } catch {
-      }
-      const worktrees = execFileSync(
-        "git",
-        ["-C", physical, "worktree", "list", "--porcelain"],
-        { encoding: "utf8", timeout: 3e3, windowsHide: true, stdio: ["ignore", "pipe", "ignore"] }
-      );
-      const main = worktrees.split(/\r?\n\r?\n/).find((entry) => !/^bare$/m.test(entry));
-      const root = main && /^worktree (.+)$/m.exec(main)?.[1];
-      return visibleRoot(root ? realpathSync3.native(root) : top);
-    } catch {
-      return physical;
-    }
+    const cached3 = projectRoots.get(physical), now = Date.now(), marker = gitMarker(physical);
+    if (cached3 && cached3.expiresAt > now && cached3.marker === marker) return cached3.root;
+    const root = resolveProjectRoot(physical, visibleRoot);
+    if (projectRoots.size >= 256) projectRoots.delete(projectRoots.keys().next().value);
+    projectRoots.set(physical, { root, expiresAt: now + PROJECT_ROOT_CACHE_MS, marker });
+    return root;
   } catch {
     return null;
+  }
+}
+function gitMarker(physical) {
+  for (let dir = physical; ; dir = dirname4(dir)) {
+    const path = join11(dir, ".git");
+    try {
+      const s = statSync6(path);
+      return `${path}:${s.ino}:${s.mtimeMs}:${s.size}`;
+    } catch {
+    }
+    if (dirname4(dir) === dir) return "";
+  }
+}
+function resolveProjectRoot(physical, visibleRoot) {
+  const git2 = (args) => execFileSync(
+    "git",
+    ["-C", physical, "rev-parse", ...args],
+    { encoding: "utf8", timeout: 3e3, windowsHide: true, stdio: ["ignore", "pipe", "ignore"] }
+  ).trim();
+  try {
+    const top = realpathSync3.native(git2(["--show-toplevel"]));
+    const common = realpathSync3.native(resolve4(physical, git2(["--git-common-dir"])));
+    if (common.endsWith("/.git") || common.endsWith("\\.git")) return visibleRoot(realpathSync3.native(dirname4(common)));
+    try {
+      const configured = execFileSync(
+        "git",
+        ["--git-dir", common, "config", "--get", "core.worktree"],
+        { encoding: "utf8", timeout: 3e3, windowsHide: true, stdio: ["ignore", "pipe", "ignore"] }
+      ).trim();
+      if (configured) return visibleRoot(realpathSync3.native(resolve4(common, configured)));
+    } catch {
+    }
+    const worktrees = execFileSync(
+      "git",
+      ["-C", physical, "worktree", "list", "--porcelain"],
+      { encoding: "utf8", timeout: 3e3, windowsHide: true, stdio: ["ignore", "pipe", "ignore"] }
+    );
+    const main = worktrees.split(/\r?\n\r?\n/).find((entry) => !/^bare$/m.test(entry));
+    const root = main && /^worktree (.+)$/m.exec(main)?.[1];
+    return visibleRoot(root ? realpathSync3.native(root) : top);
+  } catch {
+    return physical;
   }
 }
 function projectKey(root) {
@@ -30971,6 +30996,7 @@ function resourceSlotHint(counts, cli) {
 }
 
 // src/core/root-concurrency.ts
+import { setTimeout as delay4 } from "node:timers/promises";
 var ROOT_LIMIT_DB = "root-limits.sqlite";
 var LOCK_WAIT_MS2 = 3e3;
 var RootConcurrency = class {
@@ -31004,6 +31030,24 @@ var RootConcurrency = class {
     if (this.slots.tryAcquire(this.resource, limit, owner)) return true;
     this.slots.release(owner, this.resource);
     return false;
+  }
+  /** Keep a FIFO ticket while another coordinator is using the same root's capacity. */
+  async acquireWhenAvailable(owner, signal) {
+    try {
+      for (; ; ) {
+        signal.throwIfAborted();
+        try {
+          const limit = this.limit();
+          if (limit > 0 && this.slots.tryAcquire(this.resource, limit, owner)) return;
+        } catch (err) {
+          if (!isSqliteBusy(err)) throw err;
+        }
+        await delay4(250, void 0, { signal });
+      }
+    } catch (err) {
+      this.release(owner);
+      throw err;
+    }
   }
   moveJobs(names) {
     this.slots.moveJobs(this.resource, names);
@@ -31065,7 +31109,7 @@ function recoverJobRecord(home, ref) {
   const state = isRecord(rawState) && typeof rawState.pid === "number" ? rawState : void 0;
   const startedAt = typeof base2.startedAt === "number" ? base2.startedAt : run ? runStart(run) : 0;
   const currentState = state && typeof state.updatedAt === "number" && state.updatedAt >= startedAt ? state : void 0;
-  const alive2 = currentState?.status === "running" && Date.now() - Number(currentState.updatedAt) < 9e4 && pidAlive(Number(currentState.pid));
+  const alive2 = currentState?.status === "running" && pidAlive(Number(currentState.pid));
   const owner = typeof base2.owner === "string" ? base2.owner : meta3?.by ?? / by ([\w.-]+)/.exec(header)?.[1];
   if (!owner) return void 0;
   const sessionId = currentState?.sessionId ?? base2.sessionId ?? base2.threadId ?? meta3?.session ?? meta3?.continues ?? null;
@@ -31278,7 +31322,9 @@ var JobManager = class {
       if (job?.host) this.checkHostedSafely(job);
     });
     node2.on("connected", () => {
-      for (const job of this.running.values()) if (job.host) this.runners?.send(job, { type: "attach" });
+      const attached = [...this.running.values()];
+      this.refreshOwnership();
+      for (const job of attached) if (job.host && this.running.has(job.id)) this.runners?.send(job, { type: "attach" });
     });
   }
   node;
@@ -31291,6 +31337,7 @@ var JobManager = class {
   history = /* @__PURE__ */ new Map();
   /** Finished jobs whose continuation waits for a free slot, in arrival order; the messages are in job.queue. */
   waitingJobs = /* @__PURE__ */ new Map();
+  pendingRuns = /* @__PURE__ */ new Map();
   /** Ids of status notes from running subagents (see fromSubagent). */
   notes = /* @__PURE__ */ new Set();
   /** Jobs this manager started, continued or took over: only these are saved (others' entries stay as they are on disk). */
@@ -31414,9 +31461,10 @@ var JobManager = class {
       }
     }
     for (const s of stored) {
-      if (!s.ownershipHistory?.length) continue;
+      const directlyOwned = this.lineage ? s.parentJob === this.lineage.parentJob : this.isMine(s.owner) && !s.parentJob;
+      if (!s.ownershipHistory?.length && (!directlyOwned || this.running.has(s.id) || this.foreground.has(s.id) || s.status === "running" && !s.host)) continue;
       let job = this.history.get(s.id);
-      const mine = this.lineage ? s.parentJob === this.lineage.parentJob : s.owner === this.node.name && !s.parentJob;
+      const mine = directlyOwned;
       if (job && (s.executionOwner === this.node.name || mine)) {
         const executing = s.executionOwner === this.node.name && (this.running.has(s.id) || this.foreground.has(s.id));
         Object.assign(job, {
@@ -31478,7 +31526,7 @@ var JobManager = class {
     const stored = readStore(this.storePath, this.log, true);
     const adopted = [];
     const recentIds = new Set(stored.slice(-HISTORY_LIMIT).map((s) => s.id));
-    for (const s of stored.filter((x) => recentIds.has(x.id) || x.status === "running")) {
+    for (const s of stored.filter((x) => recentIds.has(x.id) || x.status === "running" || x.waitingForStart)) {
       if (this.lineage && s.parentJob !== this.lineage.parentJob) continue;
       if (!this.lineage && s.parentJob) continue;
       if (this.history.has(s.id)) continue;
@@ -31498,6 +31546,7 @@ var JobManager = class {
     if (stored.length) this.log.info("restored subagent jobs", { count: Math.min(stored.length, HISTORY_LIMIT), runnerHosted: adopted.length });
     this.assignLegacySupervisors();
     this.settleAdopted(adopted);
+    for (const job of this.history.values()) if (job.waitingForStart && this.isMine(job.owner)) this.waitForSlot(job);
     this.persist();
   }
   /** Whether a runner-hosted job can be taken over here (its runner lives, or finished and left its report). */
@@ -31735,6 +31784,7 @@ var JobManager = class {
   }
   canStart() {
     this.refreshOwnership();
+    for (const job of [...this.running.values()]) if (job.host) this.checkHostedSafely(job, true);
     return this.runningCount() + [...this.foreground.values()].filter((j) => this.isMine(j.owner)).length < this.maxJobs && this.withRootBudget((budget) => {
       if (!this.lineage) budget.setLimit(this.maxJobs);
       return budget.available();
@@ -31751,6 +31801,15 @@ var JobManager = class {
   }
   start(agent, model, prompt, run, resume, args) {
     const job = this.newJob(agent, model, prompt, "job", resume, args);
+    if (!this.canStart() || this.waitingJobs.size) {
+      job.status = "interrupted";
+      job.waitingForStart = true;
+      job.progress = "queued: waiting for a subagent slot";
+      this.pendingRuns.set(job.id, run);
+      this.waitForSlot(job);
+      this.remember(job);
+      return job;
+    }
     this.remember(job);
     this.log.info("subagent started", { job: job.name, model, prompt: prompt.slice(0, PROMPT_PREVIEW_CHARS) });
     this.launch(job, run);
@@ -31812,6 +31871,7 @@ var JobManager = class {
     if (this.hostedRunning(job)) this.checkHosted(job);
     if (this.waitingJobs.has(job.id)) {
       job.queue.push(message);
+      this.persist();
       return { outcome: "waiting", job };
     }
     if (job.status === "running" && job.controller.signal.aborted) {
@@ -31872,12 +31932,29 @@ var JobManager = class {
       if (job.status === "running") continue;
       if (!this.canStart()) return;
       this.waitingJobs.delete(job.id);
+      if (job.waitingForStart) {
+        try {
+          const run = job.resume?.(job.prompt, "", job.workdir, job.worktree) ?? this.pendingRuns.get(job.id);
+          this.pendingRuns.delete(job.id);
+          if (run) this.launch(job, run);
+          else {
+            this.waitingJobs.set(job.id, job);
+            return;
+          }
+        } catch (err) {
+          this.pendingRuns.delete(job.id);
+          job.waitingForStart = void 0;
+          this.finish(job, "failed", "", null, failureCause({ error: err }));
+        }
+        continue;
+      }
       if (!job.queue.length || !job.resume || !job.sessionId) continue;
       this.log.info("subagent resumed (was waiting for a slot)", { job: job.name, sessionId: job.sessionId });
       this.launch(job, job.resume(job.queue.splice(0).join("\n\n"), job.sessionId, job.workdir, job.worktree));
     }
   }
   launch(job, run) {
+    job.waitingForStart = void 0;
     if (typeof job.args?.model === "string") job.model = job.args.model;
     job.status = "running";
     job.executionOwner = !this.isMine(job.owner) ? this.node.name : void 0;
@@ -31889,7 +31966,12 @@ var JobManager = class {
     job.foreground = false;
     this.running.set(job.id, job);
     this.own.add(job.id);
-    job.host = this.runners ? run.hosted?.(job) ?? null : null;
+    try {
+      job.host = this.runners ? run.hosted?.(job) ?? null : null;
+    } catch (err) {
+      this.finish(job, "failed", "", sessionOfError(err), failureCause({ error: err }));
+      return;
+    }
     job.forwarded = [];
     this.persist();
     if (job.host) {
@@ -31901,7 +31983,14 @@ var JobManager = class {
       job.progress = message;
       this.log.debug("subagent progress", { job: job.name, message });
     };
-    run(job.controller.signal, onProgress, job).then(
+    let promise2;
+    try {
+      promise2 = run(job.controller.signal, onProgress, job);
+    } catch (err) {
+      this.finish(job, "failed", "", sessionOfError(err), failureCause({ error: err }));
+      return;
+    }
+    promise2.then(
       (res) => {
         job.workdir = res.workdir ?? job.workdir;
         job.worktree = res.worktree ?? job.worktree;
@@ -32007,7 +32096,13 @@ var JobManager = class {
     const waiting = [...this.waitingJobs.values()].find((j) => j.id === id || j.name === ref);
     if (waiting) {
       this.waitingJobs.delete(waiting.id);
+      this.pendingRuns.delete(waiting.id);
       waiting.queue = [];
+      if (waiting.waitingForStart) {
+        waiting.waitingForStart = void 0;
+        waiting.controller.abort();
+        this.finish(waiting, "failed", "", null, "cancelled before starting");
+      }
       this.log.info("waiting subagent continuation cancelled", { job: waiting.name });
       return true;
     }
@@ -32048,8 +32143,9 @@ var JobManager = class {
       clearInterval(this.rootWaitTimer);
       this.rootWaitTimer = null;
     }
-    for (const j of this.waitingJobs.values()) j.queue = [];
+    for (const j of this.waitingJobs.values()) if (!j.waitingForStart) j.queue = [];
     this.waitingJobs.clear();
+    this.pendingRuns.clear();
     for (const j of this.running.values()) if (!j.host && (!j.executionOwner || j.executionOwner === this.node.name)) j.controller.abort();
     for (const j of this.foreground.values()) denyPendingApprovals(j, "session closed");
     if (this.hostTimer) clearInterval(this.hostTimer);
@@ -32144,6 +32240,7 @@ function toStored(j) {
     prompt: j.prompt,
     startedAt: j.startedAt,
     status: j.status,
+    waitingForStart: j.waitingForStart,
     sessionId: j.sessionId,
     workdir: j.workdir,
     worktree: j.worktree,
@@ -43056,7 +43153,7 @@ function formatPeer(p, selfId, now = Date.now()) {
   const flags = [
     p.agent,
     `v${p.version ?? "unknown"}${p.version !== APP_VERSION ? " \xB7 version skew (retained code)" : ""}`,
-    p.activity ?? null,
+    p.activity ?? "activity unknown (no busy/idle report)",
     p.wakeOnDirect && p.wakeAvailable ? "direct messages wake this session" : null,
     p.autoWake ? "auto-wake" : p.activity === "idle" && !(p.wakeOnDirect && p.wakeAvailable) ? "auto-wake off: will be read on its next turn" : null,
     `up ${formatUptime(now - p.startedAt)}`,
@@ -43094,15 +43191,25 @@ function formatDuration(ms) {
 function formatReplyRestrictions(result) {
   return (result.replyRestrictions ?? []).map(({ name: name2, supervisor }) => `${name2} can't reply to you directly. Its replies go to its supervisor ${supervisor}. To get an answer, ask ${supervisor}, ask ${supervisor} to grant you with send_to, or use the project's main session.`);
 }
+function formatInboxMessages(messages) {
+  const quiet = messages.filter(isQuietMessage);
+  if (!quiet.length) return formatMessages(messages);
+  const oldest = Math.max(0, Date.now() - Math.min(...quiet.map((m) => m.createdAt)));
+  return formatMessages(messages, { header: `[agent-bridge] ${messages.length - quiet.length} actionable message(s), ${quiet.length} retained quiet copy/copies. Quiet copies are historical coordination, not new requests; oldest is ${formatDuration(oldest)} old.`, replyHint: false });
+}
+function formatProjectRoute(route, recipient = route.main) {
+  return `${route.address} routed to ${recipient} (main ${route.main} since ${new Date(route.since).toISOString().slice(11, 16)} UTC${route.previous ? `, previously ${route.previous}` : ""}).`;
+}
 function formatDelivery(result, maxHops = DEFAULT_MAX_HOPS) {
   return result.deliveredTo.map((name2) => {
     const peer = result.recipientStates?.find((p) => p.name === name2);
     const message = result.messages.find((m) => m.recipient === name2);
     const direct = message && (message.to === name2 || message.to !== BROADCAST && !AGENT_KINDS.includes(message.to) && message.recipient === name2);
     const canWake = message && message.hop < (peer?.wakeMaxHops ?? maxHops) && !isQuietMessage(message) && !message.conversationId.endsWith(":note") && peer?.wakeAvailable && (peer.autoWake || peer.wakeOnDirect && (direct || message.to === BROADCAST));
-    const hint = peer?.activity === "idle" ? canWake ? "idle; wake requested on the receiving PC, awaiting consumption" : "idle; will be read on its next turn (no wake for this delivery)" : "waiting for the peer to consume it";
+    const state = peer?.activity ?? "activity unknown";
+    const hint = state === "idle" ? canWake ? "idle; wake requested on the receiving PC; a new turn is expected, consumption unconfirmed" : "idle; will be read on its next turn (no wake for this delivery)" : `${state}; ${canWake ? state === "busy" ? "wake policy enabled; idle wake waits until the current turn ends" : "wake policy enabled; native wake depends on receiving session activity" : "no wake for this delivery"}; queued for its next hook, tool call or turn`;
     return `Delivered to inbox: ${name2} (${hint}). Delivery does not mean read.`;
-  }).concat((result.failedFor ?? []).map((failed) => `Delivery not confirmed: ${failed.name} (${failed.reason}). The attempt is retained in history; retry explicitly when the paired link is available.`)).concat(formatReplyRestrictions(result));
+  }).concat(result.projectRoute ? [formatProjectRoute(result.projectRoute, result.deliveredTo[0])] : []).concat((result.failedFor ?? []).map((failed) => `Delivery not confirmed: ${failed.name} (${failed.reason}). The attempt is retained in history; retry explicitly when the paired link is available.`)).concat(result.wakeRequestedFor?.length ? [`Wake requested on the receiving PC: ${result.wakeRequestedFor.join(", ")}. Native turn start is not yet confirmed.`] : []).concat((result.skippedFor ?? []).map((name2) => `Skipped offline registration: ${name2} (not seen recently and not a known project master).`)).concat(result.queuedFor.map((name2) => `Queued for offline session: ${name2}.`)).concat(formatReplyRestrictions(result));
 }
 
 // src/mcp/message-wait.ts
@@ -43978,7 +44085,7 @@ var StdioServerTransport = class {
 };
 
 // src/mcp/remote-ask.ts
-import { setTimeout as delay4 } from "node:timers/promises";
+import { setTimeout as delay5 } from "node:timers/promises";
 import { randomUUID as randomUUID12 } from "node:crypto";
 
 // src/network/remote-job-protocol.ts
@@ -44094,7 +44201,7 @@ async function runRemoteAsk(node2, target, args, job, signal, onProgress) {
       }
       if (state && state.status !== "running" && !snapshot.alive) return { text: state.report ?? "Remote job ended without a report.", sessionId: state.sessionId ?? null, isError: state.status === "failed", details: {}, workdir: state.workdir ?? void 0, worktree: state.worktree ?? void 0 };
       if (!snapshot.alive) throw new Error("Remote job runner ended without a result.");
-      await delay4(REMOTE_JOB_POLL_MS, void 0, { signal: combined });
+      await delay5(REMOTE_JOB_POLL_MS, void 0, { signal: combined });
       snapshot = await node2.remoteJob(host, { op: "state", job: job.id });
     }
   } finally {
@@ -44425,7 +44532,7 @@ function t(key3, params = {}) {
 }
 
 // src/core/node.ts
-import { randomUUID as randomUUID24 } from "node:crypto";
+import { randomUUID as randomUUID25 } from "node:crypto";
 import { EventEmitter as EventEmitter2 } from "node:events";
 import { unlinkSync as unlinkSync2 } from "node:fs";
 import { dirname as dirname24, join as join61 } from "node:path";
@@ -45551,7 +45658,7 @@ function readHistorySource(file2, id) {
 }
 
 // src/core/broker.ts
-import { randomUUID as randomUUID22 } from "node:crypto";
+import { randomUUID as randomUUID23 } from "node:crypto";
 import { createServer as createServer6 } from "node:net";
 
 // src/core/store.ts
@@ -45660,7 +45767,8 @@ function backupIfDue(home, now = Date.now()) {
 
 // src/core/store.ts
 var BACKUP_CHECK_INTERVAL_MS = 60 * 60 * 1e3;
-var SQLITE_STORE_VERSION = 8;
+var SQLITE_STORE_VERSION = 9;
+var BROADCAST_RECENT_MS = 24 * 60 * 60 * 1e3;
 function agentQueueKey(agent) {
   return `agent:${agent}`;
 }
@@ -45730,7 +45838,14 @@ var MIGRATIONS = [
     );
     PRAGMA user_version = 7;
   ` },
-  { version: 8, sql: CONVERSATION_MIGRATION }
+  { version: 8, sql: CONVERSATION_MIGRATION },
+  { version: 9, sql: `
+    CREATE TABLE IF NOT EXISTS peer_last_seen (
+      name TEXT PRIMARY KEY, seen_at INTEGER NOT NULL
+    );
+    INSERT INTO peer_last_seen SELECT name, MAX(learned_at) FROM peer_names GROUP BY name;
+    PRAGMA user_version = 9;
+  ` }
 ];
 function migrateMessageSchema(db, file2, existed, log) {
   migrateSqlite(db, file2, existed, SQLITE_STORE_VERSION, MIGRATIONS, log);
@@ -45865,11 +45980,17 @@ var MessageStore = class {
         DO UPDATE SET session_id=COALESCE(excluded.session_id,peer_names.session_id), learned_at=MIN(peer_names.learned_at,excluded.learned_at)`).run(identity, peer.name, peer.sessionId, peer.agent, at);
       this.db.prepare(`INSERT INTO peer_name_owners VALUES (?,?) ON CONFLICT(name)
         DO UPDATE SET identity=excluded.identity`).run(peer.name, identity ?? `unidentified:${peer.id}`);
+      if (!peer.jobAgent && !peer.subagent) this.markPeerSeen(peer.name, at);
       this.db.exec("COMMIT");
     } catch (err) {
       this.db.exec("ROLLBACK");
       throw err;
     }
+  }
+  /** Presence updates never change the identity that currently owns a name. */
+  markPeerSeen(name2, at) {
+    this.db.prepare(`INSERT INTO peer_last_seen VALUES (?,?)
+      ON CONFLICT(name) DO UPDATE SET seen_at=MAX(peer_last_seen.seen_at,excluded.seen_at)`).run(name2, at);
   }
   namesFor(peer) {
     const identity = registrationIdentity(peer);
@@ -45897,6 +46018,21 @@ var MessageStore = class {
       const cwds = session ? files2.all(session).map((file2) => String(file2.cwd)) : [];
       return !cwds.length || cwds.some((cwd) => !isPluginCacheCwd(cwd));
     }).map((row) => String(row.name));
+  }
+  /** Eligibility never removes history or old queued messages. Unknown old names are skipped. */
+  recentProjectSenders(address, previous, since) {
+    return this.db.prepare(`SELECT from_name FROM messages WHERE to_target=? AND recipient=? AND created_at>=?
+      AND from_id NOT LIKE 'job:%' GROUP BY from_name ORDER BY MAX(created_at) DESC LIMIT 64`).all(address, previous, since).map((row) => String(row.from_name));
+  }
+  broadcastRecipients(now, masters) {
+    const seen = this.db.prepare("SELECT seen_at FROM peer_last_seen WHERE name=?");
+    const queued = [], skipped = [];
+    for (const name2 of this.broadcastNames()) {
+      const at = Number(seen.get(name2)?.seen_at ?? 0);
+      (masters.has(name2) || at > 0 && at >= now - BROADCAST_RECENT_MS ? queued : skipped).push(name2);
+    }
+    for (const name2 of masters) if (!queued.includes(name2) && !skipped.includes(name2)) queued.push(name2);
+    return { queued, skipped };
   }
   /** Keep lock waits out of the broker event loop. Callbacks must be synchronous atomic steps. */
   retryWrite(operation) {
@@ -48304,7 +48440,7 @@ async function finishedRunOutcomes(home, log, names) {
 }
 function summarizeRun(file2, text3, mtimeMs, now, meta3 = {}) {
   const lines = text3.split("\n").filter(Boolean);
-  const finished = [...lines].reverse().find((l) => / finished after \d+s · /.test(l));
+  const finished = finishedRunLine(text3);
   const last = (finished ?? lines.at(-1) ?? "").replace(/^\d\d:\d\d:\d\d /, "");
   const status = finished ? / · done$/.test(finished) ? "done" : "failed" : now - mtimeMs > STALE_RUN_MS2 ? "interrupted" : "running";
   const m = /^(\d{4})-(\d\d)-(\d\d)-(\d\d)-(\d\d)-(\d\d)-([a-z]+)-/.exec(file2);
@@ -48636,13 +48772,38 @@ var RemoteDashboard = class {
 };
 
 // src/network/remote-jobs.ts
-import { randomUUID as randomUUID21 } from "node:crypto";
+import { randomUUID as randomUUID22 } from "node:crypto";
 import { existsSync as existsSync27, realpathSync as realpathSync10, statSync as statSync15 } from "node:fs";
 import { isAbsolute as isAbsolute10, join as join60 } from "node:path";
 
 // src/mcp/delegate-run.ts
-import { randomUUID as randomUUID20 } from "node:crypto";
+import { randomUUID as randomUUID21 } from "node:crypto";
 import { isAbsolute as isAbsolute9, join as join57, relative as relative8, resolve as resolve17 } from "node:path";
+
+// src/core/startup-admission.ts
+import { randomUUID as randomUUID20 } from "node:crypto";
+var STARTUP_CAPACITY = 2;
+var STARTUP_RESOURCE = "delegate-startup";
+async function acquireStartup(home, signal) {
+  const slots = new ResourceSlots(home);
+  const owner = { id: `startup-${randomUUID20()}`, pid: process.pid };
+  try {
+    await slots.acquire(STARTUP_RESOURCE, STARTUP_CAPACITY, owner, signal);
+  } catch (err) {
+    slots.close();
+    throw err;
+  }
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    try {
+      slots.release(owner, STARTUP_RESOURCE);
+    } finally {
+      slots.close();
+    }
+  };
+}
 
 // src/core/effort.ts
 import { readFileSync as readFileSync31 } from "node:fs";
@@ -48802,13 +48963,14 @@ function worktreeArgs(target, a, cfg, cwd, home) {
 }
 async function runDelegate(rc, target, a, signal, onProgress, background, job) {
   checkDepth(rc.cfg.maxDelegateDepth);
-  if (!job?.rootSession) return runWithWorktreeLease(rc, target, a, signal, onProgress, background, job);
+  if (!job?.rootSession) return runWithStartup(rc, target, a, signal, onProgress, background, job);
   const budget = new RootConcurrency(rc.home, job.rootSession);
-  const owner = { id: `${job.name}-${randomUUID20()}`, pid: process.pid };
+  const owner = { id: `${job.name}-${randomUUID21()}`, pid: process.pid };
   let timer;
   try {
     if (!job.parentJob) budget.ensureLimit(rc.cfg.maxJobs);
-    if (!budget.acquire(owner)) throw new Error("The top session's subagent concurrency limit is reached.");
+    onProgress?.("queued: waiting for root admission");
+    await budget.acquireWhenAvailable(owner, signal);
     timer = setInterval(() => {
       try {
         budget.renew(owner);
@@ -48817,15 +48979,29 @@ async function runDelegate(rc, target, a, signal, onProgress, background, job) {
       }
     }, SLOT_RENEW_MS);
     timer.unref();
-    return await runWithWorktreeLease(rc, target, a, signal, onProgress, background, job);
+    return await runWithStartup(rc, target, a, signal, onProgress, background, job);
   } finally {
     clearInterval(timer);
-    budget.release(owner);
-    budget.close();
+    try {
+      budget.release(owner);
+    } finally {
+      budget.close();
+    }
+  }
+}
+async function runWithStartup(rc, target, a, signal, onProgress, background, job) {
+  onProgress?.("queued: waiting for machine startup admission");
+  const release = await acquireStartup(rc.home, signal);
+  try {
+    signal.throwIfAborted();
+    onProgress?.("starting native CLI");
+    return await runWithWorktreeLease({ ...rc, startupReady: release }, target, a, signal, onProgress, background, job);
+  } finally {
+    release();
   }
 }
 async function runWithWorktreeLease(rc, target, a, signal, onProgress, background, job) {
-  const wt = a._worktree ?? (a.worktree ? await createWorktree({ cwd: a.cwd || rc.cwd(), home: rc.home, jobId: randomUUID20().slice(0, 8), log: rc.log }) : null);
+  const wt = a._worktree ?? (a.worktree ? await createWorktree({ cwd: a.cwd || rc.cwd(), home: rc.home, jobId: randomUUID21().slice(0, 8), log: rc.log }) : null);
   const root = wt?.path ?? bridgeWorktreeRoot(a.cwd || rc.cwd(), rc.home);
   if (!root) return runDelegateInner(rc, target, a, signal, onProgress, background, job);
   const release = worktreeLease(rc.home, { path: root });
@@ -48850,7 +49026,7 @@ async function runDelegateInner(rc, target, a, signal, onProgress, background, j
   const cwd = a.cwd || rc.cwd();
   a = worktreeArgs(target, a, cfg, cwd, rc.home);
   const access = a.access;
-  const wt = a._worktree ?? (a.worktree ? await createWorktree({ cwd, home: rc.home, jobId: randomUUID20().slice(0, 8), log: dlog }) : null);
+  const wt = a._worktree ?? (a.worktree ? await createWorktree({ cwd, home: rc.home, jobId: randomUUID21().slice(0, 8), log: dlog }) : null);
   const workdir = wt?.cwd ?? cwd;
   const linkRoot = wt?.path ?? bridgeWorktreeRoot(workdir, rc.home);
   const watchChanges = !wt && (access === "edit" || access === "ask" && target === "codex");
@@ -48861,7 +49037,7 @@ async function runDelegateInner(rc, target, a, signal, onProgress, background, j
   let relayCalls = 0;
   const codexHash = target === "codex" ? codexPermissionHookHash() : null;
   const journalPermission = async (request2, decide) => {
-    const id = randomUUID20();
+    const id = randomUUID21();
     const context2 = { kind: "approval", agent: target, project: workdir, job: job?.name ?? a._job, session: job?.sessionId ?? void 0 };
     await appendContextEvent(rc.home, { ...context2, payload: { id, stage: "request", request: request2 } });
     const decision = await decide();
@@ -48932,7 +49108,7 @@ async function runDelegateInner(rc, target, a, signal, onProgress, background, j
   try {
     feed = startRunFeed({
       home: rc.home,
-      name: `${target}-${randomUUID20().slice(0, 8)}`,
+      name: `${target}-${randomUUID21().slice(0, 8)}`,
       header: `${target}${a.model ? ` (${a.model}${a.effort ? `, effort ${a.effort}` : ""})` : a.effort ? ` (effort ${a.effort})` : ""} in ${workdir}, access ${access ?? "default"}, by ${me}${a.session_id ? `, continues ${a.session_id}` : ""}
 ${a.prompt}
 ---`,
@@ -49042,7 +49218,7 @@ ${a.prompt}
     });
     void steering?.rename?.(title).catch((err) => dlog.warn("could not rename the Codex thread", { err: err.message }));
   };
-  const slotOwner = { id: `${a._job ?? target}-${randomUUID20()}`, pid: process.pid };
+  const slotOwner = { id: `${a._job ?? target}-${randomUUID21()}`, pid: process.pid };
   let slots = null;
   let slotTimer;
   let res;
@@ -49084,6 +49260,7 @@ ${a.prompt}
         },
         writableRoots,
         onSession: (id) => {
+          rc.startupReady?.();
           feed.meta({ session: id });
           if (job) rc.jobs?.note(job, { sessionId: id, workdir, worktree: wt });
         },
@@ -49291,11 +49468,9 @@ var RemoteJobHost = class {
 // src/mcp/job-host.ts
 var RUNNERS_DIR_NAME = "jobs";
 var CONTROL_CONVERSATION_PREFIX = "jobctl-";
-var RUNNER_HEARTBEAT_MS = 15e3;
-var STALE_MS = 6 * RUNNER_HEARTBEAT_MS;
 var START_GRACE_MS = 3e4;
 var KEEP_FILES_MS = 7 * 24 * 60 * 60 * 1e3;
-var DETACH_LAUNCHER = "require('node:child_process').spawn(process.execPath,process.argv.slice(1),{detached:true,stdio:'ignore',windowsHide:true}).unref()";
+var DETACH_LAUNCHER = "const c=require('node:child_process').spawn(process.execPath,process.argv.slice(1),{detached:true,stdio:'ignore',windowsHide:true});c.on('error',()=>process.exit(1));if(c.pid)process.stdout.write(String(c.pid));c.unref()";
 function runnerStatePath(home, id) {
   return join59(home, RUNNERS_DIR_NAME, `${id}.json`);
 }
@@ -49376,9 +49551,18 @@ var JobRunners = class {
       archiveFile(file2);
       writeJsonStore(file2, { ...full }, null);
       const args = [this.cli, "job-runner", file2];
+      const info = { pid: null, peer: job.name, startedAt: Date.now() };
       let pid = null;
       if (process.platform === "win32") {
-        const launcher = spawn6(process.execPath, ["-e", DETACH_LAUNCHER, ...args], { stdio: "ignore", windowsHide: true });
+        const launcher = spawn6(process.execPath, ["-e", DETACH_LAUNCHER, ...args], { stdio: ["ignore", "pipe", "ignore"], windowsHide: true });
+        let output2 = "";
+        launcher.stdout.on("data", (chunk) => {
+          output2 += chunk;
+        });
+        launcher.on("close", () => {
+          const reported = Number(output2);
+          if (Number.isSafeInteger(reported) && reported > 0) info.pid = reported;
+        });
         launcher.on("error", (err) => this.log.warn("could not start a job runner", { job: job.name, err: err.message }));
       } else {
         const child = spawn6(process.execPath, args, { detached: true, stdio: "ignore" });
@@ -49387,7 +49571,8 @@ var JobRunners = class {
         pid = child.pid ?? null;
       }
       this.log.info("job runner started", { job: job.name, pid });
-      return { pid, peer: job.name, startedAt: Date.now() };
+      info.pid = pid;
+      return info;
     } catch (err) {
       this.log.warn("job runner unavailable; the subagent runs inside this server", { job: job.name, err: err.message });
       return null;
@@ -49401,9 +49586,9 @@ var JobRunners = class {
     if (job.remote) return this.remote.alive(job);
     if (!state) {
       const host = job.host;
-      return Boolean(host) && Date.now() - host.startedAt < START_GRACE_MS && (host.pid === null || pidAlive(host.pid));
+      return Boolean(host) && (host.pid !== null ? pidAlive(host.pid) : Date.now() - host.startedAt < START_GRACE_MS);
     }
-    return pidAlive(state.pid) && Date.now() - state.updatedAt < STALE_MS;
+    return pidAlive(state.pid);
   }
   send(job, control) {
     if (job.remote) return this.remote.send(job, control);
@@ -49459,7 +49644,7 @@ var RemoteJobs = class {
     const request2 = remoteJobRequestSchema.parse(raw);
     if (!this.network.peerSupports(host, REMOTE_JOB_CAPABILITY)) throw new Error("Remote broker update needed or paired PC disconnected: install remote-jobs-v1 support and restart its hosting sessions.");
     if (this.pending.size >= REMOTE_JOB_RATE_LIMIT) throw new Error("Too many pending remote job requests.");
-    const rid = randomUUID21();
+    const rid = randomUUID22();
     const response = new Promise((resolve19, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(rid);
@@ -49728,7 +49913,12 @@ var Broker = class {
         const args = external_exports.object({ to: external_exports.string().min(1) }).strict().parse(a);
         return this.switchProjectMain(c.peer, this.connByName(args.to)?.peer ?? void 0);
       },
-      projectJobs: (c) => this.storedJobs().filter((j) => this.groups.canControl(this.requirePeer(c), j, this.localPeers())),
+      projectJobs: (c) => {
+        const peer = this.requirePeer(c);
+        const known = new Set(this.storedJobs().map((job) => job.name));
+        for (const runner of this.conns) if (runner.peer?.jobAgent && !known.has(runner.peer.name)) this.jobForControl(peer, runner.peer.name);
+        return this.storedJobs().filter((j) => this.groups.canControl(peer, j, this.localPeers()));
+      },
       coordinatorAvailability: (c, a) => {
         const args = external_exports.object({ name: external_exports.string().optional(), unavailable: external_exports.boolean() }).strict().parse(a);
         if (!c.peer && !args.name) throw new BridgeError("bad_request", "A coordinator name is required.");
@@ -49845,7 +50035,7 @@ var Broker = class {
         return peer;
       },
       claimMail: (c, a) => this.onClaimMail(c, a),
-      ping: () => ({ brokerPid: process.pid, protocol: PROTOCOL_VERSION }),
+      ping: () => ({ brokerPid: process.pid, protocol: PROTOCOL_VERSION, brokerVersion: APP_VERSION }),
       networkStatus: () => this.network?.status() ?? { enabled: false, config: this.networking?.config, discovered: [], paired: [] },
       remoteJob: async (c, a) => {
         const peer = this.requirePeer(c);
@@ -49861,7 +50051,7 @@ var Broker = class {
           const pair = this.requireNetwork().status().paired.find((p) => p.id === a.host || p.name === a.host);
           const name2 = snapshot.state.peer;
           this.receiveRemote({
-            id: randomUUID22(),
+            id: randomUUID23(),
             from: { id: `${pair?.id ?? a.host}/job:${a.request.job}`, name: `${pair?.name ?? a.host}/${name2}`, agent: "other" },
             to: peer.name,
             recipient: peer.name,
@@ -49923,6 +50113,7 @@ var Broker = class {
   groups;
   /** Live role selection, recomputed after broker restart; no durable ownership is rewritten. */
   projectMains = /* @__PURE__ */ new Map();
+  projectRoutes = /* @__PURE__ */ new Map();
   server = null;
   conns = /* @__PURE__ */ new Set();
   historyBackground = null;
@@ -49931,6 +50122,7 @@ var Broker = class {
   pendingJobMailRouteAgain = false;
   pendingJobMailRetry = null;
   closing = false;
+  requestTurn = Promise.resolve();
   network = null;
   remoteJobs = null;
   remoteDashboard = null;
@@ -50042,7 +50234,7 @@ var Broker = class {
     this.remoteDashboard = new RemoteDashboard(service, { home: this.networking.home, log: this.log, peers: () => this.dashboardPeers() });
     this.remoteJobs = new RemoteJobs(service, this.networking.home, this.log, async (record2, control) => {
       this.receiveRemote({
-        id: randomUUID22(),
+        id: randomUUID23(),
         from: { id: record2.owner, name: record2.owner, agent: "other" },
         to: record2.name,
         recipient: record2.name,
@@ -50100,6 +50292,12 @@ var Broker = class {
     socket.on("close", () => {
       this.conns.delete(conn);
       if (conn.peer) {
+        if (!this.closing && !conn.peer.jobAgent && !conn.peer.subagent) {
+          const name2 = conn.peer.name, at = this.now();
+          void this.store.retryWrite(() => {
+            if (!this.closing) this.store.markPeerSeen(name2, at);
+          }).catch((err) => this.log.warn("offline last-seen update deferred", { err: String(err) }));
+        }
         void this.routePendingJobMail().catch((err) => this.log.warn("pending job reroute deferred", { err: String(err) }));
         this.log.info("peer left", { name: conn.peer.name, agent: conn.peer.agent });
         if (!conn.peer.jobAgent) this.broadcastEvent("peer_left", conn.peer, conn);
@@ -50110,6 +50308,10 @@ var Broker = class {
     const handler = this.handlers[frame.op];
     try {
       if (!handler) throw new BridgeError("bad_request", `unknown op: ${String(frame.op)}`);
+      const turn = this.requestTurn.then(() => new Promise((resolve19) => setImmediate(resolve19)));
+      this.requestTurn = turn;
+      await turn;
+      if (this.closing) return;
       if (!conn.authed && !UNAUTHENTICATED_OPS.has(frame.op)) throw new BridgeError("unauthorized", "authenticate first");
       this.log.debug("request", { op: frame.op, peer: conn.peer?.name });
       const result = await handler(conn, frame.args ?? {});
@@ -50189,16 +50391,46 @@ var Broker = class {
     let main = this.projectMains.get(key3);
     if (!members2.some((p) => p.name === main)) {
       main = members2[0]?.name;
-      if (main) this.projectMains.set(key3, main);
+      if (main) this.recordProjectMain(key3, `project:${basename12(decorated.projectRoot)}`, main);
     }
-    return { ...decorated, projectMain: main === peer.name, projectAddress: `project:${basename12(decorated.projectRoot)}` };
+    return { ...decorated, projectMain: main === peer.name, projectAddress: `project:${basename12(decorated.projectRoot)}`, projectRoute: this.projectRoutes.get(key3) };
   }
   switchProjectMain(source, target) {
     if (!target || target.jobAgent || target.subagent || target.host) throw new BridgeError("bad_request", "Choose a live local project master.");
     const peer = this.projectPeer(target);
     if (!peer.projectGroup || source && (source.jobAgent || this.projectPeer(source).projectGroup !== peer.projectGroup)) throw new BridgeError("unauthorized", "Only a master of this project may switch its main session.");
-    this.projectMains.set(peer.projectGroup, peer.name);
+    this.recordProjectMain(peer.projectGroup, peer.projectAddress, peer.name);
     return this.projectPeer(target);
+  }
+  recordProjectMain(key3, address, main) {
+    const previous = this.projectMains.get(key3);
+    if (previous === main) return;
+    const route = { address, main, since: this.now(), previous };
+    this.projectMains.set(key3, main);
+    this.projectRoutes.set(key3, route);
+    if (previous) void this.notifyProjectMainChange(route).catch((err) => this.log.warn("project main notice deferred", { err: String(err) }));
+  }
+  async notifyProjectMainChange(route) {
+    const recipients = /* @__PURE__ */ new Set([route.previous, ...this.store.recentProjectSenders(route.address, route.previous, route.since - 24 * 60 * 60 * 1e3)]);
+    for (const recipient of recipients) {
+      if (this.closing) return;
+      if (!PEER_NAME_PATTERN.test(recipient) || this.connByName(recipient)?.peer?.jobAgent) continue;
+      const message = {
+        id: randomUUID23(),
+        from: { id: "bridge-project-routing", name: "agent-bridge", agent: "other" },
+        to: recipient,
+        recipient,
+        conversationId: `project-main-${randomUUID23()}`,
+        replyTo: null,
+        hop: 0,
+        body: `${route.address} main changed from ${route.previous} to ${route.main} at ${new Date(route.since).toISOString().slice(11, 16)} UTC. Future project-address mail routes to ${route.main}; exact session names keep direct routing.`,
+        createdAt: route.since,
+        readAt: null
+      };
+      await this.store.retryWrite(() => this.store.insert(message));
+      const conn = this.recipientConn(recipient);
+      if (conn) this.emit(conn, "message", message);
+    }
   }
   sameJobFamily(a, b, jobs = this.storedJobs()) {
     if (this.jobSupervisor(a, jobs) !== this.jobSupervisor(b, jobs)) return false;
@@ -50350,12 +50582,12 @@ Handoff note: ${receipt.note}` : "") + "\n\nYou are their supervisor. Use messag
     peer.parentJob = typeof job.parentJob === "string" ? job.parentJob : void 0;
     if (isRecord(job.args) && Array.isArray(job.args.send_to)) peer.jobSendTo = job.args.send_to;
   }
-  siblingConns(conn) {
+  siblingConns(conn, target) {
     const peer = this.requirePeer(conn);
     if (!peer.jobAgent || !peer.jobOwner) throw new BridgeError("bad_request", "not a linked job");
     const jobs = this.storedJobs();
     const supervisor = this.jobSupervisor(peer, jobs);
-    return [...this.conns].filter((c) => c !== conn && c.peer?.jobAgent && (this.sameJobFamily(peer, c.peer, jobs) || this.sharedJobs(peer, c.peer, jobs) || peer.jobSendTo?.includes(c.peer.name)));
+    return [...this.conns].filter((c) => c !== conn && c.peer?.jobAgent && (!target || c.peer.name === target) && (this.sameJobFamily(peer, c.peer, jobs) || this.sharedJobs(peer, c.peer, jobs) || peer.jobSendTo?.includes(c.peer.name)));
   }
   jobForControl(peer, ref) {
     const known = this.storedJobs().find((j) => j.name === ref || j.id === ref);
@@ -50398,7 +50630,7 @@ Handoff note: ${receipt.note}` : "") + "\n\nYou are their supervisor. Use messag
       });
       return records;
     } catch {
-      return [];
+      return [...this.recoveredJobs.values()];
     }
   }
   /** A restored legacy runner may still advertise its old owner name until its next turn. */
@@ -50406,12 +50638,12 @@ Handoff note: ${receipt.note}` : "") + "\n\nYou are their supervisor. Use messag
     const job = jobs.find((j) => `job:${j.id}` === peer.id);
     return typeof job?.supervisor === "string" ? job.supervisor : peer.jobOwner;
   }
-  storedSiblings(peer) {
+  storedSiblings(peer, target) {
     if (!this.jobsPath || !peer.jobOwner) return [];
     try {
       const records = this.storedJobs();
       const supervisor = this.jobSupervisor(peer, records);
-      return records.flatMap((j) => j && (this.sameJobFamily(peer, { id: `job:${j.id}`, jobOwner: String(j.supervisor) }, records) || this.sharedJobs(peer, { id: `job:${j.id}` }, records) || peer.jobSendTo?.includes(String(j.name))) && typeof j.id === "string" && typeof j.name === "string" && j.name !== peer.name && `job:${j.id}` !== peer.id && AGENT_KINDS.includes(j.agent) && SIBLING_STATUSES.has(j.status) ? [{ id: `job:${j.id}`, name: j.name, title: isRecord(j.args) && typeof j.args.title === "string" ? j.args.title : "", agent: j.agent, status: j.status, ...typeof j.finishedAt === "number" ? { finishedAt: j.finishedAt } : {}, report: typeof j.report === "string" ? j.report : null }] : []);
+      return records.flatMap((j) => j && (!target || j.name === target) && (this.sameJobFamily(peer, { id: `job:${j.id}`, jobOwner: String(j.supervisor) }, records) || this.sharedJobs(peer, { id: `job:${j.id}` }, records) || peer.jobSendTo?.includes(String(j.name))) && typeof j.id === "string" && typeof j.name === "string" && j.name !== peer.name && `job:${j.id}` !== peer.id && AGENT_KINDS.includes(j.agent) && SIBLING_STATUSES.has(j.status) ? [{ id: `job:${j.id}`, name: j.name, title: isRecord(j.args) && typeof j.args.title === "string" ? j.args.title : "", agent: j.agent, status: j.status, ...typeof j.finishedAt === "number" ? { finishedAt: j.finishedAt } : {}, report: typeof j.report === "string" ? j.report : null }] : []);
     } catch {
       return [];
     }
@@ -50440,8 +50672,8 @@ Handoff note: ${receipt.note}` : "") + "\n\nYou are their supervisor. Use messag
     const key3 = dedupeKey ? `${sender.id}:${dedupeKey}` : null;
     const seen = key3 ? this.sentByKey.get(key3) : void 0;
     if (seen) return seen.result;
-    const target = this.siblingConns(conn).find((c) => c.peer.name === args.to);
-    const stored = this.storedSiblings(sender).find((s) => s.name === args.to);
+    const target = this.siblingConns(conn, args.to).find((c) => c.peer.name === args.to);
+    const stored = this.storedSiblings(sender, args.to).find((s) => s.name === args.to);
     if (!target && !stored) {
       if (!isJobSendTarget(args.to) || !sender.jobSendTo?.includes(args.to) || args.to.includes("-job-") || args.to.includes("-ask-") || this.connByName(args.to)?.peer?.jobAgent) {
         throw new BridgeError("unknown_target", "no sibling with that job name or explicit send_to grant");
@@ -50465,7 +50697,7 @@ Handoff note: ${receipt.note}` : "") + "\n\nYou are their supervisor. Use messag
       if (typeof args.body !== "string" || !args.body.trim() || args.body.length > MAX_BODY_CHARS) {
         throw new BridgeError("bad_request", "invalid sibling message body");
       }
-      const id = randomUUID22();
+      const id = randomUUID23();
       const notice = {
         id,
         from: { id: sender.id, name: sender.name, agent: sender.jobAgent ?? sender.agent },
@@ -50491,7 +50723,7 @@ ${args.body}`,
       }
       throw new BridgeError("bad_request", `sibling conversation reached its ${args.maxHops}-message hop limit; message was not delivered. Durable notice ${id} saved for sender and supervisor, including the undelivered text`);
     }
-    const conversationId = parent2?.conversationId ?? `${SIBLING_CONVERSATION_PREFIX}${randomUUID22()}`;
+    const conversationId = parent2?.conversationId ?? `${SIBLING_CONVERSATION_PREFIX}${randomUUID23()}`;
     const result = await this.onSend(conn, { ...args, dedupeKey, conversationId });
     const message = result.messages[0];
     const recipientOwner = target?.peer?.jobParent ?? this.storedJobs().find((j) => j.name === args.to)?.owner;
@@ -50499,7 +50731,7 @@ ${args.body}`,
     for (const owner of observers) {
       const note = {
         ...message,
-        id: randomUUID22(),
+        id: randomUUID23(),
         recipient: owner,
         conversationId: `${conversationId}${SIBLING_NOTE_SUFFIX}`,
         body: `Sibling message to ${message.recipient}:
@@ -50526,7 +50758,7 @@ ${message.body}`
       const candidate = `${requested}-${i}`;
       if (!this.connByName(candidate)) return candidate;
     }
-    return `${requested}-${randomUUID22().slice(0, 8)}`;
+    return `${requested}-${randomUUID23().slice(0, 8)}`;
   }
   onDecide(conn, value) {
     const peer = this.requirePeer(conn);
@@ -50567,7 +50799,7 @@ ${message.body}`
   }
   queueDecision(decision, peer) {
     const message = {
-      id: randomUUID22(),
+      id: randomUUID23(),
       from: decision.author,
       to: peer.name,
       recipient: peer.name,
@@ -50658,7 +50890,7 @@ Call decisions to look up current decisions or their history.`,
     this.replayMail(conn, peer, () => {
       this.queueCurrentDecisions(peer);
     });
-    return { brokerPid: process.pid, name: peer.name, sessionId: peer.sessionId, peers: this.livePeers().filter((x) => x.id !== peer.id) };
+    return { brokerPid: process.pid, brokerVersion: APP_VERSION, name: peer.name, sessionId: peer.sessionId, peers: this.livePeers().filter((x) => x.id !== peer.id) };
   }
   /**
    * Mail sent to a "-N" stand-in of this peer's name (a reload ran the session under it briefly) moves to the
@@ -50804,11 +51036,14 @@ Call decisions to look up current decisions or their history.`,
     if (to === BROADCAST) {
       if (sender.jobAgent) throw new BridgeError("unauthorized", "job runners cannot broadcast to independent sessions");
       const ownNames = /* @__PURE__ */ new Set([sender.name, ...this.store.namesFor(sender)]);
-      const queued = this.store.broadcastNames().filter((name2) => !ownNames.has(name2) && !this.recipientConn(name2));
-      if (others.length === 0 && queued.length === 0 && !this.network?.peers().some((p) => !p.jobAgent)) {
+      const masters = new Set([...this.projectMains.values(), ...this.storedJobs().filter((job) => !job.parentJob && job.status === "running").map(primaryFor)].filter((name2) => PEER_NAME_PATTERN.test(name2)));
+      const eligible = this.store.broadcastRecipients(this.now(), masters);
+      const offline = (name2) => !ownNames.has(name2) && !this.recipientConn(name2);
+      const queued = eligible.queued.filter(offline), skipped = eligible.skipped.filter(offline);
+      if (others.length === 0 && queued.length === 0 && skipped.length === 0 && !this.network?.peers().some((p) => !p.jobAgent)) {
         throw new BridgeError("unknown_target", "no other known sessions; send to an exact name to create an offline queue");
       }
-      return { live: others, queued };
+      return { live: others, queued, skipped };
     }
     const recipient = this.recipientConn(to);
     const exact = all.find((c) => c.peer.id === to || c === recipient);
@@ -50904,9 +51139,9 @@ Call decisions to look up current decisions or their history.`,
         this.log.debug("replyTo refers to an unknown message", { replyTo });
       }
     }
-    conversationId ||= randomUUID22();
+    conversationId ||= randomUUID23();
     if (own2 && (to === own2.rootName || to === own2.owner || this.groups.members(own2, this.localPeers()).some((p) => p.name === to) || mastersFor(own2).includes(to))) conversationId = this.jobConversation(own2, to, conversationId);
-    const id = sender.jobAgent && args.dedupeKey?.startsWith(COMPLETION_DEDUPE_PREFIX) ? completionMessageId(sender.id, args.dedupeKey.slice(COMPLETION_DEDUPE_PREFIX.length)) : randomUUID22();
+    const id = sender.jobAgent && args.dedupeKey?.startsWith(COMPLETION_DEDUPE_PREFIX) ? completionMessageId(sender.id, args.dedupeKey.slice(COMPLETION_DEDUPE_PREFIX.length)) : randomUUID23();
     const createdAt = this.now();
     const base2 = {
       id,
@@ -50926,13 +51161,13 @@ Call decisions to look up current decisions or their history.`,
       return result2;
     }
     const remoteTargets = to === BROADCAST ? this.network?.peers().filter((p) => !p.jobAgent).map((p) => p.name) ?? [] : [];
-    let { live, queued } = this.resolveTargets(to, sender);
+    let { live, queued, skipped } = this.resolveTargets(to, sender);
     if (own2 && to === this.jobRecipient(own2)) {
       for (let i = live.length - 1; i >= 0; i--) {
         if (live[i].peer?.unavailable) queued.push(live.splice(i, 1)[0].peer.name);
       }
     }
-    if (conversationId.startsWith(SIBLING_CONVERSATION_PREFIX) && (queued.some((name2) => !sender.jobAgent || !this.storedSiblings(sender).some((s) => s.name === name2)) || live.some((c) => c.peer.jobAgent && (!sender.jobAgent || !sender.jobOwner || !this.sameJobFamily(sender, c.peer) && !this.sharedJobs(sender, c.peer) && !sender.jobSendTo?.includes(c.peer.name))))) {
+    if (conversationId.startsWith(SIBLING_CONVERSATION_PREFIX) && (queued.some((name2) => !sender.jobAgent || !this.storedSiblings(sender, name2).some((s) => s.name === name2)) || live.some((c) => c.peer.jobAgent && (!sender.jobAgent || !sender.jobOwner || !this.sameJobFamily(sender, c.peer) && !this.sharedJobs(sender, c.peer) && !sender.jobSendTo?.includes(c.peer.name))))) {
       throw new BridgeError("unauthorized", "sibling chat requires the same supervisor or an explicit send_to job grant");
     }
     let replyRestrictions = conversationId.startsWith(CONTROL_CONVERSATION_PREFIX) ? [] : [...live.map((c) => c.peer.name), ...queued].flatMap((name2) => {
@@ -50978,7 +51213,8 @@ Call decisions to look up current decisions or their history.`,
       deliveredTo: live.map((c) => c.peer.name),
       queuedFor: queued
     });
-    const result = { messages, deliveredTo: live.map((c) => c.peer.name), queuedFor: queued, recipientStates: live.map((c) => ({ name: c.peer.name, activity: c.peer.activity, autoWake: c.peer.autoWake, wakeOnDirect: c.peer.wakeOnDirect, wakeAvailable: c.peer.wakeAvailable, wakeMaxHops: c.peer.wakeMaxHops })) };
+    const result = { messages, ...skipped ? { skippedFor: skipped } : {}, deliveredTo: live.map((c) => c.peer.name), queuedFor: queued, recipientStates: live.map((c) => ({ name: c.peer.name, activity: c.peer.activity, autoWake: c.peer.autoWake, wakeOnDirect: c.peer.wakeOnDirect, wakeAvailable: c.peer.wakeAvailable, wakeMaxHops: c.peer.wakeMaxHops })) };
+    if (to.startsWith("project:") && live[0]?.peer) result.projectRoute = this.projectPeer(live[0].peer).projectRoute;
     if (replyRestrictions.length) result.replyRestrictions = replyRestrictions;
     for (const recipient of remoteTargets) {
       try {
@@ -50996,6 +51232,10 @@ Call decisions to look up current decisions or their history.`,
         this.log.warn("broadcast recipient delivery failed", { id, recipient, err: String(err) });
       }
     }
+    result.wakeRequestedFor = (result.recipientStates ?? []).filter((peer) => {
+      const message = result.messages.find((m) => m.recipient === peer.name);
+      return Boolean(message && peer.wakeAvailable && (peer.autoWake || peer.wakeOnDirect && (message.to === BROADCAST || message.to === peer.name || message.recipient === peer.name && !AGENT_KINDS.includes(message.to))) && message.hop < (peer.wakeMaxHops ?? DEFAULT_MAX_HOPS) && !isQuietMessage(message) && !message.conversationId.endsWith(":note"));
+    }).map((peer) => peer.name);
     return result;
   }
   /** A pending response is one frame, unlike streamed replay events. Bound it by bytes as well as rows. */
@@ -51115,6 +51355,7 @@ var BridgeClient = class _BridgeClient extends EventEmitter {
   nextId = 1;
   pending = /* @__PURE__ */ new Map();
   closed = false;
+  brokerVersion;
   /** Connect to an existing broker. Rejects with the socket error (ENOENT/ECONNREFUSED if nobody listens). */
   static connect(pipePath, log, timeoutMs = CONNECT_TIMEOUT_MS) {
     return new Promise((resolve19, reject) => {
@@ -51145,7 +51386,18 @@ var BridgeClient = class _BridgeClient extends EventEmitter {
         this.pending.delete(id);
         reject(new Error(`broker request timed out: ${op}`));
       }, timeoutMs);
-      this.pending.set(id, { resolve: resolve19, reject, timer });
+      this.pending.set(id, { resolve: (value) => {
+        const hello = value;
+        const version2 = hello?.brokerVersion ?? (Array.isArray(hello?.peers) ? hello.peers.find((peer) => peer.pid === hello.brokerPid)?.version : void 0);
+        if (typeof version2 === "string") this.brokerVersion = version2;
+        resolve19(value);
+      }, reject: (err) => {
+        if (/unknown op:/.test(err.message)) reject(new BridgeError(
+          "protocol_mismatch",
+          `Broker ${this.brokerVersion ? "v" + this.brokerVersion : "version unknown (older protocol)"} does not support ${op} required by server v${APP_VERSION}. Update the broker host and reload its session after current jobs finish; no operation was applied.`
+        ));
+        else reject(err);
+      }, timer });
       this.socket.write(encodeFrame({ t: "req", id, op, args }));
     });
   }
@@ -51188,7 +51440,7 @@ async function processIdentity(pid) {
 }
 
 // src/core/job-control.ts
-import { randomUUID as randomUUID23 } from "node:crypto";
+import { randomUUID as randomUUID24 } from "node:crypto";
 var DASHBOARD_JOB_CONVERSATION = "jobctl-dashboard";
 var CONTROL_TIMEOUT_MS = 1e4;
 var JobControlError = class extends Error {
@@ -51200,7 +51452,7 @@ var JobControlError = class extends Error {
 };
 async function controlDashboardJob(node2, owner, job, command) {
   if (!(await node2.peers()).some((p) => p.name === owner)) throw new JobControlError("The owning session is not connected. Reopen it to continue this subagent.", "offline");
-  const requestId = randomUUID23();
+  const requestId = randomUUID24();
   let receive;
   let timer;
   const reply2 = new Promise((resolve19, reject) => {
@@ -51237,7 +51489,7 @@ var BridgeNode = class extends EventEmitter2 {
   constructor(opts) {
     super();
     this.opts = opts;
-    this.id = opts.id ?? randomUUID24();
+    this.id = opts.id ?? randomUUID25();
     this.currentName = opts.name;
     this.currentCwd = opts.cwd;
     this.autoWake = opts.autoWake;
@@ -51348,9 +51600,9 @@ var BridgeNode = class extends EventEmitter2 {
   }
   /** Doubling delay for background retries, capped; reset once connected. */
   nextBackoff() {
-    const delay5 = this.reconnectDelay;
-    this.reconnectDelay = Math.min(delay5 * 2, RECONNECT_BACKOFF_MAX_MS);
-    return delay5;
+    const delay6 = this.reconnectDelay;
+    this.reconnectDelay = Math.min(delay6 * 2, RECONNECT_BACKOFF_MAX_MS);
+    return delay6;
   }
   /**
    * Retry the election later until connected or stopped. Also after "unauthorized" / "protocol_mismatch":
@@ -51540,7 +51792,7 @@ var BridgeNode = class extends EventEmitter2 {
   /** quiet: not part of a conversation of this agent (no listen window, replies are not awaited), e.g. control messages to a job runner. */
   send(args, opts = {}) {
     return this.withClient(async (c) => {
-      const res = await this.sendRequest(c, "send", { ...args, dedupeKey: args.dedupeKey || randomUUID24() });
+      const res = await this.sendRequest(c, "send", { ...args, dedupeKey: args.dedupeKey || randomUUID25() });
       if (opts.quiet) return res;
       this.lastSent = Date.now();
       if (!args.replyTo) for (const m of res.messages) this.asked.add(m.id);
@@ -51629,7 +51881,7 @@ var BridgeNode = class extends EventEmitter2 {
     return this.withClient((c) => c.request("siblings", {}));
   }
   sendSibling(args, maxHops) {
-    return this.withClient((c) => this.sendRequest(c, "sendSibling", { ...args, maxHops, dedupeKey: args.dedupeKey || randomUUID24() }));
+    return this.withClient((c) => this.sendRequest(c, "sendSibling", { ...args, maxHops, dedupeKey: args.dedupeKey || randomUUID25() }));
   }
   async updateJob(patch) {
     Object.assign(this.opts, patch);
@@ -51866,6 +52118,7 @@ var CodexWaker = class {
   inFlight = false;
   /** Bumped on every activity report, so a finishing wake-up can tell whether hooks reported since it began. */
   reports = 0;
+  arrivals = 0;
   setThreadId(id) {
     if (id && id !== this.threadId) {
       this.threadId = id;
@@ -51878,7 +52131,7 @@ var CodexWaker = class {
     if (state === "idle" && this.hasWakeableMail()) this.schedule();
   }
   hasWakeableMail() {
-    return this.node.unread().some((m) => m.hop < this.cfg.maxHops && !isQuietMessage(m) && (this.node.autoWakeEnabled || m.from.id.startsWith("job:") && m.conversationId.endsWith(":fallback") || !m.conversationId.endsWith(":note") && (this.node.isNotificationAwaited(m) || this.cfg.wakeOnDirect && m.to !== BROADCAST && !AGENT_KINDS.includes(m.to) && (m.to === this.node.name || m.to === this.node.id || m.recipient === this.node.name))));
+    return this.node.unread().some((m) => m.hop < this.cfg.maxHops && !isQuietMessage(m) && (this.node.autoWakeEnabled || m.from.id.startsWith("job:") && m.conversationId.endsWith(":fallback") || !m.conversationId.endsWith(":note") && (this.node.isNotificationAwaited(m) || this.cfg.wakeOnDirect && (m.to === BROADCAST || !AGENT_KINDS.includes(m.to) && (m.to === this.node.name || m.to === this.node.id || m.recipient === this.node.name)))));
   }
   idleWithMail() {
     return this.state === "idle" && this.hasWakeableMail();
@@ -51889,6 +52142,7 @@ var CodexWaker = class {
       this.log.info("not waking codex: hop limit reached", { id: m.id, hop: m.hop });
       return;
     }
+    this.arrivals++;
     if (this.idleWithMail()) this.schedule();
   }
   schedule() {
@@ -51908,6 +52162,7 @@ var CodexWaker = class {
     this.inFlight = true;
     this.state = "busy";
     const reportsAtStart = this.reports;
+    const arrivalsAtStart = this.arrivals;
     const failed = () => {
       if (this.reports === reportsAtStart) this.state = "idle";
     };
@@ -51931,7 +52186,8 @@ var CodexWaker = class {
       this.log.warn("codex queue failed", { err: err.message });
     } finally {
       this.inFlight = false;
-      if (this.reports !== reportsAtStart && this.idleWithMail()) this.schedule();
+      if (this.reports === reportsAtStart) this.state = "idle";
+      if ((this.reports !== reportsAtStart || this.arrivals !== arrivalsAtStart) && this.idleWithMail()) this.schedule();
     }
   }
 };
@@ -52157,7 +52413,7 @@ import { join as join68 } from "node:path";
 import { DatabaseSync as DatabaseSync16 } from "node:sqlite";
 
 // src/cli/dashboard-key.ts
-import { randomBytes as randomBytes9, randomUUID as randomUUID25 } from "node:crypto";
+import { randomBytes as randomBytes9, randomUUID as randomUUID26 } from "node:crypto";
 import { existsSync as existsSync28, linkSync, mkdirSync as mkdirSync30, readFileSync as readFileSync33, renameSync as renameSync9, unlinkSync as unlinkSync3, writeFileSync as writeFileSync15 } from "node:fs";
 import { join as join64 } from "node:path";
 var DASHBOARD_KEY_FILE = "dashboard-key";
@@ -52166,7 +52422,7 @@ function loadDashboardKey(home, legacy, reset = false) {
   mkdirSync30(home, { recursive: true, mode: 448 });
   const file2 = join64(home, DASHBOARD_KEY_FILE);
   if (reset || !existsSync28(file2)) {
-    const temp = join64(home, `.dashboard-key-${randomUUID25()}`);
+    const temp = join64(home, `.dashboard-key-${randomUUID26()}`);
     let created = false;
     try {
       writeFileSync15(temp, "", { flag: "wx", mode: 384 });
@@ -52652,6 +52908,15 @@ main.wrap { padding-top: 32px; max-width: 1240px; }
 .sess-actions button.ghost { min-height: 30px; padding: 4px 12px; border-radius: 7px; }
 .chip.main-chip { color: var(--accent); background: var(--accent-soft); border-color: transparent; font-weight: 600; }
 .tree-proj { padding: 8px 10px 2px; font-size: 11.5px; color: var(--faint); min-width: 0; }
+/* A project shared by several sessions: the project is the headline, its sessions hang beneath it. */
+.tree-group { margin: 4px 0 6px; }
+.tree-group-head { display: flex; align-items: center; gap: 8px; padding: 6px 8px 2px 10px; font-size: 13.5px; font-weight: 650; color: var(--text); min-width: 0; }
+.tree-group-head .ell { flex: 1; min-width: 0; }
+.tree-sess.member { margin-left: 14px; border-left: 1.5px solid var(--line); border-radius: 0 8px 8px 0; }
+.tree-sess.member > a { padding: 4px 8px 4px 8px; font-size: 13px; }
+.tree-sess.member .lbl small { display: inline; margin-left: 6px; font-size: 11.5px; }
+.tree-sess.member.secondary > a { color: var(--muted); font-weight: 500; }
+.tree-sess.member .main-tag { margin-left: 6px; padding: 0 6px; border-radius: 6px; font-size: 10.5px; font-weight: 600; color: var(--accent); background: var(--accent-soft); vertical-align: 1px; }
 .tree-sess { position: relative; border-radius: 8px; }
 .tree-sess:hover { background: color-mix(in srgb, var(--panel) 60%, transparent); }
 .tree-sess.cur { background: var(--panel); box-shadow: var(--shadow); }
@@ -53586,9 +53851,26 @@ function projectSidebar(items) {
   }
   // The sidebar lists sessions only (subagents live in each session's own column). A project heading
   // only appears when two or more sessions share the project.
-  return [...projects.values()].map((p) =>
-    (p.title && p.items.length > 1 ? '<div class="tree-proj"><span class="ell">' + esc(p.title) + "</span></div>" : "") + p.items.map(sideSession).join("")
-  ).join("");
+  return [...projects.values()].map((p) => {
+    if (!p.title || p.items.length < 2) return p.items.map(sideSession).join("");
+    // A shared project: the project is the headline; its sessions are compact members, main first.
+    const members = [...p.items].sort((a, b) => Number(!!b.peer?.projectMain) - Number(!!a.peer?.projectMain));
+    const running = members.reduce((n, x) => n + (x.running || 0), 0);
+    return '<div class="tree-group"><div class="tree-group-head"><span class="ell">' + esc(p.title) + "</span>" +
+      (running ? '<span class="count" title="subagents working">' + running + "</span>" : "") + "</div>" +
+      members.map(sideMember).join("") + "</div>";
+  }).join("");
+}
+
+/** One session inside a shared project: the agent is the label, the main one is marked, a secondary is quieter. */
+function sideMember(x) {
+  const p = x.peer || {}, cur = x.name === route.session, main = !!p.projectMain;
+  const agent = { claude: "Claude", codex: "Codex", opencode: "opencode", antigravity: "Antigravity" }[p.agent] || p.agent || "session";
+  const state = p.unavailable ? "unavailable" : p.activity || "connected";
+  return '<div class="tree-sess member' + (main ? " main" : " secondary") + (cur ? " cur" : "") + (x.live ? "" : " ended") + '">' +
+    '<a href="' + href(x.name) + '" title="' + esc(x.name + (p.cwd ? " \xB7 " + p.cwd : "")) + '"' + (cur ? ' aria-current="page"' : "") + ">" + dot(p.activity) +
+    '<span class="lbl ell">' + esc(agent) + (main ? '<span class="main-tag">main</span>' : "") + '<small class="ell">' + esc(state) + "</small></span>" +
+    (x.running ? '<span class="count" title="subagents working">' + x.running + "</span>" : "") + "</a></div>";
 }
 
 const narrow = () => typeof matchMedia === "function" && matchMedia("(max-width: 640px)").matches;
@@ -55229,7 +55511,7 @@ function parseNetworkAddress(address) {
 // src/core/doctor.ts
 import { existsSync as existsSync29, lstatSync as lstatSync11, mkdirSync as mkdirSync31, readFileSync as readFileSync34, readdirSync as readdirSync19, renameSync as renameSync10 } from "node:fs";
 import { basename as basename13, dirname as dirname25, join as join65, relative as relative9 } from "node:path";
-import { randomUUID as randomUUID26 } from "node:crypto";
+import { randomUUID as randomUUID27 } from "node:crypto";
 import { DatabaseSync as DatabaseSync14 } from "node:sqlite";
 function doctor(home, now = Date.now()) {
   const report = { checkedAt: now, ok: true, schema: [], findings: [], sizes: [], totalBytes: 0, backups: listBackups(home) };
@@ -56681,11 +56963,12 @@ function registerTools(mcp, ctx, targets) {
         ...others.map((p) => formatPeer(p))
       ];
       const quietCount = n.unread().filter(isQuietMessage).length;
-      if (quietCount) lines.push(`${quietCount} retained quiet message(s), available in inbox/history on request; excluded from actionable unread mail.`);
+      if (quietCount) lines.push(`${quietCount} retained quiet message(s), available with inbox(include_quiet=true) or history; excluded from actionable unread mail.`);
       const load = await n.brokerLoad().catch(() => null);
       if (load && load.connectedJobs > load.testedJobs) lines.push(`Broker load warning: ${load.connectedJobs} jobs are connected; the load check covered ${load.testedJobs}. Queue additional work to stay within the measured load.`);
       const groupPeers = peers.filter((p) => p.projectGroup && !p.host);
       if (groupPeers.length) lines.push("Local project groups:", ...groupPeers.map((p) => `- ${p.projectAddress}: ${p.name} (${p.projectMain ? "main" : "secondary"}${p.unavailable ? ", unavailable" : ""})`));
+      for (const p of groupPeers.filter((p2) => p2.projectMain && p2.projectRoute)) lines.push(formatProjectRoute(p.projectRoute));
       if (shared.length) lines.push("Project jobs (shared local authority):", ...shared.map((j) => `- ${j.name} (${j.agent}, ${j.status}; primary ${j.owner})${isRecord(j.args) && j.args.title ? ` "${j.args.title}"` : ""}`));
       const transferNotes = /* @__PURE__ */ new Map();
       for (const message of n.unread()) {
@@ -56721,7 +57004,7 @@ function registerTools(mcp, ctx, targets) {
     "send",
     {
       title: "Send message",
-      description: `Send a message to another agent. "to" is a peer name from "peers", an agent kind ("claude", "codex") when exactly one is online, or "${BROADCAST}" for everyone. Delivery means queued in the recipient inbox, not read. Broadcasts include registered offline local sessions and connected paired-PC sessions, with delivered, queued or failed results per recipient. Direct messages wake idle Claude, Codex and opencode sessions according to wakeOnDirect and available CLI transport; other recipients may read them on their next turn. Auto-wake is handled on the recipient PC, including paired PCs; it is never enabled by send. Use wait_for_message(read_receipt_of=<sent id>) to wait for consumption. If the recipient is offline the message waits for it. When answering with new information, pass its id as reply_to. Do not send pure acknowledgements or repeat a reply as a status note. Delegated jobs can send to their parent, siblings, or exact local session/job names explicitly granted with send_to at spawn. Sibling messages arrive live or wait for the next turn, with a quiet supervisor copy. Sending to a finished sibling returns its saved final report immediately; it will not answer. Do not wait for finished siblings or for read receipts from them. Other sessions and broadcasts are unavailable. Peers shows grants and the sibling thread limit before composing.`,
+      description: `Send a message to another agent. "to" is a peer name from "peers", an agent kind ("claude", "codex") when exactly one is online, or "${BROADCAST}" for everyone. Delivery means queued in the recipient inbox, not read. Broadcasts wake every live session according to its settings and include recently seen offline local sessions or known project masters and connected paired-PC sessions, with delivered, queued or failed results per recipient. Direct messages wake idle Claude, Codex and opencode sessions according to wakeOnDirect and available CLI transport; other recipients may read them on their next turn. Auto-wake is handled on the recipient PC, including paired PCs; it is never enabled by send. Use wait_for_message(read_receipt_of=<sent id>) to wait for consumption. If the recipient is offline the message waits for it. When answering with new information, pass its id as reply_to. Do not send pure acknowledgements or repeat a reply as a status note. Delegated jobs can send to their parent, siblings, or exact local session/job names explicitly granted with send_to at spawn. Sibling messages arrive live or wait for the next turn, with a quiet supervisor copy. Sending to a finished sibling returns its saved final report immediately; it will not answer. Do not wait for finished siblings or for read receipts from them. Other sessions and broadcasts are unavailable. Peers shows grants and the sibling thread limit before composing.`,
       inputSchema: {
         to: external_exports.string().min(1).describe('Peer name, agent kind ("claude" / "codex") or "*"'),
         message: external_exports.string().min(1).max(MAX_BODY_CHARS).describe("Message text (Markdown is fine)"),
@@ -56767,6 +57050,7 @@ ${formatReplyRestrictions(result).join("\n")}`);
       if (a.reply_to) n.markRead([a.reply_to]);
       const res = await n.send({ to: a.to, body: a.message, replyTo: a.reply_to, conversationId: a.conversation_id });
       const first = res.messages[0];
+      if (!first) return text2(["No recipients were eligible for this broadcast.", ...formatDelivery(res, cfg.maxHops)].join("\n"));
       const lines = [t("send.ok", { id: first.id, conversation: first.conversationId })];
       lines.push(...formatDelivery(res, cfg.maxHops));
       if (res.queuedFor.length) lines.push(t("send.queued", { names: res.queuedFor.join(", ") }));
@@ -56822,23 +57106,24 @@ ${formatReplyRestrictions(result).join("\n")}`);
     "inbox",
     {
       title: "Read inbox",
-      description: "Read unread messages from other agents, including quiet transfer progress, sibling copies and acknowledgements on demand. Messages are marked read unless mark_read is false. Peeking with mark_read=false does not produce a read receipt.",
+      description: "Read unread messages from other agents, with quiet transfer progress, sibling copies and acknowledgements excluded by default. Use include_quiet=true (or a read-only mark_read=false peek) to inspect retained copies. Messages are marked read unless mark_read is false. Peeking with mark_read=false does not produce a read receipt.",
       inputSchema: {
-        mark_read: external_exports.boolean().optional().describe("Mark returned messages as read (default true)"),
+        include_quiet: external_exports.boolean().optional().describe("Include historical quiet coordination copies (default false)"),
+        mark_read: external_exports.boolean().optional().describe("Mark returned messages as read (default true); false also permits inspecting retained quiet copies"),
         limit: external_exports.number().int().min(1).max(100).optional()
       }
     },
     guarded("inbox", async (a) => {
       if (ctx.childInbox) {
-        const msgs2 = ctx.childInbox.unread().slice(0, a.limit ?? HOOK_MAX_MESSAGES);
+        const msgs2 = ctx.childInbox.unread().filter((m) => (a.include_quiet ?? a.mark_read === false) || !isQuietMessage(m)).slice(0, a.limit ?? HOOK_MAX_MESSAGES);
         if (a.mark_read !== false) ctx.childInbox.markRead(msgs2.map((m) => m.id));
-        return text2(msgs2.length ? formatMessages(msgs2) : t("inbox.empty"));
+        return text2(msgs2.length ? formatInboxMessages(msgs2) : t("inbox.empty"));
       }
       const n = requireNode();
-      const msgs = n.unread().slice(0, a.limit ?? HOOK_MAX_MESSAGES);
+      const msgs = n.unread().filter((m) => (a.include_quiet ?? a.mark_read === false) || !isQuietMessage(m)).slice(0, a.limit ?? HOOK_MAX_MESSAGES);
       if (msgs.length === 0) return text2(t("inbox.empty"));
       if (a.mark_read !== false) n.markRead(msgs.map((m) => m.id));
-      return text2(formatMessages(msgs));
+      return text2(formatInboxMessages(msgs));
     })
   );
   register(
@@ -56863,7 +57148,7 @@ ${formatReplyRestrictions(result).join("\n")}`);
         if (!ctx.childInbox.unread().some(matches)) await ctx.childInbox.wait(singleWaitTimeoutMs(a.timeout_sec ?? DEFAULT_WAIT_SEC), extra.signal, matches);
         const msgs = ctx.childInbox.unread().filter(matches).slice(0, HOOK_MAX_MESSAGES);
         ctx.childInbox.markRead(msgs.map((m) => m.id));
-        return text2(msgs.length ? formatMessages(msgs) : t("inbox.empty"));
+        return text2(msgs.length ? formatInboxMessages(msgs) : t("inbox.empty"));
       }
       const n = requireNode();
       if (extra.signal.aborted) return text2("Wait cancelled before registration; mail remains queued.");
@@ -57002,7 +57287,7 @@ ${formatReplyRestrictions(result).join("\n")}`);
     });
     const resumeFor = (a) => (message, sessionId, workdir, worktree) => (
       // Saved settings win, including removal of an earlier exact permission override.
-      background((job) => resumeArgs(a, job.name, message, sessionId, workdir, worktree, job.args), a)
+      background((job) => !sessionId ? { ...a, ...job.args, prompt: message, _job: job.name } : resumeArgs(a, job.name, message, sessionId, workdir, worktree, job.args), a)
     );
     resumers[target] = resumeFor;
     if (!targets.includes(target)) continue;
@@ -57087,14 +57372,13 @@ ${res.text || t("delegate.empty")}`, res.isError);
         if (a.host && !ctx.runners) throw new BridgeError("bad_request", "Remote jobs require the bundled runner. Update and reload this session.");
         const jobs = ctx.jobs;
         if (!jobs) throw new BridgeError("bad_request", t("err.delegatedSession"));
-        if (!jobs.canStart()) return text2(t("jobs.limit", { max: jobs.limit }), true);
         const job = jobs.start(target, a.model ?? defaultModel, a.prompt, background((job2) => ({ ...a, _job: job2.name }), a), resumeFor(a), keep(a));
         const cwd = a.cwd || ctx.cwd();
         const access = a.access ?? (a.worktree || isBridgeWorktree(cwd, ctx.home) ? "edit" : null);
         const exact = a.sandbox !== void 0 || a.permission_mode !== void 0 || a.auto_approve !== void 0;
         const note = exact ? "" : `
 ${access === "edit" ? t("jobs.accessEdit") : access === "ask" ? t("jobs.accessAsk") : t("jobs.accessRead")}`;
-        return text2(`${t("jobs.started", { name: job.name })}${note}${derivedTitle ? `
+        return text2(`${job.waitingForStart ? `Subagent ${job.name} queued for a free slot (maximum ${jobs.limit}).` : t("jobs.started", { name: job.name })}${note}${derivedTitle ? `
 Title derived from prompt: "${a.title}".` : ""}`);
       })
     );

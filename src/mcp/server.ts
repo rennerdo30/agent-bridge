@@ -41,7 +41,7 @@ import { resolveDbPath, resolveHome, resolvePipePath } from "../core/paths.js";
 import { inspectClaudeLaunch } from "../core/procinfo.js";
 import { loadOrCreateToken } from "../core/token.js";
 import { BridgeError, BROADCAST, CODING_AGENTS, isQuietMessage, SIBLING_CONVERSATION_PREFIX, TRANSFER_PROGRESS_PREFIX, type AgentKind, type BridgeMessage, type CodingAgent } from "../core/protocol.js";
-import { formatReplyRestrictions, formatDelivery, formatDuration, formatMessage, formatMessages, formatPeer, formatVersionSkew } from "./format.js";
+import { formatInboxMessages, formatProjectRoute, formatReplyRestrictions, formatDelivery, formatDuration, formatMessage, formatMessages, formatPeer, formatVersionSkew } from "./format.js";
 import { CodexWaker, type Activity } from "./codex-wake.js";
 import { buildHookResponse, discardFinishedNotes, type HookEvent } from "./hooks.js";
 import { ACCESS_LEVELS, DELEGATION_TARGETS, nativeSubagentsSchema, type Access } from "./targets.js";
@@ -705,11 +705,12 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
         ...others.map((p) => formatPeer(p)),
       ];
       const quietCount = n.unread().filter(isQuietMessage).length;
-      if (quietCount) lines.push(`${quietCount} retained quiet message(s), available in inbox/history on request; excluded from actionable unread mail.`);
+      if (quietCount) lines.push(`${quietCount} retained quiet message(s), available with inbox(include_quiet=true) or history; excluded from actionable unread mail.`);
       const load = await n.brokerLoad().catch(() => null); // Earlier brokers do not expose the additive load probe.
       if (load && load.connectedJobs > load.testedJobs) lines.push(`Broker load warning: ${load.connectedJobs} jobs are connected; the load check covered ${load.testedJobs}. Queue additional work to stay within the measured load.`);
       const groupPeers = peers.filter((p) => p.projectGroup && !p.host);
       if (groupPeers.length) lines.push("Local project groups:", ...groupPeers.map((p) => `- ${p.projectAddress}: ${p.name} (${p.projectMain ? "main" : "secondary"}${p.unavailable ? ", unavailable" : ""})`));
+      for (const p of groupPeers.filter((p) => p.projectMain && p.projectRoute)) lines.push(formatProjectRoute(p.projectRoute!));
       if (shared.length) lines.push("Project jobs (shared local authority):", ...shared.map((j) => `- ${j.name} (${j.agent}, ${j.status}; primary ${j.owner})${isRecord(j.args) && j.args.title ? ` \"${j.args.title}\"` : ""}`));
       const transferNotes = new Map<string, BridgeMessage>();
       for (const message of n.unread()) {
@@ -748,7 +749,7 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
       title: "Send message",
       description:
         `Send a message to another agent. "to" is a peer name from "peers", an agent kind ("claude", "codex") when exactly one is online, or "${BROADCAST}" for everyone. ` +
-        "Delivery means queued in the recipient inbox, not read. Project addresses include available live secondaries. Broadcasts include registered offline local sessions, connected paired-PC sessions and your running jobs; jobs:* targets only your running jobs through existing links, even when authority RPCs are unavailable. Per-recipient results report queueing, not consumption. Direct messages wake idle Claude, Codex and opencode sessions according to wakeOnDirect and available CLI transport; other recipients may read them on their next turn. " +
+        "Delivery means queued in the recipient inbox, not read. Project addresses include available live secondaries. Broadcasts wake every live session according to its settings and include recently seen offline local sessions or known project masters, connected paired-PC sessions and your running jobs; jobs:* targets only your running jobs through existing links, even when authority RPCs are unavailable. Per-recipient results report queueing, not consumption. Direct messages wake idle Claude, Codex and opencode sessions according to wakeOnDirect and available CLI transport; other recipients may read them on their next turn. " +
         "Auto-wake is handled on the recipient PC, including paired PCs; it is never enabled by send. Use wait_for_message(read_receipt_of=<sent id>) to wait for consumption. " +
         "If the recipient is offline the message waits for it. When answering with new information, pass its id as reply_to. Do not send pure acknowledgements or repeat a reply as a status note. " +
         "Delegated jobs can send to their parent, siblings, or exact local session/job names explicitly granted with send_to at spawn. Sibling messages arrive live or wait for the next turn, with a quiet supervisor copy. Sending to a finished sibling returns its saved final report immediately; it will not answer. Do not wait for finished siblings or for read receipts from them. Other sessions and broadcasts are unavailable. Peers shows grants and the sibling thread limit before composing.",
@@ -808,7 +809,8 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
           if (!jobLines.length) throw err;
           throw new Error(`Session broadcast failed: ${(err as Error).message}\nRunning-job broadcast already queued:\n${jobLines.join("\n")}. Do not resend to these jobs without checking consumption.`);
         });
-      const first = res.messages[0]!;
+      const first = res.messages[0];
+      if (!first) return text(["No session recipients were eligible for this broadcast.", ...formatDelivery(res, cfg.maxHops), ...jobLines].join("\n"));
       const lines = [t("send.ok", { id: first.id, conversation: first.conversationId })];
       lines.push(...formatDelivery(res, cfg.maxHops));
       if (jobLines.length) lines.push(`Running-job broadcast:\n${jobLines.join("\n")}`);
@@ -871,23 +873,24 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
     "inbox",
     {
       title: "Read inbox",
-      description: "Read unread messages from other agents, including quiet transfer progress, sibling copies and acknowledgements on demand. Messages are marked read unless mark_read is false. Peeking with mark_read=false does not produce a read receipt.",
+      description: "Read unread messages from other agents, with quiet transfer progress, sibling copies and acknowledgements excluded by default. Use include_quiet=true (or a read-only mark_read=false peek) to inspect retained copies. Messages are marked read unless mark_read is false. Peeking with mark_read=false does not produce a read receipt.",
       inputSchema: {
-        mark_read: z.boolean().optional().describe("Mark returned messages as read (default true)"),
+        include_quiet: z.boolean().optional().describe("Include historical quiet coordination copies (default false)"),
+        mark_read: z.boolean().optional().describe("Mark returned messages as read (default true); false also permits inspecting retained quiet copies"),
         limit: z.number().int().min(1).max(100).optional(),
       },
     },
-    guarded("inbox", async (a: { mark_read?: boolean; limit?: number }) => {
+    guarded("inbox", async (a: { mark_read?: boolean; limit?: number; include_quiet?: boolean }) => {
       if (ctx.childInbox) {
-        const msgs = ctx.childInbox.unread().slice(0, a.limit ?? HOOK_MAX_MESSAGES);
+        const msgs = ctx.childInbox.unread().filter((m) => (a.include_quiet ?? a.mark_read === false) || !isQuietMessage(m)).slice(0, a.limit ?? HOOK_MAX_MESSAGES);
         if (a.mark_read !== false) ctx.childInbox.markRead(msgs.map((m) => m.id));
-        return text(msgs.length ? formatMessages(msgs) : t("inbox.empty"));
+        return text(msgs.length ? formatInboxMessages(msgs) : t("inbox.empty"));
       }
       const n = requireNode();
-      const msgs = n.unread().slice(0, a.limit ?? HOOK_MAX_MESSAGES);
+      const msgs = n.unread().filter((m) => (a.include_quiet ?? a.mark_read === false) || !isQuietMessage(m)).slice(0, a.limit ?? HOOK_MAX_MESSAGES);
       if (msgs.length === 0) return text(t("inbox.empty"));
       if (a.mark_read !== false) n.markRead(msgs.map((m) => m.id));
-      return text(formatMessages(msgs));
+      return text(formatInboxMessages(msgs));
     }),
   );
 
@@ -922,7 +925,7 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
         if (!ctx.childInbox.unread().some(matches)) await ctx.childInbox.wait(singleWaitTimeoutMs(a.timeout_sec ?? DEFAULT_WAIT_SEC), extra.signal, matches);
         const msgs = ctx.childInbox.unread().filter(matches).slice(0, HOOK_MAX_MESSAGES);
         ctx.childInbox.markRead(msgs.map((m) => m.id));
-        return text(msgs.length ? formatMessages(msgs) : t("inbox.empty"));
+        return text(msgs.length ? formatInboxMessages(msgs) : t("inbox.empty"));
       }
       const n = requireNode();
       if (extra.signal.aborted) return text("Wait cancelled before registration; mail remains queued.");
@@ -1110,7 +1113,9 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
       (a: DelegateArgs): Resume =>
       (message, sessionId, workdir, worktree) =>
         // Saved settings win, including removal of an earlier exact permission override.
-        background((job) => resumeArgs(a, job.name, message, sessionId, workdir, worktree, job.args), a);
+        background((job) => !sessionId
+          ? { ...a, ...job.args, prompt: message, _job: job.name } as DelegateArgs
+          : resumeArgs(a, job.name, message, sessionId, workdir, worktree, job.args), a);
     resumers[target] = resumeFor;
     // An inherited job can use the same agent kind as its new supervisor.
     if (!targets.includes(target)) continue;
@@ -1207,14 +1212,13 @@ ${res.text || t("delegate.empty")}`, res.isError);
         if (a.host && !ctx.runners) throw new BridgeError("bad_request", "Remote jobs require the bundled runner. Update and reload this session.");
         const jobs = ctx.jobs;
         if (!jobs) throw new BridgeError("bad_request", t("err.delegatedSession"));
-        if (!jobs.canStart()) return text(t("jobs.limit", { max: jobs.limit }), true);
         const job = jobs.start(target, a.model ?? defaultModel, a.prompt, background((job) => ({ ...a, _job: job.name }), a), resumeFor(a), keep(a));
         const cwd = a.cwd || ctx.cwd();
         const access = a.access ?? (a.worktree || isBridgeWorktree(cwd, ctx.home) ? "edit" : null);
         // Exact target options (sandbox, permission_mode, auto_approve) say it themselves.
         const exact = a.sandbox !== undefined || a.permission_mode !== undefined || a.auto_approve !== undefined;
         const note = exact ? "" : `\n${access === "edit" ? t("jobs.accessEdit") : access === "ask" ? t("jobs.accessAsk") : t("jobs.accessRead")}`;
-        return text(`${t("jobs.started", { name: job.name })}${note}${derivedTitle ? `\nTitle derived from prompt: "${a.title}".` : ""}`);
+        return text(`${job.waitingForStart ? `Subagent ${job.name} queued for a free slot (maximum ${jobs.limit}).` : t("jobs.started", { name: job.name })}${note}${derivedTitle ? `\nTitle derived from prompt: "${a.title}".` : ""}`);
       }),
     );
   }

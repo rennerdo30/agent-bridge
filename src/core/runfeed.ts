@@ -1,7 +1,7 @@
 import { appendFileSync, mkdirSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { isRecord, mergeStoreFields, readJsonStore, retentionLimit, writeJsonStore } from "./json-store.js";
-import { archiveOldRuns, archiveRun } from "./run-archive.js";
+import { archiveOldRuns, archiveRun, finishedRunLine } from "./run-archive.js";
 import { storageLease } from "./storage-lock.js";
 
 /**
@@ -88,7 +88,7 @@ function pruneOldLogs(dir: string): void {
       .sort((a, b) => b.t - a.t);
     for (const { f } of files.slice(limit)) {
       const path = join(dir, f);
-      if (Date.now() - statSync(path).mtimeMs <= STALE_RUN_MS && !/^\d\d:\d\d:\d\d finished after \d+s · /m.test(readFileSync(path, "utf8"))) continue;
+      if (Date.now() - statSync(path).mtimeMs <= STALE_RUN_MS && !finishedRunLine(readFileSync(path, "utf8"))) continue;
       archiveRun(path);
     }
   } catch (err) {

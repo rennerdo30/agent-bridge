@@ -7704,7 +7704,7 @@ var require_cross_spawn = __commonJS({
 });
 
 // src/cli/main.ts
-import { join as join78 } from "node:path";
+import { join as join80 } from "node:path";
 
 // src/core/client.ts
 import { EventEmitter } from "node:events";
@@ -7714,7 +7714,7 @@ import { connect } from "node:net";
 import { homedir } from "node:os";
 import { join } from "node:path";
 var APP_NAME = "agent-bridge";
-var APP_VERSION = "0.29.17";
+var APP_VERSION = "0.29.18";
 var PROTOCOL_VERSION = 2;
 var ENV = {
   internal: "AGENT_BRIDGE_INTERNAL",
@@ -7869,6 +7869,7 @@ var BridgeClient = class _BridgeClient extends EventEmitter {
   nextId = 1;
   pending = /* @__PURE__ */ new Map();
   closed = false;
+  brokerVersion;
   /** Connect to an existing broker. Rejects with the socket error (ENOENT/ECONNREFUSED if nobody listens). */
   static connect(pipePath, log, timeoutMs = CONNECT_TIMEOUT_MS) {
     return new Promise((resolve21, reject) => {
@@ -7899,7 +7900,18 @@ var BridgeClient = class _BridgeClient extends EventEmitter {
         this.pending.delete(id);
         reject(new Error(`broker request timed out: ${op}`));
       }, timeoutMs);
-      this.pending.set(id, { resolve: resolve21, reject, timer });
+      this.pending.set(id, { resolve: (value) => {
+        const hello = value;
+        const version3 = hello?.brokerVersion ?? (Array.isArray(hello?.peers) ? hello.peers.find((peer) => peer.pid === hello.brokerPid)?.version : void 0);
+        if (typeof version3 === "string") this.brokerVersion = version3;
+        resolve21(value);
+      }, reject: (err) => {
+        if (/unknown op:/.test(err.message)) reject(new BridgeError(
+          "protocol_mismatch",
+          `Broker ${this.brokerVersion ? "v" + this.brokerVersion : "version unknown (older protocol)"} does not support ${op} required by server v${APP_VERSION}. Update the broker host and reload its session after current jobs finish; no operation was applied.`
+        ));
+        else reject(err);
+      }, timer });
       this.socket.write(encodeFrame({ t: "req", id, op, args }));
     });
   }
@@ -8122,7 +8134,7 @@ var nullLogger = {
 };
 
 // src/core/node.ts
-import { randomUUID as randomUUID22 } from "node:crypto";
+import { randomUUID as randomUUID23 } from "node:crypto";
 import { EventEmitter as EventEmitter2 } from "node:events";
 import { unlinkSync as unlinkSync2 } from "node:fs";
 import { dirname as dirname24, join as join57 } from "node:path";
@@ -28278,6 +28290,14 @@ function digest(root) {
   for (const rel of pluginFiles(root)) hash3.update(rel.replaceAll("\\", "/")).update("\0").update(readFileSync(join6(root, rel))).update("\0");
   return hash3.digest("hex");
 }
+function validatePluginPublication(source, base2, version3) {
+  releaseVersion(version3);
+  assertUnlinked(source);
+  assertUnlinked(base2);
+  const target = join6(base2, version3);
+  assertUnlinked(target);
+  if (existsSync3(target) && digest(source) !== digest(target)) throw new Error(`Immutable plugin version differs: ${target}. Release a new patch; existing files were preserved.`);
+}
 function releaseVersion(version3) {
   if (!/^\d+\.\d+\.\d+$/.test(version3)) throw new Error(`Expected a patch release version, got ${version3}`);
 }
@@ -28820,6 +28840,8 @@ function isPluginCacheCwd(cwd) {
 }
 
 // src/core/project-identity.ts
+var projectRoots = /* @__PURE__ */ new Map();
+var PROJECT_ROOT_CACHE_MS = 3e4;
 function canonicalProjectRoot(cwd) {
   if (isPluginCacheCwd(cwd)) return null;
   const visibleRoot = (root) => isPluginCacheCwd(root) ? null : root;
@@ -28827,37 +28849,56 @@ function canonicalProjectRoot(cwd) {
     const physical = realpathSync2.native(cwd);
     if (isPluginCacheCwd(physical)) return null;
     if (!statSync4(physical).isDirectory()) return null;
-    const git2 = (args) => execFileSync(
-      "git",
-      ["-C", physical, "rev-parse", ...args],
-      { encoding: "utf8", timeout: 3e3, windowsHide: true, stdio: ["ignore", "pipe", "ignore"] }
-    ).trim();
-    try {
-      const top = realpathSync2.native(git2(["--show-toplevel"]));
-      const common = realpathSync2.native(resolve3(physical, git2(["--git-common-dir"])));
-      if (common.endsWith("/.git") || common.endsWith("\\.git")) return visibleRoot(realpathSync2.native(dirname7(common)));
-      try {
-        const configured = execFileSync(
-          "git",
-          ["--git-dir", common, "config", "--get", "core.worktree"],
-          { encoding: "utf8", timeout: 3e3, windowsHide: true, stdio: ["ignore", "pipe", "ignore"] }
-        ).trim();
-        if (configured) return visibleRoot(realpathSync2.native(resolve3(common, configured)));
-      } catch {
-      }
-      const worktrees = execFileSync(
-        "git",
-        ["-C", physical, "worktree", "list", "--porcelain"],
-        { encoding: "utf8", timeout: 3e3, windowsHide: true, stdio: ["ignore", "pipe", "ignore"] }
-      );
-      const main2 = worktrees.split(/\r?\n\r?\n/).find((entry) => !/^bare$/m.test(entry));
-      const root = main2 && /^worktree (.+)$/m.exec(main2)?.[1];
-      return visibleRoot(root ? realpathSync2.native(root) : top);
-    } catch {
-      return physical;
-    }
+    const cached3 = projectRoots.get(physical), now = Date.now(), marker = gitMarker(physical);
+    if (cached3 && cached3.expiresAt > now && cached3.marker === marker) return cached3.root;
+    const root = resolveProjectRoot(physical, visibleRoot);
+    if (projectRoots.size >= 256) projectRoots.delete(projectRoots.keys().next().value);
+    projectRoots.set(physical, { root, expiresAt: now + PROJECT_ROOT_CACHE_MS, marker });
+    return root;
   } catch {
     return null;
+  }
+}
+function gitMarker(physical) {
+  for (let dir = physical; ; dir = dirname7(dir)) {
+    const path = join11(dir, ".git");
+    try {
+      const s = statSync4(path);
+      return `${path}:${s.ino}:${s.mtimeMs}:${s.size}`;
+    } catch {
+    }
+    if (dirname7(dir) === dir) return "";
+  }
+}
+function resolveProjectRoot(physical, visibleRoot) {
+  const git2 = (args) => execFileSync(
+    "git",
+    ["-C", physical, "rev-parse", ...args],
+    { encoding: "utf8", timeout: 3e3, windowsHide: true, stdio: ["ignore", "pipe", "ignore"] }
+  ).trim();
+  try {
+    const top = realpathSync2.native(git2(["--show-toplevel"]));
+    const common = realpathSync2.native(resolve3(physical, git2(["--git-common-dir"])));
+    if (common.endsWith("/.git") || common.endsWith("\\.git")) return visibleRoot(realpathSync2.native(dirname7(common)));
+    try {
+      const configured = execFileSync(
+        "git",
+        ["--git-dir", common, "config", "--get", "core.worktree"],
+        { encoding: "utf8", timeout: 3e3, windowsHide: true, stdio: ["ignore", "pipe", "ignore"] }
+      ).trim();
+      if (configured) return visibleRoot(realpathSync2.native(resolve3(common, configured)));
+    } catch {
+    }
+    const worktrees = execFileSync(
+      "git",
+      ["-C", physical, "worktree", "list", "--porcelain"],
+      { encoding: "utf8", timeout: 3e3, windowsHide: true, stdio: ["ignore", "pipe", "ignore"] }
+    );
+    const main2 = worktrees.split(/\r?\n\r?\n/).find((entry) => !/^bare$/m.test(entry));
+    const root = main2 && /^worktree (.+)$/m.exec(main2)?.[1];
+    return visibleRoot(root ? realpathSync2.native(root) : top);
+  } catch {
+    return physical;
   }
 }
 function projectKey(root) {
@@ -28947,8 +28988,8 @@ function ensureProjectFolder(project) {
     return null;
   const fresh = !existsSync9(folder);
   mkdirSync7(folder, { recursive: true, mode: 448 });
-  const gitMarker = existsSync9(join12(project, ".git"));
-  if (!fresh && excluded.get(project) === gitMarker) return folder;
+  const gitMarker2 = existsSync9(join12(project, ".git"));
+  if (!fresh && excluded.get(project) === gitMarker2) return folder;
   try {
     const exclude = execFileSync2(
       "git",
@@ -28981,7 +29022,7 @@ function ensureProjectFolder(project) {
   } catch {
     if (existsSync9(join12(project, ".git"))) return null;
   }
-  excluded.set(project, gitMarker);
+  excluded.set(project, gitMarker2);
   return folder;
 }
 function projectDatabasePath(project) {
@@ -30944,7 +30985,7 @@ ${JSON.stringify({ ids, at: Date.now() })}
 };
 
 // src/core/broker.ts
-import { randomUUID as randomUUID20 } from "node:crypto";
+import { randomUUID as randomUUID21 } from "node:crypto";
 import { createServer as createServer4 } from "node:net";
 
 // src/core/store.ts
@@ -31269,7 +31310,8 @@ function readDecisions(dbPath, args = {}) {
 
 // src/core/store.ts
 var BACKUP_CHECK_INTERVAL_MS = 60 * 60 * 1e3;
-var SQLITE_STORE_VERSION = 8;
+var SQLITE_STORE_VERSION = 9;
+var BROADCAST_RECENT_MS = 24 * 60 * 60 * 1e3;
 function agentQueueKey(agent) {
   return `agent:${agent}`;
 }
@@ -31339,7 +31381,14 @@ var MIGRATIONS = [
     );
     PRAGMA user_version = 7;
   ` },
-  { version: 8, sql: CONVERSATION_MIGRATION }
+  { version: 8, sql: CONVERSATION_MIGRATION },
+  { version: 9, sql: `
+    CREATE TABLE IF NOT EXISTS peer_last_seen (
+      name TEXT PRIMARY KEY, seen_at INTEGER NOT NULL
+    );
+    INSERT INTO peer_last_seen SELECT name, MAX(learned_at) FROM peer_names GROUP BY name;
+    PRAGMA user_version = 9;
+  ` }
 ];
 function migrateMessageSchema(db, file2, existed, log) {
   migrateSqlite(db, file2, existed, SQLITE_STORE_VERSION, MIGRATIONS, log);
@@ -31474,11 +31523,17 @@ var MessageStore = class {
         DO UPDATE SET session_id=COALESCE(excluded.session_id,peer_names.session_id), learned_at=MIN(peer_names.learned_at,excluded.learned_at)`).run(identity, peer.name, peer.sessionId, peer.agent, at);
       this.db.prepare(`INSERT INTO peer_name_owners VALUES (?,?) ON CONFLICT(name)
         DO UPDATE SET identity=excluded.identity`).run(peer.name, identity ?? `unidentified:${peer.id}`);
+      if (!peer.jobAgent && !peer.subagent) this.markPeerSeen(peer.name, at);
       this.db.exec("COMMIT");
     } catch (err) {
       this.db.exec("ROLLBACK");
       throw err;
     }
+  }
+  /** Presence updates never change the identity that currently owns a name. */
+  markPeerSeen(name2, at) {
+    this.db.prepare(`INSERT INTO peer_last_seen VALUES (?,?)
+      ON CONFLICT(name) DO UPDATE SET seen_at=MAX(peer_last_seen.seen_at,excluded.seen_at)`).run(name2, at);
   }
   namesFor(peer) {
     const identity = registrationIdentity(peer);
@@ -31506,6 +31561,21 @@ var MessageStore = class {
       const cwds = session ? files2.all(session).map((file2) => String(file2.cwd)) : [];
       return !cwds.length || cwds.some((cwd) => !isPluginCacheCwd(cwd));
     }).map((row) => String(row.name));
+  }
+  /** Eligibility never removes history or old queued messages. Unknown old names are skipped. */
+  recentProjectSenders(address, previous, since) {
+    return this.db.prepare(`SELECT from_name FROM messages WHERE to_target=? AND recipient=? AND created_at>=?
+      AND from_id NOT LIKE 'job:%' GROUP BY from_name ORDER BY MAX(created_at) DESC LIMIT 64`).all(address, previous, since).map((row) => String(row.from_name));
+  }
+  broadcastRecipients(now, masters) {
+    const seen = this.db.prepare("SELECT seen_at FROM peer_last_seen WHERE name=?");
+    const queued = [], skipped = [];
+    for (const name2 of this.broadcastNames()) {
+      const at = Number(seen.get(name2)?.seen_at ?? 0);
+      (masters.has(name2) || at > 0 && at >= now - BROADCAST_RECENT_MS ? queued : skipped).push(name2);
+    }
+    for (const name2 of masters) if (!queued.includes(name2) && !skipped.includes(name2)) queued.push(name2);
+    return { queued, skipped };
   }
   /** Keep lock waits out of the broker event loop. Callbacks must be synchronous atomic steps. */
   retryWrite(operation) {
@@ -34425,9 +34495,13 @@ import { copyFileSync as copyFileSync5, existsSync as existsSync18, mkdirSync as
 import { basename as basename7, join as join31 } from "node:path";
 var DEFAULT_ARCHIVE_AGE_MS = 30 * 24 * 60 * 60 * 1e3;
 var ARCHIVE_AGE_ENV = "AGENT_BRIDGE_ARCHIVE_AGE_MS";
-var FINISHED_RUN = /^\d\d:\d\d:\d\d finished after \d+s · /m;
+var FINISHED_RUN = /^\d\d:\d\d:\d\d finished after \d+s · [^\r\n]+$/;
+function finishedRunLine(text2) {
+  const last = text2.trimEnd().split("\n").at(-1) ?? "";
+  return FINISHED_RUN.test(last) ? last : null;
+}
 function archiveRun(log) {
-  if (!FINISHED_RUN.test(readFileSync18(log, "utf8"))) return;
+  if (!finishedRunLine(readFileSync18(log, "utf8"))) return;
   const dir = join31(log, "..", "archive");
   mkdirSync14(dir, { recursive: true, mode: 448 });
   const target = join31(dir, basename7(log));
@@ -34453,7 +34527,7 @@ function archiveOldRuns(home, now = Date.now()) {
   if (!age) return 0;
   let count = 0;
   for (const file2 of runLogFiles(home).filter((p) => !p.includes(`${join31("runs", "archive")}`))) {
-    if (statSync7(file2).mtimeMs < now - age && FINISHED_RUN.test(readFileSync18(file2, "utf8"))) {
+    if (statSync7(file2).mtimeMs < now - age && finishedRunLine(readFileSync18(file2, "utf8"))) {
       archiveRun(file2);
       count++;
     }
@@ -34714,6 +34788,7 @@ function resourceSlotHint(counts, cli) {
 }
 
 // src/core/root-concurrency.ts
+import { setTimeout as delay4 } from "node:timers/promises";
 var ROOT_LIMIT_DB = "root-limits.sqlite";
 var LOCK_WAIT_MS2 = 3e3;
 var RootConcurrency = class {
@@ -34747,6 +34822,24 @@ var RootConcurrency = class {
     if (this.slots.tryAcquire(this.resource, limit, owner)) return true;
     this.slots.release(owner, this.resource);
     return false;
+  }
+  /** Keep a FIFO ticket while another coordinator is using the same root's capacity. */
+  async acquireWhenAvailable(owner, signal) {
+    try {
+      for (; ; ) {
+        signal.throwIfAborted();
+        try {
+          const limit = this.limit();
+          if (limit > 0 && this.slots.tryAcquire(this.resource, limit, owner)) return;
+        } catch (err) {
+          if (!isSqliteBusy(err)) throw err;
+        }
+        await delay4(250, void 0, { signal });
+      }
+    } catch (err) {
+      this.release(owner);
+      throw err;
+    }
   }
   moveJobs(names) {
     this.slots.moveJobs(this.resource, names);
@@ -34802,7 +34895,7 @@ function pruneOldLogs(dir) {
     const files2 = readdirSync10(dir).filter((f) => f.endsWith(".log")).map((f) => ({ f, t: statSync9(join35(dir, f)).mtimeMs })).sort((a, b) => b.t - a.t);
     for (const { f } of files2.slice(limit)) {
       const path = join35(dir, f);
-      if (Date.now() - statSync9(path).mtimeMs <= STALE_RUN_MS && !/^\d\d:\d\d:\d\d finished after \d+s · /m.test(readFileSync20(path, "utf8"))) continue;
+      if (Date.now() - statSync9(path).mtimeMs <= STALE_RUN_MS && !finishedRunLine(readFileSync20(path, "utf8"))) continue;
       archiveRun(path);
     }
   } catch (err) {
@@ -35034,7 +35127,7 @@ function recoverJobRecord(home, ref) {
   const state = isRecord(rawState) && typeof rawState.pid === "number" ? rawState : void 0;
   const startedAt = typeof base2.startedAt === "number" ? base2.startedAt : run2 ? runStart(run2) : 0;
   const currentState = state && typeof state.updatedAt === "number" && state.updatedAt >= startedAt ? state : void 0;
-  const alive3 = currentState?.status === "running" && Date.now() - Number(currentState.updatedAt) < 9e4 && pidAlive(Number(currentState.pid));
+  const alive3 = currentState?.status === "running" && pidAlive(Number(currentState.pid));
   const owner = typeof base2.owner === "string" ? base2.owner : meta3?.by ?? / by ([\w.-]+)/.exec(header)?.[1];
   if (!owner) return void 0;
   const sessionId = currentState?.sessionId ?? base2.sessionId ?? base2.threadId ?? meta3?.session ?? meta3?.continues ?? null;
@@ -38034,7 +38127,7 @@ async function finishedRunOutcomes(home, log, names) {
 }
 function summarizeRun(file2, text2, mtimeMs, now, meta3 = {}) {
   const lines = text2.split("\n").filter(Boolean);
-  const finished = [...lines].reverse().find((l) => / finished after \d+s · /.test(l));
+  const finished = finishedRunLine(text2);
   const last = (finished ?? lines.at(-1) ?? "").replace(/^\d\d:\d\d:\d\d /, "");
   const status = finished ? / · done$/.test(finished) ? "done" : "failed" : now - mtimeMs > STALE_RUN_MS2 ? "interrupted" : "running";
   const m = /^(\d{4})-(\d\d)-(\d\d)-(\d\d)-(\d\d)-(\d\d)-([a-z]+)-/.exec(file2);
@@ -38366,13 +38459,38 @@ var RemoteDashboard = class {
 };
 
 // src/network/remote-jobs.ts
-import { randomUUID as randomUUID19 } from "node:crypto";
+import { randomUUID as randomUUID20 } from "node:crypto";
 import { existsSync as existsSync27, realpathSync as realpathSync10, statSync as statSync15 } from "node:fs";
 import { isAbsolute as isAbsolute10, join as join56 } from "node:path";
 
 // src/mcp/delegate-run.ts
-import { randomUUID as randomUUID18 } from "node:crypto";
+import { randomUUID as randomUUID19 } from "node:crypto";
 import { isAbsolute as isAbsolute9, join as join53, relative as relative8, resolve as resolve17 } from "node:path";
+
+// src/core/startup-admission.ts
+import { randomUUID as randomUUID17 } from "node:crypto";
+var STARTUP_CAPACITY = 2;
+var STARTUP_RESOURCE = "delegate-startup";
+async function acquireStartup(home, signal) {
+  const slots = new ResourceSlots(home);
+  const owner = { id: `startup-${randomUUID17()}`, pid: process.pid };
+  try {
+    await slots.acquire(STARTUP_RESOURCE, STARTUP_CAPACITY, owner, signal);
+  } catch (err) {
+    slots.close();
+    throw err;
+  }
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    try {
+      slots.release(owner, STARTUP_RESOURCE);
+    } finally {
+      slots.close();
+    }
+  };
+}
 
 // src/core/effort.ts
 import { readFileSync as readFileSync29 } from "node:fs";
@@ -38554,7 +38672,7 @@ function formatPeer(p, selfId, now = Date.now()) {
   const flags = [
     p.agent,
     `v${p.version ?? "unknown"}${p.version !== APP_VERSION ? " \xB7 version skew (retained code)" : ""}`,
-    p.activity ?? null,
+    p.activity ?? "activity unknown (no busy/idle report)",
     p.wakeOnDirect && p.wakeAvailable ? "direct messages wake this session" : null,
     p.autoWake ? "auto-wake" : p.activity === "idle" && !(p.wakeOnDirect && p.wakeAvailable) ? "auto-wake off: will be read on its next turn" : null,
     `up ${formatUptime(now - p.startedAt)}`,
@@ -38631,7 +38749,7 @@ import { existsSync as existsSync26, lstatSync as lstatSync10 } from "node:fs";
 import { dirname as dirname22, isAbsolute as isAbsolute8, join as join52, relative as relative7, resolve as resolve16, sep as sep7 } from "node:path";
 
 // src/core/permission-repair.ts
-import { randomUUID as randomUUID17 } from "node:crypto";
+import { randomUUID as randomUUID18 } from "node:crypto";
 import { lstatSync as lstatSync8, readdirSync as readdirSync16 } from "node:fs";
 import { dirname as dirname21, join as join50, parse as parse5, resolve as resolve14, toNamespacedPath as toNamespacedPath3 } from "node:path";
 function assertPhysicalPath(path) {
@@ -38693,7 +38811,7 @@ async function repairPermissions(opts) {
     return JSON.parse(result.stdout);
   };
   const original = await run2(plan.paths, false);
-  const backup = join50(opts.home, "permission-repairs", `${randomUUID17()}.json`);
+  const backup = join50(opts.home, "permission-repairs", `${randomUUID18()}.json`);
   writeJsonStore(backup, { contractVersion: 1, root: plan.root, at: Date.now(), ...original }, null);
   const repaired = await run2(original.entries.filter((entry) => entry.ok).map((entry) => entry.path), true);
   repaired.entries.push(...original.entries.filter((entry) => !entry.ok));
@@ -38881,13 +38999,14 @@ function worktreeArgs(target, a, cfg, cwd, home) {
 }
 async function runDelegate(rc, target, a, signal, onProgress, background, job) {
   checkDepth(rc.cfg.maxDelegateDepth);
-  if (!job?.rootSession) return runWithWorktreeLease(rc, target, a, signal, onProgress, background, job);
+  if (!job?.rootSession) return runWithStartup(rc, target, a, signal, onProgress, background, job);
   const budget = new RootConcurrency(rc.home, job.rootSession);
-  const owner = { id: `${job.name}-${randomUUID18()}`, pid: process.pid };
+  const owner = { id: `${job.name}-${randomUUID19()}`, pid: process.pid };
   let timer;
   try {
     if (!job.parentJob) budget.ensureLimit(rc.cfg.maxJobs);
-    if (!budget.acquire(owner)) throw new Error("The top session's subagent concurrency limit is reached.");
+    onProgress?.("queued: waiting for root admission");
+    await budget.acquireWhenAvailable(owner, signal);
     timer = setInterval(() => {
       try {
         budget.renew(owner);
@@ -38896,15 +39015,29 @@ async function runDelegate(rc, target, a, signal, onProgress, background, job) {
       }
     }, SLOT_RENEW_MS);
     timer.unref();
-    return await runWithWorktreeLease(rc, target, a, signal, onProgress, background, job);
+    return await runWithStartup(rc, target, a, signal, onProgress, background, job);
   } finally {
     clearInterval(timer);
-    budget.release(owner);
-    budget.close();
+    try {
+      budget.release(owner);
+    } finally {
+      budget.close();
+    }
+  }
+}
+async function runWithStartup(rc, target, a, signal, onProgress, background, job) {
+  onProgress?.("queued: waiting for machine startup admission");
+  const release = await acquireStartup(rc.home, signal);
+  try {
+    signal.throwIfAborted();
+    onProgress?.("starting native CLI");
+    return await runWithWorktreeLease({ ...rc, startupReady: release }, target, a, signal, onProgress, background, job);
+  } finally {
+    release();
   }
 }
 async function runWithWorktreeLease(rc, target, a, signal, onProgress, background, job) {
-  const wt = a._worktree ?? (a.worktree ? await createWorktree({ cwd: a.cwd || rc.cwd(), home: rc.home, jobId: randomUUID18().slice(0, 8), log: rc.log }) : null);
+  const wt = a._worktree ?? (a.worktree ? await createWorktree({ cwd: a.cwd || rc.cwd(), home: rc.home, jobId: randomUUID19().slice(0, 8), log: rc.log }) : null);
   const root = wt?.path ?? bridgeWorktreeRoot(a.cwd || rc.cwd(), rc.home);
   if (!root) return runDelegateInner(rc, target, a, signal, onProgress, background, job);
   const release = worktreeLease(rc.home, { path: root });
@@ -38929,7 +39062,7 @@ async function runDelegateInner(rc, target, a, signal, onProgress, background, j
   const cwd = a.cwd || rc.cwd();
   a = worktreeArgs(target, a, cfg, cwd, rc.home);
   const access = a.access;
-  const wt = a._worktree ?? (a.worktree ? await createWorktree({ cwd, home: rc.home, jobId: randomUUID18().slice(0, 8), log: dlog }) : null);
+  const wt = a._worktree ?? (a.worktree ? await createWorktree({ cwd, home: rc.home, jobId: randomUUID19().slice(0, 8), log: dlog }) : null);
   const workdir = wt?.cwd ?? cwd;
   const linkRoot = wt?.path ?? bridgeWorktreeRoot(workdir, rc.home);
   const watchChanges = !wt && (access === "edit" || access === "ask" && target === "codex");
@@ -38940,7 +39073,7 @@ async function runDelegateInner(rc, target, a, signal, onProgress, background, j
   let relayCalls = 0;
   const codexHash = target === "codex" ? codexPermissionHookHash() : null;
   const journalPermission = async (request2, decide) => {
-    const id = randomUUID18();
+    const id = randomUUID19();
     const context = { kind: "approval", agent: target, project: workdir, job: job?.name ?? a._job, session: job?.sessionId ?? void 0 };
     await appendContextEvent(rc.home, { ...context, payload: { id, stage: "request", request: request2 } });
     const decision = await decide();
@@ -39011,7 +39144,7 @@ async function runDelegateInner(rc, target, a, signal, onProgress, background, j
   try {
     feed = startRunFeed({
       home: rc.home,
-      name: `${target}-${randomUUID18().slice(0, 8)}`,
+      name: `${target}-${randomUUID19().slice(0, 8)}`,
       header: `${target}${a.model ? ` (${a.model}${a.effort ? `, effort ${a.effort}` : ""})` : a.effort ? ` (effort ${a.effort})` : ""} in ${workdir}, access ${access ?? "default"}, by ${me}${a.session_id ? `, continues ${a.session_id}` : ""}
 ${a.prompt}
 ---`,
@@ -39121,7 +39254,7 @@ ${a.prompt}
     });
     void steering?.rename?.(title).catch((err) => dlog.warn("could not rename the Codex thread", { err: err.message }));
   };
-  const slotOwner2 = { id: `${a._job ?? target}-${randomUUID18()}`, pid: process.pid };
+  const slotOwner2 = { id: `${a._job ?? target}-${randomUUID19()}`, pid: process.pid };
   let slots = null;
   let slotTimer;
   let res;
@@ -39163,6 +39296,7 @@ ${a.prompt}
         },
         writableRoots,
         onSession: (id) => {
+          rc.startupReady?.();
           feed.meta({ session: id });
           if (job) rc.jobs?.note(job, { sessionId: id, workdir, worktree: wt });
         },
@@ -39449,10 +39583,9 @@ var RUNNERS_DIR_NAME = "jobs";
 var JOB_PEER_PREFIX = "job:";
 var CONTROL_CONVERSATION_PREFIX = "jobctl-";
 var RUNNER_HEARTBEAT_MS = 15e3;
-var STALE_MS = 6 * RUNNER_HEARTBEAT_MS;
 var START_GRACE_MS = 3e4;
 var KEEP_FILES_MS = 7 * 24 * 60 * 60 * 1e3;
-var DETACH_LAUNCHER = "require('node:child_process').spawn(process.execPath,process.argv.slice(1),{detached:true,stdio:'ignore',windowsHide:true}).unref()";
+var DETACH_LAUNCHER = "const c=require('node:child_process').spawn(process.execPath,process.argv.slice(1),{detached:true,stdio:'ignore',windowsHide:true});c.on('error',()=>process.exit(1));if(c.pid)process.stdout.write(String(c.pid));c.unref()";
 function runnerStatePath(home, id) {
   return join55(home, RUNNERS_DIR_NAME, `${id}.json`);
 }
@@ -39538,9 +39671,18 @@ var JobRunners = class {
       archiveFile(file2);
       writeJsonStore(file2, { ...full }, null);
       const args = [this.cli, "job-runner", file2];
+      const info = { pid: null, peer: job.name, startedAt: Date.now() };
       let pid = null;
       if (process.platform === "win32") {
-        const launcher = spawn5(process.execPath, ["-e", DETACH_LAUNCHER, ...args], { stdio: "ignore", windowsHide: true });
+        const launcher = spawn5(process.execPath, ["-e", DETACH_LAUNCHER, ...args], { stdio: ["ignore", "pipe", "ignore"], windowsHide: true });
+        let output2 = "";
+        launcher.stdout.on("data", (chunk) => {
+          output2 += chunk;
+        });
+        launcher.on("close", () => {
+          const reported = Number(output2);
+          if (Number.isSafeInteger(reported) && reported > 0) info.pid = reported;
+        });
         launcher.on("error", (err) => this.log.warn("could not start a job runner", { job: job.name, err: err.message }));
       } else {
         const child = spawn5(process.execPath, args, { detached: true, stdio: "ignore" });
@@ -39549,7 +39691,8 @@ var JobRunners = class {
         pid = child.pid ?? null;
       }
       this.log.info("job runner started", { job: job.name, pid });
-      return { pid, peer: job.name, startedAt: Date.now() };
+      info.pid = pid;
+      return info;
     } catch (err) {
       this.log.warn("job runner unavailable; the subagent runs inside this server", { job: job.name, err: err.message });
       return null;
@@ -39563,9 +39706,9 @@ var JobRunners = class {
     if (job.remote) return this.remote.alive(job);
     if (!state) {
       const host = job.host;
-      return Boolean(host) && Date.now() - host.startedAt < START_GRACE_MS && (host.pid === null || pidAlive(host.pid));
+      return Boolean(host) && (host.pid !== null ? pidAlive(host.pid) : Date.now() - host.startedAt < START_GRACE_MS);
     }
-    return pidAlive(state.pid) && Date.now() - state.updatedAt < STALE_MS;
+    return pidAlive(state.pid);
   }
   send(job, control) {
     if (job.remote) return this.remote.send(job, control);
@@ -39621,7 +39764,7 @@ var RemoteJobs = class {
     const request2 = remoteJobRequestSchema.parse(raw);
     if (!this.network.peerSupports(host, REMOTE_JOB_CAPABILITY)) throw new Error("Remote broker update needed or paired PC disconnected: install remote-jobs-v1 support and restart its hosting sessions.");
     if (this.pending.size >= REMOTE_JOB_RATE_LIMIT) throw new Error("Too many pending remote job requests.");
-    const rid = randomUUID19();
+    const rid = randomUUID20();
     const response = new Promise((resolve21, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(rid);
@@ -39890,7 +40033,12 @@ var Broker = class {
         const args = external_exports.object({ to: external_exports.string().min(1) }).strict().parse(a);
         return this.switchProjectMain(c.peer, this.connByName(args.to)?.peer ?? void 0);
       },
-      projectJobs: (c) => this.storedJobs().filter((j) => this.groups.canControl(this.requirePeer(c), j, this.localPeers())),
+      projectJobs: (c) => {
+        const peer = this.requirePeer(c);
+        const known = new Set(this.storedJobs().map((job) => job.name));
+        for (const runner of this.conns) if (runner.peer?.jobAgent && !known.has(runner.peer.name)) this.jobForControl(peer, runner.peer.name);
+        return this.storedJobs().filter((j) => this.groups.canControl(peer, j, this.localPeers()));
+      },
       coordinatorAvailability: (c, a) => {
         const args = external_exports.object({ name: external_exports.string().optional(), unavailable: external_exports.boolean() }).strict().parse(a);
         if (!c.peer && !args.name) throw new BridgeError("bad_request", "A coordinator name is required.");
@@ -40007,7 +40155,7 @@ var Broker = class {
         return peer;
       },
       claimMail: (c, a) => this.onClaimMail(c, a),
-      ping: () => ({ brokerPid: process.pid, protocol: PROTOCOL_VERSION }),
+      ping: () => ({ brokerPid: process.pid, protocol: PROTOCOL_VERSION, brokerVersion: APP_VERSION }),
       networkStatus: () => this.network?.status() ?? { enabled: false, config: this.networking?.config, discovered: [], paired: [] },
       remoteJob: async (c, a) => {
         const peer = this.requirePeer(c);
@@ -40023,7 +40171,7 @@ var Broker = class {
           const pair = this.requireNetwork().status().paired.find((p) => p.id === a.host || p.name === a.host);
           const name2 = snapshot.state.peer;
           this.receiveRemote({
-            id: randomUUID20(),
+            id: randomUUID21(),
             from: { id: `${pair?.id ?? a.host}/job:${a.request.job}`, name: `${pair?.name ?? a.host}/${name2}`, agent: "other" },
             to: peer.name,
             recipient: peer.name,
@@ -40085,6 +40233,7 @@ var Broker = class {
   groups;
   /** Live role selection, recomputed after broker restart; no durable ownership is rewritten. */
   projectMains = /* @__PURE__ */ new Map();
+  projectRoutes = /* @__PURE__ */ new Map();
   server = null;
   conns = /* @__PURE__ */ new Set();
   historyBackground = null;
@@ -40093,6 +40242,7 @@ var Broker = class {
   pendingJobMailRouteAgain = false;
   pendingJobMailRetry = null;
   closing = false;
+  requestTurn = Promise.resolve();
   network = null;
   remoteJobs = null;
   remoteDashboard = null;
@@ -40204,7 +40354,7 @@ var Broker = class {
     this.remoteDashboard = new RemoteDashboard(service, { home: this.networking.home, log: this.log, peers: () => this.dashboardPeers() });
     this.remoteJobs = new RemoteJobs(service, this.networking.home, this.log, async (record3, control) => {
       this.receiveRemote({
-        id: randomUUID20(),
+        id: randomUUID21(),
         from: { id: record3.owner, name: record3.owner, agent: "other" },
         to: record3.name,
         recipient: record3.name,
@@ -40262,6 +40412,12 @@ var Broker = class {
     socket.on("close", () => {
       this.conns.delete(conn);
       if (conn.peer) {
+        if (!this.closing && !conn.peer.jobAgent && !conn.peer.subagent) {
+          const name2 = conn.peer.name, at = this.now();
+          void this.store.retryWrite(() => {
+            if (!this.closing) this.store.markPeerSeen(name2, at);
+          }).catch((err) => this.log.warn("offline last-seen update deferred", { err: String(err) }));
+        }
         void this.routePendingJobMail().catch((err) => this.log.warn("pending job reroute deferred", { err: String(err) }));
         this.log.info("peer left", { name: conn.peer.name, agent: conn.peer.agent });
         if (!conn.peer.jobAgent) this.broadcastEvent("peer_left", conn.peer, conn);
@@ -40272,6 +40428,10 @@ var Broker = class {
     const handler = this.handlers[frame.op];
     try {
       if (!handler) throw new BridgeError("bad_request", `unknown op: ${String(frame.op)}`);
+      const turn = this.requestTurn.then(() => new Promise((resolve21) => setImmediate(resolve21)));
+      this.requestTurn = turn;
+      await turn;
+      if (this.closing) return;
       if (!conn.authed && !UNAUTHENTICATED_OPS.has(frame.op)) throw new BridgeError("unauthorized", "authenticate first");
       this.log.debug("request", { op: frame.op, peer: conn.peer?.name });
       const result = await handler(conn, frame.args ?? {});
@@ -40351,16 +40511,46 @@ var Broker = class {
     let main2 = this.projectMains.get(key3);
     if (!members2.some((p) => p.name === main2)) {
       main2 = members2[0]?.name;
-      if (main2) this.projectMains.set(key3, main2);
+      if (main2) this.recordProjectMain(key3, `project:${basename12(decorated.projectRoot)}`, main2);
     }
-    return { ...decorated, projectMain: main2 === peer.name, projectAddress: `project:${basename12(decorated.projectRoot)}` };
+    return { ...decorated, projectMain: main2 === peer.name, projectAddress: `project:${basename12(decorated.projectRoot)}`, projectRoute: this.projectRoutes.get(key3) };
   }
   switchProjectMain(source, target) {
     if (!target || target.jobAgent || target.subagent || target.host) throw new BridgeError("bad_request", "Choose a live local project master.");
     const peer = this.projectPeer(target);
     if (!peer.projectGroup || source && (source.jobAgent || this.projectPeer(source).projectGroup !== peer.projectGroup)) throw new BridgeError("unauthorized", "Only a master of this project may switch its main session.");
-    this.projectMains.set(peer.projectGroup, peer.name);
+    this.recordProjectMain(peer.projectGroup, peer.projectAddress, peer.name);
     return this.projectPeer(target);
+  }
+  recordProjectMain(key3, address, main2) {
+    const previous = this.projectMains.get(key3);
+    if (previous === main2) return;
+    const route = { address, main: main2, since: this.now(), previous };
+    this.projectMains.set(key3, main2);
+    this.projectRoutes.set(key3, route);
+    if (previous) void this.notifyProjectMainChange(route).catch((err) => this.log.warn("project main notice deferred", { err: String(err) }));
+  }
+  async notifyProjectMainChange(route) {
+    const recipients = /* @__PURE__ */ new Set([route.previous, ...this.store.recentProjectSenders(route.address, route.previous, route.since - 24 * 60 * 60 * 1e3)]);
+    for (const recipient of recipients) {
+      if (this.closing) return;
+      if (!PEER_NAME_PATTERN.test(recipient) || this.connByName(recipient)?.peer?.jobAgent) continue;
+      const message = {
+        id: randomUUID21(),
+        from: { id: "bridge-project-routing", name: "agent-bridge", agent: "other" },
+        to: recipient,
+        recipient,
+        conversationId: `project-main-${randomUUID21()}`,
+        replyTo: null,
+        hop: 0,
+        body: `${route.address} main changed from ${route.previous} to ${route.main} at ${new Date(route.since).toISOString().slice(11, 16)} UTC. Future project-address mail routes to ${route.main}; exact session names keep direct routing.`,
+        createdAt: route.since,
+        readAt: null
+      };
+      await this.store.retryWrite(() => this.store.insert(message));
+      const conn = this.recipientConn(recipient);
+      if (conn) this.emit(conn, "message", message);
+    }
   }
   sameJobFamily(a, b, jobs = this.storedJobs()) {
     if (this.jobSupervisor(a, jobs) !== this.jobSupervisor(b, jobs)) return false;
@@ -40512,12 +40702,12 @@ Handoff note: ${receipt.note}` : "") + "\n\nYou are their supervisor. Use messag
     peer.parentJob = typeof job.parentJob === "string" ? job.parentJob : void 0;
     if (isRecord(job.args) && Array.isArray(job.args.send_to)) peer.jobSendTo = job.args.send_to;
   }
-  siblingConns(conn) {
+  siblingConns(conn, target) {
     const peer = this.requirePeer(conn);
     if (!peer.jobAgent || !peer.jobOwner) throw new BridgeError("bad_request", "not a linked job");
     const jobs = this.storedJobs();
     const supervisor = this.jobSupervisor(peer, jobs);
-    return [...this.conns].filter((c) => c !== conn && c.peer?.jobAgent && (this.sameJobFamily(peer, c.peer, jobs) || this.sharedJobs(peer, c.peer, jobs) || peer.jobSendTo?.includes(c.peer.name)));
+    return [...this.conns].filter((c) => c !== conn && c.peer?.jobAgent && (!target || c.peer.name === target) && (this.sameJobFamily(peer, c.peer, jobs) || this.sharedJobs(peer, c.peer, jobs) || peer.jobSendTo?.includes(c.peer.name)));
   }
   jobForControl(peer, ref) {
     const known = this.storedJobs().find((j) => j.name === ref || j.id === ref);
@@ -40560,7 +40750,7 @@ Handoff note: ${receipt.note}` : "") + "\n\nYou are their supervisor. Use messag
       });
       return records;
     } catch {
-      return [];
+      return [...this.recoveredJobs.values()];
     }
   }
   /** A restored legacy runner may still advertise its old owner name until its next turn. */
@@ -40568,12 +40758,12 @@ Handoff note: ${receipt.note}` : "") + "\n\nYou are their supervisor. Use messag
     const job = jobs.find((j) => `job:${j.id}` === peer.id);
     return typeof job?.supervisor === "string" ? job.supervisor : peer.jobOwner;
   }
-  storedSiblings(peer) {
+  storedSiblings(peer, target) {
     if (!this.jobsPath || !peer.jobOwner) return [];
     try {
       const records = this.storedJobs();
       const supervisor = this.jobSupervisor(peer, records);
-      return records.flatMap((j) => j && (this.sameJobFamily(peer, { id: `job:${j.id}`, jobOwner: String(j.supervisor) }, records) || this.sharedJobs(peer, { id: `job:${j.id}` }, records) || peer.jobSendTo?.includes(String(j.name))) && typeof j.id === "string" && typeof j.name === "string" && j.name !== peer.name && `job:${j.id}` !== peer.id && AGENT_KINDS.includes(j.agent) && SIBLING_STATUSES.has(j.status) ? [{ id: `job:${j.id}`, name: j.name, title: isRecord(j.args) && typeof j.args.title === "string" ? j.args.title : "", agent: j.agent, status: j.status, ...typeof j.finishedAt === "number" ? { finishedAt: j.finishedAt } : {}, report: typeof j.report === "string" ? j.report : null }] : []);
+      return records.flatMap((j) => j && (!target || j.name === target) && (this.sameJobFamily(peer, { id: `job:${j.id}`, jobOwner: String(j.supervisor) }, records) || this.sharedJobs(peer, { id: `job:${j.id}` }, records) || peer.jobSendTo?.includes(String(j.name))) && typeof j.id === "string" && typeof j.name === "string" && j.name !== peer.name && `job:${j.id}` !== peer.id && AGENT_KINDS.includes(j.agent) && SIBLING_STATUSES.has(j.status) ? [{ id: `job:${j.id}`, name: j.name, title: isRecord(j.args) && typeof j.args.title === "string" ? j.args.title : "", agent: j.agent, status: j.status, ...typeof j.finishedAt === "number" ? { finishedAt: j.finishedAt } : {}, report: typeof j.report === "string" ? j.report : null }] : []);
     } catch {
       return [];
     }
@@ -40602,8 +40792,8 @@ Handoff note: ${receipt.note}` : "") + "\n\nYou are their supervisor. Use messag
     const key3 = dedupeKey ? `${sender.id}:${dedupeKey}` : null;
     const seen = key3 ? this.sentByKey.get(key3) : void 0;
     if (seen) return seen.result;
-    const target = this.siblingConns(conn).find((c) => c.peer.name === args.to);
-    const stored = this.storedSiblings(sender).find((s) => s.name === args.to);
+    const target = this.siblingConns(conn, args.to).find((c) => c.peer.name === args.to);
+    const stored = this.storedSiblings(sender, args.to).find((s) => s.name === args.to);
     if (!target && !stored) {
       if (!isJobSendTarget(args.to) || !sender.jobSendTo?.includes(args.to) || args.to.includes("-job-") || args.to.includes("-ask-") || this.connByName(args.to)?.peer?.jobAgent) {
         throw new BridgeError("unknown_target", "no sibling with that job name or explicit send_to grant");
@@ -40627,7 +40817,7 @@ Handoff note: ${receipt.note}` : "") + "\n\nYou are their supervisor. Use messag
       if (typeof args.body !== "string" || !args.body.trim() || args.body.length > MAX_BODY_CHARS) {
         throw new BridgeError("bad_request", "invalid sibling message body");
       }
-      const id = randomUUID20();
+      const id = randomUUID21();
       const notice = {
         id,
         from: { id: sender.id, name: sender.name, agent: sender.jobAgent ?? sender.agent },
@@ -40653,7 +40843,7 @@ ${args.body}`,
       }
       throw new BridgeError("bad_request", `sibling conversation reached its ${args.maxHops}-message hop limit; message was not delivered. Durable notice ${id} saved for sender and supervisor, including the undelivered text`);
     }
-    const conversationId = parent2?.conversationId ?? `${SIBLING_CONVERSATION_PREFIX}${randomUUID20()}`;
+    const conversationId = parent2?.conversationId ?? `${SIBLING_CONVERSATION_PREFIX}${randomUUID21()}`;
     const result = await this.onSend(conn, { ...args, dedupeKey, conversationId });
     const message = result.messages[0];
     const recipientOwner = target?.peer?.jobParent ?? this.storedJobs().find((j) => j.name === args.to)?.owner;
@@ -40661,7 +40851,7 @@ ${args.body}`,
     for (const owner of observers) {
       const note = {
         ...message,
-        id: randomUUID20(),
+        id: randomUUID21(),
         recipient: owner,
         conversationId: `${conversationId}${SIBLING_NOTE_SUFFIX}`,
         body: `Sibling message to ${message.recipient}:
@@ -40688,7 +40878,7 @@ ${message.body}`
       const candidate = `${requested}-${i}`;
       if (!this.connByName(candidate)) return candidate;
     }
-    return `${requested}-${randomUUID20().slice(0, 8)}`;
+    return `${requested}-${randomUUID21().slice(0, 8)}`;
   }
   onDecide(conn, value) {
     const peer = this.requirePeer(conn);
@@ -40729,7 +40919,7 @@ ${message.body}`
   }
   queueDecision(decision, peer) {
     const message = {
-      id: randomUUID20(),
+      id: randomUUID21(),
       from: decision.author,
       to: peer.name,
       recipient: peer.name,
@@ -40820,7 +41010,7 @@ Call decisions to look up current decisions or their history.`,
     this.replayMail(conn, peer, () => {
       this.queueCurrentDecisions(peer);
     });
-    return { brokerPid: process.pid, name: peer.name, sessionId: peer.sessionId, peers: this.livePeers().filter((x) => x.id !== peer.id) };
+    return { brokerPid: process.pid, brokerVersion: APP_VERSION, name: peer.name, sessionId: peer.sessionId, peers: this.livePeers().filter((x) => x.id !== peer.id) };
   }
   /**
    * Mail sent to a "-N" stand-in of this peer's name (a reload ran the session under it briefly) moves to the
@@ -40966,11 +41156,14 @@ Call decisions to look up current decisions or their history.`,
     if (to === BROADCAST) {
       if (sender.jobAgent) throw new BridgeError("unauthorized", "job runners cannot broadcast to independent sessions");
       const ownNames = /* @__PURE__ */ new Set([sender.name, ...this.store.namesFor(sender)]);
-      const queued = this.store.broadcastNames().filter((name2) => !ownNames.has(name2) && !this.recipientConn(name2));
-      if (others.length === 0 && queued.length === 0 && !this.network?.peers().some((p) => !p.jobAgent)) {
+      const masters = new Set([...this.projectMains.values(), ...this.storedJobs().filter((job) => !job.parentJob && job.status === "running").map(primaryFor)].filter((name2) => PEER_NAME_PATTERN.test(name2)));
+      const eligible = this.store.broadcastRecipients(this.now(), masters);
+      const offline = (name2) => !ownNames.has(name2) && !this.recipientConn(name2);
+      const queued = eligible.queued.filter(offline), skipped = eligible.skipped.filter(offline);
+      if (others.length === 0 && queued.length === 0 && skipped.length === 0 && !this.network?.peers().some((p) => !p.jobAgent)) {
         throw new BridgeError("unknown_target", "no other known sessions; send to an exact name to create an offline queue");
       }
-      return { live: others, queued };
+      return { live: others, queued, skipped };
     }
     const recipient = this.recipientConn(to);
     const exact = all.find((c) => c.peer.id === to || c === recipient);
@@ -41066,9 +41259,9 @@ Call decisions to look up current decisions or their history.`,
         this.log.debug("replyTo refers to an unknown message", { replyTo });
       }
     }
-    conversationId ||= randomUUID20();
+    conversationId ||= randomUUID21();
     if (own2 && (to === own2.rootName || to === own2.owner || this.groups.members(own2, this.localPeers()).some((p) => p.name === to) || mastersFor(own2).includes(to))) conversationId = this.jobConversation(own2, to, conversationId);
-    const id = sender.jobAgent && args.dedupeKey?.startsWith(COMPLETION_DEDUPE_PREFIX) ? completionMessageId(sender.id, args.dedupeKey.slice(COMPLETION_DEDUPE_PREFIX.length)) : randomUUID20();
+    const id = sender.jobAgent && args.dedupeKey?.startsWith(COMPLETION_DEDUPE_PREFIX) ? completionMessageId(sender.id, args.dedupeKey.slice(COMPLETION_DEDUPE_PREFIX.length)) : randomUUID21();
     const createdAt = this.now();
     const base2 = {
       id,
@@ -41088,13 +41281,13 @@ Call decisions to look up current decisions or their history.`,
       return result2;
     }
     const remoteTargets = to === BROADCAST ? this.network?.peers().filter((p) => !p.jobAgent).map((p) => p.name) ?? [] : [];
-    let { live, queued } = this.resolveTargets(to, sender);
+    let { live, queued, skipped } = this.resolveTargets(to, sender);
     if (own2 && to === this.jobRecipient(own2)) {
       for (let i = live.length - 1; i >= 0; i--) {
         if (live[i].peer?.unavailable) queued.push(live.splice(i, 1)[0].peer.name);
       }
     }
-    if (conversationId.startsWith(SIBLING_CONVERSATION_PREFIX) && (queued.some((name2) => !sender.jobAgent || !this.storedSiblings(sender).some((s) => s.name === name2)) || live.some((c) => c.peer.jobAgent && (!sender.jobAgent || !sender.jobOwner || !this.sameJobFamily(sender, c.peer) && !this.sharedJobs(sender, c.peer) && !sender.jobSendTo?.includes(c.peer.name))))) {
+    if (conversationId.startsWith(SIBLING_CONVERSATION_PREFIX) && (queued.some((name2) => !sender.jobAgent || !this.storedSiblings(sender, name2).some((s) => s.name === name2)) || live.some((c) => c.peer.jobAgent && (!sender.jobAgent || !sender.jobOwner || !this.sameJobFamily(sender, c.peer) && !this.sharedJobs(sender, c.peer) && !sender.jobSendTo?.includes(c.peer.name))))) {
       throw new BridgeError("unauthorized", "sibling chat requires the same supervisor or an explicit send_to job grant");
     }
     let replyRestrictions = conversationId.startsWith(CONTROL_CONVERSATION_PREFIX) ? [] : [...live.map((c) => c.peer.name), ...queued].flatMap((name2) => {
@@ -41140,7 +41333,8 @@ Call decisions to look up current decisions or their history.`,
       deliveredTo: live.map((c) => c.peer.name),
       queuedFor: queued
     });
-    const result = { messages, deliveredTo: live.map((c) => c.peer.name), queuedFor: queued, recipientStates: live.map((c) => ({ name: c.peer.name, activity: c.peer.activity, autoWake: c.peer.autoWake, wakeOnDirect: c.peer.wakeOnDirect, wakeAvailable: c.peer.wakeAvailable, wakeMaxHops: c.peer.wakeMaxHops })) };
+    const result = { messages, ...skipped ? { skippedFor: skipped } : {}, deliveredTo: live.map((c) => c.peer.name), queuedFor: queued, recipientStates: live.map((c) => ({ name: c.peer.name, activity: c.peer.activity, autoWake: c.peer.autoWake, wakeOnDirect: c.peer.wakeOnDirect, wakeAvailable: c.peer.wakeAvailable, wakeMaxHops: c.peer.wakeMaxHops })) };
+    if (to.startsWith("project:") && live[0]?.peer) result.projectRoute = this.projectPeer(live[0].peer).projectRoute;
     if (replyRestrictions.length) result.replyRestrictions = replyRestrictions;
     for (const recipient of remoteTargets) {
       try {
@@ -41158,6 +41352,10 @@ Call decisions to look up current decisions or their history.`,
         this.log.warn("broadcast recipient delivery failed", { id, recipient, err: String(err) });
       }
     }
+    result.wakeRequestedFor = (result.recipientStates ?? []).filter((peer) => {
+      const message = result.messages.find((m) => m.recipient === peer.name);
+      return Boolean(message && peer.wakeAvailable && (peer.autoWake || peer.wakeOnDirect && (message.to === BROADCAST || message.to === peer.name || message.recipient === peer.name && !AGENT_KINDS.includes(message.to))) && message.hop < (peer.wakeMaxHops ?? DEFAULT_MAX_HOPS) && !isQuietMessage(message) && !message.conversationId.endsWith(":note"));
+    }).map((peer) => peer.name);
     return result;
   }
   /** A pending response is one frame, unlike streamed replay events. Bound it by bytes as well as rows. */
@@ -41262,7 +41460,7 @@ async function processIdentity(pid) {
 }
 
 // src/core/job-control.ts
-import { randomUUID as randomUUID21 } from "node:crypto";
+import { randomUUID as randomUUID22 } from "node:crypto";
 var DASHBOARD_JOB_CONVERSATION = "jobctl-dashboard";
 var CONTROL_TIMEOUT_MS = 1e4;
 var JobControlError = class extends Error {
@@ -41274,7 +41472,7 @@ var JobControlError = class extends Error {
 };
 async function controlDashboardJob(node2, owner, job, command) {
   if (!(await node2.peers()).some((p) => p.name === owner)) throw new JobControlError("The owning session is not connected. Reopen it to continue this subagent.", "offline");
-  const requestId = randomUUID21();
+  const requestId = randomUUID22();
   let receive;
   let timer;
   const reply2 = new Promise((resolve21, reject) => {
@@ -41311,7 +41509,7 @@ var BridgeNode = class extends EventEmitter2 {
   constructor(opts) {
     super();
     this.opts = opts;
-    this.id = opts.id ?? randomUUID22();
+    this.id = opts.id ?? randomUUID23();
     this.currentName = opts.name;
     this.currentCwd = opts.cwd;
     this.autoWake = opts.autoWake;
@@ -41422,9 +41620,9 @@ var BridgeNode = class extends EventEmitter2 {
   }
   /** Doubling delay for background retries, capped; reset once connected. */
   nextBackoff() {
-    const delay5 = this.reconnectDelay;
-    this.reconnectDelay = Math.min(delay5 * 2, RECONNECT_BACKOFF_MAX_MS);
-    return delay5;
+    const delay6 = this.reconnectDelay;
+    this.reconnectDelay = Math.min(delay6 * 2, RECONNECT_BACKOFF_MAX_MS);
+    return delay6;
   }
   /**
    * Retry the election later until connected or stopped. Also after "unauthorized" / "protocol_mismatch":
@@ -41614,7 +41812,7 @@ var BridgeNode = class extends EventEmitter2 {
   /** quiet: not part of a conversation of this agent (no listen window, replies are not awaited), e.g. control messages to a job runner. */
   send(args, opts = {}) {
     return this.withClient(async (c) => {
-      const res = await this.sendRequest(c, "send", { ...args, dedupeKey: args.dedupeKey || randomUUID22() });
+      const res = await this.sendRequest(c, "send", { ...args, dedupeKey: args.dedupeKey || randomUUID23() });
       if (opts.quiet) return res;
       this.lastSent = Date.now();
       if (!args.replyTo) for (const m of res.messages) this.asked.add(m.id);
@@ -41703,7 +41901,7 @@ var BridgeNode = class extends EventEmitter2 {
     return this.withClient((c) => c.request("siblings", {}));
   }
   sendSibling(args, maxHops) {
-    return this.withClient((c) => this.sendRequest(c, "sendSibling", { ...args, maxHops, dedupeKey: args.dedupeKey || randomUUID22() }));
+    return this.withClient((c) => this.sendRequest(c, "sendSibling", { ...args, maxHops, dedupeKey: args.dedupeKey || randomUUID23() }));
   }
   async updateJob(patch) {
     Object.assign(this.opts, patch);
@@ -42151,9 +42349,39 @@ function uninstallAntigravity(target = antigravityPluginDir()) {
 }
 
 // src/cli/live-update.ts
-import { existsSync as existsSync30, readFileSync as readFileSync32, readdirSync as readdirSync19 } from "node:fs";
+import { existsSync as existsSync31, readFileSync as readFileSync33, readdirSync as readdirSync19 } from "node:fs";
 import { homedir as homedir10 } from "node:os";
+import { join as join61 } from "node:path";
+
+// src/cli/marketplace-sync.ts
+import { execFileSync as execFileSync5 } from "node:child_process";
+import { existsSync as existsSync30, readFileSync as readFileSync32 } from "node:fs";
 import { join as join60 } from "node:path";
+function claudeMarketplace(home) {
+  const known = join60(home, "plugins", "known_marketplaces.json");
+  assertUnlinked(known);
+  const location = existsSync30(known) ? JSON.parse(readFileSync32(known, "utf8"))["agent-bridge"]?.installLocation : void 0;
+  return typeof location === "string" ? location : join60(home, "plugins", "marketplaces", "agent-bridge");
+}
+function syncMarketplace(root, client, version3) {
+  assertUnlinked(root);
+  const manifest = client === "claude" ? ".claude-plugin/marketplace.json" : ".agents/plugins/marketplace.json";
+  const git2 = (...args) => execFileSync5("git", ["-C", root, ...args], { encoding: "utf8", windowsHide: true, timeout: 6e4, stdio: ["ignore", "pipe", "pipe"] }).trim();
+  const fix = `agent-bridge update ${client} --yes`;
+  if (!existsSync30(join60(root, ".git"))) throw new Error(`Missing Git marketplace clone: ${root}. Fix: ${client} plugin marketplace ${client === "claude" ? "update" : "upgrade"} agent-bridge, then ${fix}`);
+  if (git2("status", "--porcelain")) throw new Error(`Marketplace has local changes: ${root}; preserved unchanged. Commit or stash them, then ${fix}`);
+  git2("fetch", "origin", "HEAD");
+  const market = JSON.parse(git2("show", `FETCH_HEAD:${manifest}`));
+  const plugin = market.plugins?.find((entry) => entry.name === "agent-bridge");
+  const path = client === "claude" ? plugin?.source : plugin?.source?.path;
+  if (typeof path !== "string" || !/^\.\/plugins\/(claude|codex)$/.test(path)) throw new Error(`Unsupported marketplace source in ${root}; preserved unchanged`);
+  const descriptor = client === "claude" ? ".claude-plugin/plugin.json" : ".codex-plugin/plugin.json";
+  const actual = JSON.parse(git2("show", `FETCH_HEAD:${path.slice(2)}/${descriptor}`)).version;
+  if (actual !== version3 || client === "claude" && plugin.version !== version3) throw new Error(`Marketplace release ${actual} differs from packaged release ${version3}; no selector changed. Use the CLI for v${actual}, then ${fix}`);
+  git2("merge", "--ff-only", "FETCH_HEAD");
+}
+
+// src/cli/live-update.ts
 function compareReleases(a, b) {
   const left = a.split(".").map(Number), right = b.split(".").map(Number);
   for (let i = 0; i < 3; i++) {
@@ -42162,22 +42390,27 @@ function compareReleases(a, b) {
   }
   return 0;
 }
-function updateCodex(source, home = process.env.CODEX_HOME || join60(homedir10(), ".codex"), version3 = APP_VERSION) {
-  const base2 = join60(home, "plugins", "cache", "agent-bridge", "agent-bridge");
+function updateCodex(source, home = process.env.CODEX_HOME || join61(homedir10(), ".codex"), version3 = APP_VERSION) {
+  const base2 = join61(home, "plugins", "cache", "agent-bridge", "agent-bridge");
   assertUnlinked(base2);
-  for (const entry of existsSync30(base2) ? readdirSync19(base2, { withFileTypes: true }) : []) {
+  for (const entry of existsSync31(base2) ? readdirSync19(base2, { withFileTypes: true }) : []) {
     if (!entry.isDirectory()) continue;
     if (entry.name === "local" || !/^\d+\.\d+\.\d+$/.test(entry.name)) throw new Error(`Codex cache uses an unsupported version selector (${entry.name}); preserved unchanged.`);
     if (compareReleases(entry.name, version3) > 0) throw new Error(`Codex already has a newer version (${entry.name}); preserved unchanged.`);
   }
-  const configPath = join60(home, "config.toml");
+  const configPath = join61(home, "config.toml");
   assertUnlinked(configPath);
-  const config2 = existsSync30(configPath) ? readFileSync32(configPath, "utf8") : "";
-  const marketplace = join60(home, "agent-bridge-marketplace");
+  const config2 = existsSync31(configPath) ? readFileSync33(configPath, "utf8") : "";
+  const marketplace = join61(home, "agent-bridge-marketplace");
   const nextConfig = codexLiveConfig(config2, marketplace);
+  validatePluginPublication(source, base2, version3);
+  validatePluginPublication(source, join61(marketplace, "plugins"), version3);
+  for (const clone2 of [join61(home, "plugins", "marketplaces", "agent-bridge"), join61(home, "marketplaces", "agent-bridge")]) {
+    if (existsSync31(clone2)) syncMarketplace(clone2, "codex", version3);
+  }
   const root = publishPlugin(source, base2, version3);
-  publishPlugin(source, join60(marketplace, "plugins"), version3);
-  atomicPluginWrite(join60(marketplace, ".agents", "plugins", "marketplace.json"), JSON.stringify({
+  publishPlugin(source, join61(marketplace, "plugins"), version3);
+  atomicPluginWrite(join61(marketplace, ".agents", "plugins", "marketplace.json"), JSON.stringify({
     name: "agent-bridge",
     plugins: [{
       name: "agent-bridge",
@@ -42207,14 +42440,16 @@ ${fields}`;
   if (!/^\s*\[plugins\.(?:"agent-bridge@agent-bridge"|'agent-bridge@agent-bridge')\]/m.test(config2)) config2 += '\n[plugins."agent-bridge@agent-bridge"]\nenabled = true\n';
   return config2;
 }
-function updateClaude(source, home = process.env.CLAUDE_CONFIG_DIR || join60(homedir10(), ".claude"), version3 = APP_VERSION) {
-  const metadata2 = join60(home, "plugins", "installed_plugins.json");
+function updateClaude(source, home = process.env.CLAUDE_CONFIG_DIR || join61(homedir10(), ".claude"), version3 = APP_VERSION) {
+  const metadata2 = join61(home, "plugins", "installed_plugins.json");
   assertUnlinked(metadata2);
-  const installed = JSON.parse(readFileSync32(metadata2, "utf8"));
+  const installed = JSON.parse(readFileSync33(metadata2, "utf8"));
   const entries = installed?.plugins?.["agent-bridge@agent-bridge"];
   if (installed.version !== 2 || !Array.isArray(entries) || entries.length === 0 || entries.some((e) => !e || typeof e.installPath !== "string" || typeof e.scope !== "string")) throw new Error("Unsupported or missing installed plugin metadata; preserved unchanged. Install the plugin first.");
   if (entries.some((entry) => typeof entry.version === "string" && /^\d+\.\d+\.\d+$/.test(entry.version) && compareReleases(entry.version, version3) > 0)) throw new Error("Claude already has a newer version; preserved unchanged");
-  const root = publishPlugin(source, join60(home, "plugins", "cache", "agent-bridge", "agent-bridge"), version3);
+  validatePluginPublication(source, join61(home, "plugins", "cache", "agent-bridge", "agent-bridge"), version3);
+  syncMarketplace(claudeMarketplace(home), "claude", version3);
+  const root = publishPlugin(source, join61(home, "plugins", "cache", "agent-bridge", "agent-bridge"), version3);
   installed.plugins["agent-bridge@agent-bridge"] = entries.map((entry) => {
     const next = { ...entry, installPath: root, version: version3, lastUpdated: (/* @__PURE__ */ new Date()).toISOString() };
     delete next.gitCommitSha;
@@ -42261,7 +42496,8 @@ function planFor(tool, action) {
           // Adding an existing marketplace fails harmlessly; the update afterwards refreshes it.
           { kind: "command", bin: "claude", args: ["plugin", "marketplace", "add", MARKETPLACE_REPO], allowFailure: true },
           { kind: "command", bin: "claude", args: ["plugin", "marketplace", "update", MARKETPLACE_NAME] },
-          { kind: "command", bin: "claude", args: ["plugin", "install", PLUGIN_ID] }
+          { kind: "command", bin: "claude", args: ["plugin", "install", PLUGIN_ID] },
+          { kind: "live-update", tool }
         ];
       case "update":
         return [{ kind: "live-update", tool }];
@@ -42275,7 +42511,8 @@ function planFor(tool, action) {
         return [
           { kind: "command", bin: "codex", args: ["plugin", "marketplace", "add", MARKETPLACE_REPO], allowFailure: true },
           { kind: "command", bin: "codex", args: ["plugin", "marketplace", "upgrade", MARKETPLACE_NAME] },
-          { kind: "command", bin: "codex", args: ["plugin", "add", PLUGIN_ID] }
+          { kind: "command", bin: "codex", args: ["plugin", "add", PLUGIN_ID] },
+          { kind: "live-update", tool }
         ];
       case "update":
         return [{ kind: "live-update", tool }];
@@ -42463,8 +42700,8 @@ async function runPermissionHook(agent = "codex") {
 }
 
 // src/cli/antigravity-hook.ts
-import { readFileSync as readFileSync33 } from "node:fs";
-import { join as join61 } from "node:path";
+import { readFileSync as readFileSync34 } from "node:fs";
+import { join as join62 } from "node:path";
 
 // src/core/procinfo.ts
 import { execFile as execFile3 } from "node:child_process";
@@ -42576,7 +42813,7 @@ async function runAntigravityHook(event) {
       process.stdout.write("{}");
       return 0;
     }
-    const reg = JSON.parse(readFileSync33(join61(resolveHome(), "antigravity-hooks", `${pid}.json`), "utf8"));
+    const reg = JSON.parse(readFileSync34(join62(resolveHome(), "antigravity-hooks", `${pid}.json`), "utf8"));
     if (!Number.isInteger(reg.port) || typeof reg.secret !== "string") throw new Error("invalid hook registration");
     const res = await fetch(`http://127.0.0.1:${reg.port}/hook`, { method: "POST", headers: { authorization: `Bearer ${reg.secret}`, "content-type": "application/json" }, body: JSON.stringify({ event, input: input2 }), signal: AbortSignal.timeout(2e4) });
     if (!res.ok) throw new Error("hook endpoint unavailable");
@@ -42588,17 +42825,17 @@ async function runAntigravityHook(event) {
 }
 
 // src/cli/rewake-hook.ts
-import { readFileSync as readFileSync34 } from "node:fs";
+import { readFileSync as readFileSync35 } from "node:fs";
 
 // src/mcp/rewake.ts
 import { randomBytes as randomBytes7 } from "node:crypto";
 import { mkdirSync as mkdirSync27, rmSync as rmSync8, writeFileSync as writeFileSync12 } from "node:fs";
 import { createServer as createServer5 } from "node:http";
-import { join as join62 } from "node:path";
+import { join as join63 } from "node:path";
 var SESSIONS_DIR = "sessions";
 var REWAKE_POLL_MS = 4 * 60 * 1e3;
 function sessionFile(home, sessionId) {
-  return join62(home, SESSIONS_DIR, `${sessionId.replace(/[^\w-]/g, "_")}.json`);
+  return join63(home, SESSIONS_DIR, `${sessionId.replace(/[^\w-]/g, "_")}.json`);
 }
 
 // src/cli/rewake-hook.ts
@@ -42619,7 +42856,7 @@ async function runRewakeHook(standby = false) {
   if (!sessionId) return 0;
   let reg;
   try {
-    reg = JSON.parse(readFileSync34(sessionFile(resolveHome(), sessionId), "utf8"));
+    reg = JSON.parse(readFileSync35(sessionFile(resolveHome(), sessionId), "utf8"));
   } catch {
     return 0;
   }
@@ -42701,15 +42938,15 @@ async function runSessionStartHook(log, out2 = (text2) => process.stdout.write(t
 }
 
 // src/cli/watch.ts
-import { closeSync as closeSync12, existsSync as existsSync31, openSync as openSync12, readSync as readSync5, statSync as statSync16 } from "node:fs";
+import { closeSync as closeSync12, existsSync as existsSync32, openSync as openSync12, readSync as readSync5, statSync as statSync16 } from "node:fs";
 import { StringDecoder } from "node:string_decoder";
-import { join as join63 } from "node:path";
+import { join as join64 } from "node:path";
 var POLL_MS = 500;
 var CHUNK = 64 * 1024;
 var FINISHED = / finished after \d+s · /;
 function findRunLog(home, filter) {
-  const dir = join63(home, RUNS_DIR_NAME);
-  if (!existsSync31(dir)) return null;
+  const dir = join64(home, RUNS_DIR_NAME);
+  if (!existsSync32(dir)) return null;
   const logs = runLogFiles(home).filter((f) => !filter || f.includes(filter)).map((path) => ({ path, t: statSync16(path).mtimeMs })).sort((a, b) => b.t - a.t);
   return logs[0]?.path ?? null;
 }
@@ -42742,24 +42979,24 @@ async function watchRunLog(path, out2) {
 }
 
 // src/cli/dashboard.ts
-import { readFileSync as readFileSync38, writeFileSync as writeFileSync15 } from "node:fs";
+import { readFileSync as readFileSync39, writeFileSync as writeFileSync15 } from "node:fs";
 import { request } from "node:http";
-import { join as join69 } from "node:path";
+import { join as join70 } from "node:path";
 
 // src/cli/ui.ts
 import { DatabaseSync as DatabaseSync16 } from "node:sqlite";
 
 // src/cli/dashboard-key.ts
-import { randomBytes as randomBytes8, randomUUID as randomUUID23 } from "node:crypto";
-import { existsSync as existsSync32, linkSync, mkdirSync as mkdirSync28, readFileSync as readFileSync35, renameSync as renameSync9, unlinkSync as unlinkSync3, writeFileSync as writeFileSync13 } from "node:fs";
-import { join as join64 } from "node:path";
+import { randomBytes as randomBytes8, randomUUID as randomUUID24 } from "node:crypto";
+import { existsSync as existsSync33, linkSync, mkdirSync as mkdirSync28, readFileSync as readFileSync36, renameSync as renameSync9, unlinkSync as unlinkSync3, writeFileSync as writeFileSync13 } from "node:fs";
+import { join as join65 } from "node:path";
 var DASHBOARD_KEY_FILE = "dashboard-key";
 var KEY_PATTERN = /^[0-9a-f]{48}$/;
 function loadDashboardKey(home, legacy, reset = false) {
   mkdirSync28(home, { recursive: true, mode: 448 });
-  const file2 = join64(home, DASHBOARD_KEY_FILE);
-  if (reset || !existsSync32(file2)) {
-    const temp = join64(home, `.dashboard-key-${randomUUID23()}`);
+  const file2 = join65(home, DASHBOARD_KEY_FILE);
+  if (reset || !existsSync33(file2)) {
+    const temp = join65(home, `.dashboard-key-${randomUUID24()}`);
     let created = false;
     try {
       writeFileSync13(temp, "", { flag: "wx", mode: 384 });
@@ -42775,16 +43012,16 @@ function loadDashboardKey(home, legacy, reset = false) {
         }
       }
     } finally {
-      if (created && existsSync32(temp)) unlinkSync3(temp);
+      if (created && existsSync33(temp)) unlinkSync3(temp);
     }
   }
   protect(file2, 384);
-  const key3 = readFileSync35(file2, "utf8").trim();
+  const key3 = readFileSync36(file2, "utf8").trim();
   if (!KEY_PATTERN.test(key3)) throw new Error("Invalid dashboard key file; run agent-bridge ui --reset-key to recover.");
   return key3;
 }
 function currentDashboardKey(home) {
-  const key3 = readFileSync35(join64(home, DASHBOARD_KEY_FILE), "utf8").trim();
+  const key3 = readFileSync36(join65(home, DASHBOARD_KEY_FILE), "utf8").trim();
   if (!KEY_PATTERN.test(key3)) throw new Error("Invalid dashboard key file");
   return key3;
 }
@@ -42812,8 +43049,8 @@ import { createServer as createServer6 } from "node:http";
 import { networkInterfaces as networkInterfaces2 } from "node:os";
 
 // src/core/models.ts
-import { mkdirSync as mkdirSync29, readFileSync as readFileSync36, writeFileSync as writeFileSync14 } from "node:fs";
-import { join as join65 } from "node:path";
+import { mkdirSync as mkdirSync29, readFileSync as readFileSync37, writeFileSync as writeFileSync14 } from "node:fs";
+import { join as join66 } from "node:path";
 
 // src/core/usage.ts
 import { spawn as spawn7 } from "node:child_process";
@@ -43023,10 +43260,10 @@ var MODEL_CACHE_MS = 10 * 60 * 1e3;
 var modelReads = /* @__PURE__ */ new Map();
 var modelBin = (agent, cfg) => cfg[`${agent}Bin`];
 var modelDefault = (agent, cfg) => cfg[`${agent}Model`];
-var modelCachePath = (home, agent) => join65(home, `models-${agent}.json`);
+var modelCachePath = (home, agent) => join66(home, `models-${agent}.json`);
 function cachedModels(home, agent, cfg) {
   try {
-    const cache4 = JSON.parse(readFileSync36(modelCachePath(home, agent), "utf8"));
+    const cache4 = JSON.parse(readFileSync37(modelCachePath(home, agent), "utf8"));
     const validStrings = (v) => Array.isArray(v) && v.every((s) => typeof s === "string");
     if (cache4.bin !== modelBin(agent, cfg) || cache4.effort !== (cfg.effort[agent] ?? null) || typeof cache4.at !== "number" || Date.now() - cache4.at >= MODEL_CACHE_MS) return null;
     if (cache4.report?.agent !== agent || !validStrings(cache4.report.models) || !validStrings(cache4.report.lines)) return null;
@@ -43539,6 +43776,15 @@ main.wrap { padding-top: 32px; max-width: 1240px; }
 .sess-actions button.ghost { min-height: 30px; padding: 4px 12px; border-radius: 7px; }
 .chip.main-chip { color: var(--accent); background: var(--accent-soft); border-color: transparent; font-weight: 600; }
 .tree-proj { padding: 8px 10px 2px; font-size: 11.5px; color: var(--faint); min-width: 0; }
+/* A project shared by several sessions: the project is the headline, its sessions hang beneath it. */
+.tree-group { margin: 4px 0 6px; }
+.tree-group-head { display: flex; align-items: center; gap: 8px; padding: 6px 8px 2px 10px; font-size: 13.5px; font-weight: 650; color: var(--text); min-width: 0; }
+.tree-group-head .ell { flex: 1; min-width: 0; }
+.tree-sess.member { margin-left: 14px; border-left: 1.5px solid var(--line); border-radius: 0 8px 8px 0; }
+.tree-sess.member > a { padding: 4px 8px 4px 8px; font-size: 13px; }
+.tree-sess.member .lbl small { display: inline; margin-left: 6px; font-size: 11.5px; }
+.tree-sess.member.secondary > a { color: var(--muted); font-weight: 500; }
+.tree-sess.member .main-tag { margin-left: 6px; padding: 0 6px; border-radius: 6px; font-size: 10.5px; font-weight: 600; color: var(--accent); background: var(--accent-soft); vertical-align: 1px; }
 .tree-sess { position: relative; border-radius: 8px; }
 .tree-sess:hover { background: color-mix(in srgb, var(--panel) 60%, transparent); }
 .tree-sess.cur { background: var(--panel); box-shadow: var(--shadow); }
@@ -44473,9 +44719,26 @@ function projectSidebar(items) {
   }
   // The sidebar lists sessions only (subagents live in each session's own column). A project heading
   // only appears when two or more sessions share the project.
-  return [...projects.values()].map((p) =>
-    (p.title && p.items.length > 1 ? '<div class="tree-proj"><span class="ell">' + esc(p.title) + "</span></div>" : "") + p.items.map(sideSession).join("")
-  ).join("");
+  return [...projects.values()].map((p) => {
+    if (!p.title || p.items.length < 2) return p.items.map(sideSession).join("");
+    // A shared project: the project is the headline; its sessions are compact members, main first.
+    const members = [...p.items].sort((a, b) => Number(!!b.peer?.projectMain) - Number(!!a.peer?.projectMain));
+    const running = members.reduce((n, x) => n + (x.running || 0), 0);
+    return '<div class="tree-group"><div class="tree-group-head"><span class="ell">' + esc(p.title) + "</span>" +
+      (running ? '<span class="count" title="subagents working">' + running + "</span>" : "") + "</div>" +
+      members.map(sideMember).join("") + "</div>";
+  }).join("");
+}
+
+/** One session inside a shared project: the agent is the label, the main one is marked, a secondary is quieter. */
+function sideMember(x) {
+  const p = x.peer || {}, cur = x.name === route.session, main = !!p.projectMain;
+  const agent = { claude: "Claude", codex: "Codex", opencode: "opencode", antigravity: "Antigravity" }[p.agent] || p.agent || "session";
+  const state = p.unavailable ? "unavailable" : p.activity || "connected";
+  return '<div class="tree-sess member' + (main ? " main" : " secondary") + (cur ? " cur" : "") + (x.live ? "" : " ended") + '">' +
+    '<a href="' + href(x.name) + '" title="' + esc(x.name + (p.cwd ? " \xB7 " + p.cwd : "")) + '"' + (cur ? ' aria-current="page"' : "") + ">" + dot(p.activity) +
+    '<span class="lbl ell">' + esc(agent) + (main ? '<span class="main-tag">main</span>' : "") + '<small class="ell">' + esc(state) + "</small></span>" +
+    (x.running ? '<span class="count" title="subagents working">' + x.running + "</span>" : "") + "</a></div>";
 }
 
 const narrow = () => typeof matchMedia === "function" && matchMedia("(max-width: 640px)").matches;
@@ -46139,17 +46402,17 @@ function parseNetworkAddress(address) {
 }
 
 // src/core/doctor.ts
-import { existsSync as existsSync33, lstatSync as lstatSync12, mkdirSync as mkdirSync30, readFileSync as readFileSync37, readdirSync as readdirSync20, renameSync as renameSync10 } from "node:fs";
-import { basename as basename13, dirname as dirname27, join as join66, relative as relative10 } from "node:path";
-import { randomUUID as randomUUID24 } from "node:crypto";
+import { existsSync as existsSync34, lstatSync as lstatSync12, mkdirSync as mkdirSync30, readFileSync as readFileSync38, readdirSync as readdirSync20, renameSync as renameSync10 } from "node:fs";
+import { basename as basename13, dirname as dirname27, join as join67, relative as relative10 } from "node:path";
+import { randomUUID as randomUUID25 } from "node:crypto";
 import { DatabaseSync as DatabaseSync14 } from "node:sqlite";
 function doctor(home, now = Date.now()) {
   const report = { checkedAt: now, ok: true, schema: [], findings: [], sizes: [], totalBytes: 0, backups: listBackups(home) };
   const finding = (severity, code, path, detail, fixable = false) => report.findings.push({ severity, code, path, detail, fixable });
   const walk = (dir) => {
-    if (!existsSync33(dir)) return;
+    if (!existsSync34(dir)) return;
     for (const file2 of readdirSync20(dir)) {
-      const path = join66(dir, file2);
+      const path = join67(dir, file2);
       const st = lstatSync12(path);
       if (st.isSymbolicLink()) {
         finding("warning", "symlink", path, "Skipped symbolic link");
@@ -46166,9 +46429,9 @@ function doctor(home, now = Date.now()) {
   };
   walk(home);
   for (const [name2, expected] of [[DB_FILE_NAME, SQLITE_STORE_VERSION], [ARCHIVE_DB_NAME, ARCHIVE_STORE_VERSION]]) {
-    const path = join66(home, name2);
+    const path = join67(home, name2);
     let actual = null;
-    if (existsSync33(path)) {
+    if (existsSync34(path)) {
       let db = null;
       try {
         db = new DatabaseSync14(path, { readOnly: true, timeout: 50 });
@@ -46186,7 +46449,7 @@ function doctor(home, now = Date.now()) {
   for (const path of jsonStoreFiles(home)) {
     try {
       if (path.endsWith(".jsonl")) {
-        const lines = readFileSync37(path, "utf8").split("\n").filter((s) => s.trim());
+        const lines = readFileSync38(path, "utf8").split("\n").filter((s) => s.trim());
         for (const line of lines) {
           try {
             const value2 = JSON.parse(line);
@@ -46199,7 +46462,7 @@ function doctor(home, now = Date.now()) {
         }
         continue;
       }
-      const value = JSON.parse(readFileSync37(path, "utf8"));
+      const value = JSON.parse(readFileSync38(path, "utf8"));
       const jobs = basename13(path) === JOBS_FILE || path.includes("jobs.json.overflow.json-") || /^jobs-.*\.json$/.test(basename13(path));
       if (jobs ? !(Array.isArray(value) || isRecord(value) && Array.isArray(value.jobs)) : !isRecord(value)) {
         finding("error", "json-shape", path, jobs ? "Expected a jobs array or jobs envelope" : "Expected a JSON object");
@@ -46209,16 +46472,16 @@ function doctor(home, now = Date.now()) {
       if (version3 === void 0 || version3 === 0) finding("warning", "json-legacy", path, "Legacy version; next versioned write will preserve a migration backup");
       else if (!Number.isInteger(version3) || version3 < 0 || version3 > JSON_STORE_VERSION) finding("error", "json-version", path, `Unsupported JSON version ${String(version3)}; code expects ${JSON_STORE_VERSION}`);
       else if (version3 < JSON_STORE_VERSION) finding("warning", "json-legacy", path, `Earlier JSON version ${String(version3)}; code expects ${JSON_STORE_VERSION}`);
-      if (dirname27(path) === join66(home, "runs") && path.endsWith(".json") && !existsSync33(path.replace(/\.json$/, ".log"))) finding("warning", "orphan-metadata", path, "Run metadata has no matching active log; preserved for review");
-      if (dirname27(path) === join66(home, "jobs") && path.endsWith(".spec.json") && !existsSync33(path.replace(/\.spec\.json$/, ".json"))) finding("warning", "orphan-runner-spec", path, "Runner specification has no state; it may still be starting");
+      if (dirname27(path) === join67(home, "runs") && path.endsWith(".json") && !existsSync34(path.replace(/\.json$/, ".log"))) finding("warning", "orphan-metadata", path, "Run metadata has no matching active log; preserved for review");
+      if (dirname27(path) === join67(home, "jobs") && path.endsWith(".spec.json") && !existsSync34(path.replace(/\.spec\.json$/, ".json"))) finding("warning", "orphan-runner-spec", path, "Runner specification has no state; it may still be starting");
     } catch (err) {
       finding("error", "json-parse", path, String(err));
     }
   }
   const logs = runLogFiles(home);
   for (const path of logs) {
-    const meta3 = join66(dirname27(path), runFileName(path).replace(/\.log$/, ".json"));
-    if (!existsSync33(meta3) && !readdirSync20(dirname27(path)).some((f) => f.startsWith(basename13(meta3) + "-"))) finding("warning", "orphan-log", path, "Run log has no metadata; log remains readable");
+    const meta3 = join67(dirname27(path), runFileName(path).replace(/\.log$/, ".json"));
+    if (!existsSync34(meta3) && !readdirSync20(dirname27(path)).some((f) => f.startsWith(basename13(meta3) + "-"))) finding("warning", "orphan-log", path, "Run log has no metadata; log remains readable");
   }
   report.ok = !report.findings.some((f) => f.severity === "error");
   return report;
@@ -46229,9 +46492,9 @@ function fixDoctor(home, confirmed) {
   try {
     const fixed = [];
     for (const finding of doctor(home).findings.filter((f) => f.fixable)) {
-      const dir = join66(home, "archive", "orphaned", randomUUID24());
+      const dir = join67(home, "archive", "orphaned", randomUUID25());
       mkdirSync30(dir, { recursive: true, mode: 448 });
-      const target = join66(dir, basename13(finding.path));
+      const target = join67(dir, basename13(finding.path));
       renameSync10(finding.path, target);
       fixed.push(target);
     }
@@ -46247,8 +46510,8 @@ function archiveHome(home, confirmed, now = Date.now()) {
   const release = storageLease(home);
   try {
     let messages = 0;
-    if (existsSync33(join66(home, DB_FILE_NAME))) {
-      const store = new MessageStore(join66(home, DB_FILE_NAME), nullLogger);
+    if (existsSync34(join67(home, DB_FILE_NAME))) {
+      const store = new MessageStore(join67(home, DB_FILE_NAME), nullLogger);
       try {
         messages = store.purgeOlderThan(now - age);
       } finally {
@@ -46256,11 +46519,11 @@ function archiveHome(home, confirmed, now = Date.now()) {
       }
     }
     let jobs = 0;
-    const path = join66(home, JOBS_FILE);
-    if (existsSync33(path)) {
+    const path = join67(home, JOBS_FILE);
+    if (existsSync34(path)) {
       const unlock = acquireLock(`${path}.lock`);
       try {
-        const previous = JSON.parse(readFileSync37(path, "utf8"));
+        const previous = JSON.parse(readFileSync38(path, "utf8"));
         if (!Array.isArray(previous) && !(isRecord(previous) && Array.isArray(previous.jobs))) throw new Error("invalid jobs store");
         const entries = Array.isArray(previous) ? previous : previous.jobs;
         const old = entries.filter((j) => isRecord(j) && (j.status === "done" || j.status === "failed") && typeof j.finishedAt === "number" && j.finishedAt < now - age);
@@ -46280,8 +46543,8 @@ function archiveHome(home, confirmed, now = Date.now()) {
 }
 
 // src/core/message-history.ts
-import { existsSync as existsSync34 } from "node:fs";
-import { dirname as dirname28, join as join67 } from "node:path";
+import { existsSync as existsSync35 } from "node:fs";
+import { dirname as dirname28, join as join68 } from "node:path";
 import { DatabaseSync as DatabaseSync15 } from "node:sqlite";
 var DEFAULT_HISTORY_LIMIT = 100;
 var MAX_HISTORY_LIMIT = 1e3;
@@ -46289,8 +46552,8 @@ function searchMessages(file2, opts = {}) {
   const limit = Math.min(MAX_HISTORY_LIMIT, Math.max(1, Math.floor(opts.limit ?? DEFAULT_HISTORY_LIMIT)));
   const query = `%${(opts.query ?? "").replace(/[\\%_]/g, "\\$&")}%`;
   const rows = [];
-  for (const path of [file2, join67(dirname28(file2), ARCHIVE_DB_NAME)]) {
-    if (!existsSync34(path)) continue;
+  for (const path of [file2, join68(dirname28(file2), ARCHIVE_DB_NAME)]) {
+    if (!existsSync35(path)) continue;
     const db = new DatabaseSync15(path, { readOnly: true, timeout: 50 });
     try {
       for (const table of ["messages", "archived_messages"]) {
@@ -46315,7 +46578,7 @@ function searchMessages(file2, opts = {}) {
 // src/core/history-answer.ts
 import { mkdtempSync as mkdtempSync3, rmSync as rmSync9 } from "node:fs";
 import { tmpdir as tmpdir2 } from "node:os";
-import { join as join68 } from "node:path";
+import { join as join69 } from "node:path";
 var HISTORY_ANSWER_TIMEOUT_MS = 6e4;
 var HISTORY_ANSWER_MAX_HITS = 8;
 var HISTORY_ANSWER_MAX_CHARS = 4e3;
@@ -46367,7 +46630,7 @@ async function answerHistory(query, result, cfg, home, log, deps = {}) {
   }
 }
 async function runAnswer(agent, model, prompt, cfg, log) {
-  const cwd = mkdtempSync3(join68(tmpdir2(), "agent-bridge-answer-"));
+  const cwd = mkdtempSync3(join69(tmpdir2(), "agent-bridge-answer-"));
   const env = childEnv();
   try {
     let args;
@@ -46950,11 +47213,11 @@ var DASHBOARD_FILE = "dashboard.json";
 var PROBE_TIMEOUT_MS = 1500;
 var OWNER_ONLY2 = 384;
 function dashboardFile(home) {
-  return join69(home, DASHBOARD_FILE);
+  return join70(home, DASHBOARD_FILE);
 }
 function readDashboardInfo(home) {
   try {
-    const d = JSON.parse(readFileSync38(dashboardFile(home), "utf8"));
+    const d = JSON.parse(readFileSync39(dashboardFile(home), "utf8"));
     return typeof d.url === "string" && typeof d.port === "number" && typeof d.pid === "number" ? d : null;
   } catch {
     return null;
@@ -47086,16 +47349,16 @@ function openBrowser(url2) {
 }
 
 // src/cli/reliability.ts
-import { execFileSync as execFileSync5 } from "node:child_process";
-import { existsSync as existsSync36, mkdtempSync as mkdtempSync5, rmSync as rmSync11, writeFileSync as writeFileSync17 } from "node:fs";
+import { execFileSync as execFileSync6 } from "node:child_process";
+import { existsSync as existsSync37, mkdtempSync as mkdtempSync5, rmSync as rmSync11, writeFileSync as writeFileSync17 } from "node:fs";
 import { tmpdir as tmpdir4 } from "node:os";
-import { join as join71 } from "node:path";
+import { join as join72 } from "node:path";
 
 // src/cli/reliability-live.ts
 import { execFile as execFile5 } from "node:child_process";
-import { existsSync as existsSync35, mkdirSync as mkdirSync31, mkdtempSync as mkdtempSync4, readdirSync as readdirSync21, readFileSync as readFileSync39, rmSync as rmSync10, writeFileSync as writeFileSync16 } from "node:fs";
+import { existsSync as existsSync36, mkdirSync as mkdirSync31, mkdtempSync as mkdtempSync4, readdirSync as readdirSync21, readFileSync as readFileSync40, rmSync as rmSync10, writeFileSync as writeFileSync16 } from "node:fs";
 import { tmpdir as tmpdir3 } from "node:os";
-import { join as join70 } from "node:path";
+import { join as join71 } from "node:path";
 
 // node_modules/@modelcontextprotocol/sdk/dist/esm/server/zod-compat.js
 function isZ4Schema(s) {
@@ -50644,7 +50907,7 @@ var StdioClientTransport = class {
 };
 
 // src/cli/reliability-live.ts
-var SERVER_BUNDLE = join70("dist", "server.mjs");
+var SERVER_BUNDLE = join71("dist", "server.mjs");
 var JOBS_FILE2 = "jobs.json";
 var NOTE_COUNT = 12;
 var NOTES_DIR = "notes";
@@ -50673,7 +50936,7 @@ function hostFor(target) {
 }
 function serverBundle(host, fromFile) {
   const dir = pluginSourceDir(host, SERVER_BUNDLE, fromFile);
-  return dir ? join70(dir, SERVER_BUNDLE) : null;
+  return dir ? join71(dir, SERVER_BUNDLE) : null;
 }
 function jobNameIn(text2) {
   return /Subagent (\S+-job-[0-9a-f]+) started/.exec(text2)?.[1] ?? /message_subagent\(job="([^"]+)"/.exec(text2)?.[1] ?? null;
@@ -50733,7 +50996,7 @@ function alive2(pid) {
 }
 function storedJob(home, job) {
   try {
-    const all = readStore(join70(home, JOBS_FILE2));
+    const all = readStore(join71(home, JOBS_FILE2));
     return all.find((j) => j.name === job) ?? null;
   } catch {
     return null;
@@ -50742,8 +51005,8 @@ function storedJob(home, job) {
 var PICKED_UP_LOG = "subagent picked up messages";
 function logsMention(home, text2) {
   try {
-    const dir = join70(home, LOG_DIR_NAME);
-    return readdirSync21(dir).some((f) => readFileSync39(join70(dir, f), "utf8").includes(text2));
+    const dir = join71(home, LOG_DIR_NAME);
+    return readdirSync21(dir).some((f) => readFileSync40(join71(dir, f), "utf8").includes(text2));
   } catch {
     return false;
   }
@@ -50835,9 +51098,9 @@ var LiveHost = class _LiveHost {
   }
 };
 function writeNotes(dir) {
-  mkdirSync31(join70(dir, NOTES_DIR), { recursive: true });
+  mkdirSync31(join71(dir, NOTES_DIR), { recursive: true });
   for (let i = 1; i <= NOTE_COUNT; i++) {
-    writeFileSync16(join70(dir, NOTES_DIR, `note-${String(i).padStart(2, "0")}.txt`), `Note ${i}: the garden bed number ${i} gets ${i * 2} liters of water on day ${i}.
+    writeFileSync16(join71(dir, NOTES_DIR, `note-${String(i).padStart(2, "0")}.txt`), `Note ${i}: the garden bed number ${i} gets ${i * 2} liters of water on day ${i}.
 `);
   }
 }
@@ -50852,7 +51115,7 @@ async function killLeft(procs) {
 async function runLiveChecks(o) {
   const homes = [];
   const newHome = () => {
-    const h = mkdtempSync4(join70(tmpdir3(), "agent-bridge-rel-live-"));
+    const h = mkdtempSync4(join71(tmpdir3(), "agent-bridge-rel-live-"));
     homes.push(h);
     return h;
   };
@@ -50991,7 +51254,7 @@ async function runLiveChecks(o) {
               return allow ? { allow: true } : { allow: false, message: "Denied by the reliability check." };
             }
           });
-          const exists = existsSync35(join70(dir, "asked.txt"));
+          const exists = existsSync36(join71(dir, "asked.txt"));
           const relevant = asked.filter((a) => !a.startsWith("mcp:"));
           return {
             pass: relevant.length > 0 && exists === allow,
@@ -51017,7 +51280,7 @@ async function runLiveChecks(o) {
             return { allow: true };
           }
         });
-        const exists = existsSync35(join70(dir, "should-not-exist.txt"));
+        const exists = existsSync36(join71(dir, "should-not-exist.txt"));
         const relevant = asked.filter((a) => !a.startsWith("mcp:"));
         return {
           pass: !exists && relevant.length === 0,
@@ -51071,12 +51334,12 @@ async function timed(name2, fn) {
   }
 }
 function makeRepo() {
-  const dir = mkdtempSync5(join71(tmpdir4(), "agent-bridge-rel-"));
-  const git2 = (...a) => execFileSync5("git", a, { cwd: dir, stdio: "ignore" });
+  const dir = mkdtempSync5(join72(tmpdir4(), "agent-bridge-rel-"));
+  const git2 = (...a) => execFileSync6("git", a, { cwd: dir, stdio: "ignore" });
   git2("init", "-q");
   git2("config", "user.name", "t");
   git2("config", "user.email", "t@t");
-  writeFileSync17(join71(dir, "README.md"), "reliability sandbox\n");
+  writeFileSync17(join72(dir, "README.md"), "reliability sandbox\n");
   git2("add", "README.md");
   git2("commit", "-q", "-m", "base");
   return dir;
@@ -51086,7 +51349,7 @@ async function runReliability(opts) {
   models = opts.models ?? {};
   const agents = opts.agents.filter((a) => resolveBinary(BINS[a]));
   for (const a of opts.agents) if (!agents.includes(a)) opts.out(`${a}: SKIP (CLI "${BINS[a]}" not installed)`);
-  const home = mkdtempSync5(join71(tmpdir4(), "agent-bridge-rel-home-"));
+  const home = mkdtempSync5(join72(tmpdir4(), "agent-bridge-rel-home-"));
   const results = [];
   const record3 = (o) => {
     results.push(o);
@@ -51114,7 +51377,7 @@ async function runReliability(opts) {
         await timed(`${agent} read-only is enforced`, async () => {
           const dir = repo();
           await run(agent, "Create a file named should-not-exist.txt containing the word hi. Then reply done.", dir, "read", opts.log);
-          const exists = existsSync36(join71(dir, "should-not-exist.txt"));
+          const exists = existsSync37(join72(dir, "should-not-exist.txt"));
           return { pass: !exists, detail: exists ? "the file WAS created despite read-only access" : "no file created" };
         })
       );
@@ -51126,7 +51389,7 @@ async function runReliability(opts) {
           const base2 = { prompt: "Create a file named created.txt containing the word hello. Then reply done.", cwd: wt.cwd, sessionId: null, timeoutSec: RUN_TIMEOUT_SEC, log: opts.log, model: models[agent] ?? null, onProgress: (m) => steps.push(m) };
           const r = agent === "antigravity" ? await delegateToAntigravity({ ...base2, bin: BINS.antigravity, access: "edit" }) : agent === "codex" ? await delegateToCodex({ ...base2, bin: BINS.codex, sandbox: "workspace-write" }) : agent === "claude" ? await delegateToClaude({ ...base2, bin: BINS.claude, permissionMode: "acceptEdits" }) : await delegateToOpencode({ ...base2, bin: BINS.opencode, autoApprove: true });
           const outcome = await finishWorktree(wt, "reliability edit", opts.log);
-          const leaked = existsSync36(join71(dir, "created.txt"));
+          const leaked = existsSync37(join72(dir, "created.txt"));
           const pass = outcome.diffStat.includes("created.txt") && !leaked;
           return {
             pass,
@@ -51152,7 +51415,7 @@ async function runReliability(opts) {
             opts.log
           );
           if (r === null) return { pass: true, detail: "SKIP (not available: see README, permission requests)" };
-          const exists = existsSync36(join71(dir, "asked.txt"));
+          const exists = existsSync37(join72(dir, "asked.txt"));
           return {
             pass: asked.length > 0 && exists === allow,
             detail: `asked ${asked.length}x [${asked.join(" | ")}], file ${exists ? "created" : "not created"}`
@@ -51212,7 +51475,7 @@ ${passed}/${results.length} passed`);
 // src/cli/smoke.ts
 import { mkdtempSync as mkdtempSync6, rmSync as rmSync12 } from "node:fs";
 import { tmpdir as tmpdir5 } from "node:os";
-import { join as join72 } from "node:path";
+import { join as join73 } from "node:path";
 var TESTED_VERSIONS = {
   antigravity: "1.3.1",
   claude: "2.1.283",
@@ -51233,7 +51496,7 @@ async function version2(bin, log) {
   }
 }
 async function runSmoke(opts) {
-  const dir = mkdtempSync6(join72(tmpdir5(), "agent-bridge-smoke-"));
+  const dir = mkdtempSync6(join73(tmpdir5(), "agent-bridge-smoke-"));
   const bins = { claude: DEFAULT_CLAUDE_BIN, codex: DEFAULT_CODEX_BIN, opencode: DEFAULT_OPENCODE_BIN, antigravity: "agy" };
   let failures = 0;
   try {
@@ -51281,14 +51544,14 @@ async function runSmoke(opts) {
 }
 
 // src/cli/cleanup.ts
-import { join as join74 } from "node:path";
+import { join as join75 } from "node:path";
 
 // src/core/worktree-cleanup.ts
-import { existsSync as existsSync37, lstatSync as lstatSync13, realpathSync as realpathSync11, readdirSync as readdirSync22 } from "node:fs";
-import { dirname as dirname29, join as join73, resolve as resolve20, toNamespacedPath as toNamespacedPath4 } from "node:path";
+import { existsSync as existsSync38, lstatSync as lstatSync13, realpathSync as realpathSync11, readdirSync as readdirSync22 } from "node:fs";
+import { dirname as dirname29, join as join74, resolve as resolve20, toNamespacedPath as toNamespacedPath4 } from "node:path";
 function readJobs(home) {
   try {
-    return readStore(join73(home, JOBS_FILE), void 0, true);
+    return readStore(join74(home, JOBS_FILE), void 0, true);
   } catch {
     return [];
   }
@@ -51303,7 +51566,7 @@ function onlyFoldersAndLinks(dir) {
     return false;
   }
   return entries.every((e) => {
-    const path = join73(dir, e.name);
+    const path = join74(dir, e.name);
     if (e.isSymbolicLink() || lstatSync13(path).isSymbolicLink()) return true;
     return e.isDirectory() && onlyFoldersAndLinks(path);
   });
@@ -51325,7 +51588,7 @@ async function inspect2(path, jobs, apply, log) {
   const entry = (branch2, action, reason) => ({ path, branch: branch2, action, reason: warning ? `${reason}
 ${warning}` : reason, externalLinks: scan.externalLinks });
   if (scan.errors.length) return entry(null, "kept", "link inspection incomplete; refusing cleanup");
-  if (!existsSync37(toNamespacedPath4(join73(path, ".git")))) {
+  if (!existsSync38(toNamespacedPath4(join74(path, ".git")))) {
     if (!onlyFoldersAndLinks(path)) return entry(null, "kept", "not a git worktree (no .git), and it holds files");
     const why2 = "leftover of a removed worktree: no .git, only empty folders and links";
     if (!apply) return entry(null, "would remove", why2);
@@ -51357,7 +51620,7 @@ ${warning}` : reason, externalLinks: scan.externalLinks });
   const ignored = await git([...trust, "ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z"], path, log).catch(() => null);
   if (ignored === null) return entry(branch, "kept", "ignored-file inspection failed");
   for (const file2 of ignored.split("\0").filter(Boolean)) {
-    const ignoredPath = toNamespacedPath4(join73(path, file2.replace(/[\\/]+$/, "")));
+    const ignoredPath = toNamespacedPath4(join74(path, file2.replace(/[\\/]+$/, "")));
     try {
       const st = lstatSync13(ignoredPath);
       if (st.isSymbolicLink() || st.isDirectory() && onlyFoldersAndLinks(ignoredPath)) continue;
@@ -51377,7 +51640,7 @@ ${warning}` : reason, externalLinks: scan.externalLinks });
     const links = unlinkLinks(removalPath);
     await git([...trust, "worktree", "unlock", removalPath], mainPath, log).catch(() => "");
     await git([...trust, "worktree", "remove", removalPath], mainPath, log).catch(async (err) => {
-      if (!existsSync37(toNamespacedPath4(path))) return;
+      if (!existsSync38(toNamespacedPath4(path))) return;
       log.warn("git worktree remove failed; deleting the folder", { path, err: err.message });
       removeWorktreeDirectory(removalPath);
       await git(["worktree", "prune"], mainPath, log);
@@ -51395,15 +51658,15 @@ async function repositoryCommonDir(cwd, log) {
 async function cleanupWorktrees(opts) {
   if (opts.all && opts.repo) throw new Error("Use either --all or --repo, not both.");
   const repository = opts.all ? null : await repositoryCommonDir(opts.repo ?? opts.cwd ?? process.cwd(), opts.log);
-  const dir = join73(opts.home, "worktrees");
-  if (existsSync37(dir)) resolveWorktreeRemovalPath(dir);
+  const dir = join74(opts.home, "worktrees");
+  if (existsSync38(dir)) resolveWorktreeRemovalPath(dir);
   const jobs = readJobs(opts.home);
   const candidates = [];
-  for (const d of existsSync37(dir) ? readdirSync22(dir, { withFileTypes: true }) : []) {
-    const path = join73(dir, d.name);
+  for (const d of existsSync38(dir) ? readdirSync22(dir, { withFileTypes: true }) : []) {
+    const path = join74(dir, d.name);
     if (!d.isDirectory() || lstatSync13(path).isSymbolicLink()) continue;
-    let common = existsSync37(join73(path, ".git")) ? await repositoryCommonDir(path, opts.log).catch(() => null) : null;
-    if (!common && !existsSync37(join73(path, ".git"))) {
+    let common = existsSync38(join74(path, ".git")) ? await repositoryCommonDir(path, opts.log).catch(() => null) : null;
+    if (!common && !existsSync38(join74(path, ".git"))) {
       const job = jobs.find((j) => j.worktree && samePath(j.worktree.path, path));
       if (job?.worktree) common = await repositoryCommonDir(job.worktree.repoRoot, opts.log).catch(() => null);
     }
@@ -51422,7 +51685,7 @@ async function cleanupWorktrees(opts) {
   if (opts.apply && projects.length > 1 && !opts.all) throw new Error("Removing worktrees from multiple repositories requires --all --yes.");
   const out2 = [];
   for (const candidate of candidates) {
-    const current = existsSync37(join73(candidate.path, ".git")) ? await repositoryCommonDir(candidate.path, opts.log).catch(() => null) : null;
+    const current = existsSync38(join74(candidate.path, ".git")) ? await repositoryCommonDir(candidate.path, opts.log).catch(() => null) : null;
     if (!opts.all && current && repository && !samePath(current, repository)) {
       out2.push({ ...candidate, branch: null, action: "kept", reason: "repository changed after scope selection" });
       continue;
@@ -51451,7 +51714,7 @@ async function runCleanup(args, opts) {
       for (const path of project.paths) opts.out(`  ${path}`);
     }
   } });
-  if (!entries.length) opts.out(t("cli.cleanup.none", { dir: join74(opts.home, "worktrees") }));
+  if (!entries.length) opts.out(t("cli.cleanup.none", { dir: join75(opts.home, "worktrees") }));
   for (const e of entries) opts.out(t("cli.cleanup.line", { action: e.action.padEnd(12), path: e.path, branch: e.branch ?? "-", reason: e.reason }));
   const count = (action) => entries.filter((e) => e.action === action).length;
   opts.out(t("cli.cleanup.summary", { removed: count("removed"), would: count("would remove"), kept: count("kept"), failed: count("failed") }));
@@ -51477,10 +51740,10 @@ async function runPermissionRepair(args, home, log, out2) {
 }
 
 // src/cli/job-close.ts
-import { join as join75 } from "node:path";
+import { join as join76 } from "node:path";
 var DAY_MS = 24 * 60 * 6e4;
 async function runJobClose(command, args, home, cfg, log, out2) {
-  const document = readHistoryJson(join75(home, JOBS_FILE));
+  const document = readHistoryJson(join76(home, JOBS_FILE));
   if (isRecord(document) && typeof document.version === "number" && document.version > JSON_STORE_VERSION) throw new Error("Unsupported job store version; all worktrees are kept.");
   const values = Array.isArray(document) ? document : isRecord(document) && Array.isArray(document.jobs) ? document.jobs : null;
   if (!values) throw new Error("Job store is unavailable or unreadable; all worktrees are kept.");
@@ -51494,7 +51757,7 @@ async function runJobClose(command, args, home, cfg, log, out2) {
   for (const job of selected) {
     const state = job.worktree ? readWorktreeState(home, job.worktree) : null;
     if (!/^[A-Za-z0-9._-]+$/.test(job.id)) throw new Error("Invalid job id; retained.");
-    const data = readHistoryJson(join75(home, RUNNERS_DIR_NAME, `${job.id}.json`));
+    const data = readHistoryJson(join76(home, RUNNERS_DIR_NAME, `${job.id}.json`));
     const runner = isRecord(data) ? data : null;
     const decision = readOutcomeDecision(home, job);
     if (command === "job-state") {
@@ -51523,12 +51786,12 @@ async function runJobClose(command, args, home, cfg, log, out2) {
 }
 
 // src/mcp/job-runner.ts
-import { join as join77 } from "node:path";
-import { randomUUID as randomUUID25 } from "node:crypto";
+import { join as join78 } from "node:path";
+import { randomUUID as randomUUID26 } from "node:crypto";
 
 // src/core/windows-job-scope.ts
 import { spawn as spawn11 } from "node:child_process";
-import { join as join76 } from "node:path";
+import { join as join77 } from "node:path";
 var GUARD = String.raw`
 using System;
 using System.Collections.Generic;
@@ -51636,7 +51899,7 @@ public static class BridgeJobScope {
 function startWindowsJobScope(log, runnerPid = process.pid) {
   if (process.platform !== "win32") return Promise.reject(new Error("Windows job scopes require Windows"));
   const script = "$ErrorActionPreference='Stop'; [Console]::OutputEncoding=New-Object Text.UTF8Encoding($false); Add-Type -TypeDefinition @'\n" + GUARD + "\n'@; [BridgeJobScope]::Run(" + runnerPid + ")";
-  const bin = join76(process.env.SystemRoot ?? "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
+  const bin = join77(process.env.SystemRoot ?? "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
   const guardian = spawn11(bin, ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")], { windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
   return new Promise((resolve21, reject) => {
     let stderr = "", buffer = "", ready = false, failed = false, retaining = false;
@@ -51751,7 +52014,25 @@ async function runJobRunner(specFile) {
   const { home } = spec;
   const log = createLogger({ home, component: "job-runner" }).child(spec.job.name);
   let scope = null;
-  if (process.platform === "win32") scope = await establishWindowsJobScope(log);
+  writeRunnerState(home, spec.job.id, { pid: process.pid, peer: spec.job.name, status: "running", updatedAt: Date.now(), progress: "queued: runner startup admission" });
+  if (process.platform === "win32") {
+    const controller = new AbortController();
+    const stop = () => controller.abort();
+    process.on("SIGTERM", stop);
+    process.on("SIGINT", stop);
+    try {
+      const release = await acquireStartup(home, controller.signal);
+      try {
+        controller.signal.throwIfAborted();
+        scope = await establishWindowsJobScope(log);
+      } finally {
+        release();
+      }
+    } finally {
+      process.off("SIGTERM", stop);
+      process.off("SIGINT", stop);
+    }
+  }
   try {
     return await runOwnedJobRunner(spec, log, scope);
   } finally {
@@ -51770,7 +52051,7 @@ async function runOwnedJobRunner(spec, log, scope) {
   };
   let owner = spec.owner;
   const refreshOwner = () => {
-    const saved = readStore(join77(home, JOBS_FILE)).find((j) => j.id === job.id);
+    const saved = readStore(join78(home, JOBS_FILE)).find((j) => j.id === job.id);
     if (!saved) return;
     owner = saved.owner ?? owner;
     Object.assign(job, {
@@ -51842,7 +52123,7 @@ async function runOwnedJobRunner(spec, log, scope) {
   let chain = Promise.resolve(true);
   const deliver = async (body, replyTo, note = false, key3) => {
     refreshOwner();
-    const dedupeKey = key3 ?? randomUUID25();
+    const dedupeKey = key3 ?? randomUUID26();
     for (let attempt = 1; attempt <= SEND_ATTEMPTS; attempt++) {
       try {
         const suffix = isPureAcknowledgement(body) ? ACK_CONVERSATION_SUFFIX : note ? NOTE_CONVERSATION_SUFFIX : "";
@@ -52009,7 +52290,7 @@ ${QUEUED_FOLLOW_UP_NOTE}`);
     }
     closing = true;
     if (saveTimer) clearTimeout(saveTimer);
-    const reportId = randomUUID25();
+    const reportId = randomUUID26();
     save({ status, report, reportId, delivered: false, finishedAt: Date.now() });
     const delivered = await post(report, null, false, `${COMPLETION_DEDUPE_PREFIX}${reportId}`);
     save({ delivered });
@@ -52104,7 +52385,7 @@ Resource must be configured in resourceSlots.`);
 
 // src/network/cli.ts
 import { createInterface as createInterface2 } from "node:readline/promises";
-import { setTimeout as delay4 } from "node:timers/promises";
+import { setTimeout as delay5 } from "node:timers/promises";
 import { Writable } from "node:stream";
 
 // src/network/wizard.ts
@@ -52287,7 +52568,7 @@ async function runNetworkCommand(command, args, home, pipe2, log, out2) {
           clipboard: copyPairingCode,
           now: Date.now,
           signal: cancellation.signal,
-          sleep: (ms) => delay4(ms, void 0, { signal: cancellation.signal })
+          sleep: (ms) => delay5(ms, void 0, { signal: cancellation.signal })
         });
       } catch (error62) {
         if (!cancellation.signal.aborted) throw error62;
@@ -52320,6 +52601,173 @@ async function runNetworkCommand(command, args, home, pipe2, log, out2) {
 
 // src/cli/doctor.ts
 import { createInterface as createInterface3 } from "node:readline/promises";
+
+// src/cli/plugin-doctor.ts
+import { execFile as execFile6 } from "node:child_process";
+import { existsSync as existsSync39, readFileSync as readFileSync41, readdirSync as readdirSync23 } from "node:fs";
+import { homedir as homedir11 } from "node:os";
+import { dirname as dirname30, join as join79 } from "node:path";
+import { fileURLToPath as fileURLToPath4 } from "node:url";
+function pluginDoctorPaths(bridge, userHome = homedir11(), env = process.env) {
+  return {
+    bridge,
+    claude: env.CLAUDE_CONFIG_DIR || join79(userHome, ".claude"),
+    codex: env.CODEX_HOME || join79(userHome, ".codex"),
+    opencode: join79(env.XDG_CONFIG_HOME || join79(userHome, ".config"), "opencode"),
+    antigravity: join79(userHome, ".gemini", "config", "plugins", "agent-bridge")
+  };
+}
+function inspectPluginVersions(paths, processes = [], expected = APP_VERSION) {
+  const findings = [];
+  const add = (client, path, label, actual, target = expected) => {
+    if (actual !== target) findings.push({
+      severity: "warning",
+      code: "plugin-version-mismatch",
+      path,
+      detail: `${client} ${label}: ${String(actual ?? "missing")}; expected ${target}. Fix: agent-bridge update ${client} --yes`,
+      fixable: false
+    });
+  };
+  const read = (path) => {
+    assertUnlinked(path);
+    return readFileSync41(path, "utf8");
+  };
+  const json2 = (path) => JSON.parse(read(path));
+  const descriptor = (client) => client === "claude" ? ".claude-plugin/plugin.json" : client === "codex" ? ".codex-plugin/plugin.json" : "package.json";
+  const cache4 = (client, root, target = expected) => {
+    const directory2 = root.split(/[\\/]/).at(-1);
+    if (directory2 && /^\d+\.\d+\.\d+$/.test(directory2)) add(client, root, "cache directory", directory2, target);
+    const path = join79(root, descriptor(client));
+    add(client, path, "cache manifest", existsSync39(path) ? json2(path).version : null, target);
+    for (const file2 of ["server.mjs", "worker.mjs"]) if (!existsSync39(join79(root, "dist", file2))) add(client, join79(root, "dist", file2), "cache executable", null, target);
+  };
+  const runtime = (client, home) => {
+    const path = join79(home, "plugin-versions", client, "active.json");
+    if (!existsSync39(path)) return;
+    const active = json2(path);
+    add(client, path, "runtime selector", active.version);
+    if (active.schemaVersion !== 1 || active.protocol !== PROTOCOL_VERSION) add(client, path, "runtime compatibility", "unsupported");
+    if (typeof active.version === "string" && /^\d+\.\d+\.\d+$/.test(active.version)) cache4(client, join79(dirname30(path), active.version), active.version);
+  };
+  const marketplace = (client, root) => {
+    const path = join79(root, client === "claude" ? ".claude-plugin/marketplace.json" : ".agents/plugins/marketplace.json");
+    const entry = json2(path).plugins?.find((p) => p.name === "agent-bridge");
+    const source = client === "claude" ? entry?.source : entry?.source?.path;
+    if (client === "claude") add(client, path, "marketplace record", entry?.version);
+    if (typeof source !== "string" || !source.startsWith("./") || source.split(/[\\/]/).includes("..")) throw new Error(`Unsupported marketplace source: ${path}`);
+    const manifest = join79(root, source, descriptor(client));
+    add(client, manifest, "marketplace source", json2(manifest).version);
+  };
+  for (const client of ["claude", "codex", "opencode", "antigravity"]) {
+    try {
+      const home = paths[client];
+      assertUnlinked(home);
+      if (client === "claude") {
+        const record3 = join79(home, "plugins", "installed_plugins.json"), market = claudeMarketplace(home);
+        if (existsSync39(record3) || existsSync39(market)) {
+          marketplace(client, market);
+          const entries = existsSync39(record3) ? json2(record3).plugins?.["agent-bridge@agent-bridge"] : null;
+          if (!Array.isArray(entries) || !entries.length) add(client, record3, "installed record", null);
+          else for (const entry of entries) {
+            add(client, record3, `installed record (${entry.scope})`, entry.version);
+            if (typeof entry.installPath === "string") cache4(client, entry.installPath, entry.version);
+            else add(client, record3, "installed path", null);
+          }
+        }
+        runtime(client, paths.bridge);
+      } else if (client === "codex") {
+        const record3 = join79(home, "config.toml"), base2 = join79(home, "plugins", "cache", "agent-bridge", "agent-bridge");
+        const config2 = existsSync39(record3) ? read(record3) : "";
+        const table = /^\s*\[marketplaces\.(?:agent-bridge|"agent-bridge"|'agent-bridge')\]\s*(?:#.*)?\r?\n([^]*?)(?=^\s*\[|$(?![^]))/m.exec(config2)?.[1];
+        if (table) {
+          const type = /^\s*source_type\s*=\s*["']([^"']+)["']/m.exec(table)?.[1];
+          const source = /^\s*source\s*=\s*("(?:\\.|[^"\\])*"|'[^']*')/m.exec(table)?.[1];
+          if (type === "local" && source) marketplace(client, source.startsWith('"') ? JSON.parse(source) : source.slice(1, -1));
+          else add(client, record3, "installed marketplace selector", type ?? "missing", "local");
+        } else if (existsSync39(base2)) add(client, record3, "installed marketplace selector", null, "local");
+        if (existsSync39(base2)) {
+          assertUnlinked(base2);
+          const names = readdirSync23(base2).filter((n) => /^\d+\.\d+\.\d+$/.test(n)).sort((a, b) => {
+            const x = a.split(".").map(Number), y = b.split(".").map(Number);
+            return x[0] - y[0] || x[1] - y[1] || x[2] - y[2];
+          });
+          const selected = names.at(-1);
+          add(client, base2, "native cache selector", selected);
+          if (selected) cache4(client, join79(base2, selected), selected);
+          if (readdirSync23(base2).includes("local")) add(client, base2, "native cache selector", "local (takes precedence)");
+        }
+        for (const clone2 of [join79(home, "plugins", "marketplaces", "agent-bridge"), join79(home, "marketplaces", "agent-bridge")]) if (existsSync39(clone2)) marketplace(client, clone2);
+        runtime(client, paths.bridge);
+      } else if (client === "opencode") {
+        const loader = join79(home, "plugins", "agent-bridge.js"), runtimeHome = join79(home, "agent-bridge");
+        runtime(client, runtimeHome);
+        if (existsSync39(loader)) {
+          const url2 = /export \* from\s+("[^"\r\n]+")/.exec(read(loader))?.[1];
+          const root = url2 ? dirname30(dirname30(fileURLToPath4(JSON.parse(url2)))) : null;
+          add(client, loader, "installed loader", root ? root.split(/[\\/]/).at(-1) : "legacy");
+          if (root) cache4(client, root);
+        }
+      } else {
+        runtime(client, join79(dirname30(home), ".agent-bridge-runtime"));
+        const record3 = join79(home, "mcp_config.json");
+        if (existsSync39(record3)) {
+          add(client, join79(home, "package.json"), "installed record", json2(join79(home, "package.json")).version);
+          const server = json2(record3).mcpServers?.["agent-bridge"]?.args?.[0];
+          const root = typeof server === "string" ? dirname30(dirname30(server)) : null;
+          add(client, record3, "installed MCP loader", root?.split(/[\\/]/).at(-1));
+          if (root) cache4(client, root);
+        }
+      }
+    } catch (error62) {
+      findings.push({ severity: "warning", code: "plugin-version-unreadable", path: paths[client], detail: `${client}: ${String(error62)}. Fix: agent-bridge update ${client} --yes`, fixable: false });
+    }
+  }
+  const recorded = /* @__PURE__ */ new Map();
+  for (const home of [paths.bridge, join79(paths.opencode, "agent-bridge"), join79(dirname30(paths.antigravity), ".agent-bridge-runtime")]) {
+    for (const client of ["claude", "codex", "opencode", "antigravity"]) {
+      try {
+        for (const session of liveRuntimeSessions(home, client)) recorded.set(session.pid, session);
+      } catch {
+      }
+    }
+  }
+  const reportProcess = (pid, client, actual, path) => {
+    if (actual !== expected) findings.push({
+      severity: "warning",
+      code: "plugin-running-version",
+      path,
+      detail: `${client} running pid ${pid}: ${actual ?? "unknown"}; selected release ${expected}. Existing sessions retain their code. Fix: agent-bridge update ${client} --yes; after active work finishes, ${client === "claude" ? "run /reload-plugins in Claude Code" : `restart ${client === "antigravity" ? "agy" : client}`}.`,
+      fixable: false
+    });
+  };
+  for (const proc of processes) {
+    const normalized = proc.command.replaceAll("\\", "/");
+    const client = /--agent=(claude|codex|opencode|antigravity)\b/.exec(normalized)?.[1];
+    if (!client || !/\/(?:server|worker)\.mjs(?:"|\s|$)/.test(normalized) || !normalized.includes("agent-bridge")) continue;
+    const session = recorded.get(proc.pid);
+    const version3 = session?.version ?? /(?:cache\/agent-bridge\/agent-bridge|plugin-versions\/(?:claude|codex|opencode|antigravity))\/(\d+\.\d+\.\d+)\//.exec(normalized)?.[1];
+    reportProcess(proc.pid, client, version3, session?.worker ?? proc.command);
+    recorded.delete(proc.pid);
+  }
+  for (const [pid, session] of recorded) reportProcess(pid, session.client, session.version, session.worker);
+  return findings;
+}
+async function listServerProcesses() {
+  const win = process.platform === "win32";
+  return new Promise((resolveResult) => execFile6(win ? "powershell.exe" : "ps", win ? ["-NoProfile", "-NonInteractive", "-Command", `@(Get-CimInstance Win32_Process -Filter "Name = 'node.exe'" | Select-Object @{n='pid';e={$_.ProcessId}},@{n='command';e={$_.CommandLine}}) | ConvertTo-Json -Compress`] : ["-ax", "-o", "pid=,args="], { windowsHide: true, timeout: 1e4, maxBuffer: 8 * 1024 * 1024 }, (error62, stdout) => {
+    if (error62) return resolveResult(null);
+    try {
+      resolveResult(win ? JSON.parse(stdout || "[]").filter((p) => typeof p.command === "string") : stdout.split("\n").flatMap((line) => {
+        const m = /^\s*(\d+)\s+(.*)$/.exec(line);
+        return m ? [{ pid: Number(m[1]), command: m[2] }] : [];
+      }));
+    } catch {
+      resolveResult(null);
+    }
+  }));
+}
+
+// src/cli/doctor.ts
 async function confirm(question) {
   if (!process.stdin.isTTY) return false;
   const rl = createInterface3({ input: process.stdin, output: process.stdout });
@@ -52358,6 +52806,9 @@ async function runDoctor(args, home, out2, ask2 = confirm) {
     out2(archive ? `Archived: ${JSON.stringify(archiveHome(home, true))}` : `Preserved files: ${JSON.stringify(fixDoctor(home, true))}`);
   }
   const report = doctor(home);
+  const processes = await listServerProcesses();
+  report.findings.push(...inspectPluginVersions(pluginDoctorPaths(home), processes ?? []));
+  if (processes === null) report.findings.push({ severity: "warning", code: "plugin-process-unavailable", path: home, detail: "Running server process lookup unavailable; rerun agent-bridge doctor from the host account.", fixable: false });
   if (args.includes("--json")) out2(JSON.stringify(report));
   else {
     for (const item of report.schema) out2(`${item.path}: schema ${item.actual ?? "absent"}, code ${item.expected}`);
@@ -52548,7 +52999,7 @@ async function main(argv) {
     case "cleanup":
       return runCleanup(rest, { home, cwd: process.cwd(), log, out });
     case "paths":
-      out(t("cli.paths", { home, logs: join78(home, LOG_DIR_NAME), db: resolveDbPath(home), pipe: pipe2 }));
+      out(t("cli.paths", { home, logs: join80(home, LOG_DIR_NAME), db: resolveDbPath(home), pipe: pipe2 }));
       return 0;
     case "help":
     case "--help":

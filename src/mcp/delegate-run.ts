@@ -5,6 +5,7 @@ import type { BridgeConfig } from "../core/config.js";
 import { APP_VERSION, DEFAULT_DELEGATE_TIMEOUT_SEC, DELEGATION_METADATA_VERSION, ENV, MAX_JOB_TIMEOUT_SEC } from "../core/constants.js";
 import { bundledCli, checkDepth, DelegateError, PARENT_JOB_ENV, ROOT_NAME_ENV, ROOT_SESSION_ENV, retryTransient, type DelegateResult } from "../core/delegate.js";
 import { RootConcurrency } from "../core/root-concurrency.js";
+import { acquireStartup } from "../core/startup-admission.js";
 import { defaultEffort } from "../core/effort.js";
 import { t } from "../core/i18n.js";
 import type { Logger } from "../core/logger.js";
@@ -64,6 +65,8 @@ export interface JobSink {
 
 /** What a delegated run needs from the process that runs it (the session's MCP server or a job runner). */
 export interface RunContext {
+  /** Release machine startup admission once the native CLI reports its session. */
+  startupReady?: () => void;
   /** Agent kind of the session that started the run. */
   agent: AgentKind;
   cfg: BridgeConfig;
@@ -123,17 +126,28 @@ export async function runDelegate(
   onProgress: ((message: string) => void) | undefined, background: boolean, job?: Job,
 ): Promise<RunResult> {
   checkDepth(rc.cfg.maxDelegateDepth);
-  if (!job?.rootSession) return runWithWorktreeLease(rc, target, a, signal, onProgress, background, job);
+  if (!job?.rootSession) return runWithStartup(rc, target, a, signal, onProgress, background, job);
   const budget = new RootConcurrency(rc.home, job.rootSession);
   const owner = { id: `${job.name}-${randomUUID()}`, pid: process.pid };
   let timer: NodeJS.Timeout | undefined;
   try {
     if (!job.parentJob) budget.ensureLimit(rc.cfg.maxJobs);
-    if (!budget.acquire(owner)) throw new Error("The top session's subagent concurrency limit is reached.");
+    onProgress?.("queued: waiting for root admission");
+    await budget.acquireWhenAvailable(owner, signal);
     timer = setInterval(() => { try { budget.renew(owner); } catch (err) { rc.log.warn("could not renew root concurrency lease", { err: String(err) }); } }, SLOT_RENEW_MS);
     timer.unref();
-    return await runWithWorktreeLease(rc, target, a, signal, onProgress, background, job);
-  } finally { clearInterval(timer); budget.release(owner); budget.close(); }
+    return await runWithStartup(rc, target, a, signal, onProgress, background, job);
+  } finally { clearInterval(timer); try { budget.release(owner); } finally { budget.close(); } }
+}
+
+async function runWithStartup(rc: RunContext, target: CodingAgent, a: DelegateArgs, signal: AbortSignal, onProgress: ((message: string) => void) | undefined, background: boolean, job?: Job): Promise<RunResult> {
+  onProgress?.("queued: waiting for machine startup admission");
+  const release = await acquireStartup(rc.home, signal);
+  try {
+    signal.throwIfAborted();
+    onProgress?.("starting native CLI");
+    return await runWithWorktreeLease({ ...rc, startupReady: release }, target, a, signal, onProgress, background, job);
+  } finally { release(); }
 }
 
 async function runWithWorktreeLease(rc: RunContext, target: CodingAgent, a: DelegateArgs, signal: AbortSignal, onProgress: ((message: string) => void) | undefined, background: boolean, job?: Job): Promise<RunResult> {
@@ -393,6 +407,7 @@ async function runDelegateInner(
           ...(slots ? { [SLOT_OWNER_ENV]: slotOwner.id, [SLOT_PID_ENV]: String(slotOwner.pid) } : {}) },
         writableRoots,
         onSession: (id) => {
+          rc.startupReady?.();
           feed.meta({ session: id });
           if (job) rc.jobs?.note(job, { sessionId: id, workdir, worktree: wt });
         },

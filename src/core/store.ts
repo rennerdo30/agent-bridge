@@ -17,7 +17,10 @@ import { configureSqlite, retrySqlite, SQLITE_BUSY_TIMEOUT_MS, SQLITE_REQUEST_BU
 
 const BACKUP_CHECK_INTERVAL_MS = 60 * 60 * 1_000;
 
-export const SQLITE_STORE_VERSION = 8;
+export const SQLITE_STORE_VERSION = 9;
+
+/** Offline broadcasts retain recently observed sessions for one day. */
+export const BROADCAST_RECENT_MS = 24 * 60 * 60 * 1_000;
 
 /** Recipient key used while a message waits for "any peer of this agent kind". */
 export function agentQueueKey(agent: AgentKind): string {
@@ -92,6 +95,13 @@ const MIGRATIONS = [
     PRAGMA user_version = 7;
   ` },
   { version: 8, sql: CONVERSATION_MIGRATION },
+  { version: 9, sql: `
+    CREATE TABLE IF NOT EXISTS peer_last_seen (
+      name TEXT PRIMARY KEY, seen_at INTEGER NOT NULL
+    );
+    INSERT INTO peer_last_seen SELECT name, MAX(learned_at) FROM peer_names GROUP BY name;
+    PRAGMA user_version = 9;
+  ` },
 ] as const;
 
 /** Upgrade only the schema, without broker startup, archive movement or retention. */
@@ -245,8 +255,15 @@ export class MessageStore {
       // Even an older or unidentified server supersedes historical ownership of its exact name.
       this.db.prepare(`INSERT INTO peer_name_owners VALUES (?,?) ON CONFLICT(name)
         DO UPDATE SET identity=excluded.identity`).run(peer.name, identity ?? `unidentified:${peer.id}`);
+      if (!peer.jobAgent && !peer.subagent) this.markPeerSeen(peer.name, at);
       this.db.exec("COMMIT");
     } catch (err) { this.db.exec("ROLLBACK"); throw err; }
+  }
+
+  /** Presence updates never change the identity that currently owns a name. */
+  markPeerSeen(name: string, at: number): void {
+    this.db.prepare(`INSERT INTO peer_last_seen VALUES (?,?)
+      ON CONFLICT(name) DO UPDATE SET seen_at=MAX(peer_last_seen.seen_at,excluded.seen_at)`).run(name, at);
   }
 
   namesFor(peer: PeerInfo): string[] {
@@ -277,6 +294,24 @@ export class MessageStore {
         // Historical rows remain untouched. Unknown paths and any real project path stay eligible.
         return !cwds.length || cwds.some((cwd) => !isPluginCacheCwd(cwd));
       }).map((row) => String(row.name));
+  }
+
+  /** Eligibility never removes history or old queued messages. Unknown old names are skipped. */
+  recentProjectSenders(address: string, previous: string, since: number): string[] {
+    return this.db.prepare(`SELECT from_name FROM messages WHERE to_target=? AND recipient=? AND created_at>=?
+      AND from_id NOT LIKE 'job:%' GROUP BY from_name ORDER BY MAX(created_at) DESC LIMIT 64`)
+      .all(address, previous, since).map((row) => String(row.from_name));
+  }
+
+  broadcastRecipients(now: number, masters: ReadonlySet<string>): { queued: string[]; skipped: string[] } {
+    const seen = this.db.prepare("SELECT seen_at FROM peer_last_seen WHERE name=?");
+    const queued: string[] = [], skipped: string[] = [];
+    for (const name of this.broadcastNames()) {
+      const at = Number(seen.get(name)?.seen_at ?? 0);
+      (masters.has(name) || at > 0 && at >= now - BROADCAST_RECENT_MS ? queued : skipped).push(name);
+    }
+    for (const name of masters) if (!queued.includes(name) && !skipped.includes(name)) queued.push(name);
+    return { queued, skipped };
   }
 
   /** Keep lock waits out of the broker event loop. Callbacks must be synchronous atomic steps. */

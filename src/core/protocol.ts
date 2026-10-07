@@ -50,7 +50,10 @@ export interface SiblingPeer {
   finishedAt?: number;
 }
 
+export interface ProjectRoute { address: string; main: string; since: number; previous?: string }
+
 export interface PeerInfo {
+  projectRoute?: ProjectRoute;
   /** Derived local project identity; paired-PC projections never confer group authority. */
   projectRoot?: string;
   projectGroup?: string;
@@ -133,6 +136,7 @@ export interface HelloArgs {
 }
 export interface HelloResult {
   brokerPid: number;
+  brokerVersion?: string;
   /** Final name; may carry a suffix if the requested name was taken. */
   name: string;
   /** Recovered identity of the same CLI process, before its next hook event. */
@@ -161,6 +165,11 @@ export interface MessageReceipt {
 export interface SendResult {
   /** Relevant unread mail at routing time. Delivery does not resolve crossed replies. */
   unreadBeforeSend?: { id: string; from: string; conversationId: string }[];
+  projectRoute?: ProjectRoute;
+  /** Wake requested according to advertised policy, not proof a native turn started. */
+  wakeRequestedFor?: string[];
+  /** Retained offline registrations excluded from this broadcast. */
+  skippedFor?: string[];
   /** Recipient jobs without a reverse reply grant need their current supervisor to relay. */
   replyRestrictions?: { name: string; supervisor: string }[];
   /** Terminal job mail is retained, but will not be answered without an explicit continuation. */
@@ -233,7 +242,7 @@ export interface RequestMap {
   updatePeer: [UpdatePeerArgs, PeerInfo];
   /** Take over the unread mail of "-N" stand-in names of this peer that no one holds (after a reload). */
   claimMail: [{ names: string[] }, { moved: number }];
-  ping: [Record<string, never>, { brokerPid: number; protocol: number }];
+  ping: [Record<string, never>, { brokerPid: number; protocol: number; brokerVersion?: string }];
   dashboardRead: [{ host: string; request: DashboardReadRequest }, DashboardReadResult];
   dashboardPeers: [Record<string, never>, PeerInfo[]];
   networkStatus: [Record<string, never>, NetworkStatus];

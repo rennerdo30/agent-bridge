@@ -1,22 +1,22 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { build } from "esbuild";
 import { expect, it } from "vitest";
 import { assertStoreUpgrade } from "../src/core/store-compatibility.js";
+import { APP_VERSION } from "../src/core/constants.js";
 import { SQLITE_STORE_VERSION } from "../src/core/store.js";
 import { until } from "./helpers.js";
 
 const textOf = (result: any): string => result.content.map((part: any) => part.text ?? "").join("\n");
 
-it("keeps real 14/16 MCP processes talking on SQLite7, then publishes SQLite8 after the old reader exits", async () => {
-  expect(SQLITE_STORE_VERSION).toBe(8);
+it("keeps released and current MCP processes talking until the older reader exits", async () => {
   const home = mkdtempSync(join(tmpdir(), "ab-real-mixed-"));
-  const oldServer = join(home, "release14.mjs"), newServer = join(home, "release16.mjs");
+  const oldServer = join(home, "release14.mjs"), newServer = join(home, "current-server.mjs");
   // Read the released artifact from Git, never from a live plugin cache or an install command.
   writeFileSync(oldServer, execFileSync("git", ["show", "v0.29.14:plugins/codex/dist/server.mjs"], { cwd: join(import.meta.dirname, ".."), maxBuffer: 20 * 1024 * 1024 }));
   const clients: Client[] = [];
@@ -40,29 +40,26 @@ it("keeps real 14/16 MCP processes talking on SQLite7, then publishes SQLite8 af
   try {
     await build({ entryPoints: [join(import.meta.dirname, "../src/mcp/main.ts")], outfile: newServer, bundle: true, platform: "node", format: "esm", logLevel: "silent",
       banner: { js: "import { createRequire as __mixedRequire } from 'node:module'; const require = __mixedRequire(import.meta.url);" },
-      plugins: [{ name: "release-version", setup(builder) {
-        builder.onLoad({ filter: /[\\/]core[\\/]constants\.ts$/ }, (args) => ({ contents: readFileSync(args.path, "utf8").replace(/APP_VERSION = "[^"]+"/, 'APP_VERSION = "0.29.16"'), loader: "ts" }));
-      } }],
     });
     const old = await start(oldServer, "old-release14", "codex");
     expect(old.getServerVersion()!.version).toBe("0.29.14");
     expect(schema()).toBe(7);
-    const current = await start(newServer, "new-release16", "claude");
-    expect(current.getServerVersion()!.version).toBe("0.29.16");
+    const current = await start(newServer, "current-release", "claude");
+    expect(current.getServerVersion()!.version).toBe(APP_VERSION);
     const peers = textOf(await current.callTool({ name: "peers", arguments: {} }));
     expect(peers).toContain("old-release14");
     expect(peers).toContain("v0.29.14");
     expect(peers).toContain("retained code");
     expect(schema()).toBe(7);
-    expect(() => assertStoreUpgrade(home, "sqlite", 7, 8)).toThrow("old-release14 (v0.29.14");
+    expect(() => assertStoreUpgrade(home, "sqlite", 7, SQLITE_STORE_VERSION)).toThrow("old-release14 (v0.29.14");
     await current.callTool({ name: "send", arguments: { to: "old-release14", message: "new-to-old protocol2" } });
     expect(textOf(await old.callTool({ name: "inbox", arguments: {} }))).toContain("new-to-old protocol2");
-    await old.callTool({ name: "send", arguments: { to: "new-release16", message: "old-to-new protocol2" } });
+    await old.callTool({ name: "send", arguments: { to: "current-release", message: "old-to-new protocol2" } });
     expect(textOf(await current.callTool({ name: "inbox", arguments: {} }))).toContain("old-to-new protocol2");
     expect(schema()).toBe(7);
     await old.close();
-    await until(() => schema() === 8, 3_000);
-    expect(textOf(await current.callTool({ name: "peers", arguments: {} }))).toContain("new-release16");
+    await until(() => schema() === SQLITE_STORE_VERSION, 3_000);
+    expect(textOf(await current.callTool({ name: "peers", arguments: {} }))).toContain("current-release");
     const db = new DatabaseSync(join(home, "bridge.db"), { readOnly: true });
     try {
       expect(db.prepare("SELECT body FROM messages ORDER BY created_at").all().map((row) => row.body)).toEqual(["new-to-old protocol2", "old-to-new protocol2"]);

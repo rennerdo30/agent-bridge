@@ -1,4 +1,5 @@
-import { mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { mkdtempSync, realpathSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { nullLogger } from "../src/core/logger.js";
@@ -35,7 +36,8 @@ export function makeEnv(): TestEnv {
     },
     async cleanup() {
       await Promise.all(nodes.map((n) => n.stop().catch(() => {})));
-      rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+      // Yield between Windows handle-release retries so pending shutdown callbacks can finish.
+      await rm(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     },
   };
 }

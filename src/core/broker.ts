@@ -7,6 +7,8 @@ import { randomUUID } from "node:crypto";
 import { isPluginCacheCwd } from "./session-visibility.js";
 import { createServer, type Server, type Socket } from "node:net";
 import {
+  APP_VERSION,
+  DEFAULT_MAX_HOPS,
   MAX_BODY_CHARS,
   BROKER_TESTED_JOB_LOAD,
   MAX_FRAME_BYTES,
@@ -100,6 +102,7 @@ export class Broker {
   private readonly groups: ProjectGroups;
   /** Live role selection, recomputed after broker restart; no durable ownership is rewritten. */
   private readonly projectMains = new Map<string, string>();
+  private readonly projectRoutes = new Map<string, import("./protocol.js").ProjectRoute>();
   private server: Server | null = null;
   private readonly conns = new Set<Conn>();
   private historyBackground: HistoryBackground | null = null;
@@ -108,6 +111,7 @@ export class Broker {
   private pendingJobMailRouteAgain = false;
   private pendingJobMailRetry: NodeJS.Timeout | null = null;
   private closing = false;
+  private requestTurn: Promise<void> = Promise.resolve();
   private network: NetworkService | null = null;
   private remoteJobs: RemoteJobs | null = null;
   private remoteDashboard: RemoteDashboard | null = null;
@@ -134,7 +138,13 @@ export class Broker {
         const args = z.object({ to: z.string().min(1) }).strict().parse(a);
         return this.switchProjectMain(c.peer, this.connByName(args.to)?.peer ?? undefined);
       },
-      projectJobs: (c) => this.storedJobs().filter((j) => this.groups.canControl(this.requirePeer(c), j, this.localPeers())),
+      projectJobs: (c) => {
+        const peer = this.requirePeer(c);
+        // Surviving runners may exist only in retained snapshots after an old server overwrote the registry.
+        const known = new Set(this.storedJobs().map((job) => job.name));
+        for (const runner of this.conns) if (runner.peer?.jobAgent && !known.has(runner.peer.name)) this.jobForControl(peer, runner.peer.name);
+        return this.storedJobs().filter((j) => this.groups.canControl(peer, j, this.localPeers()));
+      },
       coordinatorAvailability: (c, a) => {
         const args = z.object({ name: z.string().optional(), unavailable: z.boolean() }).strict().parse(a);
         if (!c.peer && !args.name) throw new BridgeError("bad_request", "A coordinator name is required.");
@@ -242,7 +252,7 @@ export class Broker {
         this.pendingMail(this.requirePeer(c).name, Math.min(Math.max(1, a.limit ?? PENDING_DEFAULT_LIMIT), PENDING_MAX_LIMIT)),
       updatePeer: (c, a) => { const peer = this.onUpdatePeer(c, a); const job = this.storedJobs().find((j) => `job:${j.id}` === peer.id); if (job?.ownershipHistory) this.refreshJobPeer(job); this.store.history.rememberPeer(peer); return peer; },
       claimMail: (c, a) => this.onClaimMail(c, a),
-      ping: () => ({ brokerPid: process.pid, protocol: PROTOCOL_VERSION }),
+      ping: () => ({ brokerPid: process.pid, protocol: PROTOCOL_VERSION, brokerVersion: APP_VERSION }),
       networkStatus: () => this.network?.status() ?? { enabled: false, config: this.networking?.config, discovered: [], paired: [] },
       remoteJob: async (c, a) => {
         const peer = this.requirePeer(c);
@@ -453,6 +463,12 @@ export class Broker {
     socket.on("close", () => {
       this.conns.delete(conn);
       if (conn.peer) {
+        if (!this.closing && !conn.peer.jobAgent && !conn.peer.subagent) {
+          const name = conn.peer.name, at = this.now();
+          void this.store.retryWrite(() => {
+            if (!this.closing) this.store.markPeerSeen(name, at);
+          }).catch((err) => this.log.warn("offline last-seen update deferred", { err: String(err) }));
+        }
         void this.routePendingJobMail().catch((err) => this.log.warn("pending job reroute deferred", { err: String(err) }));
         this.log.info("peer left", { name: conn.peer.name, agent: conn.peer.agent });
         if (!conn.peer.jobAgent) this.broadcastEvent("peer_left", conn.peer, conn);
@@ -464,6 +480,12 @@ export class Broker {
     const handler = this.handlers[frame.op] as Handler<Op> | undefined;
     try {
       if (!handler) throw new BridgeError("bad_request", `unknown op: ${String(frame.op)}`);
+      // Start one handler per event-loop turn so bursts cannot starve fresh hook connections.
+      // Only its start is scheduled: a pending SQLite retry never holds up other requests.
+      const turn = this.requestTurn.then(() => new Promise<void>((resolve) => setImmediate(resolve)));
+      this.requestTurn = turn;
+      await turn;
+      if (this.closing) return;
       if (!conn.authed && !UNAUTHENTICATED_OPS.has(frame.op)) throw new BridgeError("unauthorized", "authenticate first");
       this.log.debug("request", { op: frame.op, peer: conn.peer?.name });
       const result = await handler(conn, (frame.args ?? {}) as never);
@@ -548,16 +570,38 @@ export class Broker {
     const members = this.localPeers().filter((p) => !p.jobAgent && !p.subagent && this.groups.decorate(p).projectGroup === key)
       .sort((a, b) => a.startedAt - b.startedAt || a.name.localeCompare(b.name));
     let main = this.projectMains.get(key);
-    if (!members.some((p) => p.name === main)) { main = members[0]?.name; if (main) this.projectMains.set(key, main); }
-    return { ...decorated, projectMain: main === peer.name, projectAddress: `project:${basename(decorated.projectRoot!)}` };
+    if (!members.some((p) => p.name === main)) { main = members[0]?.name; if (main) this.recordProjectMain(key, `project:${basename(decorated.projectRoot!)}`, main); }
+    return { ...decorated, projectMain: main === peer.name, projectAddress: `project:${basename(decorated.projectRoot!)}`, projectRoute: this.projectRoutes.get(key) };
   }
 
   private switchProjectMain(source: PeerInfo | null | undefined, target: PeerInfo | undefined): PeerInfo {
     if (!target || target.jobAgent || target.subagent || target.host) throw new BridgeError("bad_request", "Choose a live local project master.");
     const peer = this.projectPeer(target);
     if (!peer.projectGroup || source && (source.jobAgent || this.projectPeer(source).projectGroup !== peer.projectGroup)) throw new BridgeError("unauthorized", "Only a master of this project may switch its main session.");
-    this.projectMains.set(peer.projectGroup, peer.name);
+    this.recordProjectMain(peer.projectGroup, peer.projectAddress!, peer.name);
     return this.projectPeer(target);
+  }
+
+  private recordProjectMain(key: string, address: string, main: string): void {
+    const previous = this.projectMains.get(key);
+    if (previous === main) return;
+    const route = { address, main, since: this.now(), previous };
+    this.projectMains.set(key, main); this.projectRoutes.set(key, route);
+    if (previous) void this.notifyProjectMainChange(route).catch((err) => this.log.warn("project main notice deferred", { err: String(err) }));
+  }
+
+  private async notifyProjectMainChange(route: import("./protocol.js").ProjectRoute): Promise<void> {
+    const recipients = new Set([route.previous!, ...this.store.recentProjectSenders(route.address, route.previous!, route.since - 24 * 60 * 60 * 1_000)]);
+    for (const recipient of recipients) {
+      if (this.closing) return;
+      if (!PEER_NAME_PATTERN.test(recipient) || this.connByName(recipient)?.peer?.jobAgent) continue;
+      const message: BridgeMessage = { id: randomUUID(), from: { id: "bridge-project-routing", name: "agent-bridge", agent: "other" },
+        to: recipient, recipient, conversationId: `project-main-${randomUUID()}`, replyTo: null, hop: 0,
+        body: `${route.address} main changed from ${route.previous} to ${route.main} at ${new Date(route.since).toISOString().slice(11, 16)} UTC. Future project-address mail routes to ${route.main}; exact session names keep direct routing.`,
+        createdAt: route.since, readAt: null };
+      await this.store.retryWrite(() => this.store.insert(message));
+      const conn = this.recipientConn(recipient); if (conn) this.emit(conn, "message", message);
+    }
   }
 
   private sameJobFamily(a: PeerInfo, b: PeerInfo, jobs = this.storedJobs()): boolean {
@@ -695,12 +739,12 @@ export class Broker {
     if (isRecord(job.args) && Array.isArray(job.args.send_to)) peer.jobSendTo = job.args.send_to as string[];
   }
 
-  private siblingConns(conn: Conn): Conn[] {
+  private siblingConns(conn: Conn, target?: string): Conn[] {
     const peer = this.requirePeer(conn);
     if (!peer.jobAgent || !peer.jobOwner) throw new BridgeError("bad_request", "not a linked job");
     const jobs = this.storedJobs();
     const supervisor = this.jobSupervisor(peer, jobs);
-    return [...this.conns].filter((c) => c !== conn && c.peer?.jobAgent && (this.sameJobFamily(peer, c.peer, jobs) || this.sharedJobs(peer, c.peer, jobs) || peer.jobSendTo?.includes(c.peer.name)));
+    return [...this.conns].filter((c) => c !== conn && c.peer?.jobAgent && (!target || c.peer.name === target) && (this.sameJobFamily(peer, c.peer, jobs) || this.sharedJobs(peer, c.peer, jobs) || peer.jobSendTo?.includes(c.peer.name)));
   }
 
   private jobForControl(peer: PeerInfo, ref: string): Record<string, unknown> | undefined {
@@ -740,7 +784,7 @@ export class Broker {
       queueMicrotask(() => { this.jobsForDispatch = null; });
       return records;
     } catch {
-      return [];
+      return [...this.recoveredJobs.values()];
     }
   }
 
@@ -750,12 +794,12 @@ export class Broker {
     return typeof job?.supervisor === "string" ? job.supervisor : peer.jobOwner;
   }
 
-  private storedSiblings(peer: PeerInfo): StoredSibling[] {
+  private storedSiblings(peer: PeerInfo, target?: string): StoredSibling[] {
     if (!this.jobsPath || !peer.jobOwner) return [];
     try {
       const records = this.storedJobs();
       const supervisor = this.jobSupervisor(peer, records);
-      return records.flatMap((j) => j && (this.sameJobFamily(peer, { id: `job:${j.id}`, jobOwner: String(j.supervisor) } as PeerInfo, records) || this.sharedJobs(peer, { id: `job:${j.id}` } as PeerInfo, records) || peer.jobSendTo?.includes(String(j.name))) && typeof j.id === "string" &&
+      return records.flatMap((j) => j && (!target || j.name === target) && (this.sameJobFamily(peer, { id: `job:${j.id}`, jobOwner: String(j.supervisor) } as PeerInfo, records) || this.sharedJobs(peer, { id: `job:${j.id}` } as PeerInfo, records) || peer.jobSendTo?.includes(String(j.name))) && typeof j.id === "string" &&
         typeof j.name === "string" && j.name !== peer.name && `job:${j.id}` !== peer.id &&
         AGENT_KINDS.includes(j.agent as AgentKind) && SIBLING_STATUSES.has(j.status as SiblingPeer["status"])
         ? [{ id: `job:${j.id}`, name: j.name, title: isRecord(j.args) && typeof j.args.title === "string" ? j.args.title : "", agent: j.agent as AgentKind, status: j.status as SiblingPeer["status"], ...(typeof j.finishedAt === "number" ? { finishedAt: j.finishedAt } : {}), report: typeof j.report === "string" ? j.report : null }]
@@ -785,8 +829,8 @@ export class Broker {
     const key = dedupeKey ? `${sender.id}:${dedupeKey}` : null;
     const seen = key ? this.sentByKey.get(key) : undefined;
     if (seen) return seen.result;
-    const target = this.siblingConns(conn).find((c) => c.peer!.name === args.to);
-    const stored = this.storedSiblings(sender).find((s) => s.name === args.to);
+    const target = this.siblingConns(conn, args.to).find((c) => c.peer!.name === args.to);
+    const stored = this.storedSiblings(sender, args.to).find((s) => s.name === args.to);
     if (!target && !stored) {
       if (!isJobSendTarget(args.to) || !sender.jobSendTo?.includes(args.to) || args.to.includes("-job-") || args.to.includes("-ask-") || this.connByName(args.to)?.peer?.jobAgent) {
         throw new BridgeError("unknown_target", "no sibling with that job name or explicit send_to grant");
@@ -980,7 +1024,7 @@ export class Broker {
     if (!peer.jobAgent) this.broadcastEvent("peer_joined", peer, conn);
     // Deliver the backlog right after the hello response has been written.
     this.replayMail(conn, peer, () => { this.queueCurrentDecisions(peer); });
-    return { brokerPid: process.pid, name: peer.name, sessionId: peer.sessionId, peers: this.livePeers().filter((x) => x.id !== peer.id) };
+    return { brokerPid: process.pid, brokerVersion: APP_VERSION, name: peer.name, sessionId: peer.sessionId, peers: this.livePeers().filter((x) => x.id !== peer.id) };
   }
 
   /**
@@ -1123,7 +1167,7 @@ export class Broker {
   }
 
   /** Turns a sender-supplied target into live connections and/or offline queue keys. */
-  private resolveTargets(to: string, sender: PeerInfo): { live: Conn[]; queued: string[] } {
+  private resolveTargets(to: string, sender: PeerInfo): { live: Conn[]; queued: string[]; skipped?: string[] } {
     const all = [...this.conns].filter((c) => c.peer && c.peer.id !== sender.id);
     // Broadcasts and agent kinds address sessions; job runners only get mail sent to them by name.
     const others = all.filter((c) => !c.peer!.jobAgent);
@@ -1144,11 +1188,14 @@ export class Broker {
     if (to === BROADCAST) {
       if (sender.jobAgent) throw new BridgeError("unauthorized", "job runners cannot broadcast to independent sessions");
       const ownNames = new Set([sender.name, ...this.store.namesFor(sender)]);
-      const queued = this.store.broadcastNames().filter((name) => !ownNames.has(name) && !this.recipientConn(name));
-      if (others.length === 0 && queued.length === 0 && !this.network?.peers().some((p) => !p.jobAgent)) {
+      const masters = new Set([...this.projectMains.values(), ...this.storedJobs().filter((job) => !job.parentJob && job.status === "running").map(primaryFor)].filter((name) => PEER_NAME_PATTERN.test(name)));
+      const eligible = this.store.broadcastRecipients(this.now(), masters);
+      const offline = (name: string) => !ownNames.has(name) && !this.recipientConn(name);
+      const queued = eligible.queued.filter(offline), skipped = eligible.skipped.filter(offline);
+      if (others.length === 0 && queued.length === 0 && skipped.length === 0 && !this.network?.peers().some((p) => !p.jobAgent)) {
         throw new BridgeError("unknown_target", "no other known sessions; send to an exact name to create an offline queue");
       }
-      return { live: others, queued };
+      return { live: others, queued, skipped };
     }
     const recipient = this.recipientConn(to);
     const exact = all.find((c) => c.peer!.id === to || c === recipient);
@@ -1273,7 +1320,7 @@ export class Broker {
       return result;
     }
     const remoteTargets = to === BROADCAST ? this.network?.peers().filter((p) => !p.jobAgent).map((p) => p.name) ?? [] : [];
-    let { live, queued } = this.resolveTargets(to, sender);
+    let { live, queued, skipped } = this.resolveTargets(to, sender);
     const unreadBeforeSend = conversationId.startsWith(CONTROL_CONVERSATION_PREFIX) || isQuietMessage({ conversationId }) ? [] :
       this.store.replyConflicts(sender.name, [...live.map((c) => c.peer!.name), ...queued], conversationId);
     const checkReply = () => {
@@ -1289,7 +1336,7 @@ export class Broker {
       }
     }
     if (conversationId.startsWith(SIBLING_CONVERSATION_PREFIX) &&
-        (queued.some((name) => !sender.jobAgent || !this.storedSiblings(sender).some((s) => s.name === name)) ||
+        (queued.some((name) => !sender.jobAgent || !this.storedSiblings(sender, name).some((s) => s.name === name)) ||
           live.some((c) => c.peer!.jobAgent && (!sender.jobAgent || !sender.jobOwner || (!this.sameJobFamily(sender, c.peer!) && !this.sharedJobs(sender, c.peer!) && !sender.jobSendTo?.includes(c.peer!.name)))))) {
       throw new BridgeError("unauthorized", "sibling chat requires the same supervisor or an explicit send_to job grant");
     }
@@ -1338,7 +1385,8 @@ export class Broker {
       deliveredTo: live.map((c) => c.peer!.name),
       queuedFor: queued,
     });
-    const result: RequestMap["send"][1] = { messages, deliveredTo: live.map((c) => c.peer!.name), queuedFor: queued, recipientStates: live.map((c) => ({ name: c.peer!.name, activity: c.peer!.activity, autoWake: c.peer!.autoWake, wakeOnDirect: c.peer!.wakeOnDirect, wakeAvailable: c.peer!.wakeAvailable, wakeMaxHops: c.peer!.wakeMaxHops })) };
+    const result: RequestMap["send"][1] = { messages, ...(skipped ? { skippedFor: skipped } : {}), deliveredTo: live.map((c) => c.peer!.name), queuedFor: queued, recipientStates: live.map((c) => ({ name: c.peer!.name, activity: c.peer!.activity, autoWake: c.peer!.autoWake, wakeOnDirect: c.peer!.wakeOnDirect, wakeAvailable: c.peer!.wakeAvailable, wakeMaxHops: c.peer!.wakeMaxHops })) };
+    if (to.startsWith("project:") && live[0]?.peer) result.projectRoute = this.projectPeer(live[0].peer).projectRoute;
     if (replyRestrictions.length) result.replyRestrictions = replyRestrictions;
     if (unreadBeforeSend.length) result.unreadBeforeSend = unreadBeforeSend.map((m) => ({ id: m.id, from: m.from.name, conversationId: m.conversationId }));
     for (const recipient of remoteTargets) {
@@ -1358,6 +1406,12 @@ export class Broker {
         this.log.warn("broadcast recipient delivery failed", { id, recipient, err: String(err) });
       }
     }
+    result.wakeRequestedFor = (result.recipientStates ?? []).filter((peer) => {
+      const message = result.messages.find((m) => m.recipient === peer.name);
+      return Boolean(message && peer.wakeAvailable && (peer.autoWake || peer.wakeOnDirect &&
+        (message.to === BROADCAST || message.to === peer.name || message.recipient === peer.name && !(AGENT_KINDS as readonly string[]).includes(message.to))) &&
+        message.hop < (peer.wakeMaxHops ?? DEFAULT_MAX_HOPS) && !isQuietMessage(message) && !message.conversationId.endsWith(":note"));
+    }).map((peer) => peer.name);
     return result;
   }
 

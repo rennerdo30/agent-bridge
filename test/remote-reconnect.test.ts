@@ -83,7 +83,9 @@ describe("remote reconnect identity and reachability (AB-104)", () => {
     const fresh = await connect(registration("session-2", { pid: 555 }));
     expect(fresh.hello).toMatchObject({ name: "session", sessionId: "chat" });
     await until(() => fresh.messages.some((m) => m.id === sent.messages[0]!.id));
-    expect(await fresh.client.request("pending", {})).toMatchObject([{ body: "queued before reconnect" }]);
+    const pending = await fresh.client.request("pending", {});
+    expect(pending.filter((message) => message.id === sent.messages[0]!.id)).toMatchObject([{ body: "queued before reconnect" }]);
+    expect(pending).toContainEqual(expect.objectContaining({ from: expect.objectContaining({ id: "bridge-project-routing" }) }));
   });
 
   it("backs up v5 bindings and messages before migrating retained names", () => {

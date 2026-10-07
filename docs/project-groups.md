@@ -41,6 +41,12 @@ live secondaries, so a secondary coordinating a topic sees it without a relay. C
 session answers. Duplicate project names are rejected as ambiguous. Exact session names always keep
 direct routing. When all masters are unavailable, use an exact session name to queue mail.
 
+Main switches send a one-line notice to the previous main and local sessions that mailed that project
+address in the last 24 hours. `peers` and project-address send results show the current main, the UTC
+switch time and the previous main. This routing timeline belongs to the current broker; a broker
+restart chooses its main from live sessions again. Delivery and notices respect each client's wake
+settings. An exact session address always stays direct.
+
 For opencode, the plugin exposes these tools with its usual `bridge_` prefix and delivers through
 its existing message notification and wake paths.
 

@@ -48,6 +48,8 @@ export type Run = ((signal: AbortSignal, onProgress: (message: string, full?: st
 export type Resume = (message: string, sessionId: string, workdir: string | null, worktree: Worktree | null) => Run;
 
 export interface Job {
+  /** Initial spawn accepted but not yet admitted; preserved across server reloads. */
+  waitingForStart?: boolean;
   /** Original recovery snapshot, retained only until ordinary durable storage takes precedence. */
   recoveredRecord?: Record<string, unknown>;
   /** Current blocking caller's delivery destination; runtime only, never ownership metadata. */
@@ -309,6 +311,7 @@ export class JobManager {
   private readonly history = new Map<string, Job>();
   /** Finished jobs whose continuation waits for a free slot, in arrival order; the messages are in job.queue. */
   private readonly waitingJobs = new Map<string, Job>();
+  private readonly pendingRuns = new Map<string, Run>();
   /** Ids of status notes from running subagents (see fromSubagent). */
   private readonly notes = new Set<string>();
   /** Jobs this manager started, continued or took over: only these are saved (others' entries stay as they are on disk). */
@@ -368,7 +371,9 @@ export class JobManager {
     });
     // Runners send to this session by name: tell them where it is now (a new server, maybe a new name).
     node.on("connected", () => {
-      for (const job of this.running.values()) if (job.host) this.runners?.send(job, { type: "attach" });
+      const attached = [...this.running.values()];
+      this.refreshOwnership();
+      for (const job of attached) if (job.host && this.running.has(job.id)) this.runners?.send(job, { type: "attach" });
     });
   }
 
@@ -477,9 +482,10 @@ export class JobManager {
       if (parent?.rootSession && parent.rootName) { this.lineage.rootSession = parent.rootSession; this.lineage.rootName = parent.rootName; }
     }
     for (const s of stored) {
-      if (!s.ownershipHistory?.length) continue;
+      const directlyOwned = this.lineage ? s.parentJob === this.lineage.parentJob : this.isMine(s.owner) && !s.parentJob;
+      if (!s.ownershipHistory?.length && (!directlyOwned || this.running.has(s.id) || this.foreground.has(s.id) || s.status === "running" && !s.host)) continue;
       let job = this.history.get(s.id);
-      const mine = this.lineage ? s.parentJob === this.lineage.parentJob : s.owner === this.node.name && !s.parentJob;
+      const mine = directlyOwned;
       if (job && (s.executionOwner === this.node.name || mine)) {
         const executing = s.executionOwner === this.node.name && (this.running.has(s.id) || this.foreground.has(s.id));
         Object.assign(job, { owner: s.owner, supervisor: s.supervisor, parentJob: s.parentJob, rootSession: s.rootSession, rootName: s.rootName,
@@ -526,7 +532,7 @@ export class JobManager {
     const adopted: Job[] = [];
     // The newest ones, plus every job still marked running however old (its runner may still be at work).
     const recentIds = new Set(stored.slice(-HISTORY_LIMIT).map((s) => s.id));
-    for (const s of stored.filter((x) => recentIds.has(x.id) || x.status === "running")) {
+    for (const s of stored.filter((x) => recentIds.has(x.id) || x.status === "running" || x.waitingForStart)) {
       if (this.lineage && s.parentJob !== this.lineage.parentJob) continue;
       if (!this.lineage && s.parentJob) continue;
       if (this.history.has(s.id)) continue;
@@ -547,6 +553,7 @@ export class JobManager {
     // Jobs saved before sibling identities existed need the same group as later jobs of their supervisor.
     this.assignLegacySupervisors();
     this.settleAdopted(adopted);
+    for (const job of this.history.values()) if (job.waitingForStart && this.isMine(job.owner)) this.waitForSlot(job);
     this.persist();
   }
 
@@ -836,6 +843,7 @@ export class JobManager {
 
   canStart(): boolean {
     this.refreshOwnership();
+    for (const job of [...this.running.values()]) if (job.host) this.checkHostedSafely(job, true);
     return this.runningCount() + [...this.foreground.values()].filter((j) => this.isMine(j.owner)).length < this.maxJobs && this.withRootBudget((budget) => {
       if (!this.lineage) budget.setLimit(this.maxJobs);
       return budget.available();
@@ -850,6 +858,15 @@ export class JobManager {
 
   start(agent: AgentKind, model: string | null, prompt: string, run: Run, resume?: Resume, args?: Record<string, unknown>): Job {
     const job = this.newJob(agent, model, prompt, "job", resume, args);
+    if (!this.canStart() || this.waitingJobs.size) {
+      job.status = "interrupted";
+      job.waitingForStart = true;
+      job.progress = "queued: waiting for a subagent slot";
+      this.pendingRuns.set(job.id, run);
+      this.waitForSlot(job);
+      this.remember(job);
+      return job;
+    }
     this.remember(job);
     this.log.info("subagent started", { job: job.name, model, prompt: prompt.slice(0, PROMPT_PREVIEW_CHARS) });
     this.launch(job, run);
@@ -916,6 +933,7 @@ export class JobManager {
     if (this.hostedRunning(job)) this.checkHosted(job);
     if (this.waitingJobs.has(job.id)) {
       job.queue.push(message);
+      this.persist();
       return { outcome: "waiting", job };
     }
     if (job.status === "running" && job.controller.signal.aborted) {
@@ -975,6 +993,18 @@ export class JobManager {
       if (job.status === "running") continue;
       if (!this.canStart()) return;
       this.waitingJobs.delete(job.id);
+      if (job.waitingForStart) {
+        try {
+          const run = job.resume?.(job.prompt, "", job.workdir, job.worktree) ?? this.pendingRuns.get(job.id);
+          this.pendingRuns.delete(job.id);
+          if (run) this.launch(job, run);
+          else { this.waitingJobs.set(job.id, job); return; }
+        } catch (err) {
+          this.pendingRuns.delete(job.id); job.waitingForStart = undefined;
+          this.finish(job, "failed", "", null, failureCause({ error: err }));
+        }
+        continue;
+      }
       if (!job.queue.length || !job.resume || !job.sessionId) continue;
       this.log.info("subagent resumed (was waiting for a slot)", { job: job.name, sessionId: job.sessionId });
       this.launch(job, job.resume(job.queue.splice(0).join("\n\n"), job.sessionId, job.workdir, job.worktree));
@@ -982,6 +1012,7 @@ export class JobManager {
   }
 
   private launch(job: Job, run: Run): void {
+    job.waitingForStart = undefined;
     if (typeof job.args?.model === "string") job.model = job.args.model;
     job.status = "running";
     job.executionOwner = !this.isMine(job.owner) ? this.node.name : undefined;
@@ -994,7 +1025,8 @@ export class JobManager {
     this.running.set(job.id, job);
     this.own.add(job.id);
     // A detached job runner where it can: the turn then survives a restart of this server.
-    job.host = this.runners ? (run.hosted?.(job) ?? null) : null;
+    try { job.host = this.runners ? (run.hosted?.(job) ?? null) : null; }
+    catch (err) { this.finish(job, "failed", "", sessionOfError(err), failureCause({ error: err })); return; }
     job.forwarded = [];
     this.persist();
     if (job.host) {
@@ -1006,7 +1038,10 @@ export class JobManager {
       job.progress = message;
       this.log.debug("subagent progress", { job: job.name, message });
     };
-    run(job.controller.signal, onProgress, job).then(
+    let promise: Promise<RunResult>;
+    try { promise = run(job.controller.signal, onProgress, job); }
+    catch (err) { this.finish(job, "failed", "", sessionOfError(err), failureCause({ error: err })); return; }
+    promise.then(
       (res) => {
         job.workdir = res.workdir ?? job.workdir;
         job.worktree = res.worktree ?? job.worktree;
@@ -1110,7 +1145,13 @@ export class JobManager {
     const waiting = [...this.waitingJobs.values()].find((j) => j.id === id || j.name === ref);
     if (waiting) {
       this.waitingJobs.delete(waiting.id);
+      this.pendingRuns.delete(waiting.id);
       waiting.queue = [];
+      if (waiting.waitingForStart) {
+        waiting.waitingForStart = undefined;
+        waiting.controller.abort();
+        this.finish(waiting, "failed", "", null, "cancelled before starting");
+      }
       this.log.info("waiting subagent continuation cancelled", { job: waiting.name });
       return true;
     }
@@ -1148,8 +1189,9 @@ export class JobManager {
    */
   cancelAll(): void {
     if (this.rootWaitTimer) { clearInterval(this.rootWaitTimer); this.rootWaitTimer = null; }
-    for (const j of this.waitingJobs.values()) j.queue = [];
+    for (const j of this.waitingJobs.values()) if (!j.waitingForStart) j.queue = [];
     this.waitingJobs.clear();
+    this.pendingRuns.clear();
     for (const j of this.running.values()) if (!j.host && (!j.executionOwner || j.executionOwner === this.node.name)) j.controller.abort();
     for (const j of this.foreground.values()) denyPendingApprovals(j, "session closed");
     if (this.hostTimer) clearInterval(this.hostTimer);
@@ -1246,7 +1288,7 @@ export function sessionOfError(err: unknown): string | null {
   return err instanceof DelegateError ? (err.sessionId ?? null) : null;
 }
 
-type StoredJob = Pick<Job, "projectRoot" | "deliveryHistory" | "ownershipHistory" | "masters" | "executionOwner" | "queuedMessages" | "forwarded" | "id" | "name" | "agent" | "model" | "prompt" | "startedAt" | "status" | "sessionId" | "workdir" | "worktree" | "args" | "owner" | "supervisor" | "finishedAt" | "host" | "remote" | "metadataVersion" | "parentJob" | "rootSession" | "rootName" | "percent" | "progressNote" | "etaAt" | "etaReportedAt">;
+type StoredJob = Pick<Job, "waitingForStart" | "projectRoot" | "deliveryHistory" | "ownershipHistory" | "masters" | "executionOwner" | "queuedMessages" | "forwarded" | "id" | "name" | "agent" | "model" | "prompt" | "startedAt" | "status" | "sessionId" | "workdir" | "worktree" | "args" | "owner" | "supervisor" | "finishedAt" | "host" | "remote" | "metadataVersion" | "parentJob" | "rootSession" | "rootName" | "percent" | "progressNote" | "etaAt" | "etaReportedAt">;
 
 function toStored(j: Job): StoredJob {
   return {
@@ -1257,6 +1299,7 @@ function toStored(j: Job): StoredJob {
     prompt: j.prompt,
     startedAt: j.startedAt,
     status: j.status,
+    waitingForStart: j.waitingForStart,
     sessionId: j.sessionId,
     workdir: j.workdir,
     worktree: j.worktree,

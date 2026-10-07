@@ -21,6 +21,7 @@ import { processCleanupReport, establishWindowsJobScope, type WindowsJobScope } 
 import type { Logger } from "../core/logger.js";
 import { closeJobWorktree } from "../core/job-close.js";
 import { recordWorktreeProcessProof } from "../core/worktree-state.js";
+import { acquireStartup } from "../core/startup-admission.js";
 
 /** Delivering a message to the session: tries for several minutes (the bridge may be changing hands, or no session hosts it). */
 const SEND_ATTEMPTS = 30;
@@ -49,7 +50,18 @@ export async function runJobRunner(specFile: string | undefined): Promise<number
   // This is a dedicated runner, never the shared broker/MCP server. Establish ownership
   // before any delegate can create tools, including tools whose intermediate parents exit.
   let scope: WindowsJobScope | null = null;
-  if (process.platform === "win32") scope = await establishWindowsJobScope(log);
+  // Publish the real runner PID before Windows ownership or machine admission can wait.
+  writeRunnerState(home, spec.job.id, { pid: process.pid, peer: spec.job.name, status: "running", updatedAt: Date.now(), progress: "queued: runner startup admission" });
+  if (process.platform === "win32") {
+    const controller = new AbortController();
+    const stop = () => controller.abort();
+    process.on("SIGTERM", stop); process.on("SIGINT", stop);
+    try {
+      const release = await acquireStartup(home, controller.signal);
+      try { controller.signal.throwIfAborted(); scope = await establishWindowsJobScope(log); }
+      finally { release(); }
+    } finally { process.off("SIGTERM", stop); process.off("SIGINT", stop); }
+  }
   try {
     return await runOwnedJobRunner(spec, log, scope);
   } finally {

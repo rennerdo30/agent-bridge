@@ -98,7 +98,7 @@ export function formatPeer(p: PeerInfo, selfId?: string, now: number = Date.now(
   const flags = [
     p.agent,
     `v${p.version ?? "unknown"}${p.version !== APP_VERSION ? " · version skew (retained code)" : ""}`,
-    p.activity ?? null,
+    p.activity ?? "activity unknown (no busy/idle report)",
     p.wakeOnDirect && p.wakeAvailable ? "direct messages wake this session" : null,
     p.autoWake ? "auto-wake" : p.activity === "idle" && !(p.wakeOnDirect && p.wakeAvailable) ? "auto-wake off: will be read on its next turn" : null,
     `up ${formatUptime(now - p.startedAt)}`,
@@ -146,6 +146,17 @@ export function formatReplyRestrictions(result: SendResult): string[] {
     `${name} can't reply to you directly. Its replies go to its supervisor ${supervisor}. To get an answer, ask ${supervisor}, ask ${supervisor} to grant you with send_to, or use the project's main session.`);
 }
 
+export function formatInboxMessages(messages: BridgeMessage[]): string {
+  const quiet = messages.filter(isQuietMessage);
+  if (!quiet.length) return formatMessages(messages);
+  const oldest = Math.max(0, Date.now() - Math.min(...quiet.map((m) => m.createdAt)));
+  return formatMessages(messages, { header: `[agent-bridge] ${messages.length - quiet.length} actionable message(s), ${quiet.length} retained quiet copy/copies. Quiet copies are historical coordination, not new requests; oldest is ${formatDuration(oldest)} old.`, replyHint: false });
+}
+
+export function formatProjectRoute(route: import("../core/protocol.js").ProjectRoute, recipient = route.main): string {
+  return `${route.address} routed to ${recipient} (main ${route.main} since ${new Date(route.since).toISOString().slice(11, 16)} UTC${route.previous ? `, previously ${route.previous}` : ""}).`;
+}
+
 /** Socket delivery is not a read receipt, locally or over a paired link. */
 export function formatDelivery(result: SendResult, maxHops = DEFAULT_MAX_HOPS): string[] {
   return result.deliveredTo.map((name) => {
@@ -154,10 +165,11 @@ export function formatDelivery(result: SendResult, maxHops = DEFAULT_MAX_HOPS): 
     const direct = message && (message.to === name || (message.to !== BROADCAST && !(AGENT_KINDS as readonly string[]).includes(message.to) && message.recipient === name));
     const canWake = message && message.hop < (peer?.wakeMaxHops ?? maxHops) && !isQuietMessage(message) && !message.conversationId.endsWith(":note") &&
       peer?.wakeAvailable && (peer.autoWake || (peer.wakeOnDirect && (direct || message.to === BROADCAST)));
-    const hint = peer?.activity === "idle"
-      ? canWake ? "idle; wake requested on the receiving PC, awaiting consumption"
+    const state = peer?.activity ?? "activity unknown";
+    const hint = state === "idle"
+      ? canWake ? "idle; wake requested on the receiving PC; a new turn is expected, consumption unconfirmed"
         : "idle; will be read on its next turn (no wake for this delivery)"
-      : "waiting for the peer to consume it";
+      : `${state}; ${canWake ? state === "busy" ? "wake policy enabled; idle wake waits until the current turn ends" : "wake policy enabled; native wake depends on receiving session activity" : "no wake for this delivery"}; queued for its next hook, tool call or turn`;
     return `Delivered to inbox: ${name} (${hint}). Delivery does not mean read.`;
-  }).concat((result.failedFor ?? []).map((failed) => `Delivery not confirmed: ${failed.name} (${failed.reason}). The attempt is retained in history; retry explicitly when the paired link is available.`)).concat(formatReplyRestrictions(result));
+  }).concat(result.projectRoute ? [formatProjectRoute(result.projectRoute, result.deliveredTo[0])] : []).concat((result.failedFor ?? []).map((failed) => `Delivery not confirmed: ${failed.name} (${failed.reason}). The attempt is retained in history; retry explicitly when the paired link is available.`)).concat(result.wakeRequestedFor?.length ? [`Wake requested on the receiving PC: ${result.wakeRequestedFor.join(", ")}. Native turn start is not yet confirmed.`] : []).concat((result.skippedFor ?? []).map((name) => `Skipped offline registration: ${name} (not seen recently and not a known project master).`)).concat(result.queuedFor.map((name) => `Queued for offline session: ${name}.`)).concat(formatReplyRestrictions(result));
 }
