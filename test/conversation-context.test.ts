@@ -39,10 +39,14 @@ afterEach(async () => {
   await env.cleanup();
   vi.unstubAllEnvs();
 });
-function setup() {
+function setup(withTranscripts = true) {
   const store = new MessageStore(env.db, nullLogger);
   closers.push(() => store.close());
-  const paths = installTranscriptFixtures(env.home).paths,
+  const paths = withTranscripts ? installTranscriptFixtures(env.home).paths : {
+    claude: join(env.home, "empty-claude"),
+    codex: join(env.home, "empty-codex"),
+    opencode: join(env.home, "empty-opencode"),
+  },
     db = new DatabaseSync(env.db);
   closers.push(() => db.close());
   const index = new HistoryIndex(db, env.home, paths);
@@ -50,12 +54,18 @@ function setup() {
   const ingest = new ConversationIngestor(db, env.home, paths);
   closers.push(() => ingest.close());
   const tick = () => {
+    let idleSweeps = 0;
     for (let i = 0; i < 60; i++) {
-      index.tick();
-      ingest.tick();
+      const indexed = index.tick();
+      const ingested = ingest.tick();
+      // Keep the bounded full-sweep check while avoiding idle WAL commits.
+      if (indexed.work || ingested) idleSweeps = 0;
+      else if (!indexed.discovering && !ingest.discovering) idleSweeps++;
+      if (idleSweeps >= 2)
+        return;
     }
   };
-  return { store, index, ingest, db, tick };
+  return { store, index, ingest, db, paths, tick };
 }
 it("retains every recipient envelope, quiet copies, decisions, reports and progress/approval events", async () => {
   const f = setup();
@@ -198,7 +208,7 @@ it("retains every recipient envelope, quiet copies, decisions, reports and progr
   ).toContain("context_large_approval_needle 🐈");
 });
 it("filters mixed-sender raw chunks correctly after a late job/project binding and reindex", () => {
-  const f = setup(),
+  const f = setup(false),
     project = join(env.home, "late-project");
   mkdirSync(project);
   const firstProject = join(env.home, "first-project");
@@ -283,6 +293,15 @@ it("filters mixed-sender raw chunks correctly after a late job/project binding a
       filters: { agent: "codex", project, job: "codex-job-second" },
     }).hits.length,
   ).toBeGreaterThan(0);
+  // Restart fairness must use persisted mirror scheduling too when there are
+  // no CLI sources whose checked counter could otherwise seed the worker.
+  f.db.exec("UPDATE conversation_projects SET checked=checked+1000000");
+  const beforeRestart = Number(f.db.prepare("SELECT max(checked) n FROM conversation_projects").get()!.n);
+  f.ingest.close();
+  const restarted = new ConversationIngestor(f.db, env.home, f.paths);
+  closers.push(() => restarted.close());
+  restarted.tick();
+  expect(Number(f.db.prepare("SELECT max(checked) n FROM conversation_projects").get()!.n)).toBeGreaterThan(beforeRestart);
 });
 it("backfills oversized archived approvals without retaining their listening capabilities", () => {
   const f = setup(),

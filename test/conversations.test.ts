@@ -18,6 +18,7 @@ import {
   CONVERSATION_BYTES,
 } from "../src/core/conversations.js";
 import { HistoryIndex } from "../src/core/history.js";
+import { MAX_TRANSCRIPT_CHUNK_BYTES } from "../src/core/transcripts/common.js";
 import {
   conversationProject,
   ensureProjectFolder,
@@ -43,7 +44,7 @@ afterEach(async () => {
   await env.cleanup();
   vi.unstubAllEnvs();
 });
-function fixture() {
+function fixture(claudeOnly = false) {
   const s = new MessageStore(env.db, nullLogger);
   close.push(() => s.close());
   const files = installTranscriptFixtures(env.home),
@@ -67,24 +68,38 @@ function fixture() {
   cli.exec("ALTER TABLE session ADD COLUMN directory TEXT");
   cli.prepare("UPDATE session SET directory=?").run(project);
   cli.close();
-  const index = new HistoryIndex(db, env.home, files.paths);
+  // Byte retention and generation tests only exercise Claude. Keep unrelated
+  // Codex/OpenCode fixtures outside discovery for those focused cases.
+  const paths = claudeOnly ? {
+    ...files.paths,
+    codex: join(env.home, "empty-codex"),
+    opencode: join(env.home, "empty-opencode"),
+  } : files.paths;
+  const index = new HistoryIndex(db, env.home, paths);
   close.push(() => index.close());
-  const ingest = new ConversationIngestor(db, env.home, files.paths);
+  const ingest = new ConversationIngestor(db, env.home, paths);
   close.push(() => ingest.close());
   const tick = (count = 80) => {
+    let idleSweeps = 0;
     for (let i = 0; i < count; i++) {
-      index.tick();
-      ingest.tick();
+      const indexed = index.tick();
+      const ingested = ingest.tick();
+      // Finish a complete idle source sweep instead of writing dozens of
+      // redundant primary/mirror WAL batches after the fixture has converged.
+      if (indexed.work || ingested) idleSweeps = 0;
+      else if (!indexed.discovering && !ingest.discovering) idleSweeps++;
+      if (idleSweeps >= 2)
+        return;
     }
   };
-  return { s, files, db, project, index, ingest, tick };
+  return { s, files, paths, db, project, index, ingest, tick };
 }
 it("retains oversized JSONL and skipped content exactly, deduplicates and resumes offsets", () => {
-  const f = fixture(),
+  const f = fixture(true),
     text =
       JSON.stringify({
         type: "system",
-        content: "a".repeat(700_000) + " oversized_retained_tail 🐈",
+        content: "a".repeat(MAX_TRANSCRIPT_CHUNK_BYTES + 1) + " oversized_retained_tail 🐈",
       }) + "\n";
   appendFileSync(f.files.claude, text);
   const original = readFileSync(f.files.claude);
@@ -107,7 +122,7 @@ it("retains oversized JSONL and skipped content exactly, deduplicates and resume
   expect(
     f.db.prepare("SELECT count(*) n FROM conversation_records").get()!.n,
   ).toBe(count);
-  const resumed = new ConversationIngestor(f.db, env.home, f.files.paths);
+  const resumed = new ConversationIngestor(f.db, env.home, f.paths);
   close.push(() => resumed.close());
   resumed.tick();
   expect(
@@ -231,7 +246,7 @@ it("retains OpenCode messages, huge parts, native grandchildren and observed rev
   expect(after.some((r) => String(r.source).includes(":message:"))).toBe(true);
 });
 it("pages complete context, keeps replaced generations and restores index from retained bytes", () => {
-  const f = fixture();
+  const f = fixture(true);
   f.tick();
   const id = `claude:${CLAUDE_SESSION}`;
   const first = readConversation(f.db, { id, limit: 1 });
