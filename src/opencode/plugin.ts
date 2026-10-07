@@ -147,7 +147,10 @@ async function createBridge({ client, directory }: PluginInput) {
   const childSessions = new Set<string>();
   const busy = new Map<string, boolean>();
   let stopCheckRunning = false;
+  let pendingStopSession: string | null = null;
+  let disposed = false;
   let sessionStartSent = false;
+  let sessionStart: Promise<void> | null = null;
 
   const hook = async (event: string, sessionID: string | null, signal?: AbortSignal): Promise<any> => {
     try {
@@ -169,13 +172,20 @@ async function createBridge({ client, directory }: PluginInput) {
     activeSession = sessionID;
     if (!sessionStartSent) {
       sessionStartSent = true;
-      void hook("SessionStart", sessionID);
+      sessionStart = hook("SessionStart", sessionID).then(async (out) => {
+        const context = out?.reason ?? out?.hookSpecificOutput?.additionalContext;
+        if (!disposed && typeof context === "string" && context) await promptAsync(client, sessionID, context, true);
+      }).catch((err) => log("warn", "could not store initial peer context", { err: String(err) }));
     }
+    return sessionStart;
   };
 
   /** Session went idle or mail arrived while idle: let the server decide whether to continue. */
   const stopCheck = async (sessionID: string) => {
-    if (stopCheckRunning) return;
+    if (disposed) return;
+    // Mail can arrive after this check takes its inbox snapshot but before it returns.
+    // Coalesce those notifications into one fresh check instead of dropping the wake.
+    if (stopCheckRunning) { pendingStopSession = sessionID; return; }
     stopCheckRunning = true;
     try {
       const out = await hook("Stop", sessionID);
@@ -188,6 +198,9 @@ async function createBridge({ client, directory }: PluginInput) {
       log("warn", "stop check failed", { err: String((err as Error)?.message ?? err) });
     } finally {
       stopCheckRunning = false;
+      const pending = pendingStopSession;
+      pendingStopSession = null;
+      if (pending && pending === activeSession && !disposed && !busy.get(pending)) void stopCheck(pending);
     }
   };
 
@@ -211,7 +224,7 @@ async function createBridge({ client, directory }: PluginInput) {
       args: jsonSchemaToZodShape(z as any, t.inputSchema as JsonSchema),
       execute: async (args: Json, ctx: ToolContext) => {
         log("debug", "tool", { name, sessionID: ctx?.sessionID });
-        noteSession(ctx?.sessionID);
+        await noteSession(ctx?.sessionID);
         const res: any = await mcp.callTool({ name, arguments: args }, undefined, { timeout: MCP_REQUEST_TIMEOUT_MS, signal: ctx?.abort });
         const out = textOf(res);
         if (res?.isError) throw new Error(out || `agent-bridge ${name} failed`);
@@ -226,14 +239,14 @@ async function createBridge({ client, directory }: PluginInput) {
 
     "chat.message": async (input: { sessionID: string }) => {
       log("debug", "chat.message", { sessionID: input?.sessionID });
-      noteSession(input?.sessionID);
+      await noteSession(input?.sessionID);
     },
 
     /** After each tool call: mail that arrived meanwhile goes into that tool's result, where the model reads it. */
     "tool.execute.after": async (input: { sessionID?: string }, output: { output?: unknown }) => {
       const sessionID = input?.sessionID;
       if (!sessionID || childSessions.has(sessionID) || typeof output?.output !== "string") return;
-      noteSession(sessionID);
+      await noteSession(sessionID);
       const out = await hook("PostToolUse", sessionID);
       const context = out?.reason ?? out?.hookSpecificOutput?.additionalContext;
       if (typeof context !== "string" || !context) return;
@@ -256,7 +269,7 @@ async function createBridge({ client, directory }: PluginInput) {
     "experimental.chat.system.transform": async (input: { sessionID?: string }, output: { system: string[] }) => {
       const sessionID = input?.sessionID;
       if (!sessionID || childSessions.has(sessionID)) return;
-      noteSession(sessionID);
+      await noteSession(sessionID);
       const out = await hook("PostToolUse", sessionID);
       const context = out?.hookSpecificOutput?.additionalContext;
       if (typeof context !== "string" || !context) return;
@@ -293,6 +306,8 @@ async function createBridge({ client, directory }: PluginInput) {
     },
 
     dispose: async () => {
+      disposed = true;
+      pendingStopSession = null;
       log("info", "disposing");
       await mcp.close().catch(() => {});
     },

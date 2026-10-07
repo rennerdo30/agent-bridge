@@ -182,11 +182,9 @@ describe("opencode plugin", () => {
     // Session finishes its turn; the listen window is open because it just sent a message.
     await hooks.event({ event: { type: "session.status", properties: { sessionID: "ses_A", status: { type: "idle" } } } });
     await peer.send({ to: got!.from.name, body: "pong from claude", replyTo: got!.id });
-    const end = Date.now() + 8_000;
-    while (prompts.length === 0 && Date.now() < end) await new Promise((r) => setTimeout(r, 100));
-    expect(prompts).toHaveLength(1);
-    expect(prompts[0]).toMatchObject({ id: "ses_A", noReply: false });
-    expect(prompts[0]!.text).toContain("pong from claude");
+    const replies = () => prompts.filter((p) => p.text.includes("pong from claude"));
+    await expect.poll(() => replies().length, { timeout: 8_000 }).toBe(1);
+    expect(replies()[0]).toMatchObject({ id: "ses_A", noReply: false });
   }, 20_000);
 
   it("feeds mail to a busy session through the system prompt", async () => {
