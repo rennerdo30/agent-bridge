@@ -229,7 +229,8 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
   const log = createLogger({ home, component: `mcp-${agent}` });
   const cwd = process.env.CLAUDE_PROJECT_DIR || process.cwd();
   // Codex starts plugin MCP servers inside the plugin folder; the project dir arrives later via hooks/_meta.
-  const cwdKnown = Boolean(process.env.CLAUDE_PROJECT_DIR) || !isInside(cwd, PLUGIN_ROOT);
+  const launchRoot = process.env.AGENT_BRIDGE_LAUNCH_PLUGIN_ROOT;
+  const cwdKnown = Boolean(process.env.CLAUDE_PROJECT_DIR) || (!isInside(cwd, PLUGIN_ROOT) && (!launchRoot || !isInside(cwd, launchRoot)));
   let configCwd: string | undefined, configRoot: string | undefined;
   const projectConfigRoot = (dir: string): string | undefined => {
     if (dir !== configCwd) { configCwd = dir; configRoot = canonicalProjectRoot(dir) ?? undefined; }
