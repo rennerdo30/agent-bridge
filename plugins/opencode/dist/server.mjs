@@ -18,9 +18,9 @@ var __export = (target, all) => {
 };
 var __copyProps = (to, from, except, desc) => {
   if (from && typeof from === "object" || typeof from === "function") {
-    for (let key2 of __getOwnPropNames(from))
-      if (!__hasOwnProp.call(to, key2) && key2 !== except)
-        __defProp(to, key2, { get: () => from[key2], enumerable: !(desc = __getOwnPropDesc(from, key2)) || desc.enumerable });
+    for (let key3 of __getOwnPropNames(from))
+      if (!__hasOwnProp.call(to, key3) && key3 !== except)
+        __defProp(to, key3, { get: () => from[key3], enumerable: !(desc = __getOwnPropDesc(from, key3)) || desc.enumerable });
   }
   return to;
 };
@@ -169,15 +169,15 @@ var require_code = __commonJS({
       return JSON.stringify(x).replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029");
     }
     exports.safeStringify = safeStringify;
-    function getProperty(key2) {
-      return typeof key2 == "string" && exports.IDENTIFIER.test(key2) ? new _Code(`.${key2}`) : _`[${key2}]`;
+    function getProperty(key3) {
+      return typeof key3 == "string" && exports.IDENTIFIER.test(key3) ? new _Code(`.${key3}`) : _`[${key3}]`;
     }
     exports.getProperty = getProperty;
-    function getEsmExportName(key2) {
-      if (typeof key2 == "string" && exports.IDENTIFIER.test(key2)) {
-        return new _Code(`${key2}`);
+    function getEsmExportName(key3) {
+      if (typeof key3 == "string" && exports.IDENTIFIER.test(key3)) {
+        return new _Code(`${key3}`);
       }
-      throw new Error(`CodeGen: invalid export name: ${key2}, use explicit $id name mapping`);
+      throw new Error(`CodeGen: invalid export name: ${key3}, use explicit $id name mapping`);
     }
     exports.getEsmExportName = getEsmExportName;
     function regexpCode(rx) {
@@ -804,11 +804,11 @@ var require_codegen = __commonJS({
       // returns code for object literal for the passed argument list of key-value pairs
       object(...keyValues) {
         const code = ["{"];
-        for (const [key2, value] of keyValues) {
+        for (const [key3, value] of keyValues) {
           if (code.length > 1)
             code.push(",");
-          code.push(key2);
-          if (key2 !== value || this.opts.es5) {
+          code.push(key3);
+          if (key3 !== value || this.opts.es5) {
             code.push(":");
             (0, code_1.addCodeArg)(code, value);
           }
@@ -1083,17 +1083,17 @@ var require_util = __commonJS({
       if (typeof schema === "boolean")
         return;
       const rules = self.RULES.keywords;
-      for (const key2 in schema) {
-        if (!rules[key2])
-          checkStrictMode(it, `unknown keyword: "${key2}"`);
+      for (const key3 in schema) {
+        if (!rules[key3])
+          checkStrictMode(it, `unknown keyword: "${key3}"`);
       }
     }
     exports.checkUnknownRules = checkUnknownRules;
     function schemaHasRules(schema, rules) {
       if (typeof schema == "boolean")
         return !schema;
-      for (const key2 in schema)
-        if (rules[key2])
+      for (const key3 in schema)
+        if (rules[key3])
           return true;
       return false;
     }
@@ -1101,8 +1101,8 @@ var require_util = __commonJS({
     function schemaHasRulesButRef(schema, RULES) {
       if (typeof schema == "boolean")
         return !schema;
-      for (const key2 in schema)
-        if (key2 !== "$ref" && RULES.all[key2])
+      for (const key3 in schema)
+        if (key3 !== "$ref" && RULES.all[key3])
           return true;
       return false;
     }
@@ -1680,8 +1680,8 @@ var require_defaults = __commonJS({
     function assignDefaults(it, ty) {
       const { properties, items } = it.schema;
       if (ty === "object" && properties) {
-        for (const key2 in properties) {
-          assignDefault(it, key2, properties[key2].default);
+        for (const key3 in properties) {
+          assignDefault(it, key3, properties[key3].default);
         }
       } else if (ty === "array" && Array.isArray(items)) {
         items.forEach((sch, i) => assignDefault(it, i, sch.default));
@@ -2065,8 +2065,8 @@ var require_fast_deep_equal = __commonJS({
         for (i = length; i-- !== 0; )
           if (!Object.prototype.hasOwnProperty.call(b, keys[i])) return false;
         for (i = length; i-- !== 0; ) {
-          var key2 = keys[i];
-          if (!equal(a[key2], b[key2])) return false;
+          var key3 = keys[i];
+          if (!equal(a[key3], b[key3])) return false;
         }
         return true;
       }
@@ -2138,20 +2138,20 @@ var require_json_schema_traverse = __commonJS({
     function _traverse(opts, pre, post, schema, jsonPtr, rootSchema, parentJsonPtr, parentKeyword, parentSchema, keyIndex) {
       if (schema && typeof schema == "object" && !Array.isArray(schema)) {
         pre(schema, jsonPtr, rootSchema, parentJsonPtr, parentKeyword, parentSchema, keyIndex);
-        for (var key2 in schema) {
-          var sch = schema[key2];
+        for (var key3 in schema) {
+          var sch = schema[key3];
           if (Array.isArray(sch)) {
-            if (key2 in traverse.arrayKeywords) {
+            if (key3 in traverse.arrayKeywords) {
               for (var i = 0; i < sch.length; i++)
-                _traverse(opts, pre, post, sch[i], jsonPtr + "/" + key2 + "/" + i, rootSchema, jsonPtr, key2, schema, i);
+                _traverse(opts, pre, post, sch[i], jsonPtr + "/" + key3 + "/" + i, rootSchema, jsonPtr, key3, schema, i);
             }
-          } else if (key2 in traverse.propsKeywords) {
+          } else if (key3 in traverse.propsKeywords) {
             if (sch && typeof sch == "object") {
               for (var prop in sch)
-                _traverse(opts, pre, post, sch[prop], jsonPtr + "/" + key2 + "/" + escapeJsonPtr(prop), rootSchema, jsonPtr, key2, schema, prop);
+                _traverse(opts, pre, post, sch[prop], jsonPtr + "/" + key3 + "/" + escapeJsonPtr(prop), rootSchema, jsonPtr, key3, schema, prop);
             }
-          } else if (key2 in traverse.keywords || opts.allKeys && !(key2 in traverse.skipKeywords)) {
-            _traverse(opts, pre, post, sch, jsonPtr + "/" + key2, rootSchema, jsonPtr, key2, schema);
+          } else if (key3 in traverse.keywords || opts.allKeys && !(key3 in traverse.skipKeywords)) {
+            _traverse(opts, pre, post, sch, jsonPtr + "/" + key3, rootSchema, jsonPtr, key3, schema);
           }
         }
         post(schema, jsonPtr, rootSchema, parentJsonPtr, parentKeyword, parentSchema, keyIndex);
@@ -2208,10 +2208,10 @@ var require_resolve = __commonJS({
       "$dynamicAnchor"
     ]);
     function hasRef(schema) {
-      for (const key2 in schema) {
-        if (REF_KEYWORDS.has(key2))
+      for (const key3 in schema) {
+        if (REF_KEYWORDS.has(key3))
           return true;
-        const sch = schema[key2];
+        const sch = schema[key3];
         if (Array.isArray(sch) && sch.some(hasRef))
           return true;
         if (typeof sch == "object" && hasRef(sch))
@@ -2221,14 +2221,14 @@ var require_resolve = __commonJS({
     }
     function countKeys(schema) {
       let count = 0;
-      for (const key2 in schema) {
-        if (key2 === "$ref")
+      for (const key3 in schema) {
+        if (key3 === "$ref")
           return Infinity;
         count++;
-        if (SIMPLE_INLINED.has(key2))
+        if (SIMPLE_INLINED.has(key3))
           continue;
-        if (typeof schema[key2] == "object") {
-          (0, util_1.eachItem)(schema[key2], (sch) => count += countKeys(sch));
+        if (typeof schema[key3] == "object") {
+          (0, util_1.eachItem)(schema[key3], (sch) => count += countKeys(sch));
         }
         if (count === Infinity)
           return Infinity;
@@ -2417,8 +2417,8 @@ var require_validate = __commonJS({
     function schemaCxtHasRules({ schema, self }) {
       if (typeof schema == "boolean")
         return !schema;
-      for (const key2 in schema)
-        if (self.RULES.all[key2])
+      for (const key3 in schema)
+        if (self.RULES.all[key3])
           return true;
       return false;
     }
@@ -2896,7 +2896,7 @@ var require_compile = __commonJS({
       const _sch = getCompilingSchema.call(this, sch);
       if (_sch)
         return _sch;
-      const rootId = (0, resolve_1.getFullPath)(this.opts.uriResolver, sch.root.baseId);
+      const rootId2 = (0, resolve_1.getFullPath)(this.opts.uriResolver, sch.root.baseId);
       const { es5, lines } = this.opts.code;
       const { ownProperties } = this.opts;
       const gen = new codegen_1.CodeGen(this.scope, { es5, lines, ownProperties });
@@ -2926,8 +2926,8 @@ var require_compile = __commonJS({
         ValidationError: _ValidationError,
         schema: sch.schema,
         schemaEnv: sch,
-        rootId,
-        baseId: sch.baseId || rootId,
+        rootId: rootId2,
+        baseId: sch.baseId || rootId2,
         schemaPath: codegen_1.nil,
         errSchemaPath: sch.schemaPath || (this.opts.jtd ? "" : "#"),
         errorPath: (0, codegen_1._)`""`,
@@ -2984,7 +2984,7 @@ var require_compile = __commonJS({
       const schOrFunc = root.refs[ref];
       if (schOrFunc)
         return schOrFunc;
-      let _sch = resolve14.call(this, root, ref);
+      let _sch = resolve17.call(this, root, ref);
       if (_sch === void 0) {
         const schema = (_a3 = root.localRefs) === null || _a3 === void 0 ? void 0 : _a3[ref];
         const { schemaId } = this.opts;
@@ -3011,7 +3011,7 @@ var require_compile = __commonJS({
     function sameSchemaEnv(s1, s2) {
       return s1.schema === s2.schema && s1.root === s2.root && s1.baseId === s2.baseId;
     }
-    function resolve14(root, ref) {
+    function resolve17(root, ref) {
       let sch;
       while (typeof (sch = this.refs[ref]) == "string")
         ref = sch;
@@ -3837,11 +3837,11 @@ var require_fast_uri = __commonJS({
         normalizeString(uri, options);
       } else if (typeof uri === "object") {
         uri = /** @type {T} */
-        parse5(serialize2(uri, options), options);
+        parse6(serialize2(uri, options), options);
       }
       return uri;
     }
-    function resolve14(baseURI, relativeURI, options) {
+    function resolve17(baseURI, relativeURI, options) {
       const schemelessOptions = options ? Object.assign({ scheme: "null" }, options) : { scheme: "null" };
       const {
         parsed: baseParsed,
@@ -3874,49 +3874,49 @@ var require_fast_uri = __commonJS({
       schemelessOptions.skipEscape = true;
       return serialize2(resolved, schemelessOptions);
     }
-    function resolveComponent(base2, relative9, options, skipNormalization) {
+    function resolveComponent(base2, relative10, options, skipNormalization) {
       const target = {};
       if (!skipNormalization) {
-        base2 = parse5(serialize2(base2, options), options);
-        relative9 = parse5(serialize2(relative9, options), options);
+        base2 = parse6(serialize2(base2, options), options);
+        relative10 = parse6(serialize2(relative10, options), options);
       }
       options = options || {};
-      if (!options.tolerant && relative9.scheme) {
-        target.scheme = relative9.scheme;
-        target.userinfo = relative9.userinfo;
-        target.host = relative9.host;
-        target.port = relative9.port;
-        target.path = removeDotSegments(relative9.path || "");
-        target.query = relative9.query;
+      if (!options.tolerant && relative10.scheme) {
+        target.scheme = relative10.scheme;
+        target.userinfo = relative10.userinfo;
+        target.host = relative10.host;
+        target.port = relative10.port;
+        target.path = removeDotSegments(relative10.path || "");
+        target.query = relative10.query;
       } else {
-        if (relative9.userinfo !== void 0 || relative9.host !== void 0 || relative9.port !== void 0) {
-          target.userinfo = relative9.userinfo;
-          target.host = relative9.host;
-          target.port = relative9.port;
-          target.path = removeDotSegments(relative9.path || "");
-          target.query = relative9.query;
+        if (relative10.userinfo !== void 0 || relative10.host !== void 0 || relative10.port !== void 0) {
+          target.userinfo = relative10.userinfo;
+          target.host = relative10.host;
+          target.port = relative10.port;
+          target.path = removeDotSegments(relative10.path || "");
+          target.query = relative10.query;
         } else {
-          if (!relative9.path) {
+          if (!relative10.path) {
             target.path = base2.path;
-            if (relative9.query !== void 0) {
-              target.query = relative9.query;
+            if (relative10.query !== void 0) {
+              target.query = relative10.query;
             } else {
               target.query = base2.query;
             }
           } else {
-            if (relative9.path[0] === "/") {
-              target.path = removeDotSegments(relative9.path);
+            if (relative10.path[0] === "/") {
+              target.path = removeDotSegments(relative10.path);
             } else {
               if ((base2.userinfo !== void 0 || base2.host !== void 0 || base2.port !== void 0) && !base2.path) {
-                target.path = "/" + relative9.path;
+                target.path = "/" + relative10.path;
               } else if (!base2.path) {
-                target.path = relative9.path;
+                target.path = relative10.path;
               } else {
-                target.path = base2.path.slice(0, base2.path.lastIndexOf("/") + 1) + relative9.path;
+                target.path = base2.path.slice(0, base2.path.lastIndexOf("/") + 1) + relative10.path;
               }
               target.path = removeDotSegments(target.path);
             }
-            target.query = relative9.query;
+            target.query = relative10.query;
           }
           target.userinfo = base2.userinfo;
           target.host = base2.host;
@@ -3924,7 +3924,7 @@ var require_fast_uri = __commonJS({
         }
         target.scheme = base2.scheme;
       }
-      target.fragment = relative9.fragment;
+      target.fragment = relative10.fragment;
       return target;
     }
     function equal(uriA, uriB, options) {
@@ -4177,7 +4177,7 @@ var require_fast_uri = __commonJS({
       }
       return { parsed, malformedAuthorityOrPort, malformedPercentEncoding, malformedSchemeSpecific, malformedHost, malformedScheme };
     }
-    function parse5(uri, opts) {
+    function parse6(uri, opts) {
       return parseWithStatus(uri, opts).parsed;
     }
     function normalizeString(uri, opts) {
@@ -4210,11 +4210,11 @@ var require_fast_uri = __commonJS({
     var fastUri = {
       SCHEMES,
       normalize,
-      resolve: resolve14,
+      resolve: resolve17,
       resolveComponent,
       equal,
       serialize: serialize2,
-      parse: parse5
+      parse: parse6
     };
     module.exports = fastUri;
     module.exports.default = fastUri;
@@ -4457,7 +4457,7 @@ var require_core = __commonJS({
         }
       }
       // Adds schema to the instance
-      addSchema(schema, key2, _meta, _validateSchema = this.opts.validateSchema) {
+      addSchema(schema, key3, _meta, _validateSchema = this.opts.validateSchema) {
         if (Array.isArray(schema)) {
           for (const sch of schema)
             this.addSchema(sch, void 0, _meta, _validateSchema);
@@ -4471,15 +4471,15 @@ var require_core = __commonJS({
             throw new Error(`schema ${schemaId} must be string`);
           }
         }
-        key2 = (0, resolve_1.normalizeId)(key2 || id);
-        this._checkUnique(key2);
-        this.schemas[key2] = this._addSchema(schema, _meta, key2, _validateSchema, true);
+        key3 = (0, resolve_1.normalizeId)(key3 || id);
+        this._checkUnique(key3);
+        this.schemas[key3] = this._addSchema(schema, _meta, key3, _validateSchema, true);
         return this;
       }
       // Add schema that will be used to validate other schemas
       // options in META_IGNORE_OPTIONS are alway set to false
-      addMetaSchema(schema, key2, _validateSchema = this.opts.validateSchema) {
-        this.addSchema(schema, key2, true, _validateSchema);
+      addMetaSchema(schema, key3, _validateSchema = this.opts.validateSchema) {
+        this.addSchema(schema, key3, true, _validateSchema);
         return this;
       }
       //  Validate schema against its meta-schema
@@ -4635,14 +4635,14 @@ var require_core = __commonJS({
           let keywords = metaSchema;
           for (const seg of segments)
             keywords = keywords[seg];
-          for (const key2 in rules) {
-            const rule = rules[key2];
+          for (const key3 in rules) {
+            const rule = rules[key3];
             if (typeof rule != "object")
               continue;
             const { $data } = rule.definition;
-            const schema = keywords[key2];
+            const schema = keywords[key3];
             if ($data && schema)
-              keywords[key2] = schemaOrData(schema);
+              keywords[key3] = schemaOrData(schema);
           }
         }
         return metaSchema;
@@ -4715,10 +4715,10 @@ var require_core = __commonJS({
     Ajv2.MissingRefError = ref_error_1.default;
     exports.default = Ajv2;
     function checkOptions(checkOpts, options, msg, log = "error") {
-      for (const key2 in checkOpts) {
-        const opt = key2;
+      for (const key3 in checkOpts) {
+        const opt = key3;
         if (opt in options)
-          this.logger[log](`${msg}: option ${key2}. ${checkOpts[opt]}`);
+          this.logger[log](`${msg}: option ${key3}. ${checkOpts[opt]}`);
       }
     }
     function getSchEnv(keyRef) {
@@ -4732,8 +4732,8 @@ var require_core = __commonJS({
       if (Array.isArray(optsSchemas))
         this.addSchema(optsSchemas);
       else
-        for (const key2 in optsSchemas)
-          this.addSchema(optsSchemas[key2], key2);
+        for (const key3 in optsSchemas)
+          this.addSchema(optsSchemas[key3], key3);
     }
     function addInitialFormats() {
       for (const name2 in this.opts.formats) {
@@ -5781,11 +5781,11 @@ var require_dependencies = __commonJS({
     function splitDependencies({ schema }) {
       const propertyDeps = {};
       const schemaDeps = {};
-      for (const key2 in schema) {
-        if (key2 === "__proto__")
+      for (const key3 in schema) {
+        if (key3 === "__proto__")
           continue;
-        const deps = Array.isArray(schema[key2]) ? propertyDeps : schemaDeps;
-        deps[key2] = schema[key2];
+        const deps = Array.isArray(schema[key3]) ? propertyDeps : schemaDeps;
+        deps[key3] = schema[key3];
       }
       return [propertyDeps, schemaDeps];
     }
@@ -5862,13 +5862,13 @@ var require_propertyNames = __commonJS({
         if ((0, util_1.alwaysValidSchema)(it, schema))
           return;
         const valid = gen.name("valid");
-        gen.forIn("key", data, (key2) => {
-          cxt.setParams({ propertyName: key2 });
+        gen.forIn("key", data, (key3) => {
+          cxt.setParams({ propertyName: key3 });
           cxt.subschema({
             keyword: "propertyNames",
-            data: key2,
+            data: key3,
             dataTypes: ["string"],
-            propertyName: key2,
+            propertyName: key3,
             compositeRule: true
           }, valid);
           gen.if((0, codegen_1.not)(valid), () => {
@@ -5917,38 +5917,38 @@ var require_additionalProperties = __commonJS({
         checkAdditionalProperties();
         cxt.ok((0, codegen_1._)`${errsCount} === ${names_1.default.errors}`);
         function checkAdditionalProperties() {
-          gen.forIn("key", data, (key2) => {
+          gen.forIn("key", data, (key3) => {
             if (!props.length && !patProps.length)
-              additionalPropertyCode(key2);
+              additionalPropertyCode(key3);
             else
-              gen.if(isAdditional(key2), () => additionalPropertyCode(key2));
+              gen.if(isAdditional(key3), () => additionalPropertyCode(key3));
           });
         }
-        function isAdditional(key2) {
+        function isAdditional(key3) {
           let definedProp;
           if (props.length > 8) {
             const propsSchema = (0, util_1.schemaRefOrVal)(it, parentSchema.properties, "properties");
-            definedProp = (0, code_1.isOwnProperty)(gen, propsSchema, key2);
+            definedProp = (0, code_1.isOwnProperty)(gen, propsSchema, key3);
           } else if (props.length) {
-            definedProp = (0, codegen_1.or)(...props.map((p) => (0, codegen_1._)`${key2} === ${p}`));
+            definedProp = (0, codegen_1.or)(...props.map((p) => (0, codegen_1._)`${key3} === ${p}`));
           } else {
             definedProp = codegen_1.nil;
           }
           if (patProps.length) {
-            definedProp = (0, codegen_1.or)(definedProp, ...patProps.map((p) => (0, codegen_1._)`${(0, code_1.usePattern)(cxt, p)}.test(${key2})`));
+            definedProp = (0, codegen_1.or)(definedProp, ...patProps.map((p) => (0, codegen_1._)`${(0, code_1.usePattern)(cxt, p)}.test(${key3})`));
           }
           return (0, codegen_1.not)(definedProp);
         }
-        function deleteAdditional(key2) {
-          gen.code((0, codegen_1._)`delete ${data}[${key2}]`);
+        function deleteAdditional(key3) {
+          gen.code((0, codegen_1._)`delete ${data}[${key3}]`);
         }
-        function additionalPropertyCode(key2) {
+        function additionalPropertyCode(key3) {
           if (opts.removeAdditional === "all" || opts.removeAdditional && schema === false) {
-            deleteAdditional(key2);
+            deleteAdditional(key3);
             return;
           }
           if (schema === false) {
-            cxt.setParams({ additionalProperty: key2 });
+            cxt.setParams({ additionalProperty: key3 });
             cxt.error();
             if (!allErrors)
               gen.break();
@@ -5957,22 +5957,22 @@ var require_additionalProperties = __commonJS({
           if (typeof schema == "object" && !(0, util_1.alwaysValidSchema)(it, schema)) {
             const valid = gen.name("valid");
             if (opts.removeAdditional === "failing") {
-              applyAdditionalSchema(key2, valid, false);
+              applyAdditionalSchema(key3, valid, false);
               gen.if((0, codegen_1.not)(valid), () => {
                 cxt.reset();
-                deleteAdditional(key2);
+                deleteAdditional(key3);
               });
             } else {
-              applyAdditionalSchema(key2, valid);
+              applyAdditionalSchema(key3, valid);
               if (!allErrors)
                 gen.if((0, codegen_1.not)(valid), () => gen.break());
             }
           }
         }
-        function applyAdditionalSchema(key2, valid, errors) {
+        function applyAdditionalSchema(key3, valid, errors) {
           const subschema = {
             keyword: "additionalProperties",
-            dataProp: key2,
+            dataProp: key3,
             dataPropType: util_1.Type.Str
           };
           if (errors === false) {
@@ -6097,19 +6097,19 @@ var require_patternProperties = __commonJS({
           }
         }
         function validateProperties(pat) {
-          gen.forIn("key", data, (key2) => {
-            gen.if((0, codegen_1._)`${(0, code_1.usePattern)(cxt, pat)}.test(${key2})`, () => {
+          gen.forIn("key", data, (key3) => {
+            gen.if((0, codegen_1._)`${(0, code_1.usePattern)(cxt, pat)}.test(${key3})`, () => {
               const alwaysValid = alwaysValidPatterns.includes(pat);
               if (!alwaysValid) {
                 cxt.subschema({
                   keyword: "patternProperties",
                   schemaProp: pat,
-                  dataProp: key2,
+                  dataProp: key3,
                   dataPropType: util_2.Type.Str
                 }, valid);
               }
               if (it.opts.unevaluated && props !== true) {
-                gen.assign((0, codegen_1._)`${props}[${key2}]`, true);
+                gen.assign((0, codegen_1._)`${props}[${key3}]`, true);
               } else if (!alwaysValid && !it.allErrors) {
                 gen.if((0, codegen_1.not)(valid), () => gen.break());
               }
@@ -7289,7 +7289,7 @@ import { closeSync, existsSync, mkdirSync, openSync, readdirSync, rmSync } from 
 import { dirname, join as join2 } from "node:path";
 var LOCK_FILE = ".maintenance-lock";
 var USERS_DIR = ".storage-users";
-var SCOPED_STORE_DIRS = /* @__PURE__ */ new Set(["runs", "jobs", "job-outcomes"]);
+var SCOPED_STORE_DIRS = /* @__PURE__ */ new Set(["runs", "jobs", "job-outcomes", "worktree-state", "permission-repairs"]);
 var NESTED_STORE_DIRS = /* @__PURE__ */ new Set(["local-result-receipts"]);
 function storageLease(home) {
   const lock = join2(home, LOCK_FILE);
@@ -7372,8 +7372,8 @@ function assertWritableStore(value) {
 }
 function mergeStoreFields(previous, next) {
   const merged = { ...previous, ...next };
-  for (const [key2, value] of Object.entries(next)) {
-    if (isRecord(previous[key2]) && isRecord(value)) merged[key2] = mergeStoreFields(previous[key2], value);
+  for (const [key3, value] of Object.entries(next)) {
+    if (isRecord(previous[key3]) && isRecord(value)) merged[key3] = mergeStoreFields(previous[key3], value);
   }
   return merged;
 }
@@ -7417,8 +7417,8 @@ function writeJsonStoreUnlocked(path, value, previous) {
     rmSync2(tmp, { force: true });
   }
 }
-function retentionLimit(key2, fallback) {
-  const raw = process.env[key2];
+function retentionLimit(key3, fallback) {
+  const raw = process.env[key3];
   if (raw === void 0 || !/^\d+$/.test(raw)) return fallback;
   const value = Number(raw);
   return Number.isSafeInteger(value) ? value : fallback;
@@ -7811,10 +7811,10 @@ function readRunLogs(home) {
       const { file: file2, st } = local;
       try {
         if (!st.isFile()) continue;
-        const key2 = original.slice(0, -".log".length);
-        const record2 = { name: key2, file: file2, updatedAt: st.mtimeMs, size: st.size, signature: fileSignature(st), archived, meta: metadata.get(`${key2}.json`) ?? {} };
-        const previous = records.get(key2);
-        if (!previous || !archived || record2.updatedAt >= previous.updatedAt) records.set(key2, record2);
+        const key3 = original.slice(0, -".log".length);
+        const record2 = { name: key3, file: file2, updatedAt: st.mtimeMs, size: st.size, signature: fileSignature(st), archived, meta: metadata.get(`${key3}.json`) ?? {} };
+        const previous = records.get(key3);
+        if (!previous || !archived || record2.updatedAt >= previous.updatedAt) records.set(key3, record2);
       } catch {
       }
     }
@@ -8096,8 +8096,8 @@ function serverNames(mcp) {
 function pluginServers(home) {
   const installed = readJson(join11(home, ".claude", "plugins", "installed_plugins.json"));
   const out = [];
-  for (const [key2, entries] of Object.entries(installed?.plugins ?? {})) {
-    const plugin = key2.split("@")[0];
+  for (const [key3, entries] of Object.entries(installed?.plugins ?? {})) {
+    const plugin = key3.split("@")[0];
     for (const e of Array.isArray(entries) ? entries : [entries]) {
       const root = e?.installPath;
       if (typeof root !== "string") continue;
@@ -8210,9 +8210,9 @@ var ParentLink = class {
         }
       );
     });
-    await new Promise((resolve14, reject) => {
+    await new Promise((resolve17, reject) => {
       this.server.once("error", reject);
-      this.server.listen(0, HOST, () => resolve14());
+      this.server.listen(0, HOST, () => resolve17());
     });
     this.url = `http://${HOST}:${this.server.address().port}`;
   }
@@ -8464,9 +8464,9 @@ function progressEventHandler(agent, onProgress, now = Date.now) {
     const step = DESCRIBERS[agent](ev);
     if (!step) return;
     if (step.id) {
-      const key2 = `${step.kind}:${step.id}`;
-      if (seen.has(key2)) return;
-      seen.add(key2);
+      const key3 = `${step.kind}:${step.id}`;
+      if (seen.has(key3)) return;
+      seen.add(key3);
     }
     if (step.text === last) return;
     last = step.text;
@@ -8527,9 +8527,9 @@ var PermissionRelay = class {
     });
     this.server.requestTimeout = 0;
     this.server.headersTimeout = 0;
-    await new Promise((resolve14, reject) => {
+    await new Promise((resolve17, reject) => {
       this.server.once("error", reject);
-      this.server.listen(0, RELAY_HOST, () => resolve14());
+      this.server.listen(0, RELAY_HOST, () => resolve17());
     });
     const { port } = this.server.address();
     this.url = `http://${RELAY_HOST}:${port}${RELAY_PATH}`;
@@ -8598,9 +8598,9 @@ async function publishApproval(home, approval, answer) {
   });
   server.requestTimeout = ANSWER_TIMEOUT_MS;
   server.headersTimeout = ANSWER_TIMEOUT_MS;
-  await new Promise((resolve14, reject) => {
+  await new Promise((resolve17, reject) => {
     server.once("error", reject);
-    server.listen(0, RELAY_HOST, resolve14);
+    server.listen(0, RELAY_HOST, resolve17);
   });
   server.unref();
   try {
@@ -8777,14 +8777,14 @@ function killTree(child, reason = "delegate cleanup") {
   const pid = child.pid;
   if (!pid || child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
   liveChildren.get(child)?.info("stopping delegate process tree", { pid, reason, method: process.platform === "win32" ? "taskkill /PID /T /F" : "process group signals" });
-  const closed = new Promise((resolve14) => child.once("close", () => resolve14()));
-  return new Promise((resolve14) => {
+  const closed = new Promise((resolve17) => child.once("close", () => resolve17()));
+  return new Promise((resolve17) => {
     if (process.platform === "win32") {
       const tk = spawn("taskkill", ["/PID", String(pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" });
-      tk.on("error", () => (child.kill(), resolve14()));
+      tk.on("error", () => (child.kill(), resolve17()));
       tk.on("close", (code) => {
         if (code !== 0 && child.exitCode === null && child.signalCode === null) child.kill();
-        resolve14();
+        resolve17();
       });
     } else {
       try {
@@ -8797,9 +8797,9 @@ function killTree(child, reason = "delegate cleanup") {
           process.kill(-pid, "SIGKILL");
         } catch {
         }
-        resolve14();
+        resolve17();
       }, KILL_GRACE_MS);
-      child.once("exit", () => (clearTimeout(force), resolve14()));
+      child.once("exit", () => (clearTimeout(force), resolve17()));
     }
   }).then(() => closed);
 }
@@ -8886,7 +8886,7 @@ function runProcess(opts) {
   }
   const { resolved, args, needsShell } = command;
   opts.log.debug("spawning delegate", { bin: resolved, args, cwd: opts.cwd, shell: needsShell });
-  return new Promise((resolve14, reject) => {
+  return new Promise((resolve17, reject) => {
     const child = spawn(resolved, args, {
       cwd: opts.cwd,
       // Some CLIs (opencode) take their project folder from PWD rather than the real cwd; keep them in sync.
@@ -8945,7 +8945,7 @@ ${tail.slice(tail.indexOf("\n") + 1)}` : head;
       stderr = (stderr + d).slice(-MAX_CAPTURE_CHARS);
     });
     child.on("error", (err) => finish(() => reject(new DelegateError(`failed to start ${opts.bin}: ${err.message}`, "failed"))));
-    child.on("close", (code, signal) => finish(() => resolve14({ code, signal, stdout: captured(), stderr })));
+    child.on("close", (code, signal) => finish(() => resolve17({ code, signal, stdout: captured(), stderr })));
     child.stdin.on("error", () => {
     });
     child.stdin.end(opts.stdin);
@@ -9056,7 +9056,8 @@ ${req.prompt}`)), req.sandbox) };
 
 ${CODEX_ASK_HINT}` };
   const common = ["--json", "--skip-git-repo-check", ...req.model ? ["-m", req.model] : [], ...req.effort ? ["-c", `model_reasoning_effort="${req.effort}"`] : []];
-  for (const [key2, value] of Object.entries(codexSubagentConfig(req.nativeSubagents))) common.push("-c", `${key2}=${value}`);
+  if (process.platform === "win32" && req.sandbox !== "danger-full-access") common.push("-c", `windows.sandbox="${req.windowsSandbox ?? "unelevated"}"`);
+  for (const [key3, value] of Object.entries(codexSubagentConfig(req.nativeSubagents))) common.push("-c", `${key3}=${value}`);
   if (req.writableRoots?.length && req.sandbox === "workspace-write") {
     common.push("-c", `sandbox_workspace_write.writable_roots=${JSON.stringify(req.writableRoots.map(realFolder))}`);
   }
@@ -9236,11 +9237,11 @@ function parseOpencodeJsonl(stdout) {
 }
 var opencodeVersions = /* @__PURE__ */ new Map();
 function opencodeV2(bin, cwd, log) {
-  const key2 = resolveBinary(bin) ?? bin;
-  let cached3 = opencodeVersions.get(key2);
+  const key3 = resolveBinary(bin) ?? bin;
+  let cached3 = opencodeVersions.get(key3);
   if (!cached3) {
     cached3 = runProcess({ bin, args: ["--version"], stdin: "", cwd, timeoutMs: 1e4, env: childEnv(), log }).then((res) => /(?:^|\s)(?:opencode\s+)?v?2\.\d+\.\d+/.test(res.stdout.trim())).catch(() => false);
-    opencodeVersions.set(key2, cached3);
+    opencodeVersions.set(key3, cached3);
   }
   return cached3;
 }
@@ -10215,9 +10216,9 @@ function floatSafeRemainder(val, step) {
   return ratio - roundedRatio;
 }
 var EVALUATING = /* @__PURE__ */ Symbol("evaluating");
-function defineLazy(object4, key2, getter) {
+function defineLazy(object4, key3, getter) {
   let value = void 0;
-  Object.defineProperty(object4, key2, {
+  Object.defineProperty(object4, key3, {
     get() {
       if (value === EVALUATING) {
         return void 0;
@@ -10229,7 +10230,7 @@ function defineLazy(object4, key2, getter) {
       return value;
     },
     set(v) {
-      Object.defineProperty(object4, key2, {
+      Object.defineProperty(object4, key3, {
         value: v
         // configurable: true,
       });
@@ -10255,47 +10256,47 @@ function rawShape(def) {
 function sourceShape(schema) {
   return rawShape(schema._zod.def) ?? schema._zod.def.shape;
 }
-function deferProp(target, key2, getter) {
-  Object.defineProperty(target, key2, {
+function deferProp(target, key3, getter) {
+  Object.defineProperty(target, key3, {
     get() {
       const value = getter();
-      assignProp(this, key2, value);
+      assignProp(this, key3, value);
       return value;
     },
     enumerable: true,
     configurable: true
   });
 }
-function putProp(target, key2, value) {
-  if (key2 in target)
-    assignProp(target, key2, value);
+function putProp(target, key3, value) {
+  if (key3 in target)
+    assignProp(target, key3, value);
   else
-    target[key2] = value;
+    target[key3] = value;
 }
 function mirrorShape(target, source, keys, wrap) {
   const raw = sourceShape(source);
-  for (const key2 of keys) {
-    const desc = Object.getOwnPropertyDescriptor(raw, key2);
+  for (const key3 of keys) {
+    const desc = Object.getOwnPropertyDescriptor(raw, key3);
     if (!desc.enumerable)
       continue;
     if (desc.get) {
-      deferProp(target, key2, () => {
-        const value = source._zod.def.shape[key2];
-        return wrap ? wrap(value, key2) : value;
+      deferProp(target, key3, () => {
+        const value = source._zod.def.shape[key3];
+        return wrap ? wrap(value, key3) : value;
       });
     } else
-      putProp(target, key2, wrap ? wrap(desc.value, key2) : desc.value);
+      putProp(target, key3, wrap ? wrap(desc.value, key3) : desc.value);
   }
 }
 function mirrorProps(target, source) {
-  for (const key2 of Reflect.ownKeys(source)) {
-    const desc = Object.getOwnPropertyDescriptor(source, key2);
+  for (const key3 of Reflect.ownKeys(source)) {
+    const desc = Object.getOwnPropertyDescriptor(source, key3);
     if (!desc.enumerable)
       continue;
     if (desc.get)
-      deferProp(target, key2, () => source[key2]);
+      deferProp(target, key3, () => source[key3]);
     else
-      putProp(target, key2, desc.value);
+      putProp(target, key3, desc.value);
   }
 }
 function mergeDefs(...defs) {
@@ -10312,11 +10313,11 @@ function cloneDef(schema) {
 function getElementAtPath(obj, path) {
   if (!path)
     return obj;
-  return path.reduce((acc, key2) => acc?.[key2], obj);
+  return path.reduce((acc, key3) => acc?.[key3], obj);
 }
 function promiseAllObject(promisesObj) {
   const keys = Object.keys(promisesObj);
-  const promises = keys.map((key2) => promisesObj[key2]);
+  const promises = keys.map((key3) => promisesObj[key3]);
   return Promise.all(promises).then((results) => {
     const resolvedObj = {};
     for (let i = 0; i < keys.length; i++) {
@@ -10388,8 +10389,8 @@ function shallowClone(o) {
 }
 function numKeys(data) {
   let keyCount = 0;
-  for (const key2 in data) {
-    if (Object.prototype.hasOwnProperty.call(data, key2)) {
+  for (const key3 in data) {
+    if (Object.prototype.hasOwnProperty.call(data, key3)) {
       keyCount++;
     }
   }
@@ -10543,12 +10544,12 @@ function pick(schema, mask) {
 function maskedKeys(schema, mask) {
   const raw = sourceShape(schema);
   const keys = [];
-  for (const key2 of Reflect.ownKeys(mask)) {
-    if (!Object.getOwnPropertyDescriptor(raw, key2)?.enumerable) {
-      throw new Error(`Unrecognized key: "${String(key2)}"`);
+  for (const key3 of Reflect.ownKeys(mask)) {
+    if (!Object.getOwnPropertyDescriptor(raw, key3)?.enumerable) {
+      throw new Error(`Unrecognized key: "${String(key3)}"`);
     }
-    if (mask[key2])
-      keys.push(key2);
+    if (mask[key3])
+      keys.push(key3);
   }
   return keys;
 }
@@ -10561,7 +10562,7 @@ function omit(schema, mask) {
   }
   const omitted = new Set(maskedKeys(schema, mask));
   const newShape = {};
-  mirrorShape(newShape, schema, Reflect.ownKeys(sourceShape(schema)).filter((key2) => !omitted.has(key2)));
+  mirrorShape(newShape, schema, Reflect.ownKeys(sourceShape(schema)).filter((key3) => !omitted.has(key3)));
   return clone(schema, mergeDefs(currDef, { shape: newShape, checks: [] }));
 }
 function extend(schema, shape) {
@@ -10572,8 +10573,8 @@ function extend(schema, shape) {
   const hasChecks = checks && checks.length > 0;
   if (hasChecks) {
     const existingShape = sourceShape(schema);
-    for (const key2 of Reflect.ownKeys(shape)) {
-      if (Object.getOwnPropertyDescriptor(existingShape, key2) !== void 0) {
+    for (const key3 of Reflect.ownKeys(shape)) {
+      if (Object.getOwnPropertyDescriptor(existingShape, key3) !== void 0) {
         throw new Error("Cannot overwrite keys on object schemas containing refinements. Use `.safeExtend()` instead.");
       }
     }
@@ -10620,15 +10621,15 @@ function partial(Class2, schema, mask, name2 = "partial") {
   }
   const selected = mask ? new Set(maskedKeys(schema, mask)) : void 0;
   const newShape = {};
-  mirrorShape(newShape, schema, Reflect.ownKeys(sourceShape(schema)), Class2 && ((value, key2) => selected && !selected.has(key2) ? value : new Class2({ type: "optional", innerType: value })));
+  mirrorShape(newShape, schema, Reflect.ownKeys(sourceShape(schema)), Class2 && ((value, key3) => selected && !selected.has(key3) ? value : new Class2({ type: "optional", innerType: value })));
   return clone(schema, mergeDefs(schema._zod.def, { shape: newShape, checks: [] }));
 }
 function required(Class2, schema, mask) {
   const selected = mask ? new Set(maskedKeys(schema, mask)) : void 0;
   const newShape = {};
-  mirrorShape(newShape, schema, Reflect.ownKeys(sourceShape(schema)), (value, key2) => (
+  mirrorShape(newShape, schema, Reflect.ownKeys(sourceShape(schema)), (value, key3) => (
     // overwrite with non-optional
-    selected && !selected.has(key2) ? value : new Class2({ type: "nonoptional", innerType: value })
+    selected && !selected.has(key3) ? value : new Class2({ type: "nonoptional", innerType: value })
   ));
   return clone(schema, mergeDefs(schema._zod.def, { shape: newShape }));
 }
@@ -10803,46 +10804,46 @@ var Class = class {
   }
 };
 function members(proto, table) {
-  for (const key2 in table) {
-    const desc = Object.getOwnPropertyDescriptor(table, key2);
+  for (const key3 in table) {
+    const desc = Object.getOwnPropertyDescriptor(table, key3);
     if (desc.get)
-      Object.defineProperty(proto, key2, { ...desc, enumerable: false });
+      Object.defineProperty(proto, key3, { ...desc, enumerable: false });
     else
-      defineBound(proto, key2, desc.value);
+      defineBound(proto, key3, desc.value);
   }
 }
-function own(inst, key2, value, enumerable = true) {
-  Object.defineProperty(inst, key2, { configurable: true, writable: true, enumerable, value });
+function own(inst, key3, value, enumerable = true) {
+  Object.defineProperty(inst, key3, { configurable: true, writable: true, enumerable, value });
   return value;
 }
-function hide(inst, key2, value) {
-  return own(inst, key2, value, false);
+function hide(inst, key3, value) {
+  return own(inst, key3, value, false);
 }
 // @__NO_SIDE_EFFECTS__
 function derived(computes, table) {
-  for (const key2 in computes) {
-    const compute = computes[key2];
-    Object.defineProperty(table, key2, {
+  for (const key3 in computes) {
+    const compute = computes[key3];
+    Object.defineProperty(table, key3, {
       configurable: true,
       enumerable: true,
       get() {
-        return own(this, key2, compute(this));
+        return own(this, key3, compute(this));
       },
       set(value) {
-        own(this, key2, value);
+        own(this, key3, value);
       }
     });
   }
   return table;
 }
-function defineBound(proto, key2, fn) {
-  Object.defineProperty(proto, key2, {
+function defineBound(proto, key3, fn) {
+  Object.defineProperty(proto, key3, {
     configurable: true,
     get() {
-      return this == null ? fn : own(this, key2, fn.bind(this));
+      return this == null ? fn : own(this, key3, fn.bind(this));
     },
     set(value) {
-      own(this, key2, value);
+      own(this, key3, value);
     }
   });
 }
@@ -10859,53 +10860,53 @@ var breaker = {
     return void 0;
   }
 };
-function defineLazyInternal(inst, key2, compute) {
+function defineLazyInternal(inst, key3, compute) {
   const proto = Object.getPrototypeOf(inst._zod);
-  if (key2 in proto && installing !== inst._zod) {
+  if (key3 in proto && installing !== inst._zod) {
     installing = void 0;
     return;
   }
   installing = inst._zod;
-  Object.defineProperty(proto, key2, {
+  Object.defineProperty(proto, key3, {
     configurable: true,
     get() {
-      Object.defineProperty(this, key2, breaker);
+      Object.defineProperty(this, key3, breaker);
       const outer = broke;
       broke = false;
       try {
         const value = compute(this);
         if (broke)
-          delete this[key2];
+          delete this[key3];
         else
-          Object.defineProperty(this, key2, { configurable: true, writable: true, value });
+          Object.defineProperty(this, key3, { configurable: true, writable: true, value });
         broke = broke || outer;
         return value;
       } catch (err) {
-        delete this[key2];
+        delete this[key3];
         broke = broke || outer;
         throw err;
       }
     },
     set(value) {
-      Object.defineProperty(this, key2, { configurable: true, writable: true, value });
+      Object.defineProperty(this, key3, { configurable: true, writable: true, value });
     }
   });
 }
-function installLazyProp(inst, key2, make, enumerable) {
-  const proto = claim(inst, key2);
+function installLazyProp(inst, key3, make, enumerable) {
+  const proto = claim(inst, key3);
   if (!proto)
     return;
-  Object.defineProperty(proto, key2, {
+  Object.defineProperty(proto, key3, {
     configurable: true,
     get() {
       const desc = { configurable: true, writable: true, enumerable, value: void 0 };
-      Object.defineProperty(this, key2, desc);
+      Object.defineProperty(this, key3, desc);
       desc.value = make(this);
-      Object.defineProperty(this, key2, desc);
+      Object.defineProperty(this, key3, desc);
       return desc.value;
     },
     set(value) {
-      Object.defineProperty(this, key2, { configurable: true, writable: true, enumerable, value });
+      Object.defineProperty(this, key3, { configurable: true, writable: true, enumerable, value });
     }
   });
 }
@@ -11082,15 +11083,15 @@ var $ZodError = $constructor("$ZodError", initializer);
 var $ZodRealError = $constructor("$ZodError", initializer, void 0, {
   Parent: Error
 });
-function node(obj, key2, make) {
-  if (!Object.prototype.hasOwnProperty.call(obj, key2)) {
-    if (key2 === "__proto__") {
-      Object.defineProperty(obj, key2, { value: make(), writable: true, enumerable: true, configurable: true });
+function node(obj, key3, make) {
+  if (!Object.prototype.hasOwnProperty.call(obj, key3)) {
+    if (key3 === "__proto__") {
+      Object.defineProperty(obj, key3, { value: make(), writable: true, enumerable: true, configurable: true });
     } else {
-      obj[key2] = make();
+      obj[key3] = make();
     }
   }
-  return obj[key2];
+  return obj[key3];
 }
 function flattenError(error62, mapper = (issue2) => issue2.message) {
   const fieldErrors = {};
@@ -11338,18 +11339,18 @@ var validateAsync = async (schema, value, _ctx) => {
   return result.issues.length === 0;
 };
 var _encode = (_Err) => {
-  const parse5 = _parse(_Err);
+  const parse6 = _parse(_Err);
   const fn = (schema, value, _ctx, _params) => {
     const ctx = _ctx ? { ..._ctx, direction: "backward" } : { direction: "backward" };
-    return parse5(schema, value, ctx, finalizeParams(fn, _params));
+    return parse6(schema, value, ctx, finalizeParams(fn, _params));
   };
   return fn;
 };
 var encode = /* @__PURE__ */ _encode($ZodRealError);
 var _decode = (_Err) => {
-  const parse5 = _parse(_Err);
+  const parse6 = _parse(_Err);
   const fn = (schema, value, _ctx, _params) => {
-    return parse5(schema, value, _ctx, finalizeParams(fn, _params));
+    return parse6(schema, value, _ctx, finalizeParams(fn, _params));
   };
   return fn;
 };
@@ -11999,16 +12000,16 @@ var $ZodCheckProperties = /* @__PURE__ */ $constructor("$ZodCheckProperties", (i
       payload.issues.push({ expected: "object", code: "invalid_type", input: payload.value, inst });
       return void 0;
     }
-    entries ?? (entries = Reflect.ownKeys(def.shape).map((key2) => [key2, def.shape[key2]]));
+    entries ?? (entries = Reflect.ownKeys(def.shape).map((key3) => [key3, def.shape[key3]]));
     const input2 = payload.value;
     let proms;
-    for (const [key2, schema] of entries) {
-      const result = schema._zod.run({ value: input2[key2], issues: [] }, {});
+    for (const [key3, schema] of entries) {
+      const result = schema._zod.run({ value: input2[key3], issues: [] }, {});
       if (result instanceof Promise) {
         proms ?? (proms = []);
-        proms.push(result.then((result2) => handleCheckPropertyResult(result2, payload, key2)));
+        proms.push(result.then((result2) => handleCheckPropertyResult(result2, payload, key3)));
       } else {
-        handleCheckPropertyResult(result, payload, key2);
+        handleCheckPropertyResult(result, payload, key3);
       }
     }
     if (proms)
@@ -12883,8 +12884,8 @@ var $ZodArray = /* @__PURE__ */ $constructor("$ZodArray", (inst, def) => {
     return payload;
   };
 });
-function handlePropertyResult(result, final, key2, input2, optin, optout) {
-  const isPresent = key2 in input2;
+function handlePropertyResult(result, final, key3, input2, optin, optout) {
+  const isPresent = key3 in input2;
   const isOptionalOut = optout === "optional";
   if (!isPresent && isOptionalOut && optin === "optional") {
     return;
@@ -12893,7 +12894,7 @@ function handlePropertyResult(result, final, key2, input2, optin, optout) {
     if (optin !== void 0 && isOptionalOut && !isPresent) {
       return;
     }
-    final.issues.push(...prefixIssues(key2, result.issues));
+    final.issues.push(...prefixIssues(key3, result.issues));
   }
   if (!isPresent && optin === void 0) {
     if (!result.issues.length) {
@@ -12901,17 +12902,17 @@ function handlePropertyResult(result, final, key2, input2, optin, optout) {
         code: "invalid_type",
         expected: "nonoptional",
         input: void 0,
-        path: [key2]
+        path: [key3]
       });
     }
     return;
   }
   if (result.value === void 0) {
     if (isPresent || optin === "defaulted" && !isOptionalOut) {
-      final.value[key2] = void 0;
+      final.value[key3] = void 0;
     }
   } else {
-    final.value[key2] = result.value;
+    final.value[key3] = result.value;
   }
 }
 var NO_SYMBOL_KEYS = [];
@@ -12944,28 +12945,28 @@ function handleCatchall(proms, input2, payload, ctx, def, inst, abortEarly) {
   const optin = _catchall.optin;
   const optout = _catchall.optout;
   let seen = 0;
-  for (const key2 in input2) {
+  for (const key3 in input2) {
     if (abortEarly && payload.issues.length !== seen) {
       if (aborted(payload, seen))
         break;
       seen = payload.issues.length;
     }
-    if (keySet.has(key2))
+    if (keySet.has(key3))
       continue;
-    if (key2 === "__proto__") {
+    if (key3 === "__proto__") {
       if (t2 === "never")
-        unrecognized.push(key2);
+        unrecognized.push(key3);
       continue;
     }
     if (t2 === "never") {
-      unrecognized.push(key2);
+      unrecognized.push(key3);
       continue;
     }
-    const r = _catchall.run({ value: input2[key2], issues: [] }, ctx);
+    const r = _catchall.run({ value: input2[key3], issues: [] }, ctx);
     if (r instanceof Promise) {
-      proms.push(r.then((r2) => handlePropertyResult(r2, payload, key2, input2, optin, optout)));
+      proms.push(r.then((r2) => handlePropertyResult(r2, payload, key3, input2, optin, optout)));
     } else {
-      handlePropertyResult(r, payload, key2, input2, optin, optout);
+      handlePropertyResult(r, payload, key3, input2, optin, optout);
     }
   }
   if (unrecognized.length) {
@@ -13002,16 +13003,16 @@ var $ZodObject = /* @__PURE__ */ $constructor("$ZodObject", (inst, def) => {
   defineLazyInternal(inst, "propValues", (zod) => {
     const shape = zod.def.shape;
     const propValues = {};
-    for (const key2 in shape) {
-      const field = shape[key2]._zod;
+    for (const key3 in shape) {
+      const field = shape[key3]._zod;
       if (field.values) {
-        if (!Object.prototype.hasOwnProperty.call(propValues, key2)) {
-          assignProp(propValues, key2, /* @__PURE__ */ new Set());
+        if (!Object.prototype.hasOwnProperty.call(propValues, key3)) {
+          assignProp(propValues, key3, /* @__PURE__ */ new Set());
         }
         for (const v of field.values)
-          propValues[key2].add(v);
+          propValues[key3].add(v);
         if (field.optin !== void 0)
-          propValues[key2].add(void 0);
+          propValues[key3].add(void 0);
       }
     }
     return propValues;
@@ -13038,22 +13039,22 @@ var $ZodObject = /* @__PURE__ */ $constructor("$ZodObject", (inst, def) => {
     const shape = value.shape;
     const abortEarly = ctx?.abortEarly;
     let seen = payload.issues.length;
-    for (const key2 of value.allKeys) {
+    for (const key3 of value.allKeys) {
       if (abortEarly && payload.issues.length !== seen) {
         if (aborted(payload, seen))
           break;
         seen = payload.issues.length;
       }
-      if (key2 === "__proto__")
+      if (key3 === "__proto__")
         continue;
-      const el = shape[key2];
+      const el = shape[key3];
       const optin = el._zod.optin;
       const optout = el._zod.optout;
-      const r = el._zod.run({ value: input2[key2], issues: [] }, ctx);
+      const r = el._zod.run({ value: input2[key3], issues: [] }, ctx);
       if (r instanceof Promise) {
-        proms.push(r.then((r2) => handlePropertyResult(r2, payload, key2, input2, optin, optout)));
+        proms.push(r.then((r2) => handlePropertyResult(r2, payload, key3, input2, optin, optout)));
       } else {
-        handlePropertyResult(r, payload, key2, input2, optin, optout);
+        handlePropertyResult(r, payload, key3, input2, optin, optout);
       }
     }
     if (!catchall) {
@@ -13087,17 +13088,17 @@ var $ZodObjectJIT = /* @__PURE__ */ $constructor("$ZodObjectJIT", (inst, def) =>
     doc.write(`const input = payload.value;`);
     const ids = /* @__PURE__ */ Object.create(null);
     let counter = 0;
-    for (const key2 of normalized.allKeys) {
-      ids[key2] = `key_${counter++}`;
+    for (const key3 of normalized.allKeys) {
+      ids[key3] = `key_${counter++}`;
     }
     doc.write(memo2 ? `const newResult = memo.alloc(inst, payload, {}, ctx);` : `const newResult = {};`);
-    for (const key2 of normalized.allKeys) {
-      if (key2 === "__proto__")
+    for (const key3 of normalized.allKeys) {
+      if (key3 === "__proto__")
         continue;
-      const id = ids[key2];
-      const k = typeof key2 === "symbol" ? `syms[${syms.indexOf(key2)}]` : esc(key2);
+      const id = ids[key3];
+      const k = typeof key3 === "symbol" ? `syms[${syms.indexOf(key3)}]` : esc(key3);
       const isPresent = `${k} in input`;
-      const schema = shape[key2];
+      const schema = shape[key3];
       const optin = schema?._zod?.optin;
       const isOptionalIn = optin !== void 0;
       const isOptionalOut = schema?._zod?.optout === "optional";
@@ -13431,21 +13432,21 @@ function mergeValues(a, b) {
   }
   if (isPlainObject(a) && isPlainObject(b)) {
     const bKeys = Object.keys(b);
-    const sharedKeys = Object.keys(a).filter((key2) => bKeys.indexOf(key2) !== -1);
+    const sharedKeys = Object.keys(a).filter((key3) => bKeys.indexOf(key3) !== -1);
     const newObj = { ...a, ...b };
     if (Object.prototype.hasOwnProperty.call(newObj, "__proto__"))
       delete newObj.__proto__;
-    for (const key2 of sharedKeys) {
-      if (key2 === "__proto__")
+    for (const key3 of sharedKeys) {
+      if (key3 === "__proto__")
         continue;
-      const sharedValue = mergeValues(a[key2], b[key2]);
+      const sharedValue = mergeValues(a[key3], b[key3]);
       if (!sharedValue.valid) {
         return {
           valid: false,
-          mergeErrorPath: [key2, ...sharedValue.mergeErrorPath]
+          mergeErrorPath: [key3, ...sharedValue.mergeErrorPath]
         };
       }
-      newObj[key2] = sharedValue.data;
+      newObj[key3] = sharedValue.data;
     }
     return { valid: true, data: newObj };
   }
@@ -13604,9 +13605,9 @@ var $ZodTuple = /* @__PURE__ */ $constructor("$ZodTuple", (inst, def) => {
     return handleTupleResults(itemResults, payload, items, input2, optoutStart);
   };
 });
-function getTupleOptStart(items, key2) {
+function getTupleOptStart(items, key3) {
   for (let i = items.length - 1; i >= 0; i--) {
-    const omittable = key2 === "optin" ? items[i]._zod.optin !== void 0 : items[i]._zod.optout === "optional";
+    const omittable = key3 === "optin" ? items[i]._zod.optin !== void 0 : items[i]._zod.optout === "optional";
     if (!omittable)
       return i + 1;
   }
@@ -13664,12 +13665,12 @@ var $ZodRecord = /* @__PURE__ */ $constructor("$ZodRecord", (inst, def) => {
     if (values && !def.partial) {
       payload.value = memo2 ? memo2.alloc(inst, payload, {}, ctx) : {};
       const recordKeys = /* @__PURE__ */ new Set();
-      for (const key2 of values) {
-        if (typeof key2 === "string" || typeof key2 === "number" || typeof key2 === "symbol") {
-          recordKeys.add(typeof key2 === "number" ? key2.toString() : key2);
-          if (key2 === "__proto__")
+      for (const key3 of values) {
+        if (typeof key3 === "string" || typeof key3 === "number" || typeof key3 === "symbol") {
+          recordKeys.add(typeof key3 === "number" ? key3.toString() : key3);
+          if (key3 === "__proto__")
             continue;
-          const keyResult = def.keyType._zod.run({ value: key2, issues: [] }, ctx);
+          const keyResult = def.keyType._zod.run({ value: key3, issues: [] }, ctx);
           if (keyResult instanceof Promise) {
             throw new Error("Async schemas not supported in object keys currently");
           }
@@ -13678,8 +13679,8 @@ var $ZodRecord = /* @__PURE__ */ $constructor("$ZodRecord", (inst, def) => {
               code: "invalid_key",
               origin: "record",
               issues: keyResult.issues.map((iss) => finalizeIssue(iss, ctx, config())),
-              input: key2,
-              path: [key2],
+              input: key3,
+              path: [key3],
               inst
             });
             continue;
@@ -13687,32 +13688,32 @@ var $ZodRecord = /* @__PURE__ */ $constructor("$ZodRecord", (inst, def) => {
           const outKey = keyResult.value;
           if (outKey === "__proto__")
             continue;
-          const result = def.valueType._zod.run({ value: input2[key2], issues: [] }, ctx);
+          const result = def.valueType._zod.run({ value: input2[key3], issues: [] }, ctx);
           if (result instanceof Promise) {
             proms.push(result.then((result2) => {
               if (result2.issues.length) {
-                payload.issues.push(...prefixIssues(key2, result2.issues));
+                payload.issues.push(...prefixIssues(key3, result2.issues));
               }
               payload.value[outKey] = result2.value;
             }));
           } else {
             if (result.issues.length) {
-              payload.issues.push(...prefixIssues(key2, result.issues));
+              payload.issues.push(...prefixIssues(key3, result.issues));
             }
             payload.value[outKey] = result.value;
           }
         }
       }
       let unrecognized;
-      for (const key2 in input2) {
-        if (!recordKeys.has(key2)) {
+      for (const key3 in input2) {
+        if (!recordKeys.has(key3)) {
           if (def.mode === "loose") {
-            if (key2 === "__proto__")
+            if (key3 === "__proto__")
               continue;
-            payload.value[key2] = input2[key2];
+            payload.value[key3] = input2[key3];
           } else {
             unrecognized = unrecognized ?? [];
-            unrecognized.push(key2);
+            unrecognized.push(key3);
           }
         }
       }
@@ -13728,18 +13729,18 @@ var $ZodRecord = /* @__PURE__ */ $constructor("$ZodRecord", (inst, def) => {
     } else {
       payload.value = memo2 ? memo2.alloc(inst, payload, {}, ctx) : {};
       let unrecognized;
-      for (const key2 of Reflect.ownKeys(input2)) {
-        if (key2 === "__proto__")
+      for (const key3 of Reflect.ownKeys(input2)) {
+        if (key3 === "__proto__")
           continue;
-        if (!Object.prototype.propertyIsEnumerable.call(input2, key2))
+        if (!Object.prototype.propertyIsEnumerable.call(input2, key3))
           continue;
-        let keyResult = def.keyType._zod.run({ value: key2, issues: [] }, ctx);
+        let keyResult = def.keyType._zod.run({ value: key3, issues: [] }, ctx);
         if (keyResult instanceof Promise) {
           throw new Error("Async schemas not supported in object keys currently");
         }
-        const checkNumericKey = typeof key2 === "string" && number.test(key2) && keyResult.issues.length;
+        const checkNumericKey = typeof key3 === "string" && number.test(key3) && keyResult.issues.length;
         if (checkNumericKey) {
-          const retryResult = def.keyType._zod.run({ value: Number(key2), issues: [] }, ctx);
+          const retryResult = def.keyType._zod.run({ value: Number(key3), issues: [] }, ctx);
           if (retryResult instanceof Promise) {
             throw new Error("Async schemas not supported in object keys currently");
           }
@@ -13749,17 +13750,17 @@ var $ZodRecord = /* @__PURE__ */ $constructor("$ZodRecord", (inst, def) => {
         }
         if (keyResult.issues.length) {
           if (def.mode === "loose") {
-            payload.value[key2] = input2[key2];
+            payload.value[key3] = input2[key3];
           } else if (values) {
             unrecognized = unrecognized ?? [];
-            unrecognized.push(key2);
+            unrecognized.push(key3);
           } else {
             payload.issues.push({
               code: "invalid_key",
               origin: "record",
               issues: keyResult.issues.map((iss) => finalizeIssue(iss, ctx, config())),
-              input: key2,
-              path: [key2],
+              input: key3,
+              path: [key3],
               inst
             });
           }
@@ -13768,17 +13769,17 @@ var $ZodRecord = /* @__PURE__ */ $constructor("$ZodRecord", (inst, def) => {
         const outKey = keyResult.value;
         if (outKey === "__proto__")
           continue;
-        const result = def.valueType._zod.run({ value: input2[key2], issues: [] }, ctx);
+        const result = def.valueType._zod.run({ value: input2[key3], issues: [] }, ctx);
         if (result instanceof Promise) {
           proms.push(result.then((result2) => {
             if (result2.issues.length) {
-              payload.issues.push(...prefixIssues(key2, result2.issues));
+              payload.issues.push(...prefixIssues(key3, result2.issues));
             }
             payload.value[outKey] = result2.value;
           }));
         } else {
           if (result.issues.length) {
-            payload.issues.push(...prefixIssues(key2, result.issues));
+            payload.issues.push(...prefixIssues(key3, result.issues));
           }
           payload.value[outKey] = result.value;
         }
@@ -13818,20 +13819,20 @@ var $ZodMap = /* @__PURE__ */ $constructor("$ZodMap", (inst, def) => {
     payload.value = memo2 ? memo2.alloc(inst, payload, /* @__PURE__ */ new Map(), ctx) : /* @__PURE__ */ new Map();
     const abortEarly = ctx?.abortEarly;
     let seen = payload.issues.length;
-    for (const [key2, value] of input2) {
+    for (const [key3, value] of input2) {
       if (abortEarly && payload.issues.length !== seen) {
         if (aborted(payload, seen))
           break;
         seen = payload.issues.length;
       }
-      const keyResult = def.keyType._zod.run({ value: key2, issues: [] }, ctx);
+      const keyResult = def.keyType._zod.run({ value: key3, issues: [] }, ctx);
       const valueResult = def.valueType._zod.run({ value, issues: [] }, ctx);
       if (keyResult instanceof Promise || valueResult instanceof Promise) {
         proms.push(Promise.all([keyResult, valueResult]).then(([keyResult2, valueResult2]) => {
-          handleMapResult(keyResult2, valueResult2, payload, key2, input2, inst, ctx);
+          handleMapResult(keyResult2, valueResult2, payload, key3, input2, inst, ctx);
         }));
       } else {
-        handleMapResult(keyResult, valueResult, payload, key2, input2, inst, ctx);
+        handleMapResult(keyResult, valueResult, payload, key3, input2, inst, ctx);
       }
     }
     if (proms.length)
@@ -13839,10 +13840,10 @@ var $ZodMap = /* @__PURE__ */ $constructor("$ZodMap", (inst, def) => {
     return payload;
   };
 });
-function handleMapResult(keyResult, valueResult, final, key2, input2, inst, ctx) {
+function handleMapResult(keyResult, valueResult, final, key3, input2, inst, ctx) {
   if (keyResult.issues.length) {
-    if (propertyKeyTypes.has(typeof key2)) {
-      final.issues.push(...prefixIssues(key2, keyResult.issues));
+    if (propertyKeyTypes.has(typeof key3)) {
+      final.issues.push(...prefixIssues(key3, keyResult.issues));
     } else {
       final.issues.push({
         code: "invalid_key",
@@ -13854,15 +13855,15 @@ function handleMapResult(keyResult, valueResult, final, key2, input2, inst, ctx)
     }
   }
   if (valueResult.issues.length) {
-    if (propertyKeyTypes.has(typeof key2)) {
-      final.issues.push(...prefixIssues(key2, valueResult.issues));
+    if (propertyKeyTypes.has(typeof key3)) {
+      final.issues.push(...prefixIssues(key3, valueResult.issues));
     } else {
       final.issues.push({
         origin: "map",
         code: "invalid_element",
         input: input2,
         inst,
-        key: key2,
+        key: key3,
         issues: valueResult.issues.map((iss) => finalizeIssue(iss, ctx, config()))
       });
     }
@@ -14519,7 +14520,7 @@ var recursive = /* @__PURE__ */ new WeakMap();
 var NONE = 0;
 var ASSUMED = 1;
 var PROVEN = 2;
-function isRecursive(inst, stack, resolve14) {
+function isRecursive(inst, stack, resolve17) {
   const cached3 = recursive.get(inst);
   if (cached3 !== void 0)
     return cached3 ? PROVEN : NONE;
@@ -14529,18 +14530,18 @@ function isRecursive(inst, stack, resolve14) {
   let result = NONE;
   const check2 = (child) => {
     if (result !== PROVEN && child?._zod) {
-      const answer = isRecursive(child, stack, resolve14);
+      const answer = isRecursive(child, stack, resolve17);
       if (answer > result)
         result = answer;
     }
   };
   const shape = (sh, spread) => {
     let answer = NONE;
-    for (const key2 of Reflect.ownKeys(sh)) {
-      const desc = Object.getOwnPropertyDescriptor(sh, key2);
+    for (const key3 of Reflect.ownKeys(sh)) {
+      const desc = Object.getOwnPropertyDescriptor(sh, key3);
       if (spread && !desc.enumerable)
         continue;
-      const child = desc.get ? ASSUMED : desc.value?._zod ? isRecursive(desc.value, stack, resolve14) : NONE;
+      const child = desc.get ? ASSUMED : desc.value?._zod ? isRecursive(desc.value, stack, resolve17) : NONE;
       if (child > answer)
         answer = child;
     }
@@ -14604,7 +14605,7 @@ function isRecursive(inst, stack, resolve14) {
       break;
     // `$ZodLazy` caches its inner on the def, so a resolved edge is followed exactly
     case "lazy": {
-      const inner = def._cachedInner ?? (resolve14 ? inst._zod.innerType : void 0);
+      const inner = def._cachedInner ?? (resolve17 ? inst._zod.innerType : void 0);
       merge2(inner ? isRecursive(inner, stack, false) : ASSUMED);
       break;
     }
@@ -14633,8 +14634,8 @@ function isRecursive(inst, stack, resolve14) {
       break;
     default: {
       kind;
-      for (const key2 in def) {
-        const desc = Object.getOwnPropertyDescriptor(def, key2);
+      for (const key3 in def) {
+        const desc = Object.getOwnPropertyDescriptor(def, key3);
         if (!desc || desc.get)
           continue;
         const value = desc.value;
@@ -22767,11 +22768,11 @@ function generatePropertiesChecks(doc, ctx, def, accessor) {
   }
   doc.write(`if (${accessor} == null) return INVALID;`);
   const shape = def.shape;
-  for (const key2 of Reflect.ownKeys(shape)) {
-    const keyExpr = typeof key2 === "symbol" ? addConstant(ctx, key2) : esc(key2);
+  for (const key3 of Reflect.ownKeys(shape)) {
+    const keyExpr = typeof key3 === "symbol" ? addConstant(ctx, key3) : esc(key3);
     const inputVar = newVar(ctx);
     doc.write(`const ${inputVar} = ${accessor}[${keyExpr}];`);
-    compileChild(doc, ctx, shape[key2], inputVar, false);
+    compileChild(doc, ctx, shape[key3], inputVar, false);
   }
 }
 function generatePropertyCheck(doc, ctx, def, accessor) {
@@ -23164,9 +23165,9 @@ function generateObjectCheck(doc, ctx, schema, accessor, buildsValue = true) {
     throw new ZodCompileUnsupportedError('object shape key "__proto__"');
   }
   const propOutputs = /* @__PURE__ */ new Map();
-  for (const key2 of allKeys) {
-    const propSchema = propShape[key2];
-    const kx = keyExpr(key2);
+  for (const key3 of allKeys) {
+    const propSchema = propShape[key3];
+    const kx = keyExpr(key3);
     const inputVar = newVar(ctx);
     doc.write(`const ${inputVar} = ${accessor}[${kx}];`);
     if (propSchema._zod.optin !== void 0) {
@@ -23187,14 +23188,14 @@ function generateObjectCheck(doc, ctx, schema, accessor, buildsValue = true) {
       } else {
         doc.write(`if (${outputVar2} === INVALID) return INVALID;`);
       }
-      propOutputs.set(key2, outputVar2);
+      propOutputs.set(key3, outputVar2);
     } else {
       if (requiresPresenceCheck(propSchema)) {
         doc.write(`if (!(${kx} in ${accessor})) return INVALID;`);
       }
       const outputAccessor = compileChild(doc, ctx, propSchema, inputVar, buildsValue);
       if (outputAccessor !== null)
-        propOutputs.set(key2, outputAccessor);
+        propOutputs.set(key3, outputAccessor);
     }
   }
   const catchall = def.catchall;
@@ -23609,9 +23610,9 @@ function generateTupleCheck(doc, ctx, schema, accessor) {
   }
   return outputVar;
 }
-function getTupleOptStart2(items, key2) {
+function getTupleOptStart2(items, key3) {
   for (let i = items.length - 1; i >= 0; i--) {
-    const omittable = key2 === "optin" ? items[i]._zod.optin !== void 0 : items[i]._zod.optout === "optional";
+    const omittable = key3 === "optin" ? items[i]._zod.optin !== void 0 : items[i]._zod.optout === "optional";
     if (!omittable)
       return i + 1;
   }
@@ -23741,16 +23742,16 @@ function generateRecordCheck(doc, ctx, schema, accessor) {
   const keyValues = recordDef.partial ? void 0 : def.keyType._zod.values;
   if (keyValues) {
     const inputKeys = [];
-    for (const key2 of keyValues) {
-      if (!(typeof key2 === "string" || typeof key2 === "number" || typeof key2 === "symbol")) {
-        throw new ZodCompileUnsupportedError(`record key value ${String(key2)}`);
+    for (const key3 of keyValues) {
+      if (!(typeof key3 === "string" || typeof key3 === "number" || typeof key3 === "symbol")) {
+        throw new ZodCompileUnsupportedError(`record key value ${String(key3)}`);
       }
-      const inputKey = typeof key2 === "number" ? key2.toString() : key2;
+      const inputKey = typeof key3 === "number" ? key3.toString() : key3;
       if (inputKey === "__proto__") {
         throw new ZodCompileUnsupportedError('record key "__proto__"');
       }
       inputKeys.push(inputKey);
-      const keyConst = addConstant(ctx, key2);
+      const keyConst = addConstant(ctx, key3);
       const outKey = generateCheck(doc, ctx, def.keyType, keyConst);
       const valueVar = newVar(ctx);
       doc.write(`const ${valueVar} = ${accessor}[${literalPropertyKey(ctx, inputKey)}];`);
@@ -23828,10 +23829,10 @@ function emitOwnKeys(doc, ctx, accessor, kVar, body, onSymbol) {
   });
   doc.write(`}`);
 }
-function literalPropertyKey(ctx, key2) {
-  if (typeof key2 === "string")
-    return esc(key2);
-  return addConstant(ctx, key2);
+function literalPropertyKey(ctx, key3) {
+  if (typeof key3 === "string")
+    return esc(key3);
+  return addConstant(ctx, key3);
 }
 function generateMapCheck(doc, ctx, schema, accessor) {
   const def = schema._zod.def;
@@ -25058,9 +25059,9 @@ function _stringFormat(Class2, format, fnOrRegex, _params = {}) {
 // node_modules/zod/v4/core/to-json-schema.js
 function assignProps(target, ...sources) {
   for (const source of sources) {
-    for (const key2 of Reflect.ownKeys(source)) {
-      if (Object.prototype.propertyIsEnumerable.call(source, key2)) {
-        assignProp(target, key2, source[key2]);
+    for (const key3 of Reflect.ownKeys(source)) {
+      if (Object.prototype.propertyIsEnumerable.call(source, key3)) {
+        assignProp(target, key3, source[key3]);
       }
     }
   }
@@ -25206,8 +25207,8 @@ function extractDefs(ctx, schema) {
     if (defId)
       seen.defId = defId;
     const schema2 = seen.schema;
-    for (const key2 in schema2) {
-      delete schema2[key2];
+    for (const key3 in schema2) {
+      delete schema2[key3];
     }
     schema2.$ref = ref;
   };
@@ -25288,8 +25289,8 @@ function foldObjects(members2) {
   for (const member of members2) {
     if (typeof member !== "object" || member.type !== "object")
       return null;
-    for (const key2 in member) {
-      if (!FOLDABLE_KEYS.has(key2))
+    for (const key3 in member) {
+      if (!FOLDABLE_KEYS.has(key3))
         return null;
     }
     objects.push(member);
@@ -25297,22 +25298,22 @@ function foldObjects(members2) {
   const properties = {};
   const required2 = /* @__PURE__ */ new Set();
   for (const object4 of objects) {
-    for (const key2 in object4.properties) {
-      if (Object.prototype.hasOwnProperty.call(properties, key2))
+    for (const key3 in object4.properties) {
+      if (Object.prototype.hasOwnProperty.call(properties, key3))
         continue;
       const parts = [];
       for (const other of objects) {
-        const part = other.properties?.[key2] ?? undeclaredConstraint(other);
+        const part = other.properties?.[key3] ?? undeclaredConstraint(other);
         if (part === null || part === void 0)
           continue;
         if (!parts.some((seen) => JSON.stringify(seen) === JSON.stringify(part)))
           parts.push(part);
       }
       const merged = parts.length === 1 ? parts[0] : foldObjects(parts) ?? { allOf: parts };
-      assignProp(properties, key2, merged);
+      assignProp(properties, key3, merged);
     }
-    for (const key2 of object4.required ?? [])
-      required2.add(key2);
+    for (const key3 of object4.required ?? [])
+      required2.add(key3);
   }
   const folded2 = { type: "object", properties };
   if (required2.size)
@@ -25337,8 +25338,8 @@ function foldIntersection(json2) {
   const allOf = json2.allOf;
   if (!Array.isArray(allOf) || allOf.length < 2)
     return;
-  for (const key2 of FOLDABLE_KEYS)
-    if (key2 in json2)
+  for (const key3 of FOLDABLE_KEYS)
+    if (key3 in json2)
       return;
   const unions = allOf.filter((m) => UNION_KEYS.some((k) => Array.isArray(m[k])));
   let folded2 = null;
@@ -25385,20 +25386,20 @@ function finalize(ctx, schema) {
       assignProps(schema2, _cached);
       const isParentRef = zodSchema._zod.parent === ref;
       if (isParentRef) {
-        for (const key2 in schema2) {
-          if (key2 === "$ref" || key2 === "allOf")
+        for (const key3 in schema2) {
+          if (key3 === "$ref" || key3 === "allOf")
             continue;
-          if (!(key2 in _cached)) {
-            delete schema2[key2];
+          if (!(key3 in _cached)) {
+            delete schema2[key3];
           }
         }
       }
       if (refSchema.$ref && refSeen.def) {
-        for (const key2 in schema2) {
-          if (key2 === "$ref" || key2 === "allOf")
+        for (const key3 in schema2) {
+          if (key3 === "$ref" || key3 === "allOf")
             continue;
-          if (key2 in refSeen.def && JSON.stringify(schema2[key2]) === JSON.stringify(refSeen.def[key2])) {
-            delete schema2[key2];
+          if (key3 in refSeen.def && JSON.stringify(schema2[key3]) === JSON.stringify(refSeen.def[key3])) {
+            delete schema2[key3];
           }
         }
       }
@@ -25410,11 +25411,11 @@ function finalize(ctx, schema) {
       if (parentSeen?.schema.$ref) {
         schema2.$ref = parentSeen.schema.$ref;
         if (parentSeen.def) {
-          for (const key2 in schema2) {
-            if (key2 === "$ref" || key2 === "allOf")
+          for (const key3 in schema2) {
+            if (key3 === "$ref" || key3 === "allOf")
               continue;
-            if (key2 in parentSeen.def && JSON.stringify(schema2[key2]) === JSON.stringify(parentSeen.def[key2])) {
-              delete schema2[key2];
+            if (key3 in parentSeen.def && JSON.stringify(schema2[key3]) === JSON.stringify(parentSeen.def[key3])) {
+              delete schema2[key3];
             }
           }
         }
@@ -25547,8 +25548,8 @@ function isTransforming(_schema, _ctx) {
     return isTransforming(def.in, ctx) || isTransforming(def.out, ctx);
   }
   if (def.type === "object") {
-    for (const key2 in def.shape) {
-      if (isTransforming(def.shape[key2], ctx))
+    for (const key3 in def.shape) {
+      if (isTransforming(def.shape[key3], ctx))
         return true;
     }
     return false;
@@ -25586,13 +25587,13 @@ var createStandardJSONSchemaMethod = (schema, io, processors = {}) => (params) =
 };
 
 // node_modules/zod/v4/core/json-schema-processors.js
-var narrowMin = (agg, key2, value) => {
-  if (agg[key2] === void 0 || value > agg[key2])
-    agg[key2] = value;
+var narrowMin = (agg, key3, value) => {
+  if (agg[key3] === void 0 || value > agg[key3])
+    agg[key3] = value;
 };
-var narrowMax = (agg, key2, value) => {
-  if (agg[key2] === void 0 || value < agg[key2])
-    agg[key2] = value;
+var narrowMax = (agg, key3, value) => {
+  if (agg[key3] === void 0 || value < agg[key3])
+    agg[key3] = value;
 };
 var narrowBoth = (agg, value) => {
   narrowMin(agg, "minimum", value);
@@ -25930,17 +25931,17 @@ var objectProcessor = (schema, ctx, _json, params) => {
   }
   json2.type = "object";
   json2.properties = {};
-  for (const key2 in shape) {
-    assignProp(json2.properties, key2, processSchema(shape[key2], ctx, {
+  for (const key3 in shape) {
+    assignProp(json2.properties, key3, processSchema(shape[key3], ctx, {
       ...params,
-      path: [...params.path, "properties", key2]
+      path: [...params.path, "properties", key3]
     }));
   }
   const requiredKeys = [];
-  for (const key2 of Object.keys(shape)) {
-    const field = def.shape[key2];
+  for (const key3 of Object.keys(shape)) {
+    const field = def.shape[key3];
     if (ctx.io === "input" ? inputOptin(field) === void 0 : field._zod.optout === void 0) {
-      requiredKeys.push(key2);
+      requiredKeys.push(key3);
     }
   }
   if (requiredKeys.length > 0) {
@@ -26315,9 +26316,9 @@ function toJSONSchema(input2, params) {
     };
     ctx2.external = external;
     for (const entry of registry2._idmap.entries()) {
-      const [key2, schema] = entry;
+      const [key3, schema] = entry;
       extractDefs(ctx2, schema);
-      assignProp(schemas, key2, finalize(ctx2, schema));
+      assignProp(schemas, key3, finalize(ctx2, schema));
     }
     if (Object.keys(defs).length > 0) {
       const defsSegment = ctx2.target === "draft-2020-12" ? "$defs" : "definitions";
@@ -26632,17 +26633,17 @@ __export(checks_exports2, {
 
 // node_modules/zod/v4/classic/errors.js
 var _installedErrorProtos = /* @__PURE__ */ new WeakSet([Object.prototype, Error.prototype]);
-function _lazyMethod(proto, key2, make) {
-  Object.defineProperty(proto, key2, {
+function _lazyMethod(proto, key3, make) {
+  Object.defineProperty(proto, key3, {
     configurable: true,
     enumerable: false,
     get() {
       const value = make(this);
-      Object.defineProperty(this, key2, { value, configurable: true, writable: true });
+      Object.defineProperty(this, key3, { value, configurable: true, writable: true });
       return value;
     },
     set(value) {
-      Object.defineProperty(this, key2, { value, configurable: true, writable: true });
+      Object.defineProperty(this, key3, { value, configurable: true, writable: true });
     }
   });
 }
@@ -28312,11 +28313,11 @@ function resolveRef(ref, ctx) {
   }
   const defsKey = ctx.version === "draft-2020-12" ? "$defs" : "definitions";
   if (path[0] === defsKey) {
-    const key2 = path[1] === void 0 ? void 0 : decodeJSONPointerSegment(path[1]);
-    if (!key2 || !ctx.defs[key2]) {
+    const key3 = path[1] === void 0 ? void 0 : decodeJSONPointerSegment(path[1]);
+    if (!key3 || !ctx.defs[key3]) {
       throw new Error(`Reference not found: ${ref}`);
     }
-    return ctx.defs[key2];
+    return ctx.defs[key3];
   }
   throw new Error(`Reference not found: ${ref}`);
 }
@@ -28351,16 +28352,16 @@ function checkObjectGuards(objectSchema, guards) {
       });
     }
     if (guards.keySchema) {
-      for (const key2 of keys) {
-        const result = guards.keySchema.safeParse(key2);
+      for (const key3 of keys) {
+        const result = guards.keySchema.safeParse(key3);
         if (result.success)
           continue;
         payload.issues.push({
           code: "invalid_key",
           origin: "record",
           issues: result.error.issues,
-          input: key2,
-          path: [key2],
+          input: key3,
+          path: [key3],
           continue: true
         });
       }
@@ -28385,20 +28386,20 @@ function canonicalKey(value, seen) {
     if (Array.isArray(value)) {
       const parts2 = [];
       for (const item of value) {
-        const key2 = canonicalKey(item, seen);
-        if (key2 === null)
+        const key3 = canonicalKey(item, seen);
+        if (key3 === null)
           return null;
-        parts2.push(key2);
+        parts2.push(key3);
       }
       return `a${parts2.length}:[${parts2.join(",")}]`;
     }
     const keys = Object.keys(value).sort();
     const parts = [];
     for (const k of keys) {
-      const key2 = canonicalKey(value[k], seen);
-      if (key2 === null)
+      const key3 = canonicalKey(value[k], seen);
+      if (key3 === null)
         return null;
-      parts.push(`${k.length}:${k}=${key2}`);
+      parts.push(`${k.length}:${k}=${key3}`);
     }
     return `o${parts.length}:{${parts.join(",")}}`;
   } finally {
@@ -28438,10 +28439,10 @@ function containsRef(value) {
     return value.some(containsRef);
   if (typeof value.$ref === "string")
     return true;
-  return Object.entries(value).some(([key2, sub]) => {
-    if (SCHEMA_KEYWORDS.has(key2))
+  return Object.entries(value).some(([key3, sub]) => {
+    if (SCHEMA_KEYWORDS.has(key3))
       return containsRef(sub);
-    if (!SCHEMA_MAP_KEYWORDS.has(key2) || typeof sub !== "object" || sub === null)
+    if (!SCHEMA_MAP_KEYWORDS.has(key3) || typeof sub !== "object" || sub === null)
       return false;
     return Object.values(sub).some(containsRef);
   });
@@ -28457,12 +28458,12 @@ function checkArrayGuards(arraySchema, guards) {
     if (guards.uniqueItems === true) {
       const firstSeen = /* @__PURE__ */ new Map();
       for (let i = 0; i < items.length; i++) {
-        const key2 = canonicalKey(items[i], /* @__PURE__ */ new Set());
-        if (key2 === null)
+        const key3 = canonicalKey(items[i], /* @__PURE__ */ new Set());
+        if (key3 === null)
           continue;
-        const first = firstSeen.get(key2);
+        const first = firstSeen.get(key3);
         if (first === void 0) {
-          firstSeen.set(key2, i);
+          firstSeen.set(key3, i);
           continue;
         }
         payload.issues.push({
@@ -28701,9 +28702,9 @@ function convertBaseSchema(schema, ctx) {
       const properties = schema.properties || {};
       const requiredSet = new Set(schema.required || []);
       const additionalSchema = typeof schema.additionalProperties === "object" ? convertSchema(schema.additionalProperties, ctx) : void 0;
-      for (const [key2, propSchema] of Object.entries(properties)) {
+      for (const [key3, propSchema] of Object.entries(properties)) {
         const propZodSchema = convertSchema(propSchema, ctx);
-        assignProp(shape, key2, requiredSet.has(key2) ? propZodSchema : propZodSchema.optional());
+        assignProp(shape, key3, requiredSet.has(key3) ? propZodSchema : propZodSchema.optional());
       }
       if (schema.patternProperties) {
         const patternProps = schema.patternProperties;
@@ -28738,12 +28739,12 @@ function convertBaseSchema(schema, ctx) {
             if (!isPlainObject(payload.value))
               return;
             const unrecognized = [];
-            for (const key2 of Object.keys(payload.value)) {
-              if (propertyKeys.includes(key2))
+            for (const key3 of Object.keys(payload.value)) {
+              if (propertyKeys.includes(key3))
                 continue;
-              if (patterns.some((regex) => regex.test(key2)))
+              if (patterns.some((regex) => regex.test(key3)))
                 continue;
-              unrecognized.push(key2);
+              unrecognized.push(key3);
             }
             if (unrecognized.length) {
               payload.issues.push({
@@ -28874,38 +28875,38 @@ function convertSchema(schema, ctx) {
   }
   const extraMeta = {};
   const coreMetadataKeys = ["$id", "id", "$comment", "$anchor", "$vocabulary", "$dynamicRef", "$dynamicAnchor"];
-  for (const key2 of coreMetadataKeys) {
-    if (key2 in schema) {
-      extraMeta[key2] = schema[key2];
+  for (const key3 of coreMetadataKeys) {
+    if (key3 in schema) {
+      extraMeta[key3] = schema[key3];
     }
   }
   const contentMetadataKeys = ["contentEncoding", "contentMediaType", "contentSchema"];
-  for (const key2 of contentMetadataKeys) {
-    if (key2 in schema) {
-      extraMeta[key2] = schema[key2];
+  for (const key3 of contentMetadataKeys) {
+    if (key3 in schema) {
+      extraMeta[key3] = schema[key3];
     }
   }
   if (schema.type === "object" && schema.$ref === void 0) {
     if (schema.propertyNames !== void 0 && !containsRef(schema.propertyNames)) {
       extraMeta.propertyNames = schema.propertyNames;
     }
-    for (const key2 of ["minProperties", "maxProperties"]) {
-      if (schema[key2] !== void 0)
-        extraMeta[key2] = schema[key2];
+    for (const key3 of ["minProperties", "maxProperties"]) {
+      if (schema[key3] !== void 0)
+        extraMeta[key3] = schema[key3];
     }
   }
   if (schema.type === "array" && schema.$ref === void 0) {
     if (schema.contains !== void 0 && !containsRef(schema.contains)) {
       extraMeta.contains = schema.contains;
     }
-    for (const key2 of ["uniqueItems", "minContains", "maxContains"]) {
-      if (schema[key2] !== void 0)
-        extraMeta[key2] = schema[key2];
+    for (const key3 of ["uniqueItems", "minContains", "maxContains"]) {
+      if (schema[key3] !== void 0)
+        extraMeta[key3] = schema[key3];
     }
   }
-  for (const key2 of Object.keys(schema)) {
-    if (!RECOGNIZED_KEYS.has(key2)) {
-      assignProp(extraMeta, key2, schema[key2]);
+  for (const key3 of Object.keys(schema)) {
+    if (!RECOGNIZED_KEYS.has(key3)) {
+      assignProp(extraMeta, key3, schema[key3]);
     }
   }
   if (Object.keys(extraMeta).length > 0) {
@@ -29254,6 +29255,8 @@ var DEFAULT_CONFIG = {
   codexBin: DEFAULT_CODEX_BIN,
   codexSubagents: DEFAULT_CODEX_SUBAGENTS,
   codexSandbox: "read-only",
+  codexWindowsSandbox: "unelevated",
+  jobCloseCleanup: false,
   codexApprovalsReviewer: DEFAULT_CODEX_APPROVALS_REVIEWER,
   codexWorktreeSandbox: null,
   codexWorkspaceWriteNetworkAccess: null,
@@ -29286,26 +29289,26 @@ function historyAnswer(v) {
   if (v.preference !== void 0 && (!Array.isArray(v.preference) || !v.preference.length || !v.preference.every((a) => agents.includes(String(a))))) return void 0;
   const out = { ...DEFAULT_HISTORY_ANSWER, preference: [...DEFAULT_HISTORY_ANSWER.preference] };
   if (Array.isArray(v.preference)) out.preference = [...new Set(v.preference)];
-  for (const key2 of ["claudeModel", "codexModel", "opencodeModel"]) {
-    if (v[key2] === void 0) continue;
-    if (key2 === "opencodeModel" && v[key2] === null) {
+  for (const key3 of ["claudeModel", "codexModel", "opencodeModel"]) {
+    if (v[key3] === void 0) continue;
+    if (key3 === "opencodeModel" && v[key3] === null) {
       out.opencodeModel = null;
       continue;
     }
-    const model = modelName(v[key2]);
+    const model = modelName(v[key3]);
     if (!model) return void 0;
-    out[key2] = model;
+    out[key3] = model;
   }
   return out;
 }
 function notifications(v) {
   if (!isRecord(v)) return void 0;
   const out = { ...DEFAULT_NOTIFICATIONS };
-  for (const key2 of Object.keys(out)) {
-    if (v[key2] === void 0) continue;
-    const value = parseBool(v[key2]);
+  for (const key3 of Object.keys(out)) {
+    if (v[key3] === void 0) continue;
+    const value = parseBool(v[key3]);
     if (value === void 0) return void 0;
-    out[key2] = value;
+    out[key3] = value;
   }
   return out;
 }
@@ -29371,11 +29374,11 @@ function watchConfig(home, agent, log, onChange, projectDir) {
     if (timer) clearInterval(timer);
   };
 }
-function saveConfigValue(home, key2, value) {
+function saveConfigValue(home, key3, value) {
   const path = join16(home, CONFIG_FILE_NAME);
   const previous = readJsonStore(path);
   const file2 = isRecord(previous) ? previous : {};
-  writeJsonStore(path, { ...file2, [key2]: value }, previous);
+  writeJsonStore(path, { ...file2, [key3]: value }, previous);
 }
 function loadConfig(home, agent, log, env = process.env, projectDir) {
   let file2 = {};
@@ -29398,12 +29401,12 @@ function loadConfig(home, agent, log, env = process.env, projectDir) {
   }
   const section = isRecord(file2[agent]) ? file2[agent] : {};
   const localSection = isRecord(project[agent]) ? project[agent] : {};
-  const pick2 = (key2, envKey, parse5) => {
-    for (const v of [envKey ? env[envKey] : void 0, localSection[key2], project[key2], section[key2], file2[key2]]) {
+  const pick2 = (key3, envKey, parse6) => {
+    for (const v of [envKey ? env[envKey] : void 0, localSection[key3], project[key3], section[key3], file2[key3]]) {
       if (v === void 0) continue;
-      const parsed = parse5(v);
+      const parsed = parse6(v);
       if (parsed !== void 0) return parsed;
-      log.warn("ignoring invalid config value", { key: key2, value: String(v) });
+      log.warn("ignoring invalid config value", { key: key3, value: String(v) });
     }
     return void 0;
   };
@@ -29428,6 +29431,8 @@ function loadConfig(home, agent, log, env = process.env, projectDir) {
       return typeof n === "number" && Number.isInteger(n) && n >= 0 && n <= MAX_CODEX_SUBAGENTS ? n : void 0;
     }) ?? d.codexSubagents,
     codexSandbox: pick2("codexSandbox", null, (v) => oneOf(v, CODEX_SANDBOXES)) ?? d.codexSandbox,
+    codexWindowsSandbox: pick2("codexWindowsSandbox", null, (v) => oneOf(v, ["unelevated", "elevated"])) ?? d.codexWindowsSandbox,
+    jobCloseCleanup: pick2("jobCloseCleanup", null, parseBool) ?? d.jobCloseCleanup,
     codexApprovalsReviewer: pick2("codexApprovalsReviewer", null, (v) => oneOf(v, CODEX_APPROVALS_REVIEWERS)) ?? d.codexApprovalsReviewer,
     codexWorktreeSandbox: pick2("codexWorktreeSandbox", null, (v) => oneOf(v, CODEX_SANDBOXES)) ?? d.codexWorktreeSandbox,
     codexWorkspaceWriteNetworkAccess: pick2("codexWorkspaceWriteNetworkAccess", null, parseBool) ?? d.codexWorkspaceWriteNetworkAccess,
@@ -29463,13 +29468,13 @@ var MODEL_LINE = /^[A-Za-z0-9._-]+\/\S+$/;
 var MAX_SUGGESTIONS = 8;
 var cache2 = /* @__PURE__ */ new Map();
 async function listOpencodeModels(bin, cwd, log) {
-  const key2 = JSON.stringify([resolveBinary(bin) ?? bin, cwd]);
-  const cached3 = cache2.get(key2);
+  const key3 = JSON.stringify([resolveBinary(bin) ?? bin, cwd]);
+  const cached3 = cache2.get(key3);
   if (cached3 && Date.now() - cached3.at < CACHE_TTL_MS) return cached3.models;
   const v2 = await opencodeV2(bin, cwd, log);
   const res = await runProcess({ bin, args: ["models", ...v2 ? ["--standalone"] : []], stdin: "", cwd, timeoutMs: LIST_TIMEOUT_MS, env: childEnv(), log });
   const models = res.stdout.split(/\r?\n/).map((l) => l.trim()).filter((l) => MODEL_LINE.test(l));
-  if (models.length) cache2.set(key2, { at: Date.now(), models });
+  if (models.length) cache2.set(key3, { at: Date.now(), models });
   return models;
 }
 function resolveOpencodeModel(input2, models) {
@@ -29537,7 +29542,7 @@ function startServe(bin, cwd, env, log) {
     resolved = target.command;
     prefix = target.prefix;
   }
-  return new Promise((resolve14, reject) => {
+  return new Promise((resolve17, reject) => {
     const child = spawn2(resolved, [...prefix, "serve", "--port", "0", "--hostname", "127.0.0.1"], {
       cwd,
       env: { ...env, PWD: cwd },
@@ -29548,7 +29553,7 @@ function startServe(bin, cwd, env, log) {
     trackChild(child, log);
     const output2 = watchServeOutput((url2) => {
       clearTimeout(timer);
-      resolve14({ child, url: url2 });
+      resolve17({ child, url: url2 });
     });
     const timer = setTimeout(() => {
       void killTree(child, "opencode startup timeout");
@@ -29808,6 +29813,7 @@ ${req.prompt}`);
   const cwd = realFolder(req.cwd);
   const env = childEnv(req.extraEnv);
   const startupArgs = req.sandbox === "danger-full-access" ? ["-c", 'sandbox_mode="danger-full-access"'] : [];
+  if (process.platform === "win32" && req.sandbox !== "danger-full-access") startupArgs.push("-c", `windows.sandbox="${req.windowsSandbox ?? "unelevated"}"`);
   const { resolved, args, needsShell } = resolveCommand(req.bin, ["app-server", ...startupArgs], env, req.log);
   req.log.debug("starting codex app-server", { bin: resolved, cwd });
   const child = spawn3(resolved, args, { cwd, env: { ...env, PWD: cwd }, shell: needsShell, windowsHide: true, stdio: ["pipe", "pipe", "pipe"], detached: process.platform !== "win32" });
@@ -29838,9 +29844,9 @@ ${req.prompt}`);
     child.stdin.write(`${JSON.stringify(msg)}
 `);
   };
-  const request2 = (method, params) => new Promise((resolve14, reject) => {
+  const request2 = (method, params) => new Promise((resolve17, reject) => {
     const id = nextId++;
-    pending.set(id, { resolve: resolve14, reject });
+    pending.set(id, { resolve: resolve17, reject });
     write({ id, method, params });
   });
   const editPaths = /* @__PURE__ */ new Map();
@@ -30050,6 +30056,7 @@ ${message}`, text_elements: [] }] });
     write({ method: "initialized", params: {} });
     const approvalPolicy = req.sandbox === "danger-full-access" ? CODEX_FULL_ACCESS_APPROVAL_POLICY : "on-request";
     const config2 = codexSubagentConfig(req.nativeSubagents);
+    if (process.platform === "win32" && req.sandbox !== "danger-full-access") config2["windows.sandbox"] = req.windowsSandbox ?? "unelevated";
     if (req.sandbox === "workspace-write" && (req.writableRoots?.length || req.networkAccess !== void 0)) {
       config2.sandbox_workspace_write = {
         ...req.writableRoots?.length ? { writable_roots: req.writableRoots.map(realFolder) } : {},
@@ -30177,7 +30184,7 @@ var DELEGATION_TARGETS = {
         let sessionId = base2.sessionId ?? null;
         for (let attempt = 1; ; attempt++) {
           try {
-            return await delegateToCodexAppServer({ ...base2, sessionId, bin: cfg.codexBin, sandbox, approvalsReviewer: a.approvals_reviewer ?? cfg.codexApprovalsReviewer, networkAccess: cfg.codexWorkspaceWriteNetworkAccess ?? void 0, writableRoots: base2.writableRoots, askMode: a.access === "ask", approve: a.access === "ask" && a.relay ? a.relay.onPermission : base2.approve });
+            return await delegateToCodexAppServer({ ...base2, sessionId, bin: cfg.codexBin, sandbox, windowsSandbox: cfg.codexWindowsSandbox, approvalsReviewer: a.approvals_reviewer ?? cfg.codexApprovalsReviewer, networkAccess: cfg.codexWorkspaceWriteNetworkAccess ?? void 0, writableRoots: base2.writableRoots, askMode: a.access === "ask", approve: a.access === "ask" && a.relay ? a.relay.onPermission : base2.approve });
           } catch (err) {
             if (err instanceof DelegateError && err.startupFailed && attempt === 1 && !base2.signal?.aborted) {
               base2.log.warn("codex app-server startup timed out; retrying once", { err: err.message });
@@ -30195,6 +30202,7 @@ var DELEGATION_TARGETS = {
         ...base2,
         bin: cfg.codexBin,
         sandbox,
+        windowsSandbox: cfg.codexWindowsSandbox,
         networkAccess: cfg.codexWorkspaceWriteNetworkAccess ?? void 0,
         ...relay ? { relayApprovals: true, extraEnv: { ...base2.extraEnv, ...a.relay.env } } : {}
       });
@@ -30254,15 +30262,15 @@ var PERMISSION_KEY_AGENT = { native_subagents: "codex", sandbox: "codex", approv
 var EFFORT_PATTERN = /^[A-Za-z0-9_-]{1,20}$/;
 function changedJobArgs(args, settings) {
   const next = { ...args };
-  if (settings.access !== void 0) for (const key2 of EXACT_PERMISSION_KEYS) delete next[key2];
-  else if (EXACT_PERMISSION_KEYS.some((key2) => settings[key2] !== void 0)) delete next.access;
-  for (const key2 of JOB_SETTING_KEYS) if (settings[key2] !== void 0) next[key2] = settings[key2];
+  if (settings.access !== void 0) for (const key3 of EXACT_PERMISSION_KEYS) delete next[key3];
+  else if (EXACT_PERMISSION_KEYS.some((key3) => settings[key3] !== void 0)) delete next.access;
+  for (const key3 of JOB_SETTING_KEYS) if (settings[key3] !== void 0) next[key3] = settings[key3];
   return next;
 }
 function parseJobSettings(input2, agent) {
   if (!input2 || typeof input2 !== "object" || Array.isArray(input2)) return "settings must be an object";
   const raw = input2;
-  const unknownKey = Object.keys(raw).find((key2) => !JOB_SETTING_KEYS.includes(key2));
+  const unknownKey = Object.keys(raw).find((key3) => !JOB_SETTING_KEYS.includes(key3));
   if (unknownKey) return `unknown setting: ${unknownKey}`;
   const settings = {};
   if (raw.native_subagents !== void 0) {
@@ -30297,8 +30305,8 @@ function parseJobSettings(input2, agent) {
     if (typeof raw.auto_approve !== "boolean") return "invalid auto_approve";
     settings.auto_approve = raw.auto_approve;
   }
-  for (const [key2, owner] of Object.entries(PERMISSION_KEY_AGENT)) {
-    if (settings[key2] !== void 0 && agent !== owner) return `${key2} applies only to ${owner} jobs.`;
+  for (const [key3, owner] of Object.entries(PERMISSION_KEY_AGENT)) {
+    if (settings[key3] !== void 0 && agent !== owner) return `${key3} applies only to ${owner} jobs.`;
   }
   if (!Object.keys(settings).length) return "no settings given";
   return settings;
@@ -30679,7 +30687,7 @@ function denyPendingApprovals(job, reason = "job finished") {
   for (const answer of [...approvalAnswers.get(job) ?? []]) answer(reason, "job completion");
 }
 function waitForApproval(job, question, timeoutMs, post, log, home, request2, askUser, escalate, forceEscalate = false) {
-  return new Promise((resolve14) => {
+  return new Promise((resolve17) => {
     let settled = false;
     let cleanup;
     const askedAt = Date.now();
@@ -30729,7 +30737,7 @@ Answer the pending dashboard approval ${approvalId}, or message_subagent(job="${
       } catch {
         log.warn("could not report approval answer", { job: job.name });
       }
-      resolve14({ allow, reason: answer.trim() });
+      resolve17({ allow, reason: answer.trim() });
       return true;
     };
     const timer = setTimeout(() => settle2("no answer in time", "timeout"), timeoutMs);
@@ -31814,7 +31822,7 @@ function unlinkChildren(dir) {
 function scanWorktreeLinks(root) {
   const scan = { externalLinks: [], errors: [] };
   const canonicalRoot = lstatSync2(toNamespacedPath(root)).isSymbolicLink() ? resolve5(root) : realpathSync6.native(root);
-  const inside = (target) => {
+  const inside2 = (target) => {
     const rel = relative3(canonicalRoot, target);
     return rel === "" || rel !== ".." && !rel.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`) && !isAbsolute5(rel);
   };
@@ -31828,7 +31836,7 @@ function scanWorktreeLinks(root) {
           target = realpathSync6.native(path);
         } catch {
         }
-        if (!inside(target)) {
+        if (!inside2(target)) {
           const link2 = { path, target };
           scan.externalLinks.push(link2);
           let directory2 = false;
@@ -31865,14 +31873,13 @@ var REMOVE_RETRIES = 3;
 var GIT_TIMEOUT_MS = 18e4;
 var WORKTREE_ADD_TIMEOUT_MS = 6e5;
 var BRANCH_PREFIX = "agent-bridge/";
-var FALLBACK_COMMIT_IDENTITY = { "user.name": "agent-bridge", "user.email": "agent-bridge@localhost" };
 var MAX_DIFFSTAT_CHARS = 4e3;
 function trustArgs(...dirs) {
   return dirs.flatMap((d) => ["-c", `safe.directory=${resolve6(d).replace(/\\/g, "/")}`]);
 }
-async function git(args, cwd, log, timeoutMs = GIT_TIMEOUT_MS) {
+async function git(args, cwd, log, timeoutMs = GIT_TIMEOUT_MS, env = process.env) {
   const what = `git ${args.filter((a, i) => !a.startsWith("-") && args[i - 1] !== "-c").slice(0, 2).join(" ")}`;
-  const res = await runProcess({ bin: GIT, args: [...LONG_PATH_ARGS, ...args], stdin: "", cwd, timeoutMs, env: process.env, log, what });
+  const res = await runProcess({ bin: GIT, args: [...LONG_PATH_ARGS, ...args], stdin: "", cwd, timeoutMs, env, log, what });
   if (res.code !== 0) throw new Error(`${what} failed: ${(res.stderr || res.stdout).trim().slice(0, 500)}`);
   return res.stdout.trimEnd();
 }
@@ -31943,22 +31950,8 @@ function removeWorktreeDirectory(path, managedRoot = path) {
   unlinkLinks(path);
   rmSync5(toNamespacedPath2(resolve6(path)), { recursive: true, force: true, maxRetries: REMOVE_RETRIES });
 }
-var SUBJECT_CHARS = 72;
 function subagentCommitMessage(opts) {
-  const plain = (s) => s.replace(/[*_`#>]+/g, "").replace(/\s+/g, " ").trim();
-  const firstLine = (s) => s.split(/\r?\n/).map(plain).find((l) => l.length > 0) ?? "";
-  const clip2 = (s) => s.length > SUBJECT_CHARS ? `${s.slice(0, SUBJECT_CHARS - 1).trimEnd()}\u2026` : s;
-  const subject = clip2(firstLine(opts.answer) || firstLine(opts.task) || "subagent changes");
-  const email3 = { codex: "noreply@openai.com", claude: "noreply@anthropic.com", opencode: "noreply@opencode.ai" }[opts.agent] ?? "noreply@localhost";
-  const who = opts.model ? `${opts.model} via ${opts.agent}` : opts.agent;
-  return [
-    subject,
-    "",
-    `Committed by agent-bridge for ${opts.job ?? "a subagent"} (${who}).`,
-    `Task: ${clip2(firstLine(opts.task))}`,
-    "",
-    `Co-Authored-By: ${who} <${email3}>`
-  ].join("\n");
+  return "Save worktree changes";
 }
 async function gitDirsOutside(cwd, log) {
   try {
@@ -31970,11 +31963,11 @@ async function gitDirsOutside(cwd, log) {
         return resolve6(p);
       }
     };
-    const inside = (p) => {
+    const inside2 = (p) => {
       const rel = relative4(real(cwd), real(p));
       return rel === "" || !rel.startsWith("..") && !isAbsolute6(rel);
     };
-    return [...new Set([gitDir, common].filter((p) => Boolean(p) && !inside(p)))];
+    return [...new Set([gitDir, common].filter((p) => Boolean(p) && !inside2(p)))];
   } catch {
     return [];
   }
@@ -32043,12 +32036,12 @@ async function finishWorktree(wt, message, log) {
   const skippedFiles = await autoCommitFiles(wt, log);
   const status = await git([...trust, "diff", "--cached", "--name-only", "-z"], wt.path, log);
   if (status) {
-    const identity = [];
-    for (const [key2, fallback] of Object.entries(FALLBACK_COMMIT_IDENTITY)) {
-      const configured = (await git([...trustArgs(wt.repoRoot), "config", "--get", key2], wt.repoRoot, log).catch(() => "")).trim();
-      identity.push("-c", `${key2}=${configured || fallback}`);
+    for (const key3 of ["user.name", "user.email"]) {
+      if (!(await git([...trust, "config", "--get", key3], wt.path, log).catch(() => "")).trim()) throw new Error(`Configure ${key3} before saving worktree changes.`);
     }
-    await git([...trust, ...identity, "commit", "-q", "--no-verify", "-m", message], wt.path, log);
+    const env = { ...process.env };
+    for (const key3 of Object.keys(env)) if (/^GIT_(AUTHOR|COMMITTER)_(NAME|EMAIL)$/i.test(key3)) delete env[key3];
+    await git([...trust, "-c", `core.hooksPath=${resolve6(wt.path).replace(/\\/g, "/")}/.git/checkpoint-hooks-disabled`, "commit", "-q", "--no-verify", "-m", "Save worktree changes"], wt.path, log, GIT_TIMEOUT_MS, env);
   }
   await unlockWorktree(wt.repoRoot, wt.path, log);
   const current = await git([...trust, "branch", "--show-current"], wt.path, log).catch(() => "") || wt.branch;
@@ -32360,7 +32353,7 @@ function archiveMessages(source, archive, where, args, reason, table = "messages
       const insert = archive.prepare("INSERT OR IGNORE INTO messages VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
       for (const r of rows) {
         const existing = archive.prepare("SELECT * FROM messages WHERE id = ? AND recipient = ?").get(r.id, r.recipient);
-        if (existing && Object.entries(r).some(([key2, value]) => !["read_at", "archive_reason", "archived_at"].includes(key2) && existing[key2] !== value)) throw new Error("archive identity conflict; original message preserved");
+        if (existing && Object.entries(r).some(([key3, value]) => !["read_at", "archive_reason", "archived_at"].includes(key3) && existing[key3] !== value)) throw new Error("archive identity conflict; original message preserved");
         insert.run(r.id, r.recipient, r.from_id, r.from_name, r.from_agent, r.to_target, r.conversation_id, r.reply_to, r.hop, r.body, r.created_at, r.read_at, r.archive_reason ?? reason, r.archived_at ?? Date.now());
         if (existing && r.read_at !== null) archive.prepare("UPDATE messages SET read_at = COALESCE(read_at, ?) WHERE id = ? AND recipient = ?").run(r.read_at, r.id, r.recipient);
       }
@@ -32470,8 +32463,8 @@ var MAX_HOLD_REASON_CHARS = 2e3;
 var JOB_OUTCOMES_DIR = "job-outcomes";
 var JOB_OUTCOME_CONTRACT_VERSION = 1;
 function decisionPath(home, job) {
-  const key2 = createHash7("sha256").update(`${job.name}:${job.startedAt}`).digest("hex");
-  return join27(home, JOB_OUTCOMES_DIR, `${key2}.json`);
+  const key3 = createHash7("sha256").update(`${job.name}:${job.startedAt}`).digest("hex");
+  return join27(home, JOB_OUTCOMES_DIR, `${key3}.json`);
 }
 function readOutcomeDecision(home, job) {
   const data = readHistoryJson(decisionPath(home, job));
@@ -32571,8 +32564,209 @@ async function listJobOutcomes(home, log, names) {
   return out;
 }
 
+// src/core/job-close.ts
+import { existsSync as existsSync12, lstatSync as lstatSync5 } from "node:fs";
+import { dirname as dirname12, isAbsolute as isAbsolute7, join as join30, relative as relative5, resolve as resolve9, sep as sep4 } from "node:path";
+
+// src/core/permission-repair.ts
+import { randomUUID as randomUUID7 } from "node:crypto";
+import { lstatSync as lstatSync3, readdirSync as readdirSync11 } from "node:fs";
+import { dirname as dirname11, join as join28, parse as parse4, resolve as resolve7, toNamespacedPath as toNamespacedPath3 } from "node:path";
+function assertPhysicalPath(path) {
+  const target = resolve7(path);
+  const parts = [];
+  for (let p = target; dirname11(p) !== p; p = dirname11(p)) parts.unshift(p);
+  for (const p of parts) if (lstatSync3(toNamespacedPath3(p)).isSymbolicLink()) throw new Error(`Refusing permission changes through a link: ${p}`);
+  return target;
+}
+function permissionRepairPlan(path) {
+  const root = assertPhysicalPath(path);
+  if (root === parse4(root).root || !lstatSync3(root).isDirectory()) throw new Error("Select one physical folder, not a filesystem root.");
+  const paths = [], skipped = [];
+  const visit2 = (p) => {
+    const stat = lstatSync3(toNamespacedPath3(p));
+    if (stat.isSymbolicLink()) {
+      skipped.push(p);
+      return;
+    }
+    paths.push(p);
+    if (stat.isDirectory()) for (const child of readdirSync11(toNamespacedPath3(p))) visit2(join28(p, child));
+  };
+  visit2(root);
+  return { root, paths, skipped };
+}
+var PERMISSION_REPAIR_SCRIPT = String.raw`
+$ErrorActionPreference = 'Stop'
+$payload = [Console]::In.ReadToEnd() | ConvertFrom-Json
+$sid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
+$results = @()
+foreach ($path in $payload.paths) {
+  try {
+    $item = Get-Item -LiteralPath $path -Force
+    for ($part = $item; $null -ne $part; $part = if ($part -is [System.IO.DirectoryInfo]) { $part.Parent } else { $part.Directory }) {
+      if ($part.Attributes -band [System.IO.FileAttributes]::ReparsePoint) { throw 'Linked path refused' }
+    }
+    $acl = $item.GetAccessControl()
+    $sddl = $acl.Sddl
+    if ($payload.apply) {
+      $acl.SetAccessRuleProtection($false, $false)
+      foreach ($rule in @($acl.Access)) { if (-not $rule.IsInherited) { [void]$acl.RemoveAccessRuleSpecific($rule) } }
+      $inherit = if ($item.PSIsContainer) { [System.Security.AccessControl.InheritanceFlags]'ContainerInherit, ObjectInherit' } else { [System.Security.AccessControl.InheritanceFlags]::None }
+      $acl.AddAccessRule([System.Security.AccessControl.FileSystemAccessRule]::new($sid, 'FullControl', $inherit, 'None', 'Allow'))
+      $acl.SetOwner($sid)
+      $item.SetAccessControl($acl)
+    }
+    $results += @{ path = $path; sddl = $sddl; ok = $true }
+  } catch { $results += @{ path = $path; ok = $false; error = $_.Exception.Message } }
+}
+ConvertTo-Json -Depth 5 -Compress -InputObject @{ sid = $sid.Value; entries = $results }
+`;
+
+// src/core/worktree-state.ts
+import { createHash as createHash8 } from "node:crypto";
+import { lstatSync as lstatSync4, mkdirSync as mkdirSync15 } from "node:fs";
+import { join as join29, resolve as resolve8 } from "node:path";
+var WORKTREE_STATE_CONTRACT = 1;
+var key2 = (wt) => createHash8("sha256").update(resolve8(wt.path).toLowerCase()).digest("hex");
+var statePath = (home, wt) => join29(home, "worktree-state", `${key2(wt)}.json`);
+var rootId = (path) => {
+  const stat = lstatSync4(path);
+  return `${stat.dev}:${stat.ino}:${stat.birthtimeMs}`;
+};
+function readWorktreeState(home, wt) {
+  const value = readHistoryJson(statePath(home, wt));
+  if (!isRecord(value) || typeof value.version === "number" && value.version > JSON_STORE_VERSION || value.contractVersion !== WORKTREE_STATE_CONTRACT || value.path !== wt.path || value.repoRoot !== wt.repoRoot || value.base !== wt.base || typeof value.rootId !== "string" || !Array.isArray(value.libraries) || !value.libraries.every((p) => typeof p === "string") || typeof value.lastContinuation !== "number") return null;
+  return value;
+}
+function saveWorktreeState(home, wt, value) {
+  const path = statePath(home, wt);
+  writeJsonStore(path, { ...value }, readJsonStore(path));
+}
+function invalidateWorktreePathProof(home, path) {
+  const value = readHistoryJson(statePath(home, { path }));
+  if (!isRecord(value) || typeof value.repoRoot !== "string" || typeof value.base !== "string") return;
+  const wt = { path, cwd: path, repoRoot: value.repoRoot, base: value.base, branch: "" };
+  const state = readWorktreeState(home, wt);
+  if (state) saveWorktreeState(home, wt, { ...state, processesStopped: false, lastContinuation: Date.now() });
+}
+function worktreeLease(home, wt) {
+  const dir = join29(home, "worktree-leases");
+  mkdirSync15(dir, { recursive: true });
+  const path = join29(dir, key2(wt));
+  try {
+    mkdirSync15(path);
+  } catch {
+    throw new Error("Worktree is running, closing, or has an unreconciled lease; kept unchanged.");
+  }
+  return () => {
+    archiveFile(path);
+  };
+}
+
+// src/core/job-close.ts
+async function recordWorktreeOrigin(home, wt, log) {
+  assertPhysicalPath(wt.path);
+  const files2 = (await git([...trustArgs(wt.path), "ls-files", "-z"], wt.path, log)).split("\0").filter(Boolean);
+  const libraries = files2.filter((file2) => /(^|\/)ProjectSettings\/ProjectVersion\.txt$/.test(file2)).map((file2) => join30(dirname12(dirname12(file2)), "Library")).filter((path) => {
+    try {
+      lstatSync5(join30(wt.path, path));
+      return false;
+    } catch (err) {
+      if (err.code !== "ENOENT") throw err;
+      return true;
+    }
+  });
+  saveWorktreeState(home, wt, { contractVersion: 1, path: wt.path, repoRoot: wt.repoRoot, base: wt.base, rootId: rootId(wt.path), libraries, lastContinuation: Date.now(), processesStopped: false });
+}
+var inside = (path, parent2) => {
+  const rel = relative5(parent2, path);
+  return rel !== ".." && !rel.startsWith(`..${sep4}`) && !isAbsolute7(rel);
+};
+async function inspect(wt, state, log) {
+  assertPhysicalPath(wt.path);
+  if (rootId(wt.path) !== state.rootId) throw new Error("Worktree root was replaced; provenance no longer applies.");
+  if (permissionRepairPlan(wt.path).skipped.length) throw new Error("Linked or shared contents are kept.");
+  const run = (args) => git([...trustArgs(wt.path), ...args], wt.path, log);
+  if (await run(["status", "--porcelain=v1", "-z", "--untracked-files=all"])) throw new Error("Uncommitted or non-ignored untracked files are kept.");
+  const libraries = [];
+  for (const file2 of state.libraries) {
+    const path = resolve9(wt.path, file2);
+    if (!inside(path, wt.path) || path === resolve9(wt.path) || !/(^|[\\/])Library$/.test(file2)) throw new Error("Invalid cache provenance; kept.");
+    if (!existsSync12(path)) continue;
+    if (!lstatSync5(path).isDirectory() || !existsSync12(join30(dirname12(path), "ProjectSettings", "ProjectVersion.txt"))) throw new Error("Cache is no longer a Unity Library.");
+    if (await run(["ls-files", "-z", "--", `:(literal)${file2.replace(/\\/g, "/")}`])) throw new Error("Tracked Library contents are kept.");
+    libraries.push(path);
+  }
+  const ignored = (await run(["ls-files", "--others", "--ignored", "--exclude-standard", "-z"])).split("\0").filter(Boolean);
+  for (const file2 of ignored) if (!libraries.some((lib) => inside(resolve9(wt.path, file2), lib))) throw new Error("Unknown ignored files may contain user data; kept.");
+  const head = await run(["rev-parse", "HEAD"]);
+  const currentBranch = await run(["symbolic-ref", "--short", "HEAD"]);
+  const reflog = await run(["reflog", "show", "--format=%H", "HEAD"]);
+  if (!reflog) throw new Error("Worktree commit history unavailable; kept.");
+  const branch = await run(["rev-parse", "--verify", wt.branch]);
+  const commits = [.../* @__PURE__ */ new Set([head, branch, ...reflog.split(/\r?\n/).filter(Boolean)])];
+  if (!commits.every((sha) => /^[a-f0-9]{40,64}$/.test(sha))) throw new Error("Invalid commit history; kept.");
+  return { libraries, head, branch: currentBranch, commits };
+}
+async function closeJobWorktree(opts) {
+  if (!opts.enabled) return { action: "disabled", reason: "jobCloseCleanup is off" };
+  const wt = opts.job.worktree;
+  if (!wt || opts.job.remote || !["done", "failed"].includes(opts.job.status) || opts.job.queue?.length) return { action: "kept", reason: "Only a finished local worktree job without queued continuations can close." };
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,100}$/.test(opts.job.name)) return { action: "kept", reason: "Invalid job branch name." };
+  let release;
+  try {
+    release = worktreeLease(opts.home, wt);
+    const state = readWorktreeState(opts.home, wt);
+    if (!state) return { action: "kept", reason: "No supported worktree provenance; legacy worktrees are kept." };
+    if (state.reapedAt && !existsSync12(wt.path)) return { action: "reaped", reason: "Already safely reaped.", pushed: state.pushed };
+    if (state.processesStopped !== true) return { action: "kept", reason: "Job process shutdown is unproven; worktree retained." };
+    const before = await inspect(wt, state, opts.log);
+    const run = (args) => git([...trustArgs(wt.repoRoot), ...args], wt.repoRoot, opts.log);
+    const pushed = [{ ref: `refs/heads/wip/${opts.job.name}`, sha: before.head }];
+    for (const sha of before.commits) {
+      try {
+        await run(["merge-base", "--is-ancestor", sha, before.head]);
+      } catch {
+        pushed.push({ ref: `refs/heads/wip/${opts.job.name}-history-${sha}`, sha });
+      }
+    }
+    await run(["push", "origin", ...pushed.map(({ ref, sha }) => `${sha}:${ref}`)]);
+    const remote = await run(["ls-remote", "--heads", "origin", ...pushed.map((p) => p.ref)]);
+    const refs = new Map(remote.split(/\r?\n/).filter(Boolean).map((line) => {
+      const [sha, ref] = line.split(/\s+/);
+      return [ref, sha];
+    }));
+    if (!pushed.every((p) => refs.get(p.ref) === p.sha)) throw new Error("Remote commit verification failed; kept.");
+    const after = await inspect(wt, state, opts.log);
+    if (after.head !== before.head || after.branch !== before.branch || after.commits.join() !== before.commits.join() || after.libraries.join() !== before.libraries.join()) throw new Error("Worktree changed while pushing; kept.");
+    saveWorktreeState(opts.home, wt, { ...state, closedAt: Date.now(), pushed, resumeBranch: before.branch });
+    for (const path of after.libraries) removeWorktreeDirectory(path, wt.path);
+    await run(["worktree", "remove", wt.path]);
+    saveWorktreeState(opts.home, wt, { ...state, closedAt: Date.now(), reapedAt: Date.now(), pushed, resumeBranch: before.branch });
+    return { action: "reaped", reason: "All worktree commits verified on pushed branches; clean checkout removed; local branches retained.", pushed };
+  } catch (err) {
+    return { action: "kept", reason: err.message };
+  } finally {
+    release?.();
+  }
+}
+async function prepareWorktreeContinuation(home, wt, log) {
+  let state = readWorktreeState(home, wt);
+  if (!existsSync12(wt.path)) {
+    if (!state?.reapedAt || !state.pushed?.length) throw new Error("Worktree is missing without a verified reap record; recreate it explicitly.");
+    const branch = state.resumeBranch ?? wt.branch;
+    await git([...trustArgs(wt.repoRoot), "worktree", "add", wt.path, branch], wt.repoRoot, log);
+    wt.branch = branch;
+    await recordWorktreeOrigin(home, wt, log);
+    state = readWorktreeState(home, wt);
+  }
+  assertPhysicalPath(wt.path);
+  if (state && rootId(wt.path) !== state.rootId) throw new Error("Worktree root was replaced; restore isolation before continuing.");
+  if (state) saveWorktreeState(home, wt, { ...state, lastContinuation: Date.now(), closedAt: void 0, reapedAt: void 0, processesStopped: false });
+}
+
 // src/mcp/server.ts
-import { dirname as dirname20, isAbsolute as isAbsolute10, join as join54, resolve as resolve13 } from "node:path";
+import { dirname as dirname22, isAbsolute as isAbsolute11, join as join57, resolve as resolve16 } from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 
 // node_modules/zod/v3/helpers/util.js
@@ -32609,9 +32803,9 @@ var util;
   };
   util2.objectKeys = typeof Object.keys === "function" ? (obj) => Object.keys(obj) : (object4) => {
     const keys = [];
-    for (const key2 in object4) {
-      if (Object.prototype.hasOwnProperty.call(object4, key2)) {
-        keys.push(key2);
+    for (const key3 in object4) {
+      if (Object.prototype.hasOwnProperty.call(object4, key3)) {
+        keys.push(key3);
       }
     }
     return keys;
@@ -33018,10 +33212,10 @@ var ParseStatus = class _ParseStatus {
   static async mergeObjectAsync(status, pairs) {
     const syncPairs = [];
     for (const pair of pairs) {
-      const key2 = await pair.key;
+      const key3 = await pair.key;
       const value = await pair.value;
       syncPairs.push({
-        key: key2,
+        key: key3,
         value
       });
     }
@@ -33030,17 +33224,17 @@ var ParseStatus = class _ParseStatus {
   static mergeObjectSync(status, pairs) {
     const finalObject = {};
     for (const pair of pairs) {
-      const { key: key2, value } = pair;
-      if (key2.status === "aborted")
+      const { key: key3, value } = pair;
+      if (key3.status === "aborted")
         return INVALID2;
       if (value.status === "aborted")
         return INVALID2;
-      if (key2.status === "dirty")
+      if (key3.status === "dirty")
         status.dirty();
       if (value.status === "dirty")
         status.dirty();
-      if (key2.value !== "__proto__" && (typeof value.value !== "undefined" || pair.alwaysSet)) {
-        finalObject[key2.value] = value.value;
+      if (key3.value !== "__proto__" && (typeof value.value !== "undefined" || pair.alwaysSet)) {
+        finalObject[key3.value] = value.value;
       }
     }
     return { status: status.value, value: finalObject };
@@ -33065,12 +33259,12 @@ var errorUtil;
 
 // node_modules/zod/v3/types.js
 var ParseInputLazyPath = class {
-  constructor(parent2, value, path, key2) {
+  constructor(parent2, value, path, key3) {
     this._cachedPath = [];
     this.parent = parent2;
     this.data = value;
     this._path = path;
-    this._key = key2;
+    this._key = key3;
   }
   get path() {
     if (!this._cachedPath.length) {
@@ -34815,9 +35009,9 @@ ZodArray2.create = (schema, params) => {
 function deepPartialify(schema) {
   if (schema instanceof ZodObject2) {
     const newShape = {};
-    for (const key2 in schema.shape) {
-      const fieldSchema = schema.shape[key2];
-      newShape[key2] = ZodOptional2.create(deepPartialify(fieldSchema));
+    for (const key3 in schema.shape) {
+      const fieldSchema = schema.shape[key3];
+      newShape[key3] = ZodOptional2.create(deepPartialify(fieldSchema));
     }
     return new ZodObject2({
       ...schema._def,
@@ -34868,29 +35062,29 @@ var ZodObject2 = class _ZodObject extends ZodType2 {
     const { shape, keys: shapeKeys } = this._getCached();
     const extraKeys = [];
     if (!(this._def.catchall instanceof ZodNever2 && this._def.unknownKeys === "strip")) {
-      for (const key2 in ctx.data) {
-        if (!shapeKeys.includes(key2)) {
-          extraKeys.push(key2);
+      for (const key3 in ctx.data) {
+        if (!shapeKeys.includes(key3)) {
+          extraKeys.push(key3);
         }
       }
     }
     const pairs = [];
-    for (const key2 of shapeKeys) {
-      const keyValidator = shape[key2];
-      const value = ctx.data[key2];
+    for (const key3 of shapeKeys) {
+      const keyValidator = shape[key3];
+      const value = ctx.data[key3];
       pairs.push({
-        key: { status: "valid", value: key2 },
-        value: keyValidator._parse(new ParseInputLazyPath(ctx, value, ctx.path, key2)),
-        alwaysSet: key2 in ctx.data
+        key: { status: "valid", value: key3 },
+        value: keyValidator._parse(new ParseInputLazyPath(ctx, value, ctx.path, key3)),
+        alwaysSet: key3 in ctx.data
       });
     }
     if (this._def.catchall instanceof ZodNever2) {
       const unknownKeys = this._def.unknownKeys;
       if (unknownKeys === "passthrough") {
-        for (const key2 of extraKeys) {
+        for (const key3 of extraKeys) {
           pairs.push({
-            key: { status: "valid", value: key2 },
-            value: { status: "valid", value: ctx.data[key2] }
+            key: { status: "valid", value: key3 },
+            value: { status: "valid", value: ctx.data[key3] }
           });
         }
       } else if (unknownKeys === "strict") {
@@ -34907,15 +35101,15 @@ var ZodObject2 = class _ZodObject extends ZodType2 {
       }
     } else {
       const catchall = this._def.catchall;
-      for (const key2 of extraKeys) {
-        const value = ctx.data[key2];
+      for (const key3 of extraKeys) {
+        const value = ctx.data[key3];
         pairs.push({
-          key: { status: "valid", value: key2 },
+          key: { status: "valid", value: key3 },
           value: catchall._parse(
-            new ParseInputLazyPath(ctx, value, ctx.path, key2)
+            new ParseInputLazyPath(ctx, value, ctx.path, key3)
             //, ctx.child(key), value, getParsedType(value)
           ),
-          alwaysSet: key2 in ctx.data
+          alwaysSet: key3 in ctx.data
         });
       }
     }
@@ -34923,10 +35117,10 @@ var ZodObject2 = class _ZodObject extends ZodType2 {
       return Promise.resolve().then(async () => {
         const syncPairs = [];
         for (const pair of pairs) {
-          const key2 = await pair.key;
+          const key3 = await pair.key;
           const value = await pair.value;
           syncPairs.push({
-            key: key2,
+            key: key3,
             value,
             alwaysSet: pair.alwaysSet
           });
@@ -35051,8 +35245,8 @@ var ZodObject2 = class _ZodObject extends ZodType2 {
   //   }) as any;
   //   return merged;
   // }
-  setKey(key2, schema) {
-    return this.augment({ [key2]: schema });
+  setKey(key3, schema) {
+    return this.augment({ [key3]: schema });
   }
   // merge<Incoming extends AnyZodObject>(
   //   merging: Incoming
@@ -35083,9 +35277,9 @@ var ZodObject2 = class _ZodObject extends ZodType2 {
   }
   pick(mask) {
     const shape = {};
-    for (const key2 of util.objectKeys(mask)) {
-      if (mask[key2] && this.shape[key2]) {
-        shape[key2] = this.shape[key2];
+    for (const key3 of util.objectKeys(mask)) {
+      if (mask[key3] && this.shape[key3]) {
+        shape[key3] = this.shape[key3];
       }
     }
     return new _ZodObject({
@@ -35095,9 +35289,9 @@ var ZodObject2 = class _ZodObject extends ZodType2 {
   }
   omit(mask) {
     const shape = {};
-    for (const key2 of util.objectKeys(this.shape)) {
-      if (!mask[key2]) {
-        shape[key2] = this.shape[key2];
+    for (const key3 of util.objectKeys(this.shape)) {
+      if (!mask[key3]) {
+        shape[key3] = this.shape[key3];
       }
     }
     return new _ZodObject({
@@ -35113,12 +35307,12 @@ var ZodObject2 = class _ZodObject extends ZodType2 {
   }
   partial(mask) {
     const newShape = {};
-    for (const key2 of util.objectKeys(this.shape)) {
-      const fieldSchema = this.shape[key2];
-      if (mask && !mask[key2]) {
-        newShape[key2] = fieldSchema;
+    for (const key3 of util.objectKeys(this.shape)) {
+      const fieldSchema = this.shape[key3];
+      if (mask && !mask[key3]) {
+        newShape[key3] = fieldSchema;
       } else {
-        newShape[key2] = fieldSchema.optional();
+        newShape[key3] = fieldSchema.optional();
       }
     }
     return new _ZodObject({
@@ -35128,16 +35322,16 @@ var ZodObject2 = class _ZodObject extends ZodType2 {
   }
   required(mask) {
     const newShape = {};
-    for (const key2 of util.objectKeys(this.shape)) {
-      if (mask && !mask[key2]) {
-        newShape[key2] = this.shape[key2];
+    for (const key3 of util.objectKeys(this.shape)) {
+      if (mask && !mask[key3]) {
+        newShape[key3] = this.shape[key3];
       } else {
-        const fieldSchema = this.shape[key2];
+        const fieldSchema = this.shape[key3];
         let newField = fieldSchema;
         while (newField instanceof ZodOptional2) {
           newField = newField._def.innerType;
         }
-        newShape[key2] = newField;
+        newShape[key3] = newField;
       }
     }
     return new _ZodObject({
@@ -35381,18 +35575,18 @@ function mergeValues2(a, b) {
     return { valid: true, data: a };
   } else if (aType === ZodParsedType.object && bType === ZodParsedType.object) {
     const bKeys = util.objectKeys(b);
-    const sharedKeys = util.objectKeys(a).filter((key2) => bKeys.indexOf(key2) !== -1);
+    const sharedKeys = util.objectKeys(a).filter((key3) => bKeys.indexOf(key3) !== -1);
     const newObj = { ...a, ...b };
     if (Object.prototype.hasOwnProperty.call(newObj, "__proto__"))
       delete newObj.__proto__;
-    for (const key2 of sharedKeys) {
-      if (key2 === "__proto__")
+    for (const key3 of sharedKeys) {
+      if (key3 === "__proto__")
         continue;
-      const sharedValue = mergeValues2(a[key2], b[key2]);
+      const sharedValue = mergeValues2(a[key3], b[key3]);
       if (!sharedValue.valid) {
         return { valid: false };
       }
-      newObj[key2] = sharedValue.data;
+      newObj[key3] = sharedValue.data;
     }
     return { valid: true, data: newObj };
   } else if (aType === ZodParsedType.array && bType === ZodParsedType.array) {
@@ -35556,11 +35750,11 @@ var ZodRecord2 = class _ZodRecord extends ZodType2 {
     const pairs = [];
     const keyType = this._def.keyType;
     const valueType = this._def.valueType;
-    for (const key2 in ctx.data) {
+    for (const key3 in ctx.data) {
       pairs.push({
-        key: keyType._parse(new ParseInputLazyPath(ctx, key2, ctx.path, key2)),
-        value: valueType._parse(new ParseInputLazyPath(ctx, ctx.data[key2], ctx.path, key2)),
-        alwaysSet: key2 in ctx.data
+        key: keyType._parse(new ParseInputLazyPath(ctx, key3, ctx.path, key3)),
+        value: valueType._parse(new ParseInputLazyPath(ctx, ctx.data[key3], ctx.path, key3)),
+        alwaysSet: key3 in ctx.data
       });
     }
     if (ctx.common.async) {
@@ -35608,9 +35802,9 @@ var ZodMap2 = class extends ZodType2 {
     }
     const keyType = this._def.keyType;
     const valueType = this._def.valueType;
-    const pairs = [...ctx.data.entries()].map(([key2, value], index) => {
+    const pairs = [...ctx.data.entries()].map(([key3, value], index) => {
       return {
-        key: keyType._parse(new ParseInputLazyPath(ctx, key2, ctx.path, [index, "key"])),
+        key: keyType._parse(new ParseInputLazyPath(ctx, key3, ctx.path, [index, "key"])),
         value: valueType._parse(new ParseInputLazyPath(ctx, value, ctx.path, [index, "value"]))
       };
     });
@@ -35618,30 +35812,30 @@ var ZodMap2 = class extends ZodType2 {
       const finalMap = /* @__PURE__ */ new Map();
       return Promise.resolve().then(async () => {
         for (const pair of pairs) {
-          const key2 = await pair.key;
+          const key3 = await pair.key;
           const value = await pair.value;
-          if (key2.status === "aborted" || value.status === "aborted") {
+          if (key3.status === "aborted" || value.status === "aborted") {
             return INVALID2;
           }
-          if (key2.status === "dirty" || value.status === "dirty") {
+          if (key3.status === "dirty" || value.status === "dirty") {
             status.dirty();
           }
-          finalMap.set(key2.value, value.value);
+          finalMap.set(key3.value, value.value);
         }
         return { status: status.value, value: finalMap };
       });
     } else {
       const finalMap = /* @__PURE__ */ new Map();
       for (const pair of pairs) {
-        const key2 = pair.key;
+        const key3 = pair.key;
         const value = pair.value;
-        if (key2.status === "aborted" || value.status === "aborted") {
+        if (key3.status === "aborted" || value.status === "aborted") {
           return INVALID2;
         }
-        if (key2.status === "dirty" || value.status === "dirty") {
+        if (key3.status === "dirty" || value.status === "dirty") {
           status.dirty();
         }
-        finalMap.set(key2.value, value.value);
+        finalMap.set(key3.value, value.value);
       }
       return { status: status.value, value: finalMap };
     }
@@ -38288,19 +38482,19 @@ var getRefs = (options) => {
 };
 
 // node_modules/zod-to-json-schema/dist/esm/errorMessages.js
-function addErrorMessage(res, key2, errorMessage, refs) {
+function addErrorMessage(res, key3, errorMessage, refs) {
   if (!refs?.errorMessages)
     return;
   if (errorMessage) {
     res.errorMessage = {
       ...res.errorMessage,
-      [key2]: errorMessage
+      [key3]: errorMessage
     };
   }
 }
-function setResponseValueAndErrors(res, key2, value, errorMessage, refs) {
-  res[key2] = value;
-  addErrorMessage(res, key2, errorMessage, refs);
+function setResponseValueAndErrors(res, key3, value, errorMessage, refs) {
+  res[key3] = value;
+  addErrorMessage(res, key3, errorMessage, refs);
 }
 
 // node_modules/zod-to-json-schema/dist/esm/getRelativePath.js
@@ -38892,11 +39086,11 @@ function parseRecordDef(def, refs) {
     return {
       type: "object",
       required: def.keyType._def.values,
-      properties: def.keyType._def.values.reduce((acc, key2) => ({
+      properties: def.keyType._def.values.reduce((acc, key3) => ({
         ...acc,
-        [key2]: parseDef(def.valueType._def, {
+        [key3]: parseDef(def.valueType._def, {
           ...refs,
-          currentPath: [...refs.currentPath, "properties", key2]
+          currentPath: [...refs.currentPath, "properties", key3]
         }) ?? parseAnyDef(refs)
       }), {}),
       additionalProperties: refs.rejectedAdditionalProperties
@@ -38963,10 +39157,10 @@ function parseMapDef(def, refs) {
 // node_modules/zod-to-json-schema/dist/esm/parsers/nativeEnum.js
 function parseNativeEnumDef(def) {
   const object4 = def.values;
-  const actualKeys = Object.keys(def.values).filter((key2) => {
-    return typeof object4[object4[key2]] !== "number";
+  const actualKeys = Object.keys(def.values).filter((key3) => {
+    return typeof object4[object4[key3]] !== "number";
   });
-  const actualValues = actualKeys.map((key2) => object4[key2]);
+  const actualValues = actualKeys.map((key3) => object4[key3]);
   const parsedTypes = Array.from(new Set(actualValues.map((values) => typeof values)));
   return {
     type: parsedTypes.length === 1 ? parsedTypes[0] === "string" ? "string" : "number" : ["string", "number"],
@@ -40058,7 +40252,7 @@ var Protocol = class {
           return;
         }
         const pollInterval = task2.pollInterval ?? this._options?.defaultTaskPollInterval ?? 1e3;
-        await new Promise((resolve14) => setTimeout(resolve14, pollInterval));
+        await new Promise((resolve17) => setTimeout(resolve17, pollInterval));
         options?.signal?.throwIfAborted();
       }
     } catch (error62) {
@@ -40075,7 +40269,7 @@ var Protocol = class {
    */
   request(request2, resultSchema, options) {
     const { relatedRequestId, resumptionToken, onresumptiontoken, task, relatedTask } = options ?? {};
-    return new Promise((resolve14, reject) => {
+    return new Promise((resolve17, reject) => {
       const earlyReject = (error62) => {
         reject(error62);
       };
@@ -40153,7 +40347,7 @@ var Protocol = class {
           if (!parseResult.success) {
             reject(parseResult.error);
           } else {
-            resolve14(parseResult.data);
+            resolve17(parseResult.data);
           }
         } catch (error62) {
           reject(error62);
@@ -40414,12 +40608,12 @@ var Protocol = class {
       }
     } catch {
     }
-    return new Promise((resolve14, reject) => {
+    return new Promise((resolve17, reject) => {
       if (signal.aborted) {
         reject(new McpError(ErrorCode.InvalidRequest, "Request cancelled"));
         return;
       }
-      const timeoutId = setTimeout(resolve14, interval);
+      const timeoutId = setTimeout(resolve17, interval);
       signal.addEventListener("abort", () => {
         clearTimeout(timeoutId);
         reject(new McpError(ErrorCode.InvalidRequest, "Request cancelled"));
@@ -40497,8 +40691,8 @@ function isPlainObject2(value) {
 }
 function mergeCapabilities(base2, additional) {
   const result = { ...base2 };
-  for (const key2 in additional) {
-    const k = key2;
+  for (const key3 in additional) {
+    const k = key3;
     const addValue = additional[k];
     if (addValue === void 0)
       continue;
@@ -41510,7 +41704,7 @@ var McpServer = class {
     let task = createTaskResult.task;
     const pollInterval = task.pollInterval ?? 5e3;
     while (task.status !== "completed" && task.status !== "failed" && task.status !== "cancelled") {
-      await new Promise((resolve14) => setTimeout(resolve14, pollInterval));
+      await new Promise((resolve17) => setTimeout(resolve17, pollInterval));
       const updatedTask = await extra.taskStore.getTask(taskId);
       if (!updatedTask) {
         throw new McpError(ErrorCode.InternalError, `Task ${taskId} not found during polling`);
@@ -42174,12 +42368,12 @@ var StdioServerTransport = class {
     this.onclose?.();
   }
   send(message) {
-    return new Promise((resolve14) => {
+    return new Promise((resolve17) => {
       const json2 = serializeMessage(message);
       if (this._stdout.write(json2)) {
-        resolve14();
+        resolve17();
       } else {
-        this._stdout.once("drain", resolve14);
+        this._stdout.once("drain", resolve17);
       }
     });
   }
@@ -42187,7 +42381,7 @@ var StdioServerTransport = class {
 
 // src/mcp/remote-ask.ts
 import { setTimeout as delay3 } from "node:timers/promises";
-import { randomUUID as randomUUID7 } from "node:crypto";
+import { randomUUID as randomUUID8 } from "node:crypto";
 
 // src/network/remote-job-protocol.ts
 var REMOTE_JOB_CAPABILITY = "remote-jobs-v1";
@@ -42288,7 +42482,7 @@ async function runRemoteAsk(node2, target, args, job, signal, onProgress) {
       });
     };
     job.live = { post: (body) => {
-      void node2.remoteJob(host, { op: "control", job: job.id, control: { type: "message", body, cid: randomUUID7() } }).catch(() => {
+      void node2.remoteJob(host, { op: "control", job: job.id, control: { type: "message", body, cid: randomUUID8() } }).catch(() => {
       });
     } };
     for (; ; ) {
@@ -42327,7 +42521,7 @@ var BLOCKING_LIMIT_TYPES = /* @__PURE__ */ new Set([
 var FULL_USAGE_PERCENT = 100;
 var CREDIT_SIGNIFICANT_DIGITS = 3;
 function capture(bin, args, cwd, log, stdin) {
-  return new Promise((resolve14, reject) => {
+  return new Promise((resolve17, reject) => {
     const env = childEnv();
     let cmd;
     try {
@@ -42350,8 +42544,8 @@ function capture(bin, args, cwd, log, stdin) {
     child.stdout.setEncoding("utf8").on("data", (d) => out += d);
     child.stderr.setEncoding("utf8").on("data", (d) => err += d);
     child.on("error", (e) => finish(() => reject(e)));
-    child.on("close", (code) => finish(() => code === 0 || out ? resolve14(out) : reject(new Error(err.trim().slice(-300) || `exit code ${code}`))));
-    if (stdin) stdin((s) => child.stdin.write(s), () => out, () => finish(() => resolve14(out)));
+    child.on("close", (code) => finish(() => code === 0 || out ? resolve17(out) : reject(new Error(err.trim().slice(-300) || `exit code ${code}`))));
+    if (stdin) stdin((s) => child.stdin.write(s), () => out, () => finish(() => resolve17(out)));
     else child.stdin.end();
   });
 }
@@ -42622,9 +42816,9 @@ var en = {
 };
 
 // src/core/i18n.ts
-function t(key2, params = {}) {
+function t(key3, params = {}) {
   const nf = new Intl.NumberFormat();
-  return en[key2].replace(/\{(\w+)\}/g, (match, name2) => {
+  return en[key3].replace(/\{(\w+)\}/g, (match, name2) => {
     const value = params[name2];
     if (value === void 0) return match;
     return typeof value === "number" ? nf.format(value) : value;
@@ -42632,27 +42826,27 @@ function t(key2, params = {}) {
 }
 
 // src/core/node.ts
-import { randomUUID as randomUUID20 } from "node:crypto";
+import { randomUUID as randomUUID21 } from "node:crypto";
 import { EventEmitter as EventEmitter2 } from "node:events";
 import { unlinkSync as unlinkSync2 } from "node:fs";
-import { dirname as dirname17, join as join44 } from "node:path";
+import { dirname as dirname19, join as join47 } from "node:path";
 
 // src/core/history.ts
-import { createHash as createHash8 } from "node:crypto";
-import { closeSync as closeSync7, existsSync as existsSync12, fstatSync as fstatSync2, openSync as openSync7, opendirSync, readSync as readSync2 } from "node:fs";
-import { basename as basename7, dirname as dirname12, join as join31 } from "node:path";
+import { createHash as createHash9 } from "node:crypto";
+import { closeSync as closeSync7, existsSync as existsSync13, fstatSync as fstatSync2, openSync as openSync7, opendirSync, readSync as readSync2 } from "node:fs";
+import { basename as basename7, dirname as dirname14, join as join34 } from "node:path";
 import { DatabaseSync as DatabaseSync8 } from "node:sqlite";
 
 // src/core/transcripts/claude.ts
-import { dirname as dirname11, join as join28 } from "node:path";
+import { dirname as dirname13, join as join31 } from "node:path";
 function claudeSessionFile(session, paths) {
   if (!session.sessionId || !TRANSCRIPT_ID.test(session.sessionId)) return null;
-  const projects = join28(paths.claude, "projects");
+  const projects = join31(paths.claude, "projects");
   const encoded = session.cwd.replace(/[^A-Za-z0-9]/g, "-");
-  const direct = safeFile(projects, join28(projects, encoded, `${session.sessionId}.jsonl`));
+  const direct = safeFile(projects, join31(projects, encoded, `${session.sessionId}.jsonl`));
   if (direct) return direct;
   for (const dir of directory(projects)) {
-    const file2 = safeFile(projects, join28(projects, dir, `${session.sessionId}.jsonl`));
+    const file2 = safeFile(projects, join31(projects, dir, `${session.sessionId}.jsonl`));
     if (file2) return file2;
   }
   return null;
@@ -42678,7 +42872,7 @@ function claudeItems(row) {
 function readClaudeChat(session, paths, from = "0", child) {
   const main = claudeSessionFile(session, paths);
   if (!main || child !== void 0 && !TRANSCRIPT_ID.test(child)) return null;
-  const nested = child ? safeFile(paths.claude, join28(dirname11(main), session.sessionId, "subagents", `agent-${child}.jsonl`)) : null;
+  const nested = child ? safeFile(paths.claude, join31(dirname13(main), session.sessionId, "subagents", `agent-${child}.jsonl`)) : null;
   const legacy = child && !nested ? listClaudeSubagents(session, paths).some((s) => s.id === child) : false;
   if (child && !nested && !legacy) return null;
   const page = readJsonl(nested ?? main, from);
@@ -42688,11 +42882,11 @@ function listClaudeSubagents(session, paths) {
   const main = claudeSessionFile(session, paths);
   if (!main) return [];
   const out = /* @__PURE__ */ new Map();
-  const dir = join28(dirname11(main), session.sessionId, "subagents");
+  const dir = join31(dirname13(main), session.sessionId, "subagents");
   for (const name2 of directory(dir).slice(0, MAX_NATIVE_SUBAGENTS)) {
     const id = /^agent-([A-Za-z0-9_-]+)\.jsonl$/.exec(name2)?.[1];
     if (!id || !TRANSCRIPT_ID.test(id)) continue;
-    const file2 = safeFile(paths.claude, join28(dir, name2));
+    const file2 = safeFile(paths.claude, join31(dir, name2));
     if (!file2) continue;
     const st = fileStat(file2), head = readHead(file2), tail = readTail(file2);
     const last = [...tail].reverse().find((r) => r.type === "assistant");
@@ -42710,7 +42904,7 @@ function listClaudeSubagents(session, paths) {
 }
 
 // src/core/transcripts/codex.ts
-import { join as join29 } from "node:path";
+import { join as join32 } from "node:path";
 import { DatabaseSync as DatabaseSync6 } from "node:sqlite";
 var ROLLOUT_NAME = /^rollout-.*-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/i;
 var DISCOVERY_CACHE_MS = 1e4;
@@ -42719,12 +42913,12 @@ var cache3 = /* @__PURE__ */ new Map();
 function rollout(file2, id, known) {
   const head = known && Object.keys(known).length ? known : object(readHead(file2).payload);
   const data = head.id === id ? head : object(readJsonl(file2).entries.find(({ value: r }) => r.type === "session_meta" && object(r.payload).id === id)?.value.payload);
-  return { file: file2, id, meta: Object.fromEntries(["id", "source", "thread_source", "parent_thread_id", "timestamp", "agent_nickname", "agent_path", "subagent_history_start_ordinal"].filter((key2) => data[key2] !== void 0).map((key2) => [key2, data[key2]])) };
+  return { file: file2, id, meta: Object.fromEntries(["id", "source", "thread_source", "parent_thread_id", "timestamp", "agent_nickname", "agent_path", "subagent_history_start_ordinal"].filter((key3) => data[key3] !== void 0).map((key3) => [key3, data[key3]])) };
 }
 function indexedRollouts(paths, id, parentId) {
   const name2 = directory(paths.codex).filter((s) => /^state_\d+\.sqlite$/.test(s)).sort((a, b) => Number(b.match(/\d+/)?.[0]) - Number(a.match(/\d+/)?.[0]))[0];
   if (!name2) return null;
-  const file2 = safeFile(paths.codex, join29(paths.codex, name2));
+  const file2 = safeFile(paths.codex, join32(paths.codex, name2));
   if (!file2) return null;
   let db;
   try {
@@ -42734,7 +42928,7 @@ function indexedRollouts(paths, id, parentId) {
     const out = [];
     for (const row of rows) {
       if (typeof row.id !== "string" || !TRANSCRIPT_ID.test(row.id) || typeof row.path !== "string") continue;
-      const target = safeFile(join29(paths.codex, "sessions"), row.path);
+      const target = safeFile(join32(paths.codex, "sessions"), row.path);
       if (!target) continue;
       const entry = rollout(target, row.id);
       if (entry.meta.id === row.id && (!parentId || parent(entry.meta) === parentId)) out.push(entry);
@@ -42747,17 +42941,17 @@ function indexedRollouts(paths, id, parentId) {
   }
 }
 function rollouts(paths) {
-  const root = join29(paths.codex, "sessions"), existing = cache3.get(root);
+  const root = join32(paths.codex, "sessions"), existing = cache3.get(root);
   if (existing && Date.now() - existing.at < DISCOVERY_CACHE_MS) return existing.files;
   const files2 = [];
   const knownFiles = new Map(existing?.files.map((r) => [r.file, r]));
   for (const year of directory(root).filter((s) => /^\d{4}$/.test(s)).sort().reverse()) {
-    for (const month of directory(join29(root, year)).filter((s) => /^\d{2}$/.test(s)).sort().reverse()) {
-      for (const day of directory(join29(root, year, month)).filter((s) => /^\d{2}$/.test(s)).sort().reverse()) {
-        for (const name2 of directory(join29(root, year, month, day)).sort().reverse()) {
+    for (const month of directory(join32(root, year)).filter((s) => /^\d{2}$/.test(s)).sort().reverse()) {
+      for (const day of directory(join32(root, year, month)).filter((s) => /^\d{2}$/.test(s)).sort().reverse()) {
+        for (const name2 of directory(join32(root, year, month, day)).sort().reverse()) {
           const id = ROLLOUT_NAME.exec(name2)?.[1];
           if (!id) continue;
-          const file2 = safeFile(root, join29(root, year, month, day, name2));
+          const file2 = safeFile(root, join32(root, year, month, day, name2));
           if (!file2) continue;
           const known = knownFiles.get(file2);
           files2.push(rollout(file2, id, known?.meta));
@@ -42814,12 +43008,12 @@ function listCodexSubagents(session, paths) {
 }
 
 // src/core/transcripts/opencode.ts
-import { join as join30 } from "node:path";
+import { join as join33 } from "node:path";
 import { DatabaseSync as DatabaseSync7 } from "node:sqlite";
 var MAX_SQLITE_PARTS = 200;
 var SQLITE_CURSOR = /^o:(\d+):([A-Za-z0-9_-]*)$/;
 function openDatabase(paths) {
-  const file2 = safeFile(paths.opencode, join30(paths.opencode, "opencode.db"));
+  const file2 = safeFile(paths.opencode, join33(paths.opencode, "opencode.db"));
   if (!file2) return null;
   try {
     return new DatabaseSync7(file2, { readOnly: true, timeout: SQLITE_READ_TIMEOUT_MS });
@@ -43055,8 +43249,8 @@ ${row.body}`,
         }, [row.author_id, row.author_name, ...sessions]);
       });
       if (this.home) {
-        const archivePath = join31(this.home, ARCHIVE_DB_NAME);
-        if (existsSync12(archivePath)) {
+        const archivePath = join34(this.home, ARCHIVE_DB_NAME);
+        if (existsSync13(archivePath)) {
           const archive = new DatabaseSync8(archivePath, { readOnly: true, timeout: HISTORY_READ_TIMEOUT_MS });
           try {
             work += this.rows("archive", archive, "messages", (row) => this.message(row));
@@ -43090,9 +43284,9 @@ ${row.body}`,
       this.lastDiscovery = Date.now();
       this.opencodeComplete = false;
       this.queue = [
-        { path: join31(this.home, "runs"), root: join31(this.home, "runs"), kind: "run", agent: "other" },
-        { path: join31(this.paths.claude, "projects"), root: this.paths.claude, kind: "transcript", agent: "claude" },
-        ...["sessions", "archived_sessions"].map((dir) => ({ path: join31(this.paths.codex, dir), root: this.paths.codex, kind: "transcript", agent: "codex" }))
+        { path: join34(this.home, "runs"), root: join34(this.home, "runs"), kind: "run", agent: "other" },
+        { path: join34(this.paths.claude, "projects"), root: this.paths.claude, kind: "transcript", agent: "claude" },
+        ...["sessions", "archived_sessions"].map((dir) => ({ path: join34(this.paths.codex, dir), root: this.paths.codex, kind: "transcript", agent: "codex" }))
       ];
     }
     let work = 0;
@@ -43112,7 +43306,7 @@ ${row.body}`,
         this.walk = null;
         continue;
       }
-      const path2 = join31(entry.path, item.name);
+      const path2 = join34(entry.path, item.name);
       if (item.isDirectory()) {
         this.queue.push({ ...entry, path: path2 });
         continue;
@@ -43126,10 +43320,10 @@ ${row.body}`,
         const id = rolloutId ?? (typeof meta3.id === "string" ? meta3.id : typeof meta3.sessionId === "string" ? meta3.sessionId : basename7(path2, ".jsonl"));
         if (!TRANSCRIPT_ID.test(id)) continue;
         const child = entry.agent === "claude" && basename7(entry.path) === "subagents" ? basename7(path2, ".jsonl").replace(/^agent-/, "") : null;
-        this.register({ path: path2, kind: "transcript", agent: entry.agent, session: child ? basename7(dirname12(entry.path)) : id, cwd: typeof meta3.cwd === "string" ? meta3.cwd : "", child });
+        this.register({ path: path2, kind: "transcript", agent: entry.agent, session: child ? basename7(dirname14(entry.path)) : id, cwd: typeof meta3.cwd === "string" ? meta3.cwd : "", child });
       }
     }
-    const path = safeFile(this.paths.opencode, join31(this.paths.opencode, "opencode.db"));
+    const path = safeFile(this.paths.opencode, join34(this.paths.opencode, "opencode.db"));
     if (path && !this.opencodeComplete) {
       const db = new DatabaseSync8(path, { readOnly: true, timeout: HISTORY_READ_TIMEOUT_MS });
       try {
@@ -43165,7 +43359,7 @@ ${row.body}`,
   }
   indexFile(file2) {
     if (file2.agent !== "opencode") {
-      const root = file2.kind === "run" ? join31(this.home, "runs") : this.paths[file2.agent];
+      const root = file2.kind === "run" ? join34(this.home, "runs") : this.paths[file2.agent];
       if (!safeFile(root, file2.path)) return 0;
     }
     const from = this.cursor(file2.path);
@@ -43201,7 +43395,7 @@ ${row.body}`,
       let meta3 = {};
       let metaText = "";
       const metaPath = file2.path.replace(/\.log(?:-\d+-[\w-]+)?$/, ".json");
-      const safeMeta = safeFile(join31(this.home, "runs"), metaPath);
+      const safeMeta = safeFile(join34(this.home, "runs"), metaPath);
       if (safeMeta) {
         const metaFd = openSync7(safeMeta, "r");
         try {
@@ -43222,7 +43416,7 @@ ${row.body}`,
       if (session) this.rememberSession(session, session, job);
       let metadataChanged = 0;
       if (Object.keys(meta3).length) {
-        const hash2 = createHash8("sha256").update(metaText).digest("hex"), source = `metadata:${metaPath}`;
+        const hash2 = createHash9("sha256").update(metaText).digest("hex"), source = `metadata:${metaPath}`;
         if (hash2 !== this.cursor(source)) {
           this.put({
             id: `run:${run}:metadata`,
@@ -43279,16 +43473,16 @@ ${buffer.subarray(0, length).toString("utf8")}`,
       where.push("instr(d.folded,?)>0");
       values.push(token);
     }
-    for (const [key2, value] of Object.entries(args.filters ?? {})) {
-      if (["session", "job"].includes(key2)) {
+    for (const [key3, value] of Object.entries(args.filters ?? {})) {
+      if (["session", "job"].includes(key3)) {
         where.push(`EXISTS (SELECT 1 FROM history_tags t WHERE t.id=d.id AND
-          ((t.type=? AND t.value=?) OR (t.type='session' AND EXISTS (SELECT 1 FROM history_sessions s WHERE s.alias=t.value AND s.${key2 === "session" ? "session" : "job"}=?))))`);
-        values.push(key2, value, value);
-      } else if (key2 === "since" || key2 === "until") {
-        where.push(`d.at ${key2 === "since" ? ">=" : "<="} ?`);
+          ((t.type=? AND t.value=?) OR (t.type='session' AND EXISTS (SELECT 1 FROM history_sessions s WHERE s.alias=t.value AND s.${key3 === "session" ? "session" : "job"}=?))))`);
+        values.push(key3, value, value);
+      } else if (key3 === "since" || key3 === "until") {
+        where.push(`d.at ${key3 === "since" ? ">=" : "<="} ?`);
         values.push(value);
       } else {
-        where.push(`d.${key2}=?`);
+        where.push(`d.${key3}=?`);
         values.push(value);
       }
     }
@@ -43328,7 +43522,7 @@ ${buffer.subarray(0, length).toString("utf8")}`,
 };
 function readHistory(file2, input2) {
   historySearchSchema.parse(input2);
-  if (!existsSync12(file2)) return { engine: "plain", hits: [] };
+  if (!existsSync13(file2)) return { engine: "plain", hits: [] };
   const db = new DatabaseSync8(file2, { readOnly: true, timeout: HISTORY_READ_TIMEOUT_MS });
   try {
     if (!db.prepare("SELECT name FROM sqlite_master WHERE name='history_documents'").get()) return { engine: "plain", hits: [] };
@@ -43338,7 +43532,7 @@ function readHistory(file2, input2) {
   }
 }
 function readHistorySource(file2, id) {
-  if (!existsSync12(file2)) return null;
+  if (!existsSync13(file2)) return null;
   const db = new DatabaseSync8(file2, { readOnly: true, timeout: HISTORY_READ_TIMEOUT_MS });
   try {
     if (!db.prepare("SELECT name FROM sqlite_master WHERE name='history_documents'").get()) return null;
@@ -43349,18 +43543,18 @@ function readHistorySource(file2, id) {
 }
 
 // src/core/broker.ts
-import { randomUUID as randomUUID18 } from "node:crypto";
+import { randomUUID as randomUUID19 } from "node:crypto";
 import { createServer as createServer4 } from "node:net";
 
 // src/core/store.ts
-import { existsSync as existsSync15, mkdirSync as mkdirSync16, realpathSync as realpathSync8 } from "node:fs";
-import { dirname as dirname14, resolve as resolve9 } from "node:path";
+import { existsSync as existsSync16, mkdirSync as mkdirSync17, realpathSync as realpathSync8 } from "node:fs";
+import { dirname as dirname16, resolve as resolve12 } from "node:path";
 import { DatabaseSync as DatabaseSync11 } from "node:sqlite";
 
 // src/core/backups.ts
-import { createHash as createHash9, randomUUID as randomUUID8 } from "node:crypto";
-import { closeSync as closeSync8, copyFileSync as copyFileSync4, existsSync as existsSync13, fsyncSync as fsyncSync3, lstatSync as lstatSync3, mkdirSync as mkdirSync15, openSync as openSync8, readFileSync as readFileSync16, readdirSync as readdirSync11, renameSync as renameSync4, writeFileSync as writeFileSync5 } from "node:fs";
-import { dirname as dirname13, join as join32, relative as relative5, resolve as resolve7, sep as sep4 } from "node:path";
+import { createHash as createHash10, randomUUID as randomUUID9 } from "node:crypto";
+import { closeSync as closeSync8, copyFileSync as copyFileSync4, existsSync as existsSync14, fsyncSync as fsyncSync3, lstatSync as lstatSync6, mkdirSync as mkdirSync16, openSync as openSync8, readFileSync as readFileSync16, readdirSync as readdirSync12, renameSync as renameSync4, writeFileSync as writeFileSync5 } from "node:fs";
+import { dirname as dirname15, join as join35, relative as relative6, resolve as resolve10, sep as sep5 } from "node:path";
 var BACKUPS_DIR_NAME = "backups";
 var BACKUP_MANIFEST_VERSION = 1;
 var DEFAULT_BACKUP_RETENTION = 7;
@@ -43378,31 +43572,31 @@ function syncFile(path) {
   }
 }
 function jsonStoreFiles(home) {
-  if (!existsSync13(home)) return [];
+  if (!existsSync14(home)) return [];
   const files2 = [];
   const visit2 = (dir, recurse) => {
-    if (!existsSync13(dir)) return;
-    const root = lstatSync3(dir);
+    if (!existsSync14(dir)) return;
+    const root = lstatSync6(dir);
     if (root.isSymbolicLink() || !root.isDirectory()) return;
-    for (const name2 of readdirSync11(dir).sort()) {
-      const path = join32(dir, name2);
-      const st = lstatSync3(path);
+    for (const name2 of readdirSync12(dir).sort()) {
+      const path = join35(dir, name2);
+      const st = lstatSync6(path);
       if (st.isSymbolicLink()) continue;
       if (st.isDirectory() && recurse) visit2(path, true);
       else if (st.isFile() && name2 !== "dashboard.json" && /\.jsonl?(?:-\d+-[\w-]+)?$/.test(name2)) files2.push(path);
     }
   };
   visit2(home, false);
-  for (const dir of ["jobs", "runs", "archive", "read-state", "job-outcomes", "local-result-receipts"]) visit2(join32(home, dir), true);
+  for (const dir of ["jobs", "runs", "archive", "read-state", "job-outcomes", "local-result-receipts"]) visit2(join35(home, dir), true);
   return files2;
 }
 function listBackups(home) {
-  const dir = join32(home, BACKUPS_DIR_NAME);
-  if (!existsSync13(dir)) return [];
-  return readdirSync11(dir).filter((f) => f.startsWith(BACKUP_PREFIX)).flatMap((f) => {
-    const path = join32(dir, f);
+  const dir = join35(home, BACKUPS_DIR_NAME);
+  if (!existsSync14(dir)) return [];
+  return readdirSync12(dir).filter((f) => f.startsWith(BACKUP_PREFIX)).flatMap((f) => {
+    const path = join35(dir, f);
     try {
-      const manifest = JSON.parse(readFileSync16(join32(path, MANIFEST_NAME), "utf8"));
+      const manifest = JSON.parse(readFileSync16(join35(path, MANIFEST_NAME), "utf8"));
       return [{ path, createdAt: manifest.createdAt }];
     } catch {
       return [];
@@ -43418,34 +43612,34 @@ function createBackup(home, now = Date.now(), rotate = true) {
   }
 }
 function createBackupUnlocked(home, now, rotate) {
-  const root = join32(home, BACKUPS_DIR_NAME);
-  mkdirSync15(root, { recursive: true, mode: 448 });
-  const name2 = `${BACKUP_PREFIX}${String(now).padStart(13, "0")}-${randomUUID8()}`;
-  const staging = join32(root, `.pending-${name2}`);
-  mkdirSync15(staging, { mode: 448 });
+  const root = join35(home, BACKUPS_DIR_NAME);
+  mkdirSync16(root, { recursive: true, mode: 448 });
+  const name2 = `${BACKUP_PREFIX}${String(now).padStart(13, "0")}-${randomUUID9()}`;
+  const staging = join35(root, `.pending-${name2}`);
+  mkdirSync16(staging, { mode: 448 });
   const manifest = { version: BACKUP_MANIFEST_VERSION, createdAt: now, files: [] };
   const capture2 = (source, sqlite) => {
-    const path = relative5(home, source).split(sep4).join("/");
-    const target = join32(staging, path);
-    mkdirSync15(dirname13(target), { recursive: true, mode: 448 });
+    const path = relative6(home, source).split(sep5).join("/");
+    const target = join35(staging, path);
+    mkdirSync16(dirname15(target), { recursive: true, mode: 448 });
     if (sqlite) snapshotDatabase(source, target);
     else copyFileSync4(source, target);
     syncFile(target);
     const raw = readFileSync16(target);
-    manifest.files.push({ path, sha256: createHash9("sha256").update(raw).digest("hex"), bytes: raw.length });
+    manifest.files.push({ path, sha256: createHash10("sha256").update(raw).digest("hex"), bytes: raw.length });
   };
-  for (const name3 of [DB_FILE_NAME, ARCHIVE_DB_NAME]) if (existsSync13(join32(home, name3))) capture2(join32(home, name3), true);
+  for (const name3 of [DB_FILE_NAME, ARCHIVE_DB_NAME]) if (existsSync14(join35(home, name3))) capture2(join35(home, name3), true);
   for (const file2 of jsonStoreFiles(home)) capture2(file2, false);
-  writeFileSync5(join32(staging, MANIFEST_NAME), JSON.stringify(manifest, null, 2) + "\n", { mode: 384 });
-  syncFile(join32(staging, MANIFEST_NAME));
-  const published = join32(root, name2);
+  writeFileSync5(join35(staging, MANIFEST_NAME), JSON.stringify(manifest, null, 2) + "\n", { mode: 384 });
+  syncFile(join35(staging, MANIFEST_NAME));
+  const published = join35(root, name2);
   renameSync4(staging, published);
   if (rotate) {
     const retention = retentionLimit(BACKUP_RETENTION_ENV, DEFAULT_BACKUP_RETENTION);
     if (retention) for (const backup of listBackups(home).slice(retention)) {
-      const cold = join32(root, "archive");
-      mkdirSync15(cold, { recursive: true, mode: 448 });
-      renameSync4(backup.path, join32(cold, backup.path.split(/[\\/]/).at(-1)));
+      const cold = join35(root, "archive");
+      mkdirSync16(cold, { recursive: true, mode: 448 });
+      renameSync4(backup.path, join35(cold, backup.path.split(/[\\/]/).at(-1)));
     }
   }
   return published;
@@ -43508,9 +43702,9 @@ PRAGMA user_version = 4;
 }
 
 // src/core/decisions.ts
-import { randomUUID as randomUUID9 } from "node:crypto";
-import { existsSync as existsSync14 } from "node:fs";
-import { resolve as resolve8 } from "node:path";
+import { randomUUID as randomUUID10 } from "node:crypto";
+import { existsSync as existsSync15 } from "node:fs";
+import { resolve as resolve11 } from "node:path";
 import { DatabaseSync as DatabaseSync10 } from "node:sqlite";
 var MAX_DECISION_TOPIC_CHARS = 160;
 var MAX_DECISION_TEXT_CHARS = MAX_BODY_CHARS - 1024;
@@ -43549,7 +43743,7 @@ CREATE TABLE decision_deliveries (
 );
 `;
 function normalizeProject(folder) {
-  const path = resolve8(folder).replace(/\\/g, "/").replace(/\/+$/, "");
+  const path = resolve11(folder).replace(/\\/g, "/").replace(/\/+$/, "");
   return process.platform === "win32" ? path.toLowerCase() : path;
 }
 function normalizeScope(scope) {
@@ -43578,7 +43772,7 @@ var DecisionStore = class {
   db;
   record(args, author, at) {
     const topic = args.topic.trim().toLowerCase();
-    const id = randomUUID9();
+    const id = randomUUID10();
     this.db.exec("BEGIN IMMEDIATE");
     try {
       const previous = this.db.prepare("SELECT id FROM decisions WHERE topic = ? ORDER BY revision DESC LIMIT 1").get(topic);
@@ -43635,7 +43829,7 @@ function formatDecisionSummary(decisions) {
   return [`Current owner decisions (${decisions.length}; call decisions for full text):`, ...lines].join("\n");
 }
 function readDecisions(dbPath, args = {}) {
-  if (!existsSync14(dbPath)) return [];
+  if (!existsSync15(dbPath)) return [];
   const db = new DatabaseSync10(dbPath, { readOnly: true });
   try {
     if (!db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'decisions'").get()) return [];
@@ -43720,7 +43914,7 @@ var MIGRATIONS = [
 ];
 function registrationIdentity(peer) {
   if (peer.jobAgent || !Number.isSafeInteger(peer.agentPid) || !peer.agentPid || peer.agentPid <= 0 || !peer.agentStartedAt) return null;
-  let cwd = resolve9(peer.cwd);
+  let cwd = resolve12(peer.cwd);
   try {
     cwd = realpathSync8.native(cwd);
   } catch {
@@ -43745,11 +43939,11 @@ function toMessage(r) {
 var MessageStore = class {
   constructor(file2, log) {
     this.log = log;
-    const existed = file2 !== ":memory:" && existsSync15(file2);
-    this.home = file2 === ":memory:" ? null : dirname14(file2);
-    if (file2 !== ":memory:") mkdirSync16(dirname14(file2), { recursive: true, mode: 448 });
+    const existed = file2 !== ":memory:" && existsSync16(file2);
+    this.home = file2 === ":memory:" ? null : dirname16(file2);
+    if (file2 !== ":memory:") mkdirSync17(dirname16(file2), { recursive: true, mode: 448 });
     this.release = file2 === ":memory:" ? () => {
-    } : storageLease(dirname14(file2));
+    } : storageLease(dirname16(file2));
     try {
       this.db = new DatabaseSync11(file2);
     } catch (err) {
@@ -43798,7 +43992,7 @@ var MessageStore = class {
     log.debug("message store opened", { file: file2 });
     if (file2 !== ":memory:") {
       try {
-        backupIfDue(dirname14(file2));
+        backupIfDue(dirname16(file2));
       } catch (err) {
         log.warn("automatic backup failed", { err: String(err) });
       }
@@ -43806,7 +44000,7 @@ var MessageStore = class {
       if (interval) {
         this.backupTimer = setInterval(() => {
           try {
-            backupIfDue(dirname14(file2));
+            backupIfDue(dirname16(file2));
           } catch (err) {
             log.warn("automatic backup failed", { err: String(err) });
           }
@@ -43993,7 +44187,7 @@ var MessageStore = class {
 };
 
 // src/core/job-handoff.ts
-import { randomUUID as randomUUID10 } from "node:crypto";
+import { randomUUID as randomUUID11 } from "node:crypto";
 import { readFileSync as readFileSync17 } from "node:fs";
 var handoffSchema = external_exports.object({
   to: external_exports.string().min(1).max(64),
@@ -44044,7 +44238,7 @@ function commitHandoff(path, source, target, input2, options = {}) {
     const existing = records.find((j) => j.owner === target.name && !j.parentJob && j.supervisor);
     const rootSession = existing?.supervisor ?? target.sessionId ?? target.id;
     const receipt = {
-      id: randomUUID10(),
+      id: randomUUID11(),
       at: Date.now(),
       from: source.name,
       to: target.name,
@@ -44112,7 +44306,7 @@ function migrateJobOwnership(previous) {
 }
 
 // src/network/link.ts
-import { randomBytes as randomBytes6, randomUUID as randomUUID14 } from "node:crypto";
+import { randomBytes as randomBytes6, randomUUID as randomUUID15 } from "node:crypto";
 import { connect, createServer as createServer3 } from "node:tls";
 
 // src/network/discovery.ts
@@ -44122,13 +44316,13 @@ import { networkInterfaces } from "node:os";
 
 // src/network/pairing.ts
 import { execFileSync as execFileSync3 } from "node:child_process";
-import { createHash as createHash10, randomBytes as randomBytes5, randomUUID as randomUUID11 } from "node:crypto";
-import { chmodSync as chmodSync2, existsSync as existsSync16, mkdirSync as mkdirSync17, readFileSync as readFileSync18, renameSync as renameSync5, writeFileSync as writeFileSync6 } from "node:fs";
-import { join as join33 } from "node:path";
+import { createHash as createHash11, randomBytes as randomBytes5, randomUUID as randomUUID12 } from "node:crypto";
+import { chmodSync as chmodSync2, existsSync as existsSync17, mkdirSync as mkdirSync18, readFileSync as readFileSync18, renameSync as renameSync5, writeFileSync as writeFileSync6 } from "node:fs";
+import { join as join36 } from "node:path";
 var DEFAULT_SYSTEM_ROOT = "C:\\Windows";
-var SYSTEM32 = join33(process.env.SystemRoot || DEFAULT_SYSTEM_ROOT, "System32");
-var WHOAMI = join33(SYSTEM32, "whoami.exe");
-var ICACLS = join33(SYSTEM32, "icacls.exe");
+var SYSTEM32 = join36(process.env.SystemRoot || DEFAULT_SYSTEM_ROOT, "System32");
+var WHOAMI = join36(SYSTEM32, "whoami.exe");
+var ICACLS = join36(SYSTEM32, "icacls.exe");
 var keySchema = external_exports.string().regex(/^[0-9a-f]{64}$/);
 var identitySchema = external_exports.object({ id: external_exports.uuid(), key: keySchema });
 var publicIdentitySchema = external_exports.object({ id: external_exports.uuid(), name: external_exports.string().regex(NETWORK_NAME_PATTERN), fingerprint: keySchema });
@@ -44136,8 +44330,8 @@ var invitationSchema = external_exports.object({ key: keySchema, expiresAt: exte
 var pairSchema = publicIdentitySchema.extend({ key: keySchema, host: external_exports.string().min(1).max(MAX_NETWORK_HOST_CHARS).optional(), port: external_exports.number().int().min(1).max(MAX_PORT2).optional() });
 var stateSchema = external_exports.object({ identity: identitySchema, invitations: external_exports.array(invitationSchema).max(MAX_NETWORK_LINKS), pairs: external_exports.array(pairSchema).max(MAX_NETWORK_LINKS) });
 var codeSchema = publicIdentitySchema.extend({ v: external_exports.literal(NETWORK_VERSION), key: keySchema });
-function keyFingerprint(key2) {
-  return createHash10("sha256").update(Buffer.from(key2, "hex")).digest("hex");
+function keyFingerprint(key3) {
+  return createHash11("sha256").update(Buffer.from(key3, "hex")).digest("hex");
 }
 var ACL_PRINCIPAL = /([^\s:][^:]*?):\(/;
 function protect(path, mode) {
@@ -44160,15 +44354,15 @@ var PairingStore = class {
     this.name = name2;
     this.now = now;
     if (!NETWORK_NAME_PATTERN.test(name2)) throw new Error("invalid network instance name");
-    this.dir = join33(home, "network");
-    this.file = join33(this.dir, "keys.json");
-    mkdirSync17(this.dir, { recursive: true, mode: OWNER_DIR_MODE });
+    this.dir = join36(home, "network");
+    this.file = join36(this.dir, "keys.json");
+    mkdirSync18(this.dir, { recursive: true, mode: OWNER_DIR_MODE });
     protect(this.dir, OWNER_DIR_MODE);
-    if (existsSync16(this.file)) {
+    if (existsSync17(this.file)) {
       protect(this.file, OWNER_FILE_MODE);
       this.state = stateSchema.parse(JSON.parse(readFileSync18(this.file, "utf8")));
     } else {
-      this.state = { identity: { id: randomUUID11(), key: randomBytes5(PAIRING_KEY_BYTES).toString("hex") }, invitations: [], pairs: [] };
+      this.state = { identity: { id: randomUUID12(), key: randomBytes5(PAIRING_KEY_BYTES).toString("hex") }, invitations: [], pairs: [] };
       this.save();
     }
   }
@@ -44189,26 +44383,26 @@ var PairingStore = class {
   inviteWithExpiry() {
     this.state.invitations = this.state.invitations.filter((p) => p.expiresAt > this.now());
     if (this.state.invitations.length + this.state.pairs.length >= MAX_NETWORK_LINKS) throw new Error("network pairing limit reached");
-    const key2 = randomBytes5(PAIRING_KEY_BYTES).toString("hex");
+    const key3 = randomBytes5(PAIRING_KEY_BYTES).toString("hex");
     const expiresAt = this.now() + PAIRING_TTL_MS;
-    this.state.invitations.push({ key: key2, expiresAt });
+    this.state.invitations.push({ key: key3, expiresAt });
     this.save();
-    return { code: Buffer.from(JSON.stringify({ v: NETWORK_VERSION, ...this.identity, key: key2 })).toString("base64url"), expiresAt };
+    return { code: Buffer.from(JSON.stringify({ v: NETWORK_VERSION, ...this.identity, key: key3 })).toString("base64url"), expiresAt };
   }
   keyFor(identity) {
     return this.state.pairs.find((p) => keyFingerprint(p.key) === identity)?.key ?? this.state.invitations.find((p) => p.expiresAt > this.now() && keyFingerprint(p.key) === identity)?.key;
   }
-  accept(key2, remote) {
+  accept(key3, remote) {
     if (remote.id === this.identity.id || remote.name === this.name) throw new Error("network instance ids and names must differ");
-    const known = this.state.pairs.find((p) => p.key === key2);
+    const known = this.state.pairs.find((p) => p.key === key3);
     if (known) {
       if (known.id !== remote.id || known.name !== remote.name || known.fingerprint !== remote.fingerprint) throw new Error("paired identity changed");
       return known;
     }
-    const invitation = this.state.invitations.find((p) => p.key === key2 && p.expiresAt > this.now());
+    const invitation = this.state.invitations.find((p) => p.key === key3 && p.expiresAt > this.now());
     if (!invitation) throw new Error("pairing code expired or revoked");
     this.checkNew(remote);
-    const pair = { ...remote, key: key2 };
+    const pair = { ...remote, key: key3 };
     this.state.pairs.push(pair);
     this.state.invitations = this.state.invitations.filter((p) => p !== invitation);
     this.save();
@@ -44238,7 +44432,7 @@ var PairingStore = class {
     this.save();
   }
   save() {
-    const temp = join33(this.dir, `${randomUUID11()}.tmp`);
+    const temp = join36(this.dir, `${randomUUID12()}.tmp`);
     writeFileSync6(temp, JSON.stringify(this.state, null, 2) + "\n", { mode: OWNER_FILE_MODE, flag: "wx" });
     protect(temp, OWNER_FILE_MODE);
     renameSync5(temp, this.file);
@@ -44319,11 +44513,11 @@ var NetworkDiscovery = class {
     return socket;
   }
   bind(socket, port, address) {
-    return new Promise((resolve14, reject) => {
+    return new Promise((resolve17, reject) => {
       socket.once("error", reject);
       socket.bind(port, address, () => {
         socket.off("error", reject);
-        resolve14();
+        resolve17();
       });
     });
   }
@@ -44440,20 +44634,20 @@ var NetworkDiscovery = class {
     this.found.clear();
   }
   closeSocket(socket) {
-    return new Promise((resolve14) => {
+    return new Promise((resolve17) => {
       try {
-        socket.close(() => resolve14());
+        socket.close(() => resolve17());
       } catch {
-        resolve14();
+        resolve17();
       }
     });
   }
 };
 
 // src/network/files.ts
-import { createHash as createHash11, randomUUID as randomUUID12 } from "node:crypto";
-import { existsSync as existsSync17, lstatSync as lstatSync4, mkdirSync as mkdirSync18, mkdtempSync as mkdtempSync2, readFileSync as readFileSync19, readdirSync as readdirSync12, renameSync as renameSync6, rmSync as rmSync6, statfsSync, writeFileSync as writeFileSync7 } from "node:fs";
-import { basename as basename8, join as join34, parse as parse4, resolve as resolve10, sep as sep5 } from "node:path";
+import { createHash as createHash12, randomUUID as randomUUID13 } from "node:crypto";
+import { existsSync as existsSync18, lstatSync as lstatSync7, mkdirSync as mkdirSync19, mkdtempSync as mkdtempSync2, readFileSync as readFileSync19, readdirSync as readdirSync13, renameSync as renameSync6, rmSync as rmSync6, statfsSync, writeFileSync as writeFileSync7 } from "node:fs";
+import { basename as basename8, join as join37, parse as parse5, resolve as resolve13, sep as sep6 } from "node:path";
 var MAX_TRANSFER_BYTES = 1024 * 1024;
 var MAX_TRANSFER_ENTRIES = 128;
 var MAX_TRANSFER_DEPTH = 16;
@@ -44474,24 +44668,24 @@ var transferSchema = external_exports.object({
 });
 var transferResultSchema = external_exports.object({ id: external_exports.uuid(), inbox: external_exports.string().max(MAX_PATH_CHARS2), files: external_exports.number().int().nonnegative().max(MAX_TRANSFER_ENTRIES), bytes: external_exports.number().int().nonnegative().max(MAX_TRANSFER_BYTES) });
 function checksum(data) {
-  return createHash11("sha256").update(data).digest("hex");
+  return createHash12("sha256").update(data).digest("hex");
 }
 function assertTransferPath(path) {
-  const absolute = resolve10(path);
-  let current = parse4(absolute).root;
-  for (const component of absolute.slice(current.length).split(sep5).filter(Boolean)) {
-    current = join34(current, component);
-    if (lstatSync4(current).isSymbolicLink()) throw new Error("file transfer does not follow symlinks or junctions");
+  const absolute = resolve13(path);
+  let current = parse5(absolute).root;
+  for (const component of absolute.slice(current.length).split(sep6).filter(Boolean)) {
+    current = join37(current, component);
+    if (lstatSync7(current).isSymbolicLink()) throw new Error("file transfer does not follow symlinks or junctions");
   }
 }
 function ensureTransferDirectory(path) {
-  if (!existsSync17(path)) {
-    const parent2 = resolve10(path, "..");
+  if (!existsSync18(path)) {
+    const parent2 = resolve13(path, "..");
     ensureTransferDirectory(parent2);
-    mkdirSync18(path, { mode: OWNER_DIR_MODE });
+    mkdirSync19(path, { mode: OWNER_DIR_MODE });
   }
   assertTransferPath(path);
-  if (!lstatSync4(path).isDirectory()) throw new Error("transfer directory is not a directory");
+  if (!lstatSync7(path).isDirectory()) throw new Error("transfer directory is not a directory");
 }
 function safeTransferPath(path) {
   const components = path.split("/");
@@ -44505,11 +44699,11 @@ function collectTransfer(paths, cwd, to, from) {
     if (!safeTransferPath(path)) throw new Error("unsafe or too deep transfer path");
     if (entries.length >= MAX_TRANSFER_ENTRIES) throw new Error("too many transfer entries");
     assertTransferPath(source);
-    const stat = lstatSync4(source);
+    const stat = lstatSync7(source);
     if (stat.isSymbolicLink()) throw new Error("file transfer does not follow symlinks or junctions");
     if (stat.isDirectory()) {
       entries.push({ kind: "directory", path });
-      for (const name2 of readdirSync12(source).sort()) walk(join34(source, name2), `${path}/${name2}`);
+      for (const name2 of readdirSync13(source).sort()) walk(join37(source, name2), `${path}/${name2}`);
     } else if (stat.isFile()) {
       if (stat.size > MAX_TRANSFER_BYTES - bytes2) throw new Error("transfer exceeds size limit");
       const data = readFileSync19(source);
@@ -44519,10 +44713,10 @@ function collectTransfer(paths, cwd, to, from) {
     } else throw new Error("only regular files and directories can be transferred");
   };
   for (const path of paths) {
-    const source = resolve10(cwd, path);
+    const source = resolve13(cwd, path);
     walk(source, basename8(source));
   }
-  const transfer = transferSchema.parse({ id: randomUUID12(), to, from, entries });
+  const transfer = transferSchema.parse({ id: randomUUID13(), to, from, entries });
   validateEntries(transfer);
   return transfer;
 }
@@ -44532,9 +44726,9 @@ function validateEntries(transfer) {
   let files2 = 0;
   const entries = transfer.entries.map((entry) => {
     const path = entry.path;
-    const key2 = path.toLowerCase();
-    if (!safeTransferPath(path) || kinds.has(key2)) throw new Error("unsafe or duplicate transfer path");
-    kinds.set(key2, entry.kind);
+    const key3 = path.toLowerCase();
+    if (!safeTransferPath(path) || kinds.has(key3)) throw new Error("unsafe or duplicate transfer path");
+    kinds.set(key3, entry.kind);
     if (entry.kind === "directory") return { path, data: null };
     const data = Buffer.from(entry.data, "base64");
     if (data.toString("base64") !== entry.data || checksum(data) !== entry.sha256) throw new Error("file checksum or encoding mismatch");
@@ -44555,16 +44749,16 @@ function receiveTransfer(home, input2) {
   assertTransferPath(home);
   const disk = statfsSync(home, { bigint: true });
   if (disk.bavail * disk.bsize < BigInt(bytes2)) throw new Error("insufficient free disk space for transfer");
-  const inbox = join34(home, "inbox");
+  const inbox = join37(home, "inbox");
   ensureTransferDirectory(inbox);
-  if (lstatSync4(inbox).isSymbolicLink()) throw new Error("inbox cannot be a symlink");
+  if (lstatSync7(inbox).isSymbolicLink()) throw new Error("inbox cannot be a symlink");
   assertTransferPath(inbox);
-  const final = join34(inbox, transfer.id);
-  if (existsSync17(final)) throw new Error("transfer already received");
-  const staging = mkdtempSync2(join34(inbox, ".partial-"));
+  const final = join37(inbox, transfer.id);
+  if (existsSync18(final)) throw new Error("transfer already received");
+  const staging = mkdtempSync2(join37(inbox, ".partial-"));
   try {
-    for (const entry of entries.filter((e) => e.data === null).sort((a, b) => a.path.length - b.path.length)) mkdirSync18(join34(staging, ...entry.path.split("/")), { mode: OWNER_DIR_MODE });
-    for (const entry of entries) if (entry.data !== null) writeFileSync7(join34(staging, ...entry.path.split("/")), entry.data, { flag: "wx", mode: OWNER_FILE_MODE });
+    for (const entry of entries.filter((e) => e.data === null).sort((a, b) => a.path.length - b.path.length)) mkdirSync19(join37(staging, ...entry.path.split("/")), { mode: OWNER_DIR_MODE });
+    for (const entry of entries) if (entry.data !== null) writeFileSync7(join37(staging, ...entry.path.split("/")), entry.data, { flag: "wx", mode: OWNER_FILE_MODE });
     renameSync6(staging, final);
     return { id: transfer.id, inbox: final, files: files2, bytes: bytes2 };
   } catch (err) {
@@ -44574,10 +44768,10 @@ function receiveTransfer(home, input2) {
 }
 
 // src/network/transfers.ts
-import { createHash as createHash12, randomUUID as randomUUID13 } from "node:crypto";
-import { constants, existsSync as existsSync18, lstatSync as lstatSync5, mkdirSync as mkdirSync19, readdirSync as readdirSync13, readFileSync as readFileSync20, renameSync as renameSync7, statSync as statSync10, writeFileSync as writeFileSync8 } from "node:fs";
+import { createHash as createHash13, randomUUID as randomUUID14 } from "node:crypto";
+import { constants, existsSync as existsSync19, lstatSync as lstatSync8, mkdirSync as mkdirSync20, readdirSync as readdirSync14, readFileSync as readFileSync20, renameSync as renameSync7, statSync as statSync10, writeFileSync as writeFileSync8 } from "node:fs";
 import { open as open2, link, unlink, statfs, lstat, opendir } from "node:fs/promises";
-import { basename as basename9, dirname as dirname15, isAbsolute as isAbsolute7, join as join35, relative as relative6, resolve as resolve11, sep as sep6 } from "node:path";
+import { basename as basename9, dirname as dirname17, isAbsolute as isAbsolute8, join as join38, relative as relative7, resolve as resolve14, sep as sep7 } from "node:path";
 var FILE_STREAM_CAPABILITY = "file-stream-v1";
 var TRANSFER_CHUNK_BYTES = 256 * 1024;
 var DEFAULT_MAX_STREAM_BYTES = 8 * 1024 * 1024 * 1024;
@@ -44612,7 +44806,7 @@ var responseSchema = external_exports.object({ kind: external_exports.literal("r
 var RemoteTransferError = class extends Error {
 };
 function digest(data) {
-  return createHash12("sha256").update(data).digest("hex");
+  return createHash13("sha256").update(data).digest("hex");
 }
 function transferSummary(home, state) {
   const bytes2 = state.entries.reduce((sum, entry) => sum + entry.offset, 0);
@@ -44628,24 +44822,24 @@ function transferSummary(home, state) {
     percent: state.status === "completed" ? 100 : state.totalBytes ? Math.floor(bytes2 / state.totalBytes * 100) : 0,
     createdAt: state.createdAt,
     updatedAt: state.updatedAt,
-    ...state.direction === "receive" ? { inbox: join35(home, "inbox", state.id) } : {},
+    ...state.direction === "receive" ? { inbox: join38(home, "inbox", state.id) } : {},
     ...state.error ? { error: state.error } : {}
   };
 }
 function persistTransfer(root, state) {
   assertTransferPath(root);
   state.updatedAt = Date.now();
-  const file2 = join35(root, `${state.id}.json`);
-  if (existsSync18(file2)) assertTransferPath(file2);
-  const temp = `${file2}.${randomUUID13()}.tmp`;
+  const file2 = join38(root, `${state.id}.json`);
+  if (existsSync19(file2)) assertTransferPath(file2);
+  const temp = `${file2}.${randomUUID14()}.tmp`;
   writeFileSync8(temp, JSON.stringify(state), { flag: "wx", mode: OWNER_FILE_MODE, flush: true });
   renameSync7(temp, file2);
 }
 function cancelStoredTransfer(home, id) {
   external_exports.uuid().parse(id);
-  const root = join35(home, "network", "transfers");
-  const path = join35(root, `${id}.json`);
-  if (!existsSync18(path)) throw new Error("unknown transfer");
+  const root = join38(home, "network", "transfers");
+  const path = join38(root, `${id}.json`);
+  if (!existsSync19(path)) throw new Error("unknown transfer");
   assertTransferPath(path);
   const state = JSON.parse(readFileSync20(path, "utf8"));
   if (state.version !== 1 || state.id !== id) throw new Error("invalid persisted transfer");
@@ -44656,11 +44850,11 @@ function cancelStoredTransfer(home, id) {
   return { id, cancelled: true };
 }
 function readTransferHistory(home) {
-  const root = join35(home, "network", "transfers");
-  if (!existsSync18(root)) return [];
+  const root = join38(home, "network", "transfers");
+  if (!existsSync19(root)) return [];
   assertTransferPath(root);
-  return readdirSync13(root).filter((file2) => /^[0-9a-f-]{36}\.json$/.test(file2)).map((file2) => {
-    const path = join35(root, file2);
+  return readdirSync14(root).filter((file2) => /^[0-9a-f-]{36}\.json$/.test(file2)).map((file2) => {
+    const path = join38(root, file2);
     assertTransferPath(path);
     return { path, mtime: statSync10(path).mtimeMs };
   }).sort((a, b) => b.mtime - a.mtime).slice(0, MAX_TRANSFER_HISTORY).map(({ path }) => {
@@ -44670,13 +44864,13 @@ function readTransferHistory(home) {
   }).sort((a, b) => b.updatedAt - a.updatedAt);
 }
 function allowedFetchPath(path, cwd, roots) {
-  const source = resolve11(cwd, path);
+  const source = resolve14(cwd, path);
   assertTransferPath(source);
   if (!roots.some((root) => {
-    if (!isAbsolute7(root)) return false;
+    if (!isAbsolute8(root)) return false;
     assertTransferPath(root);
-    const rel = relative6(resolve11(root), source);
-    return rel === "" || !isAbsolute7(rel) && rel !== ".." && !rel.startsWith(`..${sep6}`);
+    const rel = relative7(resolve14(root), source);
+    return rel === "" || !isAbsolute8(rel) && rel !== ".." && !rel.startsWith(`..${sep7}`);
   })) throw new Error("fetch is disabled or path is outside allowed fetch roots");
   return source;
 }
@@ -44695,10 +44889,10 @@ var TransferManager = class {
     this.log = log;
     this.options = options;
     assertTransferPath(home);
-    this.root = join35(home, "network", "transfers");
+    this.root = join38(home, "network", "transfers");
     ensureTransferDirectory(this.root);
     assertTransferPath(this.root);
-    for (const file2 of readdirSync13(this.root).filter((file3) => /^[0-9a-f-]{36}\.json$/.test(file3))) {
+    for (const file2 of readdirSync14(this.root).filter((file3) => /^[0-9a-f-]{36}\.json$/.test(file3))) {
       const state = this.read(file2.slice(0, -5));
       if (state && (!TERMINAL.has(state.status) || state.cancelPending || state.abortPending)) {
         if (this.states.size >= MAX_ACTIVE_TRANSFERS) {
@@ -44725,8 +44919,8 @@ var TransferManager = class {
   closed = false;
   root;
   read(id) {
-    const file2 = join35(this.root, `${id}.json`);
-    if (!existsSync18(file2)) return void 0;
+    const file2 = join38(this.root, `${id}.json`);
+    if (!existsSync19(file2)) return void 0;
     assertTransferPath(file2);
     const state = JSON.parse(readFileSync20(file2, "utf8"));
     if (state.version !== 1 || state.id !== id || !Array.isArray(state.entries) || state.entries.length > MAX_STREAM_ENTRIES) throw new Error("invalid persisted transfer");
@@ -44784,7 +44978,7 @@ var TransferManager = class {
     const recipient = state.direction === "send" ? state.from.name : state.to;
     const from = state.direction === "receive" ? { ...state.from, id: `${state.remote}/${state.from.id}`, name: `${state.peer.split("/")[0]}/${state.from.name}` } : { id: `files-${state.id}`, name: "files", agent: "other" };
     this.transport.notify({
-      id: state.direction === "receive" && state.status === "completed" ? state.id : randomUUID13(),
+      id: state.direction === "receive" && state.status === "completed" ? state.id : randomUUID14(),
       from,
       to: recipient,
       recipient,
@@ -44800,7 +44994,7 @@ var TransferManager = class {
   ensureCapacity() {
     if (this.states.size >= MAX_ACTIVE_TRANSFERS) throw new Error("too many active file transfers");
   }
-  start(remote, peer, to, paths, cwd, from, pull = false, id = randomUUID13(), legacy = false) {
+  start(remote, peer, to, paths, cwd, from, pull = false, id = randomUUID14(), legacy = false) {
     this.ensureCapacity();
     const state = {
       version: 1,
@@ -44857,13 +45051,13 @@ var TransferManager = class {
   }
   rpc(remote, id, fields) {
     if (this.closed) return Promise.reject(new Error("transfer manager closed"));
-    const rid = randomUUID13();
-    return new Promise((resolve14, reject) => {
+    const rid = randomUUID14();
+    return new Promise((resolve17, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(rid);
         reject(new Error("file transfer request timed out"));
       }, TRANSFER_REQUEST_TIMEOUT_MS);
-      this.pending.set(rid, { remote, id, resolve: resolve14, reject, timer });
+      this.pending.set(rid, { remote, id, resolve: resolve17, reject, timer });
       void Promise.resolve().then(() => this.transport.send(remote, { kind: "request", rid, id, ...fields })).catch((error62) => {
         clearTimeout(timer);
         this.pending.delete(rid);
@@ -44928,15 +45122,15 @@ var TransferManager = class {
     const kinds = /* @__PURE__ */ new Map();
     let total = 0;
     for (const entry of entries) {
-      const key2 = entry.path.toLowerCase();
-      if (!safeTransferPath(entry.path) || kinds.has(key2)) throw new Error("unsafe or duplicate transfer path");
-      kinds.set(key2, entry.kind);
+      const key3 = entry.path.toLowerCase();
+      if (!safeTransferPath(entry.path) || kinds.has(key3)) throw new Error("unsafe or duplicate transfer path");
+      kinds.set(key3, entry.kind);
       if (entry.kind === "directory" && entry.size !== 0) throw new Error("invalid directory size");
       total += entry.size;
       if (!Number.isSafeInteger(total) || total > (this.options.maxBytes ?? DEFAULT_MAX_STREAM_BYTES)) throw new Error("transfer exceeds size limit");
     }
-    for (const key2 of kinds.keys()) {
-      const parts = key2.split("/");
+    for (const key3 of kinds.keys()) {
+      const parts = key3.split("/");
       for (let i = 1; i < parts.length; i++) if (kinds.get(parts.slice(0, i).join("/")) !== "directory") throw new Error("missing directory or file used as parent");
     }
     if (Buffer.byteLength(JSON.stringify(entries.map(({ path, kind, size }) => ({ path, kind, size })))) > MAX_NETWORK_FRAME_BYTES / 2) throw new Error("transfer manifest exceeds network frame limit");
@@ -44958,7 +45152,7 @@ var TransferManager = class {
           if (names.length + entries.length >= MAX_STREAM_ENTRIES) throw new Error("too many transfer entries");
           names.push(child.name);
         }
-        for (const name2 of names.sort()) await walk(join35(source, name2), `${path}/${name2}`);
+        for (const name2 of names.sort()) await walk(join38(source, name2), `${path}/${name2}`);
       } else if (st.isFile()) {
         total += st.size;
         if (total > (this.options.maxBytes ?? DEFAULT_MAX_STREAM_BYTES)) throw new Error("transfer exceeds size limit");
@@ -44966,7 +45160,7 @@ var TransferManager = class {
       } else throw new Error("only regular files and directories can be transferred");
     };
     for (const path of state.paths) {
-      const source = resolve11(state.cwd, path);
+      const source = resolve14(state.cwd, path);
       await walk(source, basename9(source));
     }
     this.validateEntries(entries);
@@ -45055,7 +45249,7 @@ var TransferManager = class {
         if (offset > entry.size || offset !== entry.size && offset % TRANSFER_CHUNK_BYTES !== 0) throw new RemoteTransferError("invalid resume offset");
         entry.offset = offset;
         const file2 = await this.source(state, entry);
-        const hash2 = createHash12("sha256");
+        const hash2 = createHash13("sha256");
         const buffer = Buffer.alloc(TRANSFER_CHUNK_BYTES);
         try {
           for (let position = 0; position < entry.size; ) {
@@ -45101,13 +45295,13 @@ var TransferManager = class {
     }
   }
   part(state, index) {
-    return join35(this.root, state.id, `${index}.part`);
+    return join38(this.root, state.id, `${index}.part`);
   }
   verified(state, index) {
-    return join35(this.root, state.id, `${index}.verified`);
+    return join38(this.root, state.id, `${index}.verified`);
   }
   target(state, entry) {
-    return join35(this.home, "inbox", state.id, ...entry.path.split("/"));
+    return join38(this.home, "inbox", state.id, ...entry.path.split("/"));
   }
   async freeDisk(bytes2) {
     const disk = await statfs(this.home, { bigint: true });
@@ -45117,7 +45311,7 @@ var TransferManager = class {
   async hashFile(path, state) {
     assertTransferPath(path);
     const file2 = await open2(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
-    const hash2 = createHash12("sha256");
+    const hash2 = createHash13("sha256");
     const buffer = Buffer.alloc(TRANSFER_CHUNK_BYTES);
     try {
       for (; ; ) {
@@ -45134,26 +45328,26 @@ var TransferManager = class {
   async recover(state, entry, index) {
     if (entry.kind !== "file") return;
     const target = this.target(state, entry);
-    if (entry.complete || entry.sha256 && existsSync18(target)) {
+    if (entry.complete || entry.sha256 && existsSync19(target)) {
       if (await this.hashFile(target, state) !== entry.sha256) throw new Error("completed file checksum mismatch");
       entry.complete = true;
       entry.offset = entry.size;
       const part = this.part(state, index);
-      if (existsSync18(part)) {
+      if (existsSync19(part)) {
         assertTransferPath(part);
         await unlink(part);
       }
       const verified2 = this.verified(state, index);
-      if (existsSync18(verified2)) {
+      if (existsSync19(verified2)) {
         assertTransferPath(verified2);
         await unlink(verified2);
       }
       return;
     }
     const verifiedPath = this.verified(state, index);
-    if (entry.sha256 && existsSync18(verifiedPath)) {
+    if (entry.sha256 && existsSync19(verifiedPath)) {
       if (await this.hashFile(verifiedPath, state) !== entry.sha256) throw new Error("verified file checksum mismatch");
-      assertTransferPath(dirname15(target));
+      assertTransferPath(dirname17(target));
       await link(verifiedPath, target);
       await unlink(verifiedPath);
       entry.complete = true;
@@ -45191,28 +45385,28 @@ var TransferManager = class {
     }
   }
   initialize(state) {
-    const inbox = join35(this.home, "inbox");
+    const inbox = join38(this.home, "inbox");
     ensureTransferDirectory(inbox);
-    const final = join35(inbox, state.id);
-    const parts = join35(this.root, state.id);
+    const final = join38(inbox, state.id);
+    const parts = join38(this.root, state.id);
     for (const dir of [final, parts]) {
-      if (!existsSync18(dir)) mkdirSync19(dir, { mode: OWNER_DIR_MODE });
+      if (!existsSync19(dir)) mkdirSync20(dir, { mode: OWNER_DIR_MODE });
       assertTransferPath(dir);
-      if (!lstatSync5(dir).isDirectory()) throw new Error("transfer directory is not a directory");
+      if (!lstatSync8(dir).isDirectory()) throw new Error("transfer directory is not a directory");
     }
     for (const entry of state.entries.filter((entry2) => entry2.kind === "directory").sort((a, b) => a.path.length - b.path.length)) {
       const dir = this.target(state, entry);
-      assertTransferPath(dirname15(dir));
-      if (!existsSync18(dir)) mkdirSync19(dir, { mode: OWNER_DIR_MODE });
+      assertTransferPath(dirname17(dir));
+      if (!existsSync19(dir)) mkdirSync20(dir, { mode: OWNER_DIR_MODE });
       assertTransferPath(dir);
-      if (!lstatSync5(dir).isDirectory()) throw new Error("transfer directory is not a directory");
+      if (!lstatSync8(dir).isDirectory()) throw new Error("transfer directory is not a directory");
     }
     for (let i = 0; i < state.entries.length; i++) if (state.entries[i].kind === "file") {
       for (const file2 of [this.part(state, i), `${this.part(state, i)}.sha256`]) {
-        assertTransferPath(dirname15(file2));
-        if (!existsSync18(file2)) writeFileSync8(file2, "", { flag: "wx", mode: OWNER_FILE_MODE, flush: true });
+        assertTransferPath(dirname17(file2));
+        if (!existsSync19(file2)) writeFileSync8(file2, "", { flag: "wx", mode: OWNER_FILE_MODE, flush: true });
         assertTransferPath(file2);
-        if (!lstatSync5(file2).isFile() || lstatSync5(file2).size !== 0) throw new Error("invalid initial partial file");
+        if (!lstatSync8(file2).isFile() || lstatSync8(file2).size !== 0) throw new Error("invalid initial partial file");
       }
     }
     state.initialized = true;
@@ -45312,9 +45506,9 @@ var TransferManager = class {
       try {
         if (!state || !state.entries.length) {
           if (!state) this.ensureCapacity();
-          const inbox = join35(this.home, "inbox");
+          const inbox = join38(this.home, "inbox");
           ensureTransferDirectory(inbox);
-          if (existsSync18(join35(inbox, request2.id)) || existsSync18(join35(this.root, request2.id))) throw new Error("transfer destination already exists");
+          if (existsSync19(join38(inbox, request2.id)) || existsSync19(join38(this.root, request2.id))) throw new Error("transfer destination already exists");
           const receiving = {
             version: 1,
             id: request2.id,
@@ -45380,10 +45574,10 @@ var TransferManager = class {
         entry.sha256 = request2.sha256;
         this.save(state);
         const target = this.target(state, entry);
-        assertTransferPath(dirname15(target));
+        assertTransferPath(dirname17(target));
         assertTransferPath(part);
         const verified = this.verified(state, request2.index);
-        if (existsSync18(verified)) throw new Error("verified file already exists");
+        if (existsSync19(verified)) throw new Error("verified file already exists");
         renameSync7(part, verified);
         await link(verified, target);
         await unlink(verified);
@@ -45509,10 +45703,10 @@ var frameSchema = external_exports.discriminatedUnion("type", [
   external_exports.object({ type: external_exports.literal("result"), rid: external_exports.uuid(), delivered: external_exports.boolean().optional(), recipient: external_exports.string().regex(NETWORK_NAME_PATTERN).optional(), readAt: external_exports.number().nonnegative().nullable().optional(), transfer: transferResultSchema.optional(), error: external_exports.string().max(MAX_METADATA_CHARS).optional() })
 ]);
 var Link = class {
-  constructor(socket, service, key2, expected) {
+  constructor(socket, service, key3, expected) {
     this.socket = socket;
     this.service = service;
-    this.key = key2;
+    this.key = key3;
     this.expected = expected;
     socket.setKeepAlive(true, NETWORK_REFRESH_MS);
     this.deadline = setTimeout(() => this.fail(new Error("network hello timed out")), NETWORK_TIMEOUT_MS);
@@ -45554,8 +45748,8 @@ var Link = class {
   extensionWrites = /* @__PURE__ */ new Set();
   readyResolve;
   readyReject;
-  ready = new Promise((resolve14, reject) => {
-    this.readyResolve = resolve14;
+  ready = new Promise((resolve17, reject) => {
+    this.readyResolve = resolve17;
     this.readyReject = reject;
   });
   deadline;
@@ -45604,7 +45798,7 @@ var Link = class {
     const data = JSON.stringify({ type, payload }) + "\n";
     if (Buffer.byteLength(data) > MAX_NETWORK_FRAME_BYTES || this.socket.writableLength > MAX_NETWORK_FRAME_BYTES || this.extensionWrites.size >= MAX_NETWORK_REQUESTS) return Promise.reject(new Error("network write limit reached"));
     if (this.socket.destroyed) return Promise.reject(new Error("network link closed"));
-    return new Promise((resolve14, reject) => {
+    return new Promise((resolve17, reject) => {
       const failed = (error62) => {
         if (!this.extensionWrites.delete(failed)) return;
         this.fail(error62);
@@ -45616,7 +45810,7 @@ var Link = class {
           if (error62) failed(error62);
           else {
             this.extensionWrites.delete(failed);
-            resolve14();
+            resolve17();
           }
         });
       } catch (error62) {
@@ -45632,7 +45826,7 @@ var Link = class {
     this.advertisedPeers = signature;
   }
   send(message) {
-    return this.request({ type: "send", rid: randomUUID14(), message: messageSchema.parse(message) });
+    return this.request({ type: "send", rid: randomUUID15(), message: messageSchema.parse(message) });
   }
   /** Detect a half-open link even when nobody sends work; activity never expires a peer. */
   heartbeat() {
@@ -45645,25 +45839,25 @@ var Link = class {
   receipt(id, sender, recipient, requireRecipient = false) {
     if (!this.receiptsSupported) return Promise.reject(new Error("Remote broker does not support read receipts. Update and reload its hosting sessions."));
     if (requireRecipient && !this.supports("recipient-receipts-v1")) return Promise.reject(new Error("Remote broker does not support per-recipient broadcast receipts. Update and reload its hosting sessions."));
-    return this.request({ type: "receipt", rid: randomUUID14(), id, sender, recipient });
+    return this.request({ type: "receipt", rid: randomUUID15(), id, sender, recipient });
   }
   files(transfer) {
-    return this.request({ type: "files", rid: randomUUID14(), transfer: transferSchema.parse(transfer) });
+    return this.request({ type: "files", rid: randomUUID15(), transfer: transferSchema.parse(transfer) });
   }
   async echo(timeoutMs = NETWORK_TIMEOUT_MS) {
     if (!this.echoSupported) throw new Error("Remote broker does not support verification. Update and restart its hosting sessions.");
-    const result = await this.request({ type: "echo", rid: randomUUID14() }, timeoutMs);
+    const result = await this.request({ type: "echo", rid: randomUUID15() }, timeoutMs);
     if (result !== true) throw new Error("network echo was not acknowledged");
   }
   request(frame, timeoutMs = NETWORK_TIMEOUT_MS) {
     if (this.pending.size >= MAX_NETWORK_REQUESTS) return Promise.reject(new Error("too many network requests"));
-    return new Promise((resolve14, reject) => {
+    return new Promise((resolve17, reject) => {
       const rid = frame.rid;
       const timer = setTimeout(() => {
         this.pending.delete(rid);
         reject(new Error("network send timed out; delivery may have occurred"));
       }, timeoutMs);
-      this.pending.set(rid, { resolve: resolve14, reject, timer, kind: frame.type });
+      this.pending.set(rid, { resolve: resolve17, reject, timer, kind: frame.type });
       try {
         if (frame.type === "send" || frame.type === "files") this.refresh();
         this.write(frame);
@@ -45837,15 +46031,15 @@ var NetworkService = class {
       ciphers: TLS_CIPHER,
       handshakeTimeout: NETWORK_TIMEOUT_MS,
       pskCallback: (socket, identity) => {
-        const key2 = this.keys.keyFor(identity);
-        if (key2) acceptedKeys.set(socket, key2);
-        return key2 ? Buffer.from(key2, "hex") : randomBytes6(PAIRING_KEY_BYTES);
+        const key3 = this.keys.keyFor(identity);
+        if (key3) acceptedKeys.set(socket, key3);
+        return key3 ? Buffer.from(key3, "hex") : randomBytes6(PAIRING_KEY_BYTES);
       }
     }, (socket) => {
-      const key2 = acceptedKeys.get(socket);
-      if (!key2 || socket.getProtocol() !== "TLSv1.3") return socket.destroy();
+      const key3 = acceptedKeys.get(socket);
+      if (!key3 || socket.getProtocol() !== "TLSv1.3") return socket.destroy();
       try {
-        new Link(socket, this, key2);
+        new Link(socket, this, key3);
       } catch (err) {
         socket.destroy();
         this.log.warn("network hello could not be sent", { message: err.message });
@@ -45860,11 +46054,11 @@ var NetworkService = class {
     server.on("tlsClientError", () => this.log.debug("network TLS authentication failed"));
     server.on("error", (err) => this.log.warn("network listener error", { message: err.message }));
     try {
-      await new Promise((resolve14, reject) => {
+      await new Promise((resolve17, reject) => {
         server.once("error", reject);
         server.listen(this.cfg.port, this.cfg.bind, () => {
           server.off("error", reject);
-          resolve14();
+          resolve17();
         });
       });
       if (this.cfg.discovery) {
@@ -45965,7 +46159,7 @@ var NetworkService = class {
       this.sockets.add(socket);
       socket.once("close", () => this.sockets.delete(socket));
       const secured = socket;
-      await new Promise((resolve14, reject) => {
+      await new Promise((resolve17, reject) => {
         const timer = setTimeout(() => {
           secured.destroy();
           reject(new Error("network TLS handshake timed out"));
@@ -45978,7 +46172,7 @@ var NetworkService = class {
         secured.once("secureConnect", () => {
           clearTimeout(timer);
           secured.off("error", onError);
-          resolve14();
+          resolve17();
         });
       });
       if (secured.getProtocol() !== "TLSv1.3" || Object.keys(secured.getPeerCertificate()).length) throw new Error("TLS-PSK required");
@@ -46049,15 +46243,15 @@ var NetworkService = class {
     this.links.clear();
     const server = this.server;
     this.server = null;
-    if (server) await new Promise((resolve14) => server.close(() => resolve14()));
+    if (server) await new Promise((resolve17) => server.close(() => resolve17()));
   }
 };
 
 // src/core/broker.ts
-import { basename as basename10, dirname as dirname16 } from "node:path";
+import { basename as basename10, dirname as dirname18 } from "node:path";
 
 // src/core/project-groups.ts
-import { join as join36 } from "node:path";
+import { join as join39 } from "node:path";
 var ProjectGroups = class {
   constructor(home) {
     this.home = home;
@@ -46087,7 +46281,7 @@ var ProjectGroups = class {
     let spec;
     if (this.home && typeof job.id === "string" && /^[a-zA-Z0-9_-]+$/.test(job.id)) {
       try {
-        spec = readJsonSnapshot(join36(this.home, "jobs", `${job.id}.spec.json`)).value;
+        spec = readJsonSnapshot(join39(this.home, "jobs", `${job.id}.spec.json`)).value;
       } catch {
       }
     }
@@ -46131,11 +46325,11 @@ var ProjectGroups = class {
 };
 
 // src/network/remote-dashboard.ts
-import { randomUUID as randomUUID15 } from "node:crypto";
+import { randomUUID as randomUUID16 } from "node:crypto";
 
 // src/core/dashboard-read.ts
 import { closeSync as closeSync9, openSync as openSync9, readFileSync as readFileSync21, readSync as readSync3, statSync as statSync11 } from "node:fs";
-import { join as join37 } from "node:path";
+import { join as join40 } from "node:path";
 
 // src/network/dashboard-protocol.ts
 var DASHBOARD_CAPABILITY = "dashboard-read-v1";
@@ -46180,7 +46374,7 @@ var LEGACY_JOB_START_TOLERANCE_MS = 1e3;
 var MAX_LOG_CHUNK = 128 * 1024;
 async function finishedRunOutcomes(home, log, names) {
   const runs = listRuns(home);
-  const jobs = readStore(join37(home, JOBS_FILE), log, true);
+  const jobs = readStore(join40(home, JOBS_FILE), log, true);
   const out = {};
   for (const run of runs) {
     if (names && !names.has(run.name)) continue;
@@ -46322,7 +46516,7 @@ function readStoredJobs(home) {
     out.set(name2, {
       owner: typeof owner === "string" && owner ? owner : null,
       ...typeof j.projectRoot === "string" ? { projectRoot: j.projectRoot } : {},
-      next: Object.fromEntries(JOB_SETTING_KEYS.filter((key2) => saved[key2] !== void 0).map((key2) => [key2, saved[key2]])),
+      next: Object.fromEntries(JOB_SETTING_KEYS.filter((key3) => saved[key3] !== void 0).map((key3) => [key3, saved[key3]])),
       ...remote && typeof remote.host === "string" && typeof remote.name === "string" ? { remote } : {}
     });
   }
@@ -46330,7 +46524,7 @@ function readStoredJobs(home) {
 }
 function classifyPeers(peers, runs, home) {
   const norm = (p) => p.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
-  const worktrees = `${norm(join37(home, "worktrees"))}/`;
+  const worktrees = `${norm(join40(home, "worktrees"))}/`;
   const byWorkdir = /* @__PURE__ */ new Map();
   for (const run of runs) if (run.workdir && !byWorkdir.has(norm(run.workdir))) byWorkdir.set(norm(run.workdir), run);
   return peers.filter((p) => !isPluginCacheCwd(p.cwd)).map((p) => {
@@ -46344,7 +46538,7 @@ var reply = (status, body) => ({ status, body });
 async function readDashboard(ctx, request2) {
   if (!dashboardRequestSchema.safeParse(request2).success) return reply(400, { error: "invalid dashboard read request" });
   const url2 = new URL(request2.path, "http://localhost");
-  for (const [key2, value] of Object.entries(request2.query ?? {})) url2.searchParams.set(key2, value);
+  for (const [key3, value] of Object.entries(request2.query ?? {})) url2.searchParams.set(key3, value);
   if (url2.pathname === "/api/state") {
     const page = pageRuns(listRuns(ctx.home), null, DEFAULT_RUN_PAGE_SIZE);
     const names = new Set(page.runs.map((run) => run.job));
@@ -46358,7 +46552,7 @@ async function readDashboard(ctx, request2) {
     const before = url2.searchParams.get("before");
     if (before !== null && !/^[\w.-]{1,256}$/.test(before)) return reply(400, { error: "invalid outcome cursor" });
     const select = (names2) => [...new Set(names2)].sort().filter((name2) => before === null || name2 > before).slice(0, limit);
-    const stored = readStore(join37(ctx.home, JOBS_FILE), ctx.log, true).filter((j) => j.status === "done" || j.status === "failed");
+    const stored = readStore(join40(ctx.home, JOBS_FILE), ctx.log, true).filter((j) => j.status === "done" || j.status === "failed");
     const runs = listRuns(ctx.home).filter((r) => r.job && (r.status === "done" || r.status === "failed"));
     const names = select([...stored.map((j) => j.name), ...runs.map((r) => r.name)]);
     const next = [...stored.map((j) => j.name), ...runs.map((r) => r.name)].some((name2) => names.length > 0 && name2 > names.at(-1)) ? names.at(-1) : null;
@@ -46483,13 +46677,13 @@ var RemoteDashboard = class {
     if (this.closed || !pair?.connected) return dashboardError("remote_offline", "The paired PC is not connected.");
     if (!this.network.peerSupports(host, DASHBOARD_CAPABILITY)) return dashboardError("remote_update_needed", "Update and restart the paired PC's hosting sessions to read its dashboard.", 409);
     if (this.pending.size >= DASHBOARD_MAX_PENDING) return dashboardError("remote_busy", "Too many pending dashboard reads.", 429);
-    const rid = randomUUID15();
-    const response = new Promise((resolve14) => {
+    const rid = randomUUID16();
+    const response = new Promise((resolve17) => {
       const timer = setTimeout(() => {
         this.pending.delete(rid);
-        resolve14(dashboardError("remote_timeout", "The paired dashboard read timed out.", 504));
+        resolve17(dashboardError("remote_timeout", "The paired dashboard read timed out.", 504));
       }, DASHBOARD_TIMEOUT_MS);
-      this.pending.set(rid, { host: pair.id, resolve: resolve14, timer });
+      this.pending.set(rid, { host: pair.id, resolve: resolve17, timer });
     });
     try {
       await this.network.sendExtension(host, DASHBOARD_FRAME, { kind: "request", rid, request: parsed.data });
@@ -46550,32 +46744,32 @@ var RemoteDashboard = class {
 };
 
 // src/network/remote-jobs.ts
-import { randomUUID as randomUUID17 } from "node:crypto";
-import { existsSync as existsSync19, realpathSync as realpathSync9, statSync as statSync13 } from "node:fs";
-import { isAbsolute as isAbsolute9, join as join43 } from "node:path";
+import { randomUUID as randomUUID18 } from "node:crypto";
+import { existsSync as existsSync20, realpathSync as realpathSync9, statSync as statSync13 } from "node:fs";
+import { isAbsolute as isAbsolute10, join as join46 } from "node:path";
 
 // src/mcp/delegate-run.ts
-import { randomUUID as randomUUID16 } from "node:crypto";
-import { isAbsolute as isAbsolute8, join as join40, relative as relative7, resolve as resolve12 } from "node:path";
+import { randomUUID as randomUUID17 } from "node:crypto";
+import { isAbsolute as isAbsolute9, join as join43, relative as relative8, resolve as resolve15 } from "node:path";
 
 // src/core/effort.ts
 import { readFileSync as readFileSync23 } from "node:fs";
 import { homedir as homedir6 } from "node:os";
-import { join as join39 } from "node:path";
+import { join as join42 } from "node:path";
 
 // src/core/codex-trust.ts
 import { readFileSync as readFileSync22, writeFileSync as writeFileSync9 } from "node:fs";
 import { homedir as homedir5 } from "node:os";
-import { join as join38 } from "node:path";
+import { join as join41 } from "node:path";
 var PERMISSION_HOOK_STATE_KEY = 'hooks.state."agent-bridge@agent-bridge:plugin.json#hooks[0]:permission_request:0:0"';
 var OBSERVATIONS_FILE = "codex-hook.json";
 function codexHome(env = process.env) {
-  return env.CODEX_HOME?.trim() || join38(homedir5(), ".codex");
+  return env.CODEX_HOME?.trim() || join41(homedir5(), ".codex");
 }
 function codexPermissionHookHash(home = codexHome(), read2 = (p) => readFileSync22(p, "utf8")) {
   let text3;
   try {
-    text3 = read2(join38(home, "config.toml"));
+    text3 = read2(join41(home, "config.toml"));
   } catch {
     return null;
   }
@@ -46590,7 +46784,7 @@ function codexPermissionHookHash(home = codexHome(), read2 = (p) => readFileSync
 }
 function readObservations(bridgeHome) {
   try {
-    return JSON.parse(readFileSync22(join38(bridgeHome, OBSERVATIONS_FILE), "utf8"));
+    return JSON.parse(readFileSync22(join41(bridgeHome, OBSERVATIONS_FILE), "utf8"));
   } catch {
     return {};
   }
@@ -46600,7 +46794,7 @@ function recordCodexHookObservation(bridgeHome, hash2, observation) {
   if (all[hash2] === "failed") return;
   all[hash2] = observation;
   try {
-    writeFileSync9(join38(bridgeHome, OBSERVATIONS_FILE), JSON.stringify(all, null, 2), { mode: 384 });
+    writeFileSync9(join41(bridgeHome, OBSERVATIONS_FILE), JSON.stringify(all, null, 2), { mode: 384 });
   } catch {
   }
 }
@@ -46612,8 +46806,8 @@ function codexPermissionHookTrusted(bridgeHome, home = codexHome(), read2 = (p) 
 // src/core/effort.ts
 function defaultEffort(agent, model, read2 = (p) => readFileSync23(p, "utf8")) {
   try {
-    if (agent === "codex") return codexConfigEffort(read2(join39(codexHome(), "config.toml")));
-    if (agent === "claude") return claudeSettingsEffort(read2(join39(process.env.CLAUDE_CONFIG_DIR?.trim() || join39(homedir6(), ".claude"), "settings.json")), model);
+    if (agent === "codex") return codexConfigEffort(read2(join42(codexHome(), "config.toml")));
+    if (agent === "claude") return claudeSettingsEffort(read2(join42(process.env.CLAUDE_CONFIG_DIR?.trim() || join42(homedir6(), ".claude"), "settings.json")), model);
   } catch {
   }
   return null;
@@ -46630,8 +46824,8 @@ function claudeSettingsEffort(json2, model) {
   const s = JSON.parse(json2);
   const id = model?.replace(/\[.*\]$/, "").toLowerCase() ?? "";
   if (id) {
-    for (const [key2, v] of Object.entries(s.modelSettings ?? {})) {
-      const k = key2.replace(/\[.*\]$/, "").toLowerCase();
+    for (const [key3, v] of Object.entries(s.modelSettings ?? {})) {
+      const k = key3.replace(/\[.*\]$/, "").toLowerCase();
       if ((id === k || id.startsWith(`${k}-`) || k.startsWith(`${id}-`)) && typeof v?.effortLevel === "string") return v.effortLevel;
     }
   }
@@ -46859,21 +47053,21 @@ var DELEGATED_JOB_NOTE = "(agent-bridge: you are a delegated job. Report what yo
 var HANDOFF_DECLINED = "Declined by agent-bridge: delegated jobs do not write the project handoff. Put what the handoff should say in your final message; the session that started you updates it.";
 var PARENT_APPROVAL_TIMEOUT_MS = 10 * 6e4;
 function isBridgeWorktree(dir, home) {
-  return isInside(dir, join40(home, "worktrees")) && resolve12(dir) !== resolve12(join40(home, "worktrees"));
+  return isInside(dir, join43(home, "worktrees")) && resolve15(dir) !== resolve15(join43(home, "worktrees"));
 }
 function bridgeWorktreeRoot(dir, home) {
   if (!isBridgeWorktree(dir, home)) return null;
-  return join40(home, "worktrees", relative7(join40(home, "worktrees"), resolve12(dir)).split(/[\\/]/)[0]);
+  return join43(home, "worktrees", relative8(join43(home, "worktrees"), resolve15(dir)).split(/[\\/]/)[0]);
 }
 function isInside(child, parent2) {
-  const rel = relative7(resolve12(parent2), resolve12(child));
-  return rel === "" || !rel.startsWith("..") && !isAbsolute8(rel);
+  const rel = relative8(resolve15(parent2), resolve15(child));
+  return rel === "" || !rel.startsWith("..") && !isAbsolute9(rel);
 }
 function resumeArgs(a, job, message, sessionId, workdir, worktree, saved) {
   if (saved) {
     a = { ...a };
-    for (const key2 of JOB_SETTING_KEYS) delete a[key2];
-    a = { ...a, ...Object.fromEntries(JOB_SETTING_KEYS.filter((key2) => saved[key2] !== void 0).map((key2) => [key2, saved[key2]])) };
+    for (const key3 of JOB_SETTING_KEYS) delete a[key3];
+    a = { ...a, ...Object.fromEntries(JOB_SETTING_KEYS.filter((key3) => saved[key3] !== void 0).map((key3) => [key3, saved[key3]])) };
   }
   return { ...a, _job: job, prompt: message, session_id: sessionId, cwd: workdir ?? a.cwd, worktree: false, _worktree: worktree ?? void 0, access: a.worktree ? a.access ?? "edit" : a.access };
 }
@@ -46885,9 +47079,9 @@ function worktreeArgs(target, a, cfg, cwd, home) {
 }
 async function runDelegate(rc, target, a, signal, onProgress, background, job) {
   checkDepth(rc.cfg.maxDelegateDepth);
-  if (!job?.rootSession) return runDelegateInner(rc, target, a, signal, onProgress, background, job);
+  if (!job?.rootSession) return runWithWorktreeLease(rc, target, a, signal, onProgress, background, job);
   const budget = new RootConcurrency(rc.home, job.rootSession);
-  const owner = { id: `${job.name}-${randomUUID16()}`, pid: process.pid };
+  const owner = { id: `${job.name}-${randomUUID17()}`, pid: process.pid };
   let timer;
   try {
     if (!job.parentJob) budget.ensureLimit(rc.cfg.maxJobs);
@@ -46900,11 +47094,29 @@ async function runDelegate(rc, target, a, signal, onProgress, background, job) {
       }
     }, SLOT_RENEW_MS);
     timer.unref();
-    return await runDelegateInner(rc, target, a, signal, onProgress, background, job);
+    return await runWithWorktreeLease(rc, target, a, signal, onProgress, background, job);
   } finally {
     clearInterval(timer);
     budget.release(owner);
     budget.close();
+  }
+}
+async function runWithWorktreeLease(rc, target, a, signal, onProgress, background, job) {
+  const wt = a._worktree ?? (a.worktree ? await createWorktree({ cwd: a.cwd || rc.cwd(), home: rc.home, jobId: randomUUID17().slice(0, 8), log: rc.log }) : null);
+  const root = wt?.path ?? bridgeWorktreeRoot(a.cwd || rc.cwd(), rc.home);
+  if (!root) return runDelegateInner(rc, target, a, signal, onProgress, background, job);
+  const release = worktreeLease(rc.home, { path: root });
+  try {
+    if (wt) {
+      if (!a._worktree) await recordWorktreeOrigin(rc.home, wt, rc.log);
+      else await prepareWorktreeContinuation(rc.home, wt, rc.log);
+    } else {
+      assertPhysicalPath(root);
+      invalidateWorktreePathProof(rc.home, root);
+    }
+    return await runDelegateInner(rc, target, wt ? { ...a, _worktree: wt } : a, signal, onProgress, background, job);
+  } finally {
+    release();
   }
 }
 async function runDelegateInner(rc, target, a, signal, onProgress, background, job) {
@@ -46915,7 +47127,7 @@ async function runDelegateInner(rc, target, a, signal, onProgress, background, j
   const cwd = a.cwd || rc.cwd();
   a = worktreeArgs(target, a, cfg, cwd, rc.home);
   const access = a.access;
-  const wt = a._worktree ?? (a.worktree ? await createWorktree({ cwd, home: rc.home, jobId: randomUUID16().slice(0, 8), log: dlog }) : null);
+  const wt = a._worktree ?? (a.worktree ? await createWorktree({ cwd, home: rc.home, jobId: randomUUID17().slice(0, 8), log: dlog }) : null);
   const workdir = wt?.cwd ?? cwd;
   const linkRoot = wt?.path ?? bridgeWorktreeRoot(workdir, rc.home);
   const watchChanges = !wt && (access === "edit" || access === "ask" && target === "codex");
@@ -46989,7 +47201,7 @@ async function runDelegateInner(rc, target, a, signal, onProgress, background, j
   try {
     feed = startRunFeed({
       home: rc.home,
-      name: `${target}-${randomUUID16().slice(0, 8)}`,
+      name: `${target}-${randomUUID17().slice(0, 8)}`,
       header: `${target}${a.model ? ` (${a.model}${a.effort ? `, effort ${a.effort}` : ""})` : a.effort ? ` (effort ${a.effort})` : ""} in ${workdir}, access ${access ?? "default"}, by ${me}${a.session_id ? `, continues ${a.session_id}` : ""}
 ${a.prompt}
 ---`,
@@ -47099,7 +47311,7 @@ ${a.prompt}
     });
     void steering?.rename?.(title).catch((err) => dlog.warn("could not rename the Codex thread", { err: err.message }));
   };
-  const slotOwner = { id: `${a._job ?? target}-${randomUUID16()}`, pid: process.pid };
+  const slotOwner = { id: `${a._job ?? target}-${randomUUID17()}`, pid: process.pid };
   let slots = null;
   let slotTimer;
   let res;
@@ -47224,7 +47436,7 @@ ${a.prompt}`));
   if (linkRoot) {
     try {
       const scan = scanWorktreeLinks(linkRoot);
-      linkedWorktreeRoot = scan.externalLinks.some((link3) => link3.path === resolve12(linkRoot));
+      linkedWorktreeRoot = scan.externalLinks.some((link3) => link3.path === resolve15(linkRoot));
       const warning = worktreeLinkWarning(scan);
       if (warning) notes.push(warning);
     } catch (err) {
@@ -47278,11 +47490,11 @@ ${notes.join("\n\n")}` : res.text };
 
 // src/mcp/job-host.ts
 import { spawn as spawn6 } from "node:child_process";
-import { mkdirSync as mkdirSync20, readdirSync as readdirSync14, statSync as statSync12 } from "node:fs";
-import { join as join42 } from "node:path";
+import { mkdirSync as mkdirSync21, readdirSync as readdirSync15, statSync as statSync12 } from "node:fs";
+import { join as join45 } from "node:path";
 
 // src/mcp/remote-job-host.ts
-import { join as join41 } from "node:path";
+import { join as join44 } from "node:path";
 var REMOTE_STATE_GRACE_MS = 9e4;
 var RemoteJobHost = class {
   constructor(node2, home, log) {
@@ -47296,7 +47508,7 @@ var RemoteJobHost = class {
   busy = /* @__PURE__ */ new Set();
   cache = /* @__PURE__ */ new Map();
   path(job) {
-    return join41(this.home, "remote-job-states", `${job.id}.json`);
+    return join44(this.home, "remote-job-states", `${job.id}.json`);
   }
   read(job) {
     return this.cache.get(job.id) ?? readJsonStore(this.path(job));
@@ -47311,7 +47523,7 @@ var RemoteJobHost = class {
     this.cache.delete(job.id);
     this.save(job, { state: null, alive: true, approvals: [] });
     const raw = { ...args, cwd: args.cwd ?? job.workdir };
-    for (const key2 of ["host", "_job", "_worktree", "send_to"]) delete raw[key2];
+    for (const key3 of ["host", "_job", "_worktree", "send_to"]) delete raw[key3];
     const request2 = { op: "spawn", job: job.id, target, args: remoteSpawnArgsSchema.parse(raw) };
     this.busy.add(job.id);
     void this.node.remoteJob(host, request2).then((snapshot) => {
@@ -47354,10 +47566,10 @@ var START_GRACE_MS = 3e4;
 var KEEP_FILES_MS = 7 * 24 * 60 * 60 * 1e3;
 var DETACH_LAUNCHER = "require('node:child_process').spawn(process.execPath,process.argv.slice(1),{detached:true,stdio:'ignore',windowsHide:true}).unref()";
 function runnerStatePath(home, id) {
-  return join42(home, RUNNERS_DIR_NAME, `${id}.json`);
+  return join45(home, RUNNERS_DIR_NAME, `${id}.json`);
 }
 function specPath(home, id) {
-  return join42(home, RUNNERS_DIR_NAME, `${id}.spec.json`);
+  return join45(home, RUNNERS_DIR_NAME, `${id}.spec.json`);
 }
 function readRunnerState(home, id) {
   try {
@@ -47375,11 +47587,11 @@ var JobRunners = class {
     this.log = log;
     this.remote = new RemoteJobHost(node2, home, log);
     try {
-      const dir = join42(home, RUNNERS_DIR_NAME);
+      const dir = join45(home, RUNNERS_DIR_NAME);
       const keepMs = retentionLimit("AGENT_BRIDGE_RUNNER_KEEP_MS", KEEP_FILES_MS);
       if (!keepMs) return;
-      for (const f of readdirSync14(dir)) {
-        const path = join42(dir, f);
+      for (const f of readdirSync15(dir)) {
+        const path = join45(dir, f);
         if (!f.endsWith(".json") || f.endsWith(".spec.json") || Date.now() - statSync12(path).mtimeMs <= keepMs) continue;
         const id = f.replace(/\.json$/, "");
         const state = readRunnerState(home, id);
@@ -47401,12 +47613,12 @@ var JobRunners = class {
   start(job, spec) {
     if (spec.args.host) return this.remote.start(job, spec.args.host, spec.target, spec.args);
     try {
-      mkdirSync20(join42(this.home, RUNNERS_DIR_NAME), { recursive: true });
-      const statePath = runnerStatePath(this.home, job.id);
+      mkdirSync21(join45(this.home, RUNNERS_DIR_NAME), { recursive: true });
+      const statePath2 = runnerStatePath(this.home, job.id);
       const file2 = specPath(this.home, job.id);
-      assertWritableStore(readJsonStore(statePath, this.log));
+      assertWritableStore(readJsonStore(statePath2, this.log));
       assertWritableStore(readJsonStore(file2, this.log));
-      archiveFile(statePath);
+      archiveFile(statePath2);
       const full = {
         ...spec,
         home: this.home,
@@ -47477,9 +47689,9 @@ var JobRunners = class {
 // src/network/remote-jobs.ts
 var REMOTE_JOBS_FILE = "remote-jobs.json";
 function allowedRemoteDirectory(directory2, roots) {
-  if (!isAbsolute9(directory2)) throw new Error("Remote cwd must be an absolute path on the paired PC.");
+  if (!isAbsolute10(directory2)) throw new Error("Remote cwd must be an absolute path on the paired PC.");
   const canonical = realpathSync9.native(directory2);
-  if (!statSync13(canonical).isDirectory() || !roots.some((root) => isAbsolute9(root) && isInside(canonical, realpathSync9.native(root)))) {
+  if (!statSync13(canonical).isDirectory() || !roots.some((root) => isAbsolute10(root) && isInside(canonical, realpathSync9.native(root)))) {
     throw new Error("Remote folder is outside network.remoteJobs.allowRoots.");
   }
   return canonical;
@@ -47492,7 +47704,7 @@ var RemoteJobs = class {
     this.control = control;
     const cli = bundledCli();
     this.runners = cli ? new JobRunners({}, home, cli, log) : null;
-    const stored = readJsonStore(join43(home, REMOTE_JOBS_FILE));
+    const stored = readJsonStore(join46(home, REMOTE_JOBS_FILE));
     if (isRecord(stored) && Array.isArray(stored.jobs)) for (const r of stored.jobs) {
       if (typeof r.pair !== "string" || typeof r.peer !== "string" || !r.job?.id || !r.args) continue;
       this.records.set(r.job.id, { ...r, job: { ...r.job, controller: new AbortController(), queue: [] } });
@@ -47516,13 +47728,13 @@ var RemoteJobs = class {
     const request2 = remoteJobRequestSchema.parse(raw);
     if (!this.network.peerSupports(host, REMOTE_JOB_CAPABILITY)) throw new Error("Remote broker update needed or paired PC disconnected: install remote-jobs-v1 support and restart its hosting sessions.");
     if (this.pending.size >= REMOTE_JOB_RATE_LIMIT) throw new Error("Too many pending remote job requests.");
-    const rid = randomUUID17();
-    const response = new Promise((resolve14, reject) => {
+    const rid = randomUUID18();
+    const response = new Promise((resolve17, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(rid);
         reject(new Error("Remote job request timed out; check the paired PC before retrying a spawn."));
       }, REMOTE_JOB_REQUEST_TIMEOUT_MS);
-      this.pending.set(rid, { host, resolve: resolve14, reject, timer });
+      this.pending.set(rid, { host, resolve: resolve17, reject, timer });
     });
     void response.catch(() => {
     });
@@ -47599,7 +47811,7 @@ var RemoteJobs = class {
       if ([...this.records.values()].filter((r) => this.snapshot(r).alive).length + this.starting.size > cfg.maxJobs) throw new Error("Remote subagent limit reached.");
       if (!record2 && this.records.size >= MAX_REMOTE_JOBS) throw new Error("Remote job registry is full.");
       if (!record2 && request2.args.session_id) throw new Error("Remote session continuation requires a job owned by this supervisor.");
-      const settings = Object.fromEntries(JOB_SETTING_KEYS.filter((key2) => key2 in request2.args).map((key2) => [key2, request2.args[key2]]));
+      const settings = Object.fromEntries(JOB_SETTING_KEYS.filter((key3) => key3 in request2.args).map((key3) => [key3, request2.args[key3]]));
       if (Object.keys(settings).length) {
         const parsed = parseJobSettings(settings, request2.target);
         if (typeof parsed === "string") throw new Error(parsed);
@@ -47616,7 +47828,7 @@ var RemoteJobs = class {
         args = resumeArgs(args, record2.job.name, args.prompt, state.sessionId, cwd, worktree, { ...args });
       } else if (args.worktree) {
         const repo = allowedRemoteDirectory(await git(["rev-parse", "--show-toplevel"], cwd, this.log), policy.allowRoots);
-        if (existsSync19(join43(repo, "worktrees"))) allowedRemoteDirectory(join43(repo, "worktrees"), policy.allowRoots);
+        if (existsSync20(join46(repo, "worktrees"))) allowedRemoteDirectory(join46(repo, "worktrees"), policy.allowRoots);
         worktree = await createWorktree({ cwd, home: repo, jobId: request2.job, log: this.log });
         cwd = allowedRemoteDirectory(worktree.cwd, policy.allowRoots);
         args = { ...args, cwd, worktree: false, _worktree: worktree };
@@ -47678,17 +47890,17 @@ var RemoteJobs = class {
     return { state, alive: alive2, approvals: listPendingApprovals(this.home).filter((a) => a.job === record2.job.name && a.owner === record2.owner) };
   }
   persist() {
-    writeJsonStore(join43(this.home, REMOTE_JOBS_FILE), { jobs: [...this.records.values()].map((r) => {
+    writeJsonStore(join46(this.home, REMOTE_JOBS_FILE), { jobs: [...this.records.values()].map((r) => {
       const { controller, queue, ...job } = r.job;
       return { ...r, job };
-    }) }, readJsonStore(join43(this.home, REMOTE_JOBS_FILE)));
+    }) }, readJsonStore(join46(this.home, REMOTE_JOBS_FILE)));
   }
   async mirror(host, peer, request2, snapshot, supervisor, localJobName) {
     const owner = peer.name;
-    const key2 = `${host}/${request2.job}`;
+    const key3 = `${host}/${request2.job}`;
     if (request2.op === "spawn") {
-      this.feeds.get(key2)?.end("interrupted");
-      this.feeds.set(key2, startRunFeed({
+      this.feeds.get(key3)?.end("interrupted");
+      this.feeds.set(key3, startRunFeed({
         home: this.home,
         name: `${request2.target}-${request2.job}`,
         header: `${request2.target} on ${host}, by ${owner}
@@ -47699,30 +47911,30 @@ ${request2.args.prompt}
       this.log.info("requested remote job", { host, job: request2.job, owner });
     }
     const state = snapshot.state;
-    if (!this.feeds.has(key2) && state?.status === "running") {
-      this.feeds.set(key2, startRunFeed({
+    if (!this.feeds.has(key3) && state?.status === "running") {
+      this.feeds.set(key3, startRunFeed({
         home: this.home,
         name: state.peer,
         header: `Reattached remote job on ${host}, by ${owner}`,
         meta: { by: owner, job: localJobName ?? state.peer, remote: { host, name: state.peer } }
       }));
     }
-    const feed = this.feeds.get(key2);
+    const feed = this.feeds.get(key3);
     if (state) {
       feed?.meta({ session: state.sessionId, workdir: state.workdir ?? void 0, model: state.model, percent: state.percent, progressNote: state.progressNote, etaAt: state.etaAt, etaReportedAt: state.etaReportedAt });
       if (state.progress) feed?.report(state.progress);
       if (state.status !== "running") {
         feed?.end(state.status, state.report);
-        this.feeds.delete(key2);
+        this.feeds.delete(key3);
       }
     }
-    const active = new Set(snapshot.approvals.map((a) => `${key2}/${a.id}`));
-    for (const [id, close] of this.approvals) if (id.startsWith(`${key2}/`) && !active.has(id)) {
+    const active = new Set(snapshot.approvals.map((a) => `${key3}/${a.id}`));
+    for (const [id, close] of this.approvals) if (id.startsWith(`${key3}/`) && !active.has(id)) {
       close();
       this.approvals.delete(id);
     }
     for (const approval of snapshot.approvals) {
-      const id = `${key2}/${approval.id}`;
+      const id = `${key3}/${approval.id}`;
       if (this.approvals.has(id) || this.publishingApprovals.has(id)) continue;
       this.publishingApprovals.add(id);
       try {
@@ -47779,7 +47991,7 @@ var Broker = class {
     this.now = now;
     this.jobsPath = jobsPath;
     this.networking = networking;
-    this.groups = new ProjectGroups(jobsPath ? dirname16(jobsPath) : void 0);
+    this.groups = new ProjectGroups(jobsPath ? dirname18(jobsPath) : void 0);
     this.handlers = {
       projectMain: (c, a) => {
         const args = external_exports.object({ to: external_exports.string().min(1) }).strict().parse(a);
@@ -47906,13 +48118,13 @@ var Broker = class {
         const supervisor = typeof saved?.supervisor === "string" ? saved.supervisor : peer.sessionId ?? peer.id;
         const snapshot = await this.remoteJobs.request(a.host, peer, a.request, supervisor, typeof saved?.name === "string" ? saved.name : void 0);
         const progress = snapshot.state?.progress;
-        const key2 = `${a.host}/${a.request.job}`;
-        if (progress && this.remoteProgress.get(key2) !== progress) {
-          this.remoteProgress.set(key2, progress);
+        const key3 = `${a.host}/${a.request.job}`;
+        if (progress && this.remoteProgress.get(key3) !== progress) {
+          this.remoteProgress.set(key3, progress);
           const pair = this.requireNetwork().status().paired.find((p) => p.id === a.host || p.name === a.host);
           const name2 = snapshot.state.peer;
           this.receiveRemote({
-            id: randomUUID18(),
+            id: randomUUID19(),
             from: { id: `${pair?.id ?? a.host}/job:${a.request.job}`, name: `${pair?.name ?? a.host}/${name2}`, agent: "other" },
             to: peer.name,
             recipient: peer.name,
@@ -47988,7 +48200,7 @@ var Broker = class {
   jobsForDispatch = null;
   /** Bind the endpoint. Rejects with the socket error (EADDRINUSE when another broker owns it). */
   listen() {
-    return new Promise((resolve14, reject) => {
+    return new Promise((resolve17, reject) => {
       const server = createServer4((socket) => this.accept(socket));
       const onError = (err) => {
         server.removeListener("listening", onListening);
@@ -48032,7 +48244,7 @@ var Broker = class {
             this.log.warn("networking could not start; local broker remains available", { message: err.message });
           }
         }
-        resolve14();
+        resolve17();
       };
       server.once("error", onError);
       server.once("listening", onListening);
@@ -48090,7 +48302,7 @@ var Broker = class {
     this.remoteDashboard = new RemoteDashboard(service, { home: this.networking.home, log: this.log, peers: () => this.dashboardPeers() });
     this.remoteJobs = new RemoteJobs(service, this.networking.home, this.log, async (record2, control) => {
       this.receiveRemote({
-        id: randomUUID18(),
+        id: randomUUID19(),
         from: { id: record2.owner, name: record2.owner, agent: "other" },
         to: record2.name,
         recipient: record2.name,
@@ -48234,13 +48446,13 @@ var Broker = class {
     return [...this.conns].flatMap((c) => c.peer ? [c.peer] : []);
   }
   projectPeer(peer) {
-    const decorated = this.groups.decorate(peer), key2 = decorated.projectGroup;
-    if (!key2 || peer.jobAgent || peer.subagent) return decorated;
-    const members2 = this.localPeers().filter((p) => !p.jobAgent && !p.subagent && this.groups.decorate(p).projectGroup === key2).sort((a, b) => a.startedAt - b.startedAt || a.name.localeCompare(b.name));
-    let main = this.projectMains.get(key2);
+    const decorated = this.groups.decorate(peer), key3 = decorated.projectGroup;
+    if (!key3 || peer.jobAgent || peer.subagent) return decorated;
+    const members2 = this.localPeers().filter((p) => !p.jobAgent && !p.subagent && this.groups.decorate(p).projectGroup === key3).sort((a, b) => a.startedAt - b.startedAt || a.name.localeCompare(b.name));
+    let main = this.projectMains.get(key3);
     if (!members2.some((p) => p.name === main)) {
       main = members2[0]?.name;
-      if (main) this.projectMains.set(key2, main);
+      if (main) this.projectMains.set(key3, main);
     }
     return { ...decorated, projectMain: main === peer.name, projectAddress: `project:${basename10(decorated.projectRoot)}` };
   }
@@ -48270,7 +48482,7 @@ var Broker = class {
       const peer = c.peer;
       if (!peer) return [];
       const job = jobs.find((j) => j.name === peer.name || `job:${j.id}` === peer.id);
-      const field = (key2) => typeof job?.[key2] === "string" ? job[key2] : void 0;
+      const field = (key3) => typeof job?.[key3] === "string" ? job[key3] : void 0;
       return [{
         ...this.projectPeer(peer),
         agent: peer.jobAgent ?? peer.agent,
@@ -48294,7 +48506,7 @@ var Broker = class {
       const current = receipt.jobs.map((j) => records.find((r) => r.id === j.id)).filter(isRecord);
       for (const job of current) {
         const old = receipt.jobs.find((j) => j.id === job.id);
-        const budget = new RootConcurrency(dirname16(this.jobsPath), String(job.rootSession));
+        const budget = new RootConcurrency(dirname18(this.jobsPath), String(job.rootSession));
         try {
           budget.moveJobs([old.name]);
         } finally {
@@ -48336,14 +48548,14 @@ Handoff note: ${receipt.note}` : "") + "\n\nYou are their supervisor. Use messag
         const message = { ...envelope, to: recipient, recipient, conversationId: this.jobConversation(job, recipient, String(envelope.conversationId)) };
         if (this.store.insertJobDelivery(message)) {
           const names = /* @__PURE__ */ new Set([recipient, envelope.to, envelope.recipient, ...mastersFor(job)]);
-          const consumed = this.jobsPath && [...names].some((name2) => typeof name2 === "string" && new ReadJournal(dirname16(this.jobsPath)).read(`name:${name2}`).includes(message.id));
+          const consumed = this.jobsPath && [...names].some((name2) => typeof name2 === "string" && new ReadJournal(dirname18(this.jobsPath)).read(`name:${name2}`).includes(message.id));
           if (consumed) this.store.markRead(recipient, [message.id], this.now());
           else if (target && !target.peer?.unavailable) this.emit(target, "message", message);
         }
       }
       if (!target || target.peer?.unavailable) continue;
       for (const from of this.store.pendingJobRecipients(String(job.id))) {
-        if (this.jobsPath) this.store.markRead(from, new ReadJournal(dirname16(this.jobsPath)).read(`name:${from}`), this.now());
+        if (this.jobsPath) this.store.markRead(from, new ReadJournal(dirname18(this.jobsPath)).read(`name:${from}`), this.now());
         const moved = this.store.handoffMail(from, recipient, String(job.id), this.now(), recipient !== job.parentJob && recipient !== primaryFor(job));
         const previous = this.connByName(from);
         if (previous && moved.length) this.emit(previous, "mail_retracted", { ids: moved.map((m) => m.id) });
@@ -48441,8 +48653,8 @@ Handoff note: ${receipt.note}` : "") + "\n\nYou are their supervisor. Use messag
   async onSendSibling(conn, args) {
     const sender = this.requirePeer(conn);
     const dedupeKey = args.dedupeKey ? `${SIBLING_CONVERSATION_PREFIX}${args.dedupeKey}` : void 0;
-    const key2 = dedupeKey ? `${sender.id}:${dedupeKey}` : null;
-    const seen = key2 ? this.sentByKey.get(key2) : void 0;
+    const key3 = dedupeKey ? `${sender.id}:${dedupeKey}` : null;
+    const seen = key3 ? this.sentByKey.get(key3) : void 0;
     if (seen) return seen.result;
     const target = this.siblingConns(conn).find((c) => c.peer.name === args.to);
     const stored = this.storedSiblings(sender).find((s) => s.name === args.to);
@@ -48469,7 +48681,7 @@ Handoff note: ${receipt.note}` : "") + "\n\nYou are their supervisor. Use messag
       if (typeof args.body !== "string" || !args.body.trim() || args.body.length > MAX_BODY_CHARS) {
         throw new BridgeError("bad_request", "invalid sibling message body");
       }
-      const id = randomUUID18();
+      const id = randomUUID19();
       const notice = {
         id,
         from: { id: sender.id, name: sender.name, agent: sender.jobAgent ?? sender.agent },
@@ -48495,7 +48707,7 @@ ${args.body}`,
       }
       throw new BridgeError("bad_request", `sibling conversation reached its ${args.maxHops}-message hop limit; message was not delivered. Durable notice ${id} saved for sender and supervisor, including the undelivered text`);
     }
-    const conversationId = parent2?.conversationId ?? `${SIBLING_CONVERSATION_PREFIX}${randomUUID18()}`;
+    const conversationId = parent2?.conversationId ?? `${SIBLING_CONVERSATION_PREFIX}${randomUUID19()}`;
     const result = await this.onSend(conn, { ...args, dedupeKey, conversationId });
     const message = result.messages[0];
     const recipientOwner = target?.peer?.jobParent ?? this.storedJobs().find((j) => j.name === args.to)?.owner;
@@ -48503,7 +48715,7 @@ ${args.body}`,
     for (const owner of observers) {
       const note = {
         ...message,
-        id: randomUUID18(),
+        id: randomUUID19(),
         recipient: owner,
         conversationId: `${conversationId}${SIBLING_NOTE_SUFFIX}`,
         body: `Sibling message to ${message.recipient}:
@@ -48530,7 +48742,7 @@ ${message.body}`
       const candidate = `${requested}-${i}`;
       if (!this.connByName(candidate)) return candidate;
     }
-    return `${requested}-${randomUUID18().slice(0, 8)}`;
+    return `${requested}-${randomUUID19().slice(0, 8)}`;
   }
   onDecide(conn, value) {
     const peer = this.requirePeer(conn);
@@ -48571,7 +48783,7 @@ ${message.body}`
   }
   queueDecision(decision, peer) {
     const message = {
-      id: randomUUID18(),
+      id: randomUUID19(),
       from: decision.author,
       to: peer.name,
       recipient: peer.name,
@@ -48783,12 +48995,12 @@ Call decisions to look up current decisions or their history.`,
    * waited longer than QUEUED_MAIL_MAX_AGE_MS most likely belongs to a session that is gone; recent mail
    * still reaches a session that restarted or reconnected after a broker hand-over.
    */
-  expireStaleQueue(key2) {
+  expireStaleQueue(key3) {
     try {
       const maxAge = retentionLimit("AGENT_BRIDGE_QUEUED_MAIL_MAX_AGE_MS", QUEUED_MAIL_MAX_AGE_MS);
-      if (maxAge) this.store.expireQueued(key2, this.now() - maxAge);
+      if (maxAge) this.store.expireQueued(key3, this.now() - maxAge);
     } catch (err) {
-      this.log.warn("expiring queued mail failed", { key: key2, err });
+      this.log.warn("expiring queued mail failed", { key: key3, err });
     }
   }
   /** Turns a sender-supplied target into live connections and/or offline queue keys. */
@@ -48829,22 +49041,22 @@ Call decisions to look up current decisions or their history.`,
   sendingByKey = /* @__PURE__ */ new Map();
   async onSend(conn, args) {
     const sender = this.requirePeer(conn);
-    const key2 = typeof args.dedupeKey === "string" && args.dedupeKey ? `${sender.id}:${args.dedupeKey}` : null;
-    const seen = key2 ? this.sentByKey.get(key2) : void 0;
+    const key3 = typeof args.dedupeKey === "string" && args.dedupeKey ? `${sender.id}:${args.dedupeKey}` : null;
+    const seen = key3 ? this.sentByKey.get(key3) : void 0;
     if (seen) return seen.result;
-    const inFlight = key2 ? this.sendingByKey.get(key2) : void 0;
+    const inFlight = key3 ? this.sendingByKey.get(key3) : void 0;
     if (inFlight) return inFlight;
     const sending = this.routeSend(conn, sender, args);
-    if (key2) this.sendingByKey.set(key2, sending);
+    if (key3) this.sendingByKey.set(key3, sending);
     let result;
     try {
       result = await sending;
     } finally {
-      if (key2) this.sendingByKey.delete(key2);
+      if (key3) this.sendingByKey.delete(key3);
     }
-    if (key2) {
+    if (key3) {
       const now = this.now();
-      this.sentByKey.set(key2, { at: now, result });
+      this.sentByKey.set(key3, { at: now, result });
       for (const [k, v] of this.sentByKey) {
         if (now - v.at < DEDUPE_KEEP_MS && this.sentByKey.size <= DEDUPE_MAX) break;
         this.sentByKey.delete(k);
@@ -48880,9 +49092,9 @@ Call decisions to look up current decisions or their history.`,
         this.log.debug("replyTo refers to an unknown message", { replyTo });
       }
     }
-    conversationId ||= randomUUID18();
+    conversationId ||= randomUUID19();
     if (own2 && (to === own2.rootName || to === own2.owner || this.groups.members(own2, this.localPeers()).some((p) => p.name === to) || mastersFor(own2).includes(to))) conversationId = this.jobConversation(own2, to, conversationId);
-    const id = sender.jobAgent && args.dedupeKey?.startsWith(COMPLETION_DEDUPE_PREFIX) ? completionMessageId(sender.id, args.dedupeKey.slice(COMPLETION_DEDUPE_PREFIX.length)) : randomUUID18();
+    const id = sender.jobAgent && args.dedupeKey?.startsWith(COMPLETION_DEDUPE_PREFIX) ? completionMessageId(sender.id, args.dedupeKey.slice(COMPLETION_DEDUPE_PREFIX.length)) : randomUUID19();
     const createdAt = this.now();
     const base2 = {
       id,
@@ -48913,7 +49125,7 @@ Call decisions to look up current decisions or their history.`,
     }
     const messages = [];
     for (const c of live) messages.push({ ...base2, recipient: c.peer.name });
-    for (const key2 of queued) messages.push({ ...base2, recipient: key2 });
+    for (const key3 of queued) messages.push({ ...base2, recipient: key3 });
     for (const m of messages) this.store.insert(m);
     live.forEach((c, i) => this.emit(c, "message", messages[i]));
     this.log.info("message routed", {
@@ -49046,7 +49258,7 @@ var BridgeClient = class _BridgeClient extends EventEmitter {
   closed = false;
   /** Connect to an existing broker. Rejects with the socket error (ENOENT/ECONNREFUSED if nobody listens). */
   static connect(pipePath, log, timeoutMs = CONNECT_TIMEOUT_MS) {
-    return new Promise((resolve14, reject) => {
+    return new Promise((resolve17, reject) => {
       const socket = connect2(pipePath);
       const timer = setTimeout(() => {
         socket.destroy();
@@ -49055,7 +49267,7 @@ var BridgeClient = class _BridgeClient extends EventEmitter {
       socket.once("connect", () => {
         clearTimeout(timer);
         socket.removeAllListeners("error");
-        resolve14(new _BridgeClient(socket, log));
+        resolve17(new _BridgeClient(socket, log));
       });
       socket.once("error", (err) => {
         clearTimeout(timer);
@@ -49069,12 +49281,12 @@ var BridgeClient = class _BridgeClient extends EventEmitter {
   request(op, args, timeoutMs = REQUEST_TIMEOUT_MS) {
     if (this.closed) return Promise.reject(new Error("connection to broker closed"));
     const id = this.nextId++;
-    return new Promise((resolve14, reject) => {
+    return new Promise((resolve17, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
         reject(new Error(`broker request timed out: ${op}`));
       }, timeoutMs);
-      this.pending.set(id, { resolve: resolve14, reject, timer });
+      this.pending.set(id, { resolve: resolve17, reject, timer });
       this.socket.write(encodeFrame({ t: "req", id, op, args }));
     });
   }
@@ -49117,7 +49329,7 @@ async function processIdentity(pid) {
 }
 
 // src/core/job-control.ts
-import { randomUUID as randomUUID19 } from "node:crypto";
+import { randomUUID as randomUUID20 } from "node:crypto";
 var DASHBOARD_JOB_CONVERSATION = "jobctl-dashboard";
 var CONTROL_TIMEOUT_MS = 1e4;
 var JobControlError = class extends Error {
@@ -49129,15 +49341,15 @@ var JobControlError = class extends Error {
 };
 async function controlDashboardJob(node2, owner, job, command) {
   if (!(await node2.peers()).some((p) => p.name === owner)) throw new JobControlError("The owning session is not connected. Reopen it to continue this subagent.", "offline");
-  const requestId = randomUUID19();
+  const requestId = randomUUID20();
   let receive;
   let timer;
-  const reply2 = new Promise((resolve14, reject) => {
+  const reply2 = new Promise((resolve17, reject) => {
     receive = (m) => {
       if (m.from.name !== owner) return;
       try {
         const result = JSON.parse(m.body);
-        if (result.type === "result" && result.requestId === requestId && typeof result.text === "string" && typeof result.outcome === "string" && typeof result.isError === "boolean") resolve14(result);
+        if (result.type === "result" && result.requestId === requestId && typeof result.text === "string" && typeof result.outcome === "string" && typeof result.isError === "boolean") resolve17(result);
       } catch {
       }
     };
@@ -49166,12 +49378,12 @@ var BridgeNode = class extends EventEmitter2 {
   constructor(opts) {
     super();
     this.opts = opts;
-    this.id = opts.id ?? randomUUID20();
+    this.id = opts.id ?? randomUUID21();
     this.currentName = opts.name;
     this.currentCwd = opts.cwd;
     this.autoWake = opts.autoWake;
     this.log = opts.log.child("node");
-    this.readJournal = new ReadJournal(dirname17(opts.dbPath));
+    this.readJournal = new ReadJournal(dirname19(opts.dbPath));
     this.restoreReadState(`name:${this.currentName}`);
   }
   opts;
@@ -49319,7 +49531,7 @@ var BridgeNode = class extends EventEmitter2 {
       this.log.error("cannot open message store", { err, db: this.opts.dbPath });
       throw err;
     }
-    const broker = new Broker(this.opts.pipePath, store, this.log.child("broker"), this.opts.token, Date.now, join44(dirname17(this.opts.dbPath), JOBS_FILE), this.opts.network);
+    const broker = new Broker(this.opts.pipePath, store, this.log.child("broker"), this.opts.token, Date.now, join47(dirname19(this.opts.dbPath), JOBS_FILE), this.opts.network);
     try {
       await broker.listen();
       this.broker = broker;
@@ -49564,7 +49776,7 @@ var BridgeNode = class extends EventEmitter2 {
    */
   deliverLocal(m) {
     try {
-      recordLocalResult(dirname17(this.opts.dbPath), m);
+      recordLocalResult(dirname19(this.opts.dbPath), m);
     } catch (err) {
       this.log.warn("could not retain local result receipt", { id: m.id, err: String(err) });
     }
@@ -49620,7 +49832,7 @@ var BridgeNode = class extends EventEmitter2 {
     if (signal?.aborted) return Promise.resolve(null);
     const existing = this.unread().find(predicate);
     if (existing) return Promise.resolve(existing);
-    return new Promise((resolve14) => {
+    return new Promise((resolve17) => {
       const done = (m) => {
         clearTimeout(timer);
         this.off("message", onMessage);
@@ -49628,7 +49840,7 @@ var BridgeNode = class extends EventEmitter2 {
         this.off("replaced", onAbort);
         this.off("stopped", onAbort);
         signal?.removeEventListener("abort", onAbort);
-        resolve14(m);
+        resolve17(m);
       };
       const onMessage = (m) => {
         if (predicate(m)) done(m);
@@ -49699,12 +49911,12 @@ import { readFile as readFile2 } from "node:fs/promises";
 var LOOKUP_TIMEOUT_MS = 5e3;
 var MAX_ANCESTORS = 4;
 function exec2(file2, args) {
-  return new Promise((resolve14, reject) => {
+  return new Promise((resolve17, reject) => {
     execFile2(
       file2,
       args,
       { timeout: LOOKUP_TIMEOUT_MS, windowsHide: true, maxBuffer: 1024 * 1024 },
-      (err, stdout) => err ? reject(err) : resolve14(stdout)
+      (err, stdout) => err ? reject(err) : resolve17(stdout)
     );
   });
 }
@@ -49859,9 +50071,9 @@ var CodexWaker = class {
 };
 
 // src/mcp/message-wait.ts
-import { randomUUID as randomUUID21 } from "node:crypto";
-import { mkdirSync as mkdirSync21, readdirSync as readdirSync15, readFileSync as readFileSync24 } from "node:fs";
-import { join as join45 } from "node:path";
+import { randomUUID as randomUUID22 } from "node:crypto";
+import { mkdirSync as mkdirSync22, readdirSync as readdirSync16, readFileSync as readFileSync24 } from "node:fs";
+import { join as join48 } from "node:path";
 var SINGLE_WAIT_SEC = DEFAULT_WAIT_SEC;
 var RECEIPT_POLL_MS = 1e3;
 function singleWaitTimeoutMs(requestedSec) {
@@ -49888,10 +50100,10 @@ function matchesNotificationWait(filters, m) {
 var MessageWaitStore = class {
   dir;
   constructor(home) {
-    this.dir = join45(home, "message-waits");
+    this.dir = join48(home, "message-waits");
   }
   path(id) {
-    return join45(this.dir, `${external_exports.uuid().parse(id)}.json`);
+    return join48(this.dir, `${external_exports.uuid().parse(id)}.json`);
   }
   owns(node2, record2) {
     return record2.sessionId && node2.currentSessionId ? record2.sessionId === node2.currentSessionId : record2.owner === node2.name;
@@ -49899,7 +50111,7 @@ var MessageWaitStore = class {
   save(node2, filters, mode = "block") {
     const existing = mode === "notify" ? this.pending(node2).find((r) => r.mode === mode && ["from", "reply_to", "conversation_id", "read_receipt_of"].every((k) => r.filters[k] === filters[k])) : void 0;
     if (existing) return existing;
-    const record2 = { id: randomUUID21(), owner: node2.name, sessionId: node2.currentSessionId, filters, mode };
+    const record2 = { id: randomUUID22(), owner: node2.name, sessionId: node2.currentSessionId, filters, mode };
     writeJsonStore(this.path(record2.id), record2, null);
     return record2;
   }
@@ -49909,10 +50121,10 @@ var MessageWaitStore = class {
     return record2;
   }
   pending(node2) {
-    mkdirSync21(this.dir, { recursive: true, mode: 448 });
-    return readdirSync15(this.dir).filter((f) => f.endsWith(".json")).flatMap((f) => {
+    mkdirSync22(this.dir, { recursive: true, mode: 448 });
+    return readdirSync16(this.dir).filter((f) => f.endsWith(".json")).flatMap((f) => {
       try {
-        const record2 = waitSchema.parse(JSON.parse(readFileSync24(join45(this.dir, f), "utf8")));
+        const record2 = waitSchema.parse(JSON.parse(readFileSync24(join48(this.dir, f), "utf8")));
         return this.owns(node2, record2) ? [record2] : [];
       } catch {
         return [];
@@ -49947,20 +50159,20 @@ function resumeWaitHint(record2) {
 async function waitForReadReceipt(node2, id, timeoutMs, signal) {
   const deadline = Date.now() + timeoutMs;
   while (!signal.aborted && !node2.wasReplaced) {
-    const receipts = await new Promise((resolve14, reject) => {
+    const receipts = await new Promise((resolve17, reject) => {
       const cleanup = () => {
         clearTimeout(timer);
         signal.removeEventListener("abort", onAbort);
       };
       const onAbort = () => {
         cleanup();
-        resolve14(null);
+        resolve17(null);
       };
       const timer = setTimeout(onAbort, Math.max(0, deadline - Date.now()));
       signal.addEventListener("abort", onAbort, { once: true });
       node2.messageReceipt(id).then((value) => {
         cleanup();
-        resolve14(value);
+        resolve17(value);
       }, (err) => {
         cleanup();
         reject(err);
@@ -49971,11 +50183,11 @@ async function waitForReadReceipt(node2, id, timeoutMs, signal) {
     if (receipts.length && receipts.every((r) => r.readAt !== null)) return receipts;
     const remaining = deadline - Date.now();
     if (remaining <= 0) break;
-    await new Promise((resolve14) => {
+    await new Promise((resolve17) => {
       const done = () => {
         clearTimeout(timer);
         signal.removeEventListener("abort", done);
-        resolve14();
+        resolve17();
       };
       const timer = setTimeout(done, Math.min(RECEIPT_POLL_MS, remaining));
       signal.addEventListener("abort", done, { once: true });
@@ -49987,9 +50199,9 @@ async function waitForReadReceipt(node2, id, timeoutMs, signal) {
 
 // src/mcp/rewake.ts
 import { randomBytes as randomBytes7 } from "node:crypto";
-import { mkdirSync as mkdirSync22, rmSync as rmSync7, writeFileSync as writeFileSync10 } from "node:fs";
+import { mkdirSync as mkdirSync23, rmSync as rmSync7, writeFileSync as writeFileSync10 } from "node:fs";
 import { createServer as createServer5 } from "node:http";
-import { join as join46 } from "node:path";
+import { join as join49 } from "node:path";
 var SESSIONS_DIR = "sessions";
 var WAKE_HEADER = "[agent-bridge] Something you were waiting for arrived:";
 var HOST2 = "127.0.0.1";
@@ -49999,7 +50211,7 @@ var WAKE_CONFIRM_MS = 2e4;
 var STANDBY_GRACE_MS = 3e3;
 var MOD_TICK_MS = 2e3;
 function sessionFile(home, sessionId) {
-  return join46(home, SESSIONS_DIR, `${sessionId.replace(/[^\w-]/g, "_")}.json`);
+  return join49(home, SESSIONS_DIR, `${sessionId.replace(/[^\w-]/g, "_")}.json`);
 }
 function shouldWakeClaudeMessage(node2, cfg, m) {
   if (m.hop >= cfg.maxHops || isQuietMessage(m) || m.conversationId.endsWith(":note")) return false;
@@ -50061,9 +50273,9 @@ var RewakeEndpoint = class {
     });
     this.server.requestTimeout = 0;
     this.server.headersTimeout = 0;
-    await new Promise((resolve14, reject) => {
+    await new Promise((resolve17, reject) => {
       this.server.once("error", reject);
-      this.server.listen(0, HOST2, () => resolve14());
+      this.server.listen(0, HOST2, () => resolve17());
     });
     this.port = this.server.address().port;
   }
@@ -50225,7 +50437,7 @@ var RewakeEndpoint = class {
   register(sessionId) {
     if (!this.server || this.retired || this.registered === sessionId) return;
     const file2 = sessionFile(this.home, sessionId);
-    mkdirSync22(join46(this.home, SESSIONS_DIR), { recursive: true });
+    mkdirSync23(join49(this.home, SESSIONS_DIR), { recursive: true });
     const reg = { port: this.port, secret: this.secret, pid: process.pid };
     writeFileSync10(file2, JSON.stringify(reg), { mode: 384 });
     if (this.registered) rmSync7(sessionFile(this.home, this.registered), { force: true });
@@ -50446,7 +50658,7 @@ var LocalCoordinator = class extends EventEmitter3 {
   }
   async wait(timeoutMs, signal, match = () => true) {
     if (this.messages.some(match) || signal?.aborted) return;
-    await new Promise((resolve14) => {
+    await new Promise((resolve17) => {
       const arrived = (message) => {
         if (match(message)) done();
       };
@@ -50454,7 +50666,7 @@ var LocalCoordinator = class extends EventEmitter3 {
         clearTimeout(timer);
         this.off("message", arrived);
         signal?.removeEventListener("abort", done);
-        resolve14();
+        resolve17();
       };
       const timer = setTimeout(done, timeoutMs);
       this.on("message", arrived);
@@ -50464,11 +50676,11 @@ var LocalCoordinator = class extends EventEmitter3 {
 };
 
 // src/core/auto-wake-pref.ts
-import { join as join47 } from "node:path";
+import { join as join50 } from "node:path";
 var FILE = "auto-wake.json";
 function read(home) {
   try {
-    return readJsonStore(join47(home, FILE)) ?? {};
+    return readJsonStore(join50(home, FILE)) ?? {};
   } catch {
     return {};
   }
@@ -50480,7 +50692,7 @@ function savedAutoWake(home, name2) {
 }
 function saveAutoWake(home, name2, enabled) {
   try {
-    const file2 = join47(home, FILE);
+    const file2 = join50(home, FILE);
     const previous = readJsonStore(file2);
     const data = isRecord(previous) ? previous : {};
     const peers = isRecord(data.peers) ? data.peers : data;
@@ -50492,15 +50704,15 @@ function saveAutoWake(home, name2, enabled) {
 }
 
 // src/core/models.ts
-import { mkdirSync as mkdirSync23, readFileSync as readFileSync25, writeFileSync as writeFileSync11 } from "node:fs";
-import { join as join48 } from "node:path";
+import { mkdirSync as mkdirSync24, readFileSync as readFileSync25, writeFileSync as writeFileSync11 } from "node:fs";
+import { join as join51 } from "node:path";
 var MAX_LISTED = 80;
 var MODEL_CACHE_MS = 10 * 60 * 1e3;
 var SHORT_MODEL_LIST = 6;
 var modelReads = /* @__PURE__ */ new Map();
 var modelBin = (agent, cfg) => cfg[`${agent}Bin`];
 var modelDefault = (agent, cfg) => cfg[`${agent}Model`];
-var modelCachePath = (home, agent) => join48(home, `models-${agent}.json`);
+var modelCachePath = (home, agent) => join51(home, `models-${agent}.json`);
 function cachedModels(home, agent, cfg) {
   try {
     const cache4 = JSON.parse(readFileSync25(modelCachePath(home, agent), "utf8"));
@@ -50520,8 +50732,8 @@ function modelParameterDescription(agent, cfg, home, example) {
 async function readModels(agent, cfg, cwd, log, home) {
   const cached3 = cachedModels(home, agent, cfg);
   if (cached3) return cached3;
-  const key2 = JSON.stringify([home, agent, modelBin(agent, cfg), modelDefault(agent, cfg), cfg.effort[agent], cwd]);
-  let reading = modelReads.get(key2);
+  const key3 = JSON.stringify([home, agent, modelBin(agent, cfg), modelDefault(agent, cfg), cfg.effort[agent], cwd]);
+  let reading = modelReads.get(key3);
   if (!reading) {
     reading = (async () => {
       const lines = await describeModels(agent, cfg, cwd, log);
@@ -50533,15 +50745,15 @@ async function readModels(agent, cfg, cwd, log, home) {
       const report = { agent, defaultModel, models, lines };
       if (!lines[0]?.startsWith("Could not list")) {
         try {
-          mkdirSync23(home, { recursive: true });
+          mkdirSync24(home, { recursive: true });
           writeFileSync11(modelCachePath(home, agent), JSON.stringify({ at: Date.now(), bin: modelBin(agent, cfg), effort: cfg.effort[agent] ?? null, report }), { mode: 384 });
         } catch (err) {
           log.debug("could not cache models", { err: err.message });
         }
       }
       return { ...report, defaultModel: modelDefault(agent, cfg) ?? defaultModel };
-    })().finally(() => modelReads.delete(key2));
-    modelReads.set(key2, reading);
+    })().finally(() => modelReads.delete(key3));
+    modelReads.set(key3, reading);
   }
   return reading;
 }
@@ -50587,14 +50799,14 @@ async function describeModels(agent, cfg, cwd, log, query = "") {
 import { randomBytes as randomBytes9 } from "node:crypto";
 import { chmodSync as chmodSync3, readFileSync as readFileSync28, writeFileSync as writeFileSync12 } from "node:fs";
 import { request } from "node:http";
-import { join as join53 } from "node:path";
+import { join as join56 } from "node:path";
 
 // src/cli/ui.ts
 import { randomBytes as randomBytes8 } from "node:crypto";
-import { existsSync as existsSync22 } from "node:fs";
+import { existsSync as existsSync23 } from "node:fs";
 import { createServer as createServer6 } from "node:http";
 import { networkInterfaces as networkInterfaces2 } from "node:os";
-import { join as join52 } from "node:path";
+import { join as join55 } from "node:path";
 
 // src/cli/logo.ts
 var LOGO_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="agent-bridge"><defs><linearGradient id="ab-bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#1e1b4b"/><stop offset="1" stop-color="#4338ca"/></linearGradient><linearGradient id="ab-l" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffb088"/><stop offset="1" stop-color="#e2603b"/></linearGradient><linearGradient id="ab-r" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#7cf0c0"/><stop offset="1" stop-color="#0e9f6e"/></linearGradient><radialGradient id="ab-glow"><stop offset="0" stop-color="#fff" stop-opacity=".55"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></radialGradient></defs><rect width="64" height="64" rx="16" fill="url(#ab-bg)"/><path d="M9 52V32A20 20 0 0 1 27 12.1v10.2A10 10 0 0 0 19 32v20z" fill="url(#ab-l)"/><path d="M55 52V32A20 20 0 0 0 37 12.1v10.2A10 10 0 0 1 45 32v20z" fill="url(#ab-r)"/><circle cx="32" cy="17" r="11" fill="url(#ab-glow)"/><path d="M32 9.5c.9 4.6 2.9 6.6 7.5 7.5-4.6.9-6.6 2.9-7.5 7.5-.9-4.6-2.9-6.6-7.5-7.5 4.6-.9 6.6-2.9 7.5-7.5z" fill="#fff"/></svg>';
@@ -53409,36 +53621,36 @@ function parseNetworkAddress(address) {
 }
 
 // src/core/doctor.ts
-import { existsSync as existsSync20, lstatSync as lstatSync6, mkdirSync as mkdirSync24, readFileSync as readFileSync26, readdirSync as readdirSync16, renameSync as renameSync8 } from "node:fs";
-import { basename as basename11, dirname as dirname18, join as join49, relative as relative8 } from "node:path";
-import { randomUUID as randomUUID22 } from "node:crypto";
+import { existsSync as existsSync21, lstatSync as lstatSync9, mkdirSync as mkdirSync25, readFileSync as readFileSync26, readdirSync as readdirSync17, renameSync as renameSync8 } from "node:fs";
+import { basename as basename11, dirname as dirname20, join as join52, relative as relative9 } from "node:path";
+import { randomUUID as randomUUID23 } from "node:crypto";
 import { DatabaseSync as DatabaseSync12 } from "node:sqlite";
 function doctor(home, now = Date.now()) {
   const report = { checkedAt: now, ok: true, schema: [], findings: [], sizes: [], totalBytes: 0, backups: listBackups(home) };
   const finding = (severity, code, path, detail, fixable = false) => report.findings.push({ severity, code, path, detail, fixable });
   const walk = (dir) => {
-    if (!existsSync20(dir)) return;
-    for (const file2 of readdirSync16(dir)) {
-      const path = join49(dir, file2);
-      const st = lstatSync6(path);
+    if (!existsSync21(dir)) return;
+    for (const file2 of readdirSync17(dir)) {
+      const path = join52(dir, file2);
+      const st = lstatSync9(path);
       if (st.isSymbolicLink()) {
         finding("warning", "symlink", path, "Skipped symbolic link");
         continue;
       }
       if (st.isDirectory()) walk(path);
       else {
-        report.sizes.push({ path: relative8(home, path), bytes: st.size });
+        report.sizes.push({ path: relative9(home, path), bytes: st.size });
         report.totalBytes += st.size;
-        if (file2.endsWith(".tmp") && !relative8(home, path).split(/[\\/]/).some((s) => ["archive", "backups"].includes(s))) finding("warning", "orphan-temp", path, "Temporary file; quarantine only with all writers stopped", true);
+        if (file2.endsWith(".tmp") && !relative9(home, path).split(/[\\/]/).some((s) => ["archive", "backups"].includes(s))) finding("warning", "orphan-temp", path, "Temporary file; quarantine only with all writers stopped", true);
         if (file2.includes(".corrupt-")) finding("error", "preserved-corrupt", path, "Preserved corrupt data needs manual recovery");
       }
     }
   };
   walk(home);
   for (const [name2, expected] of [[DB_FILE_NAME, SQLITE_STORE_VERSION], [ARCHIVE_DB_NAME, ARCHIVE_STORE_VERSION]]) {
-    const path = join49(home, name2);
+    const path = join52(home, name2);
     let actual = null;
-    if (existsSync20(path)) {
+    if (existsSync21(path)) {
       let db = null;
       try {
         db = new DatabaseSync12(path, { readOnly: true });
@@ -53479,24 +53691,24 @@ function doctor(home, now = Date.now()) {
       if (version2 === void 0 || version2 === 0) finding("warning", "json-legacy", path, "Legacy version; next versioned write will preserve a migration backup");
       else if (!Number.isInteger(version2) || version2 < 0 || version2 > JSON_STORE_VERSION) finding("error", "json-version", path, `Unsupported JSON version ${String(version2)}; code expects ${JSON_STORE_VERSION}`);
       else if (version2 < JSON_STORE_VERSION) finding("warning", "json-legacy", path, `Earlier JSON version ${String(version2)}; code expects ${JSON_STORE_VERSION}`);
-      if (dirname18(path) === join49(home, "runs") && path.endsWith(".json") && !existsSync20(path.replace(/\.json$/, ".log"))) finding("warning", "orphan-metadata", path, "Run metadata has no matching active log; preserved for review");
-      if (dirname18(path) === join49(home, "jobs") && path.endsWith(".spec.json") && !existsSync20(path.replace(/\.spec\.json$/, ".json"))) finding("warning", "orphan-runner-spec", path, "Runner specification has no state; it may still be starting");
+      if (dirname20(path) === join52(home, "runs") && path.endsWith(".json") && !existsSync21(path.replace(/\.json$/, ".log"))) finding("warning", "orphan-metadata", path, "Run metadata has no matching active log; preserved for review");
+      if (dirname20(path) === join52(home, "jobs") && path.endsWith(".spec.json") && !existsSync21(path.replace(/\.spec\.json$/, ".json"))) finding("warning", "orphan-runner-spec", path, "Runner specification has no state; it may still be starting");
     } catch (err) {
       finding("error", "json-parse", path, String(err));
     }
   }
   const logs = runLogFiles(home);
   for (const path of logs) {
-    const meta3 = join49(dirname18(path), runFileName(path).replace(/\.log$/, ".json"));
-    if (!existsSync20(meta3) && !readdirSync16(dirname18(path)).some((f) => f.startsWith(basename11(meta3) + "-"))) finding("warning", "orphan-log", path, "Run log has no metadata; log remains readable");
+    const meta3 = join52(dirname20(path), runFileName(path).replace(/\.log$/, ".json"));
+    if (!existsSync21(meta3) && !readdirSync17(dirname20(path)).some((f) => f.startsWith(basename11(meta3) + "-"))) finding("warning", "orphan-log", path, "Run log has no metadata; log remains readable");
   }
   report.ok = !report.findings.some((f) => f.severity === "error");
   return report;
 }
 
 // src/core/message-history.ts
-import { existsSync as existsSync21 } from "node:fs";
-import { dirname as dirname19, join as join50 } from "node:path";
+import { existsSync as existsSync22 } from "node:fs";
+import { dirname as dirname21, join as join53 } from "node:path";
 import { DatabaseSync as DatabaseSync13 } from "node:sqlite";
 var DEFAULT_HISTORY_LIMIT = 100;
 var MAX_HISTORY_LIMIT = 1e3;
@@ -53504,8 +53716,8 @@ function searchMessages(file2, opts = {}) {
   const limit = Math.min(MAX_HISTORY_LIMIT, Math.max(1, Math.floor(opts.limit ?? DEFAULT_HISTORY_LIMIT)));
   const query = `%${(opts.query ?? "").replace(/[\\%_]/g, "\\$&")}%`;
   const rows = [];
-  for (const path of [file2, join50(dirname19(file2), ARCHIVE_DB_NAME)]) {
-    if (!existsSync21(path)) continue;
+  for (const path of [file2, join53(dirname21(file2), ARCHIVE_DB_NAME)]) {
+    if (!existsSync22(path)) continue;
     const db = new DatabaseSync13(path, { readOnly: true });
     try {
       for (const table of ["messages", "archived_messages"]) {
@@ -53530,7 +53742,7 @@ function searchMessages(file2, opts = {}) {
 // src/core/history-answer.ts
 import { mkdtempSync as mkdtempSync3, rmSync as rmSync8 } from "node:fs";
 import { tmpdir as tmpdir2 } from "node:os";
-import { join as join51 } from "node:path";
+import { join as join54 } from "node:path";
 var HISTORY_ANSWER_TIMEOUT_MS = 6e4;
 var HISTORY_ANSWER_MAX_HITS = 8;
 var HISTORY_ANSWER_MAX_CHARS = 4e3;
@@ -53582,7 +53794,7 @@ async function answerHistory(query, result, cfg, home, log, deps = {}) {
   }
 }
 async function runAnswer(agent, model, prompt, cfg, log) {
-  const cwd = mkdtempSync3(join51(tmpdir2(), "agent-bridge-answer-"));
+  const cwd = mkdtempSync3(join54(tmpdir2(), "agent-bridge-answer-"));
   const env = childEnv();
   try {
     let args;
@@ -53622,11 +53834,11 @@ function markRemoteDashboard(value, host) {
     return next;
   };
   const result = { ...value, host };
-  for (const key2 of ["items", "subagents"]) if (Array.isArray(value[key2])) result[key2] = value[key2].map((raw) => item(raw));
+  for (const key3 of ["items", "subagents"]) if (Array.isArray(value[key3])) result[key3] = value[key3].map((raw) => item(raw));
   if (Array.isArray(value.runs)) result.runs = value.runs.map((raw) => item(raw, true));
-  else if (isRecord(value.runs)) result.runs = Object.fromEntries(Object.entries(value.runs).map(([key2, raw]) => [qualify(key2), item(raw)]));
-  if (isRecord(value.jobs)) result.jobs = Object.fromEntries(Object.entries(value.jobs).map(([key2, raw]) => [qualify(key2), item(raw)]));
-  if (isRecord(value.groups)) result.groups = Object.fromEntries(Object.entries(value.groups).map(([key2, names]) => [key2, Array.isArray(names) ? names.map(qualify) : names]));
+  else if (isRecord(value.runs)) result.runs = Object.fromEntries(Object.entries(value.runs).map(([key3, raw]) => [qualify(key3), item(raw)]));
+  if (isRecord(value.jobs)) result.jobs = Object.fromEntries(Object.entries(value.jobs).map(([key3, raw]) => [qualify(key3), item(raw)]));
+  if (isRecord(value.groups)) result.groups = Object.fromEntries(Object.entries(value.groups).map(([key3, names]) => [key3, Array.isArray(names) ? names.map(qualify) : names]));
   return result;
 }
 
@@ -53767,7 +53979,7 @@ async function startUi(opts) {
       });
     }
     if (remoteState) return remoteState.value;
-    const waited = await Promise.race([remoteStateLoad, new Promise((resolve14) => setTimeout(() => resolve14(null), REMOTE_STATE_FIRST_WAIT_MS))]);
+    const waited = await Promise.race([remoteStateLoad, new Promise((resolve17) => setTimeout(() => resolve17(null), REMOTE_STATE_FIRST_WAIT_MS))]);
     return waited ?? {};
   };
   let usage = null;
@@ -53845,10 +54057,10 @@ async function startUi(opts) {
     }
     if (req.method === "GET" && url2.pathname === "/api/search") {
       const allowed = /* @__PURE__ */ new Set(["q", "session", "job", "agent", "kind", "since", "until", "limit", "answer"]);
-      if ([...url2.searchParams.keys()].some((key2) => !allowed.has(key2) || url2.searchParams.getAll(key2).length !== 1)) return send(res, 400, { error: "Unknown or duplicate search parameter." });
-      const filters = Object.fromEntries(["session", "job", "agent", "kind", "since", "until"].flatMap((key2) => {
-        const value = url2.searchParams.get(key2);
-        return value === null ? [] : [[key2, (key2 === "since" || key2 === "until") && /^\d+$/.test(value) ? Number(value) : value]];
+      if ([...url2.searchParams.keys()].some((key3) => !allowed.has(key3) || url2.searchParams.getAll(key3).length !== 1)) return send(res, 400, { error: "Unknown or duplicate search parameter." });
+      const filters = Object.fromEntries(["session", "job", "agent", "kind", "since", "until"].flatMap((key3) => {
+        const value = url2.searchParams.get(key3);
+        return value === null ? [] : [[key3, (key3 === "since" || key3 === "until") && /^\d+$/.test(value) ? Number(value) : value]];
       }));
       const args = historySearchSchema.safeParse({ query: url2.searchParams.get("q"), filters, ...url2.searchParams.has("limit") ? { limit: Number(url2.searchParams.get("limit")) } : {} });
       const answer = url2.searchParams.get("answer");
@@ -54008,7 +54220,7 @@ async function startUi(opts) {
     }
     if (req.method === "GET" && (url2.pathname === "/api/runs" || url2.pathname === "/api/job-outcomes") && url2.searchParams.has("host")) {
       const host2 = url2.searchParams.get("host");
-      const query = Object.fromEntries([...url2.searchParams].filter(([key2]) => key2 !== "host"));
+      const query = Object.fromEntries([...url2.searchParams].filter(([key3]) => key3 !== "host"));
       const parsed = dashboardRequestSchema.safeParse({ path: url2.pathname, query });
       if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(host2) || !parsed.success) return send(res, 400, { error: "invalid remote dashboard request" });
       const result = await remoteRead(host2, parsed.data);
@@ -54049,9 +54261,9 @@ async function startUi(opts) {
       const run = typeof body.run === "string" ? body.run : "";
       const command = jobCommand(body);
       if (!RUN_NAME.test(`${run}.log`) || !command) return send(res, 400, { error: "a valid run and request are required" });
-      const file2 = join52(opts.home, RUNS_DIR_NAME, `${run}.log`);
-      if (!existsSync22(file2)) return send(res, 404, { error: "no such run" });
-      const meta3 = readMeta(join52(opts.home, RUNS_DIR_NAME, `${run}.json`));
+      const file2 = join55(opts.home, RUNS_DIR_NAME, `${run}.log`);
+      if (!existsSync23(file2)) return send(res, 404, { error: "no such run" });
+      const meta3 = readMeta(join55(opts.home, RUNS_DIR_NAME, `${run}.json`));
       if (!meta3.by || !meta3.job) return send(res, 409, { error: "This run has no owning session or job recorded." });
       try {
         const result = await controlDashboardJob(await getSender(), await jobOwner(opts.home, meta3.job, meta3.by, await getSender()), meta3.job, command);
@@ -54069,9 +54281,9 @@ async function startUi(opts) {
       if (!res.headersSent) send(res, 500, { error: String(err.message) });
     });
   });
-  await new Promise((resolve14, reject) => {
+  await new Promise((resolve17, reject) => {
     server.once("error", reject);
-    server.listen(opts.port, UI_HOST, () => resolve14());
+    server.listen(opts.port, UI_HOST, () => resolve17());
   });
   const { port } = server.address();
   return {
@@ -54090,7 +54302,7 @@ var SECRET_BYTES5 = 24;
 var PROBE_TIMEOUT_MS = 1500;
 var OWNER_ONLY2 = 384;
 function dashboardFile(home) {
-  return join53(home, DASHBOARD_FILE);
+  return join56(home, DASHBOARD_FILE);
 }
 function readDashboardInfo(home) {
   try {
@@ -54109,13 +54321,13 @@ function processAlive(pid) {
   }
 }
 function probeDashboard(port, secret) {
-  return new Promise((resolve14) => {
+  return new Promise((resolve17) => {
     const req = request({ host: "127.0.0.1", port, path: secret ? `/?t=${secret}` : "/api/state", timeout: PROBE_TIMEOUT_MS }, (res) => {
       res.resume();
-      resolve14(secret ? res.statusCode === 302 && res.headers["set-cookie"]?.some((cookie) => cookie.startsWith(`ab_ui=${secret};`)) === true : res.statusCode === 403 || res.statusCode === 200);
+      resolve17(secret ? res.statusCode === 302 && res.headers["set-cookie"]?.some((cookie) => cookie.startsWith(`ab_ui=${secret};`)) === true : res.statusCode === 403 || res.statusCode === 200);
     });
     req.on("timeout", () => req.destroy());
-    req.on("error", () => resolve14(false));
+    req.on("error", () => resolve17(false));
     req.end();
   });
 }
@@ -54154,7 +54366,7 @@ var DashboardController = class {
       for (let attempt = 0; attempt < 10; attempt++) {
         const winner = await findRunningDashboard(this.opts.home);
         if (winner) return winner;
-        await new Promise((resolve14) => setTimeout(resolve14, 50));
+        await new Promise((resolve17) => setTimeout(resolve17, 50));
       }
       throw err;
     }
@@ -54251,7 +54463,7 @@ function changeSettings(node2, jobs, ref, input2, log) {
   if (typeof settings === "string") return { outcome: "invalid", text: settings, isError: true };
   jobs.setSettings(job.name, settings);
   log.info("dashboard changed subagent settings", { job: job.name, settings });
-  const list = Object.entries(settings).map(([key2, value]) => `${key2}=${value}`).join(", ");
+  const list = Object.entries(settings).map(([key3, value]) => `${key3}=${value}`).join(", ");
   const when = job.status === "running" ? "Applies from its next turn; the turn running now keeps its settings." : "Applies when it continues.";
   return { outcome: "saved", text: `Saved settings for ${job.name}: ${list}. ${when}`, isError: false };
 }
@@ -54271,7 +54483,7 @@ var MAX_TITLE_CHARS3 = 80;
 var SUBAGENT_TOOLS = /* @__PURE__ */ new Set(["peers", "send", "report_progress", "hook_event"]);
 var STAND_IN_RECHECK_MS = 3e4;
 var KEPT_ARGS = ["native_subagents", "host", "model", "effort", "cwd", "timeout_sec", "worktree", "access", "sandbox", "approvals_reviewer", "permission_mode", "auto_approve", "allow_tools", "send_to", "title"];
-var PLUGIN_ROOT = resolve13(dirname20(fileURLToPath2(import.meta.url)), "..");
+var PLUGIN_ROOT = resolve16(dirname22(fileURLToPath2(import.meta.url)), "..");
 function pathFromUriOrPath(v) {
   if (typeof v !== "string" || !v) return null;
   if (v.startsWith("file:")) {
@@ -54281,7 +54493,7 @@ function pathFromUriOrPath(v) {
       return null;
     }
   }
-  return isAbsolute10(v) ? v : null;
+  return isAbsolute11(v) ? v : null;
 }
 function text2(s, isError = false) {
   return { content: [{ type: "text", text: s }], ...isError ? { isError: true } : {} };
@@ -54377,7 +54589,7 @@ async function startServer(argv = process.argv.slice(2)) {
     const parentJob = process.env[PARENT_JOB_ENV];
     const rootSession = process.env[ROOT_SESSION_ENV];
     const coordinator = ctx.childInbox = new LocalCoordinator(parentJob, rootSession);
-    ctx.jobs = new JobManager(coordinator, log.child("jobs"), join54(home, JOBS_FILE), cfg.maxJobs, {
+    ctx.jobs = new JobManager(coordinator, log.child("jobs"), join57(home, JOBS_FILE), cfg.maxJobs, {
       parentJob,
       rootSession,
       rootName: process.env[ROOT_NAME_ENV] || ctx.parent.name,
@@ -54385,7 +54597,7 @@ async function startServer(argv = process.argv.slice(2)) {
     });
   }
   if (node2) {
-    ctx.jobs = new JobManager(node2, log.child("jobs"), join54(home, JOBS_FILE), cfg.maxJobs);
+    ctx.jobs = new JobManager(node2, log.child("jobs"), join57(home, JOBS_FILE), cfg.maxJobs);
     node2.on("replaced", () => ctx.jobs?.setDormant(true));
     node2.on("reclaimed", () => ctx.jobs?.setDormant(false));
     const cli = process.env[ENV.jobRunner] === "0" ? null : bundledCli();
@@ -54518,9 +54730,28 @@ async function startServer(argv = process.argv.slice(2)) {
   };
   const transport = new StdioServerTransport();
   let shuttingDown = false;
+  let closeSweepBusy = false;
+  const closeSweep = setInterval(() => {
+    if (shuttingDown || closeSweepBusy || !cfg.jobCloseCleanup || !node2) return;
+    closeSweepBusy = true;
+    void (async () => {
+      const waiting = new Set(ctx.jobs?.waiting().map((job) => job.name));
+      for (const job of ctx.jobs?.recent(Number.MAX_SAFE_INTEGER) ?? []) {
+        if (job.owner !== node2.name || !job.worktree || job.queue.length || waiting.has(job.name) || !["done", "failed"].includes(job.status)) continue;
+        const state = readWorktreeState(home, job.worktree);
+        if (!state || state.reapedAt || readOutcomeDecision(home, job)?.state === "held" || Math.max(state.lastContinuation, job.finishedAt ?? Date.now()) > Date.now() - 24 * 60 * 6e4) continue;
+        const result = await closeJobWorktree({ home, job, enabled: cfg.jobCloseCleanup, log });
+        log.info("idle worktree close", { job: job.name, ...result });
+      }
+    })().catch((err) => log.warn("idle close sweep kept worktrees", { err: String(err) })).finally(() => {
+      closeSweepBusy = false;
+    });
+  }, 15 * 6e4);
+  closeSweep.unref();
   const shutdown = async (reason) => {
     if (shuttingDown) return;
     shuttingDown = true;
+    clearInterval(closeSweep);
     log.info("shutting down", { reason });
     ctx.jobs?.cancelAll();
     await killAllDelegates();
@@ -54563,11 +54794,11 @@ async function startServer(argv = process.argv.slice(2)) {
       adopt();
       setTimeout(adopt, STAND_IN_RECHECK_MS).unref();
     });
-    const join55 = () => node2.start().catch((err) => log.error("could not join the bridge", { err: err.message }));
+    const join58 = () => node2.start().catch((err) => log.error("could not join the bridge", { err: err.message }));
     if (ctx.headless) {
       log.info("headless claude -p run: not joining the bridge unless a bridge tool is used");
     } else if (cwdKnown) {
-      void join55();
+      void join58();
     } else {
       log.info("project directory unknown yet; waiting for host metadata before bridge join");
     }
@@ -55176,7 +55407,7 @@ ${r.lines.map((l) => `  ${l}`).join("\n")}`).join("\n\n"));
     "set_job_outcome",
     {
       title: "Set a finished job's outcome",
-      description: "Record that your finished job is held with a reason or discarded. This records a decision; it does not merge or delete its branch. Only its owning supervisor can set it.",
+      description: "Record that your finished job is held with a reason or discarded. With jobCloseCleanup enabled, discarded local worktree jobs push their commits and reap only a proven clean checkout. Held jobs and local branches are retained. Only its owning supervisor can set it.",
       inputSchema: { job: external_exports.string().min(1), state: external_exports.enum(["held", "discarded"]), reason: external_exports.string().max(MAX_HOLD_REASON_CHARS).optional() }
     },
     guarded("set_job_outcome", async (a) => {
@@ -55185,7 +55416,8 @@ ${r.lines.map((l) => `  ${l}`).join("\n")}`).join("\n\n"));
       if (!job) throw new BridgeError("bad_request", "Unknown job.");
       try {
         setJobOutcome(ctx.home, job, n.name, a.state, a.reason);
-        return text2(JSON.stringify({ job: job.name, outcome: await deriveJobOutcome(ctx.home, job, log) }));
+        const cleanup = a.state === "discarded" ? await closeJobWorktree({ home: ctx.home, job, enabled: cfg.jobCloseCleanup, log }) : void 0;
+        return text2(JSON.stringify({ job: job.name, outcome: await deriveJobOutcome(ctx.home, job, log), cleanup }));
       } catch (err) {
         throw new BridgeError("bad_request", err.message);
       }
@@ -55243,11 +55475,11 @@ ${r.lines.map((l) => `  ${l}`).join("\n")}`).join("\n\n"));
         }
       }
       if (existing) {
-        for (const [key2, agent] of Object.entries(PERMISSION_KEY_AGENT)) {
-          if (a[key2] !== void 0 && existing.agent !== agent) throw new BridgeError("bad_request", `${key2} applies only to ${agent} jobs.`);
+        for (const [key3, agent] of Object.entries(PERMISSION_KEY_AGENT)) {
+          if (a[key3] !== void 0 && existing.agent !== agent) throw new BridgeError("bad_request", `${key3} applies only to ${agent} jobs.`);
         }
       }
-      const settings = Object.fromEntries(JOB_SETTING_KEYS.filter((key2) => a[key2] !== void 0).map((key2) => [key2, a[key2]]));
+      const settings = Object.fromEntries(JOB_SETTING_KEYS.filter((key3) => a[key3] !== void 0).map((key3) => [key3, a[key3]]));
       const wasRunning = existing?.status === "running";
       if (a.title?.trim()) {
         jobs.setTitle(a.job, a.title.trim());
@@ -55259,7 +55491,7 @@ ${r.lines.map((l) => `  ${l}`).join("\n")}`).join("\n\n"));
       const { outcome, job } = jobs.followUp(a.job, a.message?.trim() || DEFAULT_FOLLOW_UP);
       const position = job ? jobs.waiting().indexOf(job) + 1 : 0;
       const settingsNote = job && Object.keys(settings).length ? `
-Saved settings: ${Object.entries(settings).map(([key2, value]) => `${key2}=${value}`).join(", ")}.${wasRunning ? " Applies from its next turn; the turn running now keeps its settings." : " Applies to this continuation and later turns."}` : "";
+Saved settings: ${Object.entries(settings).map(([key3, value]) => `${key3}=${value}`).join(", ")}.${wasRunning ? " Applies from its next turn; the turn running now keeps its settings." : " Applies to this continuation and later turns."}` : "";
       return text2(
         t(`followUp.${outcome}`, { name: job?.name ?? a.job, max: jobs.limit, running: jobs.runningCount(), ahead: position > 1 ? ` (${position - 1} queued before it)` : "" }) + settingsNote,
         outcome === "unknown" || outcome === "no-session"
