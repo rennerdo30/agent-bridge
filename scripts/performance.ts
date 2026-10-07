@@ -142,12 +142,20 @@ try {
     try { await c.request("auth", { protocol: PROTOCOL_VERSION, token }); await c.request("dashboardPeers", {}); }
     finally { c.close(); }
   });
+  let sendIteration = 0;
   await Promise.all([
     loop(2000, () => timed("state", async () => { const res = await fetch(`http://127.0.0.1:${ui!.port}/api/state`, { headers: { cookie: `ab_ui=${secret}` } }); if (res.status !== 200) throw new Error(`HTTP ${res.status}`); await res.json(); })),
     ...Array.from({ length: 6 }, () => loop(1000, hook)),
     ...Array.from({ length: jobCount }, (_, i) => loop(2000, () => timed("sibling", () => clients[i]!.request("sendSibling", { to: jobs[(i + 1) % jobCount]!.name, body: "synthetic coordination", maxHops: 32 })))),
     loop(1000, () => timed("peers", () => clients[jobCount]!.request("peers", {}))),
-    loop(1000, () => timed("send", () => clients[jobCount]!.request("send", { to: `load-session-${jobCount + 1}`, body: "synthetic direct message" }))),
+    loop(1000, () => timed("send", async () => {
+      const args = { to: `load-session-${jobCount + 1}`, body: "synthetic direct message" };
+      if (sendIteration++ % 2) return clients[jobCount]!.request("send", args);
+      const id = randomUUID(), result = await clients[jobCount]!.request("trackedSend", { ...args, messageId: id });
+      const state = await timed("sendStatus", () => clients[jobCount]!.request("sendState", { id }));
+      if (result.storage?.state !== "stored" || state.state !== "stored" || state.message?.id !== id) throw new Error("tracked send storage mismatch");
+      return result;
+    })),
     loop(1000, () => timed("pairedPing", () => a!.verify(b!.keys.identity.id))),
   ]);
   for (const manager of managers) manager.setDormant(true);
@@ -168,7 +176,7 @@ try {
   let sqlHeartbeat = 0;
   const sqlBeat = setTimeout(() => { sqlHeartbeat = performance.now() - sqlStart; }, 20);
   await Promise.all([
-    timed("sqliteContendedSend", () => clients[jobCount]!.request("send", { to: `load-session-${jobCount + 1}`, body: "sqlite contention probe", dedupeKey: "sqlite-probe" })),
+    timed("sqliteContendedSend", () => clients[jobCount]!.request("trackedSend", { to: `load-session-${jobCount + 1}`, body: "sqlite contention probe", messageId: randomUUID(), dedupeKey: "sqlite-probe" })),
     timed("peersDuringSqliteLock", () => clients[jobCount]!.request("peers", {})),
   ]);
   clearTimeout(sqlBeat); await sqlWorker.terminate();

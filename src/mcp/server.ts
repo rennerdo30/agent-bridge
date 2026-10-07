@@ -40,7 +40,7 @@ import { MAX_STREAM_ENTRIES } from "../network/transfers.js";
 import { resolveDbPath, resolveHome, resolvePipePath } from "../core/paths.js";
 import { inspectClaudeLaunch } from "../core/procinfo.js";
 import { loadOrCreateToken } from "../core/token.js";
-import { BridgeError, BROADCAST, CODING_AGENTS, isQuietMessage, SIBLING_CONVERSATION_PREFIX, TRANSFER_PROGRESS_PREFIX, type AgentKind, type BridgeMessage, type CodingAgent } from "../core/protocol.js";
+import { BridgeError, BROADCAST, CODING_AGENTS, isQuietMessage, isUnsupportedOperation, SIBLING_CONVERSATION_PREFIX, TRANSFER_PROGRESS_PREFIX, type AgentKind, type BridgeMessage, type CodingAgent } from "../core/protocol.js";
 import { formatInboxMessages, formatProjectRoute, formatReplyRestrictions, formatDelivery, formatDuration, formatMessage, formatMessages, formatPeer, formatVersionSkew } from "./format.js";
 import { CodexWaker, type Activity } from "./codex-wake.js";
 import { buildHookResponse, discardFinishedNotes, type HookEvent } from "./hooks.js";
@@ -612,7 +612,7 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
         const job = ctx.jobs?.find(entry.job);
         const authority = node ? await node.jobAuthority(entry.job).catch(err => {
           // A legacy broker can lack authority RPCs. Only fresh local ownership can replace that check.
-          if (!String((err as Error).message).includes("unknown op: jobAuthority")) throw err;
+          if (!isUnsupportedOperation(err, "jobAuthority")) throw err;
           return ctx.jobs?.list().find(j => j.name === entry.job && j.owner === node.name) ?? null;
         }) : job;
         if (!authority) throw new BridgeError("bad_request", "This approval belongs to another supervisor.");
@@ -772,10 +772,12 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
         conversation_id: z.string().optional().describe("Continue an existing conversation"),
         if_no_newer_than: z.string().optional().describe("Refuse this reply if newer unread conversation or recipient mail exists after this message id"),
         message_kind: z.enum(["note", "question"]).optional().describe("note retains FYI/status in history without waking or injecting context; question requests supervisor attention"),
+        message_id: z.uuid().optional().describe("Stable UUID for an idempotent send or recovery retry. Reuse this id only with the same content; requires an updated broker."),
       },
     },
-    guarded("send", async (a: { to: string; message: string; reply_to?: string; conversation_id?: string; if_no_newer_than?: string; message_kind?: "note" | "question" }) => {
+    guarded("send", async (a: { to: string; message: string; reply_to?: string; conversation_id?: string; if_no_newer_than?: string; message_kind?: "note" | "question"; message_id?: string }) => {
       if (!node && ctx.parent) {
+        if (a.message_id) throw new BridgeError("bad_request", "Durable message IDs require a session broker connection; parent links do not support idempotent retries.");
         if (a.if_no_newer_than) throw new BridgeError("bad_request", "Guarded sends require a session broker connection; read the parent/sibling inbox before replying.");
         if (ctx.jobs?.find(a.to)) {
           const result = ctx.jobs.followUp(a.to, a.message);
@@ -798,6 +800,7 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
         return text(t("send.toParent", { name: ctx.parent.name }));
       }
       const n = requireNode();
+      if (a.message_id && (a.to === "*" || a.to === "jobs:*" || ctx.jobs?.find(a.to))) throw new BridgeError("bad_request", "Durable message IDs require an exact session or project broker recipient; running-job links cannot use this id.");
       if (a.if_no_newer_than && (a.to === "*" || a.to === "jobs:*")) throw new BridgeError("bad_request", "Use an exact recipient or project for guarded replies; running-job broadcasts cannot be guarded.");
       const jobBroadcast = a.to === "*" || a.to === "jobs:*" ? ctx.jobs?.broadcastRunning(a.message) ?? [] : [];
       const jobLines = jobBroadcast.map((r) => `- ${r.name}: ${r.outcome}`);
@@ -816,14 +819,17 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
       }
       if (a.reply_to) n.markRead([a.reply_to]);
       const res = await n.send({ to: a.to, body: a.message, replyTo: a.reply_to,
-        conversationId: a.message_kind === "note" ? `${a.conversation_id ?? `note-${Date.now()}`}:note` : a.conversation_id,
-        ifNoNewerThan: a.if_no_newer_than }).catch(err => {
+        conversationId: a.message_kind === "note" ? `${a.conversation_id ?? `note-${a.message_id ?? Date.now()}`}:note` : a.conversation_id,
+        ifNoNewerThan: a.if_no_newer_than, messageId: a.message_id }).catch(err => {
           if (!jobLines.length) throw err;
-          throw new Error(`Session broadcast failed: ${(err as Error).message}\nRunning-job broadcast already queued:\n${jobLines.join("\n")}. Do not resend to these jobs without checking consumption.`);
+          throw new Error(`Session broadcast failed: ${(err as Error).message}\nRunning-job broadcast already attempted:\n${jobLines.join("\n")}. Do not resend to these jobs without checking consumption.`);
         });
       const first = res.messages[0];
       if (!first) return text(["No session recipients were eligible for this broadcast.", ...formatDelivery(res, cfg.maxHops), ...jobLines].join("\n"));
-      const lines = [t("send.ok", { id: first.id, conversation: first.conversationId })];
+      const lines = [res.storage?.recovered
+        ? `Message ${first.id} is stored in the broker (conversation ${first.conversationId}). Recovered by id; no additional message sent. Delivery and consumption are separate.`
+        : `Message ${first.id} is stored in the broker (conversation ${first.conversationId}).`];
+      if (res.storage?.receipts.length) lines.push(`Stored recipient copies: ${res.storage.receipts.map(r => `${r.recipient} (${r.readAt === null ? "unread" : "read"})`).join(", ")}.`);
       lines.push(...formatDelivery(res, cfg.maxHops));
       if (jobLines.length) lines.push(`Running-job broadcast:\n${jobLines.join("\n")}`);
       if (res.unreadBeforeSend?.length) lines.push(`Warning: ${res.unreadBeforeSend.length} unread conversation/recipient message(s) were waiting before this send: ${res.unreadBeforeSend.map((m) => m.id).join(", ")}. Read inbox before settling a proposal; use if_no_newer_than for guarded replies.`);
@@ -832,6 +838,13 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
       lines.push(`For a consumption receipt, call wait_for_message(read_receipt_of="${first.id}").`);
       return text(lines.join("\n"));
     }),
+  );
+
+  register(
+    "send_status",
+    { title: "Look up sent message", description: "Look up your message by its durable UUID directly in broker storage and retained archives, without waiting for history indexing. Stored confirms persistence, not delivery or consumption. Pending/not_stored describe the instant checked; an outstanding send may still store it. Retry send with the same message_id to avoid duplicates.",
+      inputSchema: { message_id: z.uuid() }, annotations: { readOnlyHint: true } },
+    guarded("send_status", async (a: { message_id: string }) => text(JSON.stringify(await requireNode().sendState(a.message_id), null, 2))),
   );
 
   register(

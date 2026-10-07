@@ -462,6 +462,17 @@ export class MessageStore {
     return row ? toMessage(row) : null;
   }
 
+  /** Retained recipient copies for a durable retry; active rows take precedence. */
+  messagesById(id: string): BridgeMessage[] {
+    const merged = new Map<string, BridgeMessage>();
+    for (const [db, table] of [[this.archiveDb, "messages"], [this.db, "archived_messages"], [this.db, "messages"]] as const) {
+      for (const row of db.prepare(`SELECT * FROM ${table} WHERE id = ? ORDER BY rowid`).all(id) as unknown as Row[]) {
+        const message = toMessage(row); merged.set(message.recipient, message);
+      }
+    }
+    return [...merged.values()];
+  }
+
   purgeOlderThan(cutoff: number): number {
     const n = archiveMessages(this.db, this.archiveDb, "created_at < ?", [cutoff], "expired");
     if (n > 0) this.log.info("archived expired messages", { count: n });

@@ -31,7 +31,8 @@ Exact-name mail still has one recipient. Paired-PC project authority is unchange
 `send(to="jobs:*", message="Hold at the next safe step")` uses this supervisor's
 existing running-job links, without `jobAuthority` or `projectJobs` RPCs. `*` also
 includes those jobs along with ordinary session recipients. Each job reports a
-queueing outcome; this is not proof of consumption or a process-level pause.
+delivery-attempt or queueing outcome; links without an acknowledgement cannot
+confirm queueing. This is not proof of consumption or a process-level pause.
 Finished jobs are never resumed by this broadcast. Approvals still need explicit
 decisions; messages cannot grant permission. If an older broker lacks authority
 RPCs, `decide` can use fresh local ownership for this session's own pending jobs.
@@ -49,9 +50,35 @@ send(to="peer", reply_to="proposal-id", if_no_newer_than="proposal-id", message=
 The broker rechecks before persistence, including after SQLite lock retries.
 Newer unread recipient or conversation mail blocks the send. Read the inbox and
 reconsider the proposal before retrying. Equal timestamps are handled conservatively.
-An older broker refuses the separate `guardedSend` opcode instead of silently
+An older broker refuses the separate `trackedSend` opcode instead of silently
 ignoring the guard. This protects mail already queued at this broker; it cannot
 predict a proposal still travelling on another PC.
+
+## Recover a send by id
+
+Ordinary session sends choose a UUID before contacting the broker. The result
+confirms that UUID is stored and identifies the stored recipient copies; this
+is independent of history indexing, wake requests and consumption. If both
+responses are lost, the sender looks up that UUID directly in active storage and
+retained archives. A recovered result does not send another message.
+
+Use `send_status(message_id="<UUID>")` to inspect the original sender's message
+and receipts. `stored` proves persistence. `pending` and `not_stored` describe
+the instant checked; an outstanding request can still store it. If the broker
+is unavailable, the error preserves the UUID and says storage is unconfirmed.
+No disconnected client can truthfully invent a definite storage verdict.
+
+To retry safely after reconnecting or a broker restart, repeat `send` with the
+same `message_id`, recipient, body and explicitly supplied conversation/reply
+fields. A stored UUID is returned without another copy or wake; changed content
+and another sender's UUID are refused. New content requires a new UUID. Project
+fan-out shares one UUID. Running-job control and legacy parent links cannot take
+an explicit durable UUID and refuse that option before sending.
+
+Older brokers explicitly reject durable sends and lookups. Automatic ordinary
+sends may fall back after that refusal, retaining the older broker's in-memory
+dedupe key. Explicit UUIDs and guarded replies never silently downgrade. No
+storage schema changes or user-data migrations are required.
 
 ## What Codex permits
 

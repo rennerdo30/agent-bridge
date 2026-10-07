@@ -17,7 +17,8 @@ import {
   RECONNECT_BACKOFF_MIN_MS,
 } from "./constants.js";
 import type { Logger } from "./logger.js";
-import { BridgeError, isQuietMessage, type AgentKind, type BridgeMessage, type PeerActivity, type PeerInfo, type RequestMap, type SendArgs, type SendResult, type SiblingPeer } from "./protocol.js";
+import { BridgeError, isQuietMessage, isUnsupportedOperation, type AgentKind, type BridgeMessage, type PeerActivity, type PeerInfo, type RequestMap, type SendArgs, type SendResult, type SiblingPeer } from "./protocol.js";
+import { completionMessageId, COMPLETION_DEDUPE_PREFIX } from "./completion.js";
 import { ReadJournal } from "./read-journal.js";
 import { recordLocalResult } from "./local-result-receipts.js";
 import { MessageStore, SQLITE_STORE_VERSION } from "./store.js";
@@ -429,13 +430,58 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
           ids.forEach(id => this.unflushedAcks.delete(id));
         }
       }
-      const res = await this.sendRequest(c, args.ifNoNewerThan ? "guardedSend" : "send", { ...args, dedupeKey: args.dedupeKey || randomUUID() });
+      const request = { ...args, dedupeKey: args.dedupeKey || randomUUID() };
+      const res = args.dedupeKey?.startsWith(COMPLETION_DEDUPE_PREFIX) && !args.messageId
+        ? await this.sendRequest(c, "send", request)
+        : await this.trackedSend(c, { ...request, messageId: args.messageId ?? (args.dedupeKey ? completionMessageId(`send:${this.name}`, args.dedupeKey) : randomUUID()) }, Boolean(args.messageId));
       if (opts.quiet) return res;
       this.lastSent = Date.now();
       if (!args.replyTo) for (const m of res.messages) this.asked.add(m.id);
       if (this.asked.size > QUESTION_ID_MEMORY) this.asked.delete(this.asked.values().next().value!);
       return res;
     });
+  }
+
+  sendState(id: string): Promise<RequestMap["sendState"][1]> {
+    return this.withClient(c => c.request("sendState", { id }));
+  }
+
+  private async trackedSend(client: BridgeClient, args: RequestMap["trackedSend"][0], explicitId: boolean): Promise<SendResult> {
+    try { return await client.request("trackedSend", args); }
+    catch (error) {
+      if (isUnsupportedOperation(error, "trackedSend")) {
+        if (explicitId || args.ifNoNewerThan) throw error;
+        // An explicit refusal proves nothing was applied. Legacy sends retain their own dedupe key.
+        const { messageId: _unused, ...legacy } = args;
+        return this.sendRequest(client, "send", legacy);
+      }
+      if (!(error instanceof Error) || error.message !== "broker request timed out: trackedSend") {
+        if (error instanceof BridgeError) throw error;
+        throw new BridgeError("internal", `Storage cannot be confirmed for message ${args.messageId}: ${(error as Error).message}. Query send_status(message_id="${args.messageId}") or retry send with the same message_id.`, { messageId: args.messageId, state: "unconfirmed" });
+      }
+      try { return await client.request("trackedSend", args); }
+      catch (retryError) {
+        if (retryError instanceof BridgeError && retryError.code !== "internal" && retryError.code !== "timeout") throw retryError;
+        try {
+          const state = await client.request("sendState", { id: args.messageId });
+          if (state.message) {
+            const message = state.message;
+            if (!(message.body === args.body || message.body.startsWith(args.body + "\n\n[agent-bridge routing hint:")) ||
+                !this.opts.jobAgent && message.to !== args.to.trim() || message.replyTo !== (args.replyTo?.trim() || null) ||
+                args.conversationId && message.conversationId !== args.conversationId.trim() &&
+                !(this.opts.jobAgent && message.conversationId === args.conversationId.trim() + ":fallback")) {
+              throw new BridgeError("bad_request", "Message id already stored with different content.", { messageId: state.id, state: "stored" });
+            }
+            return { messages: [message], deliveredTo: [], queuedFor: [],
+              storage: { id: state.id, state: "stored", recovered: true, receipts: state.receipts } };
+          }
+          throw new BridgeError("timeout", `Message ${state.id} is ${state.state} as of ${new Date(state.checkedAt).toISOString()}; an outstanding request can still store it. Query send_status(message_id="${state.id}") or retry send with the same message_id.`, { messageId: state.id, state: state.state });
+        } catch (lookupError) {
+          if (lookupError instanceof BridgeError && lookupError.details?.messageId) throw lookupError;
+          throw new BridgeError("timeout", `Storage cannot be confirmed for message ${args.messageId}: broker lookup unavailable. Query send_status(message_id="${args.messageId}") or retry send with the same message_id; use a new id only for a new message.`, { messageId: args.messageId, state: "unconfirmed", cause: String(retryError) });
+        }
+      }
+    }
   }
 
   /** A late send response can be recovered from the same broker without sending twice. */

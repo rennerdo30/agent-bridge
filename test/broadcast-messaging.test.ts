@@ -80,7 +80,9 @@ it("broadcasts to local and paired-PC sessions with recipient wake policies and 
     { recipient: "local", readAt: expect.any(Number) }, { recipient: "mac/remote", readAt: expect.any(Number) },
     { recipient: "mac/muted", readAt: null },
   ]);
-  expect((await sender.send({ to: "*", body: "Owner-wide instruction", dedupeKey: "broadcast-once" })).messages).toEqual(sent.messages);
+  const retried = await sender.send({ to: "*", body: "Owner-wide instruction", dedupeKey: "broadcast-once" });
+  expect(retried.messages.map(m => [m.id, m.recipient, m.body])).toEqual(sent.messages.map(m => [m.id, m.recipient, m.body]));
+  expect(retried.storage?.recovered).toBe(true);
   expect(remote.unread()).toEqual([]);
   const original = NetworkService.prototype.send;
   vi.spyOn(NetworkService.prototype, "send").mockImplementation(function (this: NetworkService, message) {
