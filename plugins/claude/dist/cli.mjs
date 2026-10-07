@@ -30970,7 +30970,6 @@ ${req.prompt}`)), req.sandbox) };
 
 ${CODEX_ASK_HINT}` };
   const common = ["--json", "--skip-git-repo-check", ...req.model ? ["-m", req.model] : [], ...req.effort ? ["-c", `model_reasoning_effort="${req.effort}"`] : []];
-  if (process.platform === "win32" && req.sandbox !== "danger-full-access") common.push("-c", `windows.sandbox="${req.windowsSandbox ?? "unelevated"}"`);
   for (const [key2, value] of Object.entries(codexSubagentConfig(req.nativeSubagents))) common.push("-c", `${key2}=${value}`);
   if (req.writableRoots?.length && req.sandbox === "workspace-write") {
     common.push("-c", `sandbox_workspace_write.writable_roots=${JSON.stringify(req.writableRoots.map(realFolder))}`);
