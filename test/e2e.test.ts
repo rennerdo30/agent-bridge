@@ -2,7 +2,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { promisify } from "node:util";
 import { execFile } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -11,6 +11,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 /** Runs the bundled plugin server (npm run build first) as two real MCP servers. */
 const SERVER = join(import.meta.dirname, "..", "plugins", "claude", "dist", "server.mjs");
 const home = mkdtempSync(join(tmpdir(), "agent-bridge-e2e-"));
+writeFileSync(join(home,"config.json"),JSON.stringify({questionAlerts:{sound:false,toast:false,reminderMinutes:0}}));
 
 async function spawnAgent(agent: "claude" | "codex" | "antigravity", name: string): Promise<Client> {
   const transport = new StdioClientTransport({
@@ -66,6 +67,16 @@ describe.skipIf(!existsSync(SERVER))("bundled MCP server end-to-end", () => {
   it("declares the Claude channel capability only for Claude", () => {
     expect(claude.getServerCapabilities()?.experimental?.["claude/channel"]).toEqual({});
     expect(codex.getServerCapabilities()?.experimental?.["claude/channel"]).toBeUndefined();
+  });
+
+  it("files notify-mode owner questions through every bundled CLI without waiting for an answer",async () => {
+    const args={title:"Fixture owner scope?",topic:"e2e-owner-scope",context:"Synthetic MCP contract check",options:[{id:"small",label:"Small",consequence:"Ships sooner",recommended:true},{id:"large",label:"Large",consequence:"Ships later",recommended:false}],blocking:true,blocks:"Fixture scope",meanwhile:"Run independent checks"};
+    const results=[];
+    for (const client of [claude,codex,antigravity]) results.push(JSON.parse(textOf(await client.callTool({name:"ask_owner",arguments:args}))));
+    expect(results.map(r => r.merged)).toEqual([false,true,true]);
+    expect(new Set(results.map(r => r.question.id)).size).toBe(1);
+    expect(results[2].question).toMatchObject({kind:"question",status:"open",deliveries:[]});
+    expect(results[2].question.askers).toHaveLength(3);
   });
 
   it("round-trips a question and a threaded answer", async () => {
