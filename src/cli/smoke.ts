@@ -10,7 +10,7 @@ import { delegateToAntigravity } from "../core/antigravity.js";
 
 /** CLI versions this agent-bridge release was verified against. */
 export const TESTED_VERSIONS: Record<CodingAgent, string> = {
-  antigravity: "1.2.0",
+  antigravity: "1.3.1",
   claude: "2.1.283",
   codex: "0.157.1",
   opencode: "1.18.32",
