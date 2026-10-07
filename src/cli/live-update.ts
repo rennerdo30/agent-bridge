@@ -6,7 +6,8 @@ import { BridgeClient } from "../core/client.js";
 import { resolvePipePath } from "../core/paths.js";
 import { nullLogger } from "../core/logger.js";
 import { loadOrCreateToken } from "../core/token.js";
-import { assertUnlinked, atomicPluginWrite, liveRuntimeSessions, publishPlugin, selectRuntime, type PluginClient } from "../core/plugin-runtime.js";
+import { assertUnlinked, atomicPluginWrite, liveRuntimeSessions, publishPlugin, selectRuntime, validatePluginPublication, type PluginClient } from "../core/plugin-runtime.js";
+import { claudeMarketplace, syncMarketplace } from "./marketplace-sync.js";
 
 export function compareReleases(a: string, b: string): number {
   const left = a.split(".").map(Number), right = b.split(".").map(Number);
@@ -27,6 +28,12 @@ export function updateCodex(source: string, home = process.env.CODEX_HOME || joi
   const config = existsSync(configPath) ? readFileSync(configPath, "utf8") : "";
   const marketplace = join(home, "agent-bridge-marketplace");
   const nextConfig = codexLiveConfig(config, marketplace);
+  validatePluginPublication(source, base, version);
+  validatePluginPublication(source, join(marketplace, "plugins"), version);
+  // Older native Git marketplaces are retained, but refresh their clone too when present.
+  for (const clone of [join(home, "plugins", "marketplaces", "agent-bridge"), join(home, "marketplaces", "agent-bridge")]) {
+    if (existsSync(clone)) syncMarketplace(clone, "codex", version);
+  }
   const root = publishPlugin(source, base, version);
   // Pin the configured marketplace to the same immutable release. Native refresh then sees
   // the already active version instead of reinstalling a stale Git marketplace snapshot.
@@ -63,6 +70,8 @@ export function updateClaude(source: string, home = process.env.CLAUDE_CONFIG_DI
   const entries = installed?.plugins?.["agent-bridge@agent-bridge"];
   if (installed.version !== 2 || !Array.isArray(entries) || entries.length === 0 || entries.some((e: any) => !e || typeof e.installPath !== "string" || typeof e.scope !== "string")) throw new Error("Unsupported or missing installed plugin metadata; preserved unchanged. Install the plugin first.");
   if (entries.some((entry: any) => typeof entry.version === "string" && /^\d+\.\d+\.\d+$/.test(entry.version) && compareReleases(entry.version, version) > 0)) throw new Error("Claude already has a newer version; preserved unchanged");
+  validatePluginPublication(source, join(home, "plugins", "cache", "agent-bridge", "agent-bridge"), version);
+  syncMarketplace(claudeMarketplace(home), "claude", version);
   const root = publishPlugin(source, join(home, "plugins", "cache", "agent-bridge", "agent-bridge"), version);
   installed.plugins["agent-bridge@agent-bridge"] = entries.map((entry: any) => {
     const next = { ...entry, installPath: root, version, lastUpdated: new Date().toISOString() };

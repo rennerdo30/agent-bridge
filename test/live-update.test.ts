@@ -13,6 +13,7 @@ import { makeEnv } from "./helpers.js";
 import { installOpencode } from "../src/cli/opencode-install.js";
 import { atomicPluginWrite, publishPlugin, selectedWorker, selectRuntime } from "../src/core/plugin-runtime.js";
 import { APP_VERSION, PROTOCOL_VERSION } from "../src/core/constants.js";
+import { marketplaceFixture } from "./marketplace-fixture.js";
 
 let dir: string, source: string;
 beforeEach(() => {
@@ -84,12 +85,38 @@ describe("immutable live updates (mock Codex)", () => {
     mkdirSync(join(home, "plugins"), { recursive: true });
     const old = { version: 2, custom: "owner", plugins: { other: [{ installPath: "keep" }], "agent-bridge@agent-bridge": [{ scope: "user", installPath: "old", version: "0.1.0", extra: "keep" }, { scope: "project", projectPath: "project", installPath: "old" }] } };
     writeFileSync(path, JSON.stringify(old));
+    const market = marketplaceFixture(dir, home);
     const root = updateClaude(source, home, "0.1.1"), next = JSON.parse(readFileSync(path, "utf8"));
     expect(next.custom).toBe("owner"); expect(next.plugins.other).toEqual(old.plugins.other);
+    expect(JSON.parse(readFileSync(join(market.clone, ".claude-plugin", "marketplace.json"), "utf8")).plugins[0].version).toBe("0.1.1");
+    expect(market.git(market.clone, "status", "--porcelain").trim()).toBe("");
     expect(next.plugins["agent-bridge@agent-bridge"]).toEqual([expect.objectContaining({ scope: "user", installPath: root, extra: "keep" }), expect.objectContaining({ scope: "project", projectPath: "project", installPath: root })]);
     expect(JSON.parse(readFileSync(join(home, "plugins", readdirSync(join(home, "plugins")).find((f) => f.startsWith("installed_plugins.json.backup-"))!), "utf8"))).toEqual(old);
     writeFileSync(path, JSON.stringify({ ...old, version: 99 }));
     expect(() => updateClaude(source, home, "0.1.2")).toThrow("Unsupported");
+  });
+
+  it("refuses dirty, divergent and wrong-release marketplaces before publishing selectors", () => {
+    const home = join(dir, "claude"), path = join(home, "plugins", "installed_plugins.json");
+    const market = marketplaceFixture(dir, home);
+    const old = JSON.stringify({ version: 2, plugins: { "agent-bridge@agent-bridge": [{ scope: "user", installPath: "old", version: "0.1.0" }] } });
+    writeFileSync(path, old);
+    const notes = join(market.clone, "owner.txt"); writeFileSync(notes, "keep notes");
+    expect(() => updateClaude(source, home, "0.1.1")).toThrow("local changes");
+    expect(readFileSync(path, "utf8")).toBe(old);
+    expect(existsSync(join(home, "plugins", "cache"))).toBe(false);
+    market.git(market.clone, "add", "."); market.git(market.clone, "-c", "user.name=rennerdo30", "-c", "user.email=9086097+rennerdo30@users.noreply.github.com", "commit", "-m", "Preserve notes");
+    expect(() => updateClaude(source, home, "0.1.1")).toThrow();
+    expect(readFileSync(notes, "utf8")).toBe("keep notes");
+    expect(readFileSync(path, "utf8")).toBe(old);
+    expect(() => updateClaude(source, home, "0.1.2")).toThrow("differs");
+  });
+
+  it("refreshes retained native Codex clones alongside the active local marketplace", () => {
+    const home = join(dir, "codex"), market = marketplaceFixture(dir, home, "codex");
+    updateCodex(source, home, "0.1.1");
+    expect(JSON.parse(readFileSync(join(market.clone, "plugins", "codex", ".codex-plugin", "plugin.json"), "utf8")).version).toBe("0.1.1");
+    expect(readFileSync(join(home, "config.toml"), "utf8")).toContain("agent-bridge-marketplace");
   });
 
   it("selects compatible workers only and preserves future selector formats", () => {
