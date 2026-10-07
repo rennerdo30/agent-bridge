@@ -1,8 +1,8 @@
 # Owner input from session Chat (AB-140)
 
-Release scope: **0.29.16 supports Claude Code, Codex and opencode**. Antigravity
-registration and its owner-chat hook transport follow in **0.29.17**; the
-Antigravity sections below describe that companion integration and its limits.
+Release scope: **0.29.16 supports Claude Code, Codex, opencode and Antigravity**.
+Antigravity uses native hooks and its retained bridge inbox; it has no verified
+external programmatic input transport to an idle native session.
 
 Research date: 2026-10-07. Read-only CLI probes and version-matched source are
 evidence of an available transport, not a successful model turn. Automated tests
@@ -15,7 +15,7 @@ mock the CLIs. No CLI transcript, session database or user configuration is edit
 | Claude Code | Existing bridge channel; otherwise existing mod submits a real user prompt, or asyncRewake/hooks deliver labeled bridge input | No dashboard transport to Task/Agent children; parent can use native SendMessage | Channel input is processed by Claude; mod waits idle, hooks deliver at a safe step. No interrupt |
 | Codex | `codex queue --thread UUID --message TEXT`, using the shared app-server queue; definitive failure falls back to bridge/waker | Attempt the same queue with the verified child UUID. If that server cannot address it, show unsupported and offer parent delivery | Native queue waits until idle. Bridge waker also waits idle; no turn/interrupt or turn/steer |
 | opencode | Existing plugin persists bridge input with `client.session.promptAsync` | Served API can address child sessions, but this dashboard has no verified live plugin client for a child; parent route only | Busy plugin steps use noReply input; idle plugin starts a prompt after Stop. No abort |
-| Antigravity (`agy`) | Planned for the separate 0.29.17 release; excluded from 0.29.16 | Not available in this release | Native registration and hooks are deferred |
+| Antigravity (`agy`) | Native hooks and bridge inbox deliver at the next safe step/turn | Explicit verified ancestry supports parent fallback; no direct child input transport | Queues input without aborting or interrupting; an idle session reads it on its next turn |
 
 Claude's [channels documentation](https://code.claude.com/docs/en/channels)
 describes MCP events arriving in the currently open session. They are channel

@@ -4,7 +4,7 @@
 JSON stores remain version 4, and archive.db remains schema 1. Existing jobs,
 ownership history, native thread IDs, grants, configuration and pairing keys survive.
 Interrupted jobs can be continued by their actual supervisor or project master.
-Claude Code, Codex and opencode share this path. Antigravity follows separately.
+Claude Code, Codex, opencode and Antigravity share this path.
 
 The release publishes tagged code and green CI. The owner installs all clients
 together; the release agent never installs or updates local clients.
