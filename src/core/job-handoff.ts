@@ -1,3 +1,5 @@
+import { migrateProjectJobs } from "./project-identity.js";
+import { primaryFor } from "./job-ownership.js";
 import { randomUUID } from "node:crypto";
 import { isPluginCacheCwd } from "./session-visibility.js";
 import { readFileSync } from "node:fs";
@@ -12,6 +14,7 @@ export const handoffSchema = z.object({
   to: z.string().min(1).max(64),
   jobs: z.union([z.literal("all"), z.array(z.string().min(1).max(80)).min(1).max(1000)]).default("all"),
   note: z.string().max(4000).optional(),
+  switch_project_main: z.boolean().optional(),
 }).strict();
 export type HandoffArgs = z.input<typeof handoffSchema>;
 export interface OwnershipChange {
@@ -26,13 +29,13 @@ export interface HandoffReceipt {
 }
 
 /** One atomic registry write is the commit point. All other effects can be replayed from this journal. */
-export function commitHandoff(path: string, source: PeerInfo, target: PeerInfo, input: HandoffArgs, options: { reason?: "group-failover" | "group-restored" } = {}): HandoffReceipt {
+export function commitHandoff(path: string, source: PeerInfo, target: PeerInfo, input: HandoffArgs, options: { reason?: "group-failover" | "group-restored"; canControl?: (job: Job) => boolean } = {}): HandoffReceipt {
   const args = handoffSchema.parse(input);
   if (source.jobAgent) throw new BridgeError("unauthorized", "Only the current supervisor session can hand off its own jobs.");
   if (isPluginCacheCwd(source.cwd) || isPluginCacheCwd(target.cwd) || target.host || target.name.includes("/") || target.jobAgent || !CODING_AGENTS.includes(target.agent as typeof CODING_AGENTS[number])) {
     throw new BridgeError("bad_request", "The target must be an exact live local Claude Code, Codex or opencode session. Paired-PC handoff is not supported.");
   }
-  if (target.name === source.name && options.reason !== "group-restored") throw new BridgeError("bad_request", "Choose another local supervisor session.");
+  if (target.name === source.name && options.reason !== "group-restored" && !options.canControl) throw new BridgeError("bad_request", "Choose another local supervisor session.");
   const unlock = acquireLock(`${path}.lock`, 0);
   try {
     let previous: unknown = null;
@@ -45,12 +48,13 @@ export function commitHandoff(path: string, source: PeerInfo, target: PeerInfo, 
       if (isRecord(j) && typeof j.id === "string" && typeof j.name === "string") byId.set(j.id, j as unknown as Job & Record<string, unknown>);
     }
     const records = [...byId.values()];
-    const own = records.filter((j) => j.owner === source.name && !j.parentJob);
+    const own = records.filter((j) => !j.parentJob && (j.owner === source.name || options.canControl?.(j)));
     const selected = args.jobs === "all" ? own : args.jobs.map((name) => {
       const job = own.find((j) => j.name === name);
-      if (!job) throw new BridgeError("unauthorized", `Job ${name} is not owned by the current supervisor (use an exact job name).`);
+      if (!job) throw new BridgeError("unauthorized", `Job ${name} is not controlled by this master (use an exact job name).`);
       return job;
     });
+    if (selected.length && selected.every((job) => primaryFor(job) === target.name) && options.reason !== "group-restored") throw new BridgeError("bad_request", "The target is already the primary for these jobs.");
     const moved = new Set(selected.map((j) => j.name));
     for (let changed = true; changed;) {
       changed = false;
@@ -75,7 +79,7 @@ export function commitHandoff(path: string, source: PeerInfo, target: PeerInfo, 
         args: { ...j.args, ...(Array.isArray(sendTo) ? { send_to: [...new Set(sendTo.map((name) => name === source.name ? target.name : name))] } : {}) },
         ownershipHistory: [...(Array.isArray(history) ? history : []), change] }];
     }));
-    const active = Array.isArray(previous) ? previous : isRecord(previous) && Array.isArray(previous.jobs) ? previous.jobs : [];
+    const active = activeRecords;
     const ids = new Set(active.filter(isRecord).map((j) => j.id));
     const all = active.map((j) => isRecord(j) ? updates.get(String(j.id)) ?? j : j);
     for (const [id, job] of updates) if (!ids.has(id)) all.push(job); // An active override preserves the immutable archive.
@@ -96,5 +100,5 @@ export function migrateJobOwnership(previous: unknown): Record<string, unknown> 
   if (previous !== null && !Array.isArray(previous) && (!isRecord(previous) || !Array.isArray(previous.jobs))) throw new Error("Invalid job registry; migration left it untouched.");
   const jobs = Array.isArray(previous) ? previous : isRecord(previous) ? previous.jobs as unknown[] : [];
   if (isRecord(previous) && previous.handoffs !== undefined && !Array.isArray(previous.handoffs)) throw new Error("Invalid handoff history; migration left it untouched.");
-  return { ...(isRecord(previous) ? previous : {}), version: JSON_STORE_VERSION, jobs, handoffs: isRecord(previous) ? previous.handoffs ?? [] : [] };
+  return { ...(isRecord(previous) ? previous : {}), version: JSON_STORE_VERSION, jobs: migrateProjectJobs(jobs), handoffs: isRecord(previous) ? previous.handoffs ?? [] : [] };
 }
