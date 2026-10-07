@@ -23,6 +23,14 @@ beforeEach(() => {
 afterEach(async () => env.cleanup());
 
 describe("available subagent models", () => {
+  it("reads installed Antigravity model slugs without treating status text as a model", async () => {
+    vi.mocked(captureOutput).mockResolvedValue("Fetching available models...\nexample-flash-high\tExample Flash High\nexample-pro\tExample Pro\n");
+    const report = await readModels("antigravity", cfg, env.home, nullLogger, env.home);
+    expect(report.models).toEqual(["example-flash-high", "example-pro"]);
+    expect(report.lines.join("\n")).toContain("xhigh, max");
+    expect(captureOutput).toHaveBeenCalledWith(cfg.antigravityBin, ["models"], env.home, nullLogger);
+    expect((await describeModels("antigravity", cfg, env.home, nullLogger, "pro")).join("\n")).not.toContain("example-flash-high");
+  });
   it("does not start any CLI while producing the startup model description", () => {
     const desc = modelParameterDescription("codex", { ...cfg, codexModel: "chosen" }, env.home, "example");
     expect(desc).toContain("Default: chosen.");

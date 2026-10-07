@@ -13,15 +13,16 @@ import type { NetworkIdentity } from "../network/pairing.js";
 import type { TransferResult } from "../network/files.js";
 import type { RemoteJobRequest } from "../network/remote-job-protocol.js";
 import type { RemoteJobSnapshot } from "../network/remote-jobs.js";
+import type { ConversationRequest, ConversationPage } from "./conversations.js";
 import type { HistorySearch, HistoryResult } from "./history.js";
 import type { TransferProgress, TransferStarted } from "../network/transfers.js";
 import type { DecideArgs, DecisionsArgs, OwnerDecision } from "./decisions.js";
 
-export type AgentKind = "claude" | "codex" | "opencode" | "other";
-export const AGENT_KINDS: readonly AgentKind[] = ["claude", "codex", "opencode", "other"];
+export type AgentKind = "claude" | "codex" | "opencode" | "antigravity" | "other";
+export const AGENT_KINDS: readonly AgentKind[] = ["claude", "codex", "opencode", "antigravity", "other"];
 /** Agents that agent-bridge can run headlessly (delegation / subagents). */
 export type CodingAgent = Exclude<AgentKind, "other">;
-export const CODING_AGENTS: readonly CodingAgent[] = ["claude", "codex", "opencode"];
+export const CODING_AGENTS: readonly CodingAgent[] = ["claude", "codex", "opencode", "antigravity"];
 
 /** Broadcast target. */
 export const BROADCAST = "*";
@@ -50,6 +51,13 @@ export interface SiblingPeer {
 }
 
 export interface PeerInfo {
+  /** Derived local project identity; paired-PC projections never confer group authority. */
+  projectRoot?: string;
+  projectGroup?: string;
+  projectMain?: boolean;
+  projectAddress?: string;
+  /** A connected coordinator deliberately yielded its jobs (for example at a usage limit). */
+  unavailable?: boolean;
   /** Unique per process. */
   id: string;
   /** Stable, human-friendly address such as "codex-myrepo". Unique among live peers. */
@@ -71,7 +79,6 @@ export interface PeerInfo {
   wakeMaxHops?: number;
   /** Whether the agent is working on a turn right now, when known (reported by hooks). */
   activity?: PeerActivity | null;
-  unavailable?: boolean;
   /** agent-bridge version of this peer. */
   version?: string;
   /** Set for a job runner (it hosts a background subagent of a session): that subagent's agent. Hidden from peer lists. */
@@ -170,6 +177,7 @@ export interface PendingArgs {
 }
 
 export interface UpdatePeerArgs {
+  unavailable?: boolean;
   jobParent?: string;
   jobTitle?: string;
   sessionId?: string | null;
@@ -189,8 +197,12 @@ export interface AuthArgs {
 }
 
 export interface RequestMap {
+  projectJobs: [Record<string, never>, Record<string, unknown>[]];
+  coordinatorAvailability: [{ name?: string; unavailable: boolean }, PeerInfo];
+  projectMain: [{ to: string }, PeerInfo];
   handoffSubagents: [import("./job-handoff.js").HandoffArgs, import("./job-handoff.js").HandoffReceipt];
   jobAuthority: [{ job: string }, import("../mcp/jobs.js").Job | null];
+  jobRecipient: [{ job: string }, string];
   inlineJobControl: [{ job: string; control: import("../mcp/jobs.js").RunnerControl }, { sent: boolean }];
   inlineJobReport: [BridgeMessage, { saved: boolean }];
   auth: [AuthArgs, { brokerPid: number }];
@@ -198,6 +210,7 @@ export interface RequestMap {
   send: [SendArgs, SendResult];
   decide: [DecideArgs, { decision: OwnerDecision; deliveredTo: string[] }];
   decisions: [DecisionsArgs, OwnerDecision[]];
+  getConversation: [ConversationRequest, ConversationPage];
   searchHistory: [HistorySearch, HistoryResult];
   reindexHistory: [{ reset?: boolean }, { work: number; discovering: boolean }];
   peers: [Record<string, never>, PeerInfo[]];

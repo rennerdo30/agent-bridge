@@ -6,7 +6,7 @@ In opencode, the native plugin exposes the same operation as `bridge_handoff_sub
 
 | Parameter | Meaning |
 | --- | --- |
-| `to` | Exact live local Claude Code, Codex or opencode session name from `peers` |
+| `to` | Exact live local Claude Code, Codex, opencode or Antigravity session name from `peers` |
 | `jobs` | Exact job names, or `"all"` (the default) |
 | `note` | Optional context for the new supervisor, up to 4,000 characters |
 

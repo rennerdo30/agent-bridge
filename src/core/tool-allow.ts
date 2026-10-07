@@ -11,7 +11,7 @@
 
 /** "plugin_agent-pair-programming_pair-desk" -> "pair-desk" (Claude names plugin servers this way). */
 function serverNames(server: string): string[] {
-  const short = /^plugin_[^_]+_(.+)$/.exec(server)?.[1];
+  const short = /^plugin_[^_]+_(.+)$/.exec(server)?.[1] ?? /^([^_]+)_\1$/.exec(server)?.[1];
   const names = short ? [server, short] : [server];
   if (names.includes("pair_desk")) names.push("pair-desk");
   return names;
@@ -58,7 +58,7 @@ function glob(pattern: string): RegExp {
  * talks to the session that runs the subagent. Its name per CLI: Codex "agent-bridge", Claude
  * "plugin_agent-bridge_bridge", opencode "bridge".
  */
-const OWN_SERVERS = new Set(["agent-bridge", "plugin_agent-bridge_bridge", "bridge"]);
+const OWN_SERVERS = new Set(["agent-bridge", "agent-bridge_agent-bridge", "plugin_agent-bridge_bridge", "bridge"]);
 
 export function isOwnServerCall(r: { tool: string; detail: string }): boolean {
   const call = mcpToolOf(r);

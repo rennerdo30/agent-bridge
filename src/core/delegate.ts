@@ -288,16 +288,20 @@ export function runProcess(opts: {
       opts.signal?.removeEventListener("abort", onAbort);
       fn();
     };
-    const kill = (reason: string) => void killTree(child, reason);
+    const kill = (reason: string) => killTree(child, reason);
     const timer = setTimeout(() => {
-      kill("delegate time limit");
       const seconds = Math.round(opts.timeoutMs / 1000);
       const message = opts.what ? `${opts.what} timed out after ${seconds}s` : `delegate timed out after ${seconds}s (its time limit, timeout_sec)`;
-      finish(() => reject(new DelegateError(message, "timeout", stderr.slice(-STDERR_TAIL_CHARS), captured())));
+      finish(() => {
+        const failed = () => reject(new DelegateError(message, "timeout", stderr.slice(-STDERR_TAIL_CHARS), captured()));
+        void kill("delegate time limit").then(failed, failed);
+      });
     }, opts.timeoutMs);
     const onAbort = () => {
-      kill("delegate aborted");
-      finish(() => reject(new DelegateError("delegate aborted", "aborted", "", captured())));
+      finish(() => {
+        const failed = () => reject(new DelegateError("delegate aborted", "aborted", "", captured()));
+        void kill("delegate aborted").then(failed, failed);
+      });
     };
     opts.signal?.addEventListener("abort", onAbort, { once: true });
 
@@ -404,8 +408,9 @@ export const CODEX_ASK_HINT =
 export const OPENCODE_READ_ONLY_PERMISSIONS = { edit: "ask", bash: "ask" } as const;
 /** MCP tools (named <server>_<tool>) can change things too: read-only runs keep only agent-bridge's send (to answer the parent). */
 export const OPENCODE_READ_ONLY_TOOLS = {
-  "*_*": false, bridge_send: true, bridge_report_progress: true, bridge_peers: true,
+  "*_*": false, bridge_send: true, bridge_report_progress: true, bridge_peers: true, bridge_search_history: true, bridge_get_conversation: true,
   bridge_spawn_codex: true, bridge_spawn_claude: true, bridge_ask_codex: true, bridge_ask_claude: true,
+  bridge_spawn_antigravity: true, bridge_ask_antigravity: true,
   bridge_message_subagent: true, bridge_cancel_subagent: true, bridge_inbox: true, bridge_wait_for_message: true,
 } as const;
 
@@ -498,7 +503,7 @@ export function realFolder(dir: string): string {
 }
 
 export async function delegateToCodex(
-  req: DelegateRequest & { bin: string; sandbox: CodexSandbox; relayApprovals?: boolean; networkAccess?: boolean },
+  req: DelegateRequest & { bin: string; sandbox: CodexSandbox; windowsSandbox?: "unelevated" | "elevated"; relayApprovals?: boolean; networkAccess?: boolean },
 ): Promise<DelegateResult> {
   checkDepth(req.maxDelegateDepth);
   // Codex's Windows sandbox runs as a separate user that does not see per-user drive mappings (a mapped
@@ -508,6 +513,7 @@ export async function delegateToCodex(
   // without this hint Codex gives up at the sandbox instead of requesting the approval.
   if (req.relayApprovals && req.sandbox !== "danger-full-access") req = { ...req, prompt: `${req.prompt}\n\n${CODEX_ASK_HINT}` };
   const common = ["--json", "--skip-git-repo-check", ...(req.model ? ["-m", req.model] : []), ...(req.effort ? ["-c", `model_reasoning_effort="${req.effort}"`] : [])];
+  if (process.platform === "win32" && req.sandbox !== "danger-full-access") common.push("-c", `windows.sandbox="${req.windowsSandbox ?? "unelevated"}"`);
   for (const [key, value] of Object.entries(codexSubagentConfig(req.nativeSubagents))) common.push("-c", `${key}=${value}`);
   if (req.writableRoots?.length && req.sandbox === "workspace-write") {
     common.push("-c", `sandbox_workspace_write.writable_roots=${JSON.stringify(req.writableRoots.map(realFolder))}`);

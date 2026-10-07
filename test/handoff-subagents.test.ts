@@ -44,7 +44,7 @@ describe("local subagent ownership handoff", () => {
     expect(mastersFor(job)).toEqual([target.name]);
     expect(chooseJobRecipient(job, await source.peers())).toBe(target.name);
   });
-  it.each(["claude", "codex", "opencode"] as const)("moves all jobs to a live %s session with history and a waking inventory", async (agent) => {
+  it.each(["claude", "codex", "opencode", "antigravity"] as const)("moves all jobs to a live %s session with history and a waking inventory", async (agent) => {
     const to = env.node(`${agent}-receiver`, agent); await to.start();
     save([record("a"), record("b", { status: "failed" })]);
     const result = await source.handoffSubagents({ to: to.name, note: "Review the evidence" });
@@ -158,9 +158,9 @@ describe("local subagent ownership handoff", () => {
     expect(readStore(path(), undefined, true).find((j) => j.id === "a")!.owner).toBe(target.name);
   });
 
-  it("appends a second transfer and rejects the former owner", async () => {
+  it("appends a reversed transfer and rejects a redundant primary switch", async () => {
     save([record("a")]); await source.handoffSubagents({ to: target.name });
-    await expect(source.handoffSubagents({ to: target.name, jobs: ["codex-job-a"] })).rejects.toThrow("not owned");
+    await expect(source.handoffSubagents({ to: target.name, jobs: ["codex-job-a"] })).rejects.toThrow("already the primary");
     await target.handoffSubagents({ to: source.name });
     expect(readStore(path())[0]!.ownershipHistory).toHaveLength(2);
   });

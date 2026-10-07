@@ -6,7 +6,7 @@ import { writeJsonStore, JSON_STORE_VERSION } from "../src/core/json-store.js";
 import { makeEnv, type TestEnv } from "./helpers.js";
 import type { PeerInfo } from "../src/core/protocol.js";
 import { DatabaseSync } from "node:sqlite";
-import { MessageStore } from "../src/core/store.js";
+import { MessageStore, SQLITE_STORE_VERSION } from "../src/core/store.js";
 import { migrateSqlite } from "../src/core/sqlite-migrations.js";
 import { nullLogger } from "../src/core/logger.js";
 import { archiveDbPath } from "../src/core/sqlite-maintenance.js";
@@ -82,7 +82,7 @@ it("makes old version-2 writers fail closed and preserves unknown fields", () =>
     const v = (value as { version: number }).version;
     if (!Number.isInteger(v) || v < 0 || v > 2) throw new Error(`unsupported JSON store version: ${v}`);
   };
-  expect(() => oldWriterGuard(next)).toThrow("unsupported JSON store version: 3");
+  expect(() => oldWriterGuard(next)).toThrow(`unsupported JSON store version: ${JSON_STORE_VERSION}`);
   expect(next.extension).toEqual({ retained: true });
 });
 
@@ -108,7 +108,7 @@ it("upgrades the released 0.29.10 SQLite layout without changing any old table r
   const store = new MessageStore(file, nullLogger); store.close();
   const next = new DatabaseSync(file);
   try {
-    expect(next.prepare("PRAGMA user_version").get()!.user_version).toBe(7);
+    expect(next.prepare("PRAGMA user_version").get()!.user_version).toBe(SQLITE_STORE_VERSION);
     for (const [table, records] of Object.entries(original)) {
       if (table === "archived_messages") {
         const archive = new DatabaseSync(archiveDbPath(file), { readOnly: true });

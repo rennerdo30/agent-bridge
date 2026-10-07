@@ -1,5 +1,11 @@
 # History search
 
+Complete raw conversation retention, project mirrors and paged MCP context access
+are documented in [conversation-storage.md](conversation-storage.md). The sections
+below describe the original bounded preview index; durable raw records now extend
+its coverage beyond those preview limits.
+
+
 `search_history` searches local bridge messages, cold `archive.db` messages, all decision
 revisions, delegated run logs and metadata (including `runs/archive`), and the CLI transcript
 readers for Claude Code, Codex and opencode. Ordinary searches only query the local index:

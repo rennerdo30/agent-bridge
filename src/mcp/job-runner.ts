@@ -1,3 +1,4 @@
+import { ProjectGroups } from "../core/project-groups.js";
 import { canControlJob } from "../core/job-ownership.js";
 import { join } from "node:path";
 import { JOBS_FILE } from "../core/constants.js";
@@ -16,8 +17,10 @@ import { resumeArgs, runDelegate, type JobSink, type RunContext } from "./delega
 import { CONTROL_CONVERSATION_PREFIX, JOB_PEER_PREFIX, RUNNER_HEARTBEAT_MS, writeRunnerState, type RunnerSpec } from "./job-host.js";
 import { jobReport, NOTE_CONVERSATION_SUFFIX, QUEUED_FOLLOW_UP_NOTE, sessionOfError, waitForApproval, type Job, type RunnerControl, type RunnerState } from "./jobs.js";
 import { changedJobArgs } from "./job-settings.js";
-import { processCleanupReport, startWindowsJobScope, type WindowsJobScope } from "../core/windows-job-scope.js";
+import { processCleanupReport, establishWindowsJobScope, type WindowsJobScope } from "../core/windows-job-scope.js";
 import type { Logger } from "../core/logger.js";
+import { closeJobWorktree } from "../core/job-close.js";
+import { recordWorktreeProcessProof } from "../core/worktree-state.js";
 
 /** Delivering a message to the session: tries for several minutes (the bridge may be changing hands, or no session hosts it). */
 const SEND_ATTEMPTS = 30;
@@ -46,14 +49,7 @@ export async function runJobRunner(specFile: string | undefined): Promise<number
   // This is a dedicated runner, never the shared broker/MCP server. Establish ownership
   // before any delegate can create tools, including tools whose intermediate parents exit.
   let scope: WindowsJobScope | null = null;
-  try {
-    if (process.platform === "win32") scope = await startWindowsJobScope(log);
-  } catch (err) {
-    const cause = "job process ownership could not be established: " + (err as Error).message;
-    log.error(cause);
-    writeRunnerState(home, spec.job.id, { pid: process.pid, peer: spec.job.name, status: "failed", updatedAt: Date.now(), finishedAt: Date.now(), report: "Subagent " + spec.job.name + " failed before starting. " + cause, delivered: false });
-    return 1;
-  }
+  if (process.platform === "win32") scope = await establishWindowsJobScope(log);
   try {
     return await runOwnedJobRunner(spec, log, scope);
   } finally {
@@ -74,7 +70,7 @@ async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: WindowsJo
   let owner = spec.owner;
   const refreshOwner = () => {
     const saved = readStore(join(home, JOBS_FILE)).find((j) => j.id === job.id);
-    if (!saved?.ownershipHistory?.length) return;
+    if (!saved) return;
     owner = saved.owner ?? owner;
     Object.assign(job, { owner, supervisor: saved.supervisor, parentJob: saved.parentJob, rootSession: saved.rootSession, rootName: saved.rootName,
       ownershipHistory: saved.ownershipHistory, masters: saved.masters, args: { ...job.args, send_to: saved.args?.send_to } });
@@ -181,7 +177,7 @@ async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: WindowsJo
     },
   };
 
-  node.on("message", (m) => {
+  node.on("message", async (m) => {
     // Direct sibling chat is handled by the current turn's SiblingLink, never as supervisor control.
     if (m.conversationId.startsWith(SIBLING_CONVERSATION_PREFIX)) return;
     node.markRead([m.id]);
@@ -200,20 +196,23 @@ async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: WindowsJo
     } catch {
       return;
     }
+    if (c.type === "cancel" && !isCurrentRunnerCancel(m.createdAt, spec.job.startedAt)) {
+      log.info("ignoring cancellation from an earlier job turn", { createdAt: m.createdAt, startedAt: spec.job.startedAt });
+      return;
+    }
     refreshOwner();
-    if (job.ownershipHistory?.length && !canControlJob(job as unknown as Record<string, unknown>, m.from.name)) return;
+    if (!owner.includes("/") && !canControlJob(job as unknown as Record<string, unknown>, m.from.name)) {
+      const peers = await node.peers();
+      const master = peers.find((p) => p.name === m.from.name);
+      if (!master || !new ProjectGroups(home).canControl(master, job as unknown as Record<string, unknown>, peers)) return;
+    }
     // The session may be a new server now, maybe under another name: answer where it is.
     if (m.from.name !== owner) log.info("the job's session is now", { name: m.from.name, was: owner });
-    if (!job.ownershipHistory?.length) owner = m.from.name;
     void node.updateJob({ jobParent: owner }).catch(() => {});
     if (c.type === "message") {
       if (closing) return;
       seen.push(c.cid);
-      if (job.pendingApproval) {
-        const answer = job.pendingApproval;
-        job.pendingApproval = null;
-        answer(c.body, `session ${m.from.name}`);
-      } else if (job.live) {
+      if (job.live) {
         job.awaitingAnswer = true;
         job.live.post(c.body);
       }
@@ -259,6 +258,7 @@ async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: WindowsJo
     let status: "done" | "failed";
     let text = "";
     let cause: string | null = null;
+    let processesStopped = false;
     try {
       const res = await runDelegate(rc, target, args, job.controller.signal, onProgress, true, job);
       job.workdir = res.workdir ?? job.workdir;
@@ -275,6 +275,7 @@ async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: WindowsJo
     if (scope) {
       try {
         const cleanup = await scope.cleanup();
+        processesStopped = cleanup.remaining.length === 0;
         text += "\n\n" + processCleanupReport(cleanup);
         if (cleanup.remaining.length) {
           status = "failed";
@@ -288,6 +289,11 @@ async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: WindowsJo
       }
     }
     job.etaAt = undefined;
+    if (job.worktree) recordWorktreeProcessProof(home, job.worktree, processesStopped);
+    if (job.controller.signal.aborted && processesStopped) {
+      const cleanup = await closeJobWorktree({ home, job: { ...job, status }, enabled: spec.cfg.jobCloseCleanup, log });
+      text += `\n\nWorktree close: ${cleanup.action}: ${cleanup.reason}`;
+    }
     job.etaReportedAt = undefined;
     const report = jobReport(job, status, Math.round((Date.now() - job.startedAt) / 1000), text, cause);
     log.info("job turn finished", { status, sessionId: job.sessionId, cause });
@@ -317,4 +323,9 @@ async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: WindowsJo
   clearInterval(heartbeat);
   await node.stop();
   return 0;
+}
+
+/** Legacy 0.29.10 control mail also carries its original broker timestamp. */
+export function isCurrentRunnerCancel(createdAt: number, startedAt: number): boolean {
+  return createdAt >= startedAt;
 }

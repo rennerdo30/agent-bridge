@@ -66,7 +66,7 @@ export async function readModels(agent: CodingAgent, cfg: BridgeConfig, cwd: str
         ? /Aliases for the latest of each family: ([^;]+)/.exec(lines[0] ?? "")?.[1]?.split(", ") ?? []
         : lines.flatMap((l) => {
             const id = /^- (\S+)/.exec(l)?.[1];
-            return id ? [agent === "codex" ? id.replace(/:$/, "") : id] : [];
+            return id ? [agent === "codex" || agent === "antigravity" ? id.replace(/:$/, "") : id] : [];
           });
       const defaultModel = lines.flatMap((l) => /^- (\S+) \(default\)/.exec(l)?.[1] ?? [])[0] ?? null;
       const report: ModelReport = { agent, defaultModel, models, lines };
@@ -109,6 +109,10 @@ export async function describeModels(agent: CodingAgent, cfg: BridgeConfig, cwd:
         ...(efforts ? [`Efforts: ${efforts}.`] : []),
         ...tail,
       ];
+    }
+    if (agent === "antigravity") {
+      const rows = (await captureOutput(cfg.antigravityBin, ["models"], cwd, log)).split(/\r?\n/).map((line) => /^([A-Za-z0-9][\w.-]*)\t+(.+)$/.exec(line.trim())).filter((row) => row && match(row[1], row[2]));
+      return [`Antigravity CLI models (${rows.length}):`, ...rows.slice(0, MAX_LISTED).map((row) => `- ${row![1]}: ${row![2]}`), "Efforts: low, medium, high, xhigh, max (model-dependent).", ...tail];
     }
     const models = (await listOpencodeModels(cfg.opencodeBin, cwd, log)).filter((m) => match(m));
     return [

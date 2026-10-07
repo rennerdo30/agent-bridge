@@ -44,7 +44,7 @@ export function discardFinishedNotes(ctx: ServerContext): void {
     if (isQuietMessage(m)) return false;
     if (!ctx.jobs?.isNote(m)) return false;
     const job = ctx.jobs.find(m.from.name);
-    return job !== undefined && !job.ownershipHistory?.length && job.status !== "running";
+    return job !== undefined && !job.projectRoot && !job.deliveryHistory?.length && !job.ownershipHistory?.length && job.status !== "running";
   });
   node.markRead(obsolete.map((m) => m.id));
 }
@@ -159,6 +159,7 @@ export async function buildHookResponse(ctx: ServerContext, input: HookInput): P
       if (!node.autoWakeEnabled && !inConversation) {
         // A notify wait is explicit permission to deliver its match, even after the listen window ends.
         const awaited = node.unread().filter((m) => (node.isNotificationAwaited(m) ||
+          (m.from.id.startsWith("job:") && m.conversationId.endsWith(":fallback")) ||
           (ctx.agent === "opencode" && m.to !== BROADCAST && !(AGENT_KINDS as readonly string[]).includes(m.to) &&
             shouldWakeClaudeMessage(node, ctx.cfg, m))) && m.hop < ctx.cfg.maxHops &&
           !isQuietMessage(m) && !m.conversationId.endsWith(":note")).slice(0, HOOK_MAX_MESSAGES);

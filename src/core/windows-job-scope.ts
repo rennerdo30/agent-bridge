@@ -92,13 +92,22 @@ public static class BridgeJobScope {
     Check(job!=IntPtr.Zero);
     IntPtr owner=IntPtr.Zero;
     try {
-      var limits=new Limits(); limits.basic.flags=0x2000; // KILL_ON_JOB_CLOSE; no breakaway permission.
+      // Setup is provisional until Node accepts readiness. Killing a timed-out guardian
+      // must never kill the runner it may have just assigned.
+      var limits=new Limits();
       int size=Marshal.SizeOf(limits); IntPtr data=Marshal.AllocHGlobal(size);
       try { Marshal.StructureToPtr(limits, data, false); Check(SetInformationJobObject(job, 9, data, (uint)size)); }
       finally { Marshal.FreeHGlobal(data); }
       owner=OpenProcess(0x00101101, false, runner); Check(owner!=IntPtr.Zero);
       Check(AssignProcessToJobObject(job, owner));
       Console.WriteLine("{\"type\":\"ready\"}"); Console.Out.Flush();
+      // Only an accepted scope enables KILL_ON_JOB_CLOSE; no breakaway permission.
+      if (Console.ReadLine()!="retain") return;
+      limits.basic.flags=0x2000;
+      data=Marshal.AllocHGlobal(size);
+      try { Marshal.StructureToPtr(limits, data, false); Check(SetInformationJobObject(job, 9, data, (uint)size)); }
+      finally { Marshal.FreeHGlobal(data); }
+      Console.WriteLine("{\"type\":\"retained\"}"); Console.Out.Flush();
       string command;
       while ((command=Console.ReadLine())!=null) {
         if (command=="cleanup") Cleanup(job, runner);
@@ -121,14 +130,14 @@ export function startWindowsJobScope(log: Logger, runnerPid = process.pid): Prom
   const bin = join(process.env.SystemRoot ?? "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
   const guardian = spawn(bin, ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")], { windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
   return new Promise((resolve, reject) => {
-    let stderr = "", buffer = "", ready = false;
+    let stderr = "", buffer = "", ready = false, failed = false, retaining = false;
     let pending: { resolve: (result: ProcessCleanup) => void; reject: (err: Error) => void; timer: NodeJS.Timeout } | null = null;
     const fail = (err: Error) => {
       clearTimeout(startup);
-      if (!ready) reject(err);
+      if (!ready && !failed) { failed = true; reject(err); }
       if (pending) { clearTimeout(pending.timer); pending.reject(err); pending = null; }
     };
-    const startup = setTimeout(() => { fail(new Error("Windows job ownership setup timed out")); guardian.kill(); }, 25_000);
+    const startup = setTimeout(() => { fail(new Error("Windows job ownership setup timed out")); if (!retaining) guardian.kill(); else { guardian.stdin!.end(); (guardian.stdout as any)?.unref?.(); (guardian.stderr as any)?.unref?.(); guardian.unref(); } }, 8_000);
     guardian.on("error", fail);
     guardian.on("exit", (code) => fail(new Error("Windows job guardian exited (" + code + "): " + stderr.slice(-2000))));
     guardian.stdin!.on("error", fail);
@@ -140,7 +149,9 @@ export function startWindowsJobScope(log: Logger, runnerPid = process.pid): Prom
         const line = buffer.slice(0, index).trim(); buffer = buffer.slice(index + 1);
         let message: any;
         try { message = JSON.parse(line); } catch { continue; }
-        if (message.type === "ready" && !ready) {
+        if (message.type === "ready" && !ready && !failed && !retaining) {
+          retaining = true; guardian.stdin!.write("retain\n");
+        } else if (message.type === "retained" && !ready && !failed) {
           ready = true; clearTimeout(startup);
           log.info("job process ownership established", { runnerPid, guardianPid: guardian.pid, method: "private Windows job object" });
           resolve({
@@ -171,4 +182,14 @@ export function startWindowsJobScope(log: Logger, runnerPid = process.pid): Prom
 export function processCleanupReport(result: ProcessCleanup): string {
   const ids = (pids: number[]) => pids.length ? " (PIDs " + pids.join(", ") + ")" : "";
   return "Background process cleanup: stopped " + result.stopped.length + " surviving job-owned processes" + ids(result.stopped) + "; " + result.remaining.length + " still running" + ids(result.remaining) + ".";
+}
+
+/** Bounded setup failures degrade startup rather than failing a delegated task. */
+export async function establishWindowsJobScope(log: Logger, start: () => Promise<WindowsJobScope> = () => startWindowsJobScope(log)): Promise<WindowsJobScope | null> {
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try { return await start(); }
+    catch (err) { log.warn("Windows job ownership setup failed", { attempt, attempts: 2, error: (err as Error).message }); }
+  }
+  log.warn("job running in degraded process ownership mode", { cleanup: "private Windows job object unavailable; delegate process cleanup remains active" });
+  return null;
 }

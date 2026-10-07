@@ -6,9 +6,11 @@ import { delegateToClaude, delegateToCodex, delegateToOpencode, resolveBinary, r
 import { t } from "../core/i18n.js";
 import type { Logger } from "../core/logger.js";
 import type { CodingAgent } from "../core/protocol.js";
+import { delegateToAntigravity } from "../core/antigravity.js";
 
 /** CLI versions this agent-bridge release was verified against. */
 export const TESTED_VERSIONS: Record<CodingAgent, string> = {
+  antigravity: "1.2.0",
   claude: "2.1.283",
   codex: "0.157.1",
   opencode: "1.18.32",
@@ -35,7 +37,7 @@ async function version(bin: string, log: Logger): Promise<string> {
  */
 export async function runSmoke(opts: { agents: CodingAgent[]; out: (s: string) => void; log: Logger }): Promise<number> {
   const dir = mkdtempSync(join(tmpdir(), "agent-bridge-smoke-"));
-  const bins: Record<CodingAgent, string> = { claude: DEFAULT_CLAUDE_BIN, codex: DEFAULT_CODEX_BIN, opencode: DEFAULT_OPENCODE_BIN };
+  const bins: Record<CodingAgent, string> = { claude: DEFAULT_CLAUDE_BIN, codex: DEFAULT_CODEX_BIN, opencode: DEFAULT_OPENCODE_BIN, antigravity: "agy" };
   let failures = 0;
   try {
     for (const agent of opts.agents) {
@@ -49,6 +51,7 @@ export async function runSmoke(opts: { agents: CodingAgent[]; out: (s: string) =
       opts.out(t("smoke.start", { agent, version: v, note }));
       const run = (prompt: string, sessionId: string | null): Promise<DelegateResult> => {
         const base = { prompt, cwd: dir, sessionId, timeoutSec: SMOKE_TIMEOUT_SEC, log: opts.log };
+        if (agent === "antigravity") return delegateToAntigravity({ ...base, bin, access: "read" });
         if (agent === "codex") return delegateToCodex({ ...base, bin, sandbox: "read-only" });
         if (agent === "claude") return delegateToClaude({ ...base, bin, permissionMode: "plan" });
         return delegateToOpencode({ ...base, bin, autoApprove: false });

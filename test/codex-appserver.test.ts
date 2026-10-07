@@ -91,11 +91,11 @@ describe("next-turn Codex settings", () => {
         writeFileSync(requests, "");
         await delegateToCodexAppServer({ bin: process.execPath, cwd: dir, prompt: "inspect phone", sandbox, sessionId, askMode: true, timeoutSec: 10, log: nullLogger, extraEnv: { AB_TEST_ARGS: argsFile, AB_TEST_REQUESTS: requests } });
         const args: string[] = JSON.parse(readFileSync(argsFile, "utf8"));
-        expect(args).toEqual(sandbox === "danger-full-access" ? ["-c", 'sandbox_mode="danger-full-access"'] : []);
+        expect(args).toEqual(sandbox === "danger-full-access" ? ["-c", 'sandbox_mode="danger-full-access"'] : process.platform === "win32" ? ["-c", 'windows.sandbox="unelevated"'] : []);
         const calls = readFileSync(requests, "utf8").trim().split("\n").map((line) => JSON.parse(line));
         const thread = calls.find((call) => call.method === (sessionId ? "thread/resume" : "thread/start"));
         expect(thread.params.sandbox).toBe(sandbox);
-        expect(JSON.stringify(thread.params.config)).not.toContain("windows.sandbox");
+        expect(thread.params.config["windows.sandbox"]).toBe(process.platform === "win32" && sandbox !== "danger-full-access" ? "unelevated" : undefined);
         const turn = calls.find((call) => call.method === "turn/start").params;
         expect(turn.sandboxPolicy.type).toBe(sandbox === "danger-full-access" ? "dangerFullAccess" : sandbox === "read-only" ? "readOnly" : "workspaceWrite");
         expect(turn.input[0].text.includes("can't see devices from the sandbox")).toBe(process.platform === "win32");
@@ -121,7 +121,7 @@ process.stdin.on("end", () => {
         await delegateToCodex({ bin: process.execPath, cwd: dir, prompt: "inspect phone", sandbox, sessionId, timeoutSec: 10, log: nullLogger });
         const args: string[] = JSON.parse(readFileSync(join(dir, "args.json"), "utf8"));
         expect(args).toEqual(expect.arrayContaining(sessionId ? ["resume", "-c", `sandbox_mode="${sandbox}"`, sessionId] : ["-s", sandbox]));
-        expect(args.some((arg) => arg.startsWith("windows.sandbox="))).toBe(false);
+        expect(args.includes('windows.sandbox="unelevated"')).toBe(process.platform === "win32" && sandbox !== "danger-full-access");
         expect(readFileSync(join(dir, "prompt.txt"), "utf8").includes("can't see devices from the sandbox")).toBe(process.platform === "win32");
       }
     } finally {

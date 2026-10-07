@@ -5,6 +5,8 @@ import { resolveDbPath } from "../core/paths.js";
 import type { RequestMap } from "../core/protocol.js";
 import { MessageStore } from "../core/store.js";
 import { loadOrCreateToken } from "../core/token.js";
+import { ConversationIngestor } from "../core/conversations.js";
+import { transcriptPaths } from "../core/transcripts/common.js";
 
 type Batch = RequestMap["reindexHistory"][1];
 
@@ -12,6 +14,7 @@ type Batch = RequestMap["reindexHistory"][1];
 export async function runReindex(home: string, pipe: string, log: Logger, out: (text: string) => void): Promise<number> {
   let client: BridgeClient | null = null;
   let store: MessageStore | null = null;
+  let ingest: ConversationIngestor | null = null;
   try {
     try { client = await BridgeClient.connect(pipe, log); }
     catch (err) {
@@ -26,7 +29,11 @@ export async function runReindex(home: string, pipe: string, log: Logger, out: (
       // Same migration/backup executor as broker startup, without chat-peer or purge side effects.
       store = new MessageStore(resolveDbPath(home), log);
       const index = store.history;
-      batch = async (reset) => { if (reset) index.reset(); return index.tick(); };
+      ingest=new ConversationIngestor(index.database,home,transcriptPaths());
+      batch = async (reset) => {
+        if(reset)index.reset();const result=index.tick();const work=result.work+ingest!.tick();
+        return {work,discovering:result.discovering || ingest!.discovering};
+      };
     }
     let result = await batch(true), ticks = 1;
     while (result.work || result.discovering) {
@@ -36,5 +43,5 @@ export async function runReindex(home: string, pipe: string, log: Logger, out: (
     }
     out(`History index rebuilt in ${ticks} bounded batches.`);
     return 0;
-  } finally { client?.close(); store?.close(); }
+  } finally { client?.close(); ingest?.close(); store?.close(); }
 }

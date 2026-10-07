@@ -1,3 +1,4 @@
+import { canonicalProjectRoot, migrateProjectJobs } from "../core/project-identity.js";
 import { canControlJob } from "../core/job-ownership.js";
 import { randomUUID } from "node:crypto";
 import { closeSync, mkdirSync, openSync, rmSync, statSync } from "node:fs";
@@ -46,8 +47,12 @@ export type Run = ((signal: AbortSignal, onProgress: (message: string, full?: st
 export type Resume = (message: string, sessionId: string, workdir: string | null, worktree: Worktree | null) => Run;
 
 export interface Job {
+  /** Current blocking caller's delivery destination; runtime only, never ownership metadata. */
+  foregroundRecipient?: string;
   ownershipHistory?: import("../core/job-handoff.js").OwnershipChange[];
   masters?: string[];
+  /** Immutable original project identity, unaffected by primary handoff. */
+  projectRoot?: string;
   executionOwner?: string;
   queuedMessages?: string[];
   /** Append-only inline envelopes: the broker can recover delivery after executor/connection loss. */
@@ -99,7 +104,7 @@ export interface Job {
   awaitingAnswer?: boolean;
   /** MCP servers the parent allowed for this job (kept across its follow-ups). */
   allowedServers?: Set<string>;
-  /** An approval question the subagent is waiting on; the next message to the job answers it. */
+  /** An approval question the subagent is waiting on; only an explicit decision answers it. */
   pendingApproval?: ((answer: string, by?: string) => boolean | void) | null;
   /** While it runs: delivers a message into the running subagent (see parent-link.ts). */
   live?: { post: (message: string, sibling?: BridgeMessage) => void } | null;
@@ -183,7 +188,7 @@ export function jobReport(job: Pick<Job, "name" | "agent" | "model" | "sessionId
 
 /**
  * Ask the session's agent to approve something a running subagent wants to do; `post` delivers the question
- * as a message from the job. The next message to the job (job.pendingApproval) answers it; none in time is "deny".
+ * as a message from the job. An explicit decision answers it; none in time is "deny".
  */
 const approvalAnswers = new WeakMap<Job, Set<(answer: string, by?: string) => boolean>>();
 
@@ -205,7 +210,7 @@ export function waitForApproval(job: Job, question: string, timeoutMs: number, p
       if (!escalate || escalated || settled) return;
       if (!published) { escalationRequested = true; return; }
       escalated = true;
-      void escalate(`Nested subagent ${job.name} asks its top supervisor for approval: ${question}\n\nAnswer the pending dashboard approval ${approvalId}, or message_subagent(job="${job.name}", message="allow" or "deny").`).catch(() => {
+      void escalate(`Nested subagent ${job.name} asks its top supervisor for approval: ${question}\n\nAnswer the pending dashboard approval ${approvalId}, or decide(approval_id="${approvalId}", decision="allow" or "deny").`).catch(() => {
         escalated = false;
         log.warn("could not escalate nested approval", { job: job.name });
       });
@@ -251,8 +256,8 @@ export function waitForApproval(job: Job, question: string, timeoutMs: number, p
     log.info("subagent asks for approval", { job: job.name });
     post(
       `Subagent ${job.name} asks for approval: ${question}\n\n` +
-        `Decide as its supervisor: answer with message_subagent(job="${job.name}", message="allow") or message="deny" (a reason may follow). ` +
-        (escalate ? 'If the decision needs the owner, answer message="escalate" to forward the same pending request. ' : "") +
+        `Decide as its supervisor: use decide(approval_id="${approvalId}", decision="allow" or "deny", reason=...). ` +
+        (escalate ? `If the decision needs the owner, use decide(approval_id="${approvalId}", decision="escalate") to forward the same pending request. ` : "") +
         `It waits for your answer; no answer within ${Math.round(timeoutMs / 60_000)} minutes counts as deny.`,
     );
     if (askUser) {
@@ -274,8 +279,11 @@ export type FollowUpOutcome = "started" | "delivered" | "queued" | "waiting" | "
  * job while maxJobs are running waits for a free slot (first come, first served) instead of being refused.
  */
 export interface JobCoordinator {
+  jobAuthority?(job: string): Promise<Job | null>;
+  cwd?: string;
   controlInlineJob?(job: string, control: RunnerControl): Promise<unknown>;
   reportInlineJob?(message: BridgeMessage): Promise<unknown>;
+  jobRecipient?(job: string): Promise<string>;
   name: string;
   id: string;
   currentSessionId: string | null;
@@ -307,6 +315,7 @@ export class JobManager {
   private rootWaitTimer: NodeJS.Timeout | null = null;
   private persistTimer: NodeJS.Timeout | null = null;
   private sharedControl = false;
+  private readonly sharedGrants = new Set<string>();
 
   constructor(
     private readonly node: JobCoordinator,
@@ -317,7 +326,8 @@ export class JobManager {
     private maxJobs: number = DEFAULT_MAX_JOBS,
     private readonly lineage?: JobLineage,
   ) {
-    node.on("shared_job_control", ({ job: name, control }: { job: string; control: RunnerControl }) => {
+    node.on("shared_job_control", async ({ job: name, control }: { job: string; control: RunnerControl }) => {
+      await this.share(name);
       this.sharedControl = true;
       try {
         if (control.type === "message") this.followUp(name, control.body);
@@ -330,12 +340,14 @@ export class JobManager {
     node.on("jobs_changed", () => this.refreshOwnership());
     node.on("inline_job_control", ({ job: name, control }: { job: string; control: RunnerControl }) => {
       this.refreshOwnership();
-      const job = [...this.running.values(), ...this.foreground.values()].find((j) => j.name === name && j.executionOwner === this.node.name);
+      const job = [...this.running.values(), ...this.foreground.values()].find((j) => j.name === name && (j.executionOwner ?? j.owner) === this.node.name);
       if (!job) return;
       if (control.type === "cancel") { job.queue = []; job.controller.abort(); }
       else if (control.type === "message") {
-        if (job.pendingApproval) job.pendingApproval(control.body, `session ${job.owner}`);
-        else if (job.live) { job.awaitingAnswer = true; job.live.post(control.body); }
+        if (job.controller.signal.aborted && job.resume && job.sessionId) {
+          job.queue.push(control.body);
+          this.waitForSlot(job);
+        } else if (job.live) { job.awaitingAnswer = true; job.live.post(control.body); }
         else job.queue.push(control.body);
       } else if (control.type === "settings") job.args = changedJobArgs(job.args, control.settings);
       else if (control.type === "title") { job.args = { ...job.args, title: control.title }; job.retitle?.(control.title); }
@@ -423,7 +435,7 @@ export class JobManager {
       });
       const ids = new Set(mine.map((j) => j.id));
       const others = entries.filter((j) => !isRecord(j) || !ids.has(j.id as string));
-      const all = [...others, ...mine].sort((a, b) => {
+      const all = migrateProjectJobs([...others, ...mine]).sort((a, b) => {
         const started = (entry: unknown) => isRecord(entry) && typeof entry.startedAt === "number" ? entry.startedAt : 0;
         return started(a) - started(b);
       });
@@ -636,6 +648,24 @@ export class JobManager {
     return [...interrupted, ...mine.filter((j) => !interrupted.includes(j)).slice(0, limit)];
   }
 
+  /** Recheck group authority at each tool call; grants remain local and are never persisted. */
+  async share(ref: string): Promise<Job | undefined> {
+    const saved = await this.node.jobAuthority?.(ref);
+    if (!saved) {
+      const old = [...this.history.values()].find((j) => j.id === ref || j.name === ref);
+      if (old) this.sharedGrants.delete(old.id);
+      return this.find(ref);
+    }
+    this.sharedGrants.add(saved.id);
+    const existing = this.history.get(saved.id);
+    if (existing) Object.assign(existing, saved);
+    else this.history.set(saved.id, { ...saved, controller: new AbortController(), progress: null, queue: [], resume: this.restoreResume?.(saved.agent, saved.args ?? {}) });
+    return this.find(saved.name);
+  }
+  recipient(job: Job): Promise<string> {
+    return this.node.jobRecipient?.(job.name) ?? Promise.resolve(job.rootName ?? job.owner ?? this.node.name);
+  }
+
   find(ref: string): Job | undefined {
     this.refreshOwnership();
     const id = ref.replace(/^.*-(?:job|ask)-/, "");
@@ -644,9 +674,9 @@ export class JobManager {
     const active = [...this.running.values(), ...this.foreground.values(), ...this.waitingJobs.values()];
     const current = active.find((j) => j.id === id || j.name === ref)
       ?? this.history.get(id) ?? [...this.history.values()].find((j) => j.name === ref);
-    if (current || !this.storePath || !this.restoreResume) return current && (!current.ownershipHistory?.length || canControlJob(current as unknown as Record<string, unknown>, this.node.name) || this.isMine(current.owner) || (this.lineage && current.parentJob === this.lineage.parentJob)) ? current : undefined;
+    if (current || !this.storePath || !this.restoreResume) return current && (this.sharedGrants.has(current.id) || canControlJob(current as unknown as Record<string, unknown>, this.node.name) || this.isMine(current.owner) || (this.lineage && current.parentJob === this.lineage.parentJob)) ? current : undefined;
     const saved = readStore(this.storePath, this.log, true).find((j) => j.id === id || j.name === ref);
-    if (!saved || (saved.ownershipHistory?.length && !this.lineage && !this.isMine(saved.owner) && !canControlJob(saved as unknown as Record<string, unknown>, this.node.name))) return undefined;
+    if (!saved || (!this.lineage && !this.isMine(saved.owner) && !canControlJob(saved as unknown as Record<string, unknown>, this.node.name) && !this.sharedGrants.has(saved.id))) return undefined;
     // The same lineage rule as restore(): a nested coordinator sees only its own children, a session only top-level jobs.
     if (this.lineage ? saved.parentJob !== this.lineage.parentJob : saved.parentJob) return undefined;
     const job: Job = { ...saved, controller: new AbortController(), progress: null, queue: [], resume: this.restoreResume(saved.agent, saved.args ?? {}) };
@@ -684,6 +714,7 @@ export class JobManager {
       resume,
       queue: [],
       args,
+      projectRoot: canonicalProjectRoot(typeof args?.cwd === "string" ? args.cwd : this.node.cwd ?? process.cwd()) ?? undefined,
       owner: this.node.name,
       // Keep the first job's identity when hooks learn the session id later, or a server reload adopts it.
       supervisor: this.supervisorIdentity(),
@@ -744,7 +775,7 @@ export class JobManager {
         job.workdir = outcome?.result?.workdir ?? job.workdir;
         job.worktree = outcome?.result?.worktree ?? job.worktree;
         this.persist();
-        if (job.ownershipHistory?.length && !this.isMine(job.owner)) {
+        if ((job.foregroundRecipient && job.foregroundRecipient !== this.node.name) || (job.ownershipHistory?.length && !this.isMine(job.owner))) {
           this.post(job, jobReport(job, job.status, Math.round((Date.now() - job.startedAt) / 1000), outcome?.result?.text ?? "", job.status === "failed" ? failureCause(outcome ?? {}) : null));
         }
         // Follow-ups sent while the caller waited continue the session in the background (or wait for a slot).
@@ -823,7 +854,7 @@ export class JobManager {
    * Send a follow-up to a subagent: queued while it runs, otherwise its session is resumed in the background,
    * as soon as a slot is free.
    */
-  followUp(ref: string, message: string): { outcome: FollowUpOutcome; job?: Job } {
+  followUp(ref: string, message: string): { outcome: FollowUpOutcome; job?: Job; approvalPending?: boolean } {
     const job = this.find(ref);
     if (!job) return { outcome: "unknown" };
     if (job.status === "running" && job.executionOwner && job.executionOwner !== this.node.name && job.owner === this.node.name) {
@@ -840,30 +871,31 @@ export class JobManager {
       job.queue.push(message);
       return { outcome: "waiting", job };
     }
+    if (job.status === "running" && job.controller.signal.aborted) {
+      if (!job.resume || !job.sessionId) return { outcome: "no-session", job };
+      // A continuation sent during cancellation belongs to a fresh turn, after this one stops.
+      job.queue.push(message);
+      this.waitForSlot(job);
+      this.persist();
+      return { outcome: "waiting", job };
+    }
     if (this.hostedRunning(job)) {
-      // Its runner decides: an answer to its approval question, a live message, or queued for after this turn.
+      // Plain text always remains a live message or a queued follow-up, even during approval.
       const state = this.runners!.state(job);
       const cid = randomUUID();
       (job.forwarded ??= []).push({ cid, body: message });
       this.runners!.send(job, { type: "message", body: message, cid });
-      return { outcome: state?.asking ? "answered" : state?.live ? "delivered" : "queued", job };
-    }
-    if (job.status === "running" && job.pendingApproval) {
-      const answer = job.pendingApproval;
-      answer(message, `session ${this.node.name}`);
-      // Escalation keeps the original wait answerable by its direct parent and the owner.
-      if (job.pendingApproval === answer && !/^\s*escalate\b/i.test(message)) job.pendingApproval = null;
-      return { outcome: "answered", job };
+      return { outcome: state?.live ? "delivered" : "queued", job, approvalPending: Boolean(state?.asking) };
     }
     if (job.status === "running") {
       // Like a native subagent: it sees the message while it works and can answer at once.
       if (job.live) {
         job.awaitingAnswer = true;
-      job.live.post(message);
-        return { outcome: "delivered", job };
+        job.live.post(message);
+        return { outcome: "delivered", job, approvalPending: Boolean(job.pendingApproval) };
       }
       job.queue.push(message);
-      return { outcome: "queued", job };
+      return { outcome: "queued", job, approvalPending: Boolean(job.pendingApproval) };
     }
     if (!job.resume || !job.sessionId) return { outcome: "no-session", job };
     if (!this.canStart()) {
@@ -893,6 +925,7 @@ export class JobManager {
   /** Start waiting continuations while there are free slots, oldest first. */
   private startWaiting(): void {
     for (const job of this.waitingJobs.values()) {
+      if (job.status === "running") continue;
       if (!this.canStart()) return;
       this.waitingJobs.delete(job.id);
       if (!job.queue.length || !job.resume || !job.sessionId) continue;
@@ -1042,9 +1075,10 @@ export class JobManager {
       // Its runner stops the subagent and reports; one that does not react in time is killed with everything it started.
       job.forwarded = [];
       const runners = this.runners!;
+      const cancelledHost = job.host, cancelledController = job.controller;
       runners.send(job, { type: "cancel" });
       setTimeout(() => {
-        if (!this.hostedRunning(job)) return;
+        if (!this.hostedRunning(job) || job.host !== cancelledHost || job.controller !== cancelledController) return;
         if (runners.alive(job, runners.state(job))) {
           this.log.warn("job runner did not stop in time; killing it", { job: job.name, pid: job.host?.pid });
           runners.kill(job);
@@ -1145,7 +1179,7 @@ export class JobManager {
       createdAt: Date.now(),
       readAt: null,
     };
-    if (job.ownershipHistory?.length && this.node.reportInlineJob) {
+    if ((job.ownershipHistory?.length || (this.storePath && !this.lineage)) && this.node.reportInlineJob) {
       job.deliveryHistory = [...(job.deliveryHistory ?? []), m];
       this.persist();
       void this.node.reportInlineJob(m).catch((err) => this.log.warn("inline report delivery failed", { err: String(err) }));
@@ -1159,7 +1193,7 @@ export function sessionOfError(err: unknown): string | null {
   return err instanceof DelegateError ? (err.sessionId ?? null) : null;
 }
 
-type StoredJob = Pick<Job, "deliveryHistory" | "ownershipHistory" | "masters" | "executionOwner" | "queuedMessages" | "forwarded" | "id" | "name" | "agent" | "model" | "prompt" | "startedAt" | "status" | "sessionId" | "workdir" | "worktree" | "args" | "owner" | "supervisor" | "finishedAt" | "host" | "remote" | "metadataVersion" | "parentJob" | "rootSession" | "rootName" | "percent" | "progressNote" | "etaAt" | "etaReportedAt">;
+type StoredJob = Pick<Job, "projectRoot" | "deliveryHistory" | "ownershipHistory" | "masters" | "executionOwner" | "queuedMessages" | "forwarded" | "id" | "name" | "agent" | "model" | "prompt" | "startedAt" | "status" | "sessionId" | "workdir" | "worktree" | "args" | "owner" | "supervisor" | "finishedAt" | "host" | "remote" | "metadataVersion" | "parentJob" | "rootSession" | "rootName" | "percent" | "progressNote" | "etaAt" | "etaReportedAt">;
 
 function toStored(j: Job): StoredJob {
   return {
@@ -1177,6 +1211,7 @@ function toStored(j: Job): StoredJob {
     owner: j.owner,
     ownershipHistory: j.ownershipHistory,
     masters: j.masters,
+    projectRoot: j.projectRoot,
     executionOwner: j.executionOwner,
     queuedMessages: [...j.queue],
     deliveryHistory: j.deliveryHistory,

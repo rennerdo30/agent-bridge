@@ -41,6 +41,17 @@ function recordJob(owner: string, job: Job): void {
 }
 
 describe("web dashboard", () => {
+  it("authenticates project main and availability actions using the existing custom controls", async () => {
+    const a = env.node("claude-group"), b = env.node("codex-group", "codex"); await a.start(); await b.start();
+    const body = JSON.stringify({ name: a.name, unavailable: true });
+    expect((await fetch(`${base()}/api/coordinator/availability`, { method: "POST", headers: { cookie, "content-type": "application/json" }, body })).status).toBe(403);
+    expect((await fetch(`${base()}/api/coordinator/availability`, { method: "POST", headers: POST_HEADERS(), body })).status).toBe(200);
+    expect((await b.peers()).find((p) => p.name === a.name)?.unavailable).toBe(true);
+    expect((await fetch(`${base()}/api/project/main`, { method: "POST", headers: POST_HEADERS(), body: JSON.stringify({ to: b.name }) })).status).toBe(200);
+    expect((await b.peers()).find((p) => p.name === b.name)?.projectMain).toBe(true);
+    expect((await fetch(`${base()}/api/project/main`, { method: "POST", headers: POST_HEADERS(), body: JSON.stringify({ to: "paired/remote" }) })).status).toBe(400);
+  });
+
   it("authenticates outcomes and derives legacy runs without rewriting their metadata", async () => {
     expect((await fetch(`${base()}/api/job-outcomes`)).status).toBe(403);
     const startedAt = Date.UTC(2026, 9, 6, 6, 32, 18);
@@ -83,7 +94,9 @@ describe("web dashboard", () => {
 
   it("serves the page and the state: sessions, runs and messages", async () => {
     const page = await fetch(`${base()}/`, { headers: { cookie } });
-    expect(await page.text()).toContain("<title>agent-bridge</title>");
+    const html = await page.text();
+    expect(html).toContain("<title>agent-bridge</title>");
+    for (const script of html.matchAll(/<script>([\s\S]*?)<\/script>/g)) expect(() => new Function(script[1]!)).not.toThrow();
 
     const peer = env.node("codex-app", "codex");
     await peer.start();

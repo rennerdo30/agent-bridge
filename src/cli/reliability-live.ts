@@ -240,7 +240,7 @@ class LiveHost {
       if (r.isError || /^No message arrived/.test(r.text)) continue;
       const body = messageBody(r.text);
       if (isApprovalQuestion(job, body)) {
-        await this.call("message_subagent", { job, message: "deny: the reliability suite allows nothing here" });
+        await this.call("decide", { approval_id: /approval_id="([0-9a-f-]{36})"/.exec(body)?.[1], decision: "deny", reason: "the reliability suite allows nothing here" });
         continue;
       }
       return body;

@@ -50,7 +50,7 @@ export function formatMessages(msgs: BridgeMessage[], opts: { header?: string; r
     const jobs = msgs.some((m) => /(?:^|\/)job:/.test(m.from.id));
     const peers = msgs.some((m) => !/(?:^|\/)job:/.test(m.from.id));
     if (peers) parts.push('To answer a peer, call the agent-bridge "send" tool with to=<from> and reply_to=<id>.');
-    if (jobs) parts.push('Subagent messages need no reply. To give a subagent more work, answer an approval question, or continue a finished one, use message_subagent(job=<from>, message=...).');
+    if (jobs) parts.push('Subagent messages need no reply. To give a subagent more work or continue a finished one, use message_subagent(job=<from>, message=...). Answer approvals explicitly with decide or the dashboard.');
   }
   return parts.join("\n\n");
 }

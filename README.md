@@ -2,9 +2,9 @@
 
 # agent-bridge
 
-**Let Claude Code, OpenAI Codex and opencode talk to each other.**
+**Let Claude Code, OpenAI Codex, opencode and Google Antigravity CLI talk to each other.**
 
-agent-bridge is a set of plugins for Claude Code, Codex and opencode, built on a shared core. In **0.29.9**, agents on the same machine or explicitly paired PCs can:
+agent-bridge is a set of plugins for Claude Code, Codex, opencode and Antigravity CLI (`agy`), built on a shared core. Agents on the same machine or explicitly paired PCs can:
 
 - **Message each other live.** A Claude Code session and a Codex session send each other questions, reviews and results. Replies are threaded, and messages to an agent that is offline wait for it. Notify-mode waits register once and deliver replies later, surviving reloads and session exit.
 - **Delegate.** `ask_<agent>` runs another agent headlessly for a one-off task and returns its answer; for example `ask_codex` and `ask_opencode` from Claude, or `ask_claude` from Codex. You can continue that session later.
@@ -39,7 +39,7 @@ There is no daemon to install. Each agent starts its own MCP server. The first o
 npx -y github:rennerdo30/agent-bridge install        # or: install claude codex opencode
 ```
 
-The installer finds which of the three tools you have. For each one it shows the exact commands it will run and asks before running them (`--yes` skips the questions). It only runs the tools' official plugin commands, listed below; for opencode it copies the plugin files into opencode's plugin folder. Nothing is patched. `uninstall` works the same way; for updates see [Updating](#updating).
+The installer finds which tools you have. For each one it shows its plan and asks before running it (`--yes` skips the questions). Claude and Codex use official plugin commands; opencode and Antigravity use their documented global plugin folders. Existing user files are preserved. `uninstall` works the same way; for updates see [Updating](#updating).
 
 ### Claude Code
 
@@ -66,6 +66,45 @@ npx -y github:rennerdo30/agent-bridge install-opencode
 This copies the plugin into opencode's global config (`~/.config/opencode/plugins/`), plus a skill and the `codex` / `claude` subagents. Existing files you created yourself are never overwritten. Restart opencode afterwards. It needs Node.js 22.13+ on `PATH`. Remove it with `npx -y github:rennerdo30/agent-bridge uninstall-opencode`.
 
 In opencode the tools are called `bridge_peers`, `bridge_send`, `bridge_ask_claude`, `bridge_spawn_codex`, and so on. Because opencode plugins can start turns themselves, opencode receives peer messages live, even while idle, whenever its listen window or auto-wake applies.
+
+### Google Antigravity CLI (`agy`)
+
+```bash
+npx -y github:rennerdo30/agent-bridge install antigravity --yes
+# Later:
+npx -y github:rennerdo30/agent-bridge update antigravity --yes
+```
+
+Requires installed, authenticated `agy` (verified with 1.2.0). Restart it after
+installation, and reload existing bridge sessions after updating them. The plugin includes MCP configuration, lifecycle/permission hooks
+and a coordination skill. It exposes the same peer, delegation, history and job
+tools as the existing plugins. Other peers get `ask_antigravity` and
+`spawn_antigravity`, with `model`, `effort` (low/medium/high/xhigh/max), `session_id`,
+`access`, `terminal_sandbox`, `bypass_permissions` and `worktree`. Continue with `message_subagent` or
+cancel with `cancel_subagent`; these use the existing durable job lifecycle.
+
+`read` denies non-reading tools; `ask` forwards those tool approvals to the
+supervisor. Both use the installed bridge gate before every tool, with native
+headless prompting bypassed because 1.2.0 otherwise auto-denies approved calls.
+`edit` keeps native Antigravity permissions; native headless prompts can deny
+commands. Explicit `bypass_permissions: true` runs with native approvals bypassed;
+`false` selects native policy. Either exact override replaces read/ask access.
+The installer grants only the bridge MCP server and backs up native
+settings. Terminal sandboxing is
+separate and depends on the installed platform. Active mail arrives at the next
+model invocation or stopping boundary. **Idle TUI sessions receive mail on their
+next turn or through `inbox`; external idle wake is unavailable in 1.2.0.**
+Account quotas are shown by native `/usage` or `/quota`; the bridge reports them
+as unknown because this version has no machine-readable quota command.
+
+Native chats and explicit child conversations are read from Antigravity JSONL
+logs without modifying them. Installer updates back up replaced files;
+uninstall archives the owned plugin, including user additions, and retains
+the native MCP allow rule. No bridge data
+format changes are required for this additive agent kind.
+
+**Gemini CLI (`gemini`) is separate and is not implemented in this release:** it
+was not installed on the verified PC. See [official evidence and CLI differences](docs/google-cli-research.md).
 
 ## Updating
 
@@ -105,8 +144,8 @@ Just ask in plain language, for example:
 | `send` | Message a peer: `to` = peer name, `claude`/`codex` (if exactly one is online) or `*`; `reply_to` threads answers |
 | `wait_for_message` | Register once for a matching reply and return immediately; short blocking waits remain available |
 | `inbox` | Read unread messages |
-| `ask_claude` / `ask_codex` / `ask_opencode` | Headless delegation to another agent (every agent gets the other two); waits and returns the answer and a `session_id` to continue |
-| `spawn_claude` / `spawn_codex` / `spawn_opencode` | Same, but as a background subagent: returns a job name at once; the result arrives as a message from `<agent>-job-<id>`; `peers` shows each job's current step |
+| `ask_claude` / `ask_codex` / `ask_opencode` / `ask_antigravity` | Headless delegation to another agent (every agent gets the other coding agents); waits and returns the answer and a `session_id` to continue |
+| `spawn_claude` / `spawn_codex` / `spawn_opencode` / `spawn_antigravity` | Same, but as a background subagent: returns a job name at once; the result arrives as a message from `<agent>-job-<id>`; `peers` shows each job's current step |
 | `message_subagent` | Talk to a subagent started with `ask_*` or `spawn_*`: a running one gets the message while it works and answers right away; a finished or failed one continues in its own session with its full context (see below) |
 | `usage_limits` | How much of each agent's account limits is used (Codex and Claude: 5-hour and weekly windows with reset times; opencode: today's spend and which models are free), so the driving agent can pick who gets large work |
 | `cancel_subagent` | Stop a running subagent (background job or blocking `ask_*` run) by its job name |
@@ -140,7 +179,7 @@ Peer names default to `<agent>-<project folder>`, for example `codex-myrepo` (`<
 - `access: "read"` (the default) lets a delegated agent look but not change anything. `access: "ask"` asks you for each change (see below). `access: "edit"` lets it change files.
 - A subagent started in an existing agent-bridge worktree (`cwd` inside `~/.agent-bridge/worktrees`) gets `access: "edit"` by default. The spawn result always says which access a job has.
 - `worktree: true` runs the subagent in its own git worktree on a branch `agent-bridge/<id>`. Your working copy stays untouched. The result shows a diff summary and the exact commands to review, merge (`git merge agent-bridge/<id>`) or discard the changes. Use it for parallel or risky edits. The review diff covers only the job's own work: if the job merged a newer state of its base branch (or of your main checkout's branch) into its branch, the diff starts from there. agent-bridge creates the worktree itself (as you, never inside the agent's sandbox) and leaves it unlocked.
-- Finished worktrees stay until you remove them. `agent-bridge cleanup` lists the ones that are safe to delete, `agent-bridge cleanup --yes` deletes them (see CLI).
+- Finished worktrees stay by default. `agent-bridge cleanup` lists safe removals; optional `jobCloseCleanup` pushes all job commits before reaping a clean, proven checkout. [Checkpoint identity, Windows permission repair and close policy](docs/worktree-lifecycle.md).
 - Delegated jobs report in their final answer; the session that started them owns the project handoff. Their task says so, their calls to handoff tools (any MCP tool named `*set_handoff` or `*update_handoff`, e.g. Pair Desk's) are declined without asking you, even with `allow_tools`, and the result warns when a job changed `HANDOFF.md` or `TODO.md` anyway.
 - Results also list the files changed in place (for `access: "edit"` without a worktree) and the token usage or cost the CLI reported.
 
@@ -194,7 +233,7 @@ Every `ask_*` and `spawn_*` run is a job with a name like `codex-job-1a2b3c4d` o
 - **After a restart:** jobs are saved in `~/.agent-bridge/jobs.json` (the last 200, small), so a restarted session can still continue them with `message_subagent`. Jobs that were running when the session ended show as interrupted; `message_subagent(job=...)` without a message recovers them in their own session, folder and worktree, with the same access.
 - **Survive `/reload-plugins`:** each background subagent (spawn_* and its follow-ups) runs in a detached `agent-bridge job-runner` process, not inside the session's MCP server. A reload or restart of the server leaves it running; the next server of the session takes it over (progress, `message_subagent`, approvals, `cancel_subagent`) and gets its result as usual. If the session is gone for good, the result waits for the next session with that name. Only a job whose runner died shows as interrupted. Blocking ask_* runs and access="ask" runs (their questions go to the user through the server) still end with the server. `AGENT_BRIDGE_JOB_RUNNER=0` runs every subagent inside the server instead.
 - **Command lifetime:** a native command can fail while its job continues. Codex command failures retain their item ID, exit/status and reported timeout evidence in run progress and logs; an unattributed exit is labelled `termination cause not reported`. Detached tools are not automatically independent of tree cancellation. See [command lifetime and durable tools](docs/command-lifetime.md).
-- **Approvals:** when a background subagent needs approval, the question goes to the agent that started it as a message: "codex-job-… asks for approval: …". Codex automatically reviews eligible approval requests first; refusals and requests left to the client reach the supervisor/dashboard. opencode with `access: "edit"` asks for whatever your opencode rules leave to "ask" (MCP tools you marked, folders outside the project, commands you marked); agent-bridge runs it through a private `opencode serve` for that instead of `opencode run --auto`, which approved all of it. Claude with `access: "edit"` asks for every permission prompt (a command or MCP tool your rules don't allow) through a `PermissionRequest` hook that agent-bridge adds with `--settings`; Claude Code before 2.1.268 does not run that hook in `-p` mode. Claude and opencode read-only runs keep their deny rules; Codex read-only escalation requests can be reviewed or forwarded. The agent answers with `message_subagent(job=..., message="allow")` or `"deny"`, so this works in auto mode and while you're away; no answer within 10 minutes counts as deny. One allow covers that MCP server for the rest of the run. A blocking `ask_*` caller can't answer while it waits, so those questions are shown to you instead; if your host can't show dialogs, opencode and Claude keep their old behavior (`--auto`, and Claude's own handling of prompts). For Codex direct user approval, combine `access: "ask"` with `approvals_reviewer: "user"`; the default automatic reviewer still applies to ask jobs.
+- **Approvals:** when a background subagent needs approval, the question goes to the agent that started it as a message: "codex-job-… asks for approval: …". Codex automatically reviews eligible approval requests first; refusals and requests left to the client reach the supervisor/dashboard. opencode with `access: "edit"` asks for whatever your opencode rules leave to "ask" (MCP tools you marked, folders outside the project, commands you marked); agent-bridge runs it through a private `opencode serve` for that instead of `opencode run --auto`, which approved all of it. Claude with `access: "edit"` asks for every permission prompt (a command or MCP tool your rules don't allow) through a `PermissionRequest` hook that agent-bridge adds with `--settings`; Claude Code before 2.1.268 does not run that hook in `-p` mode. Claude and opencode read-only runs keep their deny rules; Codex read-only escalation requests can be reviewed or forwarded. The agent answers explicitly with `decide(approval_id=..., decision="allow")` or `decision="deny"` (or in the dashboard). Plain `message_subagent` text, including `allow` or `deny`, never answers an approval and the result mentions any pending approval, so this works in auto mode and while you're away; no answer within 10 minutes counts as deny. One allow covers that MCP server for the rest of the run. A blocking `ask_*` caller can't answer while it waits, so those questions are shown to you instead; if your host can't show dialogs, opencode and Claude keep their old behavior (`--auto`, and Claude's own handling of prompts). For Codex direct user approval, combine `access: "ask"` with `approvals_reviewer: "user"`; the default automatic reviewer still applies to ask jobs.
 
 - **Progress:** subagents report `percent`, a short `note` and optional `eta_minutes` with `report_progress`; `peers` and the dashboard show the progress and time left. Both are the subagent's own estimates.
 - **Read-only tools without asking:** list MCP tools that subagents may call without an approval question, as `server.tool` patterns with `*`: `"autoApproveTools": ["pair-desk.get_*", "pair-desk.list_*"]` in the config (or `AGENT_BRIDGE_AUTO_APPROVE_TOOLS`, comma-separated), or `allow_tools=[...]` on a single `spawn_*` / `ask_*`. An "allow" answer covers that MCP server for the rest of the job, follow-ups included.

@@ -60,7 +60,7 @@ describe("next-turn job settings", () => {
     const args = resumeArgs(BASE, job.name, "continue", job.sessionId!, "/same-folder", null, job.args);
     expect(args).toMatchObject({ model: "new-model", access: "read", effort: "high", native_subagents: 0, session_id: "thread-1", cwd: "/same-folder" });
     expect(args.sandbox).toBeUndefined();
-    const restored = new JobManager(env.node("claude-restored"), nullLogger, join(env.home, "jobs.json"));
+    const restored = new JobManager(env.node("claude-settings"), nullLogger, join(env.home, "jobs.json"));
     restored.restore(() => undefined);
     expect(restored.find(job.name)).toMatchObject({ model: "new-model", args: { model: "new-model", access: "read", effort: "high", native_subagents: 0 } });
     expect(jobs.setSettings("missing", { access: "edit" })).toBe(false);

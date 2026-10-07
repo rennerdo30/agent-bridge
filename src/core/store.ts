@@ -2,19 +2,20 @@ import { existsSync, mkdirSync, realpathSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { DatabaseSync, type StatementSync } from "node:sqlite";
 import type { Logger } from "./logger.js";
-import type { AgentKind, BridgeMessage, PeerInfo } from "./protocol.js";
+import { isQuietMessage, type AgentKind, type BridgeMessage, type PeerInfo } from "./protocol.js";
 import { migrateSqlite } from "./sqlite-migrations.js";
 import { archiveDbPath, archiveMessages, openArchive } from "./sqlite-maintenance.js";
 import { storageLease } from "./storage-lock.js";
 import { backupIfDue, BACKUP_INTERVAL_ENV, DEFAULT_BACKUP_INTERVAL_MS } from "./backups.js";
 import { retentionLimit } from "./json-store.js";
 import { historySchema } from "./history-schema.js";
+import { CONVERSATION_MIGRATION } from "./conversation-schema.js";
 import { HistoryIndex } from "./history.js";
 import { DECISIONS_SCHEMA, DecisionStore } from "./decisions.js";
 
 const BACKUP_CHECK_INTERVAL_MS = 60 * 60 * 1_000;
 
-export const SQLITE_STORE_VERSION = 7;
+export const SQLITE_STORE_VERSION = 8;
 
 /** Recipient key used while a message waits for "any peer of this agent kind". */
 export function agentQueueKey(agent: AgentKind): string {
@@ -88,6 +89,7 @@ const MIGRATIONS = [
     );
     PRAGMA user_version = 7;
   ` },
+  { version: 8, sql: CONVERSATION_MIGRATION },
 ] as const;
 
 export function registrationIdentity(peer: PeerInfo): string | null {
@@ -140,6 +142,7 @@ export class MessageStore {
   private backupTimer: ReturnType<typeof setInterval> | null = null;
   readonly decisions: DecisionStore;
   readonly history: HistoryIndex;
+  readonly file: string;
   private readonly stmt: {
     insert: StatementSync;
     unread: StatementSync;
@@ -152,6 +155,7 @@ export class MessageStore {
     file: string,
     private readonly log: Logger,
   ) {
+    this.file = file;
     const existed = file !== ":memory:" && existsSync(file);
     this.home = file === ":memory:" ? null : dirname(file);
     if (file !== ":memory:") mkdirSync(dirname(file), { recursive: true, mode: 0o700 }); // owner-only on Unix
@@ -260,7 +264,7 @@ export class MessageStore {
   }
 
   /** Copy pending job mail to its new supervisor, retaining the old row as history. Replay is idempotent. */
-  handoffMail(from: string, to: string, job: string, at: number): BridgeMessage[] {
+  handoffMail(from: string, to: string, job: string, at: number, fallback = false): BridgeMessage[] {
     if (from === to) return [];
     this.db.exec("BEGIN IMMEDIATE");
     try {
@@ -270,9 +274,10 @@ export class MessageStore {
         const route = this.db.prepare("SELECT recipient, consumed_at FROM job_delivery_routes WHERE id=?").get(row.id);
         if (route && (route.consumed_at !== null || route.recipient !== from)) continue;
         const m = { ...toMessage(row), recipient: to, to, readAt: null };
+        if (fallback && !isQuietMessage(m)) m.conversationId = m.conversationId.replace(/:note$/, "") + (m.conversationId.endsWith(":fallback") ? "" : ":fallback");
         const existing = this.db.prepare("SELECT read_at FROM messages WHERE id=? AND recipient=?").get(m.id, to);
         if (!existing) this.insert(m);
-        else this.db.prepare("UPDATE messages SET read_at=NULL, to_target=? WHERE id=? AND recipient=?").run(to, m.id, to);
+        else this.db.prepare("UPDATE messages SET read_at=NULL, to_target=?, conversation_id=? WHERE id=? AND recipient=?").run(to, m.conversationId, m.id, to);
         copied.push(m);
         this.db.prepare("INSERT INTO job_delivery_routes(id,recipient,consumed_at) VALUES (?,?,NULL) ON CONFLICT(id) DO UPDATE SET recipient=excluded.recipient").run(m.id, to);
         this.stmt.markRead.run(at, m.id, from);
@@ -280,6 +285,10 @@ export class MessageStore {
       this.db.exec("COMMIT");
       return copied;
     } catch (err) { this.db.exec("ROLLBACK"); throw err; }
+  }
+
+  pendingJobRecipients(job: string): string[] {
+    return this.db.prepare("SELECT DISTINCT recipient FROM messages WHERE from_id=? AND read_at IS NULL").all(`job:${job}`).map((row) => String(row.recipient));
   }
 
   insertOnce(m: BridgeMessage): boolean {
