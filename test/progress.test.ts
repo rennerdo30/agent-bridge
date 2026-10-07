@@ -7,6 +7,14 @@ import { describeCodexEvent, progressEventHandler } from "../src/core/progress.j
 import { startRunFeed } from "../src/core/runfeed.js";
 
 describe("progress lines", () => {
+  it("counts native Antigravity steps once and retains denied tool completions", () => {
+    const out: string[] = [], handle = progressEventHandler("antigravity", (message) => out.push(message), () => 0)!;
+    const step = { step_index: 1, tool_name: "run_command", tool_info: { parameters: { CommandLine: "npm test" } } };
+    handle({ event: "step_update", step_update: { ...step, state: "ACTIVE" } });
+    handle({ event: "step_update", step_update: { ...step, state: "DONE" } });
+    handle({ event: "step_update", step_update: { ...step, state: "ERROR", tool_info: { error: { message: "pre-tool hook denied" } } } });
+    expect(out).toEqual(["0s · step 1 (1 cmds) · run_command: npm test", "0s · step 1 (1 cmds) · run_command failed: pre-tool hook denied"]);
+  });
   it("count steps, show elapsed time and what the agent says", () => {
     let t = 0;
     const out: string[] = [];

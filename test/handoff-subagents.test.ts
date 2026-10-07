@@ -44,7 +44,7 @@ describe("local subagent ownership handoff", () => {
     expect(mastersFor(job)).toEqual([target.name]);
     expect(chooseJobRecipient(job, await source.peers())).toBe(target.name);
   });
-  it.each(["claude", "codex", "opencode"] as const)("moves all jobs to a live %s session with history and a waking inventory", async (agent) => {
+  it.each(["claude", "codex", "opencode", "antigravity"] as const)("moves all jobs to a live %s session with history and a waking inventory", async (agent) => {
     const to = env.node(`${agent}-receiver`, agent); await to.start();
     save([record("a"), record("b", { status: "failed" })]);
     const result = await source.handoffSubagents({ to: to.name, note: "Review the evidence" });

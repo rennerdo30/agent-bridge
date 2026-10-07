@@ -11,7 +11,8 @@ import { readTranscript, listNativeSubagents } from "../src/core/transcripts/ind
 import { antigravityItems } from "../src/core/transcripts/antigravity.js";
 import { parseJobSettings } from "../src/mcp/job-settings.js";
 import { DEFAULT_CONFIG } from "../src/core/config.js";
-import { DELEGATION_TARGETS } from "../src/mcp/targets.js";
+import { DELEGATION_TARGETS, supportsAsk } from "../src/mcp/targets.js";
+import { isAutoApproved, isHandoffToolCall } from "../src/core/tool-allow.js";
 import { delegationTargets } from "../src/mcp/server.js";
 
 const mocks = vi.hoisted(() => ({ run: vi.fn(), ask: vi.fn() }));
@@ -68,6 +69,9 @@ describe("Antigravity delegation", () => {
     expect(delegationTargets("claude")).toContain("antigravity");
     expect(delegationTargets("antigravity")).toEqual(["claude", "codex", "opencode"]);
     expect(DELEGATION_TARGETS.antigravity.permission(DEFAULT_CONFIG, {})).toBe("read");
+    expect(supportsAsk("antigravity", undefined)).toBe(true);
+    expect(isAutoApproved({ tool: "mcp:pair-desk_pair-desk", detail: "comment: {}" }, ["pair-desk:worker"])).toBe(true);
+    expect(isHandoffToolCall({ tool: "mcp:pair-desk_pair-desk", detail: "update_handoff: {}" })).toBe(true);
     expect(parseJobSettings({ terminal_sandbox: true, access: "ask" }, "antigravity")).toEqual({ terminal_sandbox: true, access: "ask" });
     expect(parseJobSettings({ terminal_sandbox: true }, "codex")).toContain("only to antigravity");
   });

@@ -2,6 +2,7 @@ import { DelegateError, checkDepth, childEnv, runProcess, type DelegateRequest, 
 import { object, parse } from "./transcripts/common.js";
 import { PermissionRelay } from "./relay.js";
 import { requireAntigravityPlugin } from "./antigravity-plugin.js";
+import { progressEventHandler } from "./progress.js";
 
 export const ANTIGRAVITY_ACCESS_ENV = "AGENT_BRIDGE_ANTIGRAVITY_ACCESS";
 export const ANTIGRAVITY_EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
@@ -36,6 +37,7 @@ export async function delegateToAntigravity(req: DelegateRequest & { bin: string
   // Live smoke confirms this gate still blocks writes with the native skip flag present.
   if (req.access !== "edit" || req.autoApprove) args.push("--dangerously-skip-permissions");
   let sessionId = req.sessionId ?? null;
+  const progress = progressEventHandler("antigravity", req.onProgress);
   // Use the common approval handler, including per-job allow rules and supervisor routing.
   const relay = req.access === "ask" && req.approve ? new PermissionRelay(req.approve, req.log) : null;
   try {
@@ -45,9 +47,7 @@ export async function delegateToAntigravity(req: DelegateRequest & { bin: string
         const ev = parse(line), id = ev.conversation_id ?? ev.step_update?.conversation_id ?? ev.result?.conversation_id;
         if (!sessionId && typeof id === "string" && id) { sessionId = id; req.onSession?.(id); }
         if (ev.event === "init") req.onInfo?.({ model: ev.init?.model ?? req.model, effort: req.effort, permission: req.access });
-        const step = object(ev.step_update);
-        if (step.tool_name) req.onProgress?.(`tool: ${step.tool_name}`);
-        if (typeof step.text_delta === "string" && step.text_delta.trim()) req.onProgress?.(`says: ${step.text_delta.trim().slice(0, 160)}`, step.text_delta);
+        progress?.(ev);
       } });
     const parsed = parseAntigravityJsonl(res.stdout);
     return { ...parsed, sessionId: parsed.sessionId ?? sessionId, isError: res.code !== 0 || parsed.isError, details: { ...parsed.details, exitCode: res.code, ...(res.code !== 0 ? { stderr: res.stderr.slice(-4000) } : {}) } };

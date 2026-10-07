@@ -37,7 +37,7 @@ describe("Antigravity process protocol", () => {
       const result = await delegateToAntigravity({ ...base, prompt: 'literal "quotes" $() and new\nline' });
       expect(result).toMatchObject({ sessionId: "fake-session", isError: false, text: 'literal "quotes" $() and new\nline' });
       expect(onSession).toHaveBeenCalledWith("fake-session");
-      expect(onProgress).toHaveBeenCalledWith("tool: view_file");
+      expect(onProgress).toHaveBeenCalledWith(expect.stringMatching(/step 1.*view_file/), expect.stringContaining("view_file"));
       expect(onInfo).toHaveBeenCalledWith(expect.objectContaining({ model: "fake-model", permission: "read" }));
       expect(await delegateToAntigravity({ ...base, prompt: "continued", sessionId: result.sessionId })).toMatchObject({ sessionId: "fake-session", text: "continued" });
     } finally { await env.cleanup(); }

@@ -31546,8 +31546,18 @@ function describeOpencodeEvent(ev) {
   if (ev?.type === "reasoning" || part.type === "reasoning") return { kind: "think", text: "thinking" };
   return null;
 }
+function describeAntigravityEvent(ev) {
+  const step = ev?.step_update;
+  if (!step || typeof step !== "object") return null;
+  if (typeof step.tool_name !== "string") return typeof step.text_delta === "string" ? say(step.text_delta) : null;
+  const name2 = step.tool_name, id = String(step.step_index);
+  const detail = firstString(step.tool_info?.parameters, ["CommandLine", "TargetFile", "AbsolutePath", "SearchPath", "Query", "ToolName"]) ?? "";
+  if (step.state === "ERROR") return { kind: "failure", id, ...txt(`${name2} failed: ${step.tool_info?.error?.message ?? "native tool error"}`) };
+  const kind = name2 === "run_command" ? "cmd" : /^(write_to_file|replace_file_content|multi_replace_file_content|notebook_edit)$/.test(name2) ? "edit" : /^(view_file|grep_search|find_by_name|list_dir|read_url_content|read_resource)$/.test(name2) ? "read" : "tool";
+  return { kind, id, ...txt(`${name2}${detail ? `: ${detail}` : ""}`) };
+}
 var DESCRIBERS = {
-  antigravity: (ev) => ev?.step_update?.tool_name ? { kind: "tool", text: `tool ${ev.step_update.tool_name}`, id: String(ev.step_update.step_index) } : typeof ev?.step_update?.text_delta === "string" ? say(ev.step_update.text_delta) : null,
+  antigravity: describeAntigravityEvent,
   codex: describeCodexEvent,
   claude: describeClaudeEvent,
   opencode: describeOpencodeEvent
@@ -32927,6 +32937,7 @@ async function delegateToAntigravity(req) {
   if (req.sandbox) args.push("--sandbox");
   if (req.access !== "edit" || req.autoApprove) args.push("--dangerously-skip-permissions");
   let sessionId = req.sessionId ?? null;
+  const progress = progressEventHandler("antigravity", req.onProgress);
   const relay = req.access === "ask" && req.approve ? new PermissionRelay(req.approve, req.log) : null;
   try {
     await relay?.start();
@@ -32946,9 +32957,7 @@ async function delegateToAntigravity(req) {
           req.onSession?.(id);
         }
         if (ev.event === "init") req.onInfo?.({ model: ev.init?.model ?? req.model, effort: req.effort, permission: req.access });
-        const step = object(ev.step_update);
-        if (step.tool_name) req.onProgress?.(`tool: ${step.tool_name}`);
-        if (typeof step.text_delta === "string" && step.text_delta.trim()) req.onProgress?.(`says: ${step.text_delta.trim().slice(0, 160)}`, step.text_delta);
+        progress?.(ev);
       }
     });
     const parsed = parseAntigravityJsonl(res.stdout);
@@ -33653,9 +33662,9 @@ function claudeModeFor(cfg, a) {
   return a.permission_mode ?? (a.access ? CLAUDE_MODE_FOR[a.access] : cfg.claudePermissionMode);
 }
 function supportsAsk(target, relay) {
+  if (target === "antigravity") return true;
   if (!relay) return false;
   if (target === "opencode") return true;
-  if (target === "antigravity") return true;
   if (target === "codex") return process.env[CODEX_EXEC_ENV] !== "1" || relay.codexHookTrusted;
   return false;
 }
@@ -37744,7 +37753,7 @@ function claudeSettingsEffort(json2, model) {
 
 // src/core/tool-allow.ts
 function serverNames2(server) {
-  const short2 = /^plugin_[^_]+_(.+)$/.exec(server)?.[1];
+  const short2 = /^plugin_[^_]+_(.+)$/.exec(server)?.[1] ?? /^([^_]+)_\1$/.exec(server)?.[1];
   const names = short2 ? [server, short2] : [server];
   if (names.includes("pair_desk")) names.push("pair-desk");
   return names;

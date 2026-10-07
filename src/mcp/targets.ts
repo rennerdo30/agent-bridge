@@ -74,9 +74,10 @@ export function claudeModeFor(cfg: BridgeConfig, a: TargetArgs): ClaudePermissio
 
 /** Whether a target can forward permission requests in this setup (else "ask" behaves like "read"). */
 export function supportsAsk(target: CodingAgent, relay: RelayWiring | undefined): boolean {
+  // Antigravity creates its relay from the common handler, which also routes background asks.
+  if (target === "antigravity") return true;
   if (!relay) return false;
   if (target === "opencode") return true;
-  if (target === "antigravity") return true;
   // Codex: through app-server always; the exec fallback needs the trusted PermissionRequest hook.
   if (target === "codex") return process.env[CODEX_EXEC_ENV] !== "1" || relay.codexHookTrusted;
   return false;

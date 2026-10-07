@@ -11,7 +11,7 @@
 
 /** "plugin_agent-pair-programming_pair-desk" -> "pair-desk" (Claude names plugin servers this way). */
 function serverNames(server: string): string[] {
-  const short = /^plugin_[^_]+_(.+)$/.exec(server)?.[1];
+  const short = /^plugin_[^_]+_(.+)$/.exec(server)?.[1] ?? /^([^_]+)_\1$/.exec(server)?.[1];
   const names = short ? [server, short] : [server];
   if (names.includes("pair_desk")) names.push("pair-desk");
   return names;

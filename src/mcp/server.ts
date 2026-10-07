@@ -587,7 +587,7 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
     {
       title: "List peers",
       description:
-        "List the open agent sessions on this machine (Claude Code, Codex, opencode): name, agent type, busy/idle, uptime, working directory and session id. " +
+        "List the open agent sessions on this machine (Claude Code, Codex, opencode, Antigravity): name, agent type, busy/idle, uptime, working directory and session id. " +
         "Also shows your own name and settings, your running subagents and the latest unread file-transfer progress on request. Delegated jobs see their parent and siblings (job name, title, agent and status). Use it to pick whom to message.",
       inputSchema: {},
       annotations: { readOnlyHint: true },
@@ -1184,7 +1184,7 @@ ${res.text || t("delegate.empty")}`, res.isError);
     "handoff_subagents",
     {
       title: "Hand off subagents",
-      description: "Transfer your running and finished local jobs, including nested jobs, to an exact live local Claude Code, Codex or opencode session. The target becomes their supervisor and receives a waking inheritance message. Remote jobs and paired-PC targets are rejected without moving anything.",
+      description: "Transfer your running and finished local jobs, including nested jobs, to an exact live local Claude Code, Codex, opencode or Antigravity session. The target becomes their supervisor and receives a waking inheritance message. Remote jobs and paired-PC targets are rejected without moving anything.",
       inputSchema: {
         to: z.string().min(1).max(64).describe("Exact live local session name from peers"),
         jobs: z.union([z.literal("all"), z.array(z.string().min(1).max(80)).min(1).max(1000)]).optional().describe("Exact job names, or all (default)"),
