@@ -59,7 +59,9 @@ it.each(["claude", "codex", "opencode", "antigravity"])("delivers the last real 
   const a = await runner("a", "opencode", "supervisor");
   await a.node.send({ to: "supervisor", conversationId: "job-a", body: "REAL_COMPLETION" });
   // No jobs are owned by this MCP manager and global/direct wake are disabled.
-  expect(await call(sup, "hook_event", { event: "Stop" })).toContain("REAL_COMPLETION");
+  // Send acknowledgement precedes delivery to the supervisor's local hook queue.
+  await expect.poll(() => call(sup, "hook_event", { event: "Stop" }),
+    { timeout: 5_000 }).toContain("REAL_COMPLETION");
   expect(await call(sup, "inbox", { mark_read: false })).not.toContain("REAL_COMPLETION");
 });
 

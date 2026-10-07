@@ -52165,8 +52165,10 @@ function loadDashboardKey(home, legacy, reset = false) {
   const file2 = join64(home, DASHBOARD_KEY_FILE);
   if (reset || !existsSync28(file2)) {
     const temp = join64(home, `.dashboard-key-${randomUUID25()}`);
+    let created = false;
     try {
       writeFileSync15(temp, "", { flag: "wx", mode: 384 });
+      created = true;
       protect(temp, 384);
       writeFileSync15(temp, !reset && legacy && KEY_PATTERN.test(legacy) ? legacy : randomBytes9(24).toString("hex"));
       if (reset) renameSync9(temp, file2);
@@ -52178,7 +52180,7 @@ function loadDashboardKey(home, legacy, reset = false) {
         }
       }
     } finally {
-      if (existsSync28(temp)) unlinkSync3(temp);
+      if (created && existsSync28(temp)) unlinkSync3(temp);
     }
   }
   protect(file2, 384);
