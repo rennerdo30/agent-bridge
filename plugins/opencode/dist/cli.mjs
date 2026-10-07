@@ -41813,7 +41813,7 @@ async function runAntigravityHook(event) {
     if (!res.ok) throw new Error("hook endpoint unavailable");
     process.stdout.write(JSON.stringify(await res.json()));
   } catch {
-    process.stdout.write(JSON.stringify(event === "PreToolUse" && process.env[ANTIGRAVITY_ACCESS_ENV] && process.env[ANTIGRAVITY_ACCESS_ENV] !== "edit" ? { decision: "deny", reason: "agent-bridge permission hook unavailable" } : {}));
+    process.stdout.write(JSON.stringify(event === "PreToolUse" && process.env[ANTIGRAVITY_ACCESS_ENV] ? { decision: "deny", reason: "agent-bridge permission hook unavailable" } : {}));
   }
   return 0;
 }

@@ -16,6 +16,13 @@ vi.mock("../src/mcp/hooks.js", () => ({ buildHookResponse: vi.fn() }));
 afterEach(() => vi.clearAllMocks());
 
 describe("Antigravity native hook routing", () => {
+  it.each(["read", "ask", "edit"])("fails closed for malformed delegated %s tool input", async (access) => {
+    const env = makeEnv();
+    try {
+      const output = execFileSync(process.execPath, [join(import.meta.dirname, "..", "plugins", "antigravity", "dist", "cli.mjs"), "antigravity-hook", "PreToolUse"], { input: "{", encoding: "utf8", env: { ...process.env, AGENT_BRIDGE_HOME: env.home, AGENT_BRIDGE_ANTIGRAVITY_ACCESS: access } });
+      expect(JSON.parse(output)).toMatchObject({ decision: "deny" });
+    } finally { await env.cleanup(); }
+  });
   it("executes Windows hook paths containing spaces and apostrophes with JSON stdin", async () => {
     if (process.platform !== "win32") return;
     const env = makeEnv(), cli = join(env.home, "owner's gate file.mjs");
