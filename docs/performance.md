@@ -12,7 +12,7 @@ The owner's files were inspected, never modified, repaired, pruned or truncated:
 | `bridge.db` | 354,811,904 bytes |
 | WAL | 6,270,672 bytes |
 | `jobs.json` | 875,347 bytes |
-| Active run files (logs and metadata) | 762 / 34,246,094 bytes |
+| Run tree files (logs and metadata, including archives) | 762 / 34,246,094 bytes |
 | Archived run files | 586 / 27,075,900 bytes |
 | Job archive snapshots | 164 / 348,346 bytes |
 | Main log / rotated log | 5,070,142 / 5,243,166 bytes |
@@ -101,7 +101,12 @@ causal evidence than a wall-clock comparison alone.
 The original discovery run, without progress writers and before CLI-root
 isolation, had 71 failures, 11.6 s maximum event-loop lag, 50,072 reads / 732 MB,
 and 12,421 ms CPU. CPU samples were dominated by `readFileUtf8`; the final baseline
-also showed `readArchivedJobs` and filesystem traversal. After caching, SQLite
+also showed `readArchivedJobs` and filesystem traversal. Its hottest
+`readFileUtf8` node had 14,494 samples, `lstat` had 1,836, and `readArchivedJobs`
+had 411. Candidate hot nodes included SQLite `all` (2,306 samples), `run`
+(850 and 818), `readFileUtf8` (598 and 314), and `stat` (306). These are raw
+per-node profiler samples from differing elapsed windows, not normalized shares.
+After caching, SQLite
 `all`/`run` and metadata checks became the larger residual costs. The candidate
 still has cold-start and persistence stalls; it does not promise zero lag.
 
