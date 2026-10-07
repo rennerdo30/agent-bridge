@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { existsSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { JOBS_FILE } from "./constants.js";
@@ -11,6 +11,35 @@ import { readStore } from "../mcp/jobs.js";
 import { git, trustArgs, type Worktree } from "./worktree.js";
 import { archiveDbPath } from "./sqlite-maintenance.js";
 import { localResultReceipt, RESULT_HEADER } from "./local-result-receipts.js";
+
+/** Resolve the ordinary files ref store without starting Git twice for one receipt.
+ * Symbolic refs, linked Git directories and alternate ref stores retain Git's resolver. */
+function localHeads(repo: string, branches: string[]): Map<string, string> | null {
+  if (["GIT_DIR", "GIT_COMMON_DIR", "GIT_WORK_TREE", "GIT_NAMESPACE"].some((key) => process.env[key])) return null;
+  if (branches.some((branch) => !/^[A-Za-z0-9._/-]+$/.test(branch) || branch.split("/").some((part) => !part || part.startsWith(".") || part.endsWith(".") || part.endsWith(".lock") || part.includes("..")))) return null;
+  try {
+    const dir = join(repo, ".git");
+    if (!lstatSync(dir).isDirectory() || /\brefStorage\s*=|\[\s*include/i.test(readFileSync(join(dir, "config"), "utf8"))) return null;
+    const packed = new Map<string, string>();
+    try {
+      for (const line of readFileSync(join(dir, "packed-refs"), "utf8").split("\n")) {
+        const match = /^((?:[a-f0-9]{40}|[a-f0-9]{64})) (refs\/heads\/.+)$/i.exec(line.trim());
+        if (match) packed.set(match[2]!, match[1]!);
+      }
+    } catch (err) { if ((err as NodeJS.ErrnoException).code !== "ENOENT") return null; }
+    const heads = new Map<string, string>();
+    for (const branch of branches) {
+      const ref = `refs/heads/${branch}`;
+      let head = packed.get(ref);
+      try { head = readFileSync(join(dir, "refs", "heads", branch), "utf8").trim(); }
+      catch (err) { if ((err as NodeJS.ErrnoException).code !== "ENOENT") return null; }
+      if (head === undefined) continue;
+      if (!/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/i.test(head)) return null;
+      heads.set(ref, head);
+    }
+    return heads;
+  } catch { return null; }
+}
 
 export const MAX_HOLD_REASON_CHARS = 2_000;
 export const JOB_OUTCOMES_DIR = "job-outcomes";
@@ -86,7 +115,7 @@ export function setJobOutcome(home: string, job: OutcomeJob, supervisor: string,
 }
 
 /** Uses the same durable read_at receipt as wait_for_message; consumed does not mean reviewed. */
-function resultDelivery(home: string, job: OutcomeJob, before: number): JobOutcome["delivery"] {
+export function readResultDelivery(home: string, job: OutcomeJob, before = Number.MAX_SAFE_INTEGER): JobOutcome["delivery"] {
   const unknown: JobOutcome["delivery"] = { status: "unknown", messageId: null, recipient: null, deliveredAt: null, readAt: null };
   const local = localResultReceipt(home, job.name, job.owner, job.startedAt, before);
   const path = resolveDbPath(home);
@@ -114,6 +143,8 @@ function resultDelivery(home: string, job: OutcomeJob, before: number): JobOutco
 
 export async function deriveJobOutcome(home: string, job: OutcomeJob, log: Logger, opts: {
   branch?: string; baseBranch?: string | null; repoRoot?: string; branchHead?: string; before?: number;
+  /** A frozen unknown receipt avoids scanning unrelated turn metadata when no evidence exists. */
+  delivery?: JobOutcome["delivery"];
 } = {}): Promise<JobOutcome> {
   const decision = readOutcomeDecision(home, job);
   const branch = opts.branch ?? job.worktree?.branch ?? null;
@@ -132,9 +163,12 @@ export async function deriveJobOutcome(home: string, job: OutcomeJob, log: Logge
       const run = (args: string[]) => git([...trustArgs(repoRoot), ...args], repoRoot, log);
       // A saved tip still proves ancestry after the branch/worktree was removed.
       // Resolve both exact refs in one process; a saved tip remains authoritative.
-      const refs = await run(["for-each-ref", "--format=%(refname)%09%(objectname)",
-        `refs/heads/${branch}`, `refs/heads/${baseBranch}`]).catch(() => "");
-      const heads = new Map(refs.split("\n").map((line) => line.trim().split("\t") as [string, string]));
+      let heads = localHeads(repoRoot, [branch, baseBranch]);
+      if (!heads) {
+        const refs = await run(["for-each-ref", "--format=%(refname)%09%(objectname)",
+          `refs/heads/${branch}`, `refs/heads/${baseBranch}`]).catch(() => "");
+        heads = new Map(refs.split("\n").map((line) => line.trim().split("\t") as [string, string]));
+      }
       branchHead ??= heads.get(`refs/heads/${branch}`) ?? null;
       merge.branchHead = branchHead;
       if (!branchHead) merge.reason = "Branch is missing and no saved tip is available.";
@@ -149,7 +183,7 @@ export async function deriveJobOutcome(home: string, job: OutcomeJob, log: Logge
       }
     }
   }
-  return { delivery: resultDelivery(home, job, opts.before ?? Number.MAX_SAFE_INTEGER), merge };
+  return { delivery: opts.delivery ?? readResultDelivery(home, job, opts.before ?? Number.MAX_SAFE_INTEGER), merge };
 }
 
 export async function listJobOutcomes(home: string, log: Logger, names?: Set<string>): Promise<Record<string, { startedAt: number; status: string; outcome: JobOutcome }>> {

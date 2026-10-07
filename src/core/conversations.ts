@@ -1191,6 +1191,9 @@ export function foreignMirrorRecord(source: string, text: string): boolean {
   // The recorded AB-159 smoke sender is synthetic. Real native transcripts imported by
   // that fixture remain real evidence and are deliberately not classified by proximity.
   if (job.from_name === "owner-smoke-main") return true;
+  // These bridge senders belong to the bundled E2E fixture, whose former inherited
+  // worktree cwd was reported to have reached the real project mirror.
+  if (source.startsWith("messages:") && ["claude-e2e", "codex-e2e", "antigravity-e2e"].includes(String(job.from_name))) return true;
   if (!source.startsWith("job-snapshot:")) return false;
   return typeof job.workdir === "string" && sandboxHome(job.workdir);
 }

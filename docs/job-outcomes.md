@@ -7,8 +7,11 @@ They return the same response envelope and `contractVersion`, with one populated
 entry, empty other collection, and `next: null`. An unknown or unfinished name
 returns 404; supplying both filters returns 400. Paired-PC reads accept these
 filters too. Run lookups read only the selected log body and retain next-turn
-receipt boundaries from metadata. The 700-run regression checks both lookups
-within one second without a stale Git cache.
+receipt boundaries from metadata whenever receipt evidence exists. An empty
+receipt snapshot stays unknown without reading unrelated metadata. Ordinary
+loose and packed Git heads are read directly; symbolic refs and alternate Git
+layouts use Git. The 700-run regression checks both lookups within one second
+for merged and unmerged branches, including packed refs, without a stale cache.
 
 It returns JSON with `contractVersion: 1`:
 
