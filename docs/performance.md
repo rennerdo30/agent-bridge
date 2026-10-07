@@ -164,8 +164,10 @@ passed, one existing runner-continuation predicate timeout, and two skipped; tha
 scenario passed its isolated rerun. The final candidate run had 767 passed, one
 existing detached-runner predicate timeout, and two skipped; that scenario also
 passed isolated. Build and typecheck passed, and each of the four new test files
-passed alone with default timeouts (12 tests total). Release validation is recorded
-in AB-121 and the task report. Vitest configuration and timeout declarations were unchanged.
+passed alone with default timeouts (12 tests total). The merged 0.29.10 release
+passed build, typecheck and the complete four-worker suite: 84 files passed,
+768 tests passed and two skipped (261.50 seconds). Release CI is recorded in
+AB-121 and the task report. Vitest configuration and timeout declarations were unchanged.
 New tests run in seconds; this load harness never enters the default test suite.
 
 Synthetic survival and local tests do not establish deployed two-PC acceptance
