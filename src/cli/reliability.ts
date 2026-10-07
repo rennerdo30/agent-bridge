@@ -82,9 +82,12 @@ function makeRepo(): string {
   const dir = mkdtempSync(join(tmpdir(), "agent-bridge-rel-"));
   const git = (...a: string[]) => execFileSync("git", a, { cwd: dir, stdio: "ignore" });
   git("init", "-q");
+  // This disposable fixture has its own configured identity, independent of the owner's config.
+  git("config", "user.name", "t");
+  git("config", "user.email", "t@t");
   writeFileSync(join(dir, "README.md"), "reliability sandbox\n");
   git("add", "README.md");
-  git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "base");
+  git("commit", "-q", "-m", "base");
   return dir;
 }
 
