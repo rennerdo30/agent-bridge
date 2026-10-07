@@ -1,37 +1,11 @@
-import {
-  appendFileSync,
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  renameSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { execFileSync } from "node:child_process";
 import { DatabaseSync } from "node:sqlite";
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { MessageStore } from "../src/core/store.js";
-import {
-  ConversationIngestor,
-  readConversation,
-  CONVERSATION_BYTES,
-} from "../src/core/conversations.js";
-import { HistoryIndex } from "../src/core/history.js";
+import { expect, it } from "vitest";
+import { ConversationIngestor, readConversation, CONVERSATION_BYTES } from "../src/core/conversations.js";
 import { MAX_TRANSCRIPT_CHUNK_BYTES } from "../src/core/transcripts/common.js";
-import {
-  conversationProject,
-  ensureProjectFolder,
-  projectDatabasePath,
-} from "../src/core/project-store.js";
-import { loadConfig } from "../src/core/config.js";
-import { nullLogger } from "../src/core/logger.js";
-import {
-  installTranscriptFixtures,
-  CLAUDE_SESSION,
-} from "./transcript-fixtures.js";
-import { makeEnv, type TestEnv } from "./helpers.js";
-
+import { conversationProject } from "../src/core/project-store.js";
+import { CLAUDE_SESSION } from "./transcript-fixtures.js";
 import { env, close, fixture } from "./conversation-test-fixture.js";
 
 it("retains oversized JSONL and skipped content exactly, deduplicates and resumes offsets", () => {

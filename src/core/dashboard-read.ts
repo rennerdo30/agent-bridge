@@ -127,6 +127,9 @@ export function listRuns(home: string, now = Date.now(), names?: Set<string>): R
     }
     catch { /* A concurrent archive operation is retried on the next refresh. */ }
   }
+  // An exact retained run needs no job-snapshot recovery or unrelated archive reads.
+  if (names && [...names].every((name) => runs.some((run) => run.name === name)))
+    return pageRuns(runs, null, runs.length).runs;
   const representedJobs = new Set(runs.map((run) => run.job));
   const representedSuffixes = new Set<string>();
   for (const run of runs) for (let at = run.name.indexOf("-"); at >= 0; at = run.name.indexOf("-", at + 1)) representedSuffixes.add(run.name.slice(at));
@@ -256,7 +259,7 @@ export async function readDashboard(ctx: DashboardReadContext, request: Dashboar
         const names = new Set([name]);
         const jobs = jobName !== null ? await listJobOutcomes(ctx.home, ctx.log, names) : {};
         const runs = runName !== null ? await finishedRunOutcomes(ctx.home, ctx.log, names) : {};
-        if (!(name in jobs) && !(name in runs)) return reply(404, { error: "no such finished job or run" });
+        if (!Object.hasOwn(jobs, name) && !Object.hasOwn(runs, name)) return reply(404, { error: "no such finished job or run" });
         const groups: Record<string, string[]> = { needsReview: [], held: [], merged: [], discarded: [] };
         for (const [key, job] of Object.entries(jobs)) {
           const state = job.outcome.merge.state;
