@@ -1,0 +1,24 @@
+{
+  "name": "agent-bridge-docs",
+  "type": "module",
+  "version": "1.0.0",
+  "private": true,
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "dev": "npm run sync-tools && node scripts/sync-assets.mjs && astro dev",
+    "build": "npm run sync-tools && node scripts/sync-assets.mjs && astro build",
+    "check:built": "node scripts/check-built-site.mjs",
+    "preview": "astro preview",
+    "sync-tools": "node scripts/generate-tools.mjs"
+  },
+  "dependencies": {
+    "@astrojs/starlight": "^0.42.5",
+    "astro": "^7.3.6",
+    "starlight-theme-galaxy": "^1.0.0"
+  },
+  "devDependencies": {
+    "@babel/parser": "^7.29.9"
+  }
+}
