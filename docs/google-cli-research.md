@@ -136,6 +136,14 @@ the supervisor. A live `peers` call succeeded and an attempted test-file write
 was explicitly denied by this gate; the file was not created. Conversation:
 `5c5b38c8-83b1-45bb-aaa3-71abfa908879`, SUCCESS, about 22.4 seconds.
 
+The same installed-plugin gate was rechecked after the local update to **agy
+1.3.1**: native `peers` succeeded, `write_to_file` was denied by the PreToolUse
+hook with the native skip switch present, and the target test file remained
+absent. Conversation `4dfce6f7-f928-44de-8408-6a686a56f2e4`, SUCCESS. This probe
+used a separate bridge home and found no other peers. Malformed delegated hook
+input also fails closed in read, ask and edit modes so handoff restrictions
+cannot be waived by an unreadable gate.
+
 Installer adds only `mcp(agent-bridge_agent-bridge/*)` to native
 `~/.gemini/antigravity-cli/settings.json`, preserving all other settings and
 backing up replaced content. Native edit permissions otherwise remain in force;
