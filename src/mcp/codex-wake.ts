@@ -2,7 +2,7 @@ import type { BridgeConfig } from "../core/config.js";
 import { runProcess } from "../core/delegate.js";
 import type { Logger } from "../core/logger.js";
 import type { BridgeNode } from "../core/node.js";
-import { isQuietMessage, type BridgeMessage } from "../core/protocol.js";
+import { AGENT_KINDS, BROADCAST, isQuietMessage, type BridgeMessage } from "../core/protocol.js";
 
 /** Collect bursts of messages into one wake-up. */
 const WAKE_DEBOUNCE_MS = 1_500;
@@ -53,7 +53,9 @@ export class CodexWaker {
 
   private hasWakeableMail(): boolean {
     return this.node.unread().some((m) => m.hop < this.cfg.maxHops && !isQuietMessage(m) &&
-      (this.node.autoWakeEnabled || (!m.conversationId.endsWith(":note") && this.node.isNotificationAwaited(m))));
+      (this.node.autoWakeEnabled || (!m.conversationId.endsWith(":note") && (this.node.isNotificationAwaited(m) ||
+        (this.cfg.wakeOnDirect && m.to !== BROADCAST && !(AGENT_KINDS as readonly string[]).includes(m.to) &&
+          (m.to === this.node.name || m.to === this.node.id || m.recipient === this.node.name))))));
   }
 
   private idleWithMail(): boolean {
