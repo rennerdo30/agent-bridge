@@ -29558,7 +29558,22 @@ async function delegateToAntigravity(req) {
   if (req.access !== "edit" || req.autoApprove) args.push("--dangerously-skip-permissions");
   let sessionId = req.sessionId ?? null;
   const progress = progressEventHandler("antigravity", req.onProgress);
-  const relay = req.access === "ask" && req.approve ? new PermissionRelay(req.approve, req.log) : null;
+  const approvals = new AbortController();
+  const approve = async (request2) => {
+    const ended = { allow: false, message: "Antigravity run ended" };
+    if (approvals.signal.aborted) return ended;
+    let stop;
+    const aborted2 = new Promise((resolve18) => {
+      stop = () => resolve18(ended);
+    });
+    approvals.signal.addEventListener("abort", stop, { once: true });
+    try {
+      return await Promise.race([req.approve(request2), aborted2]);
+    } finally {
+      approvals.signal.removeEventListener("abort", stop);
+    }
+  };
+  const relay = req.access === "ask" && req.approve ? new PermissionRelay(approve, req.log) : null;
   try {
     await relay?.start();
     const res = await runProcess({
@@ -29586,6 +29601,7 @@ async function delegateToAntigravity(req) {
     if (err instanceof DelegateError) err.sessionId = sessionId ?? parseAntigravityJsonl(err.partialStdout).sessionId;
     throw err;
   } finally {
+    approvals.abort();
     await relay?.stop();
   }
 }

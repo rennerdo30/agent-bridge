@@ -65,6 +65,18 @@ describe("Antigravity delegation", () => {
     await delegateToAntigravity({ bin: "agy", prompt: "task", cwd: temp(), access: "ask", timeoutSec: 20, log: nullLogger, approve, extraEnv: { AGENT_BRIDGE_RELAY_URL: "http://127.0.0.1:1/inherited" } });
     expect(approve).toHaveBeenCalledWith(expect.objectContaining({ tool: "run_command", detail: "npm test" }));
   });
+  it("drains an unanswered approval relay when the CLI times out", async () => {
+    let entered!: () => void, response!: Promise<unknown>;
+    const waiting = new Promise<void>((resolve) => { entered = resolve; });
+    const approve = vi.fn(() => { entered(); return new Promise<never>(() => {}); });
+    mocks.run.mockImplementation(async (opts) => {
+      response = fetch(opts.env.AGENT_BRIDGE_RELAY_URL, { method: "POST", headers: { authorization: `Bearer ${opts.env.AGENT_BRIDGE_RELAY_TOKEN}` }, body: JSON.stringify({ agent: "antigravity", tool: "run_command", detail: "npm test" }) }).then((result) => result.json());
+      await waiting;
+      throw new DelegateError("timed out", "timeout");
+    });
+    await expect(delegateToAntigravity({ bin: "agy", prompt: "task", cwd: temp(), access: "ask", timeoutSec: 1, log: nullLogger, approve })).rejects.toMatchObject({ kind: "timeout" });
+    expect(await response).toEqual({ allow: false, message: "Antigravity run ended" });
+  });
   it("registers shared targets and keeps Antigravity access settings agent-specific", () => {
     expect(delegationTargets("claude")).toContain("antigravity");
     expect(delegationTargets("antigravity")).toEqual(["claude", "codex", "opencode"]);

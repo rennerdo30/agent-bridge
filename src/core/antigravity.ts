@@ -1,6 +1,6 @@
 import { DelegateError, checkDepth, childEnv, runProcess, type DelegateRequest, type DelegateResult } from "./delegate.js";
 import { object, parse } from "./transcripts/common.js";
-import { PermissionRelay } from "./relay.js";
+import { PermissionRelay, type PermissionDecision, type PermissionRequest } from "./relay.js";
 import { requireAntigravityPlugin } from "./antigravity-plugin.js";
 import { progressEventHandler } from "./progress.js";
 
@@ -39,7 +39,17 @@ export async function delegateToAntigravity(req: DelegateRequest & { bin: string
   let sessionId = req.sessionId ?? null;
   const progress = progressEventHandler("antigravity", req.onProgress);
   // Use the common approval handler, including per-job allow rules and supervisor routing.
-  const relay = req.access === "ask" && req.approve ? new PermissionRelay(req.approve, req.log) : null;
+  const approvals = new AbortController();
+  const approve = async (request: PermissionRequest): Promise<PermissionDecision> => {
+    const ended: PermissionDecision = { allow: false, message: "Antigravity run ended" };
+    if (approvals.signal.aborted) return ended;
+    let stop!: () => void;
+    const aborted = new Promise<PermissionDecision>((resolve) => { stop = () => resolve(ended); });
+    approvals.signal.addEventListener("abort", stop, { once: true });
+    try { return await Promise.race([req.approve!(request), aborted]); }
+    finally { approvals.signal.removeEventListener("abort", stop); }
+  };
+  const relay = req.access === "ask" && req.approve ? new PermissionRelay(approve, req.log) : null;
   try {
     await relay?.start();
     const res = await runProcess({ bin: req.bin, args, cwd: req.cwd, stdin: JSON.stringify({ event: "user", message: { content: req.prompt } }) + "\n", timeoutMs: req.timeoutSec * 1000, signal: req.signal, env: childEnv({ ...req.extraEnv, ...relay?.childEnv(), [ANTIGRAVITY_ACCESS_ENV]: req.access }), log: req.log,
@@ -55,6 +65,7 @@ export async function delegateToAntigravity(req: DelegateRequest & { bin: string
     if (err instanceof DelegateError) err.sessionId = sessionId ?? parseAntigravityJsonl(err.partialStdout).sessionId;
     throw err;
   } finally {
+    approvals.abort();
     await relay?.stop();
   }
 }

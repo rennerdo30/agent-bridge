@@ -4,7 +4,9 @@ Verified 2026-10-07 using official documentation and local command probes.
 
 ## Which CLI is supported
 
-**Antigravity CLI is installed as `agy`, version 1.2.0.** `where gemini` and
+**Antigravity CLI is installed as `agy`, currently version 1.3.1.** Initial
+research and authenticated integration probes used 1.2.0; a subsequent
+read-only version probe on the same day found 1.3.1. `where gemini` and
 `where antigravity` returned no matches; `where agy` found the executable.
 `npm list -g --depth=0` contained Codex and opencode only. `agy models` worked.
 The bridge agent name is `antigravity`; tools are `ask_antigravity` and
@@ -41,7 +43,7 @@ Package evidence: [`@google/gemini-cli` stable metadata](https://registry.npmjs.
   inject ephemeral context, PreToolUse gates tools, Stop can continue with a
   reason. Hook payloads expose conversationId, workspacePaths, modelName and
   transcriptPath. Mail is injected at the next model invocation or stopping
-  boundary. There is no documented external idle-TUI wake command in 1.2.0;
+  boundary. There is no documented external programmatic idle-TUI send command;
   idle messages remain queued for the next turn or explicit inbox call.
 - [Permissions](https://antigravity.google/docs/permissions?tab=cli): workspace
   writes may be implicitly allowed. Consequently bridge read/ask modes need a
@@ -52,7 +54,7 @@ Package evidence: [`@google/gemini-cli` stable metadata](https://registry.npmjs.
   `bypass_permissions: true|false` is the exact bridge override for native
   bypass/native approval policy; either value replaces generic read/ask access.
 - [Quotas](https://antigravity.google/docs/cli/commands/usage): `/usage` or
-  `/quota` is interactive. 1.2.0 offers no documented machine-readable quota
+  `/quota` is interactive. The installed help offers no machine-readable quota
   subcommand. The bridge reports unknown account limits, with the native command
   to inspect them, and does not turn that into a model call.
 - Native logs were observed under
@@ -95,8 +97,17 @@ Package evidence: [`@google/gemini-cli` stable metadata](https://registry.npmjs.
 
 The official [changelog](https://antigravity.google/docs/changelog?tab=cli)
 lists CLI **1.2.14** and desktop Antigravity **2.19.1**, both dated September 30,
-2026. This integration was verified against the locally installed **agy 1.2.0**;
-it does not upgrade Google's CLI or assume the desktop app supplies `gemini`.
+2026. That fetched changelog currently trails the local **agy 1.3.1** version;
+the version observations are recorded separately rather than assuming they agree.
+This integration does not upgrade Google's CLI or assume the desktop supplies `gemini`.
+
+The installed 1.3.1 help retains the researched stream, resume, model, effort,
+sandbox, approval and plugin flags. It also exposes `--remote-control` and
+`remote-control start|status|stop`. Official [Remote Control documentation](https://antigravity.google/docs/remote-control?tab=cli)
+describes live desktop/web UI access through an authenticated reverse tunnel,
+including prompts and approvals. It does not document a local programmatic send
+API. The bridge therefore uses native lifecycle hooks and inbox fallback rather
+than starting a daemon or reverse tunnel. No remote service was started.
 
 Authenticated installed `agy 1.2.0` completed a trivial no-tools prompt using
 `gemini-3.8-flash-low`, stream-json, 30-second print timeout: SUCCESS,
