@@ -37,8 +37,10 @@ export function attachDashboardJobControl(node: BridgeNode, jobs: JobManager, lo
       } catch (err) { result = { outcome: "rejected", text: (err as Error).message, isError: true }; }
     } else if (command.type === "message") {
       if (typeof command.body !== "string" || !command.body.trim() || command.body.length > MAX_BODY_CHARS) return;
+      await jobs.share(command.job);
       result = followUp(node, jobs, command.job, command.body);
     } else if (command.type === "settings") {
+      await jobs.share(command.job);
       result = changeSettings(node, jobs, command.job, command.settings, log);
     } else {
       return;
@@ -49,7 +51,7 @@ export function attachDashboardJobControl(node: BridgeNode, jobs: JobManager, lo
 
 function followUp(node: BridgeNode, jobs: JobManager, ref: string, body: string): DashboardResult {
   const owned = jobs.find(ref);
-  const { outcome, job } = owned && canControlJob(owned as unknown as Record<string, unknown>, node.name) ? jobs.followUp(ref, body) : { outcome: "unknown" as const, job: undefined };
+  const { outcome, job } = owned ? jobs.followUp(ref, body) : { outcome: "unknown" as const, job: undefined };
   const position = job ? jobs.waiting().indexOf(job) + 1 : 0;
   return {
     outcome,
@@ -61,7 +63,7 @@ function followUp(node: BridgeNode, jobs: JobManager, ref: string, body: string)
 /** Next-turn settings only: no follow-up, so a finished subagent stays finished until someone continues it. */
 function changeSettings(node: BridgeNode, jobs: JobManager, ref: string, input: unknown, log: Logger): DashboardResult {
   const job = jobs.find(ref);
-  if (!job || !canControlJob(job as unknown as Record<string, unknown>, node.name)) return { outcome: "unknown", text: t("followUp.unknown", { name: ref }), isError: true };
+  if (!job) return { outcome: "unknown", text: t("followUp.unknown", { name: ref }), isError: true };
   const settings = parseJobSettings(input, job.agent);
   if (typeof settings === "string") return { outcome: "invalid", text: settings, isError: true };
   jobs.setSettings(job.name, settings);

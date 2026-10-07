@@ -4,7 +4,7 @@ import { basename, dirname, join } from "node:path";
 import type { Logger } from "./logger.js";
 import { storageLease, storeHome } from "./storage-lock.js";
 
-export const JSON_STORE_VERSION = 3;
+export const JSON_STORE_VERSION = 4;
 export const KEEP_STORE_BACKUPS = 3;
 const RENAME_ATTEMPTS = 50;
 const RENAME_RETRY_MS = 20;

@@ -53,6 +53,21 @@ describe("CodexWaker", () => {
     rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   });
 
+  it("wakes the fallback master for direct job mail with auto-wake off", async () => {
+    fakeCodex(dir, 0, 0);
+    const node = fakeNode(dir); node.autoWakeEnabled = false;
+    const waker = new CodexWaker(node as unknown as BridgeNode, cfg(), nullLogger, { debounceMs: 20, queueTimeoutMs: 2_000 });
+    waker.setThreadId("fallback-thread");
+    node.inbox.push({ ...mail("note"), from: { id: "job:1234", name: "codex-job-1234", agent: "codex" }, conversationId: "job-1234:note" });
+    node.emit("message", node.inbox[0]);
+    expect((waker as unknown as { timer: unknown }).timer).toBeNull();
+    node.inbox.push({ ...node.inbox[0]!, id: "fallback-note", conversationId: "job-1234:fallback" });
+    node.emit("message", node.inbox[1]);
+    await until(() => calls() === 1);
+    await until(() => !(waker as unknown as { inFlight: boolean }).inFlight);
+    expect(node.inbox).toHaveLength(2);
+  });
+
   it("does not schedule a wake for a quiet sibling observer copy, including on an idle report", () => {
     const node = fakeNode(dir);
     const waker = new CodexWaker(node as unknown as BridgeNode, cfg(), nullLogger, { debounceMs: 20, queueTimeoutMs: 2_000 });
