@@ -18,6 +18,7 @@ import { attachDashboardJobControl } from "../src/mcp/dashboard-control.js";
 import { loadOrCreateToken } from "../src/core/token.js";
 import { makeEnv, until, type TestEnv } from "./helpers.js";
 import type { PeerInfo } from "../src/core/protocol.js";
+import { chooseJobRecipient, mastersFor } from "../src/core/job-ownership.js";
 
 let env: TestEnv, source: BridgeNode, target: BridgeNode;
 let extra: BridgeNode[] = [];
@@ -38,6 +39,11 @@ beforeEach(async () => { env = makeEnv(); source = env.node("claude-source"); ta
 afterEach(async () => { await ui?.close(); ui = undefined; for (const m of managers.splice(0)) m.cancelAll(); for (const n of extra.splice(0)) await n.stop(); await env.cleanup(); });
 
 describe("local subagent ownership handoff", () => {
+  it("routes a legacy direct job to its current owner despite stale root lineage", async () => {
+    const job = record("legacy", { owner: target.name });
+    expect(mastersFor(job)).toEqual([target.name]);
+    expect(chooseJobRecipient(job, await source.peers())).toBe(target.name);
+  });
   it.each(["claude", "codex", "opencode"] as const)("moves all jobs to a live %s session with history and a waking inventory", async (agent) => {
     const to = env.node(`${agent}-receiver`, agent); await to.start();
     save([record("a"), record("b", { status: "failed" })]);
