@@ -10,6 +10,7 @@ import {
   QUEUED_MAIL_MAX_AGE_MS,
 } from "./constants.js";
 import type { Logger } from "./logger.js";
+import { isSqliteBusy } from "./sqlite-policy.js";
 import {
   AGENT_KINDS,
   BROADCAST,
@@ -92,6 +93,10 @@ export class Broker {
   private readonly conns = new Set<Conn>();
   private historyTimer: NodeJS.Timeout | null = null;
   private purgeTimer: NodeJS.Timeout | null = null;
+  private pendingJobMailRoute: Promise<void> | null = null;
+  private pendingJobMailRouteAgain = false;
+  private pendingJobMailRetry: NodeJS.Timeout | null = null;
+  private closing = false;
   private network: NetworkService | null = null;
   private remoteJobs: RemoteJobs | null = null;
   private remoteDashboard: RemoteDashboard | null = null;
@@ -167,7 +172,7 @@ export class Broker {
         c.authed = true;
         return { brokerPid: process.pid };
       },
-      hello: (c, a) => { const result = this.onHello(c, a); const job = this.storedJobs().find((j) => `job:${j.id}` === c.peer?.id); if (job?.ownershipHistory) this.refreshJobPeer(job); this.routePendingJobMail(); this.store.history.rememberPeer(c.peer!); return result; },
+      hello: async (c, a) => { const result = this.onHello(c, a); const job = this.storedJobs().find((j) => `job:${j.id}` === c.peer?.id); if (job?.ownershipHistory) this.refreshJobPeer(job); await this.routePendingJobMail(); this.store.history.rememberPeer(c.peer!); return result; },
       send: (c, a) => this.onSend(c, a),
       decide: (c, a) => this.onDecide(c, a),
       decisions: (c, a) => this.onDecisions(c, a),
@@ -300,6 +305,9 @@ export class Broker {
   }
 
   async close(): Promise<void> {
+    this.closing = true;
+    if (this.pendingJobMailRetry) clearTimeout(this.pendingJobMailRetry);
+    this.pendingJobMailRetry = null;
     if (this.historyTimer) clearInterval(this.historyTimer);
     if (this.purgeTimer) clearInterval(this.purgeTimer);
     await this.networkChange;
@@ -314,6 +322,7 @@ export class Broker {
     const server = this.server;
     this.server = null;
     if (server) await new Promise<void>((r) => server.close(() => r()));
+    await this.pendingJobMailRoute?.catch((err) => this.log.warn("pending mail route stopped", { err: String(err) }));
     this.store.close();
     this.log.info("broker closed");
   }
@@ -399,7 +408,7 @@ export class Broker {
     socket.on("error", (err) => this.log.debug("connection error", { err: err.message }));
     socket.on("close", () => {
       this.conns.delete(conn);
-      try { this.routePendingJobMail(); } catch (err) { this.log.warn("pending job reroute deferred", { err: String(err) }); }
+      void this.routePendingJobMail().catch((err) => this.log.warn("pending job reroute deferred", { err: String(err) }));
       if (conn.peer) {
         this.log.info("peer left", { name: conn.peer.name, agent: conn.peer.agent });
         if (!conn.peer.jobAgent) this.broadcastEvent("peer_left", conn.peer, conn);
@@ -530,24 +539,50 @@ export class Broker {
     }
   }
 
-  routePendingJobMail(): void {
-    const live = [...this.conns].flatMap((c) => c.peer ? [c.peer] : []);
-    for (const job of this.storedJobs()) {
-      if (!Array.isArray(job.ownershipHistory) || !job.ownershipHistory.length) continue;
-      const recipient = chooseJobRecipient(job, live), target = this.connByName(recipient);
-      if (Array.isArray(job.deliveryHistory)) for (const envelope of job.deliveryHistory) {
-        if (!isRecord(envelope) || !isRecord(envelope.from) || envelope.from.id !== `job:${job.id}` || typeof envelope.id !== "string" || typeof envelope.body !== "string") continue;
-        const message = { ...envelope, to: recipient, recipient } as unknown as BridgeMessage;
-        if (this.store.insertJobDelivery(message) && target) this.emit(target, "message", message);
+  routePendingJobMail(): Promise<void> {
+    if (this.closing) return Promise.resolve();
+    this.pendingJobMailRouteAgain = true;
+    this.pendingJobMailRoute ??= this.reroutePendingJobMail().catch((err) => {
+      // A busy interval can outlast one RPC deadline. Durable envelopes still need a drain
+      // even if no new connection arrives to trigger another routing pass.
+      if (isSqliteBusy(err) && !this.closing && !this.pendingJobMailRetry) {
+        this.pendingJobMailRetry = setTimeout(() => {
+          this.pendingJobMailRetry = null;
+          void this.routePendingJobMail().catch((error) => this.log.warn("pending job mail retry deferred", { err: String(error) }));
+        }, 1_000);
+        this.pendingJobMailRetry.unref();
       }
-      if (!target) continue;
-      for (const from of mastersFor(job)) {
-        const moved = this.store.handoffMail(from, recipient, String(job.id), this.now());
-        const previous = this.connByName(from);
-        if (previous && moved.length) this.emit(previous, "mail_retracted", { ids: moved.map((m) => m.id) });
-        for (const m of moved) this.emit(target, "message", m);
+      throw err;
+    }).finally(() => { this.pendingJobMailRoute = null; });
+    return this.pendingJobMailRoute;
+  }
+
+  private async reroutePendingJobMail(): Promise<void> {
+    do {
+      this.pendingJobMailRouteAgain = false;
+      for (const job of this.storedJobs()) {
+        if (!Array.isArray(job.ownershipHistory) || !job.ownershipHistory.length) continue;
+        // Each ledger insert and handoff is idempotent. Re-evaluate the live recipient on every
+        // retry: the primary may leave or return while another SQLite writer holds the lock.
+        await this.store.retryWrite(() => {
+          if (this.closing) return;
+          const live = [...this.conns].flatMap((c) => c.peer ? [c.peer] : []);
+          const recipient = chooseJobRecipient(job, live), target = this.connByName(recipient);
+          if (Array.isArray(job.deliveryHistory)) for (const envelope of job.deliveryHistory) {
+            if (!isRecord(envelope) || !isRecord(envelope.from) || envelope.from.id !== `job:${job.id}` || typeof envelope.id !== "string" || typeof envelope.body !== "string") continue;
+            const message = { ...envelope, to: recipient, recipient } as unknown as BridgeMessage;
+            if (this.store.insertJobDelivery(message) && target) this.emit(target, "message", message);
+          }
+          if (!target) return;
+          for (const from of mastersFor(job)) {
+            const moved = this.store.handoffMail(from, recipient, String(job.id), this.now());
+            const previous = this.connByName(from);
+            if (previous && moved.length) this.emit(previous, "mail_retracted", { ids: moved.map((m) => m.id) });
+            for (const m of moved) this.emit(target, "message", m);
+          }
+        });
       }
-    }
+    } while (this.pendingJobMailRouteAgain && !this.closing);
   }
 
   private refreshJobPeer(job: Record<string, unknown>): void {
