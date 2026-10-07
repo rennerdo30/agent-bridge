@@ -19,6 +19,7 @@ import { startUi } from "../src/cli/ui.js";
 import { listRuns } from "../src/core/dashboard-read.js";
 import { JobManager, acquireLock, type Job, type Run } from "../src/mcp/jobs.js";
 import { EventEmitter } from "node:events";
+import { execFileSync } from "node:child_process";
 import { NetworkService } from "../src/network/link.js";
 import { DEFAULT_NETWORK_CONFIG } from "../src/network/config.js";
 import { decodePairingCode } from "../src/network/pairing.js";
@@ -28,6 +29,7 @@ const duration = Number(process.env.AB_PERF_SECONDS ?? 20);
 const jobCount = Number(process.env.AB_PERF_JOBS ?? 30);
 if (!Number.isInteger(jobCount) || jobCount < 1 || jobCount > 50) throw new Error("AB_PERF_JOBS must be 1..50");
 const home = fs.realpathSync.native(fs.mkdtempSync(join(tmpdir(), "abp-")));
+const originalCwd = process.cwd();
 const pipe = resolvePipePath(home, {}), token = "synthetic-load-token";
 if (process.platform !== "win32" && Buffer.byteLength(pipe) >= 104) throw new Error("socket path too long");
 const pause = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -65,11 +67,17 @@ const managers: JobManager[] = [];
 const lag = monitorEventLoopDelay({ resolution: 10 });
 let failures = 0, delivered = 0, quietCopies = 0;
 try {
+  // Jobs with no explicit cwd must also resolve to the fixture, never the source checkout.
+  execFileSync("git", ["init", "--quiet", home], { windowsHide: true });
+  process.chdir(home);
+  process.env.AGENT_BRIDGE_HOME = home;
+  process.env.AGENT_BRIDGE_PLUGIN_RUNTIME_HOME = home;
   // No discovery of the owner's CLI transcripts in a synthetic load profile.
   process.env.CODEX_HOME = join(home, "codex-fixture");
   process.env.CLAUDE_CONFIG_DIR = join(home, "claude-fixture");
   process.env.XDG_DATA_HOME = join(home, "xdg-fixture");
-  for (const name of ["codex-fixture", "claude-fixture", "xdg-fixture"]) fs.mkdirSync(join(home, name));
+  process.env.ANTIGRAVITY_CLI_HOME = join(home, "agy-fixture");
+  for (const name of ["codex-fixture", "claude-fixture", "xdg-fixture", "agy-fixture"]) fs.mkdirSync(join(home, name));
   fs.mkdirSync(join(home, "runs", "archive"), { recursive: true });
   fs.mkdirSync(join(home, "archive"));
   fs.writeFileSync(join(home, "token"), token);
@@ -188,6 +196,7 @@ try {
   for (const manager of managers) manager.setDormant(true);
   for (const c of clients) c.close();
   await broker?.close(); store?.close();
+  process.chdir(originalCwd);
   // Only the fresh synthetic root is removed. No owner data or source links are used.
   if (!home.startsWith(fs.realpathSync.native(tmpdir()))) throw new Error("unexpected synthetic root");
   fs.rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
