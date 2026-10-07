@@ -1,0 +1,79 @@
+{
+  "tag": "v0.29.10",
+  "commit": "664bcd78e41613e7a2bbd370bd25f4cb0399c5c2",
+  "jsonVersion": 2,
+  "pendingApprovalStore": true,
+  "source": "Released json-store, runfeed, pairing and available relay writers executed in isolated tagged worktree",
+  "files": [
+    {
+      "path": "approvals/11111111-1111-4111-8111-111111111111.json",
+      "bytes": 319,
+      "sha256": "f908acc8caee938336c42e233aabf765212f29dc05e66842d7643ad16ead9f9d"
+    },
+    {
+      "path": "archive/jobs-retained.json",
+      "bytes": 223,
+      "sha256": "eb8dde52e26ef8cfb18fd3996ae14b07276abf63d67d2935478571eca850e377"
+    },
+    {
+      "path": "auto-wake.json",
+      "bytes": 82,
+      "sha256": "3f6b4f67afdde1ac956f024a7bc71afac0a9c1b8540d54d6d0028e7cdd9e7949"
+    },
+    {
+      "path": "config.json",
+      "bytes": 303,
+      "sha256": "8c16e505e45f45f6a6ab9ee0a00d698ae1cbade17b689fd4a30f246757ba7b96"
+    },
+    {
+      "path": "job-outcomes/kept-job.json",
+      "bytes": 172,
+      "sha256": "bfce1a6d56f3c2271753e312bfa931e91345458282b38d4881e6a697e7fc83d0"
+    },
+    {
+      "path": "jobs/kept-job.spec.json",
+      "bytes": 199,
+      "sha256": "92d875cf3671a251d615ab4610139009a81e6c299e5d306fdd29be97e3be87a8"
+    },
+    {
+      "path": "jobs/kept-job.state.json",
+      "bytes": 117,
+      "sha256": "9e9dbbbbf0e2dd39db7647c00606915098c821b93e829838adad0f636c1bcd95"
+    },
+    {
+      "path": "jobs.json",
+      "bytes": 750,
+      "sha256": "62d0912906b557c32dcf8b7b4c134625145e26d05a4c2331ff3e76e8b66065c5"
+    },
+    {
+      "path": "message-waits/wait.json",
+      "bytes": 125,
+      "sha256": "52b86b4753f9c87a419709fad31e92c5e916ae5dd827eb8efc604fdf7eea8d90"
+    },
+    {
+      "path": "models-codex.json",
+      "bytes": 131,
+      "sha256": "06f941cefb2680ba6367a7c5516395574a5ada92b96fe708d4aa9b19b48be8b9"
+    },
+    {
+      "path": "network/keys.json",
+      "bytes": 585,
+      "sha256": "379d344a01e5ce3b25afc5b0fe5a29a06ec2d2a70eff550d6af0416162e89148"
+    },
+    {
+      "path": "read-state/session.json",
+      "bytes": 100,
+      "sha256": "744124e9e30afae6e0994171ce8d36c9b456357e1c28614f10c312a4555ecca5"
+    },
+    {
+      "path": "runs/2023-11-14-22-13-20-codex-job-kept.json",
+      "bytes": 222,
+      "sha256": "02bce045c5b304eeb9ee7da047e3d75bdb3ab9d8e113feecaeace57d32c8ba2e"
+    },
+    {
+      "path": "runs/2023-11-14-22-13-20-codex-job-kept.log",
+      "bytes": 231,
+      "sha256": "67510ad69eed2379d6ed20bca07e278cfcda012fee65ba1612bac060e3ae260d"
+    }
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "job": "codex-job-kept",
+  "decision": "keep",
+  "history": [
+    {
+      "decision": "keep",
+      "at": 1700000000000
+    }
+  ],
+  "future": "keep",
+  "version": 2
+}

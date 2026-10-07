@@ -1,0 +1,10 @@
+{
+  "by": "codex-source",
+  "agent": "codex",
+  "session": "native-thread",
+  "continues": "previous-thread",
+  "workdir": "__FIXTURE_HOME__",
+  "branch": "saved-branch",
+  "repoRoot": "__FIXTURE_HOME__",
+  "version": 2
+}

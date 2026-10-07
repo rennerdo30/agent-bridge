@@ -1,0 +1,21 @@
+{
+  "autoWake": false,
+  "maxJobs": 4,
+  "codex": {
+    "wakeOnDirect": true
+  },
+  "network": {
+    "enabled": false,
+    "name": "fixture-local",
+    "bind": "127.0.0.1",
+    "port": 0,
+    "discovery": false
+  },
+  "future": {
+    "nested": [
+      "keep",
+      "保存"
+    ]
+  },
+  "version": 4
+}

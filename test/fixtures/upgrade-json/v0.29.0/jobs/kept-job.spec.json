@@ -1,0 +1,11 @@
+{
+  "job": "codex-job-kept",
+  "session": "native-thread",
+  "cwd": "__FIXTURE_HOME__",
+  "owner": "codex-source",
+  "args": {
+    "prompt": "Retained task"
+  },
+  "future": "keep",
+  "version": 2
+}

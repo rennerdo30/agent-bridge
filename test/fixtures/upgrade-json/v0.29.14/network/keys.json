@@ -1,0 +1,20 @@
+{
+  "identity": {
+    "id": "956d057f-3cf9-4d73-b454-66991d0056f3",
+    "key": "fe84c3ec43ac57e2e068a07b5bba48bb111da31dd28a5fdddad6672b53389e94"
+  },
+  "invitations": [
+    {
+      "key": "8cef6ec811c6a2f3375a77064e95b30190dccdcbffadf2efd6b8f4a645765102",
+      "expiresAt": 1700000600000
+    }
+  ],
+  "pairs": [
+    {
+      "id": "11111111-1111-4111-8111-111111111111",
+      "name": "fixture-remote",
+      "fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "key": "eee1b56f45f182b61703cddbfc1a7ac49176300c286082ab001c8d0626a6bd0e"
+    }
+  ]
+}

@@ -1,0 +1,35 @@
+{
+  "jobs": [
+    {
+      "id": "kept-job",
+      "name": "codex-job-kept",
+      "agent": "codex",
+      "owner": "codex-source",
+      "rootName": "codex-source",
+      "rootSession": "root-session",
+      "state": "failed",
+      "prompt": "Retained task",
+      "startedAt": 1700000000000,
+      "session": "native-thread",
+      "args": {
+        "model": "retained-model",
+        "future": {
+          "value": "keep"
+        }
+      },
+      "workdir": "__FIXTURE_HOME__",
+      "worktree": {
+        "path": "__FIXTURE_HOME__\\worktree",
+        "repoRoot": "__FIXTURE_HOME__",
+        "branch": "saved-branch"
+      },
+      "future": {
+        "unicode": "保存"
+      }
+    }
+  ],
+  "extension": {
+    "keep": true
+  },
+  "version": 4
+}
