@@ -36,7 +36,7 @@ import { resolveDbPath, resolveHome, resolvePipePath } from "../core/paths.js";
 import { inspectClaudeLaunch } from "../core/procinfo.js";
 import { loadOrCreateToken } from "../core/token.js";
 import { BridgeError, BROADCAST, CODING_AGENTS, isQuietMessage, SIBLING_CONVERSATION_PREFIX, TRANSFER_PROGRESS_PREFIX, type AgentKind, type BridgeMessage, type CodingAgent } from "../core/protocol.js";
-import { formatDelivery, formatDuration, formatMessage, formatMessages, formatPeer } from "./format.js";
+import { formatDelivery, formatDuration, formatMessage, formatMessages, formatPeer, formatVersionSkew } from "./format.js";
 import { CodexWaker, type Activity } from "./codex-wake.js";
 import { buildHookResponse, discardFinishedNotes, type HookEvent } from "./hooks.js";
 import { ACCESS_LEVELS, DELEGATION_TARGETS, nativeSubagentsSchema, type Access } from "./targets.js";
@@ -638,6 +638,7 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
       // Job runners are this or another session's subagents, not sessions (an older broker still lists them).
       const others = peers.filter((p) => p.id !== n.id && !p.id.startsWith("job:"));
       const lines = [
+        ...formatVersionSkew(peers),
         t("peers.self", {
           name: n.name,
           broker: n.isBroker ? t("common.yes") : t("common.no"),

@@ -3,6 +3,7 @@ import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readdirSync, wri
 import { basename, dirname, join } from "node:path";
 import { isRecord, JSON_STORE_VERSION } from "./json-store.js";
 import { readJsonSnapshot } from "./file-cache.js";
+import { assertStoreUpgrade } from "./store-compatibility.js";
 
 interface ArchivedJobSnapshot { signature: string; jobs: Record<string, unknown>[] }
 const snapshots = new Map<string, ArchivedJobSnapshot>();
@@ -42,6 +43,7 @@ export function readArchivedJobSnapshot(path: string): ArchivedJobSnapshot {
 
 /** Full raw records, including unknown fields. Publish before replacing the active jobs store. */
 export function archiveJobs(path: string, jobs: unknown[]): string {
+  assertStoreUpgrade(dirname(path), "json", 0, JSON_STORE_VERSION);
   const dir = join(dirname(path), "archive");
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   const target = join(dir, `jobs-${Date.now()}-${randomUUID()}.json`);

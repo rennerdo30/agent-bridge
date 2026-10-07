@@ -19,7 +19,9 @@ import type { Logger } from "./logger.js";
 import { BridgeError, isQuietMessage, type AgentKind, type BridgeMessage, type PeerActivity, type PeerInfo, type SendArgs, type SendResult, type SiblingPeer } from "./protocol.js";
 import { ReadJournal } from "./read-journal.js";
 import { recordLocalResult } from "./local-result-receipts.js";
-import { MessageStore } from "./store.js";
+import { MessageStore, SQLITE_STORE_VERSION } from "./store.js";
+import { JSON_STORE_VERSION } from "./json-store.js";
+import { recordStorePeer } from "./store-compatibility.js";
 import { parentProcessIdentity } from "./process-identity.js";
 import { DASHBOARD_JOB_CONVERSATION } from "./job-control.js";
 import type { NetworkConfig } from "../network/config.js";
@@ -123,6 +125,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
     this.currentCwd = opts.cwd;
     this.autoWake = opts.autoWake;
     this.log = opts.log.child("node");
+    if (opts.dbPath !== ":memory:") recordStorePeer(dirname(opts.dbPath), { pid: process.pid, name: opts.name, version: APP_VERSION, storeCapabilities: { json: JSON_STORE_VERSION, sqlite: SQLITE_STORE_VERSION } });
     this.readJournal = new ReadJournal(dirname(opts.dbPath));
     this.restoreReadState(`name:${this.currentName}`);
   }
@@ -252,6 +255,10 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
     try {
       store = new MessageStore(this.opts.dbPath, this.log.child("store"));
     } catch (err) {
+      if (["EBUSY", "SQLITE_BUSY", "STORE_UPGRADE_DEFERRED"].includes(errCode(err)) || /database is locked/.test(String((err as Error).message))) {
+        this.log.info("another session is preparing the store; retrying broker election", { db: this.opts.dbPath });
+        return false;
+      }
       this.log.error("cannot open message store", { err, db: this.opts.dbPath });
       throw err;
     }
@@ -288,6 +295,11 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
 
   private async adopt(client: BridgeClient): Promise<void> {
     client.on("event", (ev, data) => this.onEvent(ev, data));
+    // Read presence before hello can trigger writes in a newer broker.
+    try {
+      await client.request("auth", { protocol: PROTOCOL_VERSION, token: this.opts.token });
+      if (this.opts.dbPath !== ":memory:") for (const peer of await client.request("peers", {})) recordStorePeer(dirname(this.opts.dbPath), peer);
+    } catch (error) { client.close(); throw error; }
     const agentStartedAt = this.opts.jobAgent ? null : await parentProcessIdentity();
     const args = this.helloArgs();
     const hello = await client.request("hello", { ...args, peer: { ...args.peer, agentStartedAt } }).catch((err) => {
@@ -317,6 +329,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
         activity: this.activity,
         unavailable: this.unavailable,
         version: APP_VERSION,
+        storeCapabilities: { json: JSON_STORE_VERSION, sqlite: SQLITE_STORE_VERSION },
         ...(this.opts.jobAgent ? { jobAgent: this.opts.jobAgent } : {}),
         ...(this.opts.jobOwner ? { jobOwner: this.opts.jobOwner, jobParent: this.opts.jobParent, parentJob: this.opts.parentJob, rootSession: this.opts.rootSession, rootName: this.opts.rootName, jobTitle: this.opts.jobTitle, jobSendTo: this.opts.jobSendTo } : {}),
       },
@@ -381,6 +394,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
       this.log.debug("message received", { id: m.id, from: m.from.name, hop: m.hop });
       this.emit("message", m);
     } else if (ev === "peer_joined" || ev === "peer_left") {
+      if (ev === "peer_joined" && this.opts.dbPath !== ":memory:") recordStorePeer(dirname(this.opts.dbPath), data as PeerInfo);
       this.emit(ev, data as PeerInfo);
     } else if (ev === "replaced") {
       // A newer server of this same session took over (e.g. /reload-plugins): stay away instead of rejoining.

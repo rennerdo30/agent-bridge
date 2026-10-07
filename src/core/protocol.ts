@@ -80,6 +80,8 @@ export interface PeerInfo {
   activity?: PeerActivity | null;
   /** agent-bridge version of this peer. */
   version?: string;
+  /** Maximum readable shared formats. Optional for retained legacy peers. */
+  storeCapabilities?: { json: number; sqlite: number };
   /** Set for a job runner (it hosts a background subagent of a session): that subagent's agent. Hidden from peer lists. */
   jobAgent?: AgentKind;
   /** Stable supervisor session identity, shared only by its jobs. */
