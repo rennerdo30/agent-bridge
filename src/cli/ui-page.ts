@@ -353,6 +353,15 @@ main.wrap { padding-top: 32px; max-width: 1240px; }
 .sess-actions button.ghost { min-height: 30px; padding: 4px 12px; border-radius: 7px; }
 .chip.main-chip { color: var(--accent); background: var(--accent-soft); border-color: transparent; font-weight: 600; }
 .tree-proj { padding: 8px 10px 2px; font-size: 11.5px; color: var(--faint); min-width: 0; }
+/* A project shared by several sessions: the project is the headline, its sessions hang beneath it. */
+.tree-group { margin: 4px 0 6px; }
+.tree-group-head { display: flex; align-items: center; gap: 8px; padding: 6px 8px 2px 10px; font-size: 13.5px; font-weight: 650; color: var(--text); min-width: 0; }
+.tree-group-head .ell { flex: 1; min-width: 0; }
+.tree-sess.member { margin-left: 14px; border-left: 1.5px solid var(--line); border-radius: 0 8px 8px 0; }
+.tree-sess.member > a { padding: 4px 8px 4px 8px; font-size: 13px; }
+.tree-sess.member .lbl small { display: inline; margin-left: 6px; font-size: 11.5px; }
+.tree-sess.member.secondary > a { color: var(--muted); font-weight: 500; }
+.tree-sess.member .main-tag { margin-left: 6px; padding: 0 6px; border-radius: 6px; font-size: 10.5px; font-weight: 600; color: var(--accent); background: var(--accent-soft); vertical-align: 1px; }
 .tree-sess { position: relative; border-radius: 8px; }
 .tree-sess:hover { background: color-mix(in srgb, var(--panel) 60%, transparent); }
 .tree-sess.cur { background: var(--panel); box-shadow: var(--shadow); }
@@ -1287,9 +1296,26 @@ function projectSidebar(items) {
   }
   // The sidebar lists sessions only (subagents live in each session's own column). A project heading
   // only appears when two or more sessions share the project.
-  return [...projects.values()].map((p) =>
-    (p.title && p.items.length > 1 ? '<div class="tree-proj"><span class="ell">' + esc(p.title) + "</span></div>" : "") + p.items.map(sideSession).join("")
-  ).join("");
+  return [...projects.values()].map((p) => {
+    if (!p.title || p.items.length < 2) return p.items.map(sideSession).join("");
+    // A shared project: the project is the headline; its sessions are compact members, main first.
+    const members = [...p.items].sort((a, b) => Number(!!b.peer?.projectMain) - Number(!!a.peer?.projectMain));
+    const running = members.reduce((n, x) => n + (x.running || 0), 0);
+    return '<div class="tree-group"><div class="tree-group-head"><span class="ell">' + esc(p.title) + "</span>" +
+      (running ? '<span class="count" title="subagents working">' + running + "</span>" : "") + "</div>" +
+      members.map(sideMember).join("") + "</div>";
+  }).join("");
+}
+
+/** One session inside a shared project: the agent is the label, the main one is marked, a secondary is quieter. */
+function sideMember(x) {
+  const p = x.peer || {}, cur = x.name === route.session, main = !!p.projectMain;
+  const agent = { claude: "Claude", codex: "Codex", opencode: "opencode", antigravity: "Antigravity" }[p.agent] || p.agent || "session";
+  const state = p.unavailable ? "unavailable" : p.activity || "connected";
+  return '<div class="tree-sess member' + (main ? " main" : " secondary") + (cur ? " cur" : "") + (x.live ? "" : " ended") + '">' +
+    '<a href="' + href(x.name) + '" title="' + esc(x.name + (p.cwd ? " · " + p.cwd : "")) + '"' + (cur ? ' aria-current="page"' : "") + ">" + dot(p.activity) +
+    '<span class="lbl ell">' + esc(agent) + (main ? '<span class="main-tag">main</span>' : "") + '<small class="ell">' + esc(state) + "</small></span>" +
+    (x.running ? '<span class="count" title="subagents working">' + x.running + "</span>" : "") + "</a></div>";
 }
 
 const narrow = () => typeof matchMedia === "function" && matchMedia("(max-width: 640px)").matches;
