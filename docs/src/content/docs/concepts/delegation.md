@@ -21,9 +21,9 @@ Codex automatic review can approve an eligible escalation beyond a read-only san
 
 Read-only also covers MCP tools, which can change things too: a read-only Claude subagent gets every configured MCP server denied (plugins, `~/.claude.json`, the project's `.mcp.json`, claude.ai connectors) except agent-bridge's own, so it can still answer you; read-only opencode subagents keep only `bridge_send` of all MCP tools. Codex automatically reviews eligible MCP approvals, forwarding refusals and remaining client requests to its supervisor.
 
-Codex edit jobs in a linked git worktree may write that worktree's git data in the main repository (`.git/worktrees/<name>` and the shared `.git`), so they can commit on their own branch. Work a subagent leaves uncommitted is committed for it with a subject taken from its answer and a `Co-Authored-By` line naming the agent and model.
+Codex edit jobs in a linked git worktree may write that worktree's git data in the main repository (`.git/worktrees/<name>` and the shared `.git`), so they can commit on their own branch. Work a subagent leaves uncommitted is checkpointed with the fixed subject `Save worktree changes`, without trailers, task text, agent names or model names.
 
-Worktree commits use the parent repository's effective `user.name` and `user.email` (local or global Git config). Only missing identity fields fall back to `agent-bridge <agent-bridge@localhost>`.
+Worktree checkpoints use the checkout's effective `user.name` and `user.email` (local or global Git config). Missing identity leaves the worktree intact and reports the problem. Inherited author and committer overrides are excluded; see [worktree checkpoints](../../worktree-lifecycle/).
 
 Codex worktree edit jobs honor `codexWorktreeSandbox` in `~/.agent-bridge/config.json`. When it is unset, they inherit `codexSandbox`, except that its safe `read-only` default becomes `workspace-write` for worktree edits. Explicit `access: "read"` or `"ask"` stays read-only, and an explicit `sandbox` wins. Plain jobs retain their read-only default. The same rules cover continued worktrees and a worktree passed as `cwd`.
 

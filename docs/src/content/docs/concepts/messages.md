@@ -7,7 +7,7 @@ title: "Messages and waking"
 | While the agent is working | injected after each tool call (`PostToolUse` hook) | same |
 | On your next prompt | injected (`UserPromptSubmit` hook) | same |
 | When the agent finishes a turn (auto-wake on) | `Stop` hook keeps it going | same |
-| While the session is idle | **live push via channel** (see below) | auto-wake runs `codex queue`, which starts a turn |
+| While the session is idle | **live push via channel** (see below) | auto-wake requests native `codex queue` delivery to the attached session |
 
 opencode receives messages through its plugin: after each model step while it works, and by starting a turn itself when it is idle.
 
@@ -44,7 +44,7 @@ For compatibility, `timeout_sec` without `mode` selects block; `read_receipt_of`
 child waits support block only. Existing interrupted blocking waits retain their filters and
 can resume as before, or convert with `wait_for_message(resume_id=<id>, mode="notify")`.
 Cancel a saved wait with `mode="cancel"` and `resume_id`; its record is archived, mail untouched.
-See [notification-wait design and tradeoffs](../../message-waits/).
+See [notification-wait design and tradeoffs](../../message-waits/) and [delivery guarantees and native wake requirements](../../messaging-delivery/). Queue acceptance alone does not prove a provider turn or inbox consumption.
 
 ### Auto-wake and loop protection
 
