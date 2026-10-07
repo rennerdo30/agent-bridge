@@ -7892,6 +7892,9 @@ function resolveDbPath(home) {
 function text(value) {
   return typeof value === "string" && value ? value : void 0;
 }
+function primaryFor(job) {
+  return (!job.parentJob && (!Array.isArray(job.ownershipHistory) || !job.ownershipHistory.length) ? text(job.owner) : void 0) ?? text(job.rootName) ?? text(job.owner) ?? "";
+}
 function mastersFor(job) {
   const history = Array.isArray(job.ownershipHistory) ? job.ownershipHistory : [];
   const names = [
@@ -7906,7 +7909,7 @@ function canControlJob(job, name2, groupMasters = []) {
   return !name2.includes("/") && (mastersFor(job).includes(name2) || groupMasters.some((p) => p.name === name2 && !p.host && !p.jobAgent && !p.subagent));
 }
 function chooseJobRecipient(job, livePeers, groupMasters = []) {
-  const primary = text(job.rootName) ?? text(job.owner) ?? "";
+  const primary = primaryFor(job);
   const live = new Set(livePeers.filter((p) => !p.host && !p.jobAgent && !p.subagent && !p.unavailable && !p.name.includes("/")).map((p) => p.name));
   if (live.has(primary)) return primary;
   const history = Array.isArray(job.ownershipHistory) ? job.ownershipHistory : [];
@@ -31092,6 +31095,9 @@ var JobManager = class {
         job.workdir = outcome?.result?.workdir ?? job.workdir;
         job.worktree = outcome?.result?.worktree ?? job.worktree;
         this.persist();
+        if (job.ownershipHistory?.length && !this.isMine(job.owner)) {
+          this.post(job, jobReport(job, job.status, Math.round((Date.now() - job.startedAt) / 1e3), outcome?.result?.text ?? "", job.status === "failed" ? failureCause(outcome ?? {}) : null));
+        }
         if (job.queue.length && job.resume && job.sessionId && !job.controller.signal.aborted && this.isMine(job.owner)) {
           if (this.canStart()) this.launch(job, job.resume(job.queue.splice(0).join("\n\n"), job.sessionId, job.workdir, job.worktree));
           else this.waitForSlot(job);
@@ -46679,6 +46685,10 @@ async function runDelegateInner(rc, target, a, signal, onProgress, background, j
   const codexHash = target === "codex" ? codexPermissionHookHash() : null;
   const askUser = rc.askUser ? async (r) => {
     if (!job) return rc.askUser(r);
+    if (job.ownershipHistory?.length && job.owner !== rc.me() && rc.jobs) {
+      const answer = await rc.jobs.askParent(job, `${r.tool}: ${r.detail}`, PARENT_APPROVAL_TIMEOUT_MS, r);
+      return answer.allow ? { allow: true } : { allow: false, message: answer.reason };
+    }
     const decision = await waitForApproval(
       job,
       `${r.tool}: ${r.detail}`,
@@ -46720,7 +46730,7 @@ async function runDelegateInner(rc, target, a, signal, onProgress, background, j
     if (!r.automaticReview && (isOwnServerCall(r) || isAutoApproved(r, autoApprove))) return { allow: true };
     let d;
     if (wiring) d = await wiring.onPermission(r);
-    else if (job && (!job.foreground || job.parentJob) && rc.jobs) {
+    else if (job && (!job.foreground || job.parentJob || job.ownershipHistory?.length) && rc.jobs) {
       const hint = approvalHint(r);
       const a2 = await rc.jobs.askParent(job, `${r.tool.replace(/^mcp:/, "MCP server ")}: ${r.detail}${hint}`, PARENT_APPROVAL_TIMEOUT_MS, r);
       d = a2.allow ? { allow: true } : { allow: false, message: `Denied by supervisor ${me}: ${a2.reason || "no reason supplied"}` };
@@ -49897,7 +49907,7 @@ function discardFinishedNotes(ctx) {
     if (isQuietMessage(m)) return false;
     if (!ctx.jobs?.isNote(m)) return false;
     const job = ctx.jobs.find(m.from.name);
-    return job !== void 0 && job.status !== "running";
+    return job !== void 0 && !job.ownershipHistory?.length && job.status !== "running";
   });
   node2.markRead(obsolete.map((m) => m.id));
 }
@@ -54596,7 +54606,8 @@ ${f.report ?? "No final report is saved. Ask your parent for its result."}`);
         const report = progressReporter(extra, log);
         const onProgress = (m) => {
           tracked?.onProgress(m);
-          report?.(m);
+          if (tracked?.job.ownershipHistory?.length && tracked.job.owner !== ctx.node?.name) ctx.jobs?.fromSubagent(tracked.job, m, null);
+          else report?.(m);
         };
         let res;
         try {
@@ -54604,6 +54615,7 @@ ${f.report ?? "No final report is saved. Ask your parent for its result."}`);
         } catch (err) {
           tracked?.end({ error: err });
           log.warn("ask failed", { job: tracked?.job.name, err: err.message });
+          if (tracked?.job.ownershipHistory?.length && tracked.job.owner !== ctx.node?.name) return text2(`Job ${tracked.job.name} is supervised by ${tracked.job.owner}; its report was routed there.`);
           const identity = tracked ? `Job: ${tracked.job.name}
 ${target} session_id: ${tracked.job.sessionId ?? "-"}
 
@@ -54611,6 +54623,7 @@ ${target} session_id: ${tracked.job.sessionId ?? "-"}
           return text2(`${identity}${describeError(err)}`, true);
         }
         tracked?.end({ result: res });
+        if (tracked?.job.ownershipHistory?.length && tracked.job.owner !== ctx.node?.name) return text2(`Job ${tracked.job.name} is supervised by ${tracked.job.owner}; its report was routed there.`);
         const header = (tracked ? `Job: ${tracked.job.name}
 ` : "") + t("delegate.done", { agent: target, session: res.sessionId ?? "-" }) + (res.isError ? "\n" + t("delegate.cause", { cause: failureCause({ result: res }) }) : "") + (tracked && res.sessionId ? "\n" + t("delegate.followUp", { job: tracked.job.name }) : "");
         return text2(`${header}

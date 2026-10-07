@@ -29743,6 +29743,9 @@ import { readFileSync as readFileSync12 } from "node:fs";
 function text(value) {
   return typeof value === "string" && value ? value : void 0;
 }
+function primaryFor(job) {
+  return (!job.parentJob && (!Array.isArray(job.ownershipHistory) || !job.ownershipHistory.length) ? text(job.owner) : void 0) ?? text(job.rootName) ?? text(job.owner) ?? "";
+}
 function mastersFor(job) {
   const history = Array.isArray(job.ownershipHistory) ? job.ownershipHistory : [];
   const names = [
@@ -29757,7 +29760,7 @@ function canControlJob(job, name2, groupMasters = []) {
   return !name2.includes("/") && (mastersFor(job).includes(name2) || groupMasters.some((p) => p.name === name2 && !p.host && !p.jobAgent && !p.subagent));
 }
 function chooseJobRecipient(job, livePeers, groupMasters = []) {
-  const primary = text(job.rootName) ?? text(job.owner) ?? "";
+  const primary = primaryFor(job);
   const live = new Set(livePeers.filter((p) => !p.host && !p.jobAgent && !p.subagent && !p.unavailable && !p.name.includes("/")).map((p) => p.name));
   if (live.has(primary)) return primary;
   const history = Array.isArray(job.ownershipHistory) ? job.ownershipHistory : [];
@@ -36472,6 +36475,10 @@ async function runDelegateInner(rc, target, a, signal, onProgress, background, j
   const codexHash = target === "codex" ? codexPermissionHookHash() : null;
   const askUser = rc.askUser ? async (r) => {
     if (!job) return rc.askUser(r);
+    if (job.ownershipHistory?.length && job.owner !== rc.me() && rc.jobs) {
+      const answer = await rc.jobs.askParent(job, `${r.tool}: ${r.detail}`, PARENT_APPROVAL_TIMEOUT_MS, r);
+      return answer.allow ? { allow: true } : { allow: false, message: answer.reason };
+    }
     const decision = await waitForApproval(
       job,
       `${r.tool}: ${r.detail}`,
@@ -36513,7 +36520,7 @@ async function runDelegateInner(rc, target, a, signal, onProgress, background, j
     if (!r.automaticReview && (isOwnServerCall(r) || isAutoApproved(r, autoApprove))) return { allow: true };
     let d;
     if (wiring) d = await wiring.onPermission(r);
-    else if (job && (!job.foreground || job.parentJob) && rc.jobs) {
+    else if (job && (!job.foreground || job.parentJob || job.ownershipHistory?.length) && rc.jobs) {
       const hint = approvalHint(r);
       const a2 = await rc.jobs.askParent(job, `${r.tool.replace(/^mcp:/, "MCP server ")}: ${r.detail}${hint}`, PARENT_APPROVAL_TIMEOUT_MS, r);
       d = a2.allow ? { allow: true } : { allow: false, message: `Denied by supervisor ${me}: ${a2.reason || "no reason supplied"}` };

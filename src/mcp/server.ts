@@ -1029,7 +1029,8 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
         const report = progressReporter(extra, log);
         const onProgress = (m: string) => {
           tracked?.onProgress(m);
-          report?.(m);
+          if (tracked?.job.ownershipHistory?.length && tracked.job.owner !== ctx.node?.name) ctx.jobs?.fromSubagent(tracked.job, m, null);
+          else report?.(m);
         };
         let res;
         try {
@@ -1040,10 +1041,12 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
         } catch (err) {
           tracked?.end({ error: err });
           log.warn("ask failed", { job: tracked?.job.name, err: (err as Error).message });
+          if (tracked?.job.ownershipHistory?.length && tracked.job.owner !== ctx.node?.name) return text(`Job ${tracked.job.name} is supervised by ${tracked.job.owner}; its report was routed there.`);
           const identity = tracked ? `Job: ${tracked.job.name}\n${target} session_id: ${tracked.job.sessionId ?? "-"}\n\n` : "";
           return text(`${identity}${describeError(err)}`, true);
         }
         tracked?.end({ result: res });
+        if (tracked?.job.ownershipHistory?.length && tracked.job.owner !== ctx.node?.name) return text(`Job ${tracked.job.name} is supervised by ${tracked.job.owner}; its report was routed there.`);
         const header =
           (tracked ? `Job: ${tracked.job.name}\n` : "") +
           t("delegate.done", { agent: target, session: res.sessionId ?? "-" }) +

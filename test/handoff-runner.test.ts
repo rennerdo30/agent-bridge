@@ -49,6 +49,29 @@ async function call(client: Client, name: string, args: Record<string, unknown> 
   return { text: (result.content as { text: string }[]).map((c) => c.text ?? "").join("\n"), error: result.isError };
 }
 
+it("hands off a blocking ask without returning results or notes to the old caller", async () => {
+  const source = await session("codex-source", "codex", true), target = await session("claude-target", "claude");
+  const release = join(env.home, "release"), linkFile = join(env.home, "link.json"); releases.push(release);
+  const pending = call(source, "ask_claude", { prompt: `release=${release} link=${linkFile} blocking work`, title: "Blocking inherited job" });
+  await until(() => existsSync(linkFile));
+  const job = readStore(join(env.home, "jobs.json")).find((j) => j.name.startsWith("claude-ask-"))!;
+  expect(job).toBeDefined();
+  expect((await call(source, "handoff_subagents", { to: "claude-target" })).error).toBeFalsy();
+  await call(source, "inbox");
+  const child = parentFromEnv(JSON.parse(readFileSync(linkFile, "utf8")))!;
+  await child.send("Foreground post-handoff note");
+  expect(readStore(join(env.home, "jobs.json")).find((j) => j.id === job.id)!.deliveryHistory?.some((m) => m.body.includes("Foreground post-handoff note"))).toBe(true);
+  writeFileSync(release, "");
+  const originalReply = await pending;
+  expect(originalReply.text).toContain("supervised by claude-target");
+  expect(originalReply.text).not.toContain("Inherited runner finished");
+  let inherited = "";
+  await expect.poll(async () => { inherited += (await call(target, "inbox")).text; return inherited.includes("Inherited runner finished"); }, { timeout: 5000 }).toBe(true);
+  expect(inherited).toContain("Foreground post-handoff note");
+  expect((await call(source, "inbox")).text).not.toMatch(/Foreground post-handoff|Inherited runner finished/);
+  expect(readStore(join(env.home, "jobs.json")).find((j) => j.id === job.id)!.deliveryHistory).toBeDefined();
+});
+
 it.each([
   ["codex", "claude", false], ["codex", "claude", true], ["opencode", "codex", false], ["codex", "opencode", false],
 ] as const)("hands off %s to %s (inline=%s), delivers once and retains master controls", async (fromAgent, toAgent, inline) => {

@@ -3,6 +3,10 @@ import type { PeerInfo } from "./protocol.js";
 export type OwnedJob = Record<string, unknown>;
 function text(value: unknown): string | undefined { return typeof value === "string" && value ? value : undefined; }
 
+export function primaryFor(job: OwnedJob): string {
+  return (!job.parentJob && (!Array.isArray(job.ownershipHistory) || !job.ownershipHistory.length) ? text(job.owner) : undefined) ?? text(job.rootName) ?? text(job.owner) ?? "";
+}
+
 /** Persisted grants and historical primaries remain masters; nested parent jobs are not sessions. */
 export function mastersFor(job: OwnedJob): string[] {
   const history = Array.isArray(job.ownershipHistory) ? job.ownershipHistory : [];
@@ -18,7 +22,7 @@ export function canControlJob(job: OwnedJob, name: string, groupMasters: readonl
 
 /** Routing never mutates the primary. When it returns, only future mail returns to it. */
 export function chooseJobRecipient(job: OwnedJob, livePeers: readonly PeerInfo[], groupMasters: readonly PeerInfo[] = []): string {
-  const primary = text(job.rootName) ?? text(job.owner) ?? "";
+  const primary = primaryFor(job);
   const live = new Set(livePeers.filter((p) => !p.host && !p.jobAgent && !p.subagent && !p.unavailable && !p.name.includes("/")).map((p) => p.name));
   if (live.has(primary)) return primary;
   const history = Array.isArray(job.ownershipHistory) ? job.ownershipHistory : [];

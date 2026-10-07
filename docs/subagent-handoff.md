@@ -32,6 +32,8 @@ The journal commits before delivery effects. Broker startup replays pending mail
 
 Detached runners keep running and accept attachment from their new supervisor. Inline runs stay in their original executor until completion; the broker validates new-supervisor controls and forwards them to that executor. Closing the original executor still ends an inline run, as it did before handoff; use detached runners for work that must survive session shutdown. Queued continuations and forwarded messages remain in the job record. Pending approval views project the new root owner while retaining the original relay capability.
 
+Running blocking `ask_*` jobs can move too. Their original tool call returns only a supervision confirmation; the result, subsequent notes and approval requests go to the new primary through the durable delivery path.
+
 Live root concurrency leases move to the target root even if its capacity is already exceeded. Running work is preserved, and further work waits until capacity is free. Existing target jobs determine its stable root identity; otherwise the target's session identity is used. Descendant managers refresh their root from the parent record before spawning. Depth remains the same because the target is a top-level session and immediate parent relationships remain unchanged.
 
 ## Dashboard
