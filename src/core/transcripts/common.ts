@@ -77,9 +77,9 @@ export function fileStat(file: string): Stats | null {
   try { return statSync(file); } catch { return null; }
 }
 /** Refuse symlinks that escape the CLI's storage root, including child-folder junctions. */
-export function safeFile(root: string, file: string): string | null {
+export function safeFile(root: string, file: string, canonicalRoot?: string): string | null {
   try {
-    const actual = realpathSync(file), rel = relative(realpathSync(root), actual);
+    const actual = realpathSync.native(file), rel = relative(canonicalRoot ?? realpathSync.native(root), actual);
     return rel && rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel) ? actual : null;
   } catch { return null; }
 }

@@ -1,9 +1,10 @@
-import { readFileSync, readdirSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { lstatSync, readdirSync, realpathSync, statSync } from "node:fs";
+import { isAbsolute, join, relative, sep } from "node:path";
 import { JOBS_FILE } from "./constants.js";
 import { isRecord } from "./json-store.js";
 import { RUNS_DIR_NAME, type RunMeta } from "./runfeed.js";
 import { safeFile } from "./transcripts/common.js";
+import { fileSignature, readJsonSnapshot } from "./file-cache.js";
 
 export const DEFAULT_RUN_PAGE_SIZE = 50;
 export const MAX_RUN_PAGE_SIZE = 500;
@@ -13,40 +14,58 @@ const ARCHIVE_SUFFIX = /(\.(?:log|json))-\d+-[\w-]+$/;
 
 /** Unlike readJsonStore, inspection never repairs or renames malformed data. */
 export function readHistoryJson(file: string): unknown {
-  try { return JSON.parse(readFileSync(file, "utf8")); } catch { return null; }
+  try { return structuredClone(readJsonSnapshot(file).value); } catch { return null; }
 }
 
 function files(dir: string): string[] {
   try { return readdirSync(dir); } catch { return []; }
 }
 
-export interface RunLogRecord { name: string; file: string; updatedAt: number; archived: boolean; meta: RunMeta }
+export interface RunLogRecord { name: string; file: string; updatedAt: number; size: number; signature: string; archived: boolean; meta: RunMeta }
 
 /** Match independently archived metadata by original name, not by its archive timestamp/UUID. */
 export function readRunLogs(home: string): RunLogRecord[] {
   const root = join(home, RUNS_DIR_NAME);
+  let canonicalRoot: string;
+  try { canonicalRoot = realpathSync.native(root); } catch { return []; }
   const records = new Map<string, RunLogRecord>();
   for (const archived of [true, false]) {
     const dir = archived ? join(root, "archive") : root;
-    const names = files(dir).sort();
+    let canonicalDir: string;
+    try { canonicalDir = realpathSync.native(dir); } catch { continue; }
+    const rel = relative(canonicalRoot, canonicalDir);
+    if (rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) continue;
+    const names = files(canonicalDir).sort();
+    // Direct files under a validated canonical directory need only lstat, not a full ancestor
+    // realpath traversal per poll. Internal symlinks retain the existing safeFile check.
+    const localFile = (name: string) => {
+      const file = join(canonicalDir, name);
+      try {
+        const st = lstatSync(file);
+        return st.isFile() ? { file, st } : st.isSymbolicLink() ? (() => {
+          const actual = safeFile(root, file, canonicalRoot);
+          return actual ? { file: actual, st: statSync(actual) } : null;
+        })() : null;
+      } catch { return null; }
+    };
     const metadata = new Map<string, RunMeta>();
     for (const name of names) {
       const original = archived ? name.replace(ARCHIVE_SUFFIX, "$1") : name;
       if (!original.endsWith(".json")) continue;
-      const file = safeFile(root, join(dir, name));
-      const value = file ? readHistoryJson(file) : null;
+      const record = localFile(name);
+      const value = record ? readHistoryJson(record.file) : null;
       if (isRecord(value)) metadata.set(original, value as RunMeta);
     }
     for (const name of names) {
       const original = archived ? name.replace(ARCHIVE_SUFFIX, "$1") : name;
       if (!RUN_LOG_NAME.test(original)) continue;
-      const file = safeFile(root, join(dir, name));
-      if (!file) continue;
+      const local = localFile(name);
+      if (!local) continue;
+      const { file, st } = local;
       try {
-        const st = statSync(file);
         if (!st.isFile()) continue;
         const key = original.slice(0, -".log".length);
-        const record = { name: key, file, updatedAt: st.mtimeMs, archived, meta: metadata.get(`${key}.json`) ?? {} };
+        const record = { name: key, file, updatedAt: st.mtimeMs, size: st.size, signature: fileSignature(st), archived, meta: metadata.get(`${key}.json`) ?? {} };
         const previous = records.get(key);
         if (!previous || !archived || record.updatedAt >= previous.updatedAt) records.set(key, record);
       } catch { /* A concurrent archiver may have moved the file; retry on the next read. */ }
@@ -58,6 +77,8 @@ export function readRunLogs(home: string): RunLogRecord[] {
 /** All durable job snapshots, oldest first; active records take precedence over archives. */
 export function readHistoryJobs(home: string): Map<string, Record<string, unknown>> {
   const out = new Map<string, Record<string, unknown>>();
+  let canonicalHome: string;
+  try { canonicalHome = realpathSync.native(home); } catch { return out; }
   const archive = join(home, "archive");
   const archived = files(archive).filter((name) => name.startsWith(`${JOBS_FILE}.`) || name.startsWith(`${JOBS_FILE}-`) || /^jobs-.*\.json$/.test(name)).sort();
   const backups = files(home).filter((name) => name.startsWith(`${JOBS_FILE}.backup-`) || name === `${JOBS_FILE}.overflow.json`).sort();
@@ -69,7 +90,7 @@ export function readHistoryJobs(home: string): Map<string, Record<string, unknow
   };
   snapshots.sort((a, b) => snapshotTime(a) - snapshotTime(b) || (a < b ? -1 : a > b ? 1 : 0));
   for (const candidate of [...snapshots, join(home, JOBS_FILE)]) {
-    const file = safeFile(home, candidate);
+    const file = safeFile(home, candidate, canonicalHome);
     const value = file ? readHistoryJson(file) : null;
     const jobs = Array.isArray(value) ? value : isRecord(value) && Array.isArray(value.jobs) ? value.jobs : [];
     for (const job of jobs) {

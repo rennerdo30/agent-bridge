@@ -1,6 +1,5 @@
 import { HISTORY_TICK_MS, historySearchSchema } from "./history.js";
 import { randomUUID } from "node:crypto";
-import { readFileSync } from "node:fs";
 import { createServer, type Server, type Socket } from "node:net";
 import {
   MAX_BODY_CHARS,
@@ -34,7 +33,9 @@ import {
 import { agentQueueKey, MessageStore, registrationIdentity } from "./store.js";
 import { tokensEqual } from "./token.js";
 import { isRecord, retentionLimit } from "./json-store.js";
-import { readArchivedJobs } from "./job-archive.js";
+import { readArchivedJobSnapshot } from "./job-archive.js";
+import { readJsonSnapshot, type JsonSnapshot } from "./file-cache.js";
+import { completionMessageId, COMPLETION_DEDUPE_PREFIX } from "./completion.js";
 import { isJobSendTarget, MAX_JOB_SEND_TARGETS } from "./job-messaging.js";
 import { NetworkService, type NetworkStatus } from "../network/link.js";
 import { readNetworkConfig, writeNetworkConfig, type NetworkConfig } from "../network/config.js";
@@ -93,6 +94,8 @@ export class Broker {
   private readonly remoteProgress = new Map<string, string>();
   private networkChange: Promise<unknown> = Promise.resolve();
   private readonly handlers: { [O in Op]: Handler<O> };
+  private jobsSnapshot: { active: JsonSnapshot; archive: string; records: Record<string, unknown>[] } | null = null;
+  private jobsForDispatch: Record<string, unknown>[] | null = null;
 
   constructor(
     private readonly pipePath: string,
@@ -453,14 +456,27 @@ export class Broker {
 
   private storedJobs(): Record<string, unknown>[] {
     if (!this.jobsPath) return [];
+    // Sibling routing consults the registry several times in one synchronous dispatch batch.
+    // Share that snapshot until the next microtask, without a timer-based stale window.
+    if (this.jobsForDispatch) return this.jobsForDispatch;
     try {
-      const data: unknown = JSON.parse(readFileSync(this.jobsPath, "utf8"));
+      const active = readJsonSnapshot(this.jobsPath), archive = readArchivedJobSnapshot(this.jobsPath);
+      if (this.jobsSnapshot?.active === active && this.jobsSnapshot.archive === archive.signature) {
+        this.jobsForDispatch = this.jobsSnapshot.records;
+        queueMicrotask(() => { this.jobsForDispatch = null; });
+        return this.jobsForDispatch;
+      }
+      const data = active.value;
       const jobs = Array.isArray(data) ? data : isRecord(data) && Array.isArray(data.jobs) ? data.jobs : [];
       const merged = new Map<string, Record<string, unknown>>();
-      for (const job of [...readArchivedJobs(this.jobsPath), ...jobs.filter(isRecord)]) {
+      for (const job of [...archive.jobs, ...jobs.filter(isRecord)]) {
         if (typeof job.id === "string") merged.set(job.id, job);
       }
-      return [...merged.values()];
+      const records = [...merged.values()];
+      this.jobsSnapshot = { active, archive: archive.signature, records };
+      this.jobsForDispatch = records;
+      queueMicrotask(() => { this.jobsForDispatch = null; });
+      return records;
     } catch {
       return [];
     }
@@ -908,7 +924,8 @@ export class Broker {
     }
     conversationId ||= randomUUID();
 
-    const id = randomUUID();
+    const id = sender.jobAgent && args.dedupeKey?.startsWith(COMPLETION_DEDUPE_PREFIX)
+      ? completionMessageId(sender.id, args.dedupeKey.slice(COMPLETION_DEDUPE_PREFIX.length)) : randomUUID();
     const createdAt = this.now();
     const base = {
       id,

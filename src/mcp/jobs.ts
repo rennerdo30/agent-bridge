@@ -14,6 +14,7 @@ import { ARCHIVE_AGE_ENV, DEFAULT_ARCHIVE_AGE_MS } from "../core/run-archive.js"
 import { newApprovalId, publishApproval, type PermissionDecision, type PermissionRequest } from "../core/relay.js";
 import { notifyJobEvent } from "../core/notifications.js";
 import { RootConcurrency } from "../core/root-concurrency.js";
+import { completionMessageId } from "../core/completion.js";
 
 const JOB_ID_LENGTH = 8;
 const PROMPT_PREVIEW_CHARS = 120;
@@ -135,6 +136,8 @@ export interface RunnerState {
   seen?: string[];
   /** The final report, and whether it reached the session (as a message on the bridge). */
   report?: string;
+  /** Stable turn delivery identity shared with the runner's broker message. Older states omit it. */
+  reportId?: string;
   delivered?: boolean;
   finishedAt?: number;
 }
@@ -309,7 +312,7 @@ export class JobManager {
       const jobId = /(?:^|\/)job:([0-9a-f]+)$/.exec(m.from.id)?.[1];
       if (!jobId) return;
       const job = this.running.get(jobId);
-      if (job?.host) this.checkHosted(job);
+      if (job?.host) this.checkHostedSafely(job);
     });
     // Runners send to this session by name: tell them where it is now (a new server, maybe a new name).
     node.on("connected", () => {
@@ -361,8 +364,12 @@ export class JobManager {
       assertWritableStore(previous);
       const entries = Array.isArray(previous) ? previous : isRecord(previous) ? previous.jobs as unknown[] : [];
       const archived = new Map(readArchivedJobs(this.storePath).map((j) => [j.id, j]));
+      const byId = new Map<unknown, Record<string, unknown>>();
+      for (const entry of entries) {
+        if (isRecord(entry) && !byId.has(entry.id)) byId.set(entry.id, entry);
+      }
       const mine = [...this.history.values()].filter((j) => this.own.has(j.id)).map((j) => {
-        const old = entries.find((entry) => isRecord(entry) && entry.id === j.id) ?? archived.get(j.id);
+        const old = byId.get(j.id) ?? archived.get(j.id);
         return mergeStoreFields(isRecord(old) ? old : {}, toStored(j)) as StoredJob;
       });
       const ids = new Set(mine.map((j) => j.id));
@@ -820,7 +827,7 @@ export class JobManager {
       },
       // The cause is the whole report here: the error says what happened (and, for a worktree, where the work is).
       (err) => this.finish(job, "failed", "", sessionOfError(err), failureCause({ error: err })),
-    );
+    ).catch((err) => this.log.warn("subagent completion processing failed; broker remains available", { job: job.name, err: String(err) }));
   }
 
   /** A running job of this manager that a job runner hosts. */
@@ -837,9 +844,17 @@ export class JobManager {
         clearInterval(this.hostTimer);
         this.hostTimer = null;
       }
-      for (const job of hosted) this.checkHosted(job);
+      for (const job of hosted) this.checkHostedSafely(job);
     }, HOST_POLL_MS);
     this.hostTimer.unref();
+  }
+
+  /** Poll and message callbacks run outside a tool request's error boundary. A temporary storage
+   * or runner fault must not terminate the hosting broker or prevent other jobs being checked.
+   */
+  private checkHostedSafely(job: Job): void {
+    try { this.checkHosted(job); }
+    catch (err) { this.log.warn("job runner check deferred after failure", { job: job.name, err: String(err) }); }
   }
 
   /**
@@ -885,7 +900,8 @@ export class JobManager {
     const pid = job.host?.pid;
     job.host = null;
     if (final) {
-      this.finish(job, final.status === "done" ? "done" : "failed", "", final.sessionId ?? null, null, final.delivered ? null : final.report);
+      this.finish(job, final.status === "done" ? "done" : "failed", "", final.sessionId ?? null, null, final.delivered ? null : final.report,
+        final.reportId ? completionMessageId(`job:${job.id}`, final.reportId) : undefined);
       return;
     }
     const cause = job.controller.signal.aborted ? "cancelled" : `its job runner${pid ? ` (process ${pid})` : ""} ended without reporting a result`;
@@ -917,7 +933,7 @@ export class JobManager {
           this.log.warn("job runner did not stop in time; killing it", { job: job.name, pid: job.host?.pid });
           runners.kill(job);
         }
-        this.checkHosted(job);
+        this.checkHostedSafely(job);
       }, CANCEL_GRACE_MS).unref();
     }
     return true;
@@ -938,7 +954,7 @@ export class JobManager {
   }
 
   /** `report`: null when the runner already delivered it, a text to post as it is, or undefined to compose it here. */
-  private finish(job: Job, status: "done" | "failed", text: string, sessionId: string | null, cause: string | null = null, report?: string | null): void {
+  private finish(job: Job, status: "done" | "failed", text: string, sessionId: string | null, cause: string | null = null, report?: string | null, messageId?: string): void {
     denyPendingApprovals(job);
     this.running.delete(job.id);
     job.etaAt = undefined;
@@ -955,11 +971,11 @@ export class JobManager {
     // Follow-ups that arrived meanwhile go out right away, into the same session (it keeps its slot).
     if (job.queue.length && job.resume && job.sessionId && !job.controller.signal.aborted) {
       const queued = job.queue.splice(0).join("\n\n");
-      if (message !== null) this.post(job, `${message}\n\n${QUEUED_FOLLOW_UP_NOTE}`);
+      if (message !== null) this.post(job, `${message}\n\n${QUEUED_FOLLOW_UP_NOTE}`, null, "", messageId);
       this.launch(job, job.resume(queued, job.sessionId, job.workdir, job.worktree));
       return;
     }
-    if (message !== null) this.post(job, message);
+    if (message !== null) this.post(job, message, null, "", messageId);
     // Its slot is free: the continuation waiting longest starts now.
     this.startWaiting();
   }
@@ -1000,9 +1016,9 @@ export class JobManager {
     return this.notes.has(m.id) || m.conversationId.endsWith(NOTE_CONVERSATION_SUFFIX) || isQuietMessage(m);
   }
 
-  private post(job: Job, body: string, replyTo: string | null = null, suffix = ""): string {
+  private post(job: Job, body: string, replyTo: string | null = null, suffix = "", id: string = randomUUID()): string {
     const m: BridgeMessage = {
-      id: randomUUID(),
+      id,
       from: { id: `job:${job.id}`, name: job.name, agent: job.agent },
       to: this.node.name,
       recipient: this.node.name,

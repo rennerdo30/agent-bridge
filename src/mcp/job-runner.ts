@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { COMPLETION_DEDUPE_PREFIX } from "../core/completion.js";
 import { archiveFile, assertWritableStore, readJsonStore } from "../core/json-store.js";
 import { failureCause } from "../core/delegate.js";
 import { createLogger } from "../core/logger.js";
@@ -128,9 +129,9 @@ async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: WindowsJo
   // Messages to the session, in order. Each is tried until the bridge takes it (the session may be offline:
   // then it waits in the store for the session's next server).
   let chain: Promise<boolean> = Promise.resolve(true);
-  const deliver = async (body: string, replyTo: string | null, note = false): Promise<boolean> => {
+  const deliver = async (body: string, replyTo: string | null, note = false, key?: string): Promise<boolean> => {
     // One key for all attempts: a send that timed out here may still be queued at a slow broker.
-    const dedupeKey = randomUUID();
+    const dedupeKey = key ?? randomUUID();
     for (let attempt = 1; attempt <= SEND_ATTEMPTS; attempt++) {
       try {
         const suffix = isPureAcknowledgement(body) ? ACK_CONVERSATION_SUFFIX : note ? NOTE_CONVERSATION_SUFFIX : "";
@@ -143,7 +144,7 @@ async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: WindowsJo
     }
     return false;
   };
-  const post = (body: string, replyTo: string | null = null, note = false): Promise<boolean> => (chain = chain.then(() => deliver(body, replyTo, note)));
+  const post = (body: string, replyTo: string | null = null, note = false, key?: string): Promise<boolean> => (chain = chain.then(() => deliver(body, replyTo, note, key)));
 
   const sink: JobSink = {
     persist: () => save(),
@@ -291,8 +292,9 @@ async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: WindowsJo
     closing = true;
     if (saveTimer) clearTimeout(saveTimer);
     // The state first: once the report arrives, the session must find the job finished.
-    save({ status, report, delivered: false, finishedAt: Date.now() });
-    const delivered = await post(report);
+    const reportId = randomUUID();
+    save({ status, report, reportId, delivered: false, finishedAt: Date.now() });
+    const delivered = await post(report, null, false, `${COMPLETION_DEDUPE_PREFIX}${reportId}`);
     save({ delivered });
     log.info("job runner done", { status, delivered });
     break;

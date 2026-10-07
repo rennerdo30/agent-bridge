@@ -1,0 +1,172 @@
+/** Opt-in load profile. Bundle with esbuild, then run with node; never part of Vitest.
+ * All writes are confined to a fresh synthetic home. Owner storage is never opened.
+ */
+import fs from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { randomUUID } from "node:crypto";
+import { performance, monitorEventLoopDelay } from "node:perf_hooks";
+import { Session } from "node:inspector";
+import { Worker } from "node:worker_threads";
+import { Broker } from "../src/core/broker.js";
+import { BridgeClient } from "../src/core/client.js";
+import { MessageStore } from "../src/core/store.js";
+import { nullLogger } from "../src/core/logger.js";
+import { PROTOCOL_VERSION } from "../src/core/constants.js";
+import { resolvePipePath } from "../src/core/paths.js";
+import { startUi } from "../src/cli/ui.js";
+import { listRuns } from "../src/core/dashboard-read.js";
+import { JobManager, acquireLock, type Job, type Run } from "../src/mcp/jobs.js";
+import { EventEmitter } from "node:events";
+import { NetworkService } from "../src/network/link.js";
+import { DEFAULT_NETWORK_CONFIG } from "../src/network/config.js";
+import { decodePairingCode } from "../src/network/pairing.js";
+import type { PeerInfo, BridgeMessage } from "../src/core/protocol.js";
+
+const duration = Number(process.env.AB_PERF_SECONDS ?? 20);
+const home = fs.realpathSync.native(fs.mkdtempSync(join(tmpdir(), "abp-")));
+const pipe = resolvePipePath(home, {}), token = "synthetic-load-token";
+if (process.platform !== "win32" && Buffer.byteLength(pipe) >= 104) throw new Error("socket path too long");
+const pause = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+const samples: Record<string, number[]> = {};
+const io: Record<string, { calls: number; ms: number; bytes: number }> = {};
+const timed = async <T>(name: string, fn: () => T | Promise<T>): Promise<T> => {
+  const start = performance.now();
+  try { return await fn(); } finally { (samples[name] ??= []).push(performance.now() - start); }
+};
+// Measure actual synchronous read/write cost, rather than infer it from request latency.
+for (const name of ["readFileSync", "writeFileSync", "statSync", "realpathSync", "readdirSync"] as const) {
+  const original = fs[name] as (...args: any[]) => any;
+  const wrapper = (...args: any[]) => {
+    const start = performance.now(); let value;
+    try { return value = original(...args); }
+    finally {
+      const record = io[name] ??= { calls: 0, ms: 0, bytes: 0 };
+      record.calls++; record.ms += performance.now() - start;
+      const data = name === "writeFileSync" ? args[1] : value;
+      if (typeof data === "string" || Buffer.isBuffer(data)) record.bytes += Buffer.byteLength(data);
+    }
+  };
+  Object.assign(wrapper, original);
+  (fs as any)[name] = wrapper;
+}
+syncBuiltinESMExports();
+
+const inspector = new Session(); inspector.connect();
+const post = (method: string) => new Promise<any>((resolve, reject) => inspector.post(method as any, (err, value) => err ? reject(err) : resolve(value)));
+const clients: BridgeClient[] = [];
+let ui: Awaited<ReturnType<typeof startUi>> | undefined;
+let store: MessageStore | undefined, broker: Broker | undefined;
+let a: NetworkService | undefined, b: NetworkService | undefined;
+const managers: JobManager[] = [];
+const lag = monitorEventLoopDelay({ resolution: 10 });
+let failures = 0, delivered = 0, quietCopies = 0;
+try {
+  // No discovery of the owner's CLI transcripts in a synthetic load profile.
+  process.env.CODEX_HOME = join(home, "codex-fixture");
+  process.env.CLAUDE_CONFIG_DIR = join(home, "claude-fixture");
+  process.env.XDG_DATA_HOME = join(home, "xdg-fixture");
+  for (const name of ["codex-fixture", "claude-fixture", "xdg-fixture"]) fs.mkdirSync(join(home, name));
+  fs.mkdirSync(join(home, "runs", "archive"), { recursive: true });
+  fs.mkdirSync(join(home, "archive"));
+  fs.writeFileSync(join(home, "token"), token);
+  fs.writeFileSync(join(home, "config.json"), JSON.stringify({ notifications: { approvals: false, finish: false, fail: false } }));
+  const jobs = Array.from({ length: 400 }, (_, i) => ({ id: i.toString(16).padStart(8, "0"), name: `codex-job-${i.toString(16).padStart(8, "0")}`, agent: "codex", supervisor: "load-root", owner: "load-owner", prompt: "synthetic task ".repeat(140), startedAt: Date.now() - i * 1000, status: i < 30 ? "running" : "done", args: { title: `Load job ${i}` }, sessionId: null, workdir: home, worktree: null }));
+  fs.writeFileSync(join(home, "jobs.json"), JSON.stringify({ jobs }));
+  for (let i = 0; i < 164; i++) fs.writeFileSync(join(home, "archive", `jobs-${i}.json`), JSON.stringify({ jobs: [jobs[i]] }));
+  for (let i = 0; i < 680; i++) {
+    const name = `2026-10-01-00-00-00-codex-${i.toString(16).padStart(8, "0")}`;
+    const root = join(home, "runs", i % 2 ? "archive" : "");
+    fs.writeFileSync(join(root, `${name}.log`), `00:00:00 codex by load-owner in ${home}, access full\nsynthetic task\n---\n${"00:00:01 synthetic progress\n".repeat(3400)}00:00:02 finished after 2s · done\n`);
+    fs.writeFileSync(join(root, `${name}.json`), JSON.stringify({ job: jobs[i % jobs.length]!.name, title: `Run ${i}` }));
+  }
+  process.env.AGENT_BRIDGE_BACKUP_INTERVAL_MS = "0";
+  store = new MessageStore(join(home, "bridge.db"), nullLogger);
+  // Large, retained message history exercises the real dashboard query.
+  for (let i = 0; i < 8000; i++) store.insert({ id: randomUUID(), from: { id: "seed", name: "load-owner", agent: "codex" }, to: "load-owner", recipient: "load-owner", conversationId: `seed-${i}`, replyTo: null, hop: 0, body: "synthetic history ".repeat(80), createdAt: Date.now() - i, readAt: Date.now() });
+  const peers: PeerInfo[] = [];
+  const networkCfg = { ...DEFAULT_NETWORK_CONFIG, enabled: true, bind: "127.0.0.1", port: 0, discovery: false };
+  a = new NetworkService(join(home, "pc-a"), { ...networkCfg, name: "pc-a" }, { peers: () => peers, receive: () => ({ delivered: true }) }, nullLogger);
+  b = new NetworkService(join(home, "pc-b"), { ...networkCfg, name: "pc-b" }, { peers: () => peers.slice(30), receive: () => ({ delivered: true }) }, nullLogger);
+  await a.start(); await b.start();
+  const invitation = b.keys.invite();
+  // Profile an established pairing. Initial Windows ACL subprocesses run before the handshake clock.
+  b.keys.accept(decodePairingCode(invitation).key, a.keys.identity);
+  await a.link(invitation, "127.0.0.1", b.port);
+  broker = new Broker(pipe, store, nullLogger, token, Date.now, join(home, "jobs.json"));
+  await broker.listen();
+  for (let i = 0; i < 36; i++) {
+    const job = i < 30 ? jobs[i]! : undefined;
+    const p: PeerInfo = { id: job ? `job:${job.id}` : randomUUID(), name: job?.name ?? (i === 30 ? "load-owner" : `load-session-${i}`), agent: "codex", cwd: home, pid: process.pid, agentPid: null, sessionId: null, startedAt: Date.now(), autoWake: false, ...(job ? { jobAgent: "codex", jobOwner: "load-root", jobParent: "load-owner" } : {}) };
+    const client = await BridgeClient.connect(pipe, nullLogger);
+    client.on("event", (_ev, data) => { if (_ev === "message") { delivered++; if ((data as BridgeMessage).conversationId.endsWith(":note")) quietCopies++; } });
+    await client.request("hello", { protocol: PROTOCOL_VERSION, token, peer: p });
+    clients.push(client); peers.push(p);
+  }
+  ui = await startUi({ home, pipe, port: 0, log: nullLogger });
+  const secret = new URL(ui.url).searchParams.get("t");
+  let progressStart = performance.now();
+  for (let i = 0; i < 6; i++) {
+    const coordinator = Object.assign(new EventEmitter(), { name: i === 0 ? "load-owner" : `load-session-${30 + i}`, id: `root-${i}`, currentSessionId: `root-${i}`, send: async () => ({}), deliverLocal: () => {} });
+    const manager = new JobManager(coordinator as any, nullLogger, join(home, "jobs.json"), 5);
+    manager.runners = {
+      state: (job: Job) => ({ pid: process.pid, peer: job.name, status: "running", updatedAt: Date.now(), percent: Math.floor((performance.now() - progressStart) / 1000), progressNote: "synthetic progress" }),
+      alive: () => true, send: () => {}, kill: () => {},
+    };
+    const run = Object.assign(async () => new Promise<never>(() => {}), { hosted: (job: Job) => ({ pid: process.pid, peer: job.name, startedAt: Date.now() }) }) as Run;
+    for (let j = 0; j < 5; j++) manager.start("codex", null, "synthetic progress task", run);
+    managers.push(manager);
+  }
+  progressStart = performance.now();
+  for (const key of Object.keys(io)) delete io[key];
+  lag.enable();
+  await post("Profiler.enable"); await post("Profiler.start");
+  const cpu = process.cpuUsage(), started = performance.now();
+  for (let i = 0; i < 5; i++) await timed("listRuns", () => listRuns(home));
+  const finishAt = performance.now() + duration * 1000;
+  const loop = async (interval: number, fn: () => Promise<unknown>) => {
+    while (performance.now() < finishAt) { try { await fn(); } catch { failures++; } await pause(interval); }
+  };
+  // Six sessions each poll hooks. A hook uses a fresh authenticated pipe.
+  const hook = () => timed("hook", async () => {
+    const c = await BridgeClient.connect(pipe, nullLogger);
+    try { await c.request("auth", { protocol: PROTOCOL_VERSION, token }); await c.request("dashboardPeers", {}); }
+    finally { c.close(); }
+  });
+  await Promise.all([
+    loop(2000, () => timed("state", async () => { const res = await fetch(`http://127.0.0.1:${ui!.port}/api/state`, { headers: { cookie: `ab_ui=${secret}` } }); if (res.status !== 200) throw new Error(`HTTP ${res.status}`); await res.json(); })),
+    ...Array.from({ length: 6 }, () => loop(1000, hook)),
+    ...Array.from({ length: 30 }, (_, i) => loop(2000, () => timed("sibling", () => clients[i]!.request("sendSibling", { to: jobs[(i + 1) % 30]!.name, body: "synthetic coordination", maxHops: 32 })))),
+    loop(1000, () => timed("pairedPing", () => a!.verify(b!.keys.identity.id))),
+  ]);
+  for (const manager of managers) manager.setDormant(true);
+  const usage = process.cpuUsage(cpu), elapsed = performance.now() - started;
+  const profile = (await post("Profiler.stop")).profile;
+  const hits = new Map<number, number>(); for (const id of profile.samples ?? []) hits.set(id, (hits.get(id) ?? 0) + 1);
+  const hot = profile.nodes.map((n: any) => ({ fn: n.callFrame.functionName, file: n.callFrame.url.split("/").at(-1), samples: hits.get(n.id) ?? 0 })).filter((n: any) => n.samples).sort((x: any, y: any) => y.samples - x.samples).slice(0, 12);
+  // Isolated cross-process store contention: release from another thread after 300ms.
+  const coordinator = Object.assign(new EventEmitter(), { name: "load-owner", sessionId: "load-root", send: async () => ({}), deliverLocal: () => {} });
+  const manager = new JobManager(coordinator as any, nullLogger, join(home, "jobs.json"));
+  const tracked = manager.track("codex", null, "synthetic progress");
+  const lockPath = join(home, "jobs.json.lock");
+  const release = acquireLock(lockPath);
+  const worker = new Worker(`const { workerData, parentPort } = require('node:worker_threads'); const fs = require('node:fs'); setTimeout(() => { fs.rmSync(workerData); parentPort.postMessage('released'); }, 300);`, { eval: true, workerData: lockPath });
+  const workerDone = new Promise<void>((resolve) => worker.once("message", () => resolve()));
+  let heartbeat = 0; const heartbeatStart = performance.now();
+  const beat = setTimeout(() => { heartbeat = performance.now() - heartbeatStart; }, 20);
+  await timed("contendedPersist", () => manager.persist());
+  await workerDone; release(); await pause(30); clearTimeout(beat); tracked.end();
+  lag.disable();
+  const stats = Object.fromEntries(Object.entries(samples).map(([key, values]) => { const sorted = [...values].sort((x, y) => x - y); return [key, { count: values.length, meanMs: values.reduce((x, y) => x + y, 0) / values.length, p95Ms: sorted[Math.floor((sorted.length - 1) * .95)], maxMs: sorted.at(-1) }]; }));
+  console.log(JSON.stringify({ durationSeconds: duration, peers: peers.length, logs: 680, retainedMessages: 8000, elapsedMs: elapsed, cpuMs: (usage.user + usage.system) / 1000, cpuPercent: (usage.user + usage.system) / (elapsed * 10), eventLoop: { p95Ms: lag.percentile(95) / 1e6, p99Ms: lag.percentile(99) / 1e6, maxMs: lag.max / 1e6 }, heartbeatMsUnderStoreContention: heartbeat, failures, delivered, quietCopies, stats, io, hot }, null, 2));
+} finally {
+  lag.disable(); inspector.disconnect();
+  await ui?.close(); await a?.close(); await b?.close();
+  for (const manager of managers) manager.setDormant(true);
+  for (const c of clients) c.close();
+  await broker?.close(); store?.close();
+  // Only the fresh synthetic root is removed. No owner data or source links are used.
+  if (!home.startsWith(fs.realpathSync.native(tmpdir()))) throw new Error("unexpected synthetic root");
+  fs.rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+}

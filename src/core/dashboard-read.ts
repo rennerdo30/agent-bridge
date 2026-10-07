@@ -110,12 +110,26 @@ export function summarizeRun(file: string, text: string, mtimeMs: number, now: n
 export function listRuns(home: string, now = Date.now()): RunSummary[] {
   const runs: RunSummary[] = [];
   for (const log of readRunLogs(home)) {
-    try { runs.push({ ...summarizeRun(`${log.name}.log`, readFileSync(log.file, "utf8"), log.updatedAt, now, log.meta), archived: log.archived, recovered: false, hasLog: true }); }
+    try {
+      const signature = `${log.signature}:${JSON.stringify(log.meta)}`;
+      let cached = runSummaries.get(log.file);
+      if (cached?.signature !== signature) {
+        // Parse once while fresh; derive interrupted/ETA state on every poll, even for unchanged logs.
+        cached = { signature, summary: summarizeRun(`${log.name}.log`, readFileSync(log.file, "utf8"), log.updatedAt, log.updatedAt, log.meta) };
+        runSummaries.delete(log.file); runSummaries.set(log.file, cached);
+        if (runSummaries.size > 2048) runSummaries.delete(runSummaries.keys().next().value!);
+      }
+      const stale = cached.summary.status === "running" && now - log.updatedAt > STALE_RUN_MS;
+      runs.push({ ...structuredClone(cached.summary), ...(stale ? { status: "interrupted", etaAt: undefined, etaReportedAt: undefined } : {}), archived: log.archived, recovered: false, hasLog: true });
+    }
     catch { /* A concurrent archive operation is retried on the next refresh. */ }
   }
+  const representedJobs = new Set(runs.map((run) => run.job));
+  const representedSuffixes = new Set<string>();
+  for (const run of runs) for (let at = run.name.indexOf("-"); at >= 0; at = run.name.indexOf("-", at + 1)) representedSuffixes.add(run.name.slice(at));
   for (const [name, job] of readHistoryJobs(home)) {
     // Older logs lack job metadata; their filename still includes the original agent/job id.
-    if (runs.some((run) => run.job === name || (typeof job.id === "string" && run.name.endsWith(`-${job.agent}-${job.id}`)))) continue;
+    if (representedJobs.has(name) || (typeof job.id === "string" && representedSuffixes.has(`-${job.agent}-${job.id}`))) continue;
     const args = isRecord(job.args) ? job.args : {};
     const worktree = isRecord(job.worktree) ? job.worktree as unknown as Worktree : null;
     const prompt = typeof job.prompt === "string" ? job.prompt : "";
@@ -138,6 +152,8 @@ export function listRuns(home: string, now = Date.now()): RunSummary[] {
   }
   return pageRuns(runs, null, runs.length).runs;
 }
+
+const runSummaries = new Map<string, { signature: string; summary: RunSummary }>();
 
 export function readMeta(file: string): RunMeta {
   try {
@@ -181,10 +197,12 @@ export type DashboardPeer = PeerInfo & { subagent: boolean; parent: string | nul
 export function classifyPeers(peers: PeerInfo[], runs: RunSummary[], home: string): DashboardPeer[] {
   const norm = (p: string) => p.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
   const worktrees = `${norm(join(home, "worktrees"))}/`;
+  const byWorkdir = new Map<string, RunSummary>();
+  for (const run of runs) if (run.workdir && !byWorkdir.has(norm(run.workdir))) byWorkdir.set(norm(run.workdir), run);
   return peers.map((p) => {
     const cwd = norm(p.cwd ?? "");
     const subagent = cwd.startsWith(worktrees);
-    const run = subagent ? runs.find((r) => r.workdir && norm(r.workdir) === cwd) : undefined;
+    const run = subagent ? byWorkdir.get(cwd) : undefined;
     return { ...p, subagent: Boolean(p.jobAgent || p.subagent || subagent), parent: p.parentJob ?? p.jobParent ?? p.rootName ?? run?.by ?? null };
   });
 }

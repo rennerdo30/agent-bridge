@@ -87,6 +87,7 @@ class Link {
   private heartbeatPending = false;
   private receiptsSupported = false;
   private capabilities: string[] = [];
+  private advertisedPeers: string | null = null;
   private extensionHandlers = 0;
   private buffer = Buffer.alloc(0);
   private readonly pending = new Map<string, Pending>();
@@ -175,7 +176,13 @@ class Link {
   }
 
   refresh(): void {
-    if (this.remote) this.write({ type: "peers", peers: this.service.localPeers() });
+    if (!this.remote) return;
+    const peers = this.service.localPeers(), signature = JSON.stringify(peers);
+    // Echo still runs every refresh; peers are a full compatible snapshot only when changed.
+    // Older brokers without echo continue receiving their periodic advertisement.
+    if (this.echoSupported && signature === this.advertisedPeers) return;
+    this.write({ type: "peers", peers });
+    this.advertisedPeers = signature;
   }
 
   send(message: BridgeMessage): Promise<DeliveryResult> {
