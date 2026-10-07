@@ -241,6 +241,49 @@ it("filters mixed-sender raw chunks correctly after a late job/project binding a
     }).hits.length,
   ).toBeGreaterThan(0);
 });
+it("backfills oversized archived approvals without retaining their listening capabilities", () => {
+  const f = setup(),
+    dir = join(env.home, "archive", "approvals");
+  mkdirSync(dir, { recursive: true });
+  const path = join(dir, "legacy-large.json"),
+    command = "x".repeat(160_000) + " legacy_approval_tail 🐈";
+  const original = JSON.stringify({
+    id: "legacy-large",
+    owner: "owner",
+    job: "opencode-job-legacy",
+    agent: "opencode",
+    tool: "edit",
+    command,
+    askedAt: 1,
+    deadline: 2,
+    pid: 123,
+    port: 456,
+    token: "local-capability-value",
+  });
+  writeFileSync(path, original);
+  f.tick();
+  const page = readConversation(f.db, { id: "bridge:job:opencode-job-legacy" });
+  const copy = JSON.parse(
+    Buffer.concat(
+      page.records.map((r) => Buffer.from(r.raw, "base64")),
+    ).toString("utf8"),
+  );
+  expect(copy.command).toBe(command);
+  expect(copy.token).toBeUndefined();
+  expect(copy.port).toBeUndefined();
+  expect(copy.pid).toBeUndefined();
+  expect(
+    f.index.search({
+      query: "legacy_approval_tail",
+      filters: {
+        kind: "approval",
+        agent: "opencode",
+        job: "opencode-job-legacy",
+      },
+    }).hits.length,
+  ).toBeGreaterThan(0);
+  expect(readFileSync(path, "utf8")).toBe(original);
+});
 it("upgrades the complete 0.29.10 disk layout without losing any old records", () => {
   const db = new DatabaseSync(env.db);
   db.exec(

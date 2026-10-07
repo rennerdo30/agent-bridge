@@ -677,6 +677,13 @@ export class ConversationIngestor {
         Math.min(CONVERSATION_BYTES, Math.max(0, stat.size - offset)),
       );
       let bytes = readSync(fd, data, 0, data.length, offset);
+      if (
+        source.format === "approval" &&
+        bytes &&
+        offset + bytes < stat.size &&
+        stat.size - offset - bytes < 1024
+      )
+        bytes = Math.max(1, bytes - 1024);
       // Keep valid UTF-8 code points together, while the raw column retains arbitrary bytes.
       if (bytes && offset + bytes < stat.size) {
         let start = bytes - 1;
@@ -686,6 +693,22 @@ export class ConversationIngestor {
         if (bytes - start < need) bytes = start;
       }
       if (bytes) {
+        if (source.format === "approval" && offset + bytes === stat.size) {
+          // Legacy publishers put these short capabilities last. Reserve their
+          // suffix for one chunk, remove it in the copy, and never edit the file.
+          const text = data.subarray(0, bytes).toString("utf8");
+          const capability =
+            /,\s*"pid"\s*:\s*\d+,\s*"port"\s*:\s*\d+,\s*"token"\s*:\s*"(?:\\.|[^"\\])*"\s*}\s*$/.exec(
+              text,
+            );
+          if (capability) {
+            const start = Buffer.byteLength(text.slice(0, capability.index));
+            const replacement = Buffer.from(
+              " ".repeat(Buffer.byteLength(capability[0]) - 1) + "}",
+            );
+            replacement.copy(data, start);
+          }
+        }
         if (offset === 0 && /\.json(?:-.*)?$/.test(source.path)) {
           const metadata = parse(data.subarray(0, bytes).toString("utf8"));
           if (typeof metadata.job === "string") {
@@ -734,6 +757,9 @@ export class ConversationIngestor {
               "project",
               "agentId",
               "cwd",
+              "id",
+              "rootSession",
+              "owner",
             ]) {
               const match = new RegExp(
                 `"${key}"\\s*:\\s*("(?:\\\\.|[^"\\\\])*")`,
@@ -777,8 +803,9 @@ export class ConversationIngestor {
                 .run(project);
           }
           if (
-            source.format === "journal" &&
-            ["progress", "report", "approval"].includes(row.kind)
+            (source.format === "journal" &&
+              ["progress", "report", "approval"].includes(row.kind)) ||
+            (source.format === "approval" && typeof row.id === "string")
           ) {
             const id = row.job ? `bridge:job:${row.job}` : source.conversation;
             const project = conversationProject(
@@ -791,10 +818,10 @@ export class ConversationIngestor {
               .run(
                 id,
                 String(row.agent ?? "other"),
-                String(row.session ?? ""),
+                String(row.session ?? row.rootSession ?? row.owner ?? ""),
                 project,
                 row.job ?? null,
-                row.kind,
+                row.kind ?? "approval",
               );
             if (project)
               this.db
@@ -802,7 +829,7 @@ export class ConversationIngestor {
                   "INSERT OR IGNORE INTO conversation_projects(project) VALUES(?)",
                 )
                 .run(project);
-            fragment = { id, kind: row.kind };
+            fragment = { id, kind: row.kind ?? "approval" };
           }
           if (
             (agent !== "codex" ||
@@ -890,47 +917,6 @@ export class ConversationIngestor {
     }
   }
   private journal(source: Record<string, any>): number {
-    if (!safeFile(this.home, source.path)) return 0;
-    if (source.format === "approval") {
-      if (Number(source.offset)) return 0;
-      // Legacy approval JSON is one bounded public record; capabilities are deliberately excluded.
-      let fd: number | undefined;
-      try {
-        fd = openSync(source.path, "r");
-        const raw = Buffer.alloc(CONVERSATION_BYTES);
-        const length = readSync(fd, raw, 0, raw.length, 0);
-        const value = parse(raw.subarray(0, length).toString("utf8"));
-        if (!value.id) return 0;
-        const { token, port, pid, ...approval } = value;
-        const id = `bridge:approval:${value.id}`,
-          job = typeof value.job === "string" ? value.job : null;
-        this.db
-          .prepare(
-            "INSERT OR IGNORE INTO conversations(id,agent,session,job,kind) VALUES(?,?,?,?,?)",
-          )
-          .run(
-            id,
-            String(value.agent ?? "other"),
-            String(value.rootSession ?? value.owner ?? ""),
-            job,
-            "approval",
-          );
-        this.put(
-          source.id,
-          0,
-          0,
-          id,
-          Buffer.from(JSON.stringify(approval)),
-          Number(value.askedAt ?? 0),
-        );
-        return Number(source.offset) ? 0 : 1;
-      } finally {
-        if (fd !== undefined) closeSync(fd);
-        this.db
-          .prepare("UPDATE conversation_sources SET offset=1 WHERE id=?")
-          .run(source.id);
-      }
-    }
     return this.jsonl(source);
   }
   private sqlite(source: Record<string, any>): number {
