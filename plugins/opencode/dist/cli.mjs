@@ -7714,7 +7714,7 @@ import { connect } from "node:net";
 import { homedir } from "node:os";
 import { join } from "node:path";
 var APP_NAME = "agent-bridge";
-var APP_VERSION = "0.29.10";
+var APP_VERSION = "0.29.12";
 var PROTOCOL_VERSION = 2;
 var ENV = {
   home: "AGENT_BRIDGE_HOME",
@@ -29808,7 +29808,23 @@ function canonicalProjectRoot(cwd) {
       const top = realpathSync3.native(git2(["--show-toplevel"]));
       const common = realpathSync3.native(resolve5(physical, git2(["--git-common-dir"])));
       if (common.endsWith("/.git") || common.endsWith("\\.git")) return realpathSync3.native(dirname9(common));
-      return top;
+      try {
+        const configured = execFileSync(
+          "git",
+          ["--git-dir", common, "config", "--get", "core.worktree"],
+          { encoding: "utf8", timeout: 3e3, windowsHide: true, stdio: ["ignore", "pipe", "ignore"] }
+        ).trim();
+        if (configured) return realpathSync3.native(resolve5(common, configured));
+      } catch {
+      }
+      const worktrees = execFileSync(
+        "git",
+        ["-C", physical, "worktree", "list", "--porcelain"],
+        { encoding: "utf8", timeout: 3e3, windowsHide: true, stdio: ["ignore", "pipe", "ignore"] }
+      );
+      const main2 = worktrees.split(/\r?\n\r?\n/).find((entry) => !/^bare$/m.test(entry));
+      const root = main2 && /^worktree (.+)$/m.exec(main2)?.[1];
+      return root ? realpathSync3.native(root) : top;
     } catch {
       return physical;
     }
@@ -33051,7 +33067,7 @@ function commitHandoff(path, source, target, input2, options = {}) {
         ownershipHistory: [...Array.isArray(history) ? history : [], change]
       }];
     }));
-    const active = Array.isArray(previous) ? previous : isRecord(previous) && Array.isArray(previous.jobs) ? previous.jobs : [];
+    const active = activeRecords;
     const ids = new Set(active.filter(isRecord).map((j) => j.id));
     const all = active.map((j) => isRecord(j) ? updates.get(String(j.id)) ?? j : j);
     for (const [id, job] of updates) if (!ids.has(id)) all.push(job);
@@ -36068,6 +36084,7 @@ function readStoredJobs(home) {
     const saved = args && typeof args === "object" ? args : {};
     out2.set(name2, {
       owner: typeof owner === "string" && owner ? owner : null,
+      ...typeof j.projectRoot === "string" ? { projectRoot: j.projectRoot } : {},
       next: Object.fromEntries(JOB_SETTING_KEYS.filter((key2) => saved[key2] !== void 0).map((key2) => [key2, saved[key2]])),
       ...remote && typeof remote.host === "string" && typeof remote.name === "string" ? { remote } : {}
     });
@@ -36628,7 +36645,7 @@ async function runDelegateInner(rc, target, a, signal, onProgress, background, j
   const codexHash = target === "codex" ? codexPermissionHookHash() : null;
   const askUser = rc.askUser ? async (r) => {
     if (!job) return rc.askUser(r);
-    if (job.ownershipHistory?.length && job.owner !== rc.me() && rc.jobs) {
+    if (rc.jobs && (job.ownershipHistory?.length && job.owner !== rc.me() || rc.jobs.recipient && await rc.jobs.recipient(job) !== rc.me())) {
       const answer = await rc.jobs.askParent(job, `${r.tool}: ${r.detail}`, PARENT_APPROVAL_TIMEOUT_MS, r);
       return answer.allow ? { allow: true } : { allow: false, message: answer.reason };
     }
@@ -37602,6 +37619,11 @@ var Broker = class {
         if (!job || !this.groups.canControl(peer, job, this.localPeers())) return null;
         return job;
       },
+      jobRecipient: (c, a) => {
+        const peer = this.requirePeer(c), job = this.storedJobs().find((j) => j.name === a.job);
+        if (!job || !this.groups.canControl(peer, job, this.localPeers())) throw new BridgeError("unauthorized", "Only a master can inspect the job recipient.");
+        return this.jobRecipient(job);
+      },
       inlineJobControl: async (c, a) => {
         const peer = this.requirePeer(c), job = this.storedJobs().find((j) => j.name === a.job);
         if (!job || !this.groups.canControl(peer, job, this.localPeers())) throw new BridgeError("unauthorized", "Only the current supervisor can control this job.");
@@ -37610,7 +37632,7 @@ var Broker = class {
           await this.onSend(c, { to: String(job.name), body: JSON.stringify(a.control), conversationId: `${CONTROL_CONVERSATION_PREFIX}${job.id}` });
           return { sent: true };
         }
-        const executor = typeof job.executionOwner === "string" ? this.connByName(job.executionOwner) : void 0;
+        const executor = typeof (job.executionOwner ?? job.owner) === "string" ? this.connByName(String(job.executionOwner ?? job.owner)) : void 0;
         if (job.status !== "running") {
           const recipient = this.jobRecipient(job);
           const primary = this.connByName(recipient);
@@ -38109,17 +38131,22 @@ Handoff note: ${receipt.note}` : "") + "\n\nYou are their supervisor. Use messag
   routePendingJobMail() {
     const live = [...this.conns].flatMap((c) => c.peer ? [c.peer] : []);
     for (const job of this.storedJobs()) {
-      if (job.remote) continue;
+      if (job.remote || !primaryFor(job)) continue;
       const recipient = this.jobRecipient(job), target = this.connByName(recipient);
       if (Array.isArray(job.deliveryHistory)) for (const envelope of job.deliveryHistory) {
         if (!isRecord(envelope) || !isRecord(envelope.from) || envelope.from.id !== `job:${job.id}` || typeof envelope.id !== "string" || typeof envelope.body !== "string") continue;
         const message = { ...envelope, to: recipient, recipient, conversationId: this.jobConversation(job, recipient, String(envelope.conversationId)) };
-        if (this.store.insertJobDelivery(message) && target) this.emit(target, "message", message);
+        if (this.store.insertJobDelivery(message)) {
+          const names = /* @__PURE__ */ new Set([recipient, envelope.to, envelope.recipient, ...mastersFor(job)]);
+          const consumed = this.jobsPath && [...names].some((name2) => typeof name2 === "string" && new ReadJournal(dirname16(this.jobsPath)).read(`name:${name2}`).includes(message.id));
+          if (consumed) this.store.markRead(recipient, [message.id], this.now());
+          else if (target) this.emit(target, "message", message);
+        }
       }
       if (!target) continue;
       for (const from of this.store.pendingJobRecipients(String(job.id))) {
         if (this.jobsPath) this.store.markRead(from, new ReadJournal(dirname16(this.jobsPath)).read(`name:${from}`), this.now());
-        const moved = this.store.handoffMail(from, recipient, String(job.id), this.now(), recipient !== job.parentJob && recipient !== (job.rootName ?? job.owner));
+        const moved = this.store.handoffMail(from, recipient, String(job.id), this.now(), recipient !== job.parentJob && recipient !== primaryFor(job));
         const previous = this.connByName(from);
         if (previous && moved.length) this.emit(previous, "mail_retracted", { ids: moved.map((m) => m.id) });
         for (const m of moved) this.emit(target, "message", m);
@@ -38131,7 +38158,7 @@ Handoff note: ${receipt.note}` : "") + "\n\nYou are their supervisor. Use messag
     return chooseJobRecipient(job, this.localPeers(), this.groups.members(job, this.localPeers()));
   }
   jobConversation(job, recipient, conversationId) {
-    if (recipient === job.parentJob || recipient === (job.rootName ?? job.owner) || isQuietMessage({ conversationId })) return conversationId;
+    if (recipient === job.parentJob || recipient === primaryFor(job) || isQuietMessage({ conversationId })) return conversationId;
     return conversationId.replace(/:note$/, "") + (conversationId.endsWith(":fallback") ? "" : ":fallback");
   }
   refreshJobPeer(job) {
@@ -39156,6 +39183,9 @@ var BridgeNode = class extends EventEmitter2 {
   projectJobs() {
     return this.withClient((c) => c.request("projectJobs", {}));
   }
+  jobRecipient(job) {
+    return this.withClient((c) => c.request("jobRecipient", { job }));
+  }
   async setUnavailable(unavailable) {
     const peer = await this.withClient((c) => c.request("coordinatorAvailability", { unavailable }));
     this.unavailable = unavailable;
@@ -39982,7 +40012,10 @@ function parseOpencodeModelCosts(text2) {
   const out2 = [];
   try {
     const models2 = JSON.parse(text2).data;
-    if (Array.isArray(models2)) return models2.flatMap((m) => typeof m.cost?.input === "number" && typeof m.cost?.output === "number" ? [{ id: `${m.providerID}/${m.id}`, input: m.cost.input, output: m.cost.output }] : []);
+    if (Array.isArray(models2)) return models2.flatMap((m) => {
+      if (!Array.isArray(m.cost) || !m.cost.length || m.cost.some((c) => typeof c.input !== "number" || typeof c.output !== "number")) return [];
+      return [{ id: `${m.providerID}/${m.id}`, input: Math.max(...m.cost.map((c) => c.input)), output: Math.max(...m.cost.map((c) => c.output)) }];
+    });
   } catch {
   }
   const parts = text2.split(/^([\w.-]+\/[\w.:@-]+)\r?\n(?=\{)/m);
@@ -41441,11 +41474,15 @@ function projectSidebar(items) {
   for (const x of items) {
     const key = x.peer && !pcOf(x.name) && x.peer.projectGroup;
     if (!key) { projects.set(x.name, { title: null, items: [x] }); continue; }
-    if (!projects.has(key)) projects.set(key, { title: folder(x.peer.projectRoot), items: [] });
+    if (!projects.has(key)) projects.set(key, { title: folder(x.peer.projectRoot), root: x.peer.projectRoot, items: [] });
     projects.get(key).items.push(x);
   }
   return [...projects.values()].map((p) => {
-    const jobs = p.title ? [...new Map(p.items.flatMap((x) => x.groups.map((g) => [g.key, { g, owner: x.name }]))).values()] : [];
+    const sameRoot = (a, b) => String(a || '').split(String.fromCharCode(92)).join('/').toLowerCase() === String(b || '').split(String.fromCharCode(92)).join('/').toLowerCase();
+    const jobs = p.title ? [...new Map(items.flatMap((x) => x.groups.filter((g) => {
+      const root = state.jobs[g.job]?.projectRoot;
+      return root ? sameRoot(root, p.root) : p.items.includes(x);
+    }).map((g) => [g.key, { g, owner: x.name }]))).values()] : [];
     const rows = jobs.filter((x) => x.g.status === 'running').map((x) => '<div class="tree-sess"><a href="' + href(x.owner, x.g.key) + '">' + dot('busy') + '<span class="lbl ell">' + esc(x.g.title || x.g.job || 'Subagent') + '<small class="ell">' + esc(x.g.agent) + ' \xB7 project job</small></span></a></div>').join('');
     return (p.title ? '<div class="tree-pc"><span>' + esc(p.title) + '</span><span>project</span></div>' : '') + p.items.map(sideSession).join('') + rows;
   }).join('');
@@ -43527,7 +43564,7 @@ async function startUi(opts) {
         remoteErrors,
         messages: recentMessages(dbPath),
         // Saved next-turn settings per job (message_subagent or the dashboard may have changed them).
-        jobs: { ...Object.fromEntries([...readStoredJobs(opts.home)].map(([name2, j]) => [name2, { next: j.next, ...j.remote ? { remote: j.remote } : {} }])), ...Object.assign({}, ...remoteStates.map((r) => r.jobs)) }
+        jobs: { ...Object.fromEntries([...readStoredJobs(opts.home)].map(([name2, j]) => [name2, { next: j.next, projectRoot: j.projectRoot, ...j.remote ? { remote: j.remote } : {} }])), ...Object.assign({}, ...remoteStates.map((r) => r.jobs)) }
       });
     }
     if (req.method === "GET" && url2.pathname === "/api/network") {
@@ -43650,7 +43687,7 @@ async function startUi(opts) {
     if (req.method === "POST" && url2.pathname === "/api/subagents/handoff") {
       if (req.headers["x-agent-bridge"] !== "1") return send(res, 403, { error: "missing header" });
       const body = await readJson2(req);
-      const parsed = handoffSchema.safeParse({ to: body.to, jobs: body.jobs, note: body.note });
+      const parsed = handoffSchema.safeParse({ to: body.to, jobs: body.jobs, note: body.note, switch_project_main: body.switch_project_main });
       if (!parsed.success || typeof body.from !== "string" || body.from.includes("/")) return send(res, 400, { error: "An exact local source and valid handoff arguments are required." });
       try {
         const result = await controlDashboardJob(await getSender(), body.from, "", { type: "handoff", ...parsed.data });
@@ -48498,7 +48535,7 @@ async function runOwnedJobRunner(spec, log, scope) {
       return;
     }
     refreshOwner();
-    if (!canControlJob(job, m.from.name)) {
+    if (!owner.includes("/") && !canControlJob(job, m.from.name)) {
       const peers = await node2.peers();
       const master = peers.find((p) => p.name === m.from.name);
       if (!master || !new ProjectGroups(home).canControl(master, job, peers)) return;
