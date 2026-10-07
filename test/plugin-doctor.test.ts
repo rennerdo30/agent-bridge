@@ -1,14 +1,13 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { inspectPluginVersions, pluginDoctorPaths, type PluginDoctorPaths } from "../src/cli/plugin-doctor.js";
-import { updateClaude, updateCodex } from "../src/cli/live-update.js";
+import { updateCodex } from "../src/cli/live-update.js";
 import { installOpencode } from "../src/cli/opencode-install.js";
 import { installAntigravity } from "../src/cli/antigravity-install.js";
-import { recordRuntimeSession, selectRuntime } from "../src/core/plugin-runtime.js";
+import { publishPlugin, recordRuntimeSession, selectRuntime } from "../src/core/plugin-runtime.js";
 import { APP_VERSION } from "../src/core/constants.js";
-import { marketplaceFixture } from "./marketplace-fixture.js";
 
 let dir: string, paths: PluginDoctorPaths, source: string;
 const put = (path: string, value: unknown) => { mkdirSync(join(path, ".."), { recursive: true }); writeFileSync(path, typeof value === "string" ? value : JSON.stringify(value)); };
@@ -23,12 +22,15 @@ beforeEach(() => {
 afterEach(() => rmSync(dir, { recursive: true, force: true, maxRetries: 3 }));
 
 function installed() {
-  const market = marketplaceFixture(dir, paths.claude); market.release(APP_VERSION);
-  put(join(paths.claude, "plugins", "installed_plugins.json"), { version: 2, plugins: { "agent-bridge@agent-bridge": [{ version: "0.1.0", installPath: "old", scope: "user" }] } });
-  updateClaude(source, paths.claude); updateCodex(source, paths.codex);
+  const clone = join(paths.claude, "plugins", "marketplaces", "agent-bridge");
+  put(join(clone, ".claude-plugin", "marketplace.json"), { name: "agent-bridge", plugins: [{ name: "agent-bridge", version: APP_VERSION, source: "./plugins/claude" }] });
+  cpSync(source, join(clone, "plugins", "claude"), { recursive: true });
+  const root = publishPlugin(source, join(paths.claude, "plugins", "cache", "agent-bridge", "agent-bridge"));
+  put(join(paths.claude, "plugins", "installed_plugins.json"), { version: 2, plugins: { "agent-bridge@agent-bridge": [{ version: APP_VERSION, installPath: root, scope: "user" }] } });
+  updateCodex(source, paths.codex);
   selectRuntime(paths.bridge, "claude", source); selectRuntime(paths.bridge, "codex", source);
   installOpencode(source, paths.opencode); installAntigravity(source, paths.antigravity);
-  return market;
+  return { clone };
 }
 function snapshot(root: string): Record<string, string> {
   if (!existsSync(root)) return {};

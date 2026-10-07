@@ -83,7 +83,7 @@ const SUBAGENT_TOOLS = new Set(["peers", "send", "report_progress", "hook_event"
 const STAND_IN_RECHECK_MS = 30_000;
 const KEPT_ARGS = ["native_subagents", "host", "model", "effort", "cwd", "timeout_sec", "worktree", "access", "sandbox", "terminal_sandbox", "bypass_permissions", "approvals_reviewer", "permission_mode", "auto_approve", "allow_tools", "send_to", "title"] as const;
 /** Plugin root: dist/server.mjs lives one level below it. */
-const PLUGIN_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const PLUGIN_ROOT = resolve(bundleDirectory(import.meta.url), "..");
 
 /** Accepts a plain path or a file:// URI (Codex serializes PathUri either way depending on version). */
 export function pathFromUriOrPath(v: unknown): string | null {
@@ -1442,3 +1442,4 @@ ${res.text || t("delegate.empty")}`, res.isError);
 }
 
 export { formatMessage };
+import { bundleDirectory } from "../core/bundle-directory.js";
