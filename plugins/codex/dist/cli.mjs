@@ -32681,7 +32681,12 @@ var OPENCODE_READ_ONLY_TOOLS = {
   bridge_wait_for_message: true
 };
 function childEnv(extra = {}) {
-  const { CLAUDE_PROJECT_DIR: _parentProject, ...env } = process.env;
+  const {
+    CLAUDE_PROJECT_DIR: _parentProject,
+    AGENT_BRIDGE_PLUGIN_RUNTIME_HOME: _parentRuntime,
+    AGENT_BRIDGE_LAUNCH_PLUGIN_ROOT: _parentPlugin,
+    ...env
+  } = process.env;
   return { ...env, ...extra, [ENV.internal]: "1", [DELEGATE_DEPTH_ENV]: String(currentDelegateDepth() + 1) };
 }
 function checkDepth(max = Number(process.env[ENV.maxDelegateDepth] ?? DEFAULT_MAX_DELEGATE_DEPTH), env = process.env) {

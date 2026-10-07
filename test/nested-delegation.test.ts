@@ -62,6 +62,19 @@ async function connect(ctx: ServerContext): Promise<Client> {
 }
 
 describe("nested delegation", () => {
+  it("does not carry a parent's plugin selector into another delegated host", () => {
+    vi.stubEnv("AGENT_BRIDGE_PLUGIN_RUNTIME_HOME", join(home, "native-runtime"));
+    vi.stubEnv("AGENT_BRIDGE_LAUNCH_PLUGIN_ROOT", join(home, "native-plugin"));
+    vi.stubEnv("AGENT_BRIDGE_HOME", home);
+    vi.stubEnv("AGENT_BRIDGE_PARENT_URL", "http://127.0.0.1:1234");
+    const env = childEnv();
+    expect(env.AGENT_BRIDGE_PLUGIN_RUNTIME_HOME).toBeUndefined();
+    expect(env.AGENT_BRIDGE_LAUNCH_PLUGIN_ROOT).toBeUndefined();
+    expect(env.AGENT_BRIDGE_HOME).toBe(home);
+    expect(env.AGENT_BRIDGE_PARENT_URL).toBe("http://127.0.0.1:1234");
+    expect(env.AGENT_BRIDGE_INTERNAL).toBe("1");
+    expect(childEnv({ AGENT_BRIDGE_PLUGIN_RUNTIME_HOME: "target-runtime" }).AGENT_BRIDGE_PLUGIN_RUNTIME_HOME).toBe("target-runtime");
+  });
   it("allows depth 2, refuses depth 3 by default and enforces the hard ceiling", () => {
     expect(() => checkDepth(2, { AGENT_BRIDGE_DELEGATE_DEPTH: "1" })).not.toThrow();
     expect(() => checkDepth(2, { AGENT_BRIDGE_DELEGATE_DEPTH: "2" })).toThrow("depth limit 2");
