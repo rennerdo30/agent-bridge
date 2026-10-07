@@ -149,7 +149,8 @@ explicit paired read operations retain their authentication and permissions.
 
 ## Validation
 
-`test/conversations.test.ts` and `test/conversations-retention.test.ts` verify exact oversized-byte retention, cursor
+The conversation tests and their byte, sidechain and OpenCode retention files
+verify exact oversized-byte retention, cursor
 restart/deduplication, replacement generations, OpenCode messages/parts/native
 grandchildren, old revisions, paging, mirrors and settings. The context tests
 cover envelope copies, decisions/events, OpenCode delegated MCP access and a
