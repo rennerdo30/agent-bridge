@@ -259,7 +259,9 @@ export class Broker {
         return { brokerPid: process.pid };
       },
       hello: async (c, a) => { const result = this.onHello(c, a); const job = this.storedJobs().find((j) => `job:${j.id}` === c.peer?.id); if (job?.ownershipHistory) this.refreshJobPeer(job); void this.routePendingJobMail().catch((err) => this.log.warn("pending job reroute deferred", { err: String(err) })); this.store.history.rememberPeer(c.peer!); return result; },
-      send: (c, a) => this.onSend(c, a),
+      send: (c, a) => this.onSend(c, { ...a, messageId: undefined }),
+      trackedSend: (c, a) => this.onTrackedSend(c, a),
+      sendState: (c, a) => this.sendState(c, z.uuid().parse(a.id).toLowerCase()),
       decide: (c, a) => this.onDecide(c, a),
       decisions: (c, a) => this.onDecisions(c, a),
       searchHistory: (_, a) => {
@@ -1259,6 +1261,50 @@ export class Broker {
   /** Results of recent sends by dedupe key (see SendArgs.dedupeKey), so a retry is not sent twice. */
   private readonly sentByKey = new Map<string, { at: number; result: RequestMap["send"][1] }>();
   private readonly sendingByKey = new Map<string, Promise<RequestMap["send"][1]>>();
+  private readonly trackedSending = new Map<string, { sender: string; fingerprint: string; result: Promise<RequestMap["send"][1]> }>();
+
+  private sendState(conn: Conn, id: string): RequestMap["sendState"][1] {
+    const sender = this.requirePeer(conn), message = this.store.byId(id), pending = this.trackedSending.get(id);
+    if ((message && message.from.name !== sender.name) || (pending && pending.sender !== sender.name)) {
+      throw new BridgeError("unauthorized", "Only the original sender can inspect or retry this message id.");
+    }
+    return { id, state: message ? "stored" : pending ? "pending" : "not_stored", checkedAt: this.now(),
+      message, receipts: message ? this.store.receipts(id) : [] };
+  }
+
+  private async onTrackedSend(conn: Conn, args: RequestMap["trackedSend"][0]): Promise<RequestMap["send"][1]> {
+    const id = z.uuid().parse(args.messageId).toLowerCase(), sender = this.requirePeer(conn);
+    const state = this.sendState(conn, id);
+    if (state.message) {
+      const message = state.message;
+      // Recipient routing hints are the only broker-added body suffix. Ownership may redirect job mail.
+      const bodyMatches = message.body === args.body || message.body.startsWith(args.body + "\n\n[agent-bridge routing hint:");
+      if (!bodyMatches || (!sender.jobAgent && message.to !== args.to.trim()) ||
+          message.replyTo !== (args.replyTo?.trim() || null) ||
+          args.conversationId && message.conversationId !== args.conversationId.trim() &&
+          !(sender.jobAgent && message.conversationId === args.conversationId.trim() + ":fallback")) {
+        throw new BridgeError("bad_request", "Message id already stored with different content; use a new id for a new message.");
+      }
+      return { messages: this.store.messagesById(id), deliveredTo: [], queuedFor: [], storage: { id, state: "stored", recovered: true, receipts: state.receipts } };
+    }
+    const fingerprint = JSON.stringify([args.to, args.body, args.replyTo, args.conversationId, args.ifNoNewerThan]);
+    const pending = this.trackedSending.get(id);
+    if (pending) {
+      if (pending.fingerprint !== fingerprint) throw new BridgeError("bad_request", "Message id already pending with different content.");
+      return pending.result;
+    }
+    const result = this.routeSend(conn, sender, { ...args, messageId: id }).then(sent => ({ ...sent,
+      storage: { id, state: this.store.byId(id) ? "stored" as const : "not_stored" as const, receipts: this.store.receipts(id) } }));
+    this.trackedSending.set(id, { sender: sender.name, fingerprint, result });
+    try {
+      return await result;
+    } catch (error) {
+      const state = this.store.byId(id) ? "stored" : "not_stored";
+      throw new BridgeError(error instanceof BridgeError ? error.code : "internal",
+        `Message ${id} is ${state} in this broker; routing failed: ${(error as Error).message}`,
+        { ...(error instanceof BridgeError ? error.details : {}), messageId: id, state });
+    } finally { this.trackedSending.delete(id); }
+  }
 
   private async onSend(conn: Conn, args: RequestMap["send"][0]): Promise<RequestMap["send"][1]> {
     const sender = this.requirePeer(conn);
@@ -1334,11 +1380,11 @@ export class Broker {
     if (args.ifNoNewerThan && (!anchor || (anchor.from.id !== sender.id && !this.store.receipts(anchor.id).some(r => r.recipient === sender.name)))) {
       throw new BridgeError("bad_request", "if_no_newer_than must identify a message exchanged by this session.");
     }
-    conversationId ||= anchor?.conversationId || randomUUID();
+    conversationId ||= anchor?.conversationId || args.messageId || randomUUID();
     if (own && (to === own.rootName || to === own.owner || this.groups.members(own, this.localPeers()).some((p) => p.name === to) || mastersFor(own).includes(to))) conversationId = this.jobConversation(own, to, conversationId);
 
-    const id = sender.jobAgent && args.dedupeKey?.startsWith(COMPLETION_DEDUPE_PREFIX)
-      ? completionMessageId(sender.id, args.dedupeKey.slice(COMPLETION_DEDUPE_PREFIX.length)) : randomUUID();
+    const id = args.messageId ?? (sender.jobAgent && args.dedupeKey?.startsWith(COMPLETION_DEDUPE_PREFIX)
+      ? completionMessageId(sender.id, args.dedupeKey.slice(COMPLETION_DEDUPE_PREFIX.length)) : randomUUID());
     const createdAt = this.now();
     const base = {
       id,

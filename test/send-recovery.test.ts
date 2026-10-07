@@ -24,14 +24,14 @@ it.each(["claude", "codex", "opencode", "antigravity"] as const)("recovers a los
   let lost = false;
   const attempts: string[] = [];
   vi.spyOn(client, "request").mockImplementation(async (op, args: any) => {
-    if (op !== "send") return request(op, args);
+    if (op !== "trackedSend") return request(op, args);
     attempts.push(args.dedupeKey);
     const result = await request(op, args);
-    if (!lost) { lost = true; throw new Error("broker request timed out: send"); }
+    if (!lost) { lost = true; throw new Error("broker request timed out: trackedSend"); }
     return result;
   });
   const sent = await sender.send({ to: recipient.name, body: "RESPONSE_LOST" });
-  expect(sent.deliveredTo).toEqual([recipient.name]);
+  expect(sent.storage).toMatchObject({ id: sent.messages[0]!.id, state: "stored", recovered: true });
   expect(attempts).toHaveLength(2);
   expect(attempts[0]).toBeTruthy(); expect(attempts[1]).toBe(attempts[0]);
   await until(() => recipient.unread().length === 1);
@@ -67,9 +67,9 @@ it("recovers a sibling response without another note or supervisor observer copy
 it("reports unconfirmed delivery after two timeouts and does not retry permanent failures", async () => {
   const sender = env.node("sender"); await sender.start();
   const client = (sender as unknown as { client: BridgeClient }).client;
-  const request = vi.spyOn(client, "request").mockRejectedValue(new Error("broker request timed out: send"));
-  await expect(sender.send({ to: "offline", body: "uncertain" })).rejects.toThrow("Delivery is unconfirmed");
-  expect(request).toHaveBeenCalledTimes(2);
+  const request = vi.spyOn(client, "request").mockRejectedValue(new Error("broker request timed out: trackedSend"));
+  await expect(sender.send({ to: "offline", body: "uncertain" })).rejects.toThrow("Storage cannot be confirmed for message");
+  expect(request).toHaveBeenCalledTimes(3);
   request.mockClear().mockRejectedValue(new Error("unauthorized target"));
   await expect(sender.send({ to: "offline", body: "denied" })).rejects.toThrow("unauthorized target");
   expect(request).toHaveBeenCalledTimes(1);

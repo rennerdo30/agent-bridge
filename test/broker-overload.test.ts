@@ -152,7 +152,9 @@ describe("broker overload survival", () => {
       const delivered = operation === "pending result" || operation.startsWith("reassigned") ? sender : recipient;
       await until(() => delivered.unread().length === 1);
       expect(delivered.unread()[0]!.body).toBe("LOCKED_SEND");
-      expect(await submit()).toEqual(result);
+      const retried = await submit();
+      if (operation === "send" || runner) expect((retried as any).messages[0].id).toBe((result as any).messages[0].id);
+      else expect(retried).toEqual(result);
       expect(delivered.unread()).toHaveLength(1);
     } finally {
       worker.postMessage("release");

@@ -103,7 +103,7 @@ export class BridgeClient extends EventEmitter<BridgeClientEvents> {
         resolve(value as RequestMap[O][1]);
       }, reject: (err) => {
         if (/unknown op:/.test(err.message)) reject(new BridgeError("protocol_mismatch",
-          `Broker ${this.brokerVersion ? "v" + this.brokerVersion : "version unknown (older protocol)"} does not support ${op} required by server v${APP_VERSION}. Update the broker host and reload its session after current jobs finish; no operation was applied.`));
+          `Broker ${this.brokerVersion ? "v" + this.brokerVersion : "version unknown (older protocol)"} does not support ${op} required by server v${APP_VERSION}. Update the broker host and reload its session after current jobs finish; no operation was applied.`, { operation: op }));
         else reject(err);
       }, timer });
       this.socket.write(encodeFrame({ t: "req", id, op, args }));

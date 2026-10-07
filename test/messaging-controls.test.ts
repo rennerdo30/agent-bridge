@@ -4,7 +4,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { DEFAULT_CONFIG } from "../src/core/config.js";
 import { nullLogger } from "../src/core/logger.js";
-import { isQuietMessage } from "../src/core/protocol.js";
+import { BridgeError, isQuietMessage } from "../src/core/protocol.js";
 import { listPendingApprovals } from "../src/core/relay.js";
 import { JobManager, waitForApproval, type Run } from "../src/mcp/jobs.js";
 import { registerTools, type ServerContext } from "../src/mcp/server.js";
@@ -24,7 +24,7 @@ it.each(["claude", "codex", "opencode", "antigravity"] as const)("%s can broadca
     const job = jobs.start(agent, null, "Long task", signal => new Promise(resolve => signal.addEventListener("abort", () => resolve({ text: "Stopped", sessionId: null, isError: true, details: {} }))));
     job.live = { post: message => received.push(message) };
   }
-  const authority = vi.spyOn(node, "jobAuthority").mockRejectedValue(new Error("unknown op: jobAuthority"));
+  const authority = vi.spyOn(node, "jobAuthority").mockRejectedValue(new BridgeError("protocol_mismatch", "Broker does not support jobAuthority required by server", { operation: "jobAuthority" }));
   const projectJobs = vi.spyOn(node, "projectJobs").mockRejectedValue(new Error("unknown op: projectJobs"));
   const ctx: ServerContext = { node, jobs, home: env.home, cfg: DEFAULT_CONFIG, agent, log: nullLogger, cwd: () => env.home, channelActive: () => false };
   const server = new McpServer({ name: "test", version: "1" }); registerTools(server, ctx, []);
@@ -82,7 +82,7 @@ it("uses detached runner links, retains undeliverable mail and reports each fail
     expect(hosted.forwarded).toHaveLength(1);
     expect(queued.queue).toEqual(["Hold at next checkpoint"]);
     expect(results).toEqual([
-      { name: hosted.name, outcome: "queued on existing runner link; consumption unconfirmed" },
+      { name: hosted.name, outcome: "delivery attempted on existing runner link; queueing and consumption unconfirmed" },
       { name: queued.name, outcome: "queued for follow-up; no live link" },
       { name: failed.name, outcome: "failed: fixture transport unavailable" },
     ]);

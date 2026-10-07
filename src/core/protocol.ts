@@ -145,6 +145,8 @@ export interface HelloResult {
 }
 
 export interface SendArgs {
+  /** Stable UUID for durable recovery and retries, including across broker restarts. */
+  messageId?: string;
   to: string;
   body: string;
   conversationId?: string;
@@ -163,6 +165,8 @@ export interface MessageReceipt {
 }
 
 export interface SendResult {
+  /** Durable broker storage, independent of delivery, history indexing and consumption. */
+  storage?: { id: string; state: "stored" | "not_stored"; recovered?: boolean; receipts: MessageReceipt[] };
   /** Relevant unread mail at routing time. Delivery does not resolve crossed replies. */
   unreadBeforeSend?: { id: string; from: string; conversationId: string }[];
   projectRoute?: ProjectRoute;
@@ -214,6 +218,9 @@ export interface AuthArgs {
 }
 
 export interface RequestMap {
+  /** Older brokers must refuse this opcode rather than discard the durable identity. */
+  trackedSend: [SendArgs & { messageId: string }, SendResult];
+  sendState: [{ id: string }, { id: string; state: "stored" | "pending" | "not_stored"; checkedAt: number; message: BridgeMessage | null; receipts: MessageReceipt[] }];
   /** Separate opcode so an older broker refuses rather than silently ignoring the guard. */
   guardedSend: [SendArgs, SendResult];
   askOwner: [import("./owner-questions.js").AskOwnerArgs, { question: import("./owner-questions.js").OwnerQuestion; merged: boolean; similar: string[] }];
@@ -283,6 +290,7 @@ export type ErrorCode =
   | "ambiguous_target"
   | "unknown_target"
   | "protocol_mismatch"
+  | "timeout"
   | "unauthorized"
   | "too_large"
   | "internal";
@@ -351,4 +359,11 @@ export class FrameDecoder {
 
 export function encodeFrame(frame: Frame): string {
   return JSON.stringify(frame) + "\n";
+}
+
+/** Only an explicit unsupported-operation response proves that no request was applied. */
+export function isUnsupportedOperation(error: unknown, op: string): boolean {
+  return error instanceof Error && (error.message.includes(`unknown op: ${op}`) ||
+    error instanceof BridgeError && error.code === "protocol_mismatch" &&
+    (error.details?.operation === op || error.message.includes(`does not support ${op} required`)));
 }

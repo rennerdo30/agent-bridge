@@ -626,7 +626,7 @@ export class JobManager {
           this.persist();
           return { name: job.name, outcome: "queued for follow-up; no live link" };
         }
-        return { name: job.name, outcome: "queued on existing runner link; consumption unconfirmed" };
+        return { name: job.name, outcome: "delivery attempted on existing runner link; queueing and consumption unconfirmed" };
       } catch (err) { return { name: job.name, outcome: `failed: ${(err as Error).message}` }; }
     });
   }

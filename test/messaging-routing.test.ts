@@ -56,10 +56,10 @@ it("retained status notes cannot block a guarded proposal", async () => {
 it("an older broker cannot silently discard a requested reply guard", async () => {
   const a = env.node("a"); await a.start();
   const client = (a as unknown as { client: BridgeClient }).client;
-  const request = vi.spyOn(client, "request").mockRejectedValue(new Error("unknown op: guardedSend"));
-  await expect(a.send({ to: "offline", body: "Must be guarded", ifNoNewerThan: "anchor" })).rejects.toThrow("unknown op: guardedSend");
+  const request = vi.spyOn(client, "request").mockRejectedValue(new Error("unknown op: trackedSend"));
+  await expect(a.send({ to: "offline", body: "Must be guarded", ifNoNewerThan: "anchor" })).rejects.toThrow("unknown op: trackedSend");
   expect(request).toHaveBeenCalledTimes(1);
-  expect(request.mock.calls[0]![0]).toBe("guardedSend");
+  expect(request.mock.calls[0]![0]).toBe("trackedSend");
 });
 
 it("a fan-out persistence failure leaves no half-delivered project send", () => {
