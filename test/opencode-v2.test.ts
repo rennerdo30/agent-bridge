@@ -4,7 +4,7 @@ import { afterEach, expect, it } from "vitest";
 import { delegateToOpencode } from "../src/core/delegate.js";
 import { delegateToOpencodeServed } from "../src/core/opencode-served.js";
 import { nullLogger } from "../src/core/logger.js";
-import { readOpencodeModelCosts } from "../src/core/usage.js";
+import { parseOpencodeModelCosts, readOpencodeModelCosts } from "../src/core/usage.js";
 import { listOpencodeModels } from "../src/core/opencode-models.js";
 
 const dirs: string[] = [];
@@ -22,7 +22,7 @@ const args = process.argv.slice(2);
 const record = (value) => appendFileSync(new URL("calls.jsonl", import.meta.url), JSON.stringify(value) + "\\n");
 if (args[0] === "--version") { record({ probe: true }); console.log("opencode v${major}.0.24"); process.exit(0); }
 if (args.some(a => ["--dir", "--pure", ${major === 2 ? '"--variant", "--verbose"' : '"--standalone"'}].includes(a))) { console.error("Unrecognized flag"); process.exit(1); }
-if (args[0] === "api") { record({ args }); console.log(JSON.stringify({data:[{providerID:"provider",id:"free",cost:{input:0,output:0}}]})); process.exit(0); }
+if (args[0] === "api") { record({ args }); console.log(JSON.stringify({data:[{providerID:"provider",id:"free",cost:[{input:0,output:0}]}]})); process.exit(0); }
 if (args[0] === "models") { record({args}); console.log("provider/model"); process.exit(0); }
 if (args[0] === "run") {
   let prompt = "";
@@ -103,4 +103,11 @@ it("lists v2 models with child configuration and caches per executable and direc
   await listOpencodeModels(second.bin, second.cwd, nullLogger);
   expect(first.calls().filter(c => c.args?.[0] === "models").map(c => c.args)).toEqual([["models", "--standalone"]]);
   expect(second.calls().find(c => c.args?.[0] === "models").args).toEqual(["models"]);
+});
+
+it("does not classify paid context tiers or unknown prices as free", () => {
+  expect(parseOpencodeModelCosts(JSON.stringify({data:[
+    {providerID:"provider",id:"tiered",cost:[{input:0,output:0},{input:2,output:4,tier:{type:"context",size:100000}}]},
+    {providerID:"provider",id:"unknown",cost:[]},
+  ]}))).toEqual([{id:"provider/tiered",input:2,output:4}]);
 });
