@@ -172,6 +172,25 @@ describe("CodexWaker", () => {
     expect(calls()).toBe(1);
   });
 
+  it("allows later mail after queue acceptance without inventing permanent host activity", async () => {
+    fakeCodex(dir, 0, 0);
+    const node = fakeNode(dir);
+    const waker = new CodexWaker(node as unknown as BridgeNode, cfg(), nullLogger, { debounceMs: 20, queueTimeoutMs: 2_000 });
+    waker.setThreadId("thread-1");
+    node.inbox.push(mail("first")); node.emit("message", node.inbox[0]);
+    await until(() => calls() === 1);
+    await until(() => !(waker as unknown as { inFlight: boolean }).inFlight);
+    await new Promise(resolve => setTimeout(resolve, 80));
+    expect(calls()).toBe(1); // No autonomous retry of unconsumed mail.
+    node.inbox.push(mail("later")); node.emit("message", node.inbox[1]);
+    await until(() => calls() === 2);
+    await until(() => !(waker as unknown as { inFlight: boolean }).inFlight);
+    waker.setActivity("busy");
+    node.inbox.push(mail("reported-busy")); node.emit("message", node.inbox[2]);
+    await new Promise(resolve => setTimeout(resolve, 80));
+    expect(calls()).toBe(2);
+  });
+
   it("queues an awaited reply with auto-wake off and leaves mail unread if queuing fails", async () => {
     fakeCodex(dir, 1, 0);
     const node = fakeNode(dir); node.autoWakeEnabled = false;

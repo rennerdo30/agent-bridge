@@ -102,6 +102,7 @@ export class Broker {
   private readonly groups: ProjectGroups;
   /** Live role selection, recomputed after broker restart; no durable ownership is rewritten. */
   private readonly projectMains = new Map<string, string>();
+  private readonly projectRoutes = new Map<string, import("./protocol.js").ProjectRoute>();
   private server: Server | null = null;
   private readonly conns = new Set<Conn>();
   private historyBackground: HistoryBackground | null = null;
@@ -555,16 +556,38 @@ export class Broker {
     const members = this.localPeers().filter((p) => !p.jobAgent && !p.subagent && this.groups.decorate(p).projectGroup === key)
       .sort((a, b) => a.startedAt - b.startedAt || a.name.localeCompare(b.name));
     let main = this.projectMains.get(key);
-    if (!members.some((p) => p.name === main)) { main = members[0]?.name; if (main) this.projectMains.set(key, main); }
-    return { ...decorated, projectMain: main === peer.name, projectAddress: `project:${basename(decorated.projectRoot!)}` };
+    if (!members.some((p) => p.name === main)) { main = members[0]?.name; if (main) this.recordProjectMain(key, `project:${basename(decorated.projectRoot!)}`, main); }
+    return { ...decorated, projectMain: main === peer.name, projectAddress: `project:${basename(decorated.projectRoot!)}`, projectRoute: this.projectRoutes.get(key) };
   }
 
   private switchProjectMain(source: PeerInfo | null | undefined, target: PeerInfo | undefined): PeerInfo {
     if (!target || target.jobAgent || target.subagent || target.host) throw new BridgeError("bad_request", "Choose a live local project master.");
     const peer = this.projectPeer(target);
     if (!peer.projectGroup || source && (source.jobAgent || this.projectPeer(source).projectGroup !== peer.projectGroup)) throw new BridgeError("unauthorized", "Only a master of this project may switch its main session.");
-    this.projectMains.set(peer.projectGroup, peer.name);
+    this.recordProjectMain(peer.projectGroup, peer.projectAddress!, peer.name);
     return this.projectPeer(target);
+  }
+
+  private recordProjectMain(key: string, address: string, main: string): void {
+    const previous = this.projectMains.get(key);
+    if (previous === main) return;
+    const route = { address, main, since: this.now(), previous };
+    this.projectMains.set(key, main); this.projectRoutes.set(key, route);
+    if (previous) void this.notifyProjectMainChange(route).catch((err) => this.log.warn("project main notice deferred", { err: String(err) }));
+  }
+
+  private async notifyProjectMainChange(route: import("./protocol.js").ProjectRoute): Promise<void> {
+    const recipients = new Set([route.previous!, ...this.store.recentProjectSenders(route.address, route.previous!, route.since - 24 * 60 * 60 * 1_000)]);
+    for (const recipient of recipients) {
+      if (this.closing) return;
+      if (!PEER_NAME_PATTERN.test(recipient) || this.connByName(recipient)?.peer?.jobAgent) continue;
+      const message: BridgeMessage = { id: randomUUID(), from: { id: "bridge-project-routing", name: "agent-bridge", agent: "other" },
+        to: recipient, recipient, conversationId: `project-main-${randomUUID()}`, replyTo: null, hop: 0,
+        body: `${route.address} main changed from ${route.previous} to ${route.main} at ${new Date(route.since).toISOString().slice(11, 16)} UTC. Future project-address mail routes to ${route.main}; exact session names keep direct routing.`,
+        createdAt: route.since, readAt: null };
+      await this.store.retryWrite(() => this.store.insert(message));
+      const conn = this.recipientConn(recipient); if (conn) this.emit(conn, "message", message);
+    }
   }
 
   private sameJobFamily(a: PeerInfo, b: PeerInfo, jobs = this.storedJobs()): boolean {
@@ -1327,6 +1350,7 @@ export class Broker {
       queuedFor: queued,
     });
     const result: RequestMap["send"][1] = { messages, ...(skipped ? { skippedFor: skipped } : {}), deliveredTo: live.map((c) => c.peer!.name), queuedFor: queued, recipientStates: live.map((c) => ({ name: c.peer!.name, activity: c.peer!.activity, autoWake: c.peer!.autoWake, wakeOnDirect: c.peer!.wakeOnDirect, wakeAvailable: c.peer!.wakeAvailable, wakeMaxHops: c.peer!.wakeMaxHops })) };
+    if (to.startsWith("project:") && live[0]?.peer) result.projectRoute = this.projectPeer(live[0].peer).projectRoute;
     if (replyRestrictions.length) result.replyRestrictions = replyRestrictions;
     for (const recipient of remoteTargets) {
       // Fan out only at the originating broker. Receiving brokers deliver one local envelope.

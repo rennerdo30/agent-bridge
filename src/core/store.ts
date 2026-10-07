@@ -285,6 +285,12 @@ export class MessageStore {
   }
 
   /** Eligibility never removes history or old queued messages. Unknown old names are skipped. */
+  recentProjectSenders(address: string, previous: string, since: number): string[] {
+    return this.db.prepare(`SELECT from_name FROM messages WHERE to_target=? AND recipient=? AND created_at>=?
+      AND from_id NOT LIKE 'job:%' GROUP BY from_name ORDER BY MAX(created_at) DESC LIMIT 64`)
+      .all(address, previous, since).map((row) => String(row.from_name));
+  }
+
   broadcastRecipients(now: number, masters: ReadonlySet<string>): { queued: string[]; skipped: string[] } {
     const seen = this.db.prepare("SELECT seen_at FROM peer_last_seen WHERE name=?");
     const queued: string[] = [], skipped: string[] = [];

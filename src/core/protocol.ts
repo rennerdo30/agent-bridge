@@ -50,7 +50,10 @@ export interface SiblingPeer {
   finishedAt?: number;
 }
 
+export interface ProjectRoute { address: string; main: string; since: number; previous?: string }
+
 export interface PeerInfo {
+  projectRoute?: ProjectRoute;
   /** Derived local project identity; paired-PC projections never confer group authority. */
   projectRoot?: string;
   projectGroup?: string;
@@ -158,6 +161,7 @@ export interface MessageReceipt {
 }
 
 export interface SendResult {
+  projectRoute?: ProjectRoute;
   /** Wake requested according to advertised policy, not proof a native turn started. */
   wakeRequestedFor?: string[];
   /** Retained offline registrations excluded from this broadcast. */

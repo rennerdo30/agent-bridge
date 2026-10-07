@@ -41,7 +41,7 @@ import { resolveDbPath, resolveHome, resolvePipePath } from "../core/paths.js";
 import { inspectClaudeLaunch } from "../core/procinfo.js";
 import { loadOrCreateToken } from "../core/token.js";
 import { BridgeError, BROADCAST, CODING_AGENTS, isQuietMessage, SIBLING_CONVERSATION_PREFIX, TRANSFER_PROGRESS_PREFIX, type AgentKind, type BridgeMessage, type CodingAgent } from "../core/protocol.js";
-import { formatReplyRestrictions, formatDelivery, formatDuration, formatMessage, formatMessages, formatPeer, formatVersionSkew } from "./format.js";
+import { formatInboxMessages, formatProjectRoute, formatReplyRestrictions, formatDelivery, formatDuration, formatMessage, formatMessages, formatPeer, formatVersionSkew } from "./format.js";
 import { CodexWaker, type Activity } from "./codex-wake.js";
 import { buildHookResponse, discardFinishedNotes, type HookEvent } from "./hooks.js";
 import { ACCESS_LEVELS, DELEGATION_TARGETS, nativeSubagentsSchema, type Access } from "./targets.js";
@@ -700,11 +700,12 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
         ...others.map((p) => formatPeer(p)),
       ];
       const quietCount = n.unread().filter(isQuietMessage).length;
-      if (quietCount) lines.push(`${quietCount} retained quiet message(s), available in inbox/history on request; excluded from actionable unread mail.`);
+      if (quietCount) lines.push(`${quietCount} retained quiet message(s), available with inbox(include_quiet=true) or history; excluded from actionable unread mail.`);
       const load = await n.brokerLoad().catch(() => null); // Earlier brokers do not expose the additive load probe.
       if (load && load.connectedJobs > load.testedJobs) lines.push(`Broker load warning: ${load.connectedJobs} jobs are connected; the load check covered ${load.testedJobs}. Queue additional work to stay within the measured load.`);
       const groupPeers = peers.filter((p) => p.projectGroup && !p.host);
       if (groupPeers.length) lines.push("Local project groups:", ...groupPeers.map((p) => `- ${p.projectAddress}: ${p.name} (${p.projectMain ? "main" : "secondary"}${p.unavailable ? ", unavailable" : ""})`));
+      for (const p of groupPeers.filter((p) => p.projectMain && p.projectRoute)) lines.push(formatProjectRoute(p.projectRoute!));
       if (shared.length) lines.push("Project jobs (shared local authority):", ...shared.map((j) => `- ${j.name} (${j.agent}, ${j.status}; primary ${j.owner})${isRecord(j.args) && j.args.title ? ` \"${j.args.title}\"` : ""}`));
       const transferNotes = new Map<string, BridgeMessage>();
       for (const message of n.unread()) {
@@ -851,23 +852,24 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
     "inbox",
     {
       title: "Read inbox",
-      description: "Read unread messages from other agents, including quiet transfer progress, sibling copies and acknowledgements on demand. Messages are marked read unless mark_read is false. Peeking with mark_read=false does not produce a read receipt.",
+      description: "Read unread messages from other agents, with quiet transfer progress, sibling copies and acknowledgements excluded by default. Use include_quiet=true (or a read-only mark_read=false peek) to inspect retained copies. Messages are marked read unless mark_read is false. Peeking with mark_read=false does not produce a read receipt.",
       inputSchema: {
-        mark_read: z.boolean().optional().describe("Mark returned messages as read (default true)"),
+        include_quiet: z.boolean().optional().describe("Include historical quiet coordination copies (default false)"),
+        mark_read: z.boolean().optional().describe("Mark returned messages as read (default true); false also permits inspecting retained quiet copies"),
         limit: z.number().int().min(1).max(100).optional(),
       },
     },
-    guarded("inbox", async (a: { mark_read?: boolean; limit?: number }) => {
+    guarded("inbox", async (a: { mark_read?: boolean; limit?: number; include_quiet?: boolean }) => {
       if (ctx.childInbox) {
-        const msgs = ctx.childInbox.unread().slice(0, a.limit ?? HOOK_MAX_MESSAGES);
+        const msgs = ctx.childInbox.unread().filter((m) => a.include_quiet === true || a.mark_read === false || !isQuietMessage(m)).slice(0, a.limit ?? HOOK_MAX_MESSAGES);
         if (a.mark_read !== false) ctx.childInbox.markRead(msgs.map((m) => m.id));
-        return text(msgs.length ? formatMessages(msgs) : t("inbox.empty"));
+        return text(msgs.length ? formatInboxMessages(msgs) : t("inbox.empty"));
       }
       const n = requireNode();
-      const msgs = n.unread().slice(0, a.limit ?? HOOK_MAX_MESSAGES);
+      const msgs = n.unread().filter((m) => a.include_quiet === true || a.mark_read === false || !isQuietMessage(m)).slice(0, a.limit ?? HOOK_MAX_MESSAGES);
       if (msgs.length === 0) return text(t("inbox.empty"));
       if (a.mark_read !== false) n.markRead(msgs.map((m) => m.id));
-      return text(formatMessages(msgs));
+      return text(formatInboxMessages(msgs));
     }),
   );
 
@@ -902,7 +904,7 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
         if (!ctx.childInbox.unread().some(matches)) await ctx.childInbox.wait(singleWaitTimeoutMs(a.timeout_sec ?? DEFAULT_WAIT_SEC), extra.signal, matches);
         const msgs = ctx.childInbox.unread().filter(matches).slice(0, HOOK_MAX_MESSAGES);
         ctx.childInbox.markRead(msgs.map((m) => m.id));
-        return text(msgs.length ? formatMessages(msgs) : t("inbox.empty"));
+        return text(msgs.length ? formatInboxMessages(msgs) : t("inbox.empty"));
       }
       const n = requireNode();
       if (extra.signal.aborted) return text("Wait cancelled before registration; mail remains queued.");

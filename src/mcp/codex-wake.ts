@@ -28,6 +28,7 @@ export class CodexWaker {
   private inFlight = false;
   /** Bumped on every activity report, so a finishing wake-up can tell whether hooks reported since it began. */
   private reports = 0;
+  private arrivals = 0;
 
   constructor(
     private readonly node: BridgeNode,
@@ -70,6 +71,7 @@ export class CodexWaker {
       this.log.info("not waking codex: hop limit reached", { id: m.id, hop: m.hop });
       return;
     }
+    this.arrivals++;
     if (this.idleWithMail()) this.schedule();
   }
 
@@ -91,6 +93,7 @@ export class CodexWaker {
     this.inFlight = true;
     this.state = "busy";
     const reportsAtStart = this.reports;
+    const arrivalsAtStart = this.arrivals;
     // The queued turn can start (and even end) while `codex queue` still runs. Hooks then report the real
     // state, which must win over our guess: a failed queue call only resets to idle if nobody reported since.
     const failed = () => {
@@ -116,9 +119,13 @@ export class CodexWaker {
       this.log.warn("codex queue failed", { err: (err as Error).message });
     } finally {
       this.inFlight = false;
+      // Queue acceptance is not a host activity report. Without hooks, retaining this guess forever
+      // strands every later message even after the native turn ends. A new arrival may queue again;
+      // this does not retry existing mail, and an explicit busy report still wins.
+      if (this.reports === reportsAtStart) this.state = "idle";
       // An idle report during the call could not schedule (inFlight); catch up on mail it left behind.
       // Without such a report nothing is retried, so a failing `codex queue` does not loop.
-      if (this.reports !== reportsAtStart && this.idleWithMail()) this.schedule();
+      if ((this.reports !== reportsAtStart || this.arrivals !== arrivalsAtStart) && this.idleWithMail()) this.schedule();
     }
   }
 }
