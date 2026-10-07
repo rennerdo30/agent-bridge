@@ -6,7 +6,7 @@ import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Broker } from "../src/core/broker.js";
 import { BridgeClient } from "../src/core/client.js";
-import { PROTOCOL_VERSION } from "../src/core/constants.js";
+import { JOBS_FILE, PROTOCOL_VERSION } from "../src/core/constants.js";
 import { nullLogger } from "../src/core/logger.js";
 import { MessageStore } from "../src/core/store.js";
 import { loadOrCreateToken } from "../src/core/token.js";
@@ -51,9 +51,16 @@ describe("broker overload survival", () => {
     await until(() => received.size === 550);
     expect(reader.unread()).toEqual([]);
   });
-  it("answers peers while a real SQLite writer lock delays send, then queues it exactly once", async () => {
+  it.each(["send", "inline result"])("answers peers while a real SQLite writer lock delays %s, then queues it exactly once", async (operation) => {
     const sender = env.node("sender"), recipient = env.node("recipient", "opencode");
     await sender.start(); await recipient.start();
+    const inline = { id: randomUUID(), from: { id: "job:inline", name: "opencode-job-inline", agent: "opencode" as const },
+      to: "recipient", recipient: "recipient", conversationId: "job-inline", replyTo: null, hop: 0, body: "LOCKED_SEND", createdAt: Date.now(), readAt: null };
+    if (operation === "inline result") writeFileSync(join(env.home, JOBS_FILE), JSON.stringify({ version: 3, jobs: [{
+      id: "inline", name: "opencode-job-inline", agent: "opencode", status: "done", owner: recipient.name,
+      rootName: recipient.name, executionOwner: sender.name, startedAt: Date.now(), prompt: "fixture",
+    }] }));
+    const submit = () => operation === "send" ? sender.send({ to: "recipient", body: "LOCKED_SEND", dedupeKey: "busy-once" }) : sender.reportInlineJob(inline);
     const worker = new Worker(`
       const { DatabaseSync } = require('node:sqlite');
       const { workerData, parentPort } = require('node:worker_threads');
@@ -67,17 +74,17 @@ describe("broker overload survival", () => {
     try {
       await until(() => messages.includes("locked"));
       let settled = false;
-      sent = sender.send({ to: "recipient", body: "LOCKED_SEND", dedupeKey: "busy-once" }).then((res) => { settled = true; return res; });
+      sent = submit().then((res) => { settled = true; return res; });
       await new Promise((resolve) => setTimeout(resolve, 30));
       expect((await sender.peers()).map((p) => p.name)).toContain("recipient");
       expect(settled).toBe(false);
       worker.postMessage("release");
       await until(() => messages.includes("released"));
       const result = await sent;
-      expect(result).toMatchObject({ deliveredTo: ["recipient"], queuedFor: [] });
+      expect(result).toMatchObject(operation === "send" ? { deliveredTo: ["recipient"], queuedFor: [] } : { saved: true });
       await until(() => recipient.unread().length === 1);
       expect(recipient.unread()[0]!.body).toBe("LOCKED_SEND");
-      expect(await sender.send({ to: "recipient", body: "LOCKED_SEND", dedupeKey: "busy-once" })).toEqual(result);
+      expect(await submit()).toEqual(result);
       expect(recipient.unread()).toHaveLength(1);
     } finally {
       worker.postMessage("release");

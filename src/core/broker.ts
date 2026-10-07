@@ -151,12 +151,12 @@ export class Broker {
         this.emit(executor, "inline_job_control", a);
         return { sent: true };
       },
-      inlineJobReport: (c, m) => {
+      inlineJobReport: async (c, m) => {
         const peer = this.requirePeer(c), job = this.storedJobs().find((j) => `job:${j.id}` === m.from?.id);
         if (!job || (job.executionOwner !== peer.name && job.owner !== peer.name && job.rootName !== peer.name) || typeof job.owner !== "string" || typeof m.body !== "string" || m.body.length > MAX_BODY_CHARS) throw new BridgeError("unauthorized", "Invalid inline job delivery.");
         const recipient = chooseJobRecipient(job, [...this.conns].flatMap((c) => c.peer ? [c.peer] : []));
         const message = { ...m, to: recipient, recipient };
-        if (this.store.insertJobDelivery(message)) {
+        if (await this.store.retryWrite(() => this.store.insertJobDelivery(message))) {
           const target = this.connByName(recipient);
           if (target) this.emit(target, "message", message);
         }
