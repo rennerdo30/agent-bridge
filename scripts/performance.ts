@@ -149,7 +149,10 @@ try {
   const usage = process.cpuUsage(cpu), elapsed = performance.now() - started;
   const profile = (await post("Profiler.stop")).profile;
   const hits = new Map<number, number>(); for (const id of profile.samples ?? []) hits.set(id, (hits.get(id) ?? 0) + 1);
-  const hot = profile.nodes.map((n: any) => ({ fn: n.callFrame.functionName, file: n.callFrame.url.split("/").at(-1), samples: hits.get(n.id) ?? 0 })).filter((n: any) => n.samples).sort((x: any, y: any) => y.samples - x.samples).slice(0, 12);
+  const parents = new Map<number, any>();
+  for (const n of profile.nodes) for (const child of n.children ?? []) parents.set(child, n);
+  const ancestry = (n: any): string[] => { const frames: string[] = []; for (let p = parents.get(n.id); p && frames.length < 8; p = parents.get(p.id)) frames.push(p.callFrame.functionName); return frames; };
+  const hot = profile.nodes.map((n: any) => ({ fn: n.callFrame.functionName, file: n.callFrame.url.split("/").at(-1), samples: hits.get(n.id) ?? 0, callers: ancestry(n) })).filter((n: any) => n.samples).sort((x: any, y: any) => y.samples - x.samples).slice(0, 12);
   // Another SQLite writer holds the real primary database while send and peers share the broker.
   const sqlWorker = new Worker(`const { DatabaseSync } = require('node:sqlite'); const { workerData, parentPort } = require('node:worker_threads');
     const db = new DatabaseSync(workerData, { timeout: 3000 }); db.exec('BEGIN IMMEDIATE'); parentPort.postMessage('locked');

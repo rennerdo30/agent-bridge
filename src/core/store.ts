@@ -324,6 +324,11 @@ export class MessageStore {
     return this.db.prepare("SELECT DISTINCT recipient FROM messages WHERE from_id=? AND read_at IS NULL AND conversation_id NOT LIKE ?").all(`job:${job}`, `${SIBLING_CONVERSATION_PREFIX}%`).map((row) => String(row.recipient));
   }
 
+  pendingJobSenders(): Set<string> {
+    return new Set(this.db.prepare("SELECT DISTINCT from_id FROM messages WHERE read_at IS NULL AND from_id LIKE 'job:%' AND conversation_id NOT LIKE ?")
+      .all(`${SIBLING_CONVERSATION_PREFIX}%`).map((row) => String(row.from_id)));
+  }
+
   insertOnce(m: BridgeMessage): boolean {
     if (this.db.prepare("SELECT 1 FROM messages WHERE id=? AND recipient=?").get(m.id, m.recipient)) return false;
     this.insert(m);

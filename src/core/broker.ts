@@ -444,8 +444,8 @@ export class Broker {
     socket.on("error", (err) => this.log.debug("connection error", { err: err.message }));
     socket.on("close", () => {
       this.conns.delete(conn);
-      void this.routePendingJobMail().catch((err) => this.log.warn("pending job reroute deferred", { err: String(err) }));
       if (conn.peer) {
+        void this.routePendingJobMail().catch((err) => this.log.warn("pending job reroute deferred", { err: String(err) }));
         this.log.info("peer left", { name: conn.peer.name, agent: conn.peer.agent });
         if (!conn.peer.jobAgent) this.broadcastEvent("peer_left", conn.peer, conn);
       }
@@ -626,9 +626,16 @@ export class Broker {
     do {
       this.pendingJobMailRouteAgain = false;
       let processed = 0;
+      let pending = this.store.pendingJobSenders();
       for (const snapshot of this.storedJobs()) {
-        if (++processed % 16 === 0) await new Promise<void>((resolve) => setImmediate(resolve));
+        if (++processed % 16 === 0) {
+          await new Promise<void>((resolve) => setImmediate(resolve));
+          pending = this.store.pendingJobSenders();
+        }
         if (snapshot.remote || !primaryFor(snapshot)) continue;
+        // Empty jobs need no write attempt or refreshed archive traversal. Every retained
+        // envelope still enters the retry callback, which rereads ownership before writing.
+        if ((!Array.isArray(snapshot.deliveryHistory) || !snapshot.deliveryHistory.length) && !pending.has(`job:${snapshot.id}`)) continue;
         await this.store.retryWrite(() => {
           if (this.closing) return;
           const job = this.storedJobs().find((record) => record.id === snapshot.id);
