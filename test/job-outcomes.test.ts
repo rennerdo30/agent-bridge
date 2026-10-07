@@ -157,6 +157,8 @@ describe("Git outcome derivation", () => {
     const repo = join(home, "repo"); mkdirSync(repo);
     const git = (...args: string[]) => execFileSync("git", args, { cwd: repo, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
     git("init", "-q");
+    git("config", "--local", "user.name", "Test");
+    git("config", "--local", "user.email", "test@example.test");
     git("-c", "user.name=Test", "-c", "user.email=test@example.test", "commit", "--allow-empty", "-qm", "base");
     const wt = await createWorktree({ cwd: repo, home, jobId: job().id, log: nullLogger });
     const j = { ...job(), worktree: wt };

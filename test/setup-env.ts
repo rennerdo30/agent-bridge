@@ -1,5 +1,11 @@
 import { vi } from "vitest";
 import { join } from "node:path";
+import { realpathSync } from "node:fs";
+import { tmpdir } from "node:os";
+
+// macOS exposes its temporary root through /var -> /private/var. Fixtures use
+// the physical directory so immutable plugin tests retain strict link rejection.
+if (process.platform !== "win32") process.env.TMPDIR = realpathSync(tmpdir());
 
 // Unit and integration tests inspect commands, never display desktop notifications on the developer's PC.
 vi.mock("../src/core/notifications.js", async (original) => ({
