@@ -412,6 +412,8 @@ export class JobManager {
             parentJob: old.parentJob, ownershipHistory: old.ownershipHistory, masters: old.masters });
           if (j.startedAt === old.startedAt) j.executionOwner = old.executionOwner as string | undefined;
           j.args = { ...j.args, ...(isRecord(old.args) ? { send_to: old.args.send_to } : {}) };
+          // A late report from an earlier turn may add delivery evidence, but cannot roll back a continuation.
+          if (typeof old.startedAt === "number" && j.startedAt < old.startedAt) return { ...old, deliveryHistory: j.deliveryHistory } as unknown as StoredJob;
           if ((old.owner !== this.node.name && old.executionOwner !== this.node.name && !(j.executionOwner === this.node.name && canControlJob(old, this.node.name)) && !this.lineage) ||
               (old.executionOwner && old.executionOwner !== this.node.name && old.status === "running" && j.startedAt === old.startedAt)) return old as unknown as StoredJob;
         }

@@ -30785,6 +30785,7 @@ var JobManager = class {
           });
           if (j.startedAt === old.startedAt) j.executionOwner = old.executionOwner;
           j.args = { ...j.args, ...isRecord(old.args) ? { send_to: old.args.send_to } : {} };
+          if (typeof old.startedAt === "number" && j.startedAt < old.startedAt) return { ...old, deliveryHistory: j.deliveryHistory };
           if (old.owner !== this.node.name && old.executionOwner !== this.node.name && !(j.executionOwner === this.node.name && canControlJob(old, this.node.name)) && !this.lineage || old.executionOwner && old.executionOwner !== this.node.name && old.status === "running" && j.startedAt === old.startedAt) return old;
         }
         return mergeStoreFields(isRecord(old) ? old : {}, toStored(j));
