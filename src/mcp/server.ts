@@ -236,7 +236,12 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
   const cwd = process.env.CLAUDE_PROJECT_DIR || process.cwd();
   // Codex starts plugin MCP servers inside the plugin folder; the project dir arrives later via hooks/_meta.
   const cwdKnown = Boolean(process.env.CLAUDE_PROJECT_DIR) || !isInside(cwd, PLUGIN_ROOT);
-  const cfg = loadConfig(home, agent, log, process.env, cwdKnown ? canonicalProjectRoot(cwd) ?? undefined : undefined);
+  let configCwd: string | undefined, configRoot: string | undefined;
+  const projectConfigRoot = (dir: string): string | undefined => {
+    if (dir !== configCwd) { configCwd = dir; configRoot = canonicalProjectRoot(dir) ?? undefined; }
+    return configRoot;
+  };
+  const cfg = loadConfig(home, agent, log, process.env, cwdKnown ? projectConfigRoot(cwd) : undefined);
   const delegated = currentDelegateDepth() > 0;
   log.info("starting MCP server", { agent, cwd, cwdKnown, delegated, version: APP_VERSION, node: process.version });
 
@@ -287,7 +292,7 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
       if (limitChanged) jobs.setLimit(next.maxJobs);
       void node.setWakePolicy(agent === "claude" && next.wakeOnDirect, (agent === "claude" && Boolean(ctx.rewakeAvailable || ctx.channelActive())) || agent === "opencode" || (agent === "codex" && Boolean(node.currentSessionId)), next.maxHops).catch(() => {});
     };
-    watchConfig(home, agent, log, applyConfig, () => cwdSettled ? canonicalProjectRoot(node.cwd) ?? "" : "");
+    watchConfig(home, agent, log, applyConfig, () => cwdSettled ? projectConfigRoot(node.cwd) ?? "" : "");
     ctx.activity = (s) => node.setActivity(s);
     // Learn the project folder once, when it was unknown at start (Codex starts us in the plugin folder).
     // Later hook cwds follow the agent's `cd`s; renaming then would strand replies sent to the old name.
@@ -297,7 +302,7 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
       Object.assign(cfg,loadConfig(home,agent,log,process.env,canonicalProjectRoot(projectDir) ?? undefined));
       const name = cfg.name ? undefined : defaultPeerName(agent, projectDir);
       await node.relocate(projectDir, name).catch((err) => log.warn("relocate failed", { err: (err as Error).message }));
-      applyConfig(loadConfig(home, agent, log, process.env, canonicalProjectRoot(node.cwd) ?? undefined));
+      applyConfig(loadConfig(home, agent, log, process.env, projectConfigRoot(node.cwd)));
     };
   }
   if (agent === "codex" && node) {
@@ -523,7 +528,7 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
   // Nested supervisors keep private child tools without independent-session bridge privileges.
   const register = ((name: string, ...rest: unknown[]) =>
     node || SUBAGENT_TOOLS.has(name) || (ctx.jobs && (
-      name === "message_subagent" || name === "cancel_subagent" || name === "inbox" || name === "wait_for_message" ||
+      name === "decide" || name === "message_subagent" || name === "cancel_subagent" || name === "inbox" || name === "wait_for_message" ||
       (currentDelegateDepth() < cfg.maxDelegateDepth && (name.startsWith("spawn_") || name.startsWith("ask_") || name === "list_models"))
     )) ? (mcp.registerTool as (...a: unknown[]) => unknown)(name, ...rest) : undefined) as typeof mcp.registerTool;
   const requireNode = (): BridgeNode => {
@@ -576,18 +581,35 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
   register(
     "decide",
     {
-      title: "Pin owner decision",
-      description: "Record an owner's decision after researching it. A newer decision on the same topic supersedes the previous revision across scopes; history is always retained. Notifications reach sessions in scope once without waking idle sessions. Scope defaults to this project folder.",
+      title: "Make an explicit decision",
+      description: "Answer a pending approval with approval_id and decision (allow, deny or escalate), or record an owner's decision after researching it. A newer decision on the same topic supersedes the previous revision across scopes; history is always retained. Notifications reach sessions in scope once without waking idle sessions. Scope defaults to this project folder.",
       inputSchema: {
-        topic: z.string().trim().min(1).max(MAX_DECISION_TOPIC_CHARS).describe("Stable topic; trimmed and case-insensitive"),
-        text: z.string().trim().min(1).max(MAX_DECISION_TEXT_CHARS).describe("The owner's decision text"),
+        approval_id: z.uuid().optional().describe("Pending approval id from the job question or dashboard"),
+        decision: z.enum(["allow", "deny", "escalate"]).optional(),
+        reason: z.string().max(4000).optional(),
+        topic: z.string().trim().min(1).max(MAX_DECISION_TOPIC_CHARS).optional().describe("Stable topic; trimmed and case-insensitive"),
+        text: z.string().trim().min(1).max(MAX_DECISION_TEXT_CHARS).optional().describe("The owner's decision text"),
         scope: decisionScopeSchema.optional().describe('"all", {project: folder}, or {sessions: [peer names, ids or session ids]}'),
         source_message_id: z.string().optional().describe("Optional existing bridge message id recording the owner's choice"),
       },
     },
-    guarded("decide", async (a: DecideArgs & { source_message_id?: string }) => {
-      const { source_message_id, ...args } = a;
-      return text(JSON.stringify(await requireNode().decide({ ...args, sourceMessageId: source_message_id })));
+    guarded("decide", async (a: Partial<DecideArgs> & { source_message_id?: string; approval_id?: string; decision?: "allow" | "deny" | "escalate"; reason?: string }) => {
+      if (a.approval_id || a.decision) {
+        if (!a.approval_id || !a.decision || a.topic || a.text || a.scope || a.source_message_id) throw new BridgeError("bad_request", "Supply approval_id and decision only, with an optional reason.");
+        const entry = listPendingApprovals(ctx.home).find((entry) => entry.id === a.approval_id);
+        if (!entry) return text("Approval expired.", true);
+        const job = ctx.jobs?.find(entry.job);
+        if (!(node ? await node.jobAuthority(entry.job) : job)) throw new BridgeError("bad_request", "This approval belongs to another supervisor.");
+        if (a.decision === "escalate") {
+          if (!entry.parentJob || !job?.pendingApproval) return text("Escalation is unavailable here; use the dashboard or ask the supervisor to decide.", true);
+          job.pendingApproval("escalate");
+          return text("Approval escalated; it remains pending.");
+        }
+        const outcome = await answerPendingApproval(ctx.home, entry.id, { decision: a.decision, reason: a.reason });
+        return text(`Approval ${outcome}.`, outcome !== "answered");
+      }
+      if (!a.topic || !a.text || a.reason) throw new BridgeError("bad_request", "Supply topic and text to record an owner decision.");
+      return text(JSON.stringify(await requireNode().decide({ topic: a.topic, text: a.text, scope: a.scope, sourceMessageId: a.source_message_id })));
     }),
   );
 
@@ -1275,7 +1297,7 @@ ${res.text || t("delegate.empty")}`, res.isError);
         "Send a follow-up to a subagent started with ask_* or spawn_* (running or finished), like messaging a native subagent. " +
         "It continues in its own session with its full context, in the same folder or worktree. " +
         "While it is still running it gets the message live, at its next step (after its current tool call), and answers right away, like a native subagent: use that to ask how far it is or to redirect it. " +
-        "The answer arrives as a message from the job. " +
+        "The answer arrives as a message from the job. Plain messages never answer pending approvals; use decide or the dashboard. " +
         "Without a message it is told to continue where it stopped: use that to recover a failed or interrupted subagent. " +
         "If all subagent slots are taken, a finished subagent's continuation is queued and starts by itself when one frees up (cancel_subagent drops it).",
       inputSchema: {
@@ -1302,15 +1324,6 @@ ${res.text || t("delegate.empty")}`, res.isError);
       const jobs = ctx.jobs;
       if (!jobs) throw new BridgeError("bad_request", t("err.delegatedSession"));
       const existing = await jobs.share(a.job);
-      // A top supervisor can answer an escalated descendant wait without taking over that child job.
-      if (node && a.message) {
-        const approval = listPendingApprovals(ctx.home).find((entry) => entry.job === a.job && entry.parentJob);
-        if (approval && /^(allow|deny)\b/i.test(a.message.trim()) && (approval.owner === node.name || approval.rootSession === jobs.rootIdentity() || await node.jobAuthority(a.job))) {
-          const decision = /^allow\b/i.test(a.message.trim()) ? "allow" : "deny";
-          const result = await answerPendingApproval(ctx.home, approval.id, { decision, reason: a.message.trim().replace(/^(allow|deny)\b\s*:?\s*/i, "") });
-          return text(`Nested approval ${result}.`, result !== "answered");
-        }
-      }
       if (existing) {
         for (const [key, agent] of Object.entries(PERMISSION_KEY_AGENT) as [keyof typeof PERMISSION_KEY_AGENT, string][]) {
           if (a[key] !== undefined && existing.agent !== agent) throw new BridgeError("bad_request", `${key} applies only to ${agent} jobs.`);
@@ -1326,13 +1339,17 @@ ${res.text || t("delegate.empty")}`, res.isError);
         }
       }
       if (Object.keys(settings).length) jobs.setSettings(a.job, settings);
-      const { outcome, job } = jobs.followUp(a.job, a.message?.trim() || DEFAULT_FOLLOW_UP);
+      const { outcome, job, approvalPending } = jobs.followUp(a.job, a.message?.trim() || DEFAULT_FOLLOW_UP);
       const position = job ? jobs.waiting().indexOf(job) + 1 : 0;
+      const pending = listPendingApprovals(ctx.home).filter(entry => entry.job === (job?.name ?? a.job));
+      const approvalNote = pending.length
+        ? "\nAn approval is still pending. This message did not answer it; use " + pending.map(entry => `decide(approval_id="${entry.id}", decision="allow" or "deny")`).join(" or ") + " or the dashboard."
+        : approvalPending ? "\nAn approval is still pending. This message did not answer it; use decide with the approval id from its question or the dashboard." : "";
       const settingsNote = job && Object.keys(settings).length
         ? `\nSaved settings: ${Object.entries(settings).map(([key, value]) => `${key}=${value}`).join(", ")}.${wasRunning ? " Applies from its next turn; the turn running now keeps its settings." : " Applies to this continuation and later turns."}`
         : "";
       return text(
-        t(`followUp.${outcome}`, { name: job?.name ?? a.job, max: jobs.limit, running: jobs.runningCount(), ahead: position > 1 ? ` (${position - 1} queued before it)` : "" }) + settingsNote,
+        t(`followUp.${outcome}`, { name: job?.name ?? a.job, max: jobs.limit, running: jobs.runningCount(), ahead: position > 1 ? ` (${position - 1} queued before it)` : "" }) + settingsNote + approvalNote,
         outcome === "unknown" || outcome === "no-session",
       );
     }),

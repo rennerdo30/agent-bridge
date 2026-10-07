@@ -50,18 +50,31 @@ describe("pending approvals", () => {
     expect((await answer).allow).toBe(results[0] === "answered");
   });
 
-  it("shares settlement with message_subagent and tells the session who answered", async () => {
+  it.each(["claude", "codex", "opencode"] as const)("keeps every plain message separate from %s approval decisions", async (agent) => {
     const node = env.node("parent");
     await node.start();
     const jobs = new JobManager(node, nullLogger, join(env.home, JOBS_FILE));
     try {
-      const j = jobs.start("codex", null, "task", (signal) => new Promise((resolve) => signal.addEventListener("abort", () => resolve({ sessionId: null, text: "cancelled", isError: true, details: {} }))));
+      const j = jobs.start(agent, null, "task", (signal) => new Promise((resolve) => signal.addEventListener("abort", () => resolve({ sessionId: null, text: "cancelled", isError: true, details: {} }))));
       const answer = jobs.askParent(j, "Run tests?", 5_000, request);
       const [entry] = await pending();
-      expect(jobs.followUp(j.name, "deny: reviewed in session").outcome).toBe("answered");
-      expect(await answer).toEqual({ allow: false, reason: "deny: reviewed in session" });
-      expect(await answerPendingApproval(env.home, entry!.id, { decision: "allow" })).toBe("expired");
-      await expect.poll(() => node.unread().some((m) => m.body.includes("denied by session"))).toBe(true);
+      for (const message of ["Wind down now", "Both requests are approved: retry them", "allow", "deny: reviewed in session"]) {
+        expect(jobs.followUp(j.name, message)).toMatchObject({ outcome: "queued", approvalPending: true });
+        expect(j.pendingApproval).toBeTypeOf("function");
+        expect(listPendingApprovals(env.home)).toHaveLength(1);
+      }
+      expect(j.queue).toHaveLength(4);
+      const post = vi.fn(); j.live = { post };
+      expect(jobs.followUp(j.name, "allow")).toMatchObject({ outcome: "delivered", approvalPending: true });
+      expect(post).toHaveBeenCalledWith("allow");
+      j.executionOwner = node.name; jobs.persist();
+      node.emit("inline_job_control", { job: j.name, control: { type: "message", body: "deny", cid: "inline-follow-up" } });
+      expect(post).toHaveBeenCalledWith("deny");
+      expect(listPendingApprovals(env.home)).toHaveLength(1);
+      expect(j.pendingApproval).toBeTypeOf("function");
+      expect(await answerPendingApproval(env.home, entry!.id, { decision: "allow" })).toBe("answered");
+      expect(await answer).toEqual({ allow: true, reason: "allow" });
+
     } finally { jobs.cancelAll(); }
   });
 

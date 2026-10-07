@@ -290,7 +290,7 @@ export function loadConfig(home: string, agent: AgentKind, log: Logger, env: Nod
 
   const d = DEFAULT_CONFIG;
   const cfg: BridgeConfig = {
-    projectGroups: [localSection.projectGroups, project.projectGroups, section.projectGroups, file.projectGroups].find((v) => v !== undefined) === undefined ? true : parseBool([localSection.projectGroups, project.projectGroups, section.projectGroups, file.projectGroups].find((v) => v !== undefined)) === true,
+    projectGroups: [localSection.projectGroups, project.projectGroups, section.projectGroups, file.projectGroups].find((v) => v !== undefined) === undefined ? true : [localSection.projectGroups, project.projectGroups, section.projectGroups, file.projectGroups].find((v) => v !== undefined) === true,
     name: pick("name", ENV.name, str) ?? d.name,
     autoWake: pick("autoWake", ENV.autoWake, parseBool) ?? d.autoWake,
     wakeOnDirect: pick("wakeOnDirect", ENV.wakeOnDirect, parseBool) ?? d.wakeOnDirect,

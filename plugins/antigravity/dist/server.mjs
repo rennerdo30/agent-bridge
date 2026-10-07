@@ -7209,7 +7209,7 @@ import { DatabaseSync as DatabaseSync5 } from "node:sqlite";
 import { homedir } from "node:os";
 import { join } from "node:path";
 var APP_NAME = "agent-bridge";
-var APP_VERSION = "0.29.12";
+var APP_VERSION = "0.29.13";
 var PROTOCOL_VERSION = 2;
 var ENV = {
   home: "AGENT_BRIDGE_HOME",
@@ -7936,19 +7936,28 @@ function projectKey(root) {
 function projectGroupsEnabled(root, home, agent) {
   if (!root) return false;
   try {
+    const records = [];
     for (const path of [home && join9(home, "config.json"), join9(root, ".agent-bridge", "config.json")]) {
-      if (!path || !existsSync4(path)) continue;
+      if (!path || !existsSync4(path)) {
+        records.push({});
+        continue;
+      }
       const value = JSON.parse(readFileSync5(path, "utf8"));
       if (!value || typeof value !== "object" || Array.isArray(value)) return false;
-      const enabled = value.projectGroups;
-      if (enabled !== void 0 && enabled !== true) return false;
-      const section = agent ? value[agent] : void 0;
-      if (section && typeof section === "object" && !Array.isArray(section)) {
-        const local = section.projectGroups;
-        if (local !== void 0 && local !== true) return false;
-      }
+      records.push(value);
     }
-    return true;
+    const section = (value) => {
+      const local = agent ? value[agent] : void 0;
+      return local && typeof local === "object" && !Array.isArray(local) ? local : {};
+    };
+    const [globalConfig2, projectConfig] = records;
+    const enabled = [
+      section(projectConfig).projectGroups,
+      projectConfig.projectGroups,
+      section(globalConfig2).projectGroups,
+      globalConfig2.projectGroups
+    ].find((v) => v !== void 0);
+    return enabled === void 0 || enabled === true;
   } catch {
     return false;
   }
@@ -29456,7 +29465,7 @@ function loadConfig(home, agent, log, env = process.env, projectDir) {
   const str = (v) => typeof v === "string" && v.trim() ? v.trim() : void 0;
   const d = DEFAULT_CONFIG;
   const cfg = {
-    projectGroups: [localSection.projectGroups, project.projectGroups, section.projectGroups, file2.projectGroups].find((v) => v !== void 0) === void 0 ? true : parseBool([localSection.projectGroups, project.projectGroups, section.projectGroups, file2.projectGroups].find((v) => v !== void 0)) === true,
+    projectGroups: [localSection.projectGroups, project.projectGroups, section.projectGroups, file2.projectGroups].find((v) => v !== void 0) === void 0 ? true : [localSection.projectGroups, project.projectGroups, section.projectGroups, file2.projectGroups].find((v) => v !== void 0) === true,
     name: pick2("name", ENV.name, str) ?? d.name,
     autoWake: pick2("autoWake", ENV.autoWake, parseBool) ?? d.autoWake,
     wakeOnDirect: pick2("wakeOnDirect", ENV.wakeOnDirect, parseBool) ?? d.wakeOnDirect,
@@ -30874,7 +30883,7 @@ function waitForApproval(job, question, timeoutMs, post, log, home, request2, as
       escalated = true;
       void escalate(`Nested subagent ${job.name} asks its top supervisor for approval: ${question}
 
-Answer the pending dashboard approval ${approvalId}, or message_subagent(job="${job.name}", message="allow" or "deny").`).catch(() => {
+Answer the pending dashboard approval ${approvalId}, or decide(approval_id="${approvalId}", decision="allow" or "deny").`).catch(() => {
         escalated = false;
         log.warn("could not escalate nested approval", { job: job.name });
       });
@@ -30952,7 +30961,7 @@ Answer the pending dashboard approval ${approvalId}, or message_subagent(job="${
     post(
       `Subagent ${job.name} asks for approval: ${question}
 
-Decide as its supervisor: answer with message_subagent(job="${job.name}", message="allow") or message="deny" (a reason may follow). ` + (escalate ? 'If the decision needs the owner, answer message="escalate" to forward the same pending request. ' : "") + `It waits for your answer; no answer within ${Math.round(timeoutMs / 6e4)} minutes counts as deny.`
+Decide as its supervisor: use decide(approval_id="${approvalId}", decision="allow" or "deny", reason=...). ` + (escalate ? `If the decision needs the owner, use decide(approval_id="${approvalId}", decision="escalate") to forward the same pending request. ` : "") + `It waits for your answer; no answer within ${Math.round(timeoutMs / 6e4)} minutes counts as deny.`
     );
     if (askUser) {
       void Promise.resolve().then(askUser).then(
@@ -30991,8 +31000,10 @@ var JobManager = class {
         job.queue = [];
         job.controller.abort();
       } else if (control.type === "message") {
-        if (job.pendingApproval) job.pendingApproval(control.body, `session ${job.owner}`);
-        else if (job.live) {
+        if (job.controller.signal.aborted && job.resume && job.sessionId) {
+          job.queue.push(control.body);
+          this.waitForSlot(job);
+        } else if (job.live) {
           job.awaitingAnswer = true;
           job.live.post(control.body);
         } else job.queue.push(control.body);
@@ -31521,27 +31532,28 @@ var JobManager = class {
       job.queue.push(message);
       return { outcome: "waiting", job };
     }
+    if (job.status === "running" && job.controller.signal.aborted) {
+      if (!job.resume || !job.sessionId) return { outcome: "no-session", job };
+      job.queue.push(message);
+      this.waitForSlot(job);
+      this.persist();
+      return { outcome: "waiting", job };
+    }
     if (this.hostedRunning(job)) {
       const state = this.runners.state(job);
       const cid = randomUUID6();
       (job.forwarded ??= []).push({ cid, body: message });
       this.runners.send(job, { type: "message", body: message, cid });
-      return { outcome: state?.asking ? "answered" : state?.live ? "delivered" : "queued", job };
-    }
-    if (job.status === "running" && job.pendingApproval) {
-      const answer = job.pendingApproval;
-      answer(message, `session ${this.node.name}`);
-      if (job.pendingApproval === answer && !/^\s*escalate\b/i.test(message)) job.pendingApproval = null;
-      return { outcome: "answered", job };
+      return { outcome: state?.live ? "delivered" : "queued", job, approvalPending: Boolean(state?.asking) };
     }
     if (job.status === "running") {
       if (job.live) {
         job.awaitingAnswer = true;
         job.live.post(message);
-        return { outcome: "delivered", job };
+        return { outcome: "delivered", job, approvalPending: Boolean(job.pendingApproval) };
       }
       job.queue.push(message);
-      return { outcome: "queued", job };
+      return { outcome: "queued", job, approvalPending: Boolean(job.pendingApproval) };
     }
     if (!job.resume || !job.sessionId) return { outcome: "no-session", job };
     if (!this.canStart()) {
@@ -31575,6 +31587,7 @@ var JobManager = class {
   /** Start waiting continuations while there are free slots, oldest first. */
   startWaiting() {
     for (const job of this.waitingJobs.values()) {
+      if (job.status === "running") continue;
       if (!this.canStart()) return;
       this.waitingJobs.delete(job.id);
       if (!job.queue.length || !job.resume || !job.sessionId) continue;
@@ -31723,9 +31736,10 @@ var JobManager = class {
     if (this.hostedRunning(job)) {
       job.forwarded = [];
       const runners = this.runners;
+      const cancelledHost = job.host, cancelledController = job.controller;
       runners.send(job, { type: "cancel" });
       setTimeout(() => {
-        if (!this.hostedRunning(job)) return;
+        if (!this.hostedRunning(job) || job.host !== cancelledHost || job.controller !== cancelledController) return;
         if (runners.alive(job, runners.state(job))) {
           this.log.warn("job runner did not stop in time; killing it", { job: job.name, pid: job.host?.pid });
           runners.kill(job);
@@ -42628,7 +42642,7 @@ function formatMessages(msgs, opts = {}) {
     const jobs = msgs.some((m) => /(?:^|\/)job:/.test(m.from.id));
     const peers = msgs.some((m) => !/(?:^|\/)job:/.test(m.from.id));
     if (peers) parts.push('To answer a peer, call the agent-bridge "send" tool with to=<from> and reply_to=<id>.');
-    if (jobs) parts.push("Subagent messages need no reply. To give a subagent more work, answer an approval question, or continue a finished one, use message_subagent(job=<from>, message=...).");
+    if (jobs) parts.push("Subagent messages need no reply. To give a subagent more work or continue a finished one, use message_subagent(job=<from>, message=...). Answer approvals explicitly with decide or the dashboard.");
   }
   return parts.join("\n\n");
 }
@@ -43243,7 +43257,7 @@ function discardFinishedNotes(ctx) {
     if (isQuietMessage(m)) return false;
     if (!ctx.jobs?.isNote(m)) return false;
     const job = ctx.jobs.find(m.from.name);
-    return job !== void 0 && !job.ownershipHistory?.length && job.status !== "running";
+    return job !== void 0 && !job.projectRoot && !job.deliveryHistory?.length && !job.ownershipHistory?.length && job.status !== "running";
   });
   node2.markRead(obsolete.map((m) => m.id));
 }
@@ -49295,7 +49309,7 @@ var Broker = class {
         const message = { ...m, to: recipient, recipient, conversationId: this.jobConversation(job, recipient, m.conversationId) };
         if (this.store.insertJobDelivery(message)) {
           const target = this.connByName(recipient);
-          if (target) this.emit(target, "message", message);
+          if (target && !target.peer?.unavailable) this.emit(target, "message", message);
         }
         return { saved: true };
       },
@@ -49769,7 +49783,6 @@ Handoff note: ${receipt.note}` : "") + "\n\nYou are their supervisor. Use messag
     this.routePendingJobMail();
   }
   routePendingJobMail() {
-    const live = [...this.conns].flatMap((c) => c.peer ? [c.peer] : []);
     for (const job of this.storedJobs()) {
       if (job.remote || !primaryFor(job)) continue;
       const recipient = this.jobRecipient(job), target = this.connByName(recipient);
@@ -49780,10 +49793,10 @@ Handoff note: ${receipt.note}` : "") + "\n\nYou are their supervisor. Use messag
           const names = /* @__PURE__ */ new Set([recipient, envelope.to, envelope.recipient, ...mastersFor(job)]);
           const consumed = this.jobsPath && [...names].some((name2) => typeof name2 === "string" && new ReadJournal(dirname20(this.jobsPath)).read(`name:${name2}`).includes(message.id));
           if (consumed) this.store.markRead(recipient, [message.id], this.now());
-          else if (target) this.emit(target, "message", message);
+          else if (target && !target.peer?.unavailable) this.emit(target, "message", message);
         }
       }
-      if (!target) continue;
+      if (!target || target.peer?.unavailable) continue;
       for (const from of this.store.pendingJobRecipients(String(job.id))) {
         if (this.jobsPath) this.store.markRead(from, new ReadJournal(dirname20(this.jobsPath)).read(`name:${from}`), this.now());
         const moved = this.store.handoffMail(from, recipient, String(job.id), this.now(), recipient !== job.parentJob && recipient !== primaryFor(job));
@@ -50128,6 +50141,7 @@ Call decisions to look up current decisions or their history.`,
       if (peer.jobAgent || typeof args.unavailable !== "boolean") throw new BridgeError("bad_request", "Only masters can change availability.");
       peer.unavailable = args.unavailable;
       this.routePendingJobMail();
+      if (!peer.unavailable) this.replayMail(conn, peer);
     }
     if (peer.jobOwner) {
       if (typeof args.jobParent === "string") peer.jobParent = args.jobParent;
@@ -50342,6 +50356,11 @@ Call decisions to look up current decisions or their history.`,
     }
     const remoteTargets = to === BROADCAST ? this.network?.peers().filter((p) => !p.jobAgent).map((p) => p.name) ?? [] : [];
     const { live, queued } = to === BROADCAST && remoteTargets.length ? { live: [...this.conns].filter((c) => c.peer && c.peer.id !== sender.id && !c.peer.jobAgent), queued: [] } : this.resolveTargets(to, sender);
+    if (own2 && to === this.jobRecipient(own2)) {
+      for (let i = live.length - 1; i >= 0; i--) {
+        if (live[i].peer?.unavailable) queued.push(live.splice(i, 1)[0].peer.name);
+      }
+    }
     if (conversationId.startsWith(SIBLING_CONVERSATION_PREFIX) && (queued.some((name2) => !sender.jobAgent || !this.storedSiblings(sender).some((s) => s.name === name2)) || live.some((c) => c.peer.jobAgent && (!sender.jobAgent || !sender.jobOwner || !this.sameJobFamily(sender, c.peer) && !this.sharedJobs(sender, c.peer) && !sender.jobSendTo?.includes(c.peer.name))))) {
       throw new BridgeError("unauthorized", "sibling chat requires the same supervisor or an explicit send_to job grant");
     }
@@ -50380,7 +50399,7 @@ Call decisions to look up current decisions or their history.`,
   unreadMail(recipient, limit) {
     const messages = this.store.unread(recipient, limit);
     if (!this.jobsPath) return messages;
-    const finished = new Set(this.storedJobs().filter((j) => j.status && j.status !== "running").map((j) => `job:${j.id}`));
+    const finished = new Set(this.storedJobs().filter((j) => j.status && j.status !== "running" && (!primaryFor(j) || !j.projectRoot && !j.deliveryHistory && !j.ownershipHistory && !this.groups.jobRoot(j, this.localPeers()))).map((j) => `job:${j.id}`));
     const obsolete = messages.filter((m) => !isQuietMessage(m) && m.conversationId.endsWith(SIBLING_NOTE_SUFFIX) && finished.has(m.from.id));
     this.store.markRead(recipient, obsolete.map((m) => m.id), this.now());
     return messages.filter((m) => !obsolete.includes(m));
@@ -55221,7 +55240,15 @@ async function startServer(argv = process.argv.slice(2)) {
   const log = createLogger({ home, component: `mcp-${agent}` });
   const cwd = process.env.CLAUDE_PROJECT_DIR || process.cwd();
   const cwdKnown = Boolean(process.env.CLAUDE_PROJECT_DIR) || !isInside(cwd, PLUGIN_ROOT);
-  const cfg = loadConfig(home, agent, log, process.env, cwdKnown ? canonicalProjectRoot(cwd) ?? void 0 : void 0);
+  let configCwd, configRoot;
+  const projectConfigRoot = (dir) => {
+    if (dir !== configCwd) {
+      configCwd = dir;
+      configRoot = canonicalProjectRoot(dir) ?? void 0;
+    }
+    return configRoot;
+  };
+  const cfg = loadConfig(home, agent, log, process.env, cwdKnown ? projectConfigRoot(cwd) : void 0);
   const delegated = currentDelegateDepth() > 0;
   log.info("starting MCP server", { agent, cwd, cwdKnown, delegated, version: APP_VERSION, node: process.version });
   const node2 = delegated ? null : new BridgeNode({
@@ -55268,7 +55295,7 @@ async function startServer(argv = process.argv.slice(2)) {
       void node2.setWakePolicy(agent === "claude" && next.wakeOnDirect, agent === "claude" && Boolean(ctx.rewakeAvailable || ctx.channelActive()) || agent === "opencode" || agent === "codex" && Boolean(node2.currentSessionId), next.maxHops).catch(() => {
       });
     };
-    watchConfig(home, agent, log, applyConfig, () => cwdSettled ? canonicalProjectRoot(node2.cwd) ?? "" : "");
+    watchConfig(home, agent, log, applyConfig, () => cwdSettled ? projectConfigRoot(node2.cwd) ?? "" : "");
     ctx.activity = (s) => node2.setActivity(s);
     ctx.learnCwd = async (projectDir) => {
       if (cwdSettled || projectDir === node2.cwd) return;
@@ -55276,7 +55303,7 @@ async function startServer(argv = process.argv.slice(2)) {
       Object.assign(cfg, loadConfig(home, agent, log, process.env, canonicalProjectRoot(projectDir) ?? void 0));
       const name2 = cfg.name ? void 0 : defaultPeerName(agent, projectDir);
       await node2.relocate(projectDir, name2).catch((err) => log.warn("relocate failed", { err: err.message }));
-      applyConfig(loadConfig(home, agent, log, process.env, canonicalProjectRoot(node2.cwd) ?? void 0));
+      applyConfig(loadConfig(home, agent, log, process.env, projectConfigRoot(node2.cwd)));
     };
   }
   if (agent === "codex" && node2) {
@@ -55471,7 +55498,7 @@ function registerTools(mcp, ctx, targets) {
   const { node: node2, log, cfg } = ctx;
   const waits = new MessageWaitStore(ctx.home);
   if (node2) waits.attach(node2);
-  const register = ((name2, ...rest) => node2 || SUBAGENT_TOOLS.has(name2) || ctx.jobs && (name2 === "message_subagent" || name2 === "cancel_subagent" || name2 === "inbox" || name2 === "wait_for_message" || currentDelegateDepth() < cfg.maxDelegateDepth && (name2.startsWith("spawn_") || name2.startsWith("ask_") || name2 === "list_models")) ? mcp.registerTool(name2, ...rest) : void 0);
+  const register = ((name2, ...rest) => node2 || SUBAGENT_TOOLS.has(name2) || ctx.jobs && (name2 === "decide" || name2 === "message_subagent" || name2 === "cancel_subagent" || name2 === "inbox" || name2 === "wait_for_message" || currentDelegateDepth() < cfg.maxDelegateDepth && (name2.startsWith("spawn_") || name2.startsWith("ask_") || name2 === "list_models")) ? mcp.registerTool(name2, ...rest) : void 0);
   const requireNode = () => {
     if (!node2) throw new BridgeError("bad_request", t("err.delegatedSession"));
     discardFinishedNotes(ctx);
@@ -55516,18 +55543,35 @@ function registerTools(mcp, ctx, targets) {
   register(
     "decide",
     {
-      title: "Pin owner decision",
-      description: "Record an owner's decision after researching it. A newer decision on the same topic supersedes the previous revision across scopes; history is always retained. Notifications reach sessions in scope once without waking idle sessions. Scope defaults to this project folder.",
+      title: "Make an explicit decision",
+      description: "Answer a pending approval with approval_id and decision (allow, deny or escalate), or record an owner's decision after researching it. A newer decision on the same topic supersedes the previous revision across scopes; history is always retained. Notifications reach sessions in scope once without waking idle sessions. Scope defaults to this project folder.",
       inputSchema: {
-        topic: external_exports.string().trim().min(1).max(MAX_DECISION_TOPIC_CHARS).describe("Stable topic; trimmed and case-insensitive"),
-        text: external_exports.string().trim().min(1).max(MAX_DECISION_TEXT_CHARS).describe("The owner's decision text"),
+        approval_id: external_exports.uuid().optional().describe("Pending approval id from the job question or dashboard"),
+        decision: external_exports.enum(["allow", "deny", "escalate"]).optional(),
+        reason: external_exports.string().max(4e3).optional(),
+        topic: external_exports.string().trim().min(1).max(MAX_DECISION_TOPIC_CHARS).optional().describe("Stable topic; trimmed and case-insensitive"),
+        text: external_exports.string().trim().min(1).max(MAX_DECISION_TEXT_CHARS).optional().describe("The owner's decision text"),
         scope: decisionScopeSchema.optional().describe('"all", {project: folder}, or {sessions: [peer names, ids or session ids]}'),
         source_message_id: external_exports.string().optional().describe("Optional existing bridge message id recording the owner's choice")
       }
     },
     guarded("decide", async (a) => {
-      const { source_message_id, ...args } = a;
-      return text2(JSON.stringify(await requireNode().decide({ ...args, sourceMessageId: source_message_id })));
+      if (a.approval_id || a.decision) {
+        if (!a.approval_id || !a.decision || a.topic || a.text || a.scope || a.source_message_id) throw new BridgeError("bad_request", "Supply approval_id and decision only, with an optional reason.");
+        const entry = listPendingApprovals(ctx.home).find((entry2) => entry2.id === a.approval_id);
+        if (!entry) return text2("Approval expired.", true);
+        const job = ctx.jobs?.find(entry.job);
+        if (!(node2 ? await node2.jobAuthority(entry.job) : job)) throw new BridgeError("bad_request", "This approval belongs to another supervisor.");
+        if (a.decision === "escalate") {
+          if (!entry.parentJob || !job?.pendingApproval) return text2("Escalation is unavailable here; use the dashboard or ask the supervisor to decide.", true);
+          job.pendingApproval("escalate");
+          return text2("Approval escalated; it remains pending.");
+        }
+        const outcome = await answerPendingApproval(ctx.home, entry.id, { decision: a.decision, reason: a.reason });
+        return text2(`Approval ${outcome}.`, outcome !== "answered");
+      }
+      if (!a.topic || !a.text || a.reason) throw new BridgeError("bad_request", "Supply topic and text to record an owner decision.");
+      return text2(JSON.stringify(await requireNode().decide({ topic: a.topic, text: a.text, scope: a.scope, sourceMessageId: a.source_message_id })));
     })
   );
   register(
@@ -56116,7 +56160,7 @@ ${r.lines.map((l) => `  ${l}`).join("\n")}`).join("\n\n"));
     "message_subagent",
     {
       title: "Message a subagent",
-      description: "Send a follow-up to a subagent started with ask_* or spawn_* (running or finished), like messaging a native subagent. It continues in its own session with its full context, in the same folder or worktree. While it is still running it gets the message live, at its next step (after its current tool call), and answers right away, like a native subagent: use that to ask how far it is or to redirect it. The answer arrives as a message from the job. Without a message it is told to continue where it stopped: use that to recover a failed or interrupted subagent. If all subagent slots are taken, a finished subagent's continuation is queued and starts by itself when one frees up (cancel_subagent drops it).",
+      description: "Send a follow-up to a subagent started with ask_* or spawn_* (running or finished), like messaging a native subagent. It continues in its own session with its full context, in the same folder or worktree. While it is still running it gets the message live, at its next step (after its current tool call), and answers right away, like a native subagent: use that to ask how far it is or to redirect it. The answer arrives as a message from the job. Plain messages never answer pending approvals; use decide or the dashboard. Without a message it is told to continue where it stopped: use that to recover a failed or interrupted subagent. If all subagent slots are taken, a finished subagent's continuation is queued and starts by itself when one frees up (cancel_subagent drops it).",
       inputSchema: {
         job: external_exports.string().min(1).describe('Job name, e.g. "codex-job-1a2b3c4d" or "opencode-ask-9f8e7d6c" (see peers)'),
         message: external_exports.string().optional().describe("The follow-up. Default: continue where you stopped and finish the task."),
@@ -56137,14 +56181,6 @@ ${r.lines.map((l) => `  ${l}`).join("\n")}`).join("\n\n"));
       const jobs = ctx.jobs;
       if (!jobs) throw new BridgeError("bad_request", t("err.delegatedSession"));
       const existing = await jobs.share(a.job);
-      if (node2 && a.message) {
-        const approval = listPendingApprovals(ctx.home).find((entry) => entry.job === a.job && entry.parentJob);
-        if (approval && /^(allow|deny)\b/i.test(a.message.trim()) && (approval.owner === node2.name || approval.rootSession === jobs.rootIdentity() || await node2.jobAuthority(a.job))) {
-          const decision = /^allow\b/i.test(a.message.trim()) ? "allow" : "deny";
-          const result = await answerPendingApproval(ctx.home, approval.id, { decision, reason: a.message.trim().replace(/^(allow|deny)\b\s*:?\s*/i, "") });
-          return text2(`Nested approval ${result}.`, result !== "answered");
-        }
-      }
       if (existing) {
         for (const [key3, agent] of Object.entries(PERMISSION_KEY_AGENT)) {
           if (a[key3] !== void 0 && existing.agent !== agent) throw new BridgeError("bad_request", `${key3} applies only to ${agent} jobs.`);
@@ -56159,12 +56195,14 @@ ${r.lines.map((l) => `  ${l}`).join("\n")}`).join("\n\n"));
         }
       }
       if (Object.keys(settings).length) jobs.setSettings(a.job, settings);
-      const { outcome, job } = jobs.followUp(a.job, a.message?.trim() || DEFAULT_FOLLOW_UP);
+      const { outcome, job, approvalPending } = jobs.followUp(a.job, a.message?.trim() || DEFAULT_FOLLOW_UP);
       const position = job ? jobs.waiting().indexOf(job) + 1 : 0;
+      const pending = listPendingApprovals(ctx.home).filter((entry) => entry.job === (job?.name ?? a.job));
+      const approvalNote = pending.length ? "\nAn approval is still pending. This message did not answer it; use " + pending.map((entry) => `decide(approval_id="${entry.id}", decision="allow" or "deny")`).join(" or ") + " or the dashboard." : approvalPending ? "\nAn approval is still pending. This message did not answer it; use decide with the approval id from its question or the dashboard." : "";
       const settingsNote = job && Object.keys(settings).length ? `
 Saved settings: ${Object.entries(settings).map(([key3, value]) => `${key3}=${value}`).join(", ")}.${wasRunning ? " Applies from its next turn; the turn running now keeps its settings." : " Applies to this continuation and later turns."}` : "";
       return text2(
-        t(`followUp.${outcome}`, { name: job?.name ?? a.job, max: jobs.limit, running: jobs.runningCount(), ahead: position > 1 ? ` (${position - 1} queued before it)` : "" }) + settingsNote,
+        t(`followUp.${outcome}`, { name: job?.name ?? a.job, max: jobs.limit, running: jobs.runningCount(), ahead: position > 1 ? ` (${position - 1} queued before it)` : "" }) + settingsNote + approvalNote,
         outcome === "unknown" || outcome === "no-session"
       );
     })
