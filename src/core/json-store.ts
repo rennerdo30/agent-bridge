@@ -3,6 +3,7 @@ import { closeSync, copyFileSync, existsSync, fsyncSync, mkdirSync, openSync, re
 import { basename, dirname, join } from "node:path";
 import type { Logger } from "./logger.js";
 import { storageLease, storeHome } from "./storage-lock.js";
+import { assertStoreUpgrade } from "./store-compatibility.js";
 
 export const JSON_STORE_VERSION = 4;
 export const KEEP_STORE_BACKUPS = 3;
@@ -35,7 +36,16 @@ export function backupPath(path: string): string {
 export function retainBackups(path: string): void {
   const prefix = `${basename(path)}.backup-`;
   const files = readdirSync(dirname(path)).filter((f) => f.startsWith(prefix)).sort().reverse();
-  for (const file of files.slice(KEEP_STORE_BACKUPS)) archiveFile(join(dirname(path), file));
+  for (const file of files.slice(KEEP_STORE_BACKUPS)) {
+    try { archiveFile(join(dirname(path), file)); }
+    catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      // Parallel readers/migration candidates may still hold this snapshot on Windows.
+      // Rotation is optional; keeping its original location is safer than failing startup.
+      if (["EBUSY", "EPERM", "EACCES", "ENOENT"].includes(code ?? "")) continue;
+      throw error;
+    }
+  }
 }
 
 export function readJsonStore(path: string, log?: Logger, valid: (value: unknown) => boolean = isRecord): unknown {
@@ -84,6 +94,7 @@ export function writeJsonStore(path: string, value: Record<string, unknown>, pre
 
 function writeJsonStoreUnlocked(path: string, value: Record<string, unknown>, previous: unknown): void {
   assertWritableStore(previous);
+  assertStoreUpgrade(storeHome(path), "json", isRecord(previous) && typeof previous.version === "number" ? previous.version : 0, JSON_STORE_VERSION);
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
   if (previous !== null && (!isRecord(previous) || previous.version !== JSON_STORE_VERSION) && existsSync(path)) {
     copyFileSync(path, backupPath(path));

@@ -97,7 +97,7 @@ export const en = {
   "cli.status.peers": "Peers online: {count}",
   "cli.status.peer": "  {name}  [{agent}, {activity}, v{version}{outdated}]  since {since}  {cwd}",
   "cli.status.outdatedMark": " OUTDATED",
-  "cli.status.outdated": "{count} session(s) run an older agent-bridge than {version}. Restart them (after finishing their current work) to load the update.",
+  "cli.status.outdated": "{count} session(s) run an older agent-bridge than {version}. They can keep working; a plugin reload or the next MCP server start loads the selected compatible update.",
   "cli.status.upToDate": "All sessions run agent-bridge {version}.",
   "cli.sent": "Sent message {id}.",
   "cli.tail.listening": "Listening as \"{name}\". Press Ctrl+C to stop.",

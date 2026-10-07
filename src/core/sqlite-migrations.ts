@@ -1,25 +1,47 @@
 import { DatabaseSync } from "node:sqlite";
+import { copyFileSync, mkdirSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
 import { backupPath, retainBackups } from "./json-store.js";
 import type { Logger } from "./logger.js";
 import { SQLITE_BUSY_TIMEOUT_MS } from "./sqlite-maintenance.js";
+import { migrationLock } from "./migration-lock.js";
+import { assertStoreUpgrade } from "./store-compatibility.js";
 
 export interface SqliteMigration { version: number; sql: string }
 const MAX_SNAPSHOT_ATTEMPTS = 10;
 
 /** Every change is versioned. Keep the writer lock through recovery from the pre-migration backup. */
 export function migrateSqlite(db: DatabaseSync, file: string, existed: boolean, target: number, migrations: readonly SqliteMigration[], log: Logger): void {
+  const release = migrationLock(file);
+  try { migrateLocked(db, file, existed, target, migrations, log); } finally { release(); }
+}
+
+function migrateLocked(db: DatabaseSync, file: string, existed: boolean, target: number, migrations: readonly SqliteMigration[], log: Logger): void {
   db.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
   const version = Number(db.prepare("PRAGMA user_version").get()!.user_version);
   if (version > target) throw new Error(`unsupported SQLite store version: ${version}`);
   if (version === target) return;
+  if (basename(file) === "bridge.db") assertStoreUpgrade(dirname(file), "sqlite", version, target);
   let backup: string | null = null;
   // A commit between snapshot and lock acquisition must not disappear on recovery.
   for (let attempt = 0; ; attempt++) {
-    if (attempt >= MAX_SNAPSHOT_ATTEMPTS) throw new Error("database kept changing before migration; retry with bridge stopped");
+    if (attempt >= MAX_SNAPSHOT_ATTEMPTS) throw Object.assign(new Error("database kept changing before migration; waiting to retry while sessions continue"), { code: "EBUSY" });
     const before = db.prepare("PRAGMA data_version").get()!.data_version;
     if (existed) {
-      backup = backupPath(file);
+      // Keep the recovery snapshot outside the legacy rotation namespace. Another
+      // mixed-version candidate may archive root backups while this writer waits.
+      const protectedDir = join(dirname(file), ".migration-snapshots");
+      mkdirSync(protectedDir, { recursive: true, mode: 0o700 });
+      const legacyBackup = backupPath(file);
+      backup = join(protectedDir, `${basename(legacyBackup)}-v${version}-to-v${target}`);
       db.prepare("VACUUM INTO ?").run(backup);
+      const snapshot = new DatabaseSync(backup, { readOnly: true });
+      try {
+        if (snapshot.prepare("PRAGMA integrity_check").all().some((row) => row.integrity_check !== "ok")) throw new Error(`invalid pre-migration snapshot: ${backup}`);
+      } finally { snapshot.close(); }
+      // Preserve the established discovery path for existing tooling. Recovery
+      // uses the protected original, which is never automatically rotated.
+      copyFileSync(backup, legacyBackup);
       retainBackups(file);
       log.info("backed up store before migration", { file, backup, version });
     }

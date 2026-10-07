@@ -8,7 +8,7 @@
  *  - when the session goes idle: the server's Stop logic decides (listen window / auto-wake), and the
  *    plugin starts a new turn with client.session.promptAsync
  */
-import { appendFileSync, mkdirSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -129,7 +129,7 @@ export const AgentBridgePlugin = async (input: PluginInput) => {
 async function createBridge({ client, directory }: PluginInput) {
   const log = makeLog();
   const here = dirname(fileURLToPath(import.meta.url));
-  const serverPath = process.env.AGENT_BRIDGE_OPENCODE_SERVER || join(here, SERVER_DIR, SERVER_FILE);
+  const serverPath = process.env.AGENT_BRIDGE_OPENCODE_SERVER || (existsSync(join(here, SERVER_FILE)) ? join(here, SERVER_FILE) : join(here, SERVER_DIR, SERVER_FILE));
   const nodeBin = process.env.AGENT_BRIDGE_NODE || "node";
   log("info", "starting", { version: APP_VERSION, directory, serverPath });
 

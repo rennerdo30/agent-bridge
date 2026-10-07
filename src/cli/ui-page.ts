@@ -628,6 +628,7 @@ button.ghost { min-height: 32px; }
   <div id="overview">
     <div class="page-head"><div><h2>Overview</h2><p class="muted" id="ovLead">Every session, subagent and message on the bridge.</p></div></div>
     <div id="ovAttn"></div>
+    <div id="ovVersions" role="status"></div>
     <div class="block stats" id="ovStats"></div>
     <div class="block"><h3>Usage left <span class="n" id="usageAt"></span><button class="linkbtn" id="usageRefresh" title="Read the limits again">refresh</button></h3><div id="ovUsage" class="cards usage"><div class="panel empty small muted">Reading the agents' limits…</div></div></div>
     <div class="block"><details><summary class="small muted">Available models</summary><div id="ovModels" class="cards usage"><div class="panel empty small muted">Open to read the available models.</div></div></details></div>
@@ -1307,6 +1308,9 @@ function countsLine(c) {
   return [c.working && '<span class="w">' + c.working + " working</span>", c.done && '<span class="d">' + c.done + " done</span>", c.failed && '<span class="f">' + c.failed + " failed</span>", c.total + " total"].filter(Boolean).join(" · ");
 }
 function renderOverview() {
+  const retained = state.peers.filter((p) => !p.version || cmpVersion(p.version, newestVersion()) < 0);
+  if (cmpVersion(state.version, newestVersion()) < 0) retained.push({ name: "dashboard host", version: state.version });
+  $("ovVersions").innerHTML = retained.length ? '<div class="attn-banner"><span><b>Version skew: sessions still run retained code.</b> ' + retained.map((p) => esc(p.name) + " (v" + esc(p.version || "unknown") + ")").join(", ") + ". Sessions keep working; shared format upgrades wait for compatible readers.</span></div>" : "";
   renderApprovalBanner();
   const live = model.sessions.filter((x) => x.live), ended = model.sessions.filter((x) => !x.live && x.groups.length);
   $("ovCount").textContent = live.length || "";
