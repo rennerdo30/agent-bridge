@@ -21324,7 +21324,7 @@ var ConversationIngestor = class {
     this.home = home;
     this.paths = paths2;
     this.checked = Number(
-      db2.prepare("SELECT coalesce(max(checked),0) n FROM conversation_sources").get().n
+      db2.prepare("SELECT coalesce(max(checked),0) n FROM (SELECT checked FROM conversation_sources UNION ALL SELECT checked FROM conversation_projects)").get().n
     );
   }
   db;
@@ -22147,7 +22147,7 @@ var ConversationIngestor = class {
     ).get();
     if (project) {
       work += syncProjectMirror(this.db, String(project.project));
-      this.db.prepare("UPDATE conversation_projects SET checked=? WHERE project=?").run(this.checked, project.project);
+      this.db.prepare("UPDATE conversation_projects SET checked=? WHERE project=?").run(++this.checked, project.project);
     }
     return work;
   }

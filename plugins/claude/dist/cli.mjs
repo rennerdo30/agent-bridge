@@ -29254,7 +29254,7 @@ var ConversationIngestor = class {
     this.home = home;
     this.paths = paths;
     this.checked = Number(
-      db.prepare("SELECT coalesce(max(checked),0) n FROM conversation_sources").get().n
+      db.prepare("SELECT coalesce(max(checked),0) n FROM (SELECT checked FROM conversation_sources UNION ALL SELECT checked FROM conversation_projects)").get().n
     );
   }
   db;
@@ -30077,7 +30077,7 @@ var ConversationIngestor = class {
     ).get();
     if (project) {
       work += syncProjectMirror(this.db, String(project.project));
-      this.db.prepare("UPDATE conversation_projects SET checked=? WHERE project=?").run(this.checked, project.project);
+      this.db.prepare("UPDATE conversation_projects SET checked=? WHERE project=?").run(++this.checked, project.project);
     }
     return work;
   }
@@ -41163,8 +41163,10 @@ Call decisions to look up current decisions or their history.`,
   /** A pending response is one frame, unlike streamed replay events. Bound it by bytes as well as rows. */
   pendingMail(recipient, limit) {
     const result = [];
+    const unavailable = this.connByName(recipient)?.peer?.unavailable;
     let bytes2 = 1024;
     for (const message of this.unreadMail(recipient, limit)) {
+      if (unavailable && message.from.id.startsWith("job:") && !message.conversationId.startsWith("siblings-")) continue;
       const size = Buffer.byteLength(JSON.stringify(message)) + 1;
       if (bytes2 + size > MAX_FRAME_BYTES) break;
       result.push(message);
