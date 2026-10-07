@@ -6,6 +6,7 @@ import { isPluginCacheCwd } from "./session-visibility.js";
 /** The common Git directory identifies linked worktrees; physical paths unify subst aliases. */
 export function canonicalProjectRoot(cwd: string): string | null {
   if (isPluginCacheCwd(cwd)) return null;
+  const visibleRoot = (root: string): string | null => isPluginCacheCwd(root) ? null : root;
   try {
     const physical = realpathSync.native(cwd);
     if (isPluginCacheCwd(physical)) return null;
@@ -16,17 +17,17 @@ export function canonicalProjectRoot(cwd: string): string | null {
       const top = realpathSync.native(git(["--show-toplevel"]));
       const common = realpathSync.native(resolve(physical, git(["--git-common-dir"])));
       // Ordinary repositories and linked worktrees share the main checkout's .git directory.
-      if (common.endsWith("/.git") || common.endsWith("\\.git")) return realpathSync.native(dirname(common));
+      if (common.endsWith("/.git") || common.endsWith("\\.git")) return visibleRoot(realpathSync.native(dirname(common)));
       try {
         const configured = execFileSync("git", ["--git-dir", common, "config", "--get", "core.worktree"],
           { encoding: "utf8", timeout: 3_000, windowsHide: true, stdio: ["ignore", "pipe", "ignore"] }).trim();
-        if (configured) return realpathSync.native(resolve(common, configured));
+        if (configured) return visibleRoot(realpathSync.native(resolve(common, configured)));
       } catch { /* A separate Git directory can instead identify its main through worktree metadata. */ }
       const worktrees = execFileSync("git", ["-C", physical, "worktree", "list", "--porcelain"],
         { encoding: "utf8", timeout: 3_000, windowsHide: true, stdio: ["ignore", "pipe", "ignore"] });
       const main = worktrees.split(/\r?\n\r?\n/).find((entry) => !/^bare$/m.test(entry));
       const root = main && /^worktree (.+)$/m.exec(main)?.[1];
-      return root ? realpathSync.native(root) : top;
+      return visibleRoot(root ? realpathSync.native(root) : top);
     } catch {
       // Non-Git projects share only an identical existing directory, never guessed ancestors.
       return physical;

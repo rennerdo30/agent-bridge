@@ -286,6 +286,7 @@ function isPluginCacheCwd(cwd) {
 // src/core/project-identity.ts
 function canonicalProjectRoot(cwd) {
   if (isPluginCacheCwd(cwd)) return null;
+  const visibleRoot = (root) => isPluginCacheCwd(root) ? null : root;
   try {
     const physical = realpathSync.native(cwd);
     if (isPluginCacheCwd(physical)) return null;
@@ -298,14 +299,14 @@ function canonicalProjectRoot(cwd) {
     try {
       const top = realpathSync.native(git(["--show-toplevel"]));
       const common = realpathSync.native(resolve(physical, git(["--git-common-dir"])));
-      if (common.endsWith("/.git") || common.endsWith("\\.git")) return realpathSync.native(dirname4(common));
+      if (common.endsWith("/.git") || common.endsWith("\\.git")) return visibleRoot(realpathSync.native(dirname4(common)));
       try {
         const configured = execFileSync(
           "git",
           ["--git-dir", common, "config", "--get", "core.worktree"],
           { encoding: "utf8", timeout: 3e3, windowsHide: true, stdio: ["ignore", "pipe", "ignore"] }
         ).trim();
-        if (configured) return realpathSync.native(resolve(common, configured));
+        if (configured) return visibleRoot(realpathSync.native(resolve(common, configured)));
       } catch {
       }
       const worktrees = execFileSync(
@@ -315,7 +316,7 @@ function canonicalProjectRoot(cwd) {
       );
       const main = worktrees.split(/\r?\n\r?\n/).find((entry) => !/^bare$/m.test(entry));
       const root = main && /^worktree (.+)$/m.exec(main)?.[1];
-      return root ? realpathSync.native(root) : top;
+      return visibleRoot(root ? realpathSync.native(root) : top);
     } catch {
       return physical;
     }
@@ -348,8 +349,9 @@ function conversationProject(cwd) {
   } catch {
   }
   const known = roots.get(cwd);
-  if (known) return known;
-  const root = projectKey(canonicalProjectRoot(cwd) ?? resolve2(cwd));
+  if (known !== void 0) return known;
+  const canonical = canonicalProjectRoot(cwd);
+  const root = canonical ? projectKey(canonical) : existsSync5(cwd) ? "" : projectKey(resolve2(cwd));
   if (roots.size >= 256) roots.delete(roots.keys().next().value);
   roots.set(cwd, root);
   return root;

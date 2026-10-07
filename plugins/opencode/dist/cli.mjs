@@ -28520,6 +28520,7 @@ function isPluginCacheCwd(cwd) {
 // src/core/project-identity.ts
 function canonicalProjectRoot(cwd) {
   if (isPluginCacheCwd(cwd)) return null;
+  const visibleRoot = (root) => isPluginCacheCwd(root) ? null : root;
   try {
     const physical = realpathSync2.native(cwd);
     if (isPluginCacheCwd(physical)) return null;
@@ -28532,14 +28533,14 @@ function canonicalProjectRoot(cwd) {
     try {
       const top = realpathSync2.native(git2(["--show-toplevel"]));
       const common = realpathSync2.native(resolve2(physical, git2(["--git-common-dir"])));
-      if (common.endsWith("/.git") || common.endsWith("\\.git")) return realpathSync2.native(dirname5(common));
+      if (common.endsWith("/.git") || common.endsWith("\\.git")) return visibleRoot(realpathSync2.native(dirname5(common)));
       try {
         const configured = execFileSync(
           "git",
           ["--git-dir", common, "config", "--get", "core.worktree"],
           { encoding: "utf8", timeout: 3e3, windowsHide: true, stdio: ["ignore", "pipe", "ignore"] }
         ).trim();
-        if (configured) return realpathSync2.native(resolve2(common, configured));
+        if (configured) return visibleRoot(realpathSync2.native(resolve2(common, configured)));
       } catch {
       }
       const worktrees = execFileSync(
@@ -28549,7 +28550,7 @@ function canonicalProjectRoot(cwd) {
       );
       const main2 = worktrees.split(/\r?\n\r?\n/).find((entry) => !/^bare$/m.test(entry));
       const root = main2 && /^worktree (.+)$/m.exec(main2)?.[1];
-      return root ? realpathSync2.native(root) : top;
+      return visibleRoot(root ? realpathSync2.native(root) : top);
     } catch {
       return physical;
     }
@@ -28625,8 +28626,9 @@ function conversationProject(cwd) {
   } catch {
   }
   const known = roots.get(cwd);
-  if (known) return known;
-  const root = projectKey(canonicalProjectRoot(cwd) ?? resolve3(cwd));
+  if (known !== void 0) return known;
+  const canonical = canonicalProjectRoot(cwd);
+  const root = canonical ? projectKey(canonical) : existsSync6(cwd) ? "" : projectKey(resolve3(cwd));
   if (roots.size >= 256) roots.delete(roots.keys().next().value);
   roots.set(cwd, root);
   return root;

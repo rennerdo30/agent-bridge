@@ -37,8 +37,9 @@ export function conversationProject(cwd: string): string {
   if (!cwd || isPluginCacheCwd(cwd)) return "";
   try { if (isPluginCacheCwd(realpathSync.native(cwd))) return ""; } catch {}
   const known = roots.get(cwd);
-  if (known) return known;
-  const root = projectKey(canonicalProjectRoot(cwd) ?? resolve(cwd));
+  if (known !== undefined) return known;
+  const canonical = canonicalProjectRoot(cwd);
+  const root = canonical ? projectKey(canonical) : existsSync(cwd) ? "" : projectKey(resolve(cwd));
   if (roots.size >= 256) roots.delete(roots.keys().next().value!);
   roots.set(cwd, root);
   return root;
