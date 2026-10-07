@@ -1406,9 +1406,6 @@ ${res.text || t("delegate.empty")}`, res.isError);
       },
     },
     async (a: { event: string; session_id?: string; stop_hook_active?: boolean | string; cwd?: string; agent_id?: string; prompt?: string }, extra: ToolExtra) => {
-      // The session's hooks reach this server: if the bridge gave the session to a stale one, take it back.
-      if (ctx.node?.wasReplaced) await ctx.node.reclaim().catch((err) => log.warn("could not take the bridge back", { err: (err as Error).message }));
-      await ctx.observeMeta?.(extra._meta);
       // An unsubstituted "${...}" template means the host had no value for that field.
       const given = (v: string | undefined) => (v && !v.startsWith("${") ? v : null);
       try {

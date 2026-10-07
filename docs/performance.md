@@ -254,3 +254,12 @@ decisions and an unknown user table, and checks the existing readable schema-6
 backup. The 400-job JSON upgrade verifies retained unknown fields, one backup and
 idempotence. No user data is deleted. Conversation schema 8 and other feature lanes
 are intentionally released separately.
+
+The owner-state dry run used a separate copy of retained storage under the isolated
+worktree. SQLite's read-only backup API captured the live databases; copied JSON
+and retained state directories were opened only in the copy. Opening the copy with
+0.29.15 left all 19 primary table counts, archive counts and SQL schema unchanged:
+SQLite 7 before and after. The copied jobs JSON remained byte-identical (494 retained jobs across current and archived records).
+The original was accessed only for read-only snapshots and copies. The release diff
+contains no migration entry, store-version bump, CREATE/ALTER/DROP change or new
+stored record format, so 0.29.14 and 0.29.15 share the same retained state format.
