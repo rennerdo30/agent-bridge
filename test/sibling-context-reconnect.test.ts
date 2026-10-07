@@ -35,7 +35,7 @@ async function connect(agent: string, name: string, extra = {}) {
   await call(c, "peers");
   return c;
 }
-async function runner(id: string, agent: "codex" | "opencode", supervisor: string) {
+async function runner(id: string, agent: "codex" | "opencode", supervisor: string, replayId?: string) {
   const job: Job = { id, name: `${agent}-job-${id}`, agent, model: null, prompt: "fixture", startedAt: Date.now(),
     controller: new AbortController(), status: "running", sessionId: null, workdir: null, worktree: null, progress: null, queue: [] };
   const node = new BridgeNode({ pipePath: env.pipe, dbPath: env.db, token: loadOrCreateToken(env.home), name: job.name,
@@ -43,11 +43,14 @@ async function runner(id: string, agent: "codex" | "opencode", supervisor: strin
     cwd: env.home, autoWake: false, canHostBroker: false, log: nullLogger });
   cleanups.push(() => node.stop());
   await node.start();
+  // Exercise replay arriving before the resumed task has its live parent link.
+  if (replayId) await until(() => node.hasSeen(replayId));
   const chat = new SiblingLink(node, job, 32, nullLogger);
   const parent = new ParentLink(supervisor, () => {}, nullLogger, undefined, chat);
   cleanups.push(() => chat.close(), () => parent.close());
   await parent.start();
   job.live = { post: (body, message) => parent.post(body, message) };
+  chat.flush();
   return { node, job, parent };
 }
 
@@ -72,7 +75,7 @@ it.each(["claude", "codex", "opencode"])("keeps sibling observer copies out of t
   for (const event of ["SessionStart", "UserPromptSubmit", "PostToolUse", "Stop"]) {
     expect(await call(sup, "hook_event", { event, session_id: "supervisor-session" })).not.toContain("SIBLING_ONLY_SECRET");
   }
-  b = await runner("b", "opencode", "supervisor");
+  b = await runner("b", "opencode", "supervisor", id);
   await until(() => b.node.hasSeen(id));
   // The receiver really gets the message through its delegated MCP hook.
   const recipient = await connect("opencode", "receiver", { ...b.parent.childEnv(), AGENT_BRIDGE_DELEGATE_DEPTH: "1" });
