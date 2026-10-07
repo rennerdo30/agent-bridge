@@ -135,11 +135,13 @@ export async function runInstaller(opts: InstallerOptions): Promise<number> {
       }
       for (const step of steps) {
         if (step.kind === "antigravity") {
-          const source = antigravitySourceDir();
-          if (step.action !== "uninstall" && !source) { opts.out("Missing Antigravity plugin build"); failures++; continue; }
-          const res = step.action === "uninstall" ? uninstallAntigravity() : installAntigravity(source!);
-          for (const file of res.files) opts.out(`  ${file}`);
-          reportPluginSessions(resolveHome(), "antigravity", APP_VERSION, opts.out);
+          try {
+            const source = antigravitySourceDir();
+            if (step.action !== "uninstall" && !source) throw new Error("Missing Antigravity plugin build");
+            const res = step.action === "uninstall" ? uninstallAntigravity() : installAntigravity(source!);
+            for (const file of res.files) opts.out(`  ${file}`);
+            if (step.action !== "uninstall") reportPluginSessions(resolveHome(), "antigravity", APP_VERSION, opts.out);
+          } catch (error) { opts.out(`  Native plugin change failed: ${String(error)}`); failures++; }
           continue;
         }
         if (step.kind === "live-update") {

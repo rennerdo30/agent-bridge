@@ -49,8 +49,8 @@ describe("Antigravity native hook routing", () => {
       expect(readFileSync(settings, "utf8")).toBe(updated);
       expect(JSON.parse(updated)).toEqual({ permissions: { allow: ["command(git)", "mcp(agent-bridge_agent-bridge/*)"], deny: ["write_file(.git/)"], ask: ["command(*)"] }, owner: { keep: true } });
       const { readdirSync } = await import("node:fs");
-      const backup = readdirSync(join(env.home, "archive"))[0]!;
-      expect(readFileSync(join(env.home, "archive", backup), "utf8")).toBe(original);
+      const backup = readdirSync(env.home).find((file) => file.startsWith("settings.json.backup-"))!;
+      expect(readFileSync(join(env.home, backup), "utf8")).toBe(original);
       writeFileSync(settings, '{"permissions":{"allow":"invalid"}}');
       expect(() => grantAntigravityBridgeMcp(settings)).toThrow("preserved unchanged");
       expect(readFileSync(settings, "utf8")).toBe('{"permissions":{"allow":"invalid"}}');
@@ -84,7 +84,8 @@ describe("Antigravity native hook routing", () => {
       expect(() => requireAntigravityPlugin(target)).toThrow("install antigravity");
       mkdirSync(join(source, "dist"), { recursive: true });
       writeFileSync(join(source, "plugin.json"), '{"name":"agent-bridge"}');
-      for (const name of ["server.mjs", "cli.mjs"]) writeFileSync(join(source, "dist", name), "// fixture");
+      writeFileSync(join(source, "package.json"), '{"version":"0.1.0"}');
+      for (const name of ["server.mjs", "worker.mjs", "cli.mjs", "history-worker.mjs"]) writeFileSync(join(source, "dist", name), "// fixture");
       installAntigravity(source, target); expect(() => requireAntigravityPlugin(target)).not.toThrow();
       const hooks = JSON.parse(readFileSync(join(target, "hooks.json"), "utf8")); hooks["agent-bridge"].enabled = false;
       writeFileSync(join(target, "hooks.json"), JSON.stringify(hooks));

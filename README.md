@@ -75,8 +75,9 @@ npx -y github:rennerdo30/agent-bridge install antigravity --yes
 npx -y github:rennerdo30/agent-bridge update antigravity --yes
 ```
 
-Requires installed, authenticated `agy` (verified with 1.2.0 and 1.3.1). Restart it after
-installation, and reload existing bridge sessions after updating them. The plugin includes MCP configuration, lifecycle/permission hooks
+Requires installed, authenticated `agy` (verified with 1.2.0 and 1.3.1). Start a new
+native session after initial installation. Updates keep running sessions on retained
+code and select new code for the next MCP server start. The plugin includes MCP configuration, lifecycle/permission hooks
 and a coordination skill. It exposes the same peer, delegation, history and job
 tools as the existing plugins. Other peers get `ask_antigravity` and
 `spawn_antigravity`, with `model`, `effort` (low/medium/high/xhigh/max), `session_id`,
@@ -99,7 +100,7 @@ Account quotas are shown by native `/usage` or `/quota`; the bridge reports them
 as unknown because no machine-readable quota command is documented.
 
 Native chats and explicit child conversations are read from Antigravity JSONL
-logs without modifying them. Installer updates back up replaced files;
+logs without modifying them. Updates publish complete immutable runtimes and back up replaced metadata;
 uninstall archives the owned plugin, including user additions, and retains
 the native MCP allow rule. No bridge data
 format changes are required for this additive agent kind.

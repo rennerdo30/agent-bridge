@@ -170,12 +170,14 @@ describe("Antigravity retained transcripts and installation", () => {
   it("backs up updates and archives uninstall including user additions", () => {
     const root = temp(), source = join(root, "source"), target = join(root, "plugin");
     mkdirSync(source); writeFileSync(join(source, "plugin.json"), '{"name":"agent-bridge"}'); writeFileSync(join(source, "package.json"), '{"version":"0.29.10"}');
+    mkdirSync(join(source, "dist"));
+    for (const name of ["server.mjs", "worker.mjs", "cli.mjs", "history-worker.mjs"]) writeFileSync(join(source, "dist", name), "// fixture");
     installAntigravity(source, target);
     writeFileSync(join(target, "owner-note.txt"), "keep me");
     writeFileSync(join(source, "package.json"), '{"version":"0.29.11"}');
     installAntigravity(source, target);
     expect(readFileSync(join(target, "owner-note.txt"), "utf8")).toBe("keep me");
-    expect(readdirSync(join(target, "archive")).some((name) => name.startsWith("package.json-"))).toBe(true);
+    expect(readdirSync(target).some((name) => name.startsWith("package.json.backup-"))).toBe(true);
     expect(JSON.parse(readFileSync(join(target, "mcp_config.json"), "utf8")).mcpServers["agent-bridge"].args.at(-1)).toBe("--agent=antigravity");
     expect(uninstallAntigravity(target).files).toEqual([target]);
     const archive = readdirSync(join(root, "archive")).find((name) => name.startsWith("plugin-"))!;

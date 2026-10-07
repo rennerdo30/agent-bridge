@@ -60,12 +60,13 @@ function atomicPluginWrite(path, text) {
   assertUnlinked(path);
   mkdirSync(dirname(path), { recursive: true });
   const previous = existsSync(path) ? readFileSync(path) : null;
-  if (previous?.toString("utf8") === text) return;
+  const content = Buffer.from(text);
+  if (previous?.equals(content)) return;
   const tmp = `${path}.${randomUUID()}.tmp`, backup = `${path}.backup-${Date.now()}-${randomUUID()}`;
   assertUnlinked(tmp);
   assertUnlinked(backup);
   if (previous) copyFileSync(path, backup);
-  writeFileSync(tmp, text, { flag: "wx", mode: 384 });
+  writeFileSync(tmp, content, { flag: "wx", mode: 384 });
   const current = existsSync(path) ? readFileSync(path) : null;
   if (previous === null !== (current === null) || previous && !previous.equals(current)) throw new Error(`Plugin metadata changed concurrently; preserved both copies: ${path}`);
   renameSync(tmp, path);
