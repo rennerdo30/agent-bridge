@@ -2,7 +2,8 @@ import { join, resolve } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { afterEach, beforeEach, expect, it } from "vitest";
-import { makeEnv, type TestEnv } from "./helpers.js";
+import { makeEnv, until, type TestEnv } from "./helpers.js";
+import { pidAlive } from "../src/core/delegate.js";
 
 let env: TestEnv;
 beforeEach(() => { env = makeEnv(); });
@@ -25,7 +26,7 @@ it.each(["claude", "codex", "opencode", "antigravity"])("%s internal MCP loads w
     expect(names).not.toContain("handoff_subagents");
     expect(await client.callTool({ name: "peers", arguments: {} })).toHaveProperty("isError", true);
     expect((await owner.peers()).map((peer) => peer.name)).toEqual(["owner"]);
-  } finally { await client.close(); }
+  } finally { const pid = transport.pid; await client.close(); if (pid) await until(() => !pidAlive(pid)); }
 });
 
 it("plugin-cache MCP becomes a real session only when tool metadata supplies the project", async () => {
@@ -47,5 +48,5 @@ it("plugin-cache MCP becomes a real session only when tool metadata supplies the
     const peers = await owner.peers();
     expect(peers).toHaveLength(2);
     expect(peers.every((peer) => peer.cwd === env.home)).toBe(true);
-  } finally { await client.close(); }
+  } finally { const pid = transport.pid; await client.close(); if (pid) await until(() => !pidAlive(pid)); }
 });
