@@ -5,7 +5,8 @@ import { ENV } from "./constants.js";
 export function isPluginCacheCwd(cwd: string): boolean {
   const path = posix.normalize(cwd.replace(/\\/g, "/")).toLowerCase().replace(/\/+$/, "");
   return /(?:^|\/)\.(?:codex|claude)\/plugins\/cache(?:\/|$)/.test(path) ||
-    /(?:^|\/)(?:\.config\/opencode|\.opencode|opencode)\/plugins?(?:\/|$)/.test(path);
+    /(?:^|\/)(?:\.config\/opencode|\.opencode|opencode)\/plugins?(?:\/|$)/.test(path) ||
+    /(?:^|\/)(?:\.gemini\/(?:config|antigravity-cli)|\.agents)\/plugins(?:\/|$)/.test(path);
 }
 
 /** Explicit marking survives child processes that do not retain delegation depth. */

@@ -19,7 +19,8 @@ import { makeEnv, type TestEnv } from "./helpers.js";
 let env: TestEnv;
 beforeEach(() => { env = makeEnv(); });
 afterEach(async () => { vi.unstubAllEnvs(); await env.cleanup(); });
-const caches = ["C:/Users/test/.codex/plugins/cache/agent-bridge/0.29.12", "/home/test/.claude/plugins/cache/agent-bridge", "/home/test/.config/opencode/plugins/agent-bridge", "C:/Users/test/AppData/Roaming/opencode/plugin/agent-bridge"];
+const caches = ["C:/Users/test/.codex/plugins/cache/agent-bridge/0.29.12", "/home/test/.claude/plugins/cache/agent-bridge", "/home/test/.config/opencode/plugins/agent-bridge", "C:/Users/test/AppData/Roaming/opencode/plugin/agent-bridge",
+  "/home/test/.gemini/config/plugins/agent-bridge", "/home/test/.gemini/antigravity-cli/plugins/agent-bridge", "/project/.agents/plugins/agent-bridge"];
 const peer = (cwd: string, name = "background"): PeerInfo => ({ id: name, name, agent: "codex", cwd, pid: 123, agentPid: 456, sessionId: null, startedAt: 1, autoWake: false });
 
 it.each(caches)("recognizes cache folder %s across path separators and case", (cwd) => {
@@ -41,20 +42,23 @@ it("marks every bridge-owned child even when extra environment attempts to clear
   expect(isInternalBridgeProcess({})).toBe(false);
 });
 
-it("rejects legacy ghost registrations without claiming mail or persisting names", async () => {
+it("rejects legacy ghost registrations without persisting names or session bindings", async () => {
   const token = loadOrCreateToken(env.home), store = new MessageStore(env.db, nullLogger);
   const broker = new Broker(env.pipe, store, nullLogger, token);
   await broker.listen();
   const client = await BridgeClient.connect(env.pipe, nullLogger);
   try {
     for (const cwd of caches) {
-      await expect(client.request("hello", { protocol: PROTOCOL_VERSION, token, peer: peer(cwd) })).rejects.toThrow("Plugin-cache");
+      await expect(client.request("hello", { protocol: PROTOCOL_VERSION, token, peer: { ...peer(cwd), sessionId: "ghost-thread" } })).rejects.toThrow("Plugin-cache");
     }
     await client.request("hello", { protocol: PROTOCOL_VERSION, token, peer: peer(env.home, "real") });
     expect((await client.request("peers", {})).map((p) => p.name)).toEqual(["real"]);
     await expect(client.request("updatePeer", { cwd: caches[0]! })).rejects.toThrow("Plugin-cache");
     const db = new DatabaseSync(env.db, { readOnly: true });
-    try { expect(db.prepare("SELECT name FROM peer_names WHERE name='background'").all()).toEqual([]); }
+    try {
+      expect(db.prepare("SELECT name FROM peer_names WHERE name='background'").all()).toEqual([]);
+      expect(db.prepare("SELECT session_id FROM session_bindings WHERE session_id='ghost-thread'").all()).toEqual([]);
+    }
     finally { db.close(); }
   } finally { client.close(); await broker.close(); }
 });
