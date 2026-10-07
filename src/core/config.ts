@@ -57,6 +57,10 @@ export interface BridgeConfig {
   codexSubagents: number;
   /** Default sandbox for delegated Codex runs. */
   codexSandbox: CodexSandbox;
+  /** Restricted-token runs keep files owned by the bridge user. Elevated is an explicit opt-in. */
+  codexWindowsSandbox: "unelevated" | "elevated";
+  /** Push and safely reap explicitly closed worktree jobs. Never enabled implicitly. */
+  jobCloseCleanup: boolean;
   /** Reviewer for eligible delegated Codex approvals; does not change the sandbox. */
   codexApprovalsReviewer: CodexApprovalsReviewer;
   /** Worktree edit runs: null inherits codexSandbox, with workspace-write for a read-only default. */
@@ -101,6 +105,8 @@ export const DEFAULT_CONFIG: BridgeConfig = {
   codexBin: DEFAULT_CODEX_BIN,
   codexSubagents: DEFAULT_CODEX_SUBAGENTS,
   codexSandbox: "read-only",
+  codexWindowsSandbox: "unelevated",
+  jobCloseCleanup: false,
   codexApprovalsReviewer: DEFAULT_CODEX_APPROVALS_REVIEWER,
   codexWorktreeSandbox: null,
   codexWorkspaceWriteNetworkAccess: null,
@@ -274,6 +280,8 @@ export function loadConfig(home: string, agent: AgentKind, log: Logger, env: Nod
       return typeof n === "number" && Number.isInteger(n) && n >= 0 && n <= MAX_CODEX_SUBAGENTS ? n : undefined;
     }) ?? d.codexSubagents,
     codexSandbox: pick("codexSandbox", null, (v) => oneOf(v, CODEX_SANDBOXES)) ?? d.codexSandbox,
+    codexWindowsSandbox: pick("codexWindowsSandbox", null, (v) => oneOf(v, ["unelevated", "elevated"] as const)) ?? d.codexWindowsSandbox,
+    jobCloseCleanup: pick("jobCloseCleanup", null, parseBool) ?? d.jobCloseCleanup,
     codexApprovalsReviewer: pick("codexApprovalsReviewer", null, (v) => oneOf(v, CODEX_APPROVALS_REVIEWERS)) ?? d.codexApprovalsReviewer,
     codexWorktreeSandbox: pick("codexWorktreeSandbox", null, (v) => oneOf(v, CODEX_SANDBOXES)) ?? d.codexWorktreeSandbox,
     codexWorkspaceWriteNetworkAccess: pick("codexWorkspaceWriteNetworkAccess", null, parseBool) ?? d.codexWorkspaceWriteNetworkAccess,

@@ -1,4 +1,7 @@
 import { MAX_HOLD_REASON_CHARS, setJobOutcome, deriveJobOutcome } from "../core/job-outcomes.js";
+import { closeJobWorktree } from "../core/job-close.js";
+import { readWorktreeState } from "../core/worktree-state.js";
+import { readOutcomeDecision } from "../core/job-outcomes.js";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -416,10 +419,27 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
 
   const transport = new StdioServerTransport();
   let shuttingDown = false;
+  let closeSweepBusy = false;
+  const closeSweep = setInterval(() => {
+    if (shuttingDown || closeSweepBusy || !cfg.jobCloseCleanup || !node) return;
+    closeSweepBusy = true;
+    void (async () => {
+      const waiting = new Set(ctx.jobs?.waiting().map((job) => job.name));
+      for (const job of ctx.jobs?.recent(Number.MAX_SAFE_INTEGER) ?? []) {
+        if (job.owner !== node.name || !job.worktree || job.queue.length || waiting.has(job.name) || !["done", "failed"].includes(job.status)) continue;
+        const state = readWorktreeState(home, job.worktree);
+        if (!state || state.reapedAt || readOutcomeDecision(home, job)?.state === "held" || Math.max(state.lastContinuation, job.finishedAt ?? Date.now()) > Date.now() - 24 * 60 * 60_000) continue;
+        const result = await closeJobWorktree({ home, job, enabled: cfg.jobCloseCleanup, log });
+        log.info("idle worktree close", { job: job.name, ...result });
+      }
+    })().catch((err) => log.warn("idle close sweep kept worktrees", { err: String(err) })).finally(() => { closeSweepBusy = false; });
+  }, 15 * 60_000);
+  closeSweep.unref();
   const shutdown = async (reason: string) => {
     // stdin end, transport close and signals can all fire; shut down once.
     if (shuttingDown) return;
     shuttingDown = true;
+    clearInterval(closeSweep);
     log.info("shutting down", { reason });
     // Runner-hosted subagents keep going for the next server of this session (see job-host.ts).
     ctx.jobs?.cancelAll();
@@ -1147,7 +1167,7 @@ ${res.text || t("delegate.empty")}`, res.isError);
     "set_job_outcome",
     {
       title: "Set a finished job's outcome",
-      description: "Record that your finished job is held with a reason or discarded. This records a decision; it does not merge or delete its branch. Only its owning supervisor can set it.",
+      description: "Record that your finished job is held with a reason or discarded. With jobCloseCleanup enabled, discarded local worktree jobs push their commits and reap only a proven clean checkout. Held jobs and local branches are retained. Only its owning supervisor can set it.",
       inputSchema: { job: z.string().min(1), state: z.enum(["held", "discarded"]), reason: z.string().max(MAX_HOLD_REASON_CHARS).optional() },
     },
     guarded("set_job_outcome", async (a: { job: string; state: "held" | "discarded"; reason?: string }) => {
@@ -1156,7 +1176,8 @@ ${res.text || t("delegate.empty")}`, res.isError);
       if (!job) throw new BridgeError("bad_request", "Unknown job.");
       try {
         setJobOutcome(ctx.home, job, n.name, a.state, a.reason);
-        return text(JSON.stringify({ job: job.name, outcome: await deriveJobOutcome(ctx.home, job, log) }));
+        const cleanup = a.state === "discarded" ? await closeJobWorktree({ home: ctx.home, job, enabled: cfg.jobCloseCleanup, log }) : undefined;
+        return text(JSON.stringify({ job: job.name, outcome: await deriveJobOutcome(ctx.home, job, log), cleanup }));
       } catch (err) { throw new BridgeError("bad_request", (err as Error).message); }
     }),
   );

@@ -14,6 +14,8 @@ import { jobReport, NOTE_CONVERSATION_SUFFIX, QUEUED_FOLLOW_UP_NOTE, sessionOfEr
 import { changedJobArgs } from "./job-settings.js";
 import { processCleanupReport, startWindowsJobScope, type WindowsJobScope } from "../core/windows-job-scope.js";
 import type { Logger } from "../core/logger.js";
+import { closeJobWorktree } from "../core/job-close.js";
+import { recordWorktreeProcessProof } from "../core/worktree-state.js";
 
 /** Delivering a message to the session: tries for several minutes (the bridge may be changing hands, or no session hosts it). */
 const SEND_ATTEMPTS = 30;
@@ -244,6 +246,7 @@ async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: WindowsJo
     let status: "done" | "failed";
     let text = "";
     let cause: string | null = null;
+    let processesStopped = false;
     try {
       const res = await runDelegate(rc, target, args, job.controller.signal, onProgress, true, job);
       job.workdir = res.workdir ?? job.workdir;
@@ -260,6 +263,7 @@ async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: WindowsJo
     if (scope) {
       try {
         const cleanup = await scope.cleanup();
+        processesStopped = cleanup.remaining.length === 0;
         text += "\n\n" + processCleanupReport(cleanup);
         if (cleanup.remaining.length) {
           status = "failed";
@@ -273,6 +277,11 @@ async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: WindowsJo
       }
     }
     job.etaAt = undefined;
+    if (job.worktree) recordWorktreeProcessProof(home, job.worktree, processesStopped);
+    if (job.controller.signal.aborted && processesStopped) {
+      const cleanup = await closeJobWorktree({ home, job: { ...job, status }, enabled: spec.cfg.jobCloseCleanup, log });
+      text += `\n\nWorktree close: ${cleanup.action}: ${cleanup.reason}`;
+    }
     job.etaReportedAt = undefined;
     const report = jobReport(job, status, Math.round((Date.now() - job.startedAt) / 1000), text, cause);
     log.info("job turn finished", { status, sessionId: job.sessionId, cause });

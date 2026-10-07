@@ -129,14 +129,13 @@ describe("delegation approval routing", () => {
     expect(result.text).toMatch(/Library -> [A-Z]:\\.*owner-cache|Library -> \/.*owner-cache/);
   });
 
-  it("does not auto-commit through a worktree root replaced by an external junction", async () => {
+  it("refuses a continued worktree root replaced by an external junction before launching tools", async () => {
     const rc = context(); const root = join(home, "worktrees", "linked-root"); const outside = join(home, "owner");
     mkdirSync(join(home, "worktrees")); mkdirSync(outside);
     symlinkSync(outside, root, "junction");
     vi.spyOn(DELEGATION_TARGETS.codex, "run").mockResolvedValue({ sessionId: "saved", text: "done", isError: false, details: {} });
-    const result = await runDelegate(rc, "codex", { title: "root", prompt: "task", access: "read", _worktree: { repoRoot: home, path: root, cwd: root, branch: "agent-bridge/test", base: "base" } }, new AbortController().signal, undefined, true);
-    expect(result.text).toContain("Auto-commit skipped: the worktree root is an external link");
-    expect(result.text).not.toContain("Could not commit");
+    await expect(runDelegate(rc, "codex", { title: "root", prompt: "task", access: "read", _worktree: { repoRoot: home, path: root, cwd: root, branch: "agent-bridge/test", base: "base" } }, new AbortController().signal, undefined, true)).rejects.toThrow("through a link");
+    expect(DELEGATION_TARGETS.codex.run).not.toHaveBeenCalled();
   });
   it("publishes native-dialog approvals without changing foreground routing", async () => {
     const rc = context();
