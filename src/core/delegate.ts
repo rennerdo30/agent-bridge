@@ -741,12 +741,30 @@ export function parseOpencodeJsonl(stdout: string): {
   return sawUsage ? { sessionId, text, error, usage: { input, output }, cost } : { sessionId, text, error };
 }
 
+const opencodeVersions = new Map<string, Promise<boolean>>();
+
+/** Probe once per executable; v2 needs a private server to inherit child config and permissions. */
+export function opencodeV2(bin: string, cwd: string, log: Logger): Promise<boolean> {
+  const key = resolveBinary(bin) ?? bin;
+  let cached = opencodeVersions.get(key);
+  if (!cached) {
+    cached = runProcess({ bin, args: ["--version"], stdin: "", cwd, timeoutMs: 10_000, env: childEnv(), log })
+      .then((res) => /(?:^|\s)(?:opencode\s+)?v?2\.\d+\.\d+/.test(res.stdout.trim()))
+      .catch(() => false);
+    opencodeVersions.set(key, cached);
+  }
+  return cached;
+}
+
 export async function delegateToOpencode(req: DelegateRequest & { bin: string; autoApprove: boolean }): Promise<DelegateResult> {
   checkDepth(req.maxDelegateDepth);
-  // --dir as well: opencode must not fall back to an inherited PWD (it then works in the wrong folder).
-  const args = ["run", "--format", "json", "--dir", req.cwd];
-  if (req.model) args.push("-m", req.model);
-  if (req.effort) args.push("--variant", req.effort);
+  const v2 = await opencodeV2(req.bin, req.cwd, req.log);
+  // runProcess sets both cwd and PWD; --dir was removed in OpenCode 2.
+  const args = ["run", "--format", "json"];
+  if (v2) args.push("--standalone");
+  if (req.model) args.push("-m", v2 && req.effort ? `${req.model.split("#")[0]}#${req.effort}` : req.model);
+  if (req.effort && !v2) args.push("--variant", req.effort);
+  if (req.effort && v2 && !req.model) throw new DelegateError("OpenCode 2 requires an explicit model when selecting effort", "failed");
   if (req.sessionId) args.push("-s", req.sessionId);
   // opencode's default rules allow edits and commands without asking, so read access must be enforced
   // explicitly: an extra config layer (merged over the user's) denies them. --auto approves the rest.
