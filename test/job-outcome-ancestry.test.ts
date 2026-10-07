@@ -62,3 +62,13 @@ it("honors shallow ancestry through Git and preserves the shallow boundary", asy
   expect(spy).toHaveBeenCalled();
   expect(readFileSync(join(home, ".git", "shallow"), "utf8")).toBe(`${later}\n`);
 });
+
+it("defers a late malformed parent header to Git's commit parser", async () => {
+  const malformed = git("cat-file", "-p", base).replace("\n\n", `\nparent ${tip}\n\n`);
+  const head = execFileSync("git", ["-C", home, "hash-object", "--literally", "-t", "commit", "-w", "--stdin"], { input: malformed, encoding: "utf8" }).trim();
+  git("update-ref", "refs/heads/main", head);
+  const spy = vi.spyOn(worktree, "git");
+  expect((await deriveJobOutcome(home, job, nullLogger)).merge.state).toBe("unmerged");
+  expect(spy).toHaveBeenCalledWith(expect.arrayContaining(["merge-base", "--is-ancestor", tip, head]), home, nullLogger);
+  expect(git("cat-file", "-p", head)).toBe(malformed);
+});

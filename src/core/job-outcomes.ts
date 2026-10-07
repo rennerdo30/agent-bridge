@@ -76,8 +76,10 @@ function localAncestor(repo: string, ancestor: string, descendant: string): bool
       const body = object.subarray(zero + 1).toString("utf8"), end = body.indexOf("\n\n");
       if (end < 0 || !new RegExp(`^tree [a-f0-9]{${head.length}}\\n`, "i").test(body)) return null;
       const result: string[] = [];
-      for (const line of body.slice(0, end).split("\n")) {
-        if (!line.startsWith("parent ")) continue;
+      let parentBlock = true;
+      for (const line of body.slice(0, end).split("\n").slice(1)) {
+        if (!line.startsWith("parent ")) { parentBlock = false; continue; }
+        if (!parentBlock) return null;
         const parent = line.slice(7);
         if (parent.length !== head.length || !/^[a-f0-9]+$/i.test(parent) || result.length >= 16) return null;
         result.push(parent);
