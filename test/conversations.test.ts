@@ -20,6 +20,7 @@ import {
 import { HistoryIndex } from "../src/core/history.js";
 import {
   conversationProject,
+  ensureProjectFolder,
   projectDatabasePath,
 } from "../src/core/project-store.js";
 import { loadConfig } from "../src/core/config.js";
@@ -300,6 +301,20 @@ it("mirrors only its project, excludes via local Git config and rebuilds deleted
     rows,
   );
   rebuilt.close();
+});
+it("excludes an existing project folder when Git is initialized after mirroring starts", () => {
+  const project = join(env.home, "late-git");
+  mkdirSync(project);
+  const folder = ensureProjectFolder(project)!;
+  writeFileSync(join(folder, "config.json"), "{}");
+  expect(ensureProjectFolder(project)).toBe(folder);
+  execFileSync("git", ["init", project], { stdio: "ignore", windowsHide: true });
+  expect(ensureProjectFolder(project)).toBe(folder);
+  expect(ensureProjectFolder(project)).toBe(folder);
+  const exclude = readFileSync(join(project, ".git", "info", "exclude"), "utf8");
+  expect(exclude.split(/\r?\n/).filter((line) => line === "/.agent-bridge/")).toHaveLength(1);
+  expect(execFileSync("git", ["-C", project, "check-ignore", ".agent-bridge/config.json"], { encoding: "utf8", windowsHide: true }).trim()).toBe(".agent-bridge/config.json");
+  expect(existsSync(join(project, ".gitignore"))).toBe(false);
 });
 it("merges project settings over global and agent defaults without modifying either file", () => {
   const project = join(env.home, "project");
