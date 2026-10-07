@@ -18,7 +18,7 @@ import { canonicalProjectRoot, projectKey } from "./project-identity.js";
 import { isPluginCacheCwd } from "./session-visibility.js";
 
 const roots = new Map<string, string>();
-const excluded = new Set<string>();
+const excluded = new Map<string, boolean>();
 function linkedParent(file: string): boolean {
   let parent = dirname(resolve(file));
   while (!existsSync(parent) && dirname(parent) !== parent)
@@ -56,7 +56,8 @@ export function ensureProjectFolder(project: string): string | null {
     return null;
   const fresh = !existsSync(folder);
   mkdirSync(folder, { recursive: true, mode: 0o700 });
-  if (!fresh && excluded.has(project)) return folder;
+  const gitMarker = existsSync(join(project, ".git"));
+  if (!fresh && excluded.get(project) === gitMarker) return folder;
   try {
     const exclude = execFileSync(
       "git",
@@ -92,7 +93,7 @@ export function ensureProjectFolder(project: string): string | null {
     if (existsSync(join(project, ".git"))) return null;
     /* Non-Git projects have no exclude file. */
   }
-  excluded.add(project);
+  excluded.set(project, gitMarker);
   return folder;
 }
 
