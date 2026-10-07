@@ -2,7 +2,8 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { promisify } from "node:util";
 import { execFile } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import { DatabaseSync } from "node:sqlite";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -51,7 +52,8 @@ describe.skipIf(!existsSync(SERVER))("bundled MCP server end-to-end", () => {
     await claude?.close();
     await codex?.close();
     await antigravity?.close();
-    rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+    // Let pending child-process shutdown callbacks release Windows directory handles.
+    await rm(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
   });
 
   it("exposes the expected tools per agent", async () => {
