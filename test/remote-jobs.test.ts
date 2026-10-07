@@ -227,7 +227,19 @@ rl.on("line", (line) => {
     const id = match![1]!;
     const name = `codex-job-${id}`;
     await waitFor(async () => (await call(local, "peers", {})).includes(`${name} "Native default": done`));
-    await call(local, "message_subagent", { job: name, message: "continue", native_subagents: 0 });
+    // Final status precedes report delivery and runner teardown. This settings test needs
+    // a new runner, rather than a message queued to the previous runner while it closes.
+    await waitFor(() => {
+      const state = readRunnerState(remoteHome, id);
+      return Boolean(state?.pid && !pidAlive(state.pid));
+    });
+    await waitFor(async () => {
+      await call(local, "peers", {});
+      const cached = join(localHome, "remote-job-states", `${id}.json`);
+      return existsSync(cached) && JSON.parse(readFileSync(cached, "utf8")).snapshot.alive === false;
+    });
+    const continued = await call(local, "message_subagent", { job: name, message: "continue", native_subagents: 0 });
+    expect(continued).toContain("continues in its own session");
     const calls = () => readFileSync(callsPath, "utf8").trim().split("\n").map((line) => JSON.parse(line));
     await waitFor(() => calls().length === 2 && readRunnerState(remoteHome, id)?.status === "done");
     expect(calls()[0].params.config).toMatchObject({ "agents.max_threads": 2, "agents.enabled": true });
