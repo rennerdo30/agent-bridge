@@ -1,8 +1,11 @@
-import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { fileURLToPath } from "node:url";
 import { archiveFile } from "../core/json-store.js";
+import { APP_VERSION } from "../core/constants.js";
+import { assertUnlinked, atomicPluginWrite, selectRuntime } from "../core/plugin-runtime.js";
 
 /** Every file agent-bridge installs outside of a plugin manager carries this marker. */
 export const INSTALL_MARKER = "agent-bridge";
@@ -58,7 +61,8 @@ function copyAll(copies: [string, string][], configDir: string): InstallResult {
       continue;
     }
     mkdirSync(dirname(to), { recursive: true });
-    copyFileSync(from, to);
+    assertUnlinked(from); assertUnlinked(to);
+    atomicPluginWrite(to, readFileSync(from, "utf8"));
     res.files.push(to);
   }
   return res;
@@ -79,19 +83,28 @@ function agentCopies(sourceDir: string, targetDir: string): [string, string][] {
 }
 
 export function installOpencode(sourceDir: string, configDir: string = opencodeConfigDir()): InstallResult {
-  return copyAll(
+  assertUnlinked(configDir);
+  const native = join(configDir, "plugins", PLUGIN_FILE);
+  assertUnlinked(native);
+  if (existsSync(native) && !ownedByUs(native)) throw new Error(`Refusing to replace an unowned opencode plugin: ${native}`);
+  // Keep the legacy server folder untouched; old plugin instances may still start it.
+  const root = selectRuntime(join(configDir, SERVER_DIR), "opencode", sourceDir, APP_VERSION);
+  const result = copyAll(
     [
-      [join(sourceDir, "dist", PLUGIN_FILE), join(configDir, "plugins", PLUGIN_FILE)],
-      [join(sourceDir, "dist", SERVER_FILE), join(configDir, "plugins", SERVER_DIR, SERVER_FILE)],
       [join(sourceDir, SKILL_REL), join(configDir, SKILL_REL)],
       ...agentCopies(sourceDir, configDir),
     ],
     configDir,
   );
+  const url = pathToFileURL(join(root, "dist", PLUGIN_FILE)).href;
+  atomicPluginWrite(native, `// agent-bridge: immutable plugin entry; previous versions are retained.\nexport * from ${JSON.stringify(url)};\n`);
+  result.files.push(native, root);
+  return result;
 }
 
 export function uninstallOpencode(configDir: string = opencodeConfigDir(), sourceDir: string | null = opencodeSourceDir()): InstallResult {
   const targets = [join(configDir, "plugins", PLUGIN_FILE), join(configDir, "plugins", SERVER_DIR), join(configDir, "skills", "agent-bridge")];
+  // Immutable runtime versions remain for existing sessions, including after uninstall.
   if (sourceDir) targets.push(...agentCopies(sourceDir, configDir).map(([, to]) => to));
   return removeOwned(targets, configDir);
 }

@@ -23,6 +23,7 @@ transcript bytes after reads. No automated test uses the owner's actual data roo
 | `core/json-store.ts` | Unpublished atomic-write `.tmp` file only. |
 | `mcp/jobs.ts` | Job-store `.lock` files, including stale locks. |
 | `core/storage-lock.ts` | Maintenance lock and empty per-process lease files. |
+| `core/migration-lock.ts` | Exclusive migration lock (PID and nonce only) on release, failed lock publication or confirmed exited owner; empty recovery coordination file. Never the database or snapshot. |
 | `core/notifications.ts` | Empty notification lock directory. |
 | `core/node.ts` | Abandoned Unix-domain socket path. |
 | `mcp/rewake.ts` | Socket endpoint registrations containing only port, secret and PID. No conversations or prompts. |

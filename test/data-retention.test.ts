@@ -18,6 +18,7 @@ const REVIEWED_REMOVALS: Record<string, string[]> = {
   "mcp/jobs.ts": ["rmSync(path, { force: true })", "rmSync(path, { force: true })"],
   "core/node.ts": ["unlinkSync(this.opts.pipePath)"],
   "core/storage-lock.ts": ["rmSync(path)", "rmSync(path, { force: true })", "rmSync(join(dir, file))", "rmSync(path, { force: true })", "rmSync(path, { force: true })"],
+  "core/migration-lock.ts": ["rmSync(path)", "rmSync(path)", "rmSync(path)", "rmSync(recovery)"],
   "core/notifications.ts": ["rmdirSync(lock)", "rmdirSync(lock)"],
   "mcp/rewake.ts": ["rmSync(sessionFile(this.home, this.registered), { force: true })", "rmSync(sessionFile(this.home, this.registered), { force: true })"],
   "network/files.ts": ["rmSync(staging, { recursive: true, force: true })"],

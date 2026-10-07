@@ -129,7 +129,7 @@ describe("formatPeer", () => {
       undefined,
       90 * 60_000,
     );
-    expect(line).toBe("- codex-app (codex, idle, auto-wake, up 1h 30m) cwd=/w/app session=t-9");
+    expect(line).toBe("- codex-app (codex, vunknown · version skew (retained code), idle, auto-wake, up 1h 30m) cwd=/w/app session=t-9");
   });
 });
 
