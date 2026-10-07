@@ -91,7 +91,7 @@ describe("sibling job messaging", () => {
     await client.connect(transport);
     const call = (name: string, args: Record<string, unknown> = {}) => client.callTool({ name, arguments: args });
     try {
-      expect((await client.listTools()).tools.map((t) => t.name).sort()).toEqual(["hook_event", "peers", "report_progress", "send"]);
+      expect((await client.listTools()).tools.map((t) => t.name).sort()).toEqual(["get_conversation", "hook_event", "peers", "report_progress", "search_history", "send"]);
       const peers = await call("peers");
       expect(JSON.stringify(peers)).toContain(b.job.name);
       expect(JSON.stringify(peers)).toContain("Task b");

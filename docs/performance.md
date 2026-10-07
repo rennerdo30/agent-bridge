@@ -178,3 +178,12 @@ New tests run in seconds; this load harness never enters the default test suite.
 Synthetic survival and local tests do not establish deployed two-PC acceptance
 or diagnose every prior broker exit. The supervisor owns release, reload and
 live acceptance; handoff and TODO files are untouched.
+
+## Durable conversation ingestion
+
+The conversation-storage lane moves history scanning and SQLite/FTS ingestion to
+one elected background worker. It adds bounded raw chunks, cached transcript
+headers, source offsets, watch prioritization and project replicas. The AB-121
+measurements above predate that lane and are not measurements of its throughput.
+See [conversation-storage.md](conversation-storage.md) for budgets and capture
+semantics. The retained corpus is append-only; no purge or VACUUM policy changed.

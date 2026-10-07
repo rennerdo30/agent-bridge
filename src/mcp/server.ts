@@ -56,7 +56,9 @@ import { JOB_SETTING_KEYS, PERMISSION_KEY_AGENT, type JobSettings } from "./job-
 import { attachDashboardJobControl } from "./dashboard-control.js";
 import { deriveJobTitle } from "./job-title.js";
 import { isJobSendTarget, MAX_JOB_SEND_TARGETS } from "../core/job-messaging.js";
-import { historyFiltersSchema, HISTORY_MAX_QUERY_CHARS, HISTORY_MAX_LIMIT, type HistorySearch } from "../core/history.js";
+import { appendContextEvent } from "../core/context-journal.js";
+import { readConversationFile, conversationPageSchema, type ConversationRequest } from "../core/conversations.js";
+import { readHistory, historyFiltersSchema, HISTORY_MAX_QUERY_CHARS, HISTORY_MAX_LIMIT, type HistorySearch } from "../core/history.js";
 import { answerHistory } from "../core/history-answer.js";
 import { decisionScopeSchema, MAX_DECISION_TOPIC_CHARS, MAX_DECISION_TEXT_CHARS, type DecideArgs, type DecisionsArgs } from "../core/decisions.js";
 
@@ -72,7 +74,7 @@ const CWD_DISCOVERY_GRACE_MS = 15_000;
 /** Subagent titles (ask_* / spawn_* `title`), like a chat title. */
 const MAX_TITLE_CHARS = 80;
 /** The tools a delegated subagent's server offers (see registerTools). */
-const SUBAGENT_TOOLS = new Set(["peers", "send", "report_progress", "hook_event"]);
+const SUBAGENT_TOOLS = new Set(["peers", "send", "report_progress", "hook_event", "search_history", "get_conversation"]);
 /** The options of a job worth keeping to continue it the same way later (no prompt, no internals). */
 /** When to look again for jobs under a stand-in name (a replaced server of the session may still be leaving). */
 const STAND_IN_RECHECK_MS = 30_000;
@@ -226,8 +228,8 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
   const targets = delegationTargets(agent);
   const home = resolveHome();
   const log = createLogger({ home, component: `mcp-${agent}` });
-  const cfg = loadConfig(home, agent, log);
   const cwd = process.env.CLAUDE_PROJECT_DIR || process.cwd();
+  const cfg = loadConfig(home, agent, log, process.env, cwd);
   // Codex starts plugin MCP servers inside the plugin folder; the project dir arrives later via hooks/_meta.
   const cwdKnown = Boolean(process.env.CLAUDE_PROJECT_DIR) || !isInside(cwd, PLUGIN_ROOT);
   const delegated = currentDelegateDepth() > 0;
@@ -278,7 +280,7 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
       Object.assign(cfg, next);
       if (limitChanged) jobs.setLimit(next.maxJobs);
       void node.setWakePolicy(agent === "claude" && next.wakeOnDirect, (agent === "claude" && Boolean(ctx.rewakeAvailable || ctx.channelActive())) || agent === "opencode" || (agent === "codex" && Boolean(node.currentSessionId)), next.maxHops).catch(() => {});
-    });
+    }, () => ctx.cwd());
     ctx.activity = (s) => node.setActivity(s);
     // Learn the project folder once, when it was unknown at start (Codex starts us in the plugin folder).
     // Later hook cwds follow the agent's `cd`s; renaming then would strand replies sent to the old name.
@@ -286,6 +288,7 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
     ctx.learnCwd = async (projectDir) => {
       if (cwdSettled || projectDir === node.cwd) return;
       cwdSettled = true;
+      Object.assign(cfg,loadConfig(home,agent,log,process.env,projectDir));
       const name = cfg.name ? undefined : defaultPeerName(agent, projectDir);
       await node.relocate(projectDir, name).catch((err) => log.warn("relocate failed", { err: (err as Error).message }));
     };
@@ -534,10 +537,17 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
     },
     guarded("search_history", async (a: HistorySearch & { answer?: boolean }) => {
       const { answer, ...args } = a;
-      const result = await requireNode().searchHistory(args);
+      const result = ctx.node ? await ctx.node.searchHistory(args) : readHistory(resolveDbPath(ctx.home),args);
       return text(JSON.stringify(answer ? { ...result, answer: await answerHistory(a.query, result, cfg, ctx.home, log) } : result));
     }),
   );
+
+  register("get_conversation", {
+    title: "Read a retained conversation",
+    description: "Fetch a complete locally retained conversation by the conversation id returned in search_history. Pages contain exact raw bytes (base64) and text chunks with source offsets. Pass next as after; concatenate chunks per source/generation to reconstruct JSONL or SQLite snapshots. No model calls or network export.",
+    inputSchema: conversationPageSchema.shape,
+    annotations: { readOnlyHint: true },
+  }, guarded("get_conversation", async (args: ConversationRequest) => text(JSON.stringify(ctx.node ? await ctx.node.getConversation(args) : readConversationFile(resolveDbPath(ctx.home),args)))));
 
   register(
     "decide",
@@ -1290,6 +1300,7 @@ ${res.text || t("delegate.empty")}`, res.isError);
         },
       },
       guarded("report_progress", async (a: { percent: number; note?: string; eta_minutes?: number }) => {
+        await appendContextEvent(ctx.home,{kind:"progress",agent:ctx.agent,job:process.env[PARENT_JOB_ENV],project:ctx.cwd(),payload:a});
         await parent.progress(a.percent, a.note ?? "", a.eta_minutes);
         return text(t("progress.reported", { percent: Math.round(a.percent) }));
       }),
