@@ -258,7 +258,9 @@ describe("sibling job messaging", () => {
     await expect(a.chat.send(outsider.job.name, "Not granted")).rejects.toThrow(/explicit send_to/);
     const first = (await a.child.siblings.send(b.job.name, "Contract update")).messages[0]!;
     await until(() => b.node.hasSeen(first.id) && otherOwner.unread().length === 1 && supervisor.unread().length === 1);
-    expect((await b.child.inbox())[0]?.body).toBe("Contract update");
+    const delivered = (await b.child.inbox())[0]?.body;
+    expect(delivered).toContain("Contract update\n\n[agent-bridge routing hint:");
+    expect(delivered).toContain(`answer via your supervisor ${otherOwner.name}`);
     expect(otherOwner.unread().every(isSiblingNote)).toBe(true);
     expect(supervisor.unread().every(isSiblingNote)).toBe(true);
     await expect(b.chat.send(a.job.name, "No reciprocal grant", first.id)).rejects.toThrow(/explicit send_to/);

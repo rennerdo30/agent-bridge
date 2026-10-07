@@ -154,6 +154,8 @@ export interface MessageReceipt {
 }
 
 export interface SendResult {
+  /** Recipient jobs without a reverse reply grant need their current supervisor to relay. */
+  replyRestrictions?: { name: string; supervisor: string }[];
   /** Terminal job mail is retained, but will not be answered without an explicit continuation. */
   finishedRecipient?: { name: string; status: SiblingPeer["status"]; finishedAt?: number; report: string | null };
   /** Failed fan-out attempts are explicit; they are not queued for automatic retry. */

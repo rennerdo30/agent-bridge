@@ -36,7 +36,7 @@ import { resolveDbPath, resolveHome, resolvePipePath } from "../core/paths.js";
 import { inspectClaudeLaunch } from "../core/procinfo.js";
 import { loadOrCreateToken } from "../core/token.js";
 import { BridgeError, BROADCAST, CODING_AGENTS, isQuietMessage, SIBLING_CONVERSATION_PREFIX, TRANSFER_PROGRESS_PREFIX, type AgentKind, type BridgeMessage, type CodingAgent } from "../core/protocol.js";
-import { formatDelivery, formatDuration, formatMessage, formatMessages, formatPeer } from "./format.js";
+import { formatReplyRestrictions, formatDelivery, formatDuration, formatMessage, formatMessages, formatPeer } from "./format.js";
 import { CodexWaker, type Activity } from "./codex-wake.js";
 import { buildHookResponse, discardFinishedNotes, type HookEvent } from "./hooks.js";
 import { ACCESS_LEVELS, DELEGATION_TARGETS, nativeSubagentsSchema, type Access } from "./targets.js";
@@ -731,7 +731,7 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
           const m = result.messages[0]!;
           const sibling = m.conversationId.startsWith(SIBLING_CONVERSATION_PREFIX);
           const delivery = result.queuedFor.length ? sibling ? "queued for the sibling's next turn" : "queued for the granted session" : sibling ? "sent to sibling" : "sent to granted session";
-          return text(`Message ${m.id} ${delivery} ${a.to} (conversation ${m.conversationId}, hop ${m.hop}).${sibling ? " The supervisor received a quiet copy." : ""}`);
+          return text(`Message ${m.id} ${delivery} ${a.to} (conversation ${m.conversationId}, hop ${m.hop}).${sibling ? " The supervisor received a quiet copy." : ""}\n${formatReplyRestrictions(result).join("\n")}`);
         }
         await ctx.parent.send(a.message, a.reply_to);
         return text(t("send.toParent", { name: ctx.parent.name }));
@@ -754,7 +754,7 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
       const lines = [t("send.ok", { id: first.id, conversation: first.conversationId })];
       lines.push(...formatDelivery(res, cfg.maxHops));
       if (res.queuedFor.length) lines.push(t("send.queued", { names: res.queuedFor.join(", ") }));
-      lines.push(t("send.waitHint"));
+      if (!res.replyRestrictions?.length) lines.push(t("send.waitHint"));
       lines.push(`For a consumption receipt, call wait_for_message(read_receipt_of="${first.id}").`);
       return text(lines.join("\n"));
     }),
