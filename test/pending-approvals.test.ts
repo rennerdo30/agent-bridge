@@ -202,7 +202,7 @@ describe("dashboard approval endpoints", () => {
       const [entry] = await pending();
       const path = `${base}/api/approvals/${entry!.id}`;
       expect((await fetch(`${base}/api/approvals`)).status).toBe(403);
-      expect(await (await fetch(`${base}/api/approvals`, { headers: { cookie } })).json()).toEqual({ approvals: [entry] });
+      expect(await (await fetch(`${base}/api/approvals`, { headers: { cookie } })).json()).toEqual({ approvals: [{ ...entry, kind:"permission" }], questions:[] });
       expect((await fetch(path, { method: "POST", headers: { cookie }, body: '{"decision":"allow"}' })).status).toBe(403);
       const headers = { cookie, "x-agent-bridge": "1", "content-type": "application/json" };
       for (const body of ["null", "[]", "{", '{"decision":"yes"}', '{"decision":"allow","reason":42}']) {

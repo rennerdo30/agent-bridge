@@ -41,6 +41,7 @@ import { HISTORY_MAX_QUERY_CHARS, historySearchSchema, readHistory, readHistoryS
 import { answerHistory, type HistoryAnswerDependencies } from "../core/history-answer.js";
 import { readDecisions, decisionScopeSchema, MAX_DECISION_TEXT_CHARS, MAX_DECISION_TOPIC_CHARS, type DecisionsArgs } from "../core/decisions.js";
 import { answerPendingApproval, listPendingApprovals, MAX_APPROVAL_REASON_CHARS } from "../core/relay.js";
+import { questionAnswerSchema, questionAlertSettingsSchema, readOwnerQuestions } from "../core/owner-questions.js";
 import { classifyPeers, listRuns, readStoredJobs, readDashboard, readMeta } from "../core/dashboard-read.js";
 export { classifyPeers, listRuns, readStoredJobs, summarizeRun, finishedRunOutcomes } from "../core/dashboard-read.js";
 export type { RunSummary, DashboardPeer, StoredJobView } from "../core/dashboard-read.js";
@@ -356,7 +357,41 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
       const decisions = readDecisions(dbPath, args);
       return send(res, 200, topic ? { topic, decisions } : { decisions });
     }
-    if (req.method === "GET" && url.pathname === "/api/approvals") return send(res, 200, { approvals: listPendingApprovals(opts.home) });
+    if (req.method === "GET" && url.pathname === "/api/approvals") {
+      let questions = readOwnerQuestions(opts.home);
+      try { questions = await networkRequest("ownerQuestions", {}); } catch { /* Legacy brokers cannot answer; retained questions remain visible. */ }
+      return send(res, 200, { approvals: [...listPendingApprovals(opts.home).map(a => ({ ...a, kind: "permission" })), ...questions.filter(q => q.status === "open")], questions });
+    }
+    if (req.method === "POST" && url.pathname === "/api/dashboard/heartbeat") {
+      if (req.headers["x-agent-bridge"] !== "1") return send(res,403,{error:"missing header"});
+      const body=await readJson(req);
+      if (typeof body.tab !== "string" || !/^[\w-]{1,80}$/.test(body.tab) || typeof body.visible !== "boolean") return send(res,400,{error:"Invalid presence"});
+      try { return send(res,200,await networkRequest("dashboardHeartbeat",{tab:body.tab,visible:body.visible})); }
+      catch { return send(res,503,{error:"Question alerts require an updated broker"}); }
+    }
+    if (url.pathname === "/api/questions/settings") {
+      if (req.method === "GET") return send(res,200,loadConfig(opts.home,"other",opts.log).questionAlerts);
+      if (req.method === "POST") {
+        if (req.headers["x-agent-bridge"] !== "1") return send(res,403,{error:"missing header"});
+        const args=questionAlertSettingsSchema.safeParse(await readJson(req));
+        if (!args.success) return send(res,400,{error:"Invalid question alert settings"});
+        saveConfigValue(opts.home,"questionAlerts",args.data); return send(res,200,args.data);
+      }
+    }
+    const questionMatch = /^\/api\/questions\/([0-9a-f-]{36})(\/dismiss)?$/.exec(url.pathname);
+    if (req.method === "POST" && questionMatch) {
+      if (req.headers["x-agent-bridge"] !== "1") return send(res,403,{error:"missing header"});
+      const body=await readJson(req);
+      try {
+        if (questionMatch[2]) {
+          if ((body.status !== "cancelled" && body.status !== "superseded") || typeof body.reason !== "string" || body.supersededBy !== undefined && typeof body.supersededBy !== "string") return send(res,400,{error:"A dismissal status and reason are required"});
+          return send(res,200,await networkRequest("dismissOwner",{id:questionMatch[1]!,status:body.status,reason:body.reason,...(typeof body.supersededBy === "string" ? {supersededBy:body.supersededBy} : {})}));
+        }
+        const args=questionAnswerSchema.safeParse(body);
+        if (!args.success) return send(res,400,{error:"Choose an option or write an answer; answers are never allow/deny approvals"});
+        return send(res,200,await networkRequest("answerOwner",{id:questionMatch[1]!,answer:args.data}));
+      } catch (error) { return send(res,409,{error:String((error as Error).message)}); }
+    }
     const approvalMatch = /^\/api\/approvals\/([0-9a-f-]{36})$/.exec(url.pathname);
     if (req.method === "POST" && approvalMatch) {
       if (req.headers["x-agent-bridge"] !== "1") return send(res, 403, { error: "missing header" });

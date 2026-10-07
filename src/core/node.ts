@@ -497,6 +497,14 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
     return this.withClient((c) => c.request("decide", args));
   }
 
+  askOwner(args: import("./owner-questions.js").AskOwnerArgs): Promise<RequestMap["askOwner"][1]> {
+    return this.withClient(c => c.request("askOwner", args));
+  }
+
+  dismissOwner(args: RequestMap["dismissOwner"][0]): Promise<RequestMap["dismissOwner"][1]> {
+    return this.withClient(c => c.request("dismissOwner", args));
+  }
+
   getConversation(args: import("./conversations.js").ConversationRequest): Promise<import("./conversations.js").ConversationPage> {
     return this.withClient((c) => c.request("getConversation", args));
   }

@@ -11,6 +11,7 @@ if (process.platform !== "win32") process.env.TMPDIR = realpathSync(tmpdir());
 vi.mock("../src/core/notifications.js", async (original) => ({
   ...await original<typeof import("../src/core/notifications.js")>(),
   notifyJobEvent: vi.fn(),
+  notifyOwnerQuestion: vi.fn(),
 }));
 
 /**

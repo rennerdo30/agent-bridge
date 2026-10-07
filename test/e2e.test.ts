@@ -2,7 +2,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { promisify } from "node:util";
 import { execFile } from "node:child_process";
-import { existsSync, mkdtempSync } from "node:fs";
+import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { DatabaseSync } from "node:sqlite";
 import { tmpdir } from "node:os";
@@ -12,10 +12,12 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 /** Runs the bundled plugin server (npm run build first) as two real MCP servers. */
 const SERVER = join(import.meta.dirname, "..", "plugins", "claude", "dist", "server.mjs");
 const home = mkdtempSync(join(tmpdir(), "agent-bridge-e2e-"));
+writeFileSync(join(home,"config.json"),JSON.stringify({questionAlerts:{sound:false,toast:false,reminderMinutes:0}}));
 
 async function spawnAgent(agent: "claude" | "codex" | "antigravity", name: string): Promise<Client> {
   const transport = new StdioClientTransport({
     command: process.execPath,
+    cwd: home,
     args: [SERVER, `--agent=${agent}`],
     cwd: home,
     env: { ...process.env, AGENT_BRIDGE_HOME: home, AGENT_BRIDGE_NAME: name, AGENT_BRIDGE_DELIVERY: "hooks", AGENT_BRIDGE_DASHBOARD: "off", AGENT_BRIDGE_LOG_LEVEL: "debug", CLAUDE_CONFIG_DIR: join(home, "claude"), CODEX_HOME: join(home, "codex"), XDG_DATA_HOME: home } as Record<string, string>,
@@ -61,13 +63,23 @@ describe.skipIf(!existsSync(SERVER))("bundled MCP server end-to-end", () => {
     const x = (await codex.listTools()).tools.map((t) => t.name).sort();
     const g = (await antigravity.listTools()).tools.map((t) => t.name).sort();
     expect(g).toEqual(c.filter((name) => !name.endsWith("_antigravity")).concat(["ask_claude", "spawn_claude"]).sort());
-    expect(c).toEqual(["ask_antigravity", "ask_codex", "ask_opencode", "auto_wake", "cancel_subagent", "cancel_transfer", "coordinator_availability", "dashboard", "decide", "decisions", "fetch_files", "get_conversation", "handoff_subagents", "hook_event", "inbox", "list_models", "max_subagents", "message_subagent", "network_status", "peers", "project_main", "search_history", "send", "send_files", "set_job_outcome", "spawn_antigravity", "spawn_codex", "spawn_opencode", "usage_limits", "wait_for_message"]);
-    expect(x).toEqual(["ask_antigravity", "ask_claude", "ask_opencode", "auto_wake", "cancel_subagent", "cancel_transfer", "coordinator_availability", "dashboard", "decide", "decisions", "fetch_files", "get_conversation", "handoff_subagents", "hook_event", "inbox", "list_models", "max_subagents", "message_subagent", "network_status", "peers", "project_main", "search_history", "send", "send_files", "set_job_outcome", "spawn_antigravity", "spawn_claude", "spawn_opencode", "usage_limits", "wait_for_message"]);
+    expect(c).toEqual(["ask_antigravity", "ask_codex", "ask_opencode", "ask_owner", "auto_wake", "cancel_subagent", "cancel_transfer", "coordinator_availability", "dashboard", "decide", "decisions", "fetch_files", "get_conversation", "handoff_subagents", "hook_event", "inbox", "list_models", "max_subagents", "message_subagent", "network_status", "peers", "project_main", "search_history", "send", "send_files", "set_job_outcome", "spawn_antigravity", "spawn_codex", "spawn_opencode", "usage_limits", "wait_for_message", "withdraw_owner_question"]);
+    expect(x).toEqual(["ask_antigravity", "ask_claude", "ask_opencode", "ask_owner", "auto_wake", "cancel_subagent", "cancel_transfer", "coordinator_availability", "dashboard", "decide", "decisions", "fetch_files", "get_conversation", "handoff_subagents", "hook_event", "inbox", "list_models", "max_subagents", "message_subagent", "network_status", "peers", "project_main", "search_history", "send", "send_files", "set_job_outcome", "spawn_antigravity", "spawn_claude", "spawn_opencode", "usage_limits", "wait_for_message", "withdraw_owner_question"]);
   });
 
   it("declares the Claude channel capability only for Claude", () => {
     expect(claude.getServerCapabilities()?.experimental?.["claude/channel"]).toEqual({});
     expect(codex.getServerCapabilities()?.experimental?.["claude/channel"]).toBeUndefined();
+  });
+
+  it("files notify-mode owner questions through every bundled CLI without waiting for an answer",async () => {
+    const args={title:"Fixture owner scope?",topic:"e2e-owner-scope",context:"Synthetic MCP contract check",options:[{id:"small",label:"Small",consequence:"Ships sooner",recommended:true},{id:"large",label:"Large",consequence:"Ships later",recommended:false}],blocking:true,blocks:"Fixture scope",meanwhile:"Run independent checks"};
+    const results=[];
+    for (const client of [claude,codex,antigravity]) results.push(JSON.parse(textOf(await client.callTool({name:"ask_owner",arguments:args}))));
+    expect(results.map(r => r.merged)).toEqual([false,true,true]);
+    expect(new Set(results.map(r => r.question.id)).size).toBe(1);
+    expect(results[2].question).toMatchObject({kind:"question",status:"open",deliveries:[]});
+    expect(results[2].question.askers).toHaveLength(3);
   });
 
   it("round-trips a question and a threaded answer", async () => {

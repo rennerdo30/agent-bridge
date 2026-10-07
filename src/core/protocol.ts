@@ -210,6 +210,11 @@ export interface AuthArgs {
 }
 
 export interface RequestMap {
+  askOwner: [import("./owner-questions.js").AskOwnerArgs, { question: import("./owner-questions.js").OwnerQuestion; merged: boolean; similar: string[] }];
+  ownerQuestions: [Record<string, never>, import("./owner-questions.js").OwnerQuestion[]];
+  answerOwner: [{ id: string; answer: import("./owner-questions.js").QuestionAnswerArgs }, import("./owner-questions.js").OwnerQuestion];
+  dismissOwner: [{ id: string; status: "cancelled" | "superseded"; reason: string; supersededBy?: string }, import("./owner-questions.js").OwnerQuestion];
+  dashboardHeartbeat: [{ tab: string; visible: boolean }, { alerts: { id: string; at: number }[]; settings: import("./owner-questions.js").QuestionAlertSettings }];
   projectJobs: [Record<string, never>, Record<string, unknown>[]];
   coordinatorAvailability: [{ name?: string; unavailable: boolean }, PeerInfo];
   projectMain: [{ to: string }, PeerInfo];
