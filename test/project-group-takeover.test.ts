@@ -138,7 +138,16 @@ it.each(["closed", "unavailable", "opencode"])("ten jobs survive a %s primary an
   const failed = starts.find((result) => result.status === "rejected");
   if (failed?.status === "rejected") throw failed.reason;
   const jobs = starts.map((result) => (result as PromiseFulfilledResult<{ name: string; id: string; release: string; link: string }>).value);
-  await until(() => jobs.every((j) => linkReady(j.link) && readRunnerState(env.home, j.id)?.sessionId && readRunnerState(env.home, j.id)?.live), 18_000);
+  try {
+    await until(() => jobs.every((j) => linkReady(j.link) && readRunnerState(env.home, j.id)?.sessionId && readRunnerState(env.home, j.id)?.live), 18_000);
+  } catch (cause) {
+    const readiness = jobs.map((job) => {
+      const state = readRunnerState(env.home, job.id);
+      return { name: job.name, status: state?.status, alive: state ? pidAlive(state.pid) : false,
+        session: Boolean(state?.sessionId), live: Boolean(state?.live), link: linkReady(job.link), progress: state?.progressNote };
+    });
+    throw new Error(`Native takeover fixture did not become ready: ${JSON.stringify(readiness)}`, { cause });
+  }
   const children = jobs.map((j) => parentFromEnv(JSON.parse(readFileSync(j.link, "utf8")))!);
   // Leave one result and note pending in the starter's inbox before it becomes unavailable.
   await children[0]!.send("Pending before takeover");
