@@ -1,3 +1,7 @@
+import { canControlJob } from "../core/job-ownership.js";
+import { join } from "node:path";
+import { JOBS_FILE } from "../core/constants.js";
+import { readStore } from "./jobs.js";
 import { randomUUID } from "node:crypto";
 import { COMPLETION_DEDUPE_PREFIX } from "../core/completion.js";
 import { archiveFile, assertWritableStore, readJsonStore } from "../core/json-store.js";
@@ -68,12 +72,20 @@ async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: WindowsJo
     allowedServers: new Set(spec.job.allowedServers),
   };
   let owner = spec.owner;
+  const refreshOwner = () => {
+    const saved = readStore(join(home, JOBS_FILE)).find((j) => j.id === job.id);
+    if (!saved?.ownershipHistory?.length) return;
+    owner = saved.owner ?? owner;
+    Object.assign(job, { owner, supervisor: saved.supervisor, parentJob: saved.parentJob, rootSession: saved.rootSession, rootName: saved.rootName,
+      ownershipHistory: saved.ownershipHistory, masters: saved.masters, args: { ...job.args, send_to: saved.args?.send_to } });
+  };
   const seen: string[] = [];
   /** The final report is decided: messages arriving now are left to the session (it continues the job). */
   let closing = false;
 
   let extra: Partial<RunnerState> = { status: "running" };
   const save = (patch: Partial<RunnerState> = {}) => {
+    refreshOwner();
     extra = { ...extra, ...patch };
     try {
       writeRunnerState(home, job.id, {
@@ -131,6 +143,7 @@ async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: WindowsJo
   let chain: Promise<boolean> = Promise.resolve(true);
   const deliver = async (body: string, replyTo: string | null, note = false, key?: string): Promise<boolean> => {
     // One key for all attempts: a send that timed out here may still be queued at a slow broker.
+    refreshOwner();
     const dedupeKey = key ?? randomUUID();
     for (let attempt = 1; attempt <= SEND_ATTEMPTS; attempt++) {
       try {
@@ -187,9 +200,11 @@ async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: WindowsJo
     } catch {
       return;
     }
+    refreshOwner();
+    if (job.ownershipHistory?.length && !canControlJob(job as unknown as Record<string, unknown>, m.from.name)) return;
     // The session may be a new server now, maybe under another name: answer where it is.
     if (m.from.name !== owner) log.info("the job's session is now", { name: m.from.name, was: owner });
-    owner = m.from.name;
+    if (!job.ownershipHistory?.length) owner = m.from.name;
     void node.updateJob({ jobParent: owner }).catch(() => {});
     if (c.type === "message") {
       if (closing) return;
@@ -197,7 +212,7 @@ async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: WindowsJo
       if (job.pendingApproval) {
         const answer = job.pendingApproval;
         job.pendingApproval = null;
-        answer(c.body, `session ${owner}`);
+        answer(c.body, `session ${m.from.name}`);
       } else if (job.live) {
         job.awaitingAnswer = true;
         job.live.post(c.body);
