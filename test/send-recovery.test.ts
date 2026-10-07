@@ -16,7 +16,7 @@ afterEach(async () => {
   await env.cleanup();
 });
 
-it.each(["claude", "codex", "opencode"] as const)("recovers a lost %s send response with one durable message", async (agent) => {
+it.each(["claude", "codex", "opencode", "antigravity"] as const)("recovers a lost %s send response with one durable message", async (agent) => {
   const sender = env.node("sender", agent), recipient = env.node("recipient", agent);
   await sender.start(); await recipient.start();
   const client = (sender as unknown as { client: BridgeClient }).client;
