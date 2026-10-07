@@ -1203,6 +1203,7 @@ ${res.text || t("delegate.empty")}`, res.isError);
         to: z.string().min(1).max(64).describe("Exact live local session name from peers"),
         jobs: z.union([z.literal("all"), z.array(z.string().min(1).max(80)).min(1).max(1000)]).optional().describe("Exact job names, or all (default)"),
         note: z.string().max(4000).optional().describe("Context for the new supervisor"),
+        switch_project_main: z.boolean().optional().describe("With all jobs, also make the same-project target the main session"),
       },
     },
     guarded("handoff_subagents", async (a: import("../core/job-handoff.js").HandoffArgs) => {
@@ -1246,7 +1247,7 @@ ${res.text || t("delegate.empty")}`, res.isError);
     guarded("message_subagent", async (a: { job: string; message?: string; title?: string } & JobSettings) => {
       const jobs = ctx.jobs;
       if (!jobs) throw new BridgeError("bad_request", t("err.delegatedSession"));
-      const existing = jobs.find(a.job);
+      const existing = await jobs.share(a.job);
       // A top supervisor can answer an escalated descendant wait without taking over that child job.
       if (node && a.message) {
         const approval = listPendingApprovals(ctx.home).find((entry) => entry.job === a.job && entry.parentJob);
@@ -1292,6 +1293,7 @@ ${res.text || t("delegate.empty")}`, res.isError);
       inputSchema: { job: z.string().min(1) },
     },
     guarded("cancel_subagent", async (a: { job: string }) => {
+      await ctx.jobs?.share(a.job);
       return ctx.jobs?.cancel(a.job) ? text(t("jobs.cancelled", { name: a.job })) : text(t("jobs.unknown", { name: a.job }), true);
     }),
   );

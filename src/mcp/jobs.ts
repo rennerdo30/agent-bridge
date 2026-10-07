@@ -1,3 +1,4 @@
+import { canonicalProjectRoot, migrateProjectJobs } from "../core/project-identity.js";
 import { canControlJob } from "../core/job-ownership.js";
 import { randomUUID } from "node:crypto";
 import { closeSync, mkdirSync, openSync, rmSync, statSync } from "node:fs";
@@ -48,6 +49,8 @@ export type Resume = (message: string, sessionId: string, workdir: string | null
 export interface Job {
   ownershipHistory?: import("../core/job-handoff.js").OwnershipChange[];
   masters?: string[];
+  /** Immutable original project identity, unaffected by primary handoff. */
+  projectRoot?: string;
   executionOwner?: string;
   queuedMessages?: string[];
   /** Paired PC hosting this job; remote PIDs must never be signalled locally. */
@@ -272,6 +275,8 @@ export type FollowUpOutcome = "started" | "delivered" | "queued" | "waiting" | "
  * job while maxJobs are running waits for a free slot (first come, first served) instead of being refused.
  */
 export interface JobCoordinator {
+  jobAuthority?(job: string): Promise<Job | null>;
+  cwd?: string;
   controlInlineJob?(job: string, control: RunnerControl): Promise<unknown>;
   reportInlineJob?(message: BridgeMessage): Promise<unknown>;
   name: string;
@@ -305,6 +310,7 @@ export class JobManager {
   private rootWaitTimer: NodeJS.Timeout | null = null;
   private persistTimer: NodeJS.Timeout | null = null;
   private sharedControl = false;
+  private readonly sharedGrants = new Set<string>();
 
   constructor(
     private readonly node: JobCoordinator,
@@ -315,7 +321,8 @@ export class JobManager {
     private maxJobs: number = DEFAULT_MAX_JOBS,
     private readonly lineage?: JobLineage,
   ) {
-    node.on("shared_job_control", ({ job: name, control }: { job: string; control: RunnerControl }) => {
+    node.on("shared_job_control", async ({ job: name, control }: { job: string; control: RunnerControl }) => {
+      await this.share(name);
       this.sharedControl = true;
       try {
         if (control.type === "message") this.followUp(name, control.body);
@@ -434,7 +441,7 @@ export class JobManager {
         archiveFile(archive);
         this.log.info("archived finished jobs", { count: overflow.size });
       }
-      writeJsonStore(this.storePath, { ...(isRecord(previous) ? previous : {}), jobs: all.filter((j) => !overflow.has(j as StoredJob)) }, previous);
+      writeJsonStore(this.storePath, { ...(isRecord(previous) ? previous : {}), jobs: migrateProjectJobs(all.filter((j) => !overflow.has(j as StoredJob))) }, previous);
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === "EJOBLOCKED") {
         this.schedulePersist();
@@ -631,6 +638,21 @@ export class JobManager {
     return [...interrupted, ...mine.filter((j) => !interrupted.includes(j)).slice(0, limit)];
   }
 
+  /** Recheck group authority at each tool call; grants remain local and are never persisted. */
+  async share(ref: string): Promise<Job | undefined> {
+    const saved = await this.node.jobAuthority?.(ref);
+    if (!saved) {
+      const old = [...this.history.values()].find((j) => j.id === ref || j.name === ref);
+      if (old) this.sharedGrants.delete(old.id);
+      return this.find(ref);
+    }
+    this.sharedGrants.add(saved.id);
+    const existing = this.history.get(saved.id);
+    if (existing) Object.assign(existing, saved);
+    else this.history.set(saved.id, { ...saved, controller: new AbortController(), progress: null, queue: [], resume: this.restoreResume?.(saved.agent, saved.args ?? {}) });
+    return this.find(saved.name);
+  }
+
   find(ref: string): Job | undefined {
     this.refreshOwnership();
     const id = ref.replace(/^.*-(?:job|ask)-/, "");
@@ -639,9 +661,9 @@ export class JobManager {
     const active = [...this.running.values(), ...this.foreground.values(), ...this.waitingJobs.values()];
     const current = active.find((j) => j.id === id || j.name === ref)
       ?? this.history.get(id) ?? [...this.history.values()].find((j) => j.name === ref);
-    if (current || !this.storePath || !this.restoreResume) return current && (canControlJob(current as unknown as Record<string, unknown>, this.node.name) || this.isMine(current.owner) || (this.lineage && current.parentJob === this.lineage.parentJob)) ? current : undefined;
+    if (current || !this.storePath || !this.restoreResume) return current && (this.sharedGrants.has(current.id) || canControlJob(current as unknown as Record<string, unknown>, this.node.name) || this.isMine(current.owner) || (this.lineage && current.parentJob === this.lineage.parentJob)) ? current : undefined;
     const saved = readStore(this.storePath, this.log, true).find((j) => j.id === id || j.name === ref);
-    if (!saved || (!this.lineage && !this.isMine(saved.owner) && !canControlJob(saved as unknown as Record<string, unknown>, this.node.name))) return undefined;
+    if (!saved || (!this.lineage && !this.isMine(saved.owner) && !canControlJob(saved as unknown as Record<string, unknown>, this.node.name) && !this.sharedGrants.has(saved.id))) return undefined;
     // The same lineage rule as restore(): a nested coordinator sees only its own children, a session only top-level jobs.
     if (this.lineage ? saved.parentJob !== this.lineage.parentJob : saved.parentJob) return undefined;
     const job: Job = { ...saved, controller: new AbortController(), progress: null, queue: [], resume: this.restoreResume(saved.agent, saved.args ?? {}) };
@@ -679,6 +701,7 @@ export class JobManager {
       resume,
       queue: [],
       args,
+      projectRoot: canonicalProjectRoot(this.node.cwd ?? process.cwd()) ?? undefined,
       owner: this.node.name,
       // Keep the first job's identity when hooks learn the session id later, or a server reload adopts it.
       supervisor: this.supervisorIdentity(),
@@ -1149,7 +1172,7 @@ export function sessionOfError(err: unknown): string | null {
   return err instanceof DelegateError ? (err.sessionId ?? null) : null;
 }
 
-type StoredJob = Pick<Job, "ownershipHistory" | "masters" | "executionOwner" | "queuedMessages" | "forwarded" | "id" | "name" | "agent" | "model" | "prompt" | "startedAt" | "status" | "sessionId" | "workdir" | "worktree" | "args" | "owner" | "supervisor" | "finishedAt" | "host" | "remote" | "metadataVersion" | "parentJob" | "rootSession" | "rootName" | "percent" | "progressNote" | "etaAt" | "etaReportedAt">;
+type StoredJob = Pick<Job, "projectRoot" | "ownershipHistory" | "masters" | "executionOwner" | "queuedMessages" | "forwarded" | "id" | "name" | "agent" | "model" | "prompt" | "startedAt" | "status" | "sessionId" | "workdir" | "worktree" | "args" | "owner" | "supervisor" | "finishedAt" | "host" | "remote" | "metadataVersion" | "parentJob" | "rootSession" | "rootName" | "percent" | "progressNote" | "etaAt" | "etaReportedAt">;
 
 function toStored(j: Job): StoredJob {
   return {
@@ -1167,6 +1190,7 @@ function toStored(j: Job): StoredJob {
     owner: j.owner,
     ownershipHistory: j.ownershipHistory,
     masters: j.masters,
+    projectRoot: j.projectRoot,
     executionOwner: j.executionOwner,
     queuedMessages: [...j.queue],
     forwarded: j.forwarded,

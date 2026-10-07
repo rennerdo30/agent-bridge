@@ -11,12 +11,14 @@ import { pidAlive, killPid } from "../src/core/delegate.js";
 
 const SERVER = join(import.meta.dirname, "..", "plugins", "claude", "dist", "server.mjs");
 let env: TestEnv, bin: string;
+const transports: StdioClientTransport[] = [];
 const clients: Client[] = [], ids: string[] = [], releases: string[] = [];
 beforeEach(() => {
   env = makeEnv(); const dir = join(env.home, "bin"); mkdirSync(dir);
   const file = join(dir, "fake.mjs");
   writeFileSync(file, `#!/usr/bin/env node
-import {existsSync,writeFileSync} from 'node:fs';
+import {existsSync,writeFileSync,appendFileSync} from 'node:fs';
+if(process.argv.includes('queue')){appendFileSync(${JSON.stringify(join(env.home, "wake-calls"))}, 'wake');process.exit(0);}
 let prompt='';process.stdin.setEncoding('utf8');process.stdin.on('data',d=>prompt+=d);
 process.stdin.on('end',async()=>{
  const release=/release=(\\S+)/.exec(prompt)?.[1],link=/link=(\\S+)/.exec(prompt)?.[1];
@@ -35,19 +37,22 @@ afterEach(async () => {
   const runnerPids = ids.splice(0).map((id) => readRunnerState(env.home, id)?.pid).filter((pid): pid is number => Boolean(pid));
   for (const pid of runnerPids) if (pidAlive(pid)) killPid(pid);
   await until(() => runnerPids.every((pid) => !pidAlive(pid)), 5_000);
+  const servers = transports.splice(0).map((t) => t.pid).filter((pid): pid is number => Boolean(pid));
   for (const client of clients.splice(0)) await client.close();
+  await until(() => servers.every((pid) => !pidAlive(pid)), 5_000);
   await env.cleanup();
 });
 async function session(name: string, agent: "codex" | "claude" | "opencode") {
   const client = new Client({ name: "group-takeover", version: "1" }); clients.push(client);
-  await client.connect(new StdioClientTransport({ command: process.execPath, args: [SERVER, `--agent=${agent}`], cwd: env.home, env: {
+  const transport = new StdioClientTransport({ command: process.execPath, args: [SERVER, `--agent=${agent}`], cwd: env.home, env: {
     ...process.env, AGENT_BRIDGE_HOME: env.home, AGENT_BRIDGE_NAME: name, AGENT_BRIDGE_CODEX_BIN: bin, AGENT_BRIDGE_CODEX_EXEC: "1",
     AGENT_BRIDGE_DASHBOARD: "off", AGENT_BRIDGE_MAX_JOBS: "16", AGENT_BRIDGE_JOB_RUNNER: "1",
-  } as Record<string, string>, stderr: "ignore" }));
+  } as Record<string, string>, stderr: "ignore" });
+  transports.push(transport); await client.connect(transport);
   await call(client, "peers"); return client;
 }
 async function call(client: Client, name: string, args: Record<string, unknown> = {}) {
-  const result = await client.callTool({ name, arguments: args });
+  const result = await client.callTool({ name, arguments: args, _meta: { threadId: "takeover-thread" } });
   return { text: (result.content as { text: string }[]).map((c) => c.text ?? "").join("\n"), error: result.isError };
 }
 
@@ -77,13 +82,17 @@ it.each(["closed", "unavailable", "opencode"])("ten jobs survive a %s primary an
   await children[2]!.escalate?.("Takeover approval request");
   for (const job of jobs) writeFileSync(job.release, "");
   await until(() => jobs.every((j) => readRunnerState(env.home, j.id)?.status === "done"), 10_000);
+  await until(() => existsSync(join(env.home, "wake-calls")), 5_000);
   let delivered = "";
   const deadline = Date.now() + 5_000;
-  while ((delivered.match(/Takeover result /g) ?? []).length < 10 && Date.now() < deadline) {
+  while ((delivered.match(/Takeover result /g) ?? []).length < 11 && Date.now() < deadline) {
     delivered += (await call(target, "inbox")).text;
-    if ((delivered.match(/Takeover result /g) ?? []).length < 10) await new Promise((r) => setTimeout(r, 20));
+    if ((delivered.match(/Takeover result /g) ?? []).length < 11) await new Promise((r) => setTimeout(r, 20));
   }
-  expect((delivered.match(/Takeover result /g) ?? []).length).toBe(10);
+  expect((delivered.match(/Takeover result /g) ?? []).length).toBe(11);
+  // The redirect queues one legitimate second turn for job 1; each original report still appears once.
+  for (const [index, job] of jobs.entries()) expect(delivered.split(`Takeover result ${job.release}`).length - 1).toBe(1);
+  expect(delivered.split("Takeover result undefined").length - 1).toBe(1);
   expect(delivered).toContain("Pending before takeover");
   expect(delivered).toContain("Takeover approval request");
   for (let i = 0; i < 10; i++) expect(delivered).toContain(`After takeover note ${i}`);

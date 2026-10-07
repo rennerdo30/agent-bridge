@@ -78,7 +78,6 @@ export interface PeerInfo {
   wakeMaxHops?: number;
   /** Whether the agent is working on a turn right now, when known (reported by hooks). */
   activity?: PeerActivity | null;
-  unavailable?: boolean;
   /** agent-bridge version of this peer. */
   version?: string;
   /** Set for a job runner (it hosts a background subagent of a session): that subagent's agent. Hidden from peer lists. */

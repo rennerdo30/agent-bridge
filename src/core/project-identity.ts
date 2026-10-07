@@ -45,3 +45,19 @@ export function projectGroupsEnabled(root: string | null, home?: string, agent?:
     return true;
   } catch { return false; }
 }
+
+/** Additive v4 migration. Unknown records and fields are retained; unresolved identities stay closed. */
+export function migrateProjectJobs(records: unknown[]): unknown[] {
+  return records.map((entry) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) return entry;
+    const job = entry as Record<string, unknown>;
+    if (typeof job.projectRoot === "string") return entry;
+    const worktree = job.worktree as Record<string, unknown> | null;
+    for (const value of [worktree?.repoRoot, job.workdir]) {
+      if (typeof value !== "string") continue;
+      const root = canonicalProjectRoot(value);
+      if (root) return { ...job, projectRoot: root };
+    }
+    return entry;
+  });
+}

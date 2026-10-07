@@ -1,3 +1,5 @@
+import { chooseJobRecipient } from "../core/job-ownership.js";
+import { ProjectGroups } from "../core/project-groups.js";
 import { handoffSchema } from "../core/job-handoff.js";
 import { randomBytes } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
@@ -53,8 +55,11 @@ const ALLOWED_HOSTS = new Set([UI_HOST, "localhost"]);
 const RUN_NAME = /^[\w.-]+\.log$/;
 
 /** A server may have adopted a job from an earlier stand-in name since its log was written. */
-function jobOwner(home: string, job: string, original: string): string {
-  return readStoredJobs(home).get(job)?.owner ?? original;
+async function jobOwner(home: string, job: string, original: string, node: BridgeNode): Promise<string> {
+  const record = readStoredJobs(home).get(job);
+  if (!record) return original;
+  const peers = await node.peers();
+  return chooseJobRecipient(record as unknown as Record<string, unknown>, peers, new ProjectGroups(home).members(record as unknown as Record<string, unknown>, peers));
 }
 
 interface MessageRow {
@@ -498,7 +503,7 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
       const meta = readMeta(join(opts.home, RUNS_DIR_NAME, `${run}.json`));
       if (!meta.by || !meta.job) return send(res, 409, { error: "This run has no owning session or job recorded." });
       try {
-        const result = await controlDashboardJob(await getSender(), jobOwner(opts.home, meta.job, meta.by), meta.job, command);
+        const result = await controlDashboardJob(await getSender(), await jobOwner(opts.home, meta.job, meta.by, await getSender()), meta.job, command);
         return send(res, result.isError ? 409 : 200, result);
       } catch (err) {
         if (err instanceof JobControlError) return send(res, err.reason === "offline" ? 409 : 504, { error: err.message });

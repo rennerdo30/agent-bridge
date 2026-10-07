@@ -40,7 +40,7 @@ export class ProjectGroups {
       try { spec = readJsonSnapshot(join(this.home, "jobs", `${job.id}.spec.json`)).value; }
       catch { /* A running job has already archived its one-use launch spec. */ }
     }
-    for (const value of [worktree?.repoRoot, isRecord(spec) ? spec.cwd : undefined, job.workdir, runner?.cwd]) {
+    for (const value of [job.projectRoot, worktree?.repoRoot, isRecord(spec) ? spec.cwd : undefined, job.workdir, runner?.cwd]) {
       if (typeof value === "string") { const root = this.root(value); if (root) { this.jobRoots.set(String(job.id), root); return root; } }
     }
     // Legacy records lacking workdir can still share while their original owner is connected.
@@ -52,7 +52,9 @@ export class ProjectGroups {
   }
 
   canControl(peer: PeerInfo, job: Record<string, unknown>, local: PeerInfo[]): boolean {
-    if (peer.jobAgent || peer.subagent || peer.host) return false;
+    if (peer.host) return false;
+    if (peer.jobAgent && peer.name === job.parentJob) return true;
+    if (peer.jobAgent || peer.subagent) return false;
     if (canControlJob(job, peer.name)) return true;
     if (!this.shareable(job)) return false;
     return this.members(job, local).some((p) => p.name === peer.name);

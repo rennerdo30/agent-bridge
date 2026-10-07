@@ -1,3 +1,4 @@
+import { migrateProjectJobs } from "./project-identity.js";
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { z } from "zod";
@@ -11,6 +12,7 @@ export const handoffSchema = z.object({
   to: z.string().min(1).max(64),
   jobs: z.union([z.literal("all"), z.array(z.string().min(1).max(80)).min(1).max(1000)]).default("all"),
   note: z.string().max(4000).optional(),
+  switch_project_main: z.boolean().optional(),
 }).strict();
 export type HandoffArgs = z.input<typeof handoffSchema>;
 export interface OwnershipChange {
@@ -95,5 +97,5 @@ export function migrateJobOwnership(previous: unknown): Record<string, unknown> 
   if (previous !== null && !Array.isArray(previous) && (!isRecord(previous) || !Array.isArray(previous.jobs))) throw new Error("Invalid job registry; migration left it untouched.");
   const jobs = Array.isArray(previous) ? previous : isRecord(previous) ? previous.jobs as unknown[] : [];
   if (isRecord(previous) && previous.handoffs !== undefined && !Array.isArray(previous.handoffs)) throw new Error("Invalid handoff history; migration left it untouched.");
-  return { ...(isRecord(previous) ? previous : {}), version: JSON_STORE_VERSION, jobs, handoffs: isRecord(previous) ? previous.handoffs ?? [] : [] };
+  return { ...(isRecord(previous) ? previous : {}), version: JSON_STORE_VERSION, jobs: migrateProjectJobs(jobs), handoffs: isRecord(previous) ? previous.handoffs ?? [] : [] };
 }
