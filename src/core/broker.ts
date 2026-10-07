@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { createServer, type Server, type Socket } from "node:net";
 import {
   MAX_BODY_CHARS,
+  BROKER_TESTED_JOB_LOAD,
   MAX_FRAME_BYTES,
   MESSAGE_TTL_MS,
   PROTOCOL_VERSION,
@@ -190,6 +191,7 @@ export class Broker {
         return this.store.history.tick();
       },
       peers: () => this.livePeers(),
+      brokerLoad: () => ({ connectedJobs: [...this.conns].filter((conn) => conn.peer?.jobAgent).length, testedJobs: BROKER_TESTED_JOB_LOAD }),
       dashboardPeers: () => this.dashboardPeers().concat(this.network?.peers() ?? []),
       dashboardRead: (_, a) => this.remoteDashboard?.request(a.host, a.request) ?? dashboardError("remote_offline", "Networking is unavailable."),
       siblings: (c) => this.siblingPeers(c),

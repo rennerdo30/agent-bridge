@@ -5,6 +5,8 @@ import { join } from "node:path";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { z } from "zod";
 import { BridgeNode } from "../src/core/node.js";
+import { BridgeClient } from "../src/core/client.js";
+import { PROTOCOL_VERSION } from "../src/core/constants.js";
 import { nullLogger } from "../src/core/logger.js";
 import { ParentLink } from "../src/core/parent-link.js";
 import { MessageStore } from "../src/core/store.js";
@@ -101,4 +103,20 @@ it("drains 550 queued results across the replay limit while retaining 159 quiet 
   const explicit = await call(sup, "inbox", { limit: 100, mark_read: false });
   expect(explicit).toContain("OBSERVER_0");
   expect(explicit).toContain("OBSERVER_99");
+});
+
+it("warns the supervisor when aggregate jobs exceed the measured broker load", async () => {
+  const sup = await connect("opencode", "supervisor");
+  expect(await call(sup, "peers")).not.toContain("Broker load warning");
+  for (let i = 0; i < 51; i++) {
+    const client = await BridgeClient.connect(env.pipe, nullLogger);
+    cleanups.push(() => client.close());
+    await client.request("hello", { protocol: PROTOCOL_VERSION, token: loadOrCreateToken(env.home), peer: {
+      id: `job:load-${i}`, name: `codex-job-load-${i}`, agent: "other", jobAgent: "codex", cwd: env.home,
+      pid: process.pid, agentPid: null, sessionId: null, startedAt: Date.now(), autoWake: false,
+    } });
+  }
+  const warning = await call(sup, "peers");
+  expect(warning).toContain("Broker load warning: 51 jobs are connected");
+  expect(warning).toContain("load check covered 50");
 });

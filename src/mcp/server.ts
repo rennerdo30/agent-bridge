@@ -614,6 +614,8 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
       ];
       const quietCount = n.unread().filter(isQuietMessage).length;
       if (quietCount) lines.push(`${quietCount} retained quiet message(s), available in inbox/history on request; excluded from actionable unread mail.`);
+      const load = await n.brokerLoad().catch(() => null); // Earlier brokers do not expose the additive load probe.
+      if (load && load.connectedJobs > load.testedJobs) lines.push(`Broker load warning: ${load.connectedJobs} jobs are connected; the load check covered ${load.testedJobs}. Queue additional work to stay within the measured load.`);
       const transferNotes = new Map<string, BridgeMessage>();
       for (const message of n.unread()) {
         if (message.conversationId.startsWith(TRANSFER_PROGRESS_PREFIX)) transferNotes.set(message.conversationId, message);

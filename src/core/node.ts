@@ -428,6 +428,10 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
     return this.withClient((c) => c.request("peers", {}));
   }
 
+  brokerLoad() {
+    return this.withClient((c) => c.request("brokerLoad", {}));
+  }
+
   async handoffSubagents(args: import("./job-handoff.js").HandoffArgs): Promise<import("./job-handoff.js").HandoffReceipt> {
     // Inline results used to bypass the broker. Retain their unread envelopes before transferring.
     return this.withClient(async (c) => {

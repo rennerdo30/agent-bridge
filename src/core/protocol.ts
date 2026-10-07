@@ -201,6 +201,7 @@ export interface RequestMap {
   searchHistory: [HistorySearch, HistoryResult];
   reindexHistory: [{ reset?: boolean }, { work: number; discovering: boolean }];
   peers: [Record<string, never>, PeerInfo[]];
+  brokerLoad: [Record<string, never>, { connectedJobs: number; testedJobs: number }];
   siblings: [Record<string, never>, SiblingPeer[]];
   sendSibling: [SendArgs & { maxHops: number }, SendResult];
   ack: [AckArgs, { acked: number }];
