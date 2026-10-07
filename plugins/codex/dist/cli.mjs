@@ -50088,7 +50088,7 @@ import { mkdtempSync as mkdtempSync6, rmSync as rmSync11 } from "node:fs";
 import { tmpdir as tmpdir5 } from "node:os";
 import { join as join67 } from "node:path";
 var TESTED_VERSIONS = {
-  antigravity: "1.2.0",
+  antigravity: "1.3.1",
   claude: "2.1.283",
   codex: "0.157.1",
   opencode: "1.18.32"

@@ -144,6 +144,11 @@ used a separate bridge home and found no other peers. Malformed delegated hook
 input also fails closed in read, ask and edit modes so handoff restrictions
 cannot be waived by an unreadable gate.
 
+The bridge's explicit manual `smoke antigravity` command also passed on 1.3.1:
+answer correct, session ID present, and resumed answer correct. This runs the
+actual adapter with streaming JSON stdin (rather than a separate `--print`
+invocation), validating its flags, parsing and `--conversation` continuation.
+
 Installer adds only `mcp(agent-bridge_agent-bridge/*)` to native
 `~/.gemini/antigravity-cli/settings.json`, preserving all other settings and
 backing up replaced content. Native edit permissions otherwise remain in force;
