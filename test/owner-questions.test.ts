@@ -112,6 +112,9 @@ describe("presence alerts and waking delivery",() => {
     peers.push({...peers[1],name:"new-main"}); peers[1].projectMain=false;
     service.complete(service.store.get(q.id)!); expect(emit).toHaveBeenCalledTimes(2);
     expect(service.store.get(q.id)?.deliveryComplete).toBe(true);
+    const closedBeforeHeartbeat=service.store.ask(question("stale-alert"),env.home,asker).question;
+    (service as any).tick(); service.store.dismiss(closedBeforeHeartbeat.id,"cancelled","No longer needed");
+    expect(service.heartbeat("tab",true).alerts).toEqual([]);
     messages.history.tick(); expect(messages.history.search({query:"compact shipping",filters:{kind:"question"}}).hits[0]?.link).toContain(q.id);
   });
   it("mirrors exact answers once and recovers an unconfirmed prior comment without duplicates",async () => {

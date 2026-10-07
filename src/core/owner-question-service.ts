@@ -27,7 +27,7 @@ export class OwnerQuestionService {
   settings(): QuestionAlertSettings { return loadConfig(this.home, "other", this.log).questionAlerts; }
   heartbeat(tab: string, visible: boolean): { alerts: { id: string; at: number }[]; settings: QuestionAlertSettings } {
     this.tabs.set(tab, { tab, visible, at: Date.now() });
-    const alerts = this.alerts.get(tab) ?? []; this.alerts.delete(tab);
+    const alerts = (this.alerts.get(tab) ?? []).filter(a => this.store.get(a.id)?.status === "open"); this.alerts.delete(tab);
     return { alerts, settings: this.settings() };
   }
   list(): OwnerQuestion[] {
@@ -119,7 +119,7 @@ export class OwnerQuestionService {
   private tick(): void {
     try {
       const at = Date.now(), settings = this.settings();
-      for (const [id,t] of this.tabs) if (at-t.at > 10_000) this.tabs.delete(id);
+      for (const [id,t] of this.tabs) if (at-t.at > 10_000) { this.tabs.delete(id); this.alerts.delete(id); }
       for (const q of this.store.work()) {
         if (q.status === "answered") { this.complete(q); continue; }
         if (q.status !== "open") continue;
