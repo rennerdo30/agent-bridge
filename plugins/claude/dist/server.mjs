@@ -30138,6 +30138,19 @@ function readArchivedJobSnapshot(path) {
   if (snapshots.size > 4) snapshots.delete(snapshots.keys().next().value);
   return next;
 }
+function archiveJobs(path, jobs) {
+  const dir = join16(dirname5(path), "archive");
+  mkdirSync7(dir, { recursive: true, mode: 448 });
+  const target = join16(dir, `jobs-${Date.now()}-${randomUUID5()}.json`);
+  writeFileSync3(target, JSON.stringify({ version: JSON_STORE_VERSION, jobs }, null, 2) + "\n", { mode: 384, flag: "wx" });
+  const fd = openSync5(target, "r+");
+  try {
+    fsyncSync2(fd);
+  } finally {
+    closeSync5(fd);
+  }
+  return target;
+}
 
 // src/core/notifications.ts
 import { spawn as spawn4 } from "node:child_process";
@@ -30722,9 +30735,7 @@ var JobManager = class {
         ...finished.filter((j) => age > 0 && typeof j.finishedAt === "number" && j.finishedAt < Date.now() - age)
       ]);
       if (overflow.size) {
-        const archive = `${this.storePath}.overflow.json`;
-        writeJsonStore(archive, { jobs: [...overflow] }, null);
-        archiveFile(archive);
+        archiveJobs(this.storePath, [...overflow]);
         this.log.info("archived finished jobs", { count: overflow.size });
       }
       writeJsonStore(this.storePath, { ...isRecord(previous) ? previous : {}, jobs: all.filter((j) => !overflow.has(j)) }, previous);

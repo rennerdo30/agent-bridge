@@ -2,6 +2,8 @@
 
 `handoff_subagents` transfers supervision from the calling session to another connected local session, regardless of agent kind.
 
+In opencode, the native plugin exposes the same operation as `bridge_handoff_subagents` and delivers the inheritance message through its normal wake path.
+
 | Parameter | Meaning |
 | --- | --- |
 | `to` | Exact live local Claude Code, Codex or opencode session name from `peers` |
