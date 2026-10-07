@@ -520,10 +520,12 @@ export class ConversationIngestor {
         this.db
           .prepare("INSERT OR IGNORE INTO history_tags VALUES(?,?,?)")
           .run(id, type!, value!);
-    if (recordProject)
+    if (recordProject) {
+      this.mirrorPending.add(String(recordProject));
       this.db
         .prepare("INSERT OR IGNORE INTO conversation_memberships VALUES(?,?)")
         .run(recordProject, conversation);
+    }
   }
   private events(
     input: DatabaseSync,

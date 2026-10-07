@@ -30,3 +30,15 @@ it("finishes large sweeps without rediscovering pending projects on forced ticks
   ingest.notifyJobs(); ingest.tick(false);
   expect(sync.mock.calls.length).toBeGreaterThan(calls);
 });
+
+it("mirrors new retained messages immediately after an idle sweep", () => {
+  vi.spyOn(Date, "now").mockReturnValue(100_000);
+  const sync = vi.spyOn(mirrors, "syncProjectMirror").mockReturnValue(0);
+  store.history.rememberPeer({id:"peer",name:"codex-session",agent:"codex",sessionId:"session",cwd:env.home});
+  for(let i=0;i<20;i++)ingest.tick(false);
+  expect(ingest.discovering).toBe(false);
+  const calls=sync.mock.calls.length;
+  store.insert({id:"new-message",body:"retained after idle",recipient:"receiver",from:{id:"peer",name:"codex-session",agent:"codex"},to:"receiver",conversationId:"thread",replyTo:null,hop:0,createdAt:100_000,readAt:null});
+  for(let i=0;i<10;i++)ingest.tick(false);
+  expect(sync.mock.calls.length).toBeGreaterThan(calls);
+});
