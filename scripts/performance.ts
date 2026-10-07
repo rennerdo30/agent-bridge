@@ -25,6 +25,8 @@ import { decodePairingCode } from "../src/network/pairing.js";
 import type { PeerInfo, BridgeMessage } from "../src/core/protocol.js";
 
 const duration = Number(process.env.AB_PERF_SECONDS ?? 20);
+const jobCount = Number(process.env.AB_PERF_JOBS ?? 30);
+if (!Number.isInteger(jobCount) || jobCount < 1 || jobCount > 50) throw new Error("AB_PERF_JOBS must be 1..50");
 const home = fs.realpathSync.native(fs.mkdtempSync(join(tmpdir(), "abp-")));
 const pipe = resolvePipePath(home, {}), token = "synthetic-load-token";
 if (process.platform !== "win32" && Buffer.byteLength(pipe) >= 104) throw new Error("socket path too long");
@@ -72,7 +74,7 @@ try {
   fs.mkdirSync(join(home, "archive"));
   fs.writeFileSync(join(home, "token"), token);
   fs.writeFileSync(join(home, "config.json"), JSON.stringify({ notifications: { approvals: false, finish: false, fail: false } }));
-  const jobs = Array.from({ length: 400 }, (_, i) => ({ id: i.toString(16).padStart(8, "0"), name: `codex-job-${i.toString(16).padStart(8, "0")}`, agent: "codex", supervisor: "load-root", owner: "load-owner", prompt: "synthetic task ".repeat(140), startedAt: Date.now() - i * 1000, status: i < 30 ? "running" : "done", args: { title: `Load job ${i}` }, sessionId: null, workdir: home, worktree: null }));
+  const jobs = Array.from({ length: 400 }, (_, i) => ({ id: i.toString(16).padStart(8, "0"), name: `codex-job-${i.toString(16).padStart(8, "0")}`, agent: "codex", supervisor: "load-root", owner: "load-owner", prompt: "synthetic task ".repeat(140), startedAt: Date.now() - i * 1000, status: i < jobCount ? "running" : "done", args: { title: `Load job ${i}` }, sessionId: null, workdir: home, worktree: null }));
   fs.writeFileSync(join(home, "jobs.json"), JSON.stringify({ jobs }));
   for (let i = 0; i < 164; i++) fs.writeFileSync(join(home, "archive", `jobs-${i}.json`), JSON.stringify({ jobs: [jobs[i]] }));
   for (let i = 0; i < 680; i++) {
@@ -88,7 +90,7 @@ try {
   const peers: PeerInfo[] = [];
   const networkCfg = { ...DEFAULT_NETWORK_CONFIG, enabled: true, bind: "127.0.0.1", port: 0, discovery: false };
   a = new NetworkService(join(home, "pc-a"), { ...networkCfg, name: "pc-a" }, { peers: () => peers, receive: () => ({ delivered: true }) }, nullLogger);
-  b = new NetworkService(join(home, "pc-b"), { ...networkCfg, name: "pc-b" }, { peers: () => peers.slice(30), receive: () => ({ delivered: true }) }, nullLogger);
+  b = new NetworkService(join(home, "pc-b"), { ...networkCfg, name: "pc-b" }, { peers: () => peers.slice(jobCount), receive: () => ({ delivered: true }) }, nullLogger);
   await a.start(); await b.start();
   const invitation = b.keys.invite();
   // Profile an established pairing. Initial Windows ACL subprocesses run before the handshake clock.
@@ -96,26 +98,27 @@ try {
   await a.link(invitation, "127.0.0.1", b.port);
   broker = new Broker(pipe, store, nullLogger, token, Date.now, join(home, "jobs.json"));
   await broker.listen();
-  for (let i = 0; i < 36; i++) {
-    const job = i < 30 ? jobs[i]! : undefined;
-    const p: PeerInfo = { id: job ? `job:${job.id}` : randomUUID(), name: job?.name ?? (i === 30 ? "load-owner" : `load-session-${i}`), agent: "codex", cwd: home, pid: process.pid, agentPid: null, sessionId: null, startedAt: Date.now(), autoWake: false, ...(job ? { jobAgent: "codex", jobOwner: "load-root", jobParent: "load-owner" } : {}) };
+  for (let i = 0; i < jobCount + 6; i++) {
+    const job = i < jobCount ? jobs[i]! : undefined;
+    const p: PeerInfo = { id: job ? `job:${job.id}` : randomUUID(), name: job?.name ?? (i === jobCount ? "load-owner" : `load-session-${i}`), agent: "codex", cwd: home, pid: process.pid, agentPid: null, sessionId: null, startedAt: Date.now(), autoWake: false, ...(job ? { jobAgent: "codex", jobOwner: "load-root", jobParent: "load-owner" } : {}) };
     const client = await BridgeClient.connect(pipe, nullLogger);
     client.on("event", (_ev, data) => { if (_ev === "message") { delivered++; if ((data as BridgeMessage).conversationId.endsWith(":note")) quietCopies++; } });
-    await client.request("hello", { protocol: PROTOCOL_VERSION, token, peer: p });
+    await client.request("hello", { protocol: PROTOCOL_VERSION, token, peer: p }).catch((err) => { client.close(); throw new Error(`hello ${p.name}: ${(err as Error).message}`, { cause: err }); });
     clients.push(client); peers.push(p);
   }
   ui = await startUi({ home, pipe, port: 0, log: nullLogger });
   const secret = new URL(ui.url).searchParams.get("t");
   let progressStart = performance.now();
   for (let i = 0; i < 6; i++) {
-    const coordinator = Object.assign(new EventEmitter(), { name: i === 0 ? "load-owner" : `load-session-${30 + i}`, id: `root-${i}`, currentSessionId: `root-${i}`, send: async () => ({}), deliverLocal: () => {} });
-    const manager = new JobManager(coordinator as any, nullLogger, join(home, "jobs.json"), 5);
+    const coordinator = Object.assign(new EventEmitter(), { name: i === 0 ? "load-owner" : `load-session-${jobCount + i}`, id: `root-${i}`, currentSessionId: `root-${i}`, send: async () => ({}), deliverLocal: () => {} });
+    const count = Math.floor(jobCount / 6) + (i < jobCount % 6 ? 1 : 0);
+    const manager = new JobManager(coordinator as any, nullLogger, join(home, "jobs.json"), count);
     manager.runners = {
       state: (job: Job) => ({ pid: process.pid, peer: job.name, status: "running", updatedAt: Date.now(), percent: Math.floor((performance.now() - progressStart) / 1000), progressNote: "synthetic progress" }),
       alive: () => true, send: () => {}, kill: () => {},
     };
     const run = Object.assign(async () => new Promise<never>(() => {}), { hosted: (job: Job) => ({ pid: process.pid, peer: job.name, startedAt: Date.now() }) }) as Run;
-    for (let j = 0; j < 5; j++) manager.start("codex", null, "synthetic progress task", run);
+    for (let j = 0; j < count; j++) manager.start("codex", null, "synthetic progress task", run);
     managers.push(manager);
   }
   progressStart = performance.now();
@@ -137,14 +140,33 @@ try {
   await Promise.all([
     loop(2000, () => timed("state", async () => { const res = await fetch(`http://127.0.0.1:${ui!.port}/api/state`, { headers: { cookie: `ab_ui=${secret}` } }); if (res.status !== 200) throw new Error(`HTTP ${res.status}`); await res.json(); })),
     ...Array.from({ length: 6 }, () => loop(1000, hook)),
-    ...Array.from({ length: 30 }, (_, i) => loop(2000, () => timed("sibling", () => clients[i]!.request("sendSibling", { to: jobs[(i + 1) % 30]!.name, body: "synthetic coordination", maxHops: 32 })))),
+    ...Array.from({ length: jobCount }, (_, i) => loop(2000, () => timed("sibling", () => clients[i]!.request("sendSibling", { to: jobs[(i + 1) % jobCount]!.name, body: "synthetic coordination", maxHops: 32 })))),
+    loop(1000, () => timed("peers", () => clients[jobCount]!.request("peers", {}))),
+    loop(1000, () => timed("send", () => clients[jobCount]!.request("send", { to: `load-session-${jobCount + 1}`, body: "synthetic direct message" }))),
     loop(1000, () => timed("pairedPing", () => a!.verify(b!.keys.identity.id))),
   ]);
   for (const manager of managers) manager.setDormant(true);
   const usage = process.cpuUsage(cpu), elapsed = performance.now() - started;
   const profile = (await post("Profiler.stop")).profile;
   const hits = new Map<number, number>(); for (const id of profile.samples ?? []) hits.set(id, (hits.get(id) ?? 0) + 1);
-  const hot = profile.nodes.map((n: any) => ({ fn: n.callFrame.functionName, file: n.callFrame.url.split("/").at(-1), samples: hits.get(n.id) ?? 0 })).filter((n: any) => n.samples).sort((x: any, y: any) => y.samples - x.samples).slice(0, 12);
+  const parents = new Map<number, any>();
+  for (const n of profile.nodes) for (const child of n.children ?? []) parents.set(child, n);
+  const ancestry = (n: any): string[] => { const frames: string[] = []; for (let p = parents.get(n.id); p && frames.length < 8; p = parents.get(p.id)) frames.push(p.callFrame.functionName); return frames; };
+  const hot = profile.nodes.map((n: any) => ({ fn: n.callFrame.functionName, file: n.callFrame.url.split("/").at(-1), samples: hits.get(n.id) ?? 0, callers: ancestry(n) })).filter((n: any) => n.samples).sort((x: any, y: any) => y.samples - x.samples).slice(0, 12);
+  // Another SQLite writer holds the real primary database while send and peers share the broker.
+  const sqlWorker = new Worker(`const { DatabaseSync } = require('node:sqlite'); const { workerData, parentPort } = require('node:worker_threads');
+    const db = new DatabaseSync(workerData, { timeout: 3000 }); db.exec('BEGIN IMMEDIATE'); parentPort.postMessage('locked');
+    setTimeout(() => { db.exec('COMMIT'); db.close(); parentPort.postMessage('released'); }, 500);`,
+    { eval: true, workerData: join(home, "bridge.db") });
+  await new Promise<void>((resolve, reject) => { sqlWorker.once("message", () => resolve()); sqlWorker.once("error", reject); });
+  const sqlStart = performance.now();
+  let sqlHeartbeat = 0;
+  const sqlBeat = setTimeout(() => { sqlHeartbeat = performance.now() - sqlStart; }, 20);
+  await Promise.all([
+    timed("sqliteContendedSend", () => clients[jobCount]!.request("send", { to: `load-session-${jobCount + 1}`, body: "sqlite contention probe", dedupeKey: "sqlite-probe" })),
+    timed("peersDuringSqliteLock", () => clients[jobCount]!.request("peers", {})),
+  ]);
+  clearTimeout(sqlBeat); await sqlWorker.terminate();
   // Isolated cross-process store contention: release from another thread after 300ms.
   const coordinator = Object.assign(new EventEmitter(), { name: "load-owner", sessionId: "load-root", send: async () => ({}), deliverLocal: () => {} });
   const manager = new JobManager(coordinator as any, nullLogger, join(home, "jobs.json"));
@@ -159,7 +181,7 @@ try {
   await workerDone; release(); await pause(30); clearTimeout(beat); tracked.end();
   lag.disable();
   const stats = Object.fromEntries(Object.entries(samples).map(([key, values]) => { const sorted = [...values].sort((x, y) => x - y); return [key, { count: values.length, meanMs: values.reduce((x, y) => x + y, 0) / values.length, p95Ms: sorted[Math.floor((sorted.length - 1) * .95)], maxMs: sorted.at(-1) }]; }));
-  console.log(JSON.stringify({ durationSeconds: duration, peers: peers.length, logs: 680, retainedMessages: 8000, elapsedMs: elapsed, cpuMs: (usage.user + usage.system) / 1000, cpuPercent: (usage.user + usage.system) / (elapsed * 10), eventLoop: { p95Ms: lag.percentile(95) / 1e6, p99Ms: lag.percentile(99) / 1e6, maxMs: lag.max / 1e6 }, heartbeatMsUnderStoreContention: heartbeat, failures, delivered, quietCopies, stats, io, hot }, null, 2));
+  console.log(JSON.stringify({ durationSeconds: duration, peers: peers.length, jobs: jobCount, logs: 680, retainedMessages: 8000, elapsedMs: elapsed, cpuMs: (usage.user + usage.system) / 1000, cpuPercent: (usage.user + usage.system) / (elapsed * 10), eventLoop: { p95Ms: lag.percentile(95) / 1e6, p99Ms: lag.percentile(99) / 1e6, maxMs: lag.max / 1e6 }, heartbeatMsUnderSqliteContention: sqlHeartbeat, heartbeatMsUnderStoreContention: heartbeat, failures, delivered, quietCopies, stats, io, hot }, null, 2));
 } finally {
   lag.disable(); inspector.disconnect();
   await ui?.close(); await a?.close(); await b?.close();

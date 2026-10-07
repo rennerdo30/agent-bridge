@@ -102,6 +102,8 @@ aliases share the main project's identity. Non-Git projects use the physical
 directory. That project's `.agent-bridge/` holds a SQLite replica named
 `conversations-<project hash>.db` and optional `config.json`. Only conversations
 belonging to that project are copied. Replica consumers open SQLite read-only.
+Plugin installation caches are infrastructure, so old cache session bindings
+retain their history centrally without creating project mirrors in those caches.
 Shared bridge threads associated with a project are copied in full. Session
 aliases and job tags follow late bindings without rereading unchanged bodies.
 Synchronization copies at most eight raw records and checks 32 metadata ids per

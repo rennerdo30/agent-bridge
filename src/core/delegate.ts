@@ -835,7 +835,9 @@ export async function withResumeHint<T>(agent: string, sessionOf: (stdout: strin
 const TRANSIENT_ERROR_RE =
   /(?:model|selected model) is at capacity|not valid JSON|upstream|overloaded|bad gateway|service unavailable|gateway time-?out|internal server error|\b50[0-4]\b|ECONNRESET|ETIMEDOUT|EPIPE|socket hang up|connection (?:reset|closed|error|refused)|stream (?:error|closed|disconnected|ended)|network error|fetch failed|temporarily unavailable|routing discovery timed out/i;
 const CAPACITY_ERROR_RE = /model is at capacity/i;
+const DATABASE_LOCK_ERROR_RE = /\bdatabase (?:is |table is |schema is )?locked\b|\bSQLITE_(?:BUSY|LOCKED)\b/i;
 export const CAPACITY_RETRY_DELAYS_MS = [15_000, 30_000, 60_000] as const;
+export const DATABASE_RETRY_DELAYS_MS = [1_000, 2_000, 4_000] as const;
 const TRANSIENT_RETRY_LIMIT = 1;
 const MS_PER_SECOND = 1_000;
 /** Usage and rate limits: retrying at once only fails again, so these are reported, not retried. */
@@ -890,8 +892,9 @@ export async function retryTransient(req: DelegateRequest, run: (req: DelegateRe
       }
     }
     const capacity = CAPACITY_ERROR_RE.test(cause);
-    const limit = capacity ? CAPACITY_RETRY_DELAYS_MS.length : TRANSIENT_RETRY_LIMIT;
-    if (!isTransientProviderError(cause) || (!sessionId && !capacity) || retries >= limit) {
+    const databaseLock = DATABASE_LOCK_ERROR_RE.test(cause);
+    const limit = databaseLock ? DATABASE_RETRY_DELAYS_MS.length : capacity ? CAPACITY_RETRY_DELAYS_MS.length : TRANSIENT_RETRY_LIMIT;
+    if ((!databaseLock && !isTransientProviderError(cause)) || (!sessionId && !capacity && !databaseLock) || retries >= limit) {
       if (failed) {
         if (failure instanceof DelegateError && firstCause) {
           failure.message += ` (after ${retries === 1 ? "one automatic retry" : `${retries} automatic retries`}: the first attempt had failed with "${firstCause}")`;
@@ -905,7 +908,7 @@ export async function retryTransient(req: DelegateRequest, run: (req: DelegateRe
       return { ...res!, text: `${note}\n\n${res!.text}`, details: { ...res!.details, retriedAfter: firstCause, retries } };
     }
     firstCause ??= cause;
-    const waitMs = capacity ? CAPACITY_RETRY_DELAYS_MS[retries]! : 0;
+    const waitMs = databaseLock ? DATABASE_RETRY_DELAYS_MS[retries]! : capacity ? CAPACITY_RETRY_DELAYS_MS[retries]! : 0;
     if (Date.now() + waitMs >= deadline) throw new DelegateError("delegate timed out during provider retry backoff", "timeout", "", "", sessionId);
     retries++;
     req.log.warn("transient provider error; retrying on the selected model", { sessionId, model, cause, retries, waitMs });

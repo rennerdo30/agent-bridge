@@ -87,7 +87,7 @@ describe("local project permission groups", () => {
     const ctx = { agent: "claude", cfg: { ...DEFAULT_CONFIG }, node: returned, jobs, log: nullLogger, home: env.home, cwd: () => path, channelActive: () => false } as ServerContext;
     const result = await buildHookResponse(ctx, { event: "UserPromptSubmit", sessionId: null, stopHookActive: false });
     expect(JSON.stringify(result)).toContain("Final pending note");
-    expect((await runner.messageReceipt(sent.messages[0]!.id))[0]!.readAt).toBeTypeOf("number");
+    await expect.poll(async () => (await runner.messageReceipt(sent.messages[0]!.id))[0]!.readAt).toBeTypeOf("number");
   });
   it("lets a secondary become primary after the starter has closed", async () => {
     await env.node("broker", "other").start();

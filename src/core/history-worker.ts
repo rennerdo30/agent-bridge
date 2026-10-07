@@ -3,8 +3,10 @@ import { DatabaseSync } from "node:sqlite";
 import { HistoryIndex, HISTORY_TICK_MS } from "./history.js";
 import { ConversationIngestor } from "./conversations.js";
 import { transcriptPaths } from "./transcripts/common.js";
+import { configureSqlite } from "./sqlite-policy.js";
 
 const db = new DatabaseSync(workerData.file, { timeout: 50 });
+configureSqlite(db, 50);
 const paths = workerData.paths ?? transcriptPaths();
 const index = new HistoryIndex(db, workerData.home, paths);
 const ingest = new ConversationIngestor(db, workerData.home, paths);

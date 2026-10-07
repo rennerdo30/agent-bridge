@@ -17,7 +17,7 @@ import {
   RECONNECT_BACKOFF_MIN_MS,
 } from "./constants.js";
 import type { Logger } from "./logger.js";
-import { BridgeError, isQuietMessage, type AgentKind, type BridgeMessage, type PeerActivity, type PeerInfo, type SendArgs, type SendResult, type SiblingPeer } from "./protocol.js";
+import { BridgeError, isQuietMessage, type AgentKind, type BridgeMessage, type PeerActivity, type PeerInfo, type RequestMap, type SendArgs, type SendResult, type SiblingPeer } from "./protocol.js";
 import { ReadJournal } from "./read-journal.js";
 import { recordLocalResult } from "./local-result-receipts.js";
 import { MessageStore } from "./store.js";
@@ -102,6 +102,10 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
   private readonly readIds = new Set<string>();
   private readonly readJournal: ReadJournal;
   private readonly unflushedAcks = new Set<string>();
+  private readonly pendingAcks = new Set<Promise<unknown>>();
+  private pendingRefreshTimer: NodeJS.Timeout | null = null;
+  private refreshingPending: Promise<void> | null = null;
+  private ackFlushScheduled = false;
   private sessionId: string | null = null;
   private autoWake: boolean;
   private wakeOnDirect = false;
@@ -174,6 +178,8 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
     this.emit("stopped");
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
     this.reconnectTimer = null;
+    if (this.pendingRefreshTimer) clearTimeout(this.pendingRefreshTimer);
+    this.pendingRefreshTimer = null;
     this.client?.close();
     this.client = null;
     if (closeBroker) {
@@ -336,15 +342,11 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
     this.reconnectDelay = RECONNECT_BACKOFF_MIN_MS;
     client.once("close", () => this.onClose(client));
     if (this.unflushedAcks.size > 0) {
-      const ids = [...this.unflushedAcks];
-      this.unflushedAcks.clear();
-      client.request("ack", { ids }).catch((err) => {
-        this.log.warn("flushing acks failed", { err: (err as Error).message });
-        ids.forEach((id) => this.unflushedAcks.add(id));
-      });
+      this.acknowledge([...this.unflushedAcks]);
     }
     this.log.info("connected to broker", { name: hello.name, brokerPid: hello.brokerPid, isBroker: this.isBroker });
     this.emit("connected", { name: hello.name, isBroker: this.isBroker });
+    this.schedulePendingRefresh();
   }
 
   private onClose(client: BridgeClient): void {
@@ -403,13 +405,25 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
   /** quiet: not part of a conversation of this agent (no listen window, replies are not awaited), e.g. control messages to a job runner. */
   send(args: SendArgs, opts: { quiet?: boolean } = {}): Promise<SendResult> {
     return this.withClient(async (c) => {
-      const res = await c.request("send", args);
+      const res = await this.sendRequest(c, "send", { ...args, dedupeKey: args.dedupeKey || randomUUID() });
       if (opts.quiet) return res;
       this.lastSent = Date.now();
       if (!args.replyTo) for (const m of res.messages) this.asked.add(m.id);
       if (this.asked.size > QUESTION_ID_MEMORY) this.asked.delete(this.asked.values().next().value!);
       return res;
     });
+  }
+
+  /** A late send response can be recovered from the same broker without sending twice. */
+  private async sendRequest<O extends "send" | "sendSibling">(client: BridgeClient, op: O, args: RequestMap[O][0]): Promise<SendResult> {
+    try { return await client.request(op, args); }
+    catch (err) {
+      if ((err as Error).message !== `broker request timed out: ${op}`) throw err;
+      try { return await client.request(op, args); }
+      catch (retryError) {
+        throw new Error(`Delivery is unconfirmed after a timed-out ${op}. Check inbox/history before resending. ${(retryError as Error).message}`, { cause: retryError });
+      }
+    }
   }
 
   /** A reply to a question this peer asked (so the answer should reach the agent even when it is idle). */
@@ -428,6 +442,10 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
 
   peers(): Promise<PeerInfo[]> {
     return this.withClient((c) => c.request("peers", {})).then((peers) => peers.filter((p) => !isPluginCacheCwd(p.cwd)));
+  }
+
+  brokerLoad() {
+    return this.withClient((c) => c.request("brokerLoad", {}));
   }
 
   projectJobs(): Promise<Record<string, unknown>[]> { return this.withClient((c) => c.request("projectJobs", {})); }
@@ -486,7 +504,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
   }
 
   sendSibling(args: SendArgs, maxHops: number): Promise<SendResult> {
-    return this.withClient((c) => c.request("sendSibling", { ...args, maxHops }));
+    return this.withClient((c) => this.sendRequest(c, "sendSibling", { ...args, maxHops, dedupeKey: args.dedupeKey || randomUUID() }));
   }
 
   async updateJob(patch: { jobParent?: string; jobTitle?: string }): Promise<void> {
@@ -520,6 +538,38 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
   /** Locally buffered unread messages, oldest first. */
   unread(): BridgeMessage[] {
     return [...this.inbox.values()].sort((a, b) => a.createdAt - b.createdAt);
+  }
+
+  /** A replay is bounded to 500 rows. Active hooks refill after receipts so the tail cannot strand. */
+  refreshPending(): Promise<void> {
+    this.refreshingPending ??= this.readPending().finally(() => { this.refreshingPending = null; });
+    return this.refreshingPending;
+  }
+
+  private async readPending(): Promise<void> {
+    if (!this.isConnected) return;
+    await Promise.all(this.pendingAcks);
+    if (this.unflushedAcks.size) {
+      const ids = [...this.unflushedAcks];
+      await this.client!.request("ack", { ids });
+      ids.forEach((id) => this.unflushedAcks.delete(id));
+    }
+    const messages = await this.client!.request("pending", { limit: 500 });
+    for (const m of messages) this.onEvent("message", m);
+  }
+
+  /** Refill channel/wake consumers too; active hooks are not required to drain a large inbox. */
+  private schedulePendingRefresh(delayMs = 100): void {
+    if (this.stopping || this.pendingRefreshTimer) return;
+    this.pendingRefreshTimer = setTimeout(() => {
+      this.pendingRefreshTimer = null;
+      if (!this.isConnected || this.stopping) return;
+      void this.refreshPending().catch((err) => {
+        this.log.warn("pending recovery deferred", { err: String(err) });
+        this.schedulePendingRefresh(1_000);
+      });
+    }, delayMs);
+    this.pendingRefreshTimer.unref();
   }
 
   /** Look up a message by id: one we still hold, or remembered as read. */
@@ -575,13 +625,23 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
 
   private acknowledge(ids: string[]): void {
     if (!ids.length) return;
-    if (!this.isConnected) {
-      ids.forEach((id) => this.unflushedAcks.add(id));
-      return;
-    }
-    this.client!.request("ack", { ids }).catch((err) => {
-      this.log.warn("ack failed; will retry after reconnect", { err: (err as Error).message });
-      ids.forEach((id) => this.unflushedAcks.add(id));
+    ids.forEach((id) => this.unflushedAcks.add(id));
+    if (!this.isConnected || this.ackFlushScheduled) return;
+    // A channel can consume hundreds of replayed messages in one stream chunk. One ack per
+    // message would exceed the broker's per-connection request cap and interrupt its own drain.
+    this.ackFlushScheduled = true;
+    setImmediate(() => {
+      this.ackFlushScheduled = false;
+      if (!this.isConnected || !this.unflushedAcks.size) return;
+      const batch = [...this.unflushedAcks].slice(0, 500);
+      batch.forEach((id) => this.unflushedAcks.delete(id));
+      const pending = this.client!.request("ack", { ids: batch }).catch((err) => {
+        this.log.warn("ack failed; retained for pending recovery", { err: (err as Error).message });
+        batch.forEach((id) => this.unflushedAcks.add(id));
+      });
+      this.pendingAcks.add(pending);
+      void pending.finally(() => { this.pendingAcks.delete(pending); this.schedulePendingRefresh(); });
+      if (this.unflushedAcks.size) this.acknowledge([...this.unflushedAcks]);
     });
   }
 

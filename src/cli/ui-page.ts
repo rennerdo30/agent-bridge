@@ -345,6 +345,8 @@ main.wrap { padding-top: 32px; max-width: 1240px; }
 .side-nav a .dot { margin-left: auto; }
 .tree-pc { text-transform: none; letter-spacing: 0; font-size: 12px; font-weight: 600; color: var(--muted); padding: 16px 8px 6px; }
 .tree-pc span:last-child { color: var(--faint); font-weight: 400; }
+/* A project shared by several sessions: a quiet sub-heading inside its PC. */
+.tree-proj { padding: 8px 10px 2px; font-size: 11.5px; color: var(--faint); min-width: 0; }
 .tree-sess { position: relative; border-radius: 8px; }
 .tree-sess:hover { background: color-mix(in srgb, var(--panel) 60%, transparent); }
 .tree-sess.cur { background: var(--panel); box-shadow: var(--shadow); }
@@ -1226,15 +1228,11 @@ function projectSidebar(items) {
     if (!projects.has(key)) projects.set(key, { title: folder(x.peer.projectRoot), root: x.peer.projectRoot, items: [] });
     projects.get(key).items.push(x);
   }
-  return [...projects.values()].map((p) => {
-    const sameRoot = (a, b) => String(a || '').split(String.fromCharCode(92)).join('/').toLowerCase() === String(b || '').split(String.fromCharCode(92)).join('/').toLowerCase();
-    const jobs = p.title ? [...new Map(items.flatMap((x) => x.groups.filter((g) => {
-      const root = state.jobs[g.job]?.projectRoot;
-      return root ? sameRoot(root, p.root) : p.items.includes(x);
-    }).map((g) => [g.key, { g, owner: x.name }]))).values()] : [];
-    const rows = jobs.filter((x) => x.g.status === 'running').map((x) => '<div class="tree-sess"><a href="' + href(x.owner, x.g.key) + '">' + dot('busy') + '<span class="lbl ell">' + esc(x.g.title || x.g.job || 'Subagent') + '<small class="ell">' + esc(x.g.agent) + ' · project job</small></span></a></div>').join('');
-    return (p.title ? '<div class="tree-pc"><span>' + esc(p.title) + '</span><span>project</span></div>' : '') + p.items.map(sideSession).join('') + rows;
-  }).join('');
+  // The sidebar lists sessions only (subagents live in each session's own column). A project heading
+  // only appears when two or more sessions share the project.
+  return [...projects.values()].map((p) =>
+    (p.title && p.items.length > 1 ? '<div class="tree-proj"><span class="ell">' + esc(p.title) + "</span></div>" : "") + p.items.map(sideSession).join("")
+  ).join("");
 }
 
 const narrow = () => typeof matchMedia === "function" && matchMedia("(max-width: 860px)").matches;

@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { setTimeout as delay } from "node:timers/promises";
 import { RESOURCE_NAME_PATTERN } from "./config.js";
+import { configureSqlite, isSqliteBusy } from "./sqlite-policy.js";
 
 export const SLOT_OWNER_ENV = "AGENT_BRIDGE_SLOT_OWNER";
 export const SLOT_PID_ENV = "AGENT_BRIDGE_SLOT_PID";
@@ -26,6 +27,7 @@ export class ResourceSlots {
   constructor(home: string, private readonly isAlive = alive, private readonly now = Date.now) {
     mkdirSync(home, { recursive: true });
     this.db = new DatabaseSync(join(home, SLOT_DB_NAME));
+    configureSqlite(this.db);
     this.db.exec(`PRAGMA busy_timeout = ${LOCK_WAIT_MS};
       CREATE TABLE IF NOT EXISTS slots (
         ticket INTEGER PRIMARY KEY AUTOINCREMENT, resource TEXT NOT NULL, id TEXT NOT NULL,
@@ -73,7 +75,8 @@ export class ResourceSlots {
     try {
       for (;;) {
         signal?.throwIfAborted();
-        if (this.tryAcquire(resource, count, owner)) return;
+        try { if (this.tryAcquire(resource, count, owner)) return; }
+        catch (err) { if (!isSqliteBusy(err)) throw err; }
         await delay(SLOT_POLL_MS, undefined, { signal });
       }
     } catch (err) {

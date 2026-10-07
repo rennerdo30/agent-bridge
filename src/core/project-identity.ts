@@ -63,6 +63,11 @@ export function projectGroupsEnabled(root: string | null, home?: string, agent?:
 
 /** Additive v4 migration. Unknown records and fields are retained; unresolved identities stay closed. */
 export function migrateProjectJobs(records: unknown[]): unknown[] {
+  const roots = new Map<string, string | null>();
+  const rootFor = (cwd: string): string | null => {
+    if (!roots.has(cwd)) roots.set(cwd, canonicalProjectRoot(cwd));
+    return roots.get(cwd) ?? null;
+  };
   return records.map((entry) => {
     if (!entry || typeof entry !== "object" || Array.isArray(entry)) return entry;
     const job = entry as Record<string, unknown>;
@@ -70,7 +75,7 @@ export function migrateProjectJobs(records: unknown[]): unknown[] {
     const worktree = job.worktree as Record<string, unknown> | null;
     for (const value of [worktree?.repoRoot, job.workdir]) {
       if (typeof value !== "string") continue;
-      const root = canonicalProjectRoot(value);
+      const root = rootFor(value);
       if (root) return { ...job, projectRoot: root };
     }
     return entry;
