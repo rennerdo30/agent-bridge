@@ -25,15 +25,14 @@ export const RUNNERS_DIR_NAME = "jobs";
 export const JOB_PEER_PREFIX = "job:";
 /** Conversation of the session's control messages to a runner, so they are told apart from chat. */
 export const CONTROL_CONVERSATION_PREFIX = "jobctl-";
-/** A runner writes its state at least this often; one that stopped writing for STALE_MS is gone. */
+/** A runner writes its state at least this often; heartbeat delay alone never proves process exit. */
 export const RUNNER_HEARTBEAT_MS = 15_000;
-const STALE_MS = 6 * RUNNER_HEARTBEAT_MS;
 /** How long a starting runner may take to report in. */
 const START_GRACE_MS = 30_000;
 /** Runner files of jobs that ended long ago are archived. Zero disables the limit. */
 const KEEP_FILES_MS = 7 * 24 * 60 * 60 * 1000;
 /** Windows: a short-lived launcher keeps the runner out of the session's process tree. */
-const DETACH_LAUNCHER = "require('node:child_process').spawn(process.execPath,process.argv.slice(1),{detached:true,stdio:'ignore',windowsHide:true}).unref()";
+const DETACH_LAUNCHER = "const c=require('node:child_process').spawn(process.execPath,process.argv.slice(1),{detached:true,stdio:'ignore',windowsHide:true});c.on('error',()=>process.exit(1));if(c.pid)process.stdout.write(String(c.pid));c.unref()";
 
 /** Everything a runner needs to run one job (written by the server next to the state file). */
 export interface RunnerSpec {
@@ -143,9 +142,13 @@ export class JobRunners implements JobHost {
       archiveFile(file);
       writeJsonStore(file, { ...full }, null);
       const args = [this.cli, "job-runner", file];
+      const info: JobHostInfo = { pid: null, peer: job.name, startedAt: Date.now() };
       let pid: number | null = null;
       if (process.platform === "win32") {
-        const launcher = spawn(process.execPath, ["-e", DETACH_LAUNCHER, ...args], { stdio: "ignore", windowsHide: true });
+        const launcher = spawn(process.execPath, ["-e", DETACH_LAUNCHER, ...args], { stdio: ["ignore", "pipe", "ignore"], windowsHide: true });
+        let output = "";
+        launcher.stdout!.on("data", chunk => { output += chunk; });
+        launcher.on("close", () => { const reported = Number(output); if (Number.isSafeInteger(reported) && reported > 0) info.pid = reported; });
         launcher.on("error", (err) => this.log.warn("could not start a job runner", { job: job.name, err: err.message }));
       } else {
         const child = spawn(process.execPath, args, { detached: true, stdio: "ignore" });
@@ -154,7 +157,8 @@ export class JobRunners implements JobHost {
         pid = child.pid ?? null;
       }
       this.log.info("job runner started", { job: job.name, pid });
-      return { pid, peer: job.name, startedAt: Date.now() };
+      info.pid = pid;
+      return info;
     } catch (err) {
       this.log.warn("job runner unavailable; the subagent runs inside this server", { job: job.name, err: (err as Error).message });
       return null;
@@ -171,9 +175,9 @@ export class JobRunners implements JobHost {
     if (!state) {
       // Not reported in yet: still starting, for a while.
       const host = job.host;
-      return Boolean(host) && Date.now() - host!.startedAt < START_GRACE_MS && (host!.pid === null || pidAlive(host!.pid));
+      return Boolean(host) && (host!.pid !== null ? pidAlive(host!.pid) : Date.now() - host!.startedAt < START_GRACE_MS);
     }
-    return pidAlive(state.pid) && Date.now() - state.updatedAt < STALE_MS;
+    return pidAlive(state.pid);
   }
 
   send(job: Job, control: RunnerControl): void {

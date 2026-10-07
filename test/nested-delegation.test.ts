@@ -321,7 +321,7 @@ createInterface({input: process.stdin}).on("line", (line) => {
     finally { await link.close(); }
   });
 
-  it("refuses nested execution at a full root budget before calling a target", async () => {
+  it("queues nested execution at a full root budget and cancels before calling a target", async () => {
     const ctx = nestedContext(); const budget = new RootConcurrency(home, ROOT);
     const parent = { id: "parent", pid: process.pid }; const sibling = { id: "sibling", pid: process.pid };
     budget.acquire(parent); budget.acquire(sibling);
@@ -329,7 +329,12 @@ createInterface({input: process.stdin}).on("line", (line) => {
     const run = vi.spyOn(DELEGATION_TARGETS.claude, "run");
     try {
       expect(ctx.jobs!.canStart()).toBe(false);
-      await expect(runDelegate({ ...ctx, me: () => PARENT_JOB }, "claude", { title: "Review", prompt: "task" }, tracked.job.controller.signal, undefined, false, tracked.job)).rejects.toThrow("concurrency limit");
+      const progress = vi.fn();
+      const pending = runDelegate({ ...ctx, me: () => PARENT_JOB }, "claude", { title: "Review", prompt: "task" }, tracked.job.controller.signal, progress, false, tracked.job);
+      const rejected = expect(pending).rejects.toThrow();
+      await until(() => progress.mock.calls.some(([text]) => text.includes("waiting for root admission")));
+      expect(run).not.toHaveBeenCalled();
+      tracked.job.controller.abort(); await rejected;
       expect(run).not.toHaveBeenCalled();
     } finally { tracked.end(); budget.release(parent); budget.release(sibling); budget.close(); }
   });

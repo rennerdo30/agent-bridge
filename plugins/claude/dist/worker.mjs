@@ -30971,6 +30971,7 @@ function resourceSlotHint(counts, cli) {
 }
 
 // src/core/root-concurrency.ts
+import { setTimeout as delay4 } from "node:timers/promises";
 var ROOT_LIMIT_DB = "root-limits.sqlite";
 var LOCK_WAIT_MS2 = 3e3;
 var RootConcurrency = class {
@@ -31004,6 +31005,24 @@ var RootConcurrency = class {
     if (this.slots.tryAcquire(this.resource, limit, owner)) return true;
     this.slots.release(owner, this.resource);
     return false;
+  }
+  /** Keep a FIFO ticket while another coordinator is using the same root's capacity. */
+  async acquireWhenAvailable(owner, signal) {
+    try {
+      for (; ; ) {
+        signal.throwIfAborted();
+        try {
+          const limit = this.limit();
+          if (limit > 0 && this.slots.tryAcquire(this.resource, limit, owner)) return;
+        } catch (err) {
+          if (!isSqliteBusy(err)) throw err;
+        }
+        await delay4(250, void 0, { signal });
+      }
+    } catch (err) {
+      this.release(owner);
+      throw err;
+    }
   }
   moveJobs(names) {
     this.slots.moveJobs(this.resource, names);
@@ -31291,6 +31310,7 @@ var JobManager = class {
   history = /* @__PURE__ */ new Map();
   /** Finished jobs whose continuation waits for a free slot, in arrival order; the messages are in job.queue. */
   waitingJobs = /* @__PURE__ */ new Map();
+  pendingRuns = /* @__PURE__ */ new Map();
   /** Ids of status notes from running subagents (see fromSubagent). */
   notes = /* @__PURE__ */ new Set();
   /** Jobs this manager started, continued or took over: only these are saved (others' entries stay as they are on disk). */
@@ -31478,7 +31498,7 @@ var JobManager = class {
     const stored = readStore(this.storePath, this.log, true);
     const adopted = [];
     const recentIds = new Set(stored.slice(-HISTORY_LIMIT).map((s) => s.id));
-    for (const s of stored.filter((x) => recentIds.has(x.id) || x.status === "running")) {
+    for (const s of stored.filter((x) => recentIds.has(x.id) || x.status === "running" || x.waitingForStart)) {
       if (this.lineage && s.parentJob !== this.lineage.parentJob) continue;
       if (!this.lineage && s.parentJob) continue;
       if (this.history.has(s.id)) continue;
@@ -31498,6 +31518,7 @@ var JobManager = class {
     if (stored.length) this.log.info("restored subagent jobs", { count: Math.min(stored.length, HISTORY_LIMIT), runnerHosted: adopted.length });
     this.assignLegacySupervisors();
     this.settleAdopted(adopted);
+    for (const job of this.history.values()) if (job.waitingForStart && this.isMine(job.owner)) this.waitForSlot(job);
     this.persist();
   }
   /** Whether a runner-hosted job can be taken over here (its runner lives, or finished and left its report). */
@@ -31735,6 +31756,7 @@ var JobManager = class {
   }
   canStart() {
     this.refreshOwnership();
+    for (const job of [...this.running.values()]) if (job.host) this.checkHostedSafely(job, true);
     return this.runningCount() + [...this.foreground.values()].filter((j) => this.isMine(j.owner)).length < this.maxJobs && this.withRootBudget((budget) => {
       if (!this.lineage) budget.setLimit(this.maxJobs);
       return budget.available();
@@ -31751,6 +31773,15 @@ var JobManager = class {
   }
   start(agent, model, prompt, run, resume, args) {
     const job = this.newJob(agent, model, prompt, "job", resume, args);
+    if (!this.canStart() || this.waitingJobs.size) {
+      job.status = "interrupted";
+      job.waitingForStart = true;
+      job.progress = "queued: waiting for a subagent slot";
+      this.pendingRuns.set(job.id, run);
+      this.waitForSlot(job);
+      this.remember(job);
+      return job;
+    }
     this.remember(job);
     this.log.info("subagent started", { job: job.name, model, prompt: prompt.slice(0, PROMPT_PREVIEW_CHARS) });
     this.launch(job, run);
@@ -31812,6 +31843,7 @@ var JobManager = class {
     if (this.hostedRunning(job)) this.checkHosted(job);
     if (this.waitingJobs.has(job.id)) {
       job.queue.push(message);
+      this.persist();
       return { outcome: "waiting", job };
     }
     if (job.status === "running" && job.controller.signal.aborted) {
@@ -31872,12 +31904,29 @@ var JobManager = class {
       if (job.status === "running") continue;
       if (!this.canStart()) return;
       this.waitingJobs.delete(job.id);
+      if (job.waitingForStart) {
+        try {
+          const run = job.resume?.(job.prompt, "", job.workdir, job.worktree) ?? this.pendingRuns.get(job.id);
+          this.pendingRuns.delete(job.id);
+          if (run) this.launch(job, run);
+          else {
+            this.waitingJobs.set(job.id, job);
+            return;
+          }
+        } catch (err) {
+          this.pendingRuns.delete(job.id);
+          job.waitingForStart = void 0;
+          this.finish(job, "failed", "", null, failureCause({ error: err }));
+        }
+        continue;
+      }
       if (!job.queue.length || !job.resume || !job.sessionId) continue;
       this.log.info("subagent resumed (was waiting for a slot)", { job: job.name, sessionId: job.sessionId });
       this.launch(job, job.resume(job.queue.splice(0).join("\n\n"), job.sessionId, job.workdir, job.worktree));
     }
   }
   launch(job, run) {
+    job.waitingForStart = void 0;
     if (typeof job.args?.model === "string") job.model = job.args.model;
     job.status = "running";
     job.executionOwner = !this.isMine(job.owner) ? this.node.name : void 0;
@@ -31889,7 +31938,12 @@ var JobManager = class {
     job.foreground = false;
     this.running.set(job.id, job);
     this.own.add(job.id);
-    job.host = this.runners ? run.hosted?.(job) ?? null : null;
+    try {
+      job.host = this.runners ? run.hosted?.(job) ?? null : null;
+    } catch (err) {
+      this.finish(job, "failed", "", sessionOfError(err), failureCause({ error: err }));
+      return;
+    }
     job.forwarded = [];
     this.persist();
     if (job.host) {
@@ -31901,7 +31955,14 @@ var JobManager = class {
       job.progress = message;
       this.log.debug("subagent progress", { job: job.name, message });
     };
-    run(job.controller.signal, onProgress, job).then(
+    let promise2;
+    try {
+      promise2 = run(job.controller.signal, onProgress, job);
+    } catch (err) {
+      this.finish(job, "failed", "", sessionOfError(err), failureCause({ error: err }));
+      return;
+    }
+    promise2.then(
       (res) => {
         job.workdir = res.workdir ?? job.workdir;
         job.worktree = res.worktree ?? job.worktree;
@@ -32007,7 +32068,13 @@ var JobManager = class {
     const waiting = [...this.waitingJobs.values()].find((j) => j.id === id || j.name === ref);
     if (waiting) {
       this.waitingJobs.delete(waiting.id);
+      this.pendingRuns.delete(waiting.id);
       waiting.queue = [];
+      if (waiting.waitingForStart) {
+        waiting.waitingForStart = void 0;
+        waiting.controller.abort();
+        this.finish(waiting, "failed", "", null, "cancelled before starting");
+      }
       this.log.info("waiting subagent continuation cancelled", { job: waiting.name });
       return true;
     }
@@ -32048,8 +32115,9 @@ var JobManager = class {
       clearInterval(this.rootWaitTimer);
       this.rootWaitTimer = null;
     }
-    for (const j of this.waitingJobs.values()) j.queue = [];
+    for (const j of this.waitingJobs.values()) if (!j.waitingForStart) j.queue = [];
     this.waitingJobs.clear();
+    this.pendingRuns.clear();
     for (const j of this.running.values()) if (!j.host && (!j.executionOwner || j.executionOwner === this.node.name)) j.controller.abort();
     for (const j of this.foreground.values()) denyPendingApprovals(j, "session closed");
     if (this.hostTimer) clearInterval(this.hostTimer);
@@ -32144,6 +32212,7 @@ function toStored(j) {
     prompt: j.prompt,
     startedAt: j.startedAt,
     status: j.status,
+    waitingForStart: j.waitingForStart,
     sessionId: j.sessionId,
     workdir: j.workdir,
     worktree: j.worktree,
@@ -43978,7 +44047,7 @@ var StdioServerTransport = class {
 };
 
 // src/mcp/remote-ask.ts
-import { setTimeout as delay4 } from "node:timers/promises";
+import { setTimeout as delay5 } from "node:timers/promises";
 import { randomUUID as randomUUID12 } from "node:crypto";
 
 // src/network/remote-job-protocol.ts
@@ -44094,7 +44163,7 @@ async function runRemoteAsk(node2, target, args, job, signal, onProgress) {
       }
       if (state && state.status !== "running" && !snapshot.alive) return { text: state.report ?? "Remote job ended without a report.", sessionId: state.sessionId ?? null, isError: state.status === "failed", details: {}, workdir: state.workdir ?? void 0, worktree: state.worktree ?? void 0 };
       if (!snapshot.alive) throw new Error("Remote job runner ended without a result.");
-      await delay4(REMOTE_JOB_POLL_MS, void 0, { signal: combined });
+      await delay5(REMOTE_JOB_POLL_MS, void 0, { signal: combined });
       snapshot = await node2.remoteJob(host, { op: "state", job: job.id });
     }
   } finally {
@@ -44425,7 +44494,7 @@ function t(key3, params = {}) {
 }
 
 // src/core/node.ts
-import { randomUUID as randomUUID24 } from "node:crypto";
+import { randomUUID as randomUUID25 } from "node:crypto";
 import { EventEmitter as EventEmitter2 } from "node:events";
 import { unlinkSync as unlinkSync2 } from "node:fs";
 import { dirname as dirname24, join as join61 } from "node:path";
@@ -45551,7 +45620,7 @@ function readHistorySource(file2, id) {
 }
 
 // src/core/broker.ts
-import { randomUUID as randomUUID22 } from "node:crypto";
+import { randomUUID as randomUUID23 } from "node:crypto";
 import { createServer as createServer6 } from "node:net";
 
 // src/core/store.ts
@@ -48636,13 +48705,38 @@ var RemoteDashboard = class {
 };
 
 // src/network/remote-jobs.ts
-import { randomUUID as randomUUID21 } from "node:crypto";
+import { randomUUID as randomUUID22 } from "node:crypto";
 import { existsSync as existsSync27, realpathSync as realpathSync10, statSync as statSync15 } from "node:fs";
 import { isAbsolute as isAbsolute10, join as join60 } from "node:path";
 
 // src/mcp/delegate-run.ts
-import { randomUUID as randomUUID20 } from "node:crypto";
+import { randomUUID as randomUUID21 } from "node:crypto";
 import { isAbsolute as isAbsolute9, join as join57, relative as relative8, resolve as resolve17 } from "node:path";
+
+// src/core/startup-admission.ts
+import { randomUUID as randomUUID20 } from "node:crypto";
+var STARTUP_CAPACITY = 2;
+var STARTUP_RESOURCE = "delegate-startup";
+async function acquireStartup(home, signal) {
+  const slots = new ResourceSlots(home);
+  const owner = { id: `startup-${randomUUID20()}`, pid: process.pid };
+  try {
+    await slots.acquire(STARTUP_RESOURCE, STARTUP_CAPACITY, owner, signal);
+  } catch (err) {
+    slots.close();
+    throw err;
+  }
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    try {
+      slots.release(owner, STARTUP_RESOURCE);
+    } finally {
+      slots.close();
+    }
+  };
+}
 
 // src/core/effort.ts
 import { readFileSync as readFileSync31 } from "node:fs";
@@ -48802,13 +48896,14 @@ function worktreeArgs(target, a, cfg, cwd, home) {
 }
 async function runDelegate(rc, target, a, signal, onProgress, background, job) {
   checkDepth(rc.cfg.maxDelegateDepth);
-  if (!job?.rootSession) return runWithWorktreeLease(rc, target, a, signal, onProgress, background, job);
+  if (!job?.rootSession) return runWithStartup(rc, target, a, signal, onProgress, background, job);
   const budget = new RootConcurrency(rc.home, job.rootSession);
-  const owner = { id: `${job.name}-${randomUUID20()}`, pid: process.pid };
+  const owner = { id: `${job.name}-${randomUUID21()}`, pid: process.pid };
   let timer;
   try {
     if (!job.parentJob) budget.ensureLimit(rc.cfg.maxJobs);
-    if (!budget.acquire(owner)) throw new Error("The top session's subagent concurrency limit is reached.");
+    onProgress?.("queued: waiting for root admission");
+    await budget.acquireWhenAvailable(owner, signal);
     timer = setInterval(() => {
       try {
         budget.renew(owner);
@@ -48817,15 +48912,29 @@ async function runDelegate(rc, target, a, signal, onProgress, background, job) {
       }
     }, SLOT_RENEW_MS);
     timer.unref();
-    return await runWithWorktreeLease(rc, target, a, signal, onProgress, background, job);
+    return await runWithStartup(rc, target, a, signal, onProgress, background, job);
   } finally {
     clearInterval(timer);
-    budget.release(owner);
-    budget.close();
+    try {
+      budget.release(owner);
+    } finally {
+      budget.close();
+    }
+  }
+}
+async function runWithStartup(rc, target, a, signal, onProgress, background, job) {
+  onProgress?.("queued: waiting for machine startup admission");
+  const release = await acquireStartup(rc.home, signal);
+  try {
+    signal.throwIfAborted();
+    onProgress?.("starting native CLI");
+    return await runWithWorktreeLease({ ...rc, startupReady: release }, target, a, signal, onProgress, background, job);
+  } finally {
+    release();
   }
 }
 async function runWithWorktreeLease(rc, target, a, signal, onProgress, background, job) {
-  const wt = a._worktree ?? (a.worktree ? await createWorktree({ cwd: a.cwd || rc.cwd(), home: rc.home, jobId: randomUUID20().slice(0, 8), log: rc.log }) : null);
+  const wt = a._worktree ?? (a.worktree ? await createWorktree({ cwd: a.cwd || rc.cwd(), home: rc.home, jobId: randomUUID21().slice(0, 8), log: rc.log }) : null);
   const root = wt?.path ?? bridgeWorktreeRoot(a.cwd || rc.cwd(), rc.home);
   if (!root) return runDelegateInner(rc, target, a, signal, onProgress, background, job);
   const release = worktreeLease(rc.home, { path: root });
@@ -48850,7 +48959,7 @@ async function runDelegateInner(rc, target, a, signal, onProgress, background, j
   const cwd = a.cwd || rc.cwd();
   a = worktreeArgs(target, a, cfg, cwd, rc.home);
   const access = a.access;
-  const wt = a._worktree ?? (a.worktree ? await createWorktree({ cwd, home: rc.home, jobId: randomUUID20().slice(0, 8), log: dlog }) : null);
+  const wt = a._worktree ?? (a.worktree ? await createWorktree({ cwd, home: rc.home, jobId: randomUUID21().slice(0, 8), log: dlog }) : null);
   const workdir = wt?.cwd ?? cwd;
   const linkRoot = wt?.path ?? bridgeWorktreeRoot(workdir, rc.home);
   const watchChanges = !wt && (access === "edit" || access === "ask" && target === "codex");
@@ -48861,7 +48970,7 @@ async function runDelegateInner(rc, target, a, signal, onProgress, background, j
   let relayCalls = 0;
   const codexHash = target === "codex" ? codexPermissionHookHash() : null;
   const journalPermission = async (request2, decide) => {
-    const id = randomUUID20();
+    const id = randomUUID21();
     const context2 = { kind: "approval", agent: target, project: workdir, job: job?.name ?? a._job, session: job?.sessionId ?? void 0 };
     await appendContextEvent(rc.home, { ...context2, payload: { id, stage: "request", request: request2 } });
     const decision = await decide();
@@ -48932,7 +49041,7 @@ async function runDelegateInner(rc, target, a, signal, onProgress, background, j
   try {
     feed = startRunFeed({
       home: rc.home,
-      name: `${target}-${randomUUID20().slice(0, 8)}`,
+      name: `${target}-${randomUUID21().slice(0, 8)}`,
       header: `${target}${a.model ? ` (${a.model}${a.effort ? `, effort ${a.effort}` : ""})` : a.effort ? ` (effort ${a.effort})` : ""} in ${workdir}, access ${access ?? "default"}, by ${me}${a.session_id ? `, continues ${a.session_id}` : ""}
 ${a.prompt}
 ---`,
@@ -49042,7 +49151,7 @@ ${a.prompt}
     });
     void steering?.rename?.(title).catch((err) => dlog.warn("could not rename the Codex thread", { err: err.message }));
   };
-  const slotOwner = { id: `${a._job ?? target}-${randomUUID20()}`, pid: process.pid };
+  const slotOwner = { id: `${a._job ?? target}-${randomUUID21()}`, pid: process.pid };
   let slots = null;
   let slotTimer;
   let res;
@@ -49084,6 +49193,7 @@ ${a.prompt}
         },
         writableRoots,
         onSession: (id) => {
+          rc.startupReady?.();
           feed.meta({ session: id });
           if (job) rc.jobs?.note(job, { sessionId: id, workdir, worktree: wt });
         },
@@ -49291,11 +49401,9 @@ var RemoteJobHost = class {
 // src/mcp/job-host.ts
 var RUNNERS_DIR_NAME = "jobs";
 var CONTROL_CONVERSATION_PREFIX = "jobctl-";
-var RUNNER_HEARTBEAT_MS = 15e3;
-var STALE_MS = 6 * RUNNER_HEARTBEAT_MS;
 var START_GRACE_MS = 3e4;
 var KEEP_FILES_MS = 7 * 24 * 60 * 60 * 1e3;
-var DETACH_LAUNCHER = "require('node:child_process').spawn(process.execPath,process.argv.slice(1),{detached:true,stdio:'ignore',windowsHide:true}).unref()";
+var DETACH_LAUNCHER = "const c=require('node:child_process').spawn(process.execPath,process.argv.slice(1),{detached:true,stdio:'ignore',windowsHide:true});c.on('error',()=>process.exit(1));if(c.pid)process.stdout.write(String(c.pid));c.unref()";
 function runnerStatePath(home, id) {
   return join59(home, RUNNERS_DIR_NAME, `${id}.json`);
 }
@@ -49376,9 +49484,18 @@ var JobRunners = class {
       archiveFile(file2);
       writeJsonStore(file2, { ...full }, null);
       const args = [this.cli, "job-runner", file2];
+      const info = { pid: null, peer: job.name, startedAt: Date.now() };
       let pid = null;
       if (process.platform === "win32") {
-        const launcher = spawn6(process.execPath, ["-e", DETACH_LAUNCHER, ...args], { stdio: "ignore", windowsHide: true });
+        const launcher = spawn6(process.execPath, ["-e", DETACH_LAUNCHER, ...args], { stdio: ["ignore", "pipe", "ignore"], windowsHide: true });
+        let output2 = "";
+        launcher.stdout.on("data", (chunk) => {
+          output2 += chunk;
+        });
+        launcher.on("close", () => {
+          const reported = Number(output2);
+          if (Number.isSafeInteger(reported) && reported > 0) info.pid = reported;
+        });
         launcher.on("error", (err) => this.log.warn("could not start a job runner", { job: job.name, err: err.message }));
       } else {
         const child = spawn6(process.execPath, args, { detached: true, stdio: "ignore" });
@@ -49387,7 +49504,8 @@ var JobRunners = class {
         pid = child.pid ?? null;
       }
       this.log.info("job runner started", { job: job.name, pid });
-      return { pid, peer: job.name, startedAt: Date.now() };
+      info.pid = pid;
+      return info;
     } catch (err) {
       this.log.warn("job runner unavailable; the subagent runs inside this server", { job: job.name, err: err.message });
       return null;
@@ -49401,9 +49519,9 @@ var JobRunners = class {
     if (job.remote) return this.remote.alive(job);
     if (!state) {
       const host = job.host;
-      return Boolean(host) && Date.now() - host.startedAt < START_GRACE_MS && (host.pid === null || pidAlive(host.pid));
+      return Boolean(host) && (host.pid !== null ? pidAlive(host.pid) : Date.now() - host.startedAt < START_GRACE_MS);
     }
-    return pidAlive(state.pid) && Date.now() - state.updatedAt < STALE_MS;
+    return pidAlive(state.pid);
   }
   send(job, control) {
     if (job.remote) return this.remote.send(job, control);
@@ -49459,7 +49577,7 @@ var RemoteJobs = class {
     const request2 = remoteJobRequestSchema.parse(raw);
     if (!this.network.peerSupports(host, REMOTE_JOB_CAPABILITY)) throw new Error("Remote broker update needed or paired PC disconnected: install remote-jobs-v1 support and restart its hosting sessions.");
     if (this.pending.size >= REMOTE_JOB_RATE_LIMIT) throw new Error("Too many pending remote job requests.");
-    const rid = randomUUID21();
+    const rid = randomUUID22();
     const response = new Promise((resolve19, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(rid);
@@ -49861,7 +49979,7 @@ var Broker = class {
           const pair = this.requireNetwork().status().paired.find((p) => p.id === a.host || p.name === a.host);
           const name2 = snapshot.state.peer;
           this.receiveRemote({
-            id: randomUUID22(),
+            id: randomUUID23(),
             from: { id: `${pair?.id ?? a.host}/job:${a.request.job}`, name: `${pair?.name ?? a.host}/${name2}`, agent: "other" },
             to: peer.name,
             recipient: peer.name,
@@ -50042,7 +50160,7 @@ var Broker = class {
     this.remoteDashboard = new RemoteDashboard(service, { home: this.networking.home, log: this.log, peers: () => this.dashboardPeers() });
     this.remoteJobs = new RemoteJobs(service, this.networking.home, this.log, async (record2, control) => {
       this.receiveRemote({
-        id: randomUUID22(),
+        id: randomUUID23(),
         from: { id: record2.owner, name: record2.owner, agent: "other" },
         to: record2.name,
         recipient: record2.name,
@@ -50465,7 +50583,7 @@ Handoff note: ${receipt.note}` : "") + "\n\nYou are their supervisor. Use messag
       if (typeof args.body !== "string" || !args.body.trim() || args.body.length > MAX_BODY_CHARS) {
         throw new BridgeError("bad_request", "invalid sibling message body");
       }
-      const id = randomUUID22();
+      const id = randomUUID23();
       const notice = {
         id,
         from: { id: sender.id, name: sender.name, agent: sender.jobAgent ?? sender.agent },
@@ -50491,7 +50609,7 @@ ${args.body}`,
       }
       throw new BridgeError("bad_request", `sibling conversation reached its ${args.maxHops}-message hop limit; message was not delivered. Durable notice ${id} saved for sender and supervisor, including the undelivered text`);
     }
-    const conversationId = parent2?.conversationId ?? `${SIBLING_CONVERSATION_PREFIX}${randomUUID22()}`;
+    const conversationId = parent2?.conversationId ?? `${SIBLING_CONVERSATION_PREFIX}${randomUUID23()}`;
     const result = await this.onSend(conn, { ...args, dedupeKey, conversationId });
     const message = result.messages[0];
     const recipientOwner = target?.peer?.jobParent ?? this.storedJobs().find((j) => j.name === args.to)?.owner;
@@ -50499,7 +50617,7 @@ ${args.body}`,
     for (const owner of observers) {
       const note = {
         ...message,
-        id: randomUUID22(),
+        id: randomUUID23(),
         recipient: owner,
         conversationId: `${conversationId}${SIBLING_NOTE_SUFFIX}`,
         body: `Sibling message to ${message.recipient}:
@@ -50526,7 +50644,7 @@ ${message.body}`
       const candidate = `${requested}-${i}`;
       if (!this.connByName(candidate)) return candidate;
     }
-    return `${requested}-${randomUUID22().slice(0, 8)}`;
+    return `${requested}-${randomUUID23().slice(0, 8)}`;
   }
   onDecide(conn, value) {
     const peer = this.requirePeer(conn);
@@ -50567,7 +50685,7 @@ ${message.body}`
   }
   queueDecision(decision, peer) {
     const message = {
-      id: randomUUID22(),
+      id: randomUUID23(),
       from: decision.author,
       to: peer.name,
       recipient: peer.name,
@@ -50904,9 +51022,9 @@ Call decisions to look up current decisions or their history.`,
         this.log.debug("replyTo refers to an unknown message", { replyTo });
       }
     }
-    conversationId ||= randomUUID22();
+    conversationId ||= randomUUID23();
     if (own2 && (to === own2.rootName || to === own2.owner || this.groups.members(own2, this.localPeers()).some((p) => p.name === to) || mastersFor(own2).includes(to))) conversationId = this.jobConversation(own2, to, conversationId);
-    const id = sender.jobAgent && args.dedupeKey?.startsWith(COMPLETION_DEDUPE_PREFIX) ? completionMessageId(sender.id, args.dedupeKey.slice(COMPLETION_DEDUPE_PREFIX.length)) : randomUUID22();
+    const id = sender.jobAgent && args.dedupeKey?.startsWith(COMPLETION_DEDUPE_PREFIX) ? completionMessageId(sender.id, args.dedupeKey.slice(COMPLETION_DEDUPE_PREFIX.length)) : randomUUID23();
     const createdAt = this.now();
     const base2 = {
       id,
@@ -51188,7 +51306,7 @@ async function processIdentity(pid) {
 }
 
 // src/core/job-control.ts
-import { randomUUID as randomUUID23 } from "node:crypto";
+import { randomUUID as randomUUID24 } from "node:crypto";
 var DASHBOARD_JOB_CONVERSATION = "jobctl-dashboard";
 var CONTROL_TIMEOUT_MS = 1e4;
 var JobControlError = class extends Error {
@@ -51200,7 +51318,7 @@ var JobControlError = class extends Error {
 };
 async function controlDashboardJob(node2, owner, job, command) {
   if (!(await node2.peers()).some((p) => p.name === owner)) throw new JobControlError("The owning session is not connected. Reopen it to continue this subagent.", "offline");
-  const requestId = randomUUID23();
+  const requestId = randomUUID24();
   let receive;
   let timer;
   const reply2 = new Promise((resolve19, reject) => {
@@ -51237,7 +51355,7 @@ var BridgeNode = class extends EventEmitter2 {
   constructor(opts) {
     super();
     this.opts = opts;
-    this.id = opts.id ?? randomUUID24();
+    this.id = opts.id ?? randomUUID25();
     this.currentName = opts.name;
     this.currentCwd = opts.cwd;
     this.autoWake = opts.autoWake;
@@ -51348,9 +51466,9 @@ var BridgeNode = class extends EventEmitter2 {
   }
   /** Doubling delay for background retries, capped; reset once connected. */
   nextBackoff() {
-    const delay5 = this.reconnectDelay;
-    this.reconnectDelay = Math.min(delay5 * 2, RECONNECT_BACKOFF_MAX_MS);
-    return delay5;
+    const delay6 = this.reconnectDelay;
+    this.reconnectDelay = Math.min(delay6 * 2, RECONNECT_BACKOFF_MAX_MS);
+    return delay6;
   }
   /**
    * Retry the election later until connected or stopped. Also after "unauthorized" / "protocol_mismatch":
@@ -51540,7 +51658,7 @@ var BridgeNode = class extends EventEmitter2 {
   /** quiet: not part of a conversation of this agent (no listen window, replies are not awaited), e.g. control messages to a job runner. */
   send(args, opts = {}) {
     return this.withClient(async (c) => {
-      const res = await this.sendRequest(c, "send", { ...args, dedupeKey: args.dedupeKey || randomUUID24() });
+      const res = await this.sendRequest(c, "send", { ...args, dedupeKey: args.dedupeKey || randomUUID25() });
       if (opts.quiet) return res;
       this.lastSent = Date.now();
       if (!args.replyTo) for (const m of res.messages) this.asked.add(m.id);
@@ -51629,7 +51747,7 @@ var BridgeNode = class extends EventEmitter2 {
     return this.withClient((c) => c.request("siblings", {}));
   }
   sendSibling(args, maxHops) {
-    return this.withClient((c) => this.sendRequest(c, "sendSibling", { ...args, maxHops, dedupeKey: args.dedupeKey || randomUUID24() }));
+    return this.withClient((c) => this.sendRequest(c, "sendSibling", { ...args, maxHops, dedupeKey: args.dedupeKey || randomUUID25() }));
   }
   async updateJob(patch) {
     Object.assign(this.opts, patch);
@@ -52157,7 +52275,7 @@ import { join as join68 } from "node:path";
 import { DatabaseSync as DatabaseSync16 } from "node:sqlite";
 
 // src/cli/dashboard-key.ts
-import { randomBytes as randomBytes9, randomUUID as randomUUID25 } from "node:crypto";
+import { randomBytes as randomBytes9, randomUUID as randomUUID26 } from "node:crypto";
 import { existsSync as existsSync28, linkSync, mkdirSync as mkdirSync30, readFileSync as readFileSync33, renameSync as renameSync9, unlinkSync as unlinkSync3, writeFileSync as writeFileSync15 } from "node:fs";
 import { join as join64 } from "node:path";
 var DASHBOARD_KEY_FILE = "dashboard-key";
@@ -52166,7 +52284,7 @@ function loadDashboardKey(home, legacy, reset = false) {
   mkdirSync30(home, { recursive: true, mode: 448 });
   const file2 = join64(home, DASHBOARD_KEY_FILE);
   if (reset || !existsSync28(file2)) {
-    const temp = join64(home, `.dashboard-key-${randomUUID25()}`);
+    const temp = join64(home, `.dashboard-key-${randomUUID26()}`);
     let created = false;
     try {
       writeFileSync15(temp, "", { flag: "wx", mode: 384 });
@@ -55229,7 +55347,7 @@ function parseNetworkAddress(address) {
 // src/core/doctor.ts
 import { existsSync as existsSync29, lstatSync as lstatSync11, mkdirSync as mkdirSync31, readFileSync as readFileSync34, readdirSync as readdirSync19, renameSync as renameSync10 } from "node:fs";
 import { basename as basename13, dirname as dirname25, join as join65, relative as relative9 } from "node:path";
-import { randomUUID as randomUUID26 } from "node:crypto";
+import { randomUUID as randomUUID27 } from "node:crypto";
 import { DatabaseSync as DatabaseSync14 } from "node:sqlite";
 function doctor(home, now = Date.now()) {
   const report = { checkedAt: now, ok: true, schema: [], findings: [], sizes: [], totalBytes: 0, backups: listBackups(home) };
@@ -57002,7 +57120,7 @@ ${formatReplyRestrictions(result).join("\n")}`);
     });
     const resumeFor = (a) => (message, sessionId, workdir, worktree) => (
       // Saved settings win, including removal of an earlier exact permission override.
-      background((job) => resumeArgs(a, job.name, message, sessionId, workdir, worktree, job.args), a)
+      background((job) => !sessionId ? { ...a, ...job.args, prompt: message, _job: job.name } : resumeArgs(a, job.name, message, sessionId, workdir, worktree, job.args), a)
     );
     resumers[target] = resumeFor;
     if (!targets.includes(target)) continue;
@@ -57087,14 +57205,13 @@ ${res.text || t("delegate.empty")}`, res.isError);
         if (a.host && !ctx.runners) throw new BridgeError("bad_request", "Remote jobs require the bundled runner. Update and reload this session.");
         const jobs = ctx.jobs;
         if (!jobs) throw new BridgeError("bad_request", t("err.delegatedSession"));
-        if (!jobs.canStart()) return text2(t("jobs.limit", { max: jobs.limit }), true);
         const job = jobs.start(target, a.model ?? defaultModel, a.prompt, background((job2) => ({ ...a, _job: job2.name }), a), resumeFor(a), keep(a));
         const cwd = a.cwd || ctx.cwd();
         const access = a.access ?? (a.worktree || isBridgeWorktree(cwd, ctx.home) ? "edit" : null);
         const exact = a.sandbox !== void 0 || a.permission_mode !== void 0 || a.auto_approve !== void 0;
         const note = exact ? "" : `
 ${access === "edit" ? t("jobs.accessEdit") : access === "ask" ? t("jobs.accessAsk") : t("jobs.accessRead")}`;
-        return text2(`${t("jobs.started", { name: job.name })}${note}${derivedTitle ? `
+        return text2(`${job.waitingForStart ? `Subagent ${job.name} queued for a free slot (maximum ${jobs.limit}).` : t("jobs.started", { name: job.name })}${note}${derivedTitle ? `
 Title derived from prompt: "${a.title}".` : ""}`);
       })
     );

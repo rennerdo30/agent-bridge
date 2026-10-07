@@ -3,6 +3,8 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { ResourceSlots, type SlotOwner } from "./resource-slots.js";
 import { configureSqlite } from "./sqlite-policy.js";
+import { isSqliteBusy } from "./sqlite-policy.js";
+import { setTimeout as delay } from "node:timers/promises";
 
 const ROOT_LIMIT_DB = "root-limits.sqlite";
 const LOCK_WAIT_MS = 3_000;
@@ -44,6 +46,20 @@ export class RootConcurrency {
     if (this.slots.tryAcquire(this.resource, limit, owner)) return true;
     this.slots.release(owner, this.resource);
     return false;
+  }
+
+  /** Keep a FIFO ticket while another coordinator is using the same root's capacity. */
+  async acquireWhenAvailable(owner: SlotOwner, signal: AbortSignal): Promise<void> {
+    try {
+      for (;;) {
+        signal.throwIfAborted();
+        try {
+          const limit = this.limit();
+          if (limit > 0 && this.slots.tryAcquire(this.resource, limit, owner)) return;
+        } catch (err) { if (!isSqliteBusy(err)) throw err; }
+        await delay(250, undefined, { signal });
+      }
+    } catch (err) { this.release(owner); throw err; }
   }
 
   moveJobs(names: string[]): void { this.slots.moveJobs(this.resource, names); }
