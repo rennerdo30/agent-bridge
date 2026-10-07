@@ -184,8 +184,11 @@ export function parseOpencodeModelCosts(text: string): ModelCost[] {
   const out: ModelCost[] = [];
   try {
     const models = JSON.parse(text).data;
-    if (Array.isArray(models)) return models.flatMap((m) => typeof m.cost?.input === "number" && typeof m.cost?.output === "number"
-      ? [{ id: `${m.providerID}/${m.id}`, input: m.cost.input, output: m.cost.output }] : []);
+    if (Array.isArray(models)) return models.flatMap((m) => {
+      // v2 prices are context tiers. A model is free only when every tier has zero prices.
+      if (!Array.isArray(m.cost) || !m.cost.length || m.cost.some((c: any) => typeof c.input !== "number" || typeof c.output !== "number")) return [];
+      return [{ id: `${m.providerID}/${m.id}`, input: Math.max(...m.cost.map((c: any) => c.input)), output: Math.max(...m.cost.map((c: any) => c.output)) }];
+    });
   } catch { /* v1 prints a model id followed by a JSON block. */ }
   const parts = text.split(/^([\w.-]+\/[\w.:@-]+)\r?\n(?=\{)/m);
   for (let i = 1; i + 1 < parts.length; i += 2) {
