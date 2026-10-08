@@ -25,13 +25,15 @@ beforeEach(() => { env = makeEnv(); });
 afterEach(async () => { vi.unstubAllEnvs(); await env.cleanup(); });
 
 describe("decision schema migrations", () => {
-  it.each([0, 1, 2])("backs up schema %i before adding decisions and retains all old data", (version) => {
+  it.each([0, 1, 2])("backs up schema %i before adding decisions and retains all old data", async (version) => {
     const old = new DatabaseSync(env.db);
     old.exec(`${EARLIER_SCHEMA} PRAGMA user_version = ${version}`);
     old.prepare("INSERT INTO messages VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run("legacy", "codex-app", "a", "claude-app", "claude", "codex-app", "c", null, 0, "old mail", 1, 2);
     if (version === 2) {
       old.exec(EARLIER_ARCHIVE);
       old.exec("INSERT INTO archived_messages SELECT *, 'expired', 3 FROM messages");
+      old.exec("INSERT INTO archived_messages SELECT * FROM archived_messages");
+      old.exec("UPDATE archived_messages SET id = 'legacy-archive' WHERE rowid = (SELECT MAX(rowid) FROM archived_messages)");
     }
     old.exec("PRAGMA journal_mode = WAL");
     old.exec("UPDATE messages SET body = 'committed WAL mail'");
@@ -40,6 +42,21 @@ describe("decision schema migrations", () => {
       expect(store.byId("legacy")).toMatchObject({ body: "committed WAL mail", readAt: 2 });
       store.decisions.record({ topic: "Build", text: "Keep backups", scope: "all" }, AUTHOR, 10);
       expect(store.decisions.list()).toHaveLength(1);
+      if (version === 2) {
+        const retained = old.prepare("SELECT * FROM archived_messages ORDER BY id").all();
+        expect(store.byId("legacy-archive")).toMatchObject({ body: "old mail", readAt: 2 });
+        const archive = new DatabaseSync(join(env.home, "archive.db"), { readOnly: true });
+        try {
+          expect(archive.prepare("SELECT COUNT(*) AS n FROM messages").get()!.n).toBe(0);
+          vi.stubEnv("AGENT_BRIDGE_AUTO_BACKUP", "0");
+          store.startBackups(); // Listener-ready maintenance is explicitly started, never constructor work.
+          expect(old.prepare("SELECT * FROM archived_messages ORDER BY id").all()).toEqual(retained);
+          await until(() => Number(old.prepare("SELECT COUNT(*) AS n FROM archived_messages").get()!.n) === 0);
+          expect(archive.prepare("SELECT * FROM messages ORDER BY id").all()).toEqual(retained);
+          expect(store.byId("legacy-archive")).toMatchObject({ body: "old mail", readAt: 2 });
+          expect(store.byId("legacy")).toMatchObject({ body: "committed WAL mail", readAt: 2 });
+        } finally { archive.close(); }
+      }
     } finally { store.close(); old.close(); }
     const backups = readdirSync(env.home).filter((f) => f.startsWith("bridge.db.backup-"));
     expect(backups).toHaveLength(1);
