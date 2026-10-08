@@ -2,7 +2,7 @@ import { copyFileSync, existsSync, readdirSync, statSync, writeFileSync } from "
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { copyLegacyConversationTail, historyDbPath, historyMigrationFailure, historyReadPath, historyReady, HISTORY_TABLES, migrateHistoryStore, openHistoryStore, releaseExitedHistoryLease } from "../src/core/history-store.js";
+import { copyLegacyConversationTail, historyDbPath, historyMigrationFailure, historyReadPath, historyReady, HISTORY_TABLES, migrateHistoryStore, openHistoryStore, releaseExitedHistoryLease, type HistoryMigrationProgress } from "../src/core/history-store.js";
 import { MessageStore } from "../src/core/store.js";
 import { loadConfig } from "../src/core/config.js";
 import { ConversationIngestor, indexedConversationText } from "../src/core/conversations.js";
@@ -14,7 +14,7 @@ import { makeEnv, type TestEnv } from "./helpers.js";
 let env: TestEnv;
 const closes: (() => void)[] = [];
 beforeEach(() => { env = makeEnv(); });
-afterEach(async () => { for (const close of closes.splice(0).reverse()) close(); await env.cleanup(); vi.unstubAllEnvs(); });
+afterEach(async () => { vi.restoreAllMocks(); for (const close of closes.splice(0).reverse()) close(); await env.cleanup(); vi.unstubAllEnvs(); });
 function legacy() {
   copyFileSync(join(import.meta.dirname, "fixtures/owner-questions-upgrade/v0.29.17/bridge.db"), env.db);
   const db = new DatabaseSync(env.db); closes.push(() => db.close());
@@ -263,6 +263,60 @@ it("retains a changed mutable table generation and reuses unchanged snapshot chu
     expect(backup.prepare(`SELECT body FROM "${archived.archived_table}" WHERE id=?`).get(row.id!)!.body).toBe(row.body);
     expect(checkpoint(db,"history_documents")!.generation).toBe(1);
   } finally { meta.close(); backup.close(); }
+});
+
+it.each(["copy_rows", "verify_rows"])("bases ETA on new work when resuming %s", async (field) => {
+  const old = legacy(), db = target(); let stop = false;
+  await expect(migrateHistoryStore(env.db, db, () => false, () => stop, undefined, false, { onProgress: () => {
+    if (Number(checkpoint(db, "conversation_records")?.[field]) === 32) stop = true;
+  } })).rejects.toThrow("stopped");
+  const snapshot = db.prepare("SELECT snapshot FROM history_migration").get()!.snapshot;
+  const now = Date.now.bind(Date); let offset = 0;
+  const clock = vi.spyOn(Date, "now").mockImplementation(() => now() + offset);
+  const updates: HistoryMigrationProgress[] = [];
+  let baseline: HistoryMigrationProgress | undefined;
+  try {
+    await migrateHistoryStore(env.db, db, undefined, undefined, undefined, false, { onProgress: progress => {
+      updates.push(progress);
+      if (!baseline) { baseline = progress; offset = 60_000; }
+    } });
+  } finally { clock.mockRestore(); }
+  expect(baseline!.completedRows).toBeGreaterThan(0);
+  expect(baseline!.etaSeconds).toBeNull();
+  const advanced = updates.find(progress => progress.completedRows > baseline!.completedRows)!;
+  expect(advanced).toBeDefined();
+  const newRows = advanced.completedRows - baseline!.completedRows;
+  expect(advanced.etaSeconds).toBeGreaterThanOrEqual(Math.ceil(60 * (advanced.totalRows - advanced.completedRows) / newRows));
+  expect(historyReady(db)).toBe(true);
+  expect(db.prepare("SELECT snapshot FROM history_migration").get()!.snapshot).toBe(snapshot);
+  expect(db.prepare("SELECT * FROM conversation_records").all()).toEqual(old.prepare("SELECT * FROM conversation_records").all());
+});
+
+it("resets ETA when a mutable snapshot generation replaces prior work", async () => {
+  const old = legacy(), db = target(); let stop = false;
+  const original = old.prepare("SELECT id,body FROM history_documents LIMIT 1").get()!;
+  const insert = old.prepare("INSERT INTO history_documents SELECT ?,kind,agent,at,body,folded,link,message,job,run,session,cursor FROM history_documents WHERE id=?");
+  for (let i = 0; i < 96; i++) insert.run(`eta-generation-${i}`, original.id!);
+  await expect(migrateHistoryStore(env.db, db, () => false, () => stop, undefined, false, { onProgress: () => {
+    if (Number(checkpoint(db, "history_documents")?.snapshot_rows) === 32) stop = true;
+  } })).rejects.toThrow("stopped");
+  old.prepare("UPDATE history_documents SET body='changed ETA generation' WHERE id=?").run(original.id!);
+  const now = Date.now.bind(Date); let offset = 0, first = true;
+  const clock = vi.spyOn(Date, "now").mockImplementation(() => now() + offset);
+  let restarted: HistoryMigrationProgress | undefined;
+  try {
+    await migrateHistoryStore(env.db, db, undefined, undefined, undefined, false, { onProgress: progress => {
+      if (first) { first = false; expect(progress.etaSeconds).toBeNull(); offset = 60_000; }
+      const state = checkpoint(db, "history_documents");
+      if (!restarted && state?.generation === 1 && Number(state.snapshot_rows) === 32) restarted = progress;
+    } });
+  } finally { clock.mockRestore(); }
+  expect(restarted).toBeDefined();
+  expect(restarted!.etaSeconds).not.toBeNull();
+  expect(restarted!.etaSeconds).toBeLessThan(10);
+  expect(historyReady(db)).toBe(true);
+  expect(checkpoint(db, "history_documents")!.generation).toBe(1);
+  expect(db.prepare("SELECT body FROM history_documents WHERE id=?").get(original.id!)!.body).toBe("changed ETA generation");
 });
 
 it("migrates history-only legacy schemas and leaves native ingestion able to continue", async () => {

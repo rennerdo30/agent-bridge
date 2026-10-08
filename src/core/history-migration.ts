@@ -100,13 +100,18 @@ export async function resumableHistoryMigration(bridge: string, target: Database
   let pinned = false, nextAt = 0, pressureSince = 0;
   let meta: DatabaseSync | undefined, source: DatabaseSync | undefined, backup: DatabaseSync | undefined;
   let progress: HistoryMigrationProgress = { phase, percent: 0, etaSeconds: null, paused: false, completedRows: 0, totalRows: 0, snapshot: state?.snapshot ?? null, ioBytesPerSecond: limit, error: null };
-  const start = Date.now(); let startRows = 0;
+  let start = Date.now(), startRows: number | undefined, lastRows = 0;
+  const resetEta = (rows: number) => { start = Date.now(); startRows = lastRows = rows; };
   const emit = (changes: Partial<HistoryMigrationProgress> = {}) => {
     if (meta) {
       const totals = meta.prepare("SELECT coalesce(sum(snapshot_rows+snapshot_verify_rows+copy_rows+verify_rows),0) done,coalesce(sum(estimate),0)*4 total FROM table_state").get()!;
       progress.completedRows = Number(totals.done); progress.totalRows = Math.max(progress.completedRows, Number(totals.total));
       progress.percent = progress.totalRows ? Math.min(99.99, 100 * progress.completedRows / progress.totalRows) : 0;
-      const work = progress.completedRows - startRows;
+      // Historical work predates this invocation. Row-based estimates remain
+      // approximate across table/phase changes, and need new work after a reset.
+      if (startRows === undefined || progress.completedRows < lastRows) resetEta(progress.completedRows);
+      lastRows = progress.completedRows;
+      const work = progress.completedRows - startRows!;
       progress.etaSeconds = work > 0 ? Math.ceil((Date.now() - start) / 1000 / work * (progress.totalRows - progress.completedRows)) : null;
     }
     progress = { ...progress, phase, ...changes }; options.onProgress?.({ ...progress });
@@ -163,7 +168,6 @@ export async function resumableHistoryMigration(bridge: string, target: Database
         backup.exec("PRAGMA busy_timeout=100; PRAGMA synchronous=FULL; PRAGMA cache_size=-2048; PRAGMA mmap_size=0");
         backup.prepare("ATTACH DATABASE ? AS progress").run(progressFile);
       }
-      startRows = tables().reduce((n, table) => n + table.snapshot_rows + table.snapshot_verify_rows + table.copy_rows + table.verify_rows, 0);
       for (let table of tables()) {
         await gap();
         // A new read view must include every retained mutable prefix unchanged. Raw
@@ -195,6 +199,9 @@ export async function resumableHistoryMigration(bridge: string, target: Database
             backup!.exec("COMMIT");
           } catch (err) { backup!.exec("ROLLBACK"); throw err; }
           table = current(table.table_name);
+          // A replaced generation can regain the old row count before the next
+          // emission, so reset explicitly rather than relying only on a decrease.
+          resetEta(tables().reduce((n, state) => n + state.snapshot_rows + state.snapshot_verify_rows + state.copy_rows + state.verify_rows, 0));
         } else if (!legacySnapshot && !guards && table.upper_rowid !== max) {
           meta.prepare("UPDATE table_state SET upper_rowid=?,estimate=?,snapshot_done=0,snapshot_verify_done=0 WHERE table_name=?").run(max, Math.max(table.snapshot_rows, max ?? 0), table.table_name);
           table = current(table.table_name);
