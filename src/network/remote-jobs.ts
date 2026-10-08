@@ -8,7 +8,7 @@ import type { Logger } from "../core/logger.js";
 import type { BridgeNode } from "../core/node.js";
 import type { PeerInfo } from "../core/protocol.js";
 import { answerPendingApproval, listPendingApprovals, publishApproval, type PendingApproval } from "../core/relay.js";
-import { startRunFeed, type RunFeed } from "../core/runfeed.js";
+import { startRunFeedReady, type RunFeed, type RunFeedOptions } from "../core/runfeed.js";
 import { createWorktree, git, gitDirsOutside, type Worktree } from "../core/worktree.js";
 import { isInside, resumeArgs, type DelegateArgs } from "../mcp/delegate-run.js";
 import { JobRunners, readRunnerState } from "../mcp/job-host.js";
@@ -23,6 +23,7 @@ interface RemoteRecord { pair: string; peer: string; owner: string; job: Job; ar
 type StoredRemoteRecord = Omit<RemoteRecord, "job"> & { job: Omit<Job, "controller" | "queue"> };
 const REMOTE_JOBS_FILE = "remote-jobs.json";
 interface Pending { host: string; resolve: (value: RemoteJobSnapshot) => void; reject: (error: Error) => void; timer: NodeJS.Timeout }
+interface MirrorIntent { options: RunFeedOptions; snapshot: RemoteJobSnapshot; controller?: AbortController; task?: Promise<void> }
 
 /** Canonical containment rejects traversal, sibling-prefix paths and symlink/junction escapes. */
 export function allowedRemoteDirectory(directory: string, roots: string[]): string {
@@ -41,6 +42,7 @@ export class RemoteJobs {
   private readonly pending = new Map<string, Pending>();
   private readonly rates = new Map<string, { at: number; requests: number; spawns: number }>();
   private readonly feeds = new Map<string, RunFeed>();
+  private readonly mirrorIntents = new Map<string, MirrorIntent>();
   private readonly approvals = new Map<string, () => void>();
   private readonly publishingApprovals = new Set<string>();
   private readonly starting = new Set<string>();
@@ -74,7 +76,9 @@ export class RemoteJobs {
     try {
       await this.network.sendExtension(host, REMOTE_JOB_FRAME, { kind: "request", rid, peer: { id: peer.id, name: peer.name, supervisor }, request });
       const snapshot = await response;
-      await this.mirror(host, peer, request, snapshot, supervisor, localJobName);
+      // The remote result is authoritative even when this PC cannot yet retain its mirror.
+      try { await this.mirror(host, peer, request, snapshot, supervisor, localJobName); }
+      catch (error) { this.log.warn("remote result retained; local run mirror unavailable", { host, job: request.job, err: String(error) }); }
       return snapshot;
     } catch (err) {
       const p = this.pending.get(rid);
@@ -233,25 +237,29 @@ export class RemoteJobs {
   }
 
   private async mirror(host: string, peer: Pick<PeerInfo, "id" | "name">, request: RemoteJobRequest, snapshot: RemoteJobSnapshot, supervisor: string, localJobName?: string): Promise<void> {
+    if (this.closed) return;
     const owner = peer.name;
     const key = `${host}/${request.job}`;
     if (request.op === "spawn") {
+      this.mirrorIntents.get(key)?.controller?.abort(new Error("Remote mirror replaced by a new turn"));
       this.feeds.get(key)?.end("interrupted");
-      this.feeds.set(key, startRunFeed({ home: this.home, name: `${request.target}-${request.job}`, header: `${request.target} on ${host}, by ${owner}\n${request.args.prompt}\n---`,
-        meta: { by: owner, job: localJobName ?? `${request.target}-job-${request.job}`, title: request.args.title, remote: { host, name: `${request.target}-job-${request.job}` }, model: request.args.model, effort: request.args.effort, access: request.args.access ?? (request.args.worktree ? "edit" : "default"), workdir: request.args.cwd } }));
+      this.feeds.delete(key);
+      this.mirrorIntents.set(key, { snapshot, options: { home: this.home, name: `${request.target}-${request.job}`, header: `${request.target} on ${host}, by ${owner}\n${request.args.prompt}\n---`,
+        meta: { by: owner, job: localJobName ?? `${request.target}-job-${request.job}`, title: request.args.title, remote: { host, name: `${request.target}-job-${request.job}` }, model: request.args.model, effort: request.args.effort, access: request.args.access ?? (request.args.worktree ? "edit" : "default"), workdir: request.args.cwd,
+          ...{ remoteSpawnArgs: { ...request.args } } } } });
       this.log.info("requested remote job", { host, job: request.job, owner });
     }
     const state = snapshot.state;
-    if (!this.feeds.has(key) && state?.status === "running") {
-      this.feeds.set(key, startRunFeed({ home: this.home, name: state.peer, header: `Reattached remote job on ${host}, by ${owner}`,
-        meta: { by: owner, job: localJobName ?? state.peer, remote: { host, name: state.peer } } }));
+    if (!this.feeds.has(key) && !this.mirrorIntents.has(key) && state?.status === "running") {
+      this.mirrorIntents.set(key, { snapshot, options: { home: this.home, name: state.peer, header: `Reattached remote job on ${host}, by ${owner}`,
+        meta: { by: owner, job: localJobName ?? state.peer, remote: { host, name: state.peer } } } });
     }
-    const feed = this.feeds.get(key);
-    if (state) {
-      feed?.meta({ session: state.sessionId, workdir: state.workdir ?? undefined, model: state.model, percent: state.percent, progressNote: state.progressNote, etaAt: state.etaAt, etaReportedAt: state.etaReportedAt });
-      if (state.progress) feed?.report(state.progress);
-      if (state.status !== "running") { feed?.end(state.status, state.report); this.feeds.delete(key); }
+    const intent = this.mirrorIntents.get(key);
+    if (intent) {
+      intent.snapshot = snapshot;
+      this.prepareMirror(key, intent);
     }
+    this.updateMirror(key, snapshot);
     const active = new Set(snapshot.approvals.map((a) => `${key}/${a.id}`));
     for (const [id, close] of this.approvals) if (id.startsWith(`${key}/`) && !active.has(id)) { close(); this.approvals.delete(id); }
     for (const approval of snapshot.approvals) {
@@ -271,8 +279,42 @@ export class RemoteJobs {
     }
   }
 
+  /** Context admission is local background work, never a second remote spawn or an RPC wait.
+   * A later state poll retries a timed-out intent with its original spawn options and latest facts. */
+  private prepareMirror(key: string, intent: MirrorIntent): void {
+    if (intent.task || this.closed) return;
+    const controller = new AbortController();
+    intent.controller = controller;
+    const timer = setTimeout(() => controller.abort(new Error("Local remote-run mirror metadata admission exceeded 2 seconds; retry on the next state poll")), 2_000);
+    timer.unref();
+    intent.task = startRunFeedReady(intent.options, controller.signal).then(feed => {
+      if (this.closed || controller.signal.aborted || this.mirrorIntents.get(key) !== intent) {
+        feed.end("interrupted"); // Release only this newly created feed; retain all of its data.
+        return;
+      }
+      this.feeds.set(key, feed);
+      this.updateMirror(key, intent.snapshot);
+      this.mirrorIntents.delete(key);
+    }).catch(error => {
+      if (!this.closed && this.mirrorIntents.get(key) === intent) this.log.warn("remote result retained; local run mirror context pending", { key, err: String(error) });
+    }).finally(() => {
+      clearTimeout(timer);
+      if (intent.controller === controller) { intent.controller = undefined; intent.task = undefined; }
+    });
+  }
+
+  private updateMirror(key: string, snapshot: RemoteJobSnapshot): void {
+    const feed = this.feeds.get(key), state = snapshot.state;
+    if (!feed || !state) return;
+    feed.meta({ session: state.sessionId, workdir: state.workdir ?? undefined, model: state.model, percent: state.percent, progressNote: state.progressNote, etaAt: state.etaAt, etaReportedAt: state.etaReportedAt });
+    if (state.progress) feed.report(state.progress);
+    if (state.status !== "running") { feed.end(state.status, state.report); this.feeds.delete(key); }
+  }
+
   close(): void {
     this.closed = true;
+    for (const intent of this.mirrorIntents.values()) intent.controller?.abort(new Error("Remote mirror broker closed"));
+    this.mirrorIntents.clear();
     for (const pending of this.pendingStarts.values()) pending.controller.abort(new Error("Remote job not_started: broker closed before detached runner startup"));
     for (const p of this.pending.values()) { clearTimeout(p.timer); p.reject(new Error("Remote jobs link closed.")); }
     this.pending.clear();
